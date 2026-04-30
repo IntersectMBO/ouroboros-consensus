@@ -98,7 +98,7 @@ type data WhatToDoWithTxDiffs = Collect | Discard
 -- differences, we don't even have differences around that we might misuse.
 type family InputTxDiffs blk wtd where
   InputTxDiffs blk Discard = ()
-  InputTxDiffs blk Collect = LedgerTables (TickedLedgerState blk) DiffMK
+  InputTxDiffs blk Collect = LedgerTables blk DiffMK
 
 class
   ( UpdateLedger blk
@@ -200,7 +200,7 @@ class
   -- ledger state. This is implemented in the Ledger. An example of non-obvious
   -- needed keys in Cardano are those of reference scripts for computing the
   -- transaction size.
-  getTransactionKeySets :: GenTx blk -> LedgerTables (LedgerState blk) KeysMK
+  getTransactionKeySets :: GenTx blk -> LedgerTables blk KeysMK
 
   -- Mempools live in a single slot so in the hard fork block case
   -- it is cheaper to perform these operations on LedgerStates, saving
@@ -228,8 +228,8 @@ class
   -- Intended to be non-default in the HardFork instance for optimizing
   -- performance.
   applyMempoolDiffs ::
-    LedgerTables (LedgerState blk) ValuesMK ->
-    LedgerTables (LedgerState blk) KeysMK ->
+    LedgerTables blk ValuesMK ->
+    LedgerTables blk KeysMK ->
     TickedLedgerState blk DiffMK ->
     TickedLedgerState blk ValuesMK
   applyMempoolDiffs = applyDiffForKeysOnTables

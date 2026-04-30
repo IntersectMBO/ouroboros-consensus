@@ -73,6 +73,7 @@ import Control.Arrow ((+++))
 import Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
+import Data.Coerce
 import Data.Functor ((<&>))
 import Data.Kind (Type)
 import Data.Typeable
@@ -501,10 +502,8 @@ instance Bridge m a => ApplyBlock LedgerState (DualBlock m a) where
           dualBlockMain
           tickedDualLedgerStateMain
 
-  getBlockKeySets =
-    castLedgerTables
-      . getBlockKeySets @LedgerState @m
-      . dualBlockMain
+instance GetBlockKeySets m => GetBlockKeySets (DualBlock m a) where
+  getBlockKeySets = coerce . getBlockKeySets @m . dualBlockMain
 
 data instance LedgerState (DualBlock m a) mk = DualLedgerState
   { dualLedgerStateMain :: LedgerState m mk
@@ -730,10 +729,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
       , vDualGenTxBridge
       } = vtx
 
-  getTransactionKeySets =
-    castLedgerTables
-      . getTransactionKeySets @m
-      . dualGenTxMain
+  getTransactionKeySets = coerce . getTransactionKeySets @m . dualGenTxMain
 
   mkMempoolApplyTxError TickedDualLedgerState{..} txt = do
     x <- mkMempoolApplyTxError tickedDualLedgerStateMain txt
@@ -1105,84 +1101,59 @@ decodeDualLedgerState decodeMain = do
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (LedgerState (DualBlock m a)) = TxIn (LedgerState m)
-type instance TxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
+type instance TxIn (DualBlock m a) = TxIn m
+type instance TxOut (DualBlock m a) = TxOut m
 
-instance CanUpgradeLedgerTables (LedgerState (DualBlock m a)) where
+instance CanUpgradeLedgerTables LedgerState (DualBlock m a) where
   upgradeTables _ _ = id
 
 instance
-  (txout ~ TxOut (LedgerState m), IndexedMemPack (LedgerState m EmptyMK) txout) =>
-  IndexedMemPack (LedgerState (DualBlock m a) EmptyMK) txout
+  (txout ~ TxOut m, IndexedMemPack LedgerState m txout) =>
+  IndexedMemPack LedgerState (DualBlock m a) txout
   where
-  indexedTypeName (DualLedgerState st _ _) = indexedTypeName @(LedgerState m EmptyMK) @txout st
+  indexedTypeName p (DualLedgerState st _ _) = indexedTypeName p st
   indexedPackedByteCount (DualLedgerState st _ _) = indexedPackedByteCount st
   indexedPackM (DualLedgerState st _ _) = indexedPackM st
   indexedUnpackM (DualLedgerState st _ _) = indexedUnpackM st
 
 instance
-  (txout ~ TxOut (LedgerState m), IndexedMemPack (Ticked LedgerState m EmptyMK) txout) =>
-  IndexedMemPack (Ticked LedgerState (DualBlock m a) EmptyMK) txout
-  where
-  indexedTypeName (TickedDualLedgerState st _ _ _) = indexedTypeName @(Ticked LedgerState m EmptyMK) @txout st
-  indexedPackedByteCount (TickedDualLedgerState st _ _ _) = indexedPackedByteCount st
-  indexedPackM (TickedDualLedgerState st _ _ _) = indexedPackM st
-  indexedUnpackM (TickedDualLedgerState st _ _ _) = indexedUnpackM st
-
-instance
-  (Ord (TxIn (LedgerState m)), MemPack (TxIn (LedgerState m)), MemPack (TxOut (LedgerState m))) =>
-  SerializeTablesWithHint (LedgerState (DualBlock m a))
+  (Ord (TxIn m), MemPack (TxIn m), MemPack (TxOut m)) =>
+  SerializeTablesWithHint LedgerState (DualBlock m a)
   where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
 
 instance
   ( Bridge m a
-  , NoThunks (TxOut (LedgerState m))
-  , NoThunks (TxIn (LedgerState m))
-  , Show (TxOut (LedgerState m))
-  , Show (TxIn (LedgerState m))
-  , Eq (TxOut (LedgerState m))
-  , Ord (TxIn (LedgerState m))
-  , MemPack (TxIn (LedgerState m))
+  , HasLedgerTables LedgerState m
   ) =>
-  HasLedgerTables (LedgerState (DualBlock m a))
+  HasLedgerTables LedgerState (DualBlock m a)
   where
   projectLedgerTables DualLedgerState{..} =
-    castLedgerTables
-      (projectLedgerTables dualLedgerStateMain)
+    coerce $ projectLedgerTables @LedgerState @m dualLedgerStateMain
 
   withLedgerTables DualLedgerState{..} main =
     DualLedgerState
-      { dualLedgerStateMain =
-          withLedgerTables dualLedgerStateMain $
-            castLedgerTables main
+      { dualLedgerStateMain = withLedgerTables @LedgerState @m dualLedgerStateMain (coerce main)
       , dualLedgerStateAux = dualLedgerStateAux
       , dualLedgerStateBridge = dualLedgerStateBridge
       }
 
 instance
   ( Bridge m a
-  , NoThunks (TxOut (LedgerState m))
-  , NoThunks (TxIn (LedgerState m))
-  , Show (TxOut (LedgerState m))
-  , Show (TxIn (LedgerState m))
-  , Eq (TxOut (LedgerState m))
-  , Ord (TxIn (LedgerState m))
-  , MemPack (TxIn (LedgerState m))
+  , HasLedgerTables (Ticked LedgerState) m
   ) =>
-  HasLedgerTables (Ticked LedgerState (DualBlock m a))
+  HasLedgerTables (Ticked LedgerState) (DualBlock m a)
   where
   projectLedgerTables TickedDualLedgerState{..} =
-    castLedgerTables
-      (projectLedgerTables tickedDualLedgerStateMain)
+    coerce $ projectLedgerTables @(Ticked LedgerState) @m tickedDualLedgerStateMain
 
   withLedgerTables
     TickedDualLedgerState{..}
     main =
       TickedDualLedgerState
         { tickedDualLedgerStateMain =
-            withLedgerTables tickedDualLedgerStateMain $ castLedgerTables main
+            withLedgerTables @(Ticked LedgerState) @m tickedDualLedgerStateMain $ coerce main
         , tickedDualLedgerStateAux
         , tickedDualLedgerStateBridge
         , tickedDualLedgerStateAuxOrig

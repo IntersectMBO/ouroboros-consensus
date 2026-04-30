@@ -7,13 +7,10 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Ledger.Tables.Basics
   ( -- * Kinds
-
-  --
 
     -- | For convenience' sake, we define these kinds which convey the intended
     -- instantiation for the type variables.
@@ -23,37 +20,14 @@ module Ouroboros.Consensus.Ledger.Tables.Basics
 
     -- * Ledger tables
   , LedgerTables (..)
-  , MemPackIdx
-  , SameUtxoTypes
   , TxIn
   , TxOut
-  , castLedgerTables
   ) where
 
-import Data.Coerce (coerce)
 import Data.Kind (Type)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Ticked (Ticked)
-
-{-------------------------------------------------------------------------------
-  Kinds
--------------------------------------------------------------------------------}
-
--- | Something that holds two types, which intend to represent /keys/ and
--- /values/.
-type MapKind = Type {- key -} -> Type {- value -} -> Type
-
--- | A @LedgerStateKind@ is the kind of any type that takes a single @MapKind@
--- parameter. The canonical inhabitant is a ledger state applied to a block type,
--- for example @LedgerState blk@.
-type LedgerStateKind = MapKind -> Type
-
--- | A @StateKind@ is the kind of a ledger state *before* it receives
--- its block argument.
---
--- The four inhabitants in this codebase are @[Ticked] [Ext]LedgerState@.
-type StateKind = Type -> LedgerStateKind
+import Ouroboros.Consensus.Ledger.Tables.Kinds
 
 {-------------------------------------------------------------------------------
   Ledger tables
@@ -78,51 +52,31 @@ type StateKind = Type -> LedgerStateKind
 --
 -- The @mk@ can be instantiated to anything that is map-like, i.e. that expects
 -- two type parameters, the key and the value.
-type LedgerTables :: LedgerStateKind -> MapKind -> Type
-newtype LedgerTables l mk = LedgerTables
-  { getLedgerTables :: mk (TxIn l) (TxOut l)
+type LedgerTables :: Type -> MapKind -> Type
+newtype LedgerTables blk mk = LedgerTables
+  { getLedgerTables :: mk (TxIn blk) (TxOut blk)
   }
   deriving stock Generic
 
 deriving stock instance
-  Show (mk (TxIn l) (TxOut l)) =>
-  Show (LedgerTables l mk)
+  Show (mk (TxIn blk) (TxOut blk)) =>
+  Show (LedgerTables blk mk)
 deriving stock instance
-  Eq (mk (TxIn l) (TxOut l)) =>
-  Eq (LedgerTables l mk)
+  Eq (mk (TxIn blk) (TxOut blk)) =>
+  Eq (LedgerTables blk mk)
 deriving newtype instance
-  NoThunks (mk (TxIn l) (TxOut l)) =>
-  NoThunks (LedgerTables l mk)
+  NoThunks (mk (TxIn blk) (TxOut blk)) =>
+  NoThunks (LedgerTables blk mk)
 
 -- | Each @LedgerState@ instance will have the notion of a @TxIn@ for the tables.
 --
 -- This will change once there is more than one table.
-type TxIn :: LedgerStateKind -> Type
-type family TxIn l
+type TxIn :: Type -> Type
+type family TxIn blk
 
 -- | Each @LedgerState@ instance will have the notion of a @TxOut@ for the
 -- tables.
 --
 -- This will change once there is more than one table.
-type TxOut :: LedgerStateKind -> Type
-type family TxOut l
-
-type instance TxIn (LedgerTables l) = TxIn l
-type instance TxOut (LedgerTables l) = TxOut l
-type instance TxIn (Ticked l blk) = TxIn (l blk)
-type instance TxOut (Ticked l blk) = TxOut (l blk)
-
--- | Auxiliary information for @IndexedMemPack@.
-type MemPackIdx :: LedgerStateKind -> MapKind -> Type
-type family MemPackIdx l mk where
-  MemPackIdx (LedgerTables l) mk = MemPackIdx l mk
-  MemPackIdx (Ticked l) mk = MemPackIdx l mk
-  MemPackIdx l mk = l mk
-
-type SameUtxoTypes l l' = (TxIn l ~ TxIn l', TxOut l ~ TxOut l')
-
-castLedgerTables ::
-  SameUtxoTypes l l' =>
-  LedgerTables l mk ->
-  LedgerTables l' mk
-castLedgerTables = coerce
+type TxOut :: Type -> Type
+type family TxOut blk

@@ -4,6 +4,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -59,7 +60,7 @@ import Data.Bifunctor
 import Data.Kind
 import GHC.Generics
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Util.IOLike
@@ -80,10 +81,10 @@ newtype LiveLMDBFS m = LiveLMDBFS {liveLMDBFs :: SomeHasFS m}
 
 -- | A container for differences that are inteded to be flushed to a
 -- 'BackingStore'
-data DiffsToFlush l = DiffsToFlush
-  { toFlushDiffs :: !(LedgerTables l DiffMK)
+data DiffsToFlush l blk = DiffsToFlush
+  { toFlushDiffs :: !(LedgerTables blk DiffMK)
   -- ^ The set of differences that should be flushed into the 'BackingStore'
-  , toFlushState :: !(l EmptyMK, l EmptyMK)
+  , toFlushState :: !(l blk EmptyMK, l blk EmptyMK)
   -- ^ The last flushed state and the newly flushed state. This will be the
   -- immutable tip.
   , toFlushSlot :: !SlotNo
@@ -91,13 +92,13 @@ data DiffsToFlush l = DiffsToFlush
   -- considered as "last flushed" in the kept 'DbChangelog'
   }
 
-data BackingStore m keys key values diff = BackingStore
+data BackingStore m l keys key values diff = BackingStore
   { bsClose :: !(m ())
   -- ^ Close the backing store
   --
   -- Other methods throw exceptions if called on a closed store. 'bsClose'
   -- itself is idempotent.
-  , bsCopy :: !(SerializeTablesHint values -> FS.FsPath -> m ())
+  , bsCopy :: !(SerializeTablesHint l values -> FS.FsPath -> m ())
   -- ^ Create a persistent copy
   --
   -- Each backing store implementation will offer a way to initialize itself
@@ -105,10 +106,10 @@ data BackingStore m keys key values diff = BackingStore
   --
   -- The destination path must not already exist. After this operation, it
   -- will be a directory.
-  , bsValueHandle :: !(m (BackingStoreValueHandle m keys key values))
+  , bsValueHandle :: !(m (BackingStoreValueHandle m l keys key values))
   -- ^ Open a 'BackingStoreValueHandle' capturing the current value of the
   -- entire database
-  , bsWrite :: !(SlotNo -> WriteHint diff -> diff -> m ())
+  , bsWrite :: !(SlotNo -> WriteHint l diff -> diff -> m ())
   -- ^ Apply a valid diff to the contents of the backing store
   , bsSnapshotBackend :: !SnapshotBackend
   -- ^ The name of the BackingStore backend, for loading and writing snapshots
@@ -116,36 +117,40 @@ data BackingStore m keys key values diff = BackingStore
   }
 
 deriving via
-  OnlyCheckWhnfNamed "BackingStore" (BackingStore m keys key values diff)
+  OnlyCheckWhnfNamed "BackingStore" (BackingStore m l keys key values diff)
   instance
-    NoThunks (BackingStore m keys key values diff)
+    NoThunks (BackingStore m l keys key values diff)
 
-type LedgerBackingStore m l =
+type LedgerBackingStore m l blk =
   BackingStore
     m
-    (LedgerTables l KeysMK)
-    (TxIn l)
-    (LedgerTables l ValuesMK)
-    (LedgerTables l DiffMK)
+    l
+    (LedgerTables blk KeysMK)
+    (TxIn blk)
+    (LedgerTables blk ValuesMK)
+    (LedgerTables blk DiffMK)
 
-type BackingStore' m blk = LedgerBackingStore m (ExtLedgerState blk)
+type BackingStore' m blk = LedgerBackingStore m ExtLedgerState blk
 
-type family InitHint values :: Type
-type instance InitHint (LedgerTables l ValuesMK) = l EmptyMK
+type InitHint :: StateKind -> Type -> Type
+type family InitHint l values :: Type
+type instance InitHint l (LedgerTables blk ValuesMK) = l blk EmptyMK
 
-type family WriteHint diffs :: Type
-type instance WriteHint (LedgerTables l DiffMK) = (l EmptyMK, l EmptyMK)
+type WriteHint :: StateKind -> Type -> Type
+type family WriteHint l diffs :: Type
+type instance WriteHint l (LedgerTables blk DiffMK) = (l blk EmptyMK, l blk EmptyMK)
 
-type family ReadHint values :: Type
-type instance ReadHint (LedgerTables l ValuesMK) = l EmptyMK
+type ReadHint :: StateKind -> Type -> Type
+type family ReadHint l values :: Type
+type instance ReadHint l (LedgerTables blk ValuesMK) = l blk EmptyMK
 
 -- | Choose how to initialize the backing store
-data InitFrom values
+data InitFrom l values
   = -- | Initialize from a set of values, at the given slot.
-    InitFromValues !(WithOrigin SlotNo) !(InitHint values) !values
+    InitFromValues !(WithOrigin SlotNo) !(InitHint l values) !values
   | -- | Use a snapshot at the given path to overwrite the set of values in the
     -- opened database.
-    InitFromCopy !(InitHint values) !FS.FsPath
+    InitFromCopy !(InitHint l values) !FS.FsPath
 
 {-------------------------------------------------------------------------------
   Value handles
@@ -156,7 +161,7 @@ data InitFrom values
 -- The performance cost is usually minimal unless this handle is held open too
 -- long. We expect clients of the 'BackingStore' to not retain handles for a
 -- long time.
-data BackingStoreValueHandle m keys key values = BackingStoreValueHandle
+data BackingStoreValueHandle m l keys key values = BackingStoreValueHandle
   { bsvhAtSlot :: !(WithOrigin SlotNo)
   -- ^ At which slot this handle was created
   , bsvhClose :: !(m ())
@@ -164,12 +169,12 @@ data BackingStoreValueHandle m keys key values = BackingStoreValueHandle
   --
   -- Other methods throw exceptions if called on a closed handle. 'bsvhClose'
   -- itself is idempotent.
-  , bsvhRangeRead :: !(ReadHint values -> RangeQuery keys -> m (values, Maybe key))
+  , bsvhRangeRead :: !(ReadHint l values -> RangeQuery keys -> m (values, Maybe key))
   -- ^ See 'RangeQuery'
-  , bsvhReadAll :: !(ReadHint values -> m values)
+  , bsvhReadAll :: !(ReadHint l values -> m values)
   -- ^ Costly read all operation, not to be used in Consensus but only in
   -- snapshot-converter executable.
-  , bsvhRead :: !(ReadHint values -> keys -> m values)
+  , bsvhRead :: !(ReadHint l values -> keys -> m values)
   -- ^ Read the given keys from the handle
   --
   -- Absent keys will merely not be present in the result instead of causing a
@@ -179,26 +184,27 @@ data BackingStoreValueHandle m keys key values = BackingStoreValueHandle
   }
 
 deriving via
-  OnlyCheckWhnfNamed "BackingStoreValueHandle" (BackingStoreValueHandle m keys key values)
+  OnlyCheckWhnfNamed "BackingStoreValueHandle" (BackingStoreValueHandle m l keys key values)
   instance
-    NoThunks (BackingStoreValueHandle m keys key values)
+    NoThunks (BackingStoreValueHandle m l keys key values)
 
-type LedgerBackingStoreValueHandle m l =
+type LedgerBackingStoreValueHandle m l blk =
   BackingStoreValueHandle
     m
-    (LedgerTables l KeysMK)
-    (TxIn l)
-    (LedgerTables l ValuesMK)
+    l
+    (LedgerTables blk KeysMK)
+    (TxIn blk)
+    (LedgerTables blk ValuesMK)
 
-type BackingStoreValueHandle' m blk = LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+type BackingStoreValueHandle' m blk = LedgerBackingStoreValueHandle m ExtLedgerState blk
 
 castBackingStoreValueHandle ::
-  (Functor m, ReadHint values ~ ReadHint values') =>
+  (Functor m, ReadHint l values ~ ReadHint l values') =>
   (values -> values') ->
   (keys' -> keys) ->
   (key -> key') ->
-  BackingStoreValueHandle m keys key values ->
-  BackingStoreValueHandle m keys' key' values'
+  BackingStoreValueHandle m l keys key values ->
+  BackingStoreValueHandle m l keys' key' values'
 castBackingStoreValueHandle f g h bsvh =
   BackingStoreValueHandle
     { bsvhAtSlot
@@ -222,8 +228,8 @@ castBackingStoreValueHandle f g h bsvh =
 -- | A combination of 'bsValueHandle' and 'bsvhRead'
 bsRead ::
   MonadThrow m =>
-  BackingStore m keys key values diff ->
-  ReadHint values ->
+  BackingStore m l keys key values diff ->
+  ReadHint l values ->
   keys ->
   m (WithOrigin SlotNo, values)
 bsRead store rhint keys = withBsValueHandle store $ \vh -> do
@@ -232,16 +238,16 @@ bsRead store rhint keys = withBsValueHandle store $ \vh -> do
 
 bsReadAll ::
   MonadThrow m =>
-  BackingStore m keys key values diff ->
-  ReadHint values ->
+  BackingStore m l keys key values diff ->
+  ReadHint l values ->
   m values
 bsReadAll store rhint = withBsValueHandle store $ \vh -> bsvhReadAll vh rhint
 
 -- | A 'IOLike.bracket'ed 'bsValueHandle'
 withBsValueHandle ::
   MonadThrow m =>
-  BackingStore m keys key values diff ->
-  (BackingStoreValueHandle m keys key values -> m a) ->
+  BackingStore m l keys key values diff ->
+  (BackingStoreValueHandle m l keys key values -> m a) ->
   m a
 withBsValueHandle store =
   bracket

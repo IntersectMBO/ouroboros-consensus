@@ -75,7 +75,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
@@ -1164,13 +1164,13 @@ answerShelleyLookupQueries ::
   , ShelleyCompatible proto era
   ) =>
   -- | Inject ledger tables
-  ( LedgerTables (LedgerState (ShelleyBlock proto era)) KeysMK ->
-    LedgerTables (LedgerState blk) KeysMK
+  ( LedgerTables (ShelleyBlock proto era) KeysMK ->
+    LedgerTables blk KeysMK
   ) ->
   -- | Eject TxOut
-  (TxOut (LedgerState blk) -> LC.TxOut era) ->
+  (TxOut blk -> LC.TxOut era) ->
   -- | Eject TxIn
-  (TxIn (LedgerState blk) -> SL.TxIn) ->
+  (TxIn blk -> SL.TxIn) ->
   ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFLookupTables result ->
   ReadOnlyForker' m blk ->
@@ -1194,7 +1194,7 @@ answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
     LedgerTables (ValuesMK values) <-
       LedgerDB.roforkerReadTables
         forker
-        (castLedgerTables $ injTables (LedgerTables $ KeysMK $ coerceSet txins))
+        (injTables (LedgerTables $ KeysMK $ coerceSet txins))
     pure $
       SL.UTxO $
         Map.mapKeys ejTxIn $
@@ -1210,7 +1210,7 @@ shelleyQFTraverseTablesPredicate ::
   forall proto era proto' era' result.
   (ShelleyBasedEra era, ShelleyBasedEra era') =>
   BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
-  TxOut (LedgerState (ShelleyBlock proto' era')) ->
+  TxOut (ShelleyBlock proto' era') ->
   Bool
 shelleyQFTraverseTablesPredicate q = case q of
   GetUTxOByAddress addr -> filterGetUTxOByAddressOne addr
@@ -1234,20 +1234,20 @@ shelleyQFTraverseTablesPredicate q = case q of
 answerShelleyTraversingQueries ::
   forall proto era m result blk.
   ( ShelleyCompatible proto era
-  , Ord (TxIn (LedgerState blk))
-  , Eq (TxOut (LedgerState blk))
-  , MemPack (TxIn (LedgerState blk))
-  , IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
+  , Ord (TxIn blk)
+  , Eq (TxOut blk)
+  , MemPack (TxIn blk)
+  , IndexedMemPack LedgerState blk (TxOut blk)
   ) =>
   Monad m =>
   -- | Eject TxOut
-  (TxOut (LedgerState blk) -> LC.TxOut era) ->
+  (TxOut blk -> LC.TxOut era) ->
   -- | Eject TxIn
-  (TxIn (LedgerState blk) -> SL.TxIn) ->
+  (TxIn blk -> SL.TxIn) ->
   -- | Get filter by query
   ( forall result'.
     BlockQuery (ShelleyBlock proto era) QFTraverseTables result' ->
-    TxOut (LedgerState blk) ->
+    TxOut blk ->
     Bool
   ) ->
   ExtLedgerCfg (ShelleyBlock proto era) ->
@@ -1270,8 +1270,8 @@ answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
   combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
 
   partial ::
-    (TxOut (LedgerState blk) -> Bool) ->
-    LedgerTables (ExtLedgerState blk) ValuesMK ->
+    (TxOut blk -> Bool) ->
+    LedgerTables blk ValuesMK ->
     Map SL.TxIn (LC.TxOut era)
   partial queryPredicate (LedgerTables (ValuesMK vs)) =
     Map.mapKeys ejTxIn $

@@ -85,7 +85,7 @@ defaultArgs backendArgs =
     }
 
 data LedgerDbBackendArgs m blk
-  = LedgerDbBackendArgsV1 (V1.LedgerDbBackendArgs m (ExtLedgerState blk))
+  = LedgerDbBackendArgsV1 (V1.LedgerDbBackendArgs m ExtLedgerState blk)
   | LedgerDbBackendArgsV2 (V2.SomeBackendArgs m blk)
 
 {-------------------------------------------------------------------------------

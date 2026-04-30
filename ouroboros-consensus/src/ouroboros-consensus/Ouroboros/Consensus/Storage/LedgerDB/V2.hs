@@ -65,7 +65,7 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import System.FS.API
 import Prelude hiding (read)
 
-type SnapshotManagerV2 m blk = SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
+type SnapshotManagerV2 m blk = SnapshotManager m m blk (StateRef m ExtLedgerState blk)
 
 newtype SnapshotExc blk = SnapshotExc {getSnapshotFailure :: SnapshotFailure blk}
   deriving (Show, Exception)
@@ -150,7 +150,7 @@ implMkLedgerDb ::
   , ApplyBlock l blk
   ) =>
   LedgerDBHandle m l blk ->
-  SnapshotManager m m blk (StateRef m (l blk)) ->
+  SnapshotManager m m blk (StateRef m l blk) ->
   (LedgerDB m l blk, TestInternals m l blk)
 implMkLedgerDb h snapManager =
   let ldb =
@@ -176,7 +176,7 @@ mkInternals ::
   ) =>
   LedgerDB m l blk ->
   LedgerDBHandle m l blk ->
-  SnapshotManager m m blk (StateRef m (l blk)) ->
+  SnapshotManager m m blk (StateRef m l blk) ->
   TestInternals m l blk
 mkInternals ldb h snapManager =
   TestInternals
@@ -295,7 +295,7 @@ implValidate ::
   BlockCache blk ->
   Word64 ->
   NonEmpty (Header blk) ->
-  SuccessForkerAction m (l blk) ->
+  SuccessForkerAction m l blk ->
   m (ValidateResult l blk)
 implValidate h ldbEnv tr cache rollbacks hdrs onSuccess =
   validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
@@ -333,7 +333,7 @@ implTryTakeSnapshot ::
   ( IOLike m
   , GetTip (l blk)
   ) =>
-  SnapshotManager m m blk (StateRef m (l blk)) ->
+  SnapshotManager m m blk (StateRef m l blk) ->
   LedgerDBEnv m l blk ->
   m () ->
   (SnapshotDelayRange -> m DiffTime) ->
@@ -389,7 +389,7 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
       traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
         SnapshotRequestCompleted
  where
-  duplicateStateRef :: StateRef m (l blk) -> m (StateRef m (l blk))
+  duplicateStateRef :: StateRef m l blk -> m (StateRef m l blk)
   duplicateStateRef StateRef{state, tables} = do
     h <- duplicate tables
     pure $ StateRef state h
@@ -425,7 +425,7 @@ implCloseDB (LDBHandle varState) = do
 
 type LedgerDBEnv :: (Type -> Type) -> StateKind -> Type -> Type
 data LedgerDBEnv m l blk = LedgerDBEnv
-  { ldbSeq :: !(StrictTVar m (LedgerSeq m (l blk)))
+  { ldbSeq :: !(StrictTVar m (LedgerSeq m l blk))
   -- ^ INVARIANT: the tip of the 'LedgerDB' is always in sync with the tip of
   -- the current chain of the ChainDB.
   , ldbPrevApplied :: !(StrictTVar m (Set (RealPoint blk)))
@@ -476,8 +476,8 @@ deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
   , NoThunks (l blk EmptyMK)
-  , NoThunks (TxIn (l blk))
-  , NoThunks (TxOut (l blk))
+  , NoThunks (TxIn blk)
+  , NoThunks (TxOut blk)
   , NoThunks (LedgerCfg l blk)
   , NoThunks (SomeResources m blk)
   ) =>
@@ -501,8 +501,8 @@ deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
   , NoThunks (l blk EmptyMK)
-  , NoThunks (TxIn (l blk))
-  , NoThunks (TxOut (l blk))
+  , NoThunks (TxIn blk)
+  , NoThunks (TxOut blk)
   , NoThunks (LedgerCfg l blk)
   , NoThunks (SomeResources m blk)
   ) =>
@@ -566,7 +566,7 @@ getEnvSTM (LDBHandle varState) f =
 -- collection has not yet been run.
 getVolatileLedgerSeq ::
   (MonadSTM m, GetTip (l blk)) =>
-  LedgerDBEnv m l blk -> STM m (LedgerSeq m (l blk))
+  LedgerDBEnv m l blk -> STM m (LedgerSeq m l blk)
 getVolatileLedgerSeq env = do
   volSuffix <- getVolatileSuffix (ldbGetVolatileSuffix env)
   LedgerSeq . volSuffix . getLedgerSeq <$> readTVar (ldbSeq env)
@@ -582,8 +582,8 @@ getVolatileLedgerSeq env = do
 openStateRef ::
   (IOLike m, Traversable t, GetTip (l blk)) =>
   LedgerDBEnv m l blk ->
-  (LedgerSeq m (l blk) -> t (StateRef m (l blk))) ->
-  m (t (StateRef m (l blk)))
+  (LedgerSeq m l blk -> t (StateRef m l blk)) ->
+  m (t (StateRef m l blk))
 openStateRef ldbEnv project =
   RAWLock.withReadAccess (ldbOpenHandlesLock ldbEnv) $ \() -> do
     tst <- project <$> atomically (getVolatileLedgerSeq ldbEnv)
@@ -596,8 +596,8 @@ openStateRef ldbEnv project =
 withStateRef ::
   (IOLike m, Traversable t, GetTip (l blk)) =>
   LedgerDBEnv m l blk ->
-  (LedgerSeq m (l blk) -> t (StateRef m (l blk))) ->
-  (t (StateRef m (l blk)) -> m a) ->
+  (LedgerSeq m l blk -> t (StateRef m l blk)) ->
+  (t (StateRef m l blk) -> m a) ->
   m a
 withStateRef ldbEnv project f =
   bracket
@@ -614,7 +614,7 @@ openStateRefAtTarget ::
   ) =>
   LedgerDBEnv m l blk ->
   Either Word64 (Target (Point blk)) ->
-  m (Either GetForkerError (StateRef m (l blk)))
+  m (Either GetForkerError (StateRef m l blk))
 openStateRefAtTarget ldbEnv target =
   openStateRef ldbEnv $ \l -> case target of
     Right VolatileTip -> pure $ currentHandle l
@@ -641,13 +641,13 @@ openNewForkerAtTarget ::
   ( HeaderHash (l blk) ~ HeaderHash blk
   , IOLike m
   , IsLedger l blk
-  , HasLedgerTables (l blk)
+  , HasLedgerTables l blk
   , LedgerSupportsProtocol blk
   , StandardHash (l blk)
   ) =>
   LedgerDBHandle m l blk ->
   Target (Point blk) ->
-  m (Either GetForkerError (Forker m (l blk)))
+  m (Either GetForkerError (Forker m l blk))
 openNewForkerAtTarget h pt = getEnv h $ \ldbEnv ->
   openStateRefAtTarget ldbEnv (Right pt) >>= traverse (newForker ldbEnv)
 
@@ -656,12 +656,12 @@ withForkerByRollback ::
   , IOLike m
   , IsLedger l blk
   , StandardHash (l blk)
-  , HasLedgerTables (l blk)
+  , HasLedgerTables l blk
   , LedgerSupportsProtocol blk
   ) =>
   LedgerDBHandle m l blk ->
   Word64 ->
-  (Forker m (l blk) -> m r) ->
+  (Forker m l blk -> m r) ->
   m (Either GetForkerError r)
 withForkerByRollback h n k = getEnv h $ \ldbEnv ->
   bracket
@@ -673,7 +673,7 @@ withForkerByRollback h n k = getEnv h $ \ldbEnv ->
 -- first duplicate if the forker has been committed.
 implForkerClose ::
   IOLike m =>
-  ForkerEnv m l ->
+  ForkerEnv m l blk ->
   m ()
 implForkerClose env = do
   wasCommitted <- readTVarIO (foeWasCommitted env)
@@ -686,14 +686,14 @@ implForkerClose env = do
 
 newForker ::
   ( IOLike m
-  , HasLedgerTables (l blk)
+  , HasLedgerTables l blk
   , NoThunks (l blk EmptyMK)
   , GetTip (l blk)
   , StandardHash (l blk)
   ) =>
   LedgerDBEnv m l blk ->
-  StateRef m (l blk) ->
-  m (Forker m (l blk))
+  StateRef m l blk ->
+  m (Forker m l blk)
 newForker ldbEnv st = do
   forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
   let tr = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv

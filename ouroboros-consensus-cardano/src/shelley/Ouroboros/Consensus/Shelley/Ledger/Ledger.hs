@@ -285,7 +285,7 @@ data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   { shelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
   , shelleyLedgerState :: !(SL.NewEpochState era)
   , shelleyLedgerTransition :: !ShelleyTransition
-  , shelleyLedgerTables :: !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
+  , shelleyLedgerTables :: !(LedgerTables (ShelleyBlock proto era) mk)
   , shelleyLedgerLatestPerasCertRound :: !(StrictMaybe PerasRoundNo)
   }
   deriving Generic
@@ -359,30 +359,21 @@ instance MemPack BigEndianTxIn where
   unpackM = do
     BigEndianTxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
 
-type instance TxIn (LedgerState (ShelleyBlock proto era)) = BigEndianTxIn
-type instance TxOut (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
+type instance TxIn (ShelleyBlock proto era) = BigEndianTxIn
+type instance TxOut (ShelleyBlock proto era) = Core.TxOut era
 
 instance
   (txout ~ Core.TxOut era, MemPack txout) =>
-  IndexedMemPack (LedgerState (ShelleyBlock proto era) EmptyMK) txout
+  IndexedMemPack LedgerState (ShelleyBlock proto era) txout
   where
-  indexedTypeName _ = typeName @txout
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
-
-instance
-  (txout ~ Core.TxOut era, MemPack txout) =>
-  IndexedMemPack (Ticked LedgerState (ShelleyBlock proto era) EmptyMK) txout
-  where
-  indexedTypeName _ = typeName @txout
+  indexedTypeName _ _ = typeName @txout
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
 instance
   ShelleyCompatible proto era =>
-  SerializeTablesWithHint (LedgerState (ShelleyBlock proto era))
+  SerializeTablesWithHint LedgerState (ShelleyBlock proto era)
   where
   encodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
     toPlainEncoding (Core.eraProtVerLow @era) $ encodeMap encodeMemPack encodeMemPack tbs
@@ -400,7 +391,7 @@ instance
 
 instance
   ShelleyBasedEra era =>
-  HasLedgerTables (LedgerState (ShelleyBlock proto era))
+  HasLedgerTables LedgerState (ShelleyBlock proto era)
   where
   projectLedgerTables = shelleyLedgerTables
   withLedgerTables st tables =
@@ -421,15 +412,15 @@ instance
 
 instance
   ShelleyBasedEra era =>
-  HasLedgerTables (Ticked LedgerState (ShelleyBlock proto era))
+  HasLedgerTables (Ticked LedgerState) (ShelleyBlock proto era)
   where
-  projectLedgerTables = castLedgerTables . tickedShelleyLedgerTables
+  projectLedgerTables = tickedShelleyLedgerTables
   withLedgerTables st tables =
     TickedShelleyLedgerState
       { untickedShelleyLedgerTip
       , tickedShelleyLedgerTransition
       , tickedShelleyLedgerState
-      , tickedShelleyLedgerTables = castLedgerTables tables
+      , tickedShelleyLedgerTables = tables
       , tickedShelleyLedgerLatestPerasCertRound
       }
    where
@@ -551,8 +542,7 @@ data instance Ticked LedgerState (ShelleyBlock proto era) mk = TickedShelleyLedg
   -- 2. However, we count within an epoch, which is slot-based. So the count
   --    must be reset when /ticking/, not when applying a block.
   , tickedShelleyLedgerState :: !(SL.NewEpochState era)
-  , tickedShelleyLedgerTables ::
-      !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
+  , tickedShelleyLedgerTables :: !(LedgerTables (ShelleyBlock proto era) mk)
   , tickedShelleyLedgerLatestPerasCertRound :: !(StrictMaybe PerasRoundNo)
   }
   deriving Generic
@@ -647,6 +637,10 @@ instance
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult (\err -> Exception.throw $! ShelleyReapplyException @era err)
 
+instance
+  ShelleyCompatible proto era =>
+  GetBlockKeySets (ShelleyBlock proto era)
+  where
   getBlockKeySets =
     LedgerTables
       . KeysMK
@@ -921,7 +915,7 @@ decodeShelleyLedgerState =
         , shelleyLedgerLatestPerasCertRound
         }
 
-instance CanUpgradeLedgerTables (LedgerState (ShelleyBlock proto era)) where
+instance CanUpgradeLedgerTables LedgerState (ShelleyBlock proto era) where
   upgradeTables _ _ = id
 
 {-------------------------------------------------------------------------------

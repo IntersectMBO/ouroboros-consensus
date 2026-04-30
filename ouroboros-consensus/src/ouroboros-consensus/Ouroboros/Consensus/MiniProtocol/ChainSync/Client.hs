@@ -111,7 +111,7 @@ import Ouroboros.Consensus.HeaderStateHistory
   )
 import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck

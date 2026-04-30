@@ -45,16 +45,15 @@ module Ouroboros.Consensus.Ledger.Basics
     -- * Associated types by block type
   , LedgerConfig
   , LedgerError
-
-    -- * Re-exports
-  , module Ouroboros.Consensus.Ledger.Tables
   ) where
 
 import Data.Kind (Constraint, Type)
 import GHC.Generics
 import Ouroboros.Consensus.Block.Abstract
-import Ouroboros.Consensus.Ledger.Tables
+import Ouroboros.Consensus.Ledger.Tables.Kinds
+import Ouroboros.Consensus.Ledger.Tables.MapKind
 import Ouroboros.Consensus.Ticked
+import Ouroboros.Consensus.Util ((...:))
 import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------

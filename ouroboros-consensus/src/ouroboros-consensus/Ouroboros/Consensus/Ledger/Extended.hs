@@ -38,7 +38,6 @@ import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Control.DeepSeq (NFData)
 import Control.Monad.Except
 import Data.Functor ((<&>))
-import Data.MemPack
 import Data.Proxy
 import Data.Typeable
 import GHC.Generics (Generic)
@@ -205,7 +204,7 @@ applyHelper f opts cfg blk TickedExtLedgerState{..} = do
         tickedHeaderState
   pure $ (\l -> ExtLedgerState l hdr) <$> castLedgerResult ledgerResult
 
-instance LedgerSupportsProtocol blk => ApplyBlock ExtLedgerState blk where
+instance (GetBlockKeySets blk, LedgerSupportsProtocol blk) => ApplyBlock ExtLedgerState blk where
   applyBlockLedgerResultWithValidation doValidate =
     applyHelper (applyBlockLedgerResultWithValidation doValidate)
 
@@ -227,8 +226,6 @@ instance LedgerSupportsProtocol blk => ApplyBlock ExtLedgerState blk where
         ledgerView
         (getHeader blk)
         tickedHeaderState
-
-  getBlockKeySets = castLedgerTables . getBlockKeySets @LedgerState @blk
 
 {-------------------------------------------------------------------------------
   Serialisation
@@ -305,60 +302,28 @@ decodeDiskExtLedgerState cfg =
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (ExtLedgerState blk) = TxIn (LedgerState blk)
-type instance TxOut (ExtLedgerState blk) = TxOut (LedgerState blk)
-
 instance
-  ( HasLedgerTables (LedgerState blk)
-  , NoThunks (TxOut (LedgerState blk))
-  , NoThunks (TxIn (LedgerState blk))
-  , Show (TxOut (LedgerState blk))
-  , Show (TxIn (LedgerState blk))
-  , Eq (TxOut (LedgerState blk))
-  , Ord (TxIn (LedgerState blk))
-  , MemPack (TxIn (LedgerState blk))
-  ) =>
-  HasLedgerTables (ExtLedgerState blk)
+  (NoThunks (TxIn blk), NoThunks (TxOut blk), HasLedgerTables LedgerState blk) =>
+  HasLedgerTables ExtLedgerState blk
   where
   projectLedgerTables (ExtLedgerState lstate _) =
-    castLedgerTables (projectLedgerTables lstate)
+    projectLedgerTables lstate
   withLedgerTables (ExtLedgerState lstate hstate) tables =
     ExtLedgerState
-      (lstate `withLedgerTables` castLedgerTables tables)
+      (lstate `withLedgerTables` tables)
       hstate
 
 instance
-  LedgerTablesAreTrivial (LedgerState blk) =>
-  LedgerTablesAreTrivial (ExtLedgerState blk)
-  where
-  convertMapKind (ExtLedgerState x y) = ExtLedgerState (convertMapKind x) y
-
-instance
-  LedgerTablesAreTrivial (Ticked LedgerState blk) =>
-  LedgerTablesAreTrivial (Ticked ExtLedgerState blk)
-  where
-  convertMapKind (TickedExtLedgerState x y z) =
-    TickedExtLedgerState (convertMapKind x) y z
-
-instance
-  ( HasLedgerTables (Ticked LedgerState blk)
-  , NoThunks (TxOut (LedgerState blk))
-  , NoThunks (TxIn (LedgerState blk))
-  , Show (TxOut (LedgerState blk))
-  , Show (TxIn (LedgerState blk))
-  , Eq (TxOut (LedgerState blk))
-  , Ord (TxIn (LedgerState blk))
-  , MemPack (TxIn (LedgerState blk))
-  ) =>
-  HasLedgerTables (Ticked ExtLedgerState blk)
+  (NoThunks (TxIn blk), NoThunks (TxOut blk), HasLedgerTables (Ticked LedgerState) blk) =>
+  HasLedgerTables (Ticked ExtLedgerState) blk
   where
   projectLedgerTables (TickedExtLedgerState lstate _view _hstate) =
-    castLedgerTables (projectLedgerTables lstate)
+    projectLedgerTables lstate
   withLedgerTables
     (TickedExtLedgerState lstate view hstate)
     tables =
       TickedExtLedgerState
-        (lstate `withLedgerTables` castLedgerTables tables)
+        (lstate `withLedgerTables` tables)
         view
         hstate
 
@@ -373,23 +338,17 @@ instance
     ExtLedgerState (unstowLedgerTables lstate) hstate
 
 instance
-  (txout ~ (TxOut (LedgerState blk)), IndexedMemPack (LedgerState blk EmptyMK) txout) =>
-  IndexedMemPack (ExtLedgerState blk EmptyMK) txout
+  (txout ~ TxOut blk, IndexedMemPack LedgerState blk txout) =>
+  IndexedMemPack ExtLedgerState blk txout
   where
-  indexedTypeName (ExtLedgerState st _) = indexedTypeName @(LedgerState blk EmptyMK) @txout st
+  indexedTypeName p (ExtLedgerState st _) = indexedTypeName p st
   indexedPackedByteCount (ExtLedgerState st _) = indexedPackedByteCount st
   indexedPackM (ExtLedgerState st _) = indexedPackM st
   indexedUnpackM (ExtLedgerState st _) = indexedUnpackM st
 
-instance
-  (txout ~ (TxOut (LedgerState blk)), IndexedMemPack (Ticked LedgerState blk EmptyMK) txout) =>
-  IndexedMemPack (Ticked ExtLedgerState blk EmptyMK) txout
-  where
-  indexedTypeName (TickedExtLedgerState st _ _) = indexedTypeName @(Ticked LedgerState blk EmptyMK) @txout st
-  indexedPackedByteCount (TickedExtLedgerState st _ _) = indexedPackedByteCount st
-  indexedPackM (TickedExtLedgerState st _ _) = indexedPackM st
-  indexedUnpackM (TickedExtLedgerState st _ _) = indexedUnpackM st
+instance LedgerTablesAreTrivial LedgerState blk => LedgerTablesAreTrivial ExtLedgerState blk where
+  convertMapKind (ExtLedgerState st hst) = ExtLedgerState (convertMapKind st) hst
 
-instance SerializeTablesWithHint (LedgerState blk) => SerializeTablesWithHint (ExtLedgerState blk) where
-  decodeTablesWithHint st = castLedgerTables <$> decodeTablesWithHint (ledgerState st)
-  encodeTablesWithHint st tbs = encodeTablesWithHint (ledgerState st) (castLedgerTables tbs)
+instance SerializeTablesWithHint LedgerState blk => SerializeTablesWithHint ExtLedgerState blk where
+  decodeTablesWithHint st = decodeTablesWithHint (ledgerState st)
+  encodeTablesWithHint st tbs = encodeTablesWithHint (ledgerState st) tbs

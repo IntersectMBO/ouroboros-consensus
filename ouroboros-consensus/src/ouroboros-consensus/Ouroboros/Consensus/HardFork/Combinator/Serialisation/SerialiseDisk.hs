@@ -19,7 +19,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.HardFork.Combinator.Protocol
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Storage.ChainDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers

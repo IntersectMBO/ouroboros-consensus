@@ -79,8 +79,8 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators
 import Data.Bifunctor
 import Data.Kind
 import Data.SOP.Functors
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Tables.Basics
-import Ouroboros.Consensus.Ledger.Tables.MapKind
 import Ouroboros.Consensus.Util ((...:), (..:), (.:))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -92,18 +92,18 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 -- 'Ouroboros.Consensus.Ledger.Tables.Diff.diff'. Once the ledger provides
 -- deltas instead of us being the ones that compute them, we can probably drop
 -- this constraint.
-type LedgerTableConstraints l =
-  ( Ord (TxIn l)
-  , Eq (TxOut l)
-  , MemPack (TxIn l)
-  , IndexedMemPack (MemPackIdx l EmptyMK) (TxOut l)
+type LedgerTableConstraints blk =
+  ( Ord (TxIn blk)
+  , Eq (TxOut blk)
+  , MemPack (TxIn blk)
+  , IndexedMemPack LedgerState blk (TxOut blk)
   )
 
-type LedgerTableConstraints' l k v =
+type LedgerTableConstraints' blk k v =
   ( Ord k
   , Eq v
   , MemPack k
-  , IndexedMemPack (MemPackIdx l EmptyMK) v
+  , IndexedMemPack LedgerState blk v
   )
 
 {-------------------------------------------------------------------------------
@@ -230,12 +230,12 @@ ltcollapse = unK2 . getLedgerTables
 -------------------------------------------------------------------------------}
 
 instance
-  ( forall k v. LedgerTableConstraints' l k v => Semigroup (mk k v)
-  , LedgerTableConstraints l
+  ( forall k v. LedgerTableConstraints' blk k v => Semigroup (mk k v)
+  , LedgerTableConstraints blk
   ) =>
-  Semigroup (LedgerTables l mk)
+  Semigroup (LedgerTables blk mk)
   where
-  (<>) :: LedgerTables l mk -> LedgerTables l mk -> LedgerTables l mk
+  (<>) :: LedgerTables blk mk -> LedgerTables blk mk -> LedgerTables blk mk
   (<>) = ltliftA2 (<>)
 
 instance

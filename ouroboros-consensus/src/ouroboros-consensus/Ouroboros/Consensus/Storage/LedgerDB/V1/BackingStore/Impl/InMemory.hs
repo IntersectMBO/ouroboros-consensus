@@ -37,7 +37,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.String (fromString)
 import GHC.Generics
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
@@ -90,16 +90,16 @@ deriving instance
 
 -- | Use a 'TVar' as a trivial backing store
 newInMemoryBackingStore ::
-  forall l m.
+  forall l blk m.
   ( IOLike m
-  , HasLedgerTables l
-  , CanUpgradeLedgerTables l
-  , SerializeTablesWithHint l
+  , HasLedgerTables l blk
+  , CanUpgradeLedgerTables l blk
+  , SerializeTablesWithHint l blk
   ) =>
   Tracer m BackingStoreTrace ->
   SnapshotsFS m ->
-  InitFrom (LedgerTables l ValuesMK) ->
-  m (LedgerBackingStore m l)
+  InitFrom l (LedgerTables blk ValuesMK) ->
+  m (LedgerBackingStore m l blk)
 newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
   traceWith tracer BSOpening
   ref <- do
@@ -236,9 +236,9 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
     fsPathFromList $ fsPathToList path <> [fromString "tvar"]
 
   lookup ::
-    LedgerTables l KeysMK ->
-    LedgerTables l ValuesMK ->
-    LedgerTables l ValuesMK
+    LedgerTables blk KeysMK ->
+    LedgerTables blk ValuesMK ->
+    LedgerTables blk ValuesMK
   lookup = ltliftA2 lookup'
 
   lookup' ::
@@ -250,9 +250,9 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
     ValuesMK (Map.restrictKeys vs ks)
 
   rangeRead ::
-    RangeQuery (LedgerTables l KeysMK) ->
-    LedgerTables l ValuesMK ->
-    (LedgerTables l ValuesMK, Maybe (TxIn l))
+    RangeQuery (LedgerTables blk KeysMK) ->
+    LedgerTables blk ValuesMK ->
+    (LedgerTables blk ValuesMK, Maybe (TxIn blk))
   rangeRead rq values =
     let vs@(LedgerTables (ValuesMK m)) = case rqPrev rq of
           Nothing ->
@@ -280,9 +280,9 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
       Just k -> ValuesMK $ Map.take n $ snd $ Map.split k vs
 
   appDiffs ::
-    LedgerTables l ValuesMK ->
-    LedgerTables l DiffMK ->
-    LedgerTables l ValuesMK
+    LedgerTables blk ValuesMK ->
+    LedgerTables blk DiffMK ->
+    LedgerTables blk ValuesMK
   appDiffs = ltliftA2 applyDiff_
 
   applyDiff_ ::
@@ -293,7 +293,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
   applyDiff_ (ValuesMK values) (DiffMK diff) =
     ValuesMK (Diff.applyDiff values diff)
 
-  count :: LedgerTables l ValuesMK -> Int
+  count :: LedgerTables blk ValuesMK -> Int
   count = ltcollapse . ltmap (K2 . count')
 
   count' :: ValuesMK k v -> Int
@@ -353,11 +353,11 @@ type data Mem
 
 instance
   ( IOLike m
-  , HasLedgerTables l
-  , CanUpgradeLedgerTables l
-  , SerializeTablesWithHint l
+  , HasLedgerTables l blk
+  , CanUpgradeLedgerTables l blk
+  , SerializeTablesWithHint l blk
   ) =>
-  Backend m Mem l
+  Backend m Mem l blk
   where
   data Args m Mem = InMemArgs
   data Trace Mem
@@ -365,8 +365,8 @@ instance
     | InMemoryBackingStoreTrace BackingStoreTrace
     deriving (Eq, Show)
 
-  isRightBackendForSnapshot _ _ UTxOHDMemSnapshot = True
-  isRightBackendForSnapshot _ _ _ = False
+  isRightBackendForSnapshot _ _ _ UTxOHDMemSnapshot = True
+  isRightBackendForSnapshot _ _ _ _ = False
 
   newBackingStoreInitialiser trcr InMemArgs =
     newInMemoryBackingStore

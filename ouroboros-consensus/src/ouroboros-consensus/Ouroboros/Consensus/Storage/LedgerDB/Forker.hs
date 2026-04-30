@@ -28,7 +28,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , RangeQueryPrevious (..)
   , Statistics (..)
   , forkerCurrentPoint
-  , castRangeQueryPrevious
   , ledgerStateReadOnlyForker
 
     -- ** Read only
@@ -60,7 +59,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Control.Monad.Except
   ( runExcept
   )
-import Data.Bifunctor (first)
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
@@ -85,8 +83,8 @@ import Ouroboros.Consensus.Util.IOLike
 -- | An independent handle to a point in the LedgerDB, which can be advanced to
 -- evaluate forks in the chain.
 -- TODO @js split l in l blk
-type Forker :: (Type -> Type) -> LedgerStateKind -> Type
-data Forker m l = Forker
+type Forker :: (Type -> Type) -> StateKind -> Type -> Type
+data Forker m l blk = Forker
   { forkerClose :: !(m ())
   -- ^ Close the current forker (idempotent).
   --
@@ -100,9 +98,10 @@ data Forker m l = Forker
   -- and not by the LedgerDB.
   , -- Queries
 
-    forkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+    forkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
   -- ^ Read ledger tables from disk.
-  , forkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
+  , forkerRangeReadTables ::
+      !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
   -- ^ Range-read ledger tables from disk.
   --
   -- This range read will return as many values as the 'QueryBatchSize' that was
@@ -116,7 +115,7 @@ data Forker m l = Forker
   -- back into the next iteration of the range read. If the function returns
   -- Nothing, it means the read returned no results, or in other words, we
   -- reached the end of the ledger tables.
-  , forkerGetLedgerState :: !(STM m (l EmptyMK))
+  , forkerGetLedgerState :: !(STM m (l blk EmptyMK))
   -- ^ Get the full ledger state without tables.
   --
   -- If an empty ledger state is all you need, use 'getVolatileTip',
@@ -127,7 +126,7 @@ data Forker m l = Forker
   -- Returns 'Nothing' if the implementation is backed by @lsm-tree@.
   , -- Updates
 
-    forkerPush :: !(l DiffMK -> m ())
+    forkerPush :: !(l blk DiffMK -> m ())
   -- ^ Advance the fork handle by pushing a new ledger state to the tip of the
   -- current fork.
   , forkerCommit :: !(STM m (m ()))
@@ -138,29 +137,24 @@ data Forker m l = Forker
   -- resources from the LedgerDB.
   }
   deriving Generic
-  deriving NoThunks via OnlyCheckWhnf (Forker m l)
+  deriving NoThunks via OnlyCheckWhnf (Forker m l blk)
 
 -- | An identifier for a 'Forker'. See 'ldbForkers'.
 newtype ForkerKey = ForkerKey Word16
   deriving stock (Show, Eq, Ord)
   deriving newtype (Enum, NoThunks, Num)
 
-type instance HeaderHash (Forker m l) = HeaderHash l
+type instance HeaderHash (Forker m l blk) = HeaderHash (l blk)
 
-type Forker' m blk = Forker m (ExtLedgerState blk)
+type Forker' m blk = Forker m ExtLedgerState blk
 
 instance
-  (GetTip l, MonadSTM m) =>
-  GetTipSTM m (Forker m l)
+  (GetTip (l blk), MonadSTM m) =>
+  GetTipSTM m (Forker m l blk)
   where
   getTipSTM forker = castPoint . getTip <$> forkerGetLedgerState forker
 
 data RangeQueryPrevious l = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo (TxIn l)
-
-castRangeQueryPrevious :: TxIn l ~ TxIn l' => RangeQueryPrevious l -> RangeQueryPrevious l'
-castRangeQueryPrevious NoPreviousQuery = NoPreviousQuery
-castRangeQueryPrevious PreviousQueryWasFinal = PreviousQueryWasFinal
-castRangeQueryPrevious (PreviousQueryWasUpTo txin) = PreviousQueryWasUpTo txin
 
 data RangeQuery l = RangeQuery
   { rqPrev :: !(RangeQueryPrevious l)
@@ -201,9 +195,9 @@ data ExceededRollback = ExceededRollback
   deriving (Show, Eq)
 
 forkerCurrentPoint ::
-  (GetTip l, HeaderHash l ~ HeaderHash blk, Functor (STM m)) =>
+  (GetTip (l blk), HeaderHash (l blk) ~ HeaderHash blk, Functor (STM m)) =>
   Proxy blk ->
-  Forker m l ->
+  Forker m l blk ->
   STM m (Point blk)
 forkerCurrentPoint _ forker =
   castPoint
@@ -211,13 +205,12 @@ forkerCurrentPoint _ forker =
     <$> forkerGetLedgerState forker
 
 ledgerStateReadOnlyForker ::
-  IOLike m => ReadOnlyForker m (ExtLedgerState blk) -> ReadOnlyForker m (LedgerState blk)
+  IOLike m => ReadOnlyForker' m blk -> ReadOnlyForker m LedgerState blk
 ledgerStateReadOnlyForker frk =
   ReadOnlyForker
     { roforkerClose = roforkerClose
-    , roforkerReadTables = fmap castLedgerTables . roforkerReadTables . castLedgerTables
-    , roforkerRangeReadTables =
-        fmap (first castLedgerTables) . roforkerRangeReadTables . castRangeQueryPrevious
+    , roforkerReadTables = roforkerReadTables
+    , roforkerRangeReadTables = roforkerRangeReadTables
     , roforkerGetLedgerState = ledgerState <$> roforkerGetLedgerState
     , roforkerReadStatistics = roforkerReadStatistics
     }
@@ -244,30 +237,31 @@ ledgerStateReadOnlyForker frk =
 -- - Forging loop.
 --
 -- - Mempool.
-type ReadOnlyForker :: (Type -> Type) -> LedgerStateKind -> Type
-data ReadOnlyForker m l = ReadOnlyForker
+type ReadOnlyForker :: (Type -> Type) -> StateKind -> Type -> Type
+data ReadOnlyForker m l blk = ReadOnlyForker
   { roforkerClose :: !(m ())
   -- ^ See 'forkerClose'
-  , roforkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+  , roforkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
   -- ^ See 'forkerReadTables'
-  , roforkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
+  , roforkerRangeReadTables ::
+      !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
   -- ^ See 'forkerRangeReadTables'.
-  , roforkerGetLedgerState :: !(STM m (l EmptyMK))
+  , roforkerGetLedgerState :: !(STM m (l blk EmptyMK))
   -- ^ See 'forkerGetLedgerState'
   , roforkerReadStatistics :: !(m Statistics)
   -- ^ See 'forkerReadStatistics'
   }
   deriving Generic
 
-instance NoThunks (ReadOnlyForker m l) where
+instance NoThunks (ReadOnlyForker m l blk) where
   wNoThunks _ _ = pure Nothing
   showTypeOf _ = "ReadOnlyForker"
 
 type instance HeaderHash (ReadOnlyForker m l) = HeaderHash l
 
-type ReadOnlyForker' m blk = ReadOnlyForker m (ExtLedgerState blk)
+type ReadOnlyForker' m blk = ReadOnlyForker m ExtLedgerState blk
 
-readOnlyForker :: Forker m l -> ReadOnlyForker m l
+readOnlyForker :: Forker m l blk -> ReadOnlyForker m l blk
 readOnlyForker forker =
   ReadOnlyForker
     { roforkerClose = forkerClose forker
@@ -291,9 +285,9 @@ data ValidateArgs m l blk = ValidateArgs
   , prevApplied :: !(STM m (Set (RealPoint blk)))
   -- ^ Get the current set of previously applied blocks
   , withForkerAtFromTip ::
-      !(forall r. Word64 -> (Forker m (l blk) -> m r) -> m (Either GetForkerError r))
+      !(forall r. Word64 -> (Forker m l blk -> m r) -> m (Either GetForkerError r))
   -- ^ Create a forker from the tip
-  , onSuccess :: !(SuccessForkerAction m (l blk))
+  , onSuccess :: !(SuccessForkerAction m l blk)
   -- ^ Continuation to run when the validation was successful
   , trace :: !(TraceValidateEvent blk -> m ())
   -- ^ A tracer for validate events
@@ -378,7 +372,7 @@ validate evs args = do
 -- new blocks.
 switch ::
   (ApplyBlock l blk, MonadSTM m) =>
-  (forall r. Word64 -> (Forker m (l blk) -> m r) -> m (Either GetForkerError r)) ->
+  (forall r. Word64 -> (Forker m l blk -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   -- | How many blocks to roll back
@@ -387,7 +381,7 @@ switch ::
   -- | New blocks to apply
   NonEmpty (Ap m l blk) ->
   ResolveBlock m blk ->
-  SuccessForkerAction m (l blk) ->
+  SuccessForkerAction m l blk ->
   m (Either GetForkerError (Either (AnnLedgerError l blk) ()))
 switch withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSuccess = do
   withForkerAtFromTip numRollbacks $ \fo -> do
@@ -436,7 +430,7 @@ applyBlock ::
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   Ap m l blk ->
-  Forker m (l blk) ->
+  Forker m l blk ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError l blk) (l blk DiffMK))
 applyBlock evs cfg ap fo doResolveBlock = case ap of
@@ -473,7 +467,7 @@ applyThenPush ::
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   Ap m l blk ->
-  Forker m (l blk) ->
+  Forker m l blk ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError l blk) ())
 applyThenPush evs cfg ap fo doResolve = do
@@ -489,7 +483,7 @@ applyThenPushMany ::
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   [Ap m l blk] ->
-  Forker m (l blk) ->
+  Forker m l blk ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError l blk) ())
 applyThenPushMany trace evs cfg aps fo doResolveBlock = pushAndTrace aps
@@ -534,8 +528,8 @@ type ResolveBlock m blk = RealPoint blk -> m blk
 -- commonly used as "how to close a @res@", which is *NOT* the case
 -- here. So it's preferable to use this more perspicious type in
 -- signatures.
-newtype SuccessForkerAction m l = MkSuccessForkerAction
-  { applySuccessForkerAction :: Forker m l -> m ()
+newtype SuccessForkerAction m l blk = MkSuccessForkerAction
+  { applySuccessForkerAction :: Forker m l blk -> m ()
   }
 
 -- | When validating a sequence of blocks, these are the possible outcomes.

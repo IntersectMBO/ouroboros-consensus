@@ -64,7 +64,7 @@ import Ouroboros.Consensus.HardFork.History.Qry
   , slotToGenesisWindow
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
-import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
+import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
   ( ExtLedgerState
   , ledgerState
