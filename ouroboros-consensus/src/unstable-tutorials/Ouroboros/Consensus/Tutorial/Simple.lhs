@@ -58,7 +58,7 @@ First, some imports we'll need:
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (AuxLedgerEvent, GetTip(..), IsLedger(..), LedgerCfg,
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
->    LedgerState, ApplyBlock(..), UpdateLedger,
+>    LedgerState, ApplyBlock(..), UpdateLedger, GetBlockKeySets (..),
 >    defaultApplyBlockLedgerResult, defaultReapplyBlockLedgerResult)
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol(..))
@@ -66,7 +66,7 @@ First, some imports we'll need:
 > import Ouroboros.Consensus.HeaderValidation
 >   (ValidateEnvelope, BasicEnvelopeValidation, HasAnnTip)
 > import Ouroboros.Consensus.Ledger.Tables
-> import Ouroboros.Consensus.Storage.LedgerDB
+> import Ouroboros.Consensus.Ledger.Tables.Utils
 > import Ouroboros.Consensus.Util.IndexedMemPack
 
 Conceptual Overview and Definitions of Key Terms
@@ -630,7 +630,8 @@ the `ApplyBlock` typeclass:
 >   applyBlockLedgerResult = defaultApplyBlockLedgerResult
 >   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
 
->   getBlockKeySets = const trivialLedgerTables
+> instance GetBlockKeySets BlockC where
+>   getBlockKeySets = const emptyLedgerTables
 
 `applyBlockLedgerResult` tries to apply a block to the ledger and fails with a
 `LedgerErr` corresponding to the particular `LedgerState blk` if for whatever
@@ -740,23 +741,19 @@ the `LedgerTables`. For a Ledger state definition as simple as the one we are
 defining there the tables are trivially empty so the operations are all trivial
 and we use the default implementation
 
-> type instance TxIn  (LedgerState BlockC) = Void
-> type instance TxOut (LedgerState BlockC) = Void
+> type instance TxIn  BlockC = Void
+> type instance TxOut BlockC = Void
 
-> instance LedgerTablesAreTrivial (LedgerState BlockC) where
+> instance LedgerTablesAreTrivial LedgerState BlockC where
 >   convertMapKind (LedgerC x y) = LedgerC x y
-> instance LedgerTablesAreTrivial (Ticked LedgerState BlockC) where
+> instance LedgerTablesAreTrivial (Ticked LedgerState) BlockC where
 >   convertMapKind (TickedLedgerStateC x) =
 >       TickedLedgerStateC (convertMapKind x)
-> deriving via TrivialLedgerTables (LedgerState BlockC)
->     instance HasLedgerTables (LedgerState BlockC)
 > deriving via Void
->   instance IndexedMemPack (LedgerState BlockC EmptyMK) Void
-> deriving via Void
->   instance IndexedMemPack (Ticked LedgerState BlockC EmptyMK) Void
-> deriving via TrivialLedgerTables (Ticked LedgerState BlockC)
->     instance HasLedgerTables (Ticked LedgerState BlockC)
-> deriving via TrivialLedgerTables (LedgerState BlockC)
->     instance CanStowLedgerTables (LedgerState BlockC)
-> deriving via TrivialLedgerTables (LedgerState BlockC)
->     instance CanUpgradeLedgerTables (LedgerState BlockC)
+>   instance IndexedMemPack LedgerState BlockC Void
+> instance HasLedgerTables LedgerState BlockC where
+>   projectLedgerTables _ = emptyLedgerTables
+>   withLedgerTables st _ = convertMapKind st
+> instance HasLedgerTables (Ticked LedgerState) BlockC where
+>   projectLedgerTables _ = emptyLedgerTables
+>   withLedgerTables st _ = convertMapKind st

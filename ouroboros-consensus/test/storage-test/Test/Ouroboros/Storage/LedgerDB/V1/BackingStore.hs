@@ -33,7 +33,7 @@ import Data.MemPack
 import qualified Data.SOP.Dict as Dict
 import qualified Data.Set as Set
 import Data.Typeable
-import Ouroboros.Consensus.Ledger.Tables
+import Ouroboros.Consensus.Ledger.Abstract
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
@@ -99,14 +99,14 @@ scaleQuickCheckTests :: Int -> QuickCheckTests -> QuickCheckTests
 scaleQuickCheckTests c (QuickCheckTests n) = QuickCheckTests $ c * n
 
 testWithIO ::
-  IO (BSEnv IO K K' V D) ->
+  IO (BSEnv IO LedgerState K K' V D) ->
   Actions (Lockstep T) ->
   Property
 testWithIO mkBSEnv = runActionsBracket pT mkBSEnv bsCleanup runner
 
 runner ::
-  RealMonad m ks k vs d a ->
-  BSEnv m ks k vs d ->
+  RealMonad m LedgerState ks k vs d a ->
+  BSEnv m LedgerState ks k vs d ->
   m a
 runner c r = runReaderT c $ bsRealEnv r
 
@@ -118,8 +118,8 @@ labelledExamples = QC.labelledExamples $ tagActions pT
   Resources
 -------------------------------------------------------------------------------}
 
-data BSEnv m ks k vs d = BSEnv
-  { bsRealEnv :: RealEnv m ks k vs d
+data BSEnv m l ks k vs d = BSEnv
+  { bsRealEnv :: RealEnv m l ks k vs d
   , bsCleanup :: m ()
   }
 
@@ -140,12 +140,12 @@ setupTempDir = do
   pure (qsmTmpDir, liftIO $ Dir.removeDirectoryRecursive qsmTmpDir)
 
 setupBSEnv ::
-  BS.Backend m backend (OTLedgerState (QC.Fixed Word) (QC.Fixed Word)) =>
+  BS.Backend m backend LedgerState (OTBlock (QC.Fixed Word) (QC.Fixed Word)) =>
   IOLike m =>
   BS.Args m backend ->
   m (SomeHasFS m) ->
   m () ->
-  m (BSEnv m K K' V D)
+  m (BSEnv m LedgerState K K' V D)
 setupBSEnv mkBsArgs mkShfs cleanup = do
   shfs@(SomeHasFS hfs) <- mkShfs
 
@@ -187,15 +187,15 @@ closeHandlers =
   Types under test
 -------------------------------------------------------------------------------}
 
-type T = BackingStoreState K K' V D
+type T = BackingStoreState LedgerState K K' V D
 
 pT :: Proxy T
 pT = Proxy
 
-type K = LedgerTables (OTLedgerState (QC.Fixed Word) (QC.Fixed Word)) KeysMK
+type K = LedgerTables (OTBlock (QC.Fixed Word) (QC.Fixed Word)) KeysMK
 type K' = QC.Fixed Word
-type V = LedgerTables (OTLedgerState (QC.Fixed Word) (QC.Fixed Word)) ValuesMK
-type D = LedgerTables (OTLedgerState (QC.Fixed Word) (QC.Fixed Word)) DiffMK
+type V = LedgerTables (OTBlock (QC.Fixed Word) (QC.Fixed Word)) ValuesMK
+type D = LedgerTables (OTBlock (QC.Fixed Word) (QC.Fixed Word)) DiffMK
 
 {-------------------------------------------------------------------------------
   @'HasOps'@ instances
@@ -205,7 +205,7 @@ instance Mock.EmptyValues V where
   emptyValues = emptyLedgerTables
 
 instance Mock.ApplyDiff V D where
-  applyDiff = applyDiffs'
+  applyDiff = ltliftA2 applyDiffsMK
 
 instance Mock.LookupKeysRange K K' V where
   lookupKeysRange = \prev n vs ->
@@ -254,7 +254,7 @@ instance Mock.ValuesLength V where
     Map.size m
 
 instance Mock.MakeDiff V D where
-  diff t1 t2 = trackingToDiffs $ calculateDifference t1 t2
+  diff t1 t2 = ltmap rawTrackingDiffs $ ltliftA2 rawCalculateDifference t1 t2
 
 instance Mock.DiffSize D where
   diffSize (LedgerTables (DiffMK (Diff.Diff m))) = Map.size m
@@ -262,19 +262,19 @@ instance Mock.DiffSize D where
 instance Mock.KeysSize K where
   keysSize (LedgerTables (KeysMK s)) = Set.size s
 
-instance Mock.MakeInitHint V where
-  makeInitHint _ = emptyOTLedgerState
+instance Mock.MakeInitHint LedgerState V where
+  makeInitHint _ _ = emptyOTLedgerState
 
-instance Mock.MakeWriteHint D where
-  makeWriteHint _ = (emptyOTLedgerState, emptyOTLedgerState)
+instance Mock.MakeWriteHint LedgerState D where
+  makeWriteHint _ _ = (emptyOTLedgerState, emptyOTLedgerState)
 
-instance Mock.MakeReadHint V where
-  makeReadHint _ = emptyOTLedgerState
+instance Mock.MakeReadHint LedgerState V where
+  makeReadHint _ _ = emptyOTLedgerState
 
-instance Mock.MakeSerializeTablesHint V where
-  makeSerializeTablesHint _ = emptyOTLedgerState
+instance Mock.MakeSerializeTablesHint LedgerState V where
+  makeSerializeTablesHint _ _ = emptyOTLedgerState
 
-instance Mock.HasOps K K' V D
+instance Mock.HasOps LedgerState K K' V D
 
 {-------------------------------------------------------------------------------
   Orphan Arbitrary instances

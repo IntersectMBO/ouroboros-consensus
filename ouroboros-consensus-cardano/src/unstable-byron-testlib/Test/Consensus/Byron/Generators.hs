@@ -425,7 +425,7 @@ genByronLedgerState = do
       Left _ -> pure Origin
       Right _ -> NotOrigin <$> arbitrary
 
-instance ZeroableMK mk => Arbitrary (LedgerTables (LedgerState ByronBlock) mk) where
+instance ZeroableMK mk => Arbitrary (LedgerTables ByronBlock mk) where
   arbitrary = pure emptyLedgerTables
 
 genByronLedgerConfig :: Gen Byron.Config

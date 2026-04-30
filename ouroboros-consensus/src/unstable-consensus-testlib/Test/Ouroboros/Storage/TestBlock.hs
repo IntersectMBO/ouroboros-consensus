@@ -66,6 +66,8 @@ module Test.Ouroboros.Storage.TestBlock
 import Cardano.Binary (DecoderError)
 import Cardano.Crypto.DSIGN
 import Cardano.Ledger.BaseTypes (unNonZero)
+import qualified Codec.CBOR.Decoding as CBOR
+import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Codec.Serialise (Serialise (decode, encode), serialise)
@@ -581,41 +583,32 @@ instance IsLedger LedgerState TestBlock where
       . TickedTestLedger
       . noNewTickingDiffs
 
-type instance TxIn (LedgerState TestBlock) = Void
-type instance TxOut (LedgerState TestBlock) = Void
-
-instance LedgerTablesAreTrivial (LedgerState TestBlock) where
+type instance TxIn TestBlock = Void
+type instance TxOut TestBlock = Void
+instance LedgerTablesAreTrivial LedgerState TestBlock where
   convertMapKind (TestLedger x y z) = TestLedger x y z
-instance LedgerTablesAreTrivial (Ticked LedgerState TestBlock) where
+instance LedgerTablesAreTrivial (Ticked LedgerState) TestBlock where
   convertMapKind (TickedTestLedger x) = TickedTestLedger (convertMapKind x)
 deriving via
-  TrivialLedgerTables (LedgerState TestBlock)
-  instance
-    HasLedgerTables (LedgerState TestBlock)
-deriving via
-  TrivialLedgerTables (Ticked LedgerState TestBlock)
-  instance
-    HasLedgerTables (Ticked LedgerState TestBlock)
-deriving via
-  TrivialLedgerTables (LedgerState TestBlock)
-  instance
-    CanStowLedgerTables (LedgerState TestBlock)
-deriving via
-  TrivialLedgerTables (LedgerState TestBlock)
-  instance
-    CanUpgradeLedgerTables (LedgerState TestBlock)
-deriving via
-  TrivialLedgerTables (LedgerState TestBlock)
-  instance
-    SerializeTablesWithHint (LedgerState TestBlock)
-deriving via
   Void
   instance
-    IndexedMemPack (LedgerState TestBlock EmptyMK) Void
-deriving via
-  Void
-  instance
-    IndexedMemPack (Ticked LedgerState TestBlock EmptyMK) Void
+    IndexedMemPack LedgerState TestBlock Void
+instance HasLedgerTables LedgerState TestBlock where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+instance HasLedgerTables (Ticked LedgerState) TestBlock where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+instance CanStowLedgerTables (LedgerState TestBlock) where
+  stowLedgerTables = convertMapKind
+  unstowLedgerTables = convertMapKind
+instance SerializeTablesWithHint LedgerState TestBlock where
+  decodeTablesWithHint _ = do
+    _ <- CBOR.decodeMapLen
+    pure (LedgerTables $ ValuesMK Map.empty)
+  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
+instance CanUpgradeLedgerTables LedgerState TestBlock where
+  upgradeTables _ _ = id
 
 instance ApplyBlock LedgerState TestBlock where
   applyBlockLedgerResultWithValidation _ _ _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})
@@ -650,7 +643,8 @@ instance ApplyBlock LedgerState TestBlock where
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult (error . ("reapplyBlockLedgerResult: impossible " <>) . show)
 
-  getBlockKeySets _blk = trivialLedgerTables
+instance GetBlockKeySets TestBlock where
+  getBlockKeySets _blk = emptyLedgerTables
 
 data instance LedgerState TestBlock mk
   = TestLedger

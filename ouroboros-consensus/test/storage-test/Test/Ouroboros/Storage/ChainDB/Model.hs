@@ -429,7 +429,7 @@ empty loe initLedger =
 
 addBlock ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
   TopLevelConfig blk ->
   blk ->
   Model blk ->
@@ -458,7 +458,7 @@ addBlock cfg blk m
 
 addPerasCert ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
   TopLevelConfig blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   Model blk ->
@@ -468,7 +468,7 @@ addPerasCert cfg cert m =
 
 addPerasVote ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
   TopLevelConfig blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   Model blk ->
@@ -484,7 +484,7 @@ addPerasVote cfg vote m =
 
 chainSelection ::
   forall blk.
-  ( LedgerTablesAreTrivial (ExtLedgerState blk)
+  ( LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
   ) =>
   TopLevelConfig blk ->
@@ -613,7 +613,7 @@ chainSelection cfg m =
         consideredCandidates
 
 addBlocks ::
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
   TopLevelConfig blk ->
   [blk] ->
   Model blk ->
@@ -623,7 +623,7 @@ addBlocks cfg = repeatedly (addBlock cfg)
 -- | Wrapper around 'addBlock' that returns an 'AddBlockPromise'.
 addBlockPromise ::
   forall m blk.
-  (LedgerSupportsProtocol blk, MonadSTM m, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  (LedgerSupportsProtocol blk, MonadSTM m, LedgerTablesAreTrivial ExtLedgerState blk) =>
   TopLevelConfig blk ->
   blk ->
   Model blk ->
@@ -644,7 +644,7 @@ addBlockPromise cfg blk m = (result, m')
 -- point.
 updateLoE ::
   forall blk.
-  ( LedgerTablesAreTrivial (ExtLedgerState blk)
+  ( LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
   ) =>
   TopLevelConfig blk ->
@@ -845,7 +845,7 @@ data ValidatedChain blk
 -- 'invalid' of the given 'Model'.
 validate ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
   TopLevelConfig blk ->
   Model blk ->
   Chain blk ->
@@ -906,7 +906,7 @@ chains bs = go Chain.Genesis
 
 validChains ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
   TopLevelConfig blk ->
   Model blk ->
   Map (HeaderHash blk) blk ->
@@ -1161,7 +1161,7 @@ reopen m = m{isOpen = True}
 -- see https://github.com/tweag/cardano-peras/issues/122
 wipeVolatileDB ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
   TopLevelConfig blk ->
   Model blk ->
   (Point blk, Model blk)

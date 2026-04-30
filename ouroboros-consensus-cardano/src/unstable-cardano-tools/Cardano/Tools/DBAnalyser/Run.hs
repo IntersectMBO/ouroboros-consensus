@@ -24,7 +24,7 @@ import qualified Debug.Trace as Debug
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
@@ -129,6 +129,8 @@ analyse ::
   ( Node.RunNode blk
   , Show (Header blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
+  , Show (TxIn blk)
+  , Show (TxOut blk)
   , HasAnalysis blk
   , HasProtocolInfo blk
   , LedgerSupportsMempool.HasTxs blk

@@ -78,7 +78,7 @@ And imports, of course:
 
 > import Ouroboros.Consensus.Ticked (Ticked, Ticked)
 > import Ouroboros.Consensus.Ledger.Abstract
->   (LedgerState, LedgerCfg, GetTip, LedgerResult (..), ApplyBlock (..),
+>   (LedgerState, LedgerCfg, GetTip, LedgerResult (..), ApplyBlock (..), GetBlockKeySets (..),
 >    UpdateLedger, IsLedger (..), AuxLedgerEvent, defaultApplyBlockLedgerResult,
 >    defaultReapplyBlockLedgerResult)
 
@@ -92,8 +92,8 @@ And imports, of course:
 >   (Forecast (..), OutsideForecastRange (..))
 > import Ouroboros.Consensus.Ledger.Basics (GetTip(..))
 > import Ouroboros.Consensus.Ledger.Tables
+> import Ouroboros.Consensus.Ledger.Tables.Utils
 
-> import Ouroboros.Consensus.Storage.LedgerDB
 > import Ouroboros.Consensus.Util.IndexedMemPack
 
 Epochs
@@ -418,7 +418,8 @@ applying each individual transaction - exactly as it was in for `BlockC`:
 >   applyBlockLedgerResult = defaultApplyBlockLedgerResult
 >   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
 
->   getBlockKeySets = const trivialLedgerTables
+> instance GetBlockKeySets BlockD where
+>   getBlockKeySets = const emptyLedgerTables
 
 Note that prior to `applyBlockLedgerResult` being invoked, the calling code will
 have already established that the header is valid and that the header matches
@@ -679,23 +680,19 @@ Appendix: UTxO-HD features
 For reference on these instances and their meaning, please see the appendix in
 [the Simple tutorial](./Simple.lhs).
 
-> type instance TxIn  (LedgerState BlockD) = Void
-> type instance TxOut (LedgerState BlockD) = Void
+> type instance TxIn  BlockD = Void
+> type instance TxOut BlockD = Void
 
-> instance LedgerTablesAreTrivial (LedgerState BlockD) where
->   convertMapKind (LedgerD x y z z') = LedgerD x y z z'
-> instance LedgerTablesAreTrivial (Ticked LedgerState BlockD) where
+> instance LedgerTablesAreTrivial LedgerState BlockD where
+>   convertMapKind (LedgerD x y z v) = LedgerD x y z v
+> instance LedgerTablesAreTrivial (Ticked LedgerState) BlockD where
 >   convertMapKind (TickedLedgerStateD x) =
 >       TickedLedgerStateD (convertMapKind x)
-> deriving via TrivialLedgerTables (LedgerState BlockD)
->     instance HasLedgerTables (LedgerState BlockD)
-> deriving via TrivialLedgerTables (Ticked LedgerState BlockD)
->     instance HasLedgerTables (Ticked LedgerState BlockD)
 > deriving via Void
->     instance IndexedMemPack (LedgerState BlockD EmptyMK) Void
-> deriving via Void
->     instance IndexedMemPack (Ticked LedgerState BlockD EmptyMK) Void
-> deriving via TrivialLedgerTables (LedgerState BlockD)
->     instance CanStowLedgerTables (LedgerState BlockD)
-> deriving via TrivialLedgerTables (LedgerState BlockD)
->     instance CanUpgradeLedgerTables (LedgerState BlockD)
+>   instance IndexedMemPack LedgerState BlockD Void
+> instance HasLedgerTables LedgerState BlockD where
+>   projectLedgerTables _ = emptyLedgerTables
+>   withLedgerTables st _ = convertMapKind st
+> instance HasLedgerTables (Ticked LedgerState) BlockD where
+>   projectLedgerTables _ = emptyLedgerTables
+>   withLedgerTables st _ = convertMapKind st

@@ -126,34 +126,24 @@ instance IsLedger LedgerState ByronSpecBlock where
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (LedgerState ByronSpecBlock) = Void
-type instance TxOut (LedgerState ByronSpecBlock) = Void
-instance LedgerTablesAreTrivial (LedgerState ByronSpecBlock) where
-  convertMapKind (ByronSpecLedgerState x y) =
-    ByronSpecLedgerState x y
-instance LedgerTablesAreTrivial (Ticked LedgerState ByronSpecBlock) where
+type instance TxIn ByronSpecBlock = Void
+type instance TxOut ByronSpecBlock = Void
+
+instance LedgerTablesAreTrivial LedgerState ByronSpecBlock where
+  convertMapKind (ByronSpecLedgerState x y) = ByronSpecLedgerState x y
+instance LedgerTablesAreTrivial (Ticked LedgerState) ByronSpecBlock where
   convertMapKind (TickedByronSpecLedgerState x y) =
     TickedByronSpecLedgerState x y
 deriving via
   Void
   instance
-    IndexedMemPack (LedgerState ByronSpecBlock EmptyMK) Void
-deriving via
-  Void
-  instance
-    IndexedMemPack (Ticked LedgerState ByronSpecBlock EmptyMK) Void
-deriving via
-  TrivialLedgerTables (LedgerState ByronSpecBlock)
-  instance
-    HasLedgerTables (LedgerState ByronSpecBlock)
-deriving via
-  TrivialLedgerTables (Ticked LedgerState ByronSpecBlock)
-  instance
-    HasLedgerTables (Ticked LedgerState ByronSpecBlock)
-deriving via
-  TrivialLedgerTables (LedgerState ByronSpecBlock)
-  instance
-    CanStowLedgerTables (LedgerState ByronSpecBlock)
+    IndexedMemPack LedgerState ByronSpecBlock Void
+instance HasLedgerTables LedgerState ByronSpecBlock where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+instance HasLedgerTables (Ticked LedgerState) ByronSpecBlock where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
 
 {-------------------------------------------------------------------------------
   Applying blocks
@@ -176,6 +166,7 @@ instance ApplyBlock LedgerState ByronSpecBlock where
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult (error . ("reapplyBlockLedgerResult: unexpected error " ++) . show)
 
+instance GetBlockKeySets ByronSpecBlock where
   getBlockKeySets _ = emptyLedgerTables
 
 {-------------------------------------------------------------------------------

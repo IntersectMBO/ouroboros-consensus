@@ -42,7 +42,7 @@ import NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
+import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
@@ -174,10 +174,10 @@ data instance Block.StorageConfig TestBlock = TestBlockStorageConfig
   Ledger tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (LedgerState TestBlock) = Token
-type instance TxOut (LedgerState TestBlock) = ()
+type instance TxIn TestBlock = Token
+type instance TxOut TestBlock = ()
 
-instance HasLedgerTables (LedgerState TestBlock) where
+instance HasLedgerTables LedgerState TestBlock where
   projectLedgerTables st =
     LedgerTables $ getTestPLDS $ payloadDependentState st
   withLedgerTables st table =
@@ -190,25 +190,18 @@ instance HasLedgerTables (LedgerState TestBlock) where
    where
     TestLedger{payloadDependentState = plds} = st
 
-instance HasLedgerTables (Ticked LedgerState TestBlock) where
+instance HasLedgerTables (Ticked LedgerState) TestBlock where
   projectLedgerTables (TickedTestLedger st) =
-    Ledger.castLedgerTables $
-      Ledger.projectLedgerTables st
+    Ledger.projectLedgerTables st
   withLedgerTables (TickedTestLedger st) tables =
-    TickedTestLedger $ Ledger.withLedgerTables st $ Ledger.castLedgerTables tables
+    TickedTestLedger $ Ledger.withLedgerTables st tables
 
 instance CanStowLedgerTables (LedgerState TestBlock) where
   stowLedgerTables = error "Mempool bench TestBlock unused: stowLedgerTables"
   unstowLedgerTables = error "Mempool bench TestBlock unused: unstowLedgerTables"
 
-instance IndexedMemPack (LedgerState TestBlock EmptyMK) () where
-  indexedTypeName _ = typeName @()
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
-
-instance IndexedMemPack (Ticked LedgerState TestBlock EmptyMK) () where
-  indexedTypeName _ = typeName @()
+instance IndexedMemPack LedgerState TestBlock () where
+  indexedTypeName _ _ = typeName @()
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM

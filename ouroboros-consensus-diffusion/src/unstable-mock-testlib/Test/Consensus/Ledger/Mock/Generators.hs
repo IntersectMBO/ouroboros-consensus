@@ -18,7 +18,7 @@ import qualified Data.Set as Set
 import Data.Typeable
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
@@ -136,7 +136,7 @@ instance
       . flip SimpleLedgerState emptyLedgerTables
       <$> arbitrary
 
-instance Arbitrary (LedgerTables (LedgerState (SimpleBlock c ext)) ValuesMK) where
+instance Arbitrary (LedgerTables (SimpleBlock c ext) ValuesMK) where
   arbitrary = LedgerTables . ValuesMK <$> arbitrary
 
 instance Arbitrary ByteSize32 where

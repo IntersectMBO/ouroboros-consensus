@@ -139,7 +139,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( unsafeChunkNoToEpochNo
   )
-import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
+import Ouroboros.Consensus.Storage.LedgerDB (CanUpgradeLedgerTables, LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
@@ -375,7 +375,8 @@ type TestConstraints blk =
   , HasHardForkHistory blk
   , SerialiseDiskConstraints blk
   , Show (LedgerState blk EmptyMK)
-  , LedgerTablesAreTrivial (LedgerState blk)
+  , LedgerTablesAreTrivial LedgerState blk
+  , CanUpgradeLedgerTables LedgerState blk
   , LedgerSupportsLedgerDB blk
   , ImmutableEraParams blk
   )

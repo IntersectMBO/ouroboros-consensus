@@ -28,13 +28,13 @@ import Control.DeepSeq (NFData (rnf))
 import Control.Tracer (Tracer)
 import qualified Data.List.NonEmpty as NE
 import Ouroboros.Consensus.HeaderValidation as Header
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import Ouroboros.Consensus.Ledger.Tables.Utils
   ( emptyLedgerTables
   , forgetLedgerTables
-  , restrictValues'
+  , restrictValuesMK
   )
 import Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
@@ -93,7 +93,7 @@ openMockedMempool capacityOverride tracer initialParams = do
                           { roforkerClose = pure ()
                           , roforkerGetLedgerState = pure (forgetLedgerTables st)
                           , roforkerReadTables = \keys ->
-                              pure $ projectLedgerTables st `restrictValues'` keys
+                              pure $ ltliftA2 restrictValuesMK (projectLedgerTables st) keys
                           , roforkerReadStatistics = pure $ Statistics 0
                           , roforkerRangeReadTables = \_ -> pure (emptyLedgerTables, Nothing)
                           }

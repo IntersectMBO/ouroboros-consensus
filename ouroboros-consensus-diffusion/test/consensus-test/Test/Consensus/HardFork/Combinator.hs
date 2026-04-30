@@ -478,16 +478,17 @@ instance SerialiseHFC '[BlockA, BlockB]
 
 -- Use defaults
 
-instance SerializeTablesWithHint (LedgerState (HardForkBlock '[BlockA, BlockB])) where
+instance SerializeTablesWithHint LedgerState (HardForkBlock '[BlockA, BlockB]) where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
 
 instance
   IndexedMemPack
-    (LedgerState (HardForkBlock '[BlockA, BlockB]) EmptyMK)
+    LedgerState
+    (HardForkBlock '[BlockA, BlockB])
     (DefaultHardForkTxOut '[BlockA, BlockB])
   where
-  indexedTypeName _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
+  indexedTypeName _ _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
   indexedPackedByteCount _ txout =
     hcollapse $
       hcmap
@@ -510,10 +511,11 @@ instance
 
 instance
   IndexedMemPack
-    (Ticked LedgerState (HardForkBlock '[BlockA, BlockB]) EmptyMK)
+    (Ticked LedgerState)
+    (HardForkBlock '[BlockA, BlockB])
     (DefaultHardForkTxOut '[BlockA, BlockB])
   where
-  indexedTypeName _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
+  indexedTypeName _ _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
   indexedPackedByteCount _ txout =
     hcollapse $
       hcmap

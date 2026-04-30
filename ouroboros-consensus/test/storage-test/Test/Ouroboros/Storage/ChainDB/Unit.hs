@@ -40,7 +40,7 @@ import Ouroboros.Consensus.Config
   ( TopLevelConfig
   )
 import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
 import Ouroboros.Consensus.Storage.ChainDB.Impl (TraceEvent)
@@ -527,7 +527,7 @@ runModelCmd cmd = do
     Right success -> pure success
 
 instance
-  (TestConstraints blk, LedgerTablesAreTrivial (LedgerState blk)) =>
+  (TestConstraints blk, LedgerTablesAreTrivial LedgerState blk) =>
   SupportsUnitTest (ModelM blk)
   where
   type FollowerId (ModelM blk) = Model.FollowerId

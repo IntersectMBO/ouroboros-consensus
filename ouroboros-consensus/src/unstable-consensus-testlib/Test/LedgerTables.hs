@@ -6,7 +6,7 @@ module Test.LedgerTables
   ) where
 
 import Data.Function (on)
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Test.QuickCheck
 
 -- | We compare the Ledger Tables of the result because the comparison with the
@@ -17,7 +17,9 @@ import Test.QuickCheck
   , ZeroableMK mk
   , EqMK mk
   , ShowMK mk
-  , HasLedgerTables (LedgerState blk)
+  , HasLedgerTables LedgerState blk
+  , Show (TxIn blk)
+  , Show (TxOut blk)
   ) =>
   LedgerState blk mk ->
   LedgerState blk mk ->
@@ -32,8 +34,10 @@ infix 4 ==?
 --
 -- > unstow . stow == id
 prop_stowable_laws ::
-  ( HasLedgerTables (LedgerState blk)
+  ( HasLedgerTables LedgerState blk
   , CanStowLedgerTables (LedgerState blk)
+  , Show (TxIn blk)
+  , Show (TxOut blk)
   ) =>
   LedgerState blk EmptyMK ->
   LedgerState blk ValuesMK ->
@@ -48,9 +52,12 @@ prop_stowable_laws = \ls ls' ->
 --
 -- > project . with == id
 prop_hasledgertables_laws ::
-  HasLedgerTables (LedgerState blk) =>
+  ( HasLedgerTables LedgerState blk
+  , Show (TxIn blk)
+  , Show (TxOut blk)
+  ) =>
   LedgerState blk EmptyMK ->
-  LedgerTables (LedgerState blk) ValuesMK ->
+  LedgerTables blk ValuesMK ->
   Property
 prop_hasledgertables_laws = \ls tbs ->
   (ls `withLedgerTables` (projectLedgerTables ls)) ==? ls
