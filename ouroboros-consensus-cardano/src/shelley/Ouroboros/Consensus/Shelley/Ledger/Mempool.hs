@@ -90,7 +90,6 @@ import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
 import Cardano.Protocol.Crypto (Crypto)
-import Control.Arrow ((+++))
 import Control.Monad (guard)
 import Control.Monad.Except (Except, liftEither)
 import Control.Monad.Identity (Identity (..))
@@ -98,7 +97,6 @@ import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
 import Data.Measure (Measure)
 import Data.Typeable (Typeable)
-import qualified Data.Validation as V
 import Data.Word (Word32)
 import GHC.Generics (Generic)
 import GHC.Natural (Natural)
@@ -363,21 +361,11 @@ theLedgerLens f x =
   Tx Limits
 -------------------------------------------------------------------------------}
 
--- | A non-exported newtype wrapper just to give a 'Semigroup' instance
-newtype TxErrorSG era = TxErrorSG {unTxErrorSG :: SL.ApplyTxError era}
-
-deriving newtype instance Semigroup (SL.ApplyTxError era) => Semigroup (TxErrorSG era)
-
 validateMaybe ::
   SL.ApplyTxError era ->
   Maybe a ->
-  V.Validation (TxErrorSG era) a
-validateMaybe err mb = V.validate (TxErrorSG err) id mb
-
-runValidation ::
-  V.Validation (TxErrorSG era) a ->
-  Except (SL.ApplyTxError era) a
-runValidation = liftEither . (unTxErrorSG +++ id) . V.toEither
+  Either (SL.ApplyTxError era) a
+validateMaybe err = maybe (Left err) Right
 
 -----
 
@@ -397,7 +385,7 @@ txInBlockSize ::
   (ShelleyCompatible proto era, MaxTxSizeUTxO era) =>
   TickedLedgerState (ShelleyBlock proto era) mk ->
   GenTx (ShelleyBlock proto era) ->
-  V.Validation (TxErrorSG era) (IgnoringOverflow ByteSize32)
+  Either (SL.ApplyTxError era) (IgnoringOverflow ByteSize32)
 txInBlockSize st (ShelleyTx _txid tx') =
   validateMaybe (maxTxSizeUTxO txsz limit) $ do
     guard $ txsz <= limit
@@ -516,19 +504,19 @@ wrapCBORinCBOROverhead size =
 instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) where
   type TxMeasure (ShelleyBlock p ShelleyEra) = IgnoringOverflow ByteSize32
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
+  txMeasure _cfg st tx = liftEither $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
 
 instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) where
   type TxMeasure (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
+  txMeasure _cfg st tx = liftEither $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
 
 instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
   type TxMeasure (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
+  txMeasure _cfg st tx = liftEither $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
 
 -----
@@ -586,7 +574,7 @@ txMeasureAlonzo ::
   ) =>
   TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
   GenTx (ShelleyBlock proto era) ->
-  V.Validation (TxErrorSG era) AlonzoMeasure
+  Either (SL.ApplyTxError era) AlonzoMeasure
 txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
   AlonzoMeasure <$> txInBlockSize st tx <*> exunits
  where
@@ -660,7 +648,7 @@ instance
   where
   type TxMeasure (ShelleyBlock p AlonzoEra) = AlonzoMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
+  txMeasure _cfg st tx = liftEither $ txMeasureAlonzo st tx
   blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
 
 -----
@@ -696,7 +684,7 @@ txMeasureDijkstra ::
   ) =>
   TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
   GenTx (ShelleyBlock proto era) ->
-  V.Validation (TxErrorSG era) DijkstraMeasure
+  Either (SL.ApplyTxError era) DijkstraMeasure
 txMeasureDijkstra st = fmap DijkstraMeasure . txMeasureConway st
 
 -----
@@ -758,7 +746,7 @@ txMeasureConway ::
   ) =>
   TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
   GenTx (ShelleyBlock proto era) ->
-  V.Validation (TxErrorSG era) ConwayMeasure
+  Either (SL.ApplyTxError era) ConwayMeasure
 txMeasureConway st tx@(ShelleyTx _txid tx') =
   ConwayMeasure <$> txMeasureAlonzo st tx <*> refScriptBytes
  where
@@ -803,7 +791,7 @@ instance
   where
   type TxMeasure (ShelleyBlock p BabbageEra) = AlonzoMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
+  txMeasure _cfg st tx = liftEither $ txMeasureAlonzo st tx
   blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
 
 instance
@@ -812,7 +800,7 @@ instance
   where
   type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
+  txMeasure _cfg st tx = liftEither $ txMeasureConway st tx
   blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
 
 instance
@@ -820,6 +808,6 @@ instance
   TxLimits (ShelleyBlock p DijkstraEra)
   where
   type TxMeasure (ShelleyBlock p DijkstraEra) = DijkstraMeasure
-  txMeasure _cfg st tx = runValidation $ txMeasureDijkstra st tx
+  txMeasure _cfg st tx = liftEither $ txMeasureDijkstra st tx
   blockCapacityTxMeasure _cfg = blockCapacityDijkstraMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)

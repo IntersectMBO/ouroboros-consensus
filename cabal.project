@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2026-03-17T01:21:06Z
+  , hackage.haskell.org 2026-04-30T10:58:23Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-04-13T13:33:52Z
+  , cardano-haskell-packages 2026-04-23T15:35:02Z
 
 active-repositories:
   , :rest
@@ -32,6 +32,14 @@ multi-repl: True
 
 import: cabal/asserts.cabal
 import: cabal/newer-ghcs.cabal
+
+if impl(ghc == 9.6.7)
+  constraints:
+    -- Needed for the dev shell tool hoogle
+    --
+    -- https://github.com/channable/alfred-margaret/pull/76
+    -- https://github.com/channable/alfred-margaret/commit/92d2bc5ce709c3e72b41f905e847118d79cf8867
+    alfred-margaret < 2.1.1.0
 
 package ouroboros-network
   -- Certain ThreadNet tests rely on transactions to be submitted promptly after
@@ -55,3 +63,12 @@ source-repository-package
     ouroboros-network
     cardano-diffusion
     network-mux
+
+source-repository-package
+    type: git
+    location: https://github.com/IntersectMBO/lsm-tree
+    tag: 198d98a0b441ee8f22debea96b675384e6c04cd9
+    --sha256: sha256-rUtSZ4l2ZTKacuy0EGE7CkCmqi0V+2c6n97+Xf+rQhA=
+    subdir:
+        blockio
+        lsm-tree
