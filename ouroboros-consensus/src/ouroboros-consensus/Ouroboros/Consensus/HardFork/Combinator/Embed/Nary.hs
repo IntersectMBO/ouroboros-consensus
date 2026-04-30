@@ -46,7 +46,7 @@ import Ouroboros.Consensus.HeaderValidation
   , HeaderState (..)
   , genesisHeaderState
   )
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables.Utils
@@ -268,7 +268,7 @@ instance Inject (Flip ExtLedgerState mk) where
 -- not rely on that class.
 injectInitialExtLedgerState ::
   forall x xs.
-  (CanHardFork (x ': xs), HasLedgerTables (LedgerState (HardForkBlock (x : xs)))) =>
+  (CanHardFork (x ': xs), HasLedgerTables LedgerState (HardForkBlock (x : xs))) =>
   TopLevelConfig (HardForkBlock (x ': xs)) ->
   ExtLedgerState x ValuesMK ->
   ExtLedgerState (HardForkBlock (x ': xs)) ValuesMK

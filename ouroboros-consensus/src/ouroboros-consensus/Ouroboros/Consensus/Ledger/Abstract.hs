@@ -18,6 +18,7 @@ module Ouroboros.Consensus.Ledger.Abstract
 
     -- * Apply block
   , ApplyBlock (..)
+  , GetBlockKeySets (..)
   , ComputeLedgerEvents (..)
   , UpdateLedger
   , defaultApplyBlockLedgerResult
@@ -40,6 +41,8 @@ module Ouroboros.Consensus.Ledger.Abstract
 
     -- * Re-exports
   , module Ouroboros.Consensus.Ledger.Basics
+  , module Ouroboros.Consensus.Ledger.Tables
+  , module Ouroboros.Consensus.Ledger.Tables.MapKind
   ) where
 
 import Control.Monad.Except
@@ -48,6 +51,8 @@ import Data.Kind (Type)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Tables
+import Ouroboros.Consensus.Ledger.Tables.MapKind
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util
@@ -87,8 +92,9 @@ class
   , HeaderHash (l blk) ~ HeaderHash blk
   , HasHeader blk
   , HasHeader (Header blk)
-  , HasLedgerTables (l blk)
-  , HasLedgerTables (Ticked l blk)
+  , HasLedgerTables l blk
+  , HasLedgerTables (Ticked l) blk
+  , GetBlockKeySets blk
   ) =>
   ApplyBlock l blk
   where
@@ -140,9 +146,10 @@ class
     Ticked l blk ValuesMK ->
     LedgerResult blk (l blk DiffMK)
 
+class GetBlockKeySets blk where
   -- | Given a block, get the key-sets that we need to apply it to a ledger
   -- state.
-  getBlockKeySets :: blk -> LedgerTables (l blk) KeysMK
+  getBlockKeySets :: blk -> LedgerTables blk KeysMK
 
 defaultApplyBlockLedgerResult ::
   (HasCallStack, ApplyBlock l blk) =>

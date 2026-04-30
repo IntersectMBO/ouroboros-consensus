@@ -57,17 +57,17 @@ data ForkerEnv m l blk = ForkerEnv
       !( StrictMVar
            m
            ( Either
-               (LedgerDBLock m, LedgerBackingStore m l)
-               (LedgerBackingStoreValueHandle m l)
+               (LedgerDBLock m, LedgerBackingStore m l blk)
+               (LedgerBackingStoreValueHandle m l blk)
            )
        )
   -- ^ Either the ingredients to create a value handle or a value handle, i.e. a
   -- local, consistent view of backing store. Use 'getValueHandle' to promote
   -- this from a Left to a Right if needed.
-  , foeChangelog :: !(StrictTVar m (DbChangelog l))
+  , foeChangelog :: !(StrictTVar m (DbChangelog l blk))
   -- ^ In memory db changelog, 'foeBackingStoreValueHandle' must refer to
   -- the anchor of this changelog.
-  , foeSwitchVar :: !(StrictTVar m (DbChangelog l))
+  , foeSwitchVar :: !(StrictTVar m (DbChangelog l blk))
   -- ^ The same 'StrictTVar' as 'ldbChangelog'
   --
   -- The anchor of this and 'foeChangelog' might get out of sync if diffs are
@@ -81,9 +81,9 @@ data ForkerEnv m l blk = ForkerEnv
 deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , NoThunks (l EmptyMK)
-  , NoThunks (TxIn l)
-  , NoThunks (TxOut l)
+  , NoThunks (l blk EmptyMK)
+  , NoThunks (TxIn blk)
+  , NoThunks (TxOut blk)
   ) =>
   NoThunks (ForkerEnv m l blk)
 
@@ -110,7 +110,8 @@ closeForkerEnv ForkerEnv{foeBackingStoreValueHandle, foeTracer, foeWasCommitted}
 
 -- | Get the value handle in a forker, creating it on demand if this is the
 -- first time we access the tables.
-getValueHandle :: (GetTip l, IOLike m) => ForkerEnv m l blk -> m (LedgerBackingStoreValueHandle m l)
+getValueHandle ::
+  (GetTip (l blk), IOLike m) => ForkerEnv m l blk -> m (LedgerBackingStoreValueHandle m l blk)
 getValueHandle ForkerEnv{foeBackingStoreValueHandle, foeChangelog} = mask_ $ do
   -- Note this is masked, so the inner function in 'modifyMVar' will also be
   -- masked.
@@ -135,10 +136,10 @@ getValueHandle ForkerEnv{foeBackingStoreValueHandle, foeChangelog} = mask_ $ do
               )
 
 implForkerReadTables ::
-  (IOLike m, HasLedgerTables l, GetTip l) =>
+  (IOLike m, HasLedgerTables l blk, GetTip (l blk)) =>
   ForkerEnv m l blk ->
-  LedgerTables l KeysMK ->
-  m (LedgerTables l ValuesMK)
+  LedgerTables blk KeysMK ->
+  m (LedgerTables blk ValuesMK)
 implForkerReadTables env ks =
   encloseTimedWith (ForkerReadTables >$< foeTracer env) $ do
     chlog <- readTVarIO (foeChangelog env)
@@ -149,11 +150,11 @@ implForkerReadTables env ks =
       Right vs -> pure vs
 
 implForkerRangeReadTables ::
-  (IOLike m, GetTip l, HasLedgerTables l) =>
+  (IOLike m, GetTip (l blk), HasLedgerTables l blk) =>
   QueryBatchSize ->
   ForkerEnv m l blk ->
-  RangeQueryPrevious l ->
-  m (LedgerTables l ValuesMK, Maybe (TxIn l))
+  RangeQueryPrevious blk ->
+  m (LedgerTables blk ValuesMK, Maybe (TxIn blk))
 implForkerRangeReadTables qbs env rq0 =
   encloseTimedWith (ForkerRangeReadTables >$< foeTracer env) $ do
     ldb <- readTVarIO $ foeChangelog env
@@ -268,15 +269,15 @@ implForkerRangeReadTables qbs env rq0 =
                       (Diff.filterWithKeyOnly (< k) ds)
 
 implForkerGetLedgerState ::
-  (MonadSTM m, GetTip l) =>
+  (MonadSTM m, GetTip (l blk)) =>
   ForkerEnv m l blk ->
-  STM m (l EmptyMK)
+  STM m (l blk EmptyMK)
 implForkerGetLedgerState env = current <$> readTVar (foeChangelog env)
 
 -- | Obtain statistics for a combination of backing store value handle and
 -- changelog.
 implForkerReadStatistics ::
-  (IOLike m, HasLedgerTables l, GetTip l) =>
+  (IOLike m, HasLedgerTables l blk, GetTip (l blk)) =>
   ForkerEnv m l blk ->
   m Forker.Statistics
 implForkerReadStatistics env = do
@@ -313,9 +314,9 @@ implForkerReadStatistics env = do
           }
 
 implForkerPush ::
-  (IOLike m, GetTip l, HasLedgerTables l) =>
+  (IOLike m, GetTip (l blk), HasLedgerTables l blk) =>
   ForkerEnv m l blk ->
-  l DiffMK ->
+  l blk DiffMK ->
   m ()
 implForkerPush env newState =
   encloseTimedWith (ForkerPush >$< foeTracer env) $ do
@@ -325,7 +326,7 @@ implForkerPush env newState =
       writeTVar (foeChangelog env) chlog'
 
 implForkerCommit ::
-  (MonadSTM m, GetTip l, StandardHash l, HasLedgerTables l) =>
+  (MonadSTM m, GetTip (l blk), StandardHash (l blk), HasLedgerTables l blk) =>
   ForkerEnv m l blk ->
   STM m ()
 implForkerCommit env = do

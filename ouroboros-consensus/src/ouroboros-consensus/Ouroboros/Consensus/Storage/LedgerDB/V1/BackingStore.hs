@@ -33,39 +33,39 @@ import Cardano.Slotting.Slot
 import Control.Tracer
 import Data.Proxy
 import Data.Typeable
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import System.FS.API
 
-type BackingStoreInitialiser m l =
-  InitFrom (LedgerTables l ValuesMK) ->
-  m (LedgerBackingStore m l)
+type BackingStoreInitialiser m l blk =
+  InitFrom l (LedgerTables blk ValuesMK) ->
+  m (LedgerBackingStore m l blk)
 
 -- | Overwrite the 'BackingStore' tables with the snapshot's tables
 restoreBackingStore ::
   Tracer m SomeBackendTrace ->
-  SomeBackendArgs m l ->
+  SomeBackendArgs m l blk ->
   SnapshotsFS m ->
-  l EmptyMK ->
+  l blk EmptyMK ->
   FsPath ->
-  m (LedgerBackingStore m l)
+  m (LedgerBackingStore m l blk)
 restoreBackingStore trcr (SomeBackendArgs bArgs) fs st loadPath =
   newBackingStoreInitialiser trcr bArgs fs (InitFromCopy st loadPath)
 
 -- | Create a 'BackingStore' from the given initial tables.
 newBackingStore ::
   Tracer m SomeBackendTrace ->
-  SomeBackendArgs m l ->
+  SomeBackendArgs m l blk ->
   SnapshotsFS m ->
-  l EmptyMK ->
-  LedgerTables l ValuesMK ->
-  m (LedgerBackingStore m l)
+  l blk EmptyMK ->
+  LedgerTables blk ValuesMK ->
+  m (LedgerBackingStore m l blk)
 newBackingStore trcr (SomeBackendArgs bArgs) fs st tables =
   newBackingStoreInitialiser trcr bArgs fs (InitFromValues Origin st tables)
 
-data SomeBackendArgs m l where
-  SomeBackendArgs :: Backend m backend l => Args m backend -> SomeBackendArgs m l
+data SomeBackendArgs m l blk where
+  SomeBackendArgs :: Backend m backend l blk => Args m backend -> SomeBackendArgs m l blk
 
 data SomeBackendTrace where
   SomeBackendTrace :: (Show (Trace backend), Typeable backend) => Trace backend -> SomeBackendTrace
@@ -73,13 +73,14 @@ data SomeBackendTrace where
 instance Show SomeBackendTrace where
   show (SomeBackendTrace tr) = show tr
 
-class Backend m backend l where
+class Backend m backend l blk where
   data Args m backend
 
   data Trace backend
 
   isRightBackendForSnapshot ::
     Proxy l ->
+    Proxy blk ->
     Args m backend ->
     SnapshotBackend ->
     Bool
@@ -88,4 +89,4 @@ class Backend m backend l where
     Tracer m SomeBackendTrace ->
     Args m backend ->
     SnapshotsFS m ->
-    BackingStoreInitialiser m l
+    BackingStoreInitialiser m l blk

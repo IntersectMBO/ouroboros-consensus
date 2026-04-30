@@ -145,7 +145,7 @@ defaultArgs ::
   ( IOLike m
   , LedgerDB.LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , LedgerDB.LedgerSupportsInMemoryLedgerDB (LedgerState blk)
+  , LedgerDB.LedgerSupportsInMemoryLedgerDB LedgerState blk
   ) =>
   Incomplete ChainDbArgs m blk
 defaultArgs =

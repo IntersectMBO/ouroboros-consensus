@@ -53,7 +53,7 @@ import qualified Ouroboros.Consensus.BlockchainTime.WallClock.Types as Clock
 import qualified Ouroboros.Consensus.HardFork.Abstract as HardFork
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
-import qualified Ouroboros.Consensus.Ledger.Basics as L
+import qualified Ouroboros.Consensus.Ledger.Abstract as L
 import Ouroboros.Consensus.Node.GsmState
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import Ouroboros.Consensus.Util.NormalForm.StrictTVar (StrictTVar)

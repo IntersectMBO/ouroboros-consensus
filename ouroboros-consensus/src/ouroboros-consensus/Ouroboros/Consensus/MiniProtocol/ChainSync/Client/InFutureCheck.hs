@@ -52,7 +52,7 @@ import Ouroboros.Consensus.HardFork.History.Qry
   ( runQuery
   , slotToWallclock
   )
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
   ( EmptyMK
   , LedgerConfig
   , LedgerState

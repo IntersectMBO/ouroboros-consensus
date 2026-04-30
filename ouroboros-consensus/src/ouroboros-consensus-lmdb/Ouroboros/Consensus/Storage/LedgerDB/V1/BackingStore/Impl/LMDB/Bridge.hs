@@ -42,6 +42,7 @@ import qualified Database.LMDB.Simple.Cursor as Cursor
 import qualified Database.LMDB.Simple.Internal as Internal
 import Foreign (Storable (peek, poke), castPtr)
 import GHC.Exts
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Util.IndexedMemPack
 
 instance Buffer MDB_val where
@@ -70,17 +71,17 @@ peekMDBValMemPack = peek >=> pure . unpackError
 pokeMDBValMemPack :: MemPack a => Ptr MDB_val -> a -> IO ()
 pokeMDBValMemPack ptr x = Internal.marshalOutBS (packByteString x) (poke ptr)
 
-indexedPeekMDBValMemPack :: IndexedMemPack idx a => idx -> Ptr MDB_val -> IO a
+indexedPeekMDBValMemPack :: IndexedMemPack l blk a => l blk EmptyMK -> Ptr MDB_val -> IO a
 indexedPeekMDBValMemPack idx = peek >=> pure . indexedUnpackError idx
 
-indexedPokeMDBValMemPack :: IndexedMemPack idx a => idx -> Ptr MDB_val -> a -> IO ()
+indexedPokeMDBValMemPack :: IndexedMemPack l blk a => l blk EmptyMK -> Ptr MDB_val -> a -> IO ()
 indexedPokeMDBValMemPack idx ptr x = Internal.marshalOutBS (indexedPackByteString idx x) (poke ptr)
 
 {-------------------------------------------------------------------------------
   Cursor
 -------------------------------------------------------------------------------}
 
-fromCodecMK :: (IndexedMemPack idx v, MemPack k) => idx -> Cursor.PeekPoke k v
+fromCodecMK :: (IndexedMemPack l blk v, MemPack k) => l blk EmptyMK -> Cursor.PeekPoke k v
 fromCodecMK idx =
   Cursor.PeekPoke
     { Cursor.kPeek = peekMDBValMemPack
@@ -92,8 +93,8 @@ fromCodecMK idx =
 -- | Wrapper around @'Cursor.runCursorAsTransaction''@ that requires a
 -- @'CodecMK'@ instead of a @'PeekPoke'@.
 runCursorAsTransaction' ::
-  (MemPack k, IndexedMemPack idx v) =>
-  idx ->
+  (MemPack k, IndexedMemPack l blk v) =>
+  l blk EmptyMK ->
   CursorM k v mode a ->
   Database k v ->
   Transaction mode a
@@ -121,16 +122,16 @@ getBS db k =
     >>= maybe (return Nothing) (liftIO . fmap Just . pure . unpackError)
 
 indexedGet ::
-  (IndexedMemPack idx v, MemPack k) =>
-  idx ->
+  (IndexedMemPack l blk v, MemPack k) =>
+  l blk EmptyMK ->
   Database k v ->
   k ->
   Transaction mode (Maybe v)
 indexedGet idx db = indexedGetBS idx db . packByteString
 
 indexedGetBS ::
-  IndexedMemPack idx v =>
-  idx ->
+  IndexedMemPack l blk v =>
+  l blk EmptyMK ->
   Database k v ->
   BS.ByteString ->
   Transaction mode (Maybe v)
@@ -164,8 +165,8 @@ putBS (Internal.Db _ dbi) keyBS value = Internal.Txn $ \txn ->
     Monad.void $ assert (len' == sz) $ Internal.copyBS (castPtr ptr, len') valueBS
 
 indexedPut ::
-  (IndexedMemPack idx v, MemPack k) =>
-  idx ->
+  (IndexedMemPack l blk v, MemPack k) =>
+  l blk EmptyMK ->
   Database k v ->
   k ->
   v ->
@@ -173,8 +174,8 @@ indexedPut ::
 indexedPut idx db = indexedPutBS idx db . packByteString
 
 indexedPutBS ::
-  IndexedMemPack idx v =>
-  idx ->
+  IndexedMemPack l blk v =>
+  l blk EmptyMK ->
   Database k v ->
   BS.ByteString ->
   v ->

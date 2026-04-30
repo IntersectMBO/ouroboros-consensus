@@ -198,39 +198,32 @@ instance IsLedger LedgerState ByronBlock where
             byronLedgerTransition
         }
 
-type instance TxIn (LedgerState ByronBlock) = Void
-type instance TxOut (LedgerState ByronBlock) = Void
+type instance TxIn ByronBlock = Void
+type instance TxOut ByronBlock = Void
 
-instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
-  convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z
-instance LedgerTablesAreTrivial (Ticked LedgerState ByronBlock) where
-  convertMapKind (TickedByronLedgerState x y) = TickedByronLedgerState x y
+instance LedgerTablesAreTrivial LedgerState ByronBlock where
+  convertMapKind ByronLedgerState{..} = ByronLedgerState{..}
 
-deriving via
-  Void
-  instance
-    IndexedMemPack (LedgerState ByronBlock EmptyMK) Void
-deriving via
-  Void
-  instance
-    IndexedMemPack (Ticked LedgerState ByronBlock EmptyMK) Void
+instance LedgerTablesAreTrivial (Ticked LedgerState) ByronBlock where
+  convertMapKind TickedByronLedgerState{..} = TickedByronLedgerState{..}
 
-deriving via
-  TrivialLedgerTables (LedgerState ByronBlock)
-  instance
-    HasLedgerTables (LedgerState ByronBlock)
-deriving via
-  TrivialLedgerTables (Ticked LedgerState ByronBlock)
-  instance
-    HasLedgerTables (Ticked LedgerState ByronBlock)
-deriving via
-  TrivialLedgerTables (LedgerState ByronBlock)
-  instance
-    CanStowLedgerTables (LedgerState ByronBlock)
-deriving via
-  TrivialLedgerTables (LedgerState ByronBlock)
-  instance
-    SerializeTablesWithHint (LedgerState ByronBlock)
+instance HasLedgerTables LedgerState ByronBlock where
+  projectLedgerTables = trivialProjectLedgerTables
+  withLedgerTables = trivialWithLedgerTables
+
+instance HasLedgerTables (Ticked LedgerState) ByronBlock where
+  projectLedgerTables = trivialProjectLedgerTables
+  withLedgerTables = trivialWithLedgerTables
+
+instance CanStowLedgerTables (LedgerState ByronBlock) where
+  stowLedgerTables = trivialStowLedgerTables
+  unstowLedgerTables = trivialUnstowLedgerTables
+
+instance SerializeTablesWithHint LedgerState ByronBlock where
+  encodeTablesWithHint = trivialEncodeTablesWithHint
+  decodeTablesWithHint = trivialDecodeTablesWithHint
+
+deriving via Void instance IndexedMemPack LedgerState ByronBlock Void
 
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces
@@ -242,6 +235,7 @@ instance ApplyBlock LedgerState ByronBlock where
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult validationErrorImpossible
 
+instance GetBlockKeySets ByronBlock where
   getBlockKeySets _ = emptyLedgerTables
 
 data instance BlockQuery ByronBlock fp result where
@@ -579,5 +573,5 @@ decodeByronResult ::
 decodeByronResult query = case query of
   GetUpdateInterfaceState -> fromByronCBOR
 
-instance CanUpgradeLedgerTables (LedgerState ByronBlock) where
+instance CanUpgradeLedgerTables LedgerState ByronBlock where
   upgradeTables _ _ = id

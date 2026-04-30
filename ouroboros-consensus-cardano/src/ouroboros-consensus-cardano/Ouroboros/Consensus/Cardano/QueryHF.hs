@@ -88,7 +88,7 @@ shelleyCardanoFilter ::
   , ShelleyCompatible proto era
   ) =>
   BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
-  TxOut (LedgerState (HardForkBlock (CardanoEras c))) ->
+  TxOut (HardForkBlock (CardanoEras c)) ->
   Bool
 shelleyCardanoFilter q = eliminateCardanoTxOut (\_ -> shelleyQFTraverseTablesPredicate q)
 
@@ -125,6 +125,6 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
 
 byronCardanoFilter ::
   BlockQuery ByronBlock QFTraverseTables result ->
-  TxOut (LedgerState (HardForkBlock (CardanoEras c))) ->
+  TxOut (HardForkBlock (CardanoEras c)) ->
   Bool
 byronCardanoFilter = \case {}

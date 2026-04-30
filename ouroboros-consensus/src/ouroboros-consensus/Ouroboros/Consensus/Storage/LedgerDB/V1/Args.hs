@@ -29,7 +29,7 @@ shouldFlush requestedFlushFrequency = case requestedFlushFrequency of
   DefaultFlushFrequency -> (>= 100)
   DisableFlushing -> const False
 
-data LedgerDbBackendArgs m l = V1Args
+data LedgerDbBackendArgs m l blk = V1Args
   { v1FlushFrequency :: FlushFrequency
-  , v1BackendArgs :: SomeBackendArgs m l
+  , v1BackendArgs :: SomeBackendArgs m l blk
   }
