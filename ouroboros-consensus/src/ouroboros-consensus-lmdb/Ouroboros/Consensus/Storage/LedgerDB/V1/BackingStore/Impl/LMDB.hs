@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -102,6 +103,13 @@ import System.IO.Temp
   Database definition
 -------------------------------------------------------------------------------}
 
+type LMDBConstraints l blk =
+  ( Ord (TxIn blk)
+  , MemPack (TxIn blk)
+  , Eq (TxOut blk)
+  , IndexedMemPack l blk (TxOut blk)
+  )
+
 -- | The LMDB database that underlies the backing store.
 data Db m blk = Db
   { dbEnv :: !(LMDB.Environment LMDB.ReadWrite)
@@ -182,7 +190,7 @@ getDb ::
 getDb (K2 name) = LMDBMK name <$> LMDB.getDatabase (Just name)
 
 readAll ::
-  (Ord (TxIn blk), MemPack (TxIn blk), IndexedMemPack l blk (TxOut blk)) =>
+  LMDBConstraints l blk =>
   l blk EmptyMK ->
   LMDBMK (TxIn blk) (TxOut blk) ->
   LMDB.Transaction mode (ValuesMK (TxIn blk) (TxOut blk))
@@ -208,7 +216,7 @@ readAll st (LMDBMK _ dbMK) =
 -- function will be unexpected.
 rangeRead ::
   forall mode l blk.
-  (Ord (TxIn blk), MemPack (TxIn blk), IndexedMemPack l blk (TxOut blk)) =>
+  LMDBConstraints l blk =>
   API.RangeQuery (LedgerTables blk KeysMK) ->
   l blk EmptyMK ->
   LMDBMK (TxIn blk) (TxOut blk) ->
@@ -236,7 +244,7 @@ rangeRead rq st dbMK =
       db
 
 initLMDBTable ::
-  (IndexedMemPack l blk (TxOut blk), MemPack (TxIn blk)) =>
+  LMDBConstraints l blk =>
   l blk EmptyMK ->
   LMDBMK (TxIn blk) (TxOut blk) ->
   ValuesMK (TxIn blk) (TxOut blk) ->
@@ -253,7 +261,7 @@ initLMDBTable st (LMDBMK tblName db) (ValuesMK utxoVals) =
         utxoVals
 
 readLMDBTable ::
-  (Ord (TxIn blk), MemPack (TxIn blk), IndexedMemPack l blk (TxOut blk)) =>
+  LMDBConstraints l blk =>
   l blk EmptyMK ->
   LMDBMK (TxIn blk) (TxOut blk) ->
   KeysMK (TxIn blk) (TxOut blk) ->
@@ -269,7 +277,7 @@ readLMDBTable st (LMDBMK _ db) (KeysMK keys) =
         Just v -> Map.insert k v m
 
 writeLMDBTable ::
-  (MemPack (TxIn blk), IndexedMemPack l blk (TxOut blk)) =>
+  LMDBConstraints l blk =>
   l blk EmptyMK ->
   LMDBMK (TxIn blk) (TxOut blk) ->
   DiffMK (TxIn blk) (TxOut blk) ->
@@ -374,9 +382,8 @@ checkAndOpenDbDirWithRetry gdd shfs@(FS.SomeHasFS fs) path =
 -- | Initialise an LMDB database from these provided values.
 initFromVals ::
   forall l blk m.
-  ( HasLedgerTables l blk
-  , IndexedMemPack l blk (TxOut blk)
-  , MonadIO m
+  ( MonadIO m
+  , LMDBConstraints l blk
   ) =>
   Trace.Tracer m API.BackingStoreTrace ->
   -- | The slot number up to which the ledger tables contain values.
@@ -455,10 +462,9 @@ lmdbCopy from0 tracer e to = do
 newLMDBBackingStore ::
   forall m l blk.
   ( HasCallStack
-  , HasLedgerTables l blk
-  , IndexedMemPack l blk (TxOut blk)
   , MonadIO m
   , IOLike m
+  , LMDBConstraints l blk
   ) =>
   Trace.Tracer m API.BackingStoreTrace ->
   -- | Configuration parameters for the LMDB database that we
@@ -605,11 +611,10 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
 -- current database state.
 mkLMDBBackingStoreValueHandle ::
   forall l blk m.
-  ( HasLedgerTables l blk
-  , IndexedMemPack l blk (TxOut blk)
-  , MonadIO m
+  ( MonadIO m
   , IOLike m
   , HasCallStack
+  , LMDBConstraints l blk
   ) =>
   -- | The LMDB database for which the backing store value handle is
   -- created.
@@ -840,10 +845,9 @@ prettyPrintLMDBErr = \case
 type data LMDB
 
 instance
-  ( HasLedgerTables l blk
-  , IndexedMemPack l blk (TxOut blk)
-  , MonadIO m
+  ( MonadIO m
   , IOLike m
+  , LMDBConstraints l blk
   ) =>
   Backend m LMDB l blk
   where
@@ -866,11 +870,11 @@ instance
 -- | Create arguments for initializing the LedgerDB using the LMDB backend.
 mkLMDBArgs ::
   ( MonadIOPrim m
-  , HasLedgerTables LedgerState blk
   , IOLike m
+  , LMDBConstraints LedgerState blk
   ) =>
-  V1.FlushFrequency -> FilePath -> LMDBLimits -> a -> (LedgerDbBackendArgs m blk, a)
-mkLMDBArgs flushing lmdbPath limits =
+  Proxy l -> V1.FlushFrequency -> FilePath -> LMDBLimits -> a -> (LedgerDbBackendArgs m blk, a)
+mkLMDBArgs _ flushing lmdbPath limits =
   (,) $
     LedgerDbBackendArgsV1 $
       V1.V1Args flushing $
@@ -968,9 +972,7 @@ yieldLmdbS readChunkSize bsvh hint k = do
 -- in the alloc step of a bracket.
 mkLMDBYieldArgs ::
   forall blk.
-  ( HasCallStack
-  , HasLedgerTables LedgerState blk
-  ) =>
+  (LMDBConstraints LedgerState blk, HasCallStack) =>
   FS.SomeHasFS IO ->
   DiskSnapshot ->
   LMDBLimits ->
@@ -997,9 +999,7 @@ mkLMDBYieldArgs fs ds limits hint = do
 -- in the alloc step of a bracket.
 mkLMDBSinkArgs ::
   forall blk.
-  ( HasCallStack
-  , HasLedgerTables LedgerState blk
-  ) =>
+  (HasCallStack, LMDBConstraints LedgerState blk) =>
   FS.SomeHasFS IO ->
   DiskSnapshot ->
   LMDBLimits ->

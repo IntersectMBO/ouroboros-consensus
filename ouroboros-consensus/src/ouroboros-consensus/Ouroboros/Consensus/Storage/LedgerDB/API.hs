@@ -202,11 +202,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDB'
   , LedgerDbPrune (..)
   , LedgerDbSerialiseConstraints
-  , LedgerSupportsInMemoryLedgerDB
-  , LedgerSupportsLedgerDB
-  , LedgerSupportsLMDBLedgerDB
-  , LedgerSupportsV1LedgerDB
-  , LedgerSupportsV2LedgerDB
   , ResolveBlock
   , currentPoint
 
@@ -302,11 +297,9 @@ type LedgerDbSerialiseConstraints blk =
   , DecodeDisk blk (AnnTip blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
-  , -- For InMemory LedgerDBs
-    MemPack (TxIn blk)
+  , IndexedMemPack LedgerState blk (TxOut blk)
+  , MemPack (TxIn blk)
   , SerializeTablesWithHint LedgerState blk
-  , -- For OnDisk LedgerDBs
-    IndexedMemPack LedgerState blk (TxOut blk)
   )
 
 -- | The core API of the LedgerDB component
@@ -810,29 +803,6 @@ instance
   where
   upgradeTables (ExtLedgerState st0 _) (ExtLedgerState st1 _) =
     upgradeTables st0 st1
-
-{-------------------------------------------------------------------------------
-  LedgerDB constraints
--------------------------------------------------------------------------------}
-
-type LedgerSupportsInMemoryLedgerDB l blk =
-  (CanUpgradeLedgerTables l blk, SerializeTablesWithHint l blk)
-
-type LedgerSupportsLMDBLedgerDB l blk = IndexedMemPack l blk (TxOut blk)
-
-type LedgerSupportsV1LedgerDB l blk =
-  (LedgerSupportsInMemoryLedgerDB l blk, LedgerSupportsLMDBLedgerDB l blk)
-
-type LedgerSupportsV2LedgerDB l blk =
-  (LedgerSupportsInMemoryLedgerDB l blk, MemPack (TxIn blk))
-
-type LedgerSupportsLedgerDB blk = LedgerSupportsLedgerDB' LedgerState blk
-
-type LedgerSupportsLedgerDB' l blk =
-  ( LedgerSupportsV1LedgerDB l blk
-  , LedgerSupportsV2LedgerDB l blk
-  , LedgerDbSerialiseConstraints blk
-  )
 
 {-------------------------------------------------------------------------------
   Pruning

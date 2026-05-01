@@ -120,7 +120,6 @@ eliminateCardanoTxOut ::
   forall r c.
   CardanoHardForkConstraints c =>
   ( forall x.
-    -- TODO ProtoCrypto constraint should be in IsShelleyBlock
     IsShelleyBlock x =>
     Index (CardanoEras c) x ->
     TxOut x ->

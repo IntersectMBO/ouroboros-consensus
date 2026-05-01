@@ -78,7 +78,7 @@ mkInitDb ::
   ( LedgerSupportsProtocol blk
   , IOLike m
   , HasHardForkHistory blk
-  , LedgerSupportsLedgerDB blk
+  , LedgerDbSerialiseConstraints blk
   ) =>
   Complete LedgerDbArgs m blk ->
   V1.LedgerDbBackendArgs m ExtLedgerState blk ->

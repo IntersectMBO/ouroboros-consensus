@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
@@ -187,11 +188,13 @@ duplicateLSMTable tracer t = do
   LedgerTablesHandle
 -------------------------------------------------------------------------------}
 
+type LSMConstraints l blk =
+  (HasLedgerTables l blk, MemPack (TxIn blk), IndexedMemPack l blk (TxOut blk))
+
 newLSMLedgerTablesHandle ::
   forall m l blk.
   ( IOLike m
-  , HasLedgerTables l blk
-  , IndexedMemPack l blk (TxOut blk)
+  , LSMConstraints l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   -- | The size of the tables
@@ -221,8 +224,7 @@ newLSMLedgerTablesHandle tracer utxosSize t =
 
 implDuplicate ::
   ( IOLike m
-  , HasLedgerTables l blk
-  , IndexedMemPack l blk (TxOut blk)
+  , LSMConstraints l blk
   ) =>
   Word64 ->
   UTxOTable m ->
@@ -237,8 +239,7 @@ implDuplicate size t tracer =
 implDuplicateWithDiffs ::
   forall m l blk mk.
   ( IOLike m
-  , HasLedgerTables l blk
-  , IndexedMemPack l blk (TxOut blk)
+  , LSMConstraints l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   UTxOTable m ->
@@ -279,8 +280,7 @@ implDuplicateWithDiffs tracer t0 size _ !st1 = do
 implRead ::
   forall m l blk.
   ( IOLike m
-  , HasLedgerTables l blk
-  , IndexedMemPack l blk (TxOut blk)
+  , LSMConstraints l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   UTxOTable m ->
@@ -313,8 +313,7 @@ implRead tracer t st (LedgerTables (KeysMK keys)) =
 
 implReadRange ::
   forall m l blk.
-  (IOLike m, IndexedMemPack l blk (TxOut blk)) =>
-  HasLedgerTables l blk =>
+  (IOLike m, LSMConstraints l blk) =>
   UTxOTable m ->
   l blk EmptyMK ->
   (Maybe (TxIn blk), Int) ->
@@ -344,8 +343,7 @@ implReadRange table st (mPrev, num) = do
 
 implReadAll ::
   ( IOLike m
-  , HasLedgerTables l blk
-  , IndexedMemPack l blk (TxOut blk)
+  , LSMConstraints l blk
   ) =>
   UTxOTable m ->
   l blk EmptyMK ->
@@ -519,6 +517,7 @@ loadSnapshot ::
   forall blk m.
   ( LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
+  , LSMConstraints LedgerState blk
   , IOLike m
   ) =>
   Tracer m LedgerDBV2Trace ->
@@ -565,8 +564,7 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session ds = do
 tableFromValuesMK ::
   forall m l blk.
   ( IOLike m
-  , IndexedMemPack l blk (TxOut blk)
-  , MemPack (TxIn blk)
+  , LSMConstraints l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   Session m ->
@@ -680,8 +678,7 @@ instance
   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
 
 instance
-  ( MemPack (TxIn blk)
-  , IndexedMemPack l blk (TxOut blk)
+  ( LSMConstraints l blk
   , IOLike m
   ) =>
   StreamingBackend m LSM l blk
@@ -757,8 +754,7 @@ sinkLsmS ::
   , MonadMask m
   , MonadST m
   , MonadEvaluate m
-  , MemPack (TxIn blk)
-  , IndexedMemPack l blk (TxOut blk)
+  , LSMConstraints l blk
   ) =>
   Int ->
   SomeHasFS m ->
@@ -802,8 +798,7 @@ sinkLsmS writeChunkSize (SomeHasFS hfs) ds session st stream = do
 -- | Create Yield arguments for LSM
 mkLSMYieldArgs ::
   ( IOLike m
-  , HasLedgerTables l blk
-  , IndexedMemPack l blk (TxOut blk)
+  , LSMConstraints l blk
   ) =>
   -- | The filepath in which the LSM database lives. Must not have a trailing slash!
   FilePath ->

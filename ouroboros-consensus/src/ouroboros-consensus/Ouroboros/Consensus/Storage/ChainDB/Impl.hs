@@ -76,7 +76,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
-import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
@@ -108,7 +107,6 @@ withDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , LedgerSupportsLedgerDB blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
@@ -125,7 +123,6 @@ openDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , LedgerSupportsLedgerDB blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
@@ -142,7 +139,6 @@ openDBInternal ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , HasCallStack
-  , LedgerSupportsLedgerDB blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   -- | 'True' = Launch background tasks

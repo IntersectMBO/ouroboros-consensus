@@ -233,8 +233,8 @@ loadSnapshot ::
   forall blk m.
   ( LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
+  , CanUpgradeLedgerTables LedgerState blk
   , IOLike m
-  , LedgerSupportsInMemoryLedgerDB LedgerState blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   CodecConfig blk ->
@@ -284,7 +284,7 @@ instance
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsInMemoryLedgerDB LedgerState blk
+  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   Backend m Mem blk
   where
@@ -309,7 +309,7 @@ mkInMemoryArgs ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsInMemoryLedgerDB LedgerState blk
+  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   a -> (LedgerDbBackendArgs m blk, a)
 mkInMemoryArgs = (,) $ LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs

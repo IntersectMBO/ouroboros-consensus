@@ -1045,6 +1045,7 @@ instance
       LedgerState
       (TestBlockWith ptype)
       (TxOut (TestBlockWith ptype))
+  , MemPack (TxIn (TestBlockWith ptype))
   , SerializeTablesWithHint LedgerState (TestBlockWith ptype)
   ) =>
   SerialiseDiskConstraints (TestBlockWith ptype)
