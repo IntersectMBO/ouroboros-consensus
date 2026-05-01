@@ -29,7 +29,6 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
-import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------

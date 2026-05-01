@@ -136,7 +136,6 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , envelopeChecks
   , mkHeaderView
   )
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CBOR
   ( decodeStrictMaybe

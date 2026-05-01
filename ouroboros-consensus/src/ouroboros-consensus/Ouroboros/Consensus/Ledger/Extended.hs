@@ -338,6 +338,13 @@ instance
     ExtLedgerState (unstowLedgerTables lstate) hstate
 
 instance
+  CanUpgradeLedgerTables LedgerState blk =>
+  CanUpgradeLedgerTables ExtLedgerState blk
+  where
+  upgradeTables (ExtLedgerState st0 _) (ExtLedgerState st1 _) =
+    upgradeTables st0 st1
+
+instance
   (txout ~ TxOut blk, IndexedMemPack LedgerState blk txout) =>
   IndexedMemPack ExtLedgerState blk txout
   where
