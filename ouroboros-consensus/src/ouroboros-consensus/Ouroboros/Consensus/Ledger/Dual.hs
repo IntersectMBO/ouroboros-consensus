@@ -648,24 +648,21 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
   applyTx
     DualLedgerConfig{..}
     wti
-    slot
     DualGenTx{..}
-    TickedDualLedgerState{..} = do
+    DualLedgerState{..} = do
       ((main', mainVtx), (aux', auxVtx)) <-
         agreeOnError
           DualGenTxErr
           ( applyTx
               dualLedgerConfigMain
               wti
-              slot
               dualGenTxMain
-              tickedDualLedgerStateMain
+              dualLedgerStateMain
           , applyTx
               dualLedgerConfigAux
               wti
-              slot
               dualGenTxAux
-              tickedDualLedgerStateAux
+              dualLedgerStateAux
           )
       let vtx =
             ValidatedDualGenTx
@@ -674,47 +671,71 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
               , vDualGenTxBridge = dualGenTxBridge
               }
       return
-        ( TickedDualLedgerState
-            { tickedDualLedgerStateMain = main'
-            , tickedDualLedgerStateAux = applyDiffs tickedDualLedgerStateAux aux'
-            , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
-            , tickedDualLedgerStateBridge =
-                updateBridgeWithTx
-                  vtx
-                  tickedDualLedgerStateBridge
+        ( DualLedgerState
+            { dualLedgerStateMain = main'
+            , dualLedgerStateAux = applyDiffs dualLedgerStateAux aux'
+            , dualLedgerStateBridge =
+                updateBridgeWithTx vtx dualLedgerStateBridge
             }
         , vtx
         )
 
-  reapplyTx
+  reapplyTxBoth
+    mode
     DualLedgerConfig{..}
     slot
     tx@ValidatedDualGenTx{..}
-    TickedDualLedgerState{..} = do
-      (main', aux') <-
-        agreeOnError
-          DualGenTxErr
-          ( reapplyTx
-              dualLedgerConfigMain
-              slot
-              vDualGenTxMain
-              tickedDualLedgerStateMain
-          , reapplyTx
-              dualLedgerConfigAux
-              slot
-              vDualGenTxAux
-              tickedDualLedgerStateAux
-          )
-      return $
-        TickedDualLedgerState
-          { tickedDualLedgerStateMain = main'
-          , tickedDualLedgerStateAux = aux'
-          , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
-          , tickedDualLedgerStateBridge =
-              updateBridgeWithTx
-                tx
-                tickedDualLedgerStateBridge
-          }
+    st = case (mode, st) of
+      (ReapplyLedgerState, DualLedgerState{..}) -> do
+        (main', aux') <-
+          agreeOnError
+            DualGenTxErr
+            ( reapplyTx
+                dualLedgerConfigMain
+                slot
+                vDualGenTxMain
+                dualLedgerStateMain
+            , reapplyTx
+                dualLedgerConfigAux
+                slot
+                vDualGenTxAux
+                dualLedgerStateAux
+            )
+        return $
+          DualLedgerState
+            { dualLedgerStateMain = main'
+            , dualLedgerStateAux = aux'
+            , dualLedgerStateBridge =
+                updateBridgeWithTx
+                  tx
+                  dualLedgerStateBridge
+            }
+      (ReapplyTickedLedgerState, WrapTickedLedgerState TickedDualLedgerState{..}) -> do
+        (main', aux') <-
+          agreeOnError
+            DualGenTxErr
+            ( reapplyTx'
+                dualLedgerConfigMain
+                slot
+                vDualGenTxMain
+                $ WrapTickedLedgerState tickedDualLedgerStateMain
+            , reapplyTx'
+                dualLedgerConfigAux
+                slot
+                vDualGenTxAux
+                $ WrapTickedLedgerState tickedDualLedgerStateAux
+            )
+        return $
+          WrapTickedLedgerState
+            TickedDualLedgerState
+              { tickedDualLedgerStateMain = unWrapTickedLedgerState main'
+              , tickedDualLedgerStateAux = unWrapTickedLedgerState aux'
+              , tickedDualLedgerStateBridge =
+                  updateBridgeWithTx
+                    tx
+                    tickedDualLedgerStateBridge
+              , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
+              }
 
   txForgetValidated vtx =
     DualGenTx
@@ -734,24 +755,30 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
       . getTransactionKeySets @m
       . dualGenTxMain
 
-  mkMempoolApplyTxError TickedDualLedgerState{..} txt = do
-    x <- mkMempoolApplyTxError tickedDualLedgerStateMain txt
-    y <- mkMempoolApplyTxError tickedDualLedgerStateAux txt
+  mkMempoolApplyTxError DualLedgerState{..} txt = do
+    x <- mkMempoolApplyTxError dualLedgerStateMain txt
+    y <- mkMempoolApplyTxError dualLedgerStateAux txt
     Just $ DualGenTxErr x y
 
 instance Bridge m a => TxLimits (DualBlock m a) where
   type TxMeasure (DualBlock m a) = TxMeasure m
 
   txWireSize = txWireSize . dualGenTxMain
-  txMeasure DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} =
+  txMeasure DualLedgerConfig{..} DualLedgerState{..} DualGenTx{..} =
     do
       mapExcept (inj +++ id)
-      $ txMeasure dualLedgerConfigMain tickedDualLedgerStateMain dualGenTxMain
+      $ txMeasure dualLedgerConfigMain dualLedgerStateMain dualGenTxMain
    where
     inj m = DualGenTxErr m (error "ByronSpec has no tx-too-big error")
 
-  blockCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
-    blockCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
+  blockCapacityTxMeasure mode DualLedgerConfig{..} st =
+    case mode of
+      ReapplyLedgerState -> blockCapacityTxMeasure ReapplyLedgerState dualLedgerConfigMain (dualLedgerStateMain st)
+      ReapplyTickedLedgerState ->
+        blockCapacityTxMeasure
+          ReapplyTickedLedgerState
+          dualLedgerConfigMain
+          (WrapTickedLedgerState $ tickedDualLedgerStateMain $ unWrapTickedLedgerState st)
 
 -- We don't need a pair of IDs, as long as we can unique ID the transaction
 newtype instance TxId (GenTx (DualBlock m a)) = DualGenTxId

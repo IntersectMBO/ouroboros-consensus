@@ -324,8 +324,8 @@ data instance Validated (GenTx BlockB)
 type instance ApplyTxErr BlockB = Void
 
 instance LedgerSupportsMempool BlockB where
-  applyTx = \_ _ _wti tx -> case tx of {}
-  reapplyTx = \_ _ vtx -> case vtx of {}
+  applyTx = \_ _wti tx -> case tx of {}
+  reapplyTxBoth = \_ _ _ vtx -> case vtx of {}
 
   txForgetValidated = \case {}
 
@@ -336,7 +336,7 @@ instance LedgerSupportsMempool BlockB where
 instance TxLimits BlockB where
   type TxMeasure BlockB = IgnoringOverflow ByteSize32
   txWireSize = const . fromIntegral $ (0 :: Int)
-  blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary
+  blockCapacityTxMeasure _mode _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary
   txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
 
 data instance TxId (GenTx BlockB)

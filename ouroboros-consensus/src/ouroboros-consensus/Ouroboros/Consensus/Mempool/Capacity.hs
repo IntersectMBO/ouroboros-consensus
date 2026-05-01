@@ -58,14 +58,15 @@ mkCapacityBytesOverride = MempoolCapacityBytesOverride
 -- up), and then simply multiply the ledger's capacity by that number.
 computeMempoolCapacity ::
   LedgerSupportsMempool blk =>
+  ReapplyMode l ->
   LedgerConfig blk ->
-  TickedLedgerState blk mk ->
+  l blk mk ->
   MempoolCapacityBytesOverride ->
   TxMeasure blk
-computeMempoolCapacity cfg st override =
+computeMempoolCapacity mode cfg st override =
   capacity
  where
-  oneBlock = blockCapacityTxMeasure cfg st
+  oneBlock = blockCapacityTxMeasure mode cfg st
   ByteSize32 oneBlockBytes = txMeasureByteSize oneBlock
 
   blockCount = case override of

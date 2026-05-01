@@ -608,19 +608,19 @@ instance
   MockProtocolSpecific c ext =>
   LedgerSupportsMempool (SimpleBlock c ext)
   where
-  applyTx cfg _wti slot tx st = do
+  applyTx cfg _wti tx st = do
     let st' = stowLedgerTables st
     st'' <-
       unstowLedgerTables
-        <$> updateSimpleUTxO cfg slot tx st'
+        <$> updateSimpleUTxO cfg s tx st'
     return
       ( trackingToDiffs $ calculateDifference st st''
       , ValidatedSimpleGenTx tx
       )
 
-  reapplyTx cfg slot vtx st =
+  reapplyTxBoth _ cfg slot vtx st =
     applyDiffs st . fst
-      <$> applyTx cfg DoNotIntervene slot (forgetValidatedSimpleGenTx vtx) st
+      <$> applyTx cfg DoNotIntervene (forgetValidatedSimpleGenTx vtx) st
 
   txForgetValidated = forgetValidatedSimpleGenTx
 
@@ -638,7 +638,7 @@ instance TxLimits (SimpleBlock c ext) where
   -- don't override it.
   --
   -- But not 'maxbound'!, since the mempool sometimes holds multiple blocks worth.
-  blockCapacityTxMeasure _cfg _st = IgnoringOverflow simpleBlockCapacity
+  blockCapacityTxMeasure _mode _cfg _st = IgnoringOverflow simpleBlockCapacity
 
   txMeasure cfg _st =
     fmap IgnoringOverflow
