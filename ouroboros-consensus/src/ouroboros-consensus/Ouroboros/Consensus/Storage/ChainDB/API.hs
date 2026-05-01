@@ -78,6 +78,9 @@ module Ouroboros.Consensus.Storage.ChainDB.API
     -- * Genesis
   , GetLoEFragment
   , LoE (..)
+
+    -- * Background ledger replay
+  , EarlyN2C (..)
   ) where
 
 import Control.Monad (void)
@@ -239,8 +242,15 @@ data ChainDB m blk = ChainDB
   -- ^ Allocate a read only forker at the given point in the given resource
   -- registry.
   --
-  -- This function is to be used by LocalStateQuery server. Note ChainSel uses
-  -- the LedgerDB directly, none of these methods are used there.
+  -- This function is to be used by the LocalStateQuery server. When
+  -- 'EarlyN2C' is enabled and the LedgerDB is still
+  -- replaying, the returned forker may be a /synthesised/ forker (see
+  -- 'EarlyN2C') whose 'roforkerGetLedgerState' returns a
+  -- state built from genesis + known hard-fork triggers. The synthesised
+  -- state is sufficient for history-only queries like @GetInterpreter@;
+  -- queries that read ledger tables (e.g. @GetUTxO*@) will fail noisily
+  -- on the synthesised forker. Note ChainSel uses the LedgerDB directly,
+  -- none of these methods are used there.
   , openReadOnlyForkerAtPoint ::
       Target (Point blk) ->
       m (Either GetForkerError (ReadOnlyForker' m blk))
@@ -1022,3 +1032,26 @@ data LoE a
 -- details. This fragment must be anchored in a (recent) point on the immutable
 -- chain, just like candidate fragments.
 type GetLoEFragment m blk = m (LoE (AnchoredFragment (HeaderWithTime blk)))
+
+-- | Whether the local node-to-client (N2C) socket is bound early in
+-- the boot sequence, so clients can connect while ledger replay
+-- continues in the background.
+--
+-- The default 'EarlyN2CDisabled' preserves the original
+-- synchronous-open / late-bind behaviour byte-for-byte: the LedgerDB
+-- replay blocks 'openDB' and the local socket is bound only after
+-- replay completes.
+--
+-- 'EarlyN2CEnabled' enables the two-phase pipeline: the
+-- LedgerDB replay is forked, 'openDB' returns as soon as the
+-- ImmutableDB is ready, the local socket binds early, and a
+-- synthesised forker serves history-only LSQ queries during the replay
+-- window. Lets clients (notably @cardano-db-sync-new@) start ingesting
+-- finalised blocks while replay continues in the background.
+data EarlyN2C
+  = -- | Original behaviour: synchronous open, late socket bind.
+    EarlyN2CDisabled
+  | -- | Two-phase open: bind socket early, replay in background, serve a
+    -- synthesised forker for history-only LSQ queries during replay.
+    EarlyN2CEnabled
+  deriving (Eq, Show, Generic, NoThunks)

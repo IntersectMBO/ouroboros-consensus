@@ -32,7 +32,8 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
-  ( GetLoEFragment
+  ( EarlyN2C (..)
+  , GetLoEFragment
   , LoE (LoEDisabled)
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -98,6 +99,16 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
   -- current LoE fragment.
   , cdbsSnapshotDelayRNG :: HKD f StdGen
   -- ^ RNG used to randomly determine the duration of snapshot delays
+  , cdbsEarlyN2C :: EarlyN2C
+  -- ^ See 'EarlyN2C'. Defaults to
+  -- 'EarlyN2CDisabled'.
+  , cdbsSynthesiseLedger ::
+      Maybe (Point blk -> Maybe (ExtLedgerState blk EmptyMK))
+  -- ^ Used when 'EarlyN2C' is enabled to build a read-only
+  -- ledger view at the immutable tip. Evaluated once at 'openDB' time
+  -- and cached on the 'ChainDbEnv'. If 'Nothing' (default) or if the
+  -- function returns 'Nothing' for the tip, LSQ Acquire during replay
+  -- fails with 'AcquireFailurePointTooOld'.
   }
 
 -- | Default arguments
@@ -133,6 +144,8 @@ defaultSpecificArgs =
     , cdbsTopLevelConfig = noDefault
     , cdbsLoE = pure LoEDisabled
     , cdbsSnapshotDelayRNG = noDefault
+    , cdbsEarlyN2C = EarlyN2CDisabled
+    , cdbsSynthesiseLedger = Nothing
     }
 
 -- | Default arguments

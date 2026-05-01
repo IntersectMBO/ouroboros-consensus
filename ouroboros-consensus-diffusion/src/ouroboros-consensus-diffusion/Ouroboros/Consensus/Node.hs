@@ -114,7 +114,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
-import Ouroboros.Consensus.Ledger.Basics (ValuesMK)
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK, ValuesMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
@@ -398,6 +398,15 @@ data StdRunNodeArgs m blk
   -- ^ The 'StdGen' will be used to initialize the salt for the LSM backend. It
   -- is expected that it is the same 'StdGen' that is passed elsewhere in
   -- Consensus, i.e. 'llrnRng'.
+  , srnEarlyN2C :: ChainDB.EarlyN2C
+  -- ^ See 'EarlyN2C'. Default
+  -- 'EarlyN2CDisabled' preserves the original
+  -- synchronous-open / late-bind behaviour.
+  , srnSynthesiseLedger ::
+      Maybe (Point blk -> Maybe (ExtLedgerState blk EmptyMK))
+  -- ^ Optional synthesised ledger view used by the LSQ server when
+  -- 'EarlyN2C' is enabled and the LedgerDB is replaying.
+  -- See 'cdbsSynthesiseLedger' on 'ChainDbSpecificArgs' for details.
   }
 
 {-------------------------------------------------------------------------------
@@ -548,30 +557,16 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               )
 
           continueWithCleanChainDB chainDB $ do
-            btime <-
-              hardForkBlockchainTime $
-                llrnCustomiseHardForkBlockchainTimeArgs $
-                  HardForkBlockchainTimeArgs
-                    { hfbtBackoffDelay = pure $ BackoffDelay 60
-                    , hfbtGetLedgerState =
-                        ledgerState <$> ChainDB.getCurrentLedger chainDB
-                    , hfbtLedgerConfig = configLedger cfg
-                    , hfbtRegistry = registry
-                    , hfbtSystemTime = systemTime
-                    , hfbtTracer =
-                        contramap
-                          (fmap (fromRelativeTime systemStart))
-                          (blockchainTimeTracer rnTraceConsensus)
-                    , hfbtMaxClockRewind = secondsToNominalDiffTime 20
-                    }
+            -- 'hardForkBlockchainTime' and 'GSM.realDurationUntilTooOld' both
+            -- eagerly read the current ledger. Substitute pending 'StrictTMVar'
+            -- wrappers here and have the thread forked below populate them
+            -- once the LedgerDB is ready.
+            btimeVar <- newEmptyTMVarIO
+            durationVar <- newEmptyTMVarIO
+            let pendingBtime = mkPendingBlockchainTime btimeVar
+                pendingDuration = mkPendingDurationUntilTooOld durationVar
 
             nodeKernelArgs <- do
-              durationUntilTooOld <-
-                GSM.realDurationUntilTooOld
-                  (configLedger cfg)
-                  (ledgerState <$> ChainDB.getCurrentLedger chainDB)
-                  llrnMaxCaughtUpAge
-                  systemTime
               let gsmMarkerFileView =
                     case ChainDB.cdbsHasFSGsmDB $ ChainDB.cdbsArgs finalArgs of
                       SomeHasFS x -> GSM.realMarkerFileView chainDB x
@@ -589,13 +584,13 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   cfg
                   llrnFeatureFlags
                   rnTraceConsensus
-                  btime
+                  pendingBtime
                   systemTime
                   (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
                   historicityCheck
                   chainDB
                   llrnMaxCaughtUpAge
-                  (Just durationUntilTooOld)
+                  (Just pendingDuration)
                   gsmMarkerFileView
                   rnGetUseBootstrapPeers
                   llrnPublicPeerSelectionStateVar
@@ -603,7 +598,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   DiffusionPipeliningOn
                   rnMempoolTimeoutConfig
                   rnTxSubmissionInitDelay
-            nodeKernel <- initNodeKernel nodeKernelArgs
+            (nodeKernel, completeNodeKernel) <- initNodeKernelEarly nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
             churnModeVar <- StrictSTM.newTVarIO ChurnModeNormal
             churnMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
@@ -649,6 +644,52 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     ntnApps
                     ntcApps
                     nodeKernel
+
+            -- Build BlockchainTime + WrapDurationUntilTooOld, publish them
+            -- via the pending-wrapper TMVars, then run 'completeNodeKernel'
+            -- which opens the real mempool, computes the real GsmState, and
+            -- spawns the ledger-dependent background threads (GSM, block
+            -- forging, block fetch logic, tx submission decision logic).
+            let runLateInit = do
+                  btime <-
+                    hardForkBlockchainTime $
+                      llrnCustomiseHardForkBlockchainTimeArgs $
+                        HardForkBlockchainTimeArgs
+                          { hfbtBackoffDelay = pure $ BackoffDelay 60
+                          , hfbtGetLedgerState =
+                              ledgerState <$> ChainDB.getCurrentLedger chainDB
+                          , hfbtLedgerConfig = configLedger cfg
+                          , hfbtRegistry = registry
+                          , hfbtSystemTime = systemTime
+                          , hfbtTracer =
+                              contramap
+                                (fmap (fromRelativeTime systemStart))
+                                (blockchainTimeTracer rnTraceConsensus)
+                          , hfbtMaxClockRewind = secondsToNominalDiffTime 20
+                          }
+                  durationUntilTooOld <-
+                    GSM.realDurationUntilTooOld
+                      (configLedger cfg)
+                      (ledgerState <$> ChainDB.getCurrentLedger chainDB)
+                      llrnMaxCaughtUpAge
+                      systemTime
+                  -- Both TMVars must be filled /before/ 'completeNodeKernel'
+                  -- is invoked: the completer calls
+                  -- 'GSM.initializationGsmState' which reads through
+                  -- 'pendingDuration' to compute the real initial 'GsmState'.
+                  atomically $ do
+                    putTMVar btimeVar btime
+                    putTMVar durationVar durationUntilTooOld
+                  completeNodeKernel
+
+            -- When 'EarlyN2C' is enabled, fork late-init so
+            -- 'llrnRunDataDiffusion' can run immediately; otherwise run it
+            -- inline (matches the original synchronous boot sequence).
+            case ChainDB.cdbsEarlyN2C (ChainDB.cdbsArgs finalArgs) of
+              ChainDB.EarlyN2CEnabled ->
+                void $ forkLinkedThread registry "Node.lateInit" runLateInit
+              ChainDB.EarlyN2CDisabled ->
+                runLateInit
 
             llrnRunDataDiffusion nodeKernel consensusDiffusionArgs apps
  where
@@ -1125,6 +1166,19 @@ stdLowLevelRunNodeArgsIO
               then id
               else ChainDB.ensureValidateAll
           )
+        . updateEarlyN2C
+
+    updateEarlyN2C ::
+      Incomplete ChainDbArgs IO blk ->
+      Incomplete ChainDbArgs IO blk
+    updateEarlyN2C args =
+      args
+        { ChainDB.cdbsArgs =
+            (ChainDB.cdbsArgs args)
+              { ChainDB.cdbsEarlyN2C = srnEarlyN2C
+              , ChainDB.cdbsSynthesiseLedger = srnSynthesiseLedger
+              }
+        }
 
     llrnCustomiseNodeKernelArgs ::
       NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->

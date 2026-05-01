@@ -24,7 +24,9 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , ChainDbHandle (..)
   , ChainDbState (..)
   , ChainSelectionPromise (..)
+  , LedgerDBStatus (..)
   , SerialiseDiskConstraints
+  , awaitLedgerDB
   , getEnv
   , getEnv1
   , getEnv2
@@ -101,7 +103,11 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
-import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
+import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
+import Ouroboros.Consensus.Ledger.Extended
+  ( ExtLedgerState
+  , ExtValidationError
+  )
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView)
@@ -113,6 +119,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   , ChainDbError (..)
   , ChainSelectionPromise (..)
   , ChainType
+  , EarlyN2C
   , LoE
   , StreamFrom
   , StreamTo
@@ -249,6 +256,27 @@ getEnvSTM1 (CDBHandle varState) f a =
     ChainDbOpen env -> f env a
     ChainDbClosed -> throwSTM $ ClosedDBError @blk prettyCallStack
 
+-- | Whether the LedgerDB has finished its initial replay yet.
+--
+-- The ChainDB starts in 'LdbReplaying' while the LedgerDB is being
+-- initialised in the background and transitions atomically to 'LdbReady'
+-- once initialisation completes.
+data LedgerDBStatus m blk
+  = LdbReplaying
+  | LdbReady !(LedgerDB' m blk)
+  deriving Generic
+
+instance
+  (IOLike m, LedgerSupportsProtocol blk, BlockSupportsDiffusionPipelining blk) =>
+  NoThunks (LedgerDBStatus m blk)
+
+-- | Block in STM until the LedgerDB is ready, then return it.
+awaitLedgerDB :: IOLike m => ChainDbEnv m blk -> STM m (LedgerDB' m blk)
+awaitLedgerDB CDB{cdbLedgerDBStatus} =
+  readTVar cdbLedgerDBStatus >>= \case
+    LdbReplaying -> retry
+    LdbReady ldb -> pure ldb
+
 data ChainDbState m blk
   = ChainDbOpen !(ChainDbEnv m blk)
   | ChainDbClosed
@@ -300,7 +328,15 @@ data ChainDbEnv m blk = CDB
   { cdbImmutableDB :: !(ImmutableDB m blk)
   , cdbImmutableDBLock :: !(RAWLock m ())
   , cdbVolatileDB :: !(VolatileDB m blk)
-  , cdbLedgerDB :: !(LedgerDB' m blk)
+  , cdbLedgerDBStatus :: !(StrictTVar m (LedgerDBStatus m blk))
+  -- ^ See 'LedgerDBStatus'. Use 'awaitLedgerDB' to read.
+  , cdbCancelInit :: !(StrictTVar m (m ()))
+  -- ^ Cancellation action for the background LedgerDB initialisation.
+  -- Run by 'closeDB'; reset to @return ()@ once initialisation completes.
+  , cdbEarlyN2C :: !EarlyN2C
+  -- ^ See 'EarlyN2C'.
+  , cdbSyntheticLedger :: !(Maybe (ExtLedgerState blk EmptyMK))
+  -- ^ Synthesised LSQ ledger view; see 'cdbsSynthesiseLedger'.
   , cdbChain :: !(StrictTVar m (InternalChain blk))
   -- ^ Contains the current chain fragment.
   --
@@ -807,6 +843,12 @@ data TraceOpenEvent blk
       -- | Immutable tip
       (Point blk)
       -- | Tip of the current chain
+      (Point blk)
+  | -- | The ImmutableDB and VolatileDB are open; the LedgerDB is still
+    -- being initialised in the background. LedgerDB-dependent operations
+    -- will block until 'OpenedDB' fires.
+    OpenedDBImmutableReady
+      -- | Immutable tip
       (Point blk)
   | -- | The ChainDB was closed.
     ClosedDB

@@ -68,7 +68,8 @@ import Ouroboros.Consensus.Peras.Weight
   )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
-  ( BlockComponent (..)
+  ( EarlyN2C (..)
+  , BlockComponent (..)
   , ChainDbFailure (..)
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -159,8 +160,13 @@ getCurrentChainLike cdb@CDB{..} getCurChain = do
 
 -- | Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
 -- last @k@ blocks of the current chain.
-getHeaderStateHistory :: ChainDbEnv m blk -> STM m (HeaderStateHistory blk)
-getHeaderStateHistory = LedgerDB.getHeaderStateHistory . cdbLedgerDB
+--
+-- Blocks via 'awaitLedgerDB' until the LedgerDB has finished its initial
+-- replay.
+getHeaderStateHistory ::
+  IOLike m => ChainDbEnv m blk -> STM m (HeaderStateHistory blk)
+getHeaderStateHistory env =
+  awaitLedgerDB env >>= LedgerDB.getHeaderStateHistory
 
 getTipBlock ::
   forall m blk.
@@ -248,8 +254,9 @@ getIsValid ::
   (IOLike m, HasHeader blk) =>
   ChainDbEnv m blk ->
   STM m (RealPoint blk -> Maybe Bool)
-getIsValid CDB{..} = do
-  prevApplied <- LedgerDB.getPrevApplied cdbLedgerDB
+getIsValid env@CDB{..} = do
+  ldb <- awaitLedgerDB env
+  prevApplied <- LedgerDB.getPrevApplied ldb
   invalid <- forgetFingerprint <$> readTVar cdbInvalid
   return $ \pt@(RealPoint _ hash) ->
     -- A block can not both be in the set of invalid blocks and
@@ -283,25 +290,41 @@ getMaxSlotNo CDB{..} = do
   return $ curChainMaxSlotNo `max` volatileDbMaxSlotNo `max` queuedMaxSlotNo
 
 -- | Get current ledger
-getCurrentLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk EmptyMK)
-getCurrentLedger CDB{..} = LedgerDB.getVolatileTip cdbLedgerDB
+--
+-- Blocks via 'awaitLedgerDB' until the LedgerDB has finished its initial
+-- replay.
+getCurrentLedger ::
+  IOLike m => ChainDbEnv m blk -> STM m (ExtLedgerState blk EmptyMK)
+getCurrentLedger env = awaitLedgerDB env >>= LedgerDB.getVolatileTip
 
 -- | Get the immutable ledger, i.e., typically @k@ blocks back.
-getImmutableLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk EmptyMK)
-getImmutableLedger CDB{..} = LedgerDB.getImmutableTip cdbLedgerDB
+--
+-- Blocks via 'awaitLedgerDB' until the LedgerDB has finished its initial
+-- replay.
+getImmutableLedger ::
+  IOLike m => ChainDbEnv m blk -> STM m (ExtLedgerState blk EmptyMK)
+getImmutableLedger env = awaitLedgerDB env >>= LedgerDB.getImmutableTip
 
 -- | Get the ledger for the given point.
 --
 -- When the given point is not among the last @k@ blocks of the current
 -- chain (i.e., older than @k@ or not on the current chain), 'Nothing' is
 -- returned.
+--
+-- Blocks via 'awaitLedgerDB' until the LedgerDB has finished its initial
+-- replay.
 getPastLedger ::
+  IOLike m =>
   ChainDbEnv m blk ->
   Point blk ->
   STM m (Maybe (ExtLedgerState blk EmptyMK))
-getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
+getPastLedger env pt =
+  awaitLedgerDB env >>= \ldb -> LedgerDB.getPastLedgerState ldb pt
 
+-- | Allocate a read-only forker via 'openReadOnlyForkerAtPoint' in the
+-- given registry.
 allocInRegistryReadOnlyForkerAtPoint ::
+  forall m blk.
   IOLike m =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
@@ -317,12 +340,49 @@ allocInRegistryReadOnlyForkerAtPoint cdb tgt rr = do
     Left err -> void (release rk) >> pure (Left err)
     Right v -> pure (Right (rk, v))
 
+-- | Open a read-only forker at the given point.
+--
+-- When the LedgerDB is ready, delegates to the LedgerDB. While it is
+-- replaying, the result depends on 'EarlyN2C':
+-- 'EarlyN2CDisabled' returns 'LedgerNotReady';
+-- 'EarlyN2CEnabled' (with a cached synthesised state)
+-- returns a 'mkSyntheticForker'.
 openReadOnlyForkerAtPoint ::
   IOLike m =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
   m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
-openReadOnlyForkerAtPoint CDB{..} = LedgerDB.openReadOnlyForker cdbLedgerDB
+openReadOnlyForkerAtPoint env tgt =
+  atomically (readTVar (cdbLedgerDBStatus env)) >>= \case
+    LdbReady ldb -> LedgerDB.openReadOnlyForker ldb tgt
+    LdbReplaying -> case cdbEarlyN2C env of
+      EarlyN2CDisabled -> pure (Left LedgerDB.LedgerNotReady)
+      EarlyN2CEnabled -> case cdbSyntheticLedger env of
+        Nothing -> pure (Left LedgerDB.LedgerNotReady)
+        Just synth -> pure (Right (mkSyntheticForker synth))
+
+-- | A 'ReadOnlyForker'' that serves a synthesised 'ExtLedgerState'.
+--
+-- Only 'roforkerGetLedgerState' is implemented. This is sufficient for
+-- history-only LSQ queries — notably @GetInterpreter@, which goes
+-- through 'hardForkSummary' on the returned state. The table-reading
+-- methods 'error' on use: they should never be called on a synthetic
+-- forker, and we prefer a loud crash to silently-empty UTxO data.
+mkSyntheticForker ::
+  forall m blk.
+  IOLike m =>
+  ExtLedgerState blk EmptyMK ->
+  LedgerDB.ReadOnlyForker' m blk
+mkSyntheticForker synth =
+  LedgerDB.ReadOnlyForker
+    { LedgerDB.roforkerClose = pure ()
+    , LedgerDB.roforkerReadTables =
+        \_ -> error "mkSyntheticForker: roforkerReadTables called on synthetic forker"
+    , LedgerDB.roforkerRangeReadTables =
+        \_ -> error "mkSyntheticForker: roforkerRangeReadTables called on synthetic forker"
+    , LedgerDB.roforkerGetLedgerState = pure synth
+    , LedgerDB.roforkerReadStatistics = pure (LedgerDB.Statistics 0)
+    }
 
 withReadOnlyForkerAtPoint ::
   IOLike m =>
@@ -338,7 +398,8 @@ withReadOnlyForkerAtPoint cdb tgt =
     (either (const $ pure ()) (lift . LedgerDB.roforkerClose))
 
 getStatistics :: IOLike m => ChainDbEnv m blk -> m LedgerDB.Statistics
-getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
+getStatistics env =
+  atomically (awaitLedgerDB env) >>= LedgerDB.getTipStatistics
 
 getPerasWeightSnapshot ::
   ChainDbEnv m blk -> STM m (WithFingerprint (PerasWeightSnapshot blk))
@@ -406,8 +467,9 @@ getLatestPerasCertOnChainRound ::
   (IOLike m, LedgerSupportsPeras blk) =>
   ChainDbEnv m blk ->
   STM m (Maybe PerasRoundNo)
-getLatestPerasCertOnChainRound CDB{..} = do
-  volatileLedger <- ledgerState <$> LedgerDB.getVolatileTip cdbLedgerDB
+getLatestPerasCertOnChainRound env = do
+  ldb <- awaitLedgerDB env
+  volatileLedger <- ledgerState <$> LedgerDB.getVolatileTip ldb
   pure (getLatestPerasCertRound volatileLedger)
 
 {-------------------------------------------------------------------------------

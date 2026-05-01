@@ -184,6 +184,8 @@ data GetForkerError
   | -- | The requested point was not found in the LedgerDB because the point
     -- older than the immutable tip.
     PointTooOld !(Maybe ExceededRollback)
+  | -- | The LedgerDB has not finished its initial replay yet.
+    LedgerNotReady
   deriving (Show, Eq)
 
 -- | Exceeded maximum rollback supported by the current ledger DB state

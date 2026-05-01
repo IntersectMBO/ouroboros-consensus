@@ -24,6 +24,10 @@ module Ouroboros.Consensus.NodeKernel
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
+  , initNodeKernelEarly
+  , mkPendingBlockchainTime
+  , mkPendingDurationUntilTooOld
+  , mkPendingMempool
   , toConsensusMode
   ) where
 
@@ -165,6 +169,73 @@ import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
 import System.Random (StdGen)
 
 {-------------------------------------------------------------------------------
+  Pending wrappers for fields that depend on a not-yet-ready LedgerDB
+-------------------------------------------------------------------------------}
+
+-- | A 'Mempool' that forwards every operation to the 'Mempool' stored in the
+-- given 'StrictTMVar', blocking on each call until the variable has been
+-- populated.
+--
+-- Used so that NtC TxSubmission and TxMonitor handlers can be wired up with a
+-- usable 'Mempool' value before the LedgerDB has finished its initial replay.
+-- Once a real 'Mempool' has been written to the variable, all subsequent
+-- forwarded calls proceed without blocking.
+mkPendingMempool ::
+  IOLike m => StrictTMVar m (Mempool m blk) -> Mempool m blk
+mkPendingMempool var =
+  Mempool
+    { addTx = \onBehalfOf tx -> do
+        m <- atomically (readTMVar var)
+        addTx m onBehalfOf tx
+    , removeTxsEvenIfValid = \txids -> do
+        m <- atomically (readTMVar var)
+        removeTxsEvenIfValid m txids
+    , getSnapshot = readTMVar var >>= getSnapshot
+    , getSnapshotFor = \slot tickedLst readKeys -> do
+        m <- atomically (readTMVar var)
+        getSnapshotFor m slot tickedLst readKeys
+    , getCapacity = readTMVar var >>= getCapacity
+    , testTryAddTx = \dt onBehalfOf tx -> do
+        m <- atomically (readTMVar var)
+        testTryAddTx m dt onBehalfOf tx
+    , testSyncWithLedger = do
+        m <- atomically (readTMVar var)
+        testSyncWithLedger m
+    }
+
+-- | A 'BlockchainTime' that forwards 'getCurrentSlot' to the 'BlockchainTime'
+-- stored in the given 'StrictTMVar', retrying in STM until the variable has
+-- been populated.
+--
+-- Used so that the 'NodeKernel' can be constructed before
+-- 'hardForkBlockchainTime' has run; consumers querying the current slot block
+-- harmlessly via STM 'retry' until the real 'BlockchainTime' is available.
+mkPendingBlockchainTime ::
+  IOLike m => StrictTMVar m (BlockchainTime m) -> BlockchainTime m
+mkPendingBlockchainTime var =
+  BlockchainTime
+    { getCurrentSlot = readTMVar var >>= getCurrentSlot
+    }
+
+-- | A 'GSM.WrapDurationUntilTooOld' that forwards
+-- 'GSM.getDurationUntilTooOld' to the wrapper stored in the given
+-- 'StrictTMVar', blocking on each call until the variable has been populated.
+--
+-- Used so that 'NodeKernelArgs' can be constructed (and hence
+-- 'initNodeKernelEarly' can run) before 'GSM.realDurationUntilTooOld' has
+-- executed. 'GSM.realDurationUntilTooOld' eagerly reads the current ledger
+-- to set up a hard-fork summary cache, so calling it synchronously during
+-- early init would block until the LedgerDB has finished replaying.
+mkPendingDurationUntilTooOld ::
+  IOLike m =>
+  StrictTMVar m (GSM.WrapDurationUntilTooOld m blk) ->
+  GSM.WrapDurationUntilTooOld m blk
+mkPendingDurationUntilTooOld var =
+  GSM.DurationUntilTooOld $ \slot -> do
+    wd <- atomically (readTMVar var)
+    GSM.getDurationUntilTooOld wd slot
+
+{-------------------------------------------------------------------------------
   Relay node
 -------------------------------------------------------------------------------}
 
@@ -241,7 +312,30 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , getDiffusionPipeliningSupport :: DiffusionPipeliningSupport
   }
 
-initNodeKernel ::
+-- | Initialise the ledger-independent portion of the 'NodeKernel'.
+--
+-- Returns:
+--
+-- 1. A 'NodeKernel' suitable for handing to the diffusion layer immediately.
+--    Its @getChainDB@, @getTopLevelConfig@, @getTracers@, peer-sharing,
+--    tx-submission, and outbound-connections fields all hold their final
+--    values. Its @getMempool@ is a 'mkPendingMempool' wrapper backed by an
+--    internally-allocated 'StrictTMVar'. Its @getBlockchainTime@ is whatever
+--    the caller put in @args.btime@; pass a 'mkPendingBlockchainTime'
+--    wrapper if you want to defer blockchain-time construction.
+-- 2. An action that runs the late phase: opens the real 'Mempool', publishes
+--    it via the internal TMVar, computes the real initial 'GsmState', and
+--    spawns the four background threads that touch the LedgerDB (GSM, block
+--    forging, block fetch logic, tx submission decision logic) plus the GDD
+--    watcher (if LoE/GDD is enabled).
+--
+-- Pre-condition for invoking the late action: the 'ChainDB''s LedgerDB has
+-- finished its initial replay, so queries that read the current ledger no
+-- longer block. The caller is also expected to have populated any pending
+-- 'BlockchainTime' wrapper (in @args.btime@) before invoking the action;
+-- otherwise the spawned threads that read the blockchain time will block
+-- until it is filled.
+initNodeKernelEarly ::
   forall m addrNTN addrNTC blk.
   ( IOLike m
   , SI.MonadTimer m
@@ -251,8 +345,8 @@ initNodeKernel ::
   , Typeable addrNTN
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
-  m (NodeKernel m addrNTN addrNTC blk)
-initNodeKernel
+  m (NodeKernel m addrNTN addrNTC blk, m ())
+initNodeKernelEarly
   args@NodeKernelArgs
     { registry
     , cfg
@@ -269,11 +363,17 @@ initNodeKernel
     , getDiffusionPipeliningSupport
     , miniProtocolParameters
     } = do
-    -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
-    blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
-    initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
+    -- Empty rather than seeded with []: 'setBlockForging' may be called
+    -- before 'blockForgingController' is spawned, in which case 'putTMVar'
+    -- on a full var would block.
+    blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newEmptyTMVarIO
 
-    st <- initInternalState args
+    -- Pending 'Mempool' wrapper. The TMVar will be filled inside the late
+    -- action (via 'completeInternalState') once the LedgerDB is ready.
+    mempoolVar <- newEmptyTMVarIO
+    let pendingMempool = mkPendingMempool mempoolVar
+
+    st <- initInternalStateEarly args pendingMempool
     let IS
           { blockFetchInterface
           , fetchClientRegistry
@@ -284,64 +384,6 @@ initNodeKernel
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
-
-    do
-      let GsmNodeKernelArgs{..} = gsmArgs
-          gsmTracerArgs =
-            ( castTip . either AF.anchorToTip tipFromHeader . AF.head . fst
-            , gsmTracer tracers
-            )
-
-      let gsm =
-            GSM.realGsmEntryPoints
-              gsmTracerArgs
-              GSM.GsmView
-                { GSM.antiThunderingHerd = Just gsmAntiThunderingHerd
-                , GSM.getCandidateOverSelection = do
-                    weights <- ChainDB.getPerasWeightSnapshot chainDB
-                    pure $ \(headers, _lst) state ->
-                      case AF.intersectionPoint headers (csCandidate state) of
-                        Nothing -> GSM.CandidateDoesNotIntersect
-                        Just{} ->
-                          GSM.WhetherCandidateIsBetter $ -- precondition requires intersection
-                            shouldSwitch
-                              ( preferAnchoredCandidate
-                                  (configBlock cfg)
-                                  (forgetFingerprint weights)
-                                  headers
-                                  (csCandidate state)
-                              )
-                , GSM.peerIsIdle = csIdling
-                , GSM.durationUntilTooOld =
-                    gsmDurationUntilTooOld
-                      <&> \wd (_headers, lst) ->
-                        GSM.getDurationUntilTooOld wd (getTipSlot lst)
-                , GSM.equivalent = (==) `on` (AF.headPoint . fst)
-                , GSM.getChainSyncStates = fmap cschState <$> cschcMap varChainSyncHandles
-                , GSM.getCurrentSelection = do
-                    headers <- ChainDB.getCurrentChainWithTime chainDB
-                    extLedgerState <- ChainDB.getCurrentLedger chainDB
-                    return (headers, ledgerState extLedgerState)
-                , GSM.minCaughtUpDuration = gsmMinCaughtUpDuration
-                , GSM.setCaughtUpPersistentMark = \upd ->
-                    (if upd then GSM.touchMarkerFile else GSM.removeMarkerFile)
-                      gsmMarkerFileView
-                , GSM.writeGsmState = \gsmState ->
-                    atomicallyWithMonotonicTime $ \time -> do
-                      writeTVar varGsmState gsmState
-                      handles <- cschcMap varChainSyncHandles
-                      traverse_ (($ time) . ($ gsmState) . cschOnGsmStateChanged) handles
-                , GSM.isHaaSatisfied = do
-                    readTVar varOutboundConnectionsState <&> \case
-                      -- See the upstream Haddocks for the exact conditions under
-                      -- which the diffusion layer is in this state.
-                      TrustedStateWithExternalPeers -> True
-                      UntrustedState -> False
-                }
-      judgment <- GSM.gsmStateToLedgerJudgement <$> readTVarIO varGsmState
-      void $ forkLinkedThread registry "NodeKernel.GSM" $ case judgment of
-        TooOld -> GSM.enterPreSyncing gsm
-        YoungEnough -> GSM.enterCaughtUp gsm
 
     peerSharingAPI <-
       newPeerSharingAPI
@@ -354,71 +396,157 @@ initNodeKernel
     sharedTxStateVar <- newSharedTxStateVar txSubmissionRng
     txMempoolSem <- newTxMempoolSem
 
-    case gnkaLoEAndGDDArgs genesisArgs of
-      LoEAndGDDDisabled -> pure ()
+    -- LoE/GDD setup: we install the @getLoEFragment@ STM callback eagerly
+    -- (it is cheap and ledger-free), but defer spawning the gddWatcher to
+    -- the late action because the watcher reads
+    -- 'ChainDB.getImmutableLedger' inside its STM reader.
+    spawnGddWatcher <- case gnkaLoEAndGDDArgs genesisArgs of
+      LoEAndGDDDisabled -> pure (pure ())
       LoEAndGDDEnabled lgArgs -> do
         varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
         setGetLoEFragment
           (readTVar varGsmState)
           (readTVar varLoEFragment)
           (lgnkaLoEFragmentTVar lgArgs)
+        pure $
+          void $
+            forkLinkedWatcher registry "NodeKernel.GDD" $
+              gddWatcher
+                cfg
+                (gddTracer tracers)
+                chainDB
+                (lgnkaGDDRateLimit lgArgs)
+                (readTVar varGsmState)
+                (cschcMap varChainSyncHandles)
+                varLoEFragment
 
-        void $
-          forkLinkedWatcher registry "NodeKernel.GDD" $
-            gddWatcher
-              cfg
-              (gddTracer tracers)
-              chainDB
-              (lgnkaGDDRateLimit lgArgs)
-              (readTVar varGsmState)
-              (cschcMap varChainSyncHandles)
-              varLoEFragment
+    let kernel =
+          NodeKernel
+            { getChainDB = chainDB
+            , getMempool = mempool
+            , getTopLevelConfig = cfg
+            , getFetchClientRegistry = fetchClientRegistry
+            , getFetchMode = readFetchMode blockFetchInterface
+            , getGsmState = readTVar varGsmState
+            , getChainSyncHandles = varChainSyncHandles
+            , getPeerSharingRegistry = peerSharingRegistry
+            , getTracers = tracers
+            , -- Atomic overwrite so callers never block on a full var.
+              setBlockForging = \a -> atomically $ do
+                _ <- LazySTM.tryTakeTMVar blockForgingVar
+                LazySTM.putTMVar blockForgingVar $! a
+            , getPeerSharingAPI = peerSharingAPI
+            , getOutboundConnectionsState =
+                varOutboundConnectionsState
+            , getDiffusionPipeliningSupport
+            , getBlockchainTime = btime
+            , getTxChannelsVar = txChannelsVar
+            , getSharedTxStateVar = sharedTxStateVar
+            , getTxMempoolSem = txMempoolSem
+            }
 
-    void $
-      forkLinkedThread registry "NodeKernel.blockForging" $
-        blockForgingController st (LazySTM.takeTMVar blockForgingVar)
+    let complete :: m ()
+        complete = do
+          -- Era init must run after the LedgerDB is ready (HardFork dispatch reads the current ledger).
+          initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
 
-    -- Run the block fetch logic in the background. This will call
-    -- 'addFetchedBlock' whenever a new block is downloaded.
-    void $
-      forkLinkedThread registry "NodeKernel.blockFetchLogic" $
-        blockFetchLogic
-          (contramap castTraceFetchDecision $ blockFetchDecisionTracer tracers)
-          (contramap (fmap castTraceFetchClientState) $ blockFetchClientTracer tracers)
-          blockFetchInterface
-          fetchClientRegistry
-          blockFetchConfiguration
+          -- Open the real 'Mempool', publish it via 'mempoolVar', and
+          -- write the real initial 'GsmState' to 'varGsmState'.
+          completeInternalState args st mempoolVar
 
-    void $
-      forkLinkedThread registry "NodeKernel.decisionLogicThreads" $
-        decisionLogicThreads
-          (txLogicTracer tracers)
-          (txCountersTracer tracers)
-          (txDecisionPolicy miniProtocolParameters)
-          txChannelsVar
-          sharedTxStateVar
+          -- 2. Spawn the GSM thread. We deliberately fork only after the
+          -- previous step writes the real 'GsmState' so that the 'judgment'
+          -- snapshot (and hence the chosen entry point) is correct. After
+          -- this fork the GSM thread takes ownership of writing
+          -- 'varGsmState' (via its 'GSM.writeGsmState' callback).
+          do
+            let GsmNodeKernelArgs{..} = gsmArgs
+                gsmTracerArgs =
+                  ( castTip . either AF.anchorToTip tipFromHeader . AF.head . fst
+                  , gsmTracer tracers
+                  )
 
-    return
-      NodeKernel
-        { getChainDB = chainDB
-        , getMempool = mempool
-        , getTopLevelConfig = cfg
-        , getFetchClientRegistry = fetchClientRegistry
-        , getFetchMode = readFetchMode blockFetchInterface
-        , getGsmState = readTVar varGsmState
-        , getChainSyncHandles = varChainSyncHandles
-        , getPeerSharingRegistry = peerSharingRegistry
-        , getTracers = tracers
-        , setBlockForging = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
-        , getPeerSharingAPI = peerSharingAPI
-        , getOutboundConnectionsState =
-            varOutboundConnectionsState
-        , getDiffusionPipeliningSupport
-        , getBlockchainTime = btime
-        , getTxChannelsVar = txChannelsVar
-        , getSharedTxStateVar = sharedTxStateVar
-        , getTxMempoolSem = txMempoolSem
-        }
+            let gsm =
+                  GSM.realGsmEntryPoints
+                    gsmTracerArgs
+                    GSM.GsmView
+                      { GSM.antiThunderingHerd = Just gsmAntiThunderingHerd
+                      , GSM.getCandidateOverSelection = do
+                          weights <- ChainDB.getPerasWeightSnapshot chainDB
+                          pure $ \(headers, _lst) state ->
+                            case AF.intersectionPoint headers (csCandidate state) of
+                              Nothing -> GSM.CandidateDoesNotIntersect
+                              Just{} ->
+                                GSM.WhetherCandidateIsBetter $ -- precondition requires intersection
+                                  shouldSwitch
+                                    ( preferAnchoredCandidate
+                                        (configBlock cfg)
+                                        (forgetFingerprint weights)
+                                        headers
+                                        (csCandidate state)
+                                    )
+                      , GSM.peerIsIdle = csIdling
+                      , GSM.durationUntilTooOld =
+                          gsmDurationUntilTooOld
+                            <&> \wd (_headers, lst) ->
+                              GSM.getDurationUntilTooOld wd (getTipSlot lst)
+                      , GSM.equivalent = (==) `on` (AF.headPoint . fst)
+                      , GSM.getChainSyncStates = fmap cschState <$> cschcMap varChainSyncHandles
+                      , GSM.getCurrentSelection = do
+                          headers <- ChainDB.getCurrentChainWithTime chainDB
+                          extLedgerState <- ChainDB.getCurrentLedger chainDB
+                          return (headers, ledgerState extLedgerState)
+                      , GSM.minCaughtUpDuration = gsmMinCaughtUpDuration
+                      , GSM.setCaughtUpPersistentMark = \upd ->
+                          (if upd then GSM.touchMarkerFile else GSM.removeMarkerFile)
+                            gsmMarkerFileView
+                      , GSM.writeGsmState = \gsmState ->
+                          atomicallyWithMonotonicTime $ \time -> do
+                            writeTVar varGsmState gsmState
+                            handles <- cschcMap varChainSyncHandles
+                            traverse_ (($ time) . ($ gsmState) . cschOnGsmStateChanged) handles
+                      , GSM.isHaaSatisfied = do
+                          readTVar varOutboundConnectionsState <&> \case
+                            -- See the upstream Haddocks for the exact conditions under
+                            -- which the diffusion layer is in this state.
+                            TrustedStateWithExternalPeers -> True
+                            UntrustedState -> False
+                      }
+            judgment <- GSM.gsmStateToLedgerJudgement <$> readTVarIO varGsmState
+            void $ forkLinkedThread registry "NodeKernel.GSM" $ case judgment of
+              TooOld -> GSM.enterPreSyncing gsm
+              YoungEnough -> GSM.enterCaughtUp gsm
+
+          -- 3. Spawn the GDD watcher (no-op if LoE/GDD disabled).
+          spawnGddWatcher
+
+          -- 4. Spawn the block forging controller.
+          void $
+            forkLinkedThread registry "NodeKernel.blockForging" $
+              blockForgingController st (LazySTM.takeTMVar blockForgingVar)
+
+          -- 5. Spawn the block fetch logic in the background. This will
+          -- call 'addFetchedBlock' whenever a new block is downloaded.
+          void $
+            forkLinkedThread registry "NodeKernel.blockFetchLogic" $
+              blockFetchLogic
+                (contramap castTraceFetchDecision $ blockFetchDecisionTracer tracers)
+                (contramap (fmap castTraceFetchClientState) $ blockFetchClientTracer tracers)
+                blockFetchInterface
+                fetchClientRegistry
+                blockFetchConfiguration
+
+          -- 6. Spawn the tx submission decision logic.
+          void $
+            forkLinkedThread registry "NodeKernel.decisionLogicThreads" $
+              decisionLogicThreads
+                (txLogicTracer tracers)
+                (txCountersTracer tracers)
+                (txDecisionPolicy miniProtocolParameters)
+                txChannelsVar
+                sharedTxStateVar
+
+    pure (kernel, complete)
    where
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
@@ -432,6 +560,27 @@ initNodeKernel
         traverse_ cancelThread forgingThreads
         blockForging' <- traverse (forkBlockForging st) blockForging
         go blockForging'
+
+-- | Backwards-compatible monolithic initialiser.
+--
+-- Calls 'initNodeKernelEarly' and immediately runs the returned complete
+-- action. By the time this returns, all background threads have been
+-- spawned and the mempool / GSM state have been populated.
+initNodeKernel ::
+  forall m addrNTN addrNTC blk.
+  ( IOLike m
+  , SI.MonadTimer m
+  , RunNode blk
+  , Ord addrNTN
+  , Hashable addrNTN
+  , Typeable addrNTN
+  ) =>
+  NodeKernelArgs m addrNTN addrNTC blk ->
+  m (NodeKernel m addrNTN addrNTC blk)
+initNodeKernel args = do
+    (kernel, complete) <- initNodeKernelEarly args
+    complete
+    pure kernel
 
 castTraceFetchDecision ::
   forall remotePeer blk.
@@ -465,17 +614,33 @@ data InternalState m addrNTN addrNTC blk = IS
   , peerSharingRegistry :: PeerSharingRegistry addrNTN m
   }
 
-initInternalState ::
+-- | Initialise the ledger-independent portion of the 'InternalState'.
+--
+-- The returned record has placeholders in the two slots that genuinely need a
+-- ready 'LedgerDB':
+--
+-- * @varGsmState@ is seeded with 'GSM.PreSyncing' — the most conservative
+--   state, which corresponds to 'LedgerStateJudgement' 'TooOld'. This is the
+--   correct judgement to expose to the diffusion layer while the LedgerDB is
+--   still replaying.
+-- * @mempool@ is whatever 'Mempool' value the caller passes in. Normally
+--   the caller passes a 'mkPendingMempool' wrapper over a freshly-allocated
+--   'StrictTMVar'; that same TMVar is then handed to 'completeInternalState'
+--   which fills it with a real 'Mempool'.
+initInternalStateEarly ::
   forall m addrNTN addrNTC blk.
   ( IOLike m
-  , SI.MonadTimer m
   , Ord addrNTN
   , Typeable addrNTN
   , RunNode blk
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
+  -- | A 'Mempool' value to install in the @mempool@ field. Use
+  -- 'mkPendingMempool' over an empty 'StrictTMVar' to defer the real
+  -- 'Mempool' until 'completeInternalState' runs.
+  Mempool m blk ->
   m (InternalState m addrNTN addrNTC blk)
-initInternalState
+initInternalStateEarly
   NodeKernelArgs
     { tracers
     , chainDB
@@ -483,31 +648,17 @@ initInternalState
     , cfg
     , blockFetchSize
     , btime
-    , mempoolCapacityOverride
-    , mempoolTimeoutConfig
-    , gsmArgs
     , getUseBootstrapPeers
     , getDiffusionPipeliningSupport
     , genesisArgs
-    } = do
-    varGsmState <- do
-      let GsmNodeKernelArgs{..} = gsmArgs
-      gsmState <-
-        GSM.initializationGsmState
-          (atomically $ ledgerState <$> ChainDB.getCurrentLedger chainDB)
-          gsmDurationUntilTooOld
-          gsmMarkerFileView
-      newTVarIO gsmState
+    }
+  mempool = do
+    -- Conservative default. The real value is computed from the current
+    -- ledger by 'completeInternalState' once the LedgerDB has finished its
+    -- initial replay.
+    varGsmState <- newTVarIO GSM.PreSyncing
 
     varChainSyncHandles <- atomically newChainSyncClientHandleCollection
-    mempool <-
-      openMempool
-        registry
-        (chainDBLedgerInterface chainDB)
-        (configLedger cfg)
-        mempoolCapacityOverride
-        mempoolTimeoutConfig
-        (mempoolTracer tracers)
 
     fetchClientRegistry <- newFetchClientRegistry
 
@@ -532,7 +683,62 @@ initInternalState
 
     peerSharingRegistry <- newPeerSharingRegistry
 
-    return IS{..}
+    pure IS{..}
+
+-- | Finish initialising the ledger-dependent portion of the 'InternalState'.
+--
+-- Pre-condition: the 'ChainDB''s LedgerDB has finished its initial replay, so
+-- queries that read the current ledger no longer block.
+--
+-- This action:
+--
+-- 1. Opens the real 'Mempool'.
+-- 2. Publishes it into the supplied 'StrictTMVar' so any 'mkPendingMempool'
+--    wrapper backed by that var begins forwarding directly to it.
+-- 3. Computes the real initial 'GsmState' via 'GSM.initializationGsmState'
+--    and writes it to @varGsmState@. This may transition 'PreSyncing' to
+--    'CaughtUp' if the marker file is present and the ledger tip is recent.
+completeInternalState ::
+  forall m addrNTN addrNTC blk.
+  ( IOLike m
+  , SI.MonadTimer m
+  , RunNode blk
+  ) =>
+  NodeKernelArgs m addrNTN addrNTC blk ->
+  InternalState m addrNTN addrNTC blk ->
+  -- | The 'StrictTMVar' backing the pending mempool that was passed to
+  -- 'initInternalStateEarly'. It must be empty.
+  StrictTMVar m (Mempool m blk) ->
+  m ()
+completeInternalState
+  NodeKernelArgs
+    { tracers
+    , chainDB
+    , registry
+    , cfg
+    , mempoolCapacityOverride
+    , mempoolTimeoutConfig
+    , gsmArgs
+    }
+  IS{varGsmState}
+  mempoolVar = do
+    realMempool <-
+      openMempool
+        registry
+        (chainDBLedgerInterface chainDB)
+        (configLedger cfg)
+        mempoolCapacityOverride
+        mempoolTimeoutConfig
+        (mempoolTracer tracers)
+    atomically $ putTMVar mempoolVar realMempool
+
+    let GsmNodeKernelArgs{gsmDurationUntilTooOld, gsmMarkerFileView} = gsmArgs
+    gsmState <-
+      GSM.initializationGsmState
+        (atomically $ ledgerState <$> ChainDB.getCurrentLedger chainDB)
+        gsmDurationUntilTooOld
+        gsmMarkerFileView
+    atomically $ writeTVar varGsmState gsmState
 
 toConsensusMode :: forall a. LoEAndGDDConfig a -> ConsensusMode
 toConsensusMode = \case

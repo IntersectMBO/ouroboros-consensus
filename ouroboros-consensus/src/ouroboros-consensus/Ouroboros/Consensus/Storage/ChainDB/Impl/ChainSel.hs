@@ -370,15 +370,16 @@ chainSelSync ::
 -- blocks that were originally postponed by the LoE, but can be adopted once we
 -- conclude that we are caught-up (and hence are longer bound by the LoE).
 chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
-  (succsOf, lookupBlockInfo, curChain, weights) <- atomically $ do
+  (succsOf, lookupBlockInfo, curChain, weights, ldb) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
-    (,,,)
+    (,,,,)
       <$> ( ignoreInvalidSuc cdbVolatileDB invalid
               <$> VolatileDB.filterByPredecessor cdbVolatileDB
           )
       <*> VolatileDB.getBlockInfo cdbVolatileDB
       <*> Query.getCurrentChain cdb
       <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
+      <*> awaitLedgerDB cdb
   let
     -- All immediate successor blocks of blocks on the current chain (including
     -- the anchor), excluding those on the current chain.
@@ -393,7 +394,7 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
       , not $ AF.pointOnFragment (realPointToPoint loePt) curChain
       ]
 
-    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
+    chainSelEnv = mkChainSelEnv cdb ldb BlockCache.empty weights curChain Nothing
 
   chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
     for
@@ -613,12 +614,13 @@ chainSelectionForBlock ::
   InvalidBlockPunishment m ->
   Electric m ()
 chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
-  (invalid, curChain, weights) <-
+  (invalid, curChain, weights, ldb) <-
     atomically $
-      (,,)
+      (,,,)
         <$> (forgetFingerprint <$> readTVar cdbInvalid)
         <*> Query.getCurrentChain cdb
         <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
+        <*> awaitLedgerDB cdb
 
   -- The current chain we're working with here is not longer than @k@ blocks
   -- (see 'getCurrentChain' and 'cdbChain'), which is easier to reason about
@@ -658,7 +660,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
 
         let traceNoChange = traceWith addBlockTracer $ StoreButDontChange p
 
-            chainSelEnv = mkChainSelEnv cdb blockCache weights curChain (Just (p, punish))
+            chainSelEnv = mkChainSelEnv cdb ldb blockCache weights curChain (Just (p, punish))
 
         case NE.nonEmpty chainDiffs of
           Just chainDiffs' -> do
@@ -883,14 +885,14 @@ switchTo ::
   ReasonForSwitch' blk ->
   -- | Forker at the tip of the above ChainDiff
   SuccessForkerAction m (ExtLedgerState blk)
-switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \forker -> do
+switchTo env@CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \forker -> do
   traceWith addBlockTracer $
     ChangingSelection $
       castPoint $
         Diff.getTip chainDiff
   (curChain, newChain, events, prevTentativeHeader, newLedger, closeOrphanedStates) <- atomically $ do
     InternalChain curChain curChainWithTime <- readTVar cdbChain -- Not Query.getCurrentChain!
-    curLedger <- getVolatileTip cdbLedgerDB
+    curLedger <- getVolatileTip =<< awaitLedgerDB env
     newLedger <- forkerGetLedgerState forker
     case Diff.apply curChain chainDiff of
       -- Impossible, as described in the docstring
@@ -1058,6 +1060,9 @@ data ChainSelEnv m blk = ChainSelEnv
 mkChainSelEnv ::
   IOLike m =>
   ChainDbEnv m blk ->
+  -- | The opened LedgerDB. Callers acquire it via 'awaitLedgerDB' (so that
+  -- this function never observes the @LdbReplaying@ status).
+  LedgerDB' m blk ->
   -- | See 'blockCache'
   BlockCache blk ->
   -- | See 'weights'
@@ -1067,9 +1072,9 @@ mkChainSelEnv ::
   -- | See 'punish'.
   Maybe (RealPoint blk, InvalidBlockPunishment m) ->
   ChainSelEnv m blk
-mkChainSelEnv CDB{..} blockCache weights curChain punish =
+mkChainSelEnv CDB{..} ldb blockCache weights curChain punish =
   ChainSelEnv
-    { lgrDB = cdbLedgerDB
+    { lgrDB = ldb
     , bcfg = configBlock cdbTopLevelConfig
     , varInvalid = cdbInvalid
     , varTentativeState = cdbTentativeState
