@@ -120,7 +120,6 @@ import Ouroboros.Consensus.Protocol.ModChainSel
 import Ouroboros.Consensus.Protocol.Signed
 import Ouroboros.Consensus.Storage.ImmutableDB (Tip)
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB
 import Ouroboros.Consensus.Util.Condense

@@ -39,7 +39,6 @@ import Data.String (fromString)
 import GHC.Generics
 import Ouroboros.Consensus.Ledger.Abstract
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( SnapshotBackend (..)
   )

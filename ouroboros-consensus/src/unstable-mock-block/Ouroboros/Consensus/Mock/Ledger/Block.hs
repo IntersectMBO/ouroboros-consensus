@@ -112,7 +112,6 @@ import Ouroboros.Consensus.Storage.Common
   ( BinaryBlockInfo (..)
   , SizeInBytes
   )
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack

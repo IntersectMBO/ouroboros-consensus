@@ -164,11 +164,14 @@ module Ouroboros.Consensus.Ledger.Tables
 
     -- * Basic LedgerState classes
 
+    -- ** Extracting and injecting ledger tables
+  , HasLedgerTables (..)
+
     -- ** Stowing ledger tables
   , CanStowLedgerTables (..)
 
-    -- ** Extracting and injecting ledger tables
-  , HasLedgerTables (..)
+    -- ** Upgrading ledger tables
+  , CanUpgradeLedgerTables (..)
 
     -- * Serialization
   , SerializeTablesHint
@@ -249,6 +252,26 @@ type CanStowLedgerTables :: LedgerStateKind -> Constraint
 class CanStowLedgerTables l where
   stowLedgerTables :: l ValuesMK -> l EmptyMK
   unstowLedgerTables :: l EmptyMK -> l ValuesMK
+
+-- | When pushing differences on InMemory Ledger DBs, we will sometimes need to
+-- update ledger tables to the latest era. For unary blocks this is a no-op, but
+-- for the Cardano block, we will need to upgrade all TxOuts in memory.
+--
+-- No correctness property relies on this, as Consensus can work with TxOuts
+-- from multiple eras, but the performance depends on it as otherwise we will be
+-- upgrading the TxOuts every time we consult them.
+type CanUpgradeLedgerTables :: StateKind -> Type -> Constraint
+class CanUpgradeLedgerTables l blk where
+  upgradeTables ::
+    -- | The original ledger state before the upgrade. This will be the
+    -- tip before applying the block.
+    l blk mk1 ->
+    -- | The ledger state after the upgrade, which might be in a
+    -- different era than the one above.
+    l blk mk2 ->
+    -- | The tables we want to maybe upgrade.
+    LedgerTables blk ValuesMK ->
+    LedgerTables blk ValuesMK
 
 {-------------------------------------------------------------------------------
   Serialization Codecs
