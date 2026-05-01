@@ -312,22 +312,22 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
                     . currentState
                     $ cur
              in Flip
-                  -- We need to bring back the diffs provided by previous
-                  -- translations. Note that if there is only one translation or
-                  -- if the previous translations don't add any new tables this
-                  -- will just be a no-op. See the haddock for
-                  -- 'translateLedgerTablesWith' and 'extendToSlot' for more
-                  -- information.
-                  . prependDiffs
-                    ( cur'
-                        `withLedgerTables` ( translateLedgerTablesWith f'
-                                               . projectLedgerTables
-                                               . unFlip
-                                               . currentState
-                                               $ cur
-                                           )
+                  . (cur' `withLedgerTables`)
+                  . ltliftA2
+                    rawPrependDiffs
+                    ( -- We need to bring back the diffs provided by previous
+                      -- translations. Note that if there is only one
+                      -- translation or if the previous translations don't add
+                      -- any new tables this will just be a no-op. See the
+                      -- haddock for 'translateLedgerTablesWith' and
+                      -- 'extendToSlot' for more information.
+                      translateLedgerTablesWith f'
+                        . projectLedgerTables
+                        . unFlip
+                        . currentState
+                        $ cur
                     )
-                  $ cur'
+                  $ projectLedgerTables cur'
         }
     )
 

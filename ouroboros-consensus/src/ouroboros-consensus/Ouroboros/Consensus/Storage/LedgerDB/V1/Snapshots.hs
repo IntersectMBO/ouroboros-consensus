@@ -284,7 +284,6 @@ loadSnapshot ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerSupportsV1LedgerDB LedgerState blk
   , LedgerDbSerialiseConstraints blk
   ) =>
   Tracer m V1.SomeBackendTrace ->

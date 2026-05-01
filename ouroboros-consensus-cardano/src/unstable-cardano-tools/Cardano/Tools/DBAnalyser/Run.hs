@@ -68,7 +68,7 @@ openLedgerDB ::
   ( LedgerSupportsProtocol blk
   , InspectLedger blk
   , HasHardForkHistory blk
-  , LedgerDB.LedgerSupportsLedgerDB blk
+  , LedgerDB.LedgerDbSerialiseConstraints blk
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   IO

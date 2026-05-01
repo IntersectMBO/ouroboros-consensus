@@ -79,10 +79,8 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators
 import Data.Bifunctor
 import Data.Kind
 import Data.SOP.Functors
-import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Tables.Basics
 import Ouroboros.Consensus.Util ((...:), (..:), (.:))
-import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   Common constraints
@@ -95,15 +93,11 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 type LedgerTableConstraints blk =
   ( Ord (TxIn blk)
   , Eq (TxOut blk)
-  , MemPack (TxIn blk)
-  , IndexedMemPack LedgerState blk (TxOut blk)
   )
 
 type LedgerTableConstraints' blk k v =
   ( Ord k
   , Eq v
-  , MemPack k
-  , IndexedMemPack LedgerState blk v
   )
 
 {-------------------------------------------------------------------------------

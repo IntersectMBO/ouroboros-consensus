@@ -102,10 +102,8 @@ import Ouroboros.Consensus.HardFork.Combinator.NetworkVersion
 import Ouroboros.Consensus.HardFork.Combinator.State
 import Ouroboros.Consensus.HardFork.Combinator.State.Instances
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Network.Block (Serialised)
@@ -198,10 +196,7 @@ class
     All HasBinaryBlockInfo xs
   , All HasNetworkProtocolVersion xs
   , All BlockSupportsLedgerQuery xs
-  , -- LedgerTables on the HardForkBlock might not be compositionally
-    -- defined, but we need to require this instances for any instantiation.
-    HasLedgerTables LedgerState (HardForkBlock xs)
-  , LedgerSupportsLedgerDB (HardForkBlock xs)
+  , SerialiseDiskConstraints (HardForkBlock xs)
   ) =>
   SerialiseHFC xs
   where

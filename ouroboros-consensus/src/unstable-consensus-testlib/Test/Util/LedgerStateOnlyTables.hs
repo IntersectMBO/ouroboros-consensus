@@ -60,7 +60,7 @@ deriving instance
   NoThunks (OTLedgerState k v mk)
 
 emptyOTLedgerState ::
-  (Ord k, Eq v, MemPack k, MemPack v, ZeroableMK mk) =>
+  (Ord k, Eq v, ZeroableMK mk) =>
   LedgerState (OTBlock k v) mk
 emptyOTLedgerState = OTLedgerState emptyMK emptyLedgerTables
 
@@ -85,7 +85,7 @@ instance (Ord k, MemPack k, MemPack v) => SerializeTablesWithHint LedgerState (O
 -------------------------------------------------------------------------------}
 
 instance
-  (Ord k, Eq v, MemPack k, MemPack v) =>
+  (Ord k, Eq v) =>
   CanStowLedgerTables (OTLedgerState k v)
   where
   stowLedgerTables OTLedgerState{otlsLedgerTables} =
@@ -104,7 +104,7 @@ type instance TxIn (OTBlock k v) = k
 type instance TxOut (OTBlock k v) = v
 
 instance
-  (Ord k, Eq v, MemPack k, MemPack v, NoThunks k, NoThunks v) =>
+  (Ord k, Eq v, NoThunks k, NoThunks v) =>
   HasLedgerTables LedgerState (OTBlock k v)
   where
   projectLedgerTables OTLedgerState{otlsLedgerTables} =

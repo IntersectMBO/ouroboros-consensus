@@ -121,7 +121,7 @@ class
   , ShowProxy (BlockQuery blk)
   , ShowProxy (TxId (GenTx blk))
   , (forall fp. ShowQuery (BlockQuery blk fp))
-  , LedgerSupportsLedgerDB blk
+  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   RunNode blk
 
