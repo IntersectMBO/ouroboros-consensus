@@ -1,8 +1,9 @@
-module Ouroboros.Consensus.Ledger.SupportsPeerSelection (
-    LedgerSupportsPeerSelection (..)
+module Ouroboros.Consensus.Ledger.SupportsPeerSelection
+  ( LedgerSupportsPeerSelection (..)
   , PoolStake (..)
   , StakePoolRelay (..)
   , stakePoolRelayAccessPoint
+
     -- * Re-exports for convenience
   , DomainAccessPoint (..)
   , IP (..)
@@ -10,31 +11,34 @@ module Ouroboros.Consensus.Ledger.SupportsPeerSelection (
   , RelayAccessPoint (..)
   ) where
 
-import           Control.DeepSeq (NFData (..))
-import           Data.List.NonEmpty (NonEmpty)
-import           Ouroboros.Consensus.Ledger.Abstract (LedgerState)
-import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
-                     (PoolStake (..))
-import           Ouroboros.Network.PeerSelection.RelayAccessPoint
-                     (DomainAccessPoint (..), IP (..), PortNumber,
-                     RelayAccessPoint (..))
+import Control.DeepSeq (NFData (..))
+import Data.List.NonEmpty (NonEmpty)
+import Ouroboros.Consensus.Ledger.Abstract (LedgerState)
+import Ouroboros.Network.PeerSelection.LedgerPeers.Type
+  ( PoolStake (..)
+  )
+import Ouroboros.Network.PeerSelection.RelayAccessPoint
+  ( DomainAccessPoint (..)
+  , IP (..)
+  , PortNumber
+  , RelayAccessPoint (..)
+  )
 
 -- | A relay registered for a stake pool
-data StakePoolRelay =
-    -- | One of the current relays
+data StakePoolRelay
+  = -- | One of the current relays
     CurrentRelay RelayAccessPoint
-
-    -- | One of the future relays
-  | FutureRelay  RelayAccessPoint
+  | -- | One of the future relays
+    FutureRelay RelayAccessPoint
   deriving (Show, Eq)
 
 instance NFData StakePoolRelay where
-    rnf (CurrentRelay ra) = rnf ra
-    rnf (FutureRelay  ra) = rnf ra
+  rnf (CurrentRelay ra) = rnf ra
+  rnf (FutureRelay ra) = rnf ra
 
 stakePoolRelayAccessPoint :: StakePoolRelay -> RelayAccessPoint
 stakePoolRelayAccessPoint (CurrentRelay ra) = ra
-stakePoolRelayAccessPoint (FutureRelay  ra) = ra
+stakePoolRelayAccessPoint (FutureRelay ra) = ra
 
 class LedgerSupportsPeerSelection blk where
   -- | Return peers registered in the ledger ordered by descending 'PoolStake'.

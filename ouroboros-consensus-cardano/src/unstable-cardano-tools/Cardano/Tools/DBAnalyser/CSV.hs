@@ -18,9 +18,8 @@
 -- is needed to compute a row in the resulting CSV.
 --
 -- We use 'TextBuilder' to efficiently intercalate values with the CSV 'Separator'.
---
-module Cardano.Tools.DBAnalyser.CSV (
-    Separator (Separator, unSeparator)
+module Cardano.Tools.DBAnalyser.CSV
+  ( Separator (Separator, unSeparator)
   , computeAndWriteLine
   , computeAndWriteLinePure
   , computeColumns
@@ -29,25 +28,25 @@ module Cardano.Tools.DBAnalyser.CSV (
   , writeLine
   ) where
 
-import           Data.String (IsString)
+import Data.String (IsString)
 import qualified Data.Text.IO as Text.IO
 import qualified System.IO as IO
+import TextBuilder (TextBuilder)
 import qualified TextBuilder as TextBuilder
-import           TextBuilder (TextBuilder)
 
-newtype Separator = Separator { unSeparator :: TextBuilder }
+newtype Separator = Separator {unSeparator :: TextBuilder}
   deriving (Show, IsString, Monoid, Semigroup)
 
 writeHeaderLine :: IO.Handle -> Separator -> [(TextBuilder, a)] -> IO ()
 writeHeaderLine handle (Separator separator) =
-      Text.IO.hPutStrLn handle
+  Text.IO.hPutStrLn handle
     . TextBuilder.toText
     . TextBuilder.intercalate separator
     . fmap fst
 
 writeLine :: IO.Handle -> Separator -> [TextBuilder] -> IO ()
 writeLine handle (Separator separator) =
-      Text.IO.hPutStrLn handle
+  Text.IO.hPutStrLn handle
     . TextBuilder.toText
     . TextBuilder.intercalate separator
 
@@ -57,7 +56,7 @@ computeAndWriteLine handle separator csvTextBuilder b = do
 
 computeAndWriteLinePure :: IO.Handle -> Separator -> [(a, b -> TextBuilder)] -> b -> IO ()
 computeAndWriteLinePure handle separator csvTextBuilder b =
-    writeLine handle separator $ computeColumnsPure (fmap snd csvTextBuilder) b
+  writeLine handle separator $ computeColumnsPure (fmap snd csvTextBuilder) b
 
 computeColumns :: [a -> IO TextBuilder] -> a -> IO [TextBuilder]
 computeColumns fTextBuilders a =
