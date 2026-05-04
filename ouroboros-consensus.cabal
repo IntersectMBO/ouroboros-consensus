@@ -122,6 +122,7 @@ library
     Ouroboros.Consensus.Committee.EveryoneVotes
     Ouroboros.Consensus.Committee.LS
     Ouroboros.Consensus.Committee.Types
+    Ouroboros.Consensus.Committee.Forging
     Ouroboros.Consensus.Committee.WFA
     Ouroboros.Consensus.Committee.WFALS
     Ouroboros.Consensus.Config
