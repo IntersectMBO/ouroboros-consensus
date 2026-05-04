@@ -98,6 +98,7 @@ import Test.QuickCheck
   , counterexample
   , tabulate
   , (.&&.)
+  , (.||.)
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
@@ -166,7 +167,9 @@ prop_leios seed =
     [ blocksProduced
     , ebCertificateInclusion
     , cumulativeTxBytes
+    , propConsistentChains
     , certificationGapIsCorrect
+        .||. length certifyingBlocks <= 1
     ]
  where
   numNodes = 3 :: Integer
@@ -203,19 +206,17 @@ prop_leios seed =
     TraceMempoolRejectedTx tx _ _ -> Just tx
     _ -> Nothing
 
-  nodeChains = nodeOutputFinalChain <$> testOutput.testOutputNodes
+  nodeChains = Chain.toOldestFirst . nodeOutputFinalChain <$> testOutput.testOutputNodes
 
-  certifyingBlocks :: [CardanoBlock StandardCrypto]
   certifyingBlocks =
-    [ blk
-    | blk@(BlockConway conwayBlk) <- concatMap Chain.toOldestFirst nodeChains
-    , case shelleyBlockRaw conwayBlk of
-        SL.Block _ (SL.BodyCertificate _ _) -> True
-        _ -> False
-    ]
-
-  certifyingSlots :: [SlotNo]
-  certifyingSlots = [blockSlot blk | blk <- certifyingBlocks]
+    -- NOTE: Assumes all nodeChains are consistent
+    toList . Set.fromList $
+      [ blockSlot blk
+      | blk@(BlockConway conwayBlk) <- concat nodeChains
+      , case shelleyBlockRaw conwayBlk of
+          SL.Block _ (SL.BodyCertificate _ _) -> True
+          _ -> False
+      ]
 
   throughput = fromIntegral (sum includedTxCounts) / fromIntegral numSlots :: Double
 
@@ -269,19 +270,29 @@ prop_leios seed =
                    & counterexample ("independent sum: " <> show expected)
                )
 
+  propConsistentChains =
+    all (== head (Map.elems nodeChains)) nodeChains
+      & counterexample "nodes have different chains"
+
+  -- NOTE: Leios demands minCertificationGap between announcement and
+  -- certification. Thus, the slots between certifying blocks must be at least
+  -- that far apart.
   certificationGapIsCorrect =
-    conjoin
-      [ counterexample
-          ( "Certification blocks too close: slots "
-              <> show (unSlotNo s1)
-              <> " and "
-              <> show (unSlotNo s2)
-              <> " (gap = "
-              <> show (unSlotNo s2 - unSlotNo s1)
-              <> ", expected > 10)"
-          )
-          (unSlotNo s2 - unSlotNo s1 > minCertificationGap)
-      | (s1, s2) <- zip certifyingSlots (drop 1 certifyingSlots)
+    conjoin $
+      [ (unSlotNo s2 - unSlotNo s1 > minCertificationGap)
+          & counterexample
+            ( "Certification blocks too close: slots "
+                <> show (unSlotNo s1)
+                <> " and "
+                <> show (unSlotNo s2)
+                <> " (gap = "
+                <> show (unSlotNo s2 - unSlotNo s1)
+                <> ", expected > "
+                <> show minCertificationGap
+                <> ")"
+            )
+          & prettyCounterexampleList "certifying block slots" 120 certifyingBlocks
+      | (s1, s2) <- zip certifyingBlocks (drop 1 certifyingBlocks)
       ]
 
 -- | Independently compute cumulative tx bytes by resolving each block in the

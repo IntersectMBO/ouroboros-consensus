@@ -90,4 +90,4 @@ instance Arbitrary EbAnnouncement where
   arbitrary = EbAnnouncement <$> (MkEbHash . BS.pack <$> vector 32) <*> arbitrary
 
 instance Arbitrary LeiosState where
-  arbitrary = pure $ LeiosState Nothing False 0
+  arbitrary = pure $ LeiosState Nothing 0

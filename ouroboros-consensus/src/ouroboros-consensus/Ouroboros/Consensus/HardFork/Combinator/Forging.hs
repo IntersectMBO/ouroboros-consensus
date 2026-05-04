@@ -93,40 +93,7 @@ hardForkBlockForging label blockForging =
     , updateForgeState = hardForkUpdateForgeState blockForging
     , checkCanForge = hardForkCheckCanForge blockForging
     , forgeBlock = hardForkForgeBlock blockForging
-    , leiosDecideForgeType = hardForkLeiosDecideForgeType blockForging
     }
-
-hardForkLeiosDecideForgeType ::
-  forall m xs.
-  (CanHardFork xs, Monad m) =>
-  NonEmptyOptNP (BlockForging m) xs -> LeiosDecideForgeTypeArgs m (HardForkBlock xs) -> m ForgeType
-hardForkLeiosDecideForgeType
-  blockForging
-  LeiosDecideForgeTypeArgs
-    { ldftaLeiosTracer
-    , ldftaLeiosDb
-    , ldftaTickedChainDepState = ldftaTickedChainDepStateHfc
-    } =
-    hcollapse $
-      hzipWith
-        decideForEra
-        (OptNP.toNP blockForging)
-        (State.tip (tickedHardForkChainDepStatePerEra ldftaTickedChainDepStateHfc))
-   where
-    decideForEra ::
-      forall blk.
-      (Maybe :.: BlockForging m) blk ->
-      (Ticked :.: WrapChainDepState) blk ->
-      K (m ForgeType) blk
-    decideForEra (Comp Nothing) _ = K (return ForgeTxsRb)
-    decideForEra (Comp (Just bf)) (Comp (WrapTickedChainDepState tcds)) =
-      K $
-        leiosDecideForgeType bf $
-          LeiosDecideForgeTypeArgs
-            { ldftaLeiosTracer
-            , ldftaLeiosDb
-            , ldftaTickedChainDepState = tcds
-            }
 
 hardForkCanBeLeader ::
   CanHardFork xs =>
@@ -334,7 +301,7 @@ hardForkForgeBlock ::
   forall m xs empty.
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
-  ForgeBlockArgs (HardForkBlock xs) ->
+  ForgeBlockArgs m (HardForkBlock xs) ->
   m (HardForkBlock xs, Maybe ForgedLeiosEb)
 hardForkForgeBlock
   blockForging
@@ -348,13 +315,23 @@ hardForkForgeBlock
         cfgs
         (OptNP.toNP blockForging)
         $ injectTxs
-        -- We know both NSs must be from the same era, because they were all
-        -- produced from the same 'BlockForging'. Unfortunately, we can't enforce
-        -- it statically.
+        -- IsLeader and ledger are guaranteed to be in the same era. The
+        -- unticked 'ChainDepState' may legitimately be in a previous era
+        -- (era boundary); we pass 'Nothing' to that era in that case.
         $ Match.mustMatchNS
           "IsLeader"
           (getOneEraIsLeader fbIsLeader)
-          (State.tip . tickedHardForkLedgerStatePerEra $ fbCurrentTickedLedgerState)
+          chainDepStateAndLedger
+
+    ledgerNS = State.tip . tickedHardForkLedgerStatePerEra $ fbCurrentTickedLedgerState
+
+    chainDepStateAndLedger ::
+      NS (Product (Maybe :.: WrapChainDepState) (FlipTickedLedgerState EmptyMK)) xs
+    chainDepStateAndLedger = case fbChainDepState of
+      Nothing -> hmap (\l -> Pair (Comp Nothing) l) ledgerNS
+      Just cds -> case Match.matchNS ledgerNS (State.tip cds) of
+        Right matched -> hmap (\(Pair l cds') -> Pair (Comp (Just cds')) l) matched
+        Left _mismatch -> hmap (\l -> Pair (Comp Nothing) l) ledgerNS
 
     injectTxs =
       injectValidatedTxs
@@ -425,7 +402,7 @@ hardForkForgeBlock
       Product
         ( Product
             WrapIsLeader
-            (FlipTickedLedgerState EmptyMK)
+            (Product (Maybe :.: WrapChainDepState) (FlipTickedLedgerState EmptyMK))
         )
         (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))
         blk ->
@@ -435,7 +412,10 @@ hardForkForgeBlock
       cfg'
       (Comp mBlockForging')
       ( Pair
-          (Pair (WrapIsLeader isLeader') (FlipTickedLedgerState ledgerState'))
+          ( Pair
+              (WrapIsLeader isLeader')
+              (Pair (Comp mChainDepState') (FlipTickedLedgerState ledgerState'))
+            )
           (Pair (Comp rbTxs') (Comp ebTxs'))
         ) =
         Comp $
@@ -453,5 +433,7 @@ hardForkForgeBlock
                 , fbCurrentSlotNo
                 , fbCurrentBlockNo
                 , fbConfig = cfg'
-                , fbForgeType
+                , fbChainDepState = unwrapChainDepState <$> mChainDepState'
+                , fbLeiosDb
+                , fbLeiosTracer
                 }

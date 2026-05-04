@@ -120,5 +120,4 @@ pbftBlockForging canBeLeader =
             fbCurrentTickedLedgerState
             (txForgetValidated <$> fbRbTxs)
             fbIsLeader
-    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }

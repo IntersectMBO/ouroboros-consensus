@@ -365,7 +365,6 @@ blockForgingA =
             fbCurrentTickedLedgerState
             (txForgetValidated <$> fbRbTxs)
             fbIsLeader
-    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
 
 -- | See 'Ouroboros.Consensus.HardFork.History.EraParams.safeFromTip'

@@ -15,12 +15,10 @@ module Ouroboros.Consensus.Block.Forging
   , ForgeStateInfo
   , ForgeStateUpdateError
   , ForgeStateUpdateInfo (..)
-  , ForgeType (..)
   , ShouldForge (..)
   , castForgeStateUpdateInfo
   , checkShouldForge
   , forgeStateUpdateInfoFromUpdateInfo
-  , LeiosDecideForgeTypeArgs (..)
   , ForgeBlockArgs (..)
 
     -- * 'UpdateInfo'
@@ -28,12 +26,11 @@ module Ouroboros.Consensus.Block.Forging
   ) where
 
 import Control.Tracer (Tracer, traceWith)
-import Data.ByteString (ByteString)
 import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.Stack
 import LeiosDemoDb (LeiosDbConnection)
-import LeiosDemoTypes (ForgedLeiosEb, LeiosCertificate, TraceLeiosKernel, TxHash)
+import LeiosDemoTypes (ForgedLeiosEb, TraceLeiosKernel)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -125,7 +122,7 @@ data BlockForging m blk = BlockForging
   -- to see whether we can actually forge a block.
   --
   -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
-  , forgeBlock :: ForgeBlockArgs blk -> m (blk, Maybe ForgedLeiosEb)
+  , forgeBlock :: ForgeBlockArgs m blk -> m (blk, Maybe ForgedLeiosEb)
   -- ^ Forge a block
   --
   -- The function is passed the prefix of the mempool that will fit within
@@ -141,27 +138,25 @@ data BlockForging m blk = BlockForging
   -- even when used as part of the hard fork combinator.
   --
   -- PRECONDITION: 'checkCanForge' returned @Right ()@.
-  , leiosDecideForgeType :: Monad m => LeiosDecideForgeTypeArgs m blk -> m ForgeType
   }
 
-data ForgeBlockArgs blk = ForgeBlockArgs
-  { fbForgeType :: ForgeType
-  , fbConfig :: TopLevelConfig blk
-  , fbCurrentBlockNo :: BlockNo -- Current block number,
+data ForgeBlockArgs m blk = ForgeBlockArgs
+  { fbConfig :: TopLevelConfig blk
+  , fbCurrentBlockNo :: BlockNo -- Current block number
   , fbCurrentSlotNo :: SlotNo -- Current slot number
   , fbCurrentTickedLedgerState :: TickedLedgerState blk EmptyMK -- Current ledger state
   , fbRbTxs :: [Validated (GenTx blk)] -- Transactions to include in the TxsRb
   , fbEbTxs :: [Validated (GenTx blk)] -- Transaction to include in the Eb
   , fbIsLeader :: IsLeader (BlockProtocol blk) -- Proof we are leader
-  }
-
-data ForgeType = ForgeTxsRb | ForgeCertRb LeiosCertificate [(TxHash, ByteString)]
-  deriving stock (Show, Eq)
-
-data LeiosDecideForgeTypeArgs m blk = LeiosDecideForgeTypeArgs
-  { ldftaLeiosDb :: LeiosDbConnection m
-  , ldftaLeiosTracer :: Tracer m TraceLeiosKernel
-  , ldftaTickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
+  , fbChainDepState :: Maybe (ChainDepState (BlockProtocol blk))
+  -- ^ The (unticked) chain-dependent state of the block we're building on.
+  -- Unticked so callers can inspect prior-slot state (e.g. the most recent
+  -- Leios EB announcement); 'Nothing' at any era boundary, since the HFC
+  -- tags each era as a distinct SOP slot and we don't translate the
+  -- previous era's state forward (the info we'd want isn't on the prior
+  -- era's header anyway).
+  , fbLeiosDb :: LeiosDbConnection m
+  , fbLeiosTracer :: Tracer m TraceLeiosKernel
   }
 
 data ShouldForge blk

@@ -136,8 +136,7 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
           (configConsensus cfg)
           forgingVRFHash
           curSlot
-    , forgeBlock = forgeShelleyBlock hotKey canBeLeader
-    , leiosDecideForgeType = \_ -> return ForgeTxsRb
+    , forgeBlock = forgeShelleyBlock hotKey canBeLeader Nothing
     }
  where
   ShelleyLeaderCredentials

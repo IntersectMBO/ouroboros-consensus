@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -14,16 +15,24 @@ import qualified Cardano.Ledger.Shelley.API as SL (extractTx)
 import Cardano.Prelude (nonEmpty)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
-import qualified Data.ByteString as BL
+import Control.Tracer (traceWith)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Sequence.Strict as Seq
+import LeiosDemoDb
+  ( LeiosDbConnection (leiosDbQueryCertificateByPoint, leiosDbQueryCompletedEbByPoint)
+  )
 import LeiosDemoTypes
-  ( EbAnnouncement (EbAnnouncement)
+  ( EbAnnouncement (EbAnnouncement, ebAnnouncementHash)
   , ForgedLeiosEb (point)
   , LeiosCertificate (leiosCertificateEbPoint)
-  , LeiosPoint (pointEbHash)
+  , LeiosPoint (MkLeiosPoint, pointEbHash)
+  , TraceLeiosKernel (MkTraceLeiosKernel)
+  , TxHash
   , encodeLeiosPoint
   , forgeLeiosEb
   , leiosEbBytesSize
+  , minCertificationGap
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Block
@@ -56,13 +65,15 @@ forgeShelleyBlock ::
   (ShelleyCompatible proto era, Monad m) =>
   HotKey (ProtoCrypto proto) m ->
   CanBeLeader proto ->
-  ForgeBlockArgs (ShelleyBlock proto era) ->
+  -- | The previous EB announcement and last slot, if any. 'Nothing'
+  -- when the protocol does not support Leios (e.g. TPraos) or when
+  -- there is no previous announcement.
+  Maybe (EbAnnouncement, WithOrigin SlotNo) ->
+  ForgeBlockArgs m (ShelleyBlock proto era) ->
   m (ShelleyBlock proto era, Maybe ForgedLeiosEb)
-forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
-  -- Only build an EB if ebTxs is not empty
-  let
-
-  (blk, mayForgedEb) <- case fbForgeType of
+forgeShelleyBlock hotKey cbl mayLeiosInfo ForgeBlockArgs{..} = do
+  forgeType <- decideForgeType
+  (blk, mayForgedEb) <- case forgeType of
     ForgeTxsRb -> do
       let body = SL.BodyInline rbTxs'
           -- Current EB to announce
@@ -134,5 +145,49 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       . getTipHash
       $ fbCurrentTickedLedgerState
 
+  -- \| Determine whether to certify a previously announced EB or just
+  -- include regular transactions. Uses the chain-dependent state from
+  -- the header state to find the previous EB announcement and slot.
+  decideForgeType :: m ForgeType
+  decideForgeType =
+    case mayLeiosInfo of
+      Nothing -> pure ForgeTxsRb
+      Just (EbAnnouncement{ebAnnouncementHash}, prevSlot) ->
+        case prevSlot of
+          Origin -> pure ForgeTxsRb
+          NotOrigin prevSlotNo
+            | unSlotNo fbCurrentSlotNo - unSlotNo prevSlotNo <= minCertificationGap -> do
+                traceWith fbLeiosTracer $ MkTraceLeiosKernel "Too soon to certify"
+                pure ForgeTxsRb
+            | otherwise -> do
+                let ebPoint =
+                      MkLeiosPoint
+                        { pointSlotNo = prevSlotNo
+                        , pointEbHash = ebAnnouncementHash
+                        }
+                mayEbClosure <- leiosDbQueryCompletedEbByPoint fbLeiosDb ebPoint
+                case mayEbClosure of
+                  Nothing -> do
+                    traceWith fbLeiosTracer $ MkTraceLeiosKernel $ "EB not downloaded " <> show ebPoint
+                    pure ForgeTxsRb
+                  Just ebClosure -> do
+                    mayCert <- leiosDbQueryCertificateByPoint fbLeiosDb ebPoint
+                    case mayCert of
+                      Nothing -> do
+                        traceWith fbLeiosTracer $
+                          MkTraceLeiosKernel $
+                            "EB downloaded but no certificate " <> show ebPoint
+                        pure ForgeTxsRb
+                      Just cert -> do
+                        traceWith fbLeiosTracer $
+                          MkTraceLeiosKernel $
+                            "EB downloaded " <> show ebPoint <> " and certified " <> show cert
+                        pure $ ForgeCertRb cert ebClosure
+
+-- | Local forge type decision: certify an EB or include regular transactions.
+data ForgeType
+  = ForgeTxsRb
+  | ForgeCertRb Leios.LeiosCertificate [(TxHash, ByteString)]
+
 toLedgerCert :: LeiosCertificate -> SL.Certificate
-toLedgerCert = SL.Certificate . BL.fromStrict . serialize' . encodeLeiosPoint . leiosCertificateEbPoint
+toLedgerCert = SL.Certificate . BSL.fromStrict . serialize' . encodeLeiosPoint . leiosCertificateEbPoint

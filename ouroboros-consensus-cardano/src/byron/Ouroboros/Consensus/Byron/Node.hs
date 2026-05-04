@@ -154,7 +154,6 @@ byronBlockForging creds =
               fbIsLeader
          in
           return (byronBlock, Nothing)
-    , leiosDecideForgeType = \_ -> return ForgeTxsRb
     }
  where
   canBeLeader = mkPBftCanBeLeader creds

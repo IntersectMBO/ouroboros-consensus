@@ -470,9 +470,10 @@ instance Functor m => Isomorphic (BlockForging m) where
                 , fbCurrentSlotNo = fbCurrentSlotNo
                 , fbCurrentBlockNo = fbCurrentBlockNo
                 , fbConfig = inject fbConfig
-                , fbForgeType = fbForgeType
+                , fbChainDepState = inject' (Proxy @(WrapChainDepState blk)) <$> fbChainDepState
+                , fbLeiosDb = fbLeiosDb
+                , fbLeiosTracer = fbLeiosTracer
                 }
-      , leiosDecideForgeType = \_args -> return ForgeTxsRb
       }
    where
     injTickedChainDepSt ::
@@ -525,9 +526,10 @@ instance Functor m => Isomorphic (BlockForging m) where
                 , fbCurrentSlotNo = fbCurrentSlotNo
                 , fbCurrentBlockNo = fbCurrentBlockNo
                 , fbConfig = project fbConfig
-                , fbForgeType = fbForgeType
+                , fbChainDepState = project' (Proxy @(WrapChainDepState blk)) <$> fbChainDepState
+                , fbLeiosDb = fbLeiosDb
+                , fbLeiosTracer = fbLeiosTracer
                 }
-      , leiosDecideForgeType = \_args -> return ForgeTxsRb
       }
    where
     projTickedChainDepSt ::

@@ -28,7 +28,6 @@ import Ouroboros.Consensus.Block.Abstract as Block
 import Ouroboros.Consensus.Block.Forging (ForgeBlockArgs (..))
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
-  , ForgeType (ForgeTxsRb)
   , ShouldForge (..)
   , checkShouldForge
   )
@@ -107,7 +106,7 @@ runForge ::
   TopLevelConfig blk ->
   GenTxs blk mk ->
   IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB _leiosConn blockForging cfg genTxs = do
+runForge epochSize_ nextSlot opts chainDB leiosConn blockForging cfg genTxs = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
   endState <- go initialForgeState{currentSlot = nextSlot}
@@ -232,7 +231,9 @@ runForge epochSize_ nextSlot opts chainDB _leiosConn blockForging cfg genTxs = d
             , fbCurrentSlotNo = currentSlot
             , fbCurrentBlockNo = bcBlockNo
             , fbConfig = cfg
-            , fbForgeType = ForgeTxsRb
+            , fbChainDepState = Just $ headerStateChainDep $ headerState unticked
+            , fbLeiosDb = leiosConn
+            , fbLeiosTracer = Trace.nullTracer
             }
 
     -- Add the block to the chain DB (synchronously) and verify adoption
