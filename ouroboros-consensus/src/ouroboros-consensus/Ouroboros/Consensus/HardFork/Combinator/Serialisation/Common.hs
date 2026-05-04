@@ -196,7 +196,15 @@ class
     All HasBinaryBlockInfo xs
   , All HasNetworkProtocolVersion xs
   , All BlockSupportsLedgerQuery xs
-  , SerialiseDiskConstraints (HardForkBlock xs)
+  , -- The constituents of 'SerialiseDiskConstraints (HardForkBlock xs)'.
+    -- We expand the constraint here rather than naming the empty class so
+    -- that the superclass cycle through
+    -- @instance SerialiseHFC xs => SerialiseDiskConstraints (HardForkBlock xs)@
+    -- is not formed (it would produce a self-referential dictionary at runtime).
+    ImmutableDbSerialiseConstraints (HardForkBlock xs)
+  , LedgerDbSerialiseConstraints (HardForkBlock xs)
+  , VolatileDbSerialiseConstraints (HardForkBlock xs)
+  , EncodeDiskDep (NestedCtxt Header) (HardForkBlock xs)
   ) =>
   SerialiseHFC xs
   where
