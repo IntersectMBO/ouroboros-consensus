@@ -624,15 +624,18 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                      in \newOcs -> do
                                           oldOcs <- readTVar varOcs
                                           when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
-                                , Cardano.getBlockHash = \targetBlock k -> do
+                                , Cardano.getImmutableBlockPoint = \targetBlock k -> do
                                     case targetBlock of
-                                      GenesisPoint -> k (pure Nothing)
+                                      GenesisPoint -> k (pure . Left $ Cardano.ImmutableBlockPointGenesisPoint)
                                       (BlockPoint targetSlot (RawBlockHash targetHash)) -> do
                                         let targetPoint = RealPoint targetSlot (fromShortRawHash (Proxy @blk) targetHash)
                                         ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
-                                          Left{} -> k (pure Nothing)
+                                          Left ChainDB.TargetNewerThanTip ->
+                                            k (pure . Left $ Cardano.ImmutableBlockPointNotYetImmutable)
+                                          Left ChainDB.TipIsOrigin ->
+                                            k (pure . Left $ Cardano.ImmutableBlockPointTipIsOrigin)
                                           Right (RealPoint actualSlot actualHash) ->
-                                            k (pure . Just $ BlockPoint actualSlot (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash))
+                                            k (pure . Right $ BlockPoint actualSlot (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash))
                                 }
                           }
                     , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
