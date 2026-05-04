@@ -107,7 +107,7 @@ praosSharedBlockForging
             (configConsensus cfg)
             curSlot
       , forgeBlock = \args ->
-          forgeShelleyBlock hotKey canBeLeader (getLeiosInfo $ fbChainDepState args) args
+          forgeShelleyBlock hotKey canBeLeader (getLeiosInfo =<< fbChainDepState args) args
       }
    where
     getLeiosInfo st =

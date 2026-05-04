@@ -784,7 +784,7 @@ forkBlockForging IS{..} blockForging =
             , fbCurrentSlotNo = currentSlot
             , fbCurrentBlockNo = bcBlockNo
             , fbConfig = cfg
-            , fbChainDepState = untickedChainDepState
+            , fbChainDepState = Just untickedChainDepState
             , fbLeiosDb = leiosConn
             , fbLeiosTracer = leiosKernelTracer tracers
             }

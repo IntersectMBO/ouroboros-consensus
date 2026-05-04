@@ -470,7 +470,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                 , fbCurrentSlotNo = fbCurrentSlotNo
                 , fbCurrentBlockNo = fbCurrentBlockNo
                 , fbConfig = inject fbConfig
-                , fbChainDepState = inject' (Proxy @(WrapChainDepState blk)) fbChainDepState
+                , fbChainDepState = inject' (Proxy @(WrapChainDepState blk)) <$> fbChainDepState
                 , fbLeiosDb = fbLeiosDb
                 , fbLeiosTracer = fbLeiosTracer
                 }
@@ -526,7 +526,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                 , fbCurrentSlotNo = fbCurrentSlotNo
                 , fbCurrentBlockNo = fbCurrentBlockNo
                 , fbConfig = project fbConfig
-                , fbChainDepState = project' (Proxy @(WrapChainDepState blk)) fbChainDepState
+                , fbChainDepState = project' (Proxy @(WrapChainDepState blk)) <$> fbChainDepState
                 , fbLeiosDb = fbLeiosDb
                 , fbLeiosTracer = fbLeiosTracer
                 }

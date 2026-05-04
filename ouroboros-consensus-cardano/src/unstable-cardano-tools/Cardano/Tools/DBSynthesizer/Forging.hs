@@ -231,7 +231,7 @@ runForge epochSize_ nextSlot opts chainDB leiosConn blockForging cfg genTxs = do
             , fbCurrentSlotNo = currentSlot
             , fbCurrentBlockNo = bcBlockNo
             , fbConfig = cfg
-            , fbChainDepState = headerStateChainDep $ headerState unticked
+            , fbChainDepState = Just $ headerStateChainDep $ headerState unticked
             , fbLeiosDb = leiosConn
             , fbLeiosTracer = Trace.nullTracer
             }

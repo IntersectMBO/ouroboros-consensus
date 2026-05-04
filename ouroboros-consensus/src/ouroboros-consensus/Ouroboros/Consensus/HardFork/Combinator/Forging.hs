@@ -315,16 +315,23 @@ hardForkForgeBlock
         cfgs
         (OptNP.toNP blockForging)
         $ injectTxs
-        -- We know both NSs must be from the same era, because they were all
-        -- produced from the same 'BlockForging'. Unfortunately, we can't enforce
-        -- it statically.
+        -- IsLeader and ledger are guaranteed to be in the same era. The
+        -- unticked 'ChainDepState' may legitimately be in a previous era
+        -- (era boundary); we pass 'Nothing' to that era in that case.
         $ Match.mustMatchNS
           "IsLeader"
           (getOneEraIsLeader fbIsLeader)
-        $ Match.mustMatchNS
-          "ChainDepState"
-          (State.tip fbChainDepState)
-          (State.tip . tickedHardForkLedgerStatePerEra $ fbCurrentTickedLedgerState)
+          chainDepStateAndLedger
+
+    ledgerNS = State.tip . tickedHardForkLedgerStatePerEra $ fbCurrentTickedLedgerState
+
+    chainDepStateAndLedger ::
+      NS (Product (Maybe :.: WrapChainDepState) (FlipTickedLedgerState EmptyMK)) xs
+    chainDepStateAndLedger = case fbChainDepState of
+      Nothing -> hmap (\l -> Pair (Comp Nothing) l) ledgerNS
+      Just cds -> case Match.matchNS ledgerNS (State.tip cds) of
+        Right matched -> hmap (\(Pair l cds') -> Pair (Comp (Just cds')) l) matched
+        Left _mismatch -> hmap (\l -> Pair (Comp Nothing) l) ledgerNS
 
     injectTxs =
       injectValidatedTxs
@@ -395,7 +402,7 @@ hardForkForgeBlock
       Product
         ( Product
             WrapIsLeader
-            (Product WrapChainDepState (FlipTickedLedgerState EmptyMK))
+            (Product (Maybe :.: WrapChainDepState) (FlipTickedLedgerState EmptyMK))
         )
         (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))
         blk ->
@@ -407,7 +414,7 @@ hardForkForgeBlock
       ( Pair
           ( Pair
               (WrapIsLeader isLeader')
-              (Pair (WrapChainDepState chainDepState') (FlipTickedLedgerState ledgerState'))
+              (Pair (Comp mChainDepState') (FlipTickedLedgerState ledgerState'))
             )
           (Pair (Comp rbTxs') (Comp ebTxs'))
         ) =
@@ -426,7 +433,7 @@ hardForkForgeBlock
                 , fbCurrentSlotNo
                 , fbCurrentBlockNo
                 , fbConfig = cfg'
-                , fbChainDepState = chainDepState'
+                , fbChainDepState = unwrapChainDepState <$> mChainDepState'
                 , fbLeiosDb
                 , fbLeiosTracer
                 }

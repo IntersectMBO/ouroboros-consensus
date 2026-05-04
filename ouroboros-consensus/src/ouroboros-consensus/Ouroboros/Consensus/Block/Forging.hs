@@ -148,8 +148,13 @@ data ForgeBlockArgs m blk = ForgeBlockArgs
   , fbRbTxs :: [Validated (GenTx blk)] -- Transactions to include in the TxsRb
   , fbEbTxs :: [Validated (GenTx blk)] -- Transaction to include in the Eb
   , fbIsLeader :: IsLeader (BlockProtocol blk) -- Proof we are leader
-  , fbChainDepState :: ChainDepState (BlockProtocol blk)
+  , fbChainDepState :: Maybe (ChainDepState (BlockProtocol blk))
   -- ^ The (unticked) chain-dependent state of the block we're building on.
+  -- Unticked so callers can inspect prior-slot state (e.g. the most recent
+  -- Leios EB announcement); 'Nothing' at any era boundary, since the HFC
+  -- tags each era as a distinct SOP slot and we don't translate the
+  -- previous era's state forward (the info we'd want isn't on the prior
+  -- era's header anyway).
   , fbLeiosDb :: LeiosDbConnection m
   , fbLeiosTracer :: Tracer m TraceLeiosKernel
   }
