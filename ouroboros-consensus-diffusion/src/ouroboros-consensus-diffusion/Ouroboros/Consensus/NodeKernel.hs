@@ -145,8 +145,10 @@ import Ouroboros.Network.PeerSharing
   )
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
 import Ouroboros.Network.TxSubmission.Inbound.V2.Registry
-  ( SharedTxStateVar
+  ( PeerTxInFlightRegistry
+  , SharedTxStateVar
   , TxSubmissionCountersVar
+  , newPeerTxInFlightRegistry
   , newSharedTxStateVar
   , newTxSubmissionCountersVar
   , txCountersThreadV2
@@ -200,6 +202,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getBlockchainTime :: BlockchainTime m
   , getSharedTxStateVar :: SharedTxStateVar m (ConnectionId addrNTN) (GenTxId blk)
   -- ^ Shared state of all `TxSubmission` clients.
+  , getPeerTxInFlightRegistry :: PeerTxInFlightRegistry m (ConnectionId addrNTN)
+  -- ^ Per-peer inflight bookkeeping for TxSubmission clients.
   , getTxCountersVar :: TxSubmissionCountersVar m
   -- ^ Monotonic tx-submission counters.
   }
@@ -345,6 +349,7 @@ initNodeKernel
         ps_POLICY_PEER_SHARE_MAX_PEERS
 
     sharedTxStateVar <- newSharedTxStateVar emptySharedTxState
+    peerTxInFlightRegistry <- newPeerTxInFlightRegistry
     txCountersVar <- newTxSubmissionCountersVar mempty
 
     case gnkaLoEAndGDDArgs genesisArgs of
@@ -389,6 +394,7 @@ initNodeKernel
           (txCountersTracer tracers)
           txCountersVar
           sharedTxStateVar
+          peerTxInFlightRegistry
 
     return
       NodeKernel
@@ -408,6 +414,7 @@ initNodeKernel
         , getDiffusionPipeliningSupport
         , getBlockchainTime = btime
         , getSharedTxStateVar = sharedTxStateVar
+        , getPeerTxInFlightRegistry = peerTxInFlightRegistry
         , getTxCountersVar = txCountersVar
         }
    where

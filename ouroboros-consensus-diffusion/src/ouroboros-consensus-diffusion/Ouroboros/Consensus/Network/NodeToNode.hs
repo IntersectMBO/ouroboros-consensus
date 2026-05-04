@@ -867,6 +867,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
               getMempoolReader (getMempool kernel)
           )
           (getSharedTxStateVar kernel)
+          (getPeerTxInFlightRegistry kernel)
           (getTxCountersVar kernel)
           them
           $ \api ->
