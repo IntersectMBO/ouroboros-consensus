@@ -20,7 +20,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , ValidatedPerasVotesWithQuorum
     ( vpvqTarget
     , vpvqVotes
-    , vpvqPerasCfg
+    , vpvqPerasParams
     )
   , votesReachQuorum
   , HasPerasCertRound (..)
@@ -81,8 +81,8 @@ data ValidatedPerasVotesWithQuorum blk = ValidatedPerasVotesWithQuorum
   -- ^ The target that all the votes are for
   , vpvqVotes :: !(NonEmpty (ValidatedPerasVote blk))
   -- ^ The votes that reached quorum for the given target
-  , vpvqPerasCfg :: !(PerasCfg blk)
-  -- ^ The Peras configuration used to validate that the votes reach quorum
+  , vpvqPerasParams :: !PerasParams
+  -- ^ The Peras parameters used to validate that the votes reach quorum
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -94,10 +94,10 @@ data ValidatedPerasVotesWithQuorum blk = ValidatedPerasVotesWithQuorum
 -- It returns 'Nothing' if either of these conditions is not met.
 votesReachQuorum ::
   StandardHash blk =>
-  PerasCfg blk ->
+  PerasParams ->
   [ValidatedPerasVote blk] ->
   Maybe (ValidatedPerasVotesWithQuorum blk)
-votesReachQuorum cfg votes =
+votesReachQuorum params votes =
   case votes of
     -- We need at least one vote to determine who these votes are for, so we
     -- can't vacuously reach a quorum, even if the quorum threshold is 0.
@@ -114,26 +114,19 @@ votesReachQuorum cfg votes =
             ValidatedPerasVotesWithQuorum
               { vpvqTarget = getPerasVoteTarget v0
               , vpvqVotes = v0 :| vs
-              , vpvqPerasCfg = cfg
+              , vpvqPerasParams = params
               }
  where
   totalVoteStake =
     mconcat (vpvVoteStake <$> votes)
   votesHaveEnoughStake =
-    stakeAboveThreshold cfg totalVoteStake
+    stakeAboveThreshold params totalVoteStake
   allVotesMatchTarget target =
     all ((== (getPerasVoteTarget target)) . getPerasVoteTarget)
 
 -- * BlockSupportsPeras class
 
-class
-  ( Show (PerasCfg blk)
-  , NoThunks (PerasCert blk)
-  ) =>
-  BlockSupportsPeras blk
-  where
-  type PerasCfg blk
-
+class BlockSupportsPeras blk where
   data PerasCert blk
 
   data PerasVote blk
@@ -143,18 +136,18 @@ class
   data PerasForgeErr blk
 
   validatePerasCert ::
-    PerasCfg blk ->
+    PerasParams ->
     PerasCert blk ->
     Either (PerasValidationErr blk) (ValidatedPerasCert blk)
 
   validatePerasVote ::
-    PerasCfg blk ->
+    PerasParams ->
     PerasVoteStakeDistr ->
     PerasVote blk ->
     Either (PerasValidationErr blk) (ValidatedPerasVote blk)
 
   forgePerasCert ::
-    PerasCfg blk ->
+    PerasParams ->
     ValidatedPerasVotesWithQuorum blk ->
     Either (PerasForgeErr blk) (ValidatedPerasCert blk)
 
@@ -168,9 +161,7 @@ class
 
 -- TODO: degenerate instance for all blks to get things to compile
 -- see https://github.com/tweag/cardano-peras/issues/73
-instance StandardHash blk => BlockSupportsPeras blk where
-  type PerasCfg blk = PerasParams
-
+instance BlockSupportsPeras blk where
   data PerasCert blk = PerasCert
     { pcCertRound :: PerasRoundNo
     , pcCertBoostedBlock :: Point blk
