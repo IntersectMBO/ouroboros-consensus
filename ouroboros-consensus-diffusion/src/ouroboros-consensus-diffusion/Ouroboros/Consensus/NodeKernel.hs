@@ -459,38 +459,41 @@ initNodeKernel
     void $ forkLinkedThread registry "NodeKernel.leiosVoting" $ do
       let tracer = leiosKernelTracer tracers
           LeiosVoteState{addVote} = leiosVoteState
-      -- Subscribe to EBs for which we have the full closure
-      chan <- subscribeEbNotifications leiosDB
-      let getNext f =
-            atomically (readTChan chan) >>= \case
-              AcquiredEb{} -> pure ()
-              AcquiredEbTxs point -> f point
       -- Access voting key and derive voter id
-      votingKey <- case topLevelConfigVotingKey cfg of
-        Nothing -> throwIO $ userError "NodeKernel.leiosVoting requires a topLevelConfigVotingKey"
-        Just key -> pure key
-      -- TODO: derive from committee within ledger state, also move within loop (changes across epochs)
-      let me = MkVoterId . fromIntegral $ BS.head votingKey
-      forever $ do
-        -- TODO: Need to poll available EBs instead? Otherwise we would not vote
-        -- when we switch to a chain only later
-        getNext $ \point -> do
-          let tooOld = const False -- TODO: check not too old; use tip or wall clock time?
-          unless (tooOld point) $ do
-            -- TODO: check whether already voted
-            -- TODO: validate EB closures against selected chain
-            -- TODO: create vote (sign the eb hash)
-            let vote =
-                  MkLeiosVote
-                    { electionId = point.pointSlotNo
-                    , voterId = me
-                    , ebHash = point.pointEbHash
-                    , voteSignature = True
-                    }
-            -- Store vote in memory and notify downstream peers
-            addVote vote
-            traceWith tracer TraceLeiosVoted{point, voter = me}
-            traceWith tracer TraceLeiosVoteAcquired{point, voter = me}
+      case topLevelConfigVotingKey cfg of
+        Nothing ->
+          traceWith tracer $
+            MkTraceLeiosKernel $
+              "NodeKernel.leiosVoting: disabled because no topLevelConfigVotingKey"
+        Just votingKey -> do
+          -- TODO: derive from committee within ledger state, also move within loop (changes across epochs)
+          let me = MkVoterId . fromIntegral $ BS.head votingKey
+          -- Subscribe to EBs for which we have the full closure
+          chan <- subscribeEbNotifications leiosDB
+          let getNext f =
+                atomically (readTChan chan) >>= \case
+                  AcquiredEb{} -> pure ()
+                  AcquiredEbTxs point -> f point
+          forever $ do
+            -- TODO: Need to poll available EBs instead? Otherwise we would not vote
+            -- when we switch to a chain only later
+            getNext $ \point -> do
+              let tooOld = const False -- TODO: check not too old; use tip or wall clock time?
+              unless (tooOld point) $ do
+                -- TODO: check whether already voted
+                -- TODO: validate EB closures against selected chain
+                -- TODO: create vote (sign the eb hash)
+                let vote =
+                      MkLeiosVote
+                        { electionId = point.pointSlotNo
+                        , voterId = me
+                        , ebHash = point.pointEbHash
+                        , voteSignature = True
+                        }
+                -- Store vote in memory and notify downstream peers
+                addVote vote
+                traceWith tracer TraceLeiosVoted{point, voter = me}
+                traceWith tracer TraceLeiosVoteAcquired{point, voter = me}
 
     return
       NodeKernel
