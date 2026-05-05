@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -17,7 +18,8 @@ module Test.Ouroboros.Storage.PerasCertDB.Model
 
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.TreeDiff (ToExpr (..), defaultExprViaShow)
+import Data.TreeDiff (Expr (..), ToExpr (..))
+import qualified Data.TreeDiff.OMap as OMap
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
@@ -25,6 +27,7 @@ import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , mkPerasWeightSnapshot
   )
+import Test.Util.Orphans.ToExpr (setExpr)
 
 data Model blk = Model
   { certs :: Set (WithArrivalTime (ValidatedPerasCert blk))
@@ -36,7 +39,15 @@ data Model blk = Model
 deriving instance StandardHash blk => Show (Model blk)
 
 instance StandardHash blk => ToExpr (Model blk) where
-  toExpr = defaultExprViaShow
+  toExpr model =
+    Rec "PerasCertDB.Model" $ OMap.fromList
+      [ ("open", toExpr (open model))
+      , ("certs", setExpr (certs model))
+      , ("latestCertSeen", maybeExpr (latestCertSeen model))
+      ]
+   where
+    maybeExpr Nothing = App "\x2205" []
+    maybeExpr (Just x) = toExpr x
 
 initModel :: Model blk
 initModel = Model{open = False, certs = Set.empty, latestCertSeen = Nothing}
