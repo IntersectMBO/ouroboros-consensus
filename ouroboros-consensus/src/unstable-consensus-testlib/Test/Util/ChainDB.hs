@@ -141,7 +141,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
     , cdbPerasVoteDbArgs =
         PerasVoteDbArgs
           { pvdbaTracer = nullTracer
-          , pvdbaPerasCfg = mkPerasParams
+          , pvdbaPerasParams = mkPerasParams
           }
     , cdbsArgs =
         ChainDbSpecificArgs
