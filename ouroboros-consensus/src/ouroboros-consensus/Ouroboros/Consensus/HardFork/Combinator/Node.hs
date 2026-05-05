@@ -11,6 +11,7 @@ import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Strict
 import GHC.Stack
+import LeiosVoting (HasLeiosVoting)
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
@@ -27,6 +28,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Node.SanityCheck ()
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 
 {-------------------------------------------------------------------------------
   ConfigSupportsNode
@@ -66,5 +68,7 @@ instance
   , BlockSupportsHFLedgerQuery xs
   , SupportedNetworkProtocolVersion (HardForkBlock xs)
   , SerialiseHFC xs
+  , ResolveLeiosBlock (HardForkBlock xs)
+  , HasLeiosVoting (HardForkBlock xs)
   ) =>
   RunNode (HardForkBlock xs)

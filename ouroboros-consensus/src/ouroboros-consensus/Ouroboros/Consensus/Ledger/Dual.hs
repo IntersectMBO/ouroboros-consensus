@@ -78,6 +78,7 @@ import Data.Kind (Type)
 import Data.Typeable
 import GHC.Generics (Generic)
 import GHC.Stack
+import LeiosVoting (HasLeiosVoting)
 import NoThunks.Class (AllowThunk (..), NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -138,6 +139,8 @@ instance
 instance
   (Typeable m, Typeable a) =>
   ResolveLeiosBlock (DualBlock m a)
+
+instance HasLeiosVoting (DualBlock m a)
 
 instance Condense m => Condense (DualBlock m a) where
   condense = condense . dualBlockMain

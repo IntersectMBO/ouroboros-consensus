@@ -57,6 +57,7 @@ import qualified Data.Set as Set
 import Data.Void
 import Data.Word
 import GHC.Generics (Generic)
+import LeiosVoting (HasLeiosVoting)
 import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -692,3 +693,7 @@ instance SerialiseNodeToClient BlockA (SomeBlockQuery (BlockQuery BlockA)) where
 instance SerialiseBlockQueryResult BlockA BlockQuery where
   encodeBlockQueryResult _ _ = \case {}
   decodeBlockQueryResult _ _ = \case {}
+
+-- * Leios
+
+instance HasLeiosVoting BlockA

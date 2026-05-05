@@ -41,7 +41,6 @@ import Cardano.Network.PeerSelection.LocalRootPeers
 import Control.Applicative ((<|>))
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
-import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (force)
 import Control.Monad
@@ -50,7 +49,6 @@ import Control.Monad.Except
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
-import qualified Data.ByteString as BS
 import Data.Data (Typeable)
 import Data.Either (partitionEithers)
 import Data.Foldable (traverse_)
@@ -70,7 +68,7 @@ import qualified Data.Text as Text
 import Data.Void (Void)
 import LeiosDemoDb
   ( LeiosDbConnection (..)
-  , LeiosDbHandle (subscribeEbNotifications)
+  , LeiosDbHandle (..)
   , LeiosEbNotification (..)
   , withLeiosDb
   )
@@ -94,6 +92,7 @@ import LeiosStagingArea
   , runStagingAreaDrain
   )
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
+import LeiosVoting (runLeiosVoting)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.BlockchainTime
@@ -619,10 +618,8 @@ initNodeKernel
           iterationEnd <- getMonotonicTime
           let loopInterval = 0.5 :: SI.DiffTime
               duration = iterationEnd `diffTime` iterationStart
-          traceWith leiosTr $
-            MkTraceLeiosKernel $
-              "leiosFetchLogic: duration " ++ show duration
-          SI.threadDelay $ loopInterval - duration
+          traceWith leiosTr $ MkTraceLeiosKernel $ "leiosFetchLogic: duration " ++ show duration
+          threadDelay $ loopInterval - duration
 
     -- CertRB staging drain (issue #890): on every EB closure arrival,
     -- check whether a staged CertRB was waiting for it; if so, hand it to
@@ -646,31 +643,13 @@ initNodeKernel
     -- peers). 'Nothing' disables voting on this node.
     leiosVoteState <- newLeiosVoteState
     void $
-      forkLinkedThread registry "NodeKernel.leiosVoting" $ do
-        let votingTr = leiosKernelTracer tracers
-        case topLevelConfigVotingKey cfg of
-          Nothing ->
-            traceWith votingTr $
-              MkTraceLeiosKernel
-                "NodeKernel.leiosVoting: disabled because no topLevelConfigVotingKey"
-          Just votingKey -> do
-            let LeiosVoteState{addVote} = leiosVoteState
-                me = MkVoterId . fromIntegral $ BS.head votingKey
-            chan <- subscribeEbNotifications leiosDB
-            let getNext f =
-                  atomically (readTChan chan) >>= \case
-                    AcquiredEb{} -> pure ()
-                    AcquiredEbTxs point -> f point
-            forever $ getNext $ \point -> do
-              let vote =
-                    MkLeiosVote
-                      { point
-                      , voterId = me
-                      , voteSignature = True
-                      }
-              addVote vote
-              traceWith votingTr Leios.TraceLeiosVoted{vote}
-              traceWith votingTr Leios.TraceLeiosVoteAcquired{vote}
+      forkLinkedThread registry "NodeKernel.leiosVoting" $
+        runLeiosVoting
+          (leiosKernelTracer tracers)
+          chainDB
+          leiosDB
+          leiosVoteState
+          (topLevelConfigVotingKey cfg)
 
     return
       NodeKernel

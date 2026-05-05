@@ -137,7 +137,6 @@ analyse ::
   , HasProtocolInfo blk
   , LedgerSupportsMempool.HasTxs blk
   , CanStowLedgerTables (LedgerState blk)
-  , LedgerDB.ResolveLeiosBlock blk
   ) =>
   DBAnalyserConfig ->
   Args blk ->

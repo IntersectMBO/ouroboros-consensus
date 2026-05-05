@@ -88,6 +88,7 @@ import Data.Proxy
 import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
+import LeiosVoting (HasLeiosVoting)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -138,6 +139,8 @@ data SimpleBlock' c ext ext' = SimpleBlock
 instance
   (Typeable c, Typeable ext, Typeable ext') =>
   ResolveLeiosBlock (SimpleBlock' c ext ext')
+
+instance HasLeiosVoting (SimpleBlock' c ext ext')
 
 instance
   (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext, Serialise ext') =>

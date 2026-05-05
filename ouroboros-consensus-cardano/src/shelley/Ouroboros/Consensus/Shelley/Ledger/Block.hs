@@ -64,6 +64,7 @@ import qualified Data.ByteString.Lazy as Lazy
 import Data.Coerce (coerce)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
+import LeiosVoting (HasLeiosVoting (..))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Combinator
@@ -354,3 +355,13 @@ instance ShelleyCompatible proto era => Condense (ShelleyBlock proto era) where
 
 instance ShelleyCompatible proto era => Condense (Header (ShelleyBlock proto era)) where
   condense = show . shelleyHeaderRaw
+
+-- * Leios voting
+
+-- | Every Shelley-based era opts in to Leios voting. Committee selection
+-- from the ledger state is not yet implemented; the placeholder is fine
+-- because 'Committee' has no data constructor and the voting loop does not
+-- inspect the value.
+instance HasLeiosVoting (ShelleyBlock proto era) where
+  getLeiosCommittee _ =
+    Just (error "FIXME: committee selection from ledger state not implemented")

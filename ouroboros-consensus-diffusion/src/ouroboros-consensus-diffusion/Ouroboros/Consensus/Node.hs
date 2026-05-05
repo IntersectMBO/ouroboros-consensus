@@ -150,7 +150,6 @@ import Ouroboros.Consensus.Storage.ChainDB
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Util.Args
@@ -412,7 +411,7 @@ pure []
 -- | Combination of 'runWith' and 'stdLowLevelRunArgsIO'
 run ::
   forall blk.
-  (RunNode blk, ResolveLeiosBlock blk) =>
+  RunNode blk =>
   RunNodeArgs IO RemoteAddress LocalAddress blk ->
   StdRunNodeArgs IO blk ->
   IO ()
@@ -480,7 +479,6 @@ runWith ::
   , NetworkIO m
   , NetworkAddr addrNTN
   , Show addrNTN
-  , ResolveLeiosBlock blk
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
   (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
@@ -845,7 +843,6 @@ openChainDB ::
   forall m blk.
   ( RunNode blk
   , IOLike m
-  , ResolveLeiosBlock blk
   ) =>
   ResourceRegistry m ->
   TopLevelConfig blk ->
