@@ -101,10 +101,14 @@ prettyTxHash (MkTxHash bytes) = BS8.unpack (BS16.encode bytes)
 -- | Uniquely identifies an endorser block in Leios. Could use 'Block SlotNo
 -- EbHash' eventually, but a dedicated type is better to explore.
 data LeiosPoint = MkLeiosPoint {pointSlotNo :: SlotNo, pointEbHash :: EbHash}
-  deriving stock (Show, Eq, Ord, Generic)
+  deriving stock (Eq, Ord, Generic)
   deriving anyclass NoThunks
 
 instance ShowProxy LeiosPoint where showProxy _ = "LeiosPoint"
+
+-- TODO: prettyprinter instance Pretty?
+instance Show LeiosPoint where
+  show = prettyLeiosPoint
 
 prettyLeiosPoint :: LeiosPoint -> String
 prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =

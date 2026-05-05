@@ -53,7 +53,7 @@ import qualified Data.Set as Set
 import Data.Word (Word64)
 import LeiosDemoDb (LeiosDbConnection, newLeiosDBInMemoryWith, withLeiosDb)
 import LeiosDemoTypes (LeiosPoint (..), TraceLeiosKernel (..), hashLeiosEb, minCertificationGap)
-import Lens.Micro (each, (%~), (^.), (^..))
+import Lens.Micro ((%~), (^.))
 import Ouroboros.Consensus.Block (SlotNo (..), blockSlot)
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
@@ -127,9 +127,8 @@ import Test.ThreadNet.Network
   ( LeiosState (..)
   , NodeOutput (..)
   , TestNodeInitialization (..)
-  , _FromLeios
-  , _FromMempool
-  , _nodeEvent
+  , TraceThreadNet (FromNode)
+  , TraceThreadNetNode (FromLeios, FromLeiosPeer, FromMempool)
   )
 import Test.ThreadNet.TxGen.Cardano (CardanoTxGenExtra (..))
 import Test.ThreadNet.Util.NodeJoinPlan (trivialNodeJoinPlan)
@@ -186,7 +185,7 @@ prop_leios seed =
 
   includedTxCounts = length . extractTxs <$> forgedBlocks
 
-  leiosTraces = traces ^.. each . _nodeEvent . _FromLeios
+  leiosTraces = [ev | FromNode _ (FromLeios ev) <- traces]
 
   forgedPoints = Map.keysSet forgedEBs
 
@@ -212,6 +211,14 @@ prop_leios seed =
           & counterexample "created votes not diffused"
           & prettyCounterexampleMap "acquired votes" 120 acquiredVotes
           & prettyCounterexampleList "voted on EBs" 120 votedPoints
+          & counterexample
+            ( "peer traces: "
+                <> unlines [show (nid, ev) | FromNode nid (FromLeiosPeer ev) <- traces]
+            )
+          & counterexample
+            ( "kernel traces: "
+                <> unlines [show (nid, ev) | FromNode nid (FromLeios ev) <- traces]
+            )
       ]
 
   votedPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
@@ -222,7 +229,7 @@ prop_leios seed =
     TraceLeiosVoteAcquired{point, voter} -> Just (point, Set.singleton voter)
     _ -> Nothing
 
-  mempoolTraces = traces ^.. each . _nodeEvent . _FromMempool
+  mempoolTraces = [ev | FromNode _ (FromMempool ev) <- traces]
 
   mempoolAddedTxs = flip mapMaybe mempoolTraces $ \case
     TraceMempoolAddedTx tx _ _ -> Just tx
@@ -605,8 +612,12 @@ prettyCounterexampleMap title maxLength m prop =
  where
   prettyMap =
     Map.toList m
-      & map (\(a, b) -> indented 2 . elided maxLength $ show a <> " -> " <> show b)
+      & map (\(a, b) -> indented 2 $ elided kvLength (show a) <> arrowStr <> elided kvLength (show b))
       & unlines
+
+  arrowStr = " -> "
+
+  kvLength = (maxLength - length arrowStr) `div` 2
 
 -- | Pretty print a list of counterexamples, one on each row and eliding long
 -- entries to given maxLength. If maxLength is 0 or negative, no elision is

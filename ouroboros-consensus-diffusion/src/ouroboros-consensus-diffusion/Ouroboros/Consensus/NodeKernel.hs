@@ -467,6 +467,9 @@ initNodeKernel
               "NodeKernel.leiosVoting: disabled because no topLevelConfigVotingKey"
         Just votingKey -> do
           -- TODO: derive from committee within ledger state, also move within loop (changes across epochs)
+          -- FIXME: Lucky seed has two identical voter ids. Fix via proper
+          -- committee selection from all registered keys.
+          -- :main -p Leios --quickcheck-replay "(SMGen 15462600834920737326 9156690725779514573,20)"
           let me = MkVoterId . fromIntegral $ BS.head votingKey
           -- Subscribe to EBs for which we have the full closure
           chan <- subscribeEbNotifications leiosDB
