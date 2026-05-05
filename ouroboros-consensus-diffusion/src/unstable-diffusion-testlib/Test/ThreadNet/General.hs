@@ -56,6 +56,7 @@ import qualified Ouroboros.Consensus.Block.Abstract as BA
 import qualified Ouroboros.Consensus.BlockchainTime as BTime
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
+import Ouroboros.Consensus.Leios.Voting (HasLeiosVoting)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -215,6 +216,7 @@ data TestConfigMB m blk = TestConfigMB
 runTestNetwork ::
   forall blk.
   ( RunNode blk
+  , HasLeiosVoting blk
   , TxGen blk
   , HasCallStack
   ) =>

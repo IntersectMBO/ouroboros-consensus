@@ -66,6 +66,7 @@ import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Condense
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
+import Ouroboros.Consensus.Leios.Voting (HasLeiosVoting)
 import Ouroboros.Consensus.HardFork.History
   ( Bound (..)
   , EraParams (..)
@@ -686,3 +687,5 @@ instance SerialiseNodeToClient BlockA (SomeBlockQuery (BlockQuery BlockA)) where
 instance SerialiseBlockQueryResult BlockA BlockQuery where
   encodeBlockQueryResult _ _ = \case {}
   decodeBlockQueryResult _ _ = \case {}
+
+instance HasLeiosVoting BlockA

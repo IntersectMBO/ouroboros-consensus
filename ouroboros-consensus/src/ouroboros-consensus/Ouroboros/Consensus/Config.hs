@@ -10,6 +10,7 @@
 module Ouroboros.Consensus.Config
   ( -- * The top-level node configuration
     TopLevelConfig (..)
+  , VotingKey
   , castTopLevelConfig
   , mkTopLevelConfig
 

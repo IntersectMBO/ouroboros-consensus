@@ -103,6 +103,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Leios.Voting (HasLeiosVoting)
 import Ouroboros.Consensus.Mock.Ledger.Address
 import Ouroboros.Consensus.Mock.Ledger.State
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
@@ -834,3 +835,5 @@ simpleBlockBinaryBlockInfo b =
 -- * Leios
 
 instance ResolveLeiosBlock (SimpleBlock' c ext ext)
+
+instance HasLeiosVoting (SimpleBlock' c ext ext')

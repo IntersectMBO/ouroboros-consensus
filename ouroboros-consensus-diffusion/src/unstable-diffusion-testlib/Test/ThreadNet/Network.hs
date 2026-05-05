@@ -88,6 +88,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Leios.Voting (HasLeiosVoting)
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
@@ -320,6 +321,7 @@ runThreadNetwork ::
   , MonadTime m
   , MonadTimer m
   , RunNode blk
+  , HasLeiosVoting blk
   , TxGen blk
   , -- TODO:, TracingConstraints blk
     HasCallStack

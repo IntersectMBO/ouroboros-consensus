@@ -54,6 +54,7 @@ import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Byron.EBBs as EBBs
 import Ouroboros.Consensus.Byron.Ledger.Conversions
 import Ouroboros.Consensus.Byron.Ledger.Orphans ()
+import Ouroboros.Consensus.Leios.Voting (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
@@ -98,6 +99,8 @@ data ByronBlock = ByronBlock
   deriving (Eq, Show)
 
 instance ResolveLeiosBlock ByronBlock
+
+instance HasLeiosVoting ByronBlock
 
 instance Condense ByronBlock where
   condense = condense . byronBlockRaw
