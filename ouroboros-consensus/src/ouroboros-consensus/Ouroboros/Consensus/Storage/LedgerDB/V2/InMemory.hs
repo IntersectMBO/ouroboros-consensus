@@ -179,7 +179,7 @@ snapshotManager ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
-  SnapshotManager m m blk (StateRef m ExtLedgerState blk)
+  SnapshotManager m blk (StateRef m ExtLedgerState blk)
 snapshotManager ccfg tracer fs =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs

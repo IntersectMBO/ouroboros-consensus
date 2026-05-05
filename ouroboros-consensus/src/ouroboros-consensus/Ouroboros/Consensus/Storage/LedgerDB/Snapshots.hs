@@ -261,10 +261,7 @@ data MetadataErr
   deriving (Eq, Show)
 
 -- | Management of snapshots for the different LedgerDB backends.
---
--- The LedgerDB V1 takes snapshots in @ReadLocked m@, hence the two different
--- @m@ and @n@ monad types.
-data SnapshotManager m n blk st = SnapshotManager
+data SnapshotManager m blk st = SnapshotManager
   { listSnapshots :: m [DiskSnapshot]
   , deleteSnapshotIfTemporary :: DiskSnapshot -> m ()
   , takeSnapshot ::
@@ -274,7 +271,7 @@ data SnapshotManager m n blk st = SnapshotManager
       -- \^ The state needed for taking the snapshot:
       -- - In V1: this will be the DbChangelog and the Backing store
       -- - In V2: this will be a StateRef
-      n (Maybe (DiskSnapshot, RealPoint blk))
+      m (Maybe (DiskSnapshot, RealPoint blk))
       -- \^ If a Snapshot was taken, its information and the point at which it
       -- was taken.
   }
@@ -355,12 +352,12 @@ loadSnapshotMetadata (SomeHasFS hasFS) ds = ExceptT $ do
           Left decodeErr -> pure $ Left $ MetadataInvalid decodeErr
           Right meta -> pure $ Right meta
 
-snapshotsMapM_ :: Monad m => SnapshotManager m n blk st -> (DiskSnapshot -> m a) -> m ()
+snapshotsMapM_ :: Monad m => SnapshotManager m blk st -> (DiskSnapshot -> m a) -> m ()
 snapshotsMapM_ snapManager f =
   mapM_ f =<< listSnapshots snapManager
 
 -- | Testing only! Destroy all snapshots in the DB.
-destroySnapshots :: Monad m => SnapshotManager m n blk st -> m ()
+destroySnapshots :: Monad m => SnapshotManager m blk st -> m ()
 destroySnapshots snapManager =
   snapshotsMapM_
     snapManager
@@ -406,7 +403,7 @@ writeExtLedgerState (SomeHasFS hasFS) encLedger path cs = do
 -- The deleted snapshots are returned.
 trimSnapshots ::
   Monad m =>
-  SnapshotManager m n blk st ->
+  SnapshotManager m blk st ->
   SnapshotPolicy ->
   m [DiskSnapshot]
 trimSnapshots snapManager SnapshotPolicy{onDiskNumSnapshots} = do

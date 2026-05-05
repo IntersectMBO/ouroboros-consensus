@@ -104,7 +104,7 @@ openDB
 -------------------------------------------------------------------------------}
 
 doOpenDB ::
-  forall m n blk db st.
+  forall m blk db st.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
@@ -112,7 +112,7 @@ doOpenDB ::
   ) =>
   Complete LedgerDbArgs m blk ->
   InitDB db m blk ->
-  SnapshotManager m n blk st ->
+  SnapshotManager m blk st ->
   StreamAPI m blk blk ->
   Point blk ->
   m (LedgerDB' m blk)
@@ -128,7 +128,7 @@ openDBInternal ::
   ) =>
   Complete LedgerDbArgs m blk ->
   InitDB db m blk ->
-  SnapshotManager m n blk st ->
+  SnapshotManager m blk st ->
   StreamAPI m blk blk ->
   Point blk ->
   m (LedgerDB' m blk, TestInternals' m blk)
