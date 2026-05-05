@@ -31,6 +31,8 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , WithArrivalTime (..)
   )
+import Ouroboros.Consensus.Peras.Params (PerasParams, mkPerasParams, perasWeight)
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API (AddPerasCertResult (..), PerasCertDB)
@@ -54,8 +56,8 @@ tests =
     [ adjustQuickCheckTests (* 100) $ testProperty "q-d" $ prop_qd
     ]
 
-perasTestCfg :: PerasCfg TestBlock
-perasTestCfg = mkPerasParams
+perasTestParams :: PerasParams
+perasTestParams = mkPerasParams
 
 prop_qd :: Actions Model -> Property
 prop_qd actions = QC.monadic f $ property () <$ runActions actions
@@ -98,7 +100,7 @@ instance StateModel Model where
                       { pcCertRound = roundNo
                       , pcCertBoostedBlock = boostedBlock
                       }
-                , vpcCertBoost = perasWeight perasTestCfg
+                , vpcCertBoost = perasWeight perasTestParams
                 }
       pure (AddCert certWithTime)
 

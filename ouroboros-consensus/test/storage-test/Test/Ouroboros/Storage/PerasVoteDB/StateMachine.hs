@@ -42,22 +42,23 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract (Point (..), SlotNo (..))
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( BlockSupportsPeras (..)
-  , HasPerasVoteBlock (..)
+  ( HasPerasVoteBlock (..)
   , HasPerasVoteRound (..)
-  , PerasRoundNo (..)
   , PerasVote (..)
-  , PerasVoteId
-  , PerasVoteStake (..)
-  , PerasVoteTarget (..)
-  , PerasVoterId (..)
   , ValidatedPerasCert
   , ValidatedPerasVote (..)
-  , mkPerasParams
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , WithArrivalTime (..)
+  )
+import Ouroboros.Consensus.Peras.Params (PerasParams, mkPerasParams)
+import Ouroboros.Consensus.Peras.Types
+  ( PerasRoundNo (..)
+  , PerasVoteId
+  , PerasVoteStake (..)
+  , PerasVoteTarget (..)
+  , PerasVoterId (..)
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
@@ -105,8 +106,8 @@ tests =
             prop_qd
     ]
 
-perasTestCfg :: PerasCfg TestBlock
-perasTestCfg = mkPerasParams
+perasTestParams :: PerasParams
+perasTestParams = mkPerasParams
 
 prop_qd :: Actions Model -> Property
 prop_qd actions = monadic runActualImplemMonad resultAsPropertyM
@@ -235,7 +236,7 @@ instance StateModel Model where
       pure (RelativeTime time)
 
   initialState =
-    Model (Model.initModel perasTestCfg)
+    Model (Model.initModel perasTestParams)
 
   nextState (Model m) action _ =
     case action of
@@ -265,7 +266,7 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
   perform _ action _ =
     case action of
       CreateDB -> do
-        let args = PerasVoteDB.PerasVoteDbArgs nullTracer perasTestCfg
+        let args = PerasVoteDB.PerasVoteDbArgs nullTracer perasTestParams
         voteDB <- lift $ PerasVoteDB.createDB args
         put voteDB
       AddVote vote -> do

@@ -39,9 +39,7 @@ import Ouroboros.Consensus.Block.Abstract
   )
 import Ouroboros.Consensus.Block.SupportsPeras
   ( HasPerasCertRound (..)
-  , PerasRoundNo (..)
   , getPerasCertRound
-  , onPerasRoundNo
   )
 import Ouroboros.Consensus.Peras.Params
   ( PerasCertArrivalThreshold (..)
@@ -49,6 +47,7 @@ import Ouroboros.Consensus.Peras.Params
   , PerasIgnoranceRounds (..)
   , PerasParams (..)
   )
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo (..), onPerasRoundNo)
 import Ouroboros.Consensus.Peras.Voting.View
   ( LatestCertOnChainView (..)
   , LatestCertSeenView (..)

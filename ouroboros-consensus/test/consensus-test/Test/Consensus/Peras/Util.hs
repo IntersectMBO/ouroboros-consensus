@@ -32,17 +32,17 @@ import Data.String (IsString (..))
 import Data.Traversable (mapAccumM)
 import Data.Word (Word8)
 import GHC.Word (Word16)
-import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasBoostedBlock (..)
-  , PerasRoundNo (..)
-  , PerasSeatIndex (..)
-  )
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCryptoAggregateVoteSignature (..)
   , VRFOutput (..)
   , VoteSignature (..)
+  )
+import Ouroboros.Consensus.Peras.Types
+  ( PerasBoostedBlock (..)
+  , PerasRoundNo (..)
+  , PerasSeatIndex (..)
   )
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import Test.QuickCheck

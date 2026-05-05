@@ -17,8 +17,9 @@ import Cardano.Ledger.BaseTypes.NonZero (knownNonZeroBounded)
 import Data.List (iterate')
 import Data.Word (Word64)
 import Numeric.Natural (Natural)
-import Ouroboros.Consensus.Block (PerasWeight (PerasWeight), SlotNo (..))
+import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Config.SecurityParam
+import Ouroboros.Consensus.Peras.Params (PerasWeight (..))
 import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , mkPerasWeightSnapshot

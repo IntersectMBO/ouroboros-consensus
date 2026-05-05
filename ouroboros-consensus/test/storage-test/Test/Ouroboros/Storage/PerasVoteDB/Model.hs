@@ -26,22 +26,23 @@ import Ouroboros.Consensus.Block.SupportsPeras
   ( HasPerasVoteBlock (..)
   , HasPerasVoteRound (..)
   , PerasCert (..)
-  , PerasCfg
-  , PerasParams (..)
-  , PerasRoundNo
-  , PerasVoteId (..)
-  , PerasVoteStake (..)
-  , PerasVoteTarget (..)
-  , PerasVoterId
   , ValidatedPerasCert (..)
   , ValidatedPerasVote
   , getPerasCertBoostedBlock
   , getPerasVoteStake
   , getPerasVoteVoterId
-  , stakeAboveThreshold
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( WithArrivalTime (..)
+  )
+import Ouroboros.Consensus.Peras.Params (PerasParams, perasWeight)
+import Ouroboros.Consensus.Peras.Types
+  ( PerasRoundNo
+  , PerasVoteId (..)
+  , PerasVoteStake (..)
+  , PerasVoteTarget (..)
+  , PerasVoterId
+  , stakeAboveThreshold
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( AddPerasVoteResult (..)
@@ -79,7 +80,7 @@ data Model blk = Model
 instance StandardHash blk => ToExpr (Model blk) where
   toExpr = defaultExprViaShow
 
-initModel :: PerasCfg blk -> Model blk
+initModel :: PerasParams -> Model blk
 initModel cfg =
   Model
     { open = False

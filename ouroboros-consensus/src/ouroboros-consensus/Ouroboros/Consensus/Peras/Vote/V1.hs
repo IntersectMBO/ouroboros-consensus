@@ -21,15 +21,15 @@ import Cardano.Binary
   , encodeListLen
   )
 import Data.Word (Word8)
-import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasBoostedBlock
-  , PerasRoundNo
-  , PerasSeatIndex
-  )
 import Ouroboros.Consensus.Committee.Crypto (CryptoSupportsVoteSigning (..))
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCrypto
   , VRFOutput
+  )
+import Ouroboros.Consensus.Peras.Types
+  ( PerasBoostedBlock
+  , PerasRoundNo
+  , PerasSeatIndex
   )
 
 -- | Concrete Peras votes using BLS signatures

@@ -49,6 +49,7 @@ import GHC.Generics
 import GHC.Stack
 import qualified Generics.SOP as SOP
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo (..))
 import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Storage.VolatileDB
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Types (FileId)

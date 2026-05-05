@@ -23,6 +23,7 @@ import Data.Maybe (catMaybes, fromJust)
 import Data.Traversable (for)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam
+import Ouroboros.Consensus.Peras.Params (PerasWeight (..))
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
