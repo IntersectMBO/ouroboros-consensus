@@ -32,6 +32,14 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
+import Ouroboros.Consensus.Peras.Params (mkPerasParams)
+import Ouroboros.Consensus.Peras.Types
+  ( PerasRoundNo (..)
+  , PerasVoteId (..)
+  , PerasVoteStake (..)
+  , PerasVoteStakeDistr (..)
+  , PerasVoterId (..)
+  )
 import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
   , PerasVoteDB

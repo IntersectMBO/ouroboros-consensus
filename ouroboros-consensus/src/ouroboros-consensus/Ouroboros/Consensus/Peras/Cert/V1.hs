@@ -30,17 +30,17 @@ import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
 import Data.Maybe (catMaybes)
 import Data.Word (Word16)
-import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasBoostedBlock
-  , PerasRoundNo
-  , PerasSeatIndex (..)
-  )
 import Ouroboros.Consensus.Committee.Crypto
   ( CryptoSupportsAggregateVoteSigning (..)
   )
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCrypto
   , VRFOutput
+  )
+import Ouroboros.Consensus.Peras.Types
+  ( PerasBoostedBlock
+  , PerasRoundNo
+  , PerasSeatIndex (..)
   )
 import Ouroboros.Consensus.Peras.Vote.V1 (PerasVoteEligibilityProof (..))
 import Ouroboros.Consensus.Util.Bitmap (Bitmap)

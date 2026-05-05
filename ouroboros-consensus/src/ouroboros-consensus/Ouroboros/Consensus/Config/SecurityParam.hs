@@ -13,7 +13,7 @@ import Cardano.Ledger.BaseTypes.NonZero
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.SupportsPeras (PerasWeight (..))
+import Ouroboros.Consensus.Peras.Params (PerasWeight (..))
 import Quiet
 
 -- | Protocol security parameter

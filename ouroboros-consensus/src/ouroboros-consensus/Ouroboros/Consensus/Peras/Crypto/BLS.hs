@@ -39,10 +39,6 @@ import Ouroboros.Consensus.Block.RealPoint
   ( bytes32RealPointHash
   , bytes32RealPointSlot
   )
-import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasBoostedBlock (..)
-  , PerasRoundNo (..)
-  )
 import Ouroboros.Consensus.Committee.Crypto
   ( CryptoSupportsAggregateVoteSigning (..)
   , CryptoSupportsBatchVRFVerification (..)
@@ -56,6 +52,10 @@ import Ouroboros.Consensus.Committee.Crypto
   )
 import Ouroboros.Consensus.Committee.Crypto.BLS (KeyRole (..))
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
+import Ouroboros.Consensus.Peras.Types
+  ( PerasBoostedBlock (..)
+  , PerasRoundNo (..)
+  )
 
 -- | BLS-based crypto scheme used in Peras voting committees
 data PerasBLSCrypto
