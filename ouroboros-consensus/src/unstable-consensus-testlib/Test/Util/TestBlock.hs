@@ -426,7 +426,7 @@ class
   applyPayload ::
     PayloadDependentState ptype ValuesMK ->
     ptype ->
-    Either (PayloadDependentError ptype) (PayloadDependentState ptype TrackingMK)
+    Either (PayloadDependentError ptype) (PayloadDependentState ptype DiffMK)
 
   -- | This function is used to implement the 'getBlockKeySets' function of the
   -- 'ApplyBlock' class. Thus we assume that the payload contains all the
@@ -453,7 +453,7 @@ applyDirectlyToPayloadDependentState ::
   ptype ->
   Either
     (PayloadDependentError ptype)
-    (Ticked LedgerState (TestBlockWith ptype) TrackingMK)
+    (Ticked LedgerState (TestBlockWith ptype) DiffMK)
 applyDirectlyToPayloadDependentState (TickedTestLedger st) tx = do
   payloadDepSt' <- applyPayload (payloadDependentState st) tx
   pure $ TickedTestLedger $ st{payloadDependentState = payloadDepSt'}
@@ -575,11 +575,10 @@ instance
           Right st' ->
             return $
               pureLedgerResult $
-                trackingToDiffs $
-                  TestLedger
-                    { lastAppliedPoint = Chain.blockPoint tb
-                    , payloadDependentState = st'
-                    }
+                TestLedger
+                  { lastAppliedPoint = Chain.blockPoint tb
+                  , payloadDependentState = st'
+                  }
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =

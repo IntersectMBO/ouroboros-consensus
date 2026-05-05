@@ -131,10 +131,10 @@ instance PayloadSemantics Tx where
       notFound = Set.filter (not . (`Map.member` tokMap)) consumed
      in
       if Set.null notFound
-        then Right $ TestPLDS (Ledger.rawAttachAndApplyDiffs toks fullDiff)
+        then Right $ TestPLDS fullDiff
         else Left $ TxApplicationError notFound
    where
-    TestPLDS toks@(ValuesMK tokMap) = plds
+    TestPLDS (ValuesMK tokMap) = plds
     Tx{consumed, produced} = tx
 
     consumedDiff, producedDiff :: Diff.Diff Token ()
@@ -225,7 +225,7 @@ txSize (TestBlockGenTx tx) =
 instance Ledger.LedgerSupportsMempool TestBlock where
   applyTx _cfg _shouldIntervene _slot (TestBlockGenTx tx) tickedSt =
     except $
-      fmap ((,ValidatedGenTx (TestBlockGenTx tx)) . Ledger.trackingToDiffs) $
+      fmap (,ValidatedGenTx (TestBlockGenTx tx)) $
         applyDirectlyToPayloadDependentState tickedSt tx
 
   reapplyTx cfg slot (ValidatedGenTx genTx) tickedSt =

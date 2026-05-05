@@ -419,7 +419,6 @@ instance
   applyBlockLedgerResultWithValidation _validation _events a blk st =
     fmap
       ( pureLedgerResult
-          . trackingToDiffs
           . calculateDifference st
           . unstowLedgerTables
       )
@@ -471,7 +470,7 @@ deriving anyclass instance
   ( SimpleCrypto c
   , Typeable ext
   ) =>
-  NoThunks (Ticked LedgerState (SimpleBlock c ext) TrackingMK)
+  NoThunks (Ticked LedgerState (SimpleBlock c ext) DiffMK)
 deriving instance
   ( SimpleCrypto c
   , Typeable ext
@@ -609,7 +608,7 @@ instance
       unstowLedgerTables
         <$> updateSimpleUTxO cfg slot tx st'
     return
-      ( trackingToDiffs $ calculateDifference st st''
+      ( calculateDifference st st''
       , ValidatedSimpleGenTx tx
       )
 
