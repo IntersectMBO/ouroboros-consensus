@@ -81,6 +81,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , reopen
   , updateLoE
   , perasCertModel
+  , perasVoteModel
   , validChains
   , volatileDbBlocks
   , wipeVolatileDB
