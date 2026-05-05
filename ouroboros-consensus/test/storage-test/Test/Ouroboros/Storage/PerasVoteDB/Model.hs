@@ -6,6 +6,7 @@
 
 module Test.Ouroboros.Storage.PerasVoteDB.Model
   ( PerasVoteDbModelError (..)
+  , VoteEntry (..)
   , Model (..)
   , initModel
   , openDB
