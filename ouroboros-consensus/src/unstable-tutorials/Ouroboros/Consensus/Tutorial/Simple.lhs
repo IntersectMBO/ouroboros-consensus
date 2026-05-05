@@ -51,10 +51,10 @@ First, some imports we'll need:
 >    Header, StorageConfig, ChainHash, HasHeader(..), HeaderFields(..),
 >    HeaderHash, Point, StandardHash)
 > import Ouroboros.Consensus.Protocol.Abstract
->   (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..), NoTiebreaker(..))
+>    (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..), NoTiebreaker(..))
 > import Ouroboros.Consensus.Ticked ( Ticked, Ticked(TickedTrivial) )
 > import Ouroboros.Consensus.Block
->   (BlockSupportsProtocol (tiebreakerView, validateView))
+>    (BlockSupportsProtocol (tiebreakerView, validateView), BlockSupportsPeras)
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (AuxLedgerEvent, GetTip(..), IsLedger(..), LedgerCfg,
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
@@ -396,7 +396,10 @@ will know nothing about the structure of the data - instead there are other
 typeclasses needed to build an interface to derive things that are needed from
 this value.  We'll implement those typeclasses next.
 
+We also need to instantiate `BlockSupportsPeras` for `BlockC`. For this, we can
+use the default emtpy implementation.
 
+> instance BlockSupportsPeras BlockC
 
 Interface to the Block Header
 -----------------------------

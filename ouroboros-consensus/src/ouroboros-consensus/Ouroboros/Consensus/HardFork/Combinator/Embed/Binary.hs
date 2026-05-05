@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -23,6 +24,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Peras (initPerasState)
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.Abstract (protocolSecurityParam)
 import Ouroboros.Consensus.TypeFamilyWrappers
@@ -33,7 +35,11 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 
 protocolInfoBinary ::
   forall m kesAgentTrace blk1 blk2.
-  (CanHardFork '[blk1, blk2], Monad m) =>
+  ( Monad m
+  , CanHardFork '[blk1, blk2]
+  , HasCanonicalTxIn '[blk1, blk2]
+  , HasHardForkTxOut '[blk1, blk2]
+  ) =>
   -- First era
   ProtocolInfo blk1 ->
   (Tracer.Tracer m kesAgentTrace -> m [MkBlockForging m blk1]) ->
@@ -60,58 +66,68 @@ protocolInfoBinary
   eraParams2
   toPartialConsensusConfig2
   toPartialLedgerConfig2 =
-    ( ProtocolInfo
-        { pInfoConfig =
-            TopLevelConfig
-              { topLevelConfigProtocol =
-                  HardForkConsensusConfig
-                    { hardForkConsensusConfigK = k
-                    , hardForkConsensusConfigShape = shape
-                    , hardForkConsensusConfigPerEra =
-                        PerEraConsensusConfig
-                          ( WrapPartialConsensusConfig (toPartialConsensusConfig1 consensusConfig1)
-                              :* WrapPartialConsensusConfig (toPartialConsensusConfig2 consensusConfig2)
-                              :* Nil
-                          )
-                    }
-              , topLevelConfigLedger =
-                  HardForkLedgerConfig
-                    { hardForkLedgerConfigShape = shape
-                    , hardForkLedgerConfigPerEra =
-                        PerEraLedgerConfig
-                          ( WrapPartialLedgerConfig (toPartialLedgerConfig1 ledgerConfig1)
-                              :* WrapPartialLedgerConfig (toPartialLedgerConfig2 ledgerConfig2)
-                              :* Nil
-                          )
-                    }
-              , topLevelConfigBlock =
-                  HardForkBlockConfig $
-                    PerEraBlockConfig $
-                      (blockConfig1 :* blockConfig2 :* Nil)
-              , topLevelConfigCodec =
-                  HardForkCodecConfig $
-                    PerEraCodecConfig $
-                      (codecConfig1 :* codecConfig2 :* Nil)
-              , topLevelConfigStorage =
-                  HardForkStorageConfig $
-                    PerEraStorageConfig $
-                      (storageConfig1 :* storageConfig2 :* Nil)
-              , topLevelConfigCheckpoints = emptyCheckpointsMap
-              }
-        , pInfoInitLedger =
-            ExtLedgerState
-              { ledgerState =
-                  HardForkLedgerState $
-                    initHardForkState (Flip initLedgerState1)
-              , headerState =
-                  genesisHeaderState $
-                    initHardForkState $
-                      WrapChainDepState $
-                        headerStateChainDep initHeaderState1
-              }
-        }
-    , \tr -> alignWith alignBlockForging <$> blockForging1 tr <*> blockForging2 tr
-    )
+    let ledgerConfig =
+          HardForkLedgerConfig
+            { hardForkLedgerConfigShape = shape
+            , hardForkLedgerConfigPerEra =
+                PerEraLedgerConfig
+                  ( WrapPartialLedgerConfig (toPartialLedgerConfig1 ledgerConfig1)
+                      :* WrapPartialLedgerConfig (toPartialLedgerConfig2 ledgerConfig2)
+                      :* Nil
+                  )
+            }
+     in ( ProtocolInfo
+            { pInfoConfig =
+                TopLevelConfig
+                  { topLevelConfigProtocol =
+                      HardForkConsensusConfig
+                        { hardForkConsensusConfigK = k
+                        , hardForkConsensusConfigShape = shape
+                        , hardForkConsensusConfigPerEra =
+                            PerEraConsensusConfig
+                              ( WrapPartialConsensusConfig (toPartialConsensusConfig1 consensusConfig1)
+                                  :* WrapPartialConsensusConfig (toPartialConsensusConfig2 consensusConfig2)
+                                  :* Nil
+                              )
+                        }
+                  , topLevelConfigLedger =
+                      ledgerConfig
+                  , topLevelConfigBlock =
+                      HardForkBlockConfig $
+                        PerEraBlockConfig $
+                          (blockConfig1 :* blockConfig2 :* Nil)
+                  , topLevelConfigCodec =
+                      HardForkCodecConfig $
+                        PerEraCodecConfig $
+                          (codecConfig1 :* codecConfig2 :* Nil)
+                  , topLevelConfigStorage =
+                      HardForkStorageConfig $
+                        PerEraStorageConfig $
+                          (storageConfig1 :* storageConfig2 :* Nil)
+                  , topLevelConfigCheckpoints = emptyCheckpointsMap
+                  }
+            , pInfoInitLedger =
+                let ledgerState =
+                      HardForkLedgerState $
+                        initHardForkState (Flip initLedgerState1)
+                    headerState =
+                      genesisHeaderState $
+                        initHardForkState $
+                          WrapChainDepState $
+                            headerStateChainDep initHeaderState1
+                    perasState =
+                      initPerasState
+                        ledgerConfig
+                        ledgerState
+                        headerState
+                 in ExtLedgerState
+                      { ledgerState
+                      , headerState
+                      , perasState
+                      }
+            }
+        , \tr -> alignWith alignBlockForging <$> blockForging1 tr <*> blockForging2 tr
+        )
    where
     ProtocolInfo
       { pInfoConfig =

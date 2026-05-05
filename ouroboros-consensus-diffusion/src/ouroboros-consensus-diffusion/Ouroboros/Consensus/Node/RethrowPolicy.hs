@@ -105,6 +105,7 @@ consensusRethrowPolicy pb =
           case e of
             MultipleWinnersInRound{} -> ourBug -- TODO: should we instead shutdown the node?
             ForgingCertError{} -> ourBug
+            EpochContextNotFoundForRound{} -> ourBug
       )
     -- Some chain sync client exceptions indicate malicious behaviour,
     -- others merely mean that we should disconnect from this client

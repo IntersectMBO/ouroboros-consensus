@@ -50,6 +50,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Control.Monad (guard)
 import Control.Monad.Except (throwError, withExcept)
 import qualified Control.State.Transition.Extended as STS
+import Data.Bifunctor (bimap)
 import Data.Functor ((<&>))
 import Data.Functor.Product
 import Data.Kind (Type)
@@ -60,6 +61,7 @@ import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Counting (getExactly)
+import Data.SOP.Either (hdistribute, mkEitherF)
 import Data.SOP.Functors (Flip (..))
 import Data.SOP.InPairs (InPairs (..))
 import qualified Data.SOP.InPairs as InPairs
@@ -94,6 +96,7 @@ import Ouroboros.Consensus.HardFork.History
   , EraIndexed
   , EraParams
   , SafeZone (..)
+  , eraIndexedToNS
   , forgetEraIndex
   )
 import qualified Ouroboros.Consensus.HardFork.History as History
@@ -344,8 +347,6 @@ instance
       . State.tip
       . tickedHardForkLedgerStatePerEra
 
--- TODO: this instance will have a full implementation as soon as we remove the
--- degenerate 'BlockSupportsPeras' instance.
 instance
   ( StandardHash (HardForkBlock xs)
   , CanHardFork xs
@@ -358,6 +359,26 @@ instance
 
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   toMaybeEraIndexedEpochToPerasRoundInfo _ = id
+
+  mkBoundedPerasEpochContext epochToPerasRoundInfo ledgerState headerState =
+    bimap
+      (HardForkPerasErrorOneEraPerasError . OneEraPerasError)
+      injectHFCBoundedPerasEpochContext
+      ( hdistribute
+          . hcmap
+            proxySingle
+            ( \_ ->
+                mkEitherF WrapPerasError id $
+                  mkBoundedPerasEpochContext
+                    ( fromMaybeEraIndexedEpochToPerasRoundInfo
+                        (Proxy @(HardForkBlock xs))
+                        epochToPerasRoundInfo
+                    )
+                    ledgerState
+                    headerState
+            )
+          $ eraIndexedToNS epochToPerasRoundInfo
+      )
 
 {-------------------------------------------------------------------------------
   HeaderValidation

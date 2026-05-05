@@ -1,6 +1,8 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Test.Ouroboros.Storage.PerasCertDB.Model
   ( Model (..)
@@ -36,9 +38,9 @@ data Model blk = Model
   }
   deriving Generic
 
-deriving instance StandardHash blk => Show (Model blk)
+deriving instance Show (PerasCert blk) => Show (Model blk)
 
-instance StandardHash blk => ToExpr (Model blk) where
+instance Show (PerasCert blk) => ToExpr (Model blk) where
   toExpr = defaultExprViaShow
 
 initModel :: Model blk
@@ -48,7 +50,9 @@ openDB :: Model blk -> Model blk
 openDB model = model{open = True}
 
 addCert ::
-  StandardHash blk =>
+  ( Ord (PerasCert blk)
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   Model blk -> WithArrivalTime (ValidatedPerasCert blk) -> (AddPerasCertResult, Model blk)
 addCert model@Model{certs, latestCertSeen} cert
   | certs `hasRoundNo` cert = (PerasCertAlreadyInDB, model)
@@ -67,6 +71,7 @@ addCert model@Model{certs, latestCertSeen} cert
             Just prev
 
 hasRoundNo ::
+  IsPerasCert (PerasCert blk) blk =>
   Set (WithArrivalTime (ValidatedPerasCert blk)) ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   Bool
@@ -74,7 +79,9 @@ hasRoundNo certs cert =
   (getPerasCertRound cert) `Set.member` (Set.map getPerasCertRound certs)
 
 getWeightSnapshot ::
-  StandardHash blk =>
+  ( IsPerasCert (PerasCert blk) blk
+  , StandardHash blk
+  ) =>
   Model blk -> PerasWeightSnapshot blk
 getWeightSnapshot Model{certs} =
   mkPerasWeightSnapshot
@@ -88,7 +95,9 @@ getLatestCertSeen ::
 getLatestCertSeen Model{latestCertSeen} =
   latestCertSeen
 
-garbageCollect :: SlotNo -> Model blk -> Model blk
+garbageCollect ::
+  IsPerasCert (PerasCert blk) blk =>
+  SlotNo -> Model blk -> Model blk
 garbageCollect slotNo model@Model{certs, latestCertSeen} =
   model
     { certs = Set.filter keepCert certs

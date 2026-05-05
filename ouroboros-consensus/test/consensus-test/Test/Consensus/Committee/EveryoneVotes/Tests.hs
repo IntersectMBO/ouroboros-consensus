@@ -316,7 +316,6 @@ genFakeEligibilityWitness
     genPoolWithZeroStakeWitness = do
       seatIndex <- SeatIndex <$> choose (nonZeroStakeSeats, totalSeats - 1)
       ledgerStake <- genPositiveStake
-      -- traceShow (">>>>>", nonZeroStakeSeats, totalSeats, seatIndex) $
       pure
         ( PoolWithZeroStake
         , EveryoneVotesMember

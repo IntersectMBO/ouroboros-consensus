@@ -73,7 +73,18 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , mkBoundedPerasEpochContextWith
+  )
+import Ouroboros.Consensus.Peras.Crypto.Mock
+  ( MockPerasCrypto
+  , MockPerasVotingCommitteeScheme
+  )
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
+import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.Serialisation
@@ -270,9 +281,10 @@ instance LedgerStateSupportsPeras (LedgerState BlockB)
 
 instance LedgerStateSupportsPeras (Ticked LedgerState BlockB)
 
--- NOTE: BlockA is only ever used wrapped in the
--- hard fork combinator (which implements 'hardForkSummary' directly and never
--- delegates to the underlying era), so this method is never actually called.
+-- NOTE: BlockB is only ever used
+-- wrapped in the hard fork combinator (which implements 'hardForkSummary'
+-- directly and never delegates to the underlying era), so this method is never
+-- actually called.
 instance HasHardForkHistory BlockB where
   type HardForkIndices BlockB = '[BlockB]
   hardForkSummary = error "BlockB being used as a SingleEraBlock"
@@ -281,7 +293,14 @@ instance StateSupportsPerasEpochContext BlockB where
   type MaybeEraIndexedEpochToPerasRoundInfo BlockB = EpochToPerasRoundInfo
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
-  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: BlockB does not support Peras"
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+
+instance BlockSupportsPeras BlockB where
+  type PerasCrypto BlockB = MockPerasCrypto BlockB
+  type PerasVotingCommitteeScheme BlockB = MockPerasVotingCommitteeScheme BlockB
+  type PerasVote BlockB = MockPerasVote BlockB
+  type PerasCert BlockB = MockPerasCert BlockB
+  type PerasError BlockB = MockPerasError BlockB
 
 instance HasPartialConsensusConfig ProtocolB
 
@@ -320,7 +339,7 @@ blockForgingB =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \cfg bno slot st txs proof ->
+    , forgeBlock = \cfg bno slot _mbPerasCert st txs proof ->
         return $
           forgeBlockB cfg bno slot st (fmap txForgetValidated txs) proof
     , finalize = return ()
