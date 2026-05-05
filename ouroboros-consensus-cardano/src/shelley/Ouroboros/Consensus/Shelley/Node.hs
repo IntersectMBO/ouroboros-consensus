@@ -30,6 +30,7 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import LeiosVoting (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
@@ -120,6 +121,7 @@ instance
   , ResolveLeiosBlock (ShelleyBlock proto era)
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , BlockSupportsSanityCheck (ShelleyBlock proto era)
+  , HasLeiosVoting (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , SerialiseNodeToClientConstraints (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)

@@ -72,10 +72,15 @@ import Ouroboros.Consensus.HardFork.Combinator
   )
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Protocol.Abstract
+  ( ChainDepState
+  , TiebreakerView
+  )
+import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosTiebreakerView
   )
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
+import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Query.LegacyPParams
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
@@ -358,10 +363,20 @@ instance ShelleyCompatible proto era => Condense (Header (ShelleyBlock proto era
 
 -- * Leios voting
 
--- | Every Shelley-based era opts in to Leios voting. Committee selection
--- from the ledger state is not yet implemented; the placeholder is fine
--- because 'Committee' has no data constructor and the voting loop does not
--- inspect the value.
-instance HasLeiosVoting (ShelleyBlock proto era) where
+-- NOTE: Only Dijkstra has Leios voting right now, all earlier Shelley-based
+-- eras will never have a committee and thus no voting should happen.
+
+-- REVIEW: Use 'proto' instead of Praos/TPraos?
+
+-- TODO: Ledger-level type class EraCommittee? LedgerState era -> Committee
+
+instance HasLeiosVoting (ShelleyBlock (TPraos c) ShelleyEra)
+instance HasLeiosVoting (ShelleyBlock (TPraos c) AllegraEra)
+instance HasLeiosVoting (ShelleyBlock (TPraos c) MaryEra)
+instance HasLeiosVoting (ShelleyBlock (TPraos c) AlonzoEra)
+instance HasLeiosVoting (ShelleyBlock (Praos c) BabbageEra)
+instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra)
+
+instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
   getLeiosCommittee _ =
     Just (error "FIXME: committee selection from ledger state not implemented")
