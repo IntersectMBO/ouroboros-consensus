@@ -28,12 +28,15 @@ import Data.Array (Array)
 import qualified Data.Array as Array
 import Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
+import Data.Map.NonEmpty (NEMap)
+import qualified Data.Map.NonEmpty as NEMap
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
 import Data.SOP.BasicFunctors
 import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
 import Data.Typeable (Typeable)
+import Data.Void (Void)
 import NoThunks.Class
   ( InspectHeapNamed (..)
   , NoThunks (..)
@@ -109,6 +112,10 @@ instance NoThunks a => NoThunks (MultiSet a) where
   showTypeOf _ = "MultiSet"
   wNoThunks ctxt = wNoThunks ctxt . MultiSet.toMap
 
+instance (NoThunks k, NoThunks v) => NoThunks (NEMap k v) where
+  showTypeOf _ = "NEMap"
+  wNoThunks ctxt = wNoThunks ctxt . NEMap.toMap
+
 instance NoThunks v => NoThunks (NESet v) where
   showTypeOf _ = "NESet"
   wNoThunks ctxt = wNoThunks ctxt . NESet.toSet
@@ -134,3 +141,10 @@ deriving via
   OnlyCheckWhnfNamed "SomeHasFS" (SomeHasFS m)
   instance
     NoThunks (SomeHasFS m)
+
+{-------------------------------------------------------------------------------
+  ShowProxy
+-------------------------------------------------------------------------------}
+
+instance ShowProxy Void
+instance ShowProxy ()

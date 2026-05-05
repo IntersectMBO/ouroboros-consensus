@@ -37,6 +37,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Mock.Ledger.Block
 import Ouroboros.Consensus.Mock.Ledger.Forge
 import Ouroboros.Consensus.Mock.Node.Abstract
+import Ouroboros.Consensus.Mock.Node.Peras ()
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Protocol.Signed

@@ -1,3 +1,5 @@
+{-# LANGUAGE NamedFieldPuns #-}
+
 -- | Test the Praos chain selection rule but with explicit leader schedule
 module Ouroboros.Consensus.Mock.Node.PraosRule
   ( MockPraosRuleBlock
@@ -7,6 +9,7 @@ module Ouroboros.Consensus.Mock.Node.PraosRule
 
 import Cardano.Crypto.KES
 import Cardano.Crypto.VRF
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block.Forging (BlockForging)
@@ -38,35 +41,42 @@ protocolInfoPraosRule
   eraParams
   schedule
   evolvingStake =
-    ProtocolInfo
-      { pInfoConfig =
-          TopLevelConfig
-            { topLevelConfigProtocol =
-                WLSConfig
-                  { wlsConfigSchedule = schedule
-                  , wlsConfigP =
-                      PraosConfig
-                        { praosParams = params
-                        , praosSignKeyVRF = NeverUsedSignKeyVRF
-                        , praosInitialEta = 0
-                        , praosInitialStake = genesisStakeDist addrDist
-                        , praosEvolvingStake = evolvingStake
-                        , praosVerKeys = verKeys
-                        }
-                  , wlsConfigNodeId = nid
-                  }
-            , topLevelConfigLedger = SimpleLedgerConfig () eraParams defaultMockConfig
-            , topLevelConfigBlock = SimpleBlockConfig
-            , topLevelConfigCodec = SimpleCodecConfig
-            , topLevelConfigStorage = SimpleStorageConfig (praosSecurityParam params)
-            , topLevelConfigCheckpoints = emptyCheckpointsMap
-            }
-      , pInfoInitLedger =
-          ExtLedgerState
-            { ledgerState = genesisSimpleLedgerState addrDist
-            , headerState = genesisHeaderState ()
-            }
-      }
+    let ledgerConfig = SimpleLedgerConfig () eraParams defaultMockConfig
+     in ProtocolInfo
+          { pInfoConfig =
+              TopLevelConfig
+                { topLevelConfigProtocol =
+                    WLSConfig
+                      { wlsConfigSchedule = schedule
+                      , wlsConfigP =
+                          PraosConfig
+                            { praosParams = params
+                            , praosSignKeyVRF = NeverUsedSignKeyVRF
+                            , praosInitialEta = 0
+                            , praosInitialStake = genesisStakeDist addrDist
+                            , praosEvolvingStake = evolvingStake
+                            , praosVerKeys = verKeys
+                            }
+                      , wlsConfigNodeId = nid
+                      }
+                , topLevelConfigLedger = ledgerConfig
+                , topLevelConfigBlock = SimpleBlockConfig
+                , topLevelConfigCodec = SimpleCodecConfig
+                , topLevelConfigStorage = SimpleStorageConfig (praosSecurityParam params)
+                , topLevelConfigCheckpoints = emptyCheckpointsMap
+                }
+          , pInfoInitLedger =
+              let ledgerState = genesisSimpleLedgerState addrDist
+                  headerState = genesisHeaderState ()
+                  perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+                  latestPerasCertOnChainRound = SNothing
+               in ExtLedgerState
+                    { ledgerState
+                    , headerState
+                    , perasEpochContextResolver
+                    , latestPerasCertOnChainRound
+                    }
+          }
    where
     addrDist :: AddrDist
     addrDist = mkAddrDist numCoreNodes

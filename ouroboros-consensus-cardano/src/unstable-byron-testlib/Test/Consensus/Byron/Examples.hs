@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
@@ -30,7 +31,7 @@ import qualified Cardano.Chain.Byron.API as CC
 import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.UTxO as CC
 import qualified Cardano.Chain.Update.Validation.Interface as CC.UPI
-import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
+import Cardano.Ledger.BaseTypes (StrictMaybe (..), knownNonZeroBounded)
 import Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block
@@ -219,10 +220,16 @@ exampleHeaderState = HeaderState (NotOrigin exampleAnnTip) exampleChainDepState
 
 exampleExtLedgerState :: ExtLedgerState ByronBlock ValuesMK
 exampleExtLedgerState =
-  ExtLedgerState
-    { ledgerState = exampleLedgerState
-    , headerState = exampleHeaderState
-    }
+  let ledgerState = exampleLedgerState
+      headerState = exampleHeaderState
+      perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+      latestPerasCertOnChainRound = SNothing
+   in ExtLedgerState
+        { ledgerState
+        , headerState
+        , perasEpochContextResolver
+        , latestPerasCertOnChainRound
+        }
 
 exampleHeaderHash :: ByronHash
 exampleHeaderHash = blockHash exampleBlock

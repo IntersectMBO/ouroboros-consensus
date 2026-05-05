@@ -4,8 +4,7 @@
 {-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Ledger.SupportsPeras
-  ( LedgerSupportsPeras (..)
-  , LedgerStateSupportsPeras (..)
+  ( LedgerStateSupportsPeras (..)
   )
 where
 
@@ -14,25 +13,7 @@ import Cardano.Ledger.Coin (Coin (..), compactCoinOrError, knownNonZeroCoin)
 import Cardano.Ledger.Keys (KeyHash (..), toVRFVerKeyHash)
 import Cardano.Ledger.State (IndividualPoolStake (..), PoolDistr (..))
 import qualified Data.Map as Map
-import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasParams
-  , PerasRoundNo
-  , defaultPerasParams
-  )
-import Ouroboros.Consensus.Ledger.Abstract (LedgerState)
-
--- | Extract Peras information stored in the ledger state (deprecated).
---
--- IMPORTANT: we are moving the cached latest Peras cert round from the
--- (non-extended) ledger state into the extended one, so we will remove this
--- type class during that refactor.
-class LedgerSupportsPeras blk where
-  -- | Extract the round number of the latest Peras certificate stored in the
-  -- given ledger state (if any). This is needed to coordinate the end of a
-  -- cooldown period.
-  getLatestPerasCertRound :: LedgerState blk mk -> Maybe PerasRoundNo
-  default getLatestPerasCertRound :: LedgerState blk mk -> Maybe PerasRoundNo
-  getLatestPerasCertRound _ = Nothing
+import Ouroboros.Consensus.Block.SupportsPeras (PerasParams, defaultPerasParams)
 
 -- | Extract Peras information stored in the ledger state.
 class LedgerStateSupportsPeras ledgerState where

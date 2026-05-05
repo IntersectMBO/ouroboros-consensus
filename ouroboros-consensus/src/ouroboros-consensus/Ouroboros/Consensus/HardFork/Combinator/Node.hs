@@ -8,6 +8,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Node () where
 
 import Data.Proxy
+import Data.SOP (All, Top)
 import Data.SOP.BasicFunctors
 import Data.SOP.Strict
 import GHC.Stack
@@ -60,7 +61,8 @@ getSameConfigValue getValue blockConfig = getSameValue values
 -------------------------------------------------------------------------------}
 
 instance
-  ( CanHardFork xs
+  ( All Top xs
+  , CanHardFork xs
   , HasCanonicalTxIn xs
   , HasHardForkTxOut xs
   , BlockSupportsHFLedgerQuery xs

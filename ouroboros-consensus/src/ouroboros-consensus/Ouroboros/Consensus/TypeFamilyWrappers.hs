@@ -1,5 +1,9 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -27,6 +31,13 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapTxMeasurePhase2 (..)
   , WrapTxOut (..)
   , WrapValidatedGenTx (..)
+  , WrapPerasVote (..)
+  , WrapPerasCert (..)
+  , WrapPerasError (..)
+  , WrapPerasCrypto (..)
+  , WrapPerasVotingCommitteeScheme (..)
+  , WrapPerasPrivateKey (..)
+  , WrapPerasVotingCommittee (..)
 
     -- * Protocol based
   , WrapCanBeLeader (..)
@@ -48,9 +59,15 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , Ticked (..)
   ) where
 
+import Cardano.Binary (FromCBOR, ToCBOR)
 import Codec.Serialise (Serialise)
+import Control.Exception (Exception)
+import Data.Typeable (Typeable)
+import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Committee.Class (VotingCommittee)
+import Ouroboros.Consensus.Committee.Crypto (PrivateKey)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
@@ -77,6 +94,72 @@ newtype WrapLedgerWarning blk = WrapLedgerWarning {unwrapLedgerWarning :: Ledger
 newtype WrapTentativeHeaderState blk = WrapTentativeHeaderState {unwrapTentativeHeaderState :: TentativeHeaderState blk}
 newtype WrapTentativeHeaderView blk = WrapTentativeHeaderView {unwrapTentativeHeaderView :: TentativeHeaderView blk}
 newtype WrapTipInfo blk = WrapTipInfo {unwrapTipInfo :: TipInfo blk}
+newtype WrapPerasVote blk = WrapPerasVote {unwrapPerasVote :: PerasVote blk}
+newtype WrapPerasCert blk = WrapPerasCert {unwrapPerasCert :: PerasCert blk}
+newtype WrapPerasError blk = WrapPerasError {unwrapPerasError :: PerasError blk}
+newtype WrapPerasCrypto blk = WrapPerasCrypto {unwrapPerasCrypto :: PerasCrypto blk}
+newtype WrapPerasVotingCommitteeScheme blk = WrapPerasVotingCommitteeScheme {unwrapPerasVotingCommitteeScheme :: PerasVotingCommitteeScheme blk}
+newtype WrapPerasPrivateKey blk = WrapPerasPrivateKey {unwrapPerasPrivateKey :: PrivateKey (PerasCrypto blk)}
+newtype WrapPerasVotingCommittee blk = WrapPerasVotingCommittee
+  {unwrapPerasVotingCommittee :: VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)}
+
+deriving instance Show (PerasVote blk) => Show (WrapPerasVote blk)
+deriving instance Show (PerasCert blk) => Show (WrapPerasCert blk)
+deriving instance Show (PerasError blk) => Show (WrapPerasError blk)
+deriving instance Show (PerasCrypto blk) => Show (WrapPerasCrypto blk)
+deriving instance Show (PerasVotingCommitteeScheme blk) => Show (WrapPerasVotingCommitteeScheme blk)
+deriving instance Show (PrivateKey (PerasCrypto blk)) => Show (WrapPerasPrivateKey blk)
+deriving instance
+  Show (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
+  Show (WrapPerasVotingCommittee blk)
+
+deriving instance Eq (PerasVote blk) => Eq (WrapPerasVote blk)
+deriving instance Eq (PerasCert blk) => Eq (WrapPerasCert blk)
+deriving instance Eq (PerasError blk) => Eq (WrapPerasError blk)
+deriving instance Eq (PerasCrypto blk) => Eq (WrapPerasCrypto blk)
+deriving instance Eq (PerasVotingCommitteeScheme blk) => Eq (WrapPerasVotingCommitteeScheme blk)
+deriving instance Eq (PrivateKey (PerasCrypto blk)) => Eq (WrapPerasPrivateKey blk)
+deriving instance
+  Eq (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
+  Eq (WrapPerasVotingCommittee blk)
+
+deriving instance Generic (WrapPerasVote blk)
+deriving instance Generic (WrapPerasCert blk)
+deriving instance Generic (WrapPerasError blk)
+deriving instance Generic (WrapPerasCrypto blk)
+deriving instance Generic (WrapPerasVotingCommitteeScheme blk)
+deriving instance Generic (WrapPerasPrivateKey blk)
+deriving instance Generic (WrapPerasVotingCommittee blk)
+
+deriving instance NoThunks (PerasVote blk) => NoThunks (WrapPerasVote blk)
+deriving instance NoThunks (PerasCert blk) => NoThunks (WrapPerasCert blk)
+deriving instance NoThunks (PerasError blk) => NoThunks (WrapPerasError blk)
+deriving instance NoThunks (PerasCrypto blk) => NoThunks (WrapPerasCrypto blk)
+deriving instance
+  NoThunks (PerasVotingCommitteeScheme blk) => NoThunks (WrapPerasVotingCommitteeScheme blk)
+deriving instance NoThunks (PrivateKey (PerasCrypto blk)) => NoThunks (WrapPerasPrivateKey blk)
+deriving instance
+  NoThunks (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
+  NoThunks (WrapPerasVotingCommittee blk)
+
+deriving newtype instance
+  ( Typeable blk
+  , FromCBOR (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk))
+  ) =>
+  FromCBOR (WrapPerasVotingCommittee blk)
+
+deriving newtype instance
+  ( Typeable blk
+  , ToCBOR (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk))
+  ) =>
+  ToCBOR (WrapPerasVotingCommittee blk)
+
+deriving instance (Typeable blk, Exception (PerasError blk)) => Exception (WrapPerasError blk)
+
+instance IsPerasError (PerasError blk) blk => IsPerasError (WrapPerasError blk) blk where
+  injectVotingCommitteeError = WrapPerasError . injectVotingCommitteeError
+  injectConversionError = WrapPerasError . injectConversionError
+  injectQuorumNotReachedError = WrapPerasError . injectQuorumNotReachedError
 
 -- | A data family wrapper for @'Validated' . 'GenTx'@
 --

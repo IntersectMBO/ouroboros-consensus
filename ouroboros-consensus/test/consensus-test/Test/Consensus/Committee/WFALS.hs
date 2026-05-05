@@ -16,7 +16,6 @@ import Data.String (IsString (..))
 import qualified Ouroboros.Consensus.Committee.Types as WFA
 import Ouroboros.Consensus.Committee.WFA (WFATiebreaker (..))
 import qualified Ouroboros.Consensus.Committee.WFA as WFA
-import Test.Consensus.Committee.Utils (mkPoolId)
 import Test.Consensus.Committee.WFALS.Conformance (conformsToRustImplementation)
 import Test.Consensus.Committee.WFALS.Model
   ( NumSeats
@@ -38,6 +37,7 @@ import Test.QuickCheck
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.Committee (mkPoolId)
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree

@@ -19,6 +19,7 @@ import qualified Cardano.Chain.Genesis as Impl
 import qualified Cardano.Chain.UTxO as Impl
 import qualified Cardano.Chain.Update as Impl
 import qualified Cardano.Chain.Update.Validation.Interface as Impl
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Data.Either (fromRight)
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe)
@@ -35,7 +36,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Dual
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -43,7 +43,6 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
-import Ouroboros.Consensus.Util ((.....:))
 import qualified Test.Cardano.Chain.Elaboration.Block as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Delegation as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Keys as Spec.Test
@@ -65,7 +64,8 @@ dualByronBlockForging creds =
     , updateForgeState = \cfg ->
         fmap castForgeStateUpdateInfo .: updateForgeState (dualTopLevelConfigMain cfg)
     , checkCanForge = checkCanForge . dualTopLevelConfigMain
-    , forgeBlock = return .....: forgeDualByronBlock
+    , forgeBlock = \cfg slot bno _mbPerasCert lst txs proof ->
+        return $ forgeDualByronBlock cfg slot bno lst txs proof
     , finalize = return ()
     }
  where
@@ -88,48 +88,56 @@ protocolInfoDualByron ::
   , m [BlockForging m DualByronBlock]
   )
 protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
-  ( ProtocolInfo
-      { pInfoConfig =
-          TopLevelConfig
-            { topLevelConfigProtocol =
-                PBftConfig
-                  { pbftParams = params
-                  }
-            , topLevelConfigLedger =
-                DualLedgerConfig
-                  { dualLedgerConfigMain = concreteGenesis
-                  , dualLedgerConfigAux = abstractConfig
-                  }
-            , topLevelConfigBlock =
-                DualBlockConfig
-                  { dualBlockConfigMain = concreteConfig
-                  , dualBlockConfigAux = ByronSpecBlockConfig
-                  }
-            , topLevelConfigCodec =
-                DualCodecConfig
-                  { dualCodecConfigMain = mkByronCodecConfig concreteGenesis
-                  , dualCodecConfigAux = ByronSpecCodecConfig
-                  }
-            , topLevelConfigStorage =
-                DualStorageConfig
-                  { dualStorageConfigMain = ByronStorageConfig concreteConfig
-                  , dualStorageConfigAux = ByronSpecStorageConfig
-                  }
-            , topLevelConfigCheckpoints = emptyCheckpointsMap
-            }
-      , pInfoInitLedger =
-          ExtLedgerState
-            { ledgerState =
-                DualLedgerState
-                  { dualLedgerStateMain = initConcreteState
-                  , dualLedgerStateAux = initAbstractState
-                  , dualLedgerStateBridge = initBridge
-                  }
-            , headerState = genesisHeaderState S.empty
-            }
-      }
-  , return $ dualByronBlockForging . byronLeaderCredentials <$> credss
-  )
+  let ledgerConfig =
+        DualLedgerConfig
+          { dualLedgerConfigMain = concreteGenesis
+          , dualLedgerConfigAux = abstractConfig
+          }
+   in ( ProtocolInfo
+          { pInfoConfig =
+              TopLevelConfig
+                { topLevelConfigProtocol =
+                    PBftConfig
+                      { pbftParams = params
+                      }
+                , topLevelConfigLedger =
+                    ledgerConfig
+                , topLevelConfigBlock =
+                    DualBlockConfig
+                      { dualBlockConfigMain = concreteConfig
+                      , dualBlockConfigAux = ByronSpecBlockConfig
+                      }
+                , topLevelConfigCodec =
+                    DualCodecConfig
+                      { dualCodecConfigMain = mkByronCodecConfig concreteGenesis
+                      , dualCodecConfigAux = ByronSpecCodecConfig
+                      }
+                , topLevelConfigStorage =
+                    DualStorageConfig
+                      { dualStorageConfigMain = ByronStorageConfig concreteConfig
+                      , dualStorageConfigAux = ByronSpecStorageConfig
+                      }
+                , topLevelConfigCheckpoints = emptyCheckpointsMap
+                }
+          , pInfoInitLedger =
+              let ledgerState =
+                    DualLedgerState
+                      { dualLedgerStateMain = initConcreteState
+                      , dualLedgerStateAux = initAbstractState
+                      , dualLedgerStateBridge = initBridge
+                      }
+                  headerState = genesisHeaderState S.empty
+                  perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+                  latestPerasCertOnChainRound = SNothing
+               in ExtLedgerState
+                    { ledgerState
+                    , headerState
+                    , perasEpochContextResolver
+                    , latestPerasCertOnChainRound
+                    }
+          }
+      , return $ dualByronBlockForging . byronLeaderCredentials <$> credss
+      )
  where
   initUtxo :: Impl.UTxO
   txIdMap :: Map Spec.TxId Impl.TxId
@@ -266,8 +274,6 @@ instance NodeInitStorage DualByronBlock where
 {-------------------------------------------------------------------------------
   RunNode instance
 -------------------------------------------------------------------------------}
-
-instance LedgerSupportsPeras DualByronBlock
 
 instance BlockSupportsMetrics DualByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown

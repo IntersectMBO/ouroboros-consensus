@@ -168,6 +168,7 @@ prop_simple_praos_convergence
                       ( HardFork.defaultEraParams
                           k
                           slotLength
+                          NoPerasEnabled
                       )
                       setupInitialNonce
                       evolvingStake

@@ -63,7 +63,6 @@ import Ouroboros.Consensus.Committee.Crypto
   )
 import Ouroboros.Consensus.Committee.Crypto.BLS (KeyRole (..))
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
-import Test.Consensus.Committee.Utils (genEpochNonce)
 import Test.QuickCheck
   ( Arbitrary (..)
   , Gen
@@ -80,6 +79,7 @@ import Test.QuickCheck
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.Committee (genEpochNonce)
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
 -- * Test crypto based on BLS signatures

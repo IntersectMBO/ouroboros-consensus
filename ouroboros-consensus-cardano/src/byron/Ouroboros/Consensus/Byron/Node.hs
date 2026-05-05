@@ -34,6 +34,7 @@ import qualified Cardano.Crypto as Crypto
 import Control.Monad (guard)
 import Data.Coerce (coerce)
 import Data.Maybe
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Text (Text)
 import Data.Void (Void)
 import Ouroboros.Consensus.Block
@@ -42,6 +43,7 @@ import Ouroboros.Consensus.Byron.Crypto.DSIGN
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Ledger.Conversions
 import Ouroboros.Consensus.Byron.Ledger.Inspect ()
+import Ouroboros.Consensus.Byron.Node.Peras ()
 import Ouroboros.Consensus.Byron.Node.Serialisation ()
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.Config
@@ -49,7 +51,6 @@ import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -59,7 +60,6 @@ import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
-import Ouroboros.Consensus.Util ((....:))
 import Ouroboros.Network.Magic (NetworkMagic (..))
 
 {-------------------------------------------------------------------------------
@@ -142,7 +142,8 @@ byronBlockForging creds =
           canBeLeader
           slot
           tickedPBftState
-    , forgeBlock = \cfg -> return ....: forgeByronBlock cfg
+    , forgeBlock = \cfg bno slot _mbPerasCert st txs proof ->
+        return $ forgeByronBlock cfg bno slot st txs proof
     , finalize = pure ()
     }
  where
@@ -209,13 +210,21 @@ protocolInfoByron
             , topLevelConfigCheckpoints = emptyCheckpointsMap
             }
       , pInfoInitLedger =
-          ExtLedgerState
-            { -- Important: don't pass the compacted genesis config to
-              -- 'initByronLedgerState', it needs the full one, including the AVVM
-              -- balances.
-              ledgerState = initByronLedgerState genesisConfig Nothing
-            , headerState = genesisHeaderState S.empty
-            }
+          let
+            -- Important: don't pass the compacted genesis config to
+            -- 'initByronLedgerState', it needs the full one, including the AVVM
+            -- balances.
+            ledgerState = initByronLedgerState genesisConfig Nothing
+            headerState = genesisHeaderState S.empty
+            perasEpochContextResolver = initPerasEpochContextResolver compactedGenesisConfig ledgerState headerState
+            latestPerasCertOnChainRound = SNothing
+           in
+            ExtLedgerState
+              { ledgerState
+              , headerState
+              , perasEpochContextResolver
+              , latestPerasCertOnChainRound
+              }
       }
    where
     compactedGenesisConfig = compactGenesisConfig genesisConfig
@@ -301,8 +310,6 @@ instance NodeInitStorage ByronBlock where
 {-------------------------------------------------------------------------------
   RunNode instance
 -------------------------------------------------------------------------------}
-
-instance LedgerSupportsPeras ByronBlock
 
 instance BlockSupportsMetrics ByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown

@@ -1,46 +1,30 @@
-{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TypeApplications #-}
 
 -- | Smoke tests for the object diffusion protocol. This uses a trivial object
 -- pool and checks that a few objects can indeed be transferred from the
 -- outbound to the inbound peer.
 module Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
   ( tests
-  , WithId (..)
   , ListWithUniqueIds (..)
   , ProtocolConstants
-  , mockSystemTime
   , prop_smoke_object_diffusion
   , genSmokeObjectId
   , genSmokeObject
-  , genListWithUniqueIds
   , genProtocolConstants
-  , genRelativeTime
-  , genWithArrivalTime
-  , genPointTestBlock
   ) where
 
 import Cardano.Network.NodeToNode.Version (NodeToNodeVersion (..))
 import Control.Monad.IOSim (runSimStrictShutdown)
 import Control.ResourceRegistry (forkLinkedThread, waitAnyThread, withRegistry)
 import Control.Tracer (Tracer, nullTracer, traceWith)
-import Data.Containers.ListUtils (nubOrdOn)
 import Data.Data (Typeable)
 import Data.Functor.Contravariant (contramap)
-import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
-import Data.Word (Word64)
 import Network.TypedProtocol.Channel (Channel, createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage)
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types
-  ( RelativeTime (..)
-  , SystemTime (..)
-  , WithArrivalTime (..)
-  )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.Inbound
   ( objectDiffusionInbound
   )
@@ -59,9 +43,7 @@ import Ouroboros.Consensus.Util.IOLike
   , uncheckedNewTVarM
   , writeTVar
   )
-import Ouroboros.Network.Block (Point (..), SlotNo (SlotNo))
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
-import Ouroboros.Network.Point (Block (Block), WithOrigin (..))
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec (codecObjectDiffusionId)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
   ( ObjectDiffusionInboundPipelined
@@ -82,7 +64,7 @@ import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.IOLike ()
-import Test.Util.TestBlock
+import Test.Util.Peras (ListWithUniqueIds (..), genListWithUniqueIds)
 
 tests :: TestTree
 tests =
@@ -92,22 +74,6 @@ tests =
         "ObjectDiffusion smoke test with mock objects"
         prop_smoke
     ]
-
-{-------------------------------------------------------------------------------
-  Provides a way to generate lists composed of objects with no duplicate ids,
-  with an Arbitrary instance
--------------------------------------------------------------------------------}
-
-class WithId a idTy | a -> idTy where
-  getId :: a -> idTy
-
-newtype ListWithUniqueIds a idTy = ListWithUniqueIds [a]
-  deriving (Eq, Show, Ord)
-
-genListWithUniqueIds :: (Ord idTy, WithId a idTy) => Gen a -> Gen (ListWithUniqueIds a idTy)
-genListWithUniqueIds genObject = ListWithUniqueIds . nubOrdOn getId <$> listOf genObject
-
-instance WithId SmokeObject SmokeObjectId where getId = getSmokeObjectId
 
 {-------------------------------------------------------------------------------
   Mock objectPools
@@ -202,46 +168,10 @@ genProtocolConstants = do
 nodeToNodeVersion :: NodeToNodeVersion
 nodeToNodeVersion = NodeToNodeV_14
 
-{-------------------------------------------------------------------------------
-  Shared generators for Peras smoke tests
--------------------------------------------------------------------------------}
-
-genRelativeTime :: Gen RelativeTime
-genRelativeTime = RelativeTime . fromIntegral <$> arbitrary @Word64
-
-genWithArrivalTime :: Gen a -> Gen (WithArrivalTime a)
-genWithArrivalTime genA = WithArrivalTime <$> genRelativeTime <*> genA
-
-genPointTestBlock :: Gen (Point TestBlock)
-genPointTestBlock =
-  -- Sometimes pick the genesis point
-  frequency
-    [ (1, pure $ Point Origin)
-    ,
-      ( 50
-      , do
-          slotNo <- SlotNo <$> arbitrary
-          hash <- TestHash . NE.fromList . getNonEmpty <$> arbitrary
-          pure $ Point (At (Block slotNo hash))
-      )
-    ]
-
--- | A static 'SystemTime' returning a constant time. The canonical mock
--- system time lives in 'Test.Util.LogicalClock.mockSystemTime', but it
--- is a field of 'LogicalClock' which requires a 'ResourceRegistry' and
--- a background tick thread — too heavyweight for simple property tests
--- that don't need time progression.
-mockSystemTime :: Applicative m => SystemTime m
-mockSystemTime =
-  SystemTime
-    { systemTimeCurrent = pure (RelativeTime 0)
-    , systemTimeWait = pure ()
-    }
-
 prop_smoke :: Property
 prop_smoke =
   forAll genProtocolConstants $ \protocolConstants ->
-    forAll (genListWithUniqueIds genSmokeObject) $ \(ListWithUniqueIds objects) ->
+    forAll (genListWithUniqueIds getSmokeObjectId genSmokeObject) $ \(ListWithUniqueIds objects) ->
       prop_smoke_object_diffusion
         protocolConstants
         objects

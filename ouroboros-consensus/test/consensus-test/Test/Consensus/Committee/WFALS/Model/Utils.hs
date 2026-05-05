@@ -17,7 +17,6 @@ import qualified Data.Map.Strict as Map
 import Data.Ratio ((%))
 import qualified Data.Set as Set
 import Data.Word (Word64)
-import Test.Consensus.Committee.Utils (mkBucket)
 import Test.Consensus.Committee.WFALS.Model
   ( IsStake (..)
   , NumSeats
@@ -38,6 +37,7 @@ import Test.QuickCheck
   , tabulate
   , vectorOf
   )
+import Test.Util.Committee (mkBucket)
 
 -- * Generators
 

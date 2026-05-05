@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -63,8 +64,15 @@ data PerasCertDbState blk = PerasCertDbState
   -- ^ The certificate with the highest round number that has been added to the
   -- db since it has been opened.
   }
-  deriving stock (Show, Generic)
-  deriving anyclass NoThunks
+
+deriving instance
+  Show (PerasCert blk) =>
+  Show (PerasCertDbState blk)
+deriving instance
+  NoThunks (PerasCert blk) =>
+  NoThunks (PerasCertDbState blk)
+deriving instance
+  Generic (PerasCertDbState blk)
 
 initialPerasCertDbState :: WithFingerprint (PerasCertDbState blk)
 initialPerasCertDbState =
@@ -79,6 +87,7 @@ initialPerasCertDbState =
 
 -- | Check that the fields of 'PerasCertDbState' are in sync.
 invariantForPerasCertDbState ::
+  IsPerasCert (PerasCert blk) blk =>
   WithFingerprint (PerasCertDbState blk) -> Either String ()
 invariantForPerasCertDbState pcds = do
   checkEqual
@@ -114,7 +123,15 @@ data TraceEvent blk
       AddPerasCertResult
   | GarbageCollected
       SlotNo
-  deriving stock (Show, Eq, Generic)
+
+deriving instance
+  Show (PerasCert blk) =>
+  Show (TraceEvent blk)
+deriving instance
+  Eq (PerasCert blk) =>
+  Eq (TraceEvent blk)
+deriving instance
+  Generic (TraceEvent blk)
 
 {------------------------------------------------------------------------------
   Creating the database
@@ -134,7 +151,7 @@ defaultArgs =
 createDB ::
   forall m blk.
   ( IOLike m
-  , StandardHash blk
+  , BlockSupportsPeras blk
   ) =>
   Complete PerasCertDbArgs m blk ->
   m (PerasCertDB m blk)
@@ -169,7 +186,9 @@ createDB args = do
 -- TODO: we will need to update this method with non-trivial validation logic
 -- see https://github.com/tweag/cardano-peras/issues/120
 implAddCert ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   PerasCertDbEnv m blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   STM m (m AddPerasCertResult)
@@ -208,14 +227,17 @@ implAddCert PerasCertDbEnv{pcdbTracer, pcdbState} cert = do
     pure addPerasCertRes
 
 implGetWeightSnapshot ::
-  (IOLike m, StandardHash blk) =>
+  ( IOLike m
+  , StandardHash blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   PerasCertDbEnv m blk ->
   STM m (WithFingerprint (PerasWeightSnapshot blk))
 implGetWeightSnapshot PerasCertDbEnv{pcdbState} = do
   WithFingerprint pcds fp <- readTVar pcdbState
   let weights =
         mkPerasWeightSnapshot
-          [ (getPerasCertBoostedBlock cert, getPerasCertBoost cert)
+          [ (getPerasCertPoint cert, vpcCertBoost (forgetArrivalTime cert))
           | cert <- Map.elems (pcdsCertsByTicket pcds)
           ]
   pure (WithFingerprint weights fp)
@@ -251,7 +273,9 @@ implGetLatestCertSeen PerasCertDbEnv{pcdbState} = do
 
 implGarbageCollect ::
   forall m blk.
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   PerasCertDbEnv m blk ->
   SlotNo ->
   STM m (m ())
@@ -270,7 +294,7 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
       } =
       let pcdsCertsByTicket' =
             Map.filter
-              (\cert -> pointSlot (getPerasCertBoostedBlock cert) >= NotOrigin slotNo)
+              (\cert -> pointSlot (getPerasCertPoint cert) >= NotOrigin slotNo)
               pcdsCertsByTicket
           pcdsCertIds' =
             Set.fromList (getPerasCertRound <$> Map.elems pcdsCertsByTicket')
@@ -280,7 +304,7 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
           -- Update the latest certificate seen status when its corresponding
           -- boosted block gets garbage collected.
           updateIfBoostingGarbageCollectedBlock cert
-            | pointSlot (getPerasCertBoostedBlock (forgetBoostedBlockStatus cert))
+            | pointSlot (getPerasCertPoint (forgetBoostedBlockStatus cert))
                 < NotOrigin slotNo =
                 CertBoostingBlockNoLongerInVolatileDB (forgetBoostedBlockStatus cert)
             | otherwise =

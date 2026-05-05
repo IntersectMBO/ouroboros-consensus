@@ -28,6 +28,9 @@ module Ouroboros.Consensus.Peras.Weight
   , weightBoostOfFragment
   , totalWeightOfFragment
   , takeVolatileSuffix
+
+    -- * Re-exports
+  , PerasWeight (..)
   ) where
 
 import Data.Foldable as Foldable (foldl')

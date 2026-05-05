@@ -120,11 +120,16 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
           (configConsensus cfg)
           forgingVRFHash
           curSlot
-    , forgeBlock = \cfg ->
+    , forgeBlock = \cfg blkNo slotNo mbPerasCert ledgerState txs ->
         forgeShelleyBlock
           hotKey
           canBeLeader
           cfg
+          blkNo
+          slotNo
+          mbPerasCert
+          ledgerState
+          txs
     , finalize = HotKey.finalize hotKey
     }
  where
@@ -204,11 +209,16 @@ protocolInfoTPraosShelleyBased
   transitionCfg
   protVer =
     assertWithMsg (validateGenesis genesis) $ do
-      initLedgerState <- mkInitLedgerState
+      ledgerState <- mkInitLedgerState
+      let headerState = genesisHeaderState initChainDepState
+      let perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+      let latestPerasCertOnChainRound = SNothing
       let initExtLedgerState =
             ExtLedgerState
-              { ledgerState = initLedgerState
-              , headerState = genesisHeaderState initChainDepState
+              { ledgerState
+              , headerState
+              , perasEpochContextResolver
+              , latestPerasCertOnChainRound
               }
       pure
         ( ProtocolInfo
@@ -279,7 +289,6 @@ protocolInfoTPraosShelleyBased
         protVer
         genesis
         (shelleyBlockIssuerVKey <$> credentialss)
-
     storageConfig :: StorageConfig (ShelleyBlock (TPraos c) era)
     storageConfig =
       ShelleyStorageConfig
@@ -301,7 +310,6 @@ protocolInfoTPraosShelleyBased
             , shelleyLedgerState = injected
             , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
             , shelleyLedgerTables = emptyLedgerTables
-            , shelleyLedgerLatestPerasCertRound = SNothing
             }
 
     initChainDepState :: TPraosState
