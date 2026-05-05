@@ -114,6 +114,8 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Params (mkPerasParams, perasRoundLength)
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
 import Ouroboros.Consensus.Protocol.ModChainSel

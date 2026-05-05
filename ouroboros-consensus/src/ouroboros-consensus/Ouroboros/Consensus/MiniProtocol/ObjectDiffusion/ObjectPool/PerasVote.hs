@@ -25,6 +25,8 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   , WithArrivalTime (..)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+import Ouroboros.Consensus.Peras.Params (mkPerasParams)
+import Ouroboros.Consensus.Peras.Types (PerasVoteId, PerasVoteStakeDistr)
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.PerasVoteDB.API

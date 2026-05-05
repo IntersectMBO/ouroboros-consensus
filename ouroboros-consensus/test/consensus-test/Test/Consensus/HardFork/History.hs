@@ -52,6 +52,8 @@ import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as HF
 import Ouroboros.Consensus.Ledger.Tables.Combinators
+import Ouroboros.Consensus.Peras.Params (PerasRoundLength (..))
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo (..))
 import Ouroboros.Consensus.Util (nTimes)
 import Test.Cardano.Slotting.Numeric ()
 import Test.Consensus.HardFork.Infra

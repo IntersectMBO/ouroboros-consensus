@@ -21,7 +21,6 @@ import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block (WithOrigin (..))
 import Ouroboros.Consensus.Block.SupportsPeras
   ( HasPerasCertRound (..)
-  , PerasRoundNo (..)
   , getPerasCertRound
   )
 import Ouroboros.Consensus.Peras.Cert.Inclusion
@@ -36,6 +35,7 @@ import Ouroboros.Consensus.Peras.Params
   , PerasParams (..)
   , mkPerasParams
   )
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo (..))
 import Ouroboros.Consensus.Util.Pred (Evidence (..))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck

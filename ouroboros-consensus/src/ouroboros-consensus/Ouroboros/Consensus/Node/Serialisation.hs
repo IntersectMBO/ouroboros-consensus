@@ -49,6 +49,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , GenTxId
   )
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo, PerasVoteId (..), PerasVoterId (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (Some (..))
 import Ouroboros.Network.Block

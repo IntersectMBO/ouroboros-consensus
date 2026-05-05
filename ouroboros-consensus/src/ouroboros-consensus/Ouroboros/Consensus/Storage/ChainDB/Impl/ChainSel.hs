@@ -66,6 +66,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.SelectView
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo)
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API

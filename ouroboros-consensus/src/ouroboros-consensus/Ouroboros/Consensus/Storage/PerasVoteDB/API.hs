@@ -37,6 +37,11 @@ import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
+import Ouroboros.Consensus.Peras.Types
+  ( PerasRoundNo
+  , PerasVoteId
+  , PerasVoteStake
+  )
 import Ouroboros.Consensus.Util.MonadSTM.NormalForm (MonadSTM (..))
 
 data PerasVoteDB m blk = PerasVoteDB

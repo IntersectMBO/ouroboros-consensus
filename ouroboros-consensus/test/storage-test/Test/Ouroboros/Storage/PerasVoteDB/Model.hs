@@ -27,21 +27,23 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , HasPerasVoteRound (..)
   , PerasCert (..)
   , PerasCfg
-  , PerasParams (..)
-  , PerasRoundNo
-  , PerasVoteId (..)
-  , PerasVoteStake (..)
-  , PerasVoteTarget (..)
-  , PerasVoterId
   , ValidatedPerasCert (..)
   , ValidatedPerasVote
   , getPerasCertBoostedBlock
   , getPerasVoteStake
   , getPerasVoteVoterId
-  , stakeAboveThreshold
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( WithArrivalTime (..)
+  )
+import Ouroboros.Consensus.Peras.Params (PerasParams, perasWeight)
+import Ouroboros.Consensus.Peras.Types
+  ( PerasRoundNo
+  , PerasVoteId (..)
+  , PerasVoteStake (..)
+  , PerasVoteTarget (..)
+  , PerasVoterId
+  , stakeAboveThreshold
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( AddPerasVoteResult (..)

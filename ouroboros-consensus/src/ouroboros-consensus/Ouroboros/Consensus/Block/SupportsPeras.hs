@@ -5,7 +5,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -13,18 +12,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasRoundNo (..)
-  , onPerasRoundNo
-  , PerasBoostedBlock (..)
-  , PerasSeatIndex (..)
-  , PerasVoteId (..)
-  , PerasVoteTarget (..)
-  , PerasVoterId (..)
-  , PerasVoteStake (..)
-  , stakeAboveThreshold
-  , PerasVoteStakeDistr (..)
-  , lookupPerasVoteStake
-  , BlockSupportsPeras (..)
+  ( BlockSupportsPeras (..)
   , PerasCert (..)
   , PerasVote (..)
   , ValidatedPerasCert (..)
@@ -44,162 +32,32 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , HasPerasVoteStake (..)
   , HasPerasVoteTarget (..)
   , HasPerasVoteId (..)
-
-    -- * Convenience re-exports
-  , module Ouroboros.Consensus.Peras.Params
   ) where
 
-import Cardano.Binary (FromCBOR, ToCBOR)
-import qualified Cardano.Binary as KeyHash
-import Cardano.Ledger.Hashes
-  ( EraIndependentBlockHeader
-  , HASH
-  , Hash
-  , KeyHash
-  , KeyRole (..)
-  )
+import Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
-import Control.DeepSeq (NFData)
-import Data.Coerce (coerce)
 import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.Map as Map
-import Data.Map.Strict (Map)
-import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
-import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
-import NoThunks.Class
-import Ouroboros.Consensus.Block.Abstract
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block.Abstract (HeaderHash, Point, StandardHash)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
-import Ouroboros.Consensus.Peras.Params
-import Ouroboros.Consensus.Util
-import Ouroboros.Consensus.Util.Condense
-import Quiet (Quiet (..))
+import Ouroboros.Consensus.Peras.Params (PerasParams (..), PerasWeight)
+import Ouroboros.Consensus.Peras.Types
+  ( PerasRoundNo
+  , PerasVoteId (..)
+  , PerasVoteStake
+  , PerasVoteStakeDistr (..)
+  , PerasVoteTarget (..)
+  , PerasVoterId (..)
+  , lookupPerasVoteStake
+  , stakeAboveThreshold
+  )
+import Ouroboros.Consensus.Util (ShowProxy (..))
 
-{-------------------------------------------------------------------------------
--- * Peras types
--------------------------------------------------------------------------------}
-
--- ** Round numbers
-
-newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
-  deriving Show via Quiet PerasRoundNo
-  deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, Num, Bounded, NoThunks, Serialise, NFData, ToCBOR, FromCBOR)
-
-instance Condense PerasRoundNo where
-  condense = show . unPerasRoundNo
-
-instance ShowProxy PerasRoundNo where
-  showProxy _ = "PerasRoundNo"
-
--- | Lift a binary operation on 'Word64' to 'PerasRoundNo'
-onPerasRoundNo ::
-  (Word64 -> Word64 -> Word64) ->
-  (PerasRoundNo -> PerasRoundNo -> PerasRoundNo)
-onPerasRoundNo = coerce
-
--- ** Boosted blocks
-
--- | The hash of the block being voted for in a Peras election
-newtype PerasBoostedBlock
-  = PerasBoostedBlock
-  { unPerasBoostedBlock :: Hash HASH EraIndependentBlockHeader
-  }
-  deriving stock (Eq, Ord, Show)
-  deriving newtype (FromCBOR, ToCBOR)
-
--- ** Seat indices
-
--- | Seat index in the voting committee used for Peras
-newtype PerasSeatIndex
-  = PerasSeatIndex
-  { unPerasSeatIndex :: Word16
-  }
-  deriving stock (Eq, Ord, Show)
-  deriving newtype (FromCBOR, ToCBOR, Enum, Bounded)
-
--- ** Stake pool distributions
-
-newtype PerasVoterId = PerasVoterId
-  { unPerasVoterId :: KeyHash StakePool
-  }
-  deriving newtype NoThunks
-  deriving stock (Eq, Ord, Generic)
-  deriving Show via Quiet PerasVoterId
-
--- NOTE: At the moment there is no consensus from researchers/engineers on how
--- we go from the absolute stake of a voter in the ledger to the relative stake
--- of their vote in the voting commitee (given that the quorum is expressed as
--- a relative value of the voting commitee total stake).
---
--- So, for now you can consider this 'Rational' as the best approximation we
--- have at the moment of the concrete type for a relative vote stake that can be
--- compared to the quorum threshold value (also currently a 'Rational').
-newtype PerasVoteStake = PerasVoteStake
-  { unPerasVoteStake :: Rational
-  }
-  deriving newtype (Eq, Ord, Num, Fractional, NoThunks, Serialise)
-  deriving stock Generic
-  deriving Show via Quiet PerasVoteStake
-  deriving Semigroup via Sum Rational
-  deriving Monoid via Sum Rational
-
--- | Check whether a given vote stake is above the quorum threshold.
---
--- TODO: this function assumes that the 'PerasVoteStake' and the quorum
--- threshold used in 'PerasParams' are expressed in the same units. That is,
--- both are either absolute or relative (normalized) values. Under the current
--- current implementation of 'PerasParams', this function only makes sense when
--- both values are relative (normalized) values, so we should either normalize
--- the 'PerasVoteStake' before calling this function, or change this function to
--- accept a stake distribution and perform the normalization internally.
-stakeAboveThreshold :: PerasParams -> PerasVoteStake -> Bool
-stakeAboveThreshold params voteStake =
-  stake >= quorumThreshold + safetyMargin
- where
-  stake =
-    unPerasVoteStake voteStake
-  quorumThreshold =
-    unPerasQuorumStakeThreshold
-      (perasQuorumStakeThreshold params)
-  safetyMargin =
-    unPerasQuorumStakeThresholdSafetyMargin
-      (perasQuorumStakeThresholdSafetyMargin params)
-
-newtype PerasVoteStakeDistr = PerasVoteStakeDistr
-  { unPerasVoteStakeDistr :: Map PerasVoterId PerasVoteStake
-  }
-  deriving newtype NoThunks
-  deriving stock (Show, Eq, Generic)
-
-data PerasVoteTarget blk = PerasVoteTarget
-  { pvtRoundNo :: !PerasRoundNo
-  , pvtBlock :: !(Point blk)
-  }
-  deriving stock (Show, Eq, Ord, Generic)
-  deriving anyclass NoThunks
-
-data PerasVoteId blk = PerasVoteId
-  { pviRoundNo :: !PerasRoundNo
-  , pviVoterId :: !PerasVoterId
-  }
-  deriving stock (Show, Eq, Ord, Generic)
-  deriving anyclass NoThunks
-
--- | Lookup the stake of a vote cast by a member of a given stake distribution.
-lookupPerasVoteStake ::
-  PerasVote blk ->
-  PerasVoteStakeDistr ->
-  Maybe PerasVoteStake
-lookupPerasVoteStake vote distr =
-  Map.lookup
-    (pvVoteVoterId vote)
-    (unPerasVoteStakeDistr distr)
-
--- ** Validated types
+-- * Validated types
 
 data ValidatedPerasCert blk = ValidatedPerasCert
   { vpcCert :: !(PerasCert blk)
@@ -214,8 +72,6 @@ data ValidatedPerasVote blk = ValidatedPerasVote
   }
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
-
--- ** Votes with enough stake to reach quorum for a given target
 
 -- | A collection of validated Peras votes that:
 -- 1. are all for the same target, and
@@ -268,9 +124,7 @@ votesReachQuorum cfg votes =
   allVotesMatchTarget target =
     all ((== (getPerasVoteTarget target)) . getPerasVoteTarget)
 
-{-------------------------------------------------------------------------------
 -- * BlockSupportsPeras class
--------------------------------------------------------------------------------}
 
 class
   ( Show (PerasCfg blk)
@@ -358,7 +212,7 @@ instance StandardHash blk => BlockSupportsPeras blk where
   -- possible 'PerasValidationErr' variants
   -- see https://github.com/tweag/cardano-peras/issues/120
   validatePerasVote _params stakeDistr vote
-    | Just stake <- lookupPerasVoteStake vote stakeDistr =
+    | Just stake <- lookupPerasVoteStake (getPerasVoteVoterId vote) stakeDistr =
         Right
           ValidatedPerasVote
             { vpvVote = vote
@@ -391,9 +245,6 @@ instance ShowProxy blk => ShowProxy (PerasCert blk) where
 instance ShowProxy blk => ShowProxy (PerasVote blk) where
   showProxy _ = "PerasVote " <> showProxy (Proxy @blk)
 
-instance ShowProxy blk => ShowProxy (PerasVoteId blk) where
-  showProxy _ = "PerasVoteId " <> showProxy (Proxy @blk)
-
 instance Serialise (HeaderHash blk) => Serialise (PerasCert blk) where
   encode PerasCert{pcCertRound, pcCertBoostedBlock} =
     encodeListLen 2
@@ -410,24 +261,13 @@ instance Serialise (HeaderHash blk) => Serialise (PerasVote blk) where
     encodeListLen 3
       <> encode pvVoteRound
       <> encode pvVoteBlock
-      <> KeyHash.toCBOR (unPerasVoterId pvVoteVoterId)
+      <> toCBOR (unPerasVoterId pvVoteVoterId)
   decode = do
     decodeListLenOf 3
     pvVoteRound <- decode
     pvVoteBlock <- decode
-    pvVoteVoterId <- PerasVoterId <$> KeyHash.fromCBOR
+    pvVoteVoterId <- PerasVoterId <$> fromCBOR
     pure $ PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId}
-
-instance Serialise (PerasVoteId blk) where
-  encode PerasVoteId{pviRoundNo, pviVoterId} =
-    encodeListLen 2
-      <> encode pviRoundNo
-      <> KeyHash.toCBOR (unPerasVoterId pviVoterId)
-  decode = do
-    decodeListLenOf 2
-    pviRoundNo <- decode
-    pviVoterId <- PerasVoterId <$> KeyHash.fromCBOR
-    pure $ PerasVoteId{pviRoundNo, pviVoterId}
 
 -- | Extract the certificate round from a Peras certificate container
 class HasPerasCertRound cert where

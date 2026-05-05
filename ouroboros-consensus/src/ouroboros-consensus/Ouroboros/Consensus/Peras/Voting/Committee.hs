@@ -1,7 +1,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -21,7 +20,6 @@ import qualified Data.Map as Map
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Maybe (isJust)
 import Data.Word (Word16, Word64)
-import Ouroboros.Consensus.Block.SupportsPeras (PerasSeatIndex (..))
 import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.Crypto (CryptoSupportsVRF (..))
 import Ouroboros.Consensus.Committee.EveryoneVotes
@@ -33,6 +31,7 @@ import Ouroboros.Consensus.Committee.WFA (SeatIndex (..))
 import Ouroboros.Consensus.Committee.WFALS (Cert (..), Vote (..), WFALS)
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import Ouroboros.Consensus.Peras.Crypto.BLS (PerasBLSCrypto)
+import Ouroboros.Consensus.Peras.Types (PerasSeatIndex (..))
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 
 -- * Peras support for multiple voting committee implementations

@@ -241,6 +241,7 @@ library
     Ouroboros.Consensus.Peras.Crypto.BLS
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
+    Ouroboros.Consensus.Peras.Types
     Ouroboros.Consensus.Peras.Vote.V1
     Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Voting.Committee

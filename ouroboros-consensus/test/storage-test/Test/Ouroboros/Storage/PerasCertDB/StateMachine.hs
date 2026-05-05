@@ -31,6 +31,8 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , WithArrivalTime (..)
   )
+import Ouroboros.Consensus.Peras.Params (mkPerasParams, perasWeight)
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API (AddPerasCertResult (..), PerasCertDB)

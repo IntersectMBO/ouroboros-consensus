@@ -5,8 +5,8 @@ module Ouroboros.Consensus.Ledger.SupportsPeras
   )
 where
 
-import Ouroboros.Consensus.Block.SupportsPeras (PerasRoundNo)
 import Ouroboros.Consensus.Ledger.Abstract (LedgerState)
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo)
 
 -- | Extract Peras information stored in the ledger state
 class LedgerSupportsPeras blk where

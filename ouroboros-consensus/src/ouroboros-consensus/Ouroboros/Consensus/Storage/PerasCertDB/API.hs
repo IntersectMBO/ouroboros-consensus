@@ -30,6 +30,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo)
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Util.MonadSTM.NormalForm (MonadSTM (..))
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
