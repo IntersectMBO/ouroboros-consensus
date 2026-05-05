@@ -87,6 +87,9 @@ import Ouroboros.Consensus.Node.Run
   , SerialiseNodeToNodeConstraints (..)
   )
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextResolver
+  )
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.Serialisation
@@ -905,7 +908,13 @@ $( do
  )
 examplesRoundtrip ::
   forall blk.
-  (SerialiseDiskConstraints blk, Eq blk, Show blk, LedgerSupportsProtocol blk) =>
+  ( SerialiseDiskConstraints blk
+  , Eq blk
+  , Show blk
+  , LedgerSupportsProtocol blk
+  , Eq (PerasEpochContextResolver blk)
+  , Show (PerasEpochContextResolver blk)
+  ) =>
   CodecConfig blk ->
   Examples blk ->
   [TestTree]

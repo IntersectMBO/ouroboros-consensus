@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -24,7 +25,6 @@ import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.NoHardForks
-import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
@@ -32,6 +32,7 @@ import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.TPraos
+import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Inspect ()
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
@@ -107,11 +108,64 @@ instance ConsensusProtocol proto => BlockSupportsSanityCheck (ShelleyBlock proto
   configAllSecurityParams = pure . protocolSecurityParam . topLevelConfigProtocol
 
 instance
-  ( ShelleyCompatible proto era
-  , LedgerSupportsProtocol (ShelleyBlock proto era)
-  , BlockSupportsSanityCheck (ShelleyBlock proto era)
-  , TxLimits (ShelleyBlock proto era)
-  , NoHardForks (ShelleyBlock proto era)
+  ( ShelleyCompatible proto ShelleyEra
+  , LedgerSupportsProtocol (ShelleyBlock proto ShelleyEra)
+  , BlockSupportsSanityCheck (ShelleyBlock proto ShelleyEra)
+  , NoHardForks (ShelleyBlock proto ShelleyEra)
   , Crypto (ProtoCrypto proto)
   ) =>
-  RunNode (ShelleyBlock proto era)
+  RunNode (ShelleyBlock proto ShelleyEra)
+
+instance
+  ( ShelleyCompatible proto AllegraEra
+  , LedgerSupportsProtocol (ShelleyBlock proto AllegraEra)
+  , BlockSupportsSanityCheck (ShelleyBlock proto AllegraEra)
+  , NoHardForks (ShelleyBlock proto AllegraEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  RunNode (ShelleyBlock proto AllegraEra)
+
+instance
+  ( ShelleyCompatible proto MaryEra
+  , LedgerSupportsProtocol (ShelleyBlock proto MaryEra)
+  , BlockSupportsSanityCheck (ShelleyBlock proto MaryEra)
+  , NoHardForks (ShelleyBlock proto MaryEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  RunNode (ShelleyBlock proto MaryEra)
+
+instance
+  ( ShelleyCompatible proto AlonzoEra
+  , LedgerSupportsProtocol (ShelleyBlock proto AlonzoEra)
+  , BlockSupportsSanityCheck (ShelleyBlock proto AlonzoEra)
+  , NoHardForks (ShelleyBlock proto AlonzoEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  RunNode (ShelleyBlock proto AlonzoEra)
+
+instance
+  ( ShelleyCompatible proto BabbageEra
+  , LedgerSupportsProtocol (ShelleyBlock proto BabbageEra)
+  , BlockSupportsSanityCheck (ShelleyBlock proto BabbageEra)
+  , NoHardForks (ShelleyBlock proto BabbageEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  RunNode (ShelleyBlock proto BabbageEra)
+
+instance
+  ( ShelleyCompatible proto ConwayEra
+  , LedgerSupportsProtocol (ShelleyBlock proto ConwayEra)
+  , BlockSupportsSanityCheck (ShelleyBlock proto ConwayEra)
+  , NoHardForks (ShelleyBlock proto ConwayEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  RunNode (ShelleyBlock proto ConwayEra)
+
+instance
+  ( ShelleyCompatible proto DijkstraEra
+  , LedgerSupportsProtocol (ShelleyBlock proto DijkstraEra)
+  , BlockSupportsSanityCheck (ShelleyBlock proto DijkstraEra)
+  , NoHardForks (ShelleyBlock proto DijkstraEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  RunNode (ShelleyBlock proto DijkstraEra)

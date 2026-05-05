@@ -1,6 +1,7 @@
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.PeerSimulator.NodeLifecycle
@@ -17,17 +18,17 @@ module Test.Consensus.PeerSimulator.NodeLifecycle
 import Control.ResourceRegistry
 import Control.Tracer (Tracer, mkTracer, traceWith)
 import Data.Functor (void)
+import Data.SOP (All, Top)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
@@ -35,6 +36,7 @@ import Ouroboros.Consensus.Ledger.Tables.MapKind (ValuesMK)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandleCollection (..)
   )
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
@@ -133,12 +135,13 @@ data NodeLifecycle blk m = NodeLifecycle
 -- candidate fragments.
 mkChainDb ::
   IOLike m =>
-  ( LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
+  ( All Top (HardForkIndices blk)
+  , LedgerSupportsProtocol blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk
   ) =>
@@ -186,12 +189,13 @@ mkChainDb resources = do
 -- intervals, the ChainDB and its persisted state.
 restoreNode ::
   ( IOLike m
+  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk
   ) =>
@@ -216,12 +220,13 @@ restoreNode resources LiveIntervalResult{lirPeerResults, lirActive} = do
 lifecycleStart ::
   forall m blk.
   ( IOLike m
+  , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk
   ) =>

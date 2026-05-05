@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -189,13 +190,18 @@ fromShelleyLedgerExamples
         , shelleyLedgerState = leNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = LedgerTables EmptyMK
-        , shelleyLedgerLatestPerasCertRound = SNothing
         }
     chainDepState = TPraosState (NotOrigin 1) pleChainDepState
     extLedgerState =
-      ExtLedgerState
-        ledgerState
-        (genesisHeaderState chainDepState)
+      let headerState = genesisHeaderState chainDepState
+          perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+          latestPerasCertOnChainRound = SNothing
+       in ExtLedgerState
+            { ledgerState
+            , headerState
+            , perasEpochContextResolver
+            , latestPerasCertOnChainRound
+            }
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
 
@@ -326,15 +332,20 @@ fromShelleyLedgerExamplesPraos
         , shelleyLedgerState = leNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = emptyLedgerTables
-        , shelleyLedgerLatestPerasCertRound = SNothing
         }
     chainDepState =
       translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto)) $
         TPraosState (NotOrigin 1) pleChainDepState
     extLedgerState =
-      ExtLedgerState
-        ledgerState
-        (genesisHeaderState chainDepState)
+      let headerState = genesisHeaderState chainDepState
+          perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+          latestPerasCertOnChainRound = SNothing
+       in ExtLedgerState
+            { ledgerState
+            , headerState
+            , perasEpochContextResolver
+            , latestPerasCertOnChainRound
+            }
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
 
