@@ -13,16 +13,31 @@ import Cardano.Binary (fromCBOR, toCBOR)
 import Cardano.Crypto.DSIGN.Class
 import Cardano.Crypto.DSIGN.Mock (MockDSIGN)
 import Cardano.Crypto.Hash (Hash, HashAlgorithm)
+import Cardano.Ledger.BaseTypes (Nonce, shelleyProtVer)
+import Cardano.Ledger.Binary
+  ( DecCBOR (..)
+  , EncCBOR (..)
+  , toPlainDecoder
+  , toPlainEncoding
+  )
 import Cardano.Ledger.Genesis (NoGenesis (..))
 import Codec.CBOR.Decoding (Decoder)
 import Codec.Serialise (Serialise (..))
 import Control.Tracer (Tracer)
+import Data.Array (Array)
+import qualified Data.Array as Array
 import Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
+import Data.Map.NonEmpty (NEMap)
+import qualified Data.Map.NonEmpty as NEMap
+import Data.Maybe.Strict (StrictMaybe, maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
 import Data.SOP.BasicFunctors
+import Data.Set.NonEmpty (NESet)
+import qualified Data.Set.NonEmpty as NESet
 import Data.Typeable (Typeable)
+import Data.Void (Void)
 import NoThunks.Class
   ( InspectHeapNamed (..)
   , NoThunks (..)
@@ -48,6 +63,16 @@ instance (HashAlgorithm h, Typeable a) => Serialise (Hash h a) where
 instance Serialise (VerKeyDSIGN MockDSIGN) where
   encode = encodeVerKeyDSIGN
   decode = decodeVerKeyDSIGN
+
+-- [TODO PERAS STATE SERIALIZATION] we probably want to remove this and pass a
+-- proper era-based version
+instance Serialise Nonce where
+  encode = toPlainEncoding shelleyProtVer . encCBOR
+  decode = toPlainDecoder Nothing shelleyProtVer decCBOR
+
+instance Serialise a => Serialise (StrictMaybe a) where
+  encode = encode . strictMaybeToMaybe
+  decode = maybeToStrictMaybe <$> decode
 
 {-------------------------------------------------------------------------------
   NoThunks
@@ -88,6 +113,18 @@ instance NoThunks a => NoThunks (MultiSet a) where
   showTypeOf _ = "MultiSet"
   wNoThunks ctxt = wNoThunks ctxt . MultiSet.toMap
 
+instance (NoThunks k, NoThunks v) => NoThunks (NEMap k v) where
+  showTypeOf _ = "NEMap"
+  wNoThunks ctxt = wNoThunks ctxt . NEMap.toMap
+
+instance NoThunks v => NoThunks (NESet v) where
+  showTypeOf _ = "NESet"
+  wNoThunks ctxt = wNoThunks ctxt . NESet.toSet
+
+instance NoThunks a => NoThunks (Array i a) where
+  showTypeOf _ = "Array"
+  wNoThunks ctxt = wNoThunks ctxt . Array.elems
+
 instance NoThunks StdGen where
   showTypeOf _ = "StdGen"
   wNoThunks ctx = wNoThunks ctx . OnlyCheckWhnf . Random.unStdGen
@@ -105,3 +142,10 @@ deriving via
   OnlyCheckWhnfNamed "SomeHasFS" (SomeHasFS m)
   instance
     NoThunks (SomeHasFS m)
+
+{-------------------------------------------------------------------------------
+  ShowProxy
+-------------------------------------------------------------------------------}
+
+instance ShowProxy Void
+instance ShowProxy ()

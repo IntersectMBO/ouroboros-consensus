@@ -38,7 +38,6 @@ import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Diff.Strict.Internal as DS
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe.Strict
 import Data.MemPack
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -259,7 +258,6 @@ stowErr fname = error $ "Function " <> fname <> " should not be used in these te
 
 deriving anyclass instance ToExpr v => ToExpr (DS.Delta v)
 deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Diff k v)
-deriving anyclass instance ToExpr v => ToExpr (StrictMaybe v)
 deriving anyclass instance
   ToExpr (mk Token TValue) => ToExpr (LedgerTables TestBlock mk)
 deriving instance

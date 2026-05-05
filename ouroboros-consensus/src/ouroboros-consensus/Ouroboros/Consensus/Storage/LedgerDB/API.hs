@@ -266,6 +266,7 @@ import System.FS.CRC
 -- instantiated with a @blk@.
 type LedgerDbSerialiseConstraints blk =
   ( Serialise (HeaderHash blk)
+  , Serialise (PerasVotingCommittee blk)
   , EncodeDisk blk (LedgerState blk EmptyMK)
   , DecodeDisk blk (LedgerState blk EmptyMK)
   , EncodeDisk blk (AnnTip blk)

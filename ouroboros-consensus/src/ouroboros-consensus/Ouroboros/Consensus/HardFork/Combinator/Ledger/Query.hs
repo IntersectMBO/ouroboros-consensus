@@ -217,7 +217,7 @@ instance
   answerPureBlockQuery
     (ExtLedgerCfg cfg)
     query
-    ext@(ExtLedgerState st@(HardForkLedgerState hardForkState) _) =
+    ext@(ExtLedgerState st@(HardForkLedgerState hardForkState) _ _ _) =
       case query of
         QueryIfCurrent queryIfCurrent ->
           interpretQueryIfCurrent
@@ -294,12 +294,26 @@ answerBlockQueryHelper
 distribExtLedgerState ::
   All SingleEraBlock xs =>
   ExtLedgerState (HardForkBlock xs) mk -> NS (Flip ExtLedgerState mk) xs
-distribExtLedgerState (ExtLedgerState ledgerState headerState) =
-  hmap (\(Pair hst lst) -> Flip $ ExtLedgerState (unFlip lst) hst) $
-    mustMatchNS
-      "HeaderState"
-      (distribHeaderState headerState)
-      (State.tip (hardForkLedgerStatePerEra ledgerState))
+distribExtLedgerState
+  ( ExtLedgerState
+      ledgerState
+      headerState
+      perasResolver
+      latestPerasCertOnChainRound
+    ) =
+    himap
+      ( \idx (Pair hst lst) ->
+          Flip $
+            ExtLedgerState
+              (unFlip lst)
+              hst
+              (castHFCPerasEpochContextResolverAtIndex idx perasResolver)
+              latestPerasCertOnChainRound
+      )
+      $ mustMatchNS
+        "HeaderState"
+        (distribHeaderState headerState)
+        (State.tip (hardForkLedgerStatePerEra ledgerState))
 
 -- | Precondition: the 'headerStateTip' and 'headerStateChainDep' should be from
 -- the same era. In practice, this is _always_ the case, unless the

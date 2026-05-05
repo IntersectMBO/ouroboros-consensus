@@ -88,8 +88,10 @@ import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsPeras (ALedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -471,6 +473,7 @@ encodeByronExtLedgerState =
     encodeByronLedgerState
     encodeByronChainDepState
     encodeByronAnnTip
+    encode
 
 encodeByronHeaderState :: HeaderState ByronBlock -> Encoding
 encodeByronHeaderState =
@@ -573,3 +576,21 @@ decodeByronResult query = case query of
 
 instance CanUpgradeLedgerTables LedgerState ByronBlock where
   upgradeTables _ _ = id
+
+{-------------------------------------------------------------------------------
+  Peras
+-------------------------------------------------------------------------------}
+
+-- | Default instances with no Peras support
+instance ALedgerStateSupportsPeras (LedgerState ByronBlock mk)
+
+instance ALedgerStateSupportsPeras (Ticked LedgerState ByronBlock mk)
+
+-- | Byron does not support Peras, so we use the default (empty) epoch context.
+--
+-- NOTE: this instance lives here rather than in
+-- 'Ouroboros.Consensus.Byron.Node.Peras' because its superclasses require the
+-- 'HasHardForkHistory' and 'ALedgerStateSupportsPeras' instances defined in this
+-- module, while 'Byron.Node.Peras' is imported (transitively) by
+-- 'Byron.Ledger.PBFT' and so cannot depend on this module.
+instance StateSupportsPerasEpochContext ByronBlock

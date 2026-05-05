@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -30,7 +31,6 @@ import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
@@ -47,6 +47,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.Node.GsmState as GSM
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
@@ -169,7 +170,13 @@ debugScheduler conf = conf{scDebug = True}
 -- Execution is started asynchronously, returning an action that kills the thread,
 -- to allow extraction of a potential exception.
 startChainSyncConnectionThread ::
-  (IOLike m, MonadTimer m, LedgerSupportsProtocol blk, ShowProxy blk, ShowProxy (Header blk)) =>
+  ( IOLike m
+  , MonadTimer m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , ShowProxy blk
+  , ShowProxy (Header blk)
+  ) =>
   ResourceRegistry m ->
   Tracer m (TraceEvent blk) ->
   TopLevelConfig blk ->
@@ -414,6 +421,7 @@ startNode ::
   , MonadTime m
   , MonadTimer m
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , ShowProxy blk
   , ShowProxy (Header blk)
   , BlockSupportsDiffusionPipelining blk
@@ -558,11 +566,11 @@ nodeLifecycle ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk
   , HasPointScheduleTestParams blk
@@ -617,11 +625,11 @@ runPointSchedule ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk
   , HasPointScheduleTestParams blk

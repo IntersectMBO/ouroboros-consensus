@@ -19,18 +19,26 @@ module Test.Ouroboros.Storage.PerasCertDB.StateMachine (tests) where
 import Control.Monad (join)
 import Control.Monad.State
 import Control.Tracer (nullTracer)
+import Data.Containers.NonEmpty (NE)
 import Data.Function ((&))
 import qualified Data.List.NonEmpty as NE
+import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Set.NonEmpty as NESet
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , WithArrivalTime (..)
   )
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
-import Ouroboros.Consensus.Storage.PerasCertDB.API (AddPerasCertResult (..), PerasCertDB)
+import Ouroboros.Consensus.Storage.PerasCertDB.API
+  ( AddPerasCertResult (..)
+  , PerasCertDB
+  , WithBoostedBlockStatus
+  )
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.STM
@@ -51,8 +59,8 @@ tests =
     [ adjustQuickCheckTests (* 100) $ testProperty "q-d" $ prop_qd
     ]
 
-perasTestCfg :: PerasCfg TestBlock
-perasTestCfg = mkPerasParams
+perasTestParams :: PerasParams blk
+perasTestParams = defaultPerasParams
 
 prop_qd :: Actions Model -> Property
 prop_qd actions = QC.monadic f $ property () <$ runActions actions
@@ -67,7 +75,8 @@ instance StateModel Model where
     OpenDB :: Action Model ()
     AddCert :: WithArrivalTime (ValidatedPerasCert TestBlock) -> Action Model AddPerasCertResult
     GetWeightSnapshot :: Action Model (PerasWeightSnapshot TestBlock)
-    GetLatestCertSeen :: Action Model (Maybe (WithArrivalTime (ValidatedPerasCert TestBlock)))
+    GetLatestCertSeen ::
+      Action Model (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert TestBlock))))
     GarbageCollect :: SlotNo -> Action Model ()
 
   arbitraryAction _ (Model model)
@@ -86,16 +95,18 @@ instance StateModel Model where
     genAddCert = do
       roundNo <- genRoundNo
       boostedBlock <- genPoint
+      voters <- genVoters
       now <- genRelativeTime
       let certWithTime =
             WithArrivalTime now $
               ValidatedPerasCert
                 { vpcCert =
-                    PerasCert
-                      { pcCertRound = roundNo
-                      , pcCertBoostedBlock = boostedBlock
+                    MockPerasCert
+                      { mockCertRound = roundNo
+                      , mockCertBlock = boostedBlock
+                      , mockCertVoters = voters
                       }
-                , vpcCertBoost = perasWeight perasTestCfg
+                , vpcCertBoost = perasWeight perasTestParams
                 }
       pure (AddCert certWithTime)
 
@@ -114,6 +125,13 @@ instance StateModel Model where
         , (1, pure $ PerasRoundNo 2)
         , (8, PerasRoundNo <$> arbitrary)
         ]
+
+    genVoters :: Gen (NE (Set PerasSeatIndex))
+    genVoters =
+      NESet.fromList <$> (liftA2 (NE.:|) genSeatIndex (listOf genSeatIndex))
+
+    genSeatIndex = PerasSeatIndex <$> arbitrary
+
     genHash = TestHash . NE.fromList . getNonEmpty <$> arbitrary
 
   initialState = Model Model.initModel
@@ -137,7 +155,7 @@ instance StateModel Model where
           -- So we should enforce: round = round' => boostedBlock = boostedBlock'
           p cert' =
             getPerasCertRound cert /= getPerasCertRound cert'
-              || getPerasCertBoostedBlock cert == getPerasCertBoostedBlock cert'
+              || getPerasCertPoint cert == getPerasCertPoint cert'
         GetWeightSnapshot -> True
         GetLatestCertSeen -> True
         GarbageCollect _slotNo -> True
@@ -192,7 +210,7 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
         "Certificate block collision"
         [ show $
             Set.member
-              (getPerasCertBoostedBlock cert)
-              (Set.map getPerasCertBoostedBlock model.certs)
+              (getPerasCertPoint cert)
+              (Set.map getPerasCertPoint model.certs)
         ]
   monitoring _ _ _ _ prop = prop

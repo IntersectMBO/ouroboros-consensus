@@ -9,6 +9,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Block
@@ -69,6 +70,10 @@ import Ouroboros.Consensus.HardFork.Combinator
   ( HasPartialConsensusConfig
   )
 import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (MaybeEraIndexedEpochToPerasRoundInfo)
+  )
+import Ouroboros.Consensus.Peras.Time (EpochToPerasRoundInfo)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosTiebreakerView
@@ -128,13 +133,17 @@ class
     HasPartialConsensusConfig proto
   , DecCBOR (SL.PState era)
   , Crypto (ProtoCrypto proto)
+  , -- Peras constraints
+    BlockSupportsPeras (ShelleyBlock proto era)
+  , StateSupportsPerasEpochContext (ShelleyBlock proto era)
+  , MaybeEraIndexedEpochToPerasRoundInfo (ShelleyBlock proto era) ~ EpochToPerasRoundInfo
   , -- Backwards compatibility
     Plain.FromCBOR (LegacyPParams era)
   , Plain.ToCBOR (LegacyPParams era)
   ) =>
   ShelleyCompatible proto era
 
-instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) where
+instance StandardHash (ShelleyBlock proto era) => ConvertRawHash (ShelleyBlock proto era) where
   -- 'HASH' is currently 'Blake2b_256', whose digest is 256 bits, i.e. 32 bytes,
   -- so this resolves to 32.
   type HashSize (ShelleyBlock proto era) = Crypto.HashSize HASH
@@ -245,7 +254,7 @@ instance ShelleyCompatible proto era => GetPrevHash (ShelleyBlock proto era) whe
       . pHeaderPrevHash
       . shelleyHeaderRaw
 
-instance ShelleyCompatible proto era => StandardHash (ShelleyBlock proto era)
+instance StandardHash (ShelleyBlock proto era)
 
 instance ShelleyCompatible proto era => HasAnnTip (ShelleyBlock proto era)
 

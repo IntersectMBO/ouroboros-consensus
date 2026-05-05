@@ -5,10 +5,14 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
   ( Inject (..)
@@ -26,10 +30,13 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
     -- * Convenience
   , forgetInjectionIndex
   , oracularInjectionIndex
+  , injectConstraint
+  , injectSingleEraBlock
   ) where
 
 import Data.Bifunctor (first)
 import Data.Coerce (Coercible, coerce)
+import Data.Maybe.Strict (StrictMaybe)
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Counting (Exactly (..))
@@ -50,9 +57,13 @@ import Ouroboros.Consensus.HeaderValidation
   , genesisHeaderState
   )
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import Ouroboros.Consensus.Ledger.Extended
+  ( ExtLedgerState (..)
+  , initPerasEpochContextResolver
+  )
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver (..))
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -172,6 +183,23 @@ injectHardForkState iidx x =
       )
       (go (InjectionIndex tele))
 
+injectSingleEraBlock ::
+  CanHardFork xs =>
+  Index xs x ->
+  (SingleEraBlock x => r) ->
+  r
+injectSingleEraBlock = injectConstraint (Proxy @SingleEraBlock)
+
+injectConstraint ::
+  All c xs =>
+  proxy c ->
+  Index xs x ->
+  (c x => r) ->
+  r
+injectConstraint proxy idx r = case idx of
+  IZ -> r
+  IS idx' -> injectConstraint proxy idx' r
+
 {-------------------------------------------------------------------------------
   Instances
 -------------------------------------------------------------------------------}
@@ -234,6 +262,11 @@ instance Inject (Flip LedgerState mk) where
 instance Inject WrapChainDepState where
   inject = coerce .: injectHardForkState
 
+instance Inject PerasEpochContextResolver where
+  inject iidx =
+    injectHFCPerasEpochContextResolver
+      . injectNS (forgetInjectionIndex iidx)
+
 instance Inject HeaderState where
   inject iidx HeaderState{..} =
     HeaderState
@@ -250,6 +283,8 @@ instance Inject (Flip ExtLedgerState mk) where
       ExtLedgerState
         { ledgerState = unFlip $ inject iidx (Flip ledgerState)
         , headerState = inject iidx headerState
+        , perasEpochContextResolver = inject iidx perasEpochContextResolver
+        , latestPerasCertOnChainRound = latestPerasCertOnChainRound
         }
 
 {-------------------------------------------------------------------------------
@@ -279,6 +314,8 @@ injectInitialExtLedgerState cfg extLedgerState0 =
   ExtLedgerState
     { ledgerState = targetEraLedgerState
     , headerState = targetEraHeaderState
+    , perasEpochContextResolver = targetEraPerasEpochContextResolver
+    , latestPerasCertOnChainRound = targetEraLatestPerasCertOnChainRound
     }
  where
   cfgs :: NP TopLevelConfig (x ': xs)
@@ -326,3 +363,9 @@ injectInitialExtLedgerState cfg extLedgerState0 =
 
   targetEraHeaderState :: HeaderState (HardForkBlock (x ': xs))
   targetEraHeaderState = genesisHeaderState targetEraChainDepState
+
+  targetEraPerasEpochContextResolver :: PerasEpochContextResolver (HardForkBlock (x ': xs))
+  targetEraPerasEpochContextResolver = initPerasEpochContextResolver (configLedger cfg) targetEraLedgerState targetEraHeaderState
+
+  targetEraLatestPerasCertOnChainRound :: StrictMaybe PerasRoundNo
+  targetEraLatestPerasCertOnChainRound = latestPerasCertOnChainRound extLedgerState0

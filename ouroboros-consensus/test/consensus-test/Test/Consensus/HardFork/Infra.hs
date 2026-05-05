@@ -35,7 +35,6 @@ import Data.SOP.Strict
 import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
-import Ouroboros.Consensus.HardFork.History (Bound (..))
 import qualified Ouroboros.Consensus.HardFork.History as HF
 import Ouroboros.Consensus.HardFork.History.EraParams (EraParams (..))
 import Test.QuickCheck
@@ -123,11 +122,17 @@ genEraParams = do
   eraSlotLength <- slotLengthFromSec <$> choose (1, 5)
   eraSafeZone <- genSafeZone
   eraGenesisWin <- GenesisWindow <$> choose (1, 10)
-  -- we restrict Peras round length to divide the epoch size.
-  -- for testing purposes, we include Peras round length in every era.
   eraPerasRoundLength <-
-    HF.PerasEnabled . PerasRoundLength
-      <$> choose (1, 10) `suchThat` (\x -> (unEpochSize eraEpochSize) `mod` x == 0)
+    frequency
+      [ (1, return HF.NoPerasEnabled)
+      ,
+        ( 3
+        , HF.PerasEnabled . PerasRoundLength
+            <$>
+            -- we restrict Peras round length to divide the epoch size.
+            choose (1, 10) `suchThat` (\x -> (unEpochSize eraEpochSize) `mod` x == 0)
+        )
+      ]
   return HF.EraParams{..}
  where
   genSafeZone :: Gen HF.SafeZone
@@ -161,13 +166,8 @@ genShape eras = HF.Shape <$> erasMapStateM genParams eras (EpochNo 0)
 
 genSummary :: Eras xs -> Gen (HF.Summary xs)
 genSummary is =
-  HF.Summary <$> erasUnfoldAtMost genEraSummary is initBoundWithPeras
+  HF.Summary <$> erasUnfoldAtMost genEraSummary is HF.initBound
  where
-  -- TODO(geo2a): revisit this hard-coding of enabling Peras when
-  -- we're further into the integration process
-  -- see https://github.com/tweag/cardano-peras/issues/112
-  initBoundWithPeras = HF.initBound{boundPerasRound = HF.PerasEnabled . PerasRoundNo $ 0}
-
   genEraSummary :: Era -> HF.Bound -> Gen (HF.EraSummary, HF.EraEnd)
   genEraSummary _era lo = do
     params <- genEraParams
