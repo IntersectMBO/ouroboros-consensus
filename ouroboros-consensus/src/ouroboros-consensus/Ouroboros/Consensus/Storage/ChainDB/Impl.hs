@@ -212,7 +212,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         (void initialLoE)
         (forgetFingerprint initialWeights)
     traceWith initChainSelTracer InitialChainSelected
-    LedgerDB.tryFlush lgrDB
 
     curLedger <- atomically $ LedgerDB.getVolatileTip lgrDB
     let lcfg = configLedger (Args.cdbsTopLevelConfig cdbSpecificArgs)

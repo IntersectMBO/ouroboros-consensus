@@ -16,62 +16,6 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
--- | The Ledger DB is responsible for the following tasks:
---
--- - __Maintaining the in-memory ledger state at the tip__: When we try to
---     extend our chain with a new block fitting onto our tip, the block must
---     first be validated using the right ledger state, i.e., the ledger state
---     corresponding to the tip.
---
--- - __Maintaining the past \(k\) in-memory ledger states__: we might roll back
---     up to \(k\) blocks when switching to a more preferable fork. Consider the
---     example below:
---
---     <<docs/haddocks/ledgerdb-switch.svg>>
---
---     Our current chain's tip is \(C_2\), but the fork containing blocks
---      \(F_1\), \(F_2\), and \(F_3\) is more preferable. We roll back our chain
---     to the intersection point of the two chains, \(I\), which must be not
---     more than \(k\) blocks back from our current tip. Next, we must validate
---     block \(F_1\) using the ledger state at block \(I\), after which we can
---     validate \(F_2\) using the resulting ledger state, and so on.
---
---     This means that we need access to all ledger states of the past \(k\)
---     blocks, i.e., the ledger states corresponding to the volatile part of the
---     current chain. Note that applying a block to a ledger state is not an
---     invertible operation, so it is not possible to simply /unapply/ \(C_1\)
---     and \(C_2\) to obtain \(I\).
---
---     Access to the last \(k\) ledger states is not only needed for validating
---     candidate chains, but also by the:
---
---     - __Local state query server__: To query any of the past \(k\) ledger
---       states.
---
---     - __Chain sync client__: To validate headers of a chain that intersects
---        with any of the past \(k\) blocks.
---
--- - __Providing 'Ouroboros.Consensus.Ledger.Tables.Basics.LedgerTable's at any of the last \(k\) ledger states__: To apply blocks or transactions on top
---     of ledger states, the LedgerDB must be able to provide the appropriate
---     ledger tables at any of those ledger states.
---
--- - __Storing snapshots on disk__: To obtain a ledger state for the current tip
---     of the chain, one has to apply /all blocks in the chain/ one-by-one to
---     the initial ledger state. When starting up the system with an on-disk
---     chain containing millions of blocks, all of them would have to be read
---     from disk and applied. This process can take hours, depending on the
---     storage and CPU speed, and is thus too costly to perform on each startup.
---
---     For this reason, a recent snapshot of the ledger state should be
---     periodically written to disk. Upon the next startup, that snapshot can be
---     read and used to restore the current ledger state, as well as the past
---      \(k\) ledger states.
---
--- - __Flushing 'LedgerTable' differences__: The running Consensus has to
---     periodically flush chunks of [differences]("Data.Map.Diff.Strict")
---     from the 'DbChangelog' to the 'BackingStore', so that memory is
---     off-loaded to the backing store, and if the backing store is an on-disk
---     implementation, reduce the memory usage.
 --
 -- Note that whenever we say /ledger state/ we mean the @'ExtLedgerState' blk
 -- mk@ type described in "Ouroboros.Consensus.Ledger.Basics".
@@ -81,24 +25,6 @@
 -- The LedgerDB has currently 3 backends it can use:
 --
 -- - InMemory: This backend is pure except for tracing. No resources are allocated.
---
--- - LMDB: This backend allocates a 'BackingStore' and
---   'BackingStoreValueHandle's on it. The 'BackingStore' does not necessarily
---   need to be closed as described in [the LMDB
---   documentation](http://www.lmdb.tech/doc/group__internal.html#ga52dd98d0c542378370cd6b712ff961b5):
---
---   > Closing a database handle is not necessary, but lets mdb_dbi_open() reuse the handle value.
---
---   Therefore, the 'BackingStore' is not allocated in any resource or tracked
---   in any way as a resource.
---
---   For the value handles, all the usages of those are bracketed or
---   tracked in a resource registry, so they will be closed
---   individually when an exception arrives. The key difference is
---   that in V1, the value handle cannot outlive the Forker (see
---   "'Forker' management in the running node" below), while in V2 the
---   resources (handles) can outlive the forkers and be moved to the
---   LedgerDB.
 --
 -- - LSM: This backend allocates a 'BlockIOFS' and a 'Session'. Using the
 --   session, new 'Tables' are allocated, but closing the session closes any
@@ -195,6 +121,57 @@
 -- >>> \  \\draw (60pt, 60pt) node[fill=white] {$k$};\
 -- >>> \  \\draw [dashed] (30pt, -40pt) -- (30pt, 45pt);"
 -- >>> :}
+
+-- | The Ledger DB is responsible for the following tasks:
+--
+-- - __Maintaining the in-memory ledger state at the tip__: When we try to
+--     extend our chain with a new block fitting onto our tip, the block must
+--     first be validated using the right ledger state, i.e., the ledger state
+--     corresponding to the tip.
+--
+-- - __Maintaining the past \(k\) in-memory ledger states__: we might roll back
+--     up to \(k\) blocks when switching to a more preferable fork. Consider the
+--     example below:
+--
+--     <<docs/haddocks/ledgerdb-switch.svg>>
+--
+--     Our current chain's tip is \(C_2\), but the fork containing blocks
+--      \(F_1\), \(F_2\), and \(F_3\) is more preferable. We roll back our chain
+--     to the intersection point of the two chains, \(I\), which must be not
+--     more than \(k\) blocks back from our current tip. Next, we must validate
+--     block \(F_1\) using the ledger state at block \(I\), after which we can
+--     validate \(F_2\) using the resulting ledger state, and so on.
+--
+--     This means that we need access to all ledger states of the past \(k\)
+--     blocks, i.e., the ledger states corresponding to the volatile part of the
+--     current chain. Note that applying a block to a ledger state is not an
+--     invertible operation, so it is not possible to simply /unapply/ \(C_1\)
+--     and \(C_2\) to obtain \(I\).
+--
+--     Access to the last \(k\) ledger states is not only needed for validating
+--     candidate chains, but also by the:
+--
+--     - __Local state query server__: To query any of the past \(k\) ledger
+--       states.
+--
+--     - __Chain sync client__: To validate headers of a chain that intersects
+--        with any of the past \(k\) blocks.
+--
+-- - __Providing 'Ouroboros.Consensus.Ledger.Tables.Basics.LedgerTable's at any of the last \(k\) ledger states__: To apply blocks or transactions on top
+--     of ledger states, the LedgerDB must be able to provide the appropriate
+--     ledger tables at any of those ledger states.
+--
+-- - __Storing snapshots on disk__: To obtain a ledger state for the current tip
+--     of the chain, one has to apply /all blocks in the chain/ one-by-one to
+--     the initial ledger state. When starting up the system with an on-disk
+--     chain containing millions of blocks, all of them would have to be read
+--     from disk and applied. This process can take hours, depending on the
+--     storage and CPU speed, and is thus too costly to perform on each startup.
+--
+--     For this reason, a recent snapshot of the ledger state should be
+--     periodically written to disk. Upon the next startup, that snapshot can be
+--     read and used to restore the current ledger state, as well as the past
+--      \(k\) ledger states.
 module Ouroboros.Consensus.Storage.LedgerDB.API
   ( -- * Main API
     CanUpgradeLedgerTables (..)
@@ -360,16 +337,6 @@ data LedgerDB m l blk = LedgerDB
   --   flush the immutable blocks from the VolatileDB into the
   --   ImmutableDB.
   -- - a function that calculates the delay before the snapshot
-  --
-  -- For V1, this MUST NOT be called concurrently with 'garbageCollect' and/or
-  -- 'tryFlush'.
-  , tryFlush :: m ()
-  -- ^ Flush V1 in-memory LedgerDB state to disk, if possible. This is a no-op
-  -- for implementations that do not need an explicit flush function.
-  --
-  -- For V1, this MUST NOT be called concurrently with 'tryTakeSnapshot'.
-  --
-  -- Note that this is rate-limited by 'ldbShouldFlush'.
   , closeDB :: m ()
   -- ^ Close the LedgerDB
   --

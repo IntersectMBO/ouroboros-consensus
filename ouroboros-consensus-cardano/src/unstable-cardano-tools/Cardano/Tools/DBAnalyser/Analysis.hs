@@ -444,7 +444,6 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
               join $ IOLike.atomically $ LedgerDB.forkerCommit frk
               when (blockSlot blk > slotNo) $ issueWarning blk
               when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
-              LedgerDB.tryFlush ldb
               LedgerDB.garbageCollect ldb
                 . fromWithOrigin 0
                 . pointSlot
@@ -541,7 +540,6 @@ checkNoThunksEvery
         IOLike.evaluate (ledgerState newLedger') >>= checkNoThunks bn
 
       LedgerDB.push internal newLedger
-      LedgerDB.tryFlush ldb
 
     checkNoThunks :: NoThunksMK mk => BlockNo -> LedgerState blk mk -> IO ()
     checkNoThunks bn ls =
@@ -594,7 +592,6 @@ traceLedgerProcessing
       mapM_ Debug.traceMarkerIO traces
 
       LedgerDB.push internal newLedger
-      LedgerDB.tryFlush ldb
 
 {-------------------------------------------------------------------------------
   Analysis: maintain a ledger state and time the five major ledger calculations
@@ -712,7 +709,6 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     F.writeDataPoint outFileHandle outFormat slotDataPoint
 
     LedgerDB.push intLedgerDB $ ExtLedgerState (prependDiffs tkLdgrSt newLedger) newHeader
-    LedgerDB.tryFlush ledgerDB
    where
     rp = blockRealPoint blk
 
@@ -828,7 +824,6 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
       IO.hFlush outFileHandle
 
     LedgerDB.push intLedgerDB nextLedgerSt
-    LedgerDB.tryFlush ldb
 
     pure ()
 
@@ -984,7 +979,6 @@ reproMempoolForge numBlks env = do
           -- the primary intention of this Analysis. Maybe GHC's CSE is already
           -- doing this sharing optimization?
           LedgerDB.reapplyThenPushNOW intLedgerDB blk
-          LedgerDB.tryFlush ledgerDB
 
           -- this flushes blk from the mempool, since every tx in it is now on the chain
           void $ Mempool.testSyncWithLedger mempool
