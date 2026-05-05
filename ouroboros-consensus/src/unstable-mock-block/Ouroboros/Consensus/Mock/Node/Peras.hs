@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Mock.Node.Peras () where
 
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block (BlockProtocol)
+import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras (..))
 import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo, forgetEraIndex)
 import Ouroboros.Consensus.Mock.Ledger.Block (SimpleBlock, SimpleCrypto)
 import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
@@ -34,3 +35,9 @@ instance
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: SimpleBlock does not support Peras"
+
+instance
+  ( SimpleCrypto c
+  , Typeable ext
+  ) =>
+  BlockSupportsPeras (SimpleBlock c ext)

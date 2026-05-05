@@ -310,6 +310,7 @@ hardForkForgeBlock ::
   TopLevelConfig (HardForkBlock xs) ->
   BlockNo ->
   SlotNo ->
+  Maybe (PerasCert (HardForkBlock xs)) ->
   TickedLedgerState (HardForkBlock xs) EmptyMK ->
   [Validated (GenTx (HardForkBlock xs))] ->
   HardForkIsLeader xs ->
@@ -319,6 +320,7 @@ hardForkForgeBlock
   cfg
   bno
   sno
+  mbPerasCert
   (TickedHardForkLedgerState transition ledgerState)
   txs
   isLeader =
@@ -375,6 +377,35 @@ hardForkForgeBlock
           error
             "Impossible! some transactions were rejected as untranslatable by rematchValidatedTxs but all of them have been translated and applied just now."
 
+    -- If we crossed an era boundary in this forge, and we are supposed to
+    -- include a Peras certificate in this block, we must ensure that the
+    -- certificate being passed to us (i.e., the latest certificate seen) is
+    -- from the same era as the block being forged. Otherwise, we drop it
+    -- (treating it as absent), since inter-era certificate inclusion is not
+    -- supported for now. In the unlikely event of recovering from a cooldown
+    -- period that crosses an era boundary, one should jumpstart the voting
+    -- process again via the same type of governance action that started this
+    -- process in the first place, but in the new era.
+    maybeInjectSameEraPerasCert ::
+      Index xs blk ->
+      PerasCert (HardForkBlock xs) ->
+      Maybe (PerasCert blk)
+    maybeInjectSameEraPerasCert index hardForkPerasCert =
+      case ( Match.matchNS
+               (getIndex index)
+               (getOneEraPerasCert hardForkPerasCert)
+           ) of
+        -- The Peras certificate is from a different era than the block being
+        -- forged, so we drop it (treating it as absent).
+        Left _mismatch ->
+          Nothing
+        -- The Peras certificate is from the same era as the block being forged,
+        -- so we keep it and pass it down to the current era's 'forgeBlock'.
+        Right nsPair ->
+          hcollapse $
+            hmap (\(Pair Refl (WrapPerasCert cert)) -> K (Just cert)) $
+              nsPair
+
     -- \| Unwraps all the layers needed for SOP and call 'forgeBlock'.
     forgeBlockOne ::
       Index xs blk ->
@@ -404,6 +435,7 @@ hardForkForgeBlock
           cfg'
           bno
           sno
+          (mbPerasCert >>= maybeInjectSameEraPerasCert index)
           ledgerState'
           (map unwrapValidatedGenTx txs')
           isLeader'
