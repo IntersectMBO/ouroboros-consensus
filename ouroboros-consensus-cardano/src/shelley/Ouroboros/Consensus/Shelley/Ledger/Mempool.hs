@@ -191,10 +191,9 @@ instance
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
 
   getTransactionKeySets (ShelleyTx _ tx) =
-    LedgerTables $
-      KeysMK $
-        coerceSet
-          (tx ^. bodyTxL . allInputsTxBodyF)
+    KeysMK $
+      coerceSet
+        (tx ^. bodyTxL . allInputsTxBodyF)
 
   mkMempoolApplyTxError _tlst txt =
     ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)

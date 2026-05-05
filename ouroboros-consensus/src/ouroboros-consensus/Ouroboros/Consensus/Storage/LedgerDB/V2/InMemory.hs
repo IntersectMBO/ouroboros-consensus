@@ -86,7 +86,7 @@ newInMemoryLedgerTablesHandle ::
   -- | FileSystem in order to take snapshots
   SomeHasFS m ->
   -- | The tables
-  LedgerTables blk ValuesMK ->
+  Values blk ->
   m (LedgerTablesHandle m l blk)
 newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) tables =
   encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $
@@ -99,7 +99,7 @@ newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) tables =
             , readAll = \_ -> pure tables
             , duplicateWithDiffs = implDuplicateWithDiffs tracer tables someFS
             , takeHandleSnapshot = implTakeHandleSnapshot tables hasFS
-            , tablesSize = Map.size . getValuesMK . getLedgerTables $ tables
+            , tablesSize = Map.size . getValuesMK $ tables
             }
      in pure h
 
@@ -112,22 +112,22 @@ implRead ::
   ( IOLike m
   , HasLedgerTables l blk
   ) =>
-  LedgerTables blk ValuesMK ->
+  Values blk ->
   l blk EmptyMK ->
-  LedgerTables blk KeysMK ->
-  m (LedgerTables blk ValuesMK)
-implRead tables _ keys = do
-  pure $ flip (ltliftA2 (\(ValuesMK v) (KeysMK k) -> ValuesMK $ v `Map.restrictKeys` k)) keys tables
+  Keys blk ->
+  m (Values blk)
+implRead (ValuesMK v) _ (KeysMK k) = do
+  pure $ ValuesMK $ v `Map.restrictKeys` k
 
 implReadRange ::
   (IOLike m, HasLedgerTables l blk) =>
-  LedgerTables blk ValuesMK ->
+  Values blk ->
   l blk EmptyMK ->
   (Maybe (TxIn blk), Int) ->
-  m (LedgerTables blk ValuesMK, Maybe (TxIn blk))
-implReadRange (LedgerTables (ValuesMK m)) _ (f, t) =
+  m (Values blk, Maybe (TxIn blk))
+implReadRange (ValuesMK m) _ (f, t) =
   let m' = Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
-   in pure (LedgerTables (ValuesMK m'), fst <$> Map.lookupMax m')
+   in pure (ValuesMK m', fst <$> Map.lookupMax m')
 
 implDuplicateWithDiffs ::
   ( IOLike m
@@ -138,7 +138,7 @@ implDuplicateWithDiffs ::
   , SerializeTablesWithHint l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
-  LedgerTables blk ValuesMK ->
+  Values blk ->
   SomeHasFS m ->
   l blk mk1 ->
   l blk DiffMK ->
@@ -146,7 +146,7 @@ implDuplicateWithDiffs ::
 implDuplicateWithDiffs !tracer tables !someFS st0 !diffs = do
   let newtables =
         flip
-          (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d)))
+          (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d))
           (projectLedgerTables diffs)
           . upgradeTables st0 diffs
           $ tables
@@ -154,7 +154,7 @@ implDuplicateWithDiffs !tracer tables !someFS st0 !diffs = do
 
 implTakeHandleSnapshot ::
   (IOLike m, SerializeTablesWithHint l blk) =>
-  LedgerTables blk ValuesMK ->
+  Values blk ->
   HasFS m h ->
   l blk EmptyMK ->
   String ->
@@ -298,7 +298,7 @@ instance
   releaseResources _ _ = pure ()
   createAndPopulateStateRefFromGenesis tracer (Resources shfs) values =
     StateRef (forgetLedgerTables values)
-      <$> newInMemoryLedgerTablesHandle tracer shfs (ltprj values)
+      <$> newInMemoryLedgerTablesHandle tracer shfs (projectLedgerTables values)
   openStateRefFromSnapshot trcr ccfg shfs _ ds =
     loadSnapshot trcr ccfg shfs ds
   snapshotManager _ _ =

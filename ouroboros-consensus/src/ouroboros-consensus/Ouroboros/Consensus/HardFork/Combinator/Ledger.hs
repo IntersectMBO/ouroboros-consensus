@@ -286,7 +286,7 @@ instance (HasCanonicalTxIn xs, HasHardForkTxOut xs, CanHardFork xs) => GetBlockK
       SingleEraBlock x =>
       Index xs x ->
       I x ->
-      K (LedgerTables (HardForkBlock xs) KeysMK) x
+      K (Keys (HardForkBlock xs)) x
     f idx (I blk) = K $ injectLedgerTables idx $ getBlockKeySets blk
 
 apply ::
@@ -887,7 +887,7 @@ instance
     forall mk.
     (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
     LedgerState (HardForkBlock xs) mk ->
-    LedgerTables (HardForkBlock xs) mk
+    MkBlk mk (HardForkBlock xs)
   projectLedgerTables (HardForkLedgerState st) =
     hcollapse $ hcimap proxySingle projectOne st
    where
@@ -895,7 +895,7 @@ instance
       SingleEraBlock x =>
       Index xs x ->
       Flip LedgerState mk x ->
-      K (LedgerTables (HardForkBlock xs) mk) x
+      K (MkBlk mk (HardForkBlock xs)) x
     projectOne i l =
       K $
         injectLedgerTables i $
@@ -906,7 +906,7 @@ instance
     forall mk any.
     (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
     LedgerState (HardForkBlock xs) any ->
-    LedgerTables (HardForkBlock xs) mk ->
+    MkBlk mk (HardForkBlock xs) ->
     LedgerState (HardForkBlock xs) mk
   withLedgerTables (HardForkLedgerState st) tables =
     HardForkLedgerState $
@@ -933,7 +933,7 @@ instance
     forall mk.
     (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
     Ticked LedgerState (HardForkBlock xs) mk ->
-    LedgerTables (HardForkBlock xs) mk
+    MkBlk mk (HardForkBlock xs)
   projectLedgerTables st =
     hcollapse $
       hcimap
@@ -945,7 +945,7 @@ instance
       SingleEraBlock x =>
       Index xs x ->
       FlipTickedLedgerState mk x ->
-      K (LedgerTables (HardForkBlock xs) mk) x
+      K (MkBlk mk (HardForkBlock xs)) x
     projectOne i l =
       K $
         injectLedgerTables i $
@@ -956,7 +956,7 @@ instance
     forall mk any.
     (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
     Ticked LedgerState (HardForkBlock xs) any ->
-    LedgerTables (HardForkBlock xs) mk ->
+    MkBlk mk (HardForkBlock xs) ->
     Ticked LedgerState (HardForkBlock xs) mk
   withLedgerTables st tables =
     st
@@ -1015,8 +1015,8 @@ injectLedgerTables ::
   , HasHardForkTxOut xs
   ) =>
   Index xs x ->
-  LedgerTables x mk ->
-  LedgerTables (HardForkBlock xs) mk
+  MkBlk mk x ->
+  MkBlk mk (HardForkBlock xs)
 injectLedgerTables idx =
   bimapLedgerTables (injectCanonicalTxIn idx) (injectHardForkTxOut idx)
 
@@ -1029,8 +1029,8 @@ ejectLedgerTables ::
   , HasHardForkTxOut xs
   ) =>
   Index xs x ->
-  LedgerTables (HardForkBlock xs) mk ->
-  LedgerTables x mk
+  MkBlk mk (HardForkBlock xs) ->
+  MkBlk mk x
 ejectLedgerTables idx =
   bimapLedgerTables (ejectCanonicalTxIn idx) (ejectHardForkTxOut idx)
 
@@ -1200,9 +1200,9 @@ instance
   upgradeTables
     (HardForkLedgerState (HardForkState hs0))
     (HardForkLedgerState (HardForkState hs1))
-    orig@(LedgerTables (ValuesMK vs)) =
+    orig@(ValuesMK vs) =
       if isJust $ Match.telescopesMismatch hs0 hs1
-        then LedgerTables $ ValuesMK $ extendTables (hmap (const (K ())) t1) vs
+        then ValuesMK $ extendTables (hmap (const (K ())) t1) vs
         else orig
      where
       t1 = Telescope.tip hs1

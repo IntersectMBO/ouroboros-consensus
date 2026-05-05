@@ -110,6 +110,7 @@ import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteTicketNo
   )
 import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike

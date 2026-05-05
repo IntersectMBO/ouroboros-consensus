@@ -25,6 +25,7 @@ import Control.Monad (when)
 import Control.RAWLock (RAWLock, withWriteAccess)
 import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import GHC.Generics
 import Ouroboros.Consensus.Block
@@ -71,8 +72,8 @@ deriving instance
 implForkerReadTables ::
   (IOLike m, GetTip (l blk)) =>
   ForkerEnv m l blk ->
-  LedgerTables blk KeysMK ->
-  m (LedgerTables blk ValuesMK)
+  Keys blk ->
+  m (Values blk)
 implForkerReadTables env ks =
   encloseTimedWith (ForkerReadTables >$< foeTracer env) $ do
     stateRef <- currentHandle <$> readTVarIO (foeLedgerSeq env)
@@ -83,14 +84,14 @@ implForkerRangeReadTables ::
   QueryBatchSize ->
   ForkerEnv m l blk ->
   RangeQueryPrevious blk ->
-  m (LedgerTables blk ValuesMK, Maybe (TxIn blk))
+  m (Values blk, Maybe (TxIn blk))
 implForkerRangeReadTables qbs env rq0 =
   encloseTimedWith (ForkerRangeReadTables >$< foeTracer env) $ do
     let n = fromIntegral $ defaultQueryBatchSize qbs
     stateRef <- currentHandle <$> readTVarIO (foeLedgerSeq env)
     case rq0 of
       NoPreviousQuery -> readRange (tables stateRef) (state stateRef) (Nothing, n)
-      PreviousQueryWasFinal -> pure (LedgerTables emptyMK, Nothing)
+      PreviousQueryWasFinal -> pure (ValuesMK Map.empty, Nothing)
       PreviousQueryWasUpTo k ->
         readRange (tables stateRef) (state stateRef) (Just k, n)
 

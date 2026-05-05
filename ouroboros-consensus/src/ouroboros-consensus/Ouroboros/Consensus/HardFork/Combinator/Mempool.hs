@@ -253,7 +253,7 @@ instance
       SingleEraBlock x =>
       Index xs x ->
       GenTx x ->
-      K (LedgerTables (HardForkBlock xs) KeysMK) x
+      K (Keys (HardForkBlock xs)) x
     f idx tx = K $ injectLedgerTables idx $ getTransactionKeySets tx
 
   -- This optimization is worthwile because we can save the projection and

@@ -137,7 +137,7 @@ instance LedgerSupportsMempool ByronBlock where
 
   txForgetValidated = forgetValidatedByronTx
 
-  getTransactionKeySets _ = emptyLedgerTables
+  getTransactionKeySets _ = emptyKeys
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 

@@ -109,11 +109,11 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   -- ^ Create an duplicate of a handle. This will be used when opening read-only
   -- forkers and also to open the first handle for a forker used in chain
   -- selection.
-  , read :: !(l blk EmptyMK -> LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
+  , read :: !(l blk EmptyMK -> Keys blk -> m (Values blk))
   -- ^ Read values for the given keys from the tables, and deserialize them as
   -- if they were from the same era as the given ledger state.
   , readRange ::
-      !(l blk EmptyMK -> (Maybe (TxIn blk), Int) -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
+      !(l blk EmptyMK -> (Maybe (TxIn blk), Int) -> m (Values blk, Maybe (TxIn blk)))
   -- ^ Read the requested number of values, possibly starting from the given
   -- key, from the tables, and deserialize them as if they were from the same
   -- era as the given ledger state.
@@ -128,7 +128,7 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   -- back into the next iteration of the range read. If the function returns
   -- Nothing, it means the read returned no results, or in other words, we
   -- reached the end of the ledger tables.
-  , readAll :: !(l blk EmptyMK -> m (LedgerTables blk ValuesMK))
+  , readAll :: !(l blk EmptyMK -> m (Values blk))
   -- ^ Costly read all operation, not to be used in Consensus but only in
   -- snapshot-converter executable. The values will be read as if they were from
   -- the same era as the given ledger state.

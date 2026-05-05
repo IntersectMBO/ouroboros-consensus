@@ -95,6 +95,7 @@ class
   , HasLedgerTables l blk
   , HasLedgerTables (Ticked l) blk
   , GetBlockKeySets blk
+  , Ord (TxIn blk)
   ) =>
   ApplyBlock l blk
   where
@@ -149,7 +150,7 @@ class
 class GetBlockKeySets blk where
   -- | Given a block, get the key-sets that we need to apply it to a ledger
   -- state.
-  getBlockKeySets :: blk -> LedgerTables blk KeysMK
+  getBlockKeySets :: blk -> Keys blk
 
 defaultApplyBlockLedgerResult ::
   (HasCallStack, ApplyBlock l blk) =>

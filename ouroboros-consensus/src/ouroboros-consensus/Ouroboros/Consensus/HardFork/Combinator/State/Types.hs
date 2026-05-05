@@ -205,17 +205,15 @@ newtype TranslateTxOut x y = TranslateTxOut (TxOut x -> TxOut y)
 translateLedgerTablesWith ::
   Ord (TxIn y) =>
   TranslateLedgerTables x y ->
-  LedgerTables x DiffMK ->
-  LedgerTables y DiffMK
+  DiffMK (TxIn x) (TxOut x) ->
+  DiffMK (TxIn y) (TxOut y)
 translateLedgerTablesWith f =
-  LedgerTables
-    . DiffMK
+  DiffMK
     . Diff.Diff
     . Map.mapKeys (translateTxInWith f)
     . getDiff
     . getDiffMK
     . mapMK (translateTxOutWith f)
-    . getLedgerTables
  where
   getDiff (Diff.Diff m) = m
 

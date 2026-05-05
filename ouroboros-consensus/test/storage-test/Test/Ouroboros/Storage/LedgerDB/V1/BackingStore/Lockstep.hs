@@ -35,9 +35,9 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Typeable
 import Ouroboros.Consensus.Ledger.Tables
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as BS
-import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as BS
+-- Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
   ( LMDBErr (..)
   )
 import Ouroboros.Consensus.Util.IOLike hiding
@@ -50,13 +50,13 @@ import Ouroboros.Consensus.Util.IOLike hiding
 import System.FS.API hiding (Handle)
 import qualified System.FS.API.Types as FS
 import Test.Cardano.Ledger.Binary.Arbitrary ()
-import Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock
+-- Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock
   ( Err (..)
   , Mock (..)
   , ValueHandle (..)
   , runMockMonad
   )
-import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock as Mock
+-- qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock as Mock
 import Test.QuickCheck (Gen)
 import qualified Test.QuickCheck as QC
 import Test.QuickCheck.StateModel

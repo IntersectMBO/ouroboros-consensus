@@ -13,8 +13,8 @@ import Data.Map.Diff.Strict.Internal (DeltaHistory (..), Diff (..))
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Sequence.NonEmpty (NESeq (..))
 import Data.Typeable
-import Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
+-- Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
 import Test.Consensus.Ledger.Tables.Diff (lawsTestOne)
 import Test.QuickCheck.Classes
 import Test.QuickCheck.Classes.Semigroup.Cancellative

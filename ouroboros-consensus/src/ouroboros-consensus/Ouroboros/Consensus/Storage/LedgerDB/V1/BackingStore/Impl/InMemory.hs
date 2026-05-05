@@ -42,7 +42,7 @@ import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( SnapshotBackend (..)
   )
-import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
+-- Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import Ouroboros.Consensus.Util.IOLike
   ( Exception
   , IOLike

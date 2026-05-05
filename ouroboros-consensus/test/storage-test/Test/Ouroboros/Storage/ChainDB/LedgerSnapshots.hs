@@ -39,9 +39,9 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args (LedgerDbBackendArgs)
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as LedgerDB.V1.InMemory
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as LedgerDB.V1.InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as LedgerDB.V2.InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LedgerDB.V2.LSM

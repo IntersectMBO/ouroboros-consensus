@@ -118,7 +118,7 @@ instance
         { shelleyLedgerTip = coerceTip <$> shelleyLedgerTip st
         , shelleyLedgerState = shelleyLedgerState st
         , shelleyLedgerTransition = shelleyLedgerTransition st
-        , shelleyLedgerTables = emptyLedgerTables
+        , shelleyLedgerTables = emptyTables
         , shelleyLedgerLatestPerasCertRound = shelleyLedgerLatestPerasCertRound st
         }
     coerceTip (ShelleyTip slot block hash) = ShelleyTip slot block (coerce hash)

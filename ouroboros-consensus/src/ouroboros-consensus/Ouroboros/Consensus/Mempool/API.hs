@@ -188,7 +188,7 @@ data Mempool m blk = Mempool
   , getSnapshotFor ::
       SlotNo ->
       TickedLedgerState blk DiffMK ->
-      (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
+      (Keys blk -> m (Values blk)) ->
       m (MempoolSnapshot blk)
   -- ^ Get a snapshot of the mempool state that is valid with respect to
   -- the given ledger state
@@ -314,7 +314,7 @@ data MempoolTimeoutConfig = MempoolTimeoutConfig
 -- | The result of attempting to add a transaction to the mempool.
 data MempoolAddTxResult blk
   = -- | The transaction was added to the mempool.
-    MempoolTxAdded !(Validated (GenTx blk)) !(LedgerTables blk DiffMK)
+    MempoolTxAdded !(Validated (GenTx blk)) !(Diffs blk)
   | -- | The transaction was rejected and could not be added to the mempool
     -- for the specified reason.
     MempoolTxRejected !(GenTx blk) !(ApplyTxErr blk)
@@ -323,14 +323,14 @@ deriving instance
   ( Eq (GenTx blk)
   , Eq (Validated (GenTx blk))
   , Eq (ApplyTxErr blk)
-  , Eq (LedgerTables blk DiffMK)
+  , Eq (Diffs blk)
   ) =>
   Eq (MempoolAddTxResult blk)
 deriving instance
   ( Show (GenTx blk)
   , Show (Validated (GenTx blk))
   , Show (ApplyTxErr blk)
-  , Show (LedgerTables blk DiffMK)
+  , Show (Diffs blk)
   ) =>
   Show (MempoolAddTxResult blk)
 

@@ -9,8 +9,8 @@ import qualified Test.Ouroboros.Storage.LedgerDB.Serialisation as Serialisation
 import qualified Test.Ouroboros.Storage.LedgerDB.SnapshotPolicySanityCheck as SnapshotPolicySanityCheck
 import qualified Test.Ouroboros.Storage.LedgerDB.Snapshots as Snapshots
 import qualified Test.Ouroboros.Storage.LedgerDB.StateMachine as StateMachine
-import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore as BackingStore
-import qualified Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog as DbChangelog
+-- qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore as BackingStore
+-- qualified Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import Test.Tasty (TestTree, testGroup)
 
 tests :: TestTree

@@ -13,12 +13,11 @@
 -- that take two ledger states, it is unclear if it will keep the in-memory part
 -- of the first or the second one.
 module Ouroboros.Consensus.Ledger.Tables.Utils
-  ( -- * Projection and injection
-    ltprj
-  , ltwith
-
-    -- * Basic operations
-  , emptyLedgerTables
+  ( -- * Basic operations
+    emptyValues
+  , emptyDiff
+  , emptyTables
+  , emptyKeys
   , forgetLedgerTables
 
     -- * Operations on 'DiffMK'
@@ -35,44 +34,19 @@ module Ouroboros.Consensus.Ledger.Tables.Utils
 
     -- ** Combining diffs
   , prependDiffs
-  , rawPrependDiffs
+  , prependDiffs'
 
     -- * Union values
   , unionValues
 
     -- * Exposed for @cardano-api@
-  , applyDiffsMK
-  , restrictValuesMK
-
-    -- * Testing
-  , applyDiffs'
-  , rawCalculateDifference -- used in test
+  , restrictValues
   ) where
 
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-
-{-------------------------------------------------------------------------------
-  Projection and injection
--------------------------------------------------------------------------------}
-
-ltwith ::
-  ( HasLedgerTables l blk
-  , CanMapMK mk'
-  , CanMapKeysMK mk'
-  , ZeroableMK mk'
-  ) =>
-  l blk mk ->
-  LedgerTables blk mk' ->
-  l blk mk'
-ltwith = withLedgerTables
-
-ltprj ::
-  (HasLedgerTables l blk, CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
-  l blk mk ->
-  LedgerTables blk mk
-ltprj = projectLedgerTables
 
 {-------------------------------------------------------------------------------
   Utils aliases: tables
@@ -84,131 +58,115 @@ noNewTickingDiffs ::
   HasLedgerTables l blk =>
   l blk any ->
   l blk DiffMK
-noNewTickingDiffs l = withLedgerTables l emptyLedgerTables
+noNewTickingDiffs l = withLedgerTables l emptyDiff
 
 -- | Remove the ledger tables
 forgetLedgerTables :: HasLedgerTables l blk => l blk mk -> l blk EmptyMK
-forgetLedgerTables l = withLedgerTables l emptyLedgerTables
+forgetLedgerTables l = withLedgerTables l emptyTables
 
 -- | Empty values for every table
-emptyLedgerTables :: (ZeroableMK mk, LedgerTableConstraints blk) => LedgerTables blk mk
-emptyLedgerTables = ltpure emptyMK
+emptyValues :: ValuesMK a b
+emptyValues = ValuesMK Map.empty
+
+emptyKeys :: KeysMK a b
+emptyKeys = KeysMK Set.empty
+
+emptyDiff :: DiffMK a b
+emptyDiff = DiffMK (Diff.Diff Map.empty)
+
+emptyTables :: EmptyMK a b
+emptyTables = EmptyMK
 
 --
 -- Prepend diffs
 --
 
-rawPrependDiffs ::
-  Ord k =>
-  -- | Earlier differences
-  DiffMK k v ->
-  -- | Later differences
-  DiffMK k v ->
-  DiffMK k v
-rawPrependDiffs (DiffMK d1) (DiffMK d2) = DiffMK (d1 <> d2)
-
--- | Prepend diffs from the first ledger state to the diffs from the second
--- ledger state. Returns ledger tables.
-prependDiffs' ::
-  ( HasLedgerTables l blk
-  , HasLedgerTables l' blk
-  ) =>
-  l blk DiffMK -> l' blk DiffMK -> LedgerTables blk DiffMK
-prependDiffs' l1 l2 = ltliftA2 rawPrependDiffs (ltprj l1) (ltprj l2)
-
 -- | Prepend the diffs from @l1@ to @l2@. Returns @l2@.
 prependDiffs ::
-  (HasLedgerTables l blk, HasLedgerTables l' blk) =>
+  (HasLedgerTables l blk, HasLedgerTables l' blk, Ord (TxIn blk)) =>
   l blk DiffMK -> l' blk DiffMK -> l' blk DiffMK
-prependDiffs l1 l2 = ltwith l2 $ prependDiffs' l1 l2
+prependDiffs l1 l2 = l2 `withLedgerTables` t
+ where
+  DiffMK d1 = projectLedgerTables l1
+  DiffMK d2 = projectLedgerTables l2
+  t = DiffMK (d1 <> d2)
+
+-- | Prepend the diffs from @l1@ to @l2@. Returns @l2@.
+prependDiffs' ::
+  (HasLedgerTables l blk, Ord (TxIn blk)) =>
+  Diffs blk -> l blk DiffMK -> l blk DiffMK
+prependDiffs' (DiffMK d1) l2 = l2 `withLedgerTables` t
+ where
+  DiffMK d2 = projectLedgerTables l2
+  t = DiffMK (d1 <> d2)
 
 --
 -- Apply diffs
 --
 
-applyDiffsMK ::
-  Ord k =>
-  -- | Values to which differences are applied
-  ValuesMK k v ->
-  -- | Differences to apply
-  DiffMK k v ->
-  ValuesMK k v
-applyDiffsMK (ValuesMK vals) (DiffMK diffs) = ValuesMK (Diff.applyDiff vals diffs)
-
--- | Apply diffs from the second ledger state to the values of the first ledger
--- state. Returns ledger tables.
-applyDiffs' ::
-  ( HasLedgerTables l blk
-  , HasLedgerTables l' blk
-  ) =>
-  l blk ValuesMK -> l' blk DiffMK -> LedgerTables blk ValuesMK
-applyDiffs' l1 l2 = ltliftA2 applyDiffsMK (ltprj l1) (ltprj l2)
-
 -- | Apply diffs from @l2@ on values from @l1@. Returns @l2@.
 applyDiffs ::
-  (HasLedgerTables l blk, HasLedgerTables l' blk) =>
+  (HasLedgerTables l blk, HasLedgerTables l' blk, Ord (TxIn blk)) =>
   l blk ValuesMK -> l' blk DiffMK -> l' blk ValuesMK
-applyDiffs l1 l2 = ltwith l2 $ applyDiffs' l1 l2
-
-rawApplyDiffForKeys ::
-  Ord k =>
-  ValuesMK k v ->
-  KeysMK k v ->
-  DiffMK k v ->
-  ValuesMK k v
-rawApplyDiffForKeys (ValuesMK vals) (KeysMK keys) (DiffMK diffs) =
-  ValuesMK (Diff.applyDiffForKeys vals keys diffs)
+applyDiffs l1 l2 = l2 `withLedgerTables` t
+ where
+  ValuesMK t1 = projectLedgerTables l1
+  DiffMK t2 = projectLedgerTables l2
+  t = ValuesMK (Diff.applyDiff t1 t2)
 
 -- | Apply diffs in @l3@ for keys in @l2@ and @l1@ on values from @l1@. Returns @l3@.
 applyDiffForKeys ::
-  (HasLedgerTables l blk, HasLedgerTables l' blk) =>
-  l blk ValuesMK -> LedgerTables blk KeysMK -> l' blk DiffMK -> l' blk ValuesMK
-applyDiffForKeys l1 l2 l3 = ltwith l3 $ applyDiffForKeys' (ltprj l1) l2 l3
-
-applyDiffForKeys' ::
-  HasLedgerTables l blk =>
-  LedgerTables blk ValuesMK -> LedgerTables blk KeysMK -> l blk DiffMK -> LedgerTables blk ValuesMK
-applyDiffForKeys' l1 l2 l3 = ltliftA3 rawApplyDiffForKeys l1 l2 (ltprj l3)
+  (HasLedgerTables l blk, HasLedgerTables l' blk, Ord (TxIn blk)) =>
+  l blk ValuesMK -> Keys blk -> l' blk DiffMK -> l' blk ValuesMK
+applyDiffForKeys l1 (KeysMK t2) l3 = l3 `withLedgerTables` t
+ where
+  ValuesMK t1 = projectLedgerTables l1
+  DiffMK t3 = projectLedgerTables l3
+  t = ValuesMK (Diff.applyDiffForKeys t1 t2 t3)
 
 -- | Apply diffs in @l3@ for keys in @l2@ and @l1@ on values from @l1@. Returns @l3@.
 applyDiffForKeysOnTables ::
-  HasLedgerTables l blk =>
-  LedgerTables blk ValuesMK -> LedgerTables blk KeysMK -> l blk DiffMK -> l blk ValuesMK
-applyDiffForKeysOnTables l1 l2 l3 = ltwith l3 $ applyDiffForKeys' l1 l2 l3
+  (HasLedgerTables l blk, Ord (TxIn blk)) =>
+  Values blk -> Keys blk -> l blk DiffMK -> l blk ValuesMK
+applyDiffForKeysOnTables (ValuesMK t1) (KeysMK t2) l3 = l3 `withLedgerTables` t
+ where
+  DiffMK t3 = projectLedgerTables l3
+  t = ValuesMK (Diff.applyDiffForKeys t1 t2 t3)
 
 --
 -- Calculate differences
 --
 
-rawCalculateDifference ::
-  (Ord k, Eq v) =>
-  ValuesMK k v ->
-  ValuesMK k v ->
-  DiffMK k v
-rawCalculateDifference (ValuesMK before) (ValuesMK after) = DiffMK (Diff.diff before after)
-
 -- | Promote values to diffs, for cases in which all existing values must be
 -- considered diffs. In particular this is used when populating the ledger
 -- tables for the first time.
-valuesAsDiffs :: HasLedgerTables l blk => l blk ValuesMK -> l blk DiffMK
-valuesAsDiffs l = ltwith l $ ltliftA (rawCalculateDifference emptyMK) (ltprj l)
+valuesAsDiffs ::
+  (HasLedgerTables l blk, Eq (TxOut blk), Ord (TxIn blk)) => l blk ValuesMK -> l blk DiffMK
+valuesAsDiffs l = l `withLedgerTables` t
+ where
+  ValuesMK t1 = projectLedgerTables l
+  t = DiffMK (Diff.diff Map.empty t1)
 
 -- | Calculate the differences between two ledger states. The first ledger state
 -- is considered /before/, the second ledger state is considered /after/.
 -- Returns the second ledger state.
 calculateDifference ::
-  (HasLedgerTables l blk, HasLedgerTables l' blk) =>
+  (HasLedgerTables l blk, HasLedgerTables l' blk, Ord (TxIn blk), Eq (TxOut blk)) =>
   l blk ValuesMK -> l' blk ValuesMK -> l' blk DiffMK
-calculateDifference l1 l2 = ltwith l2 $ ltliftA2 rawCalculateDifference (ltprj l1) (ltprj l2)
+calculateDifference l1 l2 = l2 `withLedgerTables` t
+ where
+  ValuesMK t1 = projectLedgerTables l1
+  ValuesMK t2 = projectLedgerTables l2
+  t = DiffMK (Diff.diff t1 t2)
 
 -- Restrict values
 
-restrictValuesMK ::
+restrictValues ::
   Ord k =>
   ValuesMK k v ->
   KeysMK k v ->
   ValuesMK k v
-restrictValuesMK (ValuesMK v) (KeysMK k) = ValuesMK $ v `Map.restrictKeys` k
+restrictValues (ValuesMK v) (KeysMK k) = ValuesMK $ v `Map.restrictKeys` k
 
 ---
 
