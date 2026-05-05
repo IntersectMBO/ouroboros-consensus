@@ -32,7 +32,7 @@ This repository also provides some executables:
 | `db-immutaliser`     | Converting the volatile suffix of the chain into immutable, so that `db-analyser` can also analyse it |
 | `immdb-server`       | Serves immutable blocks from a ChainDB in a Node-to-node connection                                   |
 | `gen-header`         | Generate and validate Praos headers                                                                   |
-| `snapshot-converter` | Converts snapshots among the UTxO-HD formats of the database (InMemory, LMDB, LSM)                    |
+| `snapshot-converter` | Converts snapshots among the UTxO-HD formats of the database (InMemory, LSM)                          |
 
 Some documentation on how to use the tools can be found in the
 [`ouroboros-consensus:cardano` README](./ouroboros-consensus-cardano/README.md).

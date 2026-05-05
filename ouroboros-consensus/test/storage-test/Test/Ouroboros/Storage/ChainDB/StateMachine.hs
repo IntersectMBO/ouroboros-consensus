@@ -140,7 +140,6 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( unsafeChunkNoToEpochNo
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -303,7 +302,6 @@ deriving instance SOP.HasDatatypeInfo (Cmd blk it flr)
 data Success blk it flr
   = Unit ()
   | Chain (AnchoredFragment (Header blk))
-  | LedgerDB (DbChangelog.DbChangelog' blk)
   | MbBlock (Maybe blk)
   | MbAllComponents (Maybe (AllComponents blk))
   | MbGCedAllComponents (MaybeGCedBlock (AllComponents blk))

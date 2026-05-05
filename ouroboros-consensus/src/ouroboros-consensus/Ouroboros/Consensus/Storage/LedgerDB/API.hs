@@ -406,8 +406,7 @@ data TestInternals m l blk = TestInternals
   , truncateSnapshots :: m ()
   , closeLedgerDB :: m ()
   , getNumLedgerTablesHandles :: m Word64
-  -- ^ Get the number of referenced 'LedgerTablesHandle's for V2. For V1, this
-  -- always returns 0.
+  -- ^ Get the number of referenced 'LedgerTablesHandle's.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "TestInternals" (TestInternals m l blk)
 
