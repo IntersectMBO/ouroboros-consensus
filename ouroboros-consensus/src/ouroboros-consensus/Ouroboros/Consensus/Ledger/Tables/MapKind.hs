@@ -26,7 +26,6 @@ module Ouroboros.Consensus.Ledger.Tables.MapKind
   , EmptyMK (..)
   , KeysMK (..)
   , SeqDiffMK (..)
-  , TrackingMK (..)
   , ValuesMK (..)
   ) where
 
@@ -174,26 +173,6 @@ instance CanMapKeysMK DiffMK where
 
 instance CanMapMK DiffMK where
   mapMK f (DiffMK d) = DiffMK $ fmap f d
-
-{-------------------------------------------------------------------------------
-  TrackingMK
--------------------------------------------------------------------------------}
-
-data TrackingMK k v = TrackingMK !(Map k v) !(Diff k v)
-  deriving (Generic, Eq, Show, NoThunks)
-  deriving anyclass (ShowMK, EqMK, NoThunksMK)
-
-instance ZeroableMK TrackingMK where
-  emptyMK = TrackingMK mempty mempty
-
-instance CanMapMK TrackingMK where
-  mapMK f (TrackingMK vs d) = TrackingMK (Map.map f vs) (fmap f d)
-
-instance CanMapKeysMK TrackingMK where
-  mapKeysMK f (TrackingMK vs d) =
-    TrackingMK
-      (getValuesMK . mapKeysMK f . ValuesMK $ vs)
-      (getDiffMK . mapKeysMK f . DiffMK $ d)
 
 {-------------------------------------------------------------------------------
   SeqDiffMK

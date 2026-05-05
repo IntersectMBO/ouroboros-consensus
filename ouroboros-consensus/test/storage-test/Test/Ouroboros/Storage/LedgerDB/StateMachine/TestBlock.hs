@@ -170,7 +170,7 @@ instance PayloadSemantics Tx where
               }
         else Left $ TokenDoesNotExist tok
 
-    track :: PayloadDependentState Tx ValuesMK -> PayloadDependentState Tx TrackingMK
+    track :: PayloadDependentState Tx ValuesMK -> PayloadDependentState Tx DiffMK
     track stAfter =
       stAfter
         { utxtoktables =

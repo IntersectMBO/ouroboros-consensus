@@ -254,7 +254,7 @@ instance Mock.ValuesLength V where
     Map.size m
 
 instance Mock.MakeDiff V D where
-  diff t1 t2 = ltmap rawTrackingDiffs $ ltliftA2 rawCalculateDifference t1 t2
+  diff t1 t2 = ltliftA2 rawCalculateDifference t1 t2
 
 instance Mock.DiffSize D where
   diffSize (LedgerTables (DiffMK (Diff.Diff m))) = Map.size m

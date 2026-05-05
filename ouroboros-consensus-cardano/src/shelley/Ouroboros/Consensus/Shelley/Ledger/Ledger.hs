@@ -696,36 +696,35 @@ applyHelper f cfg blk stBefore = do
 
   let track ::
         LedgerState (ShelleyBlock proto era) ValuesMK ->
-        LedgerState (ShelleyBlock proto era) TrackingMK
+        LedgerState (ShelleyBlock proto era) DiffMK
       track = calculateDifference stBefore
 
   return $
     ledgerResult <&> \newNewEpochState ->
-      trackingToDiffs $
-        track $
-          unstowLedgerTables $
-            ShelleyLedgerState
-              { shelleyLedgerTip =
-                  NotOrigin
-                    ShelleyTip
-                      { shelleyTipBlockNo = blockNo blk
-                      , shelleyTipSlotNo = blockSlot blk
-                      , shelleyTipHash = blockHash blk
-                      }
-              , shelleyLedgerState =
-                  newNewEpochState
-              , shelleyLedgerTransition =
-                  ShelleyTransitionInfo
-                    { shelleyAfterVoting =
-                        -- We count the number of blocks that have been applied after the
-                        -- voting deadline has passed.
-                        (if blockSlot blk >= votingDeadline then succ else id) $
-                          shelleyAfterVoting tickedShelleyLedgerTransition
+      track $
+        unstowLedgerTables $
+          ShelleyLedgerState
+            { shelleyLedgerTip =
+                NotOrigin
+                  ShelleyTip
+                    { shelleyTipBlockNo = blockNo blk
+                    , shelleyTipSlotNo = blockSlot blk
+                    , shelleyTipHash = blockHash blk
                     }
-              , shelleyLedgerTables = emptyLedgerTables
-              , shelleyLedgerLatestPerasCertRound =
-                  shelleyLedgerLatestPerasCertRound'
-              }
+            , shelleyLedgerState =
+                newNewEpochState
+            , shelleyLedgerTransition =
+                ShelleyTransitionInfo
+                  { shelleyAfterVoting =
+                      -- We count the number of blocks that have been applied after the
+                      -- voting deadline has passed.
+                      (if blockSlot blk >= votingDeadline then succ else id) $
+                        shelleyAfterVoting tickedShelleyLedgerTransition
+                  }
+            , shelleyLedgerTables = emptyLedgerTables
+            , shelleyLedgerLatestPerasCertRound =
+                shelleyLedgerLatestPerasCertRound'
+            }
  where
   globals = shelleyLedgerGlobals cfg
   swindow = SL.stabilityWindow globals
