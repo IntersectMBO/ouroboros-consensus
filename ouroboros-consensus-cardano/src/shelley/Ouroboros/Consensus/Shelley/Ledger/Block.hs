@@ -1,3 +1,4 @@
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -9,12 +10,15 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Block
   ( GetHeader (..)
   , Header (..)
   , IsShelleyBlock
+  , ShelleyPerasCertCompatibleWithLedger (..)
+  , LedgerPerasCertError (..)
   , NestedCtxt_ (..)
   , ShelleyBasedEra
   , ShelleyBlock (..)
@@ -50,11 +54,13 @@ import Cardano.Ledger.Binary.Group (EncCBORGroup)
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import qualified Cardano.Ledger.Block as SL (EraBlockHeader)
 import Cardano.Ledger.Core as SL
-  ( eraDecoder
+  ( EraBlockBody (..)
+  , eraDecoder
   , eraProtVerLow
   , toEraCBOR
   )
-import qualified Cardano.Ledger.Core as SL (BlockBody, TranslationContext, hashBlockBody)
+import qualified Cardano.Ledger.Core as SL (TranslationContext)
+import qualified Cardano.Ledger.Dijkstra.BlockBody as SL
 import Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
@@ -62,15 +68,16 @@ import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Coerce (coerce)
 import Data.Typeable (Typeable)
+import Data.Void (absurd)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Combinator
   ( HasPartialConsensusConfig
-  , LedgerState
   )
+import Ouroboros.Consensus.HardFork.History (EpochToPerasRoundInfo)
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosTiebreakerView
@@ -130,20 +137,18 @@ class
     HasPartialConsensusConfig proto
   , DecCBOR (SL.PState era)
   , Crypto (ProtoCrypto proto)
+  , -- Peras constraints
+    BlockSupportsPeras (ShelleyBlock proto era)
+  , ShelleyPerasCertCompatibleWithLedger proto era
+  , StateSupportsPerasEpochContext (ShelleyBlock proto era)
+  , MaybeEraIndexedEpochToPerasRoundInfo (ShelleyBlock proto era) ~ EpochToPerasRoundInfo
   , -- Backwards compatibility
     Plain.FromCBOR (LegacyPParams era)
   , Plain.ToCBOR (LegacyPParams era)
-  , -- TODO: replace the four constraints below with:
-    -- 'StateSupportsPerasEpochContext (ShelleyBlock proto er)' once that type
-    -- class is in place.
-    ChainDepStateSupportsPeras (ChainDepState (BlockProtocol (ShelleyBlock proto era)))
-  , ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol (ShelleyBlock proto era))))
-  , LedgerStateSupportsPeras (LedgerState (ShelleyBlock proto era))
-  , LedgerStateSupportsPeras (Ticked LedgerState (ShelleyBlock proto era))
   ) =>
   ShelleyCompatible proto era
 
-instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) where
+instance StandardHash (ShelleyBlock proto era) => ConvertRawHash (ShelleyBlock proto era) where
   -- 'HASH' is currently 'Blake2b_256', whose digest is 256 bits, i.e. 32 bytes,
   -- so this resolves to 32.
   type HashSize (ShelleyBlock proto era) = Crypto.HashSize HASH
@@ -254,13 +259,62 @@ instance ShelleyCompatible proto era => GetPrevHash (ShelleyBlock proto era) whe
       . pHeaderPrevHash
       . shelleyHeaderRaw
 
-instance ShelleyCompatible proto era => StandardHash (ShelleyBlock proto era)
+instance StandardHash (ShelleyBlock proto era)
 
 instance ShelleyCompatible proto era => HasAnnTip (ShelleyBlock proto era)
 
 -- The 'ValidateEnvelope' instance lives in the
 -- "Ouroboros.Consensus.Shelley.Ledger.Ledger" module because of the
 -- dependency on the 'LedgerConfig'.
+
+{-------------------------------------------------------------------------------
+  Conversion between Peras certificates type between Ledger and Consensus
+-------------------------------------------------------------------------------}
+
+-- | Error type for Ledger <=> Consensus Peras certificate conversions
+newtype LedgerPerasCertError = LedgerPerasCertError String
+  deriving (Eq, Show, Generic, NoThunks)
+
+-- | Bridge between the Peras certificates types between Consensus and Ledger
+class ShelleyPerasCertCompatibleWithLedger proto era where
+  -- | Convert a Ledger Peras certificate to a Consensus Peras certificate
+  toLedgerPerasCert ::
+    PerasCert (ShelleyBlock proto era) ->
+    SL.PerasCert
+  default toLedgerPerasCert ::
+    PerasCert (ShelleyBlock proto era) ~ VoidPerasCert (ShelleyBlock proto era) =>
+    PerasCert (ShelleyBlock proto era) ->
+    SL.PerasCert
+  toLedgerPerasCert =
+    absurd . unVoidPerasCert
+
+  -- | Convert a Ledger Peras certificate to a Consensus Peras certificate
+  fromLedgerPerasCert ::
+    SL.PerasCert ->
+    Either LedgerPerasCertError (PerasCert (ShelleyBlock proto era))
+  default fromLedgerPerasCert ::
+    SL.PerasCert ->
+    Either LedgerPerasCertError (PerasCert (ShelleyBlock proto era))
+  fromLedgerPerasCert cert =
+    Left $
+      LedgerPerasCertError $
+        "this era does not support Peras certificates, but received"
+          <> show cert
+
+  -- | Extract a Peras certificate from a Shelley block body, if present
+  extractPerasCertFromShelleyBlockBody ::
+    BlockBody era ->
+    Either LedgerPerasCertError (Maybe (PerasCert (ShelleyBlock proto era)))
+  extractPerasCertFromShelleyBlockBody _ =
+    Right Nothing
+
+  -- | Inject a Peras certificate into a Shelley block body
+  injectPerasCertIntoShelleyBlockBody ::
+    PerasCert (ShelleyBlock proto era) ->
+    BlockBody era ->
+    BlockBody era
+  injectPerasCertIntoShelleyBlockBody _ =
+    id
 
 {-------------------------------------------------------------------------------
   Conversions

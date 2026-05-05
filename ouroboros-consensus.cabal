@@ -241,6 +241,8 @@ library
     Ouroboros.Consensus.Peras.Cert.V1
     Ouroboros.Consensus.Peras.Context
     Ouroboros.Consensus.Peras.Crypto.BLS
+    Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
+    Ouroboros.Consensus.Peras.Error.V1
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Types
@@ -251,6 +253,7 @@ library
     Ouroboros.Consensus.Peras.Voting.Adapter
     Ouroboros.Consensus.Peras.Voting.Rules
     Ouroboros.Consensus.Peras.Voting.Trace
+    Ouroboros.Consensus.Peras.Voting.V1
     Ouroboros.Consensus.Peras.Voting.View
     Ouroboros.Consensus.Peras.Weight
     Ouroboros.Consensus.Protocol.Abstract
@@ -453,6 +456,7 @@ library unstable-consensus-testlib
     Ouroboros.Consensus.Peras.Crypto.Mock
     Ouroboros.Consensus.Peras.Error.Mock
     Ouroboros.Consensus.Peras.Vote.Mock
+    Ouroboros.Consensus.Peras.Voting.Mock
     Test.LedgerTables
     Test.Ouroboros.Consensus.ChainGenerator.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.BitVector
@@ -597,6 +601,7 @@ library unstable-mock-block
     Ouroboros.Consensus.Mock.Node.Abstract
     Ouroboros.Consensus.Mock.Node.BFT
     Ouroboros.Consensus.Mock.Node.PBFT
+    Ouroboros.Consensus.Mock.Node.Peras
     Ouroboros.Consensus.Mock.Node.Praos
     Ouroboros.Consensus.Mock.Node.PraosRule
     Ouroboros.Consensus.Mock.Node.Serialisation
@@ -838,7 +843,6 @@ test-suite storage-test
     cardano-ledger-binary:testlib,
     cardano-ledger-core:cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
-    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,
@@ -851,6 +855,7 @@ test-suite storage-test
     io-sim,
     mempack,
     mtl,
+    nonempty-containers,
     nothunks,
     ouroboros-consensus:{lsm, ouroboros-consensus},
     ouroboros-network:{api, api-tests-lib, protocols-tests-lib},
@@ -1348,6 +1353,7 @@ library cardano
     Ouroboros.Consensus.Byron.Ledger.PBFT
     Ouroboros.Consensus.Byron.Ledger.Serialisation
     Ouroboros.Consensus.Byron.Node
+    Ouroboros.Consensus.Byron.Node.Peras
     Ouroboros.Consensus.Byron.Node.Serialisation
     Ouroboros.Consensus.Byron.Protocol
     Ouroboros.Consensus.Cardano
@@ -1380,6 +1386,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Node
     Ouroboros.Consensus.Shelley.Node.Common
     Ouroboros.Consensus.Shelley.Node.DiffusionPipelining
+    Ouroboros.Consensus.Shelley.Node.Peras
     Ouroboros.Consensus.Shelley.Node.Praos
     Ouroboros.Consensus.Shelley.Node.Serialisation
     Ouroboros.Consensus.Shelley.Node.TPraos
@@ -1600,6 +1607,7 @@ test-suite shelley-test
     Test.Consensus.Shelley.Coherence
     Test.Consensus.Shelley.Golden
     Test.Consensus.Shelley.LedgerTables
+    Test.Consensus.Shelley.Peras
     Test.Consensus.Shelley.Serialisation
     Test.Consensus.Shelley.SupportedNetworkProtocolVersion
     Test.ThreadNet.Shelley
@@ -1607,12 +1615,13 @@ test-suite shelley-test
   build-depends:
     base,
     bytestring,
+    cardano-binary,
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
     cardano-ledger-api,
     cardano-ledger-babbage:testlib,
     cardano-ledger-conway:testlib,
     cardano-ledger-core,
-    cardano-ledger-dijkstra:testlib,
+    cardano-ledger-dijkstra:{cardano-ledger-dijkstra, testlib},
     cardano-ledger-shelley,
     cardano-protocol-tpraos,
     cardano-slotting,

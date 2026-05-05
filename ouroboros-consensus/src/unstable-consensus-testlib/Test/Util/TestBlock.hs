@@ -90,7 +90,7 @@ module Test.Util.TestBlock
   , updateToNextNumeral
   ) where
 
-import Cardano.Binary (DecoderError)
+import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
 import Cardano.Crypto.DSIGN
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded, unNonZero)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -136,13 +136,26 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Cert.Mock
+  ( MockPerasCert (..)
+  )
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , mkBoundedPerasEpochContextWith
+  )
+import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCrypto, MockPerasVotingCommitteeScheme)
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
+import Ouroboros.Consensus.Peras.Vote.Mock
+  ( MockPerasVote (..)
+  )
+import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
@@ -632,12 +645,25 @@ deriving anyclass instance
   NoThunks (Ticked LedgerState (TestBlockWith ptype) mk)
 
 testInitExtLedgerWithState ::
+  ( Typeable ptype
+  , HasLedgerTables LedgerState (TestBlockWith ptype)
+  ) =>
   PayloadDependentState ptype mk -> ExtLedgerState (TestBlockWith ptype) mk
 testInitExtLedgerWithState st =
-  ExtLedgerState
-    { ledgerState = testInitLedgerWithState st
-    , headerState = genesisHeaderState ()
-    }
+  let ledgerState = testInitLedgerWithState st
+      headerState = genesisHeaderState ()
+      perasEpochContextResolver =
+        initPerasEpochContextResolver
+          (configLedger singleNodeTestConfig)
+          (forgetLedgerTables ledgerState)
+          headerState
+      latestPerasCertOnChainRound = SNothing
+   in ExtLedgerState
+        { ledgerState
+        , headerState
+        , perasEpochContextResolver
+        , latestPerasCertOnChainRound
+        }
 
 data TestBlockLedgerConfig = TestBlockLedgerConfig
   { tblcHardForkParams :: !HardFork.EraParams
@@ -692,9 +718,36 @@ instance PayloadSemantics ptype => LedgerSupportsProtocol (TestBlockWith ptype) 
   ledgerViewForecastAt cfg state =
     constantForecastInRange (strictMaybeToMaybe (tblcForecastRange cfg)) () (getTipSlot state)
 
-instance LedgerSupportsPeras (TestBlockWith ptype)
+instance LedgerStateSupportsPeras (LedgerState (TestBlockWith ptype))
+
+instance LedgerStateSupportsPeras (Ticked LedgerState (TestBlockWith ptype))
+
+instance Typeable ptype => StateSupportsPerasEpochContext (TestBlockWith ptype) where
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+
+{-------------------------------------------------------------------------------
+  BlockSupportsPeras
+-------------------------------------------------------------------------------}
+
+-- NOTE: this is a mocked up implementation without crypto!
+instance
+  Typeable ptype =>
+  BlockSupportsPeras (TestBlockWith ptype)
+  where
+  type PerasCrypto (TestBlockWith ptype) = MockPerasCrypto (TestBlockWith ptype)
+  type
+    PerasVotingCommitteeScheme (TestBlockWith ptype) =
+      MockPerasVotingCommitteeScheme (TestBlockWith ptype)
+  type PerasVote (TestBlockWith ptype) = MockPerasVote (TestBlockWith ptype)
+  type PerasCert (TestBlockWith ptype) = MockPerasCert (TestBlockWith ptype)
+  type PerasError (TestBlockWith ptype) = MockPerasError (TestBlockWith ptype)
+
+{-------------------------------------------------------------------------------
+  Test infrastructure: config
+-------------------------------------------------------------------------------}
 
 singleNodeTestConfigWith ::
+  forall ptype.
   CodecConfig (TestBlockWith ptype) ->
   StorageConfig (TestBlockWith ptype) ->
   SecurityParam ->
@@ -753,8 +806,8 @@ data instance CodecConfig TestBlock = TestBlockCodecConfig
 data instance StorageConfig TestBlock = TestBlockStorageConfig
   deriving (Show, Generic, NoThunks)
 
-instance HasHardForkHistory TestBlock where
-  type HardForkIndices TestBlock = '[TestBlock]
+instance HasHardForkHistory (TestBlockWith ptype) where
+  type HardForkIndices (TestBlockWith ptype) = '[TestBlockWith ptype]
   hardForkSummary = neverForksHardForkSummary tblcHardForkParams
 
 data instance BlockQuery TestBlock fp result where
@@ -971,8 +1024,8 @@ instance Serialise (AnnTip (TestBlockWith ptype)) where
   decode = defaultDecodeAnnTip decode
 
 instance PayloadSemantics ptype => Serialise (ExtLedgerState (TestBlockWith ptype) EmptyMK) where
-  encode = encodeExtLedgerState encode encode encode
-  decode = decodeExtLedgerState decode decode decode
+  encode = encodeExtLedgerState encode encode encode toCBOR
+  decode = decodeExtLedgerState decode decode decode fromCBOR
 
 instance Serialise (RealPoint (TestBlockWith ptype)) where
   encode = encodeRealPoint encode
