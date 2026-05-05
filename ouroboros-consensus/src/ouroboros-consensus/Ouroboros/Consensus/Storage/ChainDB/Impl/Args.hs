@@ -229,7 +229,7 @@ completeChainDbArgs
       , cdbPerasVoteDbArgs =
           PerasVoteDB.PerasVoteDbArgs
             { PerasVoteDB.pvdbaTracer = PerasVoteDB.pvdbaTracer (cdbPerasVoteDbArgs defArgs)
-            , PerasVoteDB.pvdbaPerasCfg = mkPerasParams
+            , PerasVoteDB.pvdbaPerasParams = mkPerasParams
             }
       , cdbsArgs =
           (cdbsArgs defArgs)
