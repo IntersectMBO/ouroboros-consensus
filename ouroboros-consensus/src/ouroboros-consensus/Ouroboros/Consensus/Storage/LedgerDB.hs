@@ -52,7 +52,6 @@ openDB ::
   , InspectLedger blk
   , HasCallStack
   , HasHardForkHistory blk
-  , LedgerDbSerialiseConstraints blk
   ) =>
   -- | Stateless initializaton arguments
   Complete LedgerDbArgs m blk ->

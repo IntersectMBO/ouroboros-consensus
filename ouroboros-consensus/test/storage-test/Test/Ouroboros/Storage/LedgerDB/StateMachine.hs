@@ -50,7 +50,6 @@ import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import qualified Data.SOP.Dict as Dict
 import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -62,14 +61,6 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
-import Ouroboros.Consensus.Storage.LedgerDB.V1.Args hiding
-  ( LedgerDbBackendArgs
-  )
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as V1.InMemory
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2.InMemory
@@ -87,7 +78,6 @@ import System.FS.Sim.STM
 import qualified System.FilePath as FilePath
 import qualified System.IO.Temp as Temp
 import Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
-import Test.Ouroboros.Storage.LedgerDB.V1.LMDB
 import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Monadic as QC
 import Test.QuickCheck.StateModel
@@ -103,12 +93,8 @@ tests :: TestTree
 tests =
   testGroup
     "StateMachine"
-    [ testProperty "InMemV1" $
-        prop_sequential 100000 inMemV1TestArguments noFilePath simulatedFS
-    , testProperty "InMemV2" $
+    [ testProperty "InMemV2" $
         prop_sequential 100000 inMemV2TestArguments noFilePath simulatedFS
-    , testProperty "LMDB" $
-        prop_sequential 1000 lmdbTestArguments (realFilePath "lmdb") realFS
     , testProperty "LSM" $
         prop_sequential 1000 lsmTestArguments (realFilePath "lsm") realFS
     ]
@@ -216,18 +202,6 @@ realFS = liftIO $ do
   tmpdir <- Temp.createTempDirectory systmpdir "init_standalone_db"
   pure (SomeHasFS $ FSIO.ioHasFS $ MountPoint tmpdir, Dir.removeDirectoryRecursive tmpdir)
 
-inMemV1TestArguments ::
-  SecurityParam ->
-  LSM.Salt ->
-  FilePath ->
-  TestArguments IO
-inMemV1TestArguments secParam _ _ =
-  TestArguments
-    { argFlavorArgs =
-        LedgerDbBackendArgsV1 $ V1Args DisableFlushing $ V1.SomeBackendArgs V1.InMemory.InMemArgs
-    , argLedgerDbCfg = extLedgerDbConfig secParam
-    }
-
 inMemV2TestArguments ::
   SecurityParam ->
   LSM.Salt ->
@@ -250,21 +224,6 @@ lsmTestArguments secParam salt fp =
         LedgerDbBackendArgsV2 $
           SomeBackendArgs $
             LSM.LSMArgs (mkFsPath $ FilePath.splitDirectories fp) salt (LSM.stdMkBlockIOFS fp)
-    , argLedgerDbCfg = extLedgerDbConfig secParam
-    }
-
-lmdbTestArguments ::
-  SecurityParam ->
-  LSM.Salt ->
-  FilePath ->
-  TestArguments IO
-lmdbTestArguments secParam _ fp =
-  TestArguments
-    { argFlavorArgs =
-        LedgerDbBackendArgsV1 $
-          V1Args DisableFlushing $
-            V1.SomeBackendArgs $
-              LMDB.LMDBBackingStoreArgs fp (testLMDBLimits 16) Dict.Dict
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -593,16 +552,6 @@ openLedgerDB flavArgs env cfg fs = do
   (ldb, od) <-
     runWithTempRegistry $
       (\x -> (x, ())) <$> case lgrBackendArgs args of
-        LedgerDbBackendArgsV1 bss ->
-          let snapManager = V1.snapshotManager args
-              initDb =
-                V1.mkInitDb
-                  args
-                  bss
-                  getBlock
-                  snapManager
-                  (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
-           in lift $ openDBInternal args initDb snapManager stream replayGoal
         LedgerDbBackendArgsV2 (V2.SomeBackendArgs bArgs) -> do
           res <-
             mkResources

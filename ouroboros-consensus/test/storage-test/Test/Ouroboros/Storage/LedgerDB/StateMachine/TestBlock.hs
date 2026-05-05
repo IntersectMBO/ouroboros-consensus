@@ -57,7 +57,6 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block (Point (Point))
@@ -265,13 +264,7 @@ stowErr fname = error $ "Function " <> fname <> " should not be used in these te
 
 deriving anyclass instance ToExpr v => ToExpr (DS.Delta v)
 deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Diff k v)
-deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.RootMeasure k v)
-deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.InternalMeasure k v)
 deriving anyclass instance ToExpr v => ToExpr (StrictMaybe v)
-deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Element k v)
-deriving anyclass instance ToExpr DS.Length
-deriving anyclass instance ToExpr DS.SlotNoUB
-deriving anyclass instance ToExpr DS.SlotNoLB
 deriving anyclass instance
   ToExpr (mk Token TValue) => ToExpr (LedgerTables TestBlock mk)
 deriving instance

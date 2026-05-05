@@ -18,7 +18,6 @@ import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..), nullTracer)
 import Data.Functor.Contravariant ((>$<))
-import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
 import Ouroboros.Consensus.Block
@@ -41,11 +40,6 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (TraceEvent (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as LedgerDB.V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
@@ -79,16 +73,6 @@ openLedgerDB args =
   runWithTempRegistry $
     (,()) <$> do
       (ldb, od) <- case LedgerDB.lgrBackendArgs args of
-        LedgerDB.LedgerDbBackendArgsV1 bss ->
-          let snapManager = LedgerDB.V1.snapshotManager args
-              initDb =
-                LedgerDB.V1.mkInitDb
-                  args
-                  bss
-                  (\_ -> pure (error "no stream"))
-                  snapManager
-                  (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
-           in lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
         LedgerDB.LedgerDbBackendArgsV2 (LedgerDB.V2.SomeBackendArgs bArgs) -> do
           res <-
             LedgerDB.V2.mkResources
@@ -115,14 +99,6 @@ openLedgerDB args =
 
 emptyStream :: Applicative m => ImmutableDB.StreamAPI m blk a
 emptyStream = ImmutableDB.StreamAPI $ \_ k -> k $ Right $ pure ImmutableDB.NoMoreItems
-
-defaultLMDBLimits :: LMDB.LMDBLimits
-defaultLMDBLimits =
-  LMDB.LMDBLimits
-    { LMDB.lmdbMapSize = 16 * 1024 * 1024 * 1024
-    , LMDB.lmdbMaxDatabases = 10
-    , LMDB.lmdbMaxReaders = 16
-    }
 
 analyse ::
   forall blk.
@@ -151,15 +127,6 @@ analyse dbaConfig args =
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of
-          V1LMDB ->
-            LedgerDB.LedgerDbBackendArgsV1
-              $ LedgerDB.V1.V1Args
-                LedgerDB.V1.DisableFlushing
-              $ LedgerDB.V1.SomeBackendArgs
-              $ LMDB.LMDBBackingStoreArgs
-                "lmdb"
-                defaultLMDBLimits
-                Dict.Dict
           V2InMem ->
             LedgerDB.LedgerDbBackendArgsV2 $
               LedgerDB.V2.SomeBackendArgs InMemory.InMemArgs

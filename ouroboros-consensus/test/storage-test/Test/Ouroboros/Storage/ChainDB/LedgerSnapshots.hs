@@ -39,9 +39,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args (LedgerDbBackendArgs)
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as LedgerDB.V1.InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as LedgerDB.V2.InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LedgerDB.V2.LSM
@@ -68,22 +65,16 @@ tests :: TestTree
 tests =
   testGroup
     "LedgerSnapshots"
-    [ testProperty "InMemV1" $ prop_ledgerSnapshots inMemV1
-    , testProperty "InMemV2" $ prop_ledgerSnapshots inMemV2
+    [ testProperty "InMemV2" $ prop_ledgerSnapshots inMemV2
     , testProperty "LSM" $ \salt -> prop_ledgerSnapshots (lsm salt)
     , testGroup
         "addBlocks while a snapshot is enqueued"
-        [ testProperty "InMemV1" $ prop_addBlocksWhileSnapshotting inMemV1
-        , testProperty "InMemV2" $ prop_addBlocksWhileSnapshotting inMemV2
+        [ testProperty "InMemV2" $ prop_addBlocksWhileSnapshotting inMemV2
         , testProperty "LSM" $ \salt -> prop_addBlocksWhileSnapshotting (lsm salt)
         ]
     ]
  where
-  inMemV1, inMemV2 :: IOLike m => LedgerDbBackendArgs m TestBlock
-  inMemV1 =
-    LedgerDB.LedgerDbBackendArgsV1 $
-      LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing $
-        LedgerDB.V1.SomeBackendArgs LedgerDB.V1.InMemory.InMemArgs
+  inMemV2 :: IOLike m => LedgerDbBackendArgs m TestBlock
   inMemV2 =
     LedgerDB.LedgerDbBackendArgsV2 $
       LedgerDB.V2.SomeBackendArgs LedgerDB.V2.InMemory.InMemArgs

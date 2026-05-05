@@ -128,14 +128,9 @@ getCommandLineConfig =
 parseConfig :: Parser Config
 parseConfig =
   ( DaemonConfig
-      <$> ( ( LSMSnapshot
-                <$> (SnapshotsDirectory <$> strOption (long "monitor-lsm-snapshots-in"))
-                <*> (LSMDatabaseFilePath <$> strOption (long "lsm-database"))
-            )
-              <|> ( StandaloneSnapshot
-                      <$> (SnapshotsDirectory <$> strOption (long "monitor-lmdb-snapshots-in"))
-                      <*> pure LMDB
-                  )
+      <$> ( LSMSnapshot
+              <$> (SnapshotsDirectory <$> strOption (long "monitor-lsm-snapshots-in"))
+              <*> (LSMDatabaseFilePath <$> strOption (long "lsm-database"))
           )
       <*> (SnapshotsDirectory <$> strOption (long "output-mem-snapshots-in"))
   )
@@ -148,10 +143,6 @@ parseConfig =
                             <$> strOption (long "input-mem")
                             <*> pure Mem
                         )
-                    <|> ( StandaloneSnapshot'
-                            <$> strOption (long "input-lmdb")
-                            <*> pure LMDB
-                        )
                 )
             <*> ( ( LSMSnapshot'
                       <$> (strOption (long "output-lsm-snapshot"))
@@ -160,10 +151,6 @@ parseConfig =
                     <|> ( StandaloneSnapshot'
                             <$> strOption (long "output-mem")
                             <*> pure Mem
-                        )
-                    <|> ( StandaloneSnapshot'
-                            <$> strOption (long "output-lmdb")
-                            <*> pure LMDB
                         )
                 )
         )

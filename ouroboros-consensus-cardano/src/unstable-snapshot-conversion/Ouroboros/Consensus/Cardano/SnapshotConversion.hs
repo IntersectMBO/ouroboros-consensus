@@ -37,7 +37,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.IOLike hiding (yield)
@@ -57,7 +56,6 @@ data LSMDatabaseFilePath = LSMDatabaseFilePath {getLSMDatabaseDir :: FilePath}
 
 data StandaloneFormat
   = Mem
-  | LMDB
 
 data SnapshotsDirectoryWithFormat
   = StandaloneSnapshot SnapshotsDirectory StandaloneFormat
@@ -313,17 +311,6 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
           ("InMemory@[" <> snapshotToDirName inSnap <> "]")
           c
           metadataCrc
-    Snapshot (StandaloneSnapshot _ LMDB) _ -> do
-      metadataCrc <- getMetadata inSnap UTxOHDLMDBSnapshot
-      (st, c) <- getState inSnap
-      checkSnapSlot st inSnap
-      pure $
-        InEnv
-          st
-          (SomeBackend <$> V1.mkLMDBYieldArgs inSomeHasFS inSnap defaultLMDBLimits st)
-          ("LMDB@[" <> snapshotToDirName inSnap <> "]")
-          c
-          metadataCrc
     Snapshot (LSMSnapshot _ (getLSMDatabaseDir -> lsmDbPath)) _ -> do
       metadataCrc <- getMetadata inSnap UTxOHDLSMSnapshot
       (st, c) <- getState inSnap
@@ -349,14 +336,6 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
           Nothing
           ("InMemory@[" <> snapshotToDirName outSnap <> "]")
           UTxOHDMemSnapshot
-    Snapshot (StandaloneSnapshot _ LMDB) _ -> do
-      checkSnapSlot st outSnap
-      pure $
-        OutEnv
-          (SomeBackend <$> V1.mkLMDBSinkArgs outSomeHasFS outSnap defaultLMDBLimits st)
-          Nothing
-          ("LMDB@[" <> snapshotToDirName outSnap <> "]")
-          UTxOHDLMDBSnapshot
     Snapshot (LSMSnapshot _ (LSMDatabaseFilePath lsmDbPath)) _ -> do
       checkSnapSlot st outSnap
       pure $
@@ -452,15 +431,3 @@ wipePath interactive fp = do
       else id
     )
     (lift $ D.removePathForcibly fp >> D.createDirectoryIfMissing True fp)
-
-{-------------------------------------------------------------------------------
-  Helpers
--------------------------------------------------------------------------------}
-
-defaultLMDBLimits :: V1.LMDBLimits
-defaultLMDBLimits =
-  V1.LMDBLimits
-    { V1.lmdbMapSize = 16 * 1024 * 1024 * 1024
-    , V1.lmdbMaxDatabases = 10
-    , V1.lmdbMaxReaders = 16
-    }

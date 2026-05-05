@@ -38,8 +38,7 @@
 --    blk EmptyMK@, stored in the @./state@ file in the snapshot directory.
 --
 -- V2 backends will provide means of loading a snapshot via the method
--- 'newHandleFromSnapshot'. V1 backends load the snapshot directly in
--- 'initFromSnapshot'.
+-- 'openStateRefFromSnapshot'.
 module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( -- * Snapshots
     CRCError (..)

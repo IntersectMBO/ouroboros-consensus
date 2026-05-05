@@ -166,12 +166,6 @@ data TransactionProcessed blk
 --
 -- See the necessary invariants on the Haddock for 'API.addTxs'.
 --
--- NOTE when using V1 LedgerDB: This function does not sync the Mempool contents
--- with the ledger state in case the latter changes in a way that doesn't
--- invalidate the db changelog, it relies on the background thread to do
--- that. If the db changelog is invalidated (by rolling back the last synced
--- ledger state), it will sync in-place.
---
 -- INVARIANT: The code needs that read and writes on the state are coupled
 -- together or inconsistencies will arise.
 doAddTx ::
