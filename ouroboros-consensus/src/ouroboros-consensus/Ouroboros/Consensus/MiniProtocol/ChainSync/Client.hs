@@ -344,6 +344,7 @@ bracketChainSyncClient ::
   ( IOLike m
   , Ord peer
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , MonadTimer m
   ) =>
   Tracer m (TraceChainSyncClientEvent blk) ->
@@ -856,6 +857,7 @@ chainSyncClient ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   ConfigEnv m blk ->
   DynamicEnv m blk ->
@@ -999,6 +1001,7 @@ findIntersectionTop ::
   forall m blk arrival judgment.
   ( IOLike m
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   ConfigEnv m blk ->
   DynamicEnv m blk ->
@@ -1195,6 +1198,7 @@ knownIntersectionStateTop ::
   forall m blk arrival judgment.
   ( IOLike m
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   ConfigEnv m blk ->
   DynamicEnv m blk ->
@@ -1649,6 +1653,7 @@ checkKnownInvalid ::
   forall m blk arrival judgment.
   ( IOLike m
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   ConfigEnv m blk ->
   DynamicEnv m blk ->
@@ -2098,6 +2103,7 @@ invalidBlockRejector ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   Tracer m (TraceChainSyncClientEvent blk) ->
   NodeToNodeVersion ->
@@ -2287,7 +2293,9 @@ data ChainSyncClientException
       -- We store the intersection point the upstream node sent us.
       (Their (Tip blk))
   | forall blk.
-    LedgerSupportsProtocol blk =>
+    ( LedgerSupportsProtocol blk
+    , BlockSupportsPeras blk
+    ) =>
     InvalidBlock
       -- | Block that triggered the validity check.
       (Point blk)

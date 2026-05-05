@@ -16,9 +16,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
--- TODO: remove this after getting rid of the degenerate 'BlockSupportsPeras'
--- instance that renders some of the constraints here redundant.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Ouroboros.Consensus.Peras.Context
   ( -- * Bounded Peras epoch context
@@ -33,6 +30,9 @@ module Ouroboros.Consensus.Peras.Context
   , PerasEpochContextResolverHandle (..)
   , mockPerasEpochContextResolverHandle
   , withResolvedRoundNo
+  , verifyPerasVoteWithHandle
+  , verifyPerasCertWithHandle
+  , forgePerasVoteIfEligibleWithHandle
 
     -- * Extracting and resolving Peras epoch contexts from the node state
   , StateSupportsPerasEpochContext (..)
@@ -77,19 +77,28 @@ import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract
   ( BlockProtocol
   , EpochNo (..)
+  , Point
   , SlotNo
   , WithOrigin (..)
   )
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
+  , IsPerasCert (..)
   , IsPerasError (..)
+  , PerasCert
   , PerasEpochContext (..)
   , PerasRoundNo
+  , PerasVote
   , PerasVotingCommittee
   , PerasVotingCommitteeInput
+  , ValidatedPerasCert
+  , ValidatedPerasVote
+  , getPerasVoteRound
   )
 import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee)
 import qualified Ouroboros.Consensus.Committee.Class as Committee
+import Ouroboros.Consensus.Committee.Crypto (PrivateKey)
+import Ouroboros.Consensus.Committee.Types (PoolId)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HardFork.History.Qry
   ( EpochToPerasRoundInfo (..)
@@ -486,6 +495,52 @@ withResolvedRoundNo handle roundNo k = do
       case k context of
         Left err -> throwSTM err
         Right a -> pure a
+
+-- | Like 'verifyPerasVote', but using a 'PerasEpochContextResolverHandle' to
+-- resolve the epoch context for the round number of the given vote.
+verifyPerasVoteWithHandle ::
+  ( MonadSTM m
+  , MonadThrow (STM m)
+  , BlockSupportsPeras blk
+  ) =>
+  PerasEpochContextResolverHandle m blk ->
+  PerasVote blk ->
+  STM m (ValidatedPerasVote blk)
+verifyPerasVoteWithHandle handle vote =
+  withResolvedRoundNo handle (getPerasVoteRound vote) $ \context ->
+    verifyPerasVote context vote
+
+-- | Like 'verifyPerasCert', but using a 'PerasEpochContextResolverHandle' to
+-- resolve the epoch context for the round number of the given certificate.
+verifyPerasCertWithHandle ::
+  ( MonadSTM m
+  , MonadThrow (STM m)
+  , BlockSupportsPeras blk
+  ) =>
+  PerasEpochContextResolverHandle m blk ->
+  PerasCert blk ->
+  STM m (ValidatedPerasCert blk)
+verifyPerasCertWithHandle handle cert =
+  withResolvedRoundNo handle (getPerasCertRound cert) $ \context ->
+    verifyPerasCert context cert
+
+-- | Like 'forgePerasVoteIfEligible', but using a
+-- 'PerasEpochContextResolverHandle' to resolve the epoch context for the given
+-- round number.
+forgePerasVoteIfEligibleWithHandle ::
+  ( MonadSTM m
+  , MonadThrow (STM m)
+  , BlockSupportsPeras blk
+  ) =>
+  PerasEpochContextResolverHandle m blk ->
+  PoolId ->
+  PrivateKey (PerasCrypto blk) ->
+  PerasRoundNo ->
+  Point blk ->
+  STM m (Maybe (ValidatedPerasVote blk))
+forgePerasVoteIfEligibleWithHandle handle poolId privateKey roundNo point =
+  withResolvedRoundNo handle roundNo $ \context ->
+    forgePerasVoteIfEligible context poolId privateKey roundNo point
 
 -- * Extracting and resolving Peras epoch contexts from the node state
 

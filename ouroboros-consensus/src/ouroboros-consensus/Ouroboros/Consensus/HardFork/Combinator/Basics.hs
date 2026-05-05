@@ -1,17 +1,24 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+-- TODO: figure out how to move the 'IsPerasVote'/'IsPerasCert' next to the
+-- definition of 'OneEraPerasVote' and 'OneEraPerasCert'.
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Basics
   ( -- * Hard fork protocol, block, and ledger state
@@ -34,6 +41,11 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
   , distribLedgerConfig
   , distribTopLevelConfig
 
+    -- ** Functions on Peras context
+  , injectHFCBoundedPerasEpochContext
+  , projectHFCBoundedPerasEpochContext
+  , injectHFCPerasEpochContextResolver
+
     -- * HFC injection/projection helpers for Peras
   , distribHardForkPoint
   , injectHardForkPoint
@@ -44,17 +56,53 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
   ) where
 
 import Cardano.Slotting.EpochInfo
+import Data.Bifunctor (bimap)
+import Data.Functor.Product (Product (..))
 import Data.Kind (Type)
-import Data.SOP (K (..))
+import Data.SOP (I (..), K (..), type (:.:) (..))
 import Data.SOP.Constraint
+import Data.SOP.Dict (Dict (..))
+import qualified Data.SOP.Dict as Dict
+import Data.SOP.Either (hdistribute, mkEitherF)
 import Data.SOP.Functors
+import Data.SOP.Index (himap, injectNS)
+import qualified Data.SOP.Match as Match
 import Data.SOP.Strict
 import Data.Typeable
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( BlockSupportsPeras (..)
+  , BoostedBlock
+  , IsPerasCert (..)
+  , IsPerasError (..)
+  , IsPerasVote (..)
+  , PerasEpochContext (..)
+  , PerasRoundNo
+  , PerasVoteCollection (..)
+  , PerasVoteCollectionWithQuorum (..)
+  , ValidatedPerasCert (..)
+  , ValidatedPerasVote (..)
+  , castPerasParams
+  , unsafeAssumeQuorum
+  , unsafePerasVoteCollection
+  )
+import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (..))
+import Ouroboros.Consensus.Committee.Crypto
+  ( ElectionId
+  , VoteCandidate
+  )
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Combinator.Abstract
+import Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork
+  ( CanHardFork
+  , EqualHashSizeOfHead
+  , HashSizeOfHead
+  )
+import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
+  ( SingleEraBlock
+  , proxySingle
+  )
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import qualified Ouroboros.Consensus.HardFork.Combinator.State.Infra as State
@@ -63,6 +111,10 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
+import Ouroboros.Consensus.Peras.Context
+  ( BoundedPerasEpochContext (..)
+  , PerasEpochContextResolver (..)
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -292,6 +344,390 @@ injectHardForkPoint = \case
     GenesisPoint
   BlockPoint s h ->
     BlockPoint s (OneEraHash (toShortRawHash (Proxy @blk) h))
+
+-- | Project a 'PerasVoteCollectionWithQuorum' of the hard fork block into a
+-- 'NS' of 'PerasVoteCollectionWithQuorum' of the single era blocks.
+projectHFCPerasVoteCollectionWithQuorum ::
+  All SingleEraBlock xs =>
+  PerasVoteCollectionWithQuorum (HardForkBlock xs) ->
+  Maybe (NS PerasVoteCollectionWithQuorum xs)
+projectHFCPerasVoteCollectionWithQuorum hfcCollection =
+  let votes = pvcVotes $ forgetQuorum hfcCollection
+      neMapNs = projectHFCWatValidatedPerasVote <$> votes
+   in case Match.matchNEMap neMapNs of
+        Left _mismatch ->
+          Nothing
+        Right nsNeMap ->
+          Just $
+            hcmap
+              proxySingle
+              ( \(Comp compedValMap) ->
+                  unsafeAssumeQuorum $
+                    unsafePerasVoteCollection
+                      ((\(Comp v) -> v) <$> compedValMap)
+              )
+              nsNeMap
+
+-- NOTE: this assumes PerasParams are the same for all eras.
+--
+-- In the future, @pecParams@ will be an @NP@ of @PerasParams@.
+projectHFCPerasEpochContext ::
+  All Top xs =>
+  PerasEpochContext (HardForkBlock xs) ->
+  NS PerasEpochContext xs
+projectHFCPerasEpochContext PerasEpochContext{pecCommittee, pecParams} =
+  hmap
+    ( \(WrapPerasVotingCommittee committee) ->
+        PerasEpochContext
+          { pecCommittee = committee
+          , pecParams = castPerasParams pecParams
+          }
+    )
+    . getOneEraPerasVotingCommittee
+    $ pecCommittee
+
+injectHFCPerasEpochContext ::
+  All Top xs =>
+  NS PerasEpochContext xs ->
+  PerasEpochContext (HardForkBlock xs)
+injectHFCPerasEpochContext nsContext =
+  PerasEpochContext
+    { pecCommittee =
+        OneEraPerasVotingCommittee
+          . hmap (WrapPerasVotingCommittee . pecCommittee)
+          $ nsContext
+    , pecParams =
+        hcollapse
+          . hmap (K . castPerasParams . pecParams)
+          $ nsContext
+    }
+
+-- | Inject a 'NS' of 'BoundedPerasEpochContext' of the single era blocks into a
+-- 'BoundedPerasEpochContext' of the hard fork block.
+injectHFCBoundedPerasEpochContext ::
+  All Top xs =>
+  NS BoundedPerasEpochContext xs ->
+  BoundedPerasEpochContext (HardForkBlock xs)
+injectHFCBoundedPerasEpochContext nsBoundedContext =
+  BoundedPerasEpochContext
+    { startPerasRoundNo =
+        hcollapse
+          . hmap (K . startPerasRoundNo)
+          $ nsBoundedContext
+    , endPerasRoundNo =
+        hcollapse
+          . hmap (K . endPerasRoundNo)
+          $ nsBoundedContext
+    , epochContext =
+        injectHFCPerasEpochContext $
+          hmap epochContext nsBoundedContext
+    }
+
+-- | Project a 'BoundedPerasEpochContext' of the hard fork block into a 'NS' of
+-- 'BoundedPerasEpochContext' of the single era blocks.
+projectHFCBoundedPerasEpochContext ::
+  All Top xs =>
+  BoundedPerasEpochContext (HardForkBlock xs) ->
+  NS BoundedPerasEpochContext xs
+projectHFCBoundedPerasEpochContext
+  BoundedPerasEpochContext
+    { startPerasRoundNo
+    , endPerasRoundNo
+    , epochContext
+    } =
+    hmap
+      ( \(WrapPerasVotingCommittee committee) ->
+          BoundedPerasEpochContext
+            { startPerasRoundNo =
+                startPerasRoundNo
+            , endPerasRoundNo =
+                endPerasRoundNo
+            , epochContext =
+                PerasEpochContext
+                  { pecCommittee = committee
+                  , pecParams = castPerasParams (pecParams epochContext)
+                  }
+            }
+      )
+      . getOneEraPerasVotingCommittee
+      $ pecCommittee epochContext
+
+-- | Inject a 'NS' of 'PerasEpochContextResolver' of the single era blocks into
+-- a 'PerasEpochContextResolver' of the hard fork block.
+injectHFCPerasEpochContextResolver ::
+  All Top xs =>
+  NS PerasEpochContextResolver xs ->
+  PerasEpochContextResolver (HardForkBlock xs)
+injectHFCPerasEpochContextResolver =
+  hcollapse
+    . himap
+      ( \idx resolver ->
+          case resolver of
+            PerasEpochContextResolverError err ->
+              K $ PerasEpochContextResolverError err
+            PerasEpochContextResolver currBoundedContext prevBoundedContext ->
+              K $
+                PerasEpochContextResolver
+                  (injectHFCBoundedPerasEpochContext . injectNS idx <$> currBoundedContext)
+                  (injectHFCBoundedPerasEpochContext . injectNS idx <$> prevBoundedContext)
+      )
+
+injectHFCValidatedPerasVote ::
+  All Top xs =>
+  NS ValidatedPerasVote xs ->
+  ValidatedPerasVote (HardForkBlock xs)
+injectHFCValidatedPerasVote ns =
+  ValidatedPerasVote
+    { vpvVote = OneEraPerasVote (hmap (WrapPerasVote . vpvVote) ns)
+    , vpvVoteWeight = hcollapse (hmap (K . vpvVoteWeight) ns)
+    }
+
+injectHFCValidatedPerasCert ::
+  All Top xs =>
+  NS ValidatedPerasCert xs ->
+  ValidatedPerasCert (HardForkBlock xs)
+injectHFCValidatedPerasCert ns =
+  ValidatedPerasCert
+    { vpcCert = OneEraPerasCert (hmap (WrapPerasCert . vpcCert) ns)
+    , vpcCertBoost = hcollapse (hmap (K . vpcCertBoost) ns)
+    }
+
+projectHFCValidatedPerasVote ::
+  All Top xs =>
+  ValidatedPerasVote (HardForkBlock xs) ->
+  NS ValidatedPerasVote xs
+projectHFCValidatedPerasVote
+  ValidatedPerasVote
+    { vpvVote
+    , vpvVoteWeight
+    } =
+    hmap
+      ( \(WrapPerasVote v) ->
+          ValidatedPerasVote
+            { vpvVote = v
+            , vpvVoteWeight
+            }
+      )
+      . getOneEraPerasVote
+      $ vpvVote
+
+projectHFCWatValidatedPerasVote ::
+  All Top xs =>
+  WithArrivalTime (ValidatedPerasVote (HardForkBlock xs)) ->
+  NS (WithArrivalTime :.: ValidatedPerasVote) xs
+projectHFCWatValidatedPerasVote (WithArrivalTime arrivalTime validatedVote) =
+  hmap (Comp . WithArrivalTime arrivalTime)
+    . projectHFCValidatedPerasVote
+    $ validatedVote
+
+{-------------------------------------------------------------------------------
+  BlockSupportsPeras
+-------------------------------------------------------------------------------}
+
+-- ** Type and class instances that are required for the 'BlockSupportsPeras'
+
+-- instance of 'HardForkBlock'
+
+type instance ElectionId (OneEraPerasCrypto xs) = PerasRoundNo
+type instance BoostedBlock (OneEraPerasVote xs) = Point (HardForkBlock xs)
+type instance BoostedBlock (OneEraPerasCert xs) = Point (HardForkBlock xs)
+type instance VoteCandidate (OneEraPerasCrypto xs) = Point (HardForkBlock xs)
+
+instance
+  ( CanHardFork xs
+  , All SingleEraBlock xs
+  ) =>
+  IsPerasVote (OneEraPerasVote xs) (HardForkBlock xs)
+  where
+  getPerasVoteRound =
+    hcollapse
+      . hcmap proxySingle (K . getPerasVoteRound . unwrapPerasVote)
+      . getOneEraPerasVote
+  getPerasVoteSeatIndex =
+    hcollapse
+      . hcmap proxySingle (K . getPerasVoteSeatIndex . unwrapPerasVote)
+      . getOneEraPerasVote
+  getPerasVoteBlock =
+    hcollapse
+      . hcmap proxySingle (K . injectHardForkPoint . getPerasVotePoint . unwrapPerasVote)
+      . getOneEraPerasVote
+
+instance
+  CanHardFork xs =>
+  IsPerasCert (OneEraPerasCert xs) (HardForkBlock xs)
+  where
+  getPerasCertRound =
+    hcollapse
+      . hcmap proxySingle (K . getPerasCertRound . unwrapPerasCert)
+      . getOneEraPerasCert
+  getPerasCertBlock =
+    hcollapse
+      . hcmap proxySingle (K . injectHardForkPoint . getPerasCertPoint . unwrapPerasCert)
+      . getOneEraPerasCert
+
+instance
+  CanHardFork xs =>
+  IsPerasError (HardForkPerasError xs) (HardForkBlock xs)
+  where
+  -- NOTE: in practice this is never produced at the HFC level
+  injectVotingCommitteeError _ = HardForkPerasErrorCommitteeError
+
+  -- NOTE: in practice this is never produced at the HFC level
+  injectConversionError _ = HardForkPerasErrorConversionError
+
+  -- NOTE: in practice this is never produced at the HFC level
+  injectQuorumNotReachedError _ = HardForkPerasErrorQuorumNotReachedError
+
+-- ** 'BlockSupportsPeras' instance for 'HardForkBlock'
+
+class
+  ( SingleEraBlock blk
+  , EqualHashSizeOfHead xs blk
+  ) =>
+  SingleEraBlockWithHashSizeOfHead xs blk
+
+instance
+  ( SingleEraBlock blk
+  , EqualHashSizeOfHead xs blk
+  ) =>
+  SingleEraBlockWithHashSizeOfHead xs blk
+
+proofSingleEraBlockWithHashSizeOfHead ::
+  forall xs.
+  ( All SingleEraBlock xs
+  , All (EqualHashSizeOfHead xs) xs
+  ) =>
+  Dict (All (SingleEraBlockWithHashSizeOfHead xs)) xs
+proofSingleEraBlockWithHashSizeOfHead =
+  Dict.mapAll
+    (\Dict -> Dict)
+    ( Dict.zipAll
+        (Dict :: Dict (All SingleEraBlock) xs)
+        (Dict :: Dict (All (EqualHashSizeOfHead xs)) xs)
+    )
+
+instance
+  ( StandardHash (HardForkBlock xs)
+  , HashSize (HardForkBlock xs) ~ HashSizeOfHead xs
+  , CanHardFork xs
+  ) =>
+  BlockSupportsPeras (HardForkBlock xs)
+  where
+  type PerasVote (HardForkBlock xs) = OneEraPerasVote xs
+  type PerasCert (HardForkBlock xs) = OneEraPerasCert xs
+  type PerasError (HardForkBlock xs) = HardForkPerasError xs
+  type PerasCrypto (HardForkBlock xs) = OneEraPerasCrypto xs
+  type PerasVotingCommitteeScheme (HardForkBlock xs) = OneEraPerasVotingCommitteeScheme xs
+
+  forgePerasVoteIfEligible context poolId privKey roundNo point =
+    let
+      nsPrivKeyContext =
+        hzipWith
+          Pair
+          (getPerEraPerasPrivateKey privKey)
+          (projectHFCPerasEpochContext context)
+     in
+      case proofSingleEraBlockWithHashSizeOfHead @xs of
+        Dict ->
+          bimap
+            (HardForkPerasErrorOneEraPerasError . OneEraPerasError)
+            (fmap injectHFCValidatedPerasVote . hsequence')
+            . hdistribute
+            . hcmap
+              (Proxy @(SingleEraBlockWithHashSizeOfHead xs))
+              ( \(Pair (WrapPerasPrivateKey privKey') context') ->
+                  mkEitherF WrapPerasError Comp $
+                    forgePerasVoteIfEligible
+                      context'
+                      poolId
+                      privKey'
+                      roundNo
+                      (distribHardForkPoint point)
+              )
+            $ nsPrivKeyContext
+
+  verifyPerasVote context vote =
+    case Match.matchNS (projectHFCPerasEpochContext context) (getOneEraPerasVote vote) of
+      Left _mismatch ->
+        Left HardForkPerasErrorEraMismatch
+      Right nsContextVote ->
+        bimap
+          (HardForkPerasErrorOneEraPerasError . OneEraPerasError)
+          injectHFCValidatedPerasVote
+          . hdistribute
+          . hcmap
+            proxySingle
+            ( \(Pair context' (WrapPerasVote vote')) ->
+                mkEitherF WrapPerasError id $
+                  verifyPerasVote context' vote'
+            )
+          $ nsContextVote
+
+  forgePerasCert context collection =
+    case projectHFCPerasVoteCollectionWithQuorum collection of
+      Nothing ->
+        Left HardForkPerasErrorEraMismatch
+      Just nsCollection ->
+        case Match.matchNS (projectHFCPerasEpochContext context) nsCollection of
+          Left _mismatch ->
+            Left HardForkPerasErrorEraMismatch
+          Right nsContextCollection ->
+            bimap
+              (HardForkPerasErrorOneEraPerasError . OneEraPerasError)
+              injectHFCValidatedPerasCert
+              . hdistribute
+              . hcmap
+                proxySingle
+                ( \(Pair context' collection') ->
+                    mkEitherF WrapPerasError id $
+                      forgePerasCert context' collection'
+                )
+              $ nsContextCollection
+
+  verifyPerasCert context cert =
+    case Match.matchNS (projectHFCPerasEpochContext context) (getOneEraPerasCert cert) of
+      Left _mismatch ->
+        Left HardForkPerasErrorEraMismatch
+      Right nsContextCert ->
+        bimap
+          (HardForkPerasErrorOneEraPerasError . OneEraPerasError)
+          injectHFCValidatedPerasCert
+          . hdistribute
+          . hcmap
+            proxySingle
+            ( \(Pair context' (WrapPerasCert cert')) ->
+                mkEitherF WrapPerasError id $
+                  verifyPerasCert context' cert'
+            )
+          $ nsContextCert
+
+  getPerasCertInBlock (HardForkBlock (OneEraBlock nsBlock)) =
+    bimap
+      (HardForkPerasErrorOneEraPerasError . OneEraPerasError)
+      (fmap OneEraPerasCert . hsequence')
+      . hdistribute
+      . hcmap
+        proxySingle
+        ( \(I block) ->
+            mkEitherF WrapPerasError (Comp . fmap WrapPerasCert) $
+              getPerasCertInBlock block
+        )
+      $ nsBlock
+
+  readPerasPrivateKeyFromEnv _proxy =
+    fmap PerEraPerasPrivateKey $
+      hsequence' $
+        hcpure proxySingle dispatchReadKey
+   where
+    dispatchReadKey ::
+      forall blk.
+      SingleEraBlock blk =>
+      (Either String :.: WrapPerasPrivateKey) blk
+    dispatchReadKey =
+      Comp
+        . fmap WrapPerasPrivateKey
+        . readPerasPrivateKeyFromEnv
+        $ Proxy @blk
 
 {-------------------------------------------------------------------------------
   LedgerSupportsPeras
