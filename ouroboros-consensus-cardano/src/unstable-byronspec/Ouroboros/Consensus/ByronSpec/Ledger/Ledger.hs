@@ -63,7 +63,7 @@ newtype ByronSpecLedgerError = ByronSpecLedgerError
   deriving (Show, Eq)
   deriving NoThunks via AllowThunk ByronSpecLedgerError
 
-type instance LedgerCfg (LedgerState ByronSpecBlock) = ByronSpecGenesis
+type instance LedgerCfg LedgerState ByronSpecBlock = ByronSpecGenesis
 
 instance UpdateLedger ByronSpecBlock
 
@@ -83,7 +83,7 @@ instance GetTip (LedgerState ByronSpecBlock) where
     castPoint $
       getByronSpecTip tip state
 
-instance GetTip (Ticked (LedgerState ByronSpecBlock)) where
+instance GetTip (Ticked LedgerState ByronSpecBlock) where
   getTip (TickedByronSpecLedgerState tip state) =
     castPoint $
       getByronSpecTip tip state
@@ -99,19 +99,17 @@ getByronSpecTip (Just slot) state =
   Ticking
 -------------------------------------------------------------------------------}
 
-data instance Ticked (LedgerState ByronSpecBlock) mk = TickedByronSpecLedgerState
+data instance Ticked LedgerState ByronSpecBlock mk = TickedByronSpecLedgerState
   { untickedByronSpecLedgerTip :: Maybe SlotNo
   , tickedByronSpecLedgerState :: Spec.State Spec.CHAIN
   }
   deriving stock (Show, Eq)
-  deriving NoThunks via AllowThunk (Ticked (LedgerState ByronSpecBlock) mk)
+  deriving NoThunks via AllowThunk (Ticked LedgerState ByronSpecBlock mk)
 
-instance IsLedger (LedgerState ByronSpecBlock) where
-  type LedgerErr (LedgerState ByronSpecBlock) = ByronSpecLedgerError
+type instance AuxLedgerEvent ByronSpecBlock = VoidLedgerEvent
 
-  type
-    AuxLedgerEvent (LedgerState ByronSpecBlock) =
-      VoidLedgerEvent (LedgerState ByronSpecBlock)
+instance IsLedger LedgerState ByronSpecBlock where
+  type LedgerErr LedgerState ByronSpecBlock = ByronSpecLedgerError
 
   applyChainTickLedgerResult _evs cfg slot (ByronSpecLedgerState tip state) =
     pureLedgerResult $
@@ -128,36 +126,30 @@ instance IsLedger (LedgerState ByronSpecBlock) where
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (LedgerState ByronSpecBlock) = Void
-type instance TxOut (LedgerState ByronSpecBlock) = Void
-instance LedgerTablesAreTrivial (LedgerState ByronSpecBlock) where
-  convertMapKind (ByronSpecLedgerState x y) =
-    ByronSpecLedgerState x y
-instance LedgerTablesAreTrivial (Ticked (LedgerState ByronSpecBlock)) where
+type instance TxIn ByronSpecBlock = Void
+type instance TxOut ByronSpecBlock = Void
+
+instance LedgerTablesAreTrivial LedgerState ByronSpecBlock where
+  convertMapKind (ByronSpecLedgerState x y) = ByronSpecLedgerState x y
+instance LedgerTablesAreTrivial (Ticked LedgerState) ByronSpecBlock where
   convertMapKind (TickedByronSpecLedgerState x y) =
     TickedByronSpecLedgerState x y
 deriving via
   Void
   instance
-    IndexedMemPack (LedgerState ByronSpecBlock EmptyMK) Void
-deriving via
-  TrivialLedgerTables (LedgerState ByronSpecBlock)
-  instance
-    HasLedgerTables (LedgerState ByronSpecBlock)
-deriving via
-  TrivialLedgerTables (Ticked (LedgerState ByronSpecBlock))
-  instance
-    HasLedgerTables (Ticked (LedgerState ByronSpecBlock))
-deriving via
-  TrivialLedgerTables (LedgerState ByronSpecBlock)
-  instance
-    CanStowLedgerTables (LedgerState ByronSpecBlock)
+    IndexedMemPack LedgerState ByronSpecBlock Void
+instance HasLedgerTables LedgerState ByronSpecBlock where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+instance HasLedgerTables (Ticked LedgerState) ByronSpecBlock where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
 
 {-------------------------------------------------------------------------------
   Applying blocks
 -------------------------------------------------------------------------------}
 
-instance ApplyBlock (LedgerState ByronSpecBlock) ByronSpecBlock where
+instance ApplyBlock LedgerState ByronSpecBlock where
   applyBlockLedgerResultWithValidation _ _ cfg block (TickedByronSpecLedgerState _tip state) =
     withExcept ByronSpecLedgerError $
       fmap (pureLedgerResult . ByronSpecLedgerState (Just (blockSlot block))) $ -- Note that the CHAIN rule also applies the chain tick. So even
@@ -174,6 +166,7 @@ instance ApplyBlock (LedgerState ByronSpecBlock) ByronSpecBlock where
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult (error . ("reapplyBlockLedgerResult: unexpected error " ++) . show)
 
+instance GetBlockKeySets ByronSpecBlock where
   getBlockKeySets _ = emptyLedgerTables
 
 {-------------------------------------------------------------------------------

@@ -60,13 +60,6 @@ import Ouroboros.Consensus.HeaderValidation
   , validateHeader
   )
 import Ouroboros.Consensus.Ledger.Abstract
-  ( ApplyBlock (getBlockKeySets, reapplyBlockLedgerResult)
-  , applyBlockLedgerResult
-  , tickThenApply
-  , tickThenApplyLedgerResult
-  , tickThenReapply
-  )
-import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( LedgerSupportsMempool
@@ -100,6 +93,8 @@ runAnalysis ::
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
   , CanStowLedgerTables (LedgerState blk)
+  , Show (TxIn blk)
+  , Show (TxOut blk)
   ) =>
   AnalysisName -> SomeAnalysis blk
 runAnalysis analysisName = case go analysisName of
@@ -760,7 +755,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     tickTheLedgerState ::
       SlotNo ->
       ExtLedgerState blk EmptyMK ->
-      IO (Ticked (LedgerState blk) DiffMK)
+      IO (Ticked LedgerState blk DiffMK)
     tickTheLedgerState slot st =
       pure $ applyChainTick OmitLedgerEvents lcfg slot (ledgerState st)
 
@@ -850,6 +845,8 @@ reproMempoolForge ::
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
+  , Show (TxIn blk)
+  , Show (TxOut blk)
   ) =>
   Int ->
   Analysis blk StartFromLedgerState
@@ -960,7 +957,7 @@ reproMempoolForge numBlks env = do
             ((), durSnap, mutSnap, gcSnap) <- timed $ do
               snap <-
                 Mempool.getSnapshotFor mempool slot ticked $
-                  fmap castLedgerTables . LedgerDB.forkerReadTables forker . castLedgerTables
+                  LedgerDB.forkerReadTables forker
 
               pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotStateHash snap `seq` ()
 

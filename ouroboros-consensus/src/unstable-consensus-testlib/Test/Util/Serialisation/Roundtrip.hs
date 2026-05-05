@@ -68,7 +68,7 @@ import GHC.Generics (Generic)
 import Language.Haskell.TH (runIO)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (AnnTip)
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
   ( decodeDiskExtLedgerState
   , encodeDiskExtLedgerState

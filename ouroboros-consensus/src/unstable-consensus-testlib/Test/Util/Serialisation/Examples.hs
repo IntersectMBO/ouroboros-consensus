@@ -64,7 +64,7 @@ data Examples blk = Examples
   , exampleExtLedgerState :: Labelled (ExtLedgerState blk EmptyMK)
   , exampleSlotNo :: Labelled SlotNo
   , exampleLedgerConfig :: Labelled (LedgerConfig blk)
-  , exampleLedgerTables :: Labelled (LedgerTables (LedgerState blk) ValuesMK)
+  , exampleLedgerTables :: Labelled (LedgerTables blk ValuesMK)
   }
 
 emptyExamples :: Examples blk

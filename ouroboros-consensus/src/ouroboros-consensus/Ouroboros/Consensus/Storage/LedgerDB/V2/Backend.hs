@@ -62,7 +62,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     Tracer m LedgerDBV2Trace ->
     Resources m backend ->
     ExtLedgerState blk ValuesMK ->
-    m (StateRef m (ExtLedgerState blk))
+    m (StateRef m ExtLedgerState blk)
 
   -- | Create a new handle from a snapshot.
   openStateRefFromSnapshot ::
@@ -74,7 +74,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     ExceptT
       (SnapshotFailure blk)
       m
-      (StateRef m (ExtLedgerState blk), RealPoint blk)
+      (StateRef m ExtLedgerState blk, RealPoint blk)
 
   -- | Instantiate the 'SnapshotManager' for this backend.
   snapshotManager ::
@@ -83,7 +83,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     CodecConfig blk ->
     Tracer m (TraceSnapshotEvent blk) ->
     SomeHasFS m ->
-    SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
+    SnapshotManager m m blk (StateRef m ExtLedgerState blk)
 
 {-------------------------------------------------------------------------------
   Existentials

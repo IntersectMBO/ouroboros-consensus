@@ -96,7 +96,7 @@ mkLedgerTables ::
   forall proto era.
   ShelleyCompatible proto era =>
   LC.Tx LC.TopTx era ->
-  LedgerTables (LedgerState (ShelleyBlock proto era)) ValuesMK
+  LedgerTables (ShelleyBlock proto era) ValuesMK
 mkLedgerTables tx =
   LedgerTables $
     ValuesMK $

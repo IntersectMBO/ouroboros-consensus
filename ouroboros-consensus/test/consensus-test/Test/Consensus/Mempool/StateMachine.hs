@@ -44,11 +44,12 @@ import qualified Data.TreeDiff.OMap as TD
 import GHC.Generics
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Basics hiding (TxIn, TxOut)
+import Ouroboros.Consensus.Ledger.Abstract hiding (TxIn, TxOut)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
+import qualified Ouroboros.Consensus.Ledger.Tables.Basics as Ledger
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (..), tickLedgerState)
@@ -102,7 +103,7 @@ data Model blk r = Model
   -- ^ Last seen ticket number
   --
   -- This indicates how many transactions have ever been added to the mempool.
-  , modelConfig :: !(LedgerCfg (LedgerState blk))
+  , modelConfig :: !(LedgerCfg LedgerState blk)
   , --  * LedgerDB
 
     modelLedgerDBTip :: !(LedgerState blk ValuesMK)
@@ -543,7 +544,7 @@ newLedgerInterface initialLedger = do
                       ReadOnlyForker
                         { roforkerClose = pure ()
                         , roforkerReadStatistics = pure $ Statistics 0
-                        , roforkerReadTables = pure . (projectLedgerTables st `restrictValues'`)
+                        , roforkerReadTables = pure . ltliftA2 restrictValuesMK (projectLedgerTables st)
                         , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
                         , roforkerGetLedgerState = pure $ forgetLedgerTables st
                         }
@@ -629,6 +630,8 @@ postcondition ::
   , ValidateEnvelope blk
   , ToExpr (Command blk Concrete)
   , ToExpr (GenTx blk)
+  , Show (Ledger.TxIn blk)
+  , Show (Ledger.TxOut blk)
   ) =>
   Model blk Concrete ->
   Command blk Concrete ->
@@ -973,7 +976,7 @@ deriving instance ToExpr (GenTx TestBlock)
 deriving instance ToExpr Tx
 deriving instance ToExpr Expiry
 
-instance ToExpr (LedgerTables (LedgerState TestBlock) ValuesMK) where
+instance ToExpr (LedgerTables TestBlock ValuesMK) where
   toExpr (LedgerTables (ValuesMK v)) = Lst [toExpr (condense txin, condense txout) | (txin, txout) <- Map.toList v]
 
 instance ToExpr (ValuesMK TxIn TxOut) where

@@ -43,6 +43,8 @@ module Test.Consensus.HardFork.Combinator.A
 import Cardano.Binary (DecoderError)
 import Cardano.Ledger.BaseTypes.NonZero
 import Cardano.Slotting.EpochInfo
+import qualified Codec.CBOR.Decoding as CBOR
+import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise
 import Control.Monad (guard)
 import qualified Data.Binary as B
@@ -87,7 +89,6 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (repeatedlyM)
 import Ouroboros.Consensus.Util.Condense
@@ -198,47 +199,46 @@ data instance LedgerState BlockA mk = LgrA
   deriving NoThunks via OnlyCheckWhnfNamed "LgrA" (LedgerState BlockA mk)
 
 -- | Ticking has no state on the A ledger state
-newtype instance Ticked (LedgerState BlockA) mk = TickedLedgerStateA
+newtype instance Ticked LedgerState BlockA mk = TickedLedgerStateA
   { getTickedLedgerStateA :: LedgerState BlockA mk
   }
   deriving stock (Generic, Show, Eq)
-  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrA" (Ticked (LedgerState BlockA) mk)
+  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrA" (Ticked LedgerState BlockA mk)
 
 {-------------------------------------------------------------------------------
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (LedgerState BlockA) = Void
-type instance TxOut (LedgerState BlockA) = Void
+type instance TxIn BlockA = Void
+type instance TxOut BlockA = Void
 
-instance LedgerTablesAreTrivial (LedgerState BlockA) where
+instance LedgerTablesAreTrivial LedgerState BlockA where
   convertMapKind (LgrA x y) = LgrA x y
-instance LedgerTablesAreTrivial (Ticked (LedgerState BlockA)) where
+instance LedgerTablesAreTrivial (Ticked LedgerState) BlockA where
   convertMapKind (TickedLedgerStateA x) = TickedLedgerStateA (convertMapKind x)
-deriving via
-  Void
-  instance
-    IndexedMemPack (LedgerState BlockA EmptyMK) Void
-deriving via
-  TrivialLedgerTables (LedgerState BlockA)
-  instance
-    HasLedgerTables (LedgerState BlockA)
-deriving via
-  TrivialLedgerTables (Ticked (LedgerState BlockA))
-  instance
-    HasLedgerTables (Ticked (LedgerState BlockA))
-deriving via
-  TrivialLedgerTables (LedgerState BlockA)
-  instance
-    CanStowLedgerTables (LedgerState BlockA)
-deriving via
-  TrivialLedgerTables (LedgerState BlockA)
-  instance
-    CanUpgradeLedgerTables (LedgerState BlockA)
-deriving via
-  TrivialLedgerTables (LedgerState BlockA)
-  instance
-    SerializeTablesWithHint (LedgerState BlockA)
+
+deriving via Void instance IndexedMemPack LedgerState BlockA Void
+
+instance HasLedgerTables LedgerState BlockA where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+
+instance HasLedgerTables (Ticked LedgerState) BlockA where
+  projectLedgerTables _ = emptyLedgerTables
+  withLedgerTables st _ = convertMapKind st
+
+instance CanStowLedgerTables (LedgerState BlockA) where
+  stowLedgerTables = convertMapKind
+  unstowLedgerTables = convertMapKind
+
+instance CanUpgradeLedgerTables LedgerState BlockA where
+  upgradeTables _ _ = id
+
+instance SerializeTablesWithHint LedgerState BlockA where
+  decodeTablesWithHint _ = do
+    _ <- CBOR.decodeMapLen
+    pure (LedgerTables $ ValuesMK Map.empty)
+  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
 
 data PartialLedgerConfigA = LCfgA
   { lcfgA_k :: SecurityParam
@@ -259,29 +259,25 @@ instance (HasZero a, Serialise a) => Serialise (NonZero a) where
       Nothing -> fail "Expected non zero but found zero!"
       Just a' -> pure a'
 
-type instance
-  LedgerCfg (LedgerState BlockA) =
-    (EpochInfo Identity, PartialLedgerConfigA)
+type instance LedgerCfg LedgerState BlockA = (EpochInfo Identity, PartialLedgerConfigA)
 
 instance GetTip (LedgerState BlockA) where
   getTip = castPoint . lgrA_tip
 
-instance GetTip (Ticked (LedgerState BlockA)) where
+instance GetTip (Ticked LedgerState BlockA) where
   getTip = castPoint . getTip . getTickedLedgerStateA
 
-instance IsLedger (LedgerState BlockA) where
-  type LedgerErr (LedgerState BlockA) = Void
+type instance AuxLedgerEvent BlockA = VoidLedgerEvent
 
-  type
-    AuxLedgerEvent (LedgerState BlockA) =
-      VoidLedgerEvent (LedgerState BlockA)
+instance IsLedger LedgerState BlockA where
+  type LedgerErr LedgerState BlockA = Void
 
   applyChainTickLedgerResult _ _ _ =
     pureLedgerResult
       . TickedLedgerStateA
       . noNewTickingDiffs
 
-instance ApplyBlock (LedgerState BlockA) BlockA where
+instance ApplyBlock LedgerState BlockA where
   applyBlockLedgerResultWithValidation _ _ cfg blk =
     fmap (pureLedgerResult . convertMapKind . setTip)
       . repeatedlyM
@@ -295,7 +291,8 @@ instance ApplyBlock (LedgerState BlockA) BlockA where
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult absurd
 
-  getBlockKeySets _blk = trivialLedgerTables
+instance GetBlockKeySets BlockA where
+  getBlockKeySets _blk = emptyLedgerTables
 
 instance UpdateLedger BlockA
 
@@ -400,7 +397,7 @@ instance LedgerSupportsMempool BlockA where
 
   txForgetValidated = forgetValidatedGenTxA
 
-  getTransactionKeySets _tx = trivialLedgerTables
+  getTransactionKeySets _tx = emptyLedgerTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 

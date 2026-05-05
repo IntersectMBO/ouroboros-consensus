@@ -746,7 +746,7 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
                           ReadOnlyForker
                             { roforkerClose = pure ()
                             , roforkerReadTables =
-                                pure . (projectLedgerTables st `restrictValues'`)
+                                pure . ltliftA2 restrictValuesMK (projectLedgerTables st)
                             , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
                             , roforkerGetLedgerState = pure $ forgetLedgerTables st
                             , roforkerReadStatistics = pure $ Statistics 0

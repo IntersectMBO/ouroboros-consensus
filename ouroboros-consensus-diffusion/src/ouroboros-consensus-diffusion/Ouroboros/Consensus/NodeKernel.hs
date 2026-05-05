@@ -665,7 +665,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           trace blockForging $ TraceNodeIsLeader currentSlot
 
           -- Tick the ledger state for the 'SlotNo' we're producing a block for
-          let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
+          let tickedLedgerState :: Ticked LedgerState blk DiffMK
               tickedLedgerState =
                 applyChainTick
                   OmitLedgerEvents
@@ -687,15 +687,13 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             snap <- getSnapshot mempool -- only used for its tip-like information
             pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
 
-          let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
-
           mempoolSnapshot <-
             lift $
               getSnapshotFor
                 mempool
                 currentSlot
                 tickedLedgerState
-                readTables
+                (roforkerReadTables forker)
 
           let (txs, txssz) =
                 snapshotTake mempoolSnapshot $

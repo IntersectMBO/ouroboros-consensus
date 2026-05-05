@@ -199,19 +199,19 @@ data ChainSetup = ChainSetup
   -- we don't guarantee this during shrinking. If 'csPrefixLen' is larger
   -- than 'csNumBlocks', the prefix should simply be considered to be the
   -- entire chain.
-  , csGenSnaps :: DbChangelog (LedgerState TestBlock.TestBlock)
+  , csGenSnaps :: DbChangelog LedgerState TestBlock.TestBlock
   -- ^ Derived: genesis snapshots
   , csChain :: [TestBlock.TestBlock]
   -- ^ Derived: the actual blocks that got applied (old to new)
-  , csPushed :: DbChangelog (LedgerState TestBlock.TestBlock)
+  , csPushed :: DbChangelog LedgerState TestBlock.TestBlock
   -- ^ Derived: the snapshots after all blocks were applied
   }
   deriving Show
 
-csBlockConfig :: ChainSetup -> LedgerDbCfg (LedgerState TestBlock.TestBlock)
+csBlockConfig :: ChainSetup -> LedgerDbCfg LedgerState TestBlock.TestBlock
 csBlockConfig = csBlockConfig' . csSecParam
 
-csBlockConfig' :: SecurityParam -> LedgerDbCfg (LedgerState TestBlock.TestBlock)
+csBlockConfig' :: SecurityParam -> LedgerDbCfg LedgerState TestBlock.TestBlock
 csBlockConfig' secParam =
   LedgerDbCfg
     { ledgerDbCfgSecParam = secParam
@@ -245,7 +245,7 @@ data SwitchSetup = SwitchSetup
   -- ^ Derived: the new blocks themselves
   , ssChain :: [TestBlock.TestBlock]
   -- ^ Derived: the full chain after switching to this fork
-  , ssSwitched :: DbChangelog (LedgerState TestBlock.TestBlock)
+  , ssSwitched :: DbChangelog LedgerState TestBlock.TestBlock
   -- ^ Derived; the snapshots after the switch was performed
   }
   deriving Show
@@ -336,12 +336,16 @@ instance Arbitrary SwitchSetup where
   Test setup
 -------------------------------------------------------------------------------}
 
-data TestLedger (mk :: MapKind) = TestLedger
+data TestBlock
+
+type TestLedger = LedgerState TestBlock
+
+data instance LedgerState TestBlock (mk :: MapKind) = TestLedger
   { tlUtxos :: mk Key Int
   , tlTip :: Point TestLedger
   }
 
-nextState :: DbChangelog TestLedger -> TestLedger DiffMK
+nextState :: DbChangelog LedgerState TestBlock -> TestLedger DiffMK
 nextState dblog =
   TestLedger
     { tlTip = pointAtSlot $ nextSlot (getTipSlot old)
@@ -359,21 +363,21 @@ instance GetTip TestLedger where
 data H = H deriving (Eq, Ord, Show, Generic)
 deriving anyclass instance NoThunks H
 deriving anyclass instance NFData H
-type instance HeaderHash TestLedger = H
+type instance HeaderHash TestBlock = H
 
-instance StandardHash TestLedger
+instance StandardHash TestBlock
 
 deriving instance Eq (TestLedger EmptyMK)
 
-type instance TxIn TestLedger = Key
-type instance TxOut TestLedger = Int
+type instance TxIn TestBlock = Key
+type instance TxOut TestBlock = Int
 
-instance HasLedgerTables TestLedger where
+instance HasLedgerTables LedgerState TestBlock where
   projectLedgerTables = LedgerTables . tlUtxos
   withLedgerTables st (LedgerTables x) = st{tlUtxos = x}
 
-instance IndexedMemPack (TestLedger EmptyMK) Int where
-  indexedTypeName _ = typeName @Int
+instance IndexedMemPack LedgerState TestBlock Int where
+  indexedTypeName _ _ = typeName @Int
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
@@ -437,15 +441,15 @@ instance Arbitrary DbChangelogTestSetupWithRollbacks where
         , rollbacks = shrinkRollback setup (rollbacks setupWithRollback)
         }
 
-resultingDbChangelog :: DbChangelogTestSetup -> DbChangelog TestLedger
+resultingDbChangelog :: DbChangelogTestSetup -> DbChangelog LedgerState TestBlock
 resultingDbChangelog setup = applyOperations (operations setup) originalDbChangelog
  where
   originalDbChangelog = DbChangelog.empty $ TestLedger EmptyMK theAnchor
   theAnchor = pointAtSlot (dbChangelogStartsAt setup)
 
 applyOperations ::
-  (HasLedgerTables l, GetTip l) =>
-  [Operation l] -> DbChangelog l -> DbChangelog l
+  (HasLedgerTables l blk, GetTip (l blk)) =>
+  [Operation (l blk)] -> DbChangelog l blk -> DbChangelog l blk
 applyOperations ops dblog = foldr' apply' dblog ops
  where
   apply' (Extend newState) dblog' = DbChangelog.extend newState dblog'
@@ -545,7 +549,7 @@ prop_rollBackToVolatileTipIsNoop (Positive n) setup = property $ Just dblog == d
   pt = getTip $ DbChangelog.current dblog
   dblog' = DbChangelog.rollbackToPoint pt $ nExtensions n dblog
 
-nExtensions :: Int -> DbChangelog TestLedger -> DbChangelog TestLedger
+nExtensions :: Int -> DbChangelog LedgerState TestBlock -> DbChangelog LedgerState TestBlock
 nExtensions n dblog = iterate ext dblog !! n
  where
   ext dblog' = DbChangelog.extend (nextState dblog') dblog'

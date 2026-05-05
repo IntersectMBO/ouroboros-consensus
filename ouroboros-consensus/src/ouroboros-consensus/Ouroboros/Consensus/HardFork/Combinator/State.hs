@@ -290,7 +290,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
         return endBound
 
   howExtend ::
-    (HasLedgerTables (LedgerState blk), HasLedgerTables (LedgerState blk')) =>
+    (HasLedgerTables LedgerState blk, HasLedgerTables LedgerState blk') =>
     TranslateLedgerState blk blk' ->
     TranslateLedgerTables blk blk' ->
     History.Bound ->
@@ -305,25 +305,29 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     , Current
         { currentStart = currentEnd
         , currentState =
-            Flip
-              -- We need to bring back the diffs provided by previous
-              -- translations. Note that if there is only one translation or
-              -- if the previous translations don't add any new tables this
-              -- will just be a no-op. See the haddock for
-              -- 'translateLedgerTablesWith' and 'extendToSlot' for more
-              -- information.
-              . prependDiffs
-                ( translateLedgerTablesWith f'
-                    . projectLedgerTables
+            let cur' =
+                  translateLedgerStateWith f (History.boundEpoch currentEnd)
+                    . forgetLedgerTables
                     . unFlip
                     . currentState
                     $ cur
-                )
-              . translateLedgerStateWith f (History.boundEpoch currentEnd)
-              . forgetLedgerTables
-              . unFlip
-              . currentState
-              $ cur
+             in Flip
+                  . (cur' `withLedgerTables`)
+                  . ltliftA2
+                    rawPrependDiffs
+                    ( -- We need to bring back the diffs provided by previous
+                      -- translations. Note that if there is only one
+                      -- translation or if the previous translations don't add
+                      -- any new tables this will just be a no-op. See the
+                      -- haddock for 'translateLedgerTablesWith' and
+                      -- 'extendToSlot' for more information.
+                      translateLedgerTablesWith f'
+                        . projectLedgerTables
+                        . unFlip
+                        . currentState
+                        $ cur
+                    )
+                  $ projectLedgerTables cur'
         }
     )
 

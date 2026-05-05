@@ -55,7 +55,7 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   { lgrSnapshotPolicyArgs :: SnapshotPolicyArgs
   , lgrGenesis :: HKD f (m (ExtLedgerState blk ValuesMK))
   , lgrHasFS :: HKD f (SomeHasFS m)
-  , lgrConfig :: LedgerDbCfgF f (ExtLedgerState blk)
+  , lgrConfig :: LedgerDbCfgF f ExtLedgerState blk
   , lgrTracer :: !(Tracer m (TraceEvent blk))
   , lgrBackendArgs :: LedgerDbBackendArgs m blk
   , lgrQueryBatchSize :: QueryBatchSize
@@ -85,7 +85,7 @@ defaultArgs backendArgs =
     }
 
 data LedgerDbBackendArgs m blk
-  = LedgerDbBackendArgsV1 (V1.LedgerDbBackendArgs m (ExtLedgerState blk))
+  = LedgerDbBackendArgsV1 (V1.LedgerDbBackendArgs m ExtLedgerState blk)
   | LedgerDbBackendArgsV2 (V2.SomeBackendArgs m blk)
 
 {-------------------------------------------------------------------------------

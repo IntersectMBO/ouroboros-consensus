@@ -104,13 +104,13 @@ instance CardanoHardForkConstraints c => MemPack (CanonicalTxIn (CardanoEras c))
   unpackM = CardanoTxIn <$> unpackM
 
 data CardanoTxOut c
-  = ShelleyTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) ShelleyEra)))
-  | AllegraTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) AllegraEra)))
-  | MaryTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) MaryEra)))
-  | AlonzoTxOut !(TxOut (LedgerState (ShelleyBlock (TPraos c) AlonzoEra)))
-  | BabbageTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) BabbageEra)))
-  | ConwayTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) ConwayEra)))
-  | DijkstraTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) DijkstraEra)))
+  = ShelleyTxOut {-# UNPACK #-} !(TxOut (ShelleyBlock (TPraos c) ShelleyEra))
+  | AllegraTxOut {-# UNPACK #-} !(TxOut (ShelleyBlock (TPraos c) AllegraEra))
+  | MaryTxOut {-# UNPACK #-} !(TxOut (ShelleyBlock (TPraos c) MaryEra))
+  | AlonzoTxOut !(TxOut (ShelleyBlock (TPraos c) AlonzoEra))
+  | BabbageTxOut !(TxOut (ShelleyBlock (Praos c) BabbageEra))
+  | ConwayTxOut !(TxOut (ShelleyBlock (Praos c) ConwayEra))
+  | DijkstraTxOut !(TxOut (ShelleyBlock (Praos c) DijkstraEra))
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
@@ -120,10 +120,9 @@ eliminateCardanoTxOut ::
   forall r c.
   CardanoHardForkConstraints c =>
   ( forall x.
-    -- TODO ProtoCrypto constraint should be in IsShelleyBlock
     IsShelleyBlock x =>
     Index (CardanoEras c) x ->
-    TxOut (LedgerState x) ->
+    TxOut x ->
     r
   ) ->
   CardanoTxOut c ->
@@ -154,7 +153,7 @@ instance CardanoHardForkConstraints c => HasHardForkTxOut (CardanoEras c) where
     forall y.
     Index (CardanoEras c) y ->
     HardForkTxOut (CardanoEras c) ->
-    TxOut (LedgerState y)
+    TxOut y
   ejectHardForkTxOut targetIdx =
     eliminateCardanoTxOut
       ( \origIdx ->
@@ -166,9 +165,9 @@ instance CardanoHardForkConstraints c => HasHardForkTxOut (CardanoEras c) where
 
 instance
   CardanoHardForkConstraints c =>
-  IndexedMemPack (LedgerState (HardForkBlock (CardanoEras c)) EmptyMK) (CardanoTxOut c)
+  IndexedMemPack LedgerState (HardForkBlock (CardanoEras c)) (CardanoTxOut c)
   where
-  indexedTypeName _ = "CardanoTxOut"
+  indexedTypeName _ _ = "CardanoTxOut"
   indexedPackM _ = eliminateCardanoTxOut (const packM)
   indexedPackedByteCount _ = eliminateCardanoTxOut (const packedByteCount)
   indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
@@ -190,7 +189,7 @@ instance
 
 instance
   CardanoHardForkConstraints c =>
-  SerializeTablesWithHint (LedgerState (HardForkBlock (CardanoEras c)))
+  SerializeTablesWithHint LedgerState (HardForkBlock (CardanoEras c))
   where
   encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
     let
@@ -217,7 +216,7 @@ instance
   decodeTablesWithHint ::
     forall s.
     LedgerState (HardForkBlock (CardanoEras c)) EmptyMK ->
-    Decoder s (LedgerTables (LedgerState (HardForkBlock (CardanoEras c))) ValuesMK)
+    Decoder s (LedgerTables (HardForkBlock (CardanoEras c)) ValuesMK)
   decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
     let
       -- These could be made into a CAF to avoid recomputing it, but
@@ -226,7 +225,7 @@ instance
         ( Fn $
             const $
               Comp $
-                K . LedgerTables @(LedgerState (HardForkBlock (CardanoEras c))) . ValuesMK
+                K . LedgerTables . ValuesMK
                   <$> (Codec.CBOR.Decoding.decodeMapLen >> pure Map.empty)
         )
           :* (Fn $ Comp . fmap K . getOne ShelleyTxOut . unFlip . currentState)
@@ -243,9 +242,9 @@ instance
     getOne ::
       forall proto era.
       ShelleyCompatible proto era =>
-      (TxOut (LedgerState (ShelleyBlock proto era)) -> CardanoTxOut c) ->
+      (TxOut (ShelleyBlock proto era) -> CardanoTxOut c) ->
       LedgerState (ShelleyBlock proto era) EmptyMK ->
-      Decoder s (LedgerTables (LedgerState (HardForkBlock (CardanoEras c))) ValuesMK)
+      Decoder s (LedgerTables (HardForkBlock (CardanoEras c)) ValuesMK)
     getOne toCardanoTxOut st =
       let certInterns =
             internsFromMap $

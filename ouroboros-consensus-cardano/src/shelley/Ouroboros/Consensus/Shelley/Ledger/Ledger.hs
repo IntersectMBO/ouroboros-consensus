@@ -136,7 +136,6 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , envelopeChecks
   , mkHeaderView
   )
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CBOR
   ( decodeStrictMaybe
@@ -219,7 +218,7 @@ mkShelleyLedgerConfig genesis transCtxt epochInfo =
     , shelleyLedgerTranslationContext = transCtxt
     }
 
-type instance LedgerCfg (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerConfig era
+type instance LedgerCfg LedgerState (ShelleyBlock proto era) = ShelleyLedgerConfig era
 
 data ShelleyPartialLedgerConfig era = ShelleyPartialLedgerConfig
   { shelleyLedgerConfig :: !(ShelleyLedgerConfig era)
@@ -285,7 +284,7 @@ data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   { shelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
   , shelleyLedgerState :: !(SL.NewEpochState era)
   , shelleyLedgerTransition :: !ShelleyTransition
-  , shelleyLedgerTables :: !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
+  , shelleyLedgerTables :: !(LedgerTables (ShelleyBlock proto era) mk)
   , shelleyLedgerLatestPerasCertRound :: !(StrictMaybe PerasRoundNo)
   }
   deriving Generic
@@ -359,21 +358,21 @@ instance MemPack BigEndianTxIn where
   unpackM = do
     BigEndianTxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
 
-type instance TxIn (LedgerState (ShelleyBlock proto era)) = BigEndianTxIn
-type instance TxOut (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
+type instance TxIn (ShelleyBlock proto era) = BigEndianTxIn
+type instance TxOut (ShelleyBlock proto era) = Core.TxOut era
 
 instance
   (txout ~ Core.TxOut era, MemPack txout) =>
-  IndexedMemPack (LedgerState (ShelleyBlock proto era) EmptyMK) txout
+  IndexedMemPack LedgerState (ShelleyBlock proto era) txout
   where
-  indexedTypeName _ = typeName @txout
+  indexedTypeName _ _ = typeName @txout
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
 instance
   ShelleyCompatible proto era =>
-  SerializeTablesWithHint (LedgerState (ShelleyBlock proto era))
+  SerializeTablesWithHint LedgerState (ShelleyBlock proto era)
   where
   encodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
     toPlainEncoding (Core.eraProtVerLow @era) $ encodeMap encodeMemPack encodeMemPack tbs
@@ -391,7 +390,7 @@ instance
 
 instance
   ShelleyBasedEra era =>
-  HasLedgerTables (LedgerState (ShelleyBlock proto era))
+  HasLedgerTables LedgerState (ShelleyBlock proto era)
   where
   projectLedgerTables = shelleyLedgerTables
   withLedgerTables st tables =
@@ -412,15 +411,15 @@ instance
 
 instance
   ShelleyBasedEra era =>
-  HasLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
+  HasLedgerTables (Ticked LedgerState) (ShelleyBlock proto era)
   where
-  projectLedgerTables = castLedgerTables . tickedShelleyLedgerTables
+  projectLedgerTables = tickedShelleyLedgerTables
   withLedgerTables st tables =
     TickedShelleyLedgerState
       { untickedShelleyLedgerTip
       , tickedShelleyLedgerTransition
       , tickedShelleyLedgerState
-      , tickedShelleyLedgerTables = castLedgerTables tables
+      , tickedShelleyLedgerTables = tables
       , tickedShelleyLedgerLatestPerasCertRound
       }
    where
@@ -471,7 +470,7 @@ instance
 
 instance
   ShelleyBasedEra era =>
-  CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era)))
+  CanStowLedgerTables (Ticked LedgerState (ShelleyBlock proto era))
   where
   stowLedgerTables st =
     TickedShelleyLedgerState
@@ -525,7 +524,7 @@ slUtxoL st vals =
 instance GetTip (LedgerState (ShelleyBlock proto era)) where
   getTip = castPoint . shelleyLedgerTipPoint
 
-instance GetTip (Ticked (LedgerState (ShelleyBlock proto era))) where
+instance GetTip (Ticked LedgerState (ShelleyBlock proto era)) where
   getTip = castPoint . untickedShelleyLedgerTipPoint
 
 {-------------------------------------------------------------------------------
@@ -533,7 +532,7 @@ instance GetTip (Ticked (LedgerState (ShelleyBlock proto era))) where
 -------------------------------------------------------------------------------}
 
 -- | Ticking only affects the state itself
-data instance Ticked (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyLedgerState
+data instance Ticked LedgerState (ShelleyBlock proto era) mk = TickedShelleyLedgerState
   { untickedShelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
   , tickedShelleyLedgerTransition :: !ShelleyTransition
   -- ^ We are counting blocks within an epoch, this means:
@@ -542,8 +541,7 @@ data instance Ticked (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyLe
   -- 2. However, we count within an epoch, which is slot-based. So the count
   --    must be reset when /ticking/, not when applying a block.
   , tickedShelleyLedgerState :: !(SL.NewEpochState era)
-  , tickedShelleyLedgerTables ::
-      !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
+  , tickedShelleyLedgerTables :: !(LedgerTables (ShelleyBlock proto era) mk)
   , tickedShelleyLedgerLatestPerasCertRound :: !(StrictMaybe PerasRoundNo)
   }
   deriving Generic
@@ -553,10 +551,10 @@ untickedShelleyLedgerTipPoint ::
   Point (ShelleyBlock proto era)
 untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
-instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) where
-  type LedgerErr (LedgerState (ShelleyBlock proto era)) = SL.BlockTransitionError era
+type instance AuxLedgerEvent (ShelleyBlock proto era) = ShelleyLedgerEvent era
 
-  type AuxLedgerEvent (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerEvent era
+instance ShelleyBasedEra era => IsLedger LedgerState (ShelleyBlock proto era) where
+  type LedgerErr LedgerState (ShelleyBlock proto era) = SL.BlockTransitionError era
 
   applyChainTickLedgerResult
     evs
@@ -608,7 +606,7 @@ data ShelleyLedgerEvent era
 
 instance
   ShelleyCompatible proto era =>
-  ApplyBlock (LedgerState (ShelleyBlock proto era)) (ShelleyBlock proto era)
+  ApplyBlock LedgerState (ShelleyBlock proto era)
   where
   -- Note: in the Shelley ledger, the @CHAIN@ rule is used to apply a whole
   -- block. In consensus, we split up the application of a block to the ledger
@@ -638,6 +636,10 @@ instance
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult (\err -> Exception.throw $! ShelleyReapplyException @era err)
 
+instance
+  ShelleyCompatible proto era =>
+  GetBlockKeySets (ShelleyBlock proto era)
+  where
   getBlockKeySets =
     LedgerTables
       . KeysMK
@@ -664,17 +666,17 @@ applyHelper ::
     Either
       (SL.BlockTransitionError era)
       ( LedgerResult
-          (LedgerState (ShelleyBlock proto era))
+          (ShelleyBlock proto era)
           (SL.NewEpochState era)
       )
   ) ->
   LedgerConfig (ShelleyBlock proto era) ->
   ShelleyBlock proto era ->
-  Ticked (LedgerState (ShelleyBlock proto era)) ValuesMK ->
+  Ticked LedgerState (ShelleyBlock proto era) ValuesMK ->
   Either
     (SL.BlockTransitionError era)
     ( LedgerResult
-        (LedgerState (ShelleyBlock proto era))
+        (ShelleyBlock proto era)
         (LedgerState (ShelleyBlock proto era) DiffMK)
     )
 applyHelper f cfg blk stBefore = do
@@ -912,7 +914,7 @@ decodeShelleyLedgerState =
         , shelleyLedgerLatestPerasCertRound
         }
 
-instance CanUpgradeLedgerTables (LedgerState (ShelleyBlock proto era)) where
+instance CanUpgradeLedgerTables LedgerState (ShelleyBlock proto era) where
   upgradeTables _ _ = id
 
 {-------------------------------------------------------------------------------

@@ -22,6 +22,8 @@ import Cardano.Binary
 import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
+import qualified Codec.CBOR.Decoding as CBOR
+import qualified Codec.CBOR.Encoding as CBOR
 import Control.Monad
 import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe, mapMaybe)
@@ -309,7 +311,7 @@ instance HasHardForkTxOut '[ByronBlock] where
 deriving via
   Void
   instance
-    IndexedMemPack (LedgerState (HardForkBlock '[ByronBlock]) EmptyMK) Void
+    IndexedMemPack LedgerState (HardForkBlock '[ByronBlock]) Void
 
 instance BlockSupportsHFLedgerQuery '[ByronBlock] where
   answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}
@@ -321,7 +323,8 @@ instance BlockSupportsHFLedgerQuery '[ByronBlock] where
   queryLedgerGetTraversingFilter IZ (q :: BlockQuery ByronBlock QFTraverseTables result) = case q of {}
   queryLedgerGetTraversingFilter (IS is) _q = case is of {}
 
-deriving via
-  TrivialLedgerTables (LedgerState (HardForkBlock '[ByronBlock]))
-  instance
-    SerializeTablesWithHint (LedgerState (HardForkBlock '[ByronBlock]))
+instance SerializeTablesWithHint LedgerState (HardForkBlock '[ByronBlock]) where
+  decodeTablesWithHint _ = do
+    _ <- CBOR.decodeMapLen
+    pure (LedgerTables $ ValuesMK Map.empty)
+  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0

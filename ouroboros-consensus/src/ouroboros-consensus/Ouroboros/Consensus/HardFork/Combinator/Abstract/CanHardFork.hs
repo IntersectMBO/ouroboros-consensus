@@ -21,7 +21,6 @@ import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import Ouroboros.Consensus.HardFork.Combinator.Translation
-import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -31,8 +30,6 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 
 class
   ( All SingleEraBlock xs
-  , All (Compose HasLedgerTables LedgerState) xs
-  , All (Compose HasTickedLedgerTables LedgerState) xs
   , Typeable xs
   , IsNonEmpty xs
   , Measure (HardForkTxMeasure xs)

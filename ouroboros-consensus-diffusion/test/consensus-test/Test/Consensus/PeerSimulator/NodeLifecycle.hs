@@ -140,7 +140,7 @@ mkChainDb ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables (LedgerState blk)
+  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   LiveResources blk m ->
   m (ChainDB m blk, m (WithOrigin SlotNo))
@@ -193,7 +193,7 @@ restoreNode ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables (LedgerState blk)
+  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   LiveResources blk m ->
   LiveIntervalResult blk ->
@@ -223,7 +223,7 @@ lifecycleStart ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables (LedgerState blk)
+  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   (LiveInterval blk m -> m ()) ->
   LiveResources blk m ->

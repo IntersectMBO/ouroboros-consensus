@@ -212,9 +212,7 @@ doAddTx mpEnv caller wti tx = do
     eRes <- withTMVarAnd istate additionalCheck $
       \is () -> do
         frkr <- readMVar forker
-        tbs <-
-          castLedgerTables
-            <$> roforkerReadTables frkr (castLedgerTables $ getTransactionKeySets tx)
+        tbs <- roforkerReadTables frkr (getTransactionKeySets tx)
         before <- getMonotonicTime
         mbX <- do
           let f m = case mbToCfg of
@@ -303,13 +301,13 @@ pureTryAddTx ::
   ) =>
   MempoolEnv m blk ->
   -- | The ledger configuration.
-  LedgerCfg (LedgerState blk) ->
+  LedgerCfg LedgerState blk ->
   WhetherToIntervene ->
   -- | The transaction to add to the mempool.
   GenTx blk ->
   -- | The current internal state of the mempool.
   InternalState blk ->
-  LedgerTables (LedgerState blk) ValuesMK ->
+  LedgerTables blk ValuesMK ->
   TriedToAddTx blk
 pureTryAddTx mpEnv cfg wti tx is values =
   let MempoolEnv
@@ -455,7 +453,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
               (getTransactionKeySets . txForgetValidated . validatedTx . TxSeq.txTicketTx)
               toKeep
       frkr <- readMVar forker
-      tbs <- castLedgerTables <$> roforkerReadTables frkr (castLedgerTables toKeep')
+      tbs <- roforkerReadTables frkr toKeep'
       let (is', t) =
             pureRemoveTxs
               capacityOverride
@@ -487,7 +485,7 @@ pureRemoveTxs ::
   LedgerConfig blk ->
   SlotNo ->
   TickedLedgerState blk DiffMK ->
-  LedgerTables (LedgerState blk) ValuesMK ->
+  LedgerTables blk ValuesMK ->
   TicketNo ->
   -- | Txs to keep
   [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
@@ -584,7 +582,7 @@ implSyncWithLedger projectResult mpEnv =
                         roforkerClose frkOld
                         pure frk
                     )
-                  tbs <- castLedgerTables <$> roforkerReadTables frk (castLedgerTables $ isTxKeys is)
+                  tbs <- roforkerReadTables frk (isTxKeys is)
                   let (is', mTrace) =
                         pureSyncWithLedger
                           capacityOverride
@@ -618,7 +616,7 @@ pureSyncWithLedger ::
   LedgerConfig blk ->
   SlotNo ->
   TickedLedgerState blk DiffMK ->
-  LedgerTables (LedgerState blk) ValuesMK ->
+  LedgerTables blk ValuesMK ->
   InternalState blk ->
   ( InternalState blk
   , Maybe (TraceEventMempool blk)

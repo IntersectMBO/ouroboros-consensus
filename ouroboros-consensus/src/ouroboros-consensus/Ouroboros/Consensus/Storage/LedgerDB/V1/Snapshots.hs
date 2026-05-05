@@ -284,18 +284,17 @@ loadSnapshot ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerSupportsV1LedgerDB (LedgerState blk)
   , LedgerDbSerialiseConstraints blk
   ) =>
   Tracer m V1.SomeBackendTrace ->
-  SomeBackendArgs m (ExtLedgerState blk) ->
+  SomeBackendArgs m ExtLedgerState blk ->
   CodecConfig blk ->
   SnapshotsFS m ->
   DiskSnapshot ->
   ExceptT
     (SnapshotFailure blk)
     m
-    ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
+    ((DbChangelog' blk, LedgerBackingStore m ExtLedgerState blk), RealPoint blk)
 loadSnapshot tracer bArgs@(SomeBackendArgs bss) ccfg fs@(SnapshotsFS fs'@(SomeHasFS hfs)) s = do
   fileEx <- lift $ FS.doesFileExist hfs (snapshotToDirPath s)
   Monad.when fileEx $ throwError $ InitFailureRead ReadSnapshotIsLegacy
@@ -306,7 +305,7 @@ loadSnapshot tracer bArgs@(SomeBackendArgs bss) ccfg fs@(SnapshotsFS fs'@(SomeHa
     withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath s)) $
       loadSnapshotMetadata fs' s
   Monad.unless
-    (isRightBackendForSnapshot (Proxy @(ExtLedgerState blk)) bss (snapshotBackend snapshotMeta))
+    (isRightBackendForSnapshot (Proxy @ExtLedgerState) (Proxy @blk) bss (snapshotBackend snapshotMeta))
     $ throwError
     $ InitFailureRead
     $ ReadMetadataError (snapshotToMetadataPath s) MetadataBackendMismatch

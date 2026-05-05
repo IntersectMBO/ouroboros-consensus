@@ -198,8 +198,8 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , PraosCrypto (ProtoCrypto proto1)
   , proto1 ~ TPraos (ProtoCrypto proto1)
   , proto1 ~ proto2
-  , MemPack (TxOut (LedgerState (ShelleyBlock proto1 era1)))
-  , MemPack (TxOut (LedgerState (ShelleyBlock proto2 era2)))
+  , MemPack (TxOut (ShelleyBlock proto1 era1))
+  , MemPack (TxOut (ShelleyBlock proto2 era2))
   )
 
 class TranslateTxMeasure a b where
@@ -532,12 +532,13 @@ instance
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
   SerializeTablesWithHint
-    (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
+    LedgerState
+    (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
   where
   encodeTablesWithHint ::
     LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK ->
     LedgerTables
-      (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
+      (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
       ValuesMK ->
     Encoding
   encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
@@ -566,7 +567,7 @@ instance
     Decoder
       s
       ( LedgerTables
-          (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
+          (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
           ValuesMK
       )
   decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
@@ -581,14 +582,14 @@ instance
     getOne ::
       forall proto era.
       ShelleyCompatible proto era =>
-      ( TxOut (LedgerState (ShelleyBlock proto era)) ->
-        TxOut (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
+      ( TxOut (ShelleyBlock proto era) ->
+        TxOut (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
       ) ->
       LedgerState (ShelleyBlock proto era) EmptyMK ->
       Decoder
         s
         ( LedgerTables
-            (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
+            (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
             ValuesMK
         )
     getOne toShelleyTxOut st =
@@ -608,10 +609,11 @@ instance
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
   IndexedMemPack
-    (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK)
+    LedgerState
+    (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
     (DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
   where
-  indexedTypeName _ =
+  indexedTypeName _ _ =
     typeName @(DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
   indexedPackedByteCount _ txout =
     hcollapse $
@@ -627,6 +629,35 @@ instance
             packM txout
         )
   indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
+    hsequence'
+      $ hcmap
+        (Proxy @MemPackTxOut)
+        (const $ Comp $ WrapTxOut <$> unpackM)
+      $ Telescope.tip idx
+
+instance
+  ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
+  IndexedMemPack
+    (Ticked LedgerState)
+    (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
+    (DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
+  where
+  indexedTypeName _ _ =
+    typeName @(DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
+  indexedPackedByteCount _ txout =
+    hcollapse $
+      hcmap
+        (Proxy @MemPackTxOut)
+        (K . packedByteCount . unwrapTxOut)
+        txout
+  indexedPackM _ =
+    hcollapse
+      . hcimap
+        (Proxy @MemPackTxOut)
+        ( \_ (WrapTxOut txout) -> K $ do
+            packM txout
+        )
+  indexedUnpackM (TickedHardForkLedgerState _ (HardForkState idx)) = do
     hsequence'
       $ hcmap
         (Proxy @MemPackTxOut)

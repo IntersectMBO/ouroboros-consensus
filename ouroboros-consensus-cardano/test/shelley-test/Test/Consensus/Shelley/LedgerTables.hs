@@ -56,22 +56,26 @@ tests =
       ]
 
 class
-  ( HasLedgerTables (LedgerState blk)
+  ( HasLedgerTables LedgerState blk
   , CanStowLedgerTables (LedgerState blk)
   , (Show `And` Arbitrary) (LedgerState blk EmptyMK)
   , (Show `And` Arbitrary) (LedgerState blk ValuesMK)
-  , (Show `And` Arbitrary) (LedgerTables (LedgerState blk) ValuesMK)
+  , (Show `And` Arbitrary) (LedgerTables blk ValuesMK)
   , L.Era (ShelleyBlockLedgerEra blk)
+  , Show (TxIn blk)
+  , Show (TxOut blk)
   ) =>
   TestLedgerTables blk
 
 instance
-  ( HasLedgerTables (LedgerState blk)
+  ( HasLedgerTables LedgerState blk
   , CanStowLedgerTables (LedgerState blk)
   , (Show `And` Arbitrary) (LedgerState blk EmptyMK)
   , (Show `And` Arbitrary) (LedgerState blk ValuesMK)
-  , (Show `And` Arbitrary) (LedgerTables (LedgerState blk) ValuesMK)
+  , (Show `And` Arbitrary) (LedgerTables blk ValuesMK)
   , L.Era (ShelleyBlockLedgerEra blk)
+  , Show (TxIn blk)
+  , Show (TxOut blk)
   ) =>
   TestLedgerTables blk
 
@@ -79,9 +83,9 @@ instance
   ( CanMock proto era
   , Arbitrary (LedgerState (ShelleyBlock proto era) EmptyMK)
   ) =>
-  Arbitrary (LedgerTables (LedgerState (ShelleyBlock proto era)) ValuesMK)
+  Arbitrary (LedgerTables (ShelleyBlock proto era) ValuesMK)
   where
-  arbitrary = projectLedgerTables . unstowLedgerTables <$> arbitrary
+  arbitrary = projectLedgerTables @LedgerState . unstowLedgerTables <$> arbitrary
 
 testBigEndianTxInPreservesOrder :: L.TxId -> L.TxIx -> L.TxIx -> Property
 testBigEndianTxInPreservesOrder txid txix1 txix2 =

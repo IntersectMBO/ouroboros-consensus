@@ -40,8 +40,7 @@ import Ouroboros.Consensus.HeaderValidation
   ( BasicEnvelopeValidation (..)
   , HeaderState (..)
   )
-import Ouroboros.Consensus.Ledger.Abstract (Validated)
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -89,7 +88,7 @@ initialForgeState = ForgeState 0 0 0 0
 -- | An action to generate transactions for a given block
 type GenTxs blk =
   SlotNo ->
-  ReadOnlyForker IO (ExtLedgerState blk) ->
+  ReadOnlyForker' IO blk ->
   TickedLedgerState blk DiffMK ->
   IO [Validated (GenTx blk)]
 
@@ -200,7 +199,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
       _ -> exitEarly' "NoLeader"
 
     -- Tick the ledger state for the 'SlotNo' we're producing a block for
-    let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
+    let tickedLedgerState :: Ticked LedgerState blk DiffMK
         tickedLedgerState =
           applyChainTick
             OmitLedgerEvents

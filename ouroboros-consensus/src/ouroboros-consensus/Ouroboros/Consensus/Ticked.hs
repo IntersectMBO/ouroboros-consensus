@@ -42,6 +42,11 @@ import Ouroboros.Consensus.Block.Abstract
 -- * New leader schedule computed for Shelley
 -- * Transition from Byron to Shelley activated in the hard fork combinator.
 -- * Nonces switched out at the start of a new epoch.
+--
+-- @Ticked@ is used mainly in two ways:
+--
+-- * @Ticked (Ext)LedgerState@ where its kind gets concretized to @StateKind -> StateKind@
+-- * @Ticked (HeaderState blk)@ where its kind gets concretized to @Type -> Type@
 type Ticked :: k -> k
 data family Ticked st
 
@@ -50,7 +55,7 @@ data family Ticked st
 data instance Ticked () = TickedTrivial
   deriving Show
 
-type instance HeaderHash (Ticked l) = HeaderHash l
+type instance HeaderHash (Ticked l blk) = HeaderHash (l blk)
 
 {-------------------------------------------------------------------------------
   Forwarding type class instances

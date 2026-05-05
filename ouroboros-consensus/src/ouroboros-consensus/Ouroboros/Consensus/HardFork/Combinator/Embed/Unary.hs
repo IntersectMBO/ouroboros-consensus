@@ -610,7 +610,7 @@ instance Isomorphic (SomeSecond (NestedCtxt f)) where
 instance Isomorphic WrapLedgerErr where
   project = WrapLedgerErr . aux . unwrapLedgerErr
    where
-    aux :: HardForkLedgerError '[blk] -> LedgerErr (LedgerState blk)
+    aux :: HardForkLedgerError '[blk] -> LedgerErr LedgerState blk
     aux (HardForkLedgerErrorFromEra err) =
       unwrapLedgerErr
         . unZ
@@ -621,7 +621,7 @@ instance Isomorphic WrapLedgerErr where
 
   inject = WrapLedgerErr . aux . unwrapLedgerErr
    where
-    aux :: LedgerErr (LedgerState blk) -> HardForkLedgerError '[blk]
+    aux :: LedgerErr LedgerState blk -> HardForkLedgerError '[blk]
     aux = HardForkLedgerErrorFromEra . OneEraLedgerError . Z . WrapLedgerErr
 
 {-------------------------------------------------------------------------------

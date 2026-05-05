@@ -253,7 +253,7 @@ instance
       SingleEraBlock x =>
       Index xs x ->
       GenTx x ->
-      K (LedgerTables (LedgerState (HardForkBlock xs)) KeysMK) x
+      K (LedgerTables (HardForkBlock xs) KeysMK) x
     f idx tx = K $ injectLedgerTables idx $ getTransactionKeySets tx
 
   -- This optimization is worthwile because we can save the projection and
@@ -421,7 +421,7 @@ type family ApplyMK k where
 
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs txIn blk = ApplyResult
-  { arState :: Ticked (LedgerState blk) (ApplyMK (ApplyHelperMode txIn))
+  { arState :: Ticked LedgerState blk (ApplyMK (ApplyHelperMode txIn))
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
 

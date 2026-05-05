@@ -78,8 +78,8 @@ And imports, of course:
 
 > import Ouroboros.Consensus.Ticked (Ticked, Ticked)
 > import Ouroboros.Consensus.Ledger.Abstract
->   (LedgerState, LedgerCfg, GetTip, LedgerResult (..), ApplyBlock (..),
->    UpdateLedger, IsLedger (..), defaultApplyBlockLedgerResult,
+>   (LedgerState, LedgerCfg, GetTip, LedgerResult (..), ApplyBlock (..), GetBlockKeySets (..),
+>    UpdateLedger, IsLedger (..), AuxLedgerEvent, defaultApplyBlockLedgerResult,
 >    defaultReapplyBlockLedgerResult)
 
 > import Ouroboros.Consensus.Ledger.SupportsMempool ()
@@ -92,8 +92,8 @@ And imports, of course:
 >   (Forecast (..), OutsideForecastRange (..))
 > import Ouroboros.Consensus.Ledger.Basics (GetTip(..))
 > import Ouroboros.Consensus.Ledger.Tables
+> import Ouroboros.Consensus.Ledger.Tables.Utils
 
-> import Ouroboros.Consensus.Storage.LedgerDB
 > import Ouroboros.Consensus.Util.IndexedMemPack
 
 Epochs
@@ -316,11 +316,11 @@ below:
 
 There is no interesting static configuration for this ledger:
 
-> type instance LedgerCfg (LedgerState BlockD) = ()
+> type instance LedgerCfg LedgerState BlockD = ()
 
 Our `GetTip` implementation retrieves the tip from the `lsbd_tip` field:
 
-> instance GetTip (Ticked (LedgerState BlockD)) where
+> instance GetTip (Ticked LedgerState BlockD) where
 >  getTip = castPoint . lsbd_tip . unTickedLedgerStateD
 
 > instance GetTip (LedgerState BlockD) where
@@ -332,7 +332,7 @@ Ticking
 `LedgerState BlockD` also needs a corresponding `Ticked` instance which is still
 very simple:
 
-> newtype instance Ticked (LedgerState BlockD) mk =
+> newtype instance Ticked LedgerState BlockD mk =
 >   TickedLedgerStateD {
 >     unTickedLedgerStateD :: LedgerState BlockD mk
 >   }
@@ -347,7 +347,7 @@ computing the `Ticked (LedgerState BlockD)` resulting from a starting
 intervening blocks are applied:
 
 > tickLedgerStateD ::
->   SlotNo -> LedgerState BlockD mk -> Ticked (LedgerState BlockD) mk
+>   SlotNo -> LedgerState BlockD mk -> Ticked LedgerState BlockD mk
 > tickLedgerStateD newSlot ldgrSt =
 >   TickedLedgerStateD $
 >     if isNewEpoch then
@@ -376,10 +376,11 @@ blocks are applied during the span of time represented by the slot argument.
 
 We can now use `tickLedgerStateD` to instantiate `IsLedger`:
 
-> instance IsLedger (LedgerState BlockD) where
->   type instance LedgerErr (LedgerState BlockD) = Void
->   type instance AuxLedgerEvent (LedgerState BlockD) = ()
->
+> type instance AuxLedgerEvent BlockD = ()
+
+> instance IsLedger LedgerState BlockD where
+>   type instance LedgerErr LedgerState BlockD = Void
+
 >   applyChainTickLedgerResult _events _cfg slot ldgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = tickLedgerStateD slot $ convertMapKind ldgrSt
@@ -395,7 +396,7 @@ Applying Blocks
 Applying a `BlockD` to a `Ticked (LedgerState BlockD)` is (again) the result of
 applying each individual transaction - exactly as it was in for `BlockC`:
 
-> applyBlockTo :: BlockD -> Ticked (LedgerState BlockD) mk -> LedgerState BlockD mk
+> applyBlockTo :: BlockD -> Ticked LedgerState BlockD mk -> LedgerState BlockD mk
 > applyBlockTo block tickedLedgerState =
 >   ledgerState { lsbd_tip = blockPoint block
 >               , lsbd_count = lsbc_count'
@@ -408,16 +409,17 @@ applying each individual transaction - exactly as it was in for `BlockC`:
 >         Inc -> i + 1
 >         Dec -> i - 1
 
-> instance ApplyBlock (LedgerState BlockD) BlockD where
+> instance ApplyBlock LedgerState BlockD where
 >   applyBlockLedgerResultWithValidation _validation _events _ldgrCfg b tickedLdgrSt =
 >     pure LedgerResult { lrResult = convertMapKind $ b `applyBlockTo` tickedLdgrSt
 >                       , lrEvents = []
 >                       }
->
+
 >   applyBlockLedgerResult = defaultApplyBlockLedgerResult
 >   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
->
->   getBlockKeySets = const trivialLedgerTables
+
+> instance GetBlockKeySets BlockD where
+>   getBlockKeySets = const emptyLedgerTables
 
 Note that prior to `applyBlockLedgerResult` being invoked, the calling code will
 have already established that the header is valid and that the header matches
@@ -678,21 +680,19 @@ Appendix: UTxO-HD features
 For reference on these instances and their meaning, please see the appendix in
 [the Simple tutorial](./Simple.lhs).
 
-> type instance TxIn  (LedgerState BlockD) = Void
-> type instance TxOut (LedgerState BlockD) = Void
+> type instance TxIn  BlockD = Void
+> type instance TxOut BlockD = Void
 
-> instance LedgerTablesAreTrivial (LedgerState BlockD) where
->   convertMapKind (LedgerD x y z z') = LedgerD x y z z'
-> instance LedgerTablesAreTrivial (Ticked (LedgerState BlockD)) where
+> instance LedgerTablesAreTrivial LedgerState BlockD where
+>   convertMapKind (LedgerD x y z v) = LedgerD x y z v
+> instance LedgerTablesAreTrivial (Ticked LedgerState) BlockD where
 >   convertMapKind (TickedLedgerStateD x) =
 >       TickedLedgerStateD (convertMapKind x)
-> deriving via TrivialLedgerTables (LedgerState BlockD)
->     instance HasLedgerTables (LedgerState BlockD)
-> deriving via TrivialLedgerTables (Ticked (LedgerState BlockD))
->     instance HasLedgerTables (Ticked (LedgerState BlockD))
 > deriving via Void
->     instance IndexedMemPack (LedgerState BlockD EmptyMK) Void
-> deriving via TrivialLedgerTables (LedgerState BlockD)
->     instance CanStowLedgerTables (LedgerState BlockD)
-> deriving via TrivialLedgerTables (LedgerState BlockD)
->     instance CanUpgradeLedgerTables (LedgerState BlockD)
+>   instance IndexedMemPack LedgerState BlockD Void
+> instance HasLedgerTables LedgerState BlockD where
+>   projectLedgerTables _ = emptyLedgerTables
+>   withLedgerTables st _ = convertMapKind st
+> instance HasLedgerTables (Ticked LedgerState) BlockD where
+>   projectLedgerTables _ = emptyLedgerTables
+>   withLedgerTables st _ = convertMapKind st

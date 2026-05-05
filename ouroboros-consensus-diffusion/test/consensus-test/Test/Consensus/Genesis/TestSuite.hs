@@ -192,7 +192,7 @@ toTestTree ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables (LedgerState blk)
+  , CanUpgradeLedgerTables LedgerState blk
   , HasPointScheduleTestParams blk
   , Eq (Header blk)
   , Eq blk

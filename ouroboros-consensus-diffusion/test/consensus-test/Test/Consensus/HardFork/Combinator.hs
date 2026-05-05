@@ -478,16 +478,17 @@ instance SerialiseHFC '[BlockA, BlockB]
 
 -- Use defaults
 
-instance SerializeTablesWithHint (LedgerState (HardForkBlock '[BlockA, BlockB])) where
+instance SerializeTablesWithHint LedgerState (HardForkBlock '[BlockA, BlockB]) where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
 
 instance
   IndexedMemPack
-    (LedgerState (HardForkBlock '[BlockA, BlockB]) EmptyMK)
+    LedgerState
+    (HardForkBlock '[BlockA, BlockB])
     (DefaultHardForkTxOut '[BlockA, BlockB])
   where
-  indexedTypeName _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
+  indexedTypeName _ _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
   indexedPackedByteCount _ txout =
     hcollapse $
       hcmap
@@ -502,6 +503,33 @@ instance
             packM txout
         )
   indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
+    hsequence'
+      $ hcmap
+        (Proxy @MemPackTxOut)
+        (const $ Comp $ WrapTxOut <$> unpackM)
+      $ Telescope.tip idx
+
+instance
+  IndexedMemPack
+    (Ticked LedgerState)
+    (HardForkBlock '[BlockA, BlockB])
+    (DefaultHardForkTxOut '[BlockA, BlockB])
+  where
+  indexedTypeName _ _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
+  indexedPackedByteCount _ txout =
+    hcollapse $
+      hcmap
+        (Proxy @MemPackTxOut)
+        (K . packedByteCount . unwrapTxOut)
+        txout
+  indexedPackM _ =
+    hcollapse
+      . hcimap
+        (Proxy @MemPackTxOut)
+        ( \_ (WrapTxOut txout) -> K $ do
+            packM txout
+        )
+  indexedUnpackM (TickedHardForkLedgerState _ (HardForkState idx)) = do
     hsequence'
       $ hcmap
         (Proxy @MemPackTxOut)
