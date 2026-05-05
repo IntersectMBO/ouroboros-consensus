@@ -326,7 +326,7 @@ translateLedgerStateByronToShelleyWrapper =
                       (byronLedgerState ledgerByron)
                 , shelleyLedgerTransition =
                     ShelleyTransitionInfo{shelleyAfterVoting = 0}
-                , shelleyLedgerTables = emptyLedgerTables
+                , shelleyLedgerTables = emptyTables
                 , shelleyLedgerLatestPerasCertRound = SNothing
                 }
         }
@@ -477,8 +477,7 @@ translateLedgerStateShelleyToAllegraWrapper =
               -- revisited, as there might be other diffs produced in the
               -- translation.
               avvmsAsDeletions =
-                LedgerTables
-                  . DiffMK
+                DiffMK
                   . Diff.fromMapDeletes
                   . coerceMapKeys
                   . Map.map SL.upgradeTxOut
@@ -491,7 +490,6 @@ translateLedgerStateShelleyToAllegraWrapper =
               stowedState =
                 stowLedgerTables
                   . withLedgerTables ls
-                  . LedgerTables
                   . ValuesMK
                   . coerceMapKeys
                   $ avvms

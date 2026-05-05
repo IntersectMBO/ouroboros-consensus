@@ -8,7 +8,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 
 import Data.Word
 import GHC.Generics
-import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
+-- Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 
 -- | The number of blocks in the immutable part of the chain that we have to see
 -- before we flush the ledger tables to disk. See 'onDiskShouldFlush'.

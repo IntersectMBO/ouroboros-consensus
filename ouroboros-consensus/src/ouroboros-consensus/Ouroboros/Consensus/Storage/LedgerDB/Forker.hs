@@ -98,10 +98,10 @@ data Forker m l blk = Forker
   -- and not by the LedgerDB.
   , -- Queries
 
-    forkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
+    forkerReadTables :: !(Keys blk -> m (Values blk))
   -- ^ Read ledger tables from disk.
   , forkerRangeReadTables ::
-      !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
+      !(RangeQueryPrevious blk -> m (Values blk, Maybe (TxIn blk)))
   -- ^ Range-read ledger tables from disk.
   --
   -- This range read will return as many values as the 'QueryBatchSize' that was
@@ -241,10 +241,10 @@ type ReadOnlyForker :: (Type -> Type) -> StateKind -> Type -> Type
 data ReadOnlyForker m l blk = ReadOnlyForker
   { roforkerClose :: !(m ())
   -- ^ See 'forkerClose'
-  , roforkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
+  , roforkerReadTables :: !(Keys blk -> m (Values blk))
   -- ^ See 'forkerReadTables'
   , roforkerRangeReadTables ::
-      !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
+      !(RangeQueryPrevious blk -> m (Values blk, Maybe (TxIn blk)))
   -- ^ See 'forkerRangeReadTables'.
   , roforkerGetLedgerState :: !(STM m (l blk EmptyMK))
   -- ^ See 'forkerGetLedgerState'

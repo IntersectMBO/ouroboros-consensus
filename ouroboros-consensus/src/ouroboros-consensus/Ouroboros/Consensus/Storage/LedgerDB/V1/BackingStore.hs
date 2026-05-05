@@ -35,7 +35,7 @@ import Data.Proxy
 import Data.Typeable
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
+-- Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import System.FS.API
 
 type BackingStoreInitialiser m l blk =

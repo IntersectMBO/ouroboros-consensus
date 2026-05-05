@@ -62,14 +62,14 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
-import Ouroboros.Consensus.Storage.LedgerDB.V1.Args hiding
+-- Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
+-- Ouroboros.Consensus.Storage.LedgerDB.V1.Args hiding
   ( LedgerDbBackendArgs
   )
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as V1.InMemory
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as V1.InMemory
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
+-- Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2.InMemory
@@ -87,7 +87,7 @@ import System.FS.Sim.STM
 import qualified System.FilePath as FilePath
 import qualified System.IO.Temp as Temp
 import Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
-import Test.Ouroboros.Storage.LedgerDB.V1.LMDB
+-- Test.Ouroboros.Storage.LedgerDB.V1.LMDB
 import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Monadic as QC
 import Test.QuickCheck.StateModel

@@ -295,7 +295,7 @@ protocolInfoTPraosShelleyBased
               L.injectIntoTestState transitionCfg $
                 L.createInitialState transitionCfg
           , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
-          , shelleyLedgerTables = emptyLedgerTables
+          , shelleyLedgerTables = emptyTables
           , shelleyLedgerLatestPerasCertRound = SNothing
           }
 

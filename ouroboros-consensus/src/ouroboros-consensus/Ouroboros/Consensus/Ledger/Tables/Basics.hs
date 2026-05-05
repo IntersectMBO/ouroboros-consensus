@@ -19,15 +19,17 @@ module Ouroboros.Consensus.Ledger.Tables.Basics
   , StateKind
 
     -- * Ledger tables
-  , LedgerTables (..)
   , TxIn
   , TxOut
+  , Keys
+  , Values
+  , Diffs
+  , MkBlk
   ) where
 
 import Data.Kind (Type)
-import GHC.Generics (Generic)
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.Tables.Kinds
+import Ouroboros.Consensus.Ledger.Tables.MapKind
 
 {-------------------------------------------------------------------------------
   Ledger tables
@@ -52,21 +54,12 @@ import Ouroboros.Consensus.Ledger.Tables.Kinds
 --
 -- The @mk@ can be instantiated to anything that is map-like, i.e. that expects
 -- two type parameters, the key and the value.
-type LedgerTables :: Type -> MapKind -> Type
-newtype LedgerTables blk mk = LedgerTables
-  { getLedgerTables :: mk (TxIn blk) (TxOut blk)
-  }
-  deriving stock Generic
+type Keys blk = KeysMK (TxIn blk) (TxOut blk)
 
-deriving stock instance
-  Show (mk (TxIn blk) (TxOut blk)) =>
-  Show (LedgerTables blk mk)
-deriving stock instance
-  Eq (mk (TxIn blk) (TxOut blk)) =>
-  Eq (LedgerTables blk mk)
-deriving newtype instance
-  NoThunks (mk (TxIn blk) (TxOut blk)) =>
-  NoThunks (LedgerTables blk mk)
+type Values blk = ValuesMK (TxIn blk) (TxOut blk)
+type Diffs blk = DiffMK (TxIn blk) (TxOut blk)
+
+type MkBlk mk blk = mk (TxIn blk) (TxOut blk)
 
 -- | Each @LedgerState@ instance will have the notion of a @TxIn@ for the tables.
 --

@@ -24,7 +24,7 @@ implGetSnapshotFor ::
   TickedLedgerState blk DiffMK ->
   -- | A function that returns values corresponding to the given keys for
   -- the unticked ledger state.
-  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
+  (Keys blk -> m (Values blk)) ->
   m (MempoolSnapshot blk)
 implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
   is <- atomically $ readTMVar istate

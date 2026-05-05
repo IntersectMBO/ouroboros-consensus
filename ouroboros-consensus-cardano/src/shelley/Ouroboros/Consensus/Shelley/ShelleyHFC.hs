@@ -388,10 +388,10 @@ translateShelleyTables ::
   , ShelleyBasedEra era
   , ShelleyBasedEra (SL.PreviousEra era)
   ) =>
-  LedgerTables (ShelleyBlock proto (SL.PreviousEra era)) mk ->
-  LedgerTables (ShelleyBlock proto era) mk
-translateShelleyTables (LedgerTables utxoTable) =
-  LedgerTables $ mapKeysMK coerce $ mapMK SL.upgradeTxOut utxoTable
+  MkBlk mk (ShelleyBlock proto (SL.PreviousEra era)) ->
+  MkBlk mk (ShelleyBlock proto era)
+translateShelleyTables utxoTable =
+  mapKeysMK coerce $ mapMK SL.upgradeTxOut utxoTable
 
 instance
   ( ShelleyBasedEra era
@@ -496,9 +496,9 @@ instance
   where
   encodeTablesWithHint ::
     LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK ->
-    LedgerTables (HardForkBlock '[ShelleyBlock proto era]) ValuesMK ->
+    Values (HardForkBlock '[ShelleyBlock proto era]) ->
     Encoding
-  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
+  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (ValuesMK tbs) =
     let
       np = (Fn $ const $ K encOne) :* Nil
      in
@@ -510,7 +510,7 @@ instance
   decodeTablesWithHint ::
     forall s.
     LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK ->
-    Decoder s (LedgerTables (HardForkBlock '[ShelleyBlock proto era]) ValuesMK)
+    Decoder s (Values (HardForkBlock '[ShelleyBlock proto era]))
   decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
     let
       np = (Fn $ Comp . fmap K . getOne . unFlip . currentState) :* Nil
@@ -519,7 +519,7 @@ instance
    where
     getOne ::
       LedgerState (ShelleyBlock proto era) EmptyMK ->
-      Decoder s (LedgerTables (HardForkBlock '[ShelleyBlock proto era]) ValuesMK)
+      Decoder s (Values (HardForkBlock '[ShelleyBlock proto era]))
     getOne st =
       let certInterns =
             internsFromMap $
@@ -530,4 +530,4 @@ instance
                   . SL.certDStateL
                   . SL.accountsL
                   . SL.accountsMapL
-       in LedgerTables . ValuesMK <$> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))
+       in ValuesMK <$> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))

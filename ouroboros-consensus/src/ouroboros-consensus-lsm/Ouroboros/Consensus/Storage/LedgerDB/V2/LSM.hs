@@ -250,7 +250,7 @@ implDuplicateWithDiffs ::
 implDuplicateWithDiffs tracer t0 size _ !st1 = do
   t <- duplicateLSMTable tracer t0
   encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $ do
-    let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
+    let DiffMK (Diff.Diff diffs) = projectLedgerTables st1
     let vec = V.create $ do
           vec' <- VM.new (Map.size diffs)
           Monad.foldM_
@@ -285,9 +285,9 @@ implRead ::
   Tracer m LedgerDBV2Trace ->
   UTxOTable m ->
   l blk EmptyMK ->
-  LedgerTables blk KeysMK ->
-  m (LedgerTables blk ValuesMK)
-implRead tracer t st (LedgerTables (KeysMK keys)) =
+  Keys blk ->
+  m (Values blk)
+implRead tracer t st (KeysMK keys) =
   encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $ do
     let vec' = V.create $ do
           vec <- VM.new (Set.size keys)
@@ -299,7 +299,6 @@ implRead tracer t st (LedgerTables (KeysMK keys)) =
     res <-
       encloseTimedWith (BackendTrace . SomeBackendTrace . LSMLookup >$< tracer) $ LSM.lookups t vec'
     pure
-      . LedgerTables
       . ValuesMK
       . Foldable.foldl'
         ( \m (k, item) ->
@@ -317,12 +316,11 @@ implReadRange ::
   UTxOTable m ->
   l blk EmptyMK ->
   (Maybe (TxIn blk), Int) ->
-  m (LedgerTables blk ValuesMK, Maybe (TxIn blk))
+  m (Values blk, Maybe (TxIn blk))
 implReadRange table st (mPrev, num) = do
   entries <- maybe cursorFromStart cursorFromKey mPrev
   pure
-    ( LedgerTables
-        . ValuesMK
+    ( ValuesMK
         . V.foldl'
           ( \m -> \case
               LSM.Entry k v -> Map.insert (fromTxInBytes (Proxy @blk) k) (fromTxOutBytes st v) m
@@ -347,11 +345,11 @@ implReadAll ::
   ) =>
   UTxOTable m ->
   l blk EmptyMK ->
-  m (LedgerTables blk ValuesMK)
+  m (Values blk)
 implReadAll t st =
   let readAll' m = do
         (v, n) <- implReadRange t st (m, 100000)
-        maybe (pure v) (fmap (ltliftA2 unionValues v) . readAll' . Just) n
+        maybe (pure v) (fmap (unionValues v) . readAll' . Just) n
    in readAll' Nothing
 
 implTakeHandleSnapshot ::
@@ -569,9 +567,9 @@ tableFromValuesMK ::
   Tracer m LedgerDBV2Trace ->
   Session m ->
   l blk EmptyMK ->
-  LedgerTables blk ValuesMK ->
+  Values blk ->
   m (UTxOTable m, Word64)
-tableFromValuesMK tracer session st (LedgerTables (ValuesMK values)) = do
+tableFromValuesMK tracer session st (ValuesMK values) = do
   table <-
     encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $ LSM.newTable session
   mapM_ (go table) $ chunks 1000 $ Map.toList values
@@ -672,7 +670,7 @@ instance
   createAndPopulateStateRefFromGenesis trcr res st = do
     let st' = forgetLedgerTables st
     (table, sz) <-
-      tableFromValuesMK trcr (sessionResource res) st' (ltprj st)
+      tableFromValuesMK trcr (sessionResource res) st' (projectLedgerTables st)
     StateRef st' <$> newLSMLedgerTablesHandle trcr sz table
 
   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
@@ -739,7 +737,7 @@ yieldLsmS readChunkSize tb hint k = do
   lift $ S.effects r
  where
   go p = do
-    (LedgerTables (ValuesMK values), mx) <- lift $ S.lift $ readRange tb hint p
+    (ValuesMK values, mx) <- lift $ S.lift $ readRange tb hint p
     if Map.null values
       then pure $ pure Nothing
       else do

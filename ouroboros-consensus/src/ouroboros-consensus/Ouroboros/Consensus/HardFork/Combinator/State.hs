@@ -56,6 +56,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Translation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract hiding (getTip)
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Util
 import Prelude hiding (sequence)
 
 {-------------------------------------------------------------------------------
@@ -253,7 +254,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
           c
             { currentState =
                 Flip
-                  . flip withLedgerTables emptyLedgerTables
+                  . flip withLedgerTables emptyDiff
                   . unFlip
                   . currentState
                   $ c
@@ -312,9 +313,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
                     . currentState
                     $ cur
              in Flip
-                  . (cur' `withLedgerTables`)
-                  . ltliftA2
-                    rawPrependDiffs
+                  . prependDiffs'
                     ( -- We need to bring back the diffs provided by previous
                       -- translations. Note that if there is only one
                       -- translation or if the previous translations don't add
@@ -327,7 +326,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
                         . currentState
                         $ cur
                     )
-                  $ projectLedgerTables cur'
+                  $ cur'
         }
     )
 

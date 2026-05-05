@@ -25,8 +25,7 @@ module Ouroboros.Consensus.Ledger.Tables.MapKind
   , DiffMK (..)
   , EmptyMK (..)
   , KeysMK (..)
-  , SeqDiffMK (..)
-  , TrackingMK (..)
+  --  , SeqDiffMK (..)
   , ValuesMK (..)
   ) where
 
@@ -39,9 +38,10 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import NoThunks.Class
-import Ouroboros.Consensus.Ledger.Tables.Basics
 import Ouroboros.Consensus.Ledger.Tables.Diff (Diff (..))
-import Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
+import Ouroboros.Consensus.Ledger.Tables.Kinds
+
+-- Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
 
 {-------------------------------------------------------------------------------
   Classes
@@ -84,20 +84,16 @@ class
 -- `Data.Set.map', namely that only injective functions are suitable to be used
 -- here.
 bimapLedgerTables ::
-  forall x y mk.
   ( CanMapKeysMK mk
   , CanMapMK mk
-  , Ord (TxIn y)
+  , Ord a'
   ) =>
-  (TxIn x -> TxIn y) ->
-  (TxOut x -> TxOut y) ->
-  LedgerTables x mk ->
-  LedgerTables y mk
+  (a -> a') ->
+  (b -> b') ->
+  mk a b ->
+  mk a' b'
 bimapLedgerTables f g =
-  LedgerTables
-    . mapKeysMK f
-    . mapMK g
-    . getLedgerTables
+  mapKeysMK f . mapMK g
 
 {-------------------------------------------------------------------------------
   EmptyMK
@@ -175,37 +171,17 @@ instance CanMapKeysMK DiffMK where
 instance CanMapMK DiffMK where
   mapMK f (DiffMK d) = DiffMK $ fmap f d
 
-{-------------------------------------------------------------------------------
-  TrackingMK
--------------------------------------------------------------------------------}
+-- {-------------------------------------------------------------------------------
+--   SeqDiffMK
+-- -------------------------------------------------------------------------------}
 
-data TrackingMK k v = TrackingMK !(Map k v) !(Diff k v)
-  deriving (Generic, Eq, Show, NoThunks)
-  deriving anyclass (ShowMK, EqMK, NoThunksMK)
+-- newtype SeqDiffMK k v = SeqDiffMK {getSeqDiffMK :: DiffSeq k v}
+--   deriving stock (Generic, Eq, Show)
+--   deriving anyclass NoThunks
+--   deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
-instance ZeroableMK TrackingMK where
-  emptyMK = TrackingMK mempty mempty
-
-instance CanMapMK TrackingMK where
-  mapMK f (TrackingMK vs d) = TrackingMK (Map.map f vs) (fmap f d)
-
-instance CanMapKeysMK TrackingMK where
-  mapKeysMK f (TrackingMK vs d) =
-    TrackingMK
-      (getValuesMK . mapKeysMK f . ValuesMK $ vs)
-      (getDiffMK . mapKeysMK f . DiffMK $ d)
-
-{-------------------------------------------------------------------------------
-  SeqDiffMK
--------------------------------------------------------------------------------}
-
-newtype SeqDiffMK k v = SeqDiffMK {getSeqDiffMK :: DiffSeq k v}
-  deriving stock (Generic, Eq, Show)
-  deriving anyclass NoThunks
-  deriving anyclass (ShowMK, EqMK, NoThunksMK)
-
-instance ZeroableMK SeqDiffMK where
-  emptyMK = SeqDiffMK empty
+-- instance ZeroableMK SeqDiffMK where
+--   emptyMK = SeqDiffMK empty
 
 {-------------------------------------------------------------------------------
   CodecMK

@@ -36,9 +36,9 @@ import Data.Typeable
 import Ouroboros.Consensus.Ledger.Abstract
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
 import Ouroboros.Consensus.Util.IOLike hiding
   ( MonadMask (..)
   , newMVar
@@ -52,9 +52,9 @@ import qualified System.FS.Sim.MockFS as MockFS
 import System.FS.Sim.STM
 import qualified System.FilePath as FilePath
 import System.IO.Temp (createTempDirectory)
-import Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
-import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock as Mock
-import Test.Ouroboros.Storage.LedgerDB.V1.LMDB (testLMDBLimits)
+-- Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
+-- qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock as Mock
+-- Test.Ouroboros.Storage.LedgerDB.V1.LMDB (testLMDBLimits)
 import Test.QuickCheck (Arbitrary (..), Property)
 import qualified Test.QuickCheck as QC
 import Test.QuickCheck.StateModel as StateModel
@@ -254,7 +254,7 @@ instance Mock.ValuesLength V where
     Map.size m
 
 instance Mock.MakeDiff V D where
-  diff t1 t2 = ltmap rawTrackingDiffs $ ltliftA2 rawCalculateDifference t1 t2
+  diff t1 t2 = ltliftA2 rawCalculateDifference t1 t2
 
 instance Mock.DiffSize D where
   diffSize (LedgerTables (DiffMK (Diff.Diff m))) = Map.size m

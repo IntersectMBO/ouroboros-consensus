@@ -1,6 +1,6 @@
 module Test.Ouroboros.Storage.LedgerDB.V1.LMDB (testLMDBLimits) where
 
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
 
 testLMDBLimits :: Int -> LMDB.LMDBLimits
 testLMDBLimits maxReaders =

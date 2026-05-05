@@ -29,7 +29,6 @@ module Ouroboros.Consensus.Ledger.Extended
   , encodeExtLedgerState
 
     -- * Type family instances
-  , LedgerTables (..)
   , Ticked (..)
   ) where
 
@@ -204,7 +203,7 @@ applyHelper f opts cfg blk TickedExtLedgerState{..} = do
         tickedHeaderState
   pure $ (\l -> ExtLedgerState l hdr) <$> castLedgerResult ledgerResult
 
-instance (GetBlockKeySets blk, LedgerSupportsProtocol blk) => ApplyBlock ExtLedgerState blk where
+instance (GetBlockKeySets blk, LedgerSupportsProtocol blk, Ord (TxIn blk)) => ApplyBlock ExtLedgerState blk where
   applyBlockLedgerResultWithValidation doValidate =
     applyHelper (applyBlockLedgerResultWithValidation doValidate)
 
@@ -303,7 +302,7 @@ decodeDiskExtLedgerState cfg =
 -------------------------------------------------------------------------------}
 
 instance
-  (NoThunks (TxIn blk), NoThunks (TxOut blk), HasLedgerTables LedgerState blk) =>
+  (NoThunks (TxIn blk), NoThunks (TxOut blk), HasLedgerTables LedgerState blk, Ord (TxIn blk)) =>
   HasLedgerTables ExtLedgerState blk
   where
   projectLedgerTables (ExtLedgerState lstate _) =
@@ -314,7 +313,11 @@ instance
       hstate
 
 instance
-  (NoThunks (TxIn blk), NoThunks (TxOut blk), HasLedgerTables (Ticked LedgerState) blk) =>
+  ( NoThunks (TxIn blk)
+  , NoThunks (TxOut blk)
+  , HasLedgerTables (Ticked LedgerState) blk
+  , Ord (TxIn blk)
+  ) =>
   HasLedgerTables (Ticked ExtLedgerState) blk
   where
   projectLedgerTables (TickedExtLedgerState lstate _view _hstate) =

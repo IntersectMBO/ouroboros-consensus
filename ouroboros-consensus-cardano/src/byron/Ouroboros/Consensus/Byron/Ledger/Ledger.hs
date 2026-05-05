@@ -40,7 +40,6 @@ module Ouroboros.Consensus.Byron.Ledger.Ledger
     -- * Type family instances
   , BlockQuery (..)
   , LedgerState (..)
-  , LedgerTables (..)
   , Ticked (..)
 
     -- * Auxiliary
@@ -91,6 +90,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -235,7 +235,7 @@ instance ApplyBlock LedgerState ByronBlock where
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult validationErrorImpossible
 
 instance GetBlockKeySets ByronBlock where
-  getBlockKeySets _ = emptyLedgerTables
+  getBlockKeySets _ = emptyKeys
 
 data instance BlockQuery ByronBlock fp result where
   GetUpdateInterfaceState :: BlockQuery ByronBlock QFNoTables UPI.State

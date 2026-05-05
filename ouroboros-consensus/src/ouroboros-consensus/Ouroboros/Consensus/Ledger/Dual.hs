@@ -41,7 +41,6 @@ module Ouroboros.Consensus.Ledger.Dual
   , GenTx (..)
   , Header (..)
   , LedgerState (..)
-  , LedgerTables (..)
   , NestedCtxt_ (..)
   , StorageConfig (..)
   , Ticked (..)
@@ -902,7 +901,7 @@ applyMaybeBlock ::
   TickedLedgerState blk ValuesMK ->
   LedgerState blk EmptyMK ->
   Except (LedgerError blk) (LedgerState blk DiffMK)
-applyMaybeBlock _ _ Nothing _ st = return $ st `withLedgerTables` emptyLedgerTables
+applyMaybeBlock _ _ Nothing _ st = return $ st `withLedgerTables` emptyDiff
 applyMaybeBlock evs cfg (Just block) tst _ = applyLedgerBlock evs cfg block tst
 
 -- | Lift 'reapplyLedgerBlock' to @Maybe blk@
@@ -916,7 +915,7 @@ reapplyMaybeBlock ::
   TickedLedgerState blk ValuesMK ->
   LedgerState blk EmptyMK ->
   LedgerState blk DiffMK
-reapplyMaybeBlock _ _ Nothing _ st = st `withLedgerTables` emptyLedgerTables
+reapplyMaybeBlock _ _ Nothing _ st = st `withLedgerTables` emptyDiff
 reapplyMaybeBlock evs cfg (Just block) tst _ = reapplyLedgerBlock evs cfg block tst
 
 -- | Used when the concrete and abstract implementation should agree on errors

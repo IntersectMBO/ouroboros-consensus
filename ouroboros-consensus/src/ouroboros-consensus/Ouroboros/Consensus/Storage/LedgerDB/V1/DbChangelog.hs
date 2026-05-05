@@ -202,8 +202,8 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
-import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
+-- Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
 import Ouroboros.Consensus.Util (repeatedlyM)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq (AnchoredSeq)

@@ -57,7 +57,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
+-- qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block (Point (Point))
@@ -170,7 +170,7 @@ instance PayloadSemantics Tx where
               }
         else Left $ TokenDoesNotExist tok
 
-    track :: PayloadDependentState Tx ValuesMK -> PayloadDependentState Tx TrackingMK
+    track :: PayloadDependentState Tx ValuesMK -> PayloadDependentState Tx DiffMK
     track stAfter =
       stAfter
         { utxtoktables =
