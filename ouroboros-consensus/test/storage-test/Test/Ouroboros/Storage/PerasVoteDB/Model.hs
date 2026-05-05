@@ -27,7 +27,6 @@ import Ouroboros.Consensus.Block.SupportsPeras
   ( HasPerasVoteBlock (..)
   , HasPerasVoteRound (..)
   , PerasCert (..)
-  , PerasCfg
   , ValidatedPerasCert (..)
   , ValidatedPerasVote
   , getPerasCertBoostedBlock
@@ -87,7 +86,7 @@ data Model blk = Model
 instance StandardHash blk => ToExpr (Model blk) where
   toExpr = defaultExprViaShow
 
-initModel :: PerasCfg blk -> Model blk
+initModel :: PerasParams -> Model blk
 initModel cfg =
   Model
     { open = False
