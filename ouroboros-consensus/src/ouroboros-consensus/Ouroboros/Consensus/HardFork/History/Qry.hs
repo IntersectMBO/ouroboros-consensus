@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -46,7 +47,11 @@ module Ouroboros.Consensus.HardFork.History.Qry
   , slotToWallclock
   , wallclockToSlot
   , perasRoundNoToSlot
+  , perasRoundNoToPerasRoundLength
   , slotToPerasRoundNo
+  , slotToPerasRoundNo'
+  , epochToPerasRoundInfo
+  , EpochToPerasRoundInfo (..)
   ) where
 
 import Codec.Serialise (Serialise (..))
@@ -133,8 +138,6 @@ import Quiet
       > s + ((t' - t) / slotLenB)
 
       These are equal by (INV-2a).
-
-   5. Slot to Peras round translation.
 
   This means that for values at that boundary, it does not matter if we use
   this era or the next era for the translation. However, this is only true for
@@ -233,7 +236,7 @@ data Expr (f :: Type -> Type) :: Type -> Type where
   ERelToAbsSlot :: Expr f (SlotInEra, TimeInSlot) -> Expr f SlotNo
   ERelToAbsEpoch :: Expr f (EpochInEra, SlotInEpoch) -> Expr f EpochNo
   ERelToAbsPerasRoundNo ::
-    Expr f (PerasEnabled PerasRoundNoInEra) -> Expr f (PerasEnabled PerasRoundNo)
+    Expr f (PerasEnabled (PerasRoundNoInEra, SlotInPerasRound)) -> Expr f (PerasEnabled PerasRoundNo)
   -- Convert between relative values
 
   ERelTimeToSlot :: Expr f TimeInEra -> Expr f (SlotInEra, TimeInSlot)
@@ -255,6 +258,8 @@ data Expr (f :: Type -> Type) :: Type -> Type where
   Interpreter
 -------------------------------------------------------------------------------}
 
+-- | The `Maybe` type in the return type is `Just` if the EraSummary was sufficient
+-- to answer the query, and `Nothing` otherwise.
 evalExprInEra :: EraSummary -> ClosedExpr a -> Maybe a
 evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
  where
@@ -268,10 +273,10 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
       EraUnbounded -> return ()
       EraEnd b -> guard $ p b
 
-  guardEndPeras :: (Bound -> PerasEnabledT Maybe Bool) -> PerasEnabledT Maybe ()
-  guardEndPeras p = case eraEnd of
-    EraUnbounded -> pure ()
-    EraEnd end -> lift . guard =<< p end
+  ensurePerasEnabled :: PerasEnabledT Maybe ()
+  ensurePerasEnabled = case eraPerasRoundLength of
+    PerasEnabled _ -> pure ()
+    NoPerasEnabled -> lift Nothing
 
   go :: Expr Identity a -> Maybe a
   go (EVar a) =
@@ -307,11 +312,10 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     return $ EpochInEra (countEpochs e (boundEpoch eraStart))
   go (EAbsToRelPerasRoundNo expr) =
     runPerasEnabledT $ do
-      eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+      ensurePerasEnabled
       absPerasRoundNo <- lift $ go expr
-      lift . guard $ absPerasRoundNo >= eraStartPerasRound
-      let roundInEra = countPerasRounds absPerasRoundNo eraStartPerasRound
-      pure . PerasRoundNoInEra $ roundInEra
+      lift . guard $ absPerasRoundNo >= boundNextPerasRound eraStart
+      return $ PerasRoundNoInEra (countPerasRounds absPerasRoundNo (boundNextPerasRound eraStart))
 
   -- Convert relative to absolute
   --
@@ -338,18 +342,23 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
         || absEpoch == boundEpoch end && getSlotInEpoch s == 0
     return absEpoch
   go (ERelToAbsPerasRoundNo expr) = runPerasEnabledT $ do
-    eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
-    relPerasRound <- PerasEnabledT $ go expr
-    let absPerasRound = addPerasRounds (getPerasRoundNoInEra relPerasRound) eraStartPerasRound
-
-    guardEndPeras $ \end -> do
-      eraEndPerasRound <- PerasEnabledT . Just $ boundPerasRound end
-      pure $ absPerasRound <= eraEndPerasRound
+    ensurePerasEnabled
+    (relPerasRound, slotElapsed) <- PerasEnabledT $ go expr
+    let absPerasRound = addPerasRounds (getPerasRoundNoInEra relPerasRound) (boundNextPerasRound eraStart)
+    lift $ guardEnd $ \end ->
+      absPerasRound < boundNextPerasRound end
+        || absPerasRound == boundNextPerasRound end && getSlotInPerasRound slotElapsed == 0
     pure absPerasRound
 
   -- Convert between relative values
   --
-  -- No guards necessary
+  -- It may seems paradoxical, but no guards are strictly necessary here:
+  -- All the RelToAbs___ conversions implement a strict upper bound check, and
+  -- Rel values are only used internally in this module. So we know at the end
+  -- of the chain that a RelToAbs____ conversion will happen and that will check
+  -- the upper bound.
+  -- (Similarly, an initial AbsToRel___ conversion will take care of the lower
+  -- bound check.)
 
   go (ERelTimeToSlot expr) = do
     t <- go expr
@@ -364,13 +373,22 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     e <- go expr
     return $ SlotInEra (getEpochInEra e * epochSize)
   go (ERelPerasRoundNoToSlot expr) = runPerasEnabledT $ do
+    ensurePerasEnabled
     PerasRoundNoInEra relPerasRoundNo <- PerasEnabledT $ go expr
     PerasRoundLength perasRoundLength <- PerasEnabledT . Just $ eraPerasRoundLength
     pure $ SlotInEra (relPerasRoundNo * perasRoundLength)
+  -- This one doesn't use 'ensurePerasEnabled' because it should return 'Just NoPerasEnabled' if the slot matches the current era bounds, but this era has not peras enabled.
   go (ERelSlotToPerasRoundNo expr) = runPerasEnabledT $ do
     SlotInEra relSlot <- lift $ go expr
-    PerasRoundLength perasRoundLength <- PerasEnabledT . Just $ eraPerasRoundLength
-    pure . bimap PerasRoundNoInEra SlotInPerasRound $ relSlot `divMod` perasRoundLength
+    PerasEnabledT $
+      Just $
+        case eraPerasRoundLength of
+          NoPerasEnabled ->
+            NoPerasEnabled
+          PerasEnabled (PerasRoundLength roundLength) ->
+            PerasEnabled $
+              bimap PerasRoundNoInEra SlotInPerasRound $
+                relSlot `divMod` roundLength
 
   -- Get era parameters
   --
@@ -393,12 +411,10 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     guardEnd $ \end -> s < boundSlot end
     return eraGenesisWin
   go (EPerasRoundLength expr) = runPerasEnabledT $ do
-    eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+    ensurePerasEnabled
     absPerasRound <- lift $ go expr
-    lift . guard $ absPerasRound >= eraStartPerasRound
-    guardEndPeras $ \end -> do
-      eraEndPerasRound <- PerasEnabledT . Just $ boundPerasRound end
-      pure $ absPerasRound < eraEndPerasRound
+    lift $ guard $ absPerasRound >= boundNextPerasRound eraStart
+    lift $ guardEnd $ \end -> absPerasRound < boundNextPerasRound end
     PerasEnabledT . Just $ eraPerasRoundLength
 
 {-------------------------------------------------------------------------------
@@ -512,7 +528,7 @@ runQueryPure q = either throw id . runQuery q
 newtype Interpreter xs = Interpreter (Summary xs)
   deriving Eq
 
-deriving instance SListI xs => Serialise (Interpreter xs)
+deriving newtype instance SListI xs => Serialise (Interpreter xs)
 
 instance Show (Interpreter xs) where
   show _ = "<Interpreter>"
@@ -644,7 +660,7 @@ slotToPerasRoundNo absSlot = runPerasEnabledT $ do
       qryFromExpr (ERelSlotToPerasRoundNo (EAbsToRelSlot (ELit absSlot)))
   absPerasRoundNo <-
     PerasEnabledT $
-      qryFromExpr (ERelToAbsPerasRoundNo (ELit (PerasEnabled relPerasRoundNo)))
+      qryFromExpr (ERelToAbsPerasRoundNo (ELit (PerasEnabled (relPerasRoundNo, slotInPerasRound))))
   roundLength <-
     PerasEnabledT $
       qryFromExpr (perasRoundNoPerasRoundLengthExpr absPerasRoundNo)
@@ -653,6 +669,70 @@ slotToPerasRoundNo absSlot = runPerasEnabledT $ do
     , getSlotInPerasRound slotInPerasRound
     , unPerasRoundLength roundLength - getSlotInPerasRound slotInPerasRound
     )
+
+slotToPerasRoundNo' :: SlotNo -> Qry (PerasEnabled (PerasRoundNo, Word64))
+slotToPerasRoundNo' absSlot = runPerasEnabledT $ do
+  (relPerasRoundNo, slotInPerasRound) <-
+    PerasEnabledT $
+      qryFromExpr (ERelSlotToPerasRoundNo (EAbsToRelSlot (ELit absSlot)))
+  absPerasRoundNo <-
+    PerasEnabledT $
+      qryFromExpr (ERelToAbsPerasRoundNo (ELit (PerasEnabled (relPerasRoundNo, slotInPerasRound))))
+  pure $
+    ( absPerasRoundNo
+    , getSlotInPerasRound slotInPerasRound
+    )
+
+-- | Information about the Peras rounds that correspond to a given epoch.
+data EpochToPerasRoundInfo = EpochToPerasRoundInfo
+  { etpriEpochNo :: !EpochNo
+  , etpriEpochStartPerasRound :: !PerasRoundNo
+  , etpriEpochEndPerasRound :: !PerasRoundNo
+  , etpriPerasRoundLength :: !PerasRoundLength
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+-- | It is safe to rely on the era index in which this query resolves, because
+-- 'EPerasRoundLength' inside 'perasRoundNoPerasRoundLengthExpr' has strict
+-- era boundary guards.
+epochToPerasRoundInfo :: EpochNo -> Qry (PerasEnabled EpochToPerasRoundInfo)
+epochToPerasRoundInfo absEpoch = runPerasEnabledT $ do
+  absEpochStartSlot <-
+    lift $ qryFromExpr (epochToSlotExpr' absEpoch)
+  absEpochEndSlot <-
+    lift $ qryFromExpr (epochToSlotExpr' (EpochNo (unEpochNo absEpoch + 1)))
+  relStartSlot <-
+    lift $ qryFromExpr (EAbsToRelSlot (ELit absEpochStartSlot))
+  relEndSlot <-
+    lift $ qryFromExpr (EAbsToRelSlot (ELit absEpochEndSlot))
+  relStartPerasRound <-
+    PerasEnabledT $ qryFromExpr (ERelSlotToPerasRoundNo (ELit relStartSlot))
+  relEndPerasRound <-
+    PerasEnabledT $ qryFromExpr (ERelSlotToPerasRoundNo (ELit relEndSlot))
+  absStartPerasRound <-
+    PerasEnabledT $ qryFromExpr (ERelToAbsPerasRoundNo (ELit (PerasEnabled relStartPerasRound)))
+  absEndPerasRound <-
+    PerasEnabledT $ qryFromExpr (ERelToAbsPerasRoundNo (ELit (PerasEnabled relEndPerasRound)))
+
+  -- This operation reads Era params, so it is guarded to resolve *only* in the right era
+  -- So we can trust the era index returned by this query when we run it through 'runQueryEraIndexed'
+  roundLength <- PerasEnabledT $ qryFromExpr (perasRoundNoPerasRoundLengthExpr absStartPerasRound)
+
+  pure $
+    EpochToPerasRoundInfo
+      { etpriEpochNo = absEpoch
+      , etpriEpochStartPerasRound = absStartPerasRound
+      , etpriEpochEndPerasRound = absEndPerasRound
+      , etpriPerasRoundLength = roundLength
+      }
+
+-- | It is safe to rely on the era index in which this query resolves, because
+-- 'EPerasRoundLength' inside 'perasRoundNoPerasRoundLengthExpr' has strict
+-- era boundary guards.
+perasRoundNoToPerasRoundLength :: PerasRoundNo -> Qry (PerasEnabled PerasRoundLength)
+perasRoundNoToPerasRoundLength absPerasRoundNo =
+  qryFromExpr (perasRoundNoPerasRoundLengthExpr absPerasRoundNo)
 
 {-------------------------------------------------------------------------------
   Supporting expressions for the queries above

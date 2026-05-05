@@ -1,7 +1,17 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Concrete Peras certificate types using BLS signatures.
@@ -13,6 +23,7 @@
 -- performed on the certificate later on.
 module Ouroboros.Consensus.Peras.Cert.V1
   ( PerasCert (..)
+  , retagPerasCert
   , PerasCertVoters (..)
   ) where
 
@@ -22,32 +33,58 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
+import Codec.Serialise (Serialise (..))
 import Control.Monad (when)
 import Control.Monad.Error.Class (MonadError (..))
+import Data.Coerce (coerce)
 import Data.Containers.NonEmpty (HasNonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
-import Data.Maybe (catMaybes)
+import qualified Data.Map.Strict as Map
+import Data.Maybe (catMaybes, isJust)
+import Data.Typeable (Proxy (..), Typeable)
 import Data.Word (Word16)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
+import Ouroboros.Consensus.Block.Abstract (ConvertRawHash (..))
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasBoostedBlock
+  ( BoostedBlock
+  , IsPerasCert (..)
+  , PerasBoostedBlock (..)
   , PerasRoundNo
   , PerasSeatIndex (..)
   )
 import Ouroboros.Consensus.Committee.Crypto
   ( CryptoSupportsAggregateVoteSigning (..)
+  , CryptoSupportsVRF (..)
   )
+import Ouroboros.Consensus.Committee.EveryoneVotes
+  ( Cert (..)
+  , EveryoneVotes
+  )
+import Ouroboros.Consensus.Committee.WFA (SeatIndex (..))
+import Ouroboros.Consensus.Committee.WFALS (Cert (..), WFALS)
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCrypto
-  , VRFOutput
   )
 import Ouroboros.Consensus.Peras.Vote.V1 (PerasVoteEligibilityProof (..))
+import Ouroboros.Consensus.Peras.Voting.Adapter
+  ( PerasCertCompatibleWithVotingCommittee (..)
+  , PerasConversionError (..)
+  , fromPerasSeatIndex
+  , toPerasSeatIndex
+  )
 import Ouroboros.Consensus.Util.Bitmap (Bitmap)
 import qualified Ouroboros.Consensus.Util.Bitmap as Bitmap
+import Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 
 -- | Concrete Peras certificates using BLS signatures
-data PerasCert
+--
+-- NOTE: the 'tag' parameter is a phantom type used to track the block type that
+-- the certificate is associated with, to ensure injectivity when 'V1.PerasCert'
+-- is used as a type instance for 'BlockSupportsPeras' class.
+data PerasCert tag
   = PerasCert
   { pcRoundNo :: !PerasRoundNo
   -- ^ Election identifier
@@ -59,9 +96,25 @@ data PerasCert
   -- ^ Aggregate BLS signature on the hash of the election identifier and
   -- the certificate message
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
 
-instance FromCBOR PerasCert where
+-- | Retag a 'PerasCert' to change its phantom type tag.
+retagPerasCert :: forall tag' tag. PerasCert tag -> PerasCert tag'
+retagPerasCert = coerce
+
+instance
+  ( ConvertRawHash blk
+  , HashSize blk ~ 32
+  ) =>
+  IsPerasCert (PerasCert blk) blk
+  where
+  getPerasCertRound = pcRoundNo
+  getPerasCertBlock = pcBoostedBlock
+
+type instance BoostedBlock (PerasCert tag) = PerasBoostedBlock
+
+instance Typeable tag => FromCBOR (PerasCert tag) where
   fromCBOR = do
     decodeListLenOf 4
     pcRoundNo <- fromCBOR
@@ -76,7 +129,7 @@ instance FromCBOR PerasCert where
         , pcSignature
         }
 
-instance ToCBOR PerasCert where
+instance Typeable tag => ToCBOR (PerasCert tag) where
   toCBOR cert =
     encodeListLen 4
       <> toCBOR (pcRoundNo cert)
@@ -84,13 +137,25 @@ instance ToCBOR PerasCert where
       <> toCBOR (pcVoters cert)
       <> toCBOR (pcSignature cert)
 
+instance Typeable tag => Serialise (PerasCert tag) where
+  encode = toCBOR
+  decode = fromCBOR
+
+instance ShowProxy tag => ShowProxy (PerasCert tag) where
+  showProxy _ = "PerasCert " <> showProxy (Proxy @tag)
+
 -- | Voters contained in a certificate with their appropriate eligibility proof
 newtype PerasCertVoters
   = PerasCertVoters
   { unPerasCertVoters ::
       NE (Map PerasSeatIndex PerasVoteEligibilityProof)
   }
-  deriving (Eq, Show)
+  deriving stock (Show, Eq, Generic)
+
+deriving via
+  OnlyCheckWhnfNamed "PerasCertVoters" PerasCertVoters
+  instance
+    NoThunks PerasCertVoters
 
 instance FromCBOR PerasCertVoters where
   fromCBOR = do
@@ -216,3 +281,120 @@ toCompactRepr (PerasCertVoters voters) =
   getNonPersistentSig = \case
     (_, PersistentPerasVoteEligibilityProof) -> Nothing
     (_, NonPersistentPerasVoteEligibilityProof p) -> Just p
+
+-- * Compatibility with voting committee implementations
+
+-- | Convert concrete Peras certificate voters to abstract committee voters
+fromPerasCertVoters ::
+  PerasCertVoters ->
+  NE (Map SeatIndex (Maybe (VRFOutput PerasBLSCrypto)))
+fromPerasCertVoters voters =
+  NEMap.fromAscList
+    . NonEmpty.map
+      ( \(seatIndex, proof) ->
+          ( fromPerasSeatIndex seatIndex
+          , fromPerasVoteEligibilityProof proof
+          )
+      )
+    . NEMap.toAscList
+    . unPerasCertVoters
+    $ voters
+ where
+  fromPerasVoteEligibilityProof = \case
+    PersistentPerasVoteEligibilityProof -> Nothing
+    NonPersistentPerasVoteEligibilityProof vrfOutput -> Just vrfOutput
+
+-- | Convert abstract committee voters to concrete Peras certificate voters
+toPerasCertVoters ::
+  NE (Map SeatIndex (Maybe (VRFOutput PerasBLSCrypto))) ->
+  Either PerasConversionError PerasCertVoters
+toPerasCertVoters voters =
+  fmap PerasCertVoters
+    . fmap NEMap.fromAscList
+    . traverse
+      ( \(seatIndex, proof) -> do
+          seatIndex' <- toPerasSeatIndex seatIndex
+          let proof' = toPerasVoteEligibilityProof proof
+          pure (seatIndex', proof')
+      )
+    . NEMap.toAscList
+    $ voters
+ where
+  toPerasVoteEligibilityProof = \case
+    Nothing -> PersistentPerasVoteEligibilityProof
+    Just vrfOutput -> NonPersistentPerasVoteEligibilityProof vrfOutput
+
+-- 'PerasCert's are compatible with 'WFALS' as long as we make sure to avoid
+-- overflowing the `Word16` seat index of each voter.
+instance
+  PerasCertCompatibleWithVotingCommittee
+    (PerasCert tag)
+    PerasBLSCrypto
+    WFALS
+  where
+  toPerasCert = \case
+    WFALSCert electionId candidate voters sig -> do
+      voters' <- toPerasCertVoters voters
+      pure $
+        PerasCert
+          { pcRoundNo = electionId
+          , pcBoostedBlock = candidate
+          , pcVoters = voters'
+          , pcSignature = sig
+          }
+
+  fromPerasCert = \case
+    PerasCert electionId candidate voters sig -> do
+      let voters' = fromPerasCertVoters voters
+      pure $
+        WFALSCert
+          electionId
+          candidate
+          voters'
+          sig
+
+-- 'PerasCert's are compatible with 'EveryoneVotes' as long as we make sure
+-- to only accept certificates containing only persistent eligibility proofs
+-- (in addition to avoiding overflowing the `Word16` seat index of each voter).
+instance
+  PerasCertCompatibleWithVotingCommittee
+    (PerasCert tag)
+    PerasBLSCrypto
+    EveryoneVotes
+  where
+  toPerasCert = \case
+    EveryoneVotesCert electionId candidate voters sig -> do
+      voters' <-
+        toPerasCertVoters
+          . NEMap.fromSet (const Nothing)
+          $ voters
+      pure $
+        PerasCert
+          { pcRoundNo = electionId
+          , pcBoostedBlock = candidate
+          , pcVoters = voters'
+          , pcSignature = sig
+          }
+
+  fromPerasCert = \case
+    PerasCert electionId candidate voters sig -> do
+      let voters' = fromPerasCertVoters voters
+      case nonPersistentVoters voters' of
+        Nothing ->
+          pure $
+            EveryoneVotesCert
+              electionId
+              candidate
+              (NEMap.keysSet voters')
+              sig
+        Just nonPersistentSeatIndices ->
+          Left $
+            EveryoneVotesButFoundNonPersistentVotersInCert
+              nonPersistentSeatIndices
+   where
+    nonPersistentVoters voters' =
+      case Map.keys (NEMap.filter isJust voters') of
+        [] ->
+          Nothing
+        nonPersistentSeats ->
+          Just (NonEmpty.fromList nonPersistentSeats)

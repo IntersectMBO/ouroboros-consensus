@@ -152,21 +152,26 @@ data EraParams = EraParams
 --
 -- We set
 --
--- * epoch size to @10k@ slots
--- * the safe zone to @2k@ slots
+-- * epoch size to @10*k@ slots
+-- * the safe zone to @2*k@ slots
 -- * the upper bound to 'NoLowerBound'
--- * the Peras Round Length is unset
+-- * the Peras Round Length is set to @2*k@ slots if peras is enabled
+--   (because it must be a divisor of the epoch size)
 --
 -- This is primarily useful for tests.
-defaultEraParams :: SecurityParam -> SlotLength -> EraParams
-defaultEraParams (SecurityParam k) slotLength =
+defaultEraParams ::
+  SecurityParam ->
+  SlotLength ->
+  PerasEnabled () ->
+  EraParams
+defaultEraParams (SecurityParam k) slotLength perasEnabled =
   EraParams
     { eraEpochSize = EpochSize (unNonZero k * 10)
     , eraSlotLength = slotLength
     , eraSafeZone = StandardSafeZone (unNonZero k * 2)
     , eraGenesisWin = GenesisWindow (unNonZero k * 2)
     , -- Peras is disabled by default
-      eraPerasRoundLength = NoPerasEnabled
+      eraPerasRoundLength = (const $ PerasRoundLength (unNonZero k * 2)) <$> perasEnabled
     }
 
 -- | Zone in which it is guaranteed that no hard fork can take place

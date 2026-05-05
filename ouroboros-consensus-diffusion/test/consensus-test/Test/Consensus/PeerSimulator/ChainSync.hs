@@ -22,7 +22,7 @@ import Control.Tracer
   )
 import Data.Proxy (Proxy (..))
 import Network.TypedProtocol.Codec (AnyMessage)
-import Ouroboros.Consensus.Block (Header, Point)
+import Ouroboros.Consensus.Block (BlockSupportsPeras, Header, Point)
 import Ouroboros.Consensus.BlockchainTime (RelativeTime (..))
 import Ouroboros.Consensus.Config
   ( DiffusionPipeliningSupport (..)
@@ -94,7 +94,10 @@ import Test.Util.Orphans.IOLike ()
 -- messages and the “in future” checks are disabled.
 basicChainSyncClient ::
   forall m blk.
-  (IOLike m, LedgerSupportsProtocol blk) =>
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  ) =>
   PeerId ->
   Tracer m (TraceEvent blk) ->
   TopLevelConfig blk ->
@@ -148,7 +151,13 @@ basicChainSyncClient
 -- 'basicChainSyncClient', synchronously. Exceptions are caught, sent to the
 -- 'StateViewTracers' and logged.
 runChainSyncClient ::
-  (IOLike m, MonadTimer m, LedgerSupportsProtocol blk, ShowProxy blk, ShowProxy (Header blk)) =>
+  ( IOLike m
+  , MonadTimer m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , ShowProxy blk
+  , ShowProxy (Header blk)
+  ) =>
   Tracer m (TraceEvent blk) ->
   TopLevelConfig blk ->
   ChainDbView m blk ->

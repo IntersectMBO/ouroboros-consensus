@@ -36,6 +36,7 @@ import Ouroboros.Consensus.Mock.Ledger.Address
 import Ouroboros.Consensus.Mock.Ledger.Block
 import Ouroboros.Consensus.Mock.Ledger.Forge
 import Ouroboros.Consensus.Mock.Node.Abstract
+import Ouroboros.Consensus.Mock.Node.Peras ()
 import Ouroboros.Consensus.Mock.Protocol.Praos
 import Ouroboros.Consensus.Protocol.Signed
 import Ouroboros.Consensus.Storage.Serialisation

@@ -32,7 +32,7 @@ import Cardano.Slotting.EpochInfo
 import Control.Exception (throw)
 import Control.Monad.Except
 import Data.Bifunctor
-import Data.Foldable (toList)
+import Data.Foldable (find, toList)
 import Data.Function (on)
 import Data.Functor.Identity
 import qualified Data.List as L
@@ -53,6 +53,13 @@ import Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as HF
+import Ouroboros.Consensus.HardFork.History.EraParams (EraParams (..))
+import Ouroboros.Consensus.HardFork.History.Summary
+  ( Bound (..)
+  , EraEnd (..)
+  , EraSummary (..)
+  , getSummary
+  )
 import Ouroboros.Consensus.Ledger.Tables.Combinators
 import Ouroboros.Consensus.Util (nTimes)
 import Test.Cardano.Slotting.Numeric ()
@@ -214,17 +221,71 @@ eventWallclockToSlot chain@ArbitraryChain{..} =
 
 eventPerasRoundNoToSlot :: ArbitraryChain -> Property
 eventPerasRoundNoToSlot chain@ArbitraryChain{..} =
-  testSkeleton chain (HF.perasRoundNoToSlot eventTimePerasRoundNo) $
-    \case
-      HF.NoPerasEnabled -> property True
-      HF.PerasEnabled (startOfPerasRound, roundLength) ->
-        conjoin
-          [ eventTimeSlot
-              === (HF.addSlots eventTimeSlotInPerasRound startOfPerasRound)
-          , eventTimeSlotInPerasRound `lt` (unPerasRoundLength roundLength)
-          ]
+  -- An eventTime has a field 'eventTimePerasRoundNo :: PerasRoundNo' that:
+  -- \* reflects the current 'PerasRoundNo' if the 'eventTimeSlotNo' corresponds
+  --   to an era with 'PerasEnabled'
+  -- \* reflects the next 'PerasRoundNo' if the 'eventTimeSlotNo' corresponds to
+  --   an era with 'NoPerasEnabled'
+  -- Unfortunately, we can't distinguish between these two cases inside
+  -- 'EventTime' with a 'Either'-like type, because when we 'stepEventTime' from
+  -- an era to the next, we only have access to the old 'EraParams' so we can't
+  -- know if the next one supports Peras.
+  --
+  -- Consequently, when an 'EventTime' is from an era with Peras disabled, its
+  -- 'eventTimeSlotNo' and 'eventTimePerasRoundNo' are not consistent:
+  -- 'eventTimePerasRoundNo' reflects the next 'PerasRoundNo' to happen, that
+  -- 'HF.perasRoundNoToSlot' will resolve to the first slot of the next era in
+  -- which Peras is enabled, which won't match the 'eventTimeSlotNo'.
+  -- Thus we should exclude any 'Event' whose time is from an era with Peras
+  -- disabled (done through the precondition 'eventSlotInPerasEnabledEra').
+  --
+  -- If we have an 'EventTime' for which 'eventSlotInPerasEnabledEra' is true,
+  -- then we also get the guarantee that at least one era in the summary
+  -- supports Peras, and assuming that the 'stepEventTime' function is correct,
+  -- such era should have peras bounds that contain the 'eventTimePerasRoundNo',
+  -- so we shouldn't encounter 'PastHorizonException'.
+  --
+  ------------------------------------------------------------------------------
+  -- TODO: A better solution to avoid this intricate precondition would be to
+  -- pass both the current era params and the (maybe) future era params to
+  -- 'stepEventTime', so that we can reflect Peras info in 'EventTime' with such
+  -- datatype:
+  --
+  -- data EventTimePeras =
+  --   EventPerasEnabled
+  --     -- | Current Peras round no
+  --     PerasRoundNo
+  --     -- | Number of slots elapsed since the start of the current Peras round
+  --     Word64
+  --   | EventNoPerasEnabled
+  --     -- | next PerasRoundNo (as we need to keep track if we tick from an era
+  -- in which Peras is disabled to an era in which Peras is enabled)
+  --     PerasRoundNo
+  --
+  -- Then the precondition would just become a
+  -- (\case EventPerasEnabled _ _ -> True; _ -> False)
+  eventSlotInPerasEnabledEra ==>
+    testSkeleton chain (HF.perasRoundNoToSlot eventTimePerasRoundNo) $
+      \case
+        HF.NoPerasEnabled ->
+          property True
+        HF.PerasEnabled (startOfPerasRound, roundLength) ->
+          conjoin
+            [ eventTimeSlot
+                === (HF.addSlots eventTimeSlotInPerasRound startOfPerasRound)
+            , eventTimeSlotInPerasRound `lt` (unPerasRoundLength roundLength)
+            ]
  where
   EventTime{..} = eventTime arbitraryEvent
+  eventSlotInPerasEnabledEra =
+    case find eventSlotMatchesEraBounds (getSummary arbitrarySummary) of
+      Just (EraSummary{eraParams = EraParams{eraPerasRoundLength = PerasEnabled _}}) -> True
+      _ -> False
+  eventSlotMatchesEraBounds = \EraSummary{..} ->
+    boundSlot eraStart <= eventTimeSlot
+      && case eraEnd of
+        EraEnd eraEnd' -> eventTimeSlot < boundSlot eraEnd'
+        EraUnbounded -> True
 
 -- | Composing queries should be equivalent to composing expressions.
 --
@@ -513,6 +574,11 @@ data EventType
     Confirm EpochNo
   deriving Show
 
+-- initEventTimePeras :: HF.EraParams -> EventTimePeras
+-- initEventTimePeras HF.EraParams{eraPerasRoundLength} = case eraPerasRoundLength of
+--   NoPerasEnabled -> EventNoPerasEnabled (PerasRoundNo 0)
+--   PerasEnabled _ -> EventPerasEnabled (PerasRoundNo 0) 0
+
 -- | When did an event occur?
 --
 -- NOTE: We don't care about 'BlockNo' here. Our events don't record necessarily
@@ -526,8 +592,8 @@ data EventTime = EventTime
   , eventTimeRelative :: RelativeTime
   , eventTimePerasRoundNo :: PerasRoundNo
   , eventTimeSlotInPerasRound :: Word64
-  -- ^ Relative slot within the current Peras round,
-  --   needed to be able to advance the round number
+  -- ^ Peras round number and relative slot within the current Peras round,
+  -- needed to be able to advance the round number
   }
   deriving Show
 
@@ -552,8 +618,8 @@ stepEventTime HF.EraParams{..} EventTime{..} =
     , eventTimeRelative =
         addRelTime (getSlotLength eraSlotLength) $
           eventTimeRelative
-    , eventTimePerasRoundNo = perasRoundNo'
-    , eventTimeSlotInPerasRound = slotInPerasRound'
+    , eventTimePerasRoundNo = roundNo'
+    , eventTimeSlotInPerasRound = slotInRound'
     }
  where
   epoch' :: EpochNo
@@ -563,13 +629,12 @@ stepEventTime HF.EraParams{..} EventTime{..} =
       then (succ eventTimeEpochNo, 0)
       else (eventTimeEpochNo, succ eventTimeEpochSlot)
 
-  perasRoundNo' :: PerasRoundNo
-  slotInPerasRound' :: Word64
-  args@(perasRoundNo', slotInPerasRound') =
+  (roundNo', slotInRound') =
     case eraPerasRoundLength of
-      HF.NoPerasEnabled -> args
-      HF.PerasEnabled (PerasRoundLength perasRoundLength) ->
-        if succ eventTimeSlotInPerasRound == perasRoundLength
+      HF.NoPerasEnabled ->
+        (eventTimePerasRoundNo, eventTimeSlotInPerasRound)
+      HF.PerasEnabled (PerasRoundLength roundLength) ->
+        if succ eventTimeSlotInPerasRound == roundLength
           then (succ eventTimePerasRoundNo, 0)
           else (eventTimePerasRoundNo, succ eventTimeSlotInPerasRound)
 
@@ -733,7 +798,7 @@ genEvents = \(Eras eras) (HF.Shape shape) -> sized $ \sz -> do
             , eventEra = era
             , eventEraParams = eraParams
             }
-    (event :) <$> go (n - 1) (stepTime typ time)
+    (event :) <$> (go (n - 1) (stepTime typ time))
    where
     era :: Era
     eraParams :: HF.EraParams

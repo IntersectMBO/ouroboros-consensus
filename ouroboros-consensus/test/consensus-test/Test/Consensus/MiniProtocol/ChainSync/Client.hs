@@ -795,7 +795,7 @@ runChainSync
         }
 
     eraParams :: HardFork.EraParams
-    eraParams = HardFork.defaultEraParams securityParam slotLength
+    eraParams = HardFork.defaultEraParams securityParam slotLength (PerasEnabled ())
 
     numCoreNodes :: NumCoreNodes
     numCoreNodes = NumCoreNodes 2

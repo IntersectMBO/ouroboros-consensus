@@ -1,8 +1,11 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Test that the Peras certificate inclusion rules can correctly decide when
@@ -17,11 +20,14 @@ module Test.Consensus.Peras.Cert.Inclusion (tests) where
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
-import Ouroboros.Consensus.Block (WithOrigin (..))
+import Ouroboros.Consensus.Block (Point (..), WithOrigin (..))
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasCertRound (..)
+  ( BoostedBlock
+  , IsPerasCert (..)
+  , PerasCertMaxRounds (..)
+  , PerasParams (..)
   , PerasRoundNo (..)
-  , getPerasCertRound
+  , defaultPerasParams
   )
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( LatestCertOnChainView (..)
@@ -29,11 +35,6 @@ import Ouroboros.Consensus.Peras.Cert.Inclusion
   , PerasCertInclusionRulesDecision (..)
   , PerasCertInclusionView (..)
   , needCert
-  )
-import Ouroboros.Consensus.Peras.Params
-  ( PerasCertMaxRounds (..)
-  , PerasParams (..)
-  , mkPerasParams
   )
 import Ouroboros.Consensus.Util.Pred (Evidence (..))
 import Test.Tasty (TestTree, testGroup)
@@ -50,6 +51,7 @@ import Test.Tasty.QuickCheck
   , testProperty
   )
 import Test.Util.QuickCheck (geometric)
+import Test.Util.TestBlock (TestBlock)
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
 {-------------------------------------------------------------------------------
@@ -83,7 +85,7 @@ data PerasCertInclusionRulesDecisionModel
 --
 -- NOTE: this predicate could be lifted directly from the agda specification.
 needCertModel ::
-  PerasCertInclusionView TestCert TestBlk ->
+  PerasCertInclusionView TestCert TestBlock ->
   PerasCertInclusionRulesDecisionModel
 needCertModel
   PerasCertInclusionView
@@ -203,11 +205,11 @@ certInclusionDecisionTag = \case
 --  - 25% chance of being 2
 --  - 12.5% chance of being 3
 --  ... and so on
-genPerasParams :: Gen PerasParams
+genPerasParams :: Gen (PerasParams blk)
 genPerasParams = do
   _A <- fromIntegral . (+ 1) <$> geometric 0.5
   pure
-    mkPerasParams
+    defaultPerasParams
       { perasCertMaxRounds = PerasCertMaxRounds _A
       }
 
@@ -235,8 +237,12 @@ data TestCert
   }
   deriving (Show, Eq, Generic)
 
-instance HasPerasCertRound TestCert where
+type instance BoostedBlock (TestCert) = Point TestBlock
+instance IsPerasCert TestCert TestBlock where
   getPerasCertRound = tcRoundNo
+
+  -- We don't really care about the block being boosted for the inclusion rules
+  getPerasCertBlock = const GenesisPoint
 
 -- | Generate a test certificate
 --
@@ -255,13 +261,6 @@ genTestCert roundNo = do
     TestCert
       { tcRoundNo = roundNo'
       }
-
--- * Mocked block type
-
--- | A mocked block type for testing
-data TestBlk
-  = TestBlk
-  deriving (Show, Eq, Generic)
 
 -- * Certificate and inclusion views
 
@@ -292,7 +291,7 @@ genPerasCertIds currRoundNo = do
       then Set.singleton (currRoundNo - 2)
       else Set.empty
 
-genPerasCertInclusionView :: Gen (PerasCertInclusionView TestCert TestBlk)
+genPerasCertInclusionView :: Gen (PerasCertInclusionView TestCert TestBlock)
 genPerasCertInclusionView = do
   perasParams <- genPerasParams
   currRoundNo <- genPerasRoundNo

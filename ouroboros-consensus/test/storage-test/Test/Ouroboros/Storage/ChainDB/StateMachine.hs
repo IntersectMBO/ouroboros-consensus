@@ -15,6 +15,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -107,6 +109,7 @@ import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
+import Generics.SOP (All, Top)
 import qualified Generics.SOP as SOP
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
@@ -123,9 +126,15 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextResolver
+  , StateSupportsPerasEpochContext
+  , perasEpochContextResolverBounds
+  )
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
@@ -158,6 +167,7 @@ import Test.Ouroboros.Storage.ChainDB.Model
   , IteratorId
   , ModelSupportsBlock
   , ShouldGarbageCollect (DoNotGarbageCollect, GarbageCollect)
+  , currentLedger
   )
 import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
 import Test.Ouroboros.Storage.Orphans ()
@@ -180,6 +190,7 @@ import Test.Util.ChunkInfo
 import Test.Util.Header (attachSlotTimeToFragment)
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.ToExpr ()
+import Test.Util.Peras (genMockPerasVoterIndices)
 import Test.Util.QuickCheck
 import Test.Util.RefEnv (RefEnv)
 import qualified Test.Util.RefEnv as RE
@@ -255,7 +266,17 @@ data Cmd blk it flr
     UpdateLedgerSnapshots
   | -- Corruption
     WipeVolatileDB
-  deriving (Generic, Show, Functor, Foldable, Traversable)
+  deriving (Generic, Functor, Foldable, Traversable)
+
+deriving instance
+  ( StandardHash blk
+  , Show blk
+  , Show it
+  , Show flr
+  , Show (PerasCert blk)
+  , Show (PerasVote blk)
+  ) =>
+  Show (Cmd blk it flr)
 
 -- = Invalid blocks
 --
@@ -355,9 +376,9 @@ type AllComponents blk =
   )
 
 type TestConstraints blk =
-  ( ConsensusProtocol (BlockProtocol blk)
+  ( All Top (HardForkIndices blk)
+  , ConsensusProtocol (BlockProtocol blk)
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , Eq (ChainDepState (BlockProtocol blk))
@@ -377,6 +398,10 @@ type TestConstraints blk =
   , LedgerTablesAreTrivial LedgerState blk
   , CanUpgradeLedgerTables LedgerState blk
   , ImmutableEraParams blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  , PerasVote blk ~ MockPerasVote blk
+  , PerasCert blk ~ MockPerasCert blk
   )
 
 deriving instance
@@ -1075,6 +1100,13 @@ lockstep model@Model{..} cmd (At resp) =
   Generator
 -------------------------------------------------------------------------------}
 
+-- | Whether the selected chain of the model is still at Origin. While it is,
+-- the header state cannot resolve a valid Peras context, so Peras actions would
+-- fail in the SUT. Note this is stronger than the DB being empty: the DB can
+-- contain dangling fork blocks while the selected chain is still at Origin.
+atOrigin :: HasHeader blk => DBModel blk -> Bool
+atOrigin dbModel = Model.tipPoint dbModel == GenesisPoint
+
 -- | Generate a 'Cmd'
 --
 -- NOTE: the frequencies for generating blocks and Peras certificates are
@@ -1106,17 +1138,21 @@ generator loe genBlock genPerasBlock m@Model{..} =
         -- The following frequencies achieve this in practice:
         let freq = case loe of
               LoEDisabled ->
-                -- We must reduce the probability of Peras events to trigger on
-                -- an empty DB since there are no interesting blocks to vote for
-                if empty then 1 else 25
+                -- While the selected chain is still at Origin, we cannot
+                -- resolve a valid Peras context, so the SUT would reject Peras
+                -- actions. Only generate them once the header state has
+                -- advanced past Origin.
+                if atOrigin dbModel then 0 else 25
               -- The LoE does not yet support Peras.
               LoEEnabled () -> 0
          in (freq, genAddPerasCert)
       , let freq = case loe of
               LoEDisabled ->
-                -- We must reduce the probability of Peras events to trigger on
-                -- an empty DB since there are no interesting blocks to vote for
-                if empty then 20 else 500
+                -- While the selected chain is still at Origin, we cannot
+                -- resolve a valid Peras context, so the SUT would reject Peras
+                -- actions. Only generate them once the header state has
+                -- advanced past Origin.
+                if atOrigin dbModel then 0 else 500
               -- The LoE does not yet support Peras.
               LoEEnabled () -> 0
          in (freq, genAddPerasVote)
@@ -1277,15 +1313,18 @@ generator loe genBlock genPerasBlock m@Model{..} =
           ]
     -- Include the boosted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
+    -- Generate some voters to populate the certificate
+    voters <- genMockPerasVoterIndices
     -- Build the certificate
     now <- genRelativeTime
     let certWithTime =
           WithArrivalTime now $
             ValidatedPerasCert
               { vpcCert =
-                  PerasCert
-                    { pcCertRound = roundNo
-                    , pcCertBoostedBlock = blockPoint blk
+                  MockPerasCert
+                    { mockCertRound = roundNo
+                    , mockCertBlock = blockPoint blk
+                    , mockCertVoters = voters
                     }
               , vpcCertBoost = boost
               }
@@ -1294,20 +1333,21 @@ generator loe genBlock genPerasBlock m@Model{..} =
   genAddPerasVote :: Gen (Cmd blk it flr)
   genAddPerasVote = do
     (blk, gapBlks) <- genPerasBlock m
-    -- Pick a round based on the remaining capacity (maxRoundVoteStake -
-    -- currentTotalStake) of existing rounds, with a flat probability for
+    -- Pick a round based on the remaining capacity (maxRoundVoteWeight -
+    -- currentTotalWeight) of existing rounds, with a flat probability for
     -- selecting a fresh new round. This ensures we never exceed the quorum
     -- threshold for multiple different blocks in the same round, avoiding the
     -- MultipleWinnersInRound error.
     let voteModel = Model.perasVoteModel dbModel
-        -- Compute total stake per round from the vote model
-        stakePerRound :: Map.Map PerasRoundNo Rational
-        stakePerRound =
+        weightFromVoteEntry = unVoteWeight . vpvVoteWeight . forgetArrivalTime . PerasVoteDBModel.veVote
+        -- Compute total weight per round from the vote model
+        weightPerRound :: Map.Map PerasRoundNo Rational
+        weightPerRound =
           Map.fromListWith
             (+)
             [ ( pvtRoundNo target
               , sum
-                  [ unPerasVoteStake (getPerasVoteStake (PerasVoteDBModel.veVote ve))
+                  [ weightFromVoteEntry ve
                   | ve <- Set.toList entries
                   ]
               )
@@ -1316,52 +1356,52 @@ generator loe genBlock genPerasBlock m@Model{..} =
 
         voteParams = PerasVoteDBModel.params voteModel
         quorum =
-          unPerasQuorumStakeThreshold (perasQuorumStakeThreshold voteParams)
-            + unPerasQuorumStakeThresholdSafetyMargin (perasQuorumStakeThresholdSafetyMargin voteParams)
-        -- Maximum total vote stake per round: 2 * quorum - epsilon.
+          unPerasQuorumWeightThreshold (perasQuorumWeightThreshold voteParams)
+            + unPerasQuorumWeightThresholdSafetyMargin (perasQuorumWeightThresholdSafetyMargin voteParams)
+        -- Maximum total vote weight per round: 2 * quorum - epsilon.
         -- Below this threshold it is impossible for two different blocks to
         -- both reach quorum in the same round.
         -- It would be more realistic to use just 'quorum', but by doing so we
         -- would only have very few voting rounds succeeding with a cert
         -- creation, because we can't concentrate votes on a few distinct
         -- candidates easily as we would observe in real world.
-        maxRoundVoteStake :: Rational
-        maxRoundVoteStake = 2 * quorum - (1 % 100)
-        -- Minimum vote stake
-        minVoteStake :: Rational
-        minVoteStake = 1 % 10
-        -- Maximum vote stake
-        maxVoteStake :: Rational
-        maxVoteStake = 1 % 2
+        maxRoundVoteWeight :: Rational
+        maxRoundVoteWeight = 2 * quorum - (1 % 100)
+        -- Minimum vote weight
+        minVoteWeight :: Rational
+        minVoteWeight = 1 % 10
+        -- Maximum vote weight
+        maxVoteWeight :: Rational
+        maxVoteWeight = 1 % 2
         -- Remaining capacity for each existing round
         roundCapacities :: [(PerasRoundNo, Rational)]
         roundCapacities =
           [ (r, cap)
-          | (r, totalStake) <- Map.toList stakePerRound
-          , let cap = maxRoundVoteStake - totalStake
-          , cap >= minVoteStake
+          | (r, totalWeight) <- Map.toList weightPerRound
+          , let cap = maxRoundVoteWeight - totalWeight
+          , cap >= minVoteWeight
           ]
         -- The next fresh round number
         freshRound :: PerasRoundNo
-        freshRound = case Map.lookupMax stakePerRound of
+        freshRound = case Map.lookupMax weightPerRound of
           Nothing -> PerasRoundNo 0
           Just (PerasRoundNo r, _) -> PerasRoundNo (r + 1)
-        -- Weight for a fresh round (same as a round with 0.25 * maxRoundVoteStake capacity remaining)
+        -- Weight for a fresh round (same as a round with 0.25 * maxRoundVoteWeight capacity remaining)
         freshWeight :: Int
-        freshWeight = max 1 $ floor (25 * maxRoundVoteStake)
+        freshWeight = max 1 $ floor (25 * maxRoundVoteWeight)
         -- Weighted choices: existing rounds by remaining capacity + fresh round
         choices :: [(Int, Gen (PerasRoundNo, Rational))]
         choices =
           [ (max 1 (floor (cap * 100)), pure (r, cap))
           | (r, cap) <- roundCapacities
           ]
-            ++ [(freshWeight, pure (freshRound, maxRoundVoteStake))]
+            ++ [(freshWeight, pure (freshRound, maxRoundVoteWeight))]
     (roundNo, capacity) <- frequency choices
-    -- Pick a vote stake between minVoteStake and min(capacity, maxVoteStake)
-    let upperBound = min capacity maxVoteStake
-    stakeNumerator <- choose (ceiling (minVoteStake * 100), floor (upperBound * 100)) :: Gen Int
-    let stake = PerasVoteStake (fromIntegral stakeNumerator % 100)
-    voterId <- PerasVoteDB.SM.genVoterId
+    -- Pick a vote weight between minVoteWeight and min(capacity, maxVoteWeight)
+    let upperBound = min capacity maxVoteWeight
+    weightNumerator <- choose (ceiling (minVoteWeight * 100), floor (upperBound * 100)) :: Gen Int
+    let weight = VoteWeight (fromIntegral weightNumerator % 100)
+    seatIndex <- PerasVoteDB.SM.genPerasSeatIndex
     -- Include the voted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
     -- Build the vote
@@ -1370,12 +1410,12 @@ generator loe genBlock genPerasBlock m@Model{..} =
           WithArrivalTime now $
             ValidatedPerasVote
               { vpvVote =
-                  PerasVote
-                    { pvVoteRound = roundNo
-                    , pvVoteBlock = blockPoint blk
-                    , pvVoteVoterId = voterId
+                  MockPerasVote
+                    { mockVoteRound = roundNo
+                    , mockVoteBlock = blockPoint blk
+                    , mockVoteSeatIndex = seatIndex
                     }
-              , vpvVoteStake = stake
+              , vpvVoteWeight = weight
               }
     pure $ AddPerasVote voteWithTime seenBlks
 
@@ -1457,6 +1497,13 @@ generator loe genBlock genPerasBlock m@Model{..} =
 chooseSlot :: SlotNo -> SlotNo -> Gen SlotNo
 chooseSlot (SlotNo start) (SlotNo end) = SlotNo <$> choose (start, end)
 
+chooseSlotWithLimit :: SlotNo -> SlotNo -> SlotNo -> Gen (Maybe SlotNo)
+chooseSlotWithLimit (SlotNo limit) (SlotNo start) (SlotNo end) =
+  let end' = min end limit
+   in if start > end'
+        then return Nothing
+        else Just . SlotNo <$> choose (start, end')
+
 {-------------------------------------------------------------------------------
   Shrinking
 -------------------------------------------------------------------------------}
@@ -1495,8 +1542,21 @@ precondition Model{..} (At cmd) =
   forAll (iters cmd) (`member` RE.keys knownIters)
     .&& forAll (flrs cmd) (`member` RE.keys knownFollowers)
     .&& case cmd of
-      -- Even though we ensure this in the generator, shrinking might change
-      -- it.
+      -- Even though we ensure that the chain is not at origin in the generator,
+      -- shrinking might change it.
+      -- While the selected chain is still at Origin, we cannot resolve a valid
+      -- Peras context, so the SUT would reject Peras actions. Shrinking can
+      -- remove the 'AddBlock's preceding a Peras command, so we must forbid
+      -- them here as well.
+      AddPerasCert{} -> Not (Boolean (atOrigin dbModel))
+      -- Same thing here, we need to ensure that the chain is not at origin.
+      --
+      -- In addition, we also make sure that the Peras round number is within
+      -- the supported bounds of the current context resolver because forging
+      -- a cert from validated votes requires access to a Peras epoch context.
+      AddPerasVote watValVote _ ->
+        (Not (Boolean (atOrigin dbModel)))
+          :&& (Boolean (withinContextBounds (getPerasVoteRound watValVote)))
       GetBlockComponent pt -> Not $ garbageCollectable pt
       GetGCedBlockComponent pt -> garbageCollectable pt
       IteratorNext it -> Not $ garbageCollectableIteratorNext it
@@ -1540,6 +1600,13 @@ precondition Model{..} (At cmd) =
         Boolean $
           Map.notMember (blockHash blk) $
             Model.invalid dbModel
+
+  withinContextBounds :: PerasRoundNo -> Bool
+  withinContextBounds roundNo =
+    let resolver =
+          perasEpochContextResolver . currentLedger $ dbModel
+        (lo, hi) = perasEpochContextResolverBounds resolver
+     in lo <= roundNo && roundNo < hi
 
 transition ::
   (TestConstraints blk, Show1 r, Eq1 r) =>
@@ -1661,8 +1728,13 @@ deriving instance
   , ToExpr (TipInfo blk)
   , ToExpr (LedgerState blk EmptyMK)
   , ToExpr (ExtValidationError blk)
+  , ToExpr (PerasEpochContextResolver blk)
   , StandardHash blk
   , Show blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  , Show (PerasEpochContext blk)
+  , Show (PerasVotingCommittee blk)
   ) =>
   ToExpr (Model blk IO Concrete)
 
@@ -1812,7 +1884,7 @@ addPerasCertOutcomes = concatMap classifyEvent
   classifyEvent :: Event Blk m Symbolic -> [String]
   classifyEvent ev = case unAt (eventCmd ev) of
     AddPerasCert certWithTime _ ->
-      let targetPt = pcCertBoostedBlock (vpcCert (forgetArrivalTime certWithTime))
+      let targetPt = getPerasCertPoint (vpcCert (forgetArrivalTime certWithTime))
        in case (isBlockConnected targetPt (dbModel (eventBefore ev))) of
             False ->
               assert (chainSelOutcome ev == "no chain selection change") $
@@ -1830,7 +1902,7 @@ addPerasVoteOutcomes = concatMap classifyEvent
   classifyEvent :: Event Blk m Symbolic -> [String]
   classifyEvent ev = case unAt (eventCmd ev) of
     AddPerasVote voteWithTime _ ->
-      let targetPt = pvVoteBlock (vpvVote (forgetArrivalTime voteWithTime))
+      let targetPt = getPerasVotePoint (vpvVote (forgetArrivalTime voteWithTime))
           certsBefore = numCerts (eventBefore ev)
           certsAfter = numCerts (eventAfter ev)
           certProduced = certsAfter > certsBefore
@@ -1899,53 +1971,55 @@ genBlkPair ::
   )
 genBlkPair chunkInfo loe Model{..} =
   ( -- For block generation
-    frequency
-      [ -- We want to prioritise growing the tree connected to genesis, as it is
-        -- the most likely growth pattern.
-        --
-        -- However, we want to produce more chainSel events than in real life,
-        -- so we prioritise growing /any/ branch, not just the current chain tip
-        genSuccOfCurrentChainTip_WithFreq 5
-      , genSuccOfAlreadyInChainDBConnected_IfAnyWithFreq 20
-      , -- We also highly prioritise the "gap blocks", i.e. blocks that are
-        -- needed to fill the gap between blocks that are already part of the
-        -- ChainDB. Gap blocks might or might not be connected to genesis at the
-        -- moment, but ultimately if all saved gap blocks get added, they will
-        -- all be connected to genesis.
-        genFromSavedGapBlocks_IfAnyWithFreq 20
-      , -- Now we also want a small probability to generate blocks that are not
-        -- connected to genesis at all. We can either generate completely new
-        -- gaps (to model out-of-order block reception), or expand on an
-        -- existing one by adding the successor of a dangling block already part
-        -- of the ChainDB.
-        --
-        -- Be careful, if the ChainDB ends up containing too many dangling
-        -- blocks, Peras targets will mostly be disconnected blocks and
-        -- consequently Peras action won't result in direct chain selection
-        -- events (instead the chain selection events will be delayed until the
-        -- gap gets filled). So we need to keep the following frequencies low.
-        genNewGap_WithFreq 2
-      , genSuccOfAlreadyInChainDBDangling_IfAnyWithFreq 2
-      , -- Finally we want a small probability to re-add an existing block of the
-        -- ChainDB
-        genAlreadyInChainDB_IfAnyWithFreq 1
-      ]
+    loopUntilJust $
+      frequency
+        [ -- We want to prioritise growing the tree connected to genesis, as it is
+          -- the most likely growth pattern.
+          --
+          -- However, we want to produce more chainSel events than in real life,
+          -- so we prioritise growing /any/ branch, not just the current chain tip
+          (5, genSuccOfCurrentChainTip_withGapBlocks)
+        , (20, genSuccOfAlreadyInChainDBConnected_withGapBlocks)
+        , -- We also highly prioritise the "gap blocks", i.e. blocks that are
+          -- needed to fill the gap between blocks that are already part of the
+          -- ChainDB. Gap blocks might or might not be connected to genesis at the
+          -- moment, but ultimately if all saved gap blocks get added, they will
+          -- all be connected to genesis.
+          (20, genFromSavedGapBlocks_withGapBlocks)
+        , -- Now we also want a small probability to generate blocks that are not
+          -- connected to genesis at all. We can either generate completely new
+          -- gaps (to model out-of-order block reception), or expand on an
+          -- existing one by adding the successor of a dangling block already part
+          -- of the ChainDB.
+          --
+          -- Be careful, if the ChainDB ends up containing too many dangling
+          -- blocks, Peras targets will mostly be disconnected blocks and
+          -- consequently Peras action won't result in direct chain selection
+          -- events (instead the chain selection events will be delayed until the
+          -- gap gets filled). So we need to keep the following frequencies low.
+          (2, genNewGap_withGapBlocks)
+        , (2, genSuccOfAlreadyInChainDBDangling_withGapBlocks)
+        , -- Finally we want a small probability to re-add an existing block of the
+          -- ChainDB
+          (1, genAlreadyInChainDB_withGapBlocks)
+        ]
   , -- For Peras vote and certs
-    frequency
-      [ -- Peras actions can theoretically only target rather old (and
-        -- connected) blocks, so there is a high chance that these blocks are
-        -- already part of the ChainDB. Consequently, we prioritise generating
-        -- Peras targets that are already part of the ChainDB and connected to
-        -- genesis
-        genAlreadyInChainDBConnected_IfAnyWithFreq 20
-      , -- We also want a small probability of generating Peras targets that are
-        -- not yet part of the ChainDB or not connected, to model the case where
-        -- we receive a cert/vote for a block before we receive the block itself
-        genSuccOfAlreadyInChainDB_IfAnyWithFreq 2
-      , genNewGap_WithFreq 1
-      , genAlreadyInChainDBDangling_IfAnyWithFreq 1
-      , genFromSavedGapBlocks_IfAnyWithFreq 1
-      ]
+    loopUntilJust $
+      frequency
+        [ -- Peras actions can theoretically only target rather old (and
+          -- connected) blocks, so there is a high chance that these blocks are
+          -- already part of the ChainDB. Consequently, we prioritise generating
+          -- Peras targets that are already part of the ChainDB and connected to
+          -- genesis
+          (20, genAlreadyInChainDBConnected_withGapBlocks)
+        , -- We also want a small probability of generating Peras targets that are
+          -- not yet part of the ChainDB or not connected, to model the case where
+          -- we receive a cert/vote for a block before we receive the block itself
+          (2, genSuccOfAlreadyInChainDB_withGapBlocks)
+        , (1, genNewGap_withGapBlocks)
+        , (1, genAlreadyInChainDBDangling_withGapBlocks)
+        , (1, genFromSavedGapBlocks_withGapBlocks)
+        ]
   )
  where
   k = unNonZero (maxRollbacks (configSecurityParam (unOpaque modelConfig)))
@@ -1975,19 +2049,27 @@ genBlkPair chunkInfo loe Model{..} =
   danglingBlocksMap :: Map.Map TestHeaderHash TestBlock
   danglingBlocksMap = Map.difference chainDBBlocksMap connectedBlocksMap
 
-  noBlocksAlreadyInChainDB = Map.null chainDBBlocksMap
-  noConnectedBlocksAlreadyInChainDB = Map.null connectedBlocksMap
-  noDanglingBlocksAlreadyInChainDB = Map.null danglingBlocksMap
-
   savedGapBlocks = seenBlocks genState
-  noSavedGapBlocks = Map.null savedGapBlocks
+
+  andThen :: Gen (Maybe a) -> (a -> Gen (Maybe b)) -> Gen (Maybe b)
+  andThen genA f =
+    genA >>= \case
+      Nothing -> pure Nothing
+      Just a -> f a
+
+  loopUntilJust :: Gen (Maybe a) -> Gen a
+  loopUntilJust gen = do
+    mbA <- gen
+    case mbA of
+      Nothing -> loopUntilJust gen
+      Just a -> pure a
 
   -- This helper function is used to wrap generators when we know that the
   -- returned block is not going to create a new gap (i.e. there exist a path
   -- from an existing block of the ChainDB to this returned block that is either
   -- empty or made of blocks that are already in the saved gap blocks).
-  noNewSavedGapBlocks :: Gen TestBlock -> Gen (TestBlock, Persistent [TestBlock])
-  noNewSavedGapBlocks = fmap (,Persistent [])
+  noNewSavedGapBlocks :: Gen (Maybe TestBlock) -> Gen (Maybe (TestBlock, Persistent [TestBlock]))
+  noNewSavedGapBlocks = fmap (fmap (,Persistent []))
 
   -- Generate a block or EBB fitting on genesis
   genFirstBlock :: Gen TestBlock
@@ -2003,19 +2085,43 @@ genBlkPair chunkInfo loe Model{..} =
         )
       ]
 
-  -- Helper that generates a block that fits onto the given block.
-  genSuccOf :: TestBlock -> Gen TestBlock
-  genSuccOf b =
+  -- We don't want to generate blocks that are more than one epoch in the
+  -- future, relative to the slot of the current selected chain tip (i.e. the
+  -- current header/ledger state).
+  --
+  -- The size of an epoch in slots is simply the 'numRegularBlocks' of the chunk config,
+  -- cf. eraParams definition in 'mkTestConfig' in Test.Ouroboros.Storage.TestBlock
+  maxSlotOfNextEpoch :: SlotNo
+  maxSlotOfNextEpoch = SlotNo ((nextEpoch + 1) * epochSize - 1)
+   where
+    -- When the tip is at Origin, we cap the max slot to the last slot of epoch
+    -- 0. Otherwise, we allow generating blocks up to the last slot of the epoch
+    -- following the one containing the current tip.
+    nextEpoch = case Model.tipBlock dbModel of
+      Nothing -> 0
+      Just b -> (unSlotNo (blockSlot b) `div` epochSize) + 1
+    -- The chunk size is uniform (see 'mkTestCfg'), so the epoch size is the
+    -- same for every slot; we can use slot 0 to compute it.
+    epochSize =
+      ImmutableDB.numRegularBlocks $
+        ImmutableDB.getChunkSize chunkInfo $
+          ImmutableDB.chunkIndexOfSlot chunkInfo 0
+
+  -- Helper that generates a block that fits onto the given block. The generated
+  -- block never occupies a slot larger than @maxSlot@ (see 'maxSlotOfNextEpoch')
+  -- except if it is an EBB block.
+  genSuccOf :: SlotNo -> TestBlock -> Gen (Maybe TestBlock)
+  genSuccOf maxSlot b =
     frequency
       [
         ( 4
         , do
-            slotNo <-
+            mbSlotNo <-
               if fromIsEBB (testBlockIsEBB b)
-                then chooseSlot (blockSlot b) (blockSlot b + 2)
-                else chooseSlot (blockSlot b + 1) (blockSlot b + 3)
+                then chooseSlotWithLimit maxSlot (blockSlot b) (blockSlot b + 2)
+                else chooseSlotWithLimit maxSlot (blockSlot b + 1) (blockSlot b + 3)
             body <- genBody
-            return $ mkNextBlock b slotNo body
+            return $ fmap (\slotNo -> mkNextBlock b slotNo body) mbSlotNo
         )
       , -- An EBB is never followed directly by another EBB, otherwise they
         -- would have the same 'BlockNo', as the EBB has the same 'BlockNo' of
@@ -2033,18 +2139,20 @@ genBlkPair chunkInfo loe Model{..} =
                   ImmutableDB.chunkSlotForBoundaryBlock
                     chunkInfo
                     (prevEpoch + 1)
-                nextNextEBB =
-                  ImmutableDB.chunkSlotForBoundaryBlock
-                    chunkInfo
-                    (prevEpoch + 2)
+            -- nextNextEBB =
+            --   ImmutableDB.chunkSlotForBoundaryBlock
+            --     chunkInfo
+            --     (prevEpoch + 2)
             (slotNo, epoch) <-
               first (ImmutableDB.chunkSlotToSlot chunkInfo)
                 <$> frequency
                   [ (7, return (nextEBB, prevEpoch + 1))
-                  , (1, return (nextNextEBB, prevEpoch + 2))
+                  -- We can no longer generate EBBs that are more than one epoch in the future, as
+                  -- this would break ticking of the ExtLedgerState (specifically for the PerasEpochContextResolver)
+                  -- , (1, return (nextNextEBB, prevEpoch + 2))
                   ]
             body <- genBody
-            return $ mkNextEBB canContainEBB b slotNo epoch body
+            return $ Just $ mkNextEBB canContainEBB b slotNo epoch body
         )
       ]
 
@@ -2054,97 +2162,100 @@ genBlkPair chunkInfo loe Model{..} =
   -- don't add just yet. These are in turn returned and stored as seen blocks
   -- in the generator state of the model. We can sample from these later on to
   -- (hopefully) fill the gaps.
-  genNewGap :: Gen (TestBlock, Persistent [TestBlock])
-  genNewGap = do
+  genNewGap_withGapBlocks :: Gen (Maybe (TestBlock, Persistent [TestBlock]))
+  genNewGap_withGapBlocks = do
     gapSize <- choose (1, 3)
     start <-
-      if noBlocksAlreadyInChainDB
-        then genFirstBlock
+      if Map.null chainDBBlocksMap
+        then Just <$> genFirstBlock
         else genSuccOfAlreadyInChainDB
-    go gapSize start []
+    case start of
+      Nothing -> return Nothing
+      Just tip -> Just <$> go maxSlotOfNextEpoch gapSize tip []
    where
-    go :: Int -> TestBlock -> [TestBlock] -> Gen (TestBlock, Persistent [TestBlock])
-    go 0 tip gapBlks = return (tip, Persistent gapBlks)
-    go n tip gapBlks = do
-      tip' <- genSuccOf tip
-      go (n - 1) tip' (tip : gapBlks)
-  genNewGap_WithFreq freq =
-    (freq, genNewGap)
+    go :: SlotNo -> Int -> TestBlock -> [TestBlock] -> Gen (TestBlock, Persistent [TestBlock])
+    go _maxSlotNo 0 tip gapBlks = return (tip, Persistent gapBlks)
+    go maxSlotNo n tip gapBlks = do
+      mbTip' <- genSuccOf maxSlotNo tip
+      case mbTip' of
+        Nothing ->
+          -- We couldn't generate a successor block, so we return the current tip and the gap blocks we have so far.
+          return (tip, Persistent gapBlks)
+        Just tip' ->
+          go maxSlotNo (n - 1) tip' (tip : gapBlks)
 
   -- An intermediate gap block that was generated by 'genNewGap' but
   -- saved for later in the model's generator state. See 'GenState' for details.
-  genFromSavedGapBlocks :: Gen TestBlock
-  genFromSavedGapBlocks = elements (Map.elems savedGapBlocks)
-  genFromSavedGapBlocks_IfAnyWithFreq freq =
+  genFromSavedGapBlocks =
+    if Map.null savedGapBlocks
+      then pure Nothing
+      else Just <$> elements (Map.elems savedGapBlocks)
+  genFromSavedGapBlocks_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since any gap block leading to the
     -- returned block should already be part of the saved gap blocks
-    (if noSavedGapBlocks then 0 else freq, noNewSavedGapBlocks genFromSavedGapBlocks)
+    noNewSavedGapBlocks genFromSavedGapBlocks
 
-  genAlreadyInChainDB :: Gen TestBlock
-  genAlreadyInChainDB = elements $ Map.elems chainDBBlocksMap
-  genAlreadyInChainDB_IfAnyWithFreq freq =
+  genAlreadyInChainDB =
+    if Map.null chainDBBlocksMap
+      then pure Nothing
+      else Just <$> elements (Map.elems chainDBBlocksMap)
+  genAlreadyInChainDB_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since gap blocks should have been saved
     -- when the block was first added to the ChainDB
-    (if noBlocksAlreadyInChainDB then 0 else freq, noNewSavedGapBlocks genAlreadyInChainDB)
+    noNewSavedGapBlocks genAlreadyInChainDB
 
   -- A block that already exists in the ChainDB and is connected to genesis.
-  genAlreadyInChainDBConnected :: Gen TestBlock
-  genAlreadyInChainDBConnected = elements $ Map.elems connectedBlocksMap
-  genAlreadyInChainDBConnected_IfAnyWithFreq freq =
+  genAlreadyInChainDBConnected =
+    if Map.null connectedBlocksMap
+      then pure Nothing
+      else Just <$> elements (Map.elems connectedBlocksMap)
+  genAlreadyInChainDBConnected_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since gap blocks should have been saved
     -- when the block was first added to the ChainDB
-    ( if noConnectedBlocksAlreadyInChainDB then 0 else freq
-    , noNewSavedGapBlocks genAlreadyInChainDBConnected
-    )
+    noNewSavedGapBlocks genAlreadyInChainDBConnected
 
   -- A block that already exists in the ChainDB but is NOT connected to genesis
   -- (i.e. it is dangling/disconnected).
-  genAlreadyInChainDBDangling :: Gen TestBlock
-  genAlreadyInChainDBDangling = elements $ Map.elems danglingBlocksMap
-  genAlreadyInChainDBDangling_IfAnyWithFreq freq =
+  genAlreadyInChainDBDangling =
+    if Map.null danglingBlocksMap
+      then pure Nothing
+      else Just <$> elements (Map.elems danglingBlocksMap)
+  genAlreadyInChainDBDangling_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since gap blocks should have been saved
     -- when the block was first added to the ChainDB
-    ( if noDanglingBlocksAlreadyInChainDB then 0 else freq
-    , noNewSavedGapBlocks genAlreadyInChainDBDangling
-    )
+    noNewSavedGapBlocks genAlreadyInChainDBDangling
 
   -- A block that fits onto the current chain
-  genSuccOfCurrentChainTip :: Gen TestBlock
   genSuccOfCurrentChainTip = case Model.tipBlock dbModel of
     Nothing -> genFirstBlock
-    Just b -> genSuccOf b
-  genSuccOfCurrentChainTip_WithFreq freq =
+    Just b ->
+      fromMaybe (error "Generating successor of current chain tip should never fail")
+        <$> genSuccOf maxSlotOfNextEpoch b
+  genSuccOfCurrentChainTip_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since there is no gap block leading to
     -- the immediate successor of a block on the current chain
-    (freq, noNewSavedGapBlocks genSuccOfCurrentChainTip)
+    noNewSavedGapBlocks (Just <$> genSuccOfCurrentChainTip)
 
   -- A block that fits onto any block in the ChainDB (connected or dangling)
-  genSuccOfAlreadyInChainDB :: Gen TestBlock
-  genSuccOfAlreadyInChainDB = genAlreadyInChainDB >>= genSuccOf
-  genSuccOfAlreadyInChainDB_IfAnyWithFreq freq =
+  genSuccOfAlreadyInChainDB = genAlreadyInChainDB `andThen` \b -> genSuccOf maxSlotOfNextEpoch b
+  genSuccOfAlreadyInChainDB_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since there is no gap block leading to
     -- the immediate successor of a block in the ChainDB
-    (if noBlocksAlreadyInChainDB then 0 else freq, noNewSavedGapBlocks genSuccOfAlreadyInChainDB)
+    noNewSavedGapBlocks genSuccOfAlreadyInChainDB
 
   -- A block that fits onto some connected block @b@ in the ChainDB.
-  genSuccOfAlreadyInChainDBConnected :: Gen TestBlock
-  genSuccOfAlreadyInChainDBConnected = genAlreadyInChainDBConnected >>= genSuccOf
-  genSuccOfAlreadyInChainDBConnected_IfAnyWithFreq freq =
+  genSuccOfAlreadyInChainDBConnected = genAlreadyInChainDBConnected `andThen` \b -> genSuccOf maxSlotOfNextEpoch b
+  genSuccOfAlreadyInChainDBConnected_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since there is no gap block leading to
     -- the immediate successor of a block in the ChainDB
-    ( if noConnectedBlocksAlreadyInChainDB then 0 else freq
-    , noNewSavedGapBlocks genSuccOfAlreadyInChainDBConnected
-    )
+    noNewSavedGapBlocks genSuccOfAlreadyInChainDBConnected
 
   -- A block that fits onto some dangling (disconnected) block @b@ in the ChainDB.
-  genSuccOfAlreadyInChainDBDangling :: Gen TestBlock
-  genSuccOfAlreadyInChainDBDangling = genAlreadyInChainDBDangling >>= genSuccOf
-  genSuccOfAlreadyInChainDBDangling_IfAnyWithFreq freq =
+  genSuccOfAlreadyInChainDBDangling = genAlreadyInChainDBDangling `andThen` \b -> genSuccOf maxSlotOfNextEpoch b
+  genSuccOfAlreadyInChainDBDangling_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since there is no gap block leading to
     -- the immediate successor of a block in the ChainDB
-    ( if noDanglingBlocksAlreadyInChainDB then 0 else freq
-    , noNewSavedGapBlocks genSuccOfAlreadyInChainDBDangling
-    )
+    noNewSavedGapBlocks genSuccOfAlreadyInChainDBDangling
 
   canContainEBB = const modelSupportsEBBs -- TODO: we could be more precise
   genBody :: Gen TestBody
@@ -2156,24 +2267,41 @@ genBlkPair chunkInfo loe Model{..} =
         [ (4, return True)
         , (1, return False)
         ]
-    perasCertRound <- do
-      let maxRoundNo =
-            case Model.roundNoOfLatestCertSeen dbModel of
-              Nothing -> 0
-              Just (PerasRoundNo r) -> r + 1
+    perasCert <- do
       frequency
-        [ (9, return Nothing)
+        [ (4, return Nothing)
         , let freq = case loe of
                 LoEDisabled -> 1
                 -- The LoE does not yet support Peras.
                 LoEEnabled () -> 0
-           in (freq, Just . PerasRoundNo <$> choose (0, maxRoundNo))
+           in (freq, Just <$> genPerasCert)
         ]
     return
       TestBody
         { tbForkNo = forkNo
         , tbIsValid = isValid
-        , tbPerasCertRound = perasCertRound
+        , tbPerasCert = perasCert
+        }
+
+  genPerasCert :: Gen (PerasCert TestBlock)
+  genPerasCert = do
+    let maxRoundNo =
+          case Model.roundNoOfLatestCertSeen dbModel of
+            Nothing -> 0
+            Just (PerasRoundNo r) -> r + 1
+    roundNo <-
+      PerasRoundNo <$> choose (0, maxRoundNo)
+    boostedBlock <-
+      -- NOTE: we don't care about this boosted block, it could be @Genesis@
+      blockPoint <$> genSuccOfCurrentChainTip
+    voters <-
+      genMockPerasVoterIndices
+
+    pure
+      MockPerasCert
+        { mockCertRound = roundNo
+        , mockCertBlock = boostedBlock
+        , mockCertVoters = voters
         }
 
 -- | Generate a random security parameter (k)
@@ -2251,8 +2379,10 @@ smUnused loe k chunkInfo =
     envUnused
     (genBlk chunkInfo loe)
     (genPerasBoostedBlk chunkInfo loe)
-    (mkTestCfg k chunkInfo)
-    testInitExtLedger
+    cfg
+    (testInitExtLedger (configLedger cfg))
+ where
+  cfg = mkTestCfg k chunkInfo
 
 prop_sequential :: LoE () -> SmallChunkInfo -> Property
 prop_sequential loe smallChunkInfo@(SmallChunkInfo chunkInfo) =
@@ -2304,7 +2434,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
           mkArgs
             testCfg
             chunkInfo
-            (testInitExtLedger `withLedgerTables` emptyLedgerTables)
+            (testInitExtLedger (configLedger testCfg) `withLedgerTables` emptyLedgerTables)
             threadRegistry
             nodeDBs
             tracer
@@ -2326,7 +2456,14 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
                 , varLoEFragment
                 , args
                 }
-            sm' = sm loe env (genBlk chunkInfo loe) (genPerasBoostedBlk chunkInfo loe) testCfg testInitExtLedger
+            sm' =
+              sm
+                loe
+                env
+                (genBlk chunkInfo loe)
+                (genPerasBoostedBlk chunkInfo loe)
+                testCfg
+                (testInitExtLedger (configLedger testCfg))
         (hist, model, res) <- QSM.runCommands' sm' cmds'
         trace <- getTrace
         return (hist, model, res, trace)

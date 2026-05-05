@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | This module defines the logic needed to evaluate when a Peras certificate
 -- must be included in a block.
@@ -16,23 +17,28 @@ module Ouroboros.Consensus.Peras.Cert.Inclusion
   , LatestCertOnChainView (..)
   , PerasCertInclusionView (..)
   , mkPerasCertInclusionView
+  , PerasCertInclusionViewHandle (..)
   , PerasCertInclusionRule (..)
   , PerasCertInclusionRulesDecision (..)
   , needCert
+  , needCertInContext
   , noCertsFromTwoRoundsAgo
   , needCertRules
   ) where
 
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Ouroboros.Consensus.Block (WithOrigin (..), withOriginToMaybe)
-import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasCertRound (..)
-  , PerasParams
+import Ouroboros.Consensus.Block
+  ( IsPerasCert (..)
+  , PerasCertMaxRounds (..)
+  , PerasParams (..)
   , PerasRoundNo (..)
+  , ValidatedPerasCert
+  , WithOrigin (..)
   )
-import Ouroboros.Consensus.Peras.Params (PerasCertMaxRounds (..), PerasParams (..))
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
+import Ouroboros.Consensus.Util.IOLike (MonadSTM (..))
 import Ouroboros.Consensus.Util.Pred
   ( Evidence (..)
   , Explainable (..)
@@ -65,7 +71,7 @@ data LatestCertOnChainView cert
 
 -- | Interface needed to evaluate the Peras cert inclusion rules
 data PerasCertInclusionView cert blk = PerasCertInclusionView
-  { perasParams :: !PerasParams
+  { perasParams :: !(PerasParams blk)
   -- ^ Peras protocol parameters
   , currRoundNo :: !PerasRoundNo
   -- ^ The current Peras round number
@@ -80,55 +86,53 @@ data PerasCertInclusionView cert blk = PerasCertInclusionView
 
 -- | Construct a 'PerasCertInclusionView' from the given inputs.
 --
--- Returns 'Nothing' if we are trying to construct the view without having a
--- latest certificate seen, which is a precondition to being able to include it
--- in the block we are building.
---
 -- NOTE: this assumes that the client code computes all the needed inputs
 -- within the same STM transaction, or the results may be inconsistent.
 mkPerasCertInclusionView ::
   forall cert blk.
-  HasPerasCertRound cert =>
+  IsPerasCert cert blk =>
   -- | Peras protocol parameters
-  PerasParams ->
+  PerasParams blk ->
   -- | Current Peras round number
   PerasRoundNo ->
   -- | Most recent certificate seen by the voter
-  WithOrigin cert ->
+  cert ->
   -- | Round number of the latest certificate present in our preferred chain
   WithOrigin PerasRoundNo ->
   -- | Set of certificates (by their round number) present in our database
   Set PerasRoundNo ->
   -- | Constructed certificate inclusion view
-  Maybe (PerasCertInclusionView cert blk)
+  PerasCertInclusionView cert blk
 mkPerasCertInclusionView
   perasParams
   currRoundNo
   latestCertSeen
   latestCertOnChain
   certIds = do
-    latestCertSeenView <- withOriginToMaybe (mkLatestCertSeenView latestCertSeen)
-    latestCertOnChainView <- traverse mkLatestCertOnChainView latestCertOnChain
-    pure $
-      PerasCertInclusionView
-        { perasParams = perasParams
-        , currRoundNo = currRoundNo
-        , latestCertSeen = latestCertSeenView
-        , latestCertOnChain = latestCertOnChainView
-        , certIds = certIds
-        }
+    PerasCertInclusionView
+      { perasParams = perasParams
+      , currRoundNo = currRoundNo
+      , latestCertSeen = mkLatestCertSeenView latestCertSeen
+      , latestCertOnChain = mkLatestCertOnChainView <$> latestCertOnChain
+      , certIds = certIds
+      }
    where
-    mkLatestCertSeenView = fmap $ \cert ->
+    mkLatestCertSeenView cert =
       LatestCertSeenView
         { lcsCert = cert
         , lcsCertRound = getPerasCertRound cert
         }
 
     mkLatestCertOnChainView roundNo =
-      Just $
-        LatestCertOnChainView
-          { lcocRoundNo = roundNo
-          }
+      LatestCertOnChainView
+        { lcocRoundNo = roundNo
+        }
+
+newtype PerasCertInclusionViewHandle m blk
+  = PerasCertInclusionViewHandle
+      ( PerasRoundNo ->
+        STM m (Maybe (PerasCertInclusionView (WithArrivalTime (ValidatedPerasCert blk)) blk))
+      )
 
 {-------------------------------------------------------------------------------
   Certificate inclusion rules
@@ -147,7 +151,7 @@ data PerasCertInclusionRulesDecision cert
   deriving Show
 
 instance
-  HasPerasCertRound cert =>
+  IsPerasCert cert blk =>
   Explainable (PerasCertInclusionRulesDecision cert)
   where
   explain mode = \case
@@ -165,6 +169,14 @@ needCert pciv =
     case e of
       ETrue{} -> IncludeCert e (lcsCert (latestCertSeen pciv))
       EFalse{} -> DoNotIncludeCert e
+
+needCertInContext ::
+  MonadSTM m =>
+  PerasCertInclusionViewHandle m blk ->
+  PerasRoundNo ->
+  STM m (Maybe (PerasCertInclusionRulesDecision (WithArrivalTime (ValidatedPerasCert blk))))
+needCertInContext (PerasCertInclusionViewHandle getPerasCertInclusionView) =
+  fmap (fmap needCert) . getPerasCertInclusionView
 
 -- | Certificate inclusion rules.
 --
