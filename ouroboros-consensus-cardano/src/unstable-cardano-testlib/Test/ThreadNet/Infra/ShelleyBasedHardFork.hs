@@ -35,6 +35,15 @@ module Test.ThreadNet.Infra.ShelleyBasedHardFork
   , protocolInfoShelleyBasedHardFork
   ) where
 
+import Cardano.Ledger.Api.Era
+  ( AllegraEra
+  , AlonzoEra
+  , BabbageEra
+  , ConwayEra
+  , DijkstraEra
+  , MaryEra
+  , ShelleyEra
+  )
 import qualified Cardano.Ledger.Api.Transition as L
 import Cardano.Ledger.Binary.Decoding
   ( decShareCBOR
@@ -70,6 +79,12 @@ import Data.Void (Void)
 import Lens.Micro ((%~), (&), (.~), (^.))
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Forging (MkBlockForging)
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( PerasEnabled
+  , PerasRoundLength
+  , dijkstraPerasRoundLength
+  , pattern NoPerasEnabled
+  )
 import Ouroboros.Consensus.Cardano.CanHardFork
   ( crossEraForecastAcrossShelley
   , translateChainDepStateAcrossShelley
@@ -83,7 +98,6 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
@@ -183,10 +197,12 @@ pattern ShelleyNodeToClientVersionMax <- ((== maxBound) -> True)
 type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   ( ShelleyCompatible proto1 era1
   , ShelleyCompatible proto2 era2
+  , HasPerasRoundLength era1
+  , HasPerasRoundLength era2
   , LedgerSupportsProtocol (ShelleyBlock proto1 era1)
   , LedgerSupportsProtocol (ShelleyBlock proto2 era2)
-  , LedgerSupportsPeras (ShelleyBlock proto1 era1)
-  , LedgerSupportsPeras (ShelleyBlock proto2 era2)
+  , SerialiseConstraintsHFC (ShelleyBlock proto1 era1)
+  , SerialiseConstraintsHFC (ShelleyBlock proto2 era2)
   , TxLimits (ShelleyBlock proto1 era1)
   , TxLimits (ShelleyBlock proto2 era2)
   , TranslateTxMeasure
@@ -404,6 +420,23 @@ instance
   Protocol info
 -------------------------------------------------------------------------------}
 
+class HasPerasRoundLength era where
+  getPerasRoundLength :: Proxy era -> PerasEnabled PerasRoundLength
+instance HasPerasRoundLength ShelleyEra where
+  getPerasRoundLength _ = NoPerasEnabled
+instance HasPerasRoundLength AllegraEra where
+  getPerasRoundLength _ = NoPerasEnabled
+instance HasPerasRoundLength MaryEra where
+  getPerasRoundLength _ = NoPerasEnabled
+instance HasPerasRoundLength AlonzoEra where
+  getPerasRoundLength _ = NoPerasEnabled
+instance HasPerasRoundLength BabbageEra where
+  getPerasRoundLength _ = NoPerasEnabled
+instance HasPerasRoundLength ConwayEra where
+  getPerasRoundLength _ = NoPerasEnabled
+instance HasPerasRoundLength DijkstraEra where
+  getPerasRoundLength _ = dijkstraPerasRoundLength
+
 protocolInfoShelleyBasedHardFork ::
   forall m proto1 era1 proto2 era2.
   ( KESAgentContext (ProtoCrypto proto2) m
@@ -488,7 +521,10 @@ protocolInfoShelleyBasedHardFork
     genesis = transCfg2 ^. L.tcShelleyGenesisL
 
     eraParams1 :: History.EraParams
-    eraParams1 = shelleyEraParams genesis
+    eraParams1 =
+      shelleyEraParams
+        genesis
+        (getPerasRoundLength (Proxy @era1))
 
     toPartialLedgerConfig1 ::
       LedgerConfig (ShelleyBlock proto1 era1) ->
@@ -502,7 +538,10 @@ protocolInfoShelleyBasedHardFork
     -- Era 2
 
     eraParams2 :: History.EraParams
-    eraParams2 = shelleyEraParams genesis
+    eraParams2 =
+      shelleyEraParams
+        genesis
+        (getPerasRoundLength (Proxy @era2))
 
     toPartialLedgerConfig2 ::
       LedgerConfig (ShelleyBlock proto2 era2) ->

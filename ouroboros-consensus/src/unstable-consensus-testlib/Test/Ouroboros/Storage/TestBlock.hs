@@ -63,9 +63,9 @@ module Test.Ouroboros.Storage.TestBlock
   , shrinkCorruptions
   ) where
 
-import Cardano.Binary (DecoderError)
+import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
 import Cardano.Crypto.DSIGN
-import Cardano.Ledger.BaseTypes (unNonZero)
+import Cardano.Ledger.BaseTypes (StrictMaybe (..), unNonZero)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
@@ -86,6 +86,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
+import Data.Set.NonEmpty.Internal (NESet (..))
 import Data.TreeDiff
 import Data.Void (Void)
 import Data.Word
@@ -108,12 +109,29 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Cert.Mock
+  ( MockPerasCert (..)
+  )
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , mkBoundedPerasEpochContextWith
+  )
+import Ouroboros.Consensus.Peras.Crypto.Mock
+  ( MockPerasCrypto
+  , MockPerasVotingCommitteeScheme
+  , VotingCommitteeError
+  )
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.State.Mock (mkMockPerasVotingCommitteeInput)
+import Ouroboros.Consensus.Peras.Vote.Mock
+  ( MockPerasVote (..)
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
 import Ouroboros.Consensus.Protocol.ModChainSel
@@ -126,6 +144,7 @@ import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Chain
+import Ouroboros.Network.Point (Block)
 import System.FS.API.Lazy
 import Test.Cardano.Slotting.Numeric ()
 import Test.Cardano.Slotting.TreeDiff ()
@@ -133,6 +152,7 @@ import Test.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.SignableRepresentation ()
 import Test.Util.Orphans.ToExpr ()
+import Test.Util.Peras (divisorClosestToQuotient)
 
 {-------------------------------------------------------------------------------
   TestBlock
@@ -198,13 +218,13 @@ data TestBody = TestBody
   -- Note that this is a /local/ number, it is specific to this block,
   -- other blocks need not be aware of it.
   , tbIsValid :: !Bool
-  , tbPerasCertRound :: !(Maybe PerasRoundNo)
+  , tbPerasCert :: !(Maybe (PerasCert TestBlock))
   -- ^ Some real blocks will ocasionally carry a Peras certificate inside their
-  -- body to coordinate the end of a cooldown period. For the purposes of the
-  -- ChainDB, we don't really care about the details of the certificate other
-  -- than its round number, which needs to be stored (and carefully updated
-  -- whenever a newer one pops up) so it can be used to evaluate the Peras
-  -- voting rules and decide if a node should resume voting.
+  -- body to coordinate the end of a cooldown period.
+  -- NOTE: for the purposes of the ChainDB, we don't care about the details of
+  -- the certificate other than its round number, which needs to be stored (and
+  -- carefully updated whenever a newer one pops up) so it can be used to
+  -- evaluate the Peras voting rules and decide if a node should resume voting.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData, NoThunks, Serialise, Hashable)
@@ -622,22 +642,18 @@ instance ApplyBlock LedgerState TestBlock where
             TestLedger
               (Chain.blockPoint tb)
               (BlockHash (blockHash tb))
-              ( let
-                  -- NOTE: this bypasses the degenerate global implementation of
-                  -- 'BlockSupportsPeras.getPerasCertInBlock' for 'TestBlock',
-                  -- which currently always returns 'Nothing'.
-                  --
-                  -- TODO: refactor this to use 'getPerasCertInBlock' after the
-                  -- HFC plumbing for 'BlockSupportsPeras' is in place.
-                  certRoundInBlock = tbPerasCertRound testBody
-                 in
-                  -- the highest Peras certificate round number  we've seen so far
-                  case (certRoundInBlock, latestPerasCertRound) of
-                    (Nothing, Nothing) -> Nothing
-                    (Just rb, Nothing) -> Just rb
-                    (Nothing, Just rl) -> Just rl
-                    (Just rb, Just rl) -> Just (rb `max` rl)
-              )
+              latestPerasCertRound'
+   where
+    -- The round number of the Peras certificate stored in this block, if any
+    perasCertRoundInBlock =
+      getPerasCertRound <$> getPerasCertInBlock tb
+    -- The highest Peras certificate round number we've seen so far
+    latestPerasCertRound' =
+      case (perasCertRoundInBlock, latestPerasCertRound) of
+        (Nothing, Nothing) -> Nothing
+        (Just rb, Nothing) -> Just rb
+        (Nothing, Just rl) -> Just rl
+        (Just rb, Just rl) -> Just (rb `max` rl)
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =
@@ -722,8 +738,27 @@ instance LedgerSupportsProtocol TestBlock where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
-instance LedgerSupportsPeras TestBlock where
-  getLatestPerasCertRound = latestPerasCertRound
+instance LedgerStateSupportsPeras (LedgerState TestBlock mk)
+
+instance LedgerStateSupportsPeras (Ticked LedgerState TestBlock mk)
+
+instance StateSupportsPerasEpochContext TestBlock where
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+
+{-------------------------------------------------------------------------------
+  BlockSupportsPeras
+-------------------------------------------------------------------------------}
+
+-- NOTE: this is a mocked up implementation without crypto!
+instance BlockSupportsPeras TestBlock where
+  type PerasCrypto TestBlock = MockPerasCrypto TestBlock
+  type PerasVotingCommitteeScheme TestBlock = MockPerasVotingCommitteeScheme TestBlock
+  type PerasVote TestBlock = MockPerasVote TestBlock
+  type PerasCert TestBlock = MockPerasCert TestBlock
+  type PerasError TestBlock = MockPerasError TestBlock
+  getPerasCertInBlock = tbPerasCert . testBody
+
+  readPerasPrivateKeyFromEnv _proxy = Right ()
 
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
@@ -736,12 +771,18 @@ instance InspectLedger TestBlock
 testInitLedger :: LedgerState TestBlock EmptyMK
 testInitLedger = TestLedger GenesisPoint GenesisHash Nothing
 
-testInitExtLedger :: ExtLedgerState TestBlock EmptyMK
-testInitExtLedger =
-  ExtLedgerState
-    { ledgerState = testInitLedger
-    , headerState = genesisHeaderState ()
-    }
+testInitExtLedger :: LedgerConfig TestBlock -> ExtLedgerState TestBlock EmptyMK
+testInitExtLedger ledgerConfig =
+  let ledgerState = testInitLedger
+      headerState = genesisHeaderState ()
+      perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+      latestPerasCertOnChainRound = SNothing
+   in ExtLedgerState
+        { ledgerState
+        , headerState
+        , perasEpochContextResolver
+        , latestPerasCertOnChainRound
+        }
 
 -- Only for a single node
 mkTestConfig :: SecurityParam -> ChunkSize -> TopLevelConfig TestBlock
@@ -782,7 +823,19 @@ mkTestConfig k ChunkSize{chunkCanContainEBB, numRegularBlocks} =
       , eraSlotLength = slotLength
       , eraSafeZone = HardFork.StandardSafeZone (unNonZero (maxRollbacks k) * 2)
       , eraGenesisWin = GenesisWindow (unNonZero (maxRollbacks k) * 2)
-      , eraPerasRoundLength = HardFork.PerasEnabled (perasRoundLength mkPerasParams)
+      , -- Epoch size is 'numRegularBlocks' (between 5 and 15), and
+        -- perasRoundLength should divive it.
+        -- picking the closest divisor to get us about 3 Peras rounds per epoch
+        -- gives us a suitable distribution of perasRoundLengths:
+        -- >>> flip divisorClosestToQuotient 3 <$> [5..15]
+        -- [1,2,1,2,3,2,1,4,1,7,5]
+        -- TODO: it would be better to generate PerasRoundLength randomly in
+        -- accordance with the 'ChunkInfo' directly, but that would require an
+        -- overhaul of how test config is propagated all over this file.
+        -- See https://github.com/tweag/cardano-peras/issues/257
+        eraPerasRoundLength =
+          PerasEnabled . PerasRoundLength $
+            divisorClosestToQuotient numRegularBlocks 3
       }
 
 instance ImmutableEraParams TestBlock where
@@ -933,16 +986,24 @@ corruptionFiles = map snd . NE.toList
   Orphans
 -------------------------------------------------------------------------------}
 
+-- ** Hashable
+
 deriving newtype instance Hashable SlotNo
 deriving newtype instance Hashable BlockNo
 deriving newtype instance Hashable PerasRoundNo
+
 instance Hashable IsEBB
-
--- use generic instance
-
+instance Hashable TestHeader
+instance Hashable TestBlock
+instance Hashable (Block SlotNo TestHeaderHash)
+instance Hashable (Point TestBlock)
+instance Hashable PerasSeatIndex
+instance Hashable (NESet PerasSeatIndex)
+instance Hashable (MockPerasCert TestBlock)
+instance (Hashable a, Hashable (WithOrigin a)) => Hashable (WithOrigin a)
 instance (StandardHash b, Hashable (HeaderHash b)) => Hashable (ChainHash b)
 
--- use generic instance
+-- ** ToExpr
 
 instance ToExpr EBB
 instance ToExpr IsEBB
@@ -964,6 +1025,20 @@ deriving instance ToExpr (HeaderEnvelopeError TestBlock)
 deriving instance ToExpr BftValidationErr
 deriving instance ToExpr (ExtValidationError TestBlock)
 
+deriving anyclass instance
+  ToExpr (VotingCommitteeError (MockPerasCrypto TestBlock) (MockPerasVotingCommitteeScheme TestBlock))
+
 deriving anyclass instance ToExpr FsPath
 deriving anyclass instance ToExpr BlocksPerFile
 deriving instance ToExpr BinaryBlockInfo
+
+-- ** Serialise for MockPerasCert via FromCBOR/ToCBOR
+instance Serialise (MockPerasCert TestBlock) where
+  encode = toCBOR
+  decode = fromCBOR
+
+-- ** FromCBOR/ToCBOR for Point TestBlock via Serialise
+instance FromCBOR (Point TestBlock) where
+  fromCBOR = decode
+instance ToCBOR (Point TestBlock) where
+  toCBOR = encode

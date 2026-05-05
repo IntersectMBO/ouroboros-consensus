@@ -231,28 +231,72 @@ instance Inject Examples where
 -------------------------------------------------------------------------------}
 
 byronEraParams :: History.EraParams
-byronEraParams = Byron.byronEraParams Byron.ledgerConfig
+byronEraParams =
+  Byron.byronEraParams
+    Byron.ledgerConfig
 
 shelleyEraParams :: History.EraParams
-shelleyEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+shelleyEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    -- here we don't have a proto type param at hand, so we can't call
+    -- 'getPerasRoundLength' from 'HasPerasRoundLength' class. So instead we use
+    -- the value it resolves to.
+    NoPerasEnabled
 
 allegraEraParams :: History.EraParams
-allegraEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+allegraEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    -- here we don't have a proto type param at hand, so we can't call
+    -- 'getPerasRoundLength' from 'HasPerasRoundLength' class. So instead we use
+    -- the value it resolves to.
+    NoPerasEnabled
 
 maryEraParams :: History.EraParams
-maryEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+maryEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    -- here we don't have a proto type param at hand, so we can't call
+    -- 'getPerasRoundLength' from 'HasPerasRoundLength' class. So instead we use
+    -- the value it resolves to.
+    NoPerasEnabled
 
 alonzoEraParams :: History.EraParams
-alonzoEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+alonzoEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    -- here we don't have a proto type param at hand, so we can't call
+    -- 'getPerasRoundLength' from 'HasPerasRoundLength' class. So instead we use
+    -- the value it resolves to.
+    NoPerasEnabled
 
 babbageEraParams :: History.EraParams
-babbageEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+babbageEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    -- here we don't have a proto type param at hand, so we can't call
+    -- 'getPerasRoundLength' from 'HasPerasRoundLength' class. So instead we use
+    -- the value it resolves to.
+    NoPerasEnabled
 
 conwayEraParams :: History.EraParams
-conwayEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+conwayEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    -- here we don't have a proto type param at hand, so we can't call
+    -- 'getPerasRoundLength' from 'HasPerasRoundLength' class. So instead we use
+    -- the value it resolves to.
+    NoPerasEnabled
 
 dijkstraEraParams :: History.EraParams
-dijkstraEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+dijkstraEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    -- here we don't have a proto type param at hand, so we can't call
+    -- 'getPerasRoundLength' from 'HasPerasRoundLength' class. So instead we use
+    -- the value it resolves to.
+    dijkstraPerasRoundLength
 
 -- | We use 10, 20, 30, 40, ... as the transition epochs
 shelleyTransitionEpoch :: EpochNo

@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 -- Necessary to give the 'HasPointScheduleTestParams' instance for 'TestBlockWith'.
@@ -9,6 +10,7 @@ import Cardano.Crypto.DSIGN (SignKeyDSIGN (..), VerKeyDSIGN (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import Ouroboros.Consensus.Block.SupportsPeras (pattern PerasEnabled)
 import Ouroboros.Consensus.Config
   ( SecurityParam
   , TopLevelConfig (..)
@@ -77,7 +79,10 @@ defaultCfg secParam (ForecastRange sfor) sgen =
   slotLength = slotLengthFromSec 20
 
   eraParams :: HardFork.EraParams
-  eraParams = (HardFork.defaultEraParams secParam slotLength){eraGenesisWin = sgen}
+  eraParams =
+    (HardFork.defaultEraParams secParam slotLength (PerasEnabled ()))
+      { eraGenesisWin = sgen
+      }
 
   numCoreNodes = NumCoreNodes 2
 

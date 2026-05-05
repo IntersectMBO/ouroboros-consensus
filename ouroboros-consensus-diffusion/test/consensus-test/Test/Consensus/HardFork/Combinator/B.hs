@@ -4,6 +4,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE EmptyDataDeriving #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -53,6 +54,7 @@ import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.Forecast
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Condense
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
@@ -64,13 +66,22 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , mkBoundedPerasEpochContextWith
+  )
+import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCrypto, MockPerasVotingCommitteeScheme)
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.State.Mock (mkMockPerasVotingCommitteeInput)
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.Serialisation
@@ -263,7 +274,24 @@ instance LedgerSupportsProtocol BlockB where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
-instance LedgerSupportsPeras BlockB
+instance LedgerStateSupportsPeras (LedgerState BlockB mk)
+
+instance LedgerStateSupportsPeras (Ticked LedgerState BlockB mk)
+
+-- NOTE: this block does not support Peras, so we can use the empty instance here.
+instance BlockSupportsPeras BlockB where
+  type PerasCrypto BlockB = MockPerasCrypto BlockB
+  type
+    PerasVotingCommitteeScheme BlockB =
+      MockPerasVotingCommitteeScheme BlockB
+  type PerasVote BlockB = MockPerasVote BlockB
+  type PerasCert BlockB = MockPerasCert BlockB
+  type PerasError BlockB = MockPerasError BlockB
+
+  -- No certs are stored in 'TestBlockWith'
+  getPerasCertInBlock _ = Nothing
+
+  readPerasPrivateKeyFromEnv _proxy = Right ()
 
 instance HasPartialConsensusConfig ProtocolB
 
@@ -302,7 +330,7 @@ blockForgingB =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \cfg bno slot st txs proof ->
+    , forgeBlock = \cfg bno slot _mbPerasCert st txs proof ->
         return $
           forgeBlockB cfg bno slot st (fmap txForgetValidated txs) proof
     , finalize = return ()
@@ -458,6 +486,17 @@ instance HasBinaryBlockInfo BlockB where
       { headerOffset = 2
       , headerSize = fromIntegral $ Lazy.length (serialise blkB_header)
       }
+
+-- NOTE: BlockB is only ever used
+-- wrapped in the hard fork combinator (which implements 'hardForkSummary'
+-- directly and never delegates to the underlying era), so this method is never
+-- actually called.
+instance HasHardForkHistory BlockB where
+  type HardForkIndices BlockB = '[BlockB]
+  hardForkSummary = error "BlockB being used as a SingleEraBlock"
+
+instance StateSupportsPerasEpochContext BlockB where
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
 
 instance SerialiseConstraintsHFC BlockB
 instance SerialiseDiskConstraints BlockB

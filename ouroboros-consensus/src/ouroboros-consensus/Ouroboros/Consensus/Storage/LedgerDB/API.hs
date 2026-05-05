@@ -220,6 +220,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , WhereToTakeSnapshot (..)
   ) where
 
+import Cardano.Binary (FromCBOR, ToCBOR)
 import Codec.CBOR.Decoding
 import Codec.CBOR.Read
 import Codec.Serialise
@@ -231,6 +232,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.MemPack
 import Data.Proxy
 import Data.Set (Set)
+import Data.Typeable (Typeable)
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class
@@ -275,6 +277,12 @@ type LedgerDbSerialiseConstraints blk =
   , IndexedMemPack LedgerState blk (TxOut blk)
   , MemPack (TxIn blk)
   , SerializeTablesWithHint LedgerState blk
+  , -- Needed for Peras
+    Typeable blk
+  , Typeable (PerasCrypto blk)
+  , Typeable (PerasVotingCommitteeScheme blk)
+  , FromCBOR (PerasVotingCommittee blk)
+  , ToCBOR (PerasVotingCommittee blk)
   )
 
 -- | The core API of the LedgerDB component
