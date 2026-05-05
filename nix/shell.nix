@@ -40,6 +40,10 @@ hsPkgs.shellFor {
         allow-newer: haddock-library:base
       '';
     };
+    hoogle.cabalProjectLocal = ''
+      if impl(ghc <9.7)
+        constraints: alfred-margaret <2.1.1.0 || >2.1.1.0
+    '';
   };
 
   shellHook = ''

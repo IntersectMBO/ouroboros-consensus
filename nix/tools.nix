@@ -2,7 +2,7 @@ inputs: final: prev:
 
 let
   inherit (final) lib;
-  tool-index-state = "2026-02-23T15:03:19Z";
+  tool-index-state = "2026-04-06T15:25:10Z";
   tool = name: version: other:
     final.haskell-nix.tool "ghc98" name ({
       version = version;
@@ -28,9 +28,14 @@ in
       rev = "f3a230de36a08920f8ad47766b0528b9229b3ce6";
       hash = "sha256-WiSq1uBjuSCEW7vp/81a1PVdo/7pf86dqy+R7lDCOdY=";
     };
+    cabalProject = ''
+      packages: .
+      constraints:
+        alfred-margaret <2.1.1.0
+    '';
   };
 
-  cabal-gild = tool "cabal-gild" "1.6.0.2" { };
+  cabal-gild = tool "cabal-gild" "1.8.4.1" { compiler-nix-name = "ghc912"; };
 
   hlint = tool "hlint" "3.10" { };
 
