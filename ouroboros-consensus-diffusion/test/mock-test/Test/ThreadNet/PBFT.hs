@@ -130,6 +130,7 @@ prop_simple_pbft_convergence
                 )
                 (pure $ blockForgingMockPBFT nid)
           , mkRekeyM = Nothing
+          , nodeKernelHook = emptyNodeKernelHook
           }
 
     refResult :: Ref.Result

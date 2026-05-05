@@ -162,6 +162,7 @@ setupTestOutput setup@SetupDualByron{..} =
                 [coreNodeId]
             )
       , mkRekeyM = Nothing -- TODO
+      , nodeKernelHook = emptyNodeKernelHook
       }
  where
   testConfig = Byron.setupTestConfig setupByron

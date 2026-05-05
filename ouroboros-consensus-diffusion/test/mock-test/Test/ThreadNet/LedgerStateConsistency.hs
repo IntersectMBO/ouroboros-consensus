@@ -122,6 +122,7 @@ prop_replay_matches_final_state
                 )
                 (pure $ blockForgingBft nid)
           , mkRekeyM = Nothing
+          , nodeKernelHook = emptyNodeKernelHook
           }
 
     someNode = snd . Map.findMin $ testOutputNodes testOutput

@@ -207,6 +207,7 @@ runThreadNet args@RunThreadNetArgs{..} =
                   , tniBlockForging = blockForging
                   }
         , mkRekeyM = Nothing
+        , nodeKernelHook = emptyNodeKernelHook
         }
 
 -- * ThreadNet configuration

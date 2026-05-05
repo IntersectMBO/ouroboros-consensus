@@ -118,4 +118,5 @@ prop_simple_bft_convergence
                 )
                 (pure $ blockForgingBft nid)
           , mkRekeyM = Nothing
+          , nodeKernelHook = emptyNodeKernelHook
           }

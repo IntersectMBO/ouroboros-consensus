@@ -21,6 +21,7 @@ module Test.ThreadNet.General
   , TestConfig (..)
   , TestConfigB (..)
   , TestConfigMB (..)
+  , emptyNodeKernelHook
   , truncateNodeJoinPlan
   , truncateNodeRestarts
   , truncateNodeTopology
@@ -45,6 +46,7 @@ import Control.Monad.IOSim
   , traceM
   , traceResult
   )
+import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer (Tracer (..), nullTracer)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -60,6 +62,7 @@ import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.NodeKernel (NodeKernel)
 import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Consensus.Protocol.LeaderSchedule
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
@@ -205,7 +208,21 @@ data TestConfigMB m blk = TestConfigMB
   , mkRekeyM :: Maybe (m (RekeyM m blk))
   -- ^ 'runTestNetwork' immediately runs this action once in order to
   -- initialize an 'RekeyM' value that it then reuses throughout the test
+  , nodeKernelHook ::
+      forall addrNTN addrNTC.
+      ResourceRegistry m -> NodeKernel m addrNTN addrNTC blk -> m ()
+  -- ^ Hook called inside 'initNodeKernel' after the kernel record is built.
+  -- Mirrors 'rnNodeKernelHook' on production's 'RunNodeArgs'. Used by tests
+  -- that need to spawn block-type-specific threads (e.g. Cardano Leios
+  -- voting). Use 'emptyNodeKernelHook' for the no-op default.
   }
+
+-- | The no-op 'nodeKernelHook' used by tests that don't need to spawn extra
+-- block-type-specific threads.
+emptyNodeKernelHook ::
+  Applicative m =>
+  ResourceRegistry m -> NodeKernel m addrNTN addrNTC blk -> m ()
+emptyNodeKernelHook _ _ = pure ()
 
 {-------------------------------------------------------------------------------
    Running tests
@@ -250,7 +267,7 @@ runTestNetwork
    where
     trace = runSimTrace $ do
       setCurrentTime dawnOfTime
-      let TestConfigMB{nodeInfo, mkRekeyM} = mkTestConfigMB
+      let TestConfigMB{nodeInfo, mkRekeyM, nodeKernelHook} = mkTestConfigMB
       let systemTime = BTime.defaultSystemTime (BTime.SystemStart dawnOfTime) nullTracer
       runThreadNetwork
         (Tracer traceM)
@@ -270,6 +287,7 @@ runTestNetwork
           , tnaTxGenExtra = txGenExtra
           , tnaVersion = networkVersion
           , tnaBlockVersion = blockVersion
+          , tnaNodeKernelHook = nodeKernelHook
           }
 
 {-------------------------------------------------------------------------------

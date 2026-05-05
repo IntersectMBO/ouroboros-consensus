@@ -276,6 +276,7 @@ prop_simple_allegraMary_convergence
                     , tniBlockForging = blockForging
                     }
           , mkRekeyM = Nothing
+          , nodeKernelHook = emptyNodeKernelHook
           }
 
     maxForkLength :: NumBlocks

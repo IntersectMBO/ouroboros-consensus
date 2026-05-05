@@ -96,6 +96,7 @@ library
     Ouroboros.Consensus.Cardano.Condense
     Ouroboros.Consensus.Cardano.Ledger
     Ouroboros.Consensus.Cardano.Node
+    Ouroboros.Consensus.Cardano.Node.Leios
     Ouroboros.Consensus.Cardano.QueryHF
     Ouroboros.Consensus.Shelley.Crypto
     Ouroboros.Consensus.Shelley.Eras
@@ -159,8 +160,11 @@ library
     mtl,
     nothunks,
     ouroboros-consensus ^>=0.27,
+    ouroboros-consensus-diffusion ^>=0.23,
     ouroboros-consensus-protocol ^>=0.12,
     ouroboros-network-api ^>=0.14,
+    resource-registry,
+    strict-stm,
     serialise ^>=0.2,
     singletons ^>=3.0,
     small-steps,

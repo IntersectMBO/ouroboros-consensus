@@ -299,6 +299,7 @@ prop_simple_real_tpraos_convergence
                     , tniBlockForging = blockForging
                     }
           , mkRekeyM = Nothing
+          , nodeKernelHook = emptyNodeKernelHook
           }
 
     initialKESPeriod :: SL.KESPeriod

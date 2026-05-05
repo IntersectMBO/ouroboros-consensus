@@ -1139,6 +1139,7 @@ prop_simple_real_pbft_convergence
                                 sequence $
                                   let ms = genKeyDSIGNRandom Stream.:< ms in ms
                     }
+          , nodeKernelHook = emptyNodeKernelHook
           }
 
     -- Byron has a hard-coded relation between k and the size of an epoch

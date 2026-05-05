@@ -139,6 +139,7 @@ prop_simple_leader_schedule_convergence
                 )
                 (pure blockForgingPraosRule)
           , mkRekeyM = Nothing
+          , nodeKernelHook = emptyNodeKernelHook
           }
 
 {-------------------------------------------------------------------------------

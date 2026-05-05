@@ -232,6 +232,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
             (protocolInfo a)
             (return blockForging)
       , mkRekeyM = Nothing
+      , nodeKernelHook = emptyNodeKernelHook
       }
 
   labelEraSizeA :: String

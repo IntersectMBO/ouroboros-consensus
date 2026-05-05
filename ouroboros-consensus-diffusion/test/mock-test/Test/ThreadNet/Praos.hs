@@ -173,6 +173,7 @@ prop_simple_praos_convergence
                 )
                 (blockForgingPraos numCoreNodes nid)
           , mkRekeyM = Nothing
+          , nodeKernelHook = emptyNodeKernelHook
           }
 
     flakyTestCopy =

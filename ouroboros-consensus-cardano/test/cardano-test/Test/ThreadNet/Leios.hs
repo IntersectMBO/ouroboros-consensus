@@ -64,6 +64,7 @@ import Ouroboros.Consensus.Cardano
   )
 import Ouroboros.Consensus.Cardano.Block (pattern BlockConway, pattern LedgerStateConway)
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
+import Ouroboros.Consensus.Cardano.Node.Leios (cardanoLeiosNodeKernelHook)
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
 import Ouroboros.Consensus.Ledger.Abstract
   ( ComputeLedgerEvents (OmitLedgerEvents)
@@ -428,6 +429,7 @@ runThreadNet initSeed numSlots numCoreNodes =
                   , tniBlockForging = blockForging
                   }
         , mkRekeyM = Nothing
+        , nodeKernelHook = cardanoLeiosNodeKernelHook
         }
   , protocolInfo0
   )

@@ -254,6 +254,9 @@ data ThreadNetworkArgs m blk = ThreadNetworkArgs
   , tnaTxGenExtra :: TxGenExtra blk
   , tnaVersion :: NodeToNodeVersion
   , tnaBlockVersion :: BlockNodeToNodeVersion blk
+  , tnaNodeKernelHook ::
+      forall addrNTN addrNTC.
+      ResourceRegistry m -> NodeKernel m addrNTN addrNTC blk -> m ()
   }
 
 {-------------------------------------------------------------------------------
@@ -346,6 +349,7 @@ runThreadNetwork
     , tnaTxGenExtra = txGenExtra
     , tnaVersion = version
     , tnaBlockVersion = blockVersion
+    , tnaNodeKernelHook
     } = withRegistry $ \sharedRegistry -> do
     mbRekeyM <- sequence mbMkRekeyM
 
@@ -1028,6 +1032,7 @@ runThreadNetwork
               }
 
       nodeKernel <- initNodeKernel nodeKernelArgs
+      tnaNodeKernelHook registry nodeKernel
 
       blockForging' <-
         map

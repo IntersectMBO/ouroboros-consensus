@@ -278,6 +278,7 @@ prop_simple_cardano_convergence
                 setupInitialNonce
                 (coreNodes !! fromIntegral nid)
           , mkRekeyM = Nothing
+          , nodeKernelHook = emptyNodeKernelHook
           }
 
     maxForkLength :: NumBlocks
