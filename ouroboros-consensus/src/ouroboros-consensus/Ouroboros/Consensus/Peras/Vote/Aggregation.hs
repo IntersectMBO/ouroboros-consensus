@@ -99,6 +99,13 @@ import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime, forgetArrivalTime)
+import Ouroboros.Consensus.Peras.Types
+  ( PerasRoundNo
+  , PerasVoteId
+  , PerasVoteStake (..)
+  , PerasVoteTarget (..)
+  , stakeAboveThreshold
+  )
 
 {-------------------------------------------------------------------------------
   Voting state for a given Peras round

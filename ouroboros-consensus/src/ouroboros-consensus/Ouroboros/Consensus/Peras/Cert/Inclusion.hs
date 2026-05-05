@@ -26,12 +26,9 @@ module Ouroboros.Consensus.Peras.Cert.Inclusion
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Ouroboros.Consensus.Block (WithOrigin (..), withOriginToMaybe)
-import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasCertRound (..)
-  , PerasParams
-  , PerasRoundNo (..)
-  )
+import Ouroboros.Consensus.Block.SupportsPeras (HasPerasCertRound (..))
 import Ouroboros.Consensus.Peras.Params (PerasCertMaxRounds (..), PerasParams (..))
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo (..))
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.Pred
   ( Evidence (..)

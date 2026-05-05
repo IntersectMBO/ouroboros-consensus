@@ -20,9 +20,7 @@ import Ouroboros.Consensus.Block.Abstract
   )
 import Ouroboros.Consensus.Block.SupportsPeras
   ( HasPerasCertRound (..)
-  , PerasRoundNo (..)
   , getPerasCertRound
-  , onPerasRoundNo
   )
 import Ouroboros.Consensus.BlockchainTime
   ( RelativeTime (..)

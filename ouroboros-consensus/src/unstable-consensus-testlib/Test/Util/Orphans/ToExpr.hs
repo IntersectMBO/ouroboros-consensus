@@ -24,6 +24,8 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.TxSeq
+import Ouroboros.Consensus.Peras.Params (PerasWeight)
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import Ouroboros.Consensus.Storage.ImmutableDB
