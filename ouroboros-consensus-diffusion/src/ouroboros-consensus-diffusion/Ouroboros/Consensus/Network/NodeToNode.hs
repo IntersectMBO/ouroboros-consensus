@@ -51,9 +51,11 @@ import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Read (DeserialiseFailure)
+import Control.Applicative ((<|>))
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
+import Control.Monad (forM_)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
@@ -65,19 +67,24 @@ import qualified Data.Map as Map
 import Data.Map.Strict (Map)
 import qualified Data.Set as Set
 import Data.Void (Void)
-import LeiosDemoDb (LeiosDbHandle (subscribeEbNotifications))
+import LeiosDemoDb
+  ( LeiosDbHandle (subscribeEbNotifications)
+  , LeiosEbNotification (..)
+  )
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
 import LeiosDemoTypes
   ( LeiosEb
-  , LeiosNotification (..)
   , LeiosPoint (..)
   , LeiosTx
+  , LeiosVote (..)
+  , TraceLeiosKernel (..)
   , TraceLeiosPeer (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosVoteState (LeiosVoteState (..), LeiosVoteSubscription (..), subscribeVotes)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Network.TypedProtocol.Peer (Peer (Effect))
@@ -96,6 +103,7 @@ import Ouroboros.Consensus.Node.ExitPolicy
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Node.Tracers (leiosKernelTracer)
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -332,6 +340,8 @@ mkHandlers
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
       , hLeiosNotifyClient = \_version controlMessageSTM peer -> toLeiosNotifyClientPeerPipelined $ Effect $ do
           let tracer = leiosPeerTracer peer
+              kernelTracer = leiosKernelTracer tracers
+              LeiosVoteState{addVote} = leiosVoteState
           MVar.modifyMVar_ getLeiosPeersVars $ \leiosPeersVars -> do
             x <- Leios.newLeiosPeerVars
             let !leiosPeersVars' = Map.insert (Leios.MkPeerId peer) x leiosPeersVars
@@ -340,7 +350,7 @@ mkHandlers
             leiosNotifyClientPeerPipelined
               ( atomically controlMessageSTM <&> \case
                   Terminate -> Left ()
-                  _ -> Right 300 {- TODO magic number -}
+                  _ -> Right 10 {- TODO magic number -}
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
@@ -377,15 +387,35 @@ mkHandlers
                       let !offers2' = Set.insert ebHash offers2
                       pure (offers1, offers2')
                     void $ MVar.tryPutMVar getLeiosReady ()
+                  MsgLeiosVotes vs -> do
+                    -- TODO: reduce this trace a bit to the essential
+                    traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs
+                    mapM_ addVote vs
+                    forM_ vs $ \MkLeiosVote{electionId, ebHash, voterId} ->
+                      traceWith kernelTracer $
+                        TraceLeiosVoteAcquired
+                          { point = MkLeiosPoint electionId ebHash
+                          , voter = voterId
+                          }
               )
       , hLeiosNotifyServer = \_version _peer -> Effect $ do
           chan <- subscribeEbNotifications leiosDB
-          pure . leiosNotifyServerPeer $ do
-            atomically (readTChan chan) >>= \case
-              LeiosOfferBlock point ebSize ->
-                pure $ MsgLeiosBlockOffer point ebSize
-              LeiosOfferBlockTxs point ->
-                pure $ MsgLeiosBlockTxsOffer point
+          let processEbNotification =
+                readTChan chan >>= \case
+                  AcquiredEb point ebSize ->
+                    pure $ MsgLeiosBlockOffer point ebSize
+                  AcquiredEbTxs point ->
+                    pure $ MsgLeiosBlockTxsOffer point
+
+          LeiosVoteSubscription{getNextVote} <- subscribeVotes leiosVoteState
+          let processVote = do
+                vote <- getNextVote
+                -- FIXME: Yields each vote separately
+                pure $ MsgLeiosVotes [vote]
+
+          pure . leiosNotifyServerPeer $
+            atomically $
+              processEbNotification <|> processVote
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
           reqVar <-
             let loop = do
@@ -427,6 +457,7 @@ mkHandlers
       } = nodeKernel
     NodeKernel
       { leiosDB
+      , leiosVoteState
       , getLeiosPeersVars
       , getLeiosOutstanding
       , getLeiosReady

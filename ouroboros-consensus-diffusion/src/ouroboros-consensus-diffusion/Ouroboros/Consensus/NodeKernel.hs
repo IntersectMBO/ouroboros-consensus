@@ -161,11 +161,14 @@ import System.Random (StdGen)
 
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
+import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
+import qualified Data.ByteString as BS
 import Data.Map (Map)
 import qualified Data.Map as Map
 import LeiosDemoDb
   ( LeiosDbConnection
   , LeiosDbHandle (..)
+  , LeiosEbNotification (..)
   , leiosDbInsertEbBody
   , leiosDbInsertEbPoint
   , leiosDbInsertTxs
@@ -176,9 +179,12 @@ import LeiosDemoTypes
   ( ForgedLeiosEb
   , LeiosOutstanding
   , LeiosPeerVars
+  , LeiosVote (..)
   , TraceLeiosKernel (..)
+  , VoterId (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
 import Ouroboros.Consensus.Mempool.TxSeq (mSize)
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 
@@ -228,6 +234,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
 
     -- See 'LeiosPeerVars' for the write patterns
     leiosDB :: LeiosDbHandle m
+  , leiosVoteState :: LeiosVoteState m
   , getLeiosPeersVars :: MVar m (Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , -- Written to by the fetch logic, by the LeiosNotify&LeiosFetch, and by LeiosCopier
     -- clients (TODO and by eviction).
@@ -407,6 +414,7 @@ initNodeKernel
           fetchClientRegistry
           blockFetchConfiguration
 
+    leiosVoteState <- newLeiosVoteState
     getLeiosPeersVars <- MVar.newMVar Map.empty
     getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding -- TODO init from DB
     getLeiosReady <- MVar.newEmptyMVar
@@ -448,6 +456,48 @@ initNodeKernel
           traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: duration " ++ show duration
           threadDelay $ loopInterval - duration
 
+    void $ forkLinkedThread registry "NodeKernel.leiosVoting" $ do
+      let tracer = leiosKernelTracer tracers
+          LeiosVoteState{addVote} = leiosVoteState
+      -- Access voting key and derive voter id
+      case topLevelConfigVotingKey cfg of
+        Nothing ->
+          traceWith tracer $
+            MkTraceLeiosKernel $
+              "NodeKernel.leiosVoting: disabled because no topLevelConfigVotingKey"
+        Just votingKey -> do
+          -- TODO: derive from committee within ledger state, also move within loop (changes across epochs)
+          -- FIXME: Lucky seed has two identical voter ids. Fix via proper
+          -- committee selection from all registered keys.
+          -- :main -p Leios --quickcheck-replay "(SMGen 15462600834920737326 9156690725779514573,20)"
+          let me = MkVoterId . fromIntegral $ BS.head votingKey
+          -- Subscribe to EBs for which we have the full closure
+          chan <- subscribeEbNotifications leiosDB
+          let getNext f =
+                atomically (readTChan chan) >>= \case
+                  AcquiredEb{} -> pure ()
+                  AcquiredEbTxs point -> f point
+          forever $ do
+            -- TODO: Need to poll available EBs instead? Otherwise we would not vote
+            -- when we switch to a chain only later
+            getNext $ \point -> do
+              let tooOld = const False -- TODO: check not too old; use tip or wall clock time?
+              unless (tooOld point) $ do
+                -- TODO: check whether already voted
+                -- TODO: validate EB closures against selected chain
+                -- TODO: create vote (sign the eb hash)
+                let vote =
+                      MkLeiosVote
+                        { electionId = point.pointSlotNo
+                        , voterId = me
+                        , ebHash = point.pointEbHash
+                        , voteSignature = True
+                        }
+                -- Store vote in memory and notify downstream peers
+                addVote vote
+                traceWith tracer TraceLeiosVoted{point, voter = me}
+                traceWith tracer TraceLeiosVoteAcquired{point, voter = me}
+
     return
       NodeKernel
         { getChainDB = chainDB
@@ -466,6 +516,7 @@ initNodeKernel
         , getDiffusionPipeliningSupport
         , getBlockchainTime = btime
         , leiosDB
+        , leiosVoteState
         , getLeiosPeersVars
         , getLeiosOutstanding
         , getLeiosReady

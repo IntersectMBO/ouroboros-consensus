@@ -47,6 +47,7 @@ module Ouroboros.Consensus.Cardano.Node
 
 import Cardano.Binary (DecoderError (..), enforceSize)
 import Cardano.Chain.Slotting (EpochSlots)
+import Cardano.Crypto.KES.Class (rawSerialiseUnsoundPureSignKeyKES)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
@@ -812,6 +813,12 @@ protocolInfoCardano paramsCardano
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
       , topLevelConfigCheckpoints = cardanoCheckpoints
+      , -- FIXME: REMOVE THIS. Accesses and re-uses KES signing key material.
+        topLevelConfigVotingKey =
+          Just
+            . rawSerialiseUnsoundPureSignKeyKES
+            . shelleyLeaderCredentialsInitSignKey
+            $ credssShelleyBased !! 0
       }
 
   -- When the initial ledger state is not in the Byron era, register various
