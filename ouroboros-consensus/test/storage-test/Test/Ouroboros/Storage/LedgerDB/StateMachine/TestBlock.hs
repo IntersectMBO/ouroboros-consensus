@@ -36,7 +36,6 @@ import qualified Codec.Serialise as S
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe.Strict
 import Data.MemPack
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -255,7 +254,6 @@ instance CanStowLedgerTables (LedgerState TestBlock) where
 stowErr :: String -> a
 stowErr fname = error $ "Function " <> fname <> " should not be used in these tests."
 
-deriving anyclass instance ToExpr v => ToExpr (StrictMaybe v)
 deriving anyclass instance
   ToExpr (mk Token TValue) => ToExpr (LedgerTables TestBlock mk)
 deriving instance

@@ -15,14 +15,6 @@ import Ouroboros.Consensus.Peras.Voting.Adapter
   ( PerasCertCompatibleWithVotingCommittee (..)
   , PerasVoteCompatibleWithVotingCommittee (..)
   )
-import Test.Consensus.Peras.Util
-  ( genPerasCert
-  , genPerasVote
-  , perasCertContainsOnlyPersistentVotes
-  , perasVoteIsPersistent
-  , tabulatePerasCert
-  , tabulatePerasVote
-  )
 import Test.QuickCheck
   ( Gen
   , Property
@@ -35,6 +27,14 @@ import Test.QuickCheck
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.Peras
+  ( genPerasCert
+  , genPerasVote
+  , perasCertContainsOnlyPersistentVotes
+  , perasVoteIsPersistent
+  , tabulatePerasCert
+  , tabulatePerasVote
+  )
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree

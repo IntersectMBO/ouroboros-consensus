@@ -237,9 +237,13 @@ library
     Ouroboros.Consensus.NodeId
     Ouroboros.Consensus.Peras.Cert.Class
     Ouroboros.Consensus.Peras.Cert.Inclusion
+    Ouroboros.Consensus.Peras.Cert.Inclusion.Trace
+    Ouroboros.Consensus.Peras.Cert.Opaque
     Ouroboros.Consensus.Peras.Cert.V1
     Ouroboros.Consensus.Peras.Context
     Ouroboros.Consensus.Peras.Crypto.BLS
+    Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
+    Ouroboros.Consensus.Peras.Error.V1
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Types
@@ -249,6 +253,8 @@ library
     Ouroboros.Consensus.Peras.Vote.V1
     Ouroboros.Consensus.Peras.Voting.Adapter
     Ouroboros.Consensus.Peras.Voting.Rules
+    Ouroboros.Consensus.Peras.Voting.Trace
+    Ouroboros.Consensus.Peras.Voting.V1
     Ouroboros.Consensus.Peras.Voting.View
     Ouroboros.Consensus.Peras.Weight
     Ouroboros.Consensus.Protocol.Abstract
@@ -451,6 +457,7 @@ library unstable-consensus-testlib
     Ouroboros.Consensus.Peras.Crypto.Mock
     Ouroboros.Consensus.Peras.Error.Mock
     Ouroboros.Consensus.Peras.Vote.Mock
+    Ouroboros.Consensus.Peras.Voting.Mock
     Test.LedgerTables
     Test.Ouroboros.Consensus.ChainGenerator.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.BitVector
@@ -485,6 +492,10 @@ library unstable-consensus-testlib
     Test.Util.Orphans.SignableRepresentation
     Test.Util.Orphans.ToExpr
     Test.Util.Paths
+    Test.Util.Peras
+    Test.Util.Peras.Common
+    Test.Util.Peras.Mock
+    Test.Util.Peras.V1
     Test.Util.QSM
     Test.Util.QuickCheck
     Test.Util.Range
@@ -591,6 +602,7 @@ library unstable-mock-block
     Ouroboros.Consensus.Mock.Node.Abstract
     Ouroboros.Consensus.Mock.Node.BFT
     Ouroboros.Consensus.Mock.Node.PBFT
+    Ouroboros.Consensus.Mock.Node.Peras
     Ouroboros.Consensus.Mock.Node.Praos
     Ouroboros.Consensus.Mock.Node.PraosRule
     Ouroboros.Consensus.Mock.Node.Serialisation
@@ -688,7 +700,6 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
     Test.Consensus.Peras.Cert.Inclusion
     Test.Consensus.Peras.Serialisation
-    Test.Consensus.Peras.Util
     Test.Consensus.Peras.Voting.Adapter
     Test.Consensus.Peras.Voting.Rules
     Test.Consensus.Peras.WeightSnapshot
@@ -833,7 +844,6 @@ test-suite storage-test
     cardano-ledger-binary:testlib,
     cardano-ledger-core:cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
-    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,
@@ -846,6 +856,7 @@ test-suite storage-test
     io-sim,
     mempack,
     mtl,
+    nonempty-containers,
     nothunks,
     ouroboros-consensus:{lsm, ouroboros-consensus},
     ouroboros-network:{api, api-tests-lib, protocols-tests-lib},
@@ -1343,6 +1354,7 @@ library cardano
     Ouroboros.Consensus.Byron.Ledger.PBFT
     Ouroboros.Consensus.Byron.Ledger.Serialisation
     Ouroboros.Consensus.Byron.Node
+    Ouroboros.Consensus.Byron.Node.Peras
     Ouroboros.Consensus.Byron.Node.Serialisation
     Ouroboros.Consensus.Byron.Protocol
     Ouroboros.Consensus.Cardano
@@ -1375,6 +1387,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Node
     Ouroboros.Consensus.Shelley.Node.Common
     Ouroboros.Consensus.Shelley.Node.DiffusionPipelining
+    Ouroboros.Consensus.Shelley.Node.Peras
     Ouroboros.Consensus.Shelley.Node.Praos
     Ouroboros.Consensus.Shelley.Node.Serialisation
     Ouroboros.Consensus.Shelley.Node.TPraos

@@ -50,6 +50,7 @@ import qualified Cardano.Ledger.Conway.Rules as SL
   )
 import qualified Cardano.Ledger.Conway.State as CG
 import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError), DijkstraEra)
+import qualified Cardano.Ledger.Dijkstra.BlockBody as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as SL
   ( DijkstraLedgerPredFailure (..)
@@ -71,6 +72,7 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( WhetherToIntervene (..)
   )
+import Ouroboros.Consensus.Peras.Cert.Opaque (OpaquePerasCert (..))
 import Ouroboros.Consensus.Peras.Params
   ( PerasEnabled
   , PerasRoundLength
@@ -146,6 +148,19 @@ class
   -- Defaults to 'NoPerasEnabled' for eras that don't explictily support Peras.
   getShelleyEraPerasRoundLength :: proxy era -> PerasEnabled PerasRoundLength
   getShelleyEraPerasRoundLength _ = NoPerasEnabled
+
+  -- | Inject a Peras certificate into a block body.
+  --
+  -- Note that the certificate we inject into a block body could potentially
+  -- come from a different era than that of the block body itself.
+  --
+  -- The default implementation is the identity function, which is appropriate
+  -- for eras that don't support Peras certificates.
+  injectPerasCertInBlockBody ::
+    OpaquePerasCert ->
+    BlockBody era ->
+    BlockBody era
+  injectPerasCertInBlockBody _ = id
 
 data ConwayEraGovDict era where
   ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
@@ -233,6 +248,10 @@ instance ShelleyBasedEra DijkstraEra where
   mkEraMkMempoolApplyTxError _prx = Nothing
 
   getShelleyEraPerasRoundLength _ = dijkstraPerasRoundLength
+
+  injectPerasCertInBlockBody (OpaquePerasCert byteArray) =
+    Dijkstra.perasCertBlockBodyL
+      .~ SJust (Dijkstra.PerasCert byteArray)
 
 applyAlonzoBasedTx ::
   forall era.

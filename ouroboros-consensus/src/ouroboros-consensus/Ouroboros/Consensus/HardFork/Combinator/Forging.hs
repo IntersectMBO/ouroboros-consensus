@@ -38,6 +38,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Mempool
 import Ouroboros.Consensus.HardFork.Combinator.Protocol
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Peras.Cert.Opaque (OpaquePerasCert)
 import Ouroboros.Consensus.TypeFamilyWrappers
 
 -- | If we cannot forge, it's because the current era could not forge
@@ -310,6 +311,7 @@ hardForkForgeBlock ::
   TopLevelConfig (HardForkBlock xs) ->
   BlockNo ->
   SlotNo ->
+  Maybe OpaquePerasCert ->
   TickedLedgerState (HardForkBlock xs) EmptyMK ->
   [Validated (GenTx (HardForkBlock xs))] ->
   HardForkIsLeader xs ->
@@ -319,6 +321,7 @@ hardForkForgeBlock
   cfg
   bno
   sno
+  mbPerasCert
   (TickedHardForkLedgerState transition ledgerState)
   txs
   isLeader =
@@ -404,6 +407,7 @@ hardForkForgeBlock
           cfg'
           bno
           sno
+          mbPerasCert
           ledgerState'
           (map unwrapValidatedGenTx txs')
           isLeader'

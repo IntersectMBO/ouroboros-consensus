@@ -50,6 +50,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Control.Monad (guard)
 import Control.Monad.Except (throwError, withExcept)
 import qualified Control.State.Transition.Extended as STS
+import Data.Bifunctor (bimap)
 import Data.Functor ((<&>))
 import Data.Functor.Product
 import Data.Kind (Type)
@@ -90,8 +91,12 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.HardFork.Combinator.Translation
 import Ouroboros.Consensus.HardFork.History
   ( Bound (..)
+  , EpochToPerasRoundInfo
+  , EraIndexed
   , EraParams
   , SafeZone (..)
+  , eraIndexedToNS
+  , forgetEraIndex
   )
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
@@ -100,6 +105,9 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  )
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack)
@@ -339,6 +347,43 @@ instance
       . hcmap proxySingle (K . getPoolDistr . getFlipTickedLedgerState)
       . State.tip
       . tickedHardForkLedgerStatePerEra
+
+-- | Defined here rather than alongside the other hard fork protocol instances
+-- because its superclasses ('HasHardForkHistory' and the ticked
+-- 'LedgerStateSupportsPeras' instance above) are not in scope in
+-- "Ouroboros.Consensus.HardFork.Combinator.Protocol".
+instance
+  ( StandardHash (HardForkBlock xs)
+  , CanHardFork xs
+  , All Top xs
+  ) =>
+  StateSupportsPerasEpochContext (HardForkBlock xs)
+  where
+  type
+    MaybeEraIndexedEpochToPerasRoundInfo (HardForkBlock xs) =
+      EraIndexed xs EpochToPerasRoundInfo
+
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = id
+
+  mkBoundedPerasEpochContext epochToPerasRoundInfo ledgerState headerState =
+    bimap
+      (HardForkPerasErrorOneEraPerasError . OneEraPerasError)
+      injectHFCBoundedPerasEpochContext
+      ( hcollect
+          . hcmap
+            proxySingle
+            ( \_ ->
+                mkEitherF
+                  WrapPerasError
+                  id
+                  $ mkBoundedPerasEpochContext
+                    (fromMaybeEraIndexedEpochToPerasRoundInfo (Proxy @(HardForkBlock xs)) epochToPerasRoundInfo)
+                    ledgerState
+                    headerState
+            )
+          $ eraIndexedToNS epochToPerasRoundInfo
+      )
 
 {-------------------------------------------------------------------------------
   HeaderValidation
