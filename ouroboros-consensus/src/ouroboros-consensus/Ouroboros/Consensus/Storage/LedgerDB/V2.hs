@@ -65,7 +65,7 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import System.FS.API
 import Prelude hiding (read)
 
-type SnapshotManagerV2 m blk = SnapshotManager m m blk (StateRef m ExtLedgerState blk)
+type SnapshotManagerV2 m blk = SnapshotManager m blk (StateRef m ExtLedgerState blk)
 
 newtype SnapshotExc blk = SnapshotExc {getSnapshotFailure :: SnapshotFailure blk}
   deriving (Show, Exception)
@@ -150,7 +150,7 @@ implMkLedgerDb ::
   , ApplyBlock l blk
   ) =>
   LedgerDBHandle m l blk ->
-  SnapshotManager m m blk (StateRef m l blk) ->
+  SnapshotManager m blk (StateRef m l blk) ->
   (LedgerDB m l blk, TestInternals m l blk)
 implMkLedgerDb h snapManager =
   let ldb =
@@ -175,7 +175,7 @@ mkInternals ::
   ) =>
   LedgerDB m l blk ->
   LedgerDBHandle m l blk ->
-  SnapshotManager m m blk (StateRef m l blk) ->
+  SnapshotManager m blk (StateRef m l blk) ->
   TestInternals m l blk
 mkInternals ldb h snapManager =
   TestInternals
@@ -227,7 +227,7 @@ mkInternals ldb h snapManager =
 -- | Testing only! Truncate all snapshots in the DB. We only truncate the state
 -- file because it is unclear how to truncate the LSM database without
 -- corrupting it.
-implIntTruncateSnapshots :: MonadThrow m => SnapshotManager m m blk st -> SomeHasFS m -> m ()
+implIntTruncateSnapshots :: MonadThrow m => SnapshotManager m blk st -> SomeHasFS m -> m ()
 implIntTruncateSnapshots snapManager (SomeHasFS fs) = do
   snapshotsMapM_ snapManager $
     \pre -> withFile fs (snapshotToStatePath pre) (AppendMode AllowExisting) $
@@ -332,7 +332,7 @@ implTryTakeSnapshot ::
   ( IOLike m
   , GetTip (l blk)
   ) =>
-  SnapshotManager m m blk (StateRef m l blk) ->
+  SnapshotManager m blk (StateRef m l blk) ->
   LedgerDBEnv m l blk ->
   m () ->
   (SnapshotDelayRange -> m DiffTime) ->
