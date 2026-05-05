@@ -43,7 +43,6 @@ import Ouroboros.Consensus.Block.Abstract
   )
 import Ouroboros.Consensus.Block.SupportsPeras
   ( HasPerasCertRound (..)
-  , PerasRoundNo (..)
   , ValidatedPerasCert
   , getPerasCertBoostedBlock
   , getPerasCertRound
@@ -61,6 +60,7 @@ import Ouroboros.Consensus.Peras.Params
   ( PerasBlockMinSlots (..)
   , PerasParams (..)
   )
+import Ouroboros.Consensus.Peras.Types (PerasRoundNo)
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
