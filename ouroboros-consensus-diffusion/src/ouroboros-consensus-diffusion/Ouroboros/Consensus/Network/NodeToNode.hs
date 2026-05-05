@@ -275,8 +275,9 @@ mkHandlers ::
   ( IOLike m
   , MonadTime m
   , MonadTimer m
-  , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , BlockSupportsPeras blk
+  , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
   , Ord addrNTN
   , Hashable addrNTN
@@ -380,7 +381,10 @@ mkHandlers
             , 10 -- TODO: see https://github.com/tweag/cardano-peras/issues/97
             , 10 -- TODO: see https://github.com/tweag/cardano-peras/issues/97
             )
-            (makePerasCertPoolWriterFromChainDB systemTime getChainDB)
+            ( makePerasCertPoolWriterFromChainDB
+                systemTime
+                getChainDB
+            )
             version
             controlMessageSTM
       , hPerasCertDiffusionServer = \version peer ->
@@ -610,6 +614,8 @@ showTracers ::
   , Show (Header blk)
   , Show (GenTx blk)
   , Show (GenTxId blk)
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
   , HasHeader blk
   , HasNestedContent Header blk
   ) =>
@@ -762,10 +768,13 @@ mkApps ::
   , Exception e
   , NFData e
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , ShowProxy blk
   , ShowProxy (Header blk)
   , ShowProxy (TxId (GenTx blk))
   , ShowProxy (GenTx blk)
+  , ShowProxy (PerasVote blk)
+  , ShowProxy (PerasCert blk)
   , Show addrNTN
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)

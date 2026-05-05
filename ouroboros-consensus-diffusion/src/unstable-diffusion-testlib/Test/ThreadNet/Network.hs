@@ -883,11 +883,12 @@ runThreadNetwork
             TopLevelConfig blk ->
             BlockNo ->
             SlotNo ->
+            Maybe (PerasCert blk) ->
             TickedLedgerState blk mk ->
             [Validated (GenTx blk)] ->
             IsLeader (BlockProtocol blk) ->
             m blk
-          customForgeBlock origBlockForging cfg' currentBno currentSlot tickedLdgSt txs prf = do
+          customForgeBlock origBlockForging cfg' currentBno currentSlot mbPerasCert tickedLdgSt txs prf = do
             let currentEpoch = HFF.futureSlotToEpoch future currentSlot
 
             -- EBBs are only ever possible in the first era
@@ -911,6 +912,7 @@ runThreadNetwork
                   cfg'
                   currentBno
                   currentSlot
+                  mbPerasCert
                   (forgetLedgerTables tickedLdgSt)
                   txs
                   prf
@@ -957,6 +959,7 @@ runThreadNetwork
                     cfg'
                     currentBno
                     currentSlot
+                    mbPerasCert
                     (forgetLedgerTables tickedLdgSt')
                     txs
                     prf
@@ -1746,6 +1749,7 @@ nullDebugTracers ::
   ( Monad m
   , Show peer
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , TracingConstraints blk
   ) =>
   Tracers m peer Void blk
@@ -1777,6 +1781,8 @@ type TracingConstraints blk =
   , Show (TxMeasurePhase1 blk)
   , Show (TxMeasurePhase2 blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
   , HasNestedContent Header blk
   , HasRawTxId (GenTxId blk)
   )

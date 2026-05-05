@@ -125,13 +125,14 @@ instance StateModel Model where
         , (1, pure $ PerasRoundNo 2)
         , (8, PerasRoundNo <$> arbitrary)
         ]
-    genHash = TestHash . NE.fromList . getNonEmpty <$> arbitrary
 
     genVoters :: Gen (NE (Set PerasSeatIndex))
     genVoters =
       NESet.fromList <$> (liftA2 (NE.:|) genSeatIndex (listOf genSeatIndex))
 
     genSeatIndex = PerasSeatIndex <$> arbitrary
+
+    genHash = TestHash . NE.fromList . getNonEmpty <$> arbitrary
 
   initialState = Model Model.initModel
 

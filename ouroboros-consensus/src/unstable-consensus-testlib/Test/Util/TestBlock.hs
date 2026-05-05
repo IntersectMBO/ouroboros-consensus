@@ -144,11 +144,18 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext (..)
   , mkBoundedPerasEpochContextWith
   )
+import Ouroboros.Consensus.Peras.Crypto.Mock
+  ( MockPerasCrypto
+  , MockPerasVotingCommitteeScheme
+  )
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -706,7 +713,34 @@ instance PayloadSemantics ptype => LedgerSupportsProtocol (TestBlockWith ptype) 
   ledgerViewForecastAt cfg state =
     constantForecastInRange (strictMaybeToMaybe (tblcForecastRange cfg)) () (getTipSlot state)
 
+{-------------------------------------------------------------------------------
+  BlockSupportsPeras
+-------------------------------------------------------------------------------}
+
+-- NOTE: this is a mocked up implementation without crypto!
+instance
+  Typeable ptype =>
+  BlockSupportsPeras (TestBlockWith ptype)
+  where
+  type PerasCrypto (TestBlockWith ptype) = MockPerasCrypto (TestBlockWith ptype)
+  type
+    PerasVotingCommitteeScheme (TestBlockWith ptype) =
+      MockPerasVotingCommitteeScheme (TestBlockWith ptype)
+  type PerasVote (TestBlockWith ptype) = MockPerasVote (TestBlockWith ptype)
+  type PerasCert (TestBlockWith ptype) = MockPerasCert (TestBlockWith ptype)
+  type PerasError (TestBlockWith ptype) = MockPerasError (TestBlockWith ptype)
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock _ = Right Nothing
+
+{-------------------------------------------------------------------------------
+  Test infrastructure: config
+-------------------------------------------------------------------------------}
+
 singleNodeTestConfigWith ::
+  forall ptype.
   CodecConfig (TestBlockWith ptype) ->
   StorageConfig (TestBlockWith ptype) ->
   SecurityParam ->

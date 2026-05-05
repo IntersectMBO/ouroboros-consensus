@@ -90,10 +90,17 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
 import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext (..)
   , mkBoundedPerasEpochContextWith
   )
+import Ouroboros.Consensus.Peras.Crypto.Mock
+  ( MockPerasCrypto
+  , MockPerasVotingCommitteeScheme
+  )
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
 import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
@@ -332,6 +339,18 @@ instance StateSupportsPerasEpochContext BlockA where
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
 
+instance BlockSupportsPeras BlockA where
+  type PerasCrypto BlockA = MockPerasCrypto BlockA
+  type PerasVotingCommitteeScheme BlockA = MockPerasVotingCommitteeScheme BlockA
+  type PerasVote BlockA = MockPerasVote BlockA
+  type PerasCert BlockA = MockPerasCert BlockA
+  type PerasError BlockA = MockPerasError BlockA
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock _ = Right Nothing
+
 instance HasPartialConsensusConfig ProtocolA
 
 instance HasPartialLedgerConfig BlockA where
@@ -379,7 +398,7 @@ blockForgingA =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \cfg bno slot st txs proof ->
+    , forgeBlock = \cfg bno slot _mbPerasCert st txs proof ->
         return $
           forgeBlockA cfg bno slot st (fmap txForgetValidated txs) proof
     , finalize = return ()

@@ -29,6 +29,8 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , AddPerasVoteResult (..)
   , addPerasCertSync
   , addPerasVoteSync
+  , WithBoostedBlockStatus (..)
+  , forgetBoostedBlockStatus
 
     -- * Trigger chain selection
   , ChainSelectionPromise (..)
@@ -94,7 +96,12 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle)
+import Ouroboros.Consensus.Peras.Cert.Inclusion (PerasCertInclusionViewHandle)
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextResolverHandle
+  , TimeResolutionContextHandle
+  )
+import Ouroboros.Consensus.Peras.Voting.View (PerasVotingViewHandle (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
@@ -107,7 +114,8 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( AddPerasCertResult (..)
   , PerasCertTicketNo
-  , WithBoostedBlockStatus
+  , WithBoostedBlockStatus (..)
+  , forgetBoostedBlockStatus
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( AddPerasVoteResult (..)
@@ -470,6 +478,19 @@ data ChainDB m blk = ChainDB
       PerasEpochContextResolverHandle m blk
   -- ^ Returns a handle to obtain the 'PerasEpochContext' for a given 'PerasRoundNo'
   -- ^ Get the set of all Peras vote IDs currently in the database.
+  , getPerasVotingViewHandle ::
+      PerasVotingViewHandle m blk
+  -- ^ Returns a handle to obtain a 'PerasVotingView' that is used to decide
+  -- when to vote with respects to the voting rules.
+  --
+  -- NOTE: This needs to be part of the API because the implementation of the ChainDB
+  -- has access, during initialization, to the 'TopLevelConfig', but it isn't
+  -- stored/exposed by the API itself.
+  , getPerasCertInclusionViewHandle ::
+      PerasCertInclusionViewHandle m blk
+  , getTimeResolutionContextHandle ::
+      TimeResolutionContextHandle m blk
+  -- ^ Returns a handle to obtain the 'PerasEpochContext' for a given 'PerasRoundNo'
   , waitForImmutableBlock :: RealPoint blk -> m (Either SeekBlockError (RealPoint blk))
   -- ^ Wait until the immutable tip's slot is equal or greater than the given slot:
   --   - returns the block when it becomes the immutable tip,

@@ -52,6 +52,7 @@ openDB ::
   ( IOLike m
   , All Top (HardForkIndices blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
   , InspectLedger blk
   , HasCallStack
