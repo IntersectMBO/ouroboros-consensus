@@ -16,6 +16,7 @@ import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
+  , VotingCommittee
   , ensureUniqueVotesWithSameTarget
   )
 import Ouroboros.Consensus.Committee.Crypto
@@ -51,16 +52,6 @@ import Ouroboros.Consensus.Committee.WFALS
   )
 import Test.Consensus.Committee.TestCrypto (TestCrypto)
 import qualified Test.Consensus.Committee.TestCrypto as TestCrypto
-import Test.Consensus.Committee.Utils
-  ( eqWithShowCmp
-  , genEpochNonce
-  , genPools
-  , mkBucket
-  , onError
-  , tabulateNumPools
-  , tabulatePoolStake
-  , unfairWFATiebreaker
-  )
 import Test.QuickCheck
   ( Gen
   , Property
@@ -75,6 +66,16 @@ import Test.QuickCheck
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.Committee
+  ( eqWithShowCmp
+  , genEpochNonce
+  , genPools
+  , mkBucket
+  , onError
+  , tabulateNumPools
+  , tabulatePoolStake
+  , unfairWFATiebreaker
+  )
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree

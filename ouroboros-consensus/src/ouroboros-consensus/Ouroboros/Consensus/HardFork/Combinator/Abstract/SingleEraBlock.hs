@@ -1,10 +1,12 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
   ( -- * Single era block
@@ -44,10 +46,14 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Context
+  ( MaybeEraIndexedEpochToPerasRoundInfo
+  , StateSupportsPerasEpochContext
+  )
+import Ouroboros.Consensus.Peras.Time (EpochToPerasRoundInfo)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Ticked
@@ -60,7 +66,6 @@ import Ouroboros.Consensus.Util.Condense
 -- | Blocks from which we can assemble a hard fork
 class
   ( LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , InspectLedger blk
   , LedgerSupportsMempool blk
   , ConvertRawTxId (GenTx blk)
@@ -77,6 +82,9 @@ class
   , ConfigSupportsNode blk
   , NodeInitStorage blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  , MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo
   , BlockSupportsMetrics blk
   , SerialiseNodeToClient blk (PartialLedgerConfig blk)
   , -- LedgerTables

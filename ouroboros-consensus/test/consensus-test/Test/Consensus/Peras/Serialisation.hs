@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Serialisation roundtrip tests for Peras types
 module Test.Consensus.Peras.Serialisation
@@ -8,13 +9,8 @@ module Test.Consensus.Peras.Serialisation
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..), decodeFull, serialize)
 import qualified Data.ByteString.Lazy as LazyByteString
-import Test.Consensus.Peras.Util
-  ( genPerasCert
-  , genPerasVote
-  , mkBucket
-  , tabulatePerasCert
-  , tabulatePerasVote
-  )
+import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import Test.QuickCheck
   ( Gen
   , Property
@@ -25,6 +21,13 @@ import Test.QuickCheck
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.Peras
+  ( genPerasCert
+  , genPerasVote
+  , mkBucket
+  , tabulatePerasCert
+  , tabulatePerasVote
+  )
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
@@ -33,13 +36,13 @@ tests =
     "Serialization roundtrip for Peras types"
     [ adjustQuickCheckTests (* 10) $
         testProperty "Roundtrip for PerasVote" $
-          prop_roundtrip
+          prop_roundtrip @(V1.PerasVote ())
             -- Generate both persistent and non-persistent votes
             (genPerasVote True)
             tabulatePerasVote
     , adjustQuickCheckTests (* 10) $
         testProperty "Roundtrip for PerasCert" $
-          prop_roundtrip
+          prop_roundtrip @(V1.PerasCert ())
             -- Generate certs with both persistent and non-persistent votes
             (genPerasCert True)
             tabulatePerasCert

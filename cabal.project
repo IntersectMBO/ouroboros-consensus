@@ -30,12 +30,12 @@ source-repository-package
     kes-agent
     kes-agent-crypto
 
--- cardano-ledger on master 2026-06-30
+-- cardano-ledger on master 2026-06-18
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger.git
-  tag: 245e63dcd335e3ca29823609e4aaa8f5f096a425
-  --sha256: sha256-chsapfNnY/V7y1snBzjP0LSVnYl/Axt6GjahTPNOKj0=
+  tag: 8dc1c431e06db2c8b5d44fb4b3cca6419197d763
+  --sha256: sha256-xKtgNFxjbJE6UWGvTioGX81NgvlKH3mHEaYMWDm8/UA=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl

@@ -47,7 +47,7 @@ module Ouroboros.Consensus.HardFork.History.Summary
   , summaryInit
   ) where
 
-import Cardano.Binary (DecoderError (DecoderErrorCustom), cborError, decodeListLen, enforceSize)
+import Cardano.Binary (enforceSize)
 import Codec.CBOR.Decoding
   ( TokenType (TypeNull)
   , decodeNull
@@ -83,8 +83,11 @@ data Bound = Bound
   { boundTime :: !RelativeTime
   , boundSlot :: !SlotNo
   , boundEpoch :: !EpochNo
-  , boundPerasRound :: !(PerasEnabled PerasRoundNo)
-  -- ^ Optional, as not every era will be Peras-enabled
+  , boundNextPerasRound :: !PerasRoundNo
+  -- ^ Contains the number of the next Peras round.
+  -- Only increases in eras that support Peras.
+  -- The information of whether Peras is enabled in the current era is held
+  -- by 'eraPerasRoundLength' in the era parameters.
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -95,9 +98,7 @@ initBound =
     { boundTime = RelativeTime 0
     , boundSlot = SlotNo 0
     , boundEpoch = EpochNo 0
-    , -- TODO(geo2a): we may want to make this configurable,
-      -- see https://github.com/tweag/cardano-peras/issues/112
-      boundPerasRound = NoPerasEnabled
+    , boundNextPerasRound = PerasRoundNo 0
     }
 
 -- | Version of 'mkUpperBound' when the upper bound may not be known
@@ -127,7 +128,11 @@ mkUpperBound EraParams{..} lo hiEpoch =
     { boundTime = addRelTime inEraTime $ boundTime lo
     , boundSlot = addSlots inEraSlots $ boundSlot lo
     , boundEpoch = hiEpoch
-    , boundPerasRound = addPerasRounds <$> inEraPerasRounds <*> boundPerasRound lo
+    , -- If Peras is disabled, as specified by 'inEraPerasRounds',
+      -- we keep the same value for 'boundNextPerasRound' as in the lower bound.
+      boundNextPerasRound = case inEraPerasRounds of
+        NoPerasEnabled -> boundNextPerasRound lo
+        PerasEnabled rounds -> addPerasRounds rounds $ boundNextPerasRound lo
     }
  where
   inEraEpochs, inEraSlots :: Word64
@@ -346,19 +351,8 @@ summarize ::
   Transitions xs ->
   Summary xs
 summarize ledgerTip = \(Shape shape) (Transitions transitions) ->
-  Summary $ go initBoundWithPeras shape transitions
+  Summary $ go initBound shape transitions
  where
-  -- as noted in the haddock, this function is only used for testing purposes,
-  -- therefore we make the initial era is Peras-enabled, which means
-  -- we only test Peras-enabled eras. It is rather difficult
-  -- to parameterise the test suite, as it requires also parameterise many non-test functions, like
-  -- 'HF.initBound'.
-  --
-  -- TODO(geo2a): revisit this hard-coding of enabling Peras when
-  -- we're further into the integration process
-  -- see https://github.com/tweag/cardano-peras/issues/112
-  initBoundWithPeras = initBound{boundPerasRound = PerasEnabled . PerasRoundNo $ 0}
-
   go ::
     Bound -> -- Lower bound for current era
     Exactly (x ': xs) EraParams -> -- params for all eras
@@ -526,26 +520,19 @@ invariantSummary = \(Summary summary) ->
 instance Serialise Bound where
   encode Bound{..} =
     mconcat $
-      [ encodeListLen $ case boundPerasRound of
-          NoPerasEnabled -> 3
-          PerasEnabled{} -> 4
+      [ encodeListLen 4
       , encode boundTime
       , encode boundSlot
       , encode boundEpoch
+      , encode boundNextPerasRound
       ]
-        <> case boundPerasRound of
-          NoPerasEnabled -> []
-          PerasEnabled bound -> [encode bound]
 
   decode = do
-    len <- decodeListLen
+    enforceSize "Bound" 4
     boundTime <- decode
     boundSlot <- decode
     boundEpoch <- decode
-    boundPerasRound <- case len of
-      3 -> pure NoPerasEnabled
-      4 -> PerasEnabled <$> decode
-      _ -> cborError (DecoderErrorCustom "Bound" "unexpected list length")
+    boundNextPerasRound <- decode
     return Bound{..}
 
 instance Serialise EraEnd where

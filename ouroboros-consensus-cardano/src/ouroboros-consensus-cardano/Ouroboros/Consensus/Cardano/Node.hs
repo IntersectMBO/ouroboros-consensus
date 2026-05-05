@@ -48,6 +48,7 @@ import Cardano.Binary (DecoderError (..), enforceSize)
 import Cardano.Chain.Slotting (EpochSlots)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Prelude (cborError)
@@ -84,6 +85,11 @@ import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
+import Ouroboros.Consensus.HardFork.History.EraParams
+  ( EraParams
+  , pattern NoPerasEnabled
+  , pattern PerasEnabled
+  )
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables
@@ -704,6 +710,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      NoPerasEnabled
 
   partialConsensusConfigShelley ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) ShelleyEra))
@@ -726,6 +733,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      NoPerasEnabled
 
   partialConsensusConfigAllegra ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) AllegraEra))
@@ -745,6 +753,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      NoPerasEnabled
 
   partialConsensusConfigMary ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) MaryEra))
@@ -764,6 +773,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      NoPerasEnabled
 
   partialConsensusConfigAlonzo ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) AlonzoEra))
@@ -783,6 +793,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      NoPerasEnabled
 
   partialConsensusConfigBabbage ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) BabbageEra))
@@ -812,6 +823,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      NoPerasEnabled
 
   partialConsensusConfigConway ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) ConwayEra))
@@ -831,6 +843,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      (PerasEnabled defaultPerasParams)
 
   partialConsensusConfigDijkstra ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) DijkstraEra))
@@ -847,19 +860,47 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
   k :: SecurityParam
   k = assert (kByron == kShelley) kByron
 
+  byronEraParams :: EraParams
+  byronEraParams =
+    Byron.byronEraParams
+      genesisByron
+
+  mkShelleyEraParams :: BlockConfig (ShelleyBlock proto era) -> EraParams
+  mkShelleyEraParams blockConfig =
+    Shelley.shelleyEraParams
+      genesisShelley
+      (fmap perasRoundLength (Shelley.shelleyPerasParams blockConfig))
+
   shape :: History.Shape (CardanoEras c)
   shape =
     History.Shape $
       Exactly $
-        K (Byron.byronEraParams genesisByron)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
+        K byronEraParams
+          :* K (mkShelleyEraParams blockConfigShelley)
+          :* K (mkShelleyEraParams blockConfigAllegra)
+          :* K (mkShelleyEraParams blockConfigMary)
+          :* K (mkShelleyEraParams blockConfigAlonzo)
+          :* K (mkShelleyEraParams blockConfigBabbage)
+          :* K (mkShelleyEraParams blockConfigConway)
+          :* K (mkShelleyEraParams blockConfigDijkstra)
           :* Nil
+
+  ledgerConfig =
+    HardForkLedgerConfig
+      { hardForkLedgerConfigShape = shape
+      , hardForkLedgerConfigPerEra =
+          PerEraLedgerConfig
+            ( WrapPartialLedgerConfig partialLedgerConfigByron
+                :* WrapPartialLedgerConfig partialLedgerConfigShelley
+                :* WrapPartialLedgerConfig partialLedgerConfigAllegra
+                :* WrapPartialLedgerConfig partialLedgerConfigMary
+                :* WrapPartialLedgerConfig partialLedgerConfigAlonzo
+                :* WrapPartialLedgerConfig partialLedgerConfigBabbage
+                :* WrapPartialLedgerConfig partialLedgerConfigConway
+                :* WrapPartialLedgerConfig partialLedgerConfigDijkstra
+                :* Nil
+            )
+      }
 
   cfg :: TopLevelConfig (CardanoBlock c)
   cfg =
@@ -882,21 +923,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
                   )
             }
       , topLevelConfigLedger =
-          HardForkLedgerConfig
-            { hardForkLedgerConfigShape = shape
-            , hardForkLedgerConfigPerEra =
-                PerEraLedgerConfig
-                  ( WrapPartialLedgerConfig partialLedgerConfigByron
-                      :* WrapPartialLedgerConfig partialLedgerConfigShelley
-                      :* WrapPartialLedgerConfig partialLedgerConfigAllegra
-                      :* WrapPartialLedgerConfig partialLedgerConfigMary
-                      :* WrapPartialLedgerConfig partialLedgerConfigAlonzo
-                      :* WrapPartialLedgerConfig partialLedgerConfigBabbage
-                      :* WrapPartialLedgerConfig partialLedgerConfigConway
-                      :* WrapPartialLedgerConfig partialLedgerConfigDijkstra
-                      :* Nil
-                  )
-            }
+          ledgerConfig
       , topLevelConfigBlock =
           CardanoBlockConfig
             blockConfigByron
@@ -938,15 +965,21 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
   mkInitExtLedgerStateCardano = do
     let HardForkLedgerState st = initLedgerState
     st' <- hsequence' (hap perEraInjections st)
+    let ledgerState = HardForkLedgerState st'
+        headerState = initHeaderState
+        perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+        latestPerasCertOnChainRound = SNothing
     pure
       ExtLedgerState
-        { headerState = initHeaderState
-        , ledgerState = HardForkLedgerState st'
+        { ledgerState
+        , headerState
+        , perasEpochContextResolver
+        , latestPerasCertOnChainRound
         }
    where
     initHeaderState :: HeaderState (CardanoBlock c)
     initLedgerState :: LedgerState (CardanoBlock c) ValuesMK
-    ExtLedgerState initLedgerState initHeaderState =
+    ExtLedgerState initLedgerState initHeaderState _ _ =
       injectInitialExtLedgerState cfg $
         initExtLedgerStateByron
 

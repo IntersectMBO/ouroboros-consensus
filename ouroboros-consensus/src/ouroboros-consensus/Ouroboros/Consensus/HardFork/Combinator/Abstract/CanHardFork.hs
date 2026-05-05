@@ -10,6 +10,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork
   ( CanHardFork (..)
   , HashSizeOfHead
+  , EqualHashSizeOfHead
   ) where
 
 import Data.Measure (Measure)

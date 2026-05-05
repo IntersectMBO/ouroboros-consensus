@@ -48,6 +48,7 @@ import qualified Ouroboros.Consensus.Block.Abstract as BA
 import qualified Ouroboros.Consensus.BlockchainTime as BTime
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -283,7 +284,12 @@ data BlockRejection blk = BlockRejection
   , brReason :: !(ExtValidationError blk)
   , brRejector :: !NodeId
   }
-  deriving Show
+
+deriving instance
+  ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  ) =>
+  Show (BlockRejection blk)
 
 data PropGeneralArgs blk = PropGeneralArgs
   { pgaBlockProperty :: blk -> Property

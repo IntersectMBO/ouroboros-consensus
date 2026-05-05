@@ -24,6 +24,7 @@ module Cardano.Tools.DBAnalyser.Analysis
   , runAnalysis
   ) where
 
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Slotting.Slot as Slotting
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting as F
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
@@ -69,6 +70,9 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.Mempool.Impl.Common
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext
+  )
 import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
@@ -90,6 +94,8 @@ runAnalysis ::
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , CanStowLedgerTables (LedgerState blk)
   , Show (TxIn blk)
   , Show (TxOut blk)
@@ -234,7 +240,13 @@ data TraceEvent blk
       Int64
       Int64
 
-instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) where
+instance
+  ( HasAnalysis blk
+  , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  ) =>
+  Show (TraceEvent blk)
+  where
   show (StartedEvent analysisName) = "Started " <> (show analysisName)
   show DoneEvent = "Done"
   show (BlockSlotEvent bn sn h) =
@@ -416,6 +428,8 @@ showEBBs AnalysisEnv{db, registry, startFrom, limit, tracer} = do
 storeLedgerStateAt ::
   forall blk.
   ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , HasAnalysis blk
   ) =>
   SlotNo ->
@@ -499,6 +513,8 @@ checkNoThunksEvery ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , CanStowLedgerTables (LedgerState blk)
   ) =>
   Word64 ->
@@ -556,6 +572,8 @@ traceLedgerProcessing ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   Analysis blk StartFromLedgerState
 traceLedgerProcessing
@@ -613,6 +631,7 @@ benchmarkLedgerOps ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , HasAnalysis blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   Maybe FilePath ->
   LedgerApplicationMode ->
@@ -706,7 +725,17 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
 
     F.writeDataPoint outFileHandle outFormat slotDataPoint
 
-    LedgerDB.push intLedgerDB $ ExtLedgerState (prependDiffs tkLdgrSt newLedger) newHeader
+    LedgerDB.push intLedgerDB $
+      let ledgerState = (prependDiffs tkLdgrSt newLedger)
+          headerState = newHeader
+          perasEpochContextResolver = initPerasEpochContextResolver lcfg ledgerState headerState
+          latestPerasCertOnChainRound = SNothing
+       in ExtLedgerState
+            { ledgerState
+            , headerState
+            , perasEpochContextResolver
+            , latestPerasCertOnChainRound
+            }
    where
     rp = blockRealPoint blk
 
@@ -776,6 +805,8 @@ getBlockApplicationMetrics ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   NumberOfBlocks -> Maybe FilePath -> Analysis blk StartFromLedgerState
 getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
