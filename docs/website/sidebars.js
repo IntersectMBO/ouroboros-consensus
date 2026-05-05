@@ -26,6 +26,7 @@ const sidebars = {
               'explanations/data_flow',
               'explanations/consensus_protocol',
               'explanations/ledger_interaction',
+              'explanations/ticking',
               'explanations/queries',
               'explanations/node_tasks',
              ]
