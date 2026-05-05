@@ -13,6 +13,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 
 -- | Peras vote aggregation and certificate forging
@@ -117,8 +118,27 @@ data PerasRoundVoteState blk = PerasRoundVoteState
   { prvsRoundNo :: !PerasRoundNo
   , prvsState :: !(Either (NoQuorum blk) (Quorum blk))
   }
-  deriving stock (Generic, Eq, Show)
-  deriving anyclass NoThunks
+
+deriving instance
+  ( StandardHash blk
+  , Show (NoQuorum blk)
+  , Show (Quorum blk)
+  ) =>
+  Show (PerasRoundVoteState blk)
+deriving instance
+  ( StandardHash blk
+  , Eq (NoQuorum blk)
+  , Eq (Quorum blk)
+  ) =>
+  Eq (PerasRoundVoteState blk)
+deriving instance
+  ( StandardHash blk
+  , NoThunks (NoQuorum blk)
+  , NoThunks (Quorum blk)
+  ) =>
+  NoThunks (PerasRoundVoteState blk)
+deriving instance
+  Generic (PerasRoundVoteState blk)
 
 instance HasPerasVoteRound (PerasRoundVoteState blk) where
   getPerasVoteRound = prvsRoundNo
@@ -127,8 +147,24 @@ instance HasPerasVoteRound (PerasRoundVoteState blk) where
 data NoQuorum blk = NoQuorum
   { candidateStates :: !(Map (Point blk) (PerasTargetVoteState blk 'Candidate))
   }
-  deriving stock (Generic, Eq, Show)
-  deriving anyclass NoThunks
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasTargetVoteState blk 'Candidate)
+  ) =>
+  Show (NoQuorum blk)
+deriving instance
+  ( StandardHash blk
+  , Eq (PerasTargetVoteState blk 'Candidate)
+  ) =>
+  Eq (NoQuorum blk)
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasTargetVoteState blk 'Candidate)
+  ) =>
+  NoThunks (NoQuorum blk)
+deriving instance
+  Generic (NoQuorum blk)
 
 -- | Current vote state when a quorum has been reached
 data Quorum blk = Quorum
@@ -136,8 +172,27 @@ data Quorum blk = Quorum
   , loserStates :: !(Map (Point blk) (PerasTargetVoteState blk 'Loser))
   , winnerState :: !(PerasTargetVoteState blk 'Winner)
   }
-  deriving stock (Generic, Eq, Show)
-  deriving anyclass NoThunks
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasTargetVoteState blk 'Loser)
+  , Show (PerasTargetVoteState blk 'Winner)
+  ) =>
+  Show (Quorum blk)
+deriving instance
+  ( StandardHash blk
+  , Eq (PerasTargetVoteState blk 'Loser)
+  , Eq (PerasTargetVoteState blk 'Winner)
+  ) =>
+  Eq (Quorum blk)
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasTargetVoteState blk 'Loser)
+  , NoThunks (PerasTargetVoteState blk 'Winner)
+  ) =>
+  NoThunks (Quorum blk)
+deriving instance
+  Generic (Quorum blk)
 
 -- | Get the certificate if quorum was reached for the given round
 getPerasRoundVoteStateCertMaybe ::
@@ -207,7 +262,13 @@ data UpdateRoundVoteStateError blk
 -- quorum) or if forging the certificate fails.
 updatePerasRoundVoteState ::
   forall blk.
-  StandardHash blk =>
+  ( StandardHash blk
+  , HasPerasVoteRound (PerasVote blk)
+  , HasPerasVoteTarget (PerasVote blk) blk
+  , HasPerasVoteBlock (PerasVote blk) blk
+  , HasPerasVoteId (PerasVote blk) blk
+  , BlockSupportsPeras blk
+  ) =>
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasParams ->
   PerasRoundVoteState blk ->
@@ -327,7 +388,13 @@ updatePerasRoundVoteState vote params roundState =
 -- quorum) or if forging the certificate fails.
 updatePerasRoundVoteStates ::
   forall blk.
-  StandardHash blk =>
+  ( StandardHash blk
+  , HasPerasVoteRound (PerasVote blk)
+  , HasPerasVoteTarget (PerasVote blk) blk
+  , HasPerasVoteBlock (PerasVote blk) blk
+  , HasPerasVoteId (PerasVote blk) blk
+  , BlockSupportsPeras blk
+  ) =>
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasParams ->
   Map PerasRoundNo (PerasRoundVoteState blk) ->
@@ -421,8 +488,27 @@ data PerasTargetVoteTally blk = PerasTargetVoteTally
   , ptvtTotalStake :: !PerasVoteStake
   -- ^ Total stake of the votes received for this target
   }
-  deriving stock (Generic, Eq, Show)
-  deriving anyclass NoThunks
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasVoteTarget blk)
+  ) =>
+  Show (PerasTargetVoteTally blk)
+deriving instance
+  ( StandardHash blk
+  , Eq (PerasVote blk)
+  , Eq (PerasVoteTarget blk)
+  ) =>
+  Eq (PerasTargetVoteTally blk)
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasVote blk)
+  , NoThunks (PerasVoteTarget blk)
+  ) =>
+  NoThunks (PerasTargetVoteTally blk)
+deriving instance
+  Generic (PerasTargetVoteTally blk)
 
 freshTargetVoteTally :: PerasVoteTarget blk -> PerasTargetVoteTally blk
 freshTargetVoteTally target =
@@ -437,7 +523,10 @@ freshTargetVoteTally target =
 --
 -- PRECONDITION: the vote's target must match the tally's target.
 updateTargetVoteTally ::
-  StandardHash blk =>
+  ( StandardHash blk
+  , HasPerasVoteTarget (PerasVote blk) blk
+  , HasPerasVoteId (PerasVote blk) blk
+  ) =>
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteTally blk ->
   PerasTargetVoteTally blk
@@ -576,7 +665,11 @@ data PerasVoteStateCandidateOrWinner blk
 --
 -- May fail if the candidate is elected winner but forging the certificate fails.
 updateCandidateVoteState ::
-  StandardHash blk =>
+  ( StandardHash blk
+  , HasPerasVoteTarget (PerasVote blk) blk
+  , HasPerasVoteId (PerasVote blk) blk
+  , BlockSupportsPeras blk
+  ) =>
   PerasParams ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Candidate ->
@@ -601,7 +694,7 @@ updateCandidateVoteState params vote oldState =
 --
 -- May fail if the loser goes above quorum by adding the vote.
 updateLoserVoteState ::
-  StandardHash blk =>
+  (StandardHash blk, HasPerasVoteTarget (PerasVote blk) blk, HasPerasVoteId (PerasVote blk) blk) =>
   PerasParams ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Loser ->
@@ -618,7 +711,7 @@ updateLoserVoteState params vote oldState =
 --
 -- PRECONDITION: the vote's target must match the underlying tally's target.
 updateWinnerVoteState ::
-  StandardHash blk =>
+  (StandardHash blk, HasPerasVoteTarget (PerasVote blk) blk, HasPerasVoteId (PerasVote blk) blk) =>
   WithArrivalTime (ValidatedPerasVote blk) ->
   PerasTargetVoteState blk 'Winner ->
   PerasTargetVoteState blk 'Winner
