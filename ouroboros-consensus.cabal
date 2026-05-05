@@ -420,14 +420,14 @@ library lsm
 
   build-depends:
     base,
-    blockio,
+    blockio ^>=0.1.1.2,
     bytestring,
     containers,
     contra-tracer,
     filepath,
     fs-api,
     io-classes:mtl,
-    lsm-tree,
+    lsm-tree ^>=1.0.0.2,
     mempack,
     mtl,
     nothunks,
@@ -559,7 +559,7 @@ library unstable-consensus-testlib
     file-embed,
     filepath,
     fs-api,
-    fs-sim ^>=0.4,
+    fs-sim ^>=0.5,
     generics-sop,
     hashable,
     io-classes:{io-classes, si-timers, strict-mvar, strict-stm},
@@ -1435,7 +1435,6 @@ library cardano
     strict-sop-core,
     text,
     these,
-    validation,
 
 library unstable-byronspec
   import: common-lib
