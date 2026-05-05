@@ -82,6 +82,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   , ledgerViewForecastAt
   )
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Node.Run (SerialiseNodeToNodeConstraints)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.TPraos
@@ -165,6 +166,7 @@ instance
   ( ShelleyCompatible proto era
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
+  , SerialiseNodeToNodeConstraints (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
   ) =>
   SerialiseHFC '[ShelleyBlock proto era]
@@ -173,6 +175,7 @@ instance
   ( ShelleyCompatible proto era
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
+  , SerialiseNodeToNodeConstraints (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
   ) =>
   SerialiseConstraintsHFC (ShelleyBlock proto era)

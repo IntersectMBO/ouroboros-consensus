@@ -62,7 +62,7 @@ module Ouroboros.Consensus.Ledger.Dual
   , encodeDualLedgerState
   ) where
 
-import Cardano.Binary (enforceSize)
+import Cardano.Binary (FromCBOR, ToCBOR, enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise
@@ -270,6 +270,12 @@ class
   , Serialise (BridgeLedger m a)
   , Serialise (BridgeBlock m a)
   , Serialise (BridgeTx m a)
+  , -- Requirements for Peras epoch context
+    Show (PerasEpochContext (DualBlock m a))
+  , Eq (PerasEpochContext (DualBlock m a))
+  , NoThunks (PerasEpochContext (DualBlock m a))
+  , FromCBOR (PerasEpochContext (DualBlock m a))
+  , ToCBOR (PerasEpochContext (DualBlock m a))
   , Show (BridgeTx m a)
   ) =>
   Bridge m a
@@ -1224,3 +1230,21 @@ instance
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
   mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: DualBlock does not support Peras"
+
+instance
+  ( StandardHash m
+  , Typeable m
+  , Typeable a
+  ) =>
+  BlockSupportsPeras (DualBlock m a)
+  where
+  type PerasVote (DualBlock m a) = VoidPerasVote (DualBlock m a)
+  type PerasCert (DualBlock m a) = VoidPerasCert (DualBlock m a)
+  type PerasError (DualBlock m a) = VoidPerasError (DualBlock m a)
+  type PerasCrypto (DualBlock m a) = VoidPerasCrypto (DualBlock m a)
+  type PerasVotingCommitteeScheme (DualBlock m a) = VoidPerasVotingCommitteeScheme
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock _ = Right Nothing

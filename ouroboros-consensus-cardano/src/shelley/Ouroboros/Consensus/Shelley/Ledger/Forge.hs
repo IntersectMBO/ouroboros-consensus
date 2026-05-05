@@ -47,6 +47,8 @@ forgeShelleyBlock ::
   BlockNo ->
   -- | Current slot number
   SlotNo ->
+  -- | Optional Peras certificate to include in the block
+  Maybe (PerasCert (ShelleyBlock proto era)) ->
   -- | Current ledger
   TickedLedgerState (ShelleyBlock proto era) mk ->
   -- | Txs to include
@@ -59,6 +61,7 @@ forgeShelleyBlock
   cfg
   curNo
   curSlot
+  mbPerasCert
   tickedLedger
   txs
   isLeader = do
@@ -82,7 +85,8 @@ forgeShelleyBlock
 
     body =
       SL.mkBasicBlockBody
-        & SL.txSeqBlockBodyL .~ Seq.fromList (fmap extractTx txs)
+        & (SL.txSeqBlockBodyL .~ Seq.fromList (fmap extractTx txs))
+        & maybe id injectPerasCertIntoShelleyBlockBody mbPerasCert
 
     actualBodySize = SL.blockBodySize protocolVersion body
 

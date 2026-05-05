@@ -905,7 +905,13 @@ $( do
  )
 examplesRoundtrip ::
   forall blk.
-  (SerialiseDiskConstraints blk, Eq blk, Show blk, LedgerSupportsProtocol blk) =>
+  ( SerialiseDiskConstraints blk
+  , LedgerSupportsProtocol blk
+  , Eq blk
+  , Show blk
+  , Eq (PerasVotingCommittee blk)
+  , Show (PerasVotingCommittee blk)
+  ) =>
   CodecConfig blk ->
   Examples blk ->
   [TestTree]

@@ -76,6 +76,7 @@ import Test.ThreadNet.Util.NodeToNodeVersion
 import Test.ThreadNet.Util.NodeTopology
 import Test.ThreadNet.Util.Seed
 import Test.Util.HardFork.Future
+import Test.Util.Peras (divisorClosestToQuotient)
 import Test.Util.SanityCheck (prop_sanityChecks)
 import Test.Util.Slots (NumSlots (..))
 import Test.Util.Time (dawnOfTime)
@@ -108,7 +109,7 @@ data TestSetup = TestSetup
 
 instance Arbitrary TestSetup where
   arbitrary = do
-    testSetupEpochSize <- abM $ EpochSize <$> choose (1, 10)
+    testSetupEpochSize <- abM $ EpochSize <$> choose (2, 10)
     testSetupK <- SecurityParam <$> choose (2, 10) `suchThatMap` nonZero
     -- TODO why does k=1 cause the nodes to only forge in the first epoch?
     testSetupTxSlot <- SlotNo <$> choose (0, 9)
@@ -164,7 +165,22 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         (History.StandardSafeZone (safeFromTipA k))
         (safeZoneB k)
       <*> pure (GenesisWindow ((unNonZero $ maxRollbacks k) * 2))
-      <*> pure dijkstraPerasRoundLength
+      <*> AB
+        (mkPerasRoundLength (getA testSetupEpochSize))
+        (mkPerasRoundLength (getB testSetupEpochSize))
+
+  -- Epoch size is a number between 1 and 10 perasRoundLength should divide it.
+  -- Picking the closest divisor to get us about 2 Peras rounds per epoch gives
+  -- us a suitable distribution of perasRoundLengths:
+  -- >>> flip divisorClosestToQuotient 2 <$> [1..10]
+  -- [1,1,1,2,1,3,1,4,3,5]
+  -- TODO: it would be better to generate PerasRoundLength randomly in
+  -- accordance with the epoch length directly, see:
+  -- https://github.com/tweag/cardano-peras/issues/257
+  mkPerasRoundLength epochSize =
+    History.PerasEnabled $
+      PerasRoundLength $
+        divisorClosestToQuotient (unEpochSize epochSize) 2
 
   shape :: History.Shape '[BlockA, BlockB]
   shape = History.Shape $ exactlyTwo eraParamsA eraParamsB

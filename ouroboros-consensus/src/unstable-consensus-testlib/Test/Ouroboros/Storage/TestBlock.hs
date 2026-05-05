@@ -117,7 +117,23 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
+import Ouroboros.Consensus.Peras.Cert.Mock
+  ( MockPerasCert (..)
+  )
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , mkBoundedPerasEpochContextWith
+  )
+import Ouroboros.Consensus.Peras.Crypto.Mock
+  ( MockPerasCrypto
+  , MockPerasVotingCommitteeScheme
+  , VotingCommitteeError
+  )
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.Vote.Mock
+  ( MockPerasVote (..)
+  )
+import Ouroboros.Consensus.Peras.Voting.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
 import Ouroboros.Consensus.Protocol.ModChainSel
@@ -138,6 +154,7 @@ import Test.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.SignableRepresentation ()
 import Test.Util.Orphans.ToExpr ()
+import Test.Util.Peras (divisorClosestToQuotient)
 
 {-------------------------------------------------------------------------------
   TestBlock
@@ -203,13 +220,13 @@ data TestBody = TestBody
   -- Note that this is a /local/ number, it is specific to this block,
   -- other blocks need not be aware of it.
   , tbIsValid :: !Bool
-  , tbPerasCertRound :: !(Maybe PerasRoundNo)
+  , tbPerasCert :: !(Maybe (PerasCert TestBlock))
   -- ^ Some real blocks will ocasionally carry a Peras certificate inside their
-  -- body to coordinate the end of a cooldown period. For the purposes of the
-  -- ChainDB, we don't really care about the details of the certificate other
-  -- than its round number, which needs to be stored (and carefully updated
-  -- whenever a newer one pops up) so it can be used to evaluate the Peras
-  -- voting rules and decide if a node should resume voting.
+  -- body to coordinate the end of a cooldown period.
+  -- NOTE: for the purposes of the ChainDB, we don't care about the details of
+  -- the certificate other than its round number, which needs to be stored (and
+  -- carefully updated whenever a newer one pops up) so it can be used to
+  -- evaluate the Peras voting rules and decide if a node should resume voting.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData, NoThunks, Serialise, Hashable)
@@ -627,22 +644,18 @@ instance ApplyBlock LedgerState TestBlock where
             TestLedger
               (Chain.blockPoint tb)
               (BlockHash (blockHash tb))
-              ( let
-                  -- NOTE: this bypasses the degenerate global implementation of
-                  -- 'BlockSupportsPeras.getPerasCertInBlock' for 'TestBlock',
-                  -- which currently always returns 'Nothing'.
-                  --
-                  -- TODO: refactor this to use 'getPerasCertInBlock' after the
-                  -- HFC plumbing for 'BlockSupportsPeras' is in place.
-                  certRoundInBlock = tbPerasCertRound testBody
-                 in
-                  -- the highest Peras certificate round number  we've seen so far
-                  case (certRoundInBlock, latestPerasCertRound) of
-                    (Nothing, Nothing) -> Nothing
-                    (Just rb, Nothing) -> Just rb
-                    (Nothing, Just rl) -> Just rl
-                    (Just rb, Just rl) -> Just (rb `max` rl)
-              )
+              latestPerasCertRound'
+   where
+    -- The round number of the Peras certificate stored in this block, if any
+    perasCertRoundInBlock =
+      either (const Nothing) (fmap getPerasCertRound) (getPerasCertInBlock tb)
+    -- The highest Peras certificate round number we've seen so far
+    latestPerasCertRound' =
+      case (perasCertRoundInBlock, latestPerasCertRound) of
+        (Nothing, Nothing) -> Nothing
+        (Just rb, Nothing) -> Just rb
+        (Nothing, Just rl) -> Just rl
+        (Just rb, Just rl) -> Just (rb `max` rl)
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =
@@ -739,7 +752,20 @@ instance StateSupportsPerasEpochContext TestBlock where
   type MaybeEraIndexedEpochToPerasRoundInfo TestBlock = EpochToPerasRoundInfo
   toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
-  mkBoundedPerasEpochContext = error "mkBoundedPerasEpochContext: TestBlock does not support Peras"
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput
+
+-- NOTE: this is a mocked up implementation without crypto!
+instance BlockSupportsPeras TestBlock where
+  type PerasCrypto TestBlock = MockPerasCrypto TestBlock
+  type PerasVotingCommitteeScheme TestBlock = MockPerasVotingCommitteeScheme TestBlock
+  type PerasVote TestBlock = MockPerasVote TestBlock
+  type PerasCert TestBlock = MockPerasCert TestBlock
+  type PerasError TestBlock = MockPerasError TestBlock
+  forgePerasVoteIfEligible = defaultForgePerasVoteIfEligible
+  verifyPerasVote = defaultVerifyPerasVote
+  forgePerasCert = defaultForgePerasCert
+  verifyPerasCert = defaultVerifyPerasCert
+  getPerasCertInBlock = Right . tbPerasCert . testBody
 
 instance InspectLedger TestBlock
 
@@ -798,7 +824,19 @@ mkTestConfig k ChunkSize{chunkCanContainEBB, numRegularBlocks} =
       , eraSlotLength = slotLength
       , eraSafeZone = HardFork.StandardSafeZone (unNonZero (maxRollbacks k) * 2)
       , eraGenesisWin = GenesisWindow (unNonZero (maxRollbacks k) * 2)
-      , eraPerasRoundLength = dijkstraPerasRoundLength
+      , -- Epoch size is 'numRegularBlocks' (between 5 and 15), and
+        -- perasRoundLength should divive it.
+        -- picking the closest divisor to get us about 3 Peras rounds per epoch
+        -- gives us a suitable distribution of perasRoundLengths:
+        -- >>> flip divisorClosestToQuotient 3 <$> [5..15]
+        -- [1,2,1,2,3,2,1,4,1,7,5]
+        -- TODO: it would be better to generate PerasRoundLength randomly in
+        -- accordance with the 'ChunkInfo' directly, but that would require an
+        -- overhaul of how test config is propagated all over this file.
+        -- See https://github.com/tweag/cardano-peras/issues/257
+        eraPerasRoundLength =
+          PerasEnabled . PerasRoundLength $
+            divisorClosestToQuotient numRegularBlocks 3
       }
 
 instance ImmutableEraParams TestBlock where
@@ -962,7 +1000,7 @@ instance Hashable (Block SlotNo TestHeaderHash)
 instance Hashable (Point TestBlock)
 instance Hashable PerasSeatIndex
 instance Hashable (NESet PerasSeatIndex)
-instance Hashable (PerasCert' TestBlock)
+instance Hashable (MockPerasCert TestBlock)
 instance (Hashable a, Hashable (WithOrigin a)) => Hashable (WithOrigin a)
 instance (StandardHash b, Hashable (HeaderHash b)) => Hashable (ChainHash b)
 
@@ -988,11 +1026,17 @@ deriving instance ToExpr (HeaderEnvelopeError TestBlock)
 deriving instance ToExpr BftValidationErr
 deriving instance ToExpr (ExtValidationError TestBlock)
 
-deriving anyclass instance ToExpr (VoidPerasError TestBlock)
+deriving anyclass instance
+  ToExpr (VotingCommitteeError (MockPerasCrypto TestBlock) (MockPerasVotingCommitteeScheme TestBlock))
 
 deriving anyclass instance ToExpr FsPath
 deriving anyclass instance ToExpr BlocksPerFile
 deriving instance ToExpr BinaryBlockInfo
+
+-- ** Serialise for MockPerasCert via FromCBOR/ToCBOR
+instance Serialise (MockPerasCert TestBlock) where
+  encode = toCBOR
+  decode = fromCBOR
 
 -- ** FromCBOR/ToCBOR for Point TestBlock via Serialise
 instance FromCBOR (Point TestBlock) where
