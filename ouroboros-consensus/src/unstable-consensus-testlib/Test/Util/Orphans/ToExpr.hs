@@ -11,13 +11,17 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Util.Orphans.ToExpr () where
+module Test.Util.Orphans.ToExpr (mapExpr, setExpr, vvoteBody) where
 
 import qualified Control.Monad.Class.MonadTime.SI as SI
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.TreeDiff
+import qualified Data.TreeDiff.OMap as OMap
 import GHC.Generics (Generic)
+import Numeric (showFFloat)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime, WithArrivalTime)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime (..), WithArrivalTime (..))
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -28,6 +32,7 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import Ouroboros.Consensus.Storage.ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.PerasVoteDB.API (PerasVoteTicketNo)
 import Ouroboros.Consensus.Util.STM (Fingerprint, WithFingerprint)
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as Fragment
@@ -122,15 +127,107 @@ instance ToExpr FsError where
 
 deriving instance ToExpr a => ToExpr (LoE a)
 
-deriving anyclass instance ToExpr PerasRoundNo
+instance ToExpr PerasRoundNo where
+  toExpr (PerasRoundNo r) = App (show r) []
 
-deriving anyclass instance ToExpr PerasWeight
+instance ToExpr PerasWeight where
+  toExpr (PerasWeight w) = App (show w) []
 
-deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (PerasCert blk)
+-- | Format a point as @#hash|slot@ or @genesis@.
+formatPoint :: StandardHash blk => Point blk -> String
+formatPoint GenesisPoint = "genesis"
+formatPoint (BlockPoint slot hash) = extractHash (show hash) ++ "|" ++ show (unSlotNo slot)
+ where
+  extractHash s = stripParens (unwords (tail (words s)))
+  stripParens ('(':rest) | not (Prelude.null rest) && last rest == ')' = init rest
+  stripParens s = s
 
-deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (ValidatedPerasCert blk)
+-- | Format a vote target as @<round = N, point = ...>@.
+formatTarget :: StandardHash blk => PerasRoundNo -> Point blk -> String
+formatTarget (PerasRoundNo r) pt = "<round = " ++ show r ++ ", point = " ++ formatPoint pt ++ ">"
 
-deriving anyclass instance ToExpr a => ToExpr (WithArrivalTime a)
+-- | Format a 'NominalDiffTime' without the trailing @s@.
+formatTime :: Show a => a -> String
+formatTime t = init (show t)
+
+-- | Extract the first 8 hex chars from a 'PerasVoterId' show output.
+formatVoterId :: Show a => a -> String
+formatVoterId v = "#" ++ take 8 (extractQuoted (show v))
+ where
+  extractQuoted s = case dropWhile (/= '"') s of
+    '"':rest -> Prelude.takeWhile (/= '"') rest
+    _ -> s
+
+-- | Build the body fields of a 'ValidatedPerasVote' as a string.
+vvoteBody :: StandardHash blk => ValidatedPerasVote blk -> String
+vvoteBody (ValidatedPerasVote vote (PerasVoteStake stake)) =
+  "for = " ++ formatTarget (pvVoteRound vote) (pvVoteBlock vote)
+    ++ ", by = " ++ formatVoterId (pvVoteVoterId vote)
+    ++ ", weight = " ++ showFFloat (Just 2) (fromRational stake :: Double) ""
+
+-- | Build the body fields of a 'ValidatedPerasCert' as a string.
+vcertBody :: StandardHash blk => ValidatedPerasCert blk -> String
+vcertBody (ValidatedPerasCert cert _boost) =
+  "for = " ++ formatTarget (pcCertRound cert) (pcCertBoostedBlock cert)
+
+instance StandardHash blk => ToExpr (PerasVoteTarget blk) where
+  toExpr (PerasVoteTarget roundNo blkPt) = App (formatTarget roundNo blkPt) []
+
+instance StandardHash blk => ToExpr (PerasVote blk) where
+  toExpr (PerasVote roundNo blkPt voterId) =
+    App ("Vote { for = " ++ formatTarget roundNo blkPt ++ ", by = " ++ formatVoterId voterId ++ " }") []
+
+instance StandardHash blk => ToExpr (ValidatedPerasVote blk) where
+  toExpr v = App ("VVote { " ++ vvoteBody v ++ " }") []
+
+instance StandardHash blk => ToExpr (PerasCert blk) where
+  toExpr (PerasCert roundNo blkPt) =
+    App ("Cert { for = " ++ formatTarget roundNo blkPt ++ " }") []
+
+instance StandardHash blk => ToExpr (ValidatedPerasCert blk) where
+  toExpr c = App ("VCert { " ++ vcertBody c ++ " }") []
+
+instance {-# OVERLAPPING #-} StandardHash blk => ToExpr (WithArrivalTime (ValidatedPerasVote blk)) where
+  toExpr (WithArrivalTime (RelativeTime t) v) =
+    App ("WatVVote { " ++ vvoteBody v ++ ", at = " ++ formatTime t ++ " }") []
+
+instance {-# OVERLAPPING #-} StandardHash blk => ToExpr (WithArrivalTime (ValidatedPerasCert blk)) where
+  toExpr (WithArrivalTime (RelativeTime t) c) =
+    App ("WatVCert { " ++ vcertBody c ++ ", at = " ++ formatTime t ++ " }") []
+
+instance {-# OVERLAPPABLE #-} ToExpr a => ToExpr (WithArrivalTime a) where
+  toExpr (WithArrivalTime (RelativeTime t) a) =
+    App ("WithArrivalTime " ++ formatTime t) [toExpr a]
+
+instance ToExpr PerasVoteTicketNo where
+  toExpr t = App (last (words (show t))) []
+
+instance ToExpr PerasParams where
+  toExpr p =
+    Rec "PerasParams" $ OMap.fromList
+      [ ("ignoranceRounds", App (show (unPerasIgnoranceRounds (perasIgnoranceRounds p))) [])
+      , ("cooldownRounds", App (show (unPerasCooldownRounds (perasCooldownRounds p))) [])
+      , ("blockMinSlots", App (show (unPerasBlockMinSlots (perasBlockMinSlots p))) [])
+      , ("certMaxRounds", App (show (unPerasCertMaxRounds (perasCertMaxRounds p))) [])
+      , ("certArrivalThreshold", App (show (unPerasCertArrivalThreshold (perasCertArrivalThreshold p))) [])
+      , ("roundLength", App (show (unPerasRoundLength (perasRoundLength p))) [])
+      , ("weight", App (show (unPerasWeight (perasWeight p))) [])
+      , ("quorumStake", App (show (unPerasQuorumStakeThreshold (perasQuorumStakeThreshold p))) [])
+      , ("quorumMargin", App (show (unPerasQuorumStakeThresholdSafetyMargin (perasQuorumStakeThresholdSafetyMargin p))) [])
+      ]
+
+-- | Render a 'Map' as a list of key => value entries.
+mapExpr :: (ToExpr k, ToExpr v) => Map.Map k v -> Expr
+mapExpr m = Lst
+  [App (exprFieldName (toExpr k) ++ " =>") [toExpr v] | (k, v) <- Map.toList m]
+ where
+  exprFieldName (App s _) = s
+  exprFieldName (Rec s _) = s
+  exprFieldName (Lst _) = "[]"
+
+-- | Render a 'Set' as a list.
+setExpr :: ToExpr a => Set.Set a -> Expr
+setExpr s = Lst [toExpr x | x <- Set.toList s]
 
 {-------------------------------------------------------------------------------
   si-timers

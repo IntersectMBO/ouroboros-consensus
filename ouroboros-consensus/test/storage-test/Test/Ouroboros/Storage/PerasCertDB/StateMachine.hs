@@ -123,7 +123,7 @@ instance StateModel Model where
 
   nextState (Model model) action _ = Model $ case action of
     OpenDB -> Model.openDB model
-    AddCert cert -> Model.addCert model cert
+    AddCert cert -> snd $ Model.addCert model cert
     GetWeightSnapshot -> model
     GetLatestCertSeen -> model
     GarbageCollect slotNo -> Model.garbageCollect slotNo model
@@ -171,9 +171,7 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
       lift $ join $ atomically $ PerasCertDB.garbageCollect perasCertDB slotNo
 
   postcondition (Model model, _) (AddCert cert) _ actual = do
-    let expected
-          | model.certs `Model.hasRoundNo` cert = PerasCertAlreadyInDB
-          | otherwise = AddedPerasCertToDB
+    let expected = fst $ Model.addCert model cert
     counterexamplePost $ show expected <> " /= " <> show actual
     pure $ expected == actual
   postcondition (Model model, _) GetWeightSnapshot _ actual = do

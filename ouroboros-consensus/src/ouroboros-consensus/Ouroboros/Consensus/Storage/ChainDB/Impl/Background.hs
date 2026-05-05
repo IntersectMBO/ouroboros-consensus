@@ -63,6 +63,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockResult (..)
+  , AddPerasCertChainSelOutcome (..)
   , BlockComponent (..)
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
@@ -613,7 +614,7 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
                   (FailedToAddBlock "Failed to add block synchronously")
               pure ()
             ChainSelAddPerasCert _cert varProcessed ->
-              void $ tryPutTMVar varProcessed ()
+              void $ tryPutTMVar varProcessed PerasCertNotProcessedClosing
           closeChainSelQueue cdbChainSelQueue
       )
       ( \message -> do

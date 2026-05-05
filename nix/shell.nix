@@ -49,5 +49,5 @@ hsPkgs.shellFor {
     export LOCALE_ARCHIVE="${pkgs.glibcLocales}/lib/locale/locale-archive"
   '';
 
-  withHoogle = true;
+  withHoogle = false;
 }

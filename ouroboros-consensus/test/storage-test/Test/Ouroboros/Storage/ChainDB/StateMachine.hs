@@ -102,6 +102,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Ord (Down (..))
 import Data.Proxy
+import Data.Ratio ((%))
 import qualified Data.Set as Set
 import Data.TreeDiff
 import Data.Typeable
@@ -165,6 +166,7 @@ import Test.Ouroboros.Storage.ChainDB.Model
 import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
 import Test.Ouroboros.Storage.Orphans ()
 import qualified Test.Ouroboros.Storage.PerasCertDB.Model as PerasCertDBModel
+import qualified Test.Ouroboros.Storage.PerasVoteDB.Model as PerasVoteDBModel
 import qualified Test.Ouroboros.Storage.PerasVoteDB.StateMachine as PerasVoteDB.SM
 import Test.Ouroboros.Storage.TestBlock
 import Test.QuickCheck hiding (forAll)
@@ -320,6 +322,8 @@ data Success blk it flr
   | MbPoint (Maybe (Point blk))
   | MaxSlot MaxSlotNo
   | MbPerasRoundNo (Maybe PerasRoundNo)
+  | PerasCertRes ChainDB.AddPerasCertChainSelOutcome
+  | PerasVoteRes (ChainDB.AddPerasVoteResult blk, Maybe ChainDB.AddPerasCertChainSelOutcome)
   deriving (Functor, Foldable, Traversable)
 
 -- | Product of all 'BlockComponent's. As this is a GADT, generating random
@@ -450,8 +454,8 @@ run ::
 run cfg env@ChainDBEnv{varDB, ..} cmd =
   readTVarIO varDB >>= \st@ChainDBState{chainDB = chainDB@ChainDB{..}, internal} -> case cmd of
     AddBlock blk _ -> Point <$> advanceAndAdd st blk
-    AddPerasCert cert _ -> Unit <$> addPerasCertSync chainDB cert
-    AddPerasVote vote _ -> Unit <$> addPerasVoteSync chainDB vote
+    AddPerasCert cert _ -> PerasCertRes <$> addPerasCertSync chainDB cert
+    AddPerasVote vote _ -> PerasVoteRes <$> addPerasVoteSync chainDB vote
     GetCurrentChain -> Chain <$> atomically getCurrentChain
     GetTipBlock -> MbBlock <$> getTipBlock
     GetTipHeader -> MbHeader <$> getTipHeader
@@ -720,8 +724,8 @@ runPure ::
   (Resp blk IteratorId FollowerId, DBModel blk)
 runPure cfg = \case
   AddBlock blk _ -> ok Point $ update (add blk)
-  AddPerasCert cert _ -> ok Unit $ update_ (Model.addPerasCert cfg cert)
-  AddPerasVote vote _ -> ok Unit $ update_ (Model.addPerasVote cfg vote)
+  AddPerasCert cert _ -> ok PerasCertRes $ update (Model.addPerasCert cfg cert)
+  AddPerasVote vote _ -> ok PerasVoteRes $ update (Model.addPerasVote cfg vote)
   GetCurrentChain -> ok Chain $ query (Model.volatileChain k getHeader)
   GetTipBlock -> ok MbBlock $ query Model.tipBlock
   GetTipHeader -> ok MbHeader $ query (fmap getHeader . Model.tipBlock)
@@ -1117,7 +1121,7 @@ generator loe genBlock genPerasBlock m@Model{..} =
               LoEDisabled ->
                 -- We must reduce the probability of Peras events to trigger on
                 -- an empty DB since there are no interesting blocks to vote for
-                if empty then 20 else 435
+                if empty then 20 else 500
               -- The LoE does not yet support Peras.
               LoEEnabled () -> 0
          in (freq, genAddPerasVote)
@@ -1295,21 +1299,72 @@ generator loe genBlock genPerasBlock m@Model{..} =
   genAddPerasVote :: Gen (Cmd blk it flr)
   genAddPerasVote = do
     (blk, gapBlks) <- genPerasBlock m
-    -- Use (max roundNo of certs seen) + 1, or 0 if no cert exists
-    -- This should guarantee that we don't generate extra votes once a winner
-    -- has been determined for a round, so we should never run into
-    -- MultipleWinnersInRound exception
-    --
-    -- Note that by this logic, we only generate votes for current/next round.
-    -- This is not a problem because 'PerasRoundNo' should not matter at all for
-    -- chain selection logic.
-    -- We have more complete coverage in PerasVoteDB statemachine tests, where we
-    -- can generate votes for past rounds too.
-    let roundNo = case Model.roundNoOfLatestCertSeen dbModel of
+    -- Pick a round based on the remaining capacity (maxRoundVoteStake -
+    -- currentTotalStake) of existing rounds, with a flat probability for
+    -- selecting a fresh new round. This ensures we never exceed the quorum
+    -- threshold for multiple different blocks in the same round, avoiding the
+    -- MultipleWinnersInRound error.
+    let voteModel = Model.perasVoteModel dbModel
+        -- Compute total stake per round from the vote model
+        stakePerRound :: Map.Map PerasRoundNo Rational
+        stakePerRound =
+          Map.fromListWith (+)
+            [ ( pvtRoundNo target
+              , sum [ unPerasVoteStake (getPerasVoteStake (PerasVoteDBModel.veVote ve))
+                    | ve <- Set.toList entries
+                    ]
+              )
+            | (target, entries) <- Map.toList (PerasVoteDBModel.votes voteModel)
+            ]
+
+        voteParams = PerasVoteDBModel.params voteModel
+        quorum =
+          unPerasQuorumStakeThreshold (perasQuorumStakeThreshold voteParams)
+            + unPerasQuorumStakeThresholdSafetyMargin (perasQuorumStakeThresholdSafetyMargin voteParams)
+        -- Maximum total vote stake per round: 2 * quorum - epsilon.
+        -- Below this threshold it is impossible for two different blocks to
+        -- both reach quorum in the same round.
+        -- It would be more realistic to use just 'quorum', but by doing so we
+        -- would only have very few voting rounds succeeding with a cert
+        -- creation, because we can't concentrate votes on a few distinct
+        -- candidates easily as we would observe in real world.
+        maxRoundVoteStake :: Rational
+        maxRoundVoteStake = 2 * quorum - (1 % 100)
+        -- Minimum vote stake
+        minVoteStake :: Rational
+        minVoteStake = 1 % 10
+        -- Maximum vote stake
+        maxVoteStake :: Rational
+        maxVoteStake = 1 % 2
+        -- Remaining capacity for each existing round
+        roundCapacities :: [(PerasRoundNo, Rational)]
+        roundCapacities =
+          [ (r, cap)
+          | (r, totalStake) <- Map.toList stakePerRound
+          , let cap = maxRoundVoteStake - totalStake
+          , cap >= minVoteStake
+          ]
+        -- The next fresh round number
+        freshRound :: PerasRoundNo
+        freshRound = case Map.lookupMax stakePerRound of
           Nothing -> PerasRoundNo 0
-          Just (PerasRoundNo r) -> PerasRoundNo (r + 1)
+          Just (PerasRoundNo r, _) -> PerasRoundNo (r + 1)
+        -- Weight for a fresh round (same as a round with 0.25 * maxRoundVoteStake capacity remaining)
+        freshWeight :: Int
+        freshWeight = max 1 $ floor (25 * maxRoundVoteStake)
+        -- Weighted choices: existing rounds by remaining capacity + fresh round
+        choices :: [(Int, Gen (PerasRoundNo, Rational))]
+        choices =
+          [ (max 1 (floor (cap * 100)), pure (r, cap))
+          | (r, cap) <- roundCapacities
+          ]
+          ++ [(freshWeight, pure (freshRound, maxRoundVoteStake))]
+    (roundNo, capacity) <- frequency choices
+    -- Pick a vote stake between minVoteStake and min(capacity, maxVoteStake)
+    let upperBound = min capacity maxVoteStake
+    stakeNumerator <- choose (ceiling (minVoteStake * 100), floor (upperBound * 100)) :: Gen Int
+    let stake = PerasVoteStake (fromIntegral stakeNumerator % 100)
     voterId <- PerasVoteDB.SM.genVoterId
-    stake <- PerasVoteDB.SM.genVoteStake
     -- Include the voted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
     -- Build the vote

@@ -26,7 +26,10 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , addBlock_
 
     -- * Adding a Peras certificate or vote
+  , AddPerasCertChainSelOutcome (..)
   , AddPerasCertPromise (..)
+  , AddPerasCertResult (..)
+  , AddPerasVoteResult (..)
   , addPerasCertSync
   , addPerasVoteSync
 
@@ -104,10 +107,12 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , Statistics
   )
 import Ouroboros.Consensus.Storage.PerasCertDB.API
-  ( PerasCertTicketNo
+  ( AddPerasCertResult (..)
+  , PerasCertTicketNo
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
-  ( PerasVoteTicketNo
+  ( AddPerasVoteResult (..)
+  , PerasVoteTicketNo
   )
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.CallStack
@@ -450,10 +455,11 @@ data ChainDB m blk = ChainDB
   -- database.
   , addPerasVoteWithAsyncCertHandling ::
       WithArrivalTime (ValidatedPerasVote blk) ->
-      m (Maybe (AddPerasCertPromise m))
-  -- ^ Add a Peras vote to the vote database. If a certificate is produced in
-  -- the process (quorum reached), it will be added via 'addPerasCertAsync'
-  -- under the hood, in which case the corresponding promise will be returned.
+      m (AddPerasVoteResult blk, Maybe (AddPerasCertPromise m))
+  -- ^ Add a Peras vote to the vote database, returning the result of the
+  -- vote addition. If a certificate is produced in the process (quorum
+  -- reached), it will be added via 'addPerasCertAsync' under the hood, in
+  -- which case the corresponding promise will be returned.
   , getPerasVotesAfter ::
       PerasVoteTicketNo ->
       STM m (Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
@@ -597,8 +603,21 @@ triggerChainSelection chainDB =
   Adding a Peras certificate or vote
 -------------------------------------------------------------------------------}
 
+-- | The outcome of processing a Peras certificate w.r.t. chain selection.
+data AddPerasCertChainSelOutcome
+  = -- | The certificate was too old to influence chain selection (the boosted
+    -- block is already immutable), so it was ignored entirely.
+    PerasCertIgnoredTooOld
+  | -- | The certificate was not processed because the ChainDB was closing.
+    PerasCertNotProcessedClosing
+  | -- | The certificate was processed; whether it was actually added to the DB
+    -- or was a duplicate is captured by the inner 'AddPerasCertResult'.
+    PerasCertProcessed AddPerasCertResult
+  deriving stock (Generic, Eq, Ord, Show)
+  deriving anyclass NoThunks
+
 newtype AddPerasCertPromise m = AddPerasCertPromise
-  { waitPerasCertProcessed :: m ()
+  { waitPerasCertProcessed :: m AddPerasCertChainSelOutcome
   -- ^ Wait until the Peras certificate has been processed (which potentially
   -- includes switching to a different chain). If the PerasCertDB did already
   -- contain a certificate for this round, the certificate is ignored (as the
@@ -606,16 +625,21 @@ newtype AddPerasCertPromise m = AddPerasCertPromise
   -- impossible).
   }
 
-addPerasCertSync :: IOLike m => ChainDB m blk -> WithArrivalTime (ValidatedPerasCert blk) -> m ()
+addPerasCertSync :: IOLike m => ChainDB m blk -> WithArrivalTime (ValidatedPerasCert blk) -> m AddPerasCertChainSelOutcome
 addPerasCertSync chainDB cert =
   waitPerasCertProcessed =<< addPerasCertAsync chainDB cert
 
-addPerasVoteSync :: IOLike m => ChainDB m blk -> WithArrivalTime (ValidatedPerasVote blk) -> m ()
+addPerasVoteSync ::
+  IOLike m =>
+  ChainDB m blk ->
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  m (AddPerasVoteResult blk, Maybe AddPerasCertChainSelOutcome)
 addPerasVoteSync chainDB vote = do
-  mCertPromise <- addPerasVoteWithAsyncCertHandling chainDB vote
-  case mCertPromise of
-    Nothing -> return ()
-    Just certPromise -> waitPerasCertProcessed certPromise
+  (voteRes, mCertPromise) <- addPerasVoteWithAsyncCertHandling chainDB vote
+  mCertRes <- case mCertPromise of
+    Nothing -> return Nothing
+    Just certPromise -> Just <$> waitPerasCertProcessed certPromise
+  return (voteRes, mCertRes)
 
 {-------------------------------------------------------------------------------
   Serialised block/header with its point

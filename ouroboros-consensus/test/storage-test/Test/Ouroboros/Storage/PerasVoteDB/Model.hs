@@ -1,7 +1,12 @@
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Test.Ouroboros.Storage.PerasVoteDB.Model
   ( PerasVoteDbModelError (..)
+  , VoteEntry (..)
   , Model (..)
   , initModel
   , openDB
@@ -18,7 +23,8 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.TreeDiff (ToExpr (..), defaultExprViaShow)
+import Data.TreeDiff (Expr (..), ToExpr (..))
+import qualified Data.TreeDiff.OMap as OMap
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), pointSlot)
 import Ouroboros.Consensus.Block.Abstract (StandardHash)
@@ -41,13 +47,15 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , stakeAboveThreshold
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
-  ( WithArrivalTime (..)
+  ( RelativeTime (..)
+  , WithArrivalTime (..)
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( AddPerasVoteResult (..)
   , PerasVoteTicketNo
   , zeroPerasVoteTicketNo
   )
+import Test.Util.Orphans.ToExpr (mapExpr, setExpr, vvoteBody)
 
 data VoteEntry blk = VoteEntry
   { veTicketNo :: PerasVoteTicketNo
@@ -58,6 +66,15 @@ data VoteEntry blk = VoteEntry
   -- ^ The vote itself
   }
   deriving (Show, Eq, Ord, Generic)
+
+-- | Display a 'VoteEntry' as its contained vote (with arrival time) plus ticket number.
+-- We don't need to repeat the voterId which is already contained in the vote
+instance StandardHash blk => ToExpr (VoteEntry blk) where
+  toExpr ve =
+    let RelativeTime t = getArrivalTime (veVote ve)
+        v = forgetArrivalTime (veVote ve)
+    in App ("VoteEntry { " ++ vvoteBody v ++ ", at = " ++ init (show t)
+            ++ ", tNo = " ++ last (words (show (veTicketNo ve))) ++ " }") []
 
 data PerasVoteDbModelError = MultipleWinnersInRound PerasRoundNo
   deriving (Show, Generic)
@@ -77,7 +94,14 @@ data Model blk = Model
   deriving (Show, Generic)
 
 instance StandardHash blk => ToExpr (Model blk) where
-  toExpr = defaultExprViaShow
+  toExpr model =
+    Rec "PerasVote.DBModel" $ OMap.fromList
+      [ ("open", toExpr (open model))
+      , ("params", toExpr (params model))
+      , ("votes", mapExpr (fmap setExpr (votes model)))
+      , ("certs", mapExpr (certs model))
+      , ("lastTicketNo", toExpr (lastTicketNo model))
+      ]
 
 initModel :: PerasCfg blk -> Model blk
 initModel cfg =

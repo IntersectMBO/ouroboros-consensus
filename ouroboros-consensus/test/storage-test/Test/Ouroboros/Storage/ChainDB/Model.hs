@@ -82,6 +82,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , reopen
   , updateLoE
   , perasCertModel
+  , perasVoteModel
   , validChains
   , volatileDbBlocks
   , wipeVolatileDB
@@ -121,6 +122,7 @@ import Ouroboros.Consensus.Protocol.MockChainSel
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
+  , AddPerasCertChainSelOutcome (..)
   , BlockComponent (..)
   , ChainDbError (..)
   , IteratorResult (..)
@@ -462,9 +464,15 @@ addPerasCert ::
   TopLevelConfig blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   Model blk ->
-  Model blk
-addPerasCert cfg cert m =
-  chainSelection cfg m{perasCertModel = PerasCertDBModel.addCert (perasCertModel m) cert}
+  (AddPerasCertChainSelOutcome, Model blk)
+addPerasCert cfg cert m
+  | pointSlot (getPerasCertBoostedBlock cert) < Chain.headSlot (immutableChain secParam m) =
+      (PerasCertIgnoredTooOld, m)
+  | otherwise =
+      let (certRes, perasCertModel') = PerasCertDBModel.addCert (perasCertModel m) cert
+       in (PerasCertProcessed certRes, chainSelection cfg m{perasCertModel = perasCertModel'})
+ where
+  secParam = configSecurityParam cfg
 
 addPerasVote ::
   forall blk.
@@ -472,14 +480,15 @@ addPerasVote ::
   TopLevelConfig blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   Model blk ->
-  Model blk
+  ((AddPerasVoteResult blk, Maybe AddPerasCertChainSelOutcome), Model blk)
 addPerasVote cfg vote m =
   case PerasVoteDBModel.addVote vote (perasVoteModel m) of
-    (Right (AddedPerasVoteAndGeneratedNewCert freshCert), perasVoteModel') ->
+    (Right voteRes@(AddedPerasVoteAndGeneratedNewCert freshCert), perasVoteModel') ->
       let creationTime = getArrivalTime vote
           certWithArrival = WithArrivalTime creationTime freshCert
-       in addPerasCert cfg certWithArrival m{perasVoteModel = perasVoteModel'}
-    (Right _, perasVoteModel') -> m{perasVoteModel = perasVoteModel'}
+          (certRes, m') = addPerasCert cfg certWithArrival m{perasVoteModel = perasVoteModel'}
+       in ((voteRes, Just certRes), m')
+    (Right voteRes, perasVoteModel') -> ((voteRes, Nothing), m{perasVoteModel = perasVoteModel'})
     (Left e, _) -> error $ "Unexpected error when adding a vote to the model: " <> show e
 
 chainSelection ::
@@ -1116,10 +1125,16 @@ garbageCollect ::
 garbageCollect secParam m@Model{..} =
   m
     { volatileDbBlocks = Map.filter (not . collectable) volatileDbBlocks
-    -- TODO garbage collection Peras certs?
-    -- See https://github.com/tweag/cardano-peras/issues/121
+    , perasCertModel = case gcSlot of
+        Origin -> perasCertModel
+        NotOrigin slotNo -> PerasCertDBModel.garbageCollect slotNo perasCertModel
+    , perasVoteModel = case gcSlot of
+        Origin -> perasVoteModel
+        NotOrigin slotNo -> PerasVoteDBModel.garbageCollect slotNo perasVoteModel
     }
  where
+  gcSlot = immutableSlotNo secParam m
+
   -- TODO what about iterators that will stream garbage collected blocks?
 
   collectable :: blk -> Bool
