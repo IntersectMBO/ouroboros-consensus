@@ -109,6 +109,7 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
+  , AddPerasCertChainSelOutcome (..)
   , AddPerasCertPromise (..)
   , ChainDbError (..)
   , ChainSelectionPromise (..)
@@ -590,7 +591,7 @@ data ChainSelMessage m blk
     ChainSelAddPerasCert
       !(WithArrivalTime (ValidatedPerasCert blk))
       -- | Used for 'AddPerasCertPromise'.
-      !(StrictTMVar m ())
+      !(StrictTMVar m AddPerasCertChainSelOutcome)
   | -- | Reprocess blocks that have been postponed by the LoE.
     ChainSelReprocessLoEBlocks
       -- | Used for 'ChainSelectionPromise'.
@@ -726,7 +727,7 @@ closeChainSelQueue ChainSelQueue{varChainSelQueue = queue} = do
     ChainSelAddBlock ab ->
       tryPutTMVar (varBlockProcessed ab) (FailedToAddBlock "Queue flushed")
     ChainSelAddPerasCert _cert varProcessed ->
-      tryPutTMVar varProcessed ()
+      tryPutTMVar varProcessed PerasCertNotProcessedClosing
     ChainSelReprocessLoEBlocks varProcessed ->
       tryPutTMVar varProcessed ()
 

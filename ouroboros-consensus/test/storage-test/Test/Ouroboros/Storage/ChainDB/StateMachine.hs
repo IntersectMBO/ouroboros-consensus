@@ -320,6 +320,8 @@ data Success blk it flr
   | MbPoint (Maybe (Point blk))
   | MaxSlot MaxSlotNo
   | MbPerasRoundNo (Maybe PerasRoundNo)
+  | PerasCertRes ChainDB.AddPerasCertChainSelOutcome
+  | PerasVoteRes (ChainDB.AddPerasVoteResult blk, Maybe ChainDB.AddPerasCertChainSelOutcome)
   deriving (Functor, Foldable, Traversable)
 
 -- | Product of all 'BlockComponent's. As this is a GADT, generating random
@@ -450,8 +452,8 @@ run ::
 run cfg env@ChainDBEnv{varDB, ..} cmd =
   readTVarIO varDB >>= \st@ChainDBState{chainDB = chainDB@ChainDB{..}, internal} -> case cmd of
     AddBlock blk _ -> Point <$> advanceAndAdd st blk
-    AddPerasCert cert _ -> Unit <$> addPerasCertSync chainDB cert
-    AddPerasVote vote _ -> Unit <$> addPerasVoteSync chainDB vote
+    AddPerasCert cert _ -> PerasCertRes <$> addPerasCertSync chainDB cert
+    AddPerasVote vote _ -> PerasVoteRes <$> addPerasVoteSync chainDB vote
     GetCurrentChain -> Chain <$> atomically getCurrentChain
     GetTipBlock -> MbBlock <$> getTipBlock
     GetTipHeader -> MbHeader <$> getTipHeader
@@ -720,8 +722,8 @@ runPure ::
   (Resp blk IteratorId FollowerId, DBModel blk)
 runPure cfg = \case
   AddBlock blk _ -> ok Point $ update (add blk)
-  AddPerasCert cert _ -> ok Unit $ update_ (Model.addPerasCert cfg cert)
-  AddPerasVote vote _ -> ok Unit $ update_ (Model.addPerasVote cfg vote)
+  AddPerasCert cert _ -> ok PerasCertRes $ update (Model.addPerasCert cfg cert)
+  AddPerasVote vote _ -> ok PerasVoteRes $ update (Model.addPerasVote cfg vote)
   GetCurrentChain -> ok Chain $ query (Model.volatileChain k getHeader)
   GetTipBlock -> ok MbBlock $ query Model.tipBlock
   GetTipHeader -> ok MbHeader $ query (fmap getHeader . Model.tipBlock)
