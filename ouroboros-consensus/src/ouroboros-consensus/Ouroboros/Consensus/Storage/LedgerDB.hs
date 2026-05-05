@@ -31,8 +31,6 @@ import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Util.Args
@@ -78,16 +76,6 @@ openDB
   getBlock
   getVolatileSuffix =
     case lgrBackendArgs args of
-      LedgerDbBackendArgsV1 bss ->
-        let snapManager = V1.snapshotManager args
-            initDb =
-              V1.mkInitDb
-                args
-                bss
-                getBlock
-                snapManager
-                getVolatileSuffix
-         in lift $ doOpenDB args initDb snapManager stream replayGoal
       LedgerDbBackendArgsV2 (SomeBackendArgs bArgs) -> do
         -- Note this is the only step that cares about the temporary
         -- registry. Note also that the final state is an polymorphic and
