@@ -24,8 +24,11 @@ import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.PerasCert.Smoke (te
 import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke (tests)
 import qualified Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke (tests)
 import qualified Test.Consensus.Peras.Cert.Inclusion (tests)
+import qualified Test.Consensus.Peras.Serialisation (tests)
+import qualified Test.Consensus.Peras.Voting.Committee (tests)
 import qualified Test.Consensus.Peras.Voting.Rules (tests)
 import qualified Test.Consensus.Peras.WeightSnapshot (tests)
+import qualified Test.Consensus.Util.Bitmap (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
 import qualified Test.Consensus.Util.Pred (tests)
 import qualified Test.Consensus.Util.Versioned (tests)
@@ -67,9 +70,12 @@ tests =
     , testGroup
         "Peras"
         [ Test.Consensus.Peras.Cert.Inclusion.tests
+        , Test.Consensus.Peras.Voting.Committee.tests
         , Test.Consensus.Peras.Voting.Rules.tests
         , Test.Consensus.Peras.WeightSnapshot.tests
+        , Test.Consensus.Peras.Serialisation.tests
         ]
+    , Test.Consensus.Util.Bitmap.tests
     , Test.Consensus.Util.MonadSTM.NormalForm.tests
     , Test.Consensus.Util.Versioned.tests
     , Test.Consensus.Util.Pred.tests

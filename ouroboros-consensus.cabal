@@ -236,12 +236,14 @@ library
     Ouroboros.Consensus.Node.Run
     Ouroboros.Consensus.Node.Serialisation
     Ouroboros.Consensus.NodeId
-    Ouroboros.Consensus.Peras.Cert
+    Ouroboros.Consensus.Peras.Cert.V1
     Ouroboros.Consensus.Peras.Cert.Inclusion
+    Ouroboros.Consensus.Peras.Crypto.BLS
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
-    Ouroboros.Consensus.Peras.Vote
+    Ouroboros.Consensus.Peras.Vote.V1
     Ouroboros.Consensus.Peras.Vote.Aggregation
+    Ouroboros.Consensus.Peras.Voting.Committee
     Ouroboros.Consensus.Peras.Voting.Rules
     Ouroboros.Consensus.Peras.Voting.View
     Ouroboros.Consensus.Peras.Weight
@@ -330,10 +332,11 @@ library
     Ouroboros.Consensus.Util.AnchoredSeq
     Ouroboros.Consensus.Util.Args
     Ouroboros.Consensus.Util.Assert
-    Ouroboros.Consensus.Util.CallStack
+    Ouroboros.Consensus.Util.Bitmap
     Ouroboros.Consensus.Util.CBOR
-    Ouroboros.Consensus.Util.Condense
     Ouroboros.Consensus.Util.CRC
+    Ouroboros.Consensus.Util.CallStack
+    Ouroboros.Consensus.Util.Condense
     Ouroboros.Consensus.Util.DepPair
     Ouroboros.Consensus.Util.EarlyExit
     Ouroboros.Consensus.Util.Enclose
@@ -719,8 +722,12 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke
     Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
     Test.Consensus.Peras.Cert.Inclusion
+    Test.Consensus.Peras.Serialisation
+    Test.Consensus.Peras.Util
+    Test.Consensus.Peras.Voting.Committee
     Test.Consensus.Peras.Voting.Rules
     Test.Consensus.Peras.WeightSnapshot
+    Test.Consensus.Util.Bitmap
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Pred
     Test.Consensus.Util.Versioned
