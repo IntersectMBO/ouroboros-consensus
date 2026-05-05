@@ -164,7 +164,6 @@ implMkLedgerDb h snapManager =
           , getPrevApplied = getEnvSTM h implGetPrevApplied
           , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
           , tryTakeSnapshot = getEnv2 h (implTryTakeSnapshot snapManager)
-          , tryFlush = getEnv h implTryFlush
           , closeDB = implCloseDB h
           }
    in (ldb, mkInternals ldb h snapManager)
@@ -370,6 +369,8 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
   -- look at the list of the ledger tables handles from the previous step and take the snapshots
   case NonEmpty.nonEmpty handles of
     Nothing -> pure ()
+    -- TODO: this logic could be forked on a separate thread now that we only
+    -- have V2.
     Just nonEmptyHandles -> do
       copyBlocks
 
@@ -393,13 +394,6 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
   duplicateStateRef StateRef{state, tables} = do
     h <- duplicate tables
     pure $ StateRef state h
-
--- In the first version of the LedgerDB for UTxO-HD, there is a need to
--- periodically flush the accumulated differences to the disk. However, in the
--- second version there is no need to do so, and because of that, this function
--- does nothing in this case.
-implTryFlush :: Applicative m => LedgerDBEnv m l blk -> m ()
-implTryFlush _ = pure ()
 
 implCloseDB :: forall m l blk. IOLike m => LedgerDBHandle m l blk -> m ()
 implCloseDB (LDBHandle varState) = do
