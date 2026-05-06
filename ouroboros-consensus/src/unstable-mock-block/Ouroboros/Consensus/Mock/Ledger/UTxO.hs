@@ -3,7 +3,6 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Mock.Ledger.UTxO
   ( -- * Basic definitions

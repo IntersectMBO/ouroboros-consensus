@@ -1,5 +1,4 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.Mock.Ledger.Stake
   ( -- * Stakeholders

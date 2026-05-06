@@ -4,12 +4,11 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 
 module Test.ThreadNet.Infra.Shelley
   ( CoreNode (..)
@@ -489,7 +488,6 @@ incrementMinorProtVer (SL.ProtVer major minor) = SL.ProtVer major (succ minor)
 
 mkSetDecentralizationParamTxs ::
   forall c.
-  ShelleyBasedEra ShelleyEra =>
   [CoreNode c] ->
   -- | The proposed protocol version
   ProtVer ->

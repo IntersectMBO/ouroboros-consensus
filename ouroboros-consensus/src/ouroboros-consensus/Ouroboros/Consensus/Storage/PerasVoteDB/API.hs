@@ -4,7 +4,6 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteDB (..)

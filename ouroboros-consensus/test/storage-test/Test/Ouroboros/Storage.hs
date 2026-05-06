@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 
 module Test.Ouroboros.Storage (tests) where
 

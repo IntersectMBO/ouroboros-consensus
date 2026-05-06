@@ -1,19 +1,14 @@
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Cardano.Node
@@ -113,10 +108,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
   )
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
 import Ouroboros.Consensus.Shelley.Node
-import Ouroboros.Consensus.Shelley.Node.Common
-  ( ShelleyEraWithCrypto
-  , shelleyBlockIssuerVKey
-  )
+import Ouroboros.Consensus.Shelley.Node.Common (shelleyBlockIssuerVKey)
 import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
 import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
 import Ouroboros.Consensus.Storage.Serialisation
@@ -1052,14 +1044,14 @@ protocolInfoCardano paramsCardano
 
     let tpraos ::
           forall era.
-          ShelleyEraWithCrypto c (TPraos c) era =>
+          Shelley.ShelleyCompatible (TPraos c) era =>
           BlockForging m (ShelleyBlock (TPraos c) era)
         tpraos =
           TPraos.shelleySharedBlockForging hotKey slotToPeriod credentials
 
     let praos ::
           forall era.
-          ShelleyEraWithCrypto c (Praos c) era =>
+          Shelley.ShelleyCompatible (Praos c) era =>
           BlockForging m (ShelleyBlock (Praos c) era)
         praos =
           Praos.praosSharedBlockForging hotKey slotToPeriod credentials

@@ -1,10 +1,6 @@
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke
@@ -124,7 +120,6 @@ prop_smoke =
       \(ListWithUniqueIds watValidatedVotes) ->
         let
           mkPoolInterfaces ::
-            forall m.
             IOLike m =>
             m
               ( ObjectPoolReader (PerasVoteId TestBlock) (PerasVote TestBlock) PerasVoteTicketNo m

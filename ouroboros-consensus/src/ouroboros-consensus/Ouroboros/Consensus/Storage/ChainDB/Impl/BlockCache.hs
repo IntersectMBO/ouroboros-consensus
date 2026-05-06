@@ -1,4 +1,3 @@
-{-# LANGUAGE FlexibleContexts #-}
 
 -- | Cache blocks in memory
 --

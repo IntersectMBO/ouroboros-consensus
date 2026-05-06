@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -62,7 +61,8 @@ import Ouroboros.Consensus.Protocol.PBFT
   , PBftSignatureThreshold (..)
   )
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
-  ( KESAgentClientTrace
+  ( AgentCrypto
+  , KESAgentClientTrace
   , KESAgentContext
   )
 import Ouroboros.Consensus.Shelley.Node
@@ -171,7 +171,7 @@ hardForkInto Conway =
 -- more details on how to specify a value of this type.
 mkSimpleTestProtocolInfo ::
   forall c.
-  (CardanoHardForkConstraints c, KESAgentContext c IO) =>
+  (CardanoHardForkConstraints c, AgentCrypto c) =>
   -- | Network decentralization parameter.
   Shelley.DecentralizationParam ->
   SecurityParam ->

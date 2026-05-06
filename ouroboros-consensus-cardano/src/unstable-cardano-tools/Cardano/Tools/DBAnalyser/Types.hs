@@ -1,4 +1,3 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Cardano.Tools.DBAnalyser.Types (module Cardano.Tools.DBAnalyser.Types) where

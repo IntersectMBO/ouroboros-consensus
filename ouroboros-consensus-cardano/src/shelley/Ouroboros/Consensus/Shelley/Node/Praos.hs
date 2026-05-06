@@ -1,13 +1,8 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Node.Praos
@@ -22,7 +17,6 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Data.Text as T
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configConsensus)
-import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Mempool
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Praos
   ( Praos
@@ -35,8 +29,7 @@ import Ouroboros.Consensus.Shelley.Ledger
   , forgeShelleyBlock
   )
 import Ouroboros.Consensus.Shelley.Node.Common
-  ( ShelleyEraWithCrypto
-  , ShelleyLeaderCredentials (..)
+  ( ShelleyLeaderCredentials (..)
   )
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -49,7 +42,6 @@ import Ouroboros.Consensus.Util.IOLike (IOLike)
 praosBlockForging ::
   forall m era c.
   ( ShelleyCompatible (Praos c) era
-  , Mempool.TxLimits (ShelleyBlock (Praos c) era)
   , IOLike m
   ) =>
   PraosParams ->
@@ -71,7 +63,7 @@ praosBlockForging praosParams hotKey credentials =
 -- 'forgeLabel'.
 praosSharedBlockForging ::
   forall m c era.
-  ( ShelleyEraWithCrypto c (Praos c) era
+  ( ShelleyCompatible (Praos c) era
   , IOLike m
   ) =>
   HotKey.HotKey c m ->

@@ -1,6 +1,4 @@
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.Node.ProtocolInfo
   ( NumCoreNodes (..)

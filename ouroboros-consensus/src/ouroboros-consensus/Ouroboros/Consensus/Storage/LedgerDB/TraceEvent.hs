@@ -1,7 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
   ( FlavorImplSpecificTrace (..)

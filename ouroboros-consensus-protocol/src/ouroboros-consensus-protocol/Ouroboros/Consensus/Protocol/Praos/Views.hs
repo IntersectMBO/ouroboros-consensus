@@ -1,4 +1,3 @@
-{-# LANGUAGE DataKinds #-}
 
 module Ouroboros.Consensus.Protocol.Praos.Views
   ( HeaderView (..)

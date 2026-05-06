@@ -1,4 +1,3 @@
-{-# LANGUAGE ConstraintKinds #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Ouroboros.Consensus.Util.RedundantConstraints
