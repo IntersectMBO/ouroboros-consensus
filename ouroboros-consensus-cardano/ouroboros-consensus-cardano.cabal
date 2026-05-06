@@ -487,7 +487,6 @@ test-suite cardano-test
     sop-core,
     sop-extras,
     strict-sop-core,
-    strict-stm,
     tasty,
     tasty-hunit,
     tasty-quickcheck,

@@ -56,7 +56,7 @@ import GHC.Generics (Generic)
 import GHC.IO.Handle (Handle)
 import GHC.IO.IOMode (IOMode (WriteMode))
 import GHC.Stack (HasCallStack, callStack)
-import LeiosDemoDb (InMemoryLeiosDb (..))
+import LeiosDemoDb.InMemory (InMemoryLeiosDbF (..))
 import Lens.Micro ((&), (.~), (^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -83,7 +83,6 @@ import Test.ThreadNet.Network
   ( NodeOutput (..)
   , TestNodeInitialization (..)
   , TraceThreadNet (..)
-  , lsLeiosDb
   )
 import Test.ThreadNet.TxGen (TxGen (..))
 import Test.ThreadNet.Util.NodeJoinPlan (trivialNodeJoinPlan)
@@ -128,13 +127,10 @@ run Opts{..} = do
   putStrLn "*** Leios"
 
   forM_ (Map.toList . testOutputNodes $ testOutput) $ \(nodeId, nodeOut) -> do
-    print $ "Node " <> show nodeId
-    print $
-      ("> eb-slotno", imEbSlots . runIdentity . lsLeiosDb . nodeLeiosState $ nodeOut)
-    print $
-      ("> eb-points", imEbPoints . runIdentity . lsLeiosDb . nodeLeiosState $ nodeOut)
-    print $
-      ("> eb-txs", length . imTxs . runIdentity . lsLeiosDb . nodeLeiosState $ nodeOut)
+    putStrLn $ show nodeId
+    putStrLn $ "> Endorser Blocks"
+    forM_ (Map.toList . runIdentity . imEbs . nodeLeiosDb $ nodeOut) $ \eb -> putStrLn (">> " <> show eb)
+    putStrLn $ "> Total transactions " <> (show . length . runIdentity . imTxs . nodeLeiosDb $ nodeOut)
 
   putStrLn "*** Outputting log files"
 

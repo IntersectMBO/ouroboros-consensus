@@ -579,7 +579,7 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
         -- announcement before. We check if the point exists and trace a warning
         -- if not, then insert as safety net. We should remove this once we are
         -- confident the fetching logic handles this correctly.
-        leiosDbLookupEbPoint db ebHash >>= \case
+        leiosDbLookupEbPoint db point >>= \case
           Just _ -> pure () -- Point already exists (expected from announcement)
           Nothing -> do
             -- Unexpected: we're receiving an EB body without having seen the announcement first
@@ -697,8 +697,9 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = d
       offsets = unfoldr nextOffset bitmaps
   -- ingest
   traceException tracer TraceLeiosPeerDbException $ do
-    completed <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
-    forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+    completedEbs <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
+    forM_ completedEbs $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let (requestedTxPeers', reverseEbIndexByTx', txsBytesSize) =
