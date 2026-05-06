@@ -4,16 +4,11 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 -- | The data structure that holds the cached ledger states.
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
@@ -250,7 +245,6 @@ reapplyThenPush cfg ap db = do
   pure db'
 
 reapplyBlock ::
-  forall m l blk.
   (ApplyBlock l blk, IOLike m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->

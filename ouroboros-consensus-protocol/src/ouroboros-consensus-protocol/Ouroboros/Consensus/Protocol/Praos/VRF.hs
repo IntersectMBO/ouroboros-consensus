@@ -5,8 +5,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | This module implements VRF range extension as described in
@@ -97,7 +95,6 @@ data VRFResult (v :: VRFUsage)
 
 -- | Compute a hash of the unified VRF output appropriate to its usage.
 hashVRF ::
-  forall (v :: VRFUsage) c proxy.
   proxy c ->
   SVRFUsage v ->
   CertifiedVRF (VRF c) InputVRF ->
@@ -111,7 +108,6 @@ hashVRF _ use certVRF =
 -- | Range-extend a VRF output to be used for leader checks from the relevant
 -- hash. See section 4.1 of the linked paper for details.
 vrfLeaderValue ::
-  forall c proxy.
   proxy c ->
   CertifiedVRF (VRF c) InputVRF ->
   BoundedNatural
@@ -123,7 +119,6 @@ vrfLeaderValue p cvrf =
 -- | Range-extend a VRF output to be used for the evolving nonce. See section
 -- 4.1 of the linked paper for details.
 vrfNonceValue ::
-  forall c proxy.
   proxy c ->
   CertifiedVRF (VRF c) InputVRF ->
   Nonce

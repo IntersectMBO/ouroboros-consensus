@@ -1,9 +1,8 @@
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Test that the Peras certificate inclusion rules can correctly decide when

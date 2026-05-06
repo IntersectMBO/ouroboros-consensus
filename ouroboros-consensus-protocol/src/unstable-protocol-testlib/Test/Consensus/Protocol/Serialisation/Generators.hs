@@ -1,4 +1,3 @@
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Generators suitable for serialisation. Note that these are not guaranteed

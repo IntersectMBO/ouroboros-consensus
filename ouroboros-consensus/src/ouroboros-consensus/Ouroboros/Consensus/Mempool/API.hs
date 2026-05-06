@@ -1,14 +1,9 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MonoLocalBinds #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -323,14 +318,16 @@ deriving instance
   ( Eq (GenTx blk)
   , Eq (Validated (GenTx blk))
   , Eq (ApplyTxErr blk)
-  , Eq (LedgerTables blk DiffMK)
+  , Eq (TxIn blk)
+  , Eq (TxOut blk)
   ) =>
   Eq (MempoolAddTxResult blk)
 deriving instance
   ( Show (GenTx blk)
   , Show (Validated (GenTx blk))
   , Show (ApplyTxErr blk)
-  , Show (LedgerTables blk DiffMK)
+  , Show (TxIn blk)
+  , Show (TxOut blk)
   ) =>
   Show (MempoolAddTxResult blk)
 

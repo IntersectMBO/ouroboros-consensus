@@ -4,7 +4,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 -- | Utilities that avoid repetition when declaring instances for types
 -- that are not amenable to @deriving@, and in particular, types with

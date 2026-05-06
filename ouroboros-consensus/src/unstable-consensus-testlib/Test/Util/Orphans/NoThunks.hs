@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -46,7 +45,7 @@ instance NoThunks (StrictMVar (IOSim s) a) => NoThunks (NormalForm.StrictMVar (I
   showTypeOf _ = "StrictMVar IOSim"
   wNoThunks ctxt mvar = wNoThunks ctxt (NormalForm.unsafeToUncheckedStrictMVar mvar)
 
-instance NoThunks (StrictTVar (IOSim s) a) => NoThunks (NormalForm.StrictTVar (IOSim s) a) where
+instance NoThunks a => NoThunks (NormalForm.StrictTVar (IOSim s) a) where
   showTypeOf _ = "StrictTVar IOSim"
   wNoThunks ctxt tv = wNoThunks ctxt (NormalForm.unsafeToUncheckedStrictTVar tv)
 

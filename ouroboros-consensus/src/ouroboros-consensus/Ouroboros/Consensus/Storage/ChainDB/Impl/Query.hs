@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -52,6 +51,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Typeable
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
@@ -129,8 +129,9 @@ getCurrentChainWithTime ::
   forall m blk.
   ( IOLike m
   , StandardHash blk
-  , HasHeader (HeaderWithTime blk)
+  , HasHeader (Header blk)
   , ConsensusProtocol (BlockProtocol blk)
+  , Typeable blk
   ) =>
   ChainDbEnv m blk ->
   STM m (AnchoredFragment (HeaderWithTime blk))

@@ -9,7 +9,6 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -473,7 +472,6 @@ deriving instance
   , NoThunks (TxIn blk)
   , NoThunks (TxOut blk)
   , NoThunks (LedgerCfg l blk)
-  , NoThunks (SomeResources m blk)
   ) =>
   NoThunks (LedgerDBEnv m l blk)
 
@@ -498,7 +496,6 @@ deriving instance
   , NoThunks (TxIn blk)
   , NoThunks (TxOut blk)
   , NoThunks (LedgerCfg l blk)
-  , NoThunks (SomeResources m blk)
   ) =>
   NoThunks (LedgerDBState m l blk)
 

@@ -1,8 +1,6 @@
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Cardano.Api.Any

@@ -5,7 +5,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -58,7 +57,7 @@ deriving via
   SelectViewDiffusionPipelining (SimpleBlock c ext)
   instance
     ( BlockSupportsProtocol (SimpleBlock c ext)
-    , Show (SelectView (BlockProtocol (SimpleBlock c ext)))
+    , Show (TiebreakerView (BlockProtocol (SimpleBlock c ext)))
     ) =>
     BlockSupportsDiffusionPipelining (SimpleBlock c ext)
 

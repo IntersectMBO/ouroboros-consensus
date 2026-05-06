@@ -1,11 +1,7 @@
-{-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.Genesis.Setup
   ( module Test.Consensus.Genesis.Setup.GenChains

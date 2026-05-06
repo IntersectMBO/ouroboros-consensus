@@ -1,8 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 module Test.Ouroboros.Storage.PerasCertDB.Model
   ( Model (..)

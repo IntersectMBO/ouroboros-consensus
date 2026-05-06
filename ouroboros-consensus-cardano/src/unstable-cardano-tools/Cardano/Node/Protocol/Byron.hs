@@ -1,8 +1,5 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE NoImplicitPrelude #-}
 
 -- DUPLICATE -- adapted from: cardano-node/src/Cardano/Node/Protocol/Byron.hs
 

@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE TypeFamilies #-}
 
 module Test.Util.ChainDB
   ( MinimalChainDbArgs (..)
