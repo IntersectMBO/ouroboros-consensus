@@ -6,6 +6,18 @@ Top-level validation a node performs when it receives a new block header.
 - Agda: `Spec.ChainHead` ([ChainHead.lagda](../../agda-spec/src/Spec/ChainHead.lagda))
 - Implementation: `Ouroboros.Consensus.HeaderValidation:validateHeader`
 
+**Top-level rule:**
+
+```quint
+def validateHeader(prev: Option[LastAppliedBlock], header: BlockHeader): bool = and {
+  validSequence(prev, header.body),
+  validKesPeriod(header.body.slot, header.body.oc),
+  // ... more checks added as we specify them
+}
+```
+
+Each section below defines one of these predicates in detail.
+
 ## Sequence checks
 
 A new header must extend the chain correctly: its slot must advance, its block number must be exactly one more, and its previous-hash pointer must match.
@@ -72,3 +84,8 @@ header = { slot: 105, blockNo: 6, prevHeader: Some("def456"), ... }
 
 validSequence(prev, header) = false  // "abc123" != "def456"
 ```
+
+## Operational certificate checks
+
+A new header must carry a valid operational certificate.
+See [Operational certificate checks](./operational-certificate.md) for the full specification.
