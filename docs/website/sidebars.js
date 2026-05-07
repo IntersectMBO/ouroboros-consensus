@@ -71,6 +71,12 @@ const sidebars = {
               'references/additional_material',
               'references/technical_reports',
               { type: 'category',
+                label: 'Specifications',
+                items: ['references/specs/index',
+                        'references/specs/header-validation',
+                       ]
+              },
+              { type: 'category',
                 label: 'Miscellaneous',
 		items: ['references/miscellaneous/about_ouroboros',
                         'references/miscellaneous/hard_won_wisdom',
