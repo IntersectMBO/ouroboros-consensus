@@ -10,6 +10,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -60,7 +61,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , BigEndianTxIn (..)
   ) where
 
-import Cardano.Ledger.Api (DijkstraEra, eraProtVerLow)
+import Cardano.Ledger.Api (eraProtVerLow)
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
@@ -124,6 +125,7 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , TxHash
   )
+import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
 import Lens.Micro.Extras (view)
 import NoThunks.Class (NoThunks (..))
@@ -147,6 +149,16 @@ import Ouroboros.Consensus.Protocol.Praos (Praos, PraosState (..))
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (Header, headerBody)
   , HeaderBody (hbLeiosEbAnnouncement, hbSlotNo)
+  )
+import Ouroboros.Consensus.Protocol.TPraos (TPraos)
+import Ouroboros.Consensus.Shelley.Eras
+  ( AllegraEra
+  , AlonzoEra
+  , BabbageEra
+  , ConwayEra
+  , DijkstraEra
+  , MaryEra
+  , ShelleyEra
   )
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -1080,3 +1092,27 @@ toLeiosTxSeq ::
   ShelleyBasedEra era =>
   [(TxHash, BS.ByteString)] -> StrictSeq (Tx TopTx era)
 toLeiosTxSeq = StrictSeq.fromList . fmap (deserialiseLeiosTx @era . snd)
+
+{-------------------------------------------------------------------------------
+  HasLeiosVoting
+-------------------------------------------------------------------------------}
+
+-- NOTE: Only Dijkstra has Leios voting right now, all earlier Shelley-based
+-- eras will never have a committee and thus no voting should happen.
+
+-- REVIEW: Use 'proto' instead of Praos/TPraos?
+
+-- TODO: Ledger-level type class EraCommittee? LedgerState era -> Committee
+
+instance HasLeiosVoting (ShelleyBlock (TPraos c) ShelleyEra)
+instance HasLeiosVoting (ShelleyBlock (TPraos c) AllegraEra)
+instance HasLeiosVoting (ShelleyBlock (TPraos c) MaryEra)
+instance HasLeiosVoting (ShelleyBlock (TPraos c) AlonzoEra)
+instance HasLeiosVoting (ShelleyBlock (Praos c) BabbageEra)
+instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra)
+
+instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
+  -- REVIEW: Should we use the LedgerView (Praos c) instead?
+  getLeiosCommittee ls =
+    Just $
+      undefined ls.shelleyLedgerState.nesPd
