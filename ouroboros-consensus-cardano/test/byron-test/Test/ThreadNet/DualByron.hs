@@ -33,7 +33,6 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Dual
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.PBFT
@@ -283,7 +282,7 @@ instance TxGen DualByronBlock where
     go ::
       [GenTx DualByronBlock] -> -- Accumulator
       Integer -> -- Number of txs to still produce
-      TickedLedgerState DualByronBlock ValuesMK ->
+      TickedLedgerState DualByronBlock Values ->
       Gen [GenTx DualByronBlock]
     go acc 0 _ = return (reverse acc)
     go acc n st = do
@@ -307,7 +306,7 @@ instance TxGen DualByronBlock where
 -- infrastructure of the Byron tests.
 genTx ::
   TopLevelConfig DualByronBlock ->
-  TickedLedgerState DualByronBlock ValuesMK ->
+  TickedLedgerState DualByronBlock Values ->
   Gen (GenTx DualByronBlock)
 genTx cfg st = do
   aux <- sigGen (Rules.ctxtUTXOW cfg') st'

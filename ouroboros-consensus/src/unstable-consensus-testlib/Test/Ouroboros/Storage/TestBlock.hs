@@ -110,7 +110,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId
@@ -580,31 +579,31 @@ instance IsLedger LedgerState TestBlock where
   applyChainTickLedgerResult _ _ _ =
     pureLedgerResult
       . TickedTestLedger
-      . noNewTickingDiffs
+      . (`withLedgerTables` emptyTable)
 
 type instance TxIn TestBlock = Void
 type instance TxOut TestBlock = Void
-instance LedgerTablesAreTrivial LedgerState TestBlock where
-  convertMapKind (TestLedger x y z) = TestLedger x y z
-instance LedgerTablesAreTrivial (Ticked LedgerState) TestBlock where
-  convertMapKind (TickedTestLedger x) = TickedTestLedger (convertMapKind x)
+instance TrivialTables LedgerState TestBlock where
+  convertTrivialTables (TestLedger x y z) = TestLedger x y z
+instance TrivialTables (Ticked LedgerState) TestBlock where
+  convertTrivialTables (TickedTestLedger x) = TickedTestLedger (convertTrivialTables x)
 deriving via
   Void
   instance
     IndexedMemPack LedgerState TestBlock Void
 instance HasLedgerTables LedgerState TestBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
+  projectLedgerTables _ = emptyTable
+  withLedgerTables st _ = convertTrivialTables st
 instance HasLedgerTables (Ticked LedgerState) TestBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
+  projectLedgerTables _ = emptyTable
+  withLedgerTables st _ = convertTrivialTables st
 instance CanStowLedgerTables (LedgerState TestBlock) where
-  stowLedgerTables = convertMapKind
-  unstowLedgerTables = convertMapKind
+  stowLedgerTables = convertTrivialTables
+  unstowLedgerTables = convertTrivialTables
 instance SerializeTablesWithHint LedgerState TestBlock where
   decodeTablesWithHint _ = do
     _ <- CBOR.decodeMapLen
-    pure (LedgerTables $ ValuesMK Map.empty)
+    pure emptyTable
   encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
 instance CanUpgradeLedgerTables LedgerState TestBlock where
   upgradeTables _ _ = id
@@ -643,7 +642,7 @@ instance ApplyBlock LedgerState TestBlock where
     defaultReapplyBlockLedgerResult (error . ("reapplyBlockLedgerResult: impossible " <>) . show)
 
 instance GetBlockKeySets TestBlock where
-  getBlockKeySets _blk = emptyLedgerTables
+  getBlockKeySets _blk = emptyTable
 
 data instance LedgerState TestBlock mk
   = TestLedger
@@ -732,10 +731,10 @@ instance InspectLedger TestBlock
 
 -- Use defaults
 
-testInitLedger :: LedgerState TestBlock EmptyMK
+testInitLedger :: LedgerState TestBlock NoTables
 testInitLedger = TestLedger GenesisPoint GenesisHash Nothing
 
-testInitExtLedger :: ExtLedgerState TestBlock EmptyMK
+testInitExtLedger :: ExtLedgerState TestBlock NoTables
 testInitExtLedger =
   ExtLedgerState
     { ledgerState = testInitLedger
@@ -825,8 +824,8 @@ instance EncodeDisk TestBlock (Header TestBlock)
 instance DecodeDisk TestBlock (Lazy.ByteString -> Header TestBlock) where
   decodeDisk _ = const <$> decode
 
-instance EncodeDisk TestBlock (LedgerState TestBlock EmptyMK)
-instance DecodeDisk TestBlock (LedgerState TestBlock EmptyMK)
+instance EncodeDisk TestBlock (LedgerState TestBlock NoTables)
+instance DecodeDisk TestBlock (LedgerState TestBlock NoTables)
 
 instance EncodeDisk TestBlock (AnnTip TestBlock) where
   encodeDisk _ = encodeAnnTipIsEBB encode
@@ -956,7 +955,7 @@ instance ToExpr (Tip TestBlock)
 
 deriving instance ToExpr TestBlockError
 deriving instance ToExpr (TipInfoIsEBB TestBlock)
-deriving instance ToExpr (LedgerState TestBlock EmptyMK)
+deriving instance ToExpr (LedgerState TestBlock NoTables)
 deriving instance ToExpr (HeaderError TestBlock)
 deriving instance ToExpr TestBlockOtherHeaderEnvelopeError
 deriving instance ToExpr (HeaderEnvelopeError TestBlock)

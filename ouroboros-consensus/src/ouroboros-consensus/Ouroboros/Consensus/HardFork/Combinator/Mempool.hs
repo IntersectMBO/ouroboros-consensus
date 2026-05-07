@@ -118,7 +118,7 @@ type DecomposedReapplyTxsResult extra xs wtd =
       , extra
       )
     ]
-    :.: FlipTickedLedgerState EmptyMK
+    :.: FlipTickedLedgerState NoTables
 
 instance
   ( CanHardFork xs
@@ -149,7 +149,7 @@ instance
       , extra
       )
     ] ->
-    TickedLedgerState (HardForkBlock xs) ValuesMK ->
+    TickedLedgerState (HardForkBlock xs) Values ->
     ReapplyTxsResult extra (HardForkBlock xs) wtd
   reapplyTxs
     HardForkLedgerConfig{..}
@@ -212,7 +212,7 @@ instance
         Index xs blk ->
         WrapLedgerConfig blk ->
         Product
-          (FlipTickedLedgerState ValuesMK)
+          (FlipTickedLedgerState Values)
           ( []
               :.: (,,) extra (InputTxDiffs (HardForkBlock xs) wtd)
               :.: WrapValidatedGenTx
@@ -251,7 +251,7 @@ instance
       SingleEraBlock x =>
       Index xs x ->
       GenTx x ->
-      K (LedgerTables (HardForkBlock xs) KeysMK) x
+      K (Keys (HardForkBlock xs)) x
     f idx tx = K $ injectLedgerTables idx $ getTransactionKeySets tx
 
   -- This optimization is worthwile because we can save the projection and
@@ -390,7 +390,7 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
         SingleEraBlock blk =>
         Index xs blk ->
         WrapLedgerConfig blk ->
-        (Product GenTx (FlipTickedLedgerState ValuesMK)) blk ->
+        (Product GenTx (FlipTickedLedgerState Values)) blk ->
         K (Except (HardForkApplyTxErr xs) (HardForkTxMeasure xs)) blk
       aux idx cfg (Pair tx' st') =
         K
@@ -414,8 +414,8 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
 
 -- | 'applyHelper' has to return one of these, depending on the apply mode used.
 type family ApplyMK k where
-  ApplyMK (ApplyHelperMode GenTx) = DiffMK
-  ApplyMK (ApplyHelperMode WrapValidatedGenTx) = ValuesMK
+  ApplyMK (ApplyHelperMode GenTx) = Diffs
+  ApplyMK (ApplyHelperMode WrapValidatedGenTx) = Values
 
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs txIn blk = ApplyResult
@@ -435,7 +435,7 @@ applyHelper ::
   WhetherToIntervene ->
   SlotNo ->
   txIn (HardForkBlock xs) ->
-  TickedLedgerState (HardForkBlock xs) ValuesMK ->
+  TickedLedgerState (HardForkBlock xs) Values ->
   Except
     (HardForkApplyTxErr xs)
     ( TickedLedgerState (HardForkBlock xs) (ApplyMK (ApplyHelperMode txIn))
@@ -521,7 +521,7 @@ applyHelper
       SingleEraBlock blk =>
       Index xs blk ->
       WrapLedgerConfig blk ->
-      Product txIn (FlipTickedLedgerState ValuesMK) blk ->
+      Product txIn (FlipTickedLedgerState Values) blk ->
       ( Except (HardForkApplyTxErr xs)
           :.: ApplyResult xs txIn
       )

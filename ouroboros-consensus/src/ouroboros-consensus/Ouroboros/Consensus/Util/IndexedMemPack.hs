@@ -30,17 +30,17 @@ import Data.MemPack.Buffer
 import Data.MemPack.Error
 import Data.Proxy
 import GHC.Stack
-import Ouroboros.Consensus.Ledger.Tables.MapKind
+import Ouroboros.Consensus.Ledger.Tables
 
 -- | See 'MemPack'.
 class IndexedMemPack l blk a where
-  indexedPackedByteCount :: l blk EmptyMK -> a -> Int
-  indexedPackM :: l blk EmptyMK -> a -> Pack s ()
-  indexedUnpackM :: Buffer b => forall s. l blk EmptyMK -> Unpack s b a
-  indexedTypeName :: Proxy a -> l blk EmptyMK -> String
+  indexedPackedByteCount :: l blk NoTables -> a -> Int
+  indexedPackM :: l blk NoTables -> a -> Pack s ()
+  indexedUnpackM :: Buffer b => forall s. l blk NoTables -> Unpack s b a
+  indexedTypeName :: Proxy a -> l blk NoTables -> String
 
 indexedPackByteString ::
-  forall a l blk. (IndexedMemPack l blk a, HasCallStack) => l blk EmptyMK -> a -> ByteString
+  forall a l blk. (IndexedMemPack l blk a, HasCallStack) => l blk NoTables -> a -> ByteString
 indexedPackByteString idx = pinnedByteArrayToByteString . indexedPackByteArray True idx
 {-# INLINE indexedPackByteString #-}
 
@@ -48,7 +48,7 @@ indexedPackByteArray ::
   forall a l blk.
   (IndexedMemPack l blk a, HasCallStack) =>
   Bool ->
-  l blk EmptyMK ->
+  l blk NoTables ->
   a ->
   ByteArray
 indexedPackByteArray isPinned idx a =
@@ -60,13 +60,13 @@ indexedPackByteArray isPinned idx a =
 {-# INLINE indexedPackByteArray #-}
 
 indexedUnpackError ::
-  forall l blk a b. (Buffer b, IndexedMemPack l blk a, HasCallStack) => l blk EmptyMK -> b -> a
+  forall l blk a b. (Buffer b, IndexedMemPack l blk a, HasCallStack) => l blk NoTables -> b -> a
 indexedUnpackError idx = errorFail . indexedUnpackFail idx
 {-# INLINEABLE indexedUnpackError #-}
 
 indexedUnpackFail ::
   forall l blk a b.
-  (IndexedMemPack l blk a, Buffer b, HasCallStack) => l blk EmptyMK -> b -> Fail SomeError a
+  (IndexedMemPack l blk a, Buffer b, HasCallStack) => l blk NoTables -> b -> Fail SomeError a
 indexedUnpackFail idx b = do
   let len = bufferByteCount b
   (a, consumedBytes) <- indexedUnpackLeftOver idx b
@@ -77,14 +77,14 @@ indexedUnpackFail idx b = do
 
 indexedUnpackLeftOver ::
   forall l blk a b.
-  (IndexedMemPack l blk a, Buffer b, HasCallStack) => l blk EmptyMK -> b -> Fail SomeError (a, Int)
+  (IndexedMemPack l blk a, Buffer b, HasCallStack) => l blk NoTables -> b -> Fail SomeError (a, Int)
 indexedUnpackLeftOver idx b = FailT $ pure $ runST $ runFailAggT $ indexedUnpackLeftOverST idx b
 {-# INLINEABLE indexedUnpackLeftOver #-}
 
 indexedUnpackLeftOverST ::
   forall l blk a b s.
   (IndexedMemPack l blk a, Buffer b, HasCallStack) =>
-  l blk EmptyMK -> b -> FailT SomeError (ST s) (a, Int)
+  l blk NoTables -> b -> FailT SomeError (ST s) (a, Int)
 indexedUnpackLeftOverST idx b = do
   let len = bufferByteCount b
   res@(_, consumedBytes) <- runStateT (runUnpack (indexedUnpackM idx) b) 0
@@ -94,7 +94,7 @@ indexedUnpackLeftOverST idx b = do
 
 indexedUnpackEither ::
   forall l blk a b.
-  (IndexedMemPack l blk a, Buffer b, HasCallStack) => l blk EmptyMK -> b -> Either SomeError a
+  (IndexedMemPack l blk a, Buffer b, HasCallStack) => l blk NoTables -> b -> Either SomeError a
 indexedUnpackEither idx = first fromMultipleErrors . runFailAgg . indexedUnpackFail idx
 {-# INLINEABLE indexedUnpackEither #-}
 

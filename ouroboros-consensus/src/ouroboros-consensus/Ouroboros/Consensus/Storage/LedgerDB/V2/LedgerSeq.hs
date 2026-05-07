@@ -57,7 +57,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils
+
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq hiding
@@ -88,7 +88,7 @@ import Prelude hiding (read)
 data LedgerTablesHandle m l blk = LedgerTablesHandle
   { close :: !(m ())
   -- ^ Close the handle
-  , duplicateWithDiffs :: !(l blk EmptyMK -> l blk DiffMK -> m (LedgerTablesHandle m l blk))
+  , duplicateWithDiffs :: !(l blk NoTables -> l blk Diffs -> m (LedgerTablesHandle m l blk))
   -- ^ Create a new handle by duplicating this one and push some diffs to it.
   --
   -- The first argument has to be the ledger state before applying
@@ -104,11 +104,11 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   -- ^ Create an duplicate of a handle. This will be used when opening read-only
   -- forkers and also to open the first handle for a forker used in chain
   -- selection.
-  , read :: !(l blk EmptyMK -> LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
+  , read :: !(l blk NoTables -> Keys blk -> m (Values blk))
   -- ^ Read values for the given keys from the tables, and deserialize them as
   -- if they were from the same era as the given ledger state.
   , readRange ::
-      !(l blk EmptyMK -> (Maybe (TxIn blk), Int) -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
+      !(l blk NoTables -> (Maybe (TxIn blk), Int) -> m (Values blk, Maybe (TxIn blk)))
   -- ^ Read the requested number of values, possibly starting from the given
   -- key, from the tables, and deserialize them as if they were from the same
   -- era as the given ledger state.
@@ -123,11 +123,11 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   -- back into the next iteration of the range read. If the function returns
   -- Nothing, it means the read returned no results, or in other words, we
   -- reached the end of the ledger tables.
-  , readAll :: !(l blk EmptyMK -> m (LedgerTables blk ValuesMK))
+  , readAll :: !(l blk NoTables -> m (Values blk))
   -- ^ Costly read all operation, not to be used in Consensus but only in
   -- snapshot-converter executable. The values will be read as if they were from
   -- the same era as the given ledger state.
-  , takeHandleSnapshot :: !(l blk EmptyMK -> String -> m (Maybe CRC))
+  , takeHandleSnapshot :: !(l blk NoTables -> String -> m (Maybe CRC))
   -- ^ Take a snapshot of a handle. The given ledger state is used to decide the
   -- encoding of the values based on the current era.
   --
@@ -142,34 +142,34 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
 -------------------------------------------------------------------------------}
 
 -- | For single era blocks, it would be the same to hold a stowed ledger state
--- (@'LedgerTables' ('LedgerState' blk) 'EmptyMK'@), an unstowed one
--- (@'LedgerTables' ('LedgerState' blk) 'ValuesMK'@) or a tuple with the state
--- and the tables ('LedgerState' blk 'EmptyMK', 'LedgerTables' ('LedgerState'
--- blk) 'ValuesMK'), however, for a hard fork block, these are not equivalent.
+-- (@'LedgerTables' ('LedgerState' blk) 'NoTables'@), an unstowed one
+-- (@'LedgerTables' ('LedgerState' blk) 'Values'@) or a tuple with the state
+-- and the tables ('LedgerState' blk 'NoTables', 'LedgerTables' ('LedgerState'
+-- blk) 'Values'), however, for a hard fork block, these are not equivalent.
 --
--- If we were to hold a sequence of type @LedgerState blk EmptyMK@ with stowed
+-- If we were to hold a sequence of type @LedgerState blk NoTables@ with stowed
 -- values, we would have to translate the entirety of the tables on epoch
 -- boundaries.
 --
--- If we were to hold a sequence of type @LedgerState blk ValuesMK@ we would
+-- If we were to hold a sequence of type @LedgerState blk Values@ we would
 -- have the same problem as the @mk@ in the state actually refers to the @mk@ in
 -- the @HardForkState@'ed state.
 --
--- Therefore it sounds reasonable to hold a @LedgerState blk EmptyMK@ with no
--- values, and a @LedgerTables blk ValuesMK@ next to it, that will live its
+-- Therefore it sounds reasonable to hold a @LedgerState blk NoTables@ with no
+-- values, and a @Values blk@ next to it, that will live its
 -- entire lifetime as @LedgerTables@ of the @HardForkBlock@.
 data StateRef m l blk = StateRef
-  { state :: !(l blk EmptyMK)
+  { state :: !(l blk NoTables)
   , tables :: !(LedgerTablesHandle m l blk)
   }
   deriving Generic
 
-deriving instance (IOLike m, NoThunks (l blk EmptyMK)) => NoThunks (StateRef m l blk)
+deriving instance (IOLike m, NoThunks (l blk NoTables)) => NoThunks (StateRef m l blk)
 
-instance Eq (l blk EmptyMK) => Eq (StateRef m l blk) where
+instance Eq (l blk NoTables) => Eq (StateRef m l blk) where
   (==) = (==) `on` state
 
-instance Show (l blk EmptyMK) => Show (StateRef m l blk) where
+instance Show (l blk NoTables) => Show (StateRef m l blk) where
   show = show . state
 
 instance GetTip (l blk) => Anchorable (WithOrigin SlotNo) (StateRef m l blk) (StateRef m l blk) where
@@ -185,10 +185,10 @@ newtype LedgerSeq m l blk = LedgerSeq
   }
   deriving Generic
 
-deriving newtype instance (IOLike m, NoThunks (l blk EmptyMK)) => NoThunks (LedgerSeq m l blk)
+deriving newtype instance (IOLike m, NoThunks (l blk NoTables)) => NoThunks (LedgerSeq m l blk)
 
-deriving newtype instance Eq (l blk EmptyMK) => Eq (LedgerSeq m l blk)
-deriving newtype instance Show (l blk EmptyMK) => Show (LedgerSeq m l blk)
+deriving newtype instance Eq (l blk NoTables) => Eq (LedgerSeq m l blk)
+deriving newtype instance Show (l blk NoTables) => Show (LedgerSeq m l blk)
 
 type LedgerSeq' m blk = LedgerSeq m ExtLedgerState blk
 
@@ -201,7 +201,7 @@ empty ::
   ( GetTip (l blk)
   , IOLike m
   ) =>
-  l blk EmptyMK ->
+  l blk NoTables ->
   init ->
   (init -> m (LedgerTablesHandle m l blk)) ->
   m (LedgerSeq m l blk)
@@ -213,8 +213,8 @@ empty' ::
   , IOLike m
   , HasLedgerTables l blk
   ) =>
-  l blk ValuesMK ->
-  (l blk ValuesMK -> m (LedgerTablesHandle m l blk)) ->
+  l blk Values ->
+  (l blk Values -> m (LedgerTablesHandle m l blk)) ->
   m (LedgerSeq m l blk)
 empty' st = empty (forgetLedgerTables st) st
 
@@ -369,7 +369,7 @@ rollbackN n ldb
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> l3s == current ldb
 -- True
-current :: GetTip (l blk) => LedgerSeq m l blk -> l blk EmptyMK
+current :: GetTip (l blk) => LedgerSeq m l blk -> l blk NoTables
 current = state . currentHandle
 
 currentHandle :: GetTip (l blk) => LedgerSeq m l blk -> StateRef m l blk
@@ -381,7 +381,7 @@ currentHandle = headAnchor . getLedgerSeq
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> l0s == anchor ldb
 -- True
-anchor :: LedgerSeq m l blk -> l blk EmptyMK
+anchor :: LedgerSeq m l blk -> l blk NoTables
 anchor = state . anchorHandle
 
 anchorHandle :: LedgerSeq m l blk -> StateRef m l blk
@@ -395,7 +395,7 @@ anchorHandle = AS.anchor . getLedgerSeq
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> [(0, l3s), (1, l2s), (2, l1s)] == snapshots ldb
 -- True
-snapshots :: LedgerSeq m l blk -> [(Word64, l blk EmptyMK)]
+snapshots :: LedgerSeq m l blk -> [(Word64, l blk NoTables)]
 snapshots =
   zip [0 ..]
     . map state
@@ -452,7 +452,7 @@ getPastLedgerAt ::
   ) =>
   Point blk ->
   LedgerSeq m l blk ->
-  Maybe (l blk EmptyMK)
+  Maybe (l blk NoTables)
 getPastLedgerAt pt db = current <$> rollback pt db
 
 -- | Roll back the volatile states up to the specified point.
@@ -523,8 +523,8 @@ immutableTipSlot =
 -- | Transform the underlying volatile 'AnchoredSeq' using the given functions.
 volatileStatesBimap ::
   AS.Anchorable (WithOrigin SlotNo) a b =>
-  (l blk EmptyMK -> a) ->
-  (l blk EmptyMK -> b) ->
+  (l blk NoTables -> a) ->
+  (l blk NoTables -> b) ->
   LedgerSeq m l blk ->
   AS.AnchoredSeq (WithOrigin SlotNo) a b
 volatileStatesBimap f g =
@@ -561,7 +561,7 @@ volatileStatesBimap f g =
 -- >>> type instance TxOut B = Void
 --
 -- >>> data instance LedgerState B (mk :: MapKind) = LS (Point B)
--- >>> instance Eq (LedgerState B EmptyMK) where LS p1 == LS p2 = p1 == p2
+-- >>> instance Eq (LedgerState B NoTables) where LS p1 == LS p2 = p1 == p2
 -- >>> :{
 --  instance GetTip (LedgerState B) where
 --    getTip (LS p) = castPoint p

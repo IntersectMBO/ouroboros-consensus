@@ -49,13 +49,10 @@ import Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation (AnnTip)
+import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)
-import Ouroboros.Consensus.Ledger.Tables
-  ( EmptyMK
-  , ValuesMK
-  )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
@@ -137,7 +134,7 @@ combineEras perEraExamples =
       eraName = singleEraName $ singleEraInfo es
 
   exampleLedgerTablesCardano ::
-    Labelled (LedgerTables (HardForkBlock (CardanoEras Crypto)) ValuesMK)
+    Labelled (Values (HardForkBlock (CardanoEras Crypto)))
   exampleLedgerTablesCardano =
     mconcat $
       hcollapse $
@@ -220,11 +217,11 @@ instance Inject Examples where
       , exampleQuery = inj (Proxy @(SomeBlockQuery :.: BlockQuery)) exampleQuery
       , exampleResult = inj (Proxy @SomeResult) exampleResult
       , exampleAnnTip = inj (Proxy @AnnTip) exampleAnnTip
-      , exampleLedgerState = inj (Proxy @(Flip LedgerState EmptyMK)) exampleLedgerState
+      , exampleLedgerState = inj (Proxy @(Flip LedgerState NoTables)) exampleLedgerState
       , exampleChainDepState = inj (Proxy @WrapChainDepState) exampleChainDepState
-      , exampleExtLedgerState = inj (Proxy @(Flip ExtLedgerState EmptyMK)) exampleExtLedgerState
+      , exampleExtLedgerState = inj (Proxy @(Flip ExtLedgerState NoTables)) exampleExtLedgerState
       , exampleSlotNo = exampleSlotNo
-      , exampleLedgerTables = inj (Proxy @WrapLedgerTables) exampleLedgerTables
+      , exampleLedgerTables = inj (Proxy @Values) exampleLedgerTables
       , -- We cannot create a HF Ledger Config out of just one of the eras
         exampleLedgerConfig = mempty
       }
@@ -238,14 +235,9 @@ instance Inject Examples where
       Proxy f -> Labelled a -> Labelled b
     inj p = map (fmap (inject' p iidx))
 
--- | This wrapper is used only in the 'Example' instance of 'Inject' so that we
--- can use a type that matches the kind expected by 'inj'.
-newtype WrapLedgerTables blk = WrapLedgerTables (LedgerTables blk ValuesMK)
-
-instance Inject WrapLedgerTables where
-  inject idx (WrapLedgerTables lt) =
-    WrapLedgerTables $
-      injectLedgerTables (forgetInjectionIndex idx) lt
+instance Inject Values where
+  inject idx lt =
+    injectLedgerTables (forgetInjectionIndex idx) lt
 
 {-------------------------------------------------------------------------------
   Setup

@@ -53,7 +53,7 @@ import Ouroboros.Consensus.HardFork.History.Qry
   , slotToWallclock
   )
 import Ouroboros.Consensus.Ledger.Abstract
-  ( EmptyMK
+  ( NoTables
   , LedgerConfig
   , LedgerState
   )
@@ -82,7 +82,7 @@ data HeaderInFutureCheck m blk arrival judgment = HeaderInFutureCheck
   -- ^ This is ideally called _immediately_ upon the header arriving.
   , judgeHeaderArrival ::
       LedgerConfig blk ->
-      LedgerState blk EmptyMK ->
+      LedgerState blk NoTables ->
       arrival ->
       Except PastHorizonException judgment
   -- ^ Judge what to do about the header's arrival time.

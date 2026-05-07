@@ -8,6 +8,9 @@ module Ouroboros.Consensus.Ledger.Tables.Diff
   ( -- * Types
     Delta (..)
   , Diff (..)
+  , empty
+  , Ouroboros.Consensus.Ledger.Tables.Diff.map
+  , mapKeys
 
     -- * Conversion
   , keysSet
@@ -68,6 +71,9 @@ newtype Diff k v = Diff (Map k (Delta v))
   deriving Generic
   deriving newtype NoThunks
 
+empty :: Diff k v
+empty = Diff Map.empty
+
 -- | Custom 'Functor' instance, since @'Functor' ('Map' k)@ is actually the
 -- 'Functor' instance for a lazy Map.
 instance Functor (Diff k) where
@@ -89,6 +95,12 @@ data Delta v
 -- | Right-biased
 instance Semigroup (Delta v) where
   _d1 <> d2 = d2
+
+map :: (v1 -> v2) -> Diff k v1 -> Diff k v2
+map f (Diff m) = Diff (Map.map (fmap f) m)
+
+mapKeys :: Ord k2 => (k1 -> k2) -> Diff k1 v -> Diff k2 v
+mapKeys f (Diff m) = Diff (Map.mapKeys f m)
 
 {------------------------------------------------------------------------------
   Conversion

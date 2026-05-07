@@ -153,7 +153,7 @@ class
   answerPureBlockQuery ::
     ExtLedgerCfg blk ->
     BlockQuery blk QFNoTables result ->
-    ExtLedgerState blk EmptyMK ->
+    ExtLedgerState blk NoTables ->
     result
 
   -- | Answer a query that requires to perform a lookup on the ledger tables. As

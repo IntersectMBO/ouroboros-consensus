@@ -105,7 +105,6 @@ import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
@@ -189,10 +188,7 @@ instance
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
 
   getTransactionKeySets (ShelleyTx _ tx) =
-    LedgerTables $
-      KeysMK $
-        coerceSet
-          (tx ^. bodyTxL . allInputsTxBodyF)
+    Keys $ coerceSet (tx ^. bodyTxL . allInputsTxBodyF)
 
   mkMempoolApplyTxError _tlst txt =
     ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)
@@ -284,14 +280,14 @@ applyShelleyTx ::
   WhetherToIntervene ->
   SlotNo ->
   GenTx (ShelleyBlock proto era) ->
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
+  TickedLedgerState (ShelleyBlock proto era) Values ->
   Except
     (ApplyTxErr (ShelleyBlock proto era))
-    ( TickedLedgerState (ShelleyBlock proto era) DiffMK
+    ( TickedLedgerState (ShelleyBlock proto era) Diffs
     , Validated (GenTx (ShelleyBlock proto era))
     )
 applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
-  let st1 :: TickedLedgerState (ShelleyBlock proto era) EmptyMK
+  let st1 :: TickedLedgerState (ShelleyBlock proto era) NoTables
       st1 = stowLedgerTables st0
 
       innerSt :: SL.NewEpochState era
@@ -305,7 +301,7 @@ applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
       wti
       tx
 
-  let st' :: TickedLedgerState (ShelleyBlock proto era) DiffMK
+  let st' :: TickedLedgerState (ShelleyBlock proto era) Diffs
       st' =
         calculateDifference st0 $
           unstowLedgerTables $
@@ -318,8 +314,8 @@ reapplyShelleyTx ::
   LedgerConfig (ShelleyBlock proto era) ->
   SlotNo ->
   Validated (GenTx (ShelleyBlock proto era)) ->
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
-  Except (ApplyTxErr (ShelleyBlock proto era)) (TickedLedgerState (ShelleyBlock proto era) ValuesMK)
+  TickedLedgerState (ShelleyBlock proto era) Values ->
+  Except (ApplyTxErr (ShelleyBlock proto era)) (TickedLedgerState (ShelleyBlock proto era) Values)
 reapplyShelleyTx cfg slot vgtx st0 = do
   let st1 = stowLedgerTables st0
       innerSt = tickedShelleyLedgerState st1
@@ -581,7 +577,7 @@ txMeasureAlonzo ::
   , ExUnitsTooBigUTxO era
   , MaxTxSizeUTxO era
   ) =>
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
+  TickedLedgerState (ShelleyBlock proto era) Values ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) AlonzoMeasure
 txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
@@ -691,7 +687,7 @@ txMeasureDijkstra ::
   , MaxTxSizeUTxO era
   , TxRefScriptsSizeTooBig era
   ) =>
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
+  TickedLedgerState (ShelleyBlock proto era) Values ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) DijkstraMeasure
 txMeasureDijkstra st = fmap DijkstraMeasure . txMeasureConway st
@@ -753,7 +749,7 @@ txMeasureConway ::
   , TxRefScriptsSizeTooBig era
   , SL.ConwayEraPParams era
   ) =>
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
+  TickedLedgerState (ShelleyBlock proto era) Values ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) ConwayMeasure
 txMeasureConway st tx@(ShelleyTx _txid tx') =

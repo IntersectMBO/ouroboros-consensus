@@ -178,6 +178,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDB'
   , LedgerDbPrune (..)
   , LedgerDbSerialiseConstraints
+  , BlockSupportsLedgerDB
   , ResolveBlock
   , currentPoint
 
@@ -267,8 +268,8 @@ import System.FS.CRC
 -- instantiated with a @blk@.
 type LedgerDbSerialiseConstraints blk =
   ( Serialise (HeaderHash blk)
-  , EncodeDisk blk (LedgerState blk EmptyMK)
-  , DecodeDisk blk (LedgerState blk EmptyMK)
+  , EncodeDisk blk (LedgerState blk NoTables)
+  , DecodeDisk blk (LedgerState blk NoTables)
   , EncodeDisk blk (AnnTip blk)
   , DecodeDisk blk (AnnTip blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
@@ -278,14 +279,21 @@ type LedgerDbSerialiseConstraints blk =
   , SerializeTablesWithHint LedgerState blk
   )
 
+type BlockSupportsLedgerDB blk =
+  ( CanUpgradeLedgerTables LedgerState blk
+  , NoThunks (LedgerState blk NoTables)
+  , NoThunks (TxIn blk)
+  , NoThunks (TxOut blk)
+  )
+
 -- | The core API of the LedgerDB component
 type LedgerDB :: (Type -> Type) -> StateKind -> Type -> Type
 data LedgerDB m l blk = LedgerDB
-  { getVolatileTip :: STM m (l blk EmptyMK)
+  { getVolatileTip :: STM m (l blk NoTables)
   -- ^ Get the empty ledger state at the (volatile) tip of the LedgerDB.
-  , getImmutableTip :: STM m (l blk EmptyMK)
+  , getImmutableTip :: STM m (l blk NoTables)
   -- ^ Get the empty ledger state at the immutable tip of the LedgerDB.
-  , getPastLedgerState :: Point blk -> STM m (Maybe (l blk EmptyMK))
+  , getPastLedgerState :: Point blk -> STM m (Maybe (l blk NoTables))
   -- ^ Get an empty ledger state at a requested point in the LedgerDB, if it
   -- exists.
   , getHeaderStateHistory ::
@@ -360,7 +368,7 @@ data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
-  , push :: l blk DiffMK -> m ()
+  , push :: l blk Diffs -> m ()
   -- ^ Push a ledger state, and prune the 'LedgerDB' to its immutable tip.
   --
   -- This does not modify the set of previously applied points.
@@ -491,7 +499,7 @@ data InitDB db m blk = InitDB
   , initReapplyBlock :: !(LedgerDbCfg ExtLedgerState blk -> blk -> db -> m db)
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
   -- LedgerDB such that there are no volatile states.
-  , currentTip :: !(db -> LedgerState blk EmptyMK)
+  , currentTip :: !(db -> LedgerState blk NoTables)
   -- ^ Getting the current tip for tracing the Ledger Events.
   , mkLedgerDb ::
       !(db -> m (LedgerDB' m blk, TestInternals' m blk))
@@ -768,7 +776,7 @@ class StreamingBackend m backend l blk where
   releaseSinkArgs :: SinkArgs m backend l blk -> m ()
 
 type Yield m l blk =
-  l blk EmptyMK ->
+  l blk NoTables ->
   ( ( Stream
         (Of (TxIn blk, TxOut blk))
         (ExceptT DeserialiseFailure m)
@@ -779,7 +787,7 @@ type Yield m l blk =
   ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
 
 type Sink m l blk =
-  l blk EmptyMK ->
+  l blk NoTables ->
   Stream
     (Of (TxIn blk, TxOut blk))
     (ExceptT DeserialiseFailure m)

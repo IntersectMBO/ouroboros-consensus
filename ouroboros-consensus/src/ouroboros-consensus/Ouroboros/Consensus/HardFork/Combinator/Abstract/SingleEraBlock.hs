@@ -32,6 +32,7 @@ import Data.SOP.Match
 import Data.SOP.Strict
 import qualified Data.Text as Text
 import Data.Void
+import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Combinator.Info
@@ -89,6 +90,15 @@ class
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
+  , Show (LedgerState blk Values)
+  , Show (LedgerState blk Diffs)
+  , Show (LedgerState blk NoTables)
+  , Eq (LedgerState blk Values)
+  , Eq (LedgerState blk Diffs)
+  , Eq (LedgerState blk NoTables)
+  , NoThunks (LedgerState blk Values)
+  , NoThunks (LedgerState blk Diffs)
+  , NoThunks (LedgerState blk NoTables)
   ) =>
   SingleEraBlock blk
   where

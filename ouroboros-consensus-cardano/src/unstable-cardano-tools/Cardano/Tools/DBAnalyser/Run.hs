@@ -61,6 +61,9 @@ openLedgerDB ::
   ( LedgerSupportsProtocol blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , NoThunks (LedgerState blk NoTables)
+  , NoThunks (TxIn blk)
+  , NoThunks (TxOut blk)
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   IO
@@ -108,7 +111,10 @@ analyse ::
   , HasAnalysis blk
   , HasProtocolInfo blk
   , LedgerSupportsMempool.HasTxs blk
+  , LedgerDB.BlockSupportsLedgerDB blk
   , CanStowLedgerTables (LedgerState blk)
+  , NoThunks (LedgerState blk Values)
+  , NoThunks (LedgerState blk Diffs)
   ) =>
   DBAnalyserConfig ->
   Args blk ->

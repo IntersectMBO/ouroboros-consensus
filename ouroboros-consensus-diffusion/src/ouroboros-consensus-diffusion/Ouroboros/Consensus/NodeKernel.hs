@@ -67,7 +67,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -660,7 +659,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           trace blockForging $ TraceNodeIsLeader currentSlot
 
           -- Tick the ledger state for the 'SlotNo' we're producing a block for
-          let tickedLedgerState :: Ticked LedgerState blk DiffMK
+          let tickedLedgerState :: Ticked LedgerState blk Diffs
               tickedLedgerState =
                 applyChainTick
                   OmitLedgerEvents
@@ -962,7 +961,7 @@ getMempoolWriter mempool =
 getPeersFromCurrentLedger ::
   (IOLike m, LedgerSupportsPeerSelection blk) =>
   NodeKernel m addrNTN addrNTC blk ->
-  (LedgerState blk EmptyMK -> Bool) ->
+  (LedgerState blk NoTables -> Bool) ->
   STM m (Maybe [(PoolStake, NonEmpty LedgerRelayAccessPoint)])
 getPeersFromCurrentLedger kernel p = do
   immutableLedger <-

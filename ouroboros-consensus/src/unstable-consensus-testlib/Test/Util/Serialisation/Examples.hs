@@ -25,11 +25,10 @@ import Ouroboros.Consensus.Block
   )
 import Ouroboros.Consensus.HeaderValidation (AnnTip)
 import Ouroboros.Consensus.Ledger.Abstract
-  ( EmptyMK
-  , LedgerConfig
+  ( LedgerConfig
   , LedgerState
-  , LedgerTables
-  , ValuesMK
+  , NoTables
+  , Values
   )
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.Query (BlockQuery, SomeBlockQuery)
@@ -59,12 +58,12 @@ data Examples blk = Examples
   , exampleQuery :: Labelled (SomeBlockQuery (BlockQuery blk))
   , exampleResult :: Labelled (SomeResult blk)
   , exampleAnnTip :: Labelled (AnnTip blk)
-  , exampleLedgerState :: Labelled (LedgerState blk EmptyMK)
+  , exampleLedgerState :: Labelled (LedgerState blk NoTables)
   , exampleChainDepState :: Labelled (ChainDepState (BlockProtocol blk))
-  , exampleExtLedgerState :: Labelled (ExtLedgerState blk EmptyMK)
+  , exampleExtLedgerState :: Labelled (ExtLedgerState blk NoTables)
   , exampleSlotNo :: Labelled SlotNo
   , exampleLedgerConfig :: Labelled (LedgerConfig blk)
-  , exampleLedgerTables :: Labelled (LedgerTables blk ValuesMK)
+  , exampleLedgerTables :: Labelled (Values blk)
   }
 
 emptyExamples :: Examples blk

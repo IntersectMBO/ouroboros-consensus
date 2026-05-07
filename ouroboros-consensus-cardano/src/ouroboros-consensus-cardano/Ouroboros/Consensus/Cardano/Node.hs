@@ -85,9 +85,8 @@ import Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
+import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -930,7 +929,7 @@ protocolInfoCardano paramsCardano
   -- data from the genesis config (if provided) in the ledger state. For
   -- example, this includes initial staking and initial funds (useful for
   -- testing/benchmarking).
-  initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c) ValuesMK
+  initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c) Values
   initExtLedgerStateCardano =
     ExtLedgerState
       { headerState = initHeaderState
@@ -941,12 +940,12 @@ protocolInfoCardano paramsCardano
       HardForkLedgerState $ hap (fn id :* registerAny) st
 
     initHeaderState :: HeaderState (CardanoBlock c)
-    initLedgerState :: LedgerState (CardanoBlock c) ValuesMK
+    initLedgerState :: LedgerState (CardanoBlock c) Values
     ExtLedgerState initLedgerState initHeaderState =
       injectInitialExtLedgerState cfg $
         initExtLedgerStateByron
 
-    registerAny :: NP (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (CardanoShelleyEras c)
+    registerAny :: NP (Flip LedgerState Values -.-> Flip LedgerState Values) (CardanoShelleyEras c)
     registerAny =
       hcmap (Proxy @IsShelleyBlock) injectIntoTestState $
         WrapTransitionConfig transitionConfigShelley
@@ -961,7 +960,7 @@ protocolInfoCardano paramsCardano
     injectIntoTestState ::
       ShelleyBasedEra era =>
       WrapTransitionConfig (ShelleyBlock proto era) ->
-      (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (ShelleyBlock proto era)
+      (Flip LedgerState Values -.-> Flip LedgerState Values) (ShelleyBlock proto era)
     injectIntoTestState (WrapTransitionConfig tcfg) = fn $ \(Flip st) ->
       -- We need to unstow the injected values
       Flip $

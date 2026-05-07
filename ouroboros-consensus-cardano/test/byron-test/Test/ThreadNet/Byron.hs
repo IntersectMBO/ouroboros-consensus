@@ -1174,7 +1174,7 @@ prop_simple_real_pbft_convergence
     finalChains :: [(NodeId, Chain ByronBlock)]
     finalChains = Map.toList $ nodeOutputFinalChain <$> testOutputNodes testOutput
 
-    finalLedgers :: [(NodeId, Byron.LedgerState ByronBlock EmptyMK)]
+    finalLedgers :: [(NodeId, Byron.LedgerState ByronBlock NoTables)]
     finalLedgers = Map.toList $ nodeOutputFinalLedger <$> testOutputNodes testOutput
 
     pvuLabels :: [(NodeId, ProtocolVersionUpdateLabel)]

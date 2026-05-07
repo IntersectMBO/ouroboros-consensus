@@ -106,6 +106,7 @@ import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteTicketNo
   )
 import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike
@@ -215,11 +216,11 @@ data ChainDB m blk = ChainDB
   -- to the chain it is on)
   --
   -- INVARIANT @'hwtHeader' <$> 'getCurrentChainWithTime' = 'getCurrentChain'@
-  , getCurrentLedger :: STM m (ExtLedgerState blk EmptyMK)
+  , getCurrentLedger :: STM m (ExtLedgerState blk NoTables)
   -- ^ Get current ledger
-  , getImmutableLedger :: STM m (ExtLedgerState blk EmptyMK)
+  , getImmutableLedger :: STM m (ExtLedgerState blk NoTables)
   -- ^ Get the immutable ledger, i.e., typically @k@ blocks back.
-  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk EmptyMK))
+  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk NoTables))
   -- ^ Get the ledger for the given point.
   --
   -- When the given point is not among the last @k@ blocks of the current

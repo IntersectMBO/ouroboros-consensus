@@ -392,7 +392,7 @@ runSystemIO expr = runSystem withChainDbEnv expr >>= toAssertion
   chunkInfo = ImmutableDB.simpleChunkInfo 100
   k = SecurityParam (knownNonZeroBounded @2)
   topLevelConfig = mkTestCfg k chunkInfo
-  withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo $ convertMapKind testInitExtLedger
+  withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo $ convertTrivialTables testInitExtLedger
 
 newtype TestFailure = TestFailure String deriving Show
 
@@ -524,7 +524,7 @@ runModelCmd cmd = do
     Right success -> pure success
 
 instance
-  (TestConstraints blk, LedgerTablesAreTrivial LedgerState blk) =>
+  TestConstraints blk =>
   SupportsUnitTest (ModelM blk)
   where
   type FollowerId (ModelM blk) = Model.FollowerId
@@ -634,7 +634,7 @@ withTestChainDbEnv ::
   (IOLike m, TestConstraints blk) =>
   TopLevelConfig blk ->
   ImmutableDB.ChunkInfo ->
-  ExtLedgerState blk ValuesMK ->
+  ExtLedgerState blk Values ->
   (ChainDBEnv m blk -> m [TraceEvent blk] -> m a) ->
   m a
 withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =

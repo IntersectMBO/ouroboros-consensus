@@ -88,7 +88,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
@@ -278,7 +277,7 @@ data VertexStatus m blk
   = -- | The vertex does not currently have a node instance; its previous
     -- instance stopped with this chain and ledger state (empty/initial before
     -- first instance)
-    VDown (Chain blk) (LedgerState blk EmptyMK)
+    VDown (Chain blk) (LedgerState blk NoTables)
   | -- | The vertex has a node instance, but it is about to transition to
     -- 'VDown' as soon as its edges transition to 'EDown'.
     VFalling
@@ -643,8 +642,8 @@ runThreadNetwork
       SlotNo ->
       (SlotNo -> STM m ()) ->
       STM m (Point blk) ->
-      ( (ReadOnlyForker' m blk -> WithEarlyExit m (ExtLedgerState blk EmptyMK)) ->
-        m (ExtLedgerState blk EmptyMK)
+      ( (ReadOnlyForker' m blk -> WithEarlyExit m (ExtLedgerState blk NoTables)) ->
+        m (ExtLedgerState blk NoTables)
       ) ->
       Mempool m blk ->
       ResourceRegistry m ->
@@ -706,8 +705,8 @@ runThreadNetwork
       OracularClock m ->
       TopLevelConfig blk ->
       Seed ->
-      ( (ReadOnlyForker' m blk -> WithEarlyExit m (LedgerState blk ValuesMK)) ->
-        m (LedgerState blk ValuesMK)
+      ( (ReadOnlyForker' m blk -> WithEarlyExit m (LedgerState blk Values)) ->
+        m (LedgerState blk Values)
       ) ->
       -- \^ How to get the current ledger state
       Mempool m blk ->
@@ -731,7 +730,7 @@ runThreadNetwork
     mkArgs ::
       ResourceRegistry m ->
       TopLevelConfig blk ->
-      ExtLedgerState blk ValuesMK ->
+      ExtLedgerState blk Values ->
       Tracer m (RealPoint blk, ExtValidationError blk) ->
       -- \^ invalid block tracer
       Tracer m (RealPoint blk, BlockNo) ->
@@ -937,7 +936,7 @@ runThreadNetwork
                 -- fail if the EBB is invalid
                 -- if it is valid, we retick to the /same/ slot
                 let apply = applyLedgerBlock OmitLedgerEvents (configLedger pInfoConfig)
-                    tables = emptyLedgerTables -- EBBs need no input tables
+                    tables = emptyTable -- EBBs need no input tables
                 tickedLdgSt' <- case Exc.runExcept $ apply ebb (tickedLdgSt `withLedgerTables` tables) of
                   Left e -> Exn.throw $ JitEbbError @blk e
                   Right st ->
@@ -1648,7 +1647,7 @@ data NodeOutput blk = NodeOutput
   { nodeOutputAdds :: Map SlotNo (Set (RealPoint blk, BlockNo))
   , nodeOutputCannotForges :: Map SlotNo [CannotForge blk]
   , nodeOutputFinalChain :: Chain blk
-  , nodeOutputFinalLedger :: LedgerState blk EmptyMK
+  , nodeOutputFinalLedger :: LedgerState blk NoTables
   , nodeOutputForges :: Map SlotNo blk
   , nodeOutputHeaderAdds :: Map SlotNo [(RealPoint blk, BlockNo)]
   , nodeOutputInvalids :: Map (RealPoint blk) [ExtValidationError blk]
@@ -1670,7 +1669,7 @@ mkTestOutput ::
   [ ( CoreNodeId
     , m (NodeInfo blk MockFS [])
     , Chain blk
-    , LedgerState blk EmptyMK
+    , LedgerState blk NoTables
     )
   ] ->
   m (TestOutput blk)

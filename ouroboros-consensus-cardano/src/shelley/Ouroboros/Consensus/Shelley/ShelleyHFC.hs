@@ -7,6 +7,7 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -361,8 +362,7 @@ instance
   , SL.TranslateEra era (ShelleyTip proto)
   , SL.TranslateEra era SL.NewEpochState
   , SL.TranslationError era SL.NewEpochState ~ Void
-  , CanMapMK mk
-  , CanMapKeysMK mk
+  , BimapTables mk
   ) =>
   SL.TranslateEra era (Flip LedgerState mk :.: ShelleyBlock proto)
   where
@@ -382,15 +382,13 @@ instance
             }
 
 translateShelleyTables ::
-  ( CanMapMK mk
-  , CanMapKeysMK mk
+  ( BimapTables mk
   , ShelleyBasedEra era
   , ShelleyBasedEra (SL.PreviousEra era)
   ) =>
-  LedgerTables (ShelleyBlock proto (SL.PreviousEra era)) mk ->
-  LedgerTables (ShelleyBlock proto era) mk
-translateShelleyTables (LedgerTables utxoTable) =
-  LedgerTables $ mapKeysMK coerce $ mapMK SL.upgradeTxOut utxoTable
+  mk (ShelleyBlock proto (SL.PreviousEra era)) ->
+  mk (ShelleyBlock proto era)
+translateShelleyTables = bimapLedgerTables coerce SL.upgradeTxOut
 
 instance
   ( ShelleyBasedEra era
@@ -494,10 +492,10 @@ instance
   SerializeTablesWithHint LedgerState (HardForkBlock '[ShelleyBlock proto era])
   where
   encodeTablesWithHint ::
-    LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK ->
-    LedgerTables (HardForkBlock '[ShelleyBlock proto era]) ValuesMK ->
+    LedgerState (HardForkBlock '[ShelleyBlock proto era]) NoTables ->
+    Values (HardForkBlock '[ShelleyBlock proto era]) ->
     Encoding
-  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
+  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (Values tbs) =
     let
       np = (Fn $ const $ K encOne) :* Nil
      in
@@ -508,8 +506,8 @@ instance
 
   decodeTablesWithHint ::
     forall s.
-    LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK ->
-    Decoder s (LedgerTables (HardForkBlock '[ShelleyBlock proto era]) ValuesMK)
+    LedgerState (HardForkBlock '[ShelleyBlock proto era]) NoTables ->
+    Decoder s (Values (HardForkBlock '[ShelleyBlock proto era]))
   decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
     let
       np = (Fn $ Comp . fmap K . getOne . unFlip . currentState) :* Nil
@@ -517,8 +515,8 @@ instance
       hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
    where
     getOne ::
-      LedgerState (ShelleyBlock proto era) EmptyMK ->
-      Decoder s (LedgerTables (HardForkBlock '[ShelleyBlock proto era]) ValuesMK)
+      LedgerState (ShelleyBlock proto era) NoTables ->
+      Decoder s (Values (HardForkBlock '[ShelleyBlock proto era]))
     getOne st =
       let certInterns =
             internsFromMap $
@@ -529,4 +527,4 @@ instance
                   . SL.certDStateL
                   . SL.accountsL
                   . SL.accountsMapL
-       in LedgerTables . ValuesMK <$> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))
+       in Values <$> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))

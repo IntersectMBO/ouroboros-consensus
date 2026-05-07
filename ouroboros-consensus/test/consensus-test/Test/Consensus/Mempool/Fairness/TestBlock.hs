@@ -20,19 +20,13 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise
 import Control.DeepSeq (NFData)
-import qualified Data.Map.Strict as Map
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
-import Ouroboros.Consensus.Ledger.Abstract
-  ( LedgerTables (..)
-  , ValuesMK (..)
-  , convertMapKind
-  )
 import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
+import Ouroboros.Consensus.Ledger.Tables (convertTrivialTables)
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Ticked (Ticked)
 import Ouroboros.Consensus.Util.IndexedMemPack
@@ -68,7 +62,7 @@ instance TestBlock.PayloadSemantics Tx where
 
   applyPayload NoPayLoadDependentState _tx = Right NoPayLoadDependentState
 
-  getPayloadKeySets = const emptyLedgerTables
+  getPayloadKeySets = const Ledger.emptyTable
 
 data instance Block.CodecConfig TestBlock = TestBlockCodecConfig
   deriving (Show, Generic, NoThunks)
@@ -104,7 +98,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
   applyTx _cfg _shouldIntervene _slot gtx st =
     pure
       ( TestBlock.TickedTestLedger $
-          convertMapKind $
+          convertTrivialTables $
             TestBlock.getTickedTestLedger
               st
       , ValidatedGenTx gtx
@@ -115,7 +109,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   txForgetValidated (ValidatedGenTx tx) = tx
 
-  getTransactionKeySets _ = emptyLedgerTables
+  getTransactionKeySets _ = Ledger.emptyTable
 
   mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
 
@@ -139,26 +133,26 @@ type instance Ledger.ApplyTxErr TestBlock = ()
 type instance Ledger.TxIn TestBlock = Void
 type instance Ledger.TxOut TestBlock = Void
 
-instance Ledger.LedgerTablesAreTrivial Ledger.LedgerState TestBlock where
-  convertMapKind (TestBlock.TestLedger x NoPayLoadDependentState) =
+instance Ledger.TrivialTables Ledger.LedgerState TestBlock where
+  convertTrivialTables (TestBlock.TestLedger x NoPayLoadDependentState) =
     TestBlock.TestLedger x NoPayLoadDependentState
-instance Ledger.LedgerTablesAreTrivial (Ticked Ledger.LedgerState) TestBlock where
-  convertMapKind (TestBlock.TickedTestLedger x) =
-    TestBlock.TickedTestLedger (Ledger.convertMapKind x)
+instance Ledger.TrivialTables (Ticked Ledger.LedgerState) TestBlock where
+  convertTrivialTables (TestBlock.TickedTestLedger x) =
+    TestBlock.TickedTestLedger (Ledger.convertTrivialTables x)
 
 deriving via Void instance IndexedMemPack Ledger.LedgerState TestBlock Void
 
 instance Ledger.HasLedgerTables Ledger.LedgerState TestBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
+  projectLedgerTables _ = Ledger.emptyTable
+  withLedgerTables st _ = convertTrivialTables st
 
 instance Ledger.HasLedgerTables (Ticked Ledger.LedgerState) TestBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
+  projectLedgerTables _ = Ledger.emptyTable
+  withLedgerTables st _ = convertTrivialTables st
 
 instance Ledger.CanStowLedgerTables (Ledger.LedgerState TestBlock) where
-  stowLedgerTables = convertMapKind
-  unstowLedgerTables = convertMapKind
+  stowLedgerTables = convertTrivialTables
+  unstowLedgerTables = convertTrivialTables
 
 instance CanUpgradeLedgerTables Ledger.LedgerState TestBlock where
   upgradeTables _ _ = id
@@ -166,5 +160,5 @@ instance CanUpgradeLedgerTables Ledger.LedgerState TestBlock where
 instance Ledger.SerializeTablesWithHint Ledger.LedgerState TestBlock where
   decodeTablesWithHint _ = do
     _ <- CBOR.decodeMapLen
-    pure (LedgerTables $ ValuesMK Map.empty)
+    pure Ledger.emptyTable
   encodeTablesWithHint _ _ = CBOR.encodeMapLen 0

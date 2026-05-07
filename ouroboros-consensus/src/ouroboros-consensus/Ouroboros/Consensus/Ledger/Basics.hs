@@ -46,8 +46,7 @@ module Ouroboros.Consensus.Ledger.Basics
 import Data.Kind (Constraint, Type)
 import GHC.Generics
 import Ouroboros.Consensus.Block.Abstract
-import Ouroboros.Consensus.Ledger.Tables.Kinds
-import Ouroboros.Consensus.Ledger.Tables.MapKind
+import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util ((...:))
 import Ouroboros.Consensus.Util.IOLike
@@ -148,11 +147,7 @@ data ComputeLedgerEvents = ComputeLedgerEvents | OmitLedgerEvents
 
 type IsLedger :: StateKind -> Type -> Constraint
 class
-  ( -- Requirements on the ledger state itself
-    forall mk. EqMK mk => Eq (l blk mk)
-  , forall mk. NoThunksMK mk => NoThunks (l blk mk)
-  , forall mk. ShowMK mk => Show (l blk mk)
-  , -- Requirements on 'LedgerCfg'
+  ( -- Requirements on 'LedgerCfg'
     NoThunks (LedgerCfg l blk)
   , -- Requirements on 'LedgerErr'
     Show (LedgerErr l blk)
@@ -207,8 +202,8 @@ class
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     SlotNo ->
-    l blk EmptyMK ->
-    LedgerResult blk (Ticked l blk DiffMK)
+    l blk NoTables ->
+    LedgerResult blk (Ticked l blk Diffs)
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick ::
@@ -216,8 +211,8 @@ applyChainTick ::
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   SlotNo ->
-  l blk EmptyMK ->
-  Ticked l blk DiffMK
+  l blk NoTables ->
+  Ticked l blk Diffs
 applyChainTick = lrResult ...: applyChainTickLedgerResult
 
 {-------------------------------------------------------------------------------

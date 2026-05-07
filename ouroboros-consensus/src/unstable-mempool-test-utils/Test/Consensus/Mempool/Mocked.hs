@@ -31,11 +31,6 @@ import Ouroboros.Consensus.HeaderValidation as Header
 import Ouroboros.Consensus.Ledger.Abstract
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
-import Ouroboros.Consensus.Ledger.Tables.Utils
-  ( emptyLedgerTables
-  , forgetLedgerTables
-  , restrictValuesMK
-  )
 import Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.Mempool.API
@@ -47,7 +42,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
 
 data MockedMempool m blk = MockedMempool
   { getLedgerInterface :: !(Mempool.LedgerInterface m blk)
-  , getLedgerStateTVar :: !(StrictTVar m (LedgerState blk ValuesMK))
+  , getLedgerStateTVar :: !(StrictTVar m (LedgerState blk Values))
   , getMempool :: !(Mempool m blk)
   }
 
@@ -63,7 +58,7 @@ instance NFData (MockedMempool m blk) where
   rnf MockedMempool{} = ()
 
 data InitialMempoolAndModelParams blk = MempoolAndModelParams
-  { immpInitialState :: !(LedgerState blk ValuesMK)
+  { immpInitialState :: !(LedgerState blk Values)
   -- ^ Initial ledger state for the mocked Ledger DB interface.
   , immpLedgerConfig :: !(Ledger.LedgerConfig blk)
   -- ^ Ledger configuration, which is needed to open the mempool.
@@ -92,10 +87,10 @@ openMockedMempool capacityOverride tracer initialParams = do
                         ReadOnlyForker
                           { roforkerClose = pure ()
                           , roforkerGetLedgerState = pure (forgetLedgerTables st)
-                          , roforkerReadTables = \keys ->
-                              pure $ ltliftA2 restrictValuesMK (projectLedgerTables st) keys
+                          , roforkerReadTables =
+                              pure . restrictValues (projectLedgerTables st)
                           , roforkerReadStatistics = pure $ Statistics 0
-                          , roforkerRangeReadTables = \_ -> pure (emptyLedgerTables, Nothing)
+                          , roforkerRangeReadTables = \_ -> pure (emptyTable, Nothing)
                           }
                   )
           }
@@ -115,7 +110,7 @@ openMockedMempool capacityOverride tracer initialParams = do
 
 setLedgerState ::
   MockedMempool IO blk ->
-  LedgerState blk ValuesMK ->
+  LedgerState blk Values ->
   IO ()
 setLedgerState MockedMempool{getLedgerStateTVar} newSt =
   atomically $ writeTVar getLedgerStateTVar newSt

@@ -56,17 +56,15 @@ First, some imports we'll need:
 > import Ouroboros.Consensus.Block
 >   (BlockSupportsProtocol (tiebreakerView, validateView))
 > import Ouroboros.Consensus.Ledger.Abstract
->   (AuxLedgerEvent, GetTip(..), IsLedger(..), LedgerCfg,
->    LedgerResult(LedgerResult, lrEvents, lrResult),
+>   (AuxLedgerEvent, GetTip(..), IsLedger(..), LedgerCfg, TxIn, TxOut, TrivialTables (..),
+>    LedgerResult(LedgerResult, lrEvents, lrResult), HasLedgerTables (..),
 >    LedgerState, ApplyBlock(..), UpdateLedger, GetBlockKeySets (..),
->    defaultApplyBlockLedgerResult, defaultReapplyBlockLedgerResult)
+>    defaultApplyBlockLedgerResult, defaultReapplyBlockLedgerResult, emptyTable)
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol(..))
 > import Ouroboros.Consensus.Forecast (trivialForecast)
 > import Ouroboros.Consensus.HeaderValidation
 >   (ValidateEnvelope, BasicEnvelopeValidation, HasAnnTip)
-> import Ouroboros.Consensus.Ledger.Tables
-> import Ouroboros.Consensus.Ledger.Tables.Utils
 > import Ouroboros.Consensus.Util.IndexedMemPack
 
 Conceptual Overview and Definitions of Key Terms
@@ -574,7 +572,7 @@ types for a ledger.  Though we are here using
 
 >   applyChainTickLedgerResult _events _cfg _slot ldgrSt =
 >     LedgerResult { lrEvents = []
->                  , lrResult = TickedLedgerStateC $ convertMapKind ldgrSt
+>                  , lrResult = TickedLedgerStateC $ convertTrivialTables ldgrSt
 >                  }
 
 The `LedgerErr` type is the type of errors associated with this ledger that can
@@ -624,14 +622,14 @@ the `ApplyBlock` typeclass:
 > instance ApplyBlock LedgerState BlockC where
 >   applyBlockLedgerResultWithValidation _validation _events _ldgrCfg block tickedLdgrSt =
 >     pure $ LedgerResult { lrEvents = []
->                         , lrResult = convertMapKind $ block `applyBlockTo` tickedLdgrSt
+>                         , lrResult = convertTrivialTables $ block `applyBlockTo` tickedLdgrSt
 >                         }
 
 >   applyBlockLedgerResult = defaultApplyBlockLedgerResult
 >   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
 
 > instance GetBlockKeySets BlockC where
->   getBlockKeySets = const emptyLedgerTables
+>   getBlockKeySets = const emptyTable
 
 `applyBlockLedgerResult` tries to apply a block to the ledger and fails with a
 `LedgerErr` corresponding to the particular `LedgerState blk` if for whatever
@@ -744,16 +742,16 @@ and we use the default implementation
 > type instance TxIn  BlockC = Void
 > type instance TxOut BlockC = Void
 
-> instance LedgerTablesAreTrivial LedgerState BlockC where
->   convertMapKind (LedgerC x y) = LedgerC x y
-> instance LedgerTablesAreTrivial (Ticked LedgerState) BlockC where
->   convertMapKind (TickedLedgerStateC x) =
->       TickedLedgerStateC (convertMapKind x)
+> instance TrivialTables LedgerState BlockC where
+>   convertTrivialTables (LedgerC x y) = LedgerC x y
+> instance TrivialTables (Ticked LedgerState) BlockC where
+>   convertTrivialTables (TickedLedgerStateC x) =
+>       TickedLedgerStateC (convertTrivialTables x)
 > deriving via Void
 >   instance IndexedMemPack LedgerState BlockC Void
 > instance HasLedgerTables LedgerState BlockC where
->   projectLedgerTables _ = emptyLedgerTables
->   withLedgerTables st _ = convertMapKind st
+>   projectLedgerTables _ = emptyTable
+>   withLedgerTables st _ = convertTrivialTables st
 > instance HasLedgerTables (Ticked LedgerState) BlockC where
->   projectLedgerTables _ = emptyLedgerTables
->   withLedgerTables st _ = convertMapKind st
+>   projectLedgerTables _ = emptyTable
+>   withLedgerTables st _ = convertTrivialTables st

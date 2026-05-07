@@ -47,7 +47,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import Ouroboros.Consensus.Storage.LedgerDB
@@ -226,8 +225,8 @@ lsmTestArguments secParam salt fp =
 type TheBlockChain =
   AS.AnchoredSeq
     (WithOrigin SlotNo)
-    (ExtLedgerState TestBlock ValuesMK)
-    (TestBlock, ExtLedgerState TestBlock ValuesMK)
+    (ExtLedgerState TestBlock Values)
+    (TestBlock, ExtLedgerState TestBlock Values)
 
 data Model
   = UnInit
@@ -240,8 +239,8 @@ data Model
 instance
   AS.Anchorable
     (WithOrigin SlotNo)
-    (ExtLedgerState TestBlock ValuesMK)
-    (TestBlock, ExtLedgerState TestBlock ValuesMK)
+    (ExtLedgerState TestBlock Values)
+    (TestBlock, ExtLedgerState TestBlock Values)
   where
   asAnchor = snd
   getAnchorMeasure _ = getTipSlot
@@ -287,7 +286,7 @@ instance StateModel Model where
     DropAndRestore :: Word64 -> LSM.Salt -> Action Model ()
     ForceTakeSnapshot :: Action Model ()
     GetState ::
-      Action Model (ExtLedgerState TestBlock EmptyMK, ExtLedgerState TestBlock EmptyMK)
+      Action Model (ExtLedgerState TestBlock NoTables, ExtLedgerState TestBlock NoTables)
     Init :: SecurityParam -> LSM.Salt -> Action Model ()
     ValidateAndCommit :: Word64 -> [TestBlock] -> Action Model ()
     -- \| This action is used only to observe the side effects of closing an
@@ -365,8 +364,8 @@ instance StateModel Model where
       StateT
         ( AS.AnchoredSeq
             (WithOrigin SlotNo)
-            (ExtLedgerState TestBlock ValuesMK)
-            (TestBlock, ExtLedgerState TestBlock ValuesMK)
+            (ExtLedgerState TestBlock Values)
+            (TestBlock, ExtLedgerState TestBlock Values)
         )
         (Except (ExtValidationError TestBlock))
         ()
@@ -380,8 +379,8 @@ instance StateModel Model where
       StateT
         ( AS.AnchoredSeq
             (WithOrigin SlotNo)
-            (ExtLedgerState TestBlock ValuesMK)
-            (TestBlock, ExtLedgerState TestBlock ValuesMK)
+            (ExtLedgerState TestBlock Values)
+            (TestBlock, ExtLedgerState TestBlock Values)
         )
         (Except (ExtValidationError TestBlock))
         ()

@@ -11,7 +11,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
+
 import Ouroboros.Consensus.Protocol.Abstract
 
 -- | Link protocol to ledger

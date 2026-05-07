@@ -49,7 +49,6 @@ import NoThunks.Class
 import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
@@ -97,7 +96,7 @@ type data WhatToDoWithTxDiffs = Collect | Discard
 -- differences, we don't even have differences around that we might misuse.
 type family InputTxDiffs blk wtd where
   InputTxDiffs blk Discard = ()
-  InputTxDiffs blk Collect = LedgerTables blk DiffMK
+  InputTxDiffs blk Collect = Diffs blk
 
 class
   ( UpdateLedger blk
@@ -129,8 +128,8 @@ class
     SlotNo ->
     GenTx blk ->
     -- | Contain only the values for the tx to apply
-    TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk DiffMK, Validated (GenTx blk))
+    TickedLedgerState blk Values ->
+    Except (ApplyTxErr blk) (TickedLedgerState blk Diffs, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -149,8 +148,8 @@ class
     SlotNo ->
     Validated (GenTx blk) ->
     -- | Contains at least the values for the tx to reapply
-    TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk ValuesMK)
+    TickedLedgerState blk Values ->
+    Except (ApplyTxErr blk) (TickedLedgerState blk Values)
 
   -- | Apply a list of previously validated transactions to a new ledger state.
   --
@@ -171,7 +170,7 @@ class
     -- | Slot number of the block containing the tx
     SlotNo ->
     [(Validated (GenTx blk), InputTxDiffs blk wtd, extra)] ->
-    TickedLedgerState blk ValuesMK ->
+    TickedLedgerState blk Values ->
     ReapplyTxsResult extra blk wtd
   reapplyTxs cfg slot txs st =
     (\(err, val, st') -> ReapplyTxsResult err (reverse val) (forgetLedgerTables st')) $
@@ -182,7 +181,7 @@ class
     foldReapplyTxs ::
       (a -> Validated (GenTx blk)) ->
       [a] ->
-      ([Invalidated blk], [a], TickedLedgerState blk ValuesMK)
+      ([Invalidated blk], [a], TickedLedgerState blk Values)
     foldReapplyTxs projectTx =
       Foldable.foldl'
         ( \(accE, accV, st') a ->
@@ -199,7 +198,7 @@ class
   -- ledger state. This is implemented in the Ledger. An example of non-obvious
   -- needed keys in Cardano are those of reference scripts for computing the
   -- transaction size.
-  getTransactionKeySets :: GenTx blk -> LedgerTables blk KeysMK
+  getTransactionKeySets :: GenTx blk -> Keys blk
 
   -- Mempools live in a single slot so in the hard fork block case
   -- it is cheaper to perform these operations on LedgerStates, saving
@@ -217,9 +216,9 @@ class
   -- Intended to be non-default in the HardFork instance for optimizing
   -- performance.
   prependMempoolDiffs ::
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk DiffMK
+    TickedLedgerState blk Diffs ->
+    TickedLedgerState blk Diffs ->
+    TickedLedgerState blk Diffs
   prependMempoolDiffs = prependDiffs
 
   -- | Apply diffs on ledger states
@@ -227,11 +226,11 @@ class
   -- Intended to be non-default in the HardFork instance for optimizing
   -- performance.
   applyMempoolDiffs ::
-    LedgerTables blk ValuesMK ->
-    LedgerTables blk KeysMK ->
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk ValuesMK
-  applyMempoolDiffs = applyDiffForKeysOnTables
+    Values blk ->
+    Keys blk ->
+    TickedLedgerState blk Diffs ->
+    TickedLedgerState blk Values
+  applyMempoolDiffs = applyDiffRestricted
 
   -- | The ledger rules' error type for the mempool's current era might allow
   -- the mempool to reject a tx for its own reasons.
@@ -256,7 +255,7 @@ data ReapplyTxsResult extra blk wtd
   , validatedTxs :: ![(Validated (GenTx blk), InputTxDiffs blk wtd, extra)]
   -- ^ txs that are valid again, order must be the same as the order in
   -- which txs were received
-  , resultingState :: !(TickedLedgerState blk EmptyMK)
+  , resultingState :: !(TickedLedgerState blk NoTables)
   }
 
 -- | A generalized transaction, 'GenTx', identifier.
@@ -367,7 +366,7 @@ class
     LedgerConfig blk ->
     -- | This state needs values as a transaction measure might depend on
     -- those. For example in Cardano they look at the reference scripts.
-    TickedLedgerState blk ValuesMK ->
+    TickedLedgerState blk Values ->
     GenTx blk ->
     Except (ApplyTxErr blk) (TxMeasure blk)
 

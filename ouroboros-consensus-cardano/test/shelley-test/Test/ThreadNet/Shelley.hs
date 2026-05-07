@@ -386,7 +386,7 @@ prop_simple_real_tpraos_convergence
         DoGeneratePPUs -> True
         DoNotGeneratePPUs -> False
 
-      finalLedgers :: [(NodeId, LedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) EmptyMK)]
+      finalLedgers :: [(NodeId, LedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) NoTables)]
       finalLedgers =
         Map.toList $ nodeOutputFinalLedger <$> testOutputNodes testOutput
 

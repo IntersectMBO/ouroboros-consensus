@@ -98,7 +98,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack)
@@ -195,7 +194,7 @@ instance CanHardFork xs => IsLedger LedgerState (HardForkBlock xs) where
     cfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
     ei = State.epochInfoLedger cfg st
 
-    extended :: HardForkState (Flip LedgerState DiffMK) xs
+    extended :: HardForkState (Flip LedgerState Diffs) xs
     extended = State.extendToSlot cfg slot st
 
 -- | Ticking outside of era transitions for now does not generate differences
@@ -212,9 +211,9 @@ tickOne ::
   ComputeLedgerEvents ->
   Index xs blk ->
   WrapPartialLedgerConfig blk ->
-  (Flip LedgerState DiffMK) blk ->
+  (Flip LedgerState Diffs) blk ->
   ( LedgerResult (HardForkBlock xs)
-      :.: FlipTickedLedgerState DiffMK
+      :.: FlipTickedLedgerState Diffs
   )
     blk
 tickOne ei slot evs sopIdx partialCfg st =
@@ -284,7 +283,7 @@ instance (HasCanonicalTxIn xs, HasHardForkTxOut xs, CanHardFork xs) => GetBlockK
       SingleEraBlock x =>
       Index xs x ->
       I x ->
-      K (LedgerTables (HardForkBlock xs) KeysMK) x
+      K (Keys (HardForkBlock xs)) x
     f idx (I blk) = K $ injectLedgerTables idx $ getBlockKeySets blk
 
 apply ::
@@ -293,10 +292,10 @@ apply ::
   ComputeLedgerEvents ->
   Index xs blk ->
   WrapLedgerConfig blk ->
-  Product I (FlipTickedLedgerState ValuesMK) blk ->
+  Product I (FlipTickedLedgerState Values) blk ->
   ( Except (HardForkLedgerError xs)
       :.: LedgerResult (HardForkBlock xs)
-      :.: Flip LedgerState DiffMK
+      :.: Flip LedgerState Diffs
   )
     blk
 apply doValidate opts index (WrapLedgerConfig cfg) (Pair (I block) (FlipTickedLedgerState st)) =
@@ -470,7 +469,7 @@ instance
 -- | Forecast annotated with details about the ledger it was derived from
 data AnnForecast state view blk = AnnForecast
   { annForecast :: Forecast (view blk)
-  , annForecastState :: state blk EmptyMK
+  , annForecastState :: state blk NoTables
   , annForecastTip :: WithOrigin SlotNo
   , annForecastEnd :: Maybe Bound
   }
@@ -883,9 +882,10 @@ instance
   where
   projectLedgerTables ::
     forall mk.
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+    BimapTables mk =>
+    EmptyTable mk =>
     LedgerState (HardForkBlock xs) mk ->
-    LedgerTables (HardForkBlock xs) mk
+    mk (HardForkBlock xs)
   projectLedgerTables (HardForkLedgerState st) =
     hcollapse $ hcimap proxySingle projectOne st
    where
@@ -893,7 +893,7 @@ instance
       SingleEraBlock x =>
       Index xs x ->
       Flip LedgerState mk x ->
-      K (LedgerTables (HardForkBlock xs) mk) x
+      K (mk (HardForkBlock xs)) x
     projectOne i l =
       K $
         injectLedgerTables i $
@@ -902,9 +902,9 @@ instance
 
   withLedgerTables ::
     forall mk any.
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+    BimapTables mk =>
     LedgerState (HardForkBlock xs) any ->
-    LedgerTables (HardForkBlock xs) mk ->
+    mk (HardForkBlock xs) ->
     LedgerState (HardForkBlock xs) mk
   withLedgerTables (HardForkLedgerState st) tables =
     HardForkLedgerState $
@@ -929,9 +929,10 @@ instance
   where
   projectLedgerTables ::
     forall mk.
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+    BimapTables mk =>
+    EmptyTable mk =>
     Ticked LedgerState (HardForkBlock xs) mk ->
-    LedgerTables (HardForkBlock xs) mk
+    mk (HardForkBlock xs)
   projectLedgerTables st =
     hcollapse $
       hcimap
@@ -943,7 +944,7 @@ instance
       SingleEraBlock x =>
       Index xs x ->
       FlipTickedLedgerState mk x ->
-      K (LedgerTables (HardForkBlock xs) mk) x
+      K (mk (HardForkBlock xs)) x
     projectOne i l =
       K $
         injectLedgerTables i $
@@ -952,9 +953,9 @@ instance
 
   withLedgerTables ::
     forall mk any.
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+    BimapTables mk =>
     Ticked LedgerState (HardForkBlock xs) any ->
-    LedgerTables (HardForkBlock xs) mk ->
+    mk (HardForkBlock xs) ->
     Ticked LedgerState (HardForkBlock xs) mk
   withLedgerTables st tables =
     st
@@ -980,55 +981,53 @@ instance
   CanStowLedgerTables (LedgerState (HardForkBlock xs))
   where
   stowLedgerTables ::
-    LedgerState (HardForkBlock xs) ValuesMK ->
-    LedgerState (HardForkBlock xs) EmptyMK
+    LedgerState (HardForkBlock xs) Values ->
+    LedgerState (HardForkBlock xs) NoTables
   stowLedgerTables (HardForkLedgerState st) =
     HardForkLedgerState $
       hcmap (Proxy @(Compose CanStowLedgerTables LedgerState)) stowOne st
    where
     stowOne ::
       Compose CanStowLedgerTables LedgerState x =>
-      Flip LedgerState ValuesMK x ->
-      Flip LedgerState EmptyMK x
+      Flip LedgerState Values x ->
+      Flip LedgerState NoTables x
     stowOne = Flip . stowLedgerTables . unFlip
 
   unstowLedgerTables ::
-    LedgerState (HardForkBlock xs) EmptyMK ->
-    LedgerState (HardForkBlock xs) ValuesMK
+    LedgerState (HardForkBlock xs) NoTables ->
+    LedgerState (HardForkBlock xs) Values
   unstowLedgerTables (HardForkLedgerState st) =
     HardForkLedgerState $
       hcmap (Proxy @(Compose CanStowLedgerTables LedgerState)) unstowOne st
    where
     unstowOne ::
       Compose CanStowLedgerTables LedgerState x =>
-      Flip LedgerState EmptyMK x ->
-      Flip LedgerState ValuesMK x
+      Flip LedgerState NoTables x ->
+      Flip LedgerState Values x
     unstowOne = Flip . unstowLedgerTables . unFlip
 
 injectLedgerTables ::
   forall xs x mk.
-  ( CanMapKeysMK mk
-  , CanMapMK mk
-  , HasCanonicalTxIn xs
+  ( HasCanonicalTxIn xs
   , HasHardForkTxOut xs
+  , BimapTables mk
   ) =>
   Index xs x ->
-  LedgerTables x mk ->
-  LedgerTables (HardForkBlock xs) mk
+  mk x ->
+  mk (HardForkBlock xs)
 injectLedgerTables idx =
   bimapLedgerTables (injectCanonicalTxIn idx) (injectHardForkTxOut idx)
 
 ejectLedgerTables ::
   forall xs x mk.
-  ( CanMapKeysMK mk
-  , Ord (TxIn x)
+  ( Ord (TxIn x)
   , HasCanonicalTxIn xs
-  , CanMapMK mk
   , HasHardForkTxOut xs
+  , BimapTables mk
   ) =>
   Index xs x ->
-  LedgerTables (HardForkBlock xs) mk ->
-  LedgerTables x mk
+  mk (HardForkBlock xs) ->
+  mk x
 ejectLedgerTables idx =
   bimapLedgerTables (ejectCanonicalTxIn idx) (ejectHardForkTxOut idx)
 
@@ -1198,9 +1197,9 @@ instance
   upgradeTables
     (HardForkLedgerState (HardForkState hs0))
     (HardForkLedgerState (HardForkState hs1))
-    orig@(LedgerTables (ValuesMK vs)) =
+    orig@(Values vs) =
       if isJust $ Match.telescopesMismatch hs0 hs1
-        then LedgerTables $ ValuesMK $ extendTables (hmap (const (K ())) t1) vs
+        then Values $ extendTables (hmap (const (K ())) t1) vs
         else orig
      where
       t1 = Telescope.tip hs1

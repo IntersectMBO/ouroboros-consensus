@@ -10,6 +10,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Bench.Consensus.Mempool.TestBlock
@@ -43,10 +44,9 @@ import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
-import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import Ouroboros.Consensus.Ledger.Tables
+import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
 import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack (..))
 import Test.Util.TestBlock hiding (TestBlock)
 
@@ -85,13 +85,13 @@ mkTx cons prod =
   Initial parameters
 -------------------------------------------------------------------------------}
 
-initialLedgerState :: LedgerState (TestBlockWith Tx) ValuesMK
+initialLedgerState :: LedgerState (TestBlockWith Tx) Values
 initialLedgerState =
   TestLedger
     { lastAppliedPoint = Block.GenesisPoint
     , payloadDependentState =
         TestPLDS
-          { getTestPLDS = ValuesMK Map.empty
+          { getTestPLDS = Values Map.empty
           }
     }
 
@@ -120,7 +120,7 @@ data TxApplicationError
 
 instance PayloadSemantics Tx where
   newtype PayloadDependentState Tx mk = TestPLDS
-    { getTestPLDS :: mk Token ()
+    { getTestPLDS :: mk TestBlock
     }
     deriving stock Generic
 
@@ -134,31 +134,31 @@ instance PayloadSemantics Tx where
         then Right $ TestPLDS fullDiff
         else Left $ TxApplicationError notFound
    where
-    TestPLDS (ValuesMK tokMap) = plds
+    TestPLDS (Values tokMap) = plds
     Tx{consumed, produced} = tx
 
     consumedDiff, producedDiff :: Diff.Diff Token ()
     consumedDiff = Diff.fromListDeletes [(t, ()) | t <- Set.toList consumed]
     producedDiff = Diff.fromListInserts [(t, ()) | t <- Set.toList produced]
 
-    fullDiff :: DiffMK Token ()
-    fullDiff = DiffMK $ consumedDiff <> producedDiff
+    fullDiff :: Diffs TestBlock
+    fullDiff = Diffs $ consumedDiff <> producedDiff
 
-  getPayloadKeySets tx = LedgerTables $ KeysMK consumed
+  getPayloadKeySets tx = Keys consumed
    where
     Tx{consumed} = tx
 
 deriving stock instance
-  EqMK mk =>
+  Eq (mk TestBlock) =>
   Eq (PayloadDependentState Tx mk)
 deriving stock instance
-  ShowMK mk =>
+  Show (mk TestBlock) =>
   Show (PayloadDependentState Tx mk)
 deriving anyclass instance
-  NoThunksMK mk =>
+  NoThunks (mk TestBlock) =>
   NoThunks (PayloadDependentState Tx mk)
 
-instance Serialise (PayloadDependentState Tx EmptyMK) where
+instance Serialise (PayloadDependentState Tx NoTables) where
   encode = error "Mempool bench TestBlock unused: encode"
   decode = error "Mempool bench TestBlock unused: decode"
 
@@ -179,12 +179,12 @@ type instance TxOut TestBlock = ()
 
 instance HasLedgerTables LedgerState TestBlock where
   projectLedgerTables st =
-    LedgerTables $ getTestPLDS $ payloadDependentState st
+    getTestPLDS $ payloadDependentState st
   withLedgerTables st table =
     st
       { payloadDependentState =
           plds
-            { getTestPLDS = Ledger.getLedgerTables table
+            { getTestPLDS = table
             }
       }
    where

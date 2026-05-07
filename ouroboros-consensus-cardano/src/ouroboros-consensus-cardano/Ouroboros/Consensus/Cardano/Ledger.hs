@@ -188,7 +188,7 @@ instance
   CardanoHardForkConstraints c =>
   SerializeTablesWithHint LedgerState (HardForkBlock (CardanoEras c))
   where
-  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
+  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (Values tbs) =
     let
       -- These could be made into a CAF to avoid recomputing it, but
       -- it is only used in serialization so it is not critical.
@@ -212,8 +212,8 @@ instance
 
   decodeTablesWithHint ::
     forall s.
-    LedgerState (HardForkBlock (CardanoEras c)) EmptyMK ->
-    Decoder s (LedgerTables (HardForkBlock (CardanoEras c)) ValuesMK)
+    LedgerState (HardForkBlock (CardanoEras c)) NoTables ->
+    Decoder s (Values (HardForkBlock (CardanoEras c)))
   decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
     let
       -- These could be made into a CAF to avoid recomputing it, but
@@ -222,7 +222,7 @@ instance
         ( Fn $
             const $
               Comp $
-                K . LedgerTables . ValuesMK
+                K . Values
                   <$> (Codec.CBOR.Decoding.decodeMapLen >> pure Map.empty)
         )
           :* (Fn $ Comp . fmap K . getOne ShelleyTxOut . unFlip . currentState)
@@ -240,8 +240,8 @@ instance
       forall proto era.
       ShelleyCompatible proto era =>
       (TxOut (ShelleyBlock proto era) -> CardanoTxOut c) ->
-      LedgerState (ShelleyBlock proto era) EmptyMK ->
-      Decoder s (LedgerTables (HardForkBlock (CardanoEras c)) ValuesMK)
+      LedgerState (ShelleyBlock proto era) NoTables ->
+      Decoder s (Values (HardForkBlock (CardanoEras c)))
     getOne toCardanoTxOut st =
       let certInterns =
             internsFromMap $
@@ -252,5 +252,5 @@ instance
                   . SL.certDStateL
                   . SL.accountsL
                   . SL.accountsMapL
-       in LedgerTables . ValuesMK
+       in Values
             <$> eraDecoder @era (decodeMap decodeMemPack (toCardanoTxOut <$> decShareCBOR certInterns))

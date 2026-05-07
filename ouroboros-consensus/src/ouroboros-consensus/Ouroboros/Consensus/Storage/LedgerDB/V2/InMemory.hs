@@ -51,7 +51,6 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
@@ -81,12 +80,13 @@ newInMemoryLedgerTablesHandle ::
   , SerializeTablesWithHint l blk
   , StandardHash (l blk)
   , GetTip (l blk)
+  , Ord (TxIn blk)
   ) =>
   Tracer m LedgerDBV2Trace ->
   -- | FileSystem in order to take snapshots
   SomeHasFS m ->
   -- | The tables
-  LedgerTables blk ValuesMK ->
+  Values blk ->
   m (LedgerTablesHandle m l blk)
 newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) tables =
   encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $
@@ -99,7 +99,7 @@ newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) tables =
             , readAll = \_ -> pure tables
             , duplicateWithDiffs = implDuplicateWithDiffs tracer tables someFS
             , takeHandleSnapshot = implTakeHandleSnapshot tables hasFS
-            , tablesSize = Map.size . getValuesMK . getLedgerTables $ tables
+            , tablesSize = Map.size . getValues $ tables
             }
      in pure h
 
@@ -110,24 +110,24 @@ newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) tables =
 
 implRead ::
   ( IOLike m
-  , HasLedgerTables l blk
+  , Ord (TxIn blk)
   ) =>
-  LedgerTables blk ValuesMK ->
-  l blk EmptyMK ->
-  LedgerTables blk KeysMK ->
-  m (LedgerTables blk ValuesMK)
+  Values blk ->
+  l blk NoTables ->
+  Keys blk ->
+  m (Values blk)
 implRead tables _ keys = do
-  pure $ flip (ltliftA2 (\(ValuesMK v) (KeysMK k) -> ValuesMK $ v `Map.restrictKeys` k)) keys tables
+  pure $ restrictValues tables keys
 
 implReadRange ::
-  (IOLike m, HasLedgerTables l blk) =>
-  LedgerTables blk ValuesMK ->
-  l blk EmptyMK ->
+  (IOLike m, Ord (TxIn blk)) =>
+  Values blk ->
+  l blk NoTables ->
   (Maybe (TxIn blk), Int) ->
-  m (LedgerTables blk ValuesMK, Maybe (TxIn blk))
-implReadRange (LedgerTables (ValuesMK m)) _ (f, t) =
+  m (Values blk, Maybe (TxIn blk))
+implReadRange (Values m) _ (f, t) =
   let m' = Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
-   in pure (LedgerTables (ValuesMK m'), fst <$> Map.lookupMax m')
+   in pure (Values m', fst <$> Map.lookupMax m')
 
 implDuplicateWithDiffs ::
   ( IOLike m
@@ -136,17 +136,18 @@ implDuplicateWithDiffs ::
   , StandardHash (l blk)
   , GetTip (l blk)
   , SerializeTablesWithHint l blk
+  , Ord (TxIn blk)
   ) =>
   Tracer m LedgerDBV2Trace ->
-  LedgerTables blk ValuesMK ->
+  Values blk ->
   SomeHasFS m ->
   l blk mk1 ->
-  l blk DiffMK ->
+  l blk Diffs ->
   m (LedgerTablesHandle m l blk)
 implDuplicateWithDiffs !tracer tables !someFS st0 !diffs = do
   let newtables =
         flip
-          (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d)))
+          (\(Values vals) (Diffs d) -> Values (Diff.applyDiff vals d))
           (projectLedgerTables diffs)
           . upgradeTables st0 diffs
           $ tables
@@ -154,9 +155,9 @@ implDuplicateWithDiffs !tracer tables !someFS st0 !diffs = do
 
 implTakeHandleSnapshot ::
   (IOLike m, SerializeTablesWithHint l blk) =>
-  LedgerTables blk ValuesMK ->
+  Values blk ->
   HasFS m h ->
-  l blk EmptyMK ->
+  l blk NoTables ->
   String ->
   m (Maybe CRC)
 implTakeHandleSnapshot values hasFS hint snapshotName = do
@@ -165,7 +166,7 @@ implTakeHandleSnapshot values hasFS hint snapshotName = do
     fmap (Just . snd) $
       hPutAllCRC hasFS hf $
         CBOR.toLazyByteString $
-          valuesMKEncoder hint values
+          canonicalTablesEncoder hint values
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -265,7 +266,7 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) ds = do
             readIncremental
               fs
               Identity
-              (valuesMKDecoder extLedgerSt)
+              (canonicalTablesDecoder extLedgerSt)
               (snapshotToTablesPath ds)
       let computedCRC = crcOfConcat checksumAsRead crcTables
       Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
@@ -298,7 +299,7 @@ instance
   releaseResources _ _ = pure ()
   createAndPopulateStateRefFromGenesis tracer (Resources shfs) values =
     StateRef (forgetLedgerTables values)
-      <$> newInMemoryLedgerTablesHandle tracer shfs (ltprj values)
+      <$> newInMemoryLedgerTablesHandle tracer shfs (projectLedgerTables values)
   openStateRefFromSnapshot trcr ccfg shfs _ ds =
     loadSnapshot trcr ccfg shfs ds
   snapshotManager _ _ =

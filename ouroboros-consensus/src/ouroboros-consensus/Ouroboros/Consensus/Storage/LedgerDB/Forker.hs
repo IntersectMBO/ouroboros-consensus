@@ -95,10 +95,10 @@ data Forker m l blk = Forker
   -- and not by the LedgerDB.
   , -- Queries
 
-    forkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
+    forkerReadTables :: !(Keys blk -> m (Values blk))
   -- ^ Read ledger tables from disk.
   , forkerRangeReadTables ::
-      !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
+      !(RangeQueryPrevious blk -> m (Values blk, Maybe (TxIn blk)))
   -- ^ Range-read ledger tables from disk.
   --
   -- This range read will return as many values as the 'QueryBatchSize' that was
@@ -112,7 +112,7 @@ data Forker m l blk = Forker
   -- back into the next iteration of the range read. If the function returns
   -- Nothing, it means the read returned no results, or in other words, we
   -- reached the end of the ledger tables.
-  , forkerGetLedgerState :: !(STM m (l blk EmptyMK))
+  , forkerGetLedgerState :: !(STM m (l blk NoTables))
   -- ^ Get the full ledger state without tables.
   --
   -- If an empty ledger state is all you need, use 'getVolatileTip',
@@ -123,7 +123,7 @@ data Forker m l blk = Forker
   -- Returns 'Nothing' if the implementation is backed by @lsm-tree@.
   , -- Updates
 
-    forkerPush :: !(l blk DiffMK -> m ())
+    forkerPush :: !(l blk Diffs -> m ())
   -- ^ Advance the fork handle by pushing a new ledger state to the tip of the
   -- current fork.
   , forkerCommit :: !(STM m (m ()))
@@ -238,12 +238,12 @@ type ReadOnlyForker :: (Type -> Type) -> StateKind -> Type -> Type
 data ReadOnlyForker m l blk = ReadOnlyForker
   { roforkerClose :: !(m ())
   -- ^ See 'forkerClose'
-  , roforkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
+  , roforkerReadTables :: !(Keys blk -> m (Values blk))
   -- ^ See 'forkerReadTables'
   , roforkerRangeReadTables ::
-      !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
+      !(RangeQueryPrevious blk -> m (Values blk, Maybe (TxIn blk)))
   -- ^ See 'forkerRangeReadTables'.
-  , roforkerGetLedgerState :: !(STM m (l blk EmptyMK))
+  , roforkerGetLedgerState :: !(STM m (l blk NoTables))
   -- ^ See 'forkerGetLedgerState'
   , roforkerReadStatistics :: !(m Statistics)
   -- ^ See 'forkerReadStatistics'
@@ -429,7 +429,7 @@ applyBlock ::
   Ap m l blk ->
   Forker m l blk ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) (l blk DiffMK))
+  m (Either (AnnLedgerError l blk) (l blk Diffs))
 applyBlock evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b ->
     withValues b (return . Right . tickThenReapply evs cfg b)
@@ -450,8 +450,8 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
  where
   withValues ::
     blk ->
-    (l blk ValuesMK -> m (Either (AnnLedgerError l blk) (l blk DiffMK))) ->
-    m (Either (AnnLedgerError l blk) (l blk DiffMK))
+    (l blk Values -> m (Either (AnnLedgerError l blk) (l blk Diffs))) ->
+    m (Either (AnnLedgerError l blk) (l blk Diffs))
   withValues blk f = do
     l <- atomically $ forkerGetLedgerState fo
     vs <- withLedgerTables l <$> forkerReadTables fo (getBlockKeySets blk)

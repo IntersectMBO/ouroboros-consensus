@@ -82,7 +82,6 @@ import Ouroboros.Consensus.Byron.Ledger.Serialisation
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
 
@@ -136,7 +135,7 @@ instance LedgerSupportsMempool ByronBlock where
 
   txForgetValidated = forgetValidatedByronTx
 
-  getTransactionKeySets _ = emptyLedgerTables
+  getTransactionKeySets _ = emptyTable
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 

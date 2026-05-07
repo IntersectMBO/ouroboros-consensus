@@ -172,7 +172,7 @@ completeChainDbArgs ::
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger
-  ExtLedgerState blk ValuesMK ->
+  ExtLedgerState blk Values ->
   ImmutableDB.ChunkInfo ->
   -- | Check integrity
   (blk -> Bool) ->

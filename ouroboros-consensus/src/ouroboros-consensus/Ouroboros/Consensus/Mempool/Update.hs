@@ -28,7 +28,6 @@ import qualified Data.Text as T
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.Impl.Common
@@ -301,7 +300,7 @@ pureTryAddTx ::
   GenTx blk ->
   -- | The current internal state of the mempool.
   InternalState blk ->
-  LedgerTables blk ValuesMK ->
+  Values blk ->
   TriedToAddTx blk
 pureTryAddTx mpEnv cfg wti tx is values =
   let MempoolEnv
@@ -453,7 +452,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
               capacityOverride
               cfg
               (isSlotNo is)
-              (isLedgerState is `withLedgerTables` emptyLedgerTables)
+              (isLedgerState is `withLedgerTables` emptyTable)
               tbs
               (isLastTicketNo is)
               toKeep
@@ -478,8 +477,8 @@ pureRemoveTxs ::
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
-  TickedLedgerState blk DiffMK ->
-  LedgerTables blk ValuesMK ->
+  TickedLedgerState blk Diffs ->
+  Values blk ->
   TicketNo ->
   -- | Txs to keep
   [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
@@ -609,8 +608,8 @@ pureSyncWithLedger ::
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
-  TickedLedgerState blk DiffMK ->
-  LedgerTables blk ValuesMK ->
+  TickedLedgerState blk Diffs ->
+  Values blk ->
   InternalState blk ->
   ( InternalState blk
   , Maybe (TraceEventMempool blk)

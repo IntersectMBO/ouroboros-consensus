@@ -27,7 +27,6 @@ import Data.Maybe (fromMaybe)
 import GHC.Generics
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
@@ -56,7 +55,7 @@ data ForkerEnv m l blk = ForkerEnv
 
 deriving instance
   ( IOLike m
-  , NoThunks (l blk EmptyMK)
+  , NoThunks (l blk NoTables)
   , NoThunks (TxIn blk)
   , NoThunks (TxOut blk)
   ) =>
@@ -69,33 +68,33 @@ deriving instance
 implForkerReadTables ::
   (IOLike m, GetTip (l blk)) =>
   ForkerEnv m l blk ->
-  LedgerTables blk KeysMK ->
-  m (LedgerTables blk ValuesMK)
+  Keys blk ->
+  m (Values blk)
 implForkerReadTables env ks =
   encloseTimedWith (ForkerReadTables >$< foeTracer env) $ do
     stateRef <- currentHandle <$> readTVarIO (foeLedgerSeq env)
     read (tables stateRef) (state stateRef) ks
 
 implForkerRangeReadTables ::
-  (IOLike m, GetTip (l blk), HasLedgerTables l blk) =>
+  (IOLike m, GetTip (l blk)) =>
   QueryBatchSize ->
   ForkerEnv m l blk ->
   RangeQueryPrevious blk ->
-  m (LedgerTables blk ValuesMK, Maybe (TxIn blk))
+  m (Values blk, Maybe (TxIn blk))
 implForkerRangeReadTables qbs env rq0 =
   encloseTimedWith (ForkerRangeReadTables >$< foeTracer env) $ do
     let n = fromIntegral $ defaultQueryBatchSize qbs
     stateRef <- currentHandle <$> readTVarIO (foeLedgerSeq env)
     case rq0 of
       NoPreviousQuery -> readRange (tables stateRef) (state stateRef) (Nothing, n)
-      PreviousQueryWasFinal -> pure (LedgerTables emptyMK, Nothing)
+      PreviousQueryWasFinal -> pure (emptyTable, Nothing)
       PreviousQueryWasUpTo k ->
         readRange (tables stateRef) (state stateRef) (Just k, n)
 
 implForkerGetLedgerState ::
   (MonadSTM m, GetTip (l blk)) =>
   ForkerEnv m l blk ->
-  STM m (l blk EmptyMK)
+  STM m (l blk NoTables)
 implForkerGetLedgerState = fmap current . readTVar . foeLedgerSeq
 
 implForkerReadStatistics ::
@@ -109,7 +108,7 @@ implForkerReadStatistics env = do
 implForkerPush ::
   (IOLike m, GetTip (l blk), HasLedgerTables l blk, HasCallStack) =>
   ForkerEnv m l blk ->
-  l blk DiffMK ->
+  l blk Diffs ->
   m ()
 implForkerPush env newState = do
   encloseTimedWith (ForkerPush >$< foeTracer env) $ do

@@ -66,7 +66,6 @@ import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMem
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol (..)
   )
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
@@ -74,6 +73,7 @@ import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Util
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.SizeInBytes
@@ -93,6 +93,9 @@ runAnalysis ::
   , CanStowLedgerTables (LedgerState blk)
   , Show (TxIn blk)
   , Show (TxOut blk)
+  , IOLike.NoThunks (LedgerState blk Values)
+  , IOLike.NoThunks (LedgerState blk NoTables)
+  , IOLike.NoThunks (LedgerState blk Diffs)
   ) =>
   AnalysisName -> SomeAnalysis blk
 runAnalysis analysisName = case go analysisName of
@@ -500,6 +503,9 @@ checkNoThunksEvery ::
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
   , CanStowLedgerTables (LedgerState blk)
+  , IOLike.NoThunks (LedgerState blk Values)
+  , IOLike.NoThunks (LedgerState blk NoTables)
+  , IOLike.NoThunks (LedgerState blk Diffs)
   ) =>
   Word64 ->
   Analysis blk StartFromLedgerState
@@ -539,7 +545,7 @@ checkNoThunksEvery
 
       LedgerDB.push internal newLedger
 
-    checkNoThunks :: NoThunksMK mk => BlockNo -> LedgerState blk mk -> IO ()
+    checkNoThunks :: IOLike.NoThunks (LedgerState blk mk) => BlockNo -> LedgerState blk mk -> IO ()
     checkNoThunks bn ls =
       noThunks ["--checkThunks"] ls >>= \case
         Nothing -> putStrLn $ show bn <> ": no thunks found."
@@ -748,14 +754,14 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
 
     tickTheLedgerState ::
       SlotNo ->
-      ExtLedgerState blk EmptyMK ->
-      IO (Ticked LedgerState blk DiffMK)
+      ExtLedgerState blk NoTables ->
+      IO (Ticked LedgerState blk Diffs)
     tickTheLedgerState slot st =
       pure $ applyChainTick OmitLedgerEvents lcfg slot (ledgerState st)
 
     applyTheBlock ::
-      TickedLedgerState blk ValuesMK ->
-      IO (LedgerState blk DiffMK)
+      TickedLedgerState blk Values ->
+      IO (LedgerState blk Diffs)
     applyTheBlock tickedLedgerSt = case ledgerAppMode of
       LedgerApply ->
         case runExcept (lrResult <$> applyBlockLedgerResult OmitLedgerEvents lcfg blk tickedLedgerSt) of

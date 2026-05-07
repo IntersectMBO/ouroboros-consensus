@@ -133,7 +133,7 @@ instance StandardHash blk => Show (Error blk) where
 -------------------------------------------------------------------------------}
 
 data InEnv backend = InEnv
-  { inState :: LedgerState (CardanoBlock StandardCrypto) EmptyMK
+  { inState :: LedgerState (CardanoBlock StandardCrypto) NoTables
   -- ^ Ledger state (without tables) that will be used to index the snapshot.
   , inStream :: IO (SomeBackend YieldArgs)
   -- ^ Yield arguments for producing a stream of TxOuts
@@ -244,7 +244,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
     ExceptT
       (Error (CardanoBlock StandardCrypto))
       IO
-      (LedgerState (CardanoBlock StandardCrypto) EmptyMK, CRC)
+      (LedgerState (CardanoBlock StandardCrypto) NoTables, CRC)
   getState ds = do
     eState <- lift $ do
       when interactive $ putStr $ "Reading ledger state from " <> snapshotToDirName ds <> "..."
@@ -284,7 +284,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
     writeSnapshotMetadata outSomeHasFS outSnap bknd
 
   checkSnapSlot ::
-    LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
+    LedgerState (CardanoBlock StandardCrypto) NoTables ->
     DiskSnapshot ->
     ExceptT (Error (CardanoBlock StandardCrypto)) IO ()
   checkSnapSlot st ds =
@@ -325,7 +325,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
 
   -- Produce an OutEnv from the given arguments
   getOutEnv ::
-    LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
+    LedgerState (CardanoBlock StandardCrypto) NoTables ->
     ExceptT (Error (CardanoBlock StandardCrypto)) IO (OutEnv backend)
   getOutEnv st = case to of
     Snapshot (StandaloneSnapshot _ Mem) _ -> do
@@ -353,7 +353,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
           UTxOHDLSMSnapshot
 
   stream ::
-    LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
+    LedgerState (CardanoBlock StandardCrypto) NoTables ->
     IO (SomeBackend YieldArgs) ->
     IO (SomeBackend SinkArgs) ->
     ExceptT DeserialiseFailure IO (Maybe CRC, Maybe CRC)

@@ -1,220 +1,262 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
--- | This module defines the 'LedgerTables', a portion of the Ledger notion of a
--- /ledger state/ (not to confuse with our
--- 'Ouroboros.Consensus.Ledger.Basics.LedgerState') that together with it,
--- conforms a complete Ledger /ledger state/.
+-- | Ledger tables: the on-disk-backed portion of a ledger state.
 --
--- 'LedgerTables' are parametrized by two types: keys and values. For now, their
--- only current instantiation is to hold the UTxO set, but future features will
--- extend this to hold other parts of the ledger state that now live in memory.
--- However, 'LedgerTables' don't necessarily have to contain maps from keys to
--- values, and the particular instantiation might choose to ignore some of those
--- types (as phantom types). See 'KeysMK' for an example.
+-- In the UTxO-HD design, the ledger state of a block @blk@ is split into two
+-- parts: the in-memory \"hull\" — the @l blk mk@ value — and a (potentially
+-- large) collection of key/value entries kept on disk and referred to here as
+-- /ledger tables/. The currently-instantiated tables for a ledger state are
+-- selected by a phantom 'TableKind' parameter @mk@, so that the same ledger
+-- state shape can be specialised to hold the actual entries ('Values'), only a
+-- set of keys ('Keys'), a pending differential update ('Diffs'), or no entries
+-- at all ('NoTables'). Operations on a ledger state then become operations on
+-- the table associated with that state via the 'HasLedgerTables' class.
 --
--- This type is used for two main purposes. Firstly, we use ledger tables to
--- /extract/ data from the /ledger state/ and store it on secondary storage (eg
--- a solid-state hard-drive). Secondly, when we load data from disk onto memory,
--- we use ledger tables to /inject/ data into the /ledger state/. This mechanism
--- allows us to keep most of the data on disk, which is rarely used, reducing
--- the memory usage of the Consensus layer.
+-- The module collects:
 --
--- = __Example__
---
--- As an example, consider a LedgerState that contains a Ledger /ledger state/
--- (such as the @NewEpochState@) and a UTxO set:
---
--- @
--- data instance t'Ouroboros.Consensus.Ledger.Basics.LedgerState' (Block era) mk = LedgerState {
---     theLedgerLedgerState :: NewEpochState era
---   , theTables            :: 'LedgerTables' (Block era) mk
--- }
--- @
---
--- The Ledger /ledger state/ contains a UTxO set as well, and with
--- @stowLedgerTables@ and @unstowLedgerTables@ we move those between the Ledger
--- /ledger state/ and the 'LedgerTables', for example:
---
--- @
--- 'unstowLedgerTables' (LedgerState {
---                         theLedgerLedgerState = NewEpochState {
---                             ...
---                           , utxoSet = Map.fromList [(\'a\', 100), (\'b\', 100), ...]
---                         }
---                       , theTables = 'EmptyMK'
---                     })
---  ==
---  LedgerState {
---      theLedgerLedgerState = NewEpochState {
---          ...
---        , utxoSet = Map.empty
---        }
---    , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'b\', 100), ...])
---    })
--- @
---
--- @
--- 'stowLedgerTables' (LedgerState {
---                       theLedgerLedgerState = NewEpochState {
---                           ...
---                         , utxoSet = Map.empty
---                       }
---                     , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'b\', 100), ...])
---                   })
---  ==
---  LedgerState {
---      theLedgerLedgerState = NewEpochState {
---          ...
---        , utxoSet = Map.fromList [(\'a\', 100), (\'b\', 100), ...]
---        }
---    , theTables = 'EmptyMK'
---    })
--- @
---
--- Using these functions we can extract the data from the Ledger /ledger state/
--- for us Consensus to manipulate, and we can then inject it back so that we
--- provide the expected data to the ledger. Note that the Ledger rules for
--- applying a block are defined in a way that it only needs the subset of the
--- UTxO set that the block being applied will consume.
---
--- Now using 'Ouroboros.Consensus.Ledger.Tables.Utils.calculateDifference', we
--- can compare two (successive) t'Ouroboros.Consensus.Ledger.Basics.LedgerState's
--- to produce differences:
---
--- @
--- 'Ouroboros.Consensus.Ledger.Tables.Utils.calculateDifference'
---   (LedgerState {
---       ...
---     , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'b\', 100)])
---     })
---   (LedgerState {
---       ...
---     , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'c\', 200)])
---     })
--- ==
---  'TrackingMK'
---    (Map.fromList [(\'a\', 100),    (\'c\', 200)])
---    (Map.fromList [(\'b\', Delete), (\'c\', Insert 200)])
--- @
---
--- This operation provided a 'TrackingMK' which is in fact just a 'ValuesMK' and
--- 'DiffMK' put together.
---
--- We can then use those differences to /forward/ a collection of values, so for
--- example (taking the example above):
---
--- @
--- let tables1 = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'b\', 100)])
---     tables2 = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'c\', 200)])
---     diffs = 'Ouroboros.Consensus.Ledger.Tables.Utils.rawForgetTrackingValues'
---           $ 'Ouroboros.Consensus.Ledger.Tables.Utils.rawCalculateDifference' tables1 tables2
--- in
---   'Ouroboros.Consensus.Ledger.Tables.Utils.rawApplyDiffs' tables1 diffs == tables2
--- @
---
--- Note: we usually don't call the @raw*@ methods directly but instead call the
--- corresponding function that operates on
--- t'Ouroboros.Consensus.Ledger.Basics.LedgerState's. See
--- "Ouroboros.Consensus.Ledger.Tables.Utils".
---
--- Also when applying a block that contains some transactions, we can produce
--- 'LedgerTable's of @KeysMK@, by gathering the txins required by the
--- transactions:
---
--- @
--- 'Ouroboros.Consensus.Ledger.Abstract.getBlockKeySets' (Block {..., txs = [Tx { input = [\'a\', \'b\'], outputs = [\'c\', \'d\'] }]})
---  == 'KeysMK' (Set.fromList [\'a\', \'b\'])
--- @
---
--- We shall use those later on to read the txouts from some storage.
---
--- We call those types ending in \"MK\" mapkinds. They model the different types
--- of collections and contained data in the tables. This example already covered
--- most of the standard mapkinds, in particular:
---
---   ['EmptyMK']: A nullary data constructor, an empty table.
---
---   ['ValuesMK']: Contains a @Data.Map@ from txin to txouts.
---
---   ['DiffMK']: Contains a @Data.Map@ from txin to a change on the value.
---
---   ['TrackingMK']: Contains both a 'ValuesMK' and 'DiffMK'.
---
---   ['KeysMK']: Contains a @Data.Set@ of txins.
---
---   ['SeqDiffMK']: A fingertree of 'DiffMK's.
+-- * The kinds used by the family ('TableKind', 'LedgerStateKind',
+--   'StateKind').
+-- * The four concrete tables ('Values', 'Keys', 'Diffs', 'NoTables') and the
+--   type families ('TxIn', 'TxOut') that determine their key/value types per
+--   block.
+-- * Generic operations on tables ('EmptyTable', 'BimapTables') and the
+--   ledger-state-side interface that ties a ledger state to its tables
+--   ('HasLedgerTables', 'CanStowLedgerTables', 'CanUpgradeLedgerTables').
+-- * Convenience helpers that lift table-level operations to whole ledger
+--   states (e.g. 'applyDiffs', 'calculateDifference', 'forgetLedgerTables').
+-- * Support for ledgers whose tables are statically empty ('TrivialTables').
+-- * The CBOR serialisation interface for tables ('SerializeTablesWithHint'
+--   and friends).
 module Ouroboros.Consensus.Ledger.Tables
-  ( -- * Core
-    module Ouroboros.Consensus.Ledger.Tables.Basics
-  , module Ouroboros.Consensus.Ledger.Tables.MapKind
+  ( -- * Kinds
+    TableKind
+  , LedgerStateKind
+  , StateKind
 
-    -- * Utilities
-  , module Ouroboros.Consensus.Ledger.Tables.Combinators
+    -- * Transaction inputs and outputs
+  , TxIn
+  , TxOut
 
-    -- * Basic LedgerState classes
+    -- * Concrete tables
+  , Values (..)
+  , Keys (..)
+  , Diffs (..)
+  , NoTables (..)
 
-    -- ** Extracting and injecting ledger tables
+    -- ** Operations on tables
+  , EmptyTable (..)
+  , BimapTables (..)
+
+    -- * Ledger state interface
   , HasLedgerTables (..)
-
-    -- ** Stowing ledger tables
   , CanStowLedgerTables (..)
-
-    -- ** Upgrading ledger tables
   , CanUpgradeLedgerTables (..)
 
-    -- * Serialization
-  , SerializeTablesWithHint (..)
-  , defaultDecodeTablesWithHint
-  , defaultEncodeTablesWithHint
-  , valuesMKDecoder
-  , valuesMKEncoder
+    -- * Operations on ledger state tables
+  , forgetLedgerTables
+  , fmapTables
 
-    -- * Special classes
-  , LedgerTablesAreTrivial (..)
-  , trivialProjectLedgerTables
-  , trivialWithLedgerTables
-  , trivialStowLedgerTables
-  , trivialUnstowLedgerTables
+    -- ** Diffs
+  , applyDiffs
+  , prependDiffs
+  , applyDiffRestricted
+  , valuesAsDiffs
+  , calculateDifference
+
+    -- ** Values
+  , restrictValues
+  , unionValues
+
+    -- * Trivial tables
+  , TrivialTables (..)
+
+    -- * Serialisation
+  , SerializeTablesWithHint (..)
+  , canonicalTablesEncoder
+  , canonicalTablesDecoder
+  , defaultEncodeTablesWithHint
+  , defaultDecodeTablesWithHint
   , trivialEncodeTablesWithHint
   , trivialDecodeTablesWithHint
-  , trivialLedgerTables
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
-import Data.Kind (Constraint, Type)
+import Data.Kind
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
-import Data.Proxy
-import Data.Void
+import Data.Set (Set)
+import qualified Data.Set as Set
+import GHC.Generics
 import NoThunks.Class
-import Ouroboros.Consensus.Ledger.Tables.Basics
-import Ouroboros.Consensus.Ledger.Tables.Combinators
-import Ouroboros.Consensus.Ledger.Tables.MapKind
-import Ouroboros.Consensus.Util.RedundantConstraints
+import Ouroboros.Consensus.Ledger.Tables.Diff (Diff)
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 
 {-------------------------------------------------------------------------------
-  Basic LedgerState classes
+  Kinds
 -------------------------------------------------------------------------------}
 
--- | Extracting @'LedgerTables'@ from @l mk@ (which will share the same @mk@),
--- or replacing the @'LedgerTables'@ associated to a particular @l@.
+-- | The kind of a concrete ledger table indexed by a block type.
+--
+-- The four canonical inhabitants in this module are 'Values', 'Keys', 'Diffs'
+-- and 'NoTables'. Selecting one of these as the @mk@ in @l blk mk@ controls
+-- which entries (if any) the ledger state carries.
+type TableKind = Type -> Type
+
+-- | A @'LedgerStateKind'@ is the kind of any type that takes a single
+-- 'TableKind' parameter. The canonical inhabitant is a ledger state applied to
+-- a block type, for example @'Ouroboros.Consensus.Ledger.Basics.LedgerState'
+-- blk@.
+type LedgerStateKind = TableKind -> Type
+
+-- | A @'StateKind'@ is the kind of a ledger state /before/ it receives its
+-- block argument.
+--
+-- The four inhabitants in this codebase are
+-- @['Ouroboros.Consensus.Ticked.Ticked']
+-- ['Ouroboros.Consensus.Ledger.Extended.Ext']LedgerState@.
+type StateKind = Type -> LedgerStateKind
+
+{-------------------------------------------------------------------------------
+  Transaction inputs and outputs
+-------------------------------------------------------------------------------}
+
+-- | The key type of the ledger table associated with @blk@.
+--
+-- For UTxO-style ledgers this is a transaction input. The single-table
+-- assumption baked into this family will need to be relaxed once a ledger
+-- carries more than one table.
+type TxIn :: Type -> Type
+type family TxIn blk
+
+-- | The value type of the ledger table associated with @blk@.
+--
+-- For UTxO-style ledgers this is a transaction output. The single-table
+-- assumption baked into this family will need to be relaxed once a ledger
+-- carries more than one table.
+type TxOut :: Type -> Type
+type family TxOut blk
+
+{-------------------------------------------------------------------------------
+  Concrete tables
+-------------------------------------------------------------------------------}
+
+-- | A complete snapshot of the table: every key is mapped to its current
+-- value.
+newtype Values blk = Values {getValues :: Map (TxIn blk) (TxOut blk)}
+
+-- | Just the set of keys of a table, with no associated values.
+--
+-- This is what gets handed to the on-disk backend when we want to know which
+-- entries to read.
+newtype Keys blk = Keys {getKeys :: Set (TxIn blk)}
+
+-- | A differential update to a table: the inserts, deletes and updates that,
+-- when applied to a starting set of 'Values', produce the next one.
+newtype Diffs blk = Diffs {getDiffs :: Diff (TxIn blk) (TxOut blk)}
+
+-- | The trivial table: no entries at all.
+--
+-- Used to mark a ledger state whose table contents are either irrelevant in
+-- the current context (e.g. they have been stowed back into the in-memory
+-- part) or simply empty (e.g. for ledgers without any on-disk state).
+data NoTables blk = NoTables deriving (Generic, NoThunks, Eq, Show)
+
+deriving newtype instance Ord (TxIn blk) => Semigroup (Keys blk)
+deriving newtype instance Ord (TxIn blk) => Monoid (Keys blk)
+
+deriving newtype instance (NoThunks (TxIn blk), NoThunks (TxOut blk)) => NoThunks (Diffs blk)
+deriving newtype instance NoThunks (TxIn blk) => NoThunks (Keys blk)
+deriving newtype instance (NoThunks (TxIn blk), NoThunks (TxOut blk)) => NoThunks (Values blk)
+
+deriving newtype instance (Eq (TxIn blk), Eq (TxOut blk)) => Eq (Diffs blk)
+deriving newtype instance (Show (TxIn blk), Show (TxOut blk)) => Show (Diffs blk)
+deriving newtype instance Ord (TxIn blk) => Semigroup (Diffs blk)
+
+deriving newtype instance (Eq (TxIn blk), Eq (TxOut blk)) => Eq (Values blk)
+deriving newtype instance (Show (TxIn blk), Show (TxOut blk)) => Show (Values blk)
+
+{-------------------------------------------------------------------------------
+  Operations on tables
+-------------------------------------------------------------------------------}
+
+-- | Tables that have a canonical empty value.
+--
+-- This is the table-level analogue of 'Data.Monoid.mempty', restricted to
+-- 'TableKind's: it gives us a way to manufacture an empty table for any block
+-- without involving the surrounding ledger state.
+class EmptyTable mk where
+  emptyTable :: mk blk
+
+instance EmptyTable Values where
+  emptyTable = Values Map.empty
+
+instance EmptyTable Keys where
+  emptyTable = Keys Set.empty
+
+instance EmptyTable NoTables where
+  emptyTable = NoTables
+
+instance EmptyTable Diffs where
+  emptyTable = Diffs Diff.empty
+
+-- | Tables that can be re-indexed from one block type to another.
+--
+-- We need this primarily for the HardFork combinator, which translates tables
+-- back and forth between the per-era block types and the umbrella
+-- 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkBlock'.
+class BimapTables mk where
+  bimapLedgerTables ::
+    Ord (TxIn y) =>
+    (TxIn x -> TxIn y) ->
+    (TxOut x -> TxOut y) ->
+    mk x ->
+    mk y
+
+instance BimapTables Keys where
+  bimapLedgerTables f _ (Keys k) = Keys $ Set.map f k
+
+instance BimapTables Values where
+  bimapLedgerTables f g (Values k) = Values $ Map.mapKeys f $ Map.map g k
+
+instance BimapTables Diffs where
+  bimapLedgerTables f g (Diffs k) = Diffs $ Diff.mapKeys f $ Diff.map g k
+
+instance BimapTables NoTables where
+  bimapLedgerTables _ _ NoTables = NoTables
+
+{-------------------------------------------------------------------------------
+  Ledger state interface
+-------------------------------------------------------------------------------}
+
+-- | Extracting the ledger tables from @l blk mk@ (which will share the same
+-- @mk@), or replacing the tables associated to a particular @l blk@.
 type HasLedgerTables :: StateKind -> Type -> Constraint
-class (NoThunks (TxIn blk), NoThunks (TxOut blk), LedgerTableConstraints blk) => HasLedgerTables l blk where
-  -- | Extract the ledger tables from a ledger state
+class HasLedgerTables l blk where
+  -- | Extract the ledger tables from a ledger state.
   --
-  -- The constraints on @mk@ are necessary because the 'CardanoBlock' instance
-  -- uses them.
+  -- The constraints on @mk@ are necessary because the
+  -- 'Ouroboros.Consensus.Cardano.Block.CardanoBlock' instance uses them.
   projectLedgerTables ::
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+    -- Needed for the HFC bimapping to inject and eject
+    BimapTables mk =>
+    -- Needed for Byron using trivial tables
+    EmptyTable mk =>
     l blk mk ->
-    LedgerTables blk mk
+    mk blk
 
   -- | Overwrite the tables in the given ledger state.
   --
@@ -224,36 +266,33 @@ class (NoThunks (TxIn blk), NoThunks (TxOut blk), LedgerTableConstraints blk) =>
   -- tables argument should not contain any data from eras that succeed the
   -- current era of the ledger state argument.
   --
-  -- The constraints on @mk@ are necessary because the 'CardanoBlock' instance
-  -- uses them.
+  -- The constraints on @mk@ are necessary because the
+  -- 'Ouroboros.Consensus.Cardano.Block.CardanoBlock' instance uses them.
   withLedgerTables ::
-    (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk) =>
+    BimapTables mk =>
     l blk any ->
-    LedgerTables blk mk ->
+    mk blk ->
     l blk mk
 
--- | LedgerTables are projections of data from a LedgerState and as such they
--- can be injected back into a LedgerState. This is necessary because the Ledger
--- rules are currently unaware of UTxO-HD changes. Thus, by stowing the ledger
--- tables, we are able to provide a Ledger State with a restricted UTxO set that
--- is enough to execute the Ledger rules.
+-- | Move the table contents in and out of the in-memory part of the ledger
+-- state.
 --
--- In particular, HardForkBlock LedgerStates are never given diretly to the
--- ledger but rather unwrapped and then it is the inner ledger state the one we
--- give to the ledger. This means that all the single era blocks must be an
--- instance of this class, but HardForkBlocks might avoid doing so.
+-- \"Stowing\" hides the table by folding its values back into the ledger
+-- state's in-memory representation, leaving the table-level slot as
+-- 'NoTables'. \"Unstowing\" is the inverse. This is used in places that need
+-- to round-trip a ledger state through a representation that has no separate
+-- table component (e.g. legacy serialisation paths).
 type CanStowLedgerTables :: LedgerStateKind -> Constraint
-class CanStowLedgerTables l where
-  stowLedgerTables :: l ValuesMK -> l EmptyMK
-  unstowLedgerTables :: l EmptyMK -> l ValuesMK
+class CanStowLedgerTables lblk where
+  stowLedgerTables :: lblk Values -> lblk NoTables
+  unstowLedgerTables :: lblk NoTables -> lblk Values
 
--- | When pushing differences on InMemory Ledger DBs, we will sometimes need to
--- update ledger tables to the latest era. For unary blocks this is a no-op, but
--- for the Cardano block, we will need to upgrade all TxOuts in memory.
+-- | Adjust the values of a ledger table when crossing a hard fork boundary.
 --
--- No correctness property relies on this, as Consensus can work with TxOuts
--- from multiple eras, but the performance depends on it as otherwise we will be
--- upgrading the TxOuts every time we consult them.
+-- A hard fork can change the representation of @'TxOut' blk@. When applying a
+-- block that triggers such a transition we may need to translate the
+-- pre-existing values to the new format before they can be combined with the
+-- post-fork ledger state.
 type CanUpgradeLedgerTables :: StateKind -> Type -> Constraint
 class CanUpgradeLedgerTables l blk where
   upgradeTables ::
@@ -264,60 +303,168 @@ class CanUpgradeLedgerTables l blk where
     -- different era than the one above.
     l blk mk2 ->
     -- | The tables we want to maybe upgrade.
-    LedgerTables blk ValuesMK ->
-    LedgerTables blk ValuesMK
+    Values blk ->
+    Values blk
 
 {-------------------------------------------------------------------------------
-  Serialization Codecs
+  Operations on ledger state tables
 -------------------------------------------------------------------------------}
 
--- | Default encoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
--- in-memory backing store.
-valuesMKEncoder ::
-  SerializeTablesWithHint l blk =>
-  l blk EmptyMK ->
-  LedgerTables blk ValuesMK ->
-  CBOR.Encoding
-valuesMKEncoder st tbs =
-  CBOR.encodeListLen 1 <> encodeTablesWithHint st tbs
+-- | Replace the tables of a ledger state with 'NoTables'.
+forgetLedgerTables :: HasLedgerTables l blk => l blk mk -> l blk NoTables
+forgetLedgerTables = (`withLedgerTables` NoTables)
 
--- | Default decoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
--- in-memory backing store.
-valuesMKDecoder ::
-  forall l blk s.
-  SerializeTablesWithHint l blk =>
-  l blk EmptyMK ->
-  CBOR.Decoder s (LedgerTables blk ValuesMK)
-valuesMKDecoder st =
+-- | Internal helper: project the tables of a ledger state and feed them to a
+-- continuation.
+withTablesFrom ::
+  (EmptyTable mk, BimapTables mk, HasLedgerTables l blk) =>
+  l blk mk -> (mk blk -> t) -> t
+withTablesFrom l k =
+  k (projectLedgerTables l)
+
+-- | Apply a function to the tables of a ledger state, possibly changing the
+-- table kind from @mk1@ to @mk2@.
+fmapTables ::
+  (EmptyTable mk1, BimapTables mk1, BimapTables mk2, HasLedgerTables l blk) =>
+  l blk mk1 -> (mk1 blk -> mk2 blk) -> l blk mk2
+fmapTables l k =
+  l `withLedgerTables` k (projectLedgerTables l)
+
+{-------------------------------------------------------------------------------
+  Operations on ledger state tables: diffs
+-------------------------------------------------------------------------------}
+
+-- | Concatenate the diffs from one ledger state in front of those of another.
+--
+-- The result keeps the in-memory part of @l'@ and carries the combined
+-- 'Diffs', i.e. \"first apply the diffs of @l1@, then the diffs of @l2@\".
+prependDiffs ::
+  (Ord (TxIn blk), HasLedgerTables l blk, HasLedgerTables l' blk) =>
+  l blk Diffs -> l' blk Diffs -> l' blk Diffs
+prependDiffs l1 l2 = fmapTables l2 $ withTablesFrom l1 (<>)
+
+-- | Apply the diffs carried by @l'@ to the values carried by @l@, returning a
+-- ledger state of the shape of @l'@ that holds the resulting 'Values'.
+applyDiffs ::
+  (Ord (TxIn blk), HasLedgerTables l blk, HasLedgerTables l' blk) =>
+  l blk Values -> l' blk Diffs -> l' blk Values
+applyDiffs l1 l2 =
+  fmapTables l2 $
+    withTablesFrom l1 $
+      \(Values x) (Diffs y) -> Values (Diff.applyDiff x y)
+
+-- | Apply the diffs carried by a ledger state, but only consider the entries
+-- whose keys lie in the supplied 'Keys' set.
+--
+-- This is the building block used when answering a query against a baseline
+-- 'Values' and a stack of pending 'Diffs' without materialising the full
+-- updated table.
+applyDiffRestricted ::
+  (Ord (TxIn blk), HasLedgerTables l blk) =>
+  Values blk -> Keys blk -> l blk Diffs -> l blk Values
+applyDiffRestricted (Values t1) (Keys t2) l3 =
+  fmapTables l3 $
+    \(Diffs t3) -> Values (Diff.applyDiffForKeys t1 t2 t3)
+
+-- | Reinterpret the values carried by a ledger state as a diff: every entry
+-- becomes an insertion on top of the empty table.
+valuesAsDiffs ::
+  (Ord (TxIn blk), Eq (TxOut blk), HasLedgerTables l blk) => l blk Values -> l blk Diffs
+valuesAsDiffs l =
+  fmapTables l $
+    Diffs . Diff.diff Map.empty . getValues
+
+-- | Compute the diff that, when applied to the values of @l1@, yields the
+-- values of @l2@. The result is attached to the in-memory part of @l2@.
+calculateDifference ::
+  (Ord (TxIn blk), Eq (TxOut blk), HasLedgerTables l blk, HasLedgerTables l' blk) =>
+  l blk Values -> l' blk Values -> l' blk Diffs
+calculateDifference l1 l2 =
+  fmapTables l2 $
+    withTablesFrom l1 $
+      \(Values t1) (Values t2) -> Diffs $ Diff.diff t1 t2
+
+{-------------------------------------------------------------------------------
+  Operations on ledger state tables: values
+-------------------------------------------------------------------------------}
+
+-- | Restrict a 'Values' table to those entries whose keys appear in the given
+-- 'Keys' set.
+restrictValues ::
+  Ord (TxIn blk) =>
+  Values blk ->
+  Keys blk ->
+  Values blk
+restrictValues (Values v) (Keys k) = Values $ v `Map.restrictKeys` k
+
+-- | Left-biased union of two 'Values' tables.
+--
+-- When both tables contain the same key, the entry from the first argument is
+-- retained.
+unionValues ::
+  Ord (TxIn blk) =>
+  Values blk ->
+  Values blk ->
+  Values blk
+unionValues (Values m1) (Values m2) = Values $ Map.union m1 m2
+
+{-------------------------------------------------------------------------------
+  Trivial tables
+-------------------------------------------------------------------------------}
+
+-- | Ledger states whose tables are statically empty for every table kind.
+--
+-- Examples are pre-UTxO-HD ledgers (e.g. Byron) that have no on-disk state at
+-- all, and test ledgers that intentionally don't track any. Instances may
+-- discharge the 'HasLedgerTables', 'CanStowLedgerTables' and
+-- 'SerializeTablesWithHint' classes via the @trivial*@ helpers below.
+type TrivialTables :: StateKind -> Type -> Constraint
+class TrivialTables l blk where
+  -- | Coerce a ledger state from one table kind to another. This is sound
+  -- precisely because the table is known to be empty regardless of the kind.
+  convertTrivialTables :: l blk mk -> l blk mk'
+
+{-------------------------------------------------------------------------------
+  Serialisation
+-------------------------------------------------------------------------------}
+
+-- | CBOR encode/decode a 'Values' table given a ledger state \"hint\".
+--
+-- The accompanying @l blk NoTables@ argument lets the encoder/decoder consult
+-- in-memory ledger context (e.g. the era of a HardFork ledger state) when
+-- deciding how to serialise individual entries. Concrete instances will often
+-- delegate to 'defaultEncodeTablesWithHint' / 'defaultDecodeTablesWithHint'.
+class SerializeTablesWithHint l blk where
+  encodeTablesWithHint :: l blk NoTables -> Values blk -> CBOR.Encoding
+  decodeTablesWithHint :: l blk NoTables -> CBOR.Decoder s (Values blk)
+
+-- | Wrap an 'encodeTablesWithHint' in a one-element CBOR list.
+--
+-- This is the canonical on-the-wire framing used by the snapshot machinery, so
+-- that the decoder side can detect a missing payload as a list-length error
+-- rather than misparsing the entries.
+canonicalTablesEncoder ::
+  SerializeTablesWithHint l blk => l blk NoTables -> Values blk -> CBOR.Encoding
+canonicalTablesEncoder st tbs = CBOR.encodeListLen 1 <> encodeTablesWithHint st tbs
+
+-- | Counterpart to 'canonicalTablesEncoder': expect a one-element CBOR list,
+-- then defer to 'decodeTablesWithHint'.
+canonicalTablesDecoder ::
+  SerializeTablesWithHint l blk => l blk NoTables -> CBOR.Decoder s (Values blk)
+canonicalTablesDecoder st =
   CBOR.decodeListLenOf 1 >> decodeTablesWithHint st
 
--- | When decoding the tables and in particular the UTxO set we want
--- to share data in the TxOuts in the same way the Ledger did (see the
--- @Share (TxOut era)@ instances). We need to provide the state in the
--- HFC case so that we can call 'eraDecoder' and also to extract the
--- interns from the state.
+-- | A reasonable default 'encodeTablesWithHint' that pickles each key/value
+-- using its 'MemPack' instance and packages them into a CBOR map.
 --
--- As we will decode with 'eraDecoder' we also need to use such era
--- for the encoding thus we need the hint also in the encoding.
---
--- See @SerializeTablesWithHint (LedgerState (HardForkBlock
--- (CardanoBlock c)))@ for a good example, the rest of the instances
--- are somewhat degenerate.
-class SerializeTablesWithHint l blk where
-  encodeTablesWithHint ::
-    l blk EmptyMK ->
-    LedgerTables blk ValuesMK ->
-    CBOR.Encoding
-  decodeTablesWithHint ::
-    l blk EmptyMK ->
-    CBOR.Decoder s (LedgerTables blk ValuesMK)
-
+-- The hint argument is unused; this default is appropriate when the
+-- serialisation of an entry does not depend on the surrounding ledger state.
 defaultEncodeTablesWithHint ::
   (MemPack (TxIn blk), MemPack (TxOut blk)) =>
-  l blk EmptyMK ->
-  LedgerTables blk ValuesMK ->
+  l blk NoTables ->
+  Values blk ->
   CBOR.Encoding
-defaultEncodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
+defaultEncodeTablesWithHint _ (Values tbs) =
   mconcat
     [ CBOR.encodeMapLen (fromIntegral $ Map.size tbs)
     , Map.foldMapWithKey
@@ -330,76 +477,34 @@ defaultEncodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
         tbs
     ]
 
+-- | Counterpart to 'defaultEncodeTablesWithHint': read a CBOR map and unpickle
+-- each key/value via 'MemPack'.
 defaultDecodeTablesWithHint ::
   (Ord (TxIn blk), MemPack (TxIn blk), MemPack (TxOut blk)) =>
-  l blk EmptyMK ->
-  CBOR.Decoder s (LedgerTables blk ValuesMK)
+  l blk NoTables ->
+  CBOR.Decoder s (Values blk)
 defaultDecodeTablesWithHint _ = do
   n <- CBOR.decodeMapLen
-  LedgerTables . ValuesMK <$> go n Map.empty
+  Values <$> go n Map.empty
  where
   go 0 m = pure m
   go n !m = do
     (k, v) <- (,) <$> (unpackMonadFail =<< CBOR.decodeBytes) <*> (unpackMonadFail =<< CBOR.decodeBytes)
     go (n - 1) (Map.insert k v m)
 
-{-------------------------------------------------------------------------------
-  Special classes of ledger states
--------------------------------------------------------------------------------}
-
--- | For some ledger states we won't be defining 'LedgerTables' and instead the
--- ledger state will be fully stored in memory, as before UTxO-HD. The ledger
--- states that are defined this way can be made instances of this class which
--- allows for easy manipulation of the types of @mk@ required at any step of the
--- program.
-type LedgerTablesAreTrivial :: StateKind -> Type -> Constraint
-class (TxIn blk ~ Void, TxOut blk ~ Void) => LedgerTablesAreTrivial l blk where
-  -- | If the ledger state is always in memory, then @l mk@ will be isomorphic
-  -- to @l mk'@ for all @mk@, @mk'@. As a result, we can convert between ledgers
-  -- states indexed by different map kinds.
-  --
-  -- This function is useful to combine functions that operate on functions that
-  -- transform the map kind on a ledger state (eg @applyChainTickLedgerResult@).
-  convertMapKind :: l blk mk -> l blk mk'
-
-trivialLedgerTables ::
-  (ZeroableMK mk, LedgerTablesAreTrivial l blk) =>
-  Proxy l ->
-  LedgerTables blk mk
-trivialLedgerTables _ = LedgerTables emptyMK
-
-trivialProjectLedgerTables ::
-  forall l blk mk.
-  (LedgerTablesAreTrivial l blk, ZeroableMK mk) =>
-  l blk mk ->
-  LedgerTables blk mk
-trivialProjectLedgerTables _ = trivialLedgerTables (Proxy @l)
-trivialWithLedgerTables ::
-  LedgerTablesAreTrivial l blk =>
-  l blk any ->
-  LedgerTables blk mk ->
-  l blk mk
-trivialWithLedgerTables st _ = convertMapKind st
-
-trivialStowLedgerTables :: LedgerTablesAreTrivial l blk => l blk ValuesMK -> l blk EmptyMK
-trivialStowLedgerTables = convertMapKind
-trivialUnstowLedgerTables :: LedgerTablesAreTrivial l blk => l blk EmptyMK -> l blk ValuesMK
-trivialUnstowLedgerTables = convertMapKind
-
+-- | Default 'decodeTablesWithHint' for a 'TrivialTables' ledger: consume a
+-- CBOR map and discard its (necessarily empty) contents.
 trivialDecodeTablesWithHint ::
-  forall l blk s.
-  LedgerTablesAreTrivial l blk =>
-  l blk EmptyMK ->
-  CBOR.Decoder s (LedgerTables blk ValuesMK)
+  l blk NoTables ->
+  CBOR.Decoder s (Values blk)
 trivialDecodeTablesWithHint _ = do
   _ <- CBOR.decodeMapLen
-  pure $ trivialLedgerTables (Proxy @l)
+  pure emptyTable
+
+-- | Default 'encodeTablesWithHint' for a 'TrivialTables' ledger: emit an empty
+-- CBOR map.
 trivialEncodeTablesWithHint ::
-  forall l blk.
-  LedgerTablesAreTrivial l blk =>
-  l blk EmptyMK ->
-  LedgerTables blk ValuesMK ->
+  l blk NoTables ->
+  Values blk ->
   CBOR.Encoding
 trivialEncodeTablesWithHint _ _ = CBOR.encodeMapLen 0
- where
-  _ = keepRedundantConstraint (Proxy @(LedgerTablesAreTrivial l blk))

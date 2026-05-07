@@ -52,7 +52,7 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types as X
 import Ouroboros.Consensus.HardFork.Combinator.Translation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract hiding (getTip)
-import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Util
 import Prelude hiding (sequence)
 
 {-------------------------------------------------------------------------------
@@ -187,10 +187,10 @@ epochInfoPrecomputedTransitionInfo shape transition st =
 -- | Extend the telescope until the specified slot is within the era at the tip.
 --
 -- Note that transitioning to a later era might create new values in the ledger
--- tables, therefore the result of this function is a @DiffMK@.
+-- tables, therefore the result of this function is a @Diffs@.
 --
 -- If we are crossing no era boundaries, this whole function is a no-op that
--- only creates an empty @DiffMK@, because the @Telescope.extend@ function will
+-- only creates an empty @Diffs@, because the @Telescope.extend@ function will
 -- do nothing.
 --
 -- If we are crossing one era boundary, the ledger tables might be populated
@@ -221,8 +221,8 @@ extendToSlot ::
   CanHardFork xs =>
   HardForkLedgerConfig xs ->
   SlotNo ->
-  HardForkState (Flip LedgerState EmptyMK) xs ->
-  HardForkState (Flip LedgerState DiffMK) xs
+  HardForkState (Flip LedgerState NoTables) xs ->
+  HardForkState (Flip LedgerState Diffs) xs
 extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st) =
   HardForkState
     . unI
@@ -243,14 +243,14 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
           (getExactly (History.getShape hardForkLedgerConfigShape))
       )
     -- In order to make this an automorphism, as required by 'Telescope.extend',
-    -- we have to promote the input to @DiffMK@ albeit it being empty.
+    -- we have to promote the input to @Diffs@ albeit it being empty.
     $ hcmap
       proxySingle
       ( \c ->
           c
             { currentState =
                 Flip
-                  . flip withLedgerTables emptyLedgerTables
+                  . flip withLedgerTables emptyTable
                   . unFlip
                   . currentState
                   $ c
@@ -267,7 +267,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     SingleEraBlock blk =>
     WrapPartialLedgerConfig blk ->
     K History.EraParams blk ->
-    Current (Flip LedgerState DiffMK) blk ->
+    Current (Flip LedgerState Diffs) blk ->
     (Maybe :.: K History.Bound) blk
   whenExtend pcfg (K eraParams) cur =
     Comp $
@@ -287,12 +287,12 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
         return endBound
 
   howExtend ::
-    (HasLedgerTables LedgerState blk, HasLedgerTables LedgerState blk') =>
+    (Ord (TxIn blk'), HasLedgerTables LedgerState blk, HasLedgerTables LedgerState blk') =>
     TranslateLedgerState blk blk' ->
     TranslateLedgerTables blk blk' ->
     History.Bound ->
-    Current (Flip LedgerState DiffMK) blk ->
-    (K Past blk, Current (Flip LedgerState DiffMK) blk')
+    Current (Flip LedgerState Diffs) blk ->
+    (K Past blk, Current (Flip LedgerState Diffs) blk')
   howExtend f f' currentEnd cur =
     ( K
         Past
@@ -309,9 +309,8 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
                     . currentState
                     $ cur
              in Flip
-                  . (cur' `withLedgerTables`)
-                  . ltliftA2
-                    rawPrependDiffs
+                  . fmapTables cur'
+                  $ (<>)
                     ( -- We need to bring back the diffs provided by previous
                       -- translations. Note that if there is only one
                       -- translation or if the previous translations don't add
@@ -324,7 +323,6 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
                         . currentState
                         $ cur
                     )
-                  $ projectLedgerTables cur'
         }
     )
 

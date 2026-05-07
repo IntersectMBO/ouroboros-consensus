@@ -73,6 +73,9 @@ mkInitDb ::
   forall m blk backend.
   ( LedgerSupportsProtocol blk
   , HasHardForkHistory blk
+  , NoThunks (LedgerState blk NoTables)
+  , NoThunks (TxIn blk)
+  , NoThunks (TxOut blk)
   , Backend m backend blk
   , IOLike m
   ) =>
@@ -147,6 +150,7 @@ implMkLedgerDb ::
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
   , ApplyBlock l blk
+  , NoThunks (l blk NoTables)
   ) =>
   LedgerDBHandle m l blk ->
   SnapshotManager m blk (StateRef m l blk) ->
@@ -235,13 +239,13 @@ implIntTruncateSnapshots snapManager (SomeHasFS fs) = do
 implGetVolatileTip ::
   (MonadSTM m, GetTip (l blk)) =>
   LedgerDBEnv m l blk ->
-  STM m (l blk EmptyMK)
+  STM m (l blk NoTables)
 implGetVolatileTip = fmap current . getVolatileLedgerSeq
 
 implGetImmutableTip ::
   (MonadSTM m, GetTip (l blk)) =>
   LedgerDBEnv m l blk ->
-  STM m (l blk EmptyMK)
+  STM m (l blk NoTables)
 implGetImmutableTip = fmap anchor . getVolatileLedgerSeq
 
 implGetPastLedgerState ::
@@ -251,7 +255,7 @@ implGetPastLedgerState ::
   , StandardHash (l blk)
   , HeaderHash (l blk) ~ HeaderHash blk
   ) =>
-  LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l blk EmptyMK))
+  LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l blk NoTables))
 implGetPastLedgerState env point =
   getPastLedgerAt point <$> getVolatileLedgerSeq env
 
@@ -286,6 +290,7 @@ implValidate ::
   , ApplyBlock l blk
   , StandardHash (l blk)
   , LedgerSupportsProtocol blk
+  , NoThunks (l blk NoTables)
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
@@ -468,7 +473,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
 deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , NoThunks (l blk EmptyMK)
+  , NoThunks (l blk NoTables)
   , NoThunks (TxIn blk)
   , NoThunks (TxOut blk)
   , NoThunks (LedgerCfg l blk)
@@ -492,7 +497,7 @@ data LedgerDBState m l blk
 deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , NoThunks (l blk EmptyMK)
+  , NoThunks (l blk NoTables)
   , NoThunks (TxIn blk)
   , NoThunks (TxOut blk)
   , NoThunks (LedgerCfg l blk)
@@ -635,6 +640,7 @@ openNewForkerAtTarget ::
   , HasLedgerTables l blk
   , LedgerSupportsProtocol blk
   , StandardHash (l blk)
+  , NoThunks (l blk NoTables)
   ) =>
   LedgerDBHandle m l blk ->
   Target (Point blk) ->
@@ -649,6 +655,7 @@ withForkerByRollback ::
   , StandardHash (l blk)
   , HasLedgerTables l blk
   , LedgerSupportsProtocol blk
+  , NoThunks (l blk NoTables)
   ) =>
   LedgerDBHandle m l blk ->
   Word64 ->
@@ -678,7 +685,7 @@ implForkerClose env = do
 newForker ::
   ( IOLike m
   , HasLedgerTables l blk
-  , NoThunks (l blk EmptyMK)
+  , NoThunks (l blk NoTables)
   , GetTip (l blk)
   , StandardHash (l blk)
   ) =>

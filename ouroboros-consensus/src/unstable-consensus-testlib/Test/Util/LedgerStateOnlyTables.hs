@@ -25,9 +25,8 @@ module Test.Util.LedgerStateOnlyTables
 import Data.MemPack
 import GHC.Generics
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Ledger.Basics (LedgerState)
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Tables
-import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
@@ -35,32 +34,32 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 -------------------------------------------------------------------------------}
 
 type OTLedgerState k v = LedgerState (OTBlock k v)
-type OTLedgerTables k v = LedgerTables (OTBlock k v)
+type OTLedgerTables k v mk = mk (OTBlock k v)
 
 -- | An empty type for blocks, which is only used to record the types @k@ and
 -- @v@.
 data OTBlock k v
 
-data instance LedgerState (OTBlock k v) (mk :: MapKind) = OTLedgerState
-  { otlsLedgerState :: ValuesMK k v
+data instance LedgerState (OTBlock k v) (mk :: TableKind) = OTLedgerState
+  { otlsLedgerState :: Values (OTBlock k v)
   , otlsLedgerTables :: OTLedgerTables k v mk
   }
   deriving Generic
 
 deriving instance
-  (Ord k, Eq v, Eq (mk k v)) =>
+  (Ord k, Eq v, Eq (mk (OTBlock k v))) =>
   Eq (OTLedgerState k v mk)
 deriving stock instance
-  (Show k, Show v, Show (mk k v)) =>
+  (Show k, Show v, Show (mk (OTBlock k v))) =>
   Show (OTLedgerState k v mk)
 deriving instance
-  (NoThunks k, NoThunks v, NoThunks (mk k v)) =>
+  (NoThunks k, NoThunks v, NoThunks (mk (OTBlock k v))) =>
   NoThunks (OTLedgerState k v mk)
 
 emptyOTLedgerState ::
-  (Ord k, Eq v, ZeroableMK mk) =>
+  EmptyTable mk =>
   LedgerState (OTBlock k v) mk
-emptyOTLedgerState = OTLedgerState emptyMK emptyLedgerTables
+emptyOTLedgerState = OTLedgerState emptyTable emptyTable
 
 instance CanUpgradeLedgerTables LedgerState (OTBlock k v) where
   upgradeTables _ _ = id
@@ -82,17 +81,14 @@ instance (Ord k, MemPack k, MemPack v) => SerializeTablesWithHint LedgerState (O
   Stowable
 -------------------------------------------------------------------------------}
 
-instance
-  (Ord k, Eq v) =>
-  CanStowLedgerTables (OTLedgerState k v)
-  where
+instance CanStowLedgerTables (OTLedgerState k v) where
   stowLedgerTables OTLedgerState{otlsLedgerTables} =
-    OTLedgerState (getLedgerTables otlsLedgerTables) emptyLedgerTables
+    OTLedgerState otlsLedgerTables emptyTable
 
   unstowLedgerTables OTLedgerState{otlsLedgerState} =
     OTLedgerState
-      emptyMK
-      (LedgerTables otlsLedgerState)
+      emptyTable
+      otlsLedgerState
 
 {-------------------------------------------------------------------------------
   Simple ledger tables
@@ -101,10 +97,7 @@ instance
 type instance TxIn (OTBlock k v) = k
 type instance TxOut (OTBlock k v) = v
 
-instance
-  (Ord k, Eq v, NoThunks k, NoThunks v) =>
-  HasLedgerTables LedgerState (OTBlock k v)
-  where
+instance HasLedgerTables LedgerState (OTBlock k v) where
   projectLedgerTables OTLedgerState{otlsLedgerTables} =
     otlsLedgerTables
 

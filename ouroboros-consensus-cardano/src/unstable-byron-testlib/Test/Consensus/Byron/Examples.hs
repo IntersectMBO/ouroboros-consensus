@@ -42,7 +42,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PBFT
@@ -120,7 +119,7 @@ examples =
     , exampleChainDepState = unlabelled exampleChainDepState
     , exampleExtLedgerState = unlabelled $ forgetLedgerTables exampleExtLedgerState
     , exampleSlotNo = unlabelled exampleSlotNo
-    , exampleLedgerTables = unlabelled emptyLedgerTables
+    , exampleLedgerTables = unlabelled emptyTable
     }
  where
   regularAndEBB :: a -> a -> Labelled a
@@ -184,7 +183,7 @@ exampleChainDepState = S.fromList signers
  where
   signers = map (`S.PBftSigner` CC.exampleKeyHash) [1 .. 4]
 
-emptyLedgerState :: LedgerState ByronBlock ValuesMK
+emptyLedgerState :: LedgerState ByronBlock Values
 emptyLedgerState =
   ByronLedgerState
     { byronLedgerTipBlockNo = Origin
@@ -197,7 +196,7 @@ emptyLedgerState =
     runExcept $
       CC.Block.initialChainValidationState ledgerConfig
 
-ledgerStateAfterEBB :: LedgerState ByronBlock ValuesMK
+ledgerStateAfterEBB :: LedgerState ByronBlock Values
 ledgerStateAfterEBB =
   applyDiffs emptyLedgerState
     . reapplyLedgerBlock OmitLedgerEvents ledgerConfig exampleEBB
@@ -206,7 +205,7 @@ ledgerStateAfterEBB =
     . forgetLedgerTables
     $ emptyLedgerState
 
-exampleLedgerState :: LedgerState ByronBlock ValuesMK
+exampleLedgerState :: LedgerState ByronBlock Values
 exampleLedgerState =
   applyDiffs emptyLedgerState
     . reapplyLedgerBlock OmitLedgerEvents ledgerConfig exampleBlock
@@ -218,7 +217,7 @@ exampleLedgerState =
 exampleHeaderState :: HeaderState ByronBlock
 exampleHeaderState = HeaderState (NotOrigin exampleAnnTip) exampleChainDepState
 
-exampleExtLedgerState :: ExtLedgerState ByronBlock ValuesMK
+exampleExtLedgerState :: ExtLedgerState ByronBlock Values
 exampleExtLedgerState =
   ExtLedgerState
     { ledgerState = exampleLedgerState

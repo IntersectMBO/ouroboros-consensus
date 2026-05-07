@@ -21,8 +21,8 @@ import Ouroboros.Consensus.ByronSpec.Ledger.GenTx
 import qualified Ouroboros.Consensus.ByronSpec.Ledger.GenTx as GenTx
 import Ouroboros.Consensus.ByronSpec.Ledger.Ledger
 import Ouroboros.Consensus.ByronSpec.Ledger.Orphans ()
+import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 
 newtype instance GenTx ByronSpecBlock = ByronSpecGenTx
   { unByronSpecGenTx :: ByronSpecGenTx
@@ -56,7 +56,7 @@ instance LedgerSupportsMempool ByronSpecBlock where
 
   txForgetValidated = forgetValidatedByronSpecGenTx
 
-  getTransactionKeySets _ = emptyLedgerTables
+  getTransactionKeySets _ = emptyTable
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 

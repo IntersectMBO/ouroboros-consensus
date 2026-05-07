@@ -43,7 +43,6 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Protocol.Abstract
   ( ChainDepState
   , tickChainDepState
@@ -88,7 +87,7 @@ initialForgeState = ForgeState 0 0 0 0
 type GenTxs blk =
   SlotNo ->
   ReadOnlyForker' IO blk ->
-  TickedLedgerState blk DiffMK ->
+  TickedLedgerState blk Diffs ->
   IO [Validated (GenTx blk)]
 
 -- DUPLICATE: runForge mirrors forging loop from ouroboros-consensus/src/Ouroboros/Consensus/NodeKernel.hs
@@ -198,7 +197,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
       _ -> exitEarly' "NoLeader"
 
     -- Tick the ledger state for the 'SlotNo' we're producing a block for
-    let tickedLedgerState :: Ticked LedgerState blk DiffMK
+    let tickedLedgerState :: Ticked LedgerState blk Diffs
         tickedLedgerState =
           applyChainTick
             OmitLedgerEvents

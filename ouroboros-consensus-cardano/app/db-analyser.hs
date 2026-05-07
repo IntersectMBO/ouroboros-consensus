@@ -1,4 +1,3 @@
-
 -- | Database analysis tool.
 module Main (main) where
 

@@ -49,17 +49,13 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
   ( currentState
   , getHardForkState
   )
+import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ledger.Basics
   ( ComputeLedgerEvents (..)
   , LedgerConfig
   , LedgerState
   , TickedLedgerState
   , applyChainTick
-  )
-import Ouroboros.Consensus.Ledger.Tables (ValuesMK)
-import Ouroboros.Consensus.Ledger.Tables.Utils
-  ( applyDiffs
-  , forgetLedgerTables
   )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -148,7 +144,7 @@ migrateUTxO ::
   MigrationInfo c ->
   SlotNo ->
   LedgerConfig (CardanoBlock c) ->
-  LedgerState (CardanoBlock c) ValuesMK ->
+  LedgerState (CardanoBlock c) Values ->
   Maybe (GenTx (CardanoBlock c))
 migrateUTxO migrationInfo curSlot lcfg lst
   | Just utxo <- mbUTxO =

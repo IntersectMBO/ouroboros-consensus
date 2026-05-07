@@ -50,7 +50,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
@@ -117,7 +117,7 @@ data TxErr
 instance PayloadSemantics Tx where
   data PayloadDependentState Tx mk
     = UTxTok
-    { utxtoktables :: LedgerTables TestBlock mk
+    { utxtoktables :: mk TestBlock
     , -- \| All the tokens that ever existed. We use this to
       -- make sure a token is not created more than once. See
       -- the definition of 'applyPayload' in the
@@ -140,8 +140,8 @@ instance PayloadSemantics Tx where
     insert ::
       Token ->
       TValue ->
-      PayloadDependentState Tx ValuesMK ->
-      Either TxErr (PayloadDependentState Tx ValuesMK)
+      PayloadDependentState Tx Values ->
+      Either TxErr (PayloadDependentState Tx Values)
     insert tok val st'@UTxTok{utxtoktables, utxhist} =
       if tok `Set.member` utxhist
         then Left $ TokenWasAlreadyCreated tok
@@ -153,8 +153,8 @@ instance PayloadSemantics Tx where
               }
     delete ::
       Token ->
-      PayloadDependentState Tx ValuesMK ->
-      Either TxErr (PayloadDependentState Tx ValuesMK)
+      PayloadDependentState Tx Values ->
+      Either TxErr (PayloadDependentState Tx Values)
     delete tok st'@UTxTok{utxtoktables} =
       if Map.member tok `queryKeys` utxtoktables
         then
@@ -164,42 +164,37 @@ instance PayloadSemantics Tx where
               }
         else Left $ TokenDoesNotExist tok
 
-    track :: PayloadDependentState Tx ValuesMK -> PayloadDependentState Tx DiffMK
+    track :: PayloadDependentState Tx Values -> PayloadDependentState Tx Diffs
     track stAfter =
       stAfter
-        { utxtoktables =
-            LedgerTables $ rawCalculateDifference utxtokBefore utxtokAfter
+        { utxtoktables = Diffs $ Diff.diff utxtokBefore utxtokAfter
         }
      where
-      utxtokBefore = getLedgerTables $ utxtoktables st
-      utxtokAfter = getLedgerTables $ utxtoktables stAfter
+      Values utxtokBefore = utxtoktables st
+      Values utxtokAfter = utxtoktables stAfter
 
   getPayloadKeySets Tx{consumed} =
-    LedgerTables $ KeysMK $ Set.singleton consumed
+    Keys $ Set.singleton consumed
 
-deriving instance Eq (LedgerTables TestBlock mk) => Eq (PayloadDependentState Tx mk)
+deriving instance Eq (mk TestBlock) => Eq (PayloadDependentState Tx mk)
 deriving instance
-  NoThunks (LedgerTables TestBlock mk) => NoThunks (PayloadDependentState Tx mk)
+  NoThunks (mk TestBlock) => NoThunks (PayloadDependentState Tx mk)
 deriving instance
-  Show (LedgerTables TestBlock mk) => Show (PayloadDependentState Tx mk)
+  Show (mk TestBlock) => Show (PayloadDependentState Tx mk)
 deriving instance
-  Serialise (LedgerTables TestBlock mk) => Serialise (PayloadDependentState Tx mk)
+  Serialise (mk TestBlock) => Serialise (PayloadDependentState Tx mk)
 
 onValues ::
   (Map Token TValue -> Map Token TValue) ->
-  LedgerTables TestBlock ValuesMK ->
-  LedgerTables TestBlock ValuesMK
-onValues f (LedgerTables testUtxtokTable) = LedgerTables $ updateMap testUtxtokTable
- where
-  updateMap :: ValuesMK Token TValue -> ValuesMK Token TValue
-  updateMap (ValuesMK utxovals) =
-    ValuesMK $ f utxovals
+  Values TestBlock ->
+  Values TestBlock
+onValues f (Values utxovals) = Values $ f utxovals
 
 queryKeys ::
   (Map Token TValue -> a) ->
-  LedgerTables TestBlock ValuesMK ->
+  Values TestBlock ->
   a
-queryKeys f (LedgerTables (ValuesMK utxovals)) = f utxovals
+queryKeys f (Values utxovals) = f utxovals
 
 {-------------------------------------------------------------------------------
   Instances required for on-disk storage of ledger state tables
@@ -234,10 +229,10 @@ instance HasLedgerTables (Ticked LedgerState) TestBlock where
   withLedgerTables (TickedTestLedger st) tables =
     TickedTestLedger $ withLedgerTables st tables
 
-instance Serialise (LedgerTables TestBlock EmptyMK) where
-  encode (LedgerTables (_ :: EmptyMK Token TValue)) =
+instance Serialise (NoTables TestBlock) where
+  encode NoTables =
     CBOR.encodeNull
-  decode = LedgerTables EmptyMK <$ CBOR.decodeNull
+  decode = NoTables <$ CBOR.decodeNull
 
 instance ToCBOR Token where
   toCBOR (Token pt) = S.encode pt
@@ -260,20 +255,18 @@ stowErr fname = error $ "Function " <> fname <> " should not be used in these te
 deriving anyclass instance ToExpr v => ToExpr (DS.Delta v)
 deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Diff k v)
 deriving anyclass instance ToExpr v => ToExpr (StrictMaybe v)
-deriving anyclass instance
-  ToExpr (mk Token TValue) => ToExpr (LedgerTables TestBlock mk)
 deriving instance
-  ToExpr (LedgerTables TestBlock mk) => ToExpr (PayloadDependentState Tx mk)
+  ToExpr (mk TestBlock) => ToExpr (PayloadDependentState Tx mk)
 
-deriving newtype instance ToExpr (ValuesMK Token TValue)
+deriving newtype instance (ToExpr (TxIn blk), ToExpr (TxOut blk)) => ToExpr (Values blk)
 
 instance ToExpr v => ToExpr (DS.DeltaHistory v) where
   toExpr h = App "DeltaHistory" [genericToExpr . toList . DS.getDeltaHistory $ h]
 
-instance ToExpr (ExtLedgerState TestBlock ValuesMK) where
+instance ToExpr (ExtLedgerState TestBlock Values) where
   toExpr = genericToExpr
 
-instance ToExpr (LedgerState (TestBlockWith Tx) ValuesMK) where
+instance ToExpr (LedgerState (TestBlockWith Tx) Values) where
   toExpr = genericToExpr
 
 instance HasHardForkHistory TestBlock where
@@ -308,17 +301,16 @@ instance HasHardForkHistory TestBlock where
   coupled to the generator's semantics.
  -------------------------------------------------------------------------------}
 
-genesis :: ExtLedgerState TestBlock ValuesMK
+genesis :: ExtLedgerState TestBlock Values
 genesis = testInitExtLedgerWithState initialTestLedgerState
 
-initialTestLedgerState :: PayloadDependentState Tx ValuesMK
+initialTestLedgerState :: PayloadDependentState Tx Values
 initialTestLedgerState =
   UTxTok
     { utxtoktables =
-        LedgerTables $
-          ValuesMK $
-            Map.singleton initialToken $
-              TValue ()
+        Values $
+          Map.singleton initialToken $
+            TValue ()
     , utxhist = Set.singleton initialToken
     }
  where

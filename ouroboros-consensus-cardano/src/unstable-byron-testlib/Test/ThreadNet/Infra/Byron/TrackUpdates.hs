@@ -42,7 +42,7 @@ import qualified Ouroboros.Consensus.Byron.Crypto.DSIGN as Crypto
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger as Byron
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Tables (EmptyMK)
+import Ouroboros.Consensus.Ledger.Tables (NoTables)
 import Ouroboros.Consensus.Node.ProtocolInfo
   ( NumCoreNodes (..)
   , ProtocolInfo (..)
@@ -90,7 +90,7 @@ mkUpdateLabels ::
   NodeTopology ->
   Ref.Result ->
   -- | from 'nodeOutputFinalLedger'
-  Byron.LedgerState ByronBlock EmptyMK ->
+  Byron.LedgerState ByronBlock NoTables ->
   (ProtocolVersionUpdateLabel, SoftwareVersionUpdateLabel)
 mkUpdateLabels
   params

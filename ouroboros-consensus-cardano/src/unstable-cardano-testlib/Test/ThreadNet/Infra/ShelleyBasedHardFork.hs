@@ -87,7 +87,6 @@ import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
@@ -257,7 +256,7 @@ instance
         \_cfg1 cfg2 ->
           HFC.TranslateLedgerState
             { translateLedgerStateWith = \_epochNo ->
-                noNewTickingDiffs
+                (`withLedgerTables` emptyTable)
                   . unFlip
                   . unComp
                   . SL.translateEra'
@@ -536,12 +535,10 @@ instance
     (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
   where
   encodeTablesWithHint ::
-    LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK ->
-    LedgerTables
-      (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-      ValuesMK ->
+    LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) NoTables ->
+    Values (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) ->
     Encoding
-  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
+  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (Values tbs) =
     let
       np =
         (Fn $ const $ K $ encOne (Proxy @era1))
@@ -563,13 +560,10 @@ instance
 
   decodeTablesWithHint ::
     forall s.
-    LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK ->
+    LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) NoTables ->
     Decoder
       s
-      ( LedgerTables
-          (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-          ValuesMK
-      )
+      (Values (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
   decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
     let
       np =
@@ -585,13 +579,10 @@ instance
       ( TxOut (ShelleyBlock proto era) ->
         TxOut (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
       ) ->
-      LedgerState (ShelleyBlock proto era) EmptyMK ->
+      LedgerState (ShelleyBlock proto era) NoTables ->
       Decoder
         s
-        ( LedgerTables
-            (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-            ValuesMK
-        )
+        (Values (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
     getOne toShelleyTxOut st =
       let certInterns =
             internsFromMap $
@@ -602,7 +593,7 @@ instance
                   . SL.certDStateL
                   . SL.accountsL
                   . SL.accountsMapL
-       in LedgerTables . ValuesMK
+       in Values
             <$> SL.eraDecoder @era
               (decodeMap (ShelleyHFCTxIn <$> decodeMemPack) (toShelleyTxOut <$> decShareCBOR certInterns))
 

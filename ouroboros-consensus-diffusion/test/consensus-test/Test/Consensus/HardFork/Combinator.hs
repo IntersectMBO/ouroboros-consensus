@@ -264,7 +264,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
             OptNil
     ]
 
-  initLedgerState :: LedgerState BlockA ValuesMK
+  initLedgerState :: LedgerState BlockA Values
   initLedgerState =
     LgrA
       { lgrA_tip = GenesisPoint

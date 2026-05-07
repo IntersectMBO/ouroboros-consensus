@@ -52,12 +52,12 @@ import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
   ( TranslateLedgerState (..)
   )
+import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ledger.Basics
   ( LedgerCfg
   , LedgerConfig
   , LedgerState
   )
-import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Diff (Diff)
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Protocol.Praos
@@ -226,7 +226,7 @@ testTablesTranslation ::
   ( Arbitrary (TestSetup srcBlk dstBlk)
   , Show (LedgerCfg LedgerState srcBlk)
   , Show (LedgerCfg LedgerState dstBlk)
-  , Show (LedgerState srcBlk EmptyMK)
+  , Show (LedgerState srcBlk NoTables)
   ) =>
   -- | Property label
   String ->
@@ -235,9 +235,9 @@ testTablesTranslation ::
     TranslateLedgerState
     srcBlk
     dstBlk ->
-  (LedgerState srcBlk EmptyMK -> LedgerState dstBlk DiffMK -> Bool) ->
+  (LedgerState srcBlk NoTables -> LedgerState dstBlk Diffs -> Bool) ->
   -- | Coverage testing function
-  (LedgerState srcBlk EmptyMK -> Property -> Property) ->
+  (LedgerState srcBlk NoTables -> Property -> Property) ->
   TestTree
 testTablesTranslation propLabel translateWithConfig translationShouldSatisfy ledgerStateShouldCover =
   testProperty propLabel withTestSetup
@@ -264,8 +264,8 @@ testTablesTranslation propLabel translateWithConfig translationShouldSatisfy led
 -------------------------------------------------------------------------------}
 
 byronUtxosAreInsertsInShelleyUtxoDiff ::
-  LedgerState ByronBlock EmptyMK ->
-  LedgerState (ShelleyBlock Proto ShelleyEra) DiffMK ->
+  LedgerState ByronBlock NoTables ->
+  LedgerState (ShelleyBlock Proto ShelleyEra) Diffs ->
   Bool
 byronUtxosAreInsertsInShelleyUtxoDiff srcLedgerState destLedgerState =
   toNextUtxoDiff srcLedgerState == extractUtxoDiff destLedgerState
@@ -290,35 +290,35 @@ byronUtxosAreInsertsInShelleyUtxoDiff srcLedgerState destLedgerState =
       BigEndianTxIn $ TxIn shelleyTxId' (TxIx txIx)
 
 shelleyAvvmAddressesAreDeletesInUtxoDiff ::
-  LedgerState (ShelleyBlock Proto ShelleyEra) EmptyMK ->
-  LedgerState (ShelleyBlock Proto AllegraEra) DiffMK ->
+  LedgerState (ShelleyBlock Proto ShelleyEra) NoTables ->
+  LedgerState (ShelleyBlock Proto AllegraEra) Diffs ->
   Bool
 shelleyAvvmAddressesAreDeletesInUtxoDiff srcLedgerState destLedgerState =
   toNextUtxoDiff srcLedgerState == extractUtxoDiff destLedgerState
  where
   toNextUtxoDiff ::
-    LedgerState (ShelleyBlock Proto ShelleyEra) EmptyMK ->
+    LedgerState (ShelleyBlock Proto ShelleyEra) NoTables ->
     Diff.Diff BigEndianTxIn (Core.TxOut AllegraEra)
   toNextUtxoDiff = avvmAddressesToUtxoDiff . stashedAVVMAddresses . shelleyLedgerState
   avvmAddressesToUtxoDiff (UTxO m) = Diff.Diff $ coerceMapKeys $ Map.map (\_ -> Diff.Delete) m
 
 utxoTablesAreEmpty ::
-  LedgerState (ShelleyBlock srcProto srcEra) EmptyMK ->
-  LedgerState (ShelleyBlock destProto destEra) DiffMK ->
+  LedgerState (ShelleyBlock srcProto srcEra) NoTables ->
+  LedgerState (ShelleyBlock destProto destEra) Diffs ->
   Bool
 utxoTablesAreEmpty _ destLedgerState = Diff.null $ extractUtxoDiff destLedgerState
 
-nonEmptyUtxosByron :: LedgerState ByronBlock EmptyMK -> Bool
+nonEmptyUtxosByron :: LedgerState ByronBlock NoTables -> Bool
 nonEmptyUtxosByron ledgerState =
   let Byron.UTxO utxo = Byron.cvsUtxo $ byronLedgerState ledgerState
    in not $ Map.null utxo
 
-nonEmptyUtxosShelley :: LedgerState (ShelleyBlock proto era) EmptyMK -> Bool
+nonEmptyUtxosShelley :: LedgerState (ShelleyBlock proto era) NoTables -> Bool
 nonEmptyUtxosShelley ledgerState =
   let UTxO m = utxosUtxo $ lsUTxOState $ esLState $ nesEs $ shelleyLedgerState ledgerState
    in not $ Map.null m
 
-nonEmptyAvvmAddresses :: LedgerState (ShelleyBlock Proto ShelleyEra) EmptyMK -> Bool
+nonEmptyAvvmAddresses :: LedgerState (ShelleyBlock Proto ShelleyEra) NoTables -> Bool
 nonEmptyAvvmAddresses ledgerState =
   let UTxO m = stashedAVVMAddresses $ shelleyLedgerState ledgerState
    in not $ Map.null m
@@ -328,10 +328,10 @@ nonEmptyAvvmAddresses ledgerState =
 -------------------------------------------------------------------------------}
 
 extractUtxoDiff ::
-  LedgerState (ShelleyBlock proto era) DiffMK ->
+  LedgerState (ShelleyBlock proto era) Diffs ->
   Diff BigEndianTxIn (Core.TxOut era)
 extractUtxoDiff shelleyLedgerState =
-  let DiffMK tables = getLedgerTables $ shelleyLedgerTables shelleyLedgerState
+  let Diffs tables = shelleyLedgerTables shelleyLedgerState
    in tables
 
 {-------------------------------------------------------------------------------
@@ -341,14 +341,14 @@ extractUtxoDiff shelleyLedgerState =
 data TestSetup src dest = TestSetup
   { tsSrcLedgerConfig :: LedgerConfig src
   , tsDestLedgerConfig :: LedgerConfig dest
-  , tsSrcLedgerState :: LedgerState src EmptyMK
+  , tsSrcLedgerState :: LedgerState src NoTables
   , tsEpochNo :: EpochNo
   }
 
 deriving instance
   ( Show (LedgerConfig src)
   , Show (LedgerConfig dest)
-  , Show (LedgerState src EmptyMK)
+  , Show (LedgerState src NoTables)
   ) =>
   Show (TestSetup src dest)
 

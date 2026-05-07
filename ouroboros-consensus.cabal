@@ -196,12 +196,7 @@ library
     Ouroboros.Consensus.Ledger.SupportsPeras
     Ouroboros.Consensus.Ledger.SupportsProtocol
     Ouroboros.Consensus.Ledger.Tables
-    Ouroboros.Consensus.Ledger.Tables.Basics
-    Ouroboros.Consensus.Ledger.Tables.Combinators
     Ouroboros.Consensus.Ledger.Tables.Diff
-    Ouroboros.Consensus.Ledger.Tables.Kinds
-    Ouroboros.Consensus.Ledger.Tables.MapKind
-    Ouroboros.Consensus.Ledger.Tables.Utils
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API
     Ouroboros.Consensus.Mempool.Capacity

@@ -47,6 +47,7 @@ import qualified Data.Text as T
 import Data.TreeDiff
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block (CodecConfig)
+import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ledger.Extended (encodeDiskExtLedgerState)
 import Ouroboros.Consensus.Ledger.Query
   ( BlockSupportsLedgerQuery
@@ -55,7 +56,6 @@ import Ouroboros.Consensus.Ledger.Query
   , blockQueryIsSupportedOnVersion
   , nodeToClientVersionToQueryVersion
   )
-import Ouroboros.Consensus.Ledger.Tables (valuesMKEncoder)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
   ( HasNetworkProtocolVersion (..)
   , SupportedNetworkProtocolVersion (..)
@@ -339,7 +339,7 @@ goldenTest_SerialiseDisk codecConfig goldenDir Examples{..} =
     goldenTests'
       "LedgerTables"
       ( zipWith
-          (\(lbl, tbs) (_, st) -> (lbl, (tbs, valuesMKEncoder st)))
+          (\(lbl, tbs) (_, st) -> (lbl, (tbs, canonicalTablesEncoder st)))
           exampleLedgerTables
           exampleLedgerState
       )

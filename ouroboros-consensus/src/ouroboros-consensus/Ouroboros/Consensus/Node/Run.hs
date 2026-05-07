@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Node.Run
   ) where
 
 import Data.Typeable (Typeable)
+import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Abstract
@@ -121,6 +122,9 @@ class
   , ShowProxy (TxId (GenTx blk))
   , (forall fp. ShowQuery (BlockQuery blk fp))
   , CanUpgradeLedgerTables LedgerState blk
+  , NoThunks (LedgerState blk NoTables)
+  , NoThunks (TxIn blk)
+  , NoThunks (TxOut blk)
   ) =>
   RunNode blk
 

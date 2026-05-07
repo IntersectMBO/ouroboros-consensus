@@ -72,7 +72,7 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs
   { mcdbTopLevelConfig :: TopLevelConfig blk
   , mcdbChunkInfo :: ImmutableDB.ChunkInfo
   -- ^ Specifies the layout of the ImmutableDB on disk.
-  , mcdbInitLedger :: ExtLedgerState blk ValuesMK
+  , mcdbInitLedger :: ExtLedgerState blk Values
   -- ^ The initial ledger state.
   , mcdbRegistry :: ResourceRegistry m
   -- ^ Keeps track of non-lexically scoped resources.

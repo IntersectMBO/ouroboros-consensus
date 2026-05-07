@@ -81,15 +81,15 @@ newtype instance LedgerState (HardForkBlock xs) mk = HardForkLedgerState
   { hardForkLedgerStatePerEra :: HardForkState (Flip LedgerState mk) xs
   }
 
-deriving stock instance
-  (ShowMK mk, CanHardFork xs) =>
-  Show (LedgerState (HardForkBlock xs) mk)
-deriving stock instance
-  (EqMK mk, CanHardFork xs) =>
-  Eq (LedgerState (HardForkBlock xs) mk)
-deriving newtype instance
-  (NoThunksMK mk, CanHardFork xs) =>
-  NoThunks (LedgerState (HardForkBlock xs) mk)
+deriving stock instance CanHardFork xs => Show (LedgerState (HardForkBlock xs) Values)
+deriving stock instance CanHardFork xs => Show (LedgerState (HardForkBlock xs) Diffs)
+deriving stock instance CanHardFork xs => Show (LedgerState (HardForkBlock xs) NoTables)
+deriving stock instance CanHardFork xs => Eq (LedgerState (HardForkBlock xs) Values)
+deriving stock instance CanHardFork xs => Eq (LedgerState (HardForkBlock xs) Diffs)
+deriving stock instance CanHardFork xs => Eq (LedgerState (HardForkBlock xs) NoTables)
+deriving newtype instance CanHardFork xs => NoThunks (LedgerState (HardForkBlock xs) Values)
+deriving newtype instance CanHardFork xs => NoThunks (LedgerState (HardForkBlock xs) Diffs)
+deriving newtype instance CanHardFork xs => NoThunks (LedgerState (HardForkBlock xs) NoTables)
 
 {-------------------------------------------------------------------------------
   Protocol config

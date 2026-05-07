@@ -14,7 +14,6 @@ module Ouroboros.Consensus.ByronSpec.Ledger.Ledger
 
     -- * Type family instances
   , LedgerState (..)
-  , LedgerTables (..)
   , Ticked (..)
   ) where
 
@@ -36,7 +35,6 @@ import Ouroboros.Consensus.ByronSpec.Ledger.Orphans ()
 import qualified Ouroboros.Consensus.ByronSpec.Ledger.Rules as Rules
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -128,21 +126,21 @@ instance IsLedger LedgerState ByronSpecBlock where
 type instance TxIn ByronSpecBlock = Void
 type instance TxOut ByronSpecBlock = Void
 
-instance LedgerTablesAreTrivial LedgerState ByronSpecBlock where
-  convertMapKind (ByronSpecLedgerState x y) = ByronSpecLedgerState x y
-instance LedgerTablesAreTrivial (Ticked LedgerState) ByronSpecBlock where
-  convertMapKind (TickedByronSpecLedgerState x y) =
+instance TrivialTables LedgerState ByronSpecBlock where
+  convertTrivialTables (ByronSpecLedgerState x y) = ByronSpecLedgerState x y
+instance TrivialTables (Ticked LedgerState) ByronSpecBlock where
+  convertTrivialTables (TickedByronSpecLedgerState x y) =
     TickedByronSpecLedgerState x y
 deriving via
   Void
   instance
     IndexedMemPack LedgerState ByronSpecBlock Void
 instance HasLedgerTables LedgerState ByronSpecBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
+  projectLedgerTables _ = emptyTable
+  withLedgerTables st _ = convertTrivialTables st
 instance HasLedgerTables (Ticked LedgerState) ByronSpecBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
+  projectLedgerTables _ = emptyTable
+  withLedgerTables st _ = convertTrivialTables st
 
 {-------------------------------------------------------------------------------
   Applying blocks
@@ -166,7 +164,7 @@ instance ApplyBlock LedgerState ByronSpecBlock where
     defaultReapplyBlockLedgerResult (error . ("reapplyBlockLedgerResult: unexpected error " ++) . show)
 
 instance GetBlockKeySets ByronSpecBlock where
-  getBlockKeySets _ = emptyLedgerTables
+  getBlockKeySets _ = emptyTable
 
 {-------------------------------------------------------------------------------
   CommonProtocolParams

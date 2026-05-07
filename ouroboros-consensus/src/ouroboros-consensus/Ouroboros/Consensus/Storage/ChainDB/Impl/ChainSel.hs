@@ -967,7 +967,7 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
   mkSelectionChangedInfo ::
     AnchoredFragment (Header blk) -> -- old selection
     ChainDiff (Header blk) -> -- diff we are adopting
-    ExtLedgerState blk EmptyMK -> -- new tip
+    ExtLedgerState blk NoTables -> -- new tip
     SelectionChangedInfo blk
   mkSelectionChangedInfo oldChain diff newTip =
     SelectionChangedInfo
@@ -988,7 +988,7 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
     oldSuffix = AF.anchorNewest (getRollback diff) oldChain
     newSuffix = getSuffix diff
 
-    ledger :: LedgerState blk EmptyMK
+    ledger :: LedgerState blk NoTables
     ledger = ledgerState newTip
 
     summary :: History.Summary (HardForkIndices blk)

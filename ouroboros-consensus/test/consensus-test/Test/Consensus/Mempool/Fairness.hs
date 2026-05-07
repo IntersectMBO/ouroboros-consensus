@@ -26,9 +26,9 @@ import Data.List.NonEmpty hiding (length)
 import Data.Void (Void, vacuous)
 import Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Mempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
@@ -105,8 +105,8 @@ testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOf
                     Right $
                       ReadOnlyForker
                         { roforkerClose = pure ()
-                        , roforkerReadTables = const $ pure emptyLedgerTables
-                        , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
+                        , roforkerReadTables = const $ pure emptyTable
+                        , roforkerRangeReadTables = const $ pure (emptyTable, Nothing)
                         , roforkerGetLedgerState = pure $ testInitLedgerWithState NoPayLoadDependentState
                         , roforkerReadStatistics = pure $ Statistics 0
                         }

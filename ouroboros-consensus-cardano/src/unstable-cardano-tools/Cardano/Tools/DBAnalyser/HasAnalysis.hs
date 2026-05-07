@@ -23,9 +23,9 @@ import TextBuilder (TextBuilder)
 
 data WithLedgerState blk = WithLedgerState
   { wlsBlk :: blk
-  , wlsStateBefore :: LedgerState blk ValuesMK
+  , wlsStateBefore :: LedgerState blk Values
   -- ^ This ledger state contains only the values to be consumed by the block
-  , wlsStateAfter :: LedgerState blk ValuesMK
+  , wlsStateAfter :: LedgerState blk Values
   -- ^ This ledger state contains only the values produced by the block
   }
 

@@ -326,5 +326,5 @@ instance BlockSupportsHFLedgerQuery '[ByronBlock] where
 instance SerializeTablesWithHint LedgerState (HardForkBlock '[ByronBlock]) where
   decodeTablesWithHint _ = do
     _ <- CBOR.decodeMapLen
-    pure (LedgerTables $ ValuesMK Map.empty)
+    pure emptyTable
   encodeTablesWithHint _ _ = CBOR.encodeMapLen 0

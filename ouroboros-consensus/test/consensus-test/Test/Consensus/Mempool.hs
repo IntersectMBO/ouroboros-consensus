@@ -49,7 +49,6 @@ import qualified Data.Set as Set
 import Data.Word
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.API (ExnMempoolTimeout (..))
 import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (..))
@@ -320,7 +319,7 @@ prop_Mempool_TraceRemovedTxs setup =
   isRemoveTxsEvent (TraceMempoolRemoveTxs txs _) = Just (map (first txForgetValidated) txs)
   isRemoveTxsEvent _ = Nothing
 
-  expectedToBeRemoved :: LedgerState TestBlock ValuesMK -> [TestTx] -> [(TestTx, TestTxError)]
+  expectedToBeRemoved :: LedgerState TestBlock Values -> [TestTx] -> [(TestTx, TestTxError)]
   expectedToBeRemoved ledgerState txsInMempool =
     [ (tx, err)
     | (tx, Left err) <- fst $ validateTxs cfg ledgerState txsInMempool
@@ -337,7 +336,7 @@ prjTx (a, _b, _c) = a
 
 data TestSetup = TestSetup
   { testLedgerCfg :: LedgerConfig TestBlock
-  , testLedgerState :: LedgerState TestBlock ValuesMK
+  , testLedgerState :: LedgerState TestBlock Values
   -- ^ The ledger state resulting from the last of 'testInitialTxs'.
   , testInitialTxs :: [TestTx]
   -- ^ These are all valid and will be the initial contents of the Mempool.
@@ -373,7 +372,7 @@ ppTestTxWithHash x =
 -- The generated 'testMempoolCap' will be:
 -- > foldMap 'genTxSize' 'testInitialTxs' + extraCapacity
 genTestSetupWithExtraCapacity ::
-  Int -> ByteSize32 -> Gen (TestSetup, LedgerState TestBlock ValuesMK)
+  Int -> ByteSize32 -> Gen (TestSetup, LedgerState TestBlock Values)
 genTestSetupWithExtraCapacity maxInitialTxs extraCapacity = do
   ledgerSize <- choose (0, maxInitialTxs)
   nbInitialTxs <- choose (0, maxInitialTxs)
@@ -393,7 +392,7 @@ genTestSetupWithExtraCapacity maxInitialTxs extraCapacity = do
 -- | Generate a 'TestSetup' and return the ledger obtained by applying all of
 -- the initial transactions. Generates setups with a fixed
 -- 'MempoolCapacityBytesOverride', no 'NoMempoolCapacityBytesOverride'.
-genTestSetup :: Int -> Gen (TestSetup, LedgerState TestBlock ValuesMK)
+genTestSetup :: Int -> Gen (TestSetup, LedgerState TestBlock Values)
 genTestSetup maxInitialTxs =
   genTestSetupWithExtraCapacity maxInitialTxs (ByteSize32 0)
 
@@ -455,17 +454,17 @@ instance Arbitrary TestSetup where
 
 txsAreValid ::
   LedgerConfig TestBlock ->
-  LedgerState TestBlock ValuesMK ->
+  LedgerState TestBlock Values ->
   [TestTx] ->
-  Either TestTxError (LedgerState TestBlock ValuesMK)
+  Either TestTxError (LedgerState TestBlock Values)
 txsAreValid cfg ledgerState txs =
   runExcept $ repeatedlyM (flip (applyTxToLedger cfg)) txs ledgerState
 
 validateTxs ::
   LedgerConfig TestBlock ->
-  LedgerState TestBlock ValuesMK ->
+  LedgerState TestBlock Values ->
   [TestTx] ->
-  ([(TestTx, Either TestTxError ())], LedgerState TestBlock ValuesMK)
+  ([(TestTx, Either TestTxError ())], LedgerState TestBlock Values)
 validateTxs cfg = go []
  where
   go revalidated ledgerState = \case
@@ -583,7 +582,7 @@ instance Arbitrary TestSetupWithTxs where
 revalidate ::
   TestSetup ->
   [TestTx] ->
-  ([(TestTx, Either TestTxError ())], LedgerState TestBlock ValuesMK)
+  ([(TestTx, Either TestTxError ())], LedgerState TestBlock Values)
 revalidate TestSetup{testLedgerCfg, testLedgerState, testInitialTxs} =
   validateTxs testLedgerCfg initLedgerState
  where
@@ -684,7 +683,7 @@ data TestMempool m = TestMempool
   -- ^ This function can be used to add transactions to the ledger/chain.
   --
   -- Remember to synchronise the mempool afterwards.
-  , getCurrentLedger :: STM m (LedgerState TestBlock ValuesMK)
+  , getCurrentLedger :: STM m (LedgerState TestBlock Values)
   -- ^ Return the current ledger.
   }
 
@@ -743,8 +742,8 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
                           ReadOnlyForker
                             { roforkerClose = pure ()
                             , roforkerReadTables =
-                                pure . ltliftA2 restrictValuesMK (projectLedgerTables st)
-                            , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
+                                pure . restrictValues (projectLedgerTables st)
+                            , roforkerRangeReadTables = const $ pure (emptyTable, Nothing)
                             , roforkerGetLedgerState = pure $ forgetLedgerTables st
                             , roforkerReadStatistics = pure $ Statistics 0
                             }
@@ -797,7 +796,7 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
   addTxToLedger ::
     forall m.
     IOLike m =>
-    StrictTVar m (LedgerState TestBlock ValuesMK) ->
+    StrictTVar m (LedgerState TestBlock Values) ->
     TestTx ->
     STM m (Either TestTxError ())
   addTxToLedger varCurrentLedgerState tx = do
@@ -811,7 +810,7 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
   addTxsToLedger ::
     forall m.
     IOLike m =>
-    StrictTVar m (LedgerState TestBlock ValuesMK) ->
+    StrictTVar m (LedgerState TestBlock Values) ->
     [TestTx] ->
     STM m [(Either TestTxError ())]
   addTxsToLedger varCurrentLedgerState txs =
@@ -820,7 +819,7 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
   -- \| Check whether the transactions in the 'MempoolSnapshot' are valid
   -- w.r.t. the current ledger state.
   checkMempoolValidity ::
-    LedgerState TestBlock ValuesMK ->
+    LedgerState TestBlock Values ->
     MempoolSnapshot TestBlock ->
     Property
   checkMempoolValidity
@@ -1218,7 +1217,7 @@ genActions genNbToAdd = go testInitLedger mempty mempty
   cfg = testLedgerConfigNoSizeLimits
 
   go ::
-    LedgerState TestBlock ValuesMK ->
+    LedgerState TestBlock Values ->
     -- \^ Current ledger state with the contents of the Mempool applied
     [TestTx] ->
     -- \^ Transactions currently in the Mempool

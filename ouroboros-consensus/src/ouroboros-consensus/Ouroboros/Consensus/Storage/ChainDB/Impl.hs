@@ -107,6 +107,7 @@ withDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
+  , LedgerDB.BlockSupportsLedgerDB blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
@@ -123,6 +124,7 @@ openDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
+  , LedgerDB.BlockSupportsLedgerDB blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
@@ -138,6 +140,7 @@ openDBInternal ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
+  , LedgerDB.BlockSupportsLedgerDB blk
   , HasCallStack
   ) =>
   Complete Args.ChainDbArgs m blk ->

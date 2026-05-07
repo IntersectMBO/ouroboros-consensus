@@ -38,11 +38,10 @@ import qualified Data.Set as Set
 import Lens.Micro
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Common
@@ -94,12 +93,11 @@ mkLedgerTables ::
   forall proto era.
   ShelleyCompatible proto era =>
   LC.Tx LC.TopTx era ->
-  LedgerTables (ShelleyBlock proto era) ValuesMK
+  Values (ShelleyBlock proto era)
 mkLedgerTables tx =
-  LedgerTables $
-    ValuesMK $
-      Map.fromList $
-        zip exampleTxIns exampleTxOuts
+  Values $
+    Map.fromList $
+      zip exampleTxIns exampleTxOuts
  where
   exampleTxIns :: [BigEndianTxIn]
   exampleTxIns = case toList (tx ^. (LC.bodyTxL . LC.allInputsTxBodyF)) of
@@ -220,7 +218,7 @@ fromShelleyLedgerExamples
                 }
         , shelleyLedgerState = leNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
-        , shelleyLedgerTables = LedgerTables EmptyMK
+        , shelleyLedgerTables = NoTables
         , shelleyLedgerLatestPerasCertRound = SNothing
         }
     chainDepState = TPraosState (NotOrigin 1) pleChainDepState
@@ -357,7 +355,7 @@ fromShelleyLedgerExamplesPraos
                 }
         , shelleyLedgerState = leNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
-        , shelleyLedgerTables = emptyLedgerTables
+        , shelleyLedgerTables = emptyTable
         , shelleyLedgerLatestPerasCertRound = SNothing
         }
     chainDepState =

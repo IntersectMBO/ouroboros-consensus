@@ -41,6 +41,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Protocol
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util
 
 -- | If we cannot forge, it's because the current era could not forge
 type HardForkCannotForge xs = OneEraCannotForge xs
@@ -312,7 +313,7 @@ hardForkForgeBlock ::
   TopLevelConfig (HardForkBlock xs) ->
   BlockNo ->
   SlotNo ->
-  TickedLedgerState (HardForkBlock xs) EmptyMK ->
+  TickedLedgerState (HardForkBlock xs) NoTables ->
   [Validated (GenTx (HardForkBlock xs))] ->
   HardForkIsLeader xs ->
   m (HardForkBlock xs)
@@ -381,7 +382,7 @@ hardForkForgeBlock
       Product
         ( Product
             WrapIsLeader
-            (FlipTickedLedgerState EmptyMK)
+            (FlipTickedLedgerState NoTables)
         )
         ([] :.: WrapValidatedGenTx)
         blk ->

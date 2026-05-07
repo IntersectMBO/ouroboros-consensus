@@ -2,7 +2,10 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -25,6 +28,7 @@ module Ouroboros.Consensus.Util
   , SomePair (..)
   , SomeSecond (..)
   , mustBeRight
+  , K2 (..)
 
     -- * Folding variations
   , foldlM'
@@ -111,6 +115,7 @@ import Cardano.Crypto.Hash
 import Control.Monad (unless)
 import Control.Monad.Class.MonadThrow
 import Control.Monad.Trans.Class
+import Data.Bifunctor
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
 import Data.ByteString.Short (ShortByteString)
@@ -161,6 +166,16 @@ data SomeSecond f a where
 mustBeRight :: Either Void a -> a
 mustBeRight (Left v) = absurd v
 mustBeRight (Right a) = a
+
+-- | The constant type bifunctor.
+type K2 :: Type -> k1 -> k2 -> Type
+newtype K2 a b c = K2 {unK2 :: a}
+  deriving stock (Show, Eq)
+  deriving stock (Functor, Foldable, Traversable)
+  deriving newtype (Monoid, Semigroup)
+
+instance Bifunctor (K2 a) where
+  bimap _ _ (K2 x) = K2 x
 
 {-------------------------------------------------------------------------------
   Folding variations

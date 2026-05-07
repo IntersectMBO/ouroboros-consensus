@@ -57,32 +57,36 @@ tests =
 class
   ( HasLedgerTables LedgerState blk
   , CanStowLedgerTables (LedgerState blk)
-  , (Show `And` Arbitrary) (LedgerState blk EmptyMK)
-  , (Show `And` Arbitrary) (LedgerState blk ValuesMK)
-  , (Show `And` Arbitrary) (LedgerTables blk ValuesMK)
+  , (Show `And` Arbitrary) (LedgerState blk NoTables)
+  , (Show `And` Arbitrary) (LedgerState blk Values)
+  , (Show `And` Arbitrary) (Values blk)
   , L.Era (ShelleyBlockLedgerEra blk)
   , Show (TxIn blk)
   , Show (TxOut blk)
+  , Eq (TxIn blk)
+  , Eq (TxOut blk)
   ) =>
   TestLedgerTables blk
 
 instance
   ( HasLedgerTables LedgerState blk
   , CanStowLedgerTables (LedgerState blk)
-  , (Show `And` Arbitrary) (LedgerState blk EmptyMK)
-  , (Show `And` Arbitrary) (LedgerState blk ValuesMK)
-  , (Show `And` Arbitrary) (LedgerTables blk ValuesMK)
+  , (Show `And` Arbitrary) (LedgerState blk NoTables)
+  , (Show `And` Arbitrary) (LedgerState blk Values)
+  , (Show `And` Arbitrary) (Values blk)
   , L.Era (ShelleyBlockLedgerEra blk)
   , Show (TxIn blk)
   , Show (TxOut blk)
+  , Eq (TxIn blk)
+  , Eq (TxOut blk)
   ) =>
   TestLedgerTables blk
 
 instance
   ( CanMock proto era
-  , Arbitrary (LedgerState (ShelleyBlock proto era) EmptyMK)
+  , Arbitrary (LedgerState (ShelleyBlock proto era) NoTables)
   ) =>
-  Arbitrary (LedgerTables (ShelleyBlock proto era) ValuesMK)
+  Arbitrary (Values (ShelleyBlock proto era))
   where
   arbitrary = projectLedgerTables @LedgerState . unstowLedgerTables <$> arbitrary
 

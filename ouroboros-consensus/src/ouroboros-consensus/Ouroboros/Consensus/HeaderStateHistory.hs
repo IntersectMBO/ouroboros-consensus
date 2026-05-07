@@ -51,7 +51,7 @@ import Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import qualified Ouroboros.Consensus.HeaderValidation as HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
+
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Util.CallStack (HasCallStack)
 import Ouroboros.Network.AnchoredSeq (Anchorable, AnchoredSeq (..))
@@ -262,7 +262,7 @@ fromChain ::
   ) =>
   TopLevelConfig blk ->
   -- | Initial ledger state
-  ExtLedgerState blk ValuesMK ->
+  ExtLedgerState blk Values ->
   Chain blk ->
   HeaderStateHistory blk
 fromChain cfg initState chain =

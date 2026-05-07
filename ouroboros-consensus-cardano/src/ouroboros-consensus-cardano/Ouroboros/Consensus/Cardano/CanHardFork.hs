@@ -78,7 +78,6 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract hiding
   ( translateChainDepState
   )
@@ -96,6 +95,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (coerceMapKeys, eitherToMaybe)
+import Unsafe.Coerce
 
 {-------------------------------------------------------------------------------
   CanHardFork
@@ -308,7 +308,7 @@ translateLedgerStateByronToShelleyWrapper =
                       (byronLedgerState ledgerByron)
                 , shelleyLedgerTransition =
                     ShelleyTransitionInfo{shelleyAfterVoting = 0}
-                , shelleyLedgerTables = emptyLedgerTables
+                , shelleyLedgerTables = emptyTable
                 , shelleyLedgerLatestPerasCertRound = SNothing
                 }
         }
@@ -459,8 +459,7 @@ translateLedgerStateShelleyToAllegraWrapper =
               -- revisited, as there might be other diffs produced in the
               -- translation.
               avvmsAsDeletions =
-                LedgerTables
-                  . DiffMK
+                Diffs
                   . Diff.fromMapDeletes
                   . coerceMapKeys
                   . Map.map SL.upgradeTxOut
@@ -473,8 +472,7 @@ translateLedgerStateShelleyToAllegraWrapper =
               stowedState =
                 stowLedgerTables
                   . withLedgerTables ls
-                  . LedgerTables
-                  . ValuesMK
+                  . Values
                   . coerceMapKeys
                   $ avvms
 
@@ -528,7 +526,7 @@ translateLedgerStateAllegraToMaryWrapper =
   ignoringBoth $
     TranslateLedgerState
       { translateLedgerStateWith = \_epochNo ->
-          noNewTickingDiffs
+          (`withLedgerTables` emptyTable)
             . unFlip
             . unComp
             . SL.translateEra' SL.NoGenesis
@@ -576,7 +574,7 @@ translateLedgerStateMaryToAlonzoWrapper =
   RequireBoth $ \_cfgMary cfgAlonzo ->
     TranslateLedgerState
       { translateLedgerStateWith = \_epochNo ->
-          noNewTickingDiffs
+          (`withLedgerTables` emptyTable)
             . unFlip
             . unComp
             . SL.translateEra' (getAlonzoTranslationContext cfgAlonzo)
@@ -633,7 +631,7 @@ translateLedgerStateAlonzoToBabbageWrapper =
   RequireBoth $ \_cfgAlonzo _cfgBabbage ->
     TranslateLedgerState
       { translateLedgerStateWith = \_epochNo ->
-          noNewTickingDiffs
+          (`withLedgerTables` emptyTable)
             . unFlip
             . unComp
             . SL.translateEra' SL.NoGenesis
@@ -650,7 +648,7 @@ translateLedgerStateAlonzoToBabbageWrapper =
       { shelleyLedgerTip = fmap castShelleyTip wo
       , shelleyLedgerState = nes
       , shelleyLedgerTransition = st
-      , shelleyLedgerTables = coerce tb
+      , shelleyLedgerTables = unsafeCoerce tb
       , shelleyLedgerLatestPerasCertRound = lcr
       }
 
@@ -715,7 +713,7 @@ translateLedgerStateBabbageToConwayWrapper =
   RequireBoth $ \_cfgBabbage cfgConway ->
     TranslateLedgerState
       { translateLedgerStateWith = \_epochNo ->
-          noNewTickingDiffs
+          (`withLedgerTables` emptyTable)
             . unFlip
             . unComp
             . SL.translateEra' (getConwayTranslationContext cfgConway)
@@ -772,7 +770,7 @@ translateLedgerStateConwayToDijkstraWrapper =
   RequireBoth $ \_cfgConway cfgDijkstra ->
     TranslateLedgerState
       { translateLedgerStateWith = \_epochNo ->
-          noNewTickingDiffs
+          (`withLedgerTables` emptyTable)
             . unFlip
             . unComp
             . SL.translateEra' (getDijkstraTranslationContext cfgDijkstra)

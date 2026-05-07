@@ -33,7 +33,6 @@ import Ouroboros.Consensus.Block.SupportsDiffusionPipelining
   )
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
 import Ouroboros.Consensus.HardFork.Abstract
-import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -44,8 +43,6 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.API
-  ( CanUpgradeLedgerTables
-  )
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IOLike (Exception, fromException)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -165,7 +162,7 @@ runGenesisTest ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables LedgerState blk
+  , BlockSupportsLedgerDB blk
   , HasPointScheduleTestParams blk
   , Eq (Header blk)
   , Eq blk
@@ -227,7 +224,7 @@ runConformanceTest ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables LedgerState blk
+  , BlockSupportsLedgerDB blk
   , HasPointScheduleTestParams blk
   , Eq (Header blk)
   , Eq blk

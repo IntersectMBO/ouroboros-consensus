@@ -12,14 +12,11 @@ import Test.QuickCheck
 -- | We compare the Ledger Tables of the result because the comparison with the
 -- rest of the LedgerState takes considerably more time to run.
 (==?) ::
-  ( CanMapMK mk
-  , CanMapKeysMK mk
-  , ZeroableMK mk
-  , EqMK mk
-  , ShowMK mk
-  , HasLedgerTables LedgerState blk
-  , Show (TxIn blk)
-  , Show (TxOut blk)
+  ( HasLedgerTables LedgerState blk
+  , Eq (mk blk)
+  , BimapTables mk
+  , Show (mk blk)
+  , EmptyTable mk
   ) =>
   LedgerState blk mk ->
   LedgerState blk mk ->
@@ -38,9 +35,11 @@ prop_stowable_laws ::
   , CanStowLedgerTables (LedgerState blk)
   , Show (TxIn blk)
   , Show (TxOut blk)
+  , Eq (TxIn blk)
+  , Eq (TxOut blk)
   ) =>
-  LedgerState blk EmptyMK ->
-  LedgerState blk ValuesMK ->
+  LedgerState blk NoTables ->
+  LedgerState blk Values ->
   Property
 prop_stowable_laws = \ls ls' ->
   stowLedgerTables (unstowLedgerTables ls) ==? ls
@@ -55,9 +54,11 @@ prop_hasledgertables_laws ::
   ( HasLedgerTables LedgerState blk
   , Show (TxIn blk)
   , Show (TxOut blk)
+  , Eq (TxIn blk)
+  , Eq (TxOut blk)
   ) =>
-  LedgerState blk EmptyMK ->
-  LedgerTables blk ValuesMK ->
+  LedgerState blk NoTables ->
+  Values blk ->
   Property
 prop_hasledgertables_laws = \ls tbs ->
   (ls `withLedgerTables` (projectLedgerTables ls)) ==? ls

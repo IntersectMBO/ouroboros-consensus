@@ -18,7 +18,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras (ShelleyEra)
 import Ouroboros.Consensus.Shelley.HFEras ()
@@ -77,7 +76,7 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
       -- \^ Accumulator
       Integer ->
       -- \^ Number of txs to still produce
-      TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ValuesMK ->
+      TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) Values ->
       Gen [GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)]
     go acc 0 _ = return (reverse acc)
     go acc n st = do
@@ -92,7 +91,7 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
 genTx ::
   TopLevelConfig (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
   SlotNo ->
-  TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ValuesMK ->
+  TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) Values ->
   Gen.GenEnv MockCrypto ShelleyEra ->
   Gen (Maybe (GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)))
 genTx _cfg slotNo TickedShelleyLedgerState{tickedShelleyLedgerState} genEnv =

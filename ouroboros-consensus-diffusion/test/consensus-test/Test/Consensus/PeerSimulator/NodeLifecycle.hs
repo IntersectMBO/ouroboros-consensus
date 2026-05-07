@@ -24,14 +24,13 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
-import Ouroboros.Consensus.Ledger.Basics (LedgerState)
+import Ouroboros.Consensus.Ledger.Tables (Values)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
-import Ouroboros.Consensus.Ledger.Tables.MapKind (ValuesMK)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandleCollection (..)
   )
@@ -46,8 +45,6 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( ChunkInfo
   )
 import Ouroboros.Consensus.Storage.LedgerDB.API
-  ( CanUpgradeLedgerTables
-  )
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -99,7 +96,7 @@ data LiveResources blk m = LiveResources
   , lrSTracer :: ChainDB m blk -> m (Tracer m ())
   , lrConfig :: TopLevelConfig blk
   , lrChunkInfo :: ChunkInfo
-  , lrInitLedger :: ExtLedgerState blk ValuesMK
+  , lrInitLedger :: ExtLedgerState blk Values
   , lrCdb :: NodeDBs (StrictTMVar m MockFS)
   -- ^ The chain DB state consists of several transient parts and the
   -- immutable DB's virtual file system.
@@ -140,7 +137,7 @@ mkChainDb ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables LedgerState blk
+  , BlockSupportsLedgerDB blk
   ) =>
   LiveResources blk m ->
   m (ChainDB m blk, m (WithOrigin SlotNo))
@@ -193,7 +190,7 @@ restoreNode ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables LedgerState blk
+  , BlockSupportsLedgerDB blk
   ) =>
   LiveResources blk m ->
   LiveIntervalResult blk ->
@@ -223,7 +220,7 @@ lifecycleStart ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables LedgerState blk
+  , BlockSupportsLedgerDB blk
   ) =>
   (LiveInterval blk m -> m ()) ->
   LiveResources blk m ->

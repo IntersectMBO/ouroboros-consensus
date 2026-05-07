@@ -221,26 +221,26 @@ instance Arbitrary ShelleyTransition where
 
 instance
   (Arbitrary (InstantStake era), CanMock proto era) =>
-  Arbitrary (LedgerState (ShelleyBlock proto era) EmptyMK)
+  Arbitrary (LedgerState (ShelleyBlock proto era) NoTables)
   where
   arbitrary =
     ShelleyLedgerState
       <$> arbitrary
       <*> arbitrary
       <*> arbitrary
-      <*> pure (LedgerTables EmptyMK)
+      <*> pure NoTables
       <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]
 
 instance
   (Arbitrary (InstantStake era), CanMock proto era) =>
-  Arbitrary (LedgerState (ShelleyBlock proto era) ValuesMK)
+  Arbitrary (LedgerState (ShelleyBlock proto era) Values)
   where
   arbitrary =
     ShelleyLedgerState
       <$> arbitrary
       <*> arbitrary
       <*> arbitrary
-      <*> (LedgerTables . ValuesMK <$> arbitrary)
+      <*> (Values <$> arbitrary)
       <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]
 
 deriving newtype instance Arbitrary BigEndianTxIn

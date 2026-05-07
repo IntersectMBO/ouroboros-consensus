@@ -39,7 +39,6 @@ module Ouroboros.Consensus.Byron.Ledger.Ledger
     -- * Type family instances
   , BlockQuery (..)
   , LedgerState (..)
-  , LedgerTables (..)
   , Ticked (..)
 
     -- * Auxiliary
@@ -89,8 +88,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Util (ShowProxy (..))
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
@@ -199,23 +197,23 @@ instance IsLedger LedgerState ByronBlock where
 type instance TxIn ByronBlock = Void
 type instance TxOut ByronBlock = Void
 
-instance LedgerTablesAreTrivial LedgerState ByronBlock where
-  convertMapKind ByronLedgerState{..} = ByronLedgerState{..}
+instance TrivialTables LedgerState ByronBlock where
+  convertTrivialTables ByronLedgerState{..} = ByronLedgerState{..}
 
-instance LedgerTablesAreTrivial (Ticked LedgerState) ByronBlock where
-  convertMapKind TickedByronLedgerState{..} = TickedByronLedgerState{..}
+instance TrivialTables (Ticked LedgerState) ByronBlock where
+  convertTrivialTables TickedByronLedgerState{..} = TickedByronLedgerState{..}
 
 instance HasLedgerTables LedgerState ByronBlock where
-  projectLedgerTables = trivialProjectLedgerTables
-  withLedgerTables = trivialWithLedgerTables
+  projectLedgerTables _ = emptyTable
+  withLedgerTables st _ = convertTrivialTables st
 
 instance HasLedgerTables (Ticked LedgerState) ByronBlock where
-  projectLedgerTables = trivialProjectLedgerTables
-  withLedgerTables = trivialWithLedgerTables
+  projectLedgerTables _ = emptyTable
+  withLedgerTables st _ = convertTrivialTables st
 
 instance CanStowLedgerTables (LedgerState ByronBlock) where
-  stowLedgerTables = trivialStowLedgerTables
-  unstowLedgerTables = trivialUnstowLedgerTables
+  stowLedgerTables = convertTrivialTables
+  unstowLedgerTables = convertTrivialTables
 
 instance SerializeTablesWithHint LedgerState ByronBlock where
   encodeTablesWithHint = trivialEncodeTablesWithHint
@@ -234,7 +232,7 @@ instance ApplyBlock LedgerState ByronBlock where
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult validationErrorImpossible
 
 instance GetBlockKeySets ByronBlock where
-  getBlockKeySets _ = emptyLedgerTables
+  getBlockKeySets _ = emptyTable
 
 data instance BlockQuery ByronBlock fp result where
   GetUpdateInterfaceState :: BlockQuery ByronBlock QFNoTables UPI.State

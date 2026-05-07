@@ -23,6 +23,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Storage.ChainDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util
 
 instance SerialiseHFC xs => SerialiseDiskConstraints (HardForkBlock xs)
 
@@ -140,7 +141,7 @@ instance
 
 instance
   SerialiseHFC xs =>
-  EncodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs) EmptyMK)
+  EncodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs) NoTables)
   where
   encodeDisk cfg =
     encodeTelescope (hcmap pSHFC (\cfg' -> fn (K . encodeDisk cfg' . unFlip)) cfgs)
@@ -150,7 +151,7 @@ instance
 
 instance
   SerialiseHFC xs =>
-  DecodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs) EmptyMK)
+  DecodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs) NoTables)
   where
   decodeDisk cfg =
     fmap HardForkLedgerState $

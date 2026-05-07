@@ -1162,9 +1162,7 @@ answerShelleyLookupQueries ::
   , ShelleyCompatible proto era
   ) =>
   -- | Inject ledger tables
-  ( LedgerTables (ShelleyBlock proto era) KeysMK ->
-    LedgerTables blk KeysMK
-  ) ->
+  (Keys (ShelleyBlock proto era) -> Keys blk) ->
   -- | Eject TxOut
   (TxOut blk -> LC.TxOut era) ->
   -- | Eject TxIn
@@ -1189,10 +1187,10 @@ answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
     Set.Set SL.TxIn ->
     m (SL.UTxO era)
   answerGetUtxOByTxIn txins = do
-    LedgerTables (ValuesMK values) <-
+    Values values <-
       LedgerDB.roforkerReadTables
         forker
-        (injTables (LedgerTables $ KeysMK $ coerceSet txins))
+        (injTables (Keys $ coerceSet txins))
     pure $
       SL.UTxO $
         Map.mapKeys ejTxIn $
@@ -1269,9 +1267,9 @@ answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
 
   partial ::
     (TxOut blk -> Bool) ->
-    LedgerTables blk ValuesMK ->
+    Values blk ->
     Map SL.TxIn (LC.TxOut era)
-  partial queryPredicate (LedgerTables (ValuesMK vs)) =
+  partial queryPredicate (Values vs) =
     Map.mapKeys ejTxIn $
       Map.mapMaybeWithKey
         ( \_k v ->

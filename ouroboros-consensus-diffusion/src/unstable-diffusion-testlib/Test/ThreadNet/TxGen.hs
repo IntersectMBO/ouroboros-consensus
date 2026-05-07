@@ -50,7 +50,7 @@ class TxGen blk where
     SlotNo ->
     TopLevelConfig blk ->
     TxGenExtra blk ->
-    LedgerState blk ValuesMK ->
+    LedgerState blk Values ->
     Gen [GenTx blk]
 
 {-------------------------------------------------------------------------------
@@ -80,7 +80,7 @@ testGenTxsHfc ::
   SlotNo ->
   TopLevelConfig (HardForkBlock xs) ->
   NP WrapTxGenExtra xs ->
-  LedgerState (HardForkBlock xs) ValuesMK ->
+  LedgerState (HardForkBlock xs) Values ->
   Gen [GenTx (HardForkBlock xs)]
 testGenTxsHfc coreNodeId numCoreNodes curSlotNo cfg extras state =
   hcollapse $
@@ -103,7 +103,7 @@ testGenTxsHfc coreNodeId numCoreNodes curSlotNo cfg extras state =
     Index xs blk ->
     TopLevelConfig blk ->
     WrapTxGenExtra blk ->
-    Flip LedgerState ValuesMK blk ->
+    Flip LedgerState Values blk ->
     K (Gen [GenTx (HardForkBlock xs)]) blk
   aux index cfg' (WrapTxGenExtra extra') (Flip state') =
     K $

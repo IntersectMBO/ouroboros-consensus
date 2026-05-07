@@ -135,7 +135,7 @@ newtype CrossEraForecaster state view x y = CrossEraForecaster
   { crossEraForecastWith ::
       Bound -> -- 'Bound' of the transition (start of the new era)
       SlotNo -> -- 'SlotNo' we're constructing a forecast for
-      state x EmptyMK ->
+      state x NoTables ->
       Except OutsideForecastRange (view y)
   }
 
@@ -143,12 +143,12 @@ newtype CrossEraForecaster state view x y = CrossEraForecaster
 newtype TranslateLedgerState x y = TranslateLedgerState
   { translateLedgerStateWith ::
       EpochNo ->
-      LedgerState x EmptyMK ->
-      LedgerState y DiffMK
+      LedgerState x NoTables ->
+      LedgerState y Diffs
   -- ^ How to translate a 'LedgerState' during the era transition.
   --
   -- When translating between eras, it can be the case that values are modified,
-  -- thus requiring this to be a @DiffMK@ on the return type. If no tables are
+  -- thus requiring this to be a @Diffs@ on the return type. If no tables are
   -- populated, normally this will be filled with @emptyLedgerTables@.
   --
   -- To make a clear example, in the context of Cardano, there are currently two
@@ -205,17 +205,15 @@ newtype TranslateTxOut x y = TranslateTxOut (TxOut x -> TxOut y)
 translateLedgerTablesWith ::
   Ord (TxIn y) =>
   TranslateLedgerTables x y ->
-  LedgerTables x DiffMK ->
-  LedgerTables y DiffMK
+  Diffs x ->
+  Diffs y
 translateLedgerTablesWith f =
-  LedgerTables
-    . DiffMK
+  Diffs
     . Diff.Diff
     . Map.mapKeys (translateTxInWith f)
     . getDiff
-    . getDiffMK
-    . mapMK (translateTxOutWith f)
-    . getLedgerTables
+    . fmap (translateTxOutWith f)
+    . getDiffs
  where
   getDiff (Diff.Diff m) = m
 

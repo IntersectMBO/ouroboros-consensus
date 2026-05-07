@@ -34,7 +34,7 @@
 --  - the ledger state tables: location and format differs among backends,
 --
 --  - the rest of the ledger state: a CBOR serialization of an @ExtLedgerState
---    blk EmptyMK@, stored in the @./state@ file in the snapshot directory.
+--    blk NoTables@, stored in the @./state@ file in the snapshot directory.
 --
 -- V2 backends will provide means of loading a snapshot via the method
 -- 'openStateRefFromSnapshot'.
@@ -124,7 +124,7 @@ import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
+import Ouroboros.Consensus.Ledger.Abstract (NoTables)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Util (Flag (..), lastMaybe)
 import Ouroboros.Consensus.Util.Args (OverrideOrDefault (..), provideDefault)
@@ -367,17 +367,17 @@ readExtLedgerState ::
   forall m blk.
   IOLike m =>
   SomeHasFS m ->
-  (forall s. Decoder s (ExtLedgerState blk EmptyMK)) ->
+  (forall s. Decoder s (ExtLedgerState blk NoTables)) ->
   (forall s. Decoder s (HeaderHash blk)) ->
   FsPath ->
-  ExceptT ReadIncrementalErr m (ExtLedgerState blk EmptyMK, CRC)
+  ExceptT ReadIncrementalErr m (ExtLedgerState blk NoTables, CRC)
 readExtLedgerState hasFS decLedger decHash =
   do
     ExceptT
     . fmap (fmap (fmap runIdentity))
     . readIncremental hasFS Identity decoder
  where
-  decoder :: Decoder s (ExtLedgerState blk EmptyMK)
+  decoder :: Decoder s (ExtLedgerState blk NoTables)
   decoder = decodeLBackwardsCompatible (Proxy @blk) decLedger decHash
 
 -- | Write an extended ledger state to disk
@@ -385,15 +385,15 @@ writeExtLedgerState ::
   forall m blk.
   MonadThrow m =>
   SomeHasFS m ->
-  (ExtLedgerState blk EmptyMK -> Encoding) ->
+  (ExtLedgerState blk NoTables -> Encoding) ->
   FsPath ->
-  ExtLedgerState blk EmptyMK ->
+  ExtLedgerState blk NoTables ->
   m CRC
 writeExtLedgerState (SomeHasFS hasFS) encLedger path cs = do
   withFile hasFS path (WriteMode MustBeNew) $ \h ->
     snd <$> hPutAllCRC hasFS h (CBOR.toLazyByteString $ encoder cs)
  where
-  encoder :: ExtLedgerState blk EmptyMK -> Encoding
+  encoder :: ExtLedgerState blk NoTables -> Encoding
   encoder = encodeL encLedger
 
 -- | Trim the number of on disk snapshots so that at most 'onDiskNumSnapshots'

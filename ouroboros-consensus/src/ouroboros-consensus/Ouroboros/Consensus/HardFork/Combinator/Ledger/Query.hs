@@ -367,7 +367,7 @@ interpretQueryIfCurrent ::
   All SingleEraBlock xs =>
   NP ExtLedgerCfg xs ->
   QueryIfCurrent xs QFNoTables result ->
-  NS (Flip ExtLedgerState EmptyMK) xs ->
+  NS (Flip ExtLedgerState NoTables) xs ->
   HardForkQueryResult xs result
 interpretQueryIfCurrent = go
  where
@@ -375,7 +375,7 @@ interpretQueryIfCurrent = go
     All SingleEraBlock xs' =>
     NP ExtLedgerCfg xs' ->
     QueryIfCurrent xs' QFNoTables result ->
-    NS (Flip ExtLedgerState EmptyMK) xs' ->
+    NS (Flip ExtLedgerState NoTables) xs' ->
     HardForkQueryResult xs' result
   go (c :* _) (QZ qry) (Z (Flip st)) =
     Right $ answerPureBlockQuery c qry st
@@ -402,7 +402,7 @@ interpretQueryIfCurrentLookup cfg q forker = do
     NP (Index xs) xs' ->
     NP ExtLedgerCfg xs' ->
     QueryIfCurrent xs' QFLookupTables result ->
-    NS (Flip ExtLedgerState EmptyMK) xs' ->
+    NS (Flip ExtLedgerState NoTables) xs' ->
     m (HardForkQueryResult xs' result)
   go (idx :* _) (c :* _) (QZ qry) _ =
     Right <$> answerBlockQueryHFLookup idx c qry forker
@@ -427,7 +427,7 @@ interpretQueryIfCurrentTraverse cfg q forker = do
     NP (Index xs) xs' ->
     NP ExtLedgerCfg xs' ->
     QueryIfCurrent xs' QFTraverseTables result ->
-    NS (Flip ExtLedgerState EmptyMK) xs' ->
+    NS (Flip ExtLedgerState NoTables) xs' ->
     m (HardForkQueryResult xs' result)
   go (idx :* _) (c :* _) (QZ qry) _ =
     Right <$> answerBlockQueryHFTraverse idx c qry forker

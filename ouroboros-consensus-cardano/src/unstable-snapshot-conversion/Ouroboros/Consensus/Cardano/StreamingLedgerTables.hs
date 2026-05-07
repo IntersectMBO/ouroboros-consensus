@@ -37,13 +37,13 @@ type L = LedgerState (CardanoBlock StandardCrypto)
 mkInMemYieldArgs ::
   SomeHasFS IO ->
   DiskSnapshot ->
-  L EmptyMK ->
+  L NoTables ->
   YieldArgs IO V2.Mem LedgerState (CardanoBlock StandardCrypto)
 mkInMemYieldArgs fs ds (HardForkLedgerState (HardForkState idx)) =
   let
     np ::
       NP
-        (Current (Flip LedgerState EmptyMK) -.-> K (Decoders (CardanoBlock StandardCrypto)))
+        (Current (Flip LedgerState NoTables) -.-> K (Decoders (CardanoBlock StandardCrypto)))
         (CardanoEras StandardCrypto)
     np =
       (Fn $ K . (\_ -> Decoders (error "Byron") (error "Byron")) . unFlip . currentState)
@@ -65,7 +65,7 @@ mkInMemYieldArgs fs ds (HardForkLedgerState (HardForkState idx)) =
     forall proto era.
     ShelleyCompatible proto era =>
     (TxOut (ShelleyBlock proto era) -> CardanoTxOut StandardCrypto) ->
-    LedgerState (ShelleyBlock proto era) EmptyMK ->
+    LedgerState (ShelleyBlock proto era) NoTables ->
     Decoders (CardanoBlock StandardCrypto)
   fromEra toCardanoTxOut st =
     let certInterns =
@@ -84,7 +84,7 @@ mkInMemYieldArgs fs ds (HardForkLedgerState (HardForkState idx)) =
 mkInMemSinkArgs ::
   SomeHasFS IO ->
   DiskSnapshot ->
-  L EmptyMK ->
+  L NoTables ->
   SinkArgs IO V2.Mem LedgerState (CardanoBlock StandardCrypto)
 mkInMemSinkArgs fs ds (HardForkLedgerState (HardForkState idx)) = do
   let

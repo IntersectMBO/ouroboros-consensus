@@ -52,9 +52,9 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util
 
 {-------------------------------------------------------------------------------
   Injection for a single block into a HardForkBlock
@@ -271,10 +271,13 @@ instance Inject (Flip ExtLedgerState mk) where
 -- not rely on that class.
 injectInitialExtLedgerState ::
   forall x xs.
-  (CanHardFork (x ': xs), HasLedgerTables LedgerState (HardForkBlock (x : xs))) =>
+  ( CanHardFork (x ': xs)
+  , HasLedgerTables LedgerState (HardForkBlock (x : xs))
+  , Ord (CanonicalTxIn (x : xs))
+  ) =>
   TopLevelConfig (HardForkBlock (x ': xs)) ->
-  ExtLedgerState x ValuesMK ->
-  ExtLedgerState (HardForkBlock (x ': xs)) ValuesMK
+  ExtLedgerState x Values ->
+  ExtLedgerState (HardForkBlock (x ': xs)) Values
 injectInitialExtLedgerState cfg extLedgerState0 =
   ExtLedgerState
     { ledgerState = targetEraLedgerState
@@ -290,10 +293,10 @@ injectInitialExtLedgerState cfg extLedgerState0 =
       )
       cfg
 
-  targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs)) ValuesMK
+  targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs)) Values
   targetEraLedgerState = applyDiffs st st'
    where
-    st :: LedgerState (HardForkBlock (x ': xs)) ValuesMK
+    st :: LedgerState (HardForkBlock (x ': xs)) Values
     st = HardForkLedgerState . initHardForkState . Flip . ledgerState $ extLedgerState0
     st' =
       HardForkLedgerState

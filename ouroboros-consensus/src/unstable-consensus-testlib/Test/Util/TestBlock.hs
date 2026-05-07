@@ -28,7 +28,6 @@ module Test.Util.TestBlock
   , BlockQuery (..)
   , CodecConfig (..)
   , Header (..)
-  , LedgerTables (..)
   , StorageConfig (..)
   , TestBlockError (..)
   , TestBlockWith (tbPayload, tbSlot, tbValid)
@@ -138,7 +137,6 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
@@ -400,11 +398,8 @@ class
   ( Typeable ptype
   , Eq ptype
   , NoThunks ptype
-  , forall mk. EqMK mk => Eq (PayloadDependentState ptype mk)
-  , forall mk. NoThunksMK mk => NoThunks (PayloadDependentState ptype mk)
-  , forall mk. ShowMK mk => Show (PayloadDependentState ptype mk)
   , forall mk. Generic (PayloadDependentState ptype mk)
-  , Serialise (PayloadDependentState ptype EmptyMK)
+  , Serialise (PayloadDependentState ptype NoTables)
   , HasLedgerTables LedgerState (TestBlockWith ptype)
   , HasLedgerTables (Ticked LedgerState) (TestBlockWith ptype)
   , CanStowLedgerTables (LedgerState (TestBlockWith ptype))
@@ -416,23 +411,24 @@ class
   , NoThunks (PayloadDependentError ptype)
   , NoThunks (CodecConfig (TestBlockWith ptype))
   , NoThunks (StorageConfig (TestBlockWith ptype))
+  , Ord (TxIn (TestBlockWith ptype))
   ) =>
   PayloadSemantics ptype
   where
-  data PayloadDependentState ptype (mk :: MapKind) :: Type
+  data PayloadDependentState ptype (mk :: TableKind) :: Type
 
   type PayloadDependentError ptype :: Type
 
   applyPayload ::
-    PayloadDependentState ptype ValuesMK ->
+    PayloadDependentState ptype Values ->
     ptype ->
-    Either (PayloadDependentError ptype) (PayloadDependentState ptype DiffMK)
+    Either (PayloadDependentError ptype) (PayloadDependentState ptype Diffs)
 
   -- | This function is used to implement the 'getBlockKeySets' function of the
   -- 'ApplyBlock' class. Thus we assume that the payload contains all the
   -- information needed to determine which keys should be retrieved from the
   -- backing store to apply a 'TestBlockWith'.
-  getPayloadKeySets :: ptype -> LedgerTables (TestBlockWith ptype) KeysMK
+  getPayloadKeySets :: ptype -> Keys (TestBlockWith ptype)
 
 instance PayloadSemantics () where
   data PayloadDependentState () mk = EmptyPLDS
@@ -443,17 +439,17 @@ instance PayloadSemantics () where
 
   applyPayload _ _ = Right EmptyPLDS
 
-  getPayloadKeySets = const emptyLedgerTables
+  getPayloadKeySets = const emptyTable
 
 -- | Apply the payload directly to the payload dependent state portion of a
 -- ticked state, leaving the rest of the input ticked state unaltered.
 applyDirectlyToPayloadDependentState ::
   PayloadSemantics ptype =>
-  Ticked LedgerState (TestBlockWith ptype) ValuesMK ->
+  Ticked LedgerState (TestBlockWith ptype) Values ->
   ptype ->
   Either
     (PayloadDependentError ptype)
-    (Ticked LedgerState (TestBlockWith ptype) DiffMK)
+    (Ticked LedgerState (TestBlockWith ptype) Diffs)
 applyDirectlyToPayloadDependentState (TickedTestLedger st) tx = do
   payloadDepSt' <- applyPayload (payloadDependentState st) tx
   pure $ TickedTestLedger $ st{payloadDependentState = payloadDepSt'}
@@ -535,29 +531,29 @@ instance
 type instance TxIn TestBlock = Void
 type instance TxOut TestBlock = Void
 
-instance LedgerTablesAreTrivial LedgerState TestBlock where
-  convertMapKind (TestLedger x EmptyPLDS) = TestLedger x EmptyPLDS
-instance LedgerTablesAreTrivial (Ticked LedgerState) TestBlock where
-  convertMapKind (TickedTestLedger x) = TickedTestLedger $ convertMapKind x
+instance TrivialTables LedgerState TestBlock where
+  convertTrivialTables (TestLedger x EmptyPLDS) = TestLedger x EmptyPLDS
+instance TrivialTables (Ticked LedgerState) TestBlock where
+  convertTrivialTables (TickedTestLedger x) = TickedTestLedger $ convertTrivialTables x
 deriving via
   Void
   instance
     IndexedMemPack LedgerState TestBlock Void
 instance HasLedgerTables LedgerState TestBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
+  projectLedgerTables _ = emptyTable
+  withLedgerTables st _ = convertTrivialTables st
 instance HasLedgerTables (Ticked LedgerState) TestBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
+  projectLedgerTables _ = emptyTable
+  withLedgerTables st _ = convertTrivialTables st
 instance CanStowLedgerTables (LedgerState TestBlock) where
-  stowLedgerTables = convertMapKind
-  unstowLedgerTables = convertMapKind
+  stowLedgerTables = convertTrivialTables
+  unstowLedgerTables = convertTrivialTables
 instance CanUpgradeLedgerTables LedgerState TestBlock where
   upgradeTables _ _ = id
 instance SerializeTablesWithHint LedgerState TestBlock where
   decodeTablesWithHint _ = do
     _ <- CBOR.decodeMapLen
-    pure (LedgerTables $ ValuesMK Map.empty)
+    pure emptyTable
   encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
 
 instance
@@ -600,7 +596,7 @@ data instance LedgerState (TestBlockWith ptype) mk
   }
 
 deriving stock instance
-  (ShowMK mk, PayloadSemantics ptype) =>
+  Show (PayloadDependentState ptype mk) =>
   Show (LedgerState (TestBlockWith ptype) mk)
 
 deriving stock instance
@@ -611,7 +607,7 @@ deriving stock instance Generic (LedgerState (TestBlockWith ptype) mk)
 
 deriving anyclass instance
   PayloadSemantics ptype =>
-  Serialise (LedgerState (TestBlockWith ptype) EmptyMK)
+  Serialise (LedgerState (TestBlockWith ptype) NoTables)
 deriving anyclass instance
   NoThunks (PayloadDependentState ptype mk) =>
   NoThunks (LedgerState (TestBlockWith ptype) mk)
@@ -627,7 +623,7 @@ newtype instance Ticked LedgerState (TestBlockWith ptype) mk = TickedTestLedger
 
 deriving stock instance Generic (Ticked LedgerState (TestBlockWith ptype) mk)
 deriving anyclass instance
-  (NoThunksMK mk, NoThunks (PayloadDependentState ptype mk)) =>
+  NoThunks (PayloadDependentState ptype mk) =>
   NoThunks (Ticked LedgerState (TestBlockWith ptype) mk)
 
 testInitExtLedgerWithState ::
@@ -666,7 +662,7 @@ instance PayloadSemantics ptype => IsLedger LedgerState (TestBlockWith ptype) wh
   applyChainTickLedgerResult _ _ _ =
     pureLedgerResult
       . TickedTestLedger
-      . noNewTickingDiffs
+      . (`withLedgerTables` emptyTable)
 
 instance PayloadSemantics ptype => UpdateLedger (TestBlockWith ptype)
 
@@ -778,10 +774,10 @@ deriving instance Show (BlockQuery TestBlock fp result)
 instance ShowQuery (BlockQuery TestBlock fp) where
   showResult QueryLedgerTip = show
 
-testInitLedger :: LedgerState TestBlock ValuesMK
+testInitLedger :: LedgerState TestBlock Values
 testInitLedger = testInitLedgerWithState EmptyPLDS
 
-testInitExtLedger :: ExtLedgerState TestBlock ValuesMK
+testInitExtLedger :: ExtLedgerState TestBlock Values
 testInitExtLedger = testInitExtLedgerWithState EmptyPLDS
 
 -- | Trivial test configuration with a single core node
@@ -969,7 +965,7 @@ instance Serialise (AnnTip (TestBlockWith ptype)) where
   encode = defaultEncodeAnnTip encode
   decode = defaultDecodeAnnTip decode
 
-instance PayloadSemantics ptype => Serialise (ExtLedgerState (TestBlockWith ptype) EmptyMK) where
+instance PayloadSemantics ptype => Serialise (ExtLedgerState (TestBlockWith ptype) NoTables) where
   encode = encodeExtLedgerState encode encode encode
   decode = decodeExtLedgerState decode decode decode
 
@@ -1015,10 +1011,10 @@ instance ReconstructNestedCtxt Header (TestBlockWith ptype)
 
 instance
   PayloadSemantics ptype =>
-  EncodeDisk (TestBlockWith ptype) (LedgerState (TestBlockWith ptype) EmptyMK)
+  EncodeDisk (TestBlockWith ptype) (LedgerState (TestBlockWith ptype) NoTables)
 instance
   PayloadSemantics ptype =>
-  DecodeDisk (TestBlockWith ptype) (LedgerState (TestBlockWith ptype) EmptyMK)
+  DecodeDisk (TestBlockWith ptype) (LedgerState (TestBlockWith ptype) NoTables)
 
 instance Serialise ptype => EncodeDiskDep (NestedCtxt Header) (TestBlockWith ptype)
 instance Serialise ptype => DecodeDiskDep (NestedCtxt Header) (TestBlockWith ptype)

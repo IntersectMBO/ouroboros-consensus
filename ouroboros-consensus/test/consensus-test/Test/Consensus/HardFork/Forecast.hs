@@ -55,8 +55,7 @@ import Ouroboros.Consensus.HardFork.History
   )
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HardFork.History.Util
-import Ouroboros.Consensus.Ledger.Tables.Combinators (K2 (..))
-import Ouroboros.Consensus.Util (Some (..), repeatedly, splits)
+import Ouroboros.Consensus.Util
 import Test.Consensus.HardFork.Infra
 import Test.QuickCheck
   ( Arbitrary (..)

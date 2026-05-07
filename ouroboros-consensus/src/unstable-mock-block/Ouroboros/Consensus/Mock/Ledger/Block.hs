@@ -47,7 +47,6 @@ module Ouroboros.Consensus.Mock.Ledger.Block
 
     -- * 'UpdateLedger'
   , LedgerState (..)
-  , LedgerTables (..)
   , Ticked (..)
   , genesisSimpleLedgerState
   , updateSimpleLedgerState
@@ -101,7 +100,6 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mock.Ledger.Address
 import Ouroboros.Consensus.Mock.Ledger.State
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
@@ -409,7 +407,7 @@ instance
   applyChainTickLedgerResult _ _ _ =
     pureLedgerResult
       . TickedSimpleLedgerState
-      . flip SimpleLedgerState emptyLedgerTables
+      . flip SimpleLedgerState emptyTable
       . simpleLedgerState
 
 instance
@@ -433,30 +431,30 @@ instance
 
 instance GetBlockKeySets (SimpleBlock c ext) where
   getBlockKeySets SimpleBlock{simpleBody = SimpleBody txs} =
-    LedgerTables $ KeysMK $ Mock.txIns txs
+    Keys $ Mock.txIns txs
 
 data instance LedgerState (SimpleBlock c ext) mk = SimpleLedgerState
   { simpleLedgerState :: MockState (SimpleBlock c ext)
-  , simpleLedgerTables :: LedgerTables (SimpleBlock c ext) mk
+  , simpleLedgerTables :: mk (SimpleBlock c ext)
   }
   deriving stock Generic
 
 deriving instance
   ( SimpleCrypto c
   , Typeable ext
-  , Eq (mk Mock.TxIn Mock.TxOut)
+  , Eq (mk (SimpleBlock c ext))
   ) =>
   Eq (LedgerState (SimpleBlock c ext) mk)
 deriving instance
   ( SimpleCrypto c
   , Typeable ext
-  , NoThunks (mk Mock.TxIn Mock.TxOut)
+  , NoThunks (mk (SimpleBlock c ext))
   ) =>
   NoThunks (LedgerState (SimpleBlock c ext) mk)
 deriving instance
   ( SimpleCrypto c
   , Typeable ext
-  , Show (mk Mock.TxIn Mock.TxOut)
+  , Show (mk (SimpleBlock c ext))
   ) =>
   Show (LedgerState (SimpleBlock c ext) mk)
 
@@ -470,7 +468,7 @@ deriving anyclass instance
   ( SimpleCrypto c
   , Typeable ext
   ) =>
-  NoThunks (Ticked LedgerState (SimpleBlock c ext) DiffMK)
+  NoThunks (Ticked LedgerState (SimpleBlock c ext) Diffs)
 deriving instance
   ( SimpleCrypto c
   , Typeable ext
@@ -496,18 +494,18 @@ updateSimpleUTxO ::
   LedgerConfig (SimpleBlock c ext) ->
   SlotNo ->
   a ->
-  TickedLedgerState (SimpleBlock c ext) EmptyMK ->
+  TickedLedgerState (SimpleBlock c ext) NoTables ->
   Except
     (MockError (SimpleBlock c ext))
-    (TickedLedgerState (SimpleBlock c ext) EmptyMK)
+    (TickedLedgerState (SimpleBlock c ext) NoTables)
 updateSimpleUTxO cfg slot x (TickedSimpleLedgerState (SimpleLedgerState st tbs)) =
   TickedSimpleLedgerState . flip SimpleLedgerState tbs
     <$> updateMockUTxO (simpleLedgerMockConfig cfg) slot x st
 
-genesisSimpleLedgerState :: AddrDist -> LedgerState (SimpleBlock c ext) ValuesMK
+genesisSimpleLedgerState :: AddrDist -> LedgerState (SimpleBlock c ext) Values
 genesisSimpleLedgerState =
   unstowLedgerTables
-    . flip SimpleLedgerState emptyLedgerTables
+    . flip SimpleLedgerState emptyTable
     . genesisMockState
 
 -- | Dummy values
@@ -555,19 +553,19 @@ instance CanStowLedgerTables (LedgerState (SimpleBlock c ext)) where
   stowLedgerTables st =
     SimpleLedgerState
       { simpleLedgerState = simpleLedgerState{mockUtxo = m}
-      , simpleLedgerTables = emptyLedgerTables
+      , simpleLedgerTables = emptyTable
       }
    where
     SimpleLedgerState
       { simpleLedgerState
-      , simpleLedgerTables = LedgerTables (ValuesMK m)
+      , simpleLedgerTables = Values m
       } = st
 
   unstowLedgerTables st =
     SimpleLedgerState
       { simpleLedgerState = simpleLedgerState{mockUtxo = mempty}
       , simpleLedgerTables =
-          LedgerTables (ValuesMK (mockUtxo simpleLedgerState))
+          Values (mockUtxo simpleLedgerState)
       }
    where
     SimpleLedgerState
@@ -619,7 +617,7 @@ instance
   txForgetValidated = forgetValidatedSimpleGenTx
 
   getTransactionKeySets =
-    LedgerTables . KeysMK . Mock.txIns . simpleGenTx
+    Keys . Mock.txIns . simpleGenTx
 
   mkMempoolApplyTxError _tls txt = Just $ MockMempoolError txt
 
