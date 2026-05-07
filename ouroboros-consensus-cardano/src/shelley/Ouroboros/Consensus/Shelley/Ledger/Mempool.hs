@@ -287,8 +287,7 @@ applyShelleyTx ::
     , Validated (GenTx (ShelleyBlock proto era))
     )
 applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
-  let st1 :: TickedLedgerState (ShelleyBlock proto era) NoTables
-      st1 = stowLedgerTables st0
+  let st1 = stowLedgerTables st0
 
       innerSt :: SL.NewEpochState era
       innerSt = tickedShelleyLedgerState st1

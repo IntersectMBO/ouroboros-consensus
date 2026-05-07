@@ -94,8 +94,8 @@ runAnalysis ::
   , Show (TxIn blk)
   , Show (TxOut blk)
   , IOLike.NoThunks (LedgerState blk Values)
-  , IOLike.NoThunks (LedgerState blk NoTables)
   , IOLike.NoThunks (LedgerState blk Diffs)
+  , IOLike.NoThunks (LedgerState blk Stowed)
   ) =>
   AnalysisName -> SomeAnalysis blk
 runAnalysis analysisName = case go analysisName of
@@ -504,8 +504,8 @@ checkNoThunksEvery ::
   , LedgerSupportsProtocol blk
   , CanStowLedgerTables (LedgerState blk)
   , IOLike.NoThunks (LedgerState blk Values)
-  , IOLike.NoThunks (LedgerState blk NoTables)
   , IOLike.NoThunks (LedgerState blk Diffs)
+  , IOLike.NoThunks (LedgerState blk Stowed)
   ) =>
   Word64 ->
   Analysis blk StartFromLedgerState

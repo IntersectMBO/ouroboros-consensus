@@ -54,6 +54,7 @@ module Ouroboros.Consensus.Ledger.Tables
   , Keys (..)
   , Diffs (..)
   , NoTables (..)
+  , Stowed (..)
 
     -- ** Operations on tables
   , EmptyTable (..)
@@ -170,10 +171,15 @@ newtype Diffs blk = Diffs {getDiffs :: Diff (TxIn blk) (TxOut blk)}
 
 -- | The trivial table: no entries at all.
 --
--- Used to mark a ledger state whose table contents are either irrelevant in
--- the current context (e.g. they have been stowed back into the in-memory
--- part) or simply empty (e.g. for ledgers without any on-disk state).
+-- Used to mark a ledger state whose table contents are empty.
 data NoTables blk = NoTables deriving (Generic, NoThunks, Eq, Show)
+
+-- | The stowed table.
+--
+-- Isomorphic to the 'NoTables' variant but conveying the message that there are
+-- in fact values inside the ledger state. 'stowLedgerTables' and
+-- 'unstowLedgerTables' make use of this type.
+data Stowed blk = Stowed deriving (Generic, NoThunks, Eq, Show)
 
 deriving newtype instance Ord (TxIn blk) => Semigroup (Keys blk)
 deriving newtype instance Ord (TxIn blk) => Monoid (Keys blk)
@@ -213,6 +219,9 @@ instance EmptyTable NoTables where
 instance EmptyTable Diffs where
   emptyTable = Diffs Diff.empty
 
+instance EmptyTable Stowed where
+  emptyTable = Stowed
+
 -- | Tables that can be re-indexed from one block type to another.
 --
 -- We need this primarily for the HardFork combinator, which translates tables
@@ -237,6 +246,9 @@ instance BimapTables Diffs where
 
 instance BimapTables NoTables where
   bimapLedgerTables _ _ NoTables = NoTables
+
+instance BimapTables Stowed where
+  bimapLedgerTables _ _ Stowed = Stowed
 
 {-------------------------------------------------------------------------------
   Ledger state interface
@@ -284,8 +296,8 @@ class HasLedgerTables l blk where
 -- table component (e.g. legacy serialisation paths).
 type CanStowLedgerTables :: LedgerStateKind -> Constraint
 class CanStowLedgerTables lblk where
-  stowLedgerTables :: lblk Values -> lblk NoTables
-  unstowLedgerTables :: lblk NoTables -> lblk Values
+  stowLedgerTables :: lblk Values -> lblk Stowed
+  unstowLedgerTables :: lblk Stowed -> lblk Values
 
 -- | Adjust the values of a ledger table when crossing a hard fork boundary.
 --

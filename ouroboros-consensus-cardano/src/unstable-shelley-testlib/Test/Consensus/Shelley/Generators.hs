@@ -233,6 +233,18 @@ instance
 
 instance
   (Arbitrary (InstantStake era), CanMock proto era) =>
+  Arbitrary (LedgerState (ShelleyBlock proto era) Stowed)
+  where
+  arbitrary =
+    ShelleyLedgerState
+      <$> arbitrary
+      <*> arbitrary
+      <*> arbitrary
+      <*> pure Stowed
+      <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]
+
+instance
+  (Arbitrary (InstantStake era), CanMock proto era) =>
   Arbitrary (LedgerState (ShelleyBlock proto era) Values)
   where
   arbitrary =

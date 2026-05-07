@@ -494,10 +494,10 @@ updateSimpleUTxO ::
   LedgerConfig (SimpleBlock c ext) ->
   SlotNo ->
   a ->
-  TickedLedgerState (SimpleBlock c ext) NoTables ->
+  TickedLedgerState (SimpleBlock c ext) Stowed ->
   Except
     (MockError (SimpleBlock c ext))
-    (TickedLedgerState (SimpleBlock c ext) NoTables)
+    (TickedLedgerState (SimpleBlock c ext) Stowed)
 updateSimpleUTxO cfg slot x (TickedSimpleLedgerState (SimpleLedgerState st tbs)) =
   TickedSimpleLedgerState . flip SimpleLedgerState tbs
     <$> updateMockUTxO (simpleLedgerMockConfig cfg) slot x st

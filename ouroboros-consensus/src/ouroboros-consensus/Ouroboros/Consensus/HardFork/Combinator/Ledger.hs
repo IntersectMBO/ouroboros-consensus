@@ -982,7 +982,7 @@ instance
   where
   stowLedgerTables ::
     LedgerState (HardForkBlock xs) Values ->
-    LedgerState (HardForkBlock xs) NoTables
+    LedgerState (HardForkBlock xs) Stowed
   stowLedgerTables (HardForkLedgerState st) =
     HardForkLedgerState $
       hcmap (Proxy @(Compose CanStowLedgerTables LedgerState)) stowOne st
@@ -990,11 +990,11 @@ instance
     stowOne ::
       Compose CanStowLedgerTables LedgerState x =>
       Flip LedgerState Values x ->
-      Flip LedgerState NoTables x
+      Flip LedgerState Stowed x
     stowOne = Flip . stowLedgerTables . unFlip
 
   unstowLedgerTables ::
-    LedgerState (HardForkBlock xs) NoTables ->
+    LedgerState (HardForkBlock xs) Stowed ->
     LedgerState (HardForkBlock xs) Values
   unstowLedgerTables (HardForkLedgerState st) =
     HardForkLedgerState $
@@ -1002,7 +1002,7 @@ instance
    where
     unstowOne ::
       Compose CanStowLedgerTables LedgerState x =>
-      Flip LedgerState NoTables x ->
+      Flip LedgerState Stowed x ->
       Flip LedgerState Values x
     unstowOne = Flip . unstowLedgerTables . unFlip
 

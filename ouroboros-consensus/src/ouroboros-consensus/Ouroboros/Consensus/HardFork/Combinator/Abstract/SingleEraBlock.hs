@@ -99,6 +99,7 @@ class
   , NoThunks (LedgerState blk Values)
   , NoThunks (LedgerState blk Diffs)
   , NoThunks (LedgerState blk NoTables)
+  , NoThunks (LedgerState blk Stowed)
   ) =>
   SingleEraBlock blk
   where

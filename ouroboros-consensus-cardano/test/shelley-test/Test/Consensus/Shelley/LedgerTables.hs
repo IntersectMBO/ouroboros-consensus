@@ -58,6 +58,7 @@ class
   ( HasLedgerTables LedgerState blk
   , CanStowLedgerTables (LedgerState blk)
   , (Show `And` Arbitrary) (LedgerState blk NoTables)
+  , (Show `And` Arbitrary) (LedgerState blk Stowed)
   , (Show `And` Arbitrary) (LedgerState blk Values)
   , (Show `And` Arbitrary) (Values blk)
   , L.Era (ShelleyBlockLedgerEra blk)
@@ -72,6 +73,7 @@ instance
   ( HasLedgerTables LedgerState blk
   , CanStowLedgerTables (LedgerState blk)
   , (Show `And` Arbitrary) (LedgerState blk NoTables)
+  , (Show `And` Arbitrary) (LedgerState blk Stowed)
   , (Show `And` Arbitrary) (LedgerState blk Values)
   , (Show `And` Arbitrary) (Values blk)
   , L.Era (ShelleyBlockLedgerEra blk)
@@ -84,7 +86,7 @@ instance
 
 instance
   ( CanMock proto era
-  , Arbitrary (LedgerState (ShelleyBlock proto era) NoTables)
+  , Arbitrary (LedgerState (ShelleyBlock proto era) Stowed)
   ) =>
   Arbitrary (Values (ShelleyBlock proto era))
   where

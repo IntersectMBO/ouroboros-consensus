@@ -90,6 +90,7 @@ deriving stock instance CanHardFork xs => Eq (LedgerState (HardForkBlock xs) NoT
 deriving newtype instance CanHardFork xs => NoThunks (LedgerState (HardForkBlock xs) Values)
 deriving newtype instance CanHardFork xs => NoThunks (LedgerState (HardForkBlock xs) Diffs)
 deriving newtype instance CanHardFork xs => NoThunks (LedgerState (HardForkBlock xs) NoTables)
+deriving newtype instance CanHardFork xs => NoThunks (LedgerState (HardForkBlock xs) Stowed)
 
 {-------------------------------------------------------------------------------
   Protocol config

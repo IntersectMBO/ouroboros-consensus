@@ -38,7 +38,7 @@ prop_stowable_laws ::
   , Eq (TxIn blk)
   , Eq (TxOut blk)
   ) =>
-  LedgerState blk NoTables ->
+  LedgerState blk Stowed ->
   LedgerState blk Values ->
   Property
 prop_stowable_laws = \ls ls' ->

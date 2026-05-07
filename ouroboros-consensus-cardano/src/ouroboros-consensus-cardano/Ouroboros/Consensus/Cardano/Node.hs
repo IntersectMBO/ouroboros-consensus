@@ -85,8 +85,8 @@ import Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -965,13 +965,13 @@ protocolInfoCardano paramsCardano
       -- We need to unstow the injected values
       Flip $
         unstowLedgerTables $
-          forgetLedgerTables $
-            st
-              { Shelley.shelleyLedgerState =
-                  L.injectIntoTestState
-                    tcfg
-                    (Shelley.shelleyLedgerState $ stowLedgerTables st)
-              }
+          st
+            { Shelley.shelleyLedgerState =
+                L.injectIntoTestState
+                  tcfg
+                  (Shelley.shelleyLedgerState $ stowLedgerTables st)
+            , Shelley.shelleyLedgerTables = Stowed
+            }
 
   -- \| For each element in the list, a block forging thread will be started.
   --

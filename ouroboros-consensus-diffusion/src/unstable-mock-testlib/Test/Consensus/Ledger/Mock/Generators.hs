@@ -120,11 +120,19 @@ instance (SimpleCrypto c, Typeable ext) => Arbitrary (SomeResult (SimpleBlock c 
 
 instance
   (SimpleCrypto c, Typeable ext) =>
+  Arbitrary (LedgerState (SimpleBlock c ext) Stowed)
+  where
+  arbitrary =
+    (`withLedgerTables` Stowed)
+      <$> arbitrary @(LedgerState (SimpleBlock c ext) Values)
+
+instance
+  (SimpleCrypto c, Typeable ext) =>
   Arbitrary (LedgerState (SimpleBlock c ext) NoTables)
   where
   arbitrary =
-    forgetLedgerTables
-      <$> arbitrary @(LedgerState (SimpleBlock c ext) Values)
+    (`withLedgerTables` NoTables)
+      <$> arbitrary @(LedgerState (SimpleBlock c ext) NoTables)
 
 instance
   (SimpleCrypto c, Typeable ext) =>

@@ -115,6 +115,7 @@ analyse ::
   , CanStowLedgerTables (LedgerState blk)
   , NoThunks (LedgerState blk Values)
   , NoThunks (LedgerState blk Diffs)
+  , NoThunks (LedgerState blk Stowed)
   ) =>
   DBAnalyserConfig ->
   Args blk ->
