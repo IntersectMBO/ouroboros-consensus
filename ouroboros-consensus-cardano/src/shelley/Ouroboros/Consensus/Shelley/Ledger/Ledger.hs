@@ -61,7 +61,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , BigEndianTxIn (..)
   ) where
 
-import Cardano.Ledger.Api (eraProtVerLow)
+import Cardano.Crypto.Hash.Class (hashToBytes)
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
@@ -84,7 +84,16 @@ import Cardano.Ledger.Binary.Plain
   , enforceSize
   )
 import qualified Cardano.Ledger.Block as Core
-import Cardano.Ledger.Core (Era, TopTx, Tx, eraDecoder, ppMaxBHSizeL, ppMaxTxSizeL)
+import qualified Cardano.Ledger.Block as SL
+import Cardano.Ledger.Core
+  ( Era
+  , KeyHash (..)
+  , TopTx
+  , Tx
+  , eraDecoder
+  , ppMaxBHSizeL
+  , ppMaxTxSizeL
+  )
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Dijkstra.BlockBody
   ( DijkstraBlockBody (DijkstraBlockBodyResolved)
@@ -94,6 +103,7 @@ import Cardano.Ledger.Dijkstra.BlockBody
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
+import Cardano.Ledger.State (poolDistrDistrL)
 import qualified Cardano.Ledger.State as SL
 import Cardano.Protocol.TPraos.API (PraosCrypto)
 import Cardano.Slotting.EpochInfo
@@ -111,17 +121,20 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Coerce
 import Data.Foldable (toList)
 import Data.Functor.Identity
+import qualified Data.Map as Map
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.MemPack
 import Data.Sequence.Strict (StrictSeq)
 import qualified Data.Sequence.Strict as StrictSeq
+import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
 import LeiosDemoDb (LeiosDbConnection (..))
 import LeiosDemoTypes
-  ( EbAnnouncement (..)
+  ( Committee (..)
+  , EbAnnouncement (..)
   , LeiosPoint (..)
   , TxHash
   )
@@ -1080,7 +1093,7 @@ instance
 -- | Deserialise a transaction supplied as Leios-stored bytes.
 deserialiseLeiosTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Tx TopTx era
 deserialiseLeiosTx bs =
-  case decodeFullAnnotator (eraProtVerLow @era) "Leios Tx" decCBOR (BL.fromStrict bs) of
+  case decodeFullAnnotator (Core.eraProtVerLow @era) "Leios Tx" decCBOR (BL.fromStrict bs) of
     Left err -> error $ "Failed to deserialise Leios tx: " <> show err
     Right tx -> tx
 
@@ -1114,5 +1127,14 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra)
 instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
   -- REVIEW: Should we use the LedgerView (Praos c) instead?
   getLeiosCommittee ls =
-    Just $
-      undefined ls.shelleyLedgerState.nesPd
+    Just $ MkCommitee{voters = everyoneVotes}
+   where
+    everyoneVotes =
+      Map.keysSet stakeDistribution
+        & Set.map unsafeDeriveVotingKey
+
+    -- FIXME: REMOVE THIS. Interprets cold key hashes as signing keys
+    unsafeDeriveVotingKey = hashToBytes . unKeyHash
+
+    stakeDistribution =
+      ls.shelleyLedgerState.nesPd ^. poolDistrDistrL
