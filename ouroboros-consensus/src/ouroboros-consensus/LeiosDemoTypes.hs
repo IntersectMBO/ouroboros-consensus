@@ -59,6 +59,7 @@ import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import qualified Numeric
+import Ouroboros.Consensus.Config (VotingKey)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , TxMeasureMetrics
@@ -495,7 +496,22 @@ decodeLeiosEb = do
 -- * Voting
 
 -- | A selected committee in which each 'VoterId' has a 'Weight'.
-data Committee
+newtype Committee = MkCommitee {voters :: Set VotingKey}
+
+-- | Voter in a committee, identified by their seat index.
+newtype VoterId = MkVoterId {voterIndex :: Word16}
+  deriving (Ord, Eq, Show)
+
+encodeVoterId :: VoterId -> Encoding
+encodeVoterId (MkVoterId idx) = CBOR.encodeWord16 idx
+
+decodeVoterId :: Decoder s VoterId
+decodeVoterId = MkVoterId <$> CBOR.decodeWord16
+
+-- | Determine the 'VoterId' on a 'Committee'.
+getVoterId :: VotingKey -> Committee -> Maybe VoterId
+getVoterId key committee =
+  MkVoterId . fromIntegral <$> Set.lookupIndex key committee.voters
 
 -- | A vote in the Leios protocol.
 data LeiosVote = MkLeiosVote
@@ -543,16 +559,6 @@ voteToObject MkLeiosVote{point, voterId, voteSignature} =
     , "voterId" .= voterId.voterIndex
     , "voteSignature" .= voteSignature
     ]
-
--- | Voter in a committee, identified by their seat index.
-newtype VoterId = MkVoterId {voterIndex :: Word16}
-  deriving (Ord, Eq, Show)
-
-encodeVoterId :: VoterId -> Encoding
-encodeVoterId (MkVoterId idx) = CBOR.encodeWord16 idx
-
-decodeVoterId :: Decoder s VoterId
-decodeVoterId = MkVoterId <$> CBOR.decodeWord16
 
 -- FIXME: proper signing of votes using BLS (SigDSIGN BLS12381MinSigDSIGN)
 type VoteSignature = Bool

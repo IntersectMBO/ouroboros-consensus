@@ -10,13 +10,12 @@ module LeiosVoting (module LeiosVoting) where
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Monad (forever)
 import Control.Tracer (Tracer, traceWith)
-import qualified Data.ByteString as BS
 import LeiosDemoDb (LeiosDbHandle (..), LeiosEbNotification (..))
 import LeiosDemoTypes
   ( Committee
   , LeiosVote (..)
   , TraceLeiosKernel (..)
-  , VoterId (..)
+  , getVoterId
   )
 import LeiosVoteState (LeiosVoteState (..))
 import Ouroboros.Consensus.Config (VotingKey)
@@ -45,36 +44,34 @@ runLeiosVoting tracer chainDB leiosDB voteState = \case
       MkTraceLeiosKernel
         "runLeiosVoting: disabled because no topLevelConfigVotingKey"
   Just votingKey -> do
-    -- FIXME: Lucky seed has two identical voter ids. Fix via proper committee
-    -- selection from all registered keys.
-    let me = MkVoterId . fromIntegral $ BS.head votingKey
-        LeiosVoteState{addVote} = voteState
+    let LeiosVoteState{addVote} = voteState
     chan <- subscribeEbNotifications leiosDB
     let getNext f =
           atomically (readTChan chan) >>= \case
             AcquiredEb{} -> pure ()
             AcquiredEbTxs point -> f point
+    -- Enter voting loop
     forever $ getNext $ \point -> do
       -- TODO: check only once per era whether we are part of the committee?
-      mCommittee <-
-        atomically $
-          getLeiosCommittee . ledgerState <$> ChainDB.getCurrentLedger chainDB
-      case mCommittee of
+      ls <- getCurrentLedgerState
+      case getLeiosCommittee ls >>= getVoterId votingKey of
         Nothing -> pure ()
-        Just _committee -> do
-          -- TODO: gate on committee membership once 'Committee' is fleshed out
+        Just voterId -> do
           -- TODO: validate EB closures against selected chain
           -- TODO: create vote (sign the eb hash)
           let vote =
                 MkLeiosVote
                   { point
-                  , voterId = me
+                  , voterId
                   , voteSignature = True
                   }
           -- Store vote in memory and notify downstream peers
           addVote vote
           traceWith tracer TraceLeiosVoted{vote}
           traceWith tracer TraceLeiosVoteAcquired{vote}
+ where
+  getCurrentLedgerState =
+    atomically $ ledgerState <$> ChainDB.getCurrentLedger chainDB
 
 -- * Committee selection
 
