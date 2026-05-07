@@ -74,6 +74,7 @@ const sidebars = {
                 label: 'Specifications',
                 items: ['references/specs/index',
                         'references/specs/header-validation',
+                        'references/specs/operational-certificate',
                        ]
               },
               { type: 'category',
