@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
@@ -26,7 +27,12 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasCooldownRounds (..)
   , PerasIgnoranceRounds (..)
   , PerasParams (..)
+  , PerasRoundNo (..)
   , mkPerasParams
+  , onPerasRoundNo
+  )
+import Ouroboros.Consensus.BlockchainTime
+  ( RelativeTime (..)
   )
 import Ouroboros.Consensus.Peras.Voting.Rules
   ( PerasVotingRulesDecision (..)

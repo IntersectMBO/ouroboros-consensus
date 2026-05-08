@@ -23,6 +23,7 @@ import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
 import Data.SOP.BasicFunctors
 import Data.Typeable (Typeable)
+import Data.Void (Void)
 import NoThunks.Class
   ( InspectHeap (..)
   , InspectHeapNamed (..)
@@ -107,3 +108,9 @@ deriving via
   OnlyCheckWhnfNamed "SomeHasFS" (SomeHasFS m)
   instance
     NoThunks (SomeHasFS m)
+
+{-------------------------------------------------------------------------------
+  ShowProxy
+-------------------------------------------------------------------------------}
+
+instance ShowProxy Void
