@@ -16,6 +16,7 @@ import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Node.Serialisation ()
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.ByronDual.Ledger
+import Ouroboros.Consensus.ByronDual.Node.Peras ()
 import Ouroboros.Consensus.ByronSpec.Ledger
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Dual

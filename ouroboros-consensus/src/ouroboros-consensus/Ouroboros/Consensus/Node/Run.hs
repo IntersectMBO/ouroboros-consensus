@@ -59,6 +59,8 @@ class
   , SerialiseNodeToNode blk (SerialisedHeader blk)
   , SerialiseNodeToNode blk (GenTx blk)
   , SerialiseNodeToNode blk (GenTxId blk)
+  , SerialiseNodeToNode blk (PerasVote blk)
+  , SerialiseNodeToNode blk (PerasCert blk)
   ) =>
   SerialiseNodeToNodeConstraints blk
   where
@@ -109,6 +111,7 @@ class
   , NodeInitStorage blk
   , BlockSupportsMetrics blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , BlockSupportsSanityCheck blk
   , Show (CannotForge blk)
   , Show (ForgeStateInfo blk)
@@ -119,6 +122,8 @@ class
   , ShowProxy (Header blk)
   , ShowProxy (BlockQuery blk)
   , ShowProxy (TxId (GenTx blk))
+  , ShowProxy (PerasVote blk)
+  , ShowProxy (PerasCert blk)
   , (forall fp. ShowQuery (BlockQuery blk fp))
   , CanUpgradeLedgerTables LedgerState blk
   ) =>

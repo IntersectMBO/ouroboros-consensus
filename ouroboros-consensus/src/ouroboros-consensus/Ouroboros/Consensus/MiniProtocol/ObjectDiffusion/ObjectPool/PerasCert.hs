@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
@@ -44,7 +45,9 @@ takeAscMap n = Map.fromDistinctAscList . take n . Map.toAscList
 
 -- | Internal helper: create a pool reader from a @getCertsAfter@ function.
 makePerasCertPoolReader ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   ( PerasCertTicketNo ->
     STM m (Map PerasCertTicketNo (m (WithArrivalTime (ValidatedPerasCert blk))))
   ) ->
@@ -65,7 +68,9 @@ makePerasCertPoolReader getCertsAfterSTM =
     }
 
 makePerasCertPoolReaderFromCertDB ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   PerasCertDB m blk ->
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromCertDB perasCertDB =
@@ -73,7 +78,9 @@ makePerasCertPoolReaderFromCertDB perasCertDB =
     (PerasCertDB.getCertsAfter perasCertDB)
 
 makePerasCertPoolReaderFromChainDB ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   ChainDB m blk ->
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromChainDB chainDB =
@@ -89,7 +96,9 @@ makePerasCertPoolReaderFromChainDB chainDB =
 -- see 'makePerasCertPoolWriterFromChainDB' which creates a pool writer from the
 -- 'ChainDB' with proper handling of chain selection side-effects.
 makePerasCertPoolWriterFromCertDB ::
-  IOLike m =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   SystemTime m ->
   PerasCertDB m blk ->
   ObjectPoolWriter PerasRoundNo (PerasCert blk) m
@@ -111,7 +120,9 @@ makePerasCertPoolWriterFromCertDB systemTime perasCertDB =
 -- | Create a pool writer from the 'ChainDB'. This properly handles any needed
 -- chain selection side-effects.
 makePerasCertPoolWriterFromChainDB ::
-  IOLike m =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   SystemTime m ->
   ChainDB m blk ->
   ObjectPoolWriter PerasRoundNo (PerasCert blk) m
@@ -137,7 +148,9 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
     }
 
 data PerasCertInboundException
-  = forall blk. PerasCertValidationError [PerasValidationErr blk]
+  = forall blk.
+    Show (PerasError blk) =>
+    PerasCertValidationError [PerasError blk]
 
 deriving instance Show PerasCertInboundException
 
@@ -154,10 +167,13 @@ instance Exception PerasCertInboundException
 -- each valid certificate is timestamped with the current wall-clock time and
 -- added to the database via @addCert@.
 processCerts ::
-  MonadSTM m =>
+  ( MonadSTM m
+  , Show (PerasError blk)
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   SystemTime m ->
   STM m (Set PerasRoundNo) ->
-  (PerasCert blk -> Either (PerasValidationErr blk) (ValidatedPerasCert blk)) ->
+  (PerasCert blk -> Either (PerasError blk) (ValidatedPerasCert blk)) ->
   (WithArrivalTime (ValidatedPerasCert blk) -> m ()) ->
   [PerasCert blk] ->
   m ()

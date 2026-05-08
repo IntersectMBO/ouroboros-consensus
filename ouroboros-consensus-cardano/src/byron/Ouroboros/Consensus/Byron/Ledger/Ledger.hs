@@ -88,6 +88,7 @@ import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Util (ShowProxy (..))
@@ -573,3 +574,10 @@ decodeByronResult query = case query of
 
 instance CanUpgradeLedgerTables LedgerState ByronBlock where
   upgradeTables _ _ = id
+
+{-------------------------------------------------------------------------------
+  LedgerSupportsPeras
+-------------------------------------------------------------------------------}
+
+-- | Default instance with no Peras support
+instance LedgerSupportsPeras ByronBlock
