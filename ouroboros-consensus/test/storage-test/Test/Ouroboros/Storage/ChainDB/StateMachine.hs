@@ -1287,7 +1287,7 @@ generator loe genBlock genPerasBlock m@Model{..} =
               { vpcCert =
                   PerasCert
                     { pcCertRound = roundNo
-                    , pcCertBoostedBlock = blockPoint blk
+                    , pcCertBlock = blockPoint blk
                     }
               , vpcCertBoost = boost
               }
@@ -1814,7 +1814,7 @@ addPerasCertOutcomes = concatMap classifyEvent
   classifyEvent :: Event Blk m Symbolic -> [String]
   classifyEvent ev = case unAt (eventCmd ev) of
     AddPerasCert certWithTime _ ->
-      let targetPt = pcCertBoostedBlock (vpcCert (forgetArrivalTime certWithTime))
+      let targetPt = pcCertBlock (vpcCert (forgetArrivalTime certWithTime))
        in case (isBlockConnected targetPt (dbModel (eventBefore ev))) of
             False ->
               assert (chainSelOutcome ev == "no chain selection change") $

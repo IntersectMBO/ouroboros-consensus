@@ -23,16 +23,7 @@ import Data.TreeDiff (ToExpr (..), defaultExprViaShow)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), pointSlot)
 import Ouroboros.Consensus.Block.Abstract (StandardHash)
-import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasVoteBlock (..)
-  , HasPerasVoteRound (..)
-  , PerasCert (..)
-  , ValidatedPerasCert (..)
-  , ValidatedPerasVote
-  , getPerasCertBoostedBlock
-  , getPerasVoteStake
-  , getPerasVoteVoterId
-  )
+import Ouroboros.Consensus.Block.SupportsPeras (IsPerasCert (..), IsPerasVote (..), PerasCert (..), ValidatedPerasCert (..), ValidatedPerasVote (..))
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( WithArrivalTime (..)
   )
@@ -165,7 +156,7 @@ addVote vote model
   -- block in this round => integrity violation (shouldn't happen in practice)
   | reachedQuorum
   , Just existingCert <- certAtRound
-  , getPerasCertBoostedBlock freshCert /= getPerasCertBoostedBlock existingCert =
+  , getPerasCertBlock freshCert /= getPerasCertBlock existingCert =
       ( Left $
           MultipleWinnersInRound roundNo
       , model
@@ -234,7 +225,7 @@ addVote vote model
       . sum
       . fmap
         ( unPerasVoteStake
-            . getPerasVoteStake
+            . vpvVoteStake
             . forgetArrivalTime
             . veVote
         )
@@ -260,7 +251,7 @@ addVote vote model
       { vpcCert =
           PerasCert
             { pcCertRound = getPerasVoteRound vote
-            , pcCertBoostedBlock = getPerasVoteBlock vote
+            , pcCertBlock = getPerasVoteBlock vote
             }
       , vpcCertBoost = perasWeight (params model)
       }
