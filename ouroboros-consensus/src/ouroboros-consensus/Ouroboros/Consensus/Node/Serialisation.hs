@@ -202,12 +202,12 @@ instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
   encodeNodeToNode ccfg version PerasCert{..} =
     encodeListLen 2
       <> encodeNodeToNode ccfg version pcCertRound
-      <> encodeNodeToNode ccfg version pcCertBoostedBlock
+      <> encodeNodeToNode ccfg version pcCertBlock
   decodeNodeToNode ccfg version = do
     decodeListLenOf 2
     pcCertRound <- decodeNodeToNode ccfg version
-    pcCertBoostedBlock <- decodeNodeToNode ccfg version
-    pure $ PerasCert pcCertRound pcCertBoostedBlock
+    pcCertBlock <- decodeNodeToNode ccfg version
+    pure $ PerasCert pcCertRound pcCertBlock
 
 instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasVote blk) where
   -- Consistent with the 'Serialise' instance for 'PerasVote' defined in Ouroboros.Consensus.Block.SupportsPeras

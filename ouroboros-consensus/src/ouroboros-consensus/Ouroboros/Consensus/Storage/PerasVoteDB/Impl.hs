@@ -84,7 +84,10 @@ invariantForPerasVoteDbState ::
   WithFingerprint (PerasVoteDbState blk) -> Either String ()
 invariantForPerasVoteDbState pvs = do
   for_ (Map.toList pvdsRoundVoteStates) $ \(roundNo, prvs) ->
-    checkEqual "pvcRoundVoteStates rounds" roundNo (getPerasVoteRound prvs)
+    checkEqual
+      "pvcRoundVoteStates rounds"
+      roundNo
+      (getPerasRoundVoteStateRound prvs)
   checkEqual
     "pvcsVotesByTicket"
     (Set.fromList (getPerasVoteRound <$> Map.elems pvdsVotesByTicket))
@@ -225,13 +228,13 @@ implAddVote params PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
             MultipleWinnersInRound
               (getPerasVoteRound vote)
               ( ExistingPerasRoundWinner
-                  ( getPerasVoteBlock winnerState
-                  , ptvsTotalStake winnerState
+                  ( getPerasTargetVoteStateBlock winnerState
+                  , getPerasTargetVoteStateTotalStake winnerState
                   )
               )
               ( BlockedPerasRoundWinner
-                  ( getPerasVoteBlock loserState
-                  , ptvsTotalStake loserState
+                  ( getPerasTargetVoteStateBlock loserState
+                  , getPerasTargetVoteStateTotalStake loserState
                   )
               )
         -- Reached quorum but failed to forge a certificate

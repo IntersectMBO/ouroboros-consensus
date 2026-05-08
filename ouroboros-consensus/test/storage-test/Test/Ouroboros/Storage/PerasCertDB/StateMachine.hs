@@ -98,7 +98,7 @@ instance StateModel Model where
                 { vpcCert =
                     PerasCert
                       { pcCertRound = roundNo
-                      , pcCertBoostedBlock = boostedBlock
+                      , pcCertBlock = boostedBlock
                       }
                 , vpcCertBoost = perasWeight perasTestParams
                 }
@@ -142,7 +142,7 @@ instance StateModel Model where
           -- So we should enforce: round = round' => boostedBlock = boostedBlock'
           p cert' =
             getPerasCertRound cert /= getPerasCertRound cert'
-              || getPerasCertBoostedBlock cert == getPerasCertBoostedBlock cert'
+              || getPerasCertBlock cert == getPerasCertBlock cert'
         GetWeightSnapshot -> True
         GetLatestCertSeen -> True
         GarbageCollect _slotNo -> True
@@ -199,7 +199,7 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
         "Certificate block collision"
         [ show $
             Set.member
-              (getPerasCertBoostedBlock cert)
-              (Set.map getPerasCertBoostedBlock model.certs)
+              (getPerasCertBlock cert)
+              (Set.map getPerasCertBlock model.certs)
         ]
   monitoring _ _ _ _ prop = prop

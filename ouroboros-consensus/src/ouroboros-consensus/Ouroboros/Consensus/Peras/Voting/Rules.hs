@@ -38,11 +38,8 @@ import Ouroboros.Consensus.Block.Abstract
   ( SlotNo (..)
   )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasCertRound (..)
-  , getPerasCertRound
-  )
-import Ouroboros.Consensus.Peras.Params
-  ( PerasCertArrivalThreshold (..)
+  ( IsPerasCert (..)
+  , PerasCertArrivalThreshold (..)
   , PerasCooldownRounds (..)
   , PerasIgnoranceRounds (..)
   , PerasParams (..)
@@ -79,7 +76,7 @@ instance Explainable PerasVotingRulesDecision where
 
 -- | Evaluate whether voting is allowed or not according to the voting rules
 isPerasVotingAllowed ::
-  HasPerasCertRound cert =>
+  IsPerasCert cert blk =>
   PerasVotingView cert ->
   PerasVotingRulesDecision
 isPerasVotingAllowed pvv =
@@ -130,7 +127,7 @@ instance Explainable PerasVotingRule where
 -- | VR-1A: the voter has seen the certificate for the previous round, and the
 -- certificate was received in the first X slots after the start of the round.
 perasVR1A ::
-  HasPerasCertRound cert =>
+  IsPerasCert cert blk =>
   PerasVotingView cert ->
   Pred PerasVotingRule
 perasVR1A
@@ -193,7 +190,7 @@ perasVR1B
 -- This enforces the chain-healing period that must occur before leaving a
 -- cooldown period.
 perasVR2A ::
-  HasPerasCertRound cert =>
+  IsPerasCert cert blk =>
   PerasVotingView cert ->
   Pred PerasVotingRule
 perasVR2A
@@ -226,7 +223,7 @@ perasVR2A
 -- This enforces chain quality and common prefix before leaving a cooldown
 -- period.
 perasVR2B ::
-  HasPerasCertRound cert =>
+  IsPerasCert cert blk =>
   PerasVotingView cert ->
   Pred PerasVotingRule
 perasVR2B
@@ -270,7 +267,7 @@ perasVR2B
 -- | Both VR-1A and VR-1B hold, which is the situation typically occurring when
 -- the voting has regularly occurred in preceding rounds.
 perasVR1 ::
-  HasPerasCertRound cert =>
+  IsPerasCert cert blk =>
   PerasVotingView cert ->
   Pred PerasVotingRule
 perasVR1 pvv =
@@ -279,7 +276,7 @@ perasVR1 pvv =
 -- | Both VR-2A and VR-2B hold, which is the situation typically occurring when
 -- the chain is about to exit a cooldown period.
 perasVR2 ::
-  HasPerasCertRound cert =>
+  IsPerasCert cert blk =>
   PerasVotingView cert ->
   Pred PerasVotingRule
 perasVR2 pvv =
@@ -287,7 +284,7 @@ perasVR2 pvv =
 
 -- | Voting is allowed if either VR-1A and VR-1B hold, or VR-2A and VR-2B hold.
 perasVotingRules ::
-  HasPerasCertRound cert =>
+  IsPerasCert cert blk =>
   PerasVotingView cert ->
   Pred PerasVotingRule
 perasVotingRules pvv =

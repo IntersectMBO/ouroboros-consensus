@@ -170,7 +170,7 @@ prop_garbageCollectRemovesOldCerts db slotNo = do
     _ <- garbageCollect db slotNo
     getCertsAfter db zeroPerasCertTicketNo
   allCertValues <- sequence (Map.elems allCertActions)
-  let targetSlots = pointSlot . getPerasCertBoostedBlock . forgetArrivalTime <$> allCertValues
+  let targetSlots = pointSlot . getPerasCertBlock . forgetArrivalTime <$> allCertValues
   pure $
     all (>= NotOrigin slotNo) targetSlots
 
