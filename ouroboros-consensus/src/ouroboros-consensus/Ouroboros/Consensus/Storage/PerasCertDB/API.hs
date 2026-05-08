@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -111,7 +112,9 @@ data AddPerasCertResult
 
 -- | After adding a cert, its round number should be present in 'getCertIds'.
 prop_addCertThenGetCertIds ::
-  MonadSTM m =>
+  ( MonadSTM m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   PerasCertDB m blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   m Bool
@@ -126,7 +129,9 @@ prop_addCertThenGetCertIds db cert =
 -- | 'getCertsAfter' with ticket 0 should return all certs in the database.
 -- NOTE: this property is not purely STM.
 prop_getCertsAfterZero ::
-  MonadSTM m =>
+  ( MonadSTM m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   PerasCertDB m blk ->
   m Bool
 prop_getCertsAfterZero db = do
@@ -161,7 +166,9 @@ prop_getCertsAfterMonotonic db ticketNo =
 -- | After garbage collection for slot S, no certs with target slot < S should remain.
 -- NOTE: this property is not purely STM.
 prop_garbageCollectRemovesOldCerts ::
-  MonadSTM m =>
+  ( MonadSTM m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   PerasCertDB m blk ->
   SlotNo ->
   m Bool
@@ -177,7 +184,9 @@ prop_garbageCollectRemovesOldCerts db slotNo = do
 -- | After adding a cert, the round number reported by 'getLatestCertSeen'
 -- should be greater than or equal to its previous value.
 prop_addCertLatestCertSeenMonotonic ::
-  MonadSTM m =>
+  ( MonadSTM m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   PerasCertDB m blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   m Bool
@@ -194,7 +203,9 @@ prop_addCertLatestCertSeenMonotonic db cert =
 
 -- | 'getLatestCertSeen' is not affected by garbage collection.
 prop_garbageCollectPreservesLatestCertSeen ::
-  (MonadSTM m, StandardHash blk) =>
+  ( MonadSTM m
+  , Eq (PerasCert blk)
+  ) =>
   PerasCertDB m blk ->
   SlotNo ->
   m Bool

@@ -10,7 +10,9 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.PerasVoteDB.Impl
   ( -- * Opening
@@ -25,7 +27,6 @@ module Ouroboros.Consensus.Storage.PerasVoteDB.Impl
 import Control.Monad (when)
 import Control.Monad.Except (throwError)
 import Control.Tracer (Tracer, nullTracer, traceWith)
-import Data.Data (Typeable)
 import Data.Foldable (for_)
 import Data.Foldable qualified as Foldable
 import Data.Kind (Type)
@@ -65,8 +66,27 @@ data PerasVoteDbState blk = PerasVoteDbState
   , pvdsLastTicketNo :: !PerasVoteTicketNo
   -- ^ The most recent 'PerasVoteTicketNo' (or 'zeroPerasVoteTicketNo' otherwise).
   }
-  deriving stock (Show, Generic)
-  deriving anyclass NoThunks
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  Show (PerasVoteDbState blk)
+deriving instance
+  ( StandardHash blk
+  , Eq (PerasVote blk)
+  , Eq (PerasCert blk)
+  ) =>
+  Eq (PerasVoteDbState blk)
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasVote blk)
+  , NoThunks (PerasCert blk)
+  ) =>
+  NoThunks (PerasVoteDbState blk)
+deriving instance
+  Generic (PerasVoteDbState blk)
 
 initialPerasVoteDbState :: WithFingerprint (PerasVoteDbState blk)
 initialPerasVoteDbState =
@@ -81,6 +101,7 @@ initialPerasVoteDbState =
 
 -- | Check that the fields of 'PerasVoteState' are in sync.
 invariantForPerasVoteDbState ::
+  IsPerasVote (PerasVote blk) blk =>
   WithFingerprint (PerasVoteDbState blk) -> Either String ()
 invariantForPerasVoteDbState pvs = do
   for_ (Map.toList pvdsRoundVoteStates) $ \(roundNo, prvs) ->
@@ -122,7 +143,27 @@ data TraceEvent blk
       (AddPerasVoteResult blk)
   | GarbageCollected
       SlotNo
-  deriving stock (Show, Eq, Generic)
+
+deriving instance
+  ( Show (PerasVoteId blk)
+  , Show (ValidatedPerasVote blk)
+  , Show (AddPerasVoteResult blk)
+  ) =>
+  Show (TraceEvent blk)
+deriving instance
+  ( Eq (PerasVoteId blk)
+  , Eq (ValidatedPerasVote blk)
+  , Eq (AddPerasVoteResult blk)
+  ) =>
+  Eq (TraceEvent blk)
+deriving instance
+  ( NoThunks (PerasVoteId blk)
+  , NoThunks (ValidatedPerasVote blk)
+  , NoThunks (AddPerasVoteResult blk)
+  ) =>
+  NoThunks (TraceEvent blk)
+deriving instance
+  Generic (TraceEvent blk)
 
 {------------------------------------------------------------------------------
   Creating the database
@@ -144,8 +185,7 @@ defaultArgs =
 createDB ::
   forall m blk.
   ( IOLike m
-  , StandardHash blk
-  , Typeable blk
+  , BlockSupportsPeras blk
   ) =>
   Complete PerasVoteDbArgs m blk ->
   m (PerasVoteDB m blk)
@@ -180,8 +220,7 @@ createDB args@PerasVoteDbArgs{pvdbaPerasParams} = do
 -- see https://github.com/tweag/cardano-peras/issues/120
 implAddVote ::
   ( IOLike m
-  , StandardHash blk
-  , Typeable blk
+  , BlockSupportsPeras blk
   ) =>
   PerasParams ->
   PerasVoteDbEnv m blk ->
@@ -285,7 +324,9 @@ implGetForgedCertForRound PerasVoteDbEnv{pvdeState} roundNo = do
 
 implGarbageCollect ::
   forall m blk.
-  IOLike m =>
+  ( IOLike m
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   PerasVoteDbEnv m blk ->
   SlotNo ->
   STM m (m ())

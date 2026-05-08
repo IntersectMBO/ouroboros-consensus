@@ -31,8 +31,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , WithArrivalTime (..)
   )
-import Ouroboros.Consensus.Peras.Params (PerasParams, mkPerasParams, perasWeight)
-import Ouroboros.Consensus.Peras.Types (PerasRoundNo (..))
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API (AddPerasCertResult (..), PerasCertDB)
@@ -96,9 +95,9 @@ instance StateModel Model where
             WithArrivalTime now $
               ValidatedPerasCert
                 { vpcCert =
-                    PerasCert
-                      { pcCertRound = roundNo
-                      , pcCertBlock = boostedBlock
+                    MockPerasCert
+                      { mockCertRound = roundNo
+                      , mockCertBlock = boostedBlock
                       }
                 , vpcCertBoost = perasWeight perasTestParams
                 }

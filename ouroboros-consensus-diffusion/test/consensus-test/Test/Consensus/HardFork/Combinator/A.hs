@@ -4,6 +4,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE EmptyDataDeriving #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -308,6 +309,9 @@ instance LedgerSupportsProtocol BlockA where
   ledgerViewForecastAt _ = trivialForecast
 
 instance LedgerSupportsPeras BlockA
+
+-- NOTE: this block does not support Peras, so we can use the empty instance here.
+instance BlockSupportsPeras BlockA
 
 instance HasPartialConsensusConfig ProtocolA
 

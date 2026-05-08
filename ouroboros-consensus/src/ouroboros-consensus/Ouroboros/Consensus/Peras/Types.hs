@@ -187,9 +187,13 @@ newtype PerasVoterId
   = PerasVoterId
   { unPerasVoterId :: KeyHash StakePool
   }
-  deriving newtype NoThunks
+  deriving newtype (NoThunks, FromCBOR, ToCBOR)
   deriving stock (Eq, Ord, Generic)
   deriving Show via Quiet PerasVoterId
+
+instance Serialise PerasVoterId where
+  encode = toCBOR . unPerasVoterId
+  decode = PerasVoterId <$> fromCBOR
 
 -- | Voting stake distribution for a Peras election
 newtype PerasVoteStakeDistr
