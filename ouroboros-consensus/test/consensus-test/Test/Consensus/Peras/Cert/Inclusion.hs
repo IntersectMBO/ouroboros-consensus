@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -18,11 +19,8 @@ module Test.Consensus.Peras.Cert.Inclusion (tests) where
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
-import Ouroboros.Consensus.Block (WithOrigin (..))
-import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasCertRound (..)
-  , getPerasCertRound
-  )
+import Ouroboros.Consensus.Block (Point (..), WithOrigin (..))
+import Ouroboros.Consensus.Block.SupportsPeras (IsPerasCert (..))
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( LatestCertOnChainView (..)
   , LatestCertSeenView (..)
@@ -51,6 +49,7 @@ import Test.Tasty.QuickCheck
   , testProperty
   )
 import Test.Util.QuickCheck (geometric)
+import Test.Util.TestBlock (TestBlock)
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
 {-------------------------------------------------------------------------------
@@ -84,7 +83,7 @@ data PerasCertInclusionRulesDecisionModel
 --
 -- NOTE: this predicate could be lifted directly from the agda specification.
 needCertModel ::
-  PerasCertInclusionView TestCert TestBlk ->
+  PerasCertInclusionView TestCert TestBlock ->
   PerasCertInclusionRulesDecisionModel
 needCertModel
   PerasCertInclusionView
@@ -236,8 +235,11 @@ data TestCert
   }
   deriving (Show, Eq, Generic)
 
-instance HasPerasCertRound TestCert where
+instance IsPerasCert TestCert TestBlock where
   getPerasCertRound = tcRoundNo
+
+  -- We don't really care about the block being boosted for the inclusion rules
+  getPerasCertBlock = const GenesisPoint
 
 -- | Generate a test certificate
 --
@@ -256,13 +258,6 @@ genTestCert roundNo = do
     TestCert
       { tcRoundNo = roundNo'
       }
-
--- * Mocked block type
-
--- | A mocked block type for testing
-data TestBlk
-  = TestBlk
-  deriving (Show, Eq, Generic)
 
 -- * Certificate and inclusion views
 
@@ -293,7 +288,7 @@ genPerasCertIds currRoundNo = do
       then Set.singleton (currRoundNo - 2)
       else Set.empty
 
-genPerasCertInclusionView :: Gen (PerasCertInclusionView TestCert TestBlk)
+genPerasCertInclusionView :: Gen (PerasCertInclusionView TestCert TestBlock)
 genPerasCertInclusionView = do
   perasParams <- genPerasParams
   currRoundNo <- genPerasRoundNo

@@ -58,7 +58,10 @@ import Quiet (Quiet (..))
 
 -- ** Round numbers
 
-newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
+newtype PerasRoundNo
+  = PerasRoundNo
+  { unPerasRoundNo :: Word64
+  }
   deriving Show via Quiet PerasRoundNo
   deriving stock Generic
   deriving newtype (Enum, Eq, Ord, Num, Bounded, NoThunks, Serialise, NFData, ToCBOR, FromCBOR)
@@ -106,7 +109,8 @@ newtype PerasSeatIndex
 -- ** Vote parameters
 
 -- | The target of a vote in a Peras election
-data PerasVoteTarget blk = PerasVoteTarget
+data PerasVoteTarget blk
+  = PerasVoteTarget
   { pvtRoundNo :: !PerasRoundNo
   , pvtBlock :: !(Point blk)
   }
@@ -114,7 +118,8 @@ data PerasVoteTarget blk = PerasVoteTarget
   deriving anyclass NoThunks
 
 -- | The identifier of a vote in a Peras election
-data PerasVoteId blk = PerasVoteId
+data PerasVoteId blk
+  = PerasVoteId
   { pviRoundNo :: !PerasRoundNo
   , pviVoterId :: !PerasVoterId
   }
@@ -143,7 +148,8 @@ instance Serialise (PerasVoteId blk) where
 -- So, for now you can consider this 'Rational' as the best approximation we
 -- have at the moment of the concrete type for a relative vote stake that can be
 -- compared to the quorum threshold value (also currently a 'Rational').
-newtype PerasVoteStake = PerasVoteStake
+newtype PerasVoteStake
+  = PerasVoteStake
   { unPerasVoteStake :: Rational
   }
   deriving newtype (Eq, Ord, Num, Fractional, NoThunks, Serialise)
@@ -177,7 +183,8 @@ stakeAboveThreshold params voteStake =
 -- ** Voting stake distributions
 
 -- | The identifier of a voter in a Peras election
-newtype PerasVoterId = PerasVoterId
+newtype PerasVoterId
+  = PerasVoterId
   { unPerasVoterId :: KeyHash StakePool
   }
   deriving newtype NoThunks
@@ -185,7 +192,8 @@ newtype PerasVoterId = PerasVoterId
   deriving Show via Quiet PerasVoterId
 
 -- | Voting stake distribution for a Peras election
-newtype PerasVoteStakeDistr = PerasVoteStakeDistr
+newtype PerasVoteStakeDistr
+  = PerasVoteStakeDistr
   { unPerasVoteStakeDistr :: Map PerasVoterId PerasVoteStake
   }
   deriving newtype NoThunks
