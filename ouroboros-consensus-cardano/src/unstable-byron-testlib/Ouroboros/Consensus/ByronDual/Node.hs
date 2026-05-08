@@ -28,6 +28,7 @@ import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Node
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.ByronDual.Ledger
+import Ouroboros.Consensus.ByronDual.Node.Peras ()
 import Ouroboros.Consensus.ByronDual.Node.Serialisation ()
 import Ouroboros.Consensus.ByronSpec.Ledger
 import qualified Ouroboros.Consensus.ByronSpec.Ledger.Genesis as Genesis

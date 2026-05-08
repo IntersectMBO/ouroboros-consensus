@@ -24,8 +24,8 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.TxSeq
-import Ouroboros.Consensus.Peras.Params (PerasWeight)
-import Ouroboros.Consensus.Peras.Types (PerasRoundNo)
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import Ouroboros.Consensus.Storage.ImmutableDB
@@ -128,11 +128,16 @@ deriving anyclass instance ToExpr PerasRoundNo
 
 deriving anyclass instance ToExpr PerasWeight
 
-deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (PerasCert blk)
+deriving anyclass instance ToExpr PerasVoteStake
 
-deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (ValidatedPerasCert blk)
+deriving anyclass instance ToExpr (PerasVoteId blk)
 
 deriving anyclass instance ToExpr a => ToExpr (WithArrivalTime a)
+
+instance ToExpr PerasVoterId where toExpr = defaultExprViaShow
+
+instance ToExpr (HeaderHash blk) => ToExpr (MockPerasVote blk)
+instance ToExpr (HeaderHash blk) => ToExpr (MockPerasCert blk)
 
 {-------------------------------------------------------------------------------
   si-timers

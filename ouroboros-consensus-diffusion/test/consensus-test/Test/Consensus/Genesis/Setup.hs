@@ -35,6 +35,7 @@ import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Block.SupportsDiffusionPipelining
   ( BlockSupportsDiffusionPipelining
   )
+import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras)
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
@@ -166,6 +167,7 @@ runGenesisTest ::
   , LedgerSupportsPeras blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
@@ -228,6 +230,7 @@ runConformanceTest ::
   , LedgerSupportsPeras blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk

@@ -1,4 +1,8 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Test.Ouroboros.Storage.PerasVoteDB.Model
   ( PerasVoteDbModelError (..)
@@ -22,13 +26,12 @@ import Data.TreeDiff (ToExpr (..), defaultExprViaShow)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), pointSlot)
 import Ouroboros.Consensus.Block.Abstract (StandardHash)
-import Ouroboros.Consensus.Block.SupportsPeras (IsPerasCert (..), IsPerasVote (..), PerasCert (..), ValidatedPerasCert (..), ValidatedPerasVote (..))
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types
-  ( WithArrivalTime (..)
-  )
-import Ouroboros.Consensus.Peras.Params (PerasParams, perasWeight)
-import Ouroboros.Consensus.Peras.Types
-  ( PerasRoundNo
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( BlockSupportsPeras (..)
+  , IsPerasCert (..)
+  , IsPerasVote (..)
+  , PerasParams
+  , PerasRoundNo
   , PerasVoteId (..)
   , PerasVoteStake (..)
   , PerasVoteTarget (..)
@@ -54,7 +57,11 @@ data VoteEntry blk = VoteEntry
   , veVote :: WithArrivalTime (ValidatedPerasVote blk)
   -- ^ The vote itself
   }
-  deriving (Show, Eq, Ord, Generic)
+
+deriving instance Show (PerasVote blk) => Show (VoteEntry blk)
+deriving instance Eq (PerasVote blk) => Eq (VoteEntry blk)
+deriving instance Ord (PerasVote blk) => Ord (VoteEntry blk)
+deriving instance Generic (VoteEntry blk)
 
 data PerasVoteDbModelError = MultipleWinnersInRound PerasRoundNo
   deriving (Show, Generic)
@@ -71,9 +78,24 @@ data Model blk = Model
   , certs :: Map PerasRoundNo (ValidatedPerasCert blk)
   -- ^ Forged certificates indexed by round number
   }
-  deriving (Show, Generic)
 
-instance StandardHash blk => ToExpr (Model blk) where
+-- deriving (Show, Generic)
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  Show (Model blk)
+deriving instance Generic (Model blk)
+
+instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  ToExpr (Model blk)
+  where
   toExpr = defaultExprViaShow
 
 initModel :: PerasParams -> Model blk
@@ -132,7 +154,12 @@ closeDB model =
     }
 
 addVote ::
-  StandardHash blk =>
+  ( StandardHash blk
+  , Ord (PerasVote blk)
+  , PerasCert blk ~ MockPerasCert blk
+  , IsPerasVote (PerasVote blk) blk
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   WithArrivalTime (ValidatedPerasVote blk) ->
   Model blk ->
   ( Either PerasVoteDbModelError (AddPerasVoteResult blk)
@@ -248,9 +275,9 @@ addVote vote model
   freshCert =
     ValidatedPerasCert
       { vpcCert =
-          PerasCert
-            { pcCertRound = getPerasVoteRound vote
-            , pcCertBlock = getPerasVoteBlock vote
+          MockPerasCert
+            { mockCertRound = roundNo
+            , mockCertBlock = votedBlock
             }
       , vpcCertBoost = perasWeight (params model)
       }

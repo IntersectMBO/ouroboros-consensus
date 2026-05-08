@@ -25,8 +25,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
-import Ouroboros.Consensus.Peras.Params (mkPerasParams, perasWeight)
-import Ouroboros.Consensus.Peras.Types (PerasRoundNo (..))
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( AddPerasCertResult (..)
   , PerasCertDB
@@ -35,7 +34,6 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.Impl as PerasCertDB
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Network.Block (StandardHash)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
   ( objectDiffusionInboundPeerPipelined
@@ -66,15 +64,22 @@ tests =
 
 genPerasCert :: Gen (PerasCert TestBlock)
 genPerasCert = do
-  pcCertRound <- PerasRoundNo <$> arbitrary
-  pcCertBlock <- genPointTestBlock
-  pure $ PerasCert{pcCertRound, pcCertBlock}
+  mockCertRound <- PerasRoundNo <$> arbitrary
+  mockCertBlock <- genPointTestBlock
+  pure $
+    MockPerasCert
+      { mockCertRound
+      , mockCertBlock
+      }
 
-instance WithId (PerasCert blk) PerasRoundNo where
-  getId = pcCertRound
+instance WithId (MockPerasCert blk) PerasRoundNo where
+  getId = getPerasCertRound
 
-instance WithId (WithArrivalTime (ValidatedPerasCert blk)) PerasRoundNo where
-  getId = pcCertRound . vpcCert . forgetArrivalTime
+instance
+  IsPerasCert (PerasCert blk) blk =>
+  WithId (WithArrivalTime (ValidatedPerasCert blk)) PerasRoundNo
+  where
+  getId = getPerasCertRound . vpcCert . forgetArrivalTime
 
 genValidatedPerasCert :: Gen (ValidatedPerasCert TestBlock)
 genValidatedPerasCert =
@@ -83,7 +88,10 @@ genValidatedPerasCert =
     <*> pure (perasWeight mkPerasParams)
 
 newCertDB ::
-  (IOLike m, StandardHash blk) => [WithArrivalTime (ValidatedPerasCert blk)] -> m (PerasCertDB m blk)
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
+  [WithArrivalTime (ValidatedPerasCert blk)] -> m (PerasCertDB m blk)
 newCertDB certs = do
   db <- PerasCertDB.createDB (PerasCertDB.PerasCertDbArgs @Identity nullTracer)
   mapM_
