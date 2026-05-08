@@ -18,7 +18,7 @@ import qualified Data.Set as Set
 import Data.TreeDiff (ToExpr (..), defaultExprViaShow)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , mkPerasWeightSnapshot
@@ -68,7 +68,7 @@ getWeightSnapshot ::
   Model blk -> PerasWeightSnapshot blk
 getWeightSnapshot Model{certs} =
   mkPerasWeightSnapshot
-    [ (getPerasCertBoostedBlock cert, getPerasCertBoost cert)
+    [ (getPerasCertBlock cert, vpcCertBoost (forgetArrivalTime cert))
     | cert <- Set.toList certs
     ]
 
@@ -81,4 +81,4 @@ garbageCollect :: SlotNo -> Model blk -> Model blk
 garbageCollect slotNo model@Model{certs} =
   model{certs = Set.filter keepCert certs}
  where
-  keepCert cert = pointSlot (getPerasCertBoostedBlock cert) >= NotOrigin slotNo
+  keepCert cert = pointSlot (getPerasCertBlock cert) >= NotOrigin slotNo

@@ -41,8 +41,7 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract (Point (..), SlotNo (..))
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasVoteBlock (..)
-  , HasPerasVoteRound (..)
+  ( IsPerasVote (..)
   , PerasVote (..)
   , ValidatedPerasCert
   , ValidatedPerasVote (..)
