@@ -2,6 +2,29 @@
 
 let
   inherit (pkgs) lib;
+
+  # lmt: Literate Markdown Tangle — extracts code blocks from markdown files.
+  # Used for literate Quint specifications (docs/website/contents/references/specs/).
+  # https://github.com/driusan/lmt
+  lmt = pkgs.stdenv.mkDerivation {
+    pname = "lmt";
+    version = "unstable-2022-07-01";
+    src = pkgs.fetchFromGitHub {
+      owner = "driusan";
+      repo = "lmt";
+      rev = "62fe18f";
+      hash = "sha256-6/jDh5dfpFAhOspKto2hB8TTSjjh++GkQWjRBaFrYZg=";
+    };
+    nativeBuildInputs = [ pkgs.go ];
+    buildPhase = ''
+      export HOME=$TMPDIR
+      go build -o lmt main.go
+    '';
+    installPhase = ''
+      mkdir -p $out/bin
+      cp lmt $out/bin/
+    '';
+  };
 in
 hsPkgs.shellFor {
   nativeBuildInputs = [
@@ -19,6 +42,8 @@ hsPkgs.shellFor {
     pkgs.cuddle
     pkgs.cddlc
     pkgs.pretty-simple
+    pkgs.quint
+    lmt
 
     # release management
     # WARNING: scriv tests are disabled in this Nix build.
