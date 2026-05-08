@@ -14,22 +14,23 @@
 -- | Ledger tables: the on-disk-backed portion of a ledger state.
 --
 -- In the UTxO-HD design, the ledger state of a block @blk@ is split into two
--- parts: the in-memory \"hull\" — the @l blk mk@ value — and a (potentially
--- large) collection of key/value entries kept on disk and referred to here as
--- /ledger tables/. The currently-instantiated tables for a ledger state are
--- selected by a phantom 'TableKind' parameter @mk@, so that the same ledger
--- state shape can be specialised to hold the actual entries ('Values'), only a
--- set of keys ('Keys'), a pending differential update ('Diffs'), or no entries
--- at all ('NoTables'). Operations on a ledger state then become operations on
--- the table associated with that state via the 'HasLedgerTables' class.
+-- parts: the in-memory \"hull\" — the @l blk NoTables@ value — and a
+-- (potentially large) collection of key/value entries kept on disk and referred
+-- to here as /ledger tables/. The currently-instantiated tables for a ledger
+-- state are selected by a phantom 'TableKind' parameter @mk@, so that the same
+-- ledger state shape can be specialised to hold the actual entries ('Values'),
+-- only a set of keys ('Keys'), a pending differential update ('Diffs'), or no
+-- entries at all ('NoTables'/'Stowed'). Operations on a ledger state then
+-- become operations on the table associated with that state via the
+-- 'HasLedgerTables' class.
 --
 -- The module collects:
 --
 -- * The kinds used by the family ('TableKind', 'LedgerStateKind',
 --   'StateKind').
--- * The four concrete tables ('Values', 'Keys', 'Diffs', 'NoTables') and the
---   type families ('TxIn', 'TxOut') that determine their key/value types per
---   block.
+-- * The five concrete tables ('Values', 'Keys', 'Diffs', 'NoTables', 'Stowed')
+--   and the type families ('TxIn', 'TxOut') that determine their key/value
+--   types per block.
 -- * Generic operations on tables ('EmptyTable', 'BimapTables') and the
 --   ledger-state-side interface that ties a ledger state to its tables
 --   ('HasLedgerTables', 'CanStowLedgerTables', 'CanUpgradeLedgerTables').
@@ -111,9 +112,9 @@ import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 
 -- | The kind of a concrete ledger table indexed by a block type.
 --
--- The four canonical inhabitants in this module are 'Values', 'Keys', 'Diffs'
--- and 'NoTables'. Selecting one of these as the @mk@ in @l blk mk@ controls
--- which entries (if any) the ledger state carries.
+-- The four canonical inhabitants in this module are 'Values', 'Keys', 'Diffs',
+-- 'Stowed' and 'NoTables'. Selecting one of these as the @mk@ in @l blk mk@
+-- controls which entries (if any) the ledger state carries.
 type TableKind = Type -> Type
 
 -- | A @'LedgerStateKind'@ is the kind of any type that takes a single
@@ -123,11 +124,18 @@ type TableKind = Type -> Type
 type LedgerStateKind = TableKind -> Type
 
 -- | A @'StateKind'@ is the kind of a ledger state /before/ it receives its
--- block argument.
+-- block argument. We normally wouldn't want to define code based on a type
+-- variable of this kind, but on some classes we need the @blk@ variable to be
+-- exposed, and we still need to support multiple @l@ so instead of @Foo
+-- (LedgerState blk) blk@ and @Foo (ExtLedgerState blk) blk@ we have @Foo
+-- LedgerState blk@ and @Foo ExtLedgerState blk@.
 --
--- The four inhabitants in this codebase are
--- @['Ouroboros.Consensus.Ticked.Ticked']
--- ['Ouroboros.Consensus.Ledger.Extended.Ext']LedgerState@.
+-- The four inhabitants in this codebase are:
+--
+-- - 'LedgerState'
+-- - 'ExtLedgerState'
+-- - @'Ticked' 'LedgerState'@
+-- - @'Ticked' 'ExtLedgerState'@
 type StateKind = Type -> LedgerStateKind
 
 {-------------------------------------------------------------------------------
@@ -154,14 +162,14 @@ type family TxOut blk
   Concrete tables
 -------------------------------------------------------------------------------}
 
--- | A complete snapshot of the table: every key is mapped to its current
--- value.
+-- | A complete snapshot (in the InMemory backing store) or a restricted subset
+-- (when returned from a Forker's 'forkerReadTables') of the tables values.
 newtype Values blk = Values {getValues :: Map (TxIn blk) (TxOut blk)}
 
 -- | Just the set of keys of a table, with no associated values.
 --
--- This is what gets handed to the on-disk backend when we want to know which
--- entries to read.
+-- This is what gets handed to the backend when we want to know which entries to
+-- read.
 newtype Keys blk = Keys {getKeys :: Set (TxIn blk)}
 
 -- | A differential update to a table: the inserts, deletes and updates that,
@@ -170,13 +178,14 @@ newtype Diffs blk = Diffs {getDiffs :: Diff (TxIn blk) (TxOut blk)}
 
 -- | The trivial table: no entries at all.
 --
--- Used to mark a ledger state whose table contents are empty.
+-- Used to mark a ledger state whose table contents are empty and also has no
+-- values inside the 'NewEpochState'.
 data NoTables blk = NoTables deriving (Generic, NoThunks, Eq, Show)
 
 -- | The stowed table.
 --
 -- Isomorphic to the 'NoTables' variant but conveying the message that there are
--- in fact values inside the ledger state. 'stowLedgerTables' and
+-- in fact values inside the 'NewEpochState'. 'stowLedgerTables' and
 -- 'unstowLedgerTables' make use of this type.
 data Stowed blk = Stowed deriving (Generic, NoThunks, Eq, Show)
 
@@ -258,9 +267,6 @@ instance BimapTables Stowed where
 type HasLedgerTables :: StateKind -> Type -> Constraint
 class HasLedgerTables l blk where
   -- | Extract the ledger tables from a ledger state.
-  --
-  -- The constraints on @mk@ are necessary because the
-  -- 'Ouroboros.Consensus.Cardano.Block.CardanoBlock' instance uses them.
   projectLedgerTables ::
     -- Needed for the HFC bimapping to inject and eject
     BimapTables mk =>
@@ -276,9 +282,6 @@ class HasLedgerTables l blk where
   -- 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkBlock' ledger, the
   -- tables argument should not contain any data from eras that succeed the
   -- current era of the ledger state argument.
-  --
-  -- The constraints on @mk@ are necessary because the
-  -- 'Ouroboros.Consensus.Cardano.Block.CardanoBlock' instance uses them.
   withLedgerTables ::
     BimapTables mk =>
     l blk any ->
@@ -290,9 +293,8 @@ class HasLedgerTables l blk where
 --
 -- \"Stowing\" hides the table by folding its values back into the ledger
 -- state's in-memory representation, leaving the table-level slot as
--- 'NoTables'. \"Unstowing\" is the inverse. This is used in places that need
--- to round-trip a ledger state through a representation that has no separate
--- table component (e.g. legacy serialisation paths).
+-- 'Stowed'. \"Unstowing\" is the inverse. This is used to put the values inside
+-- the NewEpochState before calling the Ledger rules.
 type CanStowLedgerTables :: LedgerStateKind -> Constraint
 class CanStowLedgerTables lblk where
   stowLedgerTables :: lblk Values -> lblk Stowed
@@ -304,6 +306,9 @@ class CanStowLedgerTables lblk where
 -- block that triggers such a transition we may need to translate the
 -- pre-existing values to the new format before they can be combined with the
 -- post-fork ledger state.
+--
+-- This is only used for performance reasons in the InMemory backend. It mimicks
+-- the translation that already happened in era boundaries before UTxO-HD.
 type CanUpgradeLedgerTables :: StateKind -> Type -> Constraint
 class CanUpgradeLedgerTables l blk where
   upgradeTables ::
@@ -364,12 +369,10 @@ applyDiffs l1 l2 =
     withTablesFrom l1 $
       \(Values x) (Diffs y) -> Values (Diff.applyDiff x y)
 
--- | Apply the diffs carried by a ledger state, but only consider the entries
--- whose keys lie in the supplied 'Keys' set.
---
--- This is the building block used when answering a query against a baseline
--- 'Values' and a stack of pending 'Diffs' without materialising the full
--- updated table.
+-- | Apply the diffs carried by a ledger state, but consider the entries whose
+-- keys lie in the supplied 'Keys' set in addition to the ones in the 'Values'
+-- table (for example for newly created keys that come to existence in the
+-- 'Diffs').
 applyDiffRestricted ::
   (Ord (TxIn blk), HasLedgerTables l blk) =>
   Values blk -> Keys blk -> l blk Diffs -> l blk Values
@@ -445,15 +448,20 @@ class TrivialTables l blk where
 -- in-memory ledger context (e.g. the era of a HardFork ledger state) when
 -- deciding how to serialise individual entries. Concrete instances will often
 -- delegate to 'defaultEncodeTablesWithHint' / 'defaultDecodeTablesWithHint'.
+--
+-- 'SerializeTablesWithHint' is to whole tables what 'IndexedMemPack' is to
+-- single values. The former is used in the InMemory backend (as we write and
+-- load whole tables on snapshots), the latter is used in the on-disk backend
+-- (as we write and load single values to the database).
 class SerializeTablesWithHint l blk where
   encodeTablesWithHint :: l blk NoTables -> Values blk -> CBOR.Encoding
   decodeTablesWithHint :: l blk NoTables -> CBOR.Decoder s (Values blk)
 
 -- | Wrap an 'encodeTablesWithHint' in a one-element CBOR list.
 --
--- This is the canonical on-the-wire framing used by the snapshot machinery, so
--- that the decoder side can detect a missing payload as a list-length error
--- rather than misparsing the entries.
+-- This is the canonical framing used by the snapshot machinery, so that the
+-- decoder side can detect a missing payload as a list-length error rather than
+-- misparsing the entries.
 canonicalTablesEncoder ::
   SerializeTablesWithHint l blk => l blk NoTables -> Values blk -> CBOR.Encoding
 canonicalTablesEncoder st tbs = CBOR.encodeListLen 1 <> encodeTablesWithHint st tbs
@@ -469,7 +477,8 @@ canonicalTablesDecoder st =
 -- using its 'MemPack' instance and packages them into a CBOR map.
 --
 -- The hint argument is unused; this default is appropriate when the
--- serialisation of an entry does not depend on the surrounding ledger state.
+-- serialisation of an entry does not depend on the surrounding ledger state
+-- (like single era blocks).
 defaultEncodeTablesWithHint ::
   (MemPack (TxIn blk), MemPack (TxOut blk)) =>
   l blk NoTables ->

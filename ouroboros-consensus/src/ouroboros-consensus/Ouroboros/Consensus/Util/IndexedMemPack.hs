@@ -33,6 +33,11 @@ import GHC.Stack
 import Ouroboros.Consensus.Ledger.Tables
 
 -- | See 'MemPack'.
+--
+-- In the context of UTxO-HD, 'SerializeTablesWithHint' is to whole tables what
+-- 'IndexedMemPack' is to single values. The former is used in the InMemory
+-- backend (as we write and load whole tables on snapshots), the latter is used
+-- in the on-disk backend (as we write and load single values to the database).
 class IndexedMemPack l blk a where
   indexedPackedByteCount :: l blk NoTables -> a -> Int
   indexedPackM :: l blk NoTables -> a -> Pack s ()
