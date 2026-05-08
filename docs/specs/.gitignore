@@ -1,0 +1,2 @@
+# Extracted .qnt files are build artifacts (source of truth is the .md files)
+*.qnt
