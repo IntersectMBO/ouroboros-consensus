@@ -561,6 +561,7 @@ nodeLifecycle ::
   , LedgerSupportsPeras blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
@@ -620,6 +621,7 @@ runPointSchedule ::
   , LedgerSupportsPeras blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk

@@ -301,7 +301,9 @@ addBlockAsync CDB{cdbTracer, cdbChainSelQueue} =
 
 addPerasCertAsync ::
   forall m blk.
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   ChainDbEnv m blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   m (AddPerasCertPromise m)
@@ -313,7 +315,9 @@ addPerasCertAsync CDB{cdbTracer, cdbChainSelQueue} =
 -- the ChainDB as well.
 addPerasVoteWithAsyncCertHandling ::
   forall m blk.
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   ChainDbEnv m blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   m (Maybe (AddPerasCertPromise m))
@@ -345,6 +349,7 @@ triggerChainSelectionAsync CDB{cdbTracer, cdbChainSelQueue} =
 chainSelSync ::
   forall m blk.
   ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk

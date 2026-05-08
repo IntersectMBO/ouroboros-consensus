@@ -1777,6 +1777,8 @@ type TracingConstraints blk =
   , Show (CannotForge blk)
   , Show (TxMeasure blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
   , HasNestedContent Header blk
   )
 

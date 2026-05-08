@@ -24,6 +24,7 @@ import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Ledger.Conversions
+import Ouroboros.Consensus.Byron.Node.Peras ()
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Query
