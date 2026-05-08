@@ -31,6 +31,7 @@ data AddVoteResult
   | VoteInvalid VoteInvalid
   | AlreadyKnown
   | Added
+  deriving (Eq, Show)
 
 data LeiosVoteSubscription m = LeiosVoteSubscription {getNextVote :: STM m LeiosVote}
 

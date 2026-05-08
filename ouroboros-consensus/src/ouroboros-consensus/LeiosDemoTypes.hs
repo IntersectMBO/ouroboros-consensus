@@ -572,6 +572,7 @@ validateLeiosVote _ MkLeiosVote{voteSignature} =
     else Right 1 -- FIXME: proper weights
 
 data VoteInvalid = InvalidSignature
+  deriving (Eq, Show)
 
 type Weight = Rational
 
