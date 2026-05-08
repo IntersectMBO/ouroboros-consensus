@@ -637,7 +637,9 @@ addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish
 
 -- | Add a Peras certificate to the background queue.
 addPerasCertToQueue ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   Tracer m (TraceAddPerasCertEvent blk) ->
   ChainSelQueue m blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
@@ -792,9 +794,11 @@ data TraceEvent blk
 
 deriving instance
   ( Show (Header blk)
+  , Show (TraceAddBlockEvent blk)
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
-  , Show (TraceAddBlockEvent blk)
   ) =>
   Show (TraceEvent blk)
 

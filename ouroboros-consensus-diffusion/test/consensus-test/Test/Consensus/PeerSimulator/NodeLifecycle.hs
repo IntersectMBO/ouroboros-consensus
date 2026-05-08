@@ -137,6 +137,7 @@ mkChainDb ::
   , LedgerSupportsPeras blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
@@ -190,6 +191,7 @@ restoreNode ::
   , LedgerSupportsPeras blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
@@ -220,6 +222,7 @@ lifecycleStart ::
   , LedgerSupportsPeras blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk

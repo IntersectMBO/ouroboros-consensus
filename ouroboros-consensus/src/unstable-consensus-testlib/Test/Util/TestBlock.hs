@@ -142,7 +142,16 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Cert.Mock
+  ( MockPerasCert (..)
+  , forgeMockPerasCert
+  , validateMockPerasCert
+  )
 import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
+import Ouroboros.Consensus.Peras.Vote.Mock
+  ( MockPerasVote (..)
+  , validateMockPerasVote
+  )
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
@@ -693,6 +702,31 @@ instance PayloadSemantics ptype => LedgerSupportsProtocol (TestBlockWith ptype) 
     constantForecastInRange (strictMaybeToMaybe (tblcForecastRange cfg)) () (getTipSlot state)
 
 instance LedgerSupportsPeras (TestBlockWith ptype)
+
+{-------------------------------------------------------------------------------
+  BlockSupportsPeras
+-------------------------------------------------------------------------------}
+
+-- NOTE: this is a mocked up implementation without crypto!
+
+instance
+  Typeable ptype =>
+  BlockSupportsPeras (TestBlockWith ptype)
+  where
+  type PerasVote (TestBlockWith ptype) = MockPerasVote (TestBlockWith ptype)
+  type PerasCert (TestBlockWith ptype) = MockPerasCert (TestBlockWith ptype)
+  type PerasError (TestBlockWith ptype) = VoidPerasError (TestBlockWith ptype)
+
+  validatePerasVote = validateMockPerasVote
+  validatePerasCert = validateMockPerasCert
+  forgePerasCert = forgeMockPerasCert
+
+  -- TODO: extract actual Peras certificates from blocks
+  getPerasCertInBlock _ = Nothing
+
+{-------------------------------------------------------------------------------
+  Test infrastructure: config
+-------------------------------------------------------------------------------}
 
 singleNodeTestConfigWith ::
   CodecConfig (TestBlockWith ptype) ->

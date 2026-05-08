@@ -102,6 +102,7 @@ withDB ::
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
@@ -118,6 +119,7 @@ openDB ::
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
@@ -133,6 +135,7 @@ openDBInternal ::
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk

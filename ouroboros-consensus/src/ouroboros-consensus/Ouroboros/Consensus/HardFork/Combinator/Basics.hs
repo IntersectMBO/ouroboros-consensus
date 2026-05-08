@@ -47,6 +47,7 @@ import Data.Typeable
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras (..), VoidPerasError)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
@@ -57,6 +58,15 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Peras.Cert.Mock
+  ( MockPerasCert (..)
+  , forgeMockPerasCert
+  , validateMockPerasCert
+  )
+import Ouroboros.Consensus.Peras.Vote.Mock
+  ( MockPerasVote (..)
+  , validateMockPerasVote
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -258,3 +268,33 @@ instance CanHardFork xs => LedgerSupportsPeras (HardForkBlock xs) where
       . hcmap proxySingle (K . getLatestPerasCertRound . unFlip)
       . State.tip
       . hardForkLedgerStatePerEra
+
+{-------------------------------------------------------------------------------
+  BlockSupportsPeras
+-------------------------------------------------------------------------------}
+
+-- NOTE: this is a mocked up implementation without crypto!
+
+-- TODO: when replacing this with a real votes and certificates, we need to make
+-- sure that their binary representation would be compatible with the one the
+-- HFC would produce if it were in charge of dispatching them. Concretely, this
+-- means adding an envelope around the actual votes and certificates indicating
+-- which era they belong to. This is to allow for the possibility of having the
+-- HFC dispatch different types of votes and certificates in the future.
+
+instance
+  ( StandardHash (HardForkBlock xs)
+  , CanHardFork xs
+  ) =>
+  BlockSupportsPeras (HardForkBlock xs)
+  where
+  type PerasVote (HardForkBlock xs) = MockPerasVote (HardForkBlock xs)
+  type PerasCert (HardForkBlock xs) = MockPerasCert (HardForkBlock xs)
+  type PerasError (HardForkBlock xs) = VoidPerasError (HardForkBlock xs)
+
+  validatePerasVote = validateMockPerasVote
+  validatePerasCert = validateMockPerasCert
+  forgePerasCert = forgeMockPerasCert
+
+  -- TODO: extract actual Peras certificates from blocks
+  getPerasCertInBlock _ = Nothing

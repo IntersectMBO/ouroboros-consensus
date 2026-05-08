@@ -91,6 +91,7 @@ import System.Random
 launchBgTasks ::
   forall m blk.
   ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
@@ -571,6 +572,7 @@ dumpGcSchedule (GcSchedule varQueue) = toList <$> readTVar varQueue
 -- ChainDB.
 addBlockRunner ::
   ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk

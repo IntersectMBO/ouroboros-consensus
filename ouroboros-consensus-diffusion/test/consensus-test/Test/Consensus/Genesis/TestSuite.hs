@@ -35,6 +35,7 @@ import Data.Monoid (Endo (..))
 import GHC.Generics (Generic, Generically (..))
 import Ouroboros.Consensus.Block
   ( BlockSupportsDiffusionPipelining
+  , BlockSupportsPeras
   , ConvertRawHash
   , Header
   )
@@ -186,6 +187,7 @@ toTestTree ::
   , LedgerSupportsPeras blk
   , SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
