@@ -1129,6 +1129,7 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
   getLeiosCommittee ls =
     Just $ MkCommitee{voters = everyoneVotes}
    where
+    -- TODO: stake-based scheme and move to era boundary (to cache sort by stake)
     everyoneVotes =
       Map.keysSet stakeDistribution
         & Set.map unsafeDeriveVotingKey

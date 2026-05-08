@@ -92,7 +92,7 @@ import LeiosStagingArea
   , runStagingAreaDrain
   )
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
-import LeiosVoting (runLeiosVoting)
+import LeiosVoting (getLeiosCommittee, runLeiosVoting)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.BlockchainTime
@@ -641,7 +641,8 @@ initNodeKernel
     -- to local "EB closure acquired" notifications and emit a vote for
     -- each acquired EB (which the LeiosNotify server then publishes to
     -- peers). 'Nothing' disables voting on this node.
-    leiosVoteState <- newLeiosVoteState
+    let getCommittee = getLeiosCommittee . ledgerState <$> ChainDB.getCurrentLedger chainDB
+    leiosVoteState <- newLeiosVoteState getCommittee
     void $
       forkLinkedThread registry "NodeKernel.leiosVoting" $
         runLeiosVoting

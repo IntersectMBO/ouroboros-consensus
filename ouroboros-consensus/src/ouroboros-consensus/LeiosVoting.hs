@@ -66,7 +66,7 @@ runLeiosVoting tracer chainDB leiosDB voteState = \case
                   , voteSignature = True
                   }
           -- Store vote in memory and notify downstream peers
-          addVote vote
+          _ <- addVote vote -- TODO: could skip validation
           traceWith tracer TraceLeiosVoted{vote}
           traceWith tracer TraceLeiosVoteAcquired{vote}
  where
