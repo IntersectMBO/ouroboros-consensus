@@ -13,9 +13,9 @@ import Control.Tracer (Tracer, traceWith)
 import LeiosDemoDb (LeiosDbHandle (..), LeiosEbNotification (..))
 import LeiosDemoTypes
   ( Committee
-  , LeiosVote (..)
   , TraceLeiosKernel (..)
   , getVoterId
+  , signLeiosVote
   )
 import LeiosVoteState (LeiosVoteState (..))
 import Ouroboros.Consensus.Config (VotingKey)
@@ -44,12 +44,14 @@ runLeiosVoting tracer chainDB leiosDB voteState = \case
       MkTraceLeiosKernel
         "runLeiosVoting: disabled because no topLevelConfigVotingKey"
   Just votingKey -> do
+    let signVote = signLeiosVote votingKey
     let LeiosVoteState{addVote} = voteState
     chan <- subscribeEbNotifications leiosDB
     let getNext f =
           atomically (readTChan chan) >>= \case
             AcquiredEb{} -> pure ()
             AcquiredEbTxs point -> f point
+
     -- Enter voting loop
     forever $ getNext $ \point -> do
       -- TODO: check only once per era whether we are part of the committee?
@@ -58,13 +60,7 @@ runLeiosVoting tracer chainDB leiosDB voteState = \case
         Nothing -> pure ()
         Just voterId -> do
           -- TODO: validate EB closures against selected chain
-          -- TODO: create vote (sign the eb hash)
-          let vote =
-                MkLeiosVote
-                  { point
-                  , voterId
-                  , voteSignature = True
-                  }
+          let vote = signVote voterId point
           -- TODO: trace if adding vote failed? Should not happen -> additional
           -- API, also should skip validation
           _ <- addVote vote

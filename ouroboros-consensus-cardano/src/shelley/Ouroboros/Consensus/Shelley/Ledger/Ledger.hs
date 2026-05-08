@@ -1127,7 +1127,7 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra)
 instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
   -- REVIEW: Should we use the LedgerView (Praos c) instead?
   getLeiosCommittee ls =
-    Just $ MkCommitee{voters = everyoneVotes}
+    Just $ MkCommittee{voters = everyoneVotes}
    where
     -- TODO: stake-based scheme and move to era boundary (to cache sort by stake)
     everyoneVotes =

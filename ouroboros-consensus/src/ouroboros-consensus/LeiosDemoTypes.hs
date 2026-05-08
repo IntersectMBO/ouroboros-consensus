@@ -495,8 +495,23 @@ decodeLeiosEb = do
 
 -- * Voting
 
+-- ** Committee
+
+-- FIXME: This should only contain public keys
+
 -- | A selected committee in which each 'VoterId' has a 'Weight'.
-newtype Committee = MkCommitee {voters :: Set VotingKey}
+newtype Committee = MkCommittee {voters :: Set VotingKey}
+  deriving Show
+
+-- | Resolve a 'VoterId' to its corresponding 'VotingKey' in the 'Committee'.
+resolveVoterId :: Committee -> VoterId -> Maybe VotingKey
+resolveVoterId MkCommittee{voters} (MkVoterId idx)
+  | i >= 0 && i < Set.size voters = Just $ Set.elemAt i voters
+  | otherwise = Nothing
+ where
+  i = fromIntegral idx
+
+-- ** VoterId
 
 -- | Voter in a committee, identified by their seat index.
 newtype VoterId = MkVoterId {voterIndex :: Word16}
@@ -512,6 +527,11 @@ decodeVoterId = MkVoterId <$> CBOR.decodeWord16
 getVoterId :: VotingKey -> Committee -> Maybe VoterId
 getVoterId key committee =
   MkVoterId . fromIntegral <$> Set.lookupIndex key committee.voters
+
+-- ** Vote
+
+-- FIXME: proper signing of votes using BLS (SigDSIGN BLS12381MinSigDSIGN)
+type VoteSignature = Bool
 
 -- | A vote in the Leios protocol.
 data LeiosVote = MkLeiosVote
@@ -560,18 +580,29 @@ voteToObject MkLeiosVote{point, voterId, voteSignature} =
     , "voteSignature" .= voteSignature
     ]
 
--- FIXME: proper signing of votes using BLS (SigDSIGN BLS12381MinSigDSIGN)
-type VoteSignature = Bool
+-- | Create a vote for given 'LeiosPoint' and signing key.
+signLeiosVote :: VotingKey -> VoterId -> LeiosPoint -> LeiosVote
+signLeiosVote _ voterId point =
+  MkLeiosVote
+    { point
+    , voterId
+    , voteSignature = True -- FIXME: proper signing of votes
+    }
 
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
 validateLeiosVote :: Committee -> LeiosVote -> Either VoteInvalid Weight
-validateLeiosVote _ MkLeiosVote{voteSignature} =
-  -- FIXME: proper signing of votes
-  if not voteSignature
-    then Left InvalidSignature
-    else Right 1 -- FIXME: proper weights
+validateLeiosVote committee MkLeiosVote{voterId, voteSignature} =
+  case resolveVoterId committee voterId of
+    Nothing -> Left SignerNotInCommittee
+    Just _vk ->
+      -- TODO: verify signature
+      if not voteSignature
+        then Left InvalidSignature
+        else Right 1 -- FIXME: proper weights
 
-data VoteInvalid = InvalidSignature
+data VoteInvalid
+  = InvalidSignature
+  | SignerNotInCommittee
   deriving (Eq, Show)
 
 type Weight = Rational
