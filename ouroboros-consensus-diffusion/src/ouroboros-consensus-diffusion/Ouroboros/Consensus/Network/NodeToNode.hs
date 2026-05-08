@@ -276,8 +276,9 @@ mkHandlers ::
   ( IOLike m
   , MonadTime m
   , MonadTimer m
-  , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , BlockSupportsPeras blk
+  , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
   , Ord addrNTN
   , Hashable addrNTN
@@ -622,6 +623,8 @@ showTracers ::
   , Show (Header blk)
   , Show (GenTx blk)
   , Show (GenTxId blk)
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
   , HasHeader blk
   , HasNestedContent Header blk
   ) =>
@@ -779,6 +782,8 @@ mkApps ::
   , ShowProxy (Header blk)
   , ShowProxy (TxId (GenTx blk))
   , ShowProxy (GenTx blk)
+  , ShowProxy (PerasVote blk)
+  , ShowProxy (PerasCert blk)
   , Show addrNTN
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)

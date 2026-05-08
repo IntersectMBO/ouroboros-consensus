@@ -38,6 +38,8 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasCooldownRounds (..)
   , PerasIgnoranceRounds (..)
   , PerasParams (..)
+  , PerasRoundNo (..)
+  , onPerasRoundNo
   )
 import Ouroboros.Consensus.Peras.Voting.View
   ( LatestCertOnChainView (..)

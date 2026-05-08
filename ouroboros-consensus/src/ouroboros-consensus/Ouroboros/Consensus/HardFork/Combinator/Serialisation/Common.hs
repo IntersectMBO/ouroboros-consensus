@@ -104,6 +104,7 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Instances
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Network.Block (Serialised)
@@ -205,6 +206,9 @@ class
   , LedgerDbSerialiseConstraints (HardForkBlock xs)
   , VolatileDbSerialiseConstraints (HardForkBlock xs)
   , EncodeDiskDep (NestedCtxt Header) (HardForkBlock xs)
+  , -- Required for Peras
+    SerialiseNodeToNode (HardForkBlock xs) (PerasVote (HardForkBlock xs))
+  , SerialiseNodeToNode (HardForkBlock xs) (PerasVote (HardForkBlock xs))
   ) =>
   SerialiseHFC xs
   where

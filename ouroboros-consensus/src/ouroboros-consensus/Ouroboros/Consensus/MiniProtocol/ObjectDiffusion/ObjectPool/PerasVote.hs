@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
@@ -45,7 +46,9 @@ takeAscMap n = Map.fromDistinctAscList . take n . Map.toAscList
 
 -- | Internal helper: create a pool reader from a @getVotesAfter@ function.
 makePerasVotePoolReader ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   ( PerasVoteTicketNo ->
     STM m (Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
   ) ->
@@ -64,7 +67,9 @@ makePerasVotePoolReader getVotesAfterSTM =
     }
 
 makePerasVotePoolReaderFromVoteDB ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   PerasVoteDB m blk ->
   ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
 makePerasVotePoolReaderFromVoteDB perasVoteDB =
@@ -72,7 +77,9 @@ makePerasVotePoolReaderFromVoteDB perasVoteDB =
     (PerasVoteDB.getVotesAfter perasVoteDB)
 
 makePerasVotePoolReaderFromChainDB ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   ChainDB m blk ->
   ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
 makePerasVotePoolReaderFromChainDB chainDB =
@@ -90,7 +97,9 @@ makePerasVotePoolReaderFromChainDB chainDB =
 -- see 'makePerasVotePoolWriterFromChainDB' which creates a pool writer from the
 -- 'ChainDB' and thus properly handles the produced certs.
 makePerasVotePoolWriterFromVoteDB ::
-  IOLike m =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   SystemTime m ->
   -- | This is needed for validating votes (since it is during the validation of
   -- votes that we give them a verified weight. In the future, we won't read it
@@ -120,7 +129,9 @@ makePerasVotePoolWriterFromVoteDB systemTime getStakeDistrSTM perasVoteDB =
 -- This properly handles the produced certs by letting the ChainDB take care
 -- of them (see 'ChainDB.addPerasVoteWithAsyncCertHandling').
 makePerasVotePoolWriterFromChainDB ::
-  IOLike m =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   SystemTime m ->
   -- | This is needed for validating votes (since its during the validation of
   -- votes that we give them a verified weight. In the future, we won't read it
@@ -152,7 +163,9 @@ makePerasVotePoolWriterFromChainDB systemTime getStakeDistrSTM chainDB =
     }
 
 data PerasVoteInboundException
-  = forall blk. PerasVoteValidationError [PerasValidationErr blk]
+  = forall blk.
+    Show (PerasError blk) =>
+    PerasVoteValidationError [PerasError blk]
 
 deriving instance Show PerasVoteInboundException
 
@@ -168,10 +181,13 @@ instance Exception PerasVoteInboundException
 -- `ouroboros-network`). Otherwise, each valid vote is timestamped with the
 -- current wall-clock time and added to the database via @addVote@.
 processVotes ::
-  MonadSTM m =>
+  ( MonadSTM m
+  , Show (PerasError blk)
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
   SystemTime m ->
   STM m (Set (PerasVoteId blk)) ->
-  (PerasVote blk -> STM m (Either (PerasValidationErr blk) (ValidatedPerasVote blk))) ->
+  (PerasVote blk -> STM m (Either (PerasError blk) (ValidatedPerasVote blk))) ->
   (WithArrivalTime (ValidatedPerasVote blk) -> m ()) ->
   [PerasVote blk] ->
   m ()

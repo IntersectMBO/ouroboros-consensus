@@ -237,12 +237,14 @@ library
     Ouroboros.Consensus.Node.Serialisation
     Ouroboros.Consensus.NodeId
     Ouroboros.Consensus.Peras.Cert.Inclusion
+    Ouroboros.Consensus.Peras.Cert.Mock
     Ouroboros.Consensus.Peras.Cert.V1
     Ouroboros.Consensus.Peras.Crypto.BLS
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Types
     Ouroboros.Consensus.Peras.Vote.Aggregation
+    Ouroboros.Consensus.Peras.Vote.Mock
     Ouroboros.Consensus.Peras.Vote.V1
     Ouroboros.Consensus.Peras.Voting.Committee
     Ouroboros.Consensus.Peras.Voting.Rules
@@ -581,6 +583,7 @@ library unstable-mock-block
     Ouroboros.Consensus.Mock.Node.Abstract
     Ouroboros.Consensus.Mock.Node.BFT
     Ouroboros.Consensus.Mock.Node.PBFT
+    Ouroboros.Consensus.Mock.Node.Peras
     Ouroboros.Consensus.Mock.Node.Praos
     Ouroboros.Consensus.Mock.Node.PraosRule
     Ouroboros.Consensus.Mock.Node.Serialisation
@@ -1317,6 +1320,7 @@ library cardano
     Ouroboros.Consensus.Byron.Ledger.PBFT
     Ouroboros.Consensus.Byron.Ledger.Serialisation
     Ouroboros.Consensus.Byron.Node
+    Ouroboros.Consensus.Byron.Node.Peras
     Ouroboros.Consensus.Byron.Node.Serialisation
     Ouroboros.Consensus.Byron.Protocol
     Ouroboros.Consensus.Cardano
@@ -1348,6 +1352,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Node
     Ouroboros.Consensus.Shelley.Node.Common
     Ouroboros.Consensus.Shelley.Node.DiffusionPipelining
+    Ouroboros.Consensus.Shelley.Node.Peras
     Ouroboros.Consensus.Shelley.Node.Praos
     Ouroboros.Consensus.Shelley.Node.Serialisation
     Ouroboros.Consensus.Shelley.Node.TPraos
@@ -1448,6 +1453,7 @@ library unstable-byron-testlib
   exposed-modules:
     Ouroboros.Consensus.ByronDual.Ledger
     Ouroboros.Consensus.ByronDual.Node
+    Ouroboros.Consensus.ByronDual.Node.Peras
     Ouroboros.Consensus.ByronDual.Node.Serialisation
     Test.Consensus.Byron.Examples
     Test.Consensus.Byron.Generators
