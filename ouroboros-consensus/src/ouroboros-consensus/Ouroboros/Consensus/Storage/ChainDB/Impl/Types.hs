@@ -655,7 +655,10 @@ addPerasCertToQueue tracer ChainSelQueue{varChainSelQueue} cert = do
       { waitPerasCertProcessed = atomically $ readTMVar varProcessed
       }
  where
-  addedToQueue = AddedPerasCertToQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
+  addedToQueue =
+    AddedPerasCertToQueue
+      (getPerasCertRound cert)
+      (getPerasCertBlock cert)
 
 -- | Try to add blocks again that were postponed due to the LoE.
 addReprocessLoEBlocks ::

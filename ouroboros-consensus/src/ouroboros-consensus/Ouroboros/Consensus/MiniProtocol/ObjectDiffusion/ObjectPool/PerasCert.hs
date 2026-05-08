@@ -89,7 +89,7 @@ makePerasCertPoolReaderFromChainDB chainDB =
 -- see 'makePerasCertPoolWriterFromChainDB' which creates a pool writer from the
 -- 'ChainDB' with proper handling of chain selection side-effects.
 makePerasCertPoolWriterFromCertDB ::
-  (StandardHash blk, IOLike m) =>
+  IOLike m =>
   SystemTime m ->
   PerasCertDB m blk ->
   ObjectPoolWriter PerasRoundNo (PerasCert blk) m
@@ -111,7 +111,7 @@ makePerasCertPoolWriterFromCertDB systemTime perasCertDB =
 -- | Create a pool writer from the 'ChainDB'. This properly handles any needed
 -- chain selection side-effects.
 makePerasCertPoolWriterFromChainDB ::
-  (StandardHash blk, IOLike m) =>
+  IOLike m =>
   SystemTime m ->
   ChainDB m blk ->
   ObjectPoolWriter PerasRoundNo (PerasCert blk) m

@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | This module defines the logic needed to evaluate when a Peras certificate
 -- must be included in a block.
@@ -25,10 +26,14 @@ module Ouroboros.Consensus.Peras.Cert.Inclusion
 
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Ouroboros.Consensus.Block (WithOrigin (..), withOriginToMaybe)
-import Ouroboros.Consensus.Block.SupportsPeras (HasPerasCertRound (..))
-import Ouroboros.Consensus.Peras.Params (PerasCertMaxRounds (..), PerasParams (..))
-import Ouroboros.Consensus.Peras.Types (PerasRoundNo (..))
+import Ouroboros.Consensus.Block
+  ( IsPerasCert (..)
+  , PerasCertMaxRounds (..)
+  , PerasParams (..)
+  , PerasRoundNo (..)
+  , WithOrigin (..)
+  , withOriginToMaybe
+  )
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.Pred
   ( Evidence (..)
@@ -85,7 +90,7 @@ data PerasCertInclusionView cert blk = PerasCertInclusionView
 -- within the same STM transaction, or the results may be inconsistent.
 mkPerasCertInclusionView ::
   forall cert blk.
-  HasPerasCertRound cert =>
+  IsPerasCert cert blk =>
   -- | Peras protocol parameters
   PerasParams ->
   -- | Current Peras round number
@@ -144,7 +149,7 @@ data PerasCertInclusionRulesDecision cert
   deriving Show
 
 instance
-  HasPerasCertRound cert =>
+  IsPerasCert cert blk =>
   Explainable (PerasCertInclusionRulesDecision cert)
   where
   explain mode = \case

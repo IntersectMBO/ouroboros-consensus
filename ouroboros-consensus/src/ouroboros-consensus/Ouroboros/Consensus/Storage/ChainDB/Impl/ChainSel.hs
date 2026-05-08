@@ -540,7 +540,7 @@ chainSelSync cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do
   certRound = getPerasCertRound cert
 
   boostedBlock :: Point blk
-  boostedBlock = getPerasCertBoostedBlock cert
+  boostedBlock = getPerasCertBlock cert
 
   -- \| Run a block that can exit early with a result value.
   withEarlyExitId :: ExceptT a (Electric m) a -> Electric m a

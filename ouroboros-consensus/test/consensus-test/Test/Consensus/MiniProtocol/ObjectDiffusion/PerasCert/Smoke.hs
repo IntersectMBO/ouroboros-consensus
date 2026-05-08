@@ -65,8 +65,8 @@ tests =
 genPerasCert :: Gen (PerasCert TestBlock)
 genPerasCert = do
   pcCertRound <- PerasRoundNo <$> arbitrary
-  pcCertBoostedBlock <- genPointTestBlock
-  pure $ PerasCert{pcCertRound, pcCertBoostedBlock}
+  pcCertBlock <- genPointTestBlock
+  pure $ PerasCert{pcCertRound, pcCertBlock}
 
 instance WithId (PerasCert blk) PerasRoundNo where
   getId = pcCertRound
