@@ -83,7 +83,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     CodecConfig blk ->
     Tracer m (TraceSnapshotEvent blk) ->
     SomeHasFS m ->
-    SnapshotManager m m blk (StateRef m ExtLedgerState blk)
+    SnapshotManager m blk (StateRef m ExtLedgerState blk)
 
 {-------------------------------------------------------------------------------
   Existentials

@@ -393,19 +393,43 @@ See https://developers.cardano.org/docs/operate-a-stake-pool/node-operations/top
 
 ## snapshot-converter
 
-## About
+### About
 
 This tool converts snapshots among the different backends supported by the node.
 
-## Running the tool
+### Running in oneshot mode
 
-Invoking the tool follows the same simple pattern always:
+`snapshot-converter` can be invoked to convert a single snapshot to a different
+format. The two formats supported at the moment are: Mem and LSM.
 
-```sh
-cabal run snapshot-converter -- <IN> <OUT> --config /path/to/cardano/config.json
+As snapshots in Mem are fully contained in one directory, providing that one is
+enough. On the other hand, converting an LSM snapshot requires a reference to
+the snapshot directory as well as the LSM database directory.
+
+To run in oneshot mode, you have to provide input and output parameters as in:
+```
+# mem to lsm
+$ snapshot-converter --input-mem <PATH> --output-lsm-snapshot <PATH> --output-lsm-database <PATH> --config <PATH>
+
+# lsm to mem
+$ snapshot-converter --input-lsm-snapshot <PATH> --input-lsm-database <PATH> --output-mem <PATH> --config <PATH>
 ```
 
-The `<IN>` and `<OUT>` parameters depend on the input and output format, receiving options:
-- `--mem-in PATH`/`--mem-out PATH` for InMemory
-- `--lmdb-in PATH`/`--lmdb-out PATH` for LMDB
-- `--lsm-database-in DB_PATH --lsm-snapshot-in PATH`/`--lsm-database-out DB_PATH --lsm-snapshot-out PATH` for LSM-trees.
+Note that the input and output paths need to be named after the slot number of
+the contained ledger state, this means for example that a snapshot for slot 100
+has to be contained in a directory `100[_suffix]` and has to be written to a
+directory `100[_some_other_suffix]`. Providing a wrong slot number will throw an
+error.
+
+This naming convention is the same expected by `cardano-node`.
+
+### Running in daemon mode
+
+`snapshot-converter` can be invoked as a daemon to monitor and convert
+snapshots produced by a `cardano-node` into Mem format as they are
+written by the node. This is only meaningful to run if your node
+produces LSM snapshots:
+```
+# lsm to mem
+$ snapshot-converter --monitor-lsm-snapshots-in <PATH> --lsm-database <PATH> --output-mem-snapshots-in <PATH> --config <PATH>
+```

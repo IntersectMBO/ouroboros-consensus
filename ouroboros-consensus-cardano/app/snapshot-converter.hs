@@ -128,14 +128,9 @@ getCommandLineConfig =
 parseConfig :: Parser Config
 parseConfig =
   ( DaemonConfig
-      <$> ( ( LSMSnapshot
-                <$> (SnapshotsDirectory <$> strOption (long "monitor-lsm-snapshots-in"))
-                <*> (LSMDatabaseFilePath <$> strOption (long "lsm-database"))
-            )
-              <|> ( StandaloneSnapshot
-                      <$> (SnapshotsDirectory <$> strOption (long "monitor-lmdb-snapshots-in"))
-                      <*> pure LMDB
-                  )
+      <$> ( LSMSnapshot
+              <$> (SnapshotsDirectory <$> strOption (long "monitor-lsm-snapshots-in"))
+              <*> (LSMDatabaseFilePath <$> strOption (long "lsm-database"))
           )
       <*> (SnapshotsDirectory <$> strOption (long "output-mem-snapshots-in"))
   )
@@ -148,10 +143,6 @@ parseConfig =
                             <$> strOption (long "input-mem")
                             <*> pure Mem
                         )
-                    <|> ( StandaloneSnapshot'
-                            <$> strOption (long "input-lmdb")
-                            <*> pure LMDB
-                        )
                 )
             <*> ( ( LSMSnapshot'
                       <$> (strOption (long "output-lsm-snapshot"))
@@ -160,10 +151,6 @@ parseConfig =
                     <|> ( StandaloneSnapshot'
                             <$> strOption (long "output-mem")
                             <*> pure Mem
-                        )
-                    <|> ( StandaloneSnapshot'
-                            <$> strOption (long "output-lmdb")
-                            <*> pure LMDB
                         )
                 )
         )
@@ -176,9 +163,9 @@ programDescription =
     # Running in oneshot mode
 
         `snapshot-converter` can be invoked to convert a single snapshot to a different
-        format. The three formats supported at the moment are: Mem, LMDB and LSM.
+        format. The two formats supported at the moment are: Mem and LSM.
 
-        As snapshots in Mem and LMDB are fully contained in one directory, providing
+        As snapshots in Mem are fully contained in one directory, providing
         that one is enough. On the other hand, converting an LSM snapshot requires a
         reference to the snapshot directory as well as the LSM database directory.
 
@@ -186,18 +173,9 @@ programDescription =
         ```
         # mem to lsm
         $ snapshot-converter --input-mem <PATH> --output-lsm-snapshot <PATH> --output-lsm-database <PATH> --config <PATH>
-        # mem to lmdb
-        $ snapshot-converter --input-mem <PATH> --output-lmdb <PATH> --config <PATH>
-
-        # lmdb to lsm
-        $ snapshot-converter --input-lmdb <PATH> --output-lsm-snapshot <PATH> --output-lsm-database --config <PATH>
-        # lmdb to mem
-        $ snapshot-converter --input-lmdb <PATH> --output-mem <PATH> --config <PATH>
 
         # lsm to mem
         $ snapshot-converter --input-lsm-snapshot <PATH> --input-lsm-database <PATH> --output-mem <PATH> --config <PATH>
-        # lsm to mem
-        $ snapshot-converter --input-lsm-snapshot <PATH> --input-lsm-database <PATH> --output-lmdb <PATH> --config <PATH>
         ```
 
         Note that the input and output paths need to be named after the slot number
@@ -213,12 +191,10 @@ programDescription =
         `snapshot-converter` can be invoked as a daemon to monitor and convert
         snapshots produced by a `cardano-node` into Mem format as they are
         written by the node. This is only meaningful to run if your node
-        produces LMDB or LSM snapshots:
+        produces LSM snapshots:
         ```
         # lsm to mem
         $ snapshot-converter --monitor-lsm-snapshots-in <PATH> --lsm-database <PATH> --output-mem-snapshots-in <PATH> --config <PATH>
-        # lmdb to mem
-        $ snapshot-converter --monitor-lmdb-snapshots-in <PATH> --output-mem-snapshots-in <PATH> --config <PATH>
         ```
     """
 #else
@@ -231,9 +207,9 @@ programDescription =
      [ "# Running in oneshot mode"
      , ""
      , "    `snapshot-converter` can be invoked to convert a single snapshot to a different"
-     , "    format. The three formats supported at the moment are: Mem, LMDB and LSM."
+     , "    format. The two formats supported at the moment are: Mem and LSM."
      , ""
-     , "    As snapshots in Mem and LMDB are fully contained in one directory, providing"
+     , "    As snapshots in Mem are fully contained in one directory, providing"
      , "    that one is enough. On the other hand, converting an LSM snapshot requires a"
      , "    reference to the snapshot directory as well as the LSM database directory."
      , ""
@@ -241,18 +217,9 @@ programDescription =
      , "    ```"
      , "    # mem to lsm"
      , "    $ snapshot-converter --input-mem <PATH> --output-lsm-snapshot <PATH> --output-lsm-database <PATH> --config <PATH>"
-     , "    # mem to lmdb"
-     , "    $ snapshot-converter --input-mem <PATH> --output-lmdb <PATH> --config <PATH>"
-     , ""
-     , "    # lmdb to lsm"
-     , "    $ snapshot-converter --input-lmdb <PATH> --output-lsm-snapshot <PATH> --output-lsm-database --config <PATH>"
-     , "    # lmdb to mem"
-     , "    $ snapshot-converter --input-lmdb <PATH> --output-mem <PATH> --config <PATH>"
      , ""
      , "    # lsm to mem"
      , "    $ snapshot-converter --input-lsm-snapshot <PATH> --input-lsm-database <PATH> --output-mem <PATH> --config <PATH>"
-     , "    # lsm to mem"
-     , "    $ snapshot-converter --input-lsm-snapshot <PATH> --input-lsm-database <PATH> --output-lmdb <PATH> --config <PATH>"
      , "    ```"
      , ""
      , "    Note that the input and output paths need to be named after the slot number"
@@ -268,13 +235,11 @@ programDescription =
      , "    `snapshot-converter` can be invoked as a daemon to monitor and convert"
      , "    snapshots produced by a `cardano-node` into Mem format as they are"
      , "    written by the node. This is only meaningful to run if your node"
-     , "    produces LMDB or LSM snapshots:"
+     , "    produces LSM snapshots:"
      , ""
      , "    ```"
      , "    # lsm to mem"
      , "    $ snapshot-converter --monitor-lsm-snapshots-in <PATH> --lsm-database <PATH> --output-mem-snapshots-in <PATH> --config <PATH>"
-     , "    # lmdb to mem"
-     , "    $ snapshot-converter --monitor-lmdb-snapshots-in <PATH> --output-mem-snapshots-in <PATH> --config <PATH>"
      , "    ```"
      ]
 #endif

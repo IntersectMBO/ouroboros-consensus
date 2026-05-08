@@ -33,7 +33,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -84,9 +83,8 @@ defaultArgs backendArgs =
     , lgrStartSnapshot = Nothing
     }
 
-data LedgerDbBackendArgs m blk
-  = LedgerDbBackendArgsV1 (V1.LedgerDbBackendArgs m ExtLedgerState blk)
-  | LedgerDbBackendArgsV2 (V2.SomeBackendArgs m blk)
+newtype LedgerDbBackendArgs m blk
+  = LedgerDbBackendArgsV2 (V2.SomeBackendArgs m blk)
 
 {-------------------------------------------------------------------------------
   QueryBatchSize

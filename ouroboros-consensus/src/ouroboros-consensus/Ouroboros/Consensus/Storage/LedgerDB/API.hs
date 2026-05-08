@@ -67,12 +67,6 @@
 --     read and used to restore the current ledger state, as well as the past
 --      \(k\) ledger states.
 --
--- - __Flushing 'LedgerTable' differences__: The running Consensus has to
---     periodically flush chunks of [differences]("Data.Map.Diff.Strict")
---     from the 'DbChangelog' to the 'BackingStore', so that memory is
---     off-loaded to the backing store, and if the backing store is an on-disk
---     implementation, reduce the memory usage.
---
 -- Note that whenever we say /ledger state/ we mean the @'ExtLedgerState' blk
 -- mk@ type described in "Ouroboros.Consensus.Ledger.Basics".
 --
@@ -81,24 +75,6 @@
 -- The LedgerDB has currently 3 backends it can use:
 --
 -- - InMemory: This backend is pure except for tracing. No resources are allocated.
---
--- - LMDB: This backend allocates a 'BackingStore' and
---   'BackingStoreValueHandle's on it. The 'BackingStore' does not necessarily
---   need to be closed as described in [the LMDB
---   documentation](http://www.lmdb.tech/doc/group__internal.html#ga52dd98d0c542378370cd6b712ff961b5):
---
---   > Closing a database handle is not necessary, but lets mdb_dbi_open() reuse the handle value.
---
---   Therefore, the 'BackingStore' is not allocated in any resource or tracked
---   in any way as a resource.
---
---   For the value handles, all the usages of those are bracketed or
---   tracked in a resource registry, so they will be closed
---   individually when an exception arrives. The key difference is
---   that in V1, the value handle cannot outlive the Forker (see
---   "'Forker' management in the running node" below), while in V2 the
---   resources (handles) can outlive the forkers and be moved to the
---   LedgerDB.
 --
 -- - LSM: This backend allocates a 'BlockIOFS' and a 'Session'. Using the
 --   session, new 'Tables' are allocated, but closing the session closes any
@@ -360,16 +336,6 @@ data LedgerDB m l blk = LedgerDB
   --   flush the immutable blocks from the VolatileDB into the
   --   ImmutableDB.
   -- - a function that calculates the delay before the snapshot
-  --
-  -- For V1, this MUST NOT be called concurrently with 'garbageCollect' and/or
-  -- 'tryFlush'.
-  , tryFlush :: m ()
-  -- ^ Flush V1 in-memory LedgerDB state to disk, if possible. This is a no-op
-  -- for implementations that do not need an explicit flush function.
-  --
-  -- For V1, this MUST NOT be called concurrently with 'tryTakeSnapshot'.
-  --
-  -- Note that this is rate-limited by 'ldbShouldFlush'.
   , closeDB :: m ()
   -- ^ Close the LedgerDB
   --
@@ -406,8 +372,7 @@ data TestInternals m l blk = TestInternals
   , truncateSnapshots :: m ()
   , closeLedgerDB :: m ()
   , getNumLedgerTablesHandles :: m Word64
-  -- ^ Get the number of referenced 'LedgerTablesHandle's for V2. For V1, this
-  -- always returns 0.
+  -- ^ Get the number of referenced 'LedgerTablesHandle's.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "TestInternals" (TestInternals m l blk)
 
@@ -555,7 +520,7 @@ data InitDB db m blk = InitDB
 -- obtained in this way will (hopefully) share much of their memory footprint
 -- with their predecessors.
 initialize ::
-  forall m n blk db st.
+  forall m blk db st.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
@@ -567,7 +532,7 @@ initialize ::
   StreamAPI m blk blk ->
   Point blk ->
   InitDB db m blk ->
-  SnapshotManager m n blk st ->
+  SnapshotManager m blk st ->
   Maybe DiskSnapshot ->
   m (InitLog blk, db)
 initialize

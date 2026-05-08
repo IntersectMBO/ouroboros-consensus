@@ -291,16 +291,6 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.Forker
     Ouroboros.Consensus.Storage.LedgerDB.Snapshots
     Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-    Ouroboros.Consensus.Storage.LedgerDB.V1
-    Ouroboros.Consensus.Storage.LedgerDB.V1.Args
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory
-    Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
-    Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
-    Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
-    Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
-    Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
     Ouroboros.Consensus.Storage.LedgerDB.V2
     Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
     Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
@@ -374,16 +364,13 @@ library
     containers >=0.5 && <0.9,
     contra-tracer ^>=0.1,
     deepseq,
-    diff-containers >=1.2,
     FailT ^>=0.1.2,
     filelock,
-    fingertree-rm >=1.0,
     fs-api ^>=0.4,
     hashable,
     io-classes:{io-classes, si-timers, strict-mvar, strict-stm} ^>=1.8.0.1 || ^>=1.9,
     measures,
     mempack,
-    monoid-subclasses,
     mtl,
     multiset ^>=0.3,
     nonempty-containers,
@@ -445,38 +432,6 @@ library lsm
     text,
     transformers,
     vector,
-
-library lmdb
-  import: common-lib
-  visibility: public
-  hs-source-dirs: ouroboros-consensus/src/ouroboros-consensus-lmdb
-  exposed-modules:
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge
-    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
-
-  build-depends:
-    base,
-    bytestring,
-    cardano-lmdb >=0.4,
-    cardano-lmdb-simple ^>=0.8,
-    cardano-slotting,
-    containers,
-    contra-tracer,
-    directory,
-    filepath,
-    fs-api,
-    io-classes,
-    mempack,
-    mtl,
-    nothunks,
-    ouroboros-consensus,
-    rawlock,
-    serialise,
-    sop-core,
-    streaming,
-    temporary,
-    text,
 
 library unstable-consensus-testlib
   import: common-lib
@@ -697,7 +652,6 @@ test-suite consensus-test
     Test.Consensus.HardFork.Summary
     Test.Consensus.HeaderValidation
     Test.Consensus.Ledger.Tables.Diff
-    Test.Consensus.Ledger.Tables.DiffSeq
     Test.Consensus.Mempool
     Test.Consensus.Mempool.Fairness
     Test.Consensus.Mempool.Fairness.TestBlock
@@ -728,15 +682,12 @@ test-suite consensus-test
     cardano-diffusion:api,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-slotting:{cardano-slotting, testlib},
-    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,
     deepseq,
-    diff-containers,
     file-embed,
     filepath,
-    fingertree-rm,
     fs-api,
     fs-sim,
     hashable,
@@ -745,13 +696,11 @@ test-suite consensus-test
     measures,
     mtl,
     mwc-random,
-    nonempty-containers,
     nothunks,
     ouroboros-consensus,
     ouroboros-network:{api, api-tests-lib, ouroboros-network, protocols, protocols-tests-lib},
     QuickCheck,
     quickcheck-classes,
-    quickcheck-monoid-subclasses,
     quickcheck-state-machine:no-vendored-treediff,
     quiet,
     random,
@@ -832,11 +781,6 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.Snapshots
     Test.Ouroboros.Storage.LedgerDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
-    Test.Ouroboros.Storage.LedgerDB.V1.BackingStore
-    Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
-    Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock
-    Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog
-    Test.Ouroboros.Storage.LedgerDB.V1.LMDB
     Test.Ouroboros.Storage.Orphans
     Test.Ouroboros.Storage.PerasCertDB
     Test.Ouroboros.Storage.PerasCertDB.Model
@@ -862,32 +806,28 @@ test-suite storage-test
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
     cborg,
-    constraints,
     containers,
     contra-tracer,
-    deepseq,
     diff-containers,
     directory,
     filepath,
     fs-api,
     fs-sim,
     generics-sop,
-    io-classes:{io-classes, strict-mvar, strict-stm},
+    io-classes:{io-classes, strict-stm},
     io-sim,
     mempack,
     mtl,
     nothunks,
-    ouroboros-consensus:{lmdb, lsm, ouroboros-consensus},
+    ouroboros-consensus:{lsm, ouroboros-consensus},
     ouroboros-network:{api, api-tests-lib, protocols-tests-lib},
     pretty-show,
     QuickCheck,
     quickcheck-dynamic ^>=4,
-    quickcheck-lockstep ^>=0.8,
     quickcheck-state-machine:no-vendored-treediff,
     random,
     resource-registry,
     serialise,
-    sop-core,
     tasty,
     tasty-hunit,
     tasty-quickcheck,
@@ -1834,7 +1774,7 @@ library unstable-cardano-tools
     network,
     network-mux,
     nothunks,
-    ouroboros-consensus:{cardano, diffusion, lmdb, lsm, ouroboros-consensus, protocol, unstable-protocol-testlib},
+    ouroboros-consensus:{cardano, diffusion, lsm, ouroboros-consensus, protocol, unstable-protocol-testlib},
     ouroboros-network:{api, framework, ouroboros-network, protocols},
     random,
     resource-registry,
@@ -1952,7 +1892,7 @@ library unstable-snapshot-conversion
     fs-api,
     microlens,
     mtl,
-    ouroboros-consensus:{cardano, lmdb, lsm, ouroboros-consensus},
+    ouroboros-consensus:{cardano, lsm, ouroboros-consensus},
     random,
     serialise,
     sop-core,

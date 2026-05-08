@@ -24,11 +24,7 @@ prop_roundtrips a =
     Success r -> r === a
 
 instance Arbitrary SnapshotBackend where
-  arbitrary =
-    elements
-      [ UTxOHDMemSnapshot
-      , UTxOHDLMDBSnapshot
-      ]
+  arbitrary = elements [UTxOHDMemSnapshot, UTxOHDLSMSnapshot]
 
 instance Arbitrary SnapshotMetadata where
   arbitrary =

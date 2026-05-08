@@ -65,7 +65,7 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import System.FS.API
 import Prelude hiding (read)
 
-type SnapshotManagerV2 m blk = SnapshotManager m m blk (StateRef m ExtLedgerState blk)
+type SnapshotManagerV2 m blk = SnapshotManager m blk (StateRef m ExtLedgerState blk)
 
 newtype SnapshotExc blk = SnapshotExc {getSnapshotFailure :: SnapshotFailure blk}
   deriving (Show, Exception)
@@ -150,7 +150,7 @@ implMkLedgerDb ::
   , ApplyBlock l blk
   ) =>
   LedgerDBHandle m l blk ->
-  SnapshotManager m m blk (StateRef m l blk) ->
+  SnapshotManager m blk (StateRef m l blk) ->
   (LedgerDB m l blk, TestInternals m l blk)
 implMkLedgerDb h snapManager =
   let ldb =
@@ -164,7 +164,6 @@ implMkLedgerDb h snapManager =
           , getPrevApplied = getEnvSTM h implGetPrevApplied
           , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
           , tryTakeSnapshot = getEnv2 h (implTryTakeSnapshot snapManager)
-          , tryFlush = getEnv h implTryFlush
           , closeDB = implCloseDB h
           }
    in (ldb, mkInternals ldb h snapManager)
@@ -176,7 +175,7 @@ mkInternals ::
   ) =>
   LedgerDB m l blk ->
   LedgerDBHandle m l blk ->
-  SnapshotManager m m blk (StateRef m l blk) ->
+  SnapshotManager m blk (StateRef m l blk) ->
   TestInternals m l blk
 mkInternals ldb h snapManager =
   TestInternals
@@ -228,7 +227,7 @@ mkInternals ldb h snapManager =
 -- | Testing only! Truncate all snapshots in the DB. We only truncate the state
 -- file because it is unclear how to truncate the LSM database without
 -- corrupting it.
-implIntTruncateSnapshots :: MonadThrow m => SnapshotManager m m blk st -> SomeHasFS m -> m ()
+implIntTruncateSnapshots :: MonadThrow m => SnapshotManager m blk st -> SomeHasFS m -> m ()
 implIntTruncateSnapshots snapManager (SomeHasFS fs) = do
   snapshotsMapM_ snapManager $
     \pre -> withFile fs (snapshotToStatePath pre) (AppendMode AllowExisting) $
@@ -333,7 +332,7 @@ implTryTakeSnapshot ::
   ( IOLike m
   , GetTip (l blk)
   ) =>
-  SnapshotManager m m blk (StateRef m l blk) ->
+  SnapshotManager m blk (StateRef m l blk) ->
   LedgerDBEnv m l blk ->
   m () ->
   (SnapshotDelayRange -> m DiffTime) ->
@@ -370,6 +369,8 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
   -- look at the list of the ledger tables handles from the previous step and take the snapshots
   case NonEmpty.nonEmpty handles of
     Nothing -> pure ()
+    -- TODO: this logic could be forked on a separate thread now that we only
+    -- have V2.
     Just nonEmptyHandles -> do
       copyBlocks
 
@@ -393,13 +394,6 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
   duplicateStateRef StateRef{state, tables} = do
     h <- duplicate tables
     pure $ StateRef state h
-
--- In the first version of the LedgerDB for UTxO-HD, there is a need to
--- periodically flush the accumulated differences to the disk. However, in the
--- second version there is no need to do so, and because of that, this function
--- does nothing in this case.
-implTryFlush :: Applicative m => LedgerDBEnv m l blk -> m ()
-implTryFlush _ = pure ()
 
 implCloseDB :: forall m l blk. IOLike m => LedgerDBHandle m l blk -> m ()
 implCloseDB (LDBHandle varState) = do

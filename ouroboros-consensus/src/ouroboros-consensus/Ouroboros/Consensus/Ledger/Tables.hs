@@ -174,7 +174,6 @@ module Ouroboros.Consensus.Ledger.Tables
   , CanUpgradeLedgerTables (..)
 
     -- * Serialization
-  , SerializeTablesHint
   , SerializeTablesWithHint (..)
   , defaultDecodeTablesWithHint
   , defaultEncodeTablesWithHint
@@ -311,25 +310,16 @@ valuesMKDecoder st =
 -- are somewhat degenerate.
 class SerializeTablesWithHint l blk where
   encodeTablesWithHint ::
-    SerializeTablesHint l (LedgerTables blk ValuesMK) ->
+    l blk EmptyMK ->
     LedgerTables blk ValuesMK ->
     CBOR.Encoding
   decodeTablesWithHint ::
-    SerializeTablesHint l (LedgerTables blk ValuesMK) ->
+    l blk EmptyMK ->
     CBOR.Decoder s (LedgerTables blk ValuesMK)
-
--- This is just for the BackingStore Lockstep tests. Once V1 is gone
--- we can inline it above.
-
--- | The hint for 'SerializeTablesWithHint'
-type SerializeTablesHint :: StateKind -> Type -> Type
-type family SerializeTablesHint l values :: Type
-
-type instance SerializeTablesHint l (LedgerTables blk ValuesMK) = l blk EmptyMK
 
 defaultEncodeTablesWithHint ::
   (MemPack (TxIn blk), MemPack (TxOut blk)) =>
-  SerializeTablesHint l (LedgerTables blk ValuesMK) ->
+  l blk EmptyMK ->
   LedgerTables blk ValuesMK ->
   CBOR.Encoding
 defaultEncodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
@@ -347,7 +337,7 @@ defaultEncodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
 
 defaultDecodeTablesWithHint ::
   (Ord (TxIn blk), MemPack (TxIn blk), MemPack (TxOut blk)) =>
-  SerializeTablesHint l (LedgerTables blk ValuesMK) ->
+  l blk EmptyMK ->
   CBOR.Decoder s (LedgerTables blk ValuesMK)
 defaultDecodeTablesWithHint _ = do
   n <- CBOR.decodeMapLen
@@ -404,7 +394,7 @@ trivialUnstowLedgerTables = convertMapKind
 trivialDecodeTablesWithHint ::
   forall l blk s.
   LedgerTablesAreTrivial l blk =>
-  SerializeTablesHint l (LedgerTables blk ValuesMK) ->
+  l blk EmptyMK ->
   CBOR.Decoder s (LedgerTables blk ValuesMK)
 trivialDecodeTablesWithHint _ = do
   _ <- CBOR.decodeMapLen
@@ -412,7 +402,7 @@ trivialDecodeTablesWithHint _ = do
 trivialEncodeTablesWithHint ::
   forall l blk.
   LedgerTablesAreTrivial l blk =>
-  SerializeTablesHint l (LedgerTables blk ValuesMK) ->
+  l blk EmptyMK ->
   LedgerTables blk ValuesMK ->
   CBOR.Encoding
 trivialEncodeTablesWithHint _ _ = CBOR.encodeMapLen 0
