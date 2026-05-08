@@ -47,10 +47,7 @@ import Ouroboros.Consensus.Block.Abstract
   , castPoint
   )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( HasPerasCertRound (..)
-  , ValidatedPerasCert
-  , getPerasCertBoostedBlock
-  , getPerasCertRound
+  ( ValidatedPerasCert, IsPerasCert (..)
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( WithArrivalTime (..)
@@ -296,5 +293,5 @@ mkPerasVotingView
       -- Check whether the boosted block is within the volatile fragment leading
       -- to the candidate block.
       AF.withinFragmentBounds
-        (castPoint (getPerasCertBoostedBlock cert))
+        (castPoint (getPerasCertBlock cert))
         chainAtCandidateBlock
