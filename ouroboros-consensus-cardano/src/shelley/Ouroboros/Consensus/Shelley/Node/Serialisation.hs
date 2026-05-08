@@ -47,6 +47,7 @@ import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
+import Ouroboros.Consensus.Shelley.Node.Peras ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( pHeaderBlockSize
   , pHeaderSize

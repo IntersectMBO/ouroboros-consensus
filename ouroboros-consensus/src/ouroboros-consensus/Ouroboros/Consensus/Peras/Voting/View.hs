@@ -47,7 +47,9 @@ import Ouroboros.Consensus.Block.Abstract
   , castPoint
   )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( ValidatedPerasCert, IsPerasCert (..)
+  ( BlockSupportsPeras (..)
+  , IsPerasCert (..)
+  , ValidatedPerasCert
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( WithArrivalTime (..)
@@ -225,6 +227,7 @@ forgetBoostedBlockStatus = \case
 mkPerasVotingView ::
   ( cert ~ WithArrivalTime (ValidatedPerasCert blk)
   , GetHeader blk
+  , IsPerasCert (PerasCert blk) blk
   ) =>
   -- | Peras protocol parameters
   PerasParams ->

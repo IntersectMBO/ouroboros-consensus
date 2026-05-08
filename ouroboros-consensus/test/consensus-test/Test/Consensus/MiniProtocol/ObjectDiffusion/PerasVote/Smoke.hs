@@ -20,7 +20,6 @@ import qualified Cardano.Crypto.Seed as SL
 import qualified Cardano.Ledger.Keys as SL
 import Control.Monad (join)
 import Control.Tracer (contramap, nullTracer)
-import Data.Data (Typeable)
 import qualified Data.Map as Map
 import Data.Ratio ((%))
 import Data.String (IsString (..))
@@ -32,14 +31,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
-import Ouroboros.Consensus.Peras.Params (mkPerasParams)
-import Ouroboros.Consensus.Peras.Types
-  ( PerasRoundNo (..)
-  , PerasVoteId (..)
-  , PerasVoteStake (..)
-  , PerasVoteStakeDistr (..)
-  , PerasVoterId (..)
-  )
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
   , PerasVoteDB
@@ -48,7 +40,6 @@ import Ouroboros.Consensus.Storage.PerasVoteDB
   )
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Network.Block (StandardHash)
 import Ouroboros.Network.Protocol.ObjectDiffusion.Codec
 import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
   ( objectDiffusionInboundPeerPipelined
@@ -92,25 +83,40 @@ genPerasVoteStake = do
 
 genPerasVote :: Gen (PerasVote TestBlock)
 genPerasVote = do
-  pvVoteRound <- PerasRoundNo <$> arbitrary
-  pvVoteBlock <- genPointTestBlock
-  pvVoteVoterId <- genPerasVoterId
-  pure $ PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId}
+  mockVoteRound <- PerasRoundNo <$> arbitrary
+  mockVoteBlock <- genPointTestBlock
+  mockVoteVoterId <- genPerasVoterId
+  mockVoteStake <- genPerasVoteStake
+  pure $
+    MockPerasVote
+      { mockVoteRound
+      , mockVoteBlock
+      , mockVoteVoterId
+      , mockVoteStake
+      }
 
-instance WithId (PerasVote blk) (PerasVoteId blk) where
+instance WithId (MockPerasVote blk) (PerasVoteId blk) where
   getId = getPerasVoteId
 
-instance WithId (WithArrivalTime (ValidatedPerasVote blk)) (PerasVoteId blk) where
+instance
+  IsPerasVote (PerasVote blk) blk =>
+  WithId (WithArrivalTime (ValidatedPerasVote blk)) (PerasVoteId blk)
+  where
   getId = getPerasVoteId . vpvVote . forgetArrivalTime
 
 genValidatedPerasVote :: Gen (ValidatedPerasVote TestBlock)
-genValidatedPerasVote =
-  ValidatedPerasVote
-    <$> genPerasVote
-    <*> genPerasVoteStake
+genValidatedPerasVote = do
+  mockVote <- genPerasVote
+  pure
+    ValidatedPerasVote
+      { vpvVote = mockVote
+      , vpvVoteStake = mockVoteStake mockVote
+      }
 
 newVoteDB ::
-  (IOLike m, StandardHash blk, Typeable blk) =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   [WithArrivalTime (ValidatedPerasVote blk)] -> m (PerasVoteDB m blk)
 newVoteDB votes = do
   db <- PerasVoteDB.createDB (PerasVoteDB.PerasVoteDbArgs nullTracer mkPerasParams)
@@ -144,16 +150,10 @@ prop_smoke =
             inboundPool <- newVoteDB []
 
             let outboundPoolReader = makePerasVotePoolReaderFromVoteDB outboundPool
-                stakeDistr =
-                  PerasVoteStakeDistr $
-                    Map.fromList
-                      [ (pvVoteVoterId (vpvVote v), vpvVoteStake v)
-                      | WithArrivalTime _ v <- watValidatedVotes
-                      ]
                 inboundPoolWriter =
                   makePerasVotePoolWriterFromVoteDB
                     mockSystemTime
-                    (pure stakeDistr)
+                    (pure (PerasVoteStakeDistr mempty)) -- mocked votes are self-validating
                     inboundPool
                 getAllInboundPoolContent = do
                   votesMap <-

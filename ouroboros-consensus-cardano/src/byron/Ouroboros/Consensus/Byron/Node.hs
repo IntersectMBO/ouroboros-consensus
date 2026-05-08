@@ -43,6 +43,7 @@ import Ouroboros.Consensus.Byron.Crypto.DSIGN
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Ledger.Conversions
 import Ouroboros.Consensus.Byron.Ledger.Inspect ()
+import Ouroboros.Consensus.Byron.Node.Peras ()
 import Ouroboros.Consensus.Byron.Node.Serialisation ()
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.Config
@@ -50,7 +51,6 @@ import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -302,8 +302,6 @@ instance NodeInitStorage ByronBlock where
 {-------------------------------------------------------------------------------
   RunNode instance
 -------------------------------------------------------------------------------}
-
-instance LedgerSupportsPeras ByronBlock
 
 instance BlockSupportsMetrics ByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown

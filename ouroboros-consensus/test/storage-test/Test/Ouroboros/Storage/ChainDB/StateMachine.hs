@@ -17,6 +17,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -127,8 +128,8 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Peras.Params (PerasWeight (..))
-import Ouroboros.Consensus.Peras.Types (PerasRoundNo (..))
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
@@ -257,7 +258,17 @@ data Cmd blk it flr
     UpdateLedgerSnapshots
   | -- Corruption
     WipeVolatileDB
-  deriving (Generic, Show, Functor, Foldable, Traversable)
+  deriving (Generic, Functor, Foldable, Traversable)
+
+deriving instance
+  ( StandardHash blk
+  , Show blk
+  , Show it
+  , Show flr
+  , Show (PerasCert blk)
+  , Show (PerasVote blk)
+  ) =>
+  Show (Cmd blk it flr)
 
 -- = Invalid blocks
 --
@@ -377,6 +388,9 @@ type TestConstraints blk =
   , LedgerTablesAreTrivial LedgerState blk
   , CanUpgradeLedgerTables LedgerState blk
   , ImmutableEraParams blk
+  , BlockSupportsPeras blk
+  , PerasVote blk ~ MockPerasVote blk
+  , PerasCert blk ~ MockPerasCert blk
   )
 
 deriving instance
@@ -1283,9 +1297,9 @@ generator loe genBlock genPerasBlock m@Model{..} =
           WithArrivalTime now $
             ValidatedPerasCert
               { vpcCert =
-                  PerasCert
-                    { pcCertRound = roundNo
-                    , pcCertBlock = blockPoint blk
+                  MockPerasCert
+                    { mockCertRound = roundNo
+                    , mockCertBlock = blockPoint blk
                     }
               , vpcCertBoost = boost
               }
@@ -1317,10 +1331,11 @@ generator loe genBlock genPerasBlock m@Model{..} =
           WithArrivalTime now $
             ValidatedPerasVote
               { vpvVote =
-                  PerasVote
-                    { pvVoteRound = roundNo
-                    , pvVoteBlock = blockPoint blk
-                    , pvVoteVoterId = voterId
+                  MockPerasVote
+                    { mockVoteRound = roundNo
+                    , mockVoteBlock = blockPoint blk
+                    , mockVoteVoterId = voterId
+                    , mockVoteStake = stake
                     }
               , vpvVoteStake = stake
               }
@@ -1610,6 +1625,8 @@ deriving instance
   , ToExpr (ExtValidationError blk)
   , StandardHash blk
   , Show blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
   ) =>
   ToExpr (Model blk IO Concrete)
 
@@ -1759,7 +1776,7 @@ addPerasCertOutcomes = concatMap classifyEvent
   classifyEvent :: Event Blk m Symbolic -> [String]
   classifyEvent ev = case unAt (eventCmd ev) of
     AddPerasCert certWithTime _ ->
-      let targetPt = pcCertBlock (vpcCert (forgetArrivalTime certWithTime))
+      let targetPt = getPerasCertBlock (vpcCert (forgetArrivalTime certWithTime))
        in case (isBlockConnected targetPt (dbModel (eventBefore ev))) of
             False ->
               assert (chainSelOutcome ev == "no chain selection change") $
@@ -1777,7 +1794,7 @@ addPerasVoteOutcomes = concatMap classifyEvent
   classifyEvent :: Event Blk m Symbolic -> [String]
   classifyEvent ev = case unAt (eventCmd ev) of
     AddPerasVote voteWithTime _ ->
-      let targetPt = pvVoteBlock (vpvVote (forgetArrivalTime voteWithTime))
+      let targetPt = getPerasVoteBlock (vpvVote (forgetArrivalTime voteWithTime))
           certsBefore = numCerts (eventBefore ev)
           certsAfter = numCerts (eventAfter ev)
           certProduced = certsAfter > certsBefore
