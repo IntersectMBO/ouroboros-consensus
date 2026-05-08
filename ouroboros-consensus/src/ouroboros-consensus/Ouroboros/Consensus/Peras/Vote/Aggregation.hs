@@ -79,13 +79,16 @@
 -- freshly forged (as opposed to voting on an already-won target).
 module Ouroboros.Consensus.Peras.Vote.Aggregation
   ( PerasRoundVoteState
-  , ptvsTotalStake
+  , getPerasRoundVoteStateRound
+  , getPerasRoundVoteStateCertMaybe
+  , getPerasRoundVoteStateMaxTargetedSlot
   , pattern VoteGeneratedNewCert
   , pattern VoteDidntGenerateNewCert
   , updatePerasRoundVoteStates
-  , getPerasRoundVoteStateCertMaybe
-  , getPerasRoundVoteStateMaxTargetedSlot
   , UpdateRoundVoteStateError (..)
+  , PerasTargetVoteState
+  , getPerasTargetVoteStateTotalStake
+  , getPerasTargetVoteStateBlock
   ) where
 
 import Cardano.Prelude (fromMaybe)
@@ -111,9 +114,6 @@ data PerasRoundVoteState blk = PerasRoundVoteState
   deriving stock (Generic, Eq, Show)
   deriving anyclass NoThunks
 
-instance HasPerasVoteRound (PerasRoundVoteState blk) where
-  getPerasVoteRound = prvsRoundNo
-
 -- | Current vote state when a quorum has not yet been reached
 data NoQuorum blk = NoQuorum
   { candidateStates :: !(Map (Point blk) (PerasTargetVoteState blk 'Candidate))
@@ -129,6 +129,10 @@ data Quorum blk = Quorum
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass NoThunks
+
+-- | Get the round number of a round vote state
+getPerasRoundVoteStateRound :: PerasRoundVoteState blk -> PerasRoundNo
+getPerasRoundVoteStateRound = prvsRoundNo
 
 -- | Get the certificate if quorum was reached for the given round
 getPerasRoundVoteStateCertMaybe ::
@@ -161,7 +165,7 @@ getPerasRoundVoteStateMaxTargetedSlot PerasRoundVoteState{prvsState} =
       maximumOrOrigin $ map pointSlot $ Map.keys candidateStates
     Right Quorum{winnerState, loserStates} ->
       maximumOrOrigin $
-        pointSlot (getPerasVoteBlock winnerState)
+        pointSlot (getPerasTargetVoteStateBlock winnerState)
           : (pointSlot <$> Map.keys loserStates)
  where
   maximumOrOrigin [] = Origin
@@ -204,7 +208,7 @@ updatePerasRoundVoteState ::
   PerasRoundVoteState blk ->
   Either (UpdateRoundVoteStateError blk) (PerasRoundVoteState blk)
 updatePerasRoundVoteState vote params roundState =
-  assert (getPerasVoteRound vote == getPerasVoteRound roundState) $ do
+  assert (getPerasVoteRound vote == getPerasRoundVoteStateRound roundState) $ do
     case roundState of
       -- Quorum not yet reached
       state@PerasRoundVoteState
@@ -522,11 +526,13 @@ instance
   noThunks ctx (PerasTargetVoteWinner tally cert) =
     noThunks ctx (tally, cert)
 
-instance HasPerasVoteRound (PerasTargetVoteState blk status) where
-  getPerasVoteRound = pvtRoundNo . ptvtTarget . ptvsVoteTally
+-- | Extract the total stake from a target vote state
+getPerasTargetVoteStateTotalStake :: PerasTargetVoteState blk status -> PerasVoteStake
+getPerasTargetVoteStateTotalStake = ptvtTotalStake . ptvsVoteTally
 
-instance HasPerasVoteBlock (PerasTargetVoteState blk status) blk where
-  getPerasVoteBlock = pvtBlock . ptvtTarget . ptvsVoteTally
+-- | Extract the block point from a target vote state
+getPerasTargetVoteStateBlock :: PerasTargetVoteState blk status -> Point blk
+getPerasTargetVoteStateBlock = pvtBlock . ptvtTarget . ptvsVoteTally
 
 -- | Extract the underlying vote tally from a target vote state
 ptvsVoteTally :: PerasTargetVoteState blk status -> PerasTargetVoteTally blk
@@ -535,9 +541,6 @@ ptvsVoteTally = \case
   PerasTargetVoteLoser tally -> tally
   PerasTargetVoteWinner tally _ -> tally
 
--- | Extract the total stake from a target vote state
-ptvsTotalStake :: PerasTargetVoteState blk status -> PerasVoteStake
-ptvsTotalStake = ptvtTotalStake . ptvsVoteTally
 
 freshCandidateVoteState :: PerasVoteTarget blk -> PerasTargetVoteState blk 'Candidate
 freshCandidateVoteState target =

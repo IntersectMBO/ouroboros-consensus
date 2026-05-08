@@ -90,7 +90,7 @@ makePerasVotePoolReaderFromChainDB chainDB =
 -- see 'makePerasVotePoolWriterFromChainDB' which creates a pool writer from the
 -- 'ChainDB' and thus properly handles the produced certs.
 makePerasVotePoolWriterFromVoteDB ::
-  (StandardHash blk, IOLike m) =>
+  IOLike m =>
   SystemTime m ->
   -- | This is needed for validating votes (since it is during the validation of
   -- votes that we give them a verified weight. In the future, we won't read it
@@ -120,7 +120,7 @@ makePerasVotePoolWriterFromVoteDB systemTime getStakeDistrSTM perasVoteDB =
 -- This properly handles the produced certs by letting the ChainDB take care
 -- of them (see 'ChainDB.addPerasVoteWithAsyncCertHandling').
 makePerasVotePoolWriterFromChainDB ::
-  (StandardHash blk, IOLike m) =>
+  IOLike m =>
   SystemTime m ->
   -- | This is needed for validating votes (since its during the validation of
   -- votes that we give them a verified weight. In the future, we won't read it

@@ -208,7 +208,7 @@ implGetWeightSnapshot PerasCertDbEnv{pcdbState} = do
   WithFingerprint pcds fp <- readTVar pcdbState
   let weights =
         mkPerasWeightSnapshot
-          [ (getPerasCertBoostedBlock cert, getPerasCertBoost cert)
+          [ (getPerasCertBlock cert, vpcCertBoost (forgetArrivalTime cert))
           | cert <- Map.elems (pcdsCertsByTicket pcds)
           ]
   pure (WithFingerprint weights fp)
@@ -263,7 +263,7 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
       } =
       let pcdsCertsByTicket' =
             Map.filter
-              (\cert -> pointSlot (getPerasCertBoostedBlock cert) >= NotOrigin slotNo)
+              (\cert -> pointSlot (getPerasCertBlock cert) >= NotOrigin slotNo)
               pcdsCertsByTicket
           pcdsCertIds' =
             Set.fromList (getPerasCertRound <$> Map.elems pcdsCertsByTicket')
