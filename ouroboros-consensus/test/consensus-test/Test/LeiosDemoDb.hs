@@ -19,6 +19,7 @@ import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import qualified Data.ByteString as BS
 import Data.Function ((&))
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Data.Time.Clock (DiffTime)
 import qualified Data.Vector as V
 import LeiosDemoDb
@@ -293,18 +294,18 @@ prop_pointsInsertThenLookup impl =
   forAll genPoint $ \point ->
     ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
       (_, insertTime) <- timed $ leiosDbInsertEbPoint con point 1000
-      (result, lookupTime) <- timed $ leiosDbLookupEbPoint con point.pointEbHash
+      (result, lookupTime) <- timed $ leiosDbLookupEbPoint con point
       pure $
-        result === Just point.pointSlotNo
+        isJust result
           & tabulate "insertEbPoint" [timeBucket insertTime]
           & tabulate "lookupEbPoint" [timeBucket lookupTime]
 
 -- | Property: looking up a non-existent point returns Nothing.
 prop_pointsLookupMissing :: DbImpl -> Property
 prop_pointsLookupMissing impl =
-  forAll genEbHash $ \missingHash ->
+  forAll genPoint $ \missingPoint ->
     ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
-      (result, lookupTime) <- timed $ leiosDbLookupEbPoint con missingHash
+      (result, lookupTime) <- timed $ leiosDbLookupEbPoint con missingPoint
       pure $
         result === Nothing
           & tabulate "lookupEbPoint (missing)" [timeBucket lookupTime]

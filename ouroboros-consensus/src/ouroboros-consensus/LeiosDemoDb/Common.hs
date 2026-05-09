@@ -47,7 +47,7 @@ data LeiosDbConnection m = LeiosDbConnection
   { close :: m ()
   -- ^ Close the connection and free up resources. After calling this, the connection may not be used anymore.
   , leiosDbScanEbPoints :: HasCallStack => m [(SlotNo, EbHash)]
-  , leiosDbLookupEbPoint :: HasCallStack => EbHash -> m (Maybe SlotNo)
+  , leiosDbLookupEbPoint :: HasCallStack => LeiosPoint -> m (Maybe BytesSize)
   -- ^ Check if an EB point exists in the database. Returns the slot if found.
   , leiosDbInsertEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m ()
   -- ^ Insert an announced EB point with its expected size.

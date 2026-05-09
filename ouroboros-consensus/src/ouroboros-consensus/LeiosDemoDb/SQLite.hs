@@ -143,15 +143,14 @@ sqlScanEbPoints db =
               loop ((slot, hash) : acc)
     loop []
 
-sqlLookupEbPoint :: DB.Database -> EbHash -> IO (Maybe SlotNo)
-sqlLookupEbPoint db ebHash =
+sqlLookupEbPoint :: DB.Database -> LeiosPoint -> IO (Maybe BytesSize)
+sqlLookupEbPoint db ebPoint =
   dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_eb) $ \stmt -> do
-    dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+    dbBindBlob stmt 1 ebPoint.pointEbHash.ebHashBytes
+    dbBindInt64 stmt 2 (fromIntegral . unSlotNo $ ebPoint.pointSlotNo)
     dbStep stmt >>= \case
       DB.Done -> pure Nothing
-      DB.Row -> do
-        slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-        pure (Just slot)
+      DB.Row -> Just . fromIntegral <$> DB.columnInt64 stmt 0
 
 sqlInsertEbPoint :: DB.Database -> LeiosPoint -> BytesSize -> IO ()
 sqlInsertEbPoint db point ebBytesSize =
@@ -408,7 +407,7 @@ sql_scan_ebs =
 
 sql_lookup_eb :: String
 sql_lookup_eb =
-  "SELECT ebSlot FROM ebs WHERE ebHashBytes = ?"
+  "SELECT ebSlot FROM ebs WHERE ebHashBytes = ? AND ebSlot = ?"
 
 sql_insert_eb :: String
 sql_insert_eb =

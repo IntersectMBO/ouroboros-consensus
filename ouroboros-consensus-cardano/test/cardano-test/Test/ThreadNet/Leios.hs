@@ -38,12 +38,10 @@ import Cardano.Ledger.Core (fromTxSeq, sizeTxF)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
-import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as StrictTVar
 import Control.Monad (foldM, replicateM)
 import Control.Monad.IOSim (runSimOrThrow)
 import Data.Foldable (toList)
 import Data.Function ((&))
-import Data.Functor.Identity (runIdentity)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing, mapMaybe)
@@ -52,6 +50,7 @@ import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import LeiosDemoDb (LeiosDbConnection, newLeiosDBInMemoryWith, withLeiosDb)
+import LeiosDemoDb.InMemory (inMemoryLeiosDbFromSnapshot)
 import LeiosDemoTypes (LeiosPoint (..), TraceLeiosKernel (..), hashLeiosEb, minCertificationGap)
 import Lens.Micro (each, (%~), (^.), (^..))
 import Ouroboros.Consensus.Block (SlotNo (..), blockSlot)
@@ -124,8 +123,7 @@ import Test.ThreadNet.Infra.Shelley
   , signTx
   )
 import Test.ThreadNet.Network
-  ( LeiosState (..)
-  , NodeOutput (..)
+  ( NodeOutput (..)
   , TestNodeInitialization (..)
   , _FromLeios
   , _FromMempool
@@ -308,9 +306,8 @@ sumChainTxBytes ::
   NodeOutput (CardanoBlock StandardCrypto) ->
   Word64
 sumChainTxBytes topConfig initLedger node = runSimOrThrow $ do
-  let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
-  stateVar <- StrictTVar.newTVarIO db
-  leiosDb <- newLeiosDBInMemoryWith stateVar
+  dbInMem <- inMemoryLeiosDbFromSnapshot (nodeLeiosDb node)
+  leiosDb <- newLeiosDBInMemoryWith dbInMem
   withLeiosDb leiosDb $ \leiosConn -> do
     let chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
         cfg = ExtLedgerCfg topConfig
@@ -343,9 +340,8 @@ replayNodeChain ::
   NodeOutput (CardanoBlock StandardCrypto) ->
   LedgerState (CardanoBlock StandardCrypto) EmptyMK
 replayNodeChain topConfig initLedger node = runSimOrThrow $ do
-  let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
-  stateVar <- StrictTVar.newTVarIO db
-  leiosDb <- newLeiosDBInMemoryWith stateVar
+  dbInMem <- inMemoryLeiosDbFromSnapshot (nodeLeiosDb node)
+  leiosDb <- newLeiosDBInMemoryWith dbInMem
   withLeiosDb leiosDb $ \leiosConn -> do
     let chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
         cfg = ExtLedgerCfg topConfig
