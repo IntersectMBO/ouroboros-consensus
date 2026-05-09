@@ -9,6 +9,7 @@
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-partial-fields #-}
@@ -30,6 +31,7 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
+import Control.Tracer (Tracer, traceWith)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Bits as Bits
@@ -59,7 +61,14 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , txMeasureMetricTxSizeBytes
   )
 import Ouroboros.Consensus.Util (ShowProxy (..))
-import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
+import Ouroboros.Consensus.Util.IOLike
+  ( DiffTime
+  , IOLike
+  , MonadMonotonicTime (getMonotonicTime)
+  , MonadThread (myThreadId)
+  , NoThunks
+  , diffTime
+  )
 import Text.Pretty.Simple (pShow)
 
 type BytesSize = Word32
@@ -96,6 +105,12 @@ data LeiosPoint = MkLeiosPoint {pointSlotNo :: SlotNo, pointEbHash :: EbHash}
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
 
+instance Aeson.ToJSON LeiosPoint where
+  toJSON ebPoint =
+    Aeson.object
+      [ "ebHash" .= (Aeson.toJSON . prettyEbHash . pointEbHash $ ebPoint)
+      , "ebSlot" .= (Aeson.toJSON . pointSlotNo $ ebPoint)
+      ]
 instance ShowProxy LeiosPoint where showProxy _ = "LeiosPoint"
 
 prettyLeiosPoint :: LeiosPoint -> String
@@ -543,23 +558,81 @@ messageLeiosFetchToObject = \case
   MsgDone ->
     "kind" .= Aeson.String "MsgDone"
 
-data TraceLeiosKernel
-  = MkTraceLeiosKernel String
-  | TraceLeiosBlockAcquired LeiosPoint
-  | -- | The EB body was received but the point was not in the database. This is
-    -- unexpected as the point should have been inserted during announcement handling.
-    TraceLeiosBlockPointMissing LeiosPoint
-  | TraceLeiosBlockTxsAcquired LeiosPoint
-  | forall m. (Show m, TxMeasureMetrics m) => TraceLeiosBlockForged
-      { slot :: SlotNo
-      , eb :: LeiosEb
-      , ebMeasure :: m
-      , mempoolRestMeasure :: m
-      }
-  | TraceLeiosBlockStored {slot :: SlotNo, eb :: LeiosEb}
-  | TraceLeiosDbException LeiosDbException
+data TraceLeiosKernel where
+  MkTraceLeiosKernel :: String -> TraceLeiosKernel
+  TraceLeiosBlockAcquired :: LeiosPoint -> TraceLeiosKernel
+  TraceLeiosBlockPointMissing :: LeiosPoint -> TraceLeiosKernel
+  TraceLeiosBlockTxsAcquired :: LeiosPoint -> TraceLeiosKernel
+  TraceLeiosBlockForged ::
+    (Show m, TxMeasureMetrics m) =>
+    {slot :: SlotNo, eb :: LeiosEb, ebMeasure :: m, mempoolRestMeasure :: m} ->
+    TraceLeiosKernel
+  TraceLeiosBlockStored :: {slot :: SlotNo, eb :: LeiosEb} -> TraceLeiosKernel
+  TraceLeiosDbException :: LeiosDbException -> TraceLeiosKernel
+  TraceProcess ::
+    (Show a, Show r, Aeson.ToJSON a, Aeson.ToJSON r) => ProcessTrace a r -> TraceLeiosKernel
 
 deriving instance Show TraceLeiosKernel
+
+-- * Process trace utilities.
+
+-- Process denotes a function with a label, that is executed in a thread with some arguments of type `a` and a result of type `r`.
+-- It consists of two distinct events, start and end.
+
+data ProcessTrace a r = ProcessTrace
+  { processLabel :: String
+  , processThreadId :: String
+  , processArgument :: a
+  , processEvent :: ProcessEvent r
+  }
+  deriving stock (Show, Eq)
+
+data ProcessEvent r
+  = ProcessStart
+  | ProcessEnd r DiffTime
+  deriving stock (Show, Eq)
+
+processTraceToObject ::
+  forall a r. (Aeson.ToJSON a, Aeson.ToJSON r) => ProcessTrace a r -> Aeson.Object
+processTraceToObject pt =
+  let
+    eventObject = case processEvent pt of
+      ProcessStart ->
+        [ "event" .= Aeson.String "Start"
+        ]
+      ProcessEnd result duration ->
+        [ "event" .= Aeson.String "End"
+        , "result" .= Aeson.toJSON result
+        , "duration" .= Aeson.toJSON duration
+        ]
+   in
+    mconcat $
+      [ "kind" .= Aeson.String "Process"
+      , "label" .= processLabel pt
+      , "thread_id" .= processThreadId pt
+      , "argument" .= (Aeson.toJSON . processArgument @a $ pt)
+      ]
+        <> eventObject
+
+traceTimed ::
+  forall m a r r'.
+  (MonadMonotonicTime m, MonadThread m, Show a, Show r', Aeson.ToJSON a, Aeson.ToJSON r') =>
+  Tracer m TraceLeiosKernel ->
+  String ->
+  a ->
+  (r -> r') ->
+  m r ->
+  m r
+traceTimed tracer label arg resFn action = do
+  tid <- show <$> myThreadId
+  before <- getMonotonicTime
+  traceWith tracer (TraceProcess @a @r' (ProcessTrace label tid arg ProcessStart))
+  res <- action
+  after <- getMonotonicTime
+  traceWith
+    tracer
+    (TraceProcess @a @r' (ProcessTrace label tid arg (ProcessEnd (resFn res) (after `diffTime` before))))
+  pure res
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
 traceLeiosKernelToObject = \case
@@ -604,6 +677,7 @@ traceLeiosKernelToObject = \case
       ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
+  TraceProcess pt -> processTraceToObject pt
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String

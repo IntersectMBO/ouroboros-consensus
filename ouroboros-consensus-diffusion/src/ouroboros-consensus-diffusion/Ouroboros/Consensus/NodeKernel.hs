@@ -862,10 +862,19 @@ forkBlockForging IS{..} blockForging =
 
       -- Store generated EB so it can be diffused
       for_ mayForgedEb $ \(eb :: ForgedLeiosEb) -> do
-        lift $ do
-          leiosDbInsertEbPoint leiosConn eb.point (Leios.leiosEbBytesSize eb.body)
-          leiosDbInsertEbBody leiosConn eb.point eb.body
-          void $ leiosDbInsertTxs leiosConn eb.txClosure
+        let traceTimed = Leios.traceTimed (leiosKernelTracer tracers)
+
+        lift $ traceTimed "forge.leios.store-eb" eb.point (const ()) $ do
+          traceTimed "forge.leios.store-eb.leiosDbInsertEbPoint" eb.point id $
+            leiosDbInsertEbPoint leiosConn eb.point (Leios.leiosEbBytesSize eb.body)
+
+          traceTimed "forge.leios.store-eb.leiosDbInsertEbBody" eb.point id $
+            leiosDbInsertEbBody leiosConn eb.point eb.body
+
+          traceTimed "forge.leios.store-eb.leiosDbInsertTxs" eb.point (const ()) $
+            void $
+              leiosDbInsertTxs leiosConn eb.txClosure
+
         traceLeios TraceLeiosBlockStored{slot = currentSlot, eb = eb.body}
 
   trace :: TraceForgeEvent blk -> WithEarlyExit m ()
