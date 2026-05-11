@@ -8,7 +8,7 @@
 -- These tests verify the semantics of the LeiosDbHandle operations for both
 -- InMemory and SQLite implementations. Each test case uses a fresh database
 -- to ensure isolation and serve as an (too optimistic) performance baseline.
-module Test.LeiosDemoDb (tests) where
+module Test.LeiosDemoDb (module Test.LeiosDemoDb) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, readTChan, tryReadTChan)

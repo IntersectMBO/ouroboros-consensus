@@ -488,15 +488,14 @@ initNodeKernel
                 -- TODO: create vote (sign the eb hash)
                 let vote =
                       MkLeiosVote
-                        { electionId = point.pointSlotNo
+                        { point
                         , voterId = me
-                        , ebHash = point.pointEbHash
                         , voteSignature = True
                         }
                 -- Store vote in memory and notify downstream peers
                 addVote vote
-                traceWith tracer TraceLeiosVoted{point, voter = me}
-                traceWith tracer TraceLeiosVoteAcquired{point, voter = me}
+                traceWith tracer TraceLeiosVoted{vote}
+                traceWith tracer TraceLeiosVoteAcquired{vote}
 
     return
       NodeKernel

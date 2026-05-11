@@ -1,28 +1,26 @@
+{-# LANGUAGE NamedFieldPuns #-}
+
 module Test.LeiosVoteState (tests) where
 
-import Cardano.Slotting.Slot (SlotNo (SlotNo))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically)
 import Control.Monad (forM_)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (runSimOrThrow)
-import qualified Data.ByteString as BS
 import Data.Maybe (isNothing)
 import LeiosDemoTypes
-  ( EbHash (MkEbHash)
-  , LeiosVote (..)
+  ( LeiosVote (..)
   , VoterId (MkVoterId)
   )
 import LeiosVoteState
+import Test.LeiosDemoDb (genPoint)
 import Test.QuickCheck
   ( Gen
   , Property
   , arbitrary
-  , chooseInt
   , counterexample
   , forAll
   , listOf1
   , property
-  , vectorOf
   , (.&&.)
   , (===)
   )
@@ -41,11 +39,10 @@ tests =
 
 genVote :: Gen LeiosVote
 genVote = do
-  slot <- SlotNo <$> arbitrary
-  voter <- MkVoterId <$> arbitrary
-  hash <- MkEbHash . BS.pack <$> vectorOf 32 (fromIntegral <$> chooseInt (0, 255))
-  sig <- arbitrary
-  pure $ MkLeiosVote slot voter hash sig
+  point <- genPoint
+  voterId <- MkVoterId <$> arbitrary
+  voteSignature <- arbitrary
+  pure $ MkLeiosVote{point, voterId, voteSignature}
 
 -- | A subscriber should receive a vote that was added after subscribing.
 prop_subscriberReceivesVote :: Property

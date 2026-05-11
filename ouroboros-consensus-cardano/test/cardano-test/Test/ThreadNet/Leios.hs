@@ -52,7 +52,13 @@ import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import LeiosDemoDb (LeiosDbConnection, newLeiosDBInMemoryWith, withLeiosDb)
-import LeiosDemoTypes (LeiosPoint (..), TraceLeiosKernel (..), hashLeiosEb, minCertificationGap)
+import LeiosDemoTypes
+  ( LeiosPoint (..)
+  , LeiosVote (..)
+  , TraceLeiosKernel (..)
+  , hashLeiosEb
+  , minCertificationGap
+  )
 import Lens.Micro ((%~), (^.))
 import Ouroboros.Consensus.Block (SlotNo (..), blockSlot)
 import Ouroboros.Consensus.Cardano
@@ -222,11 +228,11 @@ prop_leios seed =
       ]
 
   votedPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
-    TraceLeiosVoted{point} -> Just point
+    TraceLeiosVoted{vote} -> Just vote.point
     _ -> Nothing
 
   acquiredVotes = Map.fromListWith mappend . flip mapMaybe leiosTraces $ \case
-    TraceLeiosVoteAcquired{point, voter} -> Just (point, Set.singleton voter)
+    TraceLeiosVoteAcquired{vote} -> Just (vote.point, Set.singleton vote.voterId)
     _ -> Nothing
 
   mempoolTraces = [ev | FromNode _ (FromMempool ev) <- traces]

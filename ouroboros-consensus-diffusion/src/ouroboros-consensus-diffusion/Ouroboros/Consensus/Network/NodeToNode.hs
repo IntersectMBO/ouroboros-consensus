@@ -79,7 +79,6 @@ import LeiosDemoTypes
   ( LeiosEb
   , LeiosPoint (..)
   , LeiosTx
-  , LeiosVote (..)
   , TraceLeiosKernel (..)
   , TraceLeiosPeer (..)
   )
@@ -391,12 +390,8 @@ mkHandlers
                     -- TODO: reduce this trace a bit to the essential
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs
                     mapM_ addVote vs
-                    forM_ vs $ \MkLeiosVote{electionId, ebHash, voterId} ->
-                      traceWith kernelTracer $
-                        TraceLeiosVoteAcquired
-                          { point = MkLeiosPoint electionId ebHash
-                          , voter = voterId
-                          }
+                    forM_ vs $ \vote ->
+                      traceWith kernelTracer TraceLeiosVoteAcquired{vote}
               )
       , hLeiosNotifyServer = \_version _peer -> Effect $ do
           chan <- subscribeEbNotifications leiosDB

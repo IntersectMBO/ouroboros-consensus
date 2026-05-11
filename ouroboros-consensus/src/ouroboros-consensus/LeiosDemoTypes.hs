@@ -32,7 +32,7 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import Data.Aeson (ToJSON, object, toJSON, (.=))
+import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Bits as Bits
 import Data.ByteString (ByteString)
@@ -495,48 +495,43 @@ data Committee
 
 -- | A vote in the Leios protocol.
 data LeiosVote = MkLeiosVote
-  { electionId :: ElectionId
+  { point :: LeiosPoint
+  -- ^ Point that gets signed. The slot also identifies the voting round.
   , voterId :: VoterId
-  , ebHash :: EbHash
+  -- ^ Identity within a 'Committee' who signed this vote.
   , voteSignature :: VoteSignature
+  -- ^ The cryptographic signature of the vote.
   }
   deriving (Generic, Eq, Ord, Show)
 
-instance ToJSON LeiosVote where
-  toJSON MkLeiosVote{electionId, voterId, ebHash} =
-    object
-      [ "electionId" .= electionId
-      , "voterId" .= voterId
-      , "ebHash" .= prettyEbHash ebHash
-      ]
-
+-- | Encode a 'LeiosVote' into CBOR.
+-- NOTE: Encodes points flat into the vote for smaller votes.
 encodeLeiosVote :: LeiosVote -> Encoding
-encodeLeiosVote MkLeiosVote{electionId, voterId, ebHash, voteSignature} =
+encodeLeiosVote MkLeiosVote{point, voterId, voteSignature} =
   CBOR.encodeListLen 4
-    <> encode electionId
+    <> encode point.pointSlotNo
+    <> encodeEbHash point.pointEbHash
     <> encodeVoterId voterId
-    <> encodeEbHash ebHash
-    <> CBOR.encodeBool voteSignature
+    <> CBOR.encodeBool voteSignature -- FIXME: encode bytes
 
+-- | Dedoe a 'LeiosVote' from CBOR.
 decodeLeiosVote :: Decoder s LeiosVote
 decodeLeiosVote = do
   enforceSize (fromString "LeiosVote") 4
-  electionId <- decode
+  pointSlotNo <- decode
+  pointEbHash <- decodeEbHash
   voterId <- decodeVoterId
-  ebHash <- decodeEbHash
-  voteSignature <- CBOR.decodeBool
-  pure MkLeiosVote{electionId, voterId, ebHash, voteSignature}
-
--- | Identifier for the voting round. In Leios, this is the slot number of the
--- EB to vote on.
-type ElectionId = SlotNo
+  voteSignature <- CBOR.decodeBool -- FIXME: decode bytes
+  pure
+    MkLeiosVote
+      { point = MkLeiosPoint{pointSlotNo, pointEbHash}
+      , voterId
+      , voteSignature
+      }
 
 -- | Voter in a committee, identified by their seat index.
 newtype VoterId = MkVoterId {voterIndex :: Word16}
   deriving (Ord, Eq, Show)
-
-instance ToJSON VoterId where
-  toJSON (MkVoterId idx) = toJSON idx
 
 encodeVoterId :: VoterId -> Encoding
 encodeVoterId (MkVoterId idx) = CBOR.encodeWord16 idx
@@ -611,8 +606,8 @@ data TraceLeiosKernel
       , mempoolRestMeasure :: m
       }
   | TraceLeiosBlockStored {slot :: SlotNo, eb :: LeiosEb}
-  | TraceLeiosVoted {point :: LeiosPoint, voter :: VoterId}
-  | TraceLeiosVoteAcquired {point :: LeiosPoint, voter :: VoterId}
+  | TraceLeiosVoted {vote :: LeiosVote}
+  | TraceLeiosVoteAcquired {vote :: LeiosVote}
   | TraceLeiosDbException LeiosDbException
 
 deriving instance Show TraceLeiosKernel
@@ -658,19 +653,19 @@ traceLeiosKernelToObject = \case
       , "slot" .= slot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
       ]
-  TraceLeiosVoted{point, voter} ->
+  TraceLeiosVoted{vote} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosVoted"
-      , "slot" .= point.pointSlotNo
-      , "hash" .= prettyEbHash point.pointEbHash
-      , "voter" .= voter.voterIndex
+      , "slot" .= vote.point.pointSlotNo
+      , "hash" .= prettyEbHash vote.point.pointEbHash
+      , "voter" .= vote.voterId.voterIndex
       ]
-  TraceLeiosVoteAcquired{point, voter} ->
+  TraceLeiosVoteAcquired{vote} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosVoteAcquired"
-      , "slot" .= point.pointSlotNo
-      , "hash" .= prettyEbHash point.pointEbHash
-      , "voter" .= voter.voterIndex
+      , "slot" .= vote.point.pointSlotNo
+      , "hash" .= prettyEbHash vote.point.pointEbHash
+      , "voter" .= vote.voterId.voterIndex
       ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
