@@ -43,7 +43,6 @@ import Data.Primitive.MutVar (MutVar)
 import qualified Data.Primitive.MutVar as Prim
 import Data.Singletons
 import Data.Word (Word32)
-import LeiosDemoTypes (LeiosVote, decodeLeiosVote, encodeLeiosVote)
 import qualified Network.Mux.Types as Mux
 import Network.TypedProtocol.Codec.CBOR
 import Network.TypedProtocol.Core
@@ -57,17 +56,18 @@ import Text.Printf
 leiosNotifyMiniProtocolNum :: Mux.MiniProtocolNum
 leiosNotifyMiniProtocolNum = Mux.MiniProtocolNum 18
 
-type LeiosNotify :: Type -> Type -> Type
-data LeiosNotify point announcement where
-  StIdle :: LeiosNotify point announcement
-  StBusy :: LeiosNotify point announcement
-  StDone :: LeiosNotify point announcement
+type LeiosNotify :: Type -> Type -> Type -> Type
+data LeiosNotify point announcement vote where
+  StIdle :: LeiosNotify point announcement vote
+  StBusy :: LeiosNotify point announcement vote
+  StDone :: LeiosNotify point announcement vote
 
 instance
   ( ShowProxy point
   , ShowProxy announcement
+  , ShowProxy vote
   ) =>
-  ShowProxy (LeiosNotify point announcement)
+  ShowProxy (LeiosNotify point announcement vote)
   where
   showProxy _ =
     concat
@@ -75,17 +75,19 @@ instance
       , showProxy (Proxy :: Proxy point)
       , " "
       , showProxy (Proxy :: Proxy announcement)
+      , " "
+      , showProxy (Proxy :: Proxy vote)
       ]
 
-instance ShowProxy (StIdle :: LeiosNotify point announcement) where
+instance ShowProxy (StIdle :: LeiosNotify point announcement vote) where
   showProxy _ = "StIdle"
-instance ShowProxy (StBusy :: LeiosNotify point announcement) where
+instance ShowProxy (StBusy :: LeiosNotify point announcement vote) where
   showProxy _ = "StBusy"
-instance ShowProxy (StDone :: LeiosNotify point announcement) where
+instance ShowProxy (StDone :: LeiosNotify point announcement vote) where
   showProxy _ = "StDone"
 
 type SingLeiosNotify ::
-  LeiosNotify point announcement ->
+  LeiosNotify point announcement vote ->
   Type
 data SingLeiosNotify st where
   SingIdle :: SingLeiosNotify StIdle
@@ -100,26 +102,26 @@ instance StateTokenI StDone where stateToken = SingDone
 
 -----
 
-instance Protocol (LeiosNotify point announcement) where
-  data Message (LeiosNotify point announcement) from to where
+instance Protocol (LeiosNotify point announcement vote) where
+  data Message (LeiosNotify point announcement vote) from to where
     MsgLeiosNotificationRequestNext ::
-      Message (LeiosNotify point announcement) StIdle StBusy
+      Message (LeiosNotify point announcement vote) StIdle StBusy
     MsgLeiosBlockAnnouncement ::
       !announcement ->
-      Message (LeiosNotify point announcement) StBusy StIdle
+      Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosBlockOffer ::
       !point ->
       !Word32 -> -- TODO this size should be redundant, determined by the announcement
-      Message (LeiosNotify point announcement) StBusy StIdle
+      Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosBlockTxsOffer ::
       !point ->
-      Message (LeiosNotify point announcement) StBusy StIdle
+      Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgLeiosVotes ::
-      -- TODO: non-empty and abstract?
-      [LeiosVote] ->
-      Message (LeiosNotify point announcement) StBusy StIdle
+      -- TODO: non-empty
+      [vote] ->
+      Message (LeiosNotify point announcement vote) StBusy StIdle
     MsgDone ::
-      Message (LeiosNotify point announcement) StIdle StDone
+      Message (LeiosNotify point announcement vote) StIdle StDone
 
   type StateAgency StIdle = ClientAgency
   type StateAgency StBusy = ServerAgency
@@ -127,7 +129,7 @@ instance Protocol (LeiosNotify point announcement) where
 
   type StateToken = SingLeiosNotify
 
-instance NFData (Message (LeiosNotify point announcement) from to) where
+instance NFData (Message (LeiosNotify point announcement vote) from to) where
   rnf = \case
     MsgLeiosNotificationRequestNext -> ()
     MsgLeiosBlockAnnouncement{} -> ()
@@ -137,24 +139,24 @@ instance NFData (Message (LeiosNotify point announcement) from to) where
     MsgDone -> ()
 
 deriving instance
-  (Eq point, Eq announcement) =>
-  Eq (Message (LeiosNotify point announcement) from to)
+  (Eq point, Eq announcement, Eq vote) =>
+  Eq (Message (LeiosNotify point announcement vote) from to)
 
 deriving instance
-  (Show point, Show announcement) =>
-  Show (Message (LeiosNotify point announcement) from to)
+  (Show point, Show announcement, Show vote) =>
+  Show (Message (LeiosNotify point announcement vote) from to)
 
 -----
 
 byteLimitsLeiosNotify ::
-  ProtocolSizeLimits (LeiosNotify point announcement) bytes
+  ProtocolSizeLimits (LeiosNotify point announcement vote) bytes
 byteLimitsLeiosNotify = ProtocolSizeLimits $ \case
   SingIdle -> smallByteLimit
   SingBusy -> smallByteLimit
   st@SingDone -> notActiveState st
 
 timeLimitsLeiosNotify ::
-  ProtocolTimeLimits (LeiosNotify point announcement)
+  ProtocolTimeLimits (LeiosNotify point announcement vote)
 timeLimitsLeiosNotify = ProtocolTimeLimits $ \case
   SingIdle -> waitForever
   SingBusy -> waitForever
@@ -163,20 +165,22 @@ timeLimitsLeiosNotify = ProtocolTimeLimits $ \case
 -----
 
 codecLeiosNotify ::
-  forall (point :: Type) (announcement :: Type) m.
+  forall point announcement vote m.
   MonadST m =>
   (point -> CBOR.Encoding) ->
   (forall s. CBOR.Decoder s point) ->
   (announcement -> CBOR.Encoding) ->
   (forall s. CBOR.Decoder s announcement) ->
-  Codec (LeiosNotify point announcement) CBOR.DeserialiseFailure m ByteString
-codecLeiosNotify encodeP decodeP encodeA decodeA =
+  (vote -> CBOR.Encoding) ->
+  (forall s. CBOR.Decoder s vote) ->
+  Codec (LeiosNotify point announcement vote) CBOR.DeserialiseFailure m ByteString
+codecLeiosNotify encodeP decodeP encodeA decodeA encodeV decodeV =
   mkCodecCborLazyBS
-    (encodeLeiosNotify encodeP encodeA)
+    (encodeLeiosNotify encodeP encodeA encodeV)
     decode
  where
   decode ::
-    forall (st :: LeiosNotify point announcement).
+    forall (st :: LeiosNotify point announcement vote).
     ActiveState st =>
     StateToken st ->
     forall s.
@@ -184,23 +188,25 @@ codecLeiosNotify encodeP decodeP encodeA decodeA =
   decode stok = do
     len <- CBOR.decodeListLen
     key <- CBOR.decodeWord
-    decodeLeiosNotify decodeP decodeA stok len key
+    decodeLeiosNotify decodeP decodeA decodeV stok len key
 
 encodeLeiosNotify ::
   forall
-    (point :: Type)
-    (announcement :: Type)
-    (st :: LeiosNotify point announcement)
-    (st' :: LeiosNotify point announcement).
+    point
+    announcement
+    vote
+    (st :: LeiosNotify point announcement vote)
+    (st' :: LeiosNotify point announcement vote).
   (point -> CBOR.Encoding) ->
   (announcement -> CBOR.Encoding) ->
-  Message (LeiosNotify point announcement) st st' ->
+  (vote -> CBOR.Encoding) ->
+  Message (LeiosNotify point announcement vote) st st' ->
   CBOR.Encoding
-encodeLeiosNotify encodeP encodeA = encode
+encodeLeiosNotify encodeP encodeA encodeV = encode
  where
   encode ::
     forall st0 st1.
-    Message (LeiosNotify point announcement) st0 st1 ->
+    Message (LeiosNotify point announcement vote) st0 st1 ->
     CBOR.Encoding
   encode = \case
     MsgLeiosNotificationRequestNext ->
@@ -226,28 +232,30 @@ encodeLeiosNotify encodeP encodeA = encode
      where
       encodeVotes =
         CBOR.encodeListLen (fromIntegral $ length vs)
-          <> foldMap encodeLeiosVote vs
+          <> foldMap encodeV vs
     MsgDone ->
       CBOR.encodeListLen 1
         <> CBOR.encodeWord 5
 
 decodeLeiosNotify ::
   forall
-    (point :: Type)
-    (announcement :: Type)
-    (st :: LeiosNotify point announcement)
+    point
+    announcement
+    vote
+    (st :: LeiosNotify point announcement vote)
     s.
   ActiveState st =>
   (forall s'. CBOR.Decoder s' point) ->
   (forall s'. CBOR.Decoder s' announcement) ->
+  (forall s'. CBOR.Decoder s' vote) ->
   StateToken st ->
   Int ->
   Word ->
   CBOR.Decoder s (SomeMessage st)
-decodeLeiosNotify decodeP decodeA = decode
+decodeLeiosNotify decodeP decodeA decodeV = decode
  where
   decode ::
-    forall (st' :: LeiosNotify point announcement).
+    forall (st' :: LeiosNotify point announcement vote).
     ActiveState st' =>
     StateToken st' ->
     Int ->
@@ -273,7 +281,7 @@ decodeLeiosNotify decodeP decodeA = decode
        where
         decodeVotes = do
           n <- CBOR.decodeListLen
-          replicateM n decodeLeiosVote
+          replicateM n decodeV
       (SingIdle, 1, 5) ->
         return $ SomeMessage MsgDone
       (SingDone, _, _) -> notActiveState stok
@@ -284,13 +292,13 @@ decodeLeiosNotify decodeP decodeA = decode
         fail $ printf "codecLeiosNotify (%s) unexpected key (%d, %d)" (show stok) key len
 
 codecLeiosNotifyId ::
-  forall (point :: Type) (announcement :: Type) m.
+  forall point announcement vote m.
   Monad m =>
   Codec
-    (LeiosNotify point announcement)
+    (LeiosNotify point announcement vote)
     CodecFailure
     m
-    (AnyMessage (LeiosNotify point announcement))
+    (AnyMessage (LeiosNotify point announcement vote))
 codecLeiosNotifyId = Codec{encode, decode}
  where
   encode ::
@@ -298,17 +306,17 @@ codecLeiosNotifyId = Codec{encode, decode}
     ( ActiveState st
     , StateTokenI st
     ) =>
-    Message (LeiosNotify point announcement) st st' ->
-    AnyMessage (LeiosNotify point announcement)
+    Message (LeiosNotify point announcement vote) st st' ->
+    AnyMessage (LeiosNotify point announcement vote)
   encode = AnyMessage
 
   decode ::
-    forall (st :: LeiosNotify point announcement).
+    forall (st :: LeiosNotify point announcement vote).
     ActiveState st =>
     StateToken st ->
     m
       ( DecodeStep
-          (AnyMessage (LeiosNotify point announcement))
+          (AnyMessage (LeiosNotify point announcement vote))
           CodecFailure
           m
           (SomeMessage st)
@@ -333,14 +341,14 @@ codecLeiosNotifyId = Codec{encode, decode}
 -----
 
 leiosNotifyClientPeer ::
-  forall m announcement point a.
+  forall m announcement point vote a.
   Monad m =>
-  m (Either a (Message (LeiosNotify point announcement) StBusy StIdle -> m ())) ->
-  Peer (LeiosNotify point announcement) AsClient NonPipelined StIdle m a
+  m (Either a (Message (LeiosNotify point announcement vote) StBusy StIdle -> m ())) ->
+  Peer (LeiosNotify point announcement vote) AsClient NonPipelined StIdle m a
 leiosNotifyClientPeer checkDone =
   go
  where
-  go :: Peer (LeiosNotify point announcement) AsClient NonPipelined StIdle m a
+  go :: Peer (LeiosNotify point announcement vote) AsClient NonPipelined StIdle m a
   go =
     Effect $
       checkDone <&> \case
@@ -359,18 +367,18 @@ leiosNotifyClientPeer checkDone =
 
 -----
 
-type LeiosNotifyServerPeer point announcement m a =
-  Peer (LeiosNotify point announcement) AsServer NonPipelined StIdle m ()
+type LeiosNotifyServerPeer point announcement vote m a =
+  Peer (LeiosNotify point announcement vote) AsServer NonPipelined StIdle m ()
 
 leiosNotifyServerPeer ::
-  forall m announcement point.
+  forall m point announcement vote.
   Monad m =>
-  m (Message (LeiosNotify point announcement) StBusy StIdle) ->
-  Peer (LeiosNotify point announcement) AsServer NonPipelined StIdle m ()
+  m (Message (LeiosNotify point announcement vote) StBusy StIdle) ->
+  Peer (LeiosNotify point announcement vote) AsServer NonPipelined StIdle m ()
 leiosNotifyServerPeer handler =
   go
  where
-  go :: Peer (LeiosNotify point announcement) AsServer NonPipelined StIdle m ()
+  go :: Peer (LeiosNotify point announcement vote) AsServer NonPipelined StIdle m ()
   go = Await ReflClientAgency $ \case
     MsgDone -> Done ReflNobodyAgency ()
     MsgLeiosNotificationRequestNext -> Effect $ do
@@ -382,15 +390,15 @@ leiosNotifyServerPeer handler =
 -----
 
 -- | Merely an abbreviation local to this module
-type X point announcement m a n =
-  Peer (LeiosNotify point announcement) AsClient (Pipelined n C) StIdle m a
+type X point announcement vote m a n =
+  Peer (LeiosNotify point announcement vote) AsClient (Pipelined n C) StIdle m a
 
-type LeiosNotifyClientPeerPipelined point announcement m a =
-  PeerPipelined (LeiosNotify point announcement) AsClient StIdle m a
+type LeiosNotifyClientPeerPipelined point announcement vote m a =
+  PeerPipelined (LeiosNotify point announcement vote) AsClient StIdle m a
 
 toLeiosNotifyClientPeerPipelined ::
-  Peer (LeiosNotify point announcement) AsClient (Pipelined Z C) StIdle m a ->
-  LeiosNotifyClientPeerPipelined point announcement m a
+  Peer (LeiosNotify point announcement vote) AsClient (Pipelined Z C) StIdle m a ->
+  LeiosNotifyClientPeerPipelined point announcement vote m a
 toLeiosNotifyClientPeerPipelined = PeerPipelined
 
 data C = MkC
@@ -398,18 +406,18 @@ data C = MkC
 data WhetherDraining = AlreadyDraining | NotYetDraining
 
 leiosNotifyClientPeerPipelined ::
-  forall m point announcement a.
+  forall m point announcement vote a.
   PrimMonad m =>
   -- | either the return value or else the current max pipelining depth
   m (Either a Int) ->
-  m (Message (LeiosNotify point announcement) StBusy StIdle -> m ()) ->
-  Peer (LeiosNotify point announcement) AsClient (Pipelined Z C) StIdle m a
+  m (Message (LeiosNotify point announcement vote) StBusy StIdle -> m ()) ->
+  Peer (LeiosNotify point announcement vote) AsClient (Pipelined Z C) StIdle m a
 leiosNotifyClientPeerPipelined checkDone k0 =
   Effect $ do
     stop <- Prim.newMutVar NotYetDraining
     pure $ go stop Zero
  where
-  go :: MutVar (PrimState m) WhetherDraining -> Nat n -> X point announcement m a n
+  go :: MutVar (PrimState m) WhetherDraining -> Nat n -> X point announcement vote m a n
   go stop !n =
     Effect $
       checkDone <&> \case
@@ -424,7 +432,7 @@ leiosNotifyClientPeerPipelined checkDone k0 =
                 (if natToInt n >= maxDepth then Nothing else Just $ sendAnother stop n)
                 (\MkC -> go stop m)
 
-  sendAnother :: MutVar (PrimState m) WhetherDraining -> Nat n -> X point announcement m a n
+  sendAnother :: MutVar (PrimState m) WhetherDraining -> Nat n -> X point announcement vote m a n
   sendAnother stop !n =
     YieldPipelined
       ReflClientAgency
@@ -434,7 +442,7 @@ leiosNotifyClientPeerPipelined checkDone k0 =
 
   receiver ::
     MutVar (PrimState m) WhetherDraining ->
-    Receiver (LeiosNotify point announcement) AsClient StBusy StIdle m C
+    Receiver (LeiosNotify point announcement vote) AsClient StBusy StIdle m C
   receiver stop =
     ReceiverAwait ReflServerAgency $ \msg -> case msg of
       MsgLeiosBlockAnnouncement{} -> handler stop k0 msg
@@ -446,14 +454,14 @@ leiosNotifyClientPeerPipelined checkDone k0 =
     MutVar (PrimState m) WhetherDraining ->
     m (msg -> m ()) ->
     msg ->
-    Receiver (LeiosNotify point announcement) AsClient StIdle StIdle m C
+    Receiver (LeiosNotify point announcement vote) AsClient StIdle StIdle m C
   handler stop k x = ReceiverEffect $ do
     Prim.readMutVar stop >>= \case
       AlreadyDraining -> pure ()
       NotYetDraining -> k >>= ($ x)
     pure $ ReceiverDone MkC
 
-  drainThePipe :: a -> Nat n -> X point announcement m a n
+  drainThePipe :: a -> Nat n -> X point announcement vote m a n
   drainThePipe x = \case
     Zero ->
       Yield ReflClientAgency MsgDone $

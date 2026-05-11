@@ -54,6 +54,9 @@ import Debug.Trace (trace)
 import GHC.Generics (Generic)
 import LeiosDemoException (LeiosDbException (..), jsonLeiosDbException)
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
+import qualified LeiosDemoOnlyTestFetch as LeiosFetch
+import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
+import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import qualified Numeric
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
@@ -504,6 +507,8 @@ data LeiosVote = MkLeiosVote
   }
   deriving (Generic, Eq, Ord, Show)
 
+instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
+
 -- | Encode a 'LeiosVote' into CBOR.
 -- NOTE: Encodes points flat into the vote for smaller votes.
 encodeLeiosVote :: LeiosVote -> Encoding
@@ -528,6 +533,15 @@ decodeLeiosVote = do
       , voterId
       , voteSignature
       }
+
+voteToObject :: LeiosVote -> Aeson.Object
+voteToObject MkLeiosVote{point, voterId, voteSignature} =
+  mconcat
+    [ "slot" .= point.pointSlotNo
+    , "ebHash" .= prettyEbHash point.pointEbHash
+    , "voterId" .= voterId.voterIndex
+    , "voteSignature" .= voteSignature
+    ]
 
 -- | Voter in a committee, identified by their seat index.
 newtype VoterId = MkVoterId {voterIndex :: Word16}
@@ -555,6 +569,41 @@ data VoteInvalid = InvalidSignature
 type Weight = Rational
 
 -- * Tracing
+
+messageLeiosNotifyToObject ::
+  Message (LeiosNotify LeiosPoint () LeiosVote) st st' ->
+  Aeson.Object
+messageLeiosNotifyToObject = \case
+  MsgLeiosNotificationRequestNext ->
+    mconcat
+      [ "kind" .= Aeson.String "MsgLeiosNotificationRequestNext"
+      ]
+  MsgLeiosBlockAnnouncement{} ->
+    mconcat
+      [ "kind" .= Aeson.String "MsgLeiosBlockAnnouncement"
+      ]
+  MsgLeiosBlockOffer (MkLeiosPoint ebSlot ebHash) ebBytesSize ->
+    mconcat
+      [ "kind" .= Aeson.String "MsgLeiosBlockOffer"
+      , "ebSlot" .= ebSlot
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebBytesSize" .= ebBytesSize
+      ]
+  MsgLeiosBlockTxsOffer (MkLeiosPoint ebSlot ebHash) ->
+    mconcat
+      [ "kind" .= Aeson.String "MsgLeiosBlockTxsOffer"
+      , "ebSlot" .= ebSlot
+      , "ebHash" .= prettyEbHash ebHash
+      ]
+  MsgLeiosVotes votes ->
+    mconcat
+      [ "kind" .= Aeson.String "MsgLeiosVotes"
+      , "votes" .= fmap voteToObject votes
+      ]
+  LeiosNotify.MsgDone ->
+    mconcat
+      [ "kind" .= Aeson.String "MsgDone"
+      ]
 
 messageLeiosFetchToObject ::
   Message (LeiosFetch LeiosPoint LeiosEb LeiosTx) st st' ->
@@ -589,7 +638,7 @@ messageLeiosFetchToObject = \case
       , "ebHash" .= prettyEbHash ebHash
       , "bitmaps" .= map prettyBitmap bitmaps
       ]
-  MsgDone ->
+  LeiosFetch.MsgDone ->
     "kind" .= Aeson.String "MsgDone"
 
 data TraceLeiosKernel
@@ -656,16 +705,12 @@ traceLeiosKernelToObject = \case
   TraceLeiosVoted{vote} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosVoted"
-      , "slot" .= vote.point.pointSlotNo
-      , "hash" .= prettyEbHash vote.point.pointEbHash
-      , "voter" .= vote.voterId.voterIndex
+      , "vote" .= voteToObject vote
       ]
   TraceLeiosVoteAcquired{vote} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosVoteAcquired"
-      , "slot" .= vote.point.pointSlotNo
-      , "hash" .= prettyEbHash vote.point.pointEbHash
-      , "voter" .= vote.voterId.voterIndex
+      , "vote" .= voteToObject vote
       ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e

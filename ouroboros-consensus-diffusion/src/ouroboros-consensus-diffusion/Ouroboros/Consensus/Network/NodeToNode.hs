@@ -79,6 +79,7 @@ import LeiosDemoTypes
   ( LeiosEb
   , LeiosPoint (..)
   , LeiosTx
+  , LeiosVote
   , TraceLeiosKernel (..)
   , TraceLeiosPeer (..)
   )
@@ -251,11 +252,11 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
-      LeiosNotifyClientPeerPipelined LeiosPoint () m ()
+      LeiosNotifyClientPeerPipelined LeiosPoint () LeiosVote m ()
   , hLeiosNotifyServer ::
       NodeToNodeVersion ->
       ConnectionId addr ->
-      LeiosNotifyServerPeer LeiosPoint () m ()
+      LeiosNotifyServerPeer LeiosPoint () LeiosVote m ()
   , hLeiosFetchClient ::
       NodeToNodeVersion ->
       ControlMessageSTM m ->
@@ -475,7 +476,7 @@ data Codecs blk addr e m bCS bSCS bBF bSBF bTX bKA bPS bLN bLF = Codecs
   , cTxSubmission2Codec :: Codec (TxSubmission2 (GenTxId blk) (GenTx blk)) e m bTX
   , cKeepAliveCodec :: Codec KeepAlive e m bKA
   , cPeerSharingCodec :: Codec (PeerSharing addr) e m bPS
-  , cLeiosNotifyCodec :: Codec (LeiosNotify LeiosPoint ()) e m bLN
+  , cLeiosNotifyCodec :: Codec (LeiosNotify LeiosPoint () LeiosVote) e m bLN
   , cLeiosFetchCodec :: Codec (LeiosFetch LeiosPoint LeiosEb LeiosTx) e m bLF
   }
 
@@ -548,6 +549,8 @@ defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion =
           Leios.decodeLeiosPoint
           (\() -> CBOR.encodeNull)
           CBOR.decodeNull
+          Leios.encodeLeiosVote
+          Leios.decodeLeiosVote
     , cLeiosFetchCodec =
         codecLeiosFetch
           Leios.encodeLeiosPoint
@@ -582,7 +585,7 @@ identityCodecs ::
     (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
-    (AnyMessage (LeiosNotify LeiosPoint ()))
+    (AnyMessage (LeiosNotify LeiosPoint () LeiosVote))
     (AnyMessage (LeiosFetch LeiosPoint LeiosEb LeiosTx))
 identityCodecs =
   Codecs
@@ -617,7 +620,7 @@ data Tracers' peer ntnAddr blk e f = Tracers
       f (TraceLabelPeer peer (TraceSendRecv (TxSubmission2 (GenTxId blk) (GenTx blk))))
   , tKeepAliveTracer :: f (TraceLabelPeer peer (TraceSendRecv KeepAlive))
   , tPeerSharingTracer :: f (TraceLabelPeer peer (TraceSendRecv (PeerSharing ntnAddr)))
-  , tLeiosNotifyTracer :: f (TraceLabelPeer peer (TraceSendRecv (LeiosNotify LeiosPoint ())))
+  , tLeiosNotifyTracer :: f (TraceLabelPeer peer (TraceSendRecv (LeiosNotify LeiosPoint () LeiosVote)))
   , tLeiosFetchTracer ::
       f (TraceLabelPeer peer (TraceSendRecv (LeiosFetch LeiosPoint LeiosEb LeiosTx)))
   }
@@ -761,9 +764,9 @@ data ByteLimits bCS bBF bTX bKA bLN bLF = ByteLimits
         KeepAlive
         bKA
   , blLeiosNotify ::
-      forall point announcement.
+      forall point announcement vote.
       ProtocolSizeLimits
-        (LeiosNotify point announcement)
+        (LeiosNotify point announcement vote)
         bLN
   , blLeiosFetch ::
       forall point eb tx.
