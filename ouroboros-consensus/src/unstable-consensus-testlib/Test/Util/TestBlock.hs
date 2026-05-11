@@ -716,6 +716,7 @@ singleNodeTestConfigWith codecConfig storageConfig k genesisWindow =
     , topLevelConfigCodec = codecConfig
     , topLevelConfigStorage = storageConfig
     , topLevelConfigCheckpoints = emptyCheckpointsMap
+    , topLevelConfigVotingKey = Nothing
     }
  where
   slotLength :: SlotLength

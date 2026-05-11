@@ -40,10 +40,7 @@ module Test.ThreadNet.Network
   , NodeOutput (..)
   , TestOutput (..)
   , TraceThreadNet (..)
-  , _nodeEvent
   , TraceThreadNetNode (..)
-  , _FromMempool
-  , _FromLeios
   , mkTestOutput
   , LeiosState (..)
   ) where
@@ -80,8 +77,7 @@ import LeiosDemoDb
   , emptyInMemoryLeiosDb
   , newLeiosDBInMemoryWith
   )
-import LeiosDemoTypes (ForgedLeiosEb, TraceLeiosKernel)
-import Lens.Micro (SimpleFold, folding)
+import LeiosDemoTypes (ForgedLeiosEb, TraceLeiosKernel, TraceLeiosPeer)
 import Network.TypedProtocol.Codec (CodecFailure, mapFailureCodec)
 import qualified Network.TypedProtocol.Codec as Codec
 import Ouroboros.Consensus.Block
@@ -926,6 +922,7 @@ runThreadNetwork
                   _ -> pure ()
             , mempoolTracer = contramap FromMempool nodeTracer
             , leiosKernelTracer = contramap FromLeios nodeTracer
+            , leiosPeerTracer = contramap FromLeiosPeer nodeTracer
             , txOutboundTracer = contramap FromTxOutbound nodeTracer
             , keepAliveClientTracer = contramap FromKeepAliveClient nodeTracer
             , consensusErrorTracer = contramap FromConsensusError nodeTracer
@@ -1763,11 +1760,9 @@ data TraceThreadNet blk
 
 deriving instance Show (TraceThreadNetNode blk) => Show (TraceThreadNet blk)
 
-_nodeEvent :: SimpleFold (TraceThreadNet blk) (TraceThreadNetNode blk)
-_nodeEvent = folding $ \case FromNode _ ev -> Just ev
-
 data TraceThreadNetNode blk
   = FromLeios TraceLeiosKernel
+  | FromLeiosPeer (TraceLabelPeer (ConnectionId NodeId) TraceLeiosPeer)
   | FromMempool (TraceEventMempool blk)
   | FromTxOutbound
       (TraceLabelPeer (ConnectionId NodeId) (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
@@ -1784,12 +1779,6 @@ deriving instance
   , Show (CSClient.TraceChainSyncClientEvent blk)
   ) =>
   Show (TraceThreadNetNode blk)
-
-_FromLeios :: SimpleFold (TraceThreadNetNode blk) TraceLeiosKernel
-_FromLeios = folding $ \case FromLeios x -> Just x; _ -> Nothing
-
-_FromMempool :: SimpleFold (TraceThreadNetNode blk) (TraceEventMempool blk)
-_FromMempool = folding $ \case FromMempool x -> Just x; _ -> Nothing
 
 -- | Gather the test output from the nodes
 mkTestOutput ::

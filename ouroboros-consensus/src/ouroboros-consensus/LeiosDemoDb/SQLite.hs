@@ -49,6 +49,7 @@ import LeiosDemoDb.Common
   ( CompletedEbs
   , LeiosDbConnection (..)
   , LeiosDbHandle (..)
+  , LeiosEbNotification (..)
   , LeiosFetchWork (..)
   )
 import LeiosDemoException (LeiosDbException (..))
@@ -56,7 +57,6 @@ import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
   , LeiosEb
-  , LeiosNotification (..)
   , LeiosPoint (..)
   , TxHash (..)
   , leiosEbBodyItems
@@ -98,7 +98,7 @@ newLeiosDBSQLite dbPath = do
 
 -- * Connection management
 
-openSQLiteConnection :: FilePath -> StrictTChan IO LeiosNotification -> IO (LeiosDbConnection IO)
+openSQLiteConnection :: FilePath -> StrictTChan IO LeiosEbNotification -> IO (LeiosDbConnection IO)
 openSQLiteConnection dbPath notificationChan = do
   shouldInitSchema <- not <$> doesFileExist dbPath
   db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate] SQLVFSDefault
@@ -174,7 +174,7 @@ sqlLookupEbBody db ebHash =
               loop ((txHash, size) : acc)
     loop []
 
-sqlInsertEbBody :: DB.Database -> (LeiosNotification -> IO ()) -> LeiosPoint -> LeiosEb -> IO ()
+sqlInsertEbBody :: DB.Database -> (LeiosEbNotification -> IO ()) -> LeiosPoint -> LeiosEb -> IO ()
 sqlInsertEbBody db notify point eb = do
   let items = leiosEbBodyItems eb
   when (null items) $
@@ -197,10 +197,10 @@ sqlInsertEbBody db notify point eb = do
       dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
       dbBindInt64 stmt 3 (fromIntegral $ unSlotNo point.pointSlotNo)
       dbStep1 stmt
-  notify $ LeiosOfferBlock point (leiosEbBytesSize eb)
+  notify $ AcquiredEb point (leiosEbBytesSize eb)
 
 sqlInsertTxs ::
-  DB.Database -> (LeiosNotification -> IO ()) -> [(TxHash, ByteString)] -> IO CompletedEbs
+  DB.Database -> (LeiosEbNotification -> IO ()) -> [(TxHash, ByteString)] -> IO CompletedEbs
 sqlInsertTxs db notify txs = do
   completed <- dbWithBEGIN db $ do
     stmtInsert <- dbPrepare db (fromString sql_insert_tx)
@@ -222,7 +222,7 @@ sqlInsertTxs db notify txs = do
     dbFinalize stmtInsert
     dbFinalize stmtDecr
     -- Find newly-complete EBs (missingTxCount reached 0)
-    dbWithPrepare db (fromString sql_find_complete_ebs) $ \stmt -> do
+    completed <- dbWithPrepare db (fromString sql_find_complete_ebs) $ \stmt -> do
       let loop acc =
             dbStep stmt >>= \case
               DB.Done -> pure (reverse acc)
@@ -231,8 +231,12 @@ sqlInsertTxs db notify txs = do
                 slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 1
                 loop (MkLeiosPoint slot ebHash : acc)
       loop []
+    -- Mark them as notified so they are not found again
+    dbWithPrepare db (fromString sql_mark_notified_ebs) $ \stmt ->
+      dbStep1 stmt
+    pure completed
   -- Emit notifications for each completed EB
-  forM_ completed $ notify . LeiosOfferBlockTxs
+  forM_ completed $ notify . AcquiredEbTxs
   pure completed
 
 sqlBatchRetrieveTxs :: DB.Database -> EbHash -> [Int] -> IO [(Int, TxHash, Maybe ByteString)]
@@ -364,40 +368,33 @@ sqlQueryCompletedEbByPoint db ebPoint =
 
 -- * SQL strings
 
+-- | Schema for the Leios database.
 sql_schema :: String
 sql_schema =
-  "CREATE TABLE ebs (\n\
-  \    ebSlot INTEGER NOT NULL\n\
-  \  ,\n\
-  \    ebHashBytes BLOB NOT NULL\n\
-  \  ,\n\
-  \    ebBytesSize INTEGER NOT NULL\n\
-  \  ,\n\
-  \    missingTxCount INTEGER\n\
-  \  ,\n\
-  \    PRIMARY KEY (ebSlot, ebHashBytes)\n\
-  \  );\n\
-  \CREATE INDEX idx_ebs_ebHashBytes ON ebs(ebHashBytes);\n\
-  \CREATE TABLE ebTxs (\n\
-  \    ebHashBytes BLOB NOT NULL   -- foreign key ebs.ebHashBytes\n\
-  \  ,\n\
-  \    txOffset INTEGER NOT NULL\n\
-  \  ,\n\
-  \    txHashBytes BLOB NOT NULL   -- raw bytes\n\
-  \  ,\n\
-  \    txBytesSize INTEGER NOT NULL\n\
-  \  ,\n\
-  \    PRIMARY KEY (ebHashBytes, txOffset)\n\
-  \  );\n\
-  \CREATE INDEX idx_ebTxs_txHashBytes ON ebTxs(txHashBytes);\n\
-  \CREATE TABLE txs (\n\
-  \    txHashBytes BLOB NOT NULL PRIMARY KEY\n\
-  \  ,\n\
-  \    txBytes BLOB NOT NULL\n\
-  \  ,\n\
-  \    txBytesSize INTEGER NOT NULL\n\
-  \  );\n\
-  \"
+  unlines
+    [ "CREATE TABLE ebs ("
+    , "  ebSlot INTEGER NOT NULL,"
+    , "  ebHashBytes BLOB NOT NULL,"
+    , "  ebBytesSize INTEGER NOT NULL,"
+    , -- NULL = body not downloaded, >0 = txs missing, 0 = just completed, <0 = notified
+      "  missingTxCount INTEGER,"
+    , "  PRIMARY KEY (ebSlot, ebHashBytes)"
+    , ");"
+    , "CREATE INDEX idx_ebs_ebHashBytes ON ebs(ebHashBytes);"
+    , "CREATE TABLE ebTxs ("
+    , "  ebHashBytes BLOB NOT NULL,"
+    , "  txOffset INTEGER NOT NULL,"
+    , "  txHashBytes BLOB NOT NULL,"
+    , "  txBytesSize INTEGER NOT NULL,"
+    , "  PRIMARY KEY (ebHashBytes, txOffset)"
+    , ");"
+    , "CREATE INDEX idx_ebTxs_txHashBytes ON ebTxs(txHashBytes);"
+    , "CREATE TABLE txs ("
+    , "  txHashBytes BLOB NOT NULL PRIMARY KEY,"
+    , "  txBytes BLOB NOT NULL,"
+    , "  txBytesSize INTEGER NOT NULL"
+    , ");"
+    ]
 
 sql_scan_ebs :: String
 sql_scan_ebs =
@@ -491,6 +488,12 @@ sql_flush_memTxHashes =
 sql_find_complete_ebs :: String
 sql_find_complete_ebs =
   "SELECT ebHashBytes, ebSlot FROM ebs WHERE missingTxCount = 0"
+
+-- | Mark complete EBs as notified so they are not found again by
+-- 'sql_find_complete_ebs'. Uses -1 as a sentinel for "already notified".
+sql_mark_notified_ebs :: String
+sql_mark_notified_ebs =
+  "UPDATE ebs SET missingTxCount = -1 WHERE missingTxCount = 0"
 
 -- | Decrement missingTxCount for all EBs referencing the given txHash.
 -- Parameter 1: txHashBytes

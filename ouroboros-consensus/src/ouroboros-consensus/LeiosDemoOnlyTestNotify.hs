@@ -33,6 +33,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import Control.DeepSeq (NFData (..))
+import Control.Monad (replicateM)
 import Control.Monad.Class.MonadST
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.ByteString.Lazy (ByteString)
@@ -42,6 +43,7 @@ import Data.Primitive.MutVar (MutVar)
 import qualified Data.Primitive.MutVar as Prim
 import Data.Singletons
 import Data.Word (Word32)
+import LeiosDemoTypes (LeiosVote, decodeLeiosVote, encodeLeiosVote)
 import qualified Network.Mux.Types as Mux
 import Network.TypedProtocol.Codec.CBOR
 import Network.TypedProtocol.Core
@@ -112,8 +114,10 @@ instance Protocol (LeiosNotify point announcement) where
     MsgLeiosBlockTxsOffer ::
       !point ->
       Message (LeiosNotify point announcement) StBusy StIdle
-    -- votes offer
-
+    MsgLeiosVotes ::
+      -- TODO: non-empty and abstract?
+      [LeiosVote] ->
+      Message (LeiosNotify point announcement) StBusy StIdle
     MsgDone ::
       Message (LeiosNotify point announcement) StIdle StDone
 
@@ -129,7 +133,7 @@ instance NFData (Message (LeiosNotify point announcement) from to) where
     MsgLeiosBlockAnnouncement{} -> ()
     MsgLeiosBlockOffer{} -> ()
     MsgLeiosBlockTxsOffer{} -> ()
-    -- votes offer
+    MsgLeiosVotes{} -> ()
     MsgDone -> ()
 
 deriving instance
@@ -215,7 +219,14 @@ encodeLeiosNotify encodeP encodeA = encode
       CBOR.encodeListLen 2
         <> CBOR.encodeWord 3
         <> encodeP p
-    -- votes offer
+    MsgLeiosVotes vs ->
+      CBOR.encodeListLen 2
+        <> CBOR.encodeWord 4
+        <> encodeVotes
+     where
+      encodeVotes =
+        CBOR.encodeListLen (fromIntegral $ length vs)
+          <> foldMap encodeLeiosVote vs
     MsgDone ->
       CBOR.encodeListLen 1
         <> CBOR.encodeWord 5
@@ -256,7 +267,13 @@ decodeLeiosNotify decodeP decodeA = decode
       (SingBusy, 2, 3) -> do
         p <- decodeP
         return $ SomeMessage $ MsgLeiosBlockTxsOffer p
-      -- votes offer
+      (SingBusy, 2, 4) -> do
+        vs <- decodeVotes
+        return $ SomeMessage $ MsgLeiosVotes vs
+       where
+        decodeVotes = do
+          n <- CBOR.decodeListLen
+          replicateM n decodeLeiosVote
       (SingIdle, 1, 5) ->
         return $ SomeMessage MsgDone
       (SingDone, _, _) -> notActiveState stok
@@ -336,6 +353,7 @@ leiosNotifyClientPeer checkDone =
               MsgLeiosBlockAnnouncement{} -> react $ k msg
               MsgLeiosBlockOffer{} -> react $ k msg
               MsgLeiosBlockTxsOffer{} -> react $ k msg
+              MsgLeiosVotes{} -> react $ k msg
 
   react action = Effect $ fmap (\() -> go) action
 
@@ -422,6 +440,7 @@ leiosNotifyClientPeerPipelined checkDone k0 =
       MsgLeiosBlockAnnouncement{} -> handler stop k0 msg
       MsgLeiosBlockOffer{} -> handler stop k0 msg
       MsgLeiosBlockTxsOffer{} -> handler stop k0 msg
+      MsgLeiosVotes{} -> handler stop k0 msg
 
   handler ::
     MutVar (PrimState m) WhetherDraining ->

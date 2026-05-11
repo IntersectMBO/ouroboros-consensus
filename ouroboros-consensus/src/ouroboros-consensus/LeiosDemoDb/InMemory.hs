@@ -33,13 +33,13 @@ import LeiosDemoDb.Common
   ( CompletedEbs
   , LeiosDbConnection (..)
   , LeiosDbHandle (..)
+  , LeiosEbNotification (..)
   , LeiosFetchWork (..)
   )
 import LeiosDemoTypes
   ( BytesSize
   , EbHash (..)
   , LeiosEb
-  , LeiosNotification (..)
   , LeiosPoint (..)
   , TxHash (..)
   , leiosEbBodyItems
@@ -152,7 +152,7 @@ imLookupEbBody stateVar ebHash = atomically $ do
 imInsertEbBody ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
-  StrictTChan m LeiosNotification ->
+  StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
   LeiosEb ->
   m ()
@@ -176,12 +176,12 @@ imInsertEbBody stateVar notificationChan point eb = do
         { imEbBodies = Map.insert point.pointEbHash entries (imEbBodies s)
         , imEbSlots = Map.insert point.pointEbHash point.pointSlotNo (imEbSlots s)
         }
-    writeTChan notificationChan $ LeiosOfferBlock point (leiosEbBytesSize eb)
+    writeTChan notificationChan $ AcquiredEb point (leiosEbBytesSize eb)
 
 imInsertTxs ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
-  StrictTChan m LeiosNotification ->
+  StrictTChan m LeiosEbNotification ->
   [(TxHash, ByteString)] ->
   m CompletedEbs
 imInsertTxs stateVar notificationChan txs = atomically $ do
@@ -200,7 +200,7 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
         , all (\e -> Map.member (eteTxHash e) (imTxs state)) (IntMap.elems entries)
         , slot <- maybeToList $ Map.lookup ebHash (imEbSlots state)
         ]
-  forM_ completed $ writeTChan notificationChan . LeiosOfferBlockTxs
+  forM_ completed $ writeTChan notificationChan . AcquiredEbTxs
   pure completed
 
 imBatchRetrieveTxs ::

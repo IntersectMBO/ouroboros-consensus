@@ -2,6 +2,7 @@ module LeiosDemoDb
   ( -- * API
     withLeiosDb
   , LeiosDbHandle (..)
+  , LeiosEbNotification (..)
   , LeiosDbConnection (..)
   , LeiosFetchWork (..)
   , CompletedEbs
