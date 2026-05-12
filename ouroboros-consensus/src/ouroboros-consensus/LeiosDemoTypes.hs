@@ -17,8 +17,28 @@
 
 module LeiosDemoTypes (module LeiosDemoTypes) where
 
-import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR, enforceSize, serialize', toCBOR)
+import Cardano.Binary
+  ( Decoder
+  , Encoding
+  , FromCBOR (fromCBOR)
+  , ToCBOR
+  , enforceSize
+  , serialize'
+  , toCBOR
+  , toStrictByteString
+  )
+import qualified Cardano.Binary as CBOR
+import Cardano.Crypto.DSIGN
+  ( SigDSIGN
+  , SignKeyDSIGN
+  , VerKeyDSIGN
+  , decodeSigDSIGN
+  , encodeSigDSIGN
+  , verifyDSIGN
+  )
+import Cardano.Crypto.DSIGN.BLS12381 (BLS12381MinSigDSIGN, BLS12381SignContext (..))
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
 import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
 import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
@@ -41,6 +61,7 @@ import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
+import Data.List (elemIndex)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Sequence (Seq)
@@ -59,7 +80,6 @@ import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import qualified Numeric
-import Ouroboros.Consensus.Config (VotingKey)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , TxMeasureMetrics
@@ -495,18 +515,31 @@ decodeLeiosEb = do
 
 -- * Voting
 
+-- | Leios uses BLS as a signature scheme. NOTE: We cannot use the
+-- cardano-ledger KeyRole infrastructure as this is fixed to use Ed25519DSIGN.
+type LeiosDSIGN = BLS12381MinSigDSIGN
+
+type LeiosSigningKey = SignKeyDSIGN LeiosDSIGN
+
+type LeiosVerificationKey = VerKeyDSIGN LeiosDSIGN
+
+type LeiosSignature = SigDSIGN LeiosDSIGN
+
+-- TODO: Seems not to be exposed, but will move into the DSIGN instance anyways
+minSigPoPDST :: BLS12381SignContext
+minSigPoPDST = BLS12381SignContext (Just "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_") Nothing
+
 -- ** Committee
 
--- FIXME: This should only contain public keys
-
 -- | A selected committee in which each 'VoterId' has a 'Weight'.
-newtype Committee = MkCommittee {voters :: Set VotingKey}
+-- TODO: ensure uniqueness in smart constructor
+newtype Committee = MkCommittee {voters :: [LeiosVerificationKey]}
   deriving Show
 
 -- | Resolve a 'VoterId' to its corresponding 'VotingKey' in the 'Committee'.
-resolveVoterId :: Committee -> VoterId -> Maybe VotingKey
+resolveVoterId :: Committee -> VoterId -> Maybe LeiosVerificationKey
 resolveVoterId MkCommittee{voters} (MkVoterId idx)
-  | i >= 0 && i < Set.size voters = Just $ Set.elemAt i voters
+  | i >= 0 && i < length voters = Just $ voters !! i
   | otherwise = Nothing
  where
   i = fromIntegral idx
@@ -524,14 +557,11 @@ decodeVoterId :: Decoder s VoterId
 decodeVoterId = MkVoterId <$> CBOR.decodeWord16
 
 -- | Determine the 'VoterId' on a 'Committee'.
-getVoterId :: VotingKey -> Committee -> Maybe VoterId
-getVoterId key committee =
-  MkVoterId . fromIntegral <$> Set.lookupIndex key committee.voters
+getVoterId :: LeiosVerificationKey -> Committee -> Maybe VoterId
+getVoterId vk committee =
+  MkVoterId . fromIntegral <$> elemIndex vk committee.voters
 
 -- ** Vote
-
--- FIXME: proper signing of votes using BLS (SigDSIGN BLS12381MinSigDSIGN)
-type VoteSignature = Bool
 
 -- | A vote in the Leios protocol.
 data LeiosVote = MkLeiosVote
@@ -539,12 +569,23 @@ data LeiosVote = MkLeiosVote
   -- ^ Point that gets signed. The slot also identifies the voting round.
   , voterId :: VoterId
   -- ^ Identity within a 'Committee' who signed this vote.
-  , voteSignature :: VoteSignature
+  , voteSignature :: LeiosSignature
   -- ^ The cryptographic signature of the vote.
   }
-  deriving (Generic, Eq, Ord, Show)
+  deriving (Generic, Eq, Show)
+
+instance Ord LeiosVote where
+  compare v1 v2 =
+    compare v1.point v2.point
+      <> compare v1.voterId v2.voterId
 
 instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
+
+instance SignableRepresentation LeiosVote where
+  getSignableRepresentation MkLeiosVote{point} =
+    toStrictByteString $
+      encode point.pointSlotNo
+        <> encodeEbHash point.pointEbHash
 
 -- | Encode a 'LeiosVote' into CBOR.
 -- NOTE: Encodes points flat into the vote for smaller votes.
@@ -554,7 +595,7 @@ encodeLeiosVote MkLeiosVote{point, voterId, voteSignature} =
     <> encode point.pointSlotNo
     <> encodeEbHash point.pointEbHash
     <> encodeVoterId voterId
-    <> CBOR.encodeBool voteSignature -- FIXME: encode bytes
+    <> encodeSigDSIGN voteSignature
 
 -- | Dedoe a 'LeiosVote' from CBOR.
 decodeLeiosVote :: Decoder s LeiosVote
@@ -563,7 +604,7 @@ decodeLeiosVote = do
   pointSlotNo <- decode
   pointEbHash <- decodeEbHash
   voterId <- decodeVoterId
-  voteSignature <- CBOR.decodeBool -- FIXME: decode bytes
+  voteSignature <- decodeSigDSIGN
   pure
     MkLeiosVote
       { point = MkLeiosPoint{pointSlotNo, pointEbHash}
@@ -572,33 +613,31 @@ decodeLeiosVote = do
       }
 
 voteToObject :: LeiosVote -> Aeson.Object
-voteToObject MkLeiosVote{point, voterId, voteSignature} =
+voteToObject MkLeiosVote{point, voterId} =
   mconcat
     [ "slot" .= point.pointSlotNo
     , "ebHash" .= prettyEbHash point.pointEbHash
     , "voterId" .= voterId.voterIndex
-    , "voteSignature" .= voteSignature
     ]
 
 -- | Create a vote for given 'LeiosPoint' and signing key.
-signLeiosVote :: VotingKey -> VoterId -> LeiosPoint -> LeiosVote
-signLeiosVote _ voterId point =
+signLeiosVote :: LeiosSigningKey -> VoterId -> LeiosPoint -> LeiosVote
+signLeiosVote sk voterId point =
   MkLeiosVote
     { point
     , voterId
-    , voteSignature = True -- FIXME: proper signing of votes
+    , voteSignature = undefined
     }
 
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
 validateLeiosVote :: Committee -> LeiosVote -> Either VoteInvalid Weight
-validateLeiosVote committee MkLeiosVote{voterId, voteSignature} =
+validateLeiosVote committee vote@MkLeiosVote{voterId, voteSignature} =
   case resolveVoterId committee voterId of
     Nothing -> Left SignerNotInCommittee
-    Just _vk ->
-      -- TODO: verify signature
-      if not voteSignature
-        then Left InvalidSignature
-        else Right 1 -- FIXME: proper weights
+    Just vk ->
+      case verifyDSIGN minSigPoPDST vk vote voteSignature of
+        Left _ -> Left InvalidSignature
+        Right () -> Right 1 -- FIXME: proper weights
 
 data VoteInvalid
   = InvalidSignature

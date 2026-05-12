@@ -7,18 +7,19 @@
 -- committee selected by the active era from its ledger state.
 module LeiosVoting (module LeiosVoting) where
 
+import Cardano.Crypto.DSIGN (DSIGNAlgorithm (deriveVerKeyDSIGN))
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Monad (forever)
 import Control.Tracer (Tracer, traceWith)
 import LeiosDemoDb (LeiosDbHandle (..), LeiosEbNotification (..))
 import LeiosDemoTypes
   ( Committee
+  , LeiosSigningKey
   , TraceLeiosKernel (..)
   , getVoterId
   , signLeiosVote
   )
 import LeiosVoteState (LeiosVoteState (..))
-import Ouroboros.Consensus.Config (VotingKey)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
@@ -36,15 +37,16 @@ runLeiosVoting ::
   ChainDB m blk ->
   LeiosDbHandle m ->
   LeiosVoteState m ->
-  Maybe VotingKey ->
+  Maybe LeiosSigningKey ->
   m ()
 runLeiosVoting tracer chainDB leiosDB voteState = \case
   Nothing ->
     traceWith tracer $
       MkTraceLeiosKernel
         "runLeiosVoting: disabled because no topLevelConfigVotingKey"
-  Just votingKey -> do
-    let signVote = signLeiosVote votingKey
+  Just sk -> do
+    let vk = deriveVerKeyDSIGN sk
+    let signVote = signLeiosVote sk
     let LeiosVoteState{addVote} = voteState
     chan <- subscribeEbNotifications leiosDB
     let getNext f =
@@ -56,7 +58,7 @@ runLeiosVoting tracer chainDB leiosDB voteState = \case
     forever $ getNext $ \point -> do
       -- TODO: check only once per era whether we are part of the committee?
       ls <- getCurrentLedgerState
-      case getLeiosCommittee ls >>= getVoterId votingKey of
+      case getLeiosCommittee ls >>= getVoterId vk of
         Nothing -> pure ()
         Just voterId -> do
           -- TODO: validate EB closures against selected chain

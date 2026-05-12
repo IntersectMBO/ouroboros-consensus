@@ -1,16 +1,23 @@
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Test.LeiosVoteState (tests) where
 
+import Cardano.Crypto.DSIGN
+  ( DSIGNAlgorithm (deriveVerKeyDSIGN)
+  , genKeyDSIGN
+  , seedSizeDSIGN
+  )
 import Control.Concurrent.Class.MonadSTM.Strict (atomically)
 import Control.Monad (forM_)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (runSimOrThrow)
-import qualified Data.ByteString as BS
+import Data.Data (Proxy (..))
 import Data.Maybe (fromJust, isNothing)
-import qualified Data.Set as Set
 import LeiosDemoTypes
   ( Committee (..)
+  , LeiosDSIGN
+  , LeiosSigningKey
   , LeiosVote (..)
   , VoteInvalid (..)
   , VoterId (MkVoterId)
@@ -26,6 +33,7 @@ import LeiosVoteState
   , subscribeVotes
   )
 import Ouroboros.Consensus.Config (VotingKey)
+import Test.Crypto.Util (arbitrarySeedOfSize)
 import Test.LeiosDemoDb (genPoint)
 import Test.QuickCheck
   ( Gen
@@ -36,6 +44,7 @@ import Test.QuickCheck
   , forAll
   , listOf1
   , property
+  , suchThat
   , vectorOf
   , (.&&.)
   , (===)
@@ -56,31 +65,31 @@ tests =
     , testProperty "vote signed with key not on committee is rejected" prop_signerNotInCommittee
     ]
 
-genVotingKey :: Gen VotingKey
-genVotingKey = BS.pack <$> vectorOf 32 (fromIntegral <$> chooseInt (0, 255))
+genLeiosSigningKey :: Gen LeiosSigningKey
+genLeiosSigningKey = do
+  seed <- arbitrarySeedOfSize (seedSizeDSIGN (Proxy @LeiosDSIGN))
+  pure $ genKeyDSIGN seed
 
 -- | A non-empty committee.
 genCommittee :: Gen Committee
 genCommittee = do
   n <- chooseInt (1, 10)
-  ks <- Set.fromList <$> vectorOf n genVotingKey
-  pure $ MkCommittee ks
+  sks <- vectorOf n genLeiosSigningKey
+  pure $ MkCommittee $ deriveVerKeyDSIGN <$> sks
 
 -- | A 'VotingKey' that is *not* a member of the given committee.
-genKeyNotIn :: Committee -> Gen VotingKey
+genKeyNotIn :: Committee -> Gen LeiosSigningKey
 genKeyNotIn committee = do
-  k <- genVotingKey
-  if Set.member k (voters committee)
-    then genKeyNotIn committee
-    else pure k
+  genLeiosSigningKey `suchThat` \sk ->
+    isNothing $ getVoterId (deriveVerKeyDSIGN sk) committee
 
 -- | A vote produced by 'signLeiosVote' with an arbitrary point and a key from the
 -- committee.
 genVoteFor :: Committee -> Gen LeiosVote
 genVoteFor committee = do
-  key <- elements (Set.toList (voters committee))
-  let voterId = fromJust $ getVoterId key committee
-  signLeiosVote key voterId <$> genPoint
+  key <- elements committee.voters
+  let vid = fromJust $ getVoterId key committee
+  signLeiosVote key vid <$> genPoint
 
 -- | A subscriber should receive a vote that was added after subscribing.
 prop_subscriberReceivesVote :: Property
