@@ -34,6 +34,7 @@ import Cardano.Crypto.DSIGN
   , VerKeyDSIGN
   , decodeSigDSIGN
   , encodeSigDSIGN
+  , signDSIGN
   , verifyDSIGN
   )
 import Cardano.Crypto.DSIGN.BLS12381 (BLS12381MinSigDSIGN, BLS12381SignContext (..))
@@ -134,6 +135,13 @@ instance ShowProxy LeiosPoint where showProxy _ = "LeiosPoint"
 -- TODO: prettyprinter instance Pretty?
 instance Show LeiosPoint where
   show = prettyLeiosPoint
+
+instance SignableRepresentation LeiosPoint where
+  getSignableRepresentation point =
+    toStrictByteString $
+      -- REVIEW: Flat concatenation expected as what is signed?
+      encode point.pointSlotNo
+        <> encodeEbHash point.pointEbHash
 
 prettyLeiosPoint :: LeiosPoint -> String
 prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =
@@ -581,12 +589,6 @@ instance Ord LeiosVote where
 
 instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
 
-instance SignableRepresentation LeiosVote where
-  getSignableRepresentation MkLeiosVote{point} =
-    toStrictByteString $
-      encode point.pointSlotNo
-        <> encodeEbHash point.pointEbHash
-
 -- | Encode a 'LeiosVote' into CBOR.
 -- NOTE: Encodes points flat into the vote for smaller votes.
 encodeLeiosVote :: LeiosVote -> Encoding
@@ -626,16 +628,16 @@ signLeiosVote sk voterId point =
   MkLeiosVote
     { point
     , voterId
-    , voteSignature = undefined
+    , voteSignature = signDSIGN minSigPoPDST point sk
     }
 
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
 validateLeiosVote :: Committee -> LeiosVote -> Either VoteInvalid Weight
-validateLeiosVote committee vote@MkLeiosVote{voterId, voteSignature} =
+validateLeiosVote committee MkLeiosVote{point, voterId, voteSignature} =
   case resolveVoterId committee voterId of
     Nothing -> Left SignerNotInCommittee
     Just vk ->
-      case verifyDSIGN minSigPoPDST vk vote voteSignature of
+      case verifyDSIGN minSigPoPDST vk point voteSignature of
         Left _ -> Left InvalidSignature
         Right () -> Right 1 -- FIXME: proper weights
 
