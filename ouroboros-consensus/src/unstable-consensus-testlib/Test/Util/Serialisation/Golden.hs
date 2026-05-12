@@ -28,6 +28,7 @@
 -- a line in the nix configuration above similar to the previous ones.
 module Test.Util.Serialisation.Golden
   ( ToGoldenDirectory (..)
+  , goldenTestCBOR
   , goldenTest_SerialiseDisk
   , goldenTest_SerialiseNodeToClient
   , goldenTest_SerialiseNodeToNode

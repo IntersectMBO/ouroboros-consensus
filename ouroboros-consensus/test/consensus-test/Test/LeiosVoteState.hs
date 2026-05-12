@@ -1,5 +1,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Test.LeiosVoteState (tests) where
@@ -9,30 +11,38 @@ import Cardano.Crypto.DSIGN
   , genKeyDSIGN
   , seedSizeDSIGN
   )
+import Cardano.Crypto.Seed (mkSeedFromBytes)
+import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically)
 import Control.Monad (forM_)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (runSimOrThrow)
+import qualified Data.ByteString as BS
 import Data.Data (Proxy (..))
 import Data.Maybe (fromJust, isNothing)
+import Data.Word (Word8)
 import LeiosDemoTypes
   ( Committee (..)
+  , EbHash (..)
   , LeiosDSIGN
+  , LeiosPoint (..)
   , LeiosSigningKey
   , LeiosVote (..)
   , VoteInvalid (..)
   , VoterId (MkVoterId)
+  , encodeLeiosVote
   , getVoterId
   , signLeiosVote
   , voters
   )
 import LeiosVoteState
-  ( addVote
+  ( AddVoteResult (..)
+  , addVote
   , getNextVote
   , newLeiosVoteState
   , subscribeVotes
   )
-import Ouroboros.Consensus.Config (VotingKey)
+import System.FilePath ((</>))
 import Test.Crypto.Util (arbitrarySeedOfSize)
 import Test.LeiosDemoDb (genPoint)
 import Test.QuickCheck
@@ -51,6 +61,8 @@ import Test.QuickCheck
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.Paths (getGoldenDir, getRelPath)
+import Test.Util.Serialisation.Golden (goldenTestCBOR)
 
 tests :: TestTree
 tests =
@@ -63,12 +75,33 @@ tests =
     , testProperty "invalid vote is rejected and not published" prop_invalidVoteRejected
     , testProperty "no committee rejects vote" prop_noCommitteeRejected
     , testProperty "vote signed with key not on committee is rejected" prop_signerNotInCommittee
+    , goldenTestCBOR
+        "golden encoding of a typical vote"
+        typicalVote
+        encodeLeiosVote
+        ($(getGoldenDir) </> "leios" </> "LeiosVote")
+        (Just ($(getRelPath "cardano-blueprint/src/network/node-to-node/leios-notify/messages.cddl"), "vote"))
     ]
+
+-- | A typical 'LeiosVote' at voter index 1000, signed with a deterministic
+-- key. Pinned by the corresponding golden file.
+typicalVote :: LeiosVote
+typicalVote =
+  signLeiosVote (mkLeiosSigningKey 0x42) (MkVoterId 1000) point
+ where
+  point = MkLeiosPoint (SlotNo 42) (MkEbHash (BS.pack [0 .. 31]))
 
 genLeiosSigningKey :: Gen LeiosSigningKey
 genLeiosSigningKey = do
   seed <- arbitrarySeedOfSize (seedSizeDSIGN (Proxy @LeiosDSIGN))
   pure $ genKeyDSIGN seed
+
+-- | Deterministic signing key, seeded by repeating a single byte.
+mkLeiosSigningKey :: Word8 -> LeiosSigningKey
+mkLeiosSigningKey b =
+  genKeyDSIGN $ mkSeedFromBytes $ BS.replicate sz b
+ where
+  sz = fromIntegral (seedSizeDSIGN (Proxy @LeiosDSIGN))
 
 data TestCommittee = TestCommittee
   { committee :: Committee
