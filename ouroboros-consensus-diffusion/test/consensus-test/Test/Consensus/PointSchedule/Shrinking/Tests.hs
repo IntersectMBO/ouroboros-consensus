@@ -1,6 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
 
 -- | Test properties of the shrinking functions
 module Test.Consensus.PointSchedule.Shrinking.Tests (tests) where

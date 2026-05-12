@@ -1,10 +1,6 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.Byron.Serialisation (tests) where
@@ -51,7 +47,7 @@ tests =
         ]
     ]
  where
-  dictNestedHdr :: forall a. NestedCtxt_ ByronBlock Header a -> Dict (Eq a, Show a)
+  dictNestedHdr :: NestedCtxt_ ByronBlock Header a -> Dict (Eq a, Show a)
   dictNestedHdr (CtxtByronBoundary _) = Dict
   dictNestedHdr (CtxtByronRegular _) = Dict
 

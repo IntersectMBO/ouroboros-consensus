@@ -1,6 +1,5 @@
 {- HLINT ignore "Unused LANGUAGE pragma" -}
 -- False hint on TypeOperators
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}

@@ -3,9 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -616,7 +614,8 @@ instance
 instance
   ( HasHeader (Header blk)
   , StandardHash (HeaderWithTime blk)
-  , Typeable blk
+  , -- Necessary because ouroboros-network demands so
+    Typeable blk
   ) =>
   HasHeader (HeaderWithTime blk)
   where

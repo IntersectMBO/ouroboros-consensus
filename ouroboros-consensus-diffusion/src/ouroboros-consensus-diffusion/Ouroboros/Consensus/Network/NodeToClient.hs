@@ -1,11 +1,7 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -427,7 +423,7 @@ mkApps ::
   , ShowProxy (ApplyTxErr blk)
   , ShowProxy (GenTx blk)
   , ShowProxy (GenTxId blk)
-  , ShowProxy (Query blk)
+  , ShowProxy (BlockQuery blk)
   , forall fp. ShowQuery (BlockQuery blk fp)
   ) =>
   NodeKernel m addrNTN addrNTC blk ->

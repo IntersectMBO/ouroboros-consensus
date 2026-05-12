@@ -1,5 +1,3 @@
-{-# LANGUAGE FlexibleContexts #-}
-
 module Test.ThreadNet.Util.SimpleBlock (prop_validSimpleBlock) where
 
 import Data.Typeable (Typeable)

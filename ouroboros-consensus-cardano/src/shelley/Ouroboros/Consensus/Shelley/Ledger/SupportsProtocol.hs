@@ -1,18 +1,11 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | This module contains 'SupportsProtocol' instances tying the ledger and
@@ -47,7 +40,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 
 instance
-  ShelleyCompatible (TPraos crypto) era =>
+  (SL.PraosCrypto crypto, ShelleyCompatible (TPraos crypto) era) =>
   LedgerSupportsProtocol (ShelleyBlock (TPraos crypto) era)
   where
   protocolLedgerView _cfg = SL.currentLedgerView . tickedShelleyLedgerState
@@ -87,6 +80,7 @@ instance
 instance
   ( ShelleyCompatible (Praos crypto) era
   , ShelleyCompatible (TPraos crypto) era
+  , SL.PraosCrypto crypto
   ) =>
   LedgerSupportsProtocol (ShelleyBlock (Praos crypto) era)
   where

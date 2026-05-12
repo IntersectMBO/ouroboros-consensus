@@ -1,5 +1,3 @@
-{-# LANGUAGE FlexibleContexts #-}
-
 -- | Intended for qualified import
 --
 -- > import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)

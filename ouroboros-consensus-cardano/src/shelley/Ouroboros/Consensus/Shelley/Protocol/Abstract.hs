@@ -1,15 +1,12 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- | Commonality between multiple protocols.
 --
@@ -149,7 +146,6 @@ class ProtocolHeaderSupportsKES proto where
     Bool
 
   mkHeader ::
-    forall crypto m.
     (Crypto crypto, Monad m, crypto ~ ProtoCrypto proto) =>
     HotKey crypto m ->
     CanBeLeader proto ->

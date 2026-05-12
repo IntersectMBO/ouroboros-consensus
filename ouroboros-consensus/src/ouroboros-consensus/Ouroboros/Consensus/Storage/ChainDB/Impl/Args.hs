@@ -1,9 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Args
@@ -141,7 +137,6 @@ defaultSpecificArgs =
 -- and 'defaultSpecificArgs' for a list of which fields are not given a default
 -- and must therefore be set explicitly.
 defaultArgs ::
-  forall m blk.
   ( IOLike m
   , LedgerDB.LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
@@ -173,7 +168,6 @@ ensureValidateAll args =
     }
 
 completeChainDbArgs ::
-  forall m blk.
   (ConsensusProtocol (BlockProtocol blk), IOLike m) =>
   ResourceRegistry m ->
   TopLevelConfig blk ->

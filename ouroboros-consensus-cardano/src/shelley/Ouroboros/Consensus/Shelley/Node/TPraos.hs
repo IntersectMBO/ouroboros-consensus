@@ -1,17 +1,8 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Node.TPraos
@@ -55,7 +46,6 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.Abstract
@@ -70,7 +60,6 @@ import Ouroboros.Consensus.Shelley.Ledger.Inspect ()
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
 import Ouroboros.Consensus.Shelley.Node.Common
   ( ProtocolParamsShelleyBased (..)
-  , ShelleyEraWithCrypto
   , ShelleyLeaderCredentials (..)
   , shelleyBlockIssuerVKey
   )
@@ -90,7 +79,6 @@ import Ouroboros.Consensus.Util.IOLike
 shelleyBlockForging ::
   forall m era c.
   ( ShelleyCompatible (TPraos c) era
-  , TxLimits (ShelleyBlock (TPraos c) era)
   , IOLike m
   ) =>
   TPraosParams ->
@@ -112,7 +100,7 @@ shelleyBlockForging tpraosParams hotKey credentials = do
 -- 'forgeLabel'.
 shelleySharedBlockForging ::
   forall m c era.
-  ( ShelleyEraWithCrypto c (TPraos c) era
+  ( ShelleyCompatible (TPraos c) era
   , IOLike m
   ) =>
   HotKey c m ->
@@ -171,7 +159,6 @@ protocolInfoShelley ::
   ( IOLike m
   , AgentCrypto c
   , ShelleyCompatible (TPraos c) ShelleyEra
-  , TxLimits (ShelleyBlock (TPraos c) ShelleyEra)
   , MonadKESAgent m
   ) =>
   SL.ShelleyGenesis ->
@@ -192,7 +179,6 @@ protocolInfoShelley
 protocolInfoTPraosShelleyBased ::
   forall m era c.
   ( ShelleyCompatible (TPraos c) era
-  , TxLimits (ShelleyBlock (TPraos c) era)
   , KESAgentContext c m
   ) =>
   ProtocolParamsShelleyBased c ->
