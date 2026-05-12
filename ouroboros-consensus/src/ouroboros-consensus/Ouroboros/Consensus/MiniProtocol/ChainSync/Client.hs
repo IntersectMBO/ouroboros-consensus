@@ -175,7 +175,7 @@ type Consensus
 data ChainDbView m blk = ChainDbView
   { getCurrentChain :: STM m (AnchoredFragment (Header blk))
   , getHeaderStateHistory :: STM m (HeaderStateHistory blk)
-  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk EmptyMK))
+  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState m blk))
   , getIsInvalidBlock ::
       STM
         m
@@ -1759,7 +1759,7 @@ checkTime cfgEnv dynEnv intEnv =
   checkArrivalTime ::
     KnownIntersectionState blk ->
     arrival ->
-    WithEarlyExit m (Intersects blk (LedgerState blk EmptyMK, RelativeTime))
+    WithEarlyExit m (Intersects blk (LedgerState m blk, RelativeTime))
   checkArrivalTime kis arrival = do
     Intersects kis' (lst, judgment) <- do
       readLedgerState kis $ \lst ->
@@ -1782,14 +1782,14 @@ checkTime cfgEnv dynEnv intEnv =
   readLedgerState ::
     forall a.
     KnownIntersectionState blk ->
-    (LedgerState blk EmptyMK -> Maybe a) ->
+    (LedgerState m blk -> Maybe a) ->
     WithEarlyExit m (Intersects blk a)
   readLedgerState kis prj = castM $ readLedgerStateHelper kis prj
 
   readLedgerStateHelper ::
     forall a.
     KnownIntersectionState blk ->
-    (LedgerState blk EmptyMK -> Maybe a) ->
+    (LedgerState m blk -> Maybe a) ->
     m (WithEarlyExit m (Intersects blk a))
   readLedgerStateHelper kis prj = atomically $ do
     -- We must first find the most recent intersection with the current
@@ -1860,7 +1860,7 @@ checkTime cfgEnv dynEnv intEnv =
   -- that far into the future.
   projectLedgerView ::
     SlotNo ->
-    LedgerState blk EmptyMK ->
+    LedgerState m blk ->
     Maybe (LedgerView (BlockProtocol blk))
   projectLedgerView slot lst =
     let forecast = ledgerViewForecastAt (configLedger cfg) lst
@@ -2287,7 +2287,7 @@ data ChainSyncClientException
       -- We store the intersection point the upstream node sent us.
       (Their (Tip blk))
   | forall blk.
-    LedgerSupportsProtocol blk =>
+    (Show (LedgerErr LedgerState blk), LedgerSupportsProtocol blk) =>
     InvalidBlock
       -- | Block that triggered the validity check.
       (Point blk)

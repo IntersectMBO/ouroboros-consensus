@@ -54,9 +54,9 @@ mkCapacityBytesOverride = MempoolCapacityBytesOverride
 -- If an override is present, reinterpret it as a number of blocks (rounded
 -- up), and then simply multiply the ledger's capacity by that number.
 computeMempoolCapacity ::
-  LedgerSupportsMempool blk =>
+  LedgerSupportsTxs blk =>
   LedgerConfig blk ->
-  TickedLedgerState blk mk ->
+  TickedLedgerState m blk ->
   MempoolCapacityBytesOverride ->
   TxMeasure blk
 computeMempoolCapacity cfg st override =

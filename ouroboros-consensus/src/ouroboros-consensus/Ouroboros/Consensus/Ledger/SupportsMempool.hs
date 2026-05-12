@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
@@ -13,7 +14,6 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , ByteSize32 (..)
   , WhatToDoWithTxDiffs (..)
-  , InputTxDiffs
   , ConvertRawTxId (..)
   , GenTx
   , GenTxId
@@ -23,7 +23,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , IgnoringOverflow (..)
   , Invalidated (..)
   , LedgerSupportsMempool (..)
-  , ReapplyTxsResult (..)
+  , LedgerSupportsTxs (..)
   , TxId
   , TxLimits (..)
   , TxMeasureMetrics (..)
@@ -38,7 +38,6 @@ import Control.Monad.Except
 import Data.ByteString.Short (ShortByteString)
 import Data.Coerce (coerce)
 import Data.DerivingVia (InstantiatedAt (..))
-import qualified Data.Foldable as Foldable
 import Data.Kind (Type)
 import Data.Measure (Measure)
 import qualified Data.Measure
@@ -49,7 +48,7 @@ import NoThunks.Class
 import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
@@ -93,27 +92,40 @@ data WhetherToIntervene
 -- simply don't care (when acquiring a mempool snapshot for forging a block).
 type data WhatToDoWithTxDiffs = Collect | Discard
 
--- | This type family serves to make sure that when we are going to discard the
--- differences, we don't even have differences around that we might misuse.
-type family InputTxDiffs blk wtd where
-  InputTxDiffs blk Discard = ()
-  InputTxDiffs blk Collect = LedgerTables blk DiffMK
-
 class
-  ( UpdateLedger blk
-  , TxLimits blk
+  ( TxLimits blk
   , NoThunks (GenTx blk)
   , NoThunks (Validated (GenTx blk))
   , Show (GenTx blk)
   , Show (Validated (GenTx blk))
   , Show (ApplyTxErr blk)
   ) =>
-  LedgerSupportsMempool blk
+  LedgerSupportsTxs blk
   where
   -- | Check whether the internal invariants of the transaction hold.
   txInvariant :: GenTx blk -> Bool
   txInvariant = const True
 
+  -- \| Discard the evidence that transaction has been previously validated
+  txForgetValidated :: Validated (GenTx blk) -> GenTx blk
+
+  -- | The ledger rules' error type for the mempool's current era might allow
+  -- the mempool to reject a tx for its own reasons.
+  --
+  -- This function therefore constructs the type that the @LocalTxSubmission@
+  -- node-to-client mini protocol sends when a tx is rejected.
+  mkMempoolApplyTxError ::
+    -- | for the HFC
+    TickedLedgerState m blk ->
+    Text ->
+    Maybe (ApplyTxErr blk)
+
+class
+  ( UpdateLedger blk
+  , LedgerSupportsTxs blk
+  ) =>
+  LedgerSupportsMempool blk
+  where
   -- | Apply an unvalidated transaction
   --
   -- The mempool expects that the ledger checks the sanity of the transaction'
@@ -123,14 +135,15 @@ class
   -- The resulting ledger state contains the diffs produced by applying this
   -- transaction alone.
   applyTx ::
+    IOLike m =>
     LedgerConfig blk ->
     WhetherToIntervene ->
     -- | Slot number of the block containing the tx
     SlotNo ->
     GenTx blk ->
     -- | Contain only the values for the tx to apply
-    TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk DiffMK, Validated (GenTx blk))
+    TickedLedgerState m blk ->
+    ExceptT (ApplyTxErr blk) m (TickedLedgerState m blk, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -143,121 +156,19 @@ class
   -- function can be used to reapply a list of transactions, providing as a
   -- first state one that contains the values for all the transactions.
   reapplyTx ::
-    HasCallStack =>
+    (HasCallStack, IOLike m) =>
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
     Validated (GenTx blk) ->
     -- | Contains at least the values for the tx to reapply
-    TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk ValuesMK)
-
-  -- | Apply a list of previously validated transactions to a new ledger state.
-  --
-  -- It is never the case that we reapply one single transaction, we always
-  -- reapply a list of transactions (and even one transaction can just be lifted
-  -- into the unary list).
-  --
-  -- When reapplying a list of transactions, in the hard-fork instance we want
-  -- to first project everything into the particular block instance and then we
-  -- can inject/project the ledger tables only once. For single era blocks, this
-  -- is by default implemented as a fold using 'reapplyTx'.
-  --
-  -- Notice: It is crucial that the list of validated transactions returned is
-  -- in the same order as they were given, as we will use those later on to
-  -- filter a list of 'TxTicket's.
-  reapplyTxs ::
-    LedgerConfig blk ->
-    -- | Slot number of the block containing the tx
-    SlotNo ->
-    [(Validated (GenTx blk), InputTxDiffs blk wtd, extra)] ->
-    TickedLedgerState blk ValuesMK ->
-    ReapplyTxsResult extra blk wtd
-  reapplyTxs cfg slot txs st =
-    (\(err, val, st') -> ReapplyTxsResult err (reverse val) (forgetLedgerTables st')) $
-      foldReapplyTxs fst3 txs
-   where
-    fst3 (a, _, _) = a
-
-    foldReapplyTxs ::
-      (a -> Validated (GenTx blk)) ->
-      [a] ->
-      ([Invalidated blk], [a], TickedLedgerState blk ValuesMK)
-    foldReapplyTxs projectTx =
-      Foldable.foldl'
-        ( \(accE, accV, st') a ->
-            case runExcept (reapplyTx cfg slot (projectTx a) st') of
-              Left err -> (Invalidated (projectTx a) err : accE, accV, st')
-              Right st'' -> (accE, a : accV, st'')
-        )
-        ([], [], st)
-
-  -- | Discard the evidence that transaction has been previously validated
-  txForgetValidated :: Validated (GenTx blk) -> GenTx blk
-
-  -- | Given a transaction, get the key-sets that we need to apply it to a
-  -- ledger state. This is implemented in the Ledger. An example of non-obvious
-  -- needed keys in Cardano are those of reference scripts for computing the
-  -- transaction size.
-  getTransactionKeySets :: GenTx blk -> LedgerTables blk KeysMK
-
-  -- Mempools live in a single slot so in the hard fork block case
-  -- it is cheaper to perform these operations on LedgerStates, saving
-  -- the time of projecting and injecting ledger tables.
-  --
-  -- The cost of this when adding transactions is very small compared
-  -- to eg the networking costs of mempool synchronization, but still
-  -- it is worthwile locking the mempool for as short as possible.
-  --
-  -- Eventually the Ledger will provide these diffs, so we might even
-  -- be able to remove this optimization altogether.
-
-  -- | Prepend diffs on ledger states
-  --
-  -- Intended to be non-default in the HardFork instance for optimizing
-  -- performance.
-  prependMempoolDiffs ::
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk DiffMK
-  prependMempoolDiffs = prependDiffs
-
-  -- | Apply diffs on ledger states
-  --
-  -- Intended to be non-default in the HardFork instance for optimizing
-  -- performance.
-  applyMempoolDiffs ::
-    LedgerTables blk ValuesMK ->
-    LedgerTables blk KeysMK ->
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk ValuesMK
-  applyMempoolDiffs = applyDiffForKeysOnTables
-
-  -- | The ledger rules' error type for the mempool's current era might allow
-  -- the mempool to reject a tx for its own reasons.
-  --
-  -- This function therefore constructs the type that the @LocalTxSubmission@
-  -- node-to-client mini protocol sends when a tx is rejected.
-  mkMempoolApplyTxError ::
-    -- | for the HFC
-    TickedLedgerState blk mk ->
-    Text ->
-    Maybe (ApplyTxErr blk)
+    TickedLedgerState m blk ->
+    ExceptT (ApplyTxErr blk) m (TickedLedgerState m blk)
 
 -- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error
-nothingMkMempoolApplyTxError :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
+nothingMkMempoolApplyTxError :: TickedLedgerState m blk -> Text -> Maybe (ApplyTxErr blk)
 nothingMkMempoolApplyTxError _ _ = Nothing
-
-data ReapplyTxsResult extra blk wtd
-  = ReapplyTxsResult
-  { invalidatedTxs :: ![Invalidated blk]
-  -- ^ txs that are now invalid. Order doesn't matter
-  , validatedTxs :: ![(Validated (GenTx blk), InputTxDiffs blk wtd, extra)]
-  -- ^ txs that are valid again, order must be the same as the order in
-  -- which txs were received
-  , resultingState :: !(TickedLedgerState blk EmptyMK)
-  }
 
 -- | A generalized transaction, 'GenTx', identifier.
 type TxId :: Type -> Type
@@ -367,7 +278,7 @@ class
     LedgerConfig blk ->
     -- | This state needs values as a transaction measure might depend on
     -- those. For example in Cardano they look at the reference scripts.
-    TickedLedgerState blk ValuesMK ->
+    TickedLedgerState m blk ->
     GenTx blk ->
     Except (ApplyTxErr blk) (TxMeasure blk)
 
@@ -375,7 +286,7 @@ class
   blockCapacityTxMeasure ::
     -- | at least for symmetry with 'txMeasure'
     LedgerConfig blk ->
-    TickedLedgerState blk mk ->
+    TickedLedgerState m blk ->
     TxMeasure blk
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@

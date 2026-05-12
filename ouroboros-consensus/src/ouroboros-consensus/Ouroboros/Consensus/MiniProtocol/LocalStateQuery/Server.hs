@@ -31,7 +31,7 @@ localStateQueryServer ::
   ) =>
   ExtLedgerCfg blk ->
   ( Target (Point blk) ->
-    m (Either GetForkerError (ResourceKey m, ReadOnlyForker' m blk))
+    m (Either GetForkerError (ResourceKey m, ExtLedgerState m blk))
   ) ->
   LocalStateQueryServer blk (Point blk) (Query blk) m ()
 localStateQueryServer cfg getView =
@@ -60,7 +60,7 @@ localStateQueryServer cfg getView =
 
   acquired ::
     ResourceKey m ->
-    ReadOnlyForker' m blk ->
+    ExtLedgerState m blk ->
     ServerStAcquired blk (Point blk) (Query blk) m ()
   acquired rk forker =
     ServerStAcquired
@@ -73,7 +73,7 @@ localStateQueryServer cfg getView =
 
   handleQuery ::
     ResourceKey m ->
-    ReadOnlyForker' m blk ->
+    ExtLedgerState m blk ->
     Query blk result ->
     m (ServerStQuerying blk (Point blk) (Query blk) m () result)
   handleQuery rk forker query = do

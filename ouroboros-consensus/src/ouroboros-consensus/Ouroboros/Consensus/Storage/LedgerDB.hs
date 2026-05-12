@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -18,9 +19,11 @@ module Ouroboros.Consensus.Storage.LedgerDB
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Data.Functor.Contravariant ((>$<))
+import Data.Typeable
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -51,6 +54,11 @@ openDB ::
   , InspectLedger blk
   , HasCallStack
   , HasHardForkHistory blk
+  , CloseLedgerHandles ExtLedgerState m blk
+  , DuplicateLedgerHandles ExtLedgerState m blk
+  , Typeable m
+  , ApplyBlock LedgerState blk
+  , NoThunks (LedgerState m blk)
   ) =>
   -- | Stateless initializaton arguments
   Complete LedgerDbArgs m blk ->

@@ -201,13 +201,13 @@ castHeaderState HeaderState{..} =
     }
 
 deriving instance
-  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  (Eq (WithOrigin (AnnTip blk)), Eq (ChainDepState (BlockProtocol blk))) =>
   Eq (HeaderState blk)
 deriving instance
-  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  (Show (WithOrigin (AnnTip blk)), Show (ChainDepState (BlockProtocol blk))) =>
   Show (HeaderState blk)
 deriving instance
-  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  (NoThunks (WithOrigin (AnnTip blk)), NoThunks (ChainDepState (BlockProtocol blk))) =>
   NoThunks (HeaderState blk)
 
 data instance Ticked (HeaderState blk) = TickedHeaderState
@@ -268,12 +268,14 @@ data HeaderEnvelopeError blk
     OtherHeaderEnvelopeError !(OtherHeaderEnvelopeError blk)
   deriving Generic
 
-deriving instance ValidateEnvelope blk => Eq (HeaderEnvelopeError blk)
-deriving instance ValidateEnvelope blk => Show (HeaderEnvelopeError blk)
 deriving instance
-  ( ValidateEnvelope blk
-  , Typeable blk
-  ) =>
+  (Eq (HeaderHash blk), Eq (ChainHash blk), Eq (OtherHeaderEnvelopeError blk)) =>
+  Eq (HeaderEnvelopeError blk)
+deriving instance
+  (Show (HeaderHash blk), Show (ChainHash blk), Show (OtherHeaderEnvelopeError blk)) =>
+  Show (HeaderEnvelopeError blk)
+deriving instance
+  (NoThunks (HeaderHash blk), NoThunks (ChainHash blk), NoThunks (OtherHeaderEnvelopeError blk)) =>
   NoThunks (HeaderEnvelopeError blk)
 
 castHeaderEnvelopeError ::
@@ -440,13 +442,13 @@ data HeaderError blk
   deriving Generic
 
 deriving instance
-  (BlockSupportsProtocol blk, ValidateEnvelope blk) =>
+  (Eq (ValidationErr (BlockProtocol blk)), Eq (HeaderEnvelopeError blk)) =>
   Eq (HeaderError blk)
 deriving instance
-  (BlockSupportsProtocol blk, ValidateEnvelope blk) =>
+  (Show (ValidationErr (BlockProtocol blk)), Show (HeaderEnvelopeError blk)) =>
   Show (HeaderError blk)
 deriving instance
-  (BlockSupportsProtocol blk, ValidateEnvelope blk) =>
+  (NoThunks (ValidationErr (BlockProtocol blk)), NoThunks (HeaderEnvelopeError blk)) =>
   NoThunks (HeaderError blk)
 
 castHeaderError ::
@@ -638,7 +640,7 @@ mkHeaderWithTime ::
   , HasHeader (Header blk)
   ) =>
   LedgerConfig blk ->
-  LedgerState blk mk ->
+  LedgerState m blk ->
   Header blk ->
   HeaderWithTime blk
 {-# INLINE mkHeaderWithTime #-}

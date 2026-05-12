@@ -77,8 +77,7 @@ class
 
 -- | Partial ledger config
 class
-  ( UpdateLedger blk
-  , Show (PartialLedgerConfig blk)
+  ( Show (PartialLedgerConfig blk)
   , NoThunks (PartialLedgerConfig blk)
   ) =>
   HasPartialLedgerConfig blk

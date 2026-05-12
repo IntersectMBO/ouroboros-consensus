@@ -12,6 +12,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-simplifiable-class-constraints #-}
 
 -- | Types used throughout the implementation: handle, state, environment,
 -- types, trace types, etc.
@@ -97,6 +98,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -248,7 +250,8 @@ getEnvSTM1 (CDBHandle varState) f a =
 data ChainDbState m blk
   = ChainDbOpen !(ChainDbEnv m blk)
   | ChainDbClosed
-  deriving (Generic, NoThunks)
+  deriving Generic
+deriving instance NoThunks (ChainDbEnv m blk) => NoThunks (ChainDbState m blk)
 
 -- | The current chain, both without and with slot times
 --
@@ -393,7 +396,11 @@ data ChainDbEnv m blk = CDB
 -- (but avoid including @m@ because we cannot impose @Typeable m@ as a
 -- constraint and still have it work with the simulator)
 instance
-  (IOLike m, LedgerSupportsProtocol blk, BlockSupportsDiffusionPipelining blk) =>
+  ( IOLike m
+  , IsLedger LedgerState blk
+  , LedgerSupportsProtocol blk
+  , BlockSupportsDiffusionPipelining blk
+  ) =>
   NoThunks (ChainDbEnv m blk)
   where
   showTypeOf _ = "ChainDbEnv m " ++ show (typeRep (Proxy @blk))
@@ -541,7 +548,11 @@ data InvalidBlockInfo blk = InvalidBlockInfo
   { invalidBlockReason :: !(ExtValidationError blk)
   , invalidBlockSlotNo :: !SlotNo
   }
-  deriving (Eq, Show, Generic, NoThunks)
+  deriving Generic
+
+deriving instance Eq (ExtValidationError blk) => Eq (InvalidBlockInfo blk)
+deriving instance Show (ExtValidationError blk) => Show (InvalidBlockInfo blk)
+deriving instance NoThunks (ExtValidationError blk) => NoThunks (InvalidBlockInfo blk)
 
 {-------------------------------------------------------------------------------
   Blocks to add
@@ -792,6 +803,7 @@ deriving instance
   , LedgerSupportsProtocol blk
   , InspectLedger blk
   , Show (TraceAddBlockEvent blk)
+  , Show (LedgerErr LedgerState blk)
   ) =>
   Show (TraceEvent blk)
 
@@ -943,6 +955,7 @@ deriving instance
   ( Eq (Header blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
+  , Eq (LedgerErr LedgerState blk)
   , Eq (ReasonForSwitch (WithEmptyFragment (WeightedSelectView (BlockProtocol blk))))
   , Eq (ReasonForSwitch (SelectView (BlockProtocol blk)))
   ) =>
@@ -951,6 +964,7 @@ deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
+  , Show (LedgerErr LedgerState blk)
   , Show (ReasonForSwitch (WithEmptyFragment (WeightedSelectView (BlockProtocol blk))))
   , Show (ReasonForSwitch (SelectView (BlockProtocol blk)))
   ) =>
@@ -968,11 +982,13 @@ data TraceValidationEvent blk
 
 deriving instance
   ( Eq (Header blk)
+  , Eq (LedgerErr LedgerState blk)
   , LedgerSupportsProtocol blk
   ) =>
   Eq (TraceValidationEvent blk)
 deriving instance
   ( Show (Header blk)
+  , Show (LedgerErr LedgerState blk)
   , LedgerSupportsProtocol blk
   ) =>
   Show (TraceValidationEvent blk)
@@ -1002,11 +1018,13 @@ data TraceInitChainSelEvent blk
 
 deriving instance
   ( Eq (Header blk)
+  , Eq (LedgerErr LedgerState blk)
   , LedgerSupportsProtocol blk
   ) =>
   Eq (TraceInitChainSelEvent blk)
 deriving instance
   ( Show (Header blk)
+  , Show (LedgerErr LedgerState blk)
   , LedgerSupportsProtocol blk
   ) =>
   Show (TraceInitChainSelEvent blk)

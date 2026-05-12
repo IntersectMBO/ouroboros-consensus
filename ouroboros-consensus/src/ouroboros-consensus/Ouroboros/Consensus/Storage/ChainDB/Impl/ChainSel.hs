@@ -89,7 +89,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import Ouroboros.Consensus.Storage.LedgerDB hiding (yield)
+import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasVoteDB.API (AddPerasVoteResult (..), PerasVoteDB (addVote))
@@ -117,6 +117,8 @@ initialChainSelection ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
+  , GetTip LedgerState blk
+  , CloseLedgerHandles ExtLedgerState m blk
   ) =>
   ImmutableDB m blk ->
   VolatileDB m blk ->
@@ -241,7 +243,7 @@ initialChainSelection
             <$> chainSelection
               cse
               (first Diff.extend <$> candidates)
-              (\_ _ -> MkSuccessForkerAction $ join . atomically . forkerCommit)
+              (\_ _ -> join . atomically . forkerCommit)
      where
       curpt = AF.anchorPoint curChain
       chainSelEnv = do
@@ -350,6 +352,8 @@ chainSelSync ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , GetTip LedgerState blk
+  , CloseLedgerHandles ExtLedgerState m blk
   ) =>
   ChainDbEnv m blk ->
   ChainSelMessage m blk ->
@@ -605,6 +609,8 @@ chainSelectionForBlock ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , GetTip LedgerState blk
+  , CloseLedgerHandles ExtLedgerState m blk
   ) =>
   ChainDbEnv m blk ->
   BlockCache blk ->
@@ -870,6 +876,8 @@ switchTo ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , GetTip LedgerState blk
+  , CloseLedgerHandles ExtLedgerState m blk
   ) =>
   ChainDbEnv m blk ->
   PerasWeightSnapshot blk ->
@@ -881,8 +889,9 @@ switchTo ::
   ChainDiff (Header blk) ->
   ReasonForSwitch' blk ->
   -- | Forker at the tip of the above ChainDiff
-  SuccessForkerAction m ExtLedgerState blk
-switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \forker -> do
+  Forker ExtLedgerState m blk ->
+  m ()
+switchTo CDB{..} weights triggerPt chainDiff reason forker = do
   traceWith addBlockTracer $
     ChangingSelection $
       castPoint $
@@ -890,7 +899,7 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
   (curChain, newChain, events, prevTentativeHeader, newLedger, closeOrphanedStates) <- atomically $ do
     InternalChain curChain curChainWithTime <- readTVar cdbChain -- Not Query.getCurrentChain!
     curLedger <- getVolatileTip cdbLedgerDB
-    newLedger <- forkerGetLedgerState forker
+    newLedger <- forkerTip forker
     case Diff.apply curChain chainDiff of
       -- Impossible, as described in the docstring
       Nothing ->
@@ -967,7 +976,7 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
   mkSelectionChangedInfo ::
     AnchoredFragment (Header blk) -> -- old selection
     ChainDiff (Header blk) -> -- diff we are adopting
-    ExtLedgerState blk EmptyMK -> -- new tip
+    ExtLedgerState m blk -> -- new tip
     SelectionChangedInfo blk
   mkSelectionChangedInfo oldChain diff newTip =
     SelectionChangedInfo
@@ -988,7 +997,7 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
     oldSuffix = AF.anchorNewest (getRollback diff) oldChain
     newSuffix = getSuffix diff
 
-    ledger :: LedgerState blk EmptyMK
+    ledger :: LedgerState m blk
     ledger = ledgerState newTip
 
     summary :: History.Summary (HardForkIndices blk)
@@ -1105,7 +1114,7 @@ chainSelection ::
   -- | The candidates
   NonEmpty (ChainDiff (Header blk), ReasonForSwitch' blk) ->
   -- | The continuation to run on succesfully validating a candidate.
-  (ChainDiff (Header blk) -> ReasonForSwitch' blk -> SuccessForkerAction m ExtLedgerState blk) ->
+  (ChainDiff (Header blk) -> ReasonForSwitch' blk -> Forker ExtLedgerState m blk -> m ()) ->
   -- | The (valid) chain diff and corresponding LedgerDB that was selected,
   -- or 'Nothing' if there is no valid chain diff preferred over the current
   -- chain.
@@ -1281,7 +1290,7 @@ validateCandidate ::
   ChainDiff (Header blk) ->
   -- | Invariant: This non-empty list of headers is the list of headers in the ChainDiff above
   NonEmpty (Header blk) ->
-  SuccessForkerAction m ExtLedgerState blk ->
+  (Forker ExtLedgerState m blk -> m ()) ->
   m (ValidationResult blk)
 validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders onSuccess =
   LedgerDB.validateFork

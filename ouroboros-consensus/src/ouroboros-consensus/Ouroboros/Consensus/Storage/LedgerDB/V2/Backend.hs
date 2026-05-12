@@ -26,10 +26,8 @@ import Data.Proxy
 import Data.Typeable
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import System.FS.API
 
@@ -61,8 +59,8 @@ class NoThunks (Resources m backend) => Backend m backend blk where
   createAndPopulateStateRefFromGenesis ::
     Tracer m LedgerDBV2Trace ->
     Resources m backend ->
-    ExtLedgerState blk ValuesMK ->
-    m (StateRef m ExtLedgerState blk)
+    ExtLedgerState m blk ->
+    m (ExtLedgerState m blk)
 
   -- | Create a new handle from a snapshot.
   openStateRefFromSnapshot ::
@@ -74,7 +72,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     ExceptT
       (SnapshotFailure blk)
       m
-      (StateRef m ExtLedgerState blk, RealPoint blk)
+      (ExtLedgerState m blk, RealPoint blk)
 
   -- | Instantiate the 'SnapshotManager' for this backend.
   snapshotManager ::
@@ -83,7 +81,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     CodecConfig blk ->
     Tracer m (TraceSnapshotEvent blk) ->
     SomeHasFS m ->
-    SnapshotManager m blk (StateRef m ExtLedgerState blk)
+    SnapshotManager m blk (ExtLedgerState m blk)
 
 {-------------------------------------------------------------------------------
   Existentials

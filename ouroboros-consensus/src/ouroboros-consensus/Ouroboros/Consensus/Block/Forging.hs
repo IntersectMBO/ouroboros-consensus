@@ -122,7 +122,7 @@ data BlockForging m blk = BlockForging
       TopLevelConfig blk ->
       BlockNo -> -- Current block number
       SlotNo -> -- Current slot number
-      TickedLedgerState blk EmptyMK -> -- Current ledger state
+      TickedLedgerState m blk -> -- Current ledger state
       [Validated (GenTx blk)] -> -- Transactions to include
       IsLeader (BlockProtocol blk) -> -- Proof we are leader
       m blk

@@ -88,17 +88,12 @@ import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Storage.ImmutableDB.API (SeekBlockError (..))
-import Ouroboros.Consensus.Storage.LedgerDB
-  ( GetForkerError
-  , ReadOnlyForker'
-  , Statistics
-  )
+import Ouroboros.Consensus.Storage.LedgerDB hiding (ClosedDBError, openDB)
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertTicketNo
   )
@@ -106,6 +101,7 @@ import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteTicketNo
   )
 import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike
@@ -215,11 +211,11 @@ data ChainDB m blk = ChainDB
   -- to the chain it is on)
   --
   -- INVARIANT @'hwtHeader' <$> 'getCurrentChainWithTime' = 'getCurrentChain'@
-  , getCurrentLedger :: STM m (ExtLedgerState blk EmptyMK)
+  , getCurrentLedger :: STM m (ExtLedgerState m blk)
   -- ^ Get current ledger
-  , getImmutableLedger :: STM m (ExtLedgerState blk EmptyMK)
+  , getImmutableLedger :: STM m (ExtLedgerState m blk)
   -- ^ Get the immutable ledger, i.e., typically @k@ blocks back.
-  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk EmptyMK))
+  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState m blk))
   -- ^ Get the ledger for the given point.
   --
   -- When the given point is not among the last @k@ blocks of the current
@@ -231,7 +227,7 @@ data ChainDB m blk = ChainDB
   , allocInRegistryReadOnlyForkerAtPoint ::
       Target (Point blk) ->
       ResourceRegistry m ->
-      m (Either GetForkerError (ResourceKey m, ReadOnlyForker' m blk))
+      m (Either GetForkerError (ResourceKey m, ExtLedgerState m blk))
   -- ^ Allocate a read only forker at the given point in the given resource
   -- registry.
   --
@@ -239,7 +235,7 @@ data ChainDB m blk = ChainDB
   -- the LedgerDB directly, none of these methods are used there.
   , openReadOnlyForkerAtPoint ::
       Target (Point blk) ->
-      m (Either GetForkerError (ReadOnlyForker' m blk))
+      m (Either GetForkerError (ExtLedgerState m blk))
   -- ^ Open a forker at the given point. This resource is untracked.
   --
   -- It is intended to be used by the Mempool as closing the mempool means the
@@ -248,7 +244,7 @@ data ChainDB m blk = ChainDB
   , withReadOnlyForkerAtPoint ::
       forall r.
       Target (Point blk) ->
-      (Either GetForkerError (ReadOnlyForker' m blk) -> WithEarlyExit m r) ->
+      (Either GetForkerError (ExtLedgerState m blk) -> WithEarlyExit m r) ->
       WithEarlyExit m r
   -- ^ Run a continuation with a forker at the given target.
   --

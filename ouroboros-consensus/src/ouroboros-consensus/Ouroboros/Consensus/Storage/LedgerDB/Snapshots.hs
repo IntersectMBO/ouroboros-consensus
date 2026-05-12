@@ -124,7 +124,6 @@ import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Util (Flag (..), lastMaybe)
 import Ouroboros.Consensus.Util.Args (OverrideOrDefault (..), provideDefault)
@@ -367,17 +366,17 @@ readExtLedgerState ::
   forall m blk.
   IOLike m =>
   SomeHasFS m ->
-  (forall s. Decoder s (ExtLedgerState blk EmptyMK)) ->
+  (forall s. Decoder s (ExtLedgerState m blk)) ->
   (forall s. Decoder s (HeaderHash blk)) ->
   FsPath ->
-  ExceptT ReadIncrementalErr m (ExtLedgerState blk EmptyMK, CRC)
+  ExceptT ReadIncrementalErr m (ExtLedgerState m blk, CRC)
 readExtLedgerState hasFS decLedger decHash =
   do
     ExceptT
     . fmap (fmap (fmap runIdentity))
     . readIncremental hasFS Identity decoder
  where
-  decoder :: Decoder s (ExtLedgerState blk EmptyMK)
+  decoder :: Decoder s (ExtLedgerState m blk)
   decoder = decodeLBackwardsCompatible (Proxy @blk) decLedger decHash
 
 -- | Write an extended ledger state to disk
@@ -385,15 +384,15 @@ writeExtLedgerState ::
   forall m blk.
   MonadThrow m =>
   SomeHasFS m ->
-  (ExtLedgerState blk EmptyMK -> Encoding) ->
+  (ExtLedgerState m blk -> Encoding) ->
   FsPath ->
-  ExtLedgerState blk EmptyMK ->
+  ExtLedgerState m blk ->
   m CRC
 writeExtLedgerState (SomeHasFS hasFS) encLedger path cs = do
   withFile hasFS path (WriteMode MustBeNew) $ \h ->
     snd <$> hPutAllCRC hasFS h (CBOR.toLazyByteString $ encoder cs)
  where
-  encoder :: ExtLedgerState blk EmptyMK -> Encoding
+  encoder :: ExtLedgerState m blk -> Encoding
   encoder = encodeL encLedger
 
 -- | Trim the number of on disk snapshots so that at most 'onDiskNumSnapshots'

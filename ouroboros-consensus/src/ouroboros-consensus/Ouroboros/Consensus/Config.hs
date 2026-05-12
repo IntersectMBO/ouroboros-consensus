@@ -56,7 +56,7 @@ data TopLevelConfig blk = TopLevelConfig
   deriving Generic
 
 instance
-  ( ConsensusProtocol (BlockProtocol blk)
+  ( NoThunks (ConsensusConfig (BlockProtocol blk))
   , NoThunks (LedgerConfig blk)
   , NoThunks (BlockConfig blk)
   , NoThunks (CodecConfig blk)

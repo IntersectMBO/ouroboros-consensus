@@ -140,14 +140,13 @@ defaultArgs ::
   ( IOLike m
   , LedgerDB.LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , LedgerDB.CanUpgradeLedgerTables LedgerState blk
   ) =>
   Incomplete ChainDbArgs m blk
 defaultArgs =
   ChainDbArgs
     ImmutableDB.defaultArgs
     VolatileDB.defaultArgs
-    (LedgerDB.defaultArgs $ LedgerDB.SomeBackendArgs InMemory.InMemArgs)
+    (LedgerDB.defaultArgs $ undefined)
     PerasCertDB.defaultArgs
     PerasVoteDB.defaultArgs
     defaultSpecificArgs
@@ -172,7 +171,7 @@ completeChainDbArgs ::
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger
-  ExtLedgerState blk ValuesMK ->
+  ExtLedgerState m blk ->
   ImmutableDB.ChunkInfo ->
   -- | Check integrity
   (blk -> Bool) ->

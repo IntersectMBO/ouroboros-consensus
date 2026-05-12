@@ -13,6 +13,6 @@ class LedgerSupportsPeras blk where
   -- | Extract the round number of the latest Peras certificate stored in the
   -- given ledger state (if any). This is needed to coordinate the end of a
   -- cooldown period.
-  getLatestPerasCertRound :: LedgerState blk mk -> Maybe PerasRoundNo
-  default getLatestPerasCertRound :: LedgerState blk mk -> Maybe PerasRoundNo
+  getLatestPerasCertRound :: LedgerState m blk -> Maybe PerasRoundNo
+  default getLatestPerasCertRound :: LedgerState m blk -> Maybe PerasRoundNo
   getLatestPerasCertRound _ = Nothing

@@ -9,6 +9,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | HeaderState history
 --
@@ -40,7 +41,6 @@ import Control.Monad.Except (Except)
 import Data.Coerce (Coercible)
 import qualified Data.List.NonEmpty as NE
 import GHC.Generics (Generic)
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import Ouroboros.Consensus.Config
@@ -51,9 +51,9 @@ import Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import qualified Ouroboros.Consensus.HeaderValidation as HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Util.CallStack (HasCallStack)
+import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq (Anchorable, AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Mock.Chain (Chain)
@@ -70,13 +70,13 @@ newtype HeaderStateHistory blk = HeaderStateHistory
   deriving Generic
 
 deriving stock instance
-  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  Eq (HeaderStateWithTime blk) =>
   Eq (HeaderStateHistory blk)
 deriving stock instance
-  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  Show (HeaderStateWithTime blk) =>
   Show (HeaderStateHistory blk)
 deriving newtype instance
-  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  NoThunks (HeaderStateWithTime blk) =>
   NoThunks (HeaderStateHistory blk)
 
 current :: HeaderStateHistory blk -> HeaderStateWithTime blk
@@ -160,13 +160,13 @@ data HeaderStateWithTime blk = HeaderStateWithTime
   deriving stock Generic
 
 deriving stock instance
-  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  Eq (HeaderState blk) =>
   Eq (HeaderStateWithTime blk)
 deriving stock instance
-  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  Show (HeaderState blk) =>
   Show (HeaderStateWithTime blk)
 deriving anyclass instance
-  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  NoThunks (HeaderState blk) =>
   NoThunks (HeaderStateWithTime blk)
 
 instance Anchorable (WithOrigin SlotNo) (HeaderStateWithTime blk) (HeaderStateWithTime blk) where
@@ -205,7 +205,7 @@ mkHeaderStateWithTimeFromSummary summary hst =
 mkHeaderStateWithTime ::
   (HasCallStack, HasHardForkHistory blk, HasAnnTip blk) =>
   LedgerConfig blk ->
-  ExtLedgerState blk mk ->
+  ExtLedgerState m blk ->
   HeaderStateWithTime blk
 mkHeaderStateWithTime lcfg (ExtLedgerState lst hst) =
   mkHeaderStateWithTimeFromSummary summary hst
@@ -255,23 +255,34 @@ validateHeader cfg lv hdr slotTime history = do
 --
 -- PRECONDITION: the blocks in the chain are valid.
 fromChain ::
-  forall blk.
+  forall m blk.
   ( ApplyBlock ExtLedgerState blk
   , HasHardForkHistory blk
   , HasAnnTip blk
+  , IOLike m
   ) =>
   TopLevelConfig blk ->
   -- | Initial ledger state
-  ExtLedgerState blk ValuesMK ->
+  ExtLedgerState m blk ->
   Chain blk ->
-  HeaderStateHistory blk
-fromChain cfg initState chain =
-  HeaderStateHistory (AS.fromOldestFirst anchorSnapshot snapshots)
- where
-  anchorSnapshot NE.:| snapshots =
-    fmap (mkHeaderStateWithTime (configLedger cfg))
-      . NE.scanl
-        (\st blk -> applyDiffs st $ tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk st)
-        initState
+  m (HeaderStateHistory blk)
+fromChain cfg initState chain = do
+  chain' <-
+    scanlM
+      (\st blk -> tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk st)
+      initState
       . Chain.toOldestFirst
       $ chain
+  let anchorSnapshot NE.:| snapshots = fmap (mkHeaderStateWithTime (configLedger cfg)) chain'
+  pure $ HeaderStateHistory (AS.fromOldestFirst anchorSnapshot snapshots)
+
+scanlM :: Monad m => (b -> a -> m b) -> b -> [a] -> m (NE.NonEmpty b)
+scanlM f z = fmap NE.fromList . scanlGo z
+ where
+  scanlGo q ls = do
+    ls' <- case ls of
+      [] -> pure []
+      x : xs -> do
+        x' <- f q x
+        scanlGo x' xs
+    pure (q : ls')

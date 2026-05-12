@@ -2,6 +2,7 @@
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -24,6 +25,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 
 import Codec.Serialise
 import Data.Either (isRight)
+import Data.Kind
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
@@ -49,7 +51,6 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
-import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
@@ -57,6 +58,7 @@ import Ouroboros.Consensus.Util.Condense
 -------------------------------------------------------------------------------}
 
 -- | Blocks from which we can assemble a hard fork
+type SingleEraBlock :: Type -> Constraint
 class
   ( LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
@@ -75,11 +77,11 @@ class
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsMetrics blk
   , SerialiseNodeToClient blk (PartialLedgerConfig blk)
-  , -- LedgerTables
-    CanStowLedgerTables (LedgerState blk)
-  , HasLedgerTables LedgerState blk
-  , HasLedgerTables (Ticked LedgerState) blk
-  , -- Instances required to support testing
+  , -- , -- LedgerTables
+    --   CanStowLedgerTables (LedgerState blk)
+    -- , HasLedgerTables LedgerState blk
+    -- , HasLedgerTables (Ticked LedgerState) blk
+    -- Instances required to support testing
     Eq (GenTx blk)
   , Eq (Validated (GenTx blk))
   , Eq (ApplyTxErr blk)
@@ -106,7 +108,7 @@ class
     EraParams ->
     -- | Start of this era
     Bound ->
-    LedgerState blk mk ->
+    LedgerState m blk ->
     Maybe EpochNo
 
   -- | Era information (for use in error messages)
@@ -120,7 +122,7 @@ singleEraTransition' ::
   WrapPartialLedgerConfig blk ->
   EraParams ->
   Bound ->
-  LedgerState blk mk ->
+  LedgerState m blk ->
   Maybe EpochNo
 singleEraTransition' = singleEraTransition . unwrapPartialLedgerConfig
 

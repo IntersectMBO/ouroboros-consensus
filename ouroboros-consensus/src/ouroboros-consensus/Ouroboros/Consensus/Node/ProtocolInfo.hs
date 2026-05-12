@@ -11,7 +11,6 @@ import Data.Word
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Abstract (ValuesMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.NodeId
 
@@ -32,9 +31,9 @@ enumCoreNodes (NumCoreNodes numNodes) =
 -------------------------------------------------------------------------------}
 
 -- | Data required to run the specified protocol.
-data ProtocolInfo b = ProtocolInfo
+data ProtocolInfo m b = ProtocolInfo
   { pInfoConfig :: !(TopLevelConfig b)
-  , pInfoInitLedger :: ExtLedgerState b ValuesMK
+  , pInfoInitLedger :: ExtLedgerState m b
   -- ^ At genesis, this LedgerState must contain the UTxOs for the initial
   -- era (which for Cardano is Byron that has void tables).
   }

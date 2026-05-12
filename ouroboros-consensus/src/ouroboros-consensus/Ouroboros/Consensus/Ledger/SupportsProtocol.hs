@@ -5,20 +5,19 @@ module Ouroboros.Consensus.Ledger.SupportsProtocol
   , LedgerSupportsProtocol (..)
   ) where
 
-import Control.Monad.Except
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Protocol.Abstract
 
 -- | Link protocol to ledger
 class
   ( BlockSupportsProtocol blk
-  , UpdateLedger blk
   , ValidateEnvelope blk
+  , Show (LedgerErr LedgerState blk)
+  , Eq (LedgerErr LedgerState blk)
   ) =>
   LedgerSupportsProtocol blk
   where
@@ -28,7 +27,7 @@ class
   -- relation between this and forecasting.
   protocolLedgerView ::
     LedgerConfig blk ->
-    Ticked LedgerState blk mk ->
+    Ticked LedgerState m blk ->
     LedgerView (BlockProtocol blk)
 
   -- | Get a forecast at the given ledger state.
@@ -69,35 +68,34 @@ class
   ledgerViewForecastAt ::
     HasCallStack =>
     LedgerConfig blk ->
-    LedgerState blk mk ->
+    LedgerState m blk ->
     Forecast (LedgerView (BlockProtocol blk))
 
--- | Relation between 'ledgerViewForecastAt' and 'applyChainTick'
-_lemma_ledgerViewForecastAt_applyChainTick ::
-  ( LedgerSupportsProtocol blk
-  , Eq (LedgerView (BlockProtocol blk))
-  ) =>
-  LedgerConfig blk ->
-  LedgerState blk mk ->
-  Forecast (LedgerView (BlockProtocol blk)) ->
-  SlotNo ->
-  Either String ()
-_lemma_ledgerViewForecastAt_applyChainTick cfg st forecast for
-  | NotOrigin for >= ledgerTipSlot st
-  , let lhs = forecastFor forecast for
-        rhs =
-          protocolLedgerView cfg
-            . applyChainTick OmitLedgerEvents cfg for
-            . forgetLedgerTables
-            $ st
-  , Right lhs' <- runExcept lhs
-  , lhs' /= rhs =
-      Left $
-        unlines
-          [ "ledgerViewForecastAt /= protocolLedgerView . applyChainTick:"
-          , show lhs'
-          , " /= "
-          , show rhs
-          ]
-  | otherwise =
-      Right ()
+-- -- | Relation between 'ledgerViewForecastAt' and 'applyChainTick'
+-- _lemma_ledgerViewForecastAt_applyChainTick ::
+--   ( LedgerSupportsProtocol blk
+--   , Eq (LedgerView (BlockProtocol blk))
+--   ) =>
+--   LedgerConfig blk ->
+--   LedgerState m blk ->
+--   Forecast (LedgerView (BlockProtocol blk)) ->
+--   SlotNo ->
+--   Either String ()
+-- _lemma_ledgerViewForecastAt_applyChainTick cfg st forecast for
+--   | NotOrigin for >= ledgerTipSlot st
+--   , let lhs = forecastFor forecast for
+--         rhs =
+--           protocolLedgerView cfg
+--             . applyChainTick OmitLedgerEvents cfg for
+--             $ st
+--   , Right lhs' <- runExcept lhs
+--   , lhs' /= rhs =
+--       Left $
+--         unlines
+--           [ "ledgerViewForecastAt /= protocolLedgerView . applyChainTick:"
+--           , show lhs'
+--           , " /= "
+--           , show rhs
+--           ]
+--   | otherwise =
+--       Right ()

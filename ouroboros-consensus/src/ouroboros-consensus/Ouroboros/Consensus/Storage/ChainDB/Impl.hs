@@ -51,13 +51,15 @@ import Data.Functor ((<&>))
 import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Typeable
 import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
-import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -107,6 +109,11 @@ withDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
+  , CloseLedgerHandles ExtLedgerState m blk
+  , DuplicateLedgerHandles ExtLedgerState m blk
+  , ApplyBlock LedgerState blk
+  , NoThunks (LedgerState m blk)
+  , Typeable m
   ) =>
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
@@ -123,6 +130,11 @@ openDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
+  , CloseLedgerHandles ExtLedgerState m blk
+  , DuplicateLedgerHandles ExtLedgerState m blk
+  , ApplyBlock LedgerState blk
+  , NoThunks (LedgerState m blk)
+  , Typeable m
   ) =>
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
@@ -138,6 +150,11 @@ openDBInternal ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
+  , CloseLedgerHandles ExtLedgerState m blk
+  , DuplicateLedgerHandles ExtLedgerState m blk
+  , ApplyBlock LedgerState blk
+  , Typeable m
+  , NoThunks (LedgerState m blk)
   , HasCallStack
   ) =>
   Complete Args.ChainDbArgs m blk ->
