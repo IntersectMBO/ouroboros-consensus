@@ -5,7 +5,7 @@
 module Test.LeiosVoteState (tests) where
 
 import Cardano.Crypto.DSIGN
-  ( DSIGNAlgorithm (deriveVerKeyDSIGN, rawDeserialiseSigDSIGN)
+  ( DSIGNAlgorithm (deriveVerKeyDSIGN)
   , genKeyDSIGN
   , seedSizeDSIGN
   )
@@ -13,7 +13,6 @@ import Control.Concurrent.Class.MonadSTM.Strict (atomically)
 import Control.Monad (forM_)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (runSimOrThrow)
-import qualified Data.ByteString as BS
 import Data.Data (Proxy (..))
 import Data.Maybe (fromJust, isNothing)
 import LeiosDemoTypes
@@ -25,7 +24,6 @@ import LeiosDemoTypes
   , VoterId (MkVoterId)
   , getVoterId
   , signLeiosVote
-  , voteSignature
   , voters
   )
 import LeiosVoteState
@@ -159,15 +157,17 @@ prop_lateSubscriber =
 prop_invalidVoteRejected :: Property
 prop_invalidVoteRejected =
   forAll genCommittee $ \testCommittee ->
-    forAll (genVoteFor testCommittee) $ \v0 -> property $ runSimOrThrow $ do
-      let badVote = v0{voteSignature = fromJust $ rawDeserialiseSigDSIGN (BS.pack $ replicate 32 0)}
-      st <- newLeiosVoteState (pure (Just testCommittee.committee))
-      sub <- subscribeVotes st
-      r <- addVote st badVote
-      mVote <- timeout 0.1 $ atomically $ getNextVote sub
-      pure $
-        r === VoteInvalid InvalidSignature
-          .&&. counterexample "subscriber should not see invalid vote" (isNothing mVote === True)
+    forAll (genVoteFor testCommittee) $ \vote ->
+      forAll genLeiosSigningKey $ \someKey ->
+        property $ runSimOrThrow $ do
+          let badVote = signLeiosVote someKey vote.voterId vote.point
+          st <- newLeiosVoteState (pure (Just testCommittee.committee))
+          sub <- subscribeVotes st
+          r <- addVote st badVote
+          mVote <- timeout 0.1 $ atomically $ getNextVote sub
+          pure $
+            r === VoteInvalid InvalidSignature
+              .&&. counterexample "subscriber should not see invalid vote" (isNothing mVote === True)
 
 -- | When no committee is selected, votes should be rejected with 'NoCommittee'
 -- and not published to subscribers.
@@ -190,8 +190,9 @@ prop_signerNotInCommittee =
   forAll genCommittee $ \testCommittee ->
     forAll (genKeyNotIn testCommittee) $ \key ->
       forAll genPoint $ \p -> property $ runSimOrThrow $ do
-        -- Claim to have a seat on the committee
-        let vote = signLeiosVote key (MkVoterId 0) p
+        -- VoterId must be outside of committe, otherwise this is just a bad signature
+        let committeeSize = length $ testCommittee.committee.voters
+        let vote = signLeiosVote key (MkVoterId $ fromIntegral committeeSize) p
         st <- newLeiosVoteState (pure (Just testCommittee.committee))
         sub <- subscribeVotes st
         r <- addVote st vote
