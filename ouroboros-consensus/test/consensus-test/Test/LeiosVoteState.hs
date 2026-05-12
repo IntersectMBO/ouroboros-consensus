@@ -1,10 +1,11 @@
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Test.LeiosVoteState (tests) where
 
 import Cardano.Crypto.DSIGN
-  ( DSIGNAlgorithm (deriveVerKeyDSIGN)
+  ( DSIGNAlgorithm (deriveVerKeyDSIGN, rawDeserialiseSigDSIGN)
   , genKeyDSIGN
   , seedSizeDSIGN
   )
@@ -12,6 +13,7 @@ import Control.Concurrent.Class.MonadSTM.Strict (atomically)
 import Control.Monad (forM_)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (runSimOrThrow)
+import qualified Data.ByteString as BS
 import Data.Data (Proxy (..))
 import Data.Maybe (fromJust, isNothing)
 import LeiosDemoTypes
@@ -70,33 +72,43 @@ genLeiosSigningKey = do
   seed <- arbitrarySeedOfSize (seedSizeDSIGN (Proxy @LeiosDSIGN))
   pure $ genKeyDSIGN seed
 
+data TestCommittee = TestCommittee
+  { committee :: Committee
+  , allKeys :: [LeiosSigningKey]
+  }
+  deriving Show
+
 -- | A non-empty committee.
-genCommittee :: Gen Committee
+genCommittee :: Gen TestCommittee
 genCommittee = do
   n <- chooseInt (1, 10)
-  sks <- vectorOf n genLeiosSigningKey
-  pure $ MkCommittee $ deriveVerKeyDSIGN <$> sks
+  allKeys <- vectorOf n genLeiosSigningKey
+  pure
+    TestCommittee
+      { committee = MkCommittee{voters = deriveVerKeyDSIGN <$> allKeys}
+      , allKeys
+      }
 
 -- | A 'VotingKey' that is *not* a member of the given committee.
-genKeyNotIn :: Committee -> Gen LeiosSigningKey
-genKeyNotIn committee = do
+genKeyNotIn :: TestCommittee -> Gen LeiosSigningKey
+genKeyNotIn c = do
   genLeiosSigningKey `suchThat` \sk ->
-    isNothing $ getVoterId (deriveVerKeyDSIGN sk) committee
+    not $ elem sk c.allKeys
 
 -- | A vote produced by 'signLeiosVote' with an arbitrary point and a key from the
 -- committee.
-genVoteFor :: Committee -> Gen LeiosVote
-genVoteFor committee = do
-  key <- elements committee.voters
-  let vid = fromJust $ getVoterId key committee
+genVoteFor :: TestCommittee -> Gen LeiosVote
+genVoteFor c = do
+  key <- elements c.allKeys
+  let vid = fromJust $ getVoterId (deriveVerKeyDSIGN key) c.committee
   signLeiosVote key vid <$> genPoint
 
 -- | A subscriber should receive a vote that was added after subscribing.
 prop_subscriberReceivesVote :: Property
 prop_subscriberReceivesVote =
-  forAll genCommittee $ \committee ->
-    forAll (genVoteFor committee) $ \vote -> property $ runSimOrThrow $ do
-      st <- newLeiosVoteState (pure (Just committee))
+  forAll genCommittee $ \testCommittee ->
+    forAll (genVoteFor testCommittee) $ \vote -> property $ runSimOrThrow $ do
+      st <- newLeiosVoteState (pure (Just testCommittee.committee))
       sub <- subscribeVotes st
       _ <- addVote st vote
       received <- atomically $ getNextVote sub
@@ -105,9 +117,9 @@ prop_subscriberReceivesVote =
 -- | A subscriber should receive all distinct votes in order.
 prop_subscriberReceivesAll :: Property
 prop_subscriberReceivesAll =
-  forAll genCommittee $ \committee ->
-    forAll (listOf1 (genVoteFor committee)) $ \votes -> property $ runSimOrThrow $ do
-      st <- newLeiosVoteState (pure (Just committee))
+  forAll genCommittee $ \testCommittee ->
+    forAll (listOf1 (genVoteFor testCommittee)) $ \votes -> property $ runSimOrThrow $ do
+      st <- newLeiosVoteState (pure (Just testCommittee.committee))
       sub <- subscribeVotes st
       forM_ votes (addVote st)
       received <- mapM (\_ -> atomically $ getNextVote sub) votes
@@ -117,9 +129,9 @@ prop_subscriberReceivesAll =
 -- 'AlreadyKnown' on the second add.
 prop_deduplicateVotes :: Property
 prop_deduplicateVotes =
-  forAll genCommittee $ \committee ->
-    forAll (genVoteFor committee) $ \vote -> property $ runSimOrThrow $ do
-      st <- newLeiosVoteState (pure (Just committee))
+  forAll genCommittee $ \testCommittee ->
+    forAll (genVoteFor testCommittee) $ \vote -> property $ runSimOrThrow $ do
+      st <- newLeiosVoteState (pure (Just testCommittee.committee))
       sub <- subscribeVotes st
       r1 <- addVote st vote
       r2 <- addVote st vote
@@ -135,9 +147,9 @@ prop_deduplicateVotes =
 -- | A subscriber that subscribes after a vote was added should not see it.
 prop_lateSubscriber :: Property
 prop_lateSubscriber =
-  forAll genCommittee $ \committee ->
-    forAll (genVoteFor committee) $ \vote -> property $ runSimOrThrow $ do
-      st <- newLeiosVoteState (pure (Just committee))
+  forAll genCommittee $ \testCommittee ->
+    forAll (genVoteFor testCommittee) $ \vote -> property $ runSimOrThrow $ do
+      st <- newLeiosVoteState (pure (Just testCommittee.committee))
       _ <- addVote st vote
       sub <- subscribeVotes st
       mVote <- timeout 0.1 $ atomically $ getNextVote sub
@@ -146,10 +158,10 @@ prop_lateSubscriber =
 -- | A vote rejected by validation must not be published to subscribers.
 prop_invalidVoteRejected :: Property
 prop_invalidVoteRejected =
-  forAll genCommittee $ \committee ->
-    forAll (genVoteFor committee) $ \v0 -> property $ runSimOrThrow $ do
-      let badVote = v0{voteSignature = False}
-      st <- newLeiosVoteState (pure (Just committee))
+  forAll genCommittee $ \testCommittee ->
+    forAll (genVoteFor testCommittee) $ \v0 -> property $ runSimOrThrow $ do
+      let badVote = v0{voteSignature = fromJust $ rawDeserialiseSigDSIGN (BS.pack $ replicate 32 0)}
+      st <- newLeiosVoteState (pure (Just testCommittee.committee))
       sub <- subscribeVotes st
       r <- addVote st badVote
       mVote <- timeout 0.1 $ atomically $ getNextVote sub
@@ -161,8 +173,8 @@ prop_invalidVoteRejected =
 -- and not published to subscribers.
 prop_noCommitteeRejected :: Property
 prop_noCommitteeRejected =
-  forAll genCommittee $ \committee ->
-    forAll (genVoteFor committee) $ \vote -> property $ runSimOrThrow $ do
+  forAll genCommittee $ \testCommittee ->
+    forAll (genVoteFor testCommittee) $ \vote -> property $ runSimOrThrow $ do
       st <- newLeiosVoteState (pure Nothing)
       sub <- subscribeVotes st
       r <- addVote st vote
@@ -175,12 +187,12 @@ prop_noCommitteeRejected =
 -- rejected with 'SignerNotInCommittee' and not published.
 prop_signerNotInCommittee :: Property
 prop_signerNotInCommittee =
-  forAll genCommittee $ \committee ->
-    forAll (genKeyNotIn committee) $ \key ->
-      forAll genPoint $ \point -> property $ runSimOrThrow $ do
+  forAll genCommittee $ \testCommittee ->
+    forAll (genKeyNotIn testCommittee) $ \key ->
+      forAll genPoint $ \p -> property $ runSimOrThrow $ do
         -- Claim to have a seat on the committee
-        let vote = signLeiosVote key (MkVoterId 0) point
-        st <- newLeiosVoteState (pure (Just committee))
+        let vote = signLeiosVote key (MkVoterId 0) p
+        st <- newLeiosVoteState (pure (Just testCommittee.committee))
         sub <- subscribeVotes st
         r <- addVote st vote
         mVote <- timeout 0.1 $ atomically $ getNextVote sub
