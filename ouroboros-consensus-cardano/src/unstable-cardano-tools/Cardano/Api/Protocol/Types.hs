@@ -1,4 +1,3 @@
-
 -- DUPLICATE -- adapted from: cardano-api/src/Cardano/Api/Protocol/Types.hs
 
 module Cardano.Api.Protocol.Types

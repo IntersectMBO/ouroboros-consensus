@@ -1,4 +1,3 @@
-
 -- | Cache blocks in memory
 --
 -- Intended for qualified import.

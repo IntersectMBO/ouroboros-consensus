@@ -1,4 +1,3 @@
-
 -- DUPLICATE -- adapted from: cardano-node/src/Cardano/Node/Protocol/Alonzo.hs
 
 module Cardano.Node.Protocol.Alonzo

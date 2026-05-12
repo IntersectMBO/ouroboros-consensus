@@ -1,4 +1,3 @@
-
 -- | Utility functions on chains
 --
 -- Intended for qualified import

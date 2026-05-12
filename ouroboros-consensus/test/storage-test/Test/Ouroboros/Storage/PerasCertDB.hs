@@ -1,4 +1,3 @@
-
 module Test.Ouroboros.Storage.PerasCertDB (tests) where
 
 import qualified Test.Ouroboros.Storage.PerasCertDB.StateMachine as StateMachine
