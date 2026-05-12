@@ -61,6 +61,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , BigEndianTxIn (..)
   ) where
 
+import Cardano.Crypto.DSIGN (DSIGNAlgorithm (deriveVerKeyDSIGN), rawDeserialiseSignKeyDSIGN)
 import Cardano.Crypto.Hash.Class (hashToBytes)
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
@@ -122,11 +123,11 @@ import Data.Coerce
 import Data.Foldable (toList)
 import Data.Functor.Identity
 import qualified Data.Map as Map
+import Data.Maybe (fromJust)
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.MemPack
 import Data.Sequence.Strict (StrictSeq)
 import qualified Data.Sequence.Strict as StrictSeq
-import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
@@ -1131,11 +1132,17 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
    where
     -- TODO: stake-based scheme and move to era boundary (to cache sort by stake)
     everyoneVotes =
-      Map.keysSet stakeDistribution
-        & Set.map unsafeDeriveVotingKey
+      toList (Map.keysSet stakeDistribution)
+        & map (deriveVerKeyDSIGN . unsafeDeriveSigningKey)
 
     -- FIXME: REMOVE THIS. Interprets cold key hashes as signing keys
-    unsafeDeriveVotingKey = hashToBytes . unKeyHash
+    unsafeDeriveSigningKey =
+      fromJust
+        . rawDeserialiseSignKeyDSIGN
+        -- Pad the 28 bytes of blake2b_224 to get 32 bytes for BLS
+        . (<> BS.pack (replicate 4 0))
+        . hashToBytes
+        . unKeyHash
 
     stakeDistribution =
       ls.shelleyLedgerState.nesPd ^. poolDistrDistrL

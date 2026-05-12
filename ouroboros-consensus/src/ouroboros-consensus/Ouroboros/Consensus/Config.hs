@@ -9,7 +9,6 @@
 module Ouroboros.Consensus.Config
   ( -- * The top-level node configuration
     TopLevelConfig (..)
-  , VotingKey
   , castTopLevelConfig
   , mkTopLevelConfig
 
@@ -33,10 +32,10 @@ module Ouroboros.Consensus.Config
   , module Ouroboros.Consensus.Config.SecurityParam
   ) where
 
-import Data.ByteString (ByteString)
 import Data.Coerce
 import Data.Map.Strict (Map)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (LeiosSigningKey)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config.SecurityParam
@@ -55,17 +54,11 @@ data TopLevelConfig blk = TopLevelConfig
   , topLevelConfigCodec :: !(CodecConfig blk)
   , topLevelConfigStorage :: !(StorageConfig blk)
   , topLevelConfigCheckpoints :: !(CheckpointsMap blk)
-  , topLevelConfigVotingKey :: !(Maybe VotingKey)
-  -- ^ Optional Leios voting key. When 'Nothing', the
-  -- 'NodeKernel.leiosVoting' background thread is disabled on this
-  -- node. Surfaced here (rather than on 'NodeKernelArgs') so the
-  -- key can be threaded from the CLI through the standard
-  -- protocol-info pipeline.
+  , -- REVIEW: Is this the best way to route additional keys into consensus for Leios/Peras?
+    -- NOTE: This is just a BLS signing key and can also used by Peras
+    topLevelConfigVotingKey :: Maybe LeiosSigningKey
   }
   deriving Generic
-
--- | Raw bytes of a Leios voting key, sourced from the node's CLI / config.
-type VotingKey = ByteString
 
 instance
   ( ConsensusProtocol (BlockProtocol blk)
