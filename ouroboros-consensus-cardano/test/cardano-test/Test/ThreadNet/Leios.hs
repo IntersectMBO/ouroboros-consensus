@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -188,8 +189,9 @@ prop_leios seed =
     , cumulativeTxBytes
     , propConsistentChains
     , certificationGapIsCorrect
-        .||. length certifyingBlocks <= 1
+        .||. length certificateBlocks <= 1
     , propVoting
+    , propCertifying
     ]
  where
   numNodes = 3 :: Int
@@ -251,6 +253,16 @@ prop_leios seed =
     TraceLeiosVoteAcquired{vote} -> Just (vote.point, Set.singleton vote.voterId)
     _ -> Nothing
 
+  propCertifying =
+    conjoin
+      [ length reachedQuorumPoints > 0
+          & counterexample "never reached quorum"
+      ]
+
+  reachedQuorumPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
+    TraceLeiosCertified{point} -> Just point
+    _ -> Nothing
+
   mempoolTraces = [ev | FromNode _ (FromMempool ev) <- traces]
 
   mempoolAddedTxs = flip mapMaybe mempoolTraces $ \case
@@ -263,7 +275,7 @@ prop_leios seed =
 
   nodeChains = Chain.toOldestFirst . nodeOutputFinalChain <$> testOutput.testOutputNodes
 
-  certifyingBlocks =
+  certificateBlocks =
     -- NOTE: Assumes all nodeChains are consistent
     toList . Set.fromList $
       [ blockSlot blk
@@ -300,7 +312,7 @@ prop_leios seed =
       & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
       & tabulate "Praos blocks forged" [show $ length forgedBlocks]
       & tabulate "Leios blocks forged" [show $ length forgedEBs]
-      & tabulate "Certifying blocks" [show $ length certifyingBlocks]
+      & tabulate "Certifying blocks" [show $ length certificateBlocks]
       & tabulate "Effective throughput" [show throughput]
 
   -- FIXME: This only exercises the in-memory replay via
@@ -321,7 +333,7 @@ prop_leios seed =
   ebCertificateInclusion =
     let expectedLedger = nodeOutputFinalLedger someNode
         foldedLedger = replayNodeChain pInfoConfig pInfoInitLedger someNode
-     in ( not (null certifyingBlocks)
+     in ( not (null certificateBlocks)
             & counterexample "no certifying blocks — test is vacuous"
         )
           .&&. (foldedLedger === expectedLedger)
@@ -363,8 +375,8 @@ prop_leios seed =
                 <> show minCertificationGap
                 <> ")"
             )
-          & prettyCounterexampleList "certifying block slots" 120 certifyingBlocks
-      | (s1, s2) <- zip certifyingBlocks (drop 1 certifyingBlocks)
+          & prettyCounterexampleList "certifying block slots" 120 certificateBlocks
+      | (s1, s2) <- zip certificateBlocks (drop 1 certificateBlocks)
       ]
 
 -- | A late-joining node must not crash on a CertRB whose certified EB

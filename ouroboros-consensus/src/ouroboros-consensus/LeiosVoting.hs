@@ -71,6 +71,8 @@ runLeiosVoting tracer chainDB leiosDB voteState = \case
               traceWith tracer TraceLeiosVoteAcquired{vote}
             err ->
               error $ "runLeiosVoting: unexpected error on addVote: " <> show err
+          -- FIXME: only trace if we have a cert
+          traceWith tracer TraceLeiosCertified{point}
  where
   getCurrentLedgerState =
     atomically $ ledgerState <$> ChainDB.getCurrentLedger chainDB

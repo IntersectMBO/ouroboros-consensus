@@ -63,6 +63,7 @@ import qualified Data.IntMap as IntMap
 import Data.List (findIndex, nubBy, sortOn)
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Ratio ((%))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
@@ -437,15 +438,6 @@ data ForgedLeiosEb = ForgedLeiosEb
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 
-newtype LeiosCertificate = LeiosCertificate
-  { leiosCertificateEbPoint :: LeiosPoint -- FIXME(bladyjoker): Mocked
-  }
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass NoThunks
-
-trustNoVerifyLeiosCertificate :: LeiosPoint -> LeiosCertificate
-trustNoVerifyLeiosCertificate = LeiosCertificate
-
 forgeLeiosEb :: EraTx era => SlotNo -> NonEmpty (Tx TopTx era) -> ForgedLeiosEb
 forgeLeiosEb slot txs =
   ForgedLeiosEb{point, body, txClosure}
@@ -659,7 +651,35 @@ data VoteInvalid
   | SignerNotInCommittee
   deriving (Eq, Show)
 
+-- * Certifying
+
 type Weight = Rational
+
+newtype LeiosCertificate = LeiosCertificate
+  { leiosCertificateEbPoint :: LeiosPoint -- FIXME(bladyjoker): Mocked
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+-- FIXME: drop this
+trustNoVerifyLeiosCertificate :: LeiosPoint -> LeiosCertificate
+trustNoVerifyLeiosCertificate = LeiosCertificate
+
+-- | Validate a 'LeiosVote' against a selected 'Committee'.
+validateLeiosCertificate ::
+  Committee ->
+  -- | Threshold
+  Weight ->
+  LeiosCertificate ->
+  -- | Total weight
+  Either CertificateInvalid Weight
+validateLeiosCertificate = undefined
+
+data CertificateInvalid
+  = CertificateSignerNotInCommittee !VoterId
+  | CertificateInsufficientWeight {got :: !Weight, required :: !Weight}
+  | CertificateSignature
+  deriving (Eq, Show)
 
 -- * Tracing
 
@@ -754,6 +774,7 @@ data TraceLeiosKernel
     TraceLeiosBlockCertified {atSlot :: SlotNo, certifiedPoint :: LeiosPoint}
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
+  | TraceLeiosCertified {point :: LeiosPoint}
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
   | -- | A CertRB was admitted to the staging area because its certified
@@ -893,6 +914,10 @@ maxTxsPerEb =
 
 minCertificationGap :: Word64
 minCertificationGap = 10
+
+-- | Minimum fraction of stake to create a valid 'LeiosCertificate'.
+minCertificationThreshold :: Rational
+minCertificationThreshold = 3 % 4
 
 leiosMempoolSize :: ByteSize32
 leiosMempoolSize = ByteSize32 24_090_112 -- 2 * (leiosEBMaxClosureSize + RB block size (mainnet = 90112))
