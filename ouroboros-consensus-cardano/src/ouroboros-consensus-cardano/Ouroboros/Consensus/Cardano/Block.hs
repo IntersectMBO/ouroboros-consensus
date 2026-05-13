@@ -236,9 +236,15 @@ import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
-import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyCompatible)
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
+import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, ShelleyCompatible)
+import Ouroboros.Consensus.Storage.LedgerDB
+  ( ResolveLeiosBlock
+      ( certifiedEbFromHeader
+      , headerLeiosAnnouncement
+      , resolveLeiosBlock
+      , resolveLeiosBlockHdr
+      )
+  )
 import Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -1543,4 +1549,8 @@ instance
 
   headerLeiosAnnouncement hdr = case hdr of
     HeaderDijkstra dHdr -> headerLeiosAnnouncement dHdr
+    _ -> Nothing
+
+  certifiedEbFromHeader hdr = case hdr of
+    HeaderDijkstra dHdr -> certifiedEbFromHeader dHdr
     _ -> Nothing

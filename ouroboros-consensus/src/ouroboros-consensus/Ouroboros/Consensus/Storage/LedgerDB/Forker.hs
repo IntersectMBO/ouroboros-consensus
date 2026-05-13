@@ -576,6 +576,12 @@ class ResolveLeiosBlock blk where
   headerLeiosAnnouncement :: Header blk -> Maybe LeiosPoint
   headerLeiosAnnouncement _ = Nothing
 
+  -- | Extract the certified EB point from a header, if this block
+  -- certifies an EB. Used by ChainSel to defer blocks whose EB
+  -- closure hasn't been fetched yet.
+  certifiedEbFromHeader :: Header blk -> Maybe LeiosPoint
+  certifiedEbFromHeader _ = Nothing
+
 {-------------------------------------------------------------------------------
   Validation
 -------------------------------------------------------------------------------}

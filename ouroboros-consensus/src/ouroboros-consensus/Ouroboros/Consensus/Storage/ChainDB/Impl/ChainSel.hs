@@ -30,7 +30,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
 
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Exception (assert)
-import Control.Monad (forM_, join, void, when)
+import Control.Monad (forM, forM_, unless, when)
 import Control.Monad.Except ()
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict
@@ -49,6 +49,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
 import GHC.Stack (HasCallStack)
+import LeiosDemoDb (LeiosDbConnection (leiosDbQueryCompletedEbByPoint))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
@@ -332,6 +333,7 @@ chainSelSync ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , ResolveLeiosBlock blk
   ) =>
   ChainDbEnv m blk ->
   ChainSelMessage m blk ->
@@ -430,7 +432,25 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
           encloseWith (traceEv >$< addBlockTracer) $
             VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
-        chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
+
+        -- If this block certifies an EB whose closure we don't have yet,
+        -- record it as pending and skip chain selection — it would be
+        -- filtered out anyway. ChainSel will be re-triggered when the
+        -- EB closure arrives (step 3).
+        isPending <- lift $ case certifiedEbFromHeader hdr of
+          Nothing -> pure False
+          Just leiosPoint -> do
+            mayClosure <- leiosDbQueryCompletedEbByPoint leiosDb leiosPoint
+            case mayClosure of
+              Just _ -> pure False
+              Nothing -> do
+                atomically $
+                  modifyTVar cdbPendingEBs $
+                    Map.insert leiosPoint (headerHash hdr)
+                pure True
+
+        unless isPending $
+          chainSelectionForBlock leiosDb cdb (BlockCache.singleton b) hdr blockPunish
 
   newTip <- lift $ atomically $ Query.getTipPoint cdb
 
@@ -592,22 +612,36 @@ chainSelectionForBlock ::
   Header blk ->
   InvalidBlockPunishment m ->
   Electric m ()
-chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
-  (invalid, curChain, weights) <-
+chainSelectionForBlock leiosDb cdb@CDB{..} blockCache hdr punish = electric $ withRegistry $ \rr -> do
+  (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, pendingHashes) <-
     atomically $
-      (,,)
+      (,,,,,)
         <$> (forgetFingerprint <$> readTVar cdbInvalid)
         <*> Query.getCurrentChain cdb
-        <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
+        <*> Query.getTipPoint cdb
+        <*> (Set.fromList . Map.elems <$> readTVar cdbPendingEBs)
+  -- This is safe: the LedgerDB tip doesn't change in between the previous
+  -- atomically block and this call to 'withTipForker'.
+  LedgerDB.withTipForker cdbLedgerDB rr $ \curForker -> do
+    curChainAndLedger :: ChainAndLedger m blk <-
+      -- The current chain we're working with here is not longer than @k@
+      -- blocks (see 'getCurrentChain' and 'cdbChain'), which is easier to
+      -- reason about when doing chain selection, etc.
+      assert (fromIntegral (AF.length curChain) <= unNonZero k) $
+        VF.newM curChain curForker
 
   -- The current chain we're working with here is not longer than @k@ blocks
   -- (see 'getCurrentChain' and 'cdbChain'), which is easier to reason about
   -- when doing chain selection, etc.
   assert (fromIntegral (AF.length curChain) <= unNonZero k) pure ()
 
-  let
-    immBlockNo :: WithOrigin BlockNo
-    immBlockNo = AF.anchorBlockNo curChain
+      -- Let these two functions ignore invalid blocks and pending CertRBs
+      lookupBlockInfo' =
+        ignorePending pendingHashes $
+          ignoreInvalid cdb invalid lookupBlockInfo
+      succsOf' =
+        Set.filter (`Set.notMember` pendingHashes)
+          . ignoreInvalidSuc cdb invalid succsOf
 
   if
     -- The chain might have grown since we added the block such that the
@@ -1382,25 +1416,13 @@ ignoreInvalidSuc ::
 ignoreInvalidSuc _ invalid succsOf =
   Set.filter (`Map.notMember` invalid) . succsOf
 
--- | Compare two 'ChainDiff's w.r.t. the chain order.
---
--- PRECONDITION: Both 'ChainDiff's fit onto the given current chain.
-compareChainDiffs ::
-  forall blk.
-  BlockSupportsProtocol blk =>
-  BlockConfig blk ->
-  PerasWeightSnapshot blk ->
-  -- | Current chain.
-  AnchoredFragment (Header blk) ->
-  ChainDiff (Header blk) ->
-  ChainDiff (Header blk) ->
-  Ordering
-compareChainDiffs bcfg weights curChain =
-  -- The precondition of 'compareAnchoredFragment's is satisfied as the result
-  -- of @mkCand@ has the same anchor as @curChain@, and so any two fragments
-  -- returned by @mkCand@ do intersect.
-  compareAnchoredFragments bcfg weights `on` mkCand
- where
-  mkCand =
-    fromMaybe (error "compareChainDiffs: precondition violated")
-      . Diff.apply curChain
+-- | Wrap a lookup function so that pending CertRBs (whose EB closure
+-- hasn't arrived yet) are invisible to chain selection.
+ignorePending ::
+  Ord h =>
+  Set h ->
+  (h -> Maybe a) ->
+  (h -> Maybe a)
+ignorePending pending getter hash
+  | Set.member hash pending = Nothing
+  | otherwise = getter hash

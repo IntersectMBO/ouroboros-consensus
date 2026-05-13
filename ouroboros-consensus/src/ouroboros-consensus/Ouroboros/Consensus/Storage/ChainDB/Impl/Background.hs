@@ -71,6 +71,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -92,6 +93,7 @@ launchBgTasks ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , ResolveLeiosBlock blk
   ) =>
   ChainDbEnv m blk ->
   -- | Number of immutable blocks replayed on ledger DB startup
@@ -610,6 +612,7 @@ addBlockRunner ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , ResolveLeiosBlock blk
   ) =>
   Fuse m ->
   ChainDbEnv m blk ->

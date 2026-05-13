@@ -244,6 +244,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     chainSelFuse <- newFuse "chain selection"
     chainSelQueue <- newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
     varChainSelStarvation <- newTVarIO ChainSelStarvationOngoing
+    varPendingEBs <- newTVarIO Map.empty
 
     let env =
           CDB
@@ -269,6 +270,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
+            , cdbPendingEBs = varPendingEBs
             , cdbPerasCertDB = perasCertDB
             }
 
