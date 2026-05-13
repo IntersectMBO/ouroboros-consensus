@@ -44,12 +44,13 @@ module Ouroboros.Consensus.Mempool.Impl.Common
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
-import Control.Monad.Trans.Except (runExcept)
+import Control.Monad.Trans.Except (runExceptT)
 import Control.Tracer
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
 import Data.Bifunctor (second)
 import qualified Data.Foldable as Foldable
+import Data.Functor ((<&>))
 import qualified Data.List.NonEmpty as NE
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -87,19 +88,15 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 -- will have to reconsider what we can cache and what we can't.
 data ValidatedTxWithDiffs blk = ValidatedTxWithDiffs
   { validatedTx :: !(Validated (GenTx blk))
-  , validatedTxDiffs :: !(LedgerTables blk DiffMK)
   }
   deriving Generic
 
 deriving instance
-  ( NoThunks (Validated (GenTx blk))
-  , NoThunks (TxIn blk)
-  , NoThunks (TxOut blk)
-  ) =>
+  NoThunks (Validated (GenTx blk)) =>
   NoThunks (ValidatedTxWithDiffs blk)
 
 -- | Internal state in the mempool
-data InternalState blk = IS
+data InternalState m blk = IS
   { isTxs :: !(TxSeq (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk))
   -- ^ Transactions currently in the mempool
   --
@@ -117,21 +114,7 @@ data InternalState blk = IS
   -- 'MempoolSnapshot' (see 'snapshotHasTx').
   --
   -- This should always be in-sync with the transactions in 'isTxs'.
-  , isTxKeys :: !(LedgerTables blk KeysMK)
-  -- ^ The cached set of keys needed for the transactions
-  -- currently in the mempool.
-  --
-  -- INVARIANT: @'isTxKeys' == foldMap (getTransactionKeySets . txForgetValidated) $ toList 'isTxs'@
-  , isTxValues :: !(LedgerTables blk ValuesMK)
-  -- ^ The cached values corresponding to reading 'isTxKeys' at
-  -- 'isLedgerState'. These values can be used unless we switch to
-  -- a different ledger state. It usually happens in the forging
-  -- loop that the same ledger state that was in 'isLedgerState'
-  -- is used, but ticked to a different slot so we can reuse these
-  -- values.
-  --
-  -- INVARIANT: 'isTxValues' should be equal to @getForkerAtTarget ... 'isLedgerState' >>= \f -> forkerReadTables f isTxKeys@
-  , isLedgerState :: !(TickedLedgerState blk DiffMK)
+  , isLedgerState :: !(TickedLedgerState m blk)
   -- ^ The cached ledger state after applying the transactions in the
   -- Mempool against the chain's ledger state. New transactions will be
   -- validated against this ledger.
@@ -172,18 +155,16 @@ data InternalState blk = IS
 deriving instance
   ( NoThunks (Validated (GenTx blk))
   , NoThunks (GenTxId blk)
-  , NoThunks (TickedLedgerState blk DiffMK)
-  , NoThunks (TxIn blk)
-  , NoThunks (TxOut blk)
+  , NoThunks (TickedLedgerState m blk)
   , NoThunks (TxMeasure blk)
   , StandardHash blk
   , Typeable blk
   ) =>
-  NoThunks (InternalState blk)
+  NoThunks (InternalState m blk)
 
 -- | \( O(1) \). Return the number of transactions in the internal state of
 -- the Mempool paired with their total size in bytes.
-isMempoolSize :: TxLimits blk => InternalState blk -> MempoolSize
+isMempoolSize :: TxLimits blk => InternalState m blk -> MempoolSize
 isMempoolSize is =
   MempoolSize
     { msNumTxs = fromIntegral $ length $ isTxs is
@@ -197,14 +178,12 @@ initInternalState ::
   TicketNo ->
   LedgerConfig blk ->
   SlotNo ->
-  TickedLedgerState blk DiffMK ->
-  InternalState blk
+  TickedLedgerState m blk ->
+  InternalState m blk
 initInternalState capacityOverride lastTicketNo cfg slot st =
   IS
     { isTxs = TxSeq.Empty
     , isTxIds = Set.empty
-    , isTxKeys = emptyLedgerTables
-    , isTxValues = emptyLedgerTables
     , isLedgerState = st
     , isTip = castPoint $ getTip st
     , isSlotNo = slot
@@ -222,14 +201,8 @@ newtype LedgerInterface m blk = LedgerInterface
   }
 
 data MempoolLedgerDBView m blk = MempoolLedgerDBView
-  { mldViewState :: LedgerState blk EmptyMK
+  { mldViewState :: LedgerState m blk
   -- ^ The ledger state currently at the tip of the LedgerDB
-  , mldViewGetForker :: m (Either GetForkerError (ReadOnlyForker m LedgerState blk))
-  -- ^ An action to get a forker at 'mldViewState' or an error in the unlikely
-  -- case that such state is now gone from the LedgerDB.
-  --
-  -- The forker is not tracked as a resource because shutting down the mempool
-  -- only happens if the system is going down, and in that case open forkers are unimportant.
   }
 
 -- | Create a 'LedgerInterface' from a 'ChainDB'.
@@ -239,15 +212,8 @@ chainDBLedgerInterface ::
   LedgerInterface m blk
 chainDBLedgerInterface chainDB =
   LedgerInterface
-    { getCurrentLedgerState = do
-        st <- ChainDB.getCurrentLedger chainDB
-        pure
-          $ MempoolLedgerDBView
-            (ledgerState st)
-          $ fmap (second ledgerStateReadOnlyForker)
-          $ ChainDB.openReadOnlyForkerAtPoint
-            chainDB
-            (SpecificPoint (castPoint $ getTip st))
+    { getCurrentLedgerState =
+        MempoolLedgerDBView . ledgerState <$> ChainDB.getCurrentLedger chainDB
     }
 
 {-------------------------------------------------------------------------------
@@ -259,9 +225,8 @@ chainDBLedgerInterface chainDB =
 -- different operations.
 data MempoolEnv m blk = MempoolEnv
   { mpEnvLedger :: LedgerInterface m blk
-  , mpEnvForker :: StrictMVar m (ReadOnlyForker m LedgerState blk)
   , mpEnvLedgerCfg :: LedgerConfig blk
-  , mpEnvStateVar :: StrictTMVar m (InternalState blk)
+  , mpEnvStateVar :: StrictTMVar m (InternalState m blk)
   , mpEnvAddTxsRemoteFifo :: StrictMVar m ()
   , mpEnvAddTxsAllFifo :: StrictMVar m ()
   , mpEnvTracer :: Tracer m (TraceEventMempool blk)
@@ -281,33 +246,24 @@ initMempoolEnv ::
   Tracer m (TraceEventMempool blk) ->
   m (MempoolEnv m blk)
 initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
-  MempoolLedgerDBView st meFrk <- atomically $ getCurrentLedgerState ledgerInterface
-  eFrk <- meFrk
-  case eFrk of
-    -- This should happen very rarely, if between getting the state and getting
-    -- the forker, the ledgerdb has changed. We just loop to try again here.
-    Left{} -> do
-      initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer
-    Right frk -> do
-      frkMVar <- newMVar frk
-      let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
-      isVar <-
-        newTMVarIO $
-          initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
-      addTxRemoteFifo <- newMVar ()
-      addTxAllFifo <- newMVar ()
-      return
-        MempoolEnv
-          { mpEnvLedger = ledgerInterface
-          , mpEnvLedgerCfg = cfg
-          , mpEnvForker = frkMVar
-          , mpEnvStateVar = isVar
-          , mpEnvAddTxsRemoteFifo = addTxRemoteFifo
-          , mpEnvAddTxsAllFifo = addTxAllFifo
-          , mpEnvTracer = tracer
-          , mpEnvCapacityOverride = capacityOverride
-          , mpEnvTimeoutConfig = mbTimeoutConfig
-          }
+  MempoolLedgerDBView st <- atomically $ getCurrentLedgerState ledgerInterface
+  (slot, st') <- tickLedgerState cfg (ForgeInUnknownSlot st)
+  isVar <-
+    newTMVarIO $
+      initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
+  addTxRemoteFifo <- newMVar ()
+  addTxAllFifo <- newMVar ()
+  return
+    MempoolEnv
+      { mpEnvLedger = ledgerInterface
+      , mpEnvLedgerCfg = cfg
+      , mpEnvStateVar = isVar
+      , mpEnvAddTxsRemoteFifo = addTxRemoteFifo
+      , mpEnvAddTxsAllFifo = addTxAllFifo
+      , mpEnvTracer = tracer
+      , mpEnvCapacityOverride = capacityOverride
+      , mpEnvTimeoutConfig = mbTimeoutConfig
+      }
 
 {-------------------------------------------------------------------------------
   Ticking the ledger state
@@ -315,14 +271,14 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
 
 -- | Tick the 'LedgerState' using the given 'BlockSlot'.
 tickLedgerState ::
-  forall blk.
+  forall m blk.
   (UpdateLedger blk, ValidateEnvelope blk) =>
   LedgerConfig blk ->
-  ForgeLedgerState blk ->
-  (SlotNo, TickedLedgerState blk DiffMK)
-tickLedgerState _cfg (ForgeInKnownSlot slot st) = (slot, st)
+  ForgeLedgerState m blk ->
+  m (SlotNo, TickedLedgerState m blk)
+tickLedgerState _cfg (ForgeInKnownSlot slot st) = pure (slot, st)
 tickLedgerState cfg (ForgeInUnknownSlot st) =
-  (slot, applyChainTick OmitLedgerEvents cfg slot st)
+  (\x -> (slot, x)) <$> applyChainTick OmitLedgerEvents cfg slot st
  where
   -- Optimistically assume that the transactions will be included in a block
   -- in the next available slot
@@ -347,34 +303,31 @@ validateNewTransaction ::
   WhetherToIntervene ->
   GenTx blk ->
   TxMeasure blk ->
-  -- | Values to cache if success
-  LedgerTables blk ValuesMK ->
   -- | This state is the internal state with the tables for this transaction
   -- advanced through the diffs in the internal state. One could think we can
   -- create this value here, but it is needed for some other uses like calling
   -- 'txMeasure' before this function.
-  TickedLedgerState blk ValuesMK ->
-  InternalState blk ->
-  ( Either (ApplyTxErr blk) (Validated (GenTx blk), LedgerTables blk DiffMK)
-  , DiffTimeMeasure -> InternalState blk
-  )
-validateNewTransaction cfg wti tx txsz origValues st is =
-  case runExcept (applyTx cfg wti isSlotNo tx st) of
+  TickedLedgerState m blk ->
+  InternalState m blk ->
+  m
+    ( Either (ApplyTxErr blk) (Validated (GenTx blk))
+    , DiffTimeMeasure -> InternalState m blk
+    )
+validateNewTransaction cfg wti tx txsz st is =
+  runExceptT (applyTx cfg wti isSlotNo tx st) <&> \case
     Left err -> (Left err, \_dur -> is)
     Right (st', vtx) ->
-      ( Right (vtx, projectLedgerTables st')
+      ( Right vtx
       , \dur ->
           is
             { isTxs =
                 isTxs
                   :> TxTicket
-                    (ValidatedTxWithDiffs vtx (projectLedgerTables st'))
+                    (ValidatedTxWithDiffs vtx)
                     nextTicketNo
                     (MkTxMeasureWithDiffTime txsz dur)
-            , isTxKeys = isTxKeys <> getTransactionKeySets tx
-            , isTxValues = ltliftA2 unionValues isTxValues origValues
             , isTxIds = Set.insert (txId tx) isTxIds
-            , isLedgerState = prependMempoolDiffs isLedgerState st'
+            , isLedgerState = st'
             , isLastTicketNo = nextTicketNo
             }
       )
@@ -382,8 +335,6 @@ validateNewTransaction cfg wti tx txsz origValues st is =
   IS
     { isTxs
     , isTxIds
-    , isTxKeys
-    , isTxValues
     , isLedgerState
     , isLastTicketNo
     , isSlotNo
@@ -399,70 +350,48 @@ validateNewTransaction cfg wti tx txsz origValues st is =
 -- revalidating the whole set of transactions onto a new state, or if we remove
 -- some transactions and revalidate the remaining ones.
 revalidateTxsFor ::
-  forall blk.
+  forall m blk.
   (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
   -- | The ticked ledger state againt which txs will be revalidated
-  TickedLedgerState blk DiffMK ->
-  -- | The tables with all the inputs for the transactions
-  LedgerTables blk ValuesMK ->
+  TickedLedgerState m blk ->
   -- | 'isLastTicketNo' and 'vrLastTicketNo'
   TicketNo ->
   [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
-  RevalidateTxsResult blk
-revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
+  m (InternalState m blk, [GenTx blk])
+revalidateTxsFor capacityOverride cfg slot st lastTicketNo txTickets = do
   let inputTxs = map wrap txTickets
-      inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
 
-      ReapplyTxsResult err validTxs st' =
-        reapplyTxs @blk @Collect cfg slot inputTxs $
-          applyMempoolDiffs values inputKeys st
-
-      outputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) validTxs
-      outputDiffs = Foldable.foldl' rawPrependDiffs (DiffMK mempty) $ map (getLedgerTables . snd3) validTxs
-   in RevalidateTxsResult
-        ( IS
-            { isTxs = TxSeq.fromList $ map unwrap validTxs
-            , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst3) validTxs
-            , isTxKeys = outputKeys
-            , isTxValues = ltliftA2 restrictValuesMK values outputKeys
-            , isLedgerState =
-                st'
-                  `withLedgerTables` (ltliftA2 rawPrependDiffs (projectLedgerTables st) (LedgerTables outputDiffs))
-            , isTip = castPoint $ getTip st
-            , isSlotNo = slot
-            , isLastTicketNo = lastTicketNo
-            , isCapacity = computeMempoolCapacity cfg st' capacityOverride
-            }
-        )
-        err
+  (st', err) <- undefined $ reapplyTx @blk @m cfg slot undefined -- inputTxs st
+  pure
+    ( IS
+        { isTxs = TxSeq.fromList $ map unwrap undefined -- validTxs
+        , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst3) undefined -- validTxs
+        , isLedgerState = st'
+        , isTip = castPoint $ getTip st
+        , isSlotNo = slot
+        , isLastTicketNo = lastTicketNo
+        , isCapacity = computeMempoolCapacity cfg st' capacityOverride
+        }
+    , [undefined]
+    )
  where
-  wrap = \(TxTicket (ValidatedTxWithDiffs tx df) tk tz) -> (tx, df, (tk, tz))
-  unwrap = \(tx, df, (tk, tz)) -> TxTicket (ValidatedTxWithDiffs tx df) tk tz
+  wrap = \(TxTicket (ValidatedTxWithDiffs tx) tk tz) -> (tx, (tk, tz))
+  unwrap = \(tx, (tk, tz)) -> TxTicket (ValidatedTxWithDiffs tx) tk tz
   fst3 (x, _, _) = x
   snd3 (_, x, _) = x
-
-data RevalidateTxsResult blk
-  = RevalidateTxsResult
-  { newInternalState :: !(InternalState blk)
-  -- ^ The internal state after revalidation
-  , removedTxs :: ![Invalidated blk]
-  -- ^ The previously valid transactions that were now invalid
-  }
 
 -- | Compute snapshot is largely the same as revalidate the transactions
 -- but we ignore the diffs.
 computeSnapshot ::
-  forall blk.
+  forall m blk.
   (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   LedgerConfig blk ->
   SlotNo ->
   -- | The ticked ledger state againt which txs will be revalidated
-  TickedLedgerState blk DiffMK ->
-  -- | The tables with all the inputs for the transactions
-  LedgerTables blk ValuesMK ->
+  TickedLedgerState m blk ->
   [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
   MempoolSnapshot blk
 computeSnapshot cfg slot st values txTickets =

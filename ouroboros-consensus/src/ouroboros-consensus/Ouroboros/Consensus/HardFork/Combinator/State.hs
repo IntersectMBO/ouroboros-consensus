@@ -35,7 +35,6 @@ import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Counting (getExactly)
-import Data.SOP.Functors (Flip (..))
 import Data.SOP.InPairs (InPairs, Requiring (..))
 import qualified Data.SOP.InPairs as InPairs
 import Data.SOP.Strict
@@ -52,7 +51,8 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types as X
 import Ouroboros.Consensus.HardFork.Combinator.Translation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract hiding (getTip)
-import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Util
+import Ouroboros.Consensus.Util.IOLike
 import Prelude hiding (sequence)
 
 {-------------------------------------------------------------------------------
@@ -119,7 +119,7 @@ recover =
 mostRecentTransitionInfo ::
   All SingleEraBlock xs =>
   HardForkLedgerConfig xs ->
-  HardForkState (Flip LedgerState mk) xs ->
+  HardForkState (LedgerState m) xs ->
   TransitionInfo
 mostRecentTransitionInfo HardForkLedgerConfig{..} st =
   hcollapse $
@@ -136,17 +136,17 @@ mostRecentTransitionInfo HardForkLedgerConfig{..} st =
     SingleEraBlock blk =>
     WrapPartialLedgerConfig blk ->
     K History.EraParams blk ->
-    Current (Flip LedgerState mk) blk ->
+    Current (LedgerState m) blk ->
     K TransitionInfo blk
-  getTransition cfg (K eraParams) Current{currentState = Flip curState, ..} = K $
-    case singleEraTransition' cfg eraParams currentStart curState of
-      Nothing -> TransitionUnknown (ledgerTipSlot curState)
+  getTransition cfg (K eraParams) (Current currentStart currentState) = K $
+    case singleEraTransition' cfg eraParams currentStart currentState of
+      Nothing -> TransitionUnknown (ledgerTipSlot currentState)
       Just e -> TransitionKnown e
 
 reconstructSummaryLedger ::
   All SingleEraBlock xs =>
   HardForkLedgerConfig xs ->
-  HardForkState (Flip LedgerState mk) xs ->
+  HardForkState (LedgerState m) xs ->
   History.Summary xs
 reconstructSummaryLedger cfg@HardForkLedgerConfig{..} st =
   reconstructSummary
@@ -161,7 +161,7 @@ reconstructSummaryLedger cfg@HardForkLedgerConfig{..} st =
 epochInfoLedger ::
   All SingleEraBlock xs =>
   HardForkLedgerConfig xs ->
-  HardForkState (Flip LedgerState mk) xs ->
+  HardForkState (LedgerState m) xs ->
   EpochInfo (Except PastHorizonException)
 epochInfoLedger cfg st =
   History.summaryToEpochInfo $
@@ -217,24 +217,23 @@ epochInfoPrecomputedTransitionInfo shape transition st =
 -- 4. Attach the diffs resulting from step 3 to the @era3@ ledger state from
 --    step 2, and return it.
 extendToSlot ::
-  forall xs.
+  forall m xs.
+  IOLike m =>
   CanHardFork xs =>
   HardForkLedgerConfig xs ->
   SlotNo ->
-  HardForkState (Flip LedgerState EmptyMK) xs ->
-  HardForkState (Flip LedgerState DiffMK) xs
+  HardForkState (LedgerState m) xs ->
+  m (HardForkState (LedgerState m) xs)
 extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st) =
-  HardForkState
-    . unI
-    . Telescope.extend
-      ( InPairs.hczipWith
+  fmap HardForkState $
+    Telescope.extend
+      ( InPairs.hcmap
           proxySingle
-          ( \f f' -> Require $ \(K t) ->
+          ( \f -> Require $ \(K t) ->
               Extend $ \cur ->
-                I $ howExtend f f' t cur
+                howExtend f t cur
           )
           translateLS
-          translateLT
       )
       ( hczipWith
           proxySingle
@@ -242,21 +241,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
           pcfgs
           (getExactly (History.getShape hardForkLedgerConfigShape))
       )
-    -- In order to make this an automorphism, as required by 'Telescope.extend',
-    -- we have to promote the input to @DiffMK@ albeit it being empty.
-    $ hcmap
-      proxySingle
-      ( \c ->
-          c
-            { currentState =
-                Flip
-                  . flip withLedgerTables emptyLedgerTables
-                  . unFlip
-                  . currentState
-                  $ c
-            }
-      )
-    $ st
+      st
  where
   pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
   cfgs = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
@@ -267,7 +252,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     SingleEraBlock blk =>
     WrapPartialLedgerConfig blk ->
     K History.EraParams blk ->
-    Current (Flip LedgerState DiffMK) blk ->
+    Current (LedgerState m) blk ->
     (Maybe :.: K History.Bound) blk
   whenExtend pcfg (K eraParams) cur =
     Comp $
@@ -277,7 +262,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
             pcfg
             eraParams
             (currentStart cur)
-            (unFlip $ currentState cur)
+            (currentState cur)
         let endBound =
               History.mkUpperBound
                 eraParams
@@ -287,51 +272,28 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
         return endBound
 
   howExtend ::
-    (HasLedgerTables LedgerState blk, HasLedgerTables LedgerState blk') =>
-    TranslateLedgerState blk blk' ->
-    TranslateLedgerTables blk blk' ->
+    TranslateLedgerState m blk blk' ->
     History.Bound ->
-    Current (Flip LedgerState DiffMK) blk ->
-    (K Past blk, Current (Flip LedgerState DiffMK) blk')
-  howExtend f f' currentEnd cur =
-    ( K
-        Past
-          { pastStart = currentStart cur
-          , pastEnd = currentEnd
+    Current (LedgerState m) blk ->
+    m (K Past blk, Current (LedgerState m) blk')
+  howExtend f currentEnd cur = do
+    cur' <-
+      translateLedgerStateWith f (History.boundEpoch currentEnd)
+        . currentState
+        $ cur
+    pure
+      ( K
+          Past
+            { pastStart = currentStart cur
+            , pastEnd = currentEnd
+            }
+      , Current
+          { currentStart = currentEnd
+          , currentState = cur'
           }
-    , Current
-        { currentStart = currentEnd
-        , currentState =
-            let cur' =
-                  translateLedgerStateWith f (History.boundEpoch currentEnd)
-                    . forgetLedgerTables
-                    . unFlip
-                    . currentState
-                    $ cur
-             in Flip
-                  . (cur' `withLedgerTables`)
-                  . ltliftA2
-                    rawPrependDiffs
-                    ( -- We need to bring back the diffs provided by previous
-                      -- translations. Note that if there is only one
-                      -- translation or if the previous translations don't add
-                      -- any new tables this will just be a no-op. See the
-                      -- haddock for 'translateLedgerTablesWith' and
-                      -- 'extendToSlot' for more information.
-                      translateLedgerTablesWith f'
-                        . projectLedgerTables
-                        . unFlip
-                        . currentState
-                        $ cur
-                    )
-                  $ projectLedgerTables cur'
-        }
-    )
+      )
 
-  translateLS :: InPairs TranslateLedgerState xs
+  translateLS :: InPairs (TranslateLedgerState m) xs
   translateLS =
     InPairs.requiringBoth cfgs $
-      translateLedgerState hardForkEraTranslation
-
-  translateLT :: InPairs TranslateLedgerTables xs
-  translateLT = translateLedgerTables hardForkEraTranslation
+      translateLedgerState hardForkEraTranslationM

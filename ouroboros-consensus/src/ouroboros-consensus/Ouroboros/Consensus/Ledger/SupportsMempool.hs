@@ -126,6 +126,8 @@ class
   ) =>
   LedgerSupportsMempool blk
   where
+  data MempoolCache blk
+
   -- | Apply an unvalidated transaction
   --
   -- The mempool expects that the ledger checks the sanity of the transaction'
@@ -135,7 +137,6 @@ class
   -- The resulting ledger state contains the diffs produced by applying this
   -- transaction alone.
   applyTx ::
-    IOLike m =>
     LedgerConfig blk ->
     WhetherToIntervene ->
     -- | Slot number of the block containing the tx
@@ -143,7 +144,8 @@ class
     GenTx blk ->
     -- | Contain only the values for the tx to apply
     TickedLedgerState m blk ->
-    ExceptT (ApplyTxErr blk) m (TickedLedgerState m blk, Validated (GenTx blk))
+    MempoolCache blk ->
+    ExceptT (ApplyTxErr blk) m (TickedLedgerState m blk, Validated (GenTx blk), MempoolCache blk)
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -163,7 +165,10 @@ class
     Validated (GenTx blk) ->
     -- | Contains at least the values for the tx to reapply
     TickedLedgerState m blk ->
+    MempoolCache blk ->
     ExceptT (ApplyTxErr blk) m (TickedLedgerState m blk)
+
+  forgetTx :: MempoolCache blk -> GenTx blk -> MempoolCache blk
 
 -- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error

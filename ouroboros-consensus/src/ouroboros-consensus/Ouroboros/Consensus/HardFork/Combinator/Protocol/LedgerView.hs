@@ -1,8 +1,10 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
   ( -- * Hard fork
@@ -17,7 +19,6 @@ import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Dict (Dict (..), all_NP)
 import Data.SOP.Strict
-import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.State.Instances ()
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.Ticked
@@ -34,7 +35,8 @@ data HardForkLedgerView_ f xs = HardForkLedgerView
   -- ^ The underlying ledger view
   }
 
-deriving instance CanHardFork xs => Show (HardForkLedgerView_ WrapLedgerView xs)
+deriving instance
+  Show (HardForkState WrapLedgerView xs) => Show (HardForkLedgerView_ WrapLedgerView xs)
 
 type HardForkLedgerView = HardForkLedgerView_ WrapLedgerView
 

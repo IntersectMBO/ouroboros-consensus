@@ -16,13 +16,13 @@ import qualified Data.SOP.Strict as SOP
 import Data.SOP.Tails (Tails)
 import qualified Data.SOP.Tails as Tails
 import Data.Typeable
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import Ouroboros.Consensus.HardFork.Combinator.Translation
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   CanHardFork
@@ -47,6 +47,7 @@ class
   -- in Haskell.)
   type HardForkTxMeasure xs
 
+  hardForkEraTranslationM :: IOLike m => EraTranslationM m xs
   hardForkEraTranslation :: EraTranslation xs
   hardForkChainSel :: Tails AcrossEraTiebreaker xs
   hardForkInjectTxs ::
@@ -68,6 +69,7 @@ instance SingleEraBlock blk => CanHardFork '[blk] where
   type HardForkTxMeasure '[blk] = TxMeasure blk
 
   hardForkEraTranslation = trivialEraTranslation
+  hardForkEraTranslationM = trivialEraTranslationM
   hardForkChainSel = Tails.mk1
   hardForkInjectTxs = InPairs.mk1
 

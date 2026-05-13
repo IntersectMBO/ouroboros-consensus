@@ -11,6 +11,7 @@ import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Util.IOLike
 
 -- | Link protocol to ledger
 class
@@ -66,7 +67,7 @@ class
   --
   -- See 'lemma_ledgerViewForecastAt_applyChainTick'.
   ledgerViewForecastAt ::
-    HasCallStack =>
+    (IOLike m, HasCallStack) =>
     LedgerConfig blk ->
     LedgerState m blk ->
     Forecast (LedgerView (BlockProtocol blk))

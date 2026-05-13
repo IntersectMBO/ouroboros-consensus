@@ -9,6 +9,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Protocol
@@ -105,7 +106,20 @@ instance CanHardFork xs => ChainOrder (HardForkTiebreakerView xs) where
 
 type HardForkChainDepState xs = HardForkState WrapChainDepState xs
 
-instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
+instance
+  ( All (Compose Show (K State.Past)) xs
+  , All (Compose Show (State.Current WrapChainDepState)) xs
+  , All (Compose Show (State.Current WrapLedgerView)) xs
+  , All (Compose Eq (K State.Past)) xs
+  , All (Compose Eq (State.Current WrapChainDepState)) xs
+  , All (Compose Eq (State.Current WrapLedgerView)) xs
+  , All (Compose NoThunks (K State.Past)) xs
+  , All (Compose NoThunks (State.Current WrapChainDepState)) xs
+  , All (Compose NoThunks (State.Current WrapLedgerView)) xs
+  , CanHardFork xs
+  ) =>
+  ConsensusProtocol (HardForkProtocol xs)
+  where
   type ChainDepState (HardForkProtocol xs) = HardForkChainDepState xs
   type ValidationErr (HardForkProtocol xs) = HardForkValidationErr xs
   type TiebreakerView (HardForkProtocol xs) = HardForkTiebreakerView xs
@@ -132,7 +146,20 @@ instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
   BlockSupportsProtocol
 -------------------------------------------------------------------------------}
 
-instance CanHardFork xs => BlockSupportsProtocol (HardForkBlock xs) where
+instance
+  ( All (Compose Show (K State.Past)) xs
+  , All (Compose Show (State.Current WrapChainDepState)) xs
+  , All (Compose Show (State.Current WrapLedgerView)) xs
+  , All (Compose Eq (K State.Past)) xs
+  , All (Compose Eq (State.Current WrapChainDepState)) xs
+  , All (Compose Eq (State.Current WrapLedgerView)) xs
+  , All (Compose NoThunks (K State.Past)) xs
+  , All (Compose NoThunks (State.Current WrapChainDepState)) xs
+  , All (Compose NoThunks (State.Current WrapLedgerView)) xs
+  , CanHardFork xs
+  ) =>
+  BlockSupportsProtocol (HardForkBlock xs)
+  where
   validateView HardForkBlockConfig{..} =
     OneEraValidateView
       . hczipWith proxySingle (WrapValidateView .: validateView) cfgs
@@ -170,6 +197,7 @@ data instance Ticked (HardForkChainDepState xs)
   }
 
 tick ::
+  forall xs.
   CanHardFork xs =>
   ConsensusConfig (HardForkProtocol xs) ->
   HardForkLedgerView xs ->
@@ -397,7 +425,6 @@ chainDepStateInfo ::
 chainDepStateInfo _ = singleEraInfo (Proxy @blk)
 
 translateConsensus ::
-  forall xs.
   CanHardFork xs =>
   EpochInfo (Except PastHorizonException) ->
   ConsensusConfig (HardForkProtocol xs) ->

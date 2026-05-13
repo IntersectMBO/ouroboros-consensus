@@ -5,7 +5,9 @@
 module Ouroboros.Consensus.HardFork.Combinator.Translation
   ( -- * Translate from one era to the next
     EraTranslation (..)
+  , EraTranslationM (..)
   , trivialEraTranslation
+  , trivialEraTranslationM
   ) where
 
 import Data.SOP.InPairs (InPairs (..), RequiringBoth (..))
@@ -18,22 +20,33 @@ import Ouroboros.Consensus.TypeFamilyWrappers
   Translate from one era to the next
 -------------------------------------------------------------------------------}
 
-data EraTranslation m xs = EraTranslation
+data EraTranslationM m xs = EraTranslationM
   { translateLedgerState ::
       !(InPairs (RequiringBoth WrapLedgerConfig (TranslateLedgerState m)) xs)
-  , translateChainDepState ::
-      !(InPairs (RequiringBoth WrapConsensusConfig (Translate WrapChainDepState)) xs)
   , crossEraForecast ::
       !(InPairs (RequiringBoth WrapLedgerConfig (CrossEraForecaster (LedgerState m) WrapLedgerView)) xs)
   }
   deriving
     NoThunks
-    via OnlyCheckWhnfNamed "EraTranslation" (EraTranslation m xs)
+    via OnlyCheckWhnfNamed "EraTranslationM" (EraTranslationM m xs)
 
-trivialEraTranslation :: EraTranslation m '[blk]
+data EraTranslation xs = EraTranslation
+  { translateChainDepState ::
+      !(InPairs (RequiringBoth WrapConsensusConfig (Translate WrapChainDepState)) xs)
+  }
+  deriving
+    NoThunks
+    via OnlyCheckWhnfNamed "EraTranslation" (EraTranslation xs)
+
+trivialEraTranslation :: EraTranslation '[blk]
 trivialEraTranslation =
   EraTranslation
+    { translateChainDepState = PNil
+    }
+
+trivialEraTranslationM :: EraTranslationM m '[blk]
+trivialEraTranslationM =
+  EraTranslationM
     { translateLedgerState = PNil
     , crossEraForecast = PNil
-    , translateChainDepState = PNil
     }

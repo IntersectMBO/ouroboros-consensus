@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -11,6 +12,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.State.Instances
@@ -32,8 +34,6 @@ import Data.SOP.Constraint
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
-import Ouroboros.Consensus.HardFork.Combinator.Lifting
 import Ouroboros.Consensus.HardFork.Combinator.State.Lift
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Prelude hiding (sequence)
@@ -88,33 +88,16 @@ type instance Same HardForkState = HardForkState
   Eq, Show, NoThunks
 -------------------------------------------------------------------------------}
 
-deriving instance Eq (f blk) => Eq (Current f blk)
+deriving newtype instance
+  (All (Compose Show (K Past)) xs, All (Compose Show (Current f)) xs) => Show (HardForkState f xs)
+deriving newtype instance
+  (All (Compose Eq (K Past)) xs, All (Compose Eq (Current f)) xs) => Eq (HardForkState f xs)
+deriving newtype instance
+  (All (Compose NoThunks (K Past)) xs, All (Compose NoThunks (Current f)) xs) =>
+  NoThunks (HardForkState f xs)
 deriving instance Show (f blk) => Show (Current f blk)
+deriving instance Eq (f blk) => Eq (Current f blk)
 deriving instance NoThunks (f blk) => NoThunks (Current f blk)
-
-deriving via
-  LiftTelescope (K Past) (Current f) xs
-  instance
-    ( All SingleEraBlock xs
-    , forall blk. SingleEraBlock blk => Show (f blk)
-    ) =>
-    Show (HardForkState f xs)
-
-deriving via
-  LiftTelescope (K Past) (Current f) xs
-  instance
-    ( All SingleEraBlock xs
-    , forall blk. SingleEraBlock blk => Eq (f blk)
-    ) =>
-    Eq (HardForkState f xs)
-
-deriving via
-  LiftNamedTelescope "HardForkState" (K Past) (Current f) xs
-  instance
-    ( All SingleEraBlock xs
-    , forall blk. SingleEraBlock blk => NoThunks (f blk)
-    ) =>
-    NoThunks (HardForkState f xs)
 
 {-------------------------------------------------------------------------------
   Serialisation
