@@ -138,6 +138,9 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , TxHash
   , mkCommitteeEveryoneVotes
+  , pointEbHash
+  , pointSlotNo
+  , validateLeiosCertificate
   )
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
@@ -1026,28 +1029,36 @@ instance
               "FIXME(bladyjoker): Certifying but not previously announced EB! Whai would you do that!? "
                 <> show cert
           SJust ann -> do
-            mAnnouncedEb <-
-              leiosDbQueryCompletedEbByPoint
-                leiosDb
-                MkLeiosPoint
-                  { pointSlotNo = fromWithOrigin (SlotNo 0) (praosStateLastSlot praosSt)
-                  , pointEbHash = ebAnnouncementHash ann
-                  }
-            case mAnnouncedEb of
-              Nothing ->
-                error $
-                  "Issue #890 gate missed: apply-time resolve found EB "
+            -- TODO: get this from ledger state / pparams
+            let committee = undefined
+            let threshold = minCertificationThreshold
+            -- FIXME: Should the LeiosCertificate move into the cardano-ledger? -> validate certificate in the ledger?
+            -- Alternative: keep 'SL.Certificate' a black box and decode it into 'LeiosCertificate' here?
+            case validateLeiosCertificate committee threshold cert of
+              Left invalid -> error $ "TODO: handle invalid cert: " <> show invalid
+              Right _total -> do
+                mAnnouncedEb <-
+                  leiosDbQueryCompletedEbByPoint
+                    leiosDb
+                    MkLeiosPoint
+                      { pointSlotNo = fromWithOrigin (SlotNo 0) (praosStateLastSlot praosSt)
+                      , pointEbHash = ebAnnouncementHash ann
+                      }
+                case mAnnouncedEb of
+                  Nothing ->
+                    error $
+                  "CertRB resolution error: apply-time resolve found EB "
                     <> show ann
                     <> " at last-slot "
                     <> show (praosStateLastSlot praosSt)
                     <> " absent; cert: "
                     <> show cert
-              Just announcedEb ->
-                pure $
-                  blk{shelleyBlockRaw = Core.Block hdr body'}
-               where
-                txSeq = toLeiosTxSeq @DijkstraEra announcedEb
-                body' = body & Core.txSeqBlockBodyL .~ txSeq
+                  Just announcedEb ->
+                    pure $
+                      blk{shelleyBlockRaw = Core.Block hdr body'}
+                   where
+                    txSeq = toLeiosTxSeq @DijkstraEra announcedEb
+                    body' = body & Core.txSeqBlockBodyL .~ txSeq
    where
     Core.Block hdr body = shelleyBlockRaw blk
 
