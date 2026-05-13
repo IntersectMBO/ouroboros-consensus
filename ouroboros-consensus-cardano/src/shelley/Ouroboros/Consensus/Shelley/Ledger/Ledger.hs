@@ -142,7 +142,7 @@ import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosState (..))
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (Header, headerBody)
-  , HeaderBody (hbLeiosEbAnnouncement, hbSlotNo)
+  , HeaderBody (hbMayEbAnnouncement, hbSlotNo)
   )
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -1033,9 +1033,9 @@ instance
     Core.Block hdr body = shelleyBlockRaw blk
 
   headerLeiosAnnouncement hdr =
-    case hbLeiosEbAnnouncement annBody of
-      SNothing -> Nothing
-      SJust ann ->
+    case hbMayEbAnnouncement annBody of
+      Nothing -> Nothing
+      Just ann ->
         Just
           MkLeiosPoint
             { pointSlotNo = hbSlotNo annBody

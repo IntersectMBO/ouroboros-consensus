@@ -75,14 +75,15 @@ forgeShelleyBlock ::
   m (ShelleyBlock proto era)
 forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   -- For the Dijkstra era only: either certify a previously-announced EB
-  -- (and embed a Leios certificate in the block body), or — if no
+  -- (and embed a Leios certificate in the block body, recording the
+  -- certified EB point on the header via 'hbMayCertifiedEb'), or — if no
   -- previous announcement is ready to be certified — possibly forge a
   -- new EB and announce it on this block's header. Other eras do
   -- neither.
-  (mayEbAnn, mayLeiosCert) <-
+  (mayEbAnn, mayLeiosCert, mayCertifiedEb) <-
     case Typeable.eqT @era @DijkstraEra of
       Just Refl -> decideLeios
-      Nothing -> pure (Nothing, SNothing)
+      Nothing -> pure (Nothing, SNothing, Nothing)
   let body = mkBody mayLeiosCert
       actualBodySize = SL.bBodySize protocolVersion body
   hdr <-
@@ -97,6 +98,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       actualBodySize
       protocolVersion
       mayEbAnn
+      mayCertifiedEb
   let blk = mkShelleyBlock $ SL.Block hdr body
   return $
     assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
@@ -106,10 +108,9 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
 
   -- A certifying Dijkstra block carries no rb-txs on the wire: the
   -- transaction sequence is resolved from the certified EB at apply
-  -- time (see 'resolveLeiosBlock'). This matches the prototype's
-  -- 'BodyCertificate cert Nothing' shape — without it, the wire body
-  -- contains rb-txs that the receiver hashes but the apply-time body
-  -- doesn't, so any subsequent re-hashing would diverge.
+  -- time (see 'resolveLeiosBlock'). Without it, the wire body contains
+  -- rb-txs that the receiver hashes but the apply-time body doesn't, so
+  -- any subsequent re-hashing would diverge.
   mkBody :: StrictMaybe LeiosCert -> SL.BlockBody era
   mkBody mayLeiosCert =
     let txs = case mayLeiosCert of
@@ -135,23 +136,28 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   -- certificate available in LeiosDb), suppressing this block's own EB
   -- announcement. Otherwise fall back to forging a new EB (when the
   -- mempool has txs for one). Mirrors the prototype's 'decideForgeType'.
-  decideLeios :: m (Maybe EbAnnouncement, StrictMaybe LeiosCert)
+  --
+  -- Returns: the EB announcement to embed in the header (if any), the
+  -- Leios certificate to place in the block body (if certifying), and
+  -- the point of the certified EB for the header's 'hbMayCertifiedEb'
+  -- field (if certifying).
+  decideLeios :: m (Maybe EbAnnouncement, StrictMaybe LeiosCert, Maybe LeiosPoint)
   decideLeios = do
-    cert <- decideCertify
-    case cert of
-      SJust _ -> pure (Nothing, cert)
-      SNothing -> do
+    mayCertifiedEb <- decideCertify
+    case mayCertifiedEb of
+      Just ebPoint -> pure (Nothing, SJust LeiosCert, Just ebPoint)
+      Nothing -> do
         ann <- mkAndStoreEb
-        pure (ann, SNothing)
+        pure (ann, SNothing, Nothing)
 
-  decideCertify :: m (StrictMaybe LeiosCert)
+  decideCertify :: m (Maybe LeiosPoint)
   decideCertify =
     case fbChainDepState >>= protocolStateLeiosInfo (Proxy @proto) of
-      Nothing -> pure SNothing
-      Just (_, Origin) -> pure SNothing
+      Nothing -> pure Nothing
+      Just (_, Origin) -> pure Nothing
       Just (ann, NotOrigin prevSlotNo)
         | unSlotNo fbCurrentSlotNo - unSlotNo prevSlotNo <= minCertificationGap ->
-            pure SNothing
+            pure Nothing
         | otherwise -> do
             let ebPoint =
                   MkLeiosPoint
@@ -164,7 +170,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                 traceWith fbLeiosTracer $
                   MkTraceLeiosKernel $
                     "EB not yet downloaded: " <> show ebPoint
-                pure SNothing
+                pure Nothing
               Just _ -> do
                 mCert <- leiosDbQueryCertificateByPoint fbLeiosDb ebPoint
                 case mCert of
@@ -172,12 +178,12 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                     traceWith fbLeiosTracer $
                       MkTraceLeiosKernel $
                         "EB downloaded but no certificate: " <> show ebPoint
-                    pure SNothing
+                    pure Nothing
                   Just _ -> do
                     traceWith fbLeiosTracer $
                       MkTraceLeiosKernel $
                         "Certifying EB at " <> show ebPoint
-                    pure (SJust LeiosCert)
+                    pure (Just ebPoint)
 
   -- Produce an EB from fbEbTxs, store it into fbLeiosDb, and return the
   -- announcement to embed in the header. An honest forger only emits an

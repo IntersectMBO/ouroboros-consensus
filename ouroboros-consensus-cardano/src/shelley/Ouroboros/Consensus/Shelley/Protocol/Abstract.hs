@@ -50,7 +50,7 @@ import Data.Kind (Type)
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement)
+import LeiosDemoTypes (EbAnnouncement, LeiosPoint)
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -169,6 +169,8 @@ class ProtocolHeaderSupportsKES proto where
     ProtVer ->
     -- | Optional Leios EB announcement. Only used by Praos.
     Maybe EbAnnouncement ->
+    -- | Leios certified EB
+    Maybe LeiosPoint ->
     m (ShelleyProtocolHeader proto)
 
   -- | Extract the most recently announced (and not yet certified) Leios EB

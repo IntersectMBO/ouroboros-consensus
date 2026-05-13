@@ -39,7 +39,13 @@ import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.VRF as VRF
-import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, StrictMaybe (..), (⭒))
+import Cardano.Ledger.BaseTypes
+  ( ActiveSlotCoeff
+  , Nonce
+  , StrictMaybe (..)
+  , maybeToStrictMaybe
+  , (⭒)
+  )
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Chain as SL
 import Cardano.Ledger.Hashes (HASH)
@@ -104,7 +110,7 @@ import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Protocol.Praos.Common
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( HeaderBody
-  , hbLeiosEbAnnouncement
+  , hbMayEbAnnouncement
   )
 import Ouroboros.Consensus.Protocol.Praos.VRF
   ( InputVRF
@@ -544,7 +550,8 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
               else praosStateCandidateNonce cs
         , praosStateOCertCounters =
             Map.insert hk n $ praosStateOCertCounters cs
-        , praosStateLeiosAnnouncement = hbLeiosEbAnnouncement (Views.hvSigned b)
+        , praosStateLeiosAnnouncement =
+            maybeToStrictMaybe (hbMayEbAnnouncement (Views.hvSigned b))
         }
      where
       epochInfoWithErr =

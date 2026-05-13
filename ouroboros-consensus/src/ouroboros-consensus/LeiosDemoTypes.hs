@@ -19,7 +19,8 @@ module LeiosDemoTypes (module LeiosDemoTypes) where
 
 import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR, enforceSize, serialize', toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
-import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
+import Cardano.Ledger.Binary (DecCBOR (..), EncCBOR (..))
+import qualified Cardano.Ledger.Binary as LedgerBinary
 import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
 import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
@@ -127,6 +128,17 @@ decodeLeiosPoint :: Decoder s LeiosPoint
 decodeLeiosPoint = do
   enforceSize (fromString "LeiosPoint") 2
   MkLeiosPoint <$> decode <*> decodeEbHash
+
+instance EncCBOR LeiosPoint where
+  encCBOR (MkLeiosPoint ebSlot ebHash) =
+    LedgerBinary.encodeListLen 2
+      <> encCBOR ebSlot
+      <> encCBOR ebHash
+
+instance DecCBOR LeiosPoint where
+  decCBOR = do
+    LedgerBinary.decodeListLenOf 2
+    MkLeiosPoint <$> decCBOR <*> decCBOR
 
 -- | Types used in Praos headers
 data EbAnnouncement = EbAnnouncement

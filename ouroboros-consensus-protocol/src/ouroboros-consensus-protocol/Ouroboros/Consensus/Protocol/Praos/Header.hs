@@ -7,6 +7,8 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ViewPatterns #-}
 
@@ -82,8 +84,8 @@ import Cardano.Slotting.Slot (SlotNo)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Word (Word32)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement)
-import NoThunks.Class (NoThunks (..))
+import LeiosDemoTypes (EbAnnouncement, LeiosPoint)
+import NoThunks.Class (AllowThunksIn (..), NoThunks (..))
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 
 -- | The body of the header is the part which gets hashed to form the hash
@@ -109,10 +111,12 @@ data HeaderBody crypto = HeaderBody
   -- ^ operational certificate
   , hbProtVer :: !ProtVer
   -- ^ protocol version
-  , hbLeiosEbAnnouncement :: !(StrictMaybe EbAnnouncement)
-  -- ^ Optional Leios endorser-block announcement (Dijkstra-only;
-  -- 'SNothing' on earlier eras). Placed on the Praos header for
-  -- early-diffusion of EB references before the body arrives.
+  , hbMayEbAnnouncement :: Maybe EbAnnouncement
+  -- ^ Leios EB announcement
+  , hbMayCertifiedEb :: Maybe LeiosPoint
+  -- ^ The EB certified by this block's certificate, if any.
+  -- See CIP-0164 §"Ranking Blocks" for how certified EBs
+  -- link ranking blocks to their EB transaction closures.
   }
   deriving Generic
 
@@ -196,11 +200,15 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
       , hbBodyHash
       , hbOCert
       , hbProtVer
-      , hbLeiosEbAnnouncement
+      , hbMayEbAnnouncement
+      , hbMayCertifiedEb
       } =
-      let (len, encEbAnnouncement) = case hbLeiosEbAnnouncement of
-            SNothing -> (10 :: Word, mempty)
-            SJust ebAnnouncement -> (11, encCBOR ebAnnouncement)
+      -- TODO(bladyjoker): This shennanigans is here for backwards compatibility, remove it!
+      let (len, encLeiosFields) = case (hbMayEbAnnouncement, hbMayCertifiedEb) of
+            (Nothing, Nothing) -> (10, mempty)
+            (Just ebAnn, Nothing) -> (11, encCBOR ebAnn)
+            (mayEbAnn, Just certEb) ->
+              (12, encCBOR mayEbAnn <> encCBOR certEb)
        in mconcat
             [ encodeListLen len
             , encCBOR hbBlockNo
@@ -213,7 +221,7 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
             , encCBOR hbBodyHash
             , encCBOR hbOCert
             , encCBOR hbProtVer
-            , encEbAnnouncement
+            , encLeiosFields
             ]
 
 instance Crypto crypto => DecCBOR (HeaderBody crypto) where
@@ -229,9 +237,11 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
     hbBodyHash <- decCBOR
     hbOCert <- unCBORGroup <$> decCBOR
     hbProtVer <- decCBOR
-    hbLeiosEbAnnouncement <- case len of
-      10 -> pure SNothing
-      11 -> SJust <$> decCBOR
+    -- TODO(bladyjoker): This shennanigans is here for backwards compatibility, remove it!
+    (hbMayEbAnnouncement, hbMayCertifiedEb) <- case len of
+      10 -> return (Nothing, Nothing)
+      11 -> (,Nothing) . Just <$> decCBOR @EbAnnouncement
+      12 -> (,) <$> decCBOR @(Maybe EbAnnouncement) <*> (Just <$> decCBOR @LeiosPoint)
       _ -> fail $ "Praos HeaderBody CBOR has wrong length: " <> show len
     pure
       HeaderBody
@@ -245,7 +255,8 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
         , hbBodyHash
         , hbOCert
         , hbProtVer
-        , hbLeiosEbAnnouncement
+        , hbMayEbAnnouncement
+        , hbMayCertifiedEb
         }
 
 encodeHeaderRaw ::
