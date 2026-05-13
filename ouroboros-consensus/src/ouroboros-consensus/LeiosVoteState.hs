@@ -47,6 +47,8 @@ newLeiosVoteState getCommittee = do
   pure
     LeiosVoteState
       { addVote = \vote -> atomically $ do
+          -- TODO: disallow votes from different epoch (than the committee is).
+          -- Could use slot numbers or put epoch into votes to distinguish?
           getCommittee >>= \case
             Nothing -> pure NoCommittee
             Just committee ->
