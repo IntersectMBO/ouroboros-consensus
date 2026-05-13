@@ -92,6 +92,7 @@ import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (LeiosPoint)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -350,6 +351,11 @@ data ChainDbEnv m blk = CDB
   , cdbChainSelStarvation :: !(StrictTVar m ChainSelStarvation)
   -- ^ Information on the last starvation of ChainSel, whether ongoing or
   -- ended recently.
+  , cdbPendingEBs :: !(StrictTVar m (Map LeiosPoint (HeaderHash blk)))
+  -- ^ CertRBs whose EB closure hasn't been fetched yet. Keyed by the
+  -- missing EB's 'LeiosPoint', value is the CertRB's header hash.
+  -- ChainSel filters these out of successor candidates until the EB
+  -- closure arrives.
   }
   deriving Generic
 

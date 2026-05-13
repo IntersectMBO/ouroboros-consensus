@@ -72,6 +72,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
@@ -92,6 +93,7 @@ launchBgTasks ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , ResolveLeiosBlock blk
   ) =>
   LeiosDbHandle m ->
   ChainDbEnv m blk ->
@@ -520,6 +522,7 @@ addBlockRunner ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , ResolveLeiosBlock blk
   ) =>
   LeiosDbHandle m ->
   Fuse m ->

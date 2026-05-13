@@ -24,7 +24,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
 
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Exception (assert)
-import Control.Monad (forM, forM_, when)
+import Control.Monad (forM, forM_, unless, when)
 import Control.Monad.Except ()
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict
@@ -43,7 +43,7 @@ import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
-import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoDb (LeiosDbConnection (leiosDbQueryCompletedEbByPoint))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))
@@ -348,6 +348,7 @@ chainSelSync ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , ResolveLeiosBlock blk
   ) =>
   LeiosDbConnection m ->
   ChainDbEnv m blk ->
@@ -426,7 +427,25 @@ chainSelSync leiosDb cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..
           encloseWith (traceEv >$< addBlockTracer) $
             VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
-        chainSelectionForBlock leiosDb cdb (BlockCache.singleton b) hdr blockPunish
+
+        -- If this block certifies an EB whose closure we don't have yet,
+        -- record it as pending and skip chain selection — it would be
+        -- filtered out anyway. ChainSel will be re-triggered when the
+        -- EB closure arrives (step 3).
+        isPending <- lift $ case certifiedEbFromHeader hdr of
+          Nothing -> pure False
+          Just leiosPoint -> do
+            mayClosure <- leiosDbQueryCompletedEbByPoint leiosDb leiosPoint
+            case mayClosure of
+              Just _ -> pure False
+              Nothing -> do
+                atomically $
+                  modifyTVar cdbPendingEBs $
+                    Map.insert leiosPoint (headerHash hdr)
+                pure True
+
+        unless isPending $
+          chainSelectionForBlock leiosDb cdb (BlockCache.singleton b) hdr blockPunish
 
   newTip <- lift $ atomically $ Query.getTipPoint cdb
 
@@ -539,14 +558,15 @@ chainSelectionForBlock ::
   InvalidBlockPunishment m ->
   Electric m ()
 chainSelectionForBlock leiosDb cdb@CDB{..} blockCache hdr punish = electric $ withRegistry $ \rr -> do
-  (invalid, succsOf, lookupBlockInfo, curChain, tipPoint) <-
+  (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, pendingHashes) <-
     atomically $
-      (,,,,)
+      (,,,,,)
         <$> (forgetFingerprint <$> readTVar cdbInvalid)
         <*> VolatileDB.filterByPredecessor cdbVolatileDB
         <*> VolatileDB.getBlockInfo cdbVolatileDB
         <*> Query.getCurrentChain cdb
         <*> Query.getTipPoint cdb
+        <*> (Set.fromList . Map.elems <$> readTVar cdbPendingEBs)
   -- This is safe: the LedgerDB tip doesn't change in between the previous
   -- atomically block and this call to 'withTipForker'.
   LedgerDB.withTipForker cdbLedgerDB rr $ \curForker -> do
@@ -561,9 +581,13 @@ chainSelectionForBlock leiosDb cdb@CDB{..} blockCache hdr punish = electric $ wi
       immBlockNo :: WithOrigin BlockNo
       immBlockNo = AF.anchorBlockNo curChain
 
-      -- Let these two functions ignore invalid blocks
-      lookupBlockInfo' = ignoreInvalid cdb invalid lookupBlockInfo
-      succsOf' = ignoreInvalidSuc cdb invalid succsOf
+      -- Let these two functions ignore invalid blocks and pending CertRBs
+      lookupBlockInfo' =
+        ignorePending pendingHashes $
+          ignoreInvalid cdb invalid lookupBlockInfo
+      succsOf' =
+        Set.filter (`Set.notMember` pendingHashes)
+          . ignoreInvalidSuc cdb invalid succsOf
 
     -- The preconditions
     assert (isJust $ lookupBlockInfo (headerHash hdr)) $ return ()
@@ -1416,3 +1440,14 @@ ignoreInvalidSuc ::
   (ChainHash blk -> Set (HeaderHash blk))
 ignoreInvalidSuc _ invalid succsOf =
   Set.filter (`Map.notMember` invalid) . succsOf
+
+-- | Wrap a lookup function so that pending CertRBs (whose EB closure
+-- hasn't arrived yet) are invisible to chain selection.
+ignorePending ::
+  Ord h =>
+  Set h ->
+  (h -> Maybe a) ->
+  (h -> Maybe a)
+ignorePending pending getter hash
+  | Set.member hash pending = Nothing
+  | otherwise = getter hash

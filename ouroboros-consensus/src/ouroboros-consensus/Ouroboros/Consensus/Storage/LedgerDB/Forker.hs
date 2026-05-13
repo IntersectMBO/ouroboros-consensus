@@ -74,6 +74,7 @@ import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoTypes (LeiosPoint)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -440,6 +441,12 @@ class ResolveLeiosBlock blk where
   resolveLeiosBlock ::
     Monad m => LeiosDbConnection m -> HeaderState blk -> blk -> m blk
   resolveLeiosBlock _ _ blk = return blk
+
+  -- | Extract the certified EB point from a header, if this block
+  -- certifies an EB. Used by ChainSel to defer blocks whose EB
+  -- closure hasn't been fetched yet.
+  certifiedEbFromHeader :: Header blk -> Maybe LeiosPoint
+  certifiedEbFromHeader _ = Nothing
 
 -- | Apply blocks to the given forker
 applyBlock ::

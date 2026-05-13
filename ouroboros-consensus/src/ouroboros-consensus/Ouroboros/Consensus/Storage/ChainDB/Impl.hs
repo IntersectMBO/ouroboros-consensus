@@ -229,6 +229,7 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
     chainSelFuse <- newFuse "chain selection"
     chainSelQueue <- newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
     varChainSelStarvation <- newTVarIO ChainSelStarvationOngoing
+    varPendingEBs <- newTVarIO Map.empty
 
     let env =
           CDB
@@ -254,6 +255,7 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
+            , cdbPendingEBs = varPendingEBs
             }
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =

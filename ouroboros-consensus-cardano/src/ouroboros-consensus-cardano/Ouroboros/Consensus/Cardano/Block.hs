@@ -215,7 +215,9 @@ import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, ShelleyCompatible)
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (resolveLeiosBlock))
+import Ouroboros.Consensus.Storage.LedgerDB
+  ( ResolveLeiosBlock (certifiedEbFromHeader, resolveLeiosBlock)
+  )
 import Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -1403,3 +1405,7 @@ instance
     injectConwayBlock
       <$> resolveLeiosBlock db conwayHdrSt conwayBlk
   resolveLeiosBlock _ _ blk = return blk
+
+  certifiedEbFromHeader (HeaderConway conwayHdr) =
+    certifiedEbFromHeader conwayHdr
+  certifiedEbFromHeader _ = Nothing

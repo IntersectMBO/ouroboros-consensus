@@ -149,6 +149,10 @@ import Ouroboros.Consensus.Protocol.Praos
   , PraosState (praosStateLastSlot, praosStateLeios)
   , withOriginToSlotNo
   )
+import Ouroboros.Consensus.Protocol.Praos.Header
+  ( Header (headerBody)
+  , HeaderBody (hbMayCertifiedEb)
+  )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -158,6 +162,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , envelopeChecks
   , mkHeaderView
   )
+import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util.CBOR
   ( decodeWithOrigin
@@ -371,6 +376,9 @@ instance
                         }
                   }
   resolveLeiosBlock _leiosDb _hdrSt blk = return blk
+
+  certifiedEbFromHeader (ShelleyHeader rawHdr _) =
+    hbMayCertifiedEb (headerBody rawHdr)
 
 deserialiseShelleyTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Core.Tx era
 deserialiseShelleyTx bs = case CB.decodeFullAnnotator (Core.eraProtVerLow @era) "Leios Tx" CB.decCBOR (BL.fromStrict bs) of
