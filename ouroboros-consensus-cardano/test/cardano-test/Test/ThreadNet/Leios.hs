@@ -100,8 +100,10 @@ import Test.Consensus.Cardano.ProtocolInfo (Era (Conway), hardForkInto)
 import Test.QuickCheck
   ( Property
   , Testable
+  , choose
   , conjoin
   , counterexample
+  , forAll
   , tabulate
   , (.&&.)
   , (.||.)
@@ -137,7 +139,7 @@ import Test.ThreadNet.Network
   , TraceThreadNetNode (FromLeios, FromLeiosPeer, FromMempool)
   )
 import Test.ThreadNet.TxGen.Cardano (CardanoTxGenExtra (..))
-import Test.ThreadNet.Util.NodeJoinPlan (trivialNodeJoinPlan)
+import Test.ThreadNet.Util.NodeJoinPlan (NodeJoinPlan (..), trivialNodeJoinPlan)
 import Test.ThreadNet.Util.NodeRestarts (noRestarts)
 import Test.ThreadNet.Util.NodeToNodeVersion (newestVersion)
 import Test.ThreadNet.Util.NodeTopology (meshNodeTopology)
@@ -152,6 +154,8 @@ tests =
     "Leios ThreadNet"
     [ adjustQuickCheckTests (`div` 10) $
         testProperty "basic functionality" prop_leios
+    , adjustQuickCheckTests (`div` 10) $
+        testProperty "late join" prop_leios_late_join
     ]
 
 -- | Verify a suite of basic Leios ThreadNet invariants in a single run:
@@ -183,7 +187,9 @@ prop_leios seed =
   numSlots = 200 :: Word64
 
   (testOutput, ProtocolInfo{pInfoConfig, pInfoInitLedger}) =
-    runThreadNet seed (NumSlots numSlots) (NumCoreNodes $ fromIntegral numNodes)
+    runThreadNet seed (NumSlots numSlots) numCoreNodes (trivialNodeJoinPlan numCoreNodes)
+
+  numCoreNodes = NumCoreNodes $ fromIntegral numNodes
 
   traces = testOutput.allTraces
 
@@ -334,6 +340,39 @@ prop_leios seed =
       | (s1, s2) <- zip certifyingBlocks (drop 1 certifyingBlocks)
       ]
 
+-- | Late-joining node must not crash.
+--
+-- 4 nodes, 200 slots. Nodes 0–2 join at slot 0; node 3 joins at a random
+-- slot. On the current codebase this crashes in 'resolveLeiosBlock' because
+-- the late node receives a CertRB referencing an EB it never saw.
+prop_leios_late_join :: Seed -> Property
+prop_leios_late_join seed =
+  forAll (choose (1, fromIntegral numSlots - 1)) $ \lateJoinSlot ->
+    let
+      joinPlan =
+        NodeJoinPlan $
+          Map.fromList
+            [ (CoreNodeId 0, SlotNo 0)
+            , (CoreNodeId 1, SlotNo 0)
+            , (CoreNodeId 2, SlotNo 0)
+            , (CoreNodeId 3, SlotNo $ fromIntegral (lateJoinSlot :: Int))
+            ]
+
+      numCoreNodes = NumCoreNodes 4
+
+      (testOutput, _) =
+        runThreadNet seed (NumSlots numSlots) numCoreNodes joinPlan
+
+      nodeChains =
+        Chain.toOldestFirst . nodeOutputFinalChain <$> testOutput.testOutputNodes
+     in
+      -- The simulation must not throw (currently crashes in resolveLeiosBlock).
+      not (null nodeChains)
+        & counterexample "test output was empty"
+        & counterexample ("late join slot: " <> show lateJoinSlot)
+ where
+  numSlots = 200 :: Word64
+
 -- | Independently compute cumulative tx bytes by resolving each block in the
 -- chain (filling in EB closures from the LeiosDB) and summing individual
 -- 'sizeTxF' values per transaction.
@@ -420,8 +459,9 @@ runThreadNet ::
   Seed ->
   NumSlots ->
   NumCoreNodes ->
+  NodeJoinPlan ->
   (TestOutput (CardanoBlock StandardCrypto), ProtocolInfo (CardanoBlock StandardCrypto))
-runThreadNet initSeed numSlots numCoreNodes =
+runThreadNet initSeed numSlots numCoreNodes joinPlan =
   ( runTestNetwork
       testConfig
       testConfigB
@@ -503,7 +543,7 @@ runThreadNet initSeed numSlots numCoreNodes =
       { forgeEbbEnv = Nothing
       , future = EraFinal slotLength shelleyGenesis.sgEpochLength
       , messageDelay = noCalcMessageDelay
-      , nodeJoinPlan = trivialNodeJoinPlan numCoreNodes
+      , nodeJoinPlan = joinPlan
       , nodeRestarts = noRestarts
       , txGenExtra =
           CardanoTxGenExtra
