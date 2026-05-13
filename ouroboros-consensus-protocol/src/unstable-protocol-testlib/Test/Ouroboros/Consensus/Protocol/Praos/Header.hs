@@ -446,6 +446,7 @@ genHeaderBody context = do
   hbBodyHash <- genHash
   (hbOCert, kesPeriod) <- genCert hbSlotNo context
   let hbMayEbAnnouncement = Nothing
+      hbMayCertifiedEb = Nothing
   let hbProtVer = protocolVersionZero
       headerBody = HeaderBody{..}
   pure $ (headerBody, kesPeriod)

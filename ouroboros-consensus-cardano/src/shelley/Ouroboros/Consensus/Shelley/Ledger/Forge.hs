@@ -94,6 +94,7 @@ forgeShelleyBlock hotKey cbl mayLeiosInfo ForgeBlockArgs{..} = do
           (SL.bodyBytesSize protocolVersion body)
           protocolVersion
           (snd <$> mayForgedEbAnn)
+          Nothing
 
       let blk =
             mkShelleyBlock $
@@ -116,6 +117,7 @@ forgeShelleyBlock hotKey cbl mayLeiosInfo ForgeBlockArgs{..} = do
           (SL.bodyBytesSize protocolVersion body)
           protocolVersion
           Nothing -- FIXME(bladyjoker): Skip announcement when certifying https://github.com/input-output-hk/ouroboros-leios/issues/838
+          (Just $ Leios.leiosCertificateEbPoint cert)
       let blk =
             mkShelleyBlock $
               SL.Block

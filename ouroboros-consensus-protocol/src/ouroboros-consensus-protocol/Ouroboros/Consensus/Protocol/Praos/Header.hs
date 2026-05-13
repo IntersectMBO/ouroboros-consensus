@@ -5,6 +5,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | Block header associated with Praos.
@@ -70,7 +71,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Word (Word32)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement)
+import LeiosDemoTypes (EbAnnouncement, LeiosPoint)
 import NoThunks.Class (AllowThunksIn (..), NoThunks (..))
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 
@@ -99,6 +100,10 @@ data HeaderBody crypto = HeaderBody
   -- ^ protocol version
   , hbMayEbAnnouncement :: Maybe EbAnnouncement
   -- ^ Leios EB announcement
+  , hbMayCertifiedEb :: Maybe LeiosPoint
+  -- ^ The EB certified by this block's certificate, if any.
+  -- See CIP-0164 §"Ranking Blocks" for how certified EBs
+  -- link ranking blocks to their EB transaction closures.
   }
   deriving Generic
 
@@ -203,13 +208,14 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
       , hbOCert
       , hbProtVer
       , hbMayEbAnnouncement
+      , hbMayCertifiedEb
       } =
-      let (len, encEbAnnouncement) = case hbMayEbAnnouncement of -- TODO(bladyjoker): This shennanigans is here for backwards compatibility, remove it!
-            Nothing -> (10, mempty)
-            Just ebAnnouncement ->
-              ( 11
-              , encCBOR ebAnnouncement
-              )
+      -- TODO(bladyjoker): This shennanigans is here for backwards compatibility, remove it!
+      let (len, encLeiosFields) = case (hbMayEbAnnouncement, hbMayCertifiedEb) of
+            (Nothing, Nothing) -> (10, mempty)
+            (Just ebAnn, Nothing) -> (11, encCBOR ebAnn)
+            (mayEbAnn, Just certEb) ->
+              (12, encCBOR mayEbAnn <> encCBOR certEb)
        in mconcat
             [ encodeListLen len
             , encCBOR hbBlockNo
@@ -222,7 +228,7 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
             , encCBOR hbBodyHash
             , encCBOR hbOCert
             , encCBOR hbProtVer
-            , encEbAnnouncement
+            , encLeiosFields
             ]
 
 instance Crypto crypto => DecCBOR (HeaderBody crypto) where
@@ -238,9 +244,11 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
     hbBodyHash <- decCBOR
     hbOCert <- unCBORGroup <$> decCBOR
     hbProtVer <- decCBOR
-    hbMayEbAnnouncement <- case len of
-      10 -> return Nothing
-      11 -> Just <$> decCBOR @EbAnnouncement -- TODO(bladyjoker): This shennanigans is here for backwards compatibility, remove it!
+    -- TODO(bladyjoker): This shennanigans is here for backwards compatibility, remove it!
+    (hbMayEbAnnouncement, hbMayCertifiedEb) <- case len of
+      10 -> return (Nothing, Nothing)
+      11 -> (,Nothing) . Just <$> decCBOR @EbAnnouncement
+      12 -> (,) <$> decCBOR @(Maybe EbAnnouncement) <*> (Just <$> decCBOR @LeiosPoint)
       _ -> fail $ "Praos HeaderBody CBOR has wrong length: " <> show len
     return $
       HeaderBody
@@ -255,6 +263,7 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
         , hbOCert
         , hbProtVer
         , hbMayEbAnnouncement
+        , hbMayCertifiedEb
         }
 
 encodeHeaderRaw ::

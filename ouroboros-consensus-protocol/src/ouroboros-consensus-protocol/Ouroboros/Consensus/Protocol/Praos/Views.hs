@@ -15,7 +15,7 @@ import Cardano.Protocol.TPraos.BHeader (PrevHash)
 import Cardano.Protocol.TPraos.OCert (OCert)
 import Cardano.Slotting.Slot (SlotNo)
 import Data.Word (Word16, Word32)
-import LeiosDemoTypes (EbAnnouncement)
+import LeiosDemoTypes (EbAnnouncement, LeiosPoint)
 import Ouroboros.Consensus.Protocol.Praos.Header (HeaderBody)
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 
@@ -38,6 +38,7 @@ data HeaderView crypto = HeaderView
   , hvSignature :: !(SignedKES (KES crypto) (HeaderBody crypto))
   -- ^ KES Signature of the header
   , hvMayEbAnnouncement :: !(Maybe EbAnnouncement)
+  , hvMayCertifiedEb :: !(Maybe LeiosPoint)
   }
 
 data LedgerView = LedgerView
