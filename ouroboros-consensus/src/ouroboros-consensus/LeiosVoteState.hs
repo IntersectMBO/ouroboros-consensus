@@ -47,18 +47,18 @@ newLeiosVoteState getCommittee = do
   pure
     LeiosVoteState
       { addVote = \vote -> atomically $ do
-          -- TODO: disallow votes from different epoch (than the committee is).
-          -- Could use slot numbers or put epoch into votes to distinguish?
-          getCommittee >>= \case
-            Nothing -> pure NoCommittee
-            Just committee ->
-              case validateLeiosVote committee vote of
-                Left reason -> pure $ VoteInvalid reason
-                Right _weight -> do
-                  seen <- readTVar seenVotes
-                  if Set.member vote seen
-                    then pure AlreadyKnown
-                    else do
+          seen <- readTVar seenVotes
+          if Set.member vote seen
+            then pure AlreadyKnown
+            else do
+              -- TODO: disallow votes from different epoch (than the committee is).
+              -- Could use slot numbers or put epoch into votes to distinguish?
+              getCommittee >>= \case
+                Nothing -> pure NoCommittee
+                Just committee ->
+                  case validateLeiosVote committee vote of
+                    Left reason -> pure $ VoteInvalid reason
+                    Right _weight -> do
                       writeTVar seenVotes $! Set.insert vote seen
                       writeTChan votesChan vote
                       pure Added

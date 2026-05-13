@@ -13,7 +13,12 @@ import Cardano.Crypto.DSIGN
   )
 import Cardano.Crypto.Seed (mkSeedFromBytes)
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Concurrent.Class.MonadSTM.Strict (atomically)
+import Control.Concurrent.Class.MonadSTM.Strict
+  ( atomically
+  , newTVar
+  , readTVar
+  , writeTVar
+  )
 import Control.Monad (forM_)
 import Control.Monad.Class.MonadTimer.SI (timeout)
 import Control.Monad.IOSim (runSimOrThrow)
@@ -71,6 +76,7 @@ tests =
     [ testProperty "subscriber receives added vote" prop_subscriberReceivesVote
     , testProperty "subscriber receives all distinct votes" prop_subscriberReceivesAll
     , testProperty "duplicate vote is reported as AlreadyKnown" prop_deduplicateVotes
+    , testProperty "duplicate check before validation" prop_deduplicateBeforeValidation
     , testProperty "late subscriber does not see prior votes" prop_lateSubscriber
     , testProperty "invalid vote is rejected and not published" prop_invalidVoteRejected
     , testProperty "no committee rejects vote" prop_noCommitteeRejected
@@ -174,6 +180,25 @@ prop_deduplicateVotes =
           .&&. counterexample "second add" (r2 === AlreadyKnown)
           .&&. counterexample "first vote" (received === vote)
           .&&. counterexample "second read should timeout" (isNothing mSecond === True)
+
+-- | Re-adding a vote must short-circuit as 'AlreadyKnown' even when the vote
+-- would no longer pass validation under the current committee. This pins
+-- ordering: the deduplication check runs before validation.
+prop_deduplicateBeforeValidation :: Property
+prop_deduplicateBeforeValidation =
+  forAll genCommittee $ \initialCommittee ->
+    forAll (genVoteFor initialCommittee) $ \vote ->
+      forAll genCommittee $ \otherCommittee -> property $ runSimOrThrow $ do
+        committeeVar <- atomically $ newTVar (Just initialCommittee.committee)
+        st <- newLeiosVoteState (readTVar committeeVar)
+        r1 <- addVote st vote
+        -- Swap to a fresh committee for which the vote does not validate
+        -- (different voter keys, so the signature check fails).
+        atomically $ writeTVar committeeVar (Just otherCommittee.committee)
+        r2 <- addVote st vote
+        pure $
+          counterexample "first add" (r1 === Added)
+            .&&. counterexample "second add" (r2 === AlreadyKnown)
 
 -- | A subscriber that subscribes after a vote was added should not see it.
 prop_lateSubscriber :: Property
