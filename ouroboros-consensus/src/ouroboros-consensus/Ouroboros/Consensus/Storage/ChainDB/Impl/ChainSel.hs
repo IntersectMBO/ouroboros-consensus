@@ -389,6 +389,17 @@ chainSelSync leiosDb cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = do
   for_ loeHeaders $ \hdr ->
     chainSelectionForBlock leiosDb cdb BlockCache.empty hdr noPunishment
   lift $ atomically $ putTMVar varProcessed ()
+-- Re-trigger chain selection for a CertRB whose EB closure has arrived.
+-- Remove it from the pending set so 'chainSelectionForBlock' no longer
+-- filters it out, then run chain selection for that block.
+chainSelSync leiosDb cdb@CDB{..} (ChainSelReprocessBlock hash varProcessed) = do
+  lift $
+    atomically $
+      modifyTVar cdbPendingEBs $
+        Map.filter (/= hash)
+  hdr <- lift $ VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
+  chainSelectionForBlock leiosDb cdb BlockCache.empty hdr noPunishment
+  lift $ atomically $ putTMVar varProcessed ()
 chainSelSync leiosDb cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   (isMember, invalid, curChain) <-
     lift $

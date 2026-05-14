@@ -55,6 +55,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , ChainSelMessage (..)
   , ChainSelQueue -- opaque
   , addBlockToAdd
+  , addReprocessBlock
   , addReprocessLoEBlocks
   , closeChainSelQueue
   , getChainSelMessage
@@ -553,6 +554,14 @@ data ChainSelMessage m blk
     ChainSelReprocessLoEBlocks
       -- | Used for 'ChainSelectionPromise'.
       !(StrictTMVar m ())
+  | -- | Reprocess a single block whose EB closure has arrived.
+    -- Used by the late-join mechanism: when a CertRB's missing EB
+    -- closure becomes available, this message re-triggers ChainSel
+    -- for that specific block.
+    ChainSelReprocessBlock
+      !(HeaderHash blk)
+      -- Used for 'ChainSelectionPromise'.
+      !(StrictTMVar m ())
 
 -- | Create a new 'ChainSelQueue' with the given size.
 newChainSelQueue :: (IOLike m, StandardHash blk, Typeable blk) => Word -> m (ChainSelQueue m blk)
@@ -612,6 +621,21 @@ addReprocessLoEBlocks tracer ChainSelQueue{varChainSelQueue} = do
       ChainSelReprocessLoEBlocks varProcessed
   return $ ChainSelectionPromise waitUntilRan
 
+-- | Re-trigger chain selection for a single block whose EB closure has
+-- arrived. Modelled on 'addReprocessLoEBlocks'.
+addReprocessBlock ::
+  IOLike m =>
+  ChainSelQueue m blk ->
+  HeaderHash blk ->
+  m (ChainSelectionPromise m)
+addReprocessBlock ChainSelQueue{varChainSelQueue} hash = do
+  varProcessed <- newEmptyTMVarIO
+  let waitUntilRan = atomically $ readTMVar varProcessed
+  atomically $
+    writeTBQueue varChainSelQueue $
+      ChainSelReprocessBlock hash varProcessed
+  return $ ChainSelectionPromise waitUntilRan
+
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
 -- queue is empty; in that case, reports the starvation (and its end) via the
 -- given tracer.
@@ -649,6 +673,7 @@ getChainSelMessage starvationTracer starvationVar chainSelQueue =
       traceWith starvationTracer $ ChainSelStarvation (FallingEdgeWith pt)
       atomically . writeTVar starvationVar . ChainSelStarvationEndedAt =<< getMonotonicTime
     ChainSelReprocessLoEBlocks{} -> pure ()
+    ChainSelReprocessBlock{} -> pure ()
 
 -- TODO Can't use tryReadTBQueue from io-classes because it is broken for IOSim
 -- (but not for IO). https://github.com/input-output-hk/io-sim/issues/195
@@ -670,6 +695,7 @@ closeChainSelQueue ChainSelQueue{varChainSelQueue = queue} = do
   blockAdd = \case
     ChainSelAddBlock ab -> Just ab
     ChainSelReprocessLoEBlocks _ -> Nothing
+    ChainSelReprocessBlock _ _ -> Nothing
 
 -- | To invoke when the given 'ChainSelMessage' has been processed by ChainSel.
 -- This is used to remove the respective point from the multiset of points in
@@ -683,6 +709,8 @@ processedChainSelMessage ChainSelQueue{varChainSelPoints} = \case
   ChainSelAddBlock BlockToAdd{blockToAdd = blk} ->
     modifyTVar varChainSelPoints $ MultiSet.delete (blockRealPoint blk)
   ChainSelReprocessLoEBlocks{} ->
+    pure ()
+  ChainSelReprocessBlock{} ->
     pure ()
 
 -- | Return a function to test the membership
