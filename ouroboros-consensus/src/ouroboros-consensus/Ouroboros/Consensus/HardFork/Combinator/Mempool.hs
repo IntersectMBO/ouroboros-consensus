@@ -26,6 +26,8 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
 
 import Control.Arrow ((+++))
 import Control.Monad.Except
+import Control.Monad.Trans (lift)
+import Data.Bifunctor
 import Data.Functor.Product
 import Data.Kind (Type)
 import qualified Data.Measure as Measure
@@ -96,12 +98,10 @@ instance Typeable xs => ShowProxy (GenTx (HardForkBlock xs))
 type instance ApplyTxErr (HardForkBlock xs) = HardForkApplyTxErr xs
 
 instance
-  ( CanHardFork xs
-  ) =>
+  CanHardFork xs =>
   LedgerSupportsMempool (HardForkBlock xs)
   where
-
-  data instance MempoolCache (HardForkBlock xs) = HardForkCache (State.HardForkState MempoolCache xs)
+  data MempoolCache (HardForkBlock xs) = HardForkCache (State.HardForkState MempoolCache xs)
 
   applyTx = applyHelper ModeApply
 
@@ -115,10 +115,10 @@ instance
         (WrapValidatedGenTx vtx)
         tls
 
-  forgetTx (HardForkCache cache) gtx = HardForkCache $ hcmap proxySingle (`forgetTx` undefined gtx) cache
+  removeFromCache = undefined
+  addToCache = undefined
 
 instance CanHardFork xs => LedgerSupportsTxs (HardForkBlock xs) where
-
   txForgetValidated =
     HardForkGenTx
       . OneEraGenTx
@@ -182,9 +182,9 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
 
   txMeasure ::
     forall m.
-    -- | used at least by HFC's composition logic
+    -- \| used at least by HFC's composition logic
     LedgerConfig (HardForkBlock xs) ->
-    -- | This state needs values as a transaction measure might depend on
+    -- \| This state needs values as a transaction measure might depend on
     -- those. For example in Cardano they look at the reference scripts.
     TickedLedgerState m (HardForkBlock xs) ->
     GenTx (HardForkBlock xs) ->
@@ -246,9 +246,10 @@ data ApplyResult m xs blk = ApplyResult
   , arCache :: MempoolCache blk
   }
 
-foo :: State.HardForkState (Product f g) xs
-    -> State.HardForkState h xs
-    -> State.HardForkState (Product f (Product g h)) xs
+foo ::
+  State.HardForkState (Product f g) xs ->
+  State.HardForkState h xs ->
+  State.HardForkState (Product f (Product g h)) xs
 foo = undefined
 
 -- | The shared logic between 'applyTx' and 'reapplyTx' for 'HardForkBlock'
@@ -267,7 +268,7 @@ applyHelper ::
   Ticked LedgerState m (HardForkBlock xs) ->
   MempoolCache (HardForkBlock xs) ->
   ExceptT
-    (HardForkApplyTxErr xs)
+    (HardForkApplyTxErr xs, MempoolCache (HardForkBlock xs))
     m
     ( Ticked LedgerState m (HardForkBlock xs)
     , Validated (GenTx (HardForkBlock xs))
@@ -280,12 +281,15 @@ applyHelper
   slot
   tx
   (TickedHardForkLedgerState transition hardForkState)
-  (HardForkCache cache) =
+  cc@(HardForkCache cache) =
     case matchPolyTx injs (modeGetTx tx) hardForkState of
-      Left mismatch ->
+      Left mismatch -> do
+        cache' <- lift $ removeFromCache (modeGetTxId tx) cc
         throwError $
-          HardForkApplyTxErrWrongEra . MismatchEraInfo $
-            Match.bihcmap proxySingle singleEraInfo ledgerInfo mismatch
+          ( HardForkApplyTxErrWrongEra . MismatchEraInfo $
+              Match.bihcmap proxySingle singleEraInfo ledgerInfo mismatch
+          , cache'
+          )
       Right matched ->
         -- We are updating the ticked ledger state by applying a transaction,
         -- but for the HFC that ledger state contains a bundled
@@ -331,6 +335,11 @@ applyHelper
         modeGetInjection
         (InPairs.requiringBoth cfgs hardForkInjectTxs)
 
+    modeGetTxId :: txIn (HardForkBlock xs) -> GenTxId (HardForkBlock xs)
+    modeGetTxId = case mode of
+      ModeApply -> txId
+      ModeReapply -> txId . txForgetValidated . unwrapValidatedGenTx
+
     modeGetTx :: txIn (HardForkBlock xs) -> NS txIn xs
     modeGetTx = case mode of
       ModeApply ->
@@ -355,13 +364,13 @@ applyHelper
       Index xs blk ->
       WrapLedgerConfig blk ->
       Product txIn (Product (Ticked LedgerState m) MempoolCache) blk ->
-      ( ExceptT (HardForkApplyTxErr xs) m
+      ( ExceptT (HardForkApplyTxErr xs, MempoolCache (HardForkBlock xs)) m
           :.: ApplyResult m xs
       )
         blk
     modeApplyCurrent index cfg (Pair tx' (Pair st cache')) =
       Comp $
-        withExceptT (injectApplyTxErr index) $
+        withExceptT (bimap (injectApplyTxErr index) undefined) $
           do
             let lcfg = unwrapLedgerConfig cfg
             case mode of

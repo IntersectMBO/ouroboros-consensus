@@ -21,16 +21,15 @@ implGetSnapshotFor ::
   SlotNo ->
   -- | The ledger state at which we want the
   -- snapshot, ticked to @slot@.
-  TickedLedgerState blk DiffMK ->
+  TickedLedgerState m blk ->
   -- | A function that returns values corresponding to the given keys for
   -- the unticked ledger state.
-  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
   m (MempoolSnapshot blk)
-implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
+implGetSnapshotFor mpEnv slot ticked = do
   is <- atomically $ readTMVar istate
   let txs =
         [ TxSeq.TxTicket tx tn tz
-        | TxSeq.TxTicket (ValidatedTxWithDiffs tx _) tn tz <- TxSeq.toList $ isTxs is
+        | TxSeq.TxTicket (ValidatedTxWithDiffs tx) tn tz <- TxSeq.toList $ isTxs is
         ]
   if pointHash (isTip is) == castHash (getTipHash ticked)
     && isSlotNo is == slot
@@ -39,17 +38,24 @@ implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
       -- have cached, then just return it.
       pure $ snapshotFromValidTxs txs (castPoint $ isTip is) (isSlotNo is)
     else do
-      values <-
+      _values <-
         if pointHash (isTip is) == castHash (getTipHash ticked)
           -- We are looking for a snapshot at the same state ticked
           -- to a different slot, so we can reuse the cached values
-          then pure (isTxValues is)
+          then pure (isCache is)
           -- We are looking for a snapshot at a different state, so we
           -- need to read the values from the ledgerdb.
-          else readUntickedTables (isTxKeys is)
-      pure $ computeSnapshot cfg slot ticked values txs
+          else fillCache txs ticked (isCache is)
+      computeSnapshot cfg slot ticked txs
  where
   MempoolEnv
     { mpEnvStateVar = istate
     , mpEnvLedgerCfg = cfg
     } = mpEnv
+
+fillCache ::
+  [TxSeq.TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
+  TickedLedgerState m blk ->
+  MempoolCache blk ->
+  m (MempoolCache blk)
+fillCache = undefined

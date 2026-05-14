@@ -11,7 +11,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-orphans -Wno-unused-imports -Wno-unused-top-binds #-}
 
 module Ouroboros.Consensus.Byron.ByronHFC
   ( ByronBlockHFC
@@ -65,12 +65,12 @@ instance ImmutableEraParams ByronBlock where
   immutableEraParams cfg =
     byronEraParamsNeverHardForks (byronGenesisConfig (configBlock cfg))
 
-instance NoHardForks ByronBlock where
-  toPartialLedgerConfig _ cfg =
-    ByronPartialLedgerConfig
-      { byronLedgerConfig = cfg
-      , byronTriggerHardFork = TriggerHardForkNotDuringThisExecution
-      }
+-- instance NoHardForks ByronBlock where
+--   toPartialLedgerConfig _ cfg =
+--     ByronPartialLedgerConfig
+--       { byronLedgerConfig = cfg
+--       , byronTriggerHardFork = TriggerHardForkNotDuringThisExecution
+--       }
 
 {-------------------------------------------------------------------------------
   SupportedNetworkProtocolVersion instance
@@ -94,23 +94,23 @@ instance SupportedNetworkProtocolVersion ByronBlockHFC where
   SerialiseHFC instance
 -------------------------------------------------------------------------------}
 
-instance SerialiseConstraintsHFC ByronBlock
+-- instance SerialiseConstraintsHFC ByronBlock
 
 -- | Forward to the ByronBlock instance, this means we don't add an era
 -- wrapper around blocks on disk. This makes sure we're compatible with the
 -- existing Byron blocks.
-instance SerialiseHFC '[ByronBlock] where
-  encodeDiskHfcBlock (DegenCodecConfig ccfg) (DegenBlock b) =
-    encodeDisk ccfg b
-  decodeDiskHfcBlock (DegenCodecConfig ccfg) =
-    (fmap (fmap DegenBlock)) <$> decodeDisk ccfg
-  reconstructHfcPrefixLen _ =
-    reconstructPrefixLen (Proxy @(Header ByronBlock))
-  reconstructHfcNestedCtxt _ prefix blockSize =
-    mapSomeNestedCtxt NCZ $
-      reconstructNestedCtxt (Proxy @(Header ByronBlock)) prefix blockSize
-  getHfcBinaryBlockInfo (DegenBlock b) =
-    getBinaryBlockInfo b
+-- instance SerialiseHFC '[ByronBlock] where
+--   encodeDiskHfcBlock (DegenCodecConfig ccfg) (DegenBlock b) =
+--     encodeDisk ccfg b
+--   decodeDiskHfcBlock (DegenCodecConfig ccfg) =
+--     (fmap (fmap DegenBlock)) <$> decodeDisk ccfg
+--   reconstructHfcPrefixLen _ =
+--     reconstructPrefixLen (Proxy @(Header ByronBlock))
+--   reconstructHfcNestedCtxt _ prefix blockSize =
+--     mapSomeNestedCtxt NCZ $
+--       reconstructNestedCtxt (Proxy @(Header ByronBlock)) prefix blockSize
+--   getHfcBinaryBlockInfo (DegenBlock b) =
+--     getBinaryBlockInfo b
 
 {-------------------------------------------------------------------------------
   Figure out the transition point for Byron
@@ -162,7 +162,7 @@ byronTransition ::
   PartialLedgerConfig ByronBlock ->
   -- | Shelley major protocol version
   Word16 ->
-  LedgerState ByronBlock mk ->
+  LedgerState m ByronBlock ->
   Maybe EpochNo
 byronTransition partialConfig shelleyMajorVersion state =
   takeAny
@@ -171,7 +171,7 @@ byronTransition partialConfig shelleyMajorVersion state =
     $ state
  where
   ByronPartialLedgerConfig lConfig _ = partialConfig
-  ByronTransitionInfo transitionInfo = byronLedgerTransition state
+  ByronTransitionInfo transitionInfo = pbyronLedgerTransition $ getPureLedgerState state
 
   k = CC.Genesis.gdK $ CC.Genesis.configGenesisData lConfig
 
@@ -223,7 +223,7 @@ byronTransition partialConfig shelleyMajorVersion state =
   isReallyStable (BlockNo bno) = distance >= CC.unBlockCount k
    where
     distance :: Word64
-    distance = case byronLedgerTipBlockNo state of
+    distance = case pbyronLedgerTipBlockNo $ getPureLedgerState state of
       Origin -> bno + 1
       NotOrigin (BlockNo tip) -> tip - bno
 
@@ -236,21 +236,21 @@ byronTransition partialConfig shelleyMajorVersion state =
   SingleEraBlock Byron
 -------------------------------------------------------------------------------}
 
-instance SingleEraBlock ByronBlock where
-  singleEraTransition pcfg _eraParams _eraStart ledgerState =
-    case byronTriggerHardFork pcfg of
-      TriggerHardForkNotDuringThisExecution -> Nothing
-      TriggerHardForkAtEpoch epoch -> Just epoch
-      TriggerHardForkAtVersion shelleyMajorVersion ->
-        byronTransition
-          pcfg
-          shelleyMajorVersion
-          ledgerState
+-- instance SingleEraBlock ByronBlock where
+--   singleEraTransition pcfg _eraParams _eraStart ledgerState =
+--     case byronTriggerHardFork pcfg of
+--       TriggerHardForkNotDuringThisExecution -> Nothing
+--       TriggerHardForkAtEpoch epoch -> Just epoch
+--       TriggerHardForkAtVersion shelleyMajorVersion ->
+--         byronTransition
+--           pcfg
+--           shelleyMajorVersion
+--           ledgerState
 
-  singleEraInfo _ =
-    SingleEraInfo
-      { singleEraName = "Byron"
-      }
+--   singleEraInfo _ =
+--     SingleEraInfo
+--       { singleEraName = "Byron"
+--       }
 
 instance PBftCrypto bc => HasPartialConsensusConfig (PBft bc)
 
@@ -289,42 +289,42 @@ instance SerialiseNodeToClient ByronBlock ByronPartialLedgerConfig where
   Canonical TxIn
 -------------------------------------------------------------------------------}
 
-instance HasCanonicalTxIn '[ByronBlock] where
-  newtype CanonicalTxIn '[ByronBlock] = ByronHFCTxIn
-    { getByronHFCTxIn :: Void
-    }
-    deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
+-- instance HasCanonicalTxIn '[ByronBlock] where
+--   newtype CanonicalTxIn '[ByronBlock] = ByronHFCTxIn
+--     { getByronHFCTxIn :: Void
+--     }
+--     deriving stock (Show, Eq, Ord)
+--     deriving newtype (NoThunks, MemPack)
 
-  injectCanonicalTxIn IZ key = absurd key
-  injectCanonicalTxIn (IS idx') _ = case idx' of {}
+--   injectCanonicalTxIn IZ key = absurd key
+--   injectCanonicalTxIn (IS idx') _ = case idx' of {}
 
-  ejectCanonicalTxIn _ key = absurd $ getByronHFCTxIn key
+--   ejectCanonicalTxIn _ key = absurd $ getByronHFCTxIn key
 
-instance HasHardForkTxOut '[ByronBlock] where
-  type HardForkTxOut '[ByronBlock] = Void
-  injectHardForkTxOut IZ txout = absurd txout
-  injectHardForkTxOut (IS idx') _ = case idx' of {}
-  ejectHardForkTxOut IZ txout = absurd txout
-  ejectHardForkTxOut (IS idx') _ = case idx' of {}
+-- instance HasHardForkTxOut '[ByronBlock] where
+--   type HardForkTxOut '[ByronBlock] = Void
+--   injectHardForkTxOut IZ txout = absurd txout
+--   injectHardForkTxOut (IS idx') _ = case idx' of {}
+--   ejectHardForkTxOut IZ txout = absurd txout
+--   ejectHardForkTxOut (IS idx') _ = case idx' of {}
 
-deriving via
-  Void
-  instance
-    IndexedMemPack LedgerState (HardForkBlock '[ByronBlock]) Void
+-- deriving via
+--   Void
+--   instance
+--     IndexedMemPack LedgerState (HardForkBlock '[ByronBlock]) Void
 
-instance BlockSupportsHFLedgerQuery '[ByronBlock] where
-  answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}
-  answerBlockQueryHFLookup (IS is) _cfg _q _dlv = case is of {}
+-- instance BlockSupportsHFLedgerQuery '[ByronBlock] where
+--   answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}
+--   answerBlockQueryHFLookup (IS is) _cfg _q _dlv = case is of {}
 
-  answerBlockQueryHFTraverse IZ _cfg (q :: BlockQuery ByronBlock QFTraverseTables result) _dlv = case q of {}
-  answerBlockQueryHFTraverse (IS is) _cfg _q _dlv = case is of {}
+--   answerBlockQueryHFTraverse IZ _cfg (q :: BlockQuery ByronBlock QFTraverseTables result) _dlv = case q of {}
+--   answerBlockQueryHFTraverse (IS is) _cfg _q _dlv = case is of {}
 
-  queryLedgerGetTraversingFilter IZ (q :: BlockQuery ByronBlock QFTraverseTables result) = case q of {}
-  queryLedgerGetTraversingFilter (IS is) _q = case is of {}
+--   queryLedgerGetTraversingFilter IZ (q :: BlockQuery ByronBlock QFTraverseTables result) = case q of {}
+--   queryLedgerGetTraversingFilter (IS is) _q = case is of {}
 
-instance SerializeTablesWithHint LedgerState (HardForkBlock '[ByronBlock]) where
-  decodeTablesWithHint _ = do
-    _ <- CBOR.decodeMapLen
-    pure (LedgerTables $ ValuesMK Map.empty)
-  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
+-- instance SerializeTablesWithHint LedgerState (HardForkBlock '[ByronBlock]) where
+--   decodeTablesWithHint _ = do
+--     _ <- CBOR.decodeMapLen
+--     pure (LedgerTables $ ValuesMK Map.empty)
+--   encodeTablesWithHint _ _ = CBOR.encodeMapLen 0

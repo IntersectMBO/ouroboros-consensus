@@ -7,6 +7,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork (CanHardFork (..)) where
 
 import Data.Measure (Measure)
+import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Functors (Product2)
 import Data.SOP.InPairs (InPairs, RequiringBoth)
@@ -19,6 +20,7 @@ import Data.Typeable
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
+import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.HardFork.Combinator.Translation
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.TypeFamilyWrappers
@@ -37,6 +39,16 @@ class
   , NoThunks (HardForkTxMeasure xs)
   , Show (HardForkTxMeasure xs)
   , TxMeasureMetrics (HardForkTxMeasure xs)
+  , --
+    All (Compose Show (K Past)) xs
+  , All (Compose Show (Current WrapChainDepState)) xs
+  , All (Compose Show (Current WrapLedgerView)) xs
+  , All (Compose Eq (K Past)) xs
+  , All (Compose Eq (Current WrapChainDepState)) xs
+  , All (Compose Eq (Current WrapLedgerView)) xs
+  , All (Compose NoThunks (K Past)) xs
+  , All (Compose NoThunks (Current WrapChainDepState)) xs
+  , All (Compose NoThunks (Current WrapLedgerView)) xs
   ) =>
   CanHardFork xs
   where

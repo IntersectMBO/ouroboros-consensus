@@ -16,7 +16,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
+{-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions -Wno-unused-imports #-}
 #if __GLASGOW_HASKELL__ < 908
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
 #endif
@@ -34,7 +34,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Query
     -- * BlockSupportsHFLedgerQuery instances
   , answerShelleyLookupQueries
   , answerShelleyTraversingQueries
-  , shelleyQFTraverseTablesPredicate
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
@@ -539,11 +538,11 @@ instance
     -- data family, and the 'ShelleyBasedEra' constraint.
     lst = ledgerState ext
     hst = headerState ext
-    st = shelleyLedgerState lst
+    st = shelleyLedgerState $ shelleyPureLedger lst
 
-  answerBlockQueryLookup = answerShelleyLookupQueries id id coerce
+  answerBlockQueryLookup = answerShelleyLookupQueries
 
-  answerBlockQueryTraverse = answerShelleyTraversingQueries id coerce shelleyQFTraverseTablesPredicate
+  answerBlockQueryTraverse = answerShelleyTraversingQueries
 
   -- \| Is the given query supported by the given 'ShelleyNodeToClientVersion'?
   blockQueryIsSupportedOnVersion = \case
@@ -1157,23 +1156,15 @@ genesisConfigEnDecoding v
 -------------------------------------------------------------------------------}
 
 answerShelleyLookupQueries ::
-  forall proto era m result blk.
+  forall proto era m result.
   ( Monad m
   , ShelleyCompatible proto era
   ) =>
-  -- | Inject ledger tables
-  ( LedgerTables (ShelleyBlock proto era) KeysMK ->
-    LedgerTables blk KeysMK
-  ) ->
-  -- | Eject TxOut
-  (TxOut blk -> LC.TxOut era) ->
-  -- | Eject TxIn
-  (TxIn blk -> SL.TxIn) ->
   ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFLookupTables result ->
-  ReadOnlyForker' m blk ->
+  ExtLedgerState m (ShelleyBlock proto era) ->
   m result
-answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
+answerShelleyLookupQueries cfg q forker =
   case q of
     GetUTxOByTxIn txins ->
       answerGetUtxOByTxIn txins
@@ -1183,41 +1174,56 @@ answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
       -- both client and server are running the same version; cf. the
       -- @GetCBOR@ Haddocks.
       mkSerialised (encodeShelleyResult maxBound q')
-        <$> answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q' forker
+        <$> answerShelleyLookupQueries cfg q' forker
  where
   answerGetUtxOByTxIn ::
     Set.Set SL.TxIn ->
     m (SL.UTxO era)
   answerGetUtxOByTxIn txins = do
-    LedgerTables (ValuesMK values) <-
-      LedgerDB.roforkerReadTables
-        forker
-        (injTables (LedgerTables $ KeysMK $ coerceSet txins))
+    SL.UTxO values <-
+      readTxOuts
+        (shelleyLedgerTables $ ledgerState forker)
+        txins
     pure $
       SL.UTxO $
-        Map.mapKeys ejTxIn $
-          Map.mapMaybeWithKey
-            ( \k v ->
-                if ejTxIn k `Set.member` txins
-                  then Just $ ejTxOut v
-                  else Nothing
-            )
-            values
+        Map.filterWithKey
+          (\k _ -> k `Set.member` txins)
+          values
 
-shelleyQFTraverseTablesPredicate ::
-  forall proto era proto' era' result.
-  (ShelleyBasedEra era, ShelleyBasedEra era') =>
+-- shelleyQFTraverseTablesPredicate ::
+--   forall proto era proto' era' result.
+--   (ShelleyBasedEra era, ShelleyBasedEra era') =>
+--   BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
+--   TxOut (ShelleyBlock proto' era') ->
+--   Bool
+-- shelleyQFTraverseTablesPredicate q = case q of
+--   GetUTxOByAddress addr -> filterGetUTxOByAddressOne addr
+--   GetUTxOWhole -> const True
+--   GetCBOR q' -> shelleyQFTraverseTablesPredicate q'
+--  where
+
+answerShelleyTraversingQueries ::
+  forall proto era m result.
+  ShelleyCompatible proto era =>
+  Monad m =>
+  ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
-  TxOut (ShelleyBlock proto' era') ->
-  Bool
-shelleyQFTraverseTablesPredicate q = case q of
-  GetUTxOByAddress addr -> filterGetUTxOByAddressOne addr
-  GetUTxOWhole -> const True
-  GetCBOR q' -> shelleyQFTraverseTablesPredicate q'
+  ExtLedgerState m (ShelleyBlock proto era) ->
+  m result
+answerShelleyTraversingQueries cfg q forker = case q of
+  GetUTxOByAddress addr -> loop (filterGetUTxOByAddressOne addr) NoPreviousQuery emptyUtxo
+  GetUTxOWhole -> loop (const True) NoPreviousQuery emptyUtxo
+  GetCBOR q' ->
+    -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
+    -- as the @GetCBOR@ query already is about opportunistically assuming
+    -- both client and server are running the same version; cf. the
+    -- @GetCBOR@ Haddocks.
+    mkSerialised (encodeShelleyResult maxBound q')
+      <$> answerShelleyTraversingQueries cfg q' forker
  where
   filterGetUTxOByAddressOne ::
     Set Addr ->
-    LC.TxOut era' ->
+    LC.TxOut era ->
     Bool
   filterGetUTxOByAddressOne addrs =
     let
@@ -1229,60 +1235,19 @@ shelleyQFTraverseTablesPredicate q = case q of
      in
       checkAddr
 
-answerShelleyTraversingQueries ::
-  forall proto era m result blk.
-  ( ShelleyCompatible proto era
-  , Ord (TxIn blk)
-  , Eq (TxOut blk)
-  , MemPack (TxIn blk)
-  , IndexedMemPack LedgerState blk (TxOut blk)
-  ) =>
-  Monad m =>
-  -- | Eject TxOut
-  (TxOut blk -> LC.TxOut era) ->
-  -- | Eject TxIn
-  (TxIn blk -> SL.TxIn) ->
-  -- | Get filter by query
-  ( forall result'.
-    BlockQuery (ShelleyBlock proto era) QFTraverseTables result' ->
-    TxOut blk ->
-    Bool
-  ) ->
-  ExtLedgerCfg (ShelleyBlock proto era) ->
-  BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
-  ReadOnlyForker' m blk ->
-  m result
-answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
-  GetUTxOByAddress{} -> loop (filt q) NoPreviousQuery emptyUtxo
-  GetUTxOWhole -> loop (filt q) NoPreviousQuery emptyUtxo
-  GetCBOR q' ->
-    -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
-    -- as the @GetCBOR@ query already is about opportunistically assuming
-    -- both client and server are running the same version; cf. the
-    -- @GetCBOR@ Haddocks.
-    mkSerialised (encodeShelleyResult maxBound q')
-      <$> answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q' forker
- where
   emptyUtxo = SL.UTxO Map.empty
 
   combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
 
   partial ::
-    (TxOut blk -> Bool) ->
-    LedgerTables blk ValuesMK ->
+    (LC.TxOut era -> Bool) ->
+    SL.UTxO era ->
     Map SL.TxIn (LC.TxOut era)
-  partial queryPredicate (LedgerTables (ValuesMK vs)) =
-    Map.mapKeys ejTxIn $
-      Map.mapMaybeWithKey
-        ( \_k v ->
-            if queryPredicate v
-              then Just $ ejTxOut v
-              else Nothing
-        )
-        vs
+  partial queryPredicate (SL.UTxO vs) =
+    Map.filter queryPredicate vs
 
   loop queryPredicate !prev !acc = do
-    (extValues, k) <- LedgerDB.roforkerRangeReadTables forker prev
+    (extValues, k) <- readTxOutsRange (shelleyLedgerTables $ ledgerState forker) prev
     case k of
       Nothing -> pure acc
       Just k' ->

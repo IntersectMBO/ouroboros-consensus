@@ -39,8 +39,7 @@ import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-  ( LedgerSupportsMempool (..)
-  , txForgetValidated
+  ( txForgetValidated
   )
 import Ouroboros.Consensus.Protocol.PBFT
 
@@ -52,7 +51,7 @@ forgeByronBlock ::
   -- | Current slot number
   SlotNo ->
   -- | Current ledger
-  TickedLedgerState ByronBlock mk ->
+  TickedLedgerState m ByronBlock ->
   -- | Txs to include
   [Validated (GenTx ByronBlock)] ->
   -- | Leader proof ('IsLeader')
@@ -137,7 +136,7 @@ forgeRegularBlock ::
   -- | Current slot number
   SlotNo ->
   -- | Current ledger
-  TickedLedgerState ByronBlock mk ->
+  TickedLedgerState m ByronBlock ->
   -- | Txs to include
   [Validated (GenTx ByronBlock)] ->
   -- | Leader proof ('IsLeader')

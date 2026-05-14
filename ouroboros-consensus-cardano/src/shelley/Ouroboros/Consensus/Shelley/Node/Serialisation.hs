@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -37,7 +38,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables (EmptyMK)
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.Praos (PraosState)
@@ -87,12 +87,12 @@ instance
 
 instance
   ShelleyCompatible proto era =>
-  EncodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era) EmptyMK)
+  EncodeDisk (ShelleyBlock proto era) (PureLedgerState (ShelleyBlock proto era))
   where
   encodeDisk _ = encodeShelleyLedgerState
 instance
   ShelleyCompatible proto era =>
-  DecodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era) EmptyMK)
+  DecodeDisk (ShelleyBlock proto era) (PureLedgerState (ShelleyBlock proto era))
   where
   decodeDisk _ = decodeShelleyLedgerState
 

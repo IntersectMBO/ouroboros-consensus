@@ -16,6 +16,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
     HardForkBlock (..)
   , HardForkProtocol
   , LedgerState (..)
+  , PureLedgerState (..)
 
     -- * Config
   , BlockConfig (..)
@@ -75,6 +76,10 @@ instance Typeable xs => ShowProxy (HardForkBlock xs)
 
 type instance BlockProtocol (HardForkBlock xs) = HardForkProtocol xs
 type instance HeaderHash (HardForkBlock xs) = OneEraHash xs
+
+newtype instance PureLedgerState (HardForkBlock xs) = PureHardForkLedgerState
+  { pureLedgerStatePerEra :: HardForkState PureLedgerState xs
+  }
 
 newtype instance LedgerState m (HardForkBlock xs) = HardForkLedgerState
   { hardForkLedgerStatePerEra :: HardForkState (LedgerState m) xs

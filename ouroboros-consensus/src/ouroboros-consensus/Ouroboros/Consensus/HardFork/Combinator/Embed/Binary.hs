@@ -11,7 +11,6 @@ import Control.Exception (assert)
 import qualified Control.Tracer as Tracer
 import Data.Align (alignWith)
 import Data.SOP.Counting (exactlyTwo)
-import Data.SOP.Functors (Flip (..))
 import Data.SOP.OptNP (NonEmptyOptNP, OptNP (..))
 import Data.SOP.Strict (NP (..))
 import Data.Text (Text)
@@ -22,7 +21,6 @@ import Ouroboros.Consensus.HardFork.Combinator
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
-import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.Abstract (protocolSecurityParam)
 import Ouroboros.Consensus.TypeFamilyWrappers
@@ -99,16 +97,13 @@ protocolInfoBinary
               , topLevelConfigCheckpoints = emptyCheckpointsMap
               }
         , pInfoInitLedger =
-            ExtLedgerState
-              { ledgerState =
-                  HardForkLedgerState $
-                    initHardForkState (Flip initLedgerState1)
-              , headerState =
-                  genesisHeaderState $
-                    initHardForkState $
-                      WrapChainDepState $
-                        headerStateChainDep initHeaderState1
-              }
+            PureHardForkLedgerState $
+              initHardForkState initLedgerState1
+        , pInfoInitHeader =
+            genesisHeaderState $
+              initHardForkState $
+                WrapChainDepState $
+                  headerStateChainDep initHeaderState1
         }
     , \tr -> alignWith alignBlockForging <$> blockForging1 tr <*> blockForging2 tr
     )
@@ -122,11 +117,8 @@ protocolInfoBinary
           , topLevelConfigCodec = codecConfig1
           , topLevelConfigStorage = storageConfig1
           }
-      , pInfoInitLedger =
-        ExtLedgerState
-          { ledgerState = initLedgerState1
-          , headerState = initHeaderState1
-          }
+      , pInfoInitLedger = initLedgerState1
+      , pInfoInitHeader = initHeaderState1
       } = protocolInfo1
 
     ProtocolInfo

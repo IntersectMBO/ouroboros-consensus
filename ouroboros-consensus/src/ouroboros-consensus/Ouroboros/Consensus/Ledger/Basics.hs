@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Ledger.Basics
     LedgerCfg
   , LedgerState
   , TickedLedgerState
+  , PureLedgerState
   , LedgerKind
   , CloseLedgerHandles (..)
   , DuplicateLedgerHandles (..)
@@ -244,6 +245,8 @@ type LedgerKind = (Type -> Type) -> Type -> Type
 -- 'Ouroboros.Consensus.Ledger.Abstract.ApplyBlock').
 type LedgerState :: LedgerKind
 data family LedgerState m blk
+
+data family PureLedgerState blk
 
 type TickedLedgerState m blk = Ticked LedgerState m blk
 

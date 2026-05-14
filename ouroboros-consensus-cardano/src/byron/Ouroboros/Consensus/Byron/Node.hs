@@ -48,7 +48,6 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -209,13 +208,11 @@ protocolInfoByron
             , topLevelConfigCheckpoints = emptyCheckpointsMap
             }
       , pInfoInitLedger =
-          ExtLedgerState
-            { -- Important: don't pass the compacted genesis config to
-              -- 'initByronLedgerState', it needs the full one, including the AVVM
-              -- balances.
-              ledgerState = initByronLedgerState genesisConfig Nothing
-            , headerState = genesisHeaderState S.empty
-            }
+          -- Important: don't pass the compacted genesis config to
+          -- 'initByronLedgerState', it needs the full one, including the AVVM
+          -- balances.
+          initByronLedgerState genesisConfig Nothing
+      , pInfoInitHeader = genesisHeaderState S.empty
       }
    where
     compactedGenesisConfig = compactGenesisConfig genesisConfig

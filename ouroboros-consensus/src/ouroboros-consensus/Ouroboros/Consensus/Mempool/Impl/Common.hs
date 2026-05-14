@@ -313,7 +313,7 @@ validateNewTransaction ::
     )
 validateNewTransaction cfg wti tx txsz st is =
   runExceptT (applyTx cfg wti isSlotNo tx st isCache) <&> \case
-    Left err -> (Left err, \_dur -> is)
+    Left (err, cache') -> (Left err, \_dur -> is{isCache = cache'})
     Right (st', vtx, cache') ->
       ( Right vtx
       , \dur ->
@@ -397,14 +397,15 @@ computeSnapshot ::
   m (MempoolSnapshot blk)
 computeSnapshot cfg slot st txTickets = do
   let inputTxs = map wrap txTickets
-  pure $ snapshotFromValidTxs
-        ( map unwrap $
-            undefined -- validatedTxs $
-              -- reapplyTxs @blk @Discard cfg slot inputTxs $
-              --  applyMempoolDiffs values inputKeys st
-        )
-        (castPoint $ getTip st)
-        slot
+  pure $
+    snapshotFromValidTxs
+      ( map unwrap $
+          undefined -- validatedTxs $
+          -- reapplyTxs @blk @Discard cfg slot inputTxs $
+          --  applyMempoolDiffs values inputKeys st
+      )
+      (castPoint $ getTip st)
+      slot
  where
   fst3 (x, _, _) = x
   wrap = (\(TxTicket tx tk tz) -> (tx, (), (tk, tz)))

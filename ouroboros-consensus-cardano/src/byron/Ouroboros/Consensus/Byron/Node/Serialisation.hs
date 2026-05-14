@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Byron.Node.Serialisation () where
@@ -53,9 +54,9 @@ instance EncodeDisk ByronBlock ByronBlock where
 instance DecodeDisk ByronBlock (Lazy.ByteString -> Either DecoderError ByronBlock) where
   decodeDisk ccfg = (Right .) <$> decodeByronBlock (getByronEpochSlots ccfg)
 
-instance EncodeDisk ByronBlock (LedgerState ByronBlock mk) where
+instance EncodeDisk ByronBlock (PureLedgerState ByronBlock) where
   encodeDisk _ = encodeByronLedgerState
-instance DecodeDisk ByronBlock (LedgerState ByronBlock mk) where
+instance DecodeDisk ByronBlock (PureLedgerState ByronBlock) where
   decodeDisk _ = decodeByronLedgerState
 
 -- | @'ChainDepState' ('BlockProtocol' 'ByronBlock')@

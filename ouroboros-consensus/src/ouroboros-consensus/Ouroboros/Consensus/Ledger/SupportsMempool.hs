@@ -146,7 +146,10 @@ class
     -- | Contain only the values for the tx to apply
     TickedLedgerState m blk ->
     MempoolCache blk ->
-    ExceptT (ApplyTxErr blk) m (TickedLedgerState m blk, Validated (GenTx blk), MempoolCache blk)
+    ExceptT
+      (ApplyTxErr blk, MempoolCache blk)
+      m
+      (TickedLedgerState m blk, Validated (GenTx blk), MempoolCache blk)
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -167,9 +170,10 @@ class
     -- | Contains at least the values for the tx to reapply
     TickedLedgerState m blk ->
     MempoolCache blk ->
-    ExceptT (ApplyTxErr blk) m (TickedLedgerState m blk)
+    ExceptT (ApplyTxErr blk, MempoolCache blk) m (TickedLedgerState m blk)
 
-  forgetTx :: MempoolCache blk -> GenTx blk -> MempoolCache blk
+  removeFromCache :: IOLike m => GenTxId blk -> MempoolCache blk -> m (MempoolCache blk)
+  addToCache :: IOLike m => GenTx blk -> LedgerState m blk -> MempoolCache blk -> m (MempoolCache blk)
 
 -- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error

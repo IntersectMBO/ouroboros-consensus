@@ -27,7 +27,6 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol (..)
   )
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract (translateLedgerView)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
@@ -61,7 +60,7 @@ instance
               , outsideForecastFor = for
               }
    where
-    ShelleyLedgerState{shelleyLedgerState} = ledgerState
+    ShelleyLedgerState PureShelleyLedgerState{shelleyLedgerState} _ = ledgerState
     globals = shelleyLedgerGlobals cfg
     swindow = SL.stabilityWindow globals
     at = ledgerTipSlot ledgerState
@@ -102,17 +101,17 @@ instance
   -- view. Since we can convert them, we piggy-back on this to get a Praos
   -- ledger view. Ultimately, we will want to liberalise the ledger code
   -- slightly.
-  ledgerViewForecastAt cfg st =
+  ledgerViewForecastAt cfg (ShelleyLedgerState st h) =
     mapForecast (translateLedgerView (Proxy @(TPraos crypto, Praos crypto))) $
-      ledgerViewForecastAt @(ShelleyBlock (TPraos crypto) era) cfg st'
+      ledgerViewForecastAt @(ShelleyBlock (TPraos crypto) era) cfg (ShelleyLedgerState st' h)
    where
-    st' :: LedgerState (ShelleyBlock (TPraos crypto) era) EmptyMK
+    st' :: PureLedgerState (ShelleyBlock (TPraos crypto) era)
     st' =
-      ShelleyLedgerState
+      PureShelleyLedgerState
         { shelleyLedgerTip = coerceTip <$> shelleyLedgerTip st
         , shelleyLedgerState = shelleyLedgerState st
         , shelleyLedgerTransition = shelleyLedgerTransition st
-        , shelleyLedgerTables = emptyLedgerTables
         , shelleyLedgerLatestPerasCertRound = shelleyLedgerLatestPerasCertRound st
         }
+
     coerceTip (ShelleyTip slot block hash) = ShelleyTip slot block (coerce hash)

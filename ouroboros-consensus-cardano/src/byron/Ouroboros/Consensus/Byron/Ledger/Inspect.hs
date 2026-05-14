@@ -97,7 +97,7 @@ data UpdateState
 -- | All proposal updates, from new to old
 protocolUpdates ::
   LedgerConfig ByronBlock ->
-  LedgerState ByronBlock mk ->
+  LedgerState m ByronBlock ->
   [ProtocolUpdate]
 protocolUpdates genesis st =
   concat
@@ -142,7 +142,7 @@ protocolUpdates genesis st =
   candidates :: [U.E.CandidateProtocolUpdate]
   endorsements :: Map U.ProtocolVersion (Set CC.KeyHash)
 
-  updState = CC.cvsUpdateState $ byronLedgerState st
+  updState = CC.cvsUpdateState $ pbyronLedgerState $ getPureLedgerState st
   registered = U.I.registeredProtocolUpdateProposals updState
   registeredAt = U.I.proposalRegistrationSlot updState
   confirmed = U.I.confirmedProposals updState

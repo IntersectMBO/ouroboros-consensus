@@ -34,7 +34,6 @@ import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Counting (Exactly (..))
 import Data.SOP.Dict (Dict (..))
-import Data.SOP.Functors (Flip (..))
 import qualified Data.SOP.InPairs as InPairs
 import Data.SOP.Index
 import Data.SOP.Strict
@@ -49,12 +48,12 @@ import Ouroboros.Consensus.HeaderValidation
   , HeaderState (..)
   , genesisHeaderState
   )
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util
+import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   Injection for a single block into a HardForkBlock
@@ -63,7 +62,7 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 class Inject f where
   inject ::
     forall x xs.
-    (CanHardFork xs, HasCanonicalTxIn xs, HasHardForkTxOut xs) =>
+    CanHardFork xs =>
     InjectionIndex xs x ->
     f x ->
     f (HardForkBlock xs)
@@ -72,8 +71,6 @@ inject' ::
   forall f a b x xs.
   ( Inject f
   , CanHardFork xs
-  , HasCanonicalTxIn xs
-  , HasHardForkTxOut xs
   , Coercible a (f x)
   , Coercible b (f (HardForkBlock xs))
   ) =>
@@ -227,9 +224,9 @@ instance Inject AnnTip where
   inject =
     (undistribAnnTip .: injectNS' (Proxy @AnnTip)) . forgetInjectionIndex
 
-instance Inject (Flip LedgerState mk) where
+instance Inject (LedgerState m) where
   inject iidx =
-    Flip . HardForkLedgerState . injectHardForkState iidx
+    HardForkLedgerState . injectHardForkState iidx
 
 instance Inject WrapChainDepState where
   inject = coerce .: injectHardForkState
@@ -244,13 +241,12 @@ instance Inject HeaderState where
               WrapChainDepState headerStateChainDep
       }
 
-instance Inject (Flip ExtLedgerState mk) where
-  inject iidx (Flip ExtLedgerState{..}) =
-    Flip $
-      ExtLedgerState
-        { ledgerState = unFlip $ inject iidx (Flip ledgerState)
-        , headerState = inject iidx headerState
-        }
+instance Inject (ExtLedgerState m) where
+  inject iidx ExtLedgerState{..} =
+    ExtLedgerState
+      { ledgerState = inject iidx ledgerState
+      , headerState = inject iidx headerState
+      }
 
 {-------------------------------------------------------------------------------
   Initial ExtLedgerState
@@ -270,40 +266,38 @@ instance Inject (Flip ExtLedgerState mk) where
 -- Note: this function is an /alternative/ to the 'Inject' class above. It does
 -- not rely on that class.
 injectInitialExtLedgerState ::
-  forall x xs.
-  (CanHardFork (x ': xs), HasLedgerTables LedgerState (HardForkBlock (x : xs))) =>
+  forall m x xs.
+  (CanHardFork (x ': xs), IOLike m) =>
   TopLevelConfig (HardForkBlock (x ': xs)) ->
-  ExtLedgerState x ValuesMK ->
-  ExtLedgerState (HardForkBlock (x ': xs)) ValuesMK
-injectInitialExtLedgerState cfg extLedgerState0 =
-  ExtLedgerState
-    { ledgerState = targetEraLedgerState
-    , headerState = targetEraHeaderState
-    }
+  ExtLedgerState m x ->
+  m (ExtLedgerState m (HardForkBlock (x ': xs)))
+injectInitialExtLedgerState cfg extLedgerState0 = do
+  targetEraLedgerState <- targetEraLedgerStateM
+  let cfgs :: NP TopLevelConfig (x ': xs)
+      cfgs =
+        distribTopLevelConfig
+          ( State.epochInfoLedger
+              (configLedger cfg)
+              (hardForkLedgerStatePerEra targetEraLedgerState)
+          )
+          cfg
+  pure
+    ExtLedgerState
+      { ledgerState = targetEraLedgerState
+      , headerState = targetEraHeaderState cfgs targetEraLedgerState
+      }
  where
-  cfgs :: NP TopLevelConfig (x ': xs)
-  cfgs =
-    distribTopLevelConfig
-      ( State.epochInfoLedger
-          (configLedger cfg)
-          (hardForkLedgerStatePerEra targetEraLedgerState)
-      )
-      cfg
-
-  targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs)) ValuesMK
-  targetEraLedgerState = applyDiffs st st'
-   where
-    st :: LedgerState (HardForkBlock (x ': xs)) ValuesMK
-    st = HardForkLedgerState . initHardForkState . Flip . ledgerState $ extLedgerState0
-    st' =
+  targetEraLedgerStateM :: m (LedgerState m (HardForkBlock (x ': xs)))
+  targetEraLedgerStateM =
+    fmap
       HardForkLedgerState
-        -- We can immediately extend it to the right slot, executing any
-        -- scheduled hard forks in the first slot
-        ( State.extendToSlot
-            (configLedger cfg)
-            (SlotNo 0)
-            (initHardForkState $ Flip $ forgetLedgerTables $ ledgerState extLedgerState0)
-        )
+      -- We can immediately extend it to the right slot, executing any
+      -- scheduled hard forks in the first slot
+      ( State.extendToSlot
+          (configLedger cfg)
+          (SlotNo 0)
+          (initHardForkState $ ledgerState extLedgerState0)
+      )
 
   firstEraChainDepState :: HardForkChainDepState (x ': xs)
   firstEraChainDepState =
@@ -312,8 +306,11 @@ injectInitialExtLedgerState cfg extLedgerState0 =
         headerStateChainDep $
           headerState extLedgerState0
 
-  targetEraChainDepState :: HardForkChainDepState (x ': xs)
-  targetEraChainDepState =
+  targetEraChainDepState ::
+    NP TopLevelConfig (x ': xs) ->
+    LedgerState m (HardForkBlock (x ': xs)) ->
+    HardForkChainDepState (x ': xs)
+  targetEraChainDepState cfgs targetEraLedgerState =
     -- Align the 'ChainDepState' with the ledger state of the target era.
     State.align
       ( InPairs.requiringBoth
@@ -324,5 +321,9 @@ injectInitialExtLedgerState cfg extLedgerState0 =
       (hardForkLedgerStatePerEra targetEraLedgerState)
       firstEraChainDepState
 
-  targetEraHeaderState :: HeaderState (HardForkBlock (x ': xs))
-  targetEraHeaderState = genesisHeaderState targetEraChainDepState
+  targetEraHeaderState ::
+    NP TopLevelConfig (x ': xs) ->
+    LedgerState m (HardForkBlock (x ': xs)) ->
+    HeaderState (HardForkBlock (x ': xs))
+  targetEraHeaderState cfgs targetEraLedgerState =
+    genesisHeaderState (targetEraChainDepState cfgs targetEraLedgerState)

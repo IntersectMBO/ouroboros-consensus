@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
 
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Args
   ( ChainDbArgs (..)

@@ -64,7 +64,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Control.Monad (void)
-import Control.Monad.Except (Except, throwError)
+import Control.Monad.Except (Except, runExcept, throwError)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
@@ -82,7 +82,6 @@ import Ouroboros.Consensus.Byron.Ledger.Serialisation
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
 
@@ -115,7 +114,7 @@ type instance ApplyTxErr ByronBlock = CC.ApplyMempoolPayloadErr
 -- orphaned instance
 instance ShowProxy CC.ApplyMempoolPayloadErr
 
-instance LedgerSupportsMempool ByronBlock where
+instance LedgerSupportsTxs ByronBlock where
   -- Check that the annotation is the canonical encoding. This is currently
   -- enforced by 'decodeByronGenTx', see its docstring for more context.
   txInvariant tx =
@@ -123,22 +122,29 @@ instance LedgerSupportsMempool ByronBlock where
    where
     tx' = toMempoolPayload tx
 
-  applyTx cfg _wti slot tx st =
-    (\st' -> (st', ValidatedByronTx tx))
-      <$> applyByronGenTx validationMode cfg slot tx st
+  txForgetValidated = forgetValidatedByronTx
+
+  mkMempoolApplyTxError = nothingMkMempoolApplyTxError
+
+instance LedgerSupportsMempool ByronBlock where
+  data MempoolCache ByronBlock = NoCacheByron
+
+  applyTx cfg _wti slot tx st NoCacheByron =
+    case runExcept (applyByronGenTx validationMode cfg slot tx st) of
+      Left err -> throwError (err, NoCacheByron)
+      Right v -> pure (v, ValidatedByronTx tx, NoCacheByron)
    where
     validationMode = CC.ValidationMode CC.BlockValidation Utxo.TxValidation
 
-  reapplyTx cfg slot vtx st =
-    applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st
+  reapplyTx cfg slot vtx st NoCacheByron =
+    either (throwError . (\x -> (x, NoCacheByron))) pure $
+      runExcept (applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st)
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 
-  txForgetValidated = forgetValidatedByronTx
+  addToCache _ _ NoCacheByron = pure NoCacheByron
 
-  getTransactionKeySets _ = emptyLedgerTables
-
-  mkMempoolApplyTxError = nothingMkMempoolApplyTxError
+  removeFromCache _ NoCacheByron = pure NoCacheByron
 
 instance TxLimits ByronBlock where
   type TxMeasure ByronBlock = IgnoringOverflow ByteSize32
@@ -292,8 +298,8 @@ applyByronGenTx ::
   LedgerConfig ByronBlock ->
   SlotNo ->
   GenTx ByronBlock ->
-  TickedLedgerState ByronBlock mk1 ->
-  Except (ApplyTxErr ByronBlock) (TickedLedgerState ByronBlock mk2)
+  TickedLedgerState m ByronBlock ->
+  Except (ApplyTxErr ByronBlock) (TickedLedgerState m ByronBlock)
 applyByronGenTx validationMode cfg slot genTx st =
   (\state -> st{tickedByronLedgerState = state})
     <$> CC.applyMempoolPayload

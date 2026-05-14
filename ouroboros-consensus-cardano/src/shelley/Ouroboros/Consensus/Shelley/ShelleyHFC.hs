@@ -13,7 +13,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-orphans -Wno-unused-imports #-}
 
 -- | This module is the Shelley Hard Fork Combinator
 module Ouroboros.Consensus.Shelley.ShelleyHFC
@@ -92,6 +92,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
@@ -121,6 +122,8 @@ instance
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
+  , Eq (WrapLedgerView (ShelleyBlock proto era))
+  , NoThunks (WrapLedgerView (ShelleyBlock proto era))
   ) =>
   NoHardForks (ShelleyBlock proto era)
   where
@@ -162,20 +165,21 @@ instance
 -- | Use the default implementations. This means the serialisation of blocks
 -- includes an era wrapper. Each block should do this from the start to be
 -- prepared for future hard forks without having to do any bit twiddling.
+-- instance
+--   ( ShelleyCompatible proto era
+--   , LedgerSupportsProtocol (ShelleyBlock proto era)
+--   , LedgerSupportsPeras (ShelleyBlock proto era)
+--   , TxLimits (ShelleyBlock proto era)
+--   , Crypto (ProtoCrypto proto)
+--   ) =>
+--   SerialiseHFC '[ShelleyBlock proto era]
 instance
   ( ShelleyCompatible proto era
   , LedgerSupportsProtocol (ShelleyBlock proto era)
-  , LedgerSupportsPeras (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
-  ) =>
-  SerialiseHFC '[ShelleyBlock proto era]
-
-instance
-  ( ShelleyCompatible proto era
-  , LedgerSupportsProtocol (ShelleyBlock proto era)
-  , TxLimits (ShelleyBlock proto era)
-  , Crypto (ProtoCrypto proto)
+  , Eq (WrapLedgerView (ShelleyBlock proto era))
+  , NoThunks (WrapLedgerView (ShelleyBlock proto era))
   ) =>
   SerialiseConstraintsHFC (ShelleyBlock proto era)
 
@@ -190,12 +194,12 @@ type ProtocolShelley = HardForkProtocol '[ShelleyBlock (TPraos StandardCrypto) S
 -------------------------------------------------------------------------------}
 
 shelleyTransition ::
-  forall era proto mk.
+  forall era proto m.
   ShelleyCompatible proto era =>
   PartialLedgerConfig (ShelleyBlock proto era) ->
   -- | Next era's initial major protocol version
   Word16 ->
-  LedgerState (ShelleyBlock proto era) mk ->
+  LedgerState m (ShelleyBlock proto era) ->
   Maybe EpochNo
 shelleyTransition
   ShelleyPartialLedgerConfig{..}
@@ -205,7 +209,7 @@ shelleyTransition
       . Shelley.Inspect.pparamsUpdate
       $ state
    where
-    ShelleyTransitionInfo{..} = shelleyLedgerTransition state
+    ShelleyTransitionInfo{..} = shelleyLedgerTransition (shelleyPureLedger state)
 
     -- 'shelleyLedgerConfig' contains a dummy 'EpochInfo' but this does not
     -- matter for extracting the genesis config
@@ -229,6 +233,8 @@ instance
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
+  , Eq (WrapLedgerView (ShelleyBlock proto era))
+  , NoThunks (WrapLedgerView (ShelleyBlock proto era))
   ) =>
   SingleEraBlock (ShelleyBlock proto era)
   where
@@ -285,22 +291,26 @@ translateChainDepStateAcrossShelley =
       WrapChainDepState $ translateChainDepState (Proxy @(protoFrom, protoTo)) chainDepState
 
 crossEraForecastAcrossShelley ::
-  forall eraFrom eraTo protoFrom protoTo.
+  forall eraFrom eraTo protoFrom protoTo m.
   ( TranslateProto protoFrom protoTo
   , LedgerSupportsProtocol (ShelleyBlock protoFrom eraFrom)
+  , ShelleyCompatible protoFrom eraFrom
+  , IOLike m
   ) =>
   RequiringBoth
     WrapLedgerConfig
-    (CrossEraForecaster LedgerState WrapLedgerView)
+    (CrossEraForecaster (LedgerState m) WrapLedgerView)
     (ShelleyBlock protoFrom eraFrom)
     (ShelleyBlock protoTo eraTo)
 crossEraForecastAcrossShelley = coerce forecastAcrossShelley
 
 -- | Forecast from a Shelley-based era to the next Shelley-based era.
 forecastAcrossShelley ::
-  forall protoFrom protoTo eraFrom eraTo mk.
+  forall protoFrom protoTo eraFrom eraTo m.
   ( TranslateProto protoFrom protoTo
   , LedgerSupportsProtocol (ShelleyBlock protoFrom eraFrom)
+  , ShelleyCompatible protoFrom eraFrom
+  , IOLike m
   ) =>
   ShelleyLedgerConfig eraFrom ->
   ShelleyLedgerConfig eraTo ->
@@ -308,7 +318,7 @@ forecastAcrossShelley ::
   Bound ->
   -- | Forecast for this slot
   SlotNo ->
-  LedgerState (ShelleyBlock protoFrom eraFrom) mk ->
+  LedgerState m (ShelleyBlock protoFrom eraFrom) ->
   Except OutsideForecastRange (WrapLedgerView (ShelleyBlock protoTo eraTo))
 forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
   | forecastFor < maxFor =
@@ -361,36 +371,37 @@ instance
   , SL.TranslateEra era (ShelleyTip proto)
   , SL.TranslateEra era SL.NewEpochState
   , SL.TranslationError era SL.NewEpochState ~ Void
-  , CanMapMK mk
-  , CanMapKeysMK mk
   ) =>
-  SL.TranslateEra era (Flip LedgerState mk :.: ShelleyBlock proto)
+  SL.TranslateEra era (LedgerState m :.: ShelleyBlock proto)
   where
-  translateEra ctxt (Comp (Flip st)) = do
-    let ShelleyLedgerState tip state _transition tables latestPerasCertRound = st
+  translateEra ctxt (Comp st) = do
+    let ShelleyLedgerState (PureShelleyLedgerState tip state _transition latestPerasCertRound) tables = st
     tip' <- mapM (SL.translateEra ctxt) tip
     state' <- SL.translateEra ctxt state
     return $
       Comp $
-        Flip $
-          ShelleyLedgerState
+        ShelleyLedgerState
+          PureShelleyLedgerState
             { shelleyLedgerTip = tip'
             , shelleyLedgerState = state'
             , shelleyLedgerTransition = ShelleyTransitionInfo 0
-            , shelleyLedgerTables = translateShelleyTables tables
             , shelleyLedgerLatestPerasCertRound = latestPerasCertRound
             }
+          (castHandle tables)
 
-translateShelleyTables ::
-  ( CanMapMK mk
-  , CanMapKeysMK mk
-  , ShelleyBasedEra era
-  , ShelleyBasedEra (SL.PreviousEra era)
-  ) =>
-  LedgerTables (ShelleyBlock proto (SL.PreviousEra era)) mk ->
-  LedgerTables (ShelleyBlock proto era) mk
-translateShelleyTables (LedgerTables utxoTable) =
-  LedgerTables $ mapKeysMK coerce $ mapMK SL.upgradeTxOut utxoTable
+castHandle :: Handle m (SL.PreviousEra era) -> Handle m era
+castHandle = undefined
+
+-- translateShelleyTables ::
+--   ( CanMapMK mk
+--   , CanMapKeysMK mk
+--   , ShelleyBasedEra era
+--   , ShelleyBasedEra (SL.PreviousEra era)
+--   ) =>
+--   LedgerTables (ShelleyBlock proto (SL.PreviousEra era)) mk ->
+--   LedgerTables (ShelleyBlock proto era) mk
+-- translateShelleyTables (LedgerTables utxoTable) =
+--   LedgerTables $ mapKeysMK coerce $ mapMK SL.upgradeTxOut utxoTable
 
 instance
   ( ShelleyBasedEra era
@@ -423,110 +434,110 @@ instance
   Canonical TxIn
 -------------------------------------------------------------------------------}
 
-instance
-  (ShelleyCompatible proto era, ShelleyBasedEra era) =>
-  HasCanonicalTxIn '[ShelleyBlock proto era]
-  where
-  newtype CanonicalTxIn '[ShelleyBlock proto era] = ShelleyBlockHFCTxIn
-    { getShelleyBlockHFCTxIn :: BigEndianTxIn
-    }
-    deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
+-- instance
+--   (ShelleyCompatible proto era, ShelleyBasedEra era) =>
+--   HasCanonicalTxIn '[ShelleyBlock proto era]
+--   where
+--   newtype CanonicalTxIn '[ShelleyBlock proto era] = ShelleyBlockHFCTxIn
+--     { getShelleyBlockHFCTxIn :: BigEndianTxIn
+--     }
+--     deriving stock (Show, Eq, Ord)
+--     deriving newtype (NoThunks, MemPack)
 
-  injectCanonicalTxIn IZ txIn = ShelleyBlockHFCTxIn txIn
-  injectCanonicalTxIn (IS idx') _ = case idx' of {}
+--   injectCanonicalTxIn IZ txIn = ShelleyBlockHFCTxIn txIn
+--   injectCanonicalTxIn (IS idx') _ = case idx' of {}
 
-  ejectCanonicalTxIn IZ txIn = getShelleyBlockHFCTxIn txIn
-  ejectCanonicalTxIn (IS idx') _ = case idx' of {}
+--   ejectCanonicalTxIn IZ txIn = getShelleyBlockHFCTxIn txIn
+--   ejectCanonicalTxIn (IS idx') _ = case idx' of {}
 
-{-------------------------------------------------------------------------------
-  HardForkTxOut
--------------------------------------------------------------------------------}
+-- {-------------------------------------------------------------------------------
+--   HardForkTxOut
+-- -------------------------------------------------------------------------------}
 
-instance ShelleyCompatible proto era => HasHardForkTxOut '[ShelleyBlock proto era] where
-  type HardForkTxOut '[ShelleyBlock proto era] = SL.TxOut era
-  injectHardForkTxOut IZ txOut = txOut
-  injectHardForkTxOut (IS idx') _ = case idx' of {}
-  ejectHardForkTxOut IZ txOut = txOut
-  ejectHardForkTxOut (IS idx') _ = case idx' of {}
-  txOutEjections = fn (unZ . unK) :* Nil
-  txOutTranslations = Tails.mk1
+-- instance ShelleyCompatible proto era => HasHardForkTxOut '[ShelleyBlock proto era] where
+--   type HardForkTxOut '[ShelleyBlock proto era] = SL.TxOut era
+--   injectHardForkTxOut IZ txOut = txOut
+--   injectHardForkTxOut (IS idx') _ = case idx' of {}
+--   ejectHardForkTxOut IZ txOut = txOut
+--   ejectHardForkTxOut (IS idx') _ = case idx' of {}
+--   txOutEjections = fn (unZ . unK) :* Nil
+--   txOutTranslations = Tails.mk1
 
-{-------------------------------------------------------------------------------
-  Queries
--------------------------------------------------------------------------------}
+-- {-------------------------------------------------------------------------------
+--   Queries
+-- -------------------------------------------------------------------------------}
 
-instance
-  ( ShelleyCompatible proto era
-  , ShelleyBasedEra era
-  , TxOut (ShelleyBlock proto era) ~ SL.TxOut era
-  , HasHardForkTxOut '[ShelleyBlock proto era]
-  ) =>
-  BlockSupportsHFLedgerQuery '[ShelleyBlock proto era]
-  where
-  answerBlockQueryHFLookup = \case
-    IZ -> answerShelleyLookupQueries (injectLedgerTables IZ) id (coerce . ejectCanonicalTxIn IZ)
-    IS idx -> case idx of {}
+-- instance
+--   ( ShelleyCompatible proto era
+--   , ShelleyBasedEra era
+--   , TxOut (ShelleyBlock proto era) ~ SL.TxOut era
+--   , HasHardForkTxOut '[ShelleyBlock proto era]
+--   ) =>
+--   BlockSupportsHFLedgerQuery '[ShelleyBlock proto era]
+--   where
+--   answerBlockQueryHFLookup = \case
+--     IZ -> answerShelleyLookupQueries (injectLedgerTables IZ) id (coerce . ejectCanonicalTxIn IZ)
+--     IS idx -> case idx of {}
 
-  answerBlockQueryHFTraverse = \case
-    IZ ->
-      answerShelleyTraversingQueries
-        id
-        (coerce . ejectCanonicalTxIn IZ)
-        (queryLedgerGetTraversingFilter @('[ShelleyBlock proto era]) IZ)
-    IS idx -> case idx of {}
+--   answerBlockQueryHFTraverse = \case
+--     IZ ->
+--       answerShelleyTraversingQueries
+--         id
+--         (coerce . ejectCanonicalTxIn IZ)
+--         (queryLedgerGetTraversingFilter @('[ShelleyBlock proto era]) IZ)
+--     IS idx -> case idx of {}
 
-  queryLedgerGetTraversingFilter = \case
-    IZ -> shelleyQFTraverseTablesPredicate
-    IS idx -> case idx of {}
+--   queryLedgerGetTraversingFilter = \case
+--     IZ -> shelleyQFTraverseTablesPredicate
+--     IS idx -> case idx of {}
 
-instance
-  (txout ~ SL.TxOut era, MemPack txout) =>
-  IndexedMemPack LedgerState (HardForkBlock '[ShelleyBlock proto era]) txout
-  where
-  indexedTypeName _ _ = typeName @txout
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
+-- instance
+--   (txout ~ SL.TxOut era, MemPack txout) =>
+--   IndexedMemPack LedgerState (HardForkBlock '[ShelleyBlock proto era]) txout
+--   where
+--   indexedTypeName _ _ = typeName @txout
+--   indexedPackedByteCount _ = packedByteCount
+--   indexedPackM _ = packM
+--   indexedUnpackM _ = unpackM
 
-instance
-  ShelleyCompatible proto era =>
-  SerializeTablesWithHint LedgerState (HardForkBlock '[ShelleyBlock proto era])
-  where
-  encodeTablesWithHint ::
-    LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK ->
-    LedgerTables (HardForkBlock '[ShelleyBlock proto era]) ValuesMK ->
-    Encoding
-  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
-    let
-      np = (Fn $ const $ K encOne) :* Nil
-     in
-      hcollapse $ hap np $ Telescope.tip idx
-   where
-    encOne :: Encoding
-    encOne = toPlainEncoding (SL.eraProtVerLow @era) $ encodeMap encodeMemPack encodeMemPack tbs
+-- instance
+--   ShelleyCompatible proto era =>
+--   SerializeTablesWithHint LedgerState (HardForkBlock '[ShelleyBlock proto era])
+--   where
+--   encodeTablesWithHint ::
+--     LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK ->
+--     LedgerTables (HardForkBlock '[ShelleyBlock proto era]) ValuesMK ->
+--     Encoding
+--   encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
+--     let
+--       np = (Fn $ const $ K encOne) :* Nil
+--      in
+--       hcollapse $ hap np $ Telescope.tip idx
+--    where
+--     encOne :: Encoding
+--     encOne = toPlainEncoding (SL.eraProtVerLow @era) $ encodeMap encodeMemPack encodeMemPack tbs
 
-  decodeTablesWithHint ::
-    forall s.
-    LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK ->
-    Decoder s (LedgerTables (HardForkBlock '[ShelleyBlock proto era]) ValuesMK)
-  decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
-    let
-      np = (Fn $ Comp . fmap K . getOne . unFlip . currentState) :* Nil
-     in
-      hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
-   where
-    getOne ::
-      LedgerState (ShelleyBlock proto era) EmptyMK ->
-      Decoder s (LedgerTables (HardForkBlock '[ShelleyBlock proto era]) ValuesMK)
-    getOne st =
-      let certInterns =
-            internsFromMap $
-              shelleyLedgerState st
-                ^. SL.nesEsL
-                  . SL.esLStateL
-                  . SL.lsCertStateL
-                  . SL.certDStateL
-                  . SL.accountsL
-                  . SL.accountsMapL
-       in LedgerTables . ValuesMK <$> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))
+--   decodeTablesWithHint ::
+--     forall s.
+--     LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK ->
+--     Decoder s (LedgerTables (HardForkBlock '[ShelleyBlock proto era]) ValuesMK)
+--   decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
+--     let
+--       np = (Fn $ Comp . fmap K . getOne . unFlip . currentState) :* Nil
+--      in
+--       hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
+--    where
+--     getOne ::
+--       LedgerState (ShelleyBlock proto era) EmptyMK ->
+--       Decoder s (LedgerTables (HardForkBlock '[ShelleyBlock proto era]) ValuesMK)
+--     getOne st =
+--       let certInterns =
+--             internsFromMap $
+--               shelleyLedgerState st
+--                 ^. SL.nesEsL
+--                   . SL.esLStateL
+--                   . SL.lsCertStateL
+--                   . SL.certDStateL
+--                   . SL.accountsL
+--                   . SL.accountsMapL
+--        in LedgerTables . ValuesMK <$> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))

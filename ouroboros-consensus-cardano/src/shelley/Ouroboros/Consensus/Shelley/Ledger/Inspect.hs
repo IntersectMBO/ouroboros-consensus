@@ -49,12 +49,12 @@ instance ShelleyBasedEra era => InspectLedger (ShelleyBlock proto era) where
     updatesAfter = pparamsUpdate after
 
 pparamsUpdate ::
-  forall era proto mk.
+  forall era proto m.
   ShelleyBasedEra era =>
-  LedgerState (ShelleyBlock proto era) mk ->
+  LedgerState m (ShelleyBlock proto era) ->
   ShelleyLedgerUpdate era
 pparamsUpdate st =
-  let nes = shelleyLedgerState st
+  let nes = shelleyLedgerState $ shelleyPureLedger st
    in ShelleyUpdatedPParams
         (SL.nextEpochUpdatedPParams (nes ^. SL.newEpochStateGovStateL))
         (succ (SL.nesEL nes))

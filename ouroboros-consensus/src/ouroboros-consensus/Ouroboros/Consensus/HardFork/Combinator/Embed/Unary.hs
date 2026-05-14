@@ -521,26 +521,26 @@ instance Functor m => Isomorphic (MkBlockForging m) where
   inject (MkBlockForging blockForgingM) =
     MkBlockForging $ inject <$> blockForgingM
 
-instance Isomorphic (ProtocolInfo m) where
-  project ::
-    forall blk.
-    NoHardForks blk =>
-    ProtocolInfo m (HardForkBlock '[blk]) -> ProtocolInfo m blk
-  project ProtocolInfo{..} =
-    ProtocolInfo
-      { pInfoConfig = project pInfoConfig
-      , pInfoInitLedger = project pInfoInitLedger
-      }
+-- instance Isomorphic (ProtocolInfo m) where
+--   project ::
+--     forall blk.
+--     NoHardForks blk =>
+--     ProtocolInfo m (HardForkBlock '[blk]) -> ProtocolInfo m blk
+--   project ProtocolInfo{..} =
+--     ProtocolInfo
+--       { pInfoConfig = project pInfoConfig
+--       , pInfoInitLedger = \p -> project pInfoInitLedger
+--       }
 
-  inject ::
-    forall blk.
-    NoHardForks blk =>
-    ProtocolInfo m blk -> ProtocolInfo m (HardForkBlock '[blk])
-  inject ProtocolInfo{..} =
-    ProtocolInfo
-      { pInfoConfig = inject pInfoConfig
-      , pInfoInitLedger = inject pInfoInitLedger
-      }
+--   inject ::
+--     forall blk.
+--     NoHardForks blk =>
+--     ProtocolInfo m blk -> ProtocolInfo m (HardForkBlock '[blk])
+--   inject ProtocolInfo{..} =
+--     ProtocolInfo
+--       { pInfoConfig = inject pInfoConfig
+--       , pInfoInitLedger = inject pInfoInitLedger
+--       }
 
 {-------------------------------------------------------------------------------
   Types that require take advantage of the fact that we have a single era

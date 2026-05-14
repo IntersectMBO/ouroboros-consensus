@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
@@ -34,10 +35,12 @@ import Data.SOP.Match
 import Data.SOP.Strict
 import qualified Data.Text as Text
 import Data.Void
+import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Combinator.Info
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.HardFork.History (Bound, EraParams)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
@@ -51,6 +54,7 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
@@ -91,6 +95,16 @@ class
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
+  , --
+    Show (K Past blk)
+  , Show (Current WrapChainDepState blk)
+  , Show (Current WrapLedgerView blk)
+  , Eq (K Past blk)
+  , Eq (Current WrapChainDepState blk)
+  , Eq (Current WrapLedgerView blk)
+  , NoThunks (K Past blk)
+  , NoThunks (Current WrapChainDepState blk)
+  , NoThunks (Current WrapLedgerView blk)
   ) =>
   SingleEraBlock blk
   where

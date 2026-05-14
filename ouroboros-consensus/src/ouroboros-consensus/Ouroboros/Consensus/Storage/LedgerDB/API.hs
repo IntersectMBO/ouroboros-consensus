@@ -178,7 +178,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDB'
   , LedgerDbPrune (..)
   , LedgerDbSerialiseConstraints
-  , SerialiseLedgerState (..)
   , ResolveBlock
   , Forker (..)
   , currentPoint
@@ -266,21 +265,13 @@ import System.FS.CRC
 -- instantiated with a @blk@.
 type LedgerDbSerialiseConstraints blk =
   ( Serialise (HeaderHash blk)
-  , SerialiseLedgerState blk
   , EncodeDisk blk (AnnTip blk)
   , DecodeDisk blk (AnnTip blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
+  , EncodeDisk blk (PureLedgerState blk)
+  , DecodeDisk blk (PureLedgerState blk)
   )
-
-class SerialiseLedgerState blk where
-  type DecodedLedgerState blk
-  encodeLedgerState ::
-    CodecConfig blk -> LedgerState m blk -> Encoding
-  decodeLedgerState ::
-    CodecConfig blk -> forall s. Decoder s (DecodedLedgerState blk)
-  rehydrate ::
-    IOLike m => DecodedLedgerState blk -> m (LedgerState m blk)
 
 -- | The core API of the LedgerDB component
 type LedgerDB :: (Type -> Type) -> LedgerKind -> Type -> Type
