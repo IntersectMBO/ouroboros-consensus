@@ -74,8 +74,10 @@ module Ouroboros.Consensus.Storage.ChainDB.API
 
 import Control.Monad (void)
 import Control.ResourceRegistry
+import Data.Map.Strict (Map)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (LeiosPoint)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
@@ -383,6 +385,10 @@ data ChainDB m blk = ChainDB
   , getChainSelStarvation :: STM m ChainSelStarvation
   -- ^ Whether ChainSel is currently starved, or when was last time it
   -- stopped being starved.
+  , getPendingCertRBs :: STM m (Map LeiosPoint (HeaderHash blk))
+  -- ^ CertRBs filtered from ChainSel candidates because their EB closure
+  -- is not yet available locally. Keyed by the missing EB's 'LeiosPoint',
+  -- value is the CertRB's header hash.
   , getLedgerTablesAtFor ::
       Point blk ->
       LedgerTables (ExtLedgerState blk) KeysMK ->

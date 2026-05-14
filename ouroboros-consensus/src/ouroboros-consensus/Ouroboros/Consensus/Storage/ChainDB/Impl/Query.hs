@@ -30,12 +30,15 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getAnyKnownBlock
   , getAnyKnownBlockComponent
   , getChainSelStarvation
+  , getPendingCertRBs
   ) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.ResourceRegistry (ResourceRegistry)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import LeiosDemoTypes (LeiosPoint)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderStateHistory
@@ -193,6 +196,13 @@ getChainSelStarvation ::
   ChainDbEnv m blk ->
   STM m ChainSelStarvation
 getChainSelStarvation CDB{..} = readTVar cdbChainSelStarvation
+
+getPendingCertRBs ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  STM m (Map LeiosPoint (HeaderHash blk))
+getPendingCertRBs cdb = readTVar (cdbPendingEBs cdb)
 
 getIsValid ::
   forall m blk.

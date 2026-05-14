@@ -275,6 +275,7 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
             , newFollower = Follower.newFollower h
             , getIsInvalidBlock = getEnvSTM h Query.getIsInvalidBlock
             , getChainSelStarvation = getEnvSTM h Query.getChainSelStarvation
+            , getPendingCertRBs = getEnvSTM h Query.getPendingCertRBs
             , closeDB = closeDB h
             , isOpen = isOpen h
             , getCurrentLedger = getEnvSTM h Query.getCurrentLedger

@@ -56,7 +56,7 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import Data.Maybe (isJust, mapMaybe)
+import Data.Maybe (fromMaybe, isJust, mapMaybe)
 import Data.Proxy
 import qualified Data.Text as Text
 import Data.Void (Void)
@@ -165,6 +165,8 @@ import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import qualified Data.ByteString as BS
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import LeiosDemoDb
   ( LeiosDbConnection
   , LeiosDbHandle (..)
@@ -176,9 +178,11 @@ import LeiosDemoDb
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
-  ( ForgedLeiosEb
+  ( EbHash
+  , ForgedLeiosEb
   , LeiosOutstanding
   , LeiosPeerVars
+  , LeiosPoint (..)
   , LeiosVote (..)
   , TraceLeiosKernel (..)
   , VoterId (..)
@@ -419,6 +423,39 @@ initNodeKernel
     getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding -- TODO init from DB
     getLeiosReady <- MVar.newEmptyMVar
 
+    -- Mirror cdbPendingEBs into Leios missingEbBodies with size 0 so that the
+    -- LeiosFetch client tries to fetch closures for CertRBs that ChainSel is
+    -- holding back.
+    lastAppliedPendingEBs <- newTVarIO Map.empty
+    void $
+      forkLinkedThread registry "NodeKernel.pendingEbReconciler" $
+        forever $ do
+          (added, removed) <- atomically $ do
+            new <- ChainDB.getPendingCertRBs chainDB
+            old <- readTVar lastAppliedPendingEBs
+            when (new == old) retry
+            writeTVar lastAppliedPendingEBs new
+            pure (Map.difference new old, Map.difference old new)
+          MVar.modifyMVar_ getLeiosOutstanding $ \outstanding -> do
+            let bodies0 = Leios.missingEbBodies outstanding
+                -- Add entries from new pending CertRBs; never overwrite an
+                -- existing non-zero (offer-supplied) size.
+                bodies1 =
+                  Map.foldlWithKey'
+                    (\acc point _ -> Map.alter (Just . fromMaybe 0) point acc)
+                    bodies0
+                    added
+                -- Drop entries we no longer need; keep offer-driven entries
+                -- (non-zero size) untouched.
+                bodies2 =
+                  Map.foldlWithKey'
+                    (\acc point _ ->
+                      Map.update (\sz -> if sz == 0 then Nothing else Just sz) point acc)
+                    bodies1
+                    removed
+            pure outstanding{Leios.missingEbBodies = bodies2}
+          void $ MVar.tryPutMVar getLeiosReady ()
+
     void $
       forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ do
         leiosConn <- allocate_ registry (LeiosDb.open leiosDB) LeiosDb.close
@@ -429,6 +466,21 @@ initNodeKernel
           iterationStart <- getMonotonicTime
           leiosPeersVars <- MVar.readMVar getLeiosPeersVars
           offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
+          -- Per-peer certified EBs derived from ChainSync candidate fragments,
+          -- used as a fallback peer source for fetching EB closures that no
+          -- peer has explicitly offered.
+          candidateCertEbs <- atomically $ do
+            handles <- cschcMap varChainSyncHandles
+            fmap (Map.mapKeysMonotonic Leios.MkPeerId) $
+              forM handles $ \handle -> do
+                state <- readTVar (cschState handle)
+                pure $
+                  Set.fromList
+                    [ pointEbHash
+                    | hwt <- AF.toOldestFirst (csCandidate state)
+                    , Just MkLeiosPoint{pointEbHash} <-
+                        [LedgerDB.certifiedEbFromHeader (hwtHeader hwt)]
+                    ]
           newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
             -- Filter outstanding work against DB before running fetch iteration.
             -- This removes EBs and TXs we already have (e.g., from forging or other peers).
@@ -438,6 +490,7 @@ initNodeKernel
                   Leios.leiosFetchLogicIteration
                     Leios.demoLeiosFetchStaticEnv
                     offerings
+                    candidateCertEbs
                     filteredOutstanding
             pure (outstanding', newDecisions)
           traceWith tracer $ MkTraceLeiosKernel $ "leiosFetchLogic: decided"
