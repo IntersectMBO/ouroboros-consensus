@@ -237,6 +237,7 @@ withTMVar tv f = withTMVarAnd tv (const $ pure ()) (\a -> const $ f a)
 -- when an exception occurs. Additionally run a @STM@ action when acquiring the
 -- value.
 withTMVarAnd ::
+  forall m a b c.
   IOLike m =>
   StrictTMVar m a ->
   -- | Additional STM action to run in the same atomically

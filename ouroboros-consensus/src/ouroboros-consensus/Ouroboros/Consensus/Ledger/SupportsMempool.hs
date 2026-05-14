@@ -137,6 +137,7 @@ class
   -- The resulting ledger state contains the diffs produced by applying this
   -- transaction alone.
   applyTx ::
+    IOLike m =>
     LedgerConfig blk ->
     WhetherToIntervene ->
     -- | Slot number of the block containing the tx
