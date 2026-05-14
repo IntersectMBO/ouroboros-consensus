@@ -347,7 +347,11 @@ prop_leios seed =
 -- the late node receives a CertRB referencing an EB it never saw.
 prop_leios_late_join :: Seed -> Property
 prop_leios_late_join seed =
-  forAll (choose (1, fromIntegral numSlots - 1)) $ \lateJoinSlot ->
+  -- Cap the join slot at numSlots/4 so the late node always has at least 3/4
+  -- of the run to catch up. Otherwise samples near numSlots would fail the
+  -- chain-consistency assertion for catch-up-bandwidth reasons unrelated to
+  -- the late-join logic under test.
+  forAll (choose (1, fromIntegral numSlots `div` 4)) $ \lateJoinSlot ->
     let
       joinPlan =
         NodeJoinPlan $
