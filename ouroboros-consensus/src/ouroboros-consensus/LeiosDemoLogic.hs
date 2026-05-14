@@ -262,9 +262,13 @@ leiosFetchLogicIteration ::
   Ord pid =>
   LeiosFetchStaticEnv ->
   Map (PeerId pid) (Set EbHash, Set EbHash) ->
+  -- | Per-peer certified EB hashes inferred from ChainSync candidate
+  -- fragments. Used as a fallback peer source when no peer has offered the
+  -- EB body (e.g. for CertRBs whose closure pre-dates the local node).
+  Map (PeerId pid) (Set EbHash) ->
   LeiosOutstanding pid ->
   (LeiosOutstanding pid, LeiosFetchDecisions pid)
-leiosFetchLogicIteration env offerings =
+leiosFetchLogicIteration env offerings candidateCertEbs =
   \acc ->
     go1 acc emptyLeiosFetchDecisions $
       expand $
@@ -330,17 +334,25 @@ leiosFetchLogicIteration env offerings =
 
   choosePeerEb :: Set (PeerId pid) -> LeiosOutstanding pid -> EbHash -> Maybe (PeerId pid)
   choosePeerEb peerIds acc ebHash =
-    foldr (\a _ -> Just a) Nothing $
-      [ peerId
-      | (peerId, (ebHashes, _ebHashes)) <-
-          Map.toList $ -- TODO prioritize/shuffle?
-            (`Map.withoutKeys` peerIds) $ -- not already requested from this peer
-              offerings
-      , Map.findWithDefault 0 peerId (Leios.requestedBytesSizePerPeer acc)
-          <= Leios.maxRequestedBytesSizePerPeer env
-      , -- peer can be sent more requests
-      ebHash `Set.member` ebHashes -- peer has offered this EB body
-      ]
+    case pickFrom (Map.map fst offerings) of
+      Just peerId -> Just peerId
+      -- No peer has offered this EB body; fall back to peers whose ChainSync
+      -- candidate fragment includes the CertRB that depends on this EB.
+      Nothing -> pickFrom candidateCertEbs
+   where
+    pickFrom :: Map (PeerId pid) (Set EbHash) -> Maybe (PeerId pid)
+    pickFrom source =
+      foldr (\a _ -> Just a) Nothing $
+        [ peerId
+        | (peerId, ebHashes) <-
+            Map.toList $ -- TODO prioritize/shuffle?
+              (`Map.withoutKeys` peerIds) $ -- not already requested from this peer
+                source
+        , Map.findWithDefault 0 peerId (Leios.requestedBytesSizePerPeer acc)
+            <= Leios.maxRequestedBytesSizePerPeer env
+        , -- peer can be sent more requests
+        ebHash `Set.member` ebHashes
+        ]
 
   goTx2 ::
     LeiosOutstanding pid ->
@@ -388,20 +400,29 @@ leiosFetchLogicIteration env offerings =
     BytesSize ->
     Maybe (PeerId pid, Map EbHash Int)
   choosePeerTx peerIds acc txOffsets targetTxBytesSize =
-    foldr (\a _ -> Just a) Nothing $
-      [ (peerId, Map.map fst txOffsets')
-      | (peerId, (_ebIds, ebIds)) <-
-          Map.toList $ -- TODO prioritize/shuffle?
-            (`Map.withoutKeys` peerIds) $ -- not already requested from this peer
-              offerings
-      , Map.findWithDefault 0 peerId (Leios.requestedBytesSizePerPeer acc)
-          <= Leios.maxRequestedBytesSizePerPeer env
-      , -- peer can be sent more requests
-      let txOffsets' = txOffsets `Map.restrictKeys` ebIds
-      , case Map.lookupMax txOffsets' of
-          Nothing -> False
-          Just (_ebHash, (_txOffset, txBytesSize)) -> targetTxBytesSize == txBytesSize -- peer has offered at least one EB closure that includes this tx with the same size
-      ]
+    case pickFrom (Map.map snd offerings) of
+      Just hit -> Just hit
+      -- Same fallback rationale as 'choosePeerEb': if a peer's ChainSync
+      -- candidate contains a CertRB for this EB, the peer must have validated
+      -- the full closure locally and therefore also has the txs.
+      Nothing -> pickFrom candidateCertEbs
+   where
+    pickFrom :: Map (PeerId pid) (Set EbHash) -> Maybe (PeerId pid, Map EbHash Int)
+    pickFrom source =
+      foldr (\a _ -> Just a) Nothing $
+        [ (peerId, Map.map fst txOffsets')
+        | (peerId, ebIds) <-
+            Map.toList $ -- TODO prioritize/shuffle?
+              (`Map.withoutKeys` peerIds) $ -- not already requested from this peer
+                source
+        , Map.findWithDefault 0 peerId (Leios.requestedBytesSizePerPeer acc)
+            <= Leios.maxRequestedBytesSizePerPeer env
+        , -- peer can be sent more requests
+        let txOffsets' = txOffsets `Map.restrictKeys` ebIds
+        , case Map.lookupMax txOffsets' of
+            Nothing -> False
+            Just (_ebHash, (_txOffset, txBytesSize)) -> targetTxBytesSize == txBytesSize
+        ]
 
 packRequests ::
   LeiosFetchStaticEnv ->
@@ -561,7 +582,11 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
   let MkLeiosPoint _ebSlot ebHash = point
   do
     let ebBytesSize' = leiosEbBytesSize eb
-    when (ebBytesSize' /= ebBytesSize) $ do
+    -- A 0 expected size signals a ChainSel-driven request (see
+    -- 'pendingEbReconciler'): we don't know the EB body size up front because
+    -- 'hbMayCertifiedEb' only carries the 'LeiosPoint'. The hash check below
+    -- is the authoritative integrity check.
+    when (ebBytesSize /= 0 && ebBytesSize' /= ebBytesSize) $ do
       error $ "MsgLeiosBlock size mismatch: " <> show (ebBytesSize', ebBytesSize)
     let ebHash' = hashLeiosEb eb
     when (ebHash' /= ebHash) $ do
