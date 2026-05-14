@@ -366,9 +366,18 @@ prop_leios_late_join seed =
       nodeChains =
         Chain.toOldestFirst . nodeOutputFinalChain <$> testOutput.testOutputNodes
      in
-      -- The simulation must not throw (currently crashes in resolveLeiosBlock).
-      not (null nodeChains)
-        & counterexample "test output was empty"
+      -- The simulation must not throw (fixed in step 2).
+      conjoin
+        [ not (null nodeChains)
+            & counterexample "test output was empty"
+        , -- All nodes should converge to the same chain. Fails after step 2
+          -- because CertRBs with missing closures are permanently excluded,
+          -- making the late node's chain shorter. Step 3 (ChainSel re-trigger
+          -- on EB arrival) fixes this.
+          all (== head (Map.elems nodeChains)) nodeChains
+            & counterexample "nodes have different chains"
+            & counterexample ("chain lengths: " <> show (fmap length nodeChains))
+        ]
         & counterexample ("late join slot: " <> show lateJoinSlot)
  where
   numSlots = 200 :: Word64
