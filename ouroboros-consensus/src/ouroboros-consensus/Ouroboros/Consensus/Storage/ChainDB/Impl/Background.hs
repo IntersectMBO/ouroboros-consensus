@@ -56,6 +56,8 @@ import Data.Void (Void)
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
+import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
+import LeiosDemoDb (LeiosDbConnection (..), LeiosDbHandle (..), LeiosEbNotification (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
@@ -102,13 +104,10 @@ launchBgTasks ::
 launchBgTasks cdb@CDB{..} replayed = do
   !addBlockThread <-
     launch "ChainDB.addBlockRunner" $
-      addBlockRunner cdbChainSelFuse cdb
-
-  ledgerDbTasksTrigger <- newLedgerDbTasksTrigger replayed
-  !ledgerDbMaintenaceThread <-
-    forkLinkedWatcher cdbRegistry "ChainDB.ledgerDbTaskWatcher" $
-      ledgerDbTaskWatcher cdb ledgerDbTasksTrigger
-
+      addBlockRunner leiosDb cdbChainSelFuse cdb
+  !ebCompletionThread <-
+    launch "ChainDB.ebCompletionRunner" $
+      ebCompletionRunner leiosDb cdb
   gcSchedule <- newGcSchedule
   !gcThread <-
     launch "ChainDB.gcBlocksScheduleRunner" $
@@ -121,12 +120,7 @@ launchBgTasks cdb@CDB{..} replayed = do
 
   atomically $
     writeTVar cdbKillBgThreads $
-      sequence_
-        [ addBlockThread
-        , cancelThread ledgerDbMaintenaceThread
-        , gcThread
-        , copyToImmutableDBThread
-        ]
+      sequence_ [addBlockThread, ebCompletionThread, gcThread, copyAndSnapshotThread]
  where
   launch :: String -> m Void -> m (m ())
   launch = fmap cancelThread .: forkLinkedThread cdbRegistry
@@ -617,44 +611,76 @@ addBlockRunner ::
   Fuse m ->
   ChainDbEnv m blk ->
   m Void
-addBlockRunner fuse cdb@CDB{..} = forever $ do
-  let trace = traceWith cdbTracer . TraceAddBlockEvent
-  trace PoppingFromQueue
-  -- if the `chainSelSync` does not complete because it was killed by an async
-  -- exception (or it errored), notify the blocked thread
-  withFuse fuse $
-    bracketOnError
-      (lift $ getChainSelMessage starvationTracer cdbChainSelStarvation cdbChainSelQueue)
-      ( \message -> lift $ atomically $ do
-          case message of
-            ChainSelReprocessLoEBlocks varProcessed ->
-              void $ tryPutTMVar varProcessed ()
-            ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
-              _ <-
-                tryPutTMVar
-                  varBlockWrittenToDisk
-                  False
-              _ <-
-                tryPutTMVar
-                  varBlockProcessed
-                  (FailedToAddBlock "Failed to add block synchronously")
-              pure ()
-            ChainSelAddPerasCert _cert varProcessed ->
-              void $ tryPutTMVar varProcessed ()
-          closeChainSelQueue cdbChainSelQueue
-      )
-      ( \message -> do
-          lift $ case message of
-            ChainSelReprocessLoEBlocks _ ->
-              trace PoppedReprocessLoEBlocksFromQueue
-            ChainSelAddBlock BlockToAdd{blockToAdd} ->
-              trace $ PoppedBlockFromQueue $ blockRealPoint blockToAdd
-            ChainSelAddPerasCert cert _varProcessed ->
-              traceWith cdbTracer $
-                TraceAddPerasCertEvent $
-                  PoppedPerasCertFromQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
-          chainSelSync cdb message
-          lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
-      )
+addBlockRunner leiosDb fuse cdb@CDB{..} = do
+  leiosConn <- open leiosDb
+  forever $ do
+    let trace = traceWith cdbTracer . TraceAddBlockEvent
+    trace $ PoppedBlockFromQueue RisingEdge
+    -- if the `chainSelSync` does not complete because it was killed by an async
+    -- exception (or it errored), notify the blocked thread
+    withFuse fuse $
+      bracketOnError
+        (lift $ getChainSelMessage starvationTracer cdbChainSelStarvation cdbChainSelQueue)
+        ( \message -> lift $ atomically $ do
+            case message of
+              ChainSelReprocessLoEBlocks varProcessed ->
+                void $ tryPutTMVar varProcessed ()
+              ChainSelReprocessBlock _ varProcessed ->
+                void $ tryPutTMVar varProcessed ()
+              ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
+                _ <-
+                  tryPutTMVar
+                    varBlockWrittenToDisk
+                    False
+                _ <-
+                  tryPutTMVar
+                    varBlockProcessed
+                    (FailedToAddBlock "Failed to add block synchronously")
+                pure ()
+            closeChainSelQueue cdbChainSelQueue
+        )
+        ( \message -> do
+            lift $ case message of
+              ChainSelReprocessLoEBlocks _ ->
+                trace PoppedReprocessLoEBlocksFromQueue
+              ChainSelReprocessBlock _ _ ->
+                trace PoppedReprocessLoEBlocksFromQueue
+              ChainSelAddBlock BlockToAdd{blockToAdd} ->
+                trace $
+                  PoppedBlockFromQueue $
+                    FallingEdgeWith $
+                      blockRealPoint blockToAdd
+            chainSelSync leiosConn cdb message
+            lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
+        )
  where
   starvationTracer = Tracer $ traceWith cdbTracer . TraceChainSelStarvationEvent
+
+-- | Monitor LeiosDB for EB completions and re-trigger ChainSel for
+-- CertRBs whose EB closure was previously missing.
+--
+-- When a CertRB arrives with a missing EB closure, 'chainSelSync'
+-- records it in 'cdbPendingEBs' and skips chain selection. This
+-- thread watches for the closure to appear in the LeiosDB, then
+-- enqueues a 'ChainSelReprocessBlock' so the CertRB can be selected.
+ebCompletionRunner ::
+  IOLike m =>
+  LeiosDbHandle m ->
+  ChainDbEnv m blk ->
+  m Void
+ebCompletionRunner leiosDb CDB{..} = do
+  notifChan <- subscribeEbNotifications leiosDb
+  leiosConn <- open leiosDb
+  forever $ do
+    notif <- atomically $ readTChan notifChan
+    let leiosPoint = case notif of
+          AcquiredEb point _ -> point
+          AcquiredEbTxs point -> point
+    pending <- atomically $ readTVar cdbPendingEBs
+    case Map.lookup leiosPoint pending of
+      Nothing -> pure ()
+      Just certRBHash -> do
+        mayComplete <- leiosDbQueryCompletedEbByPoint leiosConn leiosPoint
+        case mayComplete of
+          Nothing -> pure ()
+          Just _ -> void $ addReprocessBlock cdbChainSelQueue certRBHash

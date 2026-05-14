@@ -363,38 +363,30 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
       <*> Query.getCurrentChain cdb
       <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
   let
-    -- All immediate successor blocks of blocks on the current chain (including
-    -- the anchor), excluding those on the current chain.
-    loePoints :: [RealPoint blk]
-    loePoints =
-      [ castRealPoint loePt
-      | curChainPt <-
-          AF.anchorPoint curChain : (blockPoint <$> AF.toOldestFirst curChain)
-      , loeHash <- Set.toList $ succsOf $ castHash (pointHash curChainPt)
-      , Just bi <- [lookupBlockInfo loeHash]
-      , let loePt = RealPoint (VolatileDB.biSlotNo bi) loeHash
-      , not $ AF.pointOnFragment (realPointToPoint loePt) curChain
-      ]
-
-    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
-
-  chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
-    for
-      loePoints
-      $ constructPreferableCandidates cdb weights curChain Map.empty
-
-  -- Consider all candidates at once, to avoid transient chain switches.
-  case NE.nonEmpty $ concat chainDiffs of
-    Just chainDiffs' ->
-      -- Find the best valid candidate. On LoE reprocess we don't log the reason
-      -- for a switch, hence the 'void'.
-      void $
-        chainSelection chainSelEnv chainDiffs' $
-          switchTo cdb weights Nothing
-    Nothing -> pure ()
-
-  atomically $ putTMVar varProcessed ()
-chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
+    succsOf' = Set.toList . succsOf . pointHash . castPoint
+    loeHashes = succsOf' (AF.anchorPoint chain)
+    firstHeader = either (const Nothing) Just $ AF.last chain
+    -- We avoid the VolatileDB for the headers we already have in the chain
+    getHeaderFromHash hash =
+      case firstHeader of
+        Just header | headerHash header == hash -> pure header
+        _ -> VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
+  loeHeaders <- lift (mapM getHeaderFromHash loeHashes)
+  for_ loeHeaders $ \hdr ->
+    chainSelectionForBlock leiosDb cdb BlockCache.empty hdr noPunishment
+  lift $ atomically $ putTMVar varProcessed ()
+-- Re-trigger chain selection for a CertRB whose EB closure has arrived.
+-- Remove it from the pending set so 'chainSelectionForBlock' no longer
+-- filters it out, then run chain selection for that block.
+chainSelSync leiosDb cdb@CDB{..} (ChainSelReprocessBlock hash varProcessed) = do
+  lift $
+    atomically $
+      modifyTVar cdbPendingEBs $
+        Map.filter (/= hash)
+  hdr <- lift $ VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
+  chainSelectionForBlock leiosDb cdb BlockCache.empty hdr noPunishment
+  lift $ atomically $ putTMVar varProcessed ()
+chainSelSync leiosDb cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   (isMember, invalid, curChain) <-
     lift $
       atomically $

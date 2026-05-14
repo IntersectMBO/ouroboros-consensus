@@ -56,7 +56,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , ChainSelMessage (..)
   , ChainSelQueue -- opaque
   , addBlockToAdd
-  , addPerasCertToQueue
+  , addReprocessBlock
   , addReprocessLoEBlocks
   , closeChainSelQueue
   , getChainSelMessage
@@ -593,6 +593,14 @@ data ChainSelMessage m blk
     ChainSelReprocessLoEBlocks
       -- | Used for 'ChainSelectionPromise'.
       !(StrictTMVar m ())
+  | -- | Reprocess a single block whose EB closure has arrived.
+    -- Used by the late-join mechanism: when a CertRB's missing EB
+    -- closure becomes available, this message re-triggers ChainSel
+    -- for that specific block.
+    ChainSelReprocessBlock
+      !(HeaderHash blk)
+      -- Used for 'ChainSelectionPromise'.
+      !(StrictTMVar m ())
 
 -- | Create a new 'ChainSelQueue' with the given size.
 newChainSelQueue :: (IOLike m, StandardHash blk, Typeable blk) => Word -> m (ChainSelQueue m blk)
@@ -676,6 +684,21 @@ addReprocessLoEBlocks tracer ChainSelQueue{varChainSelQueue} = do
     AddedReprocessLoEBlocksToQueue (FallingEdgeWith (fromIntegral queueSize))
   return $ ChainSelectionPromise waitUntilRan
 
+-- | Re-trigger chain selection for a single block whose EB closure has
+-- arrived. Modelled on 'addReprocessLoEBlocks'.
+addReprocessBlock ::
+  IOLike m =>
+  ChainSelQueue m blk ->
+  HeaderHash blk ->
+  m (ChainSelectionPromise m)
+addReprocessBlock ChainSelQueue{varChainSelQueue} hash = do
+  varProcessed <- newEmptyTMVarIO
+  let waitUntilRan = atomically $ readTMVar varProcessed
+  atomically $
+    writeTBQueue varChainSelQueue $
+      ChainSelReprocessBlock hash varProcessed
+  return $ ChainSelectionPromise waitUntilRan
+
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
 -- queue is empty; in that case, reports the starvation (and its end) via the
 -- given tracer.
@@ -714,19 +737,17 @@ getChainSelMessage starvationTracer starvationVar chainSelQueue =
       atomically . writeTVar starvationVar . ChainSelStarvationEndedAt =<< getMonotonicTime
     ChainSelAddPerasCert{} -> pure ()
     ChainSelReprocessLoEBlocks{} -> pure ()
+    ChainSelReprocessBlock{} -> pure ()
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
 closeChainSelQueue ChainSelQueue{varChainSelQueue = queue} = do
   traverse_ deliverPromise =<< flushTBQueue queue
  where
-  deliverPromise = \case
-    ChainSelAddBlock ab ->
-      tryPutTMVar (varBlockProcessed ab) (FailedToAddBlock "Queue flushed")
-    ChainSelAddPerasCert _cert varProcessed ->
-      tryPutTMVar varProcessed ()
-    ChainSelReprocessLoEBlocks varProcessed ->
-      tryPutTMVar varProcessed ()
+  blockAdd = \case
+    ChainSelAddBlock ab -> Just ab
+    ChainSelReprocessLoEBlocks _ -> Nothing
+    ChainSelReprocessBlock _ _ -> Nothing
 
 -- | To invoke when the given 'ChainSelMessage' has been processed by ChainSel.
 -- This is used to remove the respective point from the multiset of points in
@@ -742,6 +763,8 @@ processedChainSelMessage ChainSelQueue{varChainSelPoints} = \case
   ChainSelAddPerasCert{} ->
     pure ()
   ChainSelReprocessLoEBlocks{} ->
+    pure ()
+  ChainSelReprocessBlock{} ->
     pure ()
 
 -- | Return a function to test the membership
