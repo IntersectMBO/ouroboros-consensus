@@ -1,12 +1,20 @@
 module Test.LeiosDemoTypes (tests) where
 
 import Cardano.Binary (serialize')
+import Cardano.Slotting.Slot (SlotNo (SlotNo))
 import qualified Data.ByteString as BS
+import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import LeiosDemoTypes
   ( BytesSize
+  , EbHash (..)
   , LeiosEb (..)
+  , LeiosOutstanding (..)
+  , LeiosPoint (..)
   , TxHash (..)
+  , applyPendingAdded
+  , applyPendingRemoved
+  , emptyLeiosOutstanding
   , encodeLeiosEb
   , leiosEbBytesSize
   , maxTxsPerEb
@@ -15,6 +23,7 @@ import Test.QuickCheck
   ( Gen
   , Property
   , chooseInt
+  , conjoin
   , counterexample
   , forAll
   , frequency
@@ -29,7 +38,39 @@ tests =
   testGroup
     "LeiosDemoTypes"
     [ testProperty "leiosEbBytesSize consistent with encodeLeiosEb" prop_ebBytesSizeConsistent
+    , testProperty "reconciler: pending-only insert/remove round-trip" prop_reconciler_pending_only
+    , testProperty "reconciler: offer-supplied entry survives pending add/remove" prop_reconciler_offer_wins
     ]
+
+-- | A pending CertRB whose body size is unknown gets inserted at size 0
+-- and is then dropped cleanly when it leaves the pending set.
+prop_reconciler_pending_only :: Property
+prop_reconciler_pending_only =
+  let point = MkLeiosPoint (SlotNo 42) (MkEbHash (BS.replicate 32 0))
+      afterAdd = applyPendingAdded [point] (emptyLeiosOutstanding :: LeiosOutstanding ())
+      afterRemove = applyPendingRemoved [point] afterAdd
+   in conjoin
+        [ Map.lookup point (missingEbBodies afterAdd) === Just 0
+        , Map.lookup point (missingEbBodies afterRemove) === Nothing
+        ]
+
+-- | An offer that arrived first with a real size must not be clobbered by
+-- a pending add and must survive a pending remove. This is the invariant
+-- that keeps the fetch byte budget accurate.
+prop_reconciler_offer_wins :: Property
+prop_reconciler_offer_wins =
+  let point = MkLeiosPoint (SlotNo 17) (MkEbHash (BS.replicate 32 1))
+      realSize = 1234
+      start =
+        (emptyLeiosOutstanding :: LeiosOutstanding ())
+          { missingEbBodies = Map.singleton point realSize
+          }
+      afterAdd = applyPendingAdded [point] start
+      afterRemove = applyPendingRemoved [point] afterAdd
+   in conjoin
+        [ Map.lookup point (missingEbBodies afterAdd) === Just realSize
+        , Map.lookup point (missingEbBodies afterRemove) === Just realSize
+        ]
 
 -- | Minimum tx size as per the ASSUMPTION in 'leiosEbBytesSize'.
 minTxBytesSize :: Int

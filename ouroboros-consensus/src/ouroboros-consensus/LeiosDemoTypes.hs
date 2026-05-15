@@ -44,6 +44,7 @@ import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Maybe (fromMaybe)
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
@@ -308,6 +309,36 @@ emptyLeiosOutstanding =
     , missingEbTxs = Map.empty
     , reverseEbIndexByTx = Map.empty
     , blockingPerEb = Map.empty
+    }
+
+-- | Insert pending-CertRB entries into 'missingEbBodies' with size 0,
+-- without clobbering any existing (offer-supplied) non-zero size. Size 0
+-- is the sentinel for "we don't know the body size because the entry was
+-- driven by ChainSel via 'cdbPendingEBs' rather than by an offer".
+applyPendingAdded ::
+  Foldable f => f LeiosPoint -> LeiosOutstanding pid -> LeiosOutstanding pid
+applyPendingAdded added outstanding =
+  outstanding
+    { missingEbBodies =
+        foldr
+          (\point acc -> Map.alter (Just . fromMaybe 0) point acc)
+          (missingEbBodies outstanding)
+          added
+    }
+
+-- | Drop pending-CertRB entries from 'missingEbBodies'. Only removes
+-- entries we own (size 0); offer-supplied entries (non-zero) are
+-- preserved.
+applyPendingRemoved ::
+  Foldable f => f LeiosPoint -> LeiosOutstanding pid -> LeiosOutstanding pid
+applyPendingRemoved removed outstanding =
+  outstanding
+    { missingEbBodies =
+        foldr
+          (\point acc ->
+            Map.update (\sz -> if sz == 0 then Nothing else Just sz) point acc)
+          (missingEbBodies outstanding)
+          removed
     }
 
 prettyLeiosOutstanding :: LeiosOutstanding pid -> String
