@@ -591,8 +591,7 @@ ebCompletionRunner ::
   m Void
 ebCompletionRunner leiosDb CDB{..} = do
   notifChan <- subscribeEbNotifications leiosDb
-  leiosConn <- open leiosDb
-  forever $ do
+  bracket (open leiosDb) close $ \leiosConn -> forever $ do
     notif <- atomically $ readTChan notifChan
     let leiosPoint = case notif of
           AcquiredEb point _ -> point
