@@ -95,7 +95,7 @@ class
   -- Users of this function can set any validation level allowed by the
   -- @small-steps@ package. See "Control.State.Transition.Extended".
   applyBlockLedgerResultWithValidation ::
-    HasCallStack =>
+    (Monad m, HasCallStack) =>
     STS.ValidationPolicy ->
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
@@ -110,7 +110,7 @@ class
   --
   -- This function will use 'ValidateAll' policy for calling the ledger rules.
   applyBlockLedgerResult ::
-    HasCallStack =>
+    (Monad m, HasCallStack) =>
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     blk ->
@@ -128,7 +128,7 @@ class
   -- validation checks. Thus this function will call the ledger rules with
   -- 'ValidateNone' policy.
   reapplyBlockLedgerResult ::
-    HasCallStack =>
+    (Monad m, HasCallStack) =>
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     blk ->
@@ -136,7 +136,7 @@ class
     m (LedgerResult blk (StateRef m l blk))
 
 defaultApplyBlockLedgerResult ::
-  (HasCallStack, ApplyBlock l blk) =>
+  (Monad m, HasCallStack, ApplyBlock l blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -146,7 +146,7 @@ defaultApplyBlockLedgerResult =
   applyBlockLedgerResultWithValidation STS.ValidateAll
 
 defaultReapplyBlockLedgerResult ::
-  (HasCallStack, ApplyBlock l blk, Functor m) =>
+  (Monad m, HasCallStack, ApplyBlock l blk, Functor m) =>
   (LedgerErr l blk -> LedgerResult blk (StateRef m l blk)) ->
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
@@ -168,7 +168,7 @@ class ApplyBlock LedgerState blk => UpdateLedger blk
 
 -- | 'lrResult' after 'applyBlockLedgerResult'
 applyLedgerBlock ::
-  (ApplyBlock l blk, HasCallStack, Functor m) =>
+  (Monad m, ApplyBlock l blk, HasCallStack, Functor m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -178,7 +178,7 @@ applyLedgerBlock = fmap lrResult ...: applyBlockLedgerResult
 
 -- | 'lrResult' after 'reapplyBlockLedgerResult'
 reapplyLedgerBlock ::
-  (ApplyBlock l blk, HasCallStack, Functor m) =>
+  (ApplyBlock l blk, HasCallStack, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -187,7 +187,7 @@ reapplyLedgerBlock ::
 reapplyLedgerBlock = fmap lrResult ...: reapplyBlockLedgerResult
 
 tickThenApplyLedgerResult ::
-  (ApplyBlock l blk, Monad m) =>
+  (StateRefHasState m (Ticked LedgerState) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -208,7 +208,7 @@ tickThenApplyLedgerResult evs cfg blk l = do
       }
 
 tickThenReapplyLedgerResult ::
-  (ApplyBlock l blk, Monad m) =>
+  (StateRefHasState m (Ticked LedgerState) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -229,7 +229,7 @@ tickThenReapplyLedgerResult evs cfg blk l = do
       }
 
 tickThenApply ::
-  (ApplyBlock l blk, Monad m) =>
+  (StateRefHasState m (Ticked LedgerState) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -238,7 +238,7 @@ tickThenApply ::
 tickThenApply = fmap lrResult ...: tickThenApplyLedgerResult
 
 tickThenReapply ::
-  (ApplyBlock l blk, Monad m) =>
+  (StateRefHasState m (Ticked LedgerState) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -247,7 +247,7 @@ tickThenReapply ::
 tickThenReapply = fmap lrResult ...: tickThenReapplyLedgerResult
 
 foldLedger ::
-  (ApplyBlock l blk, Monad m) =>
+  (StateRefHasState m (Ticked LedgerState) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   [blk] ->
@@ -257,7 +257,7 @@ foldLedger evs cfg =
   repeatedlyM (tickThenApply evs cfg)
 
 refoldLedger ::
-  (ApplyBlock l blk, Monad m) =>
+  (StateRefHasState m (Ticked LedgerState) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents -> LedgerCfg l blk -> [blk] -> StateRef m l blk -> m (StateRef m l blk)
 refoldLedger evs cfg =
   repeatedlyM (tickThenReapply evs cfg)
