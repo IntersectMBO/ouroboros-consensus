@@ -97,17 +97,25 @@ launchBgTasks ::
   , HasHardForkHistory blk
   , ResolveLeiosBlock blk
   ) =>
+  LeiosDbHandle m ->
   ChainDbEnv m blk ->
   -- | Number of immutable blocks replayed on ledger DB startup
   Word64 ->
   m ()
-launchBgTasks cdb@CDB{..} replayed = do
+launchBgTasks leiosDb cdb@CDB{..} replayed = do
   !addBlockThread <-
     launch "ChainDB.addBlockRunner" $
       addBlockRunner leiosDb cdbChainSelFuse cdb
+
   !ebCompletionThread <-
     launch "ChainDB.ebCompletionRunner" $
       ebCompletionRunner leiosDb cdb
+
+  ledgerDbTasksTrigger <- newLedgerDbTasksTrigger replayed
+  !ledgerDbMaintenaceThread <-
+    forkLinkedWatcher cdbRegistry "ChainDB.ledgerDbTaskWatcher" $
+      ledgerDbTaskWatcher cdb ledgerDbTasksTrigger
+
   gcSchedule <- newGcSchedule
   !gcThread <-
     launch "ChainDB.gcBlocksScheduleRunner" $
@@ -120,7 +128,13 @@ launchBgTasks cdb@CDB{..} replayed = do
 
   atomically $
     writeTVar cdbKillBgThreads $
-      sequence_ [addBlockThread, ebCompletionThread, gcThread, copyAndSnapshotThread]
+      sequence_
+        [ addBlockThread
+        , ebCompletionThread
+        , cancelThread ledgerDbMaintenaceThread
+        , gcThread
+        , copyToImmutableDBThread
+        ]
  where
   launch :: String -> m Void -> m (m ())
   launch = fmap cancelThread .: forkLinkedThread cdbRegistry
@@ -608,6 +622,7 @@ addBlockRunner ::
   , HasCallStack
   , ResolveLeiosBlock blk
   ) =>
+  LeiosDbHandle m ->
   Fuse m ->
   ChainDbEnv m blk ->
   m Void
@@ -615,7 +630,7 @@ addBlockRunner leiosDb fuse cdb@CDB{..} = do
   leiosConn <- open leiosDb
   forever $ do
     let trace = traceWith cdbTracer . TraceAddBlockEvent
-    trace $ PoppedBlockFromQueue RisingEdge
+    trace PoppingFromQueue
     -- if the `chainSelSync` does not complete because it was killed by an async
     -- exception (or it errored), notify the blocked thread
     withFuse fuse $
@@ -637,6 +652,8 @@ addBlockRunner leiosDb fuse cdb@CDB{..} = do
                     varBlockProcessed
                     (FailedToAddBlock "Failed to add block synchronously")
                 pure ()
+              ChainSelAddPerasCert _cert varProcessed ->
+                void $ tryPutTMVar varProcessed ()
             closeChainSelQueue cdbChainSelQueue
         )
         ( \message -> do
@@ -646,10 +663,11 @@ addBlockRunner leiosDb fuse cdb@CDB{..} = do
               ChainSelReprocessBlock _ hash _ ->
                 trace $ PoppedReprocessBlockFromQueue hash
               ChainSelAddBlock BlockToAdd{blockToAdd} ->
-                trace $
-                  PoppedBlockFromQueue $
-                    FallingEdgeWith $
-                      blockRealPoint blockToAdd
+                trace $ PoppedBlockFromQueue $ blockRealPoint blockToAdd
+              ChainSelAddPerasCert cert _varProcessed ->
+                traceWith cdbTracer $
+                  TraceAddPerasCertEvent $
+                    PoppedPerasCertFromQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
             chainSelSync leiosConn cdb message
             lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
         )
@@ -668,14 +686,14 @@ ebCompletionRunner ::
   LeiosDbHandle m ->
   ChainDbEnv m blk ->
   m Void
-ebCompletionRunner leiosDb CDB{..} = do
+ebCompletionRunner leiosDb cdb = do
   notifChan <- subscribeEbNotifications leiosDb
   bracket (open leiosDb) close $ \leiosConn -> forever $ do
     notif <- atomically $ readTChan notifChan
     let leiosPoint = case notif of
           AcquiredEb point _ -> point
           AcquiredEbTxs point -> point
-    pending <- atomically $ readTVar cdbPendingEBs
+    pending <- atomically $ readTVar (cdbPendingEBs cdb)
     case Map.lookup leiosPoint pending of
       Nothing -> pure ()
       Just certRBHash -> do
@@ -685,7 +703,7 @@ ebCompletionRunner leiosDb CDB{..} = do
           Just _ ->
             void $
               addReprocessBlock
-                (contramap TraceAddBlockEvent cdbTracer)
-                cdbChainSelQueue
+                (contramap TraceAddBlockEvent (cdbTracer cdb))
+                (cdbChainSelQueue cdb)
                 leiosPoint
                 certRBHash

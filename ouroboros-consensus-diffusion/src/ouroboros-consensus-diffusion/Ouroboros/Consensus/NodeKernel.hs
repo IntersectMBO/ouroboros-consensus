@@ -58,6 +58,7 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Measure
 import Data.Maybe (isJust, mapMaybe)
 import Data.Proxy
 import Data.Set (Set)
@@ -211,8 +212,6 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
-import Ouroboros.Consensus.Mempool.TxSeq (mSize)
-import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 
 {-------------------------------------------------------------------------------
   Relay node
@@ -320,6 +319,7 @@ initNodeKernel ::
   ( IOLike m
   , SI.MonadTimer m
   , RunNode blk
+  , ResolveLeiosBlock blk
   , Ord addrNTN
   , Hashable addrNTN
   , Typeable addrNTN

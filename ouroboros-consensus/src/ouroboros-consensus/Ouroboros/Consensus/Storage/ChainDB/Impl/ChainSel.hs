@@ -30,7 +30,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
 
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Exception (assert)
-import Control.Monad (forM, forM_, unless, when)
+import Control.Monad (forM, forM_, join, unless, void, when)
 import Control.Monad.Except ()
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict
@@ -335,6 +335,7 @@ chainSelSync ::
   , HasCallStack
   , ResolveLeiosBlock blk
   ) =>
+  LeiosDbConnection m ->
   ChainDbEnv m blk ->
   ChainSelMessage m blk ->
   Electric m ()
@@ -352,36 +353,56 @@ chainSelSync ::
 -- Note that we do this even when we are caught-up, as we might want to select
 -- blocks that were originally postponed by the LoE, but can be adopted once we
 -- conclude that we are caught-up (and hence are longer bound by the LoE).
-chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
-  (succsOf, lookupBlockInfo, curChain, weights) <- atomically $ do
+chainSelSync _leiosDb cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
+  (succsOf, lookupBlockInfo, curChain, weights, pendingHashes) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
-    (,,,)
+    (,,,,)
       <$> ( ignoreInvalidSuc cdbVolatileDB invalid
               <$> VolatileDB.filterByPredecessor cdbVolatileDB
           )
       <*> VolatileDB.getBlockInfo cdbVolatileDB
       <*> Query.getCurrentChain cdb
       <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
+      <*> (Set.fromList . Map.elems <$> readTVar cdbPendingEBs)
   let
-    succsOf' = Set.toList . succsOf . pointHash . castPoint
-    loeHashes = succsOf' (AF.anchorPoint chain)
-    firstHeader = either (const Nothing) Just $ AF.last chain
-    -- We avoid the VolatileDB for the headers we already have in the chain
-    getHeaderFromHash hash =
-      case firstHeader of
-        Just header | headerHash header == hash -> pure header
-        _ -> VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
-  loeHeaders <- lift (mapM getHeaderFromHash loeHashes)
-  for_ loeHeaders $ \hdr ->
-    chainSelectionForBlock leiosDb cdb BlockCache.empty hdr noPunishment
-  lift $ atomically $ putTMVar varProcessed ()
+    -- All immediate successor blocks of blocks on the current chain (including
+    -- the anchor), excluding those on the current chain.
+    loePoints :: [RealPoint blk]
+    loePoints =
+      [ castRealPoint loePt
+      | curChainPt <-
+          AF.anchorPoint curChain : (blockPoint <$> AF.toOldestFirst curChain)
+      , loeHash <- Set.toList $ succsOf $ castHash (pointHash curChainPt)
+      , Just bi <- [lookupBlockInfo loeHash]
+      , let loePt = RealPoint (VolatileDB.biSlotNo bi) loeHash
+      , not $ AF.pointOnFragment (realPointToPoint loePt) curChain
+      ]
+
+    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
+
+  chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
+    for
+      loePoints
+      $ constructPreferableCandidates cdb pendingHashes weights curChain Map.empty
+
+  -- Consider all candidates at once, to avoid transient chain switches.
+  case NE.nonEmpty $ concat chainDiffs of
+    Just chainDiffs' ->
+      -- Find the best valid candidate. On LoE reprocess we don't log the reason
+      -- for a switch, hence the 'void'.
+      void $
+        chainSelection chainSelEnv chainDiffs' $
+          switchTo cdb weights Nothing
+    Nothing -> pure ()
+
+  atomically $ putTMVar varProcessed ()
 -- Re-trigger chain selection for a CertRB whose EB closure has arrived.
 -- Remove it from the pending set so 'chainSelectionForBlock' no longer
 -- filters it out, then run chain selection for that block.
-chainSelSync leiosDb cdb@CDB{..} (ChainSelReprocessBlock point hash varProcessed) = do
-  lift $ atomically $ modifyTVar cdbPendingEBs $ Map.delete point
-  hdr <- lift $ VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
-  chainSelectionForBlock leiosDb cdb BlockCache.empty hdr noPunishment
+chainSelSync leiosDb cdb (ChainSelReprocessBlock point hash varProcessed) = do
+  lift $ atomically $ modifyTVar (cdbPendingEBs cdb) $ Map.delete point
+  hdr <- lift $ VolatileDB.getKnownBlockComponent (cdbVolatileDB cdb) GetHeader hash
+  chainSelectionForBlock cdb BlockCache.empty hdr noPunishment
   lift $ atomically $ putTMVar varProcessed ()
 chainSelSync leiosDb cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   (isMember, invalid, curChain) <-
@@ -461,7 +482,7 @@ chainSelSync leiosDb cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..
                   Nothing -> pure True
 
         unless isPending $
-          chainSelectionForBlock leiosDb cdb (BlockCache.singleton b) hdr blockPunish
+          chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
 
   newTip <- lift $ atomically $ Query.getTipPoint cdb
 
@@ -491,7 +512,7 @@ chainSelSync leiosDb cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..
       putTMVar varBlockProcessed (SuccesfullyAddedBlock tip)
 -- Process a Peras certificate by adding it to the PerasCertDB and potentially
 -- performing chain selection if a candidate is now better than our selection.
-chainSelSync cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do
+chainSelSync _leiosDb cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do
   curChain <- lift $ atomically $ Query.getCurrentChain cdb
   let immTip = AF.castAnchor $ AF.anchor curChain
 
@@ -623,36 +644,23 @@ chainSelectionForBlock ::
   Header blk ->
   InvalidBlockPunishment m ->
   Electric m ()
-chainSelectionForBlock leiosDb cdb@CDB{..} blockCache hdr punish = electric $ withRegistry $ \rr -> do
-  (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, pendingHashes) <-
+chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
+  (invalid, curChain, weights, pendingHashes) <-
     atomically $
-      (,,,,,)
+      (,,,)
         <$> (forgetFingerprint <$> readTVar cdbInvalid)
         <*> Query.getCurrentChain cdb
-        <*> Query.getTipPoint cdb
+        <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
         <*> (Set.fromList . Map.elems <$> readTVar cdbPendingEBs)
-  -- This is safe: the LedgerDB tip doesn't change in between the previous
-  -- atomically block and this call to 'withTipForker'.
-  LedgerDB.withTipForker cdbLedgerDB rr $ \curForker -> do
-    curChainAndLedger :: ChainAndLedger m blk <-
-      -- The current chain we're working with here is not longer than @k@
-      -- blocks (see 'getCurrentChain' and 'cdbChain'), which is easier to
-      -- reason about when doing chain selection, etc.
-      assert (fromIntegral (AF.length curChain) <= unNonZero k) $
-        VF.newM curChain curForker
 
   -- The current chain we're working with here is not longer than @k@ blocks
   -- (see 'getCurrentChain' and 'cdbChain'), which is easier to reason about
   -- when doing chain selection, etc.
   assert (fromIntegral (AF.length curChain) <= unNonZero k) pure ()
 
-      -- Let these two functions ignore invalid blocks and pending CertRBs
-      lookupBlockInfo' =
-        ignorePending pendingHashes $
-          ignoreInvalid cdb invalid lookupBlockInfo
-      succsOf' =
-        Set.filter (`Set.notMember` pendingHashes)
-          . ignoreInvalidSuc cdb invalid succsOf
+  let
+    immBlockNo :: WithOrigin BlockNo
+    immBlockNo = AF.anchorBlockNo curChain
 
   if
     -- The chain might have grown since we added the block such that the
@@ -672,10 +680,13 @@ chainSelectionForBlock leiosDb cdb@CDB{..} blockCache hdr punish = electric $ wi
 
     -- Try to select a chain involving the block.
     | otherwise -> do
-        -- Construct all 'ChainDiff's involving the block.
+        -- Construct all 'ChainDiff's involving the block. CertRBs whose EB
+        -- closure hasn't been fetched yet ('pendingHashes') are filtered out
+        -- of the successor candidates.
         chainDiffs <-
           constructPreferableCandidates
             cdb
+            pendingHashes
             weights
             curChain
             (Map.singleton (headerHash hdr) hdr)
@@ -718,6 +729,9 @@ constructPreferableCandidates ::
   , BlockSupportsProtocol blk
   ) =>
   ChainDbEnv m blk ->
+  -- | CertRBs whose EB closure hasn't been fetched yet; filtered out of
+  -- successor candidates and block-info lookups.
+  Set (HeaderHash blk) ->
   PerasWeightSnapshot blk ->
   -- | The current chain.
   AnchoredFragment (Header blk) ->
@@ -728,12 +742,18 @@ constructPreferableCandidates ::
   -- | All candidates involving @p@ (ie containing @p@ in 'getSuffix') which are
   -- preferable to the current chain.
   m [(ChainDiff (Header blk), ReasonForSwitch' blk)]
-constructPreferableCandidates CDB{..} weights curChain hdrCache p = do
+constructPreferableCandidates CDB{..} pendingHashes weights curChain hdrCache p = do
   (succsOf, lookupBlockInfo) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
     (,)
-      <$> (ignoreInvalidSuc p invalid <$> VolatileDB.filterByPredecessor cdbVolatileDB)
-      <*> (ignoreInvalid p invalid <$> VolatileDB.getBlockInfo cdbVolatileDB)
+      <$> ( (Set.filter (`Set.notMember` pendingHashes) .)
+              . ignoreInvalidSuc p invalid
+              <$> VolatileDB.filterByPredecessor cdbVolatileDB
+          )
+      <*> ( ignorePending pendingHashes
+              . ignoreInvalid p invalid
+              <$> VolatileDB.getBlockInfo cdbVolatileDB
+          )
 
   loeFrag <- fmap sanitizeLoEFrag <$> cdbLoE
   traceWith
@@ -1404,6 +1424,26 @@ isPipelineable bcfg st ChainDiff{..}
 {-------------------------------------------------------------------------------
   Helpers
 -------------------------------------------------------------------------------}
+
+compareChainDiffs ::
+  forall blk.
+  BlockSupportsProtocol blk =>
+  BlockConfig blk ->
+  PerasWeightSnapshot blk ->
+  -- | Current chain.
+  AnchoredFragment (Header blk) ->
+  ChainDiff (Header blk) ->
+  ChainDiff (Header blk) ->
+  Ordering
+compareChainDiffs bcfg weights curChain =
+  -- The precondition of 'compareAnchoredFragment's is satisfied as the result
+  -- of @mkCand@ has the same anchor as @curChain@, and so any two fragments
+  -- returned by @mkCand@ do intersect.
+  compareAnchoredFragments bcfg weights `on` mkCand
+ where
+  mkCand =
+    fromMaybe (error "compareChainDiffs: precondition violated")
+      . Diff.apply curChain
 
 -- | Wrap a @getter@ function so that it returns 'Nothing' for invalid blocks.
 ignoreInvalid ::
