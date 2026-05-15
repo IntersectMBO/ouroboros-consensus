@@ -427,8 +427,23 @@ chainSelSync leiosDb cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..
 
         -- If this block certifies an EB whose closure we don't have yet,
         -- record it as pending and skip chain selection — it would be
-        -- filtered out anyway. ChainSel will be re-triggered when the
-        -- EB closure arrives (step 3).
+        -- filtered out anyway. ChainSel will be re-triggered by
+        -- 'ebCompletionRunner' (Background.hs) when the EB closure
+        -- arrives.
+        --
+        -- After inserting into 'cdbPendingEBs', re-query the LeiosDb:
+        -- the closure may have completed between the first query and
+        -- the insert, in which case 'ebCompletionRunner' fired against
+        -- an empty pending set and dropped its notification. If we hit
+        -- that window, remove the entry and fall through to chain
+        -- selection in-process — the in-place removal preserves the
+        -- "every removal pairs with a ChainSel run" property.
+        --
+        -- A broader sweep in 'leiosFetchLogic' (NodeKernel.hs) covers
+        -- this race and other missed-notification scenarios on its
+        -- normal iteration cadence; this inline recheck is a local
+        -- optimization that closes the immediate window without
+        -- waiting for the next sweep tick.
         isPending <- lift $ case certifiedEbFromHeader hdr of
           Nothing -> pure False
           Just leiosPoint -> do
@@ -439,7 +454,14 @@ chainSelSync leiosDb cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..
                 atomically $
                   modifyTVar cdbPendingEBs $
                     Map.insert leiosPoint (headerHash hdr)
-                pure True
+                mayClosure' <- leiosDbQueryCompletedEbByPoint leiosDb leiosPoint
+                case mayClosure' of
+                  Just _ -> do
+                    atomically $
+                      modifyTVar cdbPendingEBs $
+                        Map.delete leiosPoint
+                    pure False
+                  Nothing -> pure True
 
         unless isPending $
           chainSelectionForBlock leiosDb cdb (BlockCache.singleton b) hdr blockPunish

@@ -529,6 +529,13 @@ initNodeKernel
           -- ChainSel's "is the closure present?" check and its insert into
           -- cdbPendingEBs. The sweep covers that race and any other
           -- missed-notification scenarios (e.g. subscription startup gap).
+          --
+          -- An inline recheck in ChainSel.hs (the add-block path that
+          -- inserts into cdbPendingEBs) closes the immediate race window
+          -- so callers don't have to wait for the next sweep tick; this
+          -- sweep is the load-bearing fix and also handles cases the
+          -- inline recheck can't see (e.g. closure arrival just after a
+          -- prior pending-insert).
           pending <- atomically $ ChainDB.getPendingCertRBs chainDB
           forM_ (Map.toList pending) $ \(leiosPoint, certRBHash) -> do
             mayComplete <- LeiosDb.leiosDbQueryCompletedEbByPoint leiosConn leiosPoint
