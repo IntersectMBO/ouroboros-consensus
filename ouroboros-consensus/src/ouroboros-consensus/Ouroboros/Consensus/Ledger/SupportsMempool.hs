@@ -119,6 +119,7 @@ class
   -- The resulting ledger state contains the diffs produced by applying this
   -- transaction alone.
   applyTx ::
+    Monad m =>
     LedgerConfig blk ->
     WhetherToIntervene ->
     -- | Slot number of the block containing the tx
@@ -139,7 +140,7 @@ class
   -- function can be used to reapply a list of transactions, providing as a
   -- first state one that contains the values for all the transactions.
   reapplyTx ::
-    HasCallStack =>
+    (Monad m, HasCallStack) =>
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
