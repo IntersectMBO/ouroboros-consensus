@@ -56,6 +56,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , ChainSelMessage (..)
   , ChainSelQueue -- opaque
   , addBlockToAdd
+  , addPerasCertToQueue
   , addReprocessBlock
   , addReprocessLoEBlocks
   , closeChainSelQueue
@@ -597,7 +598,12 @@ data ChainSelMessage m blk
     -- Used by the late-join mechanism: when a CertRB's missing EB
     -- closure becomes available, this message re-triggers ChainSel
     -- for that specific block.
+    --
+    -- The 'LeiosPoint' is the missing EB's point, used as the key into
+    -- 'cdbPendingEBs'; the 'HeaderHash' is the CertRB itself, used to
+    -- look the header up in the VolatileDB.
     ChainSelReprocessBlock
+      !LeiosPoint
       !(HeaderHash blk)
       -- Used for 'ChainSelectionPromise'.
       !(StrictTMVar m ())
@@ -690,15 +696,16 @@ addReprocessBlock ::
   IOLike m =>
   Tracer m (TraceAddBlockEvent blk) ->
   ChainSelQueue m blk ->
+  LeiosPoint ->
   HeaderHash blk ->
   m (ChainSelectionPromise m)
-addReprocessBlock tracer ChainSelQueue{varChainSelQueue} hash = do
+addReprocessBlock tracer ChainSelQueue{varChainSelQueue} point hash = do
   varProcessed <- newEmptyTMVarIO
   let waitUntilRan = atomically $ readTMVar varProcessed
   traceWith tracer $ AddedReprocessBlockToQueue hash
   atomically $
     writeTBQueue varChainSelQueue $
-      ChainSelReprocessBlock hash varProcessed
+      ChainSelReprocessBlock point hash varProcessed
   return $ ChainSelectionPromise waitUntilRan
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
@@ -746,10 +753,15 @@ closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
 closeChainSelQueue ChainSelQueue{varChainSelQueue = queue} = do
   traverse_ deliverPromise =<< flushTBQueue queue
  where
-  blockAdd = \case
-    ChainSelAddBlock ab -> Just ab
-    ChainSelReprocessLoEBlocks _ -> Nothing
-    ChainSelReprocessBlock _ _ -> Nothing
+  deliverPromise = \case
+    ChainSelAddBlock ab ->
+      tryPutTMVar (varBlockProcessed ab) (FailedToAddBlock "Queue flushed")
+    ChainSelAddPerasCert _cert varProcessed ->
+      tryPutTMVar varProcessed ()
+    ChainSelReprocessLoEBlocks varProcessed ->
+      tryPutTMVar varProcessed ()
+    ChainSelReprocessBlock _point _hash varProcessed ->
+      tryPutTMVar varProcessed ()
 
 -- | To invoke when the given 'ChainSelMessage' has been processed by ChainSel.
 -- This is used to remove the respective point from the multiset of points in

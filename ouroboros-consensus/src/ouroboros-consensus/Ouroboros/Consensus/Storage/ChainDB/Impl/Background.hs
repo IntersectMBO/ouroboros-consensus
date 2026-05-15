@@ -625,7 +625,7 @@ addBlockRunner leiosDb fuse cdb@CDB{..} = do
             case message of
               ChainSelReprocessLoEBlocks varProcessed ->
                 void $ tryPutTMVar varProcessed ()
-              ChainSelReprocessBlock _ varProcessed ->
+              ChainSelReprocessBlock _ _ varProcessed ->
                 void $ tryPutTMVar varProcessed ()
               ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
                 _ <-
@@ -643,7 +643,7 @@ addBlockRunner leiosDb fuse cdb@CDB{..} = do
             lift $ case message of
               ChainSelReprocessLoEBlocks _ ->
                 trace PoppedReprocessLoEBlocksFromQueue
-              ChainSelReprocessBlock hash _ ->
+              ChainSelReprocessBlock _ hash _ ->
                 trace $ PoppedReprocessBlockFromQueue hash
               ChainSelAddBlock BlockToAdd{blockToAdd} ->
                 trace $
@@ -687,4 +687,5 @@ ebCompletionRunner leiosDb CDB{..} = do
               addReprocessBlock
                 (contramap TraceAddBlockEvent cdbTracer)
                 cdbChainSelQueue
+                leiosPoint
                 certRBHash

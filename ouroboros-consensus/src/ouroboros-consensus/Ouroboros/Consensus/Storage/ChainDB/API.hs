@@ -172,10 +172,11 @@ data ChainDB m blk = ChainDB
   -- https://github.com/IntersectMBO/ouroboros-consensus/blob/main/docs/website/contents/for-developers/HandlingBlocksFromTheFuture.md#handling-blocks-from-the-future
   , chainSelAsync :: m (ChainSelectionPromise m)
   -- ^ Trigger reprocessing of blocks postponed by the LoE.
-  , addReprocessBlock :: HeaderHash blk -> m (ChainSelectionPromise m)
+  , addReprocessBlock :: LeiosPoint -> HeaderHash blk -> m (ChainSelectionPromise m)
   -- ^ Re-trigger chain selection for a single CertRB whose EB closure
   -- has just become available locally. Removes the block from
-  -- 'getPendingCertRBs' and re-runs ChainSel against its header.
+  -- 'getPendingCertRBs' (keyed by 'LeiosPoint') and re-runs ChainSel
+  -- against its header (looked up by 'HeaderHash').
   , getCurrentChain :: STM m (AnchoredFragment (Header blk))
   -- ^ Get the current chain fragment
   --
@@ -432,7 +433,7 @@ data ChainDB m blk = ChainDB
   --
   -- This is intended to be used by the mempool to hydrate a ledger state at
   -- a specific point.
-  , getStatistics :: m (Maybe Statistics)
+  , getStatistics :: m Statistics
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
   , addPerasCertAsync :: WithArrivalTime (ValidatedPerasCert blk) -> m (AddPerasCertPromise m)

@@ -282,7 +282,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             { addBlockAsync = getEnv2 h ChainSel.addBlockAsync
             , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
             , addReprocessBlock =
-                getEnv1 h $ \env' ->
+                getEnv2 h $ \env' ->
                   addReprocessBlock
                     (TraceAddBlockEvent >$< cdbTracer env')
                     (cdbChainSelQueue env')
@@ -330,7 +330,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                     (void $ Background.copyToImmutableDB env')
                     Nothing
                     maxBound
-            , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
+            , intAddBlockRunner = getEnv h (Background.addBlockRunner leiosDb addBlockTestFuse)
             , intKillBgThreads = varKillBgThreads
             }
 
@@ -340,7 +340,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env replayed
+    when launchBgTasks $ Background.launchBgTasks leiosDb env replayed
 
     -- Note we put the ChainDB in the top level registry before exiting the
     -- 'runWithTempRegistry' scope. This way, the critical resources (actually
@@ -360,6 +360,11 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     argsLgrDb
     argsPerasCertDB
     cdbSpecificArgs = args
+
+  -- The Leios demo DB handle, shared with the LedgerDB. The background runners
+  -- ('addBlockRunner', 'ebCompletionRunner') open their own per-thread
+  -- 'LeiosDbConnection' from this handle.
+  leiosDb = LedgerDB.lgrLeiosDb argsLgrDb
 
   -- The LedgerDB requires a criterion ('LedgerDB.GetVolatileSuffix')
   -- determining which of its states are volatile/immutable. Once we have

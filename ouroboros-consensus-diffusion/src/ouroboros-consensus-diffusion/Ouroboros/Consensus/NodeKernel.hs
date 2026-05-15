@@ -524,7 +524,7 @@ initNodeKernel
           forM_ (Map.toList pending) $ \(leiosPoint, certRBHash) -> do
             mayComplete <- LeiosDb.leiosDbQueryCompletedEbByPoint leiosConn leiosPoint
             when (isJust mayComplete) $
-              void $ ChainDB.addReprocessBlock chainDB certRBHash
+              void $ ChainDB.addReprocessBlock chainDB leiosPoint certRBHash
           leiosPeersVars <- MVar.readMVar getLeiosPeersVars
           offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
           -- Per-peer certified EBs derived from ChainSync candidate fragments,
