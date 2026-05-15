@@ -643,8 +643,8 @@ addBlockRunner leiosDb fuse cdb@CDB{..} = do
             lift $ case message of
               ChainSelReprocessLoEBlocks _ ->
                 trace PoppedReprocessLoEBlocksFromQueue
-              ChainSelReprocessBlock _ _ ->
-                trace PoppedReprocessLoEBlocksFromQueue
+              ChainSelReprocessBlock hash _ ->
+                trace $ PoppedReprocessBlockFromQueue hash
               ChainSelAddBlock BlockToAdd{blockToAdd} ->
                 trace $
                   PoppedBlockFromQueue $
@@ -682,4 +682,9 @@ ebCompletionRunner leiosDb CDB{..} = do
         mayComplete <- leiosDbQueryCompletedEbByPoint leiosConn leiosPoint
         case mayComplete of
           Nothing -> pure ()
-          Just _ -> void $ addReprocessBlock cdbChainSelQueue certRBHash
+          Just _ ->
+            void $
+              addReprocessBlock
+                (contramap TraceAddBlockEvent cdbTracer)
+                cdbChainSelQueue
+                certRBHash
