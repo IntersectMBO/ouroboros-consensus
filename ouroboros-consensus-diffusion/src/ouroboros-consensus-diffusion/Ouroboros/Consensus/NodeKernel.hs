@@ -56,7 +56,7 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import Data.Maybe (fromMaybe, isJust, mapMaybe)
+import Data.Maybe (isJust, mapMaybe)
 import Data.Proxy
 import qualified Data.Text as Text
 import Data.Void (Void)
@@ -434,24 +434,10 @@ initNodeKernel
             when (new == old) retry
             writeTVar lastAppliedPendingEBs new
             pure (Map.difference new old, Map.difference old new)
-          MVar.modifyMVar_ getLeiosOutstanding $ \outstanding -> do
-            let bodies0 = Leios.missingEbBodies outstanding
-                -- Add entries from new pending CertRBs; never overwrite an
-                -- existing non-zero (offer-supplied) size.
-                bodies1 =
-                  Map.foldlWithKey'
-                    (\acc point _ -> Map.alter (Just . fromMaybe 0) point acc)
-                    bodies0
-                    added
-                -- Drop entries we no longer need; keep offer-driven entries
-                -- (non-zero size) untouched.
-                bodies2 =
-                  Map.foldlWithKey'
-                    (\acc point _ ->
-                      Map.update (\sz -> if sz == 0 then Nothing else Just sz) point acc)
-                    bodies1
-                    removed
-            pure outstanding{Leios.missingEbBodies = bodies2}
+          MVar.modifyMVar_ getLeiosOutstanding $
+            pure
+              . Leios.applyPendingRemoved (Map.keys removed)
+              . Leios.applyPendingAdded (Map.keys added)
           void $ MVar.tryPutMVar getLeiosReady ()
 
     void $
