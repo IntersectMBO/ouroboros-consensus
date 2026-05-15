@@ -17,7 +17,7 @@
 --
 -- This module contains a bunch of unit tests to make sure that these locks and
 -- markers are created correctly and behave as expected.
-module Test.Consensus.Node (tests) where
+module Test.Consensus.DBLock (tests) where
 
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.IOSim (runSimOrThrow)
@@ -46,7 +46,7 @@ import Test.Util.QuickCheck (ge)
 tests :: TestTree
 tests =
   testGroup
-    "Node"
+    "DBLock"
     [ testGroup
         "checkDbMarker"
         [ testCase "match" test_checkNetworkMagic_match

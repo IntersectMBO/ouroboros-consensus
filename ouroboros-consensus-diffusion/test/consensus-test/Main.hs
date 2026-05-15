@@ -1,11 +1,11 @@
 module Main (main) where
 
 import qualified Test.Consensus.BlockTree.Tests (tests)
+import qualified Test.Consensus.DBLock (tests)
 import qualified Test.Consensus.GSM (tests)
 import qualified Test.Consensus.Genesis.TestSuite.SmallKey.Tests (tests)
 import qualified Test.Consensus.Genesis.Tests (tests)
 import qualified Test.Consensus.HardFork.Combinator (tests)
-import qualified Test.Consensus.Node (tests)
 import qualified Test.Consensus.PeerSimulator.Tests (tests)
 import qualified Test.Consensus.PointSchedule.Shrinking.Tests (tests)
 import qualified Test.Consensus.PointSchedule.Tests (tests)
@@ -22,7 +22,7 @@ tests :: TestTree
 tests =
   testGroup
     "ouroboros-consensus"
-    [ Test.Consensus.Node.tests
+    [ Test.Consensus.DBLock.tests
     , testGroup
         "HardFork"
         [ testGroup
