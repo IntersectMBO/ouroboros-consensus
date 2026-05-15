@@ -22,6 +22,7 @@ import qualified Data.ByteString as BS
 import LeiosDemoTypes
   ( EbAnnouncement (EbAnnouncement)
   , EbHash (MkEbHash)
+  , LeiosPoint (MkLeiosPoint)
   )
 import Ouroboros.Consensus.Protocol.Praos (PraosState (PraosState))
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
@@ -74,7 +75,7 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> ocert
           <*> arbitrary
           <*> arbitrary
-          <*> pure Nothing
+          <*> arbitrary
 
 instance Praos.PraosCrypto c => Arbitrary (Header c) where
   arbitrary = do
@@ -98,4 +99,9 @@ instance Arbitrary PraosState where
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
-      <*> pure SNothing
+      <*> arbitrary
+
+instance Arbitrary LeiosPoint where
+  arbitrary = MkLeiosPoint <$> arbitrary <*> (MkEbHash . BS.pack <$> vectorOfWord8 32)
+   where
+    vectorOfWord8 n = sequence (replicate n arbitrary)

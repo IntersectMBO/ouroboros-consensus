@@ -109,6 +109,7 @@ import Ouroboros.Consensus.Protocol.Praos.VRF
   , vrfLeaderValue
   )
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
+import Test.Consensus.Protocol.Serialisation.Generators ()
 import Test.QuickCheck
   ( Gen
   , arbitrary
@@ -446,8 +447,8 @@ genHeaderBody context = do
   hbBodySize <- choose (1000, 90000)
   hbBodyHash <- genHash
   (hbOCert, kesPeriod) <- genCert hbSlotNo context
-  let hbMayEbAnnouncement = Nothing
-      hbMayCertifiedEb = Nothing
+  hbMayEbAnnouncement <- arbitrary
+  hbMayCertifiedEb <- arbitrary
   let hbProtVer = protocolVersionZero
       hbLeiosEbAnnouncement = SNothing
       headerBody = HeaderBody{..}
