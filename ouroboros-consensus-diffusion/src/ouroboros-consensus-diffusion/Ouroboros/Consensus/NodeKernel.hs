@@ -189,7 +189,6 @@ import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import qualified Data.ByteString as BS
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
 import LeiosDemoDb
   ( LeiosDbConnection
@@ -202,8 +201,7 @@ import LeiosDemoDb
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
-  ( EbHash
-  , ForgedLeiosEb
+  ( ForgedLeiosEb
   , LeiosOutstanding
   , LeiosPeerVars
   , LeiosPoint (..)
@@ -549,8 +547,8 @@ initNodeKernel
           candidateCertEbs <- atomically $ do
             handles <- cschcMap varChainSyncHandles
             fmap (Map.mapKeysMonotonic Leios.MkPeerId) $
-              forM handles $ \handle -> do
-                state <- readTVar (cschState handle)
+              forM handles $ \csHandle -> do
+                state <- readTVar (cschState csHandle)
                 pure $
                   Set.fromList
                     [ pointEbHash
