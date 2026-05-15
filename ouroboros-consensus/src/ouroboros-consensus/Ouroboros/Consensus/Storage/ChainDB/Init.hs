@@ -20,7 +20,7 @@ import Prelude hiding (map)
 data InitChainDB m blk = InitChainDB
   { addBlock :: blk -> m ()
   -- ^ Add a block to the DB
-  , getCurrentLedger :: m (LedgerState blk EmptyMK)
+  , getCurrentLedger :: m (LedgerState blk)
   -- ^ Return the current ledger state
   }
 
@@ -38,7 +38,7 @@ fromFull db =
 map ::
   Functor m =>
   (blk' -> blk) ->
-  (LedgerState blk EmptyMK -> LedgerState blk' EmptyMK) ->
+  (LedgerState blk -> LedgerState blk') ->
   InitChainDB m blk ->
   InitChainDB m blk'
 map f g db =
