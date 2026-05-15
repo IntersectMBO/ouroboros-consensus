@@ -464,6 +464,18 @@ initNodeKernel
           traceWith tracer $ MkTraceLeiosKernel "leiosFetchLogic: wait for leios ready"
           () <- MVar.takeMVar getLeiosReady
           iterationStart <- getMonotonicTime
+          -- Sweep cdbPendingEBs for CertRBs whose EB closure has since
+          -- become available locally, and re-enqueue them for ChainSel.
+          -- ebCompletionRunner already does this when a notification fires,
+          -- but it can miss the window if the closure completes between
+          -- ChainSel's "is the closure present?" check and its insert into
+          -- cdbPendingEBs. The sweep covers that race and any other
+          -- missed-notification scenarios (e.g. subscription startup gap).
+          pending <- atomically $ ChainDB.getPendingCertRBs chainDB
+          forM_ (Map.toList pending) $ \(leiosPoint, certRBHash) -> do
+            mayComplete <- LeiosDb.leiosDbQueryCompletedEbByPoint leiosConn leiosPoint
+            when (isJust mayComplete) $
+              void $ ChainDB.addReprocessBlock chainDB certRBHash
           leiosPeersVars <- MVar.readMVar getLeiosPeersVars
           offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
           -- Per-peer certified EBs derived from ChainSync candidate fragments,

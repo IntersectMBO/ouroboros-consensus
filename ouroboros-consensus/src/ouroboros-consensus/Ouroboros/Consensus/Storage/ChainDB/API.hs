@@ -160,6 +160,10 @@ data ChainDB m blk = ChainDB
   -- https://github.com/IntersectMBO/ouroboros-consensus/blob/main/docs/website/contents/for-developers/HandlingBlocksFromTheFuture.md#handling-blocks-from-the-future
   , chainSelAsync :: m (ChainSelectionPromise m)
   -- ^ Trigger reprocessing of blocks postponed by the LoE.
+  , addReprocessBlock :: HeaderHash blk -> m (ChainSelectionPromise m)
+  -- ^ Re-trigger chain selection for a single CertRB whose EB closure
+  -- has just become available locally. Removes the block from
+  -- 'getPendingCertRBs' and re-runs ChainSel against its header.
   , getCurrentChain :: STM m (AnchoredFragment (Header blk))
   -- ^ Get the current chain fragment
   --
