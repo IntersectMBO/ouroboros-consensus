@@ -17,6 +17,7 @@ module Ouroboros.Consensus.Ledger.Basics
     LedgerCfg
   , LedgerState
   , TickedLedgerState
+  , Statistics (..)
 
     -- * Definition of a ledger independent of a choice of block
   , ComputeLedgerEvents (..)
@@ -262,6 +263,14 @@ class StateRefHasState m l blk where
   mkStateRef :: l blk -> LedgerTables m blk -> StateRef m l blk
 
   close :: StateRef m l blk -> m ()
+
+  getStats :: StateRef m l blk -> Statistics
+
+  duplicate :: StateRef m l blk -> m (StateRef m l blk)
+
+newtype Statistics = Statistics
+  { ledgerTableSize :: Int
+  }
 
 class StateRefHasTables m l blk where
   tables :: StateRef m l blk -> LedgerTables m blk

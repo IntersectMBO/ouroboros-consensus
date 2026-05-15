@@ -6,6 +6,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
@@ -173,10 +174,8 @@
 -- >>> :}
 module Ouroboros.Consensus.Storage.LedgerDB.API
   ( -- * Main API
-    CanUpgradeLedgerTables (..)
-  , LedgerDB (..)
+    LedgerDB (..)
   , LedgerDB'
-  , LedgerDbPrune (..)
   , LedgerDbSerialiseConstraints
   , ResolveBlock
   , currentPoint
@@ -229,14 +228,12 @@ import Data.ByteString (ByteString)
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
-import Data.MemPack
 import Data.Proxy
 import Data.Set (Set)
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -248,11 +245,10 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Storage.Serialisation
-import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Point
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -267,25 +263,22 @@ import System.FS.CRC
 -- instantiated with a @blk@.
 type LedgerDbSerialiseConstraints blk =
   ( Serialise (HeaderHash blk)
-  , EncodeDisk blk (LedgerState blk EmptyMK)
-  , DecodeDisk blk (LedgerState blk EmptyMK)
+  , EncodeDisk blk (LedgerState blk)
+  , DecodeDisk blk (LedgerState blk)
   , EncodeDisk blk (AnnTip blk)
   , DecodeDisk blk (AnnTip blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
-  , IndexedMemPack LedgerState blk (TxOut blk)
-  , MemPack (TxIn blk)
-  , SerializeTablesWithHint LedgerState blk
   )
 
 -- | The core API of the LedgerDB component
-type LedgerDB :: (Type -> Type) -> StateKind -> Type -> Type
+type LedgerDB :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 data LedgerDB m l blk = LedgerDB
-  { getVolatileTip :: STM m (l blk EmptyMK)
+  { getVolatileTip :: STM m (l blk)
   -- ^ Get the empty ledger state at the (volatile) tip of the LedgerDB.
-  , getImmutableTip :: STM m (l blk EmptyMK)
+  , getImmutableTip :: STM m (l blk)
   -- ^ Get the empty ledger state at the immutable tip of the LedgerDB.
-  , getPastLedgerState :: Point blk -> STM m (Maybe (l blk EmptyMK))
+  , getPastLedgerState :: Point blk -> STM m (Maybe (l blk))
   -- ^ Get an empty ledger state at a requested point in the LedgerDB, if it
   -- exists.
   , getHeaderStateHistory ::
@@ -350,7 +343,7 @@ type instance HeaderHash (LedgerDB m l blk) = HeaderHash blk
 type LedgerDB' m blk = LedgerDB m ExtLedgerState blk
 
 currentPoint ::
-  (GetTip (l blk), HeaderHash (l blk) ~ HeaderHash blk, Functor (STM m)) =>
+  (GetTip l blk, HeaderHash (l blk) ~ HeaderHash blk, Functor (STM m)) =>
   LedgerDB m l blk ->
   STM m (Point blk)
 currentPoint ldb = castPoint . getTip <$> getVolatileTip ldb
@@ -360,7 +353,7 @@ data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
-  , push :: l blk DiffMK -> m ()
+  , push :: StateRef m l blk -> m ()
   -- ^ Push a ledger state, and prune the 'LedgerDB' to its immutable tip.
   --
   -- This does not modify the set of previously applied points.
@@ -400,7 +393,7 @@ data LedgerDbError
 
 -- | 'bracket'-style usage of a forker at the LedgerDB tip.
 withTipForker ::
-  IOLike m =>
+  (IOLike m, StateRefHasState m l blk) =>
   LedgerDB m l blk ->
   (Forker m l blk -> m a) ->
   m a
@@ -416,17 +409,20 @@ withTipForker ldb =
 
 -- | Get statistics from the tip of the LedgerDB.
 getTipStatistics ::
-  IOLike m =>
+  (IOLike m, StateRefHasState m l blk, GetTip l blk) =>
   LedgerDB m l blk ->
   m Statistics
-getTipStatistics ldb = withTipForker ldb forkerReadStatistics
+getTipStatistics ldb = withTipForker ldb (fmap getStats . atomically . forkerTip)
 
 openReadOnlyForker ::
-  MonadSTM m =>
+  (MonadSTM m, StateRefHasState m l blk, GetTip l blk) =>
   LedgerDB m l blk ->
   Target (Point blk) ->
-  m (Either GetForkerError (ReadOnlyForker m l blk))
-openReadOnlyForker ldb pt = fmap readOnlyForker <$> openForkerAtTarget ldb pt
+  m (Either GetForkerError (StateRef m l blk))
+openReadOnlyForker ldb pt =
+  openForkerAtTarget ldb pt >>= \case
+    Left err -> pure (Left err)
+    Right v -> Right <$> atomically (forkerTip v)
 
 {-------------------------------------------------------------------------------
   Initialization
@@ -464,7 +460,7 @@ data InitDB db m blk = InitDB
   , initReapplyBlock :: !(LedgerDbCfg ExtLedgerState blk -> blk -> db -> m db)
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
   -- LedgerDB such that there are no volatile states.
-  , currentTip :: !(db -> LedgerState blk EmptyMK)
+  , currentTip :: !(db -> LedgerState blk)
   -- ^ Getting the current tip for tracing the Ledger Events.
   , mkLedgerDb ::
       !(db -> m (LedgerDB' m blk, TestInternals' m blk))
@@ -728,9 +724,9 @@ class StreamingBackend m backend l blk where
   releaseSinkArgs :: SinkArgs m backend l blk -> m ()
 
 type Yield m l blk =
-  l blk EmptyMK ->
+  l blk ->
   ( ( Stream
-        (Of (TxIn blk, TxOut blk))
+        (Of ((), ()))
         (ExceptT DeserialiseFailure m)
         (Stream (Of ByteString) m (Maybe CRC)) ->
       ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
@@ -739,14 +735,14 @@ type Yield m l blk =
   ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
 
 type Sink m l blk =
-  l blk EmptyMK ->
+  l blk ->
   Stream
-    (Of (TxIn blk, TxOut blk))
+    (Of ((), ()))
     (ExceptT DeserialiseFailure m)
     (Stream (Of ByteString) m (Maybe CRC)) ->
   ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
 
 data Decoders blk
   = Decoders
-      (forall s. Decoder s (TxIn blk))
-      (forall s. Decoder s (TxOut blk))
+      (forall s. Decoder s ())
+      (forall s. Decoder s ())

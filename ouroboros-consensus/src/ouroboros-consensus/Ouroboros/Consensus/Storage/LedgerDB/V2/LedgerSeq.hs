@@ -23,6 +23,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
   , LedgerDbCfg
   , configLedgerDb
   , LedgerDbCfgF (..)
+  , LedgerDbPrune (..)
 
     -- * Apply Blocks
   , extend
@@ -470,7 +471,7 @@ getPastLedgerAt ::
   ( HasHeader blk
   , GetTip l blk
   , HeaderHash (l blk) ~ HeaderHash blk
-  , StandardHash (l blk)
+  , StandardHash blk
   , StateRefHasState m l blk
   ) =>
   Point blk ->

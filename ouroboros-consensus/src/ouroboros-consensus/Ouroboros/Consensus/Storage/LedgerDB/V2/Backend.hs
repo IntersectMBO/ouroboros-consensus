@@ -29,7 +29,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import System.FS.API
 
@@ -61,7 +60,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
   createAndPopulateStateRefFromGenesis ::
     Tracer m LedgerDBV2Trace ->
     Resources m backend ->
-    ExtLedgerState blk ValuesMK ->
+    ExtLedgerState blk ->
     m (StateRef m ExtLedgerState blk)
 
   -- | Create a new handle from a snapshot.

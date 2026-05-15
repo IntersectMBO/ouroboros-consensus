@@ -20,10 +20,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
     ExceededRollback (..)
   , Forker (..)
   , GetForkerError (..)
-  , Statistics (..)
   , forkerCommit
   , forkerTip
   , forkerPush
+  , forkerClose
 
     -- * Validation
   , AnnLedgerError (..)
@@ -39,12 +39,16 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , PushStart (..)
   , Pushing (..)
   , TraceValidateEvent (..)
+  , ForkerKey (..)
+  , TraceForkerEventWithKey (..)
+  , TraceForkerEvent (..)
   ) where
 
 import Control.Exception (throw)
 import Control.Monad (when)
 import Control.Monad.Except (runExceptT)
 import Control.RAWLock
+import Control.Tracer
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
@@ -61,21 +65,13 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCac
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredSeq as AS
 
 {-------------------------------------------------------------------------------
   Forker
 -------------------------------------------------------------------------------}
-
--- | This type captures the size of the ledger tables at a particular point in
--- the LedgerDB.
---
--- This is for now the only metric that was requested from other components, but
--- this type might be augmented in the future with more statistics.
-newtype Statistics = Statistics
-  { ledgerTableSize :: Int
-  }
 
 -- | Errors that can be thrown while acquiring forkers.
 data GetForkerError
@@ -101,21 +97,43 @@ data ExceededRollback = ExceededRollback
   }
   deriving (Show, Eq)
 
+-- | An identifier for a 'Forker'. See 'ldbForkers'.
+newtype ForkerKey = ForkerKey Word16
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Enum, NoThunks, Num)
+
 data Forker m l blk = Forker
   { foeLedgerSeq :: !(StrictTVar m (LedgerSeq m l blk))
   , foeSwitchVar :: !(StrictTVar m (LedgerSeq m l blk))
   , foeWasCommitted :: !(StrictTVar m Bool)
   , foeLedgerDbLock :: !(RAWLock m ())
+  , foeTracer :: !(Tracer m TraceForkerEvent)
   }
 
+-- TODO @js we were also pruning here, what happened with that?
 forkerPush ::
   (GetTip l blk, MonadSTM m, StateRefHasState m l blk) =>
   Forker m l blk -> StateRef m l blk -> STM m ()
-forkerPush (Forker frk _ _ _) st = modifyTVar frk (extend st)
+forkerPush (Forker frk _ _ _ _) st = modifyTVar frk (extend st)
 
 forkerTip ::
   (GetTip l blk, MonadSTM m, StateRefHasState m l blk) => Forker m l blk -> STM m (StateRef m l blk)
-forkerTip (Forker frk _ _ _) = currentHandle <$> readTVar frk
+forkerTip (Forker frk _ _ _ _) = currentHandle <$> readTVar frk
+
+-- | Will release all handles in the 'foeLedgerSeq', which will be only the
+-- first duplicate if the forker has been committed.
+forkerClose ::
+  (IOLike m, StateRefHasState m l blk) =>
+  Forker m l blk ->
+  m ()
+forkerClose env = do
+  wasCommitted <- readTVarIO (foeWasCommitted env)
+  if wasCommitted
+    then
+      traceWith (foeTracer env) (ForkerClose ForkerWasCommitted)
+    else
+      traceWith (foeTracer env) (ForkerClose ForkerWasUncommitted)
+  closeLedgerSeq =<< readTVarIO (foeLedgerSeq env)
 
 forkerCommit ::
   (IOLike m, GetTip l blk, StandardHash blk, StateRefHasState m l blk) =>
@@ -472,20 +490,20 @@ data TraceValidateEvent blk
   Forker events
 -------------------------------------------------------------------------------}
 
--- data TraceForkerEventWithKey
---   = TraceForkerEventWithKey ForkerKey TraceForkerEvent
---   deriving (Show, Eq)
+data TraceForkerEventWithKey
+  = TraceForkerEventWithKey ForkerKey TraceForkerEvent
+  deriving (Show, Eq)
 
--- data TraceForkerEvent
---   = ForkerOpen
---   | ForkerReadTables EnclosingTimed
---   | ForkerRangeReadTables EnclosingTimed
---   | ForkerReadStatistics
---   | ForkerPush EnclosingTimed
---   | ForkerClose ForkerWasCommitted
---   deriving (Show, Eq)
+data TraceForkerEvent
+  = ForkerOpen
+  | ForkerReadTables EnclosingTimed
+  | ForkerRangeReadTables EnclosingTimed
+  | ForkerReadStatistics
+  | ForkerPush EnclosingTimed
+  | ForkerClose ForkerWasCommitted
+  deriving (Show, Eq)
 
--- data ForkerWasCommitted
---   = ForkerWasCommitted
---   | ForkerWasUncommitted
---   deriving (Eq, Show)
+data ForkerWasCommitted
+  = ForkerWasCommitted
+  | ForkerWasUncommitted
+  deriving (Eq, Show)

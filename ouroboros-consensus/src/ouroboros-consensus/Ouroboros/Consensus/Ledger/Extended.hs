@@ -140,7 +140,7 @@ data instance Ticked ExtLedgerState blk = TickedExtLedgerState
   }
 
 instance
-  (StateRefHasState m (Ticked LedgerState) blk, StateRefHasState m LedgerState blk) =>
+  (Functor m, StateRefHasState m (Ticked LedgerState) blk, StateRefHasState m LedgerState blk) =>
   StateRefHasState m ExtLedgerState blk
   where
   data StateRef m ExtLedgerState blk where
@@ -153,8 +153,13 @@ instance
   state (ExtStateRef s h) = ExtLedgerState (state s) h
   mkStateRef (ExtLedgerState a b) tbs = ExtStateRef (mkStateRef a tbs) b
   close (ExtStateRef s _) = close s
+  getStats (ExtStateRef s _) = getStats s
+  duplicate (ExtStateRef s h) = flip ExtStateRef h <$> (duplicate s)
 
-instance StateRefHasState m (Ticked LedgerState) blk => StateRefHasState m (Ticked ExtLedgerState) blk where
+instance
+  (Monad m, StateRefHasState m (Ticked LedgerState) blk) =>
+  StateRefHasState m (Ticked ExtLedgerState) blk
+  where
   data StateRef m (Ticked ExtLedgerState) blk where
     TickedExtStateRef ::
       StateRefHasState m (Ticked LedgerState) blk =>
@@ -166,6 +171,8 @@ instance StateRefHasState m (Ticked LedgerState) blk => StateRefHasState m (Tick
   state (TickedExtStateRef s v h) = TickedExtLedgerState (state s) v h
   mkStateRef (TickedExtLedgerState a b c) tbs = TickedExtStateRef (mkStateRef a tbs) b c
   close (TickedExtStateRef s _ _) = close s
+  getStats (TickedExtStateRef s _ _) = getStats s
+  duplicate (TickedExtStateRef s l h) = (\s' -> TickedExtStateRef s' l h) <$> (duplicate s)
 
 instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState) blk where
   getTip = castPoint . getTip . tickedLedgerState
