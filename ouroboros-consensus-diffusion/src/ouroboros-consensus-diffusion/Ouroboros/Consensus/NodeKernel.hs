@@ -544,6 +544,14 @@ initNodeKernel
           -- Per-peer certified EBs derived from ChainSync candidate fragments,
           -- used as a fallback peer source for fetching EB closures that no
           -- peer has explicitly offered.
+          --
+          -- Load-bearing invariant: if a peer's candidate fragment contains
+          -- a CertRB, that peer has the EB closure. This rests on the
+          -- upstream's ChainSync server only emitting selected-chain
+          -- headers, the upstream's ChainSel filtering CertRBs with missing
+          -- closures (cdbPendingEBs), and LeiosDB not GC'ing closures. See
+          -- the fallback branches in 'choosePeerEb' / 'choosePeerTx' in
+          -- LeiosDemoLogic.
           candidateCertEbs <- atomically $ do
             handles <- cschcMap varChainSyncHandles
             fmap (Map.mapKeysMonotonic Leios.MkPeerId) $
