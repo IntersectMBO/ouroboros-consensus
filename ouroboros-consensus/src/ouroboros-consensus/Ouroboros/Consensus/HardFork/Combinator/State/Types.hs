@@ -16,13 +16,9 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types
   , TransitionInfo (..)
   , Translate (..)
   , TranslateLedgerState (..)
-  , TranslateLedgerTables (..)
-  , TranslateTxOut (..)
-  , translateLedgerTablesWith
   ) where
 
 import Control.Monad.Except
-import qualified Data.Map.Strict as Map
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Strict
@@ -34,7 +30,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.History (Bound)
 import Ouroboros.Consensus.Ledger.Abstract
-import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 
 {-------------------------------------------------------------------------------
   Types
@@ -111,8 +106,8 @@ sequenceHardForkState (HardForkState tel) =
       hmap sequenceCurrent tel
  where
   sequenceCurrent :: Current (m :.: f) a -> (m :.: Current f) a
-  sequenceCurrent (Current start state) =
-    Comp $ Current start <$> unComp state
+  sequenceCurrent (Current start st) =
+    Comp $ Current start <$> unComp st
 
 {-------------------------------------------------------------------------------
   Supporting types
@@ -135,16 +130,16 @@ newtype CrossEraForecaster state view x y = CrossEraForecaster
   { crossEraForecastWith ::
       Bound -> -- 'Bound' of the transition (start of the new era)
       SlotNo -> -- 'SlotNo' we're constructing a forecast for
-      state x EmptyMK ->
+      state x ->
       Except OutsideForecastRange (view y)
   }
 
 -- | Translate a 'LedgerState' across an era transition.
-newtype TranslateLedgerState x y = TranslateLedgerState
+newtype TranslateLedgerState m x y = TranslateLedgerState
   { translateLedgerStateWith ::
       EpochNo ->
-      LedgerState x EmptyMK ->
-      LedgerState y DiffMK
+      StateRef m LedgerState x ->
+      m (StateRef m LedgerState y)
   -- ^ How to translate a 'LedgerState' during the era transition.
   --
   -- When translating between eras, it can be the case that values are modified,
@@ -163,61 +158,6 @@ newtype TranslateLedgerState x y = TranslateLedgerState
   -- reserves. See the code that performs the translation Shelley->Allegra for
   -- more information.
   }
-
--- | Transate a 'LedgerTables' across an era transition.
-data TranslateLedgerTables x y = TranslateLedgerTables
-  { translateTxInWith :: !(TxIn x -> TxIn y)
-  -- ^ Translate a 'TxIn' across an era transition.
-  --
-  -- See 'translateLedgerTablesWith'.
-  , translateTxOutWith :: !(TxOut x -> TxOut y)
-  -- ^ Translate a 'TxOut' across an era transition.
-  --
-  -- See 'translateLedgerTablesWith'.
-  }
-
-newtype TranslateTxOut x y = TranslateTxOut (TxOut x -> TxOut y)
-
--- | Translate a 'LedgerTables' across an era transition.
---
--- To translate 'LedgerTable's, it's sufficient to know how to translate
--- 'TxIn's and 'TxOut's. Use 'translateLedgerTablesWith' to translate
--- 'LedgerTable's using 'translateTxInWith' and 'translateTxOutWith'.
---
--- This is a rather technical subtlety. When performing a ledger state
--- translation, the provided input ledger state will be initially populated with
--- a @emptyLedgerTables@. This step is required so that the operation provided
--- to 'Telescope.extend' is an automorphism.
---
--- If we only extend by one era, this function is a no-op, as the input will be
--- empty ledger states. However, if we extend across multiple eras, previous
--- eras might populate tables thus creating values that now need to be
--- translated to newer eras. This function fills that hole and allows us to
--- promote tables from one era into tables from the next era.
---
--- NOTE: If either 'translateTxInWith' or 'translateTxOutWith' is a no-op ('id'),
--- mapping over the diff with those functions is also equivalent to a
--- no-op. However, we are still traversing the map in both cases.
---
--- NOTE: This function is only used on ticking, to prepend differences from
--- previous eras, so it will be called only when crossing era boundaries,
--- therefore the translation won't be equivalent to 'id'.
-translateLedgerTablesWith ::
-  Ord (TxIn y) =>
-  TranslateLedgerTables x y ->
-  LedgerTables x DiffMK ->
-  LedgerTables y DiffMK
-translateLedgerTablesWith f =
-  LedgerTables
-    . DiffMK
-    . Diff.Diff
-    . Map.mapKeys (translateTxInWith f)
-    . getDiff
-    . getDiffMK
-    . mapMK (translateTxOutWith f)
-    . getLedgerTables
- where
-  getDiff (Diff.Diff m) = m
 
 -- | Knowledge in a particular era of the transition to the next era
 data TransitionInfo
