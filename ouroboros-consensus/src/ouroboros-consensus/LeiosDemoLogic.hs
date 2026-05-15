@@ -336,8 +336,14 @@ leiosFetchLogicIteration env offerings candidateCertEbs =
   choosePeerEb peerIds acc ebHash =
     case pickFrom (Map.map fst offerings) of
       Just peerId -> Just peerId
-      -- No peer has offered this EB body; fall back to peers whose ChainSync
-      -- candidate fragment includes the CertRB that depends on this EB.
+      -- Fallback: peers whose ChainSync candidate fragment contains the
+      -- CertRB that depends on this EB.
+      --
+      -- Correctness depends on: (1) the upstream's ChainSync server only
+      -- emits MsgRollForward for selected-chain headers; (2) the upstream's
+      -- ChainSel filters CertRBs with missing closures via cdbPendingEBs;
+      -- (3) LeiosDB does not GC closures. Violations of any of these would
+      -- cause us to dispatch unsatisfiable fetches.
       Nothing -> pickFrom candidateCertEbs
    where
     pickFrom :: Map (PeerId pid) (Set EbHash) -> Maybe (PeerId pid)
@@ -402,9 +408,10 @@ leiosFetchLogicIteration env offerings candidateCertEbs =
   choosePeerTx peerIds acc txOffsets targetTxBytesSize =
     case pickFrom (Map.map snd offerings) of
       Just hit -> Just hit
-      -- Same fallback rationale as 'choosePeerEb': if a peer's ChainSync
-      -- candidate contains a CertRB for this EB, the peer must have validated
-      -- the full closure locally and therefore also has the txs.
+      -- Fallback: peers whose ChainSync candidate fragment contains a CertRB
+      -- for this EB must have validated the full closure locally, so they
+      -- also have the txs. See 'choosePeerEb' for the load-bearing invariant
+      -- chain this depends on.
       Nothing -> pickFrom candidateCertEbs
    where
     pickFrom :: Map (PeerId pid) (Set EbHash) -> Maybe (PeerId pid, Map EbHash Int)
