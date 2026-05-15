@@ -32,7 +32,7 @@ localTxSubmissionServer tracer mempool =
           traceWith tracer $ TraceReceivedTx tx
           MkSolo addTxRes <- addLocalTxs mempool (MkSolo tx)
           case addTxRes of
-            MempoolTxAdded _tx _diff -> return (SubmitSuccess, server)
+            MempoolTxAdded _tx -> return (SubmitSuccess, server)
             MempoolTxRejected _tx addTxErr -> return (SubmitFail addTxErr, server)
       , recvMsgDone = ()
       }
