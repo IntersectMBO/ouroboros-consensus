@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
@@ -50,6 +51,7 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
@@ -88,6 +90,8 @@ class
   , Show (LedgerState blk)
   , Eq (LedgerState blk)
   , NoThunks (LedgerState blk)
+  , forall m. Monad m => StateRefHasState m LedgerState blk
+  , forall m. Monad m => StateRefHasState m (Ticked LedgerState) blk
   ) =>
   SingleEraBlock blk
   where

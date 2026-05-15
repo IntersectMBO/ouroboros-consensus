@@ -35,7 +35,6 @@ import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Counting (getExactly)
-import Data.SOP.Functors (Flip (..))
 import Data.SOP.InPairs (InPairs, Requiring (..))
 import qualified Data.SOP.InPairs as InPairs
 import Data.SOP.Strict
@@ -52,7 +51,7 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types as X
 import Ouroboros.Consensus.HardFork.Combinator.Translation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract hiding (getTip)
-import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Util
 import Prelude hiding (sequence)
 
 {-------------------------------------------------------------------------------
@@ -218,18 +217,18 @@ epochInfoPrecomputedTransitionInfo shape transition st =
 --    step 2, and return it.
 extendToSlot ::
   forall m xs.
-  CanHardFork xs =>
+  (CanHardFork xs, Monad m) =>
   HardForkLedgerConfig xs ->
   SlotNo ->
-  StateRef m LedgerState (HardForkBlock xs) ->
-  m (StateRef m LedgerState (HardForkBlock xs))
+  HardForkState (StateRef m LedgerState) xs ->
+  m (HardForkState (StateRef m LedgerState) xs)
 extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st) =
   fmap HardForkState
     . Telescope.extend
       ( InPairs.hcmap
           proxySingle
-          ( \f f' -> Require $ \(K t) ->
-              Extend $ howExtend f f' t
+          ( \f -> Require $ \(K t) ->
+              Extend $ howExtend f t
           )
           translateLS
       )
@@ -243,14 +242,14 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
  where
   pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
   cfgs = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
-  ei = epochInfoLedger ledgerCfg ledgerSt
+  ei = epochInfoLedger ledgerCfg (hcmap proxySingle state ledgerSt)
 
   -- Return the end of this era if we should transition to the next
   whenExtend ::
     SingleEraBlock blk =>
     WrapPartialLedgerConfig blk ->
     K History.EraParams blk ->
-    Current LedgerState blk ->
+    Current (StateRef m LedgerState) blk ->
     (Maybe :.: K History.Bound) blk
   whenExtend pcfg (K eraParams) cur =
     Comp $
@@ -260,7 +259,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
             pcfg
             eraParams
             (currentStart cur)
-            (currentState cur)
+            (state $ currentState cur)
         let endBound =
               History.mkUpperBound
                 eraParams
@@ -273,41 +272,20 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     TranslateLedgerState m blk blk' ->
     History.Bound ->
     Current (StateRef m LedgerState) blk ->
-    (K Past blk, Current (StateRef m LedgerState) blk')
-  howExtend f f' currentEnd cur =
-    ( K
-        Past
-          { pastStart = currentStart cur
-          , pastEnd = currentEnd
+    m (K Past blk, Current (StateRef m LedgerState) blk')
+  howExtend f currentEnd (Current currentStart currentState) = do
+    cur' <- translateLedgerStateWith f (History.boundEpoch currentEnd) $ currentState
+    pure
+      ( K
+          Past
+            { pastStart = currentStart
+            , pastEnd = currentEnd
+            }
+      , Current
+          { currentStart = currentEnd
+          , currentState = cur'
           }
-    , Current
-        { currentStart = currentEnd
-        , currentState =
-            let cur' =
-                  translateLedgerStateWith f (History.boundEpoch currentEnd)
-                    . forgetLedgerTables
-                    . unFlip
-                    . currentState
-                    $ cur
-             in Flip
-                  . (cur' `withLedgerTables`)
-                  . ltliftA2
-                    rawPrependDiffs
-                    ( -- We need to bring back the diffs provided by previous
-                      -- translations. Note that if there is only one
-                      -- translation or if the previous translations don't add
-                      -- any new tables this will just be a no-op. See the
-                      -- haddock for 'translateLedgerTablesWith' and
-                      -- 'extendToSlot' for more information.
-                      translateLedgerTablesWith f'
-                        . projectLedgerTables
-                        . unFlip
-                        . currentState
-                        $ cur
-                    )
-                  $ projectLedgerTables cur'
-        }
-    )
+      )
 
   translateLS :: InPairs (TranslateLedgerState m) xs
   translateLS =
