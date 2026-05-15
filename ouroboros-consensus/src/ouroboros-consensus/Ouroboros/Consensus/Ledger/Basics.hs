@@ -23,6 +23,9 @@ module Ouroboros.Consensus.Ledger.Basics
   , IsLedger (..)
   , AuxLedgerEvent
   , applyChainTick
+  , StateRefHasState (..)
+  , StateRefHasTables (..)
+  , LedgerTables
 
     -- * Ledger Events
   , LedgerResult (..)
@@ -46,8 +49,6 @@ module Ouroboros.Consensus.Ledger.Basics
 import Data.Kind (Constraint, Type)
 import GHC.Generics
 import Ouroboros.Consensus.Block.Abstract
-import Ouroboros.Consensus.Ledger.Tables.Kinds
-import Ouroboros.Consensus.Ledger.Tables.MapKind
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util ((...:))
 import Ouroboros.Consensus.Util.IOLike
@@ -56,17 +57,17 @@ import Ouroboros.Consensus.Util.IOLike
   Tip
 -------------------------------------------------------------------------------}
 
-type GetTip :: LedgerStateKind -> Constraint
-class GetTip l where
+type GetTip :: (Type -> Type) -> Type -> Constraint
+class GetTip l blk where
   -- | Point of the most recently applied block
   --
   -- Should be 'GenesisPoint' when no blocks have been applied yet
-  getTip :: forall mk. l mk -> Point l
+  getTip :: l blk -> Point blk
 
-getTipHash :: GetTip l => l mk -> ChainHash l
+getTipHash :: GetTip l blk => l blk -> ChainHash blk
 getTipHash = pointHash . getTip
 
-getTipSlot :: GetTip l => l mk -> WithOrigin SlotNo
+getTipSlot :: GetTip l blk => l blk -> WithOrigin SlotNo
 getTipSlot = pointSlot . getTip
 
 type GetTipSTM :: (Type -> Type) -> Type -> Constraint
@@ -123,7 +124,7 @@ pureLedgerResult a =
 -- | Static environment required for the ledger
 --
 -- Types that inhabit this family will come from the Ledger code.
-type LedgerCfg :: StateKind -> Type -> Type
+type LedgerCfg :: (Type -> Type) -> Type -> Type
 type family LedgerCfg l blk :: Type
 
 -- | Event emitted by the ledger
@@ -146,13 +147,9 @@ type family AuxLedgerEvent blk :: Type
 data ComputeLedgerEvents = ComputeLedgerEvents | OmitLedgerEvents
   deriving (Eq, Show, Generic, NoThunks)
 
-type IsLedger :: StateKind -> Type -> Constraint
+type IsLedger :: (Type -> Type) -> Type -> Constraint
 class
-  ( -- Requirements on the ledger state itself
-    forall mk. EqMK mk => Eq (l blk mk)
-  , forall mk. NoThunksMK mk => NoThunks (l blk mk)
-  , forall mk. ShowMK mk => Show (l blk mk)
-  , -- Requirements on 'LedgerCfg'
+  ( -- Requirements on 'LedgerCfg'
     NoThunks (LedgerCfg l blk)
   , -- Requirements on 'LedgerErr'
     Show (LedgerErr l blk)
@@ -162,8 +159,8 @@ class
     --
     -- See comment for 'applyChainTickLedgerResult' about the tip of the
     -- ticked ledger.
-    GetTip (l blk)
-  , GetTip (Ticked l blk)
+    GetTip l blk
+  , GetTip (Ticked l) blk
   ) =>
   IsLedger l blk
   where
@@ -207,18 +204,18 @@ class
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     SlotNo ->
-    l blk EmptyMK ->
-    LedgerResult blk (Ticked l blk DiffMK)
+    StateRef m l blk ->
+    m (LedgerResult blk (StateRef m (Ticked l) blk))
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick ::
-  IsLedger l blk =>
+  (Functor m, IsLedger l blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   SlotNo ->
-  l blk EmptyMK ->
-  Ticked l blk DiffMK
-applyChainTick = lrResult ...: applyChainTickLedgerResult
+  StateRef m l blk ->
+  m (StateRef m (Ticked l) blk)
+applyChainTick = fmap lrResult ...: applyChainTickLedgerResult
 
 {-------------------------------------------------------------------------------
   Link block to its ledger
@@ -240,8 +237,29 @@ applyChainTick = lrResult ...: applyChainTickLedgerResult
 -- The main operations we can do with a 'LedgerState' are /ticking/ (defined in
 -- 'IsLedger'), and /applying a block/ (defined in
 -- 'Ouroboros.Consensus.Ledger.Abstract.ApplyBlock').
-type LedgerState :: Type -> LedgerStateKind
-data family LedgerState blk mk
+type LedgerState :: Type -> Type
+data family LedgerState blk
+
+type LedgerTables :: (Type -> Type) -> Type -> Type
+data family LedgerTables m blk
+
+type StateRefHasState :: (Type -> Type) -> (Type -> Type) -> Type -> Constraint
+class StateRefHasState m l blk where
+  -- \|
+  -- Usually
+  -- @@@
+  -- data instance StateRef m blk = StateRef {
+  --     state :: LedgerState blk
+  --   , tables :: LedgerTables m blk
+  -- }
+  -- @@@
+  -- except for the HardForkBlock.
+  data StateRef m l blk
+
+  state :: StateRef m l blk -> l blk
+
+class StateRefHasTables m blk where
+  tables :: StateRef m l blk -> LedgerTables m blk
 
 type TickedLedgerState blk = Ticked LedgerState blk
 
