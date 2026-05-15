@@ -392,20 +392,20 @@ data AddTxOnBehalfOf = AddTxForRemotePeer | AddTxForLocalClient
 -- ledger: the update system might be updated, scheduled delegations might be
 -- applied, etc., and such changes should take effect before we validate any
 -- transactions.
-data ForgeLedgerState blk
+data ForgeLedgerState m blk
   = -- | The slot number of the block is known
     --
     -- This will only be the case when we realized that we are the slot leader
     -- and we are actually producing a block. It is the caller's responsibility
     -- to call 'applyChainTick' and produce the ticked ledger state.
-    ForgeInKnownSlot SlotNo (TickedLedgerState blk)
+    ForgeInKnownSlot SlotNo (StateRef m (Ticked LedgerState) blk)
   | -- | The slot number of the block is not yet known
     --
     -- When we are validating transactions before we know in which block they
     -- will end up, we have to make an assumption about which slot number to use
     -- for 'applyChainTick' to prepare the ledger state; we will assume that
     -- they will end up in the slot after the slot at the tip of the ledger.
-    ForgeInUnknownSlot (LedgerState blk)
+    ForgeInUnknownSlot (StateRef m LedgerState blk)
 
 {-------------------------------------------------------------------------------
   Snapshot of the mempool
