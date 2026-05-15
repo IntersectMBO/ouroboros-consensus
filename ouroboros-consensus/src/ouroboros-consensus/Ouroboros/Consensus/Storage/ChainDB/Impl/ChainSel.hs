@@ -33,7 +33,7 @@ import Control.Exception (assert)
 import Control.Monad (forM_, join, void, when)
 import Control.Monad.Except ()
 import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.State.Strict
+import Control.Monad.Trans.State.Strict hiding (state)
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Bifunctor (first)
 import Data.Function (on)
@@ -117,6 +117,8 @@ initialChainSelection ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
+  , StateRefHasState m (Ticked LedgerState) blk
+  , StateRefHasState m LedgerState blk
   ) =>
   ImmutableDB m blk ->
   VolatileDB m blk ->
@@ -350,6 +352,8 @@ chainSelSync ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , StateRefHasState m (Ticked LedgerState) blk
+  , StateRefHasState m LedgerState blk
   ) =>
   ChainDbEnv m blk ->
   ChainSelMessage m blk ->
@@ -605,6 +609,8 @@ chainSelectionForBlock ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , StateRefHasState m (Ticked LedgerState) blk
+  , StateRefHasState m LedgerState blk
   ) =>
   ChainDbEnv m blk ->
   BlockCache blk ->
@@ -870,6 +876,8 @@ switchTo ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , StateRefHasState m (Ticked LedgerState) blk
+  , StateRefHasState m LedgerState blk
   ) =>
   ChainDbEnv m blk ->
   PerasWeightSnapshot blk ->
@@ -890,7 +898,7 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
   (curChain, newChain, events, prevTentativeHeader, newLedger, closeOrphanedStates) <- atomically $ do
     InternalChain curChain curChainWithTime <- readTVar cdbChain -- Not Query.getCurrentChain!
     curLedger <- getVolatileTip cdbLedgerDB
-    newLedger <- forkerGetLedgerState forker
+    newLedger <- state <$> forkerTip forker
     case Diff.apply curChain chainDiff of
       -- Impossible, as described in the docstring
       Nothing ->
@@ -967,7 +975,7 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
   mkSelectionChangedInfo ::
     AnchoredFragment (Header blk) -> -- old selection
     ChainDiff (Header blk) -> -- diff we are adopting
-    ExtLedgerState blk EmptyMK -> -- new tip
+    ExtLedgerState blk -> -- new tip
     SelectionChangedInfo blk
   mkSelectionChangedInfo oldChain diff newTip =
     SelectionChangedInfo
@@ -988,7 +996,7 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
     oldSuffix = AF.anchorNewest (getRollback diff) oldChain
     newSuffix = getSuffix diff
 
-    ledger :: LedgerState blk EmptyMK
+    ledger :: LedgerState blk
     ledger = ledgerState newTip
 
     summary :: History.Summary (HardForkIndices blk)
