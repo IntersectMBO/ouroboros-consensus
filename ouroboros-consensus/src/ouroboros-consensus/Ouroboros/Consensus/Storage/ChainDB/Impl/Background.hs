@@ -589,14 +589,14 @@ ebCompletionRunner ::
   LeiosDbHandle m ->
   ChainDbEnv m blk ->
   m Void
-ebCompletionRunner leiosDb CDB{..} = do
+ebCompletionRunner leiosDb cdb = do
   notifChan <- subscribeEbNotifications leiosDb
   bracket (open leiosDb) close $ \leiosConn -> forever $ do
     notif <- atomically $ readTChan notifChan
     let leiosPoint = case notif of
           AcquiredEb point _ -> point
           AcquiredEbTxs point -> point
-    pending <- atomically $ readTVar cdbPendingEBs
+    pending <- atomically $ readTVar (cdbPendingEBs cdb)
     case Map.lookup leiosPoint pending of
       Nothing -> pure ()
       Just certRBHash -> do
@@ -606,7 +606,7 @@ ebCompletionRunner leiosDb CDB{..} = do
           Just _ ->
             void $
               addReprocessBlock
-                (contramap TraceAddBlockEvent cdbTracer)
-                cdbChainSelQueue
+                (contramap TraceAddBlockEvent (cdbTracer cdb))
+                (cdbChainSelQueue cdb)
                 leiosPoint
                 certRBHash
