@@ -370,14 +370,15 @@ prop_leios_late_join seed =
       nodeChains =
         Chain.toOldestFirst . nodeOutputFinalChain <$> testOutput.testOutputNodes
      in
-      -- The simulation must not throw (fixed in step 2).
+      -- The simulation must not throw: ChainSel skips a CertRB whose EB
+      -- closure is missing instead of crashing in resolveLeiosBlock.
       conjoin
         [ not (null nodeChains)
             & counterexample "test output was empty"
-        , -- All nodes should converge to the same chain. Fails after step 2
-          -- because CertRBs with missing closures are permanently excluded,
-          -- making the late node's chain shorter. Step 3 (ChainSel re-trigger
-          -- on EB arrival) fixes this.
+        , -- All nodes should converge to the same chain. Without the
+          -- ChainSel re-trigger on EB closure arrival ('ebCompletionRunner'),
+          -- the late node's chain stays shorter because the filtered
+          -- CertRBs are never reconsidered.
           all (== head (Map.elems nodeChains)) nodeChains
             & counterexample "nodes have different chains"
             & counterexample ("chain lengths: " <> show (fmap length nodeChains))
