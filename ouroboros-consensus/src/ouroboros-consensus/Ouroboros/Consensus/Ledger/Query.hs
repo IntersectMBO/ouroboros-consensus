@@ -78,7 +78,6 @@ import Ouroboros.Consensus.Node.Serialisation
   , SerialiseNodeToClient (..)
   , SerialiseResult (..)
   )
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))
 import Ouroboros.Consensus.Util.DepPair
 import Ouroboros.Consensus.Util.IOLike
@@ -153,7 +152,7 @@ class
   answerPureBlockQuery ::
     ExtLedgerCfg blk ->
     BlockQuery blk QFNoTables result ->
-    ExtLedgerState blk EmptyMK ->
+    ExtLedgerState blk ->
     result
 
   -- | Answer a query that requires to perform a lookup on the ledger tables. As
@@ -169,7 +168,7 @@ class
     MonadSTM m =>
     ExtLedgerCfg blk ->
     BlockQuery blk QFLookupTables result ->
-    ReadOnlyForker' m blk ->
+    StateRef m ExtLedgerState blk ->
     m result
 
   -- | Answer a query that requires to traverse the ledger tables. As consensus
@@ -184,7 +183,7 @@ class
     MonadSTM m =>
     ExtLedgerCfg blk ->
     BlockQuery blk QFTraverseTables result ->
-    ReadOnlyForker' m blk ->
+    StateRef m ExtLedgerState blk ->
     m result
 
   -- | Is the given query supported in this NTC version?
@@ -249,29 +248,32 @@ data Query blk result where
 -- | Answer the given query about the extended ledger state.
 answerQuery ::
   forall blk m result.
-  (BlockSupportsLedgerQuery blk, ConfigSupportsNode blk, HasAnnTip blk, MonadSTM m) =>
+  ( BlockSupportsLedgerQuery blk
+  , ConfigSupportsNode blk
+  , HasAnnTip blk
+  , MonadSTM m
+  , StateRefHasState m LedgerState blk
+  , StateRefHasState m (Ticked LedgerState) blk
+  ) =>
   ExtLedgerCfg blk ->
-  ReadOnlyForker' m blk ->
+  StateRef m ExtLedgerState blk ->
   Query blk result ->
   m result
-answerQuery config forker query = case query of
+answerQuery config sref query = case query of
   BlockQuery (blockQuery :: BlockQuery blk footprint result) ->
     case sing :: Sing footprint of
       SQFNoTables ->
-        answerPureBlockQuery config blockQuery
-          <$> atomically (roforkerGetLedgerState forker)
+        pure $ answerPureBlockQuery config blockQuery (state sref)
       SQFLookupTables ->
-        answerBlockQueryLookup config blockQuery forker
+        answerBlockQueryLookup config blockQuery sref
       SQFTraverseTables ->
-        answerBlockQueryTraverse config blockQuery forker
+        answerBlockQueryTraverse config blockQuery sref
   GetSystemStart ->
     pure $ getSystemStart (topLevelConfigBlock (getExtLedgerCfg config))
   GetChainBlockNo ->
-    headerStateBlockNo . headerState
-      <$> atomically (roforkerGetLedgerState forker)
+    pure . headerStateBlockNo . headerState $ state sref
   GetChainPoint ->
-    headerStatePoint . headerState
-      <$> atomically (roforkerGetLedgerState forker)
+    pure . headerStatePoint . headerState $ state sref
   DebugLedgerConfig ->
     pure $ topLevelConfigLedger (getExtLedgerCfg config)
 
