@@ -66,6 +66,7 @@ import qualified Control.Tracer as Tracer
 import qualified Data.ByteString.Short as Short
 import Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
+import Data.Maybe (listToMaybe)
 import Data.SOP.BasicFunctors
 import Data.SOP.Counting
 import Data.SOP.Functors (Flip (..))
@@ -935,18 +936,17 @@ protocolInfoCardano paramsCardano
             (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
       , topLevelConfigCheckpoints = cardanoCheckpoints
       , -- FIXME: REMOVE THIS. Accesses and re-uses KES signing key material.
-        topLevelConfigVotingKey = do
+        -- For nodes without Shelley-based leader credentials (e.g. relays),
+        -- there is no key material to re-use, so the voting key is Nothing.
+        topLevelConfigVotingKey =
           let assumeUnsound = \case
                 PraosCredentialsUnsound _ sk -> sk
                 PraosCredentialsAgent{} -> error "can't derive topLevelConfigVotingKey from agent"
-          case credssShelleyBased of
-            [] -> Nothing
-            (c : _) ->
-              Just
-                . rawSerialiseUnsoundPureSignKeyKES
+           in rawSerialiseUnsoundPureSignKeyKES
                 . assumeUnsound
                 . praosCanBeLeaderCredentialsSource
-                $ shelleyLeaderCredentialsCanBeLeader c
+                . shelleyLeaderCredentialsCanBeLeader
+                <$> listToMaybe credssShelleyBased
       }
 
   -- When the initial ledger state is not in the Byron era, register various
