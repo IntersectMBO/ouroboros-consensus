@@ -187,7 +187,7 @@ reapplyLedgerBlock ::
 reapplyLedgerBlock = fmap lrResult ...: reapplyBlockLedgerResult
 
 tickThenApplyLedgerResult ::
-  (StateRefHasState m (Ticked LedgerState) blk, ApplyBlock l blk, Monad m) =>
+  (StateRefHasState m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -208,7 +208,7 @@ tickThenApplyLedgerResult evs cfg blk l = do
       }
 
 tickThenReapplyLedgerResult ::
-  (StateRefHasState m (Ticked LedgerState) blk, ApplyBlock l blk, Monad m) =>
+  (StateRefHasState m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -229,7 +229,7 @@ tickThenReapplyLedgerResult evs cfg blk l = do
       }
 
 tickThenApply ::
-  (StateRefHasState m (Ticked LedgerState) blk, ApplyBlock l blk, Monad m) =>
+  (StateRefHasState m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -238,7 +238,7 @@ tickThenApply ::
 tickThenApply = fmap lrResult ...: tickThenApplyLedgerResult
 
 tickThenReapply ::
-  (StateRefHasState m (Ticked LedgerState) blk, ApplyBlock l blk, Monad m) =>
+  (StateRefHasState m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -247,7 +247,7 @@ tickThenReapply ::
 tickThenReapply = fmap lrResult ...: tickThenReapplyLedgerResult
 
 foldLedger ::
-  (StateRefHasState m (Ticked LedgerState) blk, ApplyBlock l blk, Monad m) =>
+  (StateRefHasState m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   [blk] ->
@@ -257,7 +257,7 @@ foldLedger evs cfg =
   repeatedlyM (tickThenApply evs cfg)
 
 refoldLedger ::
-  (StateRefHasState m (Ticked LedgerState) blk, ApplyBlock l blk, Monad m) =>
+  (StateRefHasState m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents -> LedgerCfg l blk -> [blk] -> StateRef m l blk -> m (StateRef m l blk)
 refoldLedger evs cfg =
   repeatedlyM (tickThenReapply evs cfg)

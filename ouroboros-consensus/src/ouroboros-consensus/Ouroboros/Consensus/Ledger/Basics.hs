@@ -201,7 +201,7 @@ class
   --
   -- prop> ledgerTipPoint (applyChainTick cfg slot st) == ledgerTipPoint st
   applyChainTickLedgerResult ::
-    (StateRefHasState m (Ticked LedgerState) blk, Monad m) =>
+    (StateRefHasState m (Ticked l) blk, Monad m) =>
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     SlotNo ->
@@ -210,7 +210,7 @@ class
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick ::
-  (StateRefHasState m (Ticked LedgerState) blk, Monad m, IsLedger l blk) =>
+  (StateRefHasState m (Ticked l) blk, Monad m, IsLedger l blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   SlotNo ->
@@ -260,6 +260,8 @@ class StateRefHasState m l blk where
   state :: StateRef m l blk -> l blk
 
   mkStateRef :: l blk -> LedgerTables m blk -> StateRef m l blk
+
+  close :: StateRef m l blk -> m ()
 
 class StateRefHasTables m l blk where
   tables :: StateRef m l blk -> LedgerTables m blk

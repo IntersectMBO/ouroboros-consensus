@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
@@ -138,24 +139,33 @@ data instance Ticked ExtLedgerState blk = TickedExtLedgerState
   , tickedHeaderState :: Ticked (HeaderState blk)
   }
 
-instance StateRefHasState m LedgerState blk => StateRefHasState m ExtLedgerState blk where
-  data StateRef m ExtLedgerState blk = ExtStateRef
-    { extState :: StateRef m LedgerState blk
-    , extHeader :: HeaderState blk
-    }
+instance
+  (StateRefHasState m (Ticked LedgerState) blk, StateRefHasState m LedgerState blk) =>
+  StateRefHasState m ExtLedgerState blk
+  where
+  data StateRef m ExtLedgerState blk where
+    ExtStateRef ::
+      StateRefHasState m (Ticked LedgerState) blk =>
+      StateRef m LedgerState blk ->
+      HeaderState blk ->
+      StateRef m ExtLedgerState blk
 
   state (ExtStateRef s h) = ExtLedgerState (state s) h
   mkStateRef (ExtLedgerState a b) tbs = ExtStateRef (mkStateRef a tbs) b
+  close (ExtStateRef s _) = close s
 
 instance StateRefHasState m (Ticked LedgerState) blk => StateRefHasState m (Ticked ExtLedgerState) blk where
-  data StateRef m (Ticked ExtLedgerState) blk = TickedExtStateRef
-    { extTickedState :: StateRef m (Ticked LedgerState) blk
-    , extLedgerView :: LedgerView (BlockProtocol blk)
-    , extTickedHeader :: Ticked (HeaderState blk)
-    }
+  data StateRef m (Ticked ExtLedgerState) blk where
+    TickedExtStateRef ::
+      StateRefHasState m (Ticked LedgerState) blk =>
+      StateRef m (Ticked LedgerState) blk ->
+      LedgerView (BlockProtocol blk) ->
+      Ticked (HeaderState blk) ->
+      StateRef m (Ticked ExtLedgerState) blk
 
   state (TickedExtStateRef s v h) = TickedExtLedgerState (state s) v h
   mkStateRef (TickedExtLedgerState a b c) tbs = TickedExtStateRef (mkStateRef a tbs) b c
+  close (TickedExtStateRef s _ _) = close s
 
 instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState) blk where
   getTip = castPoint . getTip . tickedLedgerState

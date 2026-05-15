@@ -379,33 +379,6 @@ data TestInternals m l blk = TestInternals
 type TestInternals' m blk = TestInternals m ExtLedgerState blk
 
 {-------------------------------------------------------------------------------
-  Config
--------------------------------------------------------------------------------}
-
-data LedgerDbCfgF f l blk = LedgerDbCfg
-  { ledgerDbCfgSecParam :: !(HKD f SecurityParam)
-  , ledgerDbCfg :: !(HKD f (LedgerCfg l blk))
-  , ledgerDbCfgComputeLedgerEvents :: !ComputeLedgerEvents
-  }
-  deriving Generic
-
-type LedgerDbCfg l = Complete LedgerDbCfgF l
-
-deriving instance NoThunks (LedgerCfg l blk) => NoThunks (LedgerDbCfg l blk)
-
-configLedgerDb ::
-  ConsensusProtocol (BlockProtocol blk) =>
-  TopLevelConfig blk ->
-  ComputeLedgerEvents ->
-  LedgerDbCfg ExtLedgerState blk
-configLedgerDb config evs =
-  LedgerDbCfg
-    { ledgerDbCfgSecParam = configSecurityParam config
-    , ledgerDbCfg = ExtLedgerCfg config
-    , ledgerDbCfgComputeLedgerEvents = evs
-    }
-
-{-------------------------------------------------------------------------------
   Exceptions
 -------------------------------------------------------------------------------}
 
@@ -737,19 +710,6 @@ data TraceReplayProgressEvent blk
       -- | the block at the tip of the ImmutableDB
       (ReplayGoal blk)
   deriving (Generic, Eq, Show)
-
-{-------------------------------------------------------------------------------
-  Pruning
--------------------------------------------------------------------------------}
-
--- | Options for prunning the LedgerDB
-data LedgerDbPrune
-  = -- | Prune all states, keeping only the current tip.
-    LedgerDbPruneAll
-  | -- | Prune such that all (non-anchor) states are not older than the given
-    -- slot.
-    LedgerDbPruneBeforeSlot SlotNo
-  deriving Show
 
 {-------------------------------------------------------------------------------
   Streaming
