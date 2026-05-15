@@ -281,6 +281,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           API.ChainDB
             { addBlockAsync = getEnv2 h ChainSel.addBlockAsync
             , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
+            , addReprocessBlock = getEnv1 h (\env' -> addReprocessBlock (cdbChainSelQueue env'))
             , getCurrentChain = getEnvSTM h Query.getCurrentChain
             , getCurrentChainWithTime = getEnvSTM h Query.getCurrentChainWithTime
             , getTipBlock = getEnv h Query.getTipBlock
