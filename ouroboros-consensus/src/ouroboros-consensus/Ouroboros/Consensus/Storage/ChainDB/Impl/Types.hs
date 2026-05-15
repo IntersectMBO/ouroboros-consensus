@@ -625,12 +625,14 @@ addReprocessLoEBlocks tracer ChainSelQueue{varChainSelQueue} = do
 -- arrived. Modelled on 'addReprocessLoEBlocks'.
 addReprocessBlock ::
   IOLike m =>
+  Tracer m (TraceAddBlockEvent blk) ->
   ChainSelQueue m blk ->
   HeaderHash blk ->
   m (ChainSelectionPromise m)
-addReprocessBlock ChainSelQueue{varChainSelQueue} hash = do
+addReprocessBlock tracer ChainSelQueue{varChainSelQueue} hash = do
   varProcessed <- newEmptyTMVarIO
   let waitUntilRan = atomically $ readTMVar varProcessed
+  traceWith tracer $ AddedReprocessBlockToQueue hash
   atomically $
     writeTBQueue varChainSelQueue $
       ChainSelReprocessBlock hash varProcessed
@@ -863,6 +865,11 @@ data TraceAddBlockEvent blk
     AddedReprocessLoEBlocksToQueue
   | -- | ChainSel will reprocess blocks that were postponed by the LoE.
     PoppedReprocessLoEBlocksFromQueue
+  | -- | A reprocess-block message was added to the queue, requesting ChainSel
+    -- to re-run for a CertRB whose EB closure has arrived.
+    AddedReprocessBlockToQueue !(HeaderHash blk)
+  | -- | ChainSel will reprocess the given CertRB.
+    PoppedReprocessBlockFromQueue !(HeaderHash blk)
   | -- | A block was added to the Volatile DB
     AddedBlockToVolatileDB (RealPoint blk) BlockNo IsEBB Enclosing
   | -- | The block fits onto the current chain, we'll try to use it to extend
