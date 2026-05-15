@@ -263,7 +263,7 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
             { addBlockAsync = getEnv2 h ChainSel.addBlockAsync
             , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
             , addReprocessBlock =
-                getEnv1 h $ \env' ->
+                getEnv2 h $ \env' ->
                   addReprocessBlock
                     (TraceAddBlockEvent >$< cdbTracer env')
                     (cdbChainSelQueue env')
