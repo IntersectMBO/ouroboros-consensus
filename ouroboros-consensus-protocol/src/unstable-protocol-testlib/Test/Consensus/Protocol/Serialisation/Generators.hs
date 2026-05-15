@@ -18,7 +18,11 @@ import Cardano.Slotting.Slot
   , WithOrigin (At, Origin)
   )
 import qualified Data.ByteString as BS
-import LeiosDemoTypes (EbAnnouncement (EbAnnouncement), EbHash (MkEbHash))
+import LeiosDemoTypes
+  ( EbAnnouncement (EbAnnouncement)
+  , EbHash (MkEbHash)
+  , LeiosPoint (MkLeiosPoint)
+  )
 import Ouroboros.Consensus.Protocol.Praos (LeiosState (LeiosState), PraosState (PraosState))
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Header
@@ -62,7 +66,7 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> ocert
           <*> arbitrary
           <*> arbitrary
-          <*> pure Nothing
+          <*> arbitrary
 
 instance Praos.PraosCrypto c => Arbitrary (Header c) where
   arbitrary = do
@@ -89,6 +93,9 @@ instance Arbitrary PraosState where
 
 instance Arbitrary EbAnnouncement where
   arbitrary = EbAnnouncement <$> (MkEbHash . BS.pack <$> vector 32) <*> arbitrary
+
+instance Arbitrary LeiosPoint where
+  arbitrary = MkLeiosPoint <$> arbitrary <*> (MkEbHash . BS.pack <$> vector 32)
 
 instance Arbitrary LeiosState where
   arbitrary = pure $ LeiosState Nothing 0
