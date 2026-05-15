@@ -527,29 +527,44 @@ initNodeKernel
               void $ ChainDB.addReprocessBlock chainDB leiosPoint certRBHash
           leiosPeersVars <- MVar.readMVar getLeiosPeersVars
           offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
-          -- Per-peer certified EBs derived from ChainSync candidate fragments,
-          -- used as a fallback peer source for fetching EB closures that no
-          -- peer has explicitly offered.
+          -- Per-peer set of EB hashes the peer has certified on its
+          -- selected chain. Used as a fallback peer source in
+          -- 'choosePeerEb' / 'choosePeerTx' when no peer has actively
+          -- offered the EB body or closure.
           --
-          -- Load-bearing invariant: if a peer's candidate fragment contains
-          -- a CertRB, that peer has the EB closure. This rests on the
-          -- upstream's ChainSync server only emitting selected-chain
-          -- headers, the upstream's ChainSel filtering CertRBs with missing
-          -- closures (cdbPendingEBs), and LeiosDB not GC'ing closures. See
-          -- the fallback branches in 'choosePeerEb' / 'choosePeerTx' in
-          -- LeiosDemoLogic.
+          -- Load-bearing invariant: if a peer's candidate fragment
+          -- contains a CertRB, that peer has the EB closure. This rests
+          -- on the upstream's ChainSync server only emitting
+          -- selected-chain headers, the upstream's ChainSel filtering
+          -- CertRBs with missing closures (cdbPendingEBs), and LeiosDB
+          -- not GC'ing closures. See the fallback branches in
+          -- 'choosePeerEb' / 'choosePeerTx' in 'LeiosDemoLogic'.
+          let
+            -- For one peer, scan its candidate fragment and collect the
+            -- hashes of every EB that any header on the candidate
+            -- certifies. Only the EB hash matters for fetch-decision
+            -- keying; the slot is discarded.
+            certifiedEbsFromCandidate csHandle = do
+              state <- readTVar (cschState csHandle)
+              pure $
+                Set.fromList
+                  -- Singleton-list generator with a refutable pattern:
+                  -- each header that does not certify an EB is silently
+                  -- skipped.
+                  [ pointEbHash
+                  | hwt <- AF.toOldestFirst (csCandidate state)
+                  , Just MkLeiosPoint{pointEbHash} <-
+                      [LedgerDB.certifiedEbFromHeader (hwtHeader hwt)]
+                  ]
           candidateCertEbs <- atomically $ do
+            -- Snapshot of all live ChainSync clients (one handle per
+            -- upstream peer).
             handles <- cschcMap varChainSyncHandles
+            -- Re-key from 'ConnectionId' to Leios's 'PeerId' newtype.
+            -- 'mapKeysMonotonic' is safe because 'MkPeerId' is just an
+            -- order-preserving wrapper.
             fmap (Map.mapKeysMonotonic Leios.MkPeerId) $
-              forM handles $ \csHandle -> do
-                state <- readTVar (cschState csHandle)
-                pure $
-                  Set.fromList
-                    [ pointEbHash
-                    | hwt <- AF.toOldestFirst (csCandidate state)
-                    , Just MkLeiosPoint{pointEbHash} <-
-                        [LedgerDB.certifiedEbFromHeader (hwtHeader hwt)]
-                    ]
+              forM handles certifiedEbsFromCandidate
           newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
             filteredOutstanding <- Leios.filterMissingWork leiosConn outstanding
             traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: filtered"
