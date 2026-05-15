@@ -51,7 +51,6 @@ import Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import qualified Ouroboros.Consensus.HeaderValidation as HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Util.CallStack (HasCallStack)
 import Ouroboros.Network.AnchoredSeq (Anchorable, AnchoredSeq (..))
@@ -205,7 +204,7 @@ mkHeaderStateWithTimeFromSummary summary hst =
 mkHeaderStateWithTime ::
   (HasCallStack, HasHardForkHistory blk, HasAnnTip blk) =>
   LedgerConfig blk ->
-  ExtLedgerState blk mk ->
+  ExtLedgerState blk ->
   HeaderStateWithTime blk
 mkHeaderStateWithTime lcfg (ExtLedgerState lst hst) =
   mkHeaderStateWithTimeFromSummary summary hst
@@ -255,23 +254,36 @@ validateHeader cfg lv hdr slotTime history = do
 --
 -- PRECONDITION: the blocks in the chain are valid.
 fromChain ::
-  forall blk.
+  forall m blk.
   ( ApplyBlock ExtLedgerState blk
   , HasHardForkHistory blk
   , HasAnnTip blk
+  , Monad m
+  , StateRefHasState m (Ticked LedgerState) blk
+  , StateRefHasState m LedgerState blk
   ) =>
   TopLevelConfig blk ->
   -- | Initial ledger state
-  ExtLedgerState blk ValuesMK ->
+  StateRef m ExtLedgerState blk ->
   Chain blk ->
-  HeaderStateHistory blk
-fromChain cfg initState chain =
-  HeaderStateHistory (AS.fromOldestFirst anchorSnapshot snapshots)
- where
-  anchorSnapshot NE.:| snapshots =
-    fmap (mkHeaderStateWithTime (configLedger cfg))
-      . NE.scanl
-        (\st blk -> applyDiffs st $ tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk st)
-        initState
+  m (HeaderStateHistory blk)
+fromChain cfg initState chain = do
+  chain' <-
+    scanlM
+      (\st blk -> tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk st)
+      initState
       . Chain.toOldestFirst
       $ chain
+  let anchorSnapshot NE.:| snapshots = fmap (mkHeaderStateWithTime (configLedger cfg) . state) chain'
+  pure $ HeaderStateHistory (AS.fromOldestFirst anchorSnapshot snapshots)
+
+scanlM :: Monad m => (b -> a -> m b) -> b -> [a] -> m (NE.NonEmpty b)
+scanlM f z = fmap NE.fromList . scanlGo z
+ where
+  scanlGo q ls = do
+    ls' <- case ls of
+      [] -> pure []
+      x : xs -> do
+        x' <- f q x
+        scanlGo x' xs
+    pure (q : ls')
