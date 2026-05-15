@@ -64,6 +64,7 @@ import Control.Exception (assert)
 import qualified Data.ByteString.Short as Short
 import Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
+import Data.Maybe (listToMaybe)
 import Data.SOP.BasicFunctors
 import Data.SOP.Counting
 import Data.SOP.Functors (Flip (..))
@@ -814,11 +815,12 @@ protocolInfoCardano paramsCardano
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
       , topLevelConfigCheckpoints = cardanoCheckpoints
       , -- FIXME: REMOVE THIS. Accesses and re-uses KES signing key material.
+        -- For nodes without Shelley-based leader credentials (e.g. relays),
+        -- there is no key material to re-use, so the voting key is Nothing.
         topLevelConfigVotingKey =
-          Just
-            . rawSerialiseUnsoundPureSignKeyKES
+          rawSerialiseUnsoundPureSignKeyKES
             . shelleyLeaderCredentialsInitSignKey
-            $ credssShelleyBased !! 0
+            <$> listToMaybe credssShelleyBased
       }
 
   -- When the initial ledger state is not in the Byron era, register various
