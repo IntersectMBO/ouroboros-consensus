@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getCurrentChain
   , getCurrentChainWithTime
   , getCurrentLedger
+  , getCurrentLedgerRef
   , getHeaderStateHistory
   , getImmutableLedger
   , getIsFetched
@@ -286,6 +287,10 @@ getMaxSlotNo CDB{..} = do
 -- | Get current ledger
 getCurrentLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk)
 getCurrentLedger CDB{..} = LedgerDB.getVolatileTip cdbLedgerDB
+
+-- | Get current ledger
+getCurrentLedgerRef :: ChainDbEnv m blk -> STM m (StateRef m ExtLedgerState blk)
+getCurrentLedgerRef CDB{..} = LedgerDB.getVolatileTipRef cdbLedgerDB
 
 -- | Get the immutable ledger, i.e., typically @k@ blocks back.
 getImmutableLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk)

@@ -37,6 +37,7 @@ import qualified Data.SOP.InPairs as InPairs
 import Data.SOP.Index
 import qualified Data.SOP.Match as Match
 import Data.SOP.Strict
+import qualified Data.SOP.Telescope as Telescope
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -99,9 +100,15 @@ instance
   CanHardFork xs =>
   LedgerSupportsMempool (HardForkBlock xs)
   where
+  data MempoolCache (HardForkBlock xs) = HardForkMempoolCache (NS MempoolCache xs)
+
+  emptyMempoolCache (HardForkTickedStateRef _ (State.HardForkState st)) =
+    HardForkMempoolCache
+      (hcmap proxySingle (emptyMempoolCache . State.currentState) $ Telescope.tip st)
+
   applyTx = applyHelper ModeApply
 
-  reapplyTx cfg slot vtx tls =
+  reapplyTx cfg slot vtx tls mch =
     fst
       <$> applyHelper
         ModeReapply
@@ -110,6 +117,7 @@ instance
         slot
         (WrapValidatedGenTx vtx)
         tls
+        mch
 
   txForgetValidated =
     HardForkGenTx
@@ -223,8 +231,8 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
   ModeReapply :: ApplyHelperMode WrapValidatedGenTx
 
 -- | A private type used only to clarify the definition of 'applyHelper'
-data ApplyResult m xs blk = ApplyResult
-  { arState :: StateRef m (Ticked LedgerState) blk
+data ApplyResult xs blk = ApplyResult
+  { arState :: MempoolCache blk
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
 
@@ -240,11 +248,12 @@ applyHelper ::
   WhetherToIntervene ->
   SlotNo ->
   txIn (HardForkBlock xs) ->
+  MempoolCache (HardForkBlock xs) ->
   StateRef m (Ticked LedgerState) (HardForkBlock xs) ->
   ExceptT
     (HardForkApplyTxErr xs)
     m
-    ( StateRef m (Ticked LedgerState) (HardForkBlock xs)
+    ( MempoolCache (HardForkBlock xs)
     , Validated (GenTx (HardForkBlock xs))
     )
 applyHelper
@@ -253,6 +262,7 @@ applyHelper
   wti
   slot
   tx
+  (HardForkMempoolCache hardForkCache)
   (HardForkTickedStateRef transition hardForkState) =
     case matchPolyTx injs (modeGetTx tx) hardForkState of
       Left mismatch ->
@@ -277,17 +287,26 @@ applyHelper
         --    which we will remain to be) or we are forecasting, which is not
         --    applicable here.
         do
+          let matched' = case Match.matchTelescope hardForkCache (State.getHardForkState matched) of
+                Left _ ->
+                  hcmap
+                    proxySingle
+                    (\(Pair tx0 st) -> Pair (emptyMempoolCache st) (Pair tx0 st))
+                    matched
+                Right m ->
+                  State.HardForkState $
+                    hcmap proxySingle (\(Pair a (State.Current s t)) -> State.Current s (Pair a t)) m
           result <-
             hsequence' $
-              hcizipWith proxySingle modeApplyCurrent cfgs matched
+              hcizipWith proxySingle modeApplyCurrent cfgs matched'
           let
-            st' :: State.HardForkState (StateRef m (Ticked LedgerState)) xs
-            st' = arState `hmap` result
+            st' :: NS MempoolCache xs
+            st' = hmap State.currentState $ Telescope.tip $ State.getHardForkState $ arState `hmap` result
 
             vtx :: Validated (GenTx (HardForkBlock xs))
             vtx = hcollapse $ (K . arValidatedTx) `hmap` result
 
-          return (HardForkTickedStateRef transition st', vtx)
+          return (HardForkMempoolCache st', vtx)
    where
     pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
     cfgs = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
@@ -326,19 +345,19 @@ applyHelper
       SingleEraBlock blk =>
       Index xs blk ->
       WrapLedgerConfig blk ->
-      Product txIn (StateRef m (Ticked LedgerState)) blk ->
+      Product MempoolCache (Product txIn (StateRef m (Ticked LedgerState))) blk ->
       ( ExceptT (HardForkApplyTxErr xs) m
-          :.: ApplyResult m xs
+          :.: ApplyResult xs
       )
         blk
-    modeApplyCurrent index cfg (Pair tx' st) =
+    modeApplyCurrent index cfg (Pair mcache (Pair tx' st)) =
       Comp $
         withExceptT (injectApplyTxErr index) $
           do
             let lcfg = unwrapLedgerConfig cfg
             case mode of
               ModeApply -> do
-                (st', vtx) <- applyTx lcfg wti slot tx' st
+                (st', vtx) <- applyTx lcfg wti slot tx' mcache st
                 pure
                   ApplyResult
                     { arValidatedTx = injectValidatedGenTx index vtx
@@ -346,7 +365,7 @@ applyHelper
                     }
               ModeReapply -> do
                 let vtx' = unwrapValidatedGenTx tx'
-                st' <- reapplyTx lcfg slot vtx' st
+                st' <- reapplyTx lcfg slot vtx' mcache st
                 -- provide the given transaction, which was already validated
                 pure
                   ApplyResult

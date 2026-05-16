@@ -216,6 +216,8 @@ data ChainDB m blk = ChainDB
   -- INVARIANT @'hwtHeader' <$> 'getCurrentChainWithTime' = 'getCurrentChain'@
   , getCurrentLedger :: STM m (ExtLedgerState blk)
   -- ^ Get current ledger
+  , getCurrentLedgerRef :: STM m (StateRef m ExtLedgerState blk)
+  -- ^ Get current ledger
   , getImmutableLedger :: STM m (ExtLedgerState blk)
   -- ^ Get the immutable ledger, i.e., typically @k@ blocks back.
   , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk))

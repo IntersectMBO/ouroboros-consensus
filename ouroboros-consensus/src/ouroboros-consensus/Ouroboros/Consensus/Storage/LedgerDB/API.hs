@@ -276,6 +276,8 @@ type LedgerDB :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 data LedgerDB m l blk = LedgerDB
   { getVolatileTip :: STM m (l blk)
   -- ^ Get the empty ledger state at the (volatile) tip of the LedgerDB.
+  , getVolatileTipRef :: STM m (StateRef m l blk)
+  -- ^ Get the empty ledger state at the (volatile) tip of the LedgerDB.
   , getImmutableTip :: STM m (l blk)
   -- ^ Get the empty ledger state at the immutable tip of the LedgerDB.
   , getPastLedgerState :: Point blk -> STM m (Maybe (l blk))

@@ -164,6 +164,7 @@ implMkLedgerDb h snapManager =
   let ldb =
         LedgerDB
           { getVolatileTip = getEnvSTM h implGetVolatileTip
+          , getVolatileTipRef = getEnvSTM h implGetVolatileTipRef
           , getImmutableTip = getEnvSTM h implGetImmutableTip
           , getPastLedgerState = \s -> getEnvSTM h (flip implGetPastLedgerState s)
           , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
@@ -248,6 +249,12 @@ implGetVolatileTip ::
   LedgerDBEnv m l blk ->
   STM m (l blk)
 implGetVolatileTip = fmap current . getVolatileLedgerSeq
+
+implGetVolatileTipRef ::
+  (MonadSTM m, GetTip l blk, StateRefHasState m l blk) =>
+  LedgerDBEnv m l blk ->
+  STM m (StateRef m l blk)
+implGetVolatileTipRef = fmap currentHandle . getVolatileLedgerSeq
 
 implGetImmutableTip ::
   (MonadSTM m, GetTip l blk, StateRefHasState m l blk) =>
