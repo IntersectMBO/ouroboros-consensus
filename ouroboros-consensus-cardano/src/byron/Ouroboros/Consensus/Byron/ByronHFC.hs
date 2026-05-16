@@ -22,14 +22,9 @@ import Cardano.Binary
 import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
 import Control.Monad
 import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe, mapMaybe)
-import Data.MemPack
-import Data.SOP.Index (Index (..))
-import Data.Void (Void, absurd)
 import Data.Word
 import GHC.Generics
 import NoThunks.Class
@@ -43,12 +38,10 @@ import Ouroboros.Consensus.HardFork.Combinator.Degenerate
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
 import Ouroboros.Consensus.Storage.Serialisation
-import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   Synonym for convenience
@@ -162,16 +155,16 @@ byronTransition ::
   PartialLedgerConfig ByronBlock ->
   -- | Shelley major protocol version
   Word16 ->
-  LedgerState ByronBlock mk ->
+  LedgerState ByronBlock ->
   Maybe EpochNo
-byronTransition partialConfig shelleyMajorVersion state =
+byronTransition partialConfig shelleyMajorVersion st =
   takeAny
     . mapMaybe isTransitionToShelley
     . Byron.Inspect.protocolUpdates lConfig
-    $ state
+    $ st
  where
   ByronPartialLedgerConfig lConfig _ = partialConfig
-  ByronTransitionInfo transitionInfo = byronLedgerTransition state
+  ByronTransitionInfo transitionInfo = byronLedgerTransition st
 
   k = CC.Genesis.gdK $ CC.Genesis.configGenesisData lConfig
 
@@ -223,7 +216,7 @@ byronTransition partialConfig shelleyMajorVersion state =
   isReallyStable (BlockNo bno) = distance >= CC.unBlockCount k
    where
     distance :: Word64
-    distance = case byronLedgerTipBlockNo state of
+    distance = case byronLedgerTipBlockNo st of
       Origin -> bno + 1
       NotOrigin (BlockNo tip) -> tip - bno
 
@@ -284,47 +277,3 @@ instance SerialiseNodeToClient ByronBlock ByronPartialLedgerConfig where
     ByronPartialLedgerConfig
       <$> fromCBOR @(LedgerConfig ByronBlock)
       <*> decodeNodeToClient ccfg version
-
-{-------------------------------------------------------------------------------
-  Canonical TxIn
--------------------------------------------------------------------------------}
-
-instance HasCanonicalTxIn '[ByronBlock] where
-  newtype CanonicalTxIn '[ByronBlock] = ByronHFCTxIn
-    { getByronHFCTxIn :: Void
-    }
-    deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
-
-  injectCanonicalTxIn IZ key = absurd key
-  injectCanonicalTxIn (IS idx') _ = case idx' of {}
-
-  ejectCanonicalTxIn _ key = absurd $ getByronHFCTxIn key
-
-instance HasHardForkTxOut '[ByronBlock] where
-  type HardForkTxOut '[ByronBlock] = Void
-  injectHardForkTxOut IZ txout = absurd txout
-  injectHardForkTxOut (IS idx') _ = case idx' of {}
-  ejectHardForkTxOut IZ txout = absurd txout
-  ejectHardForkTxOut (IS idx') _ = case idx' of {}
-
-deriving via
-  Void
-  instance
-    IndexedMemPack LedgerState (HardForkBlock '[ByronBlock]) Void
-
-instance BlockSupportsHFLedgerQuery '[ByronBlock] where
-  answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}
-  answerBlockQueryHFLookup (IS is) _cfg _q _dlv = case is of {}
-
-  answerBlockQueryHFTraverse IZ _cfg (q :: BlockQuery ByronBlock QFTraverseTables result) _dlv = case q of {}
-  answerBlockQueryHFTraverse (IS is) _cfg _q _dlv = case is of {}
-
-  queryLedgerGetTraversingFilter IZ (q :: BlockQuery ByronBlock QFTraverseTables result) = case q of {}
-  queryLedgerGetTraversingFilter (IS is) _q = case is of {}
-
-instance SerializeTablesWithHint LedgerState (HardForkBlock '[ByronBlock]) where
-  decodeTablesWithHint _ = do
-    _ <- CBOR.decodeMapLen
-    pure (LedgerTables $ ValuesMK Map.empty)
-  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0

@@ -314,14 +314,14 @@ validateNewTransaction ::
   StateRef m (Ticked LedgerState) blk ->
   InternalState blk ->
   m
-    ( Either (ApplyTxErr blk) (Validated (GenTx blk))
+    ( Either (ApplyTxErr blk) (Validated (GenTx blk), StateRef m (Ticked LedgerState) blk)
     , DiffTimeMeasure -> InternalState blk
     )
 validateNewTransaction cfg wti tx txsz st is =
   runExceptT (applyTx cfg wti isSlotNo tx isCache st) <&> \case
     Left err -> (Left err, \_dur -> is)
-    Right (cache', vtx) ->
-      ( Right vtx
+    Right (st', cache', vtx) ->
+      ( Right (vtx, st')
       , \dur ->
           is
             { isTxs =

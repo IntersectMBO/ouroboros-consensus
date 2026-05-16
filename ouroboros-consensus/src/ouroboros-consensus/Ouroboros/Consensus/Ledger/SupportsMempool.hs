@@ -132,7 +132,10 @@ class
     -- | Contain only the values for the tx to apply
     MempoolCache blk ->
     StateRef m (Ticked LedgerState) blk ->
-    ExceptT (ApplyTxErr blk) m (MempoolCache blk, Validated (GenTx blk))
+    ExceptT
+      (ApplyTxErr blk)
+      m
+      (StateRef m (Ticked LedgerState) blk, MempoolCache blk, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -153,7 +156,10 @@ class
     -- | Contains at least the values for the tx to reapply
     MempoolCache blk ->
     StateRef m (Ticked LedgerState) blk ->
-    ExceptT (ApplyTxErr blk) m (MempoolCache blk)
+    ExceptT
+      (ApplyTxErr blk)
+      m
+      (StateRef m (Ticked LedgerState) blk, MempoolCache blk)
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk

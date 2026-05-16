@@ -140,7 +140,7 @@ data instance Ticked ExtLedgerState blk = TickedExtLedgerState
   }
 
 instance
-  (Functor m, StateRefHasState m (Ticked LedgerState) blk, StateRefHasState m LedgerState blk) =>
+  (Monad m, StateRefHasState m (Ticked LedgerState) blk, StateRefHasState m LedgerState blk) =>
   StateRefHasState m ExtLedgerState blk
   where
   data StateRef m ExtLedgerState blk where

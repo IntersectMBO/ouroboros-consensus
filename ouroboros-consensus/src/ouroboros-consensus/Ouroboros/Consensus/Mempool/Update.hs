@@ -384,29 +384,33 @@ pureTryAddTx mpEnv cfg wti tx is =
           , not $ txsdifftime Measure.<= FiniteDiffTimeMeasure (mempoolTimeoutCapacity toCfg) ->
               pure $ NotEnoughSpaceLeft
           | otherwise -> do
-              st <- readMVar (mpEnvForker mpEnv)
-              validateNewTransaction cfg wti tx txsz st is <&> \case
-                (Left err, _) ->
-                  Processed $ \_dur ->
-                    TransactionProcessingResult
-                      Nothing
-                      (MempoolTxRejected tx err)
-                      ( TraceMempoolRejectedTx
-                          tx
-                          err
-                          MempoolRejectedByLedger
-                          (isMempoolSize is)
-                      )
-                (Right vtx, is') ->
-                  Processed $ \dur ->
-                    TransactionProcessingResult
-                      (Just (is' dur))
-                      (MempoolTxAdded vtx)
-                      ( TraceMempoolAddedTx
-                          vtx
-                          (isMempoolSize is)
-                          (isMempoolSize (is' dur))
-                      )
+              modifyMVar (mpEnvForker mpEnv) $ \st ->
+                validateNewTransaction cfg wti tx txsz st is <&> \case
+                  (Left err, _) ->
+                    ( st
+                    , Processed $ \_dur ->
+                        TransactionProcessingResult
+                          Nothing
+                          (MempoolTxRejected tx err)
+                          ( TraceMempoolRejectedTx
+                              tx
+                              err
+                              MempoolRejectedByLedger
+                              (isMempoolSize is)
+                          )
+                    )
+                  (Right (vtx, st'), is') ->
+                    ( st'
+                    , Processed $ \dur ->
+                        TransactionProcessingResult
+                          (Just (is' dur))
+                          (MempoolTxAdded vtx)
+                          ( TraceMempoolAddedTx
+                              vtx
+                              (isMempoolSize is)
+                              (isMempoolSize (is' dur))
+                          )
+                    )
  where
   currentSize = TxSeq.toSize (isTxs is)
 
