@@ -34,7 +34,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger
   ) where
 
 import Control.Monad (guard)
-import Control.Monad.Except (ExceptT, throwError, withExcept, withExceptT)
+import Control.Monad.Except (ExceptT (..), runExceptT, throwError, withExcept)
 import qualified Control.State.Transition.Extended as STS
 import Data.Functor ((<&>))
 import Data.Functor.Product
@@ -267,6 +267,7 @@ instance
       )
 
 apply ::
+  forall xs blk m.
   (SListI xs, SingleEraBlock blk, Monad m) =>
   STS.ValidationPolicy ->
   ComputeLedgerEvents ->
@@ -279,10 +280,13 @@ apply ::
   )
     blk
 apply doValidate opts index (WrapLedgerConfig cfg) (Pair (I block) st) =
-  Comp $
-    withExceptT (injectLedgerError index) $
-      fmap (Comp . embedLedgerResult (injectLedgerEvent index)) $
-        applyBlockLedgerResultWithValidation doValidate opts cfg block st
+  Comp $ ExceptT $ do
+    res <-
+      runExceptT
+        (applyBlockLedgerResultWithValidation doValidate opts cfg block st)
+    pure $ case res of
+      Left e -> Left (injectLedgerError index e)
+      Right r -> Right (Comp (embedLedgerResult (injectLedgerEvent index) r))
 
 {-------------------------------------------------------------------------------
   UpdateLedger

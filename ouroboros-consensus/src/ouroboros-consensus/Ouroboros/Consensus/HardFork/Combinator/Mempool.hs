@@ -357,29 +357,33 @@ applyHelper
       )
         blk
     modeApplyCurrent index cfg (Pair mcache (Pair tx' st)) =
-      Comp $
-        withExceptT (injectApplyTxErr index) $
-          do
-            let lcfg = unwrapLedgerConfig cfg
-            case mode of
-              ModeApply -> do
-                (st', mcache', vtx) <- applyTx lcfg wti slot tx' mcache st
-                pure
+      Comp $ ExceptT $ do
+        let lcfg = unwrapLedgerConfig cfg
+        res <- case mode of
+          ModeApply ->
+            fmap
+              ( fmap $ \(st', mcache', vtx) ->
                   ApplyResult
                     { arValidatedTx = injectValidatedGenTx index vtx
                     , arState = st'
                     , arCache = mcache'
                     }
-              ModeReapply -> do
-                let vtx' = unwrapValidatedGenTx tx'
-                (st', mcache') <- reapplyTx lcfg slot vtx' mcache st
-                -- provide the given transaction, which was already validated
-                pure
-                  ApplyResult
-                    { arValidatedTx = injectValidatedGenTx index vtx'
-                    , arState = st'
-                    , arCache = mcache'
-                    }
+              )
+              (runExceptT (applyTx lcfg wti slot tx' mcache st))
+          ModeReapply ->
+            let vtx' = unwrapValidatedGenTx tx'
+             in fmap
+                  ( fmap $ \(st', mcache') ->
+                      ApplyResult
+                        { arValidatedTx = injectValidatedGenTx index vtx'
+                        , arState = st'
+                        , arCache = mcache'
+                        }
+                  )
+                  (runExceptT (reapplyTx lcfg slot vtx' mcache st))
+        pure $ case res of
+          Left e -> Left (injectApplyTxErr index e)
+          Right r -> Right r
 
 newtype instance TxId (GenTx (HardForkBlock xs)) = HardForkGenTxId
   { getHardForkGenTxId :: OneEraGenTxId xs
