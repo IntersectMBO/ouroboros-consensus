@@ -243,7 +243,7 @@ type LedgerState :: Type -> Type
 data family LedgerState blk
 
 type LedgerTables :: (Type -> Type) -> Type -> Type
-data family LedgerTables m blk
+type family LedgerTables m blk
 
 type StateRefHasState :: (Type -> Type) -> (Type -> Type) -> Type -> Constraint
 class Monad m => StateRefHasState m l blk where
