@@ -47,6 +47,7 @@ import Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace (..)
   )
+import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.Block (Tip)
 import Ouroboros.Network.BlockFetch
   ( TraceFetchClientState
@@ -175,6 +176,7 @@ showTracers ::
   , Show (TxMeasure blk)
   , Show remotePeer
   , LedgerSupportsProtocol blk
+  , HasRawTxId (TxId (GenTx blk))
   ) =>
   Tracer m String -> Tracers m remotePeer localPeer blk
 showTracers tr =

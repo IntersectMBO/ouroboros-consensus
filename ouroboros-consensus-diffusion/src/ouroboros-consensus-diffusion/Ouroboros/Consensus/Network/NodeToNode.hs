@@ -528,6 +528,7 @@ showTracers ::
   , Show (GenTxId blk)
   , HasHeader blk
   , HasNestedContent Header blk
+  , HasRawTxId (TxId (GenTx blk))
   ) =>
   Tracer m String -> Tracers m ntnAddr blk e
 showTracers tr =
