@@ -2119,24 +2119,37 @@ genBlkPair chunkInfo loe Model{..} =
         [ (4, return True)
         , (1, return False)
         ]
-    perasCertRound <- do
-      let maxRoundNo =
-            case Model.roundNoOfLatestCertSeen dbModel of
-              Nothing -> 0
-              Just (PerasRoundNo r) -> r + 1
+    perasCert <- do
       frequency
-        [ (9, return Nothing)
+        [ (4, return Nothing)
         , let freq = case loe of
                 LoEDisabled -> 1
                 -- The LoE does not yet support Peras.
                 LoEEnabled () -> 0
-           in (freq, Just . PerasRoundNo <$> choose (0, maxRoundNo))
+           in (freq, Just <$> genPerasCert)
         ]
     return
       TestBody
         { tbForkNo = forkNo
         , tbIsValid = isValid
-        , tbPerasCertRound = perasCertRound
+        , tbPerasCert = perasCert
+        }
+
+  genPerasCert :: Gen (PerasCert TestBlock)
+  genPerasCert = do
+    let maxRoundNo =
+          case Model.roundNoOfLatestCertSeen dbModel of
+            Nothing -> 0
+            Just (PerasRoundNo r) -> r + 1
+    roundNo <-
+      PerasRoundNo <$> choose (0, maxRoundNo)
+    boostedBlock <-
+      -- NOTE: we don't care about this boosted block, it could be @Genesis@
+      blockPoint <$> genSuccOfCurrentChainTip
+    pure
+      MockPerasCert
+        { mockCertRound = roundNo
+        , mockCertBlock = boostedBlock
         }
 
 -- | Generate a random security parameter (k)
