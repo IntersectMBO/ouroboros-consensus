@@ -135,6 +135,7 @@ import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Chain
+import Ouroboros.Network.Point (Block)
 import System.FS.API.Lazy
 import Test.Cardano.Slotting.Numeric ()
 import Test.Cardano.Slotting.TreeDiff ()
@@ -207,13 +208,13 @@ data TestBody = TestBody
   -- Note that this is a /local/ number, it is specific to this block,
   -- other blocks need not be aware of it.
   , tbIsValid :: !Bool
-  , tbPerasCertRound :: !(Maybe PerasRoundNo)
+  , tbPerasCert :: !(Maybe (PerasCert TestBlock))
   -- ^ Some real blocks will ocasionally carry a Peras certificate inside their
-  -- body to coordinate the end of a cooldown period. For the purposes of the
-  -- ChainDB, we don't really care about the details of the certificate other
-  -- than its round number, which needs to be stored (and carefully updated
-  -- whenever a newer one pops up) so it can be used to evaluate the Peras
-  -- voting rules and decide if a node should resume voting.
+  -- body to coordinate the end of a cooldown period.
+  -- NOTE: for the purposes of the ChainDB, we don't care about the details of
+  -- the certificate other than its round number, which needs to be stored (and
+  -- carefully updated whenever a newer one pops up) so it can be used to
+  -- evaluate the Peras voting rules and decide if a node should resume voting.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (NFData, NoThunks, Serialise, Hashable)
@@ -953,16 +954,22 @@ corruptionFiles = map snd . NE.toList
   Orphans
 -------------------------------------------------------------------------------}
 
+-- ** Hashable
+
 deriving newtype instance Hashable SlotNo
 deriving newtype instance Hashable BlockNo
 deriving newtype instance Hashable PerasRoundNo
+
 instance Hashable IsEBB
-
--- use generic instance
-
+instance Hashable TestHeader
+instance Hashable TestBlock
+instance Hashable (Block SlotNo TestHeaderHash)
+instance Hashable (Point TestBlock)
+instance Hashable (MockPerasCert TestBlock)
+instance (Hashable a, Hashable (WithOrigin a)) => Hashable (WithOrigin a)
 instance (StandardHash b, Hashable (HeaderHash b)) => Hashable (ChainHash b)
 
--- use generic instance
+-- ** ToExpr
 
 instance ToExpr EBB
 instance ToExpr IsEBB
