@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -20,10 +21,17 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
+import Data.Proxy (Proxy (..))
+import Data.Typeable (Typeable)
 import Data.Word (Word8)
+import Ouroboros.Consensus.Block
+  ( ConvertRawHash (..)
+  , Point
+  , decodeRawHash
+  , encodeRawHash
+  )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasBoostedBlock
-  , PerasRoundNo
+  ( PerasRoundNo
   , PerasSeatIndex
   )
 import Ouroboros.Consensus.Committee.Crypto (CryptoSupportsVoteSigning (..))
@@ -31,29 +39,35 @@ import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCrypto
   , VRFOutput
   )
+import Ouroboros.Network.Block (decodePoint, encodePoint)
 
 -- | Concrete Peras votes using BLS signatures
-data PerasVote
+-- 'blk' is mainly used here to ensure type family injectivity.
+-- For convenience/preventing annoying conversions, we also use it to indicate
+-- in 'Point blk' for the boosted block.
+data PerasVote blk
   = PerasVote
   { pvRoundNo :: !PerasRoundNo
   -- ^ Election identifier
-  , pvBoostedBlock :: !PerasBoostedBlock
+  , pvBoostedBlock :: !(Point blk)
   -- ^ Vote message, i.e., the hash of the block being voted for
+  -- TODO: 'blk' here may not refer to the actual era of the boosted block,
+  -- see https://github.com/tweag/cardano-peras/issues/251
   , pvSeatIndex :: !PerasSeatIndex
   -- ^ Seat index assigned to the committee member (identifies the voter)
-  , pvEligibilityProof :: !PerasVoteEligibilityProof
+  , pvEligibilityProof :: !(PerasVoteEligibilityProof blk)
   -- ^ Proof of eligibility for voting, depending on the type of membership to
   -- the committee (persistent vs non-persistent)
-  , pvSignature :: !(VoteSignature PerasBLSCrypto)
+  , pvSignature :: !(VoteSignature (PerasBLSCrypto blk))
   -- ^ BLS signature on the hash of the election identifier and vote message
   }
   deriving (Show, Eq)
 
-instance FromCBOR PerasVote where
+instance (Typeable blk, ConvertRawHash blk) => FromCBOR (PerasVote blk) where
   fromCBOR = do
     decodeListLenOf 5
     pvRoundNo <- fromCBOR
-    pvBoostedBlock <- fromCBOR
+    pvBoostedBlock <- decodePoint (decodeRawHash (Proxy @blk))
     pvSeatIndex <- fromCBOR
     pvEligibilityProof <- fromCBOR
     pvSignature <- fromCBOR
@@ -66,24 +80,24 @@ instance FromCBOR PerasVote where
         , pvSignature
         }
 
-instance ToCBOR PerasVote where
+instance (Typeable blk, ConvertRawHash blk) => ToCBOR (PerasVote blk) where
   toCBOR vote =
     encodeListLen 5
       <> toCBOR (pvRoundNo vote)
-      <> toCBOR (pvBoostedBlock vote)
+      <> encodePoint (encodeRawHash (Proxy @blk)) (pvBoostedBlock vote)
       <> toCBOR (pvSeatIndex vote)
       <> toCBOR (pvEligibilityProof vote)
       <> toCBOR (pvSignature vote)
 
 -- | Proof of eligibility for voting for committee members
-data PerasVoteEligibilityProof
+data PerasVoteEligibilityProof blk
   = -- | Persistent committee members require no additional proof of eligibility
     PersistentPerasVoteEligibilityProof
   | -- | Non-persistent committee members provide a VRF proof of eligibility
-    NonPersistentPerasVoteEligibilityProof !(VRFOutput PerasBLSCrypto)
+    NonPersistentPerasVoteEligibilityProof !(VRFOutput (PerasBLSCrypto blk))
   deriving stock (Eq, Show)
 
-instance FromCBOR PerasVoteEligibilityProof where
+instance Typeable blk => FromCBOR (PerasVoteEligibilityProof blk) where
   fromCBOR = do
     len <- decodeListLen
     tag <- fromCBOR @Word8
@@ -95,7 +109,7 @@ instance FromCBOR PerasVoteEligibilityProof where
           "Invalid PerasVoteEligibilityProof length/tag: "
             <> show (len, tag)
 
-instance ToCBOR PerasVoteEligibilityProof where
+instance Typeable blk => ToCBOR (PerasVoteEligibilityProof blk) where
   toCBOR = \case
     PersistentPerasVoteEligibilityProof ->
       encodeListLen 1

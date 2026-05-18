@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Concrete Peras certificate types using BLS signatures.
@@ -29,10 +30,17 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
 import Data.Maybe (catMaybes)
+import Data.Proxy (Proxy (..))
+import Data.Typeable (Typeable)
 import Data.Word (Word16)
+import Ouroboros.Consensus.Block
+  ( ConvertRawHash (..)
+  , Point
+  , decodeRawHash
+  , encodeRawHash
+  )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasBoostedBlock
-  , PerasRoundNo
+  ( PerasRoundNo
   , PerasSeatIndex (..)
   )
 import Ouroboros.Consensus.Committee.Crypto
@@ -45,27 +53,33 @@ import Ouroboros.Consensus.Peras.Crypto.BLS
 import Ouroboros.Consensus.Peras.Vote.V1 (PerasVoteEligibilityProof (..))
 import Ouroboros.Consensus.Util.Bitmap (Bitmap)
 import qualified Ouroboros.Consensus.Util.Bitmap as Bitmap
+import Ouroboros.Network.Block (decodePoint, encodePoint)
 
 -- | Concrete Peras certificates using BLS signatures
-data PerasCert
+-- 'blk' is mainly used here to ensure type family injectivity.
+-- For convenience/preventing annoying conversions, we also use it to indicate
+-- in 'Point blk' for the boosted block.
+data PerasCert blk
   = PerasCert
   { pcRoundNo :: !PerasRoundNo
   -- ^ Election identifier
-  , pcBoostedBlock :: !PerasBoostedBlock
+  , pcBoostedBlock :: !(Point blk)
   -- ^ Certificate message, i.e., the hash of the block being boosted
-  , pcVoters :: !PerasCertVoters
+  -- TODO: 'blk' here may not refer to the actual era of the boosted block,
+  -- see https://github.com/tweag/cardano-peras/issues/251
+  , pcVoters :: !(PerasCertVoters blk)
   -- ^ Voters who contributed to this certificate
-  , pcSignature :: !(AggregateVoteSignature PerasBLSCrypto)
+  , pcSignature :: !(AggregateVoteSignature (PerasBLSCrypto blk))
   -- ^ Aggregate BLS signature on the hash of the election identifier and
   -- the certificate message
   }
   deriving (Show, Eq)
 
-instance FromCBOR PerasCert where
+instance (Typeable blk, ConvertRawHash blk) => FromCBOR (PerasCert blk) where
   fromCBOR = do
     decodeListLenOf 4
     pcRoundNo <- fromCBOR
-    pcBoostedBlock <- fromCBOR
+    pcBoostedBlock <- decodePoint (decodeRawHash (Proxy @blk))
     pcVoters <- fromCBOR
     pcSignature <- fromCBOR
     pure
@@ -76,23 +90,23 @@ instance FromCBOR PerasCert where
         , pcSignature
         }
 
-instance ToCBOR PerasCert where
+instance (Typeable blk, ConvertRawHash blk) => ToCBOR (PerasCert blk) where
   toCBOR cert =
     encodeListLen 4
       <> toCBOR (pcRoundNo cert)
-      <> toCBOR (pcBoostedBlock cert)
+      <> encodePoint (encodeRawHash (Proxy @blk)) (pcBoostedBlock cert)
       <> toCBOR (pcVoters cert)
       <> toCBOR (pcSignature cert)
 
 -- | Voters contained in a certificate with their appropriate eligibility proof
-newtype PerasCertVoters
+newtype PerasCertVoters blk
   = PerasCertVoters
   { unPerasCertVoters ::
-      NE (Map PerasSeatIndex PerasVoteEligibilityProof)
+      NE (Map PerasSeatIndex (PerasVoteEligibilityProof blk))
   }
   deriving (Eq, Show)
 
-instance FromCBOR PerasCertVoters where
+instance Typeable blk => FromCBOR (PerasCertVoters blk) where
   fromCBOR = do
     decodeListLenOf 2
     votersBitmap <- fromCBOR
@@ -105,7 +119,7 @@ instance FromCBOR PerasCertVoters where
         , nonPersistentSigs
         }
 
-instance ToCBOR PerasCertVoters where
+instance Typeable blk => ToCBOR (PerasCertVoters blk) where
   toCBOR voters =
     encodeListLen 2
       <> toCBOR votersBitmap
@@ -141,10 +155,10 @@ instance ToCBOR PerasCertVoters where
 --     7 => non-persistent(np3)
 --   }
 -- @
-data CompactPerasCertVoters
+data CompactPerasCertVoters blk
   = CompactPerasCertVoters
   { votersBitmap :: !(Bitmap Word16)
-  , nonPersistentSigs :: ![VRFOutput PerasBLSCrypto]
+  , nonPersistentSigs :: ![VRFOutput (PerasBLSCrypto blk)]
   }
   deriving (Eq, Show)
 
@@ -152,8 +166,8 @@ data CompactPerasCertVoters
 --
 -- See 'CompactPerasCertVoters' for the encoding scheme used here.
 fromCompactRepr ::
-  CompactPerasCertVoters ->
-  Either String PerasCertVoters
+  CompactPerasCertVoters blk ->
+  Either String (PerasCertVoters blk)
 fromCompactRepr
   CompactPerasCertVoters
     { votersBitmap
@@ -195,8 +209,8 @@ fromCompactRepr
 --
 -- See 'CompactPerasCertVoters' for the encoding scheme used here.
 toCompactRepr ::
-  PerasCertVoters ->
-  CompactPerasCertVoters
+  PerasCertVoters blk ->
+  CompactPerasCertVoters blk
 toCompactRepr (PerasCertVoters voters) =
   CompactPerasCertVoters
     { votersBitmap
