@@ -31,6 +31,7 @@ import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
+import Control.Monad.Class.MonadTime (MonadMonotonicTimeNSec (getMonotonicTimeNSec))
 import Control.Tracer (Tracer, traceWith)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
@@ -65,7 +66,6 @@ import Ouroboros.Consensus.Util.IOLike
   ( DiffTime
   , IOLike
   , MonadMonotonicTime (getMonotonicTime)
-  , MonadThread (myThreadId)
   , NoThunks
   , diffTime
   )
@@ -570,37 +570,44 @@ data TraceLeiosKernel where
   TraceLeiosBlockStored :: {slot :: SlotNo, eb :: LeiosEb} -> TraceLeiosKernel
   TraceLeiosDbException :: LeiosDbException -> TraceLeiosKernel
   TraceProcess ::
-    (Show a, Show r, Aeson.ToJSON a, Aeson.ToJSON r) => ProcessTrace a r -> TraceLeiosKernel
+    (Show a, Show r, Aeson.ToJSON a, Aeson.ToJSON r) => PTrace a r -> TraceLeiosKernel
 
 deriving instance Show TraceLeiosKernel
 
--- * Process trace utilities.
+-- * PTrace - Process trace utilities.
 
--- Process denotes a function with a label, that is executed in a thread with some arguments of type `a` and a result of type `r`.
--- It consists of two distinct events, start and end.
-
-data ProcessTrace a r = ProcessTrace
-  { processLabel :: String
-  , processThreadId :: String
-  , processArgument :: a
-  , processEvent :: ProcessEvent r
+-- | Process denotes a Function Call within a Thread with some Argument of type `a` and a Result of type `r`.
+-- It consists of two distinct Events, Start and End.
+data PTrace a r = PTrace
+  { ptCall :: Word64
+  -- ^ Call identifier, unique amongst all calls
+  , ptParentCall :: Maybe Word64
+  -- ^ Parent Call or Nothing if no parents
+  , ptFunction :: String
+  -- ^ Function identifier, something like "module.name:function_name"
+  , ptThread :: String
+  -- ^ Thread identifier, something like a OS "thread id" or "forge"
+  , ptArgument :: a
+  -- ^ A Function Argument that distinguishes the Call meaningfully
+  , ptEvent :: PEvent r
+  -- ^ Start or End of a Process
   }
   deriving stock (Show, Eq)
 
-data ProcessEvent r
-  = ProcessStart
-  | ProcessEnd r DiffTime
+data PEvent r
+  = PStart
+  | PEnd r DiffTime
   deriving stock (Show, Eq)
 
-processTraceToObject ::
-  forall a r. (Aeson.ToJSON a, Aeson.ToJSON r) => ProcessTrace a r -> Aeson.Object
-processTraceToObject pt =
+ptToObject ::
+  forall a r. (Aeson.ToJSON a, Aeson.ToJSON r) => PTrace a r -> Aeson.Object
+ptToObject pt =
   let
-    eventObject = case processEvent pt of
-      ProcessStart ->
+    eventObject = case ptEvent pt of
+      PStart ->
         [ "event" .= Aeson.String "Start"
         ]
-      ProcessEnd result duration ->
+      PEnd result duration ->
         [ "event" .= Aeson.String "End"
         , "result" .= Aeson.toJSON result
         , "duration" .= Aeson.toJSON duration
@@ -608,30 +615,34 @@ processTraceToObject pt =
    in
     mconcat $
       [ "kind" .= Aeson.String "Process"
-      , "label" .= processLabel pt
-      , "thread_id" .= processThreadId pt
-      , "argument" .= (Aeson.toJSON . processArgument @a $ pt)
+      , "call" .= ptCall pt
+      , "parent" .= ptParentCall pt
+      , "function" .= ptFunction pt
+      , "thread" .= ptThread pt
+      , "argument" .= (Aeson.toJSON . ptArgument @a $ pt)
       ]
         <> eventObject
 
-traceTimed ::
+ptrace ::
   forall m a r r'.
-  (MonadMonotonicTime m, MonadThread m, Show a, Show r', Aeson.ToJSON a, Aeson.ToJSON r') =>
+  (MonadMonotonicTime m, Show a, Show r', Aeson.ToJSON a, Aeson.ToJSON r') =>
   Tracer m TraceLeiosKernel ->
+  Maybe Word64 ->
+  String ->
   String ->
   a ->
   (r -> r') ->
-  m r ->
+  (Word64 -> m r) ->
   m r
-traceTimed tracer label arg resFn action = do
-  tid <- show <$> myThreadId
+ptrace tracer par t fn arg resFn action = do
+  callId <- getMonotonicTimeNSec -- NOTE(bladyjoker): Workaround for missing MonadUnique
+  traceWith tracer (TraceProcess @a @r' (PTrace callId par fn t arg PStart))
   before <- getMonotonicTime
-  traceWith tracer (TraceProcess @a @r' (ProcessTrace label tid arg ProcessStart))
-  res <- action
+  res <- action callId
   after <- getMonotonicTime
   traceWith
     tracer
-    (TraceProcess @a @r' (ProcessTrace label tid arg (ProcessEnd (resFn res) (after `diffTime` before))))
+    (TraceProcess @a @r' (PTrace callId par fn t arg (PEnd (resFn res) (after `diffTime` before))))
   pure res
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
@@ -677,7 +688,7 @@ traceLeiosKernelToObject = \case
       ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
-  TraceProcess pt -> processTraceToObject pt
+  TraceProcess pt -> ptToObject pt
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String
