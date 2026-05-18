@@ -603,7 +603,8 @@ forkBlockForging IS{..} blockForging =
       withRegistry $ \rr -> do
         leiosConn <- allocate_ rr (LeiosDb.open leiosDB) LeiosDb.close
         withEarlyExit_ $
-          go rr currentSlot leiosConn
+          ptrace Nothing "onSlot" currentSlot (const ()) $
+            go rr currentSlot leiosConn
  where
   threadLabel :: String
   threadLabel =
@@ -619,292 +620,290 @@ forkBlockForging IS{..} blockForging =
     WithEarlyExit m r
   ptrace par = Leios.ptrace (Tracer (lift . traceWith (leiosKernelTracer tracers))) par threadLabel
 
-  go :: ResourceRegistry m -> SlotNo -> LeiosDbConnection m -> WithEarlyExit m ()
-  go reg currentSlot leiosConn =
-    ptrace Nothing "onSlot" currentSlot (const ()) $ \forgeCall ->
-      do
-        trace $ TraceStartLeadershipCheck currentSlot
+  go :: ResourceRegistry m -> SlotNo -> LeiosDbConnection m -> Word64 -> WithEarlyExit m ()
+  go reg currentSlot leiosConn forgeCall = do
+    trace $ TraceStartLeadershipCheck currentSlot
 
-        -- Figure out which block to connect to
-        --
-        -- Normally this will be the current block at the tip, but it may be the
-        -- /previous/ block, if there were multiple slot leaders
-        BlockContext{bcBlockNo, bcPrevPoint} <- do
-          eBlkCtx <-
+    -- Figure out which block to connect to
+    --
+    -- Normally this will be the current block at the tip, but it may be the
+    -- /previous/ block, if there were multiple slot leaders
+    BlockContext{bcBlockNo, bcPrevPoint} <- do
+      eBlkCtx <-
+        lift $
+          atomically $
+            mkCurrentBlockContext currentSlot
+              <$> ChainDB.getCurrentChain chainDB
+      case eBlkCtx of
+        Right blkCtx -> return blkCtx
+        Left failure -> do
+          trace failure
+          exitEarly
+
+    trace $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
+
+    -- Get forker corresponding to bcPrevPoint
+    --
+    -- This might fail if, in between choosing 'bcPrevPoint' and this call to
+    -- 'ChainDB.getReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
+    -- is no longer on our chain. When that happens, we simply give up on the
+    -- chance to produce a block.
+    forkerEith <- lift $ ChainDB.getReadOnlyForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
+    -- Remember to close this forker before exiting!
+    forker <- case forkerEith of
+      Left _ -> do
+        trace $ TraceNoLedgerState currentSlot bcPrevPoint
+        exitEarly
+      Right forker -> pure forker
+
+    unticked <- lift $ atomically $ LedgerDB.roforkerGetLedgerState forker
+    let untickedChainDepState = headerStateChainDep (headerState unticked)
+
+    trace $ TraceLedgerState currentSlot bcPrevPoint
+
+    -- We require the ticked ledger view in order to construct the ticked
+    -- 'ChainDepState'.
+    ledgerView <-
+      case runExcept $
+        forecastFor
+          ( ledgerViewForecastAt
+              (configLedger cfg)
+              (ledgerState unticked)
+          )
+          currentSlot of
+        Left err -> do
+          -- There are so many empty slots between the tip of our chain and the
+          -- current slot that we cannot get an ledger view anymore In
+          -- principle, this is no problem; we can still produce a block (we use
+          -- the ticked ledger state). However, we probably don't /want/ to
+          -- produce a block in this case; we are most likely missing a blocks
+          -- on our chain.
+          trace $ TraceNoLedgerView currentSlot err
+          lift $ roforkerClose forker
+          exitEarly
+        Right lv ->
+          return lv
+
+    trace $ TraceLedgerView currentSlot
+
+    -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
+    -- only need the ticked 'ChainDepState' to check the whether we're a leader.
+    -- This is much cheaper than ticking the entire 'ExtLedgerState'.
+    let tickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
+        tickedChainDepState =
+          tickChainDepState
+            (configConsensus cfg)
+            ledgerView
+            currentSlot
+            untickedChainDepState
+
+    -- Check if we are the leader
+    proof <- do
+      shouldForge <-
+        lift $
+          checkShouldForge
+            blockForging
+            ( contramap
+                (TraceLabelCreds (forgeLabel blockForging))
+                (forgeStateInfoTracer tracers)
+            )
+            cfg
+            currentSlot
+            tickedChainDepState
+      case shouldForge of
+        ForgeStateUpdateError err -> do
+          trace $ TraceForgeStateUpdateError currentSlot err
+          lift $ roforkerClose forker
+          exitEarly
+        CannotForge cannotForge -> do
+          trace $ TraceNodeCannotForge currentSlot cannotForge
+          lift $ roforkerClose forker
+          exitEarly
+        NotLeader -> do
+          trace $ TraceNodeNotLeader currentSlot
+          lift $ roforkerClose forker
+          exitEarly
+        ShouldForge p -> return p
+
+    -- At this point we have established that we are indeed slot leader
+    trace $ TraceNodeIsLeader currentSlot
+
+    -- Tick the ledger state for the 'SlotNo' we're producing a block for
+    let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
+        tickedLedgerState =
+          applyChainTick
+            OmitLedgerEvents
+            (configLedger cfg)
+            currentSlot
+            (ledgerState unticked)
+
+    _ <- evaluate tickedLedgerState
+    trace $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
+
+    (rbTxs, rbTxsList, ebTxs, ebTxsList, restTxs', mempoolSnapshot) <- ptrace (Just forgeCall) "partition-mempool" () (const ()) $ \partMempCall -> do
+      -- Get a snapshot of the mempool that is consistent with the ledger
+      --
+      -- NOTE: It is possible that due to adoption of new blocks the
+      -- /current/ ledger will have changed. This doesn't matter: we will
+      -- produce a block that fits onto the ledger we got above; if the
+      -- ledger in the meantime changes, the block we produce here may or
+      -- may not be adopted, but it won't be invalid.
+      let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
+
+      mempoolSnapshot <- ptrace (Just partMempCall) "get-snap" () (const ()) $ \_ -> do
+        mp <-
+          lift $
+            getSnapshotFor
+              mempool
+              currentSlot
+              tickedLedgerState
+              readTables
+        _ <- evaluate (length (snaposhotTxs2 mp))
+        return mp
+
+      lift $ roforkerClose forker
+
+      let mempoolTxs = snaposhotTxs2 mempoolSnapshot
+          (rbTxs, restTxs) =
+            TxSeq.splitAfterTxSize
+              mempoolTxs
+              (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState)
+          rbTxsList = fmap TxSeq.txTicketTx . TxSeq.toList $ rbTxs
+
+          mayEndorserBlockCapacity = ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
+          (ebTxs, restTxs') = case mayEndorserBlockCapacity of
+            Nothing -> (TxSeq.fromList [], TxSeq.fromList [])
+            Just endorserBlockCapacity -> TxSeq.splitAfterTxSize restTxs endorserBlockCapacity
+          ebTxsList = fmap TxSeq.txTicketTx . TxSeq.toList $ ebTxs
+
+      -- NB respect the capacity of the ledger state we're extending,
+      -- which is /not/ 'snapshotLedgerState'
+
+      -- force the mempool's computation before the tracer event
+      -- REVIEW: also force ebTxs?
+      ptrace (Just partMempCall) "eval-all" () (const ()) $ \_ -> do
+        _ <- evaluate (length rbTxs)
+        _ <- evaluate (length ebTxs)
+        void $ evaluate (length restTxs')
+
+      trace $
+        TraceForgingMempoolSnapshot
+          currentSlot
+          bcPrevPoint
+          (castHash $ snapshotStateHash mempoolSnapshot)
+          (snapshotSlotNo mempoolSnapshot) -- TODO(bladyjoker): mempoolHash and mempoolSlotNo only for tracing? Why?
+      return (rbTxs, rbTxsList, ebTxs, ebTxsList, restTxs', mempoolSnapshot)
+
+    (newBlock, mayForgedEb) <- ptrace (Just forgeCall) "forge-block" () (const ()) $ \_ -> do
+      -- Actually produce the block
+      let forgeBlockArgs =
+            ForgeBlockArgs
+              { fbIsLeader = proof
+              , fbEbTxs = ebTxsList -- TODO(bladyjoker): Turn into NonEmpty
+              , fbRbTxs = rbTxsList
+              , fbCurrentTickedLedgerState = (forgetLedgerTables tickedLedgerState)
+              , fbCurrentSlotNo = currentSlot
+              , fbCurrentBlockNo = bcBlockNo
+              , fbConfig = cfg
+              , fbChainDepState = Just untickedChainDepState
+              , fbLeiosDb = leiosConn
+              , fbLeiosTracer = leiosKernelTracer tracers
+              }
+      (newBlock, mayForgedEb) <- lift $ Block.forgeBlock blockForging forgeBlockArgs
+
+      trace $
+        TraceForgedBlock currentSlot $
+          ForgedBlock
+            { fbLedgerTip = ledgerTipPoint (ledgerState unticked)
+            , fbNewBlock = newBlock
+            , fbNewBlockSize = TxSeq.txSeqMeasure rbTxs
+            , fbMempoolSize = snapshotMempoolSize mempoolSnapshot
+            , fbMempoolRestSize = TxSeq.txSeqMeasure restTxs'
+            }
+
+      for_ mayForgedEb $ \forgedEb ->
+        traceLeios
+          TraceLeiosBlockForged
+            { slot = currentSlot
+            , eb = forgedEb.body
+            , ebMeasure = mSize $ TxSeq.txSeqMeasure ebTxs
+            , mempoolRestMeasure = mSize $ TxSeq.txSeqMeasure restTxs'
+            }
+      return (newBlock, mayForgedEb)
+
+    ptrace (Just forgeCall) "add-block" () (const ()) $ \_ -> do
+      -- Add the block to the chain DB
+      let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
+      -- Make sure that if an async exception is thrown while a block is
+      -- added to the chain db, we will remove txs from the mempool.
+
+      -- 'addBlockAsync' is a non-blocking action, so `mask_` would suffice,
+      -- but the finalizer is a blocking operation, hence we need to use
+      -- 'uninterruptibleMask_' to make sure that async exceptions do not
+      -- interrupt it.
+      uninterruptibleMask_ $ do
+        result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
+        -- Block until we have processed the block
+        mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
+
+        -- Check whether we adopted our block
+        when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $ do
+          isInvalid <-
             lift $
               atomically $
-                mkCurrentBlockContext currentSlot
-                  <$> ChainDB.getCurrentChain chainDB
-          case eBlkCtx of
-            Right blkCtx -> return blkCtx
-            Left failure -> do
-              trace failure
-              exitEarly
+                ($ blockHash newBlock) . forgetFingerprint
+                  <$> ChainDB.getIsInvalidBlock chainDB
+          case isInvalid of
+            Nothing ->
+              trace $ TraceDidntAdoptBlock currentSlot newBlock
+            Just reason -> do
+              trace $ TraceForgedInvalidBlock currentSlot newBlock reason
+              -- We just produced a block that is invalid according to the
+              -- ledger in the ChainDB, while the mempool said it is valid.
+              -- There is an inconsistency between the two!
+              --
+              -- Remove all the transactions in that block, otherwise we'll
+              -- run the risk of forging the same invalid block again. This
+              -- means that we'll throw away some good transactions in the
+              -- process.
+              whenJust
+                (NE.nonEmpty (map (txId . txForgetValidated) rbTxsList))
+                (lift . removeTxsEvenIfValid mempool)
+          exitEarly
 
-        trace $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
-
-        -- Get forker corresponding to bcPrevPoint
+        -- We successfully produced /and/ adopted a block
         --
-        -- This might fail if, in between choosing 'bcPrevPoint' and this call to
-        -- 'ChainDB.getReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
-        -- is no longer on our chain. When that happens, we simply give up on the
-        -- chance to produce a block.
-        forkerEith <- lift $ ChainDB.getReadOnlyForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
-        -- Remember to close this forker before exiting!
-        forker <- case forkerEith of
-          Left _ -> do
-            trace $ TraceNoLedgerState currentSlot bcPrevPoint
-            exitEarly
-          Right forker -> pure forker
+        -- NOTE: we are tracing the transactions we retrieved from the Mempool,
+        -- not the transactions actually /in the block/.
+        -- The transactions in the block should be a prefix of the transactions
+        -- in the mempool. If this is not the case, this is a bug.
+        -- Unfortunately, we can't
+        -- assert this here because the ability to extract transactions from a
+        -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
+        -- e.g., @DualBlock@.
+        trace $ TraceAdoptedBlock currentSlot newBlock rbTxsList
 
-        unticked <- lift $ atomically $ LedgerDB.roforkerGetLedgerState forker
-        let untickedChainDepState = headerStateChainDep (headerState unticked)
-
-        trace $ TraceLedgerState currentSlot bcPrevPoint
-
-        -- We require the ticked ledger view in order to construct the ticked
-        -- 'ChainDepState'.
-        ledgerView <-
-          case runExcept $
-            forecastFor
-              ( ledgerViewForecastAt
-                  (configLedger cfg)
-                  (ledgerState unticked)
-              )
-              currentSlot of
-            Left err -> do
-              -- There are so many empty slots between the tip of our chain and the
-              -- current slot that we cannot get an ledger view anymore In
-              -- principle, this is no problem; we can still produce a block (we use
-              -- the ticked ledger state). However, we probably don't /want/ to
-              -- produce a block in this case; we are most likely missing a blocks
-              -- on our chain.
-              trace $ TraceNoLedgerView currentSlot err
-              lift $ roforkerClose forker
-              exitEarly
-            Right lv ->
-              return lv
-
-        trace $ TraceLedgerView currentSlot
-
-        -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
-        -- only need the ticked 'ChainDepState' to check the whether we're a leader.
-        -- This is much cheaper than ticking the entire 'ExtLedgerState'.
-        let tickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
-            tickedChainDepState =
-              tickChainDepState
-                (configConsensus cfg)
-                ledgerView
-                currentSlot
-                untickedChainDepState
-
-        -- Check if we are the leader
-        proof <- do
-          shouldForge <-
-            lift $
-              checkShouldForge
-                blockForging
-                ( contramap
-                    (TraceLabelCreds (forgeLabel blockForging))
-                    (forgeStateInfoTracer tracers)
-                )
-                cfg
-                currentSlot
-                tickedChainDepState
-          case shouldForge of
-            ForgeStateUpdateError err -> do
-              trace $ TraceForgeStateUpdateError currentSlot err
-              lift $ roforkerClose forker
-              exitEarly
-            CannotForge cannotForge -> do
-              trace $ TraceNodeCannotForge currentSlot cannotForge
-              lift $ roforkerClose forker
-              exitEarly
-            NotLeader -> do
-              trace $ TraceNodeNotLeader currentSlot
-              lift $ roforkerClose forker
-              exitEarly
-            ShouldForge p -> return p
-
-        -- At this point we have established that we are indeed slot leader
-        trace $ TraceNodeIsLeader currentSlot
-
-        -- Tick the ledger state for the 'SlotNo' we're producing a block for
-        let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
-            tickedLedgerState =
-              applyChainTick
-                OmitLedgerEvents
-                (configLedger cfg)
-                currentSlot
-                (ledgerState unticked)
-
-        _ <- evaluate tickedLedgerState
-        trace $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
-
-        (rbTxs, rbTxsList, ebTxs, ebTxsList, restTxs', mempoolSnapshot) <- ptrace (Just forgeCall) "partition-mempool" () (const ()) $ \partMempCall -> do
-          -- Get a snapshot of the mempool that is consistent with the ledger
-          --
-          -- NOTE: It is possible that due to adoption of new blocks the
-          -- /current/ ledger will have changed. This doesn't matter: we will
-          -- produce a block that fits onto the ledger we got above; if the
-          -- ledger in the meantime changes, the block we produce here may or
-          -- may not be adopted, but it won't be invalid.
-          let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
-
-          mempoolSnapshot <- ptrace (Just partMempCall) "get-snap" () (const ()) $ \_ -> do
-            mp <-
+    uninterruptibleMask_ $ do
+      -- Store generated EB so it can be diffused
+      for_ mayForgedEb $ \(eb :: ForgedLeiosEb) -> do
+        ptrace (Just forgeCall) "leios.store-eb" eb.point (const ()) $ \storeEbCall -> do
+          ptrace (Just storeEbCall) "leiosDbInsertEbPoint" eb.point id $
+            const $
               lift $
-                getSnapshotFor
-                  mempool
-                  currentSlot
-                  tickedLedgerState
-                  readTables
-            _ <- evaluate (length (snaposhotTxs2 mp))
-            return mp
+                leiosDbInsertEbPoint leiosConn eb.point (Leios.leiosEbBytesSize eb.body)
 
-          lift $ roforkerClose forker
+          ptrace (Just storeEbCall) "leiosDbInsertEbBody" eb.point id $
+            const $
+              lift $
+                leiosDbInsertEbBody leiosConn eb.point eb.body
 
-          let mempoolTxs = snaposhotTxs2 mempoolSnapshot
-              (rbTxs, restTxs) =
-                TxSeq.splitAfterTxSize
-                  mempoolTxs
-                  (blockCapacityTxMeasure (configLedger cfg) tickedLedgerState)
-              rbTxsList = fmap TxSeq.txTicketTx . TxSeq.toList $ rbTxs
-
-              mayEndorserBlockCapacity = ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
-              (ebTxs, restTxs') = case mayEndorserBlockCapacity of
-                Nothing -> (TxSeq.fromList [], TxSeq.fromList [])
-                Just endorserBlockCapacity -> TxSeq.splitAfterTxSize restTxs endorserBlockCapacity
-              ebTxsList = fmap TxSeq.txTicketTx . TxSeq.toList $ ebTxs
-
-          -- NB respect the capacity of the ledger state we're extending,
-          -- which is /not/ 'snapshotLedgerState'
-
-          -- force the mempool's computation before the tracer event
-          -- REVIEW: also force ebTxs?
-          ptrace (Just partMempCall) "eval-all" () (const ()) $ \_ -> do
-            _ <- evaluate (length rbTxs)
-            _ <- evaluate (length ebTxs)
-            void $ evaluate (length restTxs')
-
-          trace $
-            TraceForgingMempoolSnapshot
-              currentSlot
-              bcPrevPoint
-              (castHash $ snapshotStateHash mempoolSnapshot)
-              (snapshotSlotNo mempoolSnapshot) -- TODO(bladyjoker): mempoolHash and mempoolSlotNo only for tracing? Why?
-          return (rbTxs, rbTxsList, ebTxs, ebTxsList, restTxs', mempoolSnapshot)
-
-        (newBlock, mayForgedEb) <- ptrace (Just forgeCall) "forge-block" () (const ()) $ \_ -> do
-          -- Actually produce the block
-          let forgeBlockArgs =
-                ForgeBlockArgs
-                  { fbIsLeader = proof
-                  , fbEbTxs = ebTxsList -- TODO(bladyjoker): Turn into NonEmpty
-                  , fbRbTxs = rbTxsList
-                  , fbCurrentTickedLedgerState = (forgetLedgerTables tickedLedgerState)
-                  , fbCurrentSlotNo = currentSlot
-                  , fbCurrentBlockNo = bcBlockNo
-                  , fbConfig = cfg
-                  , fbChainDepState = Just untickedChainDepState
-                  , fbLeiosDb = leiosConn
-                  , fbLeiosTracer = leiosKernelTracer tracers
-                  }
-          (newBlock, mayForgedEb) <- lift $ Block.forgeBlock blockForging forgeBlockArgs
-
-          trace $
-            TraceForgedBlock currentSlot $
-              ForgedBlock
-                { fbLedgerTip = ledgerTipPoint (ledgerState unticked)
-                , fbNewBlock = newBlock
-                , fbNewBlockSize = TxSeq.txSeqMeasure rbTxs
-                , fbMempoolSize = snapshotMempoolSize mempoolSnapshot
-                , fbMempoolRestSize = TxSeq.txSeqMeasure restTxs'
-                }
-
-          for_ mayForgedEb $ \forgedEb ->
-            traceLeios
-              TraceLeiosBlockForged
-                { slot = currentSlot
-                , eb = forgedEb.body
-                , ebMeasure = mSize $ TxSeq.txSeqMeasure ebTxs
-                , mempoolRestMeasure = mSize $ TxSeq.txSeqMeasure restTxs'
-                }
-          return (newBlock, mayForgedEb)
-
-        ptrace (Just forgeCall) "add-block" () (const ()) $ \_ -> do
-          -- Add the block to the chain DB
-          let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
-          -- Make sure that if an async exception is thrown while a block is
-          -- added to the chain db, we will remove txs from the mempool.
-
-          -- 'addBlockAsync' is a non-blocking action, so `mask_` would suffice,
-          -- but the finalizer is a blocking operation, hence we need to use
-          -- 'uninterruptibleMask_' to make sure that async exceptions do not
-          -- interrupt it.
-          uninterruptibleMask_ $ do
-            result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
-            -- Block until we have processed the block
-            mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
-
-            -- Check whether we adopted our block
-            when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $ do
-              isInvalid <-
+          ptrace (Just storeEbCall) "leiosDbInsertTxs" eb.point (const ()) $
+            const $
+              void $
                 lift $
-                  atomically $
-                    ($ blockHash newBlock) . forgetFingerprint
-                      <$> ChainDB.getIsInvalidBlock chainDB
-              case isInvalid of
-                Nothing ->
-                  trace $ TraceDidntAdoptBlock currentSlot newBlock
-                Just reason -> do
-                  trace $ TraceForgedInvalidBlock currentSlot newBlock reason
-                  -- We just produced a block that is invalid according to the
-                  -- ledger in the ChainDB, while the mempool said it is valid.
-                  -- There is an inconsistency between the two!
-                  --
-                  -- Remove all the transactions in that block, otherwise we'll
-                  -- run the risk of forging the same invalid block again. This
-                  -- means that we'll throw away some good transactions in the
-                  -- process.
-                  whenJust
-                    (NE.nonEmpty (map (txId . txForgetValidated) rbTxsList))
-                    (lift . removeTxsEvenIfValid mempool)
-              exitEarly
+                  leiosDbInsertTxs leiosConn eb.txClosure
 
-            -- We successfully produced /and/ adopted a block
-            --
-            -- NOTE: we are tracing the transactions we retrieved from the Mempool,
-            -- not the transactions actually /in the block/.
-            -- The transactions in the block should be a prefix of the transactions
-            -- in the mempool. If this is not the case, this is a bug.
-            -- Unfortunately, we can't
-            -- assert this here because the ability to extract transactions from a
-            -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
-            -- e.g., @DualBlock@.
-            trace $ TraceAdoptedBlock currentSlot newBlock rbTxsList
-
-        uninterruptibleMask_ $ do
-          -- Store generated EB so it can be diffused
-          for_ mayForgedEb $ \(eb :: ForgedLeiosEb) -> do
-            ptrace (Just forgeCall) "leios.store-eb" eb.point (const ()) $ \storeEbCall -> do
-              ptrace (Just storeEbCall) "leiosDbInsertEbPoint" eb.point id $
-                const $
-                  lift $
-                    leiosDbInsertEbPoint leiosConn eb.point (Leios.leiosEbBytesSize eb.body)
-
-              ptrace (Just storeEbCall) "leiosDbInsertEbBody" eb.point id $
-                const $
-                  lift $
-                    leiosDbInsertEbBody leiosConn eb.point eb.body
-
-              ptrace (Just storeEbCall) "leiosDbInsertTxs" eb.point (const ()) $
-                const $
-                  void $
-                    lift $
-                      leiosDbInsertTxs leiosConn eb.txClosure
-
-            traceLeios TraceLeiosBlockStored{slot = currentSlot, eb = eb.body}
+        traceLeios TraceLeiosBlockStored{slot = currentSlot, eb = eb.body}
 
   trace :: TraceForgeEvent blk -> WithEarlyExit m ()
   trace =
