@@ -86,34 +86,34 @@ import qualified Cardano.Ledger.Dijkstra.Rules as DijkstraEra
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Mary (ApplyTxError (MaryApplyTxError))
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
 import Cardano.Protocol.Crypto (Crypto)
 import Control.Arrow ((+++))
 import Control.Monad (guard)
-import Control.Monad.Except (Except, liftEither)
+import Control.Monad.Except
 import Control.Monad.Identity (Identity (..))
+import Control.Monad.Trans (lift)
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Measure (Measure)
+import Data.Set (Set)
 import Data.Typeable (Typeable)
 import qualified Data.Validation as V
 import Data.Word (Word32)
 import GHC.Generics (Generic)
 import GHC.Natural (Natural)
-import Lens.Micro ((^.))
+import Lens.Micro
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( BigEndianTxIn (..)
-  , ShelleyLedgerConfig (shelleyLedgerGlobals)
-  , Ticked (TickedShelleyLedgerState, tickedShelleyLedgerState)
-  , getPParams
-  )
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Util (ShowProxy (..), coerceSet)
 import Ouroboros.Consensus.Util.Condense
@@ -176,10 +176,61 @@ fixedBlockBodyOverhead = 1024
 perTxOverhead :: Num a => a
 perTxOverhead = 4
 
+-- | The mempool can evolve in the presence of a HardForkBlock in different
+-- ways. Supposing the mempool is currently synced with the state @S@, we will
+-- then re-sync it with the state @T@ which comes from ticking @U@ to one slot
+-- after its slot:
+--
+-- @@@
+--                                Era boundary
+--                           Era 1            Era 2
+--                    │                 │
+--                    │ ┌─┐   ┌─┐   ┌─┐ │
+-- 1         Same era │ │S│   │U├───►T│ │
+--                    │ └─┘   └─┘   └─┘ │
+--                    │                 │
+--                    │ ┌─┐         ┌─┐ │ ┌─┐
+-- 2    Tick boundary │ │S│         │U│─┼─►T│
+--                    │ └─┘         └─┘ │ └─┘
+--                    │                 │
+--                    │ ┌─┐             │ ┌─┐   ┌─┐
+-- 3          New era │ │S│             │ │U├───►T│
+--                    │ └─┘             │ └─┘   └─┘
+--                    │                 │
+--                    │ ┌─┐   ┌─┐       │       ┌─┐
+-- 4     Previous era │ │U├───►T│       │       │S│
+--                    │ └─┘   └─┘       │       └─┘
+--                    │                 │
+--                    │             ┌─┐ │ ┌─┐   ┌─┐
+-- 5 Same era by tick │             │U│─┼─►T│   │S│
+--                    │             └─┘ │ └─┘   └─┘
+--                    │                 │
+-- @@@
+--
+-- When applying/reapplying a transaction in the HardFork instance, we check
+-- that the MempoolCache must be in the same era as the LedgerState, otherwise
+-- the single era block instance is given an empty cache. This is reasonable
+-- because we cannot carry values or differences to other eras as they use
+-- @TxOut era@.
+--
+-- However, when the state @S@ (and therefore the MempoolCache) are in the same
+-- era as the state @T@, we will propagate the current cache. This happens in
+-- two scenarios:
+--
+-- 1. When syncing/computing a snapshot with a new ledger state: the TxIns and
+--    the Diffs of the transaction will not change but the values that are
+--    available in the state do change. Furthermore as some transactions might
+--    become invalid, the resulting UTxO set
+--
+-- 2.
 instance
   (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era)) =>
   LedgerSupportsMempool (ShelleyBlock proto era)
   where
+  data MempoolCache (ShelleyBlock proto era) = ShelleyMempoolCache
+    { cacheValues :: Map SL.TxIn (L.TxOut era)
+    }
+
   txInvariant = const True
 
   applyTx = applyShelleyTx
@@ -188,14 +239,12 @@ instance
 
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
 
-  getTransactionKeySets (ShelleyTx _ tx) =
-    LedgerTables $
-      KeysMK $
-        coerceSet
-          (tx ^. bodyTxL . allInputsTxBodyF)
-
   mkMempoolApplyTxError _tlst txt =
     ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)
+
+getTransactionKeySets ::
+  ShelleyCompatible proto era => GenTx (ShelleyBlock proto era) -> Set SL.TxIn
+getTransactionKeySets (ShelleyTx _ tx) = tx ^. bodyTxL . allInputsTxBodyF
 
 mkShelleyTx ::
   forall era proto. ShelleyBasedEra era => Tx TopTx era -> GenTx (ShelleyBlock proto era)
@@ -278,49 +327,58 @@ instance Show (GenTxId (ShelleyBlock proto era)) where
 -------------------------------------------------------------------------------}
 
 applyShelleyTx ::
-  forall era proto.
+  forall m era proto.
   ShelleyBasedEra era =>
   LedgerConfig (ShelleyBlock proto era) ->
   WhetherToIntervene ->
   SlotNo ->
   GenTx (ShelleyBlock proto era) ->
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
-  Except
+  MempoolCache (ShelleyBlock proto era) ->
+  StateRef m (Ticked LedgerState) (ShelleyBlock proto era) ->
+  ExceptT
     (ApplyTxErr (ShelleyBlock proto era))
-    ( TickedLedgerState (ShelleyBlock proto era) DiffMK
+    m
+    ( StateRef m (Ticked LedgerState) (ShelleyBlock proto era)
+    , MempoolCache (ShelleyBlock proto era)
     , Validated (GenTx (ShelleyBlock proto era))
     )
-applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
-  let st1 :: TickedLedgerState (ShelleyBlock proto era) EmptyMK
-      st1 = stowLedgerTables st0
+applyShelleyTx cfg wti slot gtx@(ShelleyTx txid tx) (ShelleyMempoolCache cacheValues) st0 = do
+  (txouts, cacheValues') <- case cacheValues Map.!? txid of
+    Nothing -> do
+      txouts <- lift $ readTxOuts (tickedStateRefHandle st0) (getTransactionKeySets gtx)
+      pure (txouts, Map.insert txid txouts cacheValues)
+    Just v -> pure (v, cacheValues)
 
-      innerSt :: SL.NewEpochState era
-      innerSt = tickedShelleyLedgerState st1
+  let newEpochState :: SL.NewEpochState era
+      newEpochState = tickedShelleyLedgerState st0 & slUtxoL .~ txouts
 
-  (mempoolState', vtx) <-
-    applyShelleyBasedTx
-      (shelleyLedgerGlobals cfg)
-      (SL.mkMempoolEnv innerSt slot)
-      (SL.mkMempoolState innerSt)
-      wti
-      tx
+  (newLedgerState, vtx) <-
+    case runExcept $
+      applyShelleyBasedTx
+        (shelleyLedgerGlobals cfg)
+        (SL.mkMempoolEnv newEpochState slot)
+        (SL.mkMempoolState newEpochState)
+        wti
+        tx of
+      Left err -> throwError (err, ShelleyMempoolCache cacheValues)
+      Right v -> pure v
 
-  let st' :: TickedLedgerState (ShelleyBlock proto era) DiffMK
-      st' =
-        trackingToDiffs $
-          calculateDifference st0 $
-            unstowLedgerTables $
-              set theLedgerLens mempoolState' st1
+  let (txouts', newLedgerState') = newLedgerState & SL.lsUTxOStateL . SL.utxoL <<.~ SL.UTxO Map.empty
+  lift $ applyDiff (tickedStateRefHandle st0) $ Diff.diff (SL.unUTxO txouts) (SL.unUTxO txouts')
 
-  pure (st', mkShelleyValidatedTx vtx)
+  pure (st0 & theLedgerLens .~ newLedgerState, cacheValues', mkShelleyValidatedTx vtx)
 
 reapplyShelleyTx ::
   ShelleyBasedEra era =>
   LedgerConfig (ShelleyBlock proto era) ->
   SlotNo ->
   Validated (GenTx (ShelleyBlock proto era)) ->
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
-  Except (ApplyTxErr (ShelleyBlock proto era)) (TickedLedgerState (ShelleyBlock proto era) ValuesMK)
+  MempoolCache (ShelleyBlock proto era) ->
+  StateRef m (Ticked LedgerState) (ShelleyBlock proto era) ->
+  ExceptT
+    (ApplyTxErr (ShelleyBlock proto era))
+    m
+    (StateRef m (Ticked LedgerState) (ShelleyBlock proto era), MempoolCache (ShelleyBlock proto era))
 reapplyShelleyTx cfg slot vgtx st0 = do
   let st1 = stowLedgerTables st0
       innerSt = tickedShelleyLedgerState st1
@@ -339,23 +397,14 @@ reapplyShelleyTx cfg slot vgtx st0 = do
  where
   ShelleyValidatedTx _txid vtx = vgtx
 
--- | The lens combinator
-set ::
-  (forall f. Applicative f => (a -> f b) -> s -> f t) ->
-  b ->
-  s ->
-  t
-set lens inner outer =
-  runIdentity $ lens (\_ -> Identity inner) outer
-
 theLedgerLens ::
   Functor f =>
   (SL.LedgerState era -> f (SL.LedgerState era)) ->
-  TickedLedgerState (ShelleyBlock proto era) mk ->
-  f (TickedLedgerState (ShelleyBlock proto era) mk)
+  StateRef m (Ticked LedgerState) (ShelleyBlock proto era) ->
+  f (StateRef m (Ticked LedgerState) (ShelleyBlock proto era))
 theLedgerLens f x =
-  (\y -> x{tickedShelleyLedgerState = y})
-    <$> SL.overNewEpochState f (tickedShelleyLedgerState x)
+  (\y -> x{tickedStateRefState = (tickedStateRefState x){tickedShelleyLedgerState = y}})
+    <$> SL.overNewEpochState f (tickedShelleyLedgerState $ tickedStateRefState x)
 
 {-------------------------------------------------------------------------------
   Tx Limits
@@ -381,7 +430,7 @@ runValidation = liftEither . (unTxErrorSG +++ id) . V.toEither
 
 txsMaxBytes ::
   ShelleyCompatible proto era =>
-  TickedLedgerState (ShelleyBlock proto era) mk ->
+  TickedLedgerState (ShelleyBlock proto era) ->
   IgnoringOverflow ByteSize32
 txsMaxBytes TickedShelleyLedgerState{tickedShelleyLedgerState} =
   -- `maxBlockBodySize` is expected to be bigger than `fixedBlockBodyOverhead`
@@ -393,7 +442,7 @@ txsMaxBytes TickedShelleyLedgerState{tickedShelleyLedgerState} =
 
 txInBlockSize ::
   (ShelleyCompatible proto era, MaxTxSizeUTxO era) =>
-  TickedLedgerState (ShelleyBlock proto era) mk ->
+  TickedLedgerState (ShelleyBlock proto era) ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) (IgnoringOverflow ByteSize32)
 txInBlockSize st (ShelleyTx _txid tx') =
@@ -562,9 +611,9 @@ fromExUnits :: ExUnits -> ExUnits' Natural
 fromExUnits = unWrapExUnits
 
 blockCapacityAlonzoMeasure ::
-  forall proto era mk.
+  forall proto era.
   (ShelleyCompatible proto era, L.AlonzoEraPParams era) =>
-  TickedLedgerState (ShelleyBlock proto era) mk ->
+  TickedLedgerState (ShelleyBlock proto era) ->
   AlonzoMeasure
 blockCapacityAlonzoMeasure ledgerState =
   AlonzoMeasure
@@ -582,7 +631,7 @@ txMeasureAlonzo ::
   , ExUnitsTooBigUTxO era
   , MaxTxSizeUTxO era
   ) =>
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
+  TickedLedgerState (ShelleyBlock proto era) ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) AlonzoMeasure
 txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
@@ -674,11 +723,11 @@ newtype DijkstraMeasure = DijkstraMeasure
     via (InstantiatedAt Generic DijkstraMeasure)
 
 blockCapacityDijkstraMeasure ::
-  forall proto era mk.
+  forall proto era.
   ( ShelleyCompatible proto era
   , SL.ConwayEraPParams era
   ) =>
-  TickedLedgerState (ShelleyBlock proto era) mk ->
+  TickedLedgerState (ShelleyBlock proto era) ->
   DijkstraMeasure
 blockCapacityDijkstraMeasure = DijkstraMeasure . blockCapacityConwayMeasure
 
@@ -692,7 +741,7 @@ txMeasureDijkstra ::
   , MaxTxSizeUTxO era
   , TxRefScriptsSizeTooBig era
   ) =>
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
+  TickedLedgerState (ShelleyBlock proto era) ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) DijkstraMeasure
 txMeasureDijkstra st = fmap DijkstraMeasure . txMeasureConway st
@@ -728,11 +777,11 @@ instance TxMeasureMetrics ConwayMeasure where
     unIgnoringOverflow . refScriptsSize
 
 blockCapacityConwayMeasure ::
-  forall proto era mk.
+  forall proto era.
   ( ShelleyCompatible proto era
   , SL.ConwayEraPParams era
   ) =>
-  TickedLedgerState (ShelleyBlock proto era) mk ->
+  TickedLedgerState (ShelleyBlock proto era) ->
   ConwayMeasure
 blockCapacityConwayMeasure st =
   ConwayMeasure
@@ -754,7 +803,7 @@ txMeasureConway ::
   , TxRefScriptsSizeTooBig era
   , SL.ConwayEraPParams era
   ) =>
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
+  TickedLedgerState (ShelleyBlock proto era) ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) ConwayMeasure
 txMeasureConway st tx@(ShelleyTx _txid tx') =

@@ -10,6 +10,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
@@ -345,14 +346,12 @@ instance MemPack BigEndianTxIn where
   unpackM = do
     BigEndianTxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
 
-slUtxoL :: SL.NewEpochState era -> SL.UTxO era -> (SL.UTxO era, SL.NewEpochState era)
-slUtxoL st vals =
-  st
-    & SL.nesEsL
-      . SL.esLStateL
-      . SL.lsUTxOStateL
-      . SL.utxoL
-      <<.~ vals
+slUtxoL :: Lens' (SL.NewEpochState era) (SL.UTxO era)
+slUtxoL =
+  SL.nesEsL
+    . SL.esLStateL
+    . SL.lsUTxOStateL
+    . SL.utxoL
 
 {-------------------------------------------------------------------------------
   GetTip
@@ -565,7 +564,7 @@ applyHelper f cfg blk stBefore = do
       pure $
         f
           globals
-          (snd $ tickedShelleyLedgerState `slUtxoL` txouts)
+          (tickedShelleyLedgerState & slUtxoL .~ txouts)
           ( let b = shelleyBlockRaw blk
                 h' = mkHeaderView (SL.blockHeader b)
              in SL.Block h' (SL.blockBody b)
