@@ -750,14 +750,14 @@ generateCmd Model{..} =
         )
       ]
 
-  chooseWord64 :: Coercible a Word64 => (a, a) -> Gen a
-  chooseWord64 (start, end) = coerce $ choose @Word64 (coerce start, coerce end)
+  chooseWord64' :: Coercible a Word64 => (a, a) -> Gen a
+  chooseWord64' (start, end) = coerce $ choose @Word64 (coerce start, coerce end)
 
   chooseSlot :: (SlotNo, SlotNo) -> Gen SlotNo
-  chooseSlot = chooseWord64
+  chooseSlot = chooseWord64'
 
   chooseEpoch :: (EpochNo, EpochNo) -> Gen EpochNo
-  chooseEpoch = chooseWord64
+  chooseEpoch = chooseWord64'
 
   genCorruption :: Gen Corruption
   genCorruption = MkCorruption <$> generateCorruptions (NE.fromList dbFiles)

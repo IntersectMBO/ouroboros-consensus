@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -42,6 +43,9 @@ module Test.Util.QuickCheck
 
     -- * Typeclass laws
   , prop_lawfulEqAndTotalOrd
+
+    -- * Deprecated symbols
+  , withNumTests
   ) where
 
 import Control.Monad.Except (Except, runExcept)
@@ -53,7 +57,19 @@ import Data.SOP.Constraint
 import Data.SOP.Strict
 import Ouroboros.Consensus.Util (repeatedly)
 import Ouroboros.Consensus.Util.Condense (Condense, condense)
+#if !MIN_VERSION_QuickCheck(2,18,0)
 import Test.QuickCheck
+#else
+import Test.QuickCheck hiding (withNumTests)
+import qualified Test.QuickCheck as QC
+#endif
+
+withNumTests :: Testable prop => Int -> prop -> Property
+#if !MIN_VERSION_QuickCheck(2,18,0)
+withNumTests = withMaxSuccess
+#else
+withNumTests = QC.withNumTests
+#endif
 
 {-------------------------------------------------------------------------------
   Generic QuickCheck utilities

@@ -82,6 +82,7 @@ import qualified Test.StateMachine.Types.Rank2 as Rank2
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.ToExpr ()
+import qualified Test.Util.QuickCheck as QC
 import Test.Util.ToExpr ()
 
 {-------------------------------------------------------------------------------
@@ -798,17 +799,17 @@ tests =
   testGroup
     "QSM"
     [ testProperty "sequential" $
-        withMaxSuccess 1000 $
+        QC.withNumTests 1000 $
           prop_mempoolSequential testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger $
             \i -> fmap (fmap fst . fst) . genTxs i
     , testGroup
         "parallel"
         [ testProperty "atomic" $
-            withMaxSuccess 10000 $
+            QC.withNumTests 10000 $
               prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
                 \i -> fmap (fmap fst . fst) . genTxs i
         , testProperty "non atomic" $
-            withMaxSuccess 10 $
+            QC.withNumTests 10 $
               prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger NonAtomic $
                 \i -> fmap (fmap fst . fst) . genTxs i
         ]
