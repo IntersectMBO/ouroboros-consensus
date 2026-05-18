@@ -114,6 +114,7 @@ import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Assert
+import System.FS.API (SomeHasFS (..))
 
 {-------------------------------------------------------------------------------
   SerialiseHFC
@@ -580,23 +581,27 @@ protocolInfoCardano ::
   ( CardanoHardForkConstraints c
   , KESAgentContext c m
   ) =>
+  SomeHasFS m ->
   CardanoProtocolParams c ->
-  ( ProtocolInfo (CardanoBlock c)
-  , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
-  )
-protocolInfoCardano paramsCardano
+  m
+    ( ProtocolInfo (CardanoBlock c)
+    , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
+    )
+protocolInfoCardano (SomeHasFS hasFS) paramsCardano
   | SL.Mainnet <- SL.sgNetworkId genesisShelley
   , length credssShelleyBased > 1 =
       error "Multiple Shelley-based credentials not allowed for mainnet"
-  | otherwise =
-      assertWithMsg
-        (validateGenesis genesisShelley)
-        ( ProtocolInfo
-            { pInfoConfig = cfg
-            , pInfoInitLedger = initExtLedgerStateCardano
-            }
-        , pure . mkBlockForgings
-        )
+  | otherwise = do
+      initExtLedgerStateCardano <- mkInitExtLedgerStateCardano
+      pure $
+        assertWithMsg
+          (validateGenesis genesisShelley)
+          ( ProtocolInfo
+              { pInfoConfig = cfg
+              , pInfoInitLedger = initExtLedgerStateCardano
+              }
+          , pure . mkBlockForgings
+          )
  where
   CardanoProtocolParams
     { byronProtocolParams
@@ -930,49 +935,56 @@ protocolInfoCardano paramsCardano
   -- data from the genesis config (if provided) in the ledger state. For
   -- example, this includes initial staking and initial funds (useful for
   -- testing/benchmarking).
-  initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c) ValuesMK
-  initExtLedgerStateCardano =
-    ExtLedgerState
-      { headerState = initHeaderState
-      , ledgerState = overShelleyBasedLedgerState initLedgerState
-      }
+  mkInitExtLedgerStateCardano :: m (ExtLedgerState (CardanoBlock c) ValuesMK)
+  mkInitExtLedgerStateCardano = do
+    let HardForkLedgerState st = initLedgerState
+    st' <- hsequence' (hap perEraInjections st)
+    pure
+      ExtLedgerState
+        { headerState = initHeaderState
+        , ledgerState = HardForkLedgerState st'
+        }
    where
-    overShelleyBasedLedgerState (HardForkLedgerState st) =
-      HardForkLedgerState $ hap (fn id :* registerAny) st
-
     initHeaderState :: HeaderState (CardanoBlock c)
     initLedgerState :: LedgerState (CardanoBlock c) ValuesMK
     ExtLedgerState initLedgerState initHeaderState =
       injectInitialExtLedgerState cfg $
         initExtLedgerStateByron
 
-    registerAny :: NP (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (CardanoShelleyEras c)
-    registerAny =
-      hcmap (Proxy @IsShelleyBlock) injectIntoTestState $
-        WrapTransitionConfig transitionConfigShelley
-          :* WrapTransitionConfig transitionConfigAllegra
-          :* WrapTransitionConfig transitionConfigMary
-          :* WrapTransitionConfig transitionConfigAlonzo
-          :* WrapTransitionConfig transitionConfigBabbage
-          :* WrapTransitionConfig transitionConfigConway
-          :* WrapTransitionConfig transitionConfigDijkstra
-          :* Nil
+    perEraInjections ::
+      NP
+        (Flip LedgerState ValuesMK -.-> (m :.: Flip LedgerState ValuesMK))
+        (CardanoEras c)
+    perEraInjections =
+      fn (Comp . pure)
+        :* hcmap (Proxy @IsShelleyBlock) shelleyInjection shelleyTcfgs
 
-    injectIntoTestState ::
-      ShelleyBasedEra era =>
+    shelleyInjection ::
+      forall proto era.
+      Shelley.ShelleyCompatible proto era =>
       WrapTransitionConfig (ShelleyBlock proto era) ->
-      (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (ShelleyBlock proto era)
-    injectIntoTestState (WrapTransitionConfig tcfg) = fn $ \(Flip st) ->
-      -- We need to unstow the injected values
-      Flip $
-        unstowLedgerTables $
-          forgetLedgerTables $
-            st
-              { Shelley.shelleyLedgerState =
-                  L.injectIntoTestState
-                    tcfg
-                    (Shelley.shelleyLedgerState $ stowLedgerTables st)
-              }
+      (Flip LedgerState ValuesMK -.-> (m :.: Flip LedgerState ValuesMK))
+        (ShelleyBlock proto era)
+    shelleyInjection (WrapTransitionConfig tcfg) = fn $ \(Flip stIn) -> Comp $ do
+      let stowed = stowLedgerTables stIn
+      newNES <-
+        L.injectIntoTestState
+          hasFS
+          tcfg
+          (Shelley.shelleyLedgerState stowed)
+      pure . Flip . unstowLedgerTables . forgetLedgerTables $
+        stowed{Shelley.shelleyLedgerState = newNES}
+
+    shelleyTcfgs :: NP WrapTransitionConfig (CardanoShelleyEras c)
+    shelleyTcfgs =
+      WrapTransitionConfig transitionConfigShelley
+        :* WrapTransitionConfig transitionConfigAllegra
+        :* WrapTransitionConfig transitionConfigMary
+        :* WrapTransitionConfig transitionConfigAlonzo
+        :* WrapTransitionConfig transitionConfigBabbage
+        :* WrapTransitionConfig transitionConfigConway
+        :* WrapTransitionConfig transitionConfigDijkstra
+        :* Nil
 
   -- \| For each element in the list, a block forging thread will be started.
   --

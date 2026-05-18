@@ -10,7 +10,6 @@ import Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer)
 import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.ByteString.Lazy as BL
-import Data.Functor.Contravariant ((>$<))
 import Data.Void (Void)
 import qualified Network.Mux as Mux
 import Network.Socket (SockAddr (..))

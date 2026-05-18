@@ -102,21 +102,10 @@ mkLedgerTables tx =
         zip exampleTxIns exampleTxOuts
  where
   exampleTxIns :: [BigEndianTxIn]
-  exampleTxIns = case toList (tx ^. (LC.bodyTxL . LC.allInputsTxBodyF)) of
-    [] -> error "No transaction inputs were provided to construct the ledger tables"
-    -- We require at least one transaction input (and one
-    -- transaction output) in the example provided by
-    -- cardano-ledger to make sure that we test the serialization
-    -- of ledger tables with at least one non-trivial example.
-    --
-    -- Also all transactions in Cardano have at least one input for
-    -- automatic replay protection.
-    xs -> map BigEndianTxIn xs
+  exampleTxIns = map BigEndianTxIn $ toList (tx ^. (LC.bodyTxL . LC.allInputsTxBodyF))
 
   exampleTxOuts :: [LC.TxOut era]
-  exampleTxOuts = case toList (tx ^. (LC.bodyTxL . LC.outputsTxBodyL)) of
-    [] -> error "No transaction outputs were provided to construct the ledger tables"
-    xs -> xs
+  exampleTxOuts = toList (tx ^. (LC.bodyTxL . LC.outputsTxBodyL))
 
 fromShelleyLedgerExamples ::
   ShelleyCompatible (TPraos StandardCrypto) era =>
@@ -144,13 +133,14 @@ fromShelleyLedgerExamples
       , exampleExtLedgerState = unlabelled extLedgerState
       , exampleSlotNo = unlabelled slotNo
       , exampleLedgerConfig = unlabelled ledgerConfig
-      , exampleLedgerTables = unlabelled $ mkLedgerTables leTx
+      , exampleLedgerTables = unlabelled $ mkLedgerTables emptyTx
       }
    where
+    emptyTx = mkBasicTx mkBasicTxBody
     blk = mkShelleyBlock pleBlock
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
     serialisedBlock = Serialised "<BLOCK>"
-    tx = mkShelleyTx leTx
+    tx = mkShelleyTx emptyTx
     slotNo = SlotNo 42
     serialisedHeader =
       SerialisedHeaderFromDepPair $ GenDepPair (NestedCtxt CtxtShelley) (Serialised "<HEADER>")
@@ -255,13 +245,14 @@ fromShelleyLedgerExamplesPraos
       , exampleResult = results
       , exampleAnnTip = unlabelled annTip
       , exampleLedgerState = unlabelled ledgerState
-      , exampleLedgerTables = unlabelled $ mkLedgerTables leTx
+      , exampleLedgerTables = unlabelled $ mkLedgerTables emptyTx
       , exampleChainDepState = unlabelled chainDepState
       , exampleExtLedgerState = unlabelled extLedgerState
       , exampleSlotNo = unlabelled slotNo
       , exampleLedgerConfig = unlabelled ledgerConfig
       }
    where
+    emptyTx = mkBasicTx mkBasicTxBody
     blk =
       mkShelleyBlock $
         let SL.Block hdr1 bdy = pleBlock
@@ -287,7 +278,7 @@ fromShelleyLedgerExamplesPraos
       hSig = coerce bhSig
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
     serialisedBlock = Serialised "<BLOCK>"
-    tx = mkShelleyTx leTx
+    tx = mkShelleyTx emptyTx
     slotNo = SlotNo 42
     serialisedHeader =
       SerialisedHeaderFromDepPair $ GenDepPair (NestedCtxt CtxtShelley) (Serialised "<HEADER>")

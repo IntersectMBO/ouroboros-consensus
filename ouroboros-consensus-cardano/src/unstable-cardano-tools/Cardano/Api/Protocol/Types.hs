@@ -10,7 +10,6 @@ module Cardano.Api.Protocol.Types
 
 import Cardano.Chain.Slotting (EpochSlots)
 import qualified Control.Tracer as Tracer
-import Data.Bifunctor (bimap)
 import Ouroboros.Consensus.Block.Forging (MkBlockForging (..))
 import Ouroboros.Consensus.Byron.ByronHFC (ByronBlockHFC)
 import Ouroboros.Consensus.Cardano
@@ -35,14 +34,16 @@ import qualified Ouroboros.Consensus.Shelley.Ledger.Block as Consensus
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC (ShelleyBlockHFC)
 import Ouroboros.Consensus.Util.IOLike
+import System.FS.API (SomeHasFS)
 
 class (RunNode blk, IOLike m) => Protocol m blk where
   data ProtocolInfoArgs m blk
   protocolInfo ::
     ProtocolInfoArgs m blk ->
-    ( ProtocolInfo blk
-    , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m blk]
-    )
+    m
+      ( ProtocolInfo blk
+      , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m blk]
+      )
 
 -- | Node client support for each consensus protocol.
 --
@@ -56,9 +57,10 @@ class RunNode blk => ProtocolClient blk where
 instance IOLike m => Protocol m ByronBlockHFC where
   data ProtocolInfoArgs m ByronBlockHFC = ProtocolInfoArgsByron ProtocolParamsByron
   protocolInfo (ProtocolInfoArgsByron params) =
-    ( inject $ protocolInfoByron params
-    , \_ -> pure . map (MkBlockForging . pure . inject) $ blockForgingByron params
-    )
+    pure
+      ( inject $ protocolInfoByron params
+      , \_ -> pure . map (MkBlockForging . pure . inject) $ blockForgingByron params
+      )
 
 instance
   ( CardanoHardForkConstraints StandardCrypto
@@ -69,10 +71,11 @@ instance
   where
   data ProtocolInfoArgs m (CardanoBlock StandardCrypto)
     = ProtocolInfoArgsCardano
+        (SomeHasFS m)
         (CardanoProtocolParams StandardCrypto)
 
-  protocolInfo (ProtocolInfoArgsCardano paramsCardano) =
-    protocolInfoCardano paramsCardano
+  protocolInfo (ProtocolInfoArgsCardano fs paramsCardano) =
+    protocolInfoCardano fs paramsCardano
 
 instance ProtocolClient ByronBlockHFC where
   data ProtocolClientInfoArgs ByronBlockHFC
@@ -99,13 +102,15 @@ instance
   where
   data ProtocolInfoArgs m (ShelleyBlockHFC (Consensus.TPraos StandardCrypto) ShelleyEra)
     = ProtocolInfoArgsShelley
+        (SomeHasFS m)
         ShelleyGenesis
         (ProtocolParamsShelleyBased StandardCrypto)
         ProtVer
-  protocolInfo (ProtocolInfoArgsShelley genesis shelleyBasedProtocolParams' protVer) =
-    bimap inject injectBlockForging $ protocolInfoShelley genesis shelleyBasedProtocolParams' protVer
+  protocolInfo (ProtocolInfoArgsShelley fs genesis shelleyBasedProtocolParams' protVer) = do
+    (pinfo, bf) <- protocolInfoShelley fs genesis shelleyBasedProtocolParams' protVer
+    pure (inject pinfo, injectBlockForging bf)
    where
-    injectBlockForging bf tr = fmap (map inject) $ bf tr
+    injectBlockForging bf tr = fmap (map inject) (bf tr)
 
 instance
   Consensus.LedgerSupportsProtocol

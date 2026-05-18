@@ -225,7 +225,7 @@ data IteratorEnv m blk = IteratorEnv
   }
 
 -- | Obtain an 'IteratorEnv' from a 'ChainDbEnv'.
-fromChainDbEnv :: ChainDbEnv m blk -> IteratorEnv m blk
+fromChainDbEnv :: Monad m => ChainDbEnv m blk -> IteratorEnv m blk
 fromChainDbEnv CDB{..} =
   IteratorEnv
     { itImmutableDB = cdbImmutableDB

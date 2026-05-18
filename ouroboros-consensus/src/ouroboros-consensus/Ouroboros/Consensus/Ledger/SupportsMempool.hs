@@ -1,13 +1,18 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
@@ -26,7 +31,10 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , ReapplyTxsResult (..)
   , TxId
   , TxLimits (..)
-  , TxMeasureMetrics (..)
+  , TxMeasure (..)
+  , TxMeasurePhase1Metrics (..)
+  , TxMeasurePhase2Metrics (..)
+  , TrivialTxMeasurePhase2 (..)
   , Validated
   , WhetherToIntervene (..)
   , nothingMkMempoolApplyTxError
@@ -41,9 +49,10 @@ import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.Foldable as Foldable
 import Data.Kind (Type)
 import Data.Measure (Measure)
-import qualified Data.Measure
+import qualified Data.Measure as M
 import Data.Text (Text)
 import Data.Word (Word32)
+import GHC.Generics
 import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Numeric.Natural
@@ -305,6 +314,48 @@ class HasTxs blk where
   Tx sizes
 -------------------------------------------------------------------------------}
 
+data TxMeasure blk = TxMeasure
+  { tmPhase1 :: !(TxMeasurePhase1 blk)
+  , tmPhase2 :: !(TxMeasurePhase2 blk)
+  }
+  deriving Generic
+
+deriving instance (Eq (TxMeasurePhase1 blk), Eq (TxMeasurePhase2 blk)) => Eq (TxMeasure blk)
+
+deriving instance (Show (TxMeasurePhase1 blk), Show (TxMeasurePhase2 blk)) => Show (TxMeasure blk)
+
+deriving via
+  InstantiatedAt Generic (TxMeasure blk)
+  instance
+    (Measure (TxMeasurePhase1 blk), Measure (TxMeasurePhase2 blk)) =>
+    Measure (TxMeasure blk)
+
+instance HasByteSize (TxMeasurePhase1 blk) => HasByteSize (TxMeasure blk) where
+  txMeasureByteSize = txMeasureByteSize . tmPhase1
+
+instance (NoThunks (TxMeasurePhase1 blk), NoThunks (TxMeasurePhase2 blk)) => NoThunks (TxMeasure blk)
+
+instance TxMeasurePhase1Metrics (TxMeasurePhase1 blk) => TxMeasurePhase1Metrics (TxMeasure blk) where
+  txMeasureMetricTxSizeBytes (TxMeasure a _) = txMeasureMetricTxSizeBytes a
+  txMeasureMetricExUnitsMemory (TxMeasure a _) = txMeasureMetricExUnitsMemory a
+  txMeasureMetricExUnitsSteps (TxMeasure a _) = txMeasureMetricExUnitsSteps a
+
+instance TxMeasurePhase2Metrics (TxMeasurePhase2 blk) => TxMeasurePhase2Metrics (TxMeasure blk) where
+  txMeasureMetricRefScriptsSizeBytes (TxMeasure _ b) = txMeasureMetricRefScriptsSizeBytes b
+
+data TrivialTxMeasurePhase2 = TrivialTxMeasurePhase2
+  deriving (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+instance Measure TrivialTxMeasurePhase2 where
+  zero = TrivialTxMeasurePhase2
+  plus _ _ = TrivialTxMeasurePhase2
+  max _ _ = TrivialTxMeasurePhase2
+  min _ _ = TrivialTxMeasurePhase2
+
+instance TxMeasurePhase2Metrics TrivialTxMeasurePhase2 where
+  txMeasureMetricRefScriptsSizeBytes _ = mempty
+
 -- | Each block has its limits of how many transactions it can hold. That limit
 -- is compared against the sum of measurements taken of each of the
 -- transactions in that block.
@@ -319,16 +370,24 @@ class HasTxs blk where
 -- execution units). For details please see the individual instances for the
 -- TxLimits.
 class
-  ( Measure (TxMeasure blk)
-  , HasByteSize (TxMeasure blk)
-  , NoThunks (TxMeasure blk)
-  , TxMeasureMetrics (TxMeasure blk)
-  , Show (TxMeasure blk)
+  ( -- \* Phase 1
+    Measure (TxMeasurePhase1 blk)
+  , HasByteSize (TxMeasurePhase1 blk)
+  , NoThunks (TxMeasurePhase1 blk)
+  , TxMeasurePhase1Metrics (TxMeasurePhase1 blk)
+  , Show (TxMeasurePhase1 blk)
+  , -- \* Phase 2
+    Measure (TxMeasurePhase2 blk)
+  , NoThunks (TxMeasurePhase2 blk)
+  , TxMeasurePhase2Metrics (TxMeasurePhase2 blk)
+  , Show (TxMeasurePhase2 blk)
   ) =>
   TxLimits blk
   where
   -- | The (possibly multi-dimensional) size of a transaction in a block.
-  type TxMeasure blk
+  type TxMeasurePhase1 blk
+
+  type TxMeasurePhase2 blk
 
   -- | The size of the transaction from the perspective of diffusion layer
   txWireSize :: GenTx blk -> Network.SizeInBytes
@@ -362,14 +421,23 @@ class
   --
   -- Returns an exception if and only if the transaction violates the per-tx
   -- limits.
-  txMeasure ::
+  txMeasurePhase1 ::
+    -- | used at least by HFC's composition logic
+    LedgerConfig blk ->
+    -- | This state needs values as a transaction measure might depend on
+    -- those. For example in Cardano they look at the reference scripts.
+    TickedLedgerState blk EmptyMK ->
+    GenTx blk ->
+    Except (ApplyTxErr blk) (TxMeasurePhase1 blk)
+
+  txMeasurePhase2 ::
     -- | used at least by HFC's composition logic
     LedgerConfig blk ->
     -- | This state needs values as a transaction measure might depend on
     -- those. For example in Cardano they look at the reference scripts.
     TickedLedgerState blk ValuesMK ->
     GenTx blk ->
-    Except (ApplyTxErr blk) (TxMeasure blk)
+    Except (ApplyTxErr blk) (TxMeasurePhase2 blk)
 
   -- | What is the allowed capacity for the txs in an individual block?
   blockCapacityTxMeasure ::
@@ -428,7 +496,7 @@ newtype IgnoringOverflow a = IgnoringOverflow {unIgnoringOverflow :: a}
   deriving newtype (Monoid, Semigroup)
   deriving newtype NoThunks
   deriving newtype HasByteSize
-  deriving newtype TxMeasureMetrics
+  deriving newtype TxMeasurePhase1Metrics
 
 instance Measure (IgnoringOverflow ByteSize32) where
   zero = coerce (0 :: Word32)
@@ -443,17 +511,28 @@ class HasByteSize a where
 instance HasByteSize ByteSize32 where
   txMeasureByteSize = id
 
-class TxMeasureMetrics msr where
+class TxMeasurePhase1Metrics msr where
   txMeasureMetricTxSizeBytes :: msr -> ByteSize32
   txMeasureMetricExUnitsMemory :: msr -> Natural
   txMeasureMetricExUnitsSteps :: msr -> Natural
+
+class TxMeasurePhase2Metrics msr where
   txMeasureMetricRefScriptsSizeBytes :: msr -> ByteSize32
 
-instance TxMeasureMetrics ByteSize32 where
+instance TxMeasurePhase2Metrics () where
+  txMeasureMetricRefScriptsSizeBytes () = mempty
+
+-- TODO: move to cardano-base
+instance Measure () where
+  zero = ()
+  plus _ _ = ()
+  max _ _ = ()
+  min _ _ = ()
+
+instance TxMeasurePhase1Metrics ByteSize32 where
   txMeasureMetricTxSizeBytes = id
   txMeasureMetricExUnitsMemory _ = 0
   txMeasureMetricExUnitsSteps _ = 0
-  txMeasureMetricRefScriptsSizeBytes _ = mempty
 
 -- | A transaction that was previously valid. Used to clarify the types on the
 -- 'reapplyTxs' function.
