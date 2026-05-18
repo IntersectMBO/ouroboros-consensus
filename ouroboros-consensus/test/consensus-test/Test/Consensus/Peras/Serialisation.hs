@@ -7,7 +7,10 @@ module Test.Consensus.Peras.Serialisation
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..), decodeFull, serialize)
+import Cardano.Ledger.BaseTypes (SlotNo (..))
 import qualified Data.ByteString.Lazy as LazyByteString
+import Ouroboros.Consensus.Block (Point)
+import Ouroboros.Consensus.Block.RealPoint (RealPoint (..), realPointToPoint)
 import Test.Consensus.Peras.Util
   ( genPerasCert
   , genPerasVote
@@ -15,8 +18,10 @@ import Test.Consensus.Peras.Util
   , tabulatePerasCert
   , tabulatePerasVote
   )
+import Test.Ouroboros.Storage.TestBlock (TestBlock, TestHeaderHash (..))
 import Test.QuickCheck
-  ( Gen
+  ( Arbitrary (..)
+  , Gen
   , Property
   , counterexample
   , forAll
@@ -27,6 +32,15 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
+-- | Generate an arbitrary 'Point' for 'TestBlock'.
+-- We reuse 'TestBlock' from "Test.Ouroboros.Storage.TestBlock" which already
+-- provides 'ConvertRawHash' (needed by the CBOR instances of Peras types).
+genTestPoint :: Gen (Point TestBlock)
+genTestPoint = do
+  slotNo <- SlotNo <$> arbitrary
+  hash <- TestHeaderHash <$> arbitrary
+  pure $ realPointToPoint $ RealPoint slotNo hash
+
 tests :: TestTree
 tests =
   testGroup
@@ -35,13 +49,13 @@ tests =
         testProperty "Roundtrip for PerasVote" $
           prop_roundtrip
             -- Generate both persistent and non-persistent votes
-            (genPerasVote True)
+            (genPerasVote genTestPoint True)
             tabulatePerasVote
     , adjustQuickCheckTests (* 10) $
         testProperty "Roundtrip for PerasCert" $
           prop_roundtrip
             -- Generate certs with both persistent and non-persistent votes
-            (genPerasCert True)
+            (genPerasCert genTestPoint True)
             tabulatePerasCert
     ]
 
