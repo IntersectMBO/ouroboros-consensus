@@ -625,7 +625,8 @@ instance
   mkMempoolApplyTxError _tls txt = Just $ MockMempoolError txt
 
 instance TxLimits (SimpleBlock c ext) where
-  type TxMeasure (SimpleBlock c ext) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase1 (SimpleBlock c ext) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 (SimpleBlock c ext) = TrivialTxMeasurePhase2
 
   txWireSize = fromIntegral . unByteSize32 . genTxSize
 
@@ -633,12 +634,14 @@ instance TxLimits (SimpleBlock c ext) where
   -- don't override it.
   --
   -- But not 'maxbound'!, since the mempool sometimes holds multiple blocks worth.
-  blockCapacityTxMeasure _cfg _st = IgnoringOverflow simpleBlockCapacity
+  blockCapacityTxMeasure _cfg _st = TxMeasure (IgnoringOverflow simpleBlockCapacity) TrivialTxMeasurePhase2
 
-  txMeasure cfg _st =
+  txMeasurePhase1 cfg _st =
     fmap IgnoringOverflow
       . checkTxSize (simpleLedgerMockConfig cfg)
       . simpleGenTx
+
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
 
 simpleBlockCapacity :: ByteSize32
 simpleBlockCapacity = ByteSize32 512

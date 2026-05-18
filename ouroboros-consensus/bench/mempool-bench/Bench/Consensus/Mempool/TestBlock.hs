@@ -241,16 +241,18 @@ instance Ledger.LedgerSupportsMempool TestBlock where
   mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
 
 instance Ledger.TxLimits TestBlock where
-  type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
+  type TxMeasurePhase1 TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
+  type TxMeasurePhase2 TestBlock = Ledger.TrivialTxMeasurePhase2
 
   txWireSize = fromIntegral . Ledger.unByteSize32 . txSize
 
   -- We tweaked this in such a way that we test the case in which we exceed the
   -- maximum mempool capacity. The value used here depends on 'txInBlockSize'.
   blockCapacityTxMeasure _cfg _st =
-    Ledger.IgnoringOverflow $ Ledger.ByteSize32 20
+    Ledger.TxMeasure (Ledger.IgnoringOverflow $ Ledger.ByteSize32 20) Ledger.TrivialTxMeasurePhase2
 
-  txMeasure _cfg _st = pure . Ledger.IgnoringOverflow . txSize
+  txMeasurePhase1 _cfg _st = pure . Ledger.IgnoringOverflow . txSize
+  txMeasurePhase2 _cfg _st _tx = pure Ledger.TrivialTxMeasurePhase2
 
 newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx
   deriving stock Generic

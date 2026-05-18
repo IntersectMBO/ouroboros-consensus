@@ -67,7 +67,7 @@ import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
 import Data.Void (Void)
-import Lens.Micro ((^.))
+import Lens.Micro ((%~), (&), (.~), (^.))
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.Cardano.CanHardFork
@@ -102,6 +102,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (eitherToMaybe)
 import Ouroboros.Consensus.Util.IndexedMemPack
+import System.FS.API (SomeHasFS)
 import Test.ThreadNet.TxGen
 import Test.ThreadNet.TxGen.Shelley ()
 
@@ -188,7 +189,12 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , LedgerSupportsPeras (ShelleyBlock proto2 era2)
   , TxLimits (ShelleyBlock proto1 era1)
   , TxLimits (ShelleyBlock proto2 era2)
-  , TranslateTxMeasure (TxMeasure (ShelleyBlock proto1 era1)) (TxMeasure (ShelleyBlock proto2 era2))
+  , TranslateTxMeasure
+      (TxMeasurePhase1 (ShelleyBlock proto1 era1))
+      (TxMeasurePhase1 (ShelleyBlock proto2 era2))
+  , TranslateTxMeasure
+      (TxMeasurePhase2 (ShelleyBlock proto1 era1))
+      (TxMeasurePhase2 (ShelleyBlock proto2 era2))
   , SL.PreviousEra era2 ~ era1
   , SL.TranslateEra era2 SL.NewEpochState
   , SL.TranslateEra era2 (SL.Tx SL.TopTx)
@@ -205,23 +211,26 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
 class TranslateTxMeasure a b where
   translateTxMeasure :: a -> b
 
+-- Phase 1 measures
+
 instance TranslateTxMeasure (IgnoringOverflow ByteSize32) (IgnoringOverflow ByteSize32) where
   translateTxMeasure = id
 
 instance TranslateTxMeasure (IgnoringOverflow ByteSize32) AlonzoMeasure where
   translateTxMeasure x = AlonzoMeasure x mempty
 
-instance TranslateTxMeasure (IgnoringOverflow ByteSize32) ConwayMeasure where
-  translateTxMeasure =
-    translateTxMeasure . (\x -> x :: AlonzoMeasure) . translateTxMeasure
-
 instance TranslateTxMeasure AlonzoMeasure AlonzoMeasure where
   translateTxMeasure = id
 
-instance TranslateTxMeasure AlonzoMeasure ConwayMeasure where
-  translateTxMeasure x = ConwayMeasure x mempty
+-- Phase 2 measures
 
-instance TranslateTxMeasure ConwayMeasure ConwayMeasure where
+instance TranslateTxMeasure TrivialTxMeasurePhase2 TrivialTxMeasurePhase2 where
+  translateTxMeasure = id
+
+instance TranslateTxMeasure TrivialTxMeasurePhase2 RefScriptSize where
+  translateTxMeasure TrivialTxMeasurePhase2 = mempty
+
+instance TranslateTxMeasure RefScriptSize RefScriptSize where
   translateTxMeasure = id
 
 instance
@@ -235,8 +244,11 @@ instance
   CanHardFork (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
   where
   type
-    HardForkTxMeasure (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
-      TxMeasure (ShelleyBlock proto2 era2)
+    HardForkTxMeasurePhase1 (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
+      TxMeasurePhase1 (ShelleyBlock proto2 era2)
+  type
+    HardForkTxMeasurePhase2 (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
+      TxMeasurePhase2 (ShelleyBlock proto2 era2)
 
   hardForkEraTranslation =
     EraTranslation
@@ -308,9 +320,13 @@ instance
         . SL.translateEra transCtxt
         . Comp
 
-  hardForkInjTxMeasure = \case
-    (Z (WrapTxMeasure x)) -> translateTxMeasure x
-    S (Z (WrapTxMeasure x)) -> x
+  hardForkInjTxMeasurePhase1 = \case
+    (Z (WrapTxMeasurePhase1 x)) -> translateTxMeasure x
+    S (Z (WrapTxMeasurePhase1 x)) -> x
+
+  hardForkInjTxMeasurePhase2 = \case
+    (Z (WrapTxMeasurePhase2 x)) -> translateTxMeasure x
+    S (Z (WrapTxMeasurePhase2 x)) -> x
 
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
@@ -393,53 +409,83 @@ protocolInfoShelleyBasedHardFork ::
   ( KESAgentContext (ProtoCrypto proto2) m
   , ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   ) =>
+  SomeHasFS m ->
   ProtocolParamsShelleyBased (ProtoCrypto proto1) ->
   SL.ProtVer ->
   SL.ProtVer ->
   L.TransitionConfig era2 ->
   TriggerHardFork ->
-  ( ProtocolInfo (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
-  , Tracer.Tracer m KESAgentClientTrace ->
-    m [MkBlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
-  )
+  m
+    ( ProtocolInfo (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
+    , Tracer.Tracer m KESAgentClientTrace ->
+      m [MkBlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
+    )
 protocolInfoShelleyBasedHardFork
+  fs
   protocolParamsShelleyBased
   protVer1
   protVer2
   transCfg2
-  hardForkTrigger =
-    protocolInfoBinary
-      -- Era 1
-      protocolInfo1
-      blockForging1
-      eraParams1
-      tpraosParams
-      toPartialLedgerConfig1
-      -- Era 2
-      protocolInfo2
-      blockForging2
-      eraParams2
-      tpraosParams
-      toPartialLedgerConfig2
+  hardForkTrigger = do
+    (protocolInfo1, blockForging1) <-
+      protocolInfoTPraosShelleyBased
+        fs
+        protocolParamsShelleyBased
+        transCfgEra1
+        protVer1
+    (protocolInfo2, blockForging2) <-
+      protocolInfoTPraosShelleyBased
+        fs
+        ProtocolParamsShelleyBased
+          { shelleyBasedInitialNonce
+          , shelleyBasedLeaderCredentials
+          }
+        transCfgEra2
+        protVer2
+    pure $
+      protocolInfoBinary
+        -- Era 1
+        protocolInfo1
+        blockForging1
+        eraParams1
+        tpraosParams
+        toPartialLedgerConfig1
+        -- Era 2
+        protocolInfo2
+        blockForging2
+        eraParams2
+        tpraosParams
+        toPartialLedgerConfig2
    where
     ProtocolParamsShelleyBased
       { shelleyBasedInitialNonce
       , shelleyBasedLeaderCredentials
       } = protocolParamsShelleyBased
 
+    -- Override the protocol version inside the Shelley genesis carried by a
+    -- transition config. Each era's 'createInitialState' enforces
+    -- 'eraProtVerLow <= curProtVer <= eraProtVerHigh', so a single shared
+    -- genesis PV cannot satisfy both era1 and era2; we derive a per-era copy.
+    overrideGenesisPV ::
+      forall era.
+      L.EraTransition era =>
+      SL.ProtVer ->
+      L.TransitionConfig era ->
+      L.TransitionConfig era
+    overrideGenesisPV pv =
+      L.tcShelleyGenesisL %~ \sg ->
+        sg{SL.sgProtocolParams = SL.sgProtocolParams sg & SL.ppProtocolVersionL .~ pv}
+
+    transCfgEra1 :: L.TransitionConfig era1
+    transCfgEra1 = (transCfg2 ^. L.tcPreviousEraConfigL) & overrideGenesisPV protVer1
+
+    transCfgEra2 :: L.TransitionConfig era2
+    transCfgEra2 = transCfg2 & overrideGenesisPV protVer2
+
     -- Era 1
 
     genesis :: SL.ShelleyGenesis
     genesis = transCfg2 ^. L.tcShelleyGenesisL
-
-    protocolInfo1 :: ProtocolInfo (ShelleyBlock proto1 era1)
-    blockForging1 ::
-      Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock proto1 era1)]
-    (protocolInfo1, blockForging1) =
-      protocolInfoTPraosShelleyBased
-        protocolParamsShelleyBased
-        (transCfg2 ^. L.tcPreviousEraConfigL)
-        protVer1
 
     eraParams1 :: History.EraParams
     eraParams1 = shelleyEraParams genesis
@@ -454,18 +500,6 @@ protocolInfoShelleyBasedHardFork
         }
 
     -- Era 2
-
-    protocolInfo2 :: ProtocolInfo (ShelleyBlock proto2 era2)
-    blockForging2 ::
-      Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock proto2 era2)]
-    (protocolInfo2, blockForging2) =
-      protocolInfoTPraosShelleyBased
-        ProtocolParamsShelleyBased
-          { shelleyBasedInitialNonce
-          , shelleyBasedLeaderCredentials
-          }
-        transCfg2
-        protVer2
 
     eraParams2 :: History.EraParams
     eraParams2 = shelleyEraParams genesis

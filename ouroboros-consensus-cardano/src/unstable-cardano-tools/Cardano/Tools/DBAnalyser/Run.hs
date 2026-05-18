@@ -15,8 +15,7 @@ import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), nullTracer)
-import Data.Functor.Contravariant ((>$<))
+import Control.Tracer (mkTracer, nullTracer, (>$<))
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
 import Ouroboros.Consensus.Block
@@ -116,8 +115,8 @@ analyse ::
 analyse dbaConfig args =
   withRegistry $ \registry -> do
     lock <- newMVar ()
-    chainDBTracer <- mkTracer lock verbose
-    analysisTracer <- mkTracer lock True
+    chainDBTracer <- mkVerboseTracer lock verbose
+    analysisTracer <- mkVerboseTracer lock True
     lsmSalt <- fst . genWord64 <$> newStdGen
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
@@ -215,10 +214,10 @@ analyse dbaConfig args =
       (ImmutableDB.openDBInternal immutableDbArgs)
       (ImmutableDB.closeDB . fst)
 
-  mkTracer _ False = return nullTracer
-  mkTracer lock True = do
+  mkVerboseTracer _ False = return nullTracer
+  mkVerboseTracer lock True = do
     startTime <- getMonotonicTime
-    return $ Tracer $ \ev -> withLock $ do
+    return $ mkTracer $ \ev -> withLock $ do
       traceTime <- getMonotonicTime
       let diff = diffTime traceTime startTime
       hPutStrLn stderr $ printf "[%.6fs] %s" (realToFrac diff :: Double) (show ev)

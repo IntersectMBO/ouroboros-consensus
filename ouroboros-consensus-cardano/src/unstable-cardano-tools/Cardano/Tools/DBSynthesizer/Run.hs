@@ -58,6 +58,9 @@ import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.Block
 import Ouroboros.Network.Point (WithOrigin (..))
 import System.Directory
+import System.FS.API (SomeHasFS (..))
+import System.FS.API.Types (MountPoint (MountPoint))
+import System.FS.IO (ioHasFS)
 import System.FilePath (takeDirectory, (</>))
 import System.Random (newStdGen)
 
@@ -67,15 +70,16 @@ initialize ::
   DBSynthesizerOptions ->
   IO (Either String (DBSynthesizerConfig, CardanoProtocolParams StandardCrypto))
 initialize NodeFilePaths{nfpConfig, nfpChainDB} creds synthOptions = do
-  relativeToConfig :: (FilePath -> FilePath) <-
-    (</>) . takeDirectory <$> makeAbsolute nfpConfig
+  configDir <- takeDirectory <$> makeAbsolute nfpConfig
+  let relativeToConfig :: FilePath -> FilePath
+      relativeToConfig = (configDir </>)
   runExceptT $ do
-    conf <- initConf relativeToConfig
+    conf <- initConf configDir relativeToConfig
     proto <- initProtocol relativeToConfig conf
     pure (conf, proto)
  where
-  initConf :: (FilePath -> FilePath) -> ExceptT String IO DBSynthesizerConfig
-  initConf relativeToConfig = do
+  initConf :: FilePath -> (FilePath -> FilePath) -> ExceptT String IO DBSynthesizerConfig
+  initConf configDir relativeToConfig = do
     inp <- handleIOExceptT show (BS.readFile nfpConfig)
     configStub <- adjustFilePaths relativeToConfig <$> readJson inp
     shelleyGenesis <- readFileJson $ ncsShelleyGenesisFile configStub
@@ -97,6 +101,7 @@ initialize NodeFilePaths{nfpConfig, nfpChainDB} creds synthOptions = do
         , confProtocolCredentials = protocolCredentials
         , confShelleyGenesis = shelleyGenesis
         , confDbDir = nfpChainDB
+        , confNodeConfigDir = configDir
         }
 
   initProtocol ::
@@ -147,8 +152,16 @@ synthesize ::
   DBSynthesizerConfig ->
   (CardanoProtocolParams StandardCrypto) ->
   IO ForgeResult
-synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP =
+synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir, confNodeConfigDir} runP =
   withRegistry $ \registry -> do
+    let fs = SomeHasFS (ioHasFS (MountPoint confNodeConfigDir))
+    ( ProtocolInfo
+        { pInfoConfig
+        , pInfoInitLedger
+        }
+      , mkForgers
+      ) <-
+      protocolInfoCardano fs runP
     snapshotDelayRng <- newStdGen
     let
       epochSize = sgEpochLength confShelleyGenesis
@@ -199,12 +212,6 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
     { synthOpenMode
     , synthLimit
     } = confOptions
-  ( ProtocolInfo
-      { pInfoConfig
-      , pInfoInitLedger
-      }
-    , mkForgers
-    ) = protocolInfoCardano runP
 
 preOpenChainDB :: DBSynthesizerOpenMode -> FilePath -> IO ()
 preOpenChainDB mode db =

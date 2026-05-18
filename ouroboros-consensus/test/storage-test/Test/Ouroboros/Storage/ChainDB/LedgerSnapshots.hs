@@ -185,7 +185,7 @@ runAddBlocks lgrDbBackendArgs testSetup = withRegistry \registry -> do
     pure (chainDB, LedgerDB.lgrHasFS $ ChainDB.cdbLgrDbArgs chainDbArgs)
 
   isSnapshottingTracer :: StrictTMVar m () -> Tracer m (ChainDB.TraceEvent TestBlock)
-  isSnapshottingTracer tmvar = Tracer \case
+  isSnapshottingTracer tmvar = mkTracer \case
     ChainDB.TraceLedgerDBEvent (LedgerDB.LedgerDBSnapshotEvent (SnapshotRequestDelayed _ _ _)) ->
       atomically $ putTMVar tmvar ()
     ChainDB.TraceLedgerDBEvent (LedgerDB.LedgerDBSnapshotEvent SnapshotRequestCompleted) ->
@@ -411,7 +411,7 @@ runTest lgrDbBackendArgs testSetup = withRegistry \registry -> do
   withTime = contramapM \ev -> (,ev) <$> getMonotonicTime
 
   isSnapshottingTracer :: StrictTMVar m () -> Tracer m (ChainDB.TraceEvent TestBlock)
-  isSnapshottingTracer tmvar = Tracer \case
+  isSnapshottingTracer tmvar = mkTracer \case
     ChainDB.TraceLedgerDBEvent (LedgerDB.LedgerDBSnapshotEvent (SnapshotRequestDelayed _ _ _)) ->
       atomically $ putTMVar tmvar ()
     ChainDB.TraceLedgerDBEvent (LedgerDB.LedgerDBSnapshotEvent SnapshotRequestCompleted) ->

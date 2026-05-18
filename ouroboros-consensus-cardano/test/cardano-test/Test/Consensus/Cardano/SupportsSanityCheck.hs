@@ -29,15 +29,19 @@ tests =
 
 prop_cardanoBlockSanityChecks :: QC.Property
 prop_cardanoBlockSanityChecks =
-  forAllBlind genSimpleTestProtocolInfo (prop_sanityChecks . pInfoConfig)
+  forAllBlind arbitrary $ \setup ->
+    QC.ioProperty $ do
+      pinfo <- mkSimpleTestProtocolInfoFromSetup setup
+      pure $ prop_sanityChecks (pInfoConfig pinfo)
 
 prop_intentionallyBrokenConfigDoesNotSanityCheck :: QC.Property
 prop_intentionallyBrokenConfigDoesNotSanityCheck =
-  forAllBlind genSimpleTestProtocolInfo $ \pinfo ->
-    let saneTopLevelConfig =
-          pInfoConfig pinfo
-        brokenConfig = breakTopLevelConfig saneTopLevelConfig
-     in expectFailure $ prop_sanityChecks brokenConfig
+  forAllBlind arbitrary $ \setup ->
+    QC.ioProperty $ do
+      pinfo <- mkSimpleTestProtocolInfoFromSetup setup
+      let saneTopLevelConfig = pInfoConfig pinfo
+          brokenConfig = breakTopLevelConfig saneTopLevelConfig
+      pure $ expectFailure $ prop_sanityChecks brokenConfig
 
 breakTopLevelConfig ::
   TopLevelConfig (CardanoBlock StandardCrypto) -> TopLevelConfig (CardanoBlock StandardCrypto)
@@ -55,17 +59,17 @@ breakTopLevelConfig tlc =
               }
         }
 
-genSimpleTestProtocolInfo :: Gen (ProtocolInfo (CardanoBlock StandardCrypto))
-genSimpleTestProtocolInfo = do
-  setup <- arbitrary
-  pure $
-    mkSimpleTestProtocolInfo
-      (decentralizationParam setup)
-      (securityParam setup)
-      (byronSlotLength setup)
-      (shelleySlotLength setup)
-      protocolVersionZero
-      (hardForkTriggers setup)
+mkSimpleTestProtocolInfoFromSetup ::
+  SimpleTestProtocolInfoSetup ->
+  IO (ProtocolInfo (CardanoBlock StandardCrypto))
+mkSimpleTestProtocolInfoFromSetup setup =
+  mkSimpleTestProtocolInfo
+    (decentralizationParam setup)
+    (securityParam setup)
+    (byronSlotLength setup)
+    (shelleySlotLength setup)
+    protocolVersionZero
+    (hardForkTriggers setup)
 
 data SimpleTestProtocolInfoSetup = SimpleTestProtocolInfoSetup
   { decentralizationParam :: Shelley.DecentralizationParam

@@ -141,7 +141,8 @@ instance LedgerSupportsMempool ByronBlock where
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 
 instance TxLimits ByronBlock where
-  type TxMeasure ByronBlock = IgnoringOverflow ByteSize32
+  type TxMeasurePhase1 ByronBlock = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 ByronBlock = TrivialTxMeasurePhase2
 
   txWireSize =
     (+ 2)
@@ -153,13 +154,16 @@ instance TxLimits ByronBlock where
       . toMempoolPayload
 
   blockCapacityTxMeasure _cfg st =
-    IgnoringOverflow $
-      ByteSize32 $
-        CC.getMaxBlockSize cvs - byronBlockEncodingOverhead
+    TxMeasure
+      ( IgnoringOverflow $
+          ByteSize32 $
+            CC.getMaxBlockSize cvs - byronBlockEncodingOverhead
+      )
+      TrivialTxMeasurePhase2
    where
     cvs = tickedByronLedgerState st
 
-  txMeasure _cfg st tx =
+  txMeasurePhase1 _cfg st tx =
     if txszNat > maxTxSize
       then throwError err
       else
@@ -182,6 +186,8 @@ instance TxLimits ByronBlock where
       CC.MempoolTxErr $
         Utxo.UTxOValidationTxValidationError $
           Utxo.TxValidationTxTooLarge txszNat maxTxSize
+
+  txMeasurePhase2 _ _ _ = pure TrivialTxMeasurePhase2
 
 data instance TxId (GenTx ByronBlock)
   = ByronTxId !Utxo.TxId
