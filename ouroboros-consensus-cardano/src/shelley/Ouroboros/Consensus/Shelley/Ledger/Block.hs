@@ -46,13 +46,15 @@ import Cardano.Ledger.Binary
   , FullByteString (..)
   , serialize
   )
+import Cardano.Ledger.Binary.Group (EncCBORGroup)
 import qualified Cardano.Ledger.Binary.Plain as Plain
+import qualified Cardano.Ledger.Block as SL (EraBlockHeader)
 import Cardano.Ledger.Core as SL
   ( eraDecoder
   , eraProtVerLow
   , toEraCBOR
   )
-import qualified Cardano.Ledger.Core as SL (TranslationContext, hashBlockBody)
+import qualified Cardano.Ledger.Core as SL (BlockBody, TranslationContext, hashBlockBody)
 import Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
@@ -103,12 +105,15 @@ type instance BlockProtocol (ShelleyBlock proto era) = proto
 class
   ( ShelleyBasedEra era
   , ShelleyProtocol proto
+  , EncCBORGroup (SL.BlockBody era)
   , -- Header constraints
     Eq (ShelleyProtocolHeader proto)
   , Show (ShelleyProtocolHeader proto)
   , NoThunks (ShelleyProtocolHeader proto)
   , EncCBOR (ShelleyProtocolHeader proto)
   , DecCBOR (Annotator (ShelleyProtocolHeader proto))
+  , SL.EraBlockHeader (ShelleyProtocolHeader proto) era
+  , SL.ApplyBlock (ShelleyProtocolHeader proto) era
   , Show (CannotForgeError proto)
   , Show (SL.TranslationContext era)
   , -- Currently the chain select view is identical

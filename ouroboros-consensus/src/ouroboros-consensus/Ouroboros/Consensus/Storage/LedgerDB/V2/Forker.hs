@@ -22,7 +22,6 @@ import Control.Exception
 import Control.Monad (when)
 import Control.RAWLock (RAWLock, withWriteAccess)
 import Control.Tracer
-import Data.Functor.Contravariant ((>$<))
 import Data.Maybe (fromMaybe)
 import GHC.Generics
 import Ouroboros.Consensus.Block

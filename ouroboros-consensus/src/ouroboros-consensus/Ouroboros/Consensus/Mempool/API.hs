@@ -4,6 +4,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -495,10 +496,12 @@ instance Measure (TxMeasure blk) => Measure (TxMeasureWithDiffTime blk) where
 instance HasByteSize (TxMeasure blk) => HasByteSize (TxMeasureWithDiffTime blk) where
   txMeasureByteSize = txMeasureByteSize . forgetTxMeasureWithDiffTime
 
-instance TxMeasureMetrics (TxMeasure blk) => TxMeasureMetrics (TxMeasureWithDiffTime blk) where
+instance TxMeasurePhase1Metrics (TxMeasure blk) => TxMeasurePhase1Metrics (TxMeasureWithDiffTime blk) where
   txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . forgetTxMeasureWithDiffTime
   txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . forgetTxMeasureWithDiffTime
   txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . forgetTxMeasureWithDiffTime
+
+instance TxMeasurePhase2Metrics (TxMeasure blk) => TxMeasurePhase2Metrics (TxMeasureWithDiffTime blk) where
   txMeasureMetricRefScriptsSizeBytes = txMeasureMetricRefScriptsSizeBytes . forgetTxMeasureWithDiffTime
 
 -- | How long it took to validate a valid tx

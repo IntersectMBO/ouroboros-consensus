@@ -83,6 +83,13 @@
           ghc912 = hydraJobs.native.haskell912.devShell;
           ghc912-profiled = hydraJobs.native.haskell912.devShellProfiled;
 
+          # 9.14 is not a hydra job yet
+          ghc914 = import ./nix/shell.nix {
+            inherit inputs pkgs;
+            hsPkgs = pkgs.hsPkgs.projectVariants.ghc914;
+            withHls = false;
+          };
+
           agda-spec = pkgs.agda-spec.shell;
 
           website = pkgs.mkShell {

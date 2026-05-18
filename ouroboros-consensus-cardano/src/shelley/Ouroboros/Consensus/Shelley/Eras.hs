@@ -27,7 +27,7 @@ module Ouroboros.Consensus.Shelley.Eras
   , StandardCrypto
   ) where
 
-import Cardano.Binary
+import Cardano.Binary (FromCBOR, ToCBOR)
 import Cardano.Ledger.Allegra (AllegraEra)
 import Cardano.Ledger.Allegra.Translation ()
 import Cardano.Ledger.Alonzo (AlonzoEra, ApplyTxError (AlonzoApplyTxError))
@@ -57,7 +57,6 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
-import qualified Cardano.Protocol.TPraos.API as SL
 import Control.Monad.Except
 import Control.State.Transition (PredicateFailure)
 import Data.Data (Proxy (Proxy))
@@ -95,11 +94,9 @@ class
   ( Core.EraBlockBody era
   , Core.EraGov era
   , SL.ApplyTx era
-  , SL.ApplyBlock era
+  , SL.ApplyTick era
   , SL.EraTransition era
-  , -- TODO This constraint is quite tight, since it fixes things to the
-    -- original TPraos ledger view. We would like to ultimately remove it.
-    SL.GetLedgerView era
+  , SL.EraForecast era
   , NoThunks (SL.StashedAVVMAddresses era)
   , EncCBOR (SL.StashedAVVMAddresses era)
   , DecCBOR (SL.StashedAVVMAddresses era)
@@ -111,7 +108,6 @@ class
   , EncCBOR (PredicateFailure (EraRule "UTXOW" era))
   , Eq (PredicateFailure (EraRule "BBODY" era))
   , Show (PredicateFailure (EraRule "BBODY" era))
-  , NoThunks (PredicateFailure (EraRule "BBODY" era))
   , NoThunks (Core.TranslationContext era)
   , ToCBOR (Core.TranslationContext era)
   , FromCBOR (Core.TranslationContext era)

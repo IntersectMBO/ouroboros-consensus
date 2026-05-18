@@ -616,7 +616,8 @@ nullTracers =
     }
 
 showTracers ::
-  ( Show blk
+  ( Monad m
+  , Show blk
   , Show ntnAddr
   , Show (Header blk)
   , Show (GenTx blk)
@@ -627,16 +628,16 @@ showTracers ::
   Tracer m String -> Tracers m ntnAddr blk e
 showTracers tr =
   Tracers
-    { tChainSyncTracer = showTracing tr
-    , tChainSyncSerialisedTracer = showTracing tr
-    , tBlockFetchTracer = showTracing tr
-    , tBlockFetchSerialisedTracer = showTracing tr
-    , tTxSubmission2Tracer = showTracing tr
-    , tPerasCertDiffusionTracer = showTracing tr
-    , tPerasVoteDiffusionTracer = showTracing tr
-    , tKeepAliveTracer = showTracing tr
-    , tPeerSharingTracer = showTracing tr
-    , tTxLogicTracer = showTracing tr
+    { tChainSyncTracer = show >$< tr
+    , tChainSyncSerialisedTracer = show >$< tr
+    , tBlockFetchTracer = show >$< tr
+    , tBlockFetchSerialisedTracer = show >$< tr
+    , tTxSubmission2Tracer = show >$< tr
+    , tPerasCertDiffusionTracer = show >$< tr
+    , tPerasVoteDiffusionTracer = show >$< tr
+    , tKeepAliveTracer = show >$< tr
+    , tPeerSharingTracer = show >$< tr
+    , tTxLogicTracer = show >$< tr
     }
 
 {-------------------------------------------------------------------------------

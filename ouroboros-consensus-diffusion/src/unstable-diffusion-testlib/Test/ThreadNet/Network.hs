@@ -61,7 +61,6 @@ import qualified Control.Monad.Except as Exc
 import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
-import Data.Functor.Contravariant ((>$<))
 import Data.Functor.Identity (Identity)
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
@@ -244,7 +243,7 @@ data ThreadNetworkArgs m blk = ThreadNetworkArgs
   { tnaForgeEbbEnv :: Maybe (ForgeEbbEnv blk)
   , tnaFuture :: Future
   , tnaJoinPlan :: NodeJoinPlan
-  , tnaNodeInfo :: CoreNodeId -> TestNodeInitialization m blk
+  , tnaNodeInfo :: CoreNodeId -> m (TestNodeInitialization m blk)
   , tnaNumCoreNodes :: NumCoreNodes
   , tnaNumSlots :: NumSlots
   , tnaMessageDelay :: CalcMessageDelay blk
@@ -378,8 +377,8 @@ runThreadNetwork
       forM coreNodeIds $ \nid -> do
         -- assume they all start with the empty chain and the same initial
         -- ledger
-        let nodeInitData = mkProtocolInfo (CoreNodeId 0)
-            TestNodeInitialization{tniProtocolInfo} = nodeInitData
+        nodeInitData <- mkProtocolInfo (CoreNodeId 0)
+        let TestNodeInitialization{tniProtocolInfo} = nodeInitData
             ProtocolInfo{pInfoInitLedger} = tniProtocolInfo
             ExtLedgerState{ledgerState} = pInfoInitLedger
         v <-
@@ -392,8 +391,8 @@ runThreadNetwork
     let uedges = edgesNodeTopology nodeTopology
     edgeStatusVars <- fmap (Map.fromList . concat) $ do
       -- assume they all use the same CodecConfig
-      let nodeInitData = mkProtocolInfo (CoreNodeId 0)
-          TestNodeInitialization{tniProtocolInfo} = nodeInitData
+      nodeInitData <- mkProtocolInfo (CoreNodeId 0)
+      let TestNodeInitialization{tniProtocolInfo} = nodeInitData
           ProtocolInfo{pInfoConfig} = tniProtocolInfo
           codecConfig = configCodec pInfoConfig
       forM uedges $ \uedge -> do
@@ -500,15 +499,15 @@ runThreadNetwork
       nodeInfo
       nextInstrSlotVar =
         void $ forkLinkedThread sharedRegistry label $ do
-          loop 0 tniProtocolInfo tniBlockForging NodeRestart restarts0
+          TestNodeInitialization
+            { tniCrucialTxs
+            , tniProtocolInfo
+            , tniBlockForging
+            } <-
+            mkProtocolInfo coreNodeId
+          loop tniCrucialTxs 0 tniProtocolInfo tniBlockForging NodeRestart restarts0
        where
         label = "vertex-" <> condense coreNodeId
-
-        TestNodeInitialization
-          { tniCrucialTxs
-          , tniProtocolInfo
-          , tniBlockForging
-          } = mkProtocolInfo coreNodeId
 
         restarts0 :: Map SlotNo NodeRestart
         restarts0 = Map.mapMaybe (Map.lookup coreNodeId) m
@@ -516,13 +515,14 @@ runThreadNetwork
           NodeRestarts m = nodeRestarts
 
         loop ::
+          [GenTx blk] ->
           SlotNo ->
           ProtocolInfo blk ->
           m [MkBlockForging m blk] ->
           NodeRestart ->
           Map SlotNo NodeRestart ->
           m ()
-        loop s pInfo mkBlockForging nr rs = do
+        loop tniCrucialTxs s pInfo mkBlockForging nr rs = do
           -- a registry solely for the resources of this specific node instance
           (again, finalChain, finalLdgr) <- withRegistry $ \nodeRegistry -> do
             -- change the node's key and prepare a delegation transaction if
@@ -599,7 +599,7 @@ runThreadNetwork
 
           case again of
             Nothing -> pure ()
-            Just (s', pInfo', blockForging', nr', rs') -> loop s' pInfo' blockForging' nr' rs'
+            Just (s', pInfo', blockForging', nr', rs') -> loop tniCrucialTxs s' pInfo' blockForging' nr' rs'
 
     -- \| Instrumentation: record the tip's block number at the onset of the
     -- slot.
@@ -793,7 +793,7 @@ runThreadNetwork
           Origin -> error "selTracer"
 
         -- prop_general relies on this tracer
-        instrumentationTracer = Tracer $ \case
+        instrumentationTracer = mkTracer $ \case
           ChainDB.TraceAddBlockEvent
             (ChainDB.AddBlockValidation (ChainDB.InvalidBlock e p)) ->
               traceWith invalidTracer (p, e)
@@ -854,7 +854,7 @@ runThreadNetwork
       -- prop_general relies on these tracers
       let invalidTracer = nodeEventsInvalids nodeInfoEvents
           updatesTracer = nodeEventsUpdates nodeInfoEvents
-          wrapTracer tr = Tracer $ \(p, bno) -> do
+          wrapTracer tr = mkTracer $ \(p, bno) -> do
             s <- OracularClock.getCurrentSlot clock
             traceWith tr (s, p, bno)
           addTracer = wrapTracer $ nodeEventsAdds nodeInfoEvents
@@ -988,7 +988,7 @@ runThreadNetwork
         -- prop_general relies on these tracers
         instrumentationTracers =
           nullTracers
-            { chainSyncClientTracer = Tracer $ \case
+            { chainSyncClientTracer = mkTracer $ \case
                 TraceLabelPeer _ (CSClient.TraceDownloadedHeader hdr) ->
                   case blockPoint hdr of
                     GenesisPoint -> pure ()
@@ -999,7 +999,7 @@ runThreadNetwork
                         headerAddTracer
                         (RealPoint s h, blockNo hdr)
                 _ -> pure ()
-            , forgeTracer = Tracer $ \(TraceLabelCreds _ ev) -> do
+            , forgeTracer = mkTracer $ \(TraceLabelCreds _ ev) -> do
                 traceWith (nodeEventsForges nodeInfoEvents) ev
                 case ev of
                   TraceNodeIsLeader s -> atomically $ blockOnCrucial s
@@ -1739,8 +1739,8 @@ mkTestOutput vertexInfos = do
 -------------------------------------------------------------------------------}
 
 -- | Occurs throughout in positions that might be useful for debugging.
-nullDebugTracer :: (Applicative m, Show a) => Tracer m a
-nullDebugTracer = nullTracer `asTypeOf` showTracing debugTracer
+nullDebugTracer :: (Monad m, Show a) => Tracer m a
+nullDebugTracer = nullTracer `asTypeOf` (show >$< debugTracer)
 
 -- | Occurs throughout in positions that might be useful for debugging.
 nullDebugTracers ::
@@ -1775,7 +1775,8 @@ type TracingConstraints blk =
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
-  , Show (TxMeasure blk)
+  , Show (TxMeasurePhase1 blk)
+  , Show (TxMeasurePhase2 blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
   , HasNestedContent Header blk
   )

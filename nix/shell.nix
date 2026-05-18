@@ -1,4 +1,4 @@
-{ inputs, pkgs, hsPkgs }:
+{ inputs, pkgs, hsPkgs, withHls ? true }:
 
 let
   inherit (pkgs) lib;
@@ -32,7 +32,7 @@ hsPkgs.shellFor {
 
   # This is the place for tools that are required to be built with the same GHC
   # version as used in hsPkgs.
-  tools = {
+  tools = lib.optionalAttrs withHls {
     haskell-language-server = {
       src = inputs.hls;
       configureArgs = "--disable-benchmarks --disable-tests";
