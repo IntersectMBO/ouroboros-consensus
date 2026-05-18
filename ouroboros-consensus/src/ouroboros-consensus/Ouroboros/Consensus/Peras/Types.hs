@@ -152,7 +152,7 @@ newtype PerasVoteStake
   = PerasVoteStake
   { unPerasVoteStake :: Rational
   }
-  deriving newtype (Eq, Ord, Num, Fractional, NoThunks, Serialise)
+  deriving newtype (Eq, Ord, Num, Fractional, NoThunks, NFData, Serialise)
   deriving stock Generic
   deriving Show via Quiet PerasVoteStake
   deriving Semigroup via Sum Rational
@@ -187,7 +187,7 @@ newtype PerasVoterId
   = PerasVoterId
   { unPerasVoterId :: KeyHash StakePool
   }
-  deriving newtype (NoThunks, FromCBOR, ToCBOR)
+  deriving newtype (NoThunks, NFData, FromCBOR, ToCBOR)
   deriving stock (Eq, Ord, Generic)
   deriving Show via Quiet PerasVoterId
 

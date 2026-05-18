@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Peras.Vote.Mock
 
 import Cardano.Binary (decodeListLenOf, encodeListLen)
 import Codec.Serialise (Serialise (..))
+import Control.DeepSeq (NFData)
 import Data.Data (Proxy (..))
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -61,6 +62,7 @@ deriving instance StandardHash blk => Show (MockPerasVote blk)
 deriving instance StandardHash blk => Eq (MockPerasVote blk)
 deriving instance StandardHash blk => Ord (MockPerasVote blk)
 deriving instance StandardHash blk => NoThunks (MockPerasVote blk)
+deriving instance StandardHash blk => NFData (MockPerasVote blk)
 deriving instance Generic (MockPerasVote blk)
 
 instance IsPerasVote (MockPerasVote blk) blk where

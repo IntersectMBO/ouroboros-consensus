@@ -49,6 +49,7 @@ import GHC.Generics
 import GHC.Stack
 import qualified Generics.SOP as SOP
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Storage.VolatileDB
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Types (FileId)
@@ -392,7 +393,7 @@ generatorCmdImpl Model{..} =
       TestBody
         <$> arbitrary
         <*> arbitrary
-        <*> liftArbitrary (PerasRoundNo <$> arbitrary)
+        <*> liftArbitrary genPerasCert
     prevHash <-
       frequency
         [ (1, return GenesisHash)
@@ -406,6 +407,16 @@ generatorCmdImpl Model{..} =
     -- We don't care about chain length in the VolatileDB
     let clen = ChainLength (fromIntegral (unBlockNo no))
     return $ mkBlock canContainEBB body prevHash slot no clen ebb
+
+  genPerasCert :: Gen (PerasCert Block)
+  genPerasCert = do
+    mockCertRound <- PerasRoundNo <$> arbitrary
+    mockCertBlock <- blockPoint <$> genRandomBlock
+    pure $
+      MockPerasCert
+        { mockCertRound
+        , mockCertBlock
+        }
 
   genHash :: Gen (HeaderHash Block)
   genHash =

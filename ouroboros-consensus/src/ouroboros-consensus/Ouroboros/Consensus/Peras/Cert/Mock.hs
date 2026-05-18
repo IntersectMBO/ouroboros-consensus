@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Peras.Cert.Mock
 
 import Cardano.Binary (decodeListLenOf, encodeListLen)
 import Codec.Serialise (Serialise (..))
+import Control.DeepSeq (NFData)
 import Data.Data (Proxy (..))
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -53,6 +54,7 @@ deriving instance StandardHash blk => Show (MockPerasCert blk)
 deriving instance StandardHash blk => Eq (MockPerasCert blk)
 deriving instance StandardHash blk => Ord (MockPerasCert blk)
 deriving instance StandardHash blk => NoThunks (MockPerasCert blk)
+deriving instance StandardHash blk => NFData (MockPerasCert blk)
 deriving instance Generic (MockPerasCert blk)
 
 instance IsPerasCert (MockPerasCert blk) blk where
