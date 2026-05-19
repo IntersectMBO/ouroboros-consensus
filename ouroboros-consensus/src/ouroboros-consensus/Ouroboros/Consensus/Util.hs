@@ -100,6 +100,7 @@ module Ouroboros.Consensus.Util
     -- * Unsafe coercions or maps
   , coerceMapKeys
   , coerceSet
+  , fillJavier
   ) where
 
 import Cardano.Crypto.Hash
@@ -138,6 +139,10 @@ import Ouroboros.Consensus.Util.RedundantConstraints
 import Ouroboros.Network.Protocol.LocalStateQuery.Codec (Some (..))
 import Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 import Unsafe.Coerce
+
+{-# DEPRECATED fillJavier "Fill this" #-}
+fillJavier :: a
+fillJavier = undefined
 
 {-------------------------------------------------------------------------------
   Type-level utility

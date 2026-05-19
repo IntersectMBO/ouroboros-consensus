@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
@@ -108,7 +109,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
-import Ouroboros.Consensus.Ledger.Abstract (ValuesMK)
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
@@ -145,6 +146,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -403,7 +405,13 @@ pure []
 -- | Combination of 'runWith' and 'stdLowLevelRunArgsIO'
 run ::
   forall blk.
-  RunNode blk =>
+  ( RunNode blk
+  , StateRefHasState IO (Ticked LedgerState) blk
+  , StateRefHasState IO LedgerState blk
+  , NoThunks (StateRef IO (Ticked LedgerState) blk)
+  , NoThunks (StateRef IO ExtLedgerState blk)
+  , NoThunks (LedgerState blk)
+  ) =>
   RunNodeArgs IO RemoteAddress LocalAddress blk ->
   StdRunNodeArgs IO blk ->
   IO ()
@@ -471,6 +479,11 @@ runWith ::
   , NetworkIO m
   , NetworkAddr addrNTN
   , Show addrNTN
+  , StateRefHasState m (Ticked LedgerState) blk
+  , StateRefHasState m LedgerState blk
+  , NoThunks (StateRef m (Ticked LedgerState) blk)
+  , NoThunks (StateRef m ExtLedgerState blk)
+  , NoThunks (LedgerState blk)
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
   (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
@@ -837,11 +850,17 @@ stdWithCheckedDB pb tracer databasePath networkMagic body = do
 
 openChainDB ::
   forall m blk.
-  (RunNode blk, IOLike m) =>
+  ( RunNode blk
+  , IOLike m
+  , StateRefHasState m (Ticked LedgerState) blk
+  , StateRefHasState m LedgerState blk
+  , NoThunks (StateRef m ExtLedgerState blk)
+  , NoThunks (LedgerState blk)
+  ) =>
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger
-  ExtLedgerState blk ValuesMK ->
+  ExtLedgerState blk ->
   -- | Immutable FS, see 'NodeDatabasePaths'
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile FS, see 'NodeDatabasePaths'

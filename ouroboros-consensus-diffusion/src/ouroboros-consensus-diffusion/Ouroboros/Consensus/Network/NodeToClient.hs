@@ -60,6 +60,7 @@ import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import qualified Network.TypedProtocol.Stateful.Codec as Stateful
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -125,6 +126,8 @@ mkHandlers ::
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerQuery blk
   , ConfigSupportsNode blk
+  , StateRefHasState m (Ticked LedgerState) blk
+  , StateRefHasState m LedgerState blk
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   NodeKernel m addrNTN addrNTC blk ->
