@@ -129,22 +129,47 @@ instance
   SerialiseNodeToNode
 -------------------------------------------------------------------------------}
 
-instance
+-- | Shared implementation of 'estimateBlockSize' for all Shelley-based eras.
+estimateBlockSizeShelley ::
   ShelleyCompatible proto era =>
-  SerialiseNodeToNodeConstraints (ShelleyBlock proto era)
+  Header (ShelleyBlock proto era) ->
+  SizeInBytes
+estimateBlockSizeShelley hdr = overhead + hdrSize + bodySize
+ where
+  -- The maximum block size is 65536, the CBOR-in-CBOR tag for this block
+  -- is:
+  --
+  -- > D8 18          # tag(24)
+  -- >    1A 00010000 # bytes(65536)
+  --
+  -- Which is 7 bytes, enough for up to 4294967295 bytes.
+  overhead = 7 {- CBOR-in-CBOR -} + 1 {- encodeListLen -}
+  bodySize = fromIntegral . pHeaderBlockSize . shelleyHeaderRaw $ hdr
+  hdrSize = fromIntegral . pHeaderSize . shelleyHeaderRaw $ hdr
+
+instance ShelleyCompatible proto ShelleyEra => SerialiseNodeToNodeConstraints (ShelleyBlock proto ShelleyEra) where
+  estimateBlockSize = estimateBlockSizeShelley
+
+instance ShelleyCompatible proto AllegraEra => SerialiseNodeToNodeConstraints (ShelleyBlock proto AllegraEra) where
+  estimateBlockSize = estimateBlockSizeShelley
+
+instance ShelleyCompatible proto MaryEra => SerialiseNodeToNodeConstraints (ShelleyBlock proto MaryEra) where
+  estimateBlockSize = estimateBlockSizeShelley
+
+instance ShelleyCompatible proto AlonzoEra => SerialiseNodeToNodeConstraints (ShelleyBlock proto AlonzoEra) where
+  estimateBlockSize = estimateBlockSizeShelley
+
+instance ShelleyCompatible proto BabbageEra => SerialiseNodeToNodeConstraints (ShelleyBlock proto BabbageEra) where
+  estimateBlockSize = estimateBlockSizeShelley
+
+instance ShelleyCompatible proto ConwayEra => SerialiseNodeToNodeConstraints (ShelleyBlock proto ConwayEra) where
+  estimateBlockSize = estimateBlockSizeShelley
+
+instance
+  ShelleyCompatible proto DijkstraEra =>
+  SerialiseNodeToNodeConstraints (ShelleyBlock proto DijkstraEra)
   where
-  estimateBlockSize hdr = overhead + hdrSize + bodySize
-   where
-    -- The maximum block size is 65536, the CBOR-in-CBOR tag for this block
-    -- is:
-    --
-    -- > D8 18          # tag(24)
-    -- >    1A 00010000 # bytes(65536)
-    --
-    -- Which is 7 bytes, enough for up to 4294967295 bytes.
-    overhead = 7 {- CBOR-in-CBOR -} + 1 {- encodeListLen -}
-    bodySize = fromIntegral . pHeaderBlockSize . shelleyHeaderRaw $ hdr
-    hdrSize = fromIntegral . pHeaderSize . shelleyHeaderRaw $ hdr
+  estimateBlockSize = estimateBlockSizeShelley
 
 -- | CBOR-in-CBOR for the annotation. This also makes it compatible with the
 -- wrapped ('Serialised') variant.

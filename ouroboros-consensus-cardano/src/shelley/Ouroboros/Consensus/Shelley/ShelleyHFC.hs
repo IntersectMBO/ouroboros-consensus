@@ -164,21 +164,112 @@ instance
 -- includes an era wrapper. Each block should do this from the start to be
 -- prepared for future hard forks without having to do any bit twiddling.
 instance
-  ( ShelleyCompatible proto era
-  , LedgerSupportsProtocol (ShelleyBlock proto era)
-  , LedgerSupportsPeras (ShelleyBlock proto era)
-  , TxLimits (ShelleyBlock proto era)
+  ( ShelleyCompatible proto ShelleyEra
+  , LedgerSupportsProtocol (ShelleyBlock proto ShelleyEra)
+  , LedgerSupportsPeras (ShelleyBlock proto ShelleyEra)
+  , TxLimits (ShelleyBlock proto ShelleyEra)
   , Crypto (ProtoCrypto proto)
   ) =>
-  SerialiseHFC '[ShelleyBlock proto era]
+  SerialiseHFC '[ShelleyBlock proto ShelleyEra]
 
 instance
-  ( ShelleyCompatible proto era
-  , LedgerSupportsProtocol (ShelleyBlock proto era)
-  , TxLimits (ShelleyBlock proto era)
+  ( ShelleyCompatible proto AllegraEra
+  , LedgerSupportsProtocol (ShelleyBlock proto AllegraEra)
+  , LedgerSupportsPeras (ShelleyBlock proto AllegraEra)
+  , TxLimits (ShelleyBlock proto AllegraEra)
   , Crypto (ProtoCrypto proto)
   ) =>
-  SerialiseConstraintsHFC (ShelleyBlock proto era)
+  SerialiseHFC '[ShelleyBlock proto AllegraEra]
+instance
+  ( ShelleyCompatible proto MaryEra
+  , LedgerSupportsProtocol (ShelleyBlock proto MaryEra)
+  , LedgerSupportsPeras (ShelleyBlock proto MaryEra)
+  , TxLimits (ShelleyBlock proto MaryEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseHFC '[ShelleyBlock proto MaryEra]
+instance
+  ( ShelleyCompatible proto AlonzoEra
+  , LedgerSupportsProtocol (ShelleyBlock proto AlonzoEra)
+  , LedgerSupportsPeras (ShelleyBlock proto AlonzoEra)
+  , TxLimits (ShelleyBlock proto AlonzoEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseHFC '[ShelleyBlock proto AlonzoEra]
+instance
+  ( ShelleyCompatible proto BabbageEra
+  , LedgerSupportsProtocol (ShelleyBlock proto BabbageEra)
+  , LedgerSupportsPeras (ShelleyBlock proto BabbageEra)
+  , TxLimits (ShelleyBlock proto BabbageEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseHFC '[ShelleyBlock proto BabbageEra]
+instance
+  ( ShelleyCompatible proto ConwayEra
+  , LedgerSupportsProtocol (ShelleyBlock proto ConwayEra)
+  , LedgerSupportsPeras (ShelleyBlock proto ConwayEra)
+  , TxLimits (ShelleyBlock proto ConwayEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseHFC '[ShelleyBlock proto ConwayEra]
+instance
+  ( ShelleyCompatible proto DijkstraEra
+  , LedgerSupportsProtocol (ShelleyBlock proto DijkstraEra)
+  , LedgerSupportsPeras (ShelleyBlock proto DijkstraEra)
+  , TxLimits (ShelleyBlock proto DijkstraEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseHFC '[ShelleyBlock proto DijkstraEra]
+
+instance
+  ( ShelleyCompatible proto ShelleyEra
+  , LedgerSupportsProtocol (ShelleyBlock proto ShelleyEra)
+  , TxLimits (ShelleyBlock proto ShelleyEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto ShelleyEra)
+instance
+  ( ShelleyCompatible proto AllegraEra
+  , LedgerSupportsProtocol (ShelleyBlock proto AllegraEra)
+  , TxLimits (ShelleyBlock proto AllegraEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto AllegraEra)
+instance
+  ( ShelleyCompatible proto MaryEra
+  , LedgerSupportsProtocol (ShelleyBlock proto MaryEra)
+  , TxLimits (ShelleyBlock proto MaryEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto MaryEra)
+instance
+  ( ShelleyCompatible proto AlonzoEra
+  , LedgerSupportsProtocol (ShelleyBlock proto AlonzoEra)
+  , TxLimits (ShelleyBlock proto AlonzoEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto AlonzoEra)
+instance
+  ( ShelleyCompatible proto BabbageEra
+  , LedgerSupportsProtocol (ShelleyBlock proto BabbageEra)
+  , TxLimits (ShelleyBlock proto BabbageEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto BabbageEra)
+instance
+  ( ShelleyCompatible proto ConwayEra
+  , LedgerSupportsProtocol (ShelleyBlock proto ConwayEra)
+  , TxLimits (ShelleyBlock proto ConwayEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto ConwayEra)
+instance
+  ( ShelleyCompatible proto DijkstraEra
+  , LedgerSupportsProtocol (ShelleyBlock proto DijkstraEra)
+  , TxLimits (ShelleyBlock proto DijkstraEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto DijkstraEra)
 
 {-------------------------------------------------------------------------------
   Protocol type definition
