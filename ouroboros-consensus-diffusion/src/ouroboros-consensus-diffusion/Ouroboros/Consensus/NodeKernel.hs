@@ -49,7 +49,6 @@ import Control.Monad.Except
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Data (Typeable)
 import Data.Either (partitionEithers)

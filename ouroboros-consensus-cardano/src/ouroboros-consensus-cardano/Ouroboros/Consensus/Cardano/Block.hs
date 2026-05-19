@@ -1,5 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
@@ -7,6 +9,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Cardano.Block
   ( -- * Eras
@@ -209,6 +212,8 @@ module Ouroboros.Consensus.Cardano.Block
   , EraMismatch (..)
   ) where
 
+import Cardano.Protocol.TPraos.API (PraosCrypto)
+import Cardano.Slotting.Slot (WithOrigin (Origin))
 import Data.Kind
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
@@ -219,8 +224,10 @@ import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HeaderValidation
-  ( OtherHeaderEnvelopeError
+  ( HeaderState (..)
+  , OtherHeaderEnvelopeError
   , TipInfo
+  , headerStateChainDep
   )
 import Ouroboros.Consensus.Ledger.Abstract (LedgerError)
 import Ouroboros.Consensus.Ledger.Query
@@ -233,6 +240,8 @@ import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
+import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyCompatible)
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -1503,3 +1512,33 @@ pattern ChainDepStateDijkstra st <-
   , ChainDepStateConway
   , ChainDepStateDijkstra
   #-}
+
+-- | Leios EB-closure splice for Dijkstra-era CardanoBlocks.
+--
+-- A certifying Dijkstra block carries a 'Maybe LeiosCert' on its body
+-- and an empty tx list: the actual transactions to apply live in the
+-- EB's stored closure, addressable via the 'LeiosDbConnection' by the
+-- previously-announced EB on the Praos header chain (reachable through
+-- 'praosStateLeiosAnnouncement' on the chain-dep state).
+--
+-- Dispatches on 'BlockDijkstra' to the @ShelleyBlock (Praos c)
+-- DijkstraEra@ instance (in "Ouroboros.Consensus.Shelley.Ledger.Ledger")
+-- after projecting the per-era 'HeaderState' from the HFC chain-dep
+-- state via the 'ChainDepStateDijkstra' pattern synonym.
+instance
+  ( PraosCrypto c
+  , ShelleyCompatible (Praos c) DijkstraEra
+  ) =>
+  ResolveLeiosBlock (HardForkBlock (CardanoEras c))
+  where
+  resolveLeiosBlock db hdrSt (BlockDijkstra dijkstraBlk) =
+    case headerStateChainDep hdrSt of
+      ChainDepStateDijkstra praosSt ->
+        let dijkstraHdrSt =
+              HeaderState
+                { headerStateTip = Origin -- unused by the Dijkstra-era splice
+                , headerStateChainDep = praosSt
+                }
+         in BlockDijkstra <$> resolveLeiosBlock db dijkstraHdrSt dijkstraBlk
+      _ -> pure (BlockDijkstra dijkstraBlk)
+  resolveLeiosBlock _db _hdrSt blk = pure blk

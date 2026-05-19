@@ -47,10 +47,10 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientException (..)
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
   )
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Forker as Forker
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IOLike (Exception, fromException)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -176,7 +176,7 @@ runGenesisTest ::
   , Eq blk
   , Terse blk
   , Condense (NodeState blk)
-  , Forker.ResolveLeiosBlock blk
+  , ResolveLeiosBlock blk
   ) =>
   ProtocolInfoArgs blk ->
   SchedulerConfig ->
@@ -239,7 +239,7 @@ runConformanceTest ::
   , Eq blk
   , Terse blk
   , Condense (NodeState blk)
-  , Forker.ResolveLeiosBlock blk
+  , ResolveLeiosBlock blk
   ) =>
   ConformanceTest blk -> TestTree
 runConformanceTest conformanceTest =

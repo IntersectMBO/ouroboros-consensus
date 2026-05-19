@@ -31,6 +31,7 @@ import Data.Traversable (for)
 import Data.Tuple (Solo (..))
 import Data.Word
 import GHC.Generics
+import LeiosDemoDb (LeiosDbConnection, LeiosDbHandle (open))
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -72,6 +73,7 @@ mkInitDb ::
   , HasHardForkHistory blk
   , Backend m backend blk
   , IOLike m
+  , ResolveLeiosBlock blk
   ) =>
   Complete LedgerDbArgs m blk ->
   ResolveBlock m blk ->
@@ -102,6 +104,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
         prevApplied <- newTVarIO Set.empty
         lock <- RAWLock.new ()
         nextForkerKey <- newTVarIO (ForkerKey 0)
+        ldbLeiosDb <- open lgrLeiosDb
         let env =
               LedgerDBEnv
                 { ldbSeq = varDB
@@ -116,6 +119,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                 , ldbOpenHandlesLock = lock
                 , ldbGetVolatileSuffix = getVolatileSuffix
                 , ldbBackendResources = SomeResources res
+                , ldbLeiosDb
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -127,6 +131,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
     , lgrHasFS
     , lgrSnapshotPolicyArgs
     , lgrQueryBatchSize
+    , lgrLeiosDb
     } = args
 
   v2Tracer :: Tracer m LedgerDBV2Trace
@@ -142,6 +147,8 @@ implMkLedgerDb ::
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
   , ApplyBlock l blk
+  , ResolveLeiosBlock blk
+  , l ~ ExtLedgerState blk
   ) =>
   LedgerDBHandle m l blk ->
   SnapshotManager m m blk (StateRef m l) ->
@@ -283,6 +290,8 @@ implValidate ::
   , ApplyBlock l blk
   , StandardHash l
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
+  , l ~ ExtLedgerState blk
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
@@ -308,6 +317,7 @@ implValidate h ldbEnv tr cache rollbacks hdrs onSuccess =
       cache
       rollbacks
       hdrs
+      (ldbLeiosDb ldbEnv)
 
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
@@ -421,6 +431,8 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- in tests can release such resources. These are the resource keys for the
   -- LSM session and the resource key for the BlockIO interface.
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
+  , ldbLeiosDb :: !(LeiosDbConnection m)
+  -- ^ Connection to the Leios demo DB.
   }
   deriving Generic
 

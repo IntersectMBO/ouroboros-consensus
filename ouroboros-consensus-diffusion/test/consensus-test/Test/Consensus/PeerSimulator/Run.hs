@@ -51,10 +51,10 @@ import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
   )
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Forker as Forker
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (forkLinkedWatcher)
@@ -561,7 +561,7 @@ nodeLifecycle ::
   , CanUpgradeLedgerTables (LedgerState blk)
   , HasPointScheduleTestParams blk
   , Eq (Header blk)
-  , Forker.ResolveLeiosBlock blk
+  , ResolveLeiosBlock blk
   ) =>
   ProtocolInfoArgs blk ->
   SchedulerConfig ->
@@ -622,7 +622,7 @@ runPointSchedule ::
   , HasPointScheduleTestParams blk
   , Eq (Header blk)
   , Eq blk
-  , Forker.ResolveLeiosBlock blk
+  , ResolveLeiosBlock blk
   ) =>
   ProtocolInfoArgs blk ->
   SchedulerConfig ->

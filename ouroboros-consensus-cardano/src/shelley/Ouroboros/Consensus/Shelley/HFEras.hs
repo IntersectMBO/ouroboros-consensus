@@ -40,6 +40,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC ()
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 
 {-------------------------------------------------------------------------------
   Hard fork eras
@@ -105,3 +106,18 @@ instance
   ShelleyCompatible (TPraos c) DijkstraEra
 
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) DijkstraEra
+
+{-------------------------------------------------------------------------------
+  ResolveLeiosBlock
+
+  Explicit no-op instance per Shelley-based (proto, era) combination
+  in CardanoEras. The real Dijkstra splice (Praos + DijkstraEra)
+  lives in "Ouroboros.Consensus.Shelley.Ledger.Ledger".
+-------------------------------------------------------------------------------}
+
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) ShelleyEra)
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AllegraEra)
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) MaryEra)
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AlonzoEra)
+instance ResolveLeiosBlock (ShelleyBlock (Praos c) BabbageEra)
+instance ResolveLeiosBlock (ShelleyBlock (Praos c) ConwayEra)

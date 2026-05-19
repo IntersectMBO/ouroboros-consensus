@@ -455,15 +455,23 @@ instance Functor m => Isomorphic (BlockForging m) where
               )
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
               (inject' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \cfg bno sno tickedLgrSt txs isLeader ->
+      , forgeBlock = \fbArgs ->
           project' (Proxy @(I blk))
             <$> forgeBlock
-              (inject cfg)
-              bno
-              sno
-              (getFlipTickedLedgerState (inject (FlipTickedLedgerState tickedLgrSt)))
-              (inject' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
-              (inject' (Proxy @(WrapIsLeader blk)) isLeader)
+              ForgeBlockArgs
+                { fbConfig = inject (fbConfig fbArgs)
+                , fbCurrentBlockNo = fbCurrentBlockNo fbArgs
+                , fbCurrentSlotNo = fbCurrentSlotNo fbArgs
+                , fbCurrentTickedLedgerState =
+                    getFlipTickedLedgerState
+                      (inject (FlipTickedLedgerState (fbCurrentTickedLedgerState fbArgs)))
+                , fbRbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbRbTxs fbArgs
+                , fbEbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs fbArgs
+                , fbIsLeader = inject' (Proxy @(WrapIsLeader blk)) (fbIsLeader fbArgs)
+                , fbChainDepState = Nothing
+                , fbLeiosDb = fbLeiosDb fbArgs
+                , fbLeiosTracer = fbLeiosTracer fbArgs
+                }
       }
    where
     injTickedChainDepSt ::
@@ -501,15 +509,23 @@ instance Functor m => Isomorphic (BlockForging m) where
               (projTickedChainDepSt tickedChainDepSt)
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
               (project' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \cfg bno sno tickedLgrSt txs isLeader ->
+      , forgeBlock = \fbArgs ->
           inject' (Proxy @(I blk))
             <$> forgeBlock
-              (project cfg)
-              bno
-              sno
-              (getFlipTickedLedgerState (project (FlipTickedLedgerState tickedLgrSt)))
-              (project' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
-              (project' (Proxy @(WrapIsLeader blk)) isLeader)
+              ForgeBlockArgs
+                { fbConfig = project (fbConfig fbArgs)
+                , fbCurrentBlockNo = fbCurrentBlockNo fbArgs
+                , fbCurrentSlotNo = fbCurrentSlotNo fbArgs
+                , fbCurrentTickedLedgerState =
+                    getFlipTickedLedgerState
+                      (project (FlipTickedLedgerState (fbCurrentTickedLedgerState fbArgs)))
+                , fbRbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbRbTxs fbArgs
+                , fbEbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs fbArgs
+                , fbIsLeader = project' (Proxy @(WrapIsLeader blk)) (fbIsLeader fbArgs)
+                , fbChainDepState = Nothing
+                , fbLeiosDb = fbLeiosDb fbArgs
+                , fbLeiosTracer = fbLeiosTracer fbArgs
+                }
       }
    where
     projTickedChainDepSt ::

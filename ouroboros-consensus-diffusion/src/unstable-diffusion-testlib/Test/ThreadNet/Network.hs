@@ -130,7 +130,6 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Forker
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense
@@ -346,7 +345,7 @@ runThreadNetwork ::
   , TxGen blk
   , TracingConstraints blk
   , HasCallStack
-  , Ouroboros.Consensus.Storage.LedgerDB.Forker.ResolveLeiosBlock blk
+  , ResolveLeiosBlock blk
   ) =>
   Tracer m (TraceThreadNet blk) ->
   SystemTime m ->

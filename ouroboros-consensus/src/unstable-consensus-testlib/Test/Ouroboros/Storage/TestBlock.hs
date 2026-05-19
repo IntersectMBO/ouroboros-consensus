@@ -144,6 +144,9 @@ data TestBlock = TestBlock
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NFData, NoThunks, Serialise)
 
+-- | Default 'ResolveLeiosBlock' — storage TestBlock never carries Leios certs.
+instance ResolveLeiosBlock TestBlock
+
 -- | Hash of a 'TestHeader'
 newtype TestHeaderHash = TestHeaderHash Int
   deriving stock (Eq, Ord, Show, Generic)
@@ -771,6 +774,7 @@ mkTestConfig k ChunkSize{chunkCanContainEBB, numRegularBlocks} =
     , topLevelConfigCodec = TestBlockCodecConfig
     , topLevelConfigStorage = TestBlockStorageConfig
     , topLevelConfigCheckpoints = emptyCheckpointsMap
+    , topLevelConfigVotingKey = Nothing
     }
  where
   slotLength :: SlotLength

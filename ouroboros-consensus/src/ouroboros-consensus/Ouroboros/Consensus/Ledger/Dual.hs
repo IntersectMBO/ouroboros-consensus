@@ -134,6 +134,11 @@ instance
   (Typeable m, Typeable a) =>
   ShowProxy (DualBlock m a)
 
+-- | Default 'ResolveLeiosBlock' — dual blocks (testing) never carry Leios certs.
+instance
+  (Typeable m, Typeable a) =>
+  ResolveLeiosBlock (DualBlock m a)
+
 instance Condense m => Condense (DualBlock m a) where
   condense = condense . dualBlockMain
 
@@ -197,6 +202,7 @@ dualTopLevelConfigMain TopLevelConfig{..} =
     , topLevelConfigCodec = dualCodecConfigMain topLevelConfigCodec
     , topLevelConfigStorage = dualStorageConfigMain topLevelConfigStorage
     , topLevelConfigCheckpoints = castCheckpointsMap topLevelConfigCheckpoints
+    , topLevelConfigVotingKey = Nothing
     }
 
 {-------------------------------------------------------------------------------

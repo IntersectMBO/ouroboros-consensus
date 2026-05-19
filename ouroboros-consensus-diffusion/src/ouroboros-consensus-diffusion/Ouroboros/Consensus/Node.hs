@@ -151,7 +151,7 @@ import Ouroboros.Consensus.Storage.ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
-import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -160,7 +160,6 @@ import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import Ouroboros.Network.BlockFetch
   ( BlockFetchConfiguration (..)
   )
-import Ouroboros.Network.BlockFetch.ConsensusInterface (FetchMode (..), PraosFetchMode (..))
 import qualified Ouroboros.Network.Diffusion as Diffusion
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
 import Ouroboros.Network.Magic

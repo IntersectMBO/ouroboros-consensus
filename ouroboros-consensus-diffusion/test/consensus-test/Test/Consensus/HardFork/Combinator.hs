@@ -56,6 +56,7 @@ import Ouroboros.Consensus.Protocol.LeaderSchedule
   ( LeaderSchedule (..)
   , leaderScheduleFor
   )
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
@@ -324,6 +325,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
                     :* Nil
             }
       , topLevelConfigCheckpoints = emptyCheckpointsMap
+      , topLevelConfigVotingKey = Nothing
       }
 
   consensusConfigA :: CoreNodeId -> ConsensusConfig ProtocolA
@@ -432,6 +434,10 @@ instance HasHardForkTxOut '[BlockA, BlockB] where
 -------------------------------------------------------------------------------}
 
 type TestBlock = HardForkBlock '[BlockA, BlockB]
+
+instance ResolveLeiosBlock BlockA
+instance ResolveLeiosBlock BlockB
+instance ResolveLeiosBlock TestBlock
 
 instance CanHardFork '[BlockA, BlockB] where
   type HardForkTxMeasure '[BlockA, BlockB] = IgnoringOverflow ByteSize32

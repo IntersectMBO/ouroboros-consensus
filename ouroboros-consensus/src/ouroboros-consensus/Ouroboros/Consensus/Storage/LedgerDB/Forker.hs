@@ -45,6 +45,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , AnnLedgerError (..)
   , AnnLedgerError'
   , ResolveBlock
+  , ResolveLeiosBlock (..)
   , SuccessForkerAction (..)
   , ValidateArgs (..)
   , ValidateResult (..)
@@ -68,8 +69,10 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
+import LeiosDemoDb (LeiosDbConnection)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.HeaderValidation (HeaderState)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
@@ -301,6 +304,11 @@ data ValidateArgs m l blk = ValidateArgs
   -- ^ How many blocks to roll back before applying the blocks
   , hdrs :: NonEmpty (Header blk)
   -- ^ The headers we want to apply
+  , vaLeiosDb :: !(LeiosDbConnection m)
+  -- ^ Leios demo DB connection: 'applyBlock' calls 'resolveLeiosBlock'
+  -- with this connection before each ledger application, so that
+  -- Dijkstra blocks carrying a 'Maybe LeiosCert' can have the EB
+  -- closure spliced into the body.
   }
 
 validate ::
@@ -308,6 +316,8 @@ validate ::
   ( IOLike m
   , HasCallStack
   , ApplyBlock l blk
+  , ResolveLeiosBlock blk
+  , l ~ ExtLedgerState blk
   ) =>
   ComputeLedgerEvents ->
   ValidateArgs m l blk ->
@@ -317,6 +327,7 @@ validate evs args = do
   res <-
     rewrap
       <$> switch
+        vaLeiosDb
         withForkerAtFromTip
         evs
         validateConfig
@@ -339,6 +350,7 @@ validate evs args = do
     , numRollbacks
     , hdrs
     , onSuccess
+    , vaLeiosDb
     } = args
 
   rewrap ::
@@ -375,7 +387,8 @@ validate evs args = do
 -- | Switch to a fork by rolling back a number of blocks and then pushing the
 -- new blocks.
 switch ::
-  (ApplyBlock l blk, MonadSTM m) =>
+  (ApplyBlock l blk, MonadSTM m, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  LeiosDbConnection m ->
   (forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -387,12 +400,13 @@ switch ::
   ResolveBlock m blk ->
   SuccessForkerAction m l ->
   m (Either GetForkerError (Either (AnnLedgerError l blk) ()))
-switch withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSuccess = do
+switch leiosDb withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSuccess = do
   withForkerAtFromTip numRollbacks $ \fo -> do
     let start = PushStart . toRealPoint . NE.head $ newBlocks
         goal = PushGoal . toRealPoint . NE.last $ newBlocks
     ePush <-
       applyThenPushMany
+        leiosDb
         (trace . StartedPushingBlockToTheLedgerDb start goal)
         evs
         cfg
@@ -430,30 +444,39 @@ toRealPoint (ApplyRef rp) = rp
 -- | Apply blocks to the given forker
 applyBlock ::
   forall m l blk.
-  (ApplyBlock l blk, MonadSTM m) =>
+  ( ApplyBlock l blk
+  , MonadSTM m
+  , ResolveLeiosBlock blk
+  , l ~ ExtLedgerState blk
+  ) =>
+  LeiosDbConnection m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   Ap m l blk ->
   Forker m l ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError l blk) (l DiffMK))
-applyBlock evs cfg ap fo doResolveBlock = case ap of
-  ReapplyVal b ->
-    withValues b (return . Right . tickThenReapply evs cfg b)
-  ApplyVal b ->
+applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
+  ReapplyVal b -> do
+    hdrSt <- headerState <$> atomically (forkerGetLedgerState fo)
+    b' <- resolveLeiosBlock leiosDb hdrSt b
+    withValues b' (return . Right . tickThenReapply evs cfg b')
+  ApplyVal b -> do
+    hdrSt <- headerState <$> atomically (forkerGetLedgerState fo)
+    b' <- resolveLeiosBlock leiosDb hdrSt b
     withValues
-      b
+      b'
       ( \v ->
-          case runExcept $ tickThenApply evs cfg b v of
-            Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b) lerr))
+          case runExcept $ tickThenApply evs cfg b' v of
+            Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b') lerr))
             Right st -> pure (Right st)
       )
   ReapplyRef r -> do
     b <- doResolveBlock r
-    applyBlock evs cfg (ReapplyVal b) fo doResolveBlock
+    applyBlock leiosDb evs cfg (ReapplyVal b) fo doResolveBlock
   ApplyRef r -> do
     b <- doResolveBlock r
-    applyBlock evs cfg (ApplyVal b) fo doResolveBlock
+    applyBlock leiosDb evs cfg (ApplyVal b) fo doResolveBlock
  where
   withValues ::
     blk ->
@@ -467,22 +490,24 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker.
 applyThenPush ::
-  (ApplyBlock l blk, MonadSTM m) =>
+  (ApplyBlock l blk, MonadSTM m, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  LeiosDbConnection m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   Ap m l blk ->
   Forker m l ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError l blk) ())
-applyThenPush evs cfg ap fo doResolve = do
-  eLerr <- applyBlock evs cfg ap fo doResolve
+applyThenPush leiosDb evs cfg ap fo doResolve = do
+  eLerr <- applyBlock leiosDb evs cfg ap fo doResolve
   case eLerr of
     Left err -> pure (Left err)
     Right st -> Right <$> forkerPush fo st
 
 -- | Apply and push a sequence of blocks (oldest first).
 applyThenPushMany ::
-  (ApplyBlock l blk, MonadSTM m) =>
+  (ApplyBlock l blk, MonadSTM m, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  LeiosDbConnection m ->
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -490,12 +515,12 @@ applyThenPushMany ::
   Forker m l ->
   ResolveBlock m blk ->
   m (Either (AnnLedgerError l blk) ())
-applyThenPushMany trace evs cfg aps fo doResolveBlock = pushAndTrace aps
+applyThenPushMany leiosDb trace evs cfg aps fo doResolveBlock = pushAndTrace aps
  where
   pushAndTrace [] = pure $ Right ()
   pushAndTrace (ap : aps') = do
     trace $ Pushing . toRealPoint $ ap
-    res <- applyThenPush evs cfg ap fo doResolveBlock
+    res <- applyThenPush leiosDb evs cfg ap fo doResolveBlock
     case res of
       Left err -> pure (Left err)
       Right () -> pushAndTrace aps'
@@ -515,6 +540,19 @@ applyThenPushMany trace evs cfg aps fo doResolveBlock = pushAndTrace aps
 -- corruption must have happened and the 'ChainDB' should trigger
 -- validation mode.
 type ResolveBlock m blk = RealPoint blk -> m blk
+
+-- | Resolve a block before it is applied to the ledger.
+--
+-- In Leios, a Dijkstra-era block may carry only a 'LeiosCert' on its body
+-- in place of the regular tx list: the actual transactions to apply live
+-- in the EB's stored closure ('LeiosDbConnection'). 'resolveLeiosBlock'
+-- splices the EB closure back into the block before validation. For
+-- block types that do not carry such certificates, the default 'return
+-- blk' is correct.
+class ResolveLeiosBlock blk where
+  resolveLeiosBlock ::
+    Monad m => LeiosDbConnection m -> HeaderState blk -> blk -> m blk
+  resolveLeiosBlock _ _ blk = return blk
 
 {-------------------------------------------------------------------------------
   Validation

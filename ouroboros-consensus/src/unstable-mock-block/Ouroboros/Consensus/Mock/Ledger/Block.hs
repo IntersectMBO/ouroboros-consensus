@@ -134,6 +134,11 @@ data SimpleBlock' c ext ext' = SimpleBlock
   }
   deriving (Generic, Show, Eq)
 
+-- | Default 'ResolveLeiosBlock' — mock blocks never carry Leios certs.
+instance
+  (Typeable c, Typeable ext, Typeable ext') =>
+  ResolveLeiosBlock (SimpleBlock' c ext ext')
+
 instance
   (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext, Serialise ext') =>
   Serialise (SimpleBlock' c ext ext')

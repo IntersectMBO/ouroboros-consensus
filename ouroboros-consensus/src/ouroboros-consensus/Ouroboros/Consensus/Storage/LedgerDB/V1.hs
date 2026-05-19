@@ -29,6 +29,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics (Generic)
+import LeiosDemoDb (LeiosDbConnection, LeiosDbHandle (open))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -77,6 +78,7 @@ mkInitDb ::
   , IOLike m
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
+  , ResolveLeiosBlock blk
   ) =>
   Complete LedgerDbArgs m blk ->
   V1.LedgerDbBackendArgs m (ExtLedgerState blk) ->
@@ -121,6 +123,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
           (,) <$> newTVarIO db <*> newTVarIO Set.empty
         flushLock <- mkLedgerDBLock
         nextForkerKey <- newTVarIO (ForkerKey 0)
+        ldbLeiosDb <- open lgrLeiosDb
         let env =
               LedgerDBEnv
                 { ldbChangelog = varDB
@@ -136,6 +139,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbResolveBlock = getBlock
                 , ldbGetVolatileSuffix = getVolatileSuffix
+                , ldbLeiosDb
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h snapManager
@@ -151,6 +155,7 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix =
     , lgrConfig
     , lgrGenesis
     , lgrQueryBatchSize
+    , lgrLeiosDb
     } = args
 
   lgrHasFS' = SnapshotsFS lgrHasFS
@@ -165,6 +170,7 @@ implMkLedgerDb ::
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   , ApplyBlock l blk
+  , ResolveLeiosBlock blk
   , l ~ ExtLedgerState blk
   , HasHardForkHistory blk
   ) =>
@@ -262,6 +268,8 @@ implValidate ::
   , HasCallStack
   , StandardHash l
   , ApplyBlock l blk
+  , ResolveLeiosBlock blk
+  , l ~ ExtLedgerState blk
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
@@ -287,6 +295,7 @@ implValidate h ldbEnv tr cache rollbacks hdrs onSuccess =
       cache
       rollbacks
       hdrs
+      (ldbLeiosDb ldbEnv)
 
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
@@ -551,6 +560,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock :: !(ResolveBlock m blk)
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
+  , ldbLeiosDb :: !(LeiosDbConnection m)
   }
   deriving Generic
 

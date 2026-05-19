@@ -319,6 +319,9 @@ isStrictDescendentOf b1 b2 = b1 `isDescendentOf` b2 && b1 /= b2
 
 instance ShowProxy TestBlock
 
+-- | Default 'ResolveLeiosBlock' — test blocks never carry Leios certificates.
+instance Typeable ptype => ResolveLeiosBlock (TestBlockWith ptype)
+
 newtype instance Header (TestBlockWith ptype)
   = TestHeader {testHeader :: TestBlockWith ptype}
   deriving stock (Eq, Show)
@@ -720,6 +723,7 @@ singleNodeTestConfigWith codecConfig storageConfig k genesisWindow =
     , topLevelConfigCodec = codecConfig
     , topLevelConfigStorage = storageConfig
     , topLevelConfigCheckpoints = emptyCheckpointsMap
+    , topLevelConfigVotingKey = Nothing
     }
  where
   slotLength :: SlotLength

@@ -49,7 +49,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
   )
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Forker
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -143,7 +143,7 @@ mkChainDb ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables (LedgerState blk)
-  , Ouroboros.Consensus.Storage.LedgerDB.Forker.ResolveLeiosBlock blk
+  , ResolveLeiosBlock blk
   ) =>
   LiveResources blk m ->
   m (ChainDB m blk, m (WithOrigin SlotNo))
@@ -197,7 +197,7 @@ restoreNode ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables (LedgerState blk)
-  , Ouroboros.Consensus.Storage.LedgerDB.Forker.ResolveLeiosBlock blk
+  , ResolveLeiosBlock blk
   ) =>
   LiveResources blk m ->
   LiveIntervalResult blk ->
@@ -228,7 +228,7 @@ lifecycleStart ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables (LedgerState blk)
-  , Ouroboros.Consensus.Storage.LedgerDB.Forker.ResolveLeiosBlock blk
+  , ResolveLeiosBlock blk
   ) =>
   (LiveInterval blk m -> m ()) ->
   LiveResources blk m ->
