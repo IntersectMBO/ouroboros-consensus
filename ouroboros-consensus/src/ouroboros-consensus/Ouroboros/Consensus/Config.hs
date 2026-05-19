@@ -9,6 +9,7 @@
 module Ouroboros.Consensus.Config
   ( -- * The top-level node configuration
     TopLevelConfig (..)
+  , VotingKey
   , castTopLevelConfig
   , mkTopLevelConfig
 
@@ -32,6 +33,7 @@ module Ouroboros.Consensus.Config
   , module Ouroboros.Consensus.Config.SecurityParam
   ) where
 
+import Data.ByteString (ByteString)
 import Data.Coerce
 import Data.Map.Strict (Map)
 import GHC.Generics (Generic)
@@ -53,8 +55,17 @@ data TopLevelConfig blk = TopLevelConfig
   , topLevelConfigCodec :: !(CodecConfig blk)
   , topLevelConfigStorage :: !(StorageConfig blk)
   , topLevelConfigCheckpoints :: !(CheckpointsMap blk)
+  , topLevelConfigVotingKey :: !(Maybe VotingKey)
+  -- ^ Optional Leios voting key. When 'Nothing', the
+  -- 'NodeKernel.leiosVoting' background thread is disabled on this
+  -- node. Surfaced here (rather than on 'NodeKernelArgs') so the
+  -- key can be threaded from the CLI through the standard
+  -- protocol-info pipeline.
   }
   deriving Generic
+
+-- | Raw bytes of a Leios voting key, sourced from the node's CLI / config.
+type VotingKey = ByteString
 
 instance
   ( ConsensusProtocol (BlockProtocol blk)
@@ -98,7 +109,7 @@ mkTopLevelConfig ::
   CheckpointsMap blk ->
   TopLevelConfig blk
 mkTopLevelConfig prtclCfg ledgerCfg blockCfg codecCfg storageCfg checkpointsMap =
-  TopLevelConfig prtclCfg ledgerCfg blockCfg codecCfg storageCfg checkpointsMap
+  TopLevelConfig prtclCfg ledgerCfg blockCfg codecCfg storageCfg checkpointsMap Nothing
 
 configConsensus :: TopLevelConfig blk -> ConsensusConfig (BlockProtocol blk)
 configConsensus = topLevelConfigProtocol
@@ -139,6 +150,7 @@ castTopLevelConfig TopLevelConfig{..} =
     , topLevelConfigCodec = coerce topLevelConfigCodec
     , topLevelConfigStorage = coerce topLevelConfigStorage
     , topLevelConfigCheckpoints = coerce topLevelConfigCheckpoints
+    , topLevelConfigVotingKey = topLevelConfigVotingKey
     }
 
 castCheckpointsMap ::

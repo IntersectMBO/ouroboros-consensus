@@ -462,33 +462,30 @@ instance TxGen (CardanoBlock StandardCrypto) where
     TxGenExtra (CardanoBlock StandardCrypto) ->
     LedgerState (CardanoBlock StandardCrypto) ValuesMK ->
     Gen [GenTx (CardanoBlock StandardCrypto)]
-  testGenTxs coreNodeId _numCores slotNo _topCfg RunThreadNetArgs{..} (LedgerStateConway st) =
-    let
-      pparams = getPParams st
-      utxos = getUTxOs st
-     in
-      return $
-        Debug.trace (show ("Node", coreNodeId, "current slot", slotNo)) $
-          -- Interleave transactions produced by each generator and take `rtnaTxsPerSlot` of them
-          take (fromIntegral rtnaTxsPerSlot) . interleave $
-            do
-              txg <- tnTxGenerators rtnaThreadNet
-              let txs = GenTxConway . mkShelleyTx <$> handleTxGenerator coreNodeId pparams utxos txg
-              return txs
-  testGenTxs coreNodeId _numCores slotNo _topCfg RunThreadNetArgs{..} (LedgerStateDijkstra st) =
-    let
-      pparams = getPParams st
-      utxos = getUTxOs st
-     in
-      return $
-        Debug.trace (show ("Node", coreNodeId, "current slot", slotNo)) $
-          take (fromIntegral rtnaTxsPerSlot) . interleave $
-            do
-              txg <- tnTxGenerators rtnaThreadNet
-              let txs = GenTxDijkstra . mkShelleyTx <$> handleTxGenerator coreNodeId pparams utxos txg
-              return txs
-  testGenTxs _coreNodeId _numCores _slotNo _topCfg _txGenExtra _st =
-    error "not in conway/dijkstra"
+  testGenTxs coreNodeId _numCores slotNo _topCfg RunThreadNetArgs{..} ls = case ls of
+    LedgerStateConway st -> genFor GenTxConway st
+    LedgerStateDijkstra st -> genFor GenTxDijkstra st
+    _ -> error "not in conway/dijkstra"
+   where
+    genFor ::
+      forall era proto.
+      SL.ShelleyBasedEra era =>
+      (GenTx (ShelleyBlock proto era) -> GenTx (CardanoBlock StandardCrypto)) ->
+      LedgerState (ShelleyBlock proto era) ValuesMK ->
+      Gen [GenTx (CardanoBlock StandardCrypto)]
+    genFor wrap st =
+      let
+        pparams = getPParams st
+        utxos = getUTxOs st
+       in
+        return $
+          Debug.trace (show ("Node", coreNodeId, "current slot", slotNo)) $
+            -- Interleave transactions produced by each generator and take `rtnaTxsPerSlot` of them
+            take (fromIntegral rtnaTxsPerSlot) . interleave $
+              do
+                txg <- tnTxGenerators rtnaThreadNet
+                let txs = wrap . mkShelleyTx <$> handleTxGenerator coreNodeId pparams utxos txg
+                return txs
 
 handleTxGenerator ::
   SL.ShelleyBasedEra era =>

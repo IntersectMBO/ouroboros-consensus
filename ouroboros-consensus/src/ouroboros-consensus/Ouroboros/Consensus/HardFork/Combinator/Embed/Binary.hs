@@ -97,6 +97,7 @@ protocolInfoBinary
                     PerEraStorageConfig $
                       (storageConfig1 :* storageConfig2 :* Nil)
               , topLevelConfigCheckpoints = emptyCheckpointsMap
+              , topLevelConfigVotingKey = Nothing
               }
         , pInfoInitLedger =
             ExtLedgerState

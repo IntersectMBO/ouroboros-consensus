@@ -99,7 +99,6 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (eitherToMaybe)
 import Ouroboros.Consensus.Util.IndexedMemPack
@@ -511,8 +510,7 @@ instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
   HasCanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
   where
-  newtype CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
-    = ShelleyHFCTxIn
+  newtype CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2) = ShelleyHFCTxIn
     { getShelleyHFCTxIn :: BigEndianTxIn
     }
     deriving stock (Show, Eq, Ord)
