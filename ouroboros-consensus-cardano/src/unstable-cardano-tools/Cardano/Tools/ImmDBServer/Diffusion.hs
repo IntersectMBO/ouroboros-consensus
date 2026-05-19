@@ -1,17 +1,36 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Cardano.Tools.ImmDBServer.Diffusion (run) where
+module Cardano.Tools.ImmDBServer.Diffusion
+  ( LeiosSchedule (..)
+  , run
+  ) where
 
 import qualified Cardano.Network.NodeToNode as N2N
-import Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer)
+import qualified Cardano.Tools.ImmDBServer.Json as Json
+import qualified Cardano.Tools.ImmDBServer.MiniProtocols as MP
+import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.ResourceRegistry
 import Control.Tracer
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Lazy as BL
 import Data.Functor.Contravariant ((>$<))
+import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import Data.Void (Void)
+import Data.Word (Word32, Word64)
+import GHC.Generics (Generic)
+import qualified LeiosDemoDb
+import qualified LeiosDemoLogic as LeiosLogic
+import qualified LeiosDemoTypes as Leios
 import qualified Network.Mux as Mux
 import Network.Socket (SockAddr (..))
 import Ouroboros.Consensus.Block
@@ -37,6 +56,8 @@ import qualified Ouroboros.Network.Protocol.Handshake as Handshake
 import qualified Ouroboros.Network.Server.Simple as Server
 import qualified Ouroboros.Network.Snocket as Snocket
 import Ouroboros.Network.Socket (SomeResponderApplication (..), configureSocket)
+import qualified System.Directory as Dir
+import System.Exit (die)
 import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (MountPoint))
 import System.FS.IO (ioHasFS)
@@ -45,12 +66,15 @@ import System.FS.IO (ioHasFS)
 -- this context.
 serve ::
   SockAddr ->
-  N2N.Versions
-    N2N.NodeToNodeVersion
-    N2N.NodeToNodeVersionData
-    (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode SockAddr BL.ByteString IO Void ()) ->
+  ( Tracer IO Json.LogEvent ->
+    N2N.Versions
+      N2N.NodeToNodeVersion
+      N2N.NodeToNodeVersionData
+      (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode SockAddr BL.ByteString IO Void ())
+  ) ->
   IO Void
-serve sockAddr application = withIOManager \iocp ->
+serve sockAddr application = withIOManager \iocp -> do
+  ultimateTracer <- Json.mkUltimateTracer
   Server.with
     (Snocket.socketSnocket iocp)
     (show >$< stdoutTracer)
@@ -72,7 +96,7 @@ serve sockAddr application = withIOManager \iocp ->
       , haQueryVersion = Handshake.queryVersion
       , haTimeLimits = Handshake.timeLimitsHandshake
       }
-    (SomeResponderApplication <$> application)
+    (SomeResponderApplication <$> application ultimateTracer)
     (\_ serverAsync -> wait serverAsync)
 
 run ::
@@ -88,18 +112,44 @@ run ::
   FilePath ->
   SockAddr ->
   TopLevelConfig blk ->
+  (Double -> IO DiffTime) ->
+  FilePath ->
+  LeiosSchedule ->
   IO Void
-run immDBDir sockAddr cfg = withRegistry \registry ->
+run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry \registry -> do
+  let mkLeiosNotifyContext registry' = do
+        -- each LeiosNotify server calls this when it initializes
+        leiosMailbox <- MVar.newEmptyMVar
+        let leiosNotifyContext = MP.MkLeiosNotifyContext{MP.leiosMailbox}
+        _threadId <-
+          forkLinkedThread
+            registry'
+            "LeiosScheduler"
+            (leiosScheduler getSlotDelay leiosNotifyContext leiosSchedule)
+        pure leiosNotifyContext
+  let mkLeiosFetchContext = do
+        -- each LeiosFetch server calls this when it initializes
+        Dir.doesFileExist leiosDbFile >>= \case
+          False -> die $ "The Leios database must already exist: " <> show leiosDbFile
+          True -> pure ()
+        leiosDb <- LeiosDemoDb.newLeiosDBSQLite leiosDbFile
+        fmap LeiosLogic.MkSomeLeiosFetchContext $
+          LeiosLogic.newLeiosFetchContext
+            leiosDb
   ImmutableDB.withDB
     (ImmutableDB.openDB (immDBArgs registry))
     \immDB ->
-      serve sockAddr $
-        immDBServer
+      serve sockAddr $ \jsonTracer ->
+        MP.immDBServer
           codecCfg
           encodeRemoteAddress
           decodeRemoteAddress
           immDB
           networkMagic
+          (getSlotDelay . fromIntegral . unSlotNo)
+          mkLeiosNotifyContext
+          mkLeiosFetchContext
+          jsonTracer
  where
   immDBArgs registry =
     ImmutableDB.defaultArgs
@@ -113,3 +163,35 @@ run immDBDir sockAddr cfg = withRegistry \registry ->
   codecCfg = configCodec cfg
   storageCfg = configStorage cfg
   networkMagic = getNetworkMagic . configBlock $ cfg
+
+-----
+
+-- | A JSON-encoded list of @(slotDbl, (ebSlot, ebHashHex, mbEbBytesSize))@
+-- entries; the immdb-server delivers each entry at its scheduled slot via the
+-- LeiosNotify mini-protocol.
+data LeiosSchedule = MkLeiosSchedule [(Double, (Word64, T.Text, Maybe Word32))]
+  deriving Generic
+
+instance Aeson.FromJSON LeiosSchedule
+
+leiosScheduler ::
+  (Double -> IO DiffTime) ->
+  MP.LeiosNotifyContext IO ->
+  LeiosSchedule ->
+  IO ()
+leiosScheduler getSlotDelay leiosContext =
+  \(MkLeiosSchedule x) -> do
+    y <-
+      traverse (traverse cnv . reverse) $
+        Map.fromListWith (++) [(k, [v]) | (k, v) <- x]
+    flip mapM_ (Map.toAscList y) $ \(slotDbl, msgs) -> do
+      getSlotDelay slotDbl >>= threadDelay
+      mapM_ (MVar.putMVar (MP.leiosMailbox leiosContext)) msgs
+ where
+  cnv (ebSlot, ebHashText, !mbEbBytesSize) = do
+    ebHash <-
+      case BS16.decode (T.encodeUtf8 ebHashText) of
+        Left err -> die $ "bad hash in Leios schedule! " ++ T.unpack ebHashText ++ " " ++ err
+        Right z -> pure z
+    let !rp = Leios.MkLeiosPoint (SlotNo ebSlot) (Leios.MkEbHash ebHash)
+    pure (rp, mbEbBytesSize)
