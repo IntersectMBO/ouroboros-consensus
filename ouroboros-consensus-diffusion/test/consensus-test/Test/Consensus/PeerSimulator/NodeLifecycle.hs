@@ -20,6 +20,7 @@ import Data.Functor (void)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable (Typeable)
+import qualified LeiosDemoDb as LeiosDb
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
@@ -48,6 +49,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
   )
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -141,6 +143,7 @@ mkChainDb ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables (LedgerState blk)
+  , Ouroboros.Consensus.Storage.LedgerDB.Forker.ResolveLeiosBlock blk
   ) =>
   LiveResources blk m ->
   m (ChainDB m blk, m (WithOrigin SlotNo))
@@ -152,18 +155,18 @@ mkChainDb resources = do
     void $ swapTMVar (nodeDBsGsm lrCdb) MockFS.empty
     void $ swapTMVar (nodeDBsLgr lrCdb) MockFS.empty
   chainDbArgs <- do
-    let args =
-          updateTracer
-            (Tracer (traceWith lrTracer . TraceChainDBEvent))
-            ( fromMinimalChainDbArgs
-                MinimalChainDbArgs
-                  { mcdbTopLevelConfig = lrConfig
-                  , mcdbChunkInfo = lrChunkInfo
-                  , mcdbInitLedger = lrInitLedger
-                  , mcdbRegistry = lrRegistry
-                  , mcdbNodeDBs = lrCdb
-                  }
-            )
+    mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
+    let args0 =
+          fromMinimalChainDbArgs
+            MinimalChainDbArgs
+              { mcdbTopLevelConfig = lrConfig
+              , mcdbChunkInfo = lrChunkInfo
+              , mcdbInitLedger = lrInitLedger
+              , mcdbRegistry = lrRegistry
+              , mcdbNodeDBs = lrCdb
+              , mcdbLeiosDb
+              }
+    let args = updateTracer (Tracer (traceWith lrTracer . TraceChainDBEvent)) args0
     pure $
       args
         { ChainDB.cdbsArgs =
@@ -194,6 +197,7 @@ restoreNode ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables (LedgerState blk)
+  , Ouroboros.Consensus.Storage.LedgerDB.Forker.ResolveLeiosBlock blk
   ) =>
   LiveResources blk m ->
   LiveIntervalResult blk ->
@@ -224,6 +228,7 @@ lifecycleStart ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables (LedgerState blk)
+  , Ouroboros.Consensus.Storage.LedgerDB.Forker.ResolveLeiosBlock blk
   ) =>
   (LiveInterval blk m -> m ()) ->
   LiveResources blk m ->

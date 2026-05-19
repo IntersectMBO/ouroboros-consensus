@@ -106,6 +106,7 @@ import Data.Void (Void)
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import qualified Generics.SOP as SOP
+import qualified LeiosDemoDb as LeiosDb
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -137,6 +138,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( unsafeChunkNoToEpochNo
   )
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Forker
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
@@ -369,6 +371,7 @@ type TestConstraints blk =
   , LedgerTablesAreTrivial (LedgerState blk)
   , LedgerSupportsLedgerDB blk
   , ImmutableEraParams blk
+  , Ouroboros.Consensus.Storage.LedgerDB.Forker.ResolveLeiosBlock blk
   )
 
 deriving instance
@@ -1961,15 +1964,15 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
     varNextId <- uncheckedNewTVarM 0
     nodeDBs <- emptyNodeDBs
     varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
-    let args =
-          mkArgs
-            testCfg
-            chunkInfo
-            (testInitExtLedger `withLedgerTables` emptyLedgerTables)
-            threadRegistry
-            nodeDBs
-            tracer
-            (loe $> varLoEFragment)
+    args <-
+      mkArgs
+        testCfg
+        chunkInfo
+        (testInitExtLedger `withLedgerTables` emptyLedgerTables)
+        threadRegistry
+        nodeDBs
+        tracer
+        (loe $> varLoEFragment)
 
     (hist, model, res, trace) <- bracket
       (open args >>= newTVarIO)
@@ -2135,8 +2138,9 @@ mkArgs ::
   NodeDBs (StrictTMVar m MockFS) ->
   CT.Tracer m (TraceEvent Blk) ->
   LoE (StrictTVar m (AnchoredFragment (HeaderWithTime Blk))) ->
-  ChainDbArgs Identity m Blk
-mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment =
+  m (ChainDbArgs Identity m Blk)
+mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment = do
+  mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
   let args =
         fromMinimalChainDbArgs
           MinimalChainDbArgs
@@ -2145,23 +2149,25 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment =
             , mcdbInitLedger = initLedger
             , mcdbRegistry = registry
             , mcdbNodeDBs = nodeDBs
+            , mcdbLeiosDb
             }
-   in ChainDB.updateTracer tracer $
-        args
-          { cdbsArgs =
-              (cdbsArgs args)
-                { ChainDB.cdbsBlocksToAddSize = 2
-                , ChainDB.cdbsLoE = traverse (atomically . readTVar) varLoEFragment
-                }
-          , cdbImmDbArgs =
-              (cdbImmDbArgs args)
-                { ImmutableDB.immCheckIntegrity = testBlockIsValid
-                }
-          , cdbVolDbArgs =
-              (cdbVolDbArgs args)
-                { VolatileDB.volCheckIntegrity = testBlockIsValid
-                }
-          }
+  pure $
+    ChainDB.updateTracer tracer $
+      args
+        { cdbsArgs =
+            (cdbsArgs args)
+              { ChainDB.cdbsBlocksToAddSize = 2
+              , ChainDB.cdbsLoE = traverse (atomically . readTVar) varLoEFragment
+              }
+        , cdbImmDbArgs =
+            (cdbImmDbArgs args)
+              { ImmutableDB.immCheckIntegrity = testBlockIsValid
+              }
+        , cdbVolDbArgs =
+            (cdbVolDbArgs args)
+              { VolatileDB.volCheckIntegrity = testBlockIsValid
+              }
+        }
 
 tests :: TestTree
 tests =

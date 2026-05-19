@@ -138,6 +138,7 @@ instance
           , Praos.hbBodyHash = SL.bhash bhBody
           , Praos.hbOCert = SL.bheaderOCert bhBody
           , Praos.hbProtVer = SL.bprotver bhBody
+          , Praos.hbLeiosEbAnnouncement = SNothing
           }
       hSig = coerce bhSig
 
@@ -233,6 +234,7 @@ instance
       <*> arbitrary
       <*> pure (LedgerTables EmptyMK)
       <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]
+      <*> arbitrary
 
 instance
   (Arbitrary (InstantStake era), CanMock proto era) =>
@@ -245,6 +247,7 @@ instance
       <*> arbitrary
       <*> (LedgerTables . ValuesMK <$> arbitrary)
       <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]
+      <*> arbitrary
 
 deriving newtype instance Arbitrary BigEndianTxIn
 

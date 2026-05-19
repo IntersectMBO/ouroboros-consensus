@@ -21,6 +21,7 @@ import Control.Exception (SomeException)
 import Control.Tracer (Tracer, nullTracer, showTracing)
 import Data.Text (Text)
 import Data.Time (UTCTime)
+import LeiosDemoTypes (TraceLeiosKernel, TraceLeiosPeer)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Forecast (OutsideForecastRange)
@@ -90,6 +91,8 @@ data Tracers' remotePeer localPeer blk f = Tracers
       f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
   , dbfTracer :: f (CSJumping.TraceEventDbf remotePeer)
   , kesAgentTracer :: f KESAgentClientTrace
+  , leiosKernelTracer :: f TraceLeiosKernel
+  , leiosPeerTracer :: f (TraceLabelPeer remotePeer TraceLeiosPeer)
   }
 
 instance
@@ -121,6 +124,8 @@ instance
       , csjTracer = f csjTracer
       , dbfTracer = f dbfTracer
       , kesAgentTracer = f kesAgentTracer
+      , leiosKernelTracer = f leiosKernelTracer
+      , leiosPeerTracer = f leiosPeerTracer
       }
    where
     f ::
@@ -160,6 +165,8 @@ nullTracers =
     , kesAgentTracer = nullTracer
     , txLogicTracer = nullTracer
     , txCountersTracer = nullTracer
+    , leiosKernelTracer = nullTracer
+    , leiosPeerTracer = nullTracer
     }
 
 showTracers ::
@@ -202,6 +209,8 @@ showTracers tr =
     , csjTracer = showTracing tr
     , dbfTracer = showTracing tr
     , kesAgentTracer = showTracing tr
+    , leiosKernelTracer = showTracing tr
+    , leiosPeerTracer = showTracing tr
     }
 
 {-------------------------------------------------------------------------------

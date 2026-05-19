@@ -109,6 +109,7 @@ import Data.Maybe (fromMaybe, isNothing)
 import Data.Set (Set)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
+import LeiosDemoDb (LeiosDbHandle)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
@@ -141,6 +142,7 @@ import Ouroboros.Consensus.Node.RethrowPolicy
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import Ouroboros.Consensus.NodeKernel
+import qualified Ouroboros.Consensus.NodeKernel as NodeKernel
 import Ouroboros.Consensus.Storage.ChainDB
   ( ChainDB
   , ChainDbArgs
@@ -149,6 +151,7 @@ import Ouroboros.Consensus.Storage.ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -157,6 +160,7 @@ import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import Ouroboros.Network.BlockFetch
   ( BlockFetchConfiguration (..)
   )
+import Ouroboros.Network.BlockFetch.ConsensusInterface (FetchMode (..), PraosFetchMode (..))
 import qualified Ouroboros.Network.Diffusion as Diffusion
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
 import Ouroboros.Network.Magic
@@ -249,6 +253,8 @@ data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs
   -- See the networking specs' section on tx-submission
   -- https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf.
   , rnTxSubmissionInitDelay :: TxSubmissionInitDelay
+  , rnLeiosDb :: LeiosDbHandle m
+  -- ^ Caller-supplied Leios demo DB factory.
   }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -407,7 +413,7 @@ pure []
 -- | Combination of 'runWith' and 'stdLowLevelRunArgsIO'
 run ::
   forall blk.
-  RunNode blk =>
+  (RunNode blk, ResolveLeiosBlock blk) =>
   RunNodeArgs IO RemoteAddress LocalAddress blk ->
   StdRunNodeArgs IO blk ->
   IO ()
@@ -475,6 +481,7 @@ runWith ::
   , NetworkIO m
   , NetworkAddr addrNTN
   , Show addrNTN
+  , ResolveLeiosBlock blk
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
   (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
@@ -534,6 +541,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               llrnMkImmutableHasFS
               llrnMkVolatileHasFS
               llrnLdbFlavorArgs
+              rnLeiosDb
               llrnChainDbArgsDefaults
               ( setLoEinChainDbArgs
                   . maybeValidateAll
@@ -596,6 +604,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   DiffusionPipeliningOn
                   rnMempoolTimeoutConfig
                   rnTxSubmissionInitDelay
+                  rnLeiosDb
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
             churnModeVar <- StrictSTM.newTVarIO ChurnModeNormal
@@ -610,7 +619,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                           , lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger nodeKernel (const True)
                           , lpExtraAPI =
                               Cardano.LedgerPeersConsensusInterface
-                                { Cardano.readFetchMode = getFetchMode nodeKernel
+                                { Cardano.readFetchMode = NodeKernel.getFetchMode nodeKernel
                                 , Cardano.getLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState nodeKernel
                                 , Cardano.updateOutboundConnectionsState =
                                     let varOcs = getOutboundConnectionsState nodeKernel
@@ -672,6 +681,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       ByteString
       ByteString
       ByteString
+      ByteString
+      ByteString
       NodeToNodeInitiatorResult
       ()
   mkNodeToNodeApps nodeKernelArgs nodeKernel peerMetrics encAddrNTN decAddrNTN version =
@@ -708,6 +719,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       NTN.Apps
         m
         addrNTN
+        ByteString
+        ByteString
         ByteString
         ByteString
         ByteString
@@ -831,7 +844,10 @@ stdWithCheckedDB pb tracer databasePath networkMagic body = do
 
 openChainDB ::
   forall m blk.
-  (RunNode blk, IOLike m) =>
+  ( RunNode blk
+  , IOLike m
+  , ResolveLeiosBlock blk
+  ) =>
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger
@@ -841,12 +857,14 @@ openChainDB ::
   -- | Volatile FS, see 'NodeDatabasePaths'
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
   LedgerDbBackendArgs m blk ->
+  -- | Leios demo DB handle
+  LeiosDbHandle m ->
   -- | A set of default arguments (possibly modified from 'defaultArgs')
   Incomplete ChainDbArgs m blk ->
   -- | Customise the 'ChainDbArgs'
   (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk) ->
   m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry cfg initLedger fsImm fsVol flavorArgs defArgs customiseArgs =
+openChainDB registry cfg initLedger fsImm fsVol flavorArgs leiosDb defArgs customiseArgs =
   let args =
         customiseArgs $
           ChainDB.completeChainDbArgs
@@ -858,6 +876,7 @@ openChainDB registry cfg initLedger fsImm fsVol flavorArgs defArgs customiseArgs
             fsImm
             fsVol
             flavorArgs
+            leiosDb
             defArgs
    in (,args) <$> ChainDB.openDB args
 
@@ -885,6 +904,7 @@ mkNodeKernelArgs ::
   DiffusionPipeliningSupport ->
   Maybe Mempool.MempoolTimeoutConfig ->
   TxSubmissionInitDelay ->
+  LeiosDbHandle m ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -907,7 +927,8 @@ mkNodeKernelArgs
   genesisArgs
   getDiffusionPipeliningSupport
   mempoolTimeoutConfig
-  txSubmissionInitDelay =
+  txSubmissionInitDelay
+  leiosDB =
     do
       let (kaRng, rng') = splitGen rng
           (psRng, txRng) = splitGen rng'
@@ -943,6 +964,7 @@ mkNodeKernelArgs
           , genesisArgs
           , getDiffusionPipeliningSupport
           , txSubmissionInitDelay
+          , leiosDB
           }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'

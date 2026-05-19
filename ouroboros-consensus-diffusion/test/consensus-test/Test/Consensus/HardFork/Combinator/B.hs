@@ -301,9 +301,15 @@ blockForgingB =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \cfg bno slot st txs proof ->
+    , forgeBlock = \ForgeBlockArgs{..} ->
         return $
-          forgeBlockB cfg bno slot st (fmap txForgetValidated txs) proof
+          forgeBlockB
+            fbConfig
+            fbCurrentBlockNo
+            fbCurrentSlotNo
+            fbCurrentTickedLedgerState
+            (fmap txForgetValidated fbRbTxs)
+            fbIsLeader
     , finalize = return ()
     }
 

@@ -53,6 +53,7 @@ import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
   )
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Forker as Forker
 import Ouroboros.Consensus.Util.Condense (Condense, CondenseList)
 import Ouroboros.Network.Util.ShowProxy (ShowProxy)
 import Test.Consensus.Genesis.Setup
@@ -198,6 +199,7 @@ toTestTree ::
   , Eq blk
   , Terse blk
   , Condense (NodeState blk)
+  , Forker.ResolveLeiosBlock blk
   ) =>
   TestSuite blk key -> [TestTree]
 toTestTree (TestSuite m) =

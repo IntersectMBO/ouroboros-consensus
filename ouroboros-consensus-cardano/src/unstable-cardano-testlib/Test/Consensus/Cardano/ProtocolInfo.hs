@@ -104,6 +104,7 @@ data Era
   | Alonzo
   | Babbage
   | Conway
+  | Dijkstra
   deriving (Show, Eq, Ord, Enum)
 
 protocolVersionZero :: SL.ProtVer
@@ -142,6 +143,10 @@ hardForkInto Babbage =
 hardForkInto Conway =
   (hardForkInto Babbage)
     { triggerHardForkConway = CardanoTriggerHardForkAtEpoch 0
+    }
+hardForkInto Dijkstra =
+  (hardForkInto Conway)
+    { triggerHardForkDijkstra = CardanoTriggerHardForkAtEpoch 0
     }
 
 {-------------------------------------------------------------------------------

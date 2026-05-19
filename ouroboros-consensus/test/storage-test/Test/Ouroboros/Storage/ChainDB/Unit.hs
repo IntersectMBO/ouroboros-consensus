@@ -32,6 +32,7 @@ import Control.Monad.State (MonadState, StateT, evalStateT, get, put)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry (closeRegistry, unsafeNewRegistry)
 import Data.Maybe (isJust)
+import qualified LeiosDemoDb as LeiosDb
 import Ouroboros.Consensus.Block.RealPoint
   ( RealPoint (..)
   , blockRealPoint
@@ -601,7 +602,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
     varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
     nodeDbs <- emptyNodeDBs
     (tracer, getTrace) <- recordingTracerTVar
-    let args = chainDbArgs threadRegistry nodeDbs tracer
+    args <- chainDbArgs threadRegistry nodeDbs tracer
     varDB <- open args >>= newTVarIO
     let env =
           ChainDBEnv
@@ -619,7 +620,8 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
     closeRegistry (registry env)
     closeRegistry (cdbsRegistry . cdbsArgs $ args env)
 
-  chainDbArgs registry nodeDbs tracer =
+  chainDbArgs registry nodeDbs tracer = do
+    mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
     let args =
           fromMinimalChainDbArgs
             MinimalChainDbArgs
@@ -628,8 +630,9 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
               , mcdbInitLedger = extLedgerState
               , mcdbRegistry = registry
               , mcdbNodeDBs = nodeDbs
+              , mcdbLeiosDb
               }
-     in updateTracer tracer args
+    pure $ updateTracer tracer args
 
 -- | Run a 'Cmd' against the real ChainDB via 'SM.run'.
 runCmd ::

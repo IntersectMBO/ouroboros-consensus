@@ -70,6 +70,7 @@ import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (ExceededSizeLimit, ExceededTimeLimit)
   , runPipelinedPeerWithLimits
   )
+import Ouroboros.Network.Mux (Reception (..))
 import Ouroboros.Network.Protocol.BlockFetch.Codec
   ( byteLimitsBlockFetch
   , codecBlockFetchId
@@ -208,7 +209,7 @@ runBlockFetchClient tracer peerId blockFetchTimeouts StateViewTracers{svtPeerSim
         traceWith svtPeerSimulatorResultsTracer $
           PeerSimulatorResult peerId $
             SomeBlockFetchClientResult $
-              Right msgRes
+              Right (fmap received msgRes)
       Left exn -> do
         traceWith svtPeerSimulatorResultsTracer $
           PeerSimulatorResult peerId $
@@ -225,7 +226,7 @@ runBlockFetchClient tracer peerId blockFetchTimeouts StateViewTracers{svtPeerSim
   ntnVersion = maxBound
 
 blockFetchNoSizeLimits :: ProtocolSizeLimits (BlockFetch block point) bytes
-blockFetchNoSizeLimits = byteLimitsBlockFetch (const 0)
+blockFetchNoSizeLimits = byteLimitsBlockFetch
 
 -- | Same as 'timeLimitsChainSync' for BlockFetch. NOTE: There exists a
 -- @timeLimitsBlockFetch@ in 'Ouroboros.Network.Protocol.BlockFetch.Codec' but
@@ -267,7 +268,7 @@ runBlockFetchServer _tracer peerId StateViewTracers{svtPeerSimulatorResultsTrace
       traceWith svtPeerSimulatorResultsTracer $
         PeerSimulatorResult peerId $
           SomeBlockFetchServerResult $
-            Right msgRes
+            Right (fmap received msgRes)
     Left exn -> do
       traceWith svtPeerSimulatorResultsTracer $
         PeerSimulatorResult peerId $

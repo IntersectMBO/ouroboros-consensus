@@ -224,6 +224,7 @@ fromShelleyLedgerExamples
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = LedgerTables EmptyMK
         , shelleyLedgerLatestPerasCertRound = SNothing
+        , shelleyCumulativeTxBytes = 0
         }
     chainDepState = TPraosState (NotOrigin 1) pleChainDepState
     extLedgerState =
@@ -285,6 +286,7 @@ fromShelleyLedgerExamplesPraos
           , hbBodyHash = SL.bhash bhBody
           , hbOCert = SL.bheaderOCert bhBody
           , hbProtVer = SL.bprotver bhBody
+          , hbLeiosEbAnnouncement = SNothing
           }
       hSig = coerce bhSig
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
@@ -361,6 +363,7 @@ fromShelleyLedgerExamplesPraos
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = emptyLedgerTables
         , shelleyLedgerLatestPerasCertRound = SNothing
+        , shelleyCumulativeTxBytes = 0
         }
     chainDepState =
       translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto)) $

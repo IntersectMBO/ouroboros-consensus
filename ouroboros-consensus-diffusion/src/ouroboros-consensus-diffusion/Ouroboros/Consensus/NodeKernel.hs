@@ -38,7 +38,9 @@ import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import Cardano.Network.PeerSelection.LocalRootPeers
   ( OutboundConnectionsState (..)
   )
+import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
+import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (force)
 import Control.Monad
@@ -47,6 +49,8 @@ import Control.Monad.Except
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.Data (Typeable)
 import Data.Either (partitionEithers)
 import Data.Foldable (traverse_)
@@ -55,11 +59,29 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import qualified Data.Measure
 import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Text as Text
 import Data.Void (Void)
+import LeiosDemoDb
+  ( LeiosDbConnection
+  , LeiosDbHandle (subscribeEbNotifications)
+  , LeiosEbNotification (..)
+  )
+import qualified LeiosDemoDb as LeiosDb
+import qualified LeiosDemoLogic as Leios
+import LeiosDemoTypes
+  ( LeiosOutstanding
+  , LeiosPeerVars
+  , LeiosVote (..)
+  , TraceLeiosKernel (..)
+  , VoterId (MkVoterId)
+  )
+import qualified LeiosDemoTypes as Leios
+import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.BlockchainTime
@@ -207,6 +229,25 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ Shared state of all `TxSubmission` clients.
   , getTxMempoolSem :: TxMempoolSem m
   -- ^ A semaphore used by tx-submission for submitting `tx`s to the mempool.
+  , -- The following fields contain the information in the Leios model exe's
+    -- @LeiosFetchDynamicEnv@ and @LeiosFetchState@ data structures.
+    --
+    -- See 'LeiosPeerVars' for the write patterns.
+    getLeiosDB :: LeiosDbHandle m
+  -- ^ Factory for opening per-thread connections to the Leios demo DB
+  -- and subscribing to EB-notification events.
+  , getLeiosVoteState :: LeiosVoteState m
+  -- ^ Aggregated vote state across all peers. Empty in S4; populated
+  -- by the voting thread in S5.
+  , getLeiosPeersVars :: MVar.MVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
+  -- ^ Per-peer offerings + outgoing request queues. Written to by
+  -- the LeiosNotify clients and read by the fetch logic.
+  , getLeiosOutstanding :: MVar.MVar m (LeiosOutstanding (ConnectionId addrNTN))
+  -- ^ Outstanding EB / TX work — written by the fetch logic, the
+  -- LeiosNotify / LeiosFetch clients, and the LeiosCopier.
+  , getLeiosReady :: MVar.MVar m ()
+  -- ^ Filled by anyone who makes a change that might unblock a new
+  -- fetch decision; the fetch logic 'MVar.takeMVar's before it runs.
   }
 
 -- | Arguments required when initializing a node
@@ -239,6 +280,11 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
       StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
   , genesisArgs :: GenesisNodeKernelArgs m blk
   , getDiffusionPipeliningSupport :: DiffusionPipeliningSupport
+  , leiosDB :: LeiosDbHandle m
+  -- ^ Factory for opening per-thread Leios DB connections. Each consumer
+  -- (forge loop, leios fetch logic, LeiosNotify / LeiosFetch handlers)
+  -- opens its own connection from this handle. 'LeiosDbConnection' is
+  -- documented as not thread-safe, so connections must not be shared.
   }
 
 initNodeKernel ::
@@ -268,6 +314,7 @@ initNodeKernel
     , genesisArgs
     , getDiffusionPipeliningSupport
     , miniProtocolParameters
+    , leiosDB
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -398,6 +445,87 @@ initNodeKernel
           txChannelsVar
           sharedTxStateVar
 
+    -- Leios fetch-logic state.
+    leiosVoteState <- newLeiosVoteState
+    getLeiosPeersVars <- MVar.newMVar Map.empty
+    getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
+    getLeiosReady <- MVar.newEmptyMVar
+
+    -- The Leios fetch logic: 0.5s loop that takes 'getLeiosReady', reads
+    -- the peers' offerings, runs 'leiosFetchLogicIteration' to decide what
+    -- to fetch next from each peer, and pushes the resulting requests onto
+    -- each peer's outgoing queue. Wakers (LeiosNotify clients receiving
+    -- announcements, LeiosFetch clients on response, etc.) 'tryPutMVar' on
+    -- 'getLeiosReady' to schedule another iteration.
+    void $
+      forkLinkedThread registry "NodeKernel.leiosFetchLogic" $ do
+        leiosConn <- snd <$> allocate registry (const (LeiosDb.open leiosDB)) LeiosDb.close
+        forever $ do
+          let leiosTr = leiosKernelTracer tracers
+          traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: wait for leios ready"
+          () <- MVar.takeMVar getLeiosReady
+          iterationStart <- getMonotonicTime
+          leiosPeersVars <- MVar.readMVar getLeiosPeersVars
+          offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
+          newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+            filteredOutstanding <- Leios.filterMissingWork leiosConn outstanding
+            traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: filtered"
+            let (!outstanding', decisions) =
+                  Leios.leiosFetchLogicIteration
+                    Leios.demoLeiosFetchStaticEnv
+                    offerings
+                    filteredOutstanding
+            pure (outstanding', decisions)
+          traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: decided"
+          let newRequests =
+                Leios.packRequests Leios.demoLeiosFetchStaticEnv newDecisions
+          traceWith leiosTr $
+            MkTraceLeiosKernel $
+              "leiosFetchLogic: "
+                ++ show (sum (fmap length newRequests))
+                ++ " new reqs"
+          (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
+            atomically $
+              StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
+          iterationEnd <- getMonotonicTime
+          let loopInterval = 0.5 :: SI.DiffTime
+              duration = iterationEnd `diffTime` iterationStart
+          traceWith leiosTr $
+            MkTraceLeiosKernel $
+              "leiosFetchLogic: duration " ++ show duration
+          SI.threadDelay $ loopInterval - duration
+
+    -- The Leios voting thread: when this node has a voting key, subscribe
+    -- to local "EB closure acquired" notifications and emit a vote for
+    -- each acquired EB (which the LeiosNotify server then publishes to
+    -- peers). 'Nothing' disables voting on this node.
+    void $
+      forkLinkedThread registry "NodeKernel.leiosVoting" $ do
+        let votingTr = leiosKernelTracer tracers
+        case topLevelConfigVotingKey cfg of
+          Nothing ->
+            traceWith votingTr $
+              MkTraceLeiosKernel
+                "NodeKernel.leiosVoting: disabled because no topLevelConfigVotingKey"
+          Just votingKey -> do
+            let LeiosVoteState{addVote} = leiosVoteState
+                me = MkVoterId . fromIntegral $ BS.head votingKey
+            chan <- subscribeEbNotifications leiosDB
+            let getNext f =
+                  atomically (readTChan chan) >>= \case
+                    AcquiredEb{} -> pure ()
+                    AcquiredEbTxs point -> f point
+            forever $ getNext $ \point -> do
+              let vote =
+                    MkLeiosVote
+                      { point
+                      , voterId = me
+                      , voteSignature = True
+                      }
+              addVote vote
+              traceWith votingTr Leios.TraceLeiosVoted{vote}
+              traceWith votingTr Leios.TraceLeiosVoteAcquired{vote}
+
     return
       NodeKernel
         { getChainDB = chainDB
@@ -418,6 +546,11 @@ initNodeKernel
         , getTxChannelsVar = txChannelsVar
         , getSharedTxStateVar = sharedTxStateVar
         , getTxMempoolSem = txMempoolSem
+        , getLeiosDB = leiosDB
+        , getLeiosVoteState = leiosVoteState
+        , getLeiosPeersVars = getLeiosPeersVars
+        , getLeiosOutstanding = getLeiosOutstanding
+        , getLeiosReady = getLeiosReady
         }
    where
     blockForgingController ::
@@ -463,6 +596,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , varGsmState :: StrictTVar m GSM.GsmState
   , mempool :: Mempool m blk
   , peerSharingRegistry :: PeerSharingRegistry addrNTN m
+  , leiosDB :: LeiosDbHandle m
   }
 
 initInternalState ::
@@ -489,6 +623,7 @@ initInternalState
     , getUseBootstrapPeers
     , getDiffusionPipeliningSupport
     , genesisArgs
+    , leiosDB
     } = do
     varGsmState <- do
       let GsmNodeKernelArgs{..} = gsmArgs
@@ -549,22 +684,29 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   forkLinkedWatcherAllocate
     registry
     label
-    blockForgingMLabel
-    finalize
-    ( \bf -> knownSlotWatcher btime $
-        \currentSlot -> withEarlyExit_ $ go bf currentSlot
+    allocateForging
+    finalizeForging
+    ( \(bf, leiosConn) -> knownSlotWatcher btime $
+        \currentSlot -> withEarlyExit_ $ go bf leiosConn currentSlot
     )
  where
   label :: String
   label = "NodeKernel.blockForging"
 
-  blockForgingMLabel = do
+  -- 'LeiosDbConnection' is not thread-safe, so we open one per
+  -- forge-credentials thread (and close it when the thread exits).
+  allocateForging = do
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
-    pure bf
+    leiosConn <- LeiosDb.open leiosDB
+    pure (bf, leiosConn)
 
-  go :: BlockForging m blk -> SlotNo -> WithEarlyExit m ()
-  go blockForging currentSlot = do
+  finalizeForging (bf, leiosConn) = do
+    LeiosDb.close leiosConn
+    finalize bf
+
+  go :: BlockForging m blk -> LeiosDbConnection m -> SlotNo -> WithEarlyExit m ()
+  go blockForging leiosConn currentSlot = do
     trace blockForging $ TraceStartLeadershipCheck currentSlot
 
     -- Figure out which block to connect to
@@ -591,7 +733,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
     -- is no longer on our chain. When that happens, we simply give up on the
     -- chance to produce a block.
-    (txs, txssz, proof, snapSize, tickedLedgerState, forgingOnTopOf) <-
+    (rbTxs, ebTxs, txssz, proof, snapSize, tickedLedgerState, forgingOnTopOf, untickedChainDepState) <-
       ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
         Left _ -> do
           trace blockForging $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -697,25 +839,33 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                 tickedLedgerState
                 readTables
 
-          let (txs, txssz) =
-                snapshotTake mempoolSnapshot $
-                  blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+          let rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+              mayEbCap = ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
+              (rbTxs, txssz) = snapshotTake mempoolSnapshot rbCap
+              ebTxs = case mayEbCap of
+                Nothing -> []
+                Just ebCap ->
+                  let (allTxs, _) = snapshotTake mempoolSnapshot (Data.Measure.plus rbCap ebCap)
+                   in drop (length rbTxs) allTxs
           -- NB respect the capacity of the ledger state we're extending,
           -- which is /not/ 'snapshotLedgerState'
 
           -- force the mempool's computation before the tracer event
-          _ <- evaluate (length txs)
+          _ <- evaluate (length rbTxs)
+          _ <- evaluate (length ebTxs)
           _ <- evaluate mempoolHash
 
           trace blockForging $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
 
           pure
-            ( txs
+            ( rbTxs
+            , ebTxs
             , txssz
             , proof
             , snapshotMempoolSize mempoolSnapshot
             , forgetLedgerTables tickedLedgerState
             , ledgerTipPoint (ledgerState unticked)
+            , headerStateChainDep (headerState unticked)
             )
 
     -- Actually produce the block
@@ -723,12 +873,18 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
       lift $
         Block.forgeBlock
           blockForging
-          cfg
-          bcBlockNo
-          currentSlot
-          tickedLedgerState
-          txs
-          proof
+          Block.ForgeBlockArgs
+            { Block.fbConfig = cfg
+            , Block.fbCurrentBlockNo = bcBlockNo
+            , Block.fbCurrentSlotNo = currentSlot
+            , Block.fbCurrentTickedLedgerState = tickedLedgerState
+            , Block.fbRbTxs = rbTxs
+            , Block.fbEbTxs = ebTxs
+            , Block.fbIsLeader = proof
+            , Block.fbChainDepState = Just untickedChainDepState
+            , Block.fbLeiosDb = leiosConn
+            , Block.fbLeiosTracer = leiosKernelTracer tracers
+            }
 
     trace blockForging $
       TraceForgedBlock
@@ -773,7 +929,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             -- means that we'll throw away some good transactions in the
             -- process.
             whenJust
-              (NE.nonEmpty (map (txId . txForgetValidated) txs))
+              (NE.nonEmpty (map (txId . txForgetValidated) (rbTxs ++ ebTxs)))
               (lift . removeTxsEvenIfValid mempool)
         exitEarly
 
@@ -787,7 +943,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
       -- assert this here because the ability to extract transactions from a
       -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
       -- e.g., @DualBlock@.
-      trace blockForging $ TraceAdoptedBlock currentSlot newBlock txs
+      trace blockForging $ TraceAdoptedBlock currentSlot newBlock rbTxs
 
   trace :: BlockForging m blk -> TraceForgeEvent blk -> WithEarlyExit m ()
   trace blockForging =

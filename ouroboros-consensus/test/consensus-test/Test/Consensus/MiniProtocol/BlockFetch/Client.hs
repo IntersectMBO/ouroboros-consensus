@@ -37,6 +37,7 @@ import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Traversable (for)
+import qualified LeiosDemoDb as LeiosDb
 import Network.TypedProtocol.Channel (createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage (..))
 import Network.TypedProtocol.Core (PeerRole (..))
@@ -280,6 +281,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
   mkChainDbView registry tracer = do
     chainDbArgs <- do
       nodeDBs <- emptyNodeDBs
+      mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
       let args =
             fromMinimalChainDbArgs $
               MinimalChainDbArgs
@@ -288,6 +290,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                 , mcdbInitLedger = testInitExtLedger
                 , mcdbRegistry = registry
                 , mcdbNodeDBs = nodeDBs
+                , mcdbLeiosDb
                 }
       pure $ ChainDB.updateTracer cdbTracer args
     (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-

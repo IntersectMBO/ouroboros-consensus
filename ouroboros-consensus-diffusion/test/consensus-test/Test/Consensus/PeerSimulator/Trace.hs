@@ -584,8 +584,8 @@ traceChainSyncSendRecvEventTestBlockWith ::
   TraceSendRecv (ChainSync (Header blk) (Point blk) (Tip blk)) ->
   m ()
 traceChainSyncSendRecvEventTestBlockWith pid ptp tracer = \case
-  TraceSendMsg amsg -> traceMsg "send" amsg
-  TraceRecvMsg amsg -> traceMsg "recv" amsg
+  TraceSendMsg _tm amsg -> traceMsg "send" amsg
+  TraceRecvMsg _tm amsg -> traceMsg "recv" amsg
  where
   -- This can be very verbose and is only useful in rare situations, so it
   -- does nothing by default.

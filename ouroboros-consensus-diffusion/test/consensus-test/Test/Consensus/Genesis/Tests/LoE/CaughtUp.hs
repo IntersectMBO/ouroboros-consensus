@@ -40,6 +40,7 @@ import Control.ResourceRegistry
 import Control.Tracer (nullTracer)
 import Data.Function (on)
 import Data.Functor (void)
+import LeiosDemoDb (newLeiosDBInMemory)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
@@ -253,6 +254,7 @@ openChainDB registry getLoEFragment = do
             { ChainDB.cdbsArgs =
                 (ChainDB.cdbsArgs a){ChainDB.cdbsLoE = getLoEFragment}
             }
+    mcdbLeiosDb <- newLeiosDBInMemory
     pure $
       configureLoE $
         fromMinimalChainDbArgs
@@ -262,6 +264,7 @@ openChainDB registry getLoEFragment = do
             , mcdbRegistry = registry
             , mcdbTopLevelConfig
             , mcdbNodeDBs
+            , mcdbLeiosDb
             }
   (_, (chainDB, ChainDB.Impl.Internal{ChainDB.Impl.intAddBlockRunner})) <-
     allocate

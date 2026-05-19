@@ -23,6 +23,9 @@ import qualified Test.Consensus.Peras.WeightSnapshot (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
 import qualified Test.Consensus.Util.Pred (tests)
 import qualified Test.Consensus.Util.Versioned (tests)
+import qualified Test.LeiosDemoDb (tests)
+import qualified Test.LeiosDemoTypes (tests)
+import qualified Test.LeiosVoteState (tests)
 import Test.Tasty
 import Test.Util.TestEnv
   ( defaultMainWithTestEnv
@@ -72,4 +75,10 @@ tests =
         ]
     , Test.Consensus.Ledger.Tables.Diff.tests
     , Test.Consensus.Ledger.Tables.DiffSeq.tests
+    , testGroup
+        "Leios"
+        [ Test.LeiosDemoTypes.tests
+        , Test.LeiosDemoDb.tests
+        , Test.LeiosVoteState.tests
+        ]
     ]

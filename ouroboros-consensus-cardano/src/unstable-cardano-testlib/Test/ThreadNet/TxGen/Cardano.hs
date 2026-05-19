@@ -17,11 +17,14 @@ import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Signing as Byron
 import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.Ledger.Address as SL (BootstrapAddress (..))
+import Cardano.Ledger.Api (DijkstraEra, PParams, Tx, TxOut)
+import Cardano.Ledger.Api.Tx.In (TxIn)
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Keys (DSIGN)
 import qualified Cardano.Ledger.Keys.Bootstrap as SL (makeBootstrapWitness)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
+import Cardano.Ledger.Shelley.LedgerState (curPParamsEpochStateL, nesEsL)
 import Cardano.Ledger.Val ((<->))
 import Cardano.Protocol.Crypto (VRF)
 import Control.Exception (assert)
@@ -38,6 +41,7 @@ import Ouroboros.Consensus.Cardano
 import Ouroboros.Consensus.Cardano.Block
   ( CardanoEras
   , GenTx (..)
+  , LedgerState (LedgerStateDijkstra)
   , ShelleyEra
   )
 import Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints)
@@ -53,22 +57,29 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.Ledger.Basics
   ( ComputeLedgerEvents (..)
   , LedgerConfig
-  , LedgerState
   , TickedLedgerState
   , applyChainTick
   )
-import Ouroboros.Consensus.Ledger.Tables (ValuesMK)
+import Ouroboros.Consensus.Ledger.Tables (ValuesMK, getLedgerTables)
+import Ouroboros.Consensus.Ledger.Tables.MapKind
+  ( getValuesMK
+  )
 import Ouroboros.Consensus.Ledger.Tables.Utils
   ( applyDiffs
   , forgetLedgerTables
   )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, mkShelleyTx)
+import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( tickedShelleyLedgerState
+  ( BigEndianTxIn (..)
+  , shelleyLedgerState
+  , shelleyLedgerTables
+  , tickedShelleyLedgerState
   )
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (mkShelleyTx)
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL (mkWitnessVKey)
+import qualified Test.QuickCheck as QC
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import Test.ThreadNet.TxGen
 
@@ -76,14 +87,35 @@ data CardanoTxGenExtra c = CardanoTxGenExtra
   { ctgeByronGenesisKeys :: GeneratedSecrets
   , ctgeNetworkMagic :: Byron.NetworkMagic
   , ctgeShelleyCoreNodes :: [Shelley.CoreNode c]
+  , ctgeExtraTxGen ::
+      SlotNo ->
+      Shelley.CoreNode c ->
+      PParams DijkstraEra ->
+      Map TxIn (TxOut DijkstraEra) ->
+      QC.Gen [Tx SL.TopTx DijkstraEra]
+  -- ^ Pluggable Dijkstra-era tx generator used by the Leios threadnet
+  -- test (and called when the current ledger state is in Dijkstra).
   }
 
 instance CardanoHardForkConstraints c => TxGen (CardanoBlock c) where
   type TxGenExtra (CardanoBlock c) = CardanoTxGenExtra c
 
   -- TODO also generate " typical " Byron and Shelley transactions
-  testGenTxs (CoreNodeId i) _ncn curSlot cfg extra ls =
-    pure $ maybeToList $ migrateUTxO migrationInfo curSlot lcfg ls
+  testGenTxs (CoreNodeId i) _ncn curSlot cfg extra ls = do
+    let migrateTxs = maybeToList $ migrateUTxO migrationInfo curSlot lcfg ls
+    extraTxs <- case ls of
+      LedgerStateDijkstra st ->
+        fmap (map (GenTxDijkstra . mkShelleyTx)) $
+          ctgeExtraTxGen
+            curSlot
+            coreNode
+            (shelleyLedgerState st ^. nesEsL . curPParamsEpochStateL)
+            ( Map.mapKeys getOriginalTxIn $
+                getValuesMK . getLedgerTables . shelleyLedgerTables $
+                  st
+            )
+      _ -> pure []
+    pure $ migrateTxs <> extraTxs
    where
     lcfg = topLevelConfigLedger cfg
 
@@ -91,7 +123,10 @@ instance CardanoHardForkConstraints c => TxGen (CardanoBlock c) where
       { ctgeByronGenesisKeys
       , ctgeNetworkMagic
       , ctgeShelleyCoreNodes
+      , ctgeExtraTxGen
       } = extra
+
+    coreNode = ctgeShelleyCoreNodes !! fromIntegral i
 
     GeneratedSecrets
       { gsRichSecrets

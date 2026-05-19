@@ -28,6 +28,7 @@ import Control.Tracer
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import LeiosDemoDb (newLeiosDBInMemory)
 import Network.TypedProtocol.Stateful.Proofs (connect)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -240,6 +241,7 @@ initLedgerDB ::
   m (LedgerDB' m TestBlock)
 initLedgerDB s c = do
   fs <- newTMVarIO MockFS.empty
+  leiosDbHandle <- newLeiosDBInMemory
   let args =
         LedgerDbArgs
           { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
@@ -250,6 +252,7 @@ initLedgerDB s c = do
           , lgrConfig = LedgerDB.configLedgerDb (testCfg s) OmitLedgerEvents
           , lgrQueryBatchSize = DefaultQueryBatchSize
           , lgrStartSnapshot = Nothing
+          , lgrLeiosDb = leiosDbHandle
           }
   ldb <-
     fst
@@ -304,6 +307,7 @@ testCfg securityParam =
     , topLevelConfigCodec = TestBlockCodecConfig
     , topLevelConfigStorage = TestBlockStorageConfig
     , topLevelConfigCheckpoints = emptyCheckpointsMap
+    , topLevelConfigVotingKey = Nothing
     }
  where
   slotLength :: SlotLength

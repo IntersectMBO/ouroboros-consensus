@@ -19,6 +19,7 @@
 module Cardano.Tools.DBAnalyser.Block.Cardano
   ( Args (configFile, threshold, CardanoBlockArgs)
   , CardanoBlockArgs
+  , mkCardanoProtocolParams
   ) where
 
 import qualified Cardano.Chain.Block as Byron.Block
@@ -419,26 +420,103 @@ mkCardanoProtocolInfo ::
   ProtocolInfo (CardanoBlock StandardCrypto)
 mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNonce triggers =
   fst $
-    protocolInfoCardano @_ @IO
-      ( CardanoProtocolParams
-          ProtocolParamsByron
-            { byronGenesis = genesisByron
-            , byronPbftSignatureThreshold = signatureThreshold
-            , byronProtocolVersion = Byron.Update.ProtocolVersion 1 2 0
-            , byronSoftwareVersion =
-                Byron.Update.SoftwareVersion (Byron.Update.ApplicationName "db-analyser") 2
-            , byronLeaderCredentials = Nothing
-            }
-          ProtocolParamsShelleyBased
-            { shelleyBasedInitialNonce = initialNonce
-            , shelleyBasedLeaderCredentials = []
-            }
-          triggers
-          transitionConfig
-          emptyCheckpointsMap
-          (ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0)
-      )
- where
+    protocolInfoCardano @_ @IO $
+      mkCardanoProtocolParamsFromBits
+        []
+        genesisByron
+        signatureThreshold
+        transitionConfig
+        initialNonce
+        triggers
+
+-- | Like 'mkCardanoProtocolInfo', but returns the 'CardanoProtocolParams'
+-- record so callers can keep the params separate from the
+-- 'ProtocolInfo'. Reads the same config-file structure as
+-- 'mkProtocolInfo' and accepts an explicit list of Shelley leader
+-- credentials, suitable for the Leios threadnet runner.
+mkCardanoProtocolParams ::
+  [ShelleyLeaderCredentials StandardCrypto] ->
+  Args (CardanoBlock StandardCrypto) ->
+  IO (CardanoProtocolParams StandardCrypto)
+mkCardanoProtocolParams shelleyLeaderCreds CardanoBlockArgs{configFile, threshold} = do
+  relativeToConfig :: (FilePath -> FilePath) <-
+    (</>) . takeDirectory <$> makeAbsolute configFile
+
+  cc :: CardanoConfig <-
+    either (error . show) (return . adjustFilePaths relativeToConfig)
+      =<< Aeson.eitherDecodeFileStrict' configFile
+
+  genesisByron <-
+    BlockByron.openGenesisByron (byronGenesisPath cc) (byronGenesisHash cc) (requiresNetworkMagic cc)
+  genesisShelley <-
+    either (error . show) return
+      =<< Aeson.eitherDecodeFileStrict' (shelleyGenesisPath cc)
+  genesisAlonzo <-
+    either (error . show) return
+      =<< Aeson.eitherDecodeFileStrict' (alonzoGenesisPath cc)
+  genesisConway <-
+    either (error . show) return
+      =<< Aeson.eitherDecodeFileStrict' (conwayGenesisPath cc)
+  genesisDijkstra <- case dijkstraGenesisPath cc of
+    Nothing -> pure emptyDijkstraGenesis
+    Just fp ->
+      either (error . show) return
+        =<< Aeson.eitherDecodeFileStrict' fp
+
+  let transCfg =
+        SL.mkLatestTransitionConfig genesisShelley genesisAlonzo genesisConway genesisDijkstra
+
+  initialNonce <- case shelleyGenesisHash cc of
+    Just h -> pure h
+    Nothing -> do
+      content <- BS.readFile (shelleyGenesisPath cc)
+      pure $
+        Nonce $
+          CryptoClass.castHash $
+            CryptoClass.hashWith id $
+              content
+
+  return $
+    mkCardanoProtocolParamsFromBits
+      shelleyLeaderCreds
+      genesisByron
+      threshold
+      transCfg
+      initialNonce
+      (cfgHardForkTriggers cc)
+
+mkCardanoProtocolParamsFromBits ::
+  [ShelleyLeaderCredentials StandardCrypto] ->
+  Byron.Genesis.Config ->
+  Maybe PBftSignatureThreshold ->
+  SL.TransitionConfig L.LatestKnownEra ->
+  Nonce ->
+  CardanoHardForkTriggers ->
+  CardanoProtocolParams StandardCrypto
+mkCardanoProtocolParamsFromBits
+  shelleyLeaderCreds
+  genesisByron
+  signatureThreshold
+  transitionConfig
+  initialNonce
+  triggers =
+    CardanoProtocolParams
+      ProtocolParamsByron
+        { byronGenesis = genesisByron
+        , byronPbftSignatureThreshold = signatureThreshold
+        , byronProtocolVersion = Byron.Update.ProtocolVersion 1 2 0
+        , byronSoftwareVersion =
+            Byron.Update.SoftwareVersion (Byron.Update.ApplicationName "db-analyser") 2
+        , byronLeaderCredentials = Nothing
+        }
+      ProtocolParamsShelleyBased
+        { shelleyBasedInitialNonce = initialNonce
+        , shelleyBasedLeaderCredentials = shelleyLeaderCreds
+        }
+      triggers
+      transitionConfig
+      emptyCheckpointsMap
+      (ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0)
 
 castHeaderHash ::
   HeaderHash ByronBlock ->

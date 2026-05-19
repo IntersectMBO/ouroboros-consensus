@@ -30,6 +30,7 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Time.Clock (secondsToDiffTime)
+import qualified LeiosDemoDb as LeiosDb
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -181,6 +182,7 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
           mcdbInitLedger = testInitExtLedger
           mcdbRegistry = registry
       mcdbNodeDBs <- emptyNodeDBs
+      mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
       let cdbArgs = fromMinimalChainDbArgs MinimalChainDbArgs{..}
       pure $ ChainDB.updateTracer cdbTracer cdbArgs
     (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-

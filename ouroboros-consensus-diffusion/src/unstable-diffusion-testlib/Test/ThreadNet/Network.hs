@@ -39,6 +39,11 @@ module Test.ThreadNet.Network
   , NodeDBs (..)
   , NodeOutput (..)
   , TestOutput (..)
+
+    -- * Leios
+  , LeiosState (..)
+  , TraceThreadNet (..)
+  , TraceThreadNetNode (..)
   ) where
 
 import Cardano.Network.NodeToNode
@@ -55,6 +60,11 @@ import Cardano.Network.PeerSelection
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
+import qualified Control.Concurrent.Class.MonadSTM.Strict as MonadSTMStrict
+  ( StrictTVar
+  , newTVarIO
+  , readTVar
+  )
 import Control.DeepSeq (NFData)
 import qualified Control.Exception as Exn
 import Control.Monad
@@ -65,7 +75,8 @@ import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor.Contravariant ((>$<))
-import Data.Functor.Identity (Identity)
+import Data.Functor.Identity (Identity (Identity))
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
@@ -77,6 +88,10 @@ import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Generics
 import GHC.Stack
+import qualified LeiosDemoDb
+import LeiosDemoOnlyTestFetch (LeiosFetch)
+import LeiosDemoOnlyTestNotify (LeiosNotify)
+import qualified LeiosDemoTypes
 import Network.TypedProtocol.Codec
   ( AnyMessage (..)
   , CodecFailure
@@ -115,6 +130,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Forker
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense
@@ -330,9 +346,14 @@ runThreadNetwork ::
   , TxGen blk
   , TracingConstraints blk
   , HasCallStack
+  , Ouroboros.Consensus.Storage.LedgerDB.Forker.ResolveLeiosBlock blk
   ) =>
-  SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
+  Tracer m (TraceThreadNet blk) ->
+  SystemTime m ->
+  ThreadNetworkArgs m blk ->
+  m (TestOutput blk)
 runThreadNetwork
+  baseTracer
   systemTime
   ThreadNetworkArgs
     { tnaForgeEbbEnv = mbForgeEbbEnv
@@ -491,7 +512,7 @@ runThreadNetwork
       CoreNodeId ->
       VertexStatusVar m blk ->
       [EdgeStatusVar m] ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (MonadSTMStrict.StrictTVar m) ->
       StrictTVar m SlotNo ->
       m ()
     forkVertex
@@ -615,7 +636,7 @@ runThreadNetwork
       OracularClock m ->
       ResourceRegistry m ->
       VertexStatusVar m blk ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (MonadSTMStrict.StrictTVar m) ->
       StrictTVar m SlotNo ->
       m ()
     forkInstrumentation
@@ -747,8 +768,9 @@ runThreadNetwork
       -- \^ ledger updates tracer
       Tracer m (ChainDB.TracePipeliningEvent blk) ->
       NodeDBs (StrictTMVar m MockFS) ->
+      LeiosState (MonadSTMStrict.StrictTVar m) ->
       CoreNodeId ->
-      ChainDbArgs Identity m blk
+      m (LeiosDemoDb.LeiosDbHandle m, ChainDbArgs Identity m blk)
     mkArgs
       registry
       cfg
@@ -759,7 +781,9 @@ runThreadNetwork
       updatesTracer
       pipeliningTracer
       nodeDBs
-      _coreNodeId =
+      leiosState
+      _coreNodeId = do
+        leiosDbHandle <- LeiosDemoDb.newLeiosDBInMemoryWith (lsLeiosDb leiosState)
         let args =
               fromMinimalChainDbArgs
                 MinimalChainDbArgs
@@ -768,9 +792,12 @@ runThreadNetwork
                   , mcdbInitLedger = initLedger
                   , mcdbRegistry = registry
                   , mcdbNodeDBs = nodeDBs
+                  , mcdbLeiosDb = leiosDbHandle
                   }
-            tr = instrumentationTracer <> nullDebugTracer
-         in args
+        let tr = instrumentationTracer <> nullDebugTracer
+        pure $
+          (,) leiosDbHandle $
+            args
               { cdbImmDbArgs =
                   (cdbImmDbArgs args)
                     { ImmutableDB.immCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
@@ -841,7 +868,7 @@ runThreadNetwork
       ResourceRegistry m ->
       ProtocolInfo blk ->
       m [MkBlockForging m blk] ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (MonadSTMStrict.StrictTVar m) ->
       [GenTx blk] ->
       -- \^ valid transactions the node should immediately propagate
       m
@@ -854,6 +881,7 @@ runThreadNetwork
       let NodeInfo
             { nodeInfoEvents
             , nodeInfoDBs
+            , nodeInfoLeios
             } = nodeInfo
 
       -- prop_general relies on these tracers
@@ -866,32 +894,32 @@ runThreadNetwork
           selTracer = wrapTracer $ nodeEventsSelects nodeInfoEvents
           headerAddTracer = wrapTracer $ nodeEventsHeaderAdds nodeInfoEvents
           pipeliningTracer = nodeEventsPipelining nodeInfoEvents
-      let chainDbArgs =
-            mkArgs
-              registry
-              pInfoConfig
-              pInfoInitLedger
-              invalidTracer
-              addTracer
-              selTracer
-              updatesTracer
-              pipeliningTracer
-              nodeInfoDBs
-              coreNodeId
+      (leiosDbHandle, chainDbArgs) <-
+        mkArgs
+          registry
+          pInfoConfig
+          pInfoInitLedger
+          invalidTracer
+          addTracer
+          selTracer
+          updatesTracer
+          pipeliningTracer
+          nodeInfoDBs
+          nodeInfoLeios
+          coreNodeId
       chainDB <-
         snd
           <$> allocate registry (const (ChainDB.openDB chainDbArgs)) ChainDB.closeDB
 
       let customForgeBlock ::
             BlockForging m blk ->
-            TopLevelConfig blk ->
-            BlockNo ->
-            SlotNo ->
-            TickedLedgerState blk mk ->
-            [Validated (GenTx blk)] ->
-            IsLeader (BlockProtocol blk) ->
+            ForgeBlockArgs m blk ->
             m blk
-          customForgeBlock origBlockForging cfg' currentBno currentSlot tickedLdgSt txs prf = do
+          customForgeBlock origBlockForging fbArgs = do
+            let currentBno = fbCurrentBlockNo fbArgs
+                currentSlot = fbCurrentSlotNo fbArgs
+                tickedLdgSt = fbCurrentTickedLedgerState fbArgs
+
             let currentEpoch = HFF.futureSlotToEpoch future currentSlot
 
             -- EBBs are only ever possible in the first era
@@ -910,14 +938,7 @@ runThreadNetwork
             case mbForgeEbbEnv <* guard needEBB of
               Nothing ->
                 -- no EBB needed, forge without making one
-                forgeBlock
-                  origBlockForging
-                  cfg'
-                  currentBno
-                  currentSlot
-                  (forgetLedgerTables tickedLdgSt)
-                  txs
-                  prf
+                forgeBlock origBlockForging fbArgs
               Just forgeEbbEnv -> do
                 -- The EBB shares its BlockNo with its predecessor (if
                 -- there is one)
@@ -958,12 +979,7 @@ runThreadNetwork
                 blk <-
                   forgeBlock
                     origBlockForging
-                    cfg'
-                    currentBno
-                    currentSlot
-                    (forgetLedgerTables tickedLdgSt')
-                    txs
-                    prf
+                    fbArgs{fbCurrentTickedLedgerState = forgetLedgerTables tickedLdgSt'}
 
                 -- If the EBB or the subsequent block is invalid, then the
                 -- ChainDB will reject it as invalid, and
@@ -990,6 +1006,15 @@ runThreadNetwork
           )
 
       let
+        -- Per-node tracer that emits ThreadNet-level traces tagged
+        -- with the originating 'CoreNodeId'. Pushed to 'baseTracer'
+        -- (provided by the test harness via 'runThreadNetwork'), which
+        -- routes events into the iosim trace log; 'runTestNetwork' then
+        -- harvests them via 'selectTraceEventsDynamic' into
+        -- 'allTraces'.
+        nodeTracer = FromNode coreNodeId >$< baseTracer
+
+      let
         -- prop_general relies on these tracers
         instrumentationTracers =
           nullTracers
@@ -1006,9 +1031,13 @@ runThreadNetwork
                 _ -> pure ()
             , forgeTracer = Tracer $ \(TraceLabelCreds _ ev) -> do
                 traceWith (nodeEventsForges nodeInfoEvents) ev
+                traceWith nodeTracer (FromForge ev)
                 case ev of
                   TraceNodeIsLeader s -> atomically $ blockOnCrucial s
                   _ -> pure ()
+            , mempoolTracer = contramap FromMempool nodeTracer
+            , leiosKernelTracer = contramap FromLeios nodeTracer
+            , leiosPeerTracer = contramap FromLeiosPeer nodeTracer
             }
 
         -- traces the node's local events other than those from the -- ChainDB
@@ -1058,6 +1087,7 @@ runThreadNetwork
           (psRng, rng3) = splitGen rng''
           (txRng, chainSyncRng) = splitGen rng3
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
+
       let nodeKernelArgs =
             NodeKernelArgs
               { tracers
@@ -1118,6 +1148,7 @@ runThreadNetwork
                     }
               , getDiffusionPipeliningSupport = DiffusionPipeliningOn
               , txSubmissionInitDelay = NoTxSubmissionInitDelay
+              , leiosDB = leiosDbHandle
               }
 
       nodeKernel <- initNodeKernel nodeKernelArgs
@@ -1215,6 +1246,8 @@ runThreadNetwork
         (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
         (AnyMessage KeepAlive)
         (AnyMessage (PeerSharing NodeId))
+        (AnyMessage (LeiosNotify LeiosDemoTypes.LeiosPoint () LeiosDemoTypes.LeiosVote))
+        (AnyMessage (LeiosFetch LeiosDemoTypes.LeiosPoint LeiosDemoTypes.LeiosEb LeiosDemoTypes.LeiosTx))
     customNodeToNodeCodecs cfg ntnVersion =
       NTN.Codecs
         { cChainSyncCodec =
@@ -1238,6 +1271,12 @@ runThreadNetwork
         , cPeerSharingCodec =
             mapFailureCodec CodecIdFailure $
               NTN.cPeerSharingCodec NTN.identityCodecs
+        , cLeiosNotifyCodec =
+            mapFailureCodec CodecIdFailure $
+              NTN.cLeiosNotifyCodec NTN.identityCodecs
+        , cLeiosFetchCodec =
+            mapFailureCodec CodecIdFailure $
+              NTN.cLeiosFetchCodec NTN.identityCodecs
         }
      where
       binaryProtocolCodecs =
@@ -1472,6 +1511,20 @@ directedEdgeInner
                       NTN.aKeepAliveClient
                       NTN.aKeepAliveServer
                       (\_ -> pure ())
+                  , miniProtocol
+                      "LeiosNotify"
+                      neverReturns
+                      neverReturns
+                      NTN.aLeiosNotifyClient
+                      NTN.aLeiosNotifyServer
+                      (\_ -> pure ())
+                  , miniProtocol
+                      "LeiosFetch"
+                      neverReturns
+                      neverReturns
+                      NTN.aLeiosFetchClient
+                      NTN.aLeiosFetchServer
+                      (\_ -> pure ())
                   ]
    where
     getApp v =
@@ -1566,7 +1619,7 @@ createConnectedChannelsWithDelay registry (client, server, proto) middle = do
 
   chan q b =
     Channel
-      { recv = fmap Just $ atomically $ MonadSTM.takeTMVar b
+      { recv = fmap (Just . MkReception IntMap.empty) $ atomically $ MonadSTM.takeTMVar b
       , send = atomically . MonadSTM.writeTQueue q
       }
 
@@ -1574,9 +1627,13 @@ createConnectedChannelsWithDelay registry (client, server, proto) middle = do
   Node information not bound to lifetime of a specific node instance
 -------------------------------------------------------------------------------}
 
-data NodeInfo blk db ev = NodeInfo
+data NodeInfo blk db ev l = NodeInfo
   { nodeInfoEvents :: NodeEvents blk ev
   , nodeInfoDBs :: NodeDBs db
+  , nodeInfoLeios :: LeiosState l
+  -- ^ Per-node Leios state. At runtime we store @StrictTVar m@ so the
+  -- LeiosDb implementation can mutate it; the snapshot reader produces
+  -- @Identity@ for use by post-hoc test assertions.
   }
 
 -- | A vector with an @ev@-shaped element for a particular set of
@@ -1607,8 +1664,8 @@ newNodeInfo ::
   forall blk m.
   IOLike m =>
   m
-    ( NodeInfo blk (StrictTMVar m MockFS) (Tracer m)
-    , m (NodeInfo blk MockFS [])
+    ( NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (MonadSTMStrict.StrictTVar m)
+    , m (NodeInfo blk MockFS [] Identity)
     )
 newNodeInfo = do
   (nodeInfoEvents, readEvents) <- do
@@ -1639,9 +1696,18 @@ newNodeInfo = do
       , NodeDBs <$> m1 <*> m2 <*> m3 <*> m4
       )
 
+  (nodeInfoLeios, readLeios) <- do
+    lsLeiosDb <- MonadSTMStrict.newTVarIO LeiosDemoDb.emptyInMemoryLeiosDb
+    pure
+      ( LeiosState{lsLeiosDb}
+      , atomically $ do
+          db <- MonadSTMStrict.readTVar lsLeiosDb
+          pure LeiosState{lsLeiosDb = Identity db}
+      )
+
   pure
-    ( NodeInfo{nodeInfoEvents, nodeInfoDBs}
-    , NodeInfo <$> readEvents <*> atomically readDBs
+    ( NodeInfo{nodeInfoEvents, nodeInfoDBs, nodeInfoLeios}
+    , NodeInfo <$> readEvents <*> atomically readDBs <*> readLeios
     )
 
 {-------------------------------------------------------------------------------
@@ -1660,19 +1726,52 @@ data NodeOutput blk = NodeOutput
   , nodeOutputSelects :: Map SlotNo [(RealPoint blk, BlockNo)]
   , nodeOutputUpdates :: [LedgerUpdate blk]
   , nodePipeliningEvents :: [ChainDB.TracePipeliningEvent blk]
+  , nodeLeiosState :: LeiosState Identity
+  -- ^ Snapshot of the node's Leios state after the run.
   }
+
+-- | The part of a node's state that relates to Leios. Parametrised over a
+-- functor @f@ so that during the run we hold mutable references
+-- (@StrictTVar m@) and at the end we snapshot to @Identity@ for the test.
+newtype LeiosState f = LeiosState
+  { lsLeiosDb :: f LeiosDemoDb.InMemoryLeiosDb
+  }
+  deriving Generic
 
 data TestOutput blk = TestOutput
   { testOutputNodes :: Map NodeId (NodeOutput blk)
   , testOutputTipBlockNos :: Map SlotNo (Map NodeId (WithOrigin BlockNo))
+  , allTraces :: [TraceThreadNet blk]
+  -- ^ All ThreadNet-level traces emitted during the run.
+  , exceptionThrown :: Maybe SomeException
+  -- ^ Captured exception if any thread threw and the test aborted.
   }
+
+-- | Top-level ThreadNet trace, tagged by the node it came from.
+data TraceThreadNet blk
+  = FromNode {fromNodeId :: CoreNodeId, fromNodeEvent :: TraceThreadNetNode blk}
+
+deriving instance Show (TraceThreadNetNode blk) => Show (TraceThreadNet blk)
+
+-- | Per-node sub-traces interesting to the Leios threadnet test.
+data TraceThreadNetNode blk
+  = FromLeios LeiosDemoTypes.TraceLeiosKernel
+  | FromLeiosPeer (TraceLabelPeer (ConnectionId NodeId) LeiosDemoTypes.TraceLeiosPeer)
+  | FromMempool (TraceEventMempool blk)
+  | FromForge (TraceForgeEvent blk)
+
+deriving instance
+  ( Show (TraceEventMempool blk)
+  , Show (TraceForgeEvent blk)
+  ) =>
+  Show (TraceThreadNetNode blk)
 
 -- | Gather the test output from the nodes
 mkTestOutput ::
   forall m blk.
   (IOLike m, HasHeader blk) =>
   [ ( CoreNodeId
-    , m (NodeInfo blk MockFS [])
+    , m (NodeInfo blk MockFS [] Identity)
     , Chain blk
     , LedgerState blk EmptyMK
     )
@@ -1687,6 +1786,7 @@ mkTestOutput vertexInfos = do
         let NodeInfo
               { nodeInfoEvents
               , nodeInfoDBs
+              , nodeInfoLeios
               } = nodeInfo
         let NodeEvents
               { nodeEventsAdds
@@ -1725,6 +1825,7 @@ mkTestOutput vertexInfos = do
                 , nodeOutputNodeDBs = nodeInfoDBs
                 , nodeOutputUpdates = nodeEventsUpdates
                 , nodePipeliningEvents = nodeEventsPipelining
+                , nodeLeiosState = nodeInfoLeios
                 }
 
         pure
@@ -1736,6 +1837,8 @@ mkTestOutput vertexInfos = do
     TestOutput
       { testOutputNodes = Map.unions nodeOutputs'
       , testOutputTipBlockNos = Map.unionsWith Map.union tipBlockNos'
+      , allTraces = []
+      , exceptionThrown = Nothing
       }
 
 {-------------------------------------------------------------------------------
@@ -1828,6 +1931,8 @@ type LimitedApp' m addr blk =
     (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
+    (AnyMessage (LeiosNotify LeiosDemoTypes.LeiosPoint () LeiosDemoTypes.LeiosVote))
+    (AnyMessage (LeiosFetch LeiosDemoTypes.LeiosPoint LeiosDemoTypes.LeiosEb LeiosDemoTypes.LeiosTx))
     NodeToNodeInitiatorResult
     ()
 
