@@ -77,6 +77,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
 
 -- $setup
@@ -135,7 +136,7 @@ instance (CanHardFork xs, Monad m) => StateRefHasState m LedgerState (HardForkBl
   close (HardForkStateRef st) = hcollapse <$> hsequence' (hcmap proxySingle (\x -> Comp $ close x >> pure (K ())) st)
   getStats (HardForkStateRef st) = hcollapse $ hcmap proxySingle (K . getStats) st
   duplicate (HardForkStateRef st) = HardForkStateRef <$> hsequence' (hcmap proxySingle (Comp . duplicate) st)
-  mkStateRef (HardForkLedgerState _st) _ = undefined -- TODO @js
+  mkStateRef (HardForkLedgerState _st) _ = fillJavier -- TODO @js
 
 instance (CanHardFork xs, Monad m) => StateRefHasState m (Ticked LedgerState) (HardForkBlock xs) where
   data StateRef m (Ticked LedgerState) (HardForkBlock xs) = HardForkTickedStateRef
@@ -148,7 +149,7 @@ instance (CanHardFork xs, Monad m) => StateRefHasState m (Ticked LedgerState) (H
   close (HardForkTickedStateRef _ st) = hcollapse <$> hsequence' (hcmap proxySingle (\x -> Comp $ close x >> pure (K ())) st)
   getStats (HardForkTickedStateRef _ st) = hcollapse $ hcmap proxySingle (K . getStats) st
   duplicate (HardForkTickedStateRef ti st) = HardForkTickedStateRef ti <$> hsequence' (hcmap proxySingle (Comp . duplicate) st)
-  mkStateRef (TickedHardForkLedgerState _ti _st) _ = undefined -- TODO @js
+  mkStateRef (TickedHardForkLedgerState _ti _st) _ = fillJavier -- TODO @js
 
 instance CanHardFork xs => IsLedger LedgerState (HardForkBlock xs) where
   type LedgerErr LedgerState (HardForkBlock xs) = HardForkLedgerError xs

@@ -35,7 +35,7 @@ import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Mempool.TxSeq (TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
-import Ouroboros.Consensus.Util (whenJust)
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike hiding (withMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
@@ -475,7 +475,7 @@ pureRemoveTxs ::
   -- | IDs to remove
   NE.NonEmpty (GenTxId blk) ->
   (InternalState blk, TraceEventMempool blk)
-pureRemoveTxs _capacityOverride _lcfg _slot _lstate _cache _tkt _txs _txIds = undefined
+pureRemoveTxs _capacityOverride _lcfg _slot _lstate _cache _tkt _txs _txIds = fillJavier
 
 -- let RevalidateTxsResult is' removed =
 --       undefined -- revalidateTxsFor
@@ -594,7 +594,7 @@ pureSyncWithLedger ::
   ( InternalState blk
   , Maybe (TraceEventMempool blk)
   )
-pureSyncWithLedger _capacityOverride _lcfg _slot _lstate _istate = undefined
+pureSyncWithLedger _capacityOverride _lcfg _slot _lstate _istate = fillJavier
 
 -- let RevalidateTxsResult is' removed =
 --       undefined -- revalidateTxsFor

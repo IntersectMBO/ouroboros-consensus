@@ -92,7 +92,7 @@ import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util (eitherToMaybe)
+import Ouroboros.Consensus.Util
 
 {-------------------------------------------------------------------------------
   CanHardFork
@@ -304,13 +304,13 @@ translateLedgerStateByronToShelleyWrapper =
         }
 
 mkHandle :: LedgerState (ShelleyBlock (TPraos c) ShelleyEra) -> m (Handle m (TPraos c) ShelleyEra)
-mkHandle = undefined
+mkHandle = fillJavier
 
 castHandle ::
   LedgerState (ShelleyBlock proto era) ->
   Handle m proto' (SL.PreviousEra era) ->
   m (Handle m proto era)
-castHandle = undefined
+castHandle = fillJavier
 
 translateChainDepStateByronToShelleyWrapper ::
   RequiringBoth

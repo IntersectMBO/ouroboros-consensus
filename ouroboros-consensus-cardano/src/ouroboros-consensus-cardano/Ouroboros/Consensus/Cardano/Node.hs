@@ -109,6 +109,7 @@ import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
 import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Assert
 
 {-------------------------------------------------------------------------------
@@ -939,7 +940,7 @@ protocolInfoCardano paramsCardano
     initHeaderState :: HeaderState (CardanoBlock c)
     initLedgerState :: LedgerState (CardanoBlock c)
     ExtLedgerState initLedgerState initHeaderState =
-      undefined -- injectInitialExtLedgerState cfg $
+      fillJavier -- injectInitialExtLedgerState cfg $
       -- initExtLedgerStateByron
     registerAny :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
     registerAny =

@@ -66,6 +66,7 @@ import Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import Ouroboros.Consensus.Util.IOLike hiding (newMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
@@ -365,7 +366,7 @@ revalidateTxsFor ::
   TicketNo ->
   [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
   m (RevalidateTxsResult blk)
-revalidateTxsFor = undefined -- capacityOverride cfg slot st values lastTicketNo txTickets =
+revalidateTxsFor = fillJavier -- capacityOverride cfg slot st values lastTicketNo txTickets =
 --  let inputTxs = map wrap txTickets
 --      inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
 
@@ -415,7 +416,7 @@ computeSnapshot ::
   StateRef m (Ticked LedgerState) blk ->
   [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
   m (MempoolSnapshot blk)
-computeSnapshot = undefined -- cfg slot st values txTickets =
+computeSnapshot = fillJavier -- cfg slot st values txTickets =
 --  let inputTxs = map wrap txTickets
 --      inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
 --   in snapshotFromValidTxs

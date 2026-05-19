@@ -25,7 +25,6 @@ module Ouroboros.Consensus.Ledger.Basics
   , AuxLedgerEvent
   , applyChainTick
   , StateRefHasState (..)
-  , StateRefHasTables (..)
   , LedgerTables
 
     -- * Ledger Events
@@ -271,9 +270,6 @@ class StateRefHasState m l blk where
 newtype Statistics = Statistics
   { ledgerTableSize :: Int
   }
-
-class StateRefHasTables m l blk where
-  tables :: StateRef m l blk -> LedgerTables m blk
 
 type TickedLedgerState blk = Ticked LedgerState blk
 

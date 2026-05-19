@@ -115,7 +115,7 @@ import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
-import Ouroboros.Consensus.Util (ShowProxy (..))
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
 import Ouroboros.Network.SizeInBytes
@@ -425,7 +425,7 @@ reapplyShelleyTx cfg slot vgtx cache st0 = do
       (SL.mkMempoolEnv newEpochState slot)
       (SL.mkMempoolState newEpochState)
       vtx of
-      Left err -> throwError (err, undefined)
+      Left err -> throwError (err, fillJavier)
       Right v -> pure v
 
   let newLedgerState' = newLedgerState & SL.lsUTxOStateL . SL.utxoL .~ SL.UTxO Map.empty

@@ -54,7 +54,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
-import Ouroboros.Consensus.Util (whenJust)
+import Ouroboros.Consensus.Util (fillJavier, whenJust)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
@@ -201,14 +201,14 @@ mkInternals _ldb h snapManager =
               st
     , wipeLedgerDB = destroySnapshots snapManager
     , truncateSnapshots = getEnv h $ implIntTruncateSnapshots snapManager . ldbHasFS
-    , push = undefined -- \st -> do
+    , push = fillJavier -- \st -> do
     -- withTipForker
     --   ldb
     --   ( \frk -> do
     --       forkerPush frk st >> Monad.join (atomically (forkerCommit frk))
     --       getEnv h pruneLedgerSeq
     --   )
-    , reapplyThenPushNOW = undefined -- \blk -> getEnv h $ \env -> do
+    , reapplyThenPushNOW = fillJavier -- \blk -> getEnv h $ \env -> do
     -- withTipForker
     --   ldb
     --   ( \frk -> do
