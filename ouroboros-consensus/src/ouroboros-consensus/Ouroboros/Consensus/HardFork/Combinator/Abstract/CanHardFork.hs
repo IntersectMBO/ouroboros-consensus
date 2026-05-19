@@ -51,7 +51,7 @@ class
   type HardForkTxMeasure xs
 
   hardForkEraTranslation :: EraTranslation xs
-  hardForkChainSel :: Tails AcrossEraSelection xs
+  hardForkChainSel :: Tails AcrossEraTiebreaker xs
   hardForkInjectTxs ::
     InPairs
       ( RequiringBoth

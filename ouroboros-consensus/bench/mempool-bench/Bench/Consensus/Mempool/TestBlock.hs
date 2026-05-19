@@ -229,8 +229,8 @@ instance Ledger.LedgerSupportsMempool TestBlock where
       fmap ((,ValidatedGenTx (TestBlockGenTx tx)) . Ledger.trackingToDiffs) $
         applyDirectlyToPayloadDependentState tickedSt tx
 
-  reapplyTx _ cfg slot (ValidatedGenTx genTx) tickedSt =
-    Ledger.attachAndApplyDiffs tickedSt . fst
+  reapplyTx cfg slot (ValidatedGenTx genTx) tickedSt =
+    Ledger.applyDiffs tickedSt . fst
       <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx tickedSt
 
   -- FIXME: it is ok to use 'DoNotIntervene' here?
@@ -239,15 +239,17 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   getTransactionKeySets (TestBlockGenTx tx) = getPayloadKeySets tx
 
+  mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
+
 instance Ledger.TxLimits TestBlock where
   type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
+
+  txWireSize = fromIntegral . Ledger.unByteSize32 . txSize
 
   -- We tweaked this in such a way that we test the case in which we exceed the
   -- maximum mempool capacity. The value used here depends on 'txInBlockSize'.
   blockCapacityTxMeasure _cfg _st =
     Ledger.IgnoringOverflow $ Ledger.ByteSize32 20
-
-  ebCapacityTxMeasure _ _ = Nothing
 
   txMeasure _cfg _st = pure . Ledger.IgnoringOverflow . txSize
 

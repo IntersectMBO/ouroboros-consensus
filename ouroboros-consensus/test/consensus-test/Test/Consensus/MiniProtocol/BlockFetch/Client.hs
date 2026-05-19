@@ -25,6 +25,7 @@
 module Test.Consensus.MiniProtocol.BlockFetch.Client (tests) where
 
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
+import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Control.Monad (replicateM)
 import Control.Monad.Class.MonadTime
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -36,7 +37,6 @@ import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Traversable (for)
-import LeiosDemoDb (newLeiosDBInMemory)
 import Network.TypedProtocol.Channel (createConnectedChannels)
 import Network.TypedProtocol.Codec (AnyMessage (..))
 import Network.TypedProtocol.Core (PeerRole (..))
@@ -75,7 +75,6 @@ import Ouroboros.Network.BlockFetch.ConsensusInterface
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
-import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.BlockFetch.Codec (codecBlockFetchId)
 import Ouroboros.Network.Protocol.BlockFetch.Server
   ( BlockFetchBlockSender (SendMsgNoBlocks, SendMsgStartBatch)
@@ -279,7 +278,6 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
     Tracer m String ->
     m (BlockFetchClientInterface.ChainDbView m TestBlock)
   mkChainDbView registry tracer = do
-    leiosDb <- newLeiosDBInMemory
     chainDbArgs <- do
       nodeDBs <- emptyNodeDBs
       let args =
@@ -295,7 +293,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
     (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
       allocate
         registry
-        (\_ -> ChainDBImpl.openDBInternal leiosDb chainDbArgs False)
+        (\_ -> ChainDBImpl.openDBInternal chainDbArgs False)
         (ChainDB.closeDB . fst)
     _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
 
@@ -308,6 +306,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
       getMaxSlotNo = ChainDB.getMaxSlotNo chainDB
       addBlockAsync = ChainDB.addBlockAsync chainDB
       getChainSelStarvation = ChainDB.getChainSelStarvation chainDB
+      getPerasWeightSnapshot = ChainDB.getPerasWeightSnapshot chainDB
     pure BlockFetchClientInterface.ChainDbView{..}
    where
     cdbTracer = Tracer \case

@@ -119,6 +119,6 @@ instance
         , shelleyLedgerState = shelleyLedgerState st
         , shelleyLedgerTransition = shelleyLedgerTransition st
         , shelleyLedgerTables = emptyLedgerTables
-        , shelleyCumulativeTxBytes = shelleyCumulativeTxBytes st
+        , shelleyLedgerLatestPerasCertRound = shelleyLedgerLatestPerasCertRound st
         }
     coerceTip (ShelleyTip slot block hash) = ShelleyTip slot block (coerce hash)

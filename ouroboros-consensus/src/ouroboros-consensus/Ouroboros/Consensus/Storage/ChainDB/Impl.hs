@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
     -- * Trace types
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
+  , TraceAddPerasCertEvent (..)
   , TraceChainSelStarvationEvent (..)
   , TraceCopyToImmutableDBEvent (..)
   , TraceEvent (..)
@@ -40,12 +41,10 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
 
 import Control.Monad (void, when)
 import Control.Monad.Trans.Class (lift)
+import qualified Control.RAWLock as RAW
 import Control.ResourceRegistry
-  ( WithTempRegistry
-  , allocate
-  , runInnerWithTempRegistry
+  ( allocate
   , runWithTempRegistry
-  , withRegistry
   )
 import Control.Tracer
 import Data.Functor ((<&>))
@@ -53,14 +52,14 @@ import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import GHC.Stack (HasCallStack)
-import LeiosDemoDb (LeiosDbConnection (..), LeiosDbHandle (..))
+import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
@@ -77,16 +76,18 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
-import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB, ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import Ouroboros.Consensus.Util (newFuse, whenJust, withFuse)
+import Ouroboros.Consensus.Util (newFuse, whenJust)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
   ( Fingerprint (..)
   , WithFingerprint (..)
   )
+import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.BlockFetch.ConsensusInterface
   ( ChainSelStarvation (..)
@@ -100,41 +101,40 @@ withDB ::
   forall m blk a.
   ( IOLike m
   , LedgerSupportsProtocol blk
+  , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , LedgerSupportsLedgerDB blk
-  , ResolveLeiosBlock blk
   ) =>
-  LeiosDbHandle m ->
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
   m a
-withDB leiosDb args = bracket (fst <$> openDBInternal leiosDb args True) API.closeDB
+withDB args = bracket (fst <$> openDBInternal args True) API.closeDB
 
 openDB ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
+  , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , LedgerSupportsLedgerDB blk
-  , ResolveLeiosBlock blk
   ) =>
-  LeiosDbHandle m ->
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
-openDB leiosDb args = fst <$> openDBInternal leiosDb args True
+openDB args = fst <$> openDBInternal args True
 
 openDBInternal ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
+  , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
@@ -142,38 +142,59 @@ openDBInternal ::
   , SerialiseDiskConstraints blk
   , HasCallStack
   , LedgerSupportsLedgerDB blk
-  , ResolveLeiosBlock blk
   ) =>
-  LeiosDbHandle m ->
   Complete Args.ChainDbArgs m blk ->
   -- | 'True' = Launch background tasks
   Bool ->
   m (ChainDB m blk, Internal m blk)
-openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
-  lift $ traceWith tracer $ TraceOpenEvent StartedOpeningDB
-  lift $ traceWith tracer $ TraceOpenEvent StartedOpeningImmutableDB
-  immutableDB <- ImmutableDB.openDB argsImmutableDb $ innerOpenCont ImmutableDB.closeDB
-  immutableDbTipPoint <- lift $ atomically $ ImmutableDB.getTipPoint immutableDB
-  let immutableDbTipChunk =
-        chunkIndexOfPoint (ImmutableDB.immChunkInfo argsImmutableDb) immutableDbTipPoint
-  lift $
+openDBInternal args launchBgTasks = runWithTempRegistry $ do
+  ( immutableDB
+    , immutableDbTipPoint
+    , volatileDB
+    , ledgerDbGetVolatileSuffix
+    , setGetCurrentChainForLedgerDB
+    ) <- lift $ do
+    traceWith tracer $ TraceOpenEvent StartedOpeningDB
+    traceWith tracer $ TraceOpenEvent StartedOpeningImmutableDB
+    immutableDB <- ImmutableDB.openDB argsImmutableDb
+    immutableDbTipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
+    let immutableDbTipChunk =
+          chunkIndexOfPoint (ImmutableDB.immChunkInfo argsImmutableDb) immutableDbTipPoint
     traceWith tracer $
       TraceOpenEvent $
         OpenedImmutableDB immutableDbTipPoint immutableDbTipChunk
 
-  lift $ traceWith tracer $ TraceOpenEvent StartedOpeningVolatileDB
-  volatileDB <- VolatileDB.openDB argsVolatileDb $ innerOpenCont VolatileDB.closeDB
-  maxSlot <- lift $ atomically $ VolatileDB.getMaxSlotNo volatileDB
-  (chainDB, testing, env) <- lift $ do
+    traceWith tracer $ TraceOpenEvent StartedOpeningVolatileDB
+    volatileDB <- VolatileDB.openDB argsVolatileDb
+    maxSlot <- atomically $ VolatileDB.getMaxSlotNo volatileDB
     traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
-    (lgrDB, replayed) <-
-      LedgerDB.openDB
-        argsLgrDb
-        (ImmutableDB.streamAPI immutableDB)
-        immutableDbTipPoint
-        (Query.getAnyKnownBlock immutableDB volatileDB)
+    (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <- mkLedgerDbGetVolatileSuffix
+    pure
+      ( immutableDB
+      , immutableDbTipPoint
+      , volatileDB
+      , ledgerDbGetVolatileSuffix
+      , setGetCurrentChainForLedgerDB
+      )
+
+  -- Note this is the only step that actually cares about the temporary registry
+  -- while initializing the ChainDB. It opens the handle to the backend and we
+  -- want to track that one to close it on exception. See "Resource management
+  -- in the LedgerDB" in "Ouroboros.Consensus.Storage.LedgerDB.API" for an
+  -- explanation of why.
+  (lgrDB, replayed) <-
+    LedgerDB.openDB
+      argsLgrDb
+      (ImmutableDB.streamAPI immutableDB)
+      immutableDbTipPoint
+      (Query.getAnyKnownBlock immutableDB volatileDB)
+      ledgerDbGetVolatileSuffix
+
+  lift $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
+
+    perasCertDB <- PerasCertDB.openDB argsPerasCertDB
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
 
@@ -181,27 +202,18 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
 
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
-    chain <- withRegistry $ \rr -> do
-      (_, leiosConn) <- allocate rr (const $ open leiosDb) close
-      chainAndLedger <-
-        ChainSel.initialChainSelection
-          leiosConn
-          immutableDB
-          volatileDB
-          lgrDB
-          rr
-          initChainSelTracer
-          (Args.cdbsTopLevelConfig cdbSpecificArgs)
-          varInvalid
-          (void initialLoE)
-      traceWith initChainSelTracer InitialChainSelected
-
-      let chain = VF.validatedFragment chainAndLedger
-          ledger = VF.validatedLedger chainAndLedger
-
-      atomically $ LedgerDB.forkerCommit ledger
-      LedgerDB.forkerClose ledger
-      pure chain
+    initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
+    chain <-
+      ChainSel.initialChainSelection
+        immutableDB
+        volatileDB
+        lgrDB
+        initChainSelTracer
+        (Args.cdbsTopLevelConfig cdbSpecificArgs)
+        varInvalid
+        (void initialLoE)
+        (forgetFingerprint initialWeights)
+    traceWith initChainSelTracer InitialChainSelected
     LedgerDB.tryFlush lgrDB
 
     curLedger <- atomically $ LedgerDB.getVolatileTip lgrDB
@@ -225,7 +237,7 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
     varNextIteratorKey <- newTVarIO (IteratorKey 0)
     varNextFollowerKey <- newTVarIO (FollowerKey 0)
     varKillBgThreads <- newTVarIO $ return ()
-    copyFuse <- newFuse "copy to immutable db"
+    immdbLock <- RAW.new ()
     chainSelFuse <- newFuse "chain selection"
     chainSelQueue <- newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
     varChainSelStarvation <- newTVarIO ChainSelStarvationOngoing
@@ -244,7 +256,7 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
             , cdbInvalid = varInvalid
             , cdbNextIteratorKey = varNextIteratorKey
             , cdbNextFollowerKey = varNextFollowerKey
-            , cdbCopyFuse = copyFuse
+            , cdbImmutableDBLock = immdbLock
             , cdbChainSelFuse = chainSelFuse
             , cdbTracer = tracer
             , cdbRegistry = Args.cdbsRegistry cdbSpecificArgs
@@ -254,7 +266,11 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
+            , cdbPerasCertDB = perasCertDB
             }
+
+    setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
+
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =
           API.ChainDB
@@ -279,19 +295,31 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
             , getImmutableLedger = getEnvSTM h Query.getImmutableLedger
             , getPastLedger = getEnvSTM1 h Query.getPastLedger
             , getHeaderStateHistory = getEnvSTM h Query.getHeaderStateHistory
-            , getReadOnlyForkerAtPoint = getEnv2 h Query.getReadOnlyForkerAtPoint
-            , getLedgerTablesAtFor = getEnv2 h Query.getLedgerTablesAtFor
+            , allocInRegistryReadOnlyForkerAtPoint = getEnv2 h Query.allocInRegistryReadOnlyForkerAtPoint
+            , openReadOnlyForkerAtPoint = getEnv1 h Query.openReadOnlyForkerAtPoint
+            , withReadOnlyForkerAtPoint = getEnvTrans2 h Query.withReadOnlyForkerAtPoint
             , getStatistics = getEnv h Query.getStatistics
+            , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
+            , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
+            , getPerasCertSnapshot = getEnvSTM h Query.getPerasCertSnapshot
+            , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
+            , getLatestPerasCertOnChainRound = getEnvSTM h Query.getLatestPerasCertOnChainRound
             }
     addBlockTestFuse <- newFuse "test chain selection"
-    copyTestFuse <- newFuse "test copy to immutable db"
     let testing =
           Internal
-            { intCopyToImmutableDB = getEnv h (withFuse copyTestFuse . Background.copyToImmutableDB)
-            , intGarbageCollect = getEnv1 h Background.garbageCollect
+            { intCopyToImmutableDB = getEnv h Background.copyToImmutableDB
+            , intGarbageCollect = \slot -> getEnv h $ \e -> do
+                Background.garbageCollectBlocks e slot
+                LedgerDB.garbageCollect (cdbLedgerDB e) slot
             , intTryTakeSnapshot = getEnv h $ \env' ->
-                void $ LedgerDB.tryTakeSnapshot (cdbLedgerDB env') Nothing maxBound
-            , intAddBlockRunner = getEnv h (Background.addBlockRunner leiosDb addBlockTestFuse)
+                void $
+                  LedgerDB.tryTakeSnapshot
+                    (cdbLedgerDB env')
+                    (void $ Background.copyToImmutableDB env')
+                    Nothing
+                    maxBound
+            , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
             , intKillBgThreads = varKillBgThreads
             }
 
@@ -301,33 +329,58 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks leiosDb env replayed
+    when launchBgTasks $ Background.launchBgTasks env replayed
 
-    return (chainDB, testing, env)
+    -- Note we put the ChainDB in the top level registry before exiting the
+    -- 'runWithTempRegistry' scope. This way, the critical resources (actually
+    -- only the LedgerDB resources, see "Resource management in the LedgerDB"
+    -- note in "Ouroboros.Consensus.Storage.LedgerDB.API") are always tracked by
+    -- a registry. As the ChainDB is so fundamental to the execution of
+    -- Consensus, it is justified for the LedgerDB to temporarily allocate
+    -- resources with 'impossibleToNotTransfer'.
+    _ <- allocate (Args.cdbsRegistry cdbSpecificArgs) (\_ -> return chainDB) API.closeDB
 
-  _ <- lift $ allocate (Args.cdbsRegistry cdbSpecificArgs) (\_ -> return chainDB) API.closeDB
-
-  return ((chainDB, testing), env)
+    return ((chainDB, testing), env)
  where
   tracer = Args.cdbsTracer cdbSpecificArgs
-  Args.ChainDbArgs argsImmutableDb argsVolatileDb argsLgrDb cdbSpecificArgs = args
+  Args.ChainDbArgs
+    argsImmutableDb
+    argsVolatileDb
+    argsLgrDb
+    argsPerasCertDB
+    cdbSpecificArgs = args
 
--- | We use 'runInnerWithTempRegistry' for the component databases.
-innerOpenCont ::
-  IOLike m =>
-  (innerDB -> m ()) ->
-  WithTempRegistry st m (innerDB, st) ->
-  WithTempRegistry (ChainDbEnv m blk) m innerDB
-innerOpenCont closer m =
-  runInnerWithTempRegistry
-    (fmap (\(innerDB, st) -> (innerDB, st, innerDB)) m)
-    ((True <$) . closer)
-    (\_env _innerDB -> True)
-
--- This check is degenerate because handles in @_env@ and the
--- @_innerDB@ handle do not support an equality check; all of the
--- identifying data is only in the handle's closure, not
--- accessible because of our intentional encapsulation choices.
+  -- The LedgerDB requires a criterion ('LedgerDB.GetVolatileSuffix')
+  -- determining which of its states are volatile/immutable. Once we have
+  -- initialized the ChainDB we can defer this decision to
+  -- 'Query.getCurrentChain'.
+  --
+  -- However, we initialize the LedgerDB before the ChainDB (for initial chain
+  -- selection), so during that period, we temporarily consider no state (apart
+  -- from the anchor state) as immutable. This is fine as we don't perform eg
+  -- any rollbacks during this period.
+  mkLedgerDbGetVolatileSuffix ::
+    m
+      ( LedgerDB.GetVolatileSuffix m blk
+      , STM m (AnchoredFragment (Header blk)) -> m ()
+      )
+  mkLedgerDbGetVolatileSuffix = do
+    varGetCurrentChain ::
+      StrictTMVar m (OnlyCheckWhnf (STM m (AnchoredFragment (Header blk)))) <-
+      newEmptyTMVarIO
+    let getVolatileSuffix =
+          LedgerDB.GetVolatileSuffix $
+            tryReadTMVar varGetCurrentChain >>= \case
+              -- If @setVarChain@ has not yet been invoked, return the entire
+              -- suffix as volatile.
+              Nothing -> pure id
+              -- Otherwise, return the suffix with the same length as the
+              -- current chain.
+              Just (OnlyCheckWhnf getCurrentChain) -> do
+                curChainLen <- AF.length <$> getCurrentChain
+                pure $ AF.anchorNewest (fromIntegral curChainLen)
+        setVarChain = atomically . writeTMVar varGetCurrentChain . OnlyCheckWhnf
+    pure (getVolatileSuffix, setVarChain)
 
 isOpen :: IOLike m => ChainDbHandle m blk -> STM m Bool
 isOpen (CDBHandle varState) =

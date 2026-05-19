@@ -1,0 +1,12 @@
+versionedTPraosState =
+  [serializationFormat1, [withOrigin<slotno>, tpraosState]]
+
+tpraosState = [prtclState, ticknState, nonce]
+
+prtclState = [{* keyhash => word64}, nonce, nonce]
+
+ticknState = [nonce, nonce]
+
+serializationFormat1 = 1
+
+;# import withOrigin, slotno, keyhash, word64, nonce from base

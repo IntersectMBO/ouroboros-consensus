@@ -1,5 +1,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE RankNTypes #-}
@@ -19,6 +20,7 @@
 -- * Converting slot to an epoch and then back to a slot should be an identity
 --   (modulo the time spent in that epoch).
 -- * Converting an epoch to a slot and then back should be an identity.
+-- * Converting a Peras round number to a slot and then back should be an identity.
 module Test.Consensus.HardFork.Summary (tests) where
 
 import Data.Time
@@ -50,6 +52,7 @@ tests =
         , testProperty "roundtripSlotWallclock" roundtripSlotWallclock
         , testProperty "roundtripSlotEpoch" roundtripSlotEpoch
         , testProperty "roundtripEpochSlot" roundtripEpochSlot
+        , testProperty "roundtripPerasRoundSlot" roundtripPerasRoundSlot
         , testProperty "reportsPastHorizon" reportsPastHorizon
         ]
     ]
@@ -131,6 +134,28 @@ roundtripEpochSlot s@ArbitrarySummary{beforeHorizonEpoch = epoch} =
         , inEpoch + slotsLeft === unEpochSize epochSize
         ]
 
+-- | Test that conversion between Peras rounds and slots roundtips.
+--   Additionally, test that the relative slot in round and remaining
+--   slots in round are withing the round length.
+roundtripPerasRoundSlot :: ArbitrarySummary -> Property
+roundtripPerasRoundSlot s@ArbitrarySummary{beforeHorizonPerasRoundNo} =
+  case beforeHorizonPerasRoundNo of
+    HF.NoPerasEnabled -> property True
+    HF.PerasEnabled perasRoundNo ->
+      noPastHorizonException s $
+        HF.perasRoundNoToSlot perasRoundNo >>= \case
+          HF.NoPerasEnabled -> pure $ property True
+          HF.PerasEnabled (slot, PerasRoundLength perasRoundLength) -> do
+            HF.slotToPerasRoundNo slot >>= \case
+              HF.NoPerasEnabled -> pure $ property True
+              HF.PerasEnabled (perasRoundNo', slotInRound, remainingSlotsInRound) ->
+                pure $
+                  conjoin
+                    [ perasRoundNo' === perasRoundNo
+                    , slotInRound `lt` perasRoundLength
+                    , remainingSlotsInRound `le` perasRoundLength
+                    ]
+
 reportsPastHorizon :: ArbitrarySummary -> Property
 reportsPastHorizon s@ArbitrarySummary{..} =
   conjoin
@@ -146,6 +171,9 @@ reportsPastHorizon s@ArbitrarySummary{..} =
     , case mPastHorizonEpoch of
         Just x -> isPastHorizonException s $ HF.epochToSlot x
         Nothing -> property True
+    , case mPastHorizonPerasRoundNo of
+        Just (HF.PerasEnabled x) -> isPastHorizonException s $ HF.perasRoundNoToSlot x
+        _ -> property True
     ]
 
 {-------------------------------------------------------------------------------
@@ -160,9 +188,13 @@ data ArbitrarySummary = forall xs. ArbitrarySummary
   , beforeHorizonTime :: RelativeTime
   , beforeHorizonSlot :: SlotNo
   , beforeHorizonEpoch :: EpochNo
+  , beforeHorizonPerasRoundNo :: HF.PerasEnabled PerasRoundNo
+  -- ^ 'PerasRoundNo' is not optional here,
+  -- i.e. we do not model non-Peras eras in the time conversion tests
   , mPastHorizonTime :: Maybe RelativeTime
   , mPastHorizonSlot :: Maybe SlotNo
   , mPastHorizonEpoch :: Maybe EpochNo
+  , mPastHorizonPerasRoundNo :: Maybe (HF.PerasEnabled PerasRoundNo)
   }
 
 deriving instance Show ArbitrarySummary
@@ -181,10 +213,12 @@ instance Arbitrary ArbitrarySummary where
         beforeHorizonSlots <- choose (0, 100_000_000)
         beforeHorizonEpochs <- choose (0, 1_000_000)
         beforeHorizonSeconds <- choose (0, 1_000_000_000)
+        beforeHorizonPerasRounds <- HF.PerasEnabled <$> choose (0, 1_000)
 
         let beforeHorizonSlot :: SlotNo
             beforeHorizonEpoch :: EpochNo
             beforeHorizonTime :: RelativeTime
+            beforeHorizonPerasRoundNo :: HF.PerasEnabled PerasRoundNo
 
             beforeHorizonSlot =
               HF.addSlots
@@ -198,19 +232,25 @@ instance Arbitrary ArbitrarySummary where
               addRelTime
                 (realToFrac (beforeHorizonSeconds :: Double))
                 (HF.boundTime summaryStart)
-
+            beforeHorizonPerasRoundNo =
+              HF.addPerasRounds
+                <$> beforeHorizonPerasRounds
+                <*> HF.boundPerasRound summaryStart
         return
           ArbitrarySummary
             { arbitrarySummary = summary
             , beforeHorizonTime
             , beforeHorizonSlot
             , beforeHorizonEpoch
+            , beforeHorizonPerasRoundNo
             , mPastHorizonTime = Nothing
             , mPastHorizonSlot = Nothing
             , mPastHorizonEpoch = Nothing
+            , mPastHorizonPerasRoundNo = Nothing
             }
       HF.EraEnd summaryEnd -> do
         let summarySlots, summaryEpochs :: Word64
+            summaryPerasRounds :: HF.PerasEnabled Word64
             summarySlots =
               HF.countSlots
                 (HF.boundSlot summaryEnd)
@@ -219,7 +259,10 @@ instance Arbitrary ArbitrarySummary where
               HF.countEpochs
                 (HF.boundEpoch summaryEnd)
                 (HF.boundEpoch summaryStart)
-
+            summaryPerasRounds =
+              HF.countPerasRounds
+                <$> HF.boundPerasRound summaryEnd
+                <*> HF.boundPerasRound summaryStart
             summaryTimeSpan :: NominalDiffTime
             summaryTimeSpan =
               diffRelTime
@@ -236,7 +279,9 @@ instance Arbitrary ArbitrarySummary where
         beforeHorizonSeconds <-
           choose (0, summaryTimeSpanSeconds)
             `suchThat` \x -> x /= summaryTimeSpanSeconds
-
+        beforeHorizonPerasRounds <- case summaryPerasRounds of
+          HF.NoPerasEnabled -> pure HF.NoPerasEnabled
+          HF.PerasEnabled rounds -> HF.PerasEnabled <$> choose (0, rounds - 1)
         let beforeHorizonSlot :: SlotNo
             beforeHorizonEpoch :: EpochNo
             beforeHorizonTime :: RelativeTime
@@ -253,16 +298,22 @@ instance Arbitrary ArbitrarySummary where
               addRelTime
                 (realToFrac beforeHorizonSeconds)
                 (HF.boundTime summaryStart)
+            beforeHorizonPerasRoundNo =
+              HF.addPerasRounds
+                <$> beforeHorizonPerasRounds
+                <*> HF.boundPerasRound summaryStart
 
         -- Pick arbitrary values past the horizon
 
         pastHorizonSlots :: Word64 <- choose (0, 10)
         pastHorizonEpochs :: Word64 <- choose (0, 10)
         pastHorizonSeconds :: Double <- choose (0, 10)
+        pastHorizonPerasRounds :: HF.PerasEnabled Word64 <- HF.PerasEnabled <$> choose (0, 10)
 
         let pastHorizonSlot :: SlotNo
             pastHorizonEpoch :: EpochNo
             pastHorizonTime :: RelativeTime
+            pastHorizonPerasRoundNo :: HF.PerasEnabled PerasRoundNo
 
             pastHorizonSlot =
               HF.addSlots
@@ -276,16 +327,21 @@ instance Arbitrary ArbitrarySummary where
               addRelTime
                 (realToFrac pastHorizonSeconds)
                 (HF.boundTime summaryEnd)
-
+            pastHorizonPerasRoundNo =
+              HF.addPerasRounds
+                <$> pastHorizonPerasRounds
+                <*> HF.boundPerasRound summaryEnd
         return
           ArbitrarySummary
             { arbitrarySummary = summary
             , beforeHorizonTime
             , beforeHorizonSlot
             , beforeHorizonEpoch
+            , beforeHorizonPerasRoundNo
             , mPastHorizonTime = Just pastHorizonTime
             , mPastHorizonSlot = Just pastHorizonSlot
             , mPastHorizonEpoch = Just pastHorizonEpoch
+            , mPastHorizonPerasRoundNo = Just pastHorizonPerasRoundNo
             }
 
   shrink summary@ArbitrarySummary{..} =

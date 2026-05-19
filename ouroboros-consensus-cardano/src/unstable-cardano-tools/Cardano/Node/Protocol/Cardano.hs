@@ -11,25 +11,25 @@
 
 module Cardano.Node.Protocol.Cardano
   ( mkConsensusProtocolCardano
-  , mkSomeConsensusProtocolCardano
 
     -- * Errors
   , CardanoProtocolInstantiationError (..)
   ) where
 
-import Cardano.Api.Any
-import Cardano.Api.Protocol.Types
+import Cardano.Api.Any (Error (..))
 import qualified Cardano.Chain.Update as Byron
-import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as SL
+import Cardano.Ledger.BaseTypes
+import Cardano.Ledger.Dijkstra.PParams
 import qualified Cardano.Node.Protocol.Alonzo as Alonzo
 import qualified Cardano.Node.Protocol.Byron as Byron
 import qualified Cardano.Node.Protocol.Conway as Conway
+import Cardano.Node.Protocol.Shelley (readGenesisAny)
 import qualified Cardano.Node.Protocol.Shelley as Shelley
-import Cardano.Node.Protocol.Types
 import Cardano.Node.Types
 import Control.Monad.Trans.Except (ExceptT)
 import Control.Monad.Trans.Except.Extra (firstExceptT)
+import Data.Maybe (fromMaybe)
 import Ouroboros.Consensus.Cardano
 import qualified Ouroboros.Consensus.Cardano as Consensus
 import Ouroboros.Consensus.Cardano.Condense ()
@@ -53,25 +53,12 @@ import Ouroboros.Consensus.Shelley.Crypto (StandardCrypto)
 --
 -- This also serves a purpose as a sanity check that we have all the necessary
 -- type class instances available.
-mkSomeConsensusProtocolCardano ::
-  NodeByronProtocolConfiguration ->
-  NodeShelleyProtocolConfiguration ->
-  NodeAlonzoProtocolConfiguration ->
-  NodeConwayProtocolConfiguration ->
-  NodeHardForkProtocolConfiguration ->
-  Maybe ProtocolFilepaths ->
-  ExceptT CardanoProtocolInstantiationError IO SomeConsensusProtocol
-mkSomeConsensusProtocolCardano nbpc nspc napc ncpc nhpc files = do
-  params <- mkConsensusProtocolCardano nbpc nspc napc ncpc nhpc files
-  return $!
-    SomeConsensusProtocol CardanoBlockType $
-      ProtocolInfoArgsCardano params
-
 mkConsensusProtocolCardano ::
   NodeByronProtocolConfiguration ->
   NodeShelleyProtocolConfiguration ->
   NodeAlonzoProtocolConfiguration ->
   NodeConwayProtocolConfiguration ->
+  Maybe NodeDijkstraProtocolConfiguration ->
   NodeHardForkProtocolConfiguration ->
   Maybe ProtocolFilepaths ->
   ExceptT CardanoProtocolInstantiationError IO (CardanoProtocolParams StandardCrypto)
@@ -99,8 +86,9 @@ mkConsensusProtocolCardano
     { npcConwayGenesisFile
     , npcConwayGenesisFileHash
     }
+  npcDijkstraProtocolConfig
   NodeHardForkProtocolConfiguration
-    { npcTestEnableDevelopmentHardForkEras = _
+    { npcTestEnableDevelopmentHardForkEras
     , -- During testing of the latest unreleased era, we conditionally
     -- declared that we knew about it. We do so only when a config option
     -- for testing development/unstable eras is used. This lets us include
@@ -112,6 +100,7 @@ mkConsensusProtocolCardano
     , npcTestAlonzoHardForkAtEpoch
     , npcTestBabbageHardForkAtEpoch
     , npcTestConwayHardForkAtEpoch
+    , npcTestDijkstraHardForkAtEpoch
     }
   files = do
     byronGenesis <-
@@ -143,12 +132,27 @@ mkConsensusProtocolCardano
           npcConwayGenesisFile
           npcConwayGenesisFileHash
 
+    dijkstraGenesis <- case npcDijkstraProtocolConfig of
+      Nothing -> pure emptyDijkstraGenesis
+      Just
+        ( NodeDijkstraProtocolConfiguration
+            { npcDijkstraGenesisFile
+            , npcDijkstraGenesisFileHash
+            }
+          ) -> do
+          (dijkstraGenesis, _dijkstraGenesisHash) <-
+            firstExceptT CardanoProtocolInstantiationDijkstraGenesisReadError $
+              readGenesisAny
+                npcDijkstraGenesisFile
+                npcDijkstraGenesisFileHash
+          pure dijkstraGenesis
+
     shelleyLeaderCredentials <-
       firstExceptT CardanoProtocolInstantiationPraosLeaderCredentialsError $
         Shelley.readLeaderCredentials files
 
     let transitionLedgerConfig =
-          SL.mkLatestTransitionConfig shelleyGenesis alonzoGenesis conwayGenesis
+          SL.mkLatestTransitionConfig shelleyGenesis alonzoGenesis conwayGenesis dijkstraGenesis
 
     -- TODO: all these protocol versions below are confusing and unnecessary.
     -- It could and should all be automated and these config entries eliminated.
@@ -205,6 +209,9 @@ mkConsensusProtocolCardano
                 -- Version 7 is Babbage
                 -- Version 8 is Babbage (intra era hardfork)
                 -- Version 9 is Conway
+                -- Version 10 is Conway (intra era hardfork)
+                -- Version 11 is Conway (intra era hardfork)
+                -- Version 12 is Dijkstra
                 --
                 -- But we also provide an override to allow for simpler test setups
                 -- such as triggering at the 0 -> 1 transition .
@@ -238,10 +245,33 @@ mkConsensusProtocolCardano
               case npcTestConwayHardForkAtEpoch of
                 Nothing -> Consensus.CardanoTriggerHardForkAtDefaultVersion
                 Just epochNo -> Consensus.CardanoTriggerHardForkAtEpoch epochNo
+          , -- Conway to Dijkstra hard fork parameters
+            triggerHardForkDijkstra =
+              case npcTestDijkstraHardForkAtEpoch of
+                Nothing -> Consensus.CardanoTriggerHardForkAtDefaultVersion
+                Just epochNo -> Consensus.CardanoTriggerHardForkAtEpoch epochNo
           }
         transitionLedgerConfig
         emptyCheckpointsMap
-        (ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0)
+        -- IMPORTANT: this Protver below has to be kept in sync with the values
+        -- used in the node in cardano-node/src/Cardano/Node/Protocol/Cardano.hs
+        -- in function mkSomeConsensusProtocolCardano.
+        ( if npcTestEnableDevelopmentHardForkEras
+            then ProtVer (natVersion @11) 0
+            else ProtVer (natVersion @10) 7
+        )
+
+-- | An empty Dijkstra genesis to be provided when none is specified in the config.
+emptyDijkstraGenesis :: SL.DijkstraGenesis
+emptyDijkstraGenesis =
+  let upgradePParamsDef =
+        UpgradeDijkstraPParams
+          { udppMaxRefScriptSizePerBlock = 1048576
+          , udppMaxRefScriptSizePerTx = 204800
+          , udppRefScriptCostStride = unsafeNonZero 25600
+          , udppRefScriptCostMultiplier = fromMaybe (error "impossible") $ boundRational 1.2
+          }
+   in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}
 
 ------------------------------------------------------------------------------
 -- Errors
@@ -255,6 +285,8 @@ data CardanoProtocolInstantiationError
   | CardanoProtocolInstantiationAlonzoGenesisReadError
       Shelley.GenesisReadError
   | CardanoProtocolInstantiationConwayGenesisReadError
+      Shelley.GenesisReadError
+  | CardanoProtocolInstantiationDijkstraGenesisReadError
       Shelley.GenesisReadError
   | CardanoProtocolInstantiationPraosLeaderCredentialsError
       Shelley.PraosLeaderCredentialsError
@@ -271,6 +303,8 @@ instance Error CardanoProtocolInstantiationError where
     "Alonzo related: " <> displayError err
   displayError (CardanoProtocolInstantiationConwayGenesisReadError err) =
     "Conway related: " <> displayError err
+  displayError (CardanoProtocolInstantiationDijkstraGenesisReadError err) =
+    "Dijkstra related: " <> displayError err
   displayError (CardanoProtocolInstantiationPraosLeaderCredentialsError err) =
     displayError err
   displayError (CardanoProtocolInstantiationErrorAlonzo err) =

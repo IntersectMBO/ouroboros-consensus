@@ -34,6 +34,7 @@ import Control.Monad.Except (Except, throwError, withExcept)
 import qualified Data.ByteString.Lazy as BL
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Text (Text)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -81,6 +82,7 @@ data MockError blk
   | MockUtxoError UtxoError
   | MockInvalidHash (ChainHash blk) (ChainHash blk)
   | MockTxSizeTooBig ByteSize32 ByteSize32
+  | MockMempoolError !Text
   deriving (Generic, NoThunks)
 
 deriving instance StandardHash blk => Show (MockError blk)

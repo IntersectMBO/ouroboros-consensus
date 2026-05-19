@@ -1,13 +1,17 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | Queries
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   ( -- * Queries
-    getBlockComponent
+    allocInRegistryReadOnlyForkerAtPoint
+  , getBlockComponent
   , getCurrentChain
   , getCurrentChainWithTime
   , getCurrentLedger
@@ -16,14 +20,18 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getIsFetched
   , getIsInvalidBlock
   , getIsValid
-  , getLedgerTablesAtFor
   , getMaxSlotNo
   , getPastLedger
-  , getReadOnlyForkerAtPoint
+  , getPerasWeightSnapshot
+  , getPerasCertSnapshot
+  , getLatestPerasCertOnChainRound
   , getStatistics
   , getTipBlock
   , getTipHeader
   , getTipPoint
+  , openReadOnlyForkerAtPoint
+  , waitForImmutableBlock
+  , withReadOnlyForkerAtPoint
 
     -- * Low-level queries
   , getAnyBlockComponent
@@ -32,8 +40,10 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getChainSelStarvation
   ) where
 
-import Cardano.Ledger.BaseTypes (unNonZero)
-import Control.ResourceRegistry (ResourceRegistry)
+import Cardano.Ledger.BaseTypes (WithOrigin (..))
+import Control.Monad (void)
+import Control.Monad.Trans.Class
+import Control.ResourceRegistry
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
@@ -42,8 +52,13 @@ import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
-import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, KeysMK, ValuesMK)
+import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Peras.Weight
+  ( PerasWeightSnapshot
+  , takeVolatileSuffix
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( BlockComponent (..)
@@ -53,9 +68,12 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
+import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (eitherToMaybe)
+import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -68,45 +86,63 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 -- | Return the last @k@ headers.
 --
--- While the in-memory fragment ('cdbChain') might temporarily be longer than
--- @k@ (until the background thread has copied those blocks to the
--- ImmutableDB), this function will never return a fragment longer than @k@.
+-- While the in-memory fragment ('cdbChain') might temporarily have more weight
+-- than @k@ (until the background thread has copied those blocks to the
+-- ImmutableDB), this function will never return a fragment heavier than @k@.
 --
 -- The anchor point of the returned fragment will be the most recent
 -- \"immutable\" block, i.e. a block that cannot be rolled back. In
 -- ChainDB.md, we call this block @i@.
 --
--- Note that the returned fragment may be shorter than @k@ in case the whole
--- chain itself is shorter than @k@ or in case the VolatileDB was corrupted.
--- In the latter case, we don't take blocks already in the ImmutableDB into
--- account, as we know they /must/ have been \"immutable\" at some point, and,
--- therefore, /must/ still be \"immutable\".
+-- Note that the returned fragment may have weight less than @k@ in case the
+-- whole chain itself weights less than @k@, or in case the VolatileDB was
+-- corrupted. In the latter case, we don't take blocks already in the
+-- ImmutableDB into account, as we know they /must/ have been \"immutable\" at
+-- some point, and, therefore, /must/ still be \"immutable\".
 getCurrentChain ::
   forall m blk.
   ( IOLike m
+  , StandardHash blk
   , HasHeader (Header blk)
   , ConsensusProtocol (BlockProtocol blk)
   ) =>
   ChainDbEnv m blk ->
   STM m (AnchoredFragment (Header blk))
-getCurrentChain CDB{..} =
-  AF.anchorNewest (unNonZero k) . icWithoutTime <$> readTVar cdbChain
- where
-  SecurityParam k = configSecurityParam cdbTopLevelConfig
+getCurrentChain cdb@CDB{..} =
+  getCurrentChainLike cdb $ icWithoutTime <$> readTVar cdbChain
 
 -- | Same as 'getCurrentChain', /mutatis mutandi/.
 getCurrentChainWithTime ::
   forall m blk.
   ( IOLike m
+  , StandardHash blk
   , HasHeader (HeaderWithTime blk)
   , ConsensusProtocol (BlockProtocol blk)
   ) =>
   ChainDbEnv m blk ->
   STM m (AnchoredFragment (HeaderWithTime blk))
-getCurrentChainWithTime CDB{..} =
-  AF.anchorNewest (unNonZero k) . icWithTime <$> readTVar cdbChain
+getCurrentChainWithTime cdb@CDB{..} =
+  getCurrentChainLike cdb $ icWithTime <$> readTVar cdbChain
+
+-- | This function is the generalised helper for 'getCurrentChain' and
+-- 'getCurrentChainWithTime'. See 'getCurrentChain' for the explanation of it's
+-- behaviour.
+getCurrentChainLike ::
+  forall m blk h.
+  ( IOLike m
+  , StandardHash blk
+  , HasHeader h
+  , HeaderHash blk ~ HeaderHash h
+  , ConsensusProtocol (BlockProtocol blk)
+  ) =>
+  ChainDbEnv m blk ->
+  STM m (AnchoredFragment h) ->
+  STM m (AnchoredFragment h)
+getCurrentChainLike cdb@CDB{..} getCurChain = do
+  weights <- forgetFingerprint <$> getPerasWeightSnapshot cdb
+  takeVolatileSuffix weights k <$> getCurChain
  where
-  SecurityParam k = configSecurityParam cdbTopLevelConfig
+  k = configSecurityParam cdbTopLevelConfig
 
 -- | Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
 -- last @k@ blocks of the current chain.
@@ -252,26 +288,94 @@ getPastLedger ::
   STM m (Maybe (ExtLedgerState blk EmptyMK))
 getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 
-getReadOnlyForkerAtPoint ::
+allocInRegistryReadOnlyForkerAtPoint ::
   IOLike m =>
   ChainDbEnv m blk ->
+  Target (Point blk) ->
   ResourceRegistry m ->
+  m (Either LedgerDB.GetForkerError (ResourceKey m, LedgerDB.ReadOnlyForker' m blk))
+allocInRegistryReadOnlyForkerAtPoint cdb tgt rr = do
+  (rk, forker) <-
+    allocate
+      rr
+      (\_ -> openReadOnlyForkerAtPoint cdb tgt)
+      (either (const $ pure ()) LedgerDB.roforkerClose)
+  case forker of
+    Left err -> void (release rk) >> pure (Left err)
+    Right v -> pure (Right (rk, v))
+
+openReadOnlyForkerAtPoint ::
+  IOLike m =>
+  ChainDbEnv m blk ->
   Target (Point blk) ->
   m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
-getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
+openReadOnlyForkerAtPoint CDB{..} = LedgerDB.openReadOnlyForker cdbLedgerDB
 
-getLedgerTablesAtFor ::
+withReadOnlyForkerAtPoint ::
   IOLike m =>
   ChainDbEnv m blk ->
-  Point blk ->
-  LedgerTables (ExtLedgerState blk) KeysMK ->
-  m (Maybe (LedgerTables (ExtLedgerState blk) ValuesMK))
-getLedgerTablesAtFor =
-  (\ldb pt ks -> eitherToMaybe <$> LedgerDB.readLedgerTablesAtFor ldb pt ks)
-    . cdbLedgerDB
+  Target (Point blk) ->
+  ( Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk) ->
+    WithEarlyExit m r
+  ) ->
+  WithEarlyExit m r
+withReadOnlyForkerAtPoint cdb tgt =
+  bracket
+    (lift $ openReadOnlyForkerAtPoint cdb tgt)
+    (either (const $ pure ()) (lift . LedgerDB.roforkerClose))
 
-getStatistics :: IOLike m => ChainDbEnv m blk -> m (Maybe LedgerDB.Statistics)
+getStatistics :: IOLike m => ChainDbEnv m blk -> m LedgerDB.Statistics
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
+
+getPerasWeightSnapshot ::
+  ChainDbEnv m blk -> STM m (WithFingerprint (PerasWeightSnapshot blk))
+getPerasWeightSnapshot CDB{..} = PerasCertDB.getWeightSnapshot cdbPerasCertDB
+
+getPerasCertSnapshot ::
+  ChainDbEnv m blk -> STM m (PerasCertSnapshot blk)
+getPerasCertSnapshot CDB{..} = PerasCertDB.getCertSnapshot cdbPerasCertDB
+
+-- | Wait until the slot of the given point is smaller or equal than the immutable tip slot,
+--   and then return:
+--   - the block at the target slot if there is a block in the immutable DB at that slot;
+--   - the block from the next occupied slot.
+--
+-- This function will never return 'Left' as it will block until it could
+-- return a 'Right'. However, the type has to be an 'Either' to avoid a call
+-- to 'error'.
+waitForImmutableBlock ::
+  forall blk m.
+  StandardHash blk =>
+  IOLike m =>
+  ChainDbEnv m blk ->
+  RealPoint blk ->
+  m (Either ImmutableDB.SeekBlockError (RealPoint blk))
+waitForImmutableBlock CDB{cdbImmutableDB} targetRealPoint = do
+  -- first, wait until the target slot is older than the immutable tip
+  _ <-
+    atomically $
+      ImmutableDB.getTip cdbImmutableDB >>= \case
+        Origin -> retry
+        At tip ->
+          check (ImmutableDB.tipSlotNo tip >= realPointSlot targetRealPoint)
+  -- then, query the DB for a point at or directly following the target slot
+  ImmutableDB.getBlockAtOrAfterPoint cdbImmutableDB targetRealPoint >>= \case
+    Left e ->
+      error $
+        "Impossible: waitForImmutableBlock called on "
+          <> show targetRealPoint
+          <> " returned "
+          <> show e
+          <> ". The ImmutableDB could have been concurrently truncated."
+    result@Right{} -> pure result
+
+getLatestPerasCertOnChainRound ::
+  (IOLike m, LedgerSupportsPeras blk) =>
+  ChainDbEnv m blk ->
+  STM m (Maybe PerasRoundNo)
+getLatestPerasCertOnChainRound CDB{..} = do
+  volatileLedger <- ledgerState <$> LedgerDB.getVolatileTip cdbLedgerDB
+  pure (getLatestPerasCertRound volatileLedger)
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent

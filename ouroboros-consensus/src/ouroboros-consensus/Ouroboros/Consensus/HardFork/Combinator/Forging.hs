@@ -1,8 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -16,10 +14,12 @@ module Ouroboros.Consensus.HardFork.Combinator.Forging
   , hardForkBlockForging
   ) where
 
-import Data.Functor.Const (Const (..))
+import Control.Monad (void)
 import Data.Functor.Product
 import Data.Maybe (fromMaybe)
+import Data.SOP (Top)
 import Data.SOP.BasicFunctors
+import Data.SOP.Constraint (All)
 import Data.SOP.Functors (Product2 (..))
 import Data.SOP.InPairs (InPairs)
 import qualified Data.SOP.InPairs as InPairs
@@ -29,7 +29,6 @@ import Data.SOP.OptNP (NonEmptyOptNP, OptNP, ViewOptNP (..))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import Data.Text (Text)
-import LeiosDemoTypes (ForgedLeiosEb)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -83,17 +82,20 @@ hardForkBlockForging ::
   (CanHardFork xs, Monad m) =>
   -- | Used as the 'forgeLabel', the labels of the given 'BlockForging's will
   -- be ignored.
-  Text ->
-  NonEmptyOptNP (BlockForging m) xs ->
-  BlockForging m (HardForkBlock xs)
-hardForkBlockForging label blockForging =
-  BlockForging
-    { forgeLabel = label
-    , canBeLeader = hardForkCanBeLeader blockForging
-    , updateForgeState = hardForkUpdateForgeState blockForging
-    , checkCanForge = hardForkCheckCanForge blockForging
-    , forgeBlock = hardForkForgeBlock blockForging
-    }
+  (NonEmptyOptNP (BlockForging m) xs -> Text) ->
+  NonEmptyOptNP (MkBlockForging m) xs ->
+  MkBlockForging m (HardForkBlock xs)
+hardForkBlockForging labelF mkBlockForgings = MkBlockForging $ do
+  blockForgings <- htraverse' mkBlockForging mkBlockForgings
+  pure
+    BlockForging
+      { forgeLabel = labelF blockForgings
+      , canBeLeader = hardForkCanBeLeader blockForgings
+      , updateForgeState = hardForkUpdateForgeState blockForgings
+      , checkCanForge = hardForkCheckCanForge blockForgings
+      , forgeBlock = hardForkForgeBlock blockForgings
+      , finalize = hardForkFinalize blockForgings
+      }
 
 hardForkCanBeLeader ::
   CanHardFork xs =>
@@ -101,6 +103,12 @@ hardForkCanBeLeader ::
 hardForkCanBeLeader =
   SomeErasCanBeLeader
     . hmap (WrapCanBeLeader . canBeLeader)
+
+hardForkFinalize ::
+  (Monad m, All Top xs) =>
+  NonEmptyOptNP (BlockForging m) xs -> m ()
+hardForkFinalize blockForging =
+  void $ htraverse_ finalize blockForging
 
 -- | POSTCONDITION: the returned 'ForgeStateUpdateInfo' is from the same era as
 -- the ticked 'ChainDepState'.
@@ -301,71 +309,53 @@ hardForkForgeBlock ::
   forall m xs empty.
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
-  ForgeBlockArgs m (HardForkBlock xs) ->
-  m (HardForkBlock xs, Maybe ForgedLeiosEb)
+  TopLevelConfig (HardForkBlock xs) ->
+  BlockNo ->
+  SlotNo ->
+  TickedLedgerState (HardForkBlock xs) EmptyMK ->
+  [Validated (GenTx (HardForkBlock xs))] ->
+  HardForkIsLeader xs ->
+  m (HardForkBlock xs)
 hardForkForgeBlock
   blockForging
-  ForgeBlockArgs{..} =
-    fmap undistrib $ hsequence' isLeaderAndLedgerStateAndBlocks
-   where
-    isLeaderAndLedgerStateAndBlocks :: NS (m :.: Product I (Const (Maybe ForgedLeiosEb))) xs
-    isLeaderAndLedgerStateAndBlocks =
-      hizipWith3
+  cfg
+  bno
+  sno
+  (TickedHardForkLedgerState transition ledgerState)
+  txs
+  isLeader =
+    fmap (HardForkBlock . OneEraBlock)
+      $ hsequence
+      $ hizipWith3
         forgeBlockOne
         cfgs
         (OptNP.toNP blockForging)
-        $ injectTxs
-        -- IsLeader and ledger are guaranteed to be in the same era. The
-        -- unticked 'ChainDepState' may legitimately be in a previous era
-        -- (era boundary); we pass 'Nothing' to that era in that case.
-        $ Match.mustMatchNS
-          "IsLeader"
-          (getOneEraIsLeader fbIsLeader)
-          chainDepStateAndLedger
-
-    ledgerNS = State.tip . tickedHardForkLedgerStatePerEra $ fbCurrentTickedLedgerState
-
-    chainDepStateAndLedger ::
-      NS (Product (Maybe :.: WrapChainDepState) (FlipTickedLedgerState EmptyMK)) xs
-    chainDepStateAndLedger = case fbChainDepState of
-      Nothing -> hmap (\l -> Pair (Comp Nothing) l) ledgerNS
-      Just cds -> case Match.matchNS ledgerNS (State.tip cds) of
-        Right matched -> hmap (\(Pair l cds') -> Pair (Comp (Just cds')) l) matched
-        Left _mismatch -> hmap (\l -> Pair (Comp Nothing) l) ledgerNS
-
-    injectTxs =
-      injectValidatedTxs
-        (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) fbRbTxs)
-        (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) fbEbTxs)
-    cfgs = distribTopLevelConfig ei fbConfig
+      $ injectValidatedTxs (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) txs)
+      -- We know both NSs must be from the same era, because they were all
+      -- produced from the same 'BlockForging'. Unfortunately, we can't enforce
+      -- it statically.
+      $ Match.mustMatchNS
+        "IsLeader"
+        (getOneEraIsLeader isLeader)
+        (State.tip ledgerState)
+   where
+    cfgs = distribTopLevelConfig ei cfg
     ei =
       State.epochInfoPrecomputedTransitionInfo
-        (hardForkLedgerConfigShape (configLedger fbConfig))
-        (tickedHardForkLedgerStateTransition fbCurrentTickedLedgerState)
-        (tickedHardForkLedgerStatePerEra fbCurrentTickedLedgerState)
+        (hardForkLedgerConfigShape (configLedger cfg))
+        transition
+        ledgerState
 
     missingBlockForgingImpossible :: EraIndex xs -> String
     missingBlockForgingImpossible eraIndex =
       "impossible: current era lacks block forging but we have an IsLeader proof "
         <> show eraIndex
 
-    -- Helper to match your desired signature (Context * (RB * EB))
-    reassoc ::
-      Product (Product f g) h blk ->
-      Product f (Product g h) blk
-    reassoc (Pair (Pair f g) h) = Pair f (Pair g h)
-
     injectValidatedTxs ::
-      [NS WrapValidatedGenTx xs] -> -- rbTxs
-      [NS WrapValidatedGenTx xs] -> -- ebTxs
+      [NS WrapValidatedGenTx xs] ->
       NS f xs ->
-      NS (Product f (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))) xs
-    injectValidatedTxs rb eb state =
-      hmap reassoc $
-        noMismatches $
-          flip (matchValidatedTxsNS injTxs) eb $ -- Inject EB (Outer)
-            noMismatches $
-              flip (matchValidatedTxsNS injTxs) rb state -- Inject RB (Inner)
+      NS (Product f ([] :.: WrapValidatedGenTx)) xs
+    injectValidatedTxs = noMismatches .: flip (matchValidatedTxsNS injTxs)
      where
       injTxs :: InPairs InjectValidatedTx xs
       injTxs =
@@ -373,6 +363,7 @@ hardForkForgeBlock
           InPairs.requiringBoth
             (hmap (WrapLedgerConfig . configLedger) cfgs)
             hardForkInjectTxs
+
       -- \| We know the transactions must be valid w.r.t. the given ledger
       -- state, the Mempool maintains that invariant. That means they are
       -- either from the same era, or can be injected into that era.
@@ -382,18 +373,6 @@ hardForkForgeBlock
       noMismatches ([], xs) = xs
       noMismatches (_errs, _) = error "unexpected unmatchable transactions"
 
-    undistrib ::
-      NS (Product I (Const (Maybe ForgedLeiosEb))) xs ->
-      (HardForkBlock xs, Maybe ForgedLeiosEb)
-    undistrib = hcollapse . himap inj
-     where
-      inj ::
-        Index xs blk ->
-        Product I (Const (Maybe ForgedLeiosEb)) blk ->
-        K (HardForkBlock xs, Maybe ForgedLeiosEb) blk
-      inj index (Pair (I blk) (Const mEb)) =
-        K (HardForkBlock (OneEraBlock (injectNS index (I blk))), mEb)
-
     -- \| Unwraps all the layers needed for SOP and call 'forgeBlock'.
     forgeBlockOne ::
       Index xs blk ->
@@ -402,38 +381,27 @@ hardForkForgeBlock
       Product
         ( Product
             WrapIsLeader
-            (Product (Maybe :.: WrapChainDepState) (FlipTickedLedgerState EmptyMK))
+            (FlipTickedLedgerState EmptyMK)
         )
-        (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))
+        ([] :.: WrapValidatedGenTx)
         blk ->
-      (m :.: Product I (Const (Maybe ForgedLeiosEb))) blk
+      m blk
     forgeBlockOne
       index
       cfg'
       (Comp mBlockForging')
       ( Pair
-          ( Pair
-              (WrapIsLeader isLeader')
-              (Pair (Comp mChainDepState') (FlipTickedLedgerState ledgerState'))
-            )
-          (Pair (Comp rbTxs') (Comp ebTxs'))
+          (Pair (WrapIsLeader isLeader') (FlipTickedLedgerState ledgerState'))
+          (Comp txs')
         ) =
-        Comp $
-          fmap (\(blk, mEb) -> Pair (I blk) (Const mEb)) $
-            forgeBlock
-              ( fromMaybe
-                  (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
-                  mBlockForging'
-              )
-              ForgeBlockArgs
-                { fbIsLeader = isLeader'
-                , fbEbTxs = (map unwrapValidatedGenTx ebTxs')
-                , fbRbTxs = (map unwrapValidatedGenTx rbTxs')
-                , fbCurrentTickedLedgerState = ledgerState'
-                , fbCurrentSlotNo
-                , fbCurrentBlockNo
-                , fbConfig = cfg'
-                , fbChainDepState = unwrapChainDepState <$> mChainDepState'
-                , fbLeiosDb
-                , fbLeiosTracer
-                }
+        forgeBlock
+          ( fromMaybe
+              (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
+              mBlockForging'
+          )
+          cfg'
+          bno
+          sno
+          ledgerState'
+          (map unwrapValidatedGenTx txs')
+          isLeader'

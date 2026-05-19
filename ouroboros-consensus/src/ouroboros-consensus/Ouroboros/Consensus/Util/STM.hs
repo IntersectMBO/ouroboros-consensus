@@ -1,9 +1,5 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -12,6 +8,8 @@ module Ouroboros.Consensus.Util.STM
   ( -- * 'Watcher'
     Watcher (..)
   , forkLinkedWatcher
+  , forkLinkedWatcherAllocate
+  , forkLinkedWatcherFinalize
   , withWatcher
 
     -- * Misc
@@ -36,10 +34,12 @@ import Control.Monad (void)
 import Control.Monad.State (StateT (..))
 import Control.ResourceRegistry
 import Data.Void
-import Data.Word (Word64)
-import GHC.Generics (Generic)
 import GHC.Stack
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.BlockFetch.ConsensusInterface
+  ( Fingerprint (..)
+  , WithFingerprint (..)
+  )
 
 {-------------------------------------------------------------------------------
   Misc
@@ -82,20 +82,6 @@ blockUntilJust getMaybeA = do
 
 blockUntilAllJust :: MonadSTM m => [STM m (Maybe a)] -> STM m [a]
 blockUntilAllJust = mapM blockUntilJust
-
--- | Simple type that can be used to indicate something in a @TVar@ is
--- changed.
-newtype Fingerprint = Fingerprint Word64
-  deriving stock (Show, Eq, Generic)
-  deriving newtype Enum
-  deriving anyclass NoThunks
-
--- | Store a value together with its fingerprint.
-data WithFingerprint a = WithFingerprint
-  { forgetFingerprint :: !a
-  , getFingerprint :: !Fingerprint
-  }
-  deriving (Show, Eq, Functor, Generic, NoThunks)
 
 {-------------------------------------------------------------------------------
   Simulate monad stacks
@@ -180,6 +166,42 @@ forkLinkedWatcher ::
   m (Thread m Void)
 forkLinkedWatcher registry label watcher =
   forkLinkedThread registry label $ runWatcher watcher
+
+-- | Spawn a new thread that safely allocates a resource, then runs a 'Watcher'
+-- using the resource, finalizing the resource safely when the watcher
+-- terminates in any way.
+--
+-- The allocated resource and thread are both linked to the registry.
+forkLinkedWatcherAllocate ::
+  forall m r a fp.
+  (IOLike m, Eq fp, HasCallStack) =>
+  ResourceRegistry m ->
+  -- | Label for the thread
+  String ->
+  m r ->
+  (r -> m ()) ->
+  (r -> Watcher m a fp) ->
+  m (Thread m Void)
+forkLinkedWatcherAllocate registry label allocater finalizer f =
+  forkLinkedThread registry label $ do
+    (rk, r) <- allocate registry (const allocater) finalizer
+    runWatcher (f r) `finally` release rk
+
+-- | Spawn a new thread that runs a 'Watcher', executing a finalizer when the
+-- thread terminates.
+--
+-- The thread will be linked to the registry.
+forkLinkedWatcherFinalize ::
+  forall m a fp.
+  (IOLike m, Eq fp, HasCallStack) =>
+  ResourceRegistry m ->
+  -- | Label for the thread
+  String ->
+  Watcher m a fp ->
+  m () ->
+  m (Thread m Void)
+forkLinkedWatcherFinalize registry label watcher finalizer =
+  forkLinkedThread registry label $ runWatcher watcher `finally` finalizer
 
 -- | Spawn a new thread that runs a 'Watcher'
 --

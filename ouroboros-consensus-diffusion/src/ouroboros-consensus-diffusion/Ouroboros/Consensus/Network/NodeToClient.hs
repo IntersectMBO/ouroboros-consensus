@@ -41,10 +41,20 @@ module Ouroboros.Consensus.Network.NodeToClient
   , responder
   ) where
 
+import Cardano.Network.NodeToClient hiding
+  ( NodeToClientVersion (..)
+  )
+import qualified Cardano.Network.NodeToClient as N
+  ( NodeToClientVersion (..)
+  , NodeToClientVersionData
+  )
+import Cardano.Network.Protocol.LocalStateQuery.Codec
+import Cardano.Network.Protocol.LocalTxMonitor.Codec
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding)
 import Codec.CBOR.Read (DeserialiseFailure)
 import Codec.Serialise (Serialise)
+import Control.DeepSeq (NFData)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.ByteString.Lazy (ByteString)
@@ -80,24 +90,14 @@ import Ouroboros.Network.Block
   )
 import Ouroboros.Network.BlockFetch
 import Ouroboros.Network.Channel
-import Ouroboros.Network.Context
 import Ouroboros.Network.Driver
 import qualified Ouroboros.Network.Driver.Stateful as Stateful
 import Ouroboros.Network.Mux
-import Ouroboros.Network.NodeToClient hiding
-  ( NodeToClientVersion (..)
-  )
-import qualified Ouroboros.Network.NodeToClient as N
-  ( NodeToClientVersion (..)
-  , NodeToClientVersionData
-  )
 import Ouroboros.Network.Protocol.ChainSync.Codec
 import Ouroboros.Network.Protocol.ChainSync.Server
 import Ouroboros.Network.Protocol.ChainSync.Type
-import Ouroboros.Network.Protocol.LocalStateQuery.Codec
 import Ouroboros.Network.Protocol.LocalStateQuery.Server
 import Ouroboros.Network.Protocol.LocalStateQuery.Type as LocalStateQuery
-import Ouroboros.Network.Protocol.LocalTxMonitor.Codec
 import Ouroboros.Network.Protocol.LocalTxMonitor.Server
 import Ouroboros.Network.Protocol.LocalTxMonitor.Type
 import Ouroboros.Network.Protocol.LocalTxSubmission.Codec
@@ -143,9 +143,9 @@ mkHandlers NodeKernelArgs{cfg, tracers} NodeKernel{getChainDB, getMempool} =
         localTxSubmissionServer
           (Node.localTxSubmissionServerTracer tracers)
           getMempool
-    , hStateQueryServer =
-        localStateQueryServer (ExtLedgerCfg cfg)
-          . ChainDB.getReadOnlyForkerAtPoint getChainDB
+    , hStateQueryServer = \reg ->
+        localStateQueryServer (ExtLedgerCfg cfg) $ \target ->
+          ChainDB.allocInRegistryReadOnlyForkerAtPoint getChainDB target reg
     , hTxMonitorServer =
         localTxMonitorServer
           getMempool
@@ -401,7 +401,7 @@ showTracers tr =
 -------------------------------------------------------------------------------}
 
 -- | A node-to-client application
-type App m peer bytes a = peer -> Channel m bytes -> m (a, Maybe (Reception bytes))
+type App m peer bytes a = peer -> Channel m bytes -> m (a, Maybe bytes)
 
 -- | Applications for the node-to-client (i.e., local) protocols
 --
@@ -422,16 +422,13 @@ mkApps ::
   forall m addrNTN addrNTC blk e bCS bTX bSQ bTM.
   ( IOLike m
   , Exception e
+  , NFData e
   , ShowProxy blk
   , ShowProxy (ApplyTxErr blk)
   , ShowProxy (GenTx blk)
   , ShowProxy (GenTxId blk)
   , ShowProxy (Query blk)
   , forall fp. ShowQuery (BlockQuery blk fp)
-  , BearerBytes bCS
-  , BearerBytes bTX
-  , BearerBytes bSQ
-  , BearerBytes bTM
   ) =>
   NodeKernel m addrNTN addrNTC blk ->
   Tracers m addrNTC blk e ->
@@ -444,7 +441,7 @@ mkApps kernel Tracers{..} Codecs{..} Handlers{..} =
   aChainSyncServer ::
     addrNTC ->
     Channel m bCS ->
-    m ((), Maybe (Reception bCS))
+    m ((), Maybe bCS)
   aChainSyncServer them channel = do
     labelThisThread "LocalChainSyncServer"
     bracketWithPrivateRegistry
@@ -461,7 +458,7 @@ mkApps kernel Tracers{..} Codecs{..} Handlers{..} =
   aTxSubmissionServer ::
     addrNTC ->
     Channel m bTX ->
-    m ((), Maybe (Reception bTX))
+    m ((), Maybe bTX)
   aTxSubmissionServer them channel = do
     labelThisThread "LocalTxSubmissionServer"
     runPeer
@@ -473,7 +470,7 @@ mkApps kernel Tracers{..} Codecs{..} Handlers{..} =
   aStateQueryServer ::
     addrNTC ->
     Channel m bSQ ->
-    m ((), Maybe (Reception bSQ))
+    m ((), Maybe bSQ)
   aStateQueryServer them channel = do
     labelThisThread "LocalStateQueryServer"
     withRegistry $ \rr ->
@@ -487,7 +484,7 @@ mkApps kernel Tracers{..} Codecs{..} Handlers{..} =
   aTxMonitorServer ::
     addrNTC ->
     Channel m bTM ->
-    m ((), Maybe (Reception bTM))
+    m ((), Maybe bTM)
   aTxMonitorServer them channel = do
     labelThisThread "LocalTxMonitorServer"
     runPeer

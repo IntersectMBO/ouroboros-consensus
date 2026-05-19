@@ -45,7 +45,6 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -55,8 +54,6 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 
 -- | Byron as the single era in the hard fork combinator
 type ByronBlockHFC = HardForkBlock '[ByronBlock]
-
-instance ResolveLeiosBlock (HardForkBlock '[ByronBlock]) -- FIXME
 
 {-------------------------------------------------------------------------------
   NoHardForks instance
@@ -104,7 +101,7 @@ instance SerialiseHFC '[ByronBlock] where
   encodeDiskHfcBlock (DegenCodecConfig ccfg) (DegenBlock b) =
     encodeDisk ccfg b
   decodeDiskHfcBlock (DegenCodecConfig ccfg) =
-    fmap DegenBlock <$> decodeDisk ccfg
+    (fmap (fmap DegenBlock)) <$> decodeDisk ccfg
   reconstructHfcPrefixLen _ =
     reconstructPrefixLen (Proxy @(Header ByronBlock))
   reconstructHfcNestedCtxt _ prefix blockSize =

@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -129,7 +130,7 @@ instance LedgerSupportsMempool ByronBlock where
    where
     validationMode = CC.ValidationMode CC.BlockValidation Utxo.TxValidation
 
-  reapplyTx _ cfg slot vtx st =
+  reapplyTx cfg slot vtx st =
     applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
@@ -138,10 +139,19 @@ instance LedgerSupportsMempool ByronBlock where
 
   getTransactionKeySets _ = emptyLedgerTables
 
+  mkMempoolApplyTxError = nothingMkMempoolApplyTxError
+
 instance TxLimits ByronBlock where
   type TxMeasure ByronBlock = IgnoringOverflow ByteSize32
 
-  ebCapacityTxMeasure _cfg _st = Nothing
+  txWireSize =
+    (+ 2)
+      -- 2 bytes overhead added by `EncCBOR (AMempoolPayload
+      -- ByteString)` instance
+      . fromIntegral
+      . Strict.length
+      . CC.mempoolPayloadRecoverBytes
+      . toMempoolPayload
 
   blockCapacityTxMeasure _cfg st =
     IgnoringOverflow $
@@ -352,7 +362,10 @@ decodeByronGenTxId = do
     1 -> ByronDlgId <$> fromByronCBOR
     2 -> ByronUpdateProposalId <$> fromByronCBOR
     3 -> ByronUpdateVoteId <$> fromByronCBOR
-    tag -> cborError $ DecoderErrorUnknownTag "GenTxId (ByronBlock cfg)" tag
+    tag ->
+      cborError $
+        DecoderErrorUnknownTag "GenTxId (ByronBlock cfg)" $
+          fromIntegral @Word8 @Word tag
 
 encodeByronApplyTxError :: ApplyTxErr ByronBlock -> Encoding
 encodeByronApplyTxError = toByronCBOR

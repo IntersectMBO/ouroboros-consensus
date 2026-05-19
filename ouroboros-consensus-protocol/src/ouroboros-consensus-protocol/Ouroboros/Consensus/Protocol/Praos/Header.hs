@@ -2,10 +2,13 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- | Block header associated with Praos.
 --
@@ -39,13 +42,8 @@ import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (decCBOR)
   , EncCBOR (..)
-  , ToCBOR (..)
-  , decodeListLen
-  , encodeListLen
-  , encodedSigKESSizeExpr
   , serialize'
   , unCBORGroup
-  , withSlice
   )
 import Cardano.Ledger.Binary.Coders
 import Cardano.Ledger.Binary.Crypto
@@ -59,19 +57,29 @@ import Cardano.Ledger.Hashes
   ( EraIndependentBlockBody
   , EraIndependentBlockHeader
   , HASH
+  , HashAnnotated (..)
+  , SafeToHash
+  , extractHash
+  , originalBytesSize
   )
 import Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
+import Cardano.Ledger.MemoBytes
+  ( Mem
+  , MemoBytes
+  , MemoHashIndex
+  , Memoized (..)
+  , getMemoRawType
+  , getMemoSafeHash
+  , mkMemoized
+  )
 import Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import Cardano.Protocol.TPraos.BHeader (PrevHash)
 import Cardano.Protocol.TPraos.OCert (OCert)
 import Cardano.Slotting.Block (BlockNo)
 import Cardano.Slotting.Slot (SlotNo)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
 import Data.Word (Word32)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement)
-import NoThunks.Class (AllowThunksIn (..), NoThunks (..))
+import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 
 -- | The body of the header is the part which gets hashed to form the hash
@@ -83,7 +91,7 @@ data HeaderBody crypto = HeaderBody
   -- ^ block slot
   , hbPrev :: !PrevHash
   -- ^ Hash of the previous block header
-  , hbVk :: !(VKey 'BlockIssuer)
+  , hbVk :: !(VKey BlockIssuer)
   -- ^ verification key of block issuer
   , hbVrfVk :: !(VRF.VerKeyVRF (VRF crypto))
   -- ^ VRF verification key for block issuer
@@ -97,8 +105,6 @@ data HeaderBody crypto = HeaderBody
   -- ^ operational certificate
   , hbProtVer :: !ProtVer
   -- ^ protocol version
-  , hbMayEbAnnouncement :: Maybe EbAnnouncement
-  -- ^ Leios EB announcement
   }
   deriving Generic
 
@@ -127,67 +133,46 @@ instance Crypto c => Eq (HeaderRaw c) where
     headerRawSig h1 == headerRawSig h2
       && headerRawBody h1 == headerRawBody h2
 
--- | Checks the binary representation first.
-instance Crypto c => Eq (Header c) where
-  h1 == h2 =
-    headerBytes h1 == headerBytes h2
-      && headerRaw h1 == headerRaw h2
-
 instance
   Crypto crypto =>
   NoThunks (HeaderRaw crypto)
 
 -- | Full header type, carrying its own memoised bytes.
-data Header crypto = HeaderConstr
-  { headerRaw :: !(HeaderRaw crypto)
-  , headerBytes :: BS.ByteString -- lazy on purpose, constructed on demand
-  }
-  deriving (Show, Generic)
-  deriving NoThunks via AllowThunksIn '["headerBytes"] (Header crypto)
+newtype Header crypto = HeaderConstr (MemoBytes (HeaderRaw crypto))
+  deriving Generic
+  deriving newtype (Eq, Show, NoThunks, Plain.ToCBOR, SafeToHash)
+
+instance Memoized (Header crypto) where
+  type RawType (Header crypto) = HeaderRaw crypto
+
+type instance MemoHashIndex (HeaderRaw crypto) = EraIndependentBlockHeader
+
+instance HashAnnotated (Header crypto) EraIndependentBlockHeader where
+  hashAnnotated = getMemoSafeHash
 
 pattern Header ::
   Crypto crypto =>
   HeaderBody crypto ->
   KES.SignedKES (KES crypto) (HeaderBody crypto) ->
   Header crypto
-pattern Header{headerBody, headerSig} <-
-  HeaderConstr
-    { headerRaw =
-      HeaderRaw
-        { headerRawBody = headerBody
-        , headerRawSig = headerSig
-        }
-    }
+pattern Header{headerBody, headerSig} <- (getMemoRawType -> HeaderRaw headerBody headerSig)
   where
-    Header body sig =
-      let header =
-            HeaderRaw
-              { headerRawBody = body
-              , headerRawSig = sig
-              }
-       in HeaderConstr
-            { headerRaw = header
-            , headerBytes = serialize' (pvMajor (hbProtVer body)) header
-            }
-
+    Header body sig = mkMemoized (pvMajor (hbProtVer body)) $ HeaderRaw body sig
 {-# COMPLETE Header #-}
 
 -- | Compute the size of the header
 headerSize :: Header crypto -> Int
-headerSize (HeaderConstr _ bytes) = BS.length bytes
+headerSize = originalBytesSize
 
 -- | Hash a header
 headerHash ::
-  Crypto crypto =>
   Header crypto ->
   Hash.Hash HASH EraIndependentBlockHeader
-headerHash = Hash.castHash . Hash.hashWithSerialiser toCBOR
+headerHash = extractHash . hashAnnotated
 
 --------------------------------------------------------------------------------
 -- Serialisation
 --------------------------------------------------------------------------------
-
--- NOTE(bladyjoker): The HeaderBody codec is trying to be backwards compatible with tools that only work with plain Praos headers.
 
 instance Crypto crypto => EncCBOR (HeaderBody crypto) where
   encCBOR
@@ -202,65 +187,39 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
       , hbBodyHash
       , hbOCert
       , hbProtVer
-      , hbMayEbAnnouncement
       } =
-      let (len, encEbAnnouncement) = case hbMayEbAnnouncement of -- TODO(bladyjoker): This shennanigans is here for backwards compatibility, remove it!
-            Nothing -> (10, mempty)
-            Just ebAnnouncement ->
-              ( 11
-              , encCBOR ebAnnouncement
-              )
-       in mconcat
-            [ encodeListLen len
-            , encCBOR hbBlockNo
-            , encCBOR hbSlotNo
-            , encCBOR hbPrev
-            , encCBOR hbVk
-            , encodeVerKeyVRF hbVrfVk
-            , encCBOR hbVrfRes
-            , encCBOR hbBodySize
-            , encCBOR hbBodyHash
-            , encCBOR hbOCert
-            , encCBOR hbProtVer
-            , encEbAnnouncement
-            ]
+      encode $
+        Rec HeaderBody
+          !> To hbBlockNo
+          !> To hbSlotNo
+          !> To hbPrev
+          !> To hbVk
+          !> E encodeVerKeyVRF hbVrfVk
+          !> To hbVrfRes
+          !> To hbBodySize
+          !> To hbBodyHash
+          !> To hbOCert
+          !> To hbProtVer
 
 instance Crypto crypto => DecCBOR (HeaderBody crypto) where
-  decCBOR = do
-    len <- decodeListLen
-    hbBlockNo <- decCBOR
-    hbSlotNo <- decCBOR
-    hbPrev <- decCBOR
-    hbVk <- decCBOR
-    hbVrfVk <- decodeVerKeyVRF
-    hbVrfRes <- decCBOR
-    hbBodySize <- decCBOR
-    hbBodyHash <- decCBOR
-    hbOCert <- unCBORGroup <$> decCBOR
-    hbProtVer <- decCBOR
-    hbMayEbAnnouncement <- case len of
-      10 -> return Nothing
-      11 -> Just <$> decCBOR @EbAnnouncement -- TODO(bladyjoker): This shennanigans is here for backwards compatibility, remove it!
-      _ -> fail $ "Praos HeaderBody CBOR has wrong length: " <> show len
-    return $
-      HeaderBody
-        { hbBlockNo
-        , hbSlotNo
-        , hbPrev
-        , hbVk
-        , hbVrfVk
-        , hbVrfRes
-        , hbBodySize
-        , hbBodyHash
-        , hbOCert
-        , hbProtVer
-        , hbMayEbAnnouncement
-        }
+  decCBOR =
+    decode $
+      RecD HeaderBody
+        <! From
+        <! From
+        <! From
+        <! From
+        <! D decodeVerKeyVRF
+        <! From
+        <! From
+        <! From
+        <! mapCoder unCBORGroup From
+        <! From
 
 encodeHeaderRaw ::
   Crypto crypto =>
   HeaderRaw crypto ->
-  Encode ('Closed 'Dense) (HeaderRaw crypto)
+  Encode (Closed Dense) (HeaderRaw crypto)
 encodeHeaderRaw (HeaderRaw body sig) =
   Rec HeaderRaw !> To body !> E encodeSignedKES sig
 
@@ -273,16 +232,9 @@ instance Crypto crypto => DecCBOR (HeaderRaw crypto) where
 instance Crypto crypto => DecCBOR (Annotator (HeaderRaw crypto)) where
   decCBOR = pure <$> decCBOR
 
-instance Crypto c => Plain.ToCBOR (Header c) where
-  toCBOR (HeaderConstr _ bytes) = Plain.encodePreEncoded bytes
+instance Crypto c => EncCBOR (Header c)
 
-instance Crypto c => EncCBOR (Header c) where
-  encodedSizeExpr size proxy =
-    1
-      + encodedSizeExpr size (headerRawBody . headerRaw <$> proxy)
-      + encodedSigKESSizeExpr (KES.getSig . headerRawSig . headerRaw <$> proxy)
-
-instance Crypto c => DecCBOR (Annotator (Header c)) where
-  decCBOR = do
-    (Annotator getT, Annotator getBytes) <- withSlice decCBOR
-    pure (Annotator (\fullbytes -> HeaderConstr (getT fullbytes) (BSL.toStrict (getBytes fullbytes))))
+deriving via
+  Mem (HeaderRaw crypto)
+  instance
+    Crypto crypto => DecCBOR (Annotator (Header crypto))

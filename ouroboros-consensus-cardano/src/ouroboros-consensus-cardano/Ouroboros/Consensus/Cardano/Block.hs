@@ -1,20 +1,12 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Cardano.Block
   ( -- * Eras
@@ -38,6 +30,7 @@ module Ouroboros.Consensus.Cardano.Block
     , BlockShelley
     , BlockBabbage
     , BlockConway
+    , BlockDijkstra
     )
 
     -- * Headers
@@ -50,13 +43,23 @@ module Ouroboros.Consensus.Cardano.Block
     , HeaderShelley
     , HeaderBabbage
     , HeaderConway
+    , HeaderDijkstra
     )
 
     -- * Generalised transactions
   , CardanoApplyTxErr
   , CardanoGenTx
   , CardanoGenTxId
-  , GenTx (GenTxAllegra, GenTxAlonzo, GenTxByron, GenTxMary, GenTxShelley, GenTxBabbage, GenTxConway)
+  , GenTx
+    ( GenTxAllegra
+    , GenTxAlonzo
+    , GenTxByron
+    , GenTxMary
+    , GenTxShelley
+    , GenTxBabbage
+    , GenTxConway
+    , GenTxDijkstra
+    )
   , HardForkApplyTxErr
     ( ApplyTxErrAllegra
     , ApplyTxErrAlonzo
@@ -66,6 +69,7 @@ module Ouroboros.Consensus.Cardano.Block
     , ApplyTxErrWrongEra
     , ApplyTxErrBabbage
     , ApplyTxErrConway
+    , ApplyTxErrDijkstra
     )
   , TxId
     ( GenTxIdAllegra
@@ -75,6 +79,7 @@ module Ouroboros.Consensus.Cardano.Block
     , GenTxIdShelley
     , GenTxIdBabbage
     , GenTxIdConway
+    , GenTxIdDijkstra
     )
 
     -- * LedgerError
@@ -88,6 +93,7 @@ module Ouroboros.Consensus.Cardano.Block
     , LedgerErrorWrongEra
     , LedgerErrorBabbage
     , LedgerErrorConway
+    , LedgerErrorDijkstra
     )
 
     -- * OtherEnvelopeError
@@ -101,6 +107,7 @@ module Ouroboros.Consensus.Cardano.Block
     , OtherHeaderEnvelopeErrorMary
     , OtherHeaderEnvelopeErrorShelley
     , OtherHeaderEnvelopeErrorWrongEra
+    , OtherHeaderEnvelopeErrorDijkstra
     )
 
     -- * TipInfo
@@ -113,6 +120,7 @@ module Ouroboros.Consensus.Cardano.Block
     , TipInfoConway
     , TipInfoMary
     , TipInfoShelley
+    , TipInfoDijkstra
     )
 
     -- * Query
@@ -124,6 +132,7 @@ module Ouroboros.Consensus.Cardano.Block
     , QueryAnytimeByron
     , QueryAnytimeMary
     , QueryAnytimeShelley
+    , QueryAnytimeDijkstra
     , QueryHardFork
     , QueryIfCurrentAllegra
     , QueryIfCurrentAlonzo
@@ -132,6 +141,7 @@ module Ouroboros.Consensus.Cardano.Block
     , QueryIfCurrentByron
     , QueryIfCurrentMary
     , QueryIfCurrentShelley
+    , QueryIfCurrentDijkstra
     )
   , CardanoQuery
   , CardanoQueryResult
@@ -164,6 +174,7 @@ module Ouroboros.Consensus.Cardano.Block
     , LedgerStateAlonzo
     , LedgerStateBabbage
     , LedgerStateConway
+    , LedgerStateDijkstra
     , LedgerStateByron
     , LedgerStateMary
     , LedgerStateShelley
@@ -176,46 +187,52 @@ module Ouroboros.Consensus.Cardano.Block
     , ChainDepStateAlonzo
     , ChainDepStateBabbage
     , ChainDepStateConway
+    , ChainDepStateDijkstra
     , ChainDepStateByron
     , ChainDepStateMary
     , ChainDepStateShelley
     )
 
+    -- * EraIndex
+  , EraIndex
+    ( EraByron
+    , EraShelley
+    , EraAllegra
+    , EraMary
+    , EraAlonzo
+    , EraBabbage
+    , EraConway
+    , EraDijkstra
+    )
+
     -- * EraMismatch
   , EraMismatch (..)
-  , pattern ExtLedgerStateConway
   ) where
 
 import Data.Kind
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
 import Data.SOP.Strict
-import LeiosDemoDb (LeiosDbConnection)
-import Ouroboros.Consensus.Block (BlockProtocol, WithOrigin (NotOrigin, Origin))
+import Ouroboros.Consensus.Block (BlockProtocol)
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HeaderValidation
-  ( AnnTip (..)
-  , HeaderState (HeaderState, headerStateChainDep, headerStateTip)
-  , OtherHeaderEnvelopeError
+  ( OtherHeaderEnvelopeError
   , TipInfo
   )
 import Ouroboros.Consensus.Ledger.Abstract (LedgerError)
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (ExtLedgerState))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , GenTxId
   )
-import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
-import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto)
+import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, ShelleyCompatible)
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (resolveLeiosBlock))
+import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -238,6 +255,7 @@ type CardanoShelleyEras c =
    , ShelleyBlock (TPraos c) AlonzoEra
    , ShelleyBlock (Praos c) BabbageEra
    , ShelleyBlock (Praos c) ConwayEra
+   , ShelleyBlock (Praos c) DijkstraEra
    ]
 
 type ShelleyBasedLedgerEras :: Type -> [Type]
@@ -248,6 +266,7 @@ type ShelleyBasedLedgerEras c =
    , AlonzoEra
    , BabbageEra
    , ConwayEra
+   , DijkstraEra
    ]
 
 {-------------------------------------------------------------------------------
@@ -264,6 +283,7 @@ pattern TagMary :: f (ShelleyBlock (TPraos c) MaryEra) -> NS f (CardanoEras c)
 pattern TagAlonzo :: f (ShelleyBlock (TPraos c) AlonzoEra) -> NS f (CardanoEras c)
 pattern TagBabbage :: f (ShelleyBlock (Praos c) BabbageEra) -> NS f (CardanoEras c)
 pattern TagConway :: f (ShelleyBlock (Praos c) ConwayEra) -> NS f (CardanoEras c)
+pattern TagDijkstra :: f (ShelleyBlock (Praos c) DijkstraEra) -> NS f (CardanoEras c)
 
 pattern TagByron x = Z x
 pattern TagShelley x = S (Z x)
@@ -272,6 +292,40 @@ pattern TagMary x = S (S (S (Z x)))
 pattern TagAlonzo x = S (S (S (S (Z x))))
 pattern TagBabbage x = S (S (S (S (S (Z x)))))
 pattern TagConway x = S (S (S (S (S (S (Z x))))))
+pattern TagDijkstra x = S (S (S (S (S (S (S (Z x)))))))
+
+{-------------------------------------------------------------------------------
+  Indices of all cardano eras
+-------------------------------------------------------------------------------}
+
+pattern EraByron :: K () ByronBlock -> EraIndex (CardanoEras c)
+pattern EraShelley :: K () (ShelleyBlock (TPraos c) ShelleyEra) -> EraIndex (CardanoEras c)
+pattern EraAllegra :: K () (ShelleyBlock (TPraos c) AllegraEra) -> EraIndex (CardanoEras c)
+pattern EraMary :: K () (ShelleyBlock (TPraos c) MaryEra) -> EraIndex (CardanoEras c)
+pattern EraAlonzo :: K () (ShelleyBlock (TPraos c) AlonzoEra) -> EraIndex (CardanoEras c)
+pattern EraBabbage :: K () (ShelleyBlock (Praos c) BabbageEra) -> EraIndex (CardanoEras c)
+pattern EraConway :: K () (ShelleyBlock (Praos c) ConwayEra) -> EraIndex (CardanoEras c)
+pattern EraDijkstra :: K () (ShelleyBlock (Praos c) DijkstraEra) -> EraIndex (CardanoEras c)
+
+pattern EraByron x = EraIndex (TagByron x)
+pattern EraShelley x = EraIndex (TagShelley x)
+pattern EraAllegra x = EraIndex (TagAllegra x)
+pattern EraMary x = EraIndex (TagMary x)
+pattern EraAlonzo x = EraIndex (TagAlonzo x)
+pattern EraBabbage x = EraIndex (TagBabbage x)
+pattern EraConway x = EraIndex (TagConway x)
+pattern EraDijkstra x = EraIndex (TagDijkstra x)
+
+{-# COMPLETE
+  EraByron
+  , EraShelley
+  , EraAllegra
+  , EraMary
+  , EraAlonzo
+  , EraBabbage
+  , EraConway
+  , EraDijkstra
+  #-}
 
 {-------------------------------------------------------------------------------
   INTERNAL A telescope function for each era
@@ -327,6 +381,17 @@ pattern TeleConway ::
   f (ShelleyBlock (Praos c) ConwayEra) ->
   Telescope g f (CardanoEras c)
 
+pattern TeleDijkstra ::
+  g ByronBlock ->
+  g (ShelleyBlock (TPraos c) ShelleyEra) ->
+  g (ShelleyBlock (TPraos c) AllegraEra) ->
+  g (ShelleyBlock (TPraos c) MaryEra) ->
+  g (ShelleyBlock (TPraos c) AlonzoEra) ->
+  g (ShelleyBlock (Praos c) BabbageEra) ->
+  g (ShelleyBlock (Praos c) ConwayEra) ->
+  f (ShelleyBlock (Praos c) DijkstraEra) ->
+  Telescope g f (CardanoEras c)
+
 -- Here we use layout and adjacency to make it obvious that we haven't
 -- miscounted.
 
@@ -344,6 +409,8 @@ pattern TeleBabbage byron shelley allegra mary alonzo x =
   TS byron (TS shelley (TS allegra (TS mary (TS alonzo (TZ x)))))
 pattern TeleConway byron shelley allegra mary alonzo babbage x =
   TS byron (TS shelley (TS allegra (TS mary (TS alonzo (TS babbage (TZ x))))))
+pattern TeleDijkstra byron shelley allegra mary alonzo babbage conway x =
+  TS byron (TS shelley (TS allegra (TS mary (TS alonzo (TS babbage (TS conway (TZ x)))))))
 
 {-------------------------------------------------------------------------------
   The block type of the Cardano block chain
@@ -383,6 +450,9 @@ pattern BlockBabbage b = HardForkBlock (OneEraBlock (TagBabbage (I b)))
 pattern BlockConway :: ShelleyBlock (Praos c) ConwayEra -> CardanoBlock c
 pattern BlockConway b = HardForkBlock (OneEraBlock (TagConway (I b)))
 
+pattern BlockDijkstra :: ShelleyBlock (Praos c) DijkstraEra -> CardanoBlock c
+pattern BlockDijkstra b = HardForkBlock (OneEraBlock (TagDijkstra (I b)))
+
 {-# COMPLETE
   BlockByron
   , BlockShelley
@@ -391,6 +461,7 @@ pattern BlockConway b = HardForkBlock (OneEraBlock (TagConway (I b)))
   , BlockAlonzo
   , BlockBabbage
   , BlockConway
+  , BlockDijkstra
   #-}
 
 {-------------------------------------------------------------------------------
@@ -433,6 +504,11 @@ pattern HeaderConway ::
   CardanoHeader c
 pattern HeaderConway h = HardForkHeader (OneEraHeader (TagConway h))
 
+pattern HeaderDijkstra ::
+  Header (ShelleyBlock (Praos c) DijkstraEra) ->
+  CardanoHeader c
+pattern HeaderDijkstra h = HardForkHeader (OneEraHeader (TagDijkstra h))
+
 {-# COMPLETE
   HeaderByron
   , HeaderShelley
@@ -441,6 +517,7 @@ pattern HeaderConway h = HardForkHeader (OneEraHeader (TagConway h))
   , HeaderAlonzo
   , HeaderBabbage
   , HeaderConway
+  , HeaderDijkstra
   #-}
 
 {-------------------------------------------------------------------------------
@@ -471,6 +548,9 @@ pattern GenTxBabbage tx = HardForkGenTx (OneEraGenTx (TagBabbage tx))
 pattern GenTxConway :: GenTx (ShelleyBlock (Praos c) ConwayEra) -> CardanoGenTx c
 pattern GenTxConway tx = HardForkGenTx (OneEraGenTx (TagConway tx))
 
+pattern GenTxDijkstra :: GenTx (ShelleyBlock (Praos c) DijkstraEra) -> CardanoGenTx c
+pattern GenTxDijkstra tx = HardForkGenTx (OneEraGenTx (TagDijkstra tx))
+
 {-# COMPLETE
   GenTxByron
   , GenTxShelley
@@ -479,6 +559,7 @@ pattern GenTxConway tx = HardForkGenTx (OneEraGenTx (TagConway tx))
   , GenTxAlonzo
   , GenTxBabbage
   , GenTxConway
+  , GenTxDijkstra
   #-}
 
 -- | The ID of a Cardano transaction.
@@ -524,6 +605,12 @@ pattern GenTxIdConway ::
 pattern GenTxIdConway txid =
   HardForkGenTxId (OneEraGenTxId (TagConway (WrapGenTxId txid)))
 
+pattern GenTxIdDijkstra ::
+  GenTxId (ShelleyBlock (Praos c) DijkstraEra) ->
+  CardanoGenTxId c
+pattern GenTxIdDijkstra txid =
+  HardForkGenTxId (OneEraGenTxId (TagDijkstra (WrapGenTxId txid)))
+
 {-# COMPLETE
   GenTxIdByron
   , GenTxIdShelley
@@ -532,6 +619,7 @@ pattern GenTxIdConway txid =
   , GenTxIdAlonzo
   , GenTxIdBabbage
   , GenTxIdConway
+  , GenTxIdDijkstra
   #-}
 
 -- | An error resulting from applying a 'CardanoGenTx' to the ledger.
@@ -591,6 +679,12 @@ pattern ApplyTxErrConway ::
 pattern ApplyTxErrConway err =
   HardForkApplyTxErrFromEra (OneEraApplyTxErr (TagConway (WrapApplyTxErr err)))
 
+pattern ApplyTxErrDijkstra ::
+  ApplyTxErr (ShelleyBlock (Praos c) DijkstraEra) ->
+  CardanoApplyTxErr c
+pattern ApplyTxErrDijkstra err =
+  HardForkApplyTxErrFromEra (OneEraApplyTxErr (TagDijkstra (WrapApplyTxErr err)))
+
 pattern ApplyTxErrWrongEra :: EraMismatch -> CardanoApplyTxErr c
 pattern ApplyTxErrWrongEra eraMismatch <-
   HardForkApplyTxErrWrongEra (mkEraMismatch -> eraMismatch)
@@ -604,6 +698,7 @@ pattern ApplyTxErrWrongEra eraMismatch <-
   , ApplyTxErrBabbage
   , ApplyTxErrConway
   , ApplyTxErrWrongEra
+  , ApplyTxErrDijkstra
   #-}
 
 {-------------------------------------------------------------------------------
@@ -673,6 +768,13 @@ pattern LedgerErrorConway err =
   HardForkLedgerErrorFromEra
     (OneEraLedgerError (TagConway (WrapLedgerErr err)))
 
+pattern LedgerErrorDijkstra ::
+  LedgerError (ShelleyBlock (Praos c) DijkstraEra) ->
+  CardanoLedgerError c
+pattern LedgerErrorDijkstra err =
+  HardForkLedgerErrorFromEra
+    (OneEraLedgerError (TagDijkstra (WrapLedgerErr err)))
+
 pattern LedgerErrorWrongEra :: EraMismatch -> CardanoLedgerError c
 pattern LedgerErrorWrongEra eraMismatch <-
   HardForkLedgerErrorWrongEra (mkEraMismatch -> eraMismatch)
@@ -685,6 +787,7 @@ pattern LedgerErrorWrongEra eraMismatch <-
   , LedgerErrorAlonzo
   , LedgerErrorBabbage
   , LedgerErrorConway
+  , LedgerErrorDijkstra
   , LedgerErrorWrongEra
   #-}
 
@@ -738,6 +841,12 @@ pattern OtherHeaderEnvelopeErrorConway ::
 pattern OtherHeaderEnvelopeErrorConway err =
   HardForkEnvelopeErrFromEra (OneEraEnvelopeErr (TagConway (WrapEnvelopeErr err)))
 
+pattern OtherHeaderEnvelopeErrorDijkstra ::
+  OtherHeaderEnvelopeError (ShelleyBlock (Praos c) DijkstraEra) ->
+  CardanoOtherHeaderEnvelopeError c
+pattern OtherHeaderEnvelopeErrorDijkstra err =
+  HardForkEnvelopeErrFromEra (OneEraEnvelopeErr (TagDijkstra (WrapEnvelopeErr err)))
+
 pattern OtherHeaderEnvelopeErrorWrongEra ::
   EraMismatch ->
   CardanoOtherHeaderEnvelopeError c
@@ -752,6 +861,7 @@ pattern OtherHeaderEnvelopeErrorWrongEra eraMismatch <-
   , OtherHeaderEnvelopeErrorAlonzo
   , OtherHeaderEnvelopeErrorBabbage
   , OtherHeaderEnvelopeErrorConway
+  , OtherHeaderEnvelopeErrorDijkstra
   , OtherHeaderEnvelopeErrorWrongEra
   #-}
 
@@ -795,6 +905,11 @@ pattern TipInfoConway ::
   CardanoTipInfo c
 pattern TipInfoConway ti = OneEraTipInfo (TagConway (WrapTipInfo ti))
 
+pattern TipInfoDijkstra ::
+  TipInfo (ShelleyBlock (Praos c) DijkstraEra) ->
+  CardanoTipInfo c
+pattern TipInfoDijkstra ti = OneEraTipInfo (TagDijkstra (WrapTipInfo ti))
+
 {-# COMPLETE
   TipInfoByron
   , TipInfoShelley
@@ -803,6 +918,7 @@ pattern TipInfoConway ti = OneEraTipInfo (TagConway (WrapTipInfo ti))
   , TipInfoAlonzo
   , TipInfoBabbage
   , TipInfoConway
+  , TipInfoDijkstra
   #-}
 
 {-------------------------------------------------------------------------------
@@ -868,16 +984,27 @@ pattern QueryIfCurrentConway ::
   BlockQuery (ShelleyBlock (Praos c) ConwayEra) fp result ->
   CardanoQuery c fp a
 
+-- | Conway-specific query that can only be answered when the ledger is in the
+-- Conway era.
+pattern QueryIfCurrentDijkstra ::
+  () =>
+  CardanoQueryResult c result ~ a =>
+  BlockQuery (ShelleyBlock (Praos c) DijkstraEra) fp result ->
+  CardanoQuery c fp a
+
 -- Here we use layout and adjacency to make it obvious that we haven't
 -- miscounted.
 
-pattern QueryIfCurrentByron q = QueryIfCurrent (QZ q)
-pattern QueryIfCurrentShelley q = QueryIfCurrent (QS (QZ q))
-pattern QueryIfCurrentAllegra q = QueryIfCurrent (QS (QS (QZ q)))
-pattern QueryIfCurrentMary q = QueryIfCurrent (QS (QS (QS (QZ q))))
-pattern QueryIfCurrentAlonzo q = QueryIfCurrent (QS (QS (QS (QS (QZ q)))))
-pattern QueryIfCurrentBabbage q = QueryIfCurrent (QS (QS (QS (QS (QS (QZ q))))))
-pattern QueryIfCurrentConway q = QueryIfCurrent (QS (QS (QS (QS (QS (QS (QZ q)))))))
+{- FOURMOLU_DISABLE -}
+pattern QueryIfCurrentByron    q = QueryIfCurrent (QZ                             q)
+pattern QueryIfCurrentShelley  q = QueryIfCurrent (QS (QZ                         q))
+pattern QueryIfCurrentAllegra  q = QueryIfCurrent (QS (QS (QZ                     q)))
+pattern QueryIfCurrentMary     q = QueryIfCurrent (QS (QS (QS (QZ                 q))))
+pattern QueryIfCurrentAlonzo   q = QueryIfCurrent (QS (QS (QS (QS (QZ             q)))))
+pattern QueryIfCurrentBabbage  q = QueryIfCurrent (QS (QS (QS (QS (QS (QZ         q))))))
+pattern QueryIfCurrentConway   q = QueryIfCurrent (QS (QS (QS (QS (QS (QS (QZ     q)))))))
+pattern QueryIfCurrentDijkstra q = QueryIfCurrent (QS (QS (QS (QS (QS (QS (QS (QZ q))))))))
+{- FOURMOLU_ENABLE -}
 
 -- | Query about the Byron era that can be answered anytime, i.e.,
 -- independent from where the tip of the ledger is.
@@ -963,6 +1090,18 @@ pattern QueryAnytimeConway ::
   CardanoQuery c QFNoTables result
 pattern QueryAnytimeConway q = QueryAnytime q (EraIndex (TagConway (K ())))
 
+-- | Query about the Dijkstra era that can be answered anytime, i.e., independent
+-- from where the tip of the ledger is.
+--
+-- For example, to ask for the start of the Dijkstra era (whether the tip of the
+-- ledger is in the Byron, Shelley, ... era), use:
+--
+-- > QueryAnytimeDijkstra EraStart
+pattern QueryAnytimeDijkstra ::
+  QueryAnytime result ->
+  CardanoQuery c QFNoTables result
+pattern QueryAnytimeDijkstra q = QueryAnytime q (EraIndex (TagDijkstra (K ())))
+
 {-# COMPLETE
   QueryIfCurrentByron
   , QueryIfCurrentShelley
@@ -977,6 +1116,7 @@ pattern QueryAnytimeConway q = QueryAnytime q (EraIndex (TagConway (K ())))
   , QueryAnytimeAlonzo
   , QueryAnytimeBabbage
   , QueryAnytimeConway
+  , QueryAnytimeDijkstra
   , QueryHardFork
   #-}
 
@@ -1013,8 +1153,9 @@ pattern CardanoCodecConfig ::
   CodecConfig (ShelleyBlock (TPraos c) AlonzoEra) ->
   CodecConfig (ShelleyBlock (Praos c) BabbageEra) ->
   CodecConfig (ShelleyBlock (Praos c) ConwayEra) ->
+  CodecConfig (ShelleyBlock (Praos c) DijkstraEra) ->
   CardanoCodecConfig c
-pattern CardanoCodecConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway =
+pattern CardanoCodecConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway cfgDijkstra =
   HardForkCodecConfig
     { hardForkCodecConfigPerEra =
       PerEraCodecConfig
@@ -1025,6 +1166,7 @@ pattern CardanoCodecConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgB
             :* cfgAlonzo
             :* cfgBabbage
             :* cfgConway
+            :* cfgDijkstra
             :* Nil
           )
     }
@@ -1049,8 +1191,9 @@ pattern CardanoBlockConfig ::
   BlockConfig (ShelleyBlock (TPraos c) AlonzoEra) ->
   BlockConfig (ShelleyBlock (Praos c) BabbageEra) ->
   BlockConfig (ShelleyBlock (Praos c) ConwayEra) ->
+  BlockConfig (ShelleyBlock (Praos c) DijkstraEra) ->
   CardanoBlockConfig c
-pattern CardanoBlockConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway =
+pattern CardanoBlockConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway cfgDijkstra =
   HardForkBlockConfig
     { hardForkBlockConfigPerEra =
       PerEraBlockConfig
@@ -1061,6 +1204,7 @@ pattern CardanoBlockConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgB
             :* cfgAlonzo
             :* cfgBabbage
             :* cfgConway
+            :* cfgDijkstra
             :* Nil
           )
     }
@@ -1085,8 +1229,9 @@ pattern CardanoStorageConfig ::
   StorageConfig (ShelleyBlock (TPraos c) AlonzoEra) ->
   StorageConfig (ShelleyBlock (Praos c) BabbageEra) ->
   StorageConfig (ShelleyBlock (Praos c) ConwayEra) ->
+  StorageConfig (ShelleyBlock (Praos c) DijkstraEra) ->
   CardanoStorageConfig c
-pattern CardanoStorageConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway =
+pattern CardanoStorageConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway cfgDijkstra =
   HardForkStorageConfig
     { hardForkStorageConfigPerEra =
       PerEraStorageConfig
@@ -1097,6 +1242,7 @@ pattern CardanoStorageConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cf
             :* cfgAlonzo
             :* cfgBabbage
             :* cfgConway
+            :* cfgDijkstra
             :* Nil
           )
     }
@@ -1124,8 +1270,9 @@ pattern CardanoConsensusConfig ::
   PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) AlonzoEra)) ->
   PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) BabbageEra)) ->
   PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) ConwayEra)) ->
+  PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) DijkstraEra)) ->
   CardanoConsensusConfig c
-pattern CardanoConsensusConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway <-
+pattern CardanoConsensusConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway cfgDijkstra <-
   HardForkConsensusConfig
     { hardForkConsensusConfigPerEra =
       PerEraConsensusConfig
@@ -1136,6 +1283,7 @@ pattern CardanoConsensusConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo 
             :* WrapPartialConsensusConfig cfgAlonzo
             :* WrapPartialConsensusConfig cfgBabbage
             :* WrapPartialConsensusConfig cfgConway
+            :* WrapPartialConsensusConfig cfgDijkstra
             :* Nil
           )
     }
@@ -1162,8 +1310,9 @@ pattern CardanoLedgerConfig ::
   PartialLedgerConfig (ShelleyBlock (TPraos c) AlonzoEra) ->
   PartialLedgerConfig (ShelleyBlock (Praos c) BabbageEra) ->
   PartialLedgerConfig (ShelleyBlock (Praos c) ConwayEra) ->
+  PartialLedgerConfig (ShelleyBlock (Praos c) DijkstraEra) ->
   CardanoLedgerConfig c
-pattern CardanoLedgerConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway <-
+pattern CardanoLedgerConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway cfgDijkstra <-
   HardForkLedgerConfig
     { hardForkLedgerConfigPerEra =
       PerEraLedgerConfig
@@ -1174,6 +1323,7 @@ pattern CardanoLedgerConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfg
             :* WrapPartialLedgerConfig cfgAlonzo
             :* WrapPartialLedgerConfig cfgBabbage
             :* WrapPartialLedgerConfig cfgConway
+            :* WrapPartialLedgerConfig cfgDijkstra
             :* Nil
           )
     }
@@ -1255,6 +1405,15 @@ pattern LedgerStateConway st <-
         (TeleConway _ _ _ _ _ _ (State.Current{currentState = Flip st}))
       )
 
+pattern LedgerStateDijkstra ::
+  LedgerState (ShelleyBlock (Praos c) DijkstraEra) mk ->
+  CardanoLedgerState c mk
+pattern LedgerStateDijkstra st <-
+  HardForkLedgerState
+    ( State.HardForkState
+        (TeleDijkstra _ _ _ _ _ _ _ (State.Current{currentState = Flip st}))
+      )
+
 {-# COMPLETE
   LedgerStateByron
   , LedgerStateShelley
@@ -1263,6 +1422,7 @@ pattern LedgerStateConway st <-
   , LedgerStateAlonzo
   , LedgerStateBabbage
   , LedgerStateConway
+  , LedgerStateDijkstra
   #-}
 
 {-------------------------------------------------------------------------------
@@ -1326,49 +1486,12 @@ pattern ChainDepStateConway st <-
   State.HardForkState
     (TeleConway _ _ _ _ _ _ (State.Current{currentState = WrapChainDepState st}))
 
-type CardanoExtLedgerState c mk = ExtLedgerState (CardanoBlock c) mk
-
-pattern ExtLedgerStateConway ::
-  ExtLedgerState (ShelleyBlock (Praos c) ConwayEra) mk ->
-  CardanoExtLedgerState c mk
-pattern ExtLedgerStateConway conwayExtLedgerSt <-
-  ( \(ExtLedgerState (LedgerStateConway lst) hst) ->
-      ExtLedgerState lst (toConwayHeaderState hst) ->
-      conwayExtLedgerSt
-    )
-
-pattern ConwayHeaderState ::
-  HeaderState (ShelleyBlock (Praos c) ConwayEra) ->
-  HeaderState (CardanoBlock c)
-pattern ConwayHeaderState conwayHeaderState <- (toConwayHeaderState -> conwayHeaderState)
-
-toConwayHeaderState ::
-  HeaderState (CardanoBlock c) -> HeaderState (ShelleyBlock (Praos c) ConwayEra)
-toConwayHeaderState (HeaderState (NotOrigin (ConwayAnnTip conwayAnnTip)) (ChainDepStateConway conwayHeaderStateChainDep)) =
-  HeaderState
-    { headerStateTip = NotOrigin conwayAnnTip
-    , headerStateChainDep = conwayHeaderStateChainDep
-    }
-toConwayHeaderState (HeaderState Origin (ChainDepStateConway conwayHeaderStateChainDep)) =
-  HeaderState
-    { headerStateTip = Origin
-    , headerStateChainDep = conwayHeaderStateChainDep
-    }
-toConwayHeaderState _ = error "Must be in Conway"
-
-pattern ConwayAnnTip ::
-  AnnTip (ShelleyBlock (Praos c) ConwayEra) ->
-  AnnTip (CardanoBlock c)
-pattern ConwayAnnTip conwayAnnTip <- (toConwayAnnTip -> conwayAnnTip)
-
-toConwayAnnTip :: AnnTip (CardanoBlock c) -> AnnTip (ShelleyBlock (Praos c) ConwayEra)
-toConwayAnnTip AnnTip{annTipSlotNo, annTipBlockNo, annTipInfo = TipInfoConway tipInfo} =
-  AnnTip
-    { annTipSlotNo
-    , annTipBlockNo
-    , annTipInfo = tipInfo
-    }
-toConwayAnnTip _ = error "Must be in Conway"
+pattern ChainDepStateDijkstra ::
+  ChainDepState (BlockProtocol (ShelleyBlock (Praos c) DijkstraEra)) ->
+  CardanoChainDepState c
+pattern ChainDepStateDijkstra st <-
+  State.HardForkState
+    (TeleDijkstra _ _ _ _ _ _ _ (State.Current{currentState = WrapChainDepState st}))
 
 {-# COMPLETE
   ChainDepStateByron
@@ -1378,28 +1501,5 @@ toConwayAnnTip _ = error "Must be in Conway"
   , ChainDepStateAlonzo
   , ChainDepStateBabbage
   , ChainDepStateConway
+  , ChainDepStateDijkstra
   #-}
-
--- Leios
-
-injectConwayBlock :: ShelleyBlock (Praos c) ConwayEra -> CardanoBlock c
-injectConwayBlock = HardForkBlock . OneEraBlock . TagConway . I
-
-instance
-  ( PraosCrypto c
-  , ShelleyCompatible (Praos c) ConwayEra
-  , LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)
-  ) =>
-  ResolveLeiosBlock (CardanoBlock c)
-  where
-  resolveLeiosBlock ::
-    forall m.
-    Monad m =>
-    LeiosDbConnection m ->
-    HeaderState (CardanoBlock c) ->
-    CardanoBlock c ->
-    m (CardanoBlock c)
-  resolveLeiosBlock db (ConwayHeaderState conwayHdrSt) (BlockConway conwayBlk) =
-    injectConwayBlock
-      <$> resolveLeiosBlock db conwayHdrSt conwayBlk
-  resolveLeiosBlock _ _ blk = return blk

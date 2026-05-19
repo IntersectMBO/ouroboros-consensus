@@ -17,6 +17,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Validation
   , reconstructPrimaryIndex
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Control.Exception (assert)
 import Control.Monad (forM_, unless, when)
 import Control.Monad.Except (ExceptT, runExceptT, throwError)
@@ -82,7 +83,7 @@ validateAndReopen ::
   ( IOLike m
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , ConvertRawHash blk
   , Eq h
   , HasCallStack
@@ -90,25 +91,37 @@ validateAndReopen ::
   ValidateEnv m blk h ->
   ResourceRegistry m ->
   ValidationPolicy ->
-  WithTempRegistry (OpenState m blk h) m (OpenState m blk h)
+  m (OpenState m blk h)
 validateAndReopen validateEnv registry valPol = wrapFsError (Proxy @blk) $ do
-  (chunk, tip) <- lift $ validate validateEnv valPol
+  (chunk, tip) <- validate validateEnv valPol
   index <-
-    lift $
-      cachedIndex
-        hasFS
-        registry
-        cacheTracer
-        cacheConfig
-        chunkInfo
-        chunk
-  case tip of
-    Origin -> assert (chunk == firstChunkNo) $ do
-      lift $ traceWith tracer NoValidLastLocation
-      mkOpenState hasFS index chunk Origin MustBeNew
-    NotOrigin tip' -> do
-      lift $ traceWith tracer $ ValidatedLastLocation chunk tip'
-      mkOpenState hasFS index chunk tip AllowExisting
+    cachedIndex
+      hasFS
+      registry
+      cacheTracer
+      cacheConfig
+      chunkInfo
+      chunk
+  -- We could omit using a temporary registry in this function because we are
+  -- initializing the system, the handles will not be modified during this step,
+  -- and an exception will either bring down the whole system or do so after
+  -- closing the ChainDB (which after initialization is in the top level
+  -- registry). However, the implementation uses 'mkOpenState' while running
+  -- several times, and in those cases it is important to run with a temporary
+  -- registry until the new handle has been put in the OpenState and will be
+  -- closed by the ChainDB closing.
+  --
+  -- Because of the above, in this particular function we can execute the
+  -- WithTempRegistry block here and don't need to propagate it any further, but
+  -- we cannot get rid of it entirely by modifying 'mkOpenState'.
+  runWithTempRegistry $
+    (\x -> (x, x)) <$> case tip of
+      Origin -> assert (chunk == firstChunkNo) $ do
+        lift $ traceWith tracer NoValidLastLocation
+        mkOpenState hasFS index chunk Origin MustBeNew
+      NotOrigin tip' -> do
+        lift $ traceWith tracer $ ValidatedLastLocation chunk tip'
+        mkOpenState hasFS index chunk tip AllowExisting
  where
   ValidateEnv{hasFS, tracer, cacheConfig, chunkInfo} = validateEnv
   cacheTracer = contramap TraceCacheEvent tracer
@@ -127,7 +140,7 @@ validate ::
   ( IOLike m
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , ConvertRawHash blk
   , HasCallStack
   ) =>
@@ -178,7 +191,7 @@ validateAllChunks ::
   ( IOLike m
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , ConvertRawHash blk
   , HasCallStack
   ) =>
@@ -261,7 +274,7 @@ validateMostRecentChunk ::
   ( IOLike m
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , ConvertRawHash blk
   , HasCallStack
   ) =>
@@ -341,7 +354,7 @@ validateChunk ::
   ( IOLike m
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , ConvertRawHash blk
   , HasCallStack
   ) =>

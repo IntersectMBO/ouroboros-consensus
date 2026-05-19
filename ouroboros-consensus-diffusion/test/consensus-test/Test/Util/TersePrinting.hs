@@ -1,19 +1,15 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
 -- | Helpers for printing various objects in a terse way. Terse printing is
 -- similar to that provided by the 'Condense' typeclass except it can be
 -- sometimes even more compact and it is very specific to tests.
 module Test.Util.TersePrinting
-  ( terseAnchor
-  , terseBlock
-  , terseFragment
-  , terseHFragment
-  , terseHWTFragment
-  , terseHeader
+  ( Terse (..)
+  , terseAnchor
   , terseMaybe
-  , tersePoint
   , terseRealPoint
-  , terseTip
   , terseWithOrigin
   ) where
 
@@ -49,6 +45,74 @@ import Test.Util.TestBlock
   , unTestHash
   )
 
+terseRealPoint :: Terse blk => RealPoint blk -> String
+terseRealPoint = tersePoint . realPointToPoint
+
+-- | Same as 'tersePoint' for anchors.
+terseAnchor :: Terse blk => Anchor blk -> String
+terseAnchor = tersePoint . anchorToPoint
+
+-- | Given a printer for elements of type @a@, prints a @WithOrigin a@ in a
+-- terse way. Origin shows as @G@.
+terseWithOrigin :: (a -> String) -> WithOrigin a -> String
+terseWithOrigin _ Origin = "G"
+terseWithOrigin terseA (At a) = terseA a
+
+-- | Helpers for printing various objects in a terse way. Terse printing is
+-- similar to that provided by the 'Condense' typeclass except it can be
+-- sometimes even more compact and it is very specific to tests.
+class Terse blk where
+  -- | Same as 'terseBlock' for points.
+  tersePoint :: Point blk -> String
+
+  -- | Print a fragment of 'TestBlock' in a terse way.
+  terseFragment :: AnchoredFragment blk -> String
+
+  -- | Same as 'terseFragment' for fragments of headers.
+  terseHFragment :: AnchoredFragment (Header blk) -> String
+
+  -- | Same as 'terseFragment' for fragments of headers with time.
+  terseHWTFragment :: AnchoredFragment (HeaderWithTime blk) -> String
+
+  terseBlock :: blk -> String
+
+  -- | Same as 'tersePoint' for tips.
+  terseTip :: Tip blk -> String
+
+  -- | Same as 'terseBlock' for headers.
+  terseHeader :: Header blk -> String
+
+-- | Same as 'terseWithOrigin' for 'Maybe'.
+terseMaybe :: (a -> String) -> Maybe a -> String
+terseMaybe _ Nothing = "X"
+terseMaybe terseA (Just a) = terseA a
+
+instance Terse TestBlock where
+  terseHWTFragment = terseHFragment . mapAnchoredFragment hwtHeader
+  terseHFragment = terseFragment . mapAnchoredFragment (\(TestHeader block) -> block)
+
+  -- This shows as @anchor | block ...@ where @anchor@ is printed with
+  -- 'terseAnchor' and @block@s are printed with @terseBlock'@; in particular,
+  -- only the last element of the hash shows and only when it is non-zero.
+  terseFragment fragment =
+    terseAnchor (anchor fragment) ++ renderBlocks
+   where
+    renderBlocks = case toOldestFirst fragment of
+      [] -> ""
+      blocks -> " | " ++ unwords (map terseBlock' blocks)
+    terseBlock' block = terseBlockSlotHash' (blockNo block) (blockSlot block) (blockHash block)
+  terseTip TipGenesis = "G"
+  terseTip (Tip sno hash bno) = terseBlockSlotHash bno sno hash
+  tersePoint GenesisPoint = "G"
+  tersePoint (BlockPoint slot hash) =
+    terseBlockSlotHash (BlockNo (fromIntegral (length (unTestHash hash)))) slot hash
+  terseHeader (TestHeader block) = terseBlock block
+
+  -- Print a 'TestBlock' as @block-slot[hash]@. @hash@ only shows if there is
+  -- a non-zero element in it. When it shows, it shows in a compact form. For
+  -- instance, the hash @[0,0,1,0,0,0]@ shows as @[2x0,1,3x0]@.
+  terseBlock block = terseBlockSlotHash (blockNo block) (blockSlot block) (blockHash block)
+
 -- | Run-length encoding of a list. This groups consecutive duplicate elements,
 -- counting them. Only the first element of the equality is kept. For instance:
 --
@@ -80,67 +144,3 @@ terseBlockSlotHash' (BlockNo bno) (SlotNo sno) (TestHash hash) =
   renderHashSuffix (forkNo :| _)
     | forkNo == 0 = ""
     | otherwise = "[" ++ show forkNo ++ "]"
-
--- | Print a 'TestBlock' as @block-slot[hash]@. @hash@ only shows if there is a
--- non-zero element in it. When it shows, it shows in a compact form. For
--- instance, the hash @[0,0,1,0,0,0]@ shows as @[2x0,1,3x0]@.
-terseBlock :: TestBlock -> String
-terseBlock block = terseBlockSlotHash (blockNo block) (blockSlot block) (blockHash block)
-
--- | Same as 'terseBlock' except only the last element of the hash shows, if it
--- is non-zero. This makes sense when showing a fragment.
-terseBlock' :: TestBlock -> String
-terseBlock' block = terseBlockSlotHash' (blockNo block) (blockSlot block) (blockHash block)
-
--- | Same as 'terseBlock' for headers.
-terseHeader :: Header TestBlock -> String
-terseHeader (TestHeader block) = terseBlock block
-
--- | Same as 'terseBlock' for points. Genesis shows as @G@.
-tersePoint :: Point TestBlock -> String
-tersePoint GenesisPoint = "G"
-tersePoint (BlockPoint slot hash) =
-  terseBlockSlotHash (BlockNo (fromIntegral (length (unTestHash hash)))) slot hash
-
-terseRealPoint :: RealPoint TestBlock -> String
-terseRealPoint = tersePoint . realPointToPoint
-
--- | Same as 'tersePoint' for anchors.
-terseAnchor :: Anchor TestBlock -> String
-terseAnchor = tersePoint . anchorToPoint
-
--- | Same as 'tersePoint' for tips.
-terseTip :: Tip TestBlock -> String
-terseTip TipGenesis = "G"
-terseTip (Tip sno hash bno) = terseBlockSlotHash bno sno hash
-
--- | Given a printer for elements of type @a@, prints a @WithOrigin a@ in a
--- terse way. Origin shows as @G@.
-terseWithOrigin :: (a -> String) -> WithOrigin a -> String
-terseWithOrigin _ Origin = "G"
-terseWithOrigin terseA (At a) = terseA a
-
--- | Print a fragment of 'TestBlock' in a terse way. This shows as @anchor |
--- block ...@ where @anchor@ is printed with 'terseAnchor' and @block@s are
--- printed with @terseBlock'@; in particular, only the last element of the hash
--- shows and only when it is non-zero.
-terseFragment :: AnchoredFragment TestBlock -> String
-terseFragment fragment =
-  terseAnchor (anchor fragment) ++ renderBlocks
- where
-  renderBlocks = case toOldestFirst fragment of
-    [] -> ""
-    blocks -> " | " ++ unwords (map terseBlock' blocks)
-
--- | Same as 'terseFragment' for fragments of headers.
-terseHFragment :: AnchoredFragment (Header TestBlock) -> String
-terseHFragment = terseFragment . mapAnchoredFragment (\(TestHeader block) -> block)
-
--- | Same as 'terseFragment' for fragments of headers with time.
-terseHWTFragment :: AnchoredFragment (HeaderWithTime TestBlock) -> String
-terseHWTFragment = terseHFragment . mapAnchoredFragment hwtHeader
-
--- | Same as 'terseWithOrigin' for 'Maybe'.
-terseMaybe :: (a -> String) -> Maybe a -> String
-terseMaybe _ Nothing = "X"
-terseMaybe terseA (Just a) = terseA a

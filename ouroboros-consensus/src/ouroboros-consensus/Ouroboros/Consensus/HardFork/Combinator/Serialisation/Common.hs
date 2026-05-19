@@ -71,7 +71,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
   , SerialiseNS (..)
   ) where
 
-import Cardano.Binary (enforceSize)
+import Cardano.Binary (DecoderError, enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as Dec
 import Codec.CBOR.Encoding (Encoding)
@@ -105,6 +105,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Network.Block (Serialised)
@@ -200,7 +201,7 @@ class
   , -- LedgerTables on the HardForkBlock might not be compositionally
     -- defined, but we need to require this instances for any instantiation.
     HasLedgerTables (LedgerState (HardForkBlock xs))
-  , SerializeTablesWithHint (LedgerState (HardForkBlock xs))
+  , LedgerSupportsLedgerDB (HardForkBlock xs)
   ) =>
   SerialiseHFC xs
   where
@@ -217,9 +218,9 @@ class
   decodeDiskHfcBlock ::
     CodecConfig (HardForkBlock xs) ->
     forall s.
-    Decoder s (Lazy.ByteString -> HardForkBlock xs)
+    Decoder s (Lazy.ByteString -> Either DecoderError (HardForkBlock xs))
   decodeDiskHfcBlock cfg =
-    (\f -> HardForkBlock . OneEraBlock . f)
+    (\f -> fmap (HardForkBlock . OneEraBlock) . f)
       <$> decodeAnnNS (hcmap pSHFC aux cfgs)
    where
     cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
@@ -227,7 +228,10 @@ class
     aux ::
       SerialiseDiskConstraints blk =>
       CodecConfig blk -> AnnDecoder I blk
-    aux cfg' = AnnDecoder $ (I .) <$> decodeDisk cfg'
+    aux cfg' =
+      AnnDecoder $
+        (fmap I .)
+          <$> decodeDisk cfg'
 
   -- | Used as the implementation of 'reconstructPrefixLen' for
   -- 'HardForkBlock'.
@@ -354,7 +358,7 @@ disabledEraException = HardForkEncoderDisabledEra . singleEraInfo
 -------------------------------------------------------------------------------}
 
 data AnnDecoder f blk = AnnDecoder
-  { annDecoder :: forall s. Decoder s (Lazy.ByteString -> f blk)
+  { annDecoder :: forall s. Decoder s (Lazy.ByteString -> Either DecoderError (f blk))
   }
 
 {-------------------------------------------------------------------------------
@@ -430,7 +434,7 @@ decodeAnnNS ::
   SListI xs =>
   NP (AnnDecoder f) xs ->
   forall s.
-  Decoder s (Lazy.ByteString -> NS f xs)
+  Decoder s (Lazy.ByteString -> Either DecoderError (NS f xs))
 decodeAnnNS ds = do
   enforceSize "decodeDiskAnnNS" 2
   i <- Dec.decodeWord8
@@ -442,8 +446,9 @@ decodeAnnNS ds = do
     Index xs blk ->
     AnnDecoder f blk ->
     K () blk ->
-    K (Decoder s (Lazy.ByteString -> NS f xs)) blk
-  aux index (AnnDecoder dec) (K ()) = K $ (injectNS index .) <$> dec
+    K (Decoder s (Lazy.ByteString -> Either DecoderError (NS f xs))) blk
+  aux index (AnnDecoder dec) (K ()) =
+    K $ (fmap (injectNS index) .) <$> dec
 
 {-------------------------------------------------------------------------------
   Dependent serialisation

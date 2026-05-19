@@ -55,7 +55,7 @@ instance Arbitrary TestSetup where
 tests :: TestTree
 tests =
   testGroup "BFT" $
-    [ roundtrip_all SimpleCodecConfig dictNestedHdr
+    [ roundtrip_all SimpleCodecConfig dictNestedHdr Nothing
     , testProperty "simple convergence" $ \setup ->
         prop_simple_bft_convergence setup
     ]
@@ -116,6 +116,6 @@ prop_simple_bft_convergence
                     k
                     (HardFork.defaultEraParams k slotLength)
                 )
-                (pure $ blockForgingBft nid)
+                (pure $ fmap (MkBlockForging . pure) $ blockForgingBft nid)
           , mkRekeyM = Nothing
           }

@@ -17,6 +17,7 @@ import qualified Control.Monad.Class.MonadTime.SI as SI
 import Data.TreeDiff
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime, WithArrivalTime)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -112,12 +113,24 @@ instance
       , toExpr j
       ]
 
+instance ToExpr RelativeTime where
+  toExpr = defaultExprViaShow
 instance ToExpr ChunkInfo where
   toExpr = defaultExprViaShow
 instance ToExpr FsError where
   toExpr fsError = App (show fsError) []
 
 deriving instance ToExpr a => ToExpr (LoE a)
+
+deriving anyclass instance ToExpr PerasRoundNo
+
+deriving anyclass instance ToExpr PerasWeight
+
+deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (PerasCert blk)
+
+deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (ValidatedPerasCert blk)
+
+deriving anyclass instance ToExpr a => ToExpr (WithArrivalTime a)
 
 {-------------------------------------------------------------------------------
   si-timers
@@ -172,5 +185,5 @@ instance
   ) =>
   ToExpr (MempoolAddTxResult blk)
   where
-  toExpr (MempoolTxAdded vtx) = App "Added" [toExpr vtx]
+  toExpr (MempoolTxAdded vtx _) = App "Added" [toExpr vtx]
   toExpr (MempoolTxRejected tx e) = App "Rejected" [toExpr tx, App (show e) []]

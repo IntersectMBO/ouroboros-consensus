@@ -100,5 +100,3 @@ cabal.project.local
 cabal.project.local~
 .HTF/
 .ghc.environment.*
-.nixos-test-history
-.direnv/

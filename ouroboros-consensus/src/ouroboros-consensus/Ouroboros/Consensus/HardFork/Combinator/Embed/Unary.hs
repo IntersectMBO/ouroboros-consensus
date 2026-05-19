@@ -434,6 +434,7 @@ instance Functor m => Isomorphic (BlockForging m) where
     BlockForging
       { forgeLabel = forgeLabel
       , canBeLeader = project' (Proxy @(WrapCanBeLeader blk)) canBeLeader
+      , finalize = finalize
       , updateForgeState = \cfg sno tickedChainDepSt ->
           project
             <$> updateForgeState
@@ -454,26 +455,15 @@ instance Functor m => Isomorphic (BlockForging m) where
               )
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
               (inject' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \ForgeBlockArgs{..} ->
-          ( \(hfRb :: HardForkBlock '[blk], mayEb) ->
-              ( project' (Proxy @(I blk)) hfRb
-              , mayEb
-              )
-          )
+      , forgeBlock = \cfg bno sno tickedLgrSt txs isLeader ->
+          project' (Proxy @(I blk))
             <$> forgeBlock
-              ForgeBlockArgs
-                { fbIsLeader = inject' (Proxy @(WrapIsLeader blk)) fbIsLeader
-                , fbEbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs
-                , fbRbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbRbTxs
-                , fbCurrentTickedLedgerState =
-                    getFlipTickedLedgerState (inject (FlipTickedLedgerState fbCurrentTickedLedgerState))
-                , fbCurrentSlotNo = fbCurrentSlotNo
-                , fbCurrentBlockNo = fbCurrentBlockNo
-                , fbConfig = inject fbConfig
-                , fbChainDepState = inject' (Proxy @(WrapChainDepState blk)) <$> fbChainDepState
-                , fbLeiosDb = fbLeiosDb
-                , fbLeiosTracer = fbLeiosTracer
-                }
+              (inject cfg)
+              bno
+              sno
+              (getFlipTickedLedgerState (inject (FlipTickedLedgerState tickedLgrSt)))
+              (inject' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
+              (inject' (Proxy @(WrapIsLeader blk)) isLeader)
       }
    where
     injTickedChainDepSt ::
@@ -496,6 +486,7 @@ instance Functor m => Isomorphic (BlockForging m) where
     BlockForging
       { forgeLabel = forgeLabel
       , canBeLeader = inject' (Proxy @(WrapCanBeLeader blk)) canBeLeader
+      , finalize = finalize
       , updateForgeState = \cfg sno tickedChainDepSt ->
           inject
             <$> updateForgeState
@@ -510,26 +501,15 @@ instance Functor m => Isomorphic (BlockForging m) where
               (projTickedChainDepSt tickedChainDepSt)
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
               (project' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \ForgeBlockArgs{..} ->
-          ( \(hfRb :: blk, mayEb) ->
-              ( inject' (Proxy @(I blk)) hfRb
-              , mayEb
-              )
-          )
+      , forgeBlock = \cfg bno sno tickedLgrSt txs isLeader ->
+          inject' (Proxy @(I blk))
             <$> forgeBlock
-              ForgeBlockArgs
-                { fbIsLeader = project' (Proxy @(WrapIsLeader blk)) fbIsLeader
-                , fbEbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs
-                , fbRbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbRbTxs
-                , fbCurrentTickedLedgerState =
-                    getFlipTickedLedgerState (project (FlipTickedLedgerState fbCurrentTickedLedgerState))
-                , fbCurrentSlotNo = fbCurrentSlotNo
-                , fbCurrentBlockNo = fbCurrentBlockNo
-                , fbConfig = project fbConfig
-                , fbChainDepState = project' (Proxy @(WrapChainDepState blk)) <$> fbChainDepState
-                , fbLeiosDb = fbLeiosDb
-                , fbLeiosTracer = fbLeiosTracer
-                }
+              (project cfg)
+              bno
+              sno
+              (getFlipTickedLedgerState (project (FlipTickedLedgerState tickedLgrSt)))
+              (project' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
+              (project' (Proxy @(WrapIsLeader blk)) isLeader)
       }
    where
     projTickedChainDepSt ::
@@ -540,6 +520,12 @@ instance Functor m => Isomorphic (BlockForging m) where
         . unComp
         . State.fromTZ
         . tickedHardForkChainDepStatePerEra
+
+instance Functor m => Isomorphic (MkBlockForging m) where
+  project (MkBlockForging blockForgingM) =
+    MkBlockForging $ project <$> blockForgingM
+  inject (MkBlockForging blockForgingM) =
+    MkBlockForging $ inject <$> blockForgingM
 
 instance Isomorphic ProtocolInfo where
   project ::

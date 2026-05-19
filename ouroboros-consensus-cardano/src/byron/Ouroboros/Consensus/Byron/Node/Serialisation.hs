@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Byron.Node.Serialisation () where
@@ -20,6 +21,7 @@ import Codec.Serialise (decode, encode)
 import Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
+import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Ledger.Conversions
@@ -49,8 +51,8 @@ instance SerialiseDiskConstraints ByronBlock
 
 instance EncodeDisk ByronBlock ByronBlock where
   encodeDisk _ = encodeByronBlock
-instance DecodeDisk ByronBlock (Lazy.ByteString -> ByronBlock) where
-  decodeDisk ccfg = decodeByronBlock (getByronEpochSlots ccfg)
+instance DecodeDisk ByronBlock (Lazy.ByteString -> Either DecoderError ByronBlock) where
+  decodeDisk ccfg = (Right .) <$> decodeByronBlock (getByronEpochSlots ccfg)
 
 instance EncodeDisk ByronBlock (LedgerState ByronBlock mk) where
   encodeDisk _ = encodeByronLedgerState
@@ -81,7 +83,7 @@ instance SerialiseNodeToNodeConstraints ByronBlock where
 -- wrapped ('Serialised') variant.
 instance SerialiseNodeToNode ByronBlock ByronBlock where
   encodeNodeToNode _ _ = wrapCBORinCBOR encodeByronBlock
-  decodeNodeToNode ccfg _ = unwrapCBORinCBOR (decodeByronBlock epochSlots)
+  decodeNodeToNode ccfg _ = unwrapCBORinCBOR ((Right .) <$> decodeByronBlock epochSlots)
    where
     epochSlots = getByronEpochSlots ccfg
 
@@ -96,7 +98,7 @@ instance SerialiseNodeToNode ByronBlock (Header ByronBlock) where
   decodeNodeToNode ccfg = \case
     ByronNodeToNodeVersion1 ->
       unwrapCBORinCBOR $
-        (flip joinSizeHint fakeByronBlockSizeHint .)
+        (Right .) . (flip joinSizeHint fakeByronBlockSizeHint .)
           <$> decodeUnsizedHeader epochSlots
     ByronNodeToNodeVersion2 ->
       nest <$> decodeDisk ccfg
@@ -161,7 +163,7 @@ instance SerialiseNodeToClient ByronBlock Config where
 -- wrapped ('Serialised') variant.
 instance SerialiseNodeToClient ByronBlock ByronBlock where
   encodeNodeToClient _ _ = wrapCBORinCBOR encodeByronBlock
-  decodeNodeToClient ccfg _ = unwrapCBORinCBOR (decodeByronBlock epochSlots)
+  decodeNodeToClient ccfg _ = unwrapCBORinCBOR ((Right .) <$> decodeByronBlock epochSlots)
    where
     epochSlots = getByronEpochSlots ccfg
 
@@ -245,7 +247,10 @@ instance DecodeDiskDepIx (NestedCtxt Header) ByronBlock where
     CBOR.decodeWord8 >>= \case
       0 -> SomeSecond . NestedCtxt . CtxtByronBoundary . SizeInBytes <$> CBOR.decodeWord32
       1 -> SomeSecond . NestedCtxt . CtxtByronRegular . SizeInBytes <$> CBOR.decodeWord32
-      t -> cborError $ DecoderErrorUnknownTag "decodeDiskDepIx ByronBlock" t
+      t ->
+        cborError $
+          DecoderErrorUnknownTag "decodeDiskDepIx ByronBlock" $
+            fromIntegral @Word8 @Word t
 
 instance DecodeDiskDep (NestedCtxt Header) ByronBlock where
   decodeDiskDep ByronCodecConfig{..} (NestedCtxt ctxt) =

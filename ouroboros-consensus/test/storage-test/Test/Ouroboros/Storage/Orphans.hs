@@ -1,9 +1,12 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Ouroboros.Storage.Orphans () where
 
+import Cardano.Crypto.Hash.Class (PackedBytes)
 import Data.Maybe (isJust)
+import Data.Time.Clock (NominalDiffTime)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( ChainDbError
@@ -16,6 +19,8 @@ import Ouroboros.Consensus.Storage.VolatileDB.API (VolatileDBError)
 import qualified Ouroboros.Consensus.Storage.VolatileDB.API as VolatileDB
 import Ouroboros.Consensus.Util.CallStack
 import System.FS.API.Types (FsError, sameFsError)
+import Test.QuickCheck.StateModel (HasVariables)
+import Test.QuickCheck.StateModel.Variables (HasVariables (..))
 
 {-------------------------------------------------------------------------------
   PrettyCallStack
@@ -66,3 +71,24 @@ deriving instance StandardHash blk => Eq (ImmutableDB.UnexpectedFailure blk)
 deriving instance StandardHash blk => Eq (ChainDbFailure blk)
 
 deriving instance StandardHash blk => Eq (ChainDbError blk)
+
+{-------------------------------------------------------------------------------
+  Time
+-------------------------------------------------------------------------------}
+
+instance HasVariables NominalDiffTime where
+  getAllVariables _ = mempty
+
+{-------------------------------------------------------------------------------
+  Rational
+-------------------------------------------------------------------------------}
+
+instance HasVariables Rational where
+  getAllVariables _ = mempty
+
+{-------------------------------------------------------------------------------
+  PackedBytes
+-------------------------------------------------------------------------------}
+
+instance HasVariables (PackedBytes a) where
+  getAllVariables _ = mempty

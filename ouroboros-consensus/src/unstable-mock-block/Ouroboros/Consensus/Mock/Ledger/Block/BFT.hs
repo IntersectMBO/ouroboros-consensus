@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -19,6 +20,7 @@ module Ouroboros.Consensus.Mock.Ledger.Block.BFT
 
 import Cardano.Binary (ToCBOR (..))
 import Cardano.Crypto.DSIGN
+import Cardano.Crypto.Hash (HashAlgorithm)
 import Cardano.Crypto.Util
 import Codec.Serialise (Serialise (..), serialise)
 import qualified Data.ByteString.Lazy as BSL
@@ -160,8 +162,11 @@ instance BftCrypto c' => Serialise (SimpleBftExt c c') where
     bftSignature <- decodeSignedDSIGN
     return $ SimpleBftExt BftFields{..}
 
-instance SimpleCrypto c => Serialise (SignedSimpleBft c c')
-instance SimpleCrypto c => SignableRepresentation (SignedSimpleBft c c') where
+instance (HashAlgorithm (SimpleHash c), Typeable c, Typeable c') => Serialise (SignedSimpleBft c c')
+instance
+  (HashAlgorithm (SimpleHash c), Typeable c, Typeable c') =>
+  SignableRepresentation (SignedSimpleBft c c')
+  where
   getSignableRepresentation = BSL.toStrict . serialise
 
 instance (Typeable c', SimpleCrypto c) => ToCBOR (SignedSimpleBft c c') where

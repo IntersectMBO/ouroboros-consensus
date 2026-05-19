@@ -12,7 +12,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -41,6 +40,7 @@ module Test.Consensus.HardFork.Combinator.A
   , TxId (..)
   ) where
 
+import Cardano.Binary (DecoderError)
 import Cardano.Ledger.BaseTypes.NonZero
 import Cardano.Slotting.EpochInfo
 import Codec.Serialise
@@ -78,6 +78,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.InitStorage
@@ -309,6 +310,8 @@ instance LedgerSupportsProtocol BlockA where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
+instance LedgerSupportsPeras BlockA
+
 instance HasPartialConsensusConfig ProtocolA
 
 instance HasPartialLedgerConfig BlockA where
@@ -356,15 +359,10 @@ blockForgingA =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \ForgeBlockArgs{..} ->
-        return . (,Nothing) $
-          forgeBlockA
-            fbConfig
-            fbCurrentBlockNo
-            fbCurrentSlotNo
-            fbCurrentTickedLedgerState
-            (txForgetValidated <$> fbRbTxs)
-            fbIsLeader
+    , forgeBlock = \cfg bno slot st txs proof ->
+        return $
+          forgeBlockA cfg bno slot st (fmap txForgetValidated txs) proof
+    , finalize = return ()
     }
 
 -- | See 'Ouroboros.Consensus.HardFork.History.EraParams.safeFromTip'
@@ -397,18 +395,20 @@ instance LedgerSupportsMempool BlockA where
       InitiateAtoB -> do
         return (TickedLedgerStateA $ st{lgrA_transition = Just sno}, ValidatedGenTxA tx)
 
-  reapplyTx _ cfg slot tx st =
-    attachAndApplyDiffs st . fst <$> applyTx cfg DoNotIntervene slot (forgetValidatedGenTxA tx) st
+  reapplyTx cfg slot tx st =
+    applyDiffs st . fst <$> applyTx cfg DoNotIntervene slot (forgetValidatedGenTxA tx) st
 
   txForgetValidated = forgetValidatedGenTxA
 
   getTransactionKeySets _tx = trivialLedgerTables
 
+  mkMempoolApplyTxError = nothingMkMempoolApplyTxError
+
 instance TxLimits BlockA where
   type TxMeasure BlockA = IgnoringOverflow ByteSize32
-  txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
+  txWireSize = const . fromIntegral $ (0 :: Int)
   blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary
-  ebCapacityTxMeasure _ _ = Nothing
+  txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
 
 newtype instance TxId (GenTx BlockA) = TxIdA Int
   deriving stock (Show, Eq, Ord, Generic)
@@ -633,8 +633,8 @@ instance EncodeDisk BlockA (LedgerState BlockA EmptyMK)
 instance DecodeDisk BlockA (LedgerState BlockA EmptyMK)
 
 instance EncodeDisk BlockA BlockA
-instance DecodeDisk BlockA (Lazy.ByteString -> BlockA) where
-  decodeDisk _ = const <$> decode
+instance DecodeDisk BlockA (Lazy.ByteString -> Either DecoderError BlockA) where
+  decodeDisk _ = const . Right <$> decode
 
 instance EncodeDisk BlockA (AnnTip BlockA)
 instance DecodeDisk BlockA (AnnTip BlockA)
@@ -659,7 +659,7 @@ instance SerialiseNodeToNode BlockA (GenTxId BlockA)
 -- the @Serialise (SerialisedHeader BlockA)@ instance below
 instance SerialiseNodeToNode BlockA (Header BlockA) where
   encodeNodeToNode _ _ = wrapCBORinCBOR encode
-  decodeNodeToNode _ _ = unwrapCBORinCBOR (const <$> decode)
+  decodeNodeToNode _ _ = unwrapCBORinCBOR (const . Right <$> decode)
 
 instance Serialise (SerialisedHeader BlockA) where
   encode = encodeTrivialSerialisedHeader

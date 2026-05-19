@@ -14,12 +14,17 @@ module Ouroboros.Consensus.Util.IndexedMemPack
   ( IndexedMemPack (..)
   , MemPack (..)
   , indexedPackByteString
+  , indexedPackByteArray
   , indexedUnpackError
+  , indexedUnpackEither
+  , unpackEither
   ) where
 
 import qualified Control.Monad as Monad
-import Control.Monad.Trans.Fail (Fail, errorFail, failT)
+import Control.Monad.ST
+import Control.Monad.Trans.Fail
 import Data.Array.Byte (ByteArray (..))
+import Data.Bifunctor (first)
 import Data.ByteString
 import Data.MemPack
 import Data.MemPack.Buffer
@@ -30,7 +35,7 @@ import GHC.Stack
 class IndexedMemPack idx a where
   indexedPackedByteCount :: idx -> a -> Int
   indexedPackM :: idx -> a -> Pack s ()
-  indexedUnpackM :: Buffer b => idx -> Unpack b a
+  indexedUnpackM :: Buffer b => forall s. idx -> Unpack s b a
   indexedTypeName :: idx -> String
 
 indexedPackByteString ::
@@ -71,12 +76,30 @@ indexedUnpackFail idx b = do
 indexedUnpackLeftOver ::
   forall idx a b.
   (IndexedMemPack idx a, Buffer b, HasCallStack) => idx -> b -> Fail SomeError (a, Int)
-indexedUnpackLeftOver idx b = do
+indexedUnpackLeftOver idx b = FailT $ pure $ runST $ runFailAggT $ indexedUnpackLeftOverST idx b
+{-# INLINEABLE indexedUnpackLeftOver #-}
+
+indexedUnpackLeftOverST ::
+  forall idx a b s.
+  (IndexedMemPack idx a, Buffer b, HasCallStack) => idx -> b -> FailT SomeError (ST s) (a, Int)
+indexedUnpackLeftOverST idx b = do
   let len = bufferByteCount b
   res@(_, consumedBytes) <- runStateT (runUnpack (indexedUnpackM idx) b) 0
   Monad.when (consumedBytes > len) $ errorLeftOver (indexedTypeName @idx @a idx) consumedBytes len
   pure res
-{-# INLINEABLE indexedUnpackLeftOver #-}
+{-# INLINEABLE indexedUnpackLeftOverST #-}
+
+indexedUnpackEither ::
+  forall idx a b.
+  (IndexedMemPack idx a, Buffer b, HasCallStack) => idx -> b -> Either SomeError a
+indexedUnpackEither idx = first fromMultipleErrors . runFailAgg . indexedUnpackFail idx
+{-# INLINEABLE indexedUnpackEither #-}
+
+unpackEither ::
+  forall a b.
+  (MemPack a, Buffer b, HasCallStack) => b -> Either SomeError a
+unpackEither = first fromMultipleErrors . runFailAgg . unpackFail
+{-# INLINEABLE unpackEither #-}
 
 errorLeftOver :: HasCallStack => String -> Int -> Int -> a
 errorLeftOver name consumedBytes len =

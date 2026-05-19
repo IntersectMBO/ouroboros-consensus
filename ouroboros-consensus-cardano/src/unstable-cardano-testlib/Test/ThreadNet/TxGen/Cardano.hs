@@ -17,7 +17,6 @@ import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Signing as Byron
 import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.Ledger.Address as SL (BootstrapAddress (..))
-import Cardano.Ledger.Api (ConwayEra)
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Keys (DSIGN)
 import qualified Cardano.Ledger.Keys.Bootstrap as SL (makeBootstrapWitness)
@@ -39,7 +38,6 @@ import Ouroboros.Consensus.Cardano
 import Ouroboros.Consensus.Cardano.Block
   ( CardanoEras
   , GenTx (..)
-  , LedgerState (LedgerStateConway)
   , ShelleyEra
   )
 import Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints)
@@ -55,10 +53,11 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.Ledger.Basics
   ( ComputeLedgerEvents (..)
   , LedgerConfig
+  , LedgerState
   , TickedLedgerState
   , applyChainTick
   )
-import Ouroboros.Consensus.Ledger.Tables (ValuesMK, getLedgerTables, getValuesMK)
+import Ouroboros.Consensus.Ledger.Tables (ValuesMK)
 import Ouroboros.Consensus.Ledger.Tables.Utils
   ( applyDiffs
   , forgetLedgerTables
@@ -67,13 +66,9 @@ import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, mkShelleyTx)
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( getPParams
-  , shelleyLedgerState
-  , shelleyLedgerTables
-  , tickedShelleyLedgerState
+  ( tickedShelleyLedgerState
   )
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL (mkWitnessVKey)
-import Test.QuickCheck (Gen)
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import Test.ThreadNet.TxGen
 
@@ -81,32 +76,14 @@ data CardanoTxGenExtra c = CardanoTxGenExtra
   { ctgeByronGenesisKeys :: GeneratedSecrets
   , ctgeNetworkMagic :: Byron.NetworkMagic
   , ctgeShelleyCoreNodes :: [Shelley.CoreNode c]
-  , ctgeExtraTxGen ::
-      SlotNo ->
-      Shelley.CoreNode c ->
-      SL.PParams ConwayEra ->
-      Map SL.TxIn (SL.TxOut ConwayEra) ->
-      Gen [SL.Tx ConwayEra]
   }
 
 instance CardanoHardForkConstraints c => TxGen (CardanoBlock c) where
   type TxGenExtra (CardanoBlock c) = CardanoTxGenExtra c
 
   -- TODO also generate " typical " Byron and Shelley transactions
-  testGenTxs (CoreNodeId i) _ncn curSlot cfg extra ls = do
-    let migrateTxs = maybeToList (migrateUTxO migrationInfo curSlot lcfg ls)
-    extraTxs <-
-      case ls of
-        LedgerStateConway st ->
-          fmap (map (GenTxConway . mkShelleyTx)) $
-            ctgeExtraTxGen
-              extra
-              curSlot
-              coreNode
-              (getPParams . shelleyLedgerState $ st)
-              (getValuesMK . getLedgerTables . shelleyLedgerTables $ st)
-        _ -> pure []
-    pure $ migrateTxs <> extraTxs
+  testGenTxs (CoreNodeId i) _ncn curSlot cfg extra ls =
+    pure $ maybeToList $ migrateUTxO migrationInfo curSlot lcfg ls
    where
     lcfg = topLevelConfigLedger cfg
 
@@ -133,7 +110,7 @@ instance CardanoHardForkConstraints c => TxGen (CardanoBlock c) where
     byronSK :: Byron.SigningKey
     byronSK = gsRichSecrets !! fromIntegral i
 
-    coreNode@Shelley.CoreNode
+    Shelley.CoreNode
       { Shelley.cnDelegateKey = paymentSK
       , Shelley.cnStakingKey = stakingSK
       , Shelley.cnVRF = vrfSK
@@ -199,7 +176,7 @@ migrateUTxO migrationInfo curSlot lcfg lst
             assert (pickedCoin > spentCoin) $
               pickedCoin <-> spentCoin
 
-          body :: SL.TxBody ShelleyEra
+          body :: SL.TxBody SL.TopTx ShelleyEra
           body =
             SL.mkBasicTxBody
               & SL.certsTxBodyL
@@ -226,14 +203,14 @@ migrateUTxO migrationInfo curSlot lcfg lst
               Byron.addrAttributes byronAddr
 
           -- Witness the stake delegation.
-          delegWit :: SL.WitVKey 'SL.Witness
+          delegWit :: SL.WitVKey SL.Witness
           delegWit =
             TL.mkWitnessVKey
               bodyHash
               (Shelley.mkKeyPair stakingSK)
 
           -- Witness the pool registration.
-          poolWit :: SL.WitVKey 'SL.Witness
+          poolWit :: SL.WitVKey SL.Witness
           poolWit =
             TL.mkWitnessVKey
               bodyHash
@@ -242,14 +219,9 @@ migrateUTxO migrationInfo curSlot lcfg lst
             then Nothing
             else
               (Just . GenTxShelley . mkShelleyTx) $
-                SL.ShelleyTx
-                  { SL.body = body
-                  , SL.auxiliaryData = SL.SNothing
-                  , SL.wits =
-                      SL.mkBasicTxWits
-                        & SL.addrTxWitsL .~ Set.fromList [delegWit, poolWit]
-                        & SL.bootAddrTxWitsL .~ Set.singleton byronWit
-                  }
+                SL.mkBasicTx body
+                  & SL.witsTxL . SL.addrTxWitsL .~ Set.fromList [delegWit, poolWit]
+                  & SL.witsTxL . SL.bootAddrTxWitsL .~ Set.singleton byronWit
   | otherwise = Nothing
  where
   mbUTxO :: Maybe (SL.UTxO ShelleyEra)
@@ -284,19 +256,19 @@ migrateUTxO migrationInfo curSlot lcfg lst
       (SL.StakeRefBase $ Shelley.mkCredential stakingSK)
 
   -- A simplistic individual pool
-  poolParams :: SL.Coin -> SL.PoolParams
+  poolParams :: SL.Coin -> SL.StakePoolParams
   poolParams pledge =
-    SL.PoolParams
-      { SL.ppCost = SL.Coin 1
-      , SL.ppMetadata = SL.SNothing
-      , SL.ppMargin = minBound
-      , SL.ppOwners = Set.singleton $ Shelley.mkKeyHash poolSK
-      , SL.ppPledge = pledge
-      , SL.ppId = Shelley.mkKeyHash poolSK
-      , SL.ppRewardAccount =
-          SL.RewardAccount Shelley.networkId $ Shelley.mkCredential poolSK
-      , SL.ppRelays = StrictSeq.empty
-      , SL.ppVrf = Shelley.mkKeyHashVrf @c vrfSK
+    SL.StakePoolParams
+      { SL.sppCost = SL.Coin 1
+      , SL.sppMetadata = SL.SNothing
+      , SL.sppMargin = minBound
+      , SL.sppOwners = Set.singleton $ Shelley.mkKeyHash poolSK
+      , SL.sppPledge = pledge
+      , SL.sppId = Shelley.mkKeyHash poolSK
+      , SL.sppAccountAddress =
+          SL.AccountAddress Shelley.networkId $ SL.AccountId (Shelley.mkCredential poolSK)
+      , SL.sppRelays = StrictSeq.empty
+      , SL.sppVrf = Shelley.mkKeyHashVrf @c vrfSK
       }
 
 -----

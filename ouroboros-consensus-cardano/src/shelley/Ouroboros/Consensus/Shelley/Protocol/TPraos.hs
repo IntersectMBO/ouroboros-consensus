@@ -66,7 +66,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
     SL.chainChecks
       maxPV
       (SL.lvChainChecks lv)
-      (SL.makeHeaderView $ protocolHeaderView @(TPraos c) hdr)
+      (SL.makeHeaderView (protocolHeaderView @(TPraos c) hdr) Nothing)
    where
     MaxMajorProtVer maxPV = tpraosMaxMajorPV $ tpraosParams cfg
 
@@ -90,7 +90,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (TPraos c) where
           currentKesPeriod - startOfKesPeriod
       | otherwise =
           0
-  mkHeader hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer _mayEbAnnouncement = do
+  mkHeader hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer = do
     TPraosFields{tpraosSignature, tpraosToSign} <-
       forgeTPraosFields hotKey canBeLeader isLeader mkBhBody
     pure $ SL.BHeader tpraosToSign tpraosSignature
@@ -133,7 +133,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsProtocol (TPraos c) where
   pTieBreakVRFValue = certifiedOutput . SL.bheaderL . SL.bhbody
 
 instance PraosCrypto c => ProtocolHeaderSupportsLedger (TPraos c) where
-  mkHeaderView = SL.makeHeaderView
+  mkHeaderView = (flip SL.makeHeaderView) Nothing
 
 type instance Signed (SL.BHeader c) = SL.BHBody c
 

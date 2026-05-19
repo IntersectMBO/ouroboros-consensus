@@ -31,7 +31,7 @@ module Ouroboros.Consensus.Node.GSM
   , module Ouroboros.Consensus.Node.GsmState
   ) where
 
-import Cardano.Network.Types (LedgerStateJudgement (..))
+import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import qualified Cardano.Slotting.Slot as Slot
 import qualified Control.Concurrent.Class.MonadSTM.TVar as LazySTM
 import Control.Monad (forever, join, unless)
@@ -104,10 +104,16 @@ data GsmView m upstreamPeer selection chainSyncState = GsmView
   -- thundering herd phenomenon.
   --
   -- 'Nothing' should only be used for testing.
-  , candidateOverSelection ::
-      selection ->
-      chainSyncState ->
-      CandidateVersusSelection
+  , getCandidateOverSelection ::
+      STM
+        m
+        ( selection ->
+          chainSyncState ->
+          CandidateVersusSelection
+        )
+  -- ^ Whether the candidate from the @chainSyncState@ is preferable to the
+  -- selection. This can depend on external state (Peras certificates boosting
+  -- blocks).
   , peerIsIdle :: chainSyncState -> Bool
   , durationUntilTooOld :: Maybe (selection -> m DurationFromNow)
   -- ^ How long from now until the selection will be so old that the node
@@ -234,7 +240,7 @@ realGsmEntryPoints tracerArgs gsmView =
 
   GsmView
     { antiThunderingHerd
-    , candidateOverSelection
+    , getCandidateOverSelection
     , peerIsIdle
     , durationUntilTooOld
     , equivalent
@@ -247,10 +253,14 @@ realGsmEntryPoints tracerArgs gsmView =
     } = gsmView
 
   enterCaughtUp :: forall neverTerminates. m neverTerminates
-  enterCaughtUp = enterCaughtUp' antiThunderingHerd
+  enterCaughtUp = do
+    traceWith tracer GsmEventInitializedInCaughtUp
+    enterCaughtUp' antiThunderingHerd
 
   enterPreSyncing :: forall neverTerminates. m neverTerminates
-  enterPreSyncing = enterPreSyncing' antiThunderingHerd
+  enterPreSyncing = do
+    traceWith tracer GsmEventInitializedInPreSyncing
+    enterPreSyncing' antiThunderingHerd
 
   enterCaughtUp' :: forall neverTerminates. Maybe StdGen -> m neverTerminates
   enterCaughtUp' g = do
@@ -379,6 +389,7 @@ realGsmEntryPoints tracerArgs gsmView =
     -- long.
     selection <- getCurrentSelection
     candidates <- traverse StrictSTM.readTVar varsState
+    candidateOverSelection <- getCandidateOverSelection
     let ok candidate =
           WhetherCandidateIsBetter False
             == candidateOverSelection selection candidate
@@ -420,13 +431,21 @@ realGsmEntryPoints tracerArgs gsmView =
     check . not =<< isHaaSatisfied
 
 data TraceGsmEvent selection
-  = -- | how many peers and the current selection
+  = -- | The GSM was initialized in the 'CaughtUp' state.
+    GsmEventInitializedInCaughtUp
+  | -- | The GSM was initialized in the 'PreSyncing' state.
+    GsmEventInitializedInPreSyncing
+  | -- | The GSM transitioned from 'Syncing' to 'CaughtUp'.
+    --
+    -- Includes the number of peers and the current selection.
     GsmEventEnterCaughtUp !Int !selection
-  | -- | the current selection and its age
+  | -- | The GSM transitioned from 'CaughtUp' to 'PreSyncing'.
+    --
+    -- Includes the current selection and its age.
     GsmEventLeaveCaughtUp !selection !DurationFromNow
-  | -- | the Honest Availability Assumption is now satisfied
+  | -- | The Honest Availability Assumption is now satisfied.
     GsmEventPreSyncingToSyncing
-  | -- | the Honest Availability Assumption is no longer satisfied
+  | -- | The Honest Availability Assumption is no longer satisfied.
     GsmEventSyncingToPreSyncing
   deriving (Eq, Show)
 

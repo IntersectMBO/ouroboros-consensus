@@ -1,7 +1,6 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -51,6 +50,7 @@ import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -60,6 +60,7 @@ import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
+import Ouroboros.Consensus.Util ((....:))
 import Ouroboros.Network.Magic (NetworkMagic (..))
 
 {-------------------------------------------------------------------------------
@@ -142,18 +143,8 @@ byronBlockForging creds =
           canBeLeader
           slot
           tickedPBftState
-    , forgeBlock = \ForgeBlockArgs{..} ->
-        let
-          byronBlock =
-            forgeByronBlock
-              fbConfig
-              fbCurrentBlockNo
-              fbCurrentSlotNo
-              fbCurrentTickedLedgerState
-              fbRbTxs
-              fbIsLeader
-         in
-          return (byronBlock, Nothing)
+    , forgeBlock = \cfg -> return ....: forgeByronBlock cfg
+    , finalize = pure ()
     }
  where
   canBeLeader = mkPBftCanBeLeader creds
@@ -217,7 +208,6 @@ protocolInfoByron
             , topLevelConfigCodec = mkByronCodecConfig compactedGenesisConfig
             , topLevelConfigStorage = ByronStorageConfig blockConfig
             , topLevelConfigCheckpoints = emptyCheckpointsMap
-            , topLevelConfigVotingKey = Nothing
             }
       , pInfoInitLedger =
           ExtLedgerState
@@ -312,6 +302,8 @@ instance NodeInitStorage ByronBlock where
 {-------------------------------------------------------------------------------
   RunNode instance
 -------------------------------------------------------------------------------}
+
+instance LedgerSupportsPeras ByronBlock
 
 instance BlockSupportsMetrics ByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown

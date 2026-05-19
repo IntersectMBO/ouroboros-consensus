@@ -24,9 +24,9 @@ import Cardano.Crypto.Hash
   ( Blake2b_256
   , Hash
   , castHash
+  , hashSize
   , hashToBytes
   , hashWith
-  , sizeHash
   )
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.Util
@@ -35,7 +35,6 @@ import Cardano.Crypto.Util
   )
 import Cardano.Crypto.VRF
   ( CertifiedVRF (certifiedOutput)
-  , OutputVRF (..)
   , getOutputVRFBytes
   )
 import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce, Nonce))
@@ -118,7 +117,7 @@ vrfLeaderValue ::
   BoundedNatural
 vrfLeaderValue p cvrf =
   assertBoundedNatural
-    ((2 :: Natural) ^ (8 * sizeHash (Proxy @HASH)))
+    ((2 :: Natural) ^ (8 * hashSize (Proxy @HASH)))
     (bytesToNatural . hashToBytes $ hashVRF p SVRFLeader cvrf)
 
 -- | Range-extend a VRF output to be used for the evolving nonce. See section

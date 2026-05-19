@@ -310,7 +310,17 @@ instance
 -------------------------------------------------------------------------------}
 
 instance Arbitrary EraParams where
-  arbitrary = EraParams <$> arbitrary <*> arbitrary <*> arbitrary <*> (GenesisWindow <$> arbitrary)
+  arbitrary =
+    EraParams
+      <$> arbitrary
+      <*> arbitrary
+      <*> arbitrary
+      <*> (GenesisWindow <$> arbitrary)
+      <*> mPerasRoundLength
+   where
+    mPerasRoundLength :: Gen (PerasEnabled PerasRoundLength)
+    mPerasRoundLength = do
+      (\x -> if x == 0 then NoPerasEnabled else PerasEnabled . PerasRoundLength $ x) <$> arbitrary
 
 instance Arbitrary SafeZone where
   arbitrary =
@@ -332,6 +342,15 @@ instance Arbitrary Bound where
       <$> (RelativeTime <$> arbitrary)
       <*> (SlotNo <$> arbitrary)
       <*> (EpochNo <$> arbitrary)
+      <*> mPerasRoundNo
+   where
+    mPerasRoundNo :: Gen (PerasEnabled PerasRoundNo)
+    mPerasRoundNo = do
+      n <- arbitrary
+      pure $
+        if n == 0
+          then NoPerasEnabled
+          else PerasEnabled (PerasRoundNo n)
 
 instance Arbitrary (K Past blk) where
   arbitrary = K <$> (Past <$> arbitrary <*> arbitrary)

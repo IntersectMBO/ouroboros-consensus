@@ -1,17 +1,12 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -20,23 +15,20 @@
 -- module will be gone.
 module Ouroboros.Consensus.Storage.LedgerDB.V1 (mkInitDb) where
 
-import Control.Arrow ((>>>))
 import Control.Monad
 import Control.Monad.Except
-import Control.ResourceRegistry
+import Control.Monad.Trans (lift)
 import Control.Tracer
-import Data.Bifunctor (first)
 import qualified Data.Foldable as Foldable
+import Data.Functor ((<&>))
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
-import Data.Map (Map)
-import qualified Data.Map.Strict as Map
+import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (isJust)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (LeiosDbConnection)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -73,35 +65,42 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import System.FS.API
 
+type SnapshotManagerV1 m blk =
+  SnapshotManager m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
+
+newtype SnapshotExc blk = SnapshotExc {getSnapshotFailure :: SnapshotFailure blk}
+  deriving (Show, Exception)
+
 mkInitDb ::
   forall m blk.
   ( LedgerSupportsProtocol blk
   , IOLike m
-  , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
-  , ResolveLeiosBlock blk
   ) =>
   Complete LedgerDbArgs m blk ->
-  Complete V1.LedgerDbFlavorArgs m ->
+  V1.LedgerDbBackendArgs m (ExtLedgerState blk) ->
   ResolveBlock m blk ->
+  SnapshotManagerV1 m blk ->
+  GetVolatileSuffix m blk ->
   InitDB (DbChangelog' blk, BackingStore' m blk) m blk
-mkInitDb args bss getBlock =
+mkInitDb args bss getBlock snapManager getVolatileSuffix =
   InitDB
     { initFromGenesis = do
         st <- lgrGenesis
         let genesis = forgetLedgerTables st
             chlog = DbCh.empty genesis
-        (_, backingStore) <-
-          allocate
-            lgrRegistry
-            (\_ -> newBackingStore bsTracer baArgs lgrHasFS' genesis (projectLedgerTables st))
-            bsClose
+        backingStore <- newBackingStore bsTracer baArgs lgrHasFS' genesis (projectLedgerTables st)
         pure (chlog, backingStore)
-    , initFromSnapshot =
+    , initFromSnapshot = \ds ->
         runExceptT
-          . loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS'
-    , closeDb = bsClose . snd
+          ( loadSnapshot
+              bsTracer
+              baArgs
+              (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
+              lgrHasFS'
+              ds
+          )
     , initReapplyBlock = \cfg blk (chlog, bstore) -> do
         !chlog' <- reapplyThenPush cfg blk (readKeySets bstore) chlog
         -- It's OK to flush without a lock here, since the `LedgerDB` has not
@@ -116,21 +115,18 @@ mkInitDb args bss getBlock =
                 pure toKeep
               else pure chlog'
         pure (chlog'', bstore)
-    , currentTip = ledgerState . current . fst
-    , pruneDb = pure . first pruneToImmTipOnly
-    , mkLedgerDb = \(db, lgrBackingStore) -> do
+    , currentTip = \(ch, _) -> ledgerState . current $ ch
+    , mkLedgerDb = \(db, ldbBackingStore) -> do
         (varDB, prevApplied) <-
           (,) <$> newTVarIO db <*> newTVarIO Set.empty
         flushLock <- mkLedgerDBLock
-        forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
         let env =
               LedgerDBEnv
                 { ldbChangelog = varDB
-                , ldbBackingStore = lgrBackingStore
+                , ldbBackingStore = ldbBackingStore
                 , ldbLock = flushLock
                 , ldbPrevApplied = prevApplied
-                , ldbForkers = forkers
                 , ldbNextForkerKey = nextForkerKey
                 , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
                 , ldbTracer = lgrTracer
@@ -139,12 +135,14 @@ mkInitDb args bss getBlock =
                 , ldbShouldFlush = shouldFlush flushFreq
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbResolveBlock = getBlock
+                , ldbGetVolatileSuffix = getVolatileSuffix
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
-        pure $ implMkLedgerDb h
+        pure $ implMkLedgerDb h snapManager
     }
  where
-  bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
+  !bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< tr
+  !tr = lgrTracer
 
   LedgerDbArgs
     { lgrHasFS
@@ -152,7 +150,6 @@ mkInitDb args bss getBlock =
     , lgrSnapshotPolicyArgs
     , lgrConfig
     , lgrGenesis
-    , lgrRegistry
     , lgrQueryBatchSize
     } = args
 
@@ -170,25 +167,25 @@ implMkLedgerDb ::
   , ApplyBlock l blk
   , l ~ ExtLedgerState blk
   , HasHardForkHistory blk
-  , ResolveLeiosBlock blk
   ) =>
   LedgerDBHandle m l blk ->
+  SnapshotManagerV1 m blk ->
   (LedgerDB' m blk, TestInternals' m blk)
-implMkLedgerDb h =
+implMkLedgerDb h snapManager =
   ( LedgerDB
       { getVolatileTip = getEnvSTM h implGetVolatileTip
       , getImmutableTip = getEnvSTM h implGetImmutableTip
       , getPastLedgerState = getEnvSTM1 h implGetPastLedgerState
       , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
-      , getForkerAtTarget = newForkerAtTarget h
-      , validateFork = \leiosDb -> getEnv5 h (implValidate leiosDb h)
+      , openForkerAtTarget = openNewForkerAtTarget h
+      , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
-      , garbageCollect = getEnvSTM1 h implGarbageCollect
-      , tryTakeSnapshot = getEnv2 h implTryTakeSnapshot
+      , garbageCollect = getEnv1 h implGarbageCollect
+      , tryTakeSnapshot = getEnv3 h (implTryTakeSnapshot snapManager)
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
-  , mkInternals h
+  , mkInternals h snapManager
   )
 
 implGetVolatileTip ::
@@ -198,10 +195,16 @@ implGetVolatileTip ::
 implGetVolatileTip = fmap current . readTVar . ldbChangelog
 
 implGetImmutableTip ::
-  MonadSTM m =>
+  (MonadSTM m, GetTip l) =>
   LedgerDBEnv m l blk ->
   STM m (l EmptyMK)
-implGetImmutableTip = fmap anchor . readTVar . ldbChangelog
+implGetImmutableTip env = do
+  volSuffix <- getVolatileSuffix $ ldbGetVolatileSuffix env
+  -- The DbChangelog might contain more than k states if they have not yet
+  -- been garbage-collected.
+  fmap (AS.anchor . volSuffix . changelogStates)
+    . readTVar
+    $ ldbChangelog env
 
 implGetPastLedgerState ::
   ( MonadSTM m
@@ -212,7 +215,18 @@ implGetPastLedgerState ::
   , HeaderHash l ~ HeaderHash blk
   ) =>
   LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l EmptyMK))
-implGetPastLedgerState env point = getPastLedgerAt point <$> readTVar (ldbChangelog env)
+implGetPastLedgerState env point = do
+  volSuffix <- getVolatileSuffix $ ldbGetVolatileSuffix env
+  readTVar (ldbChangelog env) <&> \chlog -> do
+    -- The DbChangelog might contain more than k states if they have not yet
+    -- been garbage-collected, so make sure that the point is volatile (or the
+    -- immutable tip).
+    guard $
+      AS.withinBounds
+        (pointSlot point)
+        ((point ==) . castPoint . either getTip getTip)
+        (volSuffix (changelogStates chlog))
+    getPastLedgerAt point chlog
 
 implGetHeaderStateHistory ::
   ( MonadSTM m
@@ -224,6 +238,7 @@ implGetHeaderStateHistory ::
   LedgerDBEnv m l blk -> STM m (HeaderStateHistory blk)
 implGetHeaderStateHistory env = do
   ldb <- readTVar (ldbChangelog env)
+  volSuffix <- getVolatileSuffix $ ldbGetVolatileSuffix env
   let currentLedgerState = ledgerState $ current ldb
       -- This summary can convert all tip slots of the ledger states in the
       -- @ledgerDb@ as these are not newer than the tip slot of the current
@@ -235,6 +250,9 @@ implGetHeaderStateHistory env = do
   pure
     . HeaderStateHistory
     . AS.bimap mkHeaderStateWithTime' mkHeaderStateWithTime'
+    -- The DbChangelog might contain more than k states if they have not yet
+    -- been garbage-collected, so only take the corresponding suffix.
+    . volSuffix
     $ changelogStates ldb
 
 implValidate ::
@@ -242,30 +260,29 @@ implValidate ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , HasCallStack
-  , l ~ ExtLedgerState blk
-  , ResolveLeiosBlock blk
+  , StandardHash l
+  , ApplyBlock l blk
   ) =>
-  LeiosDbConnection m ->
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
-  ResourceRegistry m ->
   (TraceValidateEvent blk -> m ()) ->
   BlockCache blk ->
   Word64 ->
-  [Header blk] ->
-  m (ValidateResult m (ExtLedgerState blk) blk)
-implValidate leiosDb h ldbEnv rr tr cache rollbacks hdrs =
-  validate leiosDb (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
+  NonEmpty (Header blk) ->
+  SuccessForkerAction m l ->
+  m (ValidateResult l blk)
+implValidate h ldbEnv tr cache rollbacks hdrs onSuccess =
+  validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
     ValidateArgs
       (ldbResolveBlock ldbEnv)
-      (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
+      (ledgerDbCfg $ ldbCfg ldbEnv)
       ( \l -> do
           prev <- readTVar (ldbPrevApplied ldbEnv)
           writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
       )
       (readTVar (ldbPrevApplied ldbEnv))
-      (newForkerByRollback h)
-      rr
+      (withForkerByRollback h)
+      onSuccess
       tr
       cache
       rollbacks
@@ -274,38 +291,45 @@ implValidate leiosDb h ldbEnv rr tr cache rollbacks hdrs =
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
 
--- | Remove all points with a slot older than the given slot from the set of
--- previously applied points.
-implGarbageCollect :: MonadSTM m => LedgerDBEnv m l blk -> SlotNo -> STM m ()
-implGarbageCollect env slotNo =
+-- | Remove 'DbChangelog' states older than the given slot, and all points with
+-- a slot older than the given slot from the set of previously applied points.
+implGarbageCollect ::
+  ( MonadSTM m
+  , IsLedger (LedgerState blk)
+  , l ~ ExtLedgerState blk
+  ) =>
+  LedgerDBEnv m l blk -> SlotNo -> m ()
+implGarbageCollect env slotNo = atomically $ do
+  modifyTVar (ldbChangelog env) $
+    prune (LedgerDbPruneBeforeSlot slotNo)
   modifyTVar (ldbPrevApplied env) $
     Set.dropWhileAntitone ((< slotNo) . realPointSlot)
 
 implTryTakeSnapshot ::
   ( l ~ ExtLedgerState blk
   , IOLike m
-  , LedgerDbSerialiseConstraints blk
-  , LedgerSupportsProtocol blk
   ) =>
-  LedgerDBEnv m l blk -> Maybe (Time, Time) -> Word64 -> m SnapCounters
-implTryTakeSnapshot env mTime nrBlocks =
+  SnapshotManagerV1 m blk ->
+  LedgerDBEnv m l blk ->
+  m () ->
+  Maybe (Time, Time) ->
+  Word64 ->
+  m SnapCounters
+implTryTakeSnapshot snapManager env copyBlocks mTime nrBlocks =
   if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks
     then do
+      copyBlocks
       void $
         withReadLock
           (ldbLock env)
           ( takeSnapshot
-              (ldbChangelog env)
-              (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-              (LedgerDBSnapshotEvent >$< ldbTracer env)
-              (ldbHasFS env)
-              (ldbBackingStore env)
+              snapManager
               Nothing
+              (ldbChangelog env, ldbBackingStore env)
           )
       void $
         trimSnapshots
-          (LedgerDBSnapshotEvent >$< ldbTracer env)
-          (snapshotsFs $ ldbHasFS env)
+          snapManager
           (ldbSnapshotPolicy env)
       (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
     else
@@ -334,30 +358,32 @@ implCloseDB (LDBHandle varState) = do
         -- Idempotent
         LedgerDBClosed -> return Nothing
         LedgerDBOpen env -> do
+          -- By writing this tvar, we already make sure that no
+          -- forkers can perform operations other than closing, as
+          -- they rely on accessing the LedgerDB, which is now closed.
           writeTVar varState LedgerDBClosed
           return $ Just env
 
   -- Only when the LedgerDB was open
-  whenJust mbOpenEnv $ \env -> do
-    closeAllForkers env
-    bsClose (ldbBackingStore env)
+  whenJust mbOpenEnv $ void . bsClose . ldbBackingStore
 
 mkInternals ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , ApplyBlock (ExtLedgerState blk) blk
   ) =>
   LedgerDBHandle m (ExtLedgerState blk) blk ->
+  SnapshotManagerV1 m blk ->
   TestInternals' m blk
-mkInternals h =
+mkInternals h snapManager =
   TestInternals
-    { takeSnapshotNOW = getEnv2 h implIntTakeSnapshot
+    { takeSnapshotNOW = getEnv2 h (implIntTakeSnapshot snapManager)
+    , wipeLedgerDB = void $ destroySnapshots snapManager
+    , truncateSnapshots = getEnv h $ void . implIntTruncateSnapshots . ldbHasFS
     , push = getEnv1 h implIntPush
     , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPush
-    , wipeLedgerDB = getEnv h $ void . destroySnapshots . snapshotsFs . ldbHasFS
-    , closeLedgerDB = getEnv h $ bsClose . ldbBackingStore
-    , truncateSnapshots = getEnv h $ void . implIntTruncateSnapshots . ldbHasFS
+    , closeLedgerDB = getEnv h $ void . bsClose . ldbBackingStore
+    , getNumLedgerTablesHandles = pure 0
     }
 
 -- | Testing only! Truncate all snapshots in the DB.
@@ -384,8 +410,12 @@ implIntTakeSnapshot ::
   , LedgerSupportsProtocol blk
   , l ~ ExtLedgerState blk
   ) =>
-  LedgerDBEnv m l blk -> WhereToTakeSnapshot -> Maybe String -> m ()
-implIntTakeSnapshot env whereTo suffix = do
+  SnapshotManagerV1 m blk ->
+  LedgerDBEnv m l blk ->
+  WhereToTakeSnapshot ->
+  Maybe String ->
+  m ()
+implIntTakeSnapshot snapManager env whereTo suffix = do
   when (whereTo == TakeAtVolatileTip) $ atomically $ modifyTVar (ldbChangelog env) pruneToImmTipOnly
   withWriteLock
     (ldbLock env)
@@ -393,12 +423,9 @@ implIntTakeSnapshot env whereTo suffix = do
   void $
     withReadLock (ldbLock env) $
       takeSnapshot
-        (ldbChangelog env)
-        (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-        (LedgerDBSnapshotEvent >$< ldbTracer env)
-        (ldbHasFS env)
-        (ldbBackingStore env)
+        snapManager
         suffix
+        (ldbChangelog env, ldbBackingStore env)
 
 implIntPush ::
   ( IOLike m
@@ -408,7 +435,7 @@ implIntPush ::
   LedgerDBEnv m l blk -> l DiffMK -> m ()
 implIntPush env st = do
   chlog <- readTVarIO $ ldbChangelog env
-  let chlog' = prune (LedgerDbPruneKeeping (ledgerDbCfgSecParam $ ldbCfg env)) $ extend st chlog
+  let chlog' = pruneToImmTipOnly $ extend st chlog
   atomically $ writeTVar (ldbChangelog env) chlog'
 
 implIntReapplyThenPush ::
@@ -512,10 +539,6 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- When a garbage-collection is performed on the VolatileDB, the points
   -- of the blocks eligible for garbage-collection should be removed from
   -- this set.
-  , ldbForkers :: !(StrictTVar m (Map ForkerKey (ForkerEnv m l blk)))
-  -- ^ Open forkers.
-  --
-  -- INVARIANT: a forker is open iff its 'ForkerKey' is in this 'Map.
   , ldbNextForkerKey :: !(StrictTVar m ForkerKey)
   , ldbSnapshotPolicy :: !SnapshotPolicy
   , ldbTracer :: !(Tracer m (TraceEvent blk))
@@ -527,6 +550,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- frequency that was provided when opening the LedgerDB.
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock :: !(ResolveBlock m blk)
+  , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
   }
   deriving Generic
 
@@ -544,18 +568,18 @@ deriving instance
 -- 'LedgerDBEnv', otherwise, throw a 'CloseDBError'.
 getEnv ::
   forall m l blk r.
-  (IOLike m, HasCallStack, HasHeader blk) =>
+  (IOLike m, HasCallStack) =>
   LedgerDBHandle m l blk ->
   (LedgerDBEnv m l blk -> m r) ->
   m r
 getEnv (LDBHandle varState) f =
   readTVarIO varState >>= \case
     LedgerDBOpen env -> f env
-    LedgerDBClosed -> throwIO $ ClosedDBError @blk prettyCallStack
+    LedgerDBClosed -> throwIO $ ClosedDBError prettyCallStack
 
 -- | Variant 'of 'getEnv' for functions taking one argument.
 getEnv1 ::
-  (IOLike m, HasCallStack, HasHeader blk) =>
+  (IOLike m, HasCallStack) =>
   LedgerDBHandle m l blk ->
   (LedgerDBEnv m l blk -> a -> m r) ->
   a ->
@@ -564,7 +588,7 @@ getEnv1 h f a = getEnv h (`f` a)
 
 -- | Variant 'of 'getEnv' for functions taking two arguments.
 getEnv2 ::
-  (IOLike m, HasCallStack, HasHeader blk) =>
+  (IOLike m, HasCallStack) =>
   LedgerDBHandle m l blk ->
   (LedgerDBEnv m l blk -> a -> b -> m r) ->
   a ->
@@ -572,9 +596,20 @@ getEnv2 ::
   m r
 getEnv2 h f a b = getEnv h (\env -> f env a b)
 
+-- | Variant 'of 'getEnv' for functions taking two arguments.
+getEnv3 ::
+  (IOLike m, HasCallStack) =>
+  LedgerDBHandle m l blk ->
+  (LedgerDBEnv m l blk -> a -> b -> c -> m r) ->
+  a ->
+  b ->
+  c ->
+  m r
+getEnv3 h f a b c = getEnv h (\env -> f env a b c)
+
 -- | Variant 'of 'getEnv' for functions taking five arguments.
 getEnv5 ::
-  (IOLike m, HasCallStack, HasHeader blk) =>
+  (IOLike m, HasCallStack) =>
   LedgerDBHandle m l blk ->
   (LedgerDBEnv m l blk -> a -> b -> c -> d -> e -> m r) ->
   a ->
@@ -588,19 +623,19 @@ getEnv5 h f a b c d e = getEnv h (\env -> f env a b c d e)
 -- | Variant of 'getEnv' that works in 'STM'.
 getEnvSTM ::
   forall m l blk r.
-  (IOLike m, HasCallStack, HasHeader blk) =>
+  (IOLike m, HasCallStack) =>
   LedgerDBHandle m l blk ->
   (LedgerDBEnv m l blk -> STM m r) ->
   STM m r
 getEnvSTM (LDBHandle varState) f =
   readTVar varState >>= \case
     LedgerDBOpen env -> f env
-    LedgerDBClosed -> throwSTM $ ClosedDBError @blk prettyCallStack
+    LedgerDBClosed -> throwSTM $ ClosedDBError prettyCallStack
 
 -- | Variant of 'getEnv1' that works in 'STM'.
 getEnvSTM1 ::
   forall m l blk a r.
-  (IOLike m, HasCallStack, HasHeader blk) =>
+  (IOLike m, HasCallStack) =>
   LedgerDBHandle m l blk ->
   (LedgerDBEnv m l blk -> a -> STM m r) ->
   a ->
@@ -608,59 +643,14 @@ getEnvSTM1 ::
 getEnvSTM1 (LDBHandle varState) f a =
   readTVar varState >>= \case
     LedgerDBOpen env -> f env a
-    LedgerDBClosed -> throwSTM $ ClosedDBError @blk prettyCallStack
+    LedgerDBClosed -> throwSTM $ ClosedDBError prettyCallStack
 
 {-------------------------------------------------------------------------------
   Forkers
 -------------------------------------------------------------------------------}
 
-getForkerEnv ::
-  forall m l blk r.
-  (IOLike m, HasCallStack, HasHeader blk) =>
-  LedgerDBHandle m l blk ->
-  ForkerKey ->
-  (ForkerEnv m l blk -> m r) ->
-  m r
-getForkerEnv (LDBHandle varState) forkerKey f = do
-  forkerEnv <-
-    atomically $
-      readTVar varState >>= \case
-        LedgerDBClosed -> throwIO $ ClosedDBError @blk prettyCallStack
-        LedgerDBOpen env ->
-          (Map.lookup forkerKey <$> readTVar (ldbForkers env)) >>= \case
-            Nothing -> throwSTM $ ClosedForkerError @blk forkerKey prettyCallStack
-            Just forkerEnv -> pure forkerEnv
-
-  f forkerEnv
-
-getForkerEnv1 ::
-  (IOLike m, HasCallStack, HasHeader blk) =>
-  LedgerDBHandle m l blk ->
-  ForkerKey ->
-  (ForkerEnv m l blk -> a -> m r) ->
-  a ->
-  m r
-getForkerEnv1 h forkerKey f a = getForkerEnv h forkerKey (`f` a)
-
-getForkerEnvSTM ::
-  forall m l blk r.
-  (IOLike m, HasCallStack, HasHeader blk) =>
-  LedgerDBHandle m l blk ->
-  ForkerKey ->
-  (ForkerEnv m l blk -> STM m r) ->
-  STM m r
-getForkerEnvSTM (LDBHandle varState) forkerKey f =
-  readTVar varState >>= \case
-    LedgerDBClosed -> throwIO $ ClosedDBError @blk prettyCallStack
-    LedgerDBOpen env ->
-      readTVar (ldbForkers env)
-        >>= ( Map.lookup forkerKey >>> \case
-                Nothing -> throwSTM $ ClosedForkerError @blk forkerKey prettyCallStack
-                Just forkerEnv -> f forkerEnv
-            )
-
 -- | Will call 'error' if the point is not on the LedgerDB
-newForkerAtTarget ::
+openNewForkerAtTarget ::
   ( HeaderHash l ~ HeaderHash blk
   , IOLike m
   , IsLedger l
@@ -669,14 +659,11 @@ newForkerAtTarget ::
   , LedgerSupportsProtocol blk
   ) =>
   LedgerDBHandle m l blk ->
-  ResourceRegistry m ->
   Target (Point blk) ->
-  m (Either GetForkerError (Forker m l blk))
-newForkerAtTarget h rr pt = getEnv h $ \ldbEnv ->
-  withReadLock (ldbLock ldbEnv) (acquireAtTarget ldbEnv rr (Right pt))
-    >>= traverse (newForker h ldbEnv)
+  m (Either GetForkerError (Forker m l))
+openNewForkerAtTarget h pt = withTransferrableReadAccess h (Right pt)
 
-newForkerByRollback ::
+withForkerByRollback ::
   ( HeaderHash l ~ HeaderHash blk
   , IOLike m
   , IsLedger l
@@ -685,34 +672,57 @@ newForkerByRollback ::
   , LedgerSupportsProtocol blk
   ) =>
   LedgerDBHandle m l blk ->
-  ResourceRegistry m ->
   -- | How many blocks to rollback from the tip
   Word64 ->
-  m (Either GetForkerError (Forker m l blk))
-newForkerByRollback h rr n = getEnv h $ \ldbEnv -> do
-  withReadLock (ldbLock ldbEnv) (acquireAtTarget ldbEnv rr (Left n)) >>= traverse (newForker h ldbEnv)
+  (Forker m l -> m r) ->
+  m (Either GetForkerError r)
+withForkerByRollback h n k =
+  bracket
+    (withTransferrableReadAccess h (Left n))
+    (either (const $ pure ()) forkerClose)
+    (either (pure . Left) (fmap Right . k))
 
--- | Close all open block and header 'Forker's.
-closeAllForkers ::
-  IOLike m =>
-  LedgerDBEnv m l blk ->
-  m ()
-closeAllForkers ldbEnv =
-  do
-    forkerEnvs <- atomically $ do
-      forkerEnvs <- Map.elems <$> readTVar forkersVar
-      writeTVar forkersVar Map.empty
-      return forkerEnvs
-    mapM_ closeForkerEnv forkerEnvs
- where
-  forkersVar = ldbForkers ldbEnv
-
-type Resources m l =
-  (LedgerBackingStoreValueHandle m l, DbChangelog l)
+-- | Acquire read access and then allocate a forker, acquiring it at the given
+-- point or rollback.
+withTransferrableReadAccess ::
+  ( HeaderHash l ~ HeaderHash blk
+  , IOLike m
+  , IsLedger l
+  , StandardHash l
+  , HasLedgerTables l
+  , LedgerSupportsProtocol blk
+  ) =>
+  LedgerDBHandle m l blk ->
+  Either Word64 (Target (Point blk)) ->
+  m (Either GetForkerError (Forker m l))
+withTransferrableReadAccess h f = getEnv h $ \ldbEnv -> do
+  -- This TVar will be used to maybe release the read lock by the resource
+  -- registry. Once the forker was opened it will be emptied.
+  bracket
+    ( do
+        tv <- newTVarIO (pure ())
+        atomically $ do
+          -- Populate the tvar with the releasing action. Creating the forker will empty this
+          writeTVar tv (atomically $ unsafeReleaseReadAccess (ldbLock ldbEnv))
+          -- Acquire the read access
+          unsafeAcquireReadAccess (ldbLock ldbEnv)
+        pure tv
+    )
+    (join . readTVarIO)
+    ( \tv ->
+        unsafeRunReadLocked
+          ( unsafeAcquireAtTarget ldbEnv f
+              >>= \case
+                Left err -> do
+                  pure (Left err)
+                Right chlog -> do
+                  Right <$> newForker ldbEnv tv chlog
+          )
+    )
 
 -- | Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
-acquireAtTarget ::
+unsafeAcquireAtTarget ::
   forall m l blk.
   ( HeaderHash l ~ HeaderHash blk
   , IOLike m
@@ -722,129 +732,88 @@ acquireAtTarget ::
   , LedgerSupportsProtocol blk
   ) =>
   LedgerDBEnv m l blk ->
-  ResourceRegistry m ->
   Either Word64 (Target (Point blk)) ->
-  ReadLocked m (Either GetForkerError (Resources m l))
-acquireAtTarget ldbEnv rr (Right VolatileTip) =
-  readLocked $ do
-    dblog <- readTVarIO (ldbChangelog ldbEnv)
-    Right . (,dblog) <$> acquire ldbEnv rr dblog
-acquireAtTarget ldbEnv rr (Right ImmutableTip) =
-  readLocked $ do
-    dblog <- readTVarIO (ldbChangelog ldbEnv)
-    Right . (,rollbackToAnchor dblog)
-      <$> acquire ldbEnv rr dblog
-acquireAtTarget ldbEnv rr (Right (SpecificPoint pt)) =
-  readLocked $ do
-    dblog <- readTVarIO (ldbChangelog ldbEnv)
-    let immTip = getTip $ anchor dblog
-    case rollback pt dblog of
-      Nothing
-        | pointSlot pt < pointSlot immTip -> pure $ Left $ PointTooOld Nothing
-        | otherwise -> pure $ Left PointNotOnChain
-      Just dblog' -> Right . (,dblog') <$> acquire ldbEnv rr dblog'
-acquireAtTarget ldbEnv rr (Left n) = readLocked $ do
-  dblog <- readTVarIO (ldbChangelog ldbEnv)
-  case rollbackN n dblog of
-    Nothing ->
-      return $
-        Left $
+  ReadLocked m (Either GetForkerError (DbChangelog l))
+unsafeAcquireAtTarget ldbEnv target = readLocked $ runExceptT $ do
+  (dblog, volStates) <- lift $ atomically $ do
+    dblog <- readTVar (ldbChangelog ldbEnv)
+    -- The DbChangelog might contain more than k states if they have not yet
+    -- been garbage-collected.
+    volSuffix <- getVolatileSuffix $ ldbGetVolatileSuffix ldbEnv
+    pure (dblog, volSuffix $ changelogStates dblog)
+
+  let immTip :: Point blk
+      immTip = castPoint $ getTip $ AS.anchor volStates
+
+      rollbackMax :: Word64
+      rollbackMax = fromIntegral $ AS.length volStates
+
+      rollbackTo pt
+        | pointSlot pt < pointSlot immTip = throwError $ PointTooOld Nothing
+        | otherwise = case rollback pt dblog of
+            Nothing -> throwError PointNotOnChain
+            Just dblog' -> pure dblog'
+  -- Get the prefix of the dblog ending in the specified target.
+  case target of
+    Right VolatileTip -> pure dblog
+    Right ImmutableTip -> rollbackTo immTip
+    Right (SpecificPoint pt) -> rollbackTo pt
+    Left n -> do
+      when (n > rollbackMax) $
+        throwError $
           PointTooOld $
-            Just $
+            Just
               ExceededRollback
-                { rollbackMaximum = maxRollback dblog
+                { rollbackMaximum = rollbackMax
                 , rollbackRequested = n
                 }
-    Just dblog' ->
-      Right . (,dblog') <$> acquire ldbEnv rr dblog'
-
-acquire ::
-  (IOLike m, GetTip l) =>
-  LedgerDBEnv m l blk ->
-  ResourceRegistry m ->
-  DbChangelog l ->
-  m (LedgerBackingStoreValueHandle m l)
-acquire ldbEnv rr dblog = do
-  -- bsvhClose is idempotent, so we let the resource call it even if the value
-  -- handle might have been closed somewhere else
-  (_, vh) <- allocate rr (\_ -> bsValueHandle $ ldbBackingStore ldbEnv) bsvhClose
-  let dblogSlot = getTipSlot (changelogLastFlushedState dblog)
-  if bsvhAtSlot vh == dblogSlot
-    then pure vh
-    else
-      bsvhClose vh
-        >> error
-          ( "Critical error: Value handles are created at "
-              <> show (bsvhAtSlot vh)
-              <> " while the db changelog is at "
-              <> show dblogSlot
-              <> ". There is either a race condition or a logic bug"
-          )
+      case rollbackN n dblog of
+        Nothing -> error "unreachable"
+        Just dblog' -> pure dblog'
 
 {-------------------------------------------------------------------------------
   Make forkers from consistent views
 -------------------------------------------------------------------------------}
 
 newForker ::
+  forall m l blk.
   ( IOLike m
   , HasLedgerTables l
-  , LedgerSupportsProtocol blk
   , NoThunks (l EmptyMK)
   , GetTip l
+  , StandardHash l
   ) =>
-  LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
-  Resources m l ->
-  m (Forker m l blk)
-newForker h ldbEnv (vh, dblog) = do
+  StrictTVar m (m ()) ->
+  DbChangelog l ->
+  ReadLocked m (Forker m l)
+newForker ldbEnv releaseVar dblog = readLocked $ do
   dblogVar <- newTVarIO dblog
   forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
+  forkerMVar <- newMVar $ Left (ldbLock ldbEnv, ldbBackingStore ldbEnv)
+  forkerCommitted <- newTVarIO False
   let forkerEnv =
         ForkerEnv
-          { foeBackingStoreValueHandle = vh
+          { foeBackingStoreValueHandle = forkerMVar
           , foeChangelog = dblogVar
           , foeSwitchVar = ldbChangelog ldbEnv
-          , foeSecurityParam = ledgerDbCfgSecParam $ ldbCfg ldbEnv
           , foeTracer =
               LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
+          , foeWasCommitted = forkerCommitted
           }
-  atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
+  atomically $
+    -- Empty the tvar created for allocating the unsafe read access,
+    -- so that it is the forker the one that takes care of releasing
+    -- it.
+    writeTVar releaseVar (pure ())
   traceWith (foeTracer forkerEnv) ForkerOpen
-  pure $ mkForker h (ldbQueryBatchSize ldbEnv) forkerKey
-
-mkForker ::
-  ( IOLike m
-  , HasHeader blk
-  , HasLedgerTables l
-  , GetTip l
-  ) =>
-  LedgerDBHandle m l blk ->
-  QueryBatchSize ->
-  ForkerKey ->
-  Forker m l blk
-mkForker h qbs forkerKey =
-  Forker
-    { forkerClose = implForkerClose h forkerKey
-    , forkerReadTables = getForkerEnv1 h forkerKey implForkerReadTables
-    , forkerRangeReadTables = getForkerEnv1 h forkerKey (implForkerRangeReadTables qbs)
-    , forkerGetLedgerState = getForkerEnvSTM h forkerKey implForkerGetLedgerState
-    , forkerReadStatistics = getForkerEnv h forkerKey implForkerReadStatistics
-    , forkerPush = getForkerEnv1 h forkerKey implForkerPush
-    , forkerCommit = getForkerEnvSTM h forkerKey implForkerCommit
-    }
-
-implForkerClose ::
-  IOLike m =>
-  LedgerDBHandle m l blk ->
-  ForkerKey ->
-  m ()
-implForkerClose (LDBHandle varState) forkerKey = do
-  envMay <-
-    atomically $
-      readTVar varState >>= \case
-        LedgerDBClosed -> pure Nothing
-        LedgerDBOpen ldbEnv -> do
-          stateTVar
-            (ldbForkers ldbEnv)
-            (Map.updateLookupWithKey (\_ _ -> Nothing) forkerKey)
-  whenJust envMay closeForkerEnv
+  pure $
+    Forker
+      { forkerClose = closeForkerEnv forkerEnv
+      , forkerReadTables = implForkerReadTables forkerEnv
+      , forkerRangeReadTables = implForkerRangeReadTables (ldbQueryBatchSize ldbEnv) forkerEnv
+      , forkerGetLedgerState = implForkerGetLedgerState forkerEnv
+      , forkerReadStatistics = implForkerReadStatistics forkerEnv
+      , forkerPush = implForkerPush forkerEnv
+      , forkerCommit = pure <$> implForkerCommit forkerEnv
+      }

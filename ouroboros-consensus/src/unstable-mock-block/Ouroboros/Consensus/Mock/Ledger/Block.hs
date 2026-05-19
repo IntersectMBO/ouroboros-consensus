@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -87,7 +88,6 @@ import Data.Proxy
 import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
-import GHC.TypeNats (KnownNat)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -102,6 +102,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mock.Ledger.Address
 import Ouroboros.Consensus.Mock.Ledger.State
@@ -133,7 +134,10 @@ data SimpleBlock' c ext ext' = SimpleBlock
   }
   deriving (Generic, Show, Eq)
 
-instance (SimpleCrypto c, Serialise ext') => Serialise (SimpleBlock' c ext ext') where
+instance
+  (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext, Serialise ext') =>
+  Serialise (SimpleBlock' c ext ext')
+  where
   encode (SimpleBlock hdr body) =
     mconcat
       [ CBOR.encodeListLen 2
@@ -194,7 +198,7 @@ data SimpleStdHeader c ext = SimpleStdHeader
   deriving anyclass NoThunks
 
 deriving anyclass instance
-  KnownNat (Hash.SizeHash (SimpleHash c)) =>
+  (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext) =>
   Serialise (SimpleStdHeader c ext)
 
 data SimpleBody = SimpleBody
@@ -213,7 +217,7 @@ instance Serialise SimpleBody where
 -- | Create a header by hashing the header without hash and adding to the
 -- resulting value.
 mkSimpleHeader ::
-  SimpleCrypto c =>
+  (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext) =>
   (ext' -> CBOR.Encoding) ->
   SimpleStdHeader c ext ->
   ext' ->
@@ -286,7 +290,7 @@ instance
 instance SimpleCrypto c => ConvertRawHash (SimpleBlock' c ext ext') where
   toShortRawHash _ = Hash.hashToBytesShort
   fromShortRawHash _ = hashFromBytesShortE
-  hashSize _ = fromIntegral $ Hash.sizeHash (Proxy @(SimpleHash c))
+  hashSize _ = fromIntegral $ Hash.hashSize (Proxy @(SimpleHash c))
 
 {-------------------------------------------------------------------------------
   HasMockTxs instance
@@ -519,6 +523,8 @@ instance MockProtocolSpecific c ext => CommonProtocolParams (SimpleBlock c ext) 
 instance LedgerSupportsPeerSelection (SimpleBlock c ext) where
   getPeers = const []
 
+instance LedgerSupportsPeras (SimpleBlock c ext)
+
 {-------------------------------------------------------------------------------
   LedgerTables
 -------------------------------------------------------------------------------}
@@ -612,8 +618,8 @@ instance
       , ValidatedSimpleGenTx tx
       )
 
-  reapplyTx _ cfg slot vtx st =
-    attachAndApplyDiffs st . fst
+  reapplyTx cfg slot vtx st =
+    applyDiffs st . fst
       <$> applyTx cfg DoNotIntervene slot (forgetValidatedSimpleGenTx vtx) st
 
   txForgetValidated = forgetValidatedSimpleGenTx
@@ -621,13 +627,12 @@ instance
   getTransactionKeySets =
     LedgerTables . KeysMK . Mock.txIns . simpleGenTx
 
+  mkMempoolApplyTxError _tls txt = Just $ MockMempoolError txt
+
 instance TxLimits (SimpleBlock c ext) where
   type TxMeasure (SimpleBlock c ext) = IgnoringOverflow ByteSize32
 
-  txMeasure cfg _st =
-    fmap IgnoringOverflow
-      . checkTxSize (simpleLedgerMockConfig cfg)
-      . simpleGenTx
+  txWireSize = fromIntegral . unByteSize32 . genTxSize
 
   -- Large value so that the Mempool tests never run out of capacity when they
   -- don't override it.
@@ -635,7 +640,10 @@ instance TxLimits (SimpleBlock c ext) where
   -- But not 'maxbound'!, since the mempool sometimes holds multiple blocks worth.
   blockCapacityTxMeasure _cfg _st = IgnoringOverflow simpleBlockCapacity
 
-  ebCapacityTxMeasure _ _ = Nothing
+  txMeasure cfg _st =
+    fmap IgnoringOverflow
+      . checkTxSize (simpleLedgerMockConfig cfg)
+      . simpleGenTx
 
 simpleBlockCapacity :: ByteSize32
 simpleBlockCapacity = ByteSize32 512
@@ -730,10 +738,7 @@ instance InspectLedger (SimpleBlock c ext)
   Crypto needed for simple blocks
 -------------------------------------------------------------------------------}
 
-class
-  (KnownNat (Hash.SizeHash (SimpleHash c)), HashAlgorithm (SimpleHash c), Typeable c) =>
-  SimpleCrypto c
-  where
+class (HashAlgorithm (SimpleHash c), Typeable c) => SimpleCrypto c where
   type SimpleHash c :: Type
 
 data SimpleStandardCrypto
@@ -793,7 +798,7 @@ instance ToCBOR SimpleBody where
   toCBOR = encode
 
 encodeSimpleHeader ::
-  KnownNat (Hash.SizeHash (SimpleHash c)) =>
+  (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext) =>
   (ext' -> CBOR.Encoding) ->
   Header (SimpleBlock' c ext ext') ->
   CBOR.Encoding
@@ -805,7 +810,7 @@ encodeSimpleHeader encodeExt SimpleHeader{..} =
     ]
 
 decodeSimpleHeader ::
-  SimpleCrypto c =>
+  (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext) =>
   (ext' -> CBOR.Encoding) ->
   (forall s. CBOR.Decoder s ext') ->
   forall s.
@@ -816,7 +821,7 @@ decodeSimpleHeader encodeExt decodeExt = do
 
 -- | Custom 'Serialise' instance that doesn't serialise the hash
 instance
-  (SimpleCrypto c, Serialise ext') =>
+  (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext, Serialise ext') =>
   Serialise (Header (SimpleBlock' c ext ext'))
   where
   encode = encodeSimpleHeader encode
@@ -830,7 +835,3 @@ simpleBlockBinaryBlockInfo b =
     { headerOffset = 1 -- For the 'encodeListLen'
     , headerSize = fromIntegral $ Lazy.length $ serialise (getHeader b)
     }
-
--- * Leios
-
-instance ResolveLeiosBlock (SimpleBlock' c ext ext)

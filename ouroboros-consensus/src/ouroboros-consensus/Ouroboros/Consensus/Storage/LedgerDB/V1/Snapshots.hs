@@ -1,6 +1,8 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Snapshots
 --
@@ -129,29 +131,30 @@
 --
 -- ------------------------------------------------------------------------------
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
-  ( loadSnapshot
-  , takeSnapshot
+  ( snapshotManager
+  , loadSnapshot
 
-    -- * Testing
-  , snapshotToStatePath
-  , snapshotToTablesPath
+    -- * snapshot-converter
+  , implTakeSnapshot
   ) where
 
 import Codec.CBOR.Encoding
 import Codec.Serialise
 import qualified Control.Monad as Monad
 import Control.Monad.Except
-import qualified Control.Monad.Trans as Trans (lift)
+import Control.Monad.Trans.Class
 import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LedgerDB.V1.Args
+import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
 import Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
@@ -160,6 +163,39 @@ import Ouroboros.Consensus.Util.Args (Complete)
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
+import qualified System.FS.API as FS
+
+snapshotManager ::
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  ) =>
+  Complete LedgerDbArgs m blk ->
+  SnapshotManager m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
+snapshotManager args =
+  snapshotManager'
+    (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
+    snapTracer
+    (SnapshotsFS (lgrHasFS args))
+ where
+  !tr = lgrTracer args
+  !snapTracer = LedgerDBSnapshotEvent >$< tr
+
+snapshotManager' ::
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  ) =>
+  CodecConfig blk ->
+  Tracer m (TraceSnapshotEvent blk) ->
+  SnapshotsFS m ->
+  SnapshotManager m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
+snapshotManager' ccfg tracer sfs@(SnapshotsFS fs) =
+  SnapshotManager
+    { listSnapshots = defaultListSnapshots fs
+    , deleteSnapshotIfTemporary = defaultDeleteSnapshotIfTemporary fs tracer
+    , takeSnapshot = \suff (ldbVar, bs) -> implTakeSnapshot ldbVar ccfg tracer sfs bs suff
+    }
 
 -- | Try to take a snapshot of the /oldest ledger state/ in the ledger DB
 --
@@ -180,7 +216,7 @@ import System.FS.API
 -- whether this snapshot corresponds to a state that is more than @k@ back.
 --
 -- TODO: Should we delete the file if an error occurs during writing?
-takeSnapshot ::
+implTakeSnapshot ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
@@ -193,7 +229,7 @@ takeSnapshot ::
   -- | Override for snapshot numbering
   Maybe String ->
   ReadLocked m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix = readLocked $ do
+implTakeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS) backingStore suffix = readLocked $ do
   state <- changelogLastFlushedState <$> readTVarIO ldbvar
   case pointToWithOriginRealPoint (castPoint (getTip state)) of
     Origin ->
@@ -201,13 +237,13 @@ takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix = readL
     NotOrigin t -> do
       let number = unSlotNo (realPointSlot t)
           snapshot = DiskSnapshot number suffix
-      diskSnapshots <- listSnapshots hasFS'
+      diskSnapshots <- defaultListSnapshots hasFS
       if List.any (== DiskSnapshot number suffix) diskSnapshots
         then
           return Nothing
         else do
           encloseTimedWith (TookSnapshot snapshot t >$< tracer) $
-            writeSnapshot hasFS' backingStore (encodeDiskExtLedgerState ccfg) snapshot state
+            writeSnapshot hasFS backingStore (encodeDiskExtLedgerState ccfg) snapshot state
           return $ Just (snapshot, t)
 
 -- | Write snapshot to disk
@@ -228,16 +264,12 @@ writeSnapshot fs@(SomeHasFS hasFS) backingStore encLedger snapshot cs = do
     SnapshotMetadata
       { snapshotBackend = bsSnapshotBackend backingStore
       , snapshotChecksum = crc
+      , snapshotTablesCodecVersion = TablesCodecVersion1
       }
   bsCopy
     backingStore
     cs
     (snapshotToTablesPath snapshot)
-
--- | The path within the LedgerDB's filesystem to the file that contains the
--- snapshot's serialized ledger state
-snapshotToStatePath :: DiskSnapshot -> FsPath
-snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
 
 -- | The path within the LedgerDB's filesystem to the directory that contains a
 -- snapshot's backing store
@@ -251,12 +283,12 @@ snapshotToTablesPath = mkFsPath . (\x -> [x, "tables"]) . snapshotToDirName
 loadSnapshot ::
   forall m blk.
   ( IOLike m
-  , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsLedgerDB blk
+  , LedgerSupportsV1LedgerDB (LedgerState blk)
+  , LedgerDbSerialiseConstraints blk
   ) =>
-  Tracer m V1.FlavorImplSpecificTrace ->
-  Complete BackingStoreArgs m ->
+  Tracer m V1.SomeBackendTrace ->
+  SomeBackendArgs m (ExtLedgerState blk) ->
   CodecConfig blk ->
   SnapshotsFS m ->
   DiskSnapshot ->
@@ -264,18 +296,20 @@ loadSnapshot ::
     (SnapshotFailure blk)
     m
     ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
-loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') s = do
+loadSnapshot tracer bArgs@(SomeBackendArgs bss) ccfg fs@(SnapshotsFS fs'@(SomeHasFS hfs)) s = do
+  fileEx <- lift $ FS.doesFileExist hfs (snapshotToDirPath s)
+  Monad.when fileEx $ throwError $ InitFailureRead ReadSnapshotIsLegacy
   (extLedgerSt, checksumAsRead) <-
     withExceptT (InitFailureRead . ReadSnapshotFailed) $
       readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath s)
   snapshotMeta <-
     withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath s)) $
       loadSnapshotMetadata fs' s
-  case (bss, snapshotBackend snapshotMeta) of
-    (InMemoryBackingStoreArgs, UTxOHDMemSnapshot) -> pure ()
-    (LMDBBackingStoreArgs _ _ _, UTxOHDLMDBSnapshot) -> pure ()
-    (_, _) ->
-      throwError $ InitFailureRead $ ReadMetadataError (snapshotToMetadataPath s) MetadataBackendMismatch
+  Monad.unless
+    (isRightBackendForSnapshot (Proxy @(ExtLedgerState blk)) bss (snapshotBackend snapshotMeta))
+    $ throwError
+    $ InitFailureRead
+    $ ReadMetadataError (snapshotToMetadataPath s) MetadataBackendMismatch
   Monad.when (checksumAsRead /= snapshotChecksum snapshotMeta) $
     throwError $
       InitFailureRead $
@@ -283,6 +317,6 @@ loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') s = do
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin -> throwError InitFailureGenesis
     NotOrigin pt -> do
-      backingStore <- Trans.lift (restoreBackingStore tracer bss fs extLedgerSt (snapshotToTablesPath s))
+      backingStore <- lift $ restoreBackingStore tracer bArgs fs extLedgerSt (snapshotToTablesPath s)
       let chlog = empty extLedgerSt
       pure ((chlog, backingStore), pt)

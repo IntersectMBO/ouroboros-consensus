@@ -115,8 +115,8 @@ withDBs ::
   (ImmutableDB m blk -> VolatileDB m blk -> m a) ->
   m a
 withDBs cfg registry dbDirs f =
-  ImmutableDB.withDB (ImmutableDB.openDB immDBArgs runWithTempRegistry) $ \immDB ->
-    VolatileDB.withDB (VolatileDB.openDB volDBArgs runWithTempRegistry) $ \volDB -> do
+  ImmutableDB.withDB (ImmutableDB.openDB immDBArgs) $ \immDB ->
+    VolatileDB.withDB (VolatileDB.openDB volDBArgs) $ \volDB -> do
       f immDB volDB
  where
   codecCfg = configCodec cfg

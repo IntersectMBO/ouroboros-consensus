@@ -124,10 +124,12 @@ declare -a interface_options=()
 for package_path in "${OUTPUT_DIR}"/*/; do
   if [[ -d "${package_path}" ]]; then
     package=$(echo "${package_path}" | rev | cut -d'/' -f2 | rev)
-    # take the first haddock file found.
-    # there should be only one but the filename is the name of the main package
-    # and can differ from the name of the enclosing directory
-    haddock_file=$(find "${package_path}" -maxdepth 1 -type f -name "*.haddock" -print | cut -d/ -f2- | head -1)
+    # Find the .haddock file for this package.
+    # Main libraries have .haddock at depth 1: package/package.haddock
+    # Sub-libraries have .haddock at depth 2: package/sub-lib/sub-lib.haddock
+    # We use -maxdepth 2 to find both cases while avoiding unintended files
+    # deeper in the directory tree (e.g., in src/ subdirectories).
+    haddock_file=$(find "${package_path}" -maxdepth 2 -type f -name "*.haddock" -print | cut -d/ -f2- | head -1)
     interface_options+=("--read-interface=${package},${haddock_file}")
   fi
 done

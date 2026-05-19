@@ -11,9 +11,10 @@ module Ouroboros.Consensus.Mock.Ledger.Forge
   ) where
 
 import Cardano.Binary (toCBOR)
-import Cardano.Crypto.Hash (hashWithSerialiser)
+import Cardano.Crypto.Hash (HashAlgorithm, hashWithSerialiser)
 import Codec.Serialise (Serialise (..), serialise)
 import qualified Data.ByteString.Lazy as Lazy
+import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -39,7 +40,7 @@ newtype ForgeExt c ext = ForgeExt
 
 forgeSimple ::
   forall c ext mk.
-  SimpleCrypto c =>
+  (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext) =>
   ForgeExt c ext ->
   TopLevelConfig (SimpleBlock c ext) ->
   -- | Current block number

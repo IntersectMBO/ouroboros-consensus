@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -16,16 +17,14 @@ import Cardano.Tools.DBSynthesizer.Types
 import Control.Monad (when)
 import Control.Monad.Except (runExcept)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
-import Control.ResourceRegistry
+import qualified Control.Monad.Trans.Class as Trans
+import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
 import Control.Tracer as Trace (nullTracer)
 import Data.Either (isRight)
-import Data.Maybe (isJust)
+import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
-import LeiosDemoDb (LeiosDbConnection)
 import Ouroboros.Consensus.Block.Abstract as Block
-import Ouroboros.Consensus.Block.Forging (ForgeBlockArgs (..))
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
   , ShouldForge (..)
@@ -58,12 +57,15 @@ import Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
   , blockProcessed
   , getCurrentChain
   , getPastLedger
-  , getReadOnlyForkerAtPoint
+  , withReadOnlyForkerAtPoint
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
   ( noPunishment
   )
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Util.EarlyExit
+  ( withEarlyExit
+  )
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.AnchoredFragment as AF
   ( Anchor (..)
@@ -85,9 +87,9 @@ initialForgeState :: ForgeState
 initialForgeState = ForgeState 0 0 0 0
 
 -- | An action to generate transactions for a given block
-type GenTxs blk mk =
+type GenTxs blk =
   SlotNo ->
-  IO (ReadOnlyForker IO (ExtLedgerState blk) blk) ->
+  ReadOnlyForker IO (ExtLedgerState blk) ->
   TickedLedgerState blk DiffMK ->
   IO [Validated (GenTx blk)]
 
@@ -95,18 +97,17 @@ type GenTxs blk mk =
 -- For an extensive commentary of the forging loop, see there.
 
 runForge ::
-  forall blk mk.
+  forall blk.
   LedgerSupportsProtocol blk =>
   EpochSize ->
   SlotNo ->
   ForgeLimit ->
   ChainDB IO blk ->
-  LeiosDbConnection IO ->
   [BlockForging IO blk] ->
   TopLevelConfig blk ->
-  GenTxs blk mk ->
+  GenTxs blk ->
   IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB leiosConn blockForging cfg genTxs = do
+runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
   endState <- go initialForgeState{currentSlot = nextSlot}
@@ -208,33 +209,33 @@ runForge epochSize_ nextSlot opts chainDB leiosConn blockForging cfg genTxs = do
             (ledgerState unticked)
 
     -- Let the caller generate transactions
-    txs <- lift $ withRegistry $ \reg ->
-      genTxs
-        currentSlot
-        ( either
-            (error "Impossible: we are forging on top of a block that the ChainDB cannot create forkers on!")
-            id
-            <$> getReadOnlyForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
-        )
-        tickedLedgerState
+    let withReadOnlyForkerAtPoint' cdb tgt k =
+          -- type legos just to reuse the same Forker combinator as
+          -- the node's forging loop
+          ExceptT . fmap (Right . fromJust) . withEarlyExit $
+            withReadOnlyForkerAtPoint cdb tgt (Trans.lift . k)
+    txs <- withReadOnlyForkerAtPoint'
+      chainDB
+      (SpecificPoint bcPrevPoint)
+      $ \case
+        Left{} -> error "Impossible: we are forging on top of a block that the ChainDB cannot create forkers on!"
+        Right frk ->
+          genTxs
+            currentSlot
+            frk
+            tickedLedgerState
 
     -- Actually produce the block
-    (newBlock, _) <-
+    newBlock <-
       lift $
         Block.forgeBlock
           blockForging'
-          ForgeBlockArgs
-            { fbIsLeader = proof
-            , fbEbTxs = mempty
-            , fbRbTxs = txs
-            , fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
-            , fbCurrentSlotNo = currentSlot
-            , fbCurrentBlockNo = bcBlockNo
-            , fbConfig = cfg
-            , fbChainDepState = Just $ headerStateChainDep $ headerState unticked
-            , fbLeiosDb = leiosConn
-            , fbLeiosTracer = Trace.nullTracer
-            }
+          cfg
+          bcBlockNo
+          currentSlot
+          (forgetLedgerTables tickedLedgerState)
+          txs
+          proof
 
     -- Add the block to the chain DB (synchronously) and verify adoption
     let noPunish = InvalidBlockPunishment.noPunishment

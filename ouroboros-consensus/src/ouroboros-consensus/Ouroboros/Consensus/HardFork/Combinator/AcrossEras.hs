@@ -45,7 +45,8 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   , OneEraLedgerEvent (..)
   , OneEraLedgerUpdate (..)
   , OneEraLedgerWarning (..)
-  , OneEraSelectView (..)
+  , OneEraReasonForSwitch (..)
+  , OneEraTiebreakerView (..)
   , OneEraTentativeHeaderState (..)
   , OneEraTentativeHeaderView (..)
   , OneEraTipInfo (..)
@@ -65,7 +66,9 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
   , oneEraBlockHeader
   ) where
 
+import Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import Codec.Serialise (Serialise (..))
+import Control.DeepSeq (NFData)
 import Control.Monad.Except (throwError)
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BSC
@@ -89,6 +92,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.Info
 import Ouroboros.Consensus.HardFork.Combinator.Lifting
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+import Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (allEqual)
@@ -134,7 +138,7 @@ newtype OneEraLedgerError xs = OneEraLedgerError {getOneEraLedgerError :: NS Wra
 newtype OneEraLedgerEvent xs = OneEraLedgerEvent {getOneEraLedgerEvent :: NS WrapLedgerEvent xs}
 newtype OneEraLedgerUpdate xs = OneEraLedgerUpdate {getOneEraLedgerUpdate :: NS WrapLedgerUpdate xs}
 newtype OneEraLedgerWarning xs = OneEraLedgerWarning {getOneEraLedgerWarning :: NS WrapLedgerWarning xs}
-newtype OneEraSelectView xs = OneEraSelectView {getOneEraSelectView :: NS WrapSelectView xs}
+newtype OneEraTiebreakerView xs = OneEraTiebreakerView {getOneEraTiebreakerView :: NS WrapTiebreakerView xs}
 newtype OneEraTentativeHeaderState xs = OneEraTentativeHeaderState {getOneEraTentativeHeaderState :: NS WrapTentativeHeaderState xs}
 newtype OneEraTentativeHeaderView xs = OneEraTentativeHeaderView {getOneEraTentativeHeaderView :: NS WrapTentativeHeaderView xs}
 newtype OneEraTipInfo xs = OneEraTipInfo {getOneEraTipInfo :: NS WrapTipInfo xs}
@@ -154,7 +158,7 @@ newtype OneEraValidationErr xs = OneEraValidationErr {getOneEraValidationErr :: 
 -- So, the type parameter @xs@ here is merely a phantom one, and we just store
 -- the underlying raw hash.
 newtype OneEraHash (xs :: [k]) = OneEraHash {getOneEraHash :: ShortByteString}
-  deriving newtype (Eq, Ord, NoThunks, Serialise)
+  deriving newtype (Eq, Ord, NoThunks, Serialise, NFData, FromCBOR, ToCBOR)
 
 instance Show (OneEraHash xs) where
   show = BSC.unpack . B16.encode . Short.fromShort . getOneEraHash
@@ -333,9 +337,9 @@ deriving via
     CanHardFork xs => NoThunks (OneEraLedgerError xs)
 
 deriving via
-  LiftNamedNS "OneEraSelectView" WrapSelectView xs
+  LiftNamedNS "OneEraTiebreakerView" WrapTiebreakerView xs
   instance
-    CanHardFork xs => NoThunks (OneEraSelectView xs)
+    CanHardFork xs => NoThunks (OneEraTiebreakerView xs)
 
 deriving via
   LiftNamedNS "OneEraTentativeHeaderState" WrapTentativeHeaderState xs
@@ -372,7 +376,7 @@ deriving via LiftNS GenTx xs instance CanHardFork xs => Eq (OneEraGenTx xs)
 deriving via LiftNS WrapLedgerErr xs instance CanHardFork xs => Eq (OneEraLedgerError xs)
 deriving via LiftNS WrapLedgerUpdate xs instance CanHardFork xs => Eq (OneEraLedgerUpdate xs)
 deriving via LiftNS WrapLedgerWarning xs instance CanHardFork xs => Eq (OneEraLedgerWarning xs)
-deriving via LiftNS WrapSelectView xs instance CanHardFork xs => Eq (OneEraSelectView xs)
+deriving via LiftNS WrapTiebreakerView xs instance CanHardFork xs => Eq (OneEraTiebreakerView xs)
 deriving via LiftNS WrapTipInfo xs instance CanHardFork xs => Eq (OneEraTipInfo xs)
 deriving via LiftNS WrapValidatedGenTx xs instance CanHardFork xs => Eq (OneEraValidatedGenTx xs)
 deriving via LiftNS WrapValidationErr xs instance CanHardFork xs => Eq (OneEraValidationErr xs)
@@ -447,4 +451,8 @@ deriving via LiftNS WrapCannotForge xs instance CanHardFork xs => Show (OneEraCa
 deriving via LiftNS GenTx xs instance CanHardFork xs => Show (OneEraGenTx xs)
 deriving via LiftNS WrapGenTxId xs instance CanHardFork xs => Show (OneEraGenTxId xs)
 deriving via LiftNS Header xs instance CanHardFork xs => Show (OneEraHeader xs)
-deriving via LiftNS WrapSelectView xs instance CanHardFork xs => Show (OneEraSelectView xs)
+deriving via LiftNS WrapTiebreakerView xs instance CanHardFork xs => Show (OneEraTiebreakerView xs)
+deriving via
+  LiftNS WrapReasonForSwitch xs
+  instance
+    CanHardFork xs => Show (OneEraReasonForSwitch xs)

@@ -3,7 +3,7 @@ module Ouroboros.Consensus.Ledger.Query.Version
   , nodeToClientVersionToQueryVersion
   ) where
 
-import Ouroboros.Network.NodeToClient.Version
+import Cardano.Network.NodeToClient.Version
 
 -- | Version of the `Query blk` type.
 --
@@ -26,3 +26,6 @@ nodeToClientVersionToQueryVersion x = case x of
   NodeToClientV_18 -> QueryVersion2
   NodeToClientV_19 -> QueryVersion2
   NodeToClientV_20 -> QueryVersion3
+  NodeToClientV_21 -> QueryVersion3
+  NodeToClientV_22 -> QueryVersion3
+  NodeToClientV_23 -> QueryVersion3

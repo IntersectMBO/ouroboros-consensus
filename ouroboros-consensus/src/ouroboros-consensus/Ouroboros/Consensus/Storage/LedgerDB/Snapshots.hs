@@ -11,12 +11,34 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | Common logic and types for LedgerDB Snapshots.
+-- | Snapshots
 --
--- Snapshots are saved copies of Ledger states in the chain which can be used to
--- restart the node without having to replay the whole chain. Regardless of the
--- actual LedgerDB implementation chosen, the general management of snapshots is
--- common to all implementations.
+-- Snapshotting a ledger state means saving a copy of the state to disk, so that
+-- a later start of a cardano-node can use such a snapshot as a starting point
+-- instead of having to replay from Genesis.
+--
+-- A snapshot is identified by the slot number of the ledger state it contains
+-- and possibly has a suffix in the name. The consensus logic will not delete a
+-- snapshot if it has a suffix. This can be used to store important
+-- snapshots. The suffix can be manually added to the snapshot by renaming the
+-- folder (see the caveats in 'snapshotManager' for the LSM backend). It will
+-- also be added automatically by some tools such as db-analyser.
+--
+-- In general snapshots will be stored in the @./ledger@ directory inside the
+-- ChainDB directory, but each LedgerDB backend is free to store it somewhere
+-- else. Management of snapshots is done through the 'SnapshotManager'
+-- record (see the 'snapshotManager' functions on each backend).
+--
+-- Snapshots cosists of two parts:
+--
+--  - the ledger state tables: location and format differs among backends,
+--
+--  - the rest of the ledger state: a CBOR serialization of an @ExtLedgerState
+--    blk EmptyMK@, stored in the @./state@ file in the snapshot directory.
+--
+-- V2 backends will provide means of loading a snapshot via the method
+-- 'newHandleFromSnapshot'. V1 backends load the snapshot directly in
+-- 'initFromSnapshot'.
 module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( -- * Snapshots
     CRCError (..)
@@ -28,6 +50,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , SnapshotFailure (..)
   , SnapshotMetadata (..)
   , SnapshotPolicyArgs (..)
+  , TablesCodecVersion (..)
   , defaultSnapshotPolicyArgs
 
     -- * Codec
@@ -38,15 +61,17 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , diskSnapshotIsTemporary
   , snapshotFromPath
   , snapshotToChecksumPath
+  , snapshotToStatePath
   , snapshotToDirName
   , snapshotToDirPath
   , snapshotToMetadataPath
 
     -- * Management
-  , deleteSnapshot
-  , listSnapshots
-  , loadSnapshotMetadata
+  , SnapshotManager (..)
+  , defaultDeleteSnapshotIfTemporary
+  , defaultListSnapshots
   , trimSnapshots
+  , loadSnapshotMetadata
   , writeSnapshotMetadata
 
     -- * Policy
@@ -81,6 +106,7 @@ import Control.Monad.Except
 import Control.Tracer
 import Data.Aeson (FromJSON (..), ToJSON (..), (.:), (.=))
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (Parser)
 import Data.Functor.Identity
 import qualified Data.List as List
 import Data.Maybe (isJust, mapMaybe)
@@ -135,9 +161,6 @@ data DiskSnapshot = DiskSnapshot
   }
   deriving (Show, Eq, Generic)
 
-instance Ord DiskSnapshot where
-  compare = comparing dsNumber
-
 data SnapshotFailure blk
   = -- | We failed to deserialise the snapshot
     --
@@ -145,7 +168,7 @@ data SnapshotFailure blk
     -- changed.
     InitFailureRead ReadSnapshotErr
   | -- | This snapshot is too recent (ahead of the tip of the immutable chain)
-    InitFailureTooRecent (RealPoint blk)
+    InitFailureTooRecent DiskSnapshot (Point blk)
   | -- | This snapshot was of the ledger state at genesis, even though we never
     -- take snapshots at genesis, so this is unexpected.
     InitFailureGenesis
@@ -159,11 +182,31 @@ data ReadSnapshotErr
     ReadSnapshotDataCorruption
   | -- | An error occurred while reading the snapshot metadata file
     ReadMetadataError FsPath MetadataErr
+  | -- | We were given a legacy snapshot
+    ReadSnapshotIsLegacy
   deriving (Eq, Show)
+
+data TablesCodecVersion
+  = -- | Used in cardano-node 10.7. Previous versions have no codec version.
+    -- [ {_ (txid, big-endian txix) => txout} ]
+    TablesCodecVersion1
+  deriving (Eq, Show)
+
+instance ToJSON TablesCodecVersion where
+  toJSON TablesCodecVersion1 = Aeson.Number 1
+
+instance FromJSON TablesCodecVersion where
+  parseJSON v = enforceVersion =<< parseJSON v
+
+enforceVersion :: Word8 -> Parser TablesCodecVersion
+enforceVersion v = case v of
+  1 -> pure TablesCodecVersion1
+  _ -> fail "Unknown or outdated tables codec version"
 
 data SnapshotMetadata = SnapshotMetadata
   { snapshotBackend :: SnapshotBackend
   , snapshotChecksum :: CRC
+  , snapshotTablesCodecVersion :: TablesCodecVersion
   }
   deriving (Eq, Show)
 
@@ -172,6 +215,7 @@ instance ToJSON SnapshotMetadata where
     Aeson.object
       [ "backend" .= snapshotBackend sm
       , "checksum" .= getCRC (snapshotChecksum sm)
+      , "tablesCodecVersion" .= snapshotTablesCodecVersion sm
       ]
 
 instance FromJSON SnapshotMetadata where
@@ -179,21 +223,25 @@ instance FromJSON SnapshotMetadata where
     SnapshotMetadata
       <$> o .: "backend"
       <*> fmap CRC (o .: "checksum")
+      <*> o .: "tablesCodecVersion"
 
 data SnapshotBackend
   = UTxOHDMemSnapshot
   | UTxOHDLMDBSnapshot
+  | UTxOHDLSMSnapshot
   deriving (Eq, Show)
 
 instance ToJSON SnapshotBackend where
   toJSON = \case
     UTxOHDMemSnapshot -> "utxohd-mem"
     UTxOHDLMDBSnapshot -> "utxohd-lmdb"
+    UTxOHDLSMSnapshot -> "utxohd-lsm"
 
 instance FromJSON SnapshotBackend where
   parseJSON = Aeson.withText "SnapshotBackend" $ \case
     "utxohd-mem" -> pure UTxOHDMemSnapshot
     "utxohd-lmdb" -> pure UTxOHDLMDBSnapshot
+    "utxohd-lsm" -> pure UTxOHDLSMSnapshot
     _ -> fail "unknown SnapshotBackend"
 
 data MetadataErr
@@ -204,6 +252,25 @@ data MetadataErr
   | -- | The metadata file has the incorrect backend
     MetadataBackendMismatch
   deriving (Eq, Show)
+
+-- | Management of snapshots for the different LedgerDB backends.
+--
+-- The LedgerDB V1 takes snapshots in @ReadLocked m@, hence the two different
+-- @m@ and @n@ monad types.
+data SnapshotManager m n blk st = SnapshotManager
+  { listSnapshots :: m [DiskSnapshot]
+  , deleteSnapshotIfTemporary :: DiskSnapshot -> m ()
+  , takeSnapshot ::
+      Maybe String ->
+      -- \^ The (possibly empty) suffix for the snapshot name
+      st ->
+      -- \^ The state needed for taking the snapshot:
+      -- - In V1: this will be the DbChangelog and the Backing store
+      -- - In V2: this will be a StateRef
+      n (Maybe (DiskSnapshot, RealPoint blk))
+      -- \^ If a Snapshot was taken, its information and the point at which it
+      -- was taken.
+  }
 
 -- | Named snapshot are permanent, they will never be deleted even if failing to
 -- deserialize.
@@ -228,19 +295,24 @@ snapshotFromPath fileName = do
     _ : str -> Just str
 
 -- | List on-disk snapshots, highest number first.
-listSnapshots :: Monad m => SomeHasFS m -> m [DiskSnapshot]
-listSnapshots (SomeHasFS HasFS{listDirectory}) =
+defaultListSnapshots :: Monad m => SomeHasFS m -> m [DiskSnapshot]
+defaultListSnapshots (SomeHasFS HasFS{listDirectory}) =
   aux <$> listDirectory (mkFsPath [])
  where
   aux :: Set String -> [DiskSnapshot]
   aux = List.sortOn (Down . dsNumber) . mapMaybe snapshotFromPath . Set.toList
 
 -- | Delete snapshot from disk
-deleteSnapshot :: (Monad m, HasCallStack) => SomeHasFS m -> DiskSnapshot -> m ()
-deleteSnapshot (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) ss = do
-  let p = snapshotToDirPath ss
-  exists <- doesDirectoryExist p
-  when exists (removeDirectoryRecursive p)
+defaultDeleteSnapshotIfTemporary ::
+  forall m blk.
+  (MonadCatch m, HasCallStack) =>
+  SomeHasFS m -> Tracer m (TraceSnapshotEvent blk) -> DiskSnapshot -> m ()
+defaultDeleteSnapshotIfTemporary (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) tracer ss =
+  when (diskSnapshotIsTemporary ss) $ void $ try @m @SomeException $ do
+    let p = snapshotToDirPath ss
+    exists <- doesDirectoryExist p
+    when exists (removeDirectoryRecursive p)
+    traceWith tracer (DeletedSnapshot ss)
 
 -- | Write a snapshot metadata JSON file.
 writeSnapshotMetadata ::
@@ -276,25 +348,16 @@ loadSnapshotMetadata (SomeHasFS hasFS) ds = ExceptT $ do
           Left decodeErr -> pure $ Left $ MetadataInvalid decodeErr
           Right meta -> pure $ Right meta
 
-snapshotsMapM_ :: Monad m => SomeHasFS m -> (FilePath -> m a) -> m ()
-snapshotsMapM_ (SomeHasFS fs) f = do
-  mapM_ f
-    =<< Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
+snapshotsMapM_ :: Monad m => SnapshotManager m n blk st -> (DiskSnapshot -> m a) -> m ()
+snapshotsMapM_ snapManager f =
+  mapM_ f =<< listSnapshots snapManager
 
 -- | Testing only! Destroy all snapshots in the DB.
-destroySnapshots :: Monad m => SomeHasFS m -> m ()
-destroySnapshots sfs@(SomeHasFS fs) = do
+destroySnapshots :: Monad m => SnapshotManager m n blk st -> m ()
+destroySnapshots snapManager =
   snapshotsMapM_
-    sfs
-    ( ( \d -> do
-          isDir <- doesDirectoryExist fs d
-          if isDir
-            then removeDirectoryRecursive fs d
-            else removeFile fs d
-      )
-        . mkFsPath
-        . (: [])
-    )
+    snapManager
+    (deleteSnapshotIfTemporary snapManager)
 
 -- | Read an extended ledger state from disk
 readExtLedgerState ::
@@ -336,20 +399,18 @@ writeExtLedgerState (SomeHasFS hasFS) encLedger path cs = do
 -- The deleted snapshots are returned.
 trimSnapshots ::
   Monad m =>
-  Tracer m (TraceSnapshotEvent r) ->
-  SomeHasFS m ->
+  SnapshotManager m n blk st ->
   SnapshotPolicy ->
   m [DiskSnapshot]
-trimSnapshots tracer fs SnapshotPolicy{onDiskNumSnapshots} = do
+trimSnapshots snapManager SnapshotPolicy{onDiskNumSnapshots} = do
   -- We only trim temporary snapshots
-  ss <- filter diskSnapshotIsTemporary <$> listSnapshots fs
+  ss <- filter diskSnapshotIsTemporary <$> listSnapshots snapManager
   -- The snapshot are most recent first, so we can simply drop from the
   -- front to get the snapshots that are "too" old.
   let ssTooOld = drop (fromIntegral onDiskNumSnapshots) ss
   mapM
     ( \s -> do
-        deleteSnapshot fs s
-        traceWith tracer $ DeletedSnapshot s
+        deleteSnapshotIfTemporary snapManager s
         pure s
     )
     ssTooOld
@@ -371,6 +432,11 @@ snapshotToMetadataPath = mkFsPath . (\x -> [x, "meta"]) . snapshotToDirName
 -- | The path within the LedgerDB's filesystem to the snapshot's directory
 snapshotToDirPath :: DiskSnapshot -> FsPath
 snapshotToDirPath = mkFsPath . (: []) . snapshotToDirName
+
+-- | The path within the LedgerDB's filesystem to the file that contains the
+-- snapshot's serialized ledger state
+snapshotToStatePath :: DiskSnapshot -> FsPath
+snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
 
 -- | Version 1: uses versioning ('Ouroboros.Consensus.Util.Versioned') and only
 -- encodes the ledger state @l@.

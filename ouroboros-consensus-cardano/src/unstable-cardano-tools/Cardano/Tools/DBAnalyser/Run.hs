@@ -5,6 +5,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Cardano.Tools.DBAnalyser.Run (analyse) where
@@ -13,8 +14,10 @@ import Cardano.Ledger.BaseTypes
 import Cardano.Tools.DBAnalyser.Analysis
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
+import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..), nullTracer)
+import Data.Functor.Contravariant ((>$<))
 import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
@@ -22,6 +25,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
   ( HasTxs
@@ -30,22 +34,29 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Node as Node
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB (TraceEvent (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as LedgerDB.V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block (genesisPoint)
+import System.FS.API
 import System.IO
+import System.Random
 import Text.Printf (printf)
 
 {-------------------------------------------------------------------------------
@@ -53,42 +64,54 @@ import Text.Printf (printf)
 -------------------------------------------------------------------------------}
 
 openLedgerDB ::
+  forall blk.
   ( LedgerSupportsProtocol blk
   , InspectLedger blk
-  , LedgerDB.LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , LedgerDB.LedgerSupportsLedgerDB blk
-  , ResolveLeiosBlock blk
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   IO
     ( LedgerDB.LedgerDB' IO blk
     , LedgerDB.TestInternals' IO blk
     )
-openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.LedgerDbFlavorArgsV1 bss} = do
-  (ledgerDB, _, intLedgerDB) <-
-    LedgerDB.openDBInternal
-      lgrDbArgs
-      ( LedgerDB.V1.mkInitDb
-          lgrDbArgs
-          bss
-          (\_ -> error "no replay")
-      )
-      emptyStream
-      genesisPoint
-  pure (ledgerDB, intLedgerDB)
-openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.LedgerDbFlavorArgsV2 args} = do
-  (ledgerDB, _, intLedgerDB) <-
-    LedgerDB.openDBInternal
-      lgrDbArgs
-      ( LedgerDB.V2.mkInitDb
-          lgrDbArgs
-          args
-          (\_ -> error "no replay")
-      )
-      emptyStream
-      genesisPoint
-  pure (ledgerDB, intLedgerDB)
+openLedgerDB args =
+  runWithTempRegistry $
+    (,()) <$> do
+      (ldb, _, od) <- case LedgerDB.lgrBackendArgs args of
+        LedgerDB.LedgerDbBackendArgsV1 bss ->
+          let snapManager = LedgerDB.V1.snapshotManager args
+              initDb =
+                LedgerDB.V1.mkInitDb
+                  args
+                  bss
+                  (\_ -> pure (error "no stream"))
+                  snapManager
+                  (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
+           in lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+        LedgerDB.LedgerDbBackendArgsV2 (LedgerDB.V2.SomeBackendArgs bArgs) -> do
+          res <-
+            LedgerDB.V2.mkResources
+              (Proxy @blk)
+              (LedgerDBFlavorImplEvent . LedgerDB.FlavorImplSpecificTraceV2 >$< LedgerDB.lgrTracer args)
+              bArgs
+              (LedgerDB.lgrHasFS args)
+          let snapManager =
+                LedgerDB.V2.snapshotManager
+                  (Proxy @blk)
+                  res
+                  (configCodec . getExtLedgerCfg . LedgerDB.ledgerDbCfg $ LedgerDB.lgrConfig args)
+                  (LedgerDBSnapshotEvent >$< LedgerDB.lgrTracer args)
+                  (LedgerDB.lgrHasFS args)
+          let initDb =
+                LedgerDB.V2.mkInitDb
+                  args
+                  (\_ -> pure (error "no stream"))
+                  snapManager
+                  (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
+                  res
+          lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+      pure (ldb, od)
 
 emptyStream :: Applicative m => ImmutableDB.StreamAPI m blk a
 emptyStream = ImmutableDB.StreamAPI $ \_ k -> k $ Right $ pure ImmutableDB.NoMoreItems
@@ -105,6 +128,7 @@ analyse ::
   forall blk.
   ( Node.RunNode blk
   , Show (Header blk)
+  , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
   , HasAnalysis blk
   , HasProtocolInfo blk
   , LedgerSupportsMempool.HasTxs blk
@@ -118,30 +142,29 @@ analyse dbaConfig args =
     lock <- newMVar ()
     chainDBTracer <- mkTracer lock verbose
     analysisTracer <- mkTracer lock True
+    lsmSalt <- fst . genWord64 <$> newStdGen
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of
-          V1InMem ->
-            LedgerDB.LedgerDbFlavorArgsV1
-              ( LedgerDB.V1.V1Args
-                  LedgerDB.V1.DisableFlushing
-                  LedgerDB.V1.InMemoryBackingStoreArgs
-              )
           V1LMDB ->
-            LedgerDB.LedgerDbFlavorArgsV1
-              ( LedgerDB.V1.V1Args
-                  LedgerDB.V1.DisableFlushing
-                  ( LedgerDB.V1.LMDBBackingStoreArgs
-                      "lmdb"
-                      defaultLMDBLimits
-                      Dict.Dict
-                  )
-              )
+            LedgerDB.LedgerDbBackendArgsV1
+              $ LedgerDB.V1.V1Args
+                LedgerDB.V1.DisableFlushing
+              $ LedgerDB.V1.SomeBackendArgs
+              $ LMDB.LMDBBackingStoreArgs
+                "lmdb"
+                defaultLMDBLimits
+                Dict.Dict
           V2InMem ->
-            LedgerDB.LedgerDbFlavorArgsV2
-              (LedgerDB.V2.V2Args LedgerDB.V2.InMemoryHandleArgs)
+            LedgerDB.LedgerDbBackendArgsV2 $
+              LedgerDB.V2.SomeBackendArgs InMemory.InMemArgs
+          V2LSM ->
+            LedgerDB.LedgerDbBackendArgsV2 $
+              LedgerDB.V2.SomeBackendArgs $
+                LSM.LSMArgs (mkFsPath ["lsm"]) lsmSalt (LSM.stdMkBlockIOFS dbDir)
+
         args' =
           ChainDB.completeChainDbArgs
             registry
@@ -220,7 +243,7 @@ analyse dbaConfig args =
 
   withImmutableDB immutableDbArgs =
     bracket
-      (ImmutableDB.openDBInternal immutableDbArgs runWithTempRegistry)
+      (ImmutableDB.openDBInternal immutableDbArgs)
       (ImmutableDB.closeDB . fst)
 
   mkTracer _ False = return nullTracer

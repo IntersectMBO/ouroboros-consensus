@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -16,10 +17,22 @@ import System.FilePath ((</>))
 import Test.Consensus.Cardano.Examples
 import Test.Tasty
 import Test.Util.Paths
+import Test.Util.Serialisation.CDDL
 import Test.Util.Serialisation.Golden
 
 tests :: TestTree
-tests = goldenTest_all codecConfig ($(getGoldenDir) </> "cardano") examples
+tests =
+  goldenTest_all
+    codecConfig
+    ($(getGoldenDir) </> "cardano")
+    ( Just $
+        CDDLsForNodeToNode
+          ("ntnblock.cddl", "serialisedCardanoBlock")
+          ("ntnheader.cddl", "header")
+          ("ntntx.cddl", "tx")
+          ("ntntxid.cddl", "txId")
+    )
+    examples
 
 instance
   CardanoHardForkConstraints c =>
@@ -41,4 +54,7 @@ instance
       CardanoNodeToClientVersion14 -> "CardanoNodeToClientVersion14"
       CardanoNodeToClientVersion15 -> "CardanoNodeToClientVersion15"
       CardanoNodeToClientVersion16 -> "CardanoNodeToClientVersion16"
+      CardanoNodeToClientVersion17 -> "CardanoNodeToClientVersion17"
+      CardanoNodeToClientVersion18 -> "CardanoNodeToClientVersion18"
+      CardanoNodeToClientVersion19 -> "CardanoNodeToClientVersion19"
       _ -> error $ "Unknown version: " <> show blockVersion

@@ -43,12 +43,13 @@ import Cardano.Protocol.TPraos.BHeader (PrevHash)
 import Cardano.Slotting.Block (BlockNo)
 import Cardano.Slotting.Slot (SlotNo)
 import Codec.Serialise (Serialise (..))
+import Control.DeepSeq (NFData)
 import Control.Monad.Except (Except)
+import Data.Aeson.Types (FromJSON, ToJSON)
 import Data.Kind (Type)
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement)
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -61,6 +62,7 @@ import Ouroboros.Consensus.Protocol.Abstract
   , ValidateView
   )
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
+import Ouroboros.Consensus.Protocol.Praos.Common (HasMaxMajorProtVer)
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 
@@ -78,6 +80,7 @@ newtype ShelleyHash = ShelleyHash
   { unShelleyHash :: Hash.Hash HASH EraIndependentBlockHeader
   }
   deriving stock (Eq, Ord, Show, Generic)
+  deriving newtype (ToJSON, FromJSON, NFData)
   deriving anyclass NoThunks
 
 deriving newtype instance ToCBOR ShelleyHash
@@ -163,8 +166,6 @@ class ProtocolHeaderSupportsKES proto where
     Int ->
     -- | Protocol version
     ProtVer ->
-    -- | Leios EB announcement
-    Maybe EbAnnouncement ->
     m (ShelleyProtocolHeader proto)
 
 -- | ProtocolHeaderSupportsProtocol` provides support for the concrete
@@ -176,7 +177,7 @@ class ProtocolHeaderSupportsProtocol proto where
     ShelleyProtocolHeader proto -> ValidateView proto
 
   pHeaderIssuer ::
-    ShelleyProtocolHeader proto -> VKey 'BlockIssuer
+    ShelleyProtocolHeader proto -> VKey BlockIssuer
   pHeaderIssueNo ::
     ShelleyProtocolHeader proto -> Word64
 
@@ -204,5 +205,6 @@ class
   , ProtocolHeaderSupportsLedger proto
   , Serialise (ChainDepState proto)
   , SignedHeader (ShelleyProtocolHeader proto)
+  , HasMaxMajorProtVer proto
   ) =>
   ShelleyProtocol proto

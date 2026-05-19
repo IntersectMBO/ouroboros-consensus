@@ -1,4 +1,3 @@
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -33,8 +32,9 @@ import Data.Aeson as Aeson
   )
 import Data.Bool (bool)
 import Data.ByteString as BS (ByteString, readFile)
+import Data.Functor (($>))
 import qualified Data.Set as Set
-import LeiosDemoDb (newLeiosDBSQLite, withLeiosDb)
+import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
 import Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
@@ -43,6 +43,7 @@ import qualified Ouroboros.Consensus.Node.InitStorage as Node
   ( nodeImmutableDbChunkInfo
   )
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
   ( ShelleyGenesis (..)
   , validateGenesis
@@ -51,7 +52,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
+import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.Block
 import Ouroboros.Network.Point (WithOrigin (..))
@@ -112,12 +114,17 @@ initialize NodeFilePaths{nfpConfig, nfpChainDB} creds synthOptions = do
         shelleyConfig
         alonzoConfig
         conwayConfig
+        dijkstraConfig
         hfConfig
         (Just confProtocolCredentials)
    where
     shelleyConfig = NodeShelleyProtocolConfiguration (GenesisFile $ ncsShelleyGenesisFile confConfigStub) Nothing
     alonzoConfig = NodeAlonzoProtocolConfiguration (GenesisFile $ ncsAlonzoGenesisFile confConfigStub) Nothing
     conwayConfig = NodeConwayProtocolConfiguration (GenesisFile $ ncsConwayGenesisFile confConfigStub) Nothing
+    dijkstraConfig =
+      fmap
+        (\x -> NodeDijkstraProtocolConfiguration (GenesisFile x) Nothing)
+        (ncsDijkstraGenesisFile confConfigStub)
     hfConfig_ = eitherParseJson $ ncsNodeConfig confConfigStub
     byConfig_ = eitherParseJson $ ncsNodeConfig confConfigStub
 
@@ -134,7 +141,7 @@ eitherParseJson v = case fromJSON v of
 
 synthesize ::
   ( TopLevelConfig (CardanoBlock StandardCrypto) ->
-    GenTxs (CardanoBlock StandardCrypto) mk
+    GenTxs (CardanoBlock StandardCrypto)
   ) ->
   DBSynthesizerConfig ->
   (CardanoProtocolParams StandardCrypto) ->
@@ -144,8 +151,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
     let
       epochSize = sgEpochLength confShelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
-      bss = LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing InMemoryBackingStoreArgs
-      flavargs = LedgerDB.LedgerDbFlavorArgsV1 bss
+      flavargs = LedgerDB.LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
       dbArgs =
         ChainDB.completeChainDbArgs
           registry
@@ -158,29 +164,33 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           flavargs
           $ ChainDB.defaultArgs
 
-    forgers <- blockForging
+    mbfs <- mkForgers nullTracer
+    allocatedForgers <-
+      traverse
+        (\mbf -> allocate registry (const (BlockForging.mkBlockForging mbf)) BlockForging.finalize)
+        mbfs
+    let forgers = snd <$> allocatedForgers
     let fCount = length forgers
     putStrLn $ "--> forger count: " ++ show fCount
-    if fCount > 0
-      then do
-        putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
-        preOpenChainDB synthOpenMode confDbDir
-        let dbTracer = nullTracer
-        putStrLn $ "--> opening/creating LeiosDB at: leios.db"
-        leiosDB <- newLeiosDBSQLite "leios.db"
-        ChainDB.withDB leiosDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
-          slotNo <- do
-            tip <- atomically (ChainDB.getTipPoint chainDB)
-            pure $ case pointSlot tip of
-              Origin -> 0
-              At s -> succ s
+    r <-
+      if fCount > 0
+        then do
+          putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
+          preOpenChainDB synthOpenMode confDbDir
+          let dbTracer = nullTracer
+          ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
+            slotNo <- do
+              tip <- atomically (ChainDB.getTipPoint chainDB)
+              pure $ case pointSlot tip of
+                Origin -> 0
+                At s -> succ s
 
-          putStrLn $ "--> starting at: " ++ show slotNo
-          withLeiosDb leiosDB $ \leiosConn ->
-            runForge epochSize slotNo synthLimit chainDB leiosConn forgers pInfoConfig $ genTxs pInfoConfig
-      else do
-        putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
-        pure $ ForgeResult 0
+            putStrLn $ "--> starting at: " ++ show slotNo
+            runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig $ genTxs pInfoConfig
+        else do
+          putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
+          pure $ ForgeResult 0
+    mapM_ (release . fst) allocatedForgers $> r
  where
   DBSynthesizerOptions
     { synthOpenMode
@@ -190,7 +200,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
       { pInfoConfig
       , pInfoInitLedger
       }
-    , blockForging
+    , mkForgers
     ) = protocolInfoCardano runP
 
 preOpenChainDB :: DBSynthesizerOpenMode -> FilePath -> IO ()

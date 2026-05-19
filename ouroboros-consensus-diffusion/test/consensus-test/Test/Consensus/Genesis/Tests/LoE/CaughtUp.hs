@@ -40,7 +40,6 @@ import Control.ResourceRegistry
 import Control.Tracer (nullTracer)
 import Data.Function (on)
 import Data.Functor (void)
-import LeiosDemoDb (newLeiosDBInMemory)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
@@ -59,6 +58,8 @@ import qualified Ouroboros.Consensus.Node.GSM as GSM
 import Ouroboros.Consensus.Node.Genesis (setGetLoEFragment)
 import Ouroboros.Consensus.Node.GsmState
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Weight (emptyPerasWeightSnapshot)
+import Ouroboros.Consensus.Protocol.Abstract (shouldSwitch)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
@@ -78,9 +79,10 @@ import Test.Util.ChainDB
 import Test.Util.Header
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestBlock
+import Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
-tests = testProperty "Select best chain when CaughtUp" prop_test
+tests = adjustQuickCheckTests (* 10) $ testProperty "Select best chain when CaughtUp" prop_test
 
 prop_test :: Property
 prop_test =
@@ -243,7 +245,6 @@ openChainDB ::
   ChainDB.GetLoEFragment m TestBlock ->
   m (ChainDB m TestBlock)
 openChainDB registry getLoEFragment = do
-  leiosDb <- newLeiosDBInMemory
   chainDbArgs <- do
     mcdbNodeDBs <- emptyNodeDBs
     let mcdbTopLevelConfig = cfg
@@ -265,7 +266,7 @@ openChainDB registry getLoEFragment = do
   (_, (chainDB, ChainDB.Impl.Internal{ChainDB.Impl.intAddBlockRunner})) <-
     allocate
       registry
-      (\_ -> ChainDB.Impl.openDBInternal leiosDb chainDbArgs False)
+      (\_ -> ChainDB.Impl.openDBInternal chainDbArgs False)
       (ChainDB.closeDB . fst)
   _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
   pure chainDB
@@ -281,7 +282,7 @@ mkGsmEntryPoints varChainSyncHandles chainDB writeGsmState =
   GSM.realGsmEntryPoints
     (id, nullTracer)
     GSM.GsmView
-      { GSM.candidateOverSelection
+      { GSM.getCandidateOverSelection = pure candidateOverSelection
       , GSM.peerIsIdle = csIdling
       , GSM.equivalent = (==) `on` AF.headPoint
       , GSM.getChainSyncStates = fmap cschState <$> cschcMap varChainSyncHandles
@@ -303,9 +304,13 @@ mkGsmEntryPoints varChainSyncHandles chainDB writeGsmState =
       Just{} ->
         -- precondition requires intersection
         GSM.WhetherCandidateIsBetter $
-          preferAnchoredCandidate (configBlock cfg) selection candFrag
+          shouldSwitch $
+            preferAnchoredCandidate (configBlock cfg) weights selection candFrag
    where
     candFrag = csCandidate candidateState
+
+    -- TODO https://github.com/tweag/cardano-peras/issues/67
+    weights = emptyPerasWeightSnapshot
 
 forkGDD ::
   forall m.

@@ -3,15 +3,12 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 
 -- DUPLICATE -- adapted from: cardano-node/src/Cardano/Node/Protocol/Shelley.hs
 
 module Cardano.Node.Protocol.Shelley
-  ( mkSomeConsensusProtocolShelley
-
-    -- * Errors
-  , GenesisReadError (..)
+  ( -- * Errors
+    GenesisReadError (..)
   , GenesisValidationError (..)
   , PraosLeaderCredentialsError (..)
   , ShelleyProtocolInstantiationError (..)
@@ -30,13 +27,10 @@ import Cardano.Api.Key
 import Cardano.Api.KeysPraos as Praos
 import Cardano.Api.KeysShelley
 import Cardano.Api.OperationalCertificate
-import qualified Cardano.Api.Protocol.Types as Protocol
 import Cardano.Api.SerialiseTextEnvelope
 import qualified Cardano.Crypto.Hash.Class as Crypto
-import Cardano.Ledger.BaseTypes (ProtVer (..), natVersion)
 import Cardano.Ledger.Keys (coerceKeyRole)
 import qualified Cardano.Ledger.Shelley.Genesis as Shelley
-import Cardano.Node.Protocol.Types
 import Cardano.Node.Types
 import Cardano.Prelude
 import Cardano.Protocol.Crypto (StandardCrypto)
@@ -50,13 +44,12 @@ import Control.Monad.Trans.Except.Extra
 import qualified Data.Aeson as Aeson (FromJSON (..), eitherDecodeStrict')
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
-import qualified Ouroboros.Consensus.Cardano as Consensus
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosCanBeLeader (..)
+  , PraosCredentialsSource (..)
   )
 import Ouroboros.Consensus.Shelley.Node
   ( Nonce (..)
-  , ProtocolParamsShelleyBased (..)
   , ShelleyGenesis (..)
   , ShelleyLeaderCredentials (..)
   )
@@ -65,43 +58,6 @@ import Prelude (String, id)
 ------------------------------------------------------------------------------
 -- Shelley protocol
 --
-
--- | Make 'SomeConsensusProtocol' using the Shelley instance.
---
--- This lets us handle multiple protocols in a generic way.
---
--- This also serves a purpose as a sanity check that we have all the necessary
--- type class instances available.
-mkSomeConsensusProtocolShelley ::
-  NodeShelleyProtocolConfiguration ->
-  Maybe ProtocolFilepaths ->
-  ExceptT ShelleyProtocolInstantiationError IO SomeConsensusProtocol
-mkSomeConsensusProtocolShelley
-  NodeShelleyProtocolConfiguration
-    { npcShelleyGenesisFile
-    , npcShelleyGenesisFileHash
-    }
-  files = do
-    (genesis, genesisHash) <-
-      firstExceptT GenesisReadError
-        $ readGenesis
-          npcShelleyGenesisFile
-          npcShelleyGenesisFileHash
-    firstExceptT GenesisValidationError $ validateGenesis genesis
-    leaderCredentials <-
-      firstExceptT PraosLeaderCredentialsError
-        $ readLeaderCredentials files
-
-    return
-      $ SomeConsensusProtocol Protocol.ShelleyBlockType
-      $ Protocol.ProtocolInfoArgsShelley
-        genesis
-        Consensus.ProtocolParamsShelleyBased
-          { shelleyBasedInitialNonce = genesisHashToPraosNonce genesisHash
-          , shelleyBasedLeaderCredentials =
-              leaderCredentials
-          }
-        (ProtVer (natVersion @2) 0)
 
 genesisHashToPraosNonce :: GenesisHash -> Nonce
 genesisHashToPraosNonce (GenesisHash h) = Nonce (Crypto.castHash h)
@@ -201,12 +157,14 @@ opCertKesKeyCheck ::
   FilePath ->
   -- | Operational certificate
   FilePath ->
-  ExceptT PraosLeaderCredentialsError IO (OperationalCertificate, SigningKey KesKey)
+  ExceptT PraosLeaderCredentialsError IO (OperationalCertificate, SigningKey UnsoundPureKesKey)
 opCertKesKeyCheck kesFile certFile = do
   opCert <-
     firstExceptT FileError (newExceptT $ readFileTextEnvelope AsOperationalCertificate certFile)
   kesSKey <-
-    firstExceptT FileError (newExceptT $ readFileTextEnvelope (AsSigningKey AsKesKey) kesFile)
+    firstExceptT
+      FileError
+      (newExceptT $ readFileTextEnvelope (AsSigningKey AsUnsoundPureKesKey) kesFile)
   let opCertSpecifiedKesKeyhash = verificationKeyHash $ getHotKey opCert
       suppliedKesKeyHash = verificationKeyHash $ getVerificationKey kesSKey
   -- Specified KES key in operational certificate should match the one
@@ -231,11 +189,11 @@ readLeaderCredentialsBulk ProtocolFilepaths{shelleyBulkCredsFile = mfp} =
   parseShelleyCredentials ::
     ShelleyCredentials ->
     ExceptT PraosLeaderCredentialsError IO (ShelleyLeaderCredentials StandardCrypto)
-  parseShelleyCredentials ShelleyCredentials{scCert, scVrf, scKes} = do
+  parseShelleyCredentials ShelleyCredentials{scCert, scVrf, scKes} =
     mkPraosLeaderCredentials
       <$> parseEnvelope AsOperationalCertificate scCert
       <*> parseEnvelope (AsSigningKey AsVrfKey) scVrf
-      <*> parseEnvelope (AsSigningKey AsKesKey) scKes
+      <*> parseEnvelope (AsSigningKey AsUnsoundPureKesKey) scKes
 
   readBulkFile ::
     Maybe FilePath ->
@@ -265,7 +223,7 @@ readLeaderCredentialsBulk ProtocolFilepaths{shelleyBulkCredsFile = mfp} =
 mkPraosLeaderCredentials ::
   OperationalCertificate ->
   SigningKey VrfKey ->
-  SigningKey KesKey ->
+  SigningKey UnsoundPureKesKey ->
   ShelleyLeaderCredentials StandardCrypto
 mkPraosLeaderCredentials
   (OperationalCertificate opcert (StakePoolVerificationKey vkey))
@@ -274,11 +232,10 @@ mkPraosLeaderCredentials
     ShelleyLeaderCredentials
       { shelleyLeaderCredentialsCanBeLeader =
           PraosCanBeLeader
-            { praosCanBeLeaderOpCert = opcert
-            , praosCanBeLeaderColdVerKey = coerceKeyRole vkey
+            { praosCanBeLeaderColdVerKey = coerceKeyRole vkey
             , praosCanBeLeaderSignKeyVRF = vrfKey
+            , praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound opcert kesKey
             }
-      , shelleyLeaderCredentialsInitSignKey = kesKey
       , shelleyLeaderCredentialsLabel = "Shelley"
       }
 

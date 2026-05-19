@@ -25,7 +25,6 @@
 -- These are the main tests for the chain DB. Commands include
 --
 -- * Add a block
--- * Add a block with a @SlotNo@ that is ahead of the wall-clock.
 -- * Get the current chain and/or ledger state
 -- * Create a new iterator and use it to stream blocks
 -- * Create a new follower and use it to follow the chain
@@ -36,6 +35,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine
   ( -- * Commands
     At (..)
   , Cmd (..)
+  , Persistent (..)
   , FollowerRef
   , IterRef
   , IteratorResult (..)
@@ -50,15 +50,20 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine
   , ShouldGarbageCollect (..)
 
     -- * Running the model
+  , DBModel
   , runCmdsLockstep
+  , runPure
 
     -- * System under test
   , ChainDBEnv (..)
   , ChainDBState (..)
+  , TestFollower
+  , TestIterator
   , close
   , mkTestCfg
   , open
   , persistBlks
+  , run
 
     -- * Specifying block components
   , AllComponents
@@ -74,7 +79,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine
   , tests
   ) where
 
-import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
+import Cardano.Ledger.BaseTypes (NonZero (..), unsafeNonZero)
 import Codec.Serialise (Serialise)
 import Control.Monad (replicateM, void)
 import Control.ResourceRegistry
@@ -90,6 +95,7 @@ import Data.Functor.Classes (Eq1, Show1)
 import Data.Functor.Identity (Identity)
 import Data.List (sortOn)
 import qualified Data.List.NonEmpty as NE
+import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Ord (Down (..))
@@ -97,12 +103,15 @@ import Data.Proxy
 import Data.TreeDiff
 import Data.Typeable
 import Data.Void (Void)
-import Data.Word (Word16)
+import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import qualified Generics.SOP as SOP
-import LeiosDemoDb (newLeiosDBInMemory)
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( RelativeTime (..)
+  , WithArrivalTime (..)
+  )
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -112,6 +121,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract
@@ -126,9 +136,10 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( unsafeChunkNoToEpochNo
   )
-import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB, ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (split)
 import Ouroboros.Consensus.Util.CallStack
@@ -151,6 +162,7 @@ import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
 import Test.Ouroboros.Storage.Orphans ()
 import Test.Ouroboros.Storage.TestBlock
 import Test.QuickCheck hiding (forAll)
+import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Monadic as QC
 import Test.StateMachine
 import qualified Test.StateMachine.Labelling as C
@@ -177,16 +189,25 @@ import Test.Util.WithEq
   Abstract model
 -------------------------------------------------------------------------------}
 
+-- | A randomly generated value that gets persisted between steps, so that we
+-- more details.
+newtype Persistent a = Persistent {unPersistent :: a}
+  deriving (Eq, Show, Functor)
+
 -- | Commands
 data Cmd blk it flr
-  = -- | Advance the current slot to the block's slot (unless smaller than the
-    -- current slot), add the block and run chain selection.
-    AddBlock blk
+  = -- | Add a block, with (possibly) some gap blocks leading to it.
+    -- For more information about gap blocks, refer to 'GenState' below.
+    AddBlock blk (Persistent [blk])
+  | -- | Add a Peras cert for a block, with (possibly) some gap blocks leading to it.
+    -- For more information about gap blocks, refer to 'GenState' below.
+    AddPerasCert (WithArrivalTime (ValidatedPerasCert blk)) (Persistent [blk])
   | GetCurrentChain
   | GetTipBlock
   | GetTipHeader
   | GetTipPoint
   | GetBlockComponent (RealPoint blk)
+  | GetLatestPerasCertOnChainRound
   | -- | Only for blocks that may have been garbage collected.
     GetGCedBlockComponent (RealPoint blk)
   | GetMaxSlotNo
@@ -257,6 +278,16 @@ data Cmd blk it flr
 -- something we are testing in 'prop_trace', see
 -- 'invalidBlockNeverValidatedAgain'.
 
+-- = No tests for waitForImmutableBlock
+--
+-- We do not test 'ChainDB.waitForImmutableBlock' here, because this test is
+-- sequential, and 'waitForImmutableBlock', which uses STM 'retry' and
+-- 'check', would block indefinitely.
+-- The core behaviour of 'waitForImmutableBlock' is tested in the ImmutableDB
+-- q-s-m test via testing 'ImmutableDB.getBlockAtOrAfterPoint'.
+-- See also the unit tests for 'ChainDB.waitForImmutableBlock' in
+-- 'Test.Ouroboros.Storage.ChainDB.Unit'.
+
 deriving instance SOP.Generic (Cmd blk it flr)
 deriving instance SOP.HasDatatypeInfo (Cmd blk it flr)
 
@@ -279,6 +310,7 @@ data Success blk it flr
   | MbChainUpdate (Maybe (ChainUpdate blk (AllComponents blk)))
   | MbPoint (Maybe (Point blk))
   | MaxSlot MaxSlotNo
+  | MbPerasRoundNo (Maybe PerasRoundNo)
   deriving (Functor, Foldable, Traversable)
 
 -- | Product of all 'BlockComponent's. As this is a GADT, generating random
@@ -317,6 +349,7 @@ type AllComponents blk =
 type TestConstraints blk =
   ( ConsensusProtocol (BlockProtocol blk)
   , LedgerSupportsProtocol blk
+  , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , Eq (ChainDepState (BlockProtocol blk))
@@ -336,7 +369,6 @@ type TestConstraints blk =
   , LedgerTablesAreTrivial (LedgerState blk)
   , LedgerSupportsLedgerDB blk
   , ImmutableEraParams blk
-  , ResolveLeiosBlock blk
   )
 
 deriving instance
@@ -345,6 +377,8 @@ deriving instance
 deriving instance
   (TestConstraints blk, Show it, Show flr) =>
   Show (Success blk it flr)
+
+instance ModelSupportsBlock TestBlock
 
 -- | Short-hand
 type TestIterator m blk = WithEq (Iterator m blk (AllComponents blk))
@@ -368,7 +402,6 @@ data ChainDBState m blk = ChainDBState
 data ChainDBEnv m blk = ChainDBEnv
   { varDB :: StrictTVar m (ChainDBState m blk)
   , registry :: ResourceRegistry m
-  , varCurSlot :: StrictTVar m SlotNo
   , varNextId :: StrictTVar m Id
   , varVolatileDbFs :: StrictTMVar m MockFS
   , args :: ChainDbArgs Identity m blk
@@ -380,8 +413,7 @@ open ::
   (IOLike m, TestConstraints blk) =>
   ChainDbArgs Identity m blk -> m (ChainDBState m blk)
 open args = do
-  leiosDb <- newLeiosDBInMemory
-  (chainDB, internal) <- openDBInternal leiosDb args False
+  (chainDB, internal) <- openDBInternal args False
   addBlockAsync <- async (intAddBlockRunner internal)
   link addBlockAsync
   return ChainDBState{chainDB, internal, addBlockAsync}
@@ -407,13 +439,15 @@ run ::
   Cmd blk (TestIterator m blk) (TestFollower m blk) ->
   m (Success blk (TestIterator m blk) (TestFollower m blk))
 run cfg env@ChainDBEnv{varDB, ..} cmd =
-  readTVarIO varDB >>= \st@ChainDBState{chainDB = ChainDB{..}, internal} -> case cmd of
-    AddBlock blk -> Point <$> (advanceAndAdd st (blockSlot blk) blk)
+  readTVarIO varDB >>= \st@ChainDBState{chainDB = chainDB@ChainDB{..}, internal} -> case cmd of
+    AddBlock blk _ -> Point <$> advanceAndAdd st blk
+    AddPerasCert cert _ -> Unit <$> addPerasCertSync chainDB cert
     GetCurrentChain -> Chain <$> atomically getCurrentChain
     GetTipBlock -> MbBlock <$> getTipBlock
     GetTipHeader -> MbHeader <$> getTipHeader
     GetTipPoint -> Point <$> atomically getTipPoint
     GetBlockComponent pt -> MbAllComponents <$> getBlockComponent allComponents pt
+    GetLatestPerasCertOnChainRound -> MbPerasRoundNo <$> atomically getLatestPerasCertOnChainRound
     GetGCedBlockComponent pt -> mbGCedAllComponents <$> getBlockComponent allComponents pt
     GetIsValid pt -> isValidResult <$> ($ pt) <$> atomically getIsValid
     GetMaxSlotNo -> MaxSlot <$> atomically getMaxSlotNo
@@ -440,12 +474,10 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
   follower = fmap Flr . giveWithEq
   ignore _ = Unit ()
 
-  advanceAndAdd :: ChainDBState m blk -> SlotNo -> blk -> m (Point blk)
-  advanceAndAdd ChainDBState{chainDB} newCurSlot blk = do
-    atomically $ modifyTVar varCurSlot (max newCurSlot)
+  advanceAndAdd :: ChainDBState m blk -> blk -> m (Point blk)
+  advanceAndAdd ChainDBState{chainDB} blk = do
     -- `blockProcessed` always returns 'Just'
     res <- addBlock chainDB InvalidBlockPunishment.noPunishment blk
-    ChainDB.triggerChainSelection chainDB
     return $ case res of
       FailedToAddBlock f -> error $ "advanceAndAdd: block not added - " ++ f
       SuccesfullyAddedBlock pt -> pt
@@ -548,8 +580,8 @@ instance Eq blk => Eq (MaybeGCedBlock blk) where
 -- 'IteratorBlockGCed' instead of 'IteratorResult'.
 data IteratorResultGCed blk = IteratorResultGCed
   { real :: Bool
-  -- ^ 'True':  result of calling 'getBlock' on the real implementation
-  -- ^ 'False': result of calling 'getBlock' on the model implementation
+  -- ^ 'True':  result of calling 'iteratorNext' on the real implementation
+  -- ^ 'False': result of calling 'iteratorNext' on the model implementation
   , iterResult :: IteratorResult blk (AllComponents blk)
   }
 
@@ -572,8 +604,9 @@ instance
       (_, True) -> eqIfNotGCed
    where
     eqIfNotGCed = case (iterResult1, iterResult2) of
-      (IteratorBlockGCed{}, _) -> True
-      (_, IteratorBlockGCed{}) -> True
+      (IteratorBlockGCed{}, IteratorBlockGCed{}) -> not (real1 && real2)
+      (IteratorBlockGCed{}, _) -> not real1
+      (_, IteratorBlockGCed{}) -> not real2
       (IteratorResult b1, IteratorResult b2) -> b1 == b2
       (IteratorExhausted, IteratorExhausted) -> True
       _ -> False
@@ -615,7 +648,7 @@ instance Eq IsValidResult where
       (Just _, Nothing) -> False
 
 {-------------------------------------------------------------------------------
-  Instantiating the semantics
+  Responses
 -------------------------------------------------------------------------------}
 
 -- | Responses are either successful termination or an error.
@@ -632,6 +665,26 @@ instance (TestConstraints blk, Eq it, Eq flr) => Eq (Resp blk it flr) where
   Resp (Right a) == Resp (Right a') = a == a'
   _ == _ = False
 
+{-------------------------------------------------------------------------------
+  Bitraversable instances
+-------------------------------------------------------------------------------}
+
+TH.deriveBifunctor ''Cmd
+TH.deriveBifoldable ''Cmd
+TH.deriveBitraversable ''Cmd
+
+TH.deriveBifunctor ''Success
+TH.deriveBifoldable ''Success
+TH.deriveBitraversable ''Success
+
+TH.deriveBifunctor ''Resp
+TH.deriveBifoldable ''Resp
+TH.deriveBitraversable ''Resp
+
+{-------------------------------------------------------------------------------
+  Instantiating the semantics
+-------------------------------------------------------------------------------}
+
 type DBModel blk = Model.Model blk
 
 -- We can't reuse 'run' because the 'ChainDB' API uses 'STM'. Instead, we call
@@ -644,12 +697,14 @@ runPure ::
   DBModel blk ->
   (Resp blk IteratorId FollowerId, DBModel blk)
 runPure cfg = \case
-  AddBlock blk -> ok Point $ update (add blk)
+  AddBlock blk _ -> ok Point $ update (add blk)
+  AddPerasCert cert _ -> ok Unit $ ((),) . update (Model.addPerasCert cfg cert)
   GetCurrentChain -> ok Chain $ query (Model.volatileChain k getHeader)
   GetTipBlock -> ok MbBlock $ query Model.tipBlock
   GetTipHeader -> ok MbHeader $ query (fmap getHeader . Model.tipBlock)
   GetTipPoint -> ok Point $ query Model.tipPoint
   GetBlockComponent pt -> err MbAllComponents $ query (Model.getBlockComponentByPoint allComponents pt)
+  GetLatestPerasCertOnChainRound -> ok MbPerasRoundNo $ query Model.getLatestPerasCertOnChainRound
   GetGCedBlockComponent pt -> err mbGCedAllComponents $ query (Model.getBlockComponentByPoint allComponents pt)
   GetMaxSlotNo -> ok MaxSlot $ query Model.getMaxSlotNo
   GetIsValid pt -> ok isValidResult $ query (Model.isValid pt)
@@ -675,7 +730,12 @@ runPure cfg = \case
   -- snapshots so that this aspect of the system would be explicitly
   -- specified. See https://github.com/IntersectMBO/ouroboros-network/issues/3375
   --
-  UpdateLedgerSnapshots -> ok Unit $ ((),)
+  -- Apart from that, to ensure that whenever we write a snapshot we have copied
+  -- the blocks to the immdb, we run the copying synchronously in the
+  -- snapshotting logic
+  -- (https://github.com/IntersectMBO/ouroboros-consensus/issues/1822), so we
+  -- update the model accordingly here.
+  UpdateLedgerSnapshots -> ok Unit $ update_ (Model.copyToImmutableDB k GarbageCollect)
   Close -> openOrClosed $ update_ Model.closeDB
   Reopen -> openOrClosed $ update_ Model.reopen
   WipeVolatileDB -> ok Point $ update (Model.wipeVolatileDB cfg)
@@ -732,22 +792,6 @@ flrs :: Bitraversable t => t it flr -> [flr]
 flrs = bifoldMap (const []) (: [])
 
 {-------------------------------------------------------------------------------
-  Bitraversable instances
--------------------------------------------------------------------------------}
-
-TH.deriveBifunctor ''Cmd
-TH.deriveBifoldable ''Cmd
-TH.deriveBitraversable ''Cmd
-
-TH.deriveBifunctor ''Success
-TH.deriveBifoldable ''Success
-TH.deriveBitraversable ''Success
-
-TH.deriveBifunctor ''Resp
-TH.deriveBifoldable ''Resp
-TH.deriveBitraversable ''Resp
-
-{-------------------------------------------------------------------------------
   Model
 -------------------------------------------------------------------------------}
 
@@ -763,12 +807,116 @@ type FollowerRef blk m r = Reference (Opaque (TestFollower m blk)) r
 -- | Mapping between iterator references and mocked followers
 type KnownFollowers blk m r = RefEnv (Opaque (TestFollower m blk)) FollowerId r
 
+-- | Generator state to be carried around between commands
+--
+-- The main idea here is to keep intermediate blocks generated by 'genBlk'
+-- around, so that we no longer need to pray for them to be (re)generated from
+-- scratch in subsequent 'AddBlock' and 'AddPerasCert' invocations.
+--
+-- To illustrate this more concretely, suppose the test has so far built the
+-- following chain:
+--
+-- @
+--  A -> B -> C
+-- @
+--
+-- From here, one of the options 'genBlk' has is to generate a dangling block
+-- via 'genBlockAfterGap'. For this, it first builds a random fork and then
+-- returns its tip. For instance, let's assume that 'genBlockAfterGap' branches
+-- from @B@, and generates a block @F@, that fits on top of @B@ via some
+-- (hypothetical) intermediate blocks @D@ and @E@:
+--
+-- @
+-- A -> B -> C
+--      |
+--      + -> (D) -> (E) -> F
+-- @
+--
+-- At this point, the state machine then runs @AddBlock F@, leaving the gap
+-- between @B@ and @F@ to be potentially filled by other random invocations to
+-- @AddBlock@ later on. This mechanism allows the state machine to generate
+-- invocations leading to interesting forks from time to time.
+--
+-- However, for that to happen, we really want to keep @D@ and @E@ around, so
+-- that they can easily be reused to fill the gap leading to @F@. Otherwise,
+-- 'genBlk' would depend entirely on randomness to regenerate these (or
+-- compatible) intermediate blocks leading to @F@ from scratch, which is in
+-- turn very unlikely for any non-trivial fork, as new random blocks can only
+-- be added _on top_ of existing ones (i.e. with no way of backtracking from 'F'
+-- to 'B' to fill the gap).
+--
+-- To tackle this problem, the model carries around an evolving 'GenState' that
+-- keeps track of all intermediate blocks generated so far. To do this, note
+-- that some block generators return not only a block, but also a collection of
+-- intermediate blocks that were generated along the way and that lead to the
+-- final block being returned. We then update the 'GenState' accordingly after
+-- each command execution (see 'updateGenState' below). Later, 'genBlk' can also
+-- sample previosuly seen blocks directly from the 'GenState' (via the
+-- 'genGapBlock' sub-generator).
+--
+-- NOTE: 'quickcheck-state-machine' does not provide much support for this, so
+-- we need to manually carry it around as part of the evolving SUT's model--even
+-- if it's technically not part of the actual model we are trying to test
+-- against.
+--
+-- TODO: Explore if this can be improved by tweaking the API of
+-- 'quickcheck-state-machine' to allow for the same functionality to exist
+-- under the hood.
+data GenState blk
+  = GenState
+  { seenBlocks :: Map (HeaderHash blk) blk
+  -- ^ Blocks that have been generated but not yet added to the ChainDB, e.g.,
+  -- gap blocks generated by 'genBlockAfterGap', or boosted blocks generated by
+  -- 'genAddPerasCert'. We don't want to discard these because they can be used
+  -- to fill gaps between existing blocks added via 'AddBlock', simulating
+  -- blocks and certificates arriving out of order.
+  }
+  deriving Generic
+
+deriving instance
+  ( ToExpr blk
+  , ToExpr (HeaderHash blk)
+  ) =>
+  ToExpr (GenState blk)
+
+deriving instance (Show blk, Show (HeaderHash blk)) => Show (GenState blk)
+
+emptyGenState :: GenState blk
+emptyGenState =
+  GenState
+    { seenBlocks = Map.empty
+    }
+
+-- | Use the extra state stored in a generated command to update a model's
+-- 'GenState' accordingly.
+updateGenState ::
+  HasHeader blk =>
+  At Cmd blk m r ->
+  GenState blk ->
+  GenState blk
+updateGenState cmd gs =
+  case unAt cmd of
+    AddBlock _ (Persistent blks) -> saveSeenBlocks blks gs
+    AddPerasCert _ (Persistent blks) -> saveSeenBlocks blks gs
+    _ -> gs
+ where
+  saveSeenBlocks blks gs' =
+    gs'
+      { seenBlocks =
+          Map.union
+            (Map.fromList [(blockHash blk, blk) | blk <- blks])
+            (seenBlocks gs')
+      }
+
 -- | Execution model
 data Model blk m r = Model
   { dbModel :: DBModel blk
   , knownIters :: KnownIters blk m r
   , knownFollowers :: KnownFollowers blk m r
   , modelConfig :: Opaque (TopLevelConfig blk)
+  , genState :: GenState blk
+  -- ^ Generator state that evolves in tandem with the model.
+  -- See the definition of 'GenState' above for more details.
   }
   deriving Generic
 
@@ -787,6 +935,7 @@ initModel loe cfg initLedger =
     , knownIters = RE.empty
     , knownFollowers = RE.empty
     , modelConfig = QSM.Opaque cfg
+    , genState = emptyGenState
     }
 
 -- | Key property of the model is that we can go from real to mock responses
@@ -874,6 +1023,7 @@ lockstep model@Model{..} cmd (At resp) =
     }
  where
   (mockResp, dbModel') = step model cmd
+  genState' = updateGenState cmd genState
   newIters = RE.fromList $ zip (iters resp) (iters mockResp)
   newFollowers = RE.fromList $ zip (flrs resp) (flrs mockResp)
   model' = case unAt cmd of
@@ -882,18 +1032,21 @@ lockstep model@Model{..} cmd (At resp) =
     Close ->
       model
         { dbModel = dbModel'
+        , genState = genState'
         , knownIters = RE.empty
         , knownFollowers = RE.empty
         }
     WipeVolatileDB ->
       model
         { dbModel = dbModel'
+        , genState = genState'
         , knownIters = RE.empty
         , knownFollowers = RE.empty
         }
     _ ->
       model
         { dbModel = dbModel'
+        , genState = genState'
         , knownIters = knownIters `RE.union` newIters
         , knownFollowers = knownFollowers `RE.union` newFollowers
         }
@@ -902,26 +1055,43 @@ lockstep model@Model{..} cmd (At resp) =
   Generator
 -------------------------------------------------------------------------------}
 
-type BlockGen blk m = Model blk m Symbolic -> Gen blk
-
 -- | Generate a 'Cmd'
+--
+-- NOTE: the frequencies for generating blocks and Peras certificates are
+-- substantially higher than for other commands. This is to ensure that the
+-- ChainDB is populated with enough blocks to exhibit interesting weighted chain
+-- selection behaviour, e.g., switching to a different (possibly shorter) fork.
+--
+-- Keep this in mind when adjusting the frequencies below, making sure not to
+-- degrade the probability of triggering the more uncommon events too much. For
+-- this, see the output of the @Tags@ table generated by QuickCheck.
 generator ::
   forall blk m.
   TestConstraints blk =>
   LoE () ->
-  BlockGen blk m ->
+  (Model blk m Symbolic -> Gen (blk, Persistent [blk])) ->
   Model blk m Symbolic ->
   Gen (At Cmd blk m Symbolic)
 generator loe genBlock m@Model{..} =
   At
     <$> frequency
-      [ (30, genAddBlock)
+      [ (100, genAddBlock)
+      , let freq = case loe of
+              LoEDisabled -> 100
+              -- The LoE does not yet support Peras.
+              LoEEnabled () -> 0
+         in (freq, genAddPerasCert)
       , (if empty then 1 else 10, return GetCurrentChain)
       , --    , (if empty then 1 else 10, return GetLedgerDB)
         (if empty then 1 else 10, return GetTipBlock)
       , -- To check that we're on the right chain
         (if empty then 1 else 10, return GetTipPoint)
       , (10, genGetBlockComponent)
+      , let freq = case loe of
+              LoEDisabled -> 10
+              -- The LoE does not yet support Peras.
+              LoEEnabled () -> 0
+         in (freq, genGetLatestPerasCertOnChainRound)
       , (if empty then 1 else 10, return GetMaxSlotNo)
       , (if empty then 1 else 10, genGetIsValid)
       , let freq = case loe of
@@ -971,7 +1141,7 @@ generator loe genBlock m@Model{..} =
   followers = RE.keys knownFollowers
 
   genRandomPoint :: Gen (RealPoint blk)
-  genRandomPoint = blockRealPoint <$> genBlock m
+  genRandomPoint = blockRealPoint . fst <$> genBlock m
 
   blocksInDB :: Map.Map (HeaderHash blk) blk
   blocksInDB = Model.blocks dbModel
@@ -992,7 +1162,7 @@ generator loe genBlock m@Model{..} =
             anchor <-
               elements $
                 AF.AnchorGenesis : fmap AF.anchorFromBlock immutableBlocks
-            blk <- genBlock m
+            (blk, _) <- genBlock m
             tip <-
               frequency
                 [ (1, pure $ Chain.headHash immutableChain)
@@ -1014,6 +1184,9 @@ generator loe genBlock m@Model{..} =
   empty :: Bool
   empty = null pointsInDB
 
+  genRelativeTime :: Gen RelativeTime
+  genRelativeTime = RelativeTime . fromIntegral <$> arbitrary @Word64
+
   genRealPoint :: Gen (RealPoint blk)
   genRealPoint =
     frequency
@@ -1031,6 +1204,7 @@ generator loe genBlock m@Model{..} =
   genGetIsValid :: Gen (Cmd blk it flr)
   genGetIsValid =
     GetIsValid <$> genRealPoint
+
   genGetBlockComponent :: Gen (Cmd blk it flr)
   genGetBlockComponent = do
     pt <- genRealPoint
@@ -1039,7 +1213,46 @@ generator loe genBlock m@Model{..} =
         then GetGCedBlockComponent pt
         else GetBlockComponent pt
 
-  genAddBlock = AddBlock <$> genBlock m
+  genGetLatestPerasCertOnChainRound :: Gen (Cmd blk it flr)
+  genGetLatestPerasCertOnChainRound =
+    return GetLatestPerasCertOnChainRound
+
+  genAddBlock :: Gen (Cmd blk it flr)
+  genAddBlock = do
+    (blk, gapBlks) <- genBlock m
+    pure $ AddBlock blk gapBlks
+
+  genAddPerasCert :: Gen (Cmd blk it flr)
+  genAddPerasCert = do
+    -- TODO should we be more strict on which blocks we add certs to?
+    -- see https://github.com/tweag/cardano-peras/issues/124
+    (blk, gapBlks) <- genBlock m
+    let roundNo = case Model.maxPerasRoundNo dbModel of
+          Nothing -> PerasRoundNo 0
+          Just (PerasRoundNo r) -> PerasRoundNo (r + 1)
+    -- Generate an almost-always-valid boost, i.e., below the maximum rollback
+    let k = unPerasWeight (maxRollbackWeight secParam)
+    boost <-
+      PerasWeight
+        <$> frequency
+          [ (10, choose (1, k - 1))
+          , (1, choose (k, k + 1))
+          ]
+    -- Include the boosted block itself in the persisted seenBlocks
+    let seenBlks = fmap (blk :) gapBlks
+    -- Build the certificate
+    now <- genRelativeTime
+    let certWithTime =
+          WithArrivalTime now $
+            ValidatedPerasCert
+              { vpcCert =
+                  PerasCert
+                    { pcCertRound = roundNo
+                    , pcCertBoostedBlock = blockPoint blk
+                    }
+              , vpcCertBoost = boost
+              }
+    pure $ AddPerasCert certWithTime seenBlks
 
   genBounds :: Gen (StreamFrom blk, StreamTo blk)
   genBounds =
@@ -1172,6 +1385,9 @@ precondition Model{..} (At cmd) =
       Stream from to -> isValidIterator from to
       Reopen -> Not $ Boolean (Model.isOpen dbModel)
       WipeVolatileDB -> Boolean $ Model.isOpen dbModel
+      UpdateLoE frag -> Boolean $ Chain.pointOnChain (AF.anchorPoint frag) immChain
+       where
+        immChain = Model.immutableChain (configSecurityParam cfg) dbModel
       _ -> Top
  where
   garbageCollectable :: RealPoint blk -> Logic
@@ -1236,15 +1452,32 @@ invariant cfg Model{..} =
 
 postcondition ::
   TestConstraints blk =>
+  TopLevelConfig blk ->
   Model blk m Concrete ->
   At Cmd blk m Concrete ->
   At Resp blk m Concrete ->
   Logic
-postcondition model cmd resp =
+postcondition cfg model cmd resp =
   (toMock (eventAfter ev) resp .== eventMockResp ev)
     .// "real response didn't match model response"
+    .&& immutableTipMonotonicity
  where
   ev = lockstep model cmd resp
+
+  immutableTipMonotonicity = case unAt cmd of
+    -- When we wipe the VolatileDB (and haven't persisted all immutable blocks),
+    -- the immutable tip can recede.
+    WipeVolatileDB -> Top
+    _ ->
+      Annotate ("Immutable tip non-monotonicity: " <> show before <> " > " <> show after) $
+        Boolean (before <= after)
+   where
+    before = immTipBlockNo $ eventBefore ev
+    after = immTipBlockNo $ eventAfter ev
+    immTipBlockNo =
+      Chain.headBlockNo
+        . Model.immutableChain (configSecurityParam cfg)
+        . dbModel
 
 semantics ::
   forall blk.
@@ -1262,7 +1495,7 @@ sm ::
   TestConstraints blk =>
   LoE () ->
   ChainDBEnv IO blk ->
-  BlockGen blk IO ->
+  (Model blk IO Symbolic -> Gen (blk, Persistent [blk])) ->
   TopLevelConfig blk ->
   ExtLedgerState blk EmptyMK ->
   StateMachine
@@ -1275,7 +1508,7 @@ sm loe env genBlock cfg initLedger =
     { initModel = initModel loe cfg initLedger
     , transition = transition
     , precondition = precondition
-    , postcondition = postcondition
+    , postcondition = postcondition cfg
     , generator = Just . generator loe genBlock
     , shrinker = shrinker
     , semantics = semantics cfg env
@@ -1333,14 +1566,19 @@ deriving instance SOP.Generic (ImmutableDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (ImmutableDB.TraceEvent blk)
 deriving instance SOP.Generic (VolatileDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (VolatileDB.TraceEvent blk)
+deriving instance SOP.Generic (PerasCertDB.TraceEvent blk)
+deriving instance SOP.HasDatatypeInfo (PerasCertDB.TraceEvent blk)
 deriving anyclass instance SOP.Generic (TraceChainSelStarvationEvent blk)
 deriving anyclass instance SOP.HasDatatypeInfo (TraceChainSelStarvationEvent blk)
+deriving anyclass instance SOP.Generic (TraceAddPerasCertEvent blk)
+deriving anyclass instance SOP.HasDatatypeInfo (TraceAddPerasCertEvent blk)
 
 data Tag
   = TagGetIsValidJust
   | TagGetIsValidNothing
   | TagChainSelReprocessChangedSelection
   | TagChainSelReprocessKeptSelection
+  | TagSwitchedToShorterChain
   deriving (Show, Eq)
 
 -- | Predicate on events
@@ -1367,6 +1605,7 @@ tag =
     , tagGetIsValidNothing
     , tagChainSelReprocess TagChainSelReprocessChangedSelection (/=)
     , tagChainSelReprocess TagChainSelReprocessKeptSelection (==)
+    , tagSwitchedToShorterChain
     ]
  where
   tagGetIsValidJust :: EventPred m
@@ -1390,6 +1629,21 @@ tag =
       | (test `on` Model.tipPoint . dbModel) (eventBefore ev) (eventAfter ev) ->
           Left t
     _ -> Right $ tagChainSelReprocess t test
+
+  -- Tag this test case if we ever switch from a longer to a shorter chain in a
+  -- non-degenerate case.
+  tagSwitchedToShorterChain :: EventPred m
+  tagSwitchedToShorterChain = C.predicate $ \case
+    ev
+      | case unAt $ eventCmd ev of
+          -- Wiping the VolatileDB is not interesting here.
+          WipeVolatileDB{} -> False
+          _ -> True
+      , ((>) `on` curChainLength) (eventBefore ev) (eventAfter ev) ->
+          Left TagSwitchedToShorterChain
+      | otherwise -> Right tagSwitchedToShorterChain
+   where
+    curChainLength = Chain.length . Model.currentChain . dbModel
 
 -- | Step the model using a 'QSM.Command' (i.e., a command associated with
 -- an explicit set of variables)
@@ -1425,33 +1679,66 @@ type Blk = TestBlock
 -- ChainDB, blocks are added /out of order/, while in the ImmutableDB, they
 -- must be added /in order/. This generator can thus not be reused for the
 -- ImmutableDB.
-genBlk :: ImmutableDB.ChunkInfo -> BlockGen Blk m
-genBlk chunkInfo Model{..} =
+genBlk ::
+  ImmutableDB.ChunkInfo ->
+  LoE () ->
+  Model Blk m r ->
+  Gen (TestBlock, Persistent [TestBlock])
+genBlk chunkInfo loe Model{..} =
   frequency
-    [ (if empty then 0 else 1, genAlreadyInChain)
-    , (5, genAppendToCurrentChain)
-    , (5, genFitsOnSomewhere)
-    , (3, genGap)
+    [ (if noBlocksInChainDB then 0 else 1, withoutGapBlocks genAlreadyInChain)
+    , (if noSavedGapBlocks then 0 else 20, withoutGapBlocks genGapBlock)
+    , (5, withoutGapBlocks genAppendToCurrentChain)
+    , (5, withoutGapBlocks genFitsOnSomewhere)
+    , (3, genBlockAfterGap)
     ]
  where
   blocksInChainDB = Model.blocks dbModel
-  modelSupportsEBBs = ImmutableDB.chunkInfoSupportsEBBs chunkInfo
-  canContainEBB = const modelSupportsEBBs -- TODO: we could be more precise
-  empty :: Bool
-  empty = Map.null blocksInChainDB
 
+  k = unNonZero (maxRollbacks (configSecurityParam (unOpaque modelConfig)))
+
+  modelSupportsEBBs =
+    ImmutableDB.chunkInfoSupportsEBBs chunkInfo
+      -- NOTE: we disable the generation of EBBs entirely when k>2 to avoid
+      -- triggering an edge case caused by a mismatch between the model and
+      -- actual the implementation. For more information, see:
+      -- https://github.com/IntersectMBO/ouroboros-consensus/issues/1745
+      && k <= 2
+
+  noBlocksInChainDB = Map.null blocksInChainDB
+
+  savedGapBlocks = seenBlocks genState
+  noSavedGapBlocks = Map.null savedGapBlocks
+  withoutGapBlocks = fmap (,Persistent [])
+
+  canContainEBB = const modelSupportsEBBs -- TODO: we could be more precise
   genBody :: Gen TestBody
   genBody = do
+    forkNo <-
+      choose (1, 3)
     isValid <-
       frequency
         [ (4, return True)
         , (1, return False)
         ]
-    forkNo <- choose (1, 3)
+    perasCertRound <- do
+      let maxRoundNo =
+            case Model.maxPerasRoundNo dbModel of
+              Nothing -> 0
+              Just (PerasRoundNo r) -> r + 1
+      frequency
+        [ (9, return Nothing)
+        , let freq = case loe of
+                LoEDisabled -> 1
+                -- The LoE does not yet support Peras.
+                LoEEnabled () -> 0
+           in (freq, Just . PerasRoundNo <$> choose (0, maxRoundNo))
+        ]
     return
       TestBody
         { tbForkNo = forkNo
         , tbIsValid = isValid
+        , tbPerasCertRound = perasCertRound
         }
 
   -- A block that already exists in the ChainDB
@@ -1472,20 +1759,28 @@ genBlk chunkInfo Model{..} =
     Nothing -> genFirstBlock
     Just _ -> genAlreadyInChain >>= genFitsOn
 
-  -- A block that doesn't fit onto a block in the ChainDB, but it creates a
-  -- gap of a couple of blocks between genesis or an existing block in the
-  -- ChainDB. We generate it by generating a few intermediary blocks first,
-  -- which we don't add. But the chance exists that we will generate them
-  -- again later on.
-  genGap :: Gen TestBlock
-  genGap = do
+  -- A block that doesn't fit onto a block in the ChainDB, but it creates a gap
+  -- of a couple of blocks between genesis or an existing block in the ChainDB.
+  -- We generate it by generating a few intermediary blocks first, which we
+  -- don't add just yet. These are in turn returned and stored as seen blocks
+  -- in the generator state of the model. We can sample from these later on to
+  -- (hopefully) fill the gaps.
+  genBlockAfterGap :: Gen (TestBlock, Persistent [TestBlock])
+  genBlockAfterGap = do
     gapSize <- choose (1, 3)
     start <- genFitsOnSomewhere
-    go gapSize start
+    go gapSize start []
    where
-    go :: Int -> TestBlock -> Gen TestBlock
-    go 0 b = return b
-    go n b = genFitsOn b >>= go (n - 1)
+    go :: Int -> TestBlock -> [TestBlock] -> Gen (TestBlock, Persistent [TestBlock])
+    go 0 tip gapBlks = return (tip, Persistent gapBlks)
+    go n tip gapBlks = do
+      tip' <- genFitsOn tip
+      go (n - 1) tip' (tip : gapBlks)
+
+  -- An intermediate gap block that was generated by 'genBlockAfterGap' but
+  -- saved for later in the model's generator state. See 'GenState' for details.
+  genGapBlock :: Gen TestBlock
+  genGapBlock = elements (Map.elems savedGapBlocks)
 
   -- Generate a block or EBB fitting on genesis
   genFirstBlock :: Gen TestBlock
@@ -1546,40 +1841,96 @@ genBlk chunkInfo Model{..} =
         )
       ]
 
+-- | Generate a random security parameter (k)
+--
+-- NOTE: after analysing the effect of varying the security parameter, we have
+-- observed a tension between:
+--
+-- 1) generating enough tests to trigger interesting weighted chain selection
+--    behavior such as switching to a shorter but heavier chain (note that the
+--    certificate boost is derived from k and must be large enough to overcome
+--    the weight of a longer chain). This corresponds to the
+--    'TagSwitchedToShorterChain' event from the @Tags@ table.
+--
+-- 2) generating enough tests exercising the ImmutableDB logic (the chain
+--    must have at least k blocks). This corresponds to the 'True' event from
+--    the @Chain length >= k@ table.
+--
+-- Here are some empirical results using fixed values of k:
+--
+-- @
+--  k    -> P(switching to shorter chain), P(building a chain with >= k blocks)
+--  k=2  -> ~1.3%, ~40%
+--  k=3  -> ~1.9%, ~20%
+--  k=4  -> ~2.4%, ~9%
+--  k=5  -> ~2.5%, ~3%
+--  k=10 -> ~3%,   ~0.05%
+-- @
+--
+-- From these results, we can see observe that the sweet spot between both
+-- desiderata appears to be around @k=2@ and @k=4@. So, we use a geometric
+-- distribution to bias the generation towards smaller security parameters,
+-- while still allowing arbitrary large ones to appear with decresing
+-- probability. Concretely, by instantiating a geometric distribution with
+-- parameter @p=0.5@ and shifting it to the right by 2, we obtain the following
+-- distribution:
+--
+-- @
+--  k    -> P(k)
+--  k=2  -> 50%
+--  k=3  -> 25%
+--  k=4  -> 12.5%
+--  k=5  -> 6.25%
+--  ...
+-- @
+--
+-- This way, roughly 87.5% of the generated security parameters will be between
+-- 2 and 4, while still allowing for larger values to appear from time to time.
+genSecurityParam :: Gen SecurityParam
+genSecurityParam =
+  SecurityParam
+    . unsafeNonZero
+    . fromIntegral
+    . (+ 2) -- shift to the right to avoid degenerate cases
+    <$> geometric 0.5 -- range in [0, +inf); mean = 1/p = 2
+
 {-------------------------------------------------------------------------------
   Top-level tests
 -------------------------------------------------------------------------------}
 
-mkTestCfg :: ImmutableDB.ChunkInfo -> TopLevelConfig TestBlock
-mkTestCfg (ImmutableDB.UniformChunkSize chunkSize) =
-  mkTestConfig (SecurityParam $ knownNonZeroBounded @2) chunkSize
+mkTestCfg :: SecurityParam -> ImmutableDB.ChunkInfo -> TopLevelConfig TestBlock
+mkTestCfg k (ImmutableDB.UniformChunkSize chunkSize) =
+  mkTestConfig k chunkSize
 
 envUnused :: ChainDBEnv m blk
 envUnused = error "ChainDBEnv used during command generation"
 
 smUnused ::
   LoE () ->
+  SecurityParam ->
   ImmutableDB.ChunkInfo ->
   StateMachine (Model Blk IO) (At Cmd Blk IO) IO (At Resp Blk IO)
-smUnused loe chunkInfo =
+smUnused loe k chunkInfo =
   sm
     loe
     envUnused
-    (genBlk chunkInfo)
-    (mkTestCfg chunkInfo)
+    (genBlk chunkInfo loe)
+    (mkTestCfg k chunkInfo)
     testInitExtLedger
 
 prop_sequential :: LoE () -> SmallChunkInfo -> Property
 prop_sequential loe smallChunkInfo@(SmallChunkInfo chunkInfo) =
-  forAllCommands (smUnused loe chunkInfo) Nothing $
-    runCmdsLockstep loe smallChunkInfo
+  QC.forAll genSecurityParam $ \k ->
+    forAllCommands (smUnused loe k chunkInfo) Nothing $
+      runCmdsLockstep loe k smallChunkInfo
 
 runCmdsLockstep ::
   LoE () ->
+  SecurityParam ->
   SmallChunkInfo ->
   QSM.Commands (At Cmd Blk IO) (At Resp Blk IO) ->
   Property
-runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
+runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
   QC.monadicIO $ do
     let
       -- Current test case command names.
@@ -1587,15 +1938,15 @@ runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
       ctcCmdNames = fmap (show . cmdName . QSM.getCommand) $ QSM.unCommands cmds
 
     (hist, prop) <- QC.run $ test cmds
-    prettyCommands (smUnused loe chunkInfo) hist
+    prettyCommands (smUnused loe k chunkInfo) hist
       $ tabulate
         "Tags"
-        (map show $ tag (execCmds (QSM.initModel (smUnused loe chunkInfo)) cmds))
+        (map show $ tag (execCmds (QSM.initModel (smUnused loe k chunkInfo)) cmds))
       $ tabulate "Command sequence length" [show $ length ctcCmdNames]
       $ tabulate "Commands" ctcCmdNames
       $ prop
  where
-  testCfg = mkTestCfg chunkInfo
+  testCfg = mkTestCfg k chunkInfo
 
   test ::
     QSM.Commands (At Cmd Blk IO) (At Resp Blk IO) ->
@@ -1607,7 +1958,6 @@ runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
     threadRegistry <- unsafeNewRegistry
     iteratorRegistry <- unsafeNewRegistry
     (tracer, getTrace) <- recordingTracerIORef
-    varCurSlot <- uncheckedNewTVarM 0
     varNextId <- uncheckedNewTVarM 0
     nodeDBs <- emptyNodeDBs
     varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
@@ -1632,13 +1982,12 @@ runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
               ChainDBEnv
                 { varDB
                 , registry = iteratorRegistry
-                , varCurSlot
                 , varNextId
                 , varVolatileDbFs = nodeDBsVol nodeDBs
                 , varLoEFragment
                 , args
                 }
-            sm' = sm loe env (genBlk chunkInfo) testCfg testInitExtLedger
+            sm' = sm loe env (genBlk chunkInfo loe) testCfg testInitExtLedger
         (hist, model, res) <- QSM.runCommands' sm' cmds'
         trace <- getTrace
         return (hist, model, res, trace)
@@ -1660,27 +2009,37 @@ runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
     fses <- atomically $ traverse readTMVar nodeDBs
     let
       modelChain = Model.currentChain $ dbModel model
+      secParam = configSecurityParam testCfg
+      hasImmutableBlocks = not (Chain.null (Model.immutableChain secParam (dbModel model)))
+      hasVolatileBlocks = not (AF.null (Model.volatileChain secParam id (dbModel model)))
       prop =
-        counterexample (show (configSecurityParam testCfg)) $
-          counterexample ("Model chain: " <> condense modelChain) $
-            counterexample ("TraceEvents: " <> unlines (map show trace)) $
-              tabulate "Chain length" [show (Chain.length modelChain)] $
-                tabulate "TraceEvents" (map traceEventName trace) $
-                  res
-                    === Ok
-                    .&&. prop_trace testCfg (dbModel model) trace
-                    .&&. counterexample
-                      "ImmutableDB is leaking file handles"
-                      (Mock.numOpenHandles (nodeDBsImm fses) === 0)
-                    .&&. counterexample
-                      "VolatileDB is leaking file handles"
-                      (Mock.numOpenHandles (nodeDBsVol fses) === 0)
-                    .&&. counterexample
-                      "LedgerDB is leaking file handles"
-                      (Mock.numOpenHandles (nodeDBsLgr fses) === 0)
-                    .&&. counterexample
-                      "There were registered clean-up actions"
-                      (remainingCleanups === 0)
+        counterexample (show (configSecurityParam testCfg))
+          $ counterexample ("Model chain: " <> condense modelChain)
+          $ counterexample ("TraceEvents: " <> unlines (map show trace))
+          $ tabulate "Chain length" [show (Chain.length modelChain)]
+          $ tabulate
+            "Chain composition (has immutable blocks, has volatile blocks)"
+            [show (hasImmutableBlocks, hasVolatileBlocks)]
+          $ tabulate "Security Parameter (k)" [show secParam]
+          $ tabulate
+            "Chain length >= k"
+            [show (Chain.length modelChain >= fromIntegral (unNonZero (maxRollbacks secParam)))]
+          $ tabulate "TraceEvents" (map traceEventName trace)
+          $ res
+            === Ok
+            .&&. prop_trace testCfg (dbModel model) trace
+            .&&. counterexample
+              "ImmutableDB is leaking file handles"
+              (Mock.numOpenHandles (nodeDBsImm fses) === 0)
+            .&&. counterexample
+              "VolatileDB is leaking file handles"
+              (Mock.numOpenHandles (nodeDBsVol fses) === 0)
+            .&&. counterexample
+              "LedgerDB is leaking file handles"
+              (Mock.numOpenHandles (nodeDBsLgr fses) === 0)
+            .&&. counterexample
+              "There were registered clean-up actions"
+              (remainingCleanups === 0)
     return (hist, prop)
 
 prop_trace :: TopLevelConfig Blk -> DBModel Blk -> [TraceEvent Blk] -> Property
@@ -1762,8 +2121,10 @@ traceEventName = \case
   TraceLedgerDBEvent ev -> "Ledger." <> constrName ev
   TraceImmutableDBEvent ev -> "ImmutableDB." <> constrName ev
   TraceVolatileDBEvent ev -> "VolatileDB." <> constrName ev
+  TracePerasCertDbEvent ev -> "PerasCertDB." <> constrName ev
   TraceLastShutdownUnclean -> "LastShutdownUnclean"
   TraceChainSelStarvationEvent ev -> "ChainSelStarvation." <> constrName ev
+  TraceAddPerasCertEvent ev -> "AddPerasCert." <> constrName ev
 
 mkArgs ::
   IOLike m =>

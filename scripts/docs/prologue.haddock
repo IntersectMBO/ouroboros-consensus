@@ -30,6 +30,8 @@ implementation of consensus.
 
     * "Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator"
 
+    * "Ouroboros.Consensus.Ledger.Tables"
+
 * Mempool: "Ouroboros.Consensus.Mempool.API"
 
 * Protocol:

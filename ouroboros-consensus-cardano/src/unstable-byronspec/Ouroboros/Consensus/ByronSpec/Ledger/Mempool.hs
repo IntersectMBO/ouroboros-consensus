@@ -50,18 +50,21 @@ instance LedgerSupportsMempool ByronSpecBlock where
       $ GenTx.apply cfg (unByronSpecGenTx tx) st
 
   -- Byron spec doesn't have multiple validation modes
-  reapplyTx _ cfg slot vtx st =
-    attachEmptyDiffs . applyDiffs st . fst
+  reapplyTx cfg slot vtx st =
+    applyDiffs st . fst
       <$> applyTx cfg DoNotIntervene slot (forgetValidatedByronSpecGenTx vtx) st
 
   txForgetValidated = forgetValidatedByronSpecGenTx
 
   getTransactionKeySets _ = emptyLedgerTables
 
+  mkMempoolApplyTxError = nothingMkMempoolApplyTxError
+
 instance TxLimits ByronSpecBlock where
   type TxMeasure ByronSpecBlock = IgnoringOverflow ByteSize32
 
   -- Dummy values, as these are not used in practice.
+  txWireSize = const . fromIntegral $ (0 :: Int)
   blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 1
-  ebCapacityTxMeasure _ _ = Nothing
+
   txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0

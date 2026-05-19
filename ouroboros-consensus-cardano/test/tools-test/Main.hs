@@ -14,8 +14,8 @@ import Test.Tasty.HUnit
 import Test.Util.TestEnv
 
 nodeConfig, chainDB :: FilePath
-nodeConfig = "test/tools-test/disk/config/config.json"
-chainDB = "test/tools-test/disk/chaindb"
+nodeConfig = "ouroboros-consensus-cardano/test/tools-test/disk/config/config.json"
+chainDB = "ouroboros-consensus-cardano/test/tools-test/disk/chaindb"
 
 testSynthOptionsCreate :: DBSynthesizerOptions
 testSynthOptionsCreate =
@@ -44,7 +44,7 @@ testNodeCredentials =
     { credCertFile = Nothing
     , credVRFFile = Nothing
     , credKESFile = Nothing
-    , credBulkFile = Just "test/tools-test/disk/config/bulk-creds-k2.json"
+    , credBulkFile = Just "ouroboros-consensus-cardano/test/tools-test/disk/config/bulk-creds-k2.json"
     }
 
 testImmutaliserConfig :: DBImmutaliser.Opts

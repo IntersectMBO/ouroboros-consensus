@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , getEnv
   , getEnv1
   , getEnv2
+  , getEnvTrans2
   , getEnvSTM
   , getEnvSTM1
 
@@ -55,6 +56,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , ChainSelMessage (..)
   , ChainSelQueue -- opaque
   , addBlockToAdd
+  , addPerasCertToQueue
   , addReprocessLoEBlocks
   , closeChainSelQueue
   , getChainSelMessage
@@ -66,6 +68,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
     -- * Trace types
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
+  , TraceAddPerasCertEvent (..)
   , TraceChainSelStarvationEvent (..)
   , TraceCopyToImmutableDBEvent (..)
   , TraceEvent (..)
@@ -79,31 +82,34 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   ) where
 
 import Control.Monad (when)
+import Control.Monad.Trans.Class
+import Control.RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Foldable (traverse_)
 import Data.Map.Strict (Map)
-import Data.Maybe (mapMaybe)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
-import Data.Set (Set)
 import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.SelectView (WeightedSelectView)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
+  , AddPerasCertPromise (..)
   , ChainDbError (..)
   , ChainSelectionPromise (..)
   , ChainType
@@ -125,6 +131,8 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , LedgerDbSerialiseConstraints
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDB)
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB
   ( VolatileDB
@@ -132,12 +140,14 @@ import Ouroboros.Consensus.Storage.VolatileDB
   )
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (Fuse)
+import Ouroboros.Consensus.Util.AnchoredFragment (ReasonForSwitch')
 import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.STM (WithFingerprint)
-import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import Ouroboros.Network.AnchoredFragment (Anchor, AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block (MaxSlotNo (..))
 import Ouroboros.Network.BlockFetch.ConsensusInterface
@@ -170,6 +180,17 @@ getEnv (CDBHandle varState) f =
     ChainDbOpen env -> f env
     ChainDbClosed -> throwIO $ ClosedDBError @blk prettyCallStack
 
+getEnvTrans ::
+  forall m blk r.
+  (IOLike m, HasCallStack, HasHeader blk) =>
+  ChainDbHandle m blk ->
+  (ChainDbEnv m blk -> WithEarlyExit m r) ->
+  WithEarlyExit m r
+getEnvTrans (CDBHandle varState) f =
+  lift (atomically (readTVar varState)) >>= \case
+    ChainDbOpen env -> f env
+    ChainDbClosed -> lift $ throwIO $ ClosedDBError @blk prettyCallStack
+
 -- | Variant 'of 'getEnv' for functions taking one argument.
 getEnv1 ::
   (IOLike m, HasCallStack, HasHeader blk) =>
@@ -188,6 +209,16 @@ getEnv2 ::
   b ->
   m r
 getEnv2 h f a b = getEnv h (\env -> f env a b)
+
+-- | Variant 'of 'getEnv' for functions taking two arguments.
+getEnvTrans2 ::
+  (IOLike m, HasCallStack, HasHeader blk) =>
+  ChainDbHandle m blk ->
+  (ChainDbEnv m blk -> a -> b -> WithEarlyExit m r) ->
+  a ->
+  b ->
+  WithEarlyExit m r
+getEnvTrans2 h f a b = getEnvTrans h (\env -> f env a b)
 
 -- | Variant of 'getEnv' that works in 'STM'.
 getEnvSTM ::
@@ -263,6 +294,7 @@ checkInternalChain (InternalChain cur curWithTime) =
 
 data ChainDbEnv m blk = CDB
   { cdbImmutableDB :: !(ImmutableDB m blk)
+  , cdbImmutableDBLock :: !(RAWLock m ())
   , cdbVolatileDB :: !(VolatileDB m blk)
   , cdbLedgerDB :: !(LedgerDB' m blk)
   , cdbChain :: !(StrictTVar m (InternalChain blk))
@@ -326,7 +358,6 @@ data ChainDbEnv m blk = CDB
   -- not when hashes are garbage-collected from the map.
   , cdbNextIteratorKey :: !(StrictTVar m IteratorKey)
   , cdbNextFollowerKey :: !(StrictTVar m FollowerKey)
-  , cdbCopyFuse :: !(Fuse m)
   , cdbChainSelFuse :: !(Fuse m)
   , cdbTracer :: !(Tracer m (TraceEvent blk))
   , cdbRegistry :: !(ResourceRegistry m)
@@ -350,6 +381,7 @@ data ChainDbEnv m blk = CDB
   , cdbChainSelStarvation :: !(StrictTVar m ChainSelStarvation)
   -- ^ Information on the last starvation of ChainSel, whether ongoing or
   -- ended recently.
+  , cdbPerasCertDB :: !(PerasCertDB m blk)
   }
   deriving Generic
 
@@ -425,8 +457,11 @@ newtype FollowerKey = FollowerKey Word
 data FollowerHandle m blk = FollowerHandle
   { fhChainType :: ChainType
   -- ^ Whether we follow the tentative chain.
-  , fhSwitchFork :: Point blk -> Set (Point blk) -> STM m ()
+  , fhSwitchFork :: AnchoredFragment (Header blk) -> STM m ()
   -- ^ When we have switched to a fork, all open 'Follower's must be notified.
+  --
+  -- Receives the suffix of the old chain anchored at the intersection with the
+  -- new chain.
   , fhClose :: m ()
   -- ^ When closing the ChainDB, we must also close all open 'Follower's, as
   -- they might be holding on to resources.
@@ -543,6 +578,11 @@ data BlockToAdd m blk = BlockToAdd
 data ChainSelMessage m blk
   = -- | Add a new block
     ChainSelAddBlock !(BlockToAdd m blk)
+  | -- | Add a Peras certificate
+    ChainSelAddPerasCert
+      !(WithArrivalTime (ValidatedPerasCert blk))
+      -- | Used for 'AddPerasCertPromise'.
+      !(StrictTMVar m ())
   | -- | Reprocess blocks that have been postponed by the LoE.
     ChainSelReprocessLoEBlocks
       -- | Used for 'ChainSelectionPromise'.
@@ -591,6 +631,27 @@ addBlockToAdd tracer (ChainSelQueue{varChainSelQueue, varChainSelPoints}) punish
       , blockProcessed = readTMVar varBlockProcessed
       }
 
+-- | Add a Peras certificate to the background queue.
+addPerasCertToQueue ::
+  IOLike m =>
+  Tracer m (TraceAddPerasCertEvent blk) ->
+  ChainSelQueue m blk ->
+  WithArrivalTime (ValidatedPerasCert blk) ->
+  m (AddPerasCertPromise m)
+addPerasCertToQueue tracer ChainSelQueue{varChainSelQueue} cert = do
+  varProcessed <- newEmptyTMVarIO
+  traceWith tracer $ addedToQueue RisingEdge
+  queueSize <- atomically $ do
+    writeTBQueue varChainSelQueue $ ChainSelAddPerasCert cert varProcessed
+    lengthTBQueue varChainSelQueue
+  traceWith tracer $ addedToQueue $ FallingEdgeWith $ fromIntegral queueSize
+  pure
+    AddPerasCertPromise
+      { waitPerasCertProcessed = atomically $ readTMVar varProcessed
+      }
+ where
+  addedToQueue = AddedPerasCertToQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
+
 -- | Try to add blocks again that were postponed due to the LoE.
 addReprocessLoEBlocks ::
   IOLike m =>
@@ -600,10 +661,13 @@ addReprocessLoEBlocks ::
 addReprocessLoEBlocks tracer ChainSelQueue{varChainSelQueue} = do
   varProcessed <- newEmptyTMVarIO
   let waitUntilRan = atomically $ readTMVar varProcessed
-  traceWith tracer $ AddedReprocessLoEBlocksToQueue
-  atomically $
+  traceWith tracer $ AddedReprocessLoEBlocksToQueue RisingEdge
+  queueSize <- atomically $ do
     writeTBQueue varChainSelQueue $
       ChainSelReprocessLoEBlocks varProcessed
+    lengthTBQueue varChainSelQueue
+  traceWith tracer $
+    AddedReprocessLoEBlocksToQueue (FallingEdgeWith (fromIntegral queueSize))
   return $ ChainSelectionPromise waitUntilRan
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
@@ -617,7 +681,7 @@ getChainSelMessage ::
   ChainSelQueue m blk ->
   m (ChainSelMessage m blk)
 getChainSelMessage starvationTracer starvationVar chainSelQueue =
-  atomically (tryReadTBQueue' queue) >>= \case
+  atomically (tryReadTBQueue queue) >>= \case
     Just msg -> pure msg
     Nothing -> do
       startStarvationMeasure
@@ -642,28 +706,21 @@ getChainSelMessage starvationTracer starvationVar chainSelQueue =
       let pt = blockRealPoint block
       traceWith starvationTracer $ ChainSelStarvation (FallingEdgeWith pt)
       atomically . writeTVar starvationVar . ChainSelStarvationEndedAt =<< getMonotonicTime
+    ChainSelAddPerasCert{} -> pure ()
     ChainSelReprocessLoEBlocks{} -> pure ()
-
--- TODO Can't use tryReadTBQueue from io-classes because it is broken for IOSim
--- (but not for IO). https://github.com/input-output-hk/io-sim/issues/195
-tryReadTBQueue' :: MonadSTM m => TBQueue m a -> STM m (Maybe a)
-tryReadTBQueue' q = (Just <$> readTBQueue q) `orElse` pure Nothing
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
 closeChainSelQueue ChainSelQueue{varChainSelQueue = queue} = do
-  as <- mapMaybe blockAdd <$> flushTBQueue queue
-  traverse_
-    ( \a ->
-        tryPutTMVar
-          (varBlockProcessed a)
-          (FailedToAddBlock "Queue flushed")
-    )
-    as
+  traverse_ deliverPromise =<< flushTBQueue queue
  where
-  blockAdd = \case
-    ChainSelAddBlock ab -> Just ab
-    ChainSelReprocessLoEBlocks _ -> Nothing
+  deliverPromise = \case
+    ChainSelAddBlock ab ->
+      tryPutTMVar (varBlockProcessed ab) (FailedToAddBlock "Queue flushed")
+    ChainSelAddPerasCert _cert varProcessed ->
+      tryPutTMVar varProcessed ()
+    ChainSelReprocessLoEBlocks varProcessed ->
+      tryPutTMVar varProcessed ()
 
 -- | To invoke when the given 'ChainSelMessage' has been processed by ChainSel.
 -- This is used to remove the respective point from the multiset of points in
@@ -676,6 +733,8 @@ processedChainSelMessage ::
 processedChainSelMessage ChainSelQueue{varChainSelPoints} = \case
   ChainSelAddBlock BlockToAdd{blockToAdd = blk} ->
     modifyTVar varChainSelPoints $ MultiSet.delete (blockRealPoint blk)
+  ChainSelAddPerasCert{} ->
+    pure ()
   ChainSelReprocessLoEBlocks{} ->
     pure ()
 
@@ -717,20 +776,17 @@ data TraceEvent blk
   | TraceLedgerDBEvent (LedgerDB.TraceEvent blk)
   | TraceImmutableDBEvent (ImmutableDB.TraceEvent blk)
   | TraceVolatileDBEvent (VolatileDB.TraceEvent blk)
+  | TracePerasCertDbEvent (PerasCertDB.TraceEvent blk)
   | TraceLastShutdownUnclean
   | TraceChainSelStarvationEvent (TraceChainSelStarvationEvent blk)
+  | TraceAddPerasCertEvent (TraceAddPerasCertEvent blk)
   deriving Generic
 
-deriving instance
-  ( Eq (Header blk)
-  , LedgerSupportsProtocol blk
-  , InspectLedger blk
-  ) =>
-  Eq (TraceEvent blk)
 deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
+  , Show (TraceAddBlockEvent blk)
   ) =>
   Show (TraceEvent blk)
 
@@ -783,7 +839,7 @@ data SelectionChangedInfo blk = SelectionChangedInfo
   , newTipSlotInEpoch :: Word64
   -- ^ The slot in the epoch, i.e., the relative slot number, of the new
   -- tip.
-  , newTipTrigger :: RealPoint blk
+  , newTipTrigger :: Maybe (RealPoint blk)
   -- ^ The new tip of the current chain ('newTipPoint') is the result of
   -- performing chain selection for a /trigger/ block ('newTipTrigger').
   -- In most cases, we add a new block to the tip of the current chain, in
@@ -793,27 +849,32 @@ data SelectionChangedInfo blk = SelectionChangedInfo
   -- chain being A and having a disconnected C lying around, adding B will
   -- result in A -> B -> C as the new chain. The trigger B /= the new tip
   -- C.
-  , newTipSelectView :: SelectView (BlockProtocol blk)
-  -- ^ The 'SelectView' of the new tip. It is guaranteed that
   --
-  -- > Just newTipSelectView > oldTipSelectView
-  -- True
-  , oldTipSelectView :: Maybe (SelectView (BlockProtocol blk))
-  -- ^ The 'SelectView' of the old, previous tip. This can be 'Nothing' when
-  -- the previous chain/tip was Genesis.
+  -- Due to the Ouroboros Genesis (Limit on Eagerness), chain selection can also
+  -- be triggered without any particular trigger block, in which case this is
+  -- 'Nothing'.
+  , newSuffixSelectView :: WeightedSelectView (BlockProtocol blk)
+  -- ^ The 'WeightedSelectView' of the suffix of our new selection that was not
+  -- already present in the old selection. It is guaranteed that
+  --
+  -- > preferCandidate cfg
+  -- >   (withEmptyFragmentFromMaybe oldSuffixSelectView)
+  -- >   newSuffixSelectView
+  , oldSuffixSelectView :: Maybe (WeightedSelectView (BlockProtocol blk))
+  -- ^ The 'WeightedSelectView' of the orphaned suffix of our old selection.
+  -- This is 'Nothing' when we extended our selection.
   }
   deriving Generic
 
 deriving stock instance
-  (Show (SelectView (BlockProtocol blk)), StandardHash blk) => Show (SelectionChangedInfo blk)
+  (Show (TiebreakerView (BlockProtocol blk)), StandardHash blk) => Show (SelectionChangedInfo blk)
 deriving stock instance
-  (Eq (SelectView (BlockProtocol blk)), StandardHash blk) => Eq (SelectionChangedInfo blk)
+  (Eq (TiebreakerView (BlockProtocol blk)), StandardHash blk) => Eq (SelectionChangedInfo blk)
 
 -- | Trace type for the various events that occur when adding a block.
 data TraceAddBlockEvent blk
-  = -- | A block with a 'BlockNo' more than @k@ back than the current tip was
-    -- ignored.
-    IgnoreBlockOlderThanK (RealPoint blk)
+  = -- | A block with a 'BlockNo' not newer than the immutable tip was ignored.
+    IgnoreBlockOlderThanImmTip (RealPoint blk)
   | -- | A block that is already in the Volatile DB was ignored.
     IgnoreBlockAlreadyInVolatileDB (RealPoint blk)
   | -- | A block that is know to be invalid was ignored.
@@ -821,12 +882,15 @@ data TraceAddBlockEvent blk
   | -- | The block was added to the queue and will be added to the ChainDB by
     -- the background thread. The size of the queue is included.
     AddedBlockToQueue (RealPoint blk) (Enclosing' Word)
+  | -- | Popping a new message for the chain selection background thread from
+    -- the queue.
+    PoppingFromQueue
   | -- | The block popped from the queue and will imminently be added to the
     -- ChainDB.
-    PoppedBlockFromQueue (Enclosing' (RealPoint blk))
+    PoppedBlockFromQueue (RealPoint blk)
   | -- | A message was added to the queue that requests that ChainSel reprocess
-    -- blocks that were postponed by the LoE.
-    AddedReprocessLoEBlocksToQueue
+    -- blocks that were postponed by the LoE. The size of the queue is included.
+    AddedReprocessLoEBlocksToQueue (Enclosing' Word)
   | -- | ChainSel will reprocess blocks that were postponed by the LoE.
     PoppedReprocessLoEBlocksFromQueue
   | -- | A block was added to the Volatile DB
@@ -850,6 +914,7 @@ data TraceAddBlockEvent blk
       (SelectionChangedInfo blk)
       (AnchoredFragment (Header blk))
       (AnchoredFragment (Header blk))
+      (ReasonForSwitch' blk)
   | -- | The new block fits onto some fork and we have switched to that fork
     -- (second fragment), as it is preferable to our (previous) current chain
     -- (first fragment).
@@ -858,6 +923,7 @@ data TraceAddBlockEvent blk
       (SelectionChangedInfo blk)
       (AnchoredFragment (Header blk))
       (AnchoredFragment (Header blk))
+      (ReasonForSwitch' blk)
   | -- | An event traced during validating performed while adding a block.
     AddBlockValidation (TraceValidationEvent blk)
   | -- | The tentative header (in the context of diffusion pipelining) has been
@@ -872,12 +938,14 @@ deriving instance
   ( Eq (Header blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
+  , Eq (ReasonForSwitch' blk)
   ) =>
   Eq (TraceAddBlockEvent blk)
 deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
+  , Show (ReasonForSwitch' blk)
   ) =>
   Show (TraceAddBlockEvent blk)
 
@@ -1020,4 +1088,27 @@ data TraceIteratorEvent blk
 -- The point in the trace is the block that finished the starvation.
 newtype TraceChainSelStarvationEvent blk
   = ChainSelStarvation (Enclosing' (RealPoint blk))
+  deriving (Generic, Eq, Show)
+
+data TraceAddPerasCertEvent blk
+  = -- | The Peras certificate from the given round boosting the given block was
+    -- added to the queue. The size of the queue is included.
+    AddedPerasCertToQueue PerasRoundNo (Point blk) (Enclosing' Word)
+  | -- | The Peras certificate from the given round boosting the given block was
+    -- popped from the queue.
+    PoppedPerasCertFromQueue PerasRoundNo (Point blk)
+  | -- | The Peras certificate from the given round boosting the given block was
+    -- too old, ie its slot was older than the current immutable slot (the third
+    -- argument).
+    IgnorePerasCertTooOld PerasRoundNo (Point blk) (Anchor blk)
+  | -- | The Peras certificate from the given round boosts a block on the
+    -- current selection.
+    PerasCertBoostsCurrentChain PerasRoundNo (Point blk)
+  | -- | The Peras certificate from the given round boosts the Genesis point.
+    PerasCertBoostsGenesis PerasRoundNo
+  | -- | The Peras certificate from the given round boosts a block that we have
+    -- not (yet) received.
+    PerasCertBoostsBlockNotYetReceived PerasRoundNo (Point blk)
+  | -- | Perform chain selection for a block boosted by a Peras certificate.
+    ChainSelectionForBoostedBlock PerasRoundNo (Point blk)
   deriving (Generic, Eq, Show)

@@ -91,10 +91,11 @@ module Test.Util.TestBlock
   , updateToNextNumeral
   ) where
 
+import Cardano.Binary (DecoderError)
 import Cardano.Crypto.DSIGN
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded, unNonZero)
 import Codec.Serialise (Serialise (..), serialise)
-import Control.DeepSeq (force)
+import Control.DeepSeq (NFData, force)
 import Control.Monad (guard, replicateM, replicateM_)
 import Control.Monad.Except (throwError)
 import qualified Data.Binary.Get as Get
@@ -134,11 +135,14 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
+import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
 import Ouroboros.Consensus.Protocol.MockChainSel
@@ -201,7 +205,7 @@ newtype TestHash = UnsafeTestHash
   { unTestHash :: NonEmpty Word64
   }
   deriving stock Generic
-  deriving newtype (Eq, Ord, Serialise, ToExpr)
+  deriving newtype (Eq, Ord, Serialise, ToExpr, NFData)
   deriving anyclass NoThunks
 
 pattern TestHash :: NonEmpty Word64 -> TestHash
@@ -245,8 +249,6 @@ data TestBlockWith ptype = TestBlockWith
   }
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass (Serialise, NoThunks, ToExpr)
-
-instance ResolveLeiosBlock (TestBlockWith a) -- FIXME
 
 -- | Create a block directly with the given parameters. This allows creating
 -- inconsistent blocks; prefer 'firstBlockWithPayload' or 'successorBlockWithPayload'.
@@ -693,6 +695,8 @@ instance PayloadSemantics ptype => LedgerSupportsProtocol (TestBlockWith ptype) 
   ledgerViewForecastAt cfg state =
     constantForecastInRange (strictMaybeToMaybe (tblcForecastRange cfg)) () (getTipSlot state)
 
+instance LedgerSupportsPeras (TestBlockWith ptype)
+
 singleNodeTestConfigWith ::
   CodecConfig (TestBlockWith ptype) ->
   StorageConfig (TestBlockWith ptype) ->
@@ -716,7 +720,6 @@ singleNodeTestConfigWith codecConfig storageConfig k genesisWindow =
     , topLevelConfigCodec = codecConfig
     , topLevelConfigStorage = storageConfig
     , topLevelConfigCheckpoints = emptyCheckpointsMap
-    , topLevelConfigVotingKey = Nothing
     }
  where
   slotLength :: SlotLength
@@ -862,15 +865,21 @@ treeToBlocks = Tree.flatten . blockTree
 treeToChains :: BlockTree -> [Chain TestBlock]
 treeToChains = map Chain.fromOldestFirst . allPaths . blockTree
 
-treePreferredChain :: BlockTree -> Chain TestBlock
-treePreferredChain =
+treePreferredChain ::
+  PerasWeightSnapshot TestBlock ->
+  BlockTree ->
+  Chain TestBlock
+treePreferredChain weights =
   fromMaybe Genesis
     . selectUnvalidatedChain
       (Proxy @(BlockProtocol TestBlock))
       (() :: ChainOrderConfig (SelectView (BlockProtocol TestBlock)))
-      blockNo
+      (weightedSelectView bcfg weights . Chain.toAnchoredFragment . fmap getHeader)
       Genesis
     . treeToChains
+ where
+  -- inconsequential for this function
+  bcfg = TestBlockConfig (NumCoreNodes 0)
 
 instance Show BlockTree where
   show (BlockTree t) = Tree.drawTree (fmap show t)
@@ -993,8 +1002,11 @@ instance ConvertRawHash (TestBlockWith ptype) where
     pure $ TestHash h
 
 instance Serialise ptype => EncodeDisk (TestBlockWith ptype) (TestBlockWith ptype)
-instance Serialise ptype => DecodeDisk (TestBlockWith ptype) (BL.ByteString -> TestBlockWith ptype) where
-  decodeDisk _ = const <$> decode
+instance
+  Serialise ptype =>
+  DecodeDisk (TestBlockWith ptype) (BL.ByteString -> Either DecoderError (TestBlockWith ptype))
+  where
+  decodeDisk _ = const . Right <$> decode
 
 instance Serialise ptype => EncodeDisk (TestBlockWith ptype) (Header (TestBlockWith ptype))
 instance Serialise ptype => DecodeDisk (TestBlockWith ptype) (BL.ByteString -> Header (TestBlockWith ptype)) where

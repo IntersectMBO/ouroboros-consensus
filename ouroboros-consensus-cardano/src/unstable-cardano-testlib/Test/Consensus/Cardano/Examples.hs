@@ -87,6 +87,7 @@ eraExamples =
     :* Shelley.examplesAlonzo
     :* Shelley.examplesBabbage
     :* Shelley.examplesConway
+    :* Shelley.examplesDijkstra
     :* Nil
 
 -- | By using this function, we can't forget to update this test when adding a
@@ -164,7 +165,10 @@ combineEras perEraExamples =
                     (ShelleyPartialLedgerConfig lcAlonzo (TriggerHardForkAtEpoch (History.boundEpoch babbageStartBound)))
                   :* WrapPartialLedgerConfig
                     (ShelleyPartialLedgerConfig lcBabbage (TriggerHardForkAtEpoch (History.boundEpoch conwayStartBound)))
-                  :* WrapPartialLedgerConfig (ShelleyPartialLedgerConfig lcConway TriggerHardForkNotDuringThisExecution)
+                  :* WrapPartialLedgerConfig
+                    (ShelleyPartialLedgerConfig lcConway (TriggerHardForkAtEpoch (History.boundEpoch dijkstraStartBound)))
+                  :* WrapPartialLedgerConfig
+                    (ShelleyPartialLedgerConfig lcDijkstra TriggerHardForkNotDuringThisExecution)
                   :* Nil
               )
           )
@@ -176,6 +180,7 @@ combineEras perEraExamples =
     , WrapLedgerConfig lcAlonzo <- labelledLcAlonzo
     , WrapLedgerConfig lcBabbage <- labelledLcBabbage
     , WrapLedgerConfig lcConway <- labelledLcConway
+    , WrapLedgerConfig lcDijkstra <- labelledLcDijkstra
     ]
    where
     ( Comp labelledLcByron
@@ -185,6 +190,7 @@ combineEras perEraExamples =
         :* Comp labelledLcAlonzo
         :* Comp labelledLcBabbage
         :* Comp labelledLcConway
+        :* Comp labelledLcDijkstra
         :* Nil
       ) = hmap (Comp . fmap (WrapLedgerConfig . snd) . exampleLedgerConfig) perEraExamples
 
@@ -270,9 +276,12 @@ babbageEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
 conwayEraParams :: History.EraParams
 conwayEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
 
+dijkstraEraParams :: History.EraParams
+dijkstraEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+
 -- | We use 10, 20, 30, 40, ... as the transition epochs
 shelleyTransitionEpoch :: EpochNo
-shelleyTransitionEpoch = 10
+shelleyTransitionEpoch = EpochNo 10
 
 byronStartBound :: History.Bound
 byronStartBound = History.initBound
@@ -289,35 +298,42 @@ allegraStartBound =
   History.mkUpperBound
     shelleyEraParams
     shelleyStartBound
-    20
+    (EpochNo 20)
 
 maryStartBound :: History.Bound
 maryStartBound =
   History.mkUpperBound
     allegraEraParams
     allegraStartBound
-    30
+    (EpochNo 30)
 
 alonzoStartBound :: History.Bound
 alonzoStartBound =
   History.mkUpperBound
     maryEraParams
     maryStartBound
-    40
+    (EpochNo 40)
 
 babbageStartBound :: History.Bound
 babbageStartBound =
   History.mkUpperBound
     alonzoEraParams
     alonzoStartBound
-    50
+    (EpochNo 50)
 
 conwayStartBound :: History.Bound
 conwayStartBound =
   History.mkUpperBound
     alonzoEraParams
     alonzoStartBound
-    60
+    (EpochNo 60)
+
+dijkstraStartBound :: History.Bound
+dijkstraStartBound =
+  History.mkUpperBound
+    alonzoEraParams
+    alonzoStartBound
+    (EpochNo 70)
 
 exampleStartBounds :: Exactly (CardanoEras Crypto) History.Bound
 exampleStartBounds =
@@ -329,6 +345,7 @@ exampleStartBounds =
         :* K alonzoStartBound
         :* K babbageStartBound
         :* K conwayStartBound
+        :* K dijkstraStartBound
         :* Nil
     )
 
@@ -343,6 +360,7 @@ cardanoShape =
           :* K alonzoEraParams
           :* K babbageEraParams
           :* K conwayEraParams
+          :* K dijkstraEraParams
           :* Nil
       )
 
@@ -365,6 +383,7 @@ codecConfig :: CardanoCodecConfig Crypto
 codecConfig =
   CardanoCodecConfig
     Byron.codecConfig
+    Shelley.ShelleyCodecConfig
     Shelley.ShelleyCodecConfig
     Shelley.ShelleyCodecConfig
     Shelley.ShelleyCodecConfig

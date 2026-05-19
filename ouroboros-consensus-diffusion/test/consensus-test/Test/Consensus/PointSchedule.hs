@@ -1,11 +1,15 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- | Data types and generators for point schedules.
 --
@@ -28,6 +32,7 @@ module Test.Consensus.PointSchedule
   , GenesisTest (..)
   , GenesisTestFull
   , GenesisWindow (..)
+  , HasPointScheduleTestParams (..)
   , LoPBucketParams (..)
   , PeerSchedule
   , PointSchedule (..)
@@ -45,6 +50,8 @@ module Test.Consensus.PointSchedule
   , prettyPointSchedule
   , stToGen
   , uniformPoints
+  , ChainSyncTimeout (..)
+  , timeLimitsChainSync
   ) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
@@ -63,14 +70,22 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import Data.Time (DiffTime)
 import Data.Word (Word64)
-import Ouroboros.Consensus.Block.Abstract (withOriginToMaybe)
+import Network.TypedProtocol
+import Ouroboros.Consensus.Block.Abstract
+  ( HasHeader
+  , withOriginToMaybe
+  )
+import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( GenesisWindow (..)
   )
-import Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
+import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo)
 import Ouroboros.Consensus.Protocol.Abstract
   ( SecurityParam (SecurityParam)
   , maxRollbacks
+  )
+import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
+  ( ChunkInfo
   )
 import Ouroboros.Consensus.Util.Condense
   ( CondenseList (..)
@@ -79,7 +94,9 @@ import Ouroboros.Consensus.Util.Condense
   )
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block (SlotNo (..), blockSlot)
+import Ouroboros.Network.Driver.Limits (ProtocolTimeLimits (..))
 import Ouroboros.Network.Point (withOrigin)
+import Ouroboros.Network.Protocol.ChainSync.Type
 import System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import qualified System.Random.Stateful as Random
 import Test.Consensus.BlockTree
@@ -116,8 +133,7 @@ import Test.Consensus.PointSchedule.SinglePeer.Indices
 import Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
 import Test.QuickCheck (Gen, arbitrary)
 import Test.QuickCheck.Random (QCGen)
-import Test.Util.TersePrinting (terseFragment)
-import Test.Util.TestBlock (TestBlock)
+import Test.Util.TersePrinting (Terse, terseFragment)
 import Text.Printf (printf)
 
 prettyPointSchedule ::
@@ -555,6 +571,44 @@ data BlockFetchTimeout = BlockFetchTimeout
   , streamingTimeout :: Maybe DiffTime
   }
 
+-- | Configurable chain-sync timeouts
+data ChainSyncTimeout = ChainSyncTimeout
+  { canAwaitTimeout :: Maybe DiffTime
+  , intersectTimeout :: Maybe DiffTime
+  , mustReplyTimeout :: Maybe DiffTime
+  , idleTimeout :: Maybe DiffTime
+  }
+
+-- | Time Limits
+--
+-- > 'TokIdle'               'waitForever' (ie never times out)
+-- > 'TokNext TokCanAwait'   the given 'canAwaitTimeout'
+-- > 'TokNext TokMustReply'  the given 'mustReplyTimeout'
+-- > 'TokIntersect'          the given 'intersectTimeout'
+timeLimitsChainSync ::
+  forall header point tip.
+  ChainSyncTimeout ->
+  ProtocolTimeLimits (ChainSync header point tip)
+timeLimitsChainSync csTimeouts = ProtocolTimeLimits stateToLimit
+ where
+  ChainSyncTimeout
+    { canAwaitTimeout
+    , intersectTimeout
+    , mustReplyTimeout
+    , idleTimeout
+    } = csTimeouts
+
+  stateToLimit ::
+    forall (st :: ChainSync header point tip).
+    ActiveState st =>
+    StateToken st ->
+    Maybe DiffTime
+  stateToLimit SingIdle = idleTimeout
+  stateToLimit (SingNext SingCanAwait) = canAwaitTimeout
+  stateToLimit (SingNext SingMustReply) = mustReplyTimeout
+  stateToLimit SingIntersect = intersectTimeout
+  stateToLimit a@SingDone = notActiveState a
+
 -- | All the data used by point schedule tests.
 data GenesisTest blk schedule = GenesisTest
   { gtSecurityParam :: SecurityParam
@@ -580,12 +634,13 @@ data GenesisTest blk schedule = GenesisTest
 type GenesisTestFull blk = GenesisTest blk (PointSchedule blk)
 
 -- | All the data describing the result of a test
-data RunGenesisTestResult = RunGenesisTestResult
+data RunGenesisTestResult blk = RunGenesisTestResult
   { rgtrTrace :: String
-  , rgtrStateView :: StateView TestBlock
+  , rgtrStateView :: StateView blk
   }
 
-prettyGenesisTest :: (schedule -> [String]) -> GenesisTest TestBlock schedule -> [String]
+prettyGenesisTest ::
+  (HasHeader blk, Terse blk) => (schedule -> [String]) -> GenesisTest blk schedule -> [String]
 prettyGenesisTest prettySchedule genesisTest =
   [ "GenesisTest:"
   , "  gtSecurityParam: " ++ show (maxRollbacks gtSecurityParam)
@@ -654,20 +709,38 @@ ensureScheduleDuration gt PointSchedule{psSchedule, psStartOrder, psMinEndTime} 
     }
  where
   endingDelay =
-    let cst = gtChainSyncTimeouts gt
-        bft = gtBlockFetchTimeouts gt
-        bfGracePeriodDelay = fromIntegral adversaryCount * 10
-     in 1
-          + bfGracePeriodDelay
-          + fromIntegral peerCount
-            * maximum
-              ( 0
-                  : catMaybes
-                    [ canAwaitTimeout cst
-                    , intersectTimeout cst
-                    , busyTimeout bft
-                    , streamingTimeout bft
-                    ]
-              )
+    let
+      cst = gtChainSyncTimeouts gt
+      bft = gtBlockFetchTimeouts gt
+      bfGracePeriodDelay = fromIntegral adversaryCount * 10
+     in
+      1
+        + bfGracePeriodDelay
+        + fromIntegral peerCount
+          * maximum
+            ( 0
+                : catMaybes
+                  [ canAwaitTimeout cst
+                  , intersectTimeout cst
+                  , busyTimeout bft
+                  , streamingTimeout bft
+                  ]
+            )
   peerCount = length (peersList psSchedule)
   adversaryCount = Map.size (adversarialPeers psSchedule)
+
+-- | This class exists to house some of the functions required of a block
+-- type in order to be used by point schedule tests in 'nodeLifecycle'. It
+-- was introduced to help generalize the tests from TestBlocks to live block
+-- types. It has no laws, and all these functions have in common is that
+-- they provide bits of state required to run the tests that did not already
+-- have a class to live in.
+class HasPointScheduleTestParams blk where
+  data ProtocolInfoArgs blk
+
+  -- | The requirement of 'IO' comes from needing to parse configuration files.
+  getProtocolInfoArgs :: IO (ProtocolInfoArgs blk)
+
+  mkProtocolInfo ::
+    SecurityParam -> ForecastRange -> GenesisWindow -> ProtocolInfoArgs blk -> ProtocolInfo blk
+  getChunkInfoFromTopLevelConfig :: TopLevelConfig blk -> ChunkInfo

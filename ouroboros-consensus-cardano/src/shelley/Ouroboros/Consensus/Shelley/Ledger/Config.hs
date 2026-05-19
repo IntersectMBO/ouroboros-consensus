@@ -52,8 +52,8 @@ data instance BlockConfig (ShelleyBlock proto era) = ShelleyConfig
   , shelleyNetworkMagic :: !NetworkMagic
   , shelleyBlockIssuerVKeys ::
       !( Map
-           (SL.KeyHash 'SL.BlockIssuer)
-           (SL.VKey 'SL.BlockIssuer)
+           (SL.KeyHash SL.BlockIssuer)
+           (SL.VKey SL.BlockIssuer)
        )
   -- ^ For nodes that can produce blocks, this should be set to the
   -- verification key(s) corresponding to the node's signing key(s). For non
@@ -70,7 +70,7 @@ mkShelleyBlockConfig ::
   ShelleyBasedEra era =>
   SL.ProtVer ->
   SL.ShelleyGenesis ->
-  [SL.VKey 'SL.BlockIssuer] ->
+  [SL.VKey SL.BlockIssuer] ->
   BlockConfig (ShelleyBlock proto era)
 mkShelleyBlockConfig protVer genesis blockIssuerVKeys =
   ShelleyConfig

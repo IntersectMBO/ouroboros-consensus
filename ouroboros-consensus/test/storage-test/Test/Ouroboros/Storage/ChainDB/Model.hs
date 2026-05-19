@@ -25,6 +25,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , addBlock
   , addBlockPromise
   , addBlocks
+  , addPerasCert
   , empty
 
     -- * Queries
@@ -33,7 +34,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , getBlock
   , getBlockByPoint
   , getBlockComponentByPoint
-  , getDbChangelog
+  , getLatestPerasCertOnChainRound
   , getIsValid
   , getLoEFragment
   , getMaxSlotNo
@@ -45,7 +46,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , invalid
   , isOpen
   , isValid
-  , lastK
+  , maxPerasRoundNo
   , tipBlock
   , tipPoint
   , volatileChain
@@ -84,17 +85,14 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , wipeVolatileDB
   ) where
 
-import Cardano.Ledger.BaseTypes
-  ( knownNonZeroBounded
-  , nonZeroOr
-  , unNonZero
-  )
+import Cardano.Ledger.BaseTypes (unNonZero)
 import Codec.Serialise (Serialise, serialise)
 import Control.Monad (unless)
 import Control.Monad.Except (runExcept)
 import Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Containers.ListUtils (nubOrdOn)
+import Data.Foldable (foldMap')
 import Data.Function (on, (&))
 import Data.Functor (($>), (<&>))
 import Data.List (isInfixOf, isPrefixOf, sortBy)
@@ -105,14 +103,17 @@ import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.TreeDiff
-import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.SelectView
+import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.MockChainSel
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -127,13 +128,8 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   , UnknownRange (..)
   , validBounds
   )
-import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
+import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanImmTip)
 import Ouroboros.Consensus.Storage.Common ()
-import Ouroboros.Consensus.Storage.LedgerDB.API
-  ( LedgerDbCfgF (..)
-  , LedgerDbPrune (..)
-  )
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
 import Ouroboros.Consensus.Util.IOLike (MonadSTM)
@@ -155,6 +151,7 @@ data Model blk = Model
   -- ^ The VolatileDB
   , immutableDbChain :: Chain blk
   -- ^ The ImmutableDB
+  , perasCerts :: Map PerasRoundNo (WithArrivalTime (ValidatedPerasCert blk))
   , cps :: CPS.ChainProducerState blk
   , currentLedger :: ExtLedgerState blk EmptyMK
   , initLedger :: ExtLedgerState blk EmptyMK
@@ -225,6 +222,13 @@ getBlockComponentByPoint blockComponent pt m =
   Right $
     (`getBlockComponent` blockComponent) <$> getBlockByPoint pt m
 
+getLatestPerasCertOnChainRound ::
+  LedgerSupportsPeras blk =>
+  Model blk ->
+  Maybe PerasRoundNo
+getLatestPerasCertOnChainRound m = do
+  getLatestPerasCertRound (ledgerState (currentLedger m))
+
 hasBlockByPoint ::
   HasHeader blk =>
   Point blk -> Model blk -> Bool
@@ -241,64 +245,70 @@ tipPoint = maybe GenesisPoint blockPoint . tipBlock
 getMaxSlotNo :: HasHeader blk => Model blk -> MaxSlotNo
 getMaxSlotNo = foldMap (MaxSlotNo . blockSlot) . blocks
 
-lastK ::
-  HasHeader a =>
-  SecurityParam ->
-  -- | Provided since `AnchoredFragment` is not a functor
-  (blk -> a) ->
-  Model blk ->
-  AnchoredFragment a
-lastK (SecurityParam k) f =
-  Fragment.anchorNewest (unNonZero k)
-    . Chain.toAnchoredFragment
-    . fmap f
-    . currentChain
-
--- | Actual number of blocks that can be rolled back. Equal to @k@, except
--- when:
+-- | Actual amount of weight that can be rolled back. This can non-trivially
+-- smaller than @k@ in the following cases:
 --
--- * Near genesis, the chain might not be @k@ blocks long yet.
--- * After VolatileDB corruption, the whole chain might be >= @k@ blocks, but
---   the tip of the ImmutableDB might be closer than @k@ blocks away from the
---   current chain's tip.
-maxActualRollback :: HasHeader blk => SecurityParam -> Model blk -> Word64
+-- * Near genesis, the chain might not have grown sufficiently yet.
+-- * After VolatileDB corruption, the whole chain might have more than weight
+--   @k@, but the tip of the ImmutableDB might be buried under significantly
+--   less than weight @k@ worth of blocks.
+maxActualRollback :: HasHeader blk => SecurityParam -> Model blk -> PerasWeight
 maxActualRollback k m =
-  fromIntegral
-    . length
+  foldMap' (weightBoostOfPoint weights)
     . takeWhile (/= immutableTipPoint)
     . map blockPoint
     . Chain.toNewestFirst
     . currentChain
     $ m
  where
+  weights = perasWeights m
+
   immutableTipPoint = Chain.headPoint (immutableChain k m)
 
 -- | Return the immutable prefix of the current chain.
 --
 -- This is the longest of the given two chains:
 --
--- 1. The current chain with the last @k@ blocks dropped.
+-- 1. The current chain with the longest suffix of weight at most @k@ dropped.
 -- 2. The chain formed by the blocks in 'immutableDbChain', i.e., the
 --    \"ImmutableDB\". We need to take this case in consideration because the
 --    VolatileDB might have been wiped.
 --
--- We need this because we do not allow rolling back more than @k@ blocks, but
+-- We need this because we do not allow rolling back more than weight @k@, but
 -- the background thread copying blocks from the VolatileDB to the ImmutableDB
 -- might not have caught up yet. This means we cannot use the tip of the
 -- ImmutableDB to know the most recent \"immutable\" block.
 immutableChain ::
+  forall blk.
+  HasHeader blk =>
   SecurityParam ->
   Model blk ->
   Chain blk
-immutableChain (SecurityParam k) m =
+immutableChain k m =
   maxBy
+    -- As one of the two chains is a prefix of the other, Peras weight doesn't
+    -- matter here.
     Chain.length
-    (Chain.drop (fromIntegral $ unNonZero k) (currentChain m))
+    (dropAtMostWeight (maxRollbackWeight k) (currentChain m))
     (immutableDbChain m)
  where
   maxBy f a b
     | f a >= f b = a
     | otherwise = b
+
+  weights = perasWeights m
+
+  -- Drop the longest suffix with at most the given weight.
+  dropAtMostWeight :: PerasWeight -> Chain blk -> Chain blk
+  dropAtMostWeight budget = go mempty
+   where
+    go w = \case
+      Genesis -> Genesis
+      c@(c' :> b)
+        | w' <= budget -> go w' c'
+        | otherwise -> c
+       where
+        w' = w <> PerasWeight 1 <> weightBoostOfPoint weights (blockPoint b)
 
 -- | Return the volatile suffix of the current chain.
 --
@@ -306,7 +316,7 @@ immutableChain (SecurityParam k) m =
 --
 -- This is the shortest of the given two chain fragments:
 --
--- 1. The last @k@ blocks of the current chain.
+-- 1. The longest suffix of the current chain with weight at most @k@.
 -- 2. The suffix of the current chain not part of the 'immutableDbChain', i.e.,
 --    the \"ImmutableDB\".
 volatileChain ::
@@ -375,37 +385,18 @@ isValid ::
   Maybe Bool
 isValid = flip getIsValid
 
-getDbChangelog ::
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (LedgerState blk)) =>
-  TopLevelConfig blk ->
-  Model blk ->
-  DbChangelog.DbChangelog' blk
-getDbChangelog cfg m@Model{..} =
-  DbChangelog.prune tip
-    . DbChangelog.reapplyThenPushMany' ledgerDbCfg blks
-    $ DbChangelog.empty initLedger
- where
-  blks = Chain.toOldestFirst $ currentChain m
-
-  k = configSecurityParam cfg
-
-  ledgerDbCfg =
-    LedgerDbCfg
-      { ledgerDbCfgSecParam = k
-      , ledgerDbCfg = ExtLedgerCfg cfg
-      , ledgerDbCfgComputeLedgerEvents = OmitLedgerEvents
-      }
-
-  tip =
-    case maxActualRollback k m of
-      0 -> LedgerDbPruneAll
-      n ->
-        -- Since we know that @`n`@ is not zero, it is impossible for `nonZeroOr`
-        -- to return a `Nothing` and the final result to have default value of @`1`@.
-        LedgerDbPruneKeeping $ SecurityParam $ nonZeroOr n $ knownNonZeroBounded @1
-
 getLoEFragment :: Model blk -> LoE (AnchoredFragment blk)
 getLoEFragment = loeFragment
+
+perasWeights :: StandardHash blk => Model blk -> PerasWeightSnapshot blk
+perasWeights =
+  mkPerasWeightSnapshot
+    . fmap (\cert -> (getPerasCertBoostedBlock cert, getPerasCertBoost cert))
+    . Map.elems
+    . perasCerts
+
+maxPerasRoundNo :: Model blk -> Maybe PerasRoundNo
+maxPerasRoundNo m = fst <$> Map.lookupMax (perasCerts m)
 
 {-------------------------------------------------------------------------------
   Construction
@@ -420,6 +411,7 @@ empty loe initLedger =
   Model
     { volatileDbBlocks = Map.empty
     , immutableDbChain = Chain.Genesis
+    , perasCerts = Map.empty
     , cps = CPS.initChainProducerState Chain.Genesis
     , currentLedger = initLedger
     , initLedger = initLedger
@@ -454,10 +446,27 @@ addBlock cfg blk m
   ignoreBlock =
     -- If the block is as old as the tip of the ImmutableDB, i.e. older
     -- than @k@, we ignore it, as we can never switch to it.
-    olderThanK hdr (headerToIsEBB hdr) immBlockNo
+    olderThanImmTip hdr immBlockNo
       ||
       -- If it's an invalid block we've seen before, ignore it.
       Map.member (blockHash blk) (invalid m)
+
+addPerasCert ::
+  forall blk.
+  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  TopLevelConfig blk ->
+  WithArrivalTime (ValidatedPerasCert blk) ->
+  Model blk ->
+  Model blk
+addPerasCert cfg cert m
+  -- Do not alter the model when a certificate for that round already exists.
+  | Map.member certRound (perasCerts m) = m
+  | otherwise =
+      chainSelection
+        cfg
+        m{perasCerts = Map.insert certRound cert (perasCerts m)}
+ where
+  certRound = getPerasCertRound cert
 
 chainSelection ::
   forall blk.
@@ -471,6 +480,7 @@ chainSelection cfg m =
   Model
     { volatileDbBlocks = volatileDbBlocks m
     , immutableDbChain = immutableDbChain m
+    , perasCerts = perasCerts m
     , cps = CPS.switchFork newChain (cps m)
     , currentLedger = newLedger
     , initLedger = initLedger m
@@ -570,7 +580,10 @@ chainSelection cfg m =
       . selectChain
         (Proxy @(BlockProtocol blk))
         (projectChainOrderConfig (configBlock cfg))
-        (selectView (configBlock cfg) . getHeader)
+        ( weightedSelectView (configBlock cfg) (perasWeights m)
+            . Chain.toAnchoredFragment
+            . fmap getHeader
+        )
         (currentChain m)
       $ consideredCandidates
 
@@ -668,11 +681,17 @@ iteratorNext itrId blockComponent m =
     Just (b : bs)
       | blockHash b `Map.member` blocks m ->
           (IteratorResult $ getBlockComponent b blockComponent, updateIter bs)
-    -- The next block `b` was part of a dead fork and has been garbage
-    -- collected.  The system-under-test then closes the iterator, and we set
-    -- the state of the iterator to the empty list to mimic that behaviour.
-    Just (b : _) ->
-      (IteratorBlockGCed $ blockRealPoint b, updateIter [])
+      | otherwise ->
+          -- The next block `b` was part of a dead fork and maybe was garbage
+          -- collected. The system-under-test will keep running the iterator
+          -- until the whole file in which the current block was stored has been
+          -- garbage collected. Here we always return IteratorBlockGCed so that
+          -- the comparison eqIfNotGCed succeeds.
+          --
+          -- We could instead mimic what the SUT does but that requires making
+          -- the model aware of the fact that the SUT removes whole files at
+          -- once, which is an implementation detail.
+          (IteratorBlockGCed $ blockRealPoint b, m)
     Nothing ->
       error "iteratorNext: unknown iterator ID"
  where
@@ -842,14 +861,7 @@ validate cfg Model{initLedger, invalid} chain =
           ledger
           (invalid <> mkInvalid b e)
       -- Valid block according to the ledger
-      Right ledger'
-        -- But the block has been recorded as an invalid block. It must be
-        -- that it exceeded the clock skew in the past.
-        | Map.member (blockHash b) invalid ->
-            ValidatedChain validPrefix ledger invalid
-        -- This is the good path
-        | otherwise ->
-            go (convertMapKind ledger') (validPrefix :> b) bs'
+      Right ledger' -> go (convertMapKind ledger') (validPrefix :> b) bs'
 
 chains ::
   forall blk.
@@ -909,7 +921,7 @@ validChains cfg m bs =
   sortChains =
     sortBy $
       flip
-        ( Fragment.compareAnchoredFragments (configBlock cfg)
+        ( Fragment.compareAnchoredFragments (configBlock cfg) (perasWeights m)
             `on` (Chain.toAnchoredFragment . fmap getHeader)
         )
 
@@ -945,7 +957,11 @@ between k from to m = do
   fork <- errFork
   -- See #871.
   if partOfCurrentChain fork
-    || Fragment.forksAtMostKBlocks (maxActualRollback k m) currentFrag fork
+    || Fragment.forksAtMostKWeight
+      (perasWeights m)
+      (maxActualRollback k m)
+      currentFrag
+      fork
     then return $ Fragment.toOldestFirst fork
     -- We cannot stream from an old fork
     else Left $ ForkTooOld from
@@ -1085,6 +1101,8 @@ garbageCollect ::
 garbageCollect secParam m@Model{..} =
   m
     { volatileDbBlocks = Map.filter (not . collectable) volatileDbBlocks
+    -- TODO garbage collection Peras certs?
+    -- See https://github.com/tweag/cardano-peras/issues/121
     }
  where
   -- TODO what about iterators that will stream garbage collected blocks?
@@ -1124,6 +1142,8 @@ closeDB m@Model{..} =
 reopen :: Model blk -> Model blk
 reopen m = m{isOpen = True}
 
+-- TODO: update to account for persisted Peras certificates.
+-- see https://github.com/tweag/cardano-peras/issues/122
 wipeVolatileDB ::
   forall blk.
   (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
@@ -1136,6 +1156,7 @@ wipeVolatileDB cfg m =
   m' =
     (closeDB m)
       { volatileDbBlocks = Map.empty
+      , perasCerts = Map.empty
       , cps = CPS.switchFork newChain (cps m)
       , currentLedger = newLedger
       , invalid = Map.empty
@@ -1154,7 +1175,11 @@ wipeVolatileDB cfg m =
       $ selectChain
         (Proxy @(BlockProtocol blk))
         (projectChainOrderConfig (configBlock cfg))
-        (selectView (configBlock cfg) . getHeader)
+        -- Weight is inconsequential as there is only a single candidate.
+        ( weightedSelectView (configBlock cfg) emptyPerasWeightSnapshot
+            . Chain.toAnchoredFragment
+            . fmap getHeader
+        )
         Chain.genesis
       $ snd
       $ validChains cfg m (immutableDbBlocks m)

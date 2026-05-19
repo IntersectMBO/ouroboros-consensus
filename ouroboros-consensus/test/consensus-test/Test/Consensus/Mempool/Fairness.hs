@@ -32,6 +32,8 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
+import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (..))
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util.IOLike (STM, atomically, retry)
 import System.Random (randomIO)
 import Test.Consensus.Mempool.Fairness.TestBlock
@@ -97,21 +99,31 @@ testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOf
       Mempool.LedgerInterface
         { Mempool.getCurrentLedgerState =
             pure $
-              testInitLedgerWithState NoPayLoadDependentState
-        , Mempool.getLedgerTablesAtFor = \_ _ ->
-            pure $
-              Just emptyLedgerTables
+              MempoolLedgerDBView
+                (testInitLedgerWithState NoPayLoadDependentState)
+                ( pure $
+                    Right $
+                      ReadOnlyForker
+                        { roforkerClose = pure ()
+                        , roforkerReadTables = const $ pure emptyLedgerTables
+                        , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
+                        , roforkerGetLedgerState = pure $ testInitLedgerWithState NoPayLoadDependentState
+                        , roforkerReadStatistics = pure $ Statistics 0
+                        }
+                )
         }
 
     eraParams =
       HardFork.defaultEraParams
         (Consensus.SecurityParam $ knownNonZeroBounded @10)
         (Time.slotLengthFromSec 2)
+
   mempool <-
     Mempool.openMempoolWithoutSyncThread
       ledgerItf
       (testBlockLedgerConfigFrom eraParams)
       (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
+      (Nothing :: Maybe Mempool.MempoolTimeoutConfig)
       Tracer.nullTracer
   ----------------------------------------------------------------------------
   --  Add and collect transactions

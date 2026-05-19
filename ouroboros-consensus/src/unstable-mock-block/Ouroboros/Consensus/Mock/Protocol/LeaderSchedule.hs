@@ -36,7 +36,7 @@ data instance ConsensusConfig (WithLeaderSchedule p) = WLSConfig
   deriving Generic
 
 instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
-  type SelectView (WithLeaderSchedule p) = SelectView p
+  type TiebreakerView (WithLeaderSchedule p) = TiebreakerView p
 
   type ChainDepState (WithLeaderSchedule p) = ()
   type LedgerView (WithLeaderSchedule p) = ()

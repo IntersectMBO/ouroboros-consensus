@@ -19,7 +19,7 @@ import Options.Applicative
   , short
   , (<**>)
   )
-import Paths_ouroboros_consensus_cardano (version)
+import Paths_ouroboros_consensus (version)
 
 parseOptions :: IO Options
 parseOptions = execParser argsParser

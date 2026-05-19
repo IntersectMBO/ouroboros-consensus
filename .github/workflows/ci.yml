@@ -19,6 +19,8 @@ on:
         type: boolean
         default: false
   pull_request:
+    # re-evaluate the workflow when labels are added or removed.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   merge_group:
   push:
     branches:
@@ -32,13 +34,39 @@ on:
     - cron: "0 0 1 * *"
 
 jobs:
+  # This aggregated job is necessary to make the 'skip-tests' label work consistently
+  # with branch protection rules.
+  #
+  # Set this job as the required check in branch protection rules instead of
+  # the individual "Build and test" matrix jobs. It reports success when tests
+  # pass or are intentionally skipped via the 'skip-tests' label.
+  ci-success-or-skipped:
+    name: All CI Jobs Successful or Skipped
+    needs: [build-test-bench-haddocks, benchmarks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          build="${{ needs.build-test-bench-haddocks.result }}"
+          bench="${{ needs.benchmarks.result }}"
+          for r in "$build" "$bench"; do
+            if [[ "$r" != "success" && "$r" != "skipped" ]]; then
+              echo "Job failed with result: $r"
+              exit 1
+            fi
+          done
+          echo "All jobs passed or were intentionally skipped."
+
   build-test-bench-haddocks:
     name: Build and test
+    # skip building testing and benchmarking if the PR has the 'skip-tests' label attached
+    if: >-
+      !contains(github.event.pull_request.labels.*.name, 'skip-tests')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.6.6"]
+        ghc: ["9.6.7", "9.10.3", "9.12.2", "9.14.1"]
         variant: [default, no-thunks]
         test-set: [all, no-thunks-safe]
         exclude:
@@ -50,10 +78,15 @@ jobs:
       # Modify this value to "invalidate" the Cabal cache.
       CABAL_CACHE_VERSION: "2024-07-04"
 
-      CABAL: "3.12.1.0"
+      CABAL: "3.16.1.0"
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
+
+    - name: Check CDDLs up-to-date with Blueprints
+      continue-on-error: true
+      run: |
+        ./scripts/ci/diff-cddls.sh
 
     - name: Install base libraries
       uses: input-output-hk/actions/base@latest
@@ -108,7 +141,7 @@ jobs:
     # Otherwise, we could restore a cache from a previous month, which makes
     # caches grow unboundedly.
     - name: "Restore cache for cabal-store"
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v5
       id: restore-cabal-store
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
@@ -128,7 +161,7 @@ jobs:
     #
     # See https://github.com/actions/cache/tree/v3/save#always-save-cache.
     - name: "Save cache for cabal-store"
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v5
       id: save-cabal-store
       if: steps.build-dependencies.outcome == 'success' && steps.restore-cabal-store.outputs.cache-hit != 'true'
       with:
@@ -138,20 +171,38 @@ jobs:
     - name: Build projects [build]
       run: cabal build all -j
 
+    - name: Install Ruby for CDDL
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.4'
+        bundler-cache: true
+
+    - name: Install cddl tools
+      if: matrix.ghc != '9.14.1'
+      run: |
+        gem install cddlc
+        cabal install cuddle-1.2.0.0 --index-state="2026-02-23T15:03:19Z" --ignore-project
+
+    - name: Install cddl tools (9.14)
+      if: matrix.ghc == '9.14.1'
+      run: |
+        gem install cddlc
+        cabal install cuddle-1.2.0.0 --allow-newer --index-state="2026-02-23T15:03:19Z" --ignore-project
+
     - name: Test
       if: matrix.test-set == 'all'
-      run: cabal test all -j --test-show-details=streaming
+      run: cabal test all -j --test-show-details=streaming --test-options '--hide-successes'
 
     - name: Test (NoThunks-safe tests only)
       if: matrix.test-set == 'no-thunks-safe'
-      run: cabal test ouroboros-consensus:consensus-test ouroboros-consensus:doctest ouroboros-consensus:infra-test ouroboros-consensus:storage-test ouroboros-consensus-cardano:byron-test ouroboros-consensus-cardano:shelley-test ouroboros-consensus-diffusion:infra-test ouroboros-consensus-protocol:protocol-test -j --test-show-details=streaming
+      run: cabal test ouroboros-consensus:consensus-test ouroboros-consensus:doctest ouroboros-consensus:consensus-infra-test ouroboros-consensus:storage-test ouroboros-consensus:byron-test ouroboros-consensus:shelley-test ouroboros-consensus:diffusion-infra-test ouroboros-consensus:protocol-test -j --test-show-details=streaming
 
     - name: Identify benchmark executables
       run: |
         cp $(cabal list-bin mempool-bench) mempool-bench
 
     - name: Upload benchmark executables
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: benchmark-exes-${{ runner.os }}-${{ matrix.ghc }}
         path: mempool-bench
@@ -163,7 +214,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.10.1'
+        && matrix.ghc=='9.10.3'
       run: |
         # need for latex, dvisvgm and standalone
         sudo apt install texlive-latex-extra texlive-latex-base
@@ -178,8 +229,8 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.10.1'
-      uses: actions/upload-artifact@v4
+        && matrix.ghc=='9.10.3'
+      uses: actions/upload-artifact@v7
       with:
         name: haddocks
         path: haddocks.tgz
@@ -193,10 +244,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.6.6"]
+        ghc: ["9.6.7", "9.10.3"]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Install base libraries
       uses: input-output-hk/actions/base@latest
@@ -204,7 +255,7 @@ jobs:
         use-sodium-vrf: false
 
     - name: Download benchmark executables
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: benchmark-exes-${{ runner.os }}-${{ matrix.ghc }}
 
@@ -228,7 +279,7 @@ jobs:
     # run on the `main` branch. If we run this workflow in the context of a PR,
     # then we will save the same results we just restored.
     - name: Cache benchmark baseline results
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: baseline-mempool-benchmarks.csv
         key:  baseline-mempool-benchmarks-${{ runner.os }}-${{ matrix.ghc }}-${{ github.run_id }}
@@ -242,7 +293,7 @@ jobs:
     # TODO: this will be necessary when we publish the benchmarks results.
     # - name: Upload mempool benchmark baseline results
     #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    #   uses: actions/upload-artifact@v4
+    #   uses: actions/upload-artifact@v7
     #   with:
     #     name: baseline-mempool-benchmarks
     #     path: baseline-mempool-benchmarks.csv
@@ -262,22 +313,34 @@ jobs:
           echo "Benchmarks comparison skipped."
         fi
 
-  deploy-documentation:
-    name: Deploy documentation to GitHub Pages
+  deploy-website:
+    name: Deploy website to GitHub Pages
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build-test-bench-haddocks
     runs-on: ubuntu-latest
+    # Most run steps (yarn install, yarn build, nix build) operate on the
+    # Docusaurus project, so we default to its directory. The haddock
+    # extraction step overrides this to run from the repo root, because the
+    # tarball contains paths relative to the repo root
+    # (./docs/website/static/haddocks/...).
     defaults:
       run:
         working-directory: ./docs/website
-    strategy:
-       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - name: Download haddocks
+        uses: actions/download-artifact@v8
         with:
-          node-version: 18
+          name: haddocks
+
+      - name: Extract haddocks into static directory
+        working-directory: .
+        run: tar vzxf haddocks.tgz
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
           cache: yarn
           cache-dependency-path: './docs/website/yarn.lock'
 
@@ -291,29 +354,19 @@ jobs:
           nix build -L .#consensus-pdfs
           cp -r --no-preserve=mode,ownership result/ static/pdfs
 
-      - name: Download haddocks
-        uses: actions/download-artifact@v4
-        with:
-          name: haddocks
-
-      - name: Copy haddocks
-        run: |
-          cd ../../
-          tar vzxf haddocks.tgz
-
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
       - name: Build website
         run: yarn build
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: ./docs/website/build
 
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
     # https://github.com/actions/deploy-pages
     permissions:

@@ -2,6 +2,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -65,11 +66,11 @@ import Test.Util.QuickCheck
 -- General approach:
 --
 -- * Generate a chain of events
--- * Each event records its own 'RelativeTime', 'SlotNo', and 'EpochNo'
+-- * Each event records its own 'RelativeTime', 'SlotNo', 'EpochNo', and 'PerasRoundNo'
 -- * We then construct a 'HF.Summary' from a /prefix/ of this chain
 -- * We then pick an arbitrary event from the (full) chain:
 --   a. If that event is on the prefix of the chain, or within the safe zone, we
---      expect to be able to do any slot/epoch or slot/time conversion, and we
+--      expect to be able to do any slot/epoch, slot/time or Peras round/slot conversion, and we
 --      can easily verify the result by comparing it to the values the 'Event'
 --      itself reports.
 --   b. If the event is outside of safe zone, we expect the conversion to throw
@@ -96,6 +97,7 @@ tests =
         , testProperty "eventWallclockToSlot" eventWallclockToSlot
         , testProperty "epochInfoSlotToEpoch" epochInfoSlotToEpoch
         , testProperty "epochInfoEpochToSlot" epochInfoEpochToSlot
+        , testProperty "eventPerasRoundNoToSlot" eventPerasRoundNoToSlot
         , testProperty "query vs expr" queryVsExprConsistency
         ]
     ]
@@ -207,6 +209,20 @@ eventWallclockToSlot chain@ArbitraryChain{..} =
 
   diff :: NominalDiffTime
   diff = arbitraryDiffTime arbitraryParams
+
+eventPerasRoundNoToSlot :: ArbitraryChain -> Property
+eventPerasRoundNoToSlot chain@ArbitraryChain{..} =
+  testSkeleton chain (HF.perasRoundNoToSlot eventTimePerasRoundNo) $
+    \case
+      HF.NoPerasEnabled -> property True
+      HF.PerasEnabled (startOfPerasRound, roundLength) ->
+        conjoin
+          [ eventTimeSlot
+              === (HF.addSlots eventTimeSlotInPerasRound startOfPerasRound)
+          , eventTimeSlotInPerasRound `lt` (unPerasRoundLength roundLength)
+          ]
+ where
+  EventTime{..} = eventTime arbitraryEvent
 
 -- | Composing queries should be equivalent to composing expressions.
 --
@@ -503,7 +519,13 @@ data EventTime = EventTime
   { eventTimeSlot :: SlotNo
   , eventTimeEpochNo :: EpochNo
   , eventTimeEpochSlot :: Word64
+  -- ^ Relative slot within the current epoch round,
+  --   needed to be able to advance the epoch number
   , eventTimeRelative :: RelativeTime
+  , eventTimePerasRoundNo :: PerasRoundNo
+  , eventTimeSlotInPerasRound :: Word64
+  -- ^ Relative slot within the current Peras round,
+  --   needed to be able to advance the round number
   }
   deriving Show
 
@@ -514,6 +536,8 @@ initEventTime =
     , eventTimeEpochNo = EpochNo 0
     , eventTimeEpochSlot = 0
     , eventTimeRelative = RelativeTime 0
+    , eventTimePerasRoundNo = PerasRoundNo 0
+    , eventTimeSlotInPerasRound = 0
     }
 
 -- | Next time slot
@@ -526,6 +550,8 @@ stepEventTime HF.EraParams{..} EventTime{..} =
     , eventTimeRelative =
         addRelTime (getSlotLength eraSlotLength) $
           eventTimeRelative
+    , eventTimePerasRoundNo = perasRoundNo'
+    , eventTimeSlotInPerasRound = slotInPerasRound'
     }
  where
   epoch' :: EpochNo
@@ -534,6 +560,16 @@ stepEventTime HF.EraParams{..} EventTime{..} =
     if succ eventTimeEpochSlot == unEpochSize eraEpochSize
       then (succ eventTimeEpochNo, 0)
       else (eventTimeEpochNo, succ eventTimeEpochSlot)
+
+  perasRoundNo' :: PerasRoundNo
+  slotInPerasRound' :: Word64
+  args@(perasRoundNo', slotInPerasRound') =
+    case eraPerasRoundLength of
+      HF.NoPerasEnabled -> args
+      HF.PerasEnabled (PerasRoundLength perasRoundLength) ->
+        if succ eventTimeSlotInPerasRound == perasRoundLength
+          then (succ eventTimePerasRoundNo, 0)
+          else (eventTimePerasRoundNo, succ eventTimeSlotInPerasRound)
 
 {-------------------------------------------------------------------------------
   Chain model

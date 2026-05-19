@@ -194,7 +194,7 @@ decodeDepPair ::
   GenDepPair Serialised (f blk) ->
   Decoder s (DepPair (f blk))
 decodeDepPair ccfg (GenDepPair fa serialised) =
-  DepPair fa <$> fromSerialised (decodeDiskDep ccfg fa) serialised
+  DepPair fa <$> fromSerialised ((Right .) <$> decodeDiskDep ccfg fa) serialised
 
 instance EncodeDiskDepIx f blk => EncodeDisk blk (GenDepPair Serialised (f blk)) where
   encodeDisk ccfg (GenDepPair fa serialised) =

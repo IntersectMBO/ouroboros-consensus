@@ -2,10 +2,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -102,16 +100,17 @@ simpleBlockForging aCanBeLeader aForgeExt =
     , canBeLeader = aCanBeLeader
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \ForgeBlockArgs{..} ->
-        return . (,Nothing) $
+    , forgeBlock = \cfg bno slot lst txs proof ->
+        return $
           forgeSimple
             aForgeExt
-            fbConfig
-            fbCurrentBlockNo
-            fbCurrentSlotNo
-            fbCurrentTickedLedgerState
-            (txForgetValidated <$> fbRbTxs)
-            fbIsLeader
+            cfg
+            bno
+            slot
+            lst
+            (map txForgetValidated txs)
+            proof
+    , finalize = pure ()
     }
  where
   _ = keepRedundantConstraint (Proxy @(ForgeStateUpdateError (SimpleBlock c ext) ~ Void))

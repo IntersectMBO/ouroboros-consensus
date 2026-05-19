@@ -5,7 +5,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -15,6 +14,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -39,19 +39,23 @@ module Test.ThreadNet.Network
   , NodeDBs (..)
   , NodeOutput (..)
   , TestOutput (..)
-  , TraceThreadNet (..)
-  , TraceThreadNetNode (..)
-  , mkTestOutput
-  , LeiosState (..)
   ) where
 
-import Cardano.Network.PeerSelection.Bootstrap
-  ( UseBootstrapPeers (..)
+import Cardano.Network.NodeToNode
+  ( ConnectionId (..)
+  , ExpandedInitiatorContext (..)
+  , IsBigLedgerPeer (..)
+  , MiniProtocolParameters (..)
+  , ResponderContext (..)
+  )
+import Cardano.Network.PeerSelection
+  ( PeerTrustable (..)
+  , UseBootstrapPeers (..)
   )
 import Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
-import qualified Control.Concurrent.Class.MonadSTM.Strict as Unchecked
+import Control.DeepSeq (NFData)
 import qualified Control.Exception as Exn
 import Control.Monad
 import Control.Monad.Class.MonadTime.SI (MonadTime)
@@ -62,23 +66,22 @@ import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor.Contravariant ((>$<))
 import Data.Functor.Identity (Identity)
-import qualified Data.IntMap as IntMap
 import qualified Data.List as List
+import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
 import Data.Void (Void)
-import GHC.Generics (Generic)
+import GHC.Generics
 import GHC.Stack
-import LeiosDemoDb
-  ( InMemoryLeiosDb
-  , emptyInMemoryLeiosDb
-  , newLeiosDBInMemoryWith
+import Network.TypedProtocol.Codec
+  ( AnyMessage (..)
+  , CodecFailure
+  , mapFailureCodec
   )
-import LeiosDemoTypes (ForgedLeiosEb, TraceLeiosKernel, TraceLeiosPeer)
-import Network.TypedProtocol.Codec (CodecFailure, mapFailureCodec)
 import qualified Network.TypedProtocol.Codec as Codec
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -115,6 +118,7 @@ import Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense
+import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -128,27 +132,29 @@ import Ouroboros.Network.BlockFetch
   )
 import Ouroboros.Network.Channel
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
-import Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
 import Ouroboros.Network.Mock.Chain (Chain (Genesis))
-import Ouroboros.Network.NodeToNode
-  ( ConnectionId (..)
-  , ExpandedInitiatorContext (..)
-  , IsBigLedgerPeer (..)
-  , MiniProtocolParameters (..)
-  , ResponderContext (..)
-  )
 import Ouroboros.Network.PeerSelection.Governor
   ( makePublicPeerSelectionStateVar
   )
 import Ouroboros.Network.PeerSelection.PeerMetric (nullMetric)
 import Ouroboros.Network.Point (WithOrigin (..))
 import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
-import Ouroboros.Network.Protocol.Limits (waitForever)
+import Ouroboros.Network.Protocol.KeepAlive.Type
+import Ouroboros.Network.Protocol.Limits (ProtocolTimeLimitsWithRnd (..), waitForever)
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
-import Ouroboros.Network.TxSubmission.Outbound (TraceTxSubmissionOutbound)
+import Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
+import Ouroboros.Network.Protocol.TxSubmission2.Type
+import Ouroboros.Network.TxSubmission.Inbound.V2
+  ( TxSubmissionInitDelay (..)
+  , TxSubmissionLogicVersion (..)
+  )
+import Ouroboros.Network.TxSubmission.Inbound.V2.Policy
+  ( TxDecisionPolicy (..)
+  , defaultTxDecisionPolicy
+  )
 import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
-import System.Random (mkStdGen, split)
+import System.Random (mkStdGen, splitGen)
 import Test.ThreadNet.TxGen
 import Test.ThreadNet.Util.NodeJoinPlan
 import Test.ThreadNet.Util.NodeRestarts
@@ -186,7 +192,7 @@ instance Show (ForgeEbbEnv blk) where
 type RekeyM m blk =
   CoreNodeId ->
   ProtocolInfo blk ->
-  m [BlockForging m blk] ->
+  m [MkBlockForging m blk] ->
   -- | The slot in which the node is rekeying
   SlotNo ->
   -- | Which epoch the slot is in
@@ -207,12 +213,12 @@ data TestNodeInitialization m blk = TestNodeInitialization
   -- that determines which transactions will be included in the block it's
   -- about to forge.
   , tniProtocolInfo :: ProtocolInfo blk
-  , tniBlockForging :: m [BlockForging m blk]
+  , tniBlockForging :: m [MkBlockForging m blk]
   }
 
 plainTestNodeInitialization ::
   ProtocolInfo blk ->
-  m [BlockForging m blk] ->
+  m [MkBlockForging m blk] ->
   TestNodeInitialization m blk
 plainTestNodeInitialization pInfo blockForging =
   TestNodeInitialization
@@ -254,6 +260,7 @@ data ThreadNetworkArgs m blk = ThreadNetworkArgs
   , tnaTxGenExtra :: TxGenExtra blk
   , tnaVersion :: NodeToNodeVersion
   , tnaBlockVersion :: BlockNodeToNodeVersion blk
+  , tnaTxLogicVersion :: TxSubmissionLogicVersion
   }
 
 {-------------------------------------------------------------------------------
@@ -321,15 +328,11 @@ runThreadNetwork ::
   , MonadTimer m
   , RunNode blk
   , TxGen blk
-  , -- TODO:, TracingConstraints blk
-    HasCallStack
+  , TracingConstraints blk
+  , HasCallStack
   ) =>
-  Tracer m (TraceThreadNet blk) ->
-  SystemTime m ->
-  ThreadNetworkArgs m blk ->
-  m (TestOutput blk)
+  SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
 runThreadNetwork
-  baseTracer
   systemTime
   ThreadNetworkArgs
     { tnaForgeEbbEnv = mbForgeEbbEnv
@@ -346,6 +349,7 @@ runThreadNetwork
     , tnaTxGenExtra = txGenExtra
     , tnaVersion = version
     , tnaBlockVersion = blockVersion
+    , tnaTxLogicVersion = txLogicVersion
     } = withRegistry $ \sharedRegistry -> do
     mbRekeyM <- sequence mbMkRekeyM
 
@@ -402,7 +406,7 @@ runThreadNetwork
           sharedRegistry
           clock
           -- traces when/why the mini protocol instances start and stop
-          nullTracer
+          nullDebugTracer
           (version, blockVersion)
           (codecConfig, calcMessageDelay)
           vertexStatusVars
@@ -487,7 +491,7 @@ runThreadNetwork
       CoreNodeId ->
       VertexStatusVar m blk ->
       [EdgeStatusVar m] ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (Unchecked.StrictTVar m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
       StrictTVar m SlotNo ->
       m ()
     forkVertex
@@ -519,20 +523,20 @@ runThreadNetwork
         loop ::
           SlotNo ->
           ProtocolInfo blk ->
-          m [BlockForging m blk] ->
+          m [MkBlockForging m blk] ->
           NodeRestart ->
           Map SlotNo NodeRestart ->
           m ()
-        loop s pInfo blockForging nr rs = do
+        loop s pInfo mkBlockForging nr rs = do
           -- a registry solely for the resources of this specific node instance
           (again, finalChain, finalLdgr) <- withRegistry $ \nodeRegistry -> do
             -- change the node's key and prepare a delegation transaction if
             -- the node is restarting because it just rekeyed
             tni' <- case (nr, mbRekeyM) of
               (NodeRekey, Just rekeyM) -> do
-                rekeyM coreNodeId pInfo blockForging s (pure . HFF.futureSlotToEpoch future)
+                rekeyM coreNodeId pInfo mkBlockForging s (pure . HFF.futureSlotToEpoch future)
               _ ->
-                pure $ plainTestNodeInitialization pInfo blockForging
+                pure $ plainTestNodeInitialization pInfo mkBlockForging
             let TestNodeInitialization
                   { tniCrucialTxs = crucialTxs'
                   , tniProtocolInfo = pInfo'
@@ -611,7 +615,7 @@ runThreadNetwork
       OracularClock m ->
       ResourceRegistry m ->
       VertexStatusVar m blk ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (Unchecked.StrictTVar m) ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
       StrictTVar m SlotNo ->
       m ()
     forkInstrumentation
@@ -642,21 +646,21 @@ runThreadNetwork
       HasCallStack =>
       OracularClock m ->
       SlotNo ->
-      ResourceRegistry m ->
       (SlotNo -> STM m ()) ->
       STM m (Point blk) ->
-      (ResourceRegistry m -> m (ReadOnlyForker' m blk)) ->
+      ( (ReadOnlyForker' m blk -> WithEarlyExit m (ExtLedgerState blk EmptyMK)) ->
+        m (ExtLedgerState blk EmptyMK)
+      ) ->
       Mempool m blk ->
+      ResourceRegistry m ->
       [GenTx blk] ->
       -- \^ valid transactions the node should immediately propagate
-      m ()
-    forkCrucialTxs clock s0 registry unblockForge getTipPoint mforker mempool txs0 = do
-      void $ forkLinkedThread registry "crucialTxs" $ withRegistry $ \reg -> do
+      m (Thread m Void)
+    forkCrucialTxs clock s0 unblockForge getTipPoint mforker mempool sharedRegistry txs0 = do
+      forkLinkedThread sharedRegistry "crucialTxs" $ do
         let loop (slot, mempFp) = do
-              forker <- mforker reg
-              extLedger <- atomically $ roforkerGetLedgerState forker
+              extLedger <- mforker $ lift . atomically . roforkerGetLedgerState
               let ledger = ledgerState extLedger
-              roforkerClose forker
 
               _ <- addTxs mempool txs0
 
@@ -693,7 +697,7 @@ runThreadNetwork
               -- avoid the race in which we wake up before the mempool's
               -- background thread wakes up by mimicking it before we do
               -- anything else
-              void $ syncWithLedger mempool
+              void $ testSyncWithLedger mempool
 
               loop fps'
         loop (s0, [])
@@ -707,20 +711,20 @@ runThreadNetwork
       OracularClock m ->
       TopLevelConfig blk ->
       Seed ->
-      (ResourceRegistry m -> m (ReadOnlyForker' m blk)) ->
+      ( (ReadOnlyForker' m blk -> WithEarlyExit m (LedgerState blk ValuesMK)) ->
+        m (LedgerState blk ValuesMK)
+      ) ->
       -- \^ How to get the current ledger state
       Mempool m blk ->
       m ()
     forkTxProducer coreNodeId registry clock cfg nodeSeed mforker mempool =
-      void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> withRegistry $ \reg -> do
-        forker <- mforker reg
-        emptySt' <- atomically $ roforkerGetLedgerState forker
-        let emptySt = emptySt'
-            doRangeQuery = roforkerRangeReadTables forker
-        fullLedgerSt <- fmap ledgerState $ do
-          fullUTxO <- doRangeQuery NoPreviousQuery
-          pure $! withLedgerTables emptySt fullUTxO
-        roforkerClose forker
+      void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> do
+        fullLedgerSt <- mforker $ \forker -> lift $ do
+          emptySt <- atomically . roforkerGetLedgerState $ forker
+          let doRangeQuery = roforkerRangeReadTables forker
+          fmap ledgerState $ do
+            (fullUTxO, _) <- doRangeQuery NoPreviousQuery
+            pure $! withLedgerTables emptySt fullUTxO
         -- Combine the node's seed with the current slot number, to make sure
         -- we generate different transactions in each slot.
         let txs =
@@ -765,7 +769,7 @@ runThreadNetwork
                   , mcdbRegistry = registry
                   , mcdbNodeDBs = nodeDBs
                   }
-            tr = instrumentationTracer
+            tr = instrumentationTracer <> nullDebugTracer
          in args
               { cdbImmDbArgs =
                   (cdbImmDbArgs args)
@@ -785,7 +789,7 @@ runThreadNetwork
                   (cdbsArgs args)
                     { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
                       cdbsGcDelay = 0
-                    , cdbsTracer = instrumentationTracer
+                    , cdbsTracer = instrumentationTracer <> nullDebugTracer
                     }
               }
        where
@@ -802,13 +806,13 @@ runThreadNetwork
             (ChainDB.AddedBlockToVolatileDB p bno IsNotEBB FallingEdge) ->
               traceWith addTracer (p, bno)
           ChainDB.TraceAddBlockEvent
-            (ChainDB.AddedToCurrentChain events p _old new) ->
+            (ChainDB.AddedToCurrentChain events p _old new _) ->
               let (warnings, updates) = partitionLedgerEvents events
                in assertWithMsg (noWarnings warnings) $ do
                     mapM_ (traceWith updatesTracer) updates
                     traceWith selTracer (ChainDB.newTipPoint p, prj new)
           ChainDB.TraceAddBlockEvent
-            (ChainDB.SwitchedToAFork events p _old new) ->
+            (ChainDB.SwitchedToAFork events p _old new _) ->
               let (warnings, updates) = partitionLedgerEvents events
                in assertWithMsg (noWarnings warnings) $ do
                     mapM_ (traceWith updatesTracer) updates
@@ -836,21 +840,20 @@ runThreadNetwork
       SlotNo ->
       ResourceRegistry m ->
       ProtocolInfo blk ->
-      m [BlockForging m blk] ->
-      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (Unchecked.StrictTVar m) ->
+      m [MkBlockForging m blk] ->
+      NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
       [GenTx blk] ->
       -- \^ valid transactions the node should immediately propagate
       m
         ( NodeKernel m NodeId Void blk
         , LimitedApp m NodeId blk
         )
-    forkNode coreNodeId clock joinSlot registry pInfo blockForging nodeInfo txs0 = do
+    forkNode coreNodeId clock joinSlot registry pInfo mkBlockForging nodeInfo txs0 = do
       let ProtocolInfo{..} = pInfo
 
       let NodeInfo
             { nodeInfoEvents
             , nodeInfoDBs
-            , nodeInfoLeios
             } = nodeInfo
 
       -- prop_general relies on these tracers
@@ -875,10 +878,99 @@ runThreadNetwork
               pipeliningTracer
               nodeInfoDBs
               coreNodeId
-      leiosDB <- newLeiosDBInMemoryWith (lsLeiosDb nodeInfoLeios)
       chainDB <-
         snd
-          <$> allocate registry (const (ChainDB.openDB leiosDB chainDbArgs)) ChainDB.closeDB
+          <$> allocate registry (const (ChainDB.openDB chainDbArgs)) ChainDB.closeDB
+
+      let customForgeBlock ::
+            BlockForging m blk ->
+            TopLevelConfig blk ->
+            BlockNo ->
+            SlotNo ->
+            TickedLedgerState blk mk ->
+            [Validated (GenTx blk)] ->
+            IsLeader (BlockProtocol blk) ->
+            m blk
+          customForgeBlock origBlockForging cfg' currentBno currentSlot tickedLdgSt txs prf = do
+            let currentEpoch = HFF.futureSlotToEpoch future currentSlot
+
+            -- EBBs are only ever possible in the first era
+            let inFirstEra = HFF.futureEpochInFirstEra future currentEpoch
+
+            let ebbSlot :: SlotNo
+                ebbSlot = SlotNo $ x * y
+                 where
+                  EpochNo x = currentEpoch
+                  EpochSize y = epochSize0
+
+            let p :: Point blk
+                p = castPoint $ getTip tickedLdgSt
+
+            let needEBB = inFirstEra && NotOrigin ebbSlot > pointSlot p
+            case mbForgeEbbEnv <* guard needEBB of
+              Nothing ->
+                -- no EBB needed, forge without making one
+                forgeBlock
+                  origBlockForging
+                  cfg'
+                  currentBno
+                  currentSlot
+                  (forgetLedgerTables tickedLdgSt)
+                  txs
+                  prf
+              Just forgeEbbEnv -> do
+                -- The EBB shares its BlockNo with its predecessor (if
+                -- there is one)
+                let ebbBno = case currentBno of
+                      -- We assume this invariant:
+                      --
+                      -- If forging of EBBs is enabled then the node
+                      -- initialization is responsible for producing any
+                      -- proper non-EBB blocks with block number 0.
+                      --
+                      -- So this case is unreachable.
+                      0 -> error "Error, only node initialization can forge non-EBB with block number 0."
+                      n -> pred n
+                let ebb =
+                      forgeEBB
+                        forgeEbbEnv
+                        pInfoConfig
+                        ebbSlot
+                        ebbBno
+                        (pointHash p)
+
+                -- fail if the EBB is invalid
+                -- if it is valid, we retick to the /same/ slot
+                let apply = applyLedgerBlock OmitLedgerEvents (configLedger pInfoConfig)
+                    tables = emptyLedgerTables -- EBBs need no input tables
+                tickedLdgSt' <- case Exc.runExcept $ apply ebb (tickedLdgSt `withLedgerTables` tables) of
+                  Left e -> Exn.throw $ JitEbbError @blk e
+                  Right st ->
+                    pure $
+                      applyChainTick
+                        OmitLedgerEvents
+                        (configLedger pInfoConfig)
+                        currentSlot
+                        (forgetLedgerTables st)
+
+                -- forge the block usings the ledger state that includes
+                -- the EBB
+                blk <-
+                  forgeBlock
+                    origBlockForging
+                    cfg'
+                    currentBno
+                    currentSlot
+                    (forgetLedgerTables tickedLdgSt')
+                    txs
+                    prf
+
+                -- If the EBB or the subsequent block is invalid, then the
+                -- ChainDB will reject it as invalid, and
+                -- 'Test.ThreadNet.General.prop_general' will eventually fail
+                -- because of a block rejection.
+                void $ ChainDB.addBlock chainDB InvalidBlockPunishment.noPunishment ebb
+                pure blk
 
       -- This variable holds the number of the earliest slot in which the
       -- crucial txs have not yet been added. In other words, it holds the
@@ -899,12 +991,10 @@ runThreadNetwork
 
       let
         -- prop_general relies on these tracers
-        nodeTracer = FromNode coreNodeId >$< baseTracer
-        tracers =
+        instrumentationTracers =
           nullTracers
-            { chainSyncClientTracer = Tracer $ \ev -> case ev of
-                TraceLabelPeer _ (CSClient.TraceDownloadedHeader hdr) -> do
-                  traceWith nodeTracer (FromChainSyncClient ev)
+            { chainSyncClientTracer = Tracer $ \case
+                TraceLabelPeer _ (CSClient.TraceDownloadedHeader hdr) ->
                   case blockPoint hdr of
                     GenesisPoint -> pure ()
                     BlockPoint s h ->
@@ -916,17 +1006,13 @@ runThreadNetwork
                 _ -> pure ()
             , forgeTracer = Tracer $ \(TraceLabelCreds _ ev) -> do
                 traceWith (nodeEventsForges nodeInfoEvents) ev
-                traceWith nodeTracer (FromForge ev)
                 case ev of
                   TraceNodeIsLeader s -> atomically $ blockOnCrucial s
                   _ -> pure ()
-            , mempoolTracer = contramap FromMempool nodeTracer
-            , leiosKernelTracer = contramap FromLeios nodeTracer
-            , leiosPeerTracer = contramap FromLeiosPeer nodeTracer
-            , txOutboundTracer = contramap FromTxOutbound nodeTracer
-            , keepAliveClientTracer = contramap FromKeepAliveClient nodeTracer
-            , consensusErrorTracer = contramap FromConsensusError nodeTracer
             }
+
+        -- traces the node's local events other than those from the -- ChainDB
+        tracers = instrumentationTracers <> nullDebugTracers
 
       let
         -- use a backoff delay of exactly one slot length (which the
@@ -967,15 +1053,19 @@ runThreadNetwork
 
       let rng = case seed of
             Seed s -> mkStdGen s
-          (kaRng, psRng) = split rng
+          (kaRng, rng') = splitGen rng
+          (gsmRng, rng'') = splitGen rng'
+          (psRng, rng3) = splitGen rng''
+          (txRng, chainSyncRng) = splitGen rng3
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
-
       let nodeKernelArgs =
             NodeKernelArgs
               { tracers
               , registry
               , cfg = pInfoConfig
+              , featureFlags = mempty
               , btime
+              , systemTime
               , chainDB
               , initChainDB = nodeInitChainDB
               , chainSyncFutureCheck =
@@ -985,14 +1075,17 @@ runThreadNetwork
               , chainSyncHistoricityCheck = \_getGsmState -> HistoricityCheck.noCheck
               , blockFetchSize = estimateBlockSize
               , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
+              , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
+              , txSubmissionRng = txRng
               , miniProtocolParameters =
                   MiniProtocolParameters
                     { chainSyncPipeliningHighMark = 4
                     , chainSyncPipeliningLowMark = 2
                     , blockFetchPipeliningMax = 10
-                    , txSubmissionMaxUnacked = 1000 -- TODO ?
+                    , txDecisionPolicy =
+                        defaultTxDecisionPolicy{maxUnacknowledgedTxIds = 1000} -- TODO ?
                     }
               , blockFetchConfiguration =
                   BlockFetchConfiguration
@@ -1007,7 +1100,7 @@ runThreadNetwork
                     }
               , gsmArgs =
                   GSM.GsmNodeKernelArgs
-                    { gsmAntiThunderingHerd = kaRng
+                    { gsmAntiThunderingHerd = gsmRng
                     , gsmDurationUntilTooOld = Nothing
                     , gsmMarkerFileView =
                         GSM.MarkerFileView
@@ -1024,29 +1117,17 @@ runThreadNetwork
                     { gnkaLoEAndGDDArgs = LoEAndGDDDisabled
                     }
               , getDiffusionPipeliningSupport = DiffusionPipeliningOn
-              , leiosDB
+              , txSubmissionInitDelay = NoTxSubmissionInitDelay
               }
 
       nodeKernel <- initNodeKernel nodeKernelArgs
 
-      blockForging' <-
-        map
-          ( \bf ->
-              bf
-                { forgeBlock =
-                    customForgeBlock
-                      CustomForgeBlockArgs
-                        { cfbaFuture = future
-                        , cfbaEpochSize0 = epochSize0
-                        , cfbaMbForgeEbbEnv = mbForgeEbbEnv
-                        , cfbaPInfoConfig = pInfoConfig
-                        , cfbaChainDb = chainDB
-                        }
-                      bf
-                }
-          )
-          <$> blockForging
-      setBlockForging nodeKernel blockForging'
+      mkBlockForgings <- mkBlockForging
+      let mkBlockForgings' =
+            map
+              (\(MkBlockForging bfM) -> MkBlockForging $ fmap (\bf -> bf{forgeBlock = customForgeBlock bf}) bfM)
+              mkBlockForgings
+      setBlockForging nodeKernel mkBlockForgings'
 
       let mempool = getMempool nodeKernel
       let app =
@@ -1054,36 +1135,28 @@ runThreadNetwork
               nodeKernel
               -- these tracers report every message sent/received by this
               -- node
-              NTN.nullTracers
+              chainSyncRng
+              nullDebugProtocolTracers
               (customNodeToNodeCodecs pInfoConfig)
-              -- REVIEW: This had "no limits" before using (const 0), this
-              -- now moved to the BearerBytes class and we would need to
-              -- select this size function via a new instance here
-              NTN.byteLimits
+              NTN.noByteLimits
               -- see #1882, tests that can't cope with timeouts.
-              ( pure $
-                  NTN.ChainSyncTimeout
-                    { canAwaitTimeout = waitForever
-                    , intersectTimeout = waitForever
-                    , mustReplyTimeout = waitForever
-                    , idleTimeout = waitForever
-                    }
-              )
+              (\_ -> ProtocolTimeLimitsWithRnd $ \_state -> (waitForever,))
               CSClient.ChainSyncLoPBucketDisabled
               CSClient.CSJDisabled
               nullMetric
               -- The purpose of this test is not testing protocols, so
               -- returning constant empty list is fine if we have thorough
               -- tests about the peer sharing protocol itself.
-              (NTN.mkHandlers nodeKernelArgs nodeKernel)
+              (NTN.mkHandlers nodeKernelArgs nodeKernel txLogicVersion)
 
       -- Create a 'ReadOnlyForker' to be used in 'forkTxProducer'. This function
       -- needs the read-only forker to elaborate a complete UTxO set to generate
       -- transactions.
-      let getForker rr = do
-            ChainDB.getReadOnlyForkerAtPoint chainDB rr VolatileTip >>= \case
+      let getForker :: forall r. ((ReadOnlyForker' m blk -> WithEarlyExit m r) -> m r)
+          getForker f = do
+            fmap fromJust $ withEarlyExit $ ChainDB.withReadOnlyForkerAtPoint chainDB VolatileTip $ \case
               Left e -> error $ show e
-              Right l -> pure l
+              Right l -> f l
 
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the
@@ -1101,15 +1174,16 @@ runThreadNetwork
       --
       -- TODO Is there a risk that this will block because the 'forkTxProducer'
       -- fills up the mempool too quickly?
-      forkCrucialTxs
-        clock
-        joinSlot
-        registry
-        unblockForge
-        (ledgerTipPoint . ledgerState <$> ChainDB.getCurrentLedger chainDB)
-        getForker
-        mempool
-        txs0
+      _ <-
+        forkCrucialTxs
+          clock
+          joinSlot
+          unblockForge
+          (ledgerTipPoint . ledgerState <$> ChainDB.getCurrentLedger chainDB)
+          getForker
+          mempool
+          registry
+          txs0
 
       forkTxProducer
         coreNodeId
@@ -1138,11 +1212,9 @@ runThreadNetwork
         Lazy.ByteString
         Lazy.ByteString
         Lazy.ByteString
-        Lazy.ByteString -- TxSubmission2
-        Lazy.ByteString -- KeepAlive
-        Lazy.ByteString -- PeerSharing
-        Lazy.ByteString -- LeiosNotify
-        Lazy.ByteString -- LeiosFetch
+        (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
+        (AnyMessage KeepAlive)
+        (AnyMessage (PeerSharing NodeId))
     customNodeToNodeCodecs cfg ntnVersion =
       NTN.Codecs
         { cChainSyncCodec =
@@ -1158,20 +1230,14 @@ runThreadNetwork
             mapFailureCodec (CodecBytesFailure "BlockFetchSerialised") $
               NTN.cBlockFetchCodecSerialised binaryProtocolCodecs
         , cTxSubmission2Codec =
-            mapFailureCodec (CodecBytesFailure "TxSubmission2") $
-              NTN.cTxSubmission2Codec binaryProtocolCodecs
+            mapFailureCodec CodecIdFailure $
+              NTN.cTxSubmission2Codec NTN.identityCodecs
         , cKeepAliveCodec =
-            mapFailureCodec (CodecBytesFailure "KeepAlive") $
-              NTN.cKeepAliveCodec binaryProtocolCodecs
+            mapFailureCodec CodecIdFailure $
+              NTN.cKeepAliveCodec NTN.identityCodecs
         , cPeerSharingCodec =
-            mapFailureCodec (CodecBytesFailure "PeerSharing") $
-              NTN.cPeerSharingCodec binaryProtocolCodecs
-        , cLeiosNotifyCodec =
-            mapFailureCodec (CodecBytesFailure "LeiosNotify") $
-              NTN.cLeiosNotifyCodec binaryProtocolCodecs
-        , cLeiosFetchCodec =
-            mapFailureCodec (CodecBytesFailure "LeiosFetch") $
-              NTN.cLeiosFetchCodec binaryProtocolCodecs
+            mapFailureCodec CodecIdFailure $
+              NTN.cPeerSharingCodec NTN.identityCodecs
         }
      where
       binaryProtocolCodecs =
@@ -1182,94 +1248,6 @@ runThreadNetwork
           (const decodeNodeId)
           ntnVersion
 
-data CustomForgeBlockArgs m blk = CustomForgeBlockArgs
-  { cfbaFuture :: Future
-  , cfbaEpochSize0 :: EpochSize
-  , cfbaMbForgeEbbEnv :: Maybe (ForgeEbbEnv blk)
-  , cfbaPInfoConfig :: TopLevelConfig blk
-  , cfbaChainDb :: ChainDB.ChainDB m blk
-  }
-
-customForgeBlock ::
-  forall m blk.
-  ( IOLike m
-  , MonadTime m
-  , RunNode blk
-  , HasCallStack
-  ) =>
-  CustomForgeBlockArgs m blk ->
-  BlockForging m blk ->
-  ForgeBlockArgs m blk ->
-  m (blk, Maybe ForgedLeiosEb)
-customForgeBlock CustomForgeBlockArgs{..} origBlockForging forgeBlockArgs@ForgeBlockArgs{..} = do
-  let currentEpoch = HFF.futureSlotToEpoch cfbaFuture fbCurrentSlotNo
-
-  -- EBBs are only ever possible in the first era
-  let inFirstEra = HFF.futureEpochInFirstEra cfbaFuture currentEpoch
-
-  let ebbSlot :: SlotNo
-      ebbSlot = SlotNo $ x * y
-       where
-        EpochNo x = currentEpoch
-        EpochSize y = cfbaEpochSize0
-
-  let p :: Point blk
-      p = castPoint $ getTip fbCurrentTickedLedgerState
-
-  let needEBB = inFirstEra && NotOrigin ebbSlot > pointSlot p
-  case cfbaMbForgeEbbEnv <* guard needEBB of
-    Nothing -> forgeBlock origBlockForging forgeBlockArgs -- no EBB needed, forge without making one
-    Just forgeEbbEnv -> do
-      -- The EBB shares its BlockNo with its predecessor (if
-      -- there is one)
-      let ebbBno = case fbCurrentBlockNo of
-            -- We assume this invariant:
-            --
-            -- If forging of EBBs is enabled then the node
-            -- initialization is responsible for producing any
-            -- proper non-EBB blocks with block number 0.
-            --
-            -- So this case is unreachable.
-            0 -> error "Error, only node initialization can forge non-EBB with block number 0."
-            n -> pred n
-      let ebb =
-            forgeEBB
-              forgeEbbEnv
-              cfbaPInfoConfig
-              ebbSlot
-              ebbBno
-              (pointHash p)
-
-      -- fail if the EBB is invalid
-      -- if it is valid, we retick to the /same/ slot
-      let apply = applyLedgerBlock OmitLedgerEvents (configLedger cfbaPInfoConfig)
-          tables = emptyLedgerTables -- EBBs need no input tables
-      tickedLdgSt' <- case Exc.runExcept $ apply ebb (fbCurrentTickedLedgerState `withLedgerTables` tables) of
-        Left e -> Exn.throw $ JitEbbError @blk e
-        Right st ->
-          pure $
-            applyChainTick
-              OmitLedgerEvents
-              (configLedger cfbaPInfoConfig)
-              fbCurrentSlotNo
-              (forgetLedgerTables st)
-
-      -- forge the block usings the ledger state that includes
-      -- the EBB
-      (blk, mayEb) <-
-        forgeBlock
-          origBlockForging
-          $ forgeBlockArgs
-            { fbCurrentTickedLedgerState = forgetLedgerTables tickedLdgSt'
-            }
-
-      -- If the EBB or the subsequent block is invalid, then the
-      -- ChainDB will reject it as invalid, and
-      -- 'Test.ThreadNet.General.prop_general' will eventually fail
-      -- because of a block rejection.
-      void $ ChainDB.addBlock cfbaChainDb InvalidBlockPunishment.noPunishment ebb
-      pure (blk, mayEb)
-
 -- | Sum of 'CodecFailure' (from @identityCodecs@) and 'DeserialiseFailure'
 -- (from @defaultCodecs@).
 data CodecError
@@ -1278,7 +1256,8 @@ data CodecError
       -- | Extra error message, e.g., the name of the codec
       String
       DeserialiseFailure
-  deriving (Show, Exception)
+  deriving stock (Show, Generic)
+  deriving anyclass (Exception, NFData)
 
 {-------------------------------------------------------------------------------
   Running an edge
@@ -1355,36 +1334,40 @@ directedEdge ::
   (CoreNodeId, VertexStatusVar m blk) ->
   (CoreNodeId, VertexStatusVar m blk) ->
   m ()
-directedEdge registry tr version cfg clock edgeStatusVar client server = forever $ do
-  restart <-
-    directedEdgeInner registry clock version cfg edgeStatusVar client server
-      `catch` hUnexpected
-  atomically $ writeTVar edgeStatusVar EDown
-  case restart of
-    RestartScheduled -> pure ()
-    RestartChainSyncTerminated -> do
-      -- "error" policy: restart at beginning of next slot
-      s <- OracularClock.getCurrentSlot clock
-      let s' = succ s
-      traceWith tr (s, MiniProtocolDelayed)
-      void $ OracularClock.blockUntilSlot clock s'
-      traceWith tr (s', MiniProtocolRestarting)
+directedEdge registry tr version cfg clock edgeStatusVar client server =
+  loop
  where
-  -- Wrap synchronous exceptions in 'MiniProtocolFatalException'
-  --
-  hUnexpected :: forall a. SomeException -> m a
-  hUnexpected e@(Exn.SomeException e') = case fromException e of
-    Just (_ :: Exn.AsyncException) -> throwIO e
-    Nothing -> case fromException e of
-      Just (_ :: Exn.SomeAsyncException) -> throwIO e
-      Nothing ->
-        throwIO
-          MiniProtocolFatalException
-            { mpfeType = Typeable.typeOf e'
-            , mpfeExn = e
-            , mpfeClient = fst client
-            , mpfeServer = fst server
-            }
+  loop = do
+    restart <-
+      directedEdgeInner registry clock version cfg edgeStatusVar client server
+        `catch` hUnexpected
+    atomically $ writeTVar edgeStatusVar EDown
+    case restart of
+      RestartScheduled -> pure ()
+      RestartChainSyncTerminated -> do
+        -- "error" policy: restart at beginning of next slot
+        s <- OracularClock.getCurrentSlot clock
+        let s' = succ s
+        traceWith tr (s, MiniProtocolDelayed)
+        void $ OracularClock.blockUntilSlot clock s'
+        traceWith tr (s', MiniProtocolRestarting)
+    loop
+   where
+    -- Wrap synchronous exceptions in 'MiniProtocolFatalException'
+    --
+    hUnexpected :: forall a. SomeException -> m a
+    hUnexpected e@(Exn.SomeException e') = case fromException e of
+      Just (_ :: Exn.AsyncException) -> throwIO e
+      Nothing -> case fromException e of
+        Just (_ :: Exn.SomeAsyncException) -> throwIO e
+        Nothing ->
+          throwIO
+            MiniProtocolFatalException
+              { mpfeType = Typeable.typeOf e'
+              , mpfeExn = e
+              , mpfeClient = fst client
+              , mpfeServer = fst server
+              }
 
 -- | Spawn threads for all of the mini protocols
 --
@@ -1411,127 +1394,93 @@ directedEdgeInner
   (node1, vertexStatusVar1)
   (node2, vertexStatusVar2) = do
     -- block until both nodes are 'VUp'
-    (LimitedApp app1, LimitedApp app2) <-
-      atomically $ (,) <$> getApp vertexStatusVar1 <*> getApp vertexStatusVar2
+    (LimitedApp app1, LimitedApp app2) <- atomically $ do
+      (,) <$> getApp vertexStatusVar1 <*> getApp vertexStatusVar2
 
     atomically $ writeTVar edgeStatusVar EUp
 
-    vertex1WatcherAsync <- async (watcher vertexStatusVar1)
-    vertex2WatcherAsync <- async (watcher vertexStatusVar2)
+    let miniProtocol ::
+          String ->
+          -- \^ protocol name
+          (String -> a -> RestartCause) ->
+          (String -> b -> RestartCause) ->
+          ( LimitedApp' m NodeId blk ->
+            NodeToNodeVersion ->
+            ExpandedInitiatorContext NodeId PeerTrustable m ->
+            Channel m msg ->
+            m (a, trailingBytes)
+          ) ->
+          -- \^ client action to run on node1
+          ( LimitedApp' m NodeId blk ->
+            NodeToNodeVersion ->
+            ResponderContext NodeId ->
+            Channel m msg ->
+            m (b, trailingBytes)
+          ) ->
+          -- \^ server action to run on node2
+          (msg -> m ()) ->
+          m (m RestartCause, m RestartCause)
+        miniProtocol proto retClient retServer client server middle = do
+          (chan, dualChan) <-
+            createConnectedChannelsWithDelay registry (node1, node2, proto) middle
+          pure
+            ( (retClient (proto <> ".client") . fst) <$> client app1 version initiatorCtx chan
+            , (retServer (proto <> ".server") . fst) <$> server app2 version responderCtx dualChan
+            )
+         where
+          initiatorCtx =
+            ExpandedInitiatorContext
+              { eicConnectionId = ConnectionId (fromCoreNodeId node1) (fromCoreNodeId node2)
+              , eicControlMessage = return Continue
+              , eicIsBigLedgerPeer = IsNotBigLedgerPeer
+              , eicExtraFlags = IsNotTrustable
+              }
+          responderCtx =
+            ResponderContext
+              { rcConnectionId = ConnectionId (fromCoreNodeId node1) (fromCoreNodeId node2)
+              }
 
-    miniProtoAsyncs <-
-      fmap concat $
-        ( forM miniProtos $ \mp -> do
-            (cli, srv) <- mp app1 app2
-            cliAsync <- async cli
-            srvAsync <- async srv
-            return [cliAsync, srvAsync]
-        )
-
-    let asyncs = [vertex1WatcherAsync, vertex2WatcherAsync] <> miniProtoAsyncs
-    -- NOTE(bladyjoker): Important to use `waitAnyCancel` to cancel other asyncs when any is done
-    (_doneAsync, restartCause) <- waitAnyCancel asyncs
-    return restartCause
+    (>>= withAsyncsWaitAny) $
+      fmap flattenPairs $
+        sequence $
+          pure (watcher vertexStatusVar1, watcher vertexStatusVar2)
+            NE.:| [ miniProtocol
+                      "ChainSync"
+                      (\_s _ -> RestartChainSyncTerminated)
+                      (\_s () -> RestartChainSyncTerminated)
+                      NTN.aChainSyncClient
+                      NTN.aChainSyncServer
+                      chainSyncMiddle
+                  , miniProtocol
+                      "BlockFetch"
+                      neverReturns
+                      neverReturns
+                      NTN.aBlockFetchClient
+                      NTN.aBlockFetchServer
+                      (\_ -> pure ())
+                  , miniProtocol
+                      "TxSubmission"
+                      neverReturns
+                      neverReturns
+                      NTN.aTxSubmission2Client
+                      NTN.aTxSubmission2Server
+                      (\_ -> pure ())
+                  , miniProtocol
+                      "KeepAlive"
+                      neverReturns
+                      neverReturns
+                      NTN.aKeepAliveClient
+                      NTN.aKeepAliveServer
+                      (\_ -> pure ())
+                  ]
    where
-    miniProtocol ::
-      String ->
-      -- \^ protocol name
-      (String -> a -> RestartCause) ->
-      (String -> b -> RestartCause) ->
-      ( LimitedApp' m NodeId blk ->
-        NodeToNodeVersion ->
-        ExpandedInitiatorContext NodeId m ->
-        Channel m msg ->
-        m (a, trailingBytes)
-      ) ->
-      -- \^ client action to run on node1
-      ( LimitedApp' m NodeId blk ->
-        NodeToNodeVersion ->
-        ResponderContext NodeId ->
-        Channel m msg ->
-        m (b, trailingBytes)
-      ) ->
-      -- \^ server action to run on node2
-      (msg -> m ()) ->
-      LimitedApp' m NodeId blk ->
-      LimitedApp' m NodeId blk ->
-      m (m RestartCause, m RestartCause)
-    miniProtocol
-      proto
-      retClient
-      retServer
-      client
-      server
-      middle
-      app1
-      app2 = do
-        (chan, dualChan) <-
-          createConnectedChannelsWithDelay registry (node1, node2, proto) middle
-        pure
-          ( (retClient (proto <> ".client") . fst) <$> client app1 version initiatorCtx chan
-          , (retServer (proto <> ".server") . fst) <$> server app2 version responderCtx dualChan
-          )
-       where
-        initiatorCtx =
-          ExpandedInitiatorContext
-            { eicConnectionId = ConnectionId (fromCoreNodeId node1) (fromCoreNodeId node2)
-            , eicControlMessage = return Continue
-            , eicIsBigLedgerPeer = IsNotBigLedgerPeer
-            }
-        responderCtx =
-          ResponderContext
-            { rcConnectionId = ConnectionId (fromCoreNodeId node1) (fromCoreNodeId node2)
-            }
-
-    miniProtos =
-      [ miniProtocol
-          "ChainSync"
-          (\_s _ -> RestartChainSyncTerminated)
-          (\_s () -> RestartChainSyncTerminated)
-          NTN.aChainSyncClient
-          NTN.aChainSyncServer
-          chainSyncMiddle
-      , miniProtocol
-          "BlockFetch"
-          neverReturns
-          neverReturns
-          NTN.aBlockFetchClient
-          NTN.aBlockFetchServer
-          (\_ -> pure ())
-      , miniProtocol
-          "TxSubmission"
-          neverReturns
-          neverReturns
-          NTN.aTxSubmission2Client
-          NTN.aTxSubmission2Server
-          (\_ -> pure ())
-      , miniProtocol
-          "KeepAlive"
-          neverReturns
-          neverReturns
-          NTN.aKeepAliveClient
-          NTN.aKeepAliveServer
-          (\_ -> pure ())
-      , miniProtocol
-          "LeiosFetch"
-          neverReturns
-          neverReturns
-          NTN.aLeiosFetchClient
-          NTN.aLeiosFetchServer
-          (\_ -> pure ())
-      , miniProtocol
-          "LeiosNotify"
-          neverReturns
-          neverReturns
-          NTN.aLeiosNotifyClient
-          NTN.aLeiosNotifyServer
-          (\_ -> pure ())
-      ]
-
     getApp v =
       readTVar v >>= \case
         VUp _ app -> pure app
         _ -> retry
+
+    flattenPairs :: forall a. NE.NonEmpty (a, a) -> NE.NonEmpty a
+    flattenPairs = uncurry (<>) . neUnzip
 
     neverReturns :: forall x void. String -> x -> void
     neverReturns s !_ = error $ s <> " never returns!"
@@ -1539,7 +1488,7 @@ directedEdgeInner
     -- terminates (by returning, not via exception) when the vertex starts
     -- 'VFalling'
     --
-    -- because of 'waitAnyCancel' used above, this brings down the whole
+    -- because of 'withAsyncsWaitAny' used above, this brings down the whole
     -- edge
     watcher :: VertexStatusVar m blk -> m RestartCause
     watcher v = do
@@ -1617,10 +1566,7 @@ createConnectedChannelsWithDelay registry (client, server, proto) middle = do
 
   chan q b =
     Channel
-      { recv = do
-          tm <- getMonotonicTime
-          x <- atomically $ MonadSTM.takeTMVar b
-          pure . Just $ MkReception (IntMap.singleton 0 tm) x
+      { recv = fmap Just $ atomically $ MonadSTM.takeTMVar b
       , send = atomically . MonadSTM.writeTQueue q
       }
 
@@ -1628,34 +1574,10 @@ createConnectedChannelsWithDelay registry (client, server, proto) middle = do
   Node information not bound to lifetime of a specific node instance
 -------------------------------------------------------------------------------}
 
-data NodeInfo blk db ev l = NodeInfo
+data NodeInfo blk db ev = NodeInfo
   { nodeInfoEvents :: NodeEvents blk ev
   , nodeInfoDBs :: NodeDBs db
-  , nodeInfoLeios :: LeiosState l
   }
-
--- `LeiosState` represents the part of the nodes' state that relates to Leios
-data LeiosState f = LeiosState
-  { lsLeiosDb :: f InMemoryLeiosDb
-  }
-  deriving stock Generic
-
-deriving instance
-  (NoThunks (f InMemoryLeiosDb), NoThunks (f [TraceLeiosKernel])) =>
-  NoThunks (LeiosState f)
-
-_emptyLeiosState :: LeiosState Identity
-_emptyLeiosState = LeiosState{lsLeiosDb = pure emptyInMemoryLeiosDb}
-
-emptyLeiosStateTVar :: IOLike m => m (LeiosState (Unchecked.StrictTVar m))
-emptyLeiosStateTVar = atomically $ do
-  lsLeiosDb <- Unchecked.newTVar emptyInMemoryLeiosDb
-  return LeiosState{lsLeiosDb}
-
-snapshotLeiosState :: IOLike m => LeiosState (Unchecked.StrictTVar m) -> m (LeiosState Identity)
-snapshotLeiosState ls = atomically $ do
-  lsLeiosDb <- pure <$> Unchecked.readTVar (lsLeiosDb ls)
-  return LeiosState{lsLeiosDb}
 
 -- | A vector with an @ev@-shaped element for a particular set of
 -- instrumentation events
@@ -1685,8 +1607,8 @@ newNodeInfo ::
   forall blk m.
   IOLike m =>
   m
-    ( NodeInfo blk (StrictTMVar m MockFS) (Tracer m) (Unchecked.StrictTVar m)
-    , m (NodeInfo blk MockFS [] Identity)
+    ( NodeInfo blk (StrictTMVar m MockFS) (Tracer m)
+    , m (NodeInfo blk MockFS [])
     )
 newNodeInfo = do
   (nodeInfoEvents, readEvents) <- do
@@ -1711,17 +1633,15 @@ newNodeInfo = do
     (v1, m1) <- mk
     (v2, m2) <- mk
     (v3, m3) <- mk
-    (v4 :: StrictTMVar m MockFS, m4 :: STM m MockFS) <- mk
+    (v4, m4) <- mk
     pure
       ( NodeDBs v1 v2 v3 v4
       , NodeDBs <$> m1 <*> m2 <*> m3 <*> m4
       )
 
-  nodeInfoLeios <- emptyLeiosStateTVar
-
   pure
-    ( NodeInfo{nodeInfoEvents, nodeInfoDBs, nodeInfoLeios}
-    , NodeInfo <$> readEvents <*> atomically readDBs <*> snapshotLeiosState nodeInfoLeios
+    ( NodeInfo{nodeInfoEvents, nodeInfoDBs}
+    , NodeInfo <$> readEvents <*> atomically readDBs
     )
 
 {-------------------------------------------------------------------------------
@@ -1740,52 +1660,19 @@ data NodeOutput blk = NodeOutput
   , nodeOutputSelects :: Map SlotNo [(RealPoint blk, BlockNo)]
   , nodeOutputUpdates :: [LedgerUpdate blk]
   , nodePipeliningEvents :: [ChainDB.TracePipeliningEvent blk]
-  , nodeLeiosState :: LeiosState Identity
   }
 
 data TestOutput blk = TestOutput
   { testOutputNodes :: Map NodeId (NodeOutput blk)
   , testOutputTipBlockNos :: Map SlotNo (Map NodeId (WithOrigin BlockNo))
-  , allTraces :: [TraceThreadNet blk]
-  , exceptionThrown :: Maybe SomeException
-  , iosimTrace :: String
   }
-
-instance Show (TestOutput blk) where
-  show _ = "TODO(bladyjoker): TestOutput show instance"
-
--- | Type of all traces tracked by the ThreadNet.
-data TraceThreadNet blk
-  = FromNode {fromNodeId :: CoreNodeId, fromNodeEvent :: TraceThreadNetNode blk}
-
-deriving instance Show (TraceThreadNetNode blk) => Show (TraceThreadNet blk)
-
-data TraceThreadNetNode blk
-  = FromLeios TraceLeiosKernel
-  | FromLeiosPeer (TraceLabelPeer (ConnectionId NodeId) TraceLeiosPeer)
-  | FromMempool (TraceEventMempool blk)
-  | FromTxOutbound
-      (TraceLabelPeer (ConnectionId NodeId) (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
-  | FromKeepAliveClient (TraceKeepAliveClient (ConnectionId NodeId))
-  | FromForge (TraceForgeEvent blk)
-  | FromConsensusError SomeException
-  | FromChainSyncClient
-      ((TraceLabelPeer (ConnectionId NodeId) (CSClient.TraceChainSyncClientEvent blk)))
-
-deriving instance
-  ( Show (TraceEventMempool blk)
-  , Show (TraceForgeEvent blk)
-  , Show (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk))
-  , Show (CSClient.TraceChainSyncClientEvent blk)
-  ) =>
-  Show (TraceThreadNetNode blk)
 
 -- | Gather the test output from the nodes
 mkTestOutput ::
   forall m blk.
   (IOLike m, HasHeader blk) =>
   [ ( CoreNodeId
-    , m (NodeInfo blk MockFS [] Identity)
+    , m (NodeInfo blk MockFS [])
     , Chain blk
     , LedgerState blk EmptyMK
     )
@@ -1800,7 +1687,6 @@ mkTestOutput vertexInfos = do
         let NodeInfo
               { nodeInfoEvents
               , nodeInfoDBs
-              , nodeInfoLeios
               } = nodeInfo
         let NodeEvents
               { nodeEventsAdds
@@ -1824,7 +1710,7 @@ mkTestOutput vertexInfos = do
                 , nodeOutputFinalLedger = ldgr
                 , nodeOutputForges =
                     Map.fromList $
-                      [(s, fbNewBlock) | TraceForgedBlock s (ForgedBlock{fbNewBlock}) <- nodeEventsForges]
+                      [(s, b) | TraceForgedBlock s _ b _ _ <- nodeEventsForges]
                 , nodeOutputHeaderAdds =
                     Map.fromListWith (flip (++)) $
                       [ (s, [(p, bno)])
@@ -1839,7 +1725,6 @@ mkTestOutput vertexInfos = do
                 , nodeOutputNodeDBs = nodeInfoDBs
                 , nodeOutputUpdates = nodeEventsUpdates
                 , nodePipeliningEvents = nodeEventsPipelining
-                , nodeLeiosState = nodeInfoLeios
                 }
 
         pure
@@ -1851,14 +1736,36 @@ mkTestOutput vertexInfos = do
     TestOutput
       { testOutputNodes = Map.unions nodeOutputs'
       , testOutputTipBlockNos = Map.unionsWith Map.union tipBlockNos'
-      , allTraces = [] -- XXX: avoid monkey patching
-      , exceptionThrown = Nothing -- XXX: avoid monkey patching
-      , iosimTrace = "" -- XXX: avoid monkey patching
       }
 
 {-------------------------------------------------------------------------------
   Constraints needed for verbose tracing
 -------------------------------------------------------------------------------}
+
+-- | Occurs throughout in positions that might be useful for debugging.
+nullDebugTracer :: (Applicative m, Show a) => Tracer m a
+nullDebugTracer = nullTracer `asTypeOf` showTracing debugTracer
+
+-- | Occurs throughout in positions that might be useful for debugging.
+nullDebugTracers ::
+  ( Monad m
+  , Show peer
+  , LedgerSupportsProtocol blk
+  , TracingConstraints blk
+  ) =>
+  Tracers m peer Void blk
+nullDebugTracers = nullTracers `asTypeOf` showTracers debugTracer
+
+-- | Occurs throughout in positions that might be useful for debugging.
+nullDebugProtocolTracers ::
+  ( Monad m
+  , HasHeader blk
+  , TracingConstraints blk
+  , Show peer
+  ) =>
+  NTN.Tracers m peer blk failure
+nullDebugProtocolTracers =
+  NTN.nullTracers `asTypeOf` NTN.showTracers debugTracer
 
 -- These constraints are when using @showTracer(s) debugTracer@ instead of
 -- @nullTracer(s)@.
@@ -1873,12 +1780,29 @@ type TracingConstraints blk =
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
   , Show (TxMeasure blk)
+  , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
   , HasNestedContent Header blk
   )
 
 {-------------------------------------------------------------------------------
   Ancillaries
 -------------------------------------------------------------------------------}
+
+-- | Spawn multiple async actions and wait for the first one to complete.
+--
+-- Each child thread is spawned with 'withAsync' and so won't outlive this one.
+-- In the use case where each child thread only terminates on an exception, the
+-- 'waitAny' ensures that this parent thread will run until a child terminates
+-- with an exception, and it will also reraise that exception.
+--
+-- Why 'NE.NonEmpty'? An empty argument list would have blocked indefinitely,
+-- which is likely not intended.
+withAsyncsWaitAny :: forall m a. IOLike m => NE.NonEmpty (m a) -> m a
+withAsyncsWaitAny = go [] . NE.toList
+ where
+  go acc = \case
+    [] -> snd <$> waitAny acc
+    m : ms -> withAsync m $ \h -> go (h : acc) ms
 
 -- | The partially instantiation of the 'NetworkApplication' type according to
 -- its use in this module
@@ -1901,11 +1825,9 @@ type LimitedApp' m addr blk =
     -- channel with the same type on both ends, i.e., 'Lazy.ByteString'.
     Lazy.ByteString
     Lazy.ByteString
-    Lazy.ByteString -- TxSubmission2
-    Lazy.ByteString -- KeepAlive
-    Lazy.ByteString -- PeerSharing
-    Lazy.ByteString -- LeiosNotify
-    Lazy.ByteString -- LeiosFetch
+    (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
+    (AnyMessage KeepAlive)
+    (AnyMessage (PeerSharing addr))
     NodeToNodeInitiatorResult
     ()
 
@@ -1943,3 +1865,11 @@ data TxGenFailure
   deriving Show
 
 instance Exception TxGenFailure
+
+-- In base@4.20 the Data.List.NonEmpty.unzip is deprecated and suggests that
+-- Data.Function.unzip should be used instead,but base versions earlier than
+-- 4.20 do not have that.
+-- Neatest solution is to cargo cult it here and switch to Data.Function.unzip
+-- later.
+neUnzip :: Functor f => f (a, b) -> (f a, f b)
+neUnzip xs = (fst <$> xs, snd <$> xs)

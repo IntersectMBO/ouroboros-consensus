@@ -53,8 +53,8 @@ import Test.Ouroboros.Consensus.ChainGenerator.Slot
   )
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Some as Some
+import Test.Ouroboros.Consensus.QuickCheck.Extras (sized1)
 import qualified Test.QuickCheck as QC
-import Test.QuickCheck.Extras (sized1)
 import Prelude hiding (words)
 
 -----

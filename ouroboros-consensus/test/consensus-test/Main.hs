@@ -3,6 +3,7 @@
 module Main (main) where
 
 import qualified Test.Consensus.BlockchainTime.Simple (tests)
+import qualified Test.Consensus.Committee.WFALS (tests)
 import qualified Test.Consensus.HardFork.Forecast (tests)
 import qualified Test.Consensus.HardFork.History (tests)
 import qualified Test.Consensus.HardFork.Summary (tests)
@@ -16,11 +17,12 @@ import qualified Test.Consensus.MiniProtocol.BlockFetch.Client (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.CSJ (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.Client (tests)
 import qualified Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests)
+import qualified Test.Consensus.Peras.Cert.Inclusion (tests)
+import qualified Test.Consensus.Peras.Voting.Rules (tests)
+import qualified Test.Consensus.Peras.WeightSnapshot (tests)
 import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
+import qualified Test.Consensus.Util.Pred (tests)
 import qualified Test.Consensus.Util.Versioned (tests)
-import qualified Test.LeiosDemoDb (tests)
-import qualified Test.LeiosDemoTypes (tests)
-import qualified Test.LeiosVoteState (tests)
 import Test.Tasty
 import Test.Util.TestEnv
   ( defaultMainWithTestEnv
@@ -35,6 +37,7 @@ tests =
   testGroup
     "ouroboros-consensus"
     [ Test.Consensus.BlockchainTime.Simple.tests
+    , Test.Consensus.Committee.WFALS.tests
     , Test.Consensus.HeaderValidation.tests
     , Test.Consensus.MiniProtocol.BlockFetch.Client.tests
     , Test.Consensus.MiniProtocol.ChainSync.CSJ.tests
@@ -46,8 +49,15 @@ tests =
         , Test.Consensus.Mempool.Fairness.tests
         , Test.Consensus.Mempool.StateMachine.tests
         ]
+    , testGroup
+        "Peras"
+        [ Test.Consensus.Peras.Cert.Inclusion.tests
+        , Test.Consensus.Peras.Voting.Rules.tests
+        , Test.Consensus.Peras.WeightSnapshot.tests
+        ]
     , Test.Consensus.Util.MonadSTM.NormalForm.tests
     , Test.Consensus.Util.Versioned.tests
+    , Test.Consensus.Util.Pred.tests
     , testGroup
         "HardFork"
         [ testGroup
@@ -62,7 +72,4 @@ tests =
         ]
     , Test.Consensus.Ledger.Tables.Diff.tests
     , Test.Consensus.Ledger.Tables.DiffSeq.tests
-    , Test.LeiosDemoTypes.tests
-    , Test.LeiosDemoDb.tests
-    , Test.LeiosVoteState.tests
     ]

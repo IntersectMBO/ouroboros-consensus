@@ -50,7 +50,6 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , pHeaderIssuer
   )
-import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -108,8 +107,8 @@ instance ShelleyCompatible proto era => BlockSupportsMetrics (ShelleyBlock proto
    where
     issuerVKeys ::
       Map
-        (SL.KeyHash 'SL.BlockIssuer)
-        (SL.VKey 'SL.BlockIssuer)
+        (SL.KeyHash SL.BlockIssuer)
+        (SL.VKey SL.BlockIssuer)
     issuerVKeys = shelleyBlockIssuerVKeys cfg
 
 instance ConsensusProtocol proto => BlockSupportsSanityCheck (ShelleyBlock proto era) where
@@ -117,7 +116,6 @@ instance ConsensusProtocol proto => BlockSupportsSanityCheck (ShelleyBlock proto
 
 instance
   ( ShelleyCompatible proto era
-  , ResolveLeiosBlock (ShelleyBlock proto era)
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , BlockSupportsSanityCheck (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)

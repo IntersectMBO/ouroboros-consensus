@@ -108,26 +108,23 @@ instance Ledger.LedgerSupportsMempool TestBlock where
       , ValidatedGenTx gtx
       )
 
-  reapplyTx _ _cfg _slot _gtx gst =
-    pure $
-      TestBlock.TickedTestLedger $
-        convertMapKind $
-          TestBlock.getTickedTestLedger
-            gst
+  reapplyTx _cfg _slot _gtx gst =
+    pure gst
 
   txForgetValidated (ValidatedGenTx tx) = tx
 
   getTransactionKeySets _ = trivialLedgerTables
 
+  mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
+
 instance Ledger.TxLimits TestBlock where
   type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
 
+  txWireSize = fromIntegral . Ledger.unByteSize32 . txSize . unGenTx
   blockCapacityTxMeasure _cfg _st =
     -- The tests will override this value. By using 1, @computeMempoolCapacity@
     -- can be exactly what each test requests.
     Ledger.IgnoringOverflow $ Ledger.ByteSize32 1
-
-  ebCapacityTxMeasure _ _ = Nothing
 
   txMeasure _cfg _st = pure . Ledger.IgnoringOverflow . txSize . unGenTx
 

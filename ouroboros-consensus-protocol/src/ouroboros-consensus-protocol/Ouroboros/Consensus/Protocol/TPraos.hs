@@ -16,7 +16,6 @@
 --   schedule determining slots to be produced by BFT
 module Ouroboros.Consensus.Protocol.TPraos
   ( MaxMajorProtVer (..)
-  , PraosChainSelectView (..)
   , TPraos
   , TPraosFields (..)
   , TPraosIsLeader (..)
@@ -83,6 +82,7 @@ import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Ledger.Util
 import Ouroboros.Consensus.Protocol.Praos.Common
 import Ouroboros.Consensus.Ticked
+import Ouroboros.Consensus.Util.CBOR
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Versioned
 
@@ -106,7 +106,7 @@ deriving instance
 -- | Fields arising from transitional praos execution which must be included in
 -- the block signature.
 data TPraosToSign c = TPraosToSign
-  { tpraosToSignIssuerVK :: SL.VKey 'SL.BlockIssuer
+  { tpraosToSignIssuerVK :: SL.VKey SL.BlockIssuer
   -- ^ Verification key for the issuer of this block.
   --
   -- Note that unlike in Classic/BFT where we have a key for the genesis
@@ -142,22 +142,21 @@ forgeTPraosFields ::
   (TPraosToSign c -> toSign) ->
   m (TPraosFields c toSign)
 forgeTPraosFields hotKey PraosCanBeLeader{..} TPraosIsLeader{..} mkToSign = do
+  ocert <- HotKey.getOCert hotKey
+  let signedFields =
+        TPraosToSign
+          { tpraosToSignIssuerVK = praosCanBeLeaderColdVerKey
+          , tpraosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF
+          , tpraosToSignEta = tpraosIsLeaderEta
+          , tpraosToSignLeader = tpraosIsLeaderProof
+          , tpraosToSignOCert = ocert
+          }
+      toSign = mkToSign signedFields
   signature <- HotKey.sign hotKey toSign
   return
     TPraosFields
       { tpraosSignature = signature
       , tpraosToSign = toSign
-      }
- where
-  toSign = mkToSign signedFields
-
-  signedFields =
-    TPraosToSign
-      { tpraosToSignIssuerVK = praosCanBeLeaderColdVerKey
-      , tpraosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF
-      , tpraosToSignEta = tpraosIsLeaderEta
-      , tpraosToSignLeader = tpraosIsLeaderProof
-      , tpraosToSignOCert = praosCanBeLeaderOpCert
       }
 
 -- | Because we are using the executable spec, rather than implementing the
@@ -256,6 +255,9 @@ data instance ConsensusConfig (TPraos c) = TPraosConfig
 
 instance SL.PraosCrypto c => NoThunks (ConsensusConfig (TPraos c))
 
+instance HasMaxMajorProtVer (TPraos c) where
+  protoMaxMajorPV = tpraosMaxMajorPV . tpraosParams
+
 -- | Transitional Praos consensus state.
 --
 -- In addition to the 'ChainDepState' provided by the ledger, we track the slot
@@ -283,7 +285,7 @@ instance Serialise TPraosState where
     encodeVersion serialisationFormatVersion1 $
       mconcat
         [ CBOR.encodeListLen 2
-        , toCBOR slot
+        , encodeWithOrigin toCBOR slot
         , toCBOR chainDepState
         ]
 
@@ -293,7 +295,7 @@ instance Serialise TPraosState where
    where
     decodeTPraosState1 = do
       enforceSize "TPraosState" 2
-      TPraosState <$> fromCBOR <*> fromCBOR
+      TPraosState <$> decodeWithOrigin fromCBOR <*> fromCBOR
 
 data instance Ticked TPraosState = TickedChainDepState
   { tickedTPraosStateChainDepState :: SL.ChainDepState
@@ -304,7 +306,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type ChainDepState (TPraos c) = TPraosState
   type IsLeader (TPraos c) = TPraosIsLeader c
   type CanBeLeader (TPraos c) = PraosCanBeLeader c
-  type SelectView (TPraos c) = PraosChainSelectView c
+  type TiebreakerView (TPraos c) = PraosTiebreakerView c
   type LedgerView (TPraos c) = SL.LedgerView
   type ValidationErr (TPraos c) = SL.ChainTransitionError c
   type ValidateView (TPraos c) = TPraosValidateView c
@@ -430,7 +432,7 @@ meetsLeaderThreshold ::
   SL.PraosCrypto c =>
   ConsensusConfig (TPraos c) ->
   LedgerView (TPraos c) ->
-  SL.KeyHash 'SL.StakePool ->
+  SL.KeyHash SL.StakePool ->
   VRF.CertifiedVRF (VRF c) SL.Seed ->
   Bool
 meetsLeaderThreshold

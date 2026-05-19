@@ -1,6 +1,5 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -16,7 +15,6 @@ module Ouroboros.Consensus.Node.Tracers
     -- * Specific tracers
   , TraceForgeEvent (..)
   , TraceLabelCreds (..)
-  , ForgedBlock (..)
   ) where
 
 import Control.Exception (SomeException)
@@ -31,6 +29,7 @@ import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Mempool (MempoolSize, TraceEventMempool)
+import Ouroboros.Consensus.Mempool.API (TxMeasureWithDiffTime (..))
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
   ( TraceBlockFetchServerEvent
   )
@@ -45,6 +44,9 @@ import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
   ( TraceLocalTxSubmissionServerEvent (..)
   )
 import Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
+import Ouroboros.Consensus.Protocol.Praos.AgentClient
+  ( KESAgentClientTrace (..)
+  )
 import Ouroboros.Network.Block (Tip)
 import Ouroboros.Network.BlockFetch
   ( TraceFetchClientState
@@ -54,15 +56,8 @@ import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent
   )
 import Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
-import Ouroboros.Network.TxSubmission.Inbound
-  ( TraceTxSubmissionInbound
-  )
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types
 import Ouroboros.Network.TxSubmission.Outbound
-  ( TraceTxSubmissionOutbound
-  )
-
-import LeiosDemoTypes (TraceLeiosKernel, TraceLeiosPeer)
-import Ouroboros.Consensus.Mempool.TxSeq (TxSeqMeasure)
 
 {-------------------------------------------------------------------------------
   All tracers of a node bundled together
@@ -80,6 +75,8 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , txOutboundTracer ::
       f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
   , localTxSubmissionServerTracer :: f (TraceLocalTxSubmissionServerEvent blk)
+  , txLogicTracer :: f (TraceTxLogic remotePeer (GenTxId blk) (GenTx blk))
+  , txCountersTracer :: f TxSubmissionCounters
   , mempoolTracer :: f (TraceEventMempool blk)
   , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
   , blockchainTimeTracer :: f (TraceBlockchainTimeEvent UTCTime)
@@ -92,8 +89,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , csjTracer ::
       f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
   , dbfTracer :: f (CSJumping.TraceEventDbf remotePeer)
-  , leiosKernelTracer :: f TraceLeiosKernel
-  , leiosPeerTracer :: f (TraceLabelPeer remotePeer TraceLeiosPeer)
+  , kesAgentTracer :: f KESAgentClientTrace
   }
 
 instance
@@ -111,6 +107,8 @@ instance
       , txInboundTracer = f txInboundTracer
       , txOutboundTracer = f txOutboundTracer
       , localTxSubmissionServerTracer = f localTxSubmissionServerTracer
+      , txLogicTracer = f txLogicTracer
+      , txCountersTracer = f txCountersTracer
       , mempoolTracer = f mempoolTracer
       , forgeTracer = f forgeTracer
       , blockchainTimeTracer = f blockchainTimeTracer
@@ -122,8 +120,7 @@ instance
       , gddTracer = f gddTracer
       , csjTracer = f csjTracer
       , dbfTracer = f dbfTracer
-      , leiosKernelTracer = f leiosKernelTracer
-      , leiosPeerTracer = f leiosPeerTracer
+      , kesAgentTracer = f kesAgentTracer
       }
    where
     f ::
@@ -160,8 +157,9 @@ nullTracers =
     , gddTracer = nullTracer
     , csjTracer = nullTracer
     , dbfTracer = nullTracer
-    , leiosKernelTracer = nullTracer
-    , leiosPeerTracer = nullTracer
+    , kesAgentTracer = nullTracer
+    , txLogicTracer = nullTracer
+    , txCountersTracer = nullTracer
     }
 
 showTracers ::
@@ -174,9 +172,9 @@ showTracers ::
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
+  , Show (TxMeasure blk)
   , Show remotePeer
   , LedgerSupportsProtocol blk
-  , Show (TxMeasure blk)
   ) =>
   Tracer m String -> Tracers m remotePeer localPeer blk
 showTracers tr =
@@ -190,6 +188,8 @@ showTracers tr =
     , txInboundTracer = showTracing tr
     , txOutboundTracer = showTracing tr
     , localTxSubmissionServerTracer = showTracing tr
+    , txLogicTracer = showTracing tr
+    , txCountersTracer = showTracing tr
     , mempoolTracer = showTracing tr
     , forgeTracer = showTracing tr
     , blockchainTimeTracer = showTracing tr
@@ -201,8 +201,7 @@ showTracers tr =
     , gddTracer = showTracing tr
     , csjTracer = showTracing tr
     , dbfTracer = showTracing tr
-    , leiosKernelTracer = showTracing tr
-    , leiosPeerTracer = showTracing tr
+    , kesAgentTracer = showTracing tr
     }
 
 {-------------------------------------------------------------------------------
@@ -352,16 +351,16 @@ data TraceForgeEvent blk
   | -- | We forged a block
     --
     -- We record the current slot number, the point of the predecessor, the block
-    -- itself, and the total size of the mempool snapshot at the time we produced
+    -- itself, the total size of the mempool snapshot at the time we produced
     -- the block (which may be significantly larger than the block, due to
-    -- maximum block size)
+    -- maximum block size), and the size of the txs included in the block.
     --
     -- This will be followed by one of three messages:
     --
     -- * TraceAdoptedBlock (normally)
     -- * TraceDidntAdoptBlock (rarely)
     -- * TraceForgedInvalidBlock (hopefully never -- this would indicate a bug)
-    TraceForgedBlock SlotNo (ForgedBlock blk)
+    TraceForgedBlock SlotNo (Point blk) blk MempoolSize (TxMeasureWithDiffTime blk)
   | -- | We did not adopt the block we produced, but the block was valid. We
     -- must have adopted a block that another leader of the same slot produced
     -- before we got the chance of adopting our own block. This is very rare,
@@ -384,7 +383,7 @@ deriving instance
   , Eq (Validated (GenTx blk))
   , Eq (ForgeStateUpdateError blk)
   , Eq (CannotForge blk)
-  , Eq (TxSeqMeasure (TxMeasure blk))
+  , Eq (TxMeasure blk)
   ) =>
   Eq (TraceForgeEvent blk)
 deriving instance
@@ -403,19 +402,3 @@ deriving instance
 -- This is useful when a node is running with multiple sets of credentials.
 data TraceLabelCreds a = TraceLabelCreds Text a
   deriving (Eq, Show, Functor)
-
-data ForgedBlock blk = ForgedBlock
-  { fbLedgerTip :: Point blk
-  , fbNewBlock :: blk
-  , fbNewBlockSize :: TxSeqMeasure (TxMeasure blk)
-  , fbMempoolSize :: MempoolSize
-  , fbMempoolRestSize :: TxSeqMeasure (TxMeasure blk)
-  }
-
-deriving instance
-  (Eq (TxSeqMeasure (TxMeasure blk)), LedgerSupportsProtocol blk, Eq blk) =>
-  Eq (ForgedBlock blk)
-
-deriving instance
-  (Show (TxMeasure blk), LedgerSupportsProtocol blk, Show blk) =>
-  Show (ForgedBlock blk)

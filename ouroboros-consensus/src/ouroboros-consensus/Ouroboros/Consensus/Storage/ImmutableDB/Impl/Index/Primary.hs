@@ -424,6 +424,13 @@ open hasFS@HasFS{hOpen, hClose} chunk allowExisting = do
   flip onException (hClose pHnd) $ do
     case allowExisting of
       AllowExisting -> return ()
+      MustExist ->
+        -- create the file if it doesn't exist
+        void $
+          hPut hasFS pHnd $
+            Put.execPut $
+              Put.putWord8 currentVersionNumber
+                <> putSecondaryOffset 0
       -- If the file is new, write the version number and the first offset,
       -- i.e. 0.
       MustBeNew ->

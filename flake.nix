@@ -16,7 +16,7 @@
       inputs.hackage.follows = "hackageNix";
     };
     hackageNix = {
-      url = "github:input-output-hk/hackage.nix?ref=for-stackage";
+      url = "github:input-output-hk/hackage.nix";
       flake = false;
     };
     CHaP = {
@@ -31,6 +31,10 @@
       url = "github:nix-community/flake-compat";
       flake = false;
     };
+    hls = {
+      url = "github:haskell/haskell-language-server/2.11.0.0";
+      flake = false;
+    };
     agda-nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     # for cabal-docspec
     cabal-extras = {
@@ -41,10 +45,6 @@
       url = "github:phadej/gentle-introduction";
       flake = false;
     };
-
-    nixpkgs-unstable.url = "github:NixOS/nixpkgs";
-
-    cardano-nix.url = "github:mlabs-haskell/cardano.nix";
   };
   outputs = inputs:
     let
@@ -73,32 +73,26 @@
           ];
         };
         hydraJobs = import ./nix/ci.nix { inherit inputs pkgs; };
-        leiosDemo = import ./scripts/leios-demo/build.nix {
-          inherit inputs;
-          pkgs = import inputs.nixpkgs-unstable { inherit system; };
-        };
       in
       {
         devShells = rec {
           default = ghc96;
           ghc96 = hydraJobs.native.haskell96.devShell;
           ghc96-profiled = hydraJobs.native.haskell96.devShellProfiled;
-          # FIXME(bladyjoker): Reintroduce eventually
-          # ghc910 = hydraJobs.native.haskell910.devShell;
-          # ghc910-profiled = hydraJobs.native.haskell910.devShellProfiled;
+          ghc910 = hydraJobs.native.haskell910.devShell;
+          ghc910-profiled = hydraJobs.native.haskell910.devShellProfiled;
+          ghc912 = hydraJobs.native.haskell912.devShell;
+          ghc912-profiled = hydraJobs.native.haskell912.devShellProfiled;
 
           agda-spec = pkgs.agda-spec.shell;
 
           website = pkgs.mkShell {
             packages = [ pkgs.nodejs pkgs.yarn ];
           };
-        } // leiosDemo.devShells;
+        };
         inherit hydraJobs;
         legacyPackages = pkgs;
-        packages =
-          hydraJobs.native.haskell96.exesNoAsserts.ouroboros-consensus-cardano // {
-            leios-mvd-test = pkgs.testers.nixosTest (import ./nix/leios-mvd/test.nix { inherit inputs pkgs; });
-          };
+        packages = hydraJobs.native.haskell96.exesNoAsserts;
       }
     );
 }

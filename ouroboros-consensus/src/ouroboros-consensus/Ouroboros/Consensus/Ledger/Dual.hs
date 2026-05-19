@@ -197,7 +197,6 @@ dualTopLevelConfigMain TopLevelConfig{..} =
     , topLevelConfigCodec = dualCodecConfigMain topLevelConfigCodec
     , topLevelConfigStorage = dualStorageConfigMain topLevelConfigStorage
     , topLevelConfigCheckpoints = castCheckpointsMap topLevelConfigCheckpoints
-    , topLevelConfigVotingKey
     }
 
 {-------------------------------------------------------------------------------
@@ -313,7 +312,7 @@ type instance BlockProtocol (DualBlock m a) = BlockProtocol m
 
 instance Bridge m a => BlockSupportsProtocol (DualBlock m a) where
   validateView cfg = validateView (dualBlockConfigMain cfg) . dualHeaderMain
-  selectView cfg = selectView (dualBlockConfigMain cfg) . dualHeaderMain
+  tiebreakerView cfg = tiebreakerView (dualBlockConfigMain cfg) . dualHeaderMain
 
   projectChainOrderConfig = projectChainOrderConfig . dualBlockConfigMain
 
@@ -688,7 +687,6 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
         )
 
   reapplyTx
-    doDiffs
     DualLedgerConfig{..}
     slot
     tx@ValidatedDualGenTx{..}
@@ -697,13 +695,11 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
         agreeOnError
           DualGenTxErr
           ( reapplyTx
-              doDiffs
               dualLedgerConfigMain
               slot
               vDualGenTxMain
               tickedDualLedgerStateMain
           , reapplyTx
-              doDiffs
               dualLedgerConfigAux
               slot
               vDualGenTxAux
@@ -712,7 +708,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
       return $
         TickedDualLedgerState
           { tickedDualLedgerStateMain = main'
-          , tickedDualLedgerStateAux = trackingToValues aux'
+          , tickedDualLedgerStateAux = aux'
           , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
           , tickedDualLedgerStateBridge =
               updateBridgeWithTx
@@ -738,9 +734,15 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
       . getTransactionKeySets @m
       . dualGenTxMain
 
+  mkMempoolApplyTxError TickedDualLedgerState{..} txt = do
+    x <- mkMempoolApplyTxError tickedDualLedgerStateMain txt
+    y <- mkMempoolApplyTxError tickedDualLedgerStateAux txt
+    Just $ DualGenTxErr x y
+
 instance Bridge m a => TxLimits (DualBlock m a) where
   type TxMeasure (DualBlock m a) = TxMeasure m
 
+  txWireSize = txWireSize . dualGenTxMain
   txMeasure DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} =
     do
       mapExcept (inj +++ id)
@@ -750,8 +752,6 @@ instance Bridge m a => TxLimits (DualBlock m a) where
 
   blockCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
     blockCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
-
-  ebCapacityTxMeasure _ _ = Nothing
 
 -- We don't need a pair of IDs, as long as we can unique ID the transaction
 newtype instance TxId (GenTx (DualBlock m a)) = DualGenTxId

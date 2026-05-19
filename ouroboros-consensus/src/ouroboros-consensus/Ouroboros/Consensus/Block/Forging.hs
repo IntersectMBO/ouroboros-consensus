@@ -1,4 +1,3 @@
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
@@ -11,6 +10,7 @@
 
 module Ouroboros.Consensus.Block.Forging
   ( BlockForging (..)
+  , MkBlockForging (..)
   , CannotForge
   , ForgeStateInfo
   , ForgeStateUpdateError
@@ -19,7 +19,6 @@ module Ouroboros.Consensus.Block.Forging
   , castForgeStateUpdateInfo
   , checkShouldForge
   , forgeStateUpdateInfoFromUpdateInfo
-  , ForgeBlockArgs (..)
 
     -- * 'UpdateInfo'
   , UpdateInfo (..)
@@ -29,8 +28,6 @@ import Control.Tracer (Tracer, traceWith)
 import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.Stack
-import LeiosDemoDb (LeiosDbConnection)
-import LeiosDemoTypes (ForgedLeiosEb, TraceLeiosKernel)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -122,7 +119,14 @@ data BlockForging m blk = BlockForging
   -- to see whether we can actually forge a block.
   --
   -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
-  , forgeBlock :: ForgeBlockArgs m blk -> m (blk, Maybe ForgedLeiosEb)
+  , forgeBlock ::
+      TopLevelConfig blk ->
+      BlockNo -> -- Current block number
+      SlotNo -> -- Current slot number
+      TickedLedgerState blk EmptyMK -> -- Current ledger state
+      [Validated (GenTx blk)] -> -- Transactions to include
+      IsLeader (BlockProtocol blk) -> -- Proof we are leader
+      m blk
   -- ^ Forge a block
   --
   -- The function is passed the prefix of the mempool that will fit within
@@ -138,26 +142,22 @@ data BlockForging m blk = BlockForging
   -- even when used as part of the hard fork combinator.
   --
   -- PRECONDITION: 'checkCanForge' returned @Right ()@.
+  , finalize :: m ()
+  -- ^ Clean up any unmanaged resources.
+  --
+  -- Such resources may include KES keys that require explicit erasing
+  -- ("secure forgetting"), and threads that connect to a KES agent.
+  -- This method will be run once when the block forging thread
+  -- terminates, whether cleanly or due to an exception.
   }
 
-data ForgeBlockArgs m blk = ForgeBlockArgs
-  { fbConfig :: TopLevelConfig blk
-  , fbCurrentBlockNo :: BlockNo -- Current block number
-  , fbCurrentSlotNo :: SlotNo -- Current slot number
-  , fbCurrentTickedLedgerState :: TickedLedgerState blk EmptyMK -- Current ledger state
-  , fbRbTxs :: [Validated (GenTx blk)] -- Transactions to include in the TxsRb
-  , fbEbTxs :: [Validated (GenTx blk)] -- Transaction to include in the Eb
-  , fbIsLeader :: IsLeader (BlockProtocol blk) -- Proof we are leader
-  , fbChainDepState :: Maybe (ChainDepState (BlockProtocol blk))
-  -- ^ The (unticked) chain-dependent state of the block we're building on.
-  -- Unticked so callers can inspect prior-slot state (e.g. the most recent
-  -- Leios EB announcement); 'Nothing' at any era boundary, since the HFC
-  -- tags each era as a distinct SOP slot and we don't translate the
-  -- previous era's state forward (the info we'd want isn't on the prior
-  -- era's header anyway).
-  , fbLeiosDb :: LeiosDbConnection m
-  , fbLeiosTracer :: Tracer m TraceLeiosKernel
-  }
+-- | 'MkBlockForging' is a wrapper around a monadic action that allocates a
+-- 'BlockForging', potentially allocating other linked resources like KES
+-- HotKeys, that *MUST* be finalized when the 'BlockForging' is no longer in
+-- use. Users of this code must call the 'finalize' function on the returned 'BlockForging' at least once after terminating otherwise allocated resources
+-- may leak.
+newtype MkBlockForging m blk
+  = MkBlockForging {mkBlockForging :: m (BlockForging m blk)}
 
 data ShouldForge blk
   = -- | Before check whether we are a leader in this slot, we tried to update

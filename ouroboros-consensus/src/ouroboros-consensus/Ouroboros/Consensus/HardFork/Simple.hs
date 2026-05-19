@@ -42,12 +42,12 @@ instance SerialiseNodeToClient blk TriggerHardFork where
   encodeNodeToClient _ _ triggerHardFork = case triggerHardFork of
     TriggerHardForkAtVersion v -> encodeListLen 2 <> encodeWord8 0 <> toCBOR v
     TriggerHardForkAtEpoch e -> encodeListLen 2 <> encodeWord8 1 <> toCBOR e
-    TriggerHardForkNotDuringThisExecution -> encodeListLen 2 <> encodeWord8 2
+    TriggerHardForkNotDuringThisExecution -> encodeListLen 1 <> encodeWord8 2
   decodeNodeToClient _ _ = do
     len <- decodeListLen
     tag <- decodeWord8
     case (len, tag) of
       (2, 0) -> TriggerHardForkAtVersion <$> fromCBOR @Word16
       (2, 1) -> TriggerHardForkAtEpoch <$> fromCBOR @EpochNo
-      (2, 2) -> pure TriggerHardForkNotDuringThisExecution
+      (1, 2) -> pure TriggerHardForkNotDuringThisExecution
       _ -> fail $ "TriggerHardFork: invalid (len, tag): " <> show (len, tag)

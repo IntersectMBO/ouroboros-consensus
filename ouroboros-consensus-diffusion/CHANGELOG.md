@@ -2,6 +2,23 @@
 
 # Changelog entries
 
+<a id='changelog-0.24.0.0'></a>
+## 0.24.0.0 -- 2025-09-29
+
+### Non-Breaking
+
+- Ensure that block forging threads finalize their keys when shutting down.
+- Adds a `kesAgentClientTracer` for tracing `KESAgentClientTrace` events
+
+### Breaking
+
+- `Ouroboros.Consensus.Network.NodeToNode.mkApps` takes `StdGen` as an argument, which is passed to `chain-sync` client.
+- `LowLevelRunNodeArgs` and `StdRunNodeArgs` were changed to match `ouroboros-network-0.22`
+- `NetworkP2PMode` was removed (non-p2p mode is removed from `ouroboros-network`).
+- `Ouroboros.Consensus.Node.stdRunDataDiffusion` was changed to match `Cardano.Network.Diffusion` API.
+
+- Added tracers `GsmEventInitializedInCaughtUp` and `GsmEventInitializedInPreSyncing` for the initial Genesis State Machine state.
+
 <a id='changelog-0.23.0.0'></a>
 ## 0.23.0.0 -- 2025-05-15
 
@@ -30,7 +47,7 @@
 ### Breaking
 
 - Implement the UTxO-HD feature. See the documentation in [the
-  webpage](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/utxo-hd/Overview/).
+  webpage](https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/miscellaneous/utxo-hd/).
   - `hStateQueryServer` now needs a `ResourceRegistry` to allocate `Forker`s.
   - `DiskPolicyArgs` was transformed into `SnapshotPolicyArgs`.
   - `StdRunNodeArgs` got two new fields:
@@ -254,7 +271,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
 
 - Added the Genesis State Machine (GSM), though for now it is merely the
   simpler [Bootstrap Peers State
-  Machine](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/BootstrapPeersIER/).
+  Machine](https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/miscellaneous/bootstrap_peers_IER/).
 
 - Added `rnGetUseBootstrapPeers` to `RunNodeArgs`, for dynamically
   enabling/disabling the GSM. The proper GSM must always be running, despite

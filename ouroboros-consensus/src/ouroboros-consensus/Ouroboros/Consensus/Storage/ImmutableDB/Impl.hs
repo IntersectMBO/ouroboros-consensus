@@ -103,6 +103,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl
   , openDBInternal
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import qualified Codec.CBOR.Write as CBOR
 import Control.Monad (replicateM_, unless, when)
 import Control.Monad.Except (runExceptT)
@@ -195,7 +196,7 @@ defaultArgs =
 -- | 'EncodeDisk' and 'DecodeDisk' constraints needed for the ImmutableDB.
 type ImmutableDbSerialiseConstraints blk =
   ( EncodeDisk blk blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , ReconstructNestedCtxt Header blk
   , HasBinaryBlockInfo blk
@@ -237,7 +238,7 @@ getHashForSlot = getHashForSlot_
 ------------------------------------------------------------------------------}
 
 openDB ::
-  forall m blk ans.
+  forall m blk.
   ( IOLike m
   , GetPrevHash blk
   , ConvertRawHash blk
@@ -245,16 +246,13 @@ openDB ::
   , HasCallStack
   ) =>
   Complete ImmutableDbArgs m blk ->
-  (forall st. WithTempRegistry st m (ImmutableDB m blk, st) -> ans) ->
-  ans
-openDB args cont =
-  openDBInternal args (cont . fmap swizzle)
- where
-  swizzle ((immdb, _internal), ost) = (immdb, ost)
+  m (ImmutableDB m blk)
+openDB args =
+  fst <$> openDBInternal args
 
 -- | For testing purposes: exposes internals via 'Internal'
 openDBInternal ::
-  forall m blk ans.
+  forall m blk.
   ( IOLike m
   , GetPrevHash blk
   , ConvertRawHash blk
@@ -262,16 +260,9 @@ openDBInternal ::
   , HasCallStack
   ) =>
   Complete ImmutableDbArgs m blk ->
-  ( forall h.
-    WithTempRegistry
-      (OpenState m blk h)
-      m
-      ((ImmutableDB m blk, Internal m blk), OpenState m blk h) ->
-    ans
-  ) ->
-  ans
-openDBInternal ImmutableDbArgs{immHasFS = SomeHasFS hasFS, ..} cont = cont $ do
-  lift $ createDirectoryIfMissing hasFS True (mkFsPath [])
+  m (ImmutableDB m blk, Internal m blk)
+openDBInternal ImmutableDbArgs{immHasFS = SomeHasFS hasFS, ..} = do
+  createDirectoryIfMissing hasFS True (mkFsPath [])
   let validateEnv =
         ValidateEnv
           { hasFS = hasFS
@@ -283,7 +274,7 @@ openDBInternal ImmutableDbArgs{immHasFS = SomeHasFS hasFS, ..} cont = cont $ do
           }
   ost <- validateAndReopen validateEnv immRegistry immValidationPolicy
 
-  stVar <- lift $ newSVar (DbOpen ost)
+  stVar <- newSVar (DbOpen ost)
 
   let dbEnv =
         ImmutableDBEnv
@@ -302,6 +293,7 @@ openDBInternal ImmutableDbArgs{immHasFS = SomeHasFS hasFS, ..} cont = cont $ do
           , getBlockComponent_ = getBlockComponentImpl dbEnv
           , appendBlock_ = appendBlockImpl dbEnv
           , stream_ = streamImpl dbEnv
+          , getBlockAtOrAfterPoint_ = getBlockAtOrAfterPointImpl dbEnv
           }
       internal =
         Internal
@@ -309,7 +301,7 @@ openDBInternal ImmutableDbArgs{immHasFS = SomeHasFS hasFS, ..} cont = cont $ do
           , getHashForSlot_ = getHashForSlotImpl dbEnv
           }
 
-  return ((db, internal), ost)
+  return (db, internal)
 
 closeDBImpl ::
   forall m blk.
@@ -457,7 +449,7 @@ getBlockComponentImpl ::
   forall m blk b.
   ( HasHeader blk
   , ReconstructNestedCtxt Header blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , IOLike m
   ) =>

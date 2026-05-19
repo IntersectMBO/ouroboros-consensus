@@ -1,29 +1,26 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.Shelley.Generators (SomeResult (..)) where
 
-import qualified Cardano.Ledger.Block as L
 import Cardano.Ledger.Core (TranslationContext)
-import qualified Cardano.Ledger.Core as L
-import Cardano.Ledger.Genesis
 import qualified Cardano.Ledger.Shelley.API as SL
-import Cardano.Ledger.Shelley.Translation
 import Cardano.Ledger.State (InstantStake)
 import Cardano.Protocol.Crypto (Crypto)
-import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Cardano.Slotting.EpochInfo
 import Control.Monad (replicateM)
 import Data.Coerce (coerce)
-import Generic.Random (genericArbitraryU)
+import Data.Maybe.Strict (StrictMaybe (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -35,7 +32,7 @@ import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosState (..))
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
-import Ouroboros.Consensus.Shelley.Ledger.Query.Types
+import Ouroboros.Consensus.Shelley.Node.Common ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Network.Block (mkSerialised)
@@ -89,10 +86,7 @@ instance
   where
   arbitrary = mkShelleyBlock <$> blk
    where
-    blk =
-      SL.Block
-        <$> arbitrary
-        <*> (L.BodyInline . L.toTxSeq @era <$> arbitrary)
+    blk = SL.Block <$> arbitrary <*> arbitrary
 
 -- | This uses a different upstream generator to ensure the header and block
 -- body relate as expected.
@@ -144,7 +138,6 @@ instance
           , Praos.hbBodyHash = SL.bhash bhBody
           , Praos.hbOCert = SL.bheaderOCert bhBody
           , Praos.hbProtVer = SL.bprotver bhBody
-          , Praos.hbMayEbAnnouncement = Nothing
           }
       hSig = coerce bhSig
 
@@ -178,12 +171,12 @@ instance CanMock proto era => Arbitrary (SomeBlockQuery (BlockQuery (ShelleyBloc
       , pure $ SomeBlockQuery GetEpochNo
       , SomeBlockQuery . GetNonMyopicMemberRewards <$> arbitrary
       , pure $ SomeBlockQuery GetCurrentPParams
-      , pure $ SomeBlockQuery GetStakeDistribution
       , pure $ SomeBlockQuery DebugEpochState
       , (\(SomeBlockQuery q) -> SomeBlockQuery (GetCBOR q)) <$> arbitrary
       , SomeBlockQuery . GetFilteredDelegationsAndRewardAccounts <$> arbitrary
       , pure $ SomeBlockQuery GetGenesisConfig
       , pure $ SomeBlockQuery DebugNewEpochState
+      , pure $ SomeBlockQuery GetStakeDistribution2
       ]
 
 instance (Arbitrary (InstantStake era), CanMock proto era) => Arbitrary (SomeResult (ShelleyBlock proto era)) where
@@ -193,7 +186,6 @@ instance (Arbitrary (InstantStake era), CanMock proto era) => Arbitrary (SomeRes
       , SomeResult GetEpochNo <$> arbitrary
       , SomeResult <$> (GetNonMyopicMemberRewards <$> arbitrary) <*> arbitrary
       , SomeResult GetCurrentPParams <$> arbitrary
-      , SomeResult GetStakeDistribution . fromLedgerPoolDistr <$> arbitrary
       , SomeResult DebugEpochState <$> arbitrary
       , ( \(SomeResult q r) ->
             SomeResult (GetCBOR q) (mkSerialised (encodeShelleyResult maxBound q) r)
@@ -202,6 +194,7 @@ instance (Arbitrary (InstantStake era), CanMock proto era) => Arbitrary (SomeRes
       , SomeResult <$> (GetFilteredDelegationsAndRewardAccounts <$> arbitrary) <*> arbitrary
       , SomeResult GetGenesisConfig . compactGenesis <$> arbitrary
       , SomeResult DebugNewEpochState <$> arbitrary
+      , SomeResult GetStakeDistribution2 <$> arbitrary
       ]
 
 instance Arbitrary NonMyopicMemberRewards where
@@ -239,7 +232,7 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> pure (LedgerTables EmptyMK)
-      <*> arbitrary
+      <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]
 
 instance
   (Arbitrary (InstantStake era), CanMock proto era) =>
@@ -251,7 +244,9 @@ instance
       <*> arbitrary
       <*> arbitrary
       <*> (LedgerTables . ValuesMK <$> arbitrary)
-      <*> arbitrary
+      <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]
+
+deriving newtype instance Arbitrary BigEndianTxIn
 
 instance CanMock proto era => Arbitrary (AnnTip (ShelleyBlock proto era)) where
   arbitrary =
@@ -311,20 +306,6 @@ arbitraryGlobalsWithFixedEpochInfo =
 
 arbitraryFixedEpochInfo :: Monad m => Gen (EpochInfo m)
 arbitraryFixedEpochInfo = fixedEpochInfo <$> arbitrary <*> arbitrary
-
-instance Arbitrary (NoGenesis era) where
-  arbitrary = pure NoGenesis
-
-instance Arbitrary FromByronTranslationContext where
-  arbitrary = FromByronTranslationContext <$> arbitrary <*> arbitrary <*> arbitrary
-
-{-------------------------------------------------------------------------------
-  Generators for cardano-ledger-specs
--------------------------------------------------------------------------------}
-
-instance Arbitrary SL.ChainDepState where
-  arbitrary = genericArbitraryU
-  shrink = genericShrink
 
 {-------------------------------------------------------------------------------
   Versioned generators for serialisation

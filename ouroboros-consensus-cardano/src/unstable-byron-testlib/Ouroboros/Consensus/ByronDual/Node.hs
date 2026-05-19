@@ -5,7 +5,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -37,6 +36,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Dual
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -44,7 +44,7 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
+import Ouroboros.Consensus.Util ((.....:))
 import qualified Test.Cardano.Chain.Elaboration.Block as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Delegation as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Keys as Spec.Test
@@ -66,16 +66,8 @@ dualByronBlockForging creds =
     , updateForgeState = \cfg ->
         fmap castForgeStateUpdateInfo .: updateForgeState (dualTopLevelConfigMain cfg)
     , checkCanForge = checkCanForge . dualTopLevelConfigMain
-    , forgeBlock = \ForgeBlockArgs{..} ->
-        -- XXX: Adding Leios EB support here feels so wrong
-        return . (,Nothing) $
-          forgeDualByronBlock
-            fbConfig
-            fbCurrentBlockNo
-            fbCurrentSlotNo
-            fbCurrentTickedLedgerState
-            fbRbTxs
-            fbIsLeader
+    , forgeBlock = return .....: forgeDualByronBlock
+    , finalize = return ()
     }
  where
   BlockForging{..} = byronBlockForging creds
@@ -125,7 +117,6 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
                   , dualStorageConfigAux = ByronSpecStorageConfig
                   }
             , topLevelConfigCheckpoints = emptyCheckpointsMap
-            , topLevelConfigVotingKey = Nothing
             }
       , pInfoInitLedger =
           ExtLedgerState
@@ -277,6 +268,8 @@ instance NodeInitStorage DualByronBlock where
   RunNode instance
 -------------------------------------------------------------------------------}
 
+instance LedgerSupportsPeras DualByronBlock
+
 instance BlockSupportsMetrics DualByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown
 
@@ -289,7 +282,3 @@ deriving via
     BlockSupportsDiffusionPipelining DualByronBlock
 
 instance RunNode DualByronBlock
-
--- * Leios
-
-instance ResolveLeiosBlock DualByronBlock

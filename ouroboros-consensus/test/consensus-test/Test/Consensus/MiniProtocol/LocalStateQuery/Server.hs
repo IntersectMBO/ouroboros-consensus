@@ -21,12 +21,13 @@ module Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests) where
 import Cardano.Crypto.DSIGN.Mock
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import Control.Concurrent.Class.MonadSTM.Strict.TMVar
+import Control.Monad (join)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.ResourceRegistry
 import Control.Tracer
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import qualified LeiosDemoDb as LeiosDb
 import Network.TypedProtocol.Stateful.Proofs (connect)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -38,6 +39,7 @@ import Ouroboros.Consensus.Ledger.Query (Query (..))
 import Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Weight (emptyPerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.BFT
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Storage.ImmutableDB.Stream hiding
@@ -46,7 +48,8 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Stream hiding
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LedgerDB.V1.Args
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
+import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Util.IOLike hiding (newTVarIO)
 import Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -101,7 +104,7 @@ prop_localStateQueryServer ::
 prop_localStateQueryServer k bt p (Positive (Small n)) = checkOutcome k chain actualOutcome
  where
   chain :: Chain TestBlock
-  chain = treePreferredChain bt
+  chain = treePreferredChain emptyPerasWeightSnapshot bt
 
   points :: [Target (Point TestBlock)]
   points =
@@ -203,7 +206,19 @@ mkServer rr k chain = do
   return $
     localStateQueryServer
       cfg
-      (LedgerDB.getReadOnlyForker lgrDB rr)
+      ( \t -> do
+          (rk, res) <-
+            allocate
+              rr
+              (\_ -> LedgerDB.openReadOnlyForker lgrDB t)
+              ( \case
+                  Left{} -> pure ()
+                  Right v -> roforkerClose v
+              )
+          case res of
+            Left err -> release rk >> pure (Left err)
+            Right v -> pure (Right (rk, v))
+      )
  where
   cfg = ExtLedgerCfg $ testCfg k
 
@@ -224,47 +239,50 @@ initLedgerDB ::
   Chain TestBlock ->
   m (LedgerDB' m TestBlock)
 initLedgerDB s c = do
-  reg <- unsafeNewRegistry
   fs <- newTMVarIO MockFS.empty
-  leiosDb <- LeiosDb.newLeiosDBInMemory
   let args =
         LedgerDbArgs
           { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
           , lgrHasFS = SomeHasFS $ simHasFS fs
           , lgrGenesis = return testInitExtLedger
           , lgrTracer = nullTracer
-          , lgrFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DefaultFlushFrequency InMemoryBackingStoreArgs
+          , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrConfig = LedgerDB.configLedgerDb (testCfg s) OmitLedgerEvents
           , lgrQueryBatchSize = DefaultQueryBatchSize
-          , lgrRegistry = reg
           , lgrStartSnapshot = Nothing
           }
-  leiosConn <- LeiosDb.open leiosDb
   ldb <-
     fst
-      <$> LedgerDB.openDB
-        args
-        streamAPI
-        (Chain.headPoint c)
-        (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
+      <$> runWithTempRegistry
+        ( do
+            db <-
+              LedgerDB.openDB
+                args
+                streamAPI
+                (Chain.headPoint c)
+                (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
+                (LedgerDB.praosGetVolatileSuffix s)
+            pure (db, ())
+        )
 
-  result <-
-    LedgerDB.validateFork
-      ldb
-      leiosConn
-      reg
-      (const $ pure ())
-      BlockCache.empty
-      0
-      (map getHeader $ Chain.toOldestFirst c)
-  case result of
-    LedgerDB.ValidateSuccessful forker -> do
-      atomically $ LedgerDB.forkerCommit forker
-      LedgerDB.forkerClose forker
-    LedgerDB.ValidateExceededRollBack _ ->
-      error "impossible: rollback was 0"
-    LedgerDB.ValidateLedgerError _ ->
-      error "impossible: there were no invalid blocks"
+  case NE.nonEmpty $ Chain.toOldestFirst c of
+    Nothing -> pure ()
+    Just chain -> do
+      result <-
+        LedgerDB.validateFork
+          ldb
+          (const $ pure ())
+          BlockCache.empty
+          0
+          (NE.map getHeader chain)
+          (MkSuccessForkerAction $ join . atomically . LedgerDB.forkerCommit)
+      case result of
+        LedgerDB.ValidateSuccessful -> do
+          pure ()
+        LedgerDB.ValidateExceededRollBack _ ->
+          error "impossible: rollback was 0"
+        LedgerDB.ValidateLedgerError _ ->
+          error "impossible: there were no invalid blocks"
 
   pure ldb
 
@@ -286,7 +304,6 @@ testCfg securityParam =
     , topLevelConfigCodec = TestBlockCodecConfig
     , topLevelConfigStorage = TestBlockStorageConfig
     , topLevelConfigCheckpoints = emptyCheckpointsMap
-    , topLevelConfigVotingKey = Nothing
     }
  where
   slotLength :: SlotLength

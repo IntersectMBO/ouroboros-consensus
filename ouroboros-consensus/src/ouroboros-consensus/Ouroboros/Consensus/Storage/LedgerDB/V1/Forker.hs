@@ -1,6 +1,9 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -18,18 +21,18 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
   , implForkerReadTables
   ) where
 
+import Control.Exception (throw)
 import Control.Tracer
+import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import Data.Semigroup
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Forker as Forker
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
@@ -40,15 +43,27 @@ import Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
   , numInserts
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
+import Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
+import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
+import qualified Ouroboros.Network.AnchoredSeq as AS
 
 {-------------------------------------------------------------------------------
   Forkers
 -------------------------------------------------------------------------------}
 
 data ForkerEnv m l blk = ForkerEnv
-  { foeBackingStoreValueHandle :: !(LedgerBackingStoreValueHandle m l)
-  -- ^ Local, consistent view of backing store
+  { foeBackingStoreValueHandle ::
+      !( StrictMVar
+           m
+           ( Either
+               (LedgerDBLock m, LedgerBackingStore m l)
+               (LedgerBackingStoreValueHandle m l)
+           )
+       )
+  -- ^ Either the ingredients to create a value handle or a value handle, i.e. a
+  -- local, consistent view of backing store. Use 'getValueHandle' to promote
+  -- this from a Left to a Right if needed.
   , foeChangelog :: !(StrictTVar m (DbChangelog l))
   -- ^ In memory db changelog, 'foeBackingStoreValueHandle' must refer to
   -- the anchor of this changelog.
@@ -57,10 +72,9 @@ data ForkerEnv m l blk = ForkerEnv
   --
   -- The anchor of this and 'foeChangelog' might get out of sync if diffs are
   -- flushed, but 'forkerCommit' will take care of this.
-  , foeSecurityParam :: !SecurityParam
-  -- ^ Config
   , foeTracer :: !(Tracer m TraceForkerEvent)
   -- ^ Config
+  , foeWasCommitted :: !(StrictTVar m Bool)
   }
   deriving Generic
 
@@ -77,67 +91,99 @@ deriving instance
   Close
 -------------------------------------------------------------------------------}
 
-closeForkerEnv :: ForkerEnv m l blk -> m ()
-closeForkerEnv ForkerEnv{foeBackingStoreValueHandle} = bsvhClose foeBackingStoreValueHandle
+closeForkerEnv :: IOLike m => ForkerEnv m l blk -> m ()
+closeForkerEnv ForkerEnv{foeBackingStoreValueHandle, foeTracer, foeWasCommitted} = do
+  wc <- readTVarIO foeWasCommitted
+  traceWith foeTracer (ForkerClose $ if wc then ForkerWasCommitted else ForkerWasUncommitted)
+  -- If this MVar is empty, we already closed the forker in the past so do nothing.
+  tryTakeMVar foeBackingStoreValueHandle >>= \case
+    -- We already closed the forker in the past, so do nothing.
+    Nothing -> pure ()
+    -- Release the read lock.
+    Just (Left (lock, _)) -> atomically $ unsafeReleaseReadAccess lock
+    -- Release the value handle
+    Just (Right bsvh) -> bsvhClose bsvh
 
 {-------------------------------------------------------------------------------
   Acquiring consistent views
 -------------------------------------------------------------------------------}
 
+-- | Get the value handle in a forker, creating it on demand if this is the
+-- first time we access the tables.
+getValueHandle :: (GetTip l, IOLike m) => ForkerEnv m l blk -> m (LedgerBackingStoreValueHandle m l)
+getValueHandle ForkerEnv{foeBackingStoreValueHandle, foeChangelog} = mask_ $ do
+  -- Note this is masked, so the inner function in 'modifyMVar' will also be
+  -- masked.
+  modifyMVar foeBackingStoreValueHandle $ \case
+    r@(Right bsvh) -> pure (r, bsvh)
+    Left (l, bs) -> do
+      bsvh <- bsValueHandle bs
+      dblogSlot <- getTipSlot . changelogLastFlushedState <$> readTVarIO foeChangelog
+      if bsvhAtSlot bsvh == dblogSlot
+        then do
+          -- Release the read lock acquired when opening the forker.
+          atomically $ unsafeReleaseReadAccess l
+          pure (Right bsvh, bsvh)
+        else
+          throw $
+            CriticalInvariantViolation
+              ( "Critical error: Value handles are created at "
+                  <> show (bsvhAtSlot bsvh)
+                  <> " while the db changelog is at "
+                  <> show dblogSlot
+                  <> ". There is either a race condition or a logic bug"
+              )
+
 implForkerReadTables ::
-  (MonadSTM m, HasLedgerTables l, GetTip l) =>
+  (IOLike m, HasLedgerTables l, GetTip l) =>
   ForkerEnv m l blk ->
   LedgerTables l KeysMK ->
   m (LedgerTables l ValuesMK)
-implForkerReadTables env ks = do
-  traceWith (foeTracer env) ForkerReadTablesStart
-  chlog <- readTVarIO (foeChangelog env)
-  unfwd <- readKeySetsWith lvh (changelogLastFlushedState chlog) ks
-  case forwardTableKeySets chlog unfwd of
-    Left _err -> error "impossible!"
-    Right vs -> do
-      traceWith (foeTracer env) ForkerReadTablesEnd
-      pure vs
- where
-  lvh = foeBackingStoreValueHandle env
+implForkerReadTables env ks =
+  encloseTimedWith (ForkerReadTables >$< foeTracer env) $ do
+    chlog <- readTVarIO (foeChangelog env)
+    bsvh <- getValueHandle env
+    unfwd <- readKeySetsWith bsvh (changelogLastFlushedState chlog) ks
+    case forwardTableKeySets chlog unfwd of
+      Left _err -> error "impossible!"
+      Right vs -> pure vs
 
 implForkerRangeReadTables ::
-  (MonadSTM m, HasLedgerTables l) =>
+  (IOLike m, GetTip l, HasLedgerTables l) =>
   QueryBatchSize ->
   ForkerEnv m l blk ->
   RangeQueryPrevious l ->
-  m (LedgerTables l ValuesMK)
-implForkerRangeReadTables qbs env rq0 = do
-  traceWith (foeTracer env) ForkerRangeReadTablesStart
-  ldb <- readTVarIO $ foeChangelog env
-  let
-    -- Get the differences without the keys that are greater or equal
-    -- than the maximum previously seen key.
-    diffs =
-      maybe
-        id
-        (ltliftA2 doDropLTE)
-        (BackingStore.rqPrev rq)
-        $ ltmap prj
-        $ changelogDiffs ldb
-    -- (1) Ensure that we never delete everything read from disk (ie if
-    --     our result is non-empty then it contains something read from
-    --     disk, as we only get an empty result if we reached the end of
-    --     the table).
-    --
-    -- (2) Also, read one additional key, which we will not include in
-    --     the result but need in order to know which in-memory
-    --     insertions to include.
-    maxDeletes = ltcollapse $ ltmap (K2 . numDeletesDiffMK) diffs
-    nrequested = 1 + max (BackingStore.rqCount rq) (1 + maxDeletes)
+  m (LedgerTables l ValuesMK, Maybe (TxIn l))
+implForkerRangeReadTables qbs env rq0 =
+  encloseTimedWith (ForkerRangeReadTables >$< foeTracer env) $ do
+    ldb <- readTVarIO $ foeChangelog env
+    let
+      -- Get the differences without the keys that are greater or equal
+      -- than the maximum previously seen key.
+      diffs =
+        maybe
+          id
+          (ltliftA2 doDropLTE)
+          (BackingStore.rqPrev rq)
+          $ ltmap prj
+          $ changelogDiffs ldb
+      -- (1) Ensure that we never delete everything read from disk (ie if
+      --     our result is non-empty then it contains something read from
+      --     disk, as we only get an empty result if we reached the end of
+      --     the table).
+      --
+      -- (2) Also, read one additional key, which we will not include in
+      --     the result but need in order to know which in-memory
+      --     insertions to include.
+      maxDeletes = ltcollapse $ ltmap (K2 . numDeletesDiffMK) diffs
+      nrequested = 1 + max (BackingStore.rqCount rq) (1 + maxDeletes)
 
-  let st = changelogLastFlushedState ldb
-  values <- BackingStore.bsvhRangeRead lvh st (rq{BackingStore.rqCount = nrequested})
-  traceWith (foeTracer env) ForkerRangeReadTablesEnd
-  pure $ ltliftA2 (doFixupReadResult nrequested) diffs values
+    let st = changelogLastFlushedState ldb
+    bsvh <- getValueHandle env
+    (values, mx) <- BackingStore.bsvhRangeRead bsvh st (rq{BackingStore.rqCount = nrequested})
+    let res = ltliftA2 (doFixupReadResult nrequested) diffs values
+    pure (res, mx)
  where
-  lvh = foeBackingStoreValueHandle env
-
   rq = BackingStore.RangeQuery rq1 (fromIntegral $ defaultQueryBatchSize qbs)
 
   rq1 = case rq0 of
@@ -230,15 +276,15 @@ implForkerGetLedgerState env = current <$> readTVar (foeChangelog env)
 -- | Obtain statistics for a combination of backing store value handle and
 -- changelog.
 implForkerReadStatistics ::
-  (MonadSTM m, HasLedgerTables l, GetTip l) =>
+  (IOLike m, HasLedgerTables l, GetTip l) =>
   ForkerEnv m l blk ->
-  m (Maybe Forker.Statistics)
+  m Forker.Statistics
 implForkerReadStatistics env = do
   traceWith (foeTracer env) ForkerReadStatistics
   dblog <- readTVarIO (foeChangelog env)
-
+  bsvh <- getValueHandle env
   let seqNo = getTipSlot $ changelogLastFlushedState dblog
-  BackingStore.Statistics{sequenceNumber = seqNo', numEntries = n} <- bsvhStat lbsvh
+  BackingStore.Statistics{sequenceNumber = seqNo', numEntries = n} <- bsvhStat bsvh
   if seqNo /= seqNo'
     then
       error $
@@ -261,30 +307,25 @@ implForkerReadStatistics env = do
             ltmap
               (K2 . getSum . numDeletes . getSeqDiffMK)
               diffs
-      pure . Just $
+      pure $
         Forker.Statistics
           { ledgerTableSize = n + nInserts - nDeletes
           }
- where
-  lbsvh = foeBackingStoreValueHandle env
 
 implForkerPush ::
-  (MonadSTM m, GetTip l, HasLedgerTables l) =>
+  (IOLike m, GetTip l, HasLedgerTables l) =>
   ForkerEnv m l blk ->
   l DiffMK ->
   m ()
-implForkerPush env newState = do
-  traceWith (foeTracer env) ForkerPushStart
-  atomically $ do
-    chlog <- readTVar (foeChangelog env)
-    let chlog' =
-          prune (LedgerDbPruneKeeping (foeSecurityParam env)) $
-            extend newState chlog
-    writeTVar (foeChangelog env) chlog'
-  traceWith (foeTracer env) ForkerPushEnd
+implForkerPush env newState =
+  encloseTimedWith (ForkerPush >$< foeTracer env) $ do
+    atomically $ do
+      chlog <- readTVar (foeChangelog env)
+      let chlog' = extend newState chlog
+      writeTVar (foeChangelog env) chlog'
 
 implForkerCommit ::
-  (MonadSTM m, GetTip l, HasLedgerTables l) =>
+  (MonadSTM m, GetTip l, StandardHash l, HasLedgerTables l) =>
   ForkerEnv m l blk ->
   STM m ()
 implForkerCommit env = do
@@ -298,12 +339,21 @@ implForkerCommit env = do
             . pointSlot
             . getTip
             $ changelogLastFlushedState orig
+        -- The 'DbChangelog' might have gotten pruned in the meantime.
+        splitAfterOrigAnchor =
+          AS.splitAfterMeasure (pointSlot origAnchor) (either sameState sameState)
+         where
+          sameState = (origAnchor ==) . getTip
+          origAnchor = getTip $ anchor orig
      in DbChangelog
           { changelogLastFlushedState = changelogLastFlushedState orig
-          , changelogStates = changelogStates dblog
+          , changelogStates = case splitAfterOrigAnchor (changelogStates dblog) of
+              Nothing -> throw $ CriticalInvariantViolation "Forker chain does no longer intersect with selected chain."
+              Just (_, suffix) -> suffix
           , changelogDiffs =
               ltliftA2 (doPrune s) (changelogDiffs orig) (changelogDiffs dblog)
           }
+  writeTVar (foeWasCommitted env) True
  where
   -- Prune the diffs from the forker's log that have already been flushed to
   -- disk
@@ -321,3 +371,7 @@ implForkerCommit env = do
       if DS.minSlot prunedSeq == DS.minSlot extendedSeq
         then extendedSeq
         else snd $ DS.splitAtSlot s extendedSeq
+
+newtype CriticalInvariantViolation = CriticalInvariantViolation {message :: String}
+  deriving Show
+  deriving anyclass Exception

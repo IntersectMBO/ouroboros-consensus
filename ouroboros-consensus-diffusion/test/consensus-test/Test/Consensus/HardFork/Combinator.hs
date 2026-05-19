@@ -56,7 +56,6 @@ import Ouroboros.Consensus.Protocol.LeaderSchedule
   ( LeaderSchedule (..)
   , leaderScheduleFor
   )
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
@@ -165,6 +164,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         (History.StandardSafeZone (safeFromTipA k))
         (safeZoneB k)
       <*> pure (GenesisWindow ((unNonZero $ maxRollbacks k) * 2))
+      <*> pure (History.PerasEnabled (perasRoundLength mkPerasParams))
 
   shape :: History.Shape '[BlockA, BlockB]
   shape = History.Shape $ exactlyTwo eraParamsA eraParamsB
@@ -195,6 +195,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
       , numSlots = testSetupNumSlots testSetup
       , nodeTopology = meshNodeTopology ncn
       , initSeed = testSetupSeed
+      , txLogicVersion = maxBound
       }
    where
     ncn :: NumCoreNodes
@@ -258,11 +259,11 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
             }
       }
 
-  blockForging :: Monad m => [BlockForging m TestBlock]
+  blockForging :: Monad m => [MkBlockForging m TestBlock]
   blockForging =
-    [ hardForkBlockForging "Test" $
-        OptCons blockForgingA $
-          OptCons blockForgingB $
+    [ hardForkBlockForging (const "Test") $
+        OptCons (MkBlockForging $ pure blockForgingA) $
+          OptCons (MkBlockForging $ pure blockForgingB) $
             OptNil
     ]
 
@@ -323,7 +324,6 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
                     :* Nil
             }
       , topLevelConfigCheckpoints = emptyCheckpointsMap
-      , topLevelConfigVotingKey = Nothing
       }
 
   consensusConfigA :: CoreNodeId -> ConsensusConfig ProtocolA
@@ -433,8 +433,6 @@ instance HasHardForkTxOut '[BlockA, BlockB] where
 
 type TestBlock = HardForkBlock '[BlockA, BlockB]
 
-instance ResolveLeiosBlock (HardForkBlock '[BlockA, BlockB])
-
 instance CanHardFork '[BlockA, BlockB] where
   type HardForkTxMeasure '[BlockA, BlockB] = IgnoringOverflow ByteSize32
 
@@ -445,7 +443,7 @@ instance CanHardFork '[BlockA, BlockB] where
       , translateChainDepState = PCons chainDepState_AtoB PNil
       , crossEraForecast = PCons forecast_AtoB PNil
       }
-  hardForkChainSel = Tails.mk2 CompareBlockNo
+  hardForkChainSel = Tails.mk2 NoTiebreakerAcrossEras
   hardForkInjectTxs = InPairs.mk2 injectTx_AtoB
 
   hardForkInjTxMeasure = \case

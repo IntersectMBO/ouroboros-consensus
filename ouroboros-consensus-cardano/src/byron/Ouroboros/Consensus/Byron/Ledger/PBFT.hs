@@ -74,7 +74,7 @@ instance BlockSupportsProtocol ByronBlock where
    where
     epochSlots = byronEpochSlots cfg
 
-  selectView _ = mkPBftSelectView
+  tiebreakerView _ = mkPBftTiebreakerView
 
 toPBftLedgerView :: Delegation.Map -> PBftLedgerView PBftByronCrypto
 toPBftLedgerView = PBftLedgerView . Delegation.unMap

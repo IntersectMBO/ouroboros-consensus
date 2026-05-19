@@ -2,15 +2,19 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , ByteSize32 (..)
-  , ComputeDiffs (..)
+  , WhatToDoWithTxDiffs (..)
+  , InputTxDiffs
   , ConvertRawTxId (..)
   , GenTx
   , GenTxId
@@ -26,8 +30,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
-  , TxCount (..)
-  , oneTxCount
+  , nothingMkMempoolApplyTxError
   ) where
 
 import Codec.Serialise (Serialise)
@@ -40,6 +43,7 @@ import qualified Data.Foldable as Foldable
 import Data.Kind (Type)
 import Data.Measure (Measure)
 import qualified Data.Measure
+import Data.Text (Text)
 import Data.Word (Word32)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class
@@ -47,6 +51,7 @@ import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
 --
@@ -84,27 +89,16 @@ data WhetherToIntervene
     Intervene
   deriving Show
 
--- | Whether to keep track of the diffs produced by applying the transactions.
---
--- When getting a mempool snapshot, we will revalidate all the
--- transactions but we won't do anything useful with the resulting
--- state. We can safely omit computing the differences in this case.
---
--- This optimization is worthwile as snapshotting is in the critical
--- path of block minting, and we don't make use of the resulting
--- state, only of the transactions that remain valid.
---
--- Eventually, the Ledger rules will construct the differences for us,
--- so this optimization will no longer be needed. That's why we chose
--- to go with a boolean isomorph instead of something fancier.
-data ComputeDiffs
-  = -- | This option should be used when syncing the mempool with the
-    -- LedgerDB, to store a useful state in the mempool.
-    ComputeDiffs
-  | -- | This option should be used only when snapshotting the mempool,
-    -- as we discard the resulting state anyways.
-    IgnoreDiffs
-  deriving Show
+-- | When we are revalidating the transactions in the mempool, we either will
+-- store the resulting differences (when re-syncing with the LedgerDB) or we
+-- simply don't care (when acquiring a mempool snapshot for forging a block).
+type data WhatToDoWithTxDiffs = Collect | Discard
+
+-- | This type family serves to make sure that when we are going to discard the
+-- differences, we don't even have differences around that we might misuse.
+type family InputTxDiffs blk wtd where
+  InputTxDiffs blk Discard = ()
+  InputTxDiffs blk Collect = LedgerTables (TickedLedgerState blk) DiffMK
 
 class
   ( UpdateLedger blk
@@ -151,14 +145,13 @@ class
   -- first state one that contains the values for all the transactions.
   reapplyTx ::
     HasCallStack =>
-    ComputeDiffs ->
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
     Validated (GenTx blk) ->
     -- | Contains at least the values for the tx to reapply
     TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk TrackingMK)
+    Except (ApplyTxErr blk) (TickedLedgerState blk ValuesMK)
 
   -- | Apply a list of previously validated transactions to a new ledger state.
   --
@@ -175,34 +168,30 @@ class
   -- in the same order as they were given, as we will use those later on to
   -- filter a list of 'TxTicket's.
   reapplyTxs ::
-    ComputeDiffs ->
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
-    [(Validated (GenTx blk), extra)] ->
+    [(Validated (GenTx blk), InputTxDiffs blk wtd, extra)] ->
     TickedLedgerState blk ValuesMK ->
-    ReapplyTxsResult extra blk
-  reapplyTxs doDiffs cfg slot txs st =
-    ( \(err, val, st') ->
-        ReapplyTxsResult
-          err
-          (reverse val)
-          st'
-    )
-      $ Foldable.foldl'
-        ( \(accE, accV, st') (tx, extra) ->
-            case runExcept (reapplyTx doDiffs cfg slot tx $ trackingToValues st') of
-              Left err -> (Invalidated tx err : accE, accV, st')
-              Right st'' ->
-                ( accE
-                , (tx, extra) : accV
-                , case doDiffs of
-                    ComputeDiffs -> prependTrackingDiffs st' st''
-                    IgnoreDiffs -> st''
-                )
+    ReapplyTxsResult extra blk wtd
+  reapplyTxs cfg slot txs st =
+    (\(err, val, st') -> ReapplyTxsResult err (reverse val) (forgetLedgerTables st')) $
+      foldReapplyTxs fst3 txs
+   where
+    fst3 (a, _, _) = a
+
+    foldReapplyTxs ::
+      (a -> Validated (GenTx blk)) ->
+      [a] ->
+      ([Invalidated blk], [a], TickedLedgerState blk ValuesMK)
+    foldReapplyTxs projectTx =
+      Foldable.foldl'
+        ( \(accE, accV, st') a ->
+            case runExcept (reapplyTx cfg slot (projectTx a) st') of
+              Left err -> (Invalidated (projectTx a) err : accE, accV, st')
+              Right st'' -> (accE, a : accV, st'')
         )
-        ([], [], attachEmptyDiffs st)
-        txs
+        ([], [], st)
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
@@ -225,6 +214,9 @@ class
   -- be able to remove this optimization altogether.
 
   -- | Prepend diffs on ledger states
+  --
+  -- Intended to be non-default in the HardFork instance for optimizing
+  -- performance.
   prependMempoolDiffs ::
     TickedLedgerState blk DiffMK ->
     TickedLedgerState blk DiffMK ->
@@ -232,6 +224,9 @@ class
   prependMempoolDiffs = prependDiffs
 
   -- | Apply diffs on ledger states
+  --
+  -- Intended to be non-default in the HardFork instance for optimizing
+  -- performance.
   applyMempoolDiffs ::
     LedgerTables (LedgerState blk) ValuesMK ->
     LedgerTables (LedgerState blk) KeysMK ->
@@ -239,15 +234,30 @@ class
     TickedLedgerState blk ValuesMK
   applyMempoolDiffs = applyDiffForKeysOnTables
 
-data ReapplyTxsResult extra blk
+  -- | The ledger rules' error type for the mempool's current era might allow
+  -- the mempool to reject a tx for its own reasons.
+  --
+  -- This function therefore constructs the type that the @LocalTxSubmission@
+  -- node-to-client mini protocol sends when a tx is rejected.
+  mkMempoolApplyTxError ::
+    -- | for the HFC
+    TickedLedgerState blk mk ->
+    Text ->
+    Maybe (ApplyTxErr blk)
+
+-- | Value of 'mkMempoolApplyTxError' when the block type can never
+-- construct the ledger error
+nothingMkMempoolApplyTxError :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
+nothingMkMempoolApplyTxError _ _ = Nothing
+
+data ReapplyTxsResult extra blk wtd
   = ReapplyTxsResult
   { invalidatedTxs :: ![Invalidated blk]
   -- ^ txs that are now invalid. Order doesn't matter
-  , validatedTxs :: ![(Validated (GenTx blk), extra)]
+  , validatedTxs :: ![(Validated (GenTx blk), InputTxDiffs blk wtd, extra)]
   -- ^ txs that are valid again, order must be the same as the order in
   -- which txs were received
-  , resultingState :: !(TickedLedgerState blk TrackingMK)
-  -- ^ Resulting ledger state
+  , resultingState :: !(TickedLedgerState blk EmptyMK)
   }
 
 -- | A generalized transaction, 'GenTx', identifier.
@@ -321,6 +331,9 @@ class
   -- | The (possibly multi-dimensional) size of a transaction in a block.
   type TxMeasure blk
 
+  -- | The size of the transaction from the perspective of diffusion layer
+  txWireSize :: GenTx blk -> Network.SizeInBytes
+
   -- | The various sizes (bytes, Plutus script ExUnits, etc) of a tx /when it's
   -- in a block/
   --
@@ -366,12 +379,6 @@ class
     TickedLedgerState blk mk ->
     TxMeasure blk
 
-  -- | What is the allowed capacity for the txs in an Leios Endorser Block?
-  ebCapacityTxMeasure ::
-    LedgerConfig blk ->
-    TickedLedgerState blk mk ->
-    Maybe (TxMeasure blk)
-
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
 -- to occur explicitly in the code where possible, for
 -- legibility/perspicuousness. We also do not need nor want subtraction.
@@ -394,7 +401,7 @@ class
 -- all.
 newtype ByteSize32 = ByteSize32 {unByteSize32 :: Word32}
   deriving stock Show
-  deriving newtype (Eq, Ord, Bounded)
+  deriving newtype (Eq, Ord)
   deriving newtype NFData
   deriving newtype Serialise
   deriving
@@ -403,21 +410,6 @@ newtype ByteSize32 = ByteSize32 {unByteSize32 :: Word32}
   deriving
     NoThunks
     via OnlyCheckWhnfNamed "ByteSize" ByteSize32
-
-newtype TxCount = TxCount {unTxCount :: Word32}
-  deriving stock Show
-  deriving newtype (Eq, Ord, Bounded)
-  deriving newtype NFData
-  deriving newtype Serialise
-  deriving
-    (Monoid, Semigroup)
-    via (InstantiatedAt Measure (IgnoringOverflow TxCount))
-  deriving
-    NoThunks
-    via OnlyCheckWhnfNamed "TxCount" TxCount
-
-oneTxCount :: IgnoringOverflow TxCount
-oneTxCount = IgnoringOverflow . TxCount $ 1
 
 -- | @'IgnoringOverflow' a@ has the same semantics as @a@, except it ignores
 -- the fact that @a@ can overflow.
@@ -432,7 +424,7 @@ oneTxCount = IgnoringOverflow . TxCount $ 1
 -- TODO upstream this to the @measure@ package
 newtype IgnoringOverflow a = IgnoringOverflow {unIgnoringOverflow :: a}
   deriving stock Show
-  deriving newtype (Eq, Ord, Bounded)
+  deriving newtype (Eq, Ord)
   deriving newtype NFData
   deriving newtype (Monoid, Semigroup)
   deriving newtype NoThunks
@@ -440,12 +432,6 @@ newtype IgnoringOverflow a = IgnoringOverflow {unIgnoringOverflow :: a}
   deriving newtype TxMeasureMetrics
 
 instance Measure (IgnoringOverflow ByteSize32) where
-  zero = coerce (0 :: Word32)
-  plus = coerce $ (+) @Word32
-  min = coerce $ min @Word32
-  max = coerce $ max @Word32
-
-instance Measure (IgnoringOverflow TxCount) where
   zero = coerce (0 :: Word32)
   plus = coerce $ (+) @Word32
   min = coerce $ min @Word32

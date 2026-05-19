@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -41,6 +42,7 @@ import qualified Cardano.Chain.Byron.API as CC
 import qualified Cardano.Chain.Slotting as CC
 import qualified Cardano.Crypto.Hashing as CC
 import Cardano.Ledger.Binary
+import Control.DeepSeq (NFData (..))
 import qualified Crypto.Hash as Crypto
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as Strict
@@ -54,7 +56,6 @@ import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Byron.EBBs as EBBs
 import Ouroboros.Consensus.Byron.Ledger.Conversions
 import Ouroboros.Consensus.Byron.Ledger.Orphans ()
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.SizeInBytes (SizeInBytes)
@@ -65,7 +66,7 @@ import Ouroboros.Network.SizeInBytes (SizeInBytes)
 
 newtype ByronHash = ByronHash {unByronHash :: CC.HeaderHash}
   deriving stock (Eq, Ord, Show, Generic)
-  deriving newtype (EncCBOR, DecCBOR, Condense)
+  deriving newtype (EncCBOR, DecCBOR, Condense, NFData)
   deriving anyclass NoThunks
 
 mkByronHash :: CC.ABlockOrBoundaryHdr ByteString -> ByronHash
@@ -97,12 +98,16 @@ data ByronBlock = ByronBlock
   }
   deriving (Eq, Show)
 
-instance ResolveLeiosBlock ByronBlock
-
 instance Condense ByronBlock where
   condense = condense . byronBlockRaw
 
 instance ShowProxy ByronBlock
+
+instance NFData ByronBlock where
+  rnf ByronBlock{byronBlockRaw, byronBlockSlotNo, byronBlockHash} =
+    byronBlockRaw `seq`
+      rnf byronBlockSlotNo `seq`
+        rnf byronBlockHash
 
 mkByronBlock :: CC.EpochSlots -> CC.ABlockOrBoundary ByteString -> ByronBlock
 mkByronBlock epochSlots blk =

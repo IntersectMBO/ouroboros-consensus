@@ -34,9 +34,10 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapConsensusConfig (..)
   , WrapIsLeader (..)
   , WrapLedgerView (..)
-  , WrapSelectView (..)
+  , WrapTiebreakerView (..)
   , WrapValidateView (..)
   , WrapValidationErr (..)
+  , WrapReasonForSwitch (..)
 
     -- * Versioning
   , WrapNodeToClientVersion (..)
@@ -98,13 +99,16 @@ newtype WrapTxOut blk = WrapTxOut {unwrapTxOut :: TxOut (LedgerState blk)}
 
 newtype WrapCanBeLeader blk = WrapCanBeLeader {unwrapCanBeLeader :: CanBeLeader (BlockProtocol blk)}
 newtype WrapChainDepState blk = WrapChainDepState {unwrapChainDepState :: ChainDepState (BlockProtocol blk)}
-newtype WrapChainOrderConfig blk = WrapChainOrderConfig {unwrapChainOrderConfig :: ChainOrderConfig (SelectView (BlockProtocol blk))}
+newtype WrapChainOrderConfig blk = WrapChainOrderConfig
+  {unwrapChainOrderConfig :: ChainOrderConfig (TiebreakerView (BlockProtocol blk))}
 newtype WrapConsensusConfig blk = WrapConsensusConfig {unwrapConsensusConfig :: ConsensusConfig (BlockProtocol blk)}
 newtype WrapIsLeader blk = WrapIsLeader {unwrapIsLeader :: IsLeader (BlockProtocol blk)}
 newtype WrapLedgerView blk = WrapLedgerView {unwrapLedgerView :: LedgerView (BlockProtocol blk)}
-newtype WrapSelectView blk = WrapSelectView {unwrapSelectView :: SelectView (BlockProtocol blk)}
+newtype WrapTiebreakerView blk = WrapTiebreakerView {unwrapTiebreakerView :: TiebreakerView (BlockProtocol blk)}
 newtype WrapValidateView blk = WrapValidateView {unwrapValidateView :: ValidateView (BlockProtocol blk)}
 newtype WrapValidationErr blk = WrapValidationErr {unwrapValidationErr :: ValidationErr (BlockProtocol blk)}
+
+newtype WrapReasonForSwitch blk = WrapReasonForSwitch {unwrapReasonForSwitch :: ReasonForSwitch (WrapTiebreakerView blk)}
 
 {-------------------------------------------------------------------------------
   Versioning
@@ -144,6 +148,7 @@ deriving instance Show (TentativeHeaderState blk) => Show (WrapTentativeHeaderSt
 deriving instance Show (TentativeHeaderView blk) => Show (WrapTentativeHeaderView blk)
 deriving instance Show (TipInfo blk) => Show (WrapTipInfo blk)
 deriving instance Show (Validated (GenTx blk)) => Show (WrapValidatedGenTx blk)
+deriving instance Show (ReasonForSwitch (WrapTiebreakerView blk)) => Show (WrapReasonForSwitch blk)
 
 deriving instance
   NoThunks (GenTxId blk) => NoThunks (WrapGenTxId blk)
@@ -173,20 +178,21 @@ deriving instance NoThunks (TxOut (LedgerState blk)) => NoThunks (WrapTxOut blk)
 -------------------------------------------------------------------------------}
 
 deriving instance Eq (ChainDepState (BlockProtocol blk)) => Eq (WrapChainDepState blk)
-deriving instance Eq (SelectView (BlockProtocol blk)) => Eq (WrapSelectView blk)
+deriving instance Eq (TiebreakerView (BlockProtocol blk)) => Eq (WrapTiebreakerView blk)
 deriving instance Eq (ValidationErr (BlockProtocol blk)) => Eq (WrapValidationErr blk)
 
-deriving instance Ord (SelectView (BlockProtocol blk)) => Ord (WrapSelectView blk)
+deriving instance Ord (TiebreakerView (BlockProtocol blk)) => Ord (WrapTiebreakerView blk)
 
-deriving instance ChainOrder (SelectView (BlockProtocol blk)) => ChainOrder (WrapSelectView blk)
+deriving instance
+  ChainOrder (TiebreakerView (BlockProtocol blk)) => ChainOrder (WrapTiebreakerView blk)
 
 deriving instance Show (ChainDepState (BlockProtocol blk)) => Show (WrapChainDepState blk)
 deriving instance Show (LedgerView (BlockProtocol blk)) => Show (WrapLedgerView blk)
-deriving instance Show (SelectView (BlockProtocol blk)) => Show (WrapSelectView blk)
+deriving instance Show (TiebreakerView (BlockProtocol blk)) => Show (WrapTiebreakerView blk)
 deriving instance Show (ValidationErr (BlockProtocol blk)) => Show (WrapValidationErr blk)
 
 deriving instance NoThunks (ChainDepState (BlockProtocol blk)) => NoThunks (WrapChainDepState blk)
-deriving instance NoThunks (SelectView (BlockProtocol blk)) => NoThunks (WrapSelectView blk)
+deriving instance NoThunks (TiebreakerView (BlockProtocol blk)) => NoThunks (WrapTiebreakerView blk)
 deriving instance NoThunks (ValidationErr (BlockProtocol blk)) => NoThunks (WrapValidationErr blk)
 
 {-------------------------------------------------------------------------------

@@ -13,9 +13,12 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator
   , extractBlockComponent
   , getSlotInfo
   , streamImpl
+  , getBlockAtOrAfterPointImpl
   ) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
 import Cardano.Prelude (forceElemsToWHNF)
+import Cardano.Slotting.Slot (WithOrigin (..))
 import qualified Codec.CBOR.Read as CBOR
 import Control.Monad (unless, void, when)
 import Control.Monad.Except (ExceptT, runExceptT, throwError)
@@ -33,6 +36,7 @@ import Data.Foldable (find)
 import Data.Functor ((<&>))
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Text as Text
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block hiding (headerHash)
@@ -116,7 +120,7 @@ streamImpl ::
   forall m blk b.
   ( IOLike m
   , HasHeader blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , ReconstructNestedCtxt Header blk
   , HasCallStack
@@ -427,7 +431,7 @@ iteratorNextImpl ::
   forall m blk b h.
   ( IOLike m
   , HasHeader blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , ReconstructNestedCtxt Header blk
   ) =>
@@ -602,7 +606,7 @@ extractBlockComponent ::
   forall m blk b h.
   ( HasHeader blk
   , ReconstructNestedCtxt Header blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   , DecodeDiskDep (NestedCtxt Header) blk
   , IOLike m
   ) =>
@@ -724,21 +728,91 @@ extractBlockComponent
     parseHeader (SomeSecond ctxt) bytes =
       throwParseErrors bytes $
         CBOR.deserialiseFromBytes
-          ((\f -> nest . DepPair ctxt . f) <$> decodeDiskDep ccfg ctxt)
+          (aux <$> decodeDiskDep ccfg ctxt)
           bytes
+     where
+      aux = \f -> Right . nest . DepPair ctxt . f
 
     throwParseErrors ::
-      forall b'.
+      forall b''.
       Lazy.ByteString ->
-      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> b') ->
-      m b'
+      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> Either Plain.DecoderError b'') ->
+      m b''
     throwParseErrors fullBytes = \case
       Right (trailing, f)
         | Lazy.null trailing ->
-            return $ f fullBytes
+            case f fullBytes of
+              Left err ->
+                throwUnexpectedFailure $
+                  ParseError
+                    (fsPathChunkFile chunk)
+                    pt
+                    (Plain.DecoderErrorDeserialiseFailure (Text.pack "") $ CBOR.DeserialiseFailure 0 (show err))
+              Right result -> pure result
         | otherwise ->
             throwUnexpectedFailure $
               TrailingDataError (fsPathChunkFile chunk) pt trailing
       Left err ->
         throwUnexpectedFailure $
-          ParseError (fsPathChunkFile chunk) pt err
+          ParseError (fsPathChunkFile chunk) pt (Plain.DecoderErrorDeserialiseFailure (Text.pack "") err)
+
+-- | Find a filled slot, starting from the target slot and going forwards in the ImmutableDB.
+--
+--   Because of EBBs, the new resulting slot may be filled with two blocks. This implementation
+--   returns the first one, even if it's an EBB. On mainnet, no new EBBs will be produced; hence,
+--   this implementation will always return a regular block.
+seekBlockForwards ::
+  forall m blk h.
+  ( IOLike m
+  , HasHeader blk
+  , HasCallStack
+  ) =>
+  ImmutableDBEnv m blk ->
+  OpenState m blk h ->
+  Tip blk ->
+  RealPoint blk ->
+  m (Either SeekBlockError (RealPoint blk))
+seekBlockForwards
+  ImmutableDBEnv{chunkInfo}
+  OpenState{currentIndex}
+  immutableTip = go
+   where
+    go targetPoint@(RealPoint slot hash) =
+      runExceptT (getSlotInfo chunkInfo currentIndex (NotOrigin immutableTip) targetPoint) >>= \case
+        Left NewerThanTip{} ->
+          -- Stop if the target slot is newer then tip
+          pure . Left $ TargetNewerThanTip
+        Left (EmptySlot{}) -> do
+          if slot < (realPointSlot . tipToRealPoint $ immutableTip)
+            -- otherwise, skip this slot and repeat with the next one
+            then go (RealPoint (slot + 1) hash)
+            -- we're past the immutable tip and did not find any blocks, so we can only return the tip.
+            -- Note that this case is impossible, as the we would not get 'EmptySlot' from 'getSlotInfo',
+            -- but we still return the tip for completeness' sake.
+            else pure . Right $ tipToRealPoint immutableTip
+        Left (WrongHash _ hashes) ->
+          case hashes of
+            -- always return the first found block, even if it's an EBB
+            (actualHash NE.:| _) ->
+              pure . Right $ RealPoint (realPointSlot targetPoint) actualHash
+        Right{} ->
+          pure . Right $ targetPoint
+
+-- | Query the immutable DB to for a block at the target slot. If the target slot is empty,
+--   return the block at the next occupied slot.
+--
+--   See the haddock of 'ChainDB.getBlockAtOrAfterPoint_' for more details.
+getBlockAtOrAfterPointImpl ::
+  forall m blk.
+  ( IOLike m
+  , HasHeader blk
+  , HasCallStack
+  ) =>
+  ImmutableDBEnv m blk ->
+  (RealPoint blk) ->
+  m (Either SeekBlockError (RealPoint blk))
+getBlockAtOrAfterPointImpl dbEnv targetPoint =
+  withOpenState dbEnv $ \_hasFS dbState@OpenState{currentTip} -> do
+    case currentTip of
+      Origin -> pure . Left $ TipIsOrigin
+      At tip -> seekBlockForwards dbEnv dbState tip targetPoint

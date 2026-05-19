@@ -29,5 +29,5 @@ tests_chainOrder aPrx =
     ("ChainOrder " <> show (typeRep aPrx))
     [ testProperty "Eq & Ord" (prop_lawfulEqAndTotalOrd @a)
     , testProperty "Consistency with Ord" $ \cfg (a :: a) b ->
-        preferCandidate cfg a b ==> a `lt` b
+        shouldSwitch (preferCandidate cfg a b) ==> a `lt` b
     ]

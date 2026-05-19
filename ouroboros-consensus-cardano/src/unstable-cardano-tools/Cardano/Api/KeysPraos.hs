@@ -13,7 +13,7 @@
 -- | Praos consensus key types and their 'Key' class instances
 module Cardano.Api.KeysPraos
   ( -- * Key types
-    KesKey
+    UnsoundPureKesKey
   , VrfKey
 
     -- * Data family instances
@@ -39,88 +39,88 @@ import Data.String (IsString (..))
 -- KES keys
 --
 
-data KesKey
+data UnsoundPureKesKey
 
-instance HasTypeProxy KesKey where
-  data AsType KesKey = AsKesKey
-  proxyToAsType _ = AsKesKey
+instance HasTypeProxy UnsoundPureKesKey where
+  data AsType UnsoundPureKesKey = AsUnsoundPureKesKey
+  proxyToAsType _ = AsUnsoundPureKesKey
 
-instance Key KesKey where
-  newtype VerificationKey KesKey
+instance Key UnsoundPureKesKey where
+  newtype VerificationKey UnsoundPureKesKey
     = KesVerificationKey (Crypto.VerKeyKES (KES StandardCrypto))
     deriving stock Eq
-    deriving (Show, IsString) via UsingRawBytesHex (VerificationKey KesKey)
+    deriving (Show, IsString) via UsingRawBytesHex (VerificationKey UnsoundPureKesKey)
     deriving newtype (EncCBOR, DecCBOR, ToCBOR, FromCBOR)
     deriving anyclass SerialiseAsCBOR
 
-  newtype SigningKey KesKey
+  newtype SigningKey UnsoundPureKesKey
     = KesSigningKey (Crypto.UnsoundPureSignKeyKES (KES StandardCrypto))
-    deriving (Show, IsString) via UsingRawBytesHex (SigningKey KesKey)
+    deriving (Show, IsString) via UsingRawBytesHex (SigningKey UnsoundPureKesKey)
     deriving newtype (ToCBOR, FromCBOR)
     deriving anyclass (EncCBOR, DecCBOR, SerialiseAsCBOR)
 
   -- This loses the mlock safety of the seed, since it starts from a normal in-memory seed.
-  deterministicSigningKey :: AsType KesKey -> Crypto.Seed -> SigningKey KesKey
-  deterministicSigningKey AsKesKey =
+  deterministicSigningKey :: AsType UnsoundPureKesKey -> Crypto.Seed -> SigningKey UnsoundPureKesKey
+  deterministicSigningKey AsUnsoundPureKesKey =
     KesSigningKey . Crypto.unsoundPureGenKeyKES
 
-  deterministicSigningKeySeedSize :: AsType KesKey -> Word
-  deterministicSigningKeySeedSize AsKesKey =
+  deterministicSigningKeySeedSize :: AsType UnsoundPureKesKey -> Word
+  deterministicSigningKeySeedSize AsUnsoundPureKesKey =
     Crypto.seedSizeKES proxy
    where
     proxy :: Proxy (KES StandardCrypto)
     proxy = Proxy
 
-  getVerificationKey :: SigningKey KesKey -> VerificationKey KesKey
+  getVerificationKey :: SigningKey UnsoundPureKesKey -> VerificationKey UnsoundPureKesKey
   getVerificationKey (KesSigningKey sk) =
     KesVerificationKey (Crypto.unsoundPureDeriveVerKeyKES sk)
 
-  verificationKeyHash :: VerificationKey KesKey -> Hash KesKey
+  verificationKeyHash :: VerificationKey UnsoundPureKesKey -> Hash UnsoundPureKesKey
   verificationKeyHash (KesVerificationKey vkey) =
-    KesKeyHash (Crypto.hashVerKeyKES vkey)
+    UnsoundPureKesKeyHash (Crypto.hashVerKeyKES vkey)
 
-instance SerialiseAsRawBytes (VerificationKey KesKey) where
+instance SerialiseAsRawBytes (VerificationKey UnsoundPureKesKey) where
   serialiseToRawBytes (KesVerificationKey vk) =
     Crypto.rawSerialiseVerKeyKES vk
 
-  deserialiseFromRawBytes (AsVerificationKey AsKesKey) bs =
+  deserialiseFromRawBytes (AsVerificationKey AsUnsoundPureKesKey) bs =
     KesVerificationKey
       <$> Crypto.rawDeserialiseVerKeyKES bs
 
-instance SerialiseAsRawBytes (SigningKey KesKey) where
+instance SerialiseAsRawBytes (SigningKey UnsoundPureKesKey) where
   serialiseToRawBytes (KesSigningKey sk) =
     Crypto.rawSerialiseUnsoundPureSignKeyKES sk
 
-  deserialiseFromRawBytes (AsSigningKey AsKesKey) bs =
+  deserialiseFromRawBytes (AsSigningKey AsUnsoundPureKesKey) bs =
     KesSigningKey <$> Crypto.rawDeserialiseUnsoundPureSignKeyKES bs
 
-instance SerialiseAsBech32 (VerificationKey KesKey) where
+instance SerialiseAsBech32 (VerificationKey UnsoundPureKesKey) where
   bech32PrefixFor _ = "kes_vk"
   bech32PrefixesPermitted _ = ["kes_vk"]
 
-instance SerialiseAsBech32 (SigningKey KesKey) where
+instance SerialiseAsBech32 (SigningKey UnsoundPureKesKey) where
   bech32PrefixFor _ = "kes_sk"
   bech32PrefixesPermitted _ = ["kes_sk"]
 
-newtype instance Hash KesKey
-  = KesKeyHash
+newtype instance Hash UnsoundPureKesKey
+  = UnsoundPureKesKeyHash
       ( Crypto.Hash
           HASH
           (Crypto.VerKeyKES (KES StandardCrypto))
       )
   deriving stock (Eq, Ord)
-  deriving (Show, IsString) via UsingRawBytesHex (Hash KesKey)
-  deriving (ToCBOR, FromCBOR) via UsingRawBytes (Hash KesKey)
+  deriving (Show, IsString) via UsingRawBytesHex (Hash UnsoundPureKesKey)
+  deriving (ToCBOR, FromCBOR) via UsingRawBytes (Hash UnsoundPureKesKey)
   deriving anyclass SerialiseAsCBOR
 
-instance SerialiseAsRawBytes (Hash KesKey) where
-  serialiseToRawBytes (KesKeyHash vkh) =
+instance SerialiseAsRawBytes (Hash UnsoundPureKesKey) where
+  serialiseToRawBytes (UnsoundPureKesKeyHash vkh) =
     Crypto.hashToBytes vkh
 
-  deserialiseFromRawBytes (AsHash AsKesKey) bs =
-    KesKeyHash <$> Crypto.hashFromBytes bs
+  deserialiseFromRawBytes (AsHash AsUnsoundPureKesKey) bs =
+    UnsoundPureKesKeyHash <$> Crypto.hashFromBytes bs
 
-instance HasTextEnvelope (VerificationKey KesKey) where
+instance HasTextEnvelope (VerificationKey UnsoundPureKesKey) where
   textEnvelopeType _ =
     "KesVerificationKey_"
       <> fromString (Crypto.algorithmNameKES proxy)
@@ -128,7 +128,7 @@ instance HasTextEnvelope (VerificationKey KesKey) where
     proxy :: Proxy (KES StandardCrypto)
     proxy = Proxy
 
-instance HasTextEnvelope (SigningKey KesKey) where
+instance HasTextEnvelope (SigningKey UnsoundPureKesKey) where
   textEnvelopeType _ =
     "KesSigningKey_"
       <> fromString (Crypto.algorithmNameKES proxy)

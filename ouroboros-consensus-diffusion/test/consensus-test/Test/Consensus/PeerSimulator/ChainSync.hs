@@ -10,6 +10,7 @@ module Test.Consensus.PeerSimulator.ChainSync
   , runChainSyncServer
   ) where
 
+import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Control.Exception (SomeException)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Tracer
@@ -50,23 +51,20 @@ import Ouroboros.Consensus.Util.IOLike
   , MonadCatch (try)
   )
 import Ouroboros.Network.Block (Tip)
-import Ouroboros.Network.Channel (Channel, received)
+import Ouroboros.Network.Channel (Channel)
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
 import Ouroboros.Network.Driver (runPeer)
 import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (ExceededSizeLimit, ExceededTimeLimit)
   , runPipelinedPeerWithLimits
   )
-import Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import Ouroboros.Network.Protocol.ChainSync.ClientPipelined
   ( ChainSyncClientPipelined
   , chainSyncClientPeerPipelined
   )
 import Ouroboros.Network.Protocol.ChainSync.Codec
-  ( ChainSyncTimeout (..)
-  , byteLimitsChainSync
+  ( byteLimitsChainSync
   , codecChainSyncId
-  , timeLimitsChainSync
   )
 import Ouroboros.Network.Protocol.ChainSync.PipelineDecision
   ( pipelineDecisionLowHighMark
@@ -86,6 +84,7 @@ import Test.Consensus.PeerSimulator.Trace
   ( TraceChainSyncClientTerminationEvent (..)
   , TraceEvent (..)
   )
+import Test.Consensus.PointSchedule (ChainSyncTimeout (..), timeLimitsChainSync)
 import Test.Consensus.PointSchedule.Peers (PeerId)
 import Test.Util.Orphans.IOLike ()
 
@@ -210,11 +209,11 @@ runChainSyncClient
                   )
               )
         case res of
-          Right (res', mReception) ->
+          Right res' ->
             traceWith svtPeerSimulatorResultsTracer $
               PeerSimulatorResult peerId $
                 SomeChainSyncClientResult $
-                  Right (res', received <$> mReception)
+                  Right res'
           Left exn -> traceException exn
    where
     traceException exn = do
@@ -235,9 +234,8 @@ runChainSyncClient
           traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceTerminatedByLoP
         _ -> pure ()
 
--- REVIEW: This is not removing the limit anymore?
 chainSyncNoSizeLimits :: ProtocolSizeLimits (ChainSync header point tip) bytes
-chainSyncNoSizeLimits = byteLimitsChainSync
+chainSyncNoSizeLimits = byteLimitsChainSync (const 0)
 
 chainSyncNoTimeouts :: ChainSyncTimeout
 chainSyncNoTimeouts =
@@ -258,11 +256,11 @@ runChainSyncServer ::
   m ()
 runChainSyncServer tracer peerId StateViewTracers{svtPeerSimulatorResultsTracer} server channel =
   (try $ runPeer sendRecvTracer codecChainSyncId channel (chainSyncServerPeer server)) >>= \case
-    Right ((), mReception) ->
+    Right ((), msgRes) ->
       traceWith svtPeerSimulatorResultsTracer $
         PeerSimulatorResult peerId $
           SomeChainSyncServerResult $
-            Right (received <$> mReception)
+            Right msgRes
     Left exn -> do
       traceWith svtPeerSimulatorResultsTracer $
         PeerSimulatorResult peerId $

@@ -29,6 +29,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( GetLoEFragment
@@ -38,9 +39,12 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   ( TraceEvent (..)
   )
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import Ouroboros.Consensus.Storage.LedgerDB (LedgerDbFlavorArgs)
+import Ouroboros.Consensus.Storage.LedgerDB (LedgerDbBackendArgs)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -54,6 +58,7 @@ data ChainDbArgs f m blk = ChainDbArgs
   { cdbImmDbArgs :: ImmutableDB.ImmutableDbArgs f m blk
   , cdbVolDbArgs :: VolatileDB.VolatileDbArgs f m blk
   , cdbLgrDbArgs :: LedgerDB.LedgerDbArgs f m blk
+  , cdbPerasCertDbArgs :: PerasCertDB.PerasCertDbArgs f m blk
   , cdbsArgs :: ChainDbSpecificArgs f m blk
   }
 
@@ -131,13 +136,18 @@ defaultSpecificArgs =
 -- and must therefore be set explicitly.
 defaultArgs ::
   forall m blk.
-  Monad m =>
+  ( IOLike m
+  , LedgerDB.LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  , LedgerDB.LedgerSupportsInMemoryLedgerDB (LedgerState blk)
+  ) =>
   Incomplete ChainDbArgs m blk
 defaultArgs =
   ChainDbArgs
     ImmutableDB.defaultArgs
     VolatileDB.defaultArgs
-    LedgerDB.defaultArgs
+    (LedgerDB.defaultArgs $ LedgerDB.SomeBackendArgs InMemory.InMemArgs)
+    PerasCertDB.defaultArgs
     defaultSpecificArgs
 
 ensureValidateAll ::
@@ -169,7 +179,7 @@ completeChainDbArgs ::
   (RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile  FS, see 'NodeDatabasePaths'
   (RelativeMountPoint -> SomeHasFS m) ->
-  Complete LedgerDbFlavorArgs m ->
+  LedgerDbBackendArgs m blk ->
   -- | A set of incomplete arguments, possibly modified wrt @defaultArgs@
   Incomplete ChainDbArgs m blk ->
   Complete ChainDbArgs m blk
@@ -206,8 +216,11 @@ completeChainDbArgs
                 LedgerDB.configLedgerDb
                   cdbsTopLevelConfig
                   (LedgerDB.ledgerDbCfgComputeLedgerEvents $ LedgerDB.lgrConfig (cdbLgrDbArgs defArgs))
-            , LedgerDB.lgrFlavorArgs = flavorArgs
-            , LedgerDB.lgrRegistry = registry
+            , LedgerDB.lgrBackendArgs = flavorArgs
+            }
+      , cdbPerasCertDbArgs =
+          PerasCertDB.PerasCertDbArgs
+            { PerasCertDB.pcdbaTracer = PerasCertDB.pcdbaTracer (cdbPerasCertDbArgs defArgs)
             }
       , cdbsArgs =
           (cdbsArgs defArgs)
@@ -226,6 +239,8 @@ updateTracer trcr args =
     { cdbImmDbArgs = (cdbImmDbArgs args){ImmutableDB.immTracer = TraceImmutableDBEvent >$< trcr}
     , cdbVolDbArgs = (cdbVolDbArgs args){VolatileDB.volTracer = TraceVolatileDBEvent >$< trcr}
     , cdbLgrDbArgs = (cdbLgrDbArgs args){LedgerDB.lgrTracer = TraceLedgerDBEvent >$< trcr}
+    , cdbPerasCertDbArgs =
+        (cdbPerasCertDbArgs args){PerasCertDB.pcdbaTracer = TracePerasCertDbEvent >$< trcr}
     , cdbsArgs = (cdbsArgs args){cdbsTracer = trcr}
     }
 

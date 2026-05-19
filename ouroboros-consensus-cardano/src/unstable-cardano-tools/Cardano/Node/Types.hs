@@ -23,8 +23,9 @@ module Cardano.Node.Types
   , NodeAlonzoProtocolConfiguration (..)
   , NodeByronProtocolConfiguration (..)
   , NodeConwayProtocolConfiguration (..)
+  , NodeDijkstraProtocolConfiguration (..)
   , NodeHardForkProtocolConfiguration (..)
-  , NodeProtocolConfiguration (..)
+  , NodeProtocolConfigurationCardano (..)
   , NodeShelleyProtocolConfiguration (..)
   , VRFPrivateKeyFilePermissionError (..)
   , renderVRFPrivateKeyFilePermissionError
@@ -114,14 +115,13 @@ data ProtocolFilepaths
 newtype GenesisHash = GenesisHash (Crypto.Hash Crypto.Blake2b_256 Crypto.ByteString)
   deriving newtype (Eq, Show, ToJSON, FromJSON)
 
-data NodeProtocolConfiguration
-  = NodeProtocolConfigurationByron NodeByronProtocolConfiguration
-  | NodeProtocolConfigurationShelley NodeShelleyProtocolConfiguration
-  | NodeProtocolConfigurationCardano
+data NodeProtocolConfigurationCardano
+  = NodeProtocolConfigurationCardano
       NodeByronProtocolConfiguration
       NodeShelleyProtocolConfiguration
       NodeAlonzoProtocolConfiguration
       NodeConwayProtocolConfiguration
+      NodeDijkstraProtocolConfiguration
       NodeHardForkProtocolConfiguration
   deriving (Eq, Show)
 
@@ -172,6 +172,13 @@ data NodeConwayProtocolConfiguration
   }
   deriving (Eq, Show)
 
+data NodeDijkstraProtocolConfiguration
+  = NodeDijkstraProtocolConfiguration
+  { npcDijkstraGenesisFile :: !GenesisFile
+  , npcDijkstraGenesisFileHash :: !(Maybe GenesisHash)
+  }
+  deriving (Eq, Show)
+
 -- | Configuration relating to a hard forks themselves, not the specific eras.
 data NodeHardForkProtocolConfiguration
   = NodeHardForkProtocolConfiguration
@@ -216,20 +223,18 @@ data NodeHardForkProtocolConfiguration
   -- configured the same, or they will disagree.
   , npcTestBabbageHardForkAtEpoch :: Maybe EpochNo
   , npcTestConwayHardForkAtEpoch :: Maybe EpochNo
+  , npcTestDijkstraHardForkAtEpoch :: Maybe EpochNo
   }
   deriving (Eq, Show)
 
-instance AdjustFilePaths NodeProtocolConfiguration where
-  adjustFilePaths f (NodeProtocolConfigurationByron pc) =
-    NodeProtocolConfigurationByron (adjustFilePaths f pc)
-  adjustFilePaths f (NodeProtocolConfigurationShelley pc) =
-    NodeProtocolConfigurationShelley (adjustFilePaths f pc)
-  adjustFilePaths f (NodeProtocolConfigurationCardano pcb pcs pca pcc pch) =
+instance AdjustFilePaths NodeProtocolConfigurationCardano where
+  adjustFilePaths f (NodeProtocolConfigurationCardano pcb pcs pca pcc pcd pch) =
     NodeProtocolConfigurationCardano
       (adjustFilePaths f pcb)
       (adjustFilePaths f pcs)
       (adjustFilePaths f pca)
       (adjustFilePaths f pcc)
+      (adjustFilePaths f pcd)
       pch
 
 instance AdjustFilePaths NodeByronProtocolConfiguration where
@@ -263,6 +268,14 @@ instance AdjustFilePaths NodeConwayProtocolConfiguration where
       { npcConwayGenesisFile
       } =
       x{npcConwayGenesisFile = adjustFilePaths f npcConwayGenesisFile}
+
+instance AdjustFilePaths NodeDijkstraProtocolConfiguration where
+  adjustFilePaths
+    f
+    x@NodeDijkstraProtocolConfiguration
+      { npcDijkstraGenesisFile
+      } =
+      x{npcDijkstraGenesisFile = adjustFilePaths f npcDijkstraGenesisFile}
 
 instance AdjustFilePaths GenesisFile where
   adjustFilePaths f (GenesisFile p) = GenesisFile (f p)

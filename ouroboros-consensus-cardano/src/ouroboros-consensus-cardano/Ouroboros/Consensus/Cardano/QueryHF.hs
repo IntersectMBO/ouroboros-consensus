@@ -19,6 +19,7 @@
 
 module Ouroboros.Consensus.Cardano.QueryHF () where
 
+import Data.Coerce
 import Data.Functor.Product
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
@@ -98,14 +99,14 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
           answerShelleyLookupQueries
             (injectLedgerTables idx)
             (ejectHardForkTxOut idx)
-            (ejectCanonicalTxIn idx)
+            (coerce . ejectCanonicalTxIn idx)
       )
   answerBlockQueryHFTraverse =
     answerCardanoQueryHF
       ( \idx ->
           answerShelleyTraversingQueries
             (ejectHardForkTxOut idx)
-            (ejectCanonicalTxIn idx)
+            (coerce . ejectCanonicalTxIn idx)
             (queryLedgerGetTraversingFilter idx)
       )
 
@@ -119,7 +120,8 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
     IS (IS (IS (IS IZ))) -> shelleyCardanoFilter q
     IS (IS (IS (IS (IS IZ)))) -> shelleyCardanoFilter q
     IS (IS (IS (IS (IS (IS IZ))))) -> shelleyCardanoFilter q
-    IS (IS (IS (IS (IS (IS (IS idx')))))) -> case idx' of {}
+    IS (IS (IS (IS (IS (IS (IS IZ)))))) -> shelleyCardanoFilter q
+    IS (IS (IS (IS (IS (IS (IS (IS idx'))))))) -> case idx' of {}
 
 byronCardanoFilter ::
   BlockQuery ByronBlock QFTraverseTables result ->

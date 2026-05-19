@@ -19,7 +19,6 @@ import qualified Cardano.Ledger.Alonzo.Scripts as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
 import Cardano.Ledger.Babbage (BabbageEra)
 import qualified Cardano.Ledger.BaseTypes as CL (natVersion)
-import qualified Cardano.Ledger.Block as L
 import Cardano.Ledger.Conway (ConwayEra)
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Mary (MaryEra)
@@ -32,13 +31,14 @@ import Data.Foldable as Foldable (foldl', toList)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, maybeToList)
 import Data.Maybe.Strict
+import Data.Monoid (Sum (..))
 import Data.Sequence.Strict (StrictSeq)
 import Data.Word (Word64)
 import Lens.Micro ((^.))
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import Ouroboros.Consensus.Shelley.Eras (StandardCrypto)
+import Ouroboros.Consensus.Shelley.Eras (DijkstraEra, StandardCrypto)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
   ( ShelleyCompatible
@@ -52,6 +52,7 @@ import Ouroboros.Consensus.Shelley.Node
   , ShelleyGenesis
   , protocolInfoShelley
   )
+import Ouroboros.Network.SizeInBytes (SizeInBytes (SizeInBytes))
 import TextBuilder (decimal)
 
 -- | Usable for each Shelley-based era
@@ -62,15 +63,15 @@ instance
   HasAnalysis (ShelleyBlock proto era)
   where
   countTxOutputs blk = case Shelley.shelleyBlockRaw blk of
-    SL.Block _ body -> sum $ fmap countOutputs (Core.fromTxSeq @era $ L.bodyTxs body)
+    SL.Block _ body -> getSum $ foldMap (Sum . countOutputs) (body ^. Core.txSeqBlockBodyL)
    where
-    countOutputs :: Core.Tx era -> Int
+    countOutputs :: Core.Tx Core.TopTx era -> Int
     countOutputs tx = length $ tx ^. Core.bodyTxL . Core.outputsTxBodyL
 
   blockTxSizes blk = case Shelley.shelleyBlockRaw blk of
     SL.Block _ body ->
       toList $
-        fmap (fromIntegral . view Core.sizeTxF) (Core.fromTxSeq @era $ L.bodyTxs body)
+        fmap (SizeInBytes . view Core.sizeTxF) (body ^. Core.txSeqBlockBodyL)
 
   knownEBBs = const Map.empty
 
@@ -99,16 +100,16 @@ instance
          | f <- maybeToList txExUnitsSteps
          ]
    where
-    txs :: StrictSeq (Core.Tx era)
+    txs :: StrictSeq (Core.Tx Core.TopTx era)
     txs = case Shelley.shelleyBlockRaw blk of
-      SL.Block _ body -> Core.fromTxSeq @era $ L.bodyTxs body
+      SL.Block _ body -> body ^. Core.txSeqBlockBodyL
 
   -- For the time being we do not support any block application
   -- metrics for Shelley-only eras.
   blockApplicationMetrics = []
 
 class PerEraAnalysis era where
-  txExUnitsSteps :: Maybe (Core.Tx era -> Word64)
+  txExUnitsSteps :: Maybe (Core.Tx Core.TopTx era -> Word64)
 
 instance PerEraAnalysis ShelleyEra where txExUnitsSteps = Nothing
 instance PerEraAnalysis AllegraEra where txExUnitsSteps = Nothing
@@ -125,6 +126,11 @@ instance PerEraAnalysis BabbageEra where
      in toEnum $ fromEnum steps
 
 instance PerEraAnalysis ConwayEra where
+  txExUnitsSteps = Just $ \tx ->
+    let (Alonzo.ExUnits _mem steps) = Alonzo.totExUnits tx
+     in toEnum $ fromEnum steps
+
+instance PerEraAnalysis DijkstraEra where
   txExUnitsSteps = Just $ \tx ->
     let (Alonzo.ExUnits _mem steps) = Alonzo.totExUnits tx
      in toEnum $ fromEnum steps

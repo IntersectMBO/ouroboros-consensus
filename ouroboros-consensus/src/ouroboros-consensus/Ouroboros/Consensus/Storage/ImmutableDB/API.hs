@@ -38,6 +38,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API
   , missingBlockPoint
   , throwApiMisuse
   , throwUnexpectedFailure
+  , SeekBlockError (..)
 
     -- * Wrappers that preserve 'HasCallStack'
   , appendBlock
@@ -45,6 +46,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API
   , getBlockComponent
   , getTip
   , stream
+  , getBlockAtOrAfterPoint
 
     -- * Derived functionality
   , getKnownBlockComponent
@@ -58,7 +60,8 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API
   , withDB
   ) where
 
-import qualified Codec.CBOR.Read as CBOR
+import Cardano.Binary (DecoderError)
+import Control.DeepSeq (NFData (..))
 import Control.Monad.Except (ExceptT (..), runExceptT, throwError)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry (ResourceRegistry)
@@ -174,6 +177,22 @@ data ImmutableDB m blk = ImmutableDB
   --
   -- The iterator is automatically closed when exhausted, and can be
   -- prematurely closed with 'iteratorClose'.
+  , getBlockAtOrAfterPoint_ ::
+      HasCallStack =>
+      (RealPoint blk) ->
+      m (Either SeekBlockError (RealPoint blk))
+  -- ^ Query the ImmutableDB for a block at the target slot. If the target slot is empty,
+  --   return the block at the next occupied slot.
+  --
+  --   Output:
+  --   - returns 'Left' if the target slot is younger than the immutable tip
+  --   - returns the block at the target slot if it's occupied
+  --   - returns the block at the next occupied slot if the target slot is empty
+  --
+  --   Note: in case a slot is occupied by two blocks, and EBB and a regular block,
+  --         return the first block, i.e. the EBB. In contemporary Cardano,
+  --         no new EBBs will be produced; hence, this implementation will always
+  --         return a regular block.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "ImmutableDB" (ImmutableDB m blk)
 
@@ -267,6 +286,7 @@ data Tip blk = Tip
 deriving instance StandardHash blk => Eq (Tip blk)
 deriving instance StandardHash blk => Show (Tip blk)
 deriving instance StandardHash blk => NoThunks (Tip blk)
+deriving instance StandardHash blk => NFData (Tip blk)
 
 tipToRealPoint :: Tip blk -> RealPoint blk
 tipToRealPoint Tip{tipSlotNo, tipHash} = RealPoint tipSlotNo tipHash
@@ -314,6 +334,14 @@ instance Ord (CompareTip blk) where
     compareIsEBB IsEBB IsNotEBB = LT
     compareIsEBB IsNotEBB IsEBB = GT
     compareIsEBB _ _ = EQ
+
+-- | Error type for 'seekBlockAtOrAfterPoint'
+data SeekBlockError
+  = -- | The requested slot is not yet immutable
+    TargetNewerThanTip
+  | -- | ImmutableDB is empty
+    TipIsOrigin
+  deriving (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Errors
@@ -378,7 +406,7 @@ data UnexpectedFailure blk
     -- one.
     ChecksumMismatchError (RealPoint blk) CRC CRC FsPath PrettyCallStack
   | -- | A block failed to parse
-    ParseError FsPath (RealPoint blk) CBOR.DeserialiseFailure
+    ParseError FsPath (RealPoint blk) DecoderError
   | -- | When parsing a block we got some trailing data
     TrailingDataError FsPath (RealPoint blk) Lazy.ByteString
   | -- | Block missing
@@ -474,6 +502,13 @@ stream ::
   StreamTo blk ->
   m (Either (MissingBlock blk) (Iterator m blk b))
 stream = stream_
+
+getBlockAtOrAfterPoint ::
+  HasCallStack =>
+  ImmutableDB m blk ->
+  (RealPoint blk) ->
+  m (Either SeekBlockError (RealPoint blk))
+getBlockAtOrAfterPoint = getBlockAtOrAfterPoint_
 
 {-------------------------------------------------------------------------------
   Derived functionality

@@ -25,6 +25,10 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , addBlockWaitWrittenToDisk
   , addBlock_
 
+    -- * Adding a Peras certificate
+  , AddPerasCertPromise (..)
+  , addPerasCertSync
+
     -- * Trigger chain selection
   , ChainSelectionPromise (..)
   , triggerChainSelection
@@ -60,6 +64,9 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , Follower (..)
   , traverseFollower
 
+    -- * Seeking for an occupied immutable block
+  , SeekBlockError (..)
+
     -- * Recovery
   , ChainDbFailure (..)
   , IsEBB (..)
@@ -77,21 +84,26 @@ import Control.ResourceRegistry
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
+import Ouroboros.Consensus.Storage.ImmutableDB.API (SeekBlockError (..))
 import Ouroboros.Consensus.Storage.LedgerDB
   ( GetForkerError
   , ReadOnlyForker'
   , Statistics
   )
+import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint)
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -188,6 +200,10 @@ data ChainDB m blk = ChainDB
   --
   -- NOTE: A direct consequence of this guarantee is that the anchor of the
   -- fragment will move as the chain grows.
+  --
+  -- Note that with Ouroboros Peras, the size of this fragment is defined in
+  -- terms /weight/ instead of /length/, see
+  -- 'Ouroboros.Consensus.Peras.Weight.takeVolatileSuffix'.
   , getCurrentChainWithTime ::
       STM m (AnchoredFragment (HeaderWithTime blk))
   -- ^ Exact same as 'getCurrentChain', except each header is annotated
@@ -208,17 +224,32 @@ data ChainDB m blk = ChainDB
   , getHeaderStateHistory :: STM m (HeaderStateHistory blk)
   -- ^ Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
   -- last @k@ blocks of the current chain.
-  , getReadOnlyForkerAtPoint ::
+  , allocInRegistryReadOnlyForkerAtPoint ::
+      Target (Point blk) ->
       ResourceRegistry m ->
+      m (Either GetForkerError (ResourceKey m, ReadOnlyForker' m blk))
+  -- ^ Allocate a read only forker at the given point in the given resource
+  -- registry.
+  --
+  -- This function is to be used by LocalStateQuery server. Note ChainSel uses
+  -- the LedgerDB directly, none of these methods are used there.
+  , openReadOnlyForkerAtPoint ::
       Target (Point blk) ->
       m (Either GetForkerError (ReadOnlyForker' m blk))
-  -- ^ Acquire a read-only forker at a specific point if that point exists
-  -- on the db.
+  -- ^ Open a forker at the given point. This resource is untracked.
   --
-  -- Note that the forker should be closed by the caller of this function.
+  -- It is intended to be used by the Mempool as closing the mempool means the
+  -- system is shutting down, so the resources does not need to be tracked. Note
+  -- ChainSel uses the LedgerDB directly, none of these methods are used there.
+  , withReadOnlyForkerAtPoint ::
+      forall r.
+      Target (Point blk) ->
+      (Either GetForkerError (ReadOnlyForker' m blk) -> WithEarlyExit m r) ->
+      WithEarlyExit m r
+  -- ^ Run a continuation with a forker at the given target.
   --
-  -- The forker is read-only becase a read-write forker could be used to
-  -- change the internal state of the LedgerDB.
+  -- This function is to be used by the forging loop. Note ChainSel uses the
+  -- LedgerDB directly, none of these methods are used there.
   , getTipBlock :: m (Maybe blk)
   -- ^ Get block at the tip of the chain, if one exists
   --
@@ -383,17 +414,37 @@ data ChainDB m blk = ChainDB
   , getChainSelStarvation :: STM m ChainSelStarvation
   -- ^ Whether ChainSel is currently starved, or when was last time it
   -- stopped being starved.
-  , getLedgerTablesAtFor ::
-      Point blk ->
-      LedgerTables (ExtLedgerState blk) KeysMK ->
-      m (Maybe (LedgerTables (ExtLedgerState blk) ValuesMK))
-  -- ^ Read ledger tables at a given point on the chain, if it exists.
-  --
-  -- This is intended to be used by the mempool to hydrate a ledger state at
-  -- a specific point.
-  , getStatistics :: m (Maybe Statistics)
+  , getStatistics :: m Statistics
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
+  , addPerasCertAsync :: WithArrivalTime (ValidatedPerasCert blk) -> m (AddPerasCertPromise m)
+  -- ^ Asynchronously insert a certificate to the DB. If this leads to a fork to
+  -- be weightier than our current selection, this will trigger a fork switch.
+  , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
+  -- ^ Get the 'PerasWeightSnapshot', representing the Peras weight boosts for
+  -- all blocks newer than the current immutable tip.
+  , getPerasCertSnapshot :: STM m (PerasCertSnapshot blk)
+  -- ^ Get the Peras certificate snapshot, containing the currently-known
+  -- certificates boosting blocks newer than the immutable tip.
+  , waitForImmutableBlock :: RealPoint blk -> m (Either SeekBlockError (RealPoint blk))
+  -- ^ Wait until the immutable tip's slot is equal or greater than the given slot:
+  --   - returns the block when it becomes the immutable tip,
+  --     reading it from disk;
+  --   - if no block was found at the target slot, returns the immutable block
+  --     at the next filled slot;
+  --
+  -- This function will never return 'Left' as it will block until it could
+  -- return a 'Right'. However, the type has to be an 'Either' to avoid a call
+  -- to 'error'.
+  --
+  -- Currently, the only use-case of this function is to verify the immutability
+  -- of a block from the big ledger peer snapshot file.
+  , getLatestPerasCertOnChainRound :: STM m (Maybe PerasRoundNo)
+  -- ^ Get the round number of the latest Peras certificate on the currently
+  -- preferred chain.
+  --
+  -- Returns 'Nothing' if the block does not contain a Peras certificate, or
+  -- if the block is from an era that does not support Peras certificates.
   , closeDB :: m ()
   -- ^ Close the ChainDB
   --
@@ -512,6 +563,23 @@ newtype ChainSelectionPromise m = ChainSelectionPromise
 triggerChainSelection :: IOLike m => ChainDB m blk -> m ()
 triggerChainSelection chainDB =
   waitChainSelectionPromise =<< chainSelAsync chainDB
+
+{-------------------------------------------------------------------------------
+  Adding a Peras certificate
+-------------------------------------------------------------------------------}
+
+newtype AddPerasCertPromise m = AddPerasCertPromise
+  { waitPerasCertProcessed :: m ()
+  -- ^ Wait until the Peras certificate has been processed (which potentially
+  -- includes switching to a different chain). If the PerasCertDB did already
+  -- contain a certificate for this round, the certificate is ignored (as the
+  -- two certificates must be identical because certificate equivocation is
+  -- impossible).
+  }
+
+addPerasCertSync :: IOLike m => ChainDB m blk -> WithArrivalTime (ValidatedPerasCert blk) -> m ()
+addPerasCertSync chainDB cert =
+  waitPerasCertProcessed =<< addPerasCertAsync chainDB cert
 
 {-------------------------------------------------------------------------------
   Serialised block/header with its point

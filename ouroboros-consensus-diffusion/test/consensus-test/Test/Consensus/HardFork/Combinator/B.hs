@@ -12,7 +12,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -36,6 +35,7 @@ module Test.Consensus.HardFork.Combinator.B
   , TxId (..)
   ) where
 
+import Cardano.Binary (DecoderError)
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Codec.Serialise
 import qualified Data.Binary as B
@@ -62,6 +62,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.InitStorage
@@ -261,6 +262,8 @@ instance LedgerSupportsProtocol BlockB where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
+instance LedgerSupportsPeras BlockB
+
 instance HasPartialConsensusConfig ProtocolB
 
 instance HasPartialLedgerConfig BlockB
@@ -298,15 +301,10 @@ blockForgingB =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \ForgeBlockArgs{..} ->
-        return . (,Nothing) $
-          forgeBlockB
-            fbConfig
-            fbCurrentBlockNo
-            fbCurrentSlotNo
-            fbCurrentTickedLedgerState
-            (txForgetValidated <$> fbRbTxs)
-            fbIsLeader
+    , forgeBlock = \cfg bno slot st txs proof ->
+        return $
+          forgeBlockB cfg bno slot st (fmap txForgetValidated txs) proof
+    , finalize = return ()
     }
 
 -- | A basic 'History.SafeZone'
@@ -327,17 +325,19 @@ type instance ApplyTxErr BlockB = Void
 
 instance LedgerSupportsMempool BlockB where
   applyTx = \_ _ _wti tx -> case tx of {}
-  reapplyTx = \_ _ _ vtx -> case vtx of {}
+  reapplyTx = \_ _ vtx -> case vtx of {}
 
   txForgetValidated = \case {}
 
   getTransactionKeySets _tx = trivialLedgerTables
 
+  mkMempoolApplyTxError = nothingMkMempoolApplyTxError
+
 instance TxLimits BlockB where
   type TxMeasure BlockB = IgnoringOverflow ByteSize32
-  txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
+  txWireSize = const . fromIntegral $ (0 :: Int)
   blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary
-  ebCapacityTxMeasure _ _ = Nothing
+  txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
 
 data instance TxId (GenTx BlockB)
   deriving stock (Show, Eq, Ord, Generic)
@@ -471,8 +471,8 @@ instance EncodeDisk BlockB (LedgerState BlockB EmptyMK)
 instance DecodeDisk BlockB (LedgerState BlockB EmptyMK)
 
 instance EncodeDisk BlockB BlockB
-instance DecodeDisk BlockB (Lazy.ByteString -> BlockB) where
-  decodeDisk _ = const <$> decode
+instance DecodeDisk BlockB (Lazy.ByteString -> Either DecoderError BlockB) where
+  decodeDisk _ = const . Right <$> decode
 
 instance EncodeDisk BlockB (AnnTip BlockB)
 instance DecodeDisk BlockB (AnnTip BlockB)
@@ -497,7 +497,7 @@ instance SerialiseNodeToNode BlockB (GenTxId BlockB)
 -- the @Serialise (SerialisedHeader BlockB)@ instance below
 instance SerialiseNodeToNode BlockB (Header BlockB) where
   encodeNodeToNode _ _ = wrapCBORinCBOR encode
-  decodeNodeToNode _ _ = unwrapCBORinCBOR (const <$> decode)
+  decodeNodeToNode _ _ = unwrapCBORinCBOR (const . Right <$> decode)
 
 instance Serialise (SerialisedHeader BlockB) where
   encode = encodeTrivialSerialisedHeader

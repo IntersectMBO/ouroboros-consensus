@@ -22,6 +22,7 @@ import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import Ouroboros.Consensus.Cardano (CardanoBlock)
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
+import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PBFT
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
@@ -79,7 +80,7 @@ instance GenTentativeHeaderViews ByronBlock where
     nubOrd . sort <$> listOf do
       bno <- arbitrary
       isEBB <- toIsEBB <$> arbitrary
-      pure $ PBftSelectView bno isEBB
+      pure $ SelectView bno (PBftTiebreakerView isEBB)
 
 instance ShelleyCompatible proto era => GenTentativeHeaderViews (ShelleyBlock proto era) where
   genTentativeHeaderViews _ = do
