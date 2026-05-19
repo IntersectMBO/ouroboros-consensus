@@ -37,7 +37,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables (EmptyMK)
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.Praos (PraosState)

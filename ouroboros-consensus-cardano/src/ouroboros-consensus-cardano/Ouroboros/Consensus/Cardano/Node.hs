@@ -62,7 +62,6 @@ import Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
 import Data.SOP.BasicFunctors
 import Data.SOP.Counting
-import Data.SOP.Functors (Flip (..))
 import Data.SOP.Index
 import Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
@@ -81,13 +80,10 @@ import Ouroboros.Consensus.Cardano.CanHardFork
 import Ouroboros.Consensus.Cardano.QueryHF ()
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator
-import Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -649,7 +645,7 @@ protocolInfoCardano paramsCardano
         , topLevelConfigLedger = ledgerConfigByron
         , topLevelConfigBlock = blockConfigByron
         }
-    , pInfoInitLedger = initExtLedgerStateByron
+    , pInfoInitLedger = _initExtLedgerStateByron
     } = protocolInfoByron byronProtocolParams
 
   partialConsensusConfigByron :: PartialConsensusConfig (BlockProtocol ByronBlock)
@@ -930,7 +926,7 @@ protocolInfoCardano paramsCardano
   -- data from the genesis config (if provided) in the ledger state. For
   -- example, this includes initial staking and initial funds (useful for
   -- testing/benchmarking).
-  initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c) ValuesMK
+  initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c)
   initExtLedgerStateCardano =
     ExtLedgerState
       { headerState = initHeaderState
@@ -941,12 +937,11 @@ protocolInfoCardano paramsCardano
       HardForkLedgerState $ hap (fn id :* registerAny) st
 
     initHeaderState :: HeaderState (CardanoBlock c)
-    initLedgerState :: LedgerState (CardanoBlock c) ValuesMK
+    initLedgerState :: LedgerState (CardanoBlock c)
     ExtLedgerState initLedgerState initHeaderState =
-      injectInitialExtLedgerState cfg $
-        initExtLedgerStateByron
-
-    registerAny :: NP (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (CardanoShelleyEras c)
+      undefined -- injectInitialExtLedgerState cfg $
+      -- initExtLedgerStateByron
+    registerAny :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
     registerAny =
       hcmap (Proxy @IsShelleyBlock) injectIntoTestState $
         WrapTransitionConfig transitionConfigShelley
@@ -961,18 +956,14 @@ protocolInfoCardano paramsCardano
     injectIntoTestState ::
       ShelleyBasedEra era =>
       WrapTransitionConfig (ShelleyBlock proto era) ->
-      (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (ShelleyBlock proto era)
-    injectIntoTestState (WrapTransitionConfig tcfg) = fn $ \(Flip st) ->
-      -- We need to unstow the injected values
-      Flip $
-        unstowLedgerTables $
-          forgetLedgerTables $
-            st
-              { Shelley.shelleyLedgerState =
-                  L.injectIntoTestState
-                    tcfg
-                    (Shelley.shelleyLedgerState $ stowLedgerTables st)
-              }
+      (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
+    injectIntoTestState (WrapTransitionConfig tcfg) = fn $ \st ->
+      st
+        { Shelley.shelleyLedgerState =
+            L.injectIntoTestState
+              tcfg
+              (Shelley.shelleyLedgerState st)
+        }
 
   -- \| For each element in the list, a block forging thread will be started.
   --

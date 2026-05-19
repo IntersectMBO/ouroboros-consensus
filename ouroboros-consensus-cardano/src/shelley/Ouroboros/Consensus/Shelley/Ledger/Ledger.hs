@@ -388,24 +388,25 @@ untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
 type instance AuxLedgerEvent (ShelleyBlock proto era) = ShelleyLedgerEvent era
 
-data Handle m era = Handle
+data Handle m proto era = Handle
   { readTxOuts :: Set SL.TxIn -> m (SL.UTxO era)
-  , duplWithDiffs :: Diff.Diff SL.TxIn (Core.TxOut era) -> m (Handle m era)
-  , dupl :: m (Handle m era)
+  , duplWithDiffs :: Diff.Diff SL.TxIn (Core.TxOut era) -> m (Handle m proto era)
+  , stateWith :: SL.UTxO era -> m (LedgerState (ShelleyBlock proto era))
+  , dupl :: m (Handle m proto era)
   , readTxOutsRange :: RangeQueryPrevious -> m (SL.UTxO era, Maybe SL.TxIn)
   , applyDiff :: Diff.Diff SL.TxIn (Core.TxOut era) -> m ()
   , closeHandle :: m ()
   , getStatsHandle :: Statistics
   }
 
-type instance LedgerTables m (ShelleyBlock proto era) = Handle m era
+type instance LedgerTables m (ShelleyBlock proto era) = Handle m proto era
 
 data RangeQueryPrevious = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo SL.TxIn
 
 instance Monad m => StateRefHasState m LedgerState (ShelleyBlock proto era) where
   data StateRef m LedgerState (ShelleyBlock proto era) = ShelleyStateRef
     { stateRefState :: LedgerState (ShelleyBlock proto era)
-    , stateRefHandle :: Handle m era
+    , stateRefHandle :: Handle m proto era
     }
 
   state = stateRefState
@@ -417,7 +418,7 @@ instance Monad m => StateRefHasState m LedgerState (ShelleyBlock proto era) wher
 instance Monad m => StateRefHasState m (Ticked LedgerState) (ShelleyBlock proto era) where
   data StateRef m (Ticked LedgerState) (ShelleyBlock proto era) = TickedShelleyStateRef
     { tickedStateRefState :: Ticked LedgerState (ShelleyBlock proto era)
-    , tickedStateRefHandle :: Handle m era
+    , tickedStateRefHandle :: Handle m proto era
     }
 
   state = tickedStateRefState

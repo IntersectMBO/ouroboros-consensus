@@ -48,7 +48,7 @@ class
   type HardForkTxMeasure xs
 
   hardForkEraTranslation :: EraTranslation xs
-  hardForkStateRefTranslation :: StateRefTranslation m xs
+  hardForkStateRefTranslation :: Monad m => StateRefTranslation m xs
   hardForkChainSel :: Tails AcrossEraTiebreaker xs
   hardForkInjectTxs ::
     InPairs
