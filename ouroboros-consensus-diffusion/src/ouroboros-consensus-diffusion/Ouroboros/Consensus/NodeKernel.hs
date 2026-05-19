@@ -173,6 +173,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ The node's top-level static configuration
   , getFetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
   -- ^ The fetch client registry, used for the block fetch clients.
+  , getKeepAliveRegistry :: KeepAliveRegistry (ConnectionId addrNTN) m
+  -- ^ The keep alive registry, used for the block fetch clients.
   , getFetchMode :: STM m FetchMode
   -- ^ The fetch mode, used by diffusion.
   , getGsmState :: STM m GSM.GsmState
@@ -272,6 +274,7 @@ initNodeKernel
     let IS
           { blockFetchInterface
           , fetchClientRegistry
+          , keepAliveRegistry
           , mempool
           , peerSharingRegistry
           , varChainSyncHandles
@@ -382,6 +385,7 @@ initNodeKernel
           (contramap (fmap castTraceFetchClientState) $ blockFetchClientTracer tracers)
           blockFetchInterface
           fetchClientRegistry
+          keepAliveRegistry
           blockFetchConfiguration
 
     void $
@@ -399,6 +403,7 @@ initNodeKernel
         , getMempool = mempool
         , getTopLevelConfig = cfg
         , getFetchClientRegistry = fetchClientRegistry
+        , getKeepAliveRegistry = keepAliveRegistry
         , getFetchMode = readFetchMode blockFetchInterface
         , getGsmState = readTVar varGsmState
         , getChainSyncHandles = varChainSyncHandles
@@ -454,6 +459,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , blockFetchInterface ::
       BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
   , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+  , keepAliveRegistry :: KeepAliveRegistry (ConnectionId addrNTN) m
   , varChainSyncHandles :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
   , varGsmState :: StrictTVar m GSM.GsmState
   , mempool :: Mempool m blk
@@ -505,6 +511,7 @@ initInternalState
         (mempoolTracer tracers)
 
     fetchClientRegistry <- newFetchClientRegistry
+    keepAliveRegistry <- newKeepAliveRegistry
 
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault

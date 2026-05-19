@@ -81,7 +81,7 @@ import Cardano.Network.NodeToNode
   , defaultMiniProtocolParameters
   )
 import Cardano.Network.NodeToNode.Version (getLocalPerasSupport)
-import Cardano.Network.PeerSelection (ChurnMode (..), PeerTrustable, UseBootstrapPeers (..))
+import Cardano.Network.PeerSelection (ChurnMode (ChurnMode), PeerTrustable, UseBootstrapPeers (..))
 import Cardano.Network.Protocol.ChainSync.Codec.TimeLimits (timeLimitsChainSync)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
@@ -151,6 +151,7 @@ import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import Ouroboros.Network.BlockFetch
   ( BlockFetchConfiguration (..)
+  , PraosFetchMode (..)
   )
 import qualified Ouroboros.Network.Diffusion as Diffusion
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
@@ -599,7 +600,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
-            churnModeVar <- StrictSTM.newTVarIO ChurnModeNormal
+            churnModeVar <- StrictSTM.newTVarIO (ChurnMode (Cardano.PraosFetchMode FetchModeDeadline))
             churnMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
             let consensusDiffusionArgs =
                   Cardano.Diffusion.CardanoConsensusArguments
@@ -618,15 +619,16 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                      in \newOcs -> do
                                           oldOcs <- readTVar varOcs
                                           when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
-                                , Cardano.getBlockHash = \targetBlock k -> do
+                                , Cardano.getImmutableBlockPoint = \targetBlock k -> do
                                     case targetBlock of
-                                      GenesisPoint -> k (pure Nothing)
+                                      GenesisPoint -> k (pure (Left Cardano.ImmutableBlockPointGenesisPoint))
                                       (BlockPoint targetSlot (RawBlockHash targetHash)) -> do
                                         let targetPoint = RealPoint targetSlot (fromShortRawHash (Proxy @blk) targetHash)
                                         ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
-                                          Left{} -> k (pure Nothing)
+                                          Left ChainDB.TipIsOrigin -> k (pure (Left Cardano.ImmutableBlockPointTipIsOrigin))
+                                          Left ChainDB.TargetNewerThanTip -> k (pure (Left Cardano.ImmutableBlockPointNotYetImmutable))
                                           Right (RealPoint actualSlot actualHash) ->
-                                            k (pure . Just $ BlockPoint actualSlot (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash))
+                                            k (pure . Right $ BlockPoint actualSlot (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash))
                                 }
                           }
                     , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
