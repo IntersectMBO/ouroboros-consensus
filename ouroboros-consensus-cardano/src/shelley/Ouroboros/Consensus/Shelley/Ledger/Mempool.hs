@@ -39,6 +39,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
   , ConwayMeasure (..)
   , DijkstraMeasure (..)
   , fromExUnits
+  , leiosEndorserBlockMeasure
   ) where
 
 import qualified Cardano.Crypto.Hash as Hash
@@ -102,6 +103,7 @@ import qualified Data.Validation as V
 import Data.Word (Word32)
 import GHC.Generics (Generic)
 import GHC.Natural (Natural)
+import qualified LeiosDemoTypes as Leios
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -665,15 +667,36 @@ instance
 
 -----
 
-newtype DijkstraMeasure = DijkstraMeasure
-  { conwayMeasure :: ConwayMeasure
+-- | Dijkstra-era block measure.
+--
+-- Extends 'ConwayMeasure' with a transaction-count limit that the Leios
+-- mempool snapshot uses for Endorser Blocks.
+data DijkstraMeasure = DijkstraMeasure
+  { conwayMeasure :: !ConwayMeasure
+  , leiosMaxTxsPerEb :: !(IgnoringOverflow TxCount)
   }
   deriving stock (Eq, Generic, Show)
   deriving anyclass NoThunks
-  deriving newtype (Semigroup, Monoid, HasByteSize, TxMeasureMetrics)
   deriving
     Measure
     via (InstantiatedAt Generic DijkstraMeasure)
+
+instance Semigroup DijkstraMeasure where
+  DijkstraMeasure c1 l1 <> DijkstraMeasure c2 l2 =
+    DijkstraMeasure (c1 <> c2) (l1 <> l2)
+
+instance Monoid DijkstraMeasure where
+  mappend = (<>)
+  mempty = DijkstraMeasure mempty mempty
+
+instance HasByteSize DijkstraMeasure where
+  txMeasureByteSize = txMeasureByteSize . conwayMeasure
+
+instance TxMeasureMetrics DijkstraMeasure where
+  txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . conwayMeasure
+  txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . conwayMeasure
+  txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . conwayMeasure
+  txMeasureMetricRefScriptsSizeBytes = txMeasureMetricRefScriptsSizeBytes . conwayMeasure
 
 blockCapacityDijkstraMeasure ::
   forall proto era mk.
@@ -682,7 +705,11 @@ blockCapacityDijkstraMeasure ::
   ) =>
   TickedLedgerState (ShelleyBlock proto era) mk ->
   DijkstraMeasure
-blockCapacityDijkstraMeasure = DijkstraMeasure . blockCapacityConwayMeasure
+blockCapacityDijkstraMeasure st =
+  DijkstraMeasure
+    { conwayMeasure = blockCapacityConwayMeasure st
+    , leiosMaxTxsPerEb = maxBound
+    }
 
 txMeasureDijkstra ::
   forall proto era.
@@ -697,7 +724,34 @@ txMeasureDijkstra ::
   TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) DijkstraMeasure
-txMeasureDijkstra st = fmap DijkstraMeasure . txMeasureConway st
+txMeasureDijkstra st tx =
+  (\c -> DijkstraMeasure c oneTxCount) <$> txMeasureConway st tx
+
+-- | The capacity for the txs in a Leios Endorser Block (Dijkstra era).
+leiosEndorserBlockMeasure ::
+  forall proto era mk.
+  ( ShelleyCompatible proto era
+  , SL.ConwayEraPParams era
+  ) =>
+  TickedLedgerState (ShelleyBlock proto era) mk ->
+  DijkstraMeasure
+leiosEndorserBlockMeasure st =
+  let
+    conway = blockCapacityConwayMeasure st
+    alonzo = alonzoMeasure conway
+    pparams = getPParams $ tickedShelleyLedgerState st
+   in
+    DijkstraMeasure
+      { conwayMeasure =
+          conway
+            { alonzoMeasure = alonzo{byteSize = IgnoringOverflow Leios.leiosEBMaxClosureSize}
+            , refScriptsSize =
+                IgnoringOverflow $
+                  ByteSize32 (pparams ^. SL.ppMaxRefScriptSizePerBlockG)
+            }
+      , leiosMaxTxsPerEb =
+          IgnoringOverflow . TxCount . fromIntegral $ Leios.maxTxsPerEb
+      }
 
 -----
 
@@ -822,4 +876,5 @@ instance
   type TxMeasure (ShelleyBlock p DijkstraEra) = DijkstraMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureDijkstra st tx
   blockCapacityTxMeasure _cfg = blockCapacityDijkstraMeasure
+  ebCapacityTxMeasure _cfg = Just . leiosEndorserBlockMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)

@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Mock.Node.Praos
@@ -55,6 +56,7 @@ protocolInfoPraos numCoreNodes nid params eraParams eta0 evolvingStakeDist =
           , topLevelConfigCodec = SimpleCodecConfig
           , topLevelConfigStorage = SimpleStorageConfig (praosSecurityParam params)
           , topLevelConfigCheckpoints = emptyCheckpointsMap
+          , topLevelConfigVotingKey = Nothing
           }
     , pInfoInitLedger =
         ExtLedgerState
@@ -134,16 +136,16 @@ praosBlockForging cid initHotKey = do
               . second forgeStateUpdateInfoFromUpdateInfo
               . evolveKey sno
       , checkCanForge = \_ _ _ _ _ -> return ()
-      , forgeBlock = \cfg bno sno tickedLedgerSt txs isLeader -> do
+      , forgeBlock = \ForgeBlockArgs{..} -> do
           hotKey <- readMVar varHotKey
           return $
             forgeSimple
               (forgePraosExt hotKey)
-              cfg
-              bno
-              sno
-              tickedLedgerSt
-              (map txForgetValidated txs)
-              isLeader
+              fbConfig
+              fbCurrentBlockNo
+              fbCurrentSlotNo
+              fbCurrentTickedLedgerState
+              (map txForgetValidated fbRbTxs)
+              fbIsLeader
       , finalize = pure ()
       }

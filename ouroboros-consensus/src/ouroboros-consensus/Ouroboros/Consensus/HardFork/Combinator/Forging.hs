@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -309,40 +310,51 @@ hardForkForgeBlock ::
   forall m xs empty.
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
-  TopLevelConfig (HardForkBlock xs) ->
-  BlockNo ->
-  SlotNo ->
-  TickedLedgerState (HardForkBlock xs) EmptyMK ->
-  [Validated (GenTx (HardForkBlock xs))] ->
-  HardForkIsLeader xs ->
+  ForgeBlockArgs m (HardForkBlock xs) ->
   m (HardForkBlock xs)
 hardForkForgeBlock
   blockForging
-  cfg
-  bno
-  sno
-  (TickedHardForkLedgerState transition ledgerState)
-  txs
-  isLeader =
+  ForgeBlockArgs
+    { fbConfig
+    , fbCurrentBlockNo
+    , fbCurrentSlotNo
+    , fbCurrentTickedLedgerState = TickedHardForkLedgerState transition ledgerState
+    , fbRbTxs
+    , fbEbTxs
+    , fbIsLeader
+    , fbChainDepState
+    , fbLeiosDb
+    , fbLeiosTracer
+    } =
     fmap (HardForkBlock . OneEraBlock)
       $ hsequence
       $ hizipWith3
         forgeBlockOne
         cfgs
         (OptNP.toNP blockForging)
-      $ injectValidatedTxs (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) txs)
-      -- We know both NSs must be from the same era, because they were all
-      -- produced from the same 'BlockForging'. Unfortunately, we can't enforce
-      -- it statically.
+      $ injectTxs
+      -- IsLeader and ledger are guaranteed to be in the same era. The
+      -- unticked 'ChainDepState' may legitimately be in a previous era
+      -- (era boundary); we pass 'Nothing' to that era in that case.
       $ Match.mustMatchNS
         "IsLeader"
-        (getOneEraIsLeader isLeader)
-        (State.tip ledgerState)
+        (getOneEraIsLeader fbIsLeader)
+        chainDepStateAndLedger
    where
-    cfgs = distribTopLevelConfig ei cfg
+    ledgerNS = State.tip ledgerState
+
+    chainDepStateAndLedger ::
+      NS (Product (Maybe :.: WrapChainDepState) (FlipTickedLedgerState EmptyMK)) xs
+    chainDepStateAndLedger = case fbChainDepState of
+      Nothing -> hmap (\l -> Pair (Comp Nothing) l) ledgerNS
+      Just cds -> case Match.matchNS ledgerNS (State.tip cds) of
+        Right matched -> hmap (\(Pair l cds') -> Pair (Comp (Just cds')) l) matched
+        Left _mismatch -> hmap (\l -> Pair (Comp Nothing) l) ledgerNS
+
+    cfgs = distribTopLevelConfig ei fbConfig
     ei =
       State.epochInfoPrecomputedTransitionInfo
-        (hardForkLedgerConfigShape (configLedger cfg))
+        (hardForkLedgerConfigShape (configLedger fbConfig))
         transition
         ledgerState
 
@@ -351,11 +363,28 @@ hardForkForgeBlock
       "impossible: current era lacks block forging but we have an IsLeader proof "
         <> show eraIndex
 
-    injectValidatedTxs ::
+    -- Reassociate the per-era state so that RB and EB tx lists end up paired.
+    reassoc ::
+      Product (Product f g) h blk ->
+      Product f (Product g h) blk
+    reassoc (Pair (Pair f g) h) = Pair f (Pair g h)
+
+    injectTxs =
+      injectRbAndEbTxs
+        (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) fbRbTxs)
+        (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) fbEbTxs)
+
+    injectRbAndEbTxs ::
+      [NS WrapValidatedGenTx xs] ->
       [NS WrapValidatedGenTx xs] ->
       NS f xs ->
-      NS (Product f ([] :.: WrapValidatedGenTx)) xs
-    injectValidatedTxs = noMismatches .: flip (matchValidatedTxsNS injTxs)
+      NS (Product f (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))) xs
+    injectRbAndEbTxs rb eb state =
+      hmap reassoc $
+        noMismatches $
+          flip (matchValidatedTxsNS injTxs) eb $
+            noMismatches $
+              flip (matchValidatedTxsNS injTxs) rb state
      where
       injTxs :: InPairs InjectValidatedTx xs
       injTxs =
@@ -364,9 +393,6 @@ hardForkForgeBlock
             (hmap (WrapLedgerConfig . configLedger) cfgs)
             hardForkInjectTxs
 
-      -- \| We know the transactions must be valid w.r.t. the given ledger
-      -- state, the Mempool maintains that invariant. That means they are
-      -- either from the same era, or can be injected into that era.
       noMismatches ::
         ([Match.Mismatch WrapValidatedGenTx f xs], NS (Product f ([] :.: WrapValidatedGenTx)) xs) ->
         NS (Product f ([] :.: WrapValidatedGenTx)) xs
@@ -381,9 +407,9 @@ hardForkForgeBlock
       Product
         ( Product
             WrapIsLeader
-            (FlipTickedLedgerState EmptyMK)
+            (Product (Maybe :.: WrapChainDepState) (FlipTickedLedgerState EmptyMK))
         )
-        ([] :.: WrapValidatedGenTx)
+        (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))
         blk ->
       m blk
     forgeBlockOne
@@ -391,17 +417,26 @@ hardForkForgeBlock
       cfg'
       (Comp mBlockForging')
       ( Pair
-          (Pair (WrapIsLeader isLeader') (FlipTickedLedgerState ledgerState'))
-          (Comp txs')
+          ( Pair
+              (WrapIsLeader isLeader')
+              (Pair (Comp mChainDepState') (FlipTickedLedgerState ledgerState'))
+            )
+          (Pair (Comp rbTxs') (Comp ebTxs'))
         ) =
         forgeBlock
           ( fromMaybe
               (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
               mBlockForging'
           )
-          cfg'
-          bno
-          sno
-          ledgerState'
-          (map unwrapValidatedGenTx txs')
-          isLeader'
+          ForgeBlockArgs
+            { fbConfig = cfg'
+            , fbCurrentBlockNo
+            , fbCurrentSlotNo
+            , fbCurrentTickedLedgerState = ledgerState'
+            , fbRbTxs = map unwrapValidatedGenTx rbTxs'
+            , fbEbTxs = map unwrapValidatedGenTx ebTxs'
+            , fbIsLeader = isLeader'
+            , fbChainDepState = unwrapChainDepState <$> mChainDepState'
+            , fbLeiosDb
+            , fbLeiosTracer
+            }

@@ -21,6 +21,7 @@ import Data.Functor.Contravariant ((>$<))
 import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
+import LeiosDemoDb (newLeiosDBInMemory)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -69,6 +70,7 @@ openLedgerDB ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , LedgerDB.LedgerSupportsLedgerDB blk
+  , LedgerDB.ResolveLeiosBlock blk
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   IO
@@ -133,6 +135,7 @@ analyse ::
   , HasProtocolInfo blk
   , LedgerSupportsMempool.HasTxs blk
   , CanStowLedgerTables (LedgerState blk)
+  , LedgerDB.ResolveLeiosBlock blk
   ) =>
   DBAnalyserConfig ->
   Args blk ->
@@ -145,6 +148,7 @@ analyse dbaConfig args =
     lsmSalt <- fst . genWord64 <$> newStdGen
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
+    leiosDbHandle <- newLeiosDBInMemory
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
         flavargs = case ldbBackend of
@@ -175,6 +179,7 @@ analyse dbaConfig args =
             shfs
             shfs
             flavargs
+            leiosDbHandle
             $ ChainDB.defaultArgs
         -- Set @k=1@ to reduce the memory usage of the LedgerDB. We only ever
         -- go forward so we don't need to account for rollbacks.

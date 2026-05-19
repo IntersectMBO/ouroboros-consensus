@@ -260,7 +260,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     fromByteSize :: IgnoringOverflow ByteSize32 -> DijkstraMeasure
     fromByteSize x = fromAlonzo $ AlonzoMeasure x mempty
     fromAlonzo x = fromConway $ ConwayMeasure x mempty
-    fromConway x = fromDijkstra $ DijkstraMeasure x
+    fromConway x = fromDijkstra $ DijkstraMeasure x mempty
     fromDijkstra x = x
 
 class TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
@@ -328,6 +328,7 @@ translateLedgerStateByronToShelleyWrapper =
                     ShelleyTransitionInfo{shelleyAfterVoting = 0}
                 , shelleyLedgerTables = emptyLedgerTables
                 , shelleyLedgerLatestPerasCertRound = SNothing
+                , shelleyCumulativeTxBytes = 0
                 }
         }
 
@@ -663,13 +664,14 @@ translateLedgerStateAlonzoToBabbageWrapper =
   transPraosLS ::
     LedgerState (ShelleyBlock (TPraos c) AlonzoEra) mk ->
     LedgerState (ShelleyBlock (Praos c) AlonzoEra) mk
-  transPraosLS (ShelleyLedgerState wo nes st tb lcr) =
+  transPraosLS (ShelleyLedgerState wo nes st tb lcr ctb) =
     ShelleyLedgerState
       { shelleyLedgerTip = fmap castShelleyTip wo
       , shelleyLedgerState = nes
       , shelleyLedgerTransition = st
       , shelleyLedgerTables = coerce tb
       , shelleyLedgerLatestPerasCertRound = lcr
+      , shelleyCumulativeTxBytes = ctb
       }
 
 translateLedgerTablesAlonzoToBabbageWrapper ::

@@ -95,10 +95,6 @@ praosSharedBlockForging
           praosCheckCanForge
             (configConsensus cfg)
             curSlot
-      , forgeBlock = \cfg ->
-          forgeShelleyBlock
-            hotKey
-            canBeLeader
-            cfg
+      , forgeBlock = forgeShelleyBlock hotKey canBeLeader
       , finalize = HotKey.finalize hotKey
       }

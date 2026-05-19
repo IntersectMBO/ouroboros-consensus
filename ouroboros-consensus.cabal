@@ -97,6 +97,16 @@ library
   import: common-lib
   hs-source-dirs: ouroboros-consensus/src/ouroboros-consensus
   exposed-modules:
+    LeiosDemoDb
+    LeiosDemoDb.Common
+    LeiosDemoDb.InMemory
+    LeiosDemoDb.SQLite
+    LeiosDemoException
+    LeiosDemoLogic
+    LeiosDemoOnlyTestFetch
+    LeiosDemoOnlyTestNotify
+    LeiosDemoTypes
+    LeiosVoteState
     Ouroboros.Consensus.Block
     Ouroboros.Consensus.Block.Abstract
     Ouroboros.Consensus.Block.EBB
@@ -362,6 +372,9 @@ library
     contra-tracer ^>=0.1,
     deepseq,
     diff-containers >=1.2,
+    direct-sqlite,
+    directory,
+    dlist,
     filelock,
     fingertree-rm >=1.0,
     fs-api ^>=0.4,
@@ -372,11 +385,15 @@ library
     monoid-subclasses,
     mtl,
     multiset ^>=0.3,
+    network-mux,
+    nonempty-containers,
     nothunks ^>=0.2 || ^>=0.3,
     ouroboros-network:{api, api-tests-lib, protocols} ^>=1.1,
+    pretty-simple,
     primitive,
     psqueues ^>=0.2.3,
     quiet ^>=0.2,
+    random,
     rawlock ^>=0.1.1,
     resource-registry ^>=0.2,
     semialign >=1.1,
@@ -393,7 +410,7 @@ library
     these ^>=1.2,
     time,
     transformers,
-    typed-protocols ^>=1.2,
+    typed-protocols:{typed-protocols, cborg} ^>=1.2,
     vector ^>=0.13,
 
   x-docspec-extra-packages:
@@ -670,6 +687,9 @@ test-suite consensus-test
   hs-source-dirs: ouroboros-consensus/test/consensus-test
   main-is: Main.hs
   other-modules:
+    Test.LeiosDemoDb
+    Test.LeiosDemoTypes
+    Test.LeiosVoteState
     Test.Consensus.BlockchainTime.Simple
     Test.Consensus.Committee.WFALS
     Test.Consensus.Committee.WFALS.Conformance
@@ -705,6 +725,7 @@ test-suite consensus-test
     async,
     base,
     base-deriving-via,
+    bytestring,
     cardano-binary,
     cardano-crypto-class:{cardano-crypto-class, testlib},
     cardano-diffusion:api,
@@ -716,6 +737,7 @@ test-suite consensus-test
     contra-tracer,
     deepseq,
     diff-containers,
+    directory,
     file-embed,
     filepath,
     fingertree-rm,
@@ -744,12 +766,14 @@ test-suite consensus-test
     tasty,
     tasty-hunit,
     tasty-quickcheck,
+    temporary,
     time,
     transformers,
     tree-diff,
     typed-protocols:{examples, stateful, typed-protocols},
     unstable-consensus-testlib,
     unstable-mock-block,
+    vector,
 
 test-suite consensus-infra-test
   import: common-test
@@ -946,6 +970,23 @@ benchmark PerasCertDB-bench
     tasty-bench,
     unstable-consensus-testlib,
 
+benchmark leios-db-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: ouroboros-consensus/bench/leios-db-bench
+  main-is: Main.hs
+  ghc-options: -with-rtsopts=-N4
+  build-depends:
+    async,
+    base,
+    bytestring,
+    cardano-slotting,
+    io-classes:si-timers,
+    ouroboros-consensus,
+    temporary,
+    time,
+    vector,
+
 test-suite doctest
   import: common-test
   main-is: doctest.hs
@@ -983,6 +1024,7 @@ library protocol
     cardano-ledger-shelley ^>=1.18,
     cardano-protocol-tpraos ^>=1.5,
     cardano-slotting,
+    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,
@@ -1019,7 +1061,9 @@ library unstable-protocol-testlib
     cardano-ledger-shelley-test,
     cardano-protocol-tpraos,
     cardano-slotting,
+    cardano-strict-containers:{cardano-strict-containers, testlib},
     containers,
+    ouroboros-consensus,
     ouroboros-consensus:protocol,
     text,
 
@@ -1081,6 +1125,7 @@ library diffusion
     fs-api,
     hashable,
     io-classes:{io-classes, si-timers, strict-stm},
+    measures,
     mtl,
     network-mux ^>=0.10,
     ouroboros-consensus:{ouroboros-consensus, protocol},
@@ -1684,6 +1729,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.Translation
     Test.ThreadNet.AllegraMary
     Test.ThreadNet.Cardano
+    Test.ThreadNet.Leios
     Test.ThreadNet.MaryAlonzo
     Test.ThreadNet.ShelleyAllegra
 
@@ -1701,20 +1747,24 @@ test-suite cardano-test
     cardano-ledger-byron:{cardano-ledger-byron, testlib},
     cardano-ledger-conway:testlib,
     cardano-ledger-core:{cardano-ledger-core, testlib},
-    cardano-ledger-dijkstra:testlib,
+    cardano-ledger-dijkstra:{cardano-ledger-dijkstra, testlib},
     cardano-ledger-mary:testlib,
     cardano-ledger-shelley:{cardano-ledger-shelley, testlib},
     cardano-protocol-tpraos,
     cardano-slotting,
+    cardano-strict-containers,
     cborg,
     constraints,
     containers,
     contra-tracer,
+    deepseq,
     directory,
     filepath,
+    io-classes:strict-stm,
+    io-sim,
     microlens,
     ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-cardano-testlib, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-mempool-test-utils},
-    ouroboros-network:{api, protocols, protocols-tests-lib},
+    ouroboros-network:{api, api-tests-lib, protocols, protocols-tests-lib},
     pretty-simple,
     process-extras,
     sop-core,
@@ -1757,7 +1807,11 @@ library unstable-cardano-tools
     Cardano.Tools.GitRev
     Cardano.Tools.Headers
     Cardano.Tools.ImmDBServer.Diffusion
+    Cardano.Tools.ImmDBServer.Json
+    Cardano.Tools.ImmDBServer.Json.SendRecv
+    Cardano.Tools.ImmDBServer.Json.Say
     Cardano.Tools.ImmDBServer.MiniProtocols
+    Cardano.Tools.ThreadNet.Run
 
   other-modules:
     Cardano.Api.Key
@@ -1791,9 +1845,11 @@ library unstable-cardano-tools
     cardano-ledger-byron,
     cardano-ledger-conway,
     cardano-ledger-core,
+    cardano-ledger-core:testlib,
     cardano-ledger-dijkstra,
     cardano-ledger-mary,
     cardano-ledger-shelley,
+    cardano-ledger-shelley-test,
     cardano-prelude,
     cardano-protocol-tpraos,
     cardano-slotting,
@@ -1812,8 +1868,11 @@ library unstable-cardano-tools
     network,
     network-mux,
     nothunks,
-    ouroboros-consensus:{cardano, diffusion, lmdb, lsm, ouroboros-consensus, protocol, unstable-protocol-testlib},
+    io-classes,
+    io-classes:si-timers,
+    ouroboros-consensus:{cardano, diffusion, lmdb, lsm, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-protocol-testlib, unstable-shelley-testlib},
     ouroboros-network:{api, framework, ouroboros-network, protocols},
+    QuickCheck,
     random,
     resource-registry,
     singletons,
@@ -1822,8 +1881,10 @@ library unstable-cardano-tools
     strict-sop-core,
     text,
     text-builder >=1,
+    time,
     transformers,
     transformers-except,
+    typed-protocols,
 
 executable db-analyser
   import: common-lib
@@ -1855,6 +1916,17 @@ executable db-analyser
       "-with-rtsopts=-T -I0 -A16m -N2 --disable-delayed-os-memory-return"
 
   other-modules: DBAnalyser.Parsers
+
+executable run-threadnet
+  import: common-exe
+  hs-source-dirs: ouroboros-consensus-cardano/app
+  main-is: run-threadnet.hs
+  build-depends:
+    base,
+    cardano-crypto-class,
+    optparse-applicative,
+    ouroboros-consensus:unstable-cardano-tools,
+    with-utf8,
 
 executable db-immutaliser
   import: common-exe
@@ -1901,12 +1973,36 @@ executable immdb-server
   hs-source-dirs: ouroboros-consensus-cardano/app
   main-is: immdb-server.hs
   build-depends:
+    aeson,
     base,
     cardano-crypto-class,
+    cardano-slotting,
     network,
     optparse-applicative,
     ouroboros-consensus:{ouroboros-consensus, unstable-cardano-tools},
+    time,
     with-utf8,
+
+executable leios-schedule-gen
+  import: common-exe
+  hs-source-dirs: ouroboros-consensus/app
+  main-is: leios-schedule-gen.hs
+  build-depends:
+    aeson,
+    base,
+    base16-bytestring,
+    bytestring,
+    cardano-binary,
+    cardano-crypto-class,
+    cborg,
+    containers,
+    directory,
+    dlist,
+    ouroboros-consensus,
+    random,
+    text,
+    vector,
+    direct-sqlite,
 
 library unstable-snapshot-conversion
   import: common-lib

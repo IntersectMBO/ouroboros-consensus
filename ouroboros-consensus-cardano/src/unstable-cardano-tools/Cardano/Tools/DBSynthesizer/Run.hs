@@ -34,6 +34,7 @@ import Data.Bool (bool)
 import Data.ByteString as BS (ByteString, readFile)
 import Data.Functor (($>))
 import qualified Data.Set as Set
+import LeiosDemoDb (LeiosDbHandle (open), newLeiosDBInMemory)
 import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
@@ -148,6 +149,8 @@ synthesize ::
   IO ForgeResult
 synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP =
   withRegistry $ \registry -> do
+    leiosDbHandle <- newLeiosDBInMemory
+    leiosDb <- open leiosDbHandle
     let
       epochSize = sgEpochLength confShelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
@@ -162,6 +165,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
           (Node.stdMkChainDbHasFS confDbDir)
           (Node.stdMkChainDbHasFS confDbDir)
           flavargs
+          leiosDbHandle
           $ ChainDB.defaultArgs
 
     mbfs <- mkForgers nullTracer
@@ -186,7 +190,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
                 At s -> succ s
 
             putStrLn $ "--> starting at: " ++ show slotNo
-            runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig $ genTxs pInfoConfig
+            runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig (genTxs pInfoConfig) leiosDb
         else do
           putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
           pure $ ForgeResult 0

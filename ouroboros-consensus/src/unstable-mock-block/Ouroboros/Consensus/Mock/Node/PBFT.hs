@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -44,6 +45,7 @@ protocolInfoMockPBFT params eraParams =
           , topLevelConfigCodec = SimpleCodecConfig
           , topLevelConfigStorage = SimpleStorageConfig (pbftSecurityParam params)
           , topLevelConfigCheckpoints = emptyCheckpointsMap
+          , topLevelConfigVotingKey = Nothing
           }
     , pInfoInitLedger =
         ExtLedgerState
@@ -108,15 +110,15 @@ pbftBlockForging canBeLeader =
             canBeLeader
             slot
             tickedPBftState
-    , forgeBlock = \cfg slot bno lst txs proof ->
+    , forgeBlock = \ForgeBlockArgs{..} ->
         return $
           forgeSimple
             forgePBftExt
-            cfg
-            slot
-            bno
-            lst
-            (map txForgetValidated txs)
-            proof
+            fbConfig
+            fbCurrentBlockNo
+            fbCurrentSlotNo
+            fbCurrentTickedLedgerState
+            (map txForgetValidated fbRbTxs)
+            fbIsLeader
     , finalize = pure ()
     }

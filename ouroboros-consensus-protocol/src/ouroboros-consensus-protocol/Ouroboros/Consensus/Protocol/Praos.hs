@@ -39,7 +39,7 @@ import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.VRF as VRF
-import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, (⭒))
+import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, StrictMaybe (..), (⭒))
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Chain as SL
 import Cardano.Ledger.Hashes (HASH)
@@ -92,6 +92,7 @@ import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (Proxy))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (EbAnnouncement)
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
@@ -101,7 +102,10 @@ import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Protocol.Praos.Common
-import Ouroboros.Consensus.Protocol.Praos.Header (HeaderBody)
+import Ouroboros.Consensus.Protocol.Praos.Header
+  ( HeaderBody
+  , hbLeiosEbAnnouncement
+  )
 import Ouroboros.Consensus.Protocol.Praos.VRF
   ( InputVRF
   , mkInputVRF
@@ -285,6 +289,13 @@ data PraosState = PraosState
   , praosStateLastEpochBlockNonce :: !Nonce
   -- ^ Nonce corresponding to the LAB nonce of the last block of the previous
   -- epoch
+  , praosStateLeiosAnnouncement :: !(StrictMaybe EbAnnouncement)
+  -- ^ The Leios 'EbAnnouncement' from the most recently applied header on
+  -- this chain — overwritten on every header tick (so a header with no
+  -- announcement clears the field). The 'ResolveLeiosBlock' instance for
+  -- the Dijkstra-era CardanoBlock reads this to look up the EB closure
+  -- that a certifying block's 'LeiosCert' refers to; only the
+  -- immediately-previous announcement is ever certified.
   }
   deriving (Generic, Show, Eq)
 
@@ -307,10 +318,11 @@ instance Serialise PraosState where
       , praosStatePreviousEpochNonce
       , praosStateLabNonce
       , praosStateLastEpochBlockNonce
+      , praosStateLeiosAnnouncement
       } =
-      encodeVersion 0 $
+      encodeVersion 1 $
         mconcat
-          [ CBOR.encodeListLen 8
+          [ CBOR.encodeListLen 9
           , toCBOR praosStateLastSlot
           , toCBOR praosStateOCertCounters
           , toCBOR praosStateEvolvingNonce
@@ -319,16 +331,32 @@ instance Serialise PraosState where
           , toCBOR praosStatePreviousEpochNonce
           , toCBOR praosStateLabNonce
           , toCBOR praosStateLastEpochBlockNonce
+          , toCBOR praosStateLeiosAnnouncement
           ]
 
   decode =
     decodeVersion
-      [(0, Decode decodePraosState)]
+      [ (0, Decode decodePraosStateV0)
+      , (1, Decode decodePraosStateV1)
+      ]
    where
-    decodePraosState = do
+    decodePraosStateV0 = do
       enforceSize "PraosState" 8
       PraosState
         <$> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> pure SNothing
+    decodePraosStateV1 = do
+      enforceSize "PraosState" 9
+      PraosState
+        <$> fromCBOR
+        <*> fromCBOR
         <*> fromCBOR
         <*> fromCBOR
         <*> fromCBOR
@@ -516,6 +544,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
               else praosStateCandidateNonce cs
         , praosStateOCertCounters =
             Map.insert hk n $ praosStateOCertCounters cs
+        , praosStateLeiosAnnouncement = hbLeiosEbAnnouncement (Views.hvSigned b)
         }
      where
       epochInfoWithErr =
@@ -771,6 +800,7 @@ instance TranslateProto (TPraos c) (Praos c) where
       , praosStatePreviousEpochNonce = epochNonce -- same as current epoch nonce
       , praosStateLabNonce = csLabNonce
       , praosStateLastEpochBlockNonce = SL.ticknStatePrevHashNonce csTickn
+      , praosStateLeiosAnnouncement = SNothing
       }
    where
     SL.ChainDepState{SL.csProtocol, SL.csTickn, SL.csLabNonce} =

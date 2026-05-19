@@ -41,7 +41,7 @@ import Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
 import Cardano.Protocol.Crypto (Crypto, VRF)
 import Cardano.Protocol.TPraos.BHeader (PrevHash)
 import Cardano.Slotting.Block (BlockNo)
-import Cardano.Slotting.Slot (SlotNo)
+import Cardano.Slotting.Slot (SlotNo, WithOrigin)
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Control.Monad.Except (Except)
@@ -50,6 +50,7 @@ import Data.Kind (Type)
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (EbAnnouncement)
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -166,7 +167,21 @@ class ProtocolHeaderSupportsKES proto where
     Int ->
     -- | Protocol version
     ProtVer ->
+    -- | Optional Leios EB announcement. Only used by Praos.
+    Maybe EbAnnouncement ->
     m (ShelleyProtocolHeader proto)
+
+  -- | Extract the most recently announced (and not yet certified) Leios EB
+  -- from the protocol's chain-dep state, alongside the slot in which it
+  -- was announced. 'Nothing' for protocols that do not carry Leios info
+  -- (TPraos); 'Just' for Praos when an announcement has been seen on
+  -- chain. Used at forge time to decide whether to embed a Leios
+  -- certificate in the block body.
+  protocolStateLeiosInfo ::
+    proxy proto ->
+    ChainDepState proto ->
+    Maybe (EbAnnouncement, WithOrigin SlotNo)
+  protocolStateLeiosInfo _ _ = Nothing
 
 -- | ProtocolHeaderSupportsProtocol` provides support for the concrete
 --   block header to support the `ConsensusProtocol` itself.

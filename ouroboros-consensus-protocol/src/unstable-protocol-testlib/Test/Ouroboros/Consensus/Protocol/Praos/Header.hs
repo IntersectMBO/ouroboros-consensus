@@ -91,6 +91,7 @@ import Data.Coerce (coerce)
 import Data.Foldable (toList)
 import qualified Data.Map as Map
 import Data.Maybe (fromJust, fromMaybe)
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy (Proxy (..))
 import Data.Ratio ((%))
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
@@ -446,6 +447,7 @@ genHeaderBody context = do
   hbBodyHash <- genHash
   (hbOCert, kesPeriod) <- genCert hbSlotNo context
   let hbProtVer = protocolVersionZero
+      hbLeiosEbAnnouncement = SNothing
       headerBody = HeaderBody{..}
   pure $ (headerBody, kesPeriod)
  where

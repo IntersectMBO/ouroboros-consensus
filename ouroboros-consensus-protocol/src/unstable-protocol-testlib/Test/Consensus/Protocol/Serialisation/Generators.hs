@@ -7,6 +7,7 @@ module Test.Consensus.Protocol.Serialisation.Generators () where
 
 import Cardano.Crypto.KES (unsoundPureSignedKES)
 import Cardano.Crypto.VRF (evalCertified)
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Cardano.Protocol.TPraos.BHeader (HashHeader, PrevHash (..))
 import Cardano.Protocol.TPraos.OCert
   ( KESPeriod (KESPeriod)
@@ -17,6 +18,11 @@ import Cardano.Slotting.Slot
   ( SlotNo (SlotNo)
   , WithOrigin (At, Origin)
   )
+import qualified Data.ByteString as BS
+import LeiosDemoTypes
+  ( EbAnnouncement (EbAnnouncement)
+  , EbHash (MkEbHash)
+  )
 import Ouroboros.Consensus.Protocol.Praos (PraosState (PraosState))
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Header
@@ -25,8 +31,17 @@ import Ouroboros.Consensus.Protocol.Praos.Header
   )
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
+import Test.Cardano.StrictContainers.Instances ()
 import Test.Crypto.KES ()
 import Test.QuickCheck (Arbitrary (..), Gen, choose, oneof)
+
+instance Arbitrary EbHash where
+  arbitrary = MkEbHash . BS.pack <$> vectorOfWord8 32
+   where
+    vectorOfWord8 n = sequence (replicate n arbitrary)
+
+instance Arbitrary EbAnnouncement where
+  arbitrary = EbAnnouncement <$> arbitrary <*> arbitrary
 
 instance Arbitrary InputVRF where
   arbitrary = mkInputVRF <$> arbitrary <*> arbitrary
@@ -58,6 +73,7 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> arbitrary
           <*> ocert
           <*> arbitrary
+          <*> arbitrary
 
 instance Praos.PraosCrypto c => Arbitrary (Header c) where
   arbitrary = do
@@ -81,3 +97,4 @@ instance Arbitrary PraosState where
       <*> arbitrary
       <*> arbitrary
       <*> arbitrary
+      <*> pure SNothing

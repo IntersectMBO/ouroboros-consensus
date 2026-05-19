@@ -616,6 +616,7 @@ protocolInfoCardano paramsCardano
         , triggerHardForkAlonzo
         , triggerHardForkBabbage
         , triggerHardForkConway
+        , triggerHardForkDijkstra
         }
     , cardanoLedgerTransitionConfig
     , cardanoCheckpoints
@@ -824,7 +825,7 @@ protocolInfoCardano paramsCardano
   partialLedgerConfigConway =
     mkPartialLedgerConfigShelley
       transitionConfigConway
-      TriggerHardForkNotDuringThisExecution
+      (toTriggerHardFork triggerHardForkDijkstra)
 
   -- Dijkstra
 
@@ -931,6 +932,7 @@ protocolInfoCardano paramsCardano
             (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
       , topLevelConfigCheckpoints = cardanoCheckpoints
+      , topLevelConfigVotingKey = Nothing
       }
 
   -- When the initial ledger state is not in the Byron era, register various

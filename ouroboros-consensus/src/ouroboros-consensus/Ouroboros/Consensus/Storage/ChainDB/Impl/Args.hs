@@ -25,6 +25,7 @@ import Data.Function ((&))
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind
 import Data.Time.Clock (secondsToDiffTime)
+import qualified LeiosDemoDb.Common
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -93,6 +94,9 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
     cdbsLoE :: GetLoEFragment m blk
   -- ^ If this is 'LoEEnabled', it contains an action that returns the
   -- current LoE fragment.
+  , cdbsLeiosDb :: HKD f (LeiosDemoDb.Common.LeiosDbHandle m)
+  -- ^ Handle for the Leios demo DB. Each downstream consumer should 'open'
+  -- its own per-thread 'LeiosDbConnection' from this handle.
   }
 
 -- | Default arguments
@@ -127,6 +131,7 @@ defaultSpecificArgs =
     , cdbsHasFSGsmDB = noDefault
     , cdbsTopLevelConfig = noDefault
     , cdbsLoE = pure LoEDisabled
+    , cdbsLeiosDb = noDefault
     }
 
 -- | Default arguments
@@ -180,6 +185,8 @@ completeChainDbArgs ::
   -- | Volatile  FS, see 'NodeDatabasePaths'
   (RelativeMountPoint -> SomeHasFS m) ->
   LedgerDbBackendArgs m blk ->
+  -- | Leios demo DB handle
+  LeiosDemoDb.Common.LeiosDbHandle m ->
   -- | A set of incomplete arguments, possibly modified wrt @defaultArgs@
   Incomplete ChainDbArgs m blk ->
   Complete ChainDbArgs m blk
@@ -192,6 +199,7 @@ completeChainDbArgs
   mkImmFS
   mkVolFS
   flavorArgs
+  leiosDb
   defArgs =
     defArgs
       { cdbImmDbArgs =
@@ -217,6 +225,7 @@ completeChainDbArgs
                   cdbsTopLevelConfig
                   (LedgerDB.ledgerDbCfgComputeLedgerEvents $ LedgerDB.lgrConfig (cdbLgrDbArgs defArgs))
             , LedgerDB.lgrBackendArgs = flavorArgs
+            , LedgerDB.lgrLeiosDb = leiosDb
             }
       , cdbPerasCertDbArgs =
           PerasCertDB.PerasCertDbArgs
@@ -227,6 +236,7 @@ completeChainDbArgs
             { cdbsRegistry = registry
             , cdbsTopLevelConfig
             , cdbsHasFSGsmDB = mkVolFS $ RelativeMountPoint "gsm"
+            , cdbsLeiosDb = leiosDb
             }
       }
 

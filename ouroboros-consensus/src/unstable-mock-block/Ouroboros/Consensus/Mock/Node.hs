@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -100,16 +101,16 @@ simpleBlockForging aCanBeLeader aForgeExt =
     , canBeLeader = aCanBeLeader
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \cfg bno slot lst txs proof ->
+    , forgeBlock = \ForgeBlockArgs{..} ->
         return $
           forgeSimple
             aForgeExt
-            cfg
-            bno
-            slot
-            lst
-            (map txForgetValidated txs)
-            proof
+            fbConfig
+            fbCurrentBlockNo
+            fbCurrentSlotNo
+            fbCurrentTickedLedgerState
+            (map txForgetValidated fbRbTxs)
+            fbIsLeader
     , finalize = pure ()
     }
  where

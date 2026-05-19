@@ -25,12 +25,14 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , Invalidated (..)
   , LedgerSupportsMempool (..)
   , ReapplyTxsResult (..)
+  , TxCount (..)
   , TxId
   , TxLimits (..)
   , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
   , nothingMkMempoolApplyTxError
+  , oneTxCount
   ) where
 
 import Codec.Serialise (Serialise)
@@ -379,6 +381,15 @@ class
     TickedLedgerState blk mk ->
     TxMeasure blk
 
+  -- | What is the allowed capacity for the txs in a Leios Endorser Block?
+  --
+  -- 'Nothing' for eras that don't support Leios.
+  ebCapacityTxMeasure ::
+    LedgerConfig blk ->
+    TickedLedgerState blk mk ->
+    Maybe (TxMeasure blk)
+  ebCapacityTxMeasure _ _ = Nothing
+
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
 -- to occur explicitly in the code where possible, for
 -- legibility/perspicuousness. We also do not need nor want subtraction.
@@ -401,7 +412,7 @@ class
 -- all.
 newtype ByteSize32 = ByteSize32 {unByteSize32 :: Word32}
   deriving stock Show
-  deriving newtype (Eq, Ord)
+  deriving newtype (Eq, Ord, Bounded)
   deriving newtype NFData
   deriving newtype Serialise
   deriving
@@ -410,6 +421,22 @@ newtype ByteSize32 = ByteSize32 {unByteSize32 :: Word32}
   deriving
     NoThunks
     via OnlyCheckWhnfNamed "ByteSize" ByteSize32
+
+-- | A count of transactions, e.g. in an Endorser Block.
+newtype TxCount = TxCount {unTxCount :: Word32}
+  deriving stock Show
+  deriving newtype (Eq, Ord, Bounded)
+  deriving newtype NFData
+  deriving newtype Serialise
+  deriving
+    (Monoid, Semigroup)
+    via (InstantiatedAt Measure (IgnoringOverflow TxCount))
+  deriving
+    NoThunks
+    via OnlyCheckWhnfNamed "TxCount" TxCount
+
+oneTxCount :: IgnoringOverflow TxCount
+oneTxCount = IgnoringOverflow . TxCount $ 1
 
 -- | @'IgnoringOverflow' a@ has the same semantics as @a@, except it ignores
 -- the fact that @a@ can overflow.
@@ -424,7 +451,7 @@ newtype ByteSize32 = ByteSize32 {unByteSize32 :: Word32}
 -- TODO upstream this to the @measure@ package
 newtype IgnoringOverflow a = IgnoringOverflow {unIgnoringOverflow :: a}
   deriving stock Show
-  deriving newtype (Eq, Ord)
+  deriving newtype (Eq, Ord, Bounded)
   deriving newtype NFData
   deriving newtype (Monoid, Semigroup)
   deriving newtype NoThunks
@@ -432,6 +459,12 @@ newtype IgnoringOverflow a = IgnoringOverflow {unIgnoringOverflow :: a}
   deriving newtype TxMeasureMetrics
 
 instance Measure (IgnoringOverflow ByteSize32) where
+  zero = coerce (0 :: Word32)
+  plus = coerce $ (+) @Word32
+  min = coerce $ min @Word32
+  max = coerce $ max @Word32
+
+instance Measure (IgnoringOverflow TxCount) where
   zero = coerce (0 :: Word32)
   plus = coerce $ (+) @Word32
   min = coerce $ min @Word32

@@ -56,6 +56,7 @@ openDB ::
   , HasCallStack
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
+  , ResolveLeiosBlock blk
   ) =>
   -- | Stateless initializaton arguments
   Complete LedgerDbArgs m blk ->

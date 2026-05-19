@@ -24,9 +24,11 @@ import Data.Either (isRight)
 import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
+import LeiosDemoDb (LeiosDbConnection)
 import Ouroboros.Consensus.Block.Abstract as Block
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
+  , ForgeBlockArgs (..)
   , ShouldForge (..)
   , checkShouldForge
   )
@@ -106,8 +108,9 @@ runForge ::
   [BlockForging IO blk] ->
   TopLevelConfig blk ->
   GenTxs blk ->
+  LeiosDbConnection IO ->
   IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
+runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
   endState <- go initialForgeState{currentSlot = nextSlot}
@@ -230,12 +233,18 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
       lift $
         Block.forgeBlock
           blockForging'
-          cfg
-          bcBlockNo
-          currentSlot
-          (forgetLedgerTables tickedLedgerState)
-          txs
-          proof
+          ForgeBlockArgs
+            { fbConfig = cfg
+            , fbCurrentBlockNo = bcBlockNo
+            , fbCurrentSlotNo = currentSlot
+            , fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
+            , fbRbTxs = txs
+            , fbEbTxs = []
+            , fbIsLeader = proof
+            , fbChainDepState = Nothing
+            , fbLeiosDb = leiosDb
+            , fbLeiosTracer = Trace.nullTracer
+            }
 
     -- Add the block to the chain DB (synchronously) and verify adoption
     let noPunish = InvalidBlockPunishment.noPunishment

@@ -10,6 +10,7 @@
 
 module Ouroboros.Consensus.Block.Forging
   ( BlockForging (..)
+  , ForgeBlockArgs (..)
   , MkBlockForging (..)
   , CannotForge
   , ForgeStateInfo
@@ -28,6 +29,8 @@ import Control.Tracer (Tracer, traceWith)
 import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.Stack
+import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoTypes (TraceLeiosKernel)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -120,12 +123,7 @@ data BlockForging m blk = BlockForging
   --
   -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
   , forgeBlock ::
-      TopLevelConfig blk ->
-      BlockNo -> -- Current block number
-      SlotNo -> -- Current slot number
-      TickedLedgerState blk EmptyMK -> -- Current ledger state
-      [Validated (GenTx blk)] -> -- Transactions to include
-      IsLeader (BlockProtocol blk) -> -- Proof we are leader
+      ForgeBlockArgs m blk ->
       m blk
   -- ^ Forge a block
   --
@@ -244,3 +242,25 @@ forgeStateUpdateInfoFromUpdateInfo ::
 forgeStateUpdateInfoFromUpdateInfo = \case
   Updated info -> ForgeStateUpdated info
   UpdateFailed err -> ForgeStateUpdateFailed err
+
+{-------------------------------------------------------------------------------
+  ForgeBlockArgs
+-------------------------------------------------------------------------------}
+
+-- | Arguments to 'forgeBlock' aggregated into a single record.
+--
+-- Bundles the regular-block and Endorser-Block transactions, the Leios demo
+-- DB and a Leios tracer so that Leios-enabled eras can produce and store EBs
+-- inline as part of forging.
+data ForgeBlockArgs m blk = ForgeBlockArgs
+  { fbConfig :: TopLevelConfig blk
+  , fbCurrentBlockNo :: BlockNo
+  , fbCurrentSlotNo :: SlotNo
+  , fbCurrentTickedLedgerState :: TickedLedgerState blk EmptyMK
+  , fbRbTxs :: [Validated (GenTx blk)]
+  , fbEbTxs :: [Validated (GenTx blk)]
+  , fbIsLeader :: IsLeader (BlockProtocol blk)
+  , fbChainDepState :: Maybe (ChainDepState (BlockProtocol blk))
+  , fbLeiosDb :: LeiosDbConnection m
+  , fbLeiosTracer :: Tracer m TraceLeiosKernel
+  }

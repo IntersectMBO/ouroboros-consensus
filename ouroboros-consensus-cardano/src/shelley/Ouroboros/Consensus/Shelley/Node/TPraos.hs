@@ -131,11 +131,7 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
           (configConsensus cfg)
           forgingVRFHash
           curSlot
-    , forgeBlock = \cfg ->
-        forgeShelleyBlock
-          hotKey
-          canBeLeader
-          cfg
+    , forgeBlock = forgeShelleyBlock hotKey canBeLeader
     , finalize = HotKey.finalize hotKey
     }
  where
@@ -247,6 +243,7 @@ protocolInfoTPraosShelleyBased
         , topLevelConfigCodec = ShelleyCodecConfig
         , topLevelConfigStorage = storageConfig
         , topLevelConfigCheckpoints = emptyCheckpointsMap
+        , topLevelConfigVotingKey = Nothing
         }
 
     consensusConfig :: ConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) era))
@@ -297,6 +294,7 @@ protocolInfoTPraosShelleyBased
           , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
           , shelleyLedgerTables = emptyLedgerTables
           , shelleyLedgerLatestPerasCertRound = SNothing
+          , shelleyCumulativeTxBytes = 0
           }
 
     initChainDepState :: TPraosState

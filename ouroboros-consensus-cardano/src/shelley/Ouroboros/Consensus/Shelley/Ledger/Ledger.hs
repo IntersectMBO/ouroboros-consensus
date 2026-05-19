@@ -60,11 +60,14 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , BigEndianTxIn (..)
   ) where
 
+import Cardano.Ledger.Api (DijkstraEra, eraProtVerLow)
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
-  ( decShareCBOR
+  ( decCBOR
+  , decShareCBOR
+  , decodeFullAnnotator
   , decodeMap
   , decodeMemPack
   , internsFromMap
@@ -80,17 +83,14 @@ import Cardano.Ledger.Binary.Plain
   , enforceSize
   )
 import qualified Cardano.Ledger.Block as Core
-import Cardano.Ledger.Core
-  ( Era
-  , eraDecoder
-  , ppMaxBHSizeL
-  , ppMaxTxSizeL
-  )
+import Cardano.Ledger.Core (Era, TopTx, Tx, eraDecoder, ppMaxBHSizeL, ppMaxTxSizeL)
 import qualified Cardano.Ledger.Core as Core
+import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.State as SL
+import Cardano.Protocol.TPraos.API (PraosCrypto)
 import Cardano.Slotting.EpochInfo
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -101,14 +101,25 @@ import Control.Arrow (left, second)
 import qualified Control.Exception as Exception
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BL
 import Data.Coerce
+import Data.Foldable (toList)
 import Data.Functor.Identity
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.MemPack
+import Data.Sequence.Strict (StrictSeq)
+import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
+import LeiosDemoDb (LeiosDbConnection (..))
+import LeiosDemoTypes
+  ( EbAnnouncement (..)
+  , LeiosPoint (..)
+  , TxHash
+  )
 import Lens.Micro
 import Lens.Micro.Extras (view)
 import NoThunks.Class (NoThunks (..))
@@ -128,6 +139,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
+import Ouroboros.Consensus.Protocol.Praos (Praos, PraosState (..))
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
@@ -137,6 +149,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , mkHeaderView
   )
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CBOR
   ( decodeStrictMaybe
@@ -287,6 +300,12 @@ data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   , shelleyLedgerTransition :: !ShelleyTransition
   , shelleyLedgerTables :: !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
   , shelleyLedgerLatestPerasCertRound :: !(StrictMaybe PerasRoundNo)
+  , shelleyCumulativeTxBytes :: !Word64
+  -- ^ Monotonically-increasing sum of all transaction bytes ever
+  -- applied. Updated on each block-apply by the sum of its body's
+  -- transaction byte sizes. Era-abstract: applies to every Shelley-
+  -- onwards ledger state (used by Leios for EB sizing on Dijkstra,
+  -- but the field is orthogonal to Leios).
   }
   deriving Generic
 
@@ -401,6 +420,7 @@ instance
       , shelleyLedgerTransition
       , shelleyLedgerTables = tables
       , shelleyLedgerLatestPerasCertRound
+      , shelleyCumulativeTxBytes
       }
    where
     ShelleyLedgerState
@@ -408,6 +428,7 @@ instance
       , shelleyLedgerState
       , shelleyLedgerTransition
       , shelleyLedgerLatestPerasCertRound
+      , shelleyCumulativeTxBytes
       } = st
 
 instance
@@ -422,6 +443,7 @@ instance
       , tickedShelleyLedgerState
       , tickedShelleyLedgerTables = castLedgerTables tables
       , tickedShelleyLedgerLatestPerasCertRound
+      , tickedShelleyCumulativeTxBytes
       }
    where
     TickedShelleyLedgerState
@@ -429,6 +451,7 @@ instance
       , tickedShelleyLedgerTransition
       , tickedShelleyLedgerState
       , tickedShelleyLedgerLatestPerasCertRound
+      , tickedShelleyCumulativeTxBytes
       } = st
 
 instance
@@ -442,6 +465,7 @@ instance
       , shelleyLedgerTransition = shelleyLedgerTransition
       , shelleyLedgerTables = emptyLedgerTables
       , shelleyLedgerLatestPerasCertRound = shelleyLedgerLatestPerasCertRound
+      , shelleyCumulativeTxBytes = shelleyCumulativeTxBytes
       }
    where
     (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO (coerceMapKeys m)
@@ -451,6 +475,7 @@ instance
       , shelleyLedgerTransition
       , shelleyLedgerTables = LedgerTables (ValuesMK m)
       , shelleyLedgerLatestPerasCertRound
+      , shelleyCumulativeTxBytes
       } = st
   unstowLedgerTables st =
     ShelleyLedgerState
@@ -459,6 +484,7 @@ instance
       , shelleyLedgerTransition = shelleyLedgerTransition
       , shelleyLedgerTables = LedgerTables (ValuesMK (coerceMapKeys $ SL.unUTxO tbs))
       , shelleyLedgerLatestPerasCertRound = shelleyLedgerLatestPerasCertRound
+      , shelleyCumulativeTxBytes = shelleyCumulativeTxBytes
       }
    where
     (tbs, shelleyLedgerState') = shelleyLedgerState `slUtxoL` mempty
@@ -467,6 +493,7 @@ instance
       , shelleyLedgerState
       , shelleyLedgerTransition
       , shelleyLedgerLatestPerasCertRound
+      , shelleyCumulativeTxBytes
       } = st
 
 instance
@@ -480,6 +507,7 @@ instance
       , tickedShelleyLedgerState = tickedShelleyLedgerState'
       , tickedShelleyLedgerTables = emptyLedgerTables
       , tickedShelleyLedgerLatestPerasCertRound = tickedShelleyLedgerLatestPerasCertRound
+      , tickedShelleyCumulativeTxBytes = tickedShelleyCumulativeTxBytes
       }
    where
     (_, tickedShelleyLedgerState') =
@@ -490,6 +518,7 @@ instance
       , tickedShelleyLedgerState
       , tickedShelleyLedgerTables = LedgerTables (ValuesMK tbs)
       , tickedShelleyLedgerLatestPerasCertRound
+      , tickedShelleyCumulativeTxBytes
       } = st
 
   unstowLedgerTables st =
@@ -499,6 +528,7 @@ instance
       , tickedShelleyLedgerState = tickedShelleyLedgerState'
       , tickedShelleyLedgerTables = LedgerTables (ValuesMK (coerceMapKeys (SL.unUTxO tbs)))
       , tickedShelleyLedgerLatestPerasCertRound = tickedShelleyLedgerLatestPerasCertRound
+      , tickedShelleyCumulativeTxBytes = tickedShelleyCumulativeTxBytes
       }
    where
     (tbs, tickedShelleyLedgerState') = tickedShelleyLedgerState `slUtxoL` mempty
@@ -507,6 +537,7 @@ instance
       , tickedShelleyLedgerTransition
       , tickedShelleyLedgerState
       , tickedShelleyLedgerLatestPerasCertRound
+      , tickedShelleyCumulativeTxBytes
       } = st
 
 slUtxoL :: SL.NewEpochState era -> SL.UTxO era -> (SL.UTxO era, SL.NewEpochState era)
@@ -545,6 +576,9 @@ data instance Ticked (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyLe
   , tickedShelleyLedgerTables ::
       !(LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
   , tickedShelleyLedgerLatestPerasCertRound :: !(StrictMaybe PerasRoundNo)
+  , tickedShelleyCumulativeTxBytes :: !Word64
+  -- ^ Mirrors 'shelleyCumulativeTxBytes' across ticks. Preserved as-is
+  -- on tick; incremented on apply by the block body's tx byte size.
   }
   deriving Generic
 
@@ -567,6 +601,7 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
       , shelleyLedgerState
       , shelleyLedgerTransition
       , shelleyLedgerLatestPerasCertRound
+      , shelleyCumulativeTxBytes
       } =
       appTick globals shelleyLedgerState slotNo <&> \l' ->
         TickedShelleyLedgerState
@@ -584,6 +619,7 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
             tickedShelleyLedgerTables = emptyLedgerTables
           , tickedShelleyLedgerLatestPerasCertRound =
               shelleyLedgerLatestPerasCertRound
+          , tickedShelleyCumulativeTxBytes = shelleyCumulativeTxBytes
           }
      where
       globals = shelleyLedgerGlobals cfg
@@ -723,6 +759,15 @@ applyHelper f cfg blk stBefore = do
               , shelleyLedgerTables = emptyLedgerTables
               , shelleyLedgerLatestPerasCertRound =
                   shelleyLedgerLatestPerasCertRound'
+              , shelleyCumulativeTxBytes =
+                  tickedShelleyCumulativeTxBytes stBefore
+                    + sum
+                      ( fromIntegral . (^. Core.sizeTxF)
+                          <$> toList
+                            ( Core.blockBody (shelleyBlockRaw blk)
+                                ^. Core.txSeqBlockBodyL
+                            )
+                      )
               }
  where
   globals = shelleyLedgerGlobals cfg
@@ -877,14 +922,16 @@ encodeShelleyLedgerState
     , shelleyLedgerState
     , shelleyLedgerTransition
     , shelleyLedgerLatestPerasCertRound
+    , shelleyCumulativeTxBytes
     } =
     encodeVersion serialisationFormatVersion2 $
       mconcat $
-        [ CBOR.encodeListLen 4
+        [ CBOR.encodeListLen 5
         , encodeWithOrigin encodeShelleyTip shelleyLedgerTip
         , toCBOR shelleyLedgerState
         , encodeShelleyTransition shelleyLedgerTransition
         , encodeStrictMaybe toCBOR shelleyLedgerLatestPerasCertRound
+        , toCBOR shelleyCumulativeTxBytes
         ]
 
 decodeShelleyLedgerState ::
@@ -898,11 +945,12 @@ decodeShelleyLedgerState =
  where
   decodeShelleyLedgerState2 :: Decoder s' (LedgerState (ShelleyBlock proto era) EmptyMK)
   decodeShelleyLedgerState2 = do
-    enforceSize "ShelleyLedgerState" 4
+    enforceSize "ShelleyLedgerState" 5
     shelleyLedgerTip <- decodeWithOrigin decodeShelleyTip
     shelleyLedgerState <- fromCBOR
     shelleyLedgerTransition <- decodeShelleyTransition
     shelleyLedgerLatestPerasCertRound <- decodeStrictMaybe fromCBOR
+    shelleyCumulativeTxBytes <- fromCBOR
     return
       ShelleyLedgerState
         { shelleyLedgerTip
@@ -910,6 +958,7 @@ decodeShelleyLedgerState =
         , shelleyLedgerTransition
         , shelleyLedgerTables = emptyLedgerTables
         , shelleyLedgerLatestPerasCertRound
+        , shelleyCumulativeTxBytes
         }
 
 instance CanUpgradeLedgerTables (LedgerState (ShelleyBlock proto era)) where
@@ -923,3 +972,60 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
   getLatestPerasCertRound =
     strictMaybeToMaybe
       . shelleyLedgerLatestPerasCertRound
+
+{-------------------------------------------------------------------------------
+  ResolveLeiosBlock
+-------------------------------------------------------------------------------}
+
+instance
+  (PraosCrypto c, ShelleyCompatible (Praos c) DijkstraEra) =>
+  ResolveLeiosBlock (ShelleyBlock (Praos c) DijkstraEra)
+  where
+  resolveLeiosBlock leiosDb hdrSt blk =
+    case body ^. leiosCertBlockBodyL of
+      SNothing -> pure blk
+      SJust cert -> do
+        let praosSt = headerStateChainDep hdrSt
+        case praosStateLeiosAnnouncement praosSt of
+          SNothing ->
+            error $
+              "FIXME(bladyjoker): Certifying but not previously announced EB! Whai would you do that!? "
+                <> show cert
+          SJust ann -> do
+            mAnnouncedEb <-
+              leiosDbQueryCompletedEbByPoint
+                leiosDb
+                MkLeiosPoint
+                  { pointSlotNo = fromWithOrigin (SlotNo 0) (praosStateLastSlot praosSt)
+                  , pointEbHash = ebAnnouncementHash ann
+                  }
+            case mAnnouncedEb of
+              Nothing ->
+                error $
+                  "FIXME(bladyjoker): What exactly does this mean? Announced EB is being certified by the current chain but it's not available?"
+                    <> show cert
+              Just announcedEb ->
+                pure $
+                  blk{shelleyBlockRaw = Core.Block hdr body'}
+               where
+                txSeq = toLeiosTxSeq @DijkstraEra announcedEb
+                body' = body & Core.txSeqBlockBodyL .~ txSeq
+   where
+    Core.Block hdr body = shelleyBlockRaw blk
+
+-- | Deserialise a transaction supplied as Leios-stored bytes.
+deserialiseLeiosTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Tx TopTx era
+deserialiseLeiosTx bs =
+  case decodeFullAnnotator (eraProtVerLow @era) "Leios Tx" decCBOR (BL.fromStrict bs) of
+    Left err -> error $ "Failed to deserialise Leios tx: " <> show err
+    Right tx -> tx
+
+-- | Turn the @[(TxHash, ByteString)]@ tuple list returned by
+-- 'leiosDbQueryCompletedEbByPoint' into the @StrictSeq (Tx TopTx era)@
+-- that 'Core.txSeqBlockBodyL' wants.
+toLeiosTxSeq ::
+  forall era.
+  ShelleyBasedEra era =>
+  [(TxHash, BS.ByteString)] -> StrictSeq (Tx TopTx era)
+toLeiosTxSeq = StrictSeq.fromList . fmap (deserialiseLeiosTx @era . snd)
+

@@ -77,8 +77,10 @@ import Cardano.Protocol.TPraos.BHeader (PrevHash)
 import Cardano.Protocol.TPraos.OCert (OCert)
 import Cardano.Slotting.Block (BlockNo)
 import Cardano.Slotting.Slot (SlotNo)
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Word (Word32)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (EbAnnouncement)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 
@@ -105,6 +107,10 @@ data HeaderBody crypto = HeaderBody
   -- ^ operational certificate
   , hbProtVer :: !ProtVer
   -- ^ protocol version
+  , hbLeiosEbAnnouncement :: !(StrictMaybe EbAnnouncement)
+  -- ^ Optional Leios endorser-block announcement (Dijkstra-only;
+  -- 'SNothing' on earlier eras). Placed on the Praos header for
+  -- early-diffusion of EB references before the body arrives.
   }
   deriving Generic
 
@@ -187,6 +193,7 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
       , hbBodyHash
       , hbOCert
       , hbProtVer
+      , hbLeiosEbAnnouncement
       } =
       encode $
         Rec HeaderBody
@@ -200,6 +207,7 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
           !> To hbBodyHash
           !> To hbOCert
           !> To hbProtVer
+          !> To hbLeiosEbAnnouncement
 
 instance Crypto crypto => DecCBOR (HeaderBody crypto) where
   decCBOR =
@@ -214,6 +222,7 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
         <! From
         <! From
         <! mapCoder unCBORGroup From
+        <! From
         <! From
 
 encodeHeaderRaw ::
