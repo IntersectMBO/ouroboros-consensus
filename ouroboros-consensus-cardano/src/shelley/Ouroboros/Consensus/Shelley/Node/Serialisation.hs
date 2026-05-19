@@ -87,12 +87,12 @@ instance
 
 instance
   ShelleyCompatible proto era =>
-  EncodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era) EmptyMK)
+  EncodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era))
   where
   encodeDisk _ = encodeShelleyLedgerState
 instance
   ShelleyCompatible proto era =>
-  DecodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era) EmptyMK)
+  DecodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era))
   where
   decodeDisk _ = decodeShelleyLedgerState
 

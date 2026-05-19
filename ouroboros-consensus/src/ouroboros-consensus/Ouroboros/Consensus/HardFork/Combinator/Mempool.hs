@@ -26,6 +26,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
 
 import Control.Arrow ((+++))
 import Control.Monad.Except
+import Data.Bifunctor
 import Data.Functor.Product
 import Data.Kind (Type)
 import qualified Data.Measure as Measure
@@ -106,7 +107,7 @@ instance
     HardForkMempoolCache
       (hcmap proxySingle (emptyMempoolCache . State.currentState) $ Telescope.tip st)
 
-  applyTx = applyHelper ModeApply
+  applyTx = withExceptT fst .....: applyHelper ModeApply
 
   reapplyTx cfg slot vtx tls mch =
     (\(a, b, _) -> (a, b))
@@ -252,7 +253,7 @@ applyHelper ::
   MempoolCache (HardForkBlock xs) ->
   StateRef m (Ticked LedgerState) (HardForkBlock xs) ->
   ExceptT
-    (HardForkApplyTxErr xs)
+    (HardForkApplyTxErr xs, MempoolCache (HardForkBlock xs))
     m
     ( StateRef m (Ticked LedgerState) (HardForkBlock xs)
     , MempoolCache (HardForkBlock xs)
@@ -264,13 +265,15 @@ applyHelper
   wti
   slot
   tx
-  (HardForkMempoolCache hardForkCache)
+  cache@(HardForkMempoolCache hardForkCache)
   (HardForkTickedStateRef transition hardForkState) =
     case matchPolyTx injs (modeGetTx tx) hardForkState of
       Left mismatch ->
         throwError $
-          HardForkApplyTxErrWrongEra . MismatchEraInfo $
-            Match.bihcmap proxySingle singleEraInfo ledgerInfo mismatch
+          ( HardForkApplyTxErrWrongEra . MismatchEraInfo $
+              Match.bihcmap proxySingle singleEraInfo ledgerInfo mismatch
+          , cache
+          )
       Right matched ->
         -- We are updating the ticked ledger state by applying a transaction,
         -- but for the HFC that ledger state contains a bundled
@@ -352,7 +355,7 @@ applyHelper
       Index xs blk ->
       WrapLedgerConfig blk ->
       Product MempoolCache (Product txIn (StateRef m (Ticked LedgerState))) blk ->
-      ( ExceptT (HardForkApplyTxErr xs) m
+      ( ExceptT (HardForkApplyTxErr xs, MempoolCache (HardForkBlock xs)) m
           :.: ApplyResult m xs
       )
         blk
@@ -362,12 +365,13 @@ applyHelper
         res <- case mode of
           ModeApply ->
             fmap
-              ( fmap $ \(st', mcache', vtx) ->
-                  ApplyResult
-                    { arValidatedTx = injectValidatedGenTx index vtx
-                    , arState = st'
-                    , arCache = mcache'
-                    }
+              ( bimap (,mcache) $
+                  \(st', mcache', vtx) ->
+                    ApplyResult
+                      { arValidatedTx = injectValidatedGenTx index vtx
+                      , arState = st'
+                      , arCache = mcache'
+                      }
               )
               (runExceptT (applyTx lcfg wti slot tx' mcache st))
           ModeReapply ->
@@ -382,7 +386,7 @@ applyHelper
                   )
                   (runExceptT (reapplyTx lcfg slot vtx' mcache st))
         pure $ case res of
-          Left e -> Left (injectApplyTxErr index e)
+          Left (e, c) -> Left (injectApplyTxErr index e, injectCache index c)
           Right r -> Right r
 
 newtype instance TxId (GenTx (HardForkBlock xs)) = HardForkGenTxId
@@ -437,6 +441,11 @@ injectApplyTxErr index =
     . OneEraApplyTxErr
     . injectNS index
     . WrapApplyTxErr
+
+injectCache :: SListI xs => Index xs blk -> MempoolCache blk -> MempoolCache (HardForkBlock xs)
+injectCache index =
+  HardForkMempoolCache
+    . injectNS index
 
 injectValidatedGenTx ::
   SListI xs => Index xs blk -> Validated (GenTx blk) -> Validated (GenTx (HardForkBlock xs))

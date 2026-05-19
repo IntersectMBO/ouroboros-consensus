@@ -157,7 +157,7 @@ class
     MempoolCache blk ->
     StateRef m (Ticked LedgerState) blk ->
     ExceptT
-      (ApplyTxErr blk)
+      (ApplyTxErr blk, MempoolCache blk)
       m
       (StateRef m (Ticked LedgerState) blk, MempoolCache blk)
 
