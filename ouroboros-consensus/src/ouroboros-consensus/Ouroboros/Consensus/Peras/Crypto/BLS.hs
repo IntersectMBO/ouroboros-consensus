@@ -1,10 +1,6 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -39,15 +35,13 @@ import Cardano.Ledger.Hashes (HASH)
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Builder.Extra as BS
 import qualified Data.ByteString.Short as BS
-import Data.Proxy (Proxy (..))
-import Ouroboros.Consensus.Block
-  ( ConvertRawHash (..)
-  , Point
-  , pattern BlockPoint
-  , pattern GenesisPoint
+import Ouroboros.Consensus.Block.RealPoint
+  ( bytes32RealPointHash
+  , bytes32RealPointSlot
   )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasRoundNo (..)
+  ( PerasBoostedBlock (..)
+  , PerasRoundNo (..)
   )
 import Ouroboros.Consensus.Committee.Crypto
   ( CryptoSupportsAggregateVoteSigning (..)
@@ -64,10 +58,10 @@ import Ouroboros.Consensus.Committee.Crypto.BLS (KeyRole (..))
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
 
 -- | BLS-based crypto scheme used in Peras voting committees
-data PerasBLSCrypto blk
+data PerasBLSCrypto
 
-type instance ElectionId (PerasBLSCrypto blk) = PerasRoundNo
-type instance VoteCandidate (PerasBLSCrypto blk) = Point blk
+type instance ElectionId PerasBLSCrypto = PerasRoundNo
+type instance VoteCandidate PerasBLSCrypto = PerasBoostedBlock
 
 -- | Private key of a Peras committee member
 data PerasPrivateKey
@@ -76,7 +70,7 @@ data PerasPrivateKey
   , perasVRFSignKey :: BLS.PrivateKey VRF
   }
 
-type instance PrivateKey (PerasBLSCrypto blk) = PerasPrivateKey
+type instance PrivateKey PerasBLSCrypto = PerasPrivateKey
 
 -- | Public key of a Peras committee member
 data PerasPublicKey
@@ -85,49 +79,47 @@ data PerasPublicKey
   , perasVRFVerKey :: BLS.PublicKey VRF
   }
 
-type instance PublicKey (PerasBLSCrypto blk) = PerasPublicKey
+type instance PublicKey PerasBLSCrypto = PerasPublicKey
 
 -- | Hash the message of a Peras vote
 --
 -- NOTE: this is inspired by the implementation used by the Praos VRF check in
 -- 'Ouroboros.Consensus.Protocol.Praos.VRF.mkInputVRF'.
 hashVoteSignature ::
-  forall blk.
-  ConvertRawHash blk =>
-  ElectionId (PerasBLSCrypto blk) ->
-  VoteCandidate (PerasBLSCrypto blk) ->
+  ElectionId PerasBLSCrypto ->
+  VoteCandidate PerasBLSCrypto ->
   Hash HASH (SigDSIGN BLS12381MinSigDSIGN)
-hashVoteSignature roundNo point =
+hashVoteSignature roundNo boostedBlock =
   Hash.castHash
     . Hash.hashWith id
     . runByteBuilder (8 + 8 + 32)
     $ roundNoBytes
-      <> pointSlotBytes
-      <> pointHashBytes
+      <> boostedBlockSlotBytes
+      <> boostedBlockHashBytes
  where
   roundNoBytes =
     BS.word64BE
       . unPerasRoundNo
       $ roundNo
-  (pointSlotBytes, pointHashBytes) = case point of
-    GenesisPoint ->
-      ( BS.word64BE 0
-      , mempty
-      )
-    BlockPoint slotNo headerHash ->
-      ( BS.word64BE (unSlotNo slotNo)
-      , BS.byteStringCopy
-          . BS.fromShort
-          . toShortRawHash (Proxy @blk)
-          $ headerHash
-      )
+  boostedBlockSlotBytes =
+    BS.word64BE
+      . unSlotNo
+      . bytes32RealPointSlot
+      . unPerasBoostedBlock
+      $ boostedBlock
+  boostedBlockHashBytes =
+    BS.byteStringCopy
+      . BS.fromShort
+      . bytes32RealPointHash
+      . unPerasBoostedBlock
+      $ boostedBlock
 
 -- | Hash the input for the VRF used in Peras elections
 --
 -- NOTE: this is inspired by the implementation used by the Praos VRF check in
 -- 'Ouroboros.Consensus.Protocol.Praos.VRF.mkInputVRF'.
 hashVRFInput ::
-  ElectionId (PerasBLSCrypto blk) ->
+  ElectionId PerasBLSCrypto ->
   Nonce ->
   Hash HASH (SigDSIGN BLS12381MinSigDSIGN)
 hashVRFInput roundNo epochNonce =
@@ -145,11 +137,11 @@ hashVRFInput roundNo epochNonce =
 
 -- * Crypto instances
 
-instance ConvertRawHash blk => CryptoSupportsVoteSigning (PerasBLSCrypto blk) where
-  type VoteSigningKey (PerasBLSCrypto blk) = BLS.PrivateKey SIGN
-  type VoteVerificationKey (PerasBLSCrypto blk) = BLS.PublicKey SIGN
+instance CryptoSupportsVoteSigning PerasBLSCrypto where
+  type VoteSigningKey PerasBLSCrypto = BLS.PrivateKey SIGN
+  type VoteVerificationKey PerasBLSCrypto = BLS.PublicKey SIGN
 
-  newtype VoteSignature (PerasBLSCrypto blk)
+  newtype VoteSignature PerasBLSCrypto
     = PerasBLSCryptoVoteSignature
     { unPerasBLSCryptoVoteSignature ::
         BLS.Signature BLS.SIGN
@@ -165,7 +157,7 @@ instance ConvertRawHash blk => CryptoSupportsVoteSigning (PerasBLSCrypto blk) wh
   signVote sk roundNo boostedBlock =
     PerasBLSCryptoVoteSignature
       . BLS.signWithRole @SIGN sk
-      $ hashVoteSignature @blk roundNo boostedBlock
+      $ hashVoteSignature roundNo boostedBlock
 
   verifyVoteSignature
     pk
@@ -174,21 +166,21 @@ instance ConvertRawHash blk => CryptoSupportsVoteSigning (PerasBLSCrypto blk) wh
     (PerasBLSCryptoVoteSignature sig) =
       BLS.verifyWithRole @SIGN
         pk
-        (hashVoteSignature @blk roundNo boostedBlock)
+        (hashVoteSignature roundNo boostedBlock)
         sig
 
-instance CryptoSupportsVRF (PerasBLSCrypto blk) where
-  type VRFSigningKey (PerasBLSCrypto blk) = BLS.PrivateKey VRF
-  type VRFVerificationKey (PerasBLSCrypto blk) = BLS.PublicKey VRF
+instance CryptoSupportsVRF PerasBLSCrypto where
+  type VRFSigningKey PerasBLSCrypto = BLS.PrivateKey VRF
+  type VRFVerificationKey PerasBLSCrypto = BLS.PublicKey VRF
 
-  newtype VRFElectionInput (PerasBLSCrypto blk)
+  newtype VRFElectionInput PerasBLSCrypto
     = PerasBLSCryptoVRFElectionInput
     { unPerasBLSCryptoVRFElectionInput ::
         Hash HASH (SigDSIGN BLS12381MinSigDSIGN)
     }
     deriving stock (Eq, Show)
 
-  newtype VRFOutput (PerasBLSCrypto blk)
+  newtype VRFOutput PerasBLSCrypto
     = PerasBLSCryptoVRFOutput
     { unPerasBLSCryptoVRFOutput ::
         BLS.Signature VRF
@@ -237,12 +229,12 @@ newtype PerasBLSCryptoAggregateVoteSignature
   deriving stock (Eq, Show)
   deriving newtype (FromCBOR, ToCBOR)
 
-instance ConvertRawHash blk => CryptoSupportsAggregateVoteSigning (PerasBLSCrypto blk) where
+instance CryptoSupportsAggregateVoteSigning PerasBLSCrypto where
   type
-    AggregateVoteVerificationKey (PerasBLSCrypto blk) =
+    AggregateVoteVerificationKey PerasBLSCrypto =
       PerasBLSCryptoAggregateVoteVerificationKey
   type
-    AggregateVoteSignature (PerasBLSCrypto blk) =
+    AggregateVoteSignature PerasBLSCrypto =
       PerasBLSCryptoAggregateVoteSignature
 
   aggregateVoteVerificationKeys _ pks = do
@@ -264,10 +256,10 @@ instance ConvertRawHash blk => CryptoSupportsAggregateVoteSigning (PerasBLSCrypt
     aggSig = do
       BLS.verifyWithRole @SIGN
         (unPerasBLSCryptoAggregateVoteVerificationKey aggPk)
-        (hashVoteSignature @blk roundNo boostedBlock)
+        (hashVoteSignature roundNo boostedBlock)
         (unPerasBLSCryptoAggregateVoteSignature aggSig)
 
-instance CryptoSupportsBatchVRFVerification (PerasBLSCrypto blk) where
+instance CryptoSupportsBatchVRFVerification PerasBLSCrypto where
   -- NOTE: in contrast to vote signatures, we cannot aggregate multiple VRF
   -- outputs into a single one when forging a certificate (because we need to
   -- derive non-persistent seat numbers from each individual one). This means

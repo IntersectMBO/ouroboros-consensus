@@ -79,8 +79,8 @@ class
 -- overflowing their `Word16` seat index.
 instance
   PerasVoteCompatibleWithVotingCommittee
-    (V1.PerasVote blk)
-    (PerasBLSCrypto blk)
+    V1.PerasVote
+    PerasBLSCrypto
     WFALS
   where
   toPerasVote = \case
@@ -130,8 +130,8 @@ instance
 -- overflowing the `Word16` seat index of each voter.
 instance
   PerasCertCompatibleWithVotingCommittee
-    (V1.PerasCert blk)
-    (PerasBLSCrypto blk)
+    V1.PerasCert
+    PerasBLSCrypto
     WFALS
   where
   toPerasCert = \case
@@ -160,8 +160,8 @@ instance
 -- avoiding overflowing their `Word16` seat index).
 instance
   PerasVoteCompatibleWithVotingCommittee
-    (V1.PerasVote blk)
-    (PerasBLSCrypto blk)
+    V1.PerasVote
+    PerasBLSCrypto
     EveryoneVotes
   where
   toPerasVote = \case
@@ -196,8 +196,8 @@ instance
 -- (in addition to avoiding overflowing the `Word16` seat index of each voter).
 instance
   PerasCertCompatibleWithVotingCommittee
-    (V1.PerasCert blk)
-    (PerasBLSCrypto blk)
+    V1.PerasCert
+    PerasBLSCrypto
     EveryoneVotes
   where
   toPerasCert = \case
@@ -263,8 +263,8 @@ toPerasSeatIndex (SeatIndex seatIndex)
 
 -- | Convert concrete Peras certificate voters to abstract committee voters
 fromPerasCertVoters ::
-  V1.PerasCertVoters blk ->
-  NE (Map SeatIndex (Maybe (VRFOutput (PerasBLSCrypto blk))))
+  V1.PerasCertVoters ->
+  NE (Map SeatIndex (Maybe (VRFOutput PerasBLSCrypto)))
 fromPerasCertVoters voters =
   NEMap.fromAscList
     . NonEmpty.map
@@ -283,8 +283,8 @@ fromPerasCertVoters voters =
 
 -- | Convert abstract committee voters to concrete Peras certificate voters
 toPerasCertVoters ::
-  NE (Map SeatIndex (Maybe (VRFOutput (PerasBLSCrypto blk)))) ->
-  Either PerasConversionError (V1.PerasCertVoters blk)
+  NE (Map SeatIndex (Maybe (VRFOutput PerasBLSCrypto))) ->
+  Either PerasConversionError V1.PerasCertVoters
 toPerasCertVoters voters =
   fmap V1.PerasCertVoters
     . fmap NEMap.fromAscList
