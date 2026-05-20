@@ -117,7 +117,7 @@ instance ShowProxy CC.ApplyMempoolPayloadErr
 instance LedgerSupportsMempool ByronBlock where
   data MempoolCache ByronBlock = NoCache
 
-  emptyMempoolCache _ = NoCache
+  mkMempoolCache _ = NoCache
 
   -- Check that the annotation is the canonical encoding. This is currently
   -- enforced by 'decodeByronGenTx', see its docstring for more context.

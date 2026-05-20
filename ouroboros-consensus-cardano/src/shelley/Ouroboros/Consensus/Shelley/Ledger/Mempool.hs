@@ -234,7 +234,7 @@ instance
     , cacheAllTxsFinalUTxO :: SL.UTxO era
     }
 
-  emptyMempoolCache _ = ShelleyMempoolCache Map.empty (SL.UTxO Map.empty) (Diff.Diff Map.empty) (SL.UTxO Map.empty)
+  mkMempoolCache _ = ShelleyMempoolCache Map.empty (SL.UTxO Map.empty) (Diff.Diff Map.empty) (SL.UTxO Map.empty)
 
   txInvariant = const True
 

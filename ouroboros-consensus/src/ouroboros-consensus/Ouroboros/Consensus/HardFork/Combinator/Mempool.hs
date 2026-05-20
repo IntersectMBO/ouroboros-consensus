@@ -103,9 +103,9 @@ instance
   where
   data MempoolCache (HardForkBlock xs) = HardForkMempoolCache (NS MempoolCache xs)
 
-  emptyMempoolCache (HardForkTickedStateHandle _ (State.HardForkState st)) =
+  mkMempoolCache (HardForkTickedStateHandle _ (State.HardForkState st)) =
     HardForkMempoolCache
-      (hcmap proxySingle (emptyMempoolCache . State.currentState) $ Telescope.tip st)
+      (hcmap proxySingle (mkMempoolCache . State.currentState) $ Telescope.tip st)
 
   applyTx = withExceptT fst .....: applyHelper ModeApply
 
@@ -296,7 +296,7 @@ applyHelper
                 Left _ ->
                   hcmap
                     proxySingle
-                    (\(Pair tx0 st) -> Pair (emptyMempoolCache st) (Pair tx0 st))
+                    (\(Pair tx0 st) -> Pair (mkMempoolCache st) (Pair tx0 st))
                     matched
                 Right m ->
                   State.HardForkState $

@@ -146,7 +146,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -406,10 +405,9 @@ pure []
 run ::
   forall blk.
   ( RunNode blk
-  , BlockSupportsLedgerHD IO (Ticked LedgerState) blk
-  , BlockSupportsLedgerHD IO LedgerState blk
-  , NoThunks (StateHandle IO (Ticked LedgerState) blk)
-  , NoThunks (StateHandle IO ExtLedgerState blk)
+  , MonadLedger IO blk
+  , NoThunks (TickedStateHandle IO blk)
+  , NoThunks (Handle ExtLedgerState IO blk)
   , NoThunks (LedgerState blk)
   ) =>
   RunNodeArgs IO RemoteAddress LocalAddress blk ->
@@ -479,10 +477,9 @@ runWith ::
   , NetworkIO m
   , NetworkAddr addrNTN
   , Show addrNTN
-  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
-  , BlockSupportsLedgerHD m LedgerState blk
-  , NoThunks (StateHandle m (Ticked LedgerState) blk)
-  , NoThunks (StateHandle m ExtLedgerState blk)
+  , MonadLedger m blk
+  , NoThunks (TickedStateHandle m blk)
+  , NoThunks (Handle ExtLedgerState m blk)
   , NoThunks (LedgerState blk)
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
@@ -852,9 +849,8 @@ openChainDB ::
   forall m blk.
   ( RunNode blk
   , IOLike m
-  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
-  , BlockSupportsLedgerHD m LedgerState blk
-  , NoThunks (StateHandle m ExtLedgerState blk)
+  , MonadLedger m blk
+  , NoThunks (Handle ExtLedgerState m blk)
   , NoThunks (LedgerState blk)
   ) =>
   ResourceRegistry m ->

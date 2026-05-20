@@ -241,9 +241,8 @@ initNodeKernel ::
   , Ord addrNTN
   , Hashable addrNTN
   , Typeable addrNTN
-  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
-  , BlockSupportsLedgerHD m LedgerState blk
-  , NoThunks (StateHandle m (Ticked LedgerState) blk)
+  , MonadLedger m blk
+  , NoThunks (TickedStateHandle m blk)
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   m (NodeKernel m addrNTN addrNTC blk)
@@ -467,9 +466,8 @@ initInternalState ::
   , Ord addrNTN
   , Typeable addrNTN
   , RunNode blk
-  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
-  , BlockSupportsLedgerHD m LedgerState blk
-  , NoThunks (StateHandle m (Ticked LedgerState) blk)
+  , MonadLedger m blk
+  , NoThunks (TickedStateHandle m blk)
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   m (InternalState m addrNTN addrNTC blk)
@@ -539,7 +537,7 @@ toConsensusMode = \case
 
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
-  (IOLike m, RunNode blk, BlockSupportsLedgerHD m LedgerState blk) =>
+  (IOLike m, RunNode blk, MonadLedger m blk) =>
   InternalState m addrNTN addrNTC blk ->
   MkBlockForging m blk ->
   m (Thread m Void)
