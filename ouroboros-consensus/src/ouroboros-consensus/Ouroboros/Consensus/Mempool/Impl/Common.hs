@@ -48,7 +48,7 @@ import Control.Monad.Except (runExcept)
 import Control.Tracer
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
-import Data.List (foldl')
+import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -386,7 +386,7 @@ revalidateTxsFor capacityOverride cfg slot st0 cache0 lastTicketNo txTickets = d
       cache0
       txTickets
   let (stFinal, cacheFinal, validRev, invalidRev) =
-        foldl' step (st0, cachePreloaded, [], []) txTickets
+        Foldable.foldl' step (st0, cachePreloaded, [], []) txTickets
       validTxs = reverse validRev
       tipSt = tickedState st0
       is' =
@@ -456,7 +456,7 @@ computeSnapshot cfg slot st0 cache0 txTickets = do
       (\c tkt -> addToCache st0 (txForgetValidated (txTicketTx tkt)) c)
       cache0
       txTickets
-  let (_, _, validRev) = foldl' step (st0, cachePreloaded, []) txTickets
+  let (_, _, validRev) = Foldable.foldl' step (st0, cachePreloaded, []) txTickets
   pure $
     snapshotFromValidTxs (reverse validRev) (getTip (tickedState st0)) slot
  where

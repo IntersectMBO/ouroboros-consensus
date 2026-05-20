@@ -51,7 +51,6 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
-import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------

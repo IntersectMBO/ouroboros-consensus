@@ -45,7 +45,6 @@ import NoThunks.Class
 import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ticked
 import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction

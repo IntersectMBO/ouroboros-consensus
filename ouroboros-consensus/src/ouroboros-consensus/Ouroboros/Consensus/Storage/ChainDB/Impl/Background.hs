@@ -77,7 +77,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IOLike

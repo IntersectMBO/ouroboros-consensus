@@ -24,12 +24,9 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
   , hardForkApplyTxErrToEither
   ) where
 
-import Control.Arrow ((+++))
 import Control.Monad.Except
-import Data.Bifunctor
 import Data.Functor.Product
 import Data.Kind (Type)
-import qualified Data.Measure as Measure
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Functors

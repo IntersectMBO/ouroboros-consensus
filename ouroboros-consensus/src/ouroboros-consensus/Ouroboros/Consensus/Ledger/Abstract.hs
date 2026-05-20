@@ -47,7 +47,6 @@ import GHC.Stack (HasCallStack)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Basics
-import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util
 
 -- | " Validated " transaction or block
