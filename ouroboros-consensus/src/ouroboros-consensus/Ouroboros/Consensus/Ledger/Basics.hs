@@ -4,7 +4,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -338,16 +337,19 @@ class MonadLedger m blk where
 
   -- | Release the backing resources. Idempotent.
   close :: Monad m => StateHandle m blk -> m ()
+
   closeTicked :: Monad m => TickedStateHandle m blk -> m ()
 
   -- | Produce an independent copy of the handle, with its own backing
   -- resources. Useful before applying a block that may or may not be
   -- committed.
   duplicate :: Monad m => StateHandle m blk -> m (StateHandle m blk)
+
   duplicateTicked :: Monad m => TickedStateHandle m blk -> m (TickedStateHandle m blk)
 
   -- | Snapshot of operational statistics for the handle.
   getStats :: StateHandle m blk -> Statistics
+
   getStatsTicked :: TickedStateHandle m blk -> Statistics
 
 -- | Operational stats for a 'StateHandle'.

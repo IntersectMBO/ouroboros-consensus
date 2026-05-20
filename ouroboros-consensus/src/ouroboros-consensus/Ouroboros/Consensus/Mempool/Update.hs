@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 
@@ -419,7 +418,7 @@ tryAddTx mpEnv cfg wti tx is =
                       )
                 )
  where
-  MempoolEnv { mpEnvTimeoutConfig = mbToCfg } = mpEnv
+  MempoolEnv{mpEnvTimeoutConfig = mbToCfg} = mpEnv
   currentSize = TxSeq.toSize (isTxs is)
 
 {-------------------------------------------------------------------------------
