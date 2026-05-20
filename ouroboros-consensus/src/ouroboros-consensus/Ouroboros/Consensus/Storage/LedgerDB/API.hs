@@ -289,7 +289,7 @@ data LedgerDB m l blk = LedgerDB
   -- ^ Get the header state history for all ledger states in the LedgerDB.
   , openForkerAtTarget ::
       Target (Point blk) ->
-      m (Either GetForkerError (Forker m l blk))
+      m (Either GetForkerError (Forker m blk))
   -- ^ Acquire a 'Forker' at the requested point. If a ledger state associated
   -- with the requested point does not exist in the LedgerDB, it will return a
   -- 'GetForkerError'.
@@ -301,8 +301,8 @@ data LedgerDB m l blk = LedgerDB
       BlockCache blk ->
       Word64 ->
       NonEmpty (Header blk) ->
-      SuccessForkerAction m l blk ->
-      m (ValidateResult l blk)
+      SuccessForkerAction m blk ->
+      m (ValidateResult blk)
   -- ^ Try to apply a sequence of blocks on top of the LedgerDB, first rolling
   -- back as many blocks as the passed @Word64@.
   --
@@ -395,9 +395,9 @@ data LedgerDbError
 
 -- | 'bracket'-style usage of a forker at the LedgerDB tip.
 withTipForker ::
-  (IOLike m, MonadLedger m blk) =>
+  (IOLike m, LedgerSupportsProtocol blk, MonadLedger m blk) =>
   LedgerDB m l blk ->
-  (Forker m l blk -> m a) ->
+  (Forker m blk -> m a) ->
   m a
 withTipForker ldb =
   bracket
@@ -411,16 +411,16 @@ withTipForker ldb =
 
 -- | Get statistics from the tip of the LedgerDB.
 getTipStatistics ::
-  (IOLike m, MonadLedger m blk, GetTip l blk) =>
+  (IOLike m, LedgerSupportsProtocol blk, MonadLedger m blk) =>
   LedgerDB m l blk ->
   m Statistics
-getTipStatistics ldb = withTipForker ldb (fmap getStats . atomically . forkerTip)
+getTipStatistics ldb = withTipForker ldb (fmap getStatsExt . atomically . forkerTip)
 
 openReadOnlyForker ::
-  (MonadSTM m, MonadLedger m blk, GetTip l blk) =>
+  (MonadSTM m, LedgerSupportsProtocol blk, MonadLedger m blk) =>
   LedgerDB m l blk ->
   Target (Point blk) ->
-  m (Either GetForkerError (Handle l m blk))
+  m (Either GetForkerError (ExtStateHandle m blk))
 openReadOnlyForker ldb pt =
   openForkerAtTarget ldb pt >>= \case
     Left err -> pure (Left err)

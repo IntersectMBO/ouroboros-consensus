@@ -13,6 +13,11 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | The data structure that holds the cached ledger states.
+--
+-- The sequence is specialised to 'ExtLedgerState': the top-level LedgerDB
+-- always holds extended states. Dropping the @l@ parameter sidesteps the
+-- otherwise-illegal type-family application @'Handle' l m blk@ in the
+-- 'Anchorable' instance head.
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
   ( -- * The ledger seq
     LedgerSeq (..)
@@ -57,6 +62,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -69,37 +75,33 @@ import Ouroboros.Network.AnchoredSeq hiding
 import qualified Ouroboros.Network.AnchoredSeq as AS hiding (map)
 
 {-------------------------------------------------------------------------------
-  Anchorable instance for 'Handle'
+  Anchorable instance for 'ExtStateHandle'
 -------------------------------------------------------------------------------}
 
--- | 'Handle l m blk' lives in the 'AnchoredSeq' as both the anchor and the
--- elements; this orphan-ish 'Anchorable' instance is what lets that work.
---
--- TODO @js: depends on a polymorphic state projection from
--- @'Handle' l m blk@ to @l blk@ (deferred — see Layer 4 review point 3).
--- 'state' here only resolves for @l ~ LedgerState@ via 'MonadLedger'.
 instance
-  (MonadLedger m blk, GetTip l blk) =>
-  Anchorable (WithOrigin SlotNo) (Handle l m blk) (Handle l m blk)
+  (MonadLedger m blk, LedgerSupportsProtocol blk) =>
+  Anchorable (WithOrigin SlotNo) (ExtStateHandle m blk) (ExtStateHandle m blk)
   where
   asAnchor = id
-  getAnchorMeasure _ = getTipSlot . state
+  getAnchorMeasure _ = getTipSlot . extLedgerState
 
 {-------------------------------------------------------------------------------
   The LedgerSeq
 -------------------------------------------------------------------------------}
 
-newtype LedgerSeq m l blk = LedgerSeq
-  { getLedgerSeq :: AnchoredSeq (WithOrigin SlotNo) (Handle l m blk) (Handle l m blk)
+newtype LedgerSeq m blk = LedgerSeq
+  { getLedgerSeq ::
+      AnchoredSeq (WithOrigin SlotNo) (ExtStateHandle m blk) (ExtStateHandle m blk)
   }
   deriving Generic
 
-deriving newtype instance (IOLike m, NoThunks (Handle l m blk)) => NoThunks (LedgerSeq m l blk)
+deriving newtype instance
+  (IOLike m, NoThunks (ExtStateHandle m blk)) => NoThunks (LedgerSeq m blk)
 
-deriving newtype instance Eq (Handle l m blk) => Eq (LedgerSeq m l blk)
-deriving newtype instance Show (Handle l m blk) => Show (LedgerSeq m l blk)
+deriving newtype instance Eq (ExtStateHandle m blk) => Eq (LedgerSeq m blk)
+deriving newtype instance Show (ExtStateHandle m blk) => Show (LedgerSeq m blk)
 
-type LedgerSeq' m blk = LedgerSeq m ExtLedgerState blk
+type LedgerSeq' m blk = LedgerSeq m blk
 
 {-------------------------------------------------------------------------------
   Construction
@@ -107,19 +109,17 @@ type LedgerSeq' m blk = LedgerSeq m ExtLedgerState blk
 
 -- | Creates an empty @LedgerSeq@
 empty ::
-  ( GetTip l blk
-  , IOLike m
-  , MonadLedger m blk
-  ) =>
-  Handle l m blk ->
-  LedgerSeq m l blk
+  (MonadLedger m blk, LedgerSupportsProtocol blk) =>
+  ExtStateHandle m blk -> LedgerSeq m blk
 empty = LedgerSeq . AS.Empty
 
 -- | Close all 'LedgerTablesHandle' in this 'LedgerSeq', in particular that on
 -- the anchor.
-closeLedgerSeq :: (Monad m, MonadLedger m blk) => LedgerSeq m l blk -> m ()
+closeLedgerSeq ::
+  (Monad m, MonadLedger m blk, LedgerSupportsProtocol blk) =>
+  LedgerSeq m blk -> m ()
 closeLedgerSeq (LedgerSeq l) =
-  mapM_ close $ AS.anchor l : AS.toOldestFirst l
+  mapM_ closeExt $ AS.anchor l : AS.toOldestFirst l
 
 {-------------------------------------------------------------------------------
   Apply blocks
@@ -170,11 +170,14 @@ configLedgerDb config evs =
 --
 -- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
-  (IOLike m, ApplyBlock l blk, MonadLedger m blk) =>
-  LedgerDbCfg l blk ->
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , MonadLedger m blk
+  ) =>
+  LedgerDbCfg ExtLedgerState blk ->
   blk ->
-  LedgerSeq m l blk ->
-  m (LedgerSeq m l blk)
+  LedgerSeq m blk ->
+  m (LedgerSeq m blk)
 reapplyThenPush cfg ap db = do
   newSt <- reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
   let (m, db') = pruneToImmTipOnly $ extend newSt db
@@ -182,12 +185,15 @@ reapplyThenPush cfg ap db = do
   pure db'
 
 reapplyBlock ::
-  (ApplyBlock l blk, IOLike m, MonadLedger m blk) =>
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , MonadLedger m blk
+  ) =>
   ComputeLedgerEvents ->
-  LedgerCfg l blk ->
+  LedgerCfg ExtLedgerState blk ->
   blk ->
-  LedgerSeq m l blk ->
-  m (Handle l m blk)
+  LedgerSeq m blk ->
+  m (ExtStateHandle m blk)
 reapplyBlock evs cfg b = tickThenReapply evs cfg b . currentHandle
 
 -- | Prune older ledger states according to the given 'LedgerDbPrune' strategy.
@@ -202,10 +208,10 @@ reapplyBlock evs cfg b = tickThenReapply evs cfg b . currentHandle
 --
 -- where @lX@ is a ledger state from slot @X-1@ (or 'Origin' for @l0@).
 prune ::
-  (Monad m, GetTip l blk, MonadLedger m blk) =>
+  (Monad m, MonadLedger m blk, LedgerSupportsProtocol blk) =>
   LedgerDbPrune ->
-  LedgerSeq m l blk ->
-  (m (), LedgerSeq m l blk)
+  LedgerSeq m blk ->
+  (m (), LedgerSeq m blk)
 prune howToPrune (LedgerSeq ldb) = case howToPrune of
   LedgerDbPruneAll ->
     (closeButHead before, LedgerSeq after)
@@ -243,10 +249,10 @@ prune howToPrune (LedgerSeq ldb) = case howToPrune of
 -- >>> AS.toOldestFirst ldb' == [l1, l2, l3, l4]
 -- True
 extend ::
-  (GetTip l blk, MonadLedger m blk) =>
-  Handle l m blk ->
-  LedgerSeq m l blk ->
-  LedgerSeq m l blk
+  (MonadLedger m blk, LedgerSupportsProtocol blk) =>
+  ExtStateHandle m blk ->
+  LedgerSeq m blk ->
+  LedgerSeq m blk
 extend newState =
   LedgerSeq . (:> newState) . getLedgerSeq
 
@@ -261,9 +267,9 @@ extend newState =
 -- >>> AS.anchor ldb' == l3 && AS.toOldestFirst ldb' == []
 -- True
 pruneToImmTipOnly ::
-  (Monad m, MonadLedger m blk, GetTip l blk) =>
-  LedgerSeq m l blk ->
-  (m (), LedgerSeq m l blk)
+  (Monad m, MonadLedger m blk, LedgerSupportsProtocol blk) =>
+  LedgerSeq m blk ->
+  (m (), LedgerSeq m blk)
 pruneToImmTipOnly = prune LedgerDbPruneAll
 
 {-------------------------------------------------------------------------------
@@ -279,10 +285,10 @@ pruneToImmTipOnly = prune LedgerDbPruneAll
 -- >>> fmap (([l1] ==) . AS.toOldestFirst . getLedgerSeq) (rollbackN 2 ldb)
 -- Just True
 rollbackN ::
-  (MonadLedger m blk, GetTip l blk) =>
+  (MonadLedger m blk, LedgerSupportsProtocol blk) =>
   Word64 ->
-  LedgerSeq m l blk ->
-  Maybe (LedgerSeq m l blk)
+  LedgerSeq m blk ->
+  Maybe (LedgerSeq m blk)
 rollbackN n ldb
   | n <= maxRollback ldb =
       Just $ LedgerSeq (AS.dropNewest (fromIntegral n) $ getLedgerSeq ldb)
@@ -298,10 +304,14 @@ rollbackN n ldb
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> l3s == current ldb
 -- True
-current :: (MonadLedger m blk, GetTip l blk) => LedgerSeq m l blk -> l blk
-current = state . currentHandle
+current ::
+  (MonadLedger m blk, LedgerSupportsProtocol blk) =>
+  LedgerSeq m blk -> ExtLedgerState blk
+current = extLedgerState . currentHandle
 
-currentHandle :: (MonadLedger m blk, GetTip l blk) => LedgerSeq m l blk -> Handle l m blk
+currentHandle ::
+  (MonadLedger m blk, LedgerSupportsProtocol blk) =>
+  LedgerSeq m blk -> ExtStateHandle m blk
 currentHandle = headAnchor . getLedgerSeq
 
 -- | The ledger state at the anchor of the Volatile chain (i.e. the immutable
@@ -310,10 +320,14 @@ currentHandle = headAnchor . getLedgerSeq
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> l0s == anchor ldb
 -- True
-anchor :: MonadLedger m blk => LedgerSeq m l blk -> l blk
-anchor = state . anchorHandle
+anchor ::
+  (MonadLedger m blk, LedgerSupportsProtocol blk) =>
+  LedgerSeq m blk -> ExtLedgerState blk
+anchor = extLedgerState . anchorHandle
 
-anchorHandle :: LedgerSeq m l blk -> Handle l m blk
+anchorHandle ::
+  (MonadLedger m blk, LedgerSupportsProtocol blk) =>
+  LedgerSeq m blk -> ExtStateHandle m blk
 anchorHandle = AS.anchor . getLedgerSeq
 
 -- | All snapshots currently stored by the ledger DB (new to old)
@@ -324,10 +338,12 @@ anchorHandle = AS.anchor . getLedgerSeq
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> [(0, l3s), (1, l2s), (2, l1s)] == snapshots ldb
 -- True
-snapshots :: MonadLedger m blk => LedgerSeq m l blk -> [(Word64, l blk)]
+snapshots ::
+  (MonadLedger m blk, LedgerSupportsProtocol blk) =>
+  LedgerSeq m blk -> [(Word64, ExtLedgerState blk)]
 snapshots =
   zip [0 ..]
-    . map state
+    . map extLedgerState
     . AS.toNewestFirst
     . getLedgerSeq
 
@@ -336,7 +352,9 @@ snapshots =
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> maxRollback ldb
 -- 3
-maxRollback :: (MonadLedger m blk, GetTip l blk) => LedgerSeq m l blk -> Word64
+maxRollback ::
+  (MonadLedger m blk, LedgerSupportsProtocol blk) =>
+  LedgerSeq m blk -> Word64
 maxRollback =
   fromIntegral
     . AS.length
@@ -347,7 +365,9 @@ maxRollback =
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> tip ldb == getTip l3s
 -- True
-tip :: (MonadLedger m blk, GetTip l blk) => LedgerSeq m l blk -> Point blk
+tip ::
+  (LedgerSupportsProtocol blk, MonadLedger m blk) =>
+  LedgerSeq m blk -> Point blk
 tip = getTip . current
 
 -- | Have we seen at least @k@ blocks?
@@ -358,7 +378,8 @@ tip = getTip . current
 -- >>> isSaturated (SecurityParam (unsafeNonZero 4)) ldb
 -- False
 isSaturated ::
-  (MonadLedger m blk, GetTip l blk) => SecurityParam -> LedgerSeq m l blk -> Bool
+  (MonadLedger m blk, LedgerSupportsProtocol blk) =>
+  SecurityParam -> LedgerSeq m blk -> Bool
 isSaturated (SecurityParam k) db =
   maxRollback db >= unNonZero k
 
@@ -376,13 +397,13 @@ isSaturated (SecurityParam k) db =
 -- True
 getPastLedgerAt ::
   ( HasHeader blk
-  , GetTip l blk
+  , LedgerSupportsProtocol blk
   , StandardHash blk
   , MonadLedger m blk
   ) =>
   Point blk ->
-  LedgerSeq m l blk ->
-  Maybe (l blk)
+  LedgerSeq m blk ->
+  Maybe (ExtLedgerState blk)
 getPastLedgerAt pt db = current <$> rollback pt db
 
 -- | Roll back the volatile states up to the specified point.
@@ -398,15 +419,15 @@ getPastLedgerAt pt db = current <$> rollback pt db
 -- True
 rollbackToPoint ::
   ( StandardHash blk
-  , GetTip l blk
+  , LedgerSupportsProtocol blk
   , MonadLedger m blk
   ) =>
-  Point blk -> LedgerSeq m l blk -> Maybe (LedgerSeq m l blk)
+  Point blk -> LedgerSeq m blk -> Maybe (LedgerSeq m blk)
 rollbackToPoint pt (LedgerSeq ldb) = do
   LedgerSeq
     <$> AS.rollback
       (pointSlot pt)
-      ((== pt) . getTip . either state state)
+      ((== pt) . getTip . either extLedgerState extLedgerState)
       ldb
 
 -- | Rollback the volatile states up to the volatile anchor.
@@ -416,8 +437,8 @@ rollbackToPoint pt (LedgerSeq ldb) = do
 -- >>> AS.anchor ldb' == l0 && AS.toOldestFirst ldb' == []
 -- True
 rollbackToAnchor ::
-  (GetTip l blk, MonadLedger m blk) =>
-  LedgerSeq m l blk -> LedgerSeq m l blk
+  (MonadLedger m blk, LedgerSupportsProtocol blk) =>
+  LedgerSeq m blk -> LedgerSeq m blk
 rollbackToAnchor (LedgerSeq vol) =
   LedgerSeq (AS.Empty (AS.anchor vol))
 
@@ -429,37 +450,40 @@ rollbackToAnchor (LedgerSeq vol) =
 -- returned.
 rollback ::
   ( HasHeader blk
-  , GetTip l blk
+  , LedgerSupportsProtocol blk
   , StandardHash blk
   , MonadLedger m blk
   ) =>
   Point blk ->
-  LedgerSeq m l blk ->
-  Maybe (LedgerSeq m l blk)
+  LedgerSeq m blk ->
+  Maybe (LedgerSeq m blk)
 rollback pt db
-  | pt == castPoint (getTip (anchor db)) =
+  | pt == getTip (anchor db) =
       Just $ rollbackToAnchor db
   | otherwise =
-      rollbackToPoint (castPoint pt) db
+      rollbackToPoint pt db
 
 immutableTipSlot ::
-  (GetTip l blk, MonadLedger m blk) =>
-  LedgerSeq m l blk -> WithOrigin SlotNo
+  (LedgerSupportsProtocol blk, MonadLedger m blk) =>
+  LedgerSeq m blk -> WithOrigin SlotNo
 immutableTipSlot =
   getTipSlot
-    . state
+    . extLedgerState
     . AS.anchor
     . getLedgerSeq
 
 -- | Transform the underlying volatile 'AnchoredSeq' using the given functions.
 volatileStatesBimap ::
-  (MonadLedger m blk, AS.Anchorable (WithOrigin SlotNo) a b) =>
-  (l blk -> a) ->
-  (l blk -> b) ->
-  LedgerSeq m l blk ->
+  ( MonadLedger m blk
+  , LedgerSupportsProtocol blk
+  , AS.Anchorable (WithOrigin SlotNo) a b
+  ) =>
+  (ExtLedgerState blk -> a) ->
+  (ExtLedgerState blk -> b) ->
+  LedgerSeq m blk ->
   AS.AnchoredSeq (WithOrigin SlotNo) a b
 volatileStatesBimap f g =
-  AS.bimap (f . state) (g . state)
+  AS.bimap (f . extLedgerState) (g . extLedgerState)
     . getLedgerSeq
 
 {-------------------------------------------------------------------------------

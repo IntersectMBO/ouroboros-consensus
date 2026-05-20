@@ -37,7 +37,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
-import System.FS.API
+import System.FS.API hiding (Handle)
 
 -- | Open the LedgerDB database
 --
@@ -54,7 +54,7 @@ openDB ::
   , HasCallStack
   , HasHardForkHistory blk
   , MonadLedger m blk
-  , NoThunks (Handle ExtLedgerState m blk)
+  , NoThunks (ExtStateHandle m blk)
   , NoThunks (LedgerState blk)
   ) =>
   -- | Stateless initializaton arguments
