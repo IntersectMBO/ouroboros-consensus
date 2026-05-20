@@ -300,6 +300,29 @@ class Monad m => MonadLedger m blk where
   mkTickedStateHandle ::
     Ticked LedgerState blk -> LedgerTablesHandle m blk -> TickedStateHandle m blk
 
+  -- | Replace the in-memory pure state portion of a handle while sharing
+  -- the underlying 'LedgerTablesHandle'.
+  --
+  -- The input handle is logically consumed: the returned handle takes
+  -- ownership of the tables, so callers must not use the input handle
+  -- after this call (otherwise two handles would claim the same
+  -- tables resource).
+  --
+  -- This is the mechanism used by 'applyTx' / 'reapplyTx' to propagate
+  -- tx-induced changes to the pure state portion of the ticked handle
+  -- without writing to the tables (the UTxO diffs introduced by mempool
+  -- txs live in the 'MempoolCache', not in the tables).
+  withState ::
+    LedgerState blk ->
+    StateHandle m blk ->
+    StateHandle m blk
+
+  -- | Ticked variant of 'withState'.
+  withTickedState ::
+    Ticked LedgerState blk ->
+    TickedStateHandle m blk ->
+    TickedStateHandle m blk
+
   -- | Release the backing resources. Idempotent.
   close :: StateHandle m blk -> m ()
   closeTicked :: TickedStateHandle m blk -> m ()

@@ -139,9 +139,51 @@ class
   -- position the @NS@-shaped cache.
   mkMempoolCache :: TickedStateHandle m blk -> MempoolCache blk
 
+  -- | Read into the cache the UTxO values the given (unvalidated)
+  -- transaction needs for validation/measurement.
+  --
+  -- This is the only monadic entry point that touches the on-disk
+  -- tables for a given tx. Once it has run, all later operations on
+  -- this tx ('txMeasure', 'applyTx', 'reapplyTx') can be /pure/: they
+  -- look up values in the cache, never in the handle's
+  -- 'LedgerTablesHandle'.
+  --
+  -- Idempotent: values already present in the cache are not re-read.
+  addToCache ::
+    Monad m =>
+    TickedStateHandle m blk ->
+    GenTx blk ->
+    MempoolCache blk ->
+    m (MempoolCache blk)
+
   -- | Check whether the internal invariants of the transaction hold.
   txInvariant :: GenTx blk -> Bool
   txInvariant = const True
+
+  -- | Drop a transaction's contribution from the 'MempoolCache'.
+  --
+  -- Used when the mempool drops a tx without going through
+  -- 'reapplyTx' (e.g. manual removal). The resulting cache has the
+  -- tx's read values and diffs forgotten, so subsequent 'reapplyTx'
+  -- calls on the remaining txs see the correct prefix-state.
+  forgetTxFromCache :: Validated (GenTx blk) -> MempoolCache blk -> MempoolCache blk
+
+  -- | Compute the measure of a transaction (e.g. size, ExUnits).
+  --
+  -- Pure: reads any required UTxO values from the cache (which the
+  -- caller is expected to have populated for this tx via 'addToCache').
+  --
+  -- INVARIANT @Right x = txMeasure cfg cache tx@ implies
+  -- @x 'Measure.<=' 'blockCapacityTxMeasure' cfg st@. Otherwise, the
+  -- mempool could block forever.
+  --
+  -- Returns an exception if and only if the transaction violates the
+  -- per-tx limits.
+  txMeasure ::
+    LedgerConfig blk ->
+    MempoolCache blk ->
+    GenTx blk ->
+    Except (ApplyTxErr blk) (TxMeasure blk)
 
   -- | Apply an unvalidated transaction.
   --
@@ -150,20 +192,21 @@ class
   -- transaction as long as there is at least one byte free in the
   -- mempool.
   --
-  -- The two stateful inputs play distinct roles:
-  --
-  -- * 'MempoolCache' — fast read source. Holds pre-materialised UTxO
-  --   values plus the diffs of every tx currently in the mempool.
-  -- * 'TickedHandle' — source of truth backing the cache. Owns the
-  --   underlying 'LedgerTablesHandle'; consulted lazily inside
-  --   'applyTx' for any keys not covered by the cache.
+  -- Pure: the values needed by this tx are expected to be in the
+  -- 'MempoolCache' already (the caller is responsible for calling
+  -- 'addToCache' first). The returned handle has the in-memory pure
+  -- state updated via 'withTickedState' from 'MonadLedger' — it
+  -- shares the underlying 'LedgerTablesHandle' with the input (no
+  -- writes to tables; the UTxO diffs introduced by mempool txs are
+  -- buffered in the 'MempoolCache' instead). The input handle is
+  -- consumed; callers must use the returned one.
   --
   -- The returned cache contains the new tx's diff appended.
   --
   -- On error the cache is /not/ returned: the caller still holds the
   -- input cache and the failed tx is simply discarded.
   applyTx ::
-    Monad m =>
+    MonadLedger m blk =>
     LedgerConfig blk ->
     WhetherToIntervene ->
     -- | Slot number of the block containing the tx
@@ -171,9 +214,8 @@ class
     GenTx blk ->
     MempoolCache blk ->
     TickedStateHandle m blk ->
-    ExceptT
+    Except
       (ApplyTxErr blk)
-      m
       (TickedStateHandle m blk, MempoolCache blk, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
@@ -184,6 +226,14 @@ class
   -- but other checks (such as checking for double spending) must still
   -- be done.
   --
+  -- Pure, with the same value-availability precondition as 'applyTx':
+  -- callers must have populated the cache for the tx (via 'addToCache'
+  -- on @'txForgetValidated' vtx@) before calling this.
+  --
+  -- The handle update semantics are the same as 'applyTx': the returned
+  -- handle has its pure state updated via 'withTickedState', sharing
+  -- the underlying 'LedgerTablesHandle' with the input.
+  --
   -- The 'MempoolCache' is threaded through both the success and failure
   -- cases — but its content differs:
   --
@@ -193,16 +243,15 @@ class
   --   /removed/. The caller can plug this cache straight back into the
   --   next 'reapplyTx' in the fold without recomputing it.
   reapplyTx ::
-    (Monad m, HasCallStack) =>
+    (HasCallStack, MonadLedger m blk) =>
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
     Validated (GenTx blk) ->
     MempoolCache blk ->
     TickedStateHandle m blk ->
-    ExceptT
+    Except
       (ApplyTxErr blk, MempoolCache blk)
-      m
       (TickedStateHandle m blk, MempoolCache blk)
 
   -- | Discard the evidence that transaction has been previously validated
@@ -315,26 +364,9 @@ class
   -- is that the Cardano ledger's "Segregated Witness" encoding scheme
   -- contributes to the encoding overhead.
   --
-  -- INVARIANT Assuming no hash collisions, the size should be the same in any
-  -- state in which the transaction is valid. For example, it's acceptable to
-  -- simply omit the size of ref scripts that could not be found, since their
-  -- absence implies the tx is invalid. In fact, that invalidity could be
-  -- reported by this function, but it need not be.
-  --
-  -- INVARIANT @Right x = txMeasure cfg st tx@ implies @x 'Measure.<='
-  -- 'blockCapacityTxMeasure cfg st'. Otherwise, the mempool could block
-  -- forever.
-  --
-  -- Returns an exception if and only if the transaction violates the per-tx
-  -- limits.
-  txMeasure ::
-    -- | used at least by HFC's composition logic
-    LedgerConfig blk ->
-    -- | This state needs values as a transaction measure might depend on
-    -- those. For example in Cardano they look at the reference scripts.
-    TickedLedgerState blk ->
-    GenTx blk ->
-    Except (ApplyTxErr blk) (TxMeasure blk)
+  -- (The per-tx measure 'txMeasure' has been moved to
+  -- 'LedgerSupportsMempool' so it can read UTxO values via the mempool
+  -- cache and ticked state handle.)
 
   -- | What is the allowed capacity for the txs in an individual block?
   blockCapacityTxMeasure ::

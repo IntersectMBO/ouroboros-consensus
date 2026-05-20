@@ -9,41 +9,34 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Impl.Common
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
-import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.IOLike
 
 implGetSnapshotFor ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
-  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , MonadLedger m blk
   ) =>
   MempoolEnv m blk ->
   -- | Get snapshot for this slot number (usually the current slot)
   SlotNo ->
-  -- | The ledger state at which we want the
-  -- snapshot, ticked to @slot@.
-  StateHandle m (Ticked LedgerState) blk ->
+  -- | The ledger state at which we want the snapshot, ticked to @slot@.
+  TickedStateHandle m blk ->
   m (MempoolSnapshot blk)
 implGetSnapshotFor mpEnv slot ticked = do
   is <- atomically $ readTMVar istate
   let txs = TxSeq.toList $ isTxs is
-  if pointHash (isTip is) == castHash (getTipHash $ state ticked)
+  if pointHash (isTip is) == getTipHash (tickedState ticked)
     && isSlotNo is == slot
     then
       -- We are looking for a snapshot exactly for the ledger state we already
       -- have cached, then just return it.
-      pure $ snapshotFromValidTxs txs (castPoint $ isTip is) (isSlotNo is)
-    else do
-      -- values <-
-      --   if pointHash (isTip is) == castHash (getTipHash ticked)
-      --     -- We are looking for a snapshot at the same state ticked
-      --     -- to a different slot, so we can reuse the cached values
-      --     then pure (isTxValues is)
-      --     -- We are looking for a snapshot at a different state, so we
-      --     -- need to read the values from the ledgerdb.
-      --     else readUntickedTables (isTxKeys is)
-      computeSnapshot cfg slot ticked txs
+      pure $ snapshotFromValidTxs txs (isTip is) (isSlotNo is)
+    else
+      -- Different state or different slot: start from a fresh cache.
+      -- TODO: the "same tip, different slot" case could reuse @isCache
+      -- is@ to skip re-reading values.
+      computeSnapshot cfg slot ticked (mkMempoolCache ticked) txs
  where
   MempoolEnv
     { mpEnvStateVar = istate

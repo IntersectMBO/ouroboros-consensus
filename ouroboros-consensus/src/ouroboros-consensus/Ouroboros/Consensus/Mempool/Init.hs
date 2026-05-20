@@ -38,9 +38,8 @@ openMempool ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
-  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
-  , BlockSupportsLedgerHD m LedgerState blk
-  , NoThunks (StateHandle m (Ticked LedgerState) blk)
+  , MonadLedger m blk
+  , NoThunks (TickedStateHandle m blk)
   ) =>
   ResourceRegistry m ->
   LedgerInterface m blk ->
@@ -62,8 +61,7 @@ forkSyncStateOnTipPointChange ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
-  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
-  , BlockSupportsLedgerHD m LedgerState blk
+  , MonadLedger m blk
   ) =>
   MempoolEnv m blk ->
   ResourceRegistry m ->
@@ -98,9 +96,8 @@ openMempoolWithoutSyncThread ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
-  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
-  , BlockSupportsLedgerHD m LedgerState blk
-  , NoThunks (StateHandle m (Ticked LedgerState) blk)
+  , MonadLedger m blk
+  , NoThunks (TickedStateHandle m blk)
   ) =>
   LedgerInterface m blk ->
   LedgerConfig blk ->
@@ -117,8 +114,7 @@ mkMempool ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
-  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
-  , BlockSupportsLedgerHD m LedgerState blk
+  , MonadLedger m blk
   ) =>
   MempoolEnv m blk -> Mempool m blk
 mkMempool mpEnv =
