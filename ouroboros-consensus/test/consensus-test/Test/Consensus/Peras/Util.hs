@@ -22,8 +22,11 @@ module Test.Consensus.Peras.Util
   ) where
 
 import Cardano.Crypto.Hash (ByteString)
+import Cardano.Ledger.BaseTypes (SlotNo (..))
 import Control.Monad (forM)
 import qualified Data.ByteString as ByteString
+import Data.ByteString.Short (ShortByteString)
+import qualified Data.ByteString.Short as ShortByteString
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Maybe (catMaybes, fromMaybe)
@@ -32,7 +35,8 @@ import Data.String (IsString (..))
 import Data.Traversable (mapAccumM)
 import Data.Word (Word8)
 import GHC.Word (Word16)
-import Ouroboros.Consensus.Block (Point)
+import Ouroboros.Consensus.Block (HeaderHash)
+import Ouroboros.Consensus.Block.RealPoint (RealPoint (..), toBytes32RealPoint)
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import Ouroboros.Consensus.Peras.Crypto.BLS
@@ -41,7 +45,8 @@ import Ouroboros.Consensus.Peras.Crypto.BLS
   , VoteSignature (..)
   )
 import Ouroboros.Consensus.Peras.Types
-  ( PerasRoundNo (..)
+  ( PerasBoostedBlock (..)
+  , PerasRoundNo (..)
   , PerasSeatIndex (..)
   )
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
@@ -59,13 +64,13 @@ import Test.QuickCheck
 -- * Predicates
 
 -- | Whether a Peras vote is a persistent one
-perasVoteIsPersistent :: V1.PerasVote blk -> Bool
+perasVoteIsPersistent :: V1.PerasVote -> Bool
 perasVoteIsPersistent vote
   | V1.PersistentPerasVoteEligibilityProof{} <- V1.pvEligibilityProof vote = True
   | otherwise = False
 
 -- | Whether a Peras certifcate only contains persistent votes
-perasCertContainsOnlyPersistentVotes :: V1.PerasCert blk -> Bool
+perasCertContainsOnlyPersistentVotes :: V1.PerasCert -> Bool
 perasCertContainsOnlyPersistentVotes cert =
   all
     ( \case
@@ -82,6 +87,18 @@ perasCertContainsOnlyPersistentVotes cert =
 
 genRoundNo :: Gen PerasRoundNo
 genRoundNo = PerasRoundNo <$> arbitrary
+
+data BlockWith32BytesHeaderHash
+type instance HeaderHash BlockWith32BytesHeaderHash = ShortByteString
+
+genBoostedBlock :: Gen PerasBoostedBlock
+genBoostedBlock = do
+  slotNo <- SlotNo <$> arbitrary
+  hash <- ShortByteString.pack <$> vectorOf 32 arbitrary
+  let bytes32realPoint =
+        toBytes32RealPoint @BlockWith32BytesHeaderHash $
+          RealPoint slotNo hash
+  pure (PerasBoostedBlock bytes32realPoint)
 
 genSeatIndex :: Gen PerasSeatIndex
 genSeatIndex = PerasSeatIndex <$> arbitrary
@@ -103,7 +120,7 @@ genSignature _ = do
   msg <- fromString @ByteString <$> arbitrary
   pure $ BLS.signWithRole key msg
 
-genVoteEligibilityProof :: Bool -> Gen (V1.PerasVoteEligibilityProof blk)
+genVoteEligibilityProof :: Bool -> Gen V1.PerasVoteEligibilityProof
 genVoteEligibilityProof shouldGenNonPersistent = do
   frequency
     [
@@ -118,7 +135,7 @@ genVoteEligibilityProof shouldGenNonPersistent = do
       )
     ]
 
-genVoters :: Bool -> Gen (V1.PerasCertVoters blk)
+genVoters :: Bool -> Gen V1.PerasCertVoters
 genVoters shouldGenNonPersistent = do
   numVoters <-
     sized $ \size ->
@@ -162,8 +179,8 @@ genVoters shouldGenNonPersistent = do
   pure $
     V1.PerasCertVoters (NEMap.fromList (NonEmpty.fromList voters))
 
-genPerasVote :: Gen (Point blk) -> Bool -> Gen (V1.PerasVote blk)
-genPerasVote genBoostedBlock shouldGenNonPersistent = do
+genPerasVote :: Bool -> Gen V1.PerasVote
+genPerasVote shouldGenNonPersistent = do
   pvRoundNo <- genRoundNo
   pvBoostedBlock <- genBoostedBlock
   pvSeatIndex <- genSeatIndex
@@ -180,8 +197,8 @@ genPerasVote genBoostedBlock shouldGenNonPersistent = do
       , V1.pvSignature
       }
 
-genPerasCert :: Gen (Point blk) -> Bool -> Gen (V1.PerasCert blk)
-genPerasCert genBoostedBlock shouldGenNonPersistent = do
+genPerasCert :: Bool -> Gen V1.PerasCert
+genPerasCert shouldGenNonPersistent = do
   pcRoundNo <- genRoundNo
   pcBoostedBlock <- genBoostedBlock
   pcVoters <- genVoters shouldGenNonPersistent
@@ -206,7 +223,7 @@ mkBucket bucketSize x suffix
   lower = (x `div` bucketSize) * bucketSize
   upper = lower + bucketSize
 
-tabulatePerasCert :: V1.PerasCert blk -> Property -> Property
+tabulatePerasCert :: V1.PerasCert -> Property -> Property
 tabulatePerasCert cert =
   foldr (flip (.)) id $
     [ tabulate
@@ -224,11 +241,7 @@ tabulatePerasCert cert =
       $ cert
   numPersistentVoters =
     length
-      . filter
-        ( \case
-            V1.PersistentPerasVoteEligibilityProof -> True
-            V1.NonPersistentPerasVoteEligibilityProof{} -> False
-        )
+      . filter (== V1.PersistentPerasVoteEligibilityProof)
       . NonEmpty.toList
       . NEMap.elems
       . V1.unPerasCertVoters
@@ -239,7 +252,7 @@ tabulatePerasCert cert =
     | numVoters == 0 = 0
     | otherwise = numPersistentVoters * 100 `div` numVoters
 
-tabulatePerasVote :: V1.PerasVote blk -> Property -> Property
+tabulatePerasVote :: V1.PerasVote -> Property -> Property
 tabulatePerasVote vote =
   foldr (flip (.)) id $
     [ tabulate
