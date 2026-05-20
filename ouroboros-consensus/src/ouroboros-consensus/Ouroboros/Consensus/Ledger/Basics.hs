@@ -24,7 +24,7 @@ module Ouroboros.Consensus.Ledger.Basics
   , IsLedger (..)
   , AuxLedgerEvent
   , applyChainTick
-  , StateRefHasState (..)
+  , BlockSupportsLedgerHD (..)
   , LedgerTables
 
     -- * Ledger Events
@@ -201,21 +201,21 @@ class
   --
   -- prop> ledgerTipPoint (applyChainTick cfg slot st) == ledgerTipPoint st
   applyChainTickLedgerResult ::
-    (StateRefHasState m (Ticked l) blk, Monad m) =>
+    (BlockSupportsLedgerHD m (Ticked l) blk, Monad m) =>
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     SlotNo ->
-    StateRef m l blk ->
-    m (LedgerResult blk (StateRef m (Ticked l) blk))
+    StateHandle m l blk ->
+    m (LedgerResult blk (StateHandle m (Ticked l) blk))
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick ::
-  (StateRefHasState m (Ticked l) blk, Monad m, IsLedger l blk) =>
+  (BlockSupportsLedgerHD m (Ticked l) blk, Monad m, IsLedger l blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   SlotNo ->
-  StateRef m l blk ->
-  m (StateRef m (Ticked l) blk)
+  StateHandle m l blk ->
+  m (StateHandle m (Ticked l) blk)
 applyChainTick = fmap lrResult ...: applyChainTickLedgerResult
 
 {-------------------------------------------------------------------------------
@@ -244,28 +244,28 @@ data family LedgerState blk
 type LedgerTables :: (Type -> Type) -> Type -> Type
 type family LedgerTables m blk
 
-type StateRefHasState :: (Type -> Type) -> (Type -> Type) -> Type -> Constraint
-class StateRefHasState m l blk where
+type BlockSupportsLedgerHD :: (Type -> Type) -> (Type -> Type) -> Type -> Constraint
+class BlockSupportsLedgerHD m l blk where
   -- \|
   -- Usually
   -- @@@
-  -- data instance StateRef m blk = StateRef {
+  -- data instance StateHandle m blk = StateHandle {
   --     state :: LedgerState blk
   --   , tables :: LedgerTables m blk
   -- }
   -- @@@
   -- except for the HardForkBlock.
-  data StateRef m l blk
+  data StateHandle m l blk
 
-  state :: StateRef m l blk -> l blk
+  state :: StateHandle m l blk -> l blk
 
-  mkStateRef :: l blk -> LedgerTables m blk -> StateRef m l blk
+  mkStateHandle :: l blk -> LedgerTables m blk -> StateHandle m l blk
 
-  close :: StateRef m l blk -> m ()
+  close :: StateHandle m l blk -> m ()
 
-  getStats :: StateRef m l blk -> Statistics
+  getStats :: StateHandle m l blk -> Statistics
 
-  duplicate :: StateRef m l blk -> m (StateRef m l blk)
+  duplicate :: StateHandle m l blk -> m (StateHandle m l blk)
 
 newtype Statistics = Statistics
   { ledgerTableSize :: Int

@@ -138,8 +138,8 @@ newtype CrossEraForecaster state view x y = CrossEraForecaster
 newtype TranslateLedgerState m x y = TranslateLedgerState
   { translateLedgerStateWith ::
       EpochNo ->
-      StateRef m LedgerState x ->
-      m (StateRef m LedgerState y)
+      StateHandle m LedgerState x ->
+      m (StateHandle m LedgerState y)
   -- ^ How to translate a 'LedgerState' during the era transition.
   --
   -- When translating between eras, it can be the case that values are modified,

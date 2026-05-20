@@ -37,7 +37,7 @@
 --    blk EmptyMK@, stored in the @./state@ file in the snapshot directory.
 --
 -- V2 backends will provide means of loading a snapshot via the method
--- 'openStateRefFromSnapshot'.
+-- 'openStateHandleFromSnapshot'.
 module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( -- * Snapshots
     CRCError (..)
@@ -268,7 +268,7 @@ data SnapshotManager m blk st = SnapshotManager
       st ->
       -- \^ The state needed for taking the snapshot:
       -- - In V1: this will be the DbChangelog and the Backing store
-      -- - In V2: this will be a StateRef
+      -- - In V2: this will be a StateHandle
       m (Maybe (DiskSnapshot, RealPoint blk))
       -- \^ If a Snapshot was taken, its information and the point at which it
       -- was taken.

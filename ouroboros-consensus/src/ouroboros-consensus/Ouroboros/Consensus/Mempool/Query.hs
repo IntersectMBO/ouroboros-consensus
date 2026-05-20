@@ -16,14 +16,14 @@ implGetSnapshotFor ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
-  , StateRefHasState m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
   ) =>
   MempoolEnv m blk ->
   -- | Get snapshot for this slot number (usually the current slot)
   SlotNo ->
   -- | The ledger state at which we want the
   -- snapshot, ticked to @slot@.
-  StateRef m (Ticked LedgerState) blk ->
+  StateHandle m (Ticked LedgerState) blk ->
   m (MempoolSnapshot blk)
 implGetSnapshotFor mpEnv slot ticked = do
   is <- atomically $ readTMVar istate

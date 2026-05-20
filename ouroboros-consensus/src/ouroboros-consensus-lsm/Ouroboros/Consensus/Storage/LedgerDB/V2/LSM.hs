@@ -396,7 +396,7 @@ snapshotManager ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
-  SnapshotManager m blk (StateRef m ExtLedgerState blk)
+  SnapshotManager m blk (StateHandle m ExtLedgerState blk)
 snapshotManager session ccfg tracer fs =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
@@ -416,7 +416,7 @@ implTakeSnapshot ::
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
   Maybe String ->
-  StateRef m ExtLedgerState blk ->
+  StateHandle m ExtLedgerState blk ->
   m (Maybe (DiskSnapshot, RealPoint blk))
 implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFs) suffix st =
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
@@ -525,7 +525,7 @@ loadSnapshot ::
   SomeHasFS m ->
   Session m ->
   DiskSnapshot ->
-  ExceptT (SnapshotFailure blk) m (StateRef m ExtLedgerState blk, RealPoint blk)
+  ExceptT (SnapshotFailure blk) m (StateHandle m ExtLedgerState blk, RealPoint blk)
 loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session ds = do
   fileEx <- lift $ doesFileExist hfs (snapshotToDirPath ds)
   Monad.when fileEx $ throwE $ InitFailureRead ReadSnapshotIsLegacy
@@ -557,7 +557,7 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session ds = do
         $ throwE
         $ InitFailureRead
           ReadSnapshotDataCorruption
-      pure (StateRef extLedgerSt h, pt)
+      pure (StateHandle extLedgerSt h, pt)
 
 -- | Create the initial LSM table from values, which should happen only at
 -- Genesis.
@@ -666,14 +666,14 @@ instance
     LSM.closeSession session
     BIO.close blockio
 
-  openStateRefFromSnapshot trcr ccfg shfs res ds = do
+  openStateHandleFromSnapshot trcr ccfg shfs res ds = do
     loadSnapshot trcr ccfg shfs (sessionResource res) ds
 
-  createAndPopulateStateRefFromGenesis trcr res st = do
+  createAndPopulateStateHandleFromGenesis trcr res st = do
     let st' = forgetLedgerTables st
     (table, sz) <-
       tableFromValuesMK trcr (sessionResource res) st' (ltprj st)
-    StateRef st' <$> newLSMLedgerTablesHandle trcr sz table
+    StateHandle st' <$> newLSMLedgerTablesHandle trcr sz table
 
   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
 

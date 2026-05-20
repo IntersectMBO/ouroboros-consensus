@@ -406,10 +406,10 @@ pure []
 run ::
   forall blk.
   ( RunNode blk
-  , StateRefHasState IO (Ticked LedgerState) blk
-  , StateRefHasState IO LedgerState blk
-  , NoThunks (StateRef IO (Ticked LedgerState) blk)
-  , NoThunks (StateRef IO ExtLedgerState blk)
+  , BlockSupportsLedgerHD IO (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD IO LedgerState blk
+  , NoThunks (StateHandle IO (Ticked LedgerState) blk)
+  , NoThunks (StateHandle IO ExtLedgerState blk)
   , NoThunks (LedgerState blk)
   ) =>
   RunNodeArgs IO RemoteAddress LocalAddress blk ->
@@ -479,10 +479,10 @@ runWith ::
   , NetworkIO m
   , NetworkAddr addrNTN
   , Show addrNTN
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
-  , NoThunks (StateRef m (Ticked LedgerState) blk)
-  , NoThunks (StateRef m ExtLedgerState blk)
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
+  , NoThunks (StateHandle m (Ticked LedgerState) blk)
+  , NoThunks (StateHandle m ExtLedgerState blk)
   , NoThunks (LedgerState blk)
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
@@ -852,9 +852,9 @@ openChainDB ::
   forall m blk.
   ( RunNode blk
   , IOLike m
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
-  , NoThunks (StateRef m ExtLedgerState blk)
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
+  , NoThunks (StateHandle m ExtLedgerState blk)
   , NoThunks (LedgerState blk)
   ) =>
   ResourceRegistry m ->

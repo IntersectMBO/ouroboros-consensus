@@ -271,10 +271,10 @@ injectInitialExtLedgerState ::
   TopLevelConfig (HardForkBlock (x ': xs)) ->
   ExtLedgerState x ->
   LedgerTables m x ->
-  m (StateRef m ExtLedgerState (HardForkBlock (x ': xs)))
+  m (StateHandle m ExtLedgerState (HardForkBlock (x ': xs)))
 injectInitialExtLedgerState cfg extLedgerState0 tbs = do
   l <- targetEraLedgerState
-  pure (ExtStateRef l (targetEraHeaderState l))
+  pure (ExtStateHandle l (targetEraHeaderState l))
  where
   cfgs :: LedgerState (HardForkBlock (x ': xs)) -> NP TopLevelConfig (x ': xs)
   cfgs l =
@@ -285,17 +285,17 @@ injectInitialExtLedgerState cfg extLedgerState0 tbs = do
       )
       cfg
 
-  targetEraLedgerState :: m (StateRef m LedgerState (HardForkBlock (x ': xs)))
+  targetEraLedgerState :: m (StateHandle m LedgerState (HardForkBlock (x ': xs)))
   targetEraLedgerState =
     fmap
-      HardForkStateRef
+      HardForkStateHandle
       -- We can immediately extend it to the right slot, executing any
       -- scheduled hard forks in the first slot
       ( State.extendToSlot
           (configLedger cfg)
           (SlotNo 0)
           . initHardForkState
-          $ mkStateRef (ledgerState extLedgerState0) tbs
+          $ mkStateHandle (ledgerState extLedgerState0) tbs
       )
 
   firstEraChainDepState :: HardForkChainDepState (x ': xs)
@@ -318,5 +318,5 @@ injectInitialExtLedgerState cfg extLedgerState0 tbs = do
       firstEraChainDepState
 
   targetEraHeaderState ::
-    StateRef m LedgerState (HardForkBlock (x ': xs)) -> HeaderState (HardForkBlock (x ': xs))
+    StateHandle m LedgerState (HardForkBlock (x ': xs)) -> HeaderState (HardForkBlock (x ': xs))
   targetEraHeaderState = genesisHeaderState . targetEraChainDepState . state

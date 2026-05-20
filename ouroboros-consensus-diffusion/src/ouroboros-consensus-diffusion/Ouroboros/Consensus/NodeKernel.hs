@@ -241,9 +241,9 @@ initNodeKernel ::
   , Ord addrNTN
   , Hashable addrNTN
   , Typeable addrNTN
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
-  , NoThunks (StateRef m (Ticked LedgerState) blk)
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
+  , NoThunks (StateHandle m (Ticked LedgerState) blk)
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   m (NodeKernel m addrNTN addrNTC blk)
@@ -467,9 +467,9 @@ initInternalState ::
   , Ord addrNTN
   , Typeable addrNTN
   , RunNode blk
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
-  , NoThunks (StateRef m (Ticked LedgerState) blk)
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
+  , NoThunks (StateHandle m (Ticked LedgerState) blk)
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   m (InternalState m addrNTN addrNTC blk)
@@ -539,7 +539,7 @@ toConsensusMode = \case
 
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
-  (IOLike m, RunNode blk, StateRefHasState m LedgerState blk) =>
+  (IOLike m, RunNode blk, BlockSupportsLedgerHD m LedgerState blk) =>
   InternalState m addrNTN addrNTC blk ->
   MkBlockForging m blk ->
   m (Thread m Void)
@@ -594,7 +594,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
         Left _ -> do
           trace blockForging $ TraceNoLedgerState currentSlot bcPrevPoint
           exitEarly
-        Right unticked@(ExtStateRef untickedLS _) -> do
+        Right unticked@(ExtStateHandle untickedLS _) -> do
           trace blockForging $ TraceLedgerState currentSlot bcPrevPoint
 
           -- We require the ticked ledger view in order to construct the ticked

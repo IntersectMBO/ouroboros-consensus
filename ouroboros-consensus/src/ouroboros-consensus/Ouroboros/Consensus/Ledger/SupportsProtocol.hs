@@ -78,11 +78,11 @@ _lemma_ledgerViewForecastAt_applyChainTick ::
   ( LedgerSupportsProtocol blk
   , Eq (LedgerView (BlockProtocol blk))
   , Monad m
-  , StateRefHasState m LedgerState blk
-  , StateRefHasState m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
   ) =>
   LedgerConfig blk ->
-  StateRef m LedgerState blk ->
+  StateHandle m LedgerState blk ->
   Forecast (LedgerView (BlockProtocol blk)) ->
   SlotNo ->
   m (Either String ())

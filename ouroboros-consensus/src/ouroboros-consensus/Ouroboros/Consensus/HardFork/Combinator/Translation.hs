@@ -5,8 +5,8 @@
 module Ouroboros.Consensus.HardFork.Combinator.Translation
   ( -- * Translate from one era to the next
     EraTranslation (..)
-  , trivialStateRefTranslation
-  , StateRefTranslation (..)
+  , trivialStateHandleTranslation
+  , StateHandleTranslation (..)
   , trivialEraTranslation
   ) where
 
@@ -19,7 +19,7 @@ import Ouroboros.Consensus.TypeFamilyWrappers
   Translate from one era to the next
 -------------------------------------------------------------------------------}
 
-data StateRefTranslation m xs = StateRefTranslation
+data StateHandleTranslation m xs = StateHandleTranslation
   { translateLedgerState ::
       !(InPairs (RequiringBoth WrapLedgerConfig (TranslateLedgerState m)) xs)
   }
@@ -31,8 +31,8 @@ data EraTranslation xs = EraTranslation
       !(InPairs (RequiringBoth WrapLedgerConfig (CrossEraForecaster LedgerState WrapLedgerView)) xs)
   }
 
-trivialStateRefTranslation :: StateRefTranslation m '[blk]
-trivialStateRefTranslation = StateRefTranslation PNil
+trivialStateHandleTranslation :: StateHandleTranslation m '[blk]
+trivialStateHandleTranslation = StateHandleTranslation PNil
 
 trivialEraTranslation :: EraTranslation '[blk]
 trivialEraTranslation =

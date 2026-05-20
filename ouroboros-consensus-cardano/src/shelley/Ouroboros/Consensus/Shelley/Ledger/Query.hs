@@ -1152,9 +1152,9 @@ answerShelleyLookupQueries ::
   ) =>
   ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFLookupTables result ->
-  StateRef m ExtLedgerState (ShelleyBlock proto era) ->
+  StateHandle m ExtLedgerState (ShelleyBlock proto era) ->
   m result
-answerShelleyLookupQueries cfg q forker@(ExtStateRef ref _) =
+answerShelleyLookupQueries cfg q forker@(ExtStateHandle ref _) =
   case q of
     GetUTxOByTxIn txins ->
       answerGetUtxOByTxIn txins
@@ -1183,9 +1183,9 @@ answerShelleyTraversingQueries ::
   Monad m =>
   ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
-  StateRef m ExtLedgerState (ShelleyBlock proto era) ->
+  StateHandle m ExtLedgerState (ShelleyBlock proto era) ->
   m result
-answerShelleyTraversingQueries cfg q forker@(ExtStateRef ref _) = case q of
+answerShelleyTraversingQueries cfg q forker@(ExtStateHandle ref _) = case q of
   GetUTxOByAddress addr -> loop (filterGetUTxOByAddressOne addr) NoPreviousQuery emptyUtxo
   GetUTxOWhole -> loop (const True) NoPreviousQuery emptyUtxo
   GetCBOR q' ->

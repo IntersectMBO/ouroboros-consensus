@@ -103,7 +103,7 @@ instance
   where
   data MempoolCache (HardForkBlock xs) = HardForkMempoolCache (NS MempoolCache xs)
 
-  emptyMempoolCache (HardForkTickedStateRef _ (State.HardForkState st)) =
+  emptyMempoolCache (HardForkTickedStateHandle _ (State.HardForkState st)) =
     HardForkMempoolCache
       (hcmap proxySingle (emptyMempoolCache . State.currentState) $ Telescope.tip st)
 
@@ -233,7 +233,7 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
 
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult m xs blk = ApplyResult
-  { arState :: StateRef m (Ticked LedgerState) blk
+  { arState :: StateHandle m (Ticked LedgerState) blk
   , arCache :: MempoolCache blk
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
@@ -251,11 +251,11 @@ applyHelper ::
   SlotNo ->
   txIn (HardForkBlock xs) ->
   MempoolCache (HardForkBlock xs) ->
-  StateRef m (Ticked LedgerState) (HardForkBlock xs) ->
+  StateHandle m (Ticked LedgerState) (HardForkBlock xs) ->
   ExceptT
     (HardForkApplyTxErr xs, MempoolCache (HardForkBlock xs))
     m
-    ( StateRef m (Ticked LedgerState) (HardForkBlock xs)
+    ( StateHandle m (Ticked LedgerState) (HardForkBlock xs)
     , MempoolCache (HardForkBlock xs)
     , Validated (GenTx (HardForkBlock xs))
     )
@@ -266,7 +266,7 @@ applyHelper
   slot
   tx
   cache@(HardForkMempoolCache hardForkCache)
-  (HardForkTickedStateRef transition hardForkState) =
+  (HardForkTickedStateHandle transition hardForkState) =
     case matchPolyTx injs (modeGetTx tx) hardForkState of
       Left mismatch ->
         throwError $
@@ -312,7 +312,7 @@ applyHelper
             vtx = hcollapse $ (K . arValidatedTx) `hmap` result
 
           return
-            ( HardForkTickedStateRef transition (arState `hmap` result)
+            ( HardForkTickedStateHandle transition (arState `hmap` result)
             , HardForkMempoolCache st'
             , vtx
             )
@@ -354,7 +354,7 @@ applyHelper
       SingleEraBlock blk =>
       Index xs blk ->
       WrapLedgerConfig blk ->
-      Product MempoolCache (Product txIn (StateRef m (Ticked LedgerState))) blk ->
+      Product MempoolCache (Product txIn (StateHandle m (Ticked LedgerState))) blk ->
       ( ExceptT (HardForkApplyTxErr xs, MempoolCache (HardForkBlock xs)) m
           :.: ApplyResult m xs
       )

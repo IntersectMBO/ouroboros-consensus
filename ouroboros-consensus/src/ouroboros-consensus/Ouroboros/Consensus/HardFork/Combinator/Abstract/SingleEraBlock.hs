@@ -90,8 +90,8 @@ class
   , Show (LedgerState blk)
   , Eq (LedgerState blk)
   , NoThunks (LedgerState blk)
-  , forall m. Monad m => StateRefHasState m LedgerState blk
-  , forall m. Monad m => StateRefHasState m (Ticked LedgerState) blk
+  , forall m. Monad m => BlockSupportsLedgerHD m LedgerState blk
+  , forall m. Monad m => BlockSupportsLedgerHD m (Ticked LedgerState) blk
   ) =>
   SingleEraBlock blk
   where

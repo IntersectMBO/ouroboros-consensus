@@ -168,13 +168,13 @@ isMempoolSize is =
     }
 
 initInternalState ::
-  (StateRefHasState m (Ticked LedgerState) blk, LedgerSupportsMempool blk) =>
+  (BlockSupportsLedgerHD m (Ticked LedgerState) blk, LedgerSupportsMempool blk) =>
   MempoolCapacityBytesOverride ->
   -- | Used for 'isLastTicketNo'
   TicketNo ->
   LedgerConfig blk ->
   SlotNo ->
-  StateRef m (Ticked LedgerState) blk ->
+  StateHandle m (Ticked LedgerState) blk ->
   InternalState blk
 initInternalState capacityOverride lastTicketNo cfg slot stref@(state -> st) =
   IS
@@ -194,7 +194,7 @@ initInternalState capacityOverride lastTicketNo cfg slot stref@(state -> st) =
 
 -- | Abstract interface needed to run a Mempool.
 newtype LedgerInterface m blk = LedgerInterface
-  { getCurrentLedgerState :: STM m (StateRef m LedgerState blk)
+  { getCurrentLedgerState :: STM m (StateHandle m LedgerState blk)
   }
 
 -- | Create a 'LedgerInterface' from a 'ChainDB'.
@@ -204,7 +204,7 @@ chainDBLedgerInterface ::
   LedgerInterface m blk
 chainDBLedgerInterface chainDB =
   LedgerInterface
-    { getCurrentLedgerState = fmap (\(ExtStateRef st _) -> st) $ ChainDB.getCurrentLedgerRef chainDB
+    { getCurrentLedgerState = fmap (\(ExtStateHandle st _) -> st) $ ChainDB.getCurrentLedgerRef chainDB
     }
 
 {-------------------------------------------------------------------------------
@@ -216,7 +216,7 @@ chainDBLedgerInterface chainDB =
 -- different operations.
 data MempoolEnv m blk = MempoolEnv
   { mpEnvLedger :: LedgerInterface m blk
-  , mpEnvForker :: StrictMVar m (StateRef m (Ticked LedgerState) blk)
+  , mpEnvForker :: StrictMVar m (StateHandle m (Ticked LedgerState) blk)
   , mpEnvLedgerCfg :: LedgerConfig blk
   , mpEnvStateVar :: StrictTMVar m (InternalState blk)
   , mpEnvAddTxsRemoteFifo :: StrictMVar m ()
@@ -228,12 +228,12 @@ data MempoolEnv m blk = MempoolEnv
 
 initMempoolEnv ::
   forall m blk.
-  ( StateRefHasState m (Ticked LedgerState) blk
+  ( BlockSupportsLedgerHD m (Ticked LedgerState) blk
   , IOLike m
   , LedgerSupportsMempool blk
   , ValidateEnvelope blk
-  , StateRefHasState m LedgerState blk
-  , NoThunks (StateRef m (Ticked LedgerState) blk)
+  , BlockSupportsLedgerHD m LedgerState blk
+  , NoThunks (StateHandle m (Ticked LedgerState) blk)
   ) =>
   LedgerInterface m blk ->
   LedgerConfig blk ->
@@ -271,14 +271,14 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
 tickLedgerState ::
   forall m blk.
   ( Monad m
-  , StateRefHasState m LedgerState blk
-  , StateRefHasState m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
   , UpdateLedger blk
   , ValidateEnvelope blk
   ) =>
   LedgerConfig blk ->
   ForgeLedgerState m blk ->
-  m (SlotNo, StateRef m (Ticked LedgerState) blk)
+  m (SlotNo, StateHandle m (Ticked LedgerState) blk)
 tickLedgerState _cfg (ForgeInKnownSlot slot st) = pure (slot, st)
 tickLedgerState cfg (ForgeInUnknownSlot st) = do
   ts <- applyChainTick OmitLedgerEvents cfg slot st
@@ -312,10 +312,10 @@ validateNewTransaction ::
   -- advanced through the diffs in the internal state. One could think we can
   -- create this value here, but it is needed for some other uses like calling
   -- 'txMeasure' before this function.
-  StateRef m (Ticked LedgerState) blk ->
+  StateHandle m (Ticked LedgerState) blk ->
   InternalState blk ->
   m
-    ( Either (ApplyTxErr blk) (Validated (GenTx blk), StateRef m (Ticked LedgerState) blk)
+    ( Either (ApplyTxErr blk) (Validated (GenTx blk), StateHandle m (Ticked LedgerState) blk)
     , DiffTimeMeasure -> InternalState blk
     )
 validateNewTransaction cfg wti tx txsz st is =
@@ -361,7 +361,7 @@ revalidateTxsFor ::
   LedgerConfig blk ->
   SlotNo ->
   -- | The ticked ledger state againt which txs will be revalidated
-  StateRef m (Ticked LedgerState) blk ->
+  StateHandle m (Ticked LedgerState) blk ->
   -- | 'isLastTicketNo' and 'vrLastTicketNo'
   TicketNo ->
   [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
@@ -413,7 +413,7 @@ computeSnapshot ::
   LedgerConfig blk ->
   SlotNo ->
   -- | The ticked ledger state againt which txs will be revalidated
-  StateRef m (Ticked LedgerState) blk ->
+  StateHandle m (Ticked LedgerState) blk ->
   [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
   m (MempoolSnapshot blk)
 computeSnapshot = fillJavier -- cfg slot st values txTickets =

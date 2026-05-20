@@ -108,7 +108,7 @@ class
   where
   data MempoolCache blk
 
-  emptyMempoolCache :: StateRef m (Ticked LedgerState) blk -> MempoolCache blk
+  emptyMempoolCache :: StateHandle m (Ticked LedgerState) blk -> MempoolCache blk
 
   -- | Check whether the internal invariants of the transaction hold.
   txInvariant :: GenTx blk -> Bool
@@ -131,11 +131,11 @@ class
     GenTx blk ->
     -- | Contain only the values for the tx to apply
     MempoolCache blk ->
-    StateRef m (Ticked LedgerState) blk ->
+    StateHandle m (Ticked LedgerState) blk ->
     ExceptT
       (ApplyTxErr blk)
       m
-      (StateRef m (Ticked LedgerState) blk, MempoolCache blk, Validated (GenTx blk))
+      (StateHandle m (Ticked LedgerState) blk, MempoolCache blk, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -155,11 +155,11 @@ class
     Validated (GenTx blk) ->
     -- | Contains at least the values for the tx to reapply
     MempoolCache blk ->
-    StateRef m (Ticked LedgerState) blk ->
+    StateHandle m (Ticked LedgerState) blk ->
     ExceptT
       (ApplyTxErr blk, MempoolCache blk)
       m
-      (StateRef m (Ticked LedgerState) blk, MempoolCache blk)
+      (StateHandle m (Ticked LedgerState) blk, MempoolCache blk)
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk

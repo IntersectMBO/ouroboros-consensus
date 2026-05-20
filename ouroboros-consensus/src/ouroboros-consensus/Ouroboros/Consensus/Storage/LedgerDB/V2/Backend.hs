@@ -57,14 +57,14 @@ class NoThunks (Resources m backend) => Backend m backend blk where
   releaseResources :: Proxy blk -> Resources m backend -> m ()
 
   -- | Create a new handle from the given Genesis state.
-  createAndPopulateStateRefFromGenesis ::
+  createAndPopulateStateHandleFromGenesis ::
     Tracer m LedgerDBV2Trace ->
     Resources m backend ->
     ExtLedgerState blk ->
-    m (StateRef m ExtLedgerState blk)
+    m (StateHandle m ExtLedgerState blk)
 
   -- | Create a new handle from a snapshot.
-  openStateRefFromSnapshot ::
+  openStateHandleFromSnapshot ::
     Tracer m LedgerDBV2Trace ->
     CodecConfig blk ->
     SomeHasFS m ->
@@ -73,7 +73,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     ExceptT
       (SnapshotFailure blk)
       m
-      (StateRef m ExtLedgerState blk, RealPoint blk)
+      (StateHandle m ExtLedgerState blk, RealPoint blk)
 
   -- | Instantiate the 'SnapshotManager' for this backend.
   snapshotManager ::
@@ -82,7 +82,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
     CodecConfig blk ->
     Tracer m (TraceSnapshotEvent blk) ->
     SomeHasFS m ->
-    SnapshotManager m blk (StateRef m ExtLedgerState blk)
+    SnapshotManager m blk (StateHandle m ExtLedgerState blk)
 
 {-------------------------------------------------------------------------------
   Existentials

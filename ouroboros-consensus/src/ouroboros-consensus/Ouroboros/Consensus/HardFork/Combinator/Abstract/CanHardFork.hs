@@ -48,7 +48,7 @@ class
   type HardForkTxMeasure xs
 
   hardForkEraTranslation :: EraTranslation xs
-  hardForkStateRefTranslation :: Monad m => StateRefTranslation m xs
+  hardForkStateHandleTranslation :: Monad m => StateHandleTranslation m xs
   hardForkChainSel :: Tails AcrossEraTiebreaker xs
   hardForkInjectTxs ::
     InPairs
@@ -69,7 +69,7 @@ instance SingleEraBlock blk => CanHardFork '[blk] where
   type HardForkTxMeasure '[blk] = TxMeasure blk
 
   hardForkEraTranslation = trivialEraTranslation
-  hardForkStateRefTranslation = trivialStateRefTranslation
+  hardForkStateHandleTranslation = trivialStateHandleTranslation
   hardForkChainSel = Tails.mk1
   hardForkInjectTxs = InPairs.mk1
 

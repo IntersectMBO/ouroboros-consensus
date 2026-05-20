@@ -289,7 +289,7 @@ getCurrentLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk)
 getCurrentLedger CDB{..} = LedgerDB.getVolatileTip cdbLedgerDB
 
 -- | Get current ledger
-getCurrentLedgerRef :: ChainDbEnv m blk -> STM m (StateRef m ExtLedgerState blk)
+getCurrentLedgerRef :: ChainDbEnv m blk -> STM m (StateHandle m ExtLedgerState blk)
 getCurrentLedgerRef CDB{..} = LedgerDB.getVolatileTipRef cdbLedgerDB
 
 -- | Get the immutable ledger, i.e., typically @k@ blocks back.
@@ -309,14 +309,14 @@ getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 
 allocInRegistryReadOnlyForkerAtPoint ::
   ( IOLike m
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
   , IsLedger LedgerState blk
   ) =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
   ResourceRegistry m ->
-  m (Either LedgerDB.GetForkerError (ResourceKey m, StateRef m ExtLedgerState blk))
+  m (Either LedgerDB.GetForkerError (ResourceKey m, StateHandle m ExtLedgerState blk))
 allocInRegistryReadOnlyForkerAtPoint cdb tgt rr = do
   (rk, forker) <-
     allocate
@@ -329,24 +329,24 @@ allocInRegistryReadOnlyForkerAtPoint cdb tgt rr = do
 
 openReadOnlyForkerAtPoint ::
   ( IOLike m
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
   , IsLedger LedgerState blk
   ) =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
-  m (Either LedgerDB.GetForkerError (StateRef m ExtLedgerState blk))
+  m (Either LedgerDB.GetForkerError (StateHandle m ExtLedgerState blk))
 openReadOnlyForkerAtPoint CDB{..} = LedgerDB.openReadOnlyForker cdbLedgerDB
 
 withReadOnlyForkerAtPoint ::
   ( IOLike m
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
   , IsLedger LedgerState blk
   ) =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
-  ( Either LedgerDB.GetForkerError (StateRef m ExtLedgerState blk) ->
+  ( Either LedgerDB.GetForkerError (StateHandle m ExtLedgerState blk) ->
     WithEarlyExit m r
   ) ->
   WithEarlyExit m r
@@ -357,8 +357,8 @@ withReadOnlyForkerAtPoint cdb tgt =
 
 getStatistics ::
   ( IOLike m
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
   , IsLedger LedgerState blk
   ) =>
   ChainDbEnv m blk -> m Statistics

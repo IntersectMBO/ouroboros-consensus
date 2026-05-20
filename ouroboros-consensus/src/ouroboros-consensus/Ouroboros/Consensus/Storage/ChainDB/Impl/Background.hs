@@ -97,8 +97,8 @@ launchBgTasks ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
   ) =>
   ChainDbEnv m blk ->
   m ()
@@ -580,8 +580,8 @@ addBlockRunner ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
   ) =>
   Fuse m ->
   ChainDbEnv m blk ->

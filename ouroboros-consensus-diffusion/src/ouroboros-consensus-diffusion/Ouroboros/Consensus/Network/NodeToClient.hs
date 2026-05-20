@@ -126,8 +126,8 @@ mkHandlers ::
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerQuery blk
   , ConfigSupportsNode blk
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   NodeKernel m addrNTN addrNTC blk ->

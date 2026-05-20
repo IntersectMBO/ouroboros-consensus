@@ -40,7 +40,7 @@ module Ouroboros.Consensus.Byron.Ledger.Ledger
   , BlockQuery (..)
   , LedgerState (..)
   , Ticked (..)
-  , StateRef (..)
+  , StateHandle (..)
 
     -- * Auxiliary
   , validationErrorImpossible
@@ -184,10 +184,10 @@ type instance AuxLedgerEvent ByronBlock = VoidLedgerEvent
 instance IsLedger LedgerState ByronBlock where
   type LedgerErr LedgerState ByronBlock = CC.ChainValidationError
 
-  applyChainTickLedgerResult _ cfg slotNo (ByronStateRef ByronLedgerState{..}) =
+  applyChainTickLedgerResult _ cfg slotNo (ByronStateHandle ByronLedgerState{..}) =
     pure $
       pureLedgerResult $
-        TickedByronStateRef $
+        TickedByronStateHandle $
           TickedByronLedgerState
             { tickedByronLedgerState =
                 CC.applyChainTick cfg (toByronSlotNo slotNo) byronLedgerState
@@ -195,18 +195,18 @@ instance IsLedger LedgerState ByronBlock where
                 byronLedgerTransition
             }
 
-instance Monad m => StateRefHasState m LedgerState ByronBlock where
-  newtype StateRef m LedgerState ByronBlock = ByronStateRef (LedgerState ByronBlock)
-  state (ByronStateRef s) = s
-  mkStateRef st _ = ByronStateRef st
+instance Monad m => BlockSupportsLedgerHD m LedgerState ByronBlock where
+  newtype StateHandle m LedgerState ByronBlock = ByronStateHandle (LedgerState ByronBlock)
+  state (ByronStateHandle s) = s
+  mkStateHandle st _ = ByronStateHandle st
   close _ = pure ()
   getStats _ = Statistics 0
   duplicate a = pure a
 
-instance Monad m => StateRefHasState m (Ticked LedgerState) ByronBlock where
-  newtype StateRef m (Ticked LedgerState) ByronBlock = TickedByronStateRef (Ticked LedgerState ByronBlock)
-  state (TickedByronStateRef s) = s
-  mkStateRef st _ = TickedByronStateRef st
+instance Monad m => BlockSupportsLedgerHD m (Ticked LedgerState) ByronBlock where
+  newtype StateHandle m (Ticked LedgerState) ByronBlock = TickedByronStateHandle (Ticked LedgerState ByronBlock)
+  state (TickedByronStateHandle s) = s
+  mkStateHandle st _ = TickedByronStateHandle st
   close _ = pure ()
   getStats _ = Statistics 0
   duplicate a = pure a
@@ -216,10 +216,10 @@ instance Monad m => StateRefHasState m (Ticked LedgerState) ByronBlock where
 -------------------------------------------------------------------------------}
 
 instance ApplyBlock LedgerState ByronBlock where
-  applyBlockLedgerResultWithValidation doValidation opts cfg blk (TickedByronStateRef st) =
+  applyBlockLedgerResultWithValidation doValidation opts cfg blk (TickedByronStateHandle st) =
     case runExcept (applyByronBlock doValidation opts cfg blk st) of
       Left err -> throwError err
-      Right v -> pure $ pureLedgerResult $ ByronStateRef v
+      Right v -> pure $ pureLedgerResult $ ByronStateHandle v
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult validationErrorImpossible
 

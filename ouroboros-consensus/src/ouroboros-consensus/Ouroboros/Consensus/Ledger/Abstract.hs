@@ -100,8 +100,8 @@ class
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     blk ->
-    StateRef m (Ticked l) blk ->
-    ExceptT (LedgerErr l blk) m (LedgerResult blk (StateRef m l blk))
+    StateHandle m (Ticked l) blk ->
+    ExceptT (LedgerErr l blk) m (LedgerResult blk (StateHandle m l blk))
 
   -- | Apply a block to the ledger state.
   --
@@ -114,8 +114,8 @@ class
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     blk ->
-    StateRef m (Ticked l) blk ->
-    ExceptT (LedgerErr l blk) m (LedgerResult blk (StateRef m l blk))
+    StateHandle m (Ticked l) blk ->
+    ExceptT (LedgerErr l blk) m (LedgerResult blk (StateHandle m l blk))
 
   -- | Re-apply a block to the very same ledger state it was applied in before.
   --
@@ -132,27 +132,27 @@ class
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     blk ->
-    StateRef m (Ticked l) blk ->
-    m (LedgerResult blk (StateRef m l blk))
+    StateHandle m (Ticked l) blk ->
+    m (LedgerResult blk (StateHandle m l blk))
 
 defaultApplyBlockLedgerResult ::
   (Monad m, HasCallStack, ApplyBlock l blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
-  StateRef m (Ticked l) blk ->
-  ExceptT (LedgerErr l blk) m (LedgerResult blk (StateRef m l blk))
+  StateHandle m (Ticked l) blk ->
+  ExceptT (LedgerErr l blk) m (LedgerResult blk (StateHandle m l blk))
 defaultApplyBlockLedgerResult =
   applyBlockLedgerResultWithValidation STS.ValidateAll
 
 defaultReapplyBlockLedgerResult ::
   (Monad m, HasCallStack, ApplyBlock l blk, Functor m) =>
-  (LedgerErr l blk -> LedgerResult blk (StateRef m l blk)) ->
+  (LedgerErr l blk -> LedgerResult blk (StateHandle m l blk)) ->
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
-  StateRef m (Ticked l) blk ->
-  m (LedgerResult blk (StateRef m l blk))
+  StateHandle m (Ticked l) blk ->
+  m (LedgerResult blk (StateHandle m l blk))
 defaultReapplyBlockLedgerResult throwReapplyError =
   ( fmap (either throwReapplyError id)
       . runExceptT
@@ -172,8 +172,8 @@ applyLedgerBlock ::
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
-  StateRef m (Ticked l) blk ->
-  ExceptT (LedgerErr l blk) m (StateRef m l blk)
+  StateHandle m (Ticked l) blk ->
+  ExceptT (LedgerErr l blk) m (StateHandle m l blk)
 applyLedgerBlock = fmap lrResult ...: applyBlockLedgerResult
 
 -- | 'lrResult' after 'reapplyBlockLedgerResult'
@@ -182,17 +182,17 @@ reapplyLedgerBlock ::
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
-  StateRef m (Ticked l) blk ->
-  m (StateRef m l blk)
+  StateHandle m (Ticked l) blk ->
+  m (StateHandle m l blk)
 reapplyLedgerBlock = fmap lrResult ...: reapplyBlockLedgerResult
 
 tickThenApplyLedgerResult ::
-  (StateRefHasState m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
+  (BlockSupportsLedgerHD m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
-  StateRef m l blk ->
-  ExceptT (LedgerErr l blk) m (LedgerResult blk (StateRef m l blk))
+  StateHandle m l blk ->
+  ExceptT (LedgerErr l blk) m (LedgerResult blk (StateHandle m l blk))
 tickThenApplyLedgerResult evs cfg blk l = do
   lrTick <- lift $ applyChainTickLedgerResult evs cfg (blockSlot blk) l
   lrBlock <-
@@ -208,12 +208,12 @@ tickThenApplyLedgerResult evs cfg blk l = do
       }
 
 tickThenReapplyLedgerResult ::
-  (StateRefHasState m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
+  (BlockSupportsLedgerHD m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
-  StateRef m l blk ->
-  m (LedgerResult blk (StateRef m l blk))
+  StateHandle m l blk ->
+  m (LedgerResult blk (StateHandle m l blk))
 tickThenReapplyLedgerResult evs cfg blk l = do
   lrTick <- applyChainTickLedgerResult evs cfg (blockSlot blk) l
   lrBlock <-
@@ -229,36 +229,36 @@ tickThenReapplyLedgerResult evs cfg blk l = do
       }
 
 tickThenApply ::
-  (StateRefHasState m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
+  (BlockSupportsLedgerHD m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
-  StateRef m l blk ->
-  ExceptT (LedgerErr l blk) m (StateRef m l blk)
+  StateHandle m l blk ->
+  ExceptT (LedgerErr l blk) m (StateHandle m l blk)
 tickThenApply = fmap lrResult ...: tickThenApplyLedgerResult
 
 tickThenReapply ::
-  (StateRefHasState m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
+  (BlockSupportsLedgerHD m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
-  StateRef m l blk ->
-  m (StateRef m l blk)
+  StateHandle m l blk ->
+  m (StateHandle m l blk)
 tickThenReapply = fmap lrResult ...: tickThenReapplyLedgerResult
 
 foldLedger ::
-  (StateRefHasState m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
+  (BlockSupportsLedgerHD m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   [blk] ->
-  StateRef m l blk ->
-  ExceptT (LedgerErr l blk) m (StateRef m l blk)
+  StateHandle m l blk ->
+  ExceptT (LedgerErr l blk) m (StateHandle m l blk)
 foldLedger evs cfg =
   repeatedlyM (tickThenApply evs cfg)
 
 refoldLedger ::
-  (StateRefHasState m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
-  ComputeLedgerEvents -> LedgerCfg l blk -> [blk] -> StateRef m l blk -> m (StateRef m l blk)
+  (BlockSupportsLedgerHD m (Ticked l) blk, ApplyBlock l blk, Monad m) =>
+  ComputeLedgerEvents -> LedgerCfg l blk -> [blk] -> StateHandle m l blk -> m (StateHandle m l blk)
 refoldLedger evs cfg =
   repeatedlyM (tickThenReapply evs cfg)
 

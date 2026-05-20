@@ -168,7 +168,7 @@ class
     MonadSTM m =>
     ExtLedgerCfg blk ->
     BlockQuery blk QFLookupTables result ->
-    StateRef m ExtLedgerState blk ->
+    StateHandle m ExtLedgerState blk ->
     m result
 
   -- | Answer a query that requires to traverse the ledger tables. As consensus
@@ -183,7 +183,7 @@ class
     MonadSTM m =>
     ExtLedgerCfg blk ->
     BlockQuery blk QFTraverseTables result ->
-    StateRef m ExtLedgerState blk ->
+    StateHandle m ExtLedgerState blk ->
     m result
 
   -- | Is the given query supported in this NTC version?
@@ -252,11 +252,11 @@ answerQuery ::
   , ConfigSupportsNode blk
   , HasAnnTip blk
   , MonadSTM m
-  , StateRefHasState m LedgerState blk
-  , StateRefHasState m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
   ) =>
   ExtLedgerCfg blk ->
-  StateRef m ExtLedgerState blk ->
+  StateHandle m ExtLedgerState blk ->
   Query blk result ->
   m result
 answerQuery config sref query = case query of

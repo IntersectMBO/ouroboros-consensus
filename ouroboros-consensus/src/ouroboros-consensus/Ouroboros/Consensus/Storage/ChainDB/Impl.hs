@@ -109,9 +109,9 @@ withDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
-  , NoThunks (StateRef m ExtLedgerState blk)
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
+  , NoThunks (StateHandle m ExtLedgerState blk)
   , NoThunks (LedgerState blk)
   ) =>
   Complete Args.ChainDbArgs m blk ->
@@ -129,9 +129,9 @@ openDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
-  , NoThunks (StateRef m ExtLedgerState blk)
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
+  , NoThunks (StateHandle m ExtLedgerState blk)
   , NoThunks (LedgerState blk)
   ) =>
   Complete Args.ChainDbArgs m blk ->
@@ -148,9 +148,9 @@ openDBInternal ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
-  , NoThunks (StateRef m ExtLedgerState blk)
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
+  , NoThunks (StateHandle m ExtLedgerState blk)
   , NoThunks (LedgerState blk)
   , HasCallStack
   ) =>

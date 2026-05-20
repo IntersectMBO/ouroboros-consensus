@@ -117,8 +117,8 @@ initialChainSelection ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , BlockSupportsDiffusionPipelining blk
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
   ) =>
   ImmutableDB m blk ->
   VolatileDB m blk ->
@@ -352,8 +352,8 @@ chainSelSync ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
   ) =>
   ChainDbEnv m blk ->
   ChainSelMessage m blk ->
@@ -609,8 +609,8 @@ chainSelectionForBlock ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
   ) =>
   ChainDbEnv m blk ->
   BlockCache blk ->
@@ -876,8 +876,8 @@ switchTo ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
   ) =>
   ChainDbEnv m blk ->
   PerasWeightSnapshot blk ->

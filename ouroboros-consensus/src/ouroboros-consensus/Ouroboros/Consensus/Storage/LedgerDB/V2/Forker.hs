@@ -123,7 +123,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
 --     -- "Resource management in the LedgerDB" in
 --     -- "Ouroboros.Consensus.Storage.LedgerDB.API".
 --     tbs <- duplicateWithDiffs (tables $ currentHandle lseq) st0 newState
---     atomically $ writeTVar (foeLedgerSeq env) (extend (StateRef st tbs) lseq)
+--     atomically $ writeTVar (foeLedgerSeq env) (extend (StateHandle st tbs) lseq)
 
 -- implForkerCommit ::
 --   (IOLike m, GetTip (l blk), StandardHash (l blk)) =>

@@ -1373,7 +1373,6 @@ library cardano
     ouroboros-consensus:{ouroboros-consensus, protocol},
     ouroboros-network:api,
     serialise,
-    singletons,
     small-steps,
     sop-core,
     sop-extras,

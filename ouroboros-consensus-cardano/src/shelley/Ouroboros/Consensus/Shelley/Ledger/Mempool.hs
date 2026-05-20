@@ -339,11 +339,11 @@ applyShelleyTx ::
   SlotNo ->
   GenTx (ShelleyBlock proto era) ->
   MempoolCache (ShelleyBlock proto era) ->
-  StateRef m (Ticked LedgerState) (ShelleyBlock proto era) ->
+  StateHandle m (Ticked LedgerState) (ShelleyBlock proto era) ->
   ExceptT
     (ApplyTxErr (ShelleyBlock proto era))
     m
-    ( StateRef m (Ticked LedgerState) (ShelleyBlock proto era)
+    ( StateHandle m (Ticked LedgerState) (ShelleyBlock proto era)
     , MempoolCache (ShelleyBlock proto era)
     , Validated (GenTx (ShelleyBlock proto era))
     )
@@ -353,7 +353,7 @@ applyShelleyTx cfg wti slot gtx cache st0 = do
   -- transactions
   (thisTxReadUTxO, allTxsReadUTxO, curUTxO) <- case cacheKnownTransactions Map.!? txid of
     Nothing -> do
-      thisTxReadUTxO <- lift $ readTxOuts (tickedStateRefHandle st0) (getTransactionKeySets gtx)
+      thisTxReadUTxO <- lift $ readTxOuts (tickedStateHandleHandle st0) (getTransactionKeySets gtx)
       let allTxUTxO = Map.union (SL.unUTxO cacheAllTxsReadUTxO) (SL.unUTxO thisTxReadUTxO)
       let curUTxO = Diff.applyDiff allTxUTxO cacheAllTxsDiff
       pure (thisTxReadUTxO, SL.UTxO allTxUTxO, SL.UTxO curUTxO)
@@ -401,11 +401,11 @@ reapplyShelleyTx ::
   SlotNo ->
   Validated (GenTx (ShelleyBlock proto era)) ->
   MempoolCache (ShelleyBlock proto era) ->
-  StateRef m (Ticked LedgerState) (ShelleyBlock proto era) ->
+  StateHandle m (Ticked LedgerState) (ShelleyBlock proto era) ->
   ExceptT
     (ApplyTxErr (ShelleyBlock proto era), MempoolCache (ShelleyBlock proto era))
     m
-    (StateRef m (Ticked LedgerState) (ShelleyBlock proto era), MempoolCache (ShelleyBlock proto era))
+    (StateHandle m (Ticked LedgerState) (ShelleyBlock proto era), MempoolCache (ShelleyBlock proto era))
 reapplyShelleyTx cfg slot vgtx cache st0 = do
   -- Get the UTxO for this transaction, the UTxO for all transactions in the
   -- mempool and the current UTxO after applying the diffs of the other
@@ -442,11 +442,11 @@ reapplyShelleyTx cfg slot vgtx cache st0 = do
 theLedgerLens ::
   Functor f =>
   (SL.LedgerState era -> f (SL.LedgerState era)) ->
-  StateRef m (Ticked LedgerState) (ShelleyBlock proto era) ->
-  f (StateRef m (Ticked LedgerState) (ShelleyBlock proto era))
+  StateHandle m (Ticked LedgerState) (ShelleyBlock proto era) ->
+  f (StateHandle m (Ticked LedgerState) (ShelleyBlock proto era))
 theLedgerLens f x =
-  (\y -> x{tickedStateRefState = (tickedStateRefState x){tickedShelleyLedgerState = y}})
-    <$> SL.overNewEpochState f (tickedShelleyLedgerState $ tickedStateRefState x)
+  (\y -> x{tickedStateHandleState = (tickedStateHandleState x){tickedShelleyLedgerState = y}})
+    <$> SL.overNewEpochState f (tickedShelleyLedgerState $ tickedStateHandleState x)
 
 {-------------------------------------------------------------------------------
   Tx Limits

@@ -59,7 +59,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 -- import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 -- import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 -- import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq hiding (tables)
--- import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq as StateRef
+-- import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq as StateHandle
 -- import Ouroboros.Consensus.Util.CBOR (readIncremental)
 -- import Ouroboros.Consensus.Util.CRC
 -- import Ouroboros.Consensus.Util.Enclose
@@ -190,7 +190,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 --   CodecConfig blk ->
 --   Tracer m (TraceSnapshotEvent blk) ->
 --   SomeHasFS m ->
---   SnapshotManager m blk (StateRef m ExtLedgerState blk)
+--   SnapshotManager m blk (StateHandle m ExtLedgerState blk)
 -- snapshotManager ccfg tracer fs =
 --   SnapshotManager
 --     { listSnapshots = defaultListSnapshots fs
@@ -208,7 +208,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 --   Tracer m (TraceSnapshotEvent blk) ->
 --   SomeHasFS m ->
 --   Maybe String ->
---   StateRef m ExtLedgerState blk ->
+--   StateHandle m ExtLedgerState blk ->
 --   m (Maybe (DiskSnapshot, RealPoint blk))
 -- implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFS) suffix st = do
 --   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
@@ -228,7 +228,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 --   writeSnapshot ds = do
 --     createDirectoryIfMissing hasFS True $ snapshotToDirPath ds
 --     crc1 <- writeExtLedgerState shfs (encodeDiskExtLedgerState ccfg) (snapshotToStatePath ds) $ state st
---     crc2 <- takeHandleSnapshot (StateRef.tables st) (state st) $ snapshotToDirName ds
+--     crc2 <- takeHandleSnapshot (StateHandle.tables st) (state st) $ snapshotToDirName ds
 --     writeSnapshotMetadata shfs ds $
 --       SnapshotMetadata
 --         { snapshotBackend = UTxOHDMemSnapshot
@@ -251,7 +251,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 --   CodecConfig blk ->
 --   SomeHasFS m ->
 --   DiskSnapshot ->
---   ExceptT (SnapshotFailure blk) m (StateRef m ExtLedgerState blk, RealPoint blk)
+--   ExceptT (SnapshotFailure blk) m (StateHandle m ExtLedgerState blk, RealPoint blk)
 -- loadSnapshot tracer ccfg fs@(SomeHasFS hfs) ds = do
 --   fileEx <- lift $ doesFileExist hfs (snapshotToDirPath ds)
 --   Monad.when fileEx $ throwE $ InitFailureRead ReadSnapshotIsLegacy
@@ -284,7 +284,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 --           InitFailureRead $
 --             ReadSnapshotDataCorruption
 --       h <- lift $ newInMemoryLedgerTablesHandle tracer fs values
---       pure (StateRef extLedgerSt h, pt)
+--       pure (StateHandle extLedgerSt h, pt)
 
 -- snapshotToTablesPath :: DiskSnapshot -> FsPath
 -- snapshotToTablesPath ds = snapshotToDirPath ds </> mkFsPath ["tables"]
@@ -307,10 +307,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 
 --   mkResources _ _ _ = pure . Resources
 --   releaseResources _ _ = pure ()
---   createAndPopulateStateRefFromGenesis tracer (Resources shfs) values =
---     StateRef (forgetLedgerTables values)
+--   createAndPopulateStateHandleFromGenesis tracer (Resources shfs) values =
+--     StateHandle (forgetLedgerTables values)
 --       <$> newInMemoryLedgerTablesHandle tracer shfs (ltprj values)
---   openStateRefFromSnapshot trcr ccfg shfs _ ds =
+--   openStateHandleFromSnapshot trcr ccfg shfs _ ds =
 --     loadSnapshot trcr ccfg shfs ds
 --   snapshotManager _ _ =
 --     Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory.snapshotManager

@@ -129,14 +129,14 @@ instance LedgerSupportsMempool ByronBlock where
   applyTx cfg _wti slot tx NoCache st =
     case runExcept (applyByronGenTx validationMode cfg slot tx (state st)) of
       Left err -> throwError err
-      Right st' -> pure (TickedByronStateRef st', NoCache, ValidatedByronTx tx)
+      Right st' -> pure (TickedByronStateHandle st', NoCache, ValidatedByronTx tx)
    where
     validationMode = CC.ValidationMode CC.BlockValidation Utxo.TxValidation
 
   reapplyTx cfg slot vtx NoCache st =
     case runExcept (applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) (state st)) of
       Left err -> throwError (err, NoCache)
-      Right v -> pure (TickedByronStateRef v, NoCache)
+      Right v -> pure (TickedByronStateHandle v, NoCache)
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 

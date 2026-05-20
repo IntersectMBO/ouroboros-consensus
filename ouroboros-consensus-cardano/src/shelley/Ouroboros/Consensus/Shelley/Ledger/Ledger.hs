@@ -34,7 +34,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , shelleyTipToPoint
   , Handle (..)
   , RangeQueryPrevious (..)
-  , StateRef (..)
+  , StateHandle (..)
 
     -- * Ledger config
   , ShelleyLedgerConfig (..)
@@ -403,29 +403,29 @@ type instance LedgerTables m (ShelleyBlock proto era) = Handle m proto era
 
 data RangeQueryPrevious = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo SL.TxIn
 
-instance Monad m => StateRefHasState m LedgerState (ShelleyBlock proto era) where
-  data StateRef m LedgerState (ShelleyBlock proto era) = ShelleyStateRef
+instance Monad m => BlockSupportsLedgerHD m LedgerState (ShelleyBlock proto era) where
+  data StateHandle m LedgerState (ShelleyBlock proto era) = ShelleyStateHandle
     { stateRefState :: LedgerState (ShelleyBlock proto era)
     , stateRefHandle :: Handle m proto era
     }
 
   state = stateRefState
   close = closeHandle . stateRefHandle
-  duplicate (ShelleyStateRef s h) = ShelleyStateRef s <$> dupl h
+  duplicate (ShelleyStateHandle s h) = ShelleyStateHandle s <$> dupl h
   getStats = getStatsHandle . stateRefHandle
-  mkStateRef = ShelleyStateRef
+  mkStateHandle = ShelleyStateHandle
 
-instance Monad m => StateRefHasState m (Ticked LedgerState) (ShelleyBlock proto era) where
-  data StateRef m (Ticked LedgerState) (ShelleyBlock proto era) = TickedShelleyStateRef
-    { tickedStateRefState :: Ticked LedgerState (ShelleyBlock proto era)
-    , tickedStateRefHandle :: Handle m proto era
+instance Monad m => BlockSupportsLedgerHD m (Ticked LedgerState) (ShelleyBlock proto era) where
+  data StateHandle m (Ticked LedgerState) (ShelleyBlock proto era) = TickedShelleyStateHandle
+    { tickedStateHandleState :: Ticked LedgerState (ShelleyBlock proto era)
+    , tickedStateHandleHandle :: Handle m proto era
     }
 
-  state = tickedStateRefState
-  close = closeHandle . tickedStateRefHandle
-  duplicate (TickedShelleyStateRef s h) = TickedShelleyStateRef s <$> dupl h
-  getStats = getStatsHandle . tickedStateRefHandle
-  mkStateRef = TickedShelleyStateRef
+  state = tickedStateHandleState
+  close = closeHandle . tickedStateHandleHandle
+  duplicate (TickedShelleyStateHandle s h) = TickedShelleyStateHandle s <$> dupl h
+  getStats = getStatsHandle . tickedStateHandleHandle
+  mkStateHandle = TickedShelleyStateHandle
 
 instance ShelleyBasedEra era => IsLedger LedgerState (ShelleyBlock proto era) where
   type LedgerErr LedgerState (ShelleyBlock proto era) = SL.BlockTransitionError era
@@ -434,7 +434,7 @@ instance ShelleyBasedEra era => IsLedger LedgerState (ShelleyBlock proto era) wh
     evs
     cfg
     slotNo
-    ( ShelleyStateRef
+    ( ShelleyStateHandle
         ShelleyLedgerState
           { shelleyLedgerTip
           , shelleyLedgerState
@@ -445,7 +445,7 @@ instance ShelleyBasedEra era => IsLedger LedgerState (ShelleyBlock proto era) wh
       ) =
       pure $
         appTick globals shelleyLedgerState slotNo <&> \l' ->
-          TickedShelleyStateRef
+          TickedShelleyStateHandle
             TickedShelleyLedgerState
               { untickedShelleyLedgerTip = shelleyLedgerTip
               , tickedShelleyLedgerTransition =
@@ -543,16 +543,16 @@ applyHelper ::
   ) ->
   LedgerConfig (ShelleyBlock proto era) ->
   ShelleyBlock proto era ->
-  StateRef m (Ticked LedgerState) (ShelleyBlock proto era) ->
+  StateHandle m (Ticked LedgerState) (ShelleyBlock proto era) ->
   ExceptT
     (SL.BlockTransitionError era)
     m
     ( LedgerResult
         (ShelleyBlock proto era)
-        (StateRef m LedgerState (ShelleyBlock proto era))
+        (StateHandle m LedgerState (ShelleyBlock proto era))
     )
 applyHelper f cfg blk stBefore = do
-  let TickedShelleyStateRef
+  let TickedShelleyStateHandle
         TickedShelleyLedgerState
           { tickedShelleyLedgerTransition
           , tickedShelleyLedgerState
@@ -584,7 +584,7 @@ applyHelper f cfg blk stBefore = do
 
   pure $
     LedgerResult evs $
-      ShelleyStateRef
+      ShelleyStateHandle
         ShelleyLedgerState
           { shelleyLedgerTip =
               NotOrigin
@@ -632,9 +632,9 @@ applyHelper f cfg blk stBefore = do
   shelleyLedgerLatestPerasCertRound' =
     case getPerasCertRoundInBlock blk of
       SNothing ->
-        tickedShelleyLedgerLatestPerasCertRound $ tickedStateRefState stBefore
+        tickedShelleyLedgerLatestPerasCertRound $ tickedStateHandleState stBefore
       SJust certRoundInBlock ->
-        case tickedShelleyLedgerLatestPerasCertRound $ tickedStateRefState stBefore of
+        case tickedShelleyLedgerLatestPerasCertRound $ tickedStateHandleState stBefore of
           SNothing ->
             SJust certRoundInBlock
           SJust latestCertRoundInLedgerState ->

@@ -29,7 +29,7 @@ module Ouroboros.Consensus.Ledger.Extended
   , encodeExtLedgerState
 
     -- * Type family instances
-  , StateRef (..)
+  , StateHandle (..)
   , Ticked (..)
   ) where
 
@@ -140,39 +140,39 @@ data instance Ticked ExtLedgerState blk = TickedExtLedgerState
   }
 
 instance
-  (Monad m, StateRefHasState m (Ticked LedgerState) blk, StateRefHasState m LedgerState blk) =>
-  StateRefHasState m ExtLedgerState blk
+  (Monad m, BlockSupportsLedgerHD m (Ticked LedgerState) blk, BlockSupportsLedgerHD m LedgerState blk) =>
+  BlockSupportsLedgerHD m ExtLedgerState blk
   where
-  data StateRef m ExtLedgerState blk where
-    ExtStateRef ::
-      StateRefHasState m (Ticked LedgerState) blk =>
-      StateRef m LedgerState blk ->
+  data StateHandle m ExtLedgerState blk where
+    ExtStateHandle ::
+      BlockSupportsLedgerHD m (Ticked LedgerState) blk =>
+      StateHandle m LedgerState blk ->
       HeaderState blk ->
-      StateRef m ExtLedgerState blk
+      StateHandle m ExtLedgerState blk
 
-  state (ExtStateRef s h) = ExtLedgerState (state s) h
-  mkStateRef (ExtLedgerState a b) tbs = ExtStateRef (mkStateRef a tbs) b
-  close (ExtStateRef s _) = close s
-  getStats (ExtStateRef s _) = getStats s
-  duplicate (ExtStateRef s h) = flip ExtStateRef h <$> (duplicate s)
+  state (ExtStateHandle s h) = ExtLedgerState (state s) h
+  mkStateHandle (ExtLedgerState a b) tbs = ExtStateHandle (mkStateHandle a tbs) b
+  close (ExtStateHandle s _) = close s
+  getStats (ExtStateHandle s _) = getStats s
+  duplicate (ExtStateHandle s h) = flip ExtStateHandle h <$> (duplicate s)
 
 instance
-  (Monad m, StateRefHasState m (Ticked LedgerState) blk) =>
-  StateRefHasState m (Ticked ExtLedgerState) blk
+  (Monad m, BlockSupportsLedgerHD m (Ticked LedgerState) blk) =>
+  BlockSupportsLedgerHD m (Ticked ExtLedgerState) blk
   where
-  data StateRef m (Ticked ExtLedgerState) blk where
-    TickedExtStateRef ::
-      StateRefHasState m (Ticked LedgerState) blk =>
-      StateRef m (Ticked LedgerState) blk ->
+  data StateHandle m (Ticked ExtLedgerState) blk where
+    TickedExtStateHandle ::
+      BlockSupportsLedgerHD m (Ticked LedgerState) blk =>
+      StateHandle m (Ticked LedgerState) blk ->
       LedgerView (BlockProtocol blk) ->
       Ticked (HeaderState blk) ->
-      StateRef m (Ticked ExtLedgerState) blk
+      StateHandle m (Ticked ExtLedgerState) blk
 
-  state (TickedExtStateRef s v h) = TickedExtLedgerState (state s) v h
-  mkStateRef (TickedExtLedgerState a b c) tbs = TickedExtStateRef (mkStateRef a tbs) b c
-  close (TickedExtStateRef s _ _) = close s
-  getStats (TickedExtStateRef s _ _) = getStats s
-  duplicate (TickedExtStateRef s l h) = (\s' -> TickedExtStateRef s' l h) <$> (duplicate s)
+  state (TickedExtStateHandle s v h) = TickedExtLedgerState (state s) v h
+  mkStateHandle (TickedExtLedgerState a b c) tbs = TickedExtStateHandle (mkStateHandle a tbs) b c
+  close (TickedExtStateHandle s _ _) = close s
+  getStats (TickedExtStateHandle s _ _) = getStats s
+  duplicate (TickedExtStateHandle s l h) = (\s' -> TickedExtStateHandle s' l h) <$> (duplicate s)
 
 instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState) blk where
   getTip = castPoint . getTip . tickedLedgerState
@@ -183,7 +183,7 @@ instance
   where
   type LedgerErr ExtLedgerState blk = ExtValidationError blk
 
-  applyChainTickLedgerResult evs cfg slot (ExtStateRef ledger header) = do
+  applyChainTickLedgerResult evs cfg slot (ExtStateHandle ledger header) = do
     ledgerResult <- applyChainTickLedgerResult evs lcfg slot ledger
     pure $
       castLedgerResult ledgerResult <&> \tickedLedgerState ->
@@ -197,7 +197,7 @@ instance
                 ledgerView
                 slot
                 header
-         in TickedExtStateRef tickedLedgerState ledgerView tickedHeaderState
+         in TickedExtStateHandle tickedLedgerState ledgerView tickedHeaderState
    where
     lcfg :: LedgerConfig blk
     lcfg = configLedger $ getExtLedgerCfg cfg
@@ -209,21 +209,21 @@ applyHelper ::
     ComputeLedgerEvents ->
     LedgerCfg LedgerState blk ->
     blk ->
-    StateRef m (Ticked LedgerState) blk ->
+    StateHandle m (Ticked LedgerState) blk ->
     ExceptT
       (LedgerErr LedgerState blk)
       m
-      (LedgerResult blk (StateRef m LedgerState blk))
+      (LedgerResult blk (StateHandle m LedgerState blk))
   ) ->
   ComputeLedgerEvents ->
   LedgerCfg ExtLedgerState blk ->
   blk ->
-  StateRef m (Ticked ExtLedgerState) blk ->
+  StateHandle m (Ticked ExtLedgerState) blk ->
   ExceptT
     (LedgerErr ExtLedgerState blk)
     m
-    (LedgerResult blk (StateRef m ExtLedgerState blk))
-applyHelper f opts cfg blk (TickedExtStateRef tickedLedgerState ledgerView tickedHeaderState) = do
+    (LedgerResult blk (StateHandle m ExtLedgerState blk))
+applyHelper f opts cfg blk (TickedExtStateHandle tickedLedgerState ledgerView tickedHeaderState) = do
   ledgerResult <-
     withExceptT ExtValidationErrorLedger $
       f
@@ -241,7 +241,7 @@ applyHelper f opts cfg blk (TickedExtStateRef tickedLedgerState ledgerView ticke
               ledgerView
               (getHeader blk)
               tickedHeaderState
-  pure $ (\l -> ExtStateRef l hdr) <$> castLedgerResult ledgerResult
+  pure $ (\l -> ExtStateHandle l hdr) <$> castLedgerResult ledgerResult
 
 instance LedgerSupportsProtocol blk => ApplyBlock ExtLedgerState blk where
   applyBlockLedgerResultWithValidation doValidate =
@@ -250,14 +250,14 @@ instance LedgerSupportsProtocol blk => ApplyBlock ExtLedgerState blk where
   applyBlockLedgerResult =
     applyHelper applyBlockLedgerResult
 
-  reapplyBlockLedgerResult evs cfg blk (TickedExtStateRef tickedLedgerState ledgerView tickedHeaderState) = do
+  reapplyBlockLedgerResult evs cfg blk (TickedExtStateHandle tickedLedgerState ledgerView tickedHeaderState) = do
     ledgerResult <-
       reapplyBlockLedgerResult
         evs
         (configLedger $ getExtLedgerCfg cfg)
         blk
         tickedLedgerState
-    pure $ (\l -> ExtStateRef l hdr) <$> castLedgerResult ledgerResult
+    pure $ (\l -> ExtStateHandle l hdr) <$> castLedgerResult ledgerResult
    where
     hdr =
       revalidateHeader

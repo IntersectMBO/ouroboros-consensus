@@ -216,7 +216,7 @@ data ChainDB m blk = ChainDB
   -- INVARIANT @'hwtHeader' <$> 'getCurrentChainWithTime' = 'getCurrentChain'@
   , getCurrentLedger :: STM m (ExtLedgerState blk)
   -- ^ Get current ledger
-  , getCurrentLedgerRef :: STM m (StateRef m ExtLedgerState blk)
+  , getCurrentLedgerRef :: STM m (StateHandle m ExtLedgerState blk)
   -- ^ Get current ledger
   , getImmutableLedger :: STM m (ExtLedgerState blk)
   -- ^ Get the immutable ledger, i.e., typically @k@ blocks back.
@@ -232,7 +232,7 @@ data ChainDB m blk = ChainDB
   , allocInRegistryReadOnlyForkerAtPoint ::
       Target (Point blk) ->
       ResourceRegistry m ->
-      m (Either GetForkerError (ResourceKey m, StateRef m ExtLedgerState blk))
+      m (Either GetForkerError (ResourceKey m, StateHandle m ExtLedgerState blk))
   -- ^ Allocate a read only forker at the given point in the given resource
   -- registry.
   --
@@ -240,7 +240,7 @@ data ChainDB m blk = ChainDB
   -- the LedgerDB directly, none of these methods are used there.
   , openReadOnlyForkerAtPoint ::
       Target (Point blk) ->
-      m (Either GetForkerError (StateRef m ExtLedgerState blk))
+      m (Either GetForkerError (StateHandle m ExtLedgerState blk))
   -- ^ Open a forker at the given point. This resource is untracked.
   --
   -- It is intended to be used by the Mempool as closing the mempool means the
@@ -249,7 +249,7 @@ data ChainDB m blk = ChainDB
   , withReadOnlyForkerAtPoint ::
       forall r.
       Target (Point blk) ->
-      (Either GetForkerError (StateRef m ExtLedgerState blk) -> WithEarlyExit m r) ->
+      (Either GetForkerError (StateHandle m ExtLedgerState blk) -> WithEarlyExit m r) ->
       WithEarlyExit m r
   -- ^ Run a continuation with a forker at the given target.
   --

@@ -503,8 +503,8 @@ implSyncWithLedger ::
   , LedgerSupportsMempool blk
   , ValidateEnvelope blk
   , HasTxId (GenTx blk)
-  , StateRefHasState m (Ticked LedgerState) blk
-  , StateRefHasState m LedgerState blk
+  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , BlockSupportsLedgerHD m LedgerState blk
   ) =>
   -- | This argument is only to be able to acquire a snapshot in the same
   -- atomically block as the re-sync when testing the mempool in the QSM
