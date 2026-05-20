@@ -213,7 +213,6 @@ module Ouroboros.Consensus.Cardano.Block
   ) where
 
 import Cardano.Protocol.TPraos.API (PraosCrypto)
-import Cardano.Slotting.Slot (WithOrigin (Origin))
 import Data.Kind
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
@@ -224,10 +223,8 @@ import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HeaderValidation
-  ( HeaderState (..)
-  , OtherHeaderEnvelopeError
+  ( OtherHeaderEnvelopeError
   , TipInfo
-  , headerStateChainDep
   )
 import Ouroboros.Consensus.Ledger.Abstract (LedgerError)
 import Ouroboros.Consensus.Ledger.Query
@@ -1523,22 +1520,18 @@ pattern ChainDepStateDijkstra st <-
 --
 -- Dispatches on 'BlockDijkstra' to the @ShelleyBlock (Praos c)
 -- DijkstraEra@ instance (in "Ouroboros.Consensus.Shelley.Ledger.Ledger")
--- after projecting the per-era 'HeaderState' from the HFC chain-dep
--- state via the 'ChainDepStateDijkstra' pattern synonym.
+-- after projecting the per-era Praos chain-dep state from the HFC
+-- chain-dep state via the 'ChainDepStateDijkstra' pattern synonym.
+-- Block and chain-dep state are scrutinised together so the dispatch is
+-- a single case; era mismatches fall through to the no-op default.
 instance
   ( PraosCrypto c
   , ShelleyCompatible (Praos c) DijkstraEra
   ) =>
   ResolveLeiosBlock (HardForkBlock (CardanoEras c))
   where
-  resolveLeiosBlock db hdrSt (BlockDijkstra dijkstraBlk) =
-    case headerStateChainDep hdrSt of
-      ChainDepStateDijkstra praosSt ->
-        let dijkstraHdrSt =
-              HeaderState
-                { headerStateTip = Origin -- unused by the Dijkstra-era splice
-                , headerStateChainDep = praosSt
-                }
-         in BlockDijkstra <$> resolveLeiosBlock db dijkstraHdrSt dijkstraBlk
-      _ -> pure (BlockDijkstra dijkstraBlk)
-  resolveLeiosBlock _db _hdrSt blk = pure blk
+  resolveLeiosBlock db cds blk =
+    case (cds, blk) of
+      (ChainDepStateDijkstra praosSt, BlockDijkstra dijkstraBlk) ->
+        BlockDijkstra <$> resolveLeiosBlock db praosSt dijkstraBlk
+      _ -> pure blk

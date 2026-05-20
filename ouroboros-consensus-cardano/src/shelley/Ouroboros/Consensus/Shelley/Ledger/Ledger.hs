@@ -980,11 +980,10 @@ instance
   (PraosCrypto c, ShelleyCompatible (Praos c) DijkstraEra) =>
   ResolveLeiosBlock (ShelleyBlock (Praos c) DijkstraEra)
   where
-  resolveLeiosBlock leiosDb hdrSt blk =
+  resolveLeiosBlock leiosDb praosSt blk =
     case body ^. leiosCertBlockBodyL of
       SNothing -> pure blk
-      SJust cert -> do
-        let praosSt = headerStateChainDep hdrSt
+      SJust cert ->
         case praosStateLeiosAnnouncement praosSt of
           SNothing ->
             error $

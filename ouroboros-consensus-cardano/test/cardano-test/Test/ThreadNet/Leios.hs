@@ -74,6 +74,7 @@ import Ouroboros.Consensus.Cardano
 import Ouroboros.Consensus.Cardano.Block (pattern BlockDijkstra, pattern LedgerStateDijkstra)
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
 import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
+import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
 import Ouroboros.Consensus.Ledger.Abstract
   ( ComputeLedgerEvents (OmitLedgerEvents)
   , LedgerCfg
@@ -361,7 +362,7 @@ sumChainTxBytes topConfig initLedger node = runSimOrThrow $ do
     fst <$> foldM (step leiosConn cfg) (0, initLedger) chain
  where
   step leiosDb cfg (total, st) blk = do
-    blk' <- resolveLeiosBlock leiosDb (headerState st) blk
+    blk' <- resolveLeiosBlock leiosDb (headerStateChainDep (headerState st)) blk
     let txBytes = blockTxSizeSum blk'
         st' = applyDiffs st $ tickThenReapply OmitLedgerEvents cfg blk' st
     pure (total + txBytes, st')
@@ -414,7 +415,7 @@ foldWithResolution leiosDb cfg blks initState =
   foldM step initState blks
  where
   step state blk = do
-    blk' <- resolveLeiosBlock leiosDb (headerState state) blk
+    blk' <- resolveLeiosBlock leiosDb (headerStateChainDep (headerState state)) blk
     pure $ applyDiffs state $ tickThenReapply OmitLedgerEvents cfg blk' state
 
 -- * Running the thread net

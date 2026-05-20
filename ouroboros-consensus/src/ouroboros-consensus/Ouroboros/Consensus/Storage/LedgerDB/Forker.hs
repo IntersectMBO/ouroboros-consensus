@@ -72,9 +72,10 @@ import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.HeaderValidation (HeaderState)
+import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Util.CallStack
@@ -304,7 +305,7 @@ data ValidateArgs m l blk = ValidateArgs
   -- ^ How many blocks to roll back before applying the blocks
   , hdrs :: NonEmpty (Header blk)
   -- ^ The headers we want to apply
-  , vaLeiosDb :: !(LeiosDbConnection m)
+  , leiosDB :: !(LeiosDbConnection m)
   -- ^ Leios demo DB connection: 'applyBlock' calls 'resolveLeiosBlock'
   -- with this connection before each ledger application, so that
   -- Dijkstra blocks carrying a 'Maybe LeiosCert' can have the EB
@@ -327,7 +328,7 @@ validate evs args = do
   res <-
     rewrap
       <$> switch
-        vaLeiosDb
+        leiosDB
         withForkerAtFromTip
         evs
         validateConfig
@@ -350,7 +351,7 @@ validate evs args = do
     , numRollbacks
     , hdrs
     , onSuccess
-    , vaLeiosDb
+    , leiosDB
     } = args
 
   rewrap ::
@@ -458,12 +459,12 @@ applyBlock ::
   m (Either (AnnLedgerError l blk) (l DiffMK))
 applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b -> do
-    hdrSt <- headerState <$> atomically (forkerGetLedgerState fo)
-    b' <- resolveLeiosBlock leiosDb hdrSt b
+    cds <- headerStateChainDep . headerState <$> atomically (forkerGetLedgerState fo)
+    b' <- resolveLeiosBlock leiosDb cds b
     withValues b' (return . Right . tickThenReapply evs cfg b')
   ApplyVal b -> do
-    hdrSt <- headerState <$> atomically (forkerGetLedgerState fo)
-    b' <- resolveLeiosBlock leiosDb hdrSt b
+    cds <- headerStateChainDep . headerState <$> atomically (forkerGetLedgerState fo)
+    b' <- resolveLeiosBlock leiosDb cds b
     withValues
       b'
       ( \v ->
@@ -551,7 +552,11 @@ type ResolveBlock m blk = RealPoint blk -> m blk
 -- blk' is correct.
 class ResolveLeiosBlock blk where
   resolveLeiosBlock ::
-    Monad m => LeiosDbConnection m -> HeaderState blk -> blk -> m blk
+    Monad m =>
+    LeiosDbConnection m ->
+    ChainDepState (BlockProtocol blk) ->
+    blk ->
+    m blk
   resolveLeiosBlock _ _ blk = return blk
 
 {-------------------------------------------------------------------------------
