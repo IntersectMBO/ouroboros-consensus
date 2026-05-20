@@ -885,7 +885,7 @@ switchTo ::
   ChainDiff (Header blk) ->
   ReasonForSwitch' blk ->
   -- | Forker at the tip of the above ChainDiff
-  SuccessForkerAction m ExtLedgerState blk
+  SuccessForkerAction m blk
 switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \forker -> do
   traceWith addBlockTracer $
     ChangingSelection $
@@ -894,7 +894,7 @@ switchTo CDB{..} weights triggerPt chainDiff reason = MkSuccessForkerAction $ \f
   (curChain, newChain, events, prevTentativeHeader, newLedger, closeOrphanedStates) <- atomically $ do
     InternalChain curChain curChainWithTime <- readTVar cdbChain -- Not Query.getCurrentChain!
     curLedger <- getVolatileTip cdbLedgerDB
-    newLedger <- state <$> forkerTip forker
+    newLedger <- extLedgerState <$> forkerTip forker
     case Diff.apply curChain chainDiff of
       -- Impossible, as described in the docstring
       Nothing ->
@@ -1109,7 +1109,7 @@ chainSelection ::
   -- | The candidates
   NonEmpty (ChainDiff (Header blk), ReasonForSwitch' blk) ->
   -- | The continuation to run on succesfully validating a candidate.
-  (ChainDiff (Header blk) -> ReasonForSwitch' blk -> SuccessForkerAction m ExtLedgerState blk) ->
+  (ChainDiff (Header blk) -> ReasonForSwitch' blk -> SuccessForkerAction m blk) ->
   -- | The (valid) chain diff and corresponding LedgerDB that was selected,
   -- or 'Nothing' if there is no valid chain diff preferred over the current
   -- chain.
@@ -1285,7 +1285,7 @@ validateCandidate ::
   ChainDiff (Header blk) ->
   -- | Invariant: This non-empty list of headers is the list of headers in the ChainDiff above
   NonEmpty (Header blk) ->
-  SuccessForkerAction m ExtLedgerState blk ->
+  SuccessForkerAction m blk ->
   m (ValidationResult blk)
 validateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) neHeaders onSuccess =
   LedgerDB.validateFork

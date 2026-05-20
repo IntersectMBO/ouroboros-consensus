@@ -63,6 +63,7 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , takeVolatileSuffix
@@ -309,53 +310,53 @@ getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 
 allocInRegistryReadOnlyForkerAtPoint ::
   ( IOLike m
+  , LedgerSupportsProtocol blk
   , MonadLedger m blk
-  , IsLedger LedgerState blk
   ) =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
   ResourceRegistry m ->
-  m (Either LedgerDB.GetForkerError (ResourceKey m, Handle ExtLedgerState m blk))
+  m (Either LedgerDB.GetForkerError (ResourceKey m, ExtStateHandle m blk))
 allocInRegistryReadOnlyForkerAtPoint cdb tgt rr = do
   (rk, forker) <-
     allocate
       rr
       (\_ -> openReadOnlyForkerAtPoint cdb tgt)
-      (either (const $ pure ()) close)
+      (either (const $ pure ()) closeExt)
   case forker of
     Left err -> void (release rk) >> pure (Left err)
     Right v -> pure (Right (rk, v))
 
 openReadOnlyForkerAtPoint ::
   ( IOLike m
+  , LedgerSupportsProtocol blk
   , MonadLedger m blk
-  , IsLedger LedgerState blk
   ) =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
-  m (Either LedgerDB.GetForkerError (Handle ExtLedgerState m blk))
+  m (Either LedgerDB.GetForkerError (ExtStateHandle m blk))
 openReadOnlyForkerAtPoint CDB{..} = LedgerDB.openReadOnlyForker cdbLedgerDB
 
 withReadOnlyForkerAtPoint ::
   ( IOLike m
+  , LedgerSupportsProtocol blk
   , MonadLedger m blk
-  , IsLedger LedgerState blk
   ) =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
-  ( Either LedgerDB.GetForkerError (Handle ExtLedgerState m blk) ->
+  ( Either LedgerDB.GetForkerError (ExtStateHandle m blk) ->
     WithEarlyExit m r
   ) ->
   WithEarlyExit m r
 withReadOnlyForkerAtPoint cdb tgt =
   bracket
     (lift $ openReadOnlyForkerAtPoint cdb tgt)
-    (either (const $ pure ()) (lift . close))
+    (either (const $ pure ()) (lift . closeExt))
 
 getStatistics ::
   ( IOLike m
+  , LedgerSupportsProtocol blk
   , MonadLedger m blk
-  , IsLedger LedgerState blk
   ) =>
   ChainDbEnv m blk -> m Statistics
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB

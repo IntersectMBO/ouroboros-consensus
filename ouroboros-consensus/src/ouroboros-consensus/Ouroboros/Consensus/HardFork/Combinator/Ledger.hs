@@ -304,7 +304,9 @@ apply doValidate opts index (WrapLedgerConfig cfg) (Pair (I block) st) =
   UpdateLedger
 -------------------------------------------------------------------------------}
 
-instance ApplyBlock LedgerState (HardForkBlock xs) => UpdateLedger (HardForkBlock xs)
+instance
+  (CanHardFork xs, ApplyBlock LedgerState (HardForkBlock xs)) =>
+  UpdateLedger (HardForkBlock xs)
 
 {-------------------------------------------------------------------------------
   HasHardForkHistory

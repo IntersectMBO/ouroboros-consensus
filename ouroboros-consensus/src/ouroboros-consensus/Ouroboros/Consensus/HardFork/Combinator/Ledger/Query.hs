@@ -232,7 +232,7 @@ answerBlockQueryHelper
   qry
   forker = do
     let hardForkState = State.getHardForkState forker
-        ei = State.epochInfoLedger lcfg $ hcmap proxySingle (ledgerState . state) forker
+        ei = State.epochInfoLedger lcfg $ hcmap proxySingle (ledgerState . extLedgerState) forker
         cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
     f cfgs qry (hmap currentState $ Telescope.tip hardForkState)
    where
@@ -366,9 +366,9 @@ interpretQueryIfCurrentLookup = go
   go (_ :* cs) (QS qry) (S st) =
     first shiftMismatch <$> go cs qry st
   go _ (QZ qry) (S st) =
-    pure $ Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle (ledgerInfo . state) st)
+    pure $ Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle (ledgerInfo . extLedgerState) st)
   go _ (QS qry) (Z st) =
-    pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo $ state st)
+    pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo $ extLedgerState st)
 
 interpretQueryIfCurrentTraverse ::
   forall result xs m.
@@ -390,9 +390,9 @@ interpretQueryIfCurrentTraverse = go
   go (_ :* cs) (QS qry) (S st) =
     first shiftMismatch <$> go cs qry st
   go _ (QZ qry) (S st) =
-    pure $ Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle (ledgerInfo . state) st)
+    pure $ Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle (ledgerInfo . extLedgerState) st)
   go _ (QS qry) (Z st) =
-    pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo $ state st)
+    pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo $ extLedgerState st)
 
 {-------------------------------------------------------------------------------
   Any era queries
