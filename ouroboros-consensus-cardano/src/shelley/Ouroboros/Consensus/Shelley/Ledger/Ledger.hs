@@ -403,7 +403,7 @@ type instance LedgerTablesHandle m (ShelleyBlock proto era) = Handle m proto era
 
 data RangeQueryPrevious = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo SL.TxIn
 
-instance Monad m => MonadLedger m (ShelleyBlock proto era) where
+instance MonadLedger m (ShelleyBlock proto era) where
   data StateHandle m (ShelleyBlock proto era) = ShelleyStateHandle
     { stateRefState :: LedgerState (ShelleyBlock proto era)
     , stateRefHandle :: Handle m proto era

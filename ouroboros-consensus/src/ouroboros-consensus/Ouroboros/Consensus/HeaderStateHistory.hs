@@ -258,6 +258,7 @@ fromChain ::
   ( ApplyBlock ExtLedgerState blk
   , HasHardForkHistory blk
   , HasAnnTip blk
+  , Monad m
   , MonadLedger m blk
   ) =>
   TopLevelConfig blk ->

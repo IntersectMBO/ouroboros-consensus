@@ -195,7 +195,7 @@ instance IsLedger LedgerState ByronBlock where
                 byronLedgerTransition
             }
 
-instance Monad m => MonadLedger m ByronBlock where
+instance MonadLedger m ByronBlock where
   newtype StateHandle m ByronBlock = ByronStateHandle (LedgerState ByronBlock)
   newtype TickedStateHandle m ByronBlock =
     TickedByronStateHandle (Ticked LedgerState ByronBlock)

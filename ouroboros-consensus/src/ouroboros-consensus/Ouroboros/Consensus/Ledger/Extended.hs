@@ -168,18 +168,20 @@ tickedExtLedgerState ::
 tickedExtLedgerState (TickedExtStateHandle s lv h) =
   TickedExtLedgerState (tickedState s) lv h
 
-closeExt :: MonadLedger m blk => ExtStateHandle m blk -> m ()
+closeExt :: (Monad m, MonadLedger m blk) => ExtStateHandle m blk -> m ()
 closeExt (ExtStateHandle s _) = close s
 
-closeTickedExt :: MonadLedger m blk => TickedExtStateHandle m blk -> m ()
+closeTickedExt ::
+  (Monad m, MonadLedger m blk) => TickedExtStateHandle m blk -> m ()
 closeTickedExt (TickedExtStateHandle s _ _) = closeTicked s
 
 duplicateExt ::
-  MonadLedger m blk => ExtStateHandle m blk -> m (ExtStateHandle m blk)
+  (Monad m, MonadLedger m blk) =>
+  ExtStateHandle m blk -> m (ExtStateHandle m blk)
 duplicateExt (ExtStateHandle s h) = flip ExtStateHandle h <$> duplicate s
 
 duplicateTickedExt ::
-  MonadLedger m blk =>
+  (Monad m, MonadLedger m blk) =>
   TickedExtStateHandle m blk -> m (TickedExtStateHandle m blk)
 duplicateTickedExt (TickedExtStateHandle s lv h) =
   (\s' -> TickedExtStateHandle s' lv h) <$> duplicateTicked s

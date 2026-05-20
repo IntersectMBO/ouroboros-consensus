@@ -269,7 +269,8 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
 -- | Tick the 'LedgerState' using the given 'BlockSlot'.
 tickLedgerState ::
   forall m blk.
-  ( MonadLedger m blk
+  ( Monad m
+  , MonadLedger m blk
   , UpdateLedger blk
   , ValidateEnvelope blk
   ) =>
@@ -364,6 +365,7 @@ revalidateTxsFor ::
   forall m blk.
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , Monad m
   , MonadLedger m blk
   ) =>
   MempoolCapacityBytesOverride ->
@@ -440,6 +442,7 @@ computeSnapshot ::
   forall m blk.
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , Monad m
   , MonadLedger m blk
   ) =>
   LedgerConfig blk ->

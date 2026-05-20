@@ -287,7 +287,7 @@ type instance TickedHandle LedgerState = TickedStateHandle
 -- a 'StateHandle' or 'TickedStateHandle' (see
 -- "Ouroboros.Consensus.Ledger.Extended").
 type MonadLedger :: (Type -> Type) -> Type -> Constraint
-class Monad m => MonadLedger m blk where
+class MonadLedger m blk where
   -- | Opaque handle to an un-ticked ledger state plus its tables.
   data StateHandle m blk
 
@@ -337,14 +337,14 @@ class Monad m => MonadLedger m blk where
     TickedStateHandle m blk
 
   -- | Release the backing resources. Idempotent.
-  close :: StateHandle m blk -> m ()
-  closeTicked :: TickedStateHandle m blk -> m ()
+  close :: Monad m => StateHandle m blk -> m ()
+  closeTicked :: Monad m => TickedStateHandle m blk -> m ()
 
   -- | Produce an independent copy of the handle, with its own backing
   -- resources. Useful before applying a block that may or may not be
   -- committed.
-  duplicate :: StateHandle m blk -> m (StateHandle m blk)
-  duplicateTicked :: TickedStateHandle m blk -> m (TickedStateHandle m blk)
+  duplicate :: Monad m => StateHandle m blk -> m (StateHandle m blk)
+  duplicateTicked :: Monad m => TickedStateHandle m blk -> m (TickedStateHandle m blk)
 
   -- | Snapshot of operational statistics for the handle.
   getStats :: StateHandle m blk -> Statistics

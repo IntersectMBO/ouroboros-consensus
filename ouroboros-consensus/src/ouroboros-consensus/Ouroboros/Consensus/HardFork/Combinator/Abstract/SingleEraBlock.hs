@@ -89,7 +89,7 @@ class
   , Show (LedgerState blk)
   , Eq (LedgerState blk)
   , NoThunks (LedgerState blk)
-  , forall m. Monad m => MonadLedger m blk
+  , forall m. MonadLedger m blk
   ) =>
   SingleEraBlock blk
   where

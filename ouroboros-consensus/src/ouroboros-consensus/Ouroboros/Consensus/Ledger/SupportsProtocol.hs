@@ -77,6 +77,7 @@ class
 _lemma_ledgerViewForecastAt_applyChainTick ::
   ( LedgerSupportsProtocol blk
   , Eq (LedgerView (BlockProtocol blk))
+  , Monad m
   , MonadLedger m blk
   ) =>
   LedgerConfig blk ->

@@ -122,7 +122,7 @@ data instance Ticked LedgerState (HardForkBlock xs)
 
 type instance AuxLedgerEvent (HardForkBlock xs) = OneEraLedgerEvent xs
 
-instance (CanHardFork xs, Monad m) => MonadLedger m (HardForkBlock xs) where
+instance CanHardFork xs => MonadLedger m (HardForkBlock xs) where
   data StateHandle m (HardForkBlock xs) = HardForkStateHandle
     { hardForkStateHandlePerEra :: HardForkState (StateHandle m) xs
     }

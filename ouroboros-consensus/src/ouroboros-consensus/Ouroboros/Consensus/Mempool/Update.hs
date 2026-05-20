@@ -477,6 +477,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
 doRemoveTxs ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , Monad m
   , MonadLedger m blk
   ) =>
   MempoolCapacityBytesOverride ->
@@ -602,6 +603,7 @@ implSyncWithLedger projectResult mpEnv =
 doSyncWithLedger ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , Monad m
   , MonadLedger m blk
   ) =>
   MempoolCapacityBytesOverride ->
