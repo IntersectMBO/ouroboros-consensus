@@ -13,7 +13,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -100,7 +99,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (decode, encode)
-import Control.Arrow (left, second)
+import Control.Arrow (left)
 import qualified Control.Exception as Exception
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
@@ -564,35 +563,31 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
       , shelleyLedgerTransition
       , shelleyCumulativeTxBytes
       } =
-      appTick globals shelleyLedgerState slotNo <&> \l' ->
-        TickedShelleyLedgerState
-          { untickedShelleyLedgerTip = shelleyLedgerTip
-          , tickedShelleyLedgerTransition =
-              -- The voting resets each epoch
-              if isNewEpoch ei (shelleyTipSlotNo <$> shelleyLedgerTip) slotNo
-                then
-                  ShelleyTransitionInfo{shelleyAfterVoting = 0}
-                else
-                  shelleyLedgerTransition
-          , tickedShelleyLedgerState = l'
-          , -- The UTxO set is only mutated by block/transaction execution and
-            -- era translations, that is why we put empty tables here.
-            tickedShelleyLedgerTables = emptyLedgerTables
-          , tickedShelleyCumulativeTxBytes = shelleyCumulativeTxBytes
+      let
+        globals = shelleyLedgerGlobals cfg
+
+        ei :: EpochInfo Identity
+        ei = SL.epochInfoPure globals
+
+        (newEpochState, events) = case evs of
+          ComputeLedgerEvents -> SL.applyTick STS.EPReturn globals shelleyLedgerState slotNo
+          OmitLedgerEvents -> (SL.applyTickNoEvents globals shelleyLedgerState slotNo, [])
+       in
+        LedgerResult
+          { lrEvents = ShelleyLedgerEventTICK <$> events
+          , lrResult =
+              TickedShelleyLedgerState
+                { untickedShelleyLedgerTip = shelleyLedgerTip
+                , tickedShelleyLedgerTransition =
+                    -- The voting resets each epoch
+                    if isNewEpoch ei (shelleyTipSlotNo <$> shelleyLedgerTip) slotNo
+                      then ShelleyTransitionInfo{shelleyAfterVoting = 0}
+                      else shelleyLedgerTransition
+                , tickedShelleyLedgerState = newEpochState
+                , tickedShelleyLedgerTables = emptyLedgerTables
+                , tickedShelleyCumulativeTxBytes = shelleyCumulativeTxBytes
+                }
           }
-     where
-      globals = shelleyLedgerGlobals cfg
-
-      ei :: EpochInfo Identity
-      ei = SL.epochInfoPure globals
-
-      appTick =
-        uncurry (flip LedgerResult) ..: case evs of
-          ComputeLedgerEvents ->
-            second (map ShelleyLedgerEventTICK)
-              ..: SL.applyTick STS.EPReturn
-          OmitLedgerEvents ->
-            (,[]) ..: SL.applyTickNoEvents
 
 -- | All events emitted by the Shelley ledger API
 data ShelleyLedgerEvent era
