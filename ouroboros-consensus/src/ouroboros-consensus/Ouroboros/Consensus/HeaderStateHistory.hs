@@ -258,13 +258,11 @@ fromChain ::
   ( ApplyBlock ExtLedgerState blk
   , HasHardForkHistory blk
   , HasAnnTip blk
-  , Monad m
-  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
-  , BlockSupportsLedgerHD m LedgerState blk
+  , MonadLedger m blk
   ) =>
   TopLevelConfig blk ->
   -- | Initial ledger state
-  StateHandle m ExtLedgerState blk ->
+  Handle ExtLedgerState m blk ->
   Chain blk ->
   m (HeaderStateHistory blk)
 fromChain cfg initState chain = do

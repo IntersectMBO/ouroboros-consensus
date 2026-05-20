@@ -30,12 +30,11 @@ localStateQueryServer ::
   , BlockSupportsLedgerQuery blk
   , Query.ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
-  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
-  , BlockSupportsLedgerHD m LedgerState blk
+  , MonadLedger m blk
   ) =>
   ExtLedgerCfg blk ->
   ( Target (Point blk) ->
-    m (Either GetForkerError (ResourceKey m, StateHandle m ExtLedgerState blk))
+    m (Either GetForkerError (ResourceKey m, Handle ExtLedgerState m blk))
   ) ->
   LocalStateQueryServer blk (Point blk) (Query blk) m ()
 localStateQueryServer cfg getView =
@@ -64,7 +63,7 @@ localStateQueryServer cfg getView =
 
   acquired ::
     ResourceKey m ->
-    StateHandle m ExtLedgerState blk ->
+    Handle ExtLedgerState m blk ->
     ServerStAcquired blk (Point blk) (Query blk) m ()
   acquired rk forker =
     ServerStAcquired
@@ -77,7 +76,7 @@ localStateQueryServer cfg getView =
 
   handleQuery ::
     ResourceKey m ->
-    StateHandle m ExtLedgerState blk ->
+    Handle ExtLedgerState m blk ->
     Query blk result ->
     m (ServerStQuerying blk (Point blk) (Query blk) m () result)
   handleQuery rk forker query = do
