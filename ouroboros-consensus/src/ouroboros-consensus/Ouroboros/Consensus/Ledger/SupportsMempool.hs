@@ -128,7 +128,7 @@ class
   -- thing) and gets re-initialised when the mempool crosses an era
   -- boundary.
   --
-  -- TODO: pin down the cache lifecycle precisely (when is it constructed,
+  -- TODO @js: pin down the cache lifecycle precisely (when is it constructed,
   -- when is it updated, when is it discarded).
   data MempoolCache blk
 

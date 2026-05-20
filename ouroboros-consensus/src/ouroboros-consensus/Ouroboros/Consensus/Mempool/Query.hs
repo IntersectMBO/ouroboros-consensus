@@ -34,7 +34,7 @@ implGetSnapshotFor mpEnv slot ticked = do
       pure $ snapshotFromValidTxs txs (isTip is) (isSlotNo is)
     else
       -- Different state or different slot: start from a fresh cache.
-      -- TODO: the "same tip, different slot" case could reuse @isCache
+      -- TODO @js: the "same tip, different slot" case could reuse @isCache
       -- is@ to skip re-reading values.
       computeSnapshot cfg slot ticked (mkMempoolCache ticked) txs
  where
