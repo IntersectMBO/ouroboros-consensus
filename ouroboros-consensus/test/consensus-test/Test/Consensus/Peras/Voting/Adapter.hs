@@ -2,10 +2,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | Test properties relating Peras and voting committee types.
-module Test.Consensus.Peras.Voting.Committee
-  ( tests
-  ) where
+-- | Test properties of the adapters between Peras and voting committee types.
+module Test.Consensus.Peras.Voting.Adapter (tests) where
 
 import Data.Proxy (Proxy (..))
 import qualified Ouroboros.Consensus.Committee.Class as Committee
@@ -13,7 +11,7 @@ import Ouroboros.Consensus.Committee.EveryoneVotes (EveryoneVotes)
 import Ouroboros.Consensus.Committee.WFALS (WFALS)
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
-import Ouroboros.Consensus.Peras.Voting.Committee
+import Ouroboros.Consensus.Peras.Voting.Adapter
   ( PerasCertCompatibleWithVotingCommittee (..)
   , PerasVoteCompatibleWithVotingCommittee (..)
   )
