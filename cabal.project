@@ -44,6 +44,12 @@ if os (windows)
   constraints:
     bitvec -simd
 
+constraints:
+  tasty <1.5.4,
+  plutus-core ^>=1.61,
+  plutus-ledger-api ^>=1.61,
+  plutus-tx ^>=1.61
+
 -- ouroboros-network dependency after introducing `bracketKeepAlive` (PR#5371)
 source-repository-package
   type: git
