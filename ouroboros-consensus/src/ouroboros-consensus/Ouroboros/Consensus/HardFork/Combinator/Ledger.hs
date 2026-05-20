@@ -104,16 +104,10 @@ data HardForkLedgerError xs
 -------------------------------------------------------------------------------}
 
 instance CanHardFork xs => GetTip LedgerState (HardForkBlock xs) where
-  getTip =
-    castPoint
-      . State.getTip (castPoint . getTip)
-      . hardForkLedgerStatePerEra
+  getTip = State.getTip getTip . hardForkLedgerStatePerEra
 
 instance CanHardFork xs => GetTip (Ticked LedgerState) (HardForkBlock xs) where
-  getTip =
-    castPoint
-      . State.getTip (castPoint . getTip)
-      . tickedHardForkLedgerStatePerEra
+  getTip = State.getTip getTip . tickedHardForkLedgerStatePerEra
 
 {-------------------------------------------------------------------------------
   Ticking

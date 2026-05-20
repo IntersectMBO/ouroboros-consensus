@@ -30,7 +30,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
-import System.FS.API
+import System.FS.API hiding (Handle)
 
 -- | Operations needed to open and operate a LedgerDB V2
 class NoThunks (Resources m backend) => Backend m backend blk where

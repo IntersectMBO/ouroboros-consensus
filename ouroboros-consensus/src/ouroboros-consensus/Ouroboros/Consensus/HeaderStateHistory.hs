@@ -272,7 +272,7 @@ fromChain cfg initState chain = do
       initState
       . Chain.toOldestFirst
       $ chain
-  let anchorSnapshot NE.:| snapshots = fmap (mkHeaderStateWithTime (configLedger cfg) . state) chain'
+  let anchorSnapshot NE.:| snapshots = fmap (mkHeaderStateWithTime (configLedger cfg) . extLedgerState) chain'
   pure $ HeaderStateHistory (AS.fromOldestFirst anchorSnapshot snapshots)
 
 scanlM :: Monad m => (b -> a -> m b) -> b -> [a] -> m (NE.NonEmpty b)
