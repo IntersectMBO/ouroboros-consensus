@@ -36,6 +36,7 @@ import Data.Traversable (mapAccumM)
 import Data.Word (Word8)
 import GHC.Word (Word16)
 import Ouroboros.Consensus.Block (HeaderHash)
+import Ouroboros.Consensus.Block.Abstract (WithOrigin (..))
 import Ouroboros.Consensus.Block.RealPoint (RealPoint (..), toBytes32RealPoint)
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
@@ -92,13 +93,19 @@ data BlockWith32BytesHeaderHash
 type instance HeaderHash BlockWith32BytesHeaderHash = ShortByteString
 
 genBoostedBlock :: Gen PerasBoostedBlock
-genBoostedBlock = do
-  slotNo <- SlotNo <$> arbitrary
-  hash <- ShortByteString.pack <$> vectorOf 32 arbitrary
-  let bytes32realPoint =
-        toBytes32RealPoint @BlockWith32BytesHeaderHash $
-          RealPoint slotNo hash
-  pure (PerasBoostedBlock bytes32realPoint)
+genBoostedBlock = PerasBoostedBlock <$> genWithOrigin genBytes32RealPoint
+ where
+  genWithOrigin gen =
+    frequency
+      [ (1, pure Origin)
+      , (9, NotOrigin <$> gen)
+      ]
+  genBytes32RealPoint = do
+    slotNo <- SlotNo <$> arbitrary
+    hash <- ShortByteString.pack <$> vectorOf 32 arbitrary
+    pure $
+      toBytes32RealPoint @BlockWith32BytesHeaderHash $
+        RealPoint slotNo hash
 
 genSeatIndex :: Gen PerasSeatIndex
 genSeatIndex = PerasSeatIndex <$> arbitrary
