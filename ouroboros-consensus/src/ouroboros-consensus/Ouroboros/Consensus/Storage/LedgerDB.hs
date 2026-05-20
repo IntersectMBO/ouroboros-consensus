@@ -53,9 +53,8 @@ openDB ::
   , InspectLedger blk
   , HasCallStack
   , HasHardForkHistory blk
-  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
-  , BlockSupportsLedgerHD m LedgerState blk
-  , NoThunks (StateHandle m ExtLedgerState blk)
+  , MonadLedger m blk
+  , NoThunks (Handle ExtLedgerState m blk)
   , NoThunks (LedgerState blk)
   ) =>
   -- | Stateless initializaton arguments

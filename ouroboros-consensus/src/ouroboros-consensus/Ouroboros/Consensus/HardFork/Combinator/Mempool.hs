@@ -233,7 +233,7 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
 
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult m xs blk = ApplyResult
-  { arState :: StateHandle m (Ticked LedgerState) blk
+  { arState :: TickedStateHandle m blk
   , arCache :: MempoolCache blk
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
@@ -251,11 +251,11 @@ applyHelper ::
   SlotNo ->
   txIn (HardForkBlock xs) ->
   MempoolCache (HardForkBlock xs) ->
-  StateHandle m (Ticked LedgerState) (HardForkBlock xs) ->
+  TickedStateHandle m (HardForkBlock xs) ->
   ExceptT
     (HardForkApplyTxErr xs, MempoolCache (HardForkBlock xs))
     m
-    ( StateHandle m (Ticked LedgerState) (HardForkBlock xs)
+    ( TickedStateHandle m (HardForkBlock xs)
     , MempoolCache (HardForkBlock xs)
     , Validated (GenTx (HardForkBlock xs))
     )
@@ -354,7 +354,7 @@ applyHelper
       SingleEraBlock blk =>
       Index xs blk ->
       WrapLedgerConfig blk ->
-      Product MempoolCache (Product txIn (StateHandle m (Ticked LedgerState))) blk ->
+      Product MempoolCache (Product txIn (TickedStateHandle m)) blk ->
       ( ExceptT (HardForkApplyTxErr xs, MempoolCache (HardForkBlock xs)) m
           :.: ApplyResult m xs
       )

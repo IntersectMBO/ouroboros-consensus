@@ -219,12 +219,12 @@ answerBlockQueryHelper ::
   (MonadSTM m, CanHardFork xs) =>
   ( NP ExtLedgerCfg xs ->
     QueryIfCurrent xs footprint result ->
-    NS (StateHandle m ExtLedgerState) xs ->
+    NS (ExtStateHandle m) xs ->
     m (HardForkQueryResult xs result)
   ) ->
   ExtLedgerCfg (HardForkBlock xs) ->
   QueryIfCurrent xs footprint result ->
-  State.HardForkState (StateHandle m ExtLedgerState) xs ->
+  State.HardForkState (ExtStateHandle m) xs ->
   m (HardForkQueryResult xs result)
 answerBlockQueryHelper
   f
@@ -253,7 +253,7 @@ distribExtLedgerState (ExtLedgerState ledgerState headerState) =
 
 hfExtLedgerState ::
   (Monad m, All SingleEraBlock xs) =>
-  StateHandle m ExtLedgerState (HardForkBlock xs) -> State.HardForkState (StateHandle m ExtLedgerState) xs
+  Handle ExtLedgerState m (HardForkBlock xs) -> State.HardForkState (ExtStateHandle m) xs
 hfExtLedgerState (ExtStateHandle (HardForkStateHandle (State.HardForkState st)) headerState) =
   case matchTelescope (distribHeaderState headerState) st of
     Left _err -> error "impossible!"
@@ -351,7 +351,7 @@ interpretQueryIfCurrentLookup ::
   (MonadSTM m, CanHardFork xs) =>
   NP ExtLedgerCfg xs ->
   QueryIfCurrent xs QFLookupTables result ->
-  NS (StateHandle m ExtLedgerState) xs ->
+  NS (ExtStateHandle m) xs ->
   m (HardForkQueryResult xs result)
 interpretQueryIfCurrentLookup = go
  where
@@ -359,7 +359,7 @@ interpretQueryIfCurrentLookup = go
     All SingleEraBlock xs' =>
     NP ExtLedgerCfg xs' ->
     QueryIfCurrent xs' QFLookupTables result ->
-    NS (StateHandle m ExtLedgerState) xs' ->
+    NS (ExtStateHandle m) xs' ->
     m (HardForkQueryResult xs' result)
   go (c :* _) (QZ qry) (Z st) =
     Right <$> answerBlockQueryLookup c qry st
@@ -375,7 +375,7 @@ interpretQueryIfCurrentTraverse ::
   (MonadSTM m, CanHardFork xs) =>
   NP ExtLedgerCfg xs ->
   QueryIfCurrent xs QFTraverseTables result ->
-  NS (StateHandle m ExtLedgerState) xs ->
+  NS (ExtStateHandle m) xs ->
   m (HardForkQueryResult xs result)
 interpretQueryIfCurrentTraverse = go
  where
@@ -383,7 +383,7 @@ interpretQueryIfCurrentTraverse = go
     All SingleEraBlock xs' =>
     NP ExtLedgerCfg xs' ->
     QueryIfCurrent xs' QFTraverseTables result ->
-    NS (StateHandle m ExtLedgerState) xs' ->
+    NS (ExtStateHandle m) xs' ->
     m (HardForkQueryResult xs' result)
   go (c :* _) (QZ qry) (Z st) =
     Right <$> answerBlockQueryTraverse c qry st

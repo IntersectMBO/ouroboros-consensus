@@ -220,8 +220,8 @@ extendToSlot ::
   (CanHardFork xs, Monad m) =>
   HardForkLedgerConfig xs ->
   SlotNo ->
-  HardForkState (StateHandle m LedgerState) xs ->
-  m (HardForkState (StateHandle m LedgerState) xs)
+  HardForkState (StateHandle m) xs ->
+  m (HardForkState (StateHandle m) xs)
 extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st) =
   fmap HardForkState
     . Telescope.extend
@@ -249,7 +249,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     SingleEraBlock blk =>
     WrapPartialLedgerConfig blk ->
     K History.EraParams blk ->
-    Current (StateHandle m LedgerState) blk ->
+    Current (StateHandle m) blk ->
     (Maybe :.: K History.Bound) blk
   whenExtend pcfg (K eraParams) cur =
     Comp $
@@ -271,8 +271,8 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
   howExtend ::
     TranslateLedgerState m blk blk' ->
     History.Bound ->
-    Current (StateHandle m LedgerState) blk ->
-    m (K Past blk, Current (StateHandle m LedgerState) blk')
+    Current (StateHandle m) blk ->
+    m (K Past blk, Current (StateHandle m) blk')
   howExtend f currentEnd (Current currentStart currentState) = do
     cur' <- translateLedgerStateWith f (History.boundEpoch currentEnd) $ currentState
     pure

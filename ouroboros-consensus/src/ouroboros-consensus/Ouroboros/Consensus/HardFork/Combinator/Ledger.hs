@@ -27,6 +27,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger
     -- * Type family instances
   , Ticked (..)
   , StateHandle (..)
+  , TickedStateHandle (..)
 
     -- * Low-level API (exported for the benefit of testing)
   , AnnForecast (..)
@@ -127,29 +128,47 @@ data instance Ticked LedgerState (HardForkBlock xs)
 
 type instance AuxLedgerEvent (HardForkBlock xs) = OneEraLedgerEvent xs
 
-instance (CanHardFork xs, Monad m) => BlockSupportsLedgerHD m LedgerState (HardForkBlock xs) where
-  data StateHandle m LedgerState (HardForkBlock xs) = HardForkStateHandle
-    { hardForkStateHandlePerEra :: HardForkState (StateHandle m LedgerState) xs
+instance (CanHardFork xs, Monad m) => MonadLedger m (HardForkBlock xs) where
+  data StateHandle m (HardForkBlock xs) = HardForkStateHandle
+    { hardForkStateHandlePerEra :: HardForkState (StateHandle m) xs
+    }
+
+  data TickedStateHandle m (HardForkBlock xs) = HardForkTickedStateHandle
+    { tickedHardForkRefLedgerStateTransition :: !TransitionInfo
+    , tickedHardForkRefLedgerStatePerEra ::
+        !(HardForkState (TickedStateHandle m) xs)
     }
 
   state (HardForkStateHandle st) = HardForkLedgerState $ hcmap proxySingle state st
-  close (HardForkStateHandle st) = hcollapse <$> hsequence' (hcmap proxySingle (\x -> Comp $ close x >> pure (K ())) st)
+  tickedState (HardForkTickedStateHandle ti st) =
+    TickedHardForkLedgerState ti $ hcmap proxySingle tickedState st
+
+  close (HardForkStateHandle st) =
+    hcollapse <$> hsequence' (hcmap proxySingle (\x -> Comp $ close x >> pure (K ())) st)
+  closeTicked (HardForkTickedStateHandle _ st) =
+    hcollapse <$> hsequence' (hcmap proxySingle (\x -> Comp $ closeTicked x >> pure (K ())) st)
+
   getStats (HardForkStateHandle st) = hcollapse $ hcmap proxySingle (K . getStats) st
-  duplicate (HardForkStateHandle st) = HardForkStateHandle <$> hsequence' (hcmap proxySingle (Comp . duplicate) st)
-  mkStateHandle (HardForkLedgerState _st) _ = fillJavier -- TODO @js
+  getStatsTicked (HardForkTickedStateHandle _ st) =
+    hcollapse $ hcmap proxySingle (K . getStatsTicked) st
 
-instance (CanHardFork xs, Monad m) => BlockSupportsLedgerHD m (Ticked LedgerState) (HardForkBlock xs) where
-  data StateHandle m (Ticked LedgerState) (HardForkBlock xs) = HardForkTickedStateHandle
-    { tickedHardForkRefLedgerStateTransition :: !TransitionInfo
-    , tickedHardForkRefLedgerStatePerEra ::
-        !(HardForkState (StateHandle m (Ticked LedgerState)) xs)
-    }
+  duplicate (HardForkStateHandle st) =
+    HardForkStateHandle <$> hsequence' (hcmap proxySingle (Comp . duplicate) st)
+  duplicateTicked (HardForkTickedStateHandle ti st) =
+    HardForkTickedStateHandle ti <$> hsequence' (hcmap proxySingle (Comp . duplicateTicked) st)
 
-  state (HardForkTickedStateHandle ti st) = TickedHardForkLedgerState ti $ hcmap proxySingle state st
-  close (HardForkTickedStateHandle _ st) = hcollapse <$> hsequence' (hcmap proxySingle (\x -> Comp $ close x >> pure (K ())) st)
-  getStats (HardForkTickedStateHandle _ st) = hcollapse $ hcmap proxySingle (K . getStats) st
-  duplicate (HardForkTickedStateHandle ti st) = HardForkTickedStateHandle ti <$> hsequence' (hcmap proxySingle (Comp . duplicate) st)
-  mkStateHandle (TickedHardForkLedgerState _ti _st) _ = fillJavier -- TODO @js
+  -- TODO @js: HFC 'mkStateHandle' / 'mkTickedStateHandle' need a concrete
+  -- representation of @LedgerTablesHandle m (HardForkBlock xs)@ — likely an
+  -- NS of per-era handles — so we can pair each era's table handle with
+  -- its ledger state in the telescope. Deferred until that data instance
+  -- is pinned down.
+  mkStateHandle (HardForkLedgerState _st) _ = fillJavier
+  mkTickedStateHandle (TickedHardForkLedgerState _ti _st) _ = fillJavier
+
+  -- TODO @js: 'withState' / 'withTickedState' require pure replacement
+  -- of the in-memory portion across the telescope. Deferred.
+  withState _newSt _h = fillJavier
+  withTickedState _newSt _h = fillJavier
 
 instance CanHardFork xs => IsLedger LedgerState (HardForkBlock xs) where
   type LedgerErr LedgerState (HardForkBlock xs) = HardForkLedgerError xs
@@ -210,12 +229,10 @@ tickOne ::
   ComputeLedgerEvents ->
   Index xs blk ->
   WrapPartialLedgerConfig blk ->
-  StateHandle m LedgerState blk ->
+  StateHandle m blk ->
   ( m
       :.: LedgerResult (HardForkBlock xs)
-      :.: StateHandle
-            m
-            (Ticked LedgerState)
+      :.: TickedStateHandle m
   )
     blk
 tickOne ei slot evs sopIdx partialCfg st =
@@ -274,10 +291,10 @@ apply ::
   ComputeLedgerEvents ->
   Index xs blk ->
   WrapLedgerConfig blk ->
-  Product I (StateHandle m (Ticked LedgerState)) blk ->
+  Product I (TickedStateHandle m) blk ->
   ( ExceptT (HardForkLedgerError xs) m
       :.: LedgerResult (HardForkBlock xs)
-      :.: StateHandle m LedgerState
+      :.: StateHandle m
   )
     blk
 apply doValidate opts index (WrapLedgerConfig cfg) (Pair (I block) st) =
