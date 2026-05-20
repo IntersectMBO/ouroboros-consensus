@@ -6,7 +6,7 @@
 
 -- | Support for using concrete votes and certificates with multiple voting
 -- committee implementations.
-module Ouroboros.Consensus.Peras.Voting.Committee
+module Ouroboros.Consensus.Peras.Voting.Adapter
   ( -- * Peras support for multiple voting committee implementations
     PerasConversionError (..)
   , PerasVoteCompatibleWithVotingCommittee (..)
