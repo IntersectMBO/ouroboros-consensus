@@ -160,20 +160,6 @@ class
   -- these errors does not depend on the type of the block.
   type LedgerErr l blk :: Type
 
-  -- | The handle representing an un-ticked ledger view at @l blk@.
-  --
-  -- For 'LedgerState' this is 'StateHandle' (a data family on
-  -- 'MonadLedger'); for 'ExtLedgerState' this is the plain record
-  -- 'Ouroboros.Consensus.Ledger.Extended.ExtStateHandle'.
-  type Handle l :: (Type -> Type) -> Type -> Type
-
-  -- | The handle representing a ticked ledger view at @l blk@.
-  --
-  -- For 'LedgerState' this is 'TickedStateHandle' (a data family on
-  -- 'MonadLedger'); for 'ExtLedgerState' this is the plain record
-  -- 'Ouroboros.Consensus.Ledger.Extended.TickedExtStateHandle'.
-  type TickedHandle l :: (Type -> Type) -> Type -> Type
-
   -- | Apply "slot based" state transformations
   --
   -- When a block is applied to the ledger state, a number of things happen
@@ -258,6 +244,30 @@ data family LedgerState blk
 -- type parameter is necessary because the record fields close over @m@.
 type LedgerTablesHandle :: (Type -> Type) -> Type -> Type
 type family LedgerTablesHandle m blk
+
+-- | The handle representing a ledger view at @l blk@.
+--
+-- Standalone (not associated with 'IsLedger') because the family depends
+-- only on the ledger view @l@, not on the block — and 'IsLedger' is
+-- per-@(l, blk)@ pair. Having one canonical instance per @l@ matches the
+-- reality: @Handle LedgerState = StateHandle@ regardless of which block.
+--
+-- For 'LedgerState' this is 'StateHandle' (a data family on 'MonadLedger');
+-- for 'ExtLedgerState' this is the plain record
+-- 'Ouroboros.Consensus.Ledger.Extended.ExtStateHandle'.
+type Handle :: (Type -> Type) -> (Type -> Type) -> Type -> Type
+type family Handle l :: (Type -> Type) -> Type -> Type
+
+type instance Handle LedgerState = StateHandle
+type instance Handle (Ticked LedgerState) = TickedStateHandle
+
+-- | The handle representing a ticked ledger view at @l blk@.
+--
+-- See 'Handle'.
+type TickedHandle :: (Type -> Type) -> (Type -> Type) -> Type -> Type
+type family TickedHandle l :: (Type -> Type) -> Type -> Type
+
+type instance TickedHandle LedgerState = TickedStateHandle
 
 -- | How to manage the resource-bearing state of a ledger view of @blk@ in
 -- monad @m@.

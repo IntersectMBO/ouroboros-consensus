@@ -195,21 +195,28 @@ instance IsLedger LedgerState ByronBlock where
                 byronLedgerTransition
             }
 
-instance Monad m => BlockSupportsLedgerHD m LedgerState ByronBlock where
-  newtype StateHandle m LedgerState ByronBlock = ByronStateHandle (LedgerState ByronBlock)
-  state (ByronStateHandle s) = s
-  mkStateHandle st _ = ByronStateHandle st
-  close _ = pure ()
-  getStats _ = Statistics 0
-  duplicate a = pure a
+instance Monad m => MonadLedger m ByronBlock where
+  newtype StateHandle m ByronBlock = ByronStateHandle (LedgerState ByronBlock)
+  newtype TickedStateHandle m ByronBlock =
+    TickedByronStateHandle (Ticked LedgerState ByronBlock)
 
-instance Monad m => BlockSupportsLedgerHD m (Ticked LedgerState) ByronBlock where
-  newtype StateHandle m (Ticked LedgerState) ByronBlock = TickedByronStateHandle (Ticked LedgerState ByronBlock)
-  state (TickedByronStateHandle s) = s
-  mkStateHandle st _ = TickedByronStateHandle st
+  state (ByronStateHandle s) = s
+  tickedState (TickedByronStateHandle s) = s
+
+  mkStateHandle st _ = ByronStateHandle st
+  mkTickedStateHandle st _ = TickedByronStateHandle st
+
+  withState s _ = ByronStateHandle s
+  withTickedState s _ = TickedByronStateHandle s
+
   close _ = pure ()
-  getStats _ = Statistics 0
+  closeTicked _ = pure ()
+
   duplicate a = pure a
+  duplicateTicked a = pure a
+
+  getStats _ = Statistics 0
+  getStatsTicked _ = Statistics 0
 
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces

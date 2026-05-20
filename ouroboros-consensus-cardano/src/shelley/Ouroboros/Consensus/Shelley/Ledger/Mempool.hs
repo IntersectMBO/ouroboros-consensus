@@ -108,7 +108,7 @@ import GHC.Natural (Natural)
 import Lens.Micro
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Abstract hiding (Handle, TickedHandle)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Shelley.Eras
@@ -339,11 +339,11 @@ applyShelleyTx ::
   SlotNo ->
   GenTx (ShelleyBlock proto era) ->
   MempoolCache (ShelleyBlock proto era) ->
-  StateHandle m (Ticked LedgerState) (ShelleyBlock proto era) ->
+  TickedStateHandle m (ShelleyBlock proto era) ->
   ExceptT
     (ApplyTxErr (ShelleyBlock proto era))
     m
-    ( StateHandle m (Ticked LedgerState) (ShelleyBlock proto era)
+    ( TickedStateHandle m (ShelleyBlock proto era)
     , MempoolCache (ShelleyBlock proto era)
     , Validated (GenTx (ShelleyBlock proto era))
     )
@@ -361,7 +361,7 @@ applyShelleyTx cfg wti slot gtx cache st0 = do
       pure (thisTxReadUTxO, cacheAllTxsReadUTxO, cacheAllTxsFinalUTxO)
 
   let newEpochState :: SL.NewEpochState era
-      newEpochState = tickedShelleyLedgerState (state st0) & slUtxoL .~ curUTxO
+      newEpochState = tickedShelleyLedgerState (tickedState st0) & slUtxoL .~ curUTxO
 
   (newLedgerState, vtx) <-
     case runExcept $
@@ -401,11 +401,11 @@ reapplyShelleyTx ::
   SlotNo ->
   Validated (GenTx (ShelleyBlock proto era)) ->
   MempoolCache (ShelleyBlock proto era) ->
-  StateHandle m (Ticked LedgerState) (ShelleyBlock proto era) ->
+  TickedStateHandle m (ShelleyBlock proto era) ->
   ExceptT
     (ApplyTxErr (ShelleyBlock proto era), MempoolCache (ShelleyBlock proto era))
     m
-    (StateHandle m (Ticked LedgerState) (ShelleyBlock proto era), MempoolCache (ShelleyBlock proto era))
+    (TickedStateHandle m (ShelleyBlock proto era), MempoolCache (ShelleyBlock proto era))
 reapplyShelleyTx cfg slot vgtx cache st0 = do
   -- Get the UTxO for this transaction, the UTxO for all transactions in the
   -- mempool and the current UTxO after applying the diffs of the other
@@ -417,7 +417,7 @@ reapplyShelleyTx cfg slot vgtx cache st0 = do
       pure (thisTxReadUTxO, cacheAllTxsReadUTxO, cacheAllTxsFinalUTxO)
 
   let newEpochState :: SL.NewEpochState era
-      newEpochState = tickedShelleyLedgerState (state st0) & slUtxoL .~ curUTxO
+      newEpochState = tickedShelleyLedgerState (tickedState st0) & slUtxoL .~ curUTxO
 
   newLedgerState <-
     case SL.reapplyTx
@@ -425,6 +425,9 @@ reapplyShelleyTx cfg slot vgtx cache st0 = do
       (SL.mkMempoolEnv newEpochState slot)
       (SL.mkMempoolState newEpochState)
       vtx of
+      -- TODO @js: per Layer 2 'reapplyTx' contract the error case must
+      -- return the cache with the failing tx's contributions removed.
+      -- Compute that here once the cache update mechanics are settled.
       Left err -> throwError (err, fillJavier)
       Right v -> pure v
 
@@ -442,8 +445,8 @@ reapplyShelleyTx cfg slot vgtx cache st0 = do
 theLedgerLens ::
   Functor f =>
   (SL.LedgerState era -> f (SL.LedgerState era)) ->
-  StateHandle m (Ticked LedgerState) (ShelleyBlock proto era) ->
-  f (StateHandle m (Ticked LedgerState) (ShelleyBlock proto era))
+  TickedStateHandle m (ShelleyBlock proto era) ->
+  f (TickedStateHandle m (ShelleyBlock proto era))
 theLedgerLens f x =
   (\y -> x{tickedStateHandleState = (tickedStateHandleState x){tickedShelleyLedgerState = y}})
     <$> SL.overNewEpochState f (tickedShelleyLedgerState $ tickedStateHandleState x)

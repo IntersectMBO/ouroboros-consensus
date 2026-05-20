@@ -303,9 +303,13 @@ translateLedgerStateByronToShelleyWrapper =
             ShelleyStateHandle st <$> mkHandle st
         }
 
+-- TODO @js: depends on the Shelley LSM/InMemory backend being restored
+-- (it needs to allocate a fresh table handle from a Shelley state).
 mkHandle :: LedgerState (ShelleyBlock (TPraos c) ShelleyEra) -> m (Handle m (TPraos c) ShelleyEra)
 mkHandle = fillJavier
 
+-- TODO @js: era-to-era table handle translation. Depends on the backend
+-- providing a way to migrate UTxO entries across Shelley eras.
 castHandle ::
   LedgerState (ShelleyBlock proto era) ->
   Handle m proto' (SL.PreviousEra era) ->

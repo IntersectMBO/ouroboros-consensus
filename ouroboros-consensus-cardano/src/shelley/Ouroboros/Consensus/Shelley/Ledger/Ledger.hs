@@ -112,7 +112,7 @@ import Ouroboros.Consensus.HardFork.History.EraParams (EraParams (..))
 import Ouroboros.Consensus.HardFork.History.Util
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Abstract hiding (Handle, TickedHandle)
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
@@ -399,33 +399,38 @@ data Handle m proto era = Handle
   , getStatsHandle :: Statistics
   }
 
-type instance LedgerTables m (ShelleyBlock proto era) = Handle m proto era
+type instance LedgerTablesHandle m (ShelleyBlock proto era) = Handle m proto era
 
 data RangeQueryPrevious = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo SL.TxIn
 
-instance Monad m => BlockSupportsLedgerHD m LedgerState (ShelleyBlock proto era) where
-  data StateHandle m LedgerState (ShelleyBlock proto era) = ShelleyStateHandle
+instance Monad m => MonadLedger m (ShelleyBlock proto era) where
+  data StateHandle m (ShelleyBlock proto era) = ShelleyStateHandle
     { stateRefState :: LedgerState (ShelleyBlock proto era)
     , stateRefHandle :: Handle m proto era
     }
 
-  state = stateRefState
-  close = closeHandle . stateRefHandle
-  duplicate (ShelleyStateHandle s h) = ShelleyStateHandle s <$> dupl h
-  getStats = getStatsHandle . stateRefHandle
-  mkStateHandle = ShelleyStateHandle
-
-instance Monad m => BlockSupportsLedgerHD m (Ticked LedgerState) (ShelleyBlock proto era) where
-  data StateHandle m (Ticked LedgerState) (ShelleyBlock proto era) = TickedShelleyStateHandle
+  data TickedStateHandle m (ShelleyBlock proto era) = TickedShelleyStateHandle
     { tickedStateHandleState :: Ticked LedgerState (ShelleyBlock proto era)
     , tickedStateHandleHandle :: Handle m proto era
     }
 
-  state = tickedStateHandleState
-  close = closeHandle . tickedStateHandleHandle
-  duplicate (TickedShelleyStateHandle s h) = TickedShelleyStateHandle s <$> dupl h
-  getStats = getStatsHandle . tickedStateHandleHandle
-  mkStateHandle = TickedShelleyStateHandle
+  state = stateRefState
+  tickedState = tickedStateHandleState
+
+  mkStateHandle = ShelleyStateHandle
+  mkTickedStateHandle = TickedShelleyStateHandle
+
+  withState s h = h{stateRefState = s}
+  withTickedState s h = h{tickedStateHandleState = s}
+
+  close = closeHandle . stateRefHandle
+  closeTicked = closeHandle . tickedStateHandleHandle
+
+  duplicate (ShelleyStateHandle s h) = ShelleyStateHandle s <$> dupl h
+  duplicateTicked (TickedShelleyStateHandle s h) = TickedShelleyStateHandle s <$> dupl h
+
+  getStats = getStatsHandle . stateRefHandle
+  getStatsTicked = getStatsHandle . tickedStateHandleHandle
 
 instance ShelleyBasedEra era => IsLedger LedgerState (ShelleyBlock proto era) where
   type LedgerErr LedgerState (ShelleyBlock proto era) = SL.BlockTransitionError era
@@ -543,13 +548,13 @@ applyHelper ::
   ) ->
   LedgerConfig (ShelleyBlock proto era) ->
   ShelleyBlock proto era ->
-  StateHandle m (Ticked LedgerState) (ShelleyBlock proto era) ->
+  TickedStateHandle m (ShelleyBlock proto era) ->
   ExceptT
     (SL.BlockTransitionError era)
     m
     ( LedgerResult
         (ShelleyBlock proto era)
-        (StateHandle m LedgerState (ShelleyBlock proto era))
+        (StateHandle m (ShelleyBlock proto era))
     )
 applyHelper f cfg blk stBefore = do
   let TickedShelleyStateHandle

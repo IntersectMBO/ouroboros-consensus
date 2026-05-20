@@ -194,13 +194,15 @@ getStatsTickedExt (TickedExtStateHandle s _ _) = getStatsTicked s
 instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState) blk where
   getTip = getTip . tickedLedgerState
 
+type instance Handle ExtLedgerState = ExtStateHandle
+type instance Handle (Ticked ExtLedgerState) = TickedExtStateHandle
+type instance TickedHandle ExtLedgerState = TickedExtStateHandle
+
 instance
   LedgerSupportsProtocol blk =>
   IsLedger ExtLedgerState blk
   where
   type LedgerErr ExtLedgerState blk = ExtValidationError blk
-  type Handle ExtLedgerState = ExtStateHandle
-  type TickedHandle ExtLedgerState = TickedExtStateHandle
 
   applyChainTickLedgerResult evs cfg slot (ExtStateHandle ledger header) = do
     ledgerResult <- applyChainTickLedgerResult evs lcfg slot ledger

@@ -940,8 +940,13 @@ protocolInfoCardano paramsCardano
     initHeaderState :: HeaderState (CardanoBlock c)
     initLedgerState :: LedgerState (CardanoBlock c)
     ExtLedgerState initLedgerState initHeaderState =
-      fillJavier -- injectInitialExtLedgerState cfg $
-      -- initExtLedgerStateByron
+      -- TODO @js: this fillJavier was 'injectInitialExtLedgerState cfg
+      -- initExtLedgerStateByron'. The new 'injectInitialExtLedgerState'
+      -- returns @m (Handle ExtLedgerState m (CardanoBlock c))@, but the
+      -- code below destructures an 'ExtLedgerState'. Restoring this
+      -- needs the polymorphic state projection on 'Handle l m blk' that
+      -- was deferred in Layer 4 review point 3.
+      fillJavier
     registerAny :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
     registerAny =
       hcmap (Proxy @IsShelleyBlock) injectIntoTestState $

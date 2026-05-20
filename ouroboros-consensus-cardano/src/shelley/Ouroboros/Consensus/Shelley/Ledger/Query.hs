@@ -75,7 +75,7 @@ import Ouroboros.Consensus.Protocol.Praos.Common
 import qualified Ouroboros.Consensus.Shelley.Eras as SE
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
-import Ouroboros.Consensus.Shelley.Ledger.Ledger
+import Ouroboros.Consensus.Shelley.Ledger.Ledger hiding (Handle)
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
   ( ShelleyNodeToClientVersion (..)
   , ledgerPeerSnapshotSupportsSRV
@@ -1152,7 +1152,7 @@ answerShelleyLookupQueries ::
   ) =>
   ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFLookupTables result ->
-  StateHandle m ExtLedgerState (ShelleyBlock proto era) ->
+  Handle ExtLedgerState m (ShelleyBlock proto era) ->
   m result
 answerShelleyLookupQueries cfg q forker@(ExtStateHandle ref _) =
   case q of
@@ -1183,7 +1183,7 @@ answerShelleyTraversingQueries ::
   Monad m =>
   ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
-  StateHandle m ExtLedgerState (ShelleyBlock proto era) ->
+  Handle ExtLedgerState m (ShelleyBlock proto era) ->
   m result
 answerShelleyTraversingQueries cfg q forker@(ExtStateHandle ref _) = case q of
   GetUTxOByAddress addr -> loop (filterGetUTxOByAddressOne addr) NoPreviousQuery emptyUtxo
