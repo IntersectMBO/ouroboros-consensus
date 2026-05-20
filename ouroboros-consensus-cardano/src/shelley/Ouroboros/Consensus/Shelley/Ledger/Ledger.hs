@@ -32,8 +32,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , castShelleyTip
   , shelleyLedgerTipPoint
   , shelleyTipToPoint
-  , Handle (..)
-  , RangeQueryPrevious (..)
   , StateHandle (..)
   , TickedStateHandle (..)
 
@@ -104,6 +102,7 @@ import Lens.Micro
 import Lens.Micro.Extras (view)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Cardano.InMemory
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -117,7 +116,6 @@ import Ouroboros.Consensus.Ledger.Abstract hiding (Handle, TickedHandle)
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
-import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -347,12 +345,6 @@ instance MemPack BigEndianTxIn where
   unpackM = do
     BigEndianTxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
 
-slUtxoL :: Lens' (SL.NewEpochState era) (SL.UTxO era)
-slUtxoL =
-  SL.nesEsL
-    . SL.esLStateL
-    . SL.lsUTxOStateL
-    . SL.utxoL
 
 {-------------------------------------------------------------------------------
   GetTip
@@ -389,30 +381,17 @@ untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
 type instance AuxLedgerEvent (ShelleyBlock proto era) = ShelleyLedgerEvent era
 
-data Handle m proto era = Handle
-  { readTxOuts :: Set SL.TxIn -> m (SL.UTxO era)
-  , duplWithDiffs :: Diff.Diff SL.TxIn (Core.TxOut era) -> m (Handle m proto era)
-  , stateWith :: SL.UTxO era -> m (LedgerState (ShelleyBlock proto era))
-  , dupl :: m (Handle m proto era)
-  , readTxOutsRange :: RangeQueryPrevious -> m (SL.UTxO era, Maybe SL.TxIn)
-  , applyDiff :: Diff.Diff SL.TxIn (Core.TxOut era) -> m ()
-  , closeHandle :: m ()
-  , getStatsHandle :: Statistics
-  }
-
-type instance LedgerTablesHandle m (ShelleyBlock proto era) = Handle m proto era
-
-data RangeQueryPrevious = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo SL.TxIn
+type instance LedgerTablesHandle m (ShelleyBlock proto era) = TablesHandle m era
 
 instance MonadLedger m (ShelleyBlock proto era) where
   data StateHandle m (ShelleyBlock proto era) = ShelleyStateHandle
     { stateRefState :: LedgerState (ShelleyBlock proto era)
-    , stateRefHandle :: Handle m proto era
+    , stateRefHandle :: TablesHandle m era
     }
 
   data TickedStateHandle m (ShelleyBlock proto era) = TickedShelleyStateHandle
     { tickedStateHandleState :: Ticked LedgerState (ShelleyBlock proto era)
-    , tickedStateHandleHandle :: Handle m proto era
+    , tickedStateHandleHandle :: TablesHandle m era
     }
 
   state = stateRefState
@@ -427,8 +406,8 @@ instance MonadLedger m (ShelleyBlock proto era) where
   close = closeHandle . stateRefHandle
   closeTicked = closeHandle . tickedStateHandleHandle
 
-  duplicate (ShelleyStateHandle s h) = ShelleyStateHandle s <$> dupl h
-  duplicateTicked (TickedShelleyStateHandle s h) = TickedShelleyStateHandle s <$> dupl h
+  duplicate (ShelleyStateHandle s h) = ShelleyStateHandle s <$> duplicateHandle h
+  duplicateTicked (TickedShelleyStateHandle s h) = TickedShelleyStateHandle s <$> duplicateHandle h
 
   getStats = getStatsHandle . stateRefHandle
   getStatsTicked = getStatsHandle . tickedStateHandleHandle
@@ -561,27 +540,22 @@ applyHelper f cfg blk stBefore = do
   let TickedShelleyStateHandle
         TickedShelleyLedgerState
           { tickedShelleyLedgerTransition
-          , tickedShelleyLedgerState
           }
         h = stBefore
 
-  txouts <- lift $ readTxOuts h (getBlockKeySets blk)
+  tickedShelleyLedgerState' <- lift $ readTxOuts h (getBlockKeySets blk)
   LedgerResult evs st' <-
     ExceptT $
       pure $
         f
           globals
-          (tickedShelleyLedgerState & slUtxoL .~ txouts)
+          tickedShelleyLedgerState'
           ( let b = shelleyBlockRaw blk
                 h' = mkHeaderView (SL.blockHeader b)
              in SL.Block h' (SL.blockBody b)
           )
 
-  let txouts' = st' ^. slUtxoL
-
-  let diffs = Diff.diff (SL.unUTxO txouts) (SL.unUTxO txouts')
-
-  h' <- lift $ duplWithDiffs h diffs
+  h' <- lift $ duplWithDiffs h tickedShelleyLedgerState' st'
 
   pure $
     LedgerResult evs $

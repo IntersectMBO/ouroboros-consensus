@@ -62,6 +62,7 @@ import Data.Typeable (Typeable)
 import Lens.Micro
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Cardano.InMemory
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import Ouroboros.Consensus.HeaderValidation
@@ -75,7 +76,7 @@ import Ouroboros.Consensus.Protocol.Praos.Common
 import qualified Ouroboros.Consensus.Shelley.Eras as SE
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
-import Ouroboros.Consensus.Shelley.Ledger.Ledger hiding (Handle)
+import Ouroboros.Consensus.Shelley.Ledger.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
   ( ShelleyNodeToClientVersion (..)
   , ledgerPeerSnapshotSupportsSRV
@@ -1156,8 +1157,13 @@ answerShelleyLookupQueries ::
   m result
 answerShelleyLookupQueries cfg q forker@(ExtStateHandle ref _) =
   case q of
-    GetUTxOByTxIn txins ->
-      answerGetUtxOByTxIn txins
+    GetUTxOByTxIn txins -> do
+      SL.UTxO values <- readTxOutByTxIn (stateRefHandle ref) txins
+      pure $
+        SL.UTxO $
+          Map.filterWithKey
+            (\k _v -> k `Set.member` txins)
+            values
     GetCBOR q' ->
       -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
       -- as the @GetCBOR@ query already is about opportunistically assuming
@@ -1165,17 +1171,6 @@ answerShelleyLookupQueries cfg q forker@(ExtStateHandle ref _) =
       -- @GetCBOR@ Haddocks.
       mkSerialised (encodeShelleyResult maxBound q')
         <$> answerShelleyLookupQueries cfg q' forker
- where
-  answerGetUtxOByTxIn ::
-    Set.Set SL.TxIn ->
-    m (SL.UTxO era)
-  answerGetUtxOByTxIn txins = do
-    SL.UTxO values <- readTxOuts (stateRefHandle ref) txins
-    pure $
-      SL.UTxO $
-        Map.filterWithKey
-          (\k _v -> k `Set.member` txins)
-          values
 
 answerShelleyTraversingQueries ::
   forall proto era m result.
@@ -1186,8 +1181,17 @@ answerShelleyTraversingQueries ::
   Handle ExtLedgerState m (ShelleyBlock proto era) ->
   m result
 answerShelleyTraversingQueries cfg q forker@(ExtStateHandle ref _) = case q of
-  GetUTxOByAddress addr -> loop (filterGetUTxOByAddressOne addr) NoPreviousQuery emptyUtxo
-  GetUTxOWhole -> loop (const True) NoPreviousQuery emptyUtxo
+  GetUTxOByAddress addr ->
+    readUTxOFiltered (stateRefHandle ref) $
+      let
+        compactAddrSet = Set.map compactAddr addr
+        checkAddr out =
+          case out ^. SL.addrEitherTxOutL of
+            Left address -> address `Set.member` addr
+            Right cAddr -> cAddr `Set.member` compactAddrSet
+       in
+        checkAddr
+  GetUTxOWhole -> readUTxOWhole (stateRefHandle ref)
   GetCBOR q' ->
     -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
     -- as the @GetCBOR@ query already is about opportunistically assuming
@@ -1195,44 +1199,3 @@ answerShelleyTraversingQueries cfg q forker@(ExtStateHandle ref _) = case q of
     -- @GetCBOR@ Haddocks.
     mkSerialised (encodeShelleyResult maxBound q')
       <$> answerShelleyTraversingQueries cfg q' forker
- where
-  filterGetUTxOByAddressOne ::
-    Set Addr ->
-    LC.TxOut era ->
-    Bool
-  filterGetUTxOByAddressOne addrs =
-    let
-      compactAddrSet = Set.map compactAddr addrs
-      checkAddr out =
-        case out ^. SL.addrEitherTxOutL of
-          Left addr -> addr `Set.member` addrs
-          Right cAddr -> cAddr `Set.member` compactAddrSet
-     in
-      checkAddr
-
-  emptyUtxo = SL.UTxO Map.empty
-
-  combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
-
-  partial ::
-    (LC.TxOut era -> Bool) ->
-    SL.UTxO era ->
-    Map SL.TxIn (LC.TxOut era)
-  partial queryPredicate (SL.UTxO vs) =
-    Map.mapMaybe
-      ( \v ->
-          if queryPredicate v
-            then Just v
-            else Nothing
-      )
-      vs
-
-  loop queryPredicate !prev !acc = do
-    (extValues, k) <- readTxOutsRange (stateRefHandle ref) prev
-    case k of
-      Nothing -> pure acc
-      Just k' ->
-        loop
-          queryPredicate
-          (PreviousQueryWasUpTo k')
-          (combUtxo acc $ partial queryPredicate extValues)
