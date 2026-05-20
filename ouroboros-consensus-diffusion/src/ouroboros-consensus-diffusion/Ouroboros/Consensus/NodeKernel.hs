@@ -314,8 +314,8 @@ initNodeKernel
                 , GSM.getChainSyncStates = fmap cschState <$> cschcMap varChainSyncHandles
                 , GSM.getCurrentSelection = do
                     headers <- ChainDB.getCurrentChainWithTime chainDB
-                    extLedgerState <- ChainDB.getCurrentLedger chainDB
-                    return (headers, ledgerState extLedgerState)
+                    lstate <- ledgerState <$> ChainDB.getCurrentLedger chainDB
+                    return (headers, lstate)
                 , GSM.minCaughtUpDuration = gsmMinCaughtUpDuration
                 , GSM.setCaughtUpPersistentMark = \upd ->
                     (if upd then GSM.touchMarkerFile else GSM.removeMarkerFile)
@@ -602,7 +602,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
               forecastFor
                 ( ledgerViewForecastAt
                     (configLedger cfg)
-                    (ledgerState $ state unticked)
+                    (ledgerState $ extLedgerState unticked)
                 )
                 currentSlot of
               Left err -> do
@@ -628,7 +628,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                   (configConsensus cfg)
                   ledgerView
                   currentSlot
-                  (headerStateChainDep (headerState $ state unticked))
+                  (headerStateChainDep (headerState $ extLedgerState unticked))
 
           -- Check if we are the leader
           proof <- do
@@ -691,7 +691,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           let (txs, txssz) =
                 snapshotTake mempoolSnapshot $
                   blockCapacityTxMeasure (configLedger cfg) $
-                    state tickedLedgerState
+                    tickedState tickedLedgerState
           -- NB respect the capacity of the ledger state we're extending,
           -- which is /not/ 'snapshotLedgerState'
 
@@ -706,8 +706,8 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             , txssz
             , proof
             , snapshotMempoolSize mempoolSnapshot
-            , state tickedLedgerState
-            , ledgerTipPoint (ledgerState $ state unticked)
+            , tickedState tickedLedgerState
+            , ledgerTipPoint (ledgerState $ extLedgerState unticked)
             )
 
     -- Actually produce the block
