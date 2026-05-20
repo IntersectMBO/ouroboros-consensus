@@ -41,6 +41,7 @@ module Ouroboros.Consensus.Byron.Ledger.Ledger
   , LedgerState (..)
   , Ticked (..)
   , StateHandle (..)
+  , TickedStateHandle (..)
 
     -- * Auxiliary
   , validationErrorImpossible

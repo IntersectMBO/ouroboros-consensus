@@ -35,6 +35,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , Handle (..)
   , RangeQueryPrevious (..)
   , StateHandle (..)
+  , TickedStateHandle (..)
 
     -- * Ledger config
   , ShelleyLedgerConfig (..)
@@ -576,12 +577,7 @@ applyHelper f cfg blk stBefore = do
              in SL.Block h' (SL.blockBody b)
           )
 
-  let txouts' =
-        st'
-          ^. SL.nesEsL
-            . SL.esLStateL
-            . SL.lsUTxOStateL
-            . SL.utxoL
+  let txouts' = st' ^. slUtxoL
 
   let diffs = Diff.diff (SL.unUTxO txouts) (SL.unUTxO txouts')
 

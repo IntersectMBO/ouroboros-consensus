@@ -238,14 +238,36 @@ instance
 
   txInvariant = const True
 
-  applyTx = applyShelleyTx
+  -- TODO @js: pre-read the UTxO inputs for the tx into the cache so the
+  -- subsequent pure 'applyTx' / 'txMeasure' calls don't have to. The
+  -- current 'applyShelleyTx' still does the read inline; once that has
+  -- been split out, populate this method properly.
+  addToCache _ts _tx c = pure c
 
-  reapplyTx = reapplyShelleyTx
+  -- TODO @js: see Layer 2 note on 'reapplyTx' error contract — the
+  -- cache returned on error must drop the failing tx's contributions.
+  -- Centralising that here will also remove the 'fillJavier' in
+  -- 'reapplyShelleyTx'.
+  forgetTxFromCache _vtx c = c
+
+  -- TODO @js: 'applyShelleyTx' / 'reapplyShelleyTx' are 'ExceptT m', but
+  -- the new shape is pure ('Except'). Splitting the UTxO read out into
+  -- 'addToCache' (done lazily/idempotently before apply) lets the apply
+  -- step be pure; until that split lands, leave these stubbed.
+  applyTx = fillJavier
+  reapplyTx = fillJavier
 
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
 
   mkMempoolApplyTxError _tlst txt =
     ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)
+
+  -- TODO @js: move the per-era body from the 'TxLimits' instances below
+  -- (one per Shelley era) into this method. The per-era 'txMeasure'
+  -- consults the ticked state for protocol params and UTxO; the new
+  -- pure shape consults the 'MempoolCache' instead, so the per-era
+  -- helpers also need adapting to read from the cache.
+  txMeasure = fillJavier
 
 getTransactionKeySets ::
   ShelleyCompatible proto era => GenTx (ShelleyBlock proto era) -> Set SL.TxIn
@@ -608,19 +630,16 @@ wrapCBORinCBOROverhead size =
 instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) where
   type TxMeasure (ShelleyBlock p ShelleyEra) = IgnoringOverflow ByteSize32
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
 
 instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) where
   type TxMeasure (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
 
 instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
   type TxMeasure (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
 
 -----
@@ -752,7 +771,6 @@ instance
   where
   type TxMeasure (ShelleyBlock p AlonzoEra) = AlonzoMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
   blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
 
 -----
@@ -895,7 +913,6 @@ instance
   where
   type TxMeasure (ShelleyBlock p BabbageEra) = AlonzoMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
   blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
 
 instance
@@ -904,7 +921,6 @@ instance
   where
   type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
   blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
 
 instance
@@ -912,6 +928,5 @@ instance
   TxLimits (ShelleyBlock p DijkstraEra)
   where
   type TxMeasure (ShelleyBlock p DijkstraEra) = DijkstraMeasure
-  txMeasure _cfg st tx = runValidation $ txMeasureDijkstra st tx
   blockCapacityTxMeasure _cfg = blockCapacityDijkstraMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
