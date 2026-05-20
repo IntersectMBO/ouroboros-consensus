@@ -276,7 +276,7 @@ type LedgerDB :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 data LedgerDB m l blk = LedgerDB
   { getVolatileTip :: STM m (l blk)
   -- ^ Get the empty ledger state at the (volatile) tip of the LedgerDB.
-  , getVolatileTipRef :: STM m (StateHandle m l blk)
+  , getVolatileTipRef :: STM m (Handle l m blk)
   -- ^ Get the empty ledger state at the (volatile) tip of the LedgerDB.
   , getImmutableTip :: STM m (l blk)
   -- ^ Get the empty ledger state at the immutable tip of the LedgerDB.
@@ -355,7 +355,7 @@ data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
-  , push :: StateHandle m l blk -> m ()
+  , push :: Handle l m blk -> m ()
   -- ^ Push a ledger state, and prune the 'LedgerDB' to its immutable tip.
   --
   -- This does not modify the set of previously applied points.
@@ -395,7 +395,7 @@ data LedgerDbError
 
 -- | 'bracket'-style usage of a forker at the LedgerDB tip.
 withTipForker ::
-  (IOLike m, BlockSupportsLedgerHD m l blk) =>
+  (IOLike m, MonadLedger m blk) =>
   LedgerDB m l blk ->
   (Forker m l blk -> m a) ->
   m a
@@ -411,16 +411,16 @@ withTipForker ldb =
 
 -- | Get statistics from the tip of the LedgerDB.
 getTipStatistics ::
-  (IOLike m, BlockSupportsLedgerHD m l blk, GetTip l blk) =>
+  (IOLike m, MonadLedger m blk, GetTip l blk) =>
   LedgerDB m l blk ->
   m Statistics
 getTipStatistics ldb = withTipForker ldb (fmap getStats . atomically . forkerTip)
 
 openReadOnlyForker ::
-  (MonadSTM m, BlockSupportsLedgerHD m l blk, GetTip l blk) =>
+  (MonadSTM m, MonadLedger m blk, GetTip l blk) =>
   LedgerDB m l blk ->
   Target (Point blk) ->
-  m (Either GetForkerError (StateHandle m l blk))
+  m (Either GetForkerError (Handle l m blk))
 openReadOnlyForker ldb pt =
   openForkerAtTarget ldb pt >>= \case
     Left err -> pure (Left err)

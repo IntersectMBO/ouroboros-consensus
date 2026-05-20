@@ -102,6 +102,24 @@ newtype ForkerKey = ForkerKey Word16
   deriving stock (Show, Eq, Ord)
   deriving newtype (Enum, NoThunks, Num)
 
+-- $note-read-only-forker
+--
+-- == Note [No ReadOnlyForker]
+--
+-- Earlier revisions exposed a separate @ReadOnlyForker@ type (and a
+-- @readOnlyForker@ down-conversion) so the LocalStateQuery server,
+-- forging loop, and mempool could hold a forker that the type system
+-- guaranteed could not commit. The current design has no such
+-- guarantee: anyone holding a 'Forker' can call 'forkerCommit'.
+--
+-- The motivation for removing it was that 'Handle' (from 'IsLedger')
+-- is now the read-only interface — query / mempool / forge code
+-- acquires a 'Handle' directly (via 'openReadOnlyForker' or
+-- 'getVolatileTipRef') and never touches a 'Forker'. The 'Forker'
+-- abstraction is now only used by chain selection (the one place that
+-- actually needs commit). If a future caller is added that holds a
+-- 'Forker' but should be read-only, consider reintroducing the
+-- type-level restriction.
 data Forker m l blk = Forker
   { foeLedgerSeq :: !(StrictTVar m (LedgerSeq m l blk))
   , foeSwitchVar :: !(StrictTVar m (LedgerSeq m l blk))
@@ -112,18 +130,18 @@ data Forker m l blk = Forker
 
 -- TODO @js we were also pruning here, what happened with that?
 forkerPush ::
-  (GetTip l blk, MonadSTM m, BlockSupportsLedgerHD m l blk) =>
-  Forker m l blk -> StateHandle m l blk -> STM m ()
+  (GetTip l blk, MonadSTM m, MonadLedger m blk) =>
+  Forker m l blk -> Handle l m blk -> STM m ()
 forkerPush (Forker frk _ _ _ _) st = modifyTVar frk (extend st)
 
 forkerTip ::
-  (GetTip l blk, MonadSTM m, BlockSupportsLedgerHD m l blk) => Forker m l blk -> STM m (StateHandle m l blk)
+  (GetTip l blk, MonadSTM m, MonadLedger m blk) => Forker m l blk -> STM m (Handle l m blk)
 forkerTip (Forker frk _ _ _ _) = currentHandle <$> readTVar frk
 
 -- | Will release all handles in the 'foeLedgerSeq', which will be only the
 -- first duplicate if the forker has been committed.
 forkerClose ::
-  (IOLike m, BlockSupportsLedgerHD m l blk) =>
+  (IOLike m, MonadLedger m blk) =>
   Forker m l blk ->
   m ()
 forkerClose env = do
@@ -136,7 +154,7 @@ forkerClose env = do
   closeLedgerSeq =<< readTVarIO (foeLedgerSeq env)
 
 forkerCommit ::
-  (IOLike m, GetTip l blk, StandardHash blk, BlockSupportsLedgerHD m l blk) =>
+  (IOLike m, GetTip l blk, StandardHash blk, MonadLedger m blk) =>
   Forker m l blk ->
   STM m (m ())
 forkerCommit env = do
@@ -219,8 +237,8 @@ validate ::
   ( IOLike m
   , HasCallStack
   , ApplyBlock l blk
-  , BlockSupportsLedgerHD m (Ticked l) blk
-  , BlockSupportsLedgerHD m l blk
+  , MonadLedger m blk
+  , MonadLedger m blk
   ) =>
   ComputeLedgerEvents ->
   ValidateArgs m l blk ->
@@ -288,7 +306,7 @@ validate evs args = do
 -- | Switch to a fork by rolling back a number of blocks and then pushing the
 -- new blocks.
 switch ::
-  (ApplyBlock l blk, MonadSTM m, BlockSupportsLedgerHD m (Ticked l) blk, BlockSupportsLedgerHD m l blk) =>
+  (ApplyBlock l blk, MonadSTM m, MonadLedger m blk) =>
   (forall r. Word64 -> (Forker m l blk -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
@@ -343,13 +361,13 @@ toRealPoint (ApplyRef rp) = rp
 -- | Apply blocks to the given forker
 applyBlock ::
   forall m l blk.
-  (ApplyBlock l blk, MonadSTM m, BlockSupportsLedgerHD m (Ticked l) blk, BlockSupportsLedgerHD m l blk) =>
+  (ApplyBlock l blk, MonadSTM m, MonadLedger m blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   Ap m l blk ->
   Forker m l blk ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) (StateHandle m l blk))
+  m (Either (AnnLedgerError l blk) (Handle l m blk))
 applyBlock evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b ->
     Right <$> (tickThenReapply evs cfg b =<< atomically (forkerTip fo))
@@ -369,7 +387,7 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker.
 applyThenPush ::
-  (ApplyBlock l blk, MonadSTM m, BlockSupportsLedgerHD m (Ticked l) blk, BlockSupportsLedgerHD m l blk) =>
+  (ApplyBlock l blk, MonadSTM m, MonadLedger m blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   Ap m l blk ->
@@ -384,7 +402,7 @@ applyThenPush evs cfg ap fo doResolve = do
 
 -- | Apply and push a sequence of blocks (oldest first).
 applyThenPushMany ::
-  (ApplyBlock l blk, MonadSTM m, BlockSupportsLedgerHD m (Ticked l) blk, BlockSupportsLedgerHD m l blk) =>
+  (ApplyBlock l blk, MonadSTM m, MonadLedger m blk) =>
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
