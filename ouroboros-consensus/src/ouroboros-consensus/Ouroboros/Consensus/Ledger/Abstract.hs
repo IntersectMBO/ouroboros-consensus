@@ -82,7 +82,6 @@ data family Validated x :: Type
 
 class
   ( IsLedger l blk
-  , HeaderHash (l blk) ~ HeaderHash blk
   , HasHeader blk
   , HasHeader (Header blk)
   ) =>

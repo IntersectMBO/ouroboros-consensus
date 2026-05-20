@@ -263,7 +263,6 @@ implGetPastLedgerState ::
   , HasHeader blk
   , IsLedger l blk
   , StandardHash blk
-  , HeaderHash (l blk) ~ HeaderHash blk
   , MonadLedger m blk
   ) =>
   LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l blk))
@@ -609,8 +608,7 @@ withStateHandle ldbEnv project f =
     f
 
 openStateHandleAtTarget ::
-  ( HeaderHash (l blk) ~ HeaderHash blk
-  , IOLike m
+  ( IOLike m
   , GetTip l blk
   , StandardHash blk
   , LedgerSupportsProtocol blk
@@ -642,8 +640,7 @@ openStateHandleAtTarget ldbEnv target =
       Just l' -> pure $ currentHandle l'
 
 openNewForkerAtTarget ::
-  ( HeaderHash (l blk) ~ HeaderHash blk
-  , IOLike m
+  ( IOLike m
   , IsLedger l blk
   , LedgerSupportsProtocol blk
   , StandardHash blk
@@ -657,8 +654,7 @@ openNewForkerAtTarget h pt = getEnv h $ \ldbEnv ->
   openStateHandleAtTarget ldbEnv (Right pt) >>= traverse (newForker ldbEnv)
 
 withForkerByRollback ::
-  ( HeaderHash (l blk) ~ HeaderHash blk
-  , IOLike m
+  ( IOLike m
   , IsLedger l blk
   , StandardHash blk
   , LedgerSupportsProtocol blk

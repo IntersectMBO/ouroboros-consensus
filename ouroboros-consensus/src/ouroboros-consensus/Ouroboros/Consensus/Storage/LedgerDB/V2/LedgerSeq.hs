@@ -377,7 +377,6 @@ isSaturated (SecurityParam k) db =
 getPastLedgerAt ::
   ( HasHeader blk
   , GetTip l blk
-  , HeaderHash (l blk) ~ HeaderHash blk
   , StandardHash blk
   , MonadLedger m blk
   ) =>
@@ -431,7 +430,6 @@ rollbackToAnchor (LedgerSeq vol) =
 rollback ::
   ( HasHeader blk
   , GetTip l blk
-  , HeaderHash (l blk) ~ HeaderHash blk
   , StandardHash blk
   , MonadLedger m blk
   ) =>

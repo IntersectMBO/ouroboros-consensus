@@ -5,6 +5,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
 
 -- | Definition is 'IsLedger'
@@ -25,6 +26,8 @@ module Ouroboros.Consensus.Ledger.Basics
   , applyChainTick
   , MonadLedger (..)
   , LedgerTablesHandle
+  , Handle
+  , TickedHandle
 
     -- * Ledger Events
   , LedgerResult (..)
@@ -256,7 +259,7 @@ type family LedgerTablesHandle m blk
 -- for 'ExtLedgerState' this is the plain record
 -- 'Ouroboros.Consensus.Ledger.Extended.ExtStateHandle'.
 type Handle :: (Type -> Type) -> (Type -> Type) -> Type -> Type
-type family Handle l :: (Type -> Type) -> Type -> Type
+type family Handle l = r | r -> l
 
 type instance Handle LedgerState = StateHandle
 type instance Handle (Ticked LedgerState) = TickedStateHandle
@@ -265,7 +268,7 @@ type instance Handle (Ticked LedgerState) = TickedStateHandle
 --
 -- See 'Handle'.
 type TickedHandle :: (Type -> Type) -> (Type -> Type) -> Type -> Type
-type family TickedHandle l :: (Type -> Type) -> Type -> Type
+type family TickedHandle l = r | r -> l
 
 type instance TickedHandle LedgerState = TickedStateHandle
 

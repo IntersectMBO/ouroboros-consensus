@@ -345,10 +345,10 @@ type instance HeaderHash (LedgerDB m l blk) = HeaderHash blk
 type LedgerDB' m blk = LedgerDB m ExtLedgerState blk
 
 currentPoint ::
-  (GetTip l blk, HeaderHash (l blk) ~ HeaderHash blk, Functor (STM m)) =>
+  (GetTip l blk, Functor (STM m)) =>
   LedgerDB m l blk ->
   STM m (Point blk)
-currentPoint ldb = castPoint . getTip <$> getVolatileTip ldb
+currentPoint ldb = getTip <$> getVolatileTip ldb
 
 data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 
