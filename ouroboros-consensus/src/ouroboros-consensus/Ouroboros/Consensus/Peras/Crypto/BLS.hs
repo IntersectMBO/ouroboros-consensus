@@ -35,6 +35,7 @@ import Cardano.Ledger.Hashes (HASH)
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Builder.Extra as BS
 import qualified Data.ByteString.Short as BS
+import Ouroboros.Consensus.Block.Abstract (WithOrigin (..))
 import Ouroboros.Consensus.Block.RealPoint
   ( bytes32RealPointHash
   , bytes32RealPointSlot
@@ -93,26 +94,28 @@ hashVoteSignature roundNo boostedBlock =
   Hash.castHash
     . Hash.hashWith id
     . runByteBuilder (8 + 8 + 32)
-    $ roundNoBytes
-      <> boostedBlockSlotBytes
-      <> boostedBlockHashBytes
+    $ roundNoBytes <> boostedBlockBytes
  where
   roundNoBytes =
     BS.word64BE
       . unPerasRoundNo
       $ roundNo
-  boostedBlockSlotBytes =
+  boostedBlockBytes =
+    case unPerasBoostedBlock boostedBlock of
+      Origin ->
+        mempty
+      NotOrigin point ->
+        bytes32RealPointSlotBytes point
+          <> bytes32RealPointHashBytes point
+
+  bytes32RealPointSlotBytes =
     BS.word64BE
       . unSlotNo
       . bytes32RealPointSlot
-      . unPerasBoostedBlock
-      $ boostedBlock
-  boostedBlockHashBytes =
+  bytes32RealPointHashBytes =
     BS.byteStringCopy
       . BS.fromShort
       . bytes32RealPointHash
-      . unPerasBoostedBlock
-      $ boostedBlock
 
 -- | Hash the input for the VRF used in Peras elections
 --

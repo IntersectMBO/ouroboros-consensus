@@ -39,7 +39,7 @@ import Data.Semigroup (Sum (..))
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Abstract (Point)
+import Ouroboros.Consensus.Block.Abstract (Point, WithOrigin)
 import Ouroboros.Consensus.Block.RealPoint
   ( Bytes32RealPoint
   , decodeBytes32RealPoint
@@ -51,6 +51,7 @@ import Ouroboros.Consensus.Peras.Params
   , PerasQuorumStakeThresholdSafetyMargin (..)
   )
 import Ouroboros.Consensus.Util (ShowProxy (..))
+import Ouroboros.Consensus.Util.CBOR (decodeWithOrigin, encodeWithOrigin)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Quiet (Quiet (..))
 
@@ -86,15 +87,15 @@ onPerasRoundNo = coerce
 -- mocked votes and certificates generally use the more abstract 'Point blk'.
 newtype PerasBoostedBlock
   = PerasBoostedBlock
-  { unPerasBoostedBlock :: Bytes32RealPoint
+  { unPerasBoostedBlock :: WithOrigin Bytes32RealPoint
   }
   deriving stock (Eq, Show)
 
 instance FromCBOR PerasBoostedBlock where
-  fromCBOR = PerasBoostedBlock <$> decodeBytes32RealPoint
+  fromCBOR = PerasBoostedBlock <$> decodeWithOrigin decodeBytes32RealPoint
 
 instance ToCBOR PerasBoostedBlock where
-  toCBOR = encodeBytes32RealPoint . unPerasBoostedBlock
+  toCBOR = encodeWithOrigin encodeBytes32RealPoint . unPerasBoostedBlock
 
 -- ** Seat indices
 
