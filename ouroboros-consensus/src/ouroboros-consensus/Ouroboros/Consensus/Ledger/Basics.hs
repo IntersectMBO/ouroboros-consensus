@@ -36,9 +36,7 @@ module Ouroboros.Consensus.Ledger.Basics
 
     -- * GetTip
   , GetTip (..)
-  , GetTipSTM (..)
   , getTipHash
-  , getTipM
   , getTipSlot
 
     -- * Associated types by block type
@@ -48,10 +46,10 @@ module Ouroboros.Consensus.Ledger.Basics
 
 import Data.Kind (Constraint, Type)
 import GHC.Generics
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util ((...:))
-import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   Tip
@@ -69,13 +67,6 @@ getTipHash = pointHash . getTip
 
 getTipSlot :: GetTip l blk => l blk -> WithOrigin SlotNo
 getTipSlot = pointSlot . getTip
-
-type GetTipSTM :: (Type -> Type) -> Type -> Constraint
-class GetTipSTM m l where
-  getTipSTM :: l -> STM m (Point l)
-
-getTipM :: (GetTipSTM m l, MonadSTM m) => l -> m (Point l)
-getTipM = atomically . getTipSTM
 
 {-------------------------------------------------------------------------------
   Events directly from the ledger
@@ -272,10 +263,6 @@ newtype Statistics = Statistics
   }
 
 type TickedLedgerState blk = Ticked LedgerState blk
-
-type instance HeaderHash (LedgerState blk) = HeaderHash blk
-
-instance StandardHash blk => StandardHash (LedgerState blk)
 
 type LedgerConfig blk = LedgerCfg LedgerState blk
 type LedgerError blk = LedgerErr LedgerState blk

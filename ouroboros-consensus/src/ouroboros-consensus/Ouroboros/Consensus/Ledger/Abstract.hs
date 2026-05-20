@@ -44,6 +44,7 @@ import Control.Monad.Trans (lift)
 import qualified Control.State.Transition.Extended as STS
 import Data.Kind (Type)
 import GHC.Stack (HasCallStack)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ticked
@@ -159,8 +160,21 @@ defaultReapplyBlockLedgerResult throwReapplyError =
   )
     ...: applyBlockLedgerResultWithValidation STS.ValidateNone
 
--- | Interaction with the ledger layer
-class ApplyBlock LedgerState blk => UpdateLedger blk
+-- | Interaction with the ledger layer.
+--
+-- The 'Eq', 'Show' and 'NoThunks' superclasses bundle the data-shape
+-- contract that concrete ledger states are expected to provide. They live
+-- on 'UpdateLedger' (rather than on 'IsLedger') because the latter has
+-- multiple inhabitants per block ('LedgerState', 'Ticked' 'LedgerState',
+-- 'ExtLedgerState', 'Ticked' 'ExtLedgerState'), not all of which need
+-- those instances.
+class
+  ( ApplyBlock LedgerState blk
+  , Eq (LedgerState blk)
+  , Show (LedgerState blk)
+  , NoThunks (LedgerState blk)
+  ) =>
+  UpdateLedger blk
 
 {-------------------------------------------------------------------------------
   Derived functionality
@@ -269,7 +283,7 @@ refoldLedger evs cfg =
 ledgerTipPoint ::
   UpdateLedger blk =>
   LedgerState blk -> Point blk
-ledgerTipPoint = castPoint . getTip
+ledgerTipPoint = getTip
 
 ledgerTipHash ::
   UpdateLedger blk =>

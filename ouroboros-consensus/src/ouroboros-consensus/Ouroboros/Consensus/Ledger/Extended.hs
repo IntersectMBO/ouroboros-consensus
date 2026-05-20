@@ -35,7 +35,6 @@ module Ouroboros.Consensus.Ledger.Extended
 
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
-import Control.DeepSeq (NFData)
 import Control.Monad.Except
 import Data.Functor ((<&>))
 import Data.Proxy
@@ -90,19 +89,8 @@ instance
   where
   showTypeOf _ = show $ typeRep (Proxy @(ExtLedgerState blk))
 
-type instance HeaderHash (ExtLedgerState blk) = HeaderHash (LedgerState blk)
-instance
-  ( NFData (HeaderHash blk)
-  , NoThunks (HeaderHash blk)
-  , Typeable (HeaderHash blk)
-  , Show (HeaderHash blk)
-  , Ord (HeaderHash blk)
-  , Eq (HeaderHash blk)
-  ) =>
-  StandardHash (ExtLedgerState blk)
-
 instance IsLedger LedgerState blk => GetTip ExtLedgerState blk where
-  getTip = castPoint . getTip . ledgerState
+  getTip = getTip . ledgerState
 
 {-------------------------------------------------------------------------------
   The extended ledger configuration
@@ -175,7 +163,7 @@ instance
   duplicate (TickedExtStateHandle s l h) = (\s' -> TickedExtStateHandle s' l h) <$> (duplicate s)
 
 instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState) blk where
-  getTip = castPoint . getTip . tickedLedgerState
+  getTip = getTip . tickedLedgerState
 
 instance
   LedgerSupportsProtocol blk =>
