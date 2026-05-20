@@ -59,7 +59,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , toTxSeq
   ) where
 
-import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import qualified Cardano.Ledger.Binary as CB
@@ -616,18 +615,77 @@ instance
   --    - 'updateChainDepState': executes the @PRTCL@ transition
   -- + 'applyBlockLedgerResult': executes the @BBODY@ transition
   --
-  applyBlockLedgerResultWithValidation doValidate evs =
-    liftEither ..: applyHelper appBlk
-   where
-    -- Apply the BBODY transition using the ticked state
-    appBlk =
-      fmap (uncurry (flip LedgerResult)) ..: case evs of
-        ComputeLedgerEvents ->
-          fmap (second (map ShelleyLedgerEventBBODY))
-            ..: SL.applyBlockEither STS.EPReturn doValidate
-        OmitLedgerEvents ->
-          fmap (,[])
-            ..: SL.applyBlockEitherNoEvents doValidate
+  applyBlockLedgerResultWithValidation doValidate evs cfg blk st = liftEither $ do
+    let TickedShelleyLedgerState
+          { tickedShelleyLedgerTransition
+          , tickedShelleyLedgerState
+          } = stowLedgerTables st
+
+        globals = shelleyLedgerGlobals cfg
+        swindow = SL.stabilityWindow globals
+
+        ei :: EpochInfo Identity
+        ei = SL.epochInfoPure globals
+
+        -- The start of the next epoch is within the safe zone, always.
+        startOfNextEpoch :: SlotNo
+        startOfNextEpoch = runIdentity $ do
+          blockEpoch <- epochInfoEpoch ei (blockSlot blk)
+          let nextEpoch = succ blockEpoch
+          epochInfoFirst ei nextEpoch
+
+        -- The block must come in strictly before the voting deadline
+        -- See Fig 13, "Protocol Parameter Update Inference Rules", of the
+        -- Shelley specification.
+        votingDeadline :: SlotNo
+        votingDeadline = subSlots (2 * swindow) startOfNextEpoch
+
+        b = shelleyBlockRaw blk
+        block =
+          -- Jared Corduan explains that the " Unsafe " here ultimately only
+          -- means the value must not be serialized. We're only passing it to
+          -- 'STS.applyBlockOpts', which does not serialize it. So this is a
+          -- safe use.
+          SL.UnsafeUnserialisedBlock (mkHeaderView (SL.bheader b)) (SL.bbody b)
+
+    (newEpochState, events) <-
+      case evs of
+        ComputeLedgerEvents -> SL.applyBlockEither STS.EPReturn doValidate globals tickedShelleyLedgerState block
+        OmitLedgerEvents -> do
+          newState <- SL.applyBlockEitherNoEvents doValidate globals tickedShelleyLedgerState block
+          return (newState, [])
+
+    let track = calculateDifference st
+
+    return
+      LedgerResult
+        { lrEvents = ShelleyLedgerEventBBODY <$> events
+        , lrResult =
+            trackingToDiffs $
+              track $
+                unstowLedgerTables $
+                  ShelleyLedgerState
+                    { shelleyLedgerTip =
+                        NotOrigin
+                          ShelleyTip
+                            { shelleyTipBlockNo = blockNo blk
+                            , shelleyTipSlotNo = blockSlot blk
+                            , shelleyTipHash = blockHash blk
+                            }
+                    , shelleyLedgerState = newEpochState
+                    , shelleyLedgerTransition =
+                        ShelleyTransitionInfo
+                          { shelleyAfterVoting =
+                              -- We count the number of blocks that have been applied after the
+                              -- voting deadline has passed.
+                              (if blockSlot blk >= votingDeadline then succ else id) $
+                                shelleyAfterVoting tickedShelleyLedgerTransition
+                          }
+                    , shelleyLedgerTables = emptyLedgerTables
+                    , shelleyCumulativeTxBytes =
+                        tickedShelleyCumulativeTxBytes st + blockTxBytes blk
+                    }
+        }
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
 
@@ -649,99 +707,6 @@ instance Show ShelleyReapplyException where
   show (ShelleyReapplyException err) = "(ShelleyReapplyException " <> show err <> ")"
 
 instance Exception.Exception ShelleyReapplyException
-
-applyHelper ::
-  forall proto era.
-  ShelleyCompatible proto era =>
-  ( SL.Globals ->
-    SL.NewEpochState era ->
-    SL.Block SL.BHeaderView era ->
-    Either
-      (SL.BlockTransitionError era)
-      ( LedgerResult
-          (LedgerState (ShelleyBlock proto era))
-          (SL.NewEpochState era)
-      )
-  ) ->
-  LedgerConfig (ShelleyBlock proto era) ->
-  ShelleyBlock proto era ->
-  Ticked (LedgerState (ShelleyBlock proto era)) ValuesMK ->
-  Either
-    (SL.BlockTransitionError era)
-    ( LedgerResult
-        (LedgerState (ShelleyBlock proto era))
-        (LedgerState (ShelleyBlock proto era) DiffMK)
-    )
-applyHelper f cfg blk stBefore = do
-  let TickedShelleyLedgerState
-        { tickedShelleyLedgerTransition
-        , tickedShelleyLedgerState
-        } = stowLedgerTables stBefore
-
-  ledgerResult <-
-    f
-      globals
-      tickedShelleyLedgerState
-      ( let b = shelleyBlockRaw blk
-            h' = mkHeaderView (SL.bheader b)
-         in -- Jared Corduan explains that the " Unsafe " here ultimately only
-            -- means the value must not be serialized. We're only passing it to
-            -- 'STS.applyBlockOpts', which does not serialize it. So this is a
-            -- safe use.
-            SL.UnsafeUnserialisedBlock h' (SL.bbody b)
-      )
-
-  let track ::
-        LedgerState (ShelleyBlock proto era) ValuesMK ->
-        LedgerState (ShelleyBlock proto era) TrackingMK
-      track = calculateDifference stBefore
-
-  return $
-    ledgerResult <&> \newNewEpochState ->
-      trackingToDiffs $
-        track $
-          unstowLedgerTables $
-            ShelleyLedgerState
-              { shelleyLedgerTip =
-                  NotOrigin
-                    ShelleyTip
-                      { shelleyTipBlockNo = blockNo blk
-                      , shelleyTipSlotNo = blockSlot blk
-                      , shelleyTipHash = blockHash blk
-                      }
-              , shelleyLedgerState =
-                  newNewEpochState
-              , shelleyLedgerTransition =
-                  ShelleyTransitionInfo
-                    { shelleyAfterVoting =
-                        -- We count the number of blocks that have been applied after the
-                        -- voting deadline has passed.
-                        (if blockSlot blk >= votingDeadline then succ else id) $
-                          shelleyAfterVoting tickedShelleyLedgerTransition
-                    }
-              , shelleyLedgerTables = emptyLedgerTables
-              , shelleyCumulativeTxBytes =
-                  tickedShelleyCumulativeTxBytes stBefore + blockTxBytes blk
-              }
- where
-  globals = shelleyLedgerGlobals cfg
-  swindow = SL.stabilityWindow globals
-
-  ei :: EpochInfo Identity
-  ei = SL.epochInfoPure globals
-
-  -- The start of the next epoch is within the safe zone, always.
-  startOfNextEpoch :: SlotNo
-  startOfNextEpoch = runIdentity $ do
-    blockEpoch <- epochInfoEpoch ei (blockSlot blk)
-    let nextEpoch = succ blockEpoch
-    epochInfoFirst ei nextEpoch
-
-  -- The block must come in strictly before the voting deadline
-  -- See Fig 13, "Protocol Parameter Update Inference Rules", of the
-  -- Shelley specification.
-  votingDeadline :: SlotNo
-  votingDeadline = subSlots (2 * swindow) startOfNextEpoch
 
 instance HasHardForkHistory (ShelleyBlock proto era) where
   type HardForkIndices (ShelleyBlock proto era) = '[ShelleyBlock proto era]
