@@ -54,6 +54,7 @@ import Ouroboros.Network.BlockFetch
   ( BlockFetchConfiguration (..)
   , FetchClientRegistry
   , GenesisBlockFetchConfiguration (..)
+  , KeepAliveRegistry
   , blockFetchLogic
   , bracketFetchClient
   , bracketKeepAliveClient
@@ -114,9 +115,10 @@ startBlockFetchLogic ::
   ProtocolInfo blk ->
   ChainDB m blk ->
   FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
+  KeepAliveRegistry PeerId m ->
   ChainSyncClientHandleCollection PeerId m blk ->
   m ()
-startBlockFetchLogic enableChainSelStarvation registry tracer protocolInfo chainDb fetchClientRegistry csHandlesCol = do
+startBlockFetchLogic enableChainSelStarvation registry tracer protocolInfo chainDb fetchClientRegistry keepAliveRegistry csHandlesCol = do
   let blockFetchConsensusInterface =
         BlockFetchClientInterface.mkBlockFetchConsensusInterface
           nullTracer -- FIXME
@@ -126,8 +128,8 @@ startBlockFetchLogic enableChainSelStarvation registry tracer protocolInfo chain
           -- The size of headers in bytes is irrelevant because our tests
           -- do not serialize the blocks.
           (\_hdr -> 1000)
-          -- This is a syncing test, so we use 'FetchModeGenesis'.
-          (pure FetchModeGenesis)
+          -- This is a syncing test, so we use 'GenesisFetchMode'.
+          (pure GenesisFetchMode)
           DiffusionPipeliningOn
 
       bfcGenesisBFConfig =
@@ -163,21 +165,22 @@ startBlockFetchLogic enableChainSelStarvation registry tracer protocolInfo chain
         nullTracer
         blockFetchConsensusInterface
         fetchClientRegistry
+        keepAliveRegistry
         blockFetchCfg
  where
   decisionTracer = TraceOther . ("BlockFetchLogic | " ++) . show >$< tracer
 
 startKeepAliveThread ::
-  forall m peer blk hdr.
+  forall m peer.
   (Ord peer, IOLike m) =>
   ResourceRegistry m ->
-  FetchClientRegistry peer hdr blk m ->
+  KeepAliveRegistry peer m ->
   peer ->
   m ()
-startKeepAliveThread registry fetchClientRegistry peerId =
+startKeepAliveThread registry keepAliveRegistry peerId =
   void $
     forkLinkedThread registry "KeepAlive" $
-      bracketKeepAliveClient fetchClientRegistry peerId $ \_ ->
+      bracketKeepAliveClient keepAliveRegistry peerId $ \_ ->
         atomically retry
 
 runBlockFetchClient ::
@@ -187,12 +190,13 @@ runBlockFetchClient ::
   BlockFetchTimeout ->
   StateViewTracers blk m ->
   FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
+  KeepAliveRegistry PeerId m ->
   ControlMessageSTM m ->
   -- | Send and receive message via the given 'Channel'.
   Channel m (AnyMessage (BlockFetch blk (Point blk))) ->
   m ()
-runBlockFetchClient tracer peerId blockFetchTimeouts StateViewTracers{svtPeerSimulatorResultsTracer} fetchClientRegistry controlMsgSTM channel = do
-  bracketFetchClient fetchClientRegistry ntnVersion peerId $ \clientCtx -> do
+runBlockFetchClient tracer peerId blockFetchTimeouts StateViewTracers{svtPeerSimulatorResultsTracer} fetchClientRegistry keepAliveRegistry controlMsgSTM channel = do
+  bracketFetchClient fetchClientRegistry keepAliveRegistry ntnVersion peerId $ \clientCtx -> do
     res <-
       try $
         runPipelinedPeerWithLimits

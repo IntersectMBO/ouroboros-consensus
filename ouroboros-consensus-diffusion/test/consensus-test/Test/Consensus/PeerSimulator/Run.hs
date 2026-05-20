@@ -60,8 +60,10 @@ import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.BlockFetch
   ( FetchClientRegistry
+  , KeepAliveRegistry
   , bracketSyncWithFetchClient
   , newFetchClientRegistry
+  , newKeepAliveRegistry
   )
 import Ouroboros.Network.Channel (createConnectedChannels)
 import Ouroboros.Network.ControlMessage
@@ -223,6 +225,7 @@ startBlockFetchConnectionThread ::
   Tracer m (TraceEvent blk) ->
   StateViewTracers blk m ->
   FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
+  KeepAliveRegistry PeerId m ->
   ControlMessageSTM m ->
   SharedResources m blk ->
   BlockFetchResources m blk ->
@@ -233,6 +236,7 @@ startBlockFetchConnectionThread
   tracer
   tracers
   fetchClientRegistry
+  keepAliveRegistry
   controlMsgSTM
   SharedResources{srPeerId}
   BlockFetchResources{bfrServer}
@@ -246,6 +250,7 @@ startBlockFetchConnectionThread
           blockFetchTimeouts
           tracers
           fetchClientRegistry
+          keepAliveRegistry
           controlMsgSTM
           clientChannel
     serverThread <-
@@ -423,6 +428,7 @@ startNode ::
 startNode protocolInfo schedulerConfig genesisTest interval = do
   let handles = psrHandles lrPeerSim
   fetchClientRegistry <- newFetchClientRegistry
+  keepAliveRegistry <- newKeepAliveRegistry
   let chainDbView = CSClient.defaultChainDbView lnChainDb
       activePeers = Map.toList $ Map.restrictKeys (psrPeers lrPeerSim) (lirActive liveResult)
       peersStartOrder = psStartOrder ++ sort [pid | (pid, _) <- activePeers, pid `notElem` psStartOrder]
@@ -453,13 +459,14 @@ startNode protocolInfo schedulerConfig genesisTest interval = do
             csjConfig
             lnStateViewTracers
             handles
-        BlockFetch.startKeepAliveThread peerRegistry fetchClientRegistry pid
+        BlockFetch.startKeepAliveThread peerRegistry keepAliveRegistry pid
         (bfClient, bfServer) <-
           startBlockFetchConnectionThread
             peerRegistry
             tracer
             lnStateViewTracers
             fetchClientRegistry
+            keepAliveRegistry
             (pure Continue)
             prShared
             prBlockFetch
@@ -475,6 +482,7 @@ startNode protocolInfo schedulerConfig genesisTest interval = do
     protocolInfo
     lnChainDb
     fetchClientRegistry
+    keepAliveRegistry
     handles
 
   for_ lrLoEVar $ \var -> do

@@ -903,6 +903,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       labelThisThread "BlockFetchClient"
       bracketFetchClient
         (getFetchClientRegistry kernel)
+        (getKeepAliveRegistry kernel)
         version
         them
         $ \clientCtx -> do
@@ -1114,7 +1115,8 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
                 dqCtx
                 (KeepAliveInterval 10)
 
-      ((), trailing) <- bracketKeepAliveClient (getFetchClientRegistry kernel) them kacApp
+      ((), trailing) <-
+        bracketKeepAliveClient (getKeepAliveRegistry kernel) them kacApp
       return (NoInitiatorResult, trailing)
 
   aKeepAliveServer ::
