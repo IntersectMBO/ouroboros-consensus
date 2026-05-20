@@ -77,12 +77,10 @@ class
 _lemma_ledgerViewForecastAt_applyChainTick ::
   ( LedgerSupportsProtocol blk
   , Eq (LedgerView (BlockProtocol blk))
-  , Monad m
-  , BlockSupportsLedgerHD m LedgerState blk
-  , BlockSupportsLedgerHD m (Ticked LedgerState) blk
+  , MonadLedger m blk
   ) =>
   LedgerConfig blk ->
-  StateHandle m LedgerState blk ->
+  StateHandle m blk ->
   Forecast (LedgerView (BlockProtocol blk)) ->
   SlotNo ->
   m (Either String ())
@@ -93,7 +91,9 @@ _lemma_ledgerViewForecastAt_applyChainTick cfg st forecast for =
       case lhs of
         Left _ -> pure ()
         Right lhs' -> do
-          rhs <- protocolLedgerView cfg . state <$> lift (applyChainTick OmitLedgerEvents cfg for st)
+          rhs <-
+            protocolLedgerView cfg . tickedState
+              <$> lift (applyChainTick OmitLedgerEvents cfg for st)
           when (lhs' /= rhs) $
             throwError $
               unlines

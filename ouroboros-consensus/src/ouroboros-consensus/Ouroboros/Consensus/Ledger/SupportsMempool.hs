@@ -12,7 +12,6 @@
 module Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , ByteSize32 (..)
-  , WhatToDoWithTxDiffs (..)
   , ConvertRawTxId (..)
   , GenTx
   , GenTxId
@@ -85,16 +84,26 @@ data WhetherToIntervene
     Intervene
   deriving Show
 
--- | When we are revalidating the transactions in the mempool, we either will
--- store the resulting differences (when re-syncing with the LedgerDB) or we
--- simply don't care (when acquiring a mempool snapshot for forging a block).
-type data WhatToDoWithTxDiffs = Collect | Discard
+-- $note-hfc-mempool
+--
+-- == Note [Mempool no longer manages tables across HFC boundaries]
+--
+-- Previous versions of this module exposed @reapplyTxs@ (a batched
+-- revalidation method with a default fold), @prependMempoolDiffs@ /
+-- @applyMempoolDiffs@ (HFC-specific optimization hooks for re-projecting
+-- diffs cheaply across eras), a 'WhatToDoWithTxDiffs' kind plus
+-- @InputTxDiffs@ family (to type-level distinguish collect-vs-discard
+-- revalidation), and @getTransactionKeySets@ (to pre-compute UTxO keys
+-- needed by a tx). All of those have been removed.
+--
+-- Rationale: tx-induced UTxO diffs are now buffered inside the
+-- per-block 'MempoolCache' rather than projected through HFC layers,
+-- which makes the optimization hooks unnecessary; key-set computation is
+-- internal to each block's 'applyTx' and lives in the Shelley instance
+-- (the only block type that maintains tables). The batched
+-- @reapplyTxs@ is now just a plain fold of 'reapplyTx' at the call
+-- site.
 
--- | This type family serves to make sure that when we are going to discard the
--- -- differences, we don't even have differences around that we might misuse.
--- type family InputTxDiffs blk wtd where
---   InputTxDiffs blk Discard = ()
---   InputTxDiffs blk Collect = LedgerTables blk DiffMK
 class
   ( UpdateLedger blk
   , TxLimits blk
@@ -106,22 +115,53 @@ class
   ) =>
   LedgerSupportsMempool blk
   where
+  -- | Per-block mempool read cache.
+  --
+  -- Morally a snapshot of the UTxO entries needed by the mempool's
+  -- current transactions, plus the diffs each transaction introduces.
+  -- Keeping these values cached lets 'applyTx' / 'reapplyTx' validate
+  -- each tx without round-tripping to disk.
+  --
+  -- This is a /pure/ value: the cache is not parameterised by @m@
+  -- because the values it holds are already materialised. For the
+  -- HFC instance the cache is era-aware (an @NS MempoolCache xs@-shaped
+  -- thing) and gets re-initialised when the mempool crosses an era
+  -- boundary.
+  --
+  -- TODO: pin down the cache lifecycle precisely (when is it constructed,
+  -- when is it updated, when is it discarded).
   data MempoolCache blk
 
-  emptyMempoolCache :: StateHandle m (Ticked LedgerState) blk -> MempoolCache blk
+  -- | Build an initial 'MempoolCache' from a ticked state handle.
+  --
+  -- The state handle is required (rather than e.g. a unit-shaped
+  -- factory) because the HFC instance needs the current era tag to
+  -- position the @NS@-shaped cache.
+  mkMempoolCache :: TickedStateHandle m blk -> MempoolCache blk
 
   -- | Check whether the internal invariants of the transaction hold.
   txInvariant :: GenTx blk -> Bool
   txInvariant = const True
 
-  -- | Apply an unvalidated transaction
+  -- | Apply an unvalidated transaction.
   --
-  -- The mempool expects that the ledger checks the sanity of the transaction'
-  -- size. The mempool implementation will add any valid transaction as long as
-  -- there is at least one byte free in the mempool.
+  -- The mempool expects that the ledger checks the sanity of the
+  -- transaction's size. The mempool implementation will add any valid
+  -- transaction as long as there is at least one byte free in the
+  -- mempool.
   --
-  -- The resulting ledger state contains the diffs produced by applying this
-  -- transaction alone.
+  -- The two stateful inputs play distinct roles:
+  --
+  -- * 'MempoolCache' — fast read source. Holds pre-materialised UTxO
+  --   values plus the diffs of every tx currently in the mempool.
+  -- * 'TickedHandle' — source of truth backing the cache. Owns the
+  --   underlying 'LedgerTablesHandle'; consulted lazily inside
+  --   'applyTx' for any keys not covered by the cache.
+  --
+  -- The returned cache contains the new tx's diff appended.
+  --
+  -- On error the cache is /not/ returned: the caller still holds the
+  -- input cache and the failed tx is simply discarded.
   applyTx ::
     Monad m =>
     LedgerConfig blk ->
@@ -129,37 +169,41 @@ class
     -- | Slot number of the block containing the tx
     SlotNo ->
     GenTx blk ->
-    -- | Contain only the values for the tx to apply
     MempoolCache blk ->
-    StateHandle m (Ticked LedgerState) blk ->
+    TickedStateHandle m blk ->
     ExceptT
       (ApplyTxErr blk)
       m
-      (StateHandle m (Ticked LedgerState) blk, MempoolCache blk, Validated (GenTx blk))
+      (TickedStateHandle m blk, MempoolCache blk, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
-  -- ledger state
+  -- ledger state.
   --
-  -- When we re-apply a transaction to a potentially different ledger state
-  -- expensive checks such as cryptographic hashes can be skipped, but other
-  -- checks (such as checking for double spending) must still be done.
+  -- When we re-apply a transaction to a potentially different ledger
+  -- state, expensive checks such as cryptographic hashes can be skipped,
+  -- but other checks (such as checking for double spending) must still
+  -- be done.
   --
-  -- The returned ledger state contains the resulting values too so that this
-  -- function can be used to reapply a list of transactions, providing as a
-  -- first state one that contains the values for all the transactions.
+  -- The 'MempoolCache' is threaded through both the success and failure
+  -- cases — but its content differs:
+  --
+  -- * On success: the cache is updated with the tx's re-derived diff.
+  -- * On error: the failing tx is being evicted from the mempool, so the
+  --   cache returned in the error has the tx's prior contributions
+  --   /removed/. The caller can plug this cache straight back into the
+  --   next 'reapplyTx' in the fold without recomputing it.
   reapplyTx ::
     (Monad m, HasCallStack) =>
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
     Validated (GenTx blk) ->
-    -- | Contains at least the values for the tx to reapply
     MempoolCache blk ->
-    StateHandle m (Ticked LedgerState) blk ->
+    TickedStateHandle m blk ->
     ExceptT
       (ApplyTxErr blk, MempoolCache blk)
       m
-      (StateHandle m (Ticked LedgerState) blk, MempoolCache blk)
+      (TickedStateHandle m blk, MempoolCache blk)
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk

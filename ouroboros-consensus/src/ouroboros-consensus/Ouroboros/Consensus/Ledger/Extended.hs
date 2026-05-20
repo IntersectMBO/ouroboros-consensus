@@ -25,6 +25,8 @@ module Ouroboros.Consensus.Ledger.Extended
     -- * Handles
   , ExtStateHandle (..)
   , TickedExtStateHandle (..)
+  , extLedgerState
+  , tickedExtLedgerState
   , closeExt
   , closeTickedExt
   , duplicateExt
@@ -152,6 +154,19 @@ data TickedExtStateHandle m blk = TickedExtStateHandle
   , tickedExtLedgerView :: !(LedgerView (BlockProtocol blk))
   , tickedExtHeaderState :: !(Ticked (HeaderState blk))
   }
+
+-- | Pure projection of the extended ledger state from an 'ExtStateHandle'.
+extLedgerState ::
+  MonadLedger m blk => ExtStateHandle m blk -> ExtLedgerState blk
+extLedgerState (ExtStateHandle s h) = ExtLedgerState (state s) h
+
+-- | Pure projection of the ticked extended ledger state from a
+-- 'TickedExtStateHandle'.
+tickedExtLedgerState ::
+  MonadLedger m blk =>
+  TickedExtStateHandle m blk -> Ticked ExtLedgerState blk
+tickedExtLedgerState (TickedExtStateHandle s lv h) =
+  TickedExtLedgerState (tickedState s) lv h
 
 closeExt :: MonadLedger m blk => ExtStateHandle m blk -> m ()
 closeExt (ExtStateHandle s _) = close s
