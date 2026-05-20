@@ -3,7 +3,6 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -24,8 +23,8 @@ module Ouroboros.Consensus.Ledger.Basics
   , IsLedger (..)
   , AuxLedgerEvent
   , applyChainTick
-  , BlockSupportsLedgerHD (..)
-  , LedgerTables
+  , MonadLedger (..)
+  , LedgerTablesHandle
 
     -- * Ledger Events
   , LedgerResult (..)
@@ -161,6 +160,20 @@ class
   -- these errors does not depend on the type of the block.
   type LedgerErr l blk :: Type
 
+  -- | The handle representing an un-ticked ledger view at @l blk@.
+  --
+  -- For 'LedgerState' this is 'StateHandle' (a data family on
+  -- 'MonadLedger'); for 'ExtLedgerState' this is the plain record
+  -- 'Ouroboros.Consensus.Ledger.Extended.ExtStateHandle'.
+  type Handle l :: (Type -> Type) -> Type -> Type
+
+  -- | The handle representing a ticked ledger view at @l blk@.
+  --
+  -- For 'LedgerState' this is 'TickedStateHandle' (a data family on
+  -- 'MonadLedger'); for 'ExtLedgerState' this is the plain record
+  -- 'Ouroboros.Consensus.Ledger.Extended.TickedExtStateHandle'.
+  type TickedHandle l :: (Type -> Type) -> Type -> Type
+
   -- | Apply "slot based" state transformations
   --
   -- When a block is applied to the ledger state, a number of things happen
@@ -179,9 +192,9 @@ class
   -- it would mean a /previous/ block set up the ledger state in such a way
   -- that as soon as a certain slot was reached, /any/ block would be invalid.
   --
-  -- Ticking a ledger state may not use any data from the 'LedgerTables',
-  -- however it might produce differences in the tables, in particular because
-  -- era transitions happen when ticking a ledger state.
+  -- Ticking does not read on-disk tables, but may emit /diffs/ over them
+  -- (notably at era boundaries in the hard-fork combinator). The returned
+  -- handle owns a fresh 'LedgerTablesHandle' independent of the input.
   --
   -- PRECONDITION: The slot number must be strictly greater than the slot at
   -- the tip of the ledger (except for EBBs, obviously..).
@@ -192,72 +205,120 @@ class
   --
   -- prop> ledgerTipPoint (applyChainTick cfg slot st) == ledgerTipPoint st
   applyChainTickLedgerResult ::
-    (BlockSupportsLedgerHD m (Ticked l) blk, Monad m) =>
+    (MonadLedger m blk, Monad m) =>
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     SlotNo ->
-    StateHandle m l blk ->
-    m (LedgerResult blk (StateHandle m (Ticked l) blk))
+    Handle l m blk ->
+    m (LedgerResult blk (TickedHandle l m blk))
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick ::
-  (BlockSupportsLedgerHD m (Ticked l) blk, Monad m, IsLedger l blk) =>
+  (MonadLedger m blk, Monad m, IsLedger l blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   SlotNo ->
-  StateHandle m l blk ->
-  m (StateHandle m (Ticked l) blk)
+  Handle l m blk ->
+  m (TickedHandle l m blk)
 applyChainTick = fmap lrResult ...: applyChainTickLedgerResult
 
 {-------------------------------------------------------------------------------
   Link block to its ledger
 -------------------------------------------------------------------------------}
 
--- | Ledger state associated with a block
+-- | Ledger state associated with a block.
 --
--- This is the Consensus notion of a Ledger /ledger state/. Each block type is
--- associated with one of the Ledger types for the /ledger state/. Virtually
--- every concept in this codebase revolves around this type, or the referenced
--- @blk@. Whenever we use the type variable @l@ we intend to signal that the
--- expected instantiation is either a 'LedgerState' or some wrapper over it
--- (like the 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState').
+-- This is the Consensus notion of a /ledger state/. Each block type is
+-- associated with one of the Ledger types via this data family. Virtually
+-- every concept in this codebase revolves around this type. Whenever we use
+-- the type variable @l@ we intend to signal that the expected instantiation
+-- is either a 'LedgerState' or some wrapper over it (like
+-- 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState').
 --
--- This type is parametrized over @mk :: 'MapKind'@ to express the
--- 'LedgerTables' contained in such a 'LedgerState'. See 'LedgerTables' for a
--- more thorough description.
+-- The on-disk part of the state (currently: the UTxO) is /not/ stored
+-- inside the 'LedgerState' itself; it lives in a 'LedgerTablesHandle'
+-- bundled into the 'StateHandle' that wraps the 'LedgerState'.
 --
--- The main operations we can do with a 'LedgerState' are /ticking/ (defined in
--- 'IsLedger'), and /applying a block/ (defined in
+-- The main operations we can do with a 'LedgerState' are /ticking/ (defined
+-- in 'IsLedger') and /applying a block/ (defined in
 -- 'Ouroboros.Consensus.Ledger.Abstract.ApplyBlock').
 type LedgerState :: Type -> Type
 data family LedgerState blk
 
-type LedgerTables :: (Type -> Type) -> Type -> Type
-type family LedgerTables m blk
+-- | Per-block handle for reading and writing the on-disk part of a ledger
+-- state (currently: UTxO).
+--
+-- This is a type family because only ledgers that actually maintain an
+-- on-disk component (notably Shelley) instantiate it concretely.
+-- 'HardForkBlock' has no instance: its handles are managed era-by-era and
+-- carried inside the per-era 'StateHandle's.
+--
+-- The expected shape of an instance is a record of operations in @m@
+-- (e.g. @readKeys@ / @writeKeys@ / @close@). Carrying @m@ as a visible
+-- type parameter is necessary because the record fields close over @m@.
+type LedgerTablesHandle :: (Type -> Type) -> Type -> Type
+type family LedgerTablesHandle m blk
 
-type BlockSupportsLedgerHD :: (Type -> Type) -> (Type -> Type) -> Type -> Constraint
-class BlockSupportsLedgerHD m l blk where
-  -- \|
-  -- Usually
-  -- @@@
-  -- data instance StateHandle m blk = StateHandle {
-  --     state :: LedgerState blk
-  --   , tables :: LedgerTables m blk
-  -- }
-  -- @@@
-  -- except for the HardForkBlock.
-  data StateHandle m l blk
+-- | How to manage the resource-bearing state of a ledger view of @blk@ in
+-- monad @m@.
+--
+-- The two associated data families are opaque handles owned by the
+-- 'Ouroboros.Consensus.Storage.LedgerDB.LedgerDB' backend. They bundle a
+-- pure 'LedgerState' (or its ticked variant) together with a
+-- 'LedgerTablesHandle' that can serve table reads in @m@.
+--
+-- This class only deals with concrete @blk@-specific state. The
+-- 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState' /
+-- 'Ticked' 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState' wrappers
+-- do not have 'MonadLedger' instances — they are plain records that embed
+-- a 'StateHandle' or 'TickedStateHandle' (see
+-- "Ouroboros.Consensus.Ledger.Extended").
+type MonadLedger :: (Type -> Type) -> Type -> Constraint
+class Monad m => MonadLedger m blk where
+  -- | Opaque handle to an un-ticked ledger state plus its tables.
+  data StateHandle m blk
 
-  state :: StateHandle m l blk -> l blk
+  -- | Opaque handle to a ticked ledger state plus its tables.
+  data TickedStateHandle m blk
 
-  mkStateHandle :: l blk -> LedgerTables m blk -> StateHandle m l blk
+  -- | Project the pure ledger state out of a handle.
+  --
+  -- Cheap; does not touch the backing 'LedgerTablesHandle'.
+  state :: StateHandle m blk -> LedgerState blk
 
-  close :: StateHandle m l blk -> m ()
+  -- | Project the pure ticked ledger state out of a handle.
+  tickedState :: TickedStateHandle m blk -> Ticked LedgerState blk
 
-  getStats :: StateHandle m l blk -> Statistics
+  -- | Build a handle from a pure state and a freshly-acquired tables
+  -- handle. The caller transfers ownership of the tables handle to the
+  -- 'StateHandle'.
+  mkStateHandle ::
+    LedgerState blk -> LedgerTablesHandle m blk -> StateHandle m blk
 
-  duplicate :: StateHandle m l blk -> m (StateHandle m l blk)
+  -- | Build a ticked handle from a pure ticked state and a freshly-acquired
+  -- tables handle.
+  mkTickedStateHandle ::
+    Ticked LedgerState blk -> LedgerTablesHandle m blk -> TickedStateHandle m blk
 
+  -- | Release the backing resources. Idempotent.
+  close :: StateHandle m blk -> m ()
+  closeTicked :: TickedStateHandle m blk -> m ()
+
+  -- | Produce an independent copy of the handle, with its own backing
+  -- resources. Useful before applying a block that may or may not be
+  -- committed.
+  duplicate :: StateHandle m blk -> m (StateHandle m blk)
+  duplicateTicked :: TickedStateHandle m blk -> m (TickedStateHandle m blk)
+
+  -- | Snapshot of operational statistics for the handle.
+  getStats :: StateHandle m blk -> Statistics
+  getStatsTicked :: TickedStateHandle m blk -> Statistics
+
+-- | Operational stats for a 'StateHandle'.
+--
+-- Intentionally a record so backends can attach further diagnostics over
+-- time without changing call-site code. Currently the only metric is the
+-- number of UTxO entries in the backing store.
 newtype Statistics = Statistics
   { ledgerTableSize :: Int
   }

@@ -22,6 +22,16 @@ module Ouroboros.Consensus.Ledger.Extended
   , ExtLedgerState (..)
   , ExtValidationError (..)
 
+    -- * Handles
+  , ExtStateHandle (..)
+  , TickedExtStateHandle (..)
+  , closeExt
+  , closeTickedExt
+  , duplicateExt
+  , duplicateTickedExt
+  , getStatsExt
+  , getStatsTickedExt
+
     -- * Serialisation
   , decodeDiskExtLedgerState
   , decodeExtLedgerState
@@ -29,7 +39,6 @@ module Ouroboros.Consensus.Ledger.Extended
   , encodeExtLedgerState
 
     -- * Type family instances
-  , StateHandle (..)
   , Ticked (..)
   ) where
 
@@ -127,40 +136,45 @@ data instance Ticked ExtLedgerState blk = TickedExtLedgerState
   , tickedHeaderState :: Ticked (HeaderState blk)
   }
 
-instance
-  (Monad m, BlockSupportsLedgerHD m (Ticked LedgerState) blk, BlockSupportsLedgerHD m LedgerState blk) =>
-  BlockSupportsLedgerHD m ExtLedgerState blk
-  where
-  data StateHandle m ExtLedgerState blk where
-    ExtStateHandle ::
-      BlockSupportsLedgerHD m (Ticked LedgerState) blk =>
-      StateHandle m LedgerState blk ->
-      HeaderState blk ->
-      StateHandle m ExtLedgerState blk
+-- | A handle for an 'ExtLedgerState'.
+--
+-- Plain record: bundles a 'StateHandle' (which owns the on-disk tables) with
+-- the pure 'HeaderState'. Constructed and destructed directly — no
+-- 'MonadLedger' instance for 'ExtLedgerState' is needed.
+data ExtStateHandle m blk = ExtStateHandle
+  { extStateHandle :: !(StateHandle m blk)
+  , extHeaderState :: !(HeaderState blk)
+  }
 
-  state (ExtStateHandle s h) = ExtLedgerState (state s) h
-  mkStateHandle (ExtLedgerState a b) tbs = ExtStateHandle (mkStateHandle a tbs) b
-  close (ExtStateHandle s _) = close s
-  getStats (ExtStateHandle s _) = getStats s
-  duplicate (ExtStateHandle s h) = flip ExtStateHandle h <$> (duplicate s)
+-- | A handle for a 'Ticked' 'ExtLedgerState'.
+data TickedExtStateHandle m blk = TickedExtStateHandle
+  { tickedExtStateHandle :: !(TickedStateHandle m blk)
+  , tickedExtLedgerView :: !(LedgerView (BlockProtocol blk))
+  , tickedExtHeaderState :: !(Ticked (HeaderState blk))
+  }
 
-instance
-  (Monad m, BlockSupportsLedgerHD m (Ticked LedgerState) blk) =>
-  BlockSupportsLedgerHD m (Ticked ExtLedgerState) blk
-  where
-  data StateHandle m (Ticked ExtLedgerState) blk where
-    TickedExtStateHandle ::
-      BlockSupportsLedgerHD m (Ticked LedgerState) blk =>
-      StateHandle m (Ticked LedgerState) blk ->
-      LedgerView (BlockProtocol blk) ->
-      Ticked (HeaderState blk) ->
-      StateHandle m (Ticked ExtLedgerState) blk
+closeExt :: MonadLedger m blk => ExtStateHandle m blk -> m ()
+closeExt (ExtStateHandle s _) = close s
 
-  state (TickedExtStateHandle s v h) = TickedExtLedgerState (state s) v h
-  mkStateHandle (TickedExtLedgerState a b c) tbs = TickedExtStateHandle (mkStateHandle a tbs) b c
-  close (TickedExtStateHandle s _ _) = close s
-  getStats (TickedExtStateHandle s _ _) = getStats s
-  duplicate (TickedExtStateHandle s l h) = (\s' -> TickedExtStateHandle s' l h) <$> (duplicate s)
+closeTickedExt :: MonadLedger m blk => TickedExtStateHandle m blk -> m ()
+closeTickedExt (TickedExtStateHandle s _ _) = closeTicked s
+
+duplicateExt ::
+  MonadLedger m blk => ExtStateHandle m blk -> m (ExtStateHandle m blk)
+duplicateExt (ExtStateHandle s h) = flip ExtStateHandle h <$> duplicate s
+
+duplicateTickedExt ::
+  MonadLedger m blk =>
+  TickedExtStateHandle m blk -> m (TickedExtStateHandle m blk)
+duplicateTickedExt (TickedExtStateHandle s lv h) =
+  (\s' -> TickedExtStateHandle s' lv h) <$> duplicateTicked s
+
+getStatsExt :: MonadLedger m blk => ExtStateHandle m blk -> Statistics
+getStatsExt (ExtStateHandle s _) = getStats s
+
+getStatsTickedExt ::
+  MonadLedger m blk => TickedExtStateHandle m blk -> Statistics
+getStatsTickedExt (TickedExtStateHandle s _ _) = getStatsTicked s
 
 instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState) blk where
   getTip = getTip . tickedLedgerState
@@ -170,55 +184,57 @@ instance
   IsLedger ExtLedgerState blk
   where
   type LedgerErr ExtLedgerState blk = ExtValidationError blk
+  type Handle ExtLedgerState = ExtStateHandle
+  type TickedHandle ExtLedgerState = TickedExtStateHandle
 
   applyChainTickLedgerResult evs cfg slot (ExtStateHandle ledger header) = do
     ledgerResult <- applyChainTickLedgerResult evs lcfg slot ledger
     pure $
-      castLedgerResult ledgerResult <&> \tickedLedgerState ->
-        let ledgerView :: LedgerView (BlockProtocol blk)
-            ledgerView = protocolLedgerView lcfg (state tickedLedgerState)
+      castLedgerResult ledgerResult <&> \tickedLedgerState' ->
+        let lv :: LedgerView (BlockProtocol blk)
+            lv = protocolLedgerView lcfg (tickedState tickedLedgerState')
 
-            tickedHeaderState :: Ticked (HeaderState blk)
-            tickedHeaderState =
+            tickedHeaderState' :: Ticked (HeaderState blk)
+            tickedHeaderState' =
               tickHeaderState
                 (configConsensus $ getExtLedgerCfg cfg)
-                ledgerView
+                lv
                 slot
                 header
-         in TickedExtStateHandle tickedLedgerState ledgerView tickedHeaderState
+         in TickedExtStateHandle tickedLedgerState' lv tickedHeaderState'
    where
     lcfg :: LedgerConfig blk
     lcfg = configLedger $ getExtLedgerCfg cfg
 
 applyHelper ::
   forall m blk.
-  (HasCallStack, LedgerSupportsProtocol blk, Monad m) =>
+  (HasCallStack, LedgerSupportsProtocol blk, Monad m, MonadLedger m blk) =>
   ( HasCallStack =>
     ComputeLedgerEvents ->
     LedgerCfg LedgerState blk ->
     blk ->
-    StateHandle m (Ticked LedgerState) blk ->
+    TickedStateHandle m blk ->
     ExceptT
       (LedgerErr LedgerState blk)
       m
-      (LedgerResult blk (StateHandle m LedgerState blk))
+      (LedgerResult blk (StateHandle m blk))
   ) ->
   ComputeLedgerEvents ->
   LedgerCfg ExtLedgerState blk ->
   blk ->
-  StateHandle m (Ticked ExtLedgerState) blk ->
+  TickedExtStateHandle m blk ->
   ExceptT
     (LedgerErr ExtLedgerState blk)
     m
-    (LedgerResult blk (StateHandle m ExtLedgerState blk))
-applyHelper f opts cfg blk (TickedExtStateHandle tickedLedgerState ledgerView tickedHeaderState) = do
+    (LedgerResult blk (ExtStateHandle m blk))
+applyHelper f opts cfg blk (TickedExtStateHandle ticked lv tickedHdr) = do
   ledgerResult <-
     withExceptT ExtValidationErrorLedger $
       f
         opts
         (configLedger $ getExtLedgerCfg cfg)
         blk
-        tickedLedgerState
+        ticked
   hdr <-
     withExceptT ExtValidationErrorHeader $
       ExceptT $
@@ -226,9 +242,9 @@ applyHelper f opts cfg blk (TickedExtStateHandle tickedLedgerState ledgerView ti
           runExcept $
             validateHeader @blk
               (getExtLedgerCfg cfg)
-              ledgerView
+              lv
               (getHeader blk)
-              tickedHeaderState
+              tickedHdr
   pure $ (\l -> ExtStateHandle l hdr) <$> castLedgerResult ledgerResult
 
 instance LedgerSupportsProtocol blk => ApplyBlock ExtLedgerState blk where
@@ -238,21 +254,21 @@ instance LedgerSupportsProtocol blk => ApplyBlock ExtLedgerState blk where
   applyBlockLedgerResult =
     applyHelper applyBlockLedgerResult
 
-  reapplyBlockLedgerResult evs cfg blk (TickedExtStateHandle tickedLedgerState ledgerView tickedHeaderState) = do
+  reapplyBlockLedgerResult evs cfg blk (TickedExtStateHandle ticked lv tickedHdr) = do
     ledgerResult <-
       reapplyBlockLedgerResult
         evs
         (configLedger $ getExtLedgerCfg cfg)
         blk
-        tickedLedgerState
+        ticked
     pure $ (\l -> ExtStateHandle l hdr) <$> castLedgerResult ledgerResult
    where
     hdr =
       revalidateHeader
         (getExtLedgerCfg cfg)
-        ledgerView
+        lv
         (getHeader blk)
-        tickedHeaderState
+        tickedHdr
 
 {-------------------------------------------------------------------------------
   Serialisation
