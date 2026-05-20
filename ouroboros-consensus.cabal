@@ -246,7 +246,7 @@ library
     Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Vote.Mock
     Ouroboros.Consensus.Peras.Vote.V1
-    Ouroboros.Consensus.Peras.Voting.Committee
+    Ouroboros.Consensus.Peras.Voting.Adapter
     Ouroboros.Consensus.Peras.Voting.Rules
     Ouroboros.Consensus.Peras.Voting.View
     Ouroboros.Consensus.Peras.Weight
@@ -683,7 +683,7 @@ test-suite consensus-test
     Test.Consensus.Peras.Cert.Inclusion
     Test.Consensus.Peras.Serialisation
     Test.Consensus.Peras.Util
-    Test.Consensus.Peras.Voting.Committee
+    Test.Consensus.Peras.Voting.Adapter
     Test.Consensus.Peras.Voting.Rules
     Test.Consensus.Peras.WeightSnapshot
     Test.Consensus.Util.Bitmap
