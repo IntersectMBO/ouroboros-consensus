@@ -1,5 +1,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 -- | Types common to any generic committee selection scheme
 module Ouroboros.Consensus.Committee.Types
@@ -13,12 +14,14 @@ module Ouroboros.Consensus.Committee.Types
 import Cardano.Ledger.BaseTypes (HasZero)
 import Cardano.Ledger.Core (KeyHash, KeyRole (..))
 import Data.Word (Word64)
+import NoThunks.Class (NoThunks)
+import Cardano.Prelude (Generic)
 
 -- | Identifier of a given voter in the committee selection scheme
 newtype PoolId = PoolId
   { unPoolId :: KeyHash StakePool
   }
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord, NoThunks, Generic)
 
 -- | Stake of a voter as reflected by the ledger state
 newtype LedgerStake = LedgerStake
@@ -31,16 +34,16 @@ newtype LedgerStake = LedgerStake
 newtype VoteWeight = VoteWeight
   { unVoteWeight :: Rational
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, NoThunks, Generic)
 
 -- | Target committee size
 newtype TargetCommitteeSize = TargetCommitteeSize
   { unTargetCommitteeSize :: Word64
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, NoThunks, Generic)
 
 -- | Wrapper to tag accumulated resources
 newtype Cumulative a = Cumulative
   { unCumulative :: a
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, NoThunks, Generic)

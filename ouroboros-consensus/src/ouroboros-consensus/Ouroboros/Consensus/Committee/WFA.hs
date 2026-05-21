@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- | Deterministic portion of the Weighted Fait-Accompli committee selection scheme
@@ -39,6 +42,8 @@ import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Word (Word64)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Committee.Types
   ( Cumulative (..)
   , LedgerStake (..)
@@ -88,7 +93,7 @@ data WFAError
     NotEnoughPoolsWithPositiveStake
       TargetCommitteeSize
       NumPoolsWithPositiveStake
-  deriving (Show, Eq)
+  deriving (Show, Eq, NoThunks, Generic)
 
 -- | Split a stake distrubution into persistent and non-persistent committee
 -- seats according to the weighted Fait-Accompli scheme.
@@ -231,14 +236,17 @@ newtype SeatIndex
   = SeatIndex
   { unSeatIndex :: Word64
   }
-  deriving (Show, Eq, Ord, Enum, Ix)
+  deriving stock (Show, Eq, Ord, Ix, Generic)
+  deriving newtype Enum
+  deriving anyclass NoThunks
 
 -- | Number of pools with positive stake in the underlying stake distribution
 newtype NumPoolsWithPositiveStake
   = NumPoolsWithPositiveStake
   { unNumPoolsWithPositiveStake :: Word64
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
 
 -- | Tiebreaker for voters with the same stake in the cumulative stake.
 --

@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -33,6 +36,8 @@ import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Data.Set (Set)
 import qualified Data.Set.NonEmpty as NESet
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
   , UniqueVotesWithSameTarget
@@ -99,7 +104,8 @@ instance
       InvalidCertSignature String
     | -- We triggered an unexpected cryptographic error
       CryptoError String
-    deriving (Show, Eq)
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass NoThunks
 
   data EligibilityWitness crypto EveryoneVotes
     = EveryoneVotesMember

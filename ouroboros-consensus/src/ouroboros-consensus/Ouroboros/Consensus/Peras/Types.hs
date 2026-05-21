@@ -89,7 +89,8 @@ newtype PerasBoostedBlock
   = PerasBoostedBlock
   { unPerasBoostedBlock :: WithOrigin Bytes32RealPoint
   }
-  deriving stock (Eq, Show)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
 
 instance FromCBOR PerasBoostedBlock where
   fromCBOR = PerasBoostedBlock <$> decodeWithOrigin decodeBytes32RealPoint
@@ -104,8 +105,9 @@ newtype PerasSeatIndex
   = PerasSeatIndex
   { unPerasSeatIndex :: Word16
   }
-  deriving stock (Eq, Ord, Show)
+  deriving stock (Show, Eq, Ord, Generic)
   deriving newtype (FromCBOR, ToCBOR, Enum, Bounded)
+  deriving anyclass NoThunks
 
 -- ** Vote parameters
 

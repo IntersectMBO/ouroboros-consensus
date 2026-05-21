@@ -1,4 +1,6 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -68,7 +70,9 @@ import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Proxy (Proxy (..))
+import GHC.Generics (Generic)
 import GHC.Natural (Natural)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Committee.Crypto (NormalizedVRFOutput (..))
 
 -- * BLS crypto helpers to instantiate voting committees
@@ -163,8 +167,9 @@ type Signature :: KeyRole -> Type
 newtype Signature r = Signature
   { unSignature :: SigDSIGN BLS12381MinSigDSIGN
   }
-  deriving stock (Eq, Show)
+  deriving stock (Show, Eq, Generic)
   deriving newtype (FromCBOR, ToCBOR)
+  deriving anyclass NoThunks
 
 -- | BLS proof of possession type
 newtype ProofOfPossession = ProofOfPossession
