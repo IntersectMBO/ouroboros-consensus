@@ -75,6 +75,7 @@ import qualified Test.QuickCheck.Monadic as QC
 import Test.QuickCheck.StateModel
 import Test.Tasty
 import Test.Tasty.QuickCheck (frequency, tabulate, testProperty)
+import qualified Test.Util.QuickCheck as QC'
 import Test.Util.TestBlock hiding
   ( TestBlock
   , TestBlockCodecConfig
@@ -99,7 +100,7 @@ prop_sequential ::
   Actions Model ->
   QC.Property
 prop_sequential maxSuccess mkTestArguments getDiskDir fsOps actions =
-  QC.withMaxSuccess maxSuccess $
+  QC'.withNumTests maxSuccess $
     QC.monadic runner $
       Monad.void $
         runActions $

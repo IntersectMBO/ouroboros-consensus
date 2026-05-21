@@ -100,6 +100,7 @@ import Test.QuickCheck.Monadic
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
+import qualified Test.Util.QuickCheck as QC
 import Test.Util.Serialisation.CDDL
 import Test.Util.Serialisation.Examples (Examples (..), Labelled)
 import Test.Util.Serialisation.SomeResult (SomeResult (..))
@@ -660,7 +661,7 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
     -- require an 'Eq' and 'Show' instance for all ledger config types which
     -- we'd like to avoid (as the EpochInfo is a record of functions).
     testProperty "roundtrip (comparing encoding) LedgerConfig" $
-      withMaxSuccess 20 $ \(Blind (WithVersion version a)) ->
+      QC.withNumTests 20 $ \(Blind (WithVersion version a)) ->
         roundtripComparingEncoding @(LedgerConfig blk) (enc version) (dec version) a
   , rtWith
       @(SomeSecond Query blk)

@@ -101,6 +101,7 @@ import Data.Word (Word32)
 import GHC.Generics (Generic)
 import GHC.Natural (Natural)
 import Lens.Micro ((^.))
+import Lens.Micro.Extras (view)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
@@ -370,12 +371,12 @@ validateMaybe ::
   SL.ApplyTxError era ->
   Maybe a ->
   V.Validation (TxErrorSG era) a
-validateMaybe err mb = V.validate (TxErrorSG err) id mb
+validateMaybe err mb = maybe (V.Failure (TxErrorSG err)) V.Success mb
 
 runValidation ::
   V.Validation (TxErrorSG era) a ->
   Except (SL.ApplyTxError era) a
-runValidation = liftEither . (unTxErrorSG +++ id) . V.toEither
+runValidation = liftEither . (unTxErrorSG +++ id) . view V.either
 
 -----
 
