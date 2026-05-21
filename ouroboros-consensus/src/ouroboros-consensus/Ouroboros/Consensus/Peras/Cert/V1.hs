@@ -29,6 +29,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
 import Data.Maybe (catMaybes)
+import Data.Typeable (Typeable)
 import Data.Word (Word16)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( PerasBoostedBlock
@@ -47,7 +48,11 @@ import Ouroboros.Consensus.Util.Bitmap (Bitmap)
 import qualified Ouroboros.Consensus.Util.Bitmap as Bitmap
 
 -- | Concrete Peras certificates using BLS signatures
-data PerasCert
+--
+-- NOTE: the 'tag' parameter is a phantom type used to track the block type that
+-- the certificate is associated with, to ensure injectivity when 'V1.PerasCert'
+-- is used as a type instance for 'BlockSupportsPeras' class.
+data PerasCert tag
   = PerasCert
   { pcRoundNo :: !PerasRoundNo
   -- ^ Election identifier
@@ -61,7 +66,7 @@ data PerasCert
   }
   deriving (Show, Eq)
 
-instance FromCBOR PerasCert where
+instance Typeable tag => FromCBOR (PerasCert tag) where
   fromCBOR = do
     decodeListLenOf 4
     pcRoundNo <- fromCBOR
@@ -76,7 +81,7 @@ instance FromCBOR PerasCert where
         , pcSignature
         }
 
-instance ToCBOR PerasCert where
+instance Typeable tag => ToCBOR (PerasCert tag) where
   toCBOR cert =
     encodeListLen 4
       <> toCBOR (pcRoundNo cert)

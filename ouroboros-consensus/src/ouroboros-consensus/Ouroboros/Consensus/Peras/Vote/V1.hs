@@ -20,6 +20,7 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
+import Data.Typeable (Typeable)
 import Data.Word (Word8)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( PerasBoostedBlock
@@ -33,7 +34,11 @@ import Ouroboros.Consensus.Peras.Crypto.BLS
   )
 
 -- | Concrete Peras votes using BLS signatures
-data PerasVote
+--
+-- NOTE: the 'tag' parameter is a phantom type used to track the block type that
+-- the vote is associated with, to ensure injectivity when 'V1.PerasVote' is
+-- used as a type instance for 'BlockSupportsPeras' class.
+data PerasVote tag
   = PerasVote
   { pvRoundNo :: !PerasRoundNo
   -- ^ Election identifier
@@ -49,7 +54,7 @@ data PerasVote
   }
   deriving (Show, Eq)
 
-instance FromCBOR PerasVote where
+instance Typeable tag => FromCBOR (PerasVote tag) where
   fromCBOR = do
     decodeListLenOf 5
     pvRoundNo <- fromCBOR
@@ -66,7 +71,7 @@ instance FromCBOR PerasVote where
         , pvSignature
         }
 
-instance ToCBOR PerasVote where
+instance Typeable tag => ToCBOR (PerasVote tag) where
   toCBOR vote =
     encodeListLen 5
       <> toCBOR (pvRoundNo vote)
