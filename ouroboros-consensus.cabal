@@ -1,4 +1,6 @@
 cabal-version: 3.0
+
+
 name: ouroboros-consensus
 version: 3.0.1.0
 synopsis: Consensus layer for the Ouroboros blockchain protocol
@@ -952,11 +954,13 @@ library protocol
     Ouroboros.Consensus.Protocol.Praos.AgentClient
     Ouroboros.Consensus.Protocol.Praos.Common
     Ouroboros.Consensus.Protocol.Praos.Header
+    Ouroboros.Consensus.Protocol.Praos.Peras
     Ouroboros.Consensus.Protocol.Praos.Views
     Ouroboros.Consensus.Protocol.Praos.VRF
     Ouroboros.Consensus.Protocol.TPraos
 
   build-depends:
+    aeson,
     base,
     bytestring,
     cardano-binary,
