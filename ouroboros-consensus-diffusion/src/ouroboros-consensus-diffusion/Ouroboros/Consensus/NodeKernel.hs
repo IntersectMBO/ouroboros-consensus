@@ -914,7 +914,7 @@ forkBlockForging IS{..} blockForging =
       for_ mayForgedEb $ \(eb :: ForgedLeiosEb) -> do
         lift $ do
           leiosDbInsertEbPoint leiosConn eb.point (Leios.leiosEbBytesSize eb.body)
-          leiosDbInsertEbBody leiosConn eb.point eb.body
+          void $ leiosDbInsertEbBody leiosConn eb.point eb.body
           void $ leiosDbInsertTxs leiosConn eb.txClosure
         traceLeios TraceLeiosBlockStored{slot = currentSlot, eb = eb.body}
 
