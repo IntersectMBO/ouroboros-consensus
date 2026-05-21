@@ -102,8 +102,8 @@ import Lens.Micro
 import Lens.Micro.Extras (view)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Cardano.InMemory
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+import Ouroboros.Consensus.Cardano.InMemory
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
@@ -345,7 +345,6 @@ instance MemPack BigEndianTxIn where
   unpackM = do
     BigEndianTxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
 
-
 {-------------------------------------------------------------------------------
   GetTip
 -------------------------------------------------------------------------------}
@@ -396,12 +395,6 @@ instance MonadLedger m (ShelleyBlock proto era) where
 
   state = stateRefState
   tickedState = tickedStateHandleState
-
-  mkStateHandle = ShelleyStateHandle
-  mkTickedStateHandle = TickedShelleyStateHandle
-
-  withState s h = h{stateRefState = s}
-  withTickedState s h = h{tickedStateHandleState = s}
 
   close = closeHandle . stateRefHandle
   closeTicked = closeHandle . tickedStateHandleHandle
@@ -543,7 +536,7 @@ applyHelper f cfg blk stBefore = do
           }
         h = stBefore
 
-  tickedShelleyLedgerState' <- lift $ readTxOuts h (getBlockKeySets blk)
+  tickedShelleyLedgerState' <- lift $ stateWith h (getBlockKeySets blk)
   LedgerResult evs st' <-
     ExceptT $
       pure $

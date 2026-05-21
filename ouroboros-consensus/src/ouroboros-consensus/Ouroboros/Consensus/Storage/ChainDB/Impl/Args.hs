@@ -41,7 +41,6 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
@@ -145,7 +144,7 @@ defaultArgs =
   ChainDbArgs
     ImmutableDB.defaultArgs
     VolatileDB.defaultArgs
-    (LedgerDB.defaultArgs fillJavier) -- TODO @js
+    LedgerDB.defaultArgs
     PerasCertDB.defaultArgs
     PerasVoteDB.defaultArgs
     defaultSpecificArgs

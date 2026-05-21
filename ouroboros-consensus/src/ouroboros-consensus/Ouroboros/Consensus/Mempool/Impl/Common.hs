@@ -269,7 +269,7 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
 -- | Tick the 'LedgerState' using the given 'BlockSlot'.
 tickLedgerState ::
   forall m blk.
-  ( Monad m
+  ( MonadThrow m
   , MonadLedger m blk
   , UpdateLedger blk
   , ValidateEnvelope blk

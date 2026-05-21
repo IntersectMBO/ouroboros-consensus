@@ -75,8 +75,8 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
+import Ouroboros.Consensus.Util.IOLike
 
 -- $setup
 -- >>> import Image.LaTeX.Render
@@ -148,19 +148,6 @@ instance CanHardFork xs => MonadLedger m (HardForkBlock xs) where
   duplicateTicked (HardForkTickedStateHandle ti st) =
     HardForkTickedStateHandle ti <$> hsequence' (hcmap proxySingle (Comp . duplicateTicked) st)
 
-  -- TODO @js: HFC 'mkStateHandle' / 'mkTickedStateHandle' need a concrete
-  -- representation of @LedgerTablesHandle m (HardForkBlock xs)@ — likely an
-  -- NS of per-era handles — so we can pair each era's table handle with
-  -- its ledger state in the telescope. Deferred until that data instance
-  -- is pinned down.
-  mkStateHandle (HardForkLedgerState _st) _ = fillJavier
-  mkTickedStateHandle (TickedHardForkLedgerState _ti _st) _ = fillJavier
-
-  -- TODO @js: 'withState' / 'withTickedState' require pure replacement
-  -- of the in-memory portion across the telescope. Deferred.
-  withState _newSt _h = fillJavier
-  withTickedState _newSt _h = fillJavier
-
 instance CanHardFork xs => IsLedger LedgerState (HardForkBlock xs) where
   type LedgerErr LedgerState (HardForkBlock xs) = HardForkLedgerError xs
 
@@ -214,7 +201,7 @@ instance CanHardFork xs => IsLedger LedgerState (HardForkBlock xs) where
 -- prepends the diffs that might have been created if this tick crossed an era
 -- boundary.
 tickOne ::
-  (SListI xs, SingleEraBlock blk, Monad m) =>
+  (SListI xs, SingleEraBlock blk, MonadThrow m) =>
   EpochInfo (Except PastHorizonException) ->
   SlotNo ->
   ComputeLedgerEvents ->

@@ -1158,7 +1158,7 @@ answerShelleyLookupQueries ::
 answerShelleyLookupQueries cfg q forker@(ExtStateHandle ref _) =
   case q of
     GetUTxOByTxIn txins -> do
-      SL.UTxO values <- readTxOutByTxIn (stateRefHandle ref) txins
+      SL.UTxO values <- readTxOuts (stateRefHandle ref) txins
       pure $
         SL.UTxO $
           Map.filterWithKey

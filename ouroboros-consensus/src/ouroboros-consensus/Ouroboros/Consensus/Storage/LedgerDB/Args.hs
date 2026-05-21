@@ -56,7 +56,7 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   , lgrHasFS :: HKD f (SomeHasFS m)
   , lgrConfig :: LedgerDbCfgF f ExtLedgerState blk
   , lgrTracer :: !(Tracer m (TraceEvent blk))
-  , lgrBackendArgs :: LedgerDbBackendArgs m blk
+  , lgrBackendArgs :: HKD f (LedgerDbBackendArgs m blk)
   , lgrQueryBatchSize :: QueryBatchSize
   , lgrStartSnapshot :: Maybe DiskSnapshot
   -- ^ If provided, the ledgerdb will start using said snapshot and fallback
@@ -67,9 +67,8 @@ data LedgerDbArgs f m blk = LedgerDbArgs
 -- | Default arguments
 defaultArgs ::
   Applicative m =>
-  V2.SomeBackendArgs m blk ->
   Incomplete LedgerDbArgs m blk
-defaultArgs backendArgs =
+defaultArgs =
   LedgerDbArgs
     { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
     , lgrGenesis = NoDefault
@@ -77,9 +76,7 @@ defaultArgs backendArgs =
     , lgrConfig = LedgerDbCfg NoDefault NoDefault OmitLedgerEvents
     , lgrQueryBatchSize = DefaultQueryBatchSize
     , lgrTracer = nullTracer
-    , -- This value is the closest thing to a pre-UTxO-HD node, and as such it
-      -- will be the default for end-users.
-      lgrBackendArgs = LedgerDbBackendArgsV2 backendArgs
+    , lgrBackendArgs = NoDefault
     , lgrStartSnapshot = Nothing
     }
 

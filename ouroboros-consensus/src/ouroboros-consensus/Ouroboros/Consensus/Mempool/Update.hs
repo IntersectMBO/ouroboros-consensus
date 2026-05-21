@@ -310,7 +310,7 @@ tryAddTx mpEnv cfg wti tx is =
     -- this step both 'txMeasure' and 'applyTx' are pure: they look up
     -- values in the cache instead of going to disk.
     cache1 <- addToCache st tx (isCache is)
-    pure $ case runExcept (txMeasure cfg cache1 tx) of
+    pure $ case runExcept (txMeasure cfg cache1 (tickedState st) tx) of
       Left err ->
         -- The transaction does not have a valid measure (eg its ExUnits is
         -- greater than what this ledger state allows for a single transaction).

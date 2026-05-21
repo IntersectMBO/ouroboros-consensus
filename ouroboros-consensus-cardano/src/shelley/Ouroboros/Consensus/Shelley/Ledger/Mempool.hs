@@ -107,6 +107,7 @@ import GHC.Natural (Natural)
 import Lens.Micro
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Cardano.InMemory
 import Ouroboros.Consensus.Ledger.Abstract hiding (Handle, TickedHandle)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff

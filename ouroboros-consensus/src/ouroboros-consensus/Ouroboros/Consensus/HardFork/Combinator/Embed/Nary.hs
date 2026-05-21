@@ -54,6 +54,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
+import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   Injection for a single block into a HardForkBlock
@@ -267,7 +268,7 @@ instance Inject ExtLedgerState where
 -- not rely on that class.
 injectInitialExtLedgerState ::
   forall m x xs.
-  (Monad m, CanHardFork (x ': xs)) =>
+  (MonadThrow m, CanHardFork (x ': xs)) =>
   TopLevelConfig (HardForkBlock (x ': xs)) ->
   ExtLedgerState x ->
   LedgerTablesHandle m x ->
@@ -295,7 +296,7 @@ injectInitialExtLedgerState cfg extLedgerState0 tbs = do
           (configLedger cfg)
           (SlotNo 0)
           . initHardForkState
-          $ mkStateHandle (ledgerState extLedgerState0) tbs
+          $ fillJavier (ledgerState extLedgerState0) tbs
       )
 
   firstEraChainDepState :: HardForkChainDepState (x ': xs)

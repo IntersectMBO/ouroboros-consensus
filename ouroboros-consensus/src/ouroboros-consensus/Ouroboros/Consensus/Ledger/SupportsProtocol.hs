@@ -14,6 +14,7 @@ import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Util.IOLike
 
 -- | Link protocol to ledger
 class
@@ -77,7 +78,7 @@ class
 _lemma_ledgerViewForecastAt_applyChainTick ::
   ( LedgerSupportsProtocol blk
   , Eq (LedgerView (BlockProtocol blk))
-  , Monad m
+  , MonadThrow m
   , MonadLedger m blk
   ) =>
   LedgerConfig blk ->

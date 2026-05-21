@@ -309,6 +309,7 @@ validate evs args = do
 switch ::
   ( LedgerSupportsProtocol blk
   , MonadSTM m
+  , MonadThrow m
   , MonadLedger m blk
   ) =>
   (forall r. Word64 -> (Forker m blk -> m r) -> m (Either GetForkerError r)) ->
@@ -367,6 +368,7 @@ applyBlock ::
   forall m blk.
   ( LedgerSupportsProtocol blk
   , MonadSTM m
+  , MonadThrow m
   , MonadLedger m blk
   ) =>
   ComputeLedgerEvents ->
@@ -404,6 +406,7 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
 applyThenPush ::
   ( LedgerSupportsProtocol blk
   , MonadSTM m
+  , MonadThrow m
   , MonadLedger m blk
   ) =>
   ComputeLedgerEvents ->
@@ -422,6 +425,7 @@ applyThenPush evs cfg ap fo doResolve = do
 applyThenPushMany ::
   ( LedgerSupportsProtocol blk
   , MonadSTM m
+  , MonadThrow m
   , MonadLedger m blk
   ) =>
   (Pushing blk -> m ()) ->

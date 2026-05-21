@@ -44,6 +44,7 @@ import NoThunks.Class
 import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ticked
 import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
@@ -154,10 +155,6 @@ class
     MempoolCache blk ->
     m (MempoolCache blk)
 
-  -- | Check whether the internal invariants of the transaction hold.
-  txInvariant :: GenTx blk -> Bool
-  txInvariant = const True
-
   -- | Drop a transaction's contribution from the 'MempoolCache'.
   --
   -- Used when the mempool drops a tx without going through
@@ -165,6 +162,10 @@ class
   -- tx's read values and diffs forgotten, so subsequent 'reapplyTx'
   -- calls on the remaining txs see the correct prefix-state.
   forgetTxFromCache :: Validated (GenTx blk) -> MempoolCache blk -> MempoolCache blk
+
+  -- | Check whether the internal invariants of the transaction hold.
+  txInvariant :: GenTx blk -> Bool
+  txInvariant = const True
 
   -- | Compute the measure of a transaction (e.g. size, ExUnits).
   --
@@ -180,6 +181,7 @@ class
   txMeasure ::
     LedgerConfig blk ->
     MempoolCache blk ->
+    Ticked LedgerState blk ->
     GenTx blk ->
     Except (ApplyTxErr blk) (TxMeasure blk)
 

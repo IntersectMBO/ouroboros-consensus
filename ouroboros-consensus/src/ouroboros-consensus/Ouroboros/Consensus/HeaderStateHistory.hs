@@ -53,6 +53,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Util.CallStack (HasCallStack)
+import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq (Anchorable, AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Mock.Chain (Chain)
@@ -258,7 +259,7 @@ fromChain ::
   ( ApplyBlock ExtLedgerState blk
   , HasHardForkHistory blk
   , HasAnnTip blk
-  , Monad m
+  , MonadThrow m
   , MonadLedger m blk
   ) =>
   TopLevelConfig blk ->

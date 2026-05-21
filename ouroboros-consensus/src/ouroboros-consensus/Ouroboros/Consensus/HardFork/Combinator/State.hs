@@ -52,6 +52,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Translation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract hiding (getTip)
 import Ouroboros.Consensus.Util
+import Ouroboros.Consensus.Util.IOLike
 import Prelude hiding (sequence)
 
 {-------------------------------------------------------------------------------
@@ -217,7 +218,7 @@ epochInfoPrecomputedTransitionInfo shape transition st =
 --    step 2, and return it.
 extendToSlot ::
   forall m xs.
-  (CanHardFork xs, Monad m) =>
+  (CanHardFork xs, MonadThrow m) =>
   HardForkLedgerConfig xs ->
   SlotNo ->
   HardForkState (StateHandle m) xs ->

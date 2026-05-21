@@ -121,7 +121,7 @@ fromMap = Diff
 fromMapInserts :: Map k v -> Diff k v
 fromMapInserts = Diff . Map.map Insert
 
-fromMapDeletes :: Map k v -> Diff k v
+fromMapDeletes :: Map k v -> Diff k v'
 fromMapDeletes = Diff . Map.map (const Delete)
 
 fromSetDeletes :: Set k -> Diff k v

@@ -90,6 +90,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Util
+import System.FS.API
 
 {-------------------------------------------------------------------------------
   LedgerState
@@ -185,30 +186,25 @@ type instance AuxLedgerEvent ByronBlock = VoidLedgerEvent
 instance IsLedger LedgerState ByronBlock where
   type LedgerErr LedgerState ByronBlock = CC.ChainValidationError
 
-  applyChainTickLedgerResult _ cfg slotNo (ByronStateHandle ByronLedgerState{..}) =
+  applyChainTickLedgerResult _ cfg slotNo (ByronStateHandle ByronLedgerState{..} h) =
     pure $
       pureLedgerResult $
-        TickedByronStateHandle $
+        TickedByronStateHandle
           TickedByronLedgerState
             { tickedByronLedgerState =
                 CC.applyChainTick cfg (toByronSlotNo slotNo) byronLedgerState
             , untickedByronLedgerTransition =
                 byronLedgerTransition
             }
+          h
 
 instance MonadLedger m ByronBlock where
-  newtype StateHandle m ByronBlock = ByronStateHandle (LedgerState ByronBlock)
-  newtype TickedStateHandle m ByronBlock =
-    TickedByronStateHandle (Ticked LedgerState ByronBlock)
+  data StateHandle m ByronBlock = ByronStateHandle (LedgerState ByronBlock) (SomeHasFS m)
+  data TickedStateHandle m ByronBlock
+    = TickedByronStateHandle (Ticked LedgerState ByronBlock) (SomeHasFS m)
 
-  state (ByronStateHandle s) = s
-  tickedState (TickedByronStateHandle s) = s
-
-  mkStateHandle st _ = ByronStateHandle st
-  mkTickedStateHandle st _ = TickedByronStateHandle st
-
-  withState s _ = ByronStateHandle s
-  withTickedState s _ = TickedByronStateHandle s
+  state (ByronStateHandle s _) = s
+  tickedState (TickedByronStateHandle s _) = s
 
   close _ = pure ()
   closeTicked _ = pure ()
@@ -224,10 +220,10 @@ instance MonadLedger m ByronBlock where
 -------------------------------------------------------------------------------}
 
 instance ApplyBlock LedgerState ByronBlock where
-  applyBlockLedgerResultWithValidation doValidation opts cfg blk (TickedByronStateHandle st) =
+  applyBlockLedgerResultWithValidation doValidation opts cfg blk (TickedByronStateHandle st h) =
     case runExcept (applyByronBlock doValidation opts cfg blk st) of
       Left err -> throwError err
-      Right v -> pure $ pureLedgerResult $ ByronStateHandle v
+      Right v -> pure $ pureLedgerResult $ ByronStateHandle v h
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult validationErrorImpossible
 

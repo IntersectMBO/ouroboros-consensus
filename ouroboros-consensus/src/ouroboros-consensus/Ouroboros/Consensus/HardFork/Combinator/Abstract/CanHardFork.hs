@@ -23,6 +23,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import Ouroboros.Consensus.HardFork.Combinator.Translation
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   CanHardFork
@@ -48,7 +49,7 @@ class
   type HardForkTxMeasure xs
 
   hardForkEraTranslation :: EraTranslation xs
-  hardForkStateHandleTranslation :: Monad m => StateHandleTranslation m xs
+  hardForkStateHandleTranslation :: MonadThrow m => StateHandleTranslation m xs
   hardForkChainSel :: Tails AcrossEraTiebreaker xs
   hardForkInjectTxs ::
     InPairs

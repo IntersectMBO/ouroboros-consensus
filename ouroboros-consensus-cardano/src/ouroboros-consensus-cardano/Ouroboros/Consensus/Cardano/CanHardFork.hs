@@ -58,6 +58,7 @@ import Ouroboros.Consensus.Byron.ByronHFC ()
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Node ()
 import Ouroboros.Consensus.Cardano.Block
+import Ouroboros.Consensus.Cardano.InMemory
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
@@ -93,6 +94,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
+import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   CanHardFork
@@ -274,7 +276,7 @@ translatePointByronToShelley point bNo =
       error "translatePointByronToShelley: invalid Byron state"
 
 translateLedgerStateByronToShelleyWrapper ::
-  (Functor m, ShelleyCompatible (TPraos c) ShelleyEra) =>
+  (MonadThrow m, ShelleyCompatible (TPraos c) ShelleyEra) =>
   RequiringBoth
     WrapLedgerConfig
     (TranslateLedgerState m)
@@ -284,37 +286,24 @@ translateLedgerStateByronToShelleyWrapper =
   RequireBoth $
     \_ (WrapLedgerConfig cfgShelley) ->
       TranslateLedgerState
-        { translateLedgerStateWith = \epochNo (ByronStateHandle ledgerByron) -> do
+        { translateLedgerStateWith = \epochNo (ByronStateHandle ledgerByron shfs) -> do
             let st =
-                  ShelleyLedgerState
-                    { shelleyLedgerTip =
-                        translatePointByronToShelley
-                          (ledgerTipPoint ledgerByron)
-                          (byronLedgerTipBlockNo ledgerByron)
-                    , shelleyLedgerState =
-                        SL.translateToShelleyLedgerState
-                          (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
-                          epochNo
-                          (byronLedgerState ledgerByron)
-                    , shelleyLedgerTransition =
-                        ShelleyTransitionInfo{shelleyAfterVoting = 0}
-                    , shelleyLedgerLatestPerasCertRound = SNothing
-                    }
-            ShelleyStateHandle st <$> mkHandle st
+                  SL.translateToShelleyLedgerState
+                    (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
+                    epochNo
+                    (byronLedgerState ledgerByron)
+
+            ShelleyStateHandle
+              ( ShelleyLedgerState
+                  { shelleyLedgerTip =
+                      translatePointByronToShelley (ledgerTipPoint ledgerByron) (byronLedgerTipBlockNo ledgerByron)
+                  , shelleyLedgerState = st
+                  , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
+                  , shelleyLedgerLatestPerasCertRound = SNothing
+                  }
+              )
+              <$> mkHandleFromState shfs st
         }
-
--- TODO @js: depends on the Shelley LSM/InMemory backend being restored
--- (it needs to allocate a fresh table handle from a Shelley state).
-mkHandle :: LedgerState (ShelleyBlock (TPraos c) ShelleyEra) -> m (Handle m (TPraos c) ShelleyEra)
-mkHandle = fillJavier
-
--- TODO @js: era-to-era table handle translation. Depends on the backend
--- providing a way to migrate UTxO entries across Shelley eras.
-castHandle ::
-  LedgerState (ShelleyBlock proto era) ->
-  Handle m proto' (SL.PreviousEra era) ->
-  m (Handle m proto era)
-castHandle = fillJavier
 
 translateChainDepStateByronToShelleyWrapper ::
   RequiringBoth
@@ -420,7 +409,7 @@ crossEraForecastByronToShelleyWrapper =
 -------------------------------------------------------------------------------}
 
 translateLedgerStateShelleyToAllegraWrapper ::
-  Monad m =>
+  MonadThrow m =>
   RequiringBoth
     WrapLedgerConfig
     (TranslateLedgerState m)
@@ -431,16 +420,14 @@ translateLedgerStateShelleyToAllegraWrapper =
     TranslateLedgerState
       { translateLedgerStateWith = \_epochNo (ShelleyStateHandle ls h) -> do
           let avvms = shelleyToAllegraAVVMsToDelete $ shelleyLedgerState ls
+              nes = stateWithUTxO h avvms
+              ls' = unComp . SL.translateEra' SL.NoGenesis $ Comp ls{shelleyLedgerState = nes}
 
-          ls' <- stateWith h avvms
+          h' <- castHandle (shelleyLedgerState ls') h
 
-          let ls'' = unComp . SL.translateEra' SL.NoGenesis $ Comp ls'
+          applyDiff h' $ Diff.fromMapDeletes $ SL.unUTxO avvms
 
-          h' <- castHandle ls'' h
-
-          applyDiff h' $ Diff.fromMapDeletes $ Map.map SL.upgradeTxOut $ SL.unUTxO avvms
-
-          pure $ ShelleyStateHandle ls'' h'
+          pure $ ShelleyStateHandle ls' h'
       }
 
 translateTxShelleyToAllegraWrapper ::
@@ -464,7 +451,7 @@ translateValidatedTxShelleyToAllegraWrapper =
 -------------------------------------------------------------------------------}
 
 translateLedgerStateAllegraToMaryWrapper ::
-  Functor m =>
+  MonadThrow m =>
   RequiringBoth
     WrapLedgerConfig
     (TranslateLedgerState m)
@@ -475,7 +462,7 @@ translateLedgerStateAllegraToMaryWrapper =
     TranslateLedgerState
       { translateLedgerStateWith = \_epochNo (ShelleyStateHandle st h) ->
           let st' = unComp . SL.translateEra' SL.NoGenesis $ Comp st
-           in ShelleyStateHandle st' <$> castHandle st' h
+           in ShelleyStateHandle st' <$> castHandle (shelleyLedgerState st') h
       }
 
 translateTxAllegraToMaryWrapper ::
@@ -499,7 +486,7 @@ translateValidatedTxAllegraToMaryWrapper =
 -------------------------------------------------------------------------------}
 
 translateLedgerStateMaryToAlonzoWrapper ::
-  Functor m =>
+  MonadThrow m =>
   RequiringBoth
     WrapLedgerConfig
     (TranslateLedgerState m)
@@ -510,7 +497,7 @@ translateLedgerStateMaryToAlonzoWrapper =
     TranslateLedgerState
       { translateLedgerStateWith = \_epochNo (ShelleyStateHandle st h) ->
           let st' = unComp . SL.translateEra' (getAlonzoTranslationContext cfgAlonzo) $ Comp st
-           in ShelleyStateHandle st' <$> castHandle st' h
+           in ShelleyStateHandle st' <$> castHandle (shelleyLedgerState st') h
       }
 
 getAlonzoTranslationContext ::
@@ -543,7 +530,7 @@ translateValidatedTxMaryToAlonzoWrapper ctxt =
 -------------------------------------------------------------------------------}
 
 translateLedgerStateAlonzoToBabbageWrapper ::
-  Functor m =>
+  MonadThrow m =>
   RequiringBoth
     WrapLedgerConfig
     (TranslateLedgerState m)
@@ -554,7 +541,7 @@ translateLedgerStateAlonzoToBabbageWrapper =
     TranslateLedgerState
       { translateLedgerStateWith = \_epochNo (ShelleyStateHandle st h) ->
           let st' = unComp . SL.translateEra' SL.NoGenesis $ Comp $ transPraosLS st
-           in ShelleyStateHandle st' <$> castHandle st' h
+           in ShelleyStateHandle st' <$> castHandle (shelleyLedgerState st') h
       }
  where
   transPraosLS ::
@@ -610,7 +597,7 @@ translateValidatedTxAlonzoToBabbageWrapper ctxt =
 -------------------------------------------------------------------------------}
 
 translateLedgerStateBabbageToConwayWrapper ::
-  Functor m =>
+  MonadThrow m =>
   RequiringBoth
     WrapLedgerConfig
     (TranslateLedgerState m)
@@ -621,7 +608,7 @@ translateLedgerStateBabbageToConwayWrapper =
     TranslateLedgerState
       { translateLedgerStateWith = \_epochNo (ShelleyStateHandle st h) ->
           let st' = unComp . SL.translateEra' (getConwayTranslationContext cfgConway) $ Comp st
-           in ShelleyStateHandle st' <$> castHandle st' h
+           in ShelleyStateHandle st' <$> castHandle (shelleyLedgerState st') h
       }
 
 getConwayTranslationContext ::
@@ -654,7 +641,7 @@ translateValidatedTxBabbageToConwayWrapper ctxt =
 -------------------------------------------------------------------------------}
 
 translateLedgerStateConwayToDijkstraWrapper ::
-  Functor m =>
+  MonadThrow m =>
   RequiringBoth
     WrapLedgerConfig
     (TranslateLedgerState m)
@@ -665,7 +652,7 @@ translateLedgerStateConwayToDijkstraWrapper =
     TranslateLedgerState
       { translateLedgerStateWith = \_epochNo (ShelleyStateHandle st h) ->
           let st' = unComp . SL.translateEra' (getDijkstraTranslationContext cfgDijkstra) $ Comp st
-           in ShelleyStateHandle st' <$> castHandle st' h
+           in ShelleyStateHandle st' <$> castHandle (shelleyLedgerState st') h
       }
 
 getDijkstraTranslationContext ::

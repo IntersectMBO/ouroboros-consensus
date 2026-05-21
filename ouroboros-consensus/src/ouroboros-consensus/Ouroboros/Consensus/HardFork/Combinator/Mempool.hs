@@ -103,13 +103,16 @@ instance
     HardForkMempoolCache
       (hcmap proxySingle (mkMempoolCache . State.currentState) $ Telescope.tip st)
 
+  addToCache _stref _gtx _cache = undefined
+  forgetTxFromCache = undefined
+
   -- TODO @js: the new 'LedgerSupportsMempool' shape (Layer 2/3) makes
   -- 'applyTx' / 'reapplyTx' pure (return 'Except', not 'ExceptT m'). The
   -- existing 'applyHelper' is monadic-in-@m@ and shells out per era; needs to
   -- be re-cast against the per-era 'MempoolCache' NS so the whole thing
   -- composes in 'Except' instead of 'ExceptT m'.
-  applyTx = fillJavier
-  reapplyTx = fillJavier
+  applyTx = undefined ModeApply
+  reapplyTx = undefined ModeReapply
 
   txForgetValidated =
     HardForkGenTx

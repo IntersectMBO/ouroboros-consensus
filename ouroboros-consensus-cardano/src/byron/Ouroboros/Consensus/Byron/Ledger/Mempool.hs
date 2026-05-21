@@ -115,20 +115,9 @@ type instance ApplyTxErr ByronBlock = CC.ApplyMempoolPayloadErr
 instance ShowProxy CC.ApplyMempoolPayloadErr
 
 instance LedgerSupportsMempool ByronBlock where
-  -- | Byron has no on-disk UTxO tables, so the cache only needs to
-  -- snapshot the dynamic protocol-parameter values that 'txMeasure'
-  -- consults (the max tx size, which lives in the ticked state's
-  -- update-state).
-  newtype MempoolCache ByronBlock = ByronMempoolCache
-    { byronMempoolCacheMaxTxSize :: Natural
-    }
+  data MempoolCache ByronBlock = ByronMempoolCache
 
-  mkMempoolCache (TickedByronStateHandle st) =
-    ByronMempoolCache $
-      Update.ppMaxTxSize $
-        CC.adoptedProtocolParameters $
-          CC.cvsUpdateState $
-            tickedByronLedgerState st
+  mkMempoolCache _ = ByronMempoolCache
 
   -- Byron has no UTxO reads to perform; the cache is built once from
   -- the ticked state and never needs to be enriched per-tx.
@@ -143,17 +132,17 @@ instance LedgerSupportsMempool ByronBlock where
    where
     tx' = toMempoolPayload tx
 
-  applyTx cfg _wti slot tx cache st =
-    case runExcept (applyByronGenTx validationMode cfg slot tx (tickedState st)) of
+  applyTx cfg _wti slot tx cache (TickedByronStateHandle st h) =
+    case runExcept (applyByronGenTx validationMode cfg slot tx st) of
       Left err -> throwError err
-      Right st' -> pure (TickedByronStateHandle st', cache, ValidatedByronTx tx)
+      Right st' -> pure (TickedByronStateHandle st' h, cache, ValidatedByronTx tx)
    where
     validationMode = CC.ValidationMode CC.BlockValidation Utxo.TxValidation
 
-  reapplyTx cfg slot vtx cache st =
-    case runExcept (applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) (tickedState st)) of
+  reapplyTx cfg slot vtx cache (TickedByronStateHandle st h) =
+    case runExcept (applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st) of
       Left err -> throwError (err, cache)
-      Right v -> pure (TickedByronStateHandle v, cache)
+      Right v -> pure (TickedByronStateHandle v h, cache)
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 
@@ -161,12 +150,18 @@ instance LedgerSupportsMempool ByronBlock where
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 
-  txMeasure _cfg (ByronMempoolCache maxTxSize) tx =
+  txMeasure _cfg _cache st tx =
     if txszNat > maxTxSize
       then throwError err
       else
         pure $ IgnoringOverflow $ ByteSize32 $ fromIntegral txsz
    where
+    maxTxSize =
+      Update.ppMaxTxSize $
+        CC.adoptedProtocolParameters $
+          CC.cvsUpdateState $
+            tickedByronLedgerState st
+
     txszNat = fromIntegral txsz :: Natural
 
     txsz =

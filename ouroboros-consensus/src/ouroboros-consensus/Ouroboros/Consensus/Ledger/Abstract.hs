@@ -47,6 +47,7 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Util
+import Ouroboros.Consensus.Util.IOLike
 
 -- | " Validated " transaction or block
 --
@@ -198,7 +199,7 @@ reapplyLedgerBlock ::
 reapplyLedgerBlock = fmap lrResult ...: reapplyBlockLedgerResult
 
 tickThenApplyLedgerResult ::
-  (MonadLedger m blk, ApplyBlock l blk, Monad m) =>
+  (MonadLedger m blk, ApplyBlock l blk, MonadThrow m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -219,7 +220,7 @@ tickThenApplyLedgerResult evs cfg blk l = do
       }
 
 tickThenReapplyLedgerResult ::
-  (MonadLedger m blk, ApplyBlock l blk, Monad m) =>
+  (MonadLedger m blk, ApplyBlock l blk, MonadThrow m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -240,7 +241,7 @@ tickThenReapplyLedgerResult evs cfg blk l = do
       }
 
 tickThenApply ::
-  (MonadLedger m blk, ApplyBlock l blk, Monad m) =>
+  (MonadLedger m blk, ApplyBlock l blk, MonadThrow m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -249,7 +250,7 @@ tickThenApply ::
 tickThenApply = fmap lrResult ...: tickThenApplyLedgerResult
 
 tickThenReapply ::
-  (MonadLedger m blk, ApplyBlock l blk, Monad m) =>
+  (MonadLedger m blk, ApplyBlock l blk, MonadThrow m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -258,7 +259,7 @@ tickThenReapply ::
 tickThenReapply = fmap lrResult ...: tickThenReapplyLedgerResult
 
 foldLedger ::
-  (MonadLedger m blk, ApplyBlock l blk, Monad m) =>
+  (MonadLedger m blk, ApplyBlock l blk, MonadThrow m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   [blk] ->
@@ -268,7 +269,7 @@ foldLedger evs cfg =
   repeatedlyM (tickThenApply evs cfg)
 
 refoldLedger ::
-  (MonadLedger m blk, ApplyBlock l blk, Monad m) =>
+  (MonadLedger m blk, ApplyBlock l blk, MonadThrow m) =>
   ComputeLedgerEvents -> LedgerCfg l blk -> [blk] -> Handle l m blk -> m (Handle l m blk)
 refoldLedger evs cfg =
   repeatedlyM (tickThenReapply evs cfg)
