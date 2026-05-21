@@ -41,6 +41,10 @@ module Ouroboros.Consensus.Network.NodeToNode
     -- ** Projections
   , initiator
   , initiatorAndResponder
+
+    -- * Leios mini-protocol limits
+  , leiosNotifyProtocolLimits
+  , leiosFetchProtocolLimits
   ) where
 
 import Cardano.Network.NodeToNode
@@ -81,6 +85,7 @@ import LeiosDemoOnlyTestFetch
   , codecLeiosFetch
   , codecLeiosFetchId
   , leiosFetchClientPeerPipelined
+  , leiosFetchMiniProtocolNum
   , leiosFetchServerPeer
   , timeLimitsLeiosFetch
   , toLeiosFetchClientPeerPipelined
@@ -99,6 +104,7 @@ import LeiosDemoOnlyTestNotify
   , codecLeiosNotify
   , codecLeiosNotifyId
   , leiosNotifyClientPeerPipelined
+  , leiosNotifyMiniProtocolNum
   , leiosNotifyServerPeer
   , timeLimitsLeiosNotify
   , toLeiosNotifyClientPeerPipelined
@@ -1331,6 +1337,27 @@ initiator miniProtocolParameters version versionData Apps{..} =
     )
     version
     versionData
+    <> mempty
+      { withHot =
+          WithHot
+            [ MiniProtocol
+                { miniProtocolNum = leiosNotifyMiniProtocolNum
+                , miniProtocolStart = StartOnDemand
+                , miniProtocolLimits = leiosNotifyProtocolLimits
+                , miniProtocolRun =
+                    InitiatorProtocolOnly
+                      (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
+                }
+            , MiniProtocol
+                { miniProtocolNum = leiosFetchMiniProtocolNum
+                , miniProtocolStart = StartOnDemand
+                , miniProtocolLimits = leiosFetchProtocolLimits
+                , miniProtocolRun =
+                    InitiatorProtocolOnly
+                      (MiniProtocolCb (\initiatorCtx -> aLeiosFetchClient version initiatorCtx))
+                }
+            ]
+      }
 
 -- | A bi-directional network application.
 --
@@ -1376,3 +1403,44 @@ initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
     )
     version
     versionData
+    <> mempty
+      { withHot =
+          WithHot
+            [ MiniProtocol
+                { miniProtocolNum = leiosNotifyMiniProtocolNum
+                , miniProtocolStart = StartOnDemand
+                , miniProtocolLimits = leiosNotifyProtocolLimits
+                , miniProtocolRun =
+                    InitiatorAndResponderProtocol
+                      (MiniProtocolCb (\initiatorCtx -> aLeiosNotifyClient version initiatorCtx))
+                      (MiniProtocolCb (\responderCtx -> aLeiosNotifyServer version responderCtx))
+                }
+            , MiniProtocol
+                { miniProtocolNum = leiosFetchMiniProtocolNum
+                , miniProtocolStart = StartOnDemand
+                , miniProtocolLimits = leiosFetchProtocolLimits
+                , miniProtocolRun =
+                    InitiatorAndResponderProtocol
+                      (MiniProtocolCb (\initiatorCtx -> aLeiosFetchClient version initiatorCtx))
+                      (MiniProtocolCb (\responderCtx -> aLeiosFetchServer version responderCtx))
+                }
+            ]
+      }
+
+leiosNotifyProtocolLimits :: MiniProtocolLimits
+leiosNotifyProtocolLimits =
+  MiniProtocolLimits
+    { maximumIngressQueue =
+        addSafetyMargin $
+          fromIntegral $
+            Leios.maxLeiosNotifyIngressQueue Leios.demoLeiosFetchStaticEnv
+    }
+
+leiosFetchProtocolLimits :: MiniProtocolLimits
+leiosFetchProtocolLimits =
+  MiniProtocolLimits
+    { maximumIngressQueue =
+        addSafetyMargin $
+          fromIntegral $
+            Leios.maxLeiosFetchIngressQueue Leios.demoLeiosFetchStaticEnv
+    }
