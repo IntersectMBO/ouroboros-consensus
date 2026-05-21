@@ -85,7 +85,7 @@ data LeiosDbConnection m = LeiosDbConnection
     leiosDbInsertTxs :: HasCallStack => [(TxHash, ByteString)] -> m CompletedEbs
   -- ^ Insert transactions into the global txs table (INSERT OR IGNORE).
   -- After inserting, checks which EBs referencing these txs are now complete
-  -- and emits LeiosOfferBlockTxs notifications for each.
+  -- and emits 'AcquiredEbTxs' notifications for each.
   --
   -- NOTE: Duplicate notifications may be emitted if the same EB becomes
   -- complete via multiple insert batches (e.g., if txs are inserted twice).

@@ -529,7 +529,7 @@ test_noOfferBlockTxsBeforeComplete db = do
   withLeiosDb db $ \con -> do
     leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
     _ <- leiosDbInsertEbBody con point eb
-    -- Consume the LeiosOfferBlock notification
+    -- Consume the 'AcquiredEb' notification
     _ <- atomically $ readTChan chan
     -- Insert only 2 of 3 txs (by txHash)
     let txsToInsert =
@@ -537,7 +537,7 @@ test_noOfferBlockTxsBeforeComplete db = do
           | (i, (txHash, _size)) <- zip [0 :: Int, 1] ebTxList
           ]
     _ <- leiosDbInsertTxs con txsToInsert
-    -- No LeiosOfferBlockTxs notification should be available
+    -- No 'AcquiredEbTxs' notification should be available
     maybeNotif <- atomically $ tryReadTChan chan
     case maybeNotif of
       Nothing -> pure ()
@@ -555,7 +555,7 @@ test_offerBlockTxs db = do
     -- Insert the EB (point then body)
     leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
     _ <- leiosDbInsertEbBody con point eb
-    -- Consume the LeiosOfferBlock notification
+    -- Consume the 'AcquiredEb' notification
     _ <- atomically $ readTChan chan
     -- Insert all txs (by txHash)
     let txsToInsert =
