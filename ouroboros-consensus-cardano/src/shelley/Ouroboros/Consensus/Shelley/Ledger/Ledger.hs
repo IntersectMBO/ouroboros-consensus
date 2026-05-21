@@ -393,6 +393,8 @@ instance MonadLedger m (ShelleyBlock proto era) where
     , tickedStateHandleHandle :: TablesHandle m era
     }
 
+  newStateHandle = ShelleyStateHandle
+
   state = stateRefState
   tickedState = tickedStateHandleState
 

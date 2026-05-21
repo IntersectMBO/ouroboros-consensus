@@ -196,10 +196,14 @@ instance IsLedger LedgerState ByronBlock where
                 byronLedgerTransition
             }
 
+type instance LedgerTablesHandle m ByronBlock = ()
+
 instance MonadLedger m ByronBlock where
   data StateHandle m ByronBlock = ByronStateHandle (LedgerState ByronBlock)
   data TickedStateHandle m ByronBlock
     = TickedByronStateHandle (Ticked LedgerState ByronBlock)
+
+  newStateHandle st () = ByronStateHandle st
 
   state (ByronStateHandle s) = s
   tickedState (TickedByronStateHandle s) = s

@@ -47,6 +47,7 @@ import qualified Data.SOP.Match as Match
 import Data.SOP.Strict
 import Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
+import Data.Void
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
@@ -118,6 +119,7 @@ data instance Ticked LedgerState (HardForkBlock xs)
   }
 
 type instance AuxLedgerEvent (HardForkBlock xs) = OneEraLedgerEvent xs
+type instance LedgerTablesHandle m (HardForkBlock xs) = Void
 
 instance CanHardFork xs => MonadLedger m (HardForkBlock xs) where
   data StateHandle m (HardForkBlock xs) = HardForkStateHandle
@@ -131,6 +133,8 @@ instance CanHardFork xs => MonadLedger m (HardForkBlock xs) where
         !(HardForkState (TickedStateHandle m) xs)
     , tickedHardForkStateHandleTransCtx :: !(TransCtx m xs)
     }
+
+  newStateHandle _ = absurd
 
   state (HardForkStateHandle st _) = HardForkLedgerState $ hcmap proxySingle state st
   tickedState (HardForkTickedStateHandle ti st _) =
