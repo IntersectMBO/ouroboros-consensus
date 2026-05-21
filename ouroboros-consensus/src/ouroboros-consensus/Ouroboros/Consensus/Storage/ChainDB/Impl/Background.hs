@@ -92,6 +92,7 @@ launchBgTasks ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , LedgerDB.ResolveLeiosBlock blk
   ) =>
   ChainDbEnv m blk ->
   -- | Number of immutable blocks replayed on ledger DB startup
@@ -610,6 +611,7 @@ addBlockRunner ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , LedgerDB.ResolveLeiosBlock blk
   ) =>
   Fuse m ->
   ChainDbEnv m blk ->

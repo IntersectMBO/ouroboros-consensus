@@ -270,6 +270,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
+            , cdbLeiosDbHandle = Args.cdbsLeiosDb cdbSpecificArgs
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env

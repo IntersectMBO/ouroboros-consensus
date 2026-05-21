@@ -95,6 +95,7 @@ import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import LeiosDemoDb.Common (LeiosDbHandle)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
@@ -382,6 +383,10 @@ data ChainDbEnv m blk = CDB
   -- ^ Information on the last starvation of ChainSel, whether ongoing or
   -- ended recently.
   , cdbPerasCertDB :: !(PerasCertDB m blk)
+  , cdbLeiosDbHandle :: !(LeiosDbHandle m)
+  -- ^ Exposes the closure cache ('readCompletedClosures').  Held as
+  -- the handle (not a 'LeiosDbConnection'): the cache is read
+  -- concurrently and connections are not thread-safe.
   }
   deriving Generic
 
