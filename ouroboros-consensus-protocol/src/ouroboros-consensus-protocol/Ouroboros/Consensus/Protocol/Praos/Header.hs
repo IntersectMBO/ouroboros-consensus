@@ -70,7 +70,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Word (Word32)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement)
+import LeiosDemoTypes (EbAnnouncement, IsCertRB (..))
 import NoThunks.Class (AllowThunksIn (..), NoThunks (..))
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 
@@ -99,6 +99,9 @@ data HeaderBody crypto = HeaderBody
   -- ^ protocol version
   , hbMayEbAnnouncement :: Maybe EbAnnouncement
   -- ^ Leios EB announcement
+  , hbIsCertRB :: !IsCertRB
+  -- ^ Stub for the CIP-0164 header bit signalling that this RB
+  -- certifies a previously-announced EB.
   }
   deriving Generic
 
@@ -203,27 +206,28 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
       , hbOCert
       , hbProtVer
       , hbMayEbAnnouncement
+      , hbIsCertRB
       } =
-      let (len, encEbAnnouncement) = case hbMayEbAnnouncement of -- TODO(bladyjoker): This shennanigans is here for backwards compatibility, remove it!
-            Nothing -> (10, mempty)
-            Just ebAnnouncement ->
-              ( 11
-              , encCBOR ebAnnouncement
-              )
-       in mconcat
-            [ encodeListLen len
-            , encCBOR hbBlockNo
-            , encCBOR hbSlotNo
-            , encCBOR hbPrev
-            , encCBOR hbVk
-            , encodeVerKeyVRF hbVrfVk
-            , encCBOR hbVrfRes
-            , encCBOR hbBodySize
-            , encCBOR hbBodyHash
-            , encCBOR hbOCert
-            , encCBOR hbProtVer
-            , encEbAnnouncement
-            ]
+      -- Canonical encoding: len=12 always, carrying @(Bool, Maybe
+      -- EbAnnouncement)@.  Pre-Leios headers (len=10, no
+      -- announcement) and announcement-only headers (len=11) are
+      -- still accepted on decode for back-compat with existing
+      -- on-disk data, but never emitted.
+      mconcat
+        [ encodeListLen 12
+        , encCBOR hbBlockNo
+        , encCBOR hbSlotNo
+        , encCBOR hbPrev
+        , encCBOR hbVk
+        , encodeVerKeyVRF hbVrfVk
+        , encCBOR hbVrfRes
+        , encCBOR hbBodySize
+        , encCBOR hbBodyHash
+        , encCBOR hbOCert
+        , encCBOR hbProtVer
+        , encCBOR hbIsCertRB
+        , encCBOR hbMayEbAnnouncement
+        ]
 
 instance Crypto crypto => DecCBOR (HeaderBody crypto) where
   decCBOR = do
@@ -238,9 +242,18 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
     hbBodyHash <- decCBOR
     hbOCert <- unCBORGroup <$> decCBOR
     hbProtVer <- decCBOR
-    hbMayEbAnnouncement <- case len of
-      10 -> return Nothing
-      11 -> Just <$> decCBOR @EbAnnouncement -- TODO(bladyjoker): This shennanigans is here for backwards compatibility, remove it!
+    -- Canonical: len=12 with @(Bool, Maybe EbAnnouncement)@.
+    -- len=10 (pre-Leios) and len=11 (announcement-only, no CertRB
+    -- bit) are accepted for back-compat but no longer emitted.
+    (hbMayEbAnnouncement, hbIsCertRB) <- case len of
+      10 -> return (Nothing, NotCertRB)
+      11 -> do
+        ebAnn <- decCBOR @EbAnnouncement
+        return (Just ebAnn, NotCertRB)
+      12 -> do
+        isCertRB <- decCBOR @IsCertRB
+        mayEbAnn <- decCBOR @(Maybe EbAnnouncement)
+        return (mayEbAnn, isCertRB)
       _ -> fail $ "Praos HeaderBody CBOR has wrong length: " <> show len
     return $
       HeaderBody
@@ -255,6 +268,7 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
         , hbOCert
         , hbProtVer
         , hbMayEbAnnouncement
+        , hbIsCertRB
         }
 
 encodeHeaderRaw ::

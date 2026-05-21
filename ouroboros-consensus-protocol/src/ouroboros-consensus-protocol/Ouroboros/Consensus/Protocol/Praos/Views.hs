@@ -15,7 +15,7 @@ import Cardano.Protocol.TPraos.BHeader (PrevHash)
 import Cardano.Protocol.TPraos.OCert (OCert)
 import Cardano.Slotting.Slot (SlotNo)
 import Data.Word (Word16, Word32)
-import LeiosDemoTypes (EbAnnouncement)
+import LeiosDemoTypes (EbAnnouncement, IsCertRB)
 import Ouroboros.Consensus.Protocol.Praos.Header (HeaderBody)
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 
@@ -38,6 +38,10 @@ data HeaderView crypto = HeaderView
   , hvSignature :: !(SignedKES (KES crypto) (HeaderBody crypto))
   -- ^ KES Signature of the header
   , hvMayEbAnnouncement :: !(Maybe EbAnnouncement)
+  , hvIsCertRB :: !IsCertRB
+  -- ^ Stub for the CIP-0164 header bit signalling that this RB
+  -- certifies a previously-announced EB.  Lifted onto 'HeaderView'
+  -- so envelope checks can read it without unpacking the body.
   }
 
 data LedgerView = LedgerView

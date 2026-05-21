@@ -24,6 +24,7 @@ import Cardano.Slotting.EpochInfo
 import Control.Monad (replicateM)
 import Data.Coerce (coerce)
 import Generic.Random (genericArbitraryU)
+import LeiosDemoTypes (IsCertRB (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -145,6 +146,7 @@ instance
           , Praos.hbOCert = SL.bheaderOCert bhBody
           , Praos.hbProtVer = SL.bprotver bhBody
           , Praos.hbMayEbAnnouncement = Nothing
+          , Praos.hbIsCertRB = NotCertRB
           }
       hSig = coerce bhSig
 
