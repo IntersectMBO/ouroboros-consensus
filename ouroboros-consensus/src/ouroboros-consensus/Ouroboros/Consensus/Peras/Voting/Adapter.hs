@@ -79,7 +79,7 @@ class
 -- overflowing their `Word16` seat index.
 instance
   PerasVoteCompatibleWithVotingCommittee
-    V1.PerasVote
+    (V1.PerasVote tag)
     PerasBLSCrypto
     WFALS
   where
@@ -130,7 +130,7 @@ instance
 -- overflowing the `Word16` seat index of each voter.
 instance
   PerasCertCompatibleWithVotingCommittee
-    V1.PerasCert
+    (V1.PerasCert tag)
     PerasBLSCrypto
     WFALS
   where
@@ -160,7 +160,7 @@ instance
 -- avoiding overflowing their `Word16` seat index).
 instance
   PerasVoteCompatibleWithVotingCommittee
-    V1.PerasVote
+    (V1.PerasVote tag)
     PerasBLSCrypto
     EveryoneVotes
   where
@@ -196,7 +196,7 @@ instance
 -- (in addition to avoiding overflowing the `Word16` seat index of each voter).
 instance
   PerasCertCompatibleWithVotingCommittee
-    V1.PerasCert
+    (V1.PerasCert tag)
     PerasBLSCrypto
     EveryoneVotes
   where

@@ -44,7 +44,7 @@ tests =
     [ adjustQuickCheckTests (* 10) $
         testProperty "Roundtrip for PerasVote via WFALS" $
           prop_roundtrip_vote
-            (Proxy @V1.PerasVote)
+            (Proxy @(V1.PerasVote ()))
             (Proxy @WFALS)
             -- WFALS supports both persistent and non-persistent of votes
             (const True)
@@ -54,7 +54,7 @@ tests =
     , adjustQuickCheckTests (* 10) $
         testProperty "Roundtrip for PerasVote via EveryoneVotes" $
           prop_roundtrip_vote
-            (Proxy @V1.PerasVote)
+            (Proxy @(V1.PerasVote ()))
             (Proxy @EveryoneVotes)
             -- EveryoneVotes only supports non-persistent votes
             perasVoteIsPersistent
@@ -65,7 +65,7 @@ tests =
     , adjustQuickCheckTests (* 10) $
         testProperty "Roundtrip for PerasCert via WFALS" $
           prop_roundtrip_cert
-            (Proxy @V1.PerasCert)
+            (Proxy @(V1.PerasCert ()))
             (Proxy @WFALS)
             -- WFALS supports certs with both persistent and non-persistent votes
             (const True)
@@ -75,7 +75,7 @@ tests =
     , adjustQuickCheckTests (* 10) $
         testProperty "Roundtrip for PerasCert via EveryoneVotes" $
           prop_roundtrip_cert
-            (Proxy @V1.PerasCert)
+            (Proxy @(V1.PerasCert ()))
             (Proxy @EveryoneVotes)
             -- EveryoneVotes only supports certs with persistent votes
             perasCertContainsOnlyPersistentVotes

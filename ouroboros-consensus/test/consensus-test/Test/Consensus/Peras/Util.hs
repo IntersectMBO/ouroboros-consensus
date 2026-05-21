@@ -65,13 +65,13 @@ import Test.QuickCheck
 -- * Predicates
 
 -- | Whether a Peras vote is a persistent one
-perasVoteIsPersistent :: V1.PerasVote -> Bool
+perasVoteIsPersistent :: V1.PerasVote tag -> Bool
 perasVoteIsPersistent vote
   | V1.PersistentPerasVoteEligibilityProof{} <- V1.pvEligibilityProof vote = True
   | otherwise = False
 
 -- | Whether a Peras certifcate only contains persistent votes
-perasCertContainsOnlyPersistentVotes :: V1.PerasCert -> Bool
+perasCertContainsOnlyPersistentVotes :: V1.PerasCert tag -> Bool
 perasCertContainsOnlyPersistentVotes cert =
   all
     ( \case
@@ -186,7 +186,7 @@ genVoters shouldGenNonPersistent = do
   pure $
     V1.PerasCertVoters (NEMap.fromList (NonEmpty.fromList voters))
 
-genPerasVote :: Bool -> Gen V1.PerasVote
+genPerasVote :: Bool -> Gen (V1.PerasVote tag)
 genPerasVote shouldGenNonPersistent = do
   pvRoundNo <- genRoundNo
   pvBoostedBlock <- genBoostedBlock
@@ -204,7 +204,7 @@ genPerasVote shouldGenNonPersistent = do
       , V1.pvSignature
       }
 
-genPerasCert :: Bool -> Gen V1.PerasCert
+genPerasCert :: Bool -> Gen (V1.PerasCert tag)
 genPerasCert shouldGenNonPersistent = do
   pcRoundNo <- genRoundNo
   pcBoostedBlock <- genBoostedBlock
@@ -230,7 +230,7 @@ mkBucket bucketSize x suffix
   lower = (x `div` bucketSize) * bucketSize
   upper = lower + bucketSize
 
-tabulatePerasCert :: V1.PerasCert -> Property -> Property
+tabulatePerasCert :: V1.PerasCert tag -> Property -> Property
 tabulatePerasCert cert =
   foldr (flip (.)) id $
     [ tabulate
@@ -259,7 +259,7 @@ tabulatePerasCert cert =
     | numVoters == 0 = 0
     | otherwise = numPersistentVoters * 100 `div` numVoters
 
-tabulatePerasVote :: V1.PerasVote -> Property -> Property
+tabulatePerasVote :: V1.PerasVote tag -> Property -> Property
 tabulatePerasVote vote =
   foldr (flip (.)) id $
     [ tabulate
