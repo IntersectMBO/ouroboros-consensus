@@ -28,7 +28,7 @@ module Main (main) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Async (async, mapConcurrently_, wait)
-import Control.Monad (forM, forM_, replicateM_, when)
+import Control.Monad (forM, forM_, replicateM_, void, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
@@ -231,7 +231,7 @@ insertOneEb conn ebIdx = do
         , let h = genTxHash ebIdx txIdx
         ]
   leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
-  leiosDbInsertEbBody conn point eb
+  void $ leiosDbInsertEbBody conn point eb
   _ <- leiosDbInsertTxs conn txs
   pure ()
 

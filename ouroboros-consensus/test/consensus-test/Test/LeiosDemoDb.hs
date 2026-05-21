@@ -14,7 +14,7 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (atomically, readTChan, tryReadTChan)
 import Control.DeepSeq (force)
 import Control.Exception (bracket)
-import Control.Monad (forM, forM_, replicateM)
+import Control.Monad (forM, forM_, replicateM, void)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
 import qualified Data.ByteString as BS
 import Data.Function ((&))
@@ -366,7 +366,7 @@ prop_txsInsertThenRetrieve impl =
         ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
           -- Insert the EB first (point then body)
           leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-          leiosDbInsertEbBody con point eb
+          void $ leiosDbInsertEbBody con point eb
           -- Get the txHashes from the EB for the offsets we want to insert
           let ebTxList = V.toList (leiosEbTxs eb)
               !txsToInsert =
@@ -426,7 +426,7 @@ test_singleSubscriber db = do
       eb = mkTestEb 3
   withLeiosDb db $ \con -> do
     leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-    leiosDbInsertEbBody con point eb
+    void $ leiosDbInsertEbBody con point eb
   notification <- atomically $ readTChan chan
   case notification of
     AcquiredEb notifPoint _ ->
@@ -444,7 +444,7 @@ test_multipleSubscribers db = do
       eb = mkTestEb 5
   withLeiosDb db $ \con -> do
     leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-    leiosDbInsertEbBody con point eb
+    void $ leiosDbInsertEbBody con point eb
   -- All subscribers should receive the notification
   notif1 <- atomically $ readTChan chan1
   notif2 <- atomically $ readTChan chan2
@@ -462,7 +462,7 @@ test_correctData db = do
       expectedSize = leiosEbBytesSize eb
   withLeiosDb db $ \con -> do
     leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-    leiosDbInsertEbBody con point eb
+    void $ leiosDbInsertEbBody con point eb
   notification <- atomically $ readTChan chan
   case notification of
     AcquiredEb notifPoint notifSize -> do
@@ -481,7 +481,7 @@ test_lateSubscriber db = do
       eb1 = mkTestEb 2
   withLeiosDb db $ \con -> do
     leiosDbInsertEbPoint con point1 (leiosEbBytesSize eb1)
-    leiosDbInsertEbBody con point1 eb1
+    void $ leiosDbInsertEbBody con point1 eb1
   -- Now subscribe
   chan <- subscribeEbNotifications db
   -- The channel should be empty (no past notifications)
@@ -494,7 +494,7 @@ test_lateSubscriber db = do
       eb2 = mkTestEb 3
   withLeiosDb db $ \con -> do
     leiosDbInsertEbPoint con point2 (leiosEbBytesSize eb2)
-    leiosDbInsertEbBody con point2 eb2
+    void $ leiosDbInsertEbBody con point2 eb2
   notification <- atomically $ readTChan chan
   assertOfferBlock point2 notification
 
@@ -511,7 +511,7 @@ test_multipleNotifications db = do
   withLeiosDb db $ \con ->
     forM_ (zip points ebs) $ \(point, eb) -> do
       leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-      leiosDbInsertEbBody con point eb
+      void $ leiosDbInsertEbBody con point eb
   -- Read all notifications and verify order
   notifications <- replicateM 5 (atomically $ readTChan chan)
   mapM_
@@ -528,7 +528,7 @@ test_noOfferBlockTxsBeforeComplete db = do
       ebTxList = V.toList (leiosEbTxs eb)
   withLeiosDb db $ \con -> do
     leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-    leiosDbInsertEbBody con point eb
+    void $ leiosDbInsertEbBody con point eb
     -- Consume the LeiosOfferBlock notification
     _ <- atomically $ readTChan chan
     -- Insert only 2 of 3 txs (by txHash)
@@ -554,7 +554,7 @@ test_offerBlockTxs db = do
   withLeiosDb db $ \con -> do
     -- Insert the EB (point then body)
     leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-    leiosDbInsertEbBody con point eb
+    void $ leiosDbInsertEbBody con point eb
     -- Consume the LeiosOfferBlock notification
     _ <- atomically $ readTChan chan
     -- Insert all txs (by txHash)
@@ -578,7 +578,7 @@ test_noReNotifyCompletedEbs db = do
   withLeiosDb db $ \con -> do
     -- Insert and complete the EB
     leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-    leiosDbInsertEbBody con point eb
+    void $ leiosDbInsertEbBody con point eb
     -- Consume the AcquiredEb notification
     acquiredEb <- atomically $ tryReadTChan chan
     case acquiredEb of
@@ -644,7 +644,7 @@ prop_fetchWorkMissingTxs impl =
           withLeiosDb db $ \con -> do
             -- Insert point and body, but no txs
             leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-            leiosDbInsertEbBody con point eb
+            void $ leiosDbInsertEbBody con point eb
             (work, queryTime) <- timed $ leiosDbQueryFetchWork con
             let expectedTxCount = numTxs
             pure $
@@ -676,7 +676,7 @@ prop_fetchWorkCompleteTxs impl =
             withLeiosDb db $ \con -> do
               -- Insert point, body, and all txs
               leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-              leiosDbInsertEbBody con point eb
+              void $ leiosDbInsertEbBody con point eb
               let ebTxList = V.toList (leiosEbTxs eb)
                   txsToInsert =
                     [ (txHash, baseTxBytes)
@@ -735,7 +735,7 @@ prop_filterEbBodiesCorrect impl =
               -- Insert some EBs (those in toInsert will have bodies)
               forM_ toInsert $ \(point, eb) -> do
                 leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-                leiosDbInsertEbBody con point eb
+                void $ leiosDbInsertEbBody con point eb
               -- Also insert points without bodies for the rest
               let withoutBodies = filter (`notElem` toInsert) pointsAndEbs
               forM_ withoutBodies $ \(point, eb) ->
@@ -794,7 +794,7 @@ prop_completedEbComplete impl =
       forAllBlind genTxBytes $ \txBytes ->
         ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
           leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-          leiosDbInsertEbBody con point eb
+          void $ leiosDbInsertEbBody con point eb
           let ebTxList = V.toList (leiosEbTxs eb)
               txsToInsert = [(txHash, txBytes) | (txHash, _size) <- ebTxList]
           _ <- leiosDbInsertTxs con txsToInsert
@@ -824,7 +824,7 @@ prop_completedEbMissingTxs impl =
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
         leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-        leiosDbInsertEbBody con point eb
+        void $ leiosDbInsertEbBody con point eb
         (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint con point
         pure $
           result === Nothing
@@ -840,7 +840,7 @@ prop_completedEbPartialTxs impl =
       forAllBlind genTxBytes $ \txBytes ->
         ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
           leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-          leiosDbInsertEbBody con point eb
+          void $ leiosDbInsertEbBody con point eb
           -- Insert only the first half of txs, leaving at least one missing
           let ebTxList = V.toList (leiosEbTxs eb)
               partialTxs = take (numTxs `div` 2) ebTxList
