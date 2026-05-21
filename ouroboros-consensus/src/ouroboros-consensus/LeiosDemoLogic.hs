@@ -592,8 +592,9 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
         -- duplicates, but we should have not even fetched it.
         -- REVIEW: ^^^^ this should be resolved
         -- TODO: This was encountered again, but likely because of a race on two fetches.
-        leiosDbInsertEbBody db point eb
+        completed <- leiosDbInsertEbBody db point eb
         traceWith ktracer $ TraceLeiosBlockAcquired point
+        forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
     -- update NodeKernel state
     let !outstanding' =
           if not novel

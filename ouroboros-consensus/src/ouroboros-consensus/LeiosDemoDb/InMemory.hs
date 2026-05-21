@@ -21,14 +21,18 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , newBroadcastTChan
   , newTVarIO
   , readTVar
+  , readTVarIO
   , writeTChan
   )
+import Control.Monad (unless)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import LeiosDemoDb.Common
   ( CompletedEbs
   , LeiosDbConnection (..)
@@ -85,6 +89,13 @@ newLeiosDBInMemory = do
 newLeiosDBInMemoryWith :: IOLike m => StrictTVar m InMemoryLeiosDb -> m (LeiosDbHandle m)
 newLeiosDBInMemoryWith stateVar = do
   notificationChan <- atomically newBroadcastTChan
+  -- Seed from whatever state the caller's 'stateVar' holds at
+  -- construction.  Empty for 'newLeiosDBInMemory'; tests that inject
+  -- pre-populated state via 'newLeiosDBInMemoryWith' rely on the
+  -- cache reflecting it.
+  closuresVar <- do
+    initial <- imComputeCompletedClosures <$> readTVarIO stateVar
+    newTVarIO initial
   pure $
     LeiosDbHandle
       { subscribeEbNotifications =
@@ -97,8 +108,8 @@ newLeiosDBInMemoryWith stateVar = do
               , leiosDbLookupEbPoint = imLookupEbPoint stateVar
               , leiosDbInsertEbPoint = imInsertEbPoint stateVar
               , leiosDbLookupEbBody = imLookupEbBody stateVar
-              , leiosDbInsertEbBody = imInsertEbBody stateVar notificationChan
-              , leiosDbInsertTxs = imInsertTxs stateVar notificationChan
+              , leiosDbInsertEbBody = imInsertEbBody stateVar notificationChan closuresVar
+              , leiosDbInsertTxs = imInsertTxs stateVar notificationChan closuresVar
               , leiosDbBatchRetrieveTxs = imBatchRetrieveTxs stateVar
               , leiosDbFilterMissingEbBodies = imFilterMissingEbBodies stateVar
               , leiosDbFilterMissingTxs = imFilterMissingTxs stateVar
@@ -106,7 +117,20 @@ newLeiosDBInMemoryWith stateVar = do
               , leiosDbQueryCompletedEbByPoint = imQueryCompletedEbByPoint stateVar
               , leiosDbQueryCertificateByPoint = return . Just . trustNoVerifyLeiosCertificate
               }
+      , readCompletedClosures = readTVarIO closuresVar
       }
+
+-- | EB hashes whose closure is complete in the given in-memory state:
+-- body stored and every referenced tx present in 'imTxs'.  Mirrors the
+-- predicate inside 'imInsertEbBody' and 'imInsertTxs'; pulled out so
+-- the seed and the per-insert update use the same definition.
+imComputeCompletedClosures :: InMemoryLeiosDb -> Set EbHash
+imComputeCompletedClosures st =
+  Set.fromList
+    [ ebHash
+    | (ebHash, entries) <- Map.toList (imEbBodies st)
+    , all (\e -> Map.member (eteTxHash e) (imTxs st)) (IntMap.elems entries)
+    ]
 
 -- * Top-level implementations
 
@@ -153,10 +177,11 @@ imInsertEbBody ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
+  StrictTVar m (Set EbHash) ->
   LeiosPoint ->
   LeiosEb ->
-  m ()
-imInsertEbBody stateVar notificationChan point eb = do
+  m CompletedEbs
+imInsertEbBody stateVar notificationChan closuresVar point eb = do
   let items = leiosEbBodyItems eb
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
@@ -177,14 +202,27 @@ imInsertEbBody stateVar notificationChan point eb = do
         , imEbSlots = Map.insert point.pointEbHash point.pointSlotNo (imEbSlots s)
         }
     writeTChan notificationChan $ AcquiredEb point (leiosEbBytesSize eb)
+    -- A body insert can complete at most its own EB's closure, and only
+    -- when all of its txs are already present.  See the haddock of
+    -- 'leiosDbInsertEbBody' for the scenario.
+    state <- readTVar stateVar
+    let allTxsPresent =
+          all (\e -> Map.member (eteTxHash e) (imTxs state)) (IntMap.elems entries)
+    if allTxsPresent
+      then do
+        writeTChan notificationChan $ AcquiredEbTxs point
+        modifyTVar closuresVar (Set.insert point.pointEbHash)
+        pure [point]
+      else pure []
 
 imInsertTxs ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
+  StrictTVar m (Set EbHash) ->
   [(TxHash, ByteString)] ->
   m CompletedEbs
-imInsertTxs stateVar notificationChan txs = atomically $ do
+imInsertTxs stateVar notificationChan closuresVar txs = atomically $ do
   let insertedTxHashes = [txHash | (txHash, _) <- txs]
   forM_ txs $ \(txHash, txBytes) -> do
     let txBytesSize = fromIntegral $ BS.length txBytes
@@ -201,6 +239,9 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
         , slot <- maybeToList $ Map.lookup ebHash (imEbSlots state)
         ]
   forM_ completed $ writeTChan notificationChan . AcquiredEbTxs
+  unless (null completed) $
+    modifyTVar closuresVar $
+      Set.union (Set.fromList (map pointEbHash completed))
   pure completed
 
 imBatchRetrieveTxs ::

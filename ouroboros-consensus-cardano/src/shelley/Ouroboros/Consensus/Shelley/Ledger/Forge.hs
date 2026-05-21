@@ -205,7 +205,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
           , mempoolRestMeasure = ByteSize32 0
           }
       leiosDbInsertEbPoint fbLeiosDb (forgedEb.point) ebSize
-      leiosDbInsertEbBody fbLeiosDb (forgedEb.point) (forgedEb.body)
+      void $ leiosDbInsertEbBody fbLeiosDb (forgedEb.point) (forgedEb.body)
       void $ leiosDbInsertTxs fbLeiosDb (forgedEb.txClosure)
       traceWith fbLeiosTracer $
         TraceLeiosBlockStored

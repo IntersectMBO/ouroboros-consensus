@@ -20,12 +20,16 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
+  , StrictTVar
   , dupTChan
+  , modifyTVar
   , newBroadcastTChan
+  , newTVarIO
+  , readTVarIO
   , writeTChan
   )
 import Control.Exception (throwIO)
-import Control.Monad (void)
+import Control.Monad (unless, void)
 import Control.Monad.Class.MonadThrow
   ( bracket
   , generalBracket
@@ -36,6 +40,8 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.String (fromString)
 import Database.SQLite3
   ( SQLOpenFlag (..)
@@ -89,17 +95,32 @@ newLeiosDBSQLiteFromEnv = do
 newLeiosDBSQLite :: FilePath -> IO (LeiosDbHandle IO)
 newLeiosDBSQLite dbPath = do
   notificationChan <- atomically newBroadcastTChan
+  -- Seed the closure cache from persisted state.  Short-lived
+  -- connection: opened, queried, closed.  Also guarantees the schema
+  -- exists before any later 'open' call.
+  closuresVar <- do
+    seedDb <- openSQLiteDb dbPath
+    initial <- sqlReadCompletedClosures seedDb
+    void $ DB.close seedDb
+    newTVarIO initial
   pure $
     LeiosDbHandle
       { subscribeEbNotifications =
           atomically (dupTChan notificationChan)
-      , open = openSQLiteConnection dbPath notificationChan
+      , open = openSQLiteConnection dbPath notificationChan closuresVar
+      , readCompletedClosures = readTVarIO closuresVar
       }
 
 -- * Connection management
 
-openSQLiteConnection :: FilePath -> StrictTChan IO LeiosEbNotification -> IO (LeiosDbConnection IO)
-openSQLiteConnection dbPath notificationChan = do
+-- | Open a connection and bring it to a usable state: pragmas, schema
+-- init (on a fresh file), and the in-memory @mem.txPoints@ attach.
+-- Shared by 'openSQLiteConnection' (each connection that backs a
+-- 'LeiosDbConnection') and by the closure-cache seed in
+-- 'newLeiosDBSQLite' (one short-lived connection at handle
+-- construction).
+openSQLiteDb :: FilePath -> IO DB.Database
+openSQLiteDb dbPath = do
   shouldInitSchema <- not <$> doesFileExist dbPath
   db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate] SQLVFSDefault
   traverse_ (dbExec db) $
@@ -111,6 +132,15 @@ openSQLiteConnection dbPath notificationChan = do
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
   dbExec db (fromString sql_attach_memTxPoints)
+  pure db
+
+openSQLiteConnection ::
+  FilePath ->
+  StrictTChan IO LeiosEbNotification ->
+  StrictTVar IO (Set EbHash) ->
+  IO (LeiosDbConnection IO)
+openSQLiteConnection dbPath notificationChan closuresVar = do
+  db <- openSQLiteDb dbPath
   let notify = atomically . writeTChan notificationChan
   pure $
     LeiosDbConnection
@@ -119,8 +149,8 @@ openSQLiteConnection dbPath notificationChan = do
       , leiosDbLookupEbPoint = sqlLookupEbPoint db
       , leiosDbInsertEbPoint = sqlInsertEbPoint db
       , leiosDbLookupEbBody = sqlLookupEbBody db
-      , leiosDbInsertEbBody = sqlInsertEbBody db notify
-      , leiosDbInsertTxs = sqlInsertTxs db notify
+      , leiosDbInsertEbBody = sqlInsertEbBody db notify closuresVar
+      , leiosDbInsertTxs = sqlInsertTxs db notify closuresVar
       , leiosDbBatchRetrieveTxs = sqlBatchRetrieveTxs db
       , leiosDbFilterMissingEbBodies = sqlFilterMissingEbBodies db
       , leiosDbFilterMissingTxs = sqlFilterMissingTxs db
@@ -174,12 +204,18 @@ sqlLookupEbBody db ebHash =
               loop ((txHash, size) : acc)
     loop []
 
-sqlInsertEbBody :: DB.Database -> (LeiosEbNotification -> IO ()) -> LeiosPoint -> LeiosEb -> IO ()
-sqlInsertEbBody db notify point eb = do
+sqlInsertEbBody ::
+  DB.Database ->
+  (LeiosEbNotification -> IO ()) ->
+  StrictTVar IO (Set EbHash) ->
+  LeiosPoint ->
+  LeiosEb ->
+  IO CompletedEbs
+sqlInsertEbBody db notify closuresVar point eb = do
   let items = leiosEbBodyItems eb
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
-  dbWithBEGIN db $ do
+  completed <- dbWithBEGIN db $ do
     dbWithPrepare db (fromString sql_insert_ebBody) $ \stmt ->
       mapM_
         ( \(txOffset, txHash, txBytesSize) -> do
@@ -197,11 +233,22 @@ sqlInsertEbBody db notify point eb = do
       dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
       dbBindInt64 stmt 3 (fromIntegral $ unSlotNo point.pointSlotNo)
       dbStep1 stmt
+    -- A body insert can complete an EB's closure on the spot when all its
+    -- txs happen to be in the DB already (e.g. another EB references the
+    -- same 'TxHash'es and completed first).  Run the same completion
+    -- finder + mark-notified step that 'sqlInsertTxs' uses.
+    findAndMarkCompletedEbs db
   notify $ AcquiredEb point (leiosEbBytesSize eb)
+  notifyAndCacheCompleted notify closuresVar completed
+  pure completed
 
 sqlInsertTxs ::
-  DB.Database -> (LeiosEbNotification -> IO ()) -> [(TxHash, ByteString)] -> IO CompletedEbs
-sqlInsertTxs db notify txs = do
+  DB.Database ->
+  (LeiosEbNotification -> IO ()) ->
+  StrictTVar IO (Set EbHash) ->
+  [(TxHash, ByteString)] ->
+  IO CompletedEbs
+sqlInsertTxs db notify closuresVar txs = do
   completed <- dbWithBEGIN db $ do
     stmtInsert <- dbPrepare db (fromString sql_insert_tx)
     stmtDecr <- dbPrepare db (fromString sql_decrement_missing_tx_count)
@@ -221,23 +268,69 @@ sqlInsertTxs db notify txs = do
         dbReset stmtDecr
     dbFinalize stmtInsert
     dbFinalize stmtDecr
-    -- Find newly-complete EBs (missingTxCount reached 0)
-    completed <- dbWithPrepare db (fromString sql_find_complete_ebs) $ \stmt -> do
-      let loop acc =
-            dbStep stmt >>= \case
-              DB.Done -> pure (reverse acc)
-              DB.Row -> do
-                ebHash <- MkEbHash <$> DB.columnBlob stmt 0
-                slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 1
-                loop (MkLeiosPoint slot ebHash : acc)
-      loop []
-    -- Mark them as notified so they are not found again
-    dbWithPrepare db (fromString sql_mark_notified_ebs) $ \stmt ->
-      dbStep1 stmt
-    pure completed
-  -- Emit notifications for each completed EB
-  forM_ completed $ notify . AcquiredEbTxs
+    findAndMarkCompletedEbs db
+  notifyAndCacheCompleted notify closuresVar completed
   pure completed
+
+-- | Find every EB whose closure has just transitioned to complete
+-- (@missingTxCount = 0@), then mark them as notified so a subsequent
+-- call does not return them again.
+--
+-- Must run inside a 'dbWithBEGIN' so the SELECT and the UPDATE are
+-- atomic: otherwise two concurrent insert paths could both observe
+-- the same row as just-completed.
+--
+-- TODO: this runs an unindexed scan of @ebs@ on every insert call.
+-- See the late-join plan, follow-up "gate findAndMarkCompletedEbs on
+-- a cheap pre-check".
+findAndMarkCompletedEbs :: DB.Database -> IO CompletedEbs
+findAndMarkCompletedEbs db = do
+  completed <- dbWithPrepare db (fromString sql_find_complete_ebs) $ \stmt ->
+    let loop acc =
+          dbStep stmt >>= \case
+            DB.Done -> pure (reverse acc)
+            DB.Row -> do
+              ebHash <- MkEbHash <$> DB.columnBlob stmt 0
+              slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 1
+              loop (MkLeiosPoint slot ebHash : acc)
+     in loop []
+  dbWithPrepare db (fromString sql_mark_notified_ebs) $ \stmt ->
+    dbStep1 stmt
+  pure completed
+
+-- | Emit @AcquiredEbTxs@ notifications and add the closures to the
+-- in-process cache.  Runs after the insert's COMMIT.  A reader between
+-- COMMIT and this call sees the pre-update cache: the DB row already
+-- has @missingTxCount = -1@, but the cache does not yet contain the
+-- EB hash, so ChainSel sees the EB as absent and treats the certifying
+-- RB as pending.  Conservative direction for ChainSel (more CertRBs
+-- filtered, not fewer — perf cost only, self-corrects on the next
+-- @chainSelectionForBlock@).
+notifyAndCacheCompleted ::
+  (LeiosEbNotification -> IO ()) ->
+  StrictTVar IO (Set EbHash) ->
+  CompletedEbs ->
+  IO ()
+notifyAndCacheCompleted notify closuresVar completed = do
+  forM_ completed $ notify . AcquiredEbTxs
+  unless (null completed) $
+    atomically $
+      modifyTVar closuresVar $
+        Set.union (Set.fromList (map pointEbHash completed))
+
+-- | Snapshot of every EB whose closure is complete.  Backs the seed
+-- in 'newLeiosDBSQLite'; the cache is then maintained by the insert
+-- paths.
+sqlReadCompletedClosures :: DB.Database -> IO (Set EbHash)
+sqlReadCompletedClosures db =
+  dbWithPrepare db (fromString sql_select_completed_closures) $ \stmt ->
+    let go acc =
+          dbStep stmt >>= \case
+            DB.Done -> pure acc
+            DB.Row -> do
+              h <- MkEbHash <$> DB.columnBlob stmt 0
+              go (Set.insert h acc)
+     in go Set.empty
 
 sqlBatchRetrieveTxs :: DB.Database -> EbHash -> [Int] -> IO [(Int, TxHash, Maybe ByteString)]
 sqlBatchRetrieveTxs db ebHash offsets =
@@ -494,6 +587,14 @@ sql_find_complete_ebs =
 sql_mark_notified_ebs :: String
 sql_mark_notified_ebs =
   "UPDATE ebs SET missingTxCount = -1 WHERE missingTxCount = 0"
+
+-- | Every EB whose closure is complete in the persisted state: body
+-- stored locally and every referenced tx present.  Covers both
+-- @missingTxCount = 0@ (just completed, unnotified) and @-1@ (notified);
+-- both states mean the closure is in the DB.
+sql_select_completed_closures :: String
+sql_select_completed_closures =
+  "SELECT ebHashBytes FROM ebs WHERE missingTxCount IS NOT NULL AND missingTxCount <= 0"
 
 -- | Decrement missingTxCount for all EBs referencing the given txHash.
 -- Parameter 1: txHashBytes
