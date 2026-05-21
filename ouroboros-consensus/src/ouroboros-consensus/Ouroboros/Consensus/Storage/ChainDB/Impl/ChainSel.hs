@@ -43,7 +43,8 @@ import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
-import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoDb (LeiosDbConnection, LeiosDbHandle (..))
+import LeiosDemoTypes (EbHash)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))
@@ -96,6 +97,7 @@ import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.AnchoredFragment
 import Ouroboros.Consensus.Util.Enclose (encloseWith)
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.RedundantConstraints (keepRedundantConstraint)
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import Ouroboros.Network.AnchoredFragment
   ( Anchor
@@ -348,6 +350,7 @@ chainSelSync ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , ResolveLeiosBlock blk
   ) =>
   LeiosDbConnection m ->
   ChainDbEnv m blk ->
@@ -531,6 +534,7 @@ chainSelectionForBlock ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , ResolveLeiosBlock blk
   ) =>
   LeiosDbConnection m ->
   ChainDbEnv m blk ->
@@ -557,13 +561,32 @@ chainSelectionForBlock leiosDb cdb@CDB{..} blockCache hdr punish = electric $ wi
       assert (fromIntegral (AF.length curChain) <= unNonZero k) $
         VF.newM curChain curForker
 
+    -- Compute the set of volatile CertRBs whose certified EB closure
+    -- has not been downloaded locally.  Both lookup wrappers below skip
+    -- these, which makes candidate construction omit the CertRB and
+    -- (transitively) anything reachable through it.  Recomputed every
+    -- 'chainSelectionForBlock' call; O(1) because the handle caches
+    -- the snapshot (see 'readCompletedClosures').
+    acquiredClosures <- readCompletedClosures cdbLeiosDbHandle
+    certRBsWithPendingEbClosures <-
+      computeCertRBsWithPendingEbClosures
+        cdbVolatileDB
+        succsOf
+        acquiredClosures
+        (pointHash (castPoint (AF.anchorPoint curChain) :: Point blk))
+
     let
       immBlockNo :: WithOrigin BlockNo
       immBlockNo = AF.anchorBlockNo curChain
 
-      -- Let these two functions ignore invalid blocks
-      lookupBlockInfo' = ignoreInvalid cdb invalid lookupBlockInfo
-      succsOf' = ignoreInvalidSuc cdb invalid succsOf
+      -- Let these two functions ignore invalid blocks and CertRBs whose
+      -- certified EB closure is still pending.
+      lookupBlockInfo' =
+        ignorePendingCertRBs certRBsWithPendingEbClosures $
+          ignoreInvalid cdb invalid lookupBlockInfo
+      succsOf' =
+        Set.filter (`Set.notMember` certRBsWithPendingEbClosures)
+          . ignoreInvalidSuc cdb invalid succsOf
 
     -- The preconditions
     assert (isJust $ lookupBlockInfo (headerHash hdr)) $ return ()
@@ -1416,3 +1439,47 @@ ignoreInvalidSuc ::
   (ChainHash blk -> Set (HeaderHash blk))
 ignoreInvalidSuc _ invalid succsOf =
   Set.filter (`Map.notMember` invalid) . succsOf
+
+-- | Wrap a @getter@ so it returns 'Nothing' for CertRBs whose certified
+-- EB closure has not been downloaded yet.
+--
+-- Same shape as 'ignoreInvalid', but generalised to 'Ord h' so the
+-- block type does not need to be threaded through a proxy: the body
+-- only uses 'Set.member', which needs no more than 'Ord' on the hash.
+ignorePendingCertRBs ::
+  Ord h =>
+  Set h ->
+  (h -> Maybe a) ->
+  (h -> Maybe a)
+ignorePendingCertRBs pending getter hash
+  | Set.member hash pending = Nothing
+  | otherwise = getter hash
+
+-- | Volatile CertRB blocks whose certified EB closure is not in the
+-- local downloaded-closures tracker.  Both lookup wrappers consult the
+-- returned set to hide such blocks from candidate construction.
+--
+-- TODO: currently a stub returning the empty set, so the late-join
+-- test still crashes in 'resolveLeiosBlock'.  The real implementation
+-- walks the VolatileDB forward from the immutable tip and, for each
+-- header satisfying 'headerIsCertRB', extracts the certified 'EbHash'
+-- from the parent header's 'headerEbAnnouncement' and checks it
+-- against the supplied closure-completed snapshot.
+computeCertRBsWithPendingEbClosures ::
+  forall m blk.
+  (IOLike m, ResolveLeiosBlock blk) =>
+  VolatileDB m blk ->
+  (ChainHash blk -> Set (HeaderHash blk)) ->
+  -- | EBs whose closure is locally complete (see
+  -- 'LeiosDbHandle.readCompletedClosures').
+  Set EbHash ->
+  -- | Where to start the walk.  Should be the immutable-tip 'ChainHash'.
+  ChainHash blk ->
+  m (Set (HeaderHash blk))
+computeCertRBsWithPendingEbClosures _volDB _succsOf _acquiredClosures _start =
+  pure Set.empty
+ where
+  -- The stub body does not need 'ResolveLeiosBlock blk'; the real
+  -- implementation will call 'headerIsCertRB' on volatile headers, so
+  -- keep the constraint documented in the signature.
+  _ = keepRedundantConstraint (Proxy @(ResolveLeiosBlock blk))
