@@ -1331,6 +1331,7 @@ library cardano
     aeson,
     primitive,
     base,
+    transformers,
     vector,
     base-deriving-via,
     bytestring,

@@ -289,7 +289,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 -- snapshotToTablesPath :: DiskSnapshot -> FsPath
 -- snapshotToTablesPath ds = snapshotToDirPath ds </> mkFsPath ["tables"]
 
--- type data Mem
+-- type data Memx
 
 -- instance
 --   ( IOLike m

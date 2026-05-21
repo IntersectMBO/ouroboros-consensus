@@ -1,16 +1,23 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Ouroboros.Consensus.Cardano.InMemory where
 
+import Cardano.Ledger.Binary.Decoding
 import Cardano.Ledger.Binary.Encoding
+import qualified Cardano.Ledger.Conway.State as SL
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
+import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Write as CBOR
+import Control.Monad.Except
+import Data.Functor.Identity
 import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.Set (Set)
@@ -18,6 +25,8 @@ import Lens.Micro
 import Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Util
+import Ouroboros.Consensus.Util.CBOR
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
 import System.FS.CRC
@@ -55,9 +64,12 @@ data TablesHandle m era = TablesHandle
   -- ^ Release the on-disk handle
   , getStatsHandle :: Statistics
   -- ^ Get the size of the tables for this handle
-  , takeHandleSnapshot :: DiskSnapshot -> m (Maybe CRC)
+  , takeHandleSnapshot :: DiskSnapshot -> m (Maybe CRC, SnapshotBackend)
   -- ^ Take a snapshot with the given name
-  , getResources :: SomeHasFS m
+  , castHandle ::
+      forall era'.
+      (SL.Era era', MemPack (SL.TxOut era'), Eq (SL.TxOut era')) =>
+      SL.NewEpochState era' -> m (TablesHandle m era')
   }
 
 slUtxoL :: Lens' (SL.NewEpochState era) (SL.UTxO era)
@@ -93,7 +105,7 @@ newInMemoryTablesHandle shfs@(SomeHasFS hasFS) ls =
           , takeHandleSnapshot = \(snapshotToDirName -> snapshotName) -> do
               createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName]
               withFile hasFS (mkFsPath [snapshotName, "utxo"]) (WriteMode MustBeNew) $ \hf ->
-                fmap (Just . snd) $
+                fmap (\(_, x) -> (Just x, UTxOHDMemSnapshot)) $
                   hPutAllCRC hasFS hf $
                     CBOR.toLazyByteString $
                       mconcat
@@ -101,16 +113,87 @@ newInMemoryTablesHandle shfs@(SomeHasFS hasFS) ls =
                         , toPlainEncoding (SL.eraProtVerLow @era) $
                             encodeMap encodeMemPack encodeMemPack (SL.unUTxO (ls ^. slUtxoL))
                         ]
-          , getResources = shfs
+          , castHandle = pure . newInMemoryTablesHandle shfs
           }
    in h
 
-castHandle ::
-  (SL.Era era, MemPack (SL.TxOut era), MonadThrow m) =>
-  SL.NewEpochState era -> TablesHandle m era0 -> m (TablesHandle m era)
-castHandle ls h = pure $ newInMemoryTablesHandle (getResources h) ls
+data MkHandle m = MkHandle
+  { fromNewEpochState ::
+      forall era.
+      (SL.Era era, MemPack (SL.TxOut era), MonadThrow m, Eq (SL.TxOut era)) =>
+      SL.NewEpochState era -> m (TablesHandle m era)
+  }
 
-mkHandleFromState ::
-  (SL.Era era, MemPack (SL.TxOut era), MonadThrow m) =>
-  SomeHasFS m -> SL.NewEpochState era -> m (TablesHandle m era)
-mkHandleFromState fs = pure . newInMemoryTablesHandle fs
+data MkHandleFromSnapshot m = MkHandleFromSnapshot
+  { fromSnapshot ::
+      forall era.
+      ( SL.Era era
+      , MemPack (SL.TxOut era)
+      , IOLike m
+      , Share (SL.TxOut era) ~ Interns (SL.Credential SL.Staking)
+      , DecShareCBOR (SL.TxOut era)
+      , SL.EraCertState era
+      , Eq (SL.TxOut era)
+      ) =>
+      DiskSnapshot -> SL.NewEpochState era -> ExceptT BackendError m (TablesHandle m era, Maybe CRC)
+  }
+
+data BackendError = BackendReadErr ReadIncrementalErr | BackendCorruptedData
+
+mkInMemoryFactory ::
+  forall m.
+  MonadThrow m =>
+  SomeHasFS m ->
+  MkHandle m
+mkInMemoryFactory shfs =
+  MkHandle
+    { fromNewEpochState = pure . newInMemoryTablesHandle shfs
+    }
+
+mkInMemoryFromSnapshot ::
+  forall m.
+  MonadThrow m =>
+  SomeHasFS m ->
+  MkHandleFromSnapshot m
+mkInMemoryFromSnapshot shfs =
+  MkHandleFromSnapshot
+    { fromSnapshot = withExceptT BackendReadErr .: implFromSnapshot
+    }
+ where
+  implFromSnapshot ::
+    forall era.
+    ( SL.Era era
+    , MemPack (SL.TxOut era)
+    , IOLike m
+    , Share (SL.TxOut era) ~ Interns (SL.Credential SL.Staking)
+    , DecShareCBOR (SL.TxOut era)
+    , SL.EraCertState era
+    ) =>
+    DiskSnapshot -> SL.NewEpochState era -> ExceptT ReadIncrementalErr m (TablesHandle m era, Maybe CRC)
+  implFromSnapshot ds ls = do
+    let certInterns =
+          internsFromMap $
+            ls
+              ^. SL.nesEsL
+                . SL.esLStateL
+                . SL.lsCertStateL
+                . SL.certDStateL
+                . SL.accountsL
+                . SL.accountsMapL
+    (utxo, Identity crcTables) <-
+      ExceptT $
+        readIncremental
+          shfs
+          Identity
+          ( do
+              l <- CBOR.decodeListLen
+              case l of
+                1 -> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))
+                _ -> fail $ "Wrong number of tables: " <> show l
+          )
+          (snapshotToTablesPath ds)
+
+    pure (newInMemoryTablesHandle shfs (ls & slUtxoL .~ SL.UTxO utxo), Just crcTables)
+
+snapshotToTablesPath :: DiskSnapshot -> FsPath
+snapshotToTablesPath ds = snapshotToDirPath ds </> mkFsPath ["tables"]

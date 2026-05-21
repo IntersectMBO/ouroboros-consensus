@@ -78,6 +78,7 @@ import Ouroboros.Consensus.Byron.Ledger.Conversions
 import Ouroboros.Consensus.Byron.Ledger.HeaderValidation ()
 import Ouroboros.Consensus.Byron.Ledger.PBFT
 import Ouroboros.Consensus.Byron.Ledger.Serialisation
+import Ouroboros.Consensus.Cardano.InMemory
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.Abstract
@@ -90,7 +91,6 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Util
-import System.FS.API
 
 {-------------------------------------------------------------------------------
   LedgerState
@@ -199,9 +199,9 @@ instance IsLedger LedgerState ByronBlock where
           h
 
 instance MonadLedger m ByronBlock where
-  data StateHandle m ByronBlock = ByronStateHandle (LedgerState ByronBlock) (SomeHasFS m)
+  data StateHandle m ByronBlock = ByronStateHandle (LedgerState ByronBlock) (MkHandle m)
   data TickedStateHandle m ByronBlock
-    = TickedByronStateHandle (Ticked LedgerState ByronBlock) (SomeHasFS m)
+    = TickedByronStateHandle (Ticked LedgerState ByronBlock) (MkHandle m)
 
   state (ByronStateHandle s _) = s
   tickedState (TickedByronStateHandle s _) = s
