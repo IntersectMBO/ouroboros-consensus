@@ -833,4 +833,7 @@ simpleBlockBinaryBlockInfo b =
 
 -- * Leios
 
-instance ResolveLeiosBlock (SimpleBlock' c ext ext)
+instance ResolveLeiosBlock (SimpleBlock' c ext ext) where
+  resolveLeiosBlock _ _ blk = return blk
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing

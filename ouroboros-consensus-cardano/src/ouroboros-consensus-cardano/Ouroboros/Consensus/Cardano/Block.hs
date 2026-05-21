@@ -215,7 +215,10 @@ import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, ShelleyCompatible)
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (resolveLeiosBlock))
+import Ouroboros.Consensus.Storage.LedgerDB
+  ( IsCertRB (..)
+  , ResolveLeiosBlock (headerEbAnnouncement, headerIsCertRB, resolveLeiosBlock)
+  )
 import Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -1403,3 +1406,19 @@ instance
     injectConwayBlock
       <$> resolveLeiosBlock db conwayHdrSt conwayBlk
   resolveLeiosBlock _ _ blk = return blk
+
+  headerIsCertRB (HeaderConway conwayHdr) = headerIsCertRB conwayHdr
+  headerIsCertRB (HeaderBabbage _) = NotCertRB
+  headerIsCertRB (HeaderAlonzo _) = NotCertRB
+  headerIsCertRB (HeaderMary _) = NotCertRB
+  headerIsCertRB (HeaderAllegra _) = NotCertRB
+  headerIsCertRB (HeaderShelley _) = NotCertRB
+  headerIsCertRB (HeaderByron _) = NotCertRB
+
+  headerEbAnnouncement (HeaderConway conwayHdr) = headerEbAnnouncement conwayHdr
+  headerEbAnnouncement (HeaderBabbage _) = Nothing
+  headerEbAnnouncement (HeaderAlonzo _) = Nothing
+  headerEbAnnouncement (HeaderMary _) = Nothing
+  headerEbAnnouncement (HeaderAllegra _) = Nothing
+  headerEbAnnouncement (HeaderShelley _) = Nothing
+  headerEbAnnouncement (HeaderByron _) = Nothing

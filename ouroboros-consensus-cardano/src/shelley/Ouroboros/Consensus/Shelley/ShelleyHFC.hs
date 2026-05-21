@@ -92,7 +92,7 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB (IsCertRB (..), ResolveLeiosBlock (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -103,7 +103,14 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 -- | Shelley as the single era in the hard fork combinator
 type ShelleyBlockHFC proto era = HardForkBlock '[ShelleyBlock proto era]
 
-instance ResolveLeiosBlock (HardForkBlock '[ShelleyBlock proto era]) -- FIXME(bladyjoker)
+-- FIXME(bladyjoker): the single-era HFC wrapper should delegate to
+-- the inner 'ShelleyBlock' instance, which carries the real Leios
+-- methods for Praos.  Until that is wired, the wrapper degrades to
+-- "never a CertRB" — fine for non-Praos eras, wrong for Praos.
+instance ResolveLeiosBlock (HardForkBlock '[ShelleyBlock proto era]) where
+  resolveLeiosBlock _ _ blk = return blk
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
 
 {-------------------------------------------------------------------------------
   NoHardForks instance
