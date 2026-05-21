@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE LambdaCase #-}
@@ -20,6 +22,8 @@ import qualified Data.Map as Map
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Maybe (isJust)
 import Data.Word (Word16, Word64)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.Crypto (CryptoSupportsVRF (..))
 import Ouroboros.Consensus.Committee.EveryoneVotes
@@ -42,7 +46,8 @@ data PerasConversionError
   | EveryoneVotesButFoundNonPersistentVotersInCert (NE [SeatIndex])
   | SeatIndexOverflowError Word64
   | CryptoError String
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
 
 -- | Conversion between (concrete) Peras votes and (abstract) committee votes.
 --
