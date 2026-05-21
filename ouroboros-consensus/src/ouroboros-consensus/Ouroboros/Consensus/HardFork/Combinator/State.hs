@@ -221,9 +221,10 @@ extendToSlot ::
   (CanHardFork xs, MonadThrow m) =>
   HardForkLedgerConfig xs ->
   SlotNo ->
+  TransCtx m xs ->
   HardForkState (StateHandle m) xs ->
   m (HardForkState (StateHandle m) xs)
-extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st) =
+extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot tcxt ledgerSt@(HardForkState st) =
   fmap HardForkState
     . Telescope.extend
       ( InPairs.hcmap
@@ -291,4 +292,4 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
   translateLS :: InPairs (TranslateLedgerState m) xs
   translateLS =
     InPairs.requiringBoth cfgs $
-      translateLedgerState hardForkStateHandleTranslation
+      translateLedgerState (hardForkStateHandleTranslation tcxt)

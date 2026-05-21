@@ -132,17 +132,17 @@ instance LedgerSupportsMempool ByronBlock where
    where
     tx' = toMempoolPayload tx
 
-  applyTx cfg _wti slot tx cache (TickedByronStateHandle st h) =
+  applyTx cfg _wti slot tx cache (TickedByronStateHandle st) =
     case runExcept (applyByronGenTx validationMode cfg slot tx st) of
       Left err -> throwError err
-      Right st' -> pure (TickedByronStateHandle st' h, cache, ValidatedByronTx tx)
+      Right st' -> pure (TickedByronStateHandle st', cache, ValidatedByronTx tx)
    where
     validationMode = CC.ValidationMode CC.BlockValidation Utxo.TxValidation
 
-  reapplyTx cfg slot vtx cache (TickedByronStateHandle st h) =
+  reapplyTx cfg slot vtx cache (TickedByronStateHandle st) =
     case runExcept (applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st) of
       Left err -> throwError (err, cache)
-      Right v -> pure (TickedByronStateHandle v h, cache)
+      Right v -> pure (TickedByronStateHandle v, cache)
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 

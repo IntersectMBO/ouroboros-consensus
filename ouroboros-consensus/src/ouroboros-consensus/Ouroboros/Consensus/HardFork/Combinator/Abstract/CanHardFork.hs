@@ -6,6 +6,7 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork (CanHardFork (..)) where
 
+import Data.Kind
 import Data.Measure (Measure)
 import Data.SOP.Constraint
 import Data.SOP.Functors (Product2)
@@ -48,8 +49,11 @@ class
   -- in Haskell.)
   type HardForkTxMeasure xs
 
+  type TransCtx (m :: (Type -> Type)) xs
+  type TransCtx m xs = ()
+
   hardForkEraTranslation :: EraTranslation xs
-  hardForkStateHandleTranslation :: MonadThrow m => StateHandleTranslation m xs
+  hardForkStateHandleTranslation :: MonadThrow m => TransCtx m xs -> StateHandleTranslation m xs
   hardForkChainSel :: Tails AcrossEraTiebreaker xs
   hardForkInjectTxs ::
     InPairs
@@ -70,7 +74,7 @@ instance SingleEraBlock blk => CanHardFork '[blk] where
   type HardForkTxMeasure '[blk] = TxMeasure blk
 
   hardForkEraTranslation = trivialEraTranslation
-  hardForkStateHandleTranslation = trivialStateHandleTranslation
+  hardForkStateHandleTranslation = const trivialStateHandleTranslation
   hardForkChainSel = Tails.mk1
   hardForkInjectTxs = InPairs.mk1
 

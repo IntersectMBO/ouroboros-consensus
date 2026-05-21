@@ -254,7 +254,7 @@ distribExtLedgerState (ExtLedgerState ledgerState headerState) =
 hfExtLedgerState ::
   (Monad m, All SingleEraBlock xs) =>
   Handle ExtLedgerState m (HardForkBlock xs) -> State.HardForkState (ExtStateHandle m) xs
-hfExtLedgerState (ExtStateHandle (HardForkStateHandle (State.HardForkState st)) headerState) =
+hfExtLedgerState (ExtStateHandle (HardForkStateHandle (State.HardForkState st) _tctx) headerState) =
   case matchTelescope (distribHeaderState headerState) st of
     Left _err -> error "impossible!"
     Right tele ->
@@ -366,7 +366,10 @@ interpretQueryIfCurrentLookup = go
   go (_ :* cs) (QS qry) (S st) =
     first shiftMismatch <$> go cs qry st
   go _ (QZ qry) (S st) =
-    pure $ Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle (ledgerInfo . extLedgerState) st)
+    pure $
+      Left $
+        MismatchEraInfo $
+          ML (queryInfo qry) (hcmap proxySingle (ledgerInfo . extLedgerState) st)
   go _ (QS qry) (Z st) =
     pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo $ extLedgerState st)
 
@@ -390,7 +393,10 @@ interpretQueryIfCurrentTraverse = go
   go (_ :* cs) (QS qry) (S st) =
     first shiftMismatch <$> go cs qry st
   go _ (QZ qry) (S st) =
-    pure $ Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle (ledgerInfo . extLedgerState) st)
+    pure $
+      Left $
+        MismatchEraInfo $
+          ML (queryInfo qry) (hcmap proxySingle (ledgerInfo . extLedgerState) st)
   go _ (QS qry) (Z st) =
     pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo $ extLedgerState st)
 

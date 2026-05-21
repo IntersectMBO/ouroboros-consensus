@@ -78,7 +78,6 @@ import Ouroboros.Consensus.Byron.Ledger.Conversions
 import Ouroboros.Consensus.Byron.Ledger.HeaderValidation ()
 import Ouroboros.Consensus.Byron.Ledger.PBFT
 import Ouroboros.Consensus.Byron.Ledger.Serialisation
-import Ouroboros.Consensus.Cardano.InMemory
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.Abstract
@@ -186,7 +185,7 @@ type instance AuxLedgerEvent ByronBlock = VoidLedgerEvent
 instance IsLedger LedgerState ByronBlock where
   type LedgerErr LedgerState ByronBlock = CC.ChainValidationError
 
-  applyChainTickLedgerResult _ cfg slotNo (ByronStateHandle ByronLedgerState{..} h) =
+  applyChainTickLedgerResult _ cfg slotNo (ByronStateHandle ByronLedgerState{..}) =
     pure $
       pureLedgerResult $
         TickedByronStateHandle
@@ -196,15 +195,14 @@ instance IsLedger LedgerState ByronBlock where
             , untickedByronLedgerTransition =
                 byronLedgerTransition
             }
-          h
 
 instance MonadLedger m ByronBlock where
-  data StateHandle m ByronBlock = ByronStateHandle (LedgerState ByronBlock) (MkHandle m)
+  data StateHandle m ByronBlock = ByronStateHandle (LedgerState ByronBlock)
   data TickedStateHandle m ByronBlock
-    = TickedByronStateHandle (Ticked LedgerState ByronBlock) (MkHandle m)
+    = TickedByronStateHandle (Ticked LedgerState ByronBlock)
 
-  state (ByronStateHandle s _) = s
-  tickedState (TickedByronStateHandle s _) = s
+  state (ByronStateHandle s) = s
+  tickedState (TickedByronStateHandle s) = s
 
   close _ = pure ()
   closeTicked _ = pure ()
@@ -220,10 +218,10 @@ instance MonadLedger m ByronBlock where
 -------------------------------------------------------------------------------}
 
 instance ApplyBlock LedgerState ByronBlock where
-  applyBlockLedgerResultWithValidation doValidation opts cfg blk (TickedByronStateHandle st h) =
+  applyBlockLedgerResultWithValidation doValidation opts cfg blk (TickedByronStateHandle st) =
     case runExcept (applyByronBlock doValidation opts cfg blk st) of
       Left err -> throwError err
-      Right v -> pure $ pureLedgerResult $ ByronStateHandle v h
+      Right v -> pure $ pureLedgerResult $ ByronStateHandle v
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult validationErrorImpossible
 

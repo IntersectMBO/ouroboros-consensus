@@ -125,10 +125,12 @@ type CardanoHardForkConstraints c =
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
   type HardForkTxMeasure (CardanoEras c) = DijkstraMeasure
 
-  hardForkStateHandleTranslation =
+  type TransCtx m (CardanoEras c) = MkHandle m
+
+  hardForkStateHandleTranslation = \tctx ->
     StateHandleTranslation
       { translateLedgerState =
-          PCons translateLedgerStateByronToShelleyWrapper $
+          PCons (translateLedgerStateByronToShelleyWrapper tctx) $
             PCons translateLedgerStateShelleyToAllegraWrapper $
               PCons translateLedgerStateAllegraToMaryWrapper $
                 PCons translateLedgerStateMaryToAlonzoWrapper $
@@ -277,16 +279,17 @@ translatePointByronToShelley point bNo =
 
 translateLedgerStateByronToShelleyWrapper ::
   (MonadThrow m, ShelleyCompatible (TPraos c) ShelleyEra) =>
+  MkHandle m ->
   RequiringBoth
     WrapLedgerConfig
     (TranslateLedgerState m)
     ByronBlock
     (ShelleyBlock (TPraos c) ShelleyEra)
-translateLedgerStateByronToShelleyWrapper =
+translateLedgerStateByronToShelleyWrapper mkH =
   RequireBoth $
     \_ (WrapLedgerConfig cfgShelley) ->
       TranslateLedgerState
-        { translateLedgerStateWith = \epochNo (ByronStateHandle ledgerByron mkH) -> do
+        { translateLedgerStateWith = \epochNo (ByronStateHandle ledgerByron) -> do
             let st =
                   SL.translateToShelleyLedgerState
                     (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))

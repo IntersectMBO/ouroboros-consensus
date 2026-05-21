@@ -99,7 +99,7 @@ instance
   where
   data MempoolCache (HardForkBlock xs) = HardForkMempoolCache (NS MempoolCache xs)
 
-  mkMempoolCache (HardForkTickedStateHandle _ (State.HardForkState st)) =
+  mkMempoolCache (HardForkTickedStateHandle _ (State.HardForkState st) _) =
     HardForkMempoolCache
       (hcmap proxySingle (mkMempoolCache . State.currentState) $ Telescope.tip st)
 
@@ -221,7 +221,7 @@ applyHelper
   slot
   tx
   cache@(HardForkMempoolCache hardForkCache)
-  (HardForkTickedStateHandle transition hardForkState) =
+  (HardForkTickedStateHandle transition hardForkState tctx) =
     case matchPolyTx injs (modeGetTx tx) hardForkState of
       Left mismatch ->
         throwError $
@@ -267,7 +267,7 @@ applyHelper
             vtx = hcollapse $ (K . arValidatedTx) `hmap` result
 
           return
-            ( HardForkTickedStateHandle transition (arState `hmap` result)
+            ( HardForkTickedStateHandle transition (arState `hmap` result) tctx
             , HardForkMempoolCache st'
             , vtx
             )

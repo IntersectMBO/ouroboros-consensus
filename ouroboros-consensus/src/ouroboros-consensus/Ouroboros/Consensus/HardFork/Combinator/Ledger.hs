@@ -122,37 +122,39 @@ type instance AuxLedgerEvent (HardForkBlock xs) = OneEraLedgerEvent xs
 instance CanHardFork xs => MonadLedger m (HardForkBlock xs) where
   data StateHandle m (HardForkBlock xs) = HardForkStateHandle
     { hardForkStateHandlePerEra :: HardForkState (StateHandle m) xs
+    , hardForkStateHandleTransCtx :: !(TransCtx m xs)
     }
 
   data TickedStateHandle m (HardForkBlock xs) = HardForkTickedStateHandle
     { tickedHardForkRefLedgerStateTransition :: !TransitionInfo
     , tickedHardForkRefLedgerStatePerEra ::
         !(HardForkState (TickedStateHandle m) xs)
+    , tickedHardForkStateHandleTransCtx :: !(TransCtx m xs)
     }
 
-  state (HardForkStateHandle st) = HardForkLedgerState $ hcmap proxySingle state st
-  tickedState (HardForkTickedStateHandle ti st) =
+  state (HardForkStateHandle st _) = HardForkLedgerState $ hcmap proxySingle state st
+  tickedState (HardForkTickedStateHandle ti st _) =
     TickedHardForkLedgerState ti $ hcmap proxySingle tickedState st
 
-  close (HardForkStateHandle st) =
+  close (HardForkStateHandle st _) =
     hcollapse <$> hsequence' (hcmap proxySingle (\x -> Comp $ close x >> pure (K ())) st)
-  closeTicked (HardForkTickedStateHandle _ st) =
+  closeTicked (HardForkTickedStateHandle _ st _) =
     hcollapse <$> hsequence' (hcmap proxySingle (\x -> Comp $ closeTicked x >> pure (K ())) st)
 
-  getStats (HardForkStateHandle st) = hcollapse $ hcmap proxySingle (K . getStats) st
-  getStatsTicked (HardForkTickedStateHandle _ st) =
+  getStats (HardForkStateHandle st _) = hcollapse $ hcmap proxySingle (K . getStats) st
+  getStatsTicked (HardForkTickedStateHandle _ st _) =
     hcollapse $ hcmap proxySingle (K . getStatsTicked) st
 
-  duplicate (HardForkStateHandle st) =
-    HardForkStateHandle <$> hsequence' (hcmap proxySingle (Comp . duplicate) st)
-  duplicateTicked (HardForkTickedStateHandle ti st) =
-    HardForkTickedStateHandle ti <$> hsequence' (hcmap proxySingle (Comp . duplicateTicked) st)
+  duplicate (HardForkStateHandle st t) =
+    flip HardForkStateHandle t <$> hsequence' (hcmap proxySingle (Comp . duplicate) st)
+  duplicateTicked (HardForkTickedStateHandle ti st t) =
+    flip (HardForkTickedStateHandle ti) t <$> hsequence' (hcmap proxySingle (Comp . duplicateTicked) st)
 
 instance CanHardFork xs => IsLedger LedgerState (HardForkBlock xs) where
   type LedgerErr LedgerState (HardForkBlock xs) = HardForkLedgerError xs
 
-  applyChainTickLedgerResult evs cfg@HardForkLedgerConfig{..} slot (HardForkStateHandle st) = do
-    extended <- State.extendToSlot cfg slot st
+  applyChainTickLedgerResult evs cfg@HardForkLedgerConfig{..} slot (HardForkStateHandle st tctx) = do
+    extended <- State.extendToSlot cfg slot tctx st
     st' <-
       sequenceHardForkState
         ( hcizipWith
@@ -188,6 +190,7 @@ instance CanHardFork xs => IsLedger LedgerState (HardForkBlock xs) where
                 --   applicable here.
                 State.mostRecentTransitionInfo cfg (hcmap proxySingle state extended)
             , tickedHardForkRefLedgerStatePerEra = l'
+            , tickedHardForkStateHandleTransCtx = tctx
             }
    where
     cfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
@@ -232,7 +235,7 @@ instance
     opts
     cfg
     (HardForkBlock (OneEraBlock block))
-    (HardForkTickedStateHandle transition st) =
+    (HardForkTickedStateHandle transition st tctx) =
       case State.match block st of
         Left mismatch ->
           -- Block from the wrong era (note that 'applyChainTick' will already
@@ -241,7 +244,7 @@ instance
             HardForkLedgerErrorWrongEra . MismatchEraInfo $
               Match.bihcmap proxySingle singleEraInfo ledgerViewInfo mismatch
         Right matched ->
-          fmap (fmap HardForkStateHandle . sequenceHardForkState) $
+          fmap (fmap (flip HardForkStateHandle tctx) . sequenceHardForkState) $
             hsequence' $
               hcizipWith proxySingle (apply doValidate opts) cfgs matched
      where

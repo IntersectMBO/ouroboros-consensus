@@ -289,12 +289,13 @@ injectInitialExtLedgerState cfg extLedgerState0 tbs = do
   targetEraLedgerState :: m (StateHandle m (HardForkBlock (x ': xs)))
   targetEraLedgerState =
     fmap
-      HardForkStateHandle
+      (flip HardForkStateHandle undefined)
       -- We can immediately extend it to the right slot, executing any
       -- scheduled hard forks in the first slot
       ( State.extendToSlot
           (configLedger cfg)
           (SlotNo 0)
+          undefined
           . initHardForkState
           $ fillJavier (ledgerState extLedgerState0) tbs
       )
