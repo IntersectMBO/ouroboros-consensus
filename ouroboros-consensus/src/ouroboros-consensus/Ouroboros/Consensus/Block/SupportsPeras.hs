@@ -14,7 +14,10 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Block.SupportsPeras
-  ( BlockSupportsPeras (..)
+  ( PerasCrypto
+  , PerasCommitteeScheme
+  , PerasVotingCommittee
+  , BlockSupportsPeras (..)
   , VoidPerasVote (..)
   , VoidPerasCert (..)
   , VoidPerasError (..)
@@ -45,9 +48,30 @@ import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
+import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee (..))
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Types
 import Ouroboros.Consensus.Util (ShowProxy)
+
+-- | The crypto scheme used for Peras votes and certificates
+--
+-- Used to dispatch a block type to a its corresponding voting crypto scheme.
+--
+-- TODO: maybe move this inside 'BlockSupportsPeras'.
+type family PerasCrypto blk :: Type
+
+-- | The voting committee scheme used for Peras.
+--
+-- Used to dispatch a block type to a its corresponding voting committee scheme.
+--
+-- TODO: maybe move this inside 'BlockSupportsPeras'.
+type family PerasCommitteeScheme blk :: Type
+
+-- | Voting committee for Peras indexed by block type
+type PerasVotingCommittee blk =
+  VotingCommittee
+    (PerasCrypto blk)
+    (PerasCommitteeScheme blk)
 
 -- * BlockSupportsPeras class
 
