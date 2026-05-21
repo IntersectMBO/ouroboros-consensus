@@ -43,7 +43,8 @@ import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
-import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoDb (LeiosDbConnection, LeiosDbHandle (..))
+import LeiosDemoTypes (EbAnnouncement (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))
@@ -348,6 +349,7 @@ chainSelSync ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , ResolveLeiosBlock blk
   ) =>
   LeiosDbConnection m ->
   ChainDbEnv m blk ->
@@ -426,6 +428,7 @@ chainSelSync leiosDb cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..
           encloseWith (traceEv >$< addBlockTracer) $
             VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
+        lift $ maybeMarkPending cdb hdr
         chainSelectionForBlock leiosDb cdb (BlockCache.singleton b) hdr blockPunish
 
   newTip <- lift $ atomically $ Query.getTipPoint cdb
@@ -539,10 +542,17 @@ chainSelectionForBlock ::
   InvalidBlockPunishment m ->
   Electric m ()
 chainSelectionForBlock leiosDb cdb@CDB{..} blockCache hdr punish = electric $ withRegistry $ \rr -> do
-  (invalid, succsOf, lookupBlockInfo, curChain, tipPoint) <-
+  (invalid, pendingCertRBs, succsOf, lookupBlockInfo, curChain, tipPoint) <-
     atomically $
-      (,,,,)
+      (,,,,,)
         <$> (forgetFingerprint <$> readTVar cdbInvalid)
+        -- CertRBs whose certified EB closure has not been downloaded
+        -- locally.  Both lookup wrappers below skip these, which makes
+        -- candidate construction omit the CertRB and (transitively)
+        -- anything reachable through it.  Populated by
+        -- 'maybeMarkPending' and drained by the closure-arrival
+        -- handler.
+        <*> (Map.keysSet . forgetFingerprint <$> readTVar cdbPendingCertRBs)
         <*> VolatileDB.filterByPredecessor cdbVolatileDB
         <*> VolatileDB.getBlockInfo cdbVolatileDB
         <*> Query.getCurrentChain cdb
@@ -561,9 +571,14 @@ chainSelectionForBlock leiosDb cdb@CDB{..} blockCache hdr punish = electric $ wi
       immBlockNo :: WithOrigin BlockNo
       immBlockNo = AF.anchorBlockNo curChain
 
-      -- Let these two functions ignore invalid blocks
-      lookupBlockInfo' = ignoreInvalid cdb invalid lookupBlockInfo
-      succsOf' = ignoreInvalidSuc cdb invalid succsOf
+      -- Let these two functions ignore invalid blocks and CertRBs whose
+      -- certified EB closure is still pending.
+      lookupBlockInfo' =
+        ignorePendingCertRBs pendingCertRBs $
+          ignoreInvalid cdb invalid lookupBlockInfo
+      succsOf' =
+        Set.filter (`Set.notMember` pendingCertRBs)
+          . ignoreInvalidSuc cdb invalid succsOf
 
     -- The preconditions
     assert (isJust $ lookupBlockInfo (headerHash hdr)) $ return ()
@@ -606,6 +621,16 @@ chainSelectionForBlock leiosDb cdb@CDB{..} blockCache hdr punish = electric $ wi
           InvalidBlockPunishment.enact
             punish
             InvalidBlockPunishment.BlockItself
+
+      -- The block is a CertRB whose certified EB closure is not locally
+      -- available.  'succsOf'' / 'lookupBlockInfo'' filter the block out
+      -- of *successor* traversals; this branch covers the case where the
+      -- block we are adding is itself the pending CertRB and 'addToCurrentChain'
+      -- / 'switchToAFork' would otherwise include it directly in a candidate.
+      -- The closure-arrival handler will re-enqueue the block once the
+      -- closure is in the LeiosDb.
+      | Set.member (headerHash hdr) pendingCertRBs -> do
+          traceWith addBlockTracer (StoreButDontChange p)
 
       -- The block fits onto the end of our current chain
       | pointHash tipPoint == headerPrevHash hdr -> do
@@ -1416,3 +1441,63 @@ ignoreInvalidSuc ::
   (ChainHash blk -> Set (HeaderHash blk))
 ignoreInvalidSuc _ invalid succsOf =
   Set.filter (`Map.notMember` invalid) . succsOf
+
+-- | Wrap a @getter@ so it returns 'Nothing' for CertRBs whose certified
+-- EB closure has not been downloaded yet.
+--
+-- Same shape as 'ignoreInvalid', but generalised to 'Ord h' so the
+-- block type does not need to be threaded through a proxy: the body
+-- only uses 'Set.member', which needs no more than 'Ord' on the hash.
+ignorePendingCertRBs ::
+  Ord h =>
+  Set h ->
+  (h -> Maybe a) ->
+  (h -> Maybe a)
+ignorePendingCertRBs pending getter hash
+  | Set.member hash pending = Nothing
+  | otherwise = getter hash
+
+-- | Mark a just-added CertRB as pending if its certified EB closure
+-- is not yet locally available.
+--
+-- Runs after 'VolatileDB.putBlock' in the 'ChainSelAddBlock' arm.
+-- Single STM transaction: read the parent's announcement and the
+-- completed-closures snapshot, write the cache.  STM read-set
+-- validation gives the required atomicity against
+-- 'notifyAndCacheCompleted', so an interleaved closure arrival cannot
+-- strand an entry (see commit @a54f33767@).
+--
+-- A no-op when:
+--
+-- * the just-added header is not a CertRB (the common case);
+-- * the parent is not in the VolDB snapshot (orphan whose parent
+--   never arrived in this process — covered by the startup walk on
+--   restart);
+-- * the parent carries no 'EbAnnouncement' (would mean the CertRB
+--   is forged on an unannouncing parent; validation rejects it
+--   later);
+-- * the certified EB closure is already complete.
+maybeMarkPending ::
+  forall m blk.
+  (IOLike m, GetPrevHash blk, ResolveLeiosBlock blk) =>
+  ChainDbEnv m blk ->
+  Header blk ->
+  m ()
+maybeMarkPending CDB{..} hdr = case headerIsCertRB hdr of
+  NotCertRB -> pure ()
+  CertRB -> atomically $ do
+    lookupLeiosFields <- VolatileDB.getLeiosFields cdbVolatileDB
+    acquired <- readCompletedClosuresSTM cdbLeiosDbHandle
+    case headerPrevHash hdr of
+      GenesisHash -> pure ()
+      BlockHash parentHash ->
+        case lookupLeiosFields parentHash of
+          Just (_parentIsCertRB, Just ann)
+            | let ebHash = ebAnnouncementHash ann
+            , ebHash `Set.notMember` acquired ->
+                modifyTVar cdbPendingCertRBs $
+                  \(WithFingerprint pending fp) ->
+                    WithFingerprint
+                      (Map.insert (headerHash hdr) ebHash pending)
+                      (succ fp)
+          _ -> pure ()

@@ -92,6 +92,8 @@ import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import LeiosDemoDb.Common (LeiosDbHandle)
+import LeiosDemoTypes (EbHash)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -350,6 +352,23 @@ data ChainDbEnv m blk = CDB
   , cdbChainSelStarvation :: !(StrictTVar m ChainSelStarvation)
   -- ^ Information on the last starvation of ChainSel, whether ongoing or
   -- ended recently.
+  , cdbLeiosDbHandle :: !(LeiosDbHandle m)
+  -- ^ Exposes the closure cache ('readCompletedClosures').  Held as
+  -- the handle (not a 'LeiosDbConnection'): the cache is read
+  -- concurrently and connections are not thread-safe.
+  , cdbPendingCertRBs :: !(StrictTVar m (WithFingerprint (Map (HeaderHash blk) EbHash)))
+  -- ^ Volatile CertRBs whose certified EB closure is not yet locally
+  -- available.  ChainSel reads this in its STM snapshot alongside
+  -- 'cdbInvalid' and skips the listed hashes during candidate
+  -- construction, so 'resolveLeiosBlock' is never invoked on a block
+  -- whose closure is still missing.
+  --
+  -- The 'Fingerprint' bumps on insert (in 'maybeMarkPending'), not on
+  -- removal; mirrors 'cdbInvalid'.
+  --
+  -- The map value is the certified 'EbHash', so the
+  -- closure-arrival handler can find matching entries by what
+  -- arrived without re-deriving the certifying relation per entry.
   }
   deriving Generic
 
