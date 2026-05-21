@@ -4,6 +4,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 -- | Weighted Fait-Accompli with Local Sortition (wFA^LS) committee selection.
 --
@@ -94,6 +97,8 @@ import Ouroboros.Consensus.Committee.WFA
   , unsafeGetCandidateInSeat
   , weightedFaitAccompliSplitSeats
   )
+import NoThunks.Class (NoThunks)
+import GHC.Generics (Generic)
 
 -- | Tag for weighted Fait-Accompli with Local Sortition (wFA^LS)
 data WFALS
@@ -161,7 +166,8 @@ instance
       InvalidCertSignature String
     | -- We triggered an unexpected cryptographic error
       CryptoError String
-    deriving (Show, Eq)
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass NoThunks
 
   data EligibilityWitness crypto WFALS
     = -- A persistent member of the voting committee
