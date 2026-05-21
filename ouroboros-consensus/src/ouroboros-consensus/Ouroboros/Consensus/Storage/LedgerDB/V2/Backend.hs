@@ -1,32 +1,41 @@
-{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeData #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
 
--- | Common interface for LedgerDB V2 backends
+-- | Common interface for LedgerDB V2 backends.
+--
+-- A backend is no longer a typeclass. It is a value of type
+-- 'LedgerDbBackendArgs' (essentially a closure over the user-supplied
+-- arguments for a specific backend) whose 'acquireBackend' action produces
+-- a 'BackendResources' record. The 'BackendResources' holds all the
+-- per-backend operations the LedgerDB driver needs at runtime:
+-- construct a genesis 'ExtStateHandle', load one from a snapshot, the
+-- 'SnapshotManager' and a release action.
+--
+-- Adding a new backend (e.g. an LSM-based one in a separate package) means
+-- exporting a constructor function that returns a 'LedgerDbBackendArgs'.
+-- Nothing in @ouroboros-consensus@ needs to know that backend exists.
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
   ( -- * Backend API
-    Backend (..)
-
-    -- * Existentials
-  , SomeBackendTrace (..)
-  , SomeBackendArgs (..)
-  , SomeResources (..)
+    LedgerDbBackendArgs (..)
+  , BackendResources (..)
 
     -- * Tracing
   , LedgerDBV2Trace (..)
+  , SomeBackendTrace (..)
   ) where
 
 import Control.Monad.Except
 import Control.ResourceRegistry
 import Control.Tracer
-import Data.Proxy
+import Data.Kind (Type)
 import Data.Typeable
+import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
@@ -35,83 +44,72 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import System.FS.API hiding (Handle)
 
--- | Operations needed to open and operate a LedgerDB V2
-class NoThunks (Resources m backend) => Backend m backend blk where
-  -- | The Arguments that will be used initially to create the 'Resources'.
-  data Args m backend
+-- | A backend for LedgerDB V2: how to acquire and release the resources
+-- needed to materialise per-block-type 'LedgerTablesHandle's, plus the
+-- corresponding snapshot manager.
+--
+-- A backend constructor (e.g. @inMemoryBackendArgs@ in
+-- @Ouroboros.Consensus.Cardano.InMemory@) closes over its own arguments and
+-- returns this record. The LedgerDB driver only ever sees this opaque
+-- interface.
+type LedgerDbBackendArgs :: (Type -> Type) -> Type -> Type
+newtype LedgerDbBackendArgs m blk = LedgerDbBackendArgs
+  { acquireBackend ::
+      forall fState.
+      Tracer m LedgerDBV2Trace ->
+      SomeHasFS m ->
+      WithTempRegistry fState m (BackendResources m blk)
+  }
 
-  -- | The Resources that will be stored in the LedgerDB environment and given
-  -- to the handle operations.
-  data Resources m backend
-
-  -- | A trace dependent on the particular backend.
-  data Trace backend
-
-  -- | Transform 'Args' into 'Resources', with some context made up of
-  -- 'LedgerDbArgs'.
-  mkResources ::
-    Proxy blk ->
-    Tracer m LedgerDBV2Trace ->
-    Args m backend ->
-    SomeHasFS m ->
-    WithTempRegistry fState m (Resources m backend)
-
-  -- | Release the acquired resources.
-  releaseResources :: Proxy blk -> Resources m backend -> m ()
-
-  -- | Create a new handle from the given Genesis state.
-  createAndPopulateStateHandleFromGenesis ::
-    Tracer m LedgerDBV2Trace ->
-    Resources m backend ->
-    ExtLedgerState blk ->
-    m (Handle ExtLedgerState m blk)
-
-  -- | Create a new handle from a snapshot.
-  openStateHandleFromSnapshot ::
-    Tracer m LedgerDBV2Trace ->
-    CodecConfig blk ->
-    SomeHasFS m ->
-    Resources m backend ->
-    DiskSnapshot ->
-    ExceptT
-      (SnapshotFailure blk)
-      m
-      (Handle ExtLedgerState m blk, RealPoint blk)
-
-  -- | Instantiate the 'SnapshotManager' for this backend.
-  snapshotManager ::
-    Proxy blk ->
-    Resources m backend ->
-    CodecConfig blk ->
-    Tracer m (TraceSnapshotEvent blk) ->
-    SomeHasFS m ->
-    SnapshotManager m blk (Handle ExtLedgerState m blk)
-
-{-------------------------------------------------------------------------------
-  Existentials
--------------------------------------------------------------------------------}
-
-data SomeBackendTrace where
-  SomeBackendTrace ::
-    (Show (Trace backend), Typeable backend) => Trace backend -> SomeBackendTrace
-
-instance Show SomeBackendTrace where
-  show (SomeBackendTrace tr) = show tr
-
-data SomeBackendArgs m blk where
-  SomeBackendArgs :: Backend m backend blk => Args m backend -> SomeBackendArgs m blk
-
-data SomeResources m blk where
-  SomeResources :: Backend m backend blk => Resources m backend -> SomeResources m blk
-
-instance NoThunks (SomeResources m blk) where
-  wNoThunks ctxt (SomeResources res) = wNoThunks ctxt res
-  noThunks ctxt (SomeResources res) = noThunks ctxt res
-  showTypeOf _ = "SomeResources"
+-- | The resources produced by 'acquireBackend': everything the LedgerDB
+-- driver needs to construct and tear down 'ExtStateHandle's for @blk@.
+--
+-- The arguments stored in 'LedgerDbBackendArgs' are turned into raw
+-- resources (a filesystem, an LSM session, ...) inside 'acquireBackend',
+-- and those resources are then closed over by the fields of this record.
+type BackendResources :: (Type -> Type) -> Type -> Type
+data BackendResources m blk = BackendResources
+  { brCreateGenesis ::
+      ExtLedgerState blk ->
+      m (ExtStateHandle m blk)
+  -- ^ Construct an 'ExtStateHandle' for the genesis ledger state. The
+  -- backend allocates a fresh 'LedgerTablesHandle' and returns the
+  -- full handle ready to be inserted into the 'LedgerSeq'.
+  , brLoadSnapshot ::
+      CodecConfig blk ->
+      SomeHasFS m ->
+      DiskSnapshot ->
+      ExceptT (SnapshotFailure blk) m (ExtStateHandle m blk, RealPoint blk)
+  -- ^ Load an 'ExtStateHandle' from a snapshot on disk.
+  , brSnapshotManager ::
+      CodecConfig blk ->
+      Tracer m (TraceSnapshotEvent blk) ->
+      SomeHasFS m ->
+      SnapshotManager m blk (ExtStateHandle m blk)
+  -- ^ Build the per-backend snapshot manager. The backend closes over
+  -- its own session/handle types here.
+  , brRelease :: m ()
+  -- ^ Release any resources allocated by 'acquireBackend' that are not
+  -- managed by the temporary registry (e.g. handles that have to outlive
+  -- the registry handoff).
+  }
+  deriving Generic
+  deriving NoThunks via OnlyCheckWhnfNamed "BackendResources" (BackendResources m blk)
 
 {-------------------------------------------------------------------------------
   Tracing
 -------------------------------------------------------------------------------}
+
+-- | An opaque per-backend trace event. Backends that want to emit
+-- structured events through the LedgerDB tracer can wrap them in this
+-- existential — it preserves the @Show@ representation without forcing
+-- the consensus library to know the backend trace types.
+data SomeBackendTrace where
+  SomeBackendTrace ::
+    (Show t, Typeable t) => t -> SomeBackendTrace
+
+instance Show SomeBackendTrace where
+  show (SomeBackendTrace tr) = show tr
 
 data LedgerDBV2Trace
   = -- | Created a new 'LedgerTablesHandle', potentially by duplicating an
@@ -125,4 +123,4 @@ data LedgerDBV2Trace
   | TraceLedgerTablesHandlePush EnclosingTimed
   | BackendTrace SomeBackendTrace
 
-deriving instance Show SomeBackendTrace => Show LedgerDBV2Trace
+deriving instance Show LedgerDBV2Trace

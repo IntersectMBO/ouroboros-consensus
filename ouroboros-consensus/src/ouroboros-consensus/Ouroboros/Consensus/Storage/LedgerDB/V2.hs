@@ -70,10 +70,9 @@ newtype SnapshotExc blk = SnapshotExc {getSnapshotFailure :: SnapshotFailure blk
   deriving (Show, Exception)
 
 mkInitDb ::
-  forall m blk backend.
+  forall m blk.
   ( LedgerSupportsProtocol blk
   , HasHardForkHistory blk
-  , Backend m backend blk
   , IOLike m
   , MonadLedger m blk
   , NoThunks (ExtStateHandle m blk)
@@ -83,22 +82,21 @@ mkInitDb ::
   ResolveBlock m blk ->
   SnapshotManagerV2 m blk ->
   GetVolatileSuffix m blk ->
-  Resources m backend ->
+  BackendResources m blk ->
   InitDB (LedgerSeq' m blk) m blk
 mkInitDb args getBlock snapManager getVolatileSuffix res = do
   InitDB
     { initFromGenesis = do
         genesis <- lgrGenesis
-        sr <- createAndPopulateStateHandleFromGenesis v2Tracer res genesis
+        sr <- brCreateGenesis res genesis
         pure $ LedgerSeq . AS.Empty $ sr
     , initFromSnapshot = \ds ->
         runExceptT
           ( first (LedgerSeq . AS.Empty)
-              <$> openStateHandleFromSnapshot
-                v2Tracer
+              <$> brLoadSnapshot
+                res
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
                 lgrHasFS
-                res
                 ds
           )
     , initReapplyBlock = reapplyThenPush
@@ -122,7 +120,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbOpenHandlesLock = lock
                 , ldbGetVolatileSuffix = getVolatileSuffix
-                , ldbBackendResources = SomeResources res
+                , ldbBackendResources = res
                 , ldbLastSuccessfulSnapshotRequestedAt = ldbLastSuccessfulSnapshotRequestedAt
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
@@ -136,9 +134,6 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
     , lgrSnapshotPolicyArgs
     , lgrQueryBatchSize
     } = args
-
-  v2Tracer :: Tracer m LedgerDBV2Trace
-  !v2Tracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< tr
 
   !tr = lgrTracer args
 
@@ -423,10 +418,10 @@ implCloseDB (LDBHandle varState) = do
           pure (Just $ (ldbSeq env, ldbBackendResources env))
   whenJust
     res
-    ( \(s, SomeResources res') -> do
+    ( \(s, res') -> do
         s' <- readTVarIO s
         closeLedgerSeq s'
-        releaseResources (Proxy @blk) res'
+        brRelease res'
     )
 
 {-------------------------------------------------------------------------------
@@ -468,10 +463,10 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- We acquire write access when pruning the LedgerDB (see
   -- 'implGarbageCollect') and when closing orphaned handles in Chain selection
   -- (see 'implForkerCommit').
-  , ldbBackendResources :: !(SomeResources m blk)
-  -- ^ Resource keys used in the LSM backend so that the closing function used
-  -- in tests can release such resources. These are the resource keys for the
-  -- LSM session and the resource key for the BlockIO interface.
+  , ldbBackendResources :: !(BackendResources m blk)
+  -- ^ The backend-provided constructors and the matching release action.
+  -- 'implCloseDB' calls 'brRelease' here once the 'LedgerSeq' has been
+  -- closed.
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
   , ldbLastSuccessfulSnapshotRequestedAt :: !(StrictTVar m (Maybe Time))
   -- ^ The time at which the latest successfully-completed snapshot was

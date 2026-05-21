@@ -11,6 +11,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
 #if __GLASGOW_HASKELL__ < 908
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
@@ -28,12 +29,14 @@ module Ouroboros.Consensus.Cardano.CanHardFork
     -- * Exposed for testing
   , getConwayTranslationContext
   , getDijkstraTranslationContext
+  , inMemoryBackendArgs
   ) where
 
 import Cardano.Ledger.Allegra.Translation
   ( shelleyToAllegraAVVMsToDelete
   )
 import qualified Cardano.Ledger.BaseTypes as SL
+import Cardano.Ledger.Binary.Decoding
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Genesis as SL
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -43,16 +46,24 @@ import Cardano.Ledger.Shelley.Translation
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
-import Control.Monad.Except (runExcept, throwError)
+import Codec.Serialise
+import qualified Control.Monad as Monad
+import Control.Monad.Except
+import Control.Monad.Trans (lift)
+import Control.Tracer
 import Data.Coerce (coerce)
+import qualified Data.List as List
 import qualified Data.Map.Strict as Map
+import Data.Maybe
 import Data.Maybe.Strict (StrictMaybe (..))
+import Data.MemPack
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import qualified Data.SOP.Strict as SOP
 import Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
+import qualified Data.SOP.Telescope as Telescope
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.ByronHFC ()
 import Ouroboros.Consensus.Byron.Ledger
@@ -61,6 +72,7 @@ import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.InMemory
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.Combinator
+import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.HardFork.History
   ( Bound (boundSlot)
@@ -68,6 +80,7 @@ import Ouroboros.Consensus.HardFork.History
   )
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract hiding (Handle, TickedHandle)
+import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32
   , IgnoringOverflow
@@ -92,9 +105,15 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC
+import Ouroboros.Consensus.Storage.LedgerDB.Args
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
+import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.IOLike
+import System.FS.API
+import System.FS.CRC
 
 {-------------------------------------------------------------------------------
   CanHardFork
@@ -683,3 +702,239 @@ translateValidatedTxConwayToDijkstraWrapper ::
 translateValidatedTxConwayToDijkstraWrapper ctxt =
   InjectValidatedTx $
     fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
+
+{-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------}
+
+-- | Construct the 'LedgerDbBackendArgs' for the in-memory backend.
+--
+-- This is the entry point that the node and tools call to wire the
+-- in-memory backend into the LedgerDB. The resources acquired here are
+-- the 'MkHandle' and 'MkHandleFromSnapshot' factories produced from the
+-- file system passed in by 'acquireBackend'; those factories are then
+-- closed over by the fields of the resulting 'BackendResources'.
+--
+-- The in-memory backend has no long-lived resources of its own, so
+-- 'brRelease' is a no-op and 'acquireBackend' does not allocate into the
+-- temporary registry.
+inMemoryBackendArgs ::
+  forall m c.
+  (CardanoHardForkConstraints c, SerialiseHFC (CardanoEras c), IOLike m) =>
+  LedgerDbBackendArgs m (CardanoBlock c)
+inMemoryBackendArgs = LedgerDbBackendArgs $ \_tr shfs ->
+  let
+    mkH :: MkHandle m
+    mkH = mkInMemoryFactory shfs
+
+    mkHs :: MkHandleFromSnapshot m
+    mkHs = mkInMemoryFromSnapshot shfs
+   in
+    pure
+      BackendResources
+        { brCreateGenesis = createGenesisInMemory mkH
+        , brLoadSnapshot = loadSnapshotInMemory mkHs mkH
+        , brSnapshotManager = inMemorySnapshotManager
+        , brRelease = pure ()
+        }
+
+-- | Build the genesis 'ExtStateHandle' for the in-memory backend.
+--
+-- The 'ExtLedgerState' supplied by 'lgrGenesis' is destructured into its
+-- 'LedgerState' / 'HeaderState' parts and the 'MkHandle' factory is used
+-- to obtain the initial 'LedgerTablesHandle'. The two are then paired
+-- with 'newStateHandle' (from 'MonadLedger') and wrapped into an
+-- 'ExtStateHandle'.
+--
+-- The block-type-specific assembly currently goes through 'fillJavier'
+-- to mirror the existing 'injectInitialExtLedgerState' wiring in
+-- "Ouroboros.Consensus.Cardano.Node": once that lands the
+-- 'MkHandle'-driven path will plug in directly here.
+createGenesisInMemory ::
+  forall m c.
+  IOLike m =>
+  MkHandle m ->
+  ExtLedgerState (CardanoBlock c) ->
+  m (ExtStateHandle m (CardanoBlock c))
+createGenesisInMemory mkH (ExtLedgerState ls hs) =
+  pure
+    ( ExtStateHandle
+        ( HardForkStateHandle
+            ( SOP.hczipWith
+                (Proxy @(MonadLedger m))
+                (\f g -> SOP.apFn f g)
+                ( SOP.Fn (flip newStateHandle ())
+                    SOP.:* SOP.hpure (error "You initialized the chain not in the first era!")
+                )
+                (hardForkLedgerStatePerEra ls)
+            )
+            mkH
+        )
+        $ hs
+    )
+
+-- TODO @js: once 'injectInitialExtLedgerState' is wired in
+-- "Ouroboros.Consensus.Cardano.Node" against 'MkHandle', call it here.
+
+-- | Load an 'ExtStateHandle' from a snapshot using the in-memory backend.
+--
+-- Reads the 'ExtLedgerState' from disk, then delegates to
+-- 'MkHandleFromSnapshot' to materialise the in-memory tables for the
+-- snapshot's era.
+loadSnapshotInMemory ::
+  forall m c.
+  (CardanoHardForkConstraints c, SerialiseHFC (CardanoEras c), IOLike m) =>
+  MkHandleFromSnapshot m ->
+  MkHandle m ->
+  CodecConfig (CardanoBlock c) ->
+  SomeHasFS m ->
+  DiskSnapshot ->
+  ExceptT
+    (SnapshotFailure (CardanoBlock c))
+    m
+    (ExtStateHandle m (CardanoBlock c), RealPoint (CardanoBlock c))
+loadSnapshotInMemory mkFromSnapshot mkH ccfg fs@(SomeHasFS hfs) ds = do
+  fileEx <- lift $ doesFileExist hfs (snapshotToDirPath ds)
+  Monad.when fileEx $ throwError $ InitFailureRead ReadSnapshotIsLegacy
+
+  snapshotMeta <-
+    withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath ds)) $
+      loadSnapshotMetadata fs ds
+  Monad.when (snapshotBackend snapshotMeta /= UTxOHDMemSnapshot) $
+    throwError $
+      InitFailureRead $
+        ReadMetadataError (snapshotToMetadataPath ds) MetadataBackendMismatch
+  (ExtLedgerState ls hs, checksumAsRead) <-
+    withExceptT
+      (InitFailureRead . ReadSnapshotFailed)
+      $ readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath ds)
+  case pointToWithOriginRealPoint (getTip ls) of
+    Origin -> throwError InitFailureGenesis
+    NotOrigin pt -> do
+      ns <-
+        SOP.hsequence' $
+          SOP.hzipWith
+            SOP.apFn
+            ( let sf ::
+                    forall proto era.
+                    ( SL.Era era
+                    , MemPack (SL.TxOut era)
+                    , IOLike m
+                    , Share (SL.TxOut era) ~ Interns (SL.Credential SL.Staking)
+                    , DecShareCBOR (SL.TxOut era)
+                    , SL.EraCertState era
+                    , Eq (SL.TxOut era)
+                    ) =>
+                    ( LedgerState SOP.-.-> ExceptT (SnapshotFailure (CardanoBlock c)) m
+                        :.: ( (,) (Maybe CRC)
+                                :.: StateHandle m
+                            )
+                    )
+                      (ShelleyBlock proto era)
+
+                  sf = SOP.Fn $ \st@(shelleyLedgerState -> nes) ->
+                    Comp $ withExceptT (InitFailureOther . show) $ do
+                      (x, y) <- fromSnapshot mkFromSnapshot ds nes
+                      pure $ Comp (y, ShelleyStateHandle st x)
+                  np =
+                    SOP.Fn (\bs -> Comp $ pure $ Comp $ (Just initCRC, ByronStateHandle bs))
+                      SOP.:* sf
+                      SOP.:* sf
+                      SOP.:* sf
+                      SOP.:* sf
+                      SOP.:* sf
+                      SOP.:* sf
+                      SOP.:* sf
+                      SOP.:* SOP.Nil
+                  np ::
+                    SOP.NP
+                      ( LedgerState SOP.-.-> ExceptT (SnapshotFailure (CardanoBlock c)) m
+                          :.: ( (,) (Maybe CRC)
+                                  :.: StateHandle m
+                              )
+                      )
+                      (CardanoEras c)
+               in np
+            )
+            (hardForkLedgerStatePerEra ls)
+      let crcTables =
+            fromMaybe initCRC $
+              SOP.hcollapse $
+                SOP.hmap (K . fst . unComp . currentState) $
+                  Telescope.tip $
+                    getHardForkState ns
+          extLedgerSt :: HardForkState (StateHandle m) (CardanoEras c)
+          extLedgerSt = SOP.hmap (snd . unComp) ns
+      let computedCRC = crcOfConcat checksumAsRead crcTables
+      Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
+        throwError $
+          InitFailureRead $
+            ReadSnapshotDataCorruption
+      pure (ExtStateHandle (HardForkStateHandle extLedgerSt mkH) hs, pt)
+
+-- | The in-memory backend's 'SnapshotManager'.
+--
+-- 'listSnapshots' and 'deleteSnapshotIfTemporary' are the standard
+-- filesystem-driven implementations. 'takeSnapshot' writes the pure
+-- 'ExtLedgerState' first and then delegates to 'takeHandleSnapshot' on
+-- the per-era 'TablesHandle' for the on-disk component.
+inMemorySnapshotManager ::
+  forall m c.
+  (CardanoHardForkConstraints c, SerialiseHFC (CardanoEras c), IOLike m) =>
+  CodecConfig (CardanoBlock c) ->
+  Tracer m (TraceSnapshotEvent (CardanoBlock c)) ->
+  SomeHasFS m ->
+  SnapshotManager m (CardanoBlock c) (ExtStateHandle m (CardanoBlock c))
+inMemorySnapshotManager ccfg snapTracer shfs@(SomeHasFS hasFS) =
+  SnapshotManager
+    { listSnapshots = defaultListSnapshots shfs
+    , deleteSnapshotIfTemporary = defaultDeleteSnapshotIfTemporary shfs snapTracer
+    , takeSnapshot = \suffix st ->
+        case pointToWithOriginRealPoint (getTip $ extLedgerState st) of
+          Origin -> return Nothing
+          NotOrigin t -> do
+            let number = unSlotNo (realPointSlot t)
+                snapshot = DiskSnapshot number suffix
+            diskSnapshots <- defaultListSnapshots shfs
+            if List.any (== DiskSnapshot number suffix) diskSnapshots
+              then
+                return Nothing
+              else do
+                writeSnapshot snapshot st
+                return $ Just (snapshot, t)
+    }
+ where
+  writeSnapshot :: DiskSnapshot -> ExtStateHandle m (CardanoBlock c) -> m ()
+  writeSnapshot ds st = do
+    createDirectoryIfMissing hasFS True $ snapshotToDirPath ds
+    crc1 <-
+      writeExtLedgerState
+        shfs
+        (encodeDiskExtLedgerState ccfg)
+        (snapshotToStatePath ds)
+        (extLedgerState st)
+    (crc2, bknd) <-
+      fmap SOP.hcollapse $
+        SOP.hsequence' $
+          SOP.hzipWith
+            SOP.apFn
+            ( let sf ::
+                    (Current (StateHandle m) SOP.-.-> m :.: K (Maybe CRC, SnapshotBackend)) (ShelleyBlock proto era)
+                  sf = SOP.Fn $ \(Current _ ss) -> Comp $ K <$> takeHandleSnapshot (stateRefHandle ss) ds
+               in (SOP.Fn $ \_ -> Comp $ pure $ K (Nothing, UTxOHDMemSnapshot))
+                    SOP.:* sf
+                    SOP.:* sf
+                    SOP.:* sf
+                    SOP.:* sf
+                    SOP.:* sf
+                    SOP.:* sf
+                    SOP.:* sf
+                    SOP.:* SOP.Nil
+            )
+            (Telescope.tip $ getHardForkState $ hardForkStateHandlePerEra $ extStateHandle st)
+    writeSnapshotMetadata shfs ds $
+      SnapshotMetadata
+        { snapshotBackend = bknd
+        , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
+        , snapshotTablesCodecVersion = TablesCodecVersion1
+        }

@@ -287,7 +287,6 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
     Ouroboros.Consensus.Storage.LedgerDB.V2
     Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
-    Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
     Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
     Ouroboros.Consensus.Storage.PerasCertDB
     Ouroboros.Consensus.Storage.PerasCertDB.API

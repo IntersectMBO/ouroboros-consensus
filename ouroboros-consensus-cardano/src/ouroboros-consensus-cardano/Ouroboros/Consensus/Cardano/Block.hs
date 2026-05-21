@@ -229,7 +229,7 @@ import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
+import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock)
 import Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------

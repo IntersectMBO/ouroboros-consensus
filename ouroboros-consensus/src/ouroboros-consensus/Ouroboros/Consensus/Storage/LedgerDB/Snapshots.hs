@@ -177,6 +177,7 @@ data SnapshotFailure blk
   | -- | This snapshot was of the ledger state at genesis, even though we never
     -- take snapshots at genesis, so this is unexpected.
     InitFailureGenesis
+  | InitFailureOther String
   deriving (Show, Eq, Generic)
 
 data ReadSnapshotErr

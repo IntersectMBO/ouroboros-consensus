@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -16,17 +17,36 @@ import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Write as CBOR
+import qualified Control.Monad as Monad
 import Control.Monad.Except
+import Control.Monad.Trans (lift)
+import Control.Tracer (Tracer)
 import Data.Functor.Identity
 import qualified Data.Map.Strict as Map
 import Data.MemPack
+import Data.Proxy
+import Data.SOP.BasicFunctors
+import Data.SOP.Constraint
+import Data.SOP.Sing (SListI)
+import Data.SOP.Strict
+import qualified Data.SOP.Telescope as Telescope
 import Data.Set (Set)
 import Lens.Micro
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Cardano.Block
+import Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork
+import Ouroboros.Consensus.HardFork.Combinator.Basics
+import Ouroboros.Consensus.HardFork.Combinator.Ledger
+import Ouroboros.Consensus.HardFork.Combinator.State.Infra
+import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Extended
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CBOR
+import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
 import System.FS.CRC
@@ -139,6 +159,7 @@ data MkHandleFromSnapshot m = MkHandleFromSnapshot
   }
 
 data BackendError = BackendReadErr ReadIncrementalErr | BackendCorruptedData
+  deriving Show
 
 mkInMemoryFactory ::
   forall m.
@@ -197,3 +218,7 @@ mkInMemoryFromSnapshot shfs =
 
 snapshotToTablesPath :: DiskSnapshot -> FsPath
 snapshotToTablesPath ds = snapshotToDirPath ds </> mkFsPath ["tables"]
+
+{-------------------------------------------------------------------------------
+  InMemory backend constructor
+-------------------------------------------------------------------------------}

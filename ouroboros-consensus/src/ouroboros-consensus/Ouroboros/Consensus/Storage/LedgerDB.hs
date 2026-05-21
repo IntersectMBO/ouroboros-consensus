@@ -77,31 +77,27 @@ openDB
   stream
   replayGoal
   getBlock
-  getVolatileSuffix =
-    case lgrBackendArgs args of
-      LedgerDbBackendArgsV2 (SomeBackendArgs bArgs) -> do
-        -- Note this is the only step that cares about the temporary
-        -- registry. Note also that the final state is an polymorphic and
-        -- unconstrained 'st' so it is clear that this function will allocate
-        -- resources with 'impossibleToNotTransfer'.
-        res <-
-          mkResources
-            (Proxy @blk)
-            (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer args)
-            bArgs
+  getVolatileSuffix = do
+    -- Note this is the only step that cares about the temporary
+    -- registry. Note also that the final state is an polymorphic and
+    -- unconstrained 'st' so it is clear that this function will allocate
+    -- resources with 'impossibleToNotTransfer'.
+    res <-
+      acquireBackend
+        (lgrBackendArgs args)
+        (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer args)
+        (lgrHasFS args)
+    let snapManager =
+          brSnapshotManager
+            res
+            (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
+            snapTracer
             (lgrHasFS args)
-        let snapManager =
-              snapshotManager
-                (Proxy @blk)
-                res
-                (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
-                snapTracer
-                (lgrHasFS args)
-        let initDb = V2.mkInitDb args getBlock snapManager getVolatileSuffix res
-        lift $ doOpenDB args initDb snapManager stream replayGoal
-       where
-        !tr = lgrTracer args
-        !snapTracer = LedgerDBSnapshotEvent >$< tr
+    let initDb = V2.mkInitDb args getBlock snapManager getVolatileSuffix res
+    lift $ doOpenDB args initDb snapManager stream replayGoal
+   where
+    !tr = lgrTracer args
+    !snapTracer = LedgerDBSnapshotEvent >$< tr
 
 {-------------------------------------------------------------------------------
   Opening a LedgerDB

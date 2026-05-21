@@ -10,7 +10,7 @@
 -- | Arguments for LedgerDB initialization.
 module Ouroboros.Consensus.Storage.LedgerDB.Args
   ( LedgerDbArgs (..)
-  , LedgerDbBackendArgs (..)
+  , LedgerDbBackendArgs
   , QueryBatchSize (..)
   , defaultArgs
   , defaultQueryBatchSize
@@ -33,7 +33,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend (LedgerDbBackendArgs)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq (AnchoredSeq)
@@ -79,9 +79,6 @@ defaultArgs =
     , lgrBackendArgs = NoDefault
     , lgrStartSnapshot = Nothing
     }
-
-newtype LedgerDbBackendArgs m blk
-  = LedgerDbBackendArgsV2 (V2.SomeBackendArgs m blk)
 
 {-------------------------------------------------------------------------------
   QueryBatchSize
