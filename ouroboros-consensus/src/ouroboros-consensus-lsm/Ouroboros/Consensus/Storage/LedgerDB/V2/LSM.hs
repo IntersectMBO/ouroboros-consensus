@@ -27,25 +27,29 @@
 -- against the new 'Handle' / 'MonadLedger' interface in Layer 1.
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   ( -- * Backend API
-    -- LSM
-    -- , Backend (..)
-    -- , Args (LSMArgs)
-    -- , Trace (..)
-    -- , LSM.LSMTreeTrace (..)
-    -- , mkLSMArgsIO
-    -- , stdMkBlockIOFS
+
+  -- LSM
+  -- , Backend (..)
+  -- , Args (LSMArgs)
+  -- , Trace (..)
+  -- , LSM.LSMTreeTrace (..)
+  -- , mkLSMArgsIO
+  -- , stdMkBlockIOFS
 
     -- * Streaming
-    -- , YieldArgs (YieldLSM)
-    -- , mkLSMYieldArgs
-    -- , SinkArgs (SinkLSM)
-    -- , mkLSMSinkArgs
+
+  -- , YieldArgs (YieldLSM)
+  -- , mkLSMYieldArgs
+  -- , SinkArgs (SinkLSM)
+  -- , mkLSMSinkArgs
 
     -- * Exported for tests
-    -- , LSM.Salt
-    -- , SomeHasFSAndBlockIO (..)
   ) where
--- 
+
+-- , LSM.Salt
+-- , SomeHasFSAndBlockIO (..)
+
+--
 -- import Codec.Serialise (decode)
 -- import Control.Exception (assert)
 -- import qualified Control.Monad as Monad
@@ -104,28 +108,28 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 -- import System.FilePath (splitDirectories, splitFileName)
 -- import System.Random
 -- import Prelude hiding (read)
--- 
+--
 -- -- | Type alias for convenience
 -- type UTxOTable m = Table m TxInBytes TxOutBytes Void
--- 
+--
 -- instance NoThunks (Table m txin txout Void) where
 --   showTypeOf _ = "Table"
 --   wNoThunks _ _ = pure Nothing
--- 
+--
 -- data LSMClosedExn = LSMClosedExn
 --   deriving (Show, Exception)
--- 
+--
 -- {-------------------------------------------------------------------------------
 --   TxOuts
 -- -------------------------------------------------------------------------------}
--- 
+--
 -- newtype TxOutBytes = TxOutBytes {unTxOutBytes :: LSM.RawBytes}
--- 
+--
 -- toTxOutBytes :: IndexedMemPack l blk (TxOut blk) => l blk EmptyMK -> TxOut blk -> TxOutBytes
 -- toTxOutBytes st txout =
 --   let barr = indexedPackByteArray True st txout
 --    in TxOutBytes $ LSM.RawBytes (VP.Vector 0 (PBA.sizeofByteArray barr) barr)
--- 
+--
 -- fromTxOutBytes :: IndexedMemPack l blk (TxOut blk) => l blk EmptyMK -> TxOutBytes -> TxOut blk
 -- fromTxOutBytes st (TxOutBytes (LSM.RawBytes vec)) =
 --   case indexedUnpackEither st vec of
@@ -137,24 +141,24 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --           , "The error: " <> show err
 --           ]
 --     Right v -> v
--- 
+--
 -- instance LSM.SerialiseValue TxOutBytes where
 --   serialiseValue = unTxOutBytes
 --   deserialiseValue = TxOutBytes
--- 
+--
 -- deriving via LSM.ResolveAsFirst TxOutBytes instance LSM.ResolveValue TxOutBytes
--- 
+--
 -- {-------------------------------------------------------------------------------
 --   TxIns
 -- -------------------------------------------------------------------------------}
--- 
+--
 -- newtype TxInBytes = TxInBytes {unTxInBytes :: LSM.RawBytes}
--- 
+--
 -- toTxInBytes :: MemPack (TxIn blk) => Proxy blk -> TxIn blk -> TxInBytes
 -- toTxInBytes _ txin =
 --   let barr = packByteArray True txin
 --    in TxInBytes $ LSM.RawBytes (VP.Vector 0 (PBA.sizeofByteArray barr) barr)
--- 
+--
 -- fromTxInBytes :: MemPack (TxIn blk) => Proxy blk -> TxInBytes -> TxIn blk
 -- fromTxInBytes _ (TxInBytes (LSM.RawBytes vec)) =
 --   case unpackEither vec of
@@ -166,19 +170,19 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --           , "The error: " <> show err
 --           ]
 --     Right v -> v
--- 
+--
 -- instance LSM.SerialiseKey TxInBytes where
 --   serialiseKey = unTxInBytes
 --   deserialiseKey = TxInBytes
--- 
+--
 -- {-------------------------------------------------------------------------------
 --   LSM Handle management
 -- -------------------------------------------------------------------------------}
--- 
+--
 -- closeLSMTable :: IOLike m => Tracer m LedgerDBV2Trace -> UTxOTable m -> m ()
 -- closeLSMTable tracer t =
 --   encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) (LSM.closeTable t)
--- 
+--
 -- duplicateLSMTable ::
 --   IOLike m =>
 --   Tracer m LedgerDBV2Trace ->
@@ -186,14 +190,14 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --   m (UTxOTable m)
 -- duplicateLSMTable tracer t = do
 --   encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) $ LSM.duplicate t
--- 
+--
 -- {-------------------------------------------------------------------------------
 --   LedgerTablesHandle
 -- -------------------------------------------------------------------------------}
--- 
+--
 -- type LSMConstraints l blk =
 --   (HasLedgerTables l blk, MemPack (TxIn blk), IndexedMemPack l blk (TxOut blk))
--- 
+--
 -- newLSMLedgerTablesHandle ::
 --   forall m l blk.
 --   ( IOLike m
@@ -217,14 +221,14 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --         , takeHandleSnapshot = implTakeHandleSnapshot tracer t
 --         , tablesSize = fromIntegral utxosSize
 --         }
--- 
+--
 -- {-# INLINE implDuplicate #-}
 -- {-# INLINE implRead #-}
 -- {-# INLINE implReadRange #-}
 -- {-# INLINE implReadAll #-}
 -- {-# INLINE implDuplicateWithDiffs #-}
 -- {-# INLINE implTakeHandleSnapshot #-}
--- 
+--
 -- implDuplicate ::
 --   ( IOLike m
 --   , LSMConstraints l blk
@@ -238,7 +242,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --     >>= newLSMLedgerTablesHandle
 --       tracer
 --       size
--- 
+--
 -- implDuplicateWithDiffs ::
 --   forall m l blk mk.
 --   ( IOLike m
@@ -273,13 +277,13 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --           assert (size + ins >= size) $
 --             assert (size + ins - dels <= size + ins) $
 --               size + ins - dels
--- 
+--
 --     encloseTimedWith (BackendTrace . SomeBackendTrace . LSMUpdate >$< tracer) $ LSM.updates t vec
 --     newLSMLedgerTablesHandle tracer size' t
 --  where
 --   f (Diff.Insert v) = LSM.Insert (toTxOutBytes (forgetLedgerTables st1) v) Nothing
 --   f Diff.Delete = LSM.Delete
--- 
+--
 -- implRead ::
 --   forall m l blk.
 --   ( IOLike m
@@ -313,7 +317,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --         )
 --         Map.empty
 --       $ V.zip vec' res
--- 
+--
 -- implReadRange ::
 --   forall m l blk.
 --   (IOLike m, LSMConstraints l blk) =>
@@ -343,7 +347,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --   -- Here we ask for one value more and we drop one value because the
 --   -- cursor returns also the key at which it was opened.
 --   cursorFromKey k = fmap (V.drop 1) $ LSM.withCursorAtOffset table (toTxInBytes (Proxy @blk) k) (LSM.take $ num + 1)
--- 
+--
 -- implReadAll ::
 --   ( IOLike m
 --   , LSMConstraints l blk
@@ -356,7 +360,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --         (v, n) <- implReadRange t st (m, 100000)
 --         maybe (pure v) (fmap (ltliftA2 unionValues v) . readAll' . Just) n
 --    in readAll' Nothing
--- 
+--
 -- implTakeHandleSnapshot ::
 --   IOLike m => Tracer m LedgerDBV2Trace -> UTxOTable m -> t -> String -> m (Maybe a)
 -- implTakeHandleSnapshot tracer t _ snapshotName = do
@@ -366,11 +370,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --       (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
 --       t
 --   pure Nothing
--- 
+--
 -- {-------------------------------------------------------------------------------
 --   SnapshotManager
 -- -------------------------------------------------------------------------------}
--- 
+--
 -- -- | Snapshots in LSM trees are split in two parts for now:
 -- --
 -- -- - The @state@ and @meta@ files in the usual location (@./ledger/<slotno>@ in
@@ -406,10 +410,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --     , deleteSnapshotIfTemporary = implDeleteSnapshotIfTemporary session fs tracer
 --     , takeSnapshot = implTakeSnapshot ccfg tracer fs
 --     }
--- 
+--
 -- {-# INLINE implTakeSnapshot #-}
 -- {-# INLINE implDeleteSnapshotIfTemporary #-}
--- 
+--
 -- implTakeSnapshot ::
 --   ( IOLike m
 --   , LedgerDbSerialiseConstraints blk
@@ -448,15 +452,15 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --         , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
 --         , snapshotTablesCodecVersion = TablesCodecVersion1
 --         }
--- 
+--
 -- snapshotToUTxOSizeFilePath :: DiskSnapshot -> FsPath
 -- snapshotToUTxOSizeFilePath ds = snapshotToDirPath ds </> mkFsPath ["utxoSize"]
--- 
+--
 -- writeUTxOSizeFile :: MonadThrow f => HasFS f h -> FsPath -> Int -> f ()
 -- writeUTxOSizeFile hasFs p sz =
 --   Monad.void $ withFile hasFs p (WriteMode MustBeNew) $ \h ->
 --     hPutAll hasFs h $ BS.toLazyByteString $ BS.intDec sz
--- 
+--
 -- readUTxOSizeFile :: MonadThrow m => HasFS m h -> FsPath -> ExceptT (SnapshotFailure blk) m Word64
 -- readUTxOSizeFile hfs p = do
 --   exists <- lift $ doesFileExist hfs p
@@ -475,7 +479,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --           . readInt
 --           . toStrict
 --           <$> hGetAll hfs h
--- 
+--
 -- -- | Delete snapshot from disk and also from the LSM tree database.
 -- implDeleteSnapshotIfTemporary ::
 --   forall m blk.
@@ -502,16 +506,16 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --       let p = snapshotToDirPath ss
 --       exists <- doesDirectoryExist p
 --       Monad.when exists (removeDirectoryRecursive p)
--- 
+--
 --     deleteLsmTable =
 --       LSM.deleteSnapshot
 --         session
 --         (fromString $ show (dsNumber ss) <> maybe "" ("_" <>) (dsSuffix ss))
--- 
+--
 -- {-------------------------------------------------------------------------------
 --   Creating the first handle
 -- -------------------------------------------------------------------------------}
--- 
+--
 -- -- | Read snapshot from disk.
 -- --
 -- --   Fail on data corruption, i.e. when the checksum of the read data differs
@@ -553,7 +557,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --               session
 --               (fromString $ snapshotToDirName ds)
 --               (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
--- 
+--
 --       h <- lift $ newLSMLedgerTablesHandle tracer msz values
 --       Monad.when
 --         (checksumAsRead /= snapshotChecksum snapshotMeta)
@@ -561,7 +565,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --         $ InitFailureRead
 --           ReadSnapshotDataCorruption
 --       pure (StateHandle extLedgerSt h, pt)
--- 
+--
 -- -- | Create the initial LSM table from values, which should happen only at
 -- -- Genesis.
 -- tableFromValuesMK ::
@@ -584,11 +588,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --     LSM.inserts table $
 --       V.fromListN (length items) $
 --         map (\(k, v) -> (toTxInBytes (Proxy @blk) k, toTxOutBytes st v, Nothing)) items
--- 
+--
 -- {-------------------------------------------------------------------------------
 --   Helpers
 -- -------------------------------------------------------------------------------}
--- 
+--
 -- stdMkBlockIOFS ::
 --   FilePath -> WithTempRegistry st IO (SomeHasFSAndBlockIO IO)
 -- stdMkBlockIOFS fastStoragePath = do
@@ -597,13 +601,13 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --       (ioHasBlockIO (MountPoint fastStoragePath) defaultIOCtxParams)
 --       (\(_, bio) -> BIO.close bio >> pure True)
 --       impossibleToNotTransfer
--- 
+--
 -- {-------------------------------------------------------------------------------
 --   Backend
 -- -------------------------------------------------------------------------------}
--- 
+--
 -- type data LSM
--- 
+--
 -- -- | Create arguments for initializing the LedgerDB using the LSM-trees backend.
 -- mkLSMArgsIO ::
 --   ( LedgerSupportsProtocol blk
@@ -617,7 +621,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --             LSMArgs (mkFsPath $ splitDirectories fp) lsmSalt (stdMkBlockIOFS fastStorage)
 --       , gen'
 --       )
--- 
+--
 -- instance
 --   ( LedgerSupportsProtocol blk
 --   , IOLike m
@@ -633,13 +637,13 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --         -- trees database will be located.
 --         Salt
 --         (forall st. WithTempRegistry st m (SomeHasFSAndBlockIO m))
--- 
+--
 --   data Resources m LSM = LSMResources
 --     { sessionResource :: !(Session m)
 --     , someHasFSAndBlockIO :: !(SomeHasFSAndBlockIO m)
 --     }
 --     deriving Generic
--- 
+--
 --   data Trace LSM
 --     = LSMTreeTrace !LSM.LSMTreeTrace
 --     | LSMLookup EnclosingTimed
@@ -647,7 +651,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --     | LSMSnap EnclosingTimed
 --     | LSMOpenSession EnclosingTimed
 --     deriving Show
--- 
+--
 --   mkResources _ trcr (LSMArgs path salt mkFS) _ = do
 --     sblockio@(SomeHasFSAndBlockIO fs blockio) <- mkFS
 --     lift $ createDirectoryIfMissing fs True path
@@ -664,22 +668,22 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --         (\s -> LSM.closeSession s >> pure True)
 --         impossibleToNotTransfer
 --     pure (LSMResources session sblockio)
--- 
+--
 --   releaseResources _ (LSMResources session (SomeHasFSAndBlockIO _ blockio)) = do
 --     LSM.closeSession session
 --     BIO.close blockio
--- 
+--
 --   openStateHandleFromSnapshot trcr ccfg shfs res ds = do
 --     loadSnapshot trcr ccfg shfs (sessionResource res) ds
--- 
+--
 --   createAndPopulateStateHandleFromGenesis trcr res st = do
 --     let st' = forgetLedgerTables st
 --     (table, sz) <-
 --       tableFromValuesMK trcr (sessionResource res) st' (ltprj st)
 --     StateHandle st' <$> newLSMLedgerTablesHandle trcr sz table
--- 
+--
 --   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
--- 
+--
 -- instance
 --   ( LSMConstraints l blk
 --   , IOLike m
@@ -695,7 +699,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --         (Session m)
 --         -- \| Only to be closed by 'releaseYieldArgs'
 --         (SomeHasFSAndBlockIO m)
--- 
+--
 --   data SinkArgs m LSM l blk
 --     = SinkLSM
 --         -- \| Chunk size
@@ -707,31 +711,31 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --         -- \| DiskSnapshot
 --         DiskSnapshot
 --         (Session m)
--- 
+--
 --   releaseYieldArgs (YieldLSM _ hdl session (SomeHasFSAndBlockIO _ bio)) = do
 --     close hdl
 --     LSM.closeSession session
 --     BIO.close bio
--- 
+--
 --   releaseSinkArgs (SinkLSM _ _ (SomeHasFSAndBlockIO _ bio) _ session) = do
 --     LSM.closeSession session
 --     BIO.close bio
--- 
+--
 --   yield _ (YieldLSM chunkSize hdl _ _) = yieldLsmS chunkSize hdl
--- 
+--
 --   sink _ (SinkLSM chunkSize shfs _ ds session) = sinkLsmS chunkSize shfs ds session
--- 
+--
 -- data SomeHasFSAndBlockIO m where
 --   SomeHasFSAndBlockIO ::
 --     (Eq h, Typeable h) => HasFS m h -> BIO.HasBlockIO m h -> SomeHasFSAndBlockIO m
--- 
+--
 -- instance IOLike m => NoThunks (Resources m LSM) where
 --   wNoThunks _ (LSMResources _ (SomeHasFSAndBlockIO _ _)) = pure Nothing
--- 
+--
 -- {-------------------------------------------------------------------------------
 --   Streaming
 -- -------------------------------------------------------------------------------}
--- 
+--
 -- yieldLsmS ::
 --   Monad m =>
 --   Int ->
@@ -748,7 +752,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --       else do
 --         S.each $ Map.toList values
 --         go (mx, readChunkSize)
--- 
+--
 -- sinkLsmS ::
 --   forall m l blk.
 --   ( MonadAsync m
@@ -786,7 +790,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --     LSM.inserts lsmTable $
 --       V.fromList
 --         [(toTxInBytes (Proxy @blk) txin, toTxOutBytes st txout, Nothing) | (txin, txout) <- accUTxOs]
--- 
+--
 --   go utxosSize lsmTable 0 accUTxOs stream' = do
 --     lift $ writeToTable lsmTable accUTxOs
 --     go utxosSize lsmTable writeChunkSize mempty stream'
@@ -797,7 +801,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --         lift $ writeToTable lsmTable accUTxOs
 --         pure (r, utxosSize)
 --       Right (item, stream'') -> go (utxosSize + 1) lsmTable (numToRead - 1) (item : accUTxOs) stream''
--- 
+--
 -- -- | Create Yield arguments for LSM
 -- mkLSMYieldArgs ::
 --   ( IOLike m
@@ -827,7 +831,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 --       (LSM.SnapshotLabel $ T.pack "UTxO table")
 --   h <- newLSMLedgerTablesHandle nullTracer 0 tb
 --   pure $ YieldLSM 1000 h session shfsbio
--- 
+--
 -- -- | Create Sink arguments for LSM
 -- mkLSMSinkArgs ::
 --   IOLike m =>

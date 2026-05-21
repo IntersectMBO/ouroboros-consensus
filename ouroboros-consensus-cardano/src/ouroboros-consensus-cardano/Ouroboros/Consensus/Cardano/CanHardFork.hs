@@ -423,9 +423,10 @@ translateLedgerStateShelleyToAllegraWrapper =
               nes = stateWithUTxO h avvms
               ls' = unComp . SL.translateEra' SL.NoGenesis $ Comp ls{shelleyLedgerState = nes}
 
-          h' <- castHandle (shelleyLedgerState ls') h
-
-          applyDiff h' $ Diff.fromMapDeletes $ SL.unUTxO avvms
+          h' <-
+            -- Written this way to ensure we don't try to hold the intermediate handle
+            castHandle (shelleyLedgerState ls') h
+              >>= flip applyDiff (Diff.fromMapDeletes $ SL.unUTxO avvms)
 
           pure $ ShelleyStateHandle ls' h'
       }

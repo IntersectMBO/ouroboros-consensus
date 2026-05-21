@@ -1295,6 +1295,7 @@ library cardano
     Ouroboros.Consensus.Cardano.CanHardFork
     Ouroboros.Consensus.Cardano.Condense
     Ouroboros.Consensus.Cardano.InMemory
+    Ouroboros.Consensus.Cardano.LSM
     Ouroboros.Consensus.Cardano.Node
     Ouroboros.Consensus.Shelley.Crypto
     Ouroboros.Consensus.Shelley.Eras
@@ -1328,9 +1329,12 @@ library cardano
 
   build-depends:
     aeson,
+    primitive,
     base,
+    vector,
     base-deriving-via,
     bytestring,
+    lsm-tree,
     fs-api,
     cardano-binary,
     cardano-crypto,

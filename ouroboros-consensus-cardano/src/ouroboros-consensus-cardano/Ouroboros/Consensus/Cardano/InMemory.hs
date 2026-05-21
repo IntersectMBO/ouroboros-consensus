@@ -29,7 +29,7 @@ data TablesHandle m era = TablesHandle
   , stateWithUTxO :: SL.UTxO era -> SL.NewEpochState era
   -- ^ Only used for the AVVMs, create a NewEpochState as if the
   -- given UTxOs had been read from the disk.
-  , applyDiff :: Diff.Diff SL.TxIn (SL.TxOut era) -> m ()
+  , applyDiff :: Diff.Diff SL.TxIn (SL.TxOut era) -> m (TablesHandle m era)
   -- ^ Only used for AVVMs. Push a bunch of diffs to this reference
   -- without duplicating it. In the OnDisk backend
   -- this will mutate the database.
@@ -85,7 +85,7 @@ newInMemoryTablesHandle shfs@(SomeHasFS hasFS) ls =
           , -- We access the requested (TxIn,TxOut)
             readTxOuts = pure . SL.UTxO . Map.restrictKeys (SL.unUTxO (ls ^. slUtxoL))
           , -- we don't apply AVVM diffs, the ledger already applied them
-            applyDiff = const $ pure ()
+            applyDiff = const $ pure h
           , -- closing has no effect
             closeHandle = pure ()
           , -- The statistics is the size of the UTxO map
