@@ -142,7 +142,10 @@ data TestBlock = TestBlock
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NoThunks, Serialise)
 
-instance ResolveLeiosBlock TestBlock
+instance ResolveLeiosBlock TestBlock where
+  resolveLeiosBlock _ _ blk = return blk
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
 
 -- | Hash of a 'TestHeader'
 newtype TestHeaderHash = TestHeaderHash Int

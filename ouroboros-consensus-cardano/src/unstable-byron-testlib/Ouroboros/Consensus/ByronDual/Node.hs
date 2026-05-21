@@ -44,7 +44,7 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB (IsCertRB (..), ResolveLeiosBlock (..))
 import qualified Test.Cardano.Chain.Elaboration.Block as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Delegation as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Keys as Spec.Test
@@ -292,4 +292,7 @@ instance RunNode DualByronBlock
 
 -- * Leios
 
-instance ResolveLeiosBlock DualByronBlock
+instance ResolveLeiosBlock DualByronBlock where
+  resolveLeiosBlock _ _ blk = return blk
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
