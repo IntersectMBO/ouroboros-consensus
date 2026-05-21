@@ -1,9 +1,13 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 -- | Concrete Peras vote types using BLS signatures.
 --
@@ -22,16 +26,22 @@ import Cardano.Binary
   )
 import Data.Typeable (Typeable)
 import Data.Word (Word8)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasBoostedBlock
+  ( PerasBoostedBlock (..)
   , PerasRoundNo
-  , PerasSeatIndex
+  , PerasSeatIndex, IsPerasCert, IsPerasVote (..)
   )
 import Ouroboros.Consensus.Committee.Crypto (CryptoSupportsVoteSigning (..))
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCrypto
   , VRFOutput
   )
+import Data.Coerce (Coercible)
+import Ouroboros.Consensus.Block.Abstract (HeaderHash)
+import Data.ByteString.Short (ShortByteString)
+import Ouroboros.Consensus.Block.RealPoint (withOriginRealPointToPoint, fromBytes32RealPoint)
 
 -- | Concrete Peras votes using BLS signatures
 --
@@ -52,7 +62,19 @@ data PerasVote tag
   , pvSignature :: !(VoteSignature PerasBLSCrypto)
   -- ^ BLS signature on the hash of the election identifier and vote message
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+instance
+  Coercible (HeaderHash blk) ShortByteString =>
+  IsPerasVote (PerasVote blk) blk where
+  getPerasVoteRound =
+    pvRoundNo
+  getPerasVoteBlock =
+    withOriginRealPointToPoint
+      . fmap fromBytes32RealPoint
+      . unPerasBoostedBlock
+      . pvBoostedBlock
 
 instance Typeable tag => FromCBOR (PerasVote tag) where
   fromCBOR = do
@@ -86,7 +108,8 @@ data PerasVoteEligibilityProof
     PersistentPerasVoteEligibilityProof
   | -- | Non-persistent committee members provide a VRF proof of eligibility
     NonPersistentPerasVoteEligibilityProof !(VRFOutput PerasBLSCrypto)
-  deriving stock (Eq, Show)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
 
 instance FromCBOR PerasVoteEligibilityProof where
   fromCBOR = do

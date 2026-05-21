@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -35,6 +37,8 @@ import Cardano.Ledger.Hashes (HASH)
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Builder.Extra as BS
 import qualified Data.ByteString.Short as BS
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (WithOrigin (..))
 import Ouroboros.Consensus.Block.RealPoint
   ( bytes32RealPointHash
@@ -149,8 +153,9 @@ instance CryptoSupportsVoteSigning PerasBLSCrypto where
     { unPerasBLSCryptoVoteSignature ::
         BLS.Signature BLS.SIGN
     }
-    deriving stock (Eq, Show)
+    deriving stock (Show, Eq, Generic)
     deriving newtype (FromCBOR, ToCBOR)
+    deriving anyclass NoThunks
 
   getVoteSigningKey _ =
     perasVoteSignKey
@@ -188,8 +193,9 @@ instance CryptoSupportsVRF PerasBLSCrypto where
     { unPerasBLSCryptoVRFOutput ::
         BLS.Signature VRF
     }
-    deriving stock (Eq, Show)
+    deriving stock (Show, Eq, Generic)
     deriving newtype (FromCBOR, ToCBOR)
+    deriving anyclass NoThunks
 
   getVRFSigningKey _ =
     perasVRFSignKey
@@ -229,8 +235,9 @@ newtype PerasBLSCryptoAggregateVoteSignature
   { unPerasBLSCryptoAggregateVoteSignature ::
       BLS.Signature SIGN
   }
-  deriving stock (Eq, Show)
+  deriving stock (Show, Eq, Generic)
   deriving newtype (FromCBOR, ToCBOR)
+  deriving anyclass NoThunks
 
 instance CryptoSupportsAggregateVoteSigning PerasBLSCrypto where
   type

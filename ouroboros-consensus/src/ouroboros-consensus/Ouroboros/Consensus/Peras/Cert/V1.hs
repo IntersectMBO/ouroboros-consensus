@@ -1,7 +1,14 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Concrete Peras certificate types using BLS signatures.
@@ -24,6 +31,8 @@ import Cardano.Binary
   )
 import Control.Monad (when)
 import Control.Monad.Error.Class (MonadError (..))
+import Data.ByteString.Short (ShortByteString)
+import Data.Coerce (Coercible)
 import Data.Containers.NonEmpty (HasNonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.NonEmpty as NEMap
@@ -31,8 +40,16 @@ import Data.Map.Strict (Map)
 import Data.Maybe (catMaybes)
 import Data.Typeable (Typeable)
 import Data.Word (Word16)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
+import Ouroboros.Consensus.Block.Abstract (HeaderHash)
+import Ouroboros.Consensus.Block.RealPoint
+  ( fromBytes32RealPoint
+  , withOriginRealPointToPoint
+  )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasBoostedBlock
+  ( IsPerasCert (..)
+  , PerasBoostedBlock (..)
   , PerasRoundNo
   , PerasSeatIndex (..)
   )
@@ -64,7 +81,20 @@ data PerasCert tag
   -- ^ Aggregate BLS signature on the hash of the election identifier and
   -- the certificate message
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+instance
+  Coercible (HeaderHash blk) ShortByteString =>
+  IsPerasCert (PerasCert blk) blk
+  where
+  getPerasCertRound =
+    pcRoundNo
+  getPerasCertBlock =
+    withOriginRealPointToPoint
+      . fmap fromBytes32RealPoint
+      . unPerasBoostedBlock
+      . pcBoostedBlock
 
 instance Typeable tag => FromCBOR (PerasCert tag) where
   fromCBOR = do
@@ -95,7 +125,12 @@ newtype PerasCertVoters
   { unPerasCertVoters ::
       NE (Map PerasSeatIndex PerasVoteEligibilityProof)
   }
-  deriving (Eq, Show)
+  deriving stock (Show, Eq, Generic)
+
+deriving via
+  OnlyCheckWhnfNamed "PerasCertVoters" PerasCertVoters
+  instance
+    NoThunks PerasCertVoters
 
 instance FromCBOR PerasCertVoters where
   fromCBOR = do
