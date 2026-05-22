@@ -5,6 +5,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Test that the Peras certificate inclusion rules can correctly decide when
@@ -21,7 +22,8 @@ import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block (Point (..), WithOrigin (..))
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( IsPerasCert (..)
+  ( BoostedBlock
+  , IsPerasCert (..)
   , PerasCertMaxRounds (..)
   , PerasParams (..)
   , PerasRoundNo (..)
@@ -235,6 +237,7 @@ data TestCert
   }
   deriving (Show, Eq, Generic)
 
+type instance BoostedBlock (TestCert) = Point TestBlock
 instance IsPerasCert TestCert TestBlock where
   getPerasCertRound = tcRoundNo
 

@@ -415,6 +415,6 @@ votesToReachQuorum model vote res =
       Set.empty
       PerasVoteTarget
         { pvtRoundNo = getPerasVoteRound vote
-        , pvtBlock = getPerasVoteBlock vote
+        , pvtBlock = getPerasVotePoint vote
         }
       (Model.votes model)

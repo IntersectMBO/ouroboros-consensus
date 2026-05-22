@@ -1,10 +1,15 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- | Base Peras types used throughout the implementation.
 module Ouroboros.Consensus.Peras.Types
@@ -13,12 +18,17 @@ module Ouroboros.Consensus.Peras.Types
   , PerasBoostedBlock (..)
   , PerasSeatIndex (..)
   , PerasVoteStake (..)
+  , BoostedBlock
+  , BoostedBlockCompatibleWithPoint (..)
   , stakeAboveThreshold
   , PerasVoteTarget (..)
   , PerasVoteId (..)
   , PerasVoterId (..)
   , PerasVoteStakeDistr (..)
   , lookupPerasVoteStake
+  , PerasConversionError (..)
+  , fromPerasSeatIndex
+  , toPerasSeatIndex
   )
 where
 
@@ -31,7 +41,10 @@ import Cardano.Binary
 import Cardano.Ledger.Hashes (KeyHash, KeyRole (..))
 import Codec.Serialise.Class (Serialise (..))
 import Control.DeepSeq (NFData)
-import Data.Coerce (coerce)
+import Data.ByteString.Short (ShortByteString)
+import Data.Coerce (Coercible, coerce)
+import Data.Containers.NonEmpty (HasNonEmpty (..))
+import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
@@ -39,12 +52,17 @@ import Data.Semigroup (Sum (..))
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Abstract (Point, WithOrigin)
+import Ouroboros.Consensus.Block.Abstract (HeaderHash, Point, WithOrigin)
 import Ouroboros.Consensus.Block.RealPoint
   ( Bytes32RealPoint
   , decodeBytes32RealPoint
   , encodeBytes32RealPoint
+  , fromBytes32RealPoint
+  , pointToWithOriginRealPoint
+  , toBytes32RealPoint
+  , withOriginRealPointToPoint
   )
+import Ouroboros.Consensus.Committee.WFA (SeatIndex (..))
 import Ouroboros.Consensus.Peras.Params
   ( PerasParams (..)
   , PerasQuorumStakeThreshold (..)
@@ -56,6 +74,16 @@ import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Quiet (Quiet (..))
 
 -- * Peras types
+
+class BoostedBlockCompatibleWithPoint boostedBlock blk where
+  boostedBlockToPoint :: boostedBlock -> Point blk
+  pointToBoostedBlock :: Point blk -> boostedBlock
+
+type family BoostedBlock voteOrCert :: Type
+
+instance BoostedBlockCompatibleWithPoint (Point blk) blk where
+  boostedBlockToPoint = id
+  pointToBoostedBlock = id
 
 -- ** Round numbers
 
@@ -97,6 +125,16 @@ instance FromCBOR PerasBoostedBlock where
 
 instance ToCBOR PerasBoostedBlock where
   toCBOR = encodeWithOrigin encodeBytes32RealPoint . unPerasBoostedBlock
+
+instance Coercible (HeaderHash blk) ShortByteString => BoostedBlockCompatibleWithPoint PerasBoostedBlock blk where
+  boostedBlockToPoint =
+    withOriginRealPointToPoint
+      . fmap fromBytes32RealPoint
+      . unPerasBoostedBlock
+  pointToBoostedBlock =
+    PerasBoostedBlock
+      . fmap toBytes32RealPoint
+      . pointToWithOriginRealPoint
 
 -- ** Seat indices
 
@@ -215,3 +253,38 @@ lookupPerasVoteStake voterId distr =
   Map.lookup
     voterId
     (unPerasVoteStakeDistr distr)
+
+-- ** Conversion errors
+
+-- | Errors that can occur when converting between Peras and committee types
+data PerasConversionError
+  = EveryoneVotesButFoundNonPersistentVoterInVote SeatIndex
+  | EveryoneVotesButFoundNonPersistentVotersInCert (NE [SeatIndex])
+  | SeatIndexOverflowError Word64
+  | CryptoError String
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+-- ** Seat index conversions
+
+-- | Convert a Peras seat index to a committee seat index.
+fromPerasSeatIndex ::
+  PerasSeatIndex ->
+  SeatIndex
+fromPerasSeatIndex (PerasSeatIndex seatIndex) =
+  SeatIndex (fromIntegral @Word16 @Word64 seatIndex)
+
+-- | Convert a committee seat index to a Peras seat index
+--
+-- NOTE: this can fail if the seat index in the committee vote or certificate
+-- overflows the smaller 'Word16' type used by Peras votes and certificates.
+-- In practice, this should never happen unless there is a bug in the voting
+-- committee logic.
+toPerasSeatIndex ::
+  SeatIndex ->
+  Either PerasConversionError PerasSeatIndex
+toPerasSeatIndex (SeatIndex seatIndex)
+  | seatIndex <= fromIntegral @Word16 @Word64 maxBound =
+      Right (PerasSeatIndex (fromIntegral @Word64 @Word16 seatIndex))
+  | otherwise =
+      Left (SeatIndexOverflowError seatIndex)

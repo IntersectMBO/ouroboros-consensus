@@ -1,6 +1,6 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE DeriveGeneric #-}
 
 -- | Types common to any generic committee selection scheme
 module Ouroboros.Consensus.Committee.Types
@@ -13,9 +13,9 @@ module Ouroboros.Consensus.Committee.Types
 
 import Cardano.Ledger.BaseTypes (HasZero)
 import Cardano.Ledger.Core (KeyHash, KeyRole (..))
+import Cardano.Prelude (Generic)
 import Data.Word (Word64)
 import NoThunks.Class (NoThunks)
-import Cardano.Prelude (Generic)
 
 -- | Identifier of a given voter in the committee selection scheme
 newtype PoolId = PoolId
