@@ -182,7 +182,7 @@ addVote vote model
   -- block in this round => integrity violation (shouldn't happen in practice)
   | reachedQuorum
   , Just existingCert <- certAtRound
-  , getPerasCertBlock freshCert /= getPerasCertBlock existingCert =
+  , getPerasCertPoint freshCert /= getPerasCertPoint existingCert =
       ( Left $
           MultipleWinnersInRound roundNo
       , model
@@ -222,7 +222,7 @@ addVote vote model
   roundNo =
     getPerasVoteRound vote
   votedBlock =
-    getPerasVoteBlock vote
+    getPerasVotePoint vote
   voter =
     getPerasVoteVoterId vote
   -- Compute the next ticket number associated to this vote.

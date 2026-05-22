@@ -7,6 +7,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -31,6 +32,7 @@ import Ouroboros.Consensus.Block.Abstract
   )
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
+  , BoostedBlock
   , IsPerasCert (..)
   , PerasParams (..)
   , PerasRoundNo
@@ -58,6 +60,7 @@ deriving instance StandardHash blk => NoThunks (MockPerasCert blk)
 deriving instance StandardHash blk => NFData (MockPerasCert blk)
 deriving instance Generic (MockPerasCert blk)
 
+type instance BoostedBlock (MockPerasCert blk) = Point blk
 instance IsPerasCert (MockPerasCert blk) blk where
   getPerasCertRound = mockCertRound
   getPerasCertBlock = mockCertBlock

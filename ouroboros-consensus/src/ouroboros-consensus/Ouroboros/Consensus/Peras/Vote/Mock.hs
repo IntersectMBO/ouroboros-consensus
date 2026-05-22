@@ -8,6 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -31,6 +32,7 @@ import Ouroboros.Consensus.Block.Abstract
   )
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
+  , BoostedBlock
   , IsPerasVote (..)
   , PerasRoundNo
   , PerasVoteStake
@@ -63,6 +65,7 @@ deriving instance StandardHash blk => NoThunks (MockPerasVote blk)
 deriving instance StandardHash blk => NFData (MockPerasVote blk)
 deriving instance Generic (MockPerasVote blk)
 
+type instance BoostedBlock (MockPerasVote blk) = Point blk
 instance IsPerasVote (MockPerasVote blk) blk where
   getPerasVoteRound = mockVoteRound
   getPerasVoteBlock = mockVoteBlock

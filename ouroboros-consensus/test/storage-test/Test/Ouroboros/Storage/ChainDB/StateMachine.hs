@@ -1775,7 +1775,7 @@ addPerasCertOutcomes = concatMap classifyEvent
   classifyEvent :: Event Blk m Symbolic -> [String]
   classifyEvent ev = case unAt (eventCmd ev) of
     AddPerasCert certWithTime _ ->
-      let targetPt = getPerasCertBlock (vpcCert (forgetArrivalTime certWithTime))
+      let targetPt = getPerasCertPoint (vpcCert (forgetArrivalTime certWithTime))
        in case (isBlockConnected targetPt (dbModel (eventBefore ev))) of
             False ->
               assert (chainSelOutcome ev == "no chain selection change") $
@@ -1793,7 +1793,7 @@ addPerasVoteOutcomes = concatMap classifyEvent
   classifyEvent :: Event Blk m Symbolic -> [String]
   classifyEvent ev = case unAt (eventCmd ev) of
     AddPerasVote voteWithTime _ ->
-      let targetPt = getPerasVoteBlock (vpvVote (forgetArrivalTime voteWithTime))
+      let targetPt = getPerasVotePoint (vpvVote (forgetArrivalTime voteWithTime))
           certsBefore = numCerts (eventBefore ev)
           certsAfter = numCerts (eventAfter ev)
           certProduced = certsAfter > certsBefore

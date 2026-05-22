@@ -202,7 +202,7 @@ prop_garbageCollectRemovesOldVotes db slotNo =
   atomically $ do
     _ <- garbageCollect db slotNo
     allVotes <- getVotesAfter db zeroPerasVoteTicketNo
-    let targetSlots = pointSlot . getPerasVoteBlock . forgetArrivalTime <$> Map.elems allVotes
+    let targetSlots = pointSlot . getPerasVotePoint . forgetArrivalTime <$> Map.elems allVotes
     pure $
       all (>= NotOrigin slotNo) targetSlots
 
