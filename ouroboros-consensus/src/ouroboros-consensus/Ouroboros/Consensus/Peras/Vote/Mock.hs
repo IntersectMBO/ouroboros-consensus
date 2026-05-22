@@ -35,10 +35,10 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , BoostedBlock
   , IsPerasVote (..)
   , PerasRoundNo
-  , PerasVoteStake
-  , PerasVoteStakeDistr
   , PerasVoterId (..)
   , ValidatedPerasVote (..)
+  , VoteWeight
+  , VoteWeightDistr
   )
 import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode (..))
 import Ouroboros.Consensus.Peras.Params (PerasParams)
@@ -53,9 +53,9 @@ data MockPerasVote blk
   { mockVoteRound :: PerasRoundNo
   , mockVoteBlock :: Point blk
   , mockVoteVoterId :: PerasVoterId
-  , mockVoteStake :: PerasVoteStake
+  , mockVoteWeight :: VoteWeight
   -- ^ This field is unique to the mocked vote, and allows us to bypass the
-  -- need for a 'PerasVoteStakeDistr' when creating validated votes in tests.
+  -- need for a 'VoteWeightDistr' when creating validated votes in tests.
   }
 
 deriving instance StandardHash blk => Show (MockPerasVote blk)
@@ -98,9 +98,9 @@ instance
         { mockVoteRound
         , mockVoteBlock
         , mockVoteVoterId
-        , mockVoteStake = 0
-        -- NOTE: stakes are never sent over the wire, but computed locally from
-        -- the stake distribution. We might need to change this in the future if
+        , mockVoteWeight = 0
+        -- NOTE: weights are never sent over the wire, but computed locally from
+        -- the voting committee. We might need to change this in the future if
         -- we ever need roundtrip tests using mocked votes, but for now this is
         -- sufficient for our needs.
         }
@@ -131,9 +131,9 @@ instance
         { mockVoteRound
         , mockVoteBlock
         , mockVoteVoterId
-        , mockVoteStake = 0
-        -- NOTE: stakes are never sent over the wire, but computed locally from
-        -- the stake distribution. We might need to change this in the future if
+        , mockVoteWeight = 0
+        -- NOTE: weights are never sent over the wire, but computed locally from
+        -- the voting committee. We might need to change this in the future if
         -- we ever need roundtrip tests using mocked votes, but for now this is
         -- sufficient for our needs.
         }
@@ -145,12 +145,12 @@ validateMockPerasVote ::
   forall blk.
   PerasVote blk ~ MockPerasVote blk =>
   PerasParams ->
-  PerasVoteStakeDistr ->
+  VoteWeightDistr ->
   PerasVote blk ->
   Either (PerasError blk) (ValidatedPerasVote blk)
-validateMockPerasVote _params _stakeDistr vote =
+validateMockPerasVote _params _voteWeightDistr vote =
   Right
     ValidatedPerasVote
       { vpvVote = vote
-      , vpvVoteStake = mockVoteStake vote
+      , vpvVoteWeight = mockVoteWeight vote
       }

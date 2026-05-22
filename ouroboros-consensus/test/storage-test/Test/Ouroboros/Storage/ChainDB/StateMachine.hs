@@ -1321,7 +1321,7 @@ generator loe genBlock genPerasBlock m@Model{..} =
           Nothing -> PerasRoundNo 0
           Just (PerasRoundNo r) -> PerasRoundNo (r + 1)
     voterId <- PerasVoteDB.SM.genVoterId
-    stake <- PerasVoteDB.SM.genVoteStake
+    weight <- PerasVoteDB.SM.genVoteWeight
     -- Include the voted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
     -- Build the vote
@@ -1334,9 +1334,9 @@ generator loe genBlock genPerasBlock m@Model{..} =
                     { mockVoteRound = roundNo
                     , mockVoteBlock = blockPoint blk
                     , mockVoteVoterId = voterId
-                    , mockVoteStake = stake
+                    , mockVoteWeight = weight
                     }
-              , vpvVoteStake = stake
+              , vpvVoteWeight = weight
               }
     pure $ AddPerasVote voteWithTime seenBlks
 
