@@ -209,14 +209,18 @@ protocolInfoByron
             , topLevelConfigStorage = ByronStorageConfig blockConfig
             , topLevelConfigCheckpoints = emptyCheckpointsMap
             }
-      , pInfoInitLedger =
+      , pInfoInitLedger = \() ->
           pure
-            ExtLedgerState
-              { -- Important: don't pass the compacted genesis config to
-                -- 'initByronLedgerState', it needs the full one, including the AVVM
-                -- balances.
-                ledgerState = initByronLedgerState genesisConfig Nothing
-              , headerState = genesisHeaderState S.empty
+            ExtStateHandle
+              { extStateHandle =
+                  ByronStateHandle $
+                    -- Important: don't pass the compacted genesis config to
+                    -- 'initByronLedgerState', it needs the full one, including the AVVM
+                    -- balances.
+                    initByronLedgerState
+                      genesisConfig
+                      Nothing
+              , extHeaderState = genesisHeaderState S.empty
               }
       }
    where

@@ -67,7 +67,7 @@ import Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import Data.Word (Word16, Word64)
-import Lens.Micro ((^.))
+import Lens.Micro
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.ByronHFC
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
@@ -82,7 +82,6 @@ import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
-import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -109,7 +108,6 @@ import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
 import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Assert
 
 {-------------------------------------------------------------------------------
@@ -578,7 +576,7 @@ protocolInfoCardano ::
   , KESAgentContext c m
   ) =>
   CardanoProtocolParams c ->
-  ( ProtocolInfo (CardanoBlock c)
+  ( ProtocolInfo m (CardanoBlock c)
   , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
   )
 protocolInfoCardano paramsCardano
@@ -927,22 +925,24 @@ protocolInfoCardano paramsCardano
   -- data from the genesis config (if provided) in the ledger state. For
   -- example, this includes initial staking and initial funds (useful for
   -- testing/benchmarking).
-  initExtLedgerStateCardano :: m (ExtLedgerState (CardanoBlock c))
+  initExtLedgerStateCardano :: HFTransCtx m (CardanoEras c) -> m (ExtStateHandle m (CardanoBlock c))
   initExtLedgerStateCardano = \tctx -> do
     -- initHeaderState :: HeaderState (CardanoBlock c)
     -- initLedgerState :: LedgerState (CardanoBlock c)
-    ExtLedgerState initLedgerState initHeaderState <-
-      injectInitialExtLedgerState cfg initExtLedgerStateByron ((), tctx)
+    b <- initExtLedgerStateByron ()
+    ExtStateHandle initLedgerState initHeaderState <-
+      injectInitialExtLedgerState cfg b tctx
+    initLedgerState' <- overShelleyBasedLedgerState initLedgerState
     pure $
-      ExtLedgerState
-        { headerState = initHeaderState
-        , ledgerState = overShelleyBasedLedgerState initLedgerState
+      ExtStateHandle
+        { extHeaderState = initHeaderState
+        , extStateHandle = initLedgerState'
         }
    where
-    overShelleyBasedLedgerState (HardForkLedgerState st) =
-      HardForkLedgerState $ hap (fn id :* registerAny) st
+    overShelleyBasedLedgerState (HardForkStateHandle st tctx) =
+      fmap (\x -> HardForkStateHandle x tctx) $ hsequence' $ hap (fn (Comp . pure) :* registerAny) st
 
-    registerAny :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
+    registerAny :: NP (StateHandle m -.-> m :.: StateHandle m) (CardanoShelleyEras c)
     registerAny =
       hcmap (Proxy @IsShelleyBlock) injectIntoTestState $
         WrapTransitionConfig transitionConfigShelley
@@ -957,14 +957,24 @@ protocolInfoCardano paramsCardano
     injectIntoTestState ::
       ShelleyBasedEra era =>
       WrapTransitionConfig (ShelleyBlock proto era) ->
-      (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
-    injectIntoTestState (WrapTransitionConfig tcfg) = fn $ \st ->
-      st
-        { Shelley.shelleyLedgerState =
+      (StateHandle m -.-> m :.: StateHandle m) (ShelleyBlock proto era)
+    injectIntoTestState (WrapTransitionConfig tcfg) = fn $ \(Shelley.ShelleyStateHandle st h) -> Comp $ do
+      let nes =
             L.injectIntoTestState
               tcfg
               (Shelley.shelleyLedgerState st)
-        }
+          nes' =
+            nes
+              & Shelley.slUtxoL
+                .~ SL.UTxO Map.empty
+      h' <- Shelley.injectValues h nes
+      Shelley.closeHandle h
+      pure $
+        Shelley.ShelleyStateHandle
+          st
+            { Shelley.shelleyLedgerState = nes'
+            }
+          h'
 
   -- \| For each element in the list, a block forging thread will be started.
   --

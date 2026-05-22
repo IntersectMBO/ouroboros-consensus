@@ -38,6 +38,7 @@ import Data.Typeable
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
@@ -68,13 +69,7 @@ newtype LedgerDbBackendArgs m blk = LedgerDbBackendArgs
 -- and those resources are then closed over by the fields of this record.
 type BackendResources :: (Type -> Type) -> Type -> Type
 data BackendResources m blk = BackendResources
-  { brCreateGenesis ::
-      ExtLedgerState blk ->
-      m (ExtStateHandle m blk)
-  -- ^ Construct an 'ExtStateHandle' for the genesis ledger state. The
-  -- backend allocates a fresh 'LedgerTablesHandle' and returns the
-  -- full handle ready to be inserted into the 'LedgerSeq'.
-  , brLoadSnapshot ::
+  { brLoadSnapshot ::
       CodecConfig blk ->
       SomeHasFS m ->
       DiskSnapshot ->
@@ -91,6 +86,7 @@ data BackendResources m blk = BackendResources
   -- ^ Release any resources allocated by 'acquireBackend' that are not
   -- managed by the temporary registry (e.g. handles that have to outlive
   -- the registry handoff).
+  , transCtx :: TransCtx m blk
   }
   deriving Generic
   deriving NoThunks via OnlyCheckWhnfNamed "BackendResources" (BackendResources m blk)

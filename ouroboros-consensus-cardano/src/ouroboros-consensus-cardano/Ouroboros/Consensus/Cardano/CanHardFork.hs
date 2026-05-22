@@ -68,7 +68,6 @@ import Ouroboros.Consensus.HardFork.History
   )
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract hiding (Handle, TickedHandle)
-import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32
   , IgnoringOverflow
@@ -126,7 +125,7 @@ type CardanoHardForkConstraints c =
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
   type HardForkTxMeasure (CardanoEras c) = DijkstraMeasure
 
-  type TransCtx m (CardanoEras c) = MkHandle m
+  type HFTransCtx m (CardanoEras c) = MkHandle m
 
   hardForkStateHandleTranslation = \tctx ->
     StateHandleTranslation

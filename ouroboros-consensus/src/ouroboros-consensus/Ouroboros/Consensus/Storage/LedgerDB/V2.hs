@@ -87,9 +87,8 @@ mkInitDb ::
 mkInitDb args getBlock snapManager getVolatileSuffix res = do
   InitDB
     { initFromGenesis = do
-        genesis <- lgrGenesis
-        sr <- brCreateGenesis res genesis
-        pure $ LedgerSeq . AS.Empty $ sr
+        genesis <- lgrGenesis (transCtx res)
+        pure $ LedgerSeq . AS.Empty $ genesis
     , initFromSnapshot = \ds ->
         runExceptT
           ( first (LedgerSeq . AS.Empty)

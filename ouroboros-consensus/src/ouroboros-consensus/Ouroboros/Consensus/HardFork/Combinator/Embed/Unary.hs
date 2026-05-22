@@ -546,7 +546,7 @@ instance
   project ProtocolInfo{..} =
     ProtocolInfo
       { pInfoConfig = project pInfoConfig
-      , pInfoInitLedger = fmap project pInfoInitLedger
+      , pInfoInitLedger = fmap project . pInfoInitLedger
       }
 
   inject ::
@@ -556,7 +556,7 @@ instance
   inject ProtocolInfo{..} =
     ProtocolInfo
       { pInfoConfig = inject pInfoConfig
-      , pInfoInitLedger = fmap inject pInfoInitLedger
+      , pInfoInitLedger = fmap inject . pInfoInitLedger
       }
 
 {-------------------------------------------------------------------------------

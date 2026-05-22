@@ -169,7 +169,7 @@ completeChainDbArgs ::
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger
-  ExtLedgerState blk ->
+  (TransCtx m blk -> m (ExtStateHandle m blk)) ->
   ImmutableDB.ChunkInfo ->
   -- | Check integrity
   (blk -> Bool) ->
@@ -211,7 +211,7 @@ completeChainDbArgs
             }
       , cdbLgrDbArgs =
           (cdbLgrDbArgs defArgs)
-            { LedgerDB.lgrGenesis = pure initLedger
+            { LedgerDB.lgrGenesis = initLedger
             , LedgerDB.lgrHasFS = mkVolFS $ RelativeMountPoint "ledger"
             , LedgerDB.lgrConfig =
                 LedgerDB.configLedgerDb

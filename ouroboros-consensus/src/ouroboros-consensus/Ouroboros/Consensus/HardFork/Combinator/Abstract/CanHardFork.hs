@@ -21,6 +21,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import Ouroboros.Consensus.HardFork.Combinator.Translation
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IOLike
@@ -72,6 +73,7 @@ class
 
 instance SingleEraBlock blk => CanHardFork '[blk] where
   type HardForkTxMeasure '[blk] = TxMeasure blk
+  type HFTransCtx m '[blk] = TransCtx m blk
 
   hardForkEraTranslation = trivialEraTranslation
   hardForkStateHandleTranslation = const trivialStateHandleTranslation

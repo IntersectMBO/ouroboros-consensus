@@ -20,7 +20,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.Abstract (protocolSecurityParam)
@@ -45,6 +45,8 @@ protocolInfoBinary ::
   History.EraParams ->
   (ConsensusConfig (BlockProtocol blk2) -> PartialConsensusConfig (BlockProtocol blk2)) ->
   (LedgerConfig blk2 -> PartialLedgerConfig blk2) ->
+  -- Projection
+  (HFTransCtx m '[blk1, blk2] -> TransCtx m blk1) ->
   ( ProtocolInfo m (HardForkBlock '[blk1, blk2])
   , Tracer.Tracer m kesAgentTrace -> m [MkBlockForging m (HardForkBlock '[blk1, blk2])]
   )
@@ -58,7 +60,8 @@ protocolInfoBinary
   blockForging2
   eraParams2
   toPartialConsensusConfig2
-  toPartialLedgerConfig2 =
+  toPartialLedgerConfig2
+  projectTransCtx =
     ( ProtocolInfo
         { pInfoConfig =
             TopLevelConfig
@@ -97,13 +100,13 @@ protocolInfoBinary
                       (storageConfig1 :* storageConfig2 :* Nil)
               , topLevelConfigCheckpoints = emptyCheckpointsMap
               }
-        , pInfoInitLedger = do
+        , pInfoInitLedger = \hftctx -> do
             ExtStateHandle initLedgerState1 initHeaderState1 <-
-              pInfoInitLedger1
+              pInfoInitLedger1 (projectTransCtx hftctx)
             pure
               ExtStateHandle
                 { extStateHandle =
-                    HardForkStateHandle . initHardForkState $ initLedgerState1
+                    HardForkStateHandle (initHardForkState initLedgerState1) hftctx
                 , extHeaderState =
                     genesisHeaderState $
                       initHardForkState $

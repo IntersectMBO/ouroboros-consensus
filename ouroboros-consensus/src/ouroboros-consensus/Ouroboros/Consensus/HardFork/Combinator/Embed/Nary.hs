@@ -270,10 +270,10 @@ injectInitialExtLedgerState ::
   forall m x xs.
   (MonadThrow m, CanHardFork (x ': xs)) =>
   TopLevelConfig (HardForkBlock (x ': xs)) ->
-  ExtLedgerState x ->
-  (LedgerTablesHandle m x, TransCtx m (x ': xs)) ->
+  ExtStateHandle m x ->
+  HFTransCtx m (x ': xs) ->
   m (ExtStateHandle m (HardForkBlock (x ': xs)))
-injectInitialExtLedgerState cfg extLedgerState0 (tbs, tctx) = do
+injectInitialExtLedgerState cfg extLedgerState0 tctx = do
   l <- targetEraLedgerState
   pure (ExtStateHandle l (targetEraHeaderState l))
  where
@@ -297,7 +297,7 @@ injectInitialExtLedgerState cfg extLedgerState0 (tbs, tctx) = do
           (SlotNo 0)
           tctx
           . initHardForkState
-          $ newStateHandle (ledgerState extLedgerState0) tbs
+          $ (extStateHandle extLedgerState0)
       )
 
   firstEraChainDepState :: HardForkChainDepState (x ': xs)
@@ -305,7 +305,7 @@ injectInitialExtLedgerState cfg extLedgerState0 (tbs, tctx) = do
     initHardForkState $
       WrapChainDepState $
         headerStateChainDep $
-          headerState extLedgerState0
+          extHeaderState extLedgerState0
 
   targetEraChainDepState :: LedgerState (HardForkBlock (x ': xs)) -> HardForkChainDepState (x ': xs)
   targetEraChainDepState l =

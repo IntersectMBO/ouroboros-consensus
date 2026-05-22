@@ -453,6 +453,7 @@ data TablesHandle m era = TablesHandle
       forall era'.
       (SL.Era era', MemPack (SL.TxOut era'), Eq (SL.TxOut era')) =>
       SL.NewEpochState era' -> m (TablesHandle m era')
+  , injectValues :: SL.NewEpochState era -> m (TablesHandle m era)
   }
 
 instance MonadLedger m (ShelleyBlock proto era) where
