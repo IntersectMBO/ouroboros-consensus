@@ -172,7 +172,7 @@ class
   -- For the hard fork block this will be instantiated to
   -- 'Ouroboros.Consensus.HardFork.Combinator.Ledger.Query.answerBlockQueryHFLookup'.
   answerBlockQueryLookup ::
-    (MonadSTM m, MonadLedger m blk) =>
+    (MonadSTM m, BlockSupportsLedgerHD m blk) =>
     ExtLedgerCfg blk ->
     BlockQuery blk QFLookupTables result ->
     ExtStateHandle m blk ->
@@ -185,7 +185,7 @@ class
   -- For the hard fork block this will be instantiated to
   -- 'Ouroboros.Consensus.HardFork.Combinator.Ledger.Query.answerBlockQueryHFTraverse'.
   answerBlockQueryTraverse ::
-    (MonadSTM m, MonadLedger m blk) =>
+    (MonadSTM m, BlockSupportsLedgerHD m blk) =>
     ExtLedgerCfg blk ->
     BlockQuery blk QFTraverseTables result ->
     ExtStateHandle m blk ->
@@ -257,7 +257,7 @@ answerQuery ::
   , ConfigSupportsNode blk
   , HasAnnTip blk
   , MonadSTM m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ExtLedgerCfg blk ->
   ExtStateHandle m blk ->

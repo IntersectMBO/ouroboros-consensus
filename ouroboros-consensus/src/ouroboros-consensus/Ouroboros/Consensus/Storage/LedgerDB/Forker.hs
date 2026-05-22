@@ -130,19 +130,19 @@ data Forker m blk = Forker
 
 -- TODO @js we were also pruning here, what happened with that?
 forkerPush ::
-  (LedgerSupportsProtocol blk, MonadSTM m, MonadLedger m blk) =>
+  (LedgerSupportsProtocol blk, MonadSTM m, BlockSupportsLedgerHD m blk) =>
   Forker m blk -> ExtStateHandle m blk -> STM m ()
 forkerPush (Forker frk _ _ _ _) st = modifyTVar frk (extend st)
 
 forkerTip ::
-  (LedgerSupportsProtocol blk, MonadSTM m, MonadLedger m blk) =>
+  (LedgerSupportsProtocol blk, MonadSTM m, BlockSupportsLedgerHD m blk) =>
   Forker m blk -> STM m (ExtStateHandle m blk)
 forkerTip (Forker frk _ _ _ _) = currentHandle <$> readTVar frk
 
 -- | Will release all handles in the 'foeLedgerSeq', which will be only the
 -- first duplicate if the forker has been committed.
 forkerClose ::
-  (LedgerSupportsProtocol blk, IOLike m, MonadLedger m blk) =>
+  (LedgerSupportsProtocol blk, IOLike m, BlockSupportsLedgerHD m blk) =>
   Forker m blk ->
   m ()
 forkerClose env = do
@@ -155,7 +155,7 @@ forkerClose env = do
   closeLedgerSeq =<< readTVarIO (foeLedgerSeq env)
 
 forkerCommit ::
-  (IOLike m, LedgerSupportsProtocol blk, StandardHash blk, MonadLedger m blk) =>
+  (IOLike m, LedgerSupportsProtocol blk, StandardHash blk, BlockSupportsLedgerHD m blk) =>
   Forker m blk ->
   STM m (m ())
 forkerCommit env = do
@@ -239,7 +239,7 @@ validate ::
   ( IOLike m
   , HasCallStack
   , LedgerSupportsProtocol blk
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ComputeLedgerEvents ->
   ValidateArgs m blk ->
@@ -310,7 +310,7 @@ switch ::
   ( LedgerSupportsProtocol blk
   , MonadSTM m
   , MonadThrow m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   (forall r. Word64 -> (Forker m blk -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
@@ -369,7 +369,7 @@ applyBlock ::
   ( LedgerSupportsProtocol blk
   , MonadSTM m
   , MonadThrow m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ComputeLedgerEvents ->
   LedgerCfg ExtLedgerState blk ->
@@ -407,7 +407,7 @@ applyThenPush ::
   ( LedgerSupportsProtocol blk
   , MonadSTM m
   , MonadThrow m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ComputeLedgerEvents ->
   LedgerCfg ExtLedgerState blk ->
@@ -426,7 +426,7 @@ applyThenPushMany ::
   ( LedgerSupportsProtocol blk
   , MonadSTM m
   , MonadThrow m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->

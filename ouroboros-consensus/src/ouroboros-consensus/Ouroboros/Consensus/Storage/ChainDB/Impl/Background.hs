@@ -96,7 +96,7 @@ launchBgTasks ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ChainDbEnv m blk ->
   m ()
@@ -578,7 +578,7 @@ addBlockRunner ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   Fuse m ->
   ChainDbEnv m blk ->

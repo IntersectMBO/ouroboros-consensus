@@ -28,7 +28,6 @@ module Ouroboros.Consensus.Ledger.Extended
   , duplicateExt
   , duplicateTickedExt
   , getStatsExt
-  , getStatsTickedExt
 
     -- * Serialisation
   , decodeDiskExtLedgerState
@@ -138,7 +137,7 @@ data instance Ticked ExtLedgerState blk = TickedExtLedgerState
 --
 -- Plain record: bundles a 'StateHandle' (which owns the on-disk tables) with
 -- the pure 'HeaderState'. Constructed and destructed directly — no
--- 'MonadLedger' instance for 'ExtLedgerState' is needed.
+-- 'BlockSupportsLedgerHD' instance for 'ExtLedgerState' is needed.
 data ExtStateHandle m blk = ExtStateHandle
   { extStateHandle :: !(StateHandle m blk)
   , extHeaderState :: !(HeaderState blk)
@@ -153,48 +152,43 @@ data TickedExtStateHandle m blk = TickedExtStateHandle
 
 -- | Pure projection of the extended ledger state from an 'ExtStateHandle'.
 extLedgerState ::
-  MonadLedger m blk => ExtStateHandle m blk -> ExtLedgerState blk
+  BlockSupportsLedgerHD m blk => ExtStateHandle m blk -> ExtLedgerState blk
 extLedgerState (ExtStateHandle s h) = ExtLedgerState (state s) h
 
 -- | Pure projection of the ticked extended ledger state from a
 -- 'TickedExtStateHandle'.
 tickedExtLedgerState ::
-  MonadLedger m blk =>
+  BlockSupportsLedgerHD m blk =>
   TickedExtStateHandle m blk -> Ticked ExtLedgerState blk
 tickedExtLedgerState (TickedExtStateHandle s lv h) =
   TickedExtLedgerState (tickedState s) lv h
 
-closeExt :: (Monad m, MonadLedger m blk) => ExtStateHandle m blk -> m ()
+closeExt :: (Monad m, BlockSupportsLedgerHD m blk) => ExtStateHandle m blk -> m ()
 closeExt (ExtStateHandle s _) = close s
 
 closeTickedExt ::
-  (Monad m, MonadLedger m blk) => TickedExtStateHandle m blk -> m ()
+  (Monad m, BlockSupportsLedgerHD m blk) => TickedExtStateHandle m blk -> m ()
 closeTickedExt (TickedExtStateHandle s _ _) = closeTicked s
 
 duplicateExt ::
-  (Monad m, MonadLedger m blk) =>
+  (Monad m, BlockSupportsLedgerHD m blk) =>
   ExtStateHandle m blk -> m (ExtStateHandle m blk)
 duplicateExt (ExtStateHandle s h) = flip ExtStateHandle h <$> duplicate s
 
 duplicateTickedExt ::
-  (Monad m, MonadLedger m blk) =>
+  (Monad m, BlockSupportsLedgerHD m blk) =>
   TickedExtStateHandle m blk -> m (TickedExtStateHandle m blk)
 duplicateTickedExt (TickedExtStateHandle s lv h) =
   (\s' -> TickedExtStateHandle s' lv h) <$> duplicateTicked s
 
-getStatsExt :: MonadLedger m blk => ExtStateHandle m blk -> Statistics
+getStatsExt :: BlockSupportsLedgerHD m blk => ExtStateHandle m blk -> Statistics
 getStatsExt (ExtStateHandle s _) = getStats s
-
-getStatsTickedExt ::
-  MonadLedger m blk => TickedExtStateHandle m blk -> Statistics
-getStatsTickedExt (TickedExtStateHandle s _ _) = getStatsTicked s
 
 instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState) blk where
   getTip = getTip . tickedLedgerState
 
 type instance Handle ExtLedgerState = ExtStateHandle
 type instance Handle (Ticked ExtLedgerState) = TickedExtStateHandle
-type instance TickedHandle ExtLedgerState = TickedExtStateHandle
 
 instance
   LedgerSupportsProtocol blk =>
@@ -223,7 +217,7 @@ instance
 
 applyHelper ::
   forall m blk.
-  (HasCallStack, LedgerSupportsProtocol blk, Monad m, MonadLedger m blk) =>
+  (HasCallStack, LedgerSupportsProtocol blk, Monad m, BlockSupportsLedgerHD m blk) =>
   ( HasCallStack =>
     ComputeLedgerEvents ->
     LedgerCfg LedgerState blk ->

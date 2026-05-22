@@ -79,7 +79,7 @@ _lemma_ledgerViewForecastAt_applyChainTick ::
   ( LedgerSupportsProtocol blk
   , Eq (LedgerView (BlockProtocol blk))
   , MonadThrow m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   LedgerConfig blk ->
   StateHandle m blk ->

@@ -30,7 +30,7 @@ localStateQueryServer ::
   , BlockSupportsLedgerQuery blk
   , Query.ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ExtLedgerCfg blk ->
   ( Target (Point blk) ->

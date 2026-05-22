@@ -311,7 +311,7 @@ getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 allocInRegistryReadOnlyForkerAtPoint ::
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
@@ -330,7 +330,7 @@ allocInRegistryReadOnlyForkerAtPoint cdb tgt rr = do
 openReadOnlyForkerAtPoint ::
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
@@ -340,7 +340,7 @@ openReadOnlyForkerAtPoint CDB{..} = LedgerDB.openReadOnlyForker cdbLedgerDB
 withReadOnlyForkerAtPoint ::
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
@@ -356,7 +356,7 @@ withReadOnlyForkerAtPoint cdb tgt =
 getStatistics ::
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ChainDbEnv m blk -> m Statistics
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB

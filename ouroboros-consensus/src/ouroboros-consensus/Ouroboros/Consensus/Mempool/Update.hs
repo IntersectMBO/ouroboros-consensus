@@ -67,7 +67,7 @@ implAddTx ::
   , MonadTimer m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   MempoolEnv m blk ->
   WhichAddTx f ->
@@ -173,7 +173,7 @@ doAddTx ::
   , HasTxId (GenTx blk)
   , IOLike m
   , MonadTimer m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   MempoolEnv m blk ->
   WhichAddTx f ->
@@ -293,7 +293,7 @@ tryAddTx ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , MonadMVar m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   MempoolEnv m blk ->
   -- | The ledger configuration.
@@ -424,7 +424,7 @@ implRemoveTxsEvenIfValid ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   MempoolEnv m blk ->
   NE.NonEmpty (GenTxId blk) ->
@@ -471,7 +471,7 @@ doRemoveTxs ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , Monad m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
@@ -509,7 +509,7 @@ implSyncWithLedger ::
   , LedgerSupportsMempool blk
   , ValidateEnvelope blk
   , HasTxId (GenTx blk)
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   -- | This argument is only to be able to acquire a snapshot in the same
   -- atomically block as the re-sync when testing the mempool in the QSM
@@ -597,7 +597,7 @@ doSyncWithLedger ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , Monad m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->

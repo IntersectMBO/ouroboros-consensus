@@ -24,7 +24,7 @@
 -- | Implementation of the 'LedgerTablesHandle' interface with LSM trees.
 --
 -- TODO @js: implementation is commented out pending re-implementation
--- against the new 'Handle' / 'MonadLedger' interface in Layer 1.
+-- against the new 'Handle' / 'BlockSupportsLedgerHD' interface in Layer 1.
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   ( -- * Backend API
 

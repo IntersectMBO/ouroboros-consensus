@@ -23,10 +23,9 @@ module Ouroboros.Consensus.Ledger.Basics
   , IsLedger (..)
   , AuxLedgerEvent
   , applyChainTick
-  , MonadLedger (..)
+  , BlockSupportsLedgerHD (..)
   , LedgerTablesHandle
   , Handle
-  , TickedHandle
 
     -- * Ledger Events
   , LedgerResult (..)
@@ -193,21 +192,21 @@ class
   --
   -- prop> ledgerTipPoint (applyChainTick cfg slot st) == ledgerTipPoint st
   applyChainTickLedgerResult ::
-    (MonadLedger m blk, MonadThrow m) =>
+    (BlockSupportsLedgerHD m blk, MonadThrow m) =>
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     SlotNo ->
     Handle l m blk ->
-    m (LedgerResult blk (TickedHandle l m blk))
+    m (LedgerResult blk (Handle (Ticked l) m blk))
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick ::
-  (MonadLedger m blk, MonadThrow m, IsLedger l blk) =>
+  (BlockSupportsLedgerHD m blk, MonadThrow m, IsLedger l blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   SlotNo ->
   Handle l m blk ->
-  m (TickedHandle l m blk)
+  m (Handle (Ticked l) m blk)
 applyChainTick = fmap lrResult ...: applyChainTickLedgerResult
 
 {-------------------------------------------------------------------------------
@@ -254,7 +253,7 @@ type family LedgerTablesHandle m blk
 -- per-@(l, blk)@ pair. Having one canonical instance per @l@ matches the
 -- reality: @Handle LedgerState = StateHandle@ regardless of which block.
 --
--- For 'LedgerState' this is 'StateHandle' (a data family on 'MonadLedger');
+-- For 'LedgerState' this is 'StateHandle' (a data family on 'BlockSupportsLedgerHD');
 -- for 'ExtLedgerState' this is the plain record
 -- 'Ouroboros.Consensus.Ledger.Extended.ExtStateHandle'.
 type Handle :: (Type -> Type) -> (Type -> Type) -> Type -> Type
@@ -262,14 +261,6 @@ type family Handle l = r | r -> l
 
 type instance Handle LedgerState = StateHandle
 type instance Handle (Ticked LedgerState) = TickedStateHandle
-
--- | The handle representing a ticked ledger view at @l blk@.
---
--- See 'Handle'.
-type TickedHandle :: (Type -> Type) -> (Type -> Type) -> Type -> Type
-type family TickedHandle l = r | r -> l
-
-type instance TickedHandle LedgerState = TickedStateHandle
 
 -- | How to manage the resource-bearing state of a ledger view of @blk@ in
 -- monad @m@.
@@ -282,11 +273,11 @@ type instance TickedHandle LedgerState = TickedStateHandle
 -- This class only deals with concrete @blk@-specific state. The
 -- 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState' /
 -- 'Ticked' 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState' wrappers
--- do not have 'MonadLedger' instances — they are plain records that embed
+-- do not have 'BlockSupportsLedgerHD' instances — they are plain records that embed
 -- a 'StateHandle' or 'TickedStateHandle' (see
 -- "Ouroboros.Consensus.Ledger.Extended").
-type MonadLedger :: (Type -> Type) -> Type -> Constraint
-class MonadLedger m blk where
+type BlockSupportsLedgerHD :: (Type -> Type) -> Type -> Constraint
+class BlockSupportsLedgerHD m blk where
   -- | Opaque handle to an un-ticked ledger state plus its tables.
   data StateHandle m blk
 
@@ -320,8 +311,6 @@ class MonadLedger m blk where
 
   -- | Snapshot of operational statistics for the handle.
   getStats :: StateHandle m blk -> Statistics
-
-  getStatsTicked :: TickedStateHandle m blk -> Statistics
 
 -- | Operational stats for a 'StateHandle'.
 --

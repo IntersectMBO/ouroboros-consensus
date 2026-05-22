@@ -180,7 +180,7 @@ class
   -- Pure: the values needed by this tx are expected to be in the
   -- 'MempoolCache' already (the caller is responsible for calling
   -- 'addToCache' first). The returned handle has the in-memory pure
-  -- state updated via 'withTickedState' from 'MonadLedger' — it
+  -- state updated via 'withTickedState' from 'BlockSupportsLedgerHD' — it
   -- shares the underlying 'LedgerTablesHandle' with the input (no
   -- writes to tables; the UTxO diffs introduced by mempool txs are
   -- buffered in the 'MempoolCache' instead). The input handle is

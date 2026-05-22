@@ -405,7 +405,7 @@ pure []
 run ::
   forall blk.
   ( RunNode blk
-  , MonadLedger IO blk
+  , BlockSupportsLedgerHD IO blk
   , NoThunks (TickedStateHandle IO blk)
   , NoThunks (Handle ExtLedgerState IO blk)
   , NoThunks (LedgerState blk)
@@ -477,7 +477,7 @@ runWith ::
   , NetworkIO m
   , NetworkAddr addrNTN
   , Show addrNTN
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   , NoThunks (TickedStateHandle m blk)
   , NoThunks (Handle ExtLedgerState m blk)
   , NoThunks (LedgerState blk)
@@ -849,7 +849,7 @@ openChainDB ::
   forall m blk.
   ( RunNode blk
   , IOLike m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   , NoThunks (Handle ExtLedgerState m blk)
   , NoThunks (LedgerState blk)
   ) =>

@@ -198,7 +198,7 @@ instance IsLedger LedgerState ByronBlock where
 
 type instance LedgerTablesHandle m ByronBlock = ()
 
-instance MonadLedger m ByronBlock where
+instance BlockSupportsLedgerHD m ByronBlock where
   data StateHandle m ByronBlock = ByronStateHandle (LedgerState ByronBlock)
   data TickedStateHandle m ByronBlock
     = TickedByronStateHandle (Ticked LedgerState ByronBlock)
@@ -215,7 +215,6 @@ instance MonadLedger m ByronBlock where
   duplicateTicked a = pure a
 
   getStats _ = Statistics 0
-  getStatsTicked _ = Statistics 0
 
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces

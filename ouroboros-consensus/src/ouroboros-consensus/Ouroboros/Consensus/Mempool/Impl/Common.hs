@@ -164,7 +164,7 @@ isMempoolSize is =
     }
 
 initInternalState ::
-  (MonadLedger m blk, LedgerSupportsMempool blk) =>
+  (BlockSupportsLedgerHD m blk, LedgerSupportsMempool blk) =>
   MempoolCapacityBytesOverride ->
   -- | Used for 'isLastTicketNo'
   TicketNo ->
@@ -231,7 +231,7 @@ initMempoolEnv ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , ValidateEnvelope blk
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   , NoThunks (TickedStateHandle m blk)
   ) =>
   LedgerInterface m blk ->
@@ -270,7 +270,7 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
 tickLedgerState ::
   forall m blk.
   ( MonadThrow m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   , UpdateLedger blk
   , ValidateEnvelope blk
   ) =>
@@ -364,7 +364,7 @@ revalidateTxsFor ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , Monad m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
@@ -435,7 +435,7 @@ computeSnapshot ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , Monad m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   LedgerConfig blk ->
   SlotNo ->

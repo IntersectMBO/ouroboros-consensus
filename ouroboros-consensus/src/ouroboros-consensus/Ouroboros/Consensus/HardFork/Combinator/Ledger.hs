@@ -120,7 +120,7 @@ data instance Ticked LedgerState (HardForkBlock xs)
 type instance AuxLedgerEvent (HardForkBlock xs) = OneEraLedgerEvent xs
 type instance LedgerTablesHandle m (HardForkBlock xs) = Void
 
-instance CanHardFork xs => MonadLedger m (HardForkBlock xs) where
+instance CanHardFork xs => BlockSupportsLedgerHD m (HardForkBlock xs) where
   data StateHandle m (HardForkBlock xs) = HardForkStateHandle
     { hardForkStateHandlePerEra :: HardForkState (StateHandle m) xs
     , hardForkStateHandleTransCtx :: !(HFTransCtx m xs)
@@ -147,8 +147,6 @@ instance CanHardFork xs => MonadLedger m (HardForkBlock xs) where
     hcollapse <$> hsequence' (hcmap proxySingle (\x -> Comp $ closeTicked x >> pure (K ())) st)
 
   getStats (HardForkStateHandle st _) = hcollapse $ hcmap proxySingle (K . getStats) st
-  getStatsTicked (HardForkTickedStateHandle _ st _) =
-    hcollapse $ hcmap proxySingle (K . getStatsTicked) st
 
   duplicate (HardForkStateHandle st t) =
     flip HardForkStateHandle t <$> hsequence' (hcmap proxySingle (Comp . duplicate) st)

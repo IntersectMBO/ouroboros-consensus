@@ -126,7 +126,7 @@ mkHandlers ::
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerQuery blk
   , ConfigSupportsNode blk
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   NodeKernel m addrNTN addrNTC blk ->

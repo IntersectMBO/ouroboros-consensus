@@ -67,7 +67,7 @@ import Ouroboros.Consensus.HardFork.History
   , addSlots
   )
 import Ouroboros.Consensus.HardFork.Simple
-import Ouroboros.Consensus.Ledger.Abstract hiding (Handle, TickedHandle)
+import Ouroboros.Consensus.Ledger.Abstract hiding (Handle)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32
   , IgnoringOverflow

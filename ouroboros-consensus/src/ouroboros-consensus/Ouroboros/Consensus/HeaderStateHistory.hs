@@ -259,7 +259,7 @@ fromChain ::
   , HasHardForkHistory blk
   , HasAnnTip blk
   , MonadThrow m
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   TopLevelConfig blk ->
   -- | Initial ledger state

@@ -53,7 +53,7 @@ openDB ::
   , InspectLedger blk
   , HasCallStack
   , HasHardForkHistory blk
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   , NoThunks (ExtStateHandle m blk)
   , NoThunks (LedgerState blk)
   ) =>

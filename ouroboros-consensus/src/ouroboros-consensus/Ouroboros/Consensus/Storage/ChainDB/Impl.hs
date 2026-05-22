@@ -108,7 +108,7 @@ withDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   , NoThunks (Handle ExtLedgerState m blk)
   , NoThunks (LedgerState blk)
   ) =>
@@ -127,7 +127,7 @@ openDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   , NoThunks (Handle ExtLedgerState m blk)
   , NoThunks (LedgerState blk)
   ) =>
@@ -145,7 +145,7 @@ openDBInternal ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
-  , MonadLedger m blk
+  , BlockSupportsLedgerHD m blk
   , NoThunks (Handle ExtLedgerState m blk)
   , NoThunks (LedgerState blk)
   , HasCallStack

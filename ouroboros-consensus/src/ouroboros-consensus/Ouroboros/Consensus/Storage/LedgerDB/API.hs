@@ -394,7 +394,7 @@ data LedgerDbError
 
 -- | 'bracket'-style usage of a forker at the LedgerDB tip.
 withTipForker ::
-  (IOLike m, LedgerSupportsProtocol blk, MonadLedger m blk) =>
+  (IOLike m, LedgerSupportsProtocol blk, BlockSupportsLedgerHD m blk) =>
   LedgerDB m l blk ->
   (Forker m blk -> m a) ->
   m a
@@ -410,13 +410,13 @@ withTipForker ldb =
 
 -- | Get statistics from the tip of the LedgerDB.
 getTipStatistics ::
-  (IOLike m, LedgerSupportsProtocol blk, MonadLedger m blk) =>
+  (IOLike m, LedgerSupportsProtocol blk, BlockSupportsLedgerHD m blk) =>
   LedgerDB m l blk ->
   m Statistics
 getTipStatistics ldb = withTipForker ldb (fmap getStatsExt . atomically . forkerTip)
 
 openReadOnlyForker ::
-  (MonadSTM m, LedgerSupportsProtocol blk, MonadLedger m blk) =>
+  (MonadSTM m, LedgerSupportsProtocol blk, BlockSupportsLedgerHD m blk) =>
   LedgerDB m l blk ->
   Target (Point blk) ->
   m (Either GetForkerError (ExtStateHandle m blk))

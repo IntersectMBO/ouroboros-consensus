@@ -45,6 +45,7 @@ import Data.Kind (Type)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ticked (Ticked)
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.IOLike
 
@@ -93,12 +94,12 @@ class
   -- Users of this function can set any validation level allowed by the
   -- @small-steps@ package. See "Control.State.Transition.Extended".
   applyBlockLedgerResultWithValidation ::
-    (Monad m, HasCallStack, MonadLedger m blk) =>
+    (Monad m, HasCallStack, BlockSupportsLedgerHD m blk) =>
     STS.ValidationPolicy ->
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     blk ->
-    TickedHandle l m blk ->
+    Handle (Ticked l) m blk ->
     ExceptT (LedgerErr l blk) m (LedgerResult blk (Handle l m blk))
 
   -- | Apply a block to the ledger state.
@@ -108,11 +109,11 @@ class
   --
   -- This function will use 'ValidateAll' policy for calling the ledger rules.
   applyBlockLedgerResult ::
-    (Monad m, HasCallStack, MonadLedger m blk) =>
+    (Monad m, HasCallStack, BlockSupportsLedgerHD m blk) =>
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     blk ->
-    TickedHandle l m blk ->
+    Handle (Ticked l) m blk ->
     ExceptT (LedgerErr l blk) m (LedgerResult blk (Handle l m blk))
 
   -- | Re-apply a block to the very same ledger state it was applied in before.
@@ -126,30 +127,30 @@ class
   -- validation checks. Thus this function will call the ledger rules with
   -- 'ValidateNone' policy.
   reapplyBlockLedgerResult ::
-    (Monad m, HasCallStack, MonadLedger m blk) =>
+    (Monad m, HasCallStack, BlockSupportsLedgerHD m blk) =>
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     blk ->
-    TickedHandle l m blk ->
+    Handle (Ticked l) m blk ->
     m (LedgerResult blk (Handle l m blk))
 
 defaultApplyBlockLedgerResult ::
-  (Monad m, HasCallStack, ApplyBlock l blk, MonadLedger m blk) =>
+  (Monad m, HasCallStack, ApplyBlock l blk, BlockSupportsLedgerHD m blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
-  TickedHandle l m blk ->
+  Handle (Ticked l) m blk ->
   ExceptT (LedgerErr l blk) m (LedgerResult blk (Handle l m blk))
 defaultApplyBlockLedgerResult =
   applyBlockLedgerResultWithValidation STS.ValidateAll
 
 defaultReapplyBlockLedgerResult ::
-  (Monad m, HasCallStack, ApplyBlock l blk, Functor m, MonadLedger m blk) =>
+  (Monad m, HasCallStack, ApplyBlock l blk, Functor m, BlockSupportsLedgerHD m blk) =>
   (LedgerErr l blk -> LedgerResult blk (Handle l m blk)) ->
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
-  TickedHandle l m blk ->
+  Handle (Ticked l) m blk ->
   m (LedgerResult blk (Handle l m blk))
 defaultReapplyBlockLedgerResult throwReapplyError =
   ( fmap (either throwReapplyError id)
@@ -179,26 +180,26 @@ class
 
 -- | 'lrResult' after 'applyBlockLedgerResult'
 applyLedgerBlock ::
-  (Monad m, ApplyBlock l blk, HasCallStack, Functor m, MonadLedger m blk) =>
+  (Monad m, ApplyBlock l blk, HasCallStack, Functor m, BlockSupportsLedgerHD m blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
-  TickedHandle l m blk ->
+  Handle (Ticked l) m blk ->
   ExceptT (LedgerErr l blk) m (Handle l m blk)
 applyLedgerBlock = fmap lrResult ...: applyBlockLedgerResult
 
 -- | 'lrResult' after 'reapplyBlockLedgerResult'
 reapplyLedgerBlock ::
-  (ApplyBlock l blk, HasCallStack, Monad m, MonadLedger m blk) =>
+  (ApplyBlock l blk, HasCallStack, Monad m, BlockSupportsLedgerHD m blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
-  TickedHandle l m blk ->
+  Handle (Ticked l) m blk ->
   m (Handle l m blk)
 reapplyLedgerBlock = fmap lrResult ...: reapplyBlockLedgerResult
 
 tickThenApplyLedgerResult ::
-  (MonadLedger m blk, ApplyBlock l blk, MonadThrow m) =>
+  (BlockSupportsLedgerHD m blk, ApplyBlock l blk, MonadThrow m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -219,7 +220,7 @@ tickThenApplyLedgerResult evs cfg blk l = do
       }
 
 tickThenReapplyLedgerResult ::
-  (MonadLedger m blk, ApplyBlock l blk, MonadThrow m) =>
+  (BlockSupportsLedgerHD m blk, ApplyBlock l blk, MonadThrow m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -240,7 +241,7 @@ tickThenReapplyLedgerResult evs cfg blk l = do
       }
 
 tickThenApply ::
-  (MonadLedger m blk, ApplyBlock l blk, MonadThrow m) =>
+  (BlockSupportsLedgerHD m blk, ApplyBlock l blk, MonadThrow m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -249,7 +250,7 @@ tickThenApply ::
 tickThenApply = fmap lrResult ...: tickThenApplyLedgerResult
 
 tickThenReapply ::
-  (MonadLedger m blk, ApplyBlock l blk, MonadThrow m) =>
+  (BlockSupportsLedgerHD m blk, ApplyBlock l blk, MonadThrow m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
@@ -258,7 +259,7 @@ tickThenReapply ::
 tickThenReapply = fmap lrResult ...: tickThenReapplyLedgerResult
 
 foldLedger ::
-  (MonadLedger m blk, ApplyBlock l blk, MonadThrow m) =>
+  (BlockSupportsLedgerHD m blk, ApplyBlock l blk, MonadThrow m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   [blk] ->
@@ -268,7 +269,7 @@ foldLedger evs cfg =
   repeatedlyM (tickThenApply evs cfg)
 
 refoldLedger ::
-  (MonadLedger m blk, ApplyBlock l blk, MonadThrow m) =>
+  (BlockSupportsLedgerHD m blk, ApplyBlock l blk, MonadThrow m) =>
   ComputeLedgerEvents -> LedgerCfg l blk -> [blk] -> Handle l m blk -> m (Handle l m blk)
 refoldLedger evs cfg =
   repeatedlyM (tickThenReapply evs cfg)

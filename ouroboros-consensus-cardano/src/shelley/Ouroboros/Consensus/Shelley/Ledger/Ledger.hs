@@ -118,7 +118,7 @@ import Ouroboros.Consensus.HardFork.History.EraParams (EraParams (..))
 import Ouroboros.Consensus.HardFork.History.Util
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Abstract hiding (Handle, TickedHandle)
+import Ouroboros.Consensus.Ledger.Abstract hiding (Handle)
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
@@ -456,7 +456,7 @@ data TablesHandle m era = TablesHandle
   , injectValues :: SL.NewEpochState era -> m (TablesHandle m era)
   }
 
-instance MonadLedger m (ShelleyBlock proto era) where
+instance BlockSupportsLedgerHD m (ShelleyBlock proto era) where
   data StateHandle m (ShelleyBlock proto era) = ShelleyStateHandle
     { stateRefState :: LedgerState (ShelleyBlock proto era)
     , stateRefHandle :: TablesHandle m era
@@ -479,7 +479,6 @@ instance MonadLedger m (ShelleyBlock proto era) where
   duplicateTicked (TickedShelleyStateHandle s h) = TickedShelleyStateHandle s <$> duplicateHandle h
 
   getStats = getStatsHandle . stateRefHandle
-  getStatsTicked = getStatsHandle . tickedStateHandleHandle
 
 instance ShelleyBasedEra era => IsLedger LedgerState (ShelleyBlock proto era) where
   type LedgerErr LedgerState (ShelleyBlock proto era) = SL.BlockTransitionError era
