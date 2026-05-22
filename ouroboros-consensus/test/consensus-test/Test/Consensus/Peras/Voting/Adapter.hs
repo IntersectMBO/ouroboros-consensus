@@ -6,15 +6,15 @@
 module Test.Consensus.Peras.Voting.Adapter (tests) where
 
 import Data.Proxy (Proxy (..))
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( PerasCertCompatibleWithVotingCommittee (..)
+  , PerasVoteCompatibleWithVotingCommittee (..)
+  )
 import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.EveryoneVotes (EveryoneVotes)
 import Ouroboros.Consensus.Committee.WFALS (WFALS)
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
-import Ouroboros.Consensus.Peras.Voting.Adapter
-  ( PerasCertCompatibleWithVotingCommittee (..)
-  , PerasVoteCompatibleWithVotingCommittee (..)
-  )
 import Test.Consensus.Peras.Util
   ( genPerasCert
   , genPerasVote

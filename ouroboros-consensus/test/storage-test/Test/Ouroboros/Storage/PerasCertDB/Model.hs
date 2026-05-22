@@ -75,7 +75,7 @@ getWeightSnapshot ::
   Model blk -> PerasWeightSnapshot blk
 getWeightSnapshot Model{certs} =
   mkPerasWeightSnapshot
-    [ (getPerasCertBlock cert, vpcCertBoost (forgetArrivalTime cert))
+    [ (getPerasCertPoint cert, vpcCertBoost (forgetArrivalTime cert))
     | cert <- Set.toList certs
     ]
 
@@ -90,4 +90,4 @@ garbageCollect ::
 garbageCollect slotNo model@Model{certs} =
   model{certs = Set.filter keepCert certs}
  where
-  keepCert cert = pointSlot (getPerasCertBlock cert) >= NotOrigin slotNo
+  keepCert cert = pointSlot (getPerasCertPoint cert) >= NotOrigin slotNo

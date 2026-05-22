@@ -539,7 +539,7 @@ chainSelSync cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do
   certRound = getPerasCertRound cert
 
   boostedBlock :: Point blk
-  boostedBlock = getPerasCertBlock cert
+  boostedBlock = getPerasCertPoint cert
 
 -- | Return 'True' when the given header should be ignored when adding it
 -- because it is too old, i.e., we wouldn't be able to switch to a chain

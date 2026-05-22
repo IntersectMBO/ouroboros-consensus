@@ -2,12 +2,13 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 
 -- | Concrete Peras vote types using BLS signatures.
 --
@@ -24,24 +25,34 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
+import Data.ByteString.Short (ShortByteString)
+import Data.Coerce (Coercible)
 import Data.Typeable (Typeable)
 import Data.Word (Word8)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block.Abstract (HeaderHash)
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasBoostedBlock (..)
+  ( BoostedBlock
+  , IsPerasVote (..)
+  , PerasBoostedBlock (..)
+  , PerasConversionError (..)
   , PerasRoundNo
-  , PerasSeatIndex, IsPerasCert, IsPerasVote (..)
+  , PerasSeatIndex
+  , PerasVoteCompatibleWithVotingCommittee (..)
+  , fromPerasSeatIndex
+  , toPerasSeatIndex
   )
 import Ouroboros.Consensus.Committee.Crypto (CryptoSupportsVoteSigning (..))
+import Ouroboros.Consensus.Committee.EveryoneVotes
+  ( EveryoneVotes
+  , Vote (..)
+  )
+import Ouroboros.Consensus.Committee.WFALS (Vote (..), WFALS)
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCrypto
   , VRFOutput
   )
-import Data.Coerce (Coercible)
-import Ouroboros.Consensus.Block.Abstract (HeaderHash)
-import Data.ByteString.Short (ShortByteString)
-import Ouroboros.Consensus.Block.RealPoint (withOriginRealPointToPoint, fromBytes32RealPoint)
 
 -- | Concrete Peras votes using BLS signatures
 --
@@ -65,16 +76,13 @@ data PerasVote tag
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
+type instance BoostedBlock (PerasVote tag) = PerasBoostedBlock
 instance
   Coercible (HeaderHash blk) ShortByteString =>
-  IsPerasVote (PerasVote blk) blk where
-  getPerasVoteRound =
-    pvRoundNo
-  getPerasVoteBlock =
-    withOriginRealPointToPoint
-      . fmap fromBytes32RealPoint
-      . unPerasBoostedBlock
-      . pvBoostedBlock
+  IsPerasVote (PerasVote blk) blk
+  where
+  getPerasVoteRound = pvRoundNo
+  getPerasVoteBlock = pvBoostedBlock
 
 instance Typeable tag => FromCBOR (PerasVote tag) where
   fromCBOR = do
@@ -132,3 +140,92 @@ instance ToCBOR PerasVoteEligibilityProof where
       encodeListLen 2
         <> toCBOR (1 :: Word8)
         <> toCBOR vrfOutput
+
+-- * Compatibility with voting committee implementations
+
+-- 'PerasVote's are compatible with 'WFALS' as long as we make sure to avoid
+-- overflowing their `Word16` seat index.
+instance
+  PerasVoteCompatibleWithVotingCommittee
+    (PerasVote tag)
+    PerasBLSCrypto
+    WFALS
+  where
+  toPerasVote = \case
+    WFALSPersistentVote seatIndex electionId candidate sig -> do
+      perasSeatIndex <- toPerasSeatIndex seatIndex
+      pure $
+        PerasVote
+          { pvRoundNo = electionId
+          , pvBoostedBlock = candidate
+          , pvSeatIndex = perasSeatIndex
+          , pvEligibilityProof = PersistentPerasVoteEligibilityProof
+          , pvSignature = sig
+          }
+    WFALSNonPersistentVote seatIndex electionId candidate vrfOutput sig -> do
+      perasSeatIndex <- toPerasSeatIndex seatIndex
+      let proof = NonPersistentPerasVoteEligibilityProof vrfOutput
+      pure $
+        PerasVote
+          { pvRoundNo = electionId
+          , pvBoostedBlock = candidate
+          , pvSeatIndex = perasSeatIndex
+          , pvEligibilityProof = proof
+          , pvSignature = sig
+          }
+
+  fromPerasVote = \case
+    PerasVote electionId candidate seatIndex proof sig -> do
+      let seatIndex' = fromPerasSeatIndex seatIndex
+      case proof of
+        PersistentPerasVoteEligibilityProof ->
+          pure $
+            WFALSPersistentVote
+              seatIndex'
+              electionId
+              candidate
+              sig
+        NonPersistentPerasVoteEligibilityProof vrfOutput ->
+          pure $
+            WFALSNonPersistentVote
+              seatIndex'
+              electionId
+              candidate
+              vrfOutput
+              sig
+
+-- 'PerasVote's are compatible with 'EveryoneVotes' as long as we make sure
+-- to only accept votes with persistent eligibility proofs (in addition to
+-- avoiding overflowing their `Word16` seat index).
+instance
+  PerasVoteCompatibleWithVotingCommittee
+    (PerasVote tag)
+    PerasBLSCrypto
+    EveryoneVotes
+  where
+  toPerasVote = \case
+    EveryoneVotesVote seatIndex electionId candidate sig -> do
+      perasSeatIndex <- toPerasSeatIndex seatIndex
+      pure $
+        PerasVote
+          { pvRoundNo = electionId
+          , pvBoostedBlock = candidate
+          , pvSeatIndex = perasSeatIndex
+          , pvEligibilityProof = PersistentPerasVoteEligibilityProof
+          , pvSignature = sig
+          }
+
+  fromPerasVote = \case
+    PerasVote electionId candidate seatIndex proof sig -> do
+      let seatIndex' = fromPerasSeatIndex seatIndex
+      case proof of
+        PersistentPerasVoteEligibilityProof ->
+          pure $
+            EveryoneVotesVote
+              seatIndex'
+              electionId
+              candidate
+              sig
+        NonPersistentPerasVoteEligibilityProof _ ->
+          Left $
+            EveryoneVotesButFoundNonPersistentVoterInVote seatIndex'
