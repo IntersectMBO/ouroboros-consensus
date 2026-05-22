@@ -292,5 +292,5 @@ mkPerasVotingView
       -- Check whether the boosted block is within the volatile fragment leading
       -- to the candidate block.
       AF.withinFragmentBounds
-        (castPoint (getPerasCertBlock cert))
+        (castPoint (getPerasCertPoint cert))
         chainAtCandidateBlock

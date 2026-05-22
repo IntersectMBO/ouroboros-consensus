@@ -4,6 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Test that the Peras voting rules can correctly decide when to vote.
@@ -21,7 +22,8 @@ import Ouroboros.Consensus.Block.Abstract
   , WithOrigin (..)
   )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( IsPerasCert (..)
+  ( BoostedBlock
+  , IsPerasCert (..)
   , PerasBlockMinSlots (..)
   , PerasCertArrivalThreshold (..)
   , PerasCooldownRounds (..)
@@ -256,6 +258,7 @@ data TestCert
   }
   deriving (Show, Eq, Generic)
 
+type instance BoostedBlock (TestCert) = Point TestBlock
 instance IsPerasCert TestCert TestBlock where
   getPerasCertRound = tcRoundNo
 
