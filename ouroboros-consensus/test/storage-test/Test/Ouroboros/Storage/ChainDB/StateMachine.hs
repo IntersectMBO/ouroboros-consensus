@@ -1311,20 +1311,21 @@ generator loe genBlock genPerasBlock m@Model{..} =
   genAddPerasVote :: Gen (Cmd blk it flr)
   genAddPerasVote = do
     (blk, gapBlks) <- genPerasBlock m
-    -- Pick a round based on the remaining capacity (maxRoundVoteStake -
-    -- currentTotalStake) of existing rounds, with a flat probability for
+    -- Pick a round based on the remaining capacity (maxRoundVoteWeight -
+    -- currentTotalWeight) of existing rounds, with a flat probability for
     -- selecting a fresh new round. This ensures we never exceed the quorum
     -- threshold for multiple different blocks in the same round, avoiding the
     -- MultipleWinnersInRound error.
     let voteModel = Model.perasVoteModel dbModel
-        -- Compute total stake per round from the vote model
-        stakePerRound :: Map.Map PerasRoundNo Rational
-        stakePerRound =
+        weightFromVoteEntry = unVoteWeight . vpvVoteWeight . forgetArrivalTime . PerasVoteDBModel.veVote
+        -- Compute total weight per round from the vote model
+        weightPerRound :: Map.Map PerasRoundNo Rational
+        weightPerRound =
           Map.fromListWith
             (+)
             [ ( pvtRoundNo target
               , sum
-                  [ unPerasVoteStake (getPerasVoteStake (PerasVoteDBModel.veVote ve))
+                  [ weightFromVoteEntry ve
                   | ve <- Set.toList entries
                   ]
               )
@@ -1333,51 +1334,51 @@ generator loe genBlock genPerasBlock m@Model{..} =
 
         voteParams = PerasVoteDBModel.params voteModel
         quorum =
-          unPerasQuorumStakeThreshold (perasQuorumStakeThreshold voteParams)
-            + unPerasQuorumStakeThresholdSafetyMargin (perasQuorumStakeThresholdSafetyMargin voteParams)
-        -- Maximum total vote stake per round: 2 * quorum - epsilon.
+          unPerasQuorumWeightThreshold (perasQuorumWeightThreshold voteParams)
+            + unPerasQuorumWeightThresholdSafetyMargin (perasQuorumWeightThresholdSafetyMargin voteParams)
+        -- Maximum total vote weight per round: 2 * quorum - epsilon.
         -- Below this threshold it is impossible for two different blocks to
         -- both reach quorum in the same round.
         -- It would be more realistic to use just 'quorum', but by doing so we
         -- would only have very few voting rounds succeeding with a cert
         -- creation, because we can't concentrate votes on a few distinct
         -- candidates easily as we would observe in real world.
-        maxRoundVoteStake :: Rational
-        maxRoundVoteStake = 2 * quorum - (1 % 100)
-        -- Minimum vote stake
-        minVoteStake :: Rational
-        minVoteStake = 1 % 10
-        -- Maximum vote stake
-        maxVoteStake :: Rational
-        maxVoteStake = 1 % 2
+        maxRoundVoteWeight :: Rational
+        maxRoundVoteWeight = 2 * quorum - (1 % 100)
+        -- Minimum vote weight
+        minVoteWeight :: Rational
+        minVoteWeight = 1 % 10
+        -- Maximum vote weight
+        maxVoteWeight :: Rational
+        maxVoteWeight = 1 % 2
         -- Remaining capacity for each existing round
         roundCapacities :: [(PerasRoundNo, Rational)]
         roundCapacities =
           [ (r, cap)
-          | (r, totalStake) <- Map.toList stakePerRound
-          , let cap = maxRoundVoteStake - totalStake
-          , cap >= minVoteStake
+          | (r, totalWeight) <- Map.toList weightPerRound
+          , let cap = maxRoundVoteWeight - totalWeight
+          , cap >= minVoteWeight
           ]
         -- The next fresh round number
         freshRound :: PerasRoundNo
-        freshRound = case Map.lookupMax stakePerRound of
+        freshRound = case Map.lookupMax weightPerRound of
           Nothing -> PerasRoundNo 0
           Just (PerasRoundNo r, _) -> PerasRoundNo (r + 1)
-        -- Weight for a fresh round (same as a round with 0.25 * maxRoundVoteStake capacity remaining)
+        -- Weight for a fresh round (same as a round with 0.25 * maxRoundVoteWeight capacity remaining)
         freshWeight :: Int
-        freshWeight = max 1 $ floor (25 * maxRoundVoteStake)
+        freshWeight = max 1 $ floor (25 * maxRoundVoteWeight)
         -- Weighted choices: existing rounds by remaining capacity + fresh round
         choices :: [(Int, Gen (PerasRoundNo, Rational))]
         choices =
           [ (max 1 (floor (cap * 100)), pure (r, cap))
           | (r, cap) <- roundCapacities
           ]
-            ++ [(freshWeight, pure (freshRound, maxRoundVoteStake))]
+            ++ [(freshWeight, pure (freshRound, maxRoundVoteWeight))]
     (roundNo, capacity) <- frequency choices
-    -- Pick a vote stake between minVoteStake and min(capacity, maxVoteStake)
-    let upperBound = min capacity maxVoteStake
-    stakeNumerator <- choose (ceiling (minVoteStake * 100), floor (upperBound * 100)) :: Gen Int
-    let stake = PerasVoteStake (fromIntegral stakeNumerator % 100)
+    -- Pick a vote weight between minVoteWeight and min(capacity, maxVoteWeight)
+    let upperBound = min capacity maxVoteWeight
+    weightNumerator <- choose (ceiling (minVoteWeight * 100), floor (upperBound * 100)) :: Gen Int
+    let weight = VoteWeight (fromIntegral weightNumerator % 100)
     voterId <- PerasVoteDB.SM.genVoterId
     -- Include the voted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
@@ -1391,9 +1392,9 @@ generator loe genBlock genPerasBlock m@Model{..} =
                     { mockVoteRound = roundNo
                     , mockVoteBlock = blockPoint blk
                     , mockVoteVoterId = voterId
-                    , mockVoteStake = stake
+                    , mockVoteWeight = weight
                     }
-              , vpvVoteStake = stake
+              , vpvVoteWeight = weight
               }
     pure $ AddPerasVote voteWithTime seenBlks
 

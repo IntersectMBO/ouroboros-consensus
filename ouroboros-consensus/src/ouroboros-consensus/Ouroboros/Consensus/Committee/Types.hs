@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- | Types common to any generic committee selection scheme
@@ -14,6 +14,9 @@ module Ouroboros.Consensus.Committee.Types
 import Cardano.Ledger.BaseTypes (HasZero)
 import Cardano.Ledger.Core (KeyHash, KeyRole (..))
 import Cardano.Prelude (Generic)
+import Codec.Serialise (Serialise)
+import Control.DeepSeq (NFData)
+import Data.Semigroup (Sum (..))
 import Data.Word (Word64)
 import NoThunks.Class (NoThunks)
 
@@ -27,14 +30,17 @@ newtype PoolId = PoolId
 newtype LedgerStake = LedgerStake
   { unLedgerStake :: Rational
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
   deriving newtype (Num, HasZero)
 
 -- | Voting power of a voter in the committee selection scheme
 newtype VoteWeight = VoteWeight
   { unVoteWeight :: Rational
   }
-  deriving (Show, Eq, NoThunks, Generic)
+  deriving newtype (Show, Eq, Ord, Num, Fractional, NoThunks, NFData, Serialise)
+  deriving stock Generic
+  deriving Semigroup via Sum Rational
+  deriving Monoid via Sum Rational
 
 -- | Target committee size
 newtype TargetCommitteeSize = TargetCommitteeSize

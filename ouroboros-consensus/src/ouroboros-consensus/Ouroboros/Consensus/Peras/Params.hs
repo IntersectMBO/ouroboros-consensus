@@ -14,8 +14,8 @@ module Ouroboros.Consensus.Peras.Params
   , PerasCertArrivalThreshold (..)
   , PerasRoundLength (..)
   , PerasWeight (..)
-  , PerasQuorumStakeThreshold (..)
-  , PerasQuorumStakeThresholdSafetyMargin (..)
+  , PerasQuorumWeightThreshold (..)
+  , PerasQuorumWeightThresholdSafetyMargin (..)
 
     -- * Protocol parameters bundle
   , PerasParams (..)
@@ -90,21 +90,21 @@ newtype PerasWeight
 deriving via Sum Word64 instance Semigroup PerasWeight
 deriving via Sum Word64 instance Monoid PerasWeight
 
--- | Total stake needed to forge a Peras certificate.
-newtype PerasQuorumStakeThreshold
-  = PerasQuorumStakeThreshold {unPerasQuorumStakeThreshold :: Rational}
-  deriving Show via Quiet PerasQuorumStakeThreshold
+-- | Total vote weight needed to forge a Peras certificate.
+newtype PerasQuorumWeightThreshold
+  = PerasQuorumWeightThreshold {unPerasQuorumWeightThreshold :: Rational}
+  deriving Show via Quiet PerasQuorumWeightThreshold
   deriving stock Generic
   deriving newtype (Eq, Ord, NoThunks, Condense)
 
--- | Safety margin needed on top of the quorum stake threshold.
+-- | Safety margin needed on top of the quorum vote weight threshold.
 --
 -- NOTE: this is needed to account for an extremely unlikely local sortition
 -- where not enough honest non-persistent parties decide to vote in a round.
 -- This mostly depend on the expected size of the voting committee.
-newtype PerasQuorumStakeThresholdSafetyMargin
-  = PerasQuorumStakeThresholdSafetyMargin {unPerasQuorumStakeThresholdSafetyMargin :: Rational}
-  deriving Show via Quiet PerasQuorumStakeThresholdSafetyMargin
+newtype PerasQuorumWeightThresholdSafetyMargin
+  = PerasQuorumWeightThresholdSafetyMargin {unPerasQuorumWeightThresholdSafetyMargin :: Rational}
+  deriving Show via Quiet PerasQuorumWeightThresholdSafetyMargin
   deriving stock Generic
   deriving newtype (Eq, Ord, NoThunks, Condense)
 
@@ -126,8 +126,8 @@ data PerasParams = PerasParams
   , perasCertArrivalThreshold :: !PerasCertArrivalThreshold
   , perasRoundLength :: !PerasRoundLength
   , perasWeight :: !PerasWeight
-  , perasQuorumStakeThreshold :: !PerasQuorumStakeThreshold
-  , perasQuorumStakeThresholdSafetyMargin :: !PerasQuorumStakeThresholdSafetyMargin
+  , perasQuorumWeightThreshold :: !PerasQuorumWeightThreshold
+  , perasQuorumWeightThresholdSafetyMargin :: !PerasQuorumWeightThresholdSafetyMargin
   }
   deriving (Show, Eq, Generic, NoThunks)
 
@@ -170,8 +170,8 @@ mkPerasParams =
         PerasRoundLength 90
     , perasWeight =
         PerasWeight 15
-    , perasQuorumStakeThreshold =
-        PerasQuorumStakeThreshold (3 / 4)
-    , perasQuorumStakeThresholdSafetyMargin =
-        PerasQuorumStakeThresholdSafetyMargin (2 / 100)
+    , perasQuorumWeightThreshold =
+        PerasQuorumWeightThreshold (3 / 4)
+    , perasQuorumWeightThresholdSafetyMargin =
+        PerasQuorumWeightThresholdSafetyMargin (2 / 100)
     }
