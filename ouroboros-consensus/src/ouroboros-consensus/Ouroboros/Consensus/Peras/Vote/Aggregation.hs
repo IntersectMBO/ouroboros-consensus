@@ -279,7 +279,7 @@ updatePerasRoundVoteState vote params roundState =
           let oldCandidateState =
                 Map.findWithDefault
                   (freshCandidateVoteState (getPerasVoteTarget vote))
-                  (getPerasVoteBlock vote)
+                  (getPerasVotePoint vote)
                   candidateStates
           candidateOrWinnerState <-
             updateCandidateVoteState params vote oldCandidateState
@@ -290,7 +290,7 @@ updatePerasRoundVoteState vote params roundState =
               -- Quorum still not reached for this round
               let prvsCandidateStates' =
                     Map.insert
-                      (getPerasVoteBlock vote)
+                      (getPerasVotePoint vote)
                       newCandidateState
                       candidateStates
               pure $
@@ -331,7 +331,7 @@ updatePerasRoundVoteState vote params roundState =
               }
         } -> do
           let votePoint =
-                getPerasVoteBlock vote
+                getPerasVotePoint vote
               winnerPoint =
                 pvtBlock (ptvtTarget (ptvsVoteTally winnerState))
           if votePoint == winnerPoint

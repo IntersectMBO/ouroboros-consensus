@@ -660,7 +660,7 @@ addPerasCertToQueue tracer ChainSelQueue{varChainSelQueue} cert = do
   addedToQueue =
     AddedPerasCertToQueue
       (getPerasCertRound cert)
-      (getPerasCertBlock cert)
+      (getPerasCertPoint cert)
 
 -- | Try to add blocks again that were postponed due to the LoE.
 addReprocessLoEBlocks ::
