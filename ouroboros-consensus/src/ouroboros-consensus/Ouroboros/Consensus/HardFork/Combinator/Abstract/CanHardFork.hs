@@ -49,12 +49,12 @@ class
   -- in Haskell.)
   type HardForkTxMeasure xs
 
-  type HFTransCtx (m :: Type -> Type) xs
-  type HFTransCtx m xs = ()
+  type HFLedgerTablesFactory (m :: Type -> Type) xs
+  type HFLedgerTablesFactory m xs = ()
 
   hardForkEraTranslation :: EraTranslation xs
   hardForkStateHandleTranslation ::
-    MonadThrow m => HFTransCtx m xs -> StateHandleTranslation m xs
+    MonadThrow m => HFLedgerTablesFactory m xs -> StateHandleTranslation m xs
   hardForkChainSel :: Tails AcrossEraTiebreaker xs
   hardForkInjectTxs ::
     InPairs
@@ -73,7 +73,7 @@ class
 
 instance SingleEraBlock blk => CanHardFork '[blk] where
   type HardForkTxMeasure '[blk] = TxMeasure blk
-  type HFTransCtx m '[blk] = TransCtx m blk
+  type HFLedgerTablesFactory m '[blk] = LedgerTablesFactory m blk
 
   hardForkEraTranslation = trivialEraTranslation
   hardForkStateHandleTranslation = const trivialStateHandleTranslation

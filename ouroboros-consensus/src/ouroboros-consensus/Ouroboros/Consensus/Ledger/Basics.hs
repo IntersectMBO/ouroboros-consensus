@@ -284,8 +284,8 @@ class BlockSupportsLedgerHD m blk where
   -- | Opaque handle to a ticked ledger state plus its tables.
   data TickedStateHandle m blk
 
-  type TransCtx m blk
-  type TransCtx m blk = ()
+  type LedgerTablesFactory m blk
+  type LedgerTablesFactory m blk = ()
 
   newStateHandle :: LedgerState blk -> LedgerTablesHandle m blk -> StateHandle m blk
 

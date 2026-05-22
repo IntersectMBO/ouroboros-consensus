@@ -52,7 +52,7 @@ type LedgerDbArgs ::
   Type
 data LedgerDbArgs f m blk = LedgerDbArgs
   { lgrSnapshotPolicyArgs :: SnapshotPolicyArgs
-  , lgrGenesis :: HKD f (TransCtx m blk -> m (ExtStateHandle m blk))
+  , lgrGenesis :: HKD f (LedgerTablesFactory m blk -> m (ExtStateHandle m blk))
   , lgrHasFS :: HKD f (SomeHasFS m)
   , lgrConfig :: LedgerDbCfgF f ExtLedgerState blk
   , lgrTracer :: !(Tracer m (TraceEvent blk))

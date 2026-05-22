@@ -271,7 +271,7 @@ injectInitialExtLedgerState ::
   (MonadThrow m, CanHardFork (x ': xs)) =>
   TopLevelConfig (HardForkBlock (x ': xs)) ->
   ExtStateHandle m x ->
-  HFTransCtx m (x ': xs) ->
+  HFLedgerTablesFactory m (x ': xs) ->
   m (ExtStateHandle m (HardForkBlock (x ': xs)))
 injectInitialExtLedgerState cfg extLedgerState0 tctx = do
   l <- targetEraLedgerState

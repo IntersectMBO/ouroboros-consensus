@@ -82,7 +82,7 @@ inMemoryBackendArgs = LedgerDbBackendArgs $ \_tr shfs ->
         { brLoadSnapshot = loadSnapshot mkHs mkH
         , brSnapshotManager = mkSnapshotManager
         , brRelease = pure ()
-        , transCtx = mkH
+        , ledgerTablesFactory = mkH
         }
 
 lsmBackendArgsIO ::
@@ -121,7 +121,7 @@ lsmBackendArgsIO lsmPath fastStoragePath salt = LedgerDbBackendArgs $ \trcr shfs
         , brRelease = do
             LSM.closeSession session
             BIO.close blockio
-        , transCtx = mkH
+        , ledgerTablesFactory = mkH
         }
 
 -- | Load an 'ExtStateHandle' from a snapshot using the in-memory backend.

@@ -169,7 +169,7 @@ completeChainDbArgs ::
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger
-  (TransCtx m blk -> m (ExtStateHandle m blk)) ->
+  (LedgerTablesFactory m blk -> m (ExtStateHandle m blk)) ->
   ImmutableDB.ChunkInfo ->
   -- | Check integrity
   (blk -> Bool) ->

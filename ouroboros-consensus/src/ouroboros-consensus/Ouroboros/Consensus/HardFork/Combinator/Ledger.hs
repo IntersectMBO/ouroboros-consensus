@@ -123,17 +123,17 @@ type instance LedgerTablesHandle m (HardForkBlock xs) = Void
 instance CanHardFork xs => BlockSupportsLedgerHD m (HardForkBlock xs) where
   data StateHandle m (HardForkBlock xs) = HardForkStateHandle
     { hardForkStateHandlePerEra :: HardForkState (StateHandle m) xs
-    , hardForkStateHandleTransCtx :: !(HFTransCtx m xs)
+    , hardForkStateHandleLedgerTablesFactory :: !(HFLedgerTablesFactory m xs)
     }
 
   data TickedStateHandle m (HardForkBlock xs) = HardForkTickedStateHandle
     { tickedHardForkRefLedgerStateTransition :: !TransitionInfo
     , tickedHardForkRefLedgerStatePerEra ::
         !(HardForkState (TickedStateHandle m) xs)
-    , tickedHardForkStateHandleTransCtx :: !(HFTransCtx m xs)
+    , tickedHardForkStateHandleLedgerTablesFactory :: !(HFLedgerTablesFactory m xs)
     }
 
-  type TransCtx m (HardForkBlock xs) = HFTransCtx m xs
+  type LedgerTablesFactory m (HardForkBlock xs) = HFLedgerTablesFactory m xs
 
   newStateHandle _ = absurd
 
@@ -193,7 +193,7 @@ instance CanHardFork xs => IsLedger LedgerState (HardForkBlock xs) where
                 --   applicable here.
                 State.mostRecentTransitionInfo cfg (hcmap proxySingle state extended)
             , tickedHardForkRefLedgerStatePerEra = l'
-            , tickedHardForkStateHandleTransCtx = tctx
+            , tickedHardForkStateHandleLedgerTablesFactory = tctx
             }
    where
     cfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra

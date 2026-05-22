@@ -295,7 +295,7 @@ protocolInfoTPraosShelleyBased
         SL.initialChainDepState initialNonce (SL.sgGenDelegs genesis)
 
     initExtLedgerState ::
-      TransCtx m (ShelleyBlock (TPraos c) era) -> m (ExtStateHandle m (ShelleyBlock (TPraos c) era))
+      LedgerTablesFactory m (ShelleyBlock (TPraos c) era) -> m (ExtStateHandle m (ShelleyBlock (TPraos c) era))
     initExtLedgerState = \() -> do
       h <- fromNewEpochState mkH newEpochState
       pure

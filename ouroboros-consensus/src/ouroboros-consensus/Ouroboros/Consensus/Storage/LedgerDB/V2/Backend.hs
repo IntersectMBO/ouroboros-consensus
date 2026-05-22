@@ -86,7 +86,7 @@ data BackendResources m blk = BackendResources
   -- ^ Release any resources allocated by 'acquireBackend' that are not
   -- managed by the temporary registry (e.g. handles that have to outlive
   -- the registry handoff).
-  , transCtx :: TransCtx m blk
+  , ledgerTablesFactory :: LedgerTablesFactory m blk
   }
   deriving Generic
   deriving NoThunks via OnlyCheckWhnfNamed "BackendResources" (BackendResources m blk)

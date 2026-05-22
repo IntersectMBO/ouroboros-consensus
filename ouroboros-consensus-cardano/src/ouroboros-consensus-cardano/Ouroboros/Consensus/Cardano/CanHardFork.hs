@@ -125,7 +125,7 @@ type CardanoHardForkConstraints c =
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
   type HardForkTxMeasure (CardanoEras c) = DijkstraMeasure
 
-  type HFTransCtx m (CardanoEras c) = MkHandle m
+  type HFLedgerTablesFactory m (CardanoEras c) = MkHandle m
 
   hardForkStateHandleTranslation = \tctx ->
     StateHandleTranslation

@@ -925,7 +925,7 @@ protocolInfoCardano paramsCardano
   -- data from the genesis config (if provided) in the ledger state. For
   -- example, this includes initial staking and initial funds (useful for
   -- testing/benchmarking).
-  initExtLedgerStateCardano :: HFTransCtx m (CardanoEras c) -> m (ExtStateHandle m (CardanoBlock c))
+  initExtLedgerStateCardano :: HFLedgerTablesFactory m (CardanoEras c) -> m (ExtStateHandle m (CardanoBlock c))
   initExtLedgerStateCardano = \tctx -> do
     -- initHeaderState :: HeaderState (CardanoBlock c)
     -- initLedgerState :: LedgerState (CardanoBlock c)

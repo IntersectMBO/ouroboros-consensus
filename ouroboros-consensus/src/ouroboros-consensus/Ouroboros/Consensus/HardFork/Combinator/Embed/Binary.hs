@@ -46,7 +46,7 @@ protocolInfoBinary ::
   (ConsensusConfig (BlockProtocol blk2) -> PartialConsensusConfig (BlockProtocol blk2)) ->
   (LedgerConfig blk2 -> PartialLedgerConfig blk2) ->
   -- Projection
-  (HFTransCtx m '[blk1, blk2] -> TransCtx m blk1) ->
+  (HFLedgerTablesFactory m '[blk1, blk2] -> LedgerTablesFactory m blk1) ->
   ( ProtocolInfo m (HardForkBlock '[blk1, blk2])
   , Tracer.Tracer m kesAgentTrace -> m [MkBlockForging m (HardForkBlock '[blk1, blk2])]
   )
@@ -61,7 +61,7 @@ protocolInfoBinary
   eraParams2
   toPartialConsensusConfig2
   toPartialLedgerConfig2
-  projectTransCtx =
+  projectLedgerTablesFactory =
     ( ProtocolInfo
         { pInfoConfig =
             TopLevelConfig
@@ -102,7 +102,7 @@ protocolInfoBinary
               }
         , pInfoInitLedger = \hftctx -> do
             ExtStateHandle initLedgerState1 initHeaderState1 <-
-              pInfoInitLedger1 (projectTransCtx hftctx)
+              pInfoInitLedger1 (projectLedgerTablesFactory hftctx)
             pure
               ExtStateHandle
                 { extStateHandle =
