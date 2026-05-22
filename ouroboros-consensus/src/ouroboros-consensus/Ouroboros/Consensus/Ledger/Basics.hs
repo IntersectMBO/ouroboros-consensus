@@ -284,6 +284,23 @@ class BlockSupportsLedgerHD m blk where
   -- | Opaque handle to a ticked ledger state plus its tables.
   data TickedStateHandle m blk
 
+  -- | Per-block context needed to construct fresh 'LedgerTablesHandle's
+  -- (and, in the HFC case, to translate them across era boundaries).
+  --
+  -- For blocks that maintain no on-disk tables, or that capture their
+  -- factory by closure at protocol-setup time, this is @()@ — see Byron
+  -- and Shelley. For the hard-fork combinator this is
+  -- 'HFLedgerTablesFactory' (defined on 'CanHardFork'), which is the
+  -- recipe used by era-translation functions to materialise the
+  -- destination era's tables. The bridging equation
+  -- @LedgerTablesFactory m (HardForkBlock xs) = HFLedgerTablesFactory m xs@
+  -- lives in the HFC's 'BlockSupportsLedgerHD' instance.
+  --
+  -- Threaded into 'Ouroboros.Consensus.Node.ProtocolInfo.pInfoInitLedger'
+  -- so genesis construction can use the same factory the backend
+  -- provides; the HFC also stashes its value on every
+  -- 'HardForkStateHandle' so that ticking across an era boundary has
+  -- access to it without an extra argument.
   type LedgerTablesFactory m blk
   type LedgerTablesFactory m blk = ()
 

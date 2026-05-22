@@ -49,6 +49,23 @@ class
   -- in Haskell.)
   type HardForkTxMeasure xs
 
+  -- | The HFC's projection of
+  -- 'Ouroboros.Consensus.Ledger.Basics.LedgerTablesFactory' for the
+  -- @HardForkBlock xs@ — i.e. the factory used by era-translation
+  -- functions to materialise the destination era's 'LedgerTablesHandle'
+  -- when ticking crosses an era boundary.
+  --
+  -- The bridging equation
+  -- @LedgerTablesFactory m (HardForkBlock xs) = HFLedgerTablesFactory m xs@
+  -- lives in the HFC's 'BlockSupportsLedgerHD' instance: the two names
+  -- denote the same concept, separated only because the HFC machinery
+  -- (in particular 'hardForkStateHandleTranslation') lives on
+  -- 'CanHardFork' while the abstract factory lives on
+  -- 'BlockSupportsLedgerHD'.
+  --
+  -- For Cardano this is @MkHandle m@. For the trivial single-era
+  -- HFC instance below, it falls through to the era's own
+  -- 'LedgerTablesFactory'.
   type HFLedgerTablesFactory (m :: Type -> Type) xs
   type HFLedgerTablesFactory m xs = ()
 

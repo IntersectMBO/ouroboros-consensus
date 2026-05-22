@@ -121,6 +121,13 @@ type instance AuxLedgerEvent (HardForkBlock xs) = OneEraLedgerEvent xs
 type instance LedgerTablesHandle m (HardForkBlock xs) = Void
 
 instance CanHardFork xs => BlockSupportsLedgerHD m (HardForkBlock xs) where
+  -- | Note: 'hardForkStateHandleLedgerTablesFactory' is stashed on every
+  -- handle so that 'applyChainTickLedgerResult' has the factory in scope
+  -- when ticking crosses an era boundary (see 'State.extendToSlot'). The
+  -- class method only receives the handle, not a separate context, so
+  -- the recipe to construct the destination era's tables has to be
+  -- reachable from the handle itself. Duplicating / casting a handle
+  -- preserves the factory.
   data StateHandle m (HardForkBlock xs) = HardForkStateHandle
     { hardForkStateHandlePerEra :: HardForkState (StateHandle m) xs
     , hardForkStateHandleLedgerTablesFactory :: !(HFLedgerTablesFactory m xs)
