@@ -1,6 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -17,15 +16,15 @@ module Ouroboros.Consensus.Peras.Types
   , onPerasRoundNo
   , PerasBoostedBlock (..)
   , PerasSeatIndex (..)
-  , PerasVoteStake (..)
   , BoostedBlock
   , BoostedBlockCompatibleWithPoint (..)
-  , stakeAboveThreshold
+  , weightAboveThreshold
   , PerasVoteTarget (..)
   , PerasVoteId (..)
   , PerasVoterId (..)
-  , PerasVoteStakeDistr (..)
-  , lookupPerasVoteStake
+  , VoteWeight (..) -- Re-exported from Committee.Types for convenience
+  , VoteWeightDistr (..)
+  , lookupVoteWeight
   , PerasConversionError (..)
   , fromPerasSeatIndex
   , toPerasSeatIndex
@@ -48,7 +47,6 @@ import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
-import Data.Semigroup (Sum (..))
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -62,11 +60,12 @@ import Ouroboros.Consensus.Block.RealPoint
   , toBytes32RealPoint
   , withOriginRealPointToPoint
   )
+import Ouroboros.Consensus.Committee.Types (VoteWeight (..))
 import Ouroboros.Consensus.Committee.WFA (SeatIndex (..))
 import Ouroboros.Consensus.Peras.Params
   ( PerasParams (..)
-  , PerasQuorumStakeThreshold (..)
-  , PerasQuorumStakeThresholdSafetyMargin (..)
+  , PerasQuorumWeightThreshold (..)
+  , PerasQuorumWeightThresholdSafetyMargin (..)
   )
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.CBOR (decodeWithOrigin, encodeWithOrigin)
@@ -181,47 +180,25 @@ instance Serialise (PerasVoteId blk) where
     pviVoterId <- PerasVoterId <$> fromCBOR
     pure $ PerasVoteId{pviRoundNo, pviVoterId}
 
--- NOTE: At the moment there is no consensus from researchers/engineers on how
--- we go from the absolute stake of a voter in the ledger to the relative stake
--- of their vote in the voting commitee (given that the quorum is expressed as
--- a relative value of the voting commitee total stake).
+-- | Check whether a given vote weight is above the quorum threshold.
 --
--- So, for now you can consider this 'Rational' as the best approximation we
--- have at the moment of the concrete type for a relative vote stake that can be
--- compared to the quorum threshold value (also currently a 'Rational').
-newtype PerasVoteStake
-  = PerasVoteStake
-  { unPerasVoteStake :: Rational
-  }
-  deriving newtype (Eq, Ord, Num, Fractional, NoThunks, NFData, Serialise)
-  deriving stock Generic
-  deriving Show via Quiet PerasVoteStake
-  deriving Semigroup via Sum Rational
-  deriving Monoid via Sum Rational
-
--- | Check whether a given vote stake is above the quorum threshold.
---
--- TODO: this function assumes that the 'PerasVoteStake' and the quorum
+-- NOTE: this function assumes that the 'VoteWeight' and the quorum
 -- threshold used in 'PerasParams' are expressed in the same units. That is,
 -- both are either absolute or relative (normalized) values. Under the current
 -- current implementation of 'PerasParams', this function only makes sense when
--- both values are relative (normalized) values, so we should either normalize
--- the 'PerasVoteStake' before calling this function, or change this function to
--- accept a stake distribution and perform the normalization internally.
-stakeAboveThreshold :: PerasParams -> PerasVoteStake -> Bool
-stakeAboveThreshold params voteStake =
-  stake >= quorumThreshold + safetyMargin
+-- both values are relative (normalized) values.
+weightAboveThreshold :: PerasParams -> VoteWeight -> Bool
+weightAboveThreshold params voteWeight =
+  weight >= quorumThreshold + safetyMargin
  where
-  stake =
-    unPerasVoteStake voteStake
+  weight =
+    unVoteWeight voteWeight
   quorumThreshold =
-    unPerasQuorumStakeThreshold
-      (perasQuorumStakeThreshold params)
+    unPerasQuorumWeightThreshold
+      (perasQuorumWeightThreshold params)
   safetyMargin =
-    unPerasQuorumStakeThresholdSafetyMargin
-      (perasQuorumStakeThresholdSafetyMargin params)
-
--- ** Voting stake distributions
+    unPerasQuorumWeightThresholdSafetyMargin
+      (perasQuorumWeightThresholdSafetyMargin params)
 
 -- | The identifier of a voter in a Peras election
 newtype PerasVoterId
@@ -236,23 +213,25 @@ instance Serialise PerasVoterId where
   encode = toCBOR . unPerasVoterId
   decode = PerasVoterId <$> fromCBOR
 
--- | Voting stake distribution for a Peras election
-newtype PerasVoteStakeDistr
-  = PerasVoteStakeDistr
-  { unPerasVoteStakeDistr :: Map PerasVoterId PerasVoteStake
+-- | Voting weight distribution for a Peras election
+-- TODO: remove, at call site an argument of this type will be replaced by a 'PerasVotingCommittee blk'.
+newtype VoteWeightDistr
+  = VoteWeightDistr
+  { unVoteWeightDistr :: Map PerasVoterId VoteWeight
   }
   deriving newtype NoThunks
   deriving stock (Show, Eq, Generic)
 
--- | Lookup the stake of a vote cast by a member of a given stake distribution.
-lookupPerasVoteStake ::
+-- | Lookup the weight of a vote cast by a member of a given weight distribution.
+-- TODO: remove this function since it will be replaced by 'eligiblePartyVoteWeight' from Committee.Class
+lookupVoteWeight ::
   PerasVoterId ->
-  PerasVoteStakeDistr ->
-  Maybe PerasVoteStake
-lookupPerasVoteStake voterId distr =
+  VoteWeightDistr ->
+  Maybe VoteWeight
+lookupVoteWeight voterId distr =
   Map.lookup
     voterId
-    (unPerasVoteStakeDistr distr)
+    (unVoteWeightDistr distr)
 
 -- ** Conversion errors
 

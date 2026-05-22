@@ -59,7 +59,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee (..))
 import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.Crypto (ElectionId, PrivateKey, VoteCandidate)
-import Ouroboros.Consensus.Committee.Types (PoolId, VoteWeight (..))
+import Ouroboros.Consensus.Committee.Types (PoolId)
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Types
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -129,13 +129,13 @@ class
 
   validatePerasVote ::
     PerasParams ->
-    PerasVoteStakeDistr ->
+    VoteWeightDistr ->
     PerasVote blk ->
     Either (PerasError blk) (ValidatedPerasVote blk)
   default validatePerasVote ::
     PerasVote blk ~ VoidPerasVote blk =>
     PerasParams ->
-    PerasVoteStakeDistr ->
+    VoteWeightDistr ->
     PerasVote blk ->
     Either (PerasError blk) (ValidatedPerasVote blk)
   validatePerasVote _ _ vote =
@@ -257,7 +257,7 @@ implPerasForgeVoteIfEligible
             pure $
               ValidatedPerasVote
                 { vpvVote = concreteVote
-                , vpvVoteStake = coerce voteWeight
+                , vpvVoteWeight = coerce voteWeight
                 }
 
 -- * Helpers to derive @BlockSupportsPeras@ for block types without Peras support
@@ -306,7 +306,7 @@ newtype VoidPerasError blk
 data ValidatedPerasVote blk
   = ValidatedPerasVote
   { vpvVote :: !(PerasVote blk)
-  , vpvVoteStake :: !PerasVoteStake
+  , vpvVoteWeight :: !VoteWeight
   }
 
 deriving instance Show (PerasVote blk) => Show (ValidatedPerasVote blk)
@@ -376,11 +376,11 @@ votesReachQuorum params votes =
     -- can't vacuously reach a quorum, even if the quorum threshold is 0.
     [] -> Nothing
     -- If we have at least one vote, we must check that all votes are for the
-    -- same target, and that their total stake of is above the quorum threshold.
+    -- same target, and that their total weight is above the quorum threshold.
     (v0 : vs)
       | not (allVotesMatchTarget v0 vs) ->
           Nothing
-      | not votesHaveEnoughStake ->
+      | not votesHaveEnoughWeight ->
           Nothing
       | otherwise ->
           Just
@@ -390,10 +390,10 @@ votesReachQuorum params votes =
               , vpvqPerasParams = params
               }
  where
-  totalVoteStake =
-    mconcat (vpvVoteStake <$> votes)
-  votesHaveEnoughStake =
-    stakeAboveThreshold params totalVoteStake
+  totalVoteWeight =
+    mconcat (vpvVoteWeight <$> votes)
+  votesHaveEnoughWeight =
+    weightAboveThreshold params totalVoteWeight
   allVotesMatchTarget target =
     all ((== (getPerasVoteTarget target)) . getPerasVoteTarget)
 

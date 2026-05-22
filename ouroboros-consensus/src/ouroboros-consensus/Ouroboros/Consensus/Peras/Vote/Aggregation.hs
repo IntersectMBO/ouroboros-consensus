@@ -18,19 +18,19 @@
 -- | Peras vote aggregation and certificate forging
 --
 -- This module implements the core voting logic for the Peras protocol, which
--- aggregates stake-weighted votes on chain blocks and forges certificates when
+-- aggregates weighted votes on chain blocks and forges certificates when
 -- quorum is reached.
 --
 -- = Overview
 --
 -- In Peras, validators vote on specific blocks during designated voting rounds.
--- Each vote carries a stake weight, and votes are aggregated by:
+-- Each vote carries a weight, and votes are aggregated by:
 --
 --   * __Round__: each vote belongs to a specific 'PerasRoundNo'
 --   * __Target__: within a round, votes are cast for different block 'Point's
 --
--- As votes arrive, the system tracks the total stake backing each candidate
--- block. When one target accumulates enough stake to exceed the configured
+-- As votes arrive, the system tracks the total weight backing each candidate
+-- block. When one target accumulates enough weight to exceed the configured
 -- quorum threshold, a certificate is automatically forged for that block,
 -- making it a winner for that round.
 --
@@ -39,7 +39,7 @@
 -- For every round being voted for, the aggregation follows a state machine:
 --
 -- 1. __Quorum not reached__: multiple block targets are candidates, each
---    accumulating votes and stake. All targets compete to reach quorum first.
+--    accumulating votes and weight. All targets compete to reach quorum first.
 --
 -- 2. __Quorum reached__: once a target reaches quorum, it becomes the winner
 --    and a certificate is forged. All other targets become losers and continue
@@ -48,7 +48,7 @@
 -- = Quorum Threshold and Multiple Winners
 --
 -- The quorum threshold is parameterized via 'PerasParams'. Depending on this
--- configuration and the stake distribution, it may be theoretically possible
+-- configuration and the weight distribution, it may be theoretically possible
 -- for multiple targets to exceed the threshold within the same round.
 --
 -- This module treats multiple winners as an error condition and rejects votes
@@ -57,10 +57,10 @@
 --   * The quorum threshold is misconfigured, or that
 --   * We were extremely unlucky when randomly selecting the voting committee.
 --
--- With a correct threshold configuration (e.g., > 3/4 of total stake + a small
+-- With a correct threshold configuration (e.g., > 3/4 of total weight + a small
 -- safety margin to account for an unlucky local sortition when selecting
 -- non-persistent voters during committee selection), multiple winners should be
--- impossible given honest stake distribution.
+-- impossible given honest weight distribution.
 --
 -- = Key Types
 --
@@ -68,7 +68,7 @@
 --      its logically split between separate 'NoQuorum' and 'Quorum' types
 --      representing the two states (1) and (2) described above, respectively.
 --   * 'PerasTargetVoteState': tracks votes for one specific block target
---   * 'PerasTargetVoteTally': raw vote count and stake accumulation
+--   * 'PerasTargetVoteTally': raw vote count and weight accumulation
 --   * 'PerasTargetVoteStatus': type-level status (Candidate/Winner/Loser)
 --   * 'UpdateRoundVoteStateError': errors from invalid state transitions
 --
@@ -88,7 +88,7 @@ module Ouroboros.Consensus.Peras.Vote.Aggregation
   , updatePerasRoundVoteStates
   , UpdateRoundVoteStateError (..)
   , PerasTargetVoteState
-  , getPerasTargetVoteStateTotalStake
+  , getPerasTargetVoteStateTotalWeight
   , getPerasTargetVoteStateBlock
   ) where
 
@@ -471,8 +471,8 @@ data PerasTargetVoteTally blk = PerasTargetVoteTally
   -- ^ What we are tallying votes for
   , ptvtVotes :: !(Map (PerasVoteId blk) (WithArrivalTime (ValidatedPerasVote blk)))
   -- ^ Votes received for this target, indexed by vote ID
-  , ptvtTotalStake :: !PerasVoteStake
-  -- ^ Total stake of the votes received for this target
+  , ptvtTotalWeight :: !VoteWeight
+  -- ^ Total weight of the votes received for this target
   }
 
 deriving instance
@@ -501,11 +501,11 @@ freshTargetVoteTally target =
   PerasTargetVoteTally
     { ptvtTarget = target
     , ptvtVotes = Map.empty
-    , ptvtTotalStake = PerasVoteStake 0
+    , ptvtTotalWeight = VoteWeight 0
     }
 
 -- | Add a vote to an existing target tally if it isn't already present,
--- and update the stake accordingly.
+-- and update the weight accordingly.
 --
 -- PRECONDITION: the vote's target must match the tally's target.
 updateTargetVoteTally ::
@@ -520,12 +520,12 @@ updateTargetVoteTally
   ptvt@PerasTargetVoteTally
     { ptvtVotes
     , ptvtTarget
-    , ptvtTotalStake
+    , ptvtTotalWeight
     } =
     assert (getPerasVoteTarget vote == ptvtTarget) $ do
       ptvt
         { ptvtVotes = pvaVotes'
-        , ptvtTotalStake = pvaTotalStake'
+        , ptvtTotalWeight = pvaTotalWeight'
         }
    where
     swapVote =
@@ -533,13 +533,13 @@ updateTargetVoteTally
         (\_k old _new -> old)
         (getPerasVoteId vote)
 
-    (pvaVotes', pvaTotalStake')
-      -- key WAS NOT present → vote inserted and stake updated
+    (pvaVotes', pvaTotalWeight')
+      -- key WAS NOT present → vote inserted and weight updated
       | (Nothing, votes') <- swapVote vote ptvtVotes =
-          (votes', ptvtTotalStake + vpvVoteStake (forgetArrivalTime vote))
-      -- key WAS already present → votes and stake unchanged
+          (votes', ptvtTotalWeight + vpvVoteWeight (forgetArrivalTime vote))
+      -- key WAS already present → votes and weight unchanged
       | otherwise =
-          (ptvtVotes, ptvtTotalStake)
+          (ptvtVotes, ptvtTotalWeight)
 
 {-------------------------------------------------------------------------------
   Peras target vote status
@@ -605,9 +605,9 @@ instance
   noThunks ctx (PerasTargetVoteWinner tally cert) =
     noThunks ctx (tally, cert)
 
--- | Extract the total stake from a target vote state
-getPerasTargetVoteStateTotalStake :: PerasTargetVoteState blk status -> PerasVoteStake
-getPerasTargetVoteStateTotalStake = ptvtTotalStake . ptvsVoteTally
+-- | Extract the total weight from a target vote state
+getPerasTargetVoteStateTotalWeight :: PerasTargetVoteState blk status -> VoteWeight
+getPerasTargetVoteStateTotalWeight = ptvtTotalWeight . ptvsVoteTally
 
 -- | Extract the block point from a target vote state
 getPerasTargetVoteStateBlock :: PerasTargetVoteState blk status -> Point blk
@@ -683,7 +683,7 @@ updateLoserVoteState ::
 updateLoserVoteState params vote oldState =
   assert (getPerasVoteTarget vote == ptvtTarget (ptvsVoteTally oldState)) $ do
     let newVoteTally = updateTargetVoteTally vote (ptvsVoteTally oldState)
-        aboveQuorum = stakeAboveThreshold params (ptvtTotalStake newVoteTally)
+        aboveQuorum = weightAboveThreshold params (ptvtTotalWeight newVoteTally)
      in if aboveQuorum
           then Left $ PerasTargetVoteLoser newVoteTally
           else Right $ PerasTargetVoteLoser newVoteTally
