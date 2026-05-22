@@ -126,7 +126,7 @@ deriving anyclass instance ToExpr PerasRoundNo
 
 deriving anyclass instance ToExpr PerasWeight
 
-deriving anyclass instance ToExpr PerasVoteStake
+deriving anyclass instance ToExpr VoteWeight
 
 deriving anyclass instance ToExpr (PerasVoteId blk)
 
