@@ -20,8 +20,10 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , IgnoringOverflow (..)
   , Invalidated (..)
   , LedgerSupportsMempool (..)
+  , MempoolAcc
   , TxId
   , TxLimits (..)
+  , TxLocalData
   , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
@@ -83,88 +85,87 @@ data WhetherToIntervene
     Intervene
   deriving Show
 
--- $note-hfc-mempool
+-- $note-mempool-redesign
 --
--- == Note [Mempool no longer manages tables across HFC boundaries]
+-- == Note [Tx-local data + accumulator]
 --
--- Previous versions of this module exposed @reapplyTxs@ (a batched
--- revalidation method with a default fold), @prependMempoolDiffs@ /
--- @applyMempoolDiffs@ (HFC-specific optimization hooks for re-projecting
--- diffs cheaply across eras), a 'WhatToDoWithTxDiffs' kind plus
--- @InputTxDiffs@ family (to type-level distinguish collect-vs-discard
--- revalidation), and @getTransactionKeySets@ (to pre-compute UTxO keys
--- needed by a tx). All of those have been removed.
+-- Each tx in the mempool carries its own block-specific 'TxLocalData'
+-- (typically the UTxO entries read from disk for its inputs). That
+-- data lives /alongside/ the validated tx in the mempool sequence, not
+-- in a global cache.
 --
--- Rationale: tx-induced UTxO diffs are now buffered inside the
--- per-block 'MempoolCache' rather than projected through HFC layers,
--- which makes the optimization hooks unnecessary; key-set computation is
--- internal to each block's 'applyTx' and lives in the Shelley instance
--- (the only block type that maintains tables). The batched
--- @reapplyTxs@ is now just a plain fold of 'reapplyTx' at the call
--- site.
+-- The mempool also maintains a 'MempoolAcc': a block-specific
+-- accumulator that represents the chain-ticked ledger state /after/
+-- all currently-cached mempool txs have been (re)applied. New txs are
+-- validated against it; on removal, it is rebuilt by folding
+-- 'reapplyTx' over the kept txs (cheaply — their 'TxLocalData' is
+-- already on hand). On a tip change, both the per-tx data and the acc
+-- are rebuilt from scratch via 'prepareTx' + 'reapplyTx'.
+--
+-- This replaces an earlier design where a single 'MempoolCache' tried
+-- to play both roles (per-tx cache /and/ aggregated view) and could
+-- get into inconsistent states when txs were evicted.
+
+-- | Per-tx data attached to each tx in the mempool sequence.
+--
+-- Typically the UTxO entries the tx's inputs reference, materialised
+-- from disk by 'prepareTx'. For Byron this is @()@; for the HFC
+-- it is era-tagged ('NS TxLocalData' over the eras).
+--
+-- Stored next to the tx; rebuilt only when the chain tip changes
+-- (i.e. on 'syncWithLedger').
+type TxLocalData :: Type -> Type
+data family TxLocalData blk
+
+-- | The mempool's aggregated view: the chain-ticked ledger state plus
+-- whatever cumulative state the block's validation needs (for
+-- Shelley, the combined 'Diff' of every tx in the mempool so far).
+--
+-- Maintained by 'applyTx' / 'reapplyTx' and rebuilt deterministically
+-- whenever the sequence of mempool txs changes (e.g. by
+-- 'removeTxs' or 'syncWithLedger').
+type MempoolAcc :: Type -> Type
+data family MempoolAcc blk
 
 class
   ( UpdateLedger blk
   , TxLimits blk
   , NoThunks (GenTx blk)
   , NoThunks (Validated (GenTx blk))
+  , NoThunks (TxLocalData blk)
+  , NoThunks (MempoolAcc blk)
   , Show (GenTx blk)
   , Show (Validated (GenTx blk))
   , Show (ApplyTxErr blk)
   ) =>
   LedgerSupportsMempool blk
   where
-  -- | Per-block mempool read cache.
-  --
-  -- Morally a snapshot of the UTxO entries needed by the mempool's
-  -- current transactions, plus the diffs each transaction introduces.
-  -- Keeping these values cached lets 'applyTx' / 'reapplyTx' validate
-  -- each tx without round-tripping to disk.
-  --
-  -- This is a /pure/ value: the cache is not parameterised by @m@
-  -- because the values it holds are already materialised. For the
-  -- HFC instance the cache is era-aware (an @NS MempoolCache xs@-shaped
-  -- thing) and gets re-initialised when the mempool crosses an era
-  -- boundary.
-  --
-  -- TODO @js: pin down the cache lifecycle precisely (when is it constructed,
-  -- when is it updated, when is it discarded).
-  data MempoolCache blk
+  -- | The empty accumulator at the given chain-ticked ledger state.
+  -- Used to seed any (re)build.
+  emptyAcc :: TickedLedgerState blk -> MempoolAcc blk
 
-  cachedState :: MempoolCache blk -> Ticked LedgerState blk
-  updateCachedState :: Ticked LedgerState blk -> MempoolCache blk -> MempoolCache blk
+  -- | Project the (possibly evolved) ticked ledger state out of the acc.
+  -- For Byron this is the same value Byron's 'applyTx' mutates; for
+  -- Shelley it carries non-UTxO ledger state changes (governance,
+  -- fees, …) accumulated by prior tx applies.
+  accTickedState :: MempoolAcc blk -> TickedLedgerState blk
 
-  -- | Build an initial 'MempoolCache' from a ticked state handle.
+  -- | Read disk-resident data this tx needs into a fresh
+  -- 'TxLocalData'. The /only/ monadic entry point; after this runs,
+  -- all later operations on this tx ('txMeasure', 'applyTx',
+  -- 'reapplyTx') are pure.
   --
-  -- The state handle is required (rather than e.g. a unit-shaped
-  -- factory) because the HFC instance needs the current era tag to
-  -- position the @NS@-shaped cache.
-  mkMempoolCache :: TickedStateHandle m blk -> MempoolCache blk
-
-  -- | Read into the cache the UTxO values the given (unvalidated)
-  -- transaction needs for validation/measurement.
-  --
-  -- This is the only monadic entry point that touches the on-disk
-  -- tables for a given tx. Once it has run, all later operations on
-  -- this tx ('txMeasure', 'applyTx', 'reapplyTx') can be /pure/: they
-  -- look up values in the cache, never in the handle's
-  -- 'LedgerTablesHandle'.
-  --
-  -- Idempotent: values already present in the cache are not re-read.
-  addToCache ::
+  -- The accumulator is passed in so the block instance can skip
+  -- reads for keys already covered by a prior mempool tx's diff (a
+  -- parent-child dependency).
+  prepareTx ::
     Monad m =>
+    LedgerConfig blk ->
+    SlotNo ->
     TickedStateHandle m blk ->
+    MempoolAcc blk ->
     GenTx blk ->
-    MempoolCache blk ->
-    m (MempoolCache blk)
-
-  -- | Drop a transaction's contribution from the 'MempoolCache'.
-  --
-  -- Used when the mempool drops a tx without going through
-  -- 'reapplyTx' (e.g. manual removal). The resulting cache has the
-  -- tx's read values and diffs forgotten, so subsequent 'reapplyTx'
-  -- calls on the remaining txs see the correct prefix-state.
-  forgetTxFromCache :: Validated (GenTx blk) -> MempoolCache blk -> MempoolCache blk
+    m (TxLocalData blk)
 
   -- | Check whether the internal invariants of the transaction hold.
   txInvariant :: GenTx blk -> Bool
@@ -177,29 +178,24 @@ class
   -- transaction as long as there is at least one byte free in the
   -- mempool.
   --
-  -- Pure: the values needed by this tx are expected to be in the
-  -- 'MempoolCache' already (the caller is responsible for calling
-  -- 'addToCache' first). The returned handle has the in-memory pure
-  -- state updated via 'withTickedState' from 'BlockSupportsLedgerHD' — it
-  -- shares the underlying 'LedgerTablesHandle' with the input (no
-  -- writes to tables; the UTxO diffs introduced by mempool txs are
-  -- buffered in the 'MempoolCache' instead). The input handle is
-  -- consumed; callers must use the returned one.
+  -- Pure: the values needed by this tx must already be in the
+  -- 'TxLocalData' (the caller is responsible for calling 'prepareTx'
+  -- first). The returned acc has this tx's contribution merged in;
+  -- callers append the tx to the mempool sequence together with its
+  -- 'TxLocalData'.
   --
-  -- The returned cache contains the new tx's diff appended.
-  --
-  -- On error the cache is /not/ returned: the caller still holds the
-  -- input cache and the failed tx is simply discarded.
+  -- On error the acc is not returned: the caller still holds the input
+  -- acc and the failed tx is simply discarded.
   applyTx ::
     LedgerConfig blk ->
     WhetherToIntervene ->
     -- | Slot number of the block containing the tx
     SlotNo ->
+    MempoolAcc blk ->
     GenTx blk ->
-    MempoolCache blk ->
-    Except
-      (ApplyTxErr blk)
-      (MempoolCache blk, Validated (GenTx blk))
+    TxLocalData blk ->
+    Except (ApplyTxErr blk)
+      (Validated (GenTx blk), MempoolAcc blk)
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state.
@@ -209,30 +205,18 @@ class
   -- but other checks (such as checking for double spending) must still
   -- be done.
   --
-  -- Pure, with the same value-availability precondition as 'applyTx':
-  -- callers must have populated the cache for the tx (via 'addToCache'
-  -- on @'txForgetValidated' vtx@) before calling this.
-  --
-  -- The handle update semantics are the same as 'applyTx': the returned
-  -- handle has its pure state updated via 'withTickedState', sharing
-  -- the underlying 'LedgerTablesHandle' with the input.
-  --
-  -- The 'MempoolCache' is threaded through both the success and failure
-  -- cases — but its content differs:
-  --
-  -- * On success: the cache is updated with the tx's re-derived diff.
-  -- * On error: the failing tx is being evicted from the mempool, so the
-  --   cache returned in the error has the tx's prior contributions
-  --   /removed/. The caller can plug this cache straight back into the
-  --   next 'reapplyTx' in the fold without recomputing it.
+  -- A failing 'reapplyTx' means the tx is no longer valid wrt the
+  -- current acc (typically because a parent tx was removed, or the
+  -- chain advanced): the caller evicts it from the mempool.
   reapplyTx ::
     HasCallStack =>
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
+    MempoolAcc blk ->
     Validated (GenTx blk) ->
-    MempoolCache blk ->
-    Except (ApplyTxErr blk) (MempoolCache blk)
+    TxLocalData blk ->
+    Except (ApplyTxErr blk) (MempoolAcc blk)
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
@@ -326,10 +310,11 @@ class
 
   -- | Compute the measure of a transaction (e.g. size, ExUnits).
   --
-  -- Pure: reads any required UTxO values from the cache (which the
-  -- caller is expected to have populated for this tx via 'addToCache').
+  -- Pure: uses the chain-ticked state for protocol parameters and the
+  -- tx's 'TxLocalData' for any UTxO values it needs (e.g. reference
+  -- scripts in Alonzo+).
   --
-  -- INVARIANT @Right x = txMeasure cfg cache tx@ implies
+  -- INVARIANT @Right x = txMeasure cfg st tld tx@ implies
   -- @x 'Measure.<=' 'blockCapacityTxMeasure' cfg st@. Otherwise, the
   -- mempool could block forever.
   --
@@ -337,35 +322,32 @@ class
   -- per-tx limits.
   txMeasure ::
     LedgerConfig blk ->
-    MempoolCache blk ->
+    TickedLedgerState blk ->
+    TxLocalData blk ->
     GenTx blk ->
     Except (ApplyTxErr blk) (TxMeasure blk)
 
   -- | The size of the transaction from the perspective of diffusion layer
   txWireSize :: GenTx blk -> Network.SizeInBytes
 
-  -- | The various sizes (bytes, Plutus script ExUnits, etc) of a tx /when it's
-  -- in a block/
+  -- | What is the allowed capacity for the txs in an individual block?
   --
-  -- This size is used to compute how many transaction we can put in a block
+  -- The various sizes (bytes, Plutus script ExUnits, etc) of a tx /when it's
+  -- in a block/.
+  --
+  -- This size is used to compute how many transactions we can put in a block
   -- when forging one.
   --
   -- The byte size component in particular might differ from the size of the
-  -- serialisation used to send and receive the transaction across the network.
-  -- For example, CBOR-in-CBOR could be used when sending the transaction
-  -- across the network, requiring a few extra bytes compared to the actual
-  -- in-block serialisation. Another example is the transaction of the
-  -- hard-fork combinator which will include an envelope indicating its era
-  -- when sent across the network. However, when embedded in the respective
-  -- era's block, there is no need for such envelope. An example from upstream
-  -- is that the Cardano ledger's "Segregated Witness" encoding scheme
-  -- contributes to the encoding overhead.
-  --
-  -- (The per-tx measure 'txMeasure' has been moved to
-  -- 'LedgerSupportsMempool' so it can read UTxO values via the mempool
-  -- cache and ticked state handle.)
-
-  -- | What is the allowed capacity for the txs in an individual block?
+  -- serialisation used to send and receive the transaction across the
+  -- network. For example, CBOR-in-CBOR could be used when sending the
+  -- transaction across the network, requiring a few extra bytes compared to
+  -- the actual in-block serialisation. Another example is the transaction of
+  -- the hard-fork combinator which will include an envelope indicating its
+  -- era when sent across the network. However, when embedded in the
+  -- respective era's block, there is no need for such envelope. An example
+  -- from upstream is that the Cardano ledger's "Segregated Witness" encoding
+  -- scheme contributes to the encoding overhead.
   blockCapacityTxMeasure ::
     -- | at least for symmetry with 'txMeasure'
     LedgerConfig blk ->

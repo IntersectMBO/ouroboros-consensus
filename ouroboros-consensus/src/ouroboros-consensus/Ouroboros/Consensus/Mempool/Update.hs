@@ -248,7 +248,7 @@ doAddTx mpEnv caller wti tx = do
               -- prior to Conway. Which is irrelevant, since mainnet is already
               -- in Conway.
               let txt = T.pack $ "MempoolTxTooSlow (" <> show dur <> ") " <> show (txId tx)
-               in mkMempoolApplyTxError (isLedgerState is) txt
+               in mkMempoolApplyTxError (accTickedState (isAcc is)) txt
         case mbX of
           Nothing -> case (wti, mbTimeoutSoftTxErr) of
             (Intervene, Just txerr) -> do
@@ -306,11 +306,11 @@ tryAddTx ::
   m (TriedToAddTx blk)
 tryAddTx mpEnv cfg wti tx is = do
   st <- readMVar (mpEnvTickedHandle mpEnv)
-  -- Pre-load the cache with any UTxO values this tx needs. After
-  -- this step both 'txMeasure' and 'applyTx' are pure: they look up
-  -- values in the cache instead of going to disk.
-  cache1 <- addToCache st tx (isCache is)
-  pure $ case runExcept (txMeasure cfg cache1 tx) of
+  -- Materialise the disk-resident data this tx needs (its
+  -- 'TxLocalData'). After this step both 'txMeasure' and 'applyTx'
+  -- are pure: they look up values in 'tld' instead of going to disk.
+  tld <- prepareTx cfg (isSlotNo is) st (isAcc is) tx
+  pure $ case runExcept (txMeasure cfg (accTickedState (isAcc is)) tld tx) of
     Left err ->
       -- The transaction does not have a valid measure (eg its ExUnits is
       -- greater than what this ledger state allows for a single transaction).
@@ -389,7 +389,7 @@ tryAddTx mpEnv cfg wti tx is = do
       , not $ txsdifftime Measure.<= FiniteDiffTimeMeasure (mempoolTimeoutCapacity toCfg) ->
           NotEnoughSpaceLeft
       | otherwise ->
-          case validateNewTransaction cfg wti tx txsz cache1 is of
+          case validateNewTransaction cfg wti tx txsz tld is of
             (Left err, _) ->
               Processed $ \_dur ->
                 TransactionProcessingResult
@@ -435,18 +435,15 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
       ts <- readMVar tickedHandleMVar
       let removeSet = Set.fromList (NE.toList toRemove)
           isToRemove =
-            (`Set.member` removeSet) . txId . txForgetValidated . txTicketTx
-          (toRemoveTickets, toKeep) =
+            (`Set.member` removeSet) . txId . txForgetValidated . fst . txTicketTx
+          (_toRemoveTickets, toKeep) =
             List.partition isToRemove (TxSeq.toList $ isTxs is)
-          forgetTxs = map txTicketTx toRemoveTickets
       (is', t) <-
         doRemoveTxs
           capacityOverride
           cfg
           (isSlotNo is)
           ts
-          (isCache is)
-          forgetTxs
           (isLastTicketNo is)
           toKeep
           toRemove
@@ -464,9 +461,12 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
 -- | Manually remove the given transactions from the mempool, returning the
 -- updated 'InternalState' and a trace event.
 --
--- Reuses the existing 'MempoolCache' by 'forgetTxFromCache'-ing the
--- evicted txs; the kept txs' read values and diffs survive, so the
--- subsequent revalidation does not need to re-read from disk.
+-- The chain tip has not moved, so the kept txs' 'TxLocalData' is still
+-- valid — we keep it via 'keepTxLocalData' and avoid re-reading from
+-- disk. The 'MempoolAcc' is rebuilt from scratch by re-folding
+-- 'reapplyTx' over the kept txs, which also surfaces any kept tx that
+-- becomes invalid as a side-effect of a removal (e.g. an orphan child
+-- whose parent was removed).
 doRemoveTxs ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
@@ -477,21 +477,15 @@ doRemoveTxs ::
   LedgerConfig blk ->
   SlotNo ->
   TickedStateHandle m blk ->
-  -- | The current cache.
-  MempoolCache blk ->
-  -- | Txs being evicted — their contributions are forgotten from the
-  -- cache before revalidating the kept txs.
-  [Validated (GenTx blk)] ->
   TicketNo ->
   -- | Txs to keep
-  [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
+  [TxTicket (TxMeasureWithDiffTime blk) (TxRecord blk)] ->
   -- | IDs being removed (only for tracing).
   NE.NonEmpty (GenTxId blk) ->
   m (InternalState blk, TraceEventMempool blk)
-doRemoveTxs capacityOverride lcfg slot ts cache0 forgetTxs tkt txs txIds = do
-  let cache1 = foldr forgetTxFromCache cache0 forgetTxs
+doRemoveTxs capacityOverride lcfg slot ts tkt txs txIds = do
   RevalidateTxsResult is' removed <-
-    revalidateTxsFor capacityOverride lcfg slot ts cache1 tkt txs
+    revalidateTxsFor capacityOverride lcfg slot ts keepTxLocalData tkt txs
   let trace =
         TraceMempoolManuallyRemovedTxs
           txIds
@@ -590,9 +584,9 @@ implSyncWithLedger projectResult mpEnv =
 -- ledger state. Returns the updated 'InternalState' and a trace event
 -- if any txs were dropped.
 --
--- Builds a /fresh/ 'MempoolCache' from the new ticked handle. The
--- previous cache cannot be reused: the ledger state has moved, so
--- previously-cached values may now be stale.
+-- Uses 'freshTxLocalData' so each tx's 'TxLocalData' is re-read against
+-- the new ticked handle: the chain tip has moved, so previously
+-- materialised values may be stale.
 doSyncWithLedger ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
@@ -612,7 +606,7 @@ doSyncWithLedger capacityOverride lcfg slot ts istate = do
       lcfg
       slot
       ts
-      (mkMempoolCache ts)
+      (freshTxLocalData lcfg slot)
       (isLastTicketNo istate)
       (TxSeq.toList $ isTxs istate)
   let mTrace =

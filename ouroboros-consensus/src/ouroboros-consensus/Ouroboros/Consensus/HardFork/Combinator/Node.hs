@@ -9,8 +9,11 @@ module Ouroboros.Consensus.HardFork.Combinator.Node () where
 
 import Data.Proxy
 import Data.SOP.BasicFunctors
+import Data.SOP.Constraint (All, Compose)
 import Data.SOP.Strict
 import GHC.Stack
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Ledger.SupportsMempool (MempoolAcc, TxLocalData)
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
@@ -61,5 +64,7 @@ instance
   ( CanHardFork xs
   , SupportedNetworkProtocolVersion (HardForkBlock xs)
   , SerialiseHFC xs
+  , All (Compose NoThunks TxLocalData) xs
+  , All (Compose NoThunks MempoolAcc) xs
   ) =>
   RunNode (HardForkBlock xs)

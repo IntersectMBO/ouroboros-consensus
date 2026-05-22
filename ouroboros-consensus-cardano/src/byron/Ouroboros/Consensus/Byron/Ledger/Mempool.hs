@@ -115,17 +115,22 @@ type instance ApplyTxErr ByronBlock = CC.ApplyMempoolPayloadErr
 instance ShowProxy CC.ApplyMempoolPayloadErr
 
 instance LedgerSupportsMempool ByronBlock where
-  data MempoolCache ByronBlock = ByronMempoolCache (Ticked LedgerState ByronBlock)
+  -- Byron has no on-disk tables; nothing to read per-tx.
+  data TxLocalData ByronBlock = ByronTxLocalData
+    deriving Generic
+    deriving anyclass NoThunks
 
-  mkMempoolCache = ByronMempoolCache . tickedState
-  cachedState (ByronMempoolCache st) = st
-  updateCachedState st _ = ByronMempoolCache st
+  -- The mempool acc /is/ the ticked ledger state for Byron: each tx
+  -- is applied in place to that state.
+  newtype MempoolAcc ByronBlock = ByronMempoolAcc
+    {unByronMempoolAcc :: Ticked LedgerState ByronBlock}
+    deriving Generic
+    deriving anyclass NoThunks
 
-  -- Byron has no UTxO reads to perform; the cache is built once from
-  -- the ticked state and never needs to be enriched per-tx.
-  addToCache _ts _tx c = pure c
+  emptyAcc = ByronMempoolAcc
+  accTickedState = unByronMempoolAcc
 
-  forgetTxFromCache _vtx c = c
+  prepareTx _cfg _slot _ts _acc _tx = pure ByronTxLocalData
 
   -- Check that the annotation is the canonical encoding. This is currently
   -- enforced by 'decodeByronGenTx', see its docstring for more context.
@@ -134,17 +139,17 @@ instance LedgerSupportsMempool ByronBlock where
    where
     tx' = toMempoolPayload tx
 
-  applyTx cfg _wti slot tx cache =
-    case runExcept (applyByronGenTx validationMode cfg slot tx (cachedState cache)) of
+  applyTx cfg _wti slot (ByronMempoolAcc st) tx _tld =
+    case runExcept (applyByronGenTx validationMode cfg slot tx st) of
       Left err -> throwError err
-      Right st' -> pure (ByronMempoolCache st', ValidatedByronTx tx)
+      Right st' -> pure (ValidatedByronTx tx, ByronMempoolAcc st')
    where
     validationMode = CC.ValidationMode CC.BlockValidation Utxo.TxValidation
 
-  reapplyTx cfg slot vtx cache =
-    case runExcept (applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) (cachedState cache)) of
+  reapplyTx cfg slot (ByronMempoolAcc st) vtx _tld =
+    case runExcept (applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st) of
       Left err -> throwError err
-      Right st' -> pure (ByronMempoolCache st')
+      Right st' -> pure (ByronMempoolAcc st')
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 
@@ -155,7 +160,7 @@ instance LedgerSupportsMempool ByronBlock where
 instance TxLimits ByronBlock where
   type TxMeasure ByronBlock = IgnoringOverflow ByteSize32
 
-  txMeasure _cfg cache tx =
+  txMeasure _cfg st _tld tx =
     if txszNat > maxTxSize
       then throwError err
       else
@@ -165,8 +170,7 @@ instance TxLimits ByronBlock where
       Update.ppMaxTxSize $
         CC.adoptedProtocolParameters $
           CC.cvsUpdateState $
-            tickedByronLedgerState $
-              cachedState cache
+            tickedByronLedgerState st
 
     txszNat = fromIntegral txsz :: Natural
 
