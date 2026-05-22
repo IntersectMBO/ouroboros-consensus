@@ -256,7 +256,16 @@ hfExtLedgerState ::
   Handle ExtLedgerState m (HardForkBlock xs) -> State.HardForkState (ExtStateHandle m) xs
 hfExtLedgerState (ExtStateHandle (HardForkStateHandle (State.HardForkState st) _tctx) headerState) =
   case matchTelescope (distribHeaderState headerState) st of
-    Left _err -> error "impossible!"
+    Left _err ->
+      -- PRECONDITION violation: the HeaderState and the per-era
+      -- StateHandle telescope must be pinned to the same era. This is
+      -- preserved by every code path that builds an HFC
+      -- 'ExtStateHandle' (see e.g. 'distribExtLedgerState'); reaching
+      -- this branch means a caller manually constructed a malformed
+      -- 'ExtStateHandle'.
+      error
+        "Ouroboros.Consensus.HardFork.Combinator.Ledger.Query.hfExtLedgerState: \
+        \HeaderState and per-era StateHandle telescope are in different eras"
     Right tele ->
       State.HardForkState $
         hcmap proxySingle (\(Pair hs (Current c ls)) -> Current c (ExtStateHandle ls hs)) tele

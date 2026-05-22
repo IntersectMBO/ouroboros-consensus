@@ -36,9 +36,9 @@ module Ouroboros.Consensus.HeaderStateHistory
   , fromChain
   ) where
 
+import Control.Monad (foldM, when)
 import Control.Monad.Except (Except)
 import Data.Coerce (Coercible)
-import qualified Data.List.NonEmpty as NE
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)
@@ -253,6 +253,10 @@ validateHeader cfg lv hdr slotTime history = do
 -- 'Chain'.
 --
 -- PRECONDITION: the blocks in the chain are valid.
+--
+-- The caller retains ownership of 'initState' (it is /not/ closed by this
+-- function); each intermediate handle produced by 'tickThenReapply' is
+-- closed before returning.
 fromChain ::
   forall m blk.
   ( ApplyBlock ExtLedgerState blk
@@ -267,22 +271,26 @@ fromChain ::
   Chain blk ->
   m (HeaderStateHistory blk)
 fromChain cfg initState chain = do
-  chain' <-
-    scanlM
-      (\st blk -> tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk st)
-      initState
-      . Chain.toOldestFirst
-      $ chain
-  let anchorSnapshot NE.:| snapshots = fmap (mkHeaderStateWithTime (configLedger cfg) . extLedgerState) chain'
-  pure $ HeaderStateHistory (AS.fromOldestFirst anchorSnapshot snapshots)
-
-scanlM :: Monad m => (b -> a -> m b) -> b -> [a] -> m (NE.NonEmpty b)
-scanlM f z = fmap NE.fromList . scanlGo z
+  let mkHSWT = mkHeaderStateWithTime (configLedger cfg) . extLedgerState
+      initHSWT = mkHSWT initState
+      blocks = Chain.toOldestFirst chain
+  -- Walk the chain. Each step calls 'tickThenReapply' which allocates a
+  -- fresh handle; we project to a snapshot, then close the previous
+  -- handle if we own it ('initState' on the first step is /not/ ours).
+  (lastHandle, weOwnLast, snapshotsRev) <-
+    foldM step (initState, False, []) blocks
+  -- The last handle we hold is never returned; close it if we own it.
+  when weOwnLast $ closeExt lastHandle
+  pure $
+    HeaderStateHistory
+      (AS.fromOldestFirst initHSWT (reverse snapshotsRev))
  where
-  scanlGo q ls = do
-    ls' <- case ls of
-      [] -> pure []
-      x : xs -> do
-        x' <- f q x
-        scanlGo x' xs
-    pure (q : ls')
+  step ::
+    (Handle ExtLedgerState m blk, Bool, [HeaderStateWithTime blk]) ->
+    blk ->
+    m (Handle ExtLedgerState m blk, Bool, [HeaderStateWithTime blk])
+  step (prev, prevOurs, snaps) blk = do
+    next <- tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk prev
+    let snap = mkHeaderStateWithTime (configLedger cfg) (extLedgerState next)
+    when prevOurs $ closeExt prev
+    pure (next, True, snap : snaps)
