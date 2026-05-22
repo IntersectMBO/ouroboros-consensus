@@ -37,10 +37,15 @@ import Ouroboros.Consensus.Ledger.Abstract
 
 -- | Generic hard fork state
 --
--- This is used both for the consensus state and the ledger state.
+-- This is used for both the consensus state, the ledger state, and the
+-- per-era 'BlockSupportsLedgerHD'\'s 'StateHandle' /
+-- 'TickedStateHandle' wrappers.
 --
--- By using a telescope with @f ~ LedgerState@, we will keep track of 'Past'
--- information for eras before the current one:
+-- A 'HardForkState' is a 'Telescope' tagged with era boundary 'Past'
+-- markers on the left and the active era's @f blk@ payload on the
+-- right. Past eras leave behind only a 'Past' record (their start and
+-- end bounds); they do not carry their old per-era state. Concretely
+-- the shape evolves as:
 --
 -- > TZ currentByronState
 -- > TZ pastByronState $ TZ currentShelleyState
@@ -140,18 +145,21 @@ newtype TranslateLedgerState m x y = TranslateLedgerState
       EpochNo ->
       StateHandle m x ->
       m (StateHandle m y)
-  -- ^ How to translate a 'LedgerState' during the era transition.
+  -- ^ How to translate a 'LedgerState' (and its backing
+  -- 'LedgerTablesHandle') during the era transition.
   --
-  -- When translating between eras, it can be the case that values are modified,
-  -- thus requiring this to be a @DiffMK@ on the return type. If no tables are
-  -- populated, normally this will be filled with @emptyLedgerTables@.
+  -- The function runs in @m@ because the destination era's
+  -- 'LedgerTablesHandle' has to be materialised by the backend factory
+  -- threaded in via 'HFLedgerTablesFactory'. The returned 'StateHandle'
+  -- owns the new handle; the input handle is consumed.
   --
   -- To make a clear example, in the context of Cardano, there are currently two
   -- cases in which this is of vital importance: Byron->Shelley and
   -- Shelley->Allegra.
   --
   -- On Byron->Shelley we basically dump the whole UTxO set as insertions
-  -- because the LedgerTables only exist for Shelley blocks.
+  -- because Byron's @LedgerTablesHandle@ is trivial (@()@) and Shelley
+  -- needs a populated tables handle.
   --
   -- On Shelley->Allegra, there were a bunch of UTxOs that were moved around,
   -- related to the AVVMs. In particular they were deleted and included in the

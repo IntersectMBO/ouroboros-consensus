@@ -186,36 +186,19 @@ epochInfoPrecomputedTransitionInfo shape transition st =
 
 -- | Extend the telescope until the specified slot is within the era at the tip.
 --
--- Note that transitioning to a later era might create new values in the ledger
--- tables, therefore the result of this function is a @DiffMK@.
+-- If the requested slot still lives within the current era, this whole
+-- function is a no-op: @Telescope.extend@ has nothing to do and the
+-- input 'HardForkState' is returned unchanged.
 --
--- If we are crossing no era boundaries, this whole function is a no-op that
--- only creates an empty @DiffMK@, because the @Telescope.extend@ function will
--- do nothing.
---
--- If we are crossing one era boundary, the ledger tables might be populated
--- with whatever @translateLedgerStateWith@ returns.
---
--- If we are crossing multiple era boundaries, the diffs generated when crossing
--- an era boundary will be prepended to the ones produced by later era
--- boundaries and, in order to all match the resulting era, they will be
--- translated to later eras.
---
--- This means in particular that if we extend from @era1@ to @era3@ going
--- through @era2@, we will:
---
--- 1. translate the ledger state from @era1@ to @era2@, which produces a @era2@
---    ledger state together with a some set of differences.
---
--- 2. keep the @era2@ diffs aside, and translate the @era2@ ledger state without
---    ledger tables, which produces a @era3@ ledger state together with a set of
---    @era3@ differences.
---
--- 3. Translate the @era2@ diffs to @era3@ differences, and prepend them to the
---    ones created in the step 2.
---
--- 4. Attach the diffs resulting from step 3 to the @era3@ ledger state from
---    step 2, and return it.
+-- If we are crossing one or more era boundaries, each step runs the
+-- corresponding 'TranslateLedgerState' in @m@: the prior era's
+-- 'StateHandle' is consumed and a fresh 'StateHandle' for the next era
+-- is materialised, using the 'HFLedgerTablesFactory' to construct that
+-- era's 'LedgerTablesHandle'. (For UTxO-bearing transitions like
+-- Byron→Shelley or Shelley→Allegra, the per-era 'TranslateLedgerState'
+-- writes the appropriate inserts/deletes into the new tables handle as
+-- part of its monadic action.) The result is a 'HardForkState'
+-- positioned at the era containing the target slot.
 extendToSlot ::
   forall m xs.
   (CanHardFork xs, MonadThrow m) =>

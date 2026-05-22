@@ -134,8 +134,8 @@ instance CanHardFork xs => BlockSupportsLedgerHD m (HardForkBlock xs) where
     }
 
   data TickedStateHandle m (HardForkBlock xs) = HardForkTickedStateHandle
-    { tickedHardForkRefLedgerStateTransition :: !TransitionInfo
-    , tickedHardForkRefLedgerStatePerEra ::
+    { tickedHardForkStateHandleTransition :: !TransitionInfo
+    , tickedHardForkStateHandlePerEra ::
         !(HardForkState (TickedStateHandle m) xs)
     , tickedHardForkStateHandleLedgerTablesFactory :: !(HFLedgerTablesFactory m xs)
     }
@@ -177,7 +177,7 @@ instance CanHardFork xs => IsLedger LedgerState (HardForkBlock xs) where
       sequenceHardForkState st'
         <&> \l' ->
           HardForkTickedStateHandle
-            { tickedHardForkRefLedgerStateTransition =
+            { tickedHardForkStateHandleTransition =
                 -- We are bundling a 'TransitionInfo' with a /ticked/ ledger state,
                 -- but /derive/ that 'TransitionInfo' from the /unticked/  (albeit
                 -- extended) state. That requires justification. Three cases:
@@ -199,7 +199,7 @@ instance CanHardFork xs => IsLedger LedgerState (HardForkBlock xs) where
                 --   to change that, or we're forecasting, which is simply not
                 --   applicable here.
                 State.mostRecentTransitionInfo cfg (hcmap proxySingle state extended)
-            , tickedHardForkRefLedgerStatePerEra = l'
+            , tickedHardForkStateHandlePerEra = l'
             , tickedHardForkStateHandleLedgerTablesFactory = tctx
             }
    where
