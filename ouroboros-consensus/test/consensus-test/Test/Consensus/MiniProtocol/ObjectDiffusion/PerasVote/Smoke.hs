@@ -8,7 +8,7 @@
 module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke
   ( tests
   , genPerasVoterId
-  , genPerasVoteStake
+  , genVoteWeight
   , genPerasVote
   , genValidatedPerasVote
   ) where
@@ -74,23 +74,23 @@ genPerasVoterId = do
       keyHash = SL.hashKey (SL.VKey verKey)
   pure (PerasVoterId keyHash)
 
-genPerasVoteStake :: Gen PerasVoteStake
-genPerasVoteStake = do
-  stake <- (1 %) <$> choose (2, 10)
-  pure (PerasVoteStake stake)
+genVoteWeight :: Gen VoteWeight
+genVoteWeight = do
+  weight <- (1 %) <$> choose (2, 10)
+  pure (VoteWeight weight)
 
 genPerasVote :: Gen (PerasVote TestBlock)
 genPerasVote = do
   mockVoteRound <- PerasRoundNo <$> arbitrary
   mockVoteBlock <- genPointTestBlock
   mockVoteVoterId <- genPerasVoterId
-  mockVoteStake <- genPerasVoteStake
+  mockVoteWeight <- genVoteWeight
   pure $
     MockPerasVote
       { mockVoteRound
       , mockVoteBlock
       , mockVoteVoterId
-      , mockVoteStake
+      , mockVoteWeight
       }
 
 instance WithId (MockPerasVote blk) (PerasVoteId blk) where
@@ -108,7 +108,7 @@ genValidatedPerasVote = do
   pure
     ValidatedPerasVote
       { vpvVote = mockVote
-      , vpvVoteStake = mockVoteStake mockVote
+      , vpvVoteWeight = mockVoteWeight mockVote
       }
 
 newVoteDB ::
@@ -150,7 +150,7 @@ prop_smoke =
                 inboundPoolWriter =
                   makePerasVotePoolWriterFromVoteDB
                     mockSystemTime
-                    (pure (PerasVoteStakeDistr mempty)) -- mocked votes are self-validating
+                    (pure (VoteWeightDistr mempty)) -- mocked votes are self-validating
                     inboundPool
                 getAllInboundPoolContent = do
                   votesMap <-

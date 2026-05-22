@@ -1,19 +1,19 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Voting interface for Peras derived from the Praos ledger view.
-module Ouroboros.Consensus.Protocol.Praos.Peras where
+module Ouroboros.Consensus.Protocol.Praos.Peras
+  ( PraosStateSupportsPerasVoting (..)
+  , getStakeDistrWithBLSPublicKeys
+  , perasBLSPublicKeysFromEnv
+  ) where
 
 import qualified Cardano.Ledger.Shelley.State as SL
 import Data.Aeson (eitherDecodeFileStrict')
@@ -91,10 +91,10 @@ instance PraosStateSupportsPerasVoting RealBlock where
     let wFATiebreaker =
           wFATiebreakerWithEpochNonce epochNonce
     stakeDistrWithPublicKeys <-
-      bimap V1.PerasTemporaryPublicKeyHackError id $
+      first V1.PerasTemporaryPublicKeyHackError $
         getStakeDistrWithBLSPublicKeys tickedPraosState
     extWFAStakeDistr <-
-      bimap V1.PerasVotingWFAError id $
+      first V1.PerasVotingWFAError $
         mkExtWFAStakeDistr
           wFATiebreaker
           stakeDistrWithPublicKeys
@@ -136,8 +136,9 @@ getStakeDistrWithBLSPublicKeys tickedPraosState = do
 -- * Retrieveing public keys from a JSON file (temporary)
 
 perasBLSPublicKeysFromEnv :: Either String (Map PoolId BLS.PerasPublicKey)
+{-# NOINLINE perasBLSPublicKeysFromEnv #-}
 perasBLSPublicKeysFromEnv =
-  unsafePerformIO $ do
+  unsafePerformIO $
     lookupEnv envVar >>= \case
       Nothing -> do
         pure $ Left $ "Environment variable " <> envVar <> " not set."
@@ -198,5 +199,5 @@ class
   praosStateGetPerasVotingCommittee p perasParams tickedPraosState = do
     committeeInput <-
       praosStatePerasVotingCommitteeInput p perasParams tickedPraosState
-    bimap injectCommitteeError id $
+    first injectCommitteeError $
       Committee.mkVotingCommittee committeeInput

@@ -101,23 +101,21 @@ makePerasVotePoolWriterFromVoteDB ::
   , BlockSupportsPeras blk
   ) =>
   SystemTime m ->
-  -- | This is needed for validating votes (since it is during the validation of
-  -- votes that we give them a verified weight. In the future, we won't read it
-  -- from the stake distr directly, but rather use the committee selection data)
-  STM m PerasVoteStakeDistr ->
+  -- | TODO: replace with a 'PerasVotingCommittee blk'
+  STM m VoteWeightDistr ->
   PerasVoteDB m blk ->
   ObjectPoolWriter (PerasVoteId blk) (PerasVote blk) m
-makePerasVotePoolWriterFromVoteDB systemTime getStakeDistrSTM perasVoteDB =
+makePerasVotePoolWriterFromVoteDB systemTime getVoteWeightDistrSTM perasVoteDB =
   ObjectPoolWriter
     { opwObjectId = getPerasVoteId
     , opwAddObjects = \votes ->
         processVotes
           systemTime
           (PerasVoteDB.getVoteIds perasVoteDB)
-          -- TODO: in the future we won't need just the stake distribution for
+          -- TODO: in the future we won't need just the vote weight distribution for
           -- validating votes, but also the whole committee selection context
           -- (containing vote weights of committee members = voters)
-          (\vote -> getStakeDistrSTM >>= \sd -> pure $ validatePerasVote mkPerasParams sd vote)
+          (\vote -> getVoteWeightDistrSTM >>= \sd -> pure $ validatePerasVote mkPerasParams sd vote)
           (void . join . atomically . PerasVoteDB.addVote perasVoteDB)
           votes
     , opwHasObject = do
@@ -133,23 +131,21 @@ makePerasVotePoolWriterFromChainDB ::
   , BlockSupportsPeras blk
   ) =>
   SystemTime m ->
-  -- | This is needed for validating votes (since its during the validation of
-  -- votes that we give them a verified weight. In the future, we won't read it
-  -- from the stake distr directly, but rather use the committee selection data)
-  STM m PerasVoteStakeDistr ->
+  -- \| TODO: replace with a 'PerasVotingCommittee blk'
+  STM m VoteWeightDistr ->
   ChainDB m blk ->
   ObjectPoolWriter (PerasVoteId blk) (PerasVote blk) m
-makePerasVotePoolWriterFromChainDB systemTime getStakeDistrSTM chainDB =
+makePerasVotePoolWriterFromChainDB systemTime getVoteWeightDistrSTM chainDB =
   ObjectPoolWriter
     { opwObjectId = getPerasVoteId
     , opwAddObjects = \votes ->
         processVotes
           systemTime
           (ChainDB.getPerasVoteIds chainDB)
-          -- TODO: in the future we won't need just the stake distribution for
+          -- TODO: in the future we won't need just the vote weight distribution for
           -- validating votes, but also the whole committee selection context
           -- (containing vote weights of committee members = voters)
-          (\vote -> getStakeDistrSTM >>= \sd -> pure $ validatePerasVote mkPerasParams sd vote)
+          (\vote -> getVoteWeightDistrSTM >>= \sd -> pure $ validatePerasVote mkPerasParams sd vote)
           -- We do not want to block the writer thread on waiting for ChainSel
           -- side-effects to complete, so we use the async version of adding
           -- votes to the ChainDB and ignore the returned promise.

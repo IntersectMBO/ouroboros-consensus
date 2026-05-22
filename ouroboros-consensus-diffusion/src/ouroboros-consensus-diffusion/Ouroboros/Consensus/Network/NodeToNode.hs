@@ -400,11 +400,11 @@ mkHandlers
                 systemTime
                 -- TODO: when actual plumbing for Peras is ready, we will have to
                 -- extract the committee selection data from the chainDB to pass
-                -- it here, instead of relying on an empty the stake distribution.
+                -- it here, instead of relying on an empty the weight distribution.
                 --
-                -- Note that the empty stake distribution will cause all votes to
+                -- Note that the empty weight distribution will cause all votes to
                 -- be considered invalid.
-                (pure (PerasVoteStakeDistr mempty))
+                (pure (VoteWeightDistr mempty))
                 getChainDB
             )
             version

@@ -33,13 +33,13 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasParams
   , PerasRoundNo
   , PerasVoteId (..)
-  , PerasVoteStake (..)
   , PerasVoteTarget (..)
   , PerasVoterId
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
+  , VoteWeight (..)
   , perasWeight
-  , stakeAboveThreshold
+  , weightAboveThreshold
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
@@ -192,7 +192,7 @@ addVote vote model
   | reachedQuorum
   , Nothing <- certAtRound =
       -- Also ensure that we didn't already have a quorum before adding this
-      -- vote in a more direct way: the stake represented by the existing votes
+      -- vote in a more direct way: the weight represented by the existing votes
       -- must be below the threshold.
       assert (not hadQuorum) $
         ( Right $
@@ -245,29 +245,29 @@ addVote vote model
   -- The extended set of votes including the new one
   extendedVotes =
     Set.insert voteEntry existingVotes
-  -- Get the total stake of a set of votes
-  getTotalStake =
-    PerasVoteStake
+  -- Get the total weight of a set of votes
+  getTotalWeight =
+    VoteWeight
       . sum
       . fmap
-        ( unPerasVoteStake
-            . vpvVoteStake
+        ( unVoteWeight
+            . vpvVoteWeight
             . forgetArrivalTime
             . veVote
         )
       . Set.toList
-  -- Total stake represented by the existing votes
-  existingVotesStake =
-    getTotalStake existingVotes
-  -- Total stake represented by the extended set of votes
-  extendedVotesStake =
-    getTotalStake extendedVotes
+  -- Total weight represented by the existing votes
+  existingVotesWeight =
+    getTotalWeight existingVotes
+  -- Total weight represented by the extended set of votes
+  extendedVotesWeight =
+    getTotalWeight extendedVotes
   -- Did we already have a quorum before adding this new vote?
   hadQuorum =
-    stakeAboveThreshold (params model) existingVotesStake
+    weightAboveThreshold (params model) existingVotesWeight
   -- Did we reach the quorum threshold with this new vote?
   reachedQuorum =
-    stakeAboveThreshold (params model) extendedVotesStake
+    weightAboveThreshold (params model) extendedVotesWeight
   -- The existing certificate (if any) for this round
   certAtRound =
     Map.lookup roundNo (certs model)

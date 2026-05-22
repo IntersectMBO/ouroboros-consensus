@@ -265,12 +265,12 @@ implAddVote params PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
               (getPerasVoteRound vote)
               ( ExistingPerasRoundWinner
                   ( getPerasTargetVoteStateBlock winnerState
-                  , getPerasTargetVoteStateTotalStake winnerState
+                  , getPerasTargetVoteStateTotalWeight winnerState
                   )
               )
               ( BlockedPerasRoundWinner
                   ( getPerasTargetVoteStateBlock loserState
-                  , getPerasTargetVoteStateTotalStake loserState
+                  , getPerasTargetVoteStateTotalWeight loserState
                   )
               )
         -- Reached quorum but failed to forge a certificate
