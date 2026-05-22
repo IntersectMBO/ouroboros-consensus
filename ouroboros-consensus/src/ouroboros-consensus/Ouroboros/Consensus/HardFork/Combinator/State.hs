@@ -221,7 +221,7 @@ extendToSlot ::
   (CanHardFork xs, MonadThrow m) =>
   HardForkLedgerConfig xs ->
   SlotNo ->
-  TransCtx m xs ->
+  HFTransCtx m xs ->
   HardForkState (StateHandle m) xs ->
   m (HardForkState (StateHandle m) xs)
 extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot tcxt ledgerSt@(HardForkState st) =

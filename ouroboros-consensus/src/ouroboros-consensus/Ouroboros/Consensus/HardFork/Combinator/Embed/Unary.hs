@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
@@ -13,6 +14,7 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | Witness isomorphism between @b@ and @HardForkBlock '[b]@
 module Ouroboros.Consensus.HardFork.Combinator.Embed.Unary
@@ -521,25 +523,40 @@ instance Functor m => Isomorphic (MkBlockForging m) where
   inject (MkBlockForging blockForgingM) =
     MkBlockForging $ inject <$> blockForgingM
 
-instance Isomorphic ProtocolInfo where
+instance Isomorphic (StateHandle m) => Isomorphic (ExtStateHandle m) where
+  project ExtStateHandle{..} =
+    ExtStateHandle
+      { extStateHandle = project extStateHandle
+      , extHeaderState = project extHeaderState
+      }
+  inject ExtStateHandle{..} =
+    ExtStateHandle
+      { extStateHandle = inject extStateHandle
+      , extHeaderState = inject extHeaderState
+      }
+
+instance
+  (Isomorphic (StateHandle m), Monad m) =>
+  Isomorphic (ProtocolInfo m)
+  where
   project ::
     forall blk.
     NoHardForks blk =>
-    ProtocolInfo (HardForkBlock '[blk]) -> ProtocolInfo blk
+    ProtocolInfo m (HardForkBlock '[blk]) -> ProtocolInfo m blk
   project ProtocolInfo{..} =
     ProtocolInfo
       { pInfoConfig = project pInfoConfig
-      , pInfoInitLedger = project pInfoInitLedger
+      , pInfoInitLedger = fmap project pInfoInitLedger
       }
 
   inject ::
     forall blk.
     NoHardForks blk =>
-    ProtocolInfo blk -> ProtocolInfo (HardForkBlock '[blk])
+    ProtocolInfo m blk -> ProtocolInfo m (HardForkBlock '[blk])
   inject ProtocolInfo{..} =
     ProtocolInfo
       { pInfoConfig = inject pInfoConfig
-      , pInfoInitLedger = inject pInfoInitLedger
+      , pInfoInitLedger = fmap inject pInfoInitLedger
       }
 
 {-------------------------------------------------------------------------------

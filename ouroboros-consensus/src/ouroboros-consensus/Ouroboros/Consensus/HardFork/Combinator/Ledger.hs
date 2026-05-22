@@ -49,7 +49,6 @@ import Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
 import Data.Void
 import GHC.Generics (Generic)
-import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
@@ -124,15 +123,17 @@ type instance LedgerTablesHandle m (HardForkBlock xs) = Void
 instance CanHardFork xs => MonadLedger m (HardForkBlock xs) where
   data StateHandle m (HardForkBlock xs) = HardForkStateHandle
     { hardForkStateHandlePerEra :: HardForkState (StateHandle m) xs
-    , hardForkStateHandleTransCtx :: !(TransCtx m xs)
+    , hardForkStateHandleTransCtx :: !(HFTransCtx m xs)
     }
 
   data TickedStateHandle m (HardForkBlock xs) = HardForkTickedStateHandle
     { tickedHardForkRefLedgerStateTransition :: !TransitionInfo
     , tickedHardForkRefLedgerStatePerEra ::
         !(HardForkState (TickedStateHandle m) xs)
-    , tickedHardForkStateHandleTransCtx :: !(TransCtx m xs)
+    , tickedHardForkStateHandleTransCtx :: !(HFTransCtx m xs)
     }
+
+  type TransCtx m (HardForkBlock xs) = HFTransCtx m xs
 
   newStateHandle _ = absurd
 

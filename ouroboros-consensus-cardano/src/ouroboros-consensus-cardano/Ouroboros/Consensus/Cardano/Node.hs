@@ -79,6 +79,7 @@ import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.CanHardFork
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator
+import Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
@@ -645,7 +646,7 @@ protocolInfoCardano paramsCardano
         , topLevelConfigLedger = ledgerConfigByron
         , topLevelConfigBlock = blockConfigByron
         }
-    , pInfoInitLedger = _initExtLedgerStateByron
+    , pInfoInitLedger = initExtLedgerStateByron
     } = protocolInfoByron byronProtocolParams
 
   partialConsensusConfigByron :: PartialConsensusConfig (BlockProtocol ByronBlock)
@@ -926,26 +927,21 @@ protocolInfoCardano paramsCardano
   -- data from the genesis config (if provided) in the ledger state. For
   -- example, this includes initial staking and initial funds (useful for
   -- testing/benchmarking).
-  initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c)
-  initExtLedgerStateCardano =
-    ExtLedgerState
-      { headerState = initHeaderState
-      , ledgerState = overShelleyBasedLedgerState initLedgerState
-      }
+  initExtLedgerStateCardano :: m (ExtLedgerState (CardanoBlock c))
+  initExtLedgerStateCardano = \tctx -> do
+    -- initHeaderState :: HeaderState (CardanoBlock c)
+    -- initLedgerState :: LedgerState (CardanoBlock c)
+    ExtLedgerState initLedgerState initHeaderState <-
+      injectInitialExtLedgerState cfg initExtLedgerStateByron ((), tctx)
+    pure $
+      ExtLedgerState
+        { headerState = initHeaderState
+        , ledgerState = overShelleyBasedLedgerState initLedgerState
+        }
    where
     overShelleyBasedLedgerState (HardForkLedgerState st) =
       HardForkLedgerState $ hap (fn id :* registerAny) st
 
-    initHeaderState :: HeaderState (CardanoBlock c)
-    initLedgerState :: LedgerState (CardanoBlock c)
-    ExtLedgerState initLedgerState initHeaderState =
-      -- TODO @js: this fillJavier was 'injectInitialExtLedgerState cfg
-      -- initExtLedgerStateByron'. The new 'injectInitialExtLedgerState'
-      -- returns @m (Handle ExtLedgerState m (CardanoBlock c))@, but the
-      -- code below destructures an 'ExtLedgerState'. Restoring this
-      -- needs the polymorphic state projection on 'Handle l m blk' that
-      -- was deferred in Layer 4 review point 3.
-      fillJavier
     registerAny :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
     registerAny =
       hcmap (Proxy @IsShelleyBlock) injectIntoTestState $

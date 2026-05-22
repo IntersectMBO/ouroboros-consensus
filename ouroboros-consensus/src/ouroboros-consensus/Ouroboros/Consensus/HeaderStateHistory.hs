@@ -40,7 +40,6 @@ import Control.Monad.Except (Except)
 import Data.Coerce (Coercible)
 import qualified Data.List.NonEmpty as NE
 import GHC.Generics (Generic)
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import Ouroboros.Consensus.Config

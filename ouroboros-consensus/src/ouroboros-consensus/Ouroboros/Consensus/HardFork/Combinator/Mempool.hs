@@ -23,9 +23,11 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
   , hardForkApplyTxErrToEither
   ) where
 
+import Control.Arrow ((+++))
 import Control.Monad.Except
 import Data.Functor.Product
 import Data.Kind (Type)
+import qualified Data.Measure as Measure
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Functors
@@ -97,22 +99,46 @@ instance
   CanHardFork xs =>
   LedgerSupportsMempool (HardForkBlock xs)
   where
-  data MempoolCache (HardForkBlock xs) = HardForkMempoolCache (NS MempoolCache xs)
+  data MempoolCache (HardForkBlock xs)
+    = HardForkMempoolCache
+        (State.HardForkState MempoolCache xs)
+        State.TransitionInfo
 
-  mkMempoolCache (HardForkTickedStateHandle _ (State.HardForkState st) _) =
+  mkMempoolCache (HardForkTickedStateHandle ti st _) =
     HardForkMempoolCache
-      (hcmap proxySingle (mkMempoolCache . State.currentState) $ Telescope.tip st)
+      (hcmap proxySingle mkMempoolCache st)
+      ti
+
+  cachedState (HardForkMempoolCache perEraCache ti) =
+    TickedHardForkLedgerState ti (hcmap proxySingle cachedState perEraCache)
+
+  updateCachedState (TickedHardForkLedgerState _ st) (HardForkMempoolCache mc ti) =
+    HardForkMempoolCache
+      ( case Match.matchTelescope (Telescope.tip $ State.getHardForkState st) (State.getHardForkState mc) of
+          Left{} -> error "Impossible!"
+          Right m ->
+            State.HardForkState $
+              hcmap
+                proxySingle
+                (\(Pair (State.Current _ a) (State.Current b c)) -> State.Current b (updateCachedState a c))
+                m
+      )
+      ti
 
   addToCache _stref _gtx _cache = undefined
   forgetTxFromCache = undefined
 
-  -- TODO @js: the new 'LedgerSupportsMempool' shape (Layer 2/3) makes
-  -- 'applyTx' / 'reapplyTx' pure (return 'Except', not 'ExceptT m'). The
-  -- existing 'applyHelper' is monadic-in-@m@ and shells out per era; needs to
-  -- be re-cast against the per-era 'MempoolCache' NS so the whole thing
-  -- composes in 'Except' instead of 'ExceptT m'.
-  applyTx = undefined ModeApply
-  reapplyTx = undefined ModeReapply
+  applyTx = applyHelper ModeApply
+
+  reapplyTx cfg slot vtx tls =
+    fst
+      <$> applyHelper
+        ModeReapply
+        cfg
+        DoNotIntervene
+        slot
+        (WrapValidatedGenTx vtx)
+        tls
 
   txForgetValidated =
     HardForkGenTx
@@ -132,14 +158,55 @@ instance
     f idx tlst =
       K $ injectApplyTxErr idx <$> mkMempoolApplyTxError tlst txt
 
-  -- TODO @js: re-implement against the per-era 'MempoolCache' NS, mirroring
-  -- the previous body that lived in 'TxLimits' (which used 'matchTx' on the
-  -- ticked HFC state). The new shape is pure and consults the cache instead
-  -- of the ticked state.
-  txMeasure = fillJavier
-
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
   type TxMeasure (HardForkBlock xs) = HardForkTxMeasure xs
+
+  txMeasure
+    HardForkLedgerConfig{..}
+    mcache@(HardForkMempoolCache perEraCache transition)
+    tx =
+      case matchTx injs (unwrapTx tx) perEraCache of
+        Left{} -> pure Measure.zero -- safe b/c the tx will be found invalid
+        Right pair ->
+          hcollapse $
+            hcizipWith proxySingle aux cfgs pair
+     where
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      ei =
+        State.epochInfoPrecomputedTransitionInfo
+          hardForkLedgerConfigShape
+          transition
+          (tickedHardForkLedgerStatePerEra $ cachedState mcache)
+      cfgs = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
+
+      unwrapTx = getOneEraGenTx . getHardForkGenTx
+
+      injs :: InPairs (InjectPolyTx GenTx) xs
+      injs =
+        InPairs.hmap (\(Pair2 injTx _injValidatedTx) -> injTx) $
+          InPairs.requiringBoth cfgs hardForkInjectTxs
+
+      aux ::
+        forall blk.
+        SingleEraBlock blk =>
+        Index xs blk ->
+        WrapLedgerConfig blk ->
+        Product GenTx MempoolCache blk ->
+        K (Except (HardForkApplyTxErr xs) (HardForkTxMeasure xs)) blk
+      aux idx cfg (Pair tx' ch) =
+        K
+          $ mapExcept
+            ( ( HardForkApplyTxErrFromEra
+                  . OneEraApplyTxErr
+                  . injectNS idx
+                  . WrapApplyTxErr
+              )
+                +++ (hardForkInjTxMeasure . injectNS idx . WrapTxMeasure)
+            )
+          $ txMeasure
+            (unwrapLedgerConfig cfg)
+            ch
+            tx'
 
   txWireSize =
     \tx ->
@@ -187,9 +254,8 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
   ModeReapply :: ApplyHelperMode WrapValidatedGenTx
 
 -- | A private type used only to clarify the definition of 'applyHelper'
-data ApplyResult m xs blk = ApplyResult
-  { arState :: TickedStateHandle m blk
-  , arCache :: MempoolCache blk
+data ApplyResult xs blk = ApplyResult
+  { arCache :: MempoolCache blk
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
 
@@ -198,20 +264,17 @@ data ApplyResult m xs blk = ApplyResult
 -- The @txIn@ variable is 'GenTx' or 'WrapValidatedGenTx', respectively. See
 -- 'ApplyHelperMode'.
 applyHelper ::
-  forall xs m txIn.
-  (CanHardFork xs, Monad m) =>
+  forall xs txIn.
+  CanHardFork xs =>
   ApplyHelperMode txIn ->
   LedgerConfig (HardForkBlock xs) ->
   WhetherToIntervene ->
   SlotNo ->
   txIn (HardForkBlock xs) ->
   MempoolCache (HardForkBlock xs) ->
-  TickedStateHandle m (HardForkBlock xs) ->
-  ExceptT
-    (HardForkApplyTxErr xs, MempoolCache (HardForkBlock xs))
-    m
-    ( TickedStateHandle m (HardForkBlock xs)
-    , MempoolCache (HardForkBlock xs)
+  Except
+    (HardForkApplyTxErr xs)
+    ( MempoolCache (HardForkBlock xs)
     , Validated (GenTx (HardForkBlock xs))
     )
 applyHelper
@@ -220,16 +283,13 @@ applyHelper
   wti
   slot
   tx
-  cache@(HardForkMempoolCache hardForkCache)
-  (HardForkTickedStateHandle transition hardForkState tctx) =
-    case matchPolyTx injs (modeGetTx tx) hardForkState of
+  cache@(HardForkMempoolCache perEraCache transition) =
+    case matchPolyTx injs (modeGetTx tx) perEraCache of
       Left mismatch ->
         throwError $
-          ( HardForkApplyTxErrWrongEra . MismatchEraInfo $
-              Match.bihcmap proxySingle singleEraInfo ledgerInfo mismatch
-          , cache
-          )
-      Right matched ->
+          HardForkApplyTxErrWrongEra . MismatchEraInfo $
+            Match.bihcmap proxySingle singleEraInfo ledgerInfo mismatch
+      Right matched -> do
         -- We are updating the ticked ledger state by applying a transaction,
         -- but for the HFC that ledger state contains a bundled
         -- 'TransitionInfo'. We don't change that 'TransitionInfo' here, which
@@ -246,31 +306,20 @@ applyHelper
         -- o 'TransitionImpossible'. Two subcases: we are in the final era (in
         --    which we will remain to be) or we are forecasting, which is not
         --    applicable here.
-        do
-          let matched' = case Match.matchTelescope hardForkCache (State.getHardForkState matched) of
-                Left _ ->
-                  hcmap
-                    proxySingle
-                    (\(Pair tx0 st) -> Pair (mkMempoolCache st) (Pair tx0 st))
-                    matched
-                Right m ->
-                  State.HardForkState $
-                    hcmap proxySingle (\(Pair a (State.Current s t)) -> State.Current s (Pair a t)) m
-          result <-
-            hsequence' $
-              hcizipWith proxySingle modeApplyCurrent cfgs matched'
-          let
-            st' :: NS MempoolCache xs
-            st' = hmap State.currentState $ Telescope.tip $ State.getHardForkState $ arCache `hmap` result
+        result <-
+          hsequence' $
+            hcizipWith proxySingle modeApplyCurrent cfgs matched
+        let
+          st' :: State.HardForkState MempoolCache xs
+          st' = arCache `hmap` result
 
-            vtx :: Validated (GenTx (HardForkBlock xs))
-            vtx = hcollapse $ (K . arValidatedTx) `hmap` result
+          vtx :: Validated (GenTx (HardForkBlock xs))
+          vtx = hcollapse $ (K . arValidatedTx) `hmap` result
 
-          return
-            ( HardForkTickedStateHandle transition (arState `hmap` result) tctx
-            , HardForkMempoolCache st'
-            , vtx
-            )
+        return
+          ( HardForkMempoolCache st' transition
+          , vtx
+          )
    where
     pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
     cfgs = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
@@ -278,7 +327,7 @@ applyHelper
       State.epochInfoPrecomputedTransitionInfo
         hardForkLedgerConfigShape
         transition
-        hardForkState
+        (tickedHardForkLedgerStatePerEra $ cachedState cache)
 
     injs :: InPairs (InjectPolyTx txIn) xs
     injs =
@@ -309,17 +358,37 @@ applyHelper
       SingleEraBlock blk =>
       Index xs blk ->
       WrapLedgerConfig blk ->
-      Product MempoolCache (Product txIn (TickedStateHandle m)) blk ->
-      ( ExceptT (HardForkApplyTxErr xs, MempoolCache (HardForkBlock xs)) m
-          :.: ApplyResult m xs
+      Product txIn MempoolCache blk ->
+      ( Except (HardForkApplyTxErr xs)
+          :.: ApplyResult xs
       )
         blk
     -- TODO @js: 'applyTx' / 'reapplyTx' are now pure ('Except', not
     -- 'ExceptT m'); the previous 'runExceptT' wrap no longer typechecks. The
     -- per-era branching needs to be re-cast in 'Except' (or this helper made
     -- pure end-to-end). Stubbed until that re-cast is done.
-    modeApplyCurrent _index _cfg (Pair _mcache (Pair _tx' _st)) =
-      fillJavier
+    modeApplyCurrent index cfg (Pair tx' cache') =
+      Comp $
+        withExcept (injectApplyTxErr index) $
+          do
+            let lcfg = unwrapLedgerConfig cfg
+            case mode of
+              ModeApply -> do
+                (st', vtx) <- applyTx lcfg wti slot tx' cache'
+                pure
+                  ApplyResult
+                    { arValidatedTx = injectValidatedGenTx index vtx
+                    , arCache = st'
+                    }
+              ModeReapply -> do
+                let vtx' = unwrapValidatedGenTx tx'
+                cache'' <- reapplyTx lcfg slot vtx' cache'
+                -- provide the given transaction, which was already validated
+                pure
+                  ApplyResult
+                    { arValidatedTx = injectValidatedGenTx index vtx'
+                    , arCache = cache''
+                    }
 
 newtype instance TxId (GenTx (HardForkBlock xs)) = HardForkGenTxId
   { getHardForkGenTxId :: OneEraGenTxId xs
@@ -373,11 +442,6 @@ injectApplyTxErr index =
     . OneEraApplyTxErr
     . injectNS index
     . WrapApplyTxErr
-
-injectCache :: SListI xs => Index xs blk -> MempoolCache blk -> MempoolCache (HardForkBlock xs)
-injectCache index =
-  HardForkMempoolCache
-    . injectNS index
 
 injectValidatedGenTx ::
   SListI xs => Index xs blk -> Validated (GenTx blk) -> Validated (GenTx (HardForkBlock xs))

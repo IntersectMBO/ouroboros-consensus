@@ -272,7 +272,7 @@ injectInitialExtLedgerState ::
   TopLevelConfig (HardForkBlock (x ': xs)) ->
   ExtLedgerState x ->
   (LedgerTablesHandle m x, TransCtx m (x ': xs)) ->
-  m (Handle ExtLedgerState m (HardForkBlock (x ': xs)))
+  m (ExtStateHandle m (HardForkBlock (x ': xs)))
 injectInitialExtLedgerState cfg extLedgerState0 (tbs, tctx) = do
   l <- targetEraLedgerState
   pure (ExtStateHandle l (targetEraHeaderState l))

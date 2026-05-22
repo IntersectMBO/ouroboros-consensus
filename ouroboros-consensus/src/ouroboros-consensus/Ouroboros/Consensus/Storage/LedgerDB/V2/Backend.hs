@@ -38,7 +38,6 @@ import Data.Typeable
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)

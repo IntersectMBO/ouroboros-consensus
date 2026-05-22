@@ -131,6 +131,9 @@ class
   -- when is it updated, when is it discarded).
   data MempoolCache blk
 
+  cachedState :: MempoolCache blk -> Ticked LedgerState blk
+  updateCachedState :: Ticked LedgerState blk -> MempoolCache blk -> MempoolCache blk
+
   -- | Build an initial 'MempoolCache' from a ticked state handle.
   --
   -- The state handle is required (rather than e.g. a unit-shaped
@@ -167,24 +170,6 @@ class
   txInvariant :: GenTx blk -> Bool
   txInvariant = const True
 
-  -- | Compute the measure of a transaction (e.g. size, ExUnits).
-  --
-  -- Pure: reads any required UTxO values from the cache (which the
-  -- caller is expected to have populated for this tx via 'addToCache').
-  --
-  -- INVARIANT @Right x = txMeasure cfg cache tx@ implies
-  -- @x 'Measure.<=' 'blockCapacityTxMeasure' cfg st@. Otherwise, the
-  -- mempool could block forever.
-  --
-  -- Returns an exception if and only if the transaction violates the
-  -- per-tx limits.
-  txMeasure ::
-    LedgerConfig blk ->
-    MempoolCache blk ->
-    Ticked LedgerState blk ->
-    GenTx blk ->
-    Except (ApplyTxErr blk) (TxMeasure blk)
-
   -- | Apply an unvalidated transaction.
   --
   -- The mempool expects that the ledger checks the sanity of the
@@ -206,17 +191,15 @@ class
   -- On error the cache is /not/ returned: the caller still holds the
   -- input cache and the failed tx is simply discarded.
   applyTx ::
-    MonadLedger m blk =>
     LedgerConfig blk ->
     WhetherToIntervene ->
     -- | Slot number of the block containing the tx
     SlotNo ->
     GenTx blk ->
     MempoolCache blk ->
-    TickedStateHandle m blk ->
     Except
       (ApplyTxErr blk)
-      (TickedStateHandle m blk, MempoolCache blk, Validated (GenTx blk))
+      (MempoolCache blk, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state.
@@ -243,16 +226,13 @@ class
   --   /removed/. The caller can plug this cache straight back into the
   --   next 'reapplyTx' in the fold without recomputing it.
   reapplyTx ::
-    (HasCallStack, MonadLedger m blk) =>
+    HasCallStack =>
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
     Validated (GenTx blk) ->
     MempoolCache blk ->
-    TickedStateHandle m blk ->
-    Except
-      (ApplyTxErr blk, MempoolCache blk)
-      (TickedStateHandle m blk, MempoolCache blk)
+    Except (ApplyTxErr blk) (MempoolCache blk)
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
@@ -343,6 +323,23 @@ class
   where
   -- | The (possibly multi-dimensional) size of a transaction in a block.
   type TxMeasure blk
+
+  -- | Compute the measure of a transaction (e.g. size, ExUnits).
+  --
+  -- Pure: reads any required UTxO values from the cache (which the
+  -- caller is expected to have populated for this tx via 'addToCache').
+  --
+  -- INVARIANT @Right x = txMeasure cfg cache tx@ implies
+  -- @x 'Measure.<=' 'blockCapacityTxMeasure' cfg st@. Otherwise, the
+  -- mempool could block forever.
+  --
+  -- Returns an exception if and only if the transaction violates the
+  -- per-tx limits.
+  txMeasure ::
+    LedgerConfig blk ->
+    MempoolCache blk ->
+    GenTx blk ->
+    Except (ApplyTxErr blk) (TxMeasure blk)
 
   -- | The size of the transaction from the perspective of diffusion layer
   txWireSize :: GenTx blk -> Network.SizeInBytes

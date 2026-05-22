@@ -35,6 +35,13 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , StateHandle (..)
   , TickedStateHandle (..)
 
+    -- * Handles
+  , TablesHandle (..)
+  , MkHandle (..)
+  , MkHandleFromSnapshot (..)
+  , BackendError (..)
+  , slUtxoL
+
     -- * Ledger config
   , ShelleyLedgerConfig (..)
   , ShelleyPartialLedgerConfig (..)
@@ -56,27 +63,28 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , encodeShelleyLedgerState
 
     -- * Low-level UTxO manipulations
-  , slUtxoL
   , BigEndianTxIn (..)
   ) where
 
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
+import Cardano.Ledger.Binary.Decoding (DecShareCBOR, Interns, Share)
 import Cardano.Ledger.Binary.Plain
   ( FromCBOR (..)
   , ToCBOR (..)
   , enforceSize
   )
 import qualified Cardano.Ledger.Block as Core
+import qualified Cardano.Ledger.Conway.State as SL
 import Cardano.Ledger.Core
   ( Era
   , ppMaxBHSizeL
   , ppMaxTxSizeL
   )
 import qualified Cardano.Ledger.Core as Core
+import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
-import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import Cardano.Slotting.EpochInfo
 import Codec.CBOR.Decoding (Decoder)
@@ -100,10 +108,8 @@ import Data.Word
 import GHC.Generics (Generic)
 import Lens.Micro
 import Lens.Micro.Extras (view)
-import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
-import Ouroboros.Consensus.Cardano.InMemory
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
@@ -116,6 +122,7 @@ import Ouroboros.Consensus.Ledger.Abstract hiding (Handle, TickedHandle)
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -125,14 +132,12 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , envelopeChecks
   , mkHeaderView
   )
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Util
-import Ouroboros.Consensus.Util.CBOR
-  ( decodeStrictMaybe
-  , decodeWithOrigin
-  , encodeStrictMaybe
-  , encodeWithOrigin
-  )
+import Ouroboros.Consensus.Util.CBOR hiding (Decoder)
+import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Versioned
+import System.FS.CRC
 
 {-------------------------------------------------------------------------------
   Config
@@ -381,6 +386,74 @@ untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 type instance AuxLedgerEvent (ShelleyBlock proto era) = ShelleyLedgerEvent era
 
 type instance LedgerTablesHandle m (ShelleyBlock proto era) = TablesHandle m era
+
+slUtxoL :: Lens' (SL.NewEpochState era) (SL.UTxO era)
+slUtxoL = SL.nesEsL . SL.esLStateL . SL.lsUTxOStateL . SL.utxoL
+
+data MkHandle m = MkHandle
+  { fromNewEpochState ::
+      forall era.
+      (SL.Era era, MemPack (SL.TxOut era), MonadThrow m, Eq (SL.TxOut era)) =>
+      SL.NewEpochState era -> m (TablesHandle m era)
+  }
+
+data MkHandleFromSnapshot m = MkHandleFromSnapshot
+  { fromSnapshot ::
+      forall era.
+      ( SL.Era era
+      , MemPack (SL.TxOut era)
+      , IOLike m
+      , Share (SL.TxOut era) ~ Interns (SL.Credential SL.Staking)
+      , DecShareCBOR (SL.TxOut era)
+      , SL.EraCertState era
+      , Eq (SL.TxOut era)
+      ) =>
+      DiskSnapshot -> SL.NewEpochState era -> ExceptT BackendError m (TablesHandle m era, Maybe CRC)
+  }
+
+data BackendError = BackendReadErr ReadIncrementalErr | BackendCorruptedData
+  deriving Show
+
+data TablesHandle m era = TablesHandle
+  { stateWith :: Set SL.TxIn -> m (SL.NewEpochState era)
+  -- ^ Given a set of TxIns, produce a NewEpochState that has the
+  -- TxOuts we could find in the backend
+  , stateWithUTxO :: SL.UTxO era -> SL.NewEpochState era
+  -- ^ Only used for the AVVMs, create a NewEpochState as if the
+  -- given UTxOs had been read from the disk.
+  , applyDiff :: Diff.Diff SL.TxIn (SL.TxOut era) -> m (TablesHandle m era)
+  -- ^ Only used for AVVMs. Push a bunch of diffs to this reference
+  -- without duplicating it. In the OnDisk backend
+  -- this will mutate the database.
+  , duplWithDiffs :: SL.NewEpochState era -> SL.NewEpochState era -> m (TablesHandle m era)
+  -- ^ Given the before and after states, produce a new handle on
+  -- the after state.
+  --
+  -- The full states are passed here so that the handle can in the
+  -- InMemory case just use the second state, and in the LSM case
+  -- it can compute the differences to push them to a duplicated
+  -- handle.
+  , duplicateHandle :: m (TablesHandle m era)
+  -- ^ Create a duplicated reference to this handle
+  , readUTxOWhole :: m (SL.UTxO era)
+  -- ^ Read the whole UTxO set from the tables. This method inside will
+  -- use pagination if accessing the disk.
+  , readUTxOFiltered :: (SL.TxOut era -> Bool) -> m (SL.UTxO era)
+  -- ^ Read the UTxO set filtered by a predicate on TxOuts. Will use
+  -- pagination if accessing the disk.
+  , readTxOuts :: Set SL.TxIn -> m (SL.UTxO era)
+  -- ^ Get a particular (TxIn,TxOut) pair.
+  , closeHandle :: m ()
+  -- ^ Release the on-disk handle
+  , getStatsHandle :: Statistics
+  -- ^ Get the size of the tables for this handle
+  , takeHandleSnapshot :: DiskSnapshot -> m (Maybe CRC, SnapshotBackend)
+  -- ^ Take a snapshot with the given name
+  , castHandle ::
+      forall era'.
+      (SL.Era era', MemPack (SL.TxOut era'), Eq (SL.TxOut era')) =>
+      SL.NewEpochState era' -> m (TablesHandle m era')
+  }
 
 instance MonadLedger m (ShelleyBlock proto era) where
   data StateHandle m (ShelleyBlock proto era) = ShelleyStateHandle

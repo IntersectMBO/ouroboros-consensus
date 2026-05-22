@@ -163,7 +163,7 @@ protocolInfoShelley ::
   SL.ShelleyGenesis ->
   ProtocolParamsShelleyBased c ->
   SL.ProtVer ->
-  ( ProtocolInfo (ShelleyBlock (TPraos c) ShelleyEra)
+  ( ProtocolInfo m (ShelleyBlock (TPraos c) ShelleyEra)
   , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
   )
 protocolInfoShelley
@@ -184,7 +184,7 @@ protocolInfoTPraosShelleyBased ::
   L.TransitionConfig era ->
   -- | see 'shelleyProtVer', mutatis mutandi
   SL.ProtVer ->
-  ( ProtocolInfo (ShelleyBlock (TPraos c) era)
+  ( ProtocolInfo m (ShelleyBlock (TPraos c) era)
   , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock (TPraos c) era)]
   )
 protocolInfoTPraosShelleyBased
@@ -287,9 +287,10 @@ protocolInfoTPraosShelleyBased
       TPraosState Origin $
         SL.initialChainDepState initialNonce (SL.sgGenDelegs genesis)
 
-    initExtLedgerState :: ExtLedgerState (ShelleyBlock (TPraos c) era)
+    initExtLedgerState :: m (ExtLedgerState (ShelleyBlock (TPraos c) era))
     initExtLedgerState =
-      ExtLedgerState
-        { ledgerState = initLedgerState
-        , headerState = genesisHeaderState initChainDepState
-        }
+      pure
+        ExtLedgerState
+          { ledgerState = initLedgerState
+          , headerState = genesisHeaderState initChainDepState
+          }

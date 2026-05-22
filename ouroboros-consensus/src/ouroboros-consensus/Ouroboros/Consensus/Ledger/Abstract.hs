@@ -43,7 +43,6 @@ import Control.Monad.Trans (lift)
 import qualified Control.State.Transition.Extended as STS
 import Data.Kind (Type)
 import GHC.Stack (HasCallStack)
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Util

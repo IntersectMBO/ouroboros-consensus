@@ -92,7 +92,6 @@ import Cardano.Protocol.Crypto (Crypto)
 import Control.Arrow ((+++))
 import Control.Monad (guard)
 import Control.Monad.Except
-import Control.Monad.Trans (lift)
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
 import Data.Map (Map)
@@ -107,7 +106,6 @@ import GHC.Natural (Natural)
 import Lens.Micro
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Cardano.InMemory
 import Ouroboros.Consensus.Ledger.Abstract hiding (Handle, TickedHandle)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
@@ -228,46 +226,44 @@ instance
   LedgerSupportsMempool (ShelleyBlock proto era)
   where
   data MempoolCache (ShelleyBlock proto era) = ShelleyMempoolCache
-    { cacheKnownTransactions :: Map SL.TxId (SL.UTxO era, Diff.Diff SL.TxIn (L.TxOut era))
+    { cacheState :: Ticked LedgerState (ShelleyBlock proto era)
+    , cacheKnownTransactions :: Map SL.TxId (SL.UTxO era, Diff.Diff SL.TxIn (L.TxOut era))
+    , cacheThisTransaction :: SL.UTxO era
     , cacheAllTxsReadUTxO :: SL.UTxO era
     , cacheAllTxsDiff :: Diff.Diff SL.TxIn (L.TxOut era)
-    , cacheAllTxsFinalUTxO :: SL.UTxO era
     }
 
-  mkMempoolCache _ = ShelleyMempoolCache Map.empty (SL.UTxO Map.empty) (Diff.Diff Map.empty) (SL.UTxO Map.empty)
+  mkMempoolCache st =
+    ShelleyMempoolCache
+      (tickedState st)
+      Map.empty
+      (SL.UTxO Map.empty)
+      (SL.UTxO Map.empty)
+      (Diff.Diff Map.empty)
+
+  cachedState = cacheState
+  updateCachedState st (ShelleyMempoolCache _ a b c d) = ShelleyMempoolCache st a b c d
 
   txInvariant = const True
 
-  -- TODO @js: pre-read the UTxO inputs for the tx into the cache so the
-  -- subsequent pure 'applyTx' / 'txMeasure' calls don't have to. The
-  -- current 'applyShelleyTx' still does the read inline; once that has
-  -- been split out, populate this method properly.
-  addToCache _ts _tx c = pure c
+  addToCache ts tx@(ShelleyTx txid _) c =
+    case cacheKnownTransactions c Map.!? txid of
+      Nothing -> do
+        utxo <- readTxOuts (tickedStateHandleHandle ts) (getTransactionKeySets tx)
+        pure c{cacheThisTransaction = utxo}
+      Just{} -> pure c
 
-  -- TODO @js: see Layer 2 note on 'reapplyTx' error contract — the
-  -- cache returned on error must drop the failing tx's contributions.
-  -- Centralising that here will also remove the 'fillJavier' in
-  -- 'reapplyShelleyTx'.
-  forgetTxFromCache _vtx c = c
+  forgetTxFromCache vtx c =
+    let ShelleyTx txid _ = txForgetValidated vtx
+     in c{cacheKnownTransactions = Map.delete txid (cacheKnownTransactions c)}
 
-  -- TODO @js: 'applyShelleyTx' / 'reapplyShelleyTx' are 'ExceptT m', but
-  -- the new shape is pure ('Except'). Splitting the UTxO read out into
-  -- 'addToCache' (done lazily/idempotently before apply) lets the apply
-  -- step be pure; until that split lands, leave these stubbed.
-  applyTx = fillJavier
-  reapplyTx = fillJavier
+  applyTx = applyShelleyTx
+  reapplyTx = reapplyShelleyTx
 
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
 
   mkMempoolApplyTxError _tlst txt =
     ($ txt) <$> mkEraMkMempoolApplyTxError (Proxy @era)
-
-  -- TODO @js: move the per-era body from the 'TxLimits' instances below
-  -- (one per Shelley era) into this method. The per-era 'txMeasure'
-  -- consults the ticked state for protocol params and UTxO; the new
-  -- pure shape consults the 'MempoolCache' instead, so the per-era
-  -- helpers also need adapting to read from the cache.
-  txMeasure = fillJavier
 
 getTransactionKeySets ::
   ShelleyCompatible proto era => GenTx (ShelleyBlock proto era) -> Set SL.TxIn
@@ -354,124 +350,122 @@ instance Show (GenTxId (ShelleyBlock proto era)) where
 -------------------------------------------------------------------------------}
 
 applyShelleyTx ::
-  forall m era proto.
-  (Monad m, ShelleyCompatible proto era) =>
+  forall era proto.
+  ShelleyCompatible proto era =>
   LedgerConfig (ShelleyBlock proto era) ->
   WhetherToIntervene ->
   SlotNo ->
   GenTx (ShelleyBlock proto era) ->
   MempoolCache (ShelleyBlock proto era) ->
-  TickedStateHandle m (ShelleyBlock proto era) ->
-  ExceptT
+  Except
     (ApplyTxErr (ShelleyBlock proto era))
-    m
-    ( TickedStateHandle m (ShelleyBlock proto era)
-    , MempoolCache (ShelleyBlock proto era)
+    ( MempoolCache (ShelleyBlock proto era)
     , Validated (GenTx (ShelleyBlock proto era))
     )
-applyShelleyTx cfg wti slot gtx cache st0 = do
-  -- Get the UTxO for this transaction, the UTxO for all transactions in the
-  -- mempool and the current UTxO after applying the diffs of the other
-  -- transactions
-  (thisTxReadUTxO, allTxsReadUTxO, curUTxO) <- case cacheKnownTransactions Map.!? txid of
-    Nothing -> do
-      thisTxReadUTxO <- lift $ readTxOuts (tickedStateHandleHandle st0) (getTransactionKeySets gtx)
-      let allTxUTxO = Map.union (SL.unUTxO cacheAllTxsReadUTxO) (SL.unUTxO thisTxReadUTxO)
-      let curUTxO = Diff.applyDiff allTxUTxO cacheAllTxsDiff
-      pure (thisTxReadUTxO, SL.UTxO allTxUTxO, SL.UTxO curUTxO)
-    Just (thisTxReadUTxO, _thisTxDiffs) ->
-      pure (thisTxReadUTxO, cacheAllTxsReadUTxO, cacheAllTxsFinalUTxO)
+applyShelleyTx cfg wti slot gtx cache = do
+  let curUTxO =
+        Diff.applyDiffForKeys
+          (SL.unUTxO cacheThisTransaction)
+          (getTransactionKeySets gtx)
+          cacheAllTxsDiff
 
-  let newEpochState :: SL.NewEpochState era
-      newEpochState = tickedShelleyLedgerState (tickedState st0) & slUtxoL .~ curUTxO
+      newEpochState :: SL.NewEpochState era
+      newEpochState = tickedShelleyLedgerState cacheState & slUtxoL .~ SL.UTxO curUTxO
 
   (newLedgerState, vtx) <-
-    case runExcept $
-      applyShelleyBasedTx
-        (shelleyLedgerGlobals cfg)
-        (SL.mkMempoolEnv newEpochState slot)
-        (SL.mkMempoolState newEpochState)
-        wti
-        tx of
-      Left err -> throwError err
-      Right v -> pure v
+    applyShelleyBasedTx
+      (shelleyLedgerGlobals cfg)
+      (SL.mkMempoolEnv newEpochState slot)
+      (SL.mkMempoolState newEpochState)
+      wti
+      tx
 
   let (curUTxO', newLedgerState') = newLedgerState & SL.lsUTxOStateL . SL.utxoL <<.~ SL.UTxO Map.empty
 
-  -- We record the values we read and the diffs for this tx
-  let thisTxDiff = Diff.diff (SL.unUTxO curUTxO) (SL.unUTxO curUTxO')
-      knownTxs = Map.insert txid (thisTxReadUTxO, thisTxDiff) cacheKnownTransactions
+      thisTxDiff = Diff.diff curUTxO (SL.unUTxO curUTxO')
+      knownTxs = Map.insert txid (cacheThisTransaction, thisTxDiff) cacheKnownTransactions
       cacheAllTxsDiff' = cacheAllTxsDiff <> thisTxDiff
 
   pure
-    ( st0 & theLedgerLens .~ newLedgerState'
-    , ShelleyMempoolCache knownTxs allTxsReadUTxO cacheAllTxsDiff' curUTxO'
+    ( ShelleyMempoolCache
+        (cacheState & theLedgerLens .~ newLedgerState')
+        knownTxs
+        (SL.UTxO Map.empty)
+        (cacheAllTxsReadUTxO <> cacheThisTransaction)
+        cacheAllTxsDiff'
     , mkShelleyValidatedTx vtx
     )
  where
   ShelleyTx txid tx = gtx
   ShelleyMempoolCache
+    cacheState
     cacheKnownTransactions
+    cacheThisTransaction
     cacheAllTxsReadUTxO
-    cacheAllTxsDiff
-    cacheAllTxsFinalUTxO = cache
+    cacheAllTxsDiff =
+      cache
 
 reapplyShelleyTx ::
-  forall m era proto.
-  (Monad m, TxLimits (ShelleyBlock proto era), ShelleyCompatible proto era) =>
+  forall era proto.
+  (TxLimits (ShelleyBlock proto era), ShelleyCompatible proto era) =>
   LedgerConfig (ShelleyBlock proto era) ->
   SlotNo ->
   Validated (GenTx (ShelleyBlock proto era)) ->
   MempoolCache (ShelleyBlock proto era) ->
-  TickedStateHandle m (ShelleyBlock proto era) ->
-  ExceptT
-    (ApplyTxErr (ShelleyBlock proto era), MempoolCache (ShelleyBlock proto era))
-    m
-    (TickedStateHandle m (ShelleyBlock proto era), MempoolCache (ShelleyBlock proto era))
-reapplyShelleyTx cfg slot vgtx cache st0 = do
+  Except
+    (ApplyTxErr (ShelleyBlock proto era))
+    (MempoolCache (ShelleyBlock proto era))
+reapplyShelleyTx cfg slot vgtx cache = do
   -- Get the UTxO for this transaction, the UTxO for all transactions in the
   -- mempool and the current UTxO after applying the diffs of the other
   -- transactions
-  (thisTxReadUTxO, allTxsReadUTxO, curUTxO) <- case cacheKnownTransactions Map.!? txid of
-    Nothing ->
-      error "reapplying a transaction we don't know about!"
-    Just (thisTxReadUTxO, _thisTxDiffs) ->
-      pure (thisTxReadUTxO, cacheAllTxsReadUTxO, cacheAllTxsFinalUTxO)
+  let utxo =
+        Diff.applyDiffForKeys
+          (SL.unUTxO cacheThisTransaction)
+          (getTransactionKeySets $ txForgetValidated vgtx)
+          cacheAllTxsDiff
 
   let newEpochState :: SL.NewEpochState era
-      newEpochState = tickedShelleyLedgerState (tickedState st0) & slUtxoL .~ curUTxO
+      newEpochState = tickedShelleyLedgerState cacheState & slUtxoL .~ SL.UTxO utxo
 
   newLedgerState <-
-    case SL.reapplyTx
-      (shelleyLedgerGlobals cfg)
-      (SL.mkMempoolEnv newEpochState slot)
-      (SL.mkMempoolState newEpochState)
-      vtx of
-      -- TODO @js: per Layer 2 'reapplyTx' contract the error case must
-      -- return the cache with the failing tx's contributions removed.
-      -- Compute that here once the cache update mechanics are settled.
-      Left err -> throwError (err, fillJavier)
-      Right v -> pure v
-
-  let newLedgerState' = newLedgerState & SL.lsUTxOStateL . SL.utxoL .~ SL.UTxO Map.empty
-
-  pure (st0 & theLedgerLens .~ newLedgerState', cache)
+    liftEither $
+      SL.reapplyTx
+        (shelleyLedgerGlobals cfg)
+        (SL.mkMempoolEnv newEpochState slot)
+        (SL.mkMempoolState newEpochState)
+        vtx
+  let (SL.UTxO utxo', newLedgerState') = newLedgerState & SL.lsUTxOStateL . SL.utxoL <<.~ SL.UTxO Map.empty
+      (knownTxs', thisTxDiffs) = case cacheKnownTransactions Map.!? txid of
+        Just (_, d) -> (cacheKnownTransactions, d)
+        Nothing ->
+          let d = Diff.diff utxo utxo'
+           in (Map.insert txid (cacheThisTransaction, d) cacheKnownTransactions, d)
+  pure
+    ( ShelleyMempoolCache
+        (cacheState & theLedgerLens .~ newLedgerState')
+        knownTxs'
+        (SL.UTxO Map.empty)
+        (cacheAllTxsReadUTxO <> cacheThisTransaction)
+        (cacheAllTxsDiff <> thisTxDiffs)
+    )
  where
   ShelleyValidatedTx txid vtx = vgtx
   ShelleyMempoolCache
+    cacheState
     cacheKnownTransactions
+    cacheThisTransaction
     cacheAllTxsReadUTxO
-    cacheAllTxsDiff
-    cacheAllTxsFinalUTxO = cache
+    cacheAllTxsDiff = cache
 
 theLedgerLens ::
   Functor f =>
   (SL.LedgerState era -> f (SL.LedgerState era)) ->
-  TickedStateHandle m (ShelleyBlock proto era) ->
-  f (TickedStateHandle m (ShelleyBlock proto era))
+  Ticked LedgerState (ShelleyBlock proto era) ->
+  f (Ticked LedgerState (ShelleyBlock proto era))
 theLedgerLens f x =
-  (\y -> x{tickedStateHandleState = (tickedStateHandleState x){tickedShelleyLedgerState = y}})
-    <$> SL.overNewEpochState f (tickedShelleyLedgerState $ tickedStateHandleState x)
+  (\y -> x{tickedShelleyLedgerState = y})
+    <$> SL.overNewEpochState f (tickedShelleyLedgerState x)
 
 {-------------------------------------------------------------------------------
   Tx Limits
@@ -630,16 +624,19 @@ wrapCBORinCBOROverhead size =
 instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) where
   type TxMeasure (ShelleyBlock p ShelleyEra) = IgnoringOverflow ByteSize32
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
+  txMeasure _cfg st tx = runValidation $ txInBlockSize (cachedState st) tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
 
 instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) where
   type TxMeasure (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
+  txMeasure _cfg st tx = runValidation $ txInBlockSize (cachedState st) tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
 
 instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
   type TxMeasure (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
+  txMeasure _cfg st tx = runValidation $ txInBlockSize (cachedState st) tx
   blockCapacityTxMeasure _cfg = txsMaxBytes
 
 -----
@@ -771,6 +768,7 @@ instance
   where
   type TxMeasure (ShelleyBlock p AlonzoEra) = AlonzoMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
+  txMeasure _cfg st tx = runValidation $ txMeasureAlonzo (cachedState st) tx
   blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
 
 -----
@@ -913,6 +911,7 @@ instance
   where
   type TxMeasure (ShelleyBlock p BabbageEra) = AlonzoMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
+  txMeasure _cfg st tx = runValidation $ txMeasureAlonzo (cachedState st) tx
   blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
 
 instance
@@ -921,6 +920,7 @@ instance
   where
   type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
+  txMeasure _cfg st tx = runValidation $ txMeasureConway (cachedState st) tx
   blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
 
 instance
@@ -929,4 +929,5 @@ instance
   where
   type TxMeasure (ShelleyBlock p DijkstraEra) = DijkstraMeasure
   blockCapacityTxMeasure _cfg = blockCapacityDijkstraMeasure
+  txMeasure _cfg st tx = runValidation $ txMeasureDijkstra (cachedState st) tx
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)

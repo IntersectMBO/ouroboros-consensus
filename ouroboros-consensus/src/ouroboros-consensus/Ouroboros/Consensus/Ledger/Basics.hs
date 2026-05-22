@@ -293,6 +293,9 @@ class MonadLedger m blk where
   -- | Opaque handle to a ticked ledger state plus its tables.
   data TickedStateHandle m blk
 
+  type TransCtx m blk
+  type TransCtx m blk = ()
+
   newStateHandle :: LedgerState blk -> LedgerTablesHandle m blk -> StateHandle m blk
 
   -- | Project the pure ledger state out of a handle.

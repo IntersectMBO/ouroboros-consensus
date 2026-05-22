@@ -62,7 +62,6 @@ import Data.Typeable (Typeable)
 import Lens.Micro
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Cardano.InMemory
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import Ouroboros.Consensus.HeaderValidation

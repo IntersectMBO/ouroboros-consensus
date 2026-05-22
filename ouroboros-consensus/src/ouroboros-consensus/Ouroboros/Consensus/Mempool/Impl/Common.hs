@@ -303,24 +303,22 @@ tickLedgerState cfg (ForgeInUnknownSlot st) = do
 -- Pure: 'applyTx' is pure and the cache passed in is expected to have
 -- been pre-loaded by the caller via 'addToCache'.
 validateNewTransaction ::
-  (LedgerSupportsMempool blk, MonadLedger m blk, HasTxId (GenTx blk)) =>
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
   LedgerConfig blk ->
   WhetherToIntervene ->
   GenTx blk ->
   TxMeasure blk ->
   -- | Cache populated by 'addToCache' for this tx.
   MempoolCache blk ->
-  -- | The ticked ledger handle backing the cache.
-  TickedStateHandle m blk ->
   InternalState blk ->
-  ( Either (ApplyTxErr blk) (Validated (GenTx blk), TickedStateHandle m blk)
+  ( Either (ApplyTxErr blk) (Validated (GenTx blk))
   , DiffTimeMeasure -> InternalState blk
   )
-validateNewTransaction cfg wti tx txsz cache st is =
-  case runExcept (applyTx cfg wti isSlotNo tx cache st) of
+validateNewTransaction cfg wti tx txsz cache is =
+  case runExcept (applyTx cfg wti isSlotNo tx cache) of
     Left err -> (Left err, \_dur -> is)
-    Right (st', cache', vtx) ->
-      ( Right (vtx, st')
+    Right (cache', vtx) ->
+      ( Right vtx
       , \dur ->
           is
             { isTxs =
@@ -380,16 +378,9 @@ revalidateTxsFor ::
   [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
   m (RevalidateTxsResult blk)
 revalidateTxsFor capacityOverride cfg slot st0 cache0 lastTicketNo txTickets = do
-  -- Pre-load cache with every tx's read values via 'addToCache'.
-  -- After this step, the actual reapplication fold is pure.
-  cachePreloaded <-
-    foldM
-      (\c tkt -> addToCache st0 (txForgetValidated (txTicketTx tkt)) c)
-      cache0
-      txTickets
-  let (stFinal, cacheFinal, validRev, invalidRev) =
-        Foldable.foldl' step (st0, cachePreloaded, [], []) txTickets
-      validTxs = reverse validRev
+  (cacheFinal, validRev, invalidRev) <-
+    foldM step (cache0, [], []) txTickets
+  let validTxs = reverse validRev
       tipSt = tickedState st0
       is' =
         IS
@@ -398,7 +389,7 @@ revalidateTxsFor capacityOverride cfg slot st0 cache0 lastTicketNo txTickets = d
               Set.fromList $
                 map (txId . txForgetValidated . txTicketTx) validTxs
           , isCache = cacheFinal
-          , isLedgerState = tickedState stFinal
+          , isLedgerState = cachedState cacheFinal
           , isTip = getTip tipSt
           , isSlotNo = slot
           , isLastTicketNo = lastTicketNo
@@ -407,22 +398,23 @@ revalidateTxsFor capacityOverride cfg slot st0 cache0 lastTicketNo txTickets = d
   pure $ RevalidateTxsResult is' (reverse invalidRev)
  where
   step ::
-    ( TickedStateHandle m blk
-    , MempoolCache blk
+    ( MempoolCache blk
     , [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))]
     , [Invalidated blk]
     ) ->
     TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk)) ->
-    ( TickedStateHandle m blk
-    , MempoolCache blk
-    , [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))]
-    , [Invalidated blk]
-    )
-  step (st, cache, valid, invalid) tkt =
-    case runExcept (reapplyTx cfg slot (txTicketTx tkt) cache st) of
-      Right (st', cache') -> (st', cache', tkt : valid, invalid)
-      Left (err, cache') ->
-        (st, cache', valid, Invalidated (txTicketTx tkt) err : invalid)
+    m
+      ( MempoolCache blk
+      , [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))]
+      , [Invalidated blk]
+      )
+  step (cache, valid, invalid) tkt = do
+    let tx = txTicketTx tkt
+    cache' <- addToCache st0 (txForgetValidated (txTicketTx tkt)) cache
+    case runExcept (reapplyTx cfg slot tx cache') of
+      Right cache'' -> pure (cache'', tkt : valid, invalid)
+      Left err ->
+        pure (forgetTxFromCache tx cache, valid, Invalidated (txTicketTx tkt) err : invalid)
 
 data RevalidateTxsResult blk
   = RevalidateTxsResult
@@ -459,14 +451,15 @@ computeSnapshot cfg slot st0 cache0 txTickets = do
       (\c tkt -> addToCache st0 (txForgetValidated (txTicketTx tkt)) c)
       cache0
       txTickets
-  let (_, _, validRev) = Foldable.foldl' step (st0, cachePreloaded, []) txTickets
+  let (_, validRev) = Foldable.foldl' step (cachePreloaded, []) txTickets
   pure $
     snapshotFromValidTxs (reverse validRev) (getTip (tickedState st0)) slot
  where
-  step (st, cache, valid) tkt =
-    case runExcept (reapplyTx cfg slot (txTicketTx tkt) cache st) of
-      Right (st', cache') -> (st', cache', tkt : valid)
-      Left (_, cache') -> (st, cache', valid)
+  step (cache, valid) tkt =
+    let tx = txTicketTx tkt
+     in case runExcept (reapplyTx cfg slot tx cache) of
+          Right cache' -> (cache', tkt : valid)
+          Left{} -> (forgetTxFromCache tx cache, valid)
 
 {-------------------------------------------------------------------------------
   Conversions

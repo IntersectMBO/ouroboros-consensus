@@ -17,7 +17,6 @@ import qualified Data.SOP.Strict as SOP
 import Data.SOP.Tails (Tails)
 import qualified Data.SOP.Tails as Tails
 import Data.Typeable
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
@@ -49,11 +48,12 @@ class
   -- in Haskell.)
   type HardForkTxMeasure xs
 
-  type TransCtx (m :: (Type -> Type)) xs
-  type TransCtx m xs = ()
+  type HFTransCtx (m :: Type -> Type) xs
+  type HFTransCtx m xs = ()
 
   hardForkEraTranslation :: EraTranslation xs
-  hardForkStateHandleTranslation :: MonadThrow m => TransCtx m xs -> StateHandleTranslation m xs
+  hardForkStateHandleTranslation ::
+    MonadThrow m => HFTransCtx m xs -> StateHandleTranslation m xs
   hardForkChainSel :: Tails AcrossEraTiebreaker xs
   hardForkInjectTxs ::
     InPairs

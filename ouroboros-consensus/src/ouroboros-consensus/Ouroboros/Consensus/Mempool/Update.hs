@@ -304,119 +304,113 @@ tryAddTx ::
   -- | The current internal state of the mempool.
   InternalState blk ->
   m (TriedToAddTx blk)
-tryAddTx mpEnv cfg wti tx is =
-  modifyMVar (mpEnvTickedHandle mpEnv) $ \st -> do
-    -- Pre-load the cache with any UTxO values this tx needs. After
-    -- this step both 'txMeasure' and 'applyTx' are pure: they look up
-    -- values in the cache instead of going to disk.
-    cache1 <- addToCache st tx (isCache is)
-    pure $ case runExcept (txMeasure cfg cache1 (tickedState st) tx) of
-      Left err ->
-        -- The transaction does not have a valid measure (eg its ExUnits is
-        -- greater than what this ledger state allows for a single transaction).
-        --
-        -- It might seem simpler to remove the failure case from 'txMeasure' and
-        -- simply fully validate the tx before determining whether it'd fit in
-        -- the mempool; that way we could reject invalid txs ASAP. However, for a
-        -- valid tx, we'd pay that validation cost every time the node's
-        -- selection changed, even if the tx wouldn't fit. So it'd very much be
-        -- as if the mempool were effectively over capacity! What's worse, each
-        -- attempt would not be using 'extendVRPrevApplied'.
-        ( st
-        , NotProcessed $
-            TransactionProcessingResult
-              Nothing
-              (MempoolTxRejected tx err)
-              ( TraceMempoolRejectedTx
-                  tx
-                  err
-                  MempoolRejectedByLedger
-                  (isMempoolSize is)
-              )
-        )
-      Right txsz
-        -- Check for overflow
-        --
-        -- No measure of a transaction can ever be negative, so the only way
-        -- adding two measures could result in a smaller measure is if some
-        -- modular arithmetic overflowed. Also, overflow necessarily yields a
-        -- lesser result, since adding 'maxBound' is modularly equivalent to
-        -- subtracting one. Recall that we're checking each individual addition.
-        --
-        -- We assume that the 'txMeasure' limit and the mempool capacity
-        -- 'isCapacity' are much smaller than the modulus, and so this should
-        -- never happen. Despite that, blocking until adding the transaction
-        -- doesn't overflow seems like a reasonable way to handle this case.
-        | not $ currentSize Measure.<= currentSize `Measure.plus` MkTxMeasureWithDiffTime txsz Measure.zero ->
-            (st, NotEnoughSpaceLeft)
-        -- We add the transaction if and only if it wouldn't overrun any component
-        -- of the mempool capacity.
-        --
-        -- In the past, this condition was instead @TxSeq.toSize (isTxs is) <
-        -- isCapacity is@. Thus the effective capacity of the mempool was
-        -- actually one increment less than the reported capacity plus one
-        -- transaction. That subtlety's cost paid for two benefits.
-        --
-        -- First, the absence of addition avoids a risk of overflow, since the
-        -- transaction's sizes (eg ExUnits) have not yet been bounded by
-        -- validation (which presumably enforces a low enough bound that any
-        -- reasonably-sized mempool would never overflow the representation's
-        -- 'maxBound').
-        --
-        -- Second, it is more fair, since it does not depend on the transaction
-        -- at all. EG a large transaction might struggle to win the race against
-        -- a firehose of tiny transactions.
-        --
-        -- However, we prefer to avoid the subtlety. Overflow is handled by the
-        -- previous guard. And fairness is already ensured elsewhere (the 'MVar's
-        -- in 'implAddTx' --- which the "Test.Consensus.Mempool.Fairness" test
-        -- exercises). Moreover, the notion of "is under capacity" becomes
-        -- difficult to assess independently of the pending tx when the measure
-        -- is multi-dimensional; both typical options (any component is not full
-        -- or every component is not full) lead to some confusing behaviors
-        -- (denying some txs that would "obviously" fit and accepting some txs
-        -- that "obviously" don't, respectively).
-        --
-        -- Even with the overflow handler, it's important that 'txMeasure'
-        -- returns a well-bounded result. Otherwise, if an adversarial tx arrived
-        -- that could't even fit in an empty mempool, then that thread would
-        -- never release the 'MVar'. In particular, we tacitly assume here that a
-        -- tx that wouldn't even fit in an empty mempool would be rejected by
-        -- 'txMeasure'.
-        | let MkTxMeasureWithDiffTime txssz _txsdifftime = currentSize
-        , not $ txssz `Measure.plus` txsz Measure.<= isCapacity is ->
-            (st, NotEnoughSpaceLeft)
-        | Just toCfg <- mbToCfg
-        , let MkTxMeasureWithDiffTime _txssz txsdifftime = currentSize
-        , not $ txsdifftime Measure.<= FiniteDiffTimeMeasure (mempoolTimeoutCapacity toCfg) ->
-            (st, NotEnoughSpaceLeft)
-        | otherwise ->
-            case validateNewTransaction cfg wti tx txsz cache1 st is of
-              (Left err, _) ->
-                ( st
-                , Processed $ \_dur ->
-                    TransactionProcessingResult
-                      Nothing
-                      (MempoolTxRejected tx err)
-                      ( TraceMempoolRejectedTx
-                          tx
-                          err
-                          MempoolRejectedByLedger
-                          (isMempoolSize is)
-                      )
-                )
-              (Right (vtx, st'), is') ->
-                ( st'
-                , Processed $ \dur ->
-                    TransactionProcessingResult
-                      (Just (is' dur))
-                      (MempoolTxAdded vtx)
-                      ( TraceMempoolAddedTx
-                          vtx
-                          (isMempoolSize is)
-                          (isMempoolSize (is' dur))
-                      )
-                )
+tryAddTx mpEnv cfg wti tx is = do
+  st <- readMVar (mpEnvTickedHandle mpEnv)
+  -- Pre-load the cache with any UTxO values this tx needs. After
+  -- this step both 'txMeasure' and 'applyTx' are pure: they look up
+  -- values in the cache instead of going to disk.
+  cache1 <- addToCache st tx (isCache is)
+  pure $ case runExcept (txMeasure cfg cache1 tx) of
+    Left err ->
+      -- The transaction does not have a valid measure (eg its ExUnits is
+      -- greater than what this ledger state allows for a single transaction).
+      --
+      -- It might seem simpler to remove the failure case from 'txMeasure' and
+      -- simply fully validate the tx before determining whether it'd fit in
+      -- the mempool; that way we could reject invalid txs ASAP. However, for a
+      -- valid tx, we'd pay that validation cost every time the node's
+      -- selection changed, even if the tx wouldn't fit. So it'd very much be
+      -- as if the mempool were effectively over capacity! What's worse, each
+      -- attempt would not be using 'extendVRPrevApplied'.
+      NotProcessed $
+        TransactionProcessingResult
+          Nothing
+          (MempoolTxRejected tx err)
+          ( TraceMempoolRejectedTx
+              tx
+              err
+              MempoolRejectedByLedger
+              (isMempoolSize is)
+          )
+    Right txsz
+      -- Check for overflow
+      --
+      -- No measure of a transaction can ever be negative, so the only way
+      -- adding two measures could result in a smaller measure is if some
+      -- modular arithmetic overflowed. Also, overflow necessarily yields a
+      -- lesser result, since adding 'maxBound' is modularly equivalent to
+      -- subtracting one. Recall that we're checking each individual addition.
+      --
+      -- We assume that the 'txMeasure' limit and the mempool capacity
+      -- 'isCapacity' are much smaller than the modulus, and so this should
+      -- never happen. Despite that, blocking until adding the transaction
+      -- doesn't overflow seems like a reasonable way to handle this case.
+      | not $ currentSize Measure.<= currentSize `Measure.plus` MkTxMeasureWithDiffTime txsz Measure.zero ->
+          NotEnoughSpaceLeft
+      -- We add the transaction if and only if it wouldn't overrun any component
+      -- of the mempool capacity.
+      --
+      -- In the past, this condition was instead @TxSeq.toSize (isTxs is) <
+      -- isCapacity is@. Thus the effective capacity of the mempool was
+      -- actually one increment less than the reported capacity plus one
+      -- transaction. That subtlety's cost paid for two benefits.
+      --
+      -- First, the absence of addition avoids a risk of overflow, since the
+      -- transaction's sizes (eg ExUnits) have not yet been bounded by
+      -- validation (which presumably enforces a low enough bound that any
+      -- reasonably-sized mempool would never overflow the representation's
+      -- 'maxBound').
+      --
+      -- Second, it is more fair, since it does not depend on the transaction
+      -- at all. EG a large transaction might struggle to win the race against
+      -- a firehose of tiny transactions.
+      --
+      -- However, we prefer to avoid the subtlety. Overflow is handled by the
+      -- previous guard. And fairness is already ensured elsewhere (the 'MVar's
+      -- in 'implAddTx' --- which the "Test.Consensus.Mempool.Fairness" test
+      -- exercises). Moreover, the notion of "is under capacity" becomes
+      -- difficult to assess independently of the pending tx when the measure
+      -- is multi-dimensional; both typical options (any component is not full
+      -- or every component is not full) lead to some confusing behaviors
+      -- (denying some txs that would "obviously" fit and accepting some txs
+      -- that "obviously" don't, respectively).
+      --
+      -- Even with the overflow handler, it's important that 'txMeasure'
+      -- returns a well-bounded result. Otherwise, if an adversarial tx arrived
+      -- that could't even fit in an empty mempool, then that thread would
+      -- never release the 'MVar'. In particular, we tacitly assume here that a
+      -- tx that wouldn't even fit in an empty mempool would be rejected by
+      -- 'txMeasure'.
+      | let MkTxMeasureWithDiffTime txssz _txsdifftime = currentSize
+      , not $ txssz `Measure.plus` txsz Measure.<= isCapacity is ->
+          NotEnoughSpaceLeft
+      | Just toCfg <- mbToCfg
+      , let MkTxMeasureWithDiffTime _txssz txsdifftime = currentSize
+      , not $ txsdifftime Measure.<= FiniteDiffTimeMeasure (mempoolTimeoutCapacity toCfg) ->
+          NotEnoughSpaceLeft
+      | otherwise ->
+          case validateNewTransaction cfg wti tx txsz cache1 is of
+            (Left err, _) ->
+              Processed $ \_dur ->
+                TransactionProcessingResult
+                  Nothing
+                  (MempoolTxRejected tx err)
+                  ( TraceMempoolRejectedTx
+                      tx
+                      err
+                      MempoolRejectedByLedger
+                      (isMempoolSize is)
+                  )
+            (Right vtx, is') ->
+              Processed $ \dur ->
+                TransactionProcessingResult
+                  (Just (is' dur))
+                  (MempoolTxAdded vtx)
+                  ( TraceMempoolAddedTx
+                      vtx
+                      (isMempoolSize is)
+                      (isMempoolSize (is' dur))
+                  )
  where
   MempoolEnv{mpEnvTimeoutConfig = mbToCfg} = mpEnv
   currentSize = TxSeq.toSize (isTxs is)
