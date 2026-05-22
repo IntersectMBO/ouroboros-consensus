@@ -936,7 +936,7 @@ protocolInfoCardano paramsCardano
     pure $
       ExtStateHandle
         { extHeaderState = initHeaderState
-        , extStateHandle = initLedgerState'
+        , unExtStateHandle = initLedgerState'
         }
    where
     overShelleyBasedLedgerState (HardForkStateHandle st tctx) =

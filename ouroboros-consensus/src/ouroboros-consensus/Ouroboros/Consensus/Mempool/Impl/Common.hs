@@ -201,7 +201,7 @@ chainDBLedgerInterface ::
 chainDBLedgerInterface chainDB =
   LedgerInterface
     { getCurrentLedgerState =
-        extStateHandle <$> ChainDB.getCurrentLedgerRef chainDB
+        unExtStateHandle <$> ChainDB.getCurrentLedgerRef chainDB
     }
 
 {-------------------------------------------------------------------------------

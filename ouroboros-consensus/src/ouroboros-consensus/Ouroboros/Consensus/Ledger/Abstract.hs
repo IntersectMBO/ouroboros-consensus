@@ -14,7 +14,6 @@ module Ouroboros.Consensus.Ledger.Abstract
 
     -- * Apply block
   , ApplyBlock (..)
-  , ComputeLedgerEvents (..)
   , UpdateLedger
   , defaultApplyBlockLedgerResult
   , defaultReapplyBlockLedgerResult

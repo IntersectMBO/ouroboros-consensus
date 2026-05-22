@@ -138,14 +138,22 @@ data instance Ticked ExtLedgerState blk = TickedExtLedgerState
 -- Plain record: bundles a 'StateHandle' (which owns the on-disk tables) with
 -- the pure 'HeaderState'. Constructed and destructed directly — no
 -- 'BlockSupportsLedgerHD' instance for 'ExtLedgerState' is needed.
+--
+-- Note: it is /structurally/ impossible to provide one.
+-- 'BlockSupportsLedgerHD' is indexed by @(m, blk)@; 'ExtLedgerState' is a
+-- @(Type -> Type)@ wrapper, not a block. So the methods that the class
+-- offers for 'StateHandle' (close / duplicate / state projection / stats)
+-- are reproduced for 'ExtStateHandle' as the plain helpers below
+-- ('closeExt', 'duplicateExt', 'extLedgerState', 'getStatsExt', …), each
+-- of which just lifts the corresponding method through the wrapper.
 data ExtStateHandle m blk = ExtStateHandle
-  { extStateHandle :: !(StateHandle m blk)
+  { unExtStateHandle :: !(StateHandle m blk)
   , extHeaderState :: !(HeaderState blk)
   }
 
 -- | A handle for a 'Ticked' 'ExtLedgerState'.
 data TickedExtStateHandle m blk = TickedExtStateHandle
-  { tickedExtStateHandle :: !(TickedStateHandle m blk)
+  { unTickedExtStateHandle :: !(TickedStateHandle m blk)
   , tickedExtLedgerView :: !(LedgerView (BlockProtocol blk))
   , tickedExtHeaderState :: !(Ticked (HeaderState blk))
   }

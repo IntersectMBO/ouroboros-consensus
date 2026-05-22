@@ -300,6 +300,6 @@ protocolInfoTPraosShelleyBased
       h <- fromNewEpochState mkH newEpochState
       pure
         ExtStateHandle
-          { extStateHandle = ShelleyStateHandle initLedgerState h
+          { unExtStateHandle = ShelleyStateHandle initLedgerState h
           , extHeaderState = genesisHeaderState initChainDepState
           }

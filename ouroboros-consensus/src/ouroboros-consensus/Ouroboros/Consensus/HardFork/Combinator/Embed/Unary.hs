@@ -526,12 +526,12 @@ instance Functor m => Isomorphic (MkBlockForging m) where
 instance Isomorphic (StateHandle m) => Isomorphic (ExtStateHandle m) where
   project ExtStateHandle{..} =
     ExtStateHandle
-      { extStateHandle = project extStateHandle
+      { unExtStateHandle = project unExtStateHandle
       , extHeaderState = project extHeaderState
       }
   inject ExtStateHandle{..} =
     ExtStateHandle
-      { extStateHandle = inject extStateHandle
+      { unExtStateHandle = inject unExtStateHandle
       , extHeaderState = inject extHeaderState
       }
 

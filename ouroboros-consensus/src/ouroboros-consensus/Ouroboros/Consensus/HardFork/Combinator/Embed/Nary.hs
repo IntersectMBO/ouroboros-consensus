@@ -297,7 +297,7 @@ injectInitialExtLedgerState cfg extLedgerState0 tctx = do
           (SlotNo 0)
           tctx
           . initHardForkState
-          $ (extStateHandle extLedgerState0)
+          $ (unExtStateHandle extLedgerState0)
       )
 
   firstEraChainDepState :: HardForkChainDepState (x ': xs)

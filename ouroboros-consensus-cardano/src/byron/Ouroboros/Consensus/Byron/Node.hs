@@ -212,7 +212,7 @@ protocolInfoByron
       , pInfoInitLedger = \() ->
           pure
             ExtStateHandle
-              { extStateHandle =
+              { unExtStateHandle =
                   ByronStateHandle $
                     -- Important: don't pass the compacted genesis config to
                     -- 'initByronLedgerState', it needs the full one, including the AVVM

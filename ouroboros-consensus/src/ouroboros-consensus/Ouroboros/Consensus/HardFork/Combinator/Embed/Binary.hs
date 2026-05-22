@@ -105,7 +105,7 @@ protocolInfoBinary
               pInfoInitLedger1 (projectLedgerTablesFactory hftctx)
             pure
               ExtStateHandle
-                { extStateHandle =
+                { unExtStateHandle =
                     HardForkStateHandle (initHardForkState initLedgerState1) hftctx
                 , extHeaderState =
                     genesisHeaderState $

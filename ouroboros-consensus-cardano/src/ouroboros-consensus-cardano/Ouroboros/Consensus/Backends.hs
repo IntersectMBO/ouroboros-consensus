@@ -281,7 +281,7 @@ mkSnapshotManager ccfg snapTracer shfs@(SomeHasFS hasFS) =
                     :* sf
                     :* Nil
             )
-            (Telescope.tip $ getHardForkState $ hardForkStateHandlePerEra $ extStateHandle st)
+            (Telescope.tip $ getHardForkState $ hardForkStateHandlePerEra $ unExtStateHandle st)
     writeSnapshotMetadata shfs ds $
       SnapshotMetadata
         { snapshotBackend = bknd

@@ -7,10 +7,15 @@
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
 
--- | Definition is 'IsLedger'
+-- | Core ledger vocabulary that the rest of the Consensus layer is built on.
 --
--- Normally this is imported from "Ouroboros.Consensus.Ledger.Abstract". We
--- pull this out to avoid circular module dependencies.
+-- This module exists to break import cycles: it holds the constraint-free
+-- pieces (the 'LedgerState' data family, the 'IsLedger' class with ticking,
+-- 'GetTip', 'LedgerResult', 'Statistics') alongside the per-block handle
+-- vocabulary ('BlockSupportsLedgerHD', 'LedgerTablesHandle', 'Handle')
+-- needed to tick a ledger. Block application ('ApplyBlock') is layered on
+-- top in "Ouroboros.Consensus.Ledger.Abstract", which is the module most
+-- consumers should import.
 module Ouroboros.Consensus.Ledger.Basics
   ( -- * The 'LedgerState' definition
     LedgerCfg
@@ -18,11 +23,13 @@ module Ouroboros.Consensus.Ledger.Basics
   , TickedLedgerState
   , Statistics (..)
 
-    -- * Definition of a ledger independent of a choice of block
+    -- * IsLedger
   , ComputeLedgerEvents (..)
   , IsLedger (..)
   , AuxLedgerEvent
   , applyChainTick
+
+    -- * Per-block handle vocabulary
   , BlockSupportsLedgerHD (..)
   , LedgerTablesHandle
   , Handle

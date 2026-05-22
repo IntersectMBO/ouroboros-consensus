@@ -93,9 +93,11 @@ _lemma_ledgerViewForecastAt_applyChainTick cfg st forecast for =
       case lhs of
         Left _ -> pure ()
         Right lhs' -> do
-          rhs <-
-            protocolLedgerView cfg . tickedState
-              <$> lift (applyChainTick OmitLedgerEvents cfg for st)
+          rhs <- lift $
+            bracket
+              (applyChainTick OmitLedgerEvents cfg for st)
+              closeTicked
+              (pure . protocolLedgerView cfg . tickedState)
           when (lhs' /= rhs) $
             throwError $
               unlines
