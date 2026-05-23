@@ -84,7 +84,7 @@ forkSyncStateOnTipPointChange menv reg =
   -- Using the tip ('Point') allows for quicker equality checks
   getCurrentTip :: STM m (Point blk)
   getCurrentTip =
-    ledgerTipPoint . state <$> getCurrentLedgerState (mpEnvLedger menv)
+    getCurrentLedgerTip (mpEnvLedger menv)
 
 -- | Unlike 'openMempool', this function does not fork a background thread
 -- that synchronises with the ledger state whenever the later changes.

@@ -128,13 +128,13 @@
 --   'withTipForker' (bracketed). The read-only path goes through
 --   'openHandleAtTarget' instead, which does not allocate a 'Forker'.
 --
--- - 'openReadOnlyForker' (a thin wrapper over 'openHandleAtTarget')
+-- - 'openReadOnlyHandle' (a thin wrapper over 'openHandleAtTarget')
 --   is used directly only in @db-analyser@ (tool), in tests, and to
---   define 'openReadOnlyForkerAtPoint'.
+--   define 'openReadOnlyHandleAtPoint'.
 --
--- - 'openReadOnlyForkerAtPoint' is used directly only to define
---   'allocInRegistryReadOnlyForkerAtPoint' (registered), to define
---   'withReadOnlyForkerAtPoint' (bracketed), and to construct a
+-- - 'openReadOnlyHandleAtPoint' is used directly only to define
+--   'allocInRegistryReadOnlyHandleAtPoint' (registered), to define
+--   'withReadOnlyHandleAtPoint' (bracketed), and to construct a
 --   'MempoolLedgerDBView'.
 --
 --  - The Forker part of 'MempoolLedgerDBView' is used directly only
@@ -204,7 +204,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbError (..)
 
     -- * Forker
-  , openReadOnlyForker
+  , openReadOnlyHandle
   , getTipStatistics
   , withTipForker
 
@@ -440,12 +440,12 @@ getTipStatistics ldb = withTipForker ldb (fmap getStatsExt . atomically . forker
 -- | Acquire a fresh read-only handle at the requested point.
 --
 -- A thin wrapper over 'openHandleAtTarget' that specialises to the LedgerDB's
--- usual @l ~ ExtLedgerState@. Kept for callers that already use this name.
-openReadOnlyForker ::
+-- usual @l ~ ExtLedgerState@.
+openReadOnlyHandle ::
   LedgerDB m ExtLedgerState blk ->
   Target (Point blk) ->
   m (Either GetForkerError (ExtStateHandle m blk))
-openReadOnlyForker = openHandleAtTarget
+openReadOnlyHandle = openHandleAtTarget
 
 {-------------------------------------------------------------------------------
   Initialization

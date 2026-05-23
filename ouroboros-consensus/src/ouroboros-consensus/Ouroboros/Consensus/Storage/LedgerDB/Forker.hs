@@ -110,7 +110,7 @@ newtype ForkerKey = ForkerKey Word16
 -- holding a 'Forker' can call 'forkerCommit'. The read-only interface
 -- is 'Handle' (from 'IsLedger') instead. Query, mempool and forging
 -- code acquire a 'Handle' directly — via 'openHandleAtTarget' (and the
--- 'openReadOnlyForker' wrapper around it) or 'getVolatileTipRef' — and
+-- 'openReadOnlyHandle' wrapper around it) or 'getVolatileTipRef' — and
 -- never touch a 'Forker'. Those entry points call
 -- 'openStateHandleAtTarget' without allocating a 'Forker' at all. The
 -- 'Forker' abstraction is reserved for chain selection, the one caller

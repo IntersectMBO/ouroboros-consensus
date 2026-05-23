@@ -143,7 +143,7 @@ mkHandlers NodeKernelArgs{cfg, tracers} NodeKernel{getChainDB, getMempool} =
           getMempool
     , hStateQueryServer = \reg ->
         localStateQueryServer (ExtLedgerCfg cfg) $ \target ->
-          ChainDB.allocInRegistryReadOnlyForkerAtPoint getChainDB target reg
+          ChainDB.allocInRegistryReadOnlyHandleAtPoint getChainDB target reg
     , hTxMonitorServer =
         localTxMonitorServer
           getMempool

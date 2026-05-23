@@ -542,8 +542,8 @@ implSyncWithLedger projectResult mpEnv =
       --
       -- Just for performance reasons, we will avoid re-validating the mempool
       -- if the state didn't change.
-      withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
-        \is st0 -> do
+      withTMVar istate $ \is ->
+        withCurrentLedgerStateDup ldgrInterface $ \st0 -> do
           (slot, ls') <- tickLedgerState cfg $ ForgeInUnknownSlot st0
           if pointHash (isTip is) == getTipHash (tickedState ls')
             && isSlotNo is == slot

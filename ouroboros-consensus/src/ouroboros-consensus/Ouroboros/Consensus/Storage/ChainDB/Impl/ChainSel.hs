@@ -33,7 +33,7 @@ import Control.Exception (assert)
 import Control.Monad (forM_, join, void, when)
 import Control.Monad.Except ()
 import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.State.Strict hiding (state)
+import Control.Monad.Trans.State.Strict
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Bifunctor (first)
 import Data.Function (on)

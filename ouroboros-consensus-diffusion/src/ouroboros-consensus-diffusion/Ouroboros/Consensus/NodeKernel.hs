@@ -584,11 +584,11 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     -- Get forker corresponding to bcPrevPoint
     --
     -- This might fail if, in between choosing 'bcPrevPoint' and this call to
-    -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
+    -- 'ChainDB.withReadOnlyHandleAtPoint', we switched to a fork where 'bcPrevPoint'
     -- is no longer on our chain. When that happens, we simply give up on the
     -- chance to produce a block.
     (txs, txssz, proof, snapSize, tickedLedgerState, forgingOnTopOf) <-
-      ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
+      ChainDB.withReadOnlyHandleAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
         Left _ -> do
           trace blockForging $ TraceNoLedgerState currentSlot bcPrevPoint
           exitEarly

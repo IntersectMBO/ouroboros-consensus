@@ -233,7 +233,7 @@ data ChainDB m blk = ChainDB
   , getHeaderStateHistory :: STM m (HeaderStateHistory blk)
   -- ^ Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
   -- last @k@ blocks of the current chain.
-  , allocInRegistryReadOnlyForkerAtPoint ::
+  , allocInRegistryReadOnlyHandleAtPoint ::
       Target (Point blk) ->
       ResourceRegistry m ->
       m (Either GetForkerError (ResourceKey m, Handle ExtLedgerState m blk))
@@ -242,7 +242,7 @@ data ChainDB m blk = ChainDB
   --
   -- This function is to be used by LocalStateQuery server. Note ChainSel uses
   -- the LedgerDB directly, none of these methods are used there.
-  , openReadOnlyForkerAtPoint ::
+  , openReadOnlyHandleAtPoint ::
       Target (Point blk) ->
       m (Either GetForkerError (Handle ExtLedgerState m blk))
   -- ^ Open a forker at the given point. This resource is untracked.
@@ -250,7 +250,7 @@ data ChainDB m blk = ChainDB
   -- It is intended to be used by the Mempool as closing the mempool means the
   -- system is shutting down, so the resources does not need to be tracked. Note
   -- ChainSel uses the LedgerDB directly, none of these methods are used there.
-  , withReadOnlyForkerAtPoint ::
+  , withReadOnlyHandleAtPoint ::
       forall r.
       Target (Point blk) ->
       (Either GetForkerError (Handle ExtLedgerState m blk) -> WithEarlyExit m r) ->

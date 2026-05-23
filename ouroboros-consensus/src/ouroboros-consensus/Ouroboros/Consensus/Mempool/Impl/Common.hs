@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -64,6 +65,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))
@@ -73,6 +75,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import Ouroboros.Consensus.Util.IOLike hiding (newMVar)
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
+import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (VolatileTip))
 
 {-------------------------------------------------------------------------------
   Internal State
@@ -193,19 +196,44 @@ initInternalState capacityOverride lastTicketNo cfg slot (tickedState -> st) =
 -------------------------------------------------------------------------------}
 
 -- | Abstract interface needed to run a Mempool.
-newtype LedgerInterface m blk = LedgerInterface
-  { getCurrentLedgerState :: STM m (StateHandle m blk)
+data LedgerInterface m blk = LedgerInterface
+  { getCurrentLedgerTip :: STM m (Point blk)
+  -- ^ Read the current ledger tip transactionally. Returns just the tip
+  -- 'Point' so callers cannot accidentally close (or otherwise touch) the
+  -- underlying 'StateHandle'. To dereference the handle in @m@, use
+  -- 'withCurrentLedgerStateDup'.
+  , withCurrentLedgerStateDup :: forall a. (StateHandle m blk -> m a) -> m a
+  -- ^ Acquire a fresh duplicate of the current 'StateHandle' (taken at the
+  -- LedgerDB's volatile tip under the LedgerDB read lock), run the action
+  -- with it, and close the duplicate when the action returns or throws.
   }
 
 -- | Create a 'LedgerInterface' from a 'ChainDB'.
 chainDBLedgerInterface ::
-  (IOLike m, IsLedger LedgerState blk) =>
+  ( IOLike m
+  , IsLedger LedgerState blk
+  , LedgerSupportsProtocol blk
+  , BlockSupportsLedgerHD m blk
+  ) =>
   ChainDB m blk ->
   LedgerInterface m blk
 chainDBLedgerInterface chainDB =
   LedgerInterface
-    { getCurrentLedgerState =
-        unExtStateHandle <$> ChainDB.getCurrentLedgerRef chainDB
+    { getCurrentLedgerTip =
+        ledgerTipPoint . state . unExtStateHandle
+          <$> ChainDB.getCurrentLedgerRef chainDB
+    , withCurrentLedgerStateDup = \k ->
+        bracket
+          (ChainDB.openReadOnlyHandleAtPoint chainDB VolatileTip)
+          (either (const $ pure ()) closeExt)
+          ( \case
+              Left err ->
+                error $
+                  "chainDBLedgerInterface: openReadOnlyHandleAtPoint VolatileTip "
+                    <> "must succeed; got: "
+                    <> show err
+              Right h -> k (unExtStateHandle h)
+          )
     }
 
 {-------------------------------------------------------------------------------
@@ -245,8 +273,8 @@ initMempoolEnv ::
   Tracer m (TraceEventMempool blk) ->
   m (MempoolEnv m blk)
 initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
-  st <- atomically $ getCurrentLedgerState ledgerInterface
-  (slot, ts) <- tickLedgerState cfg (ForgeInUnknownSlot st)
+  (slot, ts) <- withCurrentLedgerStateDup ledgerInterface $ \st ->
+    tickLedgerState cfg (ForgeInUnknownSlot st)
   tsMVar <- newMVar ts
   isVar <-
     newTMVarIO $

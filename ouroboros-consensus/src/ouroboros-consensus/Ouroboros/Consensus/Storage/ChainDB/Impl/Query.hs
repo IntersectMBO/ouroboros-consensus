@@ -9,7 +9,7 @@
 -- | Queries
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   ( -- * Queries
-    allocInRegistryReadOnlyForkerAtPoint
+    allocInRegistryReadOnlyHandleAtPoint
   , getBlockComponent
   , getCurrentChain
   , getCurrentChainWithTime
@@ -33,9 +33,9 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getTipBlock
   , getTipHeader
   , getTipPoint
-  , openReadOnlyForkerAtPoint
+  , openReadOnlyHandleAtPoint
   , waitForImmutableBlock
-  , withReadOnlyForkerAtPoint
+  , withReadOnlyHandleAtPoint
 
     -- * Low-level queries
   , getAnyBlockComponent
@@ -308,7 +308,7 @@ getPastLedger ::
   STM m (Maybe (ExtLedgerState blk))
 getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 
-allocInRegistryReadOnlyForkerAtPoint ::
+allocInRegistryReadOnlyHandleAtPoint ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD m blk
@@ -317,17 +317,17 @@ allocInRegistryReadOnlyForkerAtPoint ::
   Target (Point blk) ->
   ResourceRegistry m ->
   m (Either LedgerDB.GetForkerError (ResourceKey m, ExtStateHandle m blk))
-allocInRegistryReadOnlyForkerAtPoint cdb tgt rr = do
+allocInRegistryReadOnlyHandleAtPoint cdb tgt rr = do
   (rk, forker) <-
     allocate
       rr
-      (\_ -> openReadOnlyForkerAtPoint cdb tgt)
+      (\_ -> openReadOnlyHandleAtPoint cdb tgt)
       (either (const $ pure ()) closeExt)
   case forker of
     Left err -> void (release rk) >> pure (Left err)
     Right v -> pure (Right (rk, v))
 
-openReadOnlyForkerAtPoint ::
+openReadOnlyHandleAtPoint ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD m blk
@@ -335,9 +335,9 @@ openReadOnlyForkerAtPoint ::
   ChainDbEnv m blk ->
   Target (Point blk) ->
   m (Either LedgerDB.GetForkerError (ExtStateHandle m blk))
-openReadOnlyForkerAtPoint CDB{..} = LedgerDB.openReadOnlyForker cdbLedgerDB
+openReadOnlyHandleAtPoint CDB{..} = LedgerDB.openReadOnlyHandle cdbLedgerDB
 
-withReadOnlyForkerAtPoint ::
+withReadOnlyHandleAtPoint ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD m blk
@@ -348,9 +348,9 @@ withReadOnlyForkerAtPoint ::
     WithEarlyExit m r
   ) ->
   WithEarlyExit m r
-withReadOnlyForkerAtPoint cdb tgt =
+withReadOnlyHandleAtPoint cdb tgt =
   bracket
-    (lift $ openReadOnlyForkerAtPoint cdb tgt)
+    (lift $ openReadOnlyHandleAtPoint cdb tgt)
     (either (const $ pure ()) (lift . closeExt))
 
 getStatistics ::
