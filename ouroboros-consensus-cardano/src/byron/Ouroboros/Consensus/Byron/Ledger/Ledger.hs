@@ -199,8 +199,8 @@ instance IsLedger LedgerState ByronBlock where
 type instance LedgerTablesHandle m ByronBlock = ()
 
 instance BlockSupportsLedgerHD m ByronBlock where
-  data StateHandle m ByronBlock = ByronStateHandle (LedgerState ByronBlock)
-  data TickedStateHandle m ByronBlock
+  newtype StateHandle m ByronBlock = ByronStateHandle (LedgerState ByronBlock)
+  newtype TickedStateHandle m ByronBlock
     = TickedByronStateHandle (Ticked LedgerState ByronBlock)
 
   newStateHandle st () = ByronStateHandle st

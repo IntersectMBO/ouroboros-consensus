@@ -94,7 +94,6 @@ import Control.Monad (guard)
 import Control.Monad.Except
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
-import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Measure (Measure)
 import Data.Set (Set)

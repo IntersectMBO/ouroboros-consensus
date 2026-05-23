@@ -6,7 +6,12 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Ouroboros.Consensus.Backends (inMemoryBackendArgs, lsmBackendArgsIO) where
+module Ouroboros.Consensus.Backends
+  ( inMemoryBackendArgs
+  , -- * Shared helpers (used by external backend libraries, e.g. @lsm@)
+    loadSnapshot
+  , mkSnapshotManager
+  ) where
 
 import Cardano.Ledger.Binary.Decoding
 import qualified Cardano.Ledger.Core as SL
@@ -15,19 +20,14 @@ import Codec.Serialise
 import qualified Control.Monad as Monad
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
-import Control.ResourceRegistry
 import Control.Tracer
-import Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import Data.Maybe
 import Data.MemPack
 import Data.SOP.BasicFunctors
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
-import Data.Word
-import qualified Database.LSMTree as LSM
 import Ouroboros.Consensus.Backends.InMemory
-import Ouroboros.Consensus.Backends.LSM
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.Ledger.Ledger
 import Ouroboros.Consensus.Cardano.Block
@@ -46,13 +46,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
-import qualified System.FS.BlockIO.API as BIO
-import System.FS.BlockIO.IO
 import System.FS.CRC
-
-{-------------------------------------------------------------------------------
-
--------------------------------------------------------------------------------}
 
 -- | Construct the 'LedgerDbBackendArgs' for the in-memory backend.
 --
@@ -85,50 +79,12 @@ inMemoryBackendArgs = LedgerDbBackendArgs $ \_tr shfs ->
         , ledgerTablesFactory = mkH
         }
 
-lsmBackendArgsIO ::
-  forall c.
-  (CardanoHardForkConstraints c, SerialiseHFC (CardanoEras c)) =>
-  FsPath -> FilePath -> Word64 -> LedgerDbBackendArgs IO (CardanoBlock c)
-lsmBackendArgsIO lsmPath fastStoragePath salt = LedgerDbBackendArgs $ \trcr shfs -> do
-  (fs, blockio) <-
-    allocateTemp
-      (ioHasBlockIO (MountPoint fastStoragePath) defaultIOCtxParams)
-      (\(_, bio) -> BIO.close bio >> pure True)
-      impossibleToNotTransfer
-  lift $ createDirectoryIfMissing fs True lsmPath
-  session <-
-    allocateTemp
-      ( LSM.openSession
-          (BackendTrace . SomeBackendTrace >$< trcr)
-          fs
-          blockio
-          salt
-          lsmPath
-      )
-      (\s -> LSM.closeSession s >> pure True)
-      impossibleToNotTransfer
-  let
-    mkH :: MkHandle IO
-    mkH = mkLSMFactory session shfs
-
-    mkHs :: MkHandleFromSnapshot IO
-    mkHs = mkLSMFromSnapshot session shfs
-   in
-    pure
-      BackendResources
-        { brLoadSnapshot = loadSnapshot UTxOHDLSMSnapshot mkHs mkH
-        , brSnapshotManager = mkSnapshotManager UTxOHDLSMSnapshot
-        , brRelease = do
-            LSM.closeSession session
-            BIO.close blockio
-        , ledgerTablesFactory = mkH
-        }
-
--- | Load an 'ExtStateHandle' from a snapshot using the in-memory backend.
+-- | Load an 'ExtStateHandle' from a snapshot.
 --
 -- Reads the 'ExtLedgerState' from disk, then delegates to
--- 'MkHandleFromSnapshot' to materialise the in-memory tables for the
--- snapshot's era.
+-- 'MkHandleFromSnapshot' to materialise the per-era tables for the
+-- snapshot's era. Shared by every backend; the expected backend tag is
+-- supplied by the caller.
 loadSnapshot ::
   forall m c.
   (CardanoHardForkConstraints c, SerialiseHFC (CardanoEras c), IOLike m) =>
@@ -226,7 +182,8 @@ loadSnapshot expectedBackend mkFromSnapshot mkH ccfg fs@(SomeHasFS hfs) ds = do
             ReadSnapshotDataCorruption
       pure (ExtStateHandle (HardForkStateHandle extLedgerSt mkH) hs, pt)
 
--- | The in-memory backend's 'SnapshotManager'.
+-- | Build the Cardano 'SnapshotManager'. Shared by every backend; the
+-- backend tag to record on Byron-era snapshots is supplied by the caller.
 --
 -- 'listSnapshots' and 'deleteSnapshotIfTemporary' are the standard
 -- filesystem-driven implementations. 'takeSnapshot' writes the pure

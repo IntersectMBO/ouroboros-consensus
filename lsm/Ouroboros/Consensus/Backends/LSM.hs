@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -10,7 +11,8 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Backends.LSM
-  ( mkLSMFactory
+  ( lsmBackendArgsIO
+  , mkLSMFactory
   , mkLSMFromSnapshot
   , readUTxOSizeFile
   ) where
@@ -22,10 +24,12 @@ import qualified Control.Monad as Monad
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Maybe
+import Control.ResourceRegistry
 import Data.ByteString (toStrict)
 import qualified Data.ByteString.Builder as BS
 import Data.ByteString.Char8 (readInt)
 import qualified Data.Foldable as Foldable
+import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import Data.MemPack
 import qualified Data.Primitive.ByteArray as PBA
@@ -41,14 +45,73 @@ import Data.Void
 import Data.Word
 import qualified Database.LSMTree as LSM
 import Lens.Micro
+import Ouroboros.Consensus.Backends (loadSnapshot, mkSnapshotManager)
+import Ouroboros.Consensus.Cardano.Block (CardanoBlock, CardanoEras)
+import Ouroboros.Consensus.Cardano.CanHardFork (CardanoHardForkConstraints)
+import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common (SerialiseHFC)
 import Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
+  ( BackendResources (..)
+  , LedgerDBV2Trace (..)
+  , LedgerDbBackendArgs (..)
+  , SomeBackendTrace (..)
+  )
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
 import System.FS.API.Lazy
+import qualified System.FS.BlockIO.API as BIO
+import System.FS.BlockIO.IO
+
+{-------------------------------------------------------------------------------
+  Backend wiring
+-------------------------------------------------------------------------------}
+
+-- | Construct the 'LedgerDbBackendArgs' for the LSM-backed Cardano backend.
+--
+-- Allocates a 'BlockIOFS' and an 'LSM.Session' into the temporary registry;
+-- both are torn down by 'brRelease'.
+lsmBackendArgsIO ::
+  forall c.
+  (CardanoHardForkConstraints c, SerialiseHFC (CardanoEras c)) =>
+  FsPath -> FilePath -> Word64 -> LedgerDbBackendArgs IO (CardanoBlock c)
+lsmBackendArgsIO lsmPath fastStoragePath salt = LedgerDbBackendArgs $ \trcr shfs -> do
+  (fs, blockio) <-
+    allocateTemp
+      (ioHasBlockIO (MountPoint fastStoragePath) defaultIOCtxParams)
+      (\(_, bio) -> BIO.close bio >> pure True)
+      impossibleToNotTransfer
+  lift $ createDirectoryIfMissing fs True lsmPath
+  session <-
+    allocateTemp
+      ( LSM.openSession
+          (BackendTrace . SomeBackendTrace >$< trcr)
+          fs
+          blockio
+          salt
+          lsmPath
+      )
+      (\s -> LSM.closeSession s >> pure True)
+      impossibleToNotTransfer
+  let
+    mkH :: MkHandle IO
+    mkH = mkLSMFactory session shfs
+
+    mkHs :: MkHandleFromSnapshot IO
+    mkHs = mkLSMFromSnapshot session shfs
+   in
+    pure
+      BackendResources
+        { brLoadSnapshot = loadSnapshot UTxOHDLSMSnapshot mkHs mkH
+        , brSnapshotManager = mkSnapshotManager UTxOHDLSMSnapshot
+        , brRelease = do
+            LSM.closeSession session
+            BIO.close blockio
+        , ledgerTablesFactory = mkH
+        }
 
 -- | Type alias for convenience
 type UTxOTable m = LSM.Table m TxInBytes TxOutBytes Void
@@ -137,8 +200,8 @@ newLSMTablesHandle shfs@(SomeHasFS fs) st utxoSize table = do
           pure handle'
       , duplWithDiffs = implDuplicateWithDiffs shfs table utxoSize
       , duplicateHandle = LSM.duplicate table >>= newLSMTablesHandle shfs st utxoSize
-      , readUTxOWhole = undefined
-      , readUTxOFiltered = undefined
+      , readUTxOWhole = drainTableFiltered table (const True)
+      , readUTxOFiltered = drainTableFiltered table
       , readTxOuts = implRead table
       , closeHandle = LSM.closeTable table
       , getStatsHandle = Statistics $ fromIntegral utxoSize
@@ -171,6 +234,41 @@ writeUTxOSizeFile :: MonadThrow f => HasFS f h -> FsPath -> Int -> f ()
 writeUTxOSizeFile hasFs p sz =
   Monad.void $ withFile hasFs p (WriteMode MustBeNew) $ \h ->
     hPutAll hasFs h $ BS.toLazyByteString $ BS.intDec sz
+
+-- | Page size for full-table cursor scans (used by 'readUTxOWhole' and
+-- 'readUTxOFiltered'). Matches the chunk size used by the older
+-- 'implReadAll' in @ouroboros-consensus-lsm@.
+drainBatchSize :: Int
+drainBatchSize = 100000
+
+-- | Scan an entire 'UTxOTable' via a cursor, keeping only those entries whose
+-- 'SL.TxOut' satisfies the supplied predicate.
+drainTableFiltered ::
+  forall m era.
+  (IOLike m, MemPack (SL.TxOut era)) =>
+  UTxOTable m ->
+  (SL.TxOut era -> Bool) ->
+  m (SL.UTxO era)
+drainTableFiltered table p =
+  LSM.withCursor table $ \cursor ->
+    SL.UTxO <$> loop cursor Map.empty
+ where
+  loop :: LSM.Cursor m TxInBytes TxOutBytes Void -> Map.Map SL.TxIn (SL.TxOut era) -> m (Map.Map SL.TxIn (SL.TxOut era))
+  loop !cursor !acc = do
+    batch <- LSM.take drainBatchSize cursor
+    let !acc' = V.foldl' step acc batch
+    if V.length batch < drainBatchSize
+      then pure acc'
+      else loop cursor acc'
+
+  step :: Map.Map SL.TxIn (SL.TxOut era) -> LSM.Entry TxInBytes TxOutBytes (LSM.BlobRef m Void) -> Map.Map SL.TxIn (SL.TxOut era)
+  step !m e = case e of
+    LSM.Entry k v ->
+      let !txout = fromTxOutBytes (Proxy @era) v
+       in if p txout
+            then Map.insert (fromTxInBytes k) txout m
+            else m
+    LSM.EntryWithBlob{} -> m
 
 implRead :: (IOLike m, MemPack (SL.TxOut era)) => UTxOTable m -> Set SL.TxIn -> m (SL.UTxO era)
 implRead table keys = do
