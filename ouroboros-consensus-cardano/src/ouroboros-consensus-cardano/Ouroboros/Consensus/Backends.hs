@@ -79,8 +79,8 @@ inMemoryBackendArgs = LedgerDbBackendArgs $ \_tr shfs ->
    in
     pure
       BackendResources
-        { brLoadSnapshot = loadSnapshot mkHs mkH
-        , brSnapshotManager = mkSnapshotManager
+        { brLoadSnapshot = loadSnapshot UTxOHDMemSnapshot mkHs mkH
+        , brSnapshotManager = mkSnapshotManager UTxOHDMemSnapshot
         , brRelease = pure ()
         , ledgerTablesFactory = mkH
         }
@@ -116,8 +116,8 @@ lsmBackendArgsIO lsmPath fastStoragePath salt = LedgerDbBackendArgs $ \trcr shfs
    in
     pure
       BackendResources
-        { brLoadSnapshot = loadSnapshot mkHs mkH
-        , brSnapshotManager = mkSnapshotManager
+        { brLoadSnapshot = loadSnapshot UTxOHDLSMSnapshot mkHs mkH
+        , brSnapshotManager = mkSnapshotManager UTxOHDLSMSnapshot
         , brRelease = do
             LSM.closeSession session
             BIO.close blockio
@@ -132,6 +132,10 @@ lsmBackendArgsIO lsmPath fastStoragePath salt = LedgerDbBackendArgs $ \trcr shfs
 loadSnapshot ::
   forall m c.
   (CardanoHardForkConstraints c, SerialiseHFC (CardanoEras c), IOLike m) =>
+  -- | The backend tag that the snapshot's metadata is expected to carry.
+  -- Snapshots tagged for any other backend are rejected with
+  -- 'MetadataBackendMismatch'.
+  SnapshotBackend ->
   MkHandleFromSnapshot m ->
   MkHandle m ->
   CodecConfig (CardanoBlock c) ->
@@ -141,14 +145,14 @@ loadSnapshot ::
     (SnapshotFailure (CardanoBlock c))
     m
     (ExtStateHandle m (CardanoBlock c), RealPoint (CardanoBlock c))
-loadSnapshot mkFromSnapshot mkH ccfg fs@(SomeHasFS hfs) ds = do
+loadSnapshot expectedBackend mkFromSnapshot mkH ccfg fs@(SomeHasFS hfs) ds = do
   fileEx <- lift $ doesFileExist hfs (snapshotToDirPath ds)
   Monad.when fileEx $ throwError $ InitFailureRead ReadSnapshotIsLegacy
 
   snapshotMeta <-
     withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath ds)) $
       loadSnapshotMetadata fs ds
-  Monad.when (snapshotBackend snapshotMeta /= UTxOHDMemSnapshot) $
+  Monad.when (snapshotBackend snapshotMeta /= expectedBackend) $
     throwError $
       InitFailureRead $
         ReadMetadataError (snapshotToMetadataPath ds) MetadataBackendMismatch
@@ -231,11 +235,14 @@ loadSnapshot mkFromSnapshot mkH ccfg fs@(SomeHasFS hfs) ds = do
 mkSnapshotManager ::
   forall m c.
   (CardanoHardForkConstraints c, SerialiseHFC (CardanoEras c), IOLike m) =>
+  -- | The backend tag to record for Byron-era snapshots. Non-Byron eras
+  -- carry the tag returned by their per-era 'takeHandleSnapshot'.
+  SnapshotBackend ->
   CodecConfig (CardanoBlock c) ->
   Tracer m (TraceSnapshotEvent (CardanoBlock c)) ->
   SomeHasFS m ->
   SnapshotManager m (CardanoBlock c) (ExtStateHandle m (CardanoBlock c))
-mkSnapshotManager ccfg snapTracer shfs@(SomeHasFS hasFS) =
+mkSnapshotManager byronBackend ccfg snapTracer shfs@(SomeHasFS hasFS) =
   SnapshotManager
     { listSnapshots = defaultListSnapshots shfs
     , deleteSnapshotIfTemporary = defaultDeleteSnapshotIfTemporary shfs snapTracer
@@ -271,7 +278,7 @@ mkSnapshotManager ccfg snapTracer shfs@(SomeHasFS hasFS) =
             ( let sf ::
                     (Current (StateHandle m) -.-> m :.: K (Maybe CRC, SnapshotBackend)) (ShelleyBlock proto era)
                   sf = Fn $ \(Current _ ss) -> Comp $ K <$> takeHandleSnapshot (stateRefHandle ss) ds
-               in (Fn $ \_ -> Comp $ pure $ K (Nothing, UTxOHDMemSnapshot))
+               in (Fn $ \_ -> Comp $ pure $ K (Nothing, byronBackend))
                     :* sf
                     :* sf
                     :* sf

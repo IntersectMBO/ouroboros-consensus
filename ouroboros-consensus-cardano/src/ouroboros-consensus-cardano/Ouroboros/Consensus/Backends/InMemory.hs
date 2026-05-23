@@ -61,9 +61,9 @@ newInMemoryTablesHandle shfs@(SomeHasFS hasFS) ls =
             closeHandle = pure ()
           , -- The statistics is the size of the UTxO map
             getStatsHandle = Statistics $ Map.size $ SL.unUTxO $ ls ^. slUtxoL
-          , takeHandleSnapshot = \(snapshotToDirName -> snapshotName) -> do
-              createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName]
-              withFile hasFS (mkFsPath [snapshotName, "utxo"]) (WriteMode MustBeNew) $ \hf ->
+          , takeHandleSnapshot = \ds -> do
+              createDirectoryIfMissing hasFS True $ snapshotToDirPath ds
+              withFile hasFS (snapshotToUTxOFilePath ds) (WriteMode MustBeNew) $ \hf ->
                 fmap (\(_, x) -> (Just x, UTxOHDMemSnapshot)) $
                   hPutAllCRC hasFS hf $
                     CBOR.toLazyByteString $
@@ -128,9 +128,9 @@ mkInMemoryFromSnapshot shfs =
                 1 -> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))
                 _ -> fail $ "Wrong number of tables: " <> show l
           )
-          (snapshotToTablesPath ds)
+          (snapshotToUTxOFilePath ds)
 
     pure (newInMemoryTablesHandle shfs (ls & slUtxoL .~ SL.UTxO utxo), Just crcTables)
 
-snapshotToTablesPath :: DiskSnapshot -> FsPath
-snapshotToTablesPath ds = snapshotToDirPath ds </> mkFsPath ["tables"]
+snapshotToUTxOFilePath :: DiskSnapshot -> FsPath
+snapshotToUTxOFilePath ds = snapshotToDirPath ds </> mkFsPath ["utxo"]

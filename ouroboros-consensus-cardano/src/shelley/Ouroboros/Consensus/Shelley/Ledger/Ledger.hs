@@ -378,6 +378,10 @@ data instance Ticked LedgerState (ShelleyBlock proto era) = TickedShelleyLedgerS
   }
   deriving Generic
 
+deriving instance
+  ShelleyBasedEra era =>
+  NoThunks (Ticked LedgerState (ShelleyBlock proto era))
+
 untickedShelleyLedgerTipPoint ::
   TickedLedgerState (ShelleyBlock proto era) ->
   Point (ShelleyBlock proto era)

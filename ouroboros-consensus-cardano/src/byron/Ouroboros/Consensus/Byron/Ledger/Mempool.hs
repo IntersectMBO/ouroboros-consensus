@@ -114,19 +114,19 @@ type instance ApplyTxErr ByronBlock = CC.ApplyMempoolPayloadErr
 -- orphaned instance
 instance ShowProxy CC.ApplyMempoolPayloadErr
 
+-- | Byron has no on-disk tables; nothing to read per-tx.
+data instance TxLocalData ByronBlock = ByronTxLocalData
+  deriving stock Generic
+  deriving anyclass NoThunks
+
+-- | The mempool acc /is/ the ticked ledger state for Byron: each tx is applied
+-- in place to that state.
+newtype instance MempoolAcc ByronBlock = ByronMempoolAcc
+  {unByronMempoolAcc :: Ticked LedgerState ByronBlock}
+  deriving stock Generic
+  deriving anyclass NoThunks
+
 instance LedgerSupportsMempool ByronBlock where
-  -- Byron has no on-disk tables; nothing to read per-tx.
-  data TxLocalData ByronBlock = ByronTxLocalData
-    deriving Generic
-    deriving anyclass NoThunks
-
-  -- The mempool acc /is/ the ticked ledger state for Byron: each tx
-  -- is applied in place to that state.
-  newtype MempoolAcc ByronBlock = ByronMempoolAcc
-    {unByronMempoolAcc :: Ticked LedgerState ByronBlock}
-    deriving Generic
-    deriving anyclass NoThunks
-
   emptyAcc = ByronMempoolAcc
   accTickedState = unByronMempoolAcc
 
