@@ -158,6 +158,7 @@ implMkLedgerDb h snapManager =
           , getPastLedgerState = \s -> getEnvSTM h (flip implGetPastLedgerState s)
           , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
           , openForkerAtTarget = openNewForkerAtTarget h
+          , openHandleAtTarget = openNewHandleAtTarget h
           , validateFork = getEnv5 h (implValidate h)
           , getPrevApplied = getEnvSTM h implGetPrevApplied
           , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
@@ -647,6 +648,20 @@ openNewForkerAtTarget ::
   m (Either GetForkerError (Forker m blk))
 openNewForkerAtTarget h pt = getEnv h $ \ldbEnv ->
   openStateHandleAtTarget ldbEnv (Right pt) >>= traverse (newForker ldbEnv)
+
+-- | Open a duplicated read-only 'ExtStateHandle' at the requested point,
+-- without going through the 'Forker' machinery.
+openNewHandleAtTarget ::
+  ( IOLike m
+  , StandardHash blk
+  , LedgerSupportsProtocol blk
+  , BlockSupportsLedgerHD m blk
+  ) =>
+  LedgerDBHandle m l blk ->
+  Target (Point blk) ->
+  m (Either GetForkerError (ExtStateHandle m blk))
+openNewHandleAtTarget h pt = getEnv h $ \ldbEnv ->
+  openStateHandleAtTarget ldbEnv (Right pt)
 
 withForkerByRollback ::
   ( IOLike m

@@ -106,20 +106,18 @@ newtype ForkerKey = ForkerKey Word16
 --
 -- == Note [No ReadOnlyForker]
 --
--- Earlier revisions exposed a separate @ReadOnlyForker@ type (and a
--- @readOnlyForker@ down-conversion) so the LocalStateQuery server,
--- forging loop, and mempool could hold a forker that the type system
--- guaranteed could not commit. The current design has no such
--- guarantee: anyone holding a 'Forker' can call 'forkerCommit'.
---
--- The motivation for removing it was that 'Handle' (from 'IsLedger')
--- is now the read-only interface — query / mempool / forge code
--- acquires a 'Handle' directly (via 'openReadOnlyForker' or
--- 'getVolatileTipRef') and never touches a 'Forker'. The 'Forker'
--- abstraction is now only used by chain selection (the one place that
--- actually needs commit). If a future caller is added that holds a
--- 'Forker' but should be read-only, consider reintroducing the
--- type-level restriction.
+-- There is no type-level read-only restriction on 'Forker': anyone
+-- holding a 'Forker' can call 'forkerCommit'. The read-only interface
+-- is 'Handle' (from 'IsLedger') instead. Query, mempool and forging
+-- code acquire a 'Handle' directly — via 'openHandleAtTarget' (and the
+-- 'openReadOnlyForker' wrapper around it) or 'getVolatileTipRef' — and
+-- never touch a 'Forker'. Those entry points call
+-- 'openStateHandleAtTarget' without allocating a 'Forker' at all. The
+-- 'Forker' abstraction is reserved for chain selection, the one caller
+-- that actually needs commit. If a future caller is added that holds a
+-- 'Forker' but should be read-only, consider reintroducing a separate
+-- @ReadOnlyForker@ type so the type system can enforce that
+-- 'forkerCommit' is unavailable on that path.
 data Forker m blk = Forker
   { foeLedgerSeq :: !(StrictTVar m (LedgerSeq m blk))
   , foeSwitchVar :: !(StrictTVar m (LedgerSeq m blk))
@@ -128,7 +126,12 @@ data Forker m blk = Forker
   , foeTracer :: !(Tracer m TraceForkerEvent)
   }
 
--- TODO @js we were also pruning here, what happened with that?
+-- | Push a new 'ExtStateHandle' onto the forker's local 'LedgerSeq'.
+--
+-- The forker's seq grows monotonically until 'forkerCommit' splices it back
+-- into the main 'LedgerSeq', or 'forkerClose' releases everything held by the
+-- forker. Pruning of the main 'LedgerSeq' to @k@ deep is the responsibility of
+-- 'implGarbageCollect', not of this function.
 forkerPush ::
   (LedgerSupportsProtocol blk, MonadSTM m, BlockSupportsLedgerHD m blk) =>
   Forker m blk -> ExtStateHandle m blk -> STM m ()
@@ -278,7 +281,12 @@ validate evs args = do
     ValidateResult blk
   rewrap (Right (Left e)) = ValidateLedgerError e
   rewrap (Left (PointTooOld (Just e))) = ValidateExceededRollBack e
-  rewrap (Left _) = error "Unreachable, validating will always rollback from the tip"
+  -- 'withForkerAtFromTip' is built around 'rollbackN'; it can only fail with
+  -- @PointTooOld (Just _)@, never with 'PointNotOnChain' nor with
+  -- @PointTooOld Nothing@.
+  rewrap (Left e) =
+    error $
+      "validate: impossible GetForkerError from a rollback-from-tip request: " <> show e
   rewrap (Right (Right ())) = ValidateSuccessful
 
   mkAps ::
@@ -399,7 +407,6 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
   ApplyRef r -> do
     b <- doResolveBlock r
     applyBlock evs cfg (ApplyVal b) fo doResolveBlock
- where
 
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker.

@@ -125,10 +125,12 @@
 -- as follows.
 --
 -- - 'openForkerAtTarget' is used directly only to define
---   'withTipForker' (bracketed) and 'openReadOnlyForker'.
+--   'withTipForker' (bracketed). The read-only path goes through
+--   'openHandleAtTarget' instead, which does not allocate a 'Forker'.
 --
--- - 'openReadOnlyForker' is used directly only in @db-analyser@
---   (tool), in tests, and to define 'openReadOnlyForkerAtPoint'.
+-- - 'openReadOnlyForker' (a thin wrapper over 'openHandleAtTarget')
+--   is used directly only in @db-analyser@ (tool), in tests, and to
+--   define 'openReadOnlyForkerAtPoint'.
 --
 -- - 'openReadOnlyForkerAtPoint' is used directly only to define
 --   'allocInRegistryReadOnlyForkerAtPoint' (registered), to define
@@ -274,13 +276,17 @@ type LedgerDbSerialiseConstraints blk =
 type LedgerDB :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 data LedgerDB m l blk = LedgerDB
   { getVolatileTip :: STM m (l blk)
-  -- ^ Get the empty ledger state at the (volatile) tip of the LedgerDB.
+  -- ^ Get the pure ledger state at the volatile tip of the LedgerDB.
   , getVolatileTipRef :: STM m (Handle l m blk)
-  -- ^ Get the empty ledger state at the (volatile) tip of the LedgerDB.
+  -- ^ Get a 'Handle' to the ledger state at the volatile tip of the LedgerDB.
+  --
+  -- Unlike 'getVolatileTip', the returned handle carries the on-disk tables
+  -- (read-only) and so can be used to look up table contents. It must
+  -- /not/ be closed by the caller — its lifetime is tied to the LedgerDB.
   , getImmutableTip :: STM m (l blk)
-  -- ^ Get the empty ledger state at the immutable tip of the LedgerDB.
+  -- ^ Get the pure ledger state at the immutable tip of the LedgerDB.
   , getPastLedgerState :: Point blk -> STM m (Maybe (l blk))
-  -- ^ Get an empty ledger state at a requested point in the LedgerDB, if it
+  -- ^ Get the pure ledger state at a requested point in the LedgerDB, if it
   -- exists.
   , getHeaderStateHistory ::
       l ~ ExtLedgerState =>
@@ -295,6 +301,19 @@ data LedgerDB m l blk = LedgerDB
   --
   -- Note this will allocate resources; see the "'Forker' management
   -- in the running node" comment above.
+  --
+  -- Use 'openHandleAtTarget' for read-only access — it avoids allocating a
+  -- 'Forker'.
+  , openHandleAtTarget ::
+      Target (Point blk) ->
+      m (Either GetForkerError (Handle l m blk))
+  -- ^ Acquire a fresh (duplicated) read-only 'Handle' at the requested point.
+  --
+  -- The handle is duplicated from the LedgerDB's internal seq (under a read
+  -- lock), so it has its own lifetime. The caller is responsible for closing
+  -- it (via 'closeExt'). Unlike 'openForkerAtTarget', this does /not/ allocate
+  -- a 'Forker' — use 'openForkerAtTarget' only when commit/push semantics are
+  -- needed.
   , validateFork ::
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
@@ -403,7 +422,10 @@ withTipForker ldb =
     ( do
         eFrk <- openForkerAtTarget ldb VolatileTip
         case eFrk of
-          Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
+          Left err ->
+            error $
+              "withTipForker: openForkerAtTarget VolatileTip must succeed; got: "
+                <> show err
           Right frk -> pure frk
     )
     forkerClose
@@ -415,15 +437,15 @@ getTipStatistics ::
   m Statistics
 getTipStatistics ldb = withTipForker ldb (fmap getStatsExt . atomically . forkerTip)
 
+-- | Acquire a fresh read-only handle at the requested point.
+--
+-- A thin wrapper over 'openHandleAtTarget' that specialises to the LedgerDB's
+-- usual @l ~ ExtLedgerState@. Kept for callers that already use this name.
 openReadOnlyForker ::
-  (MonadSTM m, LedgerSupportsProtocol blk, BlockSupportsLedgerHD m blk) =>
-  LedgerDB m l blk ->
+  LedgerDB m ExtLedgerState blk ->
   Target (Point blk) ->
   m (Either GetForkerError (ExtStateHandle m blk))
-openReadOnlyForker ldb pt =
-  openForkerAtTarget ldb pt >>= \case
-    Left err -> pure (Left err)
-    Right v -> Right <$> atomically (forkerTip v)
+openReadOnlyForker = openHandleAtTarget
 
 {-------------------------------------------------------------------------------
   Initialization
@@ -462,7 +484,7 @@ data InitDB db m blk = InitDB
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
   -- LedgerDB such that there are no volatile states.
   , currentTip :: !(db -> LedgerState blk)
-  -- ^ Getting the current tip for tracing the Ledger Events.
+  -- ^ Get the current tip — used for tracing Ledger Events.
   , mkLedgerDb ::
       !(db -> m (LedgerDB' m blk, TestInternals' m blk))
   -- ^ Create a LedgerDB from the initialized data structures from previous

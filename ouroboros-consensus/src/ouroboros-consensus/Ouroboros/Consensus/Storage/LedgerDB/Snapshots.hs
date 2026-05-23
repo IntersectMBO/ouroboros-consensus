@@ -36,8 +36,9 @@
 --  - the rest of the ledger state: a CBOR serialization of an @ExtLedgerState
 --    blk EmptyMK@, stored in the @./state@ file in the snapshot directory.
 --
--- V2 backends will provide means of loading a snapshot via the method
--- 'openStateHandleFromSnapshot'.
+-- V2 backends will provide means of loading a snapshot via the
+-- 'Ouroboros.Consensus.Storage.LedgerDB.V2.Backend.brLoadSnapshot' field of
+-- 'Ouroboros.Consensus.Storage.LedgerDB.V2.Backend.BackendResources'.
 module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( -- * Snapshots
     CRCError (..)

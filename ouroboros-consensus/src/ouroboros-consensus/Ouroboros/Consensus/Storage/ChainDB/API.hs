@@ -215,9 +215,13 @@ data ChainDB m blk = ChainDB
   --
   -- INVARIANT @'hwtHeader' <$> 'getCurrentChainWithTime' = 'getCurrentChain'@
   , getCurrentLedger :: STM m (ExtLedgerState blk)
-  -- ^ Get current ledger
+  -- ^ Get the current ledger state.
   , getCurrentLedgerRef :: STM m (Handle ExtLedgerState m blk)
-  -- ^ Get current ledger
+  -- ^ Get a 'Handle' to the current ledger state.
+  --
+  -- Unlike 'getCurrentLedger', the returned handle can be used to look up
+  -- on-disk table contents (read-only). It must /not/ be closed by the caller
+  -- — its lifetime is tied to the LedgerDB.
   , getImmutableLedger :: STM m (ExtLedgerState blk)
   -- ^ Get the immutable ledger, i.e., typically @k@ blocks back.
   , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk))
