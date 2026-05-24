@@ -10,7 +10,7 @@
 -- | Arguments for LedgerDB initialization.
 module Ouroboros.Consensus.Storage.LedgerDB.Args
   ( LedgerDbArgs (..)
-  , LedgerDbBackendArgs (..)
+  , LedgerDbBackendArgs
   , QueryBatchSize (..)
   , defaultArgs
   , defaultQueryBatchSize
@@ -33,7 +33,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend (LedgerDbBackendArgs)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq (AnchoredSeq)
@@ -52,20 +52,19 @@ type LedgerDbArgs ::
   Type
 data LedgerDbArgs f m blk = LedgerDbArgs
   { lgrSnapshotPolicyArgs :: SnapshotPolicyArgs
-  , lgrGenesis :: HKD f (m (ExtLedgerState blk ValuesMK))
+  , lgrGenesis :: HKD f (LedgerTablesFactory m blk -> m (ExtStateHandle m blk))
   , lgrHasFS :: HKD f (SomeHasFS m)
   , lgrConfig :: LedgerDbCfgF f ExtLedgerState blk
   , lgrTracer :: !(Tracer m (TraceEvent blk))
-  , lgrBackendArgs :: LedgerDbBackendArgs m blk
+  , lgrBackendArgs :: HKD f (LedgerDbBackendArgs m blk)
   , lgrQueryBatchSize :: QueryBatchSize
   }
 
 -- | Default arguments
 defaultArgs ::
   Applicative m =>
-  V2.SomeBackendArgs m blk ->
   Incomplete LedgerDbArgs m blk
-defaultArgs backendArgs =
+defaultArgs =
   LedgerDbArgs
     { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
     , lgrGenesis = NoDefault
@@ -73,13 +72,8 @@ defaultArgs backendArgs =
     , lgrConfig = LedgerDbCfg NoDefault NoDefault OmitLedgerEvents
     , lgrQueryBatchSize = DefaultQueryBatchSize
     , lgrTracer = nullTracer
-    , -- This value is the closest thing to a pre-UTxO-HD node, and as such it
-      -- will be the default for end-users.
-      lgrBackendArgs = LedgerDbBackendArgsV2 backendArgs
+    , lgrBackendArgs = NoDefault
     }
-
-newtype LedgerDbBackendArgs m blk
-  = LedgerDbBackendArgsV2 (V2.SomeBackendArgs m blk)
 
 {-------------------------------------------------------------------------------
   QueryBatchSize

@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -11,31 +12,17 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( -- * Forker API
     ExceededRollback (..)
   , Forker (..)
-  , Forker'
-  , ForkerKey (..)
   , GetForkerError (..)
-  , RangeQuery (..)
-  , RangeQueryPrevious (..)
-  , Statistics (..)
-  , forkerCurrentPoint
-  , ledgerStateReadOnlyForker
-
-    -- ** Read only
-  , ReadOnlyForker (..)
-  , ReadOnlyForker'
-  , readOnlyForker
-
-    -- ** Tracing
-  , TraceForkerEvent (..)
-  , TraceForkerEventWithKey (..)
-  , ForkerWasCommitted (..)
+  , forkerCommit
+  , forkerTip
+  , forkerPush
+  , forkerClose
 
     -- * Validation
   , AnnLedgerError (..)
@@ -51,121 +38,39 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , PushStart (..)
   , Pushing (..)
   , TraceValidateEvent (..)
+  , ForkerKey (..)
+  , TraceForkerEventWithKey (..)
+  , TraceForkerEvent (..)
   ) where
 
-import Control.Monad.Except
-  ( runExcept
-  )
+import Control.Exception (throw)
+import Control.Monad (when)
+import Control.Monad.Except (runExceptT)
+import Control.RAWLock
+import Control.Tracer
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import Data.Maybe
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
-import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CallStack
-import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
+import qualified Ouroboros.Network.AnchoredSeq as AS
 
 {-------------------------------------------------------------------------------
   Forker
 -------------------------------------------------------------------------------}
-
--- | An independent handle to a point in the LedgerDB, which can be advanced to
--- evaluate forks in the chain.
--- TODO @js split l in l blk
-type Forker :: (Type -> Type) -> StateKind -> Type -> Type
-data Forker m l blk = Forker
-  { forkerClose :: !(m ())
-  -- ^ Close the current forker (idempotent).
-  --
-  -- Other functions on forkers should throw a 'ClosedForkError' once the
-  -- forker is closed.
-  --
-  -- Note: always use this functions before the forker is forgotten!
-  -- Otherwise, cleanup of (on-disk) state might not be prompt or guaranteed.
-  --
-  -- This function should release any resources that are held by the forker,
-  -- and not by the LedgerDB.
-  , -- Queries
-
-    forkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
-  -- ^ Read ledger tables from disk.
-  , forkerRangeReadTables ::
-      !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
-  -- ^ Range-read ledger tables from disk.
-  --
-  -- This range read will return as many values as the 'QueryBatchSize' that was
-  -- passed when opening the LedgerDB.
-  --
-  -- The second component of the returned tuple is the maximal key found by the
-  -- forker. This is only necessary because some backends have a different
-  -- sorting for the keys than the order defined in Haskell.
-  --
-  -- The last key retrieved is part of the map too. It is intended to be fed
-  -- back into the next iteration of the range read. If the function returns
-  -- Nothing, it means the read returned no results, or in other words, we
-  -- reached the end of the ledger tables.
-  , forkerGetLedgerState :: !(STM m (l blk EmptyMK))
-  -- ^ Get the full ledger state without tables.
-  --
-  -- If an empty ledger state is all you need, use 'getVolatileTip',
-  -- 'getImmutableTip', or 'getPastLedgerState' instead of using a 'Forker'.
-  , forkerReadStatistics :: !(m Statistics)
-  -- ^ Get statistics about the current state of the handle if possible.
-  --
-  -- Returns 'Nothing' if the implementation is backed by @lsm-tree@.
-  , -- Updates
-
-    forkerPush :: !(l blk DiffMK -> m ())
-  -- ^ Advance the fork handle by pushing a new ledger state to the tip of the
-  -- current fork.
-  , forkerCommit :: !(STM m (m ()))
-  -- ^ Commit the fork, which was constructed using 'forkerPush', as the
-  -- current version of the LedgerDB.
-  --
-  -- Returns an IO action that has to be run on cleanup. It closes the orphaned
-  -- resources from the LedgerDB.
-  }
-  deriving Generic
-  deriving NoThunks via OnlyCheckWhnf (Forker m l blk)
-
--- | An identifier for a 'Forker'. See 'ldbForkers'.
-newtype ForkerKey = ForkerKey Word16
-  deriving stock (Show, Eq, Ord)
-  deriving newtype (Enum, NoThunks, Num)
-
-type instance HeaderHash (Forker m l blk) = HeaderHash (l blk)
-
-type Forker' m blk = Forker m ExtLedgerState blk
-
-instance
-  (GetTip (l blk), MonadSTM m) =>
-  GetTipSTM m (Forker m l blk)
-  where
-  getTipSTM forker = castPoint . getTip <$> forkerGetLedgerState forker
-
-data RangeQueryPrevious l = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo (TxIn l)
-
-data RangeQuery l = RangeQuery
-  { rqPrev :: !(RangeQueryPrevious l)
-  , rqCount :: !Int
-  }
-
--- | This type captures the size of the ledger tables at a particular point in
--- the LedgerDB.
---
--- This is for now the only metric that was requested from other components, but
--- this type might be augmented in the future with more statistics.
-newtype Statistics = Statistics
-  { ledgerTableSize :: Int
-  }
 
 -- | Errors that can be thrown while acquiring forkers.
 data GetForkerError
@@ -191,100 +96,135 @@ data ExceededRollback = ExceededRollback
   }
   deriving (Show, Eq)
 
-forkerCurrentPoint ::
-  (GetTip (l blk), HeaderHash (l blk) ~ HeaderHash blk, Functor (STM m)) =>
-  Proxy blk ->
-  Forker m l blk ->
-  STM m (Point blk)
-forkerCurrentPoint _ forker =
-  castPoint
-    . getTip
-    <$> forkerGetLedgerState forker
+-- | An identifier for a 'Forker'. See 'ldbForkers'.
+newtype ForkerKey = ForkerKey Word16
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Enum, NoThunks, Num)
 
-ledgerStateReadOnlyForker ::
-  IOLike m => ReadOnlyForker' m blk -> ReadOnlyForker m LedgerState blk
-ledgerStateReadOnlyForker frk =
-  ReadOnlyForker
-    { roforkerClose = roforkerClose
-    , roforkerReadTables = roforkerReadTables
-    , roforkerRangeReadTables = roforkerRangeReadTables
-    , roforkerGetLedgerState = ledgerState <$> roforkerGetLedgerState
-    , roforkerReadStatistics = roforkerReadStatistics
-    }
- where
-  ReadOnlyForker
-    { roforkerClose
-    , roforkerReadTables
-    , roforkerRangeReadTables
-    , roforkerGetLedgerState
-    , roforkerReadStatistics
-    } = frk
-
-{-------------------------------------------------------------------------------
-  Read-only forkers
--------------------------------------------------------------------------------}
-
--- | Read-only 'Forker'.
+-- $note-read-only-forker
 --
--- These forkers are not allowed to commit. They are used everywhere except in
--- Chain Selection. In particular they are now used in:
+-- == Note [No ReadOnlyForker]
 --
--- - LocalStateQuery server, via 'getReadOnlyForkerAtPoint'
---
--- - Forging loop.
---
--- - Mempool.
-type ReadOnlyForker :: (Type -> Type) -> StateKind -> Type -> Type
-data ReadOnlyForker m l blk = ReadOnlyForker
-  { roforkerClose :: !(m ())
-  -- ^ See 'forkerClose'
-  , roforkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
-  -- ^ See 'forkerReadTables'
-  , roforkerRangeReadTables ::
-      !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
-  -- ^ See 'forkerRangeReadTables'.
-  , roforkerGetLedgerState :: !(STM m (l blk EmptyMK))
-  -- ^ See 'forkerGetLedgerState'
-  , roforkerReadStatistics :: !(m Statistics)
-  -- ^ See 'forkerReadStatistics'
+-- There is no type-level read-only restriction on 'Forker': anyone
+-- holding a 'Forker' can call 'forkerCommit'. The read-only interface
+-- is 'Handle' (from 'IsLedger') instead. Query, mempool and forging
+-- code acquire a 'Handle' directly — via 'openHandleAtTarget' (and the
+-- 'openReadOnlyHandle' wrapper around it) or 'getVolatileTipRef' — and
+-- never touch a 'Forker'. Those entry points call
+-- 'openStateHandleAtTarget' without allocating a 'Forker' at all. The
+-- 'Forker' abstraction is reserved for chain selection, the one caller
+-- that actually needs commit. If a future caller is added that holds a
+-- 'Forker' but should be read-only, consider reintroducing a separate
+-- @ReadOnlyForker@ type so the type system can enforce that
+-- 'forkerCommit' is unavailable on that path.
+data Forker m blk = Forker
+  { foeLedgerSeq :: !(StrictTVar m (LedgerSeq m blk))
+  , foeSwitchVar :: !(StrictTVar m (LedgerSeq m blk))
+  , foeWasCommitted :: !(StrictTVar m Bool)
+  , foeLedgerDbLock :: !(RAWLock m ())
+  , foeTracer :: !(Tracer m TraceForkerEvent)
   }
-  deriving Generic
 
-instance NoThunks (ReadOnlyForker m l blk) where
-  wNoThunks _ _ = pure Nothing
-  showTypeOf _ = "ReadOnlyForker"
+-- | Push a new 'ExtStateHandle' onto the forker's local 'LedgerSeq'.
+--
+-- The forker's seq grows monotonically until 'forkerCommit' splices it back
+-- into the main 'LedgerSeq', or 'forkerClose' releases everything held by the
+-- forker. Pruning of the main 'LedgerSeq' to @k@ deep is the responsibility of
+-- 'implGarbageCollect', not of this function.
+forkerPush ::
+  (LedgerSupportsProtocol blk, MonadSTM m, BlockSupportsLedgerHD m blk) =>
+  Forker m blk -> ExtStateHandle m blk -> STM m ()
+forkerPush (Forker frk _ _ _ _) st = modifyTVar frk (extend st)
 
-type instance HeaderHash (ReadOnlyForker m l) = HeaderHash l
+forkerTip ::
+  (LedgerSupportsProtocol blk, MonadSTM m, BlockSupportsLedgerHD m blk) =>
+  Forker m blk -> STM m (ExtStateHandle m blk)
+forkerTip (Forker frk _ _ _ _) = currentHandle <$> readTVar frk
 
-type ReadOnlyForker' m blk = ReadOnlyForker m ExtLedgerState blk
+-- | Will release all handles in the 'foeLedgerSeq', which will be only the
+-- first duplicate if the forker has been committed.
+forkerClose ::
+  (LedgerSupportsProtocol blk, IOLike m, BlockSupportsLedgerHD m blk) =>
+  Forker m blk ->
+  m ()
+forkerClose env = do
+  wasCommitted <- readTVarIO (foeWasCommitted env)
+  if wasCommitted
+    then
+      traceWith (foeTracer env) (ForkerClose ForkerWasCommitted)
+    else
+      traceWith (foeTracer env) (ForkerClose ForkerWasUncommitted)
+  closeLedgerSeq =<< readTVarIO (foeLedgerSeq env)
 
-readOnlyForker :: Forker m l blk -> ReadOnlyForker m l blk
-readOnlyForker forker =
-  ReadOnlyForker
-    { roforkerClose = forkerClose forker
-    , roforkerReadTables = forkerReadTables forker
-    , roforkerRangeReadTables = forkerRangeReadTables forker
-    , roforkerGetLedgerState = forkerGetLedgerState forker
-    , roforkerReadStatistics = forkerReadStatistics forker
-    }
+forkerCommit ::
+  (IOLike m, LedgerSupportsProtocol blk, StandardHash blk, BlockSupportsLedgerHD m blk) =>
+  Forker m blk ->
+  STM m (m ())
+forkerCommit env = do
+  wasCommitted <- readTVar (foeWasCommitted env)
+  when wasCommitted $
+    throw $
+      CriticalInvariantViolation "Critical invariant violation: forker has been committed twice"
+  ls@(LedgerSeq lseq) <- readTVar (foeLedgerSeq env)
+  let intersectionSlot = getTipSlot $ anchor ls
+  let predicate = (== getTipHash (anchor ls)) . getTipHash . extLedgerState
+  (toCloseForker, toCloseLdb) <-
+    stateTVar
+      (foeSwitchVar env)
+      ( \(LedgerSeq olddb) -> fromMaybe theImpossible $ do
+          -- Split the selection at the intersection point. The snd component will
+          -- have to be closed.
+          (toKeepBase, toCloseLdb) <-
+            AS.splitAfterMeasure intersectionSlot (either predicate predicate) olddb
+          -- Join the prefix of the selection with the sequence in the forker
+          newdb <- AS.join (const $ const True) toKeepBase lseq
+          -- Do /not/ close the anchor of @toClose@, as that is also the
+          -- tip of @olddb'@ which will be used in @newdb@.
+          let ldbToClose = case toCloseLdb of
+                AS.Empty _ -> Nothing
+                _ AS.:< closeOld' -> Just (LedgerSeq closeOld')
+          pure ((AS.anchor lseq, ldbToClose), LedgerSeq newdb)
+      )
+  writeTVar (foeWasCommitted env) True
+  -- We put 'toCloseForker' in the LedgerSeq to then close it when closing the
+  -- forker.
+  writeTVar (foeLedgerSeq env) (LedgerSeq (AS.Empty toCloseForker))
+  pure
+    ( whenJust toCloseLdb $ \seqToClose ->
+        withWriteAccess (foeLedgerDbLock env) $ \() -> do
+          closeLedgerSeq seqToClose
+          pure ((), ())
+    )
+ where
+  theImpossible =
+    throw $
+      CriticalInvariantViolation $
+        unwords
+          [ "Critical invariant violation:"
+          , "Forker chain does no longer intersect with selected chain."
+          ]
+
+newtype CriticalInvariantViolation = CriticalInvariantViolation {message :: String}
+  deriving Show
+  deriving anyclass Exception
 
 {-------------------------------------------------------------------------------
   Validation
 -------------------------------------------------------------------------------}
 
-data ValidateArgs m l blk = ValidateArgs
+data ValidateArgs m blk = ValidateArgs
   { resolve :: !(ResolveBlock m blk)
   -- ^ How to retrieve blocks from headers
-  , validateConfig :: !(LedgerCfg l blk)
+  , validateConfig :: !(LedgerCfg ExtLedgerState blk)
   -- ^ The config
   , addPrevApplied :: !([RealPoint blk] -> STM m ())
   -- ^ How to add a previously applied block to the set of known blocks
   , prevApplied :: !(STM m (Set (RealPoint blk)))
   -- ^ Get the current set of previously applied blocks
   , withForkerAtFromTip ::
-      !(forall r. Word64 -> (Forker m l blk -> m r) -> m (Either GetForkerError r))
+      !(forall r. Word64 -> (Forker m blk -> m r) -> m (Either GetForkerError r))
   -- ^ Create a forker from the tip
-  , onSuccess :: !(SuccessForkerAction m l blk)
+  , onSuccess :: !(SuccessForkerAction m blk)
   -- ^ Continuation to run when the validation was successful
   , trace :: !(TraceValidateEvent blk -> m ())
   -- ^ A tracer for validate events
@@ -297,14 +237,15 @@ data ValidateArgs m l blk = ValidateArgs
   }
 
 validate ::
-  forall m l blk.
+  forall m blk.
   ( IOLike m
   , HasCallStack
-  , ApplyBlock l blk
+  , LedgerSupportsProtocol blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ComputeLedgerEvents ->
-  ValidateArgs m l blk ->
-  m (ValidateResult l blk)
+  ValidateArgs m blk ->
+  m (ValidateResult blk)
 validate evs args = do
   aps <- mkAps <$> atomically prevApplied
   res <-
@@ -335,16 +276,21 @@ validate evs args = do
     } = args
 
   rewrap ::
-    Either GetForkerError (Either (AnnLedgerError l blk) ()) ->
-    ValidateResult l blk
+    Either GetForkerError (Either (AnnLedgerError blk) ()) ->
+    ValidateResult blk
   rewrap (Right (Left e)) = ValidateLedgerError e
   rewrap (Left (PointTooOld (Just e))) = ValidateExceededRollBack e
-  rewrap (Left _) = error "Unreachable, validating will always rollback from the tip"
+  -- 'withForkerAtFromTip' is built around 'rollbackN'; it can only fail with
+  -- @PointTooOld (Just _)@, never with 'PointNotOnChain' nor with
+  -- @PointTooOld Nothing@.
+  rewrap (Left e) =
+    error $
+      "validate: impossible GetForkerError from a rollback-from-tip request: " <> show e
   rewrap (Right (Right ())) = ValidateSuccessful
 
   mkAps ::
     Set (RealPoint blk) ->
-    NonEmpty (Ap m l blk)
+    NonEmpty (Ap m blk)
   mkAps prev =
     NE.map
       ( \hdr -> case ( Set.member (headerRealPoint hdr) prev
@@ -359,7 +305,7 @@ validate evs args = do
 
   -- \| Based on the 'ValidateResult', return the hashes corresponding to
   -- valid blocks.
-  validBlockPoints :: ValidateResult l blk -> [RealPoint blk] -> [RealPoint blk]
+  validBlockPoints :: ValidateResult blk -> [RealPoint blk] -> [RealPoint blk]
   validBlockPoints = \case
     ValidateExceededRollBack _ -> const []
     ValidateSuccessful -> id
@@ -368,18 +314,22 @@ validate evs args = do
 -- | Switch to a fork by rolling back a number of blocks and then pushing the
 -- new blocks.
 switch ::
-  (ApplyBlock l blk, MonadSTM m) =>
-  (forall r. Word64 -> (Forker m l blk -> m r) -> m (Either GetForkerError r)) ->
+  ( LedgerSupportsProtocol blk
+  , MonadSTM m
+  , MonadThrow m
+  , BlockSupportsLedgerHD m blk
+  ) =>
+  (forall r. Word64 -> (Forker m blk -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
-  LedgerCfg l blk ->
+  LedgerCfg ExtLedgerState blk ->
   -- | How many blocks to roll back
   Word64 ->
   (TraceValidateEvent blk -> m ()) ->
   -- | New blocks to apply
-  NonEmpty (Ap m l blk) ->
+  NonEmpty (Ap m blk) ->
   ResolveBlock m blk ->
-  SuccessForkerAction m l blk ->
-  m (Either GetForkerError (Either (AnnLedgerError l blk) ()))
+  SuccessForkerAction m blk ->
+  m (Either GetForkerError (Either (AnnLedgerError blk) ()))
 switch withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSuccess = do
   withForkerAtFromTip numRollbacks $ \fo -> do
     let start = PushStart . toRealPoint . NE.head $ newBlocks
@@ -407,14 +357,14 @@ switch withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSucc
 --     1. Are we passing the block by value or by reference?
 --
 --     2. Are we applying or reapplying the block?
-type Ap :: (Type -> Type) -> StateKind -> Type -> Type
-data Ap m l blk where
-  ReapplyVal :: blk -> Ap m l blk
-  ApplyVal :: blk -> Ap m l blk
-  ReapplyRef :: RealPoint blk -> Ap m l blk
-  ApplyRef :: RealPoint blk -> Ap m l blk
+type Ap :: (Type -> Type) -> Type -> Type
+data Ap m blk where
+  ReapplyVal :: blk -> Ap m blk
+  ApplyVal :: blk -> Ap m blk
+  ReapplyRef :: RealPoint blk -> Ap m blk
+  ApplyRef :: RealPoint blk -> Ap m blk
 
-toRealPoint :: HasHeader blk => Ap m l blk -> RealPoint blk
+toRealPoint :: HasHeader blk => Ap m blk -> RealPoint blk
 toRealPoint (ReapplyVal blk) = blockRealPoint blk
 toRealPoint (ApplyVal blk) = blockRealPoint blk
 toRealPoint (ReapplyRef rp) = rp
@@ -422,67 +372,75 @@ toRealPoint (ApplyRef rp) = rp
 
 -- | Apply blocks to the given forker
 applyBlock ::
-  forall m l blk.
-  (ApplyBlock l blk, MonadSTM m) =>
+  forall m blk.
+  ( LedgerSupportsProtocol blk
+  , MonadSTM m
+  , MonadThrow m
+  , BlockSupportsLedgerHD m blk
+  ) =>
   ComputeLedgerEvents ->
-  LedgerCfg l blk ->
-  Ap m l blk ->
-  Forker m l blk ->
+  LedgerCfg ExtLedgerState blk ->
+  Ap m blk ->
+  Forker m blk ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) (l blk DiffMK))
+  m (Either (AnnLedgerError blk) (ExtStateHandle m blk))
 applyBlock evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b ->
-    withValues b (return . Right . tickThenReapply evs cfg b)
-  ApplyVal b ->
-    withValues
-      b
-      ( \v ->
-          case runExcept $ tickThenApply evs cfg b v of
-            Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b) lerr))
-            Right st -> pure (Right st)
-      )
+    Right <$> (tickThenReapply evs cfg b =<< atomically (forkerTip fo))
+  ApplyVal b -> do
+    ftip <- atomically (forkerTip fo)
+    (runExceptT $ tickThenApply evs cfg b ftip) >>= \case
+      Left lerr ->
+        pure
+          ( Left
+              ( AnnLedgerError
+                  (getTip $ extLedgerState ftip)
+                  (blockRealPoint b)
+                  lerr
+              )
+          )
+      Right st -> pure (Right st)
   ReapplyRef r -> do
     b <- doResolveBlock r
     applyBlock evs cfg (ReapplyVal b) fo doResolveBlock
   ApplyRef r -> do
     b <- doResolveBlock r
     applyBlock evs cfg (ApplyVal b) fo doResolveBlock
- where
-  withValues ::
-    blk ->
-    (l blk ValuesMK -> m (Either (AnnLedgerError l blk) (l blk DiffMK))) ->
-    m (Either (AnnLedgerError l blk) (l blk DiffMK))
-  withValues blk f = do
-    l <- atomically $ forkerGetLedgerState fo
-    vs <- withLedgerTables l <$> forkerReadTables fo (getBlockKeySets blk)
-    f vs
 
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker.
 applyThenPush ::
-  (ApplyBlock l blk, MonadSTM m) =>
+  ( LedgerSupportsProtocol blk
+  , MonadSTM m
+  , MonadThrow m
+  , BlockSupportsLedgerHD m blk
+  ) =>
   ComputeLedgerEvents ->
-  LedgerCfg l blk ->
-  Ap m l blk ->
-  Forker m l blk ->
+  LedgerCfg ExtLedgerState blk ->
+  Ap m blk ->
+  Forker m blk ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) ())
+  m (Either (AnnLedgerError blk) ())
 applyThenPush evs cfg ap fo doResolve = do
   eLerr <- applyBlock evs cfg ap fo doResolve
   case eLerr of
     Left err -> pure (Left err)
-    Right st -> Right <$> forkerPush fo st
+    Right st -> Right <$> atomically (forkerPush fo st)
 
 -- | Apply and push a sequence of blocks (oldest first).
 applyThenPushMany ::
-  (ApplyBlock l blk, MonadSTM m) =>
+  ( LedgerSupportsProtocol blk
+  , MonadSTM m
+  , MonadThrow m
+  , BlockSupportsLedgerHD m blk
+  ) =>
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
-  LedgerCfg l blk ->
-  [Ap m l blk] ->
-  Forker m l blk ->
+  LedgerCfg ExtLedgerState blk ->
+  [Ap m blk] ->
+  Forker m blk ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) ())
+  m (Either (AnnLedgerError blk) ())
 applyThenPushMany trace evs cfg aps fo doResolveBlock = pushAndTrace aps
  where
   pushAndTrace [] = pure $ Right ()
@@ -525,14 +483,14 @@ type ResolveBlock m blk = RealPoint blk -> m blk
 -- commonly used as "how to close a @res@", which is *NOT* the case
 -- here. So it's preferable to use this more perspicious type in
 -- signatures.
-newtype SuccessForkerAction m l blk = MkSuccessForkerAction
-  { applySuccessForkerAction :: Forker m l blk -> m ()
+newtype SuccessForkerAction m blk = MkSuccessForkerAction
+  { applySuccessForkerAction :: Forker m blk -> m ()
   }
 
 -- | When validating a sequence of blocks, these are the possible outcomes.
-data ValidateResult l blk
+data ValidateResult blk
   = ValidateSuccessful
-  | ValidateLedgerError (AnnLedgerError l blk)
+  | ValidateLedgerError (AnnLedgerError blk)
   | ValidateExceededRollBack ExceededRollback
 
 {-------------------------------------------------------------------------------
@@ -540,16 +498,16 @@ data ValidateResult l blk
 -------------------------------------------------------------------------------}
 
 -- | Annotated ledger errors
-data AnnLedgerError l blk = AnnLedgerError
+data AnnLedgerError blk = AnnLedgerError
   { annLedgerBaseRef :: Point blk
   -- ^ The last block that was valid
   , annLedgerErrRef :: RealPoint blk
   -- ^ Reference to the block that had the error
-  , annLedgerErr :: LedgerErr l blk
+  , annLedgerErr :: LedgerErr ExtLedgerState blk
   -- ^ The ledger error itself
   }
 
-type AnnLedgerError' blk = AnnLedgerError ExtLedgerState blk
+type AnnLedgerError' blk = AnnLedgerError blk
 
 {-------------------------------------------------------------------------------
   Trace validation events
@@ -585,12 +543,13 @@ data TraceForkerEventWithKey
   = TraceForkerEventWithKey ForkerKey TraceForkerEvent
   deriving (Show, Eq)
 
+-- | Forker-level events.
+--
+-- Per-handle events (reads, range reads, pushes, statistics) live on the
+-- backend tracer ('LedgerDBV2Trace') instead, because reads and pushes now
+-- happen against an 'ExtStateHandle' rather than against a 'Forker'.
 data TraceForkerEvent
   = ForkerOpen
-  | ForkerReadTables EnclosingTimed
-  | ForkerRangeReadTables EnclosingTimed
-  | ForkerReadStatistics
-  | ForkerPush EnclosingTimed
   | ForkerClose ForkerWasCommitted
   deriving (Show, Eq)
 
