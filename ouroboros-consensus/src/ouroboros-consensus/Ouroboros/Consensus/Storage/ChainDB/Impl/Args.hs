@@ -38,8 +38,6 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerDbBackendArgs)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -140,14 +138,13 @@ defaultArgs ::
   ( IOLike m
   , LedgerDB.LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , LedgerDB.CanUpgradeLedgerTables LedgerState blk
   ) =>
   Incomplete ChainDbArgs m blk
 defaultArgs =
   ChainDbArgs
     ImmutableDB.defaultArgs
     VolatileDB.defaultArgs
-    (LedgerDB.defaultArgs $ LedgerDB.SomeBackendArgs InMemory.InMemArgs)
+    LedgerDB.defaultArgs
     PerasCertDB.defaultArgs
     PerasVoteDB.defaultArgs
     defaultSpecificArgs
@@ -172,7 +169,7 @@ completeChainDbArgs ::
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger
-  ExtLedgerState blk ValuesMK ->
+  (LedgerTablesFactory m blk -> m (ExtStateHandle m blk)) ->
   ImmutableDB.ChunkInfo ->
   -- | Check integrity
   (blk -> Bool) ->
@@ -214,7 +211,7 @@ completeChainDbArgs
             }
       , cdbLgrDbArgs =
           (cdbLgrDbArgs defArgs)
-            { LedgerDB.lgrGenesis = pure initLedger
+            { LedgerDB.lgrGenesis = initLedger
             , LedgerDB.lgrHasFS = mkVolFS $ RelativeMountPoint "ledger"
             , LedgerDB.lgrConfig =
                 LedgerDB.configLedgerDb
