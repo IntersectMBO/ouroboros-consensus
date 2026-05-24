@@ -9,22 +9,23 @@ module Ouroboros.Consensus.HardFork.Combinator.Node () where
 
 import Data.Proxy
 import Data.SOP.BasicFunctors
+import Data.SOP.Constraint (All, Compose)
 import Data.SOP.Strict
 import GHC.Stack
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.HardFork.Combinator.Forging ()
-import Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams ()
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection ()
-import Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.Metrics ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.SanityCheck ()
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
+import Ouroboros.Consensus.Ledger.SupportsMempool (MempoolAcc, TxLocalData)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 
@@ -61,10 +62,9 @@ getSameConfigValue getValue blockConfig = getSameValue values
 
 instance
   ( CanHardFork xs
-  , HasCanonicalTxIn xs
-  , HasHardForkTxOut xs
-  , BlockSupportsHFLedgerQuery xs
   , SupportedNetworkProtocolVersion (HardForkBlock xs)
   , SerialiseHFC xs
+  , All (Compose NoThunks TxLocalData) xs
+  , All (Compose NoThunks MempoolAcc) xs
   ) =>
   RunNode (HardForkBlock xs)
