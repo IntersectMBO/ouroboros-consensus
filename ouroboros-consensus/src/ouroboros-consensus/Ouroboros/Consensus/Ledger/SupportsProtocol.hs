@@ -5,14 +5,16 @@ module Ouroboros.Consensus.Ledger.SupportsProtocol
   , LedgerSupportsProtocol (..)
   ) where
 
+import Control.Monad (when)
 import Control.Monad.Except
+import Control.Monad.Trans (lift)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Util.IOLike
 
 -- | Link protocol to ledger
 class
@@ -28,7 +30,7 @@ class
   -- relation between this and forecasting.
   protocolLedgerView ::
     LedgerConfig blk ->
-    Ticked LedgerState blk mk ->
+    Ticked LedgerState blk ->
     LedgerView (BlockProtocol blk)
 
   -- | Get a forecast at the given ledger state.
@@ -69,35 +71,39 @@ class
   ledgerViewForecastAt ::
     HasCallStack =>
     LedgerConfig blk ->
-    LedgerState blk mk ->
+    LedgerState blk ->
     Forecast (LedgerView (BlockProtocol blk))
 
 -- | Relation between 'ledgerViewForecastAt' and 'applyChainTick'
 _lemma_ledgerViewForecastAt_applyChainTick ::
   ( LedgerSupportsProtocol blk
   , Eq (LedgerView (BlockProtocol blk))
+  , MonadThrow m
+  , BlockSupportsLedgerHD m blk
   ) =>
   LedgerConfig blk ->
-  LedgerState blk mk ->
+  StateHandle m blk ->
   Forecast (LedgerView (BlockProtocol blk)) ->
   SlotNo ->
-  Either String ()
-_lemma_ledgerViewForecastAt_applyChainTick cfg st forecast for
-  | NotOrigin for >= ledgerTipSlot st
-  , let lhs = forecastFor forecast for
-        rhs =
-          protocolLedgerView cfg
-            . applyChainTick OmitLedgerEvents cfg for
-            . forgetLedgerTables
-            $ st
-  , Right lhs' <- runExcept lhs
-  , lhs' /= rhs =
-      Left $
-        unlines
-          [ "ledgerViewForecastAt /= protocolLedgerView . applyChainTick:"
-          , show lhs'
-          , " /= "
-          , show rhs
-          ]
-  | otherwise =
-      Right ()
+  m (Either String ())
+_lemma_ledgerViewForecastAt_applyChainTick cfg st forecast for =
+  runExceptT $
+    when (NotOrigin for >= ledgerTipSlot (state st)) $ do
+      let lhs = runExcept (forecastFor forecast for)
+      case lhs of
+        Left _ -> pure ()
+        Right lhs' -> do
+          rhs <-
+            lift $
+              bracket
+                (applyChainTick OmitLedgerEvents cfg for st)
+                closeTicked
+                (pure . protocolLedgerView cfg . tickedState)
+          when (lhs' /= rhs) $
+            throwError $
+              unlines
+                [ "ledgerViewForecastAt /= protocolLedgerView . applyChainTick:"
+                , show lhs'
+                , " /= "
+                , show rhs
+                ]

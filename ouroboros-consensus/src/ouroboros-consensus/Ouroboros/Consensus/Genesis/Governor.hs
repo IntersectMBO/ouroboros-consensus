@@ -63,7 +63,6 @@ import Ouroboros.Consensus.HardFork.History.Qry
   , slotToGenesisWindow
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
-import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
   ( ExtLedgerState
   , ledgerState
@@ -198,7 +197,7 @@ data GDDTrigger a
 data GDDStateView m blk peer = GDDStateView
   { gddCtxCurChain :: AnchoredFragment (HeaderWithTime blk)
   -- ^ The current chain selection
-  , gddCtxImmutableLedgerSt :: ExtLedgerState blk EmptyMK
+  , gddCtxImmutableLedgerSt :: ExtLedgerState blk
   -- ^ The current ledger state
   , gddCtxKillActions :: Map peer (m ())
   -- ^ Callbacks to disconnect from peers

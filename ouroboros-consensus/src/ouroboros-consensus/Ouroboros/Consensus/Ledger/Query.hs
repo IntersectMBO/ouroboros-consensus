@@ -78,7 +78,6 @@ import Ouroboros.Consensus.Node.Serialisation
   , SerialiseNodeToClient (..)
   , SerialiseResult (..)
   )
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))
 import Ouroboros.Consensus.Util.DepPair
 import Ouroboros.Consensus.Util.IOLike
@@ -153,38 +152,43 @@ class
   answerPureBlockQuery ::
     ExtLedgerCfg blk ->
     BlockQuery blk QFNoTables result ->
-    ExtLedgerState blk EmptyMK ->
+    ExtLedgerState blk ->
     result
 
-  -- | Answer a query that requires to perform a lookup on the ledger tables. As
-  -- consensus always runs with a HardForkBlock, this might result in a
-  -- different code path to answer a query compared to the one that a single
-  -- block would take, one that is aware of the fact that the ledger tables
-  -- might be HF ledger tables thus making use of some utilities to make these
-  -- queries faster.
+  -- | Answer a query that requires to perform a lookup on the ledger tables.
+  --
+  -- The 'ExtStateHandle' replaces the older @ReadOnlyForker'@: callers
+  -- acquire a handle once, run their query against the snapshot it
+  -- represents, and close it when done. Unlike the forker, there is no
+  -- STM-level refresh — the handle's view of the state is fixed at
+  -- acquisition.
+  --
+  -- As consensus always runs with a HardForkBlock, this might result in
+  -- a different code path to answer a query compared to the one that a
+  -- single block would take, one that is aware of the fact that the
+  -- ledger tables might be HF ledger tables thus making use of some
+  -- utilities to make these queries faster.
   --
   -- For the hard fork block this will be instantiated to
   -- 'Ouroboros.Consensus.HardFork.Combinator.Ledger.Query.answerBlockQueryHFLookup'.
   answerBlockQueryLookup ::
-    MonadSTM m =>
+    (MonadSTM m, BlockSupportsLedgerHD m blk) =>
     ExtLedgerCfg blk ->
     BlockQuery blk QFLookupTables result ->
-    ReadOnlyForker' m blk ->
+    ExtStateHandle m blk ->
     m result
 
-  -- | Answer a query that requires to traverse the ledger tables. As consensus
-  -- always runs with a HardForkBlock, this might result in a different code
-  -- path to answer a query compared to the one that a single block would take,
-  -- one that is aware of the fact that the ledger tables might be HF ledger
-  -- tables thus making use of some utilities to make these queries faster.
+  -- | Answer a query that requires to traverse the ledger tables.
+  --
+  -- See 'answerBlockQueryLookup' for handle lifecycle.
   --
   -- For the hard fork block this will be instantiated to
   -- 'Ouroboros.Consensus.HardFork.Combinator.Ledger.Query.answerBlockQueryHFTraverse'.
   answerBlockQueryTraverse ::
-    MonadSTM m =>
+    (MonadSTM m, BlockSupportsLedgerHD m blk) =>
     ExtLedgerCfg blk ->
     BlockQuery blk QFTraverseTables result ->
-    ReadOnlyForker' m blk ->
+    ExtStateHandle m blk ->
     m result
 
   -- | Is the given query supported in this NTC version?
@@ -249,29 +253,31 @@ data Query blk result where
 -- | Answer the given query about the extended ledger state.
 answerQuery ::
   forall blk m result.
-  (BlockSupportsLedgerQuery blk, ConfigSupportsNode blk, HasAnnTip blk, MonadSTM m) =>
+  ( BlockSupportsLedgerQuery blk
+  , ConfigSupportsNode blk
+  , HasAnnTip blk
+  , MonadSTM m
+  , BlockSupportsLedgerHD m blk
+  ) =>
   ExtLedgerCfg blk ->
-  ReadOnlyForker' m blk ->
+  ExtStateHandle m blk ->
   Query blk result ->
   m result
-answerQuery config forker query = case query of
+answerQuery config sref query = case query of
   BlockQuery (blockQuery :: BlockQuery blk footprint result) ->
     case sing :: Sing footprint of
       SQFNoTables ->
-        answerPureBlockQuery config blockQuery
-          <$> atomically (roforkerGetLedgerState forker)
+        pure $ answerPureBlockQuery config blockQuery (extLedgerState sref)
       SQFLookupTables ->
-        answerBlockQueryLookup config blockQuery forker
+        answerBlockQueryLookup config blockQuery sref
       SQFTraverseTables ->
-        answerBlockQueryTraverse config blockQuery forker
+        answerBlockQueryTraverse config blockQuery sref
   GetSystemStart ->
     pure $ getSystemStart (topLevelConfigBlock (getExtLedgerCfg config))
   GetChainBlockNo ->
-    headerStateBlockNo . headerState
-      <$> atomically (roforkerGetLedgerState forker)
+    pure . headerStateBlockNo $ extHeaderState sref
   GetChainPoint ->
-    headerStatePoint . headerState
-      <$> atomically (roforkerGetLedgerState forker)
+    pure . headerStatePoint $ extHeaderState sref
   DebugLedgerConfig ->
     pure $ topLevelConfigLedger (getExtLedgerCfg config)
 

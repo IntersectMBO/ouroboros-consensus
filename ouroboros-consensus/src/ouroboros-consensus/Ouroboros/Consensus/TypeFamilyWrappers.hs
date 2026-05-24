@@ -22,9 +22,7 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapTentativeHeaderState (..)
   , WrapTentativeHeaderView (..)
   , WrapTipInfo (..)
-  , WrapTxIn (..)
   , WrapTxMeasure (..)
-  , WrapTxOut (..)
   , WrapValidatedGenTx (..)
 
     -- * Protocol based
@@ -89,9 +87,6 @@ newtype WrapTipInfo blk = WrapTipInfo {unwrapTipInfo :: TipInfo blk}
 newtype WrapValidatedGenTx blk = WrapValidatedGenTx {unwrapValidatedGenTx :: Validated (GenTx blk)}
 
 newtype WrapTxMeasure blk = WrapTxMeasure {unwrapTxMeasure :: TxMeasure blk}
-
-newtype WrapTxIn blk = WrapTxIn {unwrapTxIn :: TxIn blk}
-newtype WrapTxOut blk = WrapTxOut {unwrapTxOut :: TxOut blk}
 
 {-------------------------------------------------------------------------------
   Consensus based
@@ -162,16 +157,6 @@ deriving instance
   NoThunks (TipInfo blk) => NoThunks (WrapTipInfo blk)
 deriving instance
   NoThunks (Validated (GenTx blk)) => NoThunks (WrapValidatedGenTx blk)
-
-deriving instance Show (TxIn blk) => Show (WrapTxIn blk)
-deriving instance Eq (TxIn blk) => Eq (WrapTxIn blk)
-deriving instance Ord (TxIn blk) => Ord (WrapTxIn blk)
-deriving instance NoThunks (TxIn blk) => NoThunks (WrapTxIn blk)
-
-deriving instance Show (TxOut blk) => Show (WrapTxOut blk)
-deriving instance Eq (TxOut blk) => Eq (WrapTxOut blk)
-deriving instance Ord (TxOut blk) => Ord (WrapTxOut blk)
-deriving instance NoThunks (TxOut blk) => NoThunks (WrapTxOut blk)
 
 {-------------------------------------------------------------------------------
   .. consensus based
