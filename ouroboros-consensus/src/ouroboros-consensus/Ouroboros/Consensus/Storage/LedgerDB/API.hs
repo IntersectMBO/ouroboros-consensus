@@ -6,11 +6,11 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -125,14 +125,16 @@
 -- as follows.
 --
 -- - 'openForkerAtTarget' is used directly only to define
---   'withTipForker' (bracketed) and 'openReadOnlyForker'.
+--   'withTipForker' (bracketed). The read-only path goes through
+--   'openHandleAtTarget' instead, which does not allocate a 'Forker'.
 --
--- - 'openReadOnlyForker' is used directly only in @db-analyser@
---   (tool), in tests, and to define 'openReadOnlyForkerAtPoint'.
+-- - 'openReadOnlyHandle' (a thin wrapper over 'openHandleAtTarget')
+--   is used directly only in @db-analyser@ (tool), in tests, and to
+--   define 'openReadOnlyHandleAtPoint'.
 --
--- - 'openReadOnlyForkerAtPoint' is used directly only to define
---   'allocInRegistryReadOnlyForkerAtPoint' (registered), to define
---   'withReadOnlyForkerAtPoint' (bracketed), and to construct a
+-- - 'openReadOnlyHandleAtPoint' is used directly only to define
+--   'allocInRegistryReadOnlyHandleAtPoint' (registered), to define
+--   'withReadOnlyHandleAtPoint' (bracketed), and to construct a
 --   'MempoolLedgerDBView'.
 --
 --  - The Forker part of 'MempoolLedgerDBView' is used directly only
@@ -173,10 +175,8 @@
 -- >>> :}
 module Ouroboros.Consensus.Storage.LedgerDB.API
   ( -- * Main API
-    CanUpgradeLedgerTables (..)
-  , LedgerDB (..)
+    LedgerDB (..)
   , LedgerDB'
-  , LedgerDbPrune (..)
   , LedgerDbSerialiseConstraints
   , ResolveBlock
   , currentPoint
@@ -204,7 +204,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbError (..)
 
     -- * Forker
-  , openReadOnlyForker
+  , openReadOnlyHandle
   , getTipStatistics
   , withTipForker
 
@@ -229,14 +229,12 @@ import Data.ByteString (ByteString)
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
-import Data.MemPack
 import Data.Proxy
 import Data.Set (Set)
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -248,11 +246,10 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Storage.Serialisation
-import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Point
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -267,26 +264,29 @@ import System.FS.CRC
 -- instantiated with a @blk@.
 type LedgerDbSerialiseConstraints blk =
   ( Serialise (HeaderHash blk)
-  , EncodeDisk blk (LedgerState blk EmptyMK)
-  , DecodeDisk blk (LedgerState blk EmptyMK)
+  , EncodeDisk blk (LedgerState blk)
+  , DecodeDisk blk (LedgerState blk)
   , EncodeDisk blk (AnnTip blk)
   , DecodeDisk blk (AnnTip blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
-  , IndexedMemPack LedgerState blk (TxOut blk)
-  , MemPack (TxIn blk)
-  , SerializeTablesWithHint LedgerState blk
   )
 
 -- | The core API of the LedgerDB component
-type LedgerDB :: (Type -> Type) -> StateKind -> Type -> Type
+type LedgerDB :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 data LedgerDB m l blk = LedgerDB
-  { getVolatileTip :: STM m (l blk EmptyMK)
-  -- ^ Get the empty ledger state at the (volatile) tip of the LedgerDB.
-  , getImmutableTip :: STM m (l blk EmptyMK)
-  -- ^ Get the empty ledger state at the immutable tip of the LedgerDB.
-  , getPastLedgerState :: Point blk -> STM m (Maybe (l blk EmptyMK))
-  -- ^ Get an empty ledger state at a requested point in the LedgerDB, if it
+  { getVolatileTip :: STM m (l blk)
+  -- ^ Get the pure ledger state at the volatile tip of the LedgerDB.
+  , getVolatileTipRef :: STM m (Handle l m blk)
+  -- ^ Get a 'Handle' to the ledger state at the volatile tip of the LedgerDB.
+  --
+  -- Unlike 'getVolatileTip', the returned handle carries the on-disk tables
+  -- (read-only) and so can be used to look up table contents. It must
+  -- /not/ be closed by the caller — its lifetime is tied to the LedgerDB.
+  , getImmutableTip :: STM m (l blk)
+  -- ^ Get the pure ledger state at the immutable tip of the LedgerDB.
+  , getPastLedgerState :: Point blk -> STM m (Maybe (l blk))
+  -- ^ Get the pure ledger state at a requested point in the LedgerDB, if it
   -- exists.
   , getHeaderStateHistory ::
       l ~ ExtLedgerState =>
@@ -294,20 +294,33 @@ data LedgerDB m l blk = LedgerDB
   -- ^ Get the header state history for all ledger states in the LedgerDB.
   , openForkerAtTarget ::
       Target (Point blk) ->
-      m (Either GetForkerError (Forker m l blk))
+      m (Either GetForkerError (Forker m blk))
   -- ^ Acquire a 'Forker' at the requested point. If a ledger state associated
   -- with the requested point does not exist in the LedgerDB, it will return a
   -- 'GetForkerError'.
   --
   -- Note this will allocate resources; see the "'Forker' management
   -- in the running node" comment above.
+  --
+  -- Use 'openHandleAtTarget' for read-only access — it avoids allocating a
+  -- 'Forker'.
+  , openHandleAtTarget ::
+      Target (Point blk) ->
+      m (Either GetForkerError (Handle l m blk))
+  -- ^ Acquire a fresh (duplicated) read-only 'Handle' at the requested point.
+  --
+  -- The handle is duplicated from the LedgerDB's internal seq (under a read
+  -- lock), so it has its own lifetime. The caller is responsible for closing
+  -- it (via 'closeExt'). Unlike 'openForkerAtTarget', this does /not/ allocate
+  -- a 'Forker' — use 'openForkerAtTarget' only when commit/push semantics are
+  -- needed.
   , validateFork ::
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
       Word64 ->
       NonEmpty (Header blk) ->
-      SuccessForkerAction m l blk ->
-      m (ValidateResult l blk)
+      SuccessForkerAction m blk ->
+      m (ValidateResult blk)
   -- ^ Try to apply a sequence of blocks on top of the LedgerDB, first rolling
   -- back as many blocks as the passed @Word64@.
   --
@@ -350,17 +363,17 @@ type instance HeaderHash (LedgerDB m l blk) = HeaderHash blk
 type LedgerDB' m blk = LedgerDB m ExtLedgerState blk
 
 currentPoint ::
-  (GetTip (l blk), HeaderHash (l blk) ~ HeaderHash blk, Functor (STM m)) =>
+  (GetTip l blk, Functor (STM m)) =>
   LedgerDB m l blk ->
   STM m (Point blk)
-currentPoint ldb = castPoint . getTip <$> getVolatileTip ldb
+currentPoint ldb = getTip <$> getVolatileTip ldb
 
 data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 
 data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
-  , push :: l blk DiffMK -> m ()
+  , push :: Handle l m blk -> m ()
   -- ^ Push a ledger state, and prune the 'LedgerDB' to its immutable tip.
   --
   -- This does not modify the set of previously applied points.
@@ -377,33 +390,6 @@ data TestInternals m l blk = TestInternals
   deriving NoThunks via OnlyCheckWhnfNamed "TestInternals" (TestInternals m l blk)
 
 type TestInternals' m blk = TestInternals m ExtLedgerState blk
-
-{-------------------------------------------------------------------------------
-  Config
--------------------------------------------------------------------------------}
-
-data LedgerDbCfgF f l blk = LedgerDbCfg
-  { ledgerDbCfgSecParam :: !(HKD f SecurityParam)
-  , ledgerDbCfg :: !(HKD f (LedgerCfg l blk))
-  , ledgerDbCfgComputeLedgerEvents :: !ComputeLedgerEvents
-  }
-  deriving Generic
-
-type LedgerDbCfg l = Complete LedgerDbCfgF l
-
-deriving instance NoThunks (LedgerCfg l blk) => NoThunks (LedgerDbCfg l blk)
-
-configLedgerDb ::
-  ConsensusProtocol (BlockProtocol blk) =>
-  TopLevelConfig blk ->
-  ComputeLedgerEvents ->
-  LedgerDbCfg ExtLedgerState blk
-configLedgerDb config evs =
-  LedgerDbCfg
-    { ledgerDbCfgSecParam = configSecurityParam config
-    , ledgerDbCfg = ExtLedgerCfg config
-    , ledgerDbCfgComputeLedgerEvents = evs
-    }
 
 {-------------------------------------------------------------------------------
   Exceptions
@@ -427,33 +413,39 @@ data LedgerDbError
 
 -- | 'bracket'-style usage of a forker at the LedgerDB tip.
 withTipForker ::
-  IOLike m =>
+  (IOLike m, LedgerSupportsProtocol blk, BlockSupportsLedgerHD m blk) =>
   LedgerDB m l blk ->
-  (Forker m l blk -> m a) ->
+  (Forker m blk -> m a) ->
   m a
 withTipForker ldb =
   bracket
     ( do
         eFrk <- openForkerAtTarget ldb VolatileTip
         case eFrk of
-          Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
+          Left err ->
+            error $
+              "withTipForker: openForkerAtTarget VolatileTip must succeed; got: "
+                <> show err
           Right frk -> pure frk
     )
     forkerClose
 
 -- | Get statistics from the tip of the LedgerDB.
 getTipStatistics ::
-  IOLike m =>
+  (IOLike m, LedgerSupportsProtocol blk, BlockSupportsLedgerHD m blk) =>
   LedgerDB m l blk ->
   m Statistics
-getTipStatistics ldb = withTipForker ldb forkerReadStatistics
+getTipStatistics ldb = withTipForker ldb (fmap getStatsExt . atomically . forkerTip)
 
-openReadOnlyForker ::
-  MonadSTM m =>
-  LedgerDB m l blk ->
+-- | Acquire a fresh read-only handle at the requested point.
+--
+-- A thin wrapper over 'openHandleAtTarget' that specialises to the LedgerDB's
+-- usual @l ~ ExtLedgerState@.
+openReadOnlyHandle ::
+  LedgerDB m ExtLedgerState blk ->
   Target (Point blk) ->
-  m (Either GetForkerError (ReadOnlyForker m l blk))
-openReadOnlyForker ldb pt = fmap readOnlyForker <$> openForkerAtTarget ldb pt
+  m (Either GetForkerError (ExtStateHandle m blk))
+openReadOnlyHandle = openHandleAtTarget
 
 {-------------------------------------------------------------------------------
   Initialization
@@ -491,8 +483,8 @@ data InitDB db m blk = InitDB
   , initReapplyBlock :: !(LedgerDbCfg ExtLedgerState blk -> blk -> db -> m db)
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
   -- LedgerDB such that there are no volatile states.
-  , currentTip :: !(db -> LedgerState blk EmptyMK)
-  -- ^ Getting the current tip for tracing the Ledger Events.
+  , currentTip :: !(db -> LedgerState blk)
+  -- ^ Get the current tip — used for tracing Ledger Events.
   , mkLedgerDb ::
       !(db -> m (LedgerDB' m blk, TestInternals' m blk))
   -- ^ Create a LedgerDB from the initialized data structures from previous
@@ -739,19 +731,6 @@ data TraceReplayProgressEvent blk
   deriving (Generic, Eq, Show)
 
 {-------------------------------------------------------------------------------
-  Pruning
--------------------------------------------------------------------------------}
-
--- | Options for prunning the LedgerDB
-data LedgerDbPrune
-  = -- | Prune all states, keeping only the current tip.
-    LedgerDbPruneAll
-  | -- | Prune such that all (non-anchor) states are not older than the given
-    -- slot.
-    LedgerDbPruneBeforeSlot SlotNo
-  deriving Show
-
-{-------------------------------------------------------------------------------
   Streaming
 -------------------------------------------------------------------------------}
 
@@ -768,9 +747,9 @@ class StreamingBackend m backend l blk where
   releaseSinkArgs :: SinkArgs m backend l blk -> m ()
 
 type Yield m l blk =
-  l blk EmptyMK ->
+  l blk ->
   ( ( Stream
-        (Of (TxIn blk, TxOut blk))
+        (Of ((), ()))
         (ExceptT DeserialiseFailure m)
         (Stream (Of ByteString) m (Maybe CRC)) ->
       ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
@@ -779,14 +758,14 @@ type Yield m l blk =
   ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
 
 type Sink m l blk =
-  l blk EmptyMK ->
+  l blk ->
   Stream
-    (Of (TxIn blk, TxOut blk))
+    (Of ((), ()))
     (ExceptT DeserialiseFailure m)
     (Stream (Of ByteString) m (Maybe CRC)) ->
   ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
 
 data Decoders blk
   = Decoders
-      (forall s. Decoder s (TxIn blk))
-      (forall s. Decoder s (TxOut blk))
+      (forall s. Decoder s ())
+      (forall s. Decoder s ())
