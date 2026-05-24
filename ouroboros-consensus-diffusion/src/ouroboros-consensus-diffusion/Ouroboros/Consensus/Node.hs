@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
@@ -108,8 +109,8 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
-import Ouroboros.Consensus.Ledger.Abstract (ValuesMK)
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Extended
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricityCheck
@@ -224,7 +225,7 @@ data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs
   -- ^ Protocol tracers for node-to-node communication
   , rnTraceNTC :: NTC.Tracers m (ConnectionId addrNTC) blk DeserialiseFailure
   -- ^ Protocol tracers for node-to-client communication
-  , rnProtocolInfo :: ProtocolInfo blk
+  , rnProtocolInfo :: ProtocolInfo m blk
   -- ^ Protocol info
   , rnNodeKernelHook ::
       ResourceRegistry m ->
@@ -404,7 +405,12 @@ pure []
 -- | Combination of 'runWith' and 'stdLowLevelRunArgsIO'
 run ::
   forall blk.
-  RunNode blk =>
+  ( RunNode blk
+  , BlockSupportsLedgerHD IO blk
+  , NoThunks (TickedStateHandle IO blk)
+  , NoThunks (Handle ExtLedgerState IO blk)
+  , NoThunks (LedgerState blk)
+  ) =>
   RunNodeArgs IO RemoteAddress LocalAddress blk ->
   StdRunNodeArgs IO blk ->
   IO ()
@@ -472,6 +478,10 @@ runWith ::
   , NetworkIO m
   , NetworkAddr addrNTN
   , Show addrNTN
+  , BlockSupportsLedgerHD m blk
+  , NoThunks (TickedStateHandle m blk)
+  , NoThunks (Handle ExtLedgerState m blk)
+  , NoThunks (LedgerState blk)
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
   (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
@@ -839,11 +849,16 @@ stdWithCheckedDB pb tracer databasePath networkMagic body = do
 
 openChainDB ::
   forall m blk.
-  (RunNode blk, IOLike m) =>
+  ( RunNode blk
+  , IOLike m
+  , BlockSupportsLedgerHD m blk
+  , NoThunks (Handle ExtLedgerState m blk)
+  , NoThunks (LedgerState blk)
+  ) =>
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger
-  ExtLedgerState blk ValuesMK ->
+  (LedgerTablesFactory m blk -> m (ExtStateHandle m blk)) ->
   -- | Immutable FS, see 'NodeDatabasePaths'
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile FS, see 'NodeDatabasePaths'

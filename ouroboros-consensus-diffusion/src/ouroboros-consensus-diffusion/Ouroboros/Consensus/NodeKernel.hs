@@ -67,7 +67,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -101,8 +100,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import Ouroboros.Consensus.Storage.LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
@@ -246,6 +243,8 @@ initNodeKernel ::
   , Ord addrNTN
   , Hashable addrNTN
   , Typeable addrNTN
+  , BlockSupportsLedgerHD m blk
+  , NoThunks (TickedStateHandle m blk)
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   m (NodeKernel m addrNTN addrNTC blk)
@@ -297,8 +296,8 @@ initNodeKernel
                 { GSM.antiThunderingHerd = Just gsmAntiThunderingHerd
                 , GSM.getCandidateOverSelection = do
                     weights <- ChainDB.getPerasWeightSnapshot chainDB
-                    pure $ \(headers, _lst) state ->
-                      case AF.intersectionPoint headers (csCandidate state) of
+                    pure $ \(headers, _lst) st0 ->
+                      case AF.intersectionPoint headers (csCandidate st0) of
                         Nothing -> GSM.CandidateDoesNotIntersect
                         Just{} ->
                           GSM.WhetherCandidateIsBetter $ -- precondition requires intersection
@@ -307,7 +306,7 @@ initNodeKernel
                                   (configBlock cfg)
                                   (forgetFingerprint weights)
                                   headers
-                                  (csCandidate state)
+                                  (csCandidate st0)
                               )
                 , GSM.peerIsIdle = csIdling
                 , GSM.durationUntilTooOld =
@@ -318,8 +317,8 @@ initNodeKernel
                 , GSM.getChainSyncStates = fmap cschState <$> cschcMap varChainSyncHandles
                 , GSM.getCurrentSelection = do
                     headers <- ChainDB.getCurrentChainWithTime chainDB
-                    extLedgerState <- ChainDB.getCurrentLedger chainDB
-                    return (headers, ledgerState extLedgerState)
+                    lstate <- ledgerState <$> ChainDB.getCurrentLedger chainDB
+                    return (headers, lstate)
                 , GSM.minCaughtUpDuration = gsmMinCaughtUpDuration
                 , GSM.setCaughtUpPersistentMark = \upd ->
                     (if upd then GSM.touchMarkerFile else GSM.removeMarkerFile)
@@ -473,6 +472,8 @@ initInternalState ::
   , Ord addrNTN
   , Typeable addrNTN
   , RunNode blk
+  , BlockSupportsLedgerHD m blk
+  , NoThunks (TickedStateHandle m blk)
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   m (InternalState m addrNTN addrNTC blk)
@@ -543,7 +544,7 @@ toConsensusMode = \case
 
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
-  (IOLike m, RunNode blk) =>
+  (IOLike m, RunNode blk, BlockSupportsLedgerHD m blk) =>
   InternalState m addrNTN addrNTC blk ->
   MkBlockForging m blk ->
   m (Thread m Void)
@@ -590,17 +591,15 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     -- Get forker corresponding to bcPrevPoint
     --
     -- This might fail if, in between choosing 'bcPrevPoint' and this call to
-    -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
+    -- 'ChainDB.withReadOnlyHandleAtPoint', we switched to a fork where 'bcPrevPoint'
     -- is no longer on our chain. When that happens, we simply give up on the
     -- chance to produce a block.
     (txs, txssz, proof, snapSize, tickedLedgerState, forgingOnTopOf) <-
-      ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
+      ChainDB.withReadOnlyHandleAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
         Left _ -> do
           trace blockForging $ TraceNoLedgerState currentSlot bcPrevPoint
           exitEarly
-        Right forker -> do
-          unticked <- lift $ atomically $ LedgerDB.roforkerGetLedgerState forker
-
+        Right unticked@(ExtStateHandle untickedLS _) -> do
           trace blockForging $ TraceLedgerState currentSlot bcPrevPoint
 
           -- We require the ticked ledger view in order to construct the ticked
@@ -610,7 +609,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
               forecastFor
                 ( ledgerViewForecastAt
                     (configLedger cfg)
-                    (ledgerState unticked)
+                    (ledgerState $ extLedgerState unticked)
                 )
                 currentSlot of
               Left err -> do
@@ -636,7 +635,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                   (configConsensus cfg)
                   ledgerView
                   currentSlot
-                  (headerStateChainDep (headerState unticked))
+                  (headerStateChainDep (headerState $ extLedgerState unticked))
 
           -- Check if we are the leader
           proof <- do
@@ -667,13 +666,13 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           trace blockForging $ TraceNodeIsLeader currentSlot
 
           -- Tick the ledger state for the 'SlotNo' we're producing a block for
-          let tickedLedgerState :: Ticked LedgerState blk DiffMK
-              tickedLedgerState =
-                applyChainTick
-                  OmitLedgerEvents
-                  (configLedger cfg)
-                  currentSlot
-                  (ledgerState unticked)
+          tickedLedgerState <-
+            lift $
+              applyChainTick
+                OmitLedgerEvents
+                (configLedger cfg)
+                currentSlot
+                untickedLS
 
           _ <- evaluate tickedLedgerState
           trace blockForging $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
@@ -695,11 +694,11 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                 mempool
                 currentSlot
                 tickedLedgerState
-                (roforkerReadTables forker)
 
           let (txs, txssz) =
                 snapshotTake mempoolSnapshot $
-                  blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+                  blockCapacityTxMeasure (configLedger cfg) $
+                    tickedState tickedLedgerState
           -- NB respect the capacity of the ledger state we're extending,
           -- which is /not/ 'snapshotLedgerState'
 
@@ -714,8 +713,8 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             , txssz
             , proof
             , snapshotMempoolSize mempoolSnapshot
-            , forgetLedgerTables tickedLedgerState
-            , ledgerTipPoint (ledgerState unticked)
+            , tickedState tickedLedgerState
+            , ledgerTipPoint (ledgerState $ extLedgerState unticked)
             )
 
     -- Actually produce the block
@@ -945,7 +944,7 @@ getMempoolWriter mempool =
 
   getTxId :: MempoolAddTxResult blk -> Either (TxId (GenTx blk)) (TxId (GenTx blk), ())
   getTxId = \case
-    MempoolTxAdded tx _ -> Left $ txId (txForgetValidated tx)
+    MempoolTxAdded tx -> Left $ txId (txForgetValidated tx)
     MempoolTxRejected tx _reason -> Right $ (txId tx, ())
 
 {-------------------------------------------------------------------------------
@@ -969,7 +968,7 @@ getMempoolWriter mempool =
 getPeersFromCurrentLedger ::
   (IOLike m, LedgerSupportsPeerSelection blk) =>
   NodeKernel m addrNTN addrNTC blk ->
-  (LedgerState blk EmptyMK -> Bool) ->
+  (LedgerState blk -> Bool) ->
   STM m (Maybe [(PoolStake, NonEmpty LedgerRelayAccessPoint)])
 getPeersFromCurrentLedger kernel p = do
   immutableLedger <-
@@ -995,7 +994,7 @@ getPeersFromCurrentLedgerAfterSlot ::
 getPeersFromCurrentLedgerAfterSlot kernel slotNo =
   getPeersFromCurrentLedger kernel afterSlotNo
  where
-  afterSlotNo :: LedgerState blk mk -> Bool
+  afterSlotNo :: LedgerState blk -> Bool
   afterSlotNo st =
     case ledgerTipSlot st of
       Origin -> False
