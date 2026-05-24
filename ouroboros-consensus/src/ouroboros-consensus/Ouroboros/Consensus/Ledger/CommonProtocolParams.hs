@@ -7,8 +7,8 @@ import Ouroboros.Consensus.Ledger.Abstract
 class UpdateLedger blk => CommonProtocolParams blk where
   -- | The maximum header size in bytes according to the currently adopted
   -- protocol parameters of the ledger state.
-  maxHeaderSize :: LedgerState blk mk -> Word32
+  maxHeaderSize :: LedgerState blk -> Word32
 
   -- | The maximum transaction size in bytes according to the currently
   -- adopted protocol parameters of the ledger state.
-  maxTxSize :: LedgerState blk mk -> Word32
+  maxTxSize :: LedgerState blk -> Word32
