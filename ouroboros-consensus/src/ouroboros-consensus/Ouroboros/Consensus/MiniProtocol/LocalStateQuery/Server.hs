@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server (localStateQueryServer) where
@@ -5,6 +6,7 @@ module Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server (localStateQueryS
 import Control.Monad (void)
 import Control.ResourceRegistry
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
   ( BlockSupportsLedgerQuery
@@ -28,10 +30,11 @@ localStateQueryServer ::
   , BlockSupportsLedgerQuery blk
   , Query.ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ExtLedgerCfg blk ->
   ( Target (Point blk) ->
-    m (Either GetForkerError (ResourceKey m, ReadOnlyForker' m blk))
+    m (Either GetForkerError (ResourceKey m, Handle ExtLedgerState m blk))
   ) ->
   LocalStateQueryServer blk (Point blk) (Query blk) m ()
 localStateQueryServer cfg getView =
@@ -60,20 +63,20 @@ localStateQueryServer cfg getView =
 
   acquired ::
     ResourceKey m ->
-    ReadOnlyForker' m blk ->
+    Handle ExtLedgerState m blk ->
     ServerStAcquired blk (Point blk) (Query blk) m ()
   acquired rk forker =
     ServerStAcquired
       { recvMsgQuery = handleQuery rk forker
-      , recvMsgReAcquire = \mp -> do close; handleAcquire mp
-      , recvMsgRelease = do close; return idle
+      , recvMsgReAcquire = \mp -> do doClose; handleAcquire mp
+      , recvMsgRelease = do doClose; return idle
       }
    where
-    close = void $ release rk
+    doClose = void $ release rk
 
   handleQuery ::
     ResourceKey m ->
-    ReadOnlyForker' m blk ->
+    Handle ExtLedgerState m blk ->
     Query blk result ->
     m (ServerStQuerying blk (Point blk) (Query blk) m () result)
   handleQuery rk forker query = do
