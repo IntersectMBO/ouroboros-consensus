@@ -58,6 +58,7 @@ import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
@@ -95,6 +96,7 @@ launchBgTasks ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ChainDbEnv m blk ->
   m ()
@@ -576,6 +578,7 @@ addBlockRunner ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , BlockSupportsLedgerHD m blk
   ) =>
   Fuse m ->
   ChainDbEnv m blk ->
