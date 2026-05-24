@@ -11,7 +11,6 @@ import Control.Exception (assert)
 import qualified Control.Tracer as Tracer
 import Data.Align (alignWith)
 import Data.SOP.Counting (exactlyTwo)
-import Data.SOP.Functors (Flip (..))
 import Data.SOP.OptNP (NonEmptyOptNP, OptNP (..))
 import Data.SOP.Strict (NP (..))
 import Data.Text (Text)
@@ -21,7 +20,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.Abstract (protocolSecurityParam)
@@ -35,18 +34,20 @@ protocolInfoBinary ::
   forall m kesAgentTrace blk1 blk2.
   (CanHardFork '[blk1, blk2], Monad m) =>
   -- First era
-  ProtocolInfo blk1 ->
+  ProtocolInfo m blk1 ->
   (Tracer.Tracer m kesAgentTrace -> m [MkBlockForging m blk1]) ->
   History.EraParams ->
   (ConsensusConfig (BlockProtocol blk1) -> PartialConsensusConfig (BlockProtocol blk1)) ->
   (LedgerConfig blk1 -> PartialLedgerConfig blk1) ->
   -- Second era
-  ProtocolInfo blk2 ->
+  ProtocolInfo m blk2 ->
   (Tracer.Tracer m kesAgentTrace -> m [MkBlockForging m blk2]) ->
   History.EraParams ->
   (ConsensusConfig (BlockProtocol blk2) -> PartialConsensusConfig (BlockProtocol blk2)) ->
   (LedgerConfig blk2 -> PartialLedgerConfig blk2) ->
-  ( ProtocolInfo (HardForkBlock '[blk1, blk2])
+  -- Projection
+  (HFLedgerTablesFactory m '[blk1, blk2] -> LedgerTablesFactory m blk1) ->
+  ( ProtocolInfo m (HardForkBlock '[blk1, blk2])
   , Tracer.Tracer m kesAgentTrace -> m [MkBlockForging m (HardForkBlock '[blk1, blk2])]
   )
 protocolInfoBinary
@@ -59,7 +60,8 @@ protocolInfoBinary
   blockForging2
   eraParams2
   toPartialConsensusConfig2
-  toPartialLedgerConfig2 =
+  toPartialLedgerConfig2
+  projectLedgerTablesFactory =
     ( ProtocolInfo
         { pInfoConfig =
             TopLevelConfig
@@ -98,17 +100,19 @@ protocolInfoBinary
                       (storageConfig1 :* storageConfig2 :* Nil)
               , topLevelConfigCheckpoints = emptyCheckpointsMap
               }
-        , pInfoInitLedger =
-            ExtLedgerState
-              { ledgerState =
-                  HardForkLedgerState $
-                    initHardForkState (Flip initLedgerState1)
-              , headerState =
-                  genesisHeaderState $
-                    initHardForkState $
-                      WrapChainDepState $
-                        headerStateChainDep initHeaderState1
-              }
+        , pInfoInitLedger = \hftctx -> do
+            ExtStateHandle initLedgerState1 initHeaderState1 <-
+              pInfoInitLedger1 (projectLedgerTablesFactory hftctx)
+            pure
+              ExtStateHandle
+                { unExtStateHandle =
+                    HardForkStateHandle (initHardForkState initLedgerState1) hftctx
+                , extHeaderState =
+                    genesisHeaderState $
+                      initHardForkState $
+                        WrapChainDepState $
+                          headerStateChainDep initHeaderState1
+                }
         }
     , \tr -> alignWith alignBlockForging <$> blockForging1 tr <*> blockForging2 tr
     )
@@ -122,11 +126,7 @@ protocolInfoBinary
           , topLevelConfigCodec = codecConfig1
           , topLevelConfigStorage = storageConfig1
           }
-      , pInfoInitLedger =
-        ExtLedgerState
-          { ledgerState = initLedgerState1
-          , headerState = initHeaderState1
-          }
+      , pInfoInitLedger = pInfoInitLedger1
       } = protocolInfo1
 
     ProtocolInfo

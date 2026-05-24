@@ -36,11 +36,10 @@ module Ouroboros.Consensus.HeaderStateHistory
   , fromChain
   ) where
 
+import Control.Monad (foldM, when)
 import Control.Monad.Except (Except)
 import Data.Coerce (Coercible)
-import qualified Data.List.NonEmpty as NE
 import GHC.Generics (Generic)
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import Ouroboros.Consensus.Config
@@ -51,9 +50,9 @@ import Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import qualified Ouroboros.Consensus.HeaderValidation as HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Util.CallStack (HasCallStack)
+import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq (Anchorable, AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Mock.Chain (Chain)
@@ -205,7 +204,7 @@ mkHeaderStateWithTimeFromSummary summary hst =
 mkHeaderStateWithTime ::
   (HasCallStack, HasHardForkHistory blk, HasAnnTip blk) =>
   LedgerConfig blk ->
-  ExtLedgerState blk mk ->
+  ExtLedgerState blk ->
   HeaderStateWithTime blk
 mkHeaderStateWithTime lcfg (ExtLedgerState lst hst) =
   mkHeaderStateWithTimeFromSummary summary hst
@@ -254,24 +253,44 @@ validateHeader cfg lv hdr slotTime history = do
 -- 'Chain'.
 --
 -- PRECONDITION: the blocks in the chain are valid.
+--
+-- The caller retains ownership of 'initState' (it is /not/ closed by this
+-- function); each intermediate handle produced by 'tickThenReapply' is
+-- closed before returning.
 fromChain ::
-  forall blk.
+  forall m blk.
   ( ApplyBlock ExtLedgerState blk
   , HasHardForkHistory blk
   , HasAnnTip blk
+  , MonadThrow m
+  , BlockSupportsLedgerHD m blk
   ) =>
   TopLevelConfig blk ->
   -- | Initial ledger state
-  ExtLedgerState blk ValuesMK ->
+  Handle ExtLedgerState m blk ->
   Chain blk ->
-  HeaderStateHistory blk
-fromChain cfg initState chain =
-  HeaderStateHistory (AS.fromOldestFirst anchorSnapshot snapshots)
+  m (HeaderStateHistory blk)
+fromChain cfg initState chain = do
+  let mkHSWT = mkHeaderStateWithTime (configLedger cfg) . extLedgerState
+      initHSWT = mkHSWT initState
+      blocks = Chain.toOldestFirst chain
+  -- Walk the chain. Each step calls 'tickThenReapply' which allocates a
+  -- fresh handle; we project to a snapshot, then close the previous
+  -- handle if we own it ('initState' on the first step is /not/ ours).
+  (lastHandle, weOwnLast, snapshotsRev) <-
+    foldM step (initState, False, []) blocks
+  -- The last handle we hold is never returned; close it if we own it.
+  when weOwnLast $ closeExt lastHandle
+  pure $
+    HeaderStateHistory
+      (AS.fromOldestFirst initHSWT (reverse snapshotsRev))
  where
-  anchorSnapshot NE.:| snapshots =
-    fmap (mkHeaderStateWithTime (configLedger cfg))
-      . NE.scanl
-        (\st blk -> applyDiffs st $ tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk st)
-        initState
-      . Chain.toOldestFirst
-      $ chain
+  step ::
+    (Handle ExtLedgerState m blk, Bool, [HeaderStateWithTime blk]) ->
+    blk ->
+    m (Handle ExtLedgerState m blk, Bool, [HeaderStateWithTime blk])
+  step (prev, prevOurs, snaps) blk = do
+    next <- tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk prev
+    let snap = mkHeaderStateWithTime (configLedger cfg) (extLedgerState next)
+    when prevOurs $ closeExt prev
+    pure (next, True, snap : snaps)

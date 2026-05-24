@@ -11,7 +11,6 @@ import qualified Data.ByteString.Lazy as Lazy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Dict (Dict (..), all_NP)
-import Data.SOP.Functors
 import Data.SOP.Strict
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
@@ -19,10 +18,10 @@ import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.HardFork.Combinator.Protocol
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Storage.ChainDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util
 
 instance SerialiseHFC xs => SerialiseDiskConstraints (HardForkBlock xs)
 
@@ -140,20 +139,20 @@ instance
 
 instance
   SerialiseHFC xs =>
-  EncodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs) EmptyMK)
+  EncodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs))
   where
   encodeDisk cfg =
-    encodeTelescope (hcmap pSHFC (\cfg' -> fn (K . encodeDisk cfg' . unFlip)) cfgs)
+    encodeTelescope (hcmap pSHFC (\cfg' -> fn (K . encodeDisk cfg')) cfgs)
       . hardForkLedgerStatePerEra
    where
     cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
 
 instance
   SerialiseHFC xs =>
-  DecodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs) EmptyMK)
+  DecodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs))
   where
   decodeDisk cfg =
     fmap HardForkLedgerState $
-      decodeTelescope (hcmap pSHFC (Comp . fmap Flip . decodeDisk) cfgs)
+      decodeTelescope (hcmap pSHFC (Comp . decodeDisk) cfgs)
    where
     cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
