@@ -15,39 +15,27 @@ implGetSnapshotFor ::
   ( IOLike m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , BlockSupportsLedgerHD m blk
   ) =>
   MempoolEnv m blk ->
   -- | Get snapshot for this slot number (usually the current slot)
   SlotNo ->
-  -- | The ledger state at which we want the
-  -- snapshot, ticked to @slot@.
-  TickedLedgerState blk DiffMK ->
-  -- | A function that returns values corresponding to the given keys for
-  -- the unticked ledger state.
-  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
+  -- | The ledger state at which we want the snapshot, ticked to @slot@.
+  TickedStateHandle m blk ->
   m (MempoolSnapshot blk)
-implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
+implGetSnapshotFor mpEnv slot ticked = do
   is <- atomically $ readTMVar istate
-  let txs =
-        [ TxSeq.TxTicket tx tn tz
-        | TxSeq.TxTicket (ValidatedTxWithDiffs tx _) tn tz <- TxSeq.toList $ isTxs is
-        ]
-  if pointHash (isTip is) == castHash (getTipHash ticked)
+  let txs = TxSeq.toList $ isTxs is
+  if pointHash (isTip is) == getTipHash (tickedState ticked)
     && isSlotNo is == slot
     then
       -- We are looking for a snapshot exactly for the ledger state we already
       -- have cached, then just return it.
-      pure $ snapshotFromValidTxs txs (castPoint $ isTip is) (isSlotNo is)
-    else do
-      values <-
-        if pointHash (isTip is) == castHash (getTipHash ticked)
-          -- We are looking for a snapshot at the same state ticked
-          -- to a different slot, so we can reuse the cached values
-          then pure (isTxValues is)
-          -- We are looking for a snapshot at a different state, so we
-          -- need to read the values from the ledgerdb.
-          else readUntickedTables (isTxKeys is)
-      pure $ computeSnapshot cfg slot ticked values txs
+      pure $ snapshotFromValidTxs txs (isTip is) (isSlotNo is)
+    else
+      -- Different state or different slot: re-prepare each tx's
+      -- 'TxLocalData' against the requested ticked state.
+      computeSnapshot cfg slot ticked (freshTxLocalData cfg slot) txs
  where
   MempoolEnv
     { mpEnvStateVar = istate
