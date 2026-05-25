@@ -8,6 +8,7 @@ module Test.Util.ChainDB
   , emptyNodeDBs
   , fromMinimalChainDbArgs
   , mkTestChunkInfo
+  , testBackendArgs
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -30,6 +31,10 @@ import Ouroboros.Consensus.Storage.ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
+  ( BackendResources (..)
+  , LedgerDbBackendArgs (..)
+  )
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDbArgs (..))
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDbArgs (..))
 import Ouroboros.Consensus.Storage.VolatileDB
@@ -159,3 +164,28 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsSnapshotDelayRNG = mkStdGen 0
           }
     }
+
+-- | A 'LedgerDbBackendArgs' suitable for ThreadNet-style tests: wraps the
+-- caller-supplied 'LedgerTablesFactory' in a 'BackendResources' whose
+-- 'brSnapshotManager' / 'brLoadSnapshot' / 'brRelease' are stubs. Tests in
+-- this harness never take or load snapshots; if they ever do, those stubs
+-- will fail loudly.
+testBackendArgs ::
+  Monad m =>
+  LedgerTablesFactory m blk -> LedgerDbBackendArgs m blk
+testBackendArgs ledgerTablesFactory = LedgerDbBackendArgs $ \_tr _shfs ->
+  pure
+    BackendResources
+      { brLoadSnapshot =
+          \_cfg _shfs _ds ->
+            error "Test.Util.ChainDB.testBackendArgs: brLoadSnapshot is unused in ThreadNet tests"
+      , brSnapshotManager =
+          \_cfg _tr shfs ->
+            LedgerDB.SnapshotManager
+              { LedgerDB.listSnapshots = LedgerDB.defaultListSnapshots shfs
+              , LedgerDB.deleteSnapshotIfTemporary = \_ds -> pure ()
+              , LedgerDB.takeSnapshot = \_suffix _st -> pure Nothing
+              }
+      , brRelease = pure ()
+      , ledgerTablesFactory = ledgerTablesFactory
+      }
