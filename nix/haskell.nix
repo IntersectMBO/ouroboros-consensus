@@ -13,6 +13,7 @@ let
       ../NOTICE
       ../cabal
       ../cabal.project
+      ../cardano-blueprint
       ../ouroboros-consensus
       ../ouroboros-consensus-cardano
       ../ouroboros-consensus-diffusion
@@ -81,7 +82,10 @@ let
         packages.ouroboros-consensus.components.tests.cardano-test = {
           build-tools =
             [ pkgs.cddlc pkgs.cuddle ];
-          extraSrcFiles = [ "ouroboros-consensus-cardano/cddl/**/*" ];
+          extraSrcFiles = [
+            "ouroboros-consensus-cardano/cddl/**/*"
+            "cardano-blueprint/src/**/*"
+          ];
         };
       })
     ];

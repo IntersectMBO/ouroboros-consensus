@@ -82,6 +82,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v6
+      with:
+        submodules: true
 
     - name: Check CDDLs up-to-date with Blueprints
       continue-on-error: true

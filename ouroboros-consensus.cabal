@@ -16,8 +16,9 @@ maintainer: operations@iohk.io
 category: Network
 build-type: Simple
 data-files:
+  cardano-blueprint/src/codecs/base.cddl
+  cardano-blueprint/src/network/node-to-node/leios-notify/messages.cddl
   ouroboros-consensus-cardano/cddl/**/*.cddl
-  ouroboros-consensus-cardano/cddl/base.cddl
 
 extra-doc-files:
   docs/haddocks/*.svg
@@ -1744,6 +1745,7 @@ test-suite cardano-test
     base,
     base16-bytestring,
     bytestring,
+    cardano-crypto-class,
     cardano-ledger-allegra:testlib,
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
     cardano-ledger-api,
