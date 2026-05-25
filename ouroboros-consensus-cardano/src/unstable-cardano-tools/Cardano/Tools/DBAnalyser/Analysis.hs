@@ -521,7 +521,9 @@ checkNoThunksEvery
       newHandle <- LedgerDB.withTipForker ldb $ \frk -> do
         oldHandle <- IOLike.atomically $ LedgerDB.forkerTip frk
         let ledgerCfg = ExtLedgerCfg cfg
-        tickThenReapply OmitLedgerEvents ledgerCfg blk oldHandle
+        runExceptT (tickThenApply OmitLedgerEvents ledgerCfg blk oldHandle) >>= \case
+          Right h -> pure h
+          Left err -> fail $ "checkNoThunksEvery: tickThenApply failed: " <> show err
       let bn = blockNo blk
       when (unBlockNo bn `mod` nBlocks == 0) $
         -- The on-disk tables are owned by the 'StateHandle' part of the
@@ -565,7 +567,9 @@ traceLedgerProcessing
       (oldExt, newHandle) <- LedgerDB.withTipForker ldb $ \frk -> do
         oldHandle <- IOLike.atomically $ LedgerDB.forkerTip frk
         let ledgerCfg = ExtLedgerCfg cfg
-        h' <- tickThenReapply OmitLedgerEvents ledgerCfg blk oldHandle
+        h' <- runExceptT (tickThenApply OmitLedgerEvents ledgerCfg blk oldHandle) >>= \case
+          Right h -> pure h
+          Left err -> fail $ "traceLedgerProcessing: tickThenApply failed: " <> show err
         pure (extLedgerState oldHandle, h')
 
       let traces =

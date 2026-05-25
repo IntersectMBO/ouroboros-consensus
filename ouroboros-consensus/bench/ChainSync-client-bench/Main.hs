@@ -98,6 +98,28 @@ oneBenchRun
   follower
   n =
     withRegistry $ \registry -> do
+      -- 'HeaderStateHistory.fromChain' is now monadic (it allocates
+      -- and closes intermediate ledger-tables handles); materialise
+      -- the genesis-only history once at setup so the per-call STM
+      -- field of the ChainDbView can just return the cached value.
+      initialHSH <-
+        HeaderStateHistory.fromChain
+          topConfig
+          ( Extended.ExtStateHandle
+              ( TB.TestStateHandle
+                  (Extended.ledgerState (oracularLedgerDB GenesisPoint))
+              )
+              (Extended.headerState (oracularLedgerDB GenesisPoint))
+          )
+          Chain.Genesis
+      let chainDbView :: CSClient.ChainDbView IO B
+          chainDbView =
+            CSClient.ChainDbView
+              { CSClient.getCurrentChain = pure $ AF.Empty AF.AnchorGenesis
+              , CSClient.getHeaderStateHistory = pure initialHSH
+              , CSClient.getIsInvalidBlock = pure invalidBlock
+              , CSClient.getPastLedger = pure . Just . oracularLedgerDB
+              }
       (clientChannel, serverChannel) <- createConnectedChannels
       void $
         forkLinkedThread registry "ChainSyncServer" $
@@ -107,7 +129,7 @@ oneBenchRun
         forkLinkedThread registry "ChainSyncClient" $
           void $
             runPipelinedPeer nullTracer codecChainSyncId clientChannel $
-              chainSyncClientPeerPipelined client
+              chainSyncClientPeerPipelined (client chainDbView)
 
       atomically $ do
         candidate <- readTVar varCandidate
@@ -115,22 +137,6 @@ oneBenchRun
           BlockHash (TB.TestHash ne) -> fromIntegral n < NE.head ne
           _ -> False
    where
-    -- This test is designed so that the initial ledger state suffices for
-    -- everything the ChainSync client needs to do.
-    chainDbView :: CSClient.ChainDbView IO B
-    chainDbView =
-      CSClient.ChainDbView
-        { CSClient.getCurrentChain = pure $ AF.Empty AF.AnchorGenesis
-        , CSClient.getHeaderStateHistory =
-            pure $
-              HeaderStateHistory.fromChain
-                topConfig
-                (oracularLedgerDB GenesisPoint)
-                Chain.Genesis
-        , CSClient.getIsInvalidBlock = pure invalidBlock
-        , CSClient.getPastLedger = pure . Just . oracularLedgerDB
-        }
-
     headerInFutureCheck ::
       InFutureCheck.SomeHeaderInFutureCheck IO B
     headerInFutureCheck =
@@ -138,8 +144,10 @@ oneBenchRun
         (clockSkewInSeconds 0)
         inTheYearOneBillion
 
-    client :: CSClient.Consensus ChainSyncClientPipelined B IO
-    client =
+    client ::
+      CSClient.ChainDbView IO B ->
+      CSClient.Consensus ChainSyncClientPipelined B IO
+    client chainDbView =
       CSClient.chainSyncClient
         CSClient.ConfigEnv
           { CSClient.chainDbView
@@ -199,7 +207,7 @@ inTheYearOneBillion =
                 * 1e9
     }
 
-oracularLedgerDB :: Point B -> Extended.ExtLedgerState B mk
+oracularLedgerDB :: Point B -> Extended.ExtLedgerState B
 oracularLedgerDB p =
   Extended.ExtLedgerState
     { Extended.headerState =

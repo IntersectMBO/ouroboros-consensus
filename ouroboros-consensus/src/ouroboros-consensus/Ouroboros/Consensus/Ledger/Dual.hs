@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
@@ -79,7 +80,7 @@ import Data.Kind (Type)
 import Data.Typeable
 import GHC.Generics (Generic)
 import GHC.Stack
-import NoThunks.Class (AllowThunk (..), NoThunks (..))
+import NoThunks.Class (AllowThunk (..), NoThunks (..), OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
@@ -491,6 +492,18 @@ instance Bridge m a => BlockSupportsLedgerHD n (DualBlock m a) where
     pure $ TickedDualStateHandle mainTSH' auxTSH' bridge auxOrig
 
   getStats (DualStateHandle mainSH _ _) = getStats mainSH
+
+deriving via
+  OnlyCheckWhnfNamed "DualStateHandle" (StateHandle n (DualBlock m a))
+  instance
+    NoThunks (StateHandle n (DualBlock m a))
+
+deriving via
+  OnlyCheckWhnfNamed
+    "TickedDualStateHandle"
+    (TickedStateHandle n (DualBlock m a))
+  instance
+    NoThunks (TickedStateHandle n (DualBlock m a))
 
 applyHelper ::
   ( Bridge m a
