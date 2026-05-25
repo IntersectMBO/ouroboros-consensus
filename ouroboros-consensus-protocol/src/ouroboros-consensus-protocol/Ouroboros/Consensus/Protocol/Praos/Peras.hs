@@ -25,13 +25,14 @@ import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block.Abstract (HeaderHash, StandardHash)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
-  , PerasCommitteeScheme
+  , IsPerasError (..)
   , PerasCrypto
   , PerasParams
   , PerasVotingCommittee
-  , injectCommitteeError
+  , PerasVotingCommitteeInput
+  , PerasVotingCommitteeScheme
   )
-import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee (..))
+import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee)
 import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.Crypto (PublicKey)
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
@@ -66,7 +67,7 @@ import System.IO.Unsafe (unsafePerformIO)
 data RealBlock
 
 type instance PerasCrypto RealBlock = BLS.PerasBLSCrypto
-type instance PerasCommitteeScheme RealBlock = WFALS
+type instance PerasVotingCommitteeScheme RealBlock = WFALS
 type instance HeaderHash RealBlock = ShortByteString
 
 instance StandardHash RealBlock
@@ -91,10 +92,10 @@ instance PraosStateSupportsPerasVoting RealBlock where
     let wFATiebreaker =
           wFATiebreakerWithEpochNonce epochNonce
     stakeDistrWithPublicKeys <-
-      first V1.PerasTemporaryPublicKeyHackError $
+      bimap V1.PerasTemporaryPublicKeyHackError id $
         getStakeDistrWithBLSPublicKeys tickedPraosState
     extWFAStakeDistr <-
-      first V1.PerasVotingWFAError $
+      bimap V1.PerasVotingWFAError id $
         mkExtWFAStakeDistr
           wFATiebreaker
           stakeDistrWithPublicKeys
@@ -174,7 +175,7 @@ perasBLSPublicKeysFromEnv =
 
 class
   ( BlockSupportsPeras blk
-  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasCommitteeScheme blk) -- TODO remove this constraint when it becomes a superclass constraint of 'BlockSupportsPeras'
+  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk) -- TODO remove this constraint when it becomes a superclass constraint of 'BlockSupportsPeras'
   ) =>
   PraosStateSupportsPerasVoting blk
   where
@@ -186,7 +187,7 @@ class
     Ticked PraosState ->
     Either
       (PerasError blk)
-      (VotingCommitteeInput (PerasCrypto blk) (PerasCommitteeScheme blk))
+      (PerasVotingCommitteeInput blk)
 
   -- | How to build a new 'PerasVotingCommittee' from a 'Ticked PraosState'. The implementation provided here relies on 'praosStatePerasVotingCommitteeInput'.
   praosStateGetPerasVotingCommittee ::
@@ -199,5 +200,5 @@ class
   praosStateGetPerasVotingCommittee p perasParams tickedPraosState = do
     committeeInput <-
       praosStatePerasVotingCommitteeInput p perasParams tickedPraosState
-    first injectCommitteeError $
+    bimap injectVotingCommitteeError id $
       Committee.mkVotingCommittee committeeInput
