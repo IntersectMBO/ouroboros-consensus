@@ -24,6 +24,7 @@ import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.RewardUpdate as SL
 import Cardano.Tools.DBAnalyser.HasAnalysis
+import Control.Tracer (nullTracer)
 import qualified Data.Aeson as Aeson
 import Data.Foldable as Foldable (foldl', toList)
 import qualified Data.Map.Strict as Map
@@ -34,6 +35,7 @@ import Data.Sequence.Strict (StrictSeq)
 import Data.Word (Word64)
 import Lens.Micro ((^.))
 import Lens.Micro.Extras (view)
+import Ouroboros.Consensus.Backends.InMemory (mkInMemoryFactory)
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras (DijkstraEra, StandardCrypto)
@@ -51,6 +53,8 @@ import Ouroboros.Consensus.Shelley.Node
   , protocolInfoShelley
   )
 import Ouroboros.Network.SizeInBytes (SizeInBytes (SizeInBytes))
+import System.FS.API (MountPoint (..), SomeHasFS (..))
+import System.FS.IO (ioHasFS)
 import TextBuilder (decimal)
 
 -- | Usable for each Shelley-based era
@@ -152,7 +156,7 @@ type ShelleyBlockArgs = Args (ShelleyBlock (TPraos StandardCrypto) ShelleyEra)
 mkShelleyProtocolInfo ::
   ShelleyGenesis ->
   Nonce ->
-  ProtocolInfo (ShelleyBlock (TPraos StandardCrypto) ShelleyEra)
+  ProtocolInfo IO (ShelleyBlock (TPraos StandardCrypto) ShelleyEra)
 mkShelleyProtocolInfo genesis initialNonce =
   fst $
     protocolInfoShelley @IO
@@ -162,3 +166,10 @@ mkShelleyProtocolInfo genesis initialNonce =
         , shelleyBasedLeaderCredentials = []
         }
       (SL.ProtVer (CL.natVersion @2) 0)
+      -- The Shelley standalone analyser is monomorphic to the in-memory
+      -- backend: 'protocolInfoShelley' bakes the 'MkHandle' into
+      -- 'pInfoInitLedger' at construction time because Shelley's
+      -- 'LedgerTablesFactory' is '()'. If the analyser is ever
+      -- re-pointed at the LSM backend for a Shelley-only path, the
+      -- factory passed here has to match.
+      (mkInMemoryFactory nullTracer (SomeHasFS (ioHasFS (MountPoint "."))))

@@ -111,15 +111,15 @@ analyseWithLedgerState f (WithLedgerState cb sb sa) =
   p :: Proxy HasAnalysis
   p = Proxy
 
-  zipLS (Comp (Just (Flip sb'))) (Comp (Just (Flip sa'))) (I blk) =
+  zipLS (Comp (Just sb')) (Comp (Just sa')) (I blk) =
     Comp . Just $ WithLedgerState blk sb' sa'
   zipLS _ _ _ = Comp Nothing
 
   oeb = getOneEraBlock . getHardForkBlock $ cb
 
   goLS ::
-    LedgerState (CardanoBlock StandardCrypto) mk ->
-    NP (Maybe :.: Flip LedgerState mk) (CardanoEras StandardCrypto)
+    LedgerState (CardanoBlock StandardCrypto) ->
+    NP (Maybe :.: LedgerState) (CardanoEras StandardCrypto)
   goLS =
     hexpand (Comp Nothing)
       . hmap (Comp . Just . currentState)
@@ -341,42 +341,34 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
     ]
 
 dispatch ::
-  LedgerState (CardanoBlock StandardCrypto) ValuesMK ->
-  (LedgerState ByronBlock ValuesMK -> IO TextBuilder) ->
-  (forall proto era. LedgerState (ShelleyBlock proto era) ValuesMK -> IO TextBuilder) ->
+  LedgerState (CardanoBlock StandardCrypto) ->
+  (LedgerState ByronBlock -> IO TextBuilder) ->
+  (forall proto era. LedgerState (ShelleyBlock proto era) -> IO TextBuilder) ->
   IO TextBuilder
 dispatch cardanoSt fByron fShelley =
   hcollapse $
     hap
-      ( fn k_fByron
-          :* fn k_fShelley
-          :* fn k_fShelley
-          :* fn k_fShelley
-          :* fn k_fShelley
-          :* fn k_fShelley
-          :* fn k_fShelley
-          :* fn k_fShelley
+      ( fn (K . fByron . currentState)
+          :* fn (K . fShelley . currentState)
+          :* fn (K . fShelley . currentState)
+          :* fn (K . fShelley . currentState)
+          :* fn (K . fShelley . currentState)
+          :* fn (K . fShelley . currentState)
+          :* fn (K . fShelley . currentState)
+          :* fn (K . fShelley . currentState)
           :* Nil
       )
-      (hardForkLedgerStatePerEra cardanoSt)
- where
-  k_fByron = K . fByron . unFlip
-
-  k_fShelley ::
-    forall proto era.
-    Flip LedgerState ValuesMK (ShelleyBlock proto era) ->
-    K (IO TextBuilder) (ShelleyBlock proto era)
-  k_fShelley = K . fShelley . unFlip
+      (Telescope.tip $ getHardForkState $ hardForkLedgerStatePerEra cardanoSt)
 
 applyToByronUtxo ::
   (Map Byron.UTxO.CompactTxIn Byron.UTxO.CompactTxOut -> IO TextBuilder) ->
-  LedgerState ByronBlock ValuesMK ->
+  LedgerState ByronBlock ->
   IO TextBuilder
 applyToByronUtxo f st =
   f $ getByronUtxo st
 
 getByronUtxo ::
-  LedgerState ByronBlock ValuesMK ->
+  LedgerState ByronBlock ->
   Map Byron.UTxO.CompactTxIn Byron.UTxO.CompactTxOut
 getByronUtxo =
   Byron.UTxO.unUTxO
@@ -385,13 +377,13 @@ getByronUtxo =
 
 applyToShelleyBasedUtxo ::
   (Map TxIn (TxOut era) -> IO TextBuilder) ->
-  LedgerState (ShelleyBlock proto era) ValuesMK ->
+  LedgerState (ShelleyBlock proto era) ->
   IO TextBuilder
 applyToShelleyBasedUtxo f st = do
   f $ getShelleyBasedUtxo st
 
 getShelleyBasedUtxo ::
-  LedgerState (ShelleyBlock proto era) ValuesMK ->
+  LedgerState (ShelleyBlock proto era) ->
   Map TxIn (TxOut era)
 getShelleyBasedUtxo =
   (\(Shelley.UTxO.UTxO xs) -> xs)
@@ -409,7 +401,7 @@ mkCardanoProtocolInfo ::
   SL.TransitionConfig L.LatestKnownEra ->
   Nonce ->
   CardanoHardForkTriggers ->
-  ProtocolInfo (CardanoBlock StandardCrypto)
+  ProtocolInfo IO (CardanoBlock StandardCrypto)
 mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNonce triggers =
   fst $
     protocolInfoCardano @_ @IO

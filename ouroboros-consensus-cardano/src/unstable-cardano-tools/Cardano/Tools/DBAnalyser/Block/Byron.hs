@@ -118,7 +118,7 @@ openGenesisByron configFile mHash requiresNetworkMagic = do
 mkByronProtocolInfo ::
   Genesis.Config ->
   Maybe PBftSignatureThreshold ->
-  ProtocolInfo ByronBlock
+  ProtocolInfo IO ByronBlock
 mkByronProtocolInfo genesisConfig signatureThreshold =
   protocolInfoByron $
     ProtocolParamsByron

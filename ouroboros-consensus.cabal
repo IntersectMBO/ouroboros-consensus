@@ -1798,8 +1798,10 @@ executable db-analyser
   build-depends:
     base,
     cardano-crypto-class,
+    fs-api,
     optparse-applicative,
-    ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools},
+    ouroboros-consensus:{cardano, lsm, ouroboros-consensus, unstable-cardano-tools},
+    random,
     text,
     with-utf8,
 
@@ -1878,9 +1880,6 @@ library unstable-snapshot-conversion
   import: common-lib
   visibility: public
   hs-source-dirs: ouroboros-consensus-cardano/src/unstable-snapshot-conversion
-  other-modules:
-    Ouroboros.Consensus.Cardano.StreamingLedgerTables
-
   exposed-modules:
     Ouroboros.Consensus.Cardano.SnapshotConversion
 
@@ -1894,10 +1893,9 @@ library unstable-snapshot-conversion
     directory,
     filepath,
     fs-api,
-    microlens,
+    mempack,
     mtl,
     ouroboros-consensus:{cardano, lsm, ouroboros-consensus},
-    random,
     serialise,
     sop-core,
     sop-extras,

@@ -35,7 +35,7 @@ import Cardano.Tools.DBAnalyser.HasAnalysis (HasAnalysis)
 import qualified Cardano.Tools.DBAnalyser.HasAnalysis as HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
 import Control.Monad (join, unless, void, when)
-import Control.Monad.Except (runExcept)
+import Control.Monad.Except (runExcept, runExceptT)
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..), nullTracer, traceWith)
 import Data.Int (Int64)
@@ -66,7 +66,6 @@ import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMem
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol (..)
   )
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
@@ -90,9 +89,8 @@ runAnalysis ::
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
-  , CanStowLedgerTables (LedgerState blk)
-  , Show (TxIn blk)
-  , Show (TxOut blk)
+  , BlockSupportsLedgerHD IO blk
+  , IOLike.NoThunks (TickedStateHandle IO blk)
   ) =>
   AnalysisName -> SomeAnalysis blk
 runAnalysis analysisName = case go analysisName of
@@ -417,6 +415,7 @@ storeLedgerStateAt ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , HasAnalysis blk
+  , BlockSupportsLedgerHD IO blk
   ) =>
   SlotNo ->
   LedgerApplicationMode ->
@@ -431,33 +430,36 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
   process :: () -> blk -> IO (NextStep, ())
   process _ blk = do
     let ledgerCfg = ExtLedgerCfg cfg
-    oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip ldb
-    LedgerDB.withTipForker
-      ldb
-      ( \frk -> do
-          tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-          case runExcept $ tickThenXApply OmitLedgerEvents ledgerCfg blk (oldLedger `withLedgerTables` tbs) of
-            Right newLedger -> do
-              LedgerDB.forkerPush frk newLedger
-              join $ IOLike.atomically $ LedgerDB.forkerCommit frk
-              when (blockSlot blk > slotNo) $ issueWarning blk
-              when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
-              LedgerDB.garbageCollect ldb
-                . fromWithOrigin 0
-                . pointSlot
-                . getTip
-                =<< IOLike.atomically (LedgerDB.getImmutableTip ldb)
-              when (blockSlot blk >= slotNo) storeLedgerState
-              return (continue blk, ())
-            Left err -> do
-              traceWith tracer $ LedgerErrorEvent (blockPoint blk) err
-              storeLedgerState
-              pure (Stop, ())
-      )
+    LedgerDB.withTipForker ldb $ \frk -> do
+      oldHandle <- IOLike.atomically $ LedgerDB.forkerTip frk
+      eNew <- tickThenXApply ledgerCfg blk oldHandle
+      case eNew of
+        Right newHandle -> do
+          join $ IOLike.atomically $ do
+            LedgerDB.forkerPush frk newHandle
+            LedgerDB.forkerCommit frk
+          when (blockSlot blk > slotNo) $ issueWarning blk
+          when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
+          LedgerDB.garbageCollect ldb
+            . fromWithOrigin 0
+            . pointSlot
+            . getTip
+            =<< IOLike.atomically (LedgerDB.getImmutableTip ldb)
+          when (blockSlot blk >= slotNo) storeLedgerState
+          return (continue blk, ())
+        Left err -> do
+          traceWith tracer $ LedgerErrorEvent (blockPoint blk) err
+          storeLedgerState
+          pure (Stop, ())
 
-  tickThenXApply = case ledgerAppMode of
-    LedgerReapply -> pure ...: tickThenReapply
-    LedgerApply -> tickThenApply
+  tickThenXApply ::
+    ExtLedgerCfg blk ->
+    blk ->
+    ExtStateHandle IO blk ->
+    IO (Either (LedgerErr ExtLedgerState blk) (ExtStateHandle IO blk))
+  tickThenXApply ledgerCfg blk h = case ledgerAppMode of
+    LedgerReapply -> Right <$> tickThenReapply OmitLedgerEvents ledgerCfg blk h
+    LedgerApply -> runExceptT (tickThenApply OmitLedgerEvents ledgerCfg blk h)
 
   continue :: blk -> NextStep
   continue blk
@@ -499,7 +501,8 @@ checkNoThunksEvery ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
-  , CanStowLedgerTables (LedgerState blk)
+  , BlockSupportsLedgerHD IO blk
+  , IOLike.NoThunks (LedgerState blk)
   ) =>
   Word64 ->
   Analysis blk StartFromLedgerState
@@ -515,31 +518,19 @@ checkNoThunksEvery
 
     process :: () -> blk -> IO ()
     process _ blk = do
-      oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip ldb
-      tbs <-
-        LedgerDB.withTipForker
-          ldb
-          (\frk -> LedgerDB.forkerReadTables frk (getBlockKeySets blk))
-      let oldLedger' = oldLedger `withLedgerTables` tbs
-      let ledgerCfg = ExtLedgerCfg cfg
-          appliedResult = tickThenApplyLedgerResult OmitLedgerEvents ledgerCfg blk oldLedger'
-          newLedger = either (error . show) lrResult $ runExcept appliedResult
-          newLedger' = applyDiffs oldLedger' newLedger
-          bn = blockNo blk
-      when (unBlockNo bn `mod` nBlocks == 0) $ do
-        -- Check the new ledger state with new values stowed. This checks that
-        -- the ledger has no thunks in their ledgerstate type.
-        IOLike.evaluate (stowLedgerTables $ ledgerState newLedger') >>= checkNoThunks bn
-        -- Check the new ledger state with diffs in the tables. This should
-        -- catch any additional thunks in the diffs tables.
-        IOLike.evaluate (ledgerState newLedger) >>= checkNoThunks bn
-        -- Check the new ledger state with values in the ledger tables. This
-        -- should catch any additional thunks in the values tables.
-        IOLike.evaluate (ledgerState newLedger') >>= checkNoThunks bn
+      newHandle <- LedgerDB.withTipForker ldb $ \frk -> do
+        oldHandle <- IOLike.atomically $ LedgerDB.forkerTip frk
+        let ledgerCfg = ExtLedgerCfg cfg
+        tickThenReapply OmitLedgerEvents ledgerCfg blk oldHandle
+      let bn = blockNo blk
+      when (unBlockNo bn `mod` nBlocks == 0) $
+        -- The on-disk tables are owned by the 'StateHandle' part of the
+        -- 'ExtStateHandle'; we can only NoThunks-check the pure state.
+        IOLike.evaluate (ledgerState (extLedgerState newHandle)) >>= checkNoThunks bn
 
-      LedgerDB.push internal newLedger
+      LedgerDB.push internal newHandle
 
-    checkNoThunks :: NoThunksMK mk => BlockNo -> LedgerState blk mk -> IO ()
+    checkNoThunks :: BlockNo -> LedgerState blk -> IO ()
     checkNoThunks bn ls =
       noThunks ["--checkThunks"] ls >>= \case
         Nothing -> putStrLn $ show bn <> ": no thunks found."
@@ -556,6 +547,7 @@ traceLedgerProcessing ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , BlockSupportsLedgerHD IO blk
   ) =>
   Analysis blk StartFromLedgerState
 traceLedgerProcessing
@@ -570,26 +562,21 @@ traceLedgerProcessing
       blk ->
       IO ()
     process _ blk = do
-      oldLedger <-
-        LedgerDB.withTipForker
-          ldb
-          ( \frk -> do
-              oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
-              oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-              pure $ oldLedgerSt `withLedgerTables` oldLedgerTbs
-          )
+      (oldExt, newHandle) <- LedgerDB.withTipForker ldb $ \frk -> do
+        oldHandle <- IOLike.atomically $ LedgerDB.forkerTip frk
+        let ledgerCfg = ExtLedgerCfg cfg
+        h' <- tickThenReapply OmitLedgerEvents ledgerCfg blk oldHandle
+        pure (extLedgerState oldHandle, h')
 
-      let ledgerCfg = ExtLedgerCfg cfg
-          appliedResult = tickThenApplyLedgerResult OmitLedgerEvents ledgerCfg blk oldLedger
-          newLedger = either (error . show) lrResult $ runExcept appliedResult
-          newLedger' = applyDiffs oldLedger newLedger
-          traces =
-            ( HasAnalysis.emitTraces $
-                HasAnalysis.WithLedgerState blk (ledgerState oldLedger) (ledgerState newLedger')
-            )
+      let traces =
+            HasAnalysis.emitTraces $
+              HasAnalysis.WithLedgerState
+                blk
+                (ledgerState oldExt)
+                (ledgerState (extLedgerState newHandle))
       mapM_ Debug.traceMarkerIO traces
 
-      LedgerDB.push internal newLedger
+      LedgerDB.push internal newHandle
 
 {-------------------------------------------------------------------------------
   Analysis: maintain a ledger state and time the five major ledger calculations
@@ -613,6 +600,7 @@ benchmarkLedgerOps ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , HasAnalysis blk
+  , BlockSupportsLedgerHD IO blk
   ) =>
   Maybe FilePath ->
   LedgerApplicationMode ->
@@ -650,10 +638,9 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     (blk, SizeInBytes) ->
     IO ()
   process ledgerDB intLedgerDB outFileHandle outFormat _ (blk, sz) = do
-    (prevLedgerState, tables) <- LedgerDB.withTipForker ledgerDB $ \frk -> do
-      st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
-      tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-      pure (st, tbs)
+    prevHandle <- LedgerDB.withTipForker ledgerDB $ \frk ->
+      IOLike.atomically $ LedgerDB.forkerTip frk
+    let prevExtLedger = extLedgerState prevHandle
     prevRtsStats <- GC.getRTSStats
     let
       -- Compute how many nanoseconds the mutator used from the last
@@ -669,12 +656,13 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     let slot = blockSlot blk
     -- We do not use strictness annotation on the resulting tuples since
     -- 'time' takes care of forcing the evaluation of its argument's result.
-    (ldgrView, tForecast) <- time $ forecast slot prevLedgerState
-    (tkHdrSt, tHdrTick) <- time $ tickTheHeaderState slot prevLedgerState ldgrView
+    (ldgrView, tForecast) <- time $ forecast slot prevExtLedger
+    (tkHdrSt, tHdrTick) <- time $ tickTheHeaderState slot prevExtLedger ldgrView
     (!newHeader, tHdrApp) <- time $ applyTheHeader ldgrView tkHdrSt
-    (tkLdgrSt, tBlkTick) <- time $ tickTheLedgerState slot prevLedgerState
-    let !tkLdgrSt' = applyDiffs (prevLedgerState `withLedgerTables` tables) tkLdgrSt
-    (!newLedger, tBlkApp) <- time $ applyTheBlock tkLdgrSt'
+    (tickedHandle, tBlkTick) <-
+      time $
+        applyChainTick OmitLedgerEvents lcfg slot (unExtStateHandle prevHandle)
+    (!newStateHandle, tBlkApp) <- time $ applyTheBlock tickedHandle
 
     currentRtsStats <- GC.getRTSStats
     let
@@ -684,7 +672,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
       slotDataPoint =
         DP.SlotDataPoint
           { DP.slot = realPointSlot rp
-          , DP.slotGap = slot `slotCount` getTipSlot prevLedgerState
+          , DP.slotGap = slot `slotCount` getTipSlot prevExtLedger
           , DP.totalTime = currentMinusPrevious GC.elapsed_ns `div` 1000
           , DP.mut = currentMinusPrevious GC.mutator_elapsed_ns `div` 1000
           , DP.gc = currentMinusPrevious GC.gc_elapsed_ns `div` 1000
@@ -706,13 +694,16 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
 
     F.writeDataPoint outFileHandle outFormat slotDataPoint
 
-    LedgerDB.push intLedgerDB $ ExtLedgerState (prependDiffs tkLdgrSt newLedger) newHeader
+    -- Push the newly applied state into the LedgerDB. The 'ExtStateHandle'
+    -- bundles the new 'StateHandle' (which carries the updated on-disk
+    -- tables) with the new header state.
+    LedgerDB.push intLedgerDB $ ExtStateHandle newStateHandle newHeader
    where
     rp = blockRealPoint blk
 
     forecast ::
       SlotNo ->
-      ExtLedgerState blk mk ->
+      ExtLedgerState blk ->
       IO (LedgerView (BlockProtocol blk))
     forecast slot st = do
       let forecaster = ledgerViewForecastAt lcfg (ledgerState st)
@@ -723,7 +714,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
 
     tickTheHeaderState ::
       SlotNo ->
-      ExtLedgerState blk mk ->
+      ExtLedgerState blk ->
       LedgerView (BlockProtocol blk) ->
       IO (Ticked (HeaderState blk))
     tickTheHeaderState slot st ledgerView =
@@ -746,23 +737,17 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
       LedgerReapply ->
         pure $! revalidateHeader cfg ledgerView (getHeader blk) tickedHeaderState
 
-    tickTheLedgerState ::
-      SlotNo ->
-      ExtLedgerState blk EmptyMK ->
-      IO (Ticked LedgerState blk DiffMK)
-    tickTheLedgerState slot st =
-      pure $ applyChainTick OmitLedgerEvents lcfg slot (ledgerState st)
-
     applyTheBlock ::
-      TickedLedgerState blk ValuesMK ->
-      IO (LedgerState blk DiffMK)
-    applyTheBlock tickedLedgerSt = case ledgerAppMode of
+      Handle (Ticked LedgerState) IO blk ->
+      IO (Handle LedgerState IO blk)
+    applyTheBlock tickedHandle = case ledgerAppMode of
       LedgerApply ->
-        case runExcept (lrResult <$> applyBlockLedgerResult OmitLedgerEvents lcfg blk tickedLedgerSt) of
-          Left err -> fail $ "benchmark doesn't support invalid blocks: " <> show rp <> " " <> show err
-          Right x -> pure x
+        runExceptT (lrResult <$> applyBlockLedgerResult OmitLedgerEvents lcfg blk tickedHandle)
+          >>= \case
+            Left err -> fail $ "benchmark doesn't support invalid blocks: " <> show rp <> " " <> show err
+            Right x -> pure x
       LedgerReapply ->
-        pure $! lrResult $ reapplyBlockLedgerResult OmitLedgerEvents lcfg blk tickedLedgerSt
+        lrResult <$> reapplyBlockLedgerResult OmitLedgerEvents lcfg blk tickedHandle
 
 withFile :: Maybe FilePath -> (IO.Handle -> IO r) -> IO r
 withFile (Just outfile) = IO.withFile outfile IO.WriteMode
@@ -776,6 +761,7 @@ getBlockApplicationMetrics ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , BlockSupportsLedgerHD IO blk
   ) =>
   NumberOfBlocks -> Maybe FilePath -> Analysis blk StartFromLedgerState
 getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
@@ -796,22 +782,17 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
     blk ->
     IO ()
   process outFileHandle _ blk = do
-    oldLedger <-
-      LedgerDB.withTipForker
-        ldb
-        ( \frk -> do
-            oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
-            oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
-            pure $ oldLedgerSt `withLedgerTables` oldLedgerTbs
-        )
+    (oldExt, newHandle) <- LedgerDB.withTipForker ldb $ \frk -> do
+      oldHandle <- IOLike.atomically $ LedgerDB.forkerTip frk
+      h' <- tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk oldHandle
+      pure (extLedgerState oldHandle, h')
 
-    let nextLedgerSt = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk oldLedger
     when (unBlockNo (blockNo blk) `mod` nrBlocks == 0) $ do
       let blockApplication =
             HasAnalysis.WithLedgerState
               blk
-              (ledgerState oldLedger)
-              (ledgerState $ applyDiffs oldLedger nextLedgerSt)
+              (ledgerState oldExt)
+              (ledgerState (extLedgerState newHandle))
 
       computeAndWriteLine
         outFileHandle
@@ -821,7 +802,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
 
       IO.hFlush outFileHandle
 
-    LedgerDB.push intLedgerDB nextLedgerSt
+    LedgerDB.push intLedgerDB newHandle
 
     pure ()
 
@@ -838,8 +819,8 @@ reproMempoolForge ::
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
-  , Show (TxIn blk)
-  , Show (TxOut blk)
+  , BlockSupportsLedgerHD IO blk
+  , IOLike.NoThunks (TickedStateHandle IO blk)
   ) =>
   Int ->
   Analysis blk StartFromLedgerState
@@ -856,14 +837,20 @@ reproMempoolForge numBlks env = do
   mempool <-
     Mempool.openMempoolWithoutSyncThread
       Mempool.LedgerInterface
-        { Mempool.getCurrentLedgerState = do
-            st <- LedgerDB.getVolatileTip ledgerDB
-            pure $
-              MempoolLedgerDBView
-                (ledgerState st)
-                ( fmap (fmap LedgerDB.ledgerStateReadOnlyForker) $
-                    LedgerDB.openReadOnlyForker ledgerDB (SpecificPoint (castPoint $ getTip st))
-                )
+        { Mempool.getCurrentLedgerTip =
+            getTip . ledgerState . extLedgerState
+              <$> LedgerDB.getVolatileTipRef ledgerDB
+        , Mempool.withCurrentLedgerStateDup = \k ->
+            IOLike.bracket
+              (LedgerDB.openReadOnlyHandle ledgerDB VolatileTip)
+              (either (const $ pure ()) closeExt)
+              ( \case
+                  Left err ->
+                    error $
+                      "reproMempoolForge: openReadOnlyHandle VolatileTip must succeed; got: "
+                        <> show err
+                  Right h -> k (unExtStateHandle h)
+              )
         }
       lCfg
       -- one mebibyte should generously accomodate two blocks' worth of txs
@@ -936,22 +923,18 @@ reproMempoolForge numBlks env = do
         Nothing -> pure ()
         Just blk -> do
           LedgerDB.withTipForker ledgerDB $ \forker -> do
-            st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState forker
+            st <- IOLike.atomically $ LedgerDB.forkerTip forker
 
             -- time the suspected slow parts of the forge thread that created
             -- this block
             --
             -- Primary caveat: that thread's mempool may have had more transactions in it.
             let slot = blockSlot blk
-            (ticked, durTick, mutTick, gcTick) <-
+            (tickedHandle, durTick, mutTick, gcTick) <-
               timed $
-                IOLike.evaluate $
-                  applyChainTick OmitLedgerEvents lCfg slot (ledgerState st)
+                applyChainTick OmitLedgerEvents lCfg slot (unExtStateHandle st)
             ((), durSnap, mutSnap, gcSnap) <- timed $ do
-              snap <-
-                Mempool.getSnapshotFor mempool slot ticked $
-                  LedgerDB.forkerReadTables forker
-
+              snap <- Mempool.getSnapshotFor mempool slot tickedHandle
               pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotStateHash snap `seq` ()
 
             let sizes = HasAnalysis.blockTxSizes blk

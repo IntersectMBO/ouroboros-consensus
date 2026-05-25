@@ -43,7 +43,6 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Protocol.Abstract
   ( ChainDepState
   , tickChainDepState
@@ -54,15 +53,16 @@ import Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
   , addBlockAsync
   , blockProcessed
   , getCurrentChain
-  , getPastLedger
-  , withReadOnlyForkerAtPoint
+  , withReadOnlyHandleAtPoint
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
   ( noPunishment
   )
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util.EarlyExit
-  ( withEarlyExit
+  ( WithEarlyExit
+  , exitEarly
+  , withEarlyExit
   )
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.AnchoredFragment as AF
@@ -87,8 +87,8 @@ initialForgeState = ForgeState 0 0 0 0
 -- | An action to generate transactions for a given block
 type GenTxs blk =
   SlotNo ->
-  ReadOnlyForker' IO blk ->
-  TickedLedgerState blk DiffMK ->
+  ExtStateHandle IO blk ->
+  Ticked LedgerState blk ->
   IO [Validated (GenTx blk)]
 
 -- DUPLICATE: runForge mirrors forging loop from ouroboros-consensus/src/Ouroboros/Consensus/NodeKernel.hs
@@ -96,7 +96,9 @@ type GenTxs blk =
 
 runForge ::
   forall blk.
-  LedgerSupportsProtocol blk =>
+  ( LedgerSupportsProtocol blk
+  , BlockSupportsLedgerHD IO blk
+  ) =>
   EpochSize ->
   SlotNo ->
   ForgeLimit ->
@@ -160,88 +162,85 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
         Right blkCtx -> return blkCtx
         Left{} -> exitEarly' "no block context"
 
-    -- Get corresponding ledger state, ledgder view and ticked 'ChainDepState'
-    unticked <- do
-      mExtLedger <- lift $ atomically $ ChainDB.getPastLedger chainDB bcPrevPoint
-      case mExtLedger of
-        Just l -> return l
-        Nothing -> exitEarly' "no ledger state"
+    -- Open a read-only handle on the volatile-tip ledger at bcPrevPoint
+    -- and run the entire per-slot work inside its bracket so the handle is
+    -- closed before we leave the slot. This mirrors NodeKernel's forging
+    -- loop in the Handle-based world.
+    --
+    -- We run the body in 'WithEarlyExit IO' (which is what the bracket
+    -- expects) and convert any early-exit to an 'ExceptT' failure with a
+    -- generic message; the synthesizer doesn't trace per-slot reasons.
+    let runWithExit ::
+          String -> WithEarlyExit IO a -> ExceptT String IO a
+        runWithExit msg act = do
+          m <- lift $ withEarlyExit act
+          maybe (exitEarly' msg) pure m
+    runWithExit "could not forge in this slot" $
+      ChainDB.withReadOnlyHandleAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
+        Left _ -> exitEarly
+        Right unticked@(ExtStateHandle untickedLS _) -> do
+          ledgerView <-
+            case runExcept $
+              forecastFor
+                ( ledgerViewForecastAt
+                    (configLedger cfg)
+                    (ledgerState (extLedgerState unticked))
+                )
+                currentSlot of
+              Left _err -> exitEarly
+              Right lv -> return lv
 
-    ledgerView <-
-      case runExcept $
-        forecastFor
-          ( ledgerViewForecastAt
-              (configLedger cfg)
-              (ledgerState unticked)
-          )
-          currentSlot of
-        Left err -> exitEarly' $ "no ledger view: " ++ show err
-        Right lv -> return lv
+          let tickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
+              tickedChainDepState =
+                tickChainDepState
+                  (configConsensus cfg)
+                  ledgerView
+                  currentSlot
+                  (headerStateChainDep (headerState (extLedgerState unticked)))
 
-    let tickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
-        tickedChainDepState =
-          tickChainDepState
-            (configConsensus cfg)
-            ledgerView
-            currentSlot
-            (headerStateChainDep (headerState unticked))
+          -- Check if any forger is slot leader
+          let
+            checkShouldForge' f =
+              checkShouldForge f nullTracer cfg currentSlot tickedChainDepState
 
-    -- Check if any forger is slot leader
-    let
-      checkShouldForge' f =
-        checkShouldForge f nullTracer cfg currentSlot tickedChainDepState
+          checks <- Trans.lift $ zip blockForging <$> mapM checkShouldForge' blockForging
 
-    checks <- zip blockForging <$> liftIO (mapM checkShouldForge' blockForging)
+          (blockForging', proof) <- case [(f, p) | (f, ShouldForge p) <- checks] of
+            x : _ -> pure x
+            _ -> exitEarly
 
-    (blockForging', proof) <- case [(f, p) | (f, ShouldForge p) <- checks] of
-      x : _ -> pure x
-      _ -> exitEarly' "NoLeader"
+          -- Tick the ledger handle for the 'SlotNo' we're producing a block for
+          tickedHandle <-
+            Trans.lift $
+              applyChainTick
+                OmitLedgerEvents
+                (configLedger cfg)
+                currentSlot
+                untickedLS
 
-    -- Tick the ledger state for the 'SlotNo' we're producing a block for
-    let tickedLedgerState :: Ticked LedgerState blk DiffMK
-        tickedLedgerState =
-          applyChainTick
-            OmitLedgerEvents
-            (configLedger cfg)
-            currentSlot
-            (ledgerState unticked)
+          -- Let the caller generate transactions
+          txs <-
+            Trans.lift $
+              genTxs currentSlot unticked (tickedState tickedHandle)
 
-    -- Let the caller generate transactions
-    let withReadOnlyForkerAtPoint' cdb tgt k =
-          -- type legos just to reuse the same Forker combinator as
-          -- the node's forging loop
-          ExceptT . fmap (Right . fromJust) . withEarlyExit $
-            withReadOnlyForkerAtPoint cdb tgt (Trans.lift . k)
-    txs <- withReadOnlyForkerAtPoint'
-      chainDB
-      (SpecificPoint bcPrevPoint)
-      $ \case
-        Left{} -> error "Impossible: we are forging on top of a block that the ChainDB cannot create forkers on!"
-        Right frk ->
-          genTxs
-            currentSlot
-            frk
-            tickedLedgerState
+          -- Actually produce the block
+          newBlock <-
+            Trans.lift $
+              Block.forgeBlock
+                blockForging'
+                cfg
+                bcBlockNo
+                currentSlot
+                (tickedState tickedHandle)
+                txs
+                proof
 
-    -- Actually produce the block
-    newBlock <-
-      lift $
-        Block.forgeBlock
-          blockForging'
-          cfg
-          bcBlockNo
-          currentSlot
-          (forgetLedgerTables tickedLedgerState)
-          txs
-          proof
+          -- Add the block to the chain DB (synchronously) and verify adoption
+          let noPunish = InvalidBlockPunishment.noPunishment
+          result <- Trans.lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
+          mbCurTip <- Trans.lift $ atomically $ ChainDB.blockProcessed result
 
-    -- Add the block to the chain DB (synchronously) and verify adoption
-    let noPunish = InvalidBlockPunishment.noPunishment
-    result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
-    mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
-
-    when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $
-      exitEarly' "block not adopted"
+          when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) exitEarly
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
