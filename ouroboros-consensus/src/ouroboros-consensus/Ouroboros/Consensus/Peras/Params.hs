@@ -20,12 +20,16 @@ module Ouroboros.Consensus.Peras.Params
     -- * Protocol parameters bundle
   , PerasParams (..)
   , mkPerasParams
+
+    -- * Convenience re-exports
+  , Committee.TargetCommitteeSize (..)
   )
 where
 
 import Data.Semigroup (Sum (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import qualified Ouroboros.Consensus.Committee.Types as Committee
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.IOLike (NoThunks)
 import Quiet (Quiet (..))
@@ -128,6 +132,7 @@ data PerasParams = PerasParams
   , perasWeight :: !PerasWeight
   , perasQuorumWeightThreshold :: !PerasQuorumWeightThreshold
   , perasQuorumWeightThresholdSafetyMargin :: !PerasQuorumWeightThresholdSafetyMargin
+  , perasTargetCommitteeSize :: !Committee.TargetCommitteeSize
   }
   deriving (Show, Eq, Generic, NoThunks)
 
@@ -174,4 +179,6 @@ mkPerasParams =
         PerasQuorumWeightThreshold (3 / 4)
     , perasQuorumWeightThresholdSafetyMargin =
         PerasQuorumWeightThresholdSafetyMargin (2 / 100)
+    , perasTargetCommitteeSize =
+        Committee.TargetCommitteeSize 800
     }
