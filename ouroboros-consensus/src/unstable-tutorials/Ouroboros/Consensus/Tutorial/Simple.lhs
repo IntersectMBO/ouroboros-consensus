@@ -56,18 +56,17 @@ First, some imports we'll need:
 > import Ouroboros.Consensus.Block
 >   (BlockSupportsProtocol (tiebreakerView, validateView))
 > import Ouroboros.Consensus.Ledger.Abstract
->   (AuxLedgerEvent, GetTip(..), IsLedger(..), LedgerCfg,
+>   (AuxLedgerEvent, BlockSupportsLedgerHD (..), GetTip(..), Handle,
+>    IsLedger(..), LedgerCfg,
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
->    LedgerState, ApplyBlock(..), UpdateLedger, GetBlockKeySets (..),
->    defaultApplyBlockLedgerResult, defaultReapplyBlockLedgerResult)
+>    LedgerState, ApplyBlock(..), UpdateLedger, LedgerTablesHandle,
+>    Statistics (..), defaultApplyBlockLedgerResult,
+>    defaultReapplyBlockLedgerResult)
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol(..))
 > import Ouroboros.Consensus.Forecast (trivialForecast)
 > import Ouroboros.Consensus.HeaderValidation
 >   (ValidateEnvelope, BasicEnvelopeValidation, HasAnnTip)
-> import Ouroboros.Consensus.Ledger.Tables
-> import Ouroboros.Consensus.Ledger.Tables.Utils
-> import Ouroboros.Consensus.Util.IndexedMemPack
 
 Conceptual Overview and Definitions of Key Terms
 ================================================
@@ -534,7 +533,7 @@ Given that the `BlockC` transactions consist of incrementing and decrementing a
 number, we materialize that number in the `LedgerState`.  We'll also need to
 keep track of some information about the most recent block we have seen.
 
-> data instance LedgerState BlockC mk =
+> data instance LedgerState BlockC =
 
 >   LedgerC
 >     -- the hash and slot number of the most recent block
@@ -555,9 +554,9 @@ Again, the slot abstraction defines a logical clock - and instances of the
 As such, we will also need to define an instance of `Ticked` for our ledger
 state.  In our example, this is essentially an `Identity` functor:
 
-> newtype instance Ticked LedgerState BlockC mk =
+> newtype instance Ticked LedgerState BlockC =
 >   TickedLedgerStateC
->     { unTickedLedgerStateC :: LedgerState BlockC mk }
+>     { unTickedLedgerStateC :: LedgerState BlockC }
 >   deriving (Show, Eq, Generic, Serialise)
 
 
@@ -572,10 +571,11 @@ types for a ledger.  Though we are here using
 > instance IsLedger LedgerState BlockC where
 >   type instance LedgerErr LedgerState BlockC = Void
 
->   applyChainTickLedgerResult _events _cfg _slot ldgrSt =
->     LedgerResult { lrEvents = []
->                  , lrResult = TickedLedgerStateC $ convertMapKind ldgrSt
->                  }
+>   applyChainTickLedgerResult _events _cfg _slot (BlockCStateHandle ldgrSt) =
+>     pure LedgerResult { lrEvents = []
+>                       , lrResult = TickedBlockCStateHandle
+>                           (TickedLedgerStateC ldgrSt)
+>                       }
 
 The `LedgerErr` type is the type of errors associated with this ledger that can
 be thrown while applying blocks or transactions.  In the case of `LedgerState
@@ -600,7 +600,7 @@ A block `b` is said to have been `applied` to a `LedgerState` if that
 `LedgerState` is the result of having witnessed `b` at some point.  We can
 express this as a function:
 
-> applyBlockTo :: BlockC -> Ticked LedgerState BlockC mk -> LedgerState BlockC mk
+> applyBlockTo :: BlockC -> Ticked LedgerState BlockC -> LedgerState BlockC
 > applyBlockTo block tickedLedgerState =
 >   ledgerState { lsbc_tip = blockPoint block
 >               , lsbc_count = lsbc_count'
@@ -622,16 +622,15 @@ The interface used by the rest of the ledger infrastructure to access this is
 the `ApplyBlock` typeclass:
 
 > instance ApplyBlock LedgerState BlockC where
->   applyBlockLedgerResultWithValidation _validation _events _ldgrCfg block tickedLdgrSt =
+>   applyBlockLedgerResultWithValidation _validation _events _ldgrCfg block
+>     (TickedBlockCStateHandle tickedLdgrSt) =
 >     pure $ LedgerResult { lrEvents = []
->                         , lrResult = convertMapKind $ block `applyBlockTo` tickedLdgrSt
+>                         , lrResult = BlockCStateHandle
+>                             (block `applyBlockTo` tickedLdgrSt)
 >                         }
 
 >   applyBlockLedgerResult = defaultApplyBlockLedgerResult
 >   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
-
-> instance GetBlockKeySets BlockC where
->   getBlockKeySets = const emptyLedgerTables
 
 `applyBlockLedgerResult` tries to apply a block to the ledger and fails with a
 `LedgerErr` corresponding to the particular `LedgerState blk` if for whatever
@@ -666,10 +665,10 @@ The `GetTip` typeclass describes how to get the `Point` of the tip - which is
 the most recently applied block.  We need to implement this both for
 `LedgerState BlockC` as well as its ticked version:
 
-> instance GetTip (Ticked LedgerState BlockC) where
+> instance GetTip (Ticked LedgerState) BlockC where
 >    getTip = castPoint . lsbc_tip . unTickedLedgerStateC
 
-> instance GetTip (LedgerState BlockC) where
+> instance GetTip LedgerState BlockC where
 >    getTip = castPoint . lsbc_tip
 
 Associating Ledgers to Protocols
@@ -715,45 +714,34 @@ To focus on the salient ideas of this document, we've put all the derivations of
 >   instance NoThunks BlockC
 > deriving via OnlyCheckWhnfNamed "HdrBlockC" (Header BlockC)
 >   instance NoThunks (Header BlockC)
-> deriving via OnlyCheckWhnfNamed "LedgerC" (LedgerState BlockC mk)
->   instance NoThunks (LedgerState BlockC mk)
+> deriving via OnlyCheckWhnfNamed "LedgerC" (LedgerState BlockC)
+>   instance NoThunks (LedgerState BlockC)
 
 Appendix: UTxO-HD features
 ==========================
 
-The introduction of UTxO-HD is out of the scope of this tutorial but we will
-describe here a few hints on how it would be defined. In broad terms, with the
-introduction of UTxO-HD a part of the ledger state (the UTxO set) was moved to
-the disk and now consensus:
+Cardano's UTxO-HD ("hard disk") work moves the UTxO set out of the in-memory
+`LedgerState` and into a per-block backing store accessed through a
+`LedgerTablesHandle`. The handle is owned by the LedgerDB backend (e.g.
+in-memory or LSM-tree) and is bundled with the pure `LedgerState` in a
+`StateHandle`.
 
-- provides subsets of that data to the ledger rules (i.e. only the consumed
-  UTxOs on a block)
+Block types that maintain no on-disk component (`BlockC` here, and Byron in
+mainline Cardano) instantiate the handle to the unit type and provide a
+trivial `BlockSupportsLedgerHD` instance — there are no resources to manage,
+duplicate or close:
 
-- stores a sequence of deltas (diffs) produced by the execution of the ledger
-  rules
+> type instance LedgerTablesHandle m BlockC = ()
 
-These subsets are defined in terms of the `LedgerTables` and the `mk` type
-variable that indicates if the collection is made of key-value pairs, only keys
-or to keys-delta pairs.
-
-The `HasLedgerTables` class defines the basic operations that can be done with
-the `LedgerTables`. For a Ledger state definition as simple as the one we are
-defining there the tables are trivially empty so the operations are all trivial
-and we use the default implementation
-
-> type instance TxIn  BlockC = Void
-> type instance TxOut BlockC = Void
-
-> instance LedgerTablesAreTrivial LedgerState BlockC where
->   convertMapKind (LedgerC x y) = LedgerC x y
-> instance LedgerTablesAreTrivial (Ticked LedgerState) BlockC where
->   convertMapKind (TickedLedgerStateC x) =
->       TickedLedgerStateC (convertMapKind x)
-> deriving via Void
->   instance IndexedMemPack LedgerState BlockC Void
-> instance HasLedgerTables LedgerState BlockC where
->   projectLedgerTables _ = emptyLedgerTables
->   withLedgerTables st _ = convertMapKind st
-> instance HasLedgerTables (Ticked LedgerState) BlockC where
->   projectLedgerTables _ = emptyLedgerTables
->   withLedgerTables st _ = convertMapKind st
+> instance BlockSupportsLedgerHD m BlockC where
+>   newtype StateHandle m BlockC = BlockCStateHandle (LedgerState BlockC)
+>   newtype TickedStateHandle m BlockC =
+>     TickedBlockCStateHandle (Ticked LedgerState BlockC)
+>   newStateHandle st () = BlockCStateHandle st
+>   state (BlockCStateHandle s) = s
+>   tickedState (TickedBlockCStateHandle s) = s
+>   close _ = pure ()
+>   closeTicked _ = pure ()
+>   duplicate a = pure a
+>   duplicateTicked a = pure a
+>   getStats _ = Statistics 0

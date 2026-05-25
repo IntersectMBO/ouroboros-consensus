@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -36,18 +37,26 @@ module Test.ThreadNet.General
 
 import Control.Exception (assert)
 import Control.Monad (guard)
-import Control.Monad.IOSim (runSimOrThrow, setCurrentTime)
+import Control.Monad.IOSim (IOSim, runSimOrThrow, setCurrentTime)
 import Control.Tracer (nullTracer)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Block.Abstract as BA
 import qualified Ouroboros.Consensus.BlockchainTime as BTime
 import Ouroboros.Consensus.Config.SecurityParam
-import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
+import Ouroboros.Consensus.Ledger.Abstract
+  ( BlockSupportsLedgerHD (..)
+  , LedgerTablesFactory
+  )
+import Ouroboros.Consensus.Ledger.Extended
+  ( ExtStateHandle
+  , ExtValidationError
+  )
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -206,6 +215,10 @@ data TestConfigMB m blk = TestConfigMB
   , mkRekeyM :: Maybe (m (RekeyM m blk))
   -- ^ 'runTestNetwork' immediately runs this action once in order to
   -- initialize an 'RekeyM' value that it then reuses throughout the test
+  , ledgerTablesFactory :: LedgerTablesFactory m blk
+  -- ^ The on-disk side of the ledger (threaded through 'pInfoInitLedger').
+  -- For blocks with no on-disk tables (Byron, the mock blocks) this is
+  -- @()@. HFC tests must supply a 'HFLedgerTablesFactory'.
   }
 
 {-------------------------------------------------------------------------------
@@ -219,6 +232,10 @@ runTestNetwork ::
   , TxGen blk
   , TracingConstraints blk
   , HasCallStack
+  , forall s. BlockSupportsLedgerHD (IOSim s) blk
+  , forall s. NoThunks (ExtStateHandle (IOSim s) blk)
+  , forall s. NoThunks (StateHandle (IOSim s) blk)
+  , forall s. NoThunks (TickedStateHandle (IOSim s) blk)
   ) =>
   TestConfig ->
   TestConfigB blk ->
@@ -247,6 +264,7 @@ runTestNetwork
       let TestConfigMB
             { nodeInfo
             , mkRekeyM
+            , ledgerTablesFactory
             } = mkTestConfigMB
       let systemTime =
             BTime.defaultSystemTime
@@ -270,6 +288,7 @@ runTestNetwork
           , tnaVersion = networkVersion
           , tnaBlockVersion = blockVersion
           , tnaTxLogicVersion = txLogicVersion
+          , tnaLedgerTablesFactory = ledgerTablesFactory
           }
 
 {-------------------------------------------------------------------------------

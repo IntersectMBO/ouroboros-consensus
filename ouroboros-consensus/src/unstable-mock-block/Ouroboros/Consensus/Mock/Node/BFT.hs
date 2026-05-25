@@ -20,11 +20,12 @@ import Ouroboros.Consensus.Protocol.BFT
 type MockBftBlock = SimpleBftBlock SimpleMockCrypto BftMockCrypto
 
 protocolInfoBft ::
+  Monad m =>
   NumCoreNodes ->
   CoreNodeId ->
   SecurityParam ->
   HardFork.EraParams ->
-  ProtocolInfo MockBftBlock
+  ProtocolInfo m MockBftBlock
 protocolInfoBft numCoreNodes nid securityParam eraParams =
   ProtocolInfo
     { pInfoConfig =
@@ -49,10 +50,13 @@ protocolInfoBft numCoreNodes nid securityParam eraParams =
           , topLevelConfigStorage = SimpleStorageConfig securityParam
           , topLevelConfigCheckpoints = emptyCheckpointsMap
           }
-    , pInfoInitLedger =
-        ExtLedgerState
-          (genesisSimpleLedgerState addrDist)
-          (genesisHeaderState ())
+    , pInfoInitLedger = \() ->
+        pure
+          ExtStateHandle
+            { unExtStateHandle =
+                SimpleStateHandle (genesisSimpleLedgerState addrDist)
+            , extHeaderState = genesisHeaderState ()
+            }
     }
  where
   signKey :: CoreNodeId -> SignKeyDSIGN MockDSIGN

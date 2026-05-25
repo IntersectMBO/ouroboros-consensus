@@ -601,6 +601,7 @@ library unstable-mempool-test-utils
     contra-tracer,
     deepseq,
     io-classes:strict-stm,
+    nothunks,
     ouroboros-consensus,
 
 library unstable-tutorials
@@ -1087,6 +1088,7 @@ library unstable-diffusion-testlib
     io-classes:{io-classes, si-timers, strict-stm},
     io-sim,
     mtl,
+    nothunks,
     ouroboros-consensus:{diffusion, ouroboros-consensus, protocol, unstable-consensus-testlib},
     ouroboros-network:{api, api-tests-lib, framework, ouroboros-network, protocols},
     QuickCheck,

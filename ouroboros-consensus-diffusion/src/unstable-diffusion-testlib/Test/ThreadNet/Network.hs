@@ -10,6 +10,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -74,6 +75,7 @@ import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Generics
 import GHC.Stack
+import NoThunks.Class (NoThunks)
 import Network.TypedProtocol.Codec
   ( AnyMessage (..)
   , CodecFailure
@@ -88,7 +90,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
@@ -186,7 +187,7 @@ instance Show (ForgeEbbEnv blk) where
 -- will restart and use 'tnaRekeyM' to compute its new 'ProtocolInfo'.
 type RekeyM m blk =
   CoreNodeId ->
-  ProtocolInfo blk ->
+  ProtocolInfo m blk ->
   m [MkBlockForging m blk] ->
   -- | The slot in which the node is rekeying
   SlotNo ->
@@ -207,12 +208,12 @@ data TestNodeInitialization m blk = TestNodeInitialization
   -- enter its mempool each slot /before/ the node takes the mempool snapshot
   -- that determines which transactions will be included in the block it's
   -- about to forge.
-  , tniProtocolInfo :: ProtocolInfo blk
+  , tniProtocolInfo :: ProtocolInfo m blk
   , tniBlockForging :: m [MkBlockForging m blk]
   }
 
 plainTestNodeInitialization ::
-  ProtocolInfo blk ->
+  ProtocolInfo m blk ->
   m [MkBlockForging m blk] ->
   TestNodeInitialization m blk
 plainTestNodeInitialization pInfo blockForging =
@@ -256,6 +257,10 @@ data ThreadNetworkArgs m blk = ThreadNetworkArgs
   , tnaVersion :: NodeToNodeVersion
   , tnaBlockVersion :: BlockNodeToNodeVersion blk
   , tnaTxLogicVersion :: TxSubmissionLogicVersion
+  , tnaLedgerTablesFactory :: LedgerTablesFactory m blk
+  -- ^ The 'LedgerTablesFactory' to thread through 'pInfoInitLedger' and
+  -- the ChainDB backend. For blocks with no on-disk tables (Byron, the
+  -- mock blocks) this is @()@. HFC tests supply a 'HFLedgerTablesFactory'.
   }
 
 {-------------------------------------------------------------------------------
@@ -278,7 +283,7 @@ data VertexStatus m blk
   = -- | The vertex does not currently have a node instance; its previous
     -- instance stopped with this chain and ledger state (empty/initial before
     -- first instance)
-    VDown (Chain blk) (LedgerState blk EmptyMK)
+    VDown (Chain blk) (LedgerState blk)
   | -- | The vertex has a node instance, but it is about to transition to
     -- 'VDown' as soon as its edges transition to 'EDown'.
     VFalling
@@ -325,6 +330,10 @@ runThreadNetwork ::
   , TxGen blk
   , TracingConstraints blk
   , HasCallStack
+  , BlockSupportsLedgerHD m blk
+  , NoThunks (ExtStateHandle m blk)
+  , NoThunks (StateHandle m blk)
+  , NoThunks (TickedStateHandle m blk)
   ) =>
   SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
 runThreadNetwork
@@ -345,6 +354,7 @@ runThreadNetwork
     , tnaVersion = version
     , tnaBlockVersion = blockVersion
     , tnaTxLogicVersion = txLogicVersion
+    , tnaLedgerTablesFactory
     } = withRegistry $ \sharedRegistry -> do
     mbRekeyM <- sequence mbMkRekeyM
 
@@ -374,18 +384,21 @@ runThreadNetwork
     -- soon as both nodes have joined the network, according to @nodeJoinPlan@.
 
     -- allocate the status variable for each vertex
+    -- compute the genesis ledger state once, by running the shared
+    -- 'pInfoInitLedger' continuation against the supplied factory; we then
+    -- close the resulting handle since we only need the pure 'LedgerState'
+    -- to seed 'VDown'.
+    initLedgerState <- do
+      let nodeInitData = mkProtocolInfo (CoreNodeId 0)
+          TestNodeInitialization{tniProtocolInfo} = nodeInitData
+          ProtocolInfo{pInfoInitLedger} = tniProtocolInfo
+      h <- pInfoInitLedger tnaLedgerTablesFactory
+      let s = ledgerState (extLedgerState h)
+      closeExt h
+      pure s
     vertexStatusVars <- fmap Map.fromList $ do
       forM coreNodeIds $ \nid -> do
-        -- assume they all start with the empty chain and the same initial
-        -- ledger
-        let nodeInitData = mkProtocolInfo (CoreNodeId 0)
-            TestNodeInitialization{tniProtocolInfo} = nodeInitData
-            ProtocolInfo{pInfoInitLedger} = tniProtocolInfo
-            ExtLedgerState{ledgerState} = pInfoInitLedger
-        v <-
-          uncheckedNewTVarM $
-            VDown Genesis $
-              forgetLedgerTables ledgerState
+        v <- uncheckedNewTVarM $ VDown Genesis initLedgerState
         pure (nid, v)
 
     -- fork the directed edges, which also allocates their status variables
@@ -517,7 +530,7 @@ runThreadNetwork
 
         loop ::
           SlotNo ->
-          ProtocolInfo blk ->
+          ProtocolInfo m blk ->
           m [MkBlockForging m blk] ->
           NodeRestart ->
           Map SlotNo NodeRestart ->
@@ -643,8 +656,9 @@ runThreadNetwork
       SlotNo ->
       (SlotNo -> STM m ()) ->
       STM m (Point blk) ->
-      ( (ReadOnlyForker' m blk -> WithEarlyExit m (ExtLedgerState blk EmptyMK)) ->
-        m (ExtLedgerState blk EmptyMK)
+      ( forall a.
+        (ExtStateHandle m blk -> WithEarlyExit m a) ->
+        m a
       ) ->
       Mempool m blk ->
       ResourceRegistry m ->
@@ -654,7 +668,7 @@ runThreadNetwork
     forkCrucialTxs clock s0 unblockForge getTipPoint mforker mempool sharedRegistry txs0 = do
       forkLinkedThread sharedRegistry "crucialTxs" $ do
         let loop (slot, mempFp) = do
-              extLedger <- mforker $ lift . atomically . roforkerGetLedgerState
+              extLedger <- mforker $ \eh -> pure (extLedgerState eh)
               let ledger = ledgerState extLedger
 
               _ <- addTxs mempool txs0
@@ -706,20 +720,16 @@ runThreadNetwork
       OracularClock m ->
       TopLevelConfig blk ->
       Seed ->
-      ( (ReadOnlyForker' m blk -> WithEarlyExit m (LedgerState blk ValuesMK)) ->
-        m (LedgerState blk ValuesMK)
+      ( forall a.
+        (ExtStateHandle m blk -> WithEarlyExit m a) ->
+        m a
       ) ->
       -- \^ How to get the current ledger state
       Mempool m blk ->
       m ()
     forkTxProducer coreNodeId registry clock cfg nodeSeed mforker mempool =
       void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> do
-        fullLedgerSt <- mforker $ \forker -> lift $ do
-          emptySt <- atomically . roforkerGetLedgerState $ forker
-          let doRangeQuery = roforkerRangeReadTables forker
-          fmap ledgerState $ do
-            (fullUTxO, _) <- doRangeQuery NoPreviousQuery
-            pure $! withLedgerTables emptySt fullUTxO
+        fullLedgerSt <- mforker $ \eh -> pure (ledgerState (extLedgerState eh))
         -- Combine the node's seed with the current slot number, to make sure
         -- we generate different transactions in each slot.
         let txs =
@@ -731,7 +741,7 @@ runThreadNetwork
     mkArgs ::
       ResourceRegistry m ->
       TopLevelConfig blk ->
-      ExtLedgerState blk ValuesMK ->
+      (LedgerTablesFactory m blk -> m (ExtStateHandle m blk)) ->
       Tracer m (RealPoint blk, ExtValidationError blk) ->
       -- \^ invalid block tracer
       Tracer m (RealPoint blk, BlockNo) ->
@@ -834,7 +844,7 @@ runThreadNetwork
       OracularClock m ->
       SlotNo ->
       ResourceRegistry m ->
-      ProtocolInfo blk ->
+      ProtocolInfo m blk ->
       m [MkBlockForging m blk] ->
       NodeInfo blk (StrictTMVar m MockFS) (Tracer m) ->
       [GenTx blk] ->
@@ -882,7 +892,7 @@ runThreadNetwork
             TopLevelConfig blk ->
             BlockNo ->
             SlotNo ->
-            TickedLedgerState blk mk ->
+            TickedLedgerState blk ->
             [Validated (GenTx blk)] ->
             IsLeader (BlockProtocol blk) ->
             m blk
@@ -910,62 +920,19 @@ runThreadNetwork
                   cfg'
                   currentBno
                   currentSlot
-                  (forgetLedgerTables tickedLdgSt)
+                  tickedLdgSt
                   txs
                   prf
-              Just forgeEbbEnv -> do
-                -- The EBB shares its BlockNo with its predecessor (if
-                -- there is one)
-                let ebbBno = case currentBno of
-                      -- We assume this invariant:
-                      --
-                      -- If forging of EBBs is enabled then the node
-                      -- initialization is responsible for producing any
-                      -- proper non-EBB blocks with block number 0.
-                      --
-                      -- So this case is unreachable.
-                      0 -> error "Error, only node initialization can forge non-EBB with block number 0."
-                      n -> pred n
-                let ebb =
-                      forgeEBB
-                        forgeEbbEnv
-                        pInfoConfig
-                        ebbSlot
-                        ebbBno
-                        (pointHash p)
-
-                -- fail if the EBB is invalid
-                -- if it is valid, we retick to the /same/ slot
-                let apply = applyLedgerBlock OmitLedgerEvents (configLedger pInfoConfig)
-                    tables = emptyLedgerTables -- EBBs need no input tables
-                tickedLdgSt' <- case Exc.runExcept $ apply ebb (tickedLdgSt `withLedgerTables` tables) of
-                  Left e -> Exn.throw $ JitEbbError @blk e
-                  Right st ->
-                    pure $
-                      applyChainTick
-                        OmitLedgerEvents
-                        (configLedger pInfoConfig)
-                        currentSlot
-                        (forgetLedgerTables st)
-
-                -- forge the block usings the ledger state that includes
-                -- the EBB
-                blk <-
-                  forgeBlock
-                    origBlockForging
-                    cfg'
-                    currentBno
-                    currentSlot
-                    (forgetLedgerTables tickedLdgSt')
-                    txs
-                    prf
-
-                -- If the EBB or the subsequent block is invalid, then the
-                -- ChainDB will reject it as invalid, and
-                -- 'Test.ThreadNet.General.prop_general' will eventually fail
-                -- because of a block rejection.
-                void $ ChainDB.addBlock chainDB InvalidBlockPunishment.noPunishment ebb
-                pure blk
+              Just _forgeEbbEnv ->
+                -- EBB forging in the test harness used the now-removed
+                -- pure 'applyLedgerBlock' / 'applyChainTick' API. The new
+                -- API operates on 'StateHandle's, which the harness does
+                -- not have visibility into at this point. Tests that
+                -- exercise EBBs (Byron-era) need a follow-up port; see
+                -- fixing-tests.md.
+                error
+                  "Test.ThreadNet.Network.customForgeBlock: EBB path not \
+                  \yet ported to the Handle-based ApplyBlock API"
 
       -- This variable holds the number of the earliest slot in which the
       -- crucial txs have not yet been added. In other words, it holds the
@@ -1137,12 +1104,11 @@ runThreadNetwork
               -- tests about the peer sharing protocol itself.
               (NTN.mkHandlers nodeKernelArgs nodeKernel txLogicVersion)
 
-      -- Create a 'ReadOnlyForker' to be used in 'forkTxProducer'. This function
-      -- needs the read-only forker to elaborate a complete UTxO set to generate
-      -- transactions.
-      let getForker :: forall r. ((ReadOnlyForker' m blk -> WithEarlyExit m r) -> m r)
+      -- Open a fresh handle on the LedgerDB volatile tip to be used in
+      -- 'forkTxProducer' and 'forkCrucialTxs'.
+      let getForker :: forall r. ((ExtStateHandle m blk -> WithEarlyExit m r) -> m r)
           getForker f = do
-            fmap fromJust $ withEarlyExit $ ChainDB.withReadOnlyForkerAtPoint chainDB VolatileTip $ \case
+            fmap fromJust $ withEarlyExit $ ChainDB.withReadOnlyHandleAtPoint chainDB VolatileTip $ \case
               Left e -> error $ show e
               Right l -> f l
 
@@ -1648,7 +1614,7 @@ data NodeOutput blk = NodeOutput
   { nodeOutputAdds :: Map SlotNo (Set (RealPoint blk, BlockNo))
   , nodeOutputCannotForges :: Map SlotNo [CannotForge blk]
   , nodeOutputFinalChain :: Chain blk
-  , nodeOutputFinalLedger :: LedgerState blk EmptyMK
+  , nodeOutputFinalLedger :: LedgerState blk
   , nodeOutputForges :: Map SlotNo blk
   , nodeOutputHeaderAdds :: Map SlotNo [(RealPoint blk, BlockNo)]
   , nodeOutputInvalids :: Map (RealPoint blk) [ExtValidationError blk]
@@ -1670,7 +1636,7 @@ mkTestOutput ::
   [ ( CoreNodeId
     , m (NodeInfo blk MockFS [])
     , Chain blk
-    , LedgerState blk EmptyMK
+    , LedgerState blk
     )
   ] ->
   m (TestOutput blk)
