@@ -150,8 +150,8 @@ import Ouroboros.Consensus.Storage.ChainDB
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
-import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -708,6 +708,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       nodeKernel
       rnTraceNTC
       (NTC.defaultCodecs codecConfig blockVersion networkVersion)
+      blockVersion
       (NTC.mkHandlers nodeKernelArgs nodeKernel)
 
   mkDiffusionApplications ::

@@ -1535,3 +1535,12 @@ instance
       (ChainDepStateDijkstra praosSt, BlockDijkstra dijkstraBlk) ->
         BlockDijkstra <$> resolveLeiosBlock db praosSt dijkstraBlk
       _ -> pure blk
+
+  resolveLeiosBlockHdr db prevAnn blk = case blk of
+    BlockDijkstra dijkstraBlk ->
+      fmap BlockDijkstra <$> resolveLeiosBlockHdr db prevAnn dijkstraBlk
+    _ -> pure Nothing
+
+  headerLeiosAnnouncement hdr = case hdr of
+    HeaderDijkstra dHdr -> headerLeiosAnnouncement dHdr
+    _ -> Nothing

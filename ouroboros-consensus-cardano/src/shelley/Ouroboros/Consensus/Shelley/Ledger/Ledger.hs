@@ -140,6 +140,10 @@ import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosState (..))
+import Ouroboros.Consensus.Protocol.Praos.Header
+  ( Header (Header, headerBody)
+  , HeaderBody (hbLeiosEbAnnouncement, hbSlotNo)
+  )
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
@@ -148,6 +152,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , envelopeChecks
   , mkHeaderView
   )
+import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CBOR
@@ -977,6 +982,7 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
 -------------------------------------------------------------------------------}
 
 instance
+  forall c.
   (PraosCrypto c, ShelleyCompatible (Praos c) DijkstraEra) =>
   ResolveLeiosBlock (ShelleyBlock (Praos c) DijkstraEra)
   where
@@ -1011,6 +1017,34 @@ instance
    where
     Core.Block hdr body = shelleyBlockRaw blk
 
+  resolveLeiosBlockHdr leiosDb prevAnn blk =
+    case body ^. leiosCertBlockBodyL of
+      SNothing -> pure Nothing
+      SJust cert -> do
+        mEb <- leiosDbQueryCompletedEbByPoint leiosDb prevAnn
+        case mEb of
+          Nothing -> error $ "Announced EB unavailable: " <> show cert
+          Just eb ->
+            pure $ Just $ blk{shelleyBlockRaw = Core.Block hdr body'}
+           where
+            txSeq = toLeiosTxSeq @DijkstraEra eb
+            body' = body & Core.txSeqBlockBodyL .~ txSeq
+   where
+    Core.Block hdr body = shelleyBlockRaw blk
+
+  headerLeiosAnnouncement hdr =
+    case hbLeiosEbAnnouncement annBody of
+      SNothing -> Nothing
+      SJust ann ->
+        Just
+          MkLeiosPoint
+            { pointSlotNo = hbSlotNo annBody
+            , pointEbHash = ebAnnouncementHash ann
+            }
+   where
+    annBody :: HeaderBody c
+    Header{headerBody = annBody} = shelleyHeaderRaw hdr
+
 -- | Deserialise a transaction supplied as Leios-stored bytes.
 deserialiseLeiosTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Tx TopTx era
 deserialiseLeiosTx bs =
@@ -1026,4 +1060,3 @@ toLeiosTxSeq ::
   ShelleyBasedEra era =>
   [(TxHash, BS.ByteString)] -> StrictSeq (Tx TopTx era)
 toLeiosTxSeq = StrictSeq.fromList . fmap (deserialiseLeiosTx @era . snd)
-

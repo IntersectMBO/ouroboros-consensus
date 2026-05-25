@@ -60,10 +60,13 @@ import Control.Tracer
 import Data.ByteString.Lazy (ByteString)
 import Data.Typeable
 import Data.Void (Void)
+import LeiosDemoDb (LeiosDbConnection, LeiosDbHandle (open))
+import qualified LeiosDemoDb as LeiosDb
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import qualified Network.TypedProtocol.Stateful.Codec as Stateful
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config (configCodec)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -78,11 +81,12 @@ import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block
-  ( Serialised
+  ( Serialised (..)
   , decodePoint
   , decodeTip
   , encodePoint
@@ -112,7 +116,9 @@ import Ouroboros.Network.Protocol.LocalTxSubmission.Type
 -- | Protocol handlers for node-to-client (local) communication
 data Handlers m peer blk = Handlers
   { hChainSyncServer ::
-      ChainDB.Follower m blk (ChainDB.WithPoint blk (Serialised blk)) ->
+      BlockNodeToClientVersion blk ->
+      LeiosDbConnection m ->
+      ChainDB.Follower m blk (ChainDB.WithPoint blk (Header blk, Serialised blk)) ->
       ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
   , hTxSubmissionServer ::
       LocalTxSubmissionServer (GenTx blk) (ApplyTxErr blk) m ()
@@ -130,6 +136,8 @@ mkHandlers ::
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerQuery blk
   , ConfigSupportsNode blk
+  , ResolveLeiosBlock blk
+  , SerialiseNodeToClient blk blk
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   NodeKernel m addrNTN addrNTC blk ->
@@ -140,6 +148,7 @@ mkHandlers NodeKernelArgs{cfg, tracers} NodeKernel{getChainDB, getMempool} =
         chainSyncBlocksServer
           (Node.chainSyncServerBlockTracer tracers)
           getChainDB
+          (configCodec cfg)
     , hTxSubmissionServer =
         localTxSubmissionServer
           (Node.localTxSubmissionServerTracer tracers)
@@ -438,9 +447,10 @@ mkApps ::
   NodeKernel m addrNTN addrNTC blk ->
   Tracers m addrNTC blk e ->
   Codecs blk e m bCS bTX bSQ bTM ->
+  BlockNodeToClientVersion blk ->
   Handlers m addrNTC blk ->
   Apps m addrNTC bCS bTX bSQ bTM ()
-mkApps kernel Tracers{..} Codecs{..} Handlers{..} =
+mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} version Handlers{..} =
   Apps{..}
  where
   aChainSyncServer ::
@@ -449,16 +459,17 @@ mkApps kernel Tracers{..} Codecs{..} Handlers{..} =
     m ((), Maybe (Reception bCS))
   aChainSyncServer them channel = do
     labelThisThread "LocalChainSyncServer"
-    bracketWithPrivateRegistry
-      (chainSyncBlockServerFollower (getChainDB kernel))
-      ChainDB.followerClose
-      $ \flr ->
-        runPeer
-          (contramap (TraceLabelPeer them) tChainSyncTracer)
-          cChainSyncCodec
-          channel
-          $ chainSyncServerPeer
-          $ hChainSyncServer flr
+    bracket (open kernelLeiosDB) LeiosDb.close $ \leiosConn ->
+      bracketWithPrivateRegistry
+        (chainSyncBlockServerFollower (getChainDB kernel))
+        ChainDB.followerClose
+        $ \flr ->
+          runPeer
+            (contramap (TraceLabelPeer them) tChainSyncTracer)
+            cChainSyncCodec
+            channel
+            $ chainSyncServerPeer
+            $ hChainSyncServer version leiosConn flr
 
   aTxSubmissionServer ::
     addrNTC ->
