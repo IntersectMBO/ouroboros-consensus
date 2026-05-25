@@ -215,11 +215,18 @@ tickByronLedgerState slot ls =
 
 -- | Apply a block on top of a chain-ticked ledger using the exported pure
 -- 'applyByronBlock' helper.
+--
+-- Mirrors the pre-T3 behaviour: 'reapplyLedgerBlock' (i.e. 'ValidateNone').
+-- 'exampleBlock' is a synthetic fixture whose txs reference a UTxO that
+-- is not in the empty initial state, so a 'ValidateAll' pass would throw
+-- 'UTxOMissingInput'. Reapply is correct here because the golden fixtures
+-- only care about the structural shape of the ledger state, not its
+-- validatability.
 applyByronExample :: SlotNo -> ByronBlock -> LedgerState ByronBlock -> LedgerState ByronBlock
 applyByronExample slot blk ledger =
   case runExcept
     ( applyByronBlock
-        STS.ValidateAll
+        STS.ValidateNone
         OmitLedgerEvents
         ledgerConfig
         blk
