@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Committee.WFA
     -- * Cumulative stake distributions
   , SeatIndex (..)
   , NumPoolsWithPositiveStake (..)
+  , TotalStake (..)
   , WFAError (..)
   , WFATiebreaker (..)
   , wFATiebreakerWithEpochNonce
@@ -248,6 +249,14 @@ newtype NumPoolsWithPositiveStake
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
+-- | Total stake in the underlying stake distribution
+newtype TotalStake
+  = TotalStake
+  { unTotalStake :: Cumulative LedgerStake
+  }
+  deriving (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
 -- | Tiebreaker for voters with the same stake in the cumulative stake.
 --
 -- This is needed to ensure that the cumulative stake distribution is fair with
@@ -364,6 +373,10 @@ data ExtWFAStakeDistr a
   -- weighted Fait-Accompli instantiations with a target committee size larger
   -- than the number of pools with positive stake, which would lead to incorrect
   -- results (e.g. granting persistent seats to voters with zero stake).
+  , totalStake :: TotalStake
+  -- ^ Total stake in the underlying stake distribution. This is also
+  -- precomputed at the beginning of each epoch to allow for quick
+  -- transformations between absolute and relative stakes.
   }
   deriving Show
 
@@ -383,6 +396,7 @@ mkExtWFAStakeDistr tiebreaker pools
         ExtWFAStakeDistr
           { unExtWFAStakeDistr = stakeDistrArray
           , numPoolsWithPositiveStake = numPoolsWithPositiveStakeAcc
+          , totalStake = TotalStake totalStakeAcc
           }
  where
   stakeDistrArray =
@@ -396,7 +410,7 @@ mkExtWFAStakeDistr tiebreaker pools
   --   * seat 0's cumulative stake == total stake, and
   --   * last seat's cumulative stake = its own stake.
   -- In addition, count the number of pools with positive stake in the same pass.
-  ((_totalStake, numPoolsWithPositiveStakeAcc), cumulativeStakeAndPools) =
+  ((totalStakeAcc, numPoolsWithPositiveStakeAcc), cumulativeStakeAndPools) =
     List.mapAccumR
       accumStakeAndCountPoolsWithPositiveStake
       ( Cumulative (LedgerStake 0)

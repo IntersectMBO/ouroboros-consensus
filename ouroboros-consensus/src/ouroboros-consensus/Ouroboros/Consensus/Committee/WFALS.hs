@@ -93,7 +93,7 @@ import Ouroboros.Consensus.Committee.WFA
   , PersistentCommitteeSize (..)
   , SeatIndex (..)
   , TotalNonPersistentStake (..)
-  , TotalPersistentStake
+  , TotalPersistentStake (..)
   , WFAError
   , getCandidateIfSeatWithinBounds
   , unsafeGetCandidateInSeat
@@ -130,7 +130,7 @@ instance
       persistentCommitteeSize :: !PersistentCommitteeSize
     , -- Expected number of non-persistent voters
       nonPersistentCommitteeSize :: !NonPersistentCommitteeSize
-    , --  Total stake of persistent voters
+    , -- Total stake of persistent voters
       totalPersistentStake :: !TotalPersistentStake
     , -- Total stake of non-persistent voters
       totalNonPersistentStake :: !TotalNonPersistentStake
@@ -398,18 +398,15 @@ implVerifyVote committee = \case
 
 -- | Compute the voting power of an eligible committee member
 --
--- NOTE: there is a subtle difference between the "Ledger stake" and the "Vote
--- weight" of a given voter. On one hand, the ledger stake is the stake as
--- reflected directly by the ledger stake distribution under consideration. On
--- the other hand, the "Vote" weight refers to the voting power of that voter,
--- i.e., the stake that a voter can effectively contribute to an election,
--- which might be different from their ledger stake depending on their committee
+-- In this voting committee scheme, the vote weight of a member depends on their
 -- membership type:
 --   * for a persistent committee member, their vote weight is equal to their
---     ledger stake throughout their entire tenure in the committee, whereas
---   * for a non-persistent committee member, their vote weight (provided that
---     they are actually selected to vote via local sortition) is equal to their
---     ledger stake normalized by the total non-persistent stake.
+--     (normalised) ledger stake throughout their entire tenure in the
+--     committee, whereas
+--   * for a non-persistent committee member, their vote weight is equal to
+--     their (normalised) non-persistent vote weight. This is computed as the
+--     number of seats granted to them by local sortition, scaled by their
+--     relative non-persistent stake w.r.t. other non-persistent voters.
 implEligiblePartyVoteWeight ::
   VotingCommittee crypto WFALS ->
   EligibilityWitness crypto WFALS ->
@@ -419,7 +416,7 @@ implEligiblePartyVoteWeight committee = \case
   WFALSPersistentMember
     _seatIndex
     (LedgerStake stake) ->
-      VoteWeight stake
+      mkVoteWeight stake
   -- Non-persistent members have their voting power proportional to their
   -- number of seats granted by local sortition and their stake (normalized
   -- by the total non-persistent stake)
@@ -428,13 +425,19 @@ implEligiblePartyVoteWeight committee = \case
     (LedgerStake stake)
     _vrfOutput
     numSeats ->
-      VoteWeight $
+      mkVoteWeight $
         fromIntegral (unLocalSortitionNumSeats (unNonZero numSeats))
           * stake
           / nonPersistentStake
-     where
-      TotalNonPersistentStake (Cumulative (LedgerStake nonPersistentStake)) =
-        totalNonPersistentStake committee
+ where
+  TotalPersistentStake (Cumulative (LedgerStake persistentStake)) =
+    totalPersistentStake committee
+  TotalNonPersistentStake (Cumulative (LedgerStake nonPersistentStake)) =
+    totalNonPersistentStake committee
+
+  mkVoteWeight absoluteStake =
+    VoteWeight (absoluteStake / (persistentStake + nonPersistentStake))
+
 
 -- | Forge a certificate attesting the winner of a given election
 implForgeCert ::
