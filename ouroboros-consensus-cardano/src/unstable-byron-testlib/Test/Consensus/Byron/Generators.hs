@@ -68,7 +68,6 @@ import Ouroboros.Consensus.HeaderValidation (AnnTip (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
-import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
 import Ouroboros.Network.SizeInBytes
@@ -401,13 +400,13 @@ instance Arbitrary CC.Del.Map where
 instance Arbitrary ByronTransition where
   arbitrary = ByronTransitionInfo . Map.fromList <$> arbitrary
 
-instance Arbitrary (LedgerState ByronBlock mk) where
+instance Arbitrary (LedgerState ByronBlock) where
   arbitrary = ByronLedgerState <$> arbitrary <*> arbitrary <*> arbitrary
 
 -- | Generator for a Byron ledger state in which the tip of the ledger given by
 -- `byronLedgerTipBlockNo` is consistent with the chain validation state, i.e., if there is no
 -- previous block, the ledger tip wil be `Origin`.
-genByronLedgerState :: Gen (LedgerState ByronBlock EmptyMK)
+genByronLedgerState :: Gen (LedgerState ByronBlock)
 genByronLedgerState = do
   chainValidationState <- arbitrary
   ledgerTransition <- arbitrary
@@ -423,9 +422,6 @@ genByronLedgerState = do
     case cvsPreviousHash of
       Left _ -> pure Origin
       Right _ -> NotOrigin <$> arbitrary
-
-instance ZeroableMK mk => Arbitrary (LedgerTables ByronBlock mk) where
-  arbitrary = pure emptyLedgerTables
 
 genByronLedgerConfig :: Gen Byron.Config
 genByronLedgerConfig = hedgehog $ CC.genConfig protocolMagicId

@@ -43,7 +43,7 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
-import Ouroboros.Consensus.Util ((.....:))
+import Ouroboros.Consensus.Util ((.....:), (.:))
 import qualified Test.Cardano.Chain.Elaboration.Block as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Delegation as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Keys as Spec.Test
@@ -84,7 +84,7 @@ protocolInfoDualByron ::
   PBftParams ->
   -- | Are we a core node?
   [CoreNodeId] ->
-  ( ProtocolInfo DualByronBlock
+  ( ProtocolInfo m DualByronBlock
   , m [BlockForging m DualByronBlock]
   )
 protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
@@ -117,16 +117,19 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
                   }
             , topLevelConfigCheckpoints = emptyCheckpointsMap
             }
-      , pInfoInitLedger =
-          ExtLedgerState
-            { ledgerState =
-                DualLedgerState
-                  { dualLedgerStateMain = initConcreteState
-                  , dualLedgerStateAux = initAbstractState
-                  , dualLedgerStateBridge = initBridge
-                  }
-            , headerState = genesisHeaderState S.empty
-            }
+      , pInfoInitLedger = \tbl ->
+          pure
+            ExtStateHandle
+              { unExtStateHandle =
+                  newStateHandle
+                    DualLedgerState
+                      { dualLedgerStateMain = initConcreteState
+                      , dualLedgerStateAux = initAbstractState
+                      , dualLedgerStateBridge = initBridge
+                      }
+                    tbl
+              , extHeaderState = genesisHeaderState S.empty
+              }
       }
   , return $ dualByronBlockForging . byronLeaderCredentials <$> credss
   )
@@ -156,8 +159,8 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
     configGenesisData = Impl.configGenesisData translated
     protocolParameters = Impl.gdProtocolParameters configGenesisData
 
-  initAbstractState :: LedgerState ByronSpecBlock ValuesMK
-  initConcreteState :: LedgerState ByronBlock ValuesMK
+  initAbstractState :: LedgerState ByronSpecBlock
+  initConcreteState :: LedgerState ByronBlock
 
   initAbstractState = initByronSpecLedgerState abstractGenesis
   initConcreteState = initByronLedgerState concreteGenesis (Just initUtxo)

@@ -21,7 +21,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mock.Ledger.Block
 import Ouroboros.Consensus.Mock.Ledger.Block.BFT
 import qualified Ouroboros.Consensus.Mock.Ledger.State as L
@@ -121,23 +120,9 @@ instance (SimpleCrypto c, Typeable ext) => Arbitrary (SomeResult (SimpleBlock c 
 
 instance
   (SimpleCrypto c, Typeable ext) =>
-  Arbitrary (LedgerState (SimpleBlock c ext) EmptyMK)
+  Arbitrary (LedgerState (SimpleBlock c ext))
   where
-  arbitrary =
-    forgetLedgerTables
-      <$> arbitrary @(LedgerState (SimpleBlock c ext) ValuesMK)
-
-instance
-  (SimpleCrypto c, Typeable ext) =>
-  Arbitrary (LedgerState (SimpleBlock c ext) ValuesMK)
-  where
-  arbitrary =
-    unstowLedgerTables
-      . flip SimpleLedgerState emptyLedgerTables
-      <$> arbitrary
-
-instance Arbitrary (LedgerTables (SimpleBlock c ext) ValuesMK) where
-  arbitrary = LedgerTables . ValuesMK <$> arbitrary
+  arbitrary = SimpleLedgerState <$> arbitrary
 
 instance Arbitrary ByteSize32 where
   arbitrary = ByteSize32 <$> arbitrary

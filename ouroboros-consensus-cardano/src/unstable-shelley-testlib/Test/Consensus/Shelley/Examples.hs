@@ -41,8 +41,6 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Common
@@ -90,34 +88,6 @@ import Test.Util.Serialisation.SomeResult (SomeResult (..))
 codecConfig :: CodecConfig StandardShelleyBlock
 codecConfig = ShelleyCodecConfig
 
-mkLedgerTables ::
-  forall proto era.
-  ShelleyCompatible proto era =>
-  LC.Tx LC.TopTx era ->
-  LedgerTables (ShelleyBlock proto era) ValuesMK
-mkLedgerTables tx =
-  LedgerTables $
-    ValuesMK $
-      Map.fromList $
-        zip exampleTxIns exampleTxOuts
- where
-  exampleTxIns :: [BigEndianTxIn]
-  exampleTxIns = case toList (tx ^. (LC.bodyTxL . LC.allInputsTxBodyF)) of
-    [] -> error "No transaction inputs were provided to construct the ledger tables"
-    -- We require at least one transaction input (and one
-    -- transaction output) in the example provided by
-    -- cardano-ledger to make sure that we test the serialization
-    -- of ledger tables with at least one non-trivial example.
-    --
-    -- Also all transactions in Cardano have at least one input for
-    -- automatic replay protection.
-    xs -> map BigEndianTxIn xs
-
-  exampleTxOuts :: [LC.TxOut era]
-  exampleTxOuts = case toList (tx ^. (LC.bodyTxL . LC.outputsTxBodyL)) of
-    [] -> error "No transaction outputs were provided to construct the ledger tables"
-    xs -> xs
-
 fromShelleyLedgerExamples ::
   ShelleyCompatible (TPraos StandardCrypto) era =>
   ProtocolLedgerExamples (SL.BHeader StandardCrypto) era ->
@@ -144,7 +114,6 @@ fromShelleyLedgerExamples
       , exampleExtLedgerState = unlabelled extLedgerState
       , exampleSlotNo = unlabelled slotNo
       , exampleLedgerConfig = unlabelled ledgerConfig
-      , exampleLedgerTables = unlabelled $ mkLedgerTables leTx
       }
    where
     blk = mkShelleyBlock pleBlock
@@ -220,7 +189,6 @@ fromShelleyLedgerExamples
                 }
         , shelleyLedgerState = leNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
-        , shelleyLedgerTables = LedgerTables EmptyMK
         , shelleyLedgerLatestPerasCertRound = SNothing
         }
     chainDepState = TPraosState (NotOrigin 1) pleChainDepState
@@ -255,7 +223,6 @@ fromShelleyLedgerExamplesPraos
       , exampleResult = results
       , exampleAnnTip = unlabelled annTip
       , exampleLedgerState = unlabelled ledgerState
-      , exampleLedgerTables = unlabelled $ mkLedgerTables leTx
       , exampleChainDepState = unlabelled chainDepState
       , exampleExtLedgerState = unlabelled extLedgerState
       , exampleSlotNo = unlabelled slotNo
@@ -357,7 +324,6 @@ fromShelleyLedgerExamplesPraos
                 }
         , shelleyLedgerState = leNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
-        , shelleyLedgerTables = emptyLedgerTables
         , shelleyLedgerLatestPerasCertRound = SNothing
         }
     chainDepState =

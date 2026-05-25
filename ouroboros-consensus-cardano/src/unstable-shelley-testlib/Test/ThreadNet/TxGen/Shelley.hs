@@ -13,12 +13,10 @@ module Test.ThreadNet.TxGen.Shelley
   ) where
 
 import qualified Cardano.Ledger.Shelley.API as SL
-import Control.Monad.Except (runExcept)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras (ShelleyEra)
 import Ouroboros.Consensus.Shelley.HFEras ()
@@ -46,53 +44,20 @@ data ShelleyTxGenExtra = ShelleyTxGenExtra
 instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
   type TxGenExtra (ShelleyBlock (TPraos MockCrypto) ShelleyEra) = ShelleyTxGenExtra
 
-  testGenTxs _coreNodeId _numCoreNodes curSlotNo cfg extra lst
-    | stgeStartAt > curSlotNo = pure []
-    -- TODO Temporarily disable the transaction generator until we fix the
-    -- failing assertion in TxSubmission.Inbound, see #2680.
-    --
-    -- When fixed, remove the True case keepig the else case below to re-enable
-    -- the transaction generator.
-
-    | otherwise =
-        if True
-          then pure []
-          else do
-            n <- choose (0, 20)
-            go [] n $
-              applyDiffs lst $
-                applyChainTick OmitLedgerEvents lcfg curSlotNo $
-                  forgetLedgerTables lst
-   where
-    ShelleyTxGenExtra
-      { stgeGenEnv
-      , stgeStartAt
-      } = extra
-
-    lcfg :: LedgerConfig (ShelleyBlock (TPraos MockCrypto) ShelleyEra)
-    lcfg = configLedger cfg
-
-    go ::
-      [GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)] ->
-      -- \^ Accumulator
-      Integer ->
-      -- \^ Number of txs to still produce
-      TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ValuesMK ->
-      Gen [GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)]
-    go acc 0 _ = return (reverse acc)
-    go acc n st = do
-      mbTx <- genTx cfg curSlotNo st stgeGenEnv
-      case mbTx of
-        Nothing -> return (reverse acc) -- cannot afford more transactions
-        Just tx -> case runExcept $ fst <$> applyTx lcfg DoNotIntervene curSlotNo tx st of
-          -- We don't mind generating invalid transactions
-          Left _ -> go (tx : acc) (n - 1) st
-          Right st' -> go (tx : acc) (n - 1) (applyDiffs st st')
+  -- The Shelley test transaction generator was already disabled before the
+  -- UTxO-HD v3 work (see #2680: failing assertion in TxSubmission.Inbound).
+  -- The original aspirational body relied on the now-removed pure
+  -- 'applyChainTick' / 'applyTx' / 'forgetLedgerTables' / 'applyDiffs'.
+  -- Restoring it needs a port to the new per-tx mempool workflow
+  -- ('TxLocalData' / 'MempoolAcc' / 'prepareTx') together with a way to
+  -- obtain a 'TickedStateHandle'. Tracked as a deferred follow-up in
+  -- fixing-tests.md.
+  testGenTxs _coreNodeId _numCoreNodes _curSlotNo _cfg _extra _lst = pure []
 
 genTx ::
   TopLevelConfig (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
   SlotNo ->
-  TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ValuesMK ->
+  TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
   Gen.GenEnv MockCrypto ShelleyEra ->
   Gen (Maybe (GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)))
 genTx _cfg slotNo TickedShelleyLedgerState{tickedShelleyLedgerState} genEnv =

@@ -32,17 +32,18 @@ import qualified Cardano.Chain.UTxO as CC
 import qualified Cardano.Chain.Update.Validation.Interface as CC.UPI
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import Control.Monad.Except (runExcept)
+import qualified Control.State.Transition.Extended as STS
 import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.Crypto.DSIGN (SignKeyDSIGN (..))
 import Ouroboros.Consensus.Byron.Ledger
+import Ouroboros.Consensus.Byron.Ledger.Conversions (toByronSlotNo)
 import Ouroboros.Consensus.Byron.Node (ByronLeaderCredentials (..))
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PBFT
@@ -116,11 +117,10 @@ examples =
     , exampleResult = unlabelled exampleResult
     , exampleAnnTip = unlabelled exampleAnnTip
     , exampleLedgerConfig = unlabelled ledgerConfig
-    , exampleLedgerState = unlabelled $ forgetLedgerTables exampleLedgerState
+    , exampleLedgerState = unlabelled exampleLedgerState
     , exampleChainDepState = unlabelled exampleChainDepState
-    , exampleExtLedgerState = unlabelled $ forgetLedgerTables exampleExtLedgerState
+    , exampleExtLedgerState = unlabelled exampleExtLedgerState
     , exampleSlotNo = unlabelled exampleSlotNo
-    , exampleLedgerTables = unlabelled emptyLedgerTables
     }
  where
   regularAndEBB :: a -> a -> Labelled a
@@ -135,7 +135,7 @@ exampleBlock =
     cfg
     (BlockNo 1)
     (SlotNo 1)
-    (applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 1) (forgetLedgerTables ledgerStateAfterEBB))
+    (tickByronLedgerState (SlotNo 1) ledgerStateAfterEBB)
     [ValidatedByronTx exampleGenTx]
     (fakeMkIsLeader leaderCredentials)
  where
@@ -184,7 +184,7 @@ exampleChainDepState = S.fromList signers
  where
   signers = map (`S.PBftSigner` CC.exampleKeyHash) [1 .. 4]
 
-emptyLedgerState :: LedgerState ByronBlock ValuesMK
+emptyLedgerState :: LedgerState ByronBlock
 emptyLedgerState =
   ByronLedgerState
     { byronLedgerTipBlockNo = Origin
@@ -197,28 +197,47 @@ emptyLedgerState =
     runExcept $
       CC.Block.initialChainValidationState ledgerConfig
 
-ledgerStateAfterEBB :: LedgerState ByronBlock ValuesMK
-ledgerStateAfterEBB =
-  applyDiffs emptyLedgerState
-    . reapplyLedgerBlock OmitLedgerEvents ledgerConfig exampleEBB
-    . applyDiffs emptyLedgerState
-    . applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 0)
-    . forgetLedgerTables
-    $ emptyLedgerState
+-- | Pure version of the chain-tick used by Byron's 'IsLedger' instance.
+--
+-- The instance method @applyChainTickLedgerResult@ lives in @m@ for the
+-- benefit of blocks with on-disk tables, but its Byron body does no I/O:
+-- it just composes 'CC.applyChainTick' with the ledger-state wrapping.
+-- We reproduce that pure composition here so the golden fixtures can be
+-- pure values.
+tickByronLedgerState ::
+  SlotNo -> LedgerState ByronBlock -> Ticked LedgerState ByronBlock
+tickByronLedgerState slot ls =
+  TickedByronLedgerState
+    { tickedByronLedgerState =
+        CC.applyChainTick ledgerConfig (toByronSlotNo slot) (byronLedgerState ls)
+    , untickedByronLedgerTransition = byronLedgerTransition ls
+    }
 
-exampleLedgerState :: LedgerState ByronBlock ValuesMK
-exampleLedgerState =
-  applyDiffs emptyLedgerState
-    . reapplyLedgerBlock OmitLedgerEvents ledgerConfig exampleBlock
-    . applyDiffs ledgerStateAfterEBB
-    . applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 1)
-    . forgetLedgerTables
-    $ ledgerStateAfterEBB
+-- | Apply a block on top of a chain-ticked ledger using the exported pure
+-- 'applyByronBlock' helper.
+applyByronExample :: SlotNo -> ByronBlock -> LedgerState ByronBlock -> LedgerState ByronBlock
+applyByronExample slot blk ledger =
+  case runExcept
+    ( applyByronBlock
+        STS.ValidateAll
+        OmitLedgerEvents
+        ledgerConfig
+        blk
+        (tickByronLedgerState slot ledger)
+    ) of
+    Left err -> error $ "applyByronExample: " <> show err
+    Right v -> v
+
+ledgerStateAfterEBB :: LedgerState ByronBlock
+ledgerStateAfterEBB = applyByronExample (SlotNo 0) exampleEBB emptyLedgerState
+
+exampleLedgerState :: LedgerState ByronBlock
+exampleLedgerState = applyByronExample (SlotNo 1) exampleBlock ledgerStateAfterEBB
 
 exampleHeaderState :: HeaderState ByronBlock
 exampleHeaderState = HeaderState (NotOrigin exampleAnnTip) exampleChainDepState
 
-exampleExtLedgerState :: ExtLedgerState ByronBlock ValuesMK
+exampleExtLedgerState :: ExtLedgerState ByronBlock
 exampleExtLedgerState =
   ExtLedgerState
     { ledgerState = exampleLedgerState

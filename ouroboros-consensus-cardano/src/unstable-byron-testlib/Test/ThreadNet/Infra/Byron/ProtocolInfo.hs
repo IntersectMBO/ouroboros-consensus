@@ -39,7 +39,7 @@ mkProtocolByron ::
   Genesis.GeneratedSecrets ->
   -- | We return the signing key which is needed in some tests, because it
   -- cannot easily be extracted from the 'ProtocolInfo'.
-  (ProtocolInfo ByronBlock, [BlockForging m ByronBlock], SignKeyDSIGN ByronDSIGN)
+  (ProtocolInfo m ByronBlock, [BlockForging m ByronBlock], SignKeyDSIGN ByronDSIGN)
 mkProtocolByron params coreNodeId genesisConfig genesisSecrets =
   (protocolInfo, blockForging, signingKey)
  where
@@ -55,7 +55,7 @@ mkProtocolByron params coreNodeId genesisConfig genesisSecrets =
 
   PBftParams{pbftSignatureThreshold} = params
 
-  protocolInfo :: ProtocolInfo ByronBlock
+  protocolInfo :: ProtocolInfo m ByronBlock
   protocolInfo = protocolInfoByron protocolParams
 
   blockForging :: [BlockForging m ByronBlock]

@@ -112,11 +112,13 @@ import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Eras (ShelleyEra)
 import Ouroboros.Consensus.Shelley.Ledger
   ( GenTx (..)
+  , MkHandle
   , ShelleyBasedEra
   , ShelleyBlock
   , ShelleyCompatible
   , mkShelleyTx
   )
+import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Util.Assert
@@ -460,14 +462,16 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
 
 mkProtocolShelley ::
   forall m c.
-  ( KESAgentContext c m
+  ( IOLike m
+  , KESAgentContext c m
   , ShelleyCompatible (TPraos c) ShelleyEra
   ) =>
   ShelleyGenesis ->
   SL.Nonce ->
   ProtVer ->
   CoreNode c ->
-  ( ProtocolInfo (ShelleyBlock (TPraos c) ShelleyEra)
+  MkHandle m ->
+  ( ProtocolInfo m (ShelleyBlock (TPraos c) ShelleyEra)
   , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
   )
 mkProtocolShelley genesis initialNonce protVer coreNode =
