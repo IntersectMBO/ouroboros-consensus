@@ -24,13 +24,14 @@ import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 type MockPraosRuleBlock = SimplePraosRuleBlock SimpleMockCrypto
 
 protocolInfoPraosRule ::
+  Monad m =>
   NumCoreNodes ->
   CoreNodeId ->
   PraosParams ->
   HardFork.EraParams ->
   LeaderSchedule ->
   PraosEvolvingStake ->
-  ProtocolInfo MockPraosRuleBlock
+  ProtocolInfo m MockPraosRuleBlock
 protocolInfoPraosRule
   numCoreNodes
   nid
@@ -61,11 +62,13 @@ protocolInfoPraosRule
             , topLevelConfigStorage = SimpleStorageConfig (praosSecurityParam params)
             , topLevelConfigCheckpoints = emptyCheckpointsMap
             }
-      , pInfoInitLedger =
-          ExtLedgerState
-            { ledgerState = genesisSimpleLedgerState addrDist
-            , headerState = genesisHeaderState ()
-            }
+      , pInfoInitLedger = \() ->
+          pure
+            ExtStateHandle
+              { unExtStateHandle =
+                  SimpleStateHandle (genesisSimpleLedgerState addrDist)
+              , extHeaderState = genesisHeaderState ()
+              }
       }
    where
     addrDist :: AddrDist

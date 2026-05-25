@@ -32,7 +32,7 @@ data Rekeying m blk = forall opKey. Rekeying
   -- and diffused (eg no @PBftExceededSignThreshold@).
   , rekeyUpd ::
       CoreNodeId ->
-      ProtocolInfo blk ->
+      ProtocolInfo m blk ->
       m [MkBlockForging m blk] ->
       EpochNo ->
       opKey ->

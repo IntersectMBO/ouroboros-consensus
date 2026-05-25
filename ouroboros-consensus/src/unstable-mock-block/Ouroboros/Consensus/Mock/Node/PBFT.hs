@@ -26,9 +26,10 @@ import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 type MockPBftBlock = SimplePBftBlock SimpleMockCrypto PBftMockCrypto
 
 protocolInfoMockPBFT ::
+  Monad m =>
   PBftParams ->
   HardFork.EraParams ->
-  ProtocolInfo MockPBftBlock
+  ProtocolInfo m MockPBftBlock
 protocolInfoMockPBFT params eraParams =
   ProtocolInfo
     { pInfoConfig =
@@ -43,10 +44,13 @@ protocolInfoMockPBFT params eraParams =
           , topLevelConfigStorage = SimpleStorageConfig (pbftSecurityParam params)
           , topLevelConfigCheckpoints = emptyCheckpointsMap
           }
-    , pInfoInitLedger =
-        ExtLedgerState
-          (genesisSimpleLedgerState addrDist)
-          (genesisHeaderState S.empty)
+    , pInfoInitLedger = \() ->
+        pure
+          ExtStateHandle
+            { unExtStateHandle =
+                SimpleStateHandle (genesisSimpleLedgerState addrDist)
+            , extHeaderState = genesisHeaderState S.empty
+            }
     }
  where
   ledgerView :: PBftLedgerView PBftMockCrypto

@@ -7,10 +7,13 @@
 module Ouroboros.Consensus.ByronSpec.Ledger.Mempool
   ( -- * Type family instances
     GenTx (..)
+  , MempoolAcc (..)
+  , TxLocalData (..)
   , Validated (..)
   ) where
 
 import Codec.Serialise
+import Control.Monad.Except (runExcept, throwError)
 import GHC.Generics (Generic)
 import NoThunks.Class (AllowThunk (..), NoThunks)
 import Ouroboros.Consensus.ByronSpec.Ledger.Block
@@ -22,7 +25,6 @@ import qualified Ouroboros.Consensus.ByronSpec.Ledger.GenTx as GenTx
 import Ouroboros.Consensus.ByronSpec.Ledger.Ledger
 import Ouroboros.Consensus.ByronSpec.Ledger.Orphans ()
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 
 newtype instance GenTx ByronSpecBlock = ByronSpecGenTx
   { unByronSpecGenTx :: ByronSpecGenTx
@@ -39,24 +41,37 @@ newtype instance Validated (GenTx ByronSpecBlock) = ValidatedByronSpecGenTx
 
 type instance ApplyTxErr ByronSpecBlock = ByronSpecGenTxErr
 
+-- | The Byron spec ledger has no on-disk tables; nothing to read per-tx.
+data instance TxLocalData ByronSpecBlock = ByronSpecTxLocalData
+  deriving stock Generic
+  deriving anyclass NoThunks
+
+-- | The mempool acc /is/ the ticked ledger state for the Byron spec: each tx is
+-- applied in place to that state.
+newtype instance MempoolAcc ByronSpecBlock = ByronSpecMempoolAcc
+  {unByronSpecMempoolAcc :: Ticked LedgerState ByronSpecBlock}
+  deriving stock Generic
+  deriving anyclass NoThunks
+
 instance LedgerSupportsMempool ByronSpecBlock where
-  applyTx cfg _wti _slot tx (TickedByronSpecLedgerState tip st) =
-    fmap
-      ( \st' ->
-          ( TickedByronSpecLedgerState tip st'
-          , ValidatedByronSpecGenTx tx
+  emptyAcc = ByronSpecMempoolAcc
+  accTickedState = unByronSpecMempoolAcc
+
+  prepareTx _cfg _slot _ts _acc _tx = pure ByronSpecTxLocalData
+
+  applyTx cfg _wti _slot (ByronSpecMempoolAcc (TickedByronSpecLedgerState tip st)) tx _tld =
+    case runExcept (GenTx.apply cfg (unByronSpecGenTx tx) st) of
+      Left err -> throwError err
+      Right st' ->
+        pure
+          ( ValidatedByronSpecGenTx tx
+          , ByronSpecMempoolAcc (TickedByronSpecLedgerState tip st')
           )
-      )
-      $ GenTx.apply cfg (unByronSpecGenTx tx) st
 
   -- Byron spec doesn't have multiple validation modes
-  reapplyTx cfg slot vtx st =
-    applyDiffs st . fst
-      <$> applyTx cfg DoNotIntervene slot (forgetValidatedByronSpecGenTx vtx) st
+  reapplyTx cfg slot acc vtx tld = snd <$> applyTx cfg DoNotIntervene slot acc (forgetValidatedByronSpecGenTx vtx) tld
 
   txForgetValidated = forgetValidatedByronSpecGenTx
-
-  getTransactionKeySets _ = emptyLedgerTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 
@@ -67,4 +82,4 @@ instance TxLimits ByronSpecBlock where
   txWireSize = const . fromIntegral $ (0 :: Int)
   blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 1
 
-  txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
+  txMeasure _cfg _st _tld _tx = pure $ IgnoringOverflow $ ByteSize32 0
