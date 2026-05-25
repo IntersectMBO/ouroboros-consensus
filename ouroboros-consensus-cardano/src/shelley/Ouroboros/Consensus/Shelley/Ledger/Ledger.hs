@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -108,6 +109,7 @@ import Data.Word
 import GHC.Generics (Generic)
 import Lens.Micro
 import Lens.Micro.Extras (view)
+import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.Config
@@ -483,6 +485,18 @@ instance BlockSupportsLedgerHD m (ShelleyBlock proto era) where
   duplicateTicked (TickedShelleyStateHandle s h) = TickedShelleyStateHandle s <$> duplicateHandle h
 
   getStats = getStatsHandle . stateRefHandle
+
+deriving via
+  OnlyCheckWhnfNamed "ShelleyStateHandle" (StateHandle m (ShelleyBlock proto era))
+  instance
+    NoThunks (StateHandle m (ShelleyBlock proto era))
+
+deriving via
+  OnlyCheckWhnfNamed
+    "TickedShelleyStateHandle"
+    (TickedStateHandle m (ShelleyBlock proto era))
+  instance
+    NoThunks (TickedStateHandle m (ShelleyBlock proto era))
 
 instance ShelleyBasedEra era => IsLedger LedgerState (ShelleyBlock proto era) where
   type LedgerErr LedgerState (ShelleyBlock proto era) = SL.BlockTransitionError era

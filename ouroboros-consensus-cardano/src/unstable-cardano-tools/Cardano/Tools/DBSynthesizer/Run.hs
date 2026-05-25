@@ -51,9 +51,8 @@ import Ouroboros.Consensus.Shelley.Node
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
+import qualified Ouroboros.Consensus.Backends as Backends
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
-import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.Block
 import Ouroboros.Network.Point (WithOrigin (..))
@@ -153,7 +152,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
     let
       epochSize = sgEpochLength confShelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
-      flavargs = LedgerDB.LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
+      flavargs = Backends.inMemoryBackendArgs
       dbArgs =
         ChainDB.completeChainDbArgs
           registry

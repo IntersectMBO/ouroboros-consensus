@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -201,8 +202,10 @@ type instance LedgerTablesHandle m ByronBlock = ()
 
 instance BlockSupportsLedgerHD m ByronBlock where
   newtype StateHandle m ByronBlock = ByronStateHandle (LedgerState ByronBlock)
+    deriving newtype NoThunks
   newtype TickedStateHandle m ByronBlock
     = TickedByronStateHandle (Ticked LedgerState ByronBlock)
+    deriving newtype NoThunks
 
   newStateHandle st () = ByronStateHandle st
 

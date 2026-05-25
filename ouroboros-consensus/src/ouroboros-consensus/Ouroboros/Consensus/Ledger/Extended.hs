@@ -1,5 +1,7 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -47,7 +49,7 @@ import Data.Proxy
 import Data.Typeable
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import NoThunks.Class (NoThunks (..))
+import NoThunks.Class (NoThunks (..), OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation
@@ -150,6 +152,7 @@ data ExtStateHandle m blk = ExtStateHandle
   { unExtStateHandle :: !(StateHandle m blk)
   , extHeaderState :: !(HeaderState blk)
   }
+  deriving NoThunks via OnlyCheckWhnfNamed "ExtStateHandle" (ExtStateHandle m blk)
 
 -- | A handle for a 'Ticked' 'ExtLedgerState'.
 data TickedExtStateHandle m blk = TickedExtStateHandle
@@ -157,6 +160,7 @@ data TickedExtStateHandle m blk = TickedExtStateHandle
   , tickedExtLedgerView :: !(LedgerView (BlockProtocol blk))
   , tickedExtHeaderState :: !(Ticked (HeaderState blk))
   }
+  deriving NoThunks via OnlyCheckWhnfNamed "TickedExtStateHandle" (TickedExtStateHandle m blk)
 
 -- | Pure projection of the extended ledger state from an 'ExtStateHandle'.
 extLedgerState ::

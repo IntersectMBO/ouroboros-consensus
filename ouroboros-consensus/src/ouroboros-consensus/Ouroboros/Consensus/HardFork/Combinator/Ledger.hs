@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -49,6 +50,7 @@ import Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
 import Data.Void
 import GHC.Generics (Generic)
+import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
@@ -159,6 +161,18 @@ instance CanHardFork xs => BlockSupportsLedgerHD m (HardForkBlock xs) where
     flip HardForkStateHandle t <$> hsequence' (hcmap proxySingle (Comp . duplicate) st)
   duplicateTicked (HardForkTickedStateHandle ti st t) =
     flip (HardForkTickedStateHandle ti) t <$> hsequence' (hcmap proxySingle (Comp . duplicateTicked) st)
+
+deriving via
+  OnlyCheckWhnfNamed "HardForkStateHandle" (StateHandle m (HardForkBlock xs))
+  instance
+    NoThunks (StateHandle m (HardForkBlock xs))
+
+deriving via
+  OnlyCheckWhnfNamed
+    "HardForkTickedStateHandle"
+    (TickedStateHandle m (HardForkBlock xs))
+  instance
+    NoThunks (TickedStateHandle m (HardForkBlock xs))
 
 instance CanHardFork xs => IsLedger LedgerState (HardForkBlock xs) where
   type LedgerErr LedgerState (HardForkBlock xs) = HardForkLedgerError xs

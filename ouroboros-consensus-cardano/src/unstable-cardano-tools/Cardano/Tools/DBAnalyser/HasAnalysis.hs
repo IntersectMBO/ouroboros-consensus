@@ -23,10 +23,10 @@ import TextBuilder (TextBuilder)
 
 data WithLedgerState blk = WithLedgerState
   { wlsBlk :: blk
-  , wlsStateBefore :: LedgerState blk ValuesMK
-  -- ^ This ledger state contains only the values to be consumed by the block
-  , wlsStateAfter :: LedgerState blk ValuesMK
-  -- ^ This ledger state contains only the values produced by the block
+  , wlsStateBefore :: LedgerState blk
+  -- ^ The ledger state before this block was applied.
+  , wlsStateAfter :: LedgerState blk
+  -- ^ The ledger state after this block was applied.
   }
 
 class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis blk where
@@ -61,4 +61,4 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
 
 class HasProtocolInfo blk where
   data Args blk
-  mkProtocolInfo :: Args blk -> IO (ProtocolInfo blk)
+  mkProtocolInfo :: Args blk -> IO (ProtocolInfo IO blk)

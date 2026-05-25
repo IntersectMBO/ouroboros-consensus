@@ -47,15 +47,12 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block (genesisPoint)
-import System.FS.API
 import System.IO
-import System.Random (genWord64, newStdGen)
+import System.Random (newStdGen)
 import Text.Printf (printf)
 
 {-------------------------------------------------------------------------------
@@ -67,6 +64,9 @@ openLedgerDB ::
   ( LedgerSupportsProtocol blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , BlockSupportsLedgerHD IO blk
+  , NoThunks (ExtStateHandle IO blk)
+  , NoThunks (LedgerState blk)
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   ImmutableDB.ImmutableDB IO blk ->
@@ -85,35 +85,30 @@ openLedgerDB ::
 openLedgerDB args immutableDB replayGoal =
   runWithTempRegistry $
     (,()) <$> do
-      (ldb, od) <- case LedgerDB.lgrBackendArgs args of
-        LedgerDB.LedgerDbBackendArgsV2 (LedgerDB.V2.SomeBackendArgs bArgs) -> do
-          res <-
-            LedgerDB.V2.mkResources
-              (Proxy @blk)
-              (LedgerDBFlavorImplEvent . LedgerDB.FlavorImplSpecificTraceV2 >$< LedgerDB.lgrTracer args)
-              bArgs
+      res <-
+        LedgerDB.V2.acquireBackend
+          (LedgerDB.lgrBackendArgs args)
+          (LedgerDBFlavorImplEvent . LedgerDB.FlavorImplSpecificTraceV2 >$< LedgerDB.lgrTracer args)
+          (LedgerDB.lgrHasFS args)
+      let snapManager =
+            LedgerDB.V2.brSnapshotManager
+              res
+              (configCodec . getExtLedgerCfg . LedgerDB.ledgerDbCfg $ LedgerDB.lgrConfig args)
+              (LedgerDBSnapshotEvent >$< LedgerDB.lgrTracer args)
               (LedgerDB.lgrHasFS args)
-          let snapManager =
-                LedgerDB.V2.snapshotManager
-                  (Proxy @blk)
-                  res
-                  (configCodec . getExtLedgerCfg . LedgerDB.ledgerDbCfg $ LedgerDB.lgrConfig args)
-                  (LedgerDBSnapshotEvent >$< LedgerDB.lgrTracer args)
-                  (LedgerDB.lgrHasFS args)
-          let initDb =
-                LedgerDB.V2.mkInitDb
-                  args
-                  (\_ -> pure (error "no stream"))
-                  snapManager
-                  (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
-                  res
-          lift $ do
-            warnUnlessSnapshotAtGoal snapManager
-            -- The replay goal is the @--analyse-from@ point, which is not
-            -- necessarily the ImmutableDB tip, so we do not know whether it
-            -- is an EBB. Assume it is not, like the vast majority of blocks.
-            LedgerDB.openDBInternal args initDb snapManager replayStream replayGoal IsNotEBB
-      pure (ldb, od)
+          initDb =
+            LedgerDB.V2.mkInitDb
+              args
+              (\_ -> pure (error "no stream"))
+              snapManager
+              (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
+              res
+      lift $ do
+        warnUnlessSnapshotAtGoal snapManager
+        -- The replay goal is the @--analyse-from@ point, which is not
+        -- necessarily the ImmutableDB tip, so we do not know whether it
+        -- is an EBB. Assume it is not, like the vast majority of blocks.
+        LedgerDB.openDBInternal args initDb snapManager replayStream replayGoal IsNotEBB
  where
   -- Stream blocks from the ImmutableDB, stopping as soon as we reach a block
   -- that is more recent than the replay goal. As a result, the replay leaves
@@ -145,35 +140,30 @@ analyse ::
   ( Node.RunNode blk
   , Show (Header blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
-  , Show (TxIn blk)
-  , Show (TxOut blk)
   , HasAnalysis blk
   , HasProtocolInfo blk
   , LedgerSupportsMempool.HasTxs blk
-  , CanStowLedgerTables (LedgerState blk)
+  , BlockSupportsLedgerHD IO blk
+  , NoThunks (ExtStateHandle IO blk)
+  , NoThunks (TickedStateHandle IO blk)
   ) =>
   DBAnalyserConfig ->
   Args blk ->
+  -- | Backend wiring for the LedgerDB. The caller picks an in-memory or LSM
+  -- backend according to 'ldbBackend' on the 'DBAnalyserConfig' (in
+  -- practice, db-analyser is monomorphic to 'CardanoBlock').
+  LedgerDB.LedgerDbBackendArgs IO blk ->
   IO (Maybe AnalysisResult)
-analyse dbaConfig args =
+analyse dbaConfig args flavargs =
   withRegistry $ \registry -> do
     lock <- newMVar ()
     chainDBTracer <- mkTracer lock verbose
     analysisTracer <- mkTracer lock True
-    lsmSalt <- fst . genWord64 <$> newStdGen
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
     snapshotDelayRng <- newStdGen
     let shfs = Node.stdMkChainDbHasFS dbDir
         chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage cfg)
-        flavargs = case ldbBackend of
-          V2InMem ->
-            LedgerDB.LedgerDbBackendArgsV2 $
-              LedgerDB.V2.SomeBackendArgs InMemory.InMemArgs
-          V2LSM ->
-            LedgerDB.LedgerDbBackendArgsV2 $
-              LedgerDB.V2.SomeBackendArgs $
-                LSM.LSMArgs (mkFsPath ["lsm"]) Nothing lsmSalt (LSM.stdMkBlockIOFS dbDir)
 
         args' =
           ChainDB.completeChainDbArgs
@@ -254,7 +244,6 @@ analyse dbaConfig args =
     , selectDB
     , validation
     , verbose
-    , ldbBackend
     } = dbaConfig
 
   SelectImmutableDB startSlot = selectDB

@@ -10,6 +10,8 @@ import Control.Monad (void)
 import DBAnalyser.Parsers
 import qualified Data.Text as T
 import Main.Utf8 (withStdTerminalHandles)
+import qualified Ouroboros.Consensus.Backends as Backends
+import qualified Ouroboros.Consensus.Backends.LSM as LSM
 import Options.Applicative
   ( execParser
   , footer
@@ -19,11 +21,19 @@ import Options.Applicative
   , progDesc
   , (<**>)
   )
+import System.FS.API (mkFsPath)
+import System.Random (genWord64, newStdGen)
 
 main :: IO ()
 main = withStdTerminalHandles $ do
   cryptoInit
-  void $ uncurry analyse =<< getCmdLine
+  (cfg, blockArgs) <- getCmdLine
+  backendArgs <- case ldbBackend cfg of
+    V2InMem -> pure Backends.inMemoryBackendArgs
+    V2LSM -> do
+      salt <- fst . genWord64 <$> newStdGen
+      pure $ LSM.lsmBackendArgsIO (mkFsPath ["lsm"]) (dbDir cfg) salt
+  void $ analyse cfg blockArgs backendArgs
 
 getCmdLine :: IO (DBAnalyserConfig, CardanoBlockArgs)
 getCmdLine = execParser opts
