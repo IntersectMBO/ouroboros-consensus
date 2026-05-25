@@ -1,7 +1,6 @@
 module Main (main) where
 
 import qualified Test.Consensus.Byron.Golden (tests)
-import qualified Test.Consensus.Byron.LedgerTables (tests)
 import qualified Test.Consensus.Byron.Serialisation (tests)
 import Test.Tasty
 import qualified Test.ThreadNet.Byron (tests)
@@ -19,7 +18,6 @@ tests =
   testGroup
     "byron"
     [ Test.Consensus.Byron.Golden.tests
-    , Test.Consensus.Byron.LedgerTables.tests
     , Test.Consensus.Byron.Serialisation.tests
     , Test.ThreadNet.Byron.tests
     , Test.ThreadNet.DualByron.tests

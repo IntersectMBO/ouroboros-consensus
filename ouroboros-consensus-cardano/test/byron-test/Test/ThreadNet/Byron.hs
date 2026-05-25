@@ -52,7 +52,6 @@ import Ouroboros.Consensus.Byron.Ledger.Conversions
 import Ouroboros.Consensus.Byron.Node
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
@@ -1174,7 +1173,7 @@ prop_simple_real_pbft_convergence
     finalChains :: [(NodeId, Chain ByronBlock)]
     finalChains = Map.toList $ nodeOutputFinalChain <$> testOutputNodes testOutput
 
-    finalLedgers :: [(NodeId, Byron.LedgerState ByronBlock EmptyMK)]
+    finalLedgers :: [(NodeId, Byron.LedgerState ByronBlock)]
     finalLedgers = Map.toList $ nodeOutputFinalLedger <$> testOutputNodes testOutput
 
     pvuLabels :: [(NodeId, ProtocolVersionUpdateLabel)]
@@ -1501,7 +1500,7 @@ mkRekeyUpd ::
   Genesis.Config ->
   Genesis.GeneratedSecrets ->
   CoreNodeId ->
-  ProtocolInfo ByronBlock ->
+  ProtocolInfo m ByronBlock ->
   m [MkBlockForging m ByronBlock] ->
   EpochNo ->
   Crypto.SignKeyDSIGN Crypto.ByronDSIGN ->

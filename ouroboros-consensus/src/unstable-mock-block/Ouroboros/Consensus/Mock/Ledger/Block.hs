@@ -437,8 +437,10 @@ instance
   where
   newtype StateHandle m (SimpleBlock c ext)
     = SimpleStateHandle (LedgerState (SimpleBlock c ext))
+    deriving newtype NoThunks
   newtype TickedStateHandle m (SimpleBlock c ext)
     = TickedSimpleStateHandle (Ticked LedgerState (SimpleBlock c ext))
+    deriving newtype NoThunks
 
   newStateHandle st () = SimpleStateHandle st
 
