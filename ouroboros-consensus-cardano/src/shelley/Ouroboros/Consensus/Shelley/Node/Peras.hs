@@ -16,7 +16,7 @@ module Ouroboros.Consensus.Shelley.Node.Peras () where
 import Cardano.Ledger.Api
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
-  , VoidPerasError
+  , EmptyPerasError
   )
 import Ouroboros.Consensus.Peras.Cert.Mock
   ( MockPerasCert (..)
@@ -55,7 +55,7 @@ instance
   where
   type PerasVote (ShelleyBlock proto DijkstraEra) = MockPerasVote (ShelleyBlock proto DijkstraEra)
   type PerasCert (ShelleyBlock proto DijkstraEra) = MockPerasCert (ShelleyBlock proto DijkstraEra)
-  type PerasError (ShelleyBlock proto DijkstraEra) = VoidPerasError (ShelleyBlock proto DijkstraEra)
+  type PerasError (ShelleyBlock proto DijkstraEra) = EmptyPerasError (ShelleyBlock proto DijkstraEra)
 
   validatePerasVote = validateMockPerasVote
   validatePerasCert = validateMockPerasCert
