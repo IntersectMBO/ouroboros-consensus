@@ -5,7 +5,10 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -53,7 +56,6 @@ import Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as HF
-import Ouroboros.Consensus.Ledger.Tables.Combinators
 import Ouroboros.Consensus.Util (nTimes)
 import Test.Cardano.Slotting.Numeric ()
 import Test.Consensus.HardFork.Infra
@@ -62,6 +64,13 @@ import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.QuickCheck
+
+-- | Phantom-indexed unit wrapper: 'K2 a x y = a'. Used here only as the
+-- 'AnnForecast' state slot when the ledger state is just '()'. (Originally
+-- lived in 'Ledger.Tables.Combinators' before the @MapKind@ vocabulary was
+-- removed.)
+type K2 :: forall k. * -> k -> *
+newtype K2 a b = K2 {unK2 :: a}
 
 -- | Tests for 'summarize'
 --

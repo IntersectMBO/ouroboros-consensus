@@ -6,6 +6,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -55,7 +58,6 @@ import Ouroboros.Consensus.HardFork.History
   )
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HardFork.History.Util
-import Ouroboros.Consensus.Ledger.Tables.Combinators (K2 (..))
 import Ouroboros.Consensus.Util (Some (..), repeatedly, splits)
 import Test.Consensus.HardFork.Infra
 import Test.QuickCheck
@@ -76,6 +78,13 @@ import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.QuickCheck
+
+-- | Phantom-indexed unit/identity wrapper: 'K2 a x y = a'. Used here only as
+-- a 'CrossEraForecaster' state slot when the ledger state has no era index
+-- worth threading. (Originally lived in 'Ledger.Tables.Combinators' before
+-- the @MapKind@ vocabulary was removed.)
+type K2 :: forall k. * -> k -> *
+newtype K2 a b = K2 {unK2 :: a}
 
 tests :: TestTree
 tests =

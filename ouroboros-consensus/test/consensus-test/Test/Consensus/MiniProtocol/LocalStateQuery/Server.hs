@@ -47,8 +47,6 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Stream hiding
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
-import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Util.IOLike hiding (newTVarIO)
 import Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -69,6 +67,7 @@ import Test.Cardano.Ledger.Core.Arbitrary ()
 import Test.QuickCheck hiding (Result)
 import Test.Tasty
 import Test.Tasty.QuickCheck
+import Test.Util.ChainDB (testBackendArgs)
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestBlock
 
@@ -209,10 +208,10 @@ mkServer rr k chain = do
           (rk, res) <-
             allocate
               rr
-              (\_ -> LedgerDB.openReadOnlyForker lgrDB t)
+              (\_ -> LedgerDB.openReadOnlyHandle lgrDB t)
               ( \case
                   Left{} -> pure ()
-                  Right v -> roforkerClose v
+                  Right v -> closeExt v
               )
           case res of
             Left err -> release rk >> pure (Left err)
@@ -243,9 +242,13 @@ initLedgerDB s c = do
         LedgerDbArgs
           { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
           , lgrHasFS = SomeHasFS $ simHasFS fs
-          , lgrGenesis = return testInitExtLedger
+          , lgrGenesis = \() ->
+              pure $
+                ExtStateHandle
+                  (TestStateHandle (ledgerState testInitExtLedger))
+                  (headerState testInitExtLedger)
           , lgrTracer = nullTracer
-          , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
+          , lgrBackendArgs = testBackendArgs ()
           , lgrConfig = LedgerDB.configLedgerDb (testCfg s) OmitLedgerEvents
           , lgrQueryBatchSize = DefaultQueryBatchSize
           , lgrStartSnapshot = Nothing

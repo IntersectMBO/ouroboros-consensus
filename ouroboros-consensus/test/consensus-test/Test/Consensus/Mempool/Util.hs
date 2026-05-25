@@ -42,7 +42,6 @@ import Ouroboros.Consensus.Config.SecurityParam
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.Abstract hiding (TxIn, TxOut)
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mock.Ledger hiding (TxId)
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import Ouroboros.Consensus.Protocol.BFT
@@ -62,7 +61,7 @@ type TestTxError = ApplyTxErr TestBlock
 type TheMeasure = IgnoringOverflow ByteSize32
 
 -- There are 5 (core)nodes and each gets 1000.
-testInitLedger :: LedgerState TestBlock ValuesMK
+testInitLedger :: LedgerState TestBlock
 testInitLedger = genesisSimpleLedgerState $ mkAddrDist (NumCoreNodes 5)
 
 -- | Test config
@@ -89,8 +88,8 @@ testLedgerConfigNoSizeLimits = mkTestLedgerConfig defaultMockConfig
 genTxs ::
   -- | The number of transactions to generate
   Int ->
-  LedgerState TestBlock ValuesMK ->
-  Gen ([(TestTx, Bool)], LedgerState TestBlock ValuesMK)
+  LedgerState TestBlock ->
+  Gen ([(TestTx, Bool)], LedgerState TestBlock)
 genTxs = go []
  where
   go txs n ledger
@@ -111,8 +110,8 @@ genTxs = go []
 genValidTxs ::
   -- | The number of valid transactions to generate
   Int ->
-  LedgerState TestBlock ValuesMK ->
-  Gen ([TestTx], LedgerState TestBlock ValuesMK)
+  LedgerState TestBlock ->
+  Gen ([TestTx], LedgerState TestBlock)
 genValidTxs = go []
  where
   go txs n ledger
@@ -123,20 +122,20 @@ genValidTxs = go []
 
 mustBeValid ::
   HasCallStack =>
-  Except TestTxError (LedgerState TestBlock ValuesMK) ->
-  LedgerState TestBlock ValuesMK
+  Except TestTxError (LedgerState TestBlock) ->
+  LedgerState TestBlock
 mustBeValid ex = case runExcept ex of
   Left _ -> error "impossible"
   Right ledger -> ledger
 
-txIsValid :: LedgerConfig TestBlock -> LedgerState TestBlock ValuesMK -> TestTx -> Bool
+txIsValid :: LedgerConfig TestBlock -> LedgerState TestBlock -> TestTx -> Bool
 txIsValid cfg ledgerState tx =
   isRight $ runExcept $ applyTxToLedger cfg ledgerState tx
 
 -- | Generate a valid transaction (but ignoring any per-tx size limits, see Note
 -- [Transaction size limit]).
-genValidTx :: LedgerState TestBlock ValuesMK -> Gen (TestTx, LedgerState TestBlock ValuesMK)
-genValidTx ledgerState@(SimpleLedgerState MockState{} (LedgerTables (ValuesMK utxo))) = do
+genValidTx :: LedgerState TestBlock -> Gen (TestTx, LedgerState TestBlock)
+genValidTx ledgerState = do
   -- Never let someone go broke, otherwise we risk concentrating all the
   -- wealth in one person. That would be problematic (for the society) but
   -- also because we wouldn't be able to generate any valid transactions
@@ -167,6 +166,8 @@ genValidTx ledgerState@(SimpleLedgerState MockState{} (LedgerTables (ValuesMK ut
       tx = mkSimpleGenTx $ Tx DoNotExpire ins outs
   return (tx, mustBeValid (applyTxToLedger testLedgerConfigNoSizeLimits ledgerState tx))
  where
+  utxo = mockUtxo (simpleLedgerState ledgerState)
+
   peopleWithFunds :: Map Addr [(TxIn, Amount)]
   peopleWithFunds =
     Map.unionsWith
@@ -175,7 +176,7 @@ genValidTx ledgerState@(SimpleLedgerState MockState{} (LedgerTables (ValuesMK ut
       | (txIn, (addr, amount)) <- Map.toList utxo
       ]
 
-genInvalidTx :: LedgerState TestBlock ValuesMK -> Gen TestTx
+genInvalidTx :: LedgerState TestBlock -> Gen TestTx
 genInvalidTx ledgerState = do
   let peopleWithFunds = nub $ map fst $ Map.elems utxo
   sender <- elements peopleWithFunds
@@ -189,9 +190,7 @@ genInvalidTx ledgerState = do
       tx = mkSimpleGenTx $ Tx DoNotExpire ins outs
   return $ assert (not (txIsValid testLedgerConfigNoSizeLimits ledgerState tx)) tx
  where
-  SimpleLedgerState
-    { simpleLedgerTables = LedgerTables (ValuesMK utxo)
-    } = ledgerState
+  utxo = mockUtxo (simpleLedgerState ledgerState)
 
 -- | Generate an invalid tx that is larger than the given measure.
 genLargeInvalidTx :: TheMeasure -> Gen TestTx
@@ -218,12 +217,12 @@ genLargeInvalidTx (IgnoringOverflow sz) = go Set.empty
 -- a hash.
 applyTxToLedger ::
   LedgerConfig TestBlock ->
-  LedgerState TestBlock ValuesMK ->
+  LedgerState TestBlock ->
   TestTx ->
-  Except TestTxError (LedgerState TestBlock ValuesMK)
+  Except TestTxError (LedgerState TestBlock)
 applyTxToLedger cfg st tx =
-  let SimpleLedgerState mockState _ = stowLedgerTables st
-   in unstowLedgerTables . mkNewLedgerState <$> updateMockUTxO mockCfg dummy tx mockState
+  let SimpleLedgerState mockState = st
+   in mkNewLedgerState <$> updateMockUTxO mockCfg dummy tx mockState
  where
   mockCfg = simpleLedgerMockConfig cfg
 
@@ -233,7 +232,7 @@ applyTxToLedger cfg st tx =
   dummy = 0
 
   mkNewLedgerState mockState' =
-    SimpleLedgerState mockState'{mockTip = BlockPoint slot' hash'} emptyLedgerTables
+    SimpleLedgerState mockState'{mockTip = BlockPoint slot' hash'}
 
   slot' = case pointSlot $ mockTip (simpleLedgerState st) of
     Origin -> 0
