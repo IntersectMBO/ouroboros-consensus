@@ -772,6 +772,7 @@ runThreadNetwork
                   { mcdbTopLevelConfig = cfg
                   , mcdbChunkInfo = ImmutableDB.simpleChunkInfo epochSize0
                   , mcdbInitLedger = initLedger
+                  , mcdbBackendArgs = testBackendArgs tnaLedgerTablesFactory
                   , mcdbRegistry = registry
                   , mcdbNodeDBs = nodeDBs
                   }
