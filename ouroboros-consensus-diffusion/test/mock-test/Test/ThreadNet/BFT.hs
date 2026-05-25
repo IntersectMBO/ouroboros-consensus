@@ -108,7 +108,7 @@ prop_simple_bft_convergence
         testConfig
         testConfigB
         TestConfigMB
-          { nodeInfo = \nid ->
+          { nodeInfo = \nid -> pure $
               plainTestNodeInitialization
                 ( protocolInfoBft
                     numCoreNodes
@@ -118,4 +118,5 @@ prop_simple_bft_convergence
                 )
                 (pure $ fmap (MkBlockForging . pure) $ blockForgingBft nid)
           , mkRekeyM = Nothing
+          , ledgerTablesFactory = ()
           }

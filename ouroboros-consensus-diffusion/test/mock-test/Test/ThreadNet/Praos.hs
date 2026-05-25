@@ -158,7 +158,7 @@ prop_simple_praos_convergence
         testConfig
         testConfigB
         TestConfigMB
-          { nodeInfo = \nid ->
+          { nodeInfo = \nid -> pure $
               plainTestNodeInitialization
                 ( protocolInfoPraos
                     numCoreNodes
@@ -173,6 +173,7 @@ prop_simple_praos_convergence
                 )
                 (fmap (fmap (MkBlockForging . pure)) $ blockForgingPraos numCoreNodes nid)
           , mkRekeyM = Nothing
+          , ledgerTablesFactory = ()
           }
 
     flakyTestCopy =

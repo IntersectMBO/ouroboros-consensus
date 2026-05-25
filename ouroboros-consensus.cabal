@@ -1566,6 +1566,8 @@ test-suite shelley-test
     containers,
     contra-tracer,
     filepath,
+    fs-api,
+    fs-sim,
     measures,
     mempack,
     microlens,

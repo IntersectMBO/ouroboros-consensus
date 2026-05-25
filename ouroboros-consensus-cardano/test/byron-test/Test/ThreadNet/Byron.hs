@@ -1116,13 +1116,14 @@ prop_simple_real_pbft_convergence
         testConfig
         testConfigB
         TestConfigMB
-          { nodeInfo = \nid ->
+          { nodeInfo = \nid -> pure $
               mkProtocolByronAndHardForkTxs
                 params
                 nid
                 genesisConfig
                 genesisSecrets
                 theProposedProtocolVersion
+          , ledgerTablesFactory = ()
           , mkRekeyM =
               Just $
                 fromRekeyingToRekeyM
