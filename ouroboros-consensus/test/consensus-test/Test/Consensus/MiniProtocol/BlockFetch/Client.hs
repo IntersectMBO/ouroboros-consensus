@@ -293,6 +293,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                       ExtStateHandle
                         (TestStateHandle (ledgerState testInitExtLedger))
                         (headerState testInitExtLedger)
+                , mcdbBackendArgs = testBackendArgs ()
                 , mcdbRegistry = registry
                 , mcdbNodeDBs = nodeDBs
                 }
