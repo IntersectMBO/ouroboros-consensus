@@ -312,7 +312,7 @@ prop_simple_real_tpraos_convergence
                   , tniBlockForging = blockForging nullTracer
                   }
           , mkRekeyM = Nothing
-          , ledgerTablesFactory = ()
+          , ledgerTablesFactory = pure ()
           }
 
     initialKESPeriod :: SL.KESPeriod

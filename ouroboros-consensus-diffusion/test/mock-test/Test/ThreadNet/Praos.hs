@@ -173,7 +173,7 @@ prop_simple_praos_convergence
                 )
                 (fmap (fmap (MkBlockForging . pure)) $ blockForgingPraos numCoreNodes nid)
           , mkRekeyM = Nothing
-          , ledgerTablesFactory = ()
+          , ledgerTablesFactory = pure ()
           }
 
     flakyTestCopy =

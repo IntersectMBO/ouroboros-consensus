@@ -221,10 +221,12 @@ data TestConfigMB m blk = TestConfigMB
   , mkRekeyM :: Maybe (m (RekeyM m blk))
   -- ^ 'runTestNetwork' immediately runs this action once in order to
   -- initialize an 'RekeyM' value that it then reuses throughout the test
-  , ledgerTablesFactory :: LedgerTablesFactory m blk
-  -- ^ The on-disk side of the ledger (threaded through 'pInfoInitLedger').
-  -- For blocks with no on-disk tables (Byron, the mock blocks) this is
-  -- @()@. HFC tests must supply a 'HFLedgerTablesFactory'.
+  , ledgerTablesFactory :: m (LedgerTablesFactory m blk)
+  -- ^ Builds the on-disk side of the ledger (threaded through
+  -- 'pInfoInitLedger'). Monadic so HFC tests can allocate a sim-fs
+  -- 'MkHandle' inside the test monad. Tests for blocks with no on-disk
+  -- tables (Byron, the mock blocks) just @pure ()@. HFC tests build a
+  -- 'HFLedgerTablesFactory' via 'mkInMemoryFactory' + 'simHasFS''.
   }
 
 {-------------------------------------------------------------------------------
@@ -272,6 +274,7 @@ runTestNetwork
             , mkRekeyM
             , ledgerTablesFactory
             } = mkTestConfigMB
+      ledgerTablesFactory' <- ledgerTablesFactory
       let systemTime =
             BTime.defaultSystemTime
               (BTime.SystemStart dawnOfTime)
@@ -294,7 +297,7 @@ runTestNetwork
           , tnaVersion = networkVersion
           , tnaBlockVersion = blockVersion
           , tnaTxLogicVersion = txLogicVersion
-          , tnaLedgerTablesFactory = ledgerTablesFactory
+          , tnaLedgerTablesFactory = ledgerTablesFactory'
           }
 
 {-------------------------------------------------------------------------------

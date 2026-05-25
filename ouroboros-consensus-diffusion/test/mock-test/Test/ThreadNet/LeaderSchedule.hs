@@ -139,7 +139,7 @@ prop_simple_leader_schedule_convergence
                 )
                 (pure $ fmap (MkBlockForging . pure) $ blockForgingPraosRule)
           , mkRekeyM = Nothing
-          , ledgerTablesFactory = ()
+          , ledgerTablesFactory = pure ()
           }
 
 {-------------------------------------------------------------------------------

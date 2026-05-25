@@ -130,7 +130,7 @@ prop_simple_pbft_convergence
                 )
                 (pure $ fmap (MkBlockForging . pure) $ blockForgingMockPBFT nid)
           , mkRekeyM = Nothing
-          , ledgerTablesFactory = ()
+          , ledgerTablesFactory = pure ()
           }
 
     refResult :: Ref.Result

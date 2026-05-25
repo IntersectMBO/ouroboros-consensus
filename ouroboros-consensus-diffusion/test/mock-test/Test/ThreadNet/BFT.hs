@@ -118,5 +118,5 @@ prop_simple_bft_convergence
                 )
                 (pure $ fmap (MkBlockForging . pure) $ blockForgingBft nid)
           , mkRekeyM = Nothing
-          , ledgerTablesFactory = ()
+          , ledgerTablesFactory = pure ()
           }
