@@ -28,7 +28,6 @@ module Test.Util.TestBlock
   , BlockQuery (..)
   , CodecConfig (..)
   , Header (..)
-  , LedgerTables (..)
   , StorageConfig (..)
   , TestBlockError (..)
   , TestBlockWith (tbPayload, tbSlot, tbValid)
@@ -49,11 +48,12 @@ module Test.Util.TestBlock
     -- ** Payload semantics
   , PayloadDependentState (..)
   , PayloadSemantics (..)
-  , applyDirectlyToPayloadDependentState
 
     -- * LedgerState
   , LedgerState (TestLedger, payloadDependentState, lastAppliedPoint)
   , Ticked (TickedTestLedger)
+  , StateHandle (TestStateHandle)
+  , TickedStateHandle (TickedTestStateHandle)
   , getTickedTestLedger
 
     -- * Chain
@@ -93,8 +93,6 @@ module Test.Util.TestBlock
 import Cardano.Binary (DecoderError)
 import Cardano.Crypto.DSIGN
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded, unNonZero)
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise (..), serialise)
 import Control.DeepSeq (NFData, force)
 import Control.Monad (guard, replicateM, replicateM_)
@@ -118,7 +116,6 @@ import Data.Tree (Tree (..))
 import qualified Data.Tree as Tree
 import Data.TreeDiff (ToExpr)
 import Data.Typeable (Typeable)
-import Data.Void (Void)
 import Data.Word
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -138,7 +135,6 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
@@ -152,7 +148,6 @@ import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Magic (NetworkMagic (..))
 import Ouroboros.Network.Mock.Chain (Chain (..))
@@ -400,14 +395,11 @@ class
   ( Typeable ptype
   , Eq ptype
   , NoThunks ptype
-  , forall mk. EqMK mk => Eq (PayloadDependentState ptype mk)
-  , forall mk. NoThunksMK mk => NoThunks (PayloadDependentState ptype mk)
-  , forall mk. ShowMK mk => Show (PayloadDependentState ptype mk)
-  , forall mk. Generic (PayloadDependentState ptype mk)
-  , Serialise (PayloadDependentState ptype EmptyMK)
-  , HasLedgerTables LedgerState (TestBlockWith ptype)
-  , HasLedgerTables (Ticked LedgerState) (TestBlockWith ptype)
-  , CanStowLedgerTables (LedgerState (TestBlockWith ptype))
+  , Eq (PayloadDependentState ptype)
+  , NoThunks (PayloadDependentState ptype)
+  , Show (PayloadDependentState ptype)
+  , Generic (PayloadDependentState ptype)
+  , Serialise (PayloadDependentState ptype)
   , Eq (PayloadDependentError ptype)
   , Show (PayloadDependentError ptype)
   , Generic (PayloadDependentError ptype)
@@ -419,44 +411,23 @@ class
   ) =>
   PayloadSemantics ptype
   where
-  data PayloadDependentState ptype (mk :: MapKind) :: Type
+  data PayloadDependentState ptype :: Type
 
   type PayloadDependentError ptype :: Type
 
   applyPayload ::
-    PayloadDependentState ptype ValuesMK ->
+    PayloadDependentState ptype ->
     ptype ->
-    Either (PayloadDependentError ptype) (PayloadDependentState ptype TrackingMK)
-
-  -- | This function is used to implement the 'getBlockKeySets' function of the
-  -- 'ApplyBlock' class. Thus we assume that the payload contains all the
-  -- information needed to determine which keys should be retrieved from the
-  -- backing store to apply a 'TestBlockWith'.
-  getPayloadKeySets :: ptype -> LedgerTables (TestBlockWith ptype) KeysMK
+    Either (PayloadDependentError ptype) (PayloadDependentState ptype)
 
 instance PayloadSemantics () where
-  data PayloadDependentState () mk = EmptyPLDS
+  data PayloadDependentState () = EmptyPLDS
     deriving stock (Eq, Show, Generic)
     deriving anyclass (Serialise, NoThunks)
 
   type PayloadDependentError () = ()
 
   applyPayload _ _ = Right EmptyPLDS
-
-  getPayloadKeySets = const emptyLedgerTables
-
--- | Apply the payload directly to the payload dependent state portion of a
--- ticked state, leaving the rest of the input ticked state unaltered.
-applyDirectlyToPayloadDependentState ::
-  PayloadSemantics ptype =>
-  Ticked LedgerState (TestBlockWith ptype) ValuesMK ->
-  ptype ->
-  Either
-    (PayloadDependentError ptype)
-    (Ticked LedgerState (TestBlockWith ptype) TrackingMK)
-applyDirectlyToPayloadDependentState (TickedTestLedger st) tx = do
-  payloadDepSt' <- applyPayload (payloadDependentState st) tx
-  pure $ TickedTestLedger $ st{payloadDependentState = payloadDepSt'}
 
 {-------------------------------------------------------------------------------
   NestedCtxt
@@ -532,112 +503,105 @@ instance
     signKey :: SlotNo -> SignKeyDSIGN MockDSIGN
     signKey (SlotNo n) = SignKeyMockDSIGN $ n `mod` numCore
 
-type instance TxIn TestBlock = Void
-type instance TxOut TestBlock = Void
-
-instance LedgerTablesAreTrivial LedgerState TestBlock where
-  convertMapKind (TestLedger x EmptyPLDS) = TestLedger x EmptyPLDS
-instance LedgerTablesAreTrivial (Ticked LedgerState) TestBlock where
-  convertMapKind (TickedTestLedger x) = TickedTestLedger $ convertMapKind x
-deriving via
-  Void
-  instance
-    IndexedMemPack LedgerState TestBlock Void
-instance HasLedgerTables LedgerState TestBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
-instance HasLedgerTables (Ticked LedgerState) TestBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
-instance CanStowLedgerTables (LedgerState TestBlock) where
-  stowLedgerTables = convertMapKind
-  unstowLedgerTables = convertMapKind
-instance CanUpgradeLedgerTables LedgerState TestBlock where
-  upgradeTables _ _ = id
-instance SerializeTablesWithHint LedgerState TestBlock where
-  decodeTablesWithHint _ = do
-    _ <- CBOR.decodeMapLen
-    pure (LedgerTables $ ValuesMK Map.empty)
-  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
-
-instance
-  PayloadSemantics ptype =>
-  ApplyBlock LedgerState (TestBlockWith ptype)
-  where
-  applyBlockLedgerResultWithValidation _validation _events _ tb@TestBlockWith{..} (TickedTestLedger TestLedger{..})
-    | blockPrevHash tb /= pointHash lastAppliedPoint =
-        throwError $ InvalidHash (pointHash lastAppliedPoint) (blockPrevHash tb)
-    | tbValid == Invalid =
-        throwError $ InvalidBlock
-    | otherwise =
-        case applyPayload payloadDependentState tbPayload of
-          Left err -> throwError $ InvalidPayload err
-          Right st' ->
-            return $
-              pureLedgerResult $
-                trackingToDiffs $
-                  TestLedger
-                    { lastAppliedPoint = Chain.blockPoint tb
-                    , payloadDependentState = st'
-                    }
-
-  applyBlockLedgerResult = defaultApplyBlockLedgerResult
-  reapplyBlockLedgerResult =
-    defaultReapplyBlockLedgerResult (error . ("Found an error when reapplying a block: " ++) . show)
-
-instance
-  PayloadSemantics ptype =>
-  GetBlockKeySets (TestBlockWith ptype)
-  where
-  getBlockKeySets = getPayloadKeySets . tbPayload
-
-data instance LedgerState (TestBlockWith ptype) mk
+data instance LedgerState (TestBlockWith ptype)
   = TestLedger
   { lastAppliedPoint :: Point (TestBlockWith ptype)
   -- ^ The ledger state simply consists of the last applied block
-  , payloadDependentState :: PayloadDependentState ptype mk
+  , payloadDependentState :: PayloadDependentState ptype
   -- ^ State that depends on the application of the block payload to the
   -- state.
   }
 
 deriving stock instance
-  (ShowMK mk, PayloadSemantics ptype) =>
-  Show (LedgerState (TestBlockWith ptype) mk)
+  PayloadSemantics ptype =>
+  Show (LedgerState (TestBlockWith ptype))
 
 deriving stock instance
-  Eq (PayloadDependentState ptype mk) =>
-  Eq (LedgerState (TestBlockWith ptype) mk)
+  Eq (PayloadDependentState ptype) =>
+  Eq (LedgerState (TestBlockWith ptype))
 
-deriving stock instance Generic (LedgerState (TestBlockWith ptype) mk)
+deriving stock instance Generic (LedgerState (TestBlockWith ptype))
 
 deriving anyclass instance
   PayloadSemantics ptype =>
-  Serialise (LedgerState (TestBlockWith ptype) EmptyMK)
+  Serialise (LedgerState (TestBlockWith ptype))
 deriving anyclass instance
-  NoThunks (PayloadDependentState ptype mk) =>
-  NoThunks (LedgerState (TestBlockWith ptype) mk)
+  NoThunks (PayloadDependentState ptype) =>
+  NoThunks (LedgerState (TestBlockWith ptype))
 
 testInitLedgerWithState ::
-  PayloadDependentState ptype mk -> LedgerState (TestBlockWith ptype) mk
+  PayloadDependentState ptype -> LedgerState (TestBlockWith ptype)
 testInitLedgerWithState = TestLedger GenesisPoint
 
 -- Ticking has no effect
-newtype instance Ticked LedgerState (TestBlockWith ptype) mk = TickedTestLedger
-  { getTickedTestLedger :: LedgerState (TestBlockWith ptype) mk
+newtype instance Ticked LedgerState (TestBlockWith ptype) = TickedTestLedger
+  { getTickedTestLedger :: LedgerState (TestBlockWith ptype)
   }
 
-deriving stock instance Generic (Ticked LedgerState (TestBlockWith ptype) mk)
+deriving stock instance Generic (Ticked LedgerState (TestBlockWith ptype))
 deriving anyclass instance
-  (NoThunksMK mk, NoThunks (PayloadDependentState ptype mk)) =>
-  NoThunks (Ticked LedgerState (TestBlockWith ptype) mk)
+  NoThunks (PayloadDependentState ptype) =>
+  NoThunks (Ticked LedgerState (TestBlockWith ptype))
 
 testInitExtLedgerWithState ::
-  PayloadDependentState ptype mk -> ExtLedgerState (TestBlockWith ptype) mk
+  PayloadDependentState ptype -> ExtLedgerState (TestBlockWith ptype)
 testInitExtLedgerWithState st =
   ExtLedgerState
     { ledgerState = testInitLedgerWithState st
     , headerState = genesisHeaderState ()
     }
+
+-- | Test blocks carry no on-disk tables, so the handle layer is trivial.
+type instance LedgerTablesHandle m (TestBlockWith ptype) = ()
+
+instance Typeable ptype => BlockSupportsLedgerHD m (TestBlockWith ptype) where
+  newtype StateHandle m (TestBlockWith ptype)
+    = TestStateHandle (LedgerState (TestBlockWith ptype))
+  newtype TickedStateHandle m (TestBlockWith ptype)
+    = TickedTestStateHandle (Ticked LedgerState (TestBlockWith ptype))
+
+  newStateHandle st () = TestStateHandle st
+
+  state (TestStateHandle s) = s
+  tickedState (TickedTestStateHandle s) = s
+
+  close _ = pure ()
+  closeTicked _ = pure ()
+
+  duplicate a = pure a
+  duplicateTicked a = pure a
+
+  getStats _ = Statistics 0
+
+instance
+  PayloadSemantics ptype =>
+  ApplyBlock LedgerState (TestBlockWith ptype)
+  where
+  applyBlockLedgerResultWithValidation
+    _validation
+    _events
+    _
+    tb@TestBlockWith{..}
+    (TickedTestStateHandle (TickedTestLedger TestLedger{..}))
+      | blockPrevHash tb /= pointHash lastAppliedPoint =
+          throwError $ InvalidHash (pointHash lastAppliedPoint) (blockPrevHash tb)
+      | tbValid == Invalid =
+          throwError InvalidBlock
+      | otherwise =
+          case applyPayload payloadDependentState tbPayload of
+            Left err -> throwError $ InvalidPayload err
+            Right st' ->
+              pure $
+                pureLedgerResult $
+                  TestStateHandle
+                    TestLedger
+                      { lastAppliedPoint = Chain.blockPoint tb
+                      , payloadDependentState = st'
+                      }
+
+  applyBlockLedgerResult = defaultApplyBlockLedgerResult
+  reapplyBlockLedgerResult =
+    defaultReapplyBlockLedgerResult (error . ("Found an error when reapplying a block: " ++) . show)
 
 data TestBlockLedgerConfig = TestBlockLedgerConfig
   { tblcHardForkParams :: !HardFork.EraParams
@@ -653,10 +617,10 @@ testBlockLedgerConfigFrom eraParams = TestBlockLedgerConfig eraParams SNothing
 
 type instance LedgerCfg LedgerState (TestBlockWith ptype) = TestBlockLedgerConfig
 
-instance GetTip (LedgerState (TestBlockWith ptype)) where
+instance GetTip LedgerState (TestBlockWith ptype) where
   getTip = castPoint . lastAppliedPoint
 
-instance GetTip (Ticked LedgerState (TestBlockWith ptype)) where
+instance GetTip (Ticked LedgerState) (TestBlockWith ptype) where
   getTip = castPoint . lastAppliedPoint . getTickedTestLedger
 
 type instance AuxLedgerEvent (TestBlockWith ptype) = VoidLedgerEvent
@@ -664,10 +628,8 @@ type instance AuxLedgerEvent (TestBlockWith ptype) = VoidLedgerEvent
 instance PayloadSemantics ptype => IsLedger LedgerState (TestBlockWith ptype) where
   type LedgerErr LedgerState (TestBlockWith ptype) = TestBlockError ptype
 
-  applyChainTickLedgerResult _ _ _ =
-    pureLedgerResult
-      . TickedTestLedger
-      . noNewTickingDiffs
+  applyChainTickLedgerResult _ _ _ (TestStateHandle st) =
+    pure $ pureLedgerResult $ TickedTestStateHandle $ TickedTestLedger st
 
 instance PayloadSemantics ptype => UpdateLedger (TestBlockWith ptype)
 
@@ -689,8 +651,8 @@ instance PayloadSemantics ptype => ValidateEnvelope (TestBlockWith ptype)
 
 instance PayloadSemantics ptype => LedgerSupportsProtocol (TestBlockWith ptype) where
   protocolLedgerView _ _ = ()
-  ledgerViewForecastAt cfg state =
-    constantForecastInRange (strictMaybeToMaybe (tblcForecastRange cfg)) () (getTipSlot state)
+  ledgerViewForecastAt cfg st =
+    constantForecastInRange (strictMaybeToMaybe (tblcForecastRange cfg)) () (getTipSlot st)
 
 instance LedgerSupportsPeras (TestBlockWith ptype)
 
@@ -779,10 +741,10 @@ deriving instance Show (BlockQuery TestBlock fp result)
 instance ShowQuery (BlockQuery TestBlock fp) where
   showResult QueryLedgerTip = show
 
-testInitLedger :: LedgerState TestBlock ValuesMK
+testInitLedger :: LedgerState TestBlock
 testInitLedger = testInitLedgerWithState EmptyPLDS
 
-testInitExtLedger :: ExtLedgerState TestBlock ValuesMK
+testInitExtLedger :: ExtLedgerState TestBlock
 testInitExtLedger = testInitExtLedgerWithState EmptyPLDS
 
 -- | Trivial test configuration with a single core node
@@ -970,7 +932,7 @@ instance Serialise (AnnTip (TestBlockWith ptype)) where
   encode = defaultEncodeAnnTip encode
   decode = defaultDecodeAnnTip decode
 
-instance PayloadSemantics ptype => Serialise (ExtLedgerState (TestBlockWith ptype) EmptyMK) where
+instance PayloadSemantics ptype => Serialise (ExtLedgerState (TestBlockWith ptype)) where
   encode = encodeExtLedgerState encode encode encode
   decode = decodeExtLedgerState decode decode decode
 
@@ -1016,10 +978,10 @@ instance ReconstructNestedCtxt Header (TestBlockWith ptype)
 
 instance
   PayloadSemantics ptype =>
-  EncodeDisk (TestBlockWith ptype) (LedgerState (TestBlockWith ptype) EmptyMK)
+  EncodeDisk (TestBlockWith ptype) (LedgerState (TestBlockWith ptype))
 instance
   PayloadSemantics ptype =>
-  DecodeDisk (TestBlockWith ptype) (LedgerState (TestBlockWith ptype) EmptyMK)
+  DecodeDisk (TestBlockWith ptype) (LedgerState (TestBlockWith ptype))
 
 instance Serialise ptype => EncodeDiskDep (NestedCtxt Header) (TestBlockWith ptype)
 instance Serialise ptype => DecodeDiskDep (NestedCtxt Header) (TestBlockWith ptype)
@@ -1037,15 +999,7 @@ instance Serialise ptype => HasBinaryBlockInfo (TestBlockWith ptype) where
       }
 
 instance
-  ( Serialise ptype
-  , PayloadSemantics ptype
-  , IndexedMemPack
-      LedgerState
-      (TestBlockWith ptype)
-      (TxOut (TestBlockWith ptype))
-  , MemPack (TxIn (TestBlockWith ptype))
-  , SerializeTablesWithHint LedgerState (TestBlockWith ptype)
-  ) =>
+  (Serialise ptype, PayloadSemantics ptype) =>
   SerialiseDiskConstraints (TestBlockWith ptype)
 
 -----

@@ -19,7 +19,7 @@ import Ouroboros.Consensus.Config
   )
 import Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
+import Ouroboros.Consensus.Ledger.Extended (ExtStateHandle)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Params (mkPerasParams)
 import Ouroboros.Consensus.Storage.ChainDB hiding
@@ -30,8 +30,6 @@ import Ouroboros.Consensus.Storage.ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as V2
-import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDbArgs (..))
 import Ouroboros.Consensus.Storage.PerasVoteDB (PerasVoteDbArgs (..))
 import Ouroboros.Consensus.Storage.VolatileDB
@@ -72,8 +70,14 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs
   { mcdbTopLevelConfig :: TopLevelConfig blk
   , mcdbChunkInfo :: ImmutableDB.ChunkInfo
   -- ^ Specifies the layout of the ImmutableDB on disk.
-  , mcdbInitLedger :: ExtLedgerState blk ValuesMK
-  -- ^ The initial ledger state.
+  , mcdbInitLedger :: LedgerTablesFactory m blk -> m (ExtStateHandle m blk)
+  -- ^ Continuation producing the initial ledger handle, given the
+  -- 'LedgerTablesFactory' the backend supplies. Matches the shape of
+  -- 'lgrGenesis'.
+  , mcdbBackendArgs :: LedgerDbBackendArgs m blk
+  -- ^ The LedgerDB backend (e.g. in-memory or LSM). Provided by the
+  -- caller because the test-lib has no knowledge of block-specific
+  -- backends.
   , mcdbRegistry :: ResourceRegistry m
   -- ^ Keeps track of non-lexically scoped resources.
   , mcdbNodeDBs :: NodeDBs (StrictTMVar m MockFS)
@@ -90,7 +94,6 @@ fromMinimalChainDbArgs ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , LedgerDbSerialiseConstraints blk
-  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   MinimalChainDbArgs m blk -> Complete ChainDbArgs m blk
 fromMinimalChainDbArgs MinimalChainDbArgs{..} =
@@ -126,11 +129,11 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           { lgrSnapshotPolicyArgs = LedgerDB.defaultSnapshotPolicyArgs
           , -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 *
             -- k seconds, where k is the security parameter.
-            lgrGenesis = return mcdbInitLedger
+            lgrGenesis = mcdbInitLedger
           , lgrHasFS = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs)
           , lgrTracer = nullTracer
           , lgrConfig = configLedgerDb mcdbTopLevelConfig OmitLedgerEvents
-          , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
+          , lgrBackendArgs = mcdbBackendArgs
           , lgrQueryBatchSize = DefaultQueryBatchSize
           , lgrStartSnapshot = Nothing
           }

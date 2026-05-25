@@ -429,7 +429,6 @@ library unstable-consensus-testlib
   visibility: public
   hs-source-dirs: ouroboros-consensus/src/unstable-consensus-testlib
   exposed-modules:
-    Test.LedgerTables
     Test.Ouroboros.Consensus.ChainGenerator.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.BitVector
     Test.Ouroboros.Consensus.ChainGenerator.Counting
@@ -452,7 +451,6 @@ library unstable-consensus-testlib
     Test.Util.HardFork.OracularClock
     Test.Util.Header
     Test.Util.InvertedMap
-    Test.Util.LedgerStateOnlyTables
     Test.Util.LogicalClock
     Test.Util.MockChain
     Test.Util.Orphans.Arbitrary
@@ -514,7 +512,6 @@ library unstable-consensus-testlib
     hashable,
     io-classes:{io-classes, si-timers, strict-mvar, strict-stm},
     io-sim,
-    mempack,
     mtl,
     nothunks,
     optparse-applicative,
