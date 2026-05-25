@@ -42,7 +42,6 @@ import qualified Ouroboros.Consensus.Byron.Crypto.DSIGN as Crypto
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger as Byron
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Tables (EmptyMK)
 import Ouroboros.Consensus.Node.ProtocolInfo
   ( NumCoreNodes (..)
   , ProtocolInfo (..)
@@ -90,7 +89,7 @@ mkUpdateLabels ::
   NodeTopology ->
   Ref.Result ->
   -- | from 'nodeOutputFinalLedger'
-  Byron.LedgerState ByronBlock EmptyMK ->
+  Byron.LedgerState ByronBlock ->
   (ProtocolVersionUpdateLabel, SoftwareVersionUpdateLabel)
 mkUpdateLabels
   params
@@ -399,7 +398,7 @@ mkProtocolByronAndHardForkTxs
     ProtocolInfo{pInfoConfig} = pInfo
     bcfg = configBlock pInfoConfig
 
-    pInfo :: ProtocolInfo ByronBlock
+    pInfo :: ProtocolInfo m ByronBlock
     blockForging :: [BlockForging m ByronBlock]
     opKey :: Crypto.SigningKey
     (pInfo, blockForging, Crypto.SignKeyByronDSIGN opKey) =
@@ -453,7 +452,7 @@ mkHardForkProposal params genesisConfig genesisSecrets propPV =
     propBody
     (Crypto.noPassSafeSigner opKey)
  where
-  pInfo :: ProtocolInfo ByronBlock
+  pInfo :: ProtocolInfo Identity ByronBlock
   _blockForging :: [BlockForging Identity ByronBlock]
   opKey :: Crypto.SigningKey
   (pInfo, _blockForging, Crypto.SignKeyByronDSIGN opKey) =

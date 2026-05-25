@@ -44,6 +44,7 @@ module Ouroboros.Consensus.Byron.Ledger.Ledger
   , TickedStateHandle (..)
 
     -- * Auxiliary
+  , applyByronBlock
   , validationErrorImpossible
   ) where
 

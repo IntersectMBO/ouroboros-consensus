@@ -1455,6 +1455,7 @@ library unstable-byron-testlib
     ouroboros-network:api,
     QuickCheck,
     serialise,
+    small-steps,
     text,
     unstable-byronspec,
 
