@@ -55,7 +55,7 @@ breakTopLevelConfig tlc =
               }
         }
 
-genSimpleTestProtocolInfo :: Gen (ProtocolInfo (CardanoBlock StandardCrypto))
+genSimpleTestProtocolInfo :: Gen (ProtocolInfo IO (CardanoBlock StandardCrypto))
 genSimpleTestProtocolInfo = do
   setup <- arbitrary
   pure $

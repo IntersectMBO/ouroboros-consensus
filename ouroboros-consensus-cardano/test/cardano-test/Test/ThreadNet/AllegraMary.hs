@@ -22,6 +22,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import Lens.Micro ((^.))
+import Ouroboros.Consensus.Backends.InMemory (mkInMemoryFactory)
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Cardano.Condense ()
 import Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..))
@@ -60,6 +61,9 @@ import Test.ThreadNet.Util.NodeJoinPlan (trivialNodeJoinPlan)
 import Test.ThreadNet.Util.NodeRestarts (noRestarts)
 import Test.ThreadNet.Util.NodeToNodeVersion (genVersionFiltered)
 import Test.ThreadNet.Util.Seed (runGen)
+import qualified System.FS.Sim.MockFS as Mock
+import System.FS.Sim.STM (simHasFS')
+import System.FS.API (SomeHasFS (..))
 import qualified Test.Util.BoolProps as BoolProps
 import Test.Util.HardFork.Future (EraSize (..), Future (..))
 import Test.Util.Orphans.Arbitrary ()
@@ -234,8 +238,10 @@ prop_simple_allegraMary_convergence
         setupTestConfig
         testConfigB
         TestConfigMB
-          { nodeInfo = \(CoreNodeId nid) ->
-              let protocolParamsShelleyBased =
+          { nodeInfo = \(CoreNodeId nid) -> do
+              shfs <- SomeHasFS <$> simHasFS' Mock.empty
+              let mkH = mkInMemoryFactory nullTracer shfs
+                  protocolParamsShelleyBased =
                     ProtocolParamsShelleyBased
                       { shelleyBasedInitialNonce = setupInitialNonce
                       , shelleyBasedLeaderCredentials =
@@ -255,21 +261,31 @@ prop_simple_allegraMary_convergence
                             L.mkShelleyTransitionConfig genesisShelley
                       )
                       hardForkTrigger
-               in TestNodeInitialization
-                    { tniCrucialTxs =
-                        if not setupHardFork
-                          then []
-                          else
-                            fmap GenTxShelley1 $
-                              Shelley.mkMASetDecentralizationParamTxs
-                                coreNodes
-                                (SL.ProtVer majorVersion2 0)
-                                (SlotNo $ unNumSlots numSlots) -- never expire
-                                setupD -- unchanged
-                    , tniProtocolInfo = protocolInfo
-                    , tniBlockForging = blockForging nullTracer
-                    }
+                      mkH
+              pure
+                TestNodeInitialization
+                  { tniCrucialTxs =
+                      if not setupHardFork
+                        then []
+                        else
+                          fmap GenTxShelley1 $
+                            Shelley.mkMASetDecentralizationParamTxs
+                              coreNodes
+                              (SL.ProtVer majorVersion2 0)
+                              (SlotNo $ unNumSlots numSlots) -- never expire
+                              setupD -- unchanged
+                  , tniProtocolInfo = protocolInfo
+                  , tniBlockForging = blockForging nullTracer
+                  }
           , mkRekeyM = Nothing
+          , ledgerTablesFactory = do
+              -- The 'HFLedgerTablesFactory' for 'ShelleyBasedHardForkEras' is
+              -- 'MkHandle m', which 'runThreadNetwork' threads into
+              -- 'pInfoInitLedger' to seed the initial 'VDown' state. A
+              -- placeholder sim-fs is sufficient (no snapshots are taken in
+              -- these tests).
+              shfs <- SomeHasFS <$> simHasFS' Mock.empty
+              pure $ mkInMemoryFactory nullTracer shfs
           }
 
     maxForkLength :: NumBlocks
