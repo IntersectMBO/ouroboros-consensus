@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
@@ -15,17 +16,23 @@ module Ouroboros.Consensus.Backends.LSM
   , mkLSMFactory
   , mkLSMFromSnapshot
   , readUTxOSizeFile
+
+    -- * Snapshot streaming
+  , lsmSnapshotYielder
+  , lsmSnapshotSinker
   ) where
 
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
-import Control.Exception
+import Codec.CBOR.Read (DeserialiseFailure)
+import Control.Exception (assert)
 import qualified Control.Monad as Monad
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
 import Control.Monad.Trans.Maybe
 import Control.ResourceRegistry
-import Data.ByteString (toStrict)
+import Control.Tracer (Tracer, nullTracer)
+import Data.ByteString (ByteString, toStrict)
 import qualified Data.ByteString.Builder as BS
 import Data.ByteString.Char8 (readInt)
 import qualified Data.Foldable as Foldable
@@ -52,6 +59,11 @@ import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common (SerialiseHF
 import Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
+import Ouroboros.Consensus.Shelley.Ledger.SnapshotStream
+  ( EntryStream
+  , SnapshotSinker (..)
+  , SnapshotYielder (..)
+  )
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
   ( BackendResources (..)
@@ -62,10 +74,16 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed, encloseTimedWith)
 import Ouroboros.Consensus.Util.IOLike
+import Streaming (Of, Stream)
+import qualified Streaming as S
+import qualified Streaming.Prelude as S
 import System.FS.API
 import System.FS.API.Lazy
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
+import System.FS.CRC (CRC)
+import System.FS.IO (HandleIO)
+import System.Random (genWord64, newStdGen)
 
 {-------------------------------------------------------------------------------
   Backend wiring
@@ -436,8 +454,232 @@ mkLSMFromSnapshot tracer session shfs = MkHandleFromSnapshot $ \ds st -> do
     withExceptT (const BackendCorruptedData) $ readUTxOSizeFile shfs (snapshotToUTxOSizeFilePath ds)
   h <-
     lift $
-      LSM.openTableFromSnapshot
-        session
-        (fromString $ snapshotToDirName ds)
-        (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
-  (,Nothing) <$> lift (newLSMTablesHandle shfs st msz h)
+      encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $
+        LSM.openTableFromSnapshot
+          session
+          (fromString $ snapshotToDirName ds)
+          (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
+  (,Nothing) <$> lift (newLSMTablesHandle tracer shfs st msz h)
+
+{-------------------------------------------------------------------------------
+  Snapshot streaming
+
+  The LSM backend doesn't have a single on-disk file for the UTxO; the
+  table is materialised by LSM's own snapshot machinery, plus a small
+  @utxoSize@ file alongside it. The yielder paginates through an
+  existing LSM snapshot via a cursor; the sinker builds a fresh table,
+  inserts entries in chunks, then calls 'LSM.saveSnapshot' and writes
+  the size sidecar.
+
+  Neither side computes a CRC over the on-disk bytes (LSM owns the
+  representation), so both ends of the running CRC pair come back as
+  'Nothing'.
+-------------------------------------------------------------------------------}
+
+-- | Chunk size for LSM cursor reads / batched inserts during snapshot
+-- streaming. Matches the chunk size used by the older streaming impl
+-- on @main@.
+streamChunkSize :: Int
+streamChunkSize = 1000
+
+-- | Open a BlockIO mount and return a release action for it.
+acquireBlockIO :: FilePath -> IO (HasFS IO HandleIO, BIO.HasBlockIO IO HandleIO, IO ())
+acquireBlockIO mountPoint = do
+  (fs, blockio) <- ioHasBlockIO (MountPoint mountPoint) defaultIOCtxParams
+  pure (fs, blockio, BIO.close blockio)
+
+-- | Generate a fresh salt for opening an LSM session.
+freshSalt :: IO LSM.Salt
+freshSalt = fst . genWord64 <$> newStdGen
+
+-- | Yield the contents of an LSM snapshot.
+--
+-- Opens a private BlockIO mount and LSM session for the duration of
+-- the yielder; 'releaseYielder' closes both. Pages through the table
+-- via a cursor in chunks of 'streamChunkSize'.
+lsmSnapshotYielder ::
+  -- | Filesystem mount point under which the LSM database lives.
+  FilePath ->
+  -- | Path of the LSM database within the mount.
+  FsPath ->
+  DiskSnapshot ->
+  IO (SnapshotYielder IO)
+lsmSnapshotYielder mountPoint dbPath ds = do
+  (fs, blockio, releaseBlockIO) <- acquireBlockIO mountPoint
+  salt <- freshSalt
+  session <- LSM.openSession nullTracer fs blockio salt dbPath
+  table <-
+    LSM.openTableFromSnapshot
+      session
+      (fromString (snapshotToDirName ds))
+      (LSM.SnapshotLabel (Text.pack "UTxO table"))
+  pure
+    SnapshotYielder
+      { runYielder = \_nes k -> do
+          residue <- k (entryStreamFromTable table)
+          -- Drain the residue byte stream; for LSM it has no bytes,
+          -- but whatever the sinker layered on top still needs to be
+          -- consumed to deliver its CRC pair.
+          lift $ S.effects residue
+      , releaseYielder = do
+          LSM.closeTable table
+          LSM.closeSession session
+          releaseBlockIO
+      }
+
+-- | Stream the contents of a LSM table in pages via a cursor.
+--
+-- The residue (inner) byte stream is empty; LSM does not have a
+-- single-file representation, so there's no input CRC.
+entryStreamFromTable ::
+  forall era.
+  MemPack (SL.TxOut era) =>
+  UTxOTable IO ->
+  EntryStream IO era (Maybe CRC)
+entryStreamFromTable table =
+  -- All real work happens in the outer 'Stream', which lives in
+  -- 'ExceptT DeserialiseFailure IO'. Once the cursor is drained the
+  -- residue is the trivial empty byte stream returning 'Nothing'.
+  S.hoist lift (page Nothing) *> pure (pure Nothing)
+ where
+  page ::
+    Maybe TxInBytes ->
+    Stream (Of (SL.TxIn, SL.TxOut era)) IO ()
+  page mLast = do
+    batch <- lift $ readPage mLast
+    if V.null batch
+      then pure ()
+      else do
+        S.each (V.toList (V.mapMaybe entryToPair batch))
+        case snd <$> V.unsnoc batch of
+          Nothing -> pure ()
+          Just (LSM.Entry k _) -> page (Just k)
+          Just (LSM.EntryWithBlob k _ _) -> page (Just k)
+
+  entryToPair :: LSM.Entry TxInBytes TxOutBytes (LSM.BlobRef IO Void) -> Maybe (SL.TxIn, SL.TxOut era)
+  entryToPair = \case
+    LSM.Entry k v -> Just (fromTxInBytes k, fromTxOutBytes (Proxy @era) v)
+    LSM.EntryWithBlob{} -> Nothing
+
+  -- Read one page worth of entries, starting strictly /after/ the
+  -- supplied key (or from the start when none was supplied). The
+  -- cursor at-offset variant includes the offset key, so we ask for
+  -- one extra and drop it.
+  readPage ::
+    Maybe TxInBytes ->
+    IO (V.Vector (LSM.Entry TxInBytes TxOutBytes (LSM.BlobRef IO Void)))
+  readPage = \case
+    Nothing -> LSM.withCursor table (LSM.take streamChunkSize)
+    Just lastKey ->
+      V.drop 1
+        <$> LSM.withCursorAtOffset table lastKey (LSM.take (streamChunkSize + 1))
+
+-- | Sink a stream of UTxO entries into a fresh LSM snapshot.
+--
+-- Creates a new database under @mountPoint\/dbPath@ (wiping any
+-- existing one) at construction time, then on every 'runSinker' call:
+-- opens a fresh table, drains the entry stream into it in chunks of
+-- 'streamChunkSize', and writes both an LSM snapshot and the
+-- @utxoSize@ sidecar through @snapshotsFs@ so the resulting snapshot
+-- is loadable by 'mkLSMFromSnapshot'.
+lsmSnapshotSinker ::
+  -- | Filesystem mount point under which the LSM database will live.
+  FilePath ->
+  -- | Path of the LSM database within the mount.
+  FsPath ->
+  -- | Filesystem rooted at the snapshots directory, used to write the
+  -- @utxoSize@ sidecar.
+  SomeHasFS IO ->
+  DiskSnapshot ->
+  IO (SnapshotSinker IO)
+lsmSnapshotSinker mountPoint dbPath (SomeHasFS snapHfs) ds = do
+  (fs, blockio, releaseBlockIO) <- acquireBlockIO mountPoint
+  salt <- freshSalt
+  removeDirectoryRecursive fs dbPath
+  createDirectory fs dbPath
+  session <- LSM.newSession nullTracer fs blockio salt dbPath
+  let releaseSession = do
+        LSM.closeSession session
+        releaseBlockIO
+  pure
+    SnapshotSinker
+      { runSinker = \entries -> do
+          residue <-
+            bracketE
+              (LSM.newTable session)
+              LSM.closeTable
+              ( \table -> do
+                  (residue, utxosSize) <-
+                    drainEntries table 0 streamChunkSize [] entries
+                  lift $
+                    LSM.saveSnapshot
+                      (fromString (snapshotToDirName ds))
+                      (LSM.SnapshotLabel (Text.pack "UTxO table"))
+                      table
+                  lift $
+                    writeUTxOSizeFile
+                      snapHfs
+                      (snapshotToUTxOSizeFilePath ds)
+                      utxosSize
+                  pure residue
+              )
+          -- LSM has no single-file representation, so the output CRC
+          -- the residue carries onwards is 'Nothing'.
+          pure (fmap (,Nothing) residue)
+      , releaseSinker = releaseSession
+      }
+ where
+  -- 'ExceptT'-friendly bracket: like 'bracket' from "Control.Exception"
+  -- but allocates and releases in the wrapped 'IO' rather than in
+  -- 'ExceptT'. Used to make sure the open table is closed even when
+  -- the stream-draining action throws.
+  bracketE ::
+    IO a ->
+    (a -> IO ()) ->
+    (a -> ExceptT DeserialiseFailure IO b) ->
+    ExceptT DeserialiseFailure IO b
+  bracketE acquire freeRes action = ExceptT $
+    bracket acquire freeRes $ \a -> runExceptT (action a)
+
+-- | Drain an entry stream into the supplied table, flushing a batch
+-- of 'streamChunkSize' rows at a time. Returns the byte-residue
+-- stream that was attached to the typed stream and the running count
+-- of entries written.
+drainEntries ::
+  forall era.
+  MemPack (SL.TxOut era) =>
+  UTxOTable IO ->
+  -- | Running count of entries written so far.
+  Int ->
+  -- | Slots remaining in the current batch.
+  Int ->
+  -- | Accumulator for the current batch (in reverse order).
+  [(SL.TxIn, SL.TxOut era)] ->
+  EntryStream IO era (Maybe CRC) ->
+  ExceptT
+    DeserialiseFailure
+    IO
+    (Stream (Of ByteString) IO (Maybe CRC), Int)
+drainEntries table = loop
+ where
+  loop !count 0 acc s = do
+    lift $ flushBatch table acc
+    loop count streamChunkSize [] s
+  loop !count !slotsLeft acc s = do
+    next <- S.next s
+    case next of
+      Left residue -> do
+        lift $ flushBatch table acc
+        pure (residue, count)
+      Right (item, s') ->
+        loop (count + 1) (slotsLeft - 1) (item : acc) s'
+
+  flushBatch :: UTxOTable IO -> [(SL.TxIn, SL.TxOut era)] -> IO ()
+  flushBatch t acc =
+    LSM.inserts t $
+      V.fromListN (length acc) $
+        map
+          ( \(k, v) ->
+              (toTxInBytes k, toTxOutBytes (Proxy @era) v, Nothing)
+          )
+          (reverse acc)

@@ -208,28 +208,18 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , getTipStatistics
   , withTipForker
 
-    -- * Streaming
-  , StreamingBackend (..)
-  , Yield
-  , Sink
-  , Decoders (..)
-
     -- * Testing
   , TestInternals (..)
   , TestInternals'
   , WhereToTakeSnapshot (..)
   ) where
 
-import Codec.CBOR.Decoding
-import Codec.CBOR.Read
 import Codec.Serialise
 import Control.Monad.Except
 import Control.Tracer
-import Data.ByteString (ByteString)
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
-import Data.Proxy
 import Data.Set (Set)
 import Data.Word
 import GHC.Generics (Generic)
@@ -253,8 +243,6 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.Block
 import Ouroboros.Network.Point
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
-import Streaming
-import System.FS.CRC
 
 {-------------------------------------------------------------------------------
   Main API
@@ -752,42 +740,3 @@ data TraceReplayProgressEvent blk
       (ReplayGoal blk)
   deriving (Generic, Eq, Show)
 
-{-------------------------------------------------------------------------------
-  Streaming
--------------------------------------------------------------------------------}
-
--- | A backend that supports streaming the ledger tables
-class StreamingBackend m backend l blk where
-  data YieldArgs m backend l blk
-
-  data SinkArgs m backend l blk
-
-  yield :: Proxy backend -> YieldArgs m backend l blk -> Yield m l blk
-  releaseYieldArgs :: YieldArgs m backend l blk -> m ()
-
-  sink :: Proxy backend -> SinkArgs m backend l blk -> Sink m l blk
-  releaseSinkArgs :: SinkArgs m backend l blk -> m ()
-
-type Yield m l blk =
-  l blk ->
-  ( ( Stream
-        (Of ((), ()))
-        (ExceptT DeserialiseFailure m)
-        (Stream (Of ByteString) m (Maybe CRC)) ->
-      ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
-    )
-  ) ->
-  ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
-
-type Sink m l blk =
-  l blk ->
-  Stream
-    (Of ((), ()))
-    (ExceptT DeserialiseFailure m)
-    (Stream (Of ByteString) m (Maybe CRC)) ->
-  ExceptT DeserialiseFailure m (Stream (Of ByteString) m (Maybe CRC, Maybe CRC))
-
-data Decoders blk
-  = Decoders
-      (forall s. Decoder s ())
-      (forall s. Decoder s ())
