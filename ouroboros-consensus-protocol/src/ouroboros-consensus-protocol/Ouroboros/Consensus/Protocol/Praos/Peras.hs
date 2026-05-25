@@ -38,7 +38,6 @@ import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
 import Ouroboros.Consensus.Committee.Types
   ( LedgerStake (..)
   , PoolId (..)
-  , TargetCommitteeSize (..)
   )
 import Ouroboros.Consensus.Committee.WFA
   ( mkExtWFAStakeDistr
@@ -51,6 +50,7 @@ import Ouroboros.Consensus.Committee.WFALS
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
+import Ouroboros.Consensus.Peras.Params (PerasParams (..))
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import Ouroboros.Consensus.Protocol.Praos
   ( PraosState (..)
@@ -83,7 +83,7 @@ instance BlockSupportsPeras RealBlock where
   validatePerasCert = undefined
 
 instance PraosStateSupportsPerasVoting RealBlock where
-  praosStatePerasVotingCommitteeInput _ _perasParams tickedPraosState = do
+  praosStatePerasVotingCommitteeInput _ perasParams tickedPraosState = do
     let epochNonce =
           praosStateEpochNonce
             . tickedPraosStateChainDepState
@@ -98,7 +98,7 @@ instance PraosStateSupportsPerasVoting RealBlock where
         mkExtWFAStakeDistr
           wFATiebreaker
           stakeDistrWithPublicKeys
-    let targetCommitteeSize = TargetCommitteeSize 100 -- TODO: use perams params to get this value instead
+    let targetCommitteeSize = perasTargetCommitteeSize perasParams
     pure $
       WFALSVotingCommitteeInput
         epochNonce
