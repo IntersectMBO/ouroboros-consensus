@@ -122,7 +122,7 @@ prop_simple_pbft_convergence
         testConfig
         testConfigB
         TestConfigMB
-          { nodeInfo = \nid ->
+          { nodeInfo = \nid -> pure $
               plainTestNodeInitialization
                 ( protocolInfoMockPBFT
                     params
@@ -130,6 +130,7 @@ prop_simple_pbft_convergence
                 )
                 (pure $ fmap (MkBlockForging . pure) $ blockForgingMockPBFT nid)
           , mkRekeyM = Nothing
+          , ledgerTablesFactory = ()
           }
 
     refResult :: Ref.Result

@@ -11,6 +11,7 @@ import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
   ( SupportedNetworkProtocolVersion
   )
+import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Test.Tasty
 import Test.Tasty.HUnit

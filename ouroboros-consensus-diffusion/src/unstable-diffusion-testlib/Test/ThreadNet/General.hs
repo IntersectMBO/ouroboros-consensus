@@ -211,7 +211,13 @@ deriving instance
 -- that 'TestConfigB' can occur in contexts (such as in 'PropGeneralArgs') for
 -- which the @m@ parameter is irrelevant and hence unknown.
 data TestConfigMB m blk = TestConfigMB
-  { nodeInfo :: CoreNodeId -> TestNodeInitialization m blk
+  { nodeInfo :: CoreNodeId -> m (TestNodeInitialization m blk)
+  -- ^ 'runTestNetwork' calls this once per node to materialise its
+  -- 'TestNodeInitialization'. The action is run in @m@ so tests can
+  -- allocate per-node resources (e.g. a fresh sim-fs for an in-memory
+  -- 'MkHandle' that Shelley-based 'protocolInfo' constructors capture
+  -- at construction time). For per-block-type tests with nothing to
+  -- allocate, just wrap the pure value in 'pure'.
   , mkRekeyM :: Maybe (m (RekeyM m blk))
   -- ^ 'runTestNetwork' immediately runs this action once in order to
   -- initialize an 'RekeyM' value that it then reuses throughout the test

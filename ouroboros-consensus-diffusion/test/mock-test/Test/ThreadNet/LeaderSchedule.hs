@@ -123,7 +123,7 @@ prop_simple_leader_schedule_convergence
         testConfig
         testConfigB
         TestConfigMB
-          { nodeInfo = \nid ->
+          { nodeInfo = \nid -> pure $
               plainTestNodeInitialization
                 ( protocolInfoPraosRule
                     numCoreNodes
@@ -139,6 +139,7 @@ prop_simple_leader_schedule_convergence
                 )
                 (pure $ fmap (MkBlockForging . pure) $ blockForgingPraosRule)
           , mkRekeyM = Nothing
+          , ledgerTablesFactory = ()
           }
 
 {-------------------------------------------------------------------------------
