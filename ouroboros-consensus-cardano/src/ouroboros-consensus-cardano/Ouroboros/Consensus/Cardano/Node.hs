@@ -51,6 +51,7 @@ module Ouroboros.Consensus.Cardano.Node
 
 import Cardano.Binary (DecoderError (..), enforceSize)
 import Cardano.Chain.Slotting (EpochSlots)
+import Cardano.Crypto.KES (rawSerialiseUnsoundPureSignKeyKES)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
@@ -98,10 +99,7 @@ import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
-import Ouroboros.Consensus.Protocol.Praos.Common
-  ( PraosCanBeLeader (..)
-  , instantiatePraosCredentials
-  )
+import Ouroboros.Consensus.Protocol.Praos.Common (PraosCanBeLeader (..), PraosCredentialsSource (..), instantiatePraosCredentials)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..))
 import qualified Ouroboros.Consensus.Protocol.TPraos as Shelley
 import Ouroboros.Consensus.Shelley.HFEras ()
@@ -932,7 +930,17 @@ protocolInfoCardano paramsCardano
             (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
       , topLevelConfigCheckpoints = cardanoCheckpoints
-      , topLevelConfigVotingKey = Nothing
+      , -- FIXME: REMOVE THIS. Accesses and re-uses KES signing key material.
+        topLevelConfigVotingKey = do
+          let assumeUnsound = \case
+                PraosCredentialsUnsound _ sk -> sk
+                PraosCredentialsAgent{} -> error "can't derive topLevelConfigVotingKey from agent"
+          Just
+            . rawSerialiseUnsoundPureSignKeyKES
+            . assumeUnsound
+            . praosCanBeLeaderCredentialsSource
+            . shelleyLeaderCredentialsCanBeLeader
+            $ credssShelleyBased !! 0
       }
 
   -- When the initial ledger state is not in the Byron era, register various
