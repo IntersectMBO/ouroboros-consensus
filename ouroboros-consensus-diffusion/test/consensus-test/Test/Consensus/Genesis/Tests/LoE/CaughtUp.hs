@@ -263,6 +263,7 @@ openChainDB registry getLoEFragment = do
                   ExtStateHandle
                     (TestStateHandle (ledgerState testInitExtLedger))
                     (headerState testInitExtLedger)
+            , mcdbBackendArgs = testBackendArgs ()
             , mcdbRegistry = registry
             , mcdbTopLevelConfig
             , mcdbNodeDBs

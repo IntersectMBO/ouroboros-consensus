@@ -102,4 +102,5 @@ instance a ~ () => HasPointScheduleTestParams (TestBlockWith a) where
               (TestStateHandle (ledgerState testInitExtLedger))
               (headerState testInitExtLedger)
       }
+  mkLedgerTablesFactory _ _ = ()
   getChunkInfoFromTopLevelConfig = mkTestChunkInfo

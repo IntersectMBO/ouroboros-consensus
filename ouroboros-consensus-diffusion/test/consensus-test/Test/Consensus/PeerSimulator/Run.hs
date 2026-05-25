@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Test.Consensus.PeerSimulator.Run
@@ -67,6 +68,7 @@ import Ouroboros.Network.ControlMessage
   ( ControlMessage (..)
   , ControlMessageSTM
   )
+import Data.Proxy (Proxy (..))
 import Ouroboros.Network.Util.ShowProxy (ShowProxy)
 import qualified Test.Consensus.PeerSimulator.BlockFetch as BlockFetch
 import qualified Test.Consensus.PeerSimulator.CSJInvariants as CSJInvariants
@@ -548,6 +550,7 @@ startNode protocolInfo schedulerConfig genesisTest interval = do
 
 -- | Set up all resources related to node start/shutdown.
 nodeLifecycle ::
+  forall m blk.
   ( IOLike m
   , MonadTime m
   , MonadTimer m
@@ -585,6 +588,7 @@ nodeLifecycle protocolArgs schedulerConfig genesisTest lrTracer lrRegistry lrPee
         , lrSTracer = mkStateTracer schedulerConfig genesisTest lrPeerSim
         , lrConfig = topLevelConfig
         , lrInitLedger = pInfoInitLedger protocolInfo
+        , lrBackendArgs = testBackendArgs (mkLedgerTablesFactory (Proxy @m) protocolArgs)
         , lrChunkInfo = getChunkInfoFromTopLevelConfig topLevelConfig
         , lrPeerSim
         , lrCdb

@@ -72,6 +72,8 @@ import Ouroboros.Consensus.Block.Abstract
   , withOriginToMaybe
   )
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
+import Data.Proxy (Proxy (..))
+import Ouroboros.Consensus.Ledger.Basics (LedgerTablesFactory)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( GenesisWindow (..)
   )
@@ -745,4 +747,17 @@ class HasPointScheduleTestParams blk where
     GenesisWindow ->
     ProtocolInfoArgs blk ->
     ProtocolInfo m blk
+
+  -- | Materialise the 'LedgerTablesFactory' for the block under test.
+  -- For blocks with no on-disk tables (TestBlock, Byron-style mocks) this
+  -- is @()@; HFC blocks would build an 'MkHandle'. The harness threads
+  -- this into 'mcdbBackendArgs' so the LedgerDB has a backend to run
+  -- against at runtime.
+  mkLedgerTablesFactory ::
+    forall m.
+    Monad m =>
+    Proxy m ->
+    ProtocolInfoArgs blk ->
+    LedgerTablesFactory m blk
+
   getChunkInfoFromTopLevelConfig :: TopLevelConfig blk -> ChunkInfo
