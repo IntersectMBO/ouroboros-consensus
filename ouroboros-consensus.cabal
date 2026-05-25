@@ -406,9 +406,10 @@ library lsm
     bytestring,
     cardano-ledger-core,
     cardano-ledger-shelley,
+    cborg,
     containers,
+    contra-tracer,
     fs-api,
-    io-classes:mtl,
     lsm-tree ^>=1.1,
     mempack,
     microlens,
@@ -416,7 +417,9 @@ library lsm
     ouroboros-consensus,
     ouroboros-consensus:cardano,
     primitive,
+    random,
     resource-registry,
+    streaming,
     text,
     transformers,
     vector,
@@ -1321,6 +1324,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Ledger.Query.LegacyPParams
     Ouroboros.Consensus.Shelley.Ledger.Query.LegacyShelleyGenesis
     Ouroboros.Consensus.Shelley.Ledger.Query.Types
+    Ouroboros.Consensus.Shelley.Ledger.SnapshotStream
     Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol
     Ouroboros.Consensus.Shelley.Node
     Ouroboros.Consensus.Shelley.Node.Common
@@ -1375,9 +1379,11 @@ library cardano
     small-steps,
     sop-core,
     sop-extras,
+    streaming,
     strict-sop-core,
     text,
     these,
+    transformers,
     validation >=1.1.5,
 
 library unstable-byronspec
