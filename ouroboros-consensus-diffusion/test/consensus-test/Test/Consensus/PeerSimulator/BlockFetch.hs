@@ -112,7 +112,7 @@ startBlockFetchLogic ::
   Bool ->
   ResourceRegistry m ->
   Tracer m (TraceEvent blk) ->
-  ProtocolInfo blk ->
+  ProtocolInfo m blk ->
   ChainDB m blk ->
   FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
   KeepAliveRegistry PeerId m ->

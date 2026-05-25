@@ -28,7 +28,7 @@ import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
-import Ouroboros.Consensus.Ledger.Basics (LedgerState)
+import Ouroboros.Consensus.Ledger.Basics (BlockSupportsLedgerHD, LedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -50,9 +50,6 @@ import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
-import Ouroboros.Consensus.Storage.LedgerDB.API
-  ( CanUpgradeLedgerTables
-  )
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (forkLinkedWatcher)
@@ -420,7 +417,7 @@ startNode ::
   , ConfigSupportsNode blk
   , HasHardForkHistory blk
   ) =>
-  ProtocolInfo blk ->
+  ProtocolInfo m blk ->
   SchedulerConfig ->
   GenesisTestFull blk ->
   LiveInterval blk m ->
@@ -564,7 +561,7 @@ nodeLifecycle ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables LedgerState blk
+  , BlockSupportsLedgerHD m blk
   , HasPointScheduleTestParams blk
   , Eq (Header blk)
   ) =>
@@ -623,7 +620,7 @@ runPointSchedule ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables LedgerState blk
+  , BlockSupportsLedgerHD m blk
   , HasPointScheduleTestParams blk
   , Eq (Header blk)
   , Eq blk
