@@ -1123,7 +1123,7 @@ prop_simple_real_pbft_convergence
                 genesisConfig
                 genesisSecrets
                 theProposedProtocolVersion
-          , ledgerTablesFactory = ()
+          , ledgerTablesFactory = pure ()
           , mkRekeyM =
               Just $
                 fromRekeyingToRekeyM

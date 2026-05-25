@@ -159,7 +159,7 @@ setupTestOutput setup@SetupDualByron{..} =
                   [coreNodeId]
           pure $ plainTestNodeInitialization pInfo (fmap (fmap (MkBlockForging . pure)) bfs)
       , mkRekeyM = Nothing -- TODO
-      , ledgerTablesFactory = ()
+      , ledgerTablesFactory = pure ()
       }
  where
   testConfig = Byron.setupTestConfig setupByron
