@@ -47,7 +47,10 @@ import Data.Typeable
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
-import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras (..), VoidPerasError)
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( BlockSupportsPeras (..)
+  , EmptyPerasError
+  )
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
@@ -290,7 +293,7 @@ instance
   where
   type PerasVote (HardForkBlock xs) = MockPerasVote (HardForkBlock xs)
   type PerasCert (HardForkBlock xs) = MockPerasCert (HardForkBlock xs)
-  type PerasError (HardForkBlock xs) = VoidPerasError (HardForkBlock xs)
+  type PerasError (HardForkBlock xs) = EmptyPerasError (HardForkBlock xs)
 
   validatePerasVote = validateMockPerasVote
   validatePerasCert = validateMockPerasCert

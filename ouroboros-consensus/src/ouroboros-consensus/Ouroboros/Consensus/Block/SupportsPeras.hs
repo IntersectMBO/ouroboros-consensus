@@ -16,12 +16,17 @@
 
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasCrypto
-  , PerasCommitteeScheme
+  , PerasVotingCommitteeScheme
   , PerasVotingCommittee
+  , PerasVotingCommitteeError
+  , PerasVotingCommitteeInput
   , BlockSupportsPeras (..)
+  , PerasVoteCompatibleWithVotingCommittee (..)
+  , PerasCertCompatibleWithVotingCommittee (..)
+  , implPerasForgeVoteIfEligible
   , VoidPerasVote (..)
   , VoidPerasCert (..)
-  , VoidPerasError (..)
+  , EmptyPerasError (..)
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
   , ValidatedPerasVotesWithQuorum
@@ -29,16 +34,12 @@ module Ouroboros.Consensus.Block.SupportsPeras
     , vpvqVotes
     , vpvqPerasParams
     )
-  , injectCommitteeError
   , votesReachQuorum
   , IsPerasVote (..)
   , getPerasVoteId
   , getPerasVoteTarget
   , IsPerasCert (..)
-  , PerasVoteCompatibleWithVotingCommittee (..)
-  , PerasCertCompatibleWithVotingCommittee (..)
-  , injectConversionError
-  , implPerasForgeVoteIfEligible
+  , IsPerasError (..)
 
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Peras.Params
@@ -79,24 +80,30 @@ type family PerasCrypto blk :: Type
 -- Used to dispatch a block type to a its corresponding voting committee scheme.
 --
 -- TODO: maybe move this inside 'BlockSupportsPeras'.
-type family PerasCommitteeScheme blk :: Type
+type family PerasVotingCommitteeScheme blk :: Type
 
--- This witness the fact that 'PerasError blk' should have a way to represent a 'VotingCommitteeError' for the corresponding 'PerasCommitteeScheme blk' and 'PerasCrypto blk'.
---
--- TODO: maybe move this inside 'BlockSupportsPeras'
-injectCommitteeError ::
-  VotingCommitteeError (PerasCrypto blk) (PerasCommitteeScheme blk) -> PerasError blk
-injectCommitteeError = undefined
-
--- TODO: Add CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasCommitteeScheme blk) as a superclass constraint of 'BlockSupportsPeras'
 
 -- | Voting committee for Peras indexed by block type
 type PerasVotingCommittee blk =
   VotingCommittee
     (PerasCrypto blk)
-    (PerasCommitteeScheme blk)
+    (PerasVotingCommitteeScheme blk)
+
+-- | Error type for Peras voting committee errors
+type PerasVotingCommitteeError blk =
+  VotingCommitteeError
+    (PerasCrypto blk)
+    (PerasVotingCommitteeScheme blk)
+
+-- | Input needed to build a Peras voting committee
+type PerasVotingCommitteeInput blk =
+  VotingCommitteeInput
+    (PerasCrypto blk)
+    (PerasVotingCommitteeScheme blk)
 
 -- * BlockSupportsPeras class
+
+-- TODO: Add CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk) as a superclass constraint of 'BlockSupportsPeras'
 
 class
   ( StandardHash blk
@@ -115,6 +122,7 @@ class
   , NoThunks (PerasError blk)
   , IsPerasVote (PerasVote blk) blk
   , IsPerasCert (PerasCert blk) blk
+  , IsPerasError (PerasError blk) blk
   ) =>
   BlockSupportsPeras blk
   where
@@ -125,7 +133,7 @@ class
   type PerasCert blk = VoidPerasCert blk
 
   type PerasError blk = (err :: Type) | err -> blk
-  type PerasError blk = VoidPerasError blk
+  type PerasError blk = EmptyPerasError blk
 
   validatePerasVote ::
     PerasParams ->
@@ -175,12 +183,6 @@ class
   getPerasCertInBlock _ =
     Nothing
 
--- This witness the fact that 'PerasError blk' should have a way to represent a 'PerasConversionError'.
---
--- TODO: maybe move this inside 'BlockSupportsPeras'
-injectConversionError :: PerasConversionError -> PerasError blk
-injectConversionError = undefined
-
 -- * Conversion between concrete Peras types and abstract committee types
 
 -- | Conversion between (concrete) Peras votes and (abstract) committee votes.
@@ -218,8 +220,12 @@ implPerasForgeVoteIfEligible ::
   forall blk.
   ( ElectionId (PerasCrypto blk) ~ PerasRoundNo -- TODO Remove later
   , VoteCandidate (PerasCrypto blk) ~ Point blk -- TODO Remove later
-  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasCommitteeScheme blk) -- TODO maybe remove this once part of 'BlockSupportsPeras' constraints
-  , PerasVoteCompatibleWithVotingCommittee (PerasVote blk) (PerasCrypto blk) (PerasCommitteeScheme blk)
+  , IsPerasError (PerasError blk) blk
+  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk) -- TODO maybe remove this once part of 'BlockSupportsPeras' constraints
+  , PerasVoteCompatibleWithVotingCommittee
+      (PerasVote blk)
+      (PerasCrypto blk)
+      (PerasVotingCommitteeScheme blk)
   ) =>
   PerasVotingCommittee blk ->
   PoolId ->
@@ -235,7 +241,7 @@ implPerasForgeVoteIfEligible
   boostedBlock =
     do
       mWitness <-
-        bimap injectCommitteeError id $
+        bimap injectVotingCommitteeError id $
           Committee.checkShouldVote
             committee
             ourId
@@ -253,7 +259,9 @@ implPerasForgeVoteIfEligible
                     ourPrivateKey
                     roundNo
                     (boostedBlockToPoint boostedBlock)
-            concreteVote <- bimap injectConversionError id $ toPerasVote @(PerasVote blk) abstractVote
+            concreteVote <-
+              bimap injectConversionError id $
+                toPerasVote @(PerasVote blk) abstractVote
             pure $
               ValidatedPerasVote
                 { vpvVote = concreteVote
@@ -292,14 +300,22 @@ instance IsPerasCert (VoidPerasCert blk) blk where
   getPerasCertRound = absurd . unVoidPerasCert
   getPerasCertBlock = absurd . unVoidPerasCert
 
--- | Imposible Peras error for @blk@.
+-- | Empty Peras error for @blk@.
 --
 -- NOTE: the phantom @blk@ is used to keep the 'PerasError' type family injective.
-newtype VoidPerasError blk
-  = VoidPerasError
-  { unVoidPerasError :: Void
+--
+-- NOTE: in contrast to 'VoidPerasVote' and 'VoidPerasCert', this type cannot be
+-- uninhabited, or we would otherwise have to construct a `Void` when injecting
+-- errors into this type, which would be impossible.
+newtype EmptyPerasError blk
+  = EmptyPerasError
+  { unEmptyPerasError :: ()
   }
   deriving newtype (Show, Eq, NoThunks, ShowProxy)
+
+instance IsPerasError (EmptyPerasError blk) blk where
+  injectVotingCommitteeError _ = EmptyPerasError ()
+  injectConversionError _ = EmptyPerasError ()
 
 -- * Validated types
 
@@ -397,10 +413,14 @@ votesReachQuorum params votes =
   allVotesMatchTarget target =
     all ((== (getPerasVoteTarget target)) . getPerasVoteTarget)
 
--- * Convenience projection classes
+-- * Convenience projection/injection classes
 
 -- | Types that support being treated as Peras votes
-class BoostedBlockCompatibleWithPoint (BoostedBlock vote) blk => IsPerasVote vote blk | vote -> blk where
+class
+  BoostedBlockCompatibleWithPoint (BoostedBlock vote) blk =>
+  IsPerasVote vote blk
+    | vote -> blk
+  where
   getPerasVoteRound :: vote -> PerasRoundNo
   getPerasVoteBlock :: vote -> BoostedBlock vote
   getPerasVoteVoterId :: vote -> PerasVoterId
@@ -425,6 +445,7 @@ getPerasVoteTarget vote =
     }
 
 type instance BoostedBlock (ValidatedPerasVote blk) = BoostedBlock (PerasVote blk)
+
 instance
   ( IsPerasVote (PerasVote blk) blk
   , BoostedBlockCompatibleWithPoint (BoostedBlock (PerasVote blk)) blk
@@ -444,7 +465,11 @@ instance
   getPerasVoteVoterId = getPerasVoteVoterId . forgetArrivalTime
 
 -- | Types that support being treated as Peras certificates
-class BoostedBlockCompatibleWithPoint (BoostedBlock cert) blk => IsPerasCert cert blk | cert -> blk where
+class
+  BoostedBlockCompatibleWithPoint (BoostedBlock cert) blk =>
+  IsPerasCert cert blk
+    | cert -> blk
+  where
   getPerasCertRound :: cert -> PerasRoundNo
   getPerasCertBlock :: cert -> BoostedBlock cert
 
@@ -462,8 +487,19 @@ instance
   getPerasCertRound = getPerasCertRound . vpcCert
   getPerasCertBlock = getPerasCertBlock . vpcCert
 
-instance IsPerasCert cert blk => IsPerasCert (WithArrivalTime cert) blk where
+type instance BoostedBlock (WithArrivalTime voteOrCert) = BoostedBlock voteOrCert
+
+instance
+  IsPerasCert cert blk =>
+  IsPerasCert (WithArrivalTime cert) blk
+  where
   getPerasCertRound = getPerasCertRound . forgetArrivalTime
   getPerasCertBlock = getPerasCertBlock . forgetArrivalTime
 
-type instance BoostedBlock (WithArrivalTime voteOrCert) = BoostedBlock voteOrCert
+-- | Error types that support injecting certain types of Peras errors
+class
+  IsPerasError err blk
+    | err -> blk
+  where
+  injectVotingCommitteeError :: PerasVotingCommitteeError blk -> err
+  injectConversionError :: PerasConversionError -> err
