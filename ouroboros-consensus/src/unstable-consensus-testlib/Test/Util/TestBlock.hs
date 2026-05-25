@@ -573,6 +573,14 @@ instance Typeable ptype => BlockSupportsLedgerHD m (TestBlockWith ptype) where
 
   getStats _ = Statistics 0
 
+deriving newtype instance
+  NoThunks (LedgerState (TestBlockWith ptype)) =>
+  NoThunks (StateHandle m (TestBlockWith ptype))
+
+deriving newtype instance
+  NoThunks (Ticked LedgerState (TestBlockWith ptype)) =>
+  NoThunks (TickedStateHandle m (TestBlockWith ptype))
+
 instance
   PayloadSemantics ptype =>
   ApplyBlock LedgerState (TestBlockWith ptype)

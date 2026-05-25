@@ -5,6 +5,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -54,7 +55,7 @@ import Control.Monad (forM_, unless, void, when)
 import Control.Monad.Class.MonadThrow (Handler (..), catches)
 import Control.Monad.Class.MonadTime (MonadTime, getCurrentTime)
 import Control.Monad.Class.MonadTimer (MonadTimer)
-import Control.Monad.IOSim (runSimOrThrow)
+import Control.Monad.IOSim (IOSim, runSimOrThrow)
 import Control.ResourceRegistry
 import Control.Tracer (contramap, contramapM, nullTracer)
 import Data.DerivingVia (InstantiatedAt (InstantiatedAt))
@@ -840,14 +841,19 @@ updateClientState chainUpdates chain =
     Nothing -> error "Client chain update failed"
 
 -- | Simulates 'ChainDB.getPastLedger'.
+--
+-- 'tickThenReapply' is monadic in the handle world; this helper drives it
+-- in 'IOSim' under 'runSimOrThrow' so the test can call it from STM
+-- callbacks the same way as before. TestBlock's per-handle operations are
+-- pure (handles are trivial newtypes), so this just shifts boilerplate.
 computePastLedger ::
   TopLevelConfig TestBlock ->
   Point TestBlock ->
   Chain TestBlock ->
-  Maybe (ExtLedgerState TestBlock EmptyMK)
+  Maybe (ExtLedgerState TestBlock)
 computePastLedger cfg pt chain
   | pt `elem` validPoints =
-      Just $ go (convertMapKind testInitExtLedger) (Chain.toOldestFirst chain)
+      Just $ runSimOrThrow $ goM initHandle (Chain.toOldestFirst chain)
   | otherwise =
       Nothing
  where
@@ -863,31 +869,40 @@ computePastLedger cfg pt chain
   validPoints =
     AF.anchorPoint curFrag : map blockPoint (AF.toOldestFirst curFrag)
 
-  -- \| Apply blocks to the ledger state until we have applied the block
-  -- matching @pt@, after which we return the resulting ledger.
-  --
-  -- PRECONDITION: @pt@ is in the list of blocks or genesis.
-  go :: ExtLedgerState TestBlock EmptyMK -> [TestBlock] -> ExtLedgerState TestBlock EmptyMK
-  go !st blks
-    | castPoint (getTip st) == pt =
-        st
-    | blk : blks' <- blks =
-        go
-          (convertMapKind $ tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk (convertMapKind st))
-          blks'
+  initHandle :: forall s. ExtStateHandle (IOSim s) TestBlock
+  initHandle =
+    let ExtLedgerState ls hs = testInitExtLedger
+     in ExtStateHandle (TestStateHandle ls) hs
+
+  goM ::
+    forall s. ExtStateHandle (IOSim s) TestBlock -> [TestBlock] -> IOSim s (ExtLedgerState TestBlock)
+  goM !h blks
+    | castPoint (getTip (extLedgerState h)) == pt =
+        pure (extLedgerState h)
+    | blk : blks' <- blks = do
+        h' <- tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk h
+        goM h' blks'
     | otherwise =
         error "point not in the list of blocks"
 
 -- | Simulates 'ChainDB.getHeaderStateHistory'.
+--
+-- The handle-based 'HeaderStateHistory.fromChain' is monadic; driven via
+-- 'runSimOrThrow' so we can keep this helper pure and call it from STM.
 computeHeaderStateHistory ::
   TopLevelConfig TestBlock ->
   Chain TestBlock ->
   HeaderStateHistory TestBlock
-computeHeaderStateHistory cfg =
-  HeaderStateHistory.trim (fromIntegral k)
-    . HeaderStateHistory.fromChain cfg (convertMapKind testInitExtLedger)
+computeHeaderStateHistory cfg chain =
+  HeaderStateHistory.trim (fromIntegral k) $
+    runSimOrThrow (HeaderStateHistory.fromChain cfg initHandle chain)
  where
   k = unNonZero $ maxRollbacks $ configSecurityParam cfg
+
+  initHandle :: forall s. ExtStateHandle (IOSim s) TestBlock
+  initHandle =
+    let ExtLedgerState ls hs = testInitExtLedger
+     in ExtStateHandle (TestStateHandle ls) hs
 
 {-------------------------------------------------------------------------------
   ChainSyncClientSetup

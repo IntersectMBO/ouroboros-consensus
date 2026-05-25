@@ -18,7 +18,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..), ExtStateHandle (..))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( CSJConfig (..)
   , CSJEnabledConfig (..)
@@ -119,19 +119,25 @@ runTest TestSetup = withRegistry $ \registry -> do
   -- in order to "initialize" CSJ.
   varHandles <- atomically newChainSyncClientHandleCollection
 
+  -- 'HeaderStateHistory.fromChain' is now monadic; materialise it once
+  -- against the empty chain so the STM-returning 'getHeaderStateHistory'
+  -- below stays pure-looking.
+  initHsh <-
+    HeaderStateHistory.fromChain
+      topLevelCfg
+      ( let ExtLedgerState{ledgerState = ls, headerState = hs} = testInitExtLedger
+         in ExtStateHandle (TestStateHandle ls) hs
+      )
+      MockChain.Genesis
+
   let chainDbView :: ChainDbView m TestBlock
       chainDbView =
         ChainDbView
           { getCurrentChain = pure $ AF.Empty AF.AnchorGenesis
-          , getHeaderStateHistory =
-              pure $
-                HeaderStateHistory.fromChain
-                  topLevelCfg
-                  testInitExtLedger
-                  MockChain.Genesis
+          , getHeaderStateHistory = pure initHsh
           , getPastLedger =
               pure . \case
-                GenesisPoint -> Just $ forgetLedgerTables testInitExtLedger
+                GenesisPoint -> Just testInitExtLedger
                 BlockPoint{} -> Nothing
           , getIsInvalidBlock =
               pure $ WithFingerprint (\_hash -> Nothing) (Fingerprint 0)
