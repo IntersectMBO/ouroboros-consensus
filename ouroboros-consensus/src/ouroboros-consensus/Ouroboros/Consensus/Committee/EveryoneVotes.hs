@@ -54,7 +54,8 @@ import Ouroboros.Consensus.Committee.Crypto
   , VoteCandidate
   )
 import Ouroboros.Consensus.Committee.Types
-  ( LedgerStake (..)
+  ( Cumulative (..)
+  , LedgerStake (..)
   , PoolId
   , VoteWeight (..)
   )
@@ -62,6 +63,7 @@ import Ouroboros.Consensus.Committee.WFA
   ( ExtWFAStakeDistr (..)
   , NumPoolsWithPositiveStake (..)
   , SeatIndex
+  , TotalStake (..)
   , WFAError
   , getCandidateIfSeatWithinBounds
   , unsafeGetCandidateInSeat
@@ -82,6 +84,8 @@ instance
       candidateSeats :: !(Map PoolId SeatIndex)
     , -- Number of active voters (i.e., those with non-zero stake)
       numActiveVoters :: !NumPoolsWithPositiveStake
+    , -- Total stake of all voters (i.e., the sum of the stakes)
+      totalActiveStake :: !TotalStake
     }
 
   data VotingCommitteeInput crypto EveryoneVotes
@@ -156,6 +160,7 @@ mkEveryoneVotesVotingCommittee
         { extWFAStakeDistr = stakeDistr
         , candidateSeats = seats
         , numActiveVoters = numPoolsWithPositiveStake stakeDistr
+        , totalActiveStake = totalStake stakeDistr
         }
 
 -- | Check whether we should vote in a given election
@@ -239,15 +244,23 @@ implVerifyVote committee = \case
 -- | Compute the voting power of an eligible committee member.
 --
 -- In this simple voting committee, the vote weight of a member is equal to
--- their ledger stake, as long as it is positive.
+-- their (normalised) ledger stake, as long as it is positive.
 implEligiblePartyVoteWeight ::
   VotingCommittee crypto EveryoneVotes ->
   EligibilityWitness crypto EveryoneVotes ->
   VoteWeight
-implEligiblePartyVoteWeight _committee member =
-  VoteWeight (unLedgerStake (unNonZero voterStake))
+implEligiblePartyVoteWeight committee = \case
+  EveryoneVotesMember _ nonZeroStake ->
+    mkVoteWeight
+      . unLedgerStake
+      . unNonZero
+      $ nonZeroStake
  where
-  EveryoneVotesMember _ voterStake = member
+  TotalStake (Cumulative (LedgerStake activeStake)) =
+    totalActiveStake committee
+
+  mkVoteWeight absoluteStake =
+    VoteWeight (absoluteStake / activeStake)
 
 -- | Forge a certificate attesting the winner of a given election
 implForgeCert ::

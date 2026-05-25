@@ -100,7 +100,19 @@ class
       (VotingCommitteeError crypto committee)
       (EligibilityWitness crypto committee)
 
-  -- | Compute the voting weight of a eligibile party
+  -- | Compute the (relative) voting power of an eligibile party
+  --
+  -- WARNING: there is a key difference between the "Ledger stake" and the "Vote
+  -- weight" of a given voter. On one hand, the ledger stake is the stake as
+  -- reflected directly by the ledger stake distribution under consideration. On
+  -- the other hand, the "Vote weight" refers to the relative (i.e. normalised)
+  -- voting power of that voter w.r.t. the rest of the committee.
+  --
+  -- It is up to the implementation of the voting committee to decide how to
+  -- compute this value, but it should be implemented so that detecting a
+  -- quorum can be done by comparing the total vote weight of the votes received
+  -- against a fixed threshold, e.g., "a quorum is reached if the total weight
+  -- of the votes received exceeds 75% / 0.75 (of the total voting stake)".
   eligiblePartyVoteWeight ::
     VotingCommittee crypto committee ->
     EligibilityWitness crypto committee ->

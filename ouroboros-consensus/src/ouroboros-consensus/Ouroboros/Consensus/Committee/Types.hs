@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -24,21 +25,24 @@ import NoThunks.Class (NoThunks)
 newtype PoolId = PoolId
   { unPoolId :: KeyHash StakePool
   }
-  deriving (Show, Eq, Ord, NoThunks, Generic)
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving anyclass NoThunks
 
 -- | Stake of a voter as reflected by the ledger state
 newtype LedgerStake = LedgerStake
   { unLedgerStake :: Rational
   }
-  deriving (Show, Eq, Ord)
+  deriving stock (Show, Eq, Ord, Generic)
   deriving newtype (Num, HasZero)
+  deriving anyclass NoThunks
 
--- | Voting power of a voter in the committee selection scheme
+-- | Relative voting power of a voter in the committee selection scheme
 newtype VoteWeight = VoteWeight
   { unVoteWeight :: Rational
   }
-  deriving newtype (Show, Eq, Ord, Num, Fractional, NoThunks, NFData, Serialise)
-  deriving stock Generic
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving newtype (Num, Fractional, NFData, Serialise)
+  deriving anyclass NoThunks
   deriving Semigroup via Sum Rational
   deriving Monoid via Sum Rational
 
@@ -46,10 +50,12 @@ newtype VoteWeight = VoteWeight
 newtype TargetCommitteeSize = TargetCommitteeSize
   { unTargetCommitteeSize :: Word64
   }
-  deriving (Show, Eq, NoThunks, Generic)
+  deriving (Show, Eq, Generic)
+  deriving anyclass NoThunks
 
 -- | Wrapper to tag accumulated resources
 newtype Cumulative a = Cumulative
   { unCumulative :: a
   }
-  deriving (Show, Eq, NoThunks, Generic)
+  deriving (Show, Eq, Generic)
+  deriving anyclass NoThunks
