@@ -1,6 +1,8 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -14,10 +16,9 @@ module Ouroboros.Consensus.Peras.Error.V1
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasCommitteeScheme
-  , PerasCrypto
+  ( IsPerasError (..)
+  , PerasVotingCommitteeError
   )
-import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee (..))
 import Ouroboros.Consensus.Committee.WFA (WFAError)
 import Ouroboros.Consensus.Peras.Types (PerasConversionError)
 
@@ -26,20 +27,24 @@ data PerasError blk
   = PerasVotingWFAError
       WFAError
   | PerasVotingCommitteeError
-      (VotingCommitteeError (PerasCrypto blk) (PerasCommitteeScheme blk))
+      (PerasVotingCommitteeError blk)
   | PerasVotingConversionError
       PerasConversionError
   | PerasTemporaryPublicKeyHackError
       String
 
 deriving instance
-  Show (VotingCommitteeError (PerasCrypto blk) (PerasCommitteeScheme blk)) =>
+  Show (PerasVotingCommitteeError blk) =>
   Show (PerasError blk)
 deriving instance
-  Eq (VotingCommitteeError (PerasCrypto blk) (PerasCommitteeScheme blk)) =>
+  Eq (PerasVotingCommitteeError blk) =>
   Eq (PerasError blk)
 deriving instance
-  NoThunks (VotingCommitteeError (PerasCrypto blk) (PerasCommitteeScheme blk)) =>
+  NoThunks (PerasVotingCommitteeError blk) =>
   NoThunks (PerasError blk)
 deriving instance
   Generic (PerasError blk)
+
+instance IsPerasError (PerasError blk) blk where
+  injectVotingCommitteeError = PerasVotingCommitteeError
+  injectConversionError = PerasVotingConversionError
