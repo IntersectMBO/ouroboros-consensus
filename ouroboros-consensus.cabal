@@ -1646,7 +1646,6 @@ test-suite cardano-test
     Test.Consensus.Cardano.Show
     Test.Consensus.Cardano.SupportedNetworkProtocolVersion
     Test.Consensus.Cardano.SupportsSanityCheck
-    Test.Consensus.Cardano.Translation
     Test.ThreadNet.AllegraMary
     Test.ThreadNet.Cardano
     Test.ThreadNet.MaryAlonzo
@@ -1676,6 +1675,8 @@ test-suite cardano-test
     contra-tracer,
     directory,
     filepath,
+    fs-api,
+    fs-sim,
     microlens,
     ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-cardano-testlib, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-mempool-test-utils},
     ouroboros-network:{api, protocols, protocols-tests-lib},
