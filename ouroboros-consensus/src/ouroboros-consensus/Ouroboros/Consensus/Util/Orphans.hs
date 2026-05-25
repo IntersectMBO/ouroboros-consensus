@@ -114,3 +114,4 @@ deriving via
 -------------------------------------------------------------------------------}
 
 instance ShowProxy Void
+instance ShowProxy ()

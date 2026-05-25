@@ -739,7 +739,7 @@ instance LedgerSupportsPeras TestBlock where
 instance BlockSupportsPeras TestBlock where
   type PerasVote TestBlock = MockPerasVote TestBlock
   type PerasCert TestBlock = MockPerasCert TestBlock
-  type PerasError TestBlock = VoidPerasError TestBlock
+  type PerasError TestBlock = EmptyPerasError TestBlock
 
   validatePerasVote = validateMockPerasVote
   validatePerasCert = validateMockPerasCert
