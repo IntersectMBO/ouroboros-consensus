@@ -43,6 +43,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..), ExtStateHandle (..))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandle (..)
   , ChainSyncClientHandleCollection (..)
@@ -257,7 +258,11 @@ openChainDB registry getLoEFragment = do
         fromMinimalChainDbArgs
           MinimalChainDbArgs
             { mcdbChunkInfo = mkTestChunkInfo mcdbTopLevelConfig
-            , mcdbInitLedger = testInitExtLedger
+            , mcdbInitLedger = \() ->
+                pure $
+                  ExtStateHandle
+                    (TestStateHandle (ledgerState testInitExtLedger))
+                    (headerState testInitExtLedger)
             , mcdbRegistry = registry
             , mcdbTopLevelConfig
             , mcdbNodeDBs

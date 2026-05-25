@@ -738,5 +738,11 @@ class HasPointScheduleTestParams blk where
   getProtocolInfoArgs :: IO (ProtocolInfoArgs blk)
 
   mkProtocolInfo ::
-    SecurityParam -> ForecastRange -> GenesisWindow -> ProtocolInfoArgs blk -> ProtocolInfo blk
+    forall m.
+    Applicative m =>
+    SecurityParam ->
+    ForecastRange ->
+    GenesisWindow ->
+    ProtocolInfoArgs blk ->
+    ProtocolInfo m blk
   getChunkInfoFromTopLevelConfig :: TopLevelConfig blk -> ChunkInfo

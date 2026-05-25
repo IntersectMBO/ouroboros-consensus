@@ -34,9 +34,10 @@ module Test.Consensus.HardFork.Combinator.A
   , GenTx (..)
   , Header (..)
   , LedgerState (..)
-  , LedgerTables (..)
   , NestedCtxt_ (..)
+  , StateHandle (..)
   , StorageConfig (..)
+  , TickedStateHandle (..)
   , TxId (..)
   ) where
 
@@ -82,7 +83,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
@@ -92,7 +92,6 @@ import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (repeatedlyM)
 import Ouroboros.Consensus.Util.Condense
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block
   ( Serialised
@@ -190,55 +189,44 @@ instance BasicEnvelopeValidation BlockA
 
 instance ValidateEnvelope BlockA
 
-data instance LedgerState BlockA mk = LgrA
+data instance LedgerState BlockA = LgrA
   { lgrA_tip :: Point BlockA
   , lgrA_transition :: Maybe SlotNo
   -- ^ The 'SlotNo' of the block containing the 'InitiateAtoB' transaction
   }
   deriving (Show, Eq, Generic, Serialise)
-  deriving NoThunks via OnlyCheckWhnfNamed "LgrA" (LedgerState BlockA mk)
+  deriving NoThunks via OnlyCheckWhnfNamed "LgrA" (LedgerState BlockA)
 
 -- | Ticking has no state on the A ledger state
-newtype instance Ticked LedgerState BlockA mk = TickedLedgerStateA
-  { getTickedLedgerStateA :: LedgerState BlockA mk
+newtype instance Ticked LedgerState BlockA = TickedLedgerStateA
+  { getTickedLedgerStateA :: LedgerState BlockA
   }
   deriving stock (Generic, Show, Eq)
-  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrA" (Ticked LedgerState BlockA mk)
+  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrA" (Ticked LedgerState BlockA)
 
 {-------------------------------------------------------------------------------
-  Ledger Tables
+  Handle layer (trivial — BlockA has no on-disk tables)
 -------------------------------------------------------------------------------}
 
-type instance TxIn BlockA = Void
-type instance TxOut BlockA = Void
+type instance LedgerTablesHandle m BlockA = ()
 
-instance LedgerTablesAreTrivial LedgerState BlockA where
-  convertMapKind (LgrA x y) = LgrA x y
-instance LedgerTablesAreTrivial (Ticked LedgerState) BlockA where
-  convertMapKind (TickedLedgerStateA x) = TickedLedgerStateA (convertMapKind x)
+instance BlockSupportsLedgerHD m BlockA where
+  newtype StateHandle m BlockA = BlockAStateHandle (LedgerState BlockA)
+  newtype TickedStateHandle m BlockA
+    = TickedBlockAStateHandle (Ticked LedgerState BlockA)
 
-deriving via Void instance IndexedMemPack LedgerState BlockA Void
+  newStateHandle st () = BlockAStateHandle st
 
-instance HasLedgerTables LedgerState BlockA where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
+  state (BlockAStateHandle s) = s
+  tickedState (TickedBlockAStateHandle s) = s
 
-instance HasLedgerTables (Ticked LedgerState) BlockA where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
+  close _ = pure ()
+  closeTicked _ = pure ()
 
-instance CanStowLedgerTables (LedgerState BlockA) where
-  stowLedgerTables = convertMapKind
-  unstowLedgerTables = convertMapKind
+  duplicate = pure
+  duplicateTicked = pure
 
-instance CanUpgradeLedgerTables LedgerState BlockA where
-  upgradeTables _ _ = id
-
-instance SerializeTablesWithHint LedgerState BlockA where
-  decodeTablesWithHint _ = do
-    _ <- CBOR.decodeMapLen
-    pure (LedgerTables $ ValuesMK Map.empty)
-  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
+  getStats _ = Statistics 0
 
 data PartialLedgerConfigA = LCfgA
   { lcfgA_k :: SecurityParam
@@ -261,10 +249,10 @@ instance (HasZero a, Serialise a) => Serialise (NonZero a) where
 
 type instance LedgerCfg LedgerState BlockA = (EpochInfo Identity, PartialLedgerConfigA)
 
-instance GetTip (LedgerState BlockA) where
+instance GetTip LedgerState BlockA where
   getTip = castPoint . lgrA_tip
 
-instance GetTip (Ticked LedgerState BlockA) where
+instance GetTip (Ticked LedgerState) BlockA where
   getTip = castPoint . getTip . getTickedLedgerStateA
 
 type instance AuxLedgerEvent BlockA = VoidLedgerEvent
@@ -272,27 +260,23 @@ type instance AuxLedgerEvent BlockA = VoidLedgerEvent
 instance IsLedger LedgerState BlockA where
   type LedgerErr LedgerState BlockA = Void
 
-  applyChainTickLedgerResult _ _ _ =
-    pureLedgerResult
-      . TickedLedgerStateA
-      . noNewTickingDiffs
+  applyChainTickLedgerResult _ _ _ (BlockAStateHandle st) =
+    pure $ pureLedgerResult $ TickedBlockAStateHandle $ TickedLedgerStateA st
 
 instance ApplyBlock LedgerState BlockA where
-  applyBlockLedgerResultWithValidation _ _ cfg blk =
-    fmap (pureLedgerResult . convertMapKind . setTip)
-      . repeatedlyM
-        (fmap (convertMapKind . fst) .: applyTx cfg DoNotIntervene (blockSlot blk))
-        (blkA_body blk)
+  applyBlockLedgerResultWithValidation _ _ _cfg blk (TickedBlockAStateHandle (TickedLedgerStateA st0)) =
+    let st' = Prelude.foldl applyOne st0 (blkA_body blk)
+     in pure $ pureLedgerResult $ BlockAStateHandle $ setTip st'
    where
-    setTip :: TickedLedgerState BlockA mk -> LedgerState BlockA mk
-    setTip (TickedLedgerStateA st) = st{lgrA_tip = blockPoint blk}
+    setTip :: LedgerState BlockA -> LedgerState BlockA
+    setTip st = st{lgrA_tip = blockPoint blk}
+
+    applyOne :: LedgerState BlockA -> GenTx BlockA -> LedgerState BlockA
+    applyOne st (TxA _ InitiateAtoB) = st{lgrA_transition = Just (blockSlot blk)}
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =
     defaultReapplyBlockLedgerResult absurd
-
-instance GetBlockKeySets BlockA where
-  getBlockKeySets _blk = emptyLedgerTables
 
 instance UpdateLedger BlockA
 
@@ -327,7 +311,7 @@ forgeBlockA ::
   TopLevelConfig BlockA ->
   BlockNo ->
   SlotNo ->
-  TickedLedgerState BlockA mk ->
+  TickedLedgerState BlockA ->
   [GenTx BlockA] ->
   IsLeader (BlockProtocol BlockA) ->
   BlockA
@@ -386,18 +370,36 @@ newtype instance Validated (GenTx BlockA) = ValidatedGenTxA {forgetValidatedGenT
 
 type instance ApplyTxErr BlockA = Void
 
-instance LedgerSupportsMempool BlockA where
-  applyTx _ _wti sno tx@(TxA _ payload) (TickedLedgerStateA st) =
-    case payload of
-      InitiateAtoB -> do
-        return (TickedLedgerStateA $ st{lgrA_transition = Just sno}, ValidatedGenTxA tx)
+data instance TxLocalData BlockA = BlockATxLocalData
+  deriving stock Generic
+  deriving anyclass NoThunks
 
-  reapplyTx cfg slot tx st =
-    applyDiffs st . fst <$> applyTx cfg DoNotIntervene slot (forgetValidatedGenTxA tx) st
+-- | BlockA has no on-disk tables; the acc is the ticked ledger state.
+newtype instance MempoolAcc BlockA = BlockAMempoolAcc
+  {unBlockAMempoolAcc :: Ticked LedgerState BlockA}
+  deriving stock Generic
+  deriving anyclass NoThunks
+
+instance LedgerSupportsMempool BlockA where
+  emptyAcc = BlockAMempoolAcc
+  accTickedState = unBlockAMempoolAcc
+
+  prepareTx _cfg _slot _tsh _acc _tx = pure BlockATxLocalData
+
+  applyTx _ _wti sno (BlockAMempoolAcc (TickedLedgerStateA st)) tx@(TxA _ payload) _tld =
+    case payload of
+      InitiateAtoB ->
+        pure
+          ( ValidatedGenTxA tx
+          , BlockAMempoolAcc $ TickedLedgerStateA $ st{lgrA_transition = Just sno}
+          )
+
+  reapplyTx _cfg sno (BlockAMempoolAcc (TickedLedgerStateA st)) vtx _tld =
+    case txA_payload (forgetValidatedGenTxA vtx) of
+      InitiateAtoB ->
+        pure $ BlockAMempoolAcc $ TickedLedgerStateA $ st{lgrA_transition = Just sno}
 
   txForgetValidated = forgetValidatedGenTxA
-
-  getTransactionKeySets _tx = emptyLedgerTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 
@@ -405,7 +407,7 @@ instance TxLimits BlockA where
   type TxMeasure BlockA = IgnoringOverflow ByteSize32
   txWireSize = const . fromIntegral $ (0 :: Int)
   blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary
-  txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
+  txMeasure _cfg _st _tld _tx = pure $ IgnoringOverflow $ ByteSize32 0
 
 newtype instance TxId (GenTx BlockA) = TxIdA Int
   deriving stock (Show, Eq, Ord, Generic)
@@ -493,7 +495,7 @@ instance InspectLedger BlockA where
    where
     k = stabilityWindowA (lcfgA_k (snd (configLedger cfg)))
 
-getConfirmationDepth :: LedgerState BlockA mk -> Maybe (SlotNo, Word64)
+getConfirmationDepth :: LedgerState BlockA -> Maybe (SlotNo, Word64)
 getConfirmationDepth st = do
   confirmedInSlot <- lgrA_transition st
   return $ case ledgerTipSlot st of
@@ -626,8 +628,8 @@ instance SerialiseNodeToNodeConstraints BlockA where
 
 deriving instance Serialise (AnnTip BlockA)
 
-instance EncodeDisk BlockA (LedgerState BlockA EmptyMK)
-instance DecodeDisk BlockA (LedgerState BlockA EmptyMK)
+instance EncodeDisk BlockA (LedgerState BlockA)
+instance DecodeDisk BlockA (LedgerState BlockA)
 
 instance EncodeDisk BlockA BlockA
 instance DecodeDisk BlockA (Lazy.ByteString -> Either DecoderError BlockA) where

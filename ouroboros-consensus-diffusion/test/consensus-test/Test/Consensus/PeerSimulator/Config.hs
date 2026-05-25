@@ -35,11 +35,13 @@ import Test.Consensus.PointSchedule
   ( ForecastRange (ForecastRange)
   , HasPointScheduleTestParams (..)
   )
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..), ExtStateHandle (..))
 import Test.Util.ChainDB (mkTestChunkInfo)
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestBlock
   ( BlockConfig (TestBlockConfig)
   , CodecConfig (TestBlockCodecConfig)
+  , StateHandle (TestStateHandle)
   , StorageConfig (TestBlockStorageConfig)
   , TestBlock
   , TestBlockLedgerConfig (..)
@@ -94,6 +96,10 @@ instance a ~ () => HasPointScheduleTestParams (TestBlockWith a) where
   mkProtocolInfo k forecast window _ =
     ProtocolInfo
       { pInfoConfig = defaultCfg k forecast window
-      , pInfoInitLedger = testInitExtLedger
+      , pInfoInitLedger = \() ->
+          pure $
+            ExtStateHandle
+              (TestStateHandle (ledgerState testInitExtLedger))
+              (headerState testInitExtLedger)
       }
   getChunkInfoFromTopLevelConfig = mkTestChunkInfo
