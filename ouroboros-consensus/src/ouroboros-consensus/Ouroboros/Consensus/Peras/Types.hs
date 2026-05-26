@@ -125,7 +125,10 @@ instance FromCBOR PerasBoostedBlock where
 instance ToCBOR PerasBoostedBlock where
   toCBOR = encodeWithOrigin encodeBytes32RealPoint . unPerasBoostedBlock
 
-instance Coercible (HeaderHash blk) ShortByteString => BoostedBlockCompatibleWithPoint PerasBoostedBlock blk where
+instance
+  Coercible (HeaderHash blk) ShortByteString =>
+  BoostedBlockCompatibleWithPoint PerasBoostedBlock blk
+  where
   boostedBlockToPoint =
     withOriginRealPointToPoint
       . fmap fromBytes32RealPoint
