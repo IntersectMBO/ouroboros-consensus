@@ -29,41 +29,57 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , VoidPerasError (..)
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
-  , ValidatedPerasVotesWithQuorum
-    ( vpvqTarget
-    , vpvqVotes
-    , vpvqPerasParams
-    )
-  , votesReachQuorum
   , IsPerasVote (..)
   , getPerasVoteId
   , getPerasVoteTarget
   , IsPerasCert (..)
   , IsPerasError (..)
 
+    -- * Types and functions related to Peras vote collection and quorum checking
+  , PerasVoteCollectionWithQuorum (forgetQuorum)
+  , PerasVoteCollection
+    ( pvcTarget
+    , pvcVotes
+    , pvcTotalWeight
+    )
+  , perasVoteCollectionSingleton
+  , perasVoteCollectionAddVote
+  , perasVoteCollectionCheckQuorum
+  , toUniqueVotesWithSameTarget
+
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Peras.Params
   , module Ouroboros.Consensus.Peras.Types
   ) where
 
+import Control.Arrow ((&&&))
+import Control.Exception (assert)
 import Data.Bifunctor (bimap)
 import Data.Coerce (coerce)
+import Data.Containers.NonEmpty (NE)
 import Data.Kind (Type)
-import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Map (Map)
+import qualified Data.Map.NonEmpty as NEMap
+import Data.Ord (comparing)
 import Data.Typeable (Typeable)
 import Data.Void (Void, absurd)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
-import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee (..))
+import Ouroboros.Consensus.Committee.Class
+  ( CryptoSupportsVotingCommittee (..)
+  , UniqueVotesWithSameTarget
+  , unsafeUniqueVotesWithSameTarget
+  )
 import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.Crypto (ElectionId, PrivateKey, VoteCandidate)
 import Ouroboros.Consensus.Committee.Types (PoolId)
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Types
 import Ouroboros.Consensus.Util (ShowProxy)
+import Ouroboros.Consensus.Util.Orphans ()
 
 -- | The crypto scheme used for Peras votes and certificates
 --
@@ -162,15 +178,18 @@ class
 
   forgePerasCert ::
     PerasParams ->
-    ValidatedPerasVotesWithQuorum blk ->
+    PerasVoteCollectionWithQuorum blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
   default forgePerasCert ::
     PerasVote blk ~ VoidPerasVote blk =>
     PerasParams ->
-    ValidatedPerasVotesWithQuorum blk ->
+    PerasVoteCollectionWithQuorum blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
   forgePerasCert _ votes =
-    absurd (unVoidPerasVote (vpvVote (NonEmpty.head (vpvqVotes votes))))
+    absurd
+      ( unVoidPerasVote
+          (vpvVote . forgetArrivalTime . NonEmpty.head . NEMap.elems . pvcVotes . forgetQuorum $ votes)
+      )
 
   -- | Extract a Peras certificate optionally stored in a block.
   --
@@ -340,76 +359,6 @@ deriving instance Ord (PerasCert blk) => Ord (ValidatedPerasCert blk)
 deriving instance NoThunks (PerasCert blk) => NoThunks (ValidatedPerasCert blk)
 deriving instance Generic (ValidatedPerasCert blk)
 
--- | A collection of validated Peras votes that:
--- 1. are all for the same target, and
--- 2. have total stake above the quorum threshold for a given 'PerasCfg'.
-data ValidatedPerasVotesWithQuorum blk
-  = ValidatedPerasVotesWithQuorum
-  { vpvqTarget :: !(PerasVoteTarget blk)
-  -- ^ The target that all the votes are for
-  , vpvqVotes :: !(NonEmpty (ValidatedPerasVote blk))
-  -- ^ The votes that reached quorum for the given target
-  , vpvqPerasParams :: !PerasParams
-  -- ^ The Peras parameters used to validate that the votes reach quorum
-  }
-
-deriving instance
-  ( StandardHash blk
-  , Show (PerasVote blk)
-  ) =>
-  Show (ValidatedPerasVotesWithQuorum blk)
-deriving instance
-  ( StandardHash blk
-  , Eq (PerasVote blk)
-  ) =>
-  Eq (ValidatedPerasVotesWithQuorum blk)
-deriving instance
-  ( StandardHash blk
-  , NoThunks (PerasVote blk)
-  ) =>
-  NoThunks (ValidatedPerasVotesWithQuorum blk)
-deriving instance
-  Generic (ValidatedPerasVotesWithQuorum blk)
-
--- | Smart constructor for 'ValidatedPerasVotesReachingQuorum'.
---
--- This function checks that all votes are for the same target, and that their
--- total stake is above the quorum threshold defined in the given 'PerasCfg'.
--- It returns 'Nothing' if either of these conditions is not met.
-votesReachQuorum ::
-  ( StandardHash blk
-  , IsPerasVote (PerasVote blk) blk
-  ) =>
-  PerasParams ->
-  [ValidatedPerasVote blk] ->
-  Maybe (ValidatedPerasVotesWithQuorum blk)
-votesReachQuorum params votes =
-  case votes of
-    -- We need at least one vote to determine who these votes are for, so we
-    -- can't vacuously reach a quorum, even if the quorum threshold is 0.
-    [] -> Nothing
-    -- If we have at least one vote, we must check that all votes are for the
-    -- same target, and that their total weight is above the quorum threshold.
-    (v0 : vs)
-      | not (allVotesMatchTarget v0 vs) ->
-          Nothing
-      | not votesHaveEnoughWeight ->
-          Nothing
-      | otherwise ->
-          Just
-            ValidatedPerasVotesWithQuorum
-              { vpvqTarget = getPerasVoteTarget v0
-              , vpvqVotes = v0 :| vs
-              , vpvqPerasParams = params
-              }
- where
-  totalVoteWeight =
-    mconcat (vpvVoteWeight <$> votes)
-  votesHaveEnoughWeight =
-    weightAboveThreshold params totalVoteWeight
-  allVotesMatchTarget target =
-    all ((== (getPerasVoteTarget target)) . getPerasVoteTarget)
-
 -- * Convenience projection/injection classes
 
 -- | Types that support being treated as Peras votes
@@ -500,3 +449,154 @@ class
   where
   injectVotingCommitteeError :: PerasVotingCommitteeError blk -> err
   injectConversionError :: PerasConversionError -> err
+
+-------------------------------------------------------------------------------è
+
+-- | Collection of Peras votes for a given target.
+--
+-- NOTE: votes in this collection are uniquely identified by their vote ID.
+data PerasVoteCollection blk
+  = PerasVoteCollection
+  { pvcTarget :: !(PerasVoteTarget blk)
+  -- ^ The target of the votes in this collection
+  , pvcVotes :: !(NE (Map (PerasVoteId blk) (WithArrivalTime (ValidatedPerasVote blk))))
+  -- ^ Votes received for this target, indexed by vote ID
+  , pvcTotalWeight :: !VoteWeight
+  -- ^ Total weight of the votes received for this target
+  }
+
+deriving instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  Show (PerasVoteCollection blk)
+deriving instance
+  ( StandardHash blk
+  , Eq (PerasVote blk)
+  , Eq (PerasCert blk)
+  ) =>
+  Eq (PerasVoteCollection blk)
+deriving instance
+  ( StandardHash blk
+  , NoThunks (PerasVote blk)
+  , NoThunks (PerasCert blk)
+  ) =>
+  NoThunks (PerasVoteCollection blk)
+deriving instance
+  Generic (PerasVoteCollection blk)
+
+-- | Smart constructor for 'PerasVoteCollection' from a single vote.
+perasVoteCollectionSingleton ::
+  IsPerasVote (PerasVote blk) blk =>
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  PerasVoteCollection blk
+perasVoteCollectionSingleton vote =
+  PerasVoteCollection
+    { pvcTarget = getPerasVoteTarget vote
+    , pvcVotes = NEMap.singleton (getPerasVoteId vote) vote
+    , pvcTotalWeight = vpvVoteWeight (forgetArrivalTime vote)
+    }
+
+-- | Add a vote to an existing vote collection if it isn't already present, and
+-- update the total weight accordingly.
+--
+-- PRECONDITION: the vote's target must match the collection's target.
+perasVoteCollectionAddVote ::
+  ( StandardHash blk
+  , IsPerasVote (PerasVote blk) blk
+  ) =>
+  WithArrivalTime (ValidatedPerasVote blk) ->
+  PerasVoteCollection blk ->
+  PerasVoteCollection blk
+perasVoteCollectionAddVote vote pvc =
+  assert (getPerasVoteTarget vote == pvcTarget pvc) $
+    pvc
+      { pvcVotes = pvcVotes'
+      , pvcTotalWeight = pvcTotalWeight'
+      }
+ where
+  swapVote =
+    NEMap.insertLookupWithKey
+      (\_k old _new -> old)
+      (getPerasVoteId vote)
+
+  (pvcVotes', pvcTotalWeight')
+    -- key WAS NOT present → vote inserted and weight updated
+    | (Nothing, votes') <- swapVote vote (pvcVotes pvc) =
+        ( votes'
+        , pvcTotalWeight pvc + vpvVoteWeight (forgetArrivalTime vote)
+        )
+    -- key WAS already present → votes and weight unchanged
+    | otherwise =
+        ( pvcVotes pvc
+        , pvcTotalWeight pvc
+        )
+
+-- | A collection of Peras votes for a given target that has reached quorum
+newtype PerasVoteCollectionWithQuorum blk
+  = PerasVoteCollectionWithQuorum {forgetQuorum :: PerasVoteCollection blk}
+
+deriving newtype instance
+  ( StandardHash blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  ) =>
+  Show (PerasVoteCollectionWithQuorum blk)
+deriving newtype instance
+  ( StandardHash blk
+  , Eq (PerasVote blk)
+  , Eq (PerasCert blk)
+  ) =>
+  Eq (PerasVoteCollectionWithQuorum blk)
+deriving newtype instance
+  ( StandardHash blk
+  , NoThunks (PerasVote blk)
+  , NoThunks (PerasCert blk)
+  ) =>
+  NoThunks (PerasVoteCollectionWithQuorum blk)
+deriving newtype instance
+  Generic (PerasVoteCollectionWithQuorum blk)
+
+-- | Smart constructor for 'PerasVoteCollectionWithQuorum'
+perasVoteCollectionCheckQuorum ::
+  PerasParams ->
+  PerasVoteCollection blk ->
+  Maybe (PerasVoteCollectionWithQuorum blk)
+perasVoteCollectionCheckQuorum params pvc =
+  case weightAboveThreshold params (pvcTotalWeight pvc) of
+    True -> Just (PerasVoteCollectionWithQuorum pvc)
+    False -> Nothing
+
+-- | Convert a collection of Peras votes that has reached quorum into the
+-- corresponding abstract representation of votes used by the voting committee
+-- to forge certificates.
+--
+-- 'UniqueVotesWithSameTarget' and 'PerasVoteCollection' enforce the same
+-- invariants, which are:
+-- - The collection is not empty
+-- - All votes have the same target
+-- - All votes have a unique vote ID (or unique seat index, which is equivalent
+--   assuming they also have the same target, see second point)
+-- In addition to that, 'PerasVoteCollectionWithQuorum' guarantees that the
+-- total weight of the votes is above the threshold.
+toUniqueVotesWithSameTarget ::
+  ( vote ~ PerasVote blk
+  , crypto ~ PerasCrypto blk
+  , committee ~ PerasVotingCommitteeScheme blk
+  , ElectionId crypto ~ PerasRoundNo
+  , VoteCandidate crypto ~ BoostedBlock vote
+  , Eq (BoostedBlock vote)
+  , IsPerasVote vote blk
+  , Committee.Vote crypto committee ~ vote
+  ) =>
+  PerasVoteCollectionWithQuorum blk ->
+  UniqueVotesWithSameTarget (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
+toUniqueVotesWithSameTarget (PerasVoteCollectionWithQuorum pvc) =
+  unsafeUniqueVotesWithSameTarget -- Skip redundant checks in production
+    (getPerasVoteRound &&& getPerasVoteBlock)
+    (comparing getPerasVoteId)
+    ( fmap (vpvVote . forgetArrivalTime)
+        . NEMap.elems
+        $ pvcVotes pvc
+    )
