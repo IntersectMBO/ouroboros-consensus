@@ -7,7 +7,6 @@ module Main (main) where
 import Bench.Consensus.Mempool
 import Bench.Consensus.Mempool.TestBlock (TestBlock)
 import qualified Bench.Consensus.Mempool.TestBlock as TestBlock
-import Test.Util.TestBlock (StateHandle (TestStateHandle))
 import Control.Arrow (first)
 import Control.DeepSeq
 import Control.Monad (unless)
@@ -36,6 +35,7 @@ import Test.Tasty.Bench
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.Options (changeOption)
 import Test.Tasty.Runners (parseOptions, tryIngredients)
+import Test.Util.TestBlock (StateHandle (TestStateHandle))
 
 main :: IO ()
 main = withStdTerminalHandles $ do

@@ -41,6 +41,9 @@ import Ouroboros.Consensus.Shelley.Node
   ( ProtocolParamsShelleyBased (..)
   , ShelleyGenesis (..)
   )
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as Mock
+import System.FS.Sim.STM (simHasFS')
 import Test.Consensus.Shelley.MockCrypto (MockCrypto)
 import Test.QuickCheck
 import Test.Tasty
@@ -61,9 +64,6 @@ import Test.ThreadNet.Util.NodeJoinPlan (trivialNodeJoinPlan)
 import Test.ThreadNet.Util.NodeRestarts (noRestarts)
 import Test.ThreadNet.Util.NodeToNodeVersion (genVersionFiltered)
 import Test.ThreadNet.Util.Seed (runGen)
-import qualified System.FS.Sim.MockFS as Mock
-import System.FS.Sim.STM (simHasFS')
-import System.FS.API (SomeHasFS (..))
 import qualified Test.Util.BoolProps as BoolProps
 import Test.Util.HardFork.Future (EraSize (..), Future (..))
 import Test.Util.Orphans.Arbitrary ()

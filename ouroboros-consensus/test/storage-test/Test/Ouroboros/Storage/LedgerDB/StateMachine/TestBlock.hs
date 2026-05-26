@@ -99,7 +99,7 @@ data TxErr
   deriving anyclass (NoThunks, Serialise, ToExpr)
 
 instance PayloadSemantics Tx where
-  -- | With the no-MK port the UTxO map lives directly inside
+  -- \| With the no-MK port the UTxO map lives directly inside
   -- 'PayloadDependentState'; there is no separate 'LedgerTables'
   -- container anymore.
   data PayloadDependentState Tx = UTxTok

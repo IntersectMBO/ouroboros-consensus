@@ -44,6 +44,9 @@ import Ouroboros.Network.Protocol.LocalTxSubmission.Examples
 import Ouroboros.Network.Protocol.LocalTxSubmission.Server
   ( localTxSubmissionServerPeer
   )
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as Mock
+import System.FS.Sim.STM (simHasFS')
 import Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
   ( deserialiseTx
   )
@@ -55,9 +58,6 @@ import Test.Consensus.Cardano.ProtocolInfo
   , mkSimpleTestProtocolInfo
   , protocolVersionZero
   )
-import qualified System.FS.Sim.MockFS as Mock
-import System.FS.Sim.STM (simHasFS')
-import System.FS.API (SomeHasFS (..))
 import Test.Consensus.Mempool.Mocked (MockedMempool)
 import qualified Test.Consensus.Mempool.Mocked as Mocked
 import Test.Tasty (TestTree, testGroup)

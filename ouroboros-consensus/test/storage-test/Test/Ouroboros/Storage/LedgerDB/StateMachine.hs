@@ -67,13 +67,13 @@ import System.FS.API
 import qualified System.FS.Sim.MockFS as MockFS
 import System.FS.Sim.STM
 import Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
-import Test.Util.ChainDB (testBackendArgsRoundtrippingSnapshots)
-import Test.Util.PureApplyBlock (pureExtTickThenApply)
 import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Monadic as QC
 import Test.QuickCheck.StateModel
 import Test.Tasty
 import Test.Tasty.QuickCheck (frequency, tabulate, testProperty)
+import Test.Util.ChainDB (testBackendArgsRoundtrippingSnapshots)
+import Test.Util.PureApplyBlock (pureExtTickThenApply)
 import qualified Test.Util.QuickCheck as QC'
 import Test.Util.TestBlock hiding
   ( TestBlock

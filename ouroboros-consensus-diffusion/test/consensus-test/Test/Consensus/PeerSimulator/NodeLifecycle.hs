@@ -29,7 +29,6 @@ import Ouroboros.Consensus.Ledger.Basics
   , LedgerTablesFactory
   )
 import Ouroboros.Consensus.Ledger.Extended (ExtStateHandle)
-import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend (LedgerDbBackendArgs)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -48,6 +47,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( ChunkInfo
   )
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend (LedgerDbBackendArgs)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -186,7 +186,16 @@ mkChainDb resources = do
   void $ forkLinkedThread lrRegistry "AddBlockRunner" (void intAddBlockRunner)
   pure (chainDB, intCopyToImmutableDB)
  where
-  LiveResources{lrRegistry, lrTracer, lrConfig, lrCdb, lrLoEVar, lrChunkInfo, lrInitLedger, lrBackendArgs} = resources
+  LiveResources
+    { lrRegistry
+    , lrTracer
+    , lrConfig
+    , lrCdb
+    , lrLoEVar
+    , lrChunkInfo
+    , lrInitLedger
+    , lrBackendArgs
+    } = resources
 
 -- | Allocate all the resources that depend on the results of previous live
 -- intervals, the ChainDB and its persisted state.

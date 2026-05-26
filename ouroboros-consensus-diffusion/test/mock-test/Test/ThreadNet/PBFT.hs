@@ -122,13 +122,14 @@ prop_simple_pbft_convergence
         testConfig
         testConfigB
         TestConfigMB
-          { nodeInfo = \nid -> pure $
-              plainTestNodeInitialization
-                ( protocolInfoMockPBFT
-                    params
-                    (HardFork.defaultEraParams k slotLength)
-                )
-                (pure $ fmap (MkBlockForging . pure) $ blockForgingMockPBFT nid)
+          { nodeInfo = \nid ->
+              pure $
+                plainTestNodeInitialization
+                  ( protocolInfoMockPBFT
+                      params
+                      (HardFork.defaultEraParams k slotLength)
+                  )
+                  (pure $ fmap (MkBlockForging . pure) $ blockForgingMockPBFT nid)
           , mkRekeyM = Nothing
           , ledgerTablesFactory = pure ()
           }

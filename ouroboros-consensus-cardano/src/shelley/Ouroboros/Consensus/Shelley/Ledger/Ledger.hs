@@ -416,7 +416,7 @@ data MkHandleFromSnapshot m = MkHandleFromSnapshot
       ) =>
       DiskSnapshot ->
       SL.NewEpochState era ->
-      -- | The 'NewEpochState' to be embedded into the in-memory pure
+      -- \| The 'NewEpochState' to be embedded into the in-memory pure
       -- 'LedgerState' part of the 'ShelleyStateHandle', the
       -- 'TablesHandle', and an optional CRC of the @utxo@ file. The
       -- backend decides whether to keep the UTxOs in the pure state

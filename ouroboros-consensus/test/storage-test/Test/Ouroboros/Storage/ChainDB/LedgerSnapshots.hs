@@ -59,7 +59,8 @@ tests =
   testGroup
     "LedgerSnapshots"
     [ testProperty "snapshots" prop_ledgerSnapshots
-    , testProperty "addBlocks while a snapshot is enqueued"
+    , testProperty
+        "addBlocks while a snapshot is enqueued"
         prop_addBlocksWhileSnapshotting
     ]
 

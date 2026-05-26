@@ -10,8 +10,6 @@ import Control.Monad (void)
 import DBAnalyser.Parsers
 import qualified Data.Text as T
 import Main.Utf8 (withStdTerminalHandles)
-import qualified Ouroboros.Consensus.Backends as Backends
-import qualified Ouroboros.Consensus.Backends.LSM as LSM
 import Options.Applicative
   ( execParser
   , footer
@@ -21,6 +19,8 @@ import Options.Applicative
   , progDesc
   , (<**>)
   )
+import qualified Ouroboros.Consensus.Backends as Backends
+import qualified Ouroboros.Consensus.Backends.LSM as LSM
 import System.FS.API (mkFsPath)
 import System.Random (genWord64, newStdGen)
 
