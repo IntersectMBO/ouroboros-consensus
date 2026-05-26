@@ -44,7 +44,6 @@ import Control.Monad.Except (runExceptT)
 import Control.Tracer (nullTracer)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
-import Data.Foldable (foldl')
 import Data.Functor.Identity (Identity (runIdentity))
 import Data.List (transpose, uncons)
 import Data.Map (Map)

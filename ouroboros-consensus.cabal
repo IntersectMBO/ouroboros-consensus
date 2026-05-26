@@ -409,7 +409,7 @@ library
     these ^>=1.2,
     time,
     transformers,
-    typed-protocols:{typed-protocols, cborg} ^>=1.2,
+    typed-protocols:{cborg, typed-protocols} ^>=1.2,
     vector ^>=0.13,
 
   x-docspec-extra-packages:
@@ -686,9 +686,6 @@ test-suite consensus-test
   hs-source-dirs: ouroboros-consensus/test/consensus-test
   main-is: Main.hs
   other-modules:
-    Test.LeiosDemoDb
-    Test.LeiosDemoTypes
-    Test.LeiosVoteState
     Test.Consensus.BlockchainTime.Simple
     Test.Consensus.Committee.WFALS
     Test.Consensus.Committee.WFALS.Conformance
@@ -716,6 +713,9 @@ test-suite consensus-test
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Pred
     Test.Consensus.Util.Versioned
+    Test.LeiosDemoDb
+    Test.LeiosDemoTypes
+    Test.LeiosVoteState
 
   build-depends:
     QuickCheck,
@@ -1807,8 +1807,8 @@ library unstable-cardano-tools
     Cardano.Tools.Headers
     Cardano.Tools.ImmDBServer.Diffusion
     Cardano.Tools.ImmDBServer.Json
-    Cardano.Tools.ImmDBServer.Json.SendRecv
     Cardano.Tools.ImmDBServer.Json.Say
+    Cardano.Tools.ImmDBServer.Json.SendRecv
     Cardano.Tools.ImmDBServer.MiniProtocols
     Cardano.Tools.ThreadNet.Run
 
@@ -1827,6 +1827,7 @@ library unstable-cardano-tools
     Cardano.Node.Protocol.Shelley
 
   build-depends:
+    QuickCheck,
     aeson,
     base,
     base16-bytestring,
@@ -1862,16 +1863,15 @@ library unstable-cardano-tools
     filepath,
     fs-api,
     githash,
+    io-classes,
+    io-classes:si-timers,
     microlens,
     mtl,
     network,
     network-mux,
     nothunks,
-    io-classes,
-    io-classes:si-timers,
     ouroboros-consensus:{cardano, diffusion, lmdb, lsm, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-protocol-testlib, unstable-shelley-testlib},
     ouroboros-network:{api, framework, ouroboros-network, protocols},
-    QuickCheck,
     random,
     resource-registry,
     singletons,
@@ -1995,13 +1995,13 @@ executable leios-schedule-gen
     cardano-crypto-class,
     cborg,
     containers,
+    direct-sqlite,
     directory,
     dlist,
     ouroboros-consensus,
     random,
     text,
     vector,
-    direct-sqlite,
 
 library unstable-snapshot-conversion
   import: common-lib

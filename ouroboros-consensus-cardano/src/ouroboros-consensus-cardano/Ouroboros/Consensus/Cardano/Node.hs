@@ -99,7 +99,11 @@ import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
-import Ouroboros.Consensus.Protocol.Praos.Common (PraosCanBeLeader (..), PraosCredentialsSource (..), instantiatePraosCredentials)
+import Ouroboros.Consensus.Protocol.Praos.Common
+  ( PraosCanBeLeader (..)
+  , PraosCredentialsSource (..)
+  , instantiatePraosCredentials
+  )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..))
 import qualified Ouroboros.Consensus.Protocol.TPraos as Shelley
 import Ouroboros.Consensus.Shelley.HFEras ()
