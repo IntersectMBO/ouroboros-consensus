@@ -652,6 +652,7 @@ test-suite consensus-test
     Test.Consensus.Mempool
     Test.Consensus.Mempool.Fairness
     Test.Consensus.Mempool.Fairness.TestBlock
+    Test.Consensus.Mempool.StateMachine
     Test.Consensus.Mempool.Util
     Test.Consensus.MiniProtocol.BlockFetch.Client
     Test.Consensus.MiniProtocol.ChainSync.Client

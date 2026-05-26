@@ -55,7 +55,9 @@ module Ouroboros.Consensus.Mock.Ledger.Block
 
     -- * 'ApplyTx' (mempool support)
   , GenTx (..)
+  , MempoolAcc (..)
   , TxId (..)
+  , TxLocalData (..)
   , Validated (..)
   , genTxSize
   , mkSimpleGenTx
