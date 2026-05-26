@@ -1320,7 +1320,7 @@ generator loe genBlock genPerasBlock m@Model{..} =
     let roundNo = case Model.roundNoOfLatestCertSeen dbModel of
           Nothing -> PerasRoundNo 0
           Just (PerasRoundNo r) -> PerasRoundNo (r + 1)
-    voterId <- PerasVoteDB.SM.genVoterId
+    seatIndex <- PerasVoteDB.SM.genPerasSeatIndex
     weight <- PerasVoteDB.SM.genVoteWeight
     -- Include the voted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
@@ -1333,7 +1333,7 @@ generator loe genBlock genPerasBlock m@Model{..} =
                   MockPerasVote
                     { mockVoteRound = roundNo
                     , mockVoteBlock = blockPoint blk
-                    , mockVoteVoterId = voterId
+                    , mockVoteSeatIndex = seatIndex
                     , mockVoteWeight = weight
                     }
               , vpvVoteWeight = weight

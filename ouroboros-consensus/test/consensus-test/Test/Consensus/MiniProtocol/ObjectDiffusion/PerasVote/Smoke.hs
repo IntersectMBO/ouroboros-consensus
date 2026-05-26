@@ -7,20 +7,16 @@
 
 module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke
   ( tests
-  , genPerasVoterId
+  , genPerasSeatIndex
   , genVoteWeight
   , genPerasVote
   , genValidatedPerasVote
   ) where
 
-import qualified Cardano.Crypto.DSIGN.Class as SL
-import qualified Cardano.Crypto.Seed as SL
-import qualified Cardano.Ledger.Keys as SL
 import Control.Monad (join)
 import Control.Tracer (contramap, nullTracer)
 import qualified Data.Map as Map
 import Data.Ratio ((%))
-import Data.String (IsString (..))
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -66,13 +62,8 @@ tests =
     [ testProperty "PerasVoteDiffusion smoke test" prop_smoke
     ]
 
-genPerasVoterId :: Gen PerasVoterId
-genPerasVoterId = do
-  bytes <- fromString <$> vectorOf 32 arbitrary
-  let signKey = SL.genKeyDSIGN (SL.mkSeedFromBytes bytes)
-      verKey = SL.deriveVerKeyDSIGN signKey
-      keyHash = SL.hashKey (SL.VKey verKey)
-  pure (PerasVoterId keyHash)
+genPerasSeatIndex :: Gen PerasSeatIndex
+genPerasSeatIndex = PerasSeatIndex <$> arbitrary
 
 genVoteWeight :: Gen VoteWeight
 genVoteWeight = do
@@ -83,13 +74,13 @@ genPerasVote :: Gen (PerasVote TestBlock)
 genPerasVote = do
   mockVoteRound <- PerasRoundNo <$> arbitrary
   mockVoteBlock <- genPointTestBlock
-  mockVoteVoterId <- genPerasVoterId
+  mockVoteSeatIndex <- genPerasSeatIndex
   mockVoteWeight <- genVoteWeight
   pure $
     MockPerasVote
       { mockVoteRound
       , mockVoteBlock
-      , mockVoteVoterId
+      , mockVoteSeatIndex
       , mockVoteWeight
       }
 
