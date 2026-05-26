@@ -1,27 +1,17 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Voting interface for Peras derived from the Praos ledger view.
 module Ouroboros.Consensus.Protocol.Praos.Peras
   ( PraosStateSupportsPerasVoting (..)
-  , getStakeDistrWithBLSPublicKeys
-  , perasBLSPublicKeysFromEnv
   ) where
 
-import qualified Cardano.Ledger.Shelley.State as SL
-import Data.Aeson (eitherDecodeFileStrict')
 import Data.Bifunctor (Bifunctor (..))
-import qualified Data.ByteString.Char8 as ByteString
 import Data.ByteString.Short (ShortByteString)
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block.Abstract (HeaderHash, StandardHash)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
@@ -34,12 +24,6 @@ import Ouroboros.Consensus.Block.SupportsPeras
   )
 import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee)
 import qualified Ouroboros.Consensus.Committee.Class as Committee
-import Ouroboros.Consensus.Committee.Crypto (PublicKey)
-import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
-import Ouroboros.Consensus.Committee.Types
-  ( LedgerStake (..)
-  , PoolId (..)
-  )
 import Ouroboros.Consensus.Committee.WFA
   ( mkExtWFAStakeDistr
   , wFATiebreakerWithEpochNonce
@@ -50,6 +34,9 @@ import Ouroboros.Consensus.Committee.WFALS
   )
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
+import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
+  ( unsafeExtendPerasStakeDistrWithPublicKeysFromEnv
+  )
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
 import Ouroboros.Consensus.Peras.Params (PerasParams (..))
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
@@ -58,8 +45,6 @@ import Ouroboros.Consensus.Protocol.Praos
   , Ticked (..)
   )
 import Ouroboros.Consensus.Protocol.Praos.Views (LedgerView (..))
-import System.Environment (lookupEnv)
-import System.IO.Unsafe (unsafePerformIO)
 
 --------------------------------------------------------------------------------
 -- This is a mocked up instance
@@ -89,87 +74,23 @@ instance PraosStateSupportsPerasVoting RealBlock where
           praosStateEpochNonce
             . tickedPraosStateChainDepState
             $ tickedPraosState
-    let wFATiebreaker =
-          wFATiebreakerWithEpochNonce epochNonce
+    -- TODO: replace the following hack with proper on-chain key registration.
     stakeDistrWithPublicKeys <-
-      bimap V1.PerasTemporaryPublicKeyHackError id $
-        getStakeDistrWithBLSPublicKeys tickedPraosState
+      bimap V1.PerasTemporaryPublicKeyHackError id
+        . unsafeExtendPerasStakeDistrWithPublicKeysFromEnv
+        . lvPoolDistr
+        . tickedPraosStateLedgerView
+        $ tickedPraosState
     extWFAStakeDistr <-
       bimap V1.PerasVotingWFAError id $
         mkExtWFAStakeDistr
-          wFATiebreaker
+          (wFATiebreakerWithEpochNonce epochNonce)
           stakeDistrWithPublicKeys
-    let targetCommitteeSize = perasTargetCommitteeSize perasParams
     pure $
       WFALSVotingCommitteeInput
         epochNonce
-        targetCommitteeSize
+        (perasTargetCommitteeSize perasParams)
         extWFAStakeDistr
-
---------------------------------------------------------------------------------
--- Helpers to deal with public keys and stake
---------------------------------------------------------------------------------
-
-getStakeDistrWithBLSPublicKeys ::
-  Ticked PraosState ->
-  Either
-    String
-    (Map PoolId (LedgerStake, PublicKey BLS.PerasBLSCrypto))
-getStakeDistrWithBLSPublicKeys tickedPraosState = do
-  let stakeDistr =
-        Map.mapKeysMonotonic PoolId
-          . Map.map (LedgerStake . SL.individualPoolStake)
-          . SL.unPoolDistr
-          . lvPoolDistr
-          . tickedPraosStateLedgerView
-          $ tickedPraosState
-
-  publicKeys <- perasBLSPublicKeysFromEnv -- Uses 'unsafePerformIO'
-  Map.traverseWithKey (addPublicKey publicKeys) stakeDistr
- where
-  addPublicKey publicKeys poolId stake =
-    case Map.lookup poolId publicKeys of
-      Nothing ->
-        Left $ "Public key not found for pool: " <> show poolId
-      Just pk ->
-        pure (stake, pk)
-
--- * Retrieveing public keys from a JSON file (temporary)
-
-perasBLSPublicKeysFromEnv :: Either String (Map PoolId BLS.PerasPublicKey)
-{-# NOINLINE perasBLSPublicKeysFromEnv #-}
-perasBLSPublicKeysFromEnv =
-  unsafePerformIO $
-    lookupEnv envVar >>= \case
-      Nothing -> do
-        pure $ Left $ "Environment variable " <> envVar <> " not set."
-      Just keysFile -> do
-        eitherDecodeFileStrict' keysFile >>= \case
-          Left err -> do
-            pure $ Left $ "Failed to parse public keys from file: " <> err
-          Right rawKeys -> do
-            pure $ decodeKeys rawKeys
- where
-  envVar =
-    "PERAS_PUBLIC_KEY_FILE"
-
-  keyScope =
-    "TESTNET"
-
-  decodeKeys =
-    fmap (Map.mapKeysMonotonic PoolId)
-      . traverse decodeKey
-
-  decodeKey key =
-    case BLS.rawDeserialisePublicKey keyScope (ByteString.pack key) of
-      Nothing ->
-        Left $ "Invalid public key format: " <> key
-      Just pk ->
-        Right $
-          BLS.PerasPublicKey
-            { BLS.perasVoteVerKey = BLS.coercePublicKey @BLS.SIGN pk
-            , BLS.perasVRFVerKey = BLS.coercePublicKey @BLS.VRF pk
-            }
 
 --------------------------------------------------------------------------------
 
