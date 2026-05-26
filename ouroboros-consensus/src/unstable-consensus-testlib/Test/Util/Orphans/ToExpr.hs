@@ -132,7 +132,7 @@ deriving anyclass instance ToExpr (PerasVoteId blk)
 
 deriving anyclass instance ToExpr a => ToExpr (WithArrivalTime a)
 
-instance ToExpr PerasVoterId where toExpr = defaultExprViaShow
+instance ToExpr PerasSeatIndex where toExpr = defaultExprViaShow
 
 instance ToExpr (HeaderHash blk) => ToExpr (MockPerasVote blk)
 instance ToExpr (HeaderHash blk) => ToExpr (MockPerasCert blk)

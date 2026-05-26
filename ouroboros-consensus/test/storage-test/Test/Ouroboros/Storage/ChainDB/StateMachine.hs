@@ -1379,7 +1379,7 @@ generator loe genBlock genPerasBlock m@Model{..} =
     let upperBound = min capacity maxVoteWeight
     weightNumerator <- choose (ceiling (minVoteWeight * 100), floor (upperBound * 100)) :: Gen Int
     let weight = VoteWeight (fromIntegral weightNumerator % 100)
-    voterId <- PerasVoteDB.SM.genVoterId
+    seatIndex <- PerasVoteDB.SM.genPerasSeatIndex
     -- Include the voted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
     -- Build the vote
@@ -1391,7 +1391,7 @@ generator loe genBlock genPerasBlock m@Model{..} =
                   MockPerasVote
                     { mockVoteRound = roundNo
                     , mockVoteBlock = blockPoint blk
-                    , mockVoteVoterId = voterId
+                    , mockVoteSeatIndex = seatIndex
                     , mockVoteWeight = weight
                     }
               , vpvVoteWeight = weight

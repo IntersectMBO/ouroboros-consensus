@@ -33,9 +33,9 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , IsPerasVote (..)
   , PerasParams
   , PerasRoundNo
+  , PerasSeatIndex
   , PerasVoteId (..)
   , PerasVoteTarget (..)
-  , PerasVoterId
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
   , VoteWeight (..)
@@ -53,8 +53,8 @@ import Ouroboros.Consensus.Storage.PerasVoteDB.API
 data VoteEntry blk = VoteEntry
   { veTicketNo :: PerasVoteTicketNo
   -- ^ The ticket number assigned to this vote
-  , veVoter :: PerasVoterId
-  -- ^ The voter ID
+  , veVoter :: PerasSeatIndex
+  -- ^ The seat index of the voter
   , veVote :: WithArrivalTime (ValidatedPerasVote blk)
   -- ^ The vote itself
   }
@@ -128,7 +128,7 @@ hasVote voteId model =
           ( \ve ->
               PerasVoteId
                 { pviRoundNo = pvtRoundNo voteTarget
-                , pviVoterId = veVoter ve
+                , pviSeatIndex = veVoter ve
                 }
           )
           votesForTarget
@@ -167,8 +167,8 @@ addVote ::
   , Model blk
   )
 addVote vote model
-  -- The ID of a vote is a pair (voterId, roundNo). So checking if the voter has
-  -- already voted in this round means checking if the pair (voterId, roundNo)
+  -- The ID of a vote is a pair (seatIndex, roundNo). So checking if the voter has
+  -- already voted in this round means checking if the pair (seatIndex, roundNo)
   -- is already present in the model i.e. if the vote is already in the model.
   -- In which case, we can ignore it.
   --
@@ -225,14 +225,14 @@ addVote vote model
   votedBlock =
     getPerasVotePoint vote
   voter =
-    getPerasVoteVoterId vote
+    getPerasVoteSeatIndex vote
   -- Compute the next ticket number associated to this vote.
   -- NOTE: This is a 64-bit counter, so there's no practical risk of overflow.
   nextTicketNo =
     succ (lastTicketNo model)
   -- Prepare various data structures needed to update the model
   voteId =
-    PerasVoteId{pviRoundNo = roundNo, pviVoterId = voter}
+    PerasVoteId{pviRoundNo = roundNo, pviSeatIndex = voter}
   voteTarget =
     PerasVoteTarget{pvtRoundNo = roundNo, pvtBlock = votedBlock}
   voteEntry =
@@ -292,7 +292,7 @@ getVoteIds model =
         ( \ve ->
             PerasVoteId
               { pviRoundNo = pvtRoundNo voteTarget
-              , pviVoterId = veVoter ve
+              , pviSeatIndex = veVoter ve
               }
         )
         votesForTarget
