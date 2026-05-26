@@ -56,7 +56,7 @@ import Ouroboros.Consensus.Protocol.LeaderSchedule
   ( LeaderSchedule (..)
   , leaderScheduleFor
   )
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB (IsCertRB (..), ResolveLeiosBlock (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
@@ -433,7 +433,10 @@ instance HasHardForkTxOut '[BlockA, BlockB] where
 
 type TestBlock = HardForkBlock '[BlockA, BlockB]
 
-instance ResolveLeiosBlock (HardForkBlock '[BlockA, BlockB])
+instance ResolveLeiosBlock (HardForkBlock '[BlockA, BlockB]) where
+  resolveLeiosBlock _ _ blk = return blk
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
 
 instance CanHardFork '[BlockA, BlockB] where
   type HardForkTxMeasure '[BlockA, BlockB] = IgnoringOverflow ByteSize32

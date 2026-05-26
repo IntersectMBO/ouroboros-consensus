@@ -19,7 +19,7 @@ module LeiosDemoTypes (module LeiosDemoTypes) where
 
 import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR, enforceSize, serialize', toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
-import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
+import Cardano.Ledger.Binary (DecCBOR (..), EncCBOR (..))
 import Cardano.Ledger.Core (EraTx, Tx)
 import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
@@ -143,6 +143,23 @@ instance FromCBOR EbAnnouncement where
   fromCBOR = do
     enforceSize "EbAnnouncement" 2
     EbAnnouncement <$> decode <*> decode
+
+-- | Whether a Praos RB certifies a previously-announced Leios EB
+-- (CIP-0164).  Wire format is @Bool@: the 'EncCBOR'/'DecCBOR'
+-- instances map @NotCertRB <-> False@ and @CertRB <-> True@ so
+-- on-disk and over-the-wire header bytes are unchanged.
+data IsCertRB = NotCertRB | CertRB
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
+
+instance EncCBOR IsCertRB where
+  encCBOR =
+    encCBOR . \case
+      NotCertRB -> False
+      CertRB -> True
+
+instance DecCBOR IsCertRB where
+  decCBOR = (\b -> if b then CertRB else NotCertRB) <$> decCBOR
 
 -- * Fetch logic types
 

@@ -14,6 +14,7 @@ import Cardano.Slotting.Slot (SlotNo)
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
+import Data.Set (Set)
 import GHC.Stack (HasCallStack)
 import LeiosDemoTypes
   ( BytesSize
@@ -38,6 +39,17 @@ data LeiosDbHandle m = LeiosDbHandle
   -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosEbNotification })
   , open :: m (LeiosDbConnection m)
   -- ^ Open a new connection to the LeiosDb.
+  , readCompletedClosures :: HasCallStack => m (Set EbHash)
+  -- ^ EB hashes for which the corresponding EB closure is complete:
+  -- the body is stored locally and every referenced tx is present.
+  -- Backed by a cache the handle seeds at construction and updates
+  -- inside the insert paths, so the read is O(1) on the ChainSel hot
+  -- path.
+  --
+  -- TODO: cap the cache.  Only EBs within @k@ of the immutable tip can
+  -- be referenced by a candidate chain, so the cache only needs to hold
+  -- that window; older entries can be evicted and answered by a DB
+  -- query on miss.
   }
 
 data LeiosEbNotification
@@ -61,13 +73,19 @@ data LeiosDbConnection m = LeiosDbConnection
   -- - Missing EB bodies: EBs in ebs with NULL missingTxCount
   -- - Missing TXs: TXs in ebTxs without entries in txs
   -- NOTE: This is O(n) and should only be used at startup for initialization.
-  , -- NOTE: yields a LeiosOfferBlock notification
-    leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m ()
+  , -- NOTE: yields an 'AcquiredEb' notification.  Additionally, for
+    -- every EB whose closure has become complete via this body insert
+    -- (i.e. all referenced txs are already present, which can happen
+    -- when two EBs reference the same 'TxHash'es and the txs were
+    -- inserted in service of the other EB), yields an 'AcquiredEbTxs'
+    -- notification and returns the completed 'LeiosPoint's.  Mirrors
+    -- the 'CompletedEbs' return of 'leiosDbInsertTxs'.
+    leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m CompletedEbs
   , -- TODO: Take [LeiosTx] and hash on insert?
     leiosDbInsertTxs :: HasCallStack => [(TxHash, ByteString)] -> m CompletedEbs
   -- ^ Insert transactions into the global txs table (INSERT OR IGNORE).
   -- After inserting, checks which EBs referencing these txs are now complete
-  -- and emits LeiosOfferBlockTxs notifications for each.
+  -- and emits 'AcquiredEbTxs' notifications for each.
   --
   -- NOTE: Duplicate notifications may be emitted if the same EB becomes
   -- complete via multiple insert batches (e.g., if txs are inserted twice).

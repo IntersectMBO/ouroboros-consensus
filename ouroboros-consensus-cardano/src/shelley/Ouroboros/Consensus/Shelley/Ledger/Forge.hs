@@ -25,6 +25,7 @@ import LeiosDemoDb
 import LeiosDemoTypes
   ( EbAnnouncement (EbAnnouncement, ebAnnouncementHash)
   , ForgedLeiosEb (point)
+  , IsCertRB (..)
   , LeiosCertificate (leiosCertificateEbPoint)
   , LeiosPoint (MkLeiosPoint, pointEbHash)
   , TraceLeiosKernel (MkTraceLeiosKernel)
@@ -94,7 +95,7 @@ forgeShelleyBlock hotKey cbl mayLeiosInfo ForgeBlockArgs{..} = do
           (SL.bodyBytesSize protocolVersion body)
           protocolVersion
           (snd <$> mayForgedEbAnn)
-
+          NotCertRB
       let blk =
             mkShelleyBlock $
               SL.Block
@@ -116,6 +117,7 @@ forgeShelleyBlock hotKey cbl mayLeiosInfo ForgeBlockArgs{..} = do
           (SL.bodyBytesSize protocolVersion body)
           protocolVersion
           Nothing -- FIXME(bladyjoker): Skip announcement when certifying https://github.com/input-output-hk/ouroboros-leios/issues/838
+          CertRB
       let blk =
             mkShelleyBlock $
               SL.Block

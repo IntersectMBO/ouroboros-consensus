@@ -32,6 +32,7 @@ import Data.Map.Strict (Map)
 import Data.Set (Set)
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (EbAnnouncement, IsCertRB)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.VolatileDB.API (BlockInfo)
@@ -130,5 +131,9 @@ data InternalBlockInfo blk = InternalBlockInfo
   , ibiBlockSize :: !BlockSize
   , ibiBlockInfo :: !(BlockInfo blk)
   , ibiNestedCtxt :: !(SomeSecond (NestedCtxt Header) blk)
+  , ibiLeiosFields :: !(IsCertRB, Maybe EbAnnouncement)
+  -- ^ Per-header Leios fields, snapshot once at parse time.  Exposed
+  -- via 'getLeiosFields'.  Kept here rather than on 'BlockInfo' so
+  -- that the public 'BlockInfo' record stays Leios-free.
   }
   deriving (Generic, NoThunks)

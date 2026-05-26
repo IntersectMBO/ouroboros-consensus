@@ -92,6 +92,7 @@ launchBgTasks ::
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , HasHardForkHistory blk
+  , LedgerDB.ResolveLeiosBlock blk
   ) =>
   LeiosDbHandle m ->
   ChainDbEnv m blk ->
@@ -520,6 +521,7 @@ addBlockRunner ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , HasCallStack
+  , LedgerDB.ResolveLeiosBlock blk
   ) =>
   LeiosDbHandle m ->
   Fuse m ->

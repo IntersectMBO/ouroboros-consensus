@@ -45,7 +45,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB (IsCertRB (..), ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -56,7 +56,14 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 -- | Byron as the single era in the hard fork combinator
 type ByronBlockHFC = HardForkBlock '[ByronBlock]
 
-instance ResolveLeiosBlock (HardForkBlock '[ByronBlock]) -- FIXME
+-- FIXME: Byron has no Leios; the hard-fork wrapper inherits the
+-- "never a CertRB" stance from the single-era block.  When Leios is
+-- introduced into the Byron-only HFC (unlikely), delegate to the
+-- inner block.
+instance ResolveLeiosBlock (HardForkBlock '[ByronBlock]) where
+  resolveLeiosBlock _ _ blk = return blk
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
 
 {-------------------------------------------------------------------------------
   NoHardForks instance

@@ -55,6 +55,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
 
     -- * Leios
   , ResolveLeiosBlock (..)
+  , IsCertRB (..)
   ) where
 
 import Control.Monad (void)
@@ -74,6 +75,7 @@ import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoTypes (EbAnnouncement, IsCertRB (..))
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -439,7 +441,13 @@ toRealPoint (Weaken ap) = toRealPoint ap
 class ResolveLeiosBlock blk where
   resolveLeiosBlock ::
     Monad m => LeiosDbConnection m -> HeaderState blk -> blk -> m blk
-  resolveLeiosBlock _ _ blk = return blk
+
+  -- | Whether this header denotes a CertRB (a block that certifies a
+  -- previously-announced Leios EB).
+  headerIsCertRB :: Header blk -> IsCertRB
+
+  -- | The Leios EB announcement carried by this header, if any.
+  headerEbAnnouncement :: Header blk -> Maybe EbAnnouncement
 
 -- | Apply blocks to the given forker
 applyBlock ::

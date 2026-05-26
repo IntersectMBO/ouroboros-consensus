@@ -246,7 +246,10 @@ data TestBlockWith ptype = TestBlockWith
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass (Serialise, NoThunks, ToExpr)
 
-instance ResolveLeiosBlock (TestBlockWith a) -- FIXME
+instance ResolveLeiosBlock (TestBlockWith a) where
+  resolveLeiosBlock _ _ blk = return blk
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
 
 -- | Create a block directly with the given parameters. This allows creating
 -- inconsistent blocks; prefer 'firstBlockWithPayload' or 'successorBlockWithPayload'.

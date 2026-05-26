@@ -96,6 +96,7 @@ import Data.Ratio ((%))
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (IsCertRB (..))
 import Ouroboros.Consensus.Protocol.Praos (PraosValidationErr (..))
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header
@@ -446,6 +447,7 @@ genHeaderBody context = do
   hbBodyHash <- genHash
   (hbOCert, kesPeriod) <- genCert hbSlotNo context
   let hbMayEbAnnouncement = Nothing
+  let hbIsCertRB = NotCertRB
   let hbProtVer = protocolVersionZero
       headerBody = HeaderBody{..}
   pure $ (headerBody, kesPeriod)

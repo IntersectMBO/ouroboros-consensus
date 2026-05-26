@@ -254,6 +254,7 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
+            , cdbLeiosDbHandle = leiosDb
             }
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =

@@ -33,6 +33,7 @@ import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map as Map
 import qualified Data.Set as Set
+import LeiosDemoTypes (IsCertRB (..))
 import Lens.Micro
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
@@ -283,6 +284,7 @@ fromShelleyLedgerExamplesPraos
           , hbOCert = SL.bheaderOCert bhBody
           , hbProtVer = SL.bprotver bhBody
           , hbMayEbAnnouncement = Nothing
+          , hbIsCertRB = NotCertRB
           }
       hSig = coerce bhSig
     hash = ShelleyHash $ SL.unHashHeader sleHashHeader
