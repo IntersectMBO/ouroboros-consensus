@@ -96,6 +96,7 @@ newLeiosDBInMemoryWith stateVar = do
   closuresVar <- do
     initial <- imComputeCompletedClosures <$> readTVarIO stateVar
     newTVarIO initial
+  let readClosuresSTM = readTVar closuresVar
   pure $
     LeiosDbHandle
       { subscribeEbNotifications =
@@ -117,7 +118,8 @@ newLeiosDBInMemoryWith stateVar = do
               , leiosDbQueryCompletedEbByPoint = imQueryCompletedEbByPoint stateVar
               , leiosDbQueryCertificateByPoint = return . Just . trustNoVerifyLeiosCertificate
               }
-      , readCompletedClosures = readTVarIO closuresVar
+      , readCompletedClosures = atomically readClosuresSTM
+      , readCompletedClosuresSTM = readClosuresSTM
       }
 
 -- | EB hashes whose closure is complete in the given in-memory state:

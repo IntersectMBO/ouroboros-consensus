@@ -11,7 +11,7 @@ module LeiosDemoDb.Common
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
-import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
+import Control.Concurrent.Class.MonadSTM.Strict (STM, StrictTChan)
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
 import Data.Set (Set)
@@ -50,6 +50,10 @@ data LeiosDbHandle m = LeiosDbHandle
   -- be referenced by a candidate chain, so the cache only needs to hold
   -- that window; older entries can be evicted and answered by a DB
   -- query on miss.
+  , readCompletedClosuresSTM :: HasCallStack => STM m (Set EbHash)
+  -- ^ STM-typed sibling of 'readCompletedClosures'.  Reads the same
+  -- backing TVar.  Lets callers combine the read with other STM
+  -- writes in a single transaction.
   }
 
 data LeiosEbNotification

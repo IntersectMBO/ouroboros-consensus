@@ -25,7 +25,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , modifyTVar
   , newBroadcastTChan
   , newTVarIO
-  , readTVarIO
+  , readTVar
   , writeTChan
   )
 import Control.Exception (throwIO)
@@ -103,12 +103,14 @@ newLeiosDBSQLite dbPath = do
     initial <- sqlReadCompletedClosures seedDb
     void $ DB.close seedDb
     newTVarIO initial
+  let readClosuresSTM = readTVar closuresVar
   pure $
     LeiosDbHandle
       { subscribeEbNotifications =
           atomically (dupTChan notificationChan)
       , open = openSQLiteConnection dbPath notificationChan closuresVar
-      , readCompletedClosures = readTVarIO closuresVar
+      , readCompletedClosures = atomically readClosuresSTM
+      , readCompletedClosuresSTM = readClosuresSTM
       }
 
 -- * Connection management
