@@ -28,6 +28,7 @@ import LeiosDemoTypes
   , VoteInvalid (..)
   , VoterId (MkVoterId)
   , getVoterId
+  , mkCommitteeEveryoneVotes
   , signLeiosVote
   , voters
   )
@@ -87,9 +88,10 @@ genCommittee :: Gen TestCommittee
 genCommittee = do
   n <- chooseInt (1, 10)
   allKeys <- vectorOf n genLeiosSigningKey
+  weights <- vectorOf n (chooseInt (1, 100))
   pure
     TestCommittee
-      { committee = MkCommittee{voters = deriveVerKeyDSIGN <$> allKeys}
+      { committee = mkCommitteeEveryoneVotes $ zip (deriveVerKeyDSIGN <$> allKeys) weights
       , allKeys
       }
 
@@ -143,7 +145,7 @@ prop_deduplicateVotes =
       -- The second read should block (no second notification).
       mSecond <- timeout 0.1 $ atomically $ getNextVote sub
       pure $
-        counterexample "first add" (r1 === Added)
+        counterexample "first add" (isAdded r1)
           .&&. counterexample "second add" (r2 === AlreadyKnown)
           .&&. counterexample "first vote" (received === vote)
           .&&. counterexample "second read should timeout" (isNothing mSecond === True)
@@ -164,7 +166,7 @@ prop_deduplicateBeforeValidation =
         atomically $ writeTVar committeeVar (Just otherCommittee.committee)
         r2 <- addVote st vote
         pure $
-          counterexample "first add" (r1 === Added)
+          counterexample "first add" (isAdded r1)
             .&&. counterexample "second add" (r2 === AlreadyKnown)
 
 -- | A subscriber that subscribes after a vote was added should not see it.
@@ -225,3 +227,7 @@ prop_signerNotInCommittee =
         pure $
           r === VoteInvalid SignerNotInCommittee
             .&&. counterexample "subscriber should not see invalid vote" (isNothing mVote === True)
+
+isAdded :: AddVoteResult -> Property
+isAdded Added{} = property True
+isAdded r = counterexample ("expected Added, got " ++ show r) False

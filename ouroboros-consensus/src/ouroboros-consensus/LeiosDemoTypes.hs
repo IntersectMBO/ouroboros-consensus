@@ -60,9 +60,10 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
+import Data.Function (on)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
-import Data.List (elemIndex)
+import Data.List (findIndex, nubBy, sortOn)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Sequence (Seq)
@@ -540,17 +541,32 @@ minSigPoPDST = BLS12381SignContext (Just "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO
 -- ** Committee
 
 -- | A selected committee in which each 'VoterId' has a 'Weight'.
--- TODO: ensure uniqueness in smart constructor
-newtype Committee = MkCommittee {voters :: [LeiosVerificationKey]}
+newtype Committee = UnsafeCommittee {voters :: [(Weight, LeiosVerificationKey)]}
   deriving Show
 
+-- | Create a 'Committee' from a mapping of verification keys and some
+-- associated weight. Duplicate entries by verification key are ignored. The
+-- final 'Weight' in the committee is normalized by the total of the input map.
+-- TODO: The total can only be calculated here in "everyone votes" scheme.
+mkCommitteeEveryoneVotes :: Real w => [(LeiosVerificationKey, w)] -> Committee
+mkCommitteeEveryoneVotes inputs =
+  UnsafeCommittee
+    . sortOn fst
+    $ [ (toRational weight / totalWeight, vk)
+      | (vk, weight) <- nubBy ((==) `on` fst) inputs
+      ]
+ where
+  totalWeight = toRational . sum $ snd <$> inputs
+
 -- | Resolve a 'VoterId' to its corresponding 'VotingKey' in the 'Committee'.
-resolveVoterId :: Committee -> VoterId -> Maybe LeiosVerificationKey
-resolveVoterId MkCommittee{voters} (MkVoterId idx)
+resolveVoterId :: Committee -> VoterId -> Maybe (Weight, LeiosVerificationKey)
+resolveVoterId committee (MkVoterId idx)
   | i >= 0 && i < length voters = Just $ voters !! i
   | otherwise = Nothing
  where
   i = fromIntegral idx
+
+  voters = committee.voters
 
 -- ** VoterId
 
@@ -567,7 +583,7 @@ decodeVoterId = MkVoterId <$> CBOR.decodeWord16
 -- | Determine the 'VoterId' on a 'Committee'.
 getVoterId :: LeiosVerificationKey -> Committee -> Maybe VoterId
 getVoterId vk committee =
-  MkVoterId . fromIntegral <$> elemIndex vk committee.voters
+  MkVoterId . fromIntegral <$> findIndex ((== vk) . snd) committee.voters
 
 -- ** Vote
 
@@ -636,10 +652,10 @@ validateLeiosVote :: Committee -> LeiosVote -> Either VoteInvalid Weight
 validateLeiosVote committee MkLeiosVote{point, voterId, voteSignature} =
   case resolveVoterId committee voterId of
     Nothing -> Left SignerNotInCommittee
-    Just vk ->
+    Just (weight, vk) ->
       case verifyDSIGN minSigPoPDST vk point voteSignature of
         Left _ -> Left InvalidSignature
-        Right () -> Right 1 -- FIXME: proper weights
+        Right () -> Right weight
 
 data VoteInvalid
   = InvalidSignature
@@ -735,7 +751,7 @@ data TraceLeiosKernel
       , mempoolRestMeasure :: m
       }
   | TraceLeiosBlockStored {slot :: SlotNo, eb :: LeiosEb}
-  | TraceLeiosVoted {vote :: LeiosVote}
+  | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
@@ -799,10 +815,11 @@ traceLeiosKernelToObject = \case
       , "slot" .= slot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
       ]
-  TraceLeiosVoted{vote} ->
+  TraceLeiosVoted{vote, weight} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosVoted"
       , "vote" .= voteToObject vote
+      , "weight" .= weight
       ]
   TraceLeiosVoteAcquired{vote} ->
     mconcat

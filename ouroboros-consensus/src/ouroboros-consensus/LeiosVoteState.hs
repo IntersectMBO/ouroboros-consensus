@@ -15,7 +15,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , writeTVar
   )
 import qualified Data.Set as Set
-import LeiosDemoTypes (Committee, LeiosVote, VoteInvalid (..), validateLeiosVote)
+import LeiosDemoTypes (Committee, LeiosVote, VoteInvalid (..), Weight, validateLeiosVote)
 
 data LeiosVoteState m = LeiosVoteState
   { addVote :: LeiosVote -> m AddVoteResult
@@ -30,7 +30,7 @@ data AddVoteResult
   = NoCommittee
   | VoteInvalid VoteInvalid
   | AlreadyKnown
-  | Added
+  | Added Weight
   deriving (Eq, Show)
 
 data LeiosVoteSubscription m = LeiosVoteSubscription {getNextVote :: STM m LeiosVote}
@@ -58,10 +58,10 @@ newLeiosVoteState getCommittee = do
                 Just committee ->
                   case validateLeiosVote committee vote of
                     Left reason -> pure $ VoteInvalid reason
-                    Right _weight -> do
+                    Right weight -> do
                       writeTVar seenVotes $! Set.insert vote seen
                       writeTChan votesChan vote
-                      pure Added
+                      pure $ Added weight
       , subscribeVotes = do
           chan <- atomically $ dupTChan votesChan
           pure $

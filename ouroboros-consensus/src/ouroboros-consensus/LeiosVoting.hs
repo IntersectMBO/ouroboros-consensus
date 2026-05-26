@@ -19,7 +19,7 @@ import LeiosDemoTypes
   , getVoterId
   , signLeiosVote
   )
-import LeiosVoteState (LeiosVoteState (..))
+import LeiosVoteState (AddVoteResult (..), LeiosVoteState (..))
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
@@ -63,11 +63,14 @@ runLeiosVoting tracer chainDB leiosDB voteState = \case
         Just voterId -> do
           -- TODO: validate EB closures against selected chain
           let vote = signVote voterId point
-          -- TODO: trace if adding vote failed? Should not happen -> additional
-          -- API, also should skip validation
-          _ <- addVote vote
-          traceWith tracer TraceLeiosVoted{vote}
-          traceWith tracer TraceLeiosVoteAcquired{vote}
+          -- NOTE: Self-validation of vote could be skipped, but useful for
+          -- determining and tracing the weight.
+          addVote vote >>= \case
+            Added weight -> do
+              traceWith tracer TraceLeiosVoted{vote, weight}
+              traceWith tracer TraceLeiosVoteAcquired{vote}
+            err ->
+              error $ "runLeiosVoting: unexpected error on addVote: " <> show err
  where
   getCurrentLedgerState =
     atomically $ ledgerState <$> ChainDB.getCurrentLedger chainDB

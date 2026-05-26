@@ -104,7 +104,7 @@ import Cardano.Ledger.Dijkstra.BlockBody
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import Cardano.Ledger.State (poolDistrDistrL)
+import Cardano.Ledger.State (individualPoolStake, poolDistrDistrL)
 import qualified Cardano.Ledger.State as SL
 import Cardano.Protocol.TPraos.API (PraosCrypto)
 import Cardano.Slotting.EpochInfo
@@ -134,10 +134,10 @@ import Data.Word
 import GHC.Generics (Generic)
 import LeiosDemoDb (LeiosDbConnection (..))
 import LeiosDemoTypes
-  ( Committee (..)
-  , EbAnnouncement (..)
+  ( EbAnnouncement (..)
   , LeiosPoint (..)
   , TxHash
+  , mkCommitteeEveryoneVotes
   )
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
@@ -1128,12 +1128,19 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) ConwayEra)
 instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
   -- REVIEW: Should we use the LedgerView (Praos c) instead?
   getLeiosCommittee ls =
-    Just $ MkCommittee{voters = everyoneVotes}
+    Just everyoneVotes
    where
-    -- TODO: stake-based scheme and move to era boundary (to cache sort by stake)
+    -- TODO: stake-based scheme and move to era boundary (to cache computation)
     everyoneVotes =
-      toList (Map.keysSet stakeDistribution)
-        & map (deriveVerKeyDSIGN . unsafeDeriveSigningKey)
+      mkCommitteeEveryoneVotes
+        [ (vk, stake)
+        | (poolId, ips) <- Map.toList stakeDistribution
+        , let vk = deriveVerKeyDSIGN $ unsafeDeriveSigningKey poolId
+              stake = individualPoolStake ips
+        ]
+
+    stakeDistribution =
+      ls.shelleyLedgerState.nesPd ^. poolDistrDistrL
 
     -- FIXME: REMOVE THIS. Interprets cold key hashes as signing keys
     unsafeDeriveSigningKey =
@@ -1143,6 +1150,3 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
         . (<> BS.pack (replicate 4 0))
         . hashToBytes
         . unKeyHash
-
-    stakeDistribution =
-      ls.shelleyLedgerState.nesPd ^. poolDistrDistrL
