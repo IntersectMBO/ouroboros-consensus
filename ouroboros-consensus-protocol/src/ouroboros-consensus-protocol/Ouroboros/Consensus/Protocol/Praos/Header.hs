@@ -42,6 +42,8 @@ import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (decCBOR)
   , EncCBOR (..)
+  , decodeListLen
+  , encodeListLen
   , serialize'
   , unCBORGroup
   )
@@ -180,6 +182,7 @@ headerHash = extractHash . hashAnnotated
 -- Serialisation
 --------------------------------------------------------------------------------
 
+-- | 10-field encoding when 'SNothing' (pre-Leios-compatible), 11 when 'SJust'.
 instance Crypto crypto => EncCBOR (HeaderBody crypto) where
   encCBOR
     HeaderBody
@@ -195,35 +198,55 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
       , hbProtVer
       , hbLeiosEbAnnouncement
       } =
-      encode $
-        Rec HeaderBody
-          !> To hbBlockNo
-          !> To hbSlotNo
-          !> To hbPrev
-          !> To hbVk
-          !> E encodeVerKeyVRF hbVrfVk
-          !> To hbVrfRes
-          !> To hbBodySize
-          !> To hbBodyHash
-          !> To hbOCert
-          !> To hbProtVer
-          !> To hbLeiosEbAnnouncement
+      let (len, encEbAnnouncement) = case hbLeiosEbAnnouncement of
+            SNothing -> (10 :: Word, mempty)
+            SJust ebAnnouncement -> (11, encCBOR ebAnnouncement)
+       in mconcat
+            [ encodeListLen len
+            , encCBOR hbBlockNo
+            , encCBOR hbSlotNo
+            , encCBOR hbPrev
+            , encCBOR hbVk
+            , encodeVerKeyVRF hbVrfVk
+            , encCBOR hbVrfRes
+            , encCBOR hbBodySize
+            , encCBOR hbBodyHash
+            , encCBOR hbOCert
+            , encCBOR hbProtVer
+            , encEbAnnouncement
+            ]
 
 instance Crypto crypto => DecCBOR (HeaderBody crypto) where
-  decCBOR =
-    decode $
-      RecD HeaderBody
-        <! From
-        <! From
-        <! From
-        <! From
-        <! D decodeVerKeyVRF
-        <! From
-        <! From
-        <! From
-        <! mapCoder unCBORGroup From
-        <! From
-        <! From
+  decCBOR = do
+    len <- decodeListLen
+    hbBlockNo <- decCBOR
+    hbSlotNo <- decCBOR
+    hbPrev <- decCBOR
+    hbVk <- decCBOR
+    hbVrfVk <- decodeVerKeyVRF
+    hbVrfRes <- decCBOR
+    hbBodySize <- decCBOR
+    hbBodyHash <- decCBOR
+    hbOCert <- unCBORGroup <$> decCBOR
+    hbProtVer <- decCBOR
+    hbLeiosEbAnnouncement <- case len of
+      10 -> pure SNothing
+      11 -> SJust <$> decCBOR
+      _ -> fail $ "Praos HeaderBody CBOR has wrong length: " <> show len
+    pure
+      HeaderBody
+        { hbBlockNo
+        , hbSlotNo
+        , hbPrev
+        , hbVk
+        , hbVrfVk
+        , hbVrfRes
+        , hbBodySize
+        , hbBodyHash
+        , hbOCert
+        , hbProtVer
+        , hbLeiosEbAnnouncement
+        }
 
 encodeHeaderRaw ::
   Crypto crypto =>
