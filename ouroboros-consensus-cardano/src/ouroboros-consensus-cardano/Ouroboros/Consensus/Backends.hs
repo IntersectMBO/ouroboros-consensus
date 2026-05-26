@@ -143,8 +143,13 @@ loadSnapshot expectedBackend mkFromSnapshot mkH ccfg fs@(SomeHasFS hfs) ds = do
 
                   sf = Fn $ \st@(shelleyLedgerState -> nes) ->
                     Comp $ withExceptT (InitFailureOther . show) $ do
-                      (x, y) <- fromSnapshot mkFromSnapshot ds nes
-                      pure $ Comp (y, ShelleyStateHandle st x)
+                      -- The backend decides what NES to embed in the
+                      -- pure-state field: InMemory re-attaches the
+                      -- UTxOs read from the @utxo@ file; LSM keeps
+                      -- 'slUtxoL' empty since the UTxOs live on disk.
+                      (nes', x, y) <- fromSnapshot mkFromSnapshot ds nes
+                      let st' = st{shelleyLedgerState = nes'}
+                      pure $ Comp (y, ShelleyStateHandle st' x)
                   np =
                     Fn (\bs -> Comp $ pure $ Comp $ (Nothing, ByronStateHandle bs))
                       :* sf

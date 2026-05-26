@@ -225,13 +225,21 @@ newLSMTablesHandle ::
   forall m era.
   (IOLike m, MemPack (SL.TxOut era), Eq (SL.TxOut era)) =>
   Tracer m LedgerDBV2Trace ->
-  SomeHasFS m -> SL.NewEpochState era -> Word64 -> UTxOTable m -> m (TablesHandle m era)
+  SomeHasFS m ->
+  SL.NewEpochState era ->
+  Word64 ->
+  UTxOTable m ->
+  m (TablesHandle m era)
 newLSMTablesHandle tracer shfs@(SomeHasFS fs) st utxoSize table = do
   pure
     TablesHandle
-      { stateWith = \txins -> do
-          tbs <- implRead tracer table txins
-          pure (st & slUtxoL .~ tbs)
+      { -- LSM keeps the UTxO on disk: read just the block's input keys
+        -- via 'implRead' and place that subset into the supplied ticked
+        -- NES. 'duplWithDiffs' will then diff subset-before against
+        -- subset-after and push the block's changes to the table.
+        stateWith = \keys nes -> do
+          SL.UTxO utxos <- implRead tracer table keys
+          pure $ nes & slUtxoL .~ SL.UTxO utxos
       , stateWithUTxO = \utxos -> st & slUtxoL .~ utxos
       , applyDiff = \d ->
           encloseTimedWith (TraceLedgerTablesHandlePush >$< tracer) $ do
@@ -304,7 +312,10 @@ drainTableFiltered table p =
   LSM.withCursor table $ \cursor ->
     SL.UTxO <$> loop cursor Map.empty
  where
-  loop :: LSM.Cursor m TxInBytes TxOutBytes Void -> Map.Map SL.TxIn (SL.TxOut era) -> m (Map.Map SL.TxIn (SL.TxOut era))
+  loop ::
+    LSM.Cursor m TxInBytes TxOutBytes Void ->
+    Map.Map SL.TxIn (SL.TxOut era) ->
+    m (Map.Map SL.TxIn (SL.TxOut era))
   loop !cursor !acc = do
     batch <- LSM.take drainBatchSize cursor
     let !acc' = V.foldl' step acc batch
@@ -312,7 +323,10 @@ drainTableFiltered table p =
       then pure acc'
       else loop cursor acc'
 
-  step :: Map.Map SL.TxIn (SL.TxOut era) -> LSM.Entry TxInBytes TxOutBytes (LSM.BlobRef m Void) -> Map.Map SL.TxIn (SL.TxOut era)
+  step ::
+    Map.Map SL.TxIn (SL.TxOut era) ->
+    LSM.Entry TxInBytes TxOutBytes (LSM.BlobRef m Void) ->
+    Map.Map SL.TxIn (SL.TxOut era)
   step !m e = case e of
     LSM.Entry k v ->
       let !txout = fromTxOutBytes (Proxy @era) v
@@ -377,7 +391,7 @@ implApplyDiff tracer shfs table size st (Diff.Diff diffs) = do
           )
           (0, 0)
           diffs
-  let size' =
+  let !size' =
         assert (size + ins >= size) $
           assert (size + ins - dels <= size + ins) $
             size + ins - dels
@@ -395,12 +409,16 @@ implDuplicateWithDiffs ::
   Word64 ->
   SL.NewEpochState era ->
   SL.NewEpochState era ->
-  m (TablesHandle m era)
+  m (SL.NewEpochState era, TablesHandle m era)
 implDuplicateWithDiffs tracer shfs table size st0 st1 =
   encloseTimedWith (TraceLedgerTablesHandlePush >$< tracer) $ do
     let SL.UTxO utxo0 = st0 ^. slUtxoL
         (SL.UTxO utxo1, st1') = st1 & slUtxoL <<.~ SL.UTxO Map.empty
-    implApplyDiff tracer shfs table size st1' $ Diff.diff utxo0 utxo1
+    -- 'st1'' has 'slUtxoL' cleared; it is also what we hand back for
+    -- the outer 'ShelleyLedgerState' so the LedgerDB doesn't carry a
+    -- per-block subset Map next to the on-disk table.
+    h <- implApplyDiff tracer shfs table size st1' $ Diff.diff utxo0 utxo1
+    pure (st1', h)
 
 mkLSMFactory ::
   forall m.
@@ -459,7 +477,10 @@ mkLSMFromSnapshot tracer session shfs = MkHandleFromSnapshot $ \ds st -> do
           session
           (fromString $ snapshotToDirName ds)
           (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
-  (,Nothing) <$> lift (newLSMTablesHandle tracer shfs st msz h)
+  -- LSM keeps UTxOs on disk only; the pure 'NewEpochState' carries an
+  -- empty 'slUtxoL' (which is also what 'encodeShelleyLedgerState'
+  -- writes), so we return @st@ unchanged.
+  (st,,Nothing) <$> lift (newLSMTablesHandle tracer shfs st msz h)
 
 {-------------------------------------------------------------------------------
   Snapshot streaming
@@ -639,7 +660,8 @@ lsmSnapshotSinker mountPoint dbPath (SomeHasFS snapHfs) ds = do
     (a -> ExceptT DeserialiseFailure IO b) ->
     ExceptT DeserialiseFailure IO b
   bracketE acquire freeRes action = ExceptT $
-    bracket acquire freeRes $ \a -> runExceptT (action a)
+    bracket acquire freeRes $
+      \a -> runExceptT (action a)
 
 -- | Drain an entry stream into the supplied table, flushing a batch
 -- of 'streamChunkSize' rows at a time. Returns the byte-residue

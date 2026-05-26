@@ -70,17 +70,27 @@ newInMemoryTablesHandle ::
   forall m era.
   (SL.Era era, MemPack (SL.TxOut era), IOLike m) =>
   Tracer m LedgerDBV2Trace ->
-  SomeHasFS m -> SL.NewEpochState era -> TablesHandle m era
+  SomeHasFS m ->
+  SL.NewEpochState era ->
+  TablesHandle m era
 newInMemoryTablesHandle tracer shfs@(SomeHasFS hasFS) ls =
   let h =
         TablesHandle
-          { -- whenever we request to read UTxOs, we provide the whole state
-            stateWith = const $ pure ls
-          , -- we createa a new pure handle with the second given state
+          { -- The handle's stored NES already carries the full UTxO,
+            -- so populate the supplied ticked NES with that map; the
+            -- key set is irrelevant here. BBODY then runs against the
+            -- full UTxO and 'duplWithDiffs' can keep the resulting
+            -- post-block NES verbatim.
+            stateWith = \_keys nes ->
+              encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $
+                pure $
+                  nes & slUtxoL .~ (ls ^. slUtxoL)
+          , -- the post-block NES already carries the full UTxO, so
+            -- return it verbatim for the outer 'ShelleyLedgerState'
+            -- and build the new handle around the same value.
             duplWithDiffs = \_ st1 ->
               encloseTimedWith (TraceLedgerTablesHandlePush >$< tracer) $
-                pure $
-                  newInMemoryTablesHandle tracer shfs st1
+                pure (st1, newInMemoryTablesHandle tracer shfs st1)
           , -- as the state already has the AVVMs, we ignore them
             stateWithUTxO = const ls
           , -- duplicating is just returning the same handle; still trace it
@@ -168,7 +178,9 @@ mkInMemoryFromSnapshot tracer shfs =
     , DecShareCBOR (SL.TxOut era)
     , SL.EraCertState era
     ) =>
-    DiskSnapshot -> SL.NewEpochState era -> ExceptT ReadIncrementalErr m (TablesHandle m era, Maybe CRC)
+    DiskSnapshot ->
+    SL.NewEpochState era ->
+    ExceptT ReadIncrementalErr m (SL.NewEpochState era, TablesHandle m era, Maybe CRC)
   implFromSnapshot ds ls = do
     let certInterns =
           internsFromMap $
@@ -192,12 +204,17 @@ mkInMemoryFromSnapshot tracer shfs =
           )
           (snapshotToUTxOFilePath ds)
 
+    -- InMemory keeps the UTxOs in the pure 'NewEpochState': re-populate
+    -- 'slUtxoL' from the @utxo@ file before constructing the handle and
+    -- hand back the same NES so the consumer can put it into the
+    -- 'ShelleyStateHandle'\'s pure-state field.
+    let ls' = ls & slUtxoL .~ SL.UTxO utxo
     h <-
       lift $
         encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $
           pure $
-            newInMemoryTablesHandle tracer shfs (ls & slUtxoL .~ SL.UTxO utxo)
-    pure (h, Just crcTables)
+            newInMemoryTablesHandle tracer shfs ls'
+    pure (ls', h, Just crcTables)
 
 snapshotToUTxOFilePath :: DiskSnapshot -> FsPath
 snapshotToUTxOFilePath ds = snapshotToDirPath ds </> mkFsPath ["utxo"]

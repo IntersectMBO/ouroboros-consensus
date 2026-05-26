@@ -414,16 +414,31 @@ data MkHandleFromSnapshot m = MkHandleFromSnapshot
       , SL.EraCertState era
       , Eq (SL.TxOut era)
       ) =>
-      DiskSnapshot -> SL.NewEpochState era -> ExceptT BackendError m (TablesHandle m era, Maybe CRC)
+      DiskSnapshot ->
+      SL.NewEpochState era ->
+      -- | The 'NewEpochState' to be embedded into the in-memory pure
+      -- 'LedgerState' part of the 'ShelleyStateHandle', the
+      -- 'TablesHandle', and an optional CRC of the @utxo@ file. The
+      -- backend decides whether to keep the UTxOs in the pure state
+      -- (InMemory) or strip them since they only live on disk (LSM).
+      ExceptT BackendError m (SL.NewEpochState era, TablesHandle m era, Maybe CRC)
   }
 
 data BackendError = BackendReadErr ReadIncrementalErr | BackendCorruptedData
   deriving Show
 
 data TablesHandle m era = TablesHandle
-  { stateWith :: Set SL.TxIn -> m (SL.NewEpochState era)
-  -- ^ Given a set of TxIns, produce a NewEpochState that has the
-  -- TxOuts we could find in the backend
+  { stateWith :: Set SL.TxIn -> SL.NewEpochState era -> m (SL.NewEpochState era)
+  -- ^ Populate the @slUtxoL@ field of the supplied (already-ticked)
+  -- 'NewEpochState' so that BBODY can be applied to it. The 'Set' is
+  -- the block's input keys.
+  --
+  -- The InMemory backend ignores the key set and copies the full
+  -- UTxO it carries in the handle's stored state; the LSM backend
+  -- reads only the requested keys from its on-disk table. Both
+  -- variants must take the ticked NES as input (rather than reusing
+  -- the handle's pre-tick NES) so that the TICK rule's effects --
+  -- epoch number, gov state, snapshots -- survive into BBODY.
   , stateWithUTxO :: SL.UTxO era -> SL.NewEpochState era
   -- ^ Only used for the AVVMs, create a NewEpochState as if the
   -- given UTxOs had been read from the disk.
@@ -431,14 +446,25 @@ data TablesHandle m era = TablesHandle
   -- ^ Only used for AVVMs. Push a bunch of diffs to this reference
   -- without duplicating it. In the OnDisk backend
   -- this will mutate the database.
-  , duplWithDiffs :: SL.NewEpochState era -> SL.NewEpochState era -> m (TablesHandle m era)
-  -- ^ Given the before and after states, produce a new handle on
-  -- the after state.
+  , duplWithDiffs ::
+      SL.NewEpochState era ->
+      SL.NewEpochState era ->
+      m (SL.NewEpochState era, TablesHandle m era)
+  -- ^ Given the before and after states, produce the NES to embed in
+  -- the outer 'ShelleyLedgerState' alongside the new handle.
   --
   -- The full states are passed here so that the handle can in the
   -- InMemory case just use the second state, and in the LSM case
   -- it can compute the differences to push them to a duplicated
   -- handle.
+  --
+  -- The returned NES is what the caller will put into the pure
+  -- 'ShelleyLedgerState' field. InMemory returns the post-block NES
+  -- verbatim (its 'slUtxoL' is the full UTxO, structurally shared
+  -- across recent blocks). LSM returns the post-block NES with
+  -- 'slUtxoL' cleared, so the LedgerDB doesn't hold ~k independent
+  -- per-block subset Maps that duplicate what already lives in the
+  -- on-disk table.
   , duplicateHandle :: m (TablesHandle m era)
   -- ^ Create a duplicated reference to this handle
   , readUTxOWhole :: m (SL.UTxO era)
@@ -463,14 +489,21 @@ data TablesHandle m era = TablesHandle
   }
 
 instance BlockSupportsLedgerHD m (ShelleyBlock proto era) where
+  -- The bangs on these fields matter: the deriving-via 'OnlyCheckWhnfNamed'
+  -- 'NoThunks' instance only checks the outermost constructor, so a lazy
+  -- field would silently retain a thunk wrapping the whole record. In
+  -- 'applyHelper' that thunk closes over @st'@ and @tickedShelleyLedgerState'@,
+  -- each of which carries the block's subset UTxO Map in the LSM case --
+  -- pure overhead on top of the on-disk table that compounds across the
+  -- volatile chain.
   data StateHandle m (ShelleyBlock proto era) = ShelleyStateHandle
-    { stateRefState :: LedgerState (ShelleyBlock proto era)
-    , stateRefHandle :: TablesHandle m era
+    { stateRefState :: !(LedgerState (ShelleyBlock proto era))
+    , stateRefHandle :: !(TablesHandle m era)
     }
 
   data TickedStateHandle m (ShelleyBlock proto era) = TickedShelleyStateHandle
-    { tickedStateHandleState :: Ticked LedgerState (ShelleyBlock proto era)
-    , tickedStateHandleHandle :: TablesHandle m era
+    { tickedStateHandleState :: !(Ticked LedgerState (ShelleyBlock proto era))
+    , tickedStateHandleHandle :: !(TablesHandle m era)
     }
 
   newStateHandle = ShelleyStateHandle
@@ -626,10 +659,25 @@ applyHelper f cfg blk stBefore = do
   let TickedShelleyStateHandle
         TickedShelleyLedgerState
           { tickedShelleyLedgerTransition
+          , tickedShelleyLedgerState
           }
         h = stBefore
 
-  tickedShelleyLedgerState' <- lift $ stateWith h (getBlockKeySets blk)
+  -- BBODY must operate on the /ticked/ NES: the TICK rule updates metadata
+  -- (epoch number, gov state, snapshots, …) but does not touch the UTxOs,
+  -- so we hand the ticked NES to the backend's 'stateWith', which places
+  -- the appropriate UTxOs into 'slUtxoL'. Each backend picks what
+  -- "appropriate" means: InMemory copies the full UTxO it carries in its
+  -- stored state (so BBODY sees every entry and 'duplWithDiffs' can just
+  -- keep the resulting full post-block NES); LSM reads only the block's
+  -- input keys from disk and lets 'duplWithDiffs' compute the diff
+  -- between subset-before and subset-after to push to the table.
+  --
+  -- Passing the ticked NES (rather than the handle's pre-tick NES) is
+  -- what keeps the TICK rule's effects -- epoch number, gov state,
+  -- snapshots, 'FuturePParams' -- visible to BBODY.
+  tickedShelleyLedgerState' <-
+    lift $ stateWith h (getBlockKeySets blk) tickedShelleyLedgerState
   LedgerResult evs st' <-
     ExceptT $
       pure $
@@ -641,7 +689,7 @@ applyHelper f cfg blk stBefore = do
              in SL.Block h' (SL.blockBody b)
           )
 
-  h' <- lift $ duplWithDiffs h tickedShelleyLedgerState' st'
+  (st'', h') <- lift $ duplWithDiffs h tickedShelleyLedgerState' st'
 
   pure $
     LedgerResult evs $
@@ -654,7 +702,7 @@ applyHelper f cfg blk stBefore = do
                   , shelleyTipSlotNo = blockSlot blk
                   , shelleyTipHash = blockHash blk
                   }
-          , shelleyLedgerState = st'
+          , shelleyLedgerState = st''
           , shelleyLedgerTransition =
               ShelleyTransitionInfo
                 { shelleyAfterVoting =
@@ -825,7 +873,11 @@ encodeShelleyLedgerState
       mconcat $
         [ CBOR.encodeListLen 4
         , encodeWithOrigin encodeShelleyTip shelleyLedgerTip
-        , toCBOR shelleyLedgerState
+        , -- The UTxOs travel with the @utxo@ file (BigEndian-encoded, shared
+          -- with the snapshot-converter); clearing 'slUtxoL' here keeps them
+          -- out of the @state@ file. On load, the backend reads the @utxo@
+          -- file separately and re-populates the in-memory NES.
+          toCBOR (shelleyLedgerState & slUtxoL .~ mempty)
         , encodeShelleyTransition shelleyLedgerTransition
         , encodeStrictMaybe toCBOR shelleyLedgerLatestPerasCertRound
         ]
