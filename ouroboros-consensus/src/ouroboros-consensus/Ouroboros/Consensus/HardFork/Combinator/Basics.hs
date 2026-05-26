@@ -49,7 +49,7 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
-  , EmptyPerasError
+  , VoidPerasError
   )
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -293,7 +293,7 @@ instance
   where
   type PerasVote (HardForkBlock xs) = MockPerasVote (HardForkBlock xs)
   type PerasCert (HardForkBlock xs) = MockPerasCert (HardForkBlock xs)
-  type PerasError (HardForkBlock xs) = EmptyPerasError (HardForkBlock xs)
+  type PerasError (HardForkBlock xs) = VoidPerasError (HardForkBlock xs)
 
   validatePerasVote = validateMockPerasVote
   validatePerasCert = validateMockPerasCert
