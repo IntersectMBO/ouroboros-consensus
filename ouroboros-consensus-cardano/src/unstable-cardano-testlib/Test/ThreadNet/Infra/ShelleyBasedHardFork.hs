@@ -75,6 +75,9 @@ import Ouroboros.Consensus.Cardano.CanHardFork
   , translateChainDepStateAcrossShelley
   )
 import Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..))
+import Ouroboros.Consensus.Config (TopLevelConfig (..))
+import Ouroboros.Consensus.Protocol.Praos.Common (MaxMajorProtVer (..))
+import Ouroboros.Consensus.Protocol.TPraos (ConsensusConfig (..), TPraosParams (..))
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Embed.Binary
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
@@ -384,11 +387,48 @@ protocolInfoShelleyBasedHardFork
     blockForging1 ::
       Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock proto1 era1)]
     (protocolInfo1, blockForging1) =
-      protocolInfoTPraosShelleyBased
-        protocolParamsShelleyBased
-        (transCfg2 ^. L.tcPreviousEraConfigL)
-        protVer1
-        mkH
+      -- 'protocolInfoTPraosShelleyBased' derives the @maxMajorProtVer@
+      -- (used by Shelley's CHAIN rule to reject blocks whose advertised
+      -- protocol version exceeds the node's max) from the supplied
+      -- 'protVer'. For an era-1 protocolInfo built that way, the max
+      -- ends up at @pvMajor protVer1@. But protocol-update transactions
+      -- inside era 1 can bump the chain's current protocol version up
+      -- to @protVer2@ (the trigger value) /before/ the era transition
+      -- fires at the next epoch boundary: in that window era-1
+      -- successor blocks carry protocol version 2 in their header. We
+      -- override era 1's @tpraosMaxMajorPV@ to @protVer2@ so the CHAIN
+      -- rule still accepts them.
+      --
+      -- This mirrors what mainline @protocolInfoCardano@ does: it sets
+      -- a single shared @maxMajorProtVer@ (the FINAL era's version) for
+      -- every era's protocolInfo, rather than deriving it per era.
+      let (raw, bf) =
+            protocolInfoTPraosShelleyBased
+              protocolParamsShelleyBased
+              (transCfg2 ^. L.tcPreviousEraConfigL)
+              protVer1
+              mkH
+       in (bumpMaxProtVer raw, bf)
+
+    bumpMaxProtVer ::
+      ProtocolInfo m (ShelleyBlock proto1 era1) ->
+      ProtocolInfo m (ShelleyBlock proto1 era1)
+    bumpMaxProtVer pInfo =
+      pInfo
+        { pInfoConfig =
+            let tlc = pInfoConfig pInfo
+                tpcfg = topLevelConfigProtocol tlc
+                params = tpraosParams tpcfg
+             in tlc
+                  { topLevelConfigProtocol =
+                      tpcfg
+                        { tpraosParams =
+                            params
+                              { tpraosMaxMajorPV = MaxMajorProtVer (SL.pvMajor protVer2)
+                              }
+                        }
+                  }
+        }
 
     eraParams1 :: History.EraParams
     eraParams1 = shelleyEraParams genesis
