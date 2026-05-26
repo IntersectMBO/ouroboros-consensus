@@ -925,16 +925,80 @@ runThreadNetwork
                   tickedLdgSt
                   txs
                   prf
-              Just _forgeEbbEnv ->
-                -- EBB forging in the test harness used the now-removed
-                -- pure 'applyLedgerBlock' / 'applyChainTick' API. The new
-                -- API operates on 'StateHandle's, which the harness does
-                -- not have visibility into at this point. Tests that
-                -- exercise EBBs (Byron-era) need a follow-up port; see
-                -- fixing-tests.md.
-                error
-                  "Test.ThreadNet.Network.customForgeBlock: EBB path not \
-                  \yet ported to the Handle-based ApplyBlock API"
+              Just forgeEbbEnv -> do
+                -- The EBB shares its BlockNo with its predecessor (if there is
+                -- one).
+                let ebbBno = case currentBno of
+                      -- We assume this invariant: if forging of EBBs is enabled
+                      -- then the node initialization is responsible for producing
+                      -- any proper non-EBB blocks with block number 0, so this
+                      -- case is unreachable.
+                      0 -> error "Error, only node initialization can forge non-EBB with block number 0."
+                      n -> pred n
+                let ebb =
+                      forgeEBB
+                        forgeEbbEnv
+                        pInfoConfig
+                        ebbSlot
+                        ebbBno
+                        (pointHash p)
+
+                -- Apply the EBB through the new Handle-based 'ApplyBlock'
+                -- API. We borrow a read-only 'ExtStateHandle' from the LedgerDB
+                -- at the volatile tip, project out the 'StateHandle', tick to
+                -- the EBB slot, apply the EBB, then re-tick to 'currentSlot'.
+                -- The result is the post-EBB 'Ticked' 'LedgerState' that
+                -- 'forgeBlock' expects.
+                let lcfg = configLedger pInfoConfig
+                tickedLdgSt' <- fmap fromJust $
+                  withEarlyExit $
+                    ChainDB.withReadOnlyHandleAtPoint chainDB VolatileTip $
+                      \case
+                        Left e -> error $ show e
+                        Right currentExt -> lift $ do
+                          let currentHdl = unExtStateHandle currentExt
+                          tickedAtEbb <-
+                            lrResult
+                              <$> applyChainTickLedgerResult
+                                OmitLedgerEvents
+                                lcfg
+                                ebbSlot
+                                currentHdl
+                          postEbbE <-
+                            Exc.runExceptT $
+                              applyLedgerBlock
+                                OmitLedgerEvents
+                                lcfg
+                                ebb
+                                tickedAtEbb
+                          postEbb <- case postEbbE of
+                            Left e -> Exn.throw $ JitEbbError @blk e
+                            Right h -> pure h
+                          tickedAtCurrent <-
+                            lrResult
+                              <$> applyChainTickLedgerResult
+                                OmitLedgerEvents
+                                lcfg
+                                currentSlot
+                                postEbb
+                          pure $ tickedState tickedAtCurrent
+
+                -- Forge the block using the post-EBB ticked ledger state.
+                blk <-
+                  forgeBlock
+                    origBlockForging
+                    cfg'
+                    currentBno
+                    currentSlot
+                    tickedLdgSt'
+                    txs
+                    prf
+
+                -- If the EBB or the subsequent block is invalid the ChainDB
+                -- will reject it, and 'Test.ThreadNet.General.prop_general'
+                -- will eventually fail because of a block rejection.
+                void $ ChainDB.addBlock chainDB InvalidBlockPunishment.noPunishment ebb
+                pure blk
 
       -- This variable holds the number of the earliest slot in which the
       -- crucial txs have not yet been added. In other words, it holds the
