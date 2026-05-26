@@ -35,7 +35,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , BoostedBlock
   , IsPerasVote (..)
   , PerasRoundNo
-  , PerasVoterId (..)
+  , PerasSeatIndex (..)
   , ValidatedPerasVote (..)
   , VoteWeight
   , VoteWeightDistr
@@ -52,7 +52,7 @@ data MockPerasVote blk
   = MockPerasVote
   { mockVoteRound :: PerasRoundNo
   , mockVoteBlock :: Point blk
-  , mockVoteVoterId :: PerasVoterId
+  , mockVoteSeatIndex :: PerasSeatIndex
   , mockVoteWeight :: VoteWeight
   -- ^ This field is unique to the mocked vote, and allows us to bypass the
   -- need for a 'VoteWeightDistr' when creating validated votes in tests.
@@ -69,7 +69,7 @@ type instance BoostedBlock (MockPerasVote blk) = Point blk
 instance IsPerasVote (MockPerasVote blk) blk where
   getPerasVoteRound = mockVoteRound
   getPerasVoteBlock = mockVoteBlock
-  getPerasVoteVoterId = mockVoteVoterId
+  getPerasVoteSeatIndex = mockVoteSeatIndex
 
 instance ShowProxy blk => ShowProxy (MockPerasVote blk) where
   showProxy _ = "MockPerasVote(" <> showProxy (Proxy @blk) <> ")"
@@ -82,22 +82,22 @@ instance
     MockPerasVote
       { mockVoteRound
       , mockVoteBlock
-      , mockVoteVoterId
+      , mockVoteSeatIndex
       } =
       encodeListLen 3
         <> encode mockVoteRound
         <> encode mockVoteBlock
-        <> encode mockVoteVoterId
+        <> encode mockVoteSeatIndex
   decode = do
     decodeListLenOf 3
     mockVoteRound <- decode
     mockVoteBlock <- decode
-    mockVoteVoterId <- decode
+    mockVoteSeatIndex <- decode
     pure $
       MockPerasVote
         { mockVoteRound
         , mockVoteBlock
-        , mockVoteVoterId
+        , mockVoteSeatIndex
         , mockVoteWeight = 0
         -- NOTE: weights are never sent over the wire, but computed locally from
         -- the voting committee. We might need to change this in the future if
@@ -115,22 +115,22 @@ instance
     MockPerasVote
       { mockVoteRound
       , mockVoteBlock
-      , mockVoteVoterId
+      , mockVoteSeatIndex
       } =
       encodeListLen 3
         <> encodeNodeToNode ccfg version mockVoteRound
         <> encodeNodeToNode ccfg version mockVoteBlock
-        <> encodeNodeToNode ccfg version mockVoteVoterId
+        <> encodeNodeToNode ccfg version mockVoteSeatIndex
   decodeNodeToNode ccfg version = do
     decodeListLenOf 3
     mockVoteRound <- decodeNodeToNode ccfg version
     mockVoteBlock <- decodeNodeToNode ccfg version
-    mockVoteVoterId <- decodeNodeToNode ccfg version
+    mockVoteSeatIndex <- decodeNodeToNode ccfg version
     pure
       MockPerasVote
         { mockVoteRound
         , mockVoteBlock
-        , mockVoteVoterId
+        , mockVoteSeatIndex
         , mockVoteWeight = 0
         -- NOTE: weights are never sent over the wire, but computed locally from
         -- the voting committee. We might need to change this in the future if

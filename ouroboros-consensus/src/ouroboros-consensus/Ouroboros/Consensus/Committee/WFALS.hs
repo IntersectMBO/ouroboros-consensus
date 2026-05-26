@@ -438,7 +438,6 @@ implEligiblePartyVoteWeight committee = \case
   mkVoteWeight absoluteStake =
     VoteWeight (absoluteStake / (persistentStake + nonPersistentStake))
 
-
 -- | Forge a certificate attesting the winner of a given election
 implForgeCert ::
   forall crypto.

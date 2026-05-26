@@ -21,7 +21,6 @@ module Ouroboros.Consensus.Peras.Types
   , weightAboveThreshold
   , PerasVoteTarget (..)
   , PerasVoteId (..)
-  , PerasVoterId (..)
   , VoteWeight (..) -- Re-exported from Committee.Types for convenience
   , VoteWeightDistr (..)
   , lookupVoteWeight
@@ -37,7 +36,6 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
-import Cardano.Ledger.Hashes (KeyHash, KeyRole (..))
 import Codec.Serialise.Class (Serialise (..))
 import Control.DeepSeq (NFData)
 import Data.ByteString.Short (ShortByteString)
@@ -146,7 +144,7 @@ newtype PerasSeatIndex
   { unPerasSeatIndex :: Word16
   }
   deriving stock (Show, Eq, Ord, Generic)
-  deriving newtype (FromCBOR, ToCBOR, Enum, Bounded)
+  deriving newtype (FromCBOR, ToCBOR, Enum, Bounded, NFData)
   deriving anyclass NoThunks
 
 -- ** Vote parameters
@@ -164,7 +162,7 @@ data PerasVoteTarget blk
 data PerasVoteId blk
   = PerasVoteId
   { pviRoundNo :: !PerasRoundNo
-  , pviVoterId :: !PerasVoterId
+  , pviSeatIndex :: !PerasSeatIndex
   }
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
@@ -173,15 +171,15 @@ instance ShowProxy blk => ShowProxy (PerasVoteId blk) where
   showProxy _ = "PerasVoteId " <> showProxy (Proxy @blk)
 
 instance Serialise (PerasVoteId blk) where
-  encode PerasVoteId{pviRoundNo, pviVoterId} =
+  encode PerasVoteId{pviRoundNo, pviSeatIndex} =
     encodeListLen 2
       <> encode pviRoundNo
-      <> toCBOR (unPerasVoterId pviVoterId)
+      <> toCBOR (unPerasSeatIndex pviSeatIndex)
   decode = do
     decodeListLenOf 2
     pviRoundNo <- decode
-    pviVoterId <- PerasVoterId <$> fromCBOR
-    pure $ PerasVoteId{pviRoundNo, pviVoterId}
+    pviSeatIndex <- PerasSeatIndex <$> fromCBOR
+    pure $ PerasVoteId{pviRoundNo, pviSeatIndex}
 
 -- | Check whether a given vote weight is above the quorum threshold.
 --
@@ -203,24 +201,15 @@ weightAboveThreshold params voteWeight =
     unPerasQuorumWeightThresholdSafetyMargin
       (perasQuorumWeightThresholdSafetyMargin params)
 
--- | The identifier of a voter in a Peras election
-newtype PerasVoterId
-  = PerasVoterId
-  { unPerasVoterId :: KeyHash StakePool
-  }
-  deriving newtype (NoThunks, NFData, FromCBOR, ToCBOR)
-  deriving stock (Eq, Ord, Generic)
-  deriving Show via Quiet PerasVoterId
-
-instance Serialise PerasVoterId where
-  encode = toCBOR . unPerasVoterId
-  decode = PerasVoterId <$> fromCBOR
+instance Serialise PerasSeatIndex where
+  encode = toCBOR . unPerasSeatIndex
+  decode = PerasSeatIndex <$> fromCBOR
 
 -- | Voting weight distribution for a Peras election
 -- TODO: remove, at call site an argument of this type will be replaced by a 'PerasVotingCommittee blk'.
 newtype VoteWeightDistr
   = VoteWeightDistr
-  { unVoteWeightDistr :: Map PerasVoterId VoteWeight
+  { unVoteWeightDistr :: Map PerasSeatIndex VoteWeight
   }
   deriving newtype NoThunks
   deriving stock (Show, Eq, Generic)
@@ -228,12 +217,12 @@ newtype VoteWeightDistr
 -- | Lookup the weight of a vote cast by a member of a given weight distribution.
 -- TODO: remove this function since it will be replaced by 'eligiblePartyVoteWeight' from Committee.Class
 lookupVoteWeight ::
-  PerasVoterId ->
+  PerasSeatIndex ->
   VoteWeightDistr ->
   Maybe VoteWeight
-lookupVoteWeight voterId distr =
+lookupVoteWeight seatIndex distr =
   Map.lookup
-    voterId
+    seatIndex
     (unVoteWeightDistr distr)
 
 -- ** Conversion errors
