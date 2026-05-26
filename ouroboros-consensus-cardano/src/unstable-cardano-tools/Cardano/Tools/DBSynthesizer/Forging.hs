@@ -20,7 +20,7 @@ import qualified Control.Monad.Trans.Class as Trans
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
 import Control.Tracer as Trace (nullTracer)
 import Data.Either (isRight)
-import Data.Maybe (fromJust, isJust)
+import Data.Maybe (isJust)
 import Data.Proxy
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block.Abstract as Block
@@ -58,7 +58,6 @@ import Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
   ( noPunishment
   )
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Util.EarlyExit
   ( WithEarlyExit
   , exitEarly

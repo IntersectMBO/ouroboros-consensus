@@ -95,7 +95,7 @@ newtype LedgerSeq m blk = LedgerSeq
   deriving Generic
 
 deriving newtype instance
-  (IOLike m, NoThunks (ExtStateHandle m blk)) => NoThunks (LedgerSeq m blk)
+  IOLike m => NoThunks (LedgerSeq m blk)
 
 deriving newtype instance Eq (ExtStateHandle m blk) => Eq (LedgerSeq m blk)
 deriving newtype instance Show (ExtStateHandle m blk) => Show (LedgerSeq m blk)

@@ -33,7 +33,6 @@ import Data.Bifunctor (second)
 import Data.Coerce (Coercible, coerce)
 import Data.SOP.BasicFunctors
 import Data.SOP.Counting (Exactly (..))
-import Data.SOP.Functors (Flip (..))
 import Data.SOP.Index (Index (..), himap)
 import Data.SOP.Strict
 import qualified Data.Text as T

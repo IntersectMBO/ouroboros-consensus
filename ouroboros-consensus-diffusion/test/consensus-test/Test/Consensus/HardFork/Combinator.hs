@@ -17,14 +17,12 @@ module Test.Consensus.HardFork.Combinator (tests) where
 
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import qualified Data.Map.Strict as Map
-import Data.SOP.BasicFunctors
 import Data.SOP.Counting
 import Data.SOP.InPairs (RequiringBoth (..))
 import qualified Data.SOP.InPairs as InPairs
 import Data.SOP.OptNP (OptNP (..))
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
-import Data.Void (Void, absurd)
 import Data.Word
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block

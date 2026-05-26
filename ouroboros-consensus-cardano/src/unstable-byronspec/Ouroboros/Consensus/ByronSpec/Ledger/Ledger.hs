@@ -76,21 +76,21 @@ initByronSpecLedgerState cfg =
 -------------------------------------------------------------------------------}
 
 instance GetTip LedgerState ByronSpecBlock where
-  getTip (ByronSpecLedgerState tip state) =
+  getTip (ByronSpecLedgerState tip st) =
     castPoint $
-      getByronSpecTip tip state
+      getByronSpecTip tip st
 
 instance GetTip (Ticked LedgerState) ByronSpecBlock where
-  getTip (TickedByronSpecLedgerState tip state) =
+  getTip (TickedByronSpecLedgerState tip st) =
     castPoint $
-      getByronSpecTip tip state
+      getByronSpecTip tip st
 
 getByronSpecTip :: Maybe SlotNo -> Spec.State Spec.CHAIN -> Point ByronSpecBlock
 getByronSpecTip Nothing _ = GenesisPoint
-getByronSpecTip (Just slot) state =
+getByronSpecTip (Just slot) st =
   BlockPoint
     slot
-    (getChainStateHash state)
+    (getChainStateHash st)
 
 {-------------------------------------------------------------------------------
   Ticking
@@ -108,7 +108,7 @@ type instance AuxLedgerEvent ByronSpecBlock = VoidLedgerEvent
 instance IsLedger LedgerState ByronSpecBlock where
   type LedgerErr LedgerState ByronSpecBlock = ByronSpecLedgerError
 
-  applyChainTickLedgerResult _evs cfg slot (ByronSpecStateHandle (ByronSpecLedgerState tip state)) =
+  applyChainTickLedgerResult _evs cfg slot (ByronSpecStateHandle (ByronSpecLedgerState tip st)) =
     pure $
       pureLedgerResult $
         TickedByronSpecStateHandle $
@@ -118,7 +118,7 @@ instance IsLedger LedgerState ByronSpecBlock where
                 Rules.applyChainTick
                   cfg
                   (toByronSpecSlotNo slot)
-                  state
+                  st
             }
 
 {-------------------------------------------------------------------------------
@@ -156,13 +156,13 @@ instance ApplyBlock LedgerState ByronSpecBlock where
     _
     cfg
     block
-    (TickedByronSpecStateHandle (TickedByronSpecLedgerState _tip state)) =
+    (TickedByronSpecStateHandle (TickedByronSpecLedgerState _tip st)) =
       -- Note that the CHAIN rule also applies the chain tick. So even
       -- though the ledger we received has already been ticked with
       -- 'applyChainTick', we do it again as part of CHAIN. This is safe, as
       -- it is idempotent. If we wanted to avoid the repeated tick, we would
       -- have to call the subtransitions of CHAIN (except for ticking).
-      case runExcept (Rules.liftCHAIN cfg (byronSpecBlock block) state) of
+      case runExcept (Rules.liftCHAIN cfg (byronSpecBlock block) st) of
         Left err -> throwError $ ByronSpecLedgerError err
         Right st' ->
           pure $

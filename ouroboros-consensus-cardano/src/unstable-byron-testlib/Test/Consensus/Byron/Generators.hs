@@ -65,7 +65,6 @@ import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.HeaderValidation (AnnTip (..))
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)

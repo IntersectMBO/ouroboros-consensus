@@ -23,19 +23,15 @@ module Test.Consensus.Shelley.Examples
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core
-import qualified Cardano.Ledger.Core as LC
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Cardano.Slotting.Time (mkSlotLength)
 import Data.Coerce (coerce)
-import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty ((:|)))
-import qualified Data.Map as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Set as Set
-import Lens.Micro
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
@@ -111,7 +107,7 @@ fromShelleyLedgerExamples
       , exampleAnnTip = unlabelled annTip
       , exampleLedgerState = unlabelled ledgerState
       , exampleChainDepState = unlabelled chainDepState
-      , exampleExtLedgerState = unlabelled extLedgerState
+      , exampleExtLedgerState = unlabelled extLedgerSt
       , exampleSlotNo = unlabelled slotNo
       , exampleLedgerConfig = unlabelled ledgerConfig
       }
@@ -192,7 +188,7 @@ fromShelleyLedgerExamples
         , shelleyLedgerLatestPerasCertRound = SNothing
         }
     chainDepState = TPraosState (NotOrigin 1) pleChainDepState
-    extLedgerState =
+    extLedgerSt =
       ExtLedgerState
         ledgerState
         (genesisHeaderState chainDepState)
@@ -224,7 +220,7 @@ fromShelleyLedgerExamplesPraos
       , exampleAnnTip = unlabelled annTip
       , exampleLedgerState = unlabelled ledgerState
       , exampleChainDepState = unlabelled chainDepState
-      , exampleExtLedgerState = unlabelled extLedgerState
+      , exampleExtLedgerState = unlabelled extLedgerSt
       , exampleSlotNo = unlabelled slotNo
       , exampleLedgerConfig = unlabelled ledgerConfig
       }
@@ -329,7 +325,7 @@ fromShelleyLedgerExamplesPraos
     chainDepState =
       translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto)) $
         TPraosState (NotOrigin 1) pleChainDepState
-    extLedgerState =
+    extLedgerSt =
       ExtLedgerState
         ledgerState
         (genesisHeaderState chainDepState)

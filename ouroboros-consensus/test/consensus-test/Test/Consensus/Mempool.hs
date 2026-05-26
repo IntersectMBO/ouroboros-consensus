@@ -53,7 +53,6 @@ import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.API (ExnMempoolTimeout (..))
 import Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Mock.Ledger hiding (TxId)
-import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util (repeatedly, repeatedlyM)
 import Ouroboros.Consensus.Util.Condense (condense)
 import Ouroboros.Consensus.Util.IOLike
@@ -814,7 +813,6 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
     ledgerState
     MempoolSnapshot
       { snapshotTxs
-      , snapshotSlotNo
       } =
       -- Validate the snapshot's txs by replaying them against the
       -- current pure 'LedgerState' through 'applyTxToLedger', which goes

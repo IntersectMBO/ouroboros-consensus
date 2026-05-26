@@ -44,7 +44,6 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Block.Abstract as BA
 import qualified Ouroboros.Consensus.BlockchainTime as BTime
@@ -53,10 +52,7 @@ import Ouroboros.Consensus.Ledger.Abstract
   ( BlockSupportsLedgerHD (..)
   , LedgerTablesFactory
   )
-import Ouroboros.Consensus.Ledger.Extended
-  ( ExtStateHandle
-  , ExtValidationError
-  )
+import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -241,7 +237,6 @@ runTestNetwork ::
   , TracingConstraints blk
   , HasCallStack
   , forall s. BlockSupportsLedgerHD (IOSim s) blk
-  , forall s. NoThunks (ExtStateHandle (IOSim s) blk)
   , forall s. NoThunks (StateHandle (IOSim s) blk)
   , forall s. NoThunks (TickedStateHandle (IOSim s) blk)
   ) =>

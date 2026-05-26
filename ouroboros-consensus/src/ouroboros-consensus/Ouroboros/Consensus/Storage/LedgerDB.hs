@@ -54,7 +54,6 @@ openDB ::
   , HasCallStack
   , HasHardForkHistory blk
   , BlockSupportsLedgerHD m blk
-  , NoThunks (ExtStateHandle m blk)
   , NoThunks (LedgerState blk)
   ) =>
   -- | Stateless initializaton arguments

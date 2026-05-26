@@ -81,7 +81,6 @@ import Network.TypedProtocol.Codec
   , mapFailureCodec
   )
 import qualified Network.TypedProtocol.Codec as Codec
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
@@ -113,7 +112,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Assert

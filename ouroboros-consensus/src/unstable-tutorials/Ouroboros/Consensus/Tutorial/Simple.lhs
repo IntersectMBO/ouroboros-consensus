@@ -56,7 +56,7 @@ First, some imports we'll need:
 > import Ouroboros.Consensus.Block
 >   (BlockSupportsProtocol (tiebreakerView, validateView))
 > import Ouroboros.Consensus.Ledger.Abstract
->   (AuxLedgerEvent, BlockSupportsLedgerHD (..), GetTip(..), Handle,
+>   (AuxLedgerEvent, BlockSupportsLedgerHD (..), GetTip(..),
 >    IsLedger(..), LedgerCfg,
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
 >    LedgerState, ApplyBlock(..), UpdateLedger, LedgerTablesHandle,

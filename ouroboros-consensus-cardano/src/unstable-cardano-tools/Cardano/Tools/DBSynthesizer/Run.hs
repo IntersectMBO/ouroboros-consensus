@@ -52,7 +52,6 @@ import Ouroboros.Consensus.Shelley.Node
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.Block
 import Ouroboros.Network.Point (WithOrigin (..))

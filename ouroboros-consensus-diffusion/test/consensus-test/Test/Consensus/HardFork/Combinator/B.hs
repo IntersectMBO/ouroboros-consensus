@@ -37,13 +37,10 @@ module Test.Consensus.HardFork.Combinator.B
 
 import Cardano.Binary (DecoderError)
 import Cardano.Ledger.BaseTypes (unNonZero)
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise
 import qualified Data.Binary as B
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
-import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Void

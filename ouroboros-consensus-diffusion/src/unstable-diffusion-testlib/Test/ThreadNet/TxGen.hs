@@ -21,7 +21,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId)
 import Test.QuickCheck (Gen)
@@ -81,20 +80,20 @@ testGenTxsHfc ::
   NP WrapTxGenExtra xs ->
   LedgerState (HardForkBlock xs) ->
   Gen [GenTx (HardForkBlock xs)]
-testGenTxsHfc coreNodeId numCoreNodes curSlotNo cfg extras state =
+testGenTxsHfc coreNodeId numCoreNodes curSlotNo cfg extras st =
   hcollapse $
     hcizipWith3
       (Proxy @TxGen)
       aux
       cfgs
       extras
-      (State.tip (hardForkLedgerStatePerEra state))
+      (State.tip (hardForkLedgerStatePerEra st))
  where
   cfgs = distribTopLevelConfig ei cfg
   ei =
     State.epochInfoLedger
       (configLedger cfg)
-      (hardForkLedgerStatePerEra state)
+      (hardForkLedgerStatePerEra st)
 
   aux ::
     forall blk.

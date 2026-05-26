@@ -301,10 +301,10 @@ instance StateModel Model where
   initialState = UnInit
 
   nextState _ (Init secParam) _var = Model (AS.Empty genesis) (Point Origin) secParam
-  nextState state GetState _var = state
-  nextState state ForceTakeSnapshot _var = state
-  nextState state@(Model _ i secParam) (ValidateAndCommit n blks) _var =
-    case modelUpdateLedger switch state of
+  nextState st GetState _var = st
+  nextState st ForceTakeSnapshot _var = st
+  nextState st@(Model _ i secParam) (ValidateAndCommit n blks) _var =
+    case modelUpdateLedger switch st of
       Model ch' _ _ ->
         Model
           ch'
@@ -347,10 +347,10 @@ instance StateModel Model where
     switch = do
       modify $ AS.dropNewest (fromIntegral n)
       mapM_ push blks
-  nextState state WipeLedgerDB _var = state
-  nextState state TruncateSnapshots _var = state
-  nextState state (DropAndRestore n) _var = modelRollback n state
-  nextState state OpenAndCloseForker _var = state
+  nextState st WipeLedgerDB _var = st
+  nextState st TruncateSnapshots _var = st
+  nextState st (DropAndRestore n) _var = modelRollback n st
+  nextState st OpenAndCloseForker _var = st
   nextState UnInit _ _ = error "Uninitialized model created a command different than Init"
 
   precondition UnInit Init{} = True
@@ -600,12 +600,12 @@ instance RunModel Model (StateT Environment IO) where
             ValidateSuccessful -> pure $ Right ()
             ValidateExceededRollBack{} -> pure $ Left ErrorValidateExceededRollback
             ValidateLedgerError (AnnLedgerError p _ err) -> error ("Unexpected ledger error" <> show err <> " on point " <> show p)
-  perform state@(Model _ _ secParam) (DropAndRestore n) lk = do
+  perform st@(Model _ _ secParam) (DropAndRestore n) lk = do
     Environment _ testInternals chainDb _ _ _ _ <- get
     lift $ do
       atomically $ modifyTVar (dbChain chainDb) (drop (fromIntegral n))
       closeLedgerDB testInternals
-    perform state (Init secParam) lk
+    perform st (Init secParam) lk
   perform _ OpenAndCloseForker _ = do
     Environment ldb _ _ _ _ _ _ <- get
     lift $ withTipForker ldb (\_ -> pure ())
