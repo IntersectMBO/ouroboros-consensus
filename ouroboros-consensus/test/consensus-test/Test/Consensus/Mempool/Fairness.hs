@@ -26,9 +26,9 @@ import Data.List.NonEmpty hiding (length)
 import Data.Void (Void, vacuous)
 import Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.Ledger.Basics (LedgerState, getTip)
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Mempool
-import Ouroboros.Consensus.Ledger.Basics (getTip)
 import Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
@@ -42,7 +42,6 @@ import Test.Util.TestBlock
   , testBlockLedgerConfigFrom
   , testInitLedgerWithState
   )
-import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 
 tests :: TestTree
 tests =

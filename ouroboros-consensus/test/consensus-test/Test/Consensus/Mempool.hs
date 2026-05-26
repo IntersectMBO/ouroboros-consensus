@@ -828,7 +828,6 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
         Right _ -> property True
         Left e -> counterexample (mkErrMsg e) $ property False
      where
-
       mkErrMsg e =
         "At the end of the test, the Mempool contents were invalid: "
           <> show e

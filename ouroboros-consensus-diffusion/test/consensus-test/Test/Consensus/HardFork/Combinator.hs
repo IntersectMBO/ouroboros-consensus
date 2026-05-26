@@ -497,4 +497,3 @@ injectTx_AtoB ::
     BlockB
 injectTx_AtoB =
   InPairs.ignoringBoth $ Pair2 cannotInjectTx cannotInjectValidatedTx
-

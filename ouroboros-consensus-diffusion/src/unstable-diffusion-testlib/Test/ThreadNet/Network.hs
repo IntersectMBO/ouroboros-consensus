@@ -75,13 +75,13 @@ import qualified Data.Typeable as Typeable
 import Data.Void (Void)
 import GHC.Generics
 import GHC.Stack
-import NoThunks.Class (NoThunks)
 import Network.TypedProtocol.Codec
   ( AnyMessage (..)
   , CodecFailure
   , mapFailureCodec
   )
 import qualified Network.TypedProtocol.Codec as Codec
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config

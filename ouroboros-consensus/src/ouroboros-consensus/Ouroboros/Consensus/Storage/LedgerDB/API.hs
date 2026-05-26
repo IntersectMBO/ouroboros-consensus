@@ -739,4 +739,3 @@ data TraceReplayProgressEvent blk
       -- | the block at the tip of the ImmutableDB
       (ReplayGoal blk)
   deriving (Generic, Eq, Show)
-

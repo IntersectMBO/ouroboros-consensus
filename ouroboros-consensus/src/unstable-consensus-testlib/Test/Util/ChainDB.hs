@@ -47,7 +47,6 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import Ouroboros.Consensus.Storage.ImmutableDB hiding (getTip)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( DiskSnapshot (..)
   , ReadSnapshotErr (..)
@@ -60,6 +59,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , writeExtLedgerState
   , writeSnapshotMetadata
   )
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
   ( BackendResources (..)
   , LedgerDbBackendArgs (..)

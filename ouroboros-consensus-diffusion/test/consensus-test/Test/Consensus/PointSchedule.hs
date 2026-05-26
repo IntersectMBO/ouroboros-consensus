@@ -64,6 +64,7 @@ import Data.Functor (($>))
 import Data.List (mapAccumL, partition, scanl')
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
+import Data.Proxy (Proxy (..))
 import Data.Time (DiffTime)
 import Data.Word (Word64)
 import Network.TypedProtocol
@@ -72,7 +73,6 @@ import Ouroboros.Consensus.Block.Abstract
   , withOriginToMaybe
   )
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
-import Data.Proxy (Proxy (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerTablesFactory)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( GenesisWindow (..)

@@ -18,6 +18,7 @@ import Ouroboros.Consensus.HardFork.History
   ( EraParams (eraGenesisWin)
   )
 import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..), ExtStateHandle (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol (GenesisWindow)
 import Ouroboros.Consensus.Node.ProtocolInfo
   ( NumCoreNodes (NumCoreNodes)
@@ -35,7 +36,6 @@ import Test.Consensus.PointSchedule
   ( ForecastRange (ForecastRange)
   , HasPointScheduleTestParams (..)
   )
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..), ExtStateHandle (..))
 import Test.Util.ChainDB (mkTestChunkInfo)
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestBlock

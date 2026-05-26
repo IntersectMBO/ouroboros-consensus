@@ -76,8 +76,6 @@ import Ouroboros.Consensus.Cardano.CanHardFork
   )
 import Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..))
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
-import Ouroboros.Consensus.Protocol.Praos.Common (MaxMajorProtVer (..))
-import Ouroboros.Consensus.Protocol.TPraos (ConsensusConfig (..), TPraosParams (..))
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Embed.Binary
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
@@ -96,7 +94,9 @@ import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace
   , KESAgentContext
   )
+import Ouroboros.Consensus.Protocol.Praos.Common (MaxMajorProtVer (..))
 import Ouroboros.Consensus.Protocol.TPraos
+import Ouroboros.Consensus.Protocol.TPraos (ConsensusConfig (..), TPraosParams (..))
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
@@ -485,4 +485,3 @@ instance
     TxGenExtra (ShelleyBasedHardForkBlock proto1 era1 proto2 era2) =
       NP WrapTxGenExtra (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
   testGenTxs = testGenTxsHfc
-

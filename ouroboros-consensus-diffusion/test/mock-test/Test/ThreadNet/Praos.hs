@@ -158,20 +158,21 @@ prop_simple_praos_convergence
         testConfig
         testConfigB
         TestConfigMB
-          { nodeInfo = \nid -> pure $
-              plainTestNodeInitialization
-                ( protocolInfoPraos
-                    numCoreNodes
-                    nid
-                    params
-                    ( HardFork.defaultEraParams
-                        k
-                        slotLength
-                    )
-                    setupInitialNonce
-                    evolvingStake
-                )
-                (fmap (fmap (MkBlockForging . pure)) $ blockForgingPraos numCoreNodes nid)
+          { nodeInfo = \nid ->
+              pure $
+                plainTestNodeInitialization
+                  ( protocolInfoPraos
+                      numCoreNodes
+                      nid
+                      params
+                      ( HardFork.defaultEraParams
+                          k
+                          slotLength
+                      )
+                      setupInitialNonce
+                      evolvingStake
+                  )
+                  (fmap (fmap (MkBlockForging . pure)) $ blockForgingPraos numCoreNodes nid)
           , mkRekeyM = Nothing
           , ledgerTablesFactory = pure ()
           }

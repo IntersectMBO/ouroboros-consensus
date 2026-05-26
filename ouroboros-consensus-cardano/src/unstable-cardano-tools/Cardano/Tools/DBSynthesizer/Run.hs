@@ -34,6 +34,7 @@ import Data.Bool (bool)
 import Data.ByteString as BS (ByteString, readFile)
 import Data.Functor (($>))
 import qualified Data.Set as Set
+import qualified Ouroboros.Consensus.Backends as Backends
 import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
@@ -51,7 +52,6 @@ import Ouroboros.Consensus.Shelley.Node
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
-import qualified Ouroboros.Consensus.Backends as Backends
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.Block

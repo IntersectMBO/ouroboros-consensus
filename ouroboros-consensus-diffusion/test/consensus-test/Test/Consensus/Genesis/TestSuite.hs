@@ -28,6 +28,7 @@ module Test.Consensus.Genesis.TestSuite
   , toTestTree
   ) where
 
+import Control.Monad.IOSim (IOSim)
 import Data.Foldable (toList)
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
@@ -42,7 +43,6 @@ import Ouroboros.Consensus.Block
   )
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
-import Control.Monad.IOSim (IOSim)
 import Ouroboros.Consensus.Ledger.Basics (BlockSupportsLedgerHD, LedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)

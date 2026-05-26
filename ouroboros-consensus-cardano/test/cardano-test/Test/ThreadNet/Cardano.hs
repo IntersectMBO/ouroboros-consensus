@@ -66,6 +66,9 @@ import Ouroboros.Consensus.Protocol.Praos.AgentClient
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as Mock
+import System.FS.Sim.STM (simHasFS')
 import Test.Consensus.Cardano.ProtocolInfo
   ( hardForkOnDefaultProtocolVersions
   , mkTestProtocolInfo
@@ -87,9 +90,6 @@ import Test.ThreadNet.Util.NodeJoinPlan (trivialNodeJoinPlan)
 import Test.ThreadNet.Util.NodeRestarts (noRestarts)
 import Test.ThreadNet.Util.NodeToNodeVersion (genVersionFiltered)
 import Test.ThreadNet.Util.Seed (runGen)
-import qualified System.FS.Sim.MockFS as Mock
-import System.FS.Sim.STM (simHasFS')
-import System.FS.API (SomeHasFS (..))
 import qualified Test.Util.BoolProps as BoolProps
 import Test.Util.HardFork.Future
 import Test.Util.Orphans.Arbitrary ()

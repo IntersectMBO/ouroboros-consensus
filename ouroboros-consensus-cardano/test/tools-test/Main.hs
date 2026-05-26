@@ -6,8 +6,8 @@ import Cardano.Tools.DBAnalyser.Types
 import qualified Cardano.Tools.DBImmutaliser.Run as DBImmutaliser
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import Cardano.Tools.DBSynthesizer.Types
-import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Backends as Backends
+import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
 import qualified Test.Cardano.Tools.Headers
 import Test.Tasty

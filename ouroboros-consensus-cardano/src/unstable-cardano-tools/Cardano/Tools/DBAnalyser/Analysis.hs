@@ -567,9 +567,10 @@ traceLedgerProcessing
       (oldExt, newHandle) <- LedgerDB.withTipForker ldb $ \frk -> do
         oldHandle <- IOLike.atomically $ LedgerDB.forkerTip frk
         let ledgerCfg = ExtLedgerCfg cfg
-        h' <- runExceptT (tickThenApply OmitLedgerEvents ledgerCfg blk oldHandle) >>= \case
-          Right h -> pure h
-          Left err -> fail $ "traceLedgerProcessing: tickThenApply failed: " <> show err
+        h' <-
+          runExceptT (tickThenApply OmitLedgerEvents ledgerCfg blk oldHandle) >>= \case
+            Right h -> pure h
+            Left err -> fail $ "traceLedgerProcessing: tickThenApply failed: " <> show err
         pure (extLedgerState oldHandle, h')
 
       let traces =

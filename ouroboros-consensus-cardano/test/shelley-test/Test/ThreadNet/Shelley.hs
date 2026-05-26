@@ -38,6 +38,9 @@ import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.ShelleyHFC ()
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as Mock
+import System.FS.Sim.STM (simHasFS')
 import Test.Consensus.Shelley.MockCrypto (MockCrypto)
 import Test.QuickCheck
 import Test.Tasty
@@ -53,9 +56,6 @@ import Test.ThreadNet.Util.NodeJoinPlan (trivialNodeJoinPlan)
 import Test.ThreadNet.Util.NodeRestarts (noRestarts)
 import Test.ThreadNet.Util.NodeToNodeVersion (genVersion)
 import Test.ThreadNet.Util.Seed (runGen)
-import qualified System.FS.Sim.MockFS as Mock
-import System.FS.Sim.STM (simHasFS')
-import System.FS.API (SomeHasFS (..))
 import Test.Util.HardFork.Future (singleEraFuture)
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Slots (NumSlots (..))
@@ -357,43 +357,45 @@ prop_simple_real_tpraos_convergence
     prop_checkFinalD :: Property
     prop_checkFinalD =
       conjoin $
-        [ let -- The previous version of this check 'applyChainTick'-ed the
-              -- final state to the 'sentinel' slot to catch the epoch
-              -- transition when the last several test slots are empty.
-              -- 'applyChainTick' is now monadic on a 'StateHandle', and
-              -- threading IO through this 'Property' would ripple through the
-              -- test harness. Reading 'd' off the unticked state is a
-              -- behavioural drift (analogous to the T3 'migrateUTxO' drop) ---
-              -- in the edge case where the epoch transition would happen at
-              -- 'sentinel' rather than during a real block, the test now
-              -- reports the pre-transition 'd'.
-              ls = Shelley.shelleyLedgerState lsUnticked
+        [ let
+            -- The previous version of this check 'applyChainTick'-ed the
+            -- final state to the 'sentinel' slot to catch the epoch
+            -- transition when the last several test slots are empty.
+            -- 'applyChainTick' is now monadic on a 'StateHandle', and
+            -- threading IO through this 'Property' would ripple through the
+            -- test harness. Reading 'd' off the unticked state is a
+            -- behavioural drift (analogous to the T3 'migrateUTxO' drop) ---
+            -- in the edge case where the epoch transition would happen at
+            -- 'sentinel' rather than during a real block, the test now
+            -- reports the pre-transition 'd'.
+            ls = Shelley.shelleyLedgerState lsUnticked
 
-              msg =
-                "The (unticked) final ledger state of "
-                  <> show nid
-                  <> " has an unexpected value for the d protocol parameter."
+            msg =
+              "The (unticked) final ledger state of "
+                <> show nid
+                <> " has an unexpected value for the d protocol parameter."
 
-              -- The actual final value of @d@
-              actual :: SL.UnitInterval
-              actual = Shelley.getPParams ls ^. SL.ppDG
+            -- The actual final value of @d@
+            actual :: SL.UnitInterval
+            actual = Shelley.getPParams ls ^. SL.ppDG
 
-              -- The expected final value of @d@
-              --
-              -- NOTE: Not applicable if 'dWasFreeToVary'.
-              expected :: DecentralizationParam
-              expected = if dShouldUpdate then setupD2 else setupD
-           in counterexample ("unticked " <> show lsUnticked)
-                $ counterexample ("ticked   " <> show ls)
-                $ counterexample ("(d,d2) = " <> show (setupD, setupD2))
-                $ counterexample
-                  ( "(dUpdatedAsOf, dShouldUpdate) = "
-                      <> show (dUpdatedAsOf, dShouldUpdate)
-                  )
-                $ counterexample msg
-                $ dWasFreeToVary
-                  .||. SL.unboundRational actual
-                    === decentralizationParamToRational expected
+            -- The expected final value of @d@
+            --
+            -- NOTE: Not applicable if 'dWasFreeToVary'.
+            expected :: DecentralizationParam
+            expected = if dShouldUpdate then setupD2 else setupD
+           in
+            counterexample ("unticked " <> show lsUnticked)
+              $ counterexample ("ticked   " <> show ls)
+              $ counterexample ("(d,d2) = " <> show (setupD, setupD2))
+              $ counterexample
+                ( "(dUpdatedAsOf, dShouldUpdate) = "
+                    <> show (dUpdatedAsOf, dShouldUpdate)
+                )
+              $ counterexample msg
+              $ dWasFreeToVary
+                .||. SL.unboundRational actual
+                  === decentralizationParamToRational expected
         | (nid, lsUnticked) <- finalLedgers
         ]
      where
