@@ -11,12 +11,17 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.Parser
 
     -- * Auxiliary
   , extractBlockInfo
+  , extractLeiosFields
   ) where
 
 import Data.Bifunctor (bimap)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Word (Word64)
+import LeiosDemoTypes (EbAnnouncement, IsCertRB)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Storage.LedgerDB
+  ( ResolveLeiosBlock (headerEbAnnouncement, headerIsCertRB)
+  )
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB.API (BlockInfo (..))
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Types
@@ -42,6 +47,7 @@ data ParsedBlockInfo blk = ParsedBlockInfo
   , pbiBlockSize :: !BlockSize
   , pbiBlockInfo :: !(BlockInfo blk)
   , pbiNestedCtxt :: !(SomeSecond (NestedCtxt Header) blk)
+  , pbiLeiosFields :: !(IsCertRB, Maybe EbAnnouncement)
   }
 
 -- | Parse the given file containing blocks.
@@ -55,6 +61,7 @@ parseBlockFile ::
   , HasBinaryBlockInfo blk
   , HasNestedContent Header blk
   , DecodeDisk blk (Lazy.ByteString -> blk)
+  , ResolveLeiosBlock blk
   ) =>
   CodecConfig blk ->
   HasFS m h ->
@@ -89,6 +96,7 @@ parseBlockFile ccfg hasFS isNotCorrupt validationPolicy fsPath =
       Right ((offset, (size, blk)), stream')
         | noValidation || isNotCorrupt blk ->
             let !blockInfo = extractBlockInfo blk
+                !leiosFields = extractLeiosFields blk
                 !newParsed =
                   ParsedBlockInfo
                     { pbiBlockOffset = BlockOffset offset
@@ -96,6 +104,7 @@ parseBlockFile ccfg hasFS isNotCorrupt validationPolicy fsPath =
                     , pbiBlockInfo = blockInfo
                     , pbiNestedCtxt = case unnest (getHeader blk) of
                         DepPair nestedCtxt _ -> SomeSecond nestedCtxt
+                    , pbiLeiosFields = leiosFields
                     }
              in checkEntries (newParsed : parsed) stream'
         | otherwise -> -- The block was invalid
@@ -125,3 +134,11 @@ extractBlockInfo blk =
     }
  where
   BinaryBlockInfo{headerOffset, headerSize} = getBinaryBlockInfo blk
+
+extractLeiosFields ::
+  (HasHeader blk, GetHeader blk, ResolveLeiosBlock blk) =>
+  blk ->
+  (IsCertRB, Maybe EbAnnouncement)
+extractLeiosFields blk = (headerIsCertRB hdr, headerEbAnnouncement hdr)
+ where
+  hdr = getHeader blk

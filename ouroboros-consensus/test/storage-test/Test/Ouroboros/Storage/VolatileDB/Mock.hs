@@ -42,6 +42,7 @@ openDBMock maxBlocksPerFile ccfg = do
       , garbageCollect = updateE_ . garbageCollectModel
       , filterByPredecessor = querySTME $ filterByPredecessorModel
       , getBlockInfo = querySTME $ getBlockInfoModel
+      , getLeiosFields = pure (const Nothing)
       , getMaxSlotNo = querySTME $ getMaxSlotNoModel
       }
    where

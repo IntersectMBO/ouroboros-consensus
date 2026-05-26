@@ -37,6 +37,7 @@ import Data.Typeable (Typeable)
 import Data.Word (Word16)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
+import LeiosDemoTypes (EbAnnouncement, IsCertRB)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
@@ -83,6 +84,16 @@ data VolatileDB m blk = VolatileDB
   -- ^ Return a function that returns the 'BlockInfo' of the block with
   -- the given hash or 'Nothing' if the block is not found in the
   -- VolatileDB.
+  , getLeiosFields ::
+      HasCallStack =>
+      STM m (HeaderHash blk -> Maybe (IsCertRB, Maybe EbAnnouncement))
+  -- ^ Return a function that returns the per-header Leios fields of the
+  -- block with the given hash, or 'Nothing' if the block is not found
+  -- in the VolatileDB.
+  --
+  -- The result pairs 'headerIsCertRB' with 'headerEbAnnouncement' for
+  -- the same header.  Kept separate from 'getBlockInfo' so that
+  -- 'BlockInfo' stays free of Leios-specific fields.
   , garbageCollect :: HasCallStack => SlotNo -> m ()
   -- ^ Try to remove all blocks with a slot number less than the given
   -- one.

@@ -52,6 +52,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB
   , tipToPoint
   )
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.VolatileDB
   ( VolatileDB
   , VolatileDbArgs (..)
@@ -108,6 +109,7 @@ withDBs ::
   , ImmutableDB.ImmutableDbSerialiseConstraints blk
   , VolatileDB.VolatileDbSerialiseConstraints blk
   , NodeInitStorage blk
+  , ResolveLeiosBlock blk
   ) =>
   TopLevelConfig blk ->
   ResourceRegistry m ->
