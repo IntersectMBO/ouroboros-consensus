@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 
 -- | Operations that update the mempool. They are internally divided in the pure
 -- and impure sides of the operation.
@@ -24,10 +25,11 @@ import Data.Void
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.Tables.Utils (restrictValuesMK, trackingToDiffs, unionValues)
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.Impl.Common
-import Ouroboros.Consensus.Mempool.TxSeq (TxTicket (..))
+import Ouroboros.Consensus.Mempool.TxSeq (TxSeq ((:>)), TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Enclose
@@ -415,35 +417,89 @@ implSyncWithLedger ::
   MempoolEnv m blk ->
   m (MempoolSnapshot blk)
 implSyncWithLedger mpEnv = encloseTimedWith (TraceMempoolSynced >$< mpEnvTracer mpEnv) $ do
-  (res :: WithTMVarOutcome Void (MempoolSnapshot blk)) <-
-    withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
-      \is ls -> do
-        let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
-        if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
-          then do
-            -- The tip didn't change, put the same state.
-            traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is)
-            pure (OK (snapshotFromIS is), is)
-          else do
-            -- We need to revalidate
-            let pt = castPoint (getTip ls)
-            mTbs <- getLedgerTablesAtFor ldgrInterface pt (isTxKeys is)
-            case mTbs of
-              Just tbs -> do
-                let (is', mTrace) =
-                      pureSyncWithLedger
-                        capacityOverride
-                        cfg
-                        slot
-                        ls'
-                        tbs
-                        is
-                whenJust mTrace (traceWith trcr)
-                pure (OK (snapshotFromIS is'), is')
-              Nothing -> do
-                -- If the point is gone, resync
-                pure (Resync, is)
-  case res of
+  (isA, lsA) <- atomically $ (,) <$> readTMVar istate <*> getCurrentLedgerState ldgrInterface
+  let (slotA, tlsA) = tickLedgerState cfg $ ForgeInUnknownSlot lsA
+
+  res <-
+    if pointHash (isTip isA) == castHash (getTipHash lsA) && isSlotNo isA == slotA
+      then do
+        -- The tip didn't change, put the same state.
+        traceWith trcr $ TraceMempoolSyncNotNeeded (isTip isA)
+        pure (OK (snapshotFromIS isA), isA)
+      else do
+        -- We need to revalidate
+        let pt = castPoint (getTip lsA)
+        mTbsA <- getLedgerTablesAtFor ldgrInterface pt (isTxKeys isA)
+        case mTbsA of
+          Just tbsA -> do
+            let (is', mTrace) =
+                  pureSyncWithLedger
+                    capacityOverride
+                    cfg
+                    slotA
+                    tlsA
+                    tbsA
+                    isA
+            whenJust mTrace (traceWith trcr)
+            isFinal <-
+              atomically $ do
+                isB <- takeTMVar istate
+                if isTip isB /= isTip isA
+                  then do
+                    return isB -- concurrent sync already ran, retry
+                  else do
+                    -- Transactions added AFTER isA was snapshotted
+                    let (_, extraSeq) = TxSeq.splitAfterTicketNo (isTxs isB) (isLastTicketNo isA)
+                        extraTickets = TxSeq.toList extraSeq
+
+                    if null extraTickets
+                      then do
+                        return $ is' -- fast path, no extra work
+                      else
+                        -- Re-apply just the extra txs on top of is' to get the correct
+                        -- isLedgerState. Use their cached values from isB (same tip).
+                        let extraKeys =
+                              foldMap
+                                (getTransactionKeySets . txForgetValidated . txTicketTx)
+                                extraTickets
+                            extraValues = ltliftA2 restrictValuesMK (isTxValues isB) extraKeys
+
+                            ReapplyTxsResult _nowInvalid validExtras newSt =
+                              reapplyTxs
+                                ComputeDiffs
+                                cfg
+                                (isSlotNo is')
+                                (map (\(TxTicket tx tk tz) -> (tx, (tk, tz))) extraTickets)
+                                (applyMempoolDiffs extraValues extraKeys (isLedgerState is'))
+                            validExtraKeys = foldMap (getTransactionKeySets . txForgetValidated . fst) validExtras
+                            is'' =
+                              is'
+                                { isTxs =
+                                    foldl
+                                      (:>)
+                                      (isTxs is')
+                                      (map (\(tx, (tk, tz)) -> TxTicket tx tk tz) validExtras)
+                                , isTxIds =
+                                    isTxIds is'
+                                      <> Set.fromList (map (txId . txForgetValidated . fst) validExtras)
+                                , isTxKeys = isTxKeys is' <> validExtraKeys
+                                , isTxValues =
+                                    ltliftA2
+                                      unionValues
+                                      (isTxValues is')
+                                      (ltliftA2 restrictValuesMK extraValues validExtraKeys)
+                                , isLedgerState = trackingToDiffs newSt
+                                , isLastTicketNo = isLastTicketNo isB -- preserve ticket ordering
+                                }
+                         in do
+                              return is''
+            atomically $ putTMVar istate isFinal
+            pure (OK (snapshotFromIS isFinal), isFinal)
+          Nothing -> do
+            -- If the point is gone, resync
+            pure (Resync, isA)
+
+  case fst res of
     OK v -> pure v
     Resync -> implSyncWithLedger mpEnv
  where
