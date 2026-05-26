@@ -14,6 +14,7 @@ import qualified Test.Consensus.HeaderValidation (tests)
 import qualified Test.Consensus.Ledger.Tables.Diff (tests)
 import qualified Test.Consensus.Mempool (tests)
 import qualified Test.Consensus.Mempool.Fairness (tests)
+import qualified Test.Consensus.Mempool.StateMachine (tests)
 import qualified Test.Consensus.MiniProtocol.BlockFetch.Client (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.CSJ (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.Client (tests)
@@ -60,12 +61,7 @@ tests =
         "Mempool"
         [ Test.Consensus.Mempool.tests
         , Test.Consensus.Mempool.Fairness.tests
-        -- 'Test.Consensus.Mempool.StateMachine' (the qsm model-vs-impl
-        -- mempool test) is deferred: its 'MockedLedgerDB' / 'tick' /
-        -- 'LedgerInterface' model is built around 'LedgerState blk
-        -- ValuesMK', which has no analogue in the handle-based world.
-        -- A faithful port is its own work-item; tracked in
-        -- fixing-tests.md.
+        , Test.Consensus.Mempool.StateMachine.tests
         ]
     , testGroup
         "Peras"
