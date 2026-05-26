@@ -300,25 +300,23 @@ findAndMarkCompletedEbs db = do
     dbStep1 stmt
   pure completed
 
--- | Emit @AcquiredEbTxs@ notifications and add the closures to the
--- in-process cache.  Runs after the insert's COMMIT.  A reader between
--- COMMIT and this call sees the pre-update cache: the DB row already
--- has @missingTxCount = -1@, but the cache does not yet contain the
--- EB hash, so ChainSel sees the EB as absent and treats the certifying
--- RB as pending.  Conservative direction for ChainSel (more CertRBs
--- filtered, not fewer — perf cost only, self-corrects on the next
--- @chainSelectionForBlock@).
+-- | Add the completed closures to the in-process cache and emit the
+-- @AcquiredEbTxs@ notifications.  Runs after the insert's COMMIT.
+--
+-- The TVar update precedes the notification: any subscriber that
+-- reacts to the notification reads 'closuresVar' in its post-update
+-- state.
 notifyAndCacheCompleted ::
   (LeiosEbNotification -> IO ()) ->
   StrictTVar IO (Set EbHash) ->
   CompletedEbs ->
   IO ()
 notifyAndCacheCompleted notify closuresVar completed = do
-  forM_ completed $ notify . AcquiredEbTxs
   unless (null completed) $
     atomically $
       modifyTVar closuresVar $
         Set.union (Set.fromList (map pointEbHash completed))
+  forM_ completed $ notify . AcquiredEbTxs
 
 -- | Snapshot of every EB whose closure is complete.  Backs the seed
 -- in 'newLeiosDBSQLite'; the cache is then maintained by the insert
