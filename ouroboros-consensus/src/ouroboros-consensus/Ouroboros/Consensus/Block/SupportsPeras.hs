@@ -293,7 +293,7 @@ type instance BoostedBlock (VoidPerasCert blk) = Point blk
 instance IsPerasVote (VoidPerasVote blk) blk where
   getPerasVoteRound = absurd . unVoidPerasVote
   getPerasVoteBlock = absurd . unVoidPerasVote
-  getPerasVoteVoterId = absurd . unVoidPerasVote
+  getPerasVoteSeatIndex = absurd . unVoidPerasVote
 
 instance IsPerasCert (VoidPerasCert blk) blk where
   getPerasCertRound = absurd . unVoidPerasCert
@@ -420,7 +420,7 @@ class
   where
   getPerasVoteRound :: vote -> PerasRoundNo
   getPerasVoteBlock :: vote -> BoostedBlock vote
-  getPerasVoteVoterId :: vote -> PerasVoterId
+  getPerasVoteSeatIndex :: vote -> PerasSeatIndex
 
   getPerasVotePoint :: vote -> Point blk
   getPerasVotePoint = boostedBlockToPoint . getPerasVoteBlock
@@ -430,7 +430,7 @@ getPerasVoteId :: IsPerasVote vote blk => vote -> PerasVoteId blk
 getPerasVoteId vote =
   PerasVoteId
     { pviRoundNo = getPerasVoteRound vote
-    , pviVoterId = getPerasVoteVoterId vote
+    , pviSeatIndex = getPerasVoteSeatIndex vote
     }
 
 -- | Extract the vote target from a Peras vote container
@@ -451,7 +451,7 @@ instance
   where
   getPerasVoteRound = getPerasVoteRound . vpvVote
   getPerasVoteBlock = getPerasVoteBlock . vpvVote
-  getPerasVoteVoterId = getPerasVoteVoterId . vpvVote
+  getPerasVoteSeatIndex = getPerasVoteSeatIndex . vpvVote
 
 instance
   IsPerasVote vote blk =>
@@ -459,7 +459,7 @@ instance
   where
   getPerasVoteRound = getPerasVoteRound . forgetArrivalTime
   getPerasVoteBlock = getPerasVoteBlock . forgetArrivalTime
-  getPerasVoteVoterId = getPerasVoteVoterId . forgetArrivalTime
+  getPerasVoteSeatIndex = getPerasVoteSeatIndex . forgetArrivalTime
 
 -- | Types that support being treated as Peras certificates
 class

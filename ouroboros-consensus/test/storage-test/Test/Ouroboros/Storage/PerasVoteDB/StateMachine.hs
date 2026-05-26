@@ -11,13 +11,10 @@ module Test.Ouroboros.Storage.PerasVoteDB.StateMachine
   ( tests
 
     -- * Reusable generators
-  , genVoterId
+  , genPerasSeatIndex
   , genVoteWeight
   ) where
 
-import qualified Cardano.Crypto.DSIGN.Class as SL
-import qualified Cardano.Crypto.Seed as SL
-import qualified Cardano.Ledger.Keys as SL
 import Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import Control.Monad (join)
 import Control.Monad.Class.MonadThrow (MonadCatch (..))
@@ -28,7 +25,6 @@ import Control.Monad.State
   , evalStateT
   )
 import Control.Tracer (nullTracer)
-import Data.Char (chr)
 import Data.Functor (($>))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as Map
@@ -36,7 +32,6 @@ import Data.Map.Strict (Map)
 import Data.Ratio ((%))
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.String (IsString (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract (Point (..), SlotNo (..))
@@ -44,9 +39,9 @@ import Ouroboros.Consensus.Block.SupportsPeras
   ( IsPerasVote (..)
   , PerasParams
   , PerasRoundNo (..)
+  , PerasSeatIndex (..)
   , PerasVoteId
   , PerasVoteTarget (..)
-  , PerasVoterId (..)
   , ValidatedPerasCert
   , ValidatedPerasVote (..)
   , VoteWeight (..)
@@ -73,7 +68,6 @@ import Test.QuickCheck
   , Gen
   , Property
   , choose
-  , elements
   , frequency
   , ioProperty
   , tabulate
@@ -181,7 +175,7 @@ instance StateModel Model where
     genAddVote = do
       roundNo <- genRoundNo
       point <- genPoint
-      voterId <- genVoterId
+      seatIndex <- genPerasSeatIndex
       weight <- genVoteWeight
       now <- genRelativeTime
       let voteWithTime =
@@ -191,7 +185,7 @@ instance StateModel Model where
                     MockPerasVote
                       { mockVoteRound = roundNo
                       , mockVoteBlock = point
-                      , mockVoteVoterId = voterId
+                      , mockVoteSeatIndex = seatIndex
                       , mockVoteWeight = weight
                       }
                 , vpvVoteWeight = weight
@@ -354,19 +348,13 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
 
 -- * Reusable generators
 
--- | Generate a random 'PerasVoterId'.
+-- | Generate a random 'PerasSeatIndex'.
 --
 -- We want to force collisions when adding votes, so we need to restrict
 -- the key space a lot here. Otherwise we might never hit the case where
 -- the same voter casts two votes for the same round/block.
-genVoterId :: Gen PerasVoterId
-genVoterId = do
-  let mkVoterKey = fromString . replicate 32
-  bytes <- mkVoterKey <$> elements [chr c | c <- [0 .. 99]]
-  let signKey = SL.genKeyDSIGN (SL.mkSeedFromBytes bytes)
-  let verKey = SL.deriveVerKeyDSIGN signKey
-  let keyHash = SL.hashKey (SL.VKey verKey)
-  pure (PerasVoterId keyHash)
+genPerasSeatIndex :: Gen PerasSeatIndex
+genPerasSeatIndex = PerasSeatIndex <$> choose (0, 99)
 
 -- | Generate a random 'VoteWeight'.
 --
