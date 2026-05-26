@@ -36,9 +36,10 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , IsPerasCert (..)
   , PerasParams (..)
   , PerasRoundNo
+  , PerasVoteCollection (pvcTarget)
+  , PerasVoteCollectionWithQuorum (..)
   , PerasVoteTarget (..)
   , ValidatedPerasCert (..)
-  , ValidatedPerasVotesWithQuorum (..)
   )
 import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode (..))
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -134,15 +135,16 @@ forgeMockPerasCert ::
   forall blk.
   PerasCert blk ~ MockPerasCert blk =>
   PerasParams ->
-  ValidatedPerasVotesWithQuorum blk ->
+  PerasVoteCollectionWithQuorum blk ->
   Either (PerasError blk) (ValidatedPerasCert blk)
-forgeMockPerasCert params votes =
-  return $
+forgeMockPerasCert params votes = do
+  let target = pvcTarget . forgetQuorum $ votes
+  Right
     ValidatedPerasCert
       { vpcCert =
           MockPerasCert
-            { mockCertRound = pvtRoundNo (vpvqTarget votes)
-            , mockCertBlock = pvtBlock (vpvqTarget votes)
+            { mockCertRound = pvtRoundNo target
+            , mockCertBlock = pvtBlock target
             }
       , vpcCertBoost = perasWeight params
       }
