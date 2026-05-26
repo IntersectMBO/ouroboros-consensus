@@ -26,7 +26,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , implPerasForgeVoteIfEligible
   , VoidPerasVote (..)
   , VoidPerasCert (..)
-  , EmptyPerasError (..)
+  , VoidPerasError (..)
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
   , ValidatedPerasVotesWithQuorum
@@ -82,7 +82,6 @@ type family PerasCrypto blk :: Type
 -- TODO: maybe move this inside 'BlockSupportsPeras'.
 type family PerasVotingCommitteeScheme blk :: Type
 
-
 -- | Voting committee for Peras indexed by block type
 type PerasVotingCommittee blk =
   VotingCommittee
@@ -133,7 +132,7 @@ class
   type PerasCert blk = VoidPerasCert blk
 
   type PerasError blk = (err :: Type) | err -> blk
-  type PerasError blk = EmptyPerasError blk
+  type PerasError blk = VoidPerasError blk
 
   validatePerasVote ::
     PerasParams ->
@@ -300,22 +299,20 @@ instance IsPerasCert (VoidPerasCert blk) blk where
   getPerasCertRound = absurd . unVoidPerasCert
   getPerasCertBlock = absurd . unVoidPerasCert
 
--- | Empty Peras error for @blk@.
+-- | Void Peras error for @blk@.
 --
 -- NOTE: the phantom @blk@ is used to keep the 'PerasError' type family injective.
---
--- NOTE: in contrast to 'VoidPerasVote' and 'VoidPerasCert', this type cannot be
--- uninhabited, or we would otherwise have to construct a `Void` when injecting
--- errors into this type, which would be impossible.
-newtype EmptyPerasError blk
-  = EmptyPerasError
-  { unEmptyPerasError :: ()
+newtype VoidPerasError blk
+  = VoidPerasError
+  { unVoidPerasError :: Void
   }
   deriving newtype (Show, Eq, NoThunks, ShowProxy)
 
-instance IsPerasError (EmptyPerasError blk) blk where
-  injectVotingCommitteeError _ = EmptyPerasError ()
-  injectConversionError _ = EmptyPerasError ()
+instance IsPerasError (VoidPerasError blk) blk where
+  injectVotingCommitteeError _ =
+    error "injectVotingCommitteeError: VoidPerasError cannot be inhabited"
+  injectConversionError _ =
+    error "injectConversionError: VoidPerasError cannot be inhabited"
 
 -- * Validated types
 

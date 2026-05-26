@@ -715,7 +715,7 @@ instance
   where
   type PerasVote (TestBlockWith ptype) = MockPerasVote (TestBlockWith ptype)
   type PerasCert (TestBlockWith ptype) = MockPerasCert (TestBlockWith ptype)
-  type PerasError (TestBlockWith ptype) = EmptyPerasError (TestBlockWith ptype)
+  type PerasError (TestBlockWith ptype) = VoidPerasError (TestBlockWith ptype)
 
   validatePerasVote = validateMockPerasVote
   validatePerasCert = validateMockPerasCert
