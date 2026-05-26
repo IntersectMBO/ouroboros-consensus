@@ -460,6 +460,7 @@ library unstable-consensus-testlib
     Test.Util.Orphans.SignableRepresentation
     Test.Util.Orphans.ToExpr
     Test.Util.Paths
+    Test.Util.PureApplyBlock
     Test.Util.QSM
     Test.Util.QuickCheck
     Test.Util.Range

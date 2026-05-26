@@ -37,8 +37,8 @@ import Ouroboros.Consensus.Config
   ( TopLevelConfig
   )
 import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
+import Ouroboros.Consensus.Ledger.Abstract hiding (close)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..), ExtStateHandle (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
 import Ouroboros.Consensus.Storage.ChainDB.Impl (TraceEvent)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
@@ -71,6 +71,7 @@ import Test.Util.ChainDB
   , emptyNodeDBs
   , fromMinimalChainDbArgs
   , nodeDBsVol
+  , testBackendArgs
   )
 import Test.Util.Tracer (recordingTracerTVar)
 
@@ -392,7 +393,7 @@ runSystemIO expr = runSystem withChainDbEnv expr >>= toAssertion
   chunkInfo = ImmutableDB.simpleChunkInfo 100
   k = SecurityParam (knownNonZeroBounded @2)
   topLevelConfig = mkTestCfg k chunkInfo
-  withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo $ convertMapKind testInitExtLedger
+  withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo testInitExtLedger
 
 newtype TestFailure = TestFailure String deriving Show
 
@@ -524,7 +525,7 @@ runModelCmd cmd = do
     Right success -> pure success
 
 instance
-  (TestConstraints blk, LedgerTablesAreTrivial LedgerState blk) =>
+  TestConstraints blk =>
   SupportsUnitTest (ModelM blk)
   where
   type FollowerId (ModelM blk) = Model.FollowerId
@@ -631,11 +632,11 @@ runSystem withChainDbEnv expr =
 
 -- | Provide a standard ChainDbEnv for testing.
 withTestChainDbEnv ::
-  (IOLike m, TestConstraints blk) =>
-  TopLevelConfig blk ->
+  IOLike m =>
+  TopLevelConfig TestBlock ->
   ImmutableDB.ChunkInfo ->
-  ExtLedgerState blk ValuesMK ->
-  (ChainDBEnv m blk -> m [TraceEvent blk] -> m a) ->
+  ExtLedgerState TestBlock ->
+  (ChainDBEnv m TestBlock -> m [TraceEvent TestBlock] -> m a) ->
   m a
 withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
   bracket openChainDbEnv closeChainDbEnv (uncurry cont)
@@ -671,7 +672,12 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
             MinimalChainDbArgs
               { mcdbTopLevelConfig = topLevelConfig
               , mcdbChunkInfo = chunkInfo
-              , mcdbInitLedger = extLedgerState
+              , mcdbInitLedger = \() ->
+                  pure $
+                    ExtStateHandle
+                      (TestStateHandle (ledgerState extLedgerState))
+                      (headerState extLedgerState)
+              , mcdbBackendArgs = testBackendArgs ()
               , mcdbRegistry = registry
               , mcdbNodeDBs = nodeDbs
               }
@@ -679,7 +685,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
 
 -- | Run a 'Cmd' against the real ChainDB via 'SM.run'.
 runCmd ::
-  (IOLike m, TestConstraints blk) =>
+  (IOLike m, TestConstraints blk, BlockSupportsLedgerHD m blk) =>
   SM.Cmd blk (SM.TestIterator m blk) (SM.TestFollower m blk) ->
   SystemM blk m (SM.Success blk (SM.TestIterator m blk) (SM.TestFollower m blk))
 runCmd cmd = do
@@ -687,7 +693,10 @@ runCmd cmd = do
   let cfg = cdbsTopLevelConfig . cdbsArgs $ args env
   SystemM $ lift $ lift $ SM.run cfg env cmd
 
-instance (IOLike m, TestConstraints blk) => SupportsUnitTest (SystemM blk m) where
+instance
+  (IOLike m, TestConstraints blk, BlockSupportsLedgerHD m blk) =>
+  SupportsUnitTest (SystemM blk m)
+  where
   type IteratorId (SystemM blk m) = SM.TestIterator m blk
   type FollowerId (SystemM blk m) = SM.TestFollower m blk
   type Block (SystemM blk m) = blk

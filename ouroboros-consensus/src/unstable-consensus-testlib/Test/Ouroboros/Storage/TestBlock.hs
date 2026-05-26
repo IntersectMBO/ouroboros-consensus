@@ -49,8 +49,10 @@ module Test.Ouroboros.Storage.TestBlock
   , testBlockToLazyByteString
 
     -- * Ledger
+  , StateHandle (TestStateHandle)
   , TestBlockError (..)
   , TestBlockOtherHeaderEnvelopeError (..)
+  , TickedStateHandle (TickedTestStateHandle)
   , mkTestConfig
   , testInitExtLedger
 
