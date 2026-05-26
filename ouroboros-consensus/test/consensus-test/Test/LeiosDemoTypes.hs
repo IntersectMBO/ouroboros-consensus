@@ -1,16 +1,30 @@
+{-# LANGUAGE TypeApplications #-}
+
 module Test.LeiosDemoTypes (tests) where
 
 import Cardano.Binary (serialize')
+import Cardano.Crypto.DSIGN
+  ( DSIGNAlgorithm (deriveVerKeyDSIGN)
+  , genKeyDSIGN
+  , seedSizeDSIGN
+  )
 import qualified Data.ByteString as BS
+import Data.Data (Proxy (..))
+import Data.List (sort)
 import qualified Data.Vector as V
 import LeiosDemoTypes
   ( BytesSize
+  , Committee (..)
+  , LeiosDSIGN
   , LeiosEb (..)
+  , LeiosSigningKey
   , TxHash (..)
   , encodeLeiosEb
   , leiosEbBytesSize
   , maxTxsPerEb
+  , mkCommitteeEveryoneVotes
   )
+import Test.Crypto.Util (arbitrarySeedOfSize)
 import Test.QuickCheck
   ( Gen
   , Property
@@ -19,6 +33,7 @@ import Test.QuickCheck
   , forAll
   , frequency
   , vectorOf
+  , (.&&.)
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
@@ -29,6 +44,7 @@ tests =
   testGroup
     "LeiosDemoTypes"
     [ testProperty "leiosEbBytesSize consistent with encodeLeiosEb" prop_ebBytesSizeConsistent
+    , testProperty "mkCommitteeEveryoneVotes normalizes and sorts" prop_committeeNormalizedAndSorted
     ]
 
 -- | Minimum tx size as per the ASSUMPTION in 'leiosEbBytesSize'.
@@ -90,3 +106,25 @@ prop_ebBytesSizeConsistent =
      in counterexample
           ("items: " <> show (V.length (leiosEbTxs eb)))
           (estimatedSize === actualSize)
+
+genLeiosSigningKey :: Gen LeiosSigningKey
+genLeiosSigningKey = do
+  seed <- arbitrarySeedOfSize (seedSizeDSIGN (Proxy @LeiosDSIGN))
+  pure $ genKeyDSIGN seed
+
+-- | 'mkCommitteeEveryoneVotes' must produce weights that sum to 1 and are
+-- sorted ascending (so 'VoterId' assignment by index is stable). Inputs are
+-- generated with distinct verification keys, since dedup-by-key is a separate
+-- concern not exercised here.
+prop_committeeNormalizedAndSorted :: Property
+prop_committeeNormalizedAndSorted =
+  forAll (chooseInt (1, 20)) $ \n ->
+    forAll (vectorOf n genLeiosSigningKey) $ \sks ->
+      forAll (vectorOf n (chooseInt (1, 1000))) $ \ws ->
+        let inputs = zip (deriveVerKeyDSIGN <$> sks) ws
+            committee = mkCommitteeEveryoneVotes inputs
+            weights = fst <$> voters committee
+         in counterexample ("committee: " <> show committee) $
+              counterexample "weights sum to 1" (sum weights === 1)
+                .&&. counterexample "weights sorted ascending" (weights === sort weights)
+                .&&. counterexample "preserves cardinality" (length weights === n)
