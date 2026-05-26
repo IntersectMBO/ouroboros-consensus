@@ -242,6 +242,7 @@ library
     Ouroboros.Consensus.Peras.Cert.Mock
     Ouroboros.Consensus.Peras.Cert.V1
     Ouroboros.Consensus.Peras.Crypto.BLS
+    Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
     Ouroboros.Consensus.Peras.Error.V1
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
@@ -960,7 +961,6 @@ library protocol
     Ouroboros.Consensus.Protocol.TPraos
 
   build-depends:
-    aeson,
     base,
     bytestring,
     cardano-binary,
