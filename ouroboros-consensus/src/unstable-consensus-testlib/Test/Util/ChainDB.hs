@@ -11,14 +11,18 @@ module Test.Util.ChainDB
   , fromMinimalChainDbArgs
   , mkTestChunkInfo
   , testBackendArgs
+  , testBackendArgsRoundtrippingSnapshots
   , testBackendArgsWithSnapshots
   ) where
 
+import Codec.Serialise (Serialise (decode, encode))
 import Control.Concurrent.Class.MonadSTM.Strict
+import Control.Monad.Except (ExceptT (..), withExceptT)
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer (nullTracer)
 import Ouroboros.Consensus.Block
-  ( WithOrigin (NotOrigin, Origin)
+  ( HeaderHash
+  , WithOrigin (NotOrigin, Origin)
   , pointToWithOriginRealPoint
   , realPointSlot
   , unSlotNo
@@ -29,7 +33,11 @@ import Ouroboros.Consensus.Config
   )
 import Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Extended (ExtStateHandle, extLedgerState)
+import Ouroboros.Consensus.Ledger.Extended
+  ( ExtLedgerState (..)
+  , ExtStateHandle (..)
+  , extLedgerState
+  )
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Params (mkPerasParams)
 import Ouroboros.Consensus.Storage.ChainDB hiding
@@ -42,9 +50,14 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( DiskSnapshot (..)
+  , ReadSnapshotErr (..)
   , SnapshotBackend (UTxOHDMemSnapshot)
+  , SnapshotFailure (..)
   , SnapshotMetadata (..)
   , TablesCodecVersion (TablesCodecVersion1)
+  , readExtLedgerState
+  , snapshotToStatePath
+  , writeExtLedgerState
   , writeSnapshotMetadata
   )
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
@@ -257,3 +270,75 @@ testBackendArgsWithSnapshots ledgerTablesFactory = LedgerDbBackendArgs $ \_tr _s
       , brRelease = pure ()
       , ledgerTablesFactory = ledgerTablesFactory
       }
+
+-- | Variant of 'testBackendArgsWithSnapshots' that also implements
+-- 'brLoadSnapshot' end-to-end: 'takeSnapshot' serialises the whole
+-- 'ExtLedgerState' (via 'Serialise') alongside the metadata file, and
+-- 'brLoadSnapshot' reads it back, wrapping it via the supplied
+-- @mkStateHandle :: LedgerState blk -> StateHandle m blk@.
+--
+-- Used by state-machine tests (e.g. @Test.Ouroboros.Storage.LedgerDB.StateMachine@)
+-- that need snapshots to roundtrip. For trivial-tables blocks the
+-- @StateHandle m blk@ is a newtype around 'LedgerState blk' so the
+-- caller passes the data constructor directly (e.g. @TestStateHandle@).
+testBackendArgsRoundtrippingSnapshots ::
+  forall m blk.
+  ( IOLike m
+  , BlockSupportsLedgerHD m blk
+  , IsLedger LedgerState blk
+  , Serialise (ExtLedgerState blk)
+  , Serialise (HeaderHash blk)
+  ) =>
+  -- | Wrap a recovered 'LedgerState' as a 'StateHandle'.
+  (LedgerState blk -> StateHandle m blk) ->
+  LedgerTablesFactory m blk ->
+  LedgerDbBackendArgs m blk
+testBackendArgsRoundtrippingSnapshots mkStateHandle ledgerTablesFactory =
+  LedgerDbBackendArgs $ \_tr _shfs ->
+    pure
+      BackendResources
+        { brLoadSnapshot = \_cfg shfs ds -> do
+            (ExtLedgerState ls hs, _crc) <-
+              withExceptT (InitFailureRead . ReadSnapshotFailed) $
+                readExtLedgerState shfs decode decode (snapshotToStatePath ds)
+            case pointToWithOriginRealPoint (getTip ls) of
+              Origin -> withExceptT id (throwE' InitFailureGenesis)
+              NotOrigin pt ->
+                pure (ExtStateHandle (mkStateHandle ls) hs, pt)
+        , brSnapshotManager = \_cfg _tr shfs@(SomeHasFS hasFS) ->
+            LedgerDB.SnapshotManager
+              { LedgerDB.listSnapshots = LedgerDB.defaultListSnapshots shfs
+              , LedgerDB.deleteSnapshotIfTemporary =
+                  LedgerDB.defaultDeleteSnapshotIfTemporary shfs nullTracer
+              , LedgerDB.takeSnapshot = \suffix st ->
+                  case pointToWithOriginRealPoint (getTip (extLedgerState st)) of
+                    Origin -> pure Nothing
+                    NotOrigin t -> do
+                      let number = unSlotNo (realPointSlot t)
+                          snapshot = DiskSnapshot number suffix
+                      existing <- LedgerDB.defaultListSnapshots shfs
+                      if snapshot `elem` existing
+                        then pure Nothing
+                        else do
+                          createDirectoryIfMissing hasFS True $
+                            LedgerDB.snapshotToDirPath snapshot
+                          crc <-
+                            writeExtLedgerState
+                              shfs
+                              encode
+                              (snapshotToStatePath snapshot)
+                              (extLedgerState st)
+                          writeSnapshotMetadata shfs snapshot $
+                            SnapshotMetadata
+                              { snapshotBackend = UTxOHDMemSnapshot
+                              , snapshotChecksum = crc
+                              , snapshotTablesCodecVersion = TablesCodecVersion1
+                              }
+                          pure $ Just (snapshot, t)
+              }
+        , brRelease = pure ()
+        , ledgerTablesFactory = ledgerTablesFactory
+        }
+ where
+  throwE' :: forall e a. e -> ExceptT e m a
+  throwE' = ExceptT . pure . Left
