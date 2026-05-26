@@ -36,39 +36,17 @@ module Test.ThreadNet.Infra.ShelleyBasedHardFork
   ) where
 
 import qualified Cardano.Ledger.Api.Transition as L
-import Cardano.Ledger.Binary.Decoding
-  ( decShareCBOR
-  , decodeMap
-  , decodeMemPack
-  , internsFromMap
-  )
-import Cardano.Ledger.Binary.Encoding
-  ( encodeMap
-  , encodeMemPack
-  , toPlainEncoding
-  )
-import qualified Cardano.Ledger.Conway.State as SL
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
-import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import Codec.CBOR.Decoding
-import Codec.CBOR.Encoding
 import Control.Monad.Except (runExcept)
 import qualified Control.Tracer as Tracer
-import Data.Coerce
 import qualified Data.Map.Strict as Map
-import Data.MemPack
-import Data.Proxy
 import Data.SOP.BasicFunctors
-import Data.SOP.Functors (Flip (..))
 import qualified Data.SOP.InPairs as InPairs
-import Data.SOP.Index (Index (..), hcimap)
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
-import qualified Data.SOP.Telescope as Telescope
 import Data.Void (Void)
 import Lens.Micro ((^.))
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.Cardano.CanHardFork
   ( crossEraForecastAcrossShelley
@@ -82,7 +60,6 @@ import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import Ouroboros.Consensus.HardFork.Combinator.State.Types as HFC
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -94,13 +71,10 @@ import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace
   , KESAgentContext
   )
-import Ouroboros.Consensus.Protocol.Praos.Common (MaxMajorProtVer (..))
 import Ouroboros.Consensus.Protocol.TPraos
-import Ouroboros.Consensus.Protocol.TPraos (ConsensusConfig (..), TPraosParams (..))
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
-import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (eitherToMaybe)
 import Ouroboros.Consensus.Util.IOLike (MonadThrow)

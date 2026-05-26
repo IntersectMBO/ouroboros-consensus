@@ -76,7 +76,6 @@ mkInitDb ::
   , HasHardForkHistory blk
   , IOLike m
   , BlockSupportsLedgerHD m blk
-  , NoThunks (ExtStateHandle m blk)
   , NoThunks (LedgerState blk)
   ) =>
   Complete LedgerDbArgs m blk ->
@@ -145,7 +144,6 @@ implMkLedgerDb ::
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
   , BlockSupportsLedgerHD m blk
-  , NoThunks (ExtStateHandle m blk)
   ) =>
   LedgerDBHandle m ExtLedgerState blk ->
   SnapshotManager m blk (ExtStateHandle m blk) ->
@@ -302,7 +300,6 @@ implValidate ::
   , HasCallStack
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD m blk
-  , NoThunks (ExtStateHandle m blk)
   ) =>
   LedgerDBHandle m ExtLedgerState blk ->
   LedgerDBEnv m ExtLedgerState blk ->
@@ -494,7 +491,6 @@ deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
   , NoThunks (l blk)
-  , NoThunks (ExtStateHandle m blk)
   , NoThunks (LedgerCfg l blk)
   ) =>
   NoThunks (LedgerDBEnv m l blk)
@@ -517,7 +513,6 @@ deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
   , NoThunks (l blk)
-  , NoThunks (ExtStateHandle m blk)
   , NoThunks (LedgerCfg l blk)
   ) =>
   NoThunks (LedgerDBState m l blk)
@@ -654,7 +649,6 @@ openNewForkerAtTarget ::
   , LedgerSupportsProtocol blk
   , StandardHash blk
   , BlockSupportsLedgerHD m blk
-  , NoThunks (ExtStateHandle m blk)
   ) =>
   LedgerDBHandle m l blk ->
   Target (Point blk) ->
@@ -682,7 +676,6 @@ withForkerByRollback ::
   , StandardHash blk
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD m blk
-  , NoThunks (ExtStateHandle m blk)
   ) =>
   LedgerDBHandle m l blk ->
   Word64 ->
@@ -698,7 +691,6 @@ newForker ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , StandardHash blk
-  , NoThunks (ExtStateHandle m blk)
   , BlockSupportsLedgerHD m blk
   ) =>
   LedgerDBEnv m l blk ->

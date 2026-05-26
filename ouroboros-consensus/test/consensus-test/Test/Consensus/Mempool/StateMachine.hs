@@ -44,17 +44,14 @@ import qualified Data.TreeDiff.OMap as TD
 import GHC.Generics
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Abstract hiding (TxIn, TxOut)
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.SupportsProtocol
-  ( LedgerSupportsProtocol
-  )
 import Ouroboros.Consensus.Mempool
 import Ouroboros.Consensus.Mempool.TxSeq
 import Ouroboros.Consensus.Mock.Ledger.Address
 import Ouroboros.Consensus.Mock.Ledger.Block
 import Ouroboros.Consensus.Mock.Ledger.State
-import Ouroboros.Consensus.Mock.Ledger.UTxO (Expiry, Tx, TxIn, TxOut)
+import Ouroboros.Consensus.Mock.Ledger.UTxO (Expiry, Tx)
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense (condense)
@@ -734,17 +731,17 @@ tests =
   testGroup
     "QSM"
     [ testProperty "sequential" $
-        withMaxSuccess 1000 $
+        withNumTests 1000 $
           prop_mempoolSequential testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger $
             \i -> fmap (fmap fst . fst) . genTxs i
     , testGroup
         "parallel"
         [ testProperty "atomic" $
-            withMaxSuccess 10000 $
+            withNumTests 10000 $
               prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
                 \i -> fmap (fmap fst . fst) . genTxs i
         , testProperty "non atomic" $
-            withMaxSuccess 10 $
+            withNumTests 10 $
               prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger NonAtomic $
                 \i -> fmap (fmap fst . fst) . genTxs i
         ]

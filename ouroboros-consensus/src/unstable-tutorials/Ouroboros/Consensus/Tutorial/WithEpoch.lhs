@@ -79,7 +79,7 @@ And imports, of course:
 > import Ouroboros.Consensus.Ticked (Ticked, Ticked)
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (BlockSupportsLedgerHD (..), LedgerState, LedgerCfg, GetTip,
->    Handle, LedgerResult (..), ApplyBlock (..),
+>    LedgerResult (..), ApplyBlock (..),
 >    UpdateLedger, IsLedger (..), AuxLedgerEvent, LedgerTablesHandle,
 >    Statistics (..), defaultApplyBlockLedgerResult,
 >    defaultReapplyBlockLedgerResult)

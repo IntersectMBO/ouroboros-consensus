@@ -27,6 +27,7 @@ import Control.Monad (forM, replicateM, unless, when)
 import Control.Monad.Except (Except, runExcept, throwError)
 import Data.Either (isRight)
 import Data.Foldable (toList)
+import Data.Kind
 import Data.List (intercalate)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -83,8 +84,8 @@ import Test.Util.QuickCheck
 -- a 'CrossEraForecaster' state slot when the ledger state has no era index
 -- worth threading. (Originally lived in 'Ledger.Tables.Combinators' before
 -- the @MapKind@ vocabulary was removed.)
-type K2 :: forall k. * -> k -> *
-newtype K2 a b = K2 {unK2 :: a}
+type K2 :: forall k. Type -> k -> Type
+newtype K2 a b = K2 a
 
 tests :: TestTree
 tests =

@@ -67,7 +67,6 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol (..)
   )
 import qualified Ouroboros.Consensus.Mempool as Mempool
-import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
@@ -667,7 +666,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     (tickedHandle, tBlkTick) <-
       time $
         applyChainTick OmitLedgerEvents lcfg slot (unExtStateHandle prevHandle)
-    (!newStateHandle, tBlkApp) <- time $ applyTheBlock tickedHandle
+    (!newHandle, tBlkApp) <- time $ applyTheBlock tickedHandle
 
     currentRtsStats <- GC.getRTSStats
     let
@@ -702,7 +701,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     -- Push the newly applied state into the LedgerDB. The 'ExtStateHandle'
     -- bundles the new 'StateHandle' (which carries the updated on-disk
     -- tables) with the new header state.
-    LedgerDB.push intLedgerDB $ ExtStateHandle newStateHandle newHeader
+    LedgerDB.push intLedgerDB $ ExtStateHandle newHandle newHeader
    where
     rp = blockRealPoint blk
 

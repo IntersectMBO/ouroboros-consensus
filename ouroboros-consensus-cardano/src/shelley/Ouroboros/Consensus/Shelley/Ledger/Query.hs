@@ -16,10 +16,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
-#if __GLASGOW_HASKELL__ < 908
-{-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
-#endif
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Query
   ( BlockQuery (.., GetLedgerPeerSnapshot)

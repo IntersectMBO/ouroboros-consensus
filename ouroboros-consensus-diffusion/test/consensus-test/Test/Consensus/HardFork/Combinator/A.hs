@@ -44,8 +44,6 @@ module Test.Consensus.HardFork.Combinator.A
 import Cardano.Binary (DecoderError)
 import Cardano.Ledger.BaseTypes.NonZero
 import Cardano.Slotting.EpochInfo
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise
 import Control.Monad (guard)
 import qualified Data.Binary as B
@@ -90,7 +88,6 @@ import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.Serialisation
-import Ouroboros.Consensus.Util (repeatedlyM)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block

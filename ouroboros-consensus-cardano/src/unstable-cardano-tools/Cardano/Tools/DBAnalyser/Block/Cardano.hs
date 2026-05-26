@@ -44,7 +44,6 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust, fromMaybe)
 import Data.SOP.BasicFunctors
-import Data.SOP.Functors
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
 import Data.String (IsString (..))
@@ -66,7 +65,7 @@ import Ouroboros.Consensus.HardFork.Combinator
   , hardForkLedgerStatePerEra
   )
 import Ouroboros.Consensus.HardFork.Combinator.State (currentState)
-import Ouroboros.Consensus.Ledger.Abstract hiding (TxIn, TxOut)
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Shelley.HFEras ()
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley.Ledger

@@ -22,7 +22,6 @@ import Data.List (sort)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Proxy (Proxy (..))
 import Data.Typeable
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
@@ -30,7 +29,7 @@ import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
-import Ouroboros.Consensus.Ledger.Basics (BlockSupportsLedgerHD, LedgerState)
+import Ouroboros.Consensus.Ledger.Basics (BlockSupportsLedgerHD)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol

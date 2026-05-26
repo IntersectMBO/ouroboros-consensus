@@ -38,6 +38,7 @@ import Data.Bifunctor
 import Data.Foldable (toList)
 import Data.Function (on)
 import Data.Functor.Identity
+import Data.Kind
 import qualified Data.List as L
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.SOP.BasicFunctors
@@ -69,8 +70,8 @@ import Test.Util.QuickCheck
 -- 'AnnForecast' state slot when the ledger state is just '()'. (Originally
 -- lived in 'Ledger.Tables.Combinators' before the @MapKind@ vocabulary was
 -- removed.)
-type K2 :: forall k. * -> k -> *
-newtype K2 a b = K2 {unK2 :: a}
+type K2 :: forall k. Type -> k -> Type
+newtype K2 a b = K2 a
 
 -- | Tests for 'summarize'
 --

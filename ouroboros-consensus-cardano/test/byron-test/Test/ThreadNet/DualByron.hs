@@ -10,14 +10,9 @@ module Test.ThreadNet.DualByron (tests) where
 
 import qualified Byron.Spec.Chain.STS.Rule.Chain as Spec
 import qualified Byron.Spec.Ledger.Core as Spec
-import qualified Byron.Spec.Ledger.UTxO as Spec
 import qualified Cardano.Chain.ProtocolConstants as Impl
-import qualified Cardano.Chain.UTxO as Impl
 import Cardano.Ledger.BaseTypes (nonZeroOr)
-import Control.Monad.Except
 import qualified Control.State.Transition.Extended as Spec
-import Data.ByteString (ByteString)
-import qualified Data.Map.Strict as Map
 import Data.Proxy
 import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
@@ -28,16 +23,12 @@ import Ouroboros.Consensus.ByronDual.Ledger
 import Ouroboros.Consensus.ByronDual.Node
 import Ouroboros.Consensus.ByronSpec.Ledger
 import qualified Ouroboros.Consensus.ByronSpec.Ledger.Genesis as Genesis
-import qualified Ouroboros.Consensus.ByronSpec.Ledger.Rules as Rules
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Dual
-import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.PBFT
 import Ouroboros.Consensus.TypeFamilyWrappers
-import qualified Test.Cardano.Chain.Elaboration.UTxO as Spec.Test
 import qualified Test.Control.State.Transition.Generator as Spec.QC
 import Test.QuickCheck
 import Test.QuickCheck.Hedgehog (hedgehog)

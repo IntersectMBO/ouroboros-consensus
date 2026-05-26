@@ -14,11 +14,7 @@ import qualified Cardano.Ledger.BaseTypes as SL
 import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
-import qualified Cardano.Ledger.Shelley.Translation as SL
-  ( toFromByronTranslationContext
-  )
 import qualified Cardano.Protocol.TPraos.OCert as SL
-import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Control.Monad (replicateM)
 import Control.Tracer (nullTracer)
 import qualified Data.Map.Strict as Map
@@ -410,10 +406,3 @@ prop_simple_real_tpraos_convergence
       finalLedgers :: [(NodeId, LedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra))]
       finalLedgers =
         Map.toList $ nodeOutputFinalLedger <$> testOutputNodes testOutput
-
-      ledgerConfig :: LedgerConfig (ShelleyBlock (TPraos MockCrypto) ShelleyEra)
-      ledgerConfig =
-        Shelley.mkShelleyLedgerConfig
-          genesisConfig
-          (SL.toFromByronTranslationContext genesisConfig) -- trivial translation context
-          (fixedEpochInfo epochSize tpraosSlotLength)

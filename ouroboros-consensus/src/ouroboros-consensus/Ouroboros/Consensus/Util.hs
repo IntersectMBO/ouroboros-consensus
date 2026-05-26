@@ -96,10 +96,6 @@ module Ouroboros.Consensus.Util
 
     -- * Type-safe boolean flags
   , Flag (..)
-
-    -- * Unsafe coercions or maps
-  , coerceMapKeys
-  , coerceSet
   ) where
 
 import Cardano.Crypto.Hash
@@ -114,7 +110,6 @@ import Control.Monad.Trans.Class
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
 import Data.ByteString.Short (ShortByteString)
-import Data.Coerce
 import Data.Foldable (asum, toList)
 import Data.Function (on)
 import Data.Functor.Identity
@@ -122,9 +117,7 @@ import Data.Functor.Product
 import Data.Kind (Type)
 import Data.List as List (foldl', maximumBy)
 import Data.List.NonEmpty (NonEmpty (..), (<|))
-import Data.Map (Map)
 import Data.Maybe (fromMaybe)
-import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -134,10 +127,8 @@ import GHC.Generics (Generic)
 import GHC.Stack
 import GHC.TypeLits (Symbol)
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.RedundantConstraints
 import Ouroboros.Network.Protocol.LocalStateQuery.Codec (Some (..))
 import Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
-import Unsafe.Coerce
 
 {-------------------------------------------------------------------------------
   Type-level utility
@@ -520,33 +511,3 @@ newtype FuseBlownException = FuseBlownException Text
 -- for an example.
 newtype Flag (name :: Symbol) = Flag {getFlag :: Bool}
   deriving (Eq, Show, Generic)
-
-{-------------------------------------------------------------------------------
-  Unsafe coercions from maps
--------------------------------------------------------------------------------}
-
-#if __GLASGOW_HASKELL__ >= 908
-{-# WARNING in "x-ord-preserving-coercions"
-  coerceMapKeys
-  [ "This function expects the types of the keys to have exactly the same Ord ordering."
-  , "If you are certain this is the case, ignore this warning with `-Wno-x-ord-preserving-coercions`."
-  ]
-  #-}
-#endif
-coerceMapKeys :: forall k1 k2 v. Coercible k1 k2 => Map k1 v -> Map k2 v
-coerceMapKeys = unsafeCoerce
- where
-  _ = keepRedundantConstraint (Proxy @(Coercible k1 k2))
-
-#if __GLASGOW_HASKELL__ >= 908
-{-# WARNING in "x-ord-preserving-coercions"
-  coerceSet
-  [ "This function expects the types of the keys to have exactly the same Ord ordering."
-  , "If you are certain this is the case, ignore this warning with `-Wno-x-ord-preserving-coercions`."
-  ]
-  #-}
-#endif
-coerceSet :: forall k1 k2. Coercible k1 k2 => Set k1 -> Set k2
-coerceSet = unsafeCoerce
- where
-  _ = keepRedundantConstraint (Proxy @(Coercible k1 k2))

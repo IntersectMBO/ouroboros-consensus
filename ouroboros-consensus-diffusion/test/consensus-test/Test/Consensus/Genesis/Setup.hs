@@ -34,7 +34,7 @@ import Ouroboros.Consensus.Block.SupportsDiffusionPipelining
   )
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
 import Ouroboros.Consensus.HardFork.Abstract
-import Ouroboros.Consensus.Ledger.Basics (BlockSupportsLedgerHD, LedgerState)
+import Ouroboros.Consensus.Ledger.Basics (BlockSupportsLedgerHD)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
