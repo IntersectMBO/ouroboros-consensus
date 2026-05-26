@@ -7,6 +7,7 @@ module Main (main) where
 import Bench.Consensus.Mempool
 import Bench.Consensus.Mempool.TestBlock (TestBlock)
 import qualified Bench.Consensus.Mempool.TestBlock as TestBlock
+import Test.Util.TestBlock (StateHandle (TestStateHandle))
 import Control.Arrow (first)
 import Control.DeepSeq
 import Control.Monad (unless)
@@ -152,6 +153,7 @@ openMempoolWithCapacity capacity =
     Mocked.MempoolAndModelParams
       { Mocked.immpInitialState = TestBlock.initialLedgerState
       , Mocked.immpLedgerConfig = TestBlock.sampleLedgerConfig
+      , Mocked.immpMakeStateHandle = TestStateHandle
       }
 
 mkNTryAddTxs :: Int -> [MempoolCmd TestBlock.TestBlock]
