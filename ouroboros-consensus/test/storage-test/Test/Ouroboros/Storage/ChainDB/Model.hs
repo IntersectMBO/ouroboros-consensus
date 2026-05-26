@@ -146,6 +146,7 @@ import Test.Cardano.Slotting.TreeDiff ()
 import qualified Test.Ouroboros.Storage.PerasCertDB.Model as PerasCertDBModel
 import qualified Test.Ouroboros.Storage.PerasVoteDB.Model as PerasVoteDBModel
 import Test.Util.Orphans.ToExpr ()
+import Test.Util.PureApplyBlock (PureExtApplyBlock, pureExtTickThenApply)
 
 type IteratorId = Int
 
@@ -158,8 +159,8 @@ data Model blk = Model
   , perasCertModel :: PerasCertDBModel.Model blk
   , perasVoteModel :: PerasVoteDBModel.Model blk
   , cps :: CPS.ChainProducerState blk
-  , currentLedger :: ExtLedgerState blk EmptyMK
-  , initLedger :: ExtLedgerState blk EmptyMK
+  , currentLedger :: ExtLedgerState blk
+  , initLedger :: ExtLedgerState blk
   , iterators :: Map IteratorId [blk]
   , valid :: Set (HeaderHash blk)
   , invalid :: InvalidBlocks blk
@@ -177,11 +178,11 @@ deriving instance
   , ToExpr (HeaderHash blk)
   , ToExpr (ChainDepState (BlockProtocol blk))
   , ToExpr (TipInfo blk)
-  , ToExpr (LedgerState blk EmptyMK)
+  , ToExpr (LedgerState blk)
   , ToExpr (ExtValidationError blk)
   , ToExpr (Chain blk)
   , ToExpr (ChainProducerState blk)
-  , ToExpr (ExtLedgerState blk EmptyMK)
+  , ToExpr (ExtLedgerState blk)
   , StandardHash blk
   , Show blk
   ) =>
@@ -408,7 +409,7 @@ roundNoOfLatestCertSeen m = getPerasCertRound <$> PerasCertDBModel.getLatestCert
 empty ::
   HasHeader blk =>
   LoE () ->
-  ExtLedgerState blk EmptyMK ->
+  ExtLedgerState blk ->
   Model blk
 empty loe initLedger =
   Model
@@ -428,7 +429,7 @@ empty loe initLedger =
 
 addBlock ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  PureExtApplyBlock blk =>
   TopLevelConfig blk ->
   blk ->
   Model blk ->
@@ -457,7 +458,7 @@ addBlock cfg blk m
 
 addPerasCert ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  PureExtApplyBlock blk =>
   TopLevelConfig blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
   Model blk ->
@@ -467,7 +468,7 @@ addPerasCert cfg cert m =
 
 addPerasVote ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  PureExtApplyBlock blk =>
   TopLevelConfig blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   Model blk ->
@@ -483,9 +484,7 @@ addPerasVote cfg vote m =
 
 chainSelection ::
   forall blk.
-  ( LedgerTablesAreTrivial ExtLedgerState blk
-  , LedgerSupportsProtocol blk
-  ) =>
+  PureExtApplyBlock blk =>
   TopLevelConfig blk ->
   Model blk ->
   Model blk
@@ -510,7 +509,7 @@ chainSelection cfg m =
   -- @invalid'@ will be a (non-strict) superset of the previous value of
   -- @invalid@, see 'validChains', thus no need to union.
   invalid' :: InvalidBlocks blk
-  candidates :: [(Chain blk, ExtLedgerState blk EmptyMK)]
+  candidates :: [(Chain blk, ExtLedgerState blk)]
   (invalid', candidates) = validChains cfg m (blocks m)
 
   immutableChainHashes =
@@ -588,7 +587,7 @@ chainSelection cfg m =
     volatileFrag = volatileChain secParam id m
 
   newChain :: Chain blk
-  newLedger :: ExtLedgerState blk EmptyMK
+  newLedger :: ExtLedgerState blk
   (newChain, newLedger) =
     fromMaybe (currentChain m, currentLedger m)
       . selectChain
@@ -612,7 +611,7 @@ chainSelection cfg m =
         consideredCandidates
 
 addBlocks ::
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  PureExtApplyBlock blk =>
   TopLevelConfig blk ->
   [blk] ->
   Model blk ->
@@ -622,7 +621,7 @@ addBlocks cfg = repeatedly (addBlock cfg)
 -- | Wrapper around 'addBlock' that returns an 'AddBlockPromise'.
 addBlockPromise ::
   forall m blk.
-  (LedgerSupportsProtocol blk, MonadSTM m, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  (PureExtApplyBlock blk, MonadSTM m) =>
   TopLevelConfig blk ->
   blk ->
   Model blk ->
@@ -643,9 +642,7 @@ addBlockPromise cfg blk m = (result, m')
 -- point.
 updateLoE ::
   forall blk.
-  ( LedgerTablesAreTrivial ExtLedgerState blk
-  , LedgerSupportsProtocol blk
-  ) =>
+  PureExtApplyBlock blk =>
   TopLevelConfig blk ->
   AnchoredFragment blk ->
   Model blk ->
@@ -833,7 +830,7 @@ data ValidatedChain blk
       -- | Valid prefix
       (Chain blk)
       -- | Corresponds to the tip of the valid prefix
-      (ExtLedgerState blk EmptyMK)
+      (ExtLedgerState blk)
       -- | Invalid blocks encountered while validating
       -- the candidate chain.
       (InvalidBlocks blk)
@@ -844,7 +841,7 @@ data ValidatedChain blk
 -- 'invalid' of the given 'Model'.
 validate ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  PureExtApplyBlock blk =>
   TopLevelConfig blk ->
   Model blk ->
   Chain blk ->
@@ -857,7 +854,7 @@ validate cfg Model{initLedger, invalid} chain =
     Map.singleton (blockHash b) (reason, blockSlot b)
 
   go ::
-    ExtLedgerState blk EmptyMK ->
+    ExtLedgerState blk ->
     -- \^ Corresponds to the tip of the valid prefix
     Chain blk ->
     -- \^ Valid prefix
@@ -867,7 +864,7 @@ validate cfg Model{initLedger, invalid} chain =
   go ledger validPrefix = \case
     -- Return 'mbFinal' if it contains an "earlier" result
     [] -> ValidatedChain validPrefix ledger invalid
-    b : bs' -> case runExcept (tickThenApply OmitLedgerEvents (ExtLedgerCfg cfg) b (convertMapKind ledger)) of
+    b : bs' -> case runExcept (pureExtTickThenApply (ExtLedgerCfg cfg) b ledger) of
       -- Invalid block according to the ledger
       Left e ->
         ValidatedChain
@@ -875,7 +872,7 @@ validate cfg Model{initLedger, invalid} chain =
           ledger
           (invalid <> mkInvalid b e)
       -- Valid block according to the ledger
-      Right ledger' -> go (convertMapKind ledger') (validPrefix :> b) bs'
+      Right ledger' -> go ledger' (validPrefix :> b) bs'
 
 chains ::
   forall blk.
@@ -905,11 +902,11 @@ chains bs = go Chain.Genesis
 
 validChains ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  PureExtApplyBlock blk =>
   TopLevelConfig blk ->
   Model blk ->
   Map (HeaderHash blk) blk ->
-  (InvalidBlocks blk, [(Chain blk, ExtLedgerState blk EmptyMK)])
+  (InvalidBlocks blk, [(Chain blk, ExtLedgerState blk)])
 validChains cfg m bs =
   foldMap (classify . validate cfg m) $
     -- Note that we sort here to make sure we pick the same chain as the real
@@ -941,7 +938,7 @@ validChains cfg m bs =
 
   classify ::
     ValidatedChain blk ->
-    (InvalidBlocks blk, [(Chain blk, ExtLedgerState blk EmptyMK)])
+    (InvalidBlocks blk, [(Chain blk, ExtLedgerState blk)])
   classify (ValidatedChain chain ledger invalid) =
     (invalid, [(chain, ledger)])
 
@@ -1160,7 +1157,7 @@ reopen m = m{isOpen = True}
 -- see https://github.com/tweag/cardano-peras/issues/122
 wipeVolatileDB ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  PureExtApplyBlock blk =>
   TopLevelConfig blk ->
   Model blk ->
   (Point blk, Model blk)
@@ -1184,7 +1181,7 @@ wipeVolatileDB cfg m =
   -- Get the chain ending at the ImmutableDB by doing chain selection on the
   -- sole candidate (or none) in the ImmutableDB.
   newChain :: Chain blk
-  newLedger :: ExtLedgerState blk EmptyMK
+  newLedger :: ExtLedgerState blk
   (newChain, newLedger) =
     isSameAsImmutableDbChain
       $ selectChain
