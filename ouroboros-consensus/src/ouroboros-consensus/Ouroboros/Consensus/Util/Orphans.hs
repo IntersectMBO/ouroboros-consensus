@@ -19,6 +19,8 @@ import Codec.Serialise (Serialise (..))
 import Control.Tracer (Tracer)
 import Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
+import Data.Map.NonEmpty (NEMap)
+import qualified Data.Map.NonEmpty as NEMap
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
 import Data.SOP.BasicFunctors
@@ -88,6 +90,10 @@ instance NoThunks a => NoThunks (K a b) where
 instance NoThunks a => NoThunks (MultiSet a) where
   showTypeOf _ = "MultiSet"
   wNoThunks ctxt = wNoThunks ctxt . MultiSet.toMap
+
+instance (NoThunks k, NoThunks v) => NoThunks (NEMap k v) where
+  showTypeOf _ = "NEMap"
+  wNoThunks ctxt = wNoThunks ctxt . NEMap.toMap
 
 instance NoThunks StdGen where
   showTypeOf _ = "StdGen"
