@@ -53,6 +53,7 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import GHC.Stack
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB.API
 import qualified Ouroboros.Consensus.Storage.VolatileDB.Impl.FileInfo as FileInfo
@@ -308,6 +309,7 @@ mkOpenState ::
   , HasBinaryBlockInfo blk
   , HasNestedContent Header blk
   , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
+  , ResolveLeiosBlock blk
   ) =>
   CodecConfig blk ->
   HasFS m h ->
@@ -360,6 +362,7 @@ mkOpenStateHelper ::
   , HasBinaryBlockInfo blk
   , HasNestedContent Header blk
   , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
+  , ResolveLeiosBlock blk
   ) =>
   CodecConfig blk ->
   HasFS m h ->
@@ -496,6 +499,7 @@ addToReverseIndex file = \revMap -> go revMap []
         , pbiBlockSize = size
         , pbiBlockInfo = blockInfo@BlockInfo{biHash}
         , pbiNestedCtxt = nestedCtxt
+        , pbiLeiosFields = leiosFields
         } = parsedBlock
       internalBlockInfo =
         InternalBlockInfo
@@ -504,6 +508,7 @@ addToReverseIndex file = \revMap -> go revMap []
           , ibiBlockSize = size
           , ibiBlockInfo = blockInfo
           , ibiNestedCtxt = nestedCtxt
+          , ibiLeiosFields = leiosFields
           }
 
   -- \| Insert the value at the key returning the updated map, unless there

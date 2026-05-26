@@ -139,8 +139,10 @@ import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
+import LeiosDemoTypes (EbAnnouncement, IsCertRB)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB.API
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.FileInfo (FileInfo)
@@ -205,6 +207,7 @@ openDB ::
   ( HasCallStack
   , IOLike m
   , GetPrevHash blk
+  , ResolveLeiosBlock blk
   , VolatileDbSerialiseConstraints blk
   ) =>
   Complete VolatileDbArgs m blk ->
@@ -237,6 +240,7 @@ openDB VolatileDbArgs{volHasFS = SomeHasFS hasFS, ..} = do
           , garbageCollect = garbageCollectImpl env
           , filterByPredecessor = filterByPredecessorImpl env
           , getBlockInfo = getBlockInfoImpl env
+          , getLeiosFields = getLeiosFieldsImpl env
           , getMaxSlotNo = getMaxSlotNoImpl env
           }
   return volatileDB
@@ -382,6 +386,7 @@ putBlockImpl ::
   , EncodeDisk blk blk
   , HasBinaryBlockInfo blk
   , HasNestedContent Header blk
+  , ResolveLeiosBlock blk
   , IOLike m
   ) =>
   VolatileDBEnv m blk ->
@@ -402,6 +407,7 @@ putBlockImpl
           when fileIsFull $ nextFile hasFS
    where
     blockInfo@BlockInfo{biHash, biSlotNo, biPrevHash} = extractBlockInfo blk
+    leiosFields = extractLeiosFields blk
 
     updateStateAfterWrite ::
       forall h.
@@ -429,6 +435,7 @@ putBlockImpl
           , ibiBlockInfo = blockInfo
           , ibiNestedCtxt = case unnest (getHeader blk) of
               DepPair nestedCtxt _ -> SomeSecond nestedCtxt
+          , ibiLeiosFields = leiosFields
           }
       currentRevMap' = Map.insert biHash internalBlockInfo' currentRevMap
       st' =
@@ -560,6 +567,14 @@ getBlockInfoImpl ::
   STM m (HeaderHash blk -> Maybe (BlockInfo blk))
 getBlockInfoImpl = getterSTM $ \st hash ->
   ibiBlockInfo <$> Map.lookup hash (currentRevMap st)
+
+getLeiosFieldsImpl ::
+  forall m blk.
+  (IOLike m, HasHeader blk) =>
+  VolatileDBEnv m blk ->
+  STM m (HeaderHash blk -> Maybe (IsCertRB, Maybe EbAnnouncement))
+getLeiosFieldsImpl = getterSTM $ \st hash ->
+  ibiLeiosFields <$> Map.lookup hash (currentRevMap st)
 
 getMaxSlotNoImpl ::
   forall m blk.
