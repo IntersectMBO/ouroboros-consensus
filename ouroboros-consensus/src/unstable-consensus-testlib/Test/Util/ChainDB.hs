@@ -1,6 +1,8 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Util.ChainDB
   ( MinimalChainDbArgs (..)
@@ -9,28 +11,42 @@ module Test.Util.ChainDB
   , fromMinimalChainDbArgs
   , mkTestChunkInfo
   , testBackendArgs
+  , testBackendArgsWithSnapshots
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer (nullTracer)
+import Ouroboros.Consensus.Block
+  ( WithOrigin (NotOrigin, Origin)
+  , pointToWithOriginRealPoint
+  , realPointSlot
+  , unSlotNo
+  )
 import Ouroboros.Consensus.Config
   ( TopLevelConfig (topLevelConfigLedger)
   , configCodec
   )
 import Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Extended (ExtStateHandle)
+import Ouroboros.Consensus.Ledger.Extended (ExtStateHandle, extLedgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Params (mkPerasParams)
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
-import Ouroboros.Consensus.Storage.ImmutableDB
+import Ouroboros.Consensus.Storage.ImmutableDB hiding (getTip)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+  ( DiskSnapshot (..)
+  , SnapshotBackend (UTxOHDMemSnapshot)
+  , SnapshotMetadata (..)
+  , TablesCodecVersion (TablesCodecVersion1)
+  , writeSnapshotMetadata
+  )
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
   ( BackendResources (..)
   , LedgerDbBackendArgs (..)
@@ -41,8 +57,9 @@ import Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike hiding (invariant)
-import System.FS.API (SomeHasFS (..))
-import System.FS.Sim.MockFS
+import System.FS.API (SomeHasFS (..), createDirectoryIfMissing)
+import System.FS.CRC (CRC (..))
+import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
 import System.FS.Sim.STM (simHasFS)
 import System.Random (mkStdGen)
@@ -185,6 +202,57 @@ testBackendArgs ledgerTablesFactory = LedgerDbBackendArgs $ \_tr _shfs ->
               , LedgerDB.deleteSnapshotIfTemporary = \_ds -> pure ()
               , LedgerDB.takeSnapshot = \_suffix _st -> pure Nothing
               }
+      , brRelease = pure ()
+      , ledgerTablesFactory = ledgerTablesFactory
+      }
+
+-- | Variant of 'testBackendArgs' whose 'brSnapshotManager' actually takes
+-- snapshots: 'takeSnapshot' writes a placeholder metadata file at the
+-- snapshot's directory so 'defaultListSnapshots' / 'defaultDeleteSnapshotIfTemporary'
+-- find it.
+--
+-- Used by snapshot-policy tests (e.g. @Test.Ouroboros.Storage.ChainDB.LedgerSnapshots@)
+-- that care about /when/ snapshots are taken, not /what/ data they
+-- contain. For trivial-tables blocks ('TestBlock' style) the snapshotted
+-- state itself does not need to be serialised.
+testBackendArgsWithSnapshots ::
+  forall m blk.
+  ( IOLike m
+  , BlockSupportsLedgerHD m blk
+  , IsLedger LedgerState blk
+  ) =>
+  LedgerTablesFactory m blk -> LedgerDbBackendArgs m blk
+testBackendArgsWithSnapshots ledgerTablesFactory = LedgerDbBackendArgs $ \_tr _shfs ->
+  pure
+    BackendResources
+      { brLoadSnapshot =
+          \_cfg _shfs _ds ->
+            error "Test.Util.ChainDB.testBackendArgsWithSnapshots: brLoadSnapshot is unused"
+      , brSnapshotManager = \_cfg _tr shfs@(SomeHasFS hasFS) ->
+          LedgerDB.SnapshotManager
+            { LedgerDB.listSnapshots = LedgerDB.defaultListSnapshots shfs
+            , LedgerDB.deleteSnapshotIfTemporary =
+                LedgerDB.defaultDeleteSnapshotIfTemporary shfs nullTracer
+            , LedgerDB.takeSnapshot = \suffix st ->
+                case pointToWithOriginRealPoint (getTip (extLedgerState st)) of
+                  Origin -> pure Nothing
+                  NotOrigin t -> do
+                    let number = unSlotNo (realPointSlot t)
+                        snapshot = DiskSnapshot number suffix
+                    existing <- LedgerDB.defaultListSnapshots shfs
+                    if snapshot `elem` existing
+                      then pure Nothing
+                      else do
+                        createDirectoryIfMissing hasFS True $
+                          LedgerDB.snapshotToDirPath snapshot
+                        writeSnapshotMetadata shfs snapshot $
+                          SnapshotMetadata
+                            { snapshotBackend = UTxOHDMemSnapshot
+                            , snapshotChecksum = CRC 0
+                            , snapshotTablesCodecVersion = TablesCodecVersion1
+                            }
+                        pure $ Just (snapshot, t)
+            }
       , brRelease = pure ()
       , ledgerTablesFactory = ledgerTablesFactory
       }

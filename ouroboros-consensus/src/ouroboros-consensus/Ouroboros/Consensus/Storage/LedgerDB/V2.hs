@@ -57,6 +57,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.Enclose (Enclosing' (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.NormalForm.StrictTVar ()
 import qualified Ouroboros.Network.AnchoredSeq as AS
@@ -398,7 +399,14 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
       threadDelay delayBeforeSnapshotting
 
       for_ nonEmptyHandles $ \(_, h) -> do
-        Monad.void $ takeSnapshot snapManager Nothing h
+        before <- getMonotonicTime
+        mTaken <- takeSnapshot snapManager Nothing h
+        after <- getMonotonicTime
+        case mTaken of
+          Nothing -> pure ()
+          Just (ds, rp) ->
+            traceWith (LedgerDBSnapshotEvent >$< ldbTracer env) $
+              TookSnapshot ds rp (FallingEdgeWith (after `diffTime` before))
         Monad.void $ closeExt h
       -- we don't bracket around the handles because it is tedious. An exception that may occur
       -- before we close them would bring the whole cardano-node down anyway.
