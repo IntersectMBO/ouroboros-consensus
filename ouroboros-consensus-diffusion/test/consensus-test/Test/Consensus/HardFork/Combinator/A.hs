@@ -209,8 +209,10 @@ type instance LedgerTablesHandle m BlockA = ()
 
 instance BlockSupportsLedgerHD m BlockA where
   newtype StateHandle m BlockA = BlockAStateHandle (LedgerState BlockA)
+    deriving NoThunks via OnlyCheckWhnfNamed "StateHandleA" (StateHandle m BlockA)
   newtype TickedStateHandle m BlockA
     = TickedBlockAStateHandle (Ticked LedgerState BlockA)
+    deriving NoThunks via OnlyCheckWhnfNamed "TickedStateHandleA" (TickedStateHandle m BlockA)
 
   newStateHandle st () = BlockAStateHandle st
 

@@ -310,7 +310,6 @@ getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 
 allocInRegistryReadOnlyHandleAtPoint ::
   ( IOLike m
-  , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD m blk
   ) =>
   ChainDbEnv m blk ->
@@ -328,10 +327,6 @@ allocInRegistryReadOnlyHandleAtPoint cdb tgt rr = do
     Right v -> pure (Right (rk, v))
 
 openReadOnlyHandleAtPoint ::
-  ( IOLike m
-  , LedgerSupportsProtocol blk
-  , BlockSupportsLedgerHD m blk
-  ) =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
   m (Either LedgerDB.GetForkerError (ExtStateHandle m blk))
@@ -339,7 +334,6 @@ openReadOnlyHandleAtPoint CDB{..} = LedgerDB.openReadOnlyHandle cdbLedgerDB
 
 withReadOnlyHandleAtPoint ::
   ( IOLike m
-  , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD m blk
   ) =>
   ChainDbEnv m blk ->

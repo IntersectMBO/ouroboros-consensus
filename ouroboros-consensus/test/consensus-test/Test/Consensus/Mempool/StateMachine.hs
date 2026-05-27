@@ -66,7 +66,11 @@ import Test.Consensus.Mempool.Util
   , testInitLedger
   , testLedgerConfigNoSizeLimits
   )
+#if !MIN_VERSION_QuickCheck(2,18,0)
 import Test.QuickCheck
+#else
+import Test.QuickCheck hiding (withNumTests)
+#endif
 import Test.QuickCheck.Monadic
 import Test.StateMachine hiding ((:>))
 import Test.StateMachine.DotDrawing
@@ -74,8 +78,13 @@ import Test.StateMachine.Types (History (..), HistoryEvent (..))
 import qualified Test.StateMachine.Types as QC
 import qualified Test.StateMachine.Types.Rank2 as Rank2
 import Test.Tasty
+#if !MIN_VERSION_QuickCheck(2,18,0)
 import Test.Tasty.QuickCheck
+#else
+import Test.Tasty.QuickCheck hiding (withNumTests)
+#endif
 import Test.Util.Orphans.ToExpr ()
+import Test.Util.QuickCheck
 import Test.Util.ToExpr ()
 
 {-------------------------------------------------------------------------------
@@ -540,9 +549,7 @@ mkSUT cfg initialLedger = do
   pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left)
 
 semantics ::
-  ( StandardHash blk
-  , GetTip LedgerState blk
-  , LedgerSupportsMempool blk
+  ( LedgerSupportsMempool blk
   , IOLike m
   ) =>
   CT.Tracer m String ->
@@ -626,8 +633,6 @@ shrinker _ _ = []
 
 sm ::
   ( IOLike m
-  , StandardHash blk
-  , GetTip LedgerState blk
   , LedgerSupportsMempool blk
   ) =>
   StateMachine (Model blk) (Command blk) m (Response blk) ->

@@ -58,7 +58,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
 import Ouroboros.Consensus.Ledger.Basics
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
+import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -109,8 +109,6 @@ withDB ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , BlockSupportsLedgerHD m blk
-  , NoThunks (Handle ExtLedgerState m blk)
-  , NoThunks (LedgerState blk)
   ) =>
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
@@ -128,8 +126,6 @@ openDB ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , BlockSupportsLedgerHD m blk
-  , NoThunks (Handle ExtLedgerState m blk)
-  , NoThunks (LedgerState blk)
   ) =>
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
@@ -146,8 +142,6 @@ openDBInternal ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , BlockSupportsLedgerHD m blk
-  , NoThunks (Handle ExtLedgerState m blk)
-  , NoThunks (LedgerState blk)
   , HasCallStack
   ) =>
   Complete Args.ChainDbArgs m blk ->

@@ -418,8 +418,7 @@ stream (HardForkLedgerState hfs) mkYielder mkSinker =
 
   shelleyFn ::
     forall proto era.
-    ( SL.Era era
-    , MemPack (SL.TxOut era)
+    ( MemPack (SL.TxOut era)
     , DecShareCBOR (SL.TxOut era)
     , Share (SL.TxOut era) ~ Interns (SL.Credential SL.Staking)
     , SL.EraCertState era

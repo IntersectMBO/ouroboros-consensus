@@ -144,7 +144,7 @@ forkerTip (Forker frk _ _ _ _) = currentHandle <$> readTVar frk
 -- | Will release all handles in the 'foeLedgerSeq', which will be only the
 -- first duplicate if the forker has been committed.
 forkerClose ::
-  (LedgerSupportsProtocol blk, IOLike m, BlockSupportsLedgerHD m blk) =>
+  (IOLike m, BlockSupportsLedgerHD m blk) =>
   Forker m blk ->
   m ()
 forkerClose env = do
@@ -157,7 +157,7 @@ forkerClose env = do
   closeLedgerSeq =<< readTVarIO (foeLedgerSeq env)
 
 forkerCommit ::
-  (IOLike m, LedgerSupportsProtocol blk, StandardHash blk, BlockSupportsLedgerHD m blk) =>
+  (IOLike m, LedgerSupportsProtocol blk, BlockSupportsLedgerHD m blk) =>
   Forker m blk ->
   STM m (m ())
 forkerCommit env = do

@@ -602,7 +602,6 @@ library unstable-mempool-test-utils
     contra-tracer,
     deepseq,
     io-classes:strict-stm,
-    nothunks,
     ouroboros-consensus,
 
 library unstable-tutorials

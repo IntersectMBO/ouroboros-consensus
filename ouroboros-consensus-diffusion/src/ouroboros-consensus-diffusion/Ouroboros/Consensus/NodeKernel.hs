@@ -244,7 +244,6 @@ initNodeKernel ::
   , Hashable addrNTN
   , Typeable addrNTN
   , BlockSupportsLedgerHD m blk
-  , NoThunks (TickedStateHandle m blk)
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   m (NodeKernel m addrNTN addrNTC blk)
@@ -473,7 +472,6 @@ initInternalState ::
   , Typeable addrNTN
   , RunNode blk
   , BlockSupportsLedgerHD m blk
-  , NoThunks (TickedStateHandle m blk)
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   m (InternalState m addrNTN addrNTC blk)

@@ -508,7 +508,6 @@ deriving via
 applyHelper ::
   ( Bridge m a
   , Monad n
-  , BlockSupportsLedgerHD n (DualBlock m a)
   ) =>
   ( ComputeLedgerEvents ->
     LedgerCfg LedgerState m ->
@@ -672,7 +671,7 @@ instance
   ShowProxy (BlockQuery (DualBlock m a))
 
 -- | Not used in the tests: no constructors
-instance Bridge m a => BlockSupportsLedgerQuery (DualBlock m a) where
+instance BlockSupportsLedgerQuery (DualBlock m a) where
   answerPureBlockQuery _ = \case {}
   answerBlockQueryLookup _ = \case {}
   answerBlockQueryTraverse _ = \case {}

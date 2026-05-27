@@ -42,7 +42,6 @@ import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   , mkHeaderStateWithTimeFromSummary
   )
-import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -76,7 +75,6 @@ mkInitDb ::
   , HasHardForkHistory blk
   , IOLike m
   , BlockSupportsLedgerHD m blk
-  , NoThunks (LedgerState blk)
   ) =>
   Complete LedgerDbArgs m blk ->
   ResolveBlock m blk ->
@@ -140,7 +138,6 @@ implMkLedgerDb ::
   forall m blk.
   ( IOLike m
   , HasCallStack
-  , StandardHash blk
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
   , BlockSupportsLedgerHD m blk
@@ -258,9 +255,7 @@ implGetImmutableTip = fmap anchor . getVolatileLedgerSeq
 
 implGetPastLedgerState ::
   ( MonadSTM m
-  , HasHeader blk
   , LedgerSupportsProtocol blk
-  , StandardHash blk
   , BlockSupportsLedgerHD m blk
   ) =>
   LedgerDBEnv m ExtLedgerState blk ->
@@ -273,7 +268,6 @@ implGetHeaderStateHistory ::
   ( MonadSTM m
   , LedgerSupportsProtocol blk
   , HasHardForkHistory blk
-  , HasAnnTip blk
   , BlockSupportsLedgerHD m blk
   ) =>
   LedgerDBEnv m ExtLedgerState blk -> STM m (HeaderStateHistory blk)
@@ -415,7 +409,7 @@ implTryTakeSnapshot snapManager env copyBlocks getRandomDelay = do
 
 implCloseDB ::
   forall m l blk.
-  (IOLike m, LedgerSupportsProtocol blk, BlockSupportsLedgerHD m blk) =>
+  (IOLike m, BlockSupportsLedgerHD m blk) =>
   LedgerDBHandle m l blk -> m ()
 implCloseDB (LDBHandle varState) = do
   res <-
@@ -491,6 +485,7 @@ deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
   , NoThunks (l blk)
+  , NoThunks (StateHandle m blk)
   , NoThunks (LedgerCfg l blk)
   ) =>
   NoThunks (LedgerDBEnv m l blk)
@@ -513,6 +508,7 @@ deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
   , NoThunks (l blk)
+  , NoThunks (StateHandle m blk)
   , NoThunks (LedgerCfg l blk)
   ) =>
   NoThunks (LedgerDBState m l blk)
@@ -614,7 +610,6 @@ withStateHandle ldbEnv project f =
 
 openStateHandleAtTarget ::
   ( IOLike m
-  , StandardHash blk
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD m blk
   ) =>
@@ -645,9 +640,7 @@ openStateHandleAtTarget ldbEnv target =
 
 openNewForkerAtTarget ::
   ( IOLike m
-  , IsLedger l blk
   , LedgerSupportsProtocol blk
-  , StandardHash blk
   , BlockSupportsLedgerHD m blk
   ) =>
   LedgerDBHandle m l blk ->
@@ -660,7 +653,6 @@ openNewForkerAtTarget h pt = getEnv h $ \ldbEnv ->
 -- without going through the 'Forker' machinery.
 openNewHandleAtTarget ::
   ( IOLike m
-  , StandardHash blk
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD m blk
   ) =>
@@ -672,8 +664,6 @@ openNewHandleAtTarget h pt = getEnv h $ \ldbEnv ->
 
 withForkerByRollback ::
   ( IOLike m
-  , IsLedger l blk
-  , StandardHash blk
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD m blk
   ) =>
@@ -690,7 +680,6 @@ withForkerByRollback h n k = getEnv h $ \ldbEnv ->
 newForker ::
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , StandardHash blk
   , BlockSupportsLedgerHD m blk
   ) =>
   LedgerDBEnv m l blk ->

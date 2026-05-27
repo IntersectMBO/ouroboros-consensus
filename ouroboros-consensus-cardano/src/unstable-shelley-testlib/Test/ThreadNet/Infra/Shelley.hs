@@ -121,7 +121,6 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Util.Assert
-import Ouroboros.Consensus.Util.IOLike (IOLike)
 import Quiet (Quiet (..))
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL
   ( KeyPair (..)
@@ -462,8 +461,7 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
 
 mkProtocolShelley ::
   forall m c.
-  ( IOLike m
-  , KESAgentContext c m
+  ( KESAgentContext c m
   , ShelleyCompatible (TPraos c) ShelleyEra
   ) =>
   ShelleyGenesis ->

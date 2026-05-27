@@ -211,7 +211,6 @@ data LedgerInterface m blk = LedgerInterface
 -- | Create a 'LedgerInterface' from a 'ChainDB'.
 chainDBLedgerInterface ::
   ( IOLike m
-  , IsLedger LedgerState blk
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD m blk
   ) =>
@@ -264,7 +263,6 @@ initMempoolEnv ::
   , LedgerSupportsMempool blk
   , ValidateEnvelope blk
   , BlockSupportsLedgerHD m blk
-  , NoThunks (TickedStateHandle m blk)
   ) =>
   LedgerInterface m blk ->
   LedgerConfig blk ->
@@ -395,8 +393,7 @@ type RefreshTxLocalData m blk =
   m (TxLocalData blk)
 
 freshTxLocalData ::
-  ( BlockSupportsLedgerHD m blk
-  , LedgerSupportsMempool blk
+  ( LedgerSupportsMempool blk
   , Monad m
   ) =>
   LedgerConfig blk ->

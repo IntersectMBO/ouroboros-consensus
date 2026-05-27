@@ -284,7 +284,7 @@ type instance Handle (Ticked LedgerState) = TickedStateHandle
 -- a 'StateHandle' or 'TickedStateHandle' (see
 -- "Ouroboros.Consensus.Ledger.Extended").
 type BlockSupportsLedgerHD :: (Type -> Type) -> Type -> Constraint
-class BlockSupportsLedgerHD m blk where
+class (NoThunks (StateHandle m blk), NoThunks (TickedStateHandle m blk)) => BlockSupportsLedgerHD m blk where
   -- | Opaque handle to an un-ticked ledger state plus its tables.
   data StateHandle m blk
 

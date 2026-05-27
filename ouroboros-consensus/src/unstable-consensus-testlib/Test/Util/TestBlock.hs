@@ -554,11 +554,14 @@ testInitExtLedgerWithState st =
 -- | Test blocks carry no on-disk tables, so the handle layer is trivial.
 type instance LedgerTablesHandle m (TestBlockWith ptype) = ()
 
-instance Typeable ptype => BlockSupportsLedgerHD m (TestBlockWith ptype) where
+instance NoThunks (PayloadDependentState ptype) => BlockSupportsLedgerHD m (TestBlockWith ptype) where
   newtype StateHandle m (TestBlockWith ptype)
     = TestStateHandle (LedgerState (TestBlockWith ptype))
+    deriving Generic
+
   newtype TickedStateHandle m (TestBlockWith ptype)
     = TickedTestStateHandle (Ticked LedgerState (TestBlockWith ptype))
+    deriving Generic
 
   newStateHandle st () = TestStateHandle st
 

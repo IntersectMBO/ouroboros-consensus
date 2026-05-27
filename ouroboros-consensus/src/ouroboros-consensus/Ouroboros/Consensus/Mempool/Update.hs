@@ -67,7 +67,6 @@ implAddTx ::
   , MonadTimer m
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
-  , BlockSupportsLedgerHD m blk
   ) =>
   MempoolEnv m blk ->
   WhichAddTx f ->
@@ -173,7 +172,6 @@ doAddTx ::
   , HasTxId (GenTx blk)
   , IOLike m
   , MonadTimer m
-  , BlockSupportsLedgerHD m blk
   ) =>
   MempoolEnv m blk ->
   WhichAddTx f ->
@@ -293,7 +291,6 @@ tryAddTx ::
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , MonadMVar m
-  , BlockSupportsLedgerHD m blk
   ) =>
   MempoolEnv m blk ->
   -- | The ledger configuration.

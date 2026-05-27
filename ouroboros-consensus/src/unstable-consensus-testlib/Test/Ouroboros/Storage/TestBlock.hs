@@ -595,8 +595,12 @@ type instance LedgerTablesHandle m TestBlock = ()
 
 instance BlockSupportsLedgerHD m TestBlock where
   newtype StateHandle m TestBlock = TestStateHandle (LedgerState TestBlock)
+    deriving Generic
+    deriving anyclass NoThunks
   newtype TickedStateHandle m TestBlock
     = TickedTestStateHandle (Ticked LedgerState TestBlock)
+    deriving Generic
+    deriving anyclass NoThunks
 
   newStateHandle st () = TestStateHandle st
 

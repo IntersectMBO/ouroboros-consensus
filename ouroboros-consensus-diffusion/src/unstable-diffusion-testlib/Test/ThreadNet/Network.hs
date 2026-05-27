@@ -329,9 +329,6 @@ runThreadNetwork ::
   , TracingConstraints blk
   , HasCallStack
   , BlockSupportsLedgerHD m blk
-  , NoThunks (ExtStateHandle m blk)
-  , NoThunks (StateHandle m blk)
-  , NoThunks (TickedStateHandle m blk)
   ) =>
   SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
 runThreadNetwork

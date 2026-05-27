@@ -39,7 +39,6 @@ openMempool ::
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
   , BlockSupportsLedgerHD m blk
-  , NoThunks (TickedStateHandle m blk)
   ) =>
   ResourceRegistry m ->
   LedgerInterface m blk ->
@@ -97,7 +96,6 @@ openMempoolWithoutSyncThread ::
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
   , BlockSupportsLedgerHD m blk
-  , NoThunks (TickedStateHandle m blk)
   ) =>
   LedgerInterface m blk ->
   LedgerConfig blk ->

@@ -130,8 +130,12 @@ type instance LedgerTablesHandle m ByronSpecBlock = ()
 instance BlockSupportsLedgerHD m ByronSpecBlock where
   newtype StateHandle m ByronSpecBlock
     = ByronSpecStateHandle (LedgerState ByronSpecBlock)
+    deriving Generic
+    deriving anyclass NoThunks
   newtype TickedStateHandle m ByronSpecBlock
     = TickedByronSpecStateHandle (Ticked LedgerState ByronSpecBlock)
+    deriving Generic
+    deriving anyclass NoThunks
 
   newStateHandle st () = ByronSpecStateHandle st
 

@@ -144,7 +144,7 @@ defaultApplyBlockLedgerResult =
   applyBlockLedgerResultWithValidation STS.ValidateAll
 
 defaultReapplyBlockLedgerResult ::
-  (Monad m, HasCallStack, ApplyBlock l blk, Functor m, BlockSupportsLedgerHD m blk) =>
+  (Monad m, HasCallStack, ApplyBlock l blk, BlockSupportsLedgerHD m blk) =>
   (LedgerErr l blk -> LedgerResult blk (Handle l m blk)) ->
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
@@ -179,7 +179,7 @@ class
 
 -- | 'lrResult' after 'applyBlockLedgerResult'
 applyLedgerBlock ::
-  (Monad m, ApplyBlock l blk, HasCallStack, Functor m, BlockSupportsLedgerHD m blk) =>
+  (Monad m, ApplyBlock l blk, HasCallStack, BlockSupportsLedgerHD m blk) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->

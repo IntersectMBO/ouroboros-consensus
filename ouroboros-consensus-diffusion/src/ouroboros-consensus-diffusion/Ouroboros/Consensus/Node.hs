@@ -407,9 +407,6 @@ run ::
   forall blk.
   ( RunNode blk
   , BlockSupportsLedgerHD IO blk
-  , NoThunks (TickedStateHandle IO blk)
-  , NoThunks (Handle ExtLedgerState IO blk)
-  , NoThunks (LedgerState blk)
   ) =>
   RunNodeArgs IO RemoteAddress LocalAddress blk ->
   StdRunNodeArgs IO blk ->
@@ -479,9 +476,6 @@ runWith ::
   , NetworkAddr addrNTN
   , Show addrNTN
   , BlockSupportsLedgerHD m blk
-  , NoThunks (TickedStateHandle m blk)
-  , NoThunks (Handle ExtLedgerState m blk)
-  , NoThunks (LedgerState blk)
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
   (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
@@ -852,8 +846,6 @@ openChainDB ::
   ( RunNode blk
   , IOLike m
   , BlockSupportsLedgerHD m blk
-  , NoThunks (Handle ExtLedgerState m blk)
-  , NoThunks (LedgerState blk)
   ) =>
   ResourceRegistry m ->
   TopLevelConfig blk ->

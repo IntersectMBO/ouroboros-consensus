@@ -128,7 +128,6 @@ mkTestChunkInfo = simpleChunkInfo . eraEpochSize . tblcHardForkParams . topLevel
 fromMinimalChainDbArgs ::
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerDbSerialiseConstraints blk
   ) =>
   MinimalChainDbArgs m blk -> Complete ChainDbArgs m blk
 fromMinimalChainDbArgs MinimalChainDbArgs{..} =
