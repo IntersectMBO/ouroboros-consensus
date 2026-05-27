@@ -257,8 +257,8 @@ mkConsensusProtocolCardano
         -- used in the node in cardano-node/src/Cardano/Node/Protocol/Cardano.hs
         -- in function mkSomeConsensusProtocolCardano.
         ( if npcTestEnableDevelopmentHardForkEras
-            then ProtVer (natVersion @11) 0
-            else ProtVer (natVersion @10) 7
+            then ProtVer (natVersion @12) 0
+            else ProtVer (natVersion @11) 0
         )
 
 -- | An empty Dijkstra genesis to be provided when none is specified in the config.
