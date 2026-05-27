@@ -115,7 +115,7 @@ instance
         , mockCertBlock
         }
 
--- | Helper to write 'BlockSupportsPeras.validatePerasCert'.
+-- | Helper to write 'BlockSupportsPeras.verifyPerasCert'.
 --
 -- WARNING: we do not perform any validation whatsoever for mocked certificates.
 validateMockPerasCert ::
