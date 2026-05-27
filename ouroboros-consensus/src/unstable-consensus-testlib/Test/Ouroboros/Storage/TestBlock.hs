@@ -741,8 +741,8 @@ instance BlockSupportsPeras TestBlock where
   type PerasCert TestBlock = MockPerasCert TestBlock
   type PerasError TestBlock = VoidPerasError TestBlock
 
-  validatePerasVote = validateMockPerasVote
-  validatePerasCert = validateMockPerasCert
+  verifyPerasVote = validateMockPerasVote
+  verifyPerasCert = validateMockPerasCert
   forgePerasCert = forgeMockPerasCert
   getPerasCertInBlock = tbPerasCert . testBody
 
