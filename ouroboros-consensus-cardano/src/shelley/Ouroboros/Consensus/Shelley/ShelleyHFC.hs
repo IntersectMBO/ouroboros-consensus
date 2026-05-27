@@ -79,9 +79,7 @@ type ShelleyBlockHFC proto era = HardForkBlock '[ShelleyBlock proto era]
 -------------------------------------------------------------------------------}
 
 instance
-  ( ShelleyCompatible proto era
-  , LedgerSupportsProtocol (ShelleyBlock proto era)
-  ) =>
+  ShelleyCompatible proto era =>
   ImmutableEraParams (ShelleyBlock proto era)
   where
   immutableEraParams =

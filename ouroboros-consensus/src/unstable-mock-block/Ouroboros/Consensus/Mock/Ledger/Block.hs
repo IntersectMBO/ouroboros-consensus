@@ -433,10 +433,7 @@ type instance AuxLedgerEvent (SimpleBlock c ext) = VoidLedgerEvent
 -- layer is trivial.
 type instance LedgerTablesHandle m (SimpleBlock c ext) = ()
 
-instance
-  (SimpleCrypto c, Typeable ext) =>
-  BlockSupportsLedgerHD m (SimpleBlock c ext)
-  where
+instance (Typeable ext, SimpleCrypto c) => BlockSupportsLedgerHD m (SimpleBlock c ext) where
   newtype StateHandle m (SimpleBlock c ext)
     = SimpleStateHandle (LedgerState (SimpleBlock c ext))
     deriving newtype NoThunks

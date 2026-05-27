@@ -216,7 +216,7 @@ instance
 
 -- | NOT EXPORTED, for footprints other than 'QFNoTables'
 answerBlockQueryHelper ::
-  (MonadSTM m, CanHardFork xs) =>
+  CanHardFork xs =>
   ( NP ExtLedgerCfg xs ->
     QueryIfCurrent xs footprint result ->
     NS (ExtStateHandle m) xs ->
@@ -252,7 +252,7 @@ distribExtLedgerState (ExtLedgerState ledgerState headerState) =
       (State.tip (hardForkLedgerStatePerEra ledgerState))
 
 hfExtLedgerState ::
-  (Monad m, All SingleEraBlock xs) =>
+  All SingleEraBlock xs =>
   Handle ExtLedgerState m (HardForkBlock xs) -> State.HardForkState (ExtStateHandle m) xs
 hfExtLedgerState (ExtStateHandle (HardForkStateHandle (State.HardForkState st) _tctx) headerState) =
   case matchTelescope (distribHeaderState headerState) st of

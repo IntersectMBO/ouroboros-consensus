@@ -237,8 +237,6 @@ runTestNetwork ::
   , TracingConstraints blk
   , HasCallStack
   , forall s. BlockSupportsLedgerHD (IOSim s) blk
-  , forall s. NoThunks (StateHandle (IOSim s) blk)
-  , forall s. NoThunks (TickedStateHandle (IOSim s) blk)
   ) =>
   TestConfig ->
   TestConfigB blk ->

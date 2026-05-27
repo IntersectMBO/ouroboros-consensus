@@ -171,9 +171,7 @@ mkInMemoryFromSnapshot tracer shfs =
  where
   implFromSnapshot ::
     forall era.
-    ( SL.Era era
-    , MemPack (SL.TxOut era)
-    , IOLike m
+    ( MemPack (SL.TxOut era)
     , Share (SL.TxOut era) ~ Interns (SL.Credential SL.Staking)
     , DecShareCBOR (SL.TxOut era)
     , SL.EraCertState era
@@ -249,9 +247,7 @@ inMemorySnapshotYielder fs ds =
  where
   readEntries ::
     forall era.
-    ( SL.Era era
-    , MemPack (SL.TxOut era)
-    , DecShareCBOR (SL.TxOut era)
+    ( DecShareCBOR (SL.TxOut era)
     , Share (SL.TxOut era) ~ Interns (SL.Credential SL.Staking)
     , SL.EraCertState era
     ) =>

@@ -683,8 +683,12 @@ rationale behind 'BlockSupportsLedgerHD' and 'LedgerTablesHandle'.
 
 > instance BlockSupportsLedgerHD m BlockD where
 >   newtype StateHandle m BlockD = BlockDStateHandle (LedgerState BlockD)
+>     deriving Generic
+>     deriving anyclass NoThunks
 >   newtype TickedStateHandle m BlockD =
 >     TickedBlockDStateHandle (Ticked LedgerState BlockD)
+>     deriving Generic
+>     deriving anyclass NoThunks
 >   newStateHandle st () = BlockDStateHandle st
 >   state (BlockDStateHandle s) = s
 >   tickedState (TickedBlockDStateHandle s) = s

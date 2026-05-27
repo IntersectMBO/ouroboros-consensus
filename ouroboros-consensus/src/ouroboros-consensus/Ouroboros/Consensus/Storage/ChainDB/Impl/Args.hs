@@ -25,7 +25,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( GetLoEFragment
@@ -135,10 +134,7 @@ defaultSpecificArgs =
 -- and 'defaultSpecificArgs' for a list of which fields are not given a default
 -- and must therefore be set explicitly.
 defaultArgs ::
-  ( IOLike m
-  , LedgerDB.LedgerDbSerialiseConstraints blk
-  , LedgerSupportsProtocol blk
-  ) =>
+  IOLike m =>
   Incomplete ChainDbArgs m blk
 defaultArgs =
   ChainDbArgs
@@ -165,7 +161,7 @@ ensureValidateAll args =
     }
 
 completeChainDbArgs ::
-  (ConsensusProtocol (BlockProtocol blk), IOLike m) =>
+  ConsensusProtocol (BlockProtocol blk) =>
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger

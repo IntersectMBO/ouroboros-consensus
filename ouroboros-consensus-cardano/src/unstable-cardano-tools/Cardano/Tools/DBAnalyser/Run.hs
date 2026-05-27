@@ -65,8 +65,6 @@ openLedgerDB ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , BlockSupportsLedgerHD IO blk
-  , NoThunks (ExtStateHandle IO blk)
-  , NoThunks (LedgerState blk)
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   ImmutableDB.ImmutableDB IO blk ->
@@ -144,8 +142,6 @@ analyse ::
   , HasProtocolInfo blk
   , LedgerSupportsMempool.HasTxs blk
   , BlockSupportsLedgerHD IO blk
-  , NoThunks (ExtStateHandle IO blk)
-  , NoThunks (TickedStateHandle IO blk)
   ) =>
   DBAnalyserConfig ->
   Args blk ->

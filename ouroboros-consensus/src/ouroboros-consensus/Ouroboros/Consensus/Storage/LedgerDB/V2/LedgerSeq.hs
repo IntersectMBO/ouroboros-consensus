@@ -59,6 +59,7 @@ import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -95,7 +96,8 @@ newtype LedgerSeq m blk = LedgerSeq
   deriving Generic
 
 deriving newtype instance
-  IOLike m => NoThunks (LedgerSeq m blk)
+  (BlockSupportsProtocol blk, HasAnnTip blk, NoThunks (StateHandle m blk)) =>
+  NoThunks (LedgerSeq m blk)
 
 deriving newtype instance Eq (ExtStateHandle m blk) => Eq (LedgerSeq m blk)
 deriving newtype instance Show (ExtStateHandle m blk) => Show (LedgerSeq m blk)
@@ -115,7 +117,7 @@ empty = LedgerSeq . AS.Empty
 -- | Close all 'LedgerTablesHandle' in this 'LedgerSeq', in particular that on
 -- the anchor.
 closeLedgerSeq ::
-  (Monad m, BlockSupportsLedgerHD m blk, GetTip LedgerState blk) =>
+  (Monad m, BlockSupportsLedgerHD m blk) =>
   LedgerSeq m blk -> m ()
 closeLedgerSeq (LedgerSeq l) =
   mapM_ closeExt $ AS.anchor l : AS.toOldestFirst l
@@ -320,13 +322,11 @@ currentHandle = headAnchor . getLedgerSeq
 -- >>> l0s == ledgerState (anchor ldb)
 -- True
 anchor ::
-  (BlockSupportsLedgerHD m blk, GetTip LedgerState blk) =>
+  BlockSupportsLedgerHD m blk =>
   LedgerSeq m blk -> ExtLedgerState blk
 anchor = extLedgerState . anchorHandle
 
-anchorHandle ::
-  (BlockSupportsLedgerHD m blk, GetTip LedgerState blk) =>
-  LedgerSeq m blk -> ExtStateHandle m blk
+anchorHandle :: LedgerSeq m blk -> ExtStateHandle m blk
 anchorHandle = AS.anchor . getLedgerSeq
 
 -- | All snapshots currently stored by the ledger DB (new to old)
@@ -338,7 +338,7 @@ anchorHandle = AS.anchor . getLedgerSeq
 -- >>> [(0, l3s), (1, l2s), (2, l1s)] == map (fmap ledgerState) (snapshots ldb)
 -- True
 snapshots ::
-  (BlockSupportsLedgerHD m blk, GetTip LedgerState blk) =>
+  BlockSupportsLedgerHD m blk =>
   LedgerSeq m blk -> [(Word64, ExtLedgerState blk)]
 snapshots =
   zip [0 ..]
@@ -397,7 +397,6 @@ isSaturated (SecurityParam k) db =
 getPastLedgerAt ::
   ( HasHeader blk
   , GetTip LedgerState blk
-  , StandardHash blk
   , BlockSupportsLedgerHD m blk
   ) =>
   Point blk ->
@@ -448,8 +447,7 @@ rollbackToAnchor (LedgerSeq vol) =
 -- When no ledger state (or anchor) has the given 'Point', 'Nothing' is
 -- returned.
 rollback ::
-  ( HasHeader blk
-  , GetTip LedgerState blk
+  ( GetTip LedgerState blk
   , StandardHash blk
   , BlockSupportsLedgerHD m blk
   ) =>
@@ -475,7 +473,6 @@ immutableTipSlot =
 -- | Transform the underlying volatile 'AnchoredSeq' using the given functions.
 volatileStatesBimap ::
   ( BlockSupportsLedgerHD m blk
-  , GetTip LedgerState blk
   , AS.Anchorable (WithOrigin SlotNo) a b
   ) =>
   (ExtLedgerState blk -> a) ->

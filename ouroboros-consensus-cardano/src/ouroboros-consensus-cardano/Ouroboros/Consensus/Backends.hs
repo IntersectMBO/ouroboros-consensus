@@ -31,7 +31,7 @@ import Ouroboros.Consensus.Backends.InMemory
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.Ledger.Ledger
 import Ouroboros.Consensus.Cardano.Block
-import Ouroboros.Consensus.Cardano.CanHardFork
+import Ouroboros.Consensus.Cardano.CanHardFork ()
 import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
@@ -61,7 +61,7 @@ import System.FS.CRC
 -- temporary registry.
 inMemoryBackendArgs ::
   forall m c.
-  (CardanoHardForkConstraints c, SerialiseHFC (CardanoEras c), IOLike m) =>
+  (SerialiseHFC (CardanoEras c), IOLike m) =>
   LedgerDbBackendArgs m (CardanoBlock c)
 inMemoryBackendArgs = LedgerDbBackendArgs $ \tr shfs ->
   let
@@ -87,7 +87,7 @@ inMemoryBackendArgs = LedgerDbBackendArgs $ \tr shfs ->
 -- supplied by the caller.
 loadSnapshot ::
   forall m c.
-  (CardanoHardForkConstraints c, SerialiseHFC (CardanoEras c), IOLike m) =>
+  (SerialiseHFC (CardanoEras c), IOLike m) =>
   -- | The backend tag that the snapshot's metadata is expected to carry.
   -- Snapshots tagged for any other backend are rejected with
   -- 'MetadataBackendMismatch'.
@@ -125,9 +125,7 @@ loadSnapshot expectedBackend mkFromSnapshot mkH ccfg fs@(SomeHasFS hfs) ds = do
             apFn
             ( let sf ::
                     forall proto era.
-                    ( SL.Era era
-                    , MemPack (SL.TxOut era)
-                    , IOLike m
+                    ( MemPack (SL.TxOut era)
                     , Share (SL.TxOut era) ~ Interns (SL.Credential SL.Staking)
                     , DecShareCBOR (SL.TxOut era)
                     , SL.EraCertState era
@@ -196,7 +194,7 @@ loadSnapshot expectedBackend mkFromSnapshot mkH ccfg fs@(SomeHasFS hfs) ds = do
 -- the per-era 'TablesHandle' for the on-disk component.
 mkSnapshotManager ::
   forall m c.
-  (CardanoHardForkConstraints c, SerialiseHFC (CardanoEras c), IOLike m) =>
+  (SerialiseHFC (CardanoEras c), IOLike m) =>
   -- | The backend tag to record for Byron-era snapshots. Non-Byron eras
   -- carry the tag returned by their per-era 'takeHandleSnapshot'.
   SnapshotBackend ->

@@ -26,7 +26,6 @@ module Test.Util.PureApplyBlock
 import Control.Monad.Except (Except, throwError)
 import qualified Control.Monad.Except as Except
 import Control.Monad.IOSim (IOSim, runSim)
-import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Ledger.Abstract
   ( BlockSupportsLedgerHD
   , ComputeLedgerEvents (OmitLedgerEvents)
@@ -97,7 +96,7 @@ pureExtTickThenApply cfg blk extSt =
 -------------------------------------------------------------------------------}
 
 instance
-  (PayloadSemantics ptype, Typeable ptype) =>
+  PayloadSemantics ptype =>
   PureExtApplyBlock (TestBlockWith ptype)
   where
   wrapExtStateHandle ExtLedgerState{ledgerState, headerState} =

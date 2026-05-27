@@ -54,7 +54,6 @@ openDB ::
   , HasCallStack
   , HasHardForkHistory blk
   , BlockSupportsLedgerHD m blk
-  , NoThunks (LedgerState blk)
   ) =>
   -- | Stateless initializaton arguments
   Complete LedgerDbArgs m blk ->

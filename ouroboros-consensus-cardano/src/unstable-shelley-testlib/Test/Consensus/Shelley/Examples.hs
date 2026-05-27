@@ -32,6 +32,7 @@ import Data.Coerce (coerce)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Set as Set
+import Lens.Micro
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
@@ -183,7 +184,7 @@ fromShelleyLedgerExamples
                 , shelleyTipBlockNo = BlockNo 3
                 , shelleyTipHash = hash
                 }
-        , shelleyLedgerState = leNewEpochState
+        , shelleyLedgerState = leNewEpochState & slUtxoL .~ mempty
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerLatestPerasCertRound = SNothing
         }
@@ -318,7 +319,7 @@ fromShelleyLedgerExamplesPraos
                 , shelleyTipBlockNo = BlockNo 3
                 , shelleyTipHash = hash
                 }
-        , shelleyLedgerState = leNewEpochState
+        , shelleyLedgerState = leNewEpochState & slUtxoL .~ mempty
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerLatestPerasCertRound = SNothing
         }

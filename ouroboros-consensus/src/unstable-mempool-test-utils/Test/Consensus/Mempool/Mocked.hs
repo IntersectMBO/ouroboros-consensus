@@ -27,7 +27,6 @@ import Control.Concurrent.Class.MonadSTM.Strict
 import Control.DeepSeq (NFData (rnf))
 import Control.Tracer (Tracer)
 import qualified Data.List.NonEmpty as NE
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.HeaderValidation as Header
 import Ouroboros.Consensus.Ledger.Abstract
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
@@ -80,8 +79,6 @@ openMockedMempool ::
   , Ledger.HasTxId (Ledger.GenTx blk)
   , Header.ValidateEnvelope blk
   , BlockSupportsLedgerHD IO blk
-  , Ledger.GetTip LedgerState blk
-  , NoThunks (TickedStateHandle IO blk)
   ) =>
   Mempool.MempoolCapacityBytesOverride ->
   Tracer IO (Mempool.TraceEventMempool blk) ->

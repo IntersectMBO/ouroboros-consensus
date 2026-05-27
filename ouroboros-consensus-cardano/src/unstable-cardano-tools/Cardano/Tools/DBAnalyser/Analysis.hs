@@ -89,7 +89,6 @@ runAnalysis ::
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD IO blk
-  , IOLike.NoThunks (TickedStateHandle IO blk)
   ) =>
   AnalysisName -> SomeAnalysis blk
 runAnalysis analysisName = case go analysisName of
@@ -501,7 +500,6 @@ checkNoThunksEvery ::
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD IO blk
-  , IOLike.NoThunks (LedgerState blk)
   ) =>
   Word64 ->
   Analysis blk StartFromLedgerState
@@ -824,7 +822,6 @@ reproMempoolForge ::
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerHD IO blk
-  , IOLike.NoThunks (TickedStateHandle IO blk)
   ) =>
   Int ->
   Analysis blk StartFromLedgerState

@@ -401,7 +401,7 @@ data LedgerDbError
 
 -- | 'bracket'-style usage of a forker at the LedgerDB tip.
 withTipForker ::
-  (IOLike m, LedgerSupportsProtocol blk, BlockSupportsLedgerHD m blk) =>
+  (IOLike m, BlockSupportsLedgerHD m blk) =>
   LedgerDB m l blk ->
   (Forker m blk -> m a) ->
   m a

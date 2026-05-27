@@ -54,7 +54,6 @@ import qualified Database.LSMTree as LSM
 import Lens.Micro
 import Ouroboros.Consensus.Backends (loadSnapshot, mkSnapshotManager)
 import Ouroboros.Consensus.Cardano.Block (CardanoBlock, CardanoEras)
-import Ouroboros.Consensus.Cardano.CanHardFork (CardanoHardForkConstraints)
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common (SerialiseHFC)
 import Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
@@ -95,7 +94,7 @@ import System.Random (genWord64, newStdGen)
 -- both are torn down by 'brRelease'.
 lsmBackendArgsIO ::
   forall c.
-  (CardanoHardForkConstraints c, SerialiseHFC (CardanoEras c)) =>
+  SerialiseHFC (CardanoEras c) =>
   FsPath -> FilePath -> Word64 -> LedgerDbBackendArgs IO (CardanoBlock c)
 lsmBackendArgsIO lsmPath fastStoragePath salt = LedgerDbBackendArgs $ \trcr shfs -> do
   (fs, blockio) <-
@@ -279,8 +278,7 @@ newLSMTablesHandle tracer shfs@(SomeHasFS fs) st utxoSize table = do
             newLSMTablesHandle tracer shfs nes' (utxoSize + fromIntegral (Map.size utxos)) table'
       }
  where
-  go ::
-    (MemPack (SL.TxOut era), Eq (SL.TxOut era)) => UTxOTable m -> [(SL.TxIn, SL.TxOut era)] -> m ()
+  go :: UTxOTable m -> [(SL.TxIn, SL.TxOut era)] -> m ()
   go table' items =
     LSM.inserts table' $
       V.fromListN (length items) $
@@ -434,9 +432,7 @@ mkLSMFactory tracer session shfs = MkHandle $ \st -> do
   mapM_ (go table) $ chunks 1000 $ Map.toList utxos
   newLSMTablesHandle tracer shfs st (fromIntegral (Map.size utxos)) table
  where
-  go ::
-    forall era.
-    (MemPack (SL.TxOut era), Eq (SL.TxOut era)) => UTxOTable m -> [(SL.TxIn, SL.TxOut era)] -> m ()
+  go :: forall era. MemPack (SL.TxOut era) => UTxOTable m -> [(SL.TxIn, SL.TxOut era)] -> m ()
   go table items =
     LSM.inserts table $
       V.fromListN (length items) $
