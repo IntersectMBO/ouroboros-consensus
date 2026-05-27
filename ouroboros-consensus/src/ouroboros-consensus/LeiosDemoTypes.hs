@@ -60,6 +60,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
+import Data.Fixed (Pico)
 import Data.Function (on)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
@@ -751,6 +752,10 @@ data TraceLeiosKernel
       , mempoolRestMeasure :: m
       }
   | TraceLeiosBlockStored {slot :: SlotNo, eb :: LeiosEb}
+  | -- NOTE: We avoid 'Header blk' or 'Point blk' here and a slot should be
+    -- sufficient because it the certying block must be directly succeeding the
+    -- forging/announcing anyways.
+    TraceLeiosBlockCertified {atSlot :: SlotNo, certifiedPoint :: LeiosPoint}
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
   | TraceLeiosDbException LeiosDbException
@@ -815,11 +820,20 @@ traceLeiosKernelToObject = \case
       , "slot" .= slot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
       ]
+  TraceLeiosBlockCertified{atSlot, certifiedPoint} ->
+    mconcat
+      [ "kind" .= Aeson.String "TraceLeiosBlockCertified"
+      , "atSlot" .= atSlot
+      , "ebSlot" .= certifiedPoint.pointSlotNo
+      , "ebHash" .= prettyEbHash certifiedPoint.pointEbHash
+      ]
   TraceLeiosVoted{vote, weight} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosVoted"
       , "vote" .= voteToObject vote
-      , "weight" .= weight
+      , -- NOTE: 1 ADA delegation is 2.2 × 10^-11 of the total stake. So 10^-12
+        -- is reasonable precision here.
+        "weight" .= fromRational @Pico weight
       ]
   TraceLeiosVoteAcquired{vote} ->
     mconcat
