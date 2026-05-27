@@ -295,8 +295,8 @@ instance
   type PerasCert (HardForkBlock xs) = MockPerasCert (HardForkBlock xs)
   type PerasError (HardForkBlock xs) = VoidPerasError (HardForkBlock xs)
 
-  validatePerasVote = validateMockPerasVote
-  validatePerasCert = validateMockPerasCert
+  verifyPerasVote = validateMockPerasVote
+  verifyPerasCert = validateMockPerasCert
   forgePerasCert = forgeMockPerasCert
 
   -- TODO: extract actual Peras certificates from blocks

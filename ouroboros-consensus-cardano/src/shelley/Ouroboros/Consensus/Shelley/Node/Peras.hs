@@ -57,8 +57,8 @@ instance
   type PerasCert (ShelleyBlock proto DijkstraEra) = MockPerasCert (ShelleyBlock proto DijkstraEra)
   type PerasError (ShelleyBlock proto DijkstraEra) = VoidPerasError (ShelleyBlock proto DijkstraEra)
 
-  validatePerasVote = validateMockPerasVote
-  validatePerasCert = validateMockPerasCert
+  verifyPerasVote = validateMockPerasVote
+  verifyPerasCert = validateMockPerasCert
   forgePerasCert = forgeMockPerasCert
 
   -- TODO: extract actual Peras certificates from blocks
