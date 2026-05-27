@@ -176,6 +176,7 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
+    varPendingCertRBs <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
 
     let initChainSelTracer = TraceInitChainSelEvent >$< tracer
 
@@ -255,6 +256,7 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbLeiosDbHandle = leiosDb
+            , cdbPendingCertRBs = varPendingCertRBs
             }
     h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
     let chainDB =
