@@ -82,9 +82,13 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Protocol.Praos.Common
+import Control.Monad.Except (runExcept)
+import Ouroboros.Consensus.Ledger.SupportsMempool (WhetherToIntervene (..))
 import qualified Ouroboros.Consensus.Shelley.Eras as SE
+import Ouroboros.Consensus.Shelley.Eras (applyShelleyBasedTx)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
+import Ouroboros.Consensus.Shelley.Ledger.Mempool (GenTx (ShelleyTx))
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
   ( ShelleyNodeToClientVersion (..)
@@ -376,6 +380,12 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
       (ShelleyBlock proto era)
       QFNoTables
       (Map SL.DRep (Set (SL.Credential SL.Staking)))
+  ValidateTx ::
+    GenTx (ShelleyBlock proto era) ->
+    BlockQuery
+      (ShelleyBlock proto era)
+      QFNoTables
+      (Either (SL.ApplyTxError era) ())
 
 {-# DEPRECATED GetLedgerPeerSnapshot' "Use GetLedgerPeerSnapshot instead" #-}
 
@@ -529,6 +539,19 @@ instance
           $ cfg
       GetDRepDelegations dreps ->
         SL.queryDRepDelegations st dreps
+      ValidateTx (ShelleyTx _ tx) ->
+        let tipSlot = case shelleyLedgerTip lst of
+              Origin -> SlotNo 0
+              NotOrigin tip -> shelleyTipSlotNo tip
+         in case runExcept $
+              applyShelleyBasedTx
+                globals
+                (SL.mkMempoolEnv st tipSlot)
+                (SL.mkMempoolState st)
+                DoNotIntervene
+                tx of
+              Left err -> Left err
+              Right _ -> Right ()
    where
     lcfg = configLedger $ getExtLedgerCfg cfg
     globals = shelleyLedgerGlobals lcfg
@@ -590,6 +613,7 @@ instance
     GetStakeDistribution2{} -> (>= v13)
     GetMaxMajorProtocolVersion -> (>= v13)
     GetDRepDelegations{} -> (>= v15)
+    ValidateTx{} -> (>= v16)
    where
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
@@ -601,6 +625,7 @@ instance
     v12 = ShelleyNodeToClientVersion12
     v13 = ShelleyNodeToClientVersion13
     v15 = ShelleyNodeToClientVersion15
+    v16 = ShelleyNodeToClientVersion16
 
 instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetLedgerTip GetLedgerTip =
@@ -767,9 +792,11 @@ instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
     | otherwise =
         Nothing
   sameDepIndex2 GetDRepDelegations{} _ = Nothing
+  sameDepIndex2 ValidateTx{} ValidateTx{} = Just Refl
+  sameDepIndex2 ValidateTx{} _ = Nothing
 
-deriving instance Eq (BlockQuery (ShelleyBlock proto era) fp result)
-deriving instance Show (BlockQuery (ShelleyBlock proto era) fp result)
+deriving instance ShelleyBasedEra era => Eq (BlockQuery (ShelleyBlock proto era) fp result)
+deriving instance ShelleyBasedEra era => Show (BlockQuery (ShelleyBlock proto era) fp result)
 
 instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock proto era) fp) where
   showResult = \case
@@ -813,6 +840,7 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
     GetStakeDistribution2{} -> show
     GetMaxMajorProtocolVersion{} -> show
     GetDRepDelegations{} -> show
+    ValidateTx{} -> show
 
 {-------------------------------------------------------------------------------
   Auxiliary
@@ -852,7 +880,7 @@ getFilteredVoteDelegatees ss creds
 
 encodeShelleyQuery ::
   forall era proto fp result.
-  ShelleyBasedEra era =>
+  ShelleyCompatible proto era =>
   BlockQuery (ShelleyBlock proto era) fp result -> Encoding
 encodeShelleyQuery query = case query of
   GetLedgerTip ->
@@ -946,10 +974,12 @@ encodeShelleyQuery query = case query of
     CBOR.encodeListLen 1 <> CBOR.encodeWord8 38
   GetDRepDelegations dreps ->
     CBOR.encodeListLen 2 <> CBOR.encodeWord8 39 <> LC.toEraCBOR @era dreps
+  ValidateTx tx ->
+    CBOR.encodeListLen 2 <> CBOR.encodeWord8 40 <> toCBOR tx
 
 decodeShelleyQuery ::
   forall era proto.
-  ShelleyBasedEra era =>
+  ShelleyCompatible proto era =>
   forall s.
   Decoder s (SomeBlockQuery (BlockQuery (ShelleyBlock proto era)))
 decodeShelleyQuery = do
@@ -1029,6 +1059,7 @@ decodeShelleyQuery = do
     (1, 37) -> return $ SomeBlockQuery GetStakeDistribution2
     (1, 38) -> return $ SomeBlockQuery GetMaxMajorProtocolVersion
     (2, 39) -> requireCG $ SomeBlockQuery . GetDRepDelegations <$> LC.fromEraCBOR @era
+    (2, 40) -> SomeBlockQuery . ValidateTx <$> fromCBOR
     _ -> failmsg "invalid"
 
 encodeShelleyResult ::
@@ -1079,6 +1110,7 @@ encodeShelleyResult v query = case query of
   GetStakeDistribution2{} -> LC.toEraCBOR @era
   GetMaxMajorProtocolVersion -> toCBOR
   GetDRepDelegations{} -> LC.toEraCBOR @era
+  ValidateTx{} -> LC.toEraCBOR @era
 
 decodeShelleyResult ::
   forall proto era fp result.
@@ -1128,6 +1160,7 @@ decodeShelleyResult v query = case query of
   GetStakeDistribution2 -> LC.fromEraCBOR @era
   GetMaxMajorProtocolVersion -> fromCBOR
   GetDRepDelegations{} -> LC.fromEraCBOR @era
+  ValidateTx{} -> LC.fromEraCBOR @era
 
 currentPParamsEnDecoding ::
   forall era s.

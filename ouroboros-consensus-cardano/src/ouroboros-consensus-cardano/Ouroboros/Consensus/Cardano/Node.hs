@@ -45,6 +45,7 @@ module Ouroboros.Consensus.Cardano.Node
   , pattern CardanoNodeToClientVersion17
   , pattern CardanoNodeToClientVersion18
   , pattern CardanoNodeToClientVersion19
+  , pattern CardanoNodeToClientVersion20
   , pattern CardanoNodeToNodeVersion1
   , pattern CardanoNodeToNodeVersion2
   ) where
@@ -438,6 +439,21 @@ pattern CardanoNodeToClientVersion19 =
         :* Nil
       )
 
+pattern CardanoNodeToClientVersion20 :: BlockNodeToClientVersion (CardanoBlock c)
+pattern CardanoNodeToClientVersion20 =
+  HardForkNodeToClientEnabled
+    HardForkSpecificNodeToClientVersion3
+    ( EraNodeToClientEnabled ByronNodeToClientVersion1
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion16
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion16
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion16
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion16
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion16
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion16
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion16
+        :* Nil
+      )
+
 instance
   CardanoHardForkConstraints c =>
   SupportedNetworkProtocolVersion (CardanoBlock c)
@@ -458,9 +474,10 @@ instance
       , (NodeToClientV_21, CardanoNodeToClientVersion17)
       , (NodeToClientV_22, CardanoNodeToClientVersion18)
       , (NodeToClientV_23, CardanoNodeToClientVersion19)
+      , (NodeToClientV_24, CardanoNodeToClientVersion20)
       ]
 
-  latestReleasedNodeVersion _prx = (Just NodeToNodeV_15, Just NodeToClientV_23)
+  latestReleasedNodeVersion _prx = (Just NodeToNodeV_15, Just NodeToClientV_24)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo

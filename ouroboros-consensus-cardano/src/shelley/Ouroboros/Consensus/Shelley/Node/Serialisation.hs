@@ -4,6 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -200,10 +201,11 @@ data ShelleyEncoderException era proto
     ShelleyEncoderUnsupportedQuery
       (SomeBlockQuery (BlockQuery (ShelleyBlock proto era)))
       ShelleyNodeToClientVersion
-  deriving Show
+
+deriving instance ShelleyBasedEra era => Show (ShelleyEncoderException era proto)
 
 instance
-  (Typeable era, Typeable proto) =>
+  (ShelleyBasedEra era, Typeable era, Typeable proto) =>
   Exception (ShelleyEncoderException era proto)
 
 instance
