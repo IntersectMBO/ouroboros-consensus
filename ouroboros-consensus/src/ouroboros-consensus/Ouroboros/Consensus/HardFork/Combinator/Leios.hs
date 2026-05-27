@@ -3,7 +3,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Hard-fork dispatch for Leios voting.
@@ -20,6 +19,7 @@ import Data.SOP.Constraint (All)
 import Data.SOP.Functors (Flip (..))
 import Data.SOP.Strict (hcmap, hcollapse)
 import qualified Data.SOP.Telescope as Telescope
+import LeiosVoting (HasLeiosVoting (..))
 import Ouroboros.Consensus.HardFork.Combinator.Basics
   ( HardForkBlock
   , LedgerState (HardForkLedgerState)
@@ -28,7 +28,6 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
   ( Current (..)
   , HardForkState (..)
   )
-import LeiosVoting (HasLeiosVoting (..))
 
 -- | Dispatch to the active era of a hard-fork chain. Requires every era in
 -- the @xs@ list to have a 'HasLeiosVoting' instance.
