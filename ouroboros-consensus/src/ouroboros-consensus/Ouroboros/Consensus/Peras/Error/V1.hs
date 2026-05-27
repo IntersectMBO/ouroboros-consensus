@@ -18,6 +18,7 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( IsPerasError (..)
   , PerasVotingCommitteeError
+  , VoteWeight
   )
 import Ouroboros.Consensus.Committee.WFA (WFAError)
 import Ouroboros.Consensus.Peras.Types (PerasConversionError)
@@ -30,6 +31,8 @@ data PerasError blk
       (PerasVotingCommitteeError blk)
   | PerasVotingConversionError
       PerasConversionError
+  | PerasQuorumNotReachedError
+      VoteWeight
   | PerasTemporaryPublicKeyHackError
       String
 
@@ -48,3 +51,4 @@ deriving instance
 instance IsPerasError (PerasError blk) blk where
   injectVotingCommitteeError = PerasVotingCommitteeError
   injectConversionError = PerasVotingConversionError
+  injectQuorumNotReachedError = PerasQuorumNotReachedError

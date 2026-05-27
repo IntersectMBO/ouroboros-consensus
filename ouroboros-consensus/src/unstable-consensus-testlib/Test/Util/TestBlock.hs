@@ -717,8 +717,8 @@ instance
   type PerasCert (TestBlockWith ptype) = MockPerasCert (TestBlockWith ptype)
   type PerasError (TestBlockWith ptype) = VoidPerasError (TestBlockWith ptype)
 
-  validatePerasVote = validateMockPerasVote
-  validatePerasCert = validateMockPerasCert
+  verifyPerasVote = validateMockPerasVote
+  verifyPerasCert = validateMockPerasCert
   forgePerasCert = forgeMockPerasCert
 
   -- TODO: extract actual Peras certificates from blocks
