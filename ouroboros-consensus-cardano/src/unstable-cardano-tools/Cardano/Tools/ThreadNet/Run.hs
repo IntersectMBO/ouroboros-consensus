@@ -45,7 +45,8 @@ import Control.Tracer (nullTracer)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
 import Data.Functor.Identity (Identity (runIdentity))
-import Data.List (foldl', transpose, uncons)
+import Data.List (transpose, uncons)
+import qualified Data.List as List
 import Data.Map (Map)
 import qualified Data.Map as Map
 import qualified Data.Sequence.Strict as StrictSeq
@@ -383,7 +384,7 @@ processThreadNetConfig ThreadNetConfig{..} = do
   tnCoreNodes <- forM tncCoreNodes processCoreNodeConfig
   let tnTopology =
         NodeTopology $
-          foldl'
+          List.foldl'
             ( \acc up ->
                 let (l, r) = unUnorderedPair up
                  in Map.insertWith (Set.union) (CoreNodeId l) (Set.singleton (CoreNodeId r)) acc

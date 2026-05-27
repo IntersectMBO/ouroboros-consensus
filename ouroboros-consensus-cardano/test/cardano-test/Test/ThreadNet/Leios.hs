@@ -316,7 +316,10 @@ prop_leios seed =
                )
 
   propConsistentChains =
-    all (== head (Map.elems nodeChains)) nodeChains
+    ( case Map.elems nodeChains of
+        [] -> True
+        c : cs -> all (== c) cs
+    )
       & counterexample "nodes have different chains"
 
   -- NOTE: Leios demands minCertificationGap between announcement and

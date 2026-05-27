@@ -19,17 +19,31 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   , chainSyncServerForFollower
   ) where
 
+import qualified Codec.CBOR.Read as CBOR.Read
+import qualified Codec.CBOR.Write as CBOR.Write
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer
+import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoTypes (LeiosPoint)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Node.NetworkProtocolVersion
+  ( BlockNodeToClientVersion
+  )
+import Ouroboros.Consensus.Node.Serialisation
+  ( SerialiseNodeToClient
+  , decodeNodeToClient
+  , encodeNodeToClient
+  )
 import Ouroboros.Consensus.Storage.ChainDB.API
-  ( ChainDB
-  , Follower
+  ( BlockComponent (GetHeader, GetRawBlock)
+  , ChainDB
+  , Follower (..)
   , WithPoint (..)
-  , getSerialisedBlockWithPoint
+  , getPoint
   , getSerialisedHeaderWithPoint
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Enclose
   ( Enclosing
@@ -39,7 +53,7 @@ import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.Block
   ( ChainUpdate (..)
-  , Serialised
+  , Serialised (..)
   , Tip (..)
   )
 import Ouroboros.Network.Protocol.ChainSync.Server
@@ -55,9 +69,16 @@ chainSyncHeaderServerFollower chainDB chainType registry =
 chainSyncBlockServerFollower ::
   ChainDB m blk ->
   ResourceRegistry m ->
-  m (Follower m blk (WithPoint blk (Serialised blk)))
+  m (Follower m blk (WithPoint blk (Header blk, Serialised blk)))
 chainSyncBlockServerFollower chainDB registry =
-  ChainDB.newFollower chainDB registry ChainDB.SelectedChain getSerialisedBlockWithPoint
+  ChainDB.newFollower chainDB registry ChainDB.SelectedChain comp
+ where
+  comp :: BlockComponent blk (WithPoint blk (Header blk, Serialised blk))
+  comp =
+    (\h sb pt -> WithPoint (h, Serialised sb) pt)
+      <$> GetHeader
+      <*> GetRawBlock
+      <*> getPoint
 
 -- | Chain Sync Server for block headers for a given a 'ChainDB'.
 --
@@ -79,15 +100,82 @@ chainSyncHeadersServer tracer chainDB flr =
 --
 -- The local node-to-client protocol uses the chain sync mini-protocol with
 -- chains of full blocks (rather than a header \/ body split).
+--
+-- Dijkstra-era certifier blocks (whose body carries a 'LeiosCert' and an
+-- empty tx list on the wire) are resolved before being sent: the
+-- transactions of the certified EB are spliced in using the previously
+-- announced EB on the announcer's header. Pre-Dijkstra blocks are passed
+-- through unchanged.
+--
+-- The server keeps only the announcer's announcement point ('LeiosPoint')
+-- between blocks rather than the full announcer header. Since a valid cert
+-- block must follow a header carrying an announcement, an absent
+-- announcement is sufficient signal that no splice is needed — letting us
+-- skip the deserialise/re-encode roundtrip entirely in that case.
 chainSyncBlocksServer ::
   forall m blk.
-  (IOLike m, HasHeader (Header blk)) =>
+  ( IOLike m
+  , HasHeader (Header blk)
+  , ResolveLeiosBlock blk
+  , SerialiseNodeToClient blk blk
+  ) =>
   Tracer m (TraceChainSyncServerEvent blk) ->
   ChainDB m blk ->
-  Follower m blk (WithPoint blk (Serialised blk)) ->
+  CodecConfig blk ->
+  BlockNodeToClientVersion blk ->
+  LeiosDbConnection m ->
+  Follower m blk (WithPoint blk (Header blk, Serialised blk)) ->
   ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
-chainSyncBlocksServer tracer chainDB flr =
-  chainSyncServerForFollower tracer (ChainDB.getCurrentTip chainDB) flr
+chainSyncBlocksServer tracer chainDB ccfg version leiosDb flr = ChainSyncServer $ do
+  prevAnnVar <- newTVarIO Nothing
+  runChainSyncServer $
+    chainSyncServerForFollower tracer (ChainDB.getCurrentTip chainDB) $
+      wrapFollower prevAnnVar flr
+ where
+  wrapFollower ::
+    StrictTVar m (Maybe LeiosPoint) ->
+    Follower m blk (WithPoint blk (Header blk, Serialised blk)) ->
+    Follower m blk (WithPoint blk (Serialised blk))
+  wrapFollower prevAnnVar f =
+    Follower
+      { followerInstruction = followerInstruction f >>= traverse (traverse resolve)
+      , followerInstructionBlocking = followerInstructionBlocking f >>= traverse resolve
+      , followerForward = \pts -> do
+          changed <- followerForward f pts
+          case changed of
+            Just pt -> setPrev pt >> pure (Just pt)
+            Nothing -> pure Nothing
+      , followerClose = followerClose f
+      }
+   where
+    resolve ::
+      WithPoint blk (Header blk, Serialised blk) ->
+      m (WithPoint blk (Serialised blk))
+    resolve (WithPoint (hdr, sblk) pt) = do
+      mPrevAnn <- readTVarIO prevAnnVar
+      atomically $ writeTVar prevAnnVar (headerLeiosAnnouncement hdr)
+      sblk' <- case mPrevAnn of
+        Nothing -> pure sblk
+        Just prevAnn -> case decode sblk of
+          Left _ -> pure sblk
+          Right blk -> do
+            mRes <- resolveLeiosBlockHdr leiosDb prevAnn blk
+            pure $ maybe sblk encode mRes
+      pure (WithPoint sblk' pt)
+
+    setPrev :: Point blk -> m ()
+    setPrev pt = case pointToWithOriginRealPoint pt of
+      Origin -> atomically $ writeTVar prevAnnVar Nothing
+      NotOrigin rp -> do
+        mHdr <- ChainDB.getBlockComponent chainDB GetHeader rp
+        atomically $ writeTVar prevAnnVar (mHdr >>= headerLeiosAnnouncement)
+
+    decode :: Serialised blk -> Either CBOR.Read.DeserialiseFailure blk
+    decode (Serialised bs) =
+      snd <$> CBOR.Read.deserialiseFromBytes (decodeNodeToClient ccfg version) bs
+
+    encode :: blk -> Serialised blk
+    encode = Serialised . CBOR.Write.toLazyByteString . encodeNodeToClient ccfg version
 
 -- | A chain sync server.
 --

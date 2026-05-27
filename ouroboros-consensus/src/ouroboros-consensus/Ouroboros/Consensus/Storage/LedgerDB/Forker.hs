@@ -70,6 +70,7 @@ import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoTypes (LeiosPoint)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
@@ -558,6 +559,22 @@ class ResolveLeiosBlock blk where
     blk ->
     m blk
   resolveLeiosBlock _ _ blk = return blk
+
+  -- | Variant taking the previously-announced EB point (extracted from the
+  -- announcer's header via 'headerLeiosAnnouncement') instead of the full
+  -- 'ChainDepState'; used by the local ChainSync server. Returns 'Nothing'
+  -- when no resolution was needed (so the caller can reuse the original
+  -- 'Serialised blk' bytes without re-encoding).
+  resolveLeiosBlockHdr ::
+    Monad m => LeiosDbConnection m -> LeiosPoint -> blk -> m (Maybe blk)
+  resolveLeiosBlockHdr _ _ _ = return Nothing
+
+  -- | The EB point announced by this header, if any. 'Nothing' for headers
+  -- in eras that don't carry Leios announcements. Lets the chain-sync
+  -- server hold only the minimum needed to splice the next cert block, and
+  -- skip decoding entirely when the announcer didn't announce.
+  headerLeiosAnnouncement :: Header blk -> Maybe LeiosPoint
+  headerLeiosAnnouncement _ = Nothing
 
 {-------------------------------------------------------------------------------
   Validation
