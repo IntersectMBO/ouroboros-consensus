@@ -131,7 +131,7 @@ class
   where
   answerBlockQueryHFLookup ::
     All SingleEraBlock xs =>
-    Monad m =>
+    MonadSTM m =>
     Index xs x ->
     ExtLedgerCfg x ->
     BlockQuery x QFLookupTables result ->

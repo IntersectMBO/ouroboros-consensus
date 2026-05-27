@@ -49,6 +49,7 @@ import qualified Cardano.Ledger.Core as SL
 import Cardano.Ledger.Keys (KeyHash)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as LC
+import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
   ( RewardProvenance
   )
@@ -89,6 +90,7 @@ import Ouroboros.Consensus.Shelley.Eras (applyShelleyBasedTx)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Mempool (GenTx (ShelleyTx))
+import Ouroboros.Consensus.Util.IOLike (MonadSTM (atomically))
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
   ( ShelleyNodeToClientVersion (..)
@@ -384,7 +386,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     GenTx (ShelleyBlock proto era) ->
     BlockQuery
       (ShelleyBlock proto era)
-      QFNoTables
+      QFLookupTables
       (Either (SL.ApplyTxError era) ())
 
 {-# DEPRECATED GetLedgerPeerSnapshot' "Use GetLedgerPeerSnapshot instead" #-}
@@ -539,19 +541,6 @@ instance
           $ cfg
       GetDRepDelegations dreps ->
         SL.queryDRepDelegations st dreps
-      ValidateTx (ShelleyTx _ tx) ->
-        let tipSlot = case shelleyLedgerTip lst of
-              Origin -> SlotNo 0
-              NotOrigin tip -> shelleyTipSlotNo tip
-         in case runExcept $
-              applyShelleyBasedTx
-                globals
-                (SL.mkMempoolEnv st tipSlot)
-                (SL.mkMempoolState st)
-                DoNotIntervene
-                tx of
-              Left err -> Left err
-              Right _ -> Right ()
    where
     lcfg = configLedger $ getExtLedgerCfg cfg
     globals = shelleyLedgerGlobals lcfg
@@ -566,7 +555,10 @@ instance
     hst = headerState ext
     st = shelleyLedgerState lst
 
-  answerBlockQueryLookup = answerShelleyLookupQueries id id coerce
+  answerBlockQueryLookup cfg q forker =
+    answerShelleyLookupQueries id id coerce
+      (ledgerState <$> atomically (LedgerDB.roforkerGetLedgerState forker))
+      cfg q forker
 
   answerBlockQueryTraverse = answerShelleyTraversingQueries id coerce shelleyQFTraverseTablesPredicate
 
@@ -1204,22 +1196,29 @@ answerShelleyLookupQueries ::
   (TxOut (LedgerState blk) -> LC.TxOut era) ->
   -- | Eject TxIn
   (TxIn (LedgerState blk) -> SL.TxIn) ->
+  -- | Get the Shelley ledger state (only called for ValidateTx)
+  m (LedgerState (ShelleyBlock proto era) EmptyMK) ->
   ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFLookupTables result ->
   ReadOnlyForker' m blk ->
   m result
-answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
+answerShelleyLookupQueries injTables ejTxOut ejTxIn getShelleyLedgerSt cfg q forker =
   case q of
     GetUTxOByTxIn txins ->
       answerGetUtxOByTxIn txins
+    ValidateTx (ShelleyTx _ tx) ->
+      answerValidateTx tx
     GetCBOR q' ->
       -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
       -- as the @GetCBOR@ query already is about opportunistically assuming
       -- both client and server are running the same version; cf. the
       -- @GetCBOR@ Haddocks.
       mkSerialised (encodeShelleyResult maxBound q')
-        <$> answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q' forker
+        <$> answerShelleyLookupQueries injTables ejTxOut ejTxIn getShelleyLedgerSt cfg q' forker
  where
+  lcfg = configLedger $ getExtLedgerCfg cfg
+  globals = shelleyLedgerGlobals lcfg
+
   answerGetUtxOByTxIn ::
     Set.Set SL.TxIn ->
     m (SL.UTxO era)
@@ -1238,6 +1237,27 @@ answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
                   else Nothing
             )
             values
+
+  answerValidateTx ::
+    SL.Tx SL.TopTx era ->
+    m (Either (SL.ApplyTxError era) ())
+  answerValidateTx tx = do
+    shelleyLedgerSt <- getShelleyLedgerSt
+    let st = shelleyLedgerState shelleyLedgerSt
+        tipSlot = case shelleyLedgerTip shelleyLedgerSt of
+          Origin -> SlotNo 0
+          NotOrigin tip -> shelleyTipSlotNo tip
+    utxo <- answerGetUtxOByTxIn (tx ^. SL.bodyTxL . SL.allInputsTxBodyF)
+    let stWithUtxo = set (SL.nesEsL . SL.esLStateL . SL.lsUTxOStateL . SL.utxoL) utxo st
+    pure $ case runExcept $
+      applyShelleyBasedTx
+        globals
+        (SL.mkMempoolEnv stWithUtxo tipSlot)
+        (SL.mkMempoolState stWithUtxo)
+        DoNotIntervene
+        tx of
+      Left err -> Left err
+      Right _ -> Right ()
 
 shelleyQFTraverseTablesPredicate ::
   forall proto era proto' era' result.

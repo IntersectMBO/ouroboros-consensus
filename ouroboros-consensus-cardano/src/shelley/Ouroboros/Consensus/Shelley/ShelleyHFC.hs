@@ -77,6 +77,7 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.HardFork.History (Bound (boundSlot))
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -92,7 +93,9 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
+import Ouroboros.Consensus.Storage.LedgerDB (roforkerGetLedgerState)
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util.IOLike (MonadSTM (atomically))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
@@ -466,7 +469,13 @@ instance
   BlockSupportsHFLedgerQuery '[ShelleyBlock proto era]
   where
   answerBlockQueryHFLookup = \case
-    IZ -> answerShelleyLookupQueries (injectLedgerTables IZ) id (coerce . ejectCanonicalTxIn IZ)
+    IZ -> \cfg q forker ->
+      let getShelleyLedgerSt = do
+            ext <- atomically (roforkerGetLedgerState forker)
+            pure $ unFlip $ currentState $ Telescope.fromTZ $
+              getHardForkState $ hardForkLedgerStatePerEra $ ledgerState ext
+       in answerShelleyLookupQueries (injectLedgerTables IZ) id (coerce . ejectCanonicalTxIn IZ)
+            getShelleyLedgerSt cfg q forker
     IS idx -> case idx of {}
 
   answerBlockQueryHFTraverse = \case

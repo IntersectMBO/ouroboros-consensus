@@ -23,9 +23,12 @@ import Data.Coerce
 import Data.Functor.Product
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
+import Data.SOP.Functors (Flip (..))
 import Data.SOP.Index
 import Data.SOP.Strict
+import qualified Data.SOP.Telescope as Telescope
 import Data.Singletons
+import Data.Type.Equality ((:~:) (..))
 import NoThunks.Class
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Node ()
@@ -33,6 +36,7 @@ import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.CanHardFork
 import Ouroboros.Consensus.Cardano.Ledger
 import Ouroboros.Consensus.HardFork.Combinator
+import Ouroboros.Consensus.HardFork.Combinator.State.Types (currentState)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables
@@ -42,6 +46,7 @@ import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util.IOLike (MonadSTM (atomically))
 
 -- | Just to have the @x@ as the last type variable
 newtype FlipBlockQuery footprint result x
@@ -95,11 +100,13 @@ shelleyCardanoFilter q = eliminateCardanoTxOut (\_ -> shelleyQFTraverseTablesPre
 instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras c) where
   answerBlockQueryHFLookup =
     answerCardanoQueryHF
-      ( \idx ->
+      ( \idx cfg q forker ->
           answerShelleyLookupQueries
             (injectLedgerTables idx)
             (ejectHardForkTxOut idx)
             (coerce . ejectCanonicalTxIn idx)
+            (getPerEraShelleyLedgerState idx forker)
+            cfg q forker
       )
   answerBlockQueryHFTraverse =
     answerCardanoQueryHF
@@ -128,3 +135,24 @@ byronCardanoFilter ::
   TxOut (LedgerState (HardForkBlock (CardanoEras c))) ->
   Bool
 byronCardanoFilter = \case {}
+
+getPerEraShelleyLedgerState ::
+  forall blk xs m.
+  (MonadSTM m, All SingleEraBlock xs) =>
+  Index xs blk ->
+  ReadOnlyForker' m (HardForkBlock xs) ->
+  m (LedgerState blk EmptyMK)
+getPerEraShelleyLedgerState idx forker = do
+  ext <- atomically (roforkerGetLedgerState forker)
+  let tipNS = Telescope.tip $ getHardForkState $ hardForkLedgerStatePerEra $ ledgerState ext
+  pure $ case projectNS idx tipNS of
+    Just cur -> unFlip (currentState cur)
+    Nothing -> error "getPerEraShelleyLedgerState: era mismatch"
+
+projectNS :: Index xs x -> NS f xs -> Maybe (f x)
+projectNS idx ns = go (getIndex idx) ns
+  where
+    go :: NS ((:~:) x) ys -> NS f ys -> Maybe (f x)
+    go (Z Refl) (Z fx) = Just fx
+    go (S i)    (S s)  = go i s
+    go _        _      = Nothing

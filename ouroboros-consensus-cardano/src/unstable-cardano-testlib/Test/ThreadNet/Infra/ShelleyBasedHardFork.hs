@@ -60,9 +60,11 @@ import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.Proxy
 import Data.SOP.BasicFunctors
+import Data.SOP.Constraint (All)
 import Data.SOP.Functors (Flip (..))
 import qualified Data.SOP.InPairs as InPairs
-import Data.SOP.Index (Index (..), hcimap)
+import Data.SOP.Index (Index (..), getIndex, hcimap)
+import Data.Type.Equality ((:~:) (..))
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
@@ -101,6 +103,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (eitherToMaybe)
+import Ouroboros.Consensus.Util.IOLike (MonadSTM (atomically))
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Test.ThreadNet.TxGen
 import Test.ThreadNet.TxGen.Shelley ()
@@ -360,11 +363,13 @@ instance
   where
   answerBlockQueryHFLookup =
     answerShelleyBasedQueryHF
-      ( \idx ->
+      ( \idx cfg q forker ->
           answerShelleyLookupQueries
             (injectLedgerTables idx)
             (ejectHardForkTxOutDefault idx)
             (coerce . ejectCanonicalTxIn idx)
+            (getPerEraShelleyLedgerState idx forker)
+            cfg q forker
       )
 
   answerBlockQueryHFTraverse =
@@ -383,6 +388,27 @@ instance
     Z (WrapTxOut x) -> shelleyQFTraverseTablesPredicate q x
     S (Z (WrapTxOut x)) -> shelleyQFTraverseTablesPredicate q x
   queryLedgerGetTraversingFilter (IS (IS idx)) _q = case idx of {}
+
+getPerEraShelleyLedgerState ::
+  forall blk xs m.
+  (MonadSTM m, All SingleEraBlock xs) =>
+  Index xs blk ->
+  ReadOnlyForker' m (HardForkBlock xs) ->
+  m (LedgerState blk EmptyMK)
+getPerEraShelleyLedgerState idx forker = do
+  ext <- atomically (roforkerGetLedgerState forker)
+  let tipNS = Telescope.tip $ getHardForkState $ hardForkLedgerStatePerEra $ ledgerState ext
+  pure $ case projectNS idx tipNS of
+    Just cur -> unFlip (HFC.currentState cur)
+    Nothing -> error "getPerEraShelleyLedgerState: era mismatch"
+
+projectNS :: Index xs x -> NS f xs -> Maybe (f x)
+projectNS idx = go (getIndex idx)
+  where
+    go :: NS ((:~:) x) ys -> NS f ys -> Maybe (f x)
+    go (Z Refl) (Z fx) = Just fx
+    go (S i)    (S s)  = go i s
+    go _        _      = Nothing
 
 {-------------------------------------------------------------------------------
   Protocol info
