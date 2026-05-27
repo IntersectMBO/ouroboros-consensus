@@ -42,6 +42,7 @@ import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
+import Data.List (intercalate)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Sequence (Seq)
@@ -565,7 +566,7 @@ data TraceLeiosKernel where
   TraceLeiosBlockTxsAcquired :: LeiosPoint -> TraceLeiosKernel
   TraceLeiosBlockForged ::
     (Show m, TxMeasureMetrics m) =>
-    {slot :: SlotNo, eb :: LeiosEb, ebMeasure :: m, mempoolRestMeasure :: m} ->
+    {slot :: SlotNo, eb :: LeiosEb, ebMeasure :: m} ->
     TraceLeiosKernel
   TraceLeiosBlockStored :: {slot :: SlotNo, eb :: LeiosEb} -> TraceLeiosKernel
   TraceLeiosDbException :: LeiosDbException -> TraceLeiosKernel
@@ -576,17 +577,22 @@ deriving instance Show TraceLeiosKernel
 
 -- * PTrace - Process trace utilities.
 
+type CallId = Word64
+type FunctionName = String
+type ThreadName = String
+type CallCtx = [(CallId, FunctionName)]
+
 -- | Process denotes a Function Call within a Thread with some Argument of type `a` and a Result of type `r`.
 -- It consists of two distinct Events, Start and End.
 data PTrace a r = PTrace
-  { ptCall :: Word64
+  { ptCall :: CallId
   -- ^ Call identifier, unique amongst all calls
-  , ptParentCall :: Maybe Word64
+  , ptAncestors :: [(CallId, String)]
   -- ^ Parent Call or Nothing if no parents
-  , ptFunction :: String
-  -- ^ Function identifier, something like "module.name:function_name"
-  , ptThread :: String
-  -- ^ Thread identifier, something like a OS "thread id" or "forge"
+  , ptFunction :: FunctionName
+  -- ^ Function name, something like "module.name:function_name"
+  , ptThread :: ThreadName
+  -- ^ Thread name, something like a OS "thread id" or "forge"
   , ptArgument :: a
   -- ^ A Function Argument that distinguishes the Call meaningfully
   , ptEvent :: PEvent r
@@ -615,34 +621,43 @@ ptToObject pt =
    in
     mconcat $
       [ "kind" .= Aeson.String "Process"
-      , "call" .= ptCall pt
-      , "parent" .= ptParentCall pt
+      , "call_id" .= ptCall pt
       , "function" .= ptFunction pt
       , "thread" .= ptThread pt
       , "argument" .= (Aeson.toJSON . ptArgument @a $ pt)
       ]
+        <> [ "call_stack" .= (intercalate " -> " (reverse $ ptFunction pt : fmap snd (ptAncestors pt)))
+           , "call_id_stack"
+               .= (intercalate " -> " (reverse $ show (ptCall pt) : fmap (show . fst) (ptAncestors pt)))
+           ]
         <> eventObject
 
 ptrace ::
   forall m a r r'.
   (MonadMonotonicTime m, Show a, Show r', Aeson.ToJSON a, Aeson.ToJSON r') =>
   Tracer m TraceLeiosKernel ->
-  Maybe Word64 ->
-  String ->
-  String ->
+  -- | Parent context
+  CallCtx ->
+  -- | Thread name
+  ThreadName ->
+  -- | Function name
+  FunctionName ->
+  -- | Function argument
   a ->
+  -- | Map result into something JSONable
   (r -> r') ->
-  (Word64 -> m r) ->
+  -- | Continuation with the new call context (to be passed to children)
+  (CallCtx -> m r) ->
   m r
-ptrace tracer par t fn arg resFn action = do
+ptrace tracer pctx t fn arg resFn action = do
   callId <- getMonotonicTimeNSec -- NOTE(bladyjoker): Workaround for missing MonadUnique
-  traceWith tracer (TraceProcess @a @r' (PTrace callId par fn t arg PStart))
+  traceWith tracer (TraceProcess @a @r' (PTrace callId pctx fn t arg PStart))
   before <- getMonotonicTime
-  res <- action callId
+  res <- action ((callId, fn) : pctx)
   after <- getMonotonicTime
   traceWith
     tracer
-    (TraceProcess @a @r' (PTrace callId par fn t arg (PEnd (resFn res) (after `diffTime` before))))
+    (TraceProcess @a @r' (PTrace callId pctx fn t arg (PEnd (resFn res) (after `diffTime` before))))
   pure res
 
 traceLeiosKernelToObject :: TraceLeiosKernel -> Aeson.Object
@@ -670,7 +685,7 @@ traceLeiosKernelToObject = \case
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
       ]
-  TraceLeiosBlockForged{slot, eb, ebMeasure, mempoolRestMeasure} ->
+  TraceLeiosBlockForged{slot, eb, ebMeasure} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosBlockForged"
       , "slot" .= slot
@@ -678,7 +693,6 @@ traceLeiosKernelToObject = \case
       , "numTxs" .= V.length (leiosEbTxs eb)
       , "ebSize" .= leiosEbBytesSize eb
       , "closureSize" .= unByteSize32 (txMeasureMetricTxSizeBytes ebMeasure)
-      , "mempoolRestSize" .= unByteSize32 (txMeasureMetricTxSizeBytes mempoolRestMeasure)
       ]
   TraceLeiosBlockStored{slot, eb} ->
     mconcat

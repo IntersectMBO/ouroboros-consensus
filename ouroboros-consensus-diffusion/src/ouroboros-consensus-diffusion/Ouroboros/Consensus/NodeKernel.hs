@@ -602,9 +602,8 @@ forkBlockForging IS{..} blockForging =
     knownSlotWatcher btime $ \currentSlot ->
       withRegistry $ \rr -> do
         leiosConn <- allocate_ rr (LeiosDb.open leiosDB) LeiosDb.close
-        withEarlyExit_ $
-          ptrace Nothing "onSlot" currentSlot (const ()) $
-            go rr currentSlot leiosConn
+        ptrace' [] "forge" currentSlot (const ()) $ \forgeCtx ->
+          withEarlyExit_ (go rr currentSlot leiosConn forgeCtx)
  where
   threadLabel :: String
   threadLabel =
@@ -612,15 +611,25 @@ forkBlockForging IS{..} blockForging =
 
   ptrace ::
     (Show a, Show r', Aeson.ToJSON a, Aeson.ToJSON r') =>
-    Maybe Word64 ->
+    Leios.CallCtx ->
     String ->
     a ->
     (r -> r') ->
-    (Word64 -> WithEarlyExit m r) ->
+    (Leios.CallCtx -> WithEarlyExit m r) ->
     WithEarlyExit m r
-  ptrace par = Leios.ptrace (Tracer (lift . traceWith (leiosKernelTracer tracers))) par threadLabel
+  ptrace pctx = Leios.ptrace (Tracer (lift . traceWith (leiosKernelTracer tracers))) pctx threadLabel
 
-  go :: ResourceRegistry m -> SlotNo -> LeiosDbConnection m -> Word64 -> WithEarlyExit m ()
+  ptrace' ::
+    (Show a, Show r', Aeson.ToJSON a, Aeson.ToJSON r') =>
+    Leios.CallCtx ->
+    String ->
+    a ->
+    (r -> r') ->
+    (Leios.CallCtx -> m r) ->
+    m r
+  ptrace' pctx = Leios.ptrace (Tracer (traceWith (leiosKernelTracer tracers))) pctx threadLabel
+
+  go :: ResourceRegistry m -> SlotNo -> LeiosDbConnection m -> Leios.CallCtx -> WithEarlyExit m ()
   go reg currentSlot leiosConn forgeCall = do
     trace $ TraceStartLeadershipCheck currentSlot
 
