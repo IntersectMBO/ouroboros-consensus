@@ -115,7 +115,7 @@ makePerasVotePoolWriterFromVoteDB systemTime getVoteWeightDistrSTM perasVoteDB =
           -- TODO: in the future we won't need just the vote weight distribution for
           -- validating votes, but also the whole committee selection context
           -- (containing vote weights of committee members = voters)
-          (\vote -> getVoteWeightDistrSTM >>= \sd -> pure $ validatePerasVote mkPerasParams sd vote)
+          (\vote -> getVoteWeightDistrSTM >>= \sd -> pure $ verifyPerasVote mkPerasParams sd vote)
           (void . join . atomically . PerasVoteDB.addVote perasVoteDB)
           votes
     , opwHasObject = do
@@ -145,7 +145,7 @@ makePerasVotePoolWriterFromChainDB systemTime getVoteWeightDistrSTM chainDB =
           -- TODO: in the future we won't need just the vote weight distribution for
           -- validating votes, but also the whole committee selection context
           -- (containing vote weights of committee members = voters)
-          (\vote -> getVoteWeightDistrSTM >>= \sd -> pure $ validatePerasVote mkPerasParams sd vote)
+          (\vote -> getVoteWeightDistrSTM >>= \sd -> pure $ verifyPerasVote mkPerasParams sd vote)
           -- We do not want to block the writer thread on waiting for ChainSel
           -- side-effects to complete, so we use the async version of adding
           -- votes to the ChainDB and ignore the returned promise.

@@ -138,7 +138,7 @@ instance
         -- sufficient for our needs.
         }
 
--- | Helper to write 'BlockSupportsPeras.validatePerasVote'.
+-- | Helper to write 'BlockSupportsPeras.verifyPerasVote'.
 --
 -- WARNING: we do not perform any validation whatsoever for mocked votes.
 validateMockPerasVote ::

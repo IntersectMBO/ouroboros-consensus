@@ -63,10 +63,10 @@ instance BlockSupportsPeras RealBlock where
   type PerasError RealBlock = V1.PerasError RealBlock
 
   -- TODO: uncomment as soon as we add this method to 'BlockSupportsPeras'
-  -- forgePerasVoteIfEligible = implPerasForgeVoteIfEligible
+  -- forgePerasVoteIfEligible = implForgePerasVoteIfEligible
   forgePerasCert = undefined
-  validatePerasVote = undefined
-  validatePerasCert = undefined
+  verifyPerasVote = undefined
+  verifyPerasCert = undefined
 
 instance PraosStateSupportsPerasVoting RealBlock where
   praosStatePerasVotingCommitteeInput _ perasParams tickedPraosState = do
