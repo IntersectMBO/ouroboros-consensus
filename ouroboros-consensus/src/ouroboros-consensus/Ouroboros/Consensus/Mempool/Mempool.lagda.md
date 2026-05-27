@@ -41,7 +41,7 @@ So:
 
 The conceptual state (the `InternalState` record, `Impl/Common.hs:104`) is:
 
-```
+```text
 (L, slot, tip, [t₁, t₂, …, tₙ], lastTicket, capacity)
 ```
 
@@ -356,12 +356,53 @@ The model omits, deliberately:
 ```agda
 module Mempool where
 
-open import Data.Bool       using (Bool; true; false; if_then_else_; _∧_)
-open import Data.List       using (List; []; _∷_; _++_; foldl; filter; map)
-open import Data.Maybe      using (Maybe; just; nothing)
-open import Data.Nat        using (ℕ; zero; suc; _≤_; _+_)
-open import Data.Product    using (_×_; _,_; proj₁; proj₂)
-open import Relation.Binary.PropositionalEquality using (_≡_; refl)
+open import Agda.Primitive        using (Level; lzero; lsuc)
+open import Agda.Builtin.Bool     using (Bool; true; false)
+open import Agda.Builtin.List     using (List; []; _∷_)
+open import Agda.Builtin.Maybe    using (Maybe; just; nothing)
+open import Agda.Builtin.Nat
+  using (zero; suc; _+_) renaming (Nat to ℕ)
+open import Agda.Builtin.Equality using (_≡_; refl)
+
+-- Helpers absent from Agda.Builtin; defined here for the sketch.
+_∧_ : Bool → Bool → Bool
+false ∧ _ = false
+true  ∧ b = b
+
+if_then_else_ : {A : Set} → Bool → A → A → A
+if true  then t else _ = t
+if false then _ else f = f
+
+infixr 4 _++_
+_++_ : {A : Set} → List A → List A → List A
+[]       ++ ys = ys
+(x ∷ xs) ++ ys = x ∷ (xs ++ ys)
+
+map : {A B : Set} → (A → B) → List A → List B
+map _ []       = []
+map f (x ∷ xs) = f x ∷ map f xs
+
+filter : {A : Set} → (A → Bool) → List A → List A
+filter _ []       = []
+filter p (x ∷ xs) = if p x then x ∷ filter p xs else filter p xs
+
+foldl : {A B : Set} → (B → A → B) → B → List A → B
+foldl _ acc []       = acc
+foldl f acc (x ∷ xs) = foldl f (f acc x) xs
+
+data _≤_ : ℕ → ℕ → Set where
+  z≤n : {n : ℕ}           → zero  ≤ n
+  s≤s : {m n : ℕ} → m ≤ n → suc m ≤ suc n
+
+record _×_ (A B : Set) : Set where
+  constructor _,_
+  field proj₁ : A
+        proj₂ : B
+open _×_
+infixr 4 _,_
+
+case_of_ : {ℓ₁ ℓ₂ : Level} {A : Set ℓ₁} {B : Set ℓ₂} → A → (A → B) → B
+case x of f = f x
 
 ------------------------------------------------------------------------
 -- 1. Postulated types and the validation oracle
@@ -564,12 +605,14 @@ record Snapshot : Set where
 getSnapshot : Mempool → Snapshot
 getSnapshot m = mkSnap (txs m) (tip m) (ledger m)
 
+postulate _≤?_ : ℕ → ℕ → Bool
+
+_∘_ : {A B C : Set} → (B → C) → (A → B) → A → C
+(f ∘ g) x = f (g x)
+
 -- snapshotTxsAfter from Impl/Common.hs:518 — txs strictly after a ticket.
 txsAfter : TicketNo → Snapshot → TxSeq
-txsAfter n = filter (λ tk → suc n ≤? ticket tk) ∘ Snapshot.snapTxs
-  where
-    postulate _≤?_ : ℕ → ℕ → Bool
-              ∘    : ∀ {A B C : Set} → (B → C) → (A → B) → A → C
+txsAfter n s = filter (λ tk → suc n ≤? ticket tk) (Snapshot.snapTxs s)
 
 -- getSnapshotFor (Query.hs:14) is a *read-only* operation: it returns a
 -- snapshot for a different ledger state without mutating the mempool's
@@ -635,6 +678,373 @@ postulate
   3. State and prove a "subsequence" property: every operation's
      output `txs` is a subsequence of its input plus possibly one new
      element at the end (for `addTx`).
+
+## 12. Proposed extension: two-lane mempool with EB/RB block types
+
+**Status:** sketch — not type-checked. Extends §11; reuses `applyAll`,
+`revalidate`, `TxSeq`, `TicketNo`, `Measure`, `fits`, `inSet` from there.
+
+### Design summary
+
+Two block types are introduced:
+
+- **EB (Endorsement Block):** a block that is circulated peer-to-peer
+  like a transaction before it reaches the chain. It carries a list of
+  transactions that have *already been validated* and so need only
+  re-application (no script re-execution) to update the ledger state.
+  At most one EB per slot is valid; this constraint is enforced by
+  checks in the EB itself and is not rechecked here. An EB only reaches
+  the chain by being referenced inside an RB.
+
+- **RB (Regular Block):** the on-chain block. Its payload is either an
+  `EBId` (reference to a previously-circulated EB) or a list of
+  priority-lane transactions. The referenced EB must have been built on
+  the same chain tip as the RB.
+
+Two transaction lanes replace the single sequence:
+
+- **Priority lane:** validated against `ebLedger` (chain tip + EB
+  re-application). Fills RBs and the priority portion of EBs. Admission
+  stops when the lane reaches one RB's worth of transactions (by byte
+  size or either ExUnit dimension).
+
+- **Regular lane:** validated against `fastLedger` (chain tip + EB +
+  priority txs). Fills the remainder of EBs after priority txs.
+  When the regular lane is full, incoming regular txs are discarded
+  but downloading continues; the node keeps accepting txs until the
+  priority lane is full.
+
+Capacity rules:
+
+- **RB / priority-lane limit:** one block's `TxMeasure` as given by the
+  protocol parameters (byte size, script ExUnits memory, script ExUnits
+  CPU, reference-script bytes).
+- **EB limit:** no protocol-parameter-based limit for now.
+  The priority-lane cap (one RB's worth) is used as a provisional
+  bound when filling an EB. **TODO:** this design choice is provisional;
+  EBs may be permitted to be larger in future.
+- **Regular-lane limit:** separate capacity, policy TBD (e.g. 2× block).
+
+```agda
+module Mempool2Lane where
+
+-- All types, postulates, and helpers from §11 (module Mempool, same file)
+-- are in scope without import: Mempool2Lane is nested inside Mempool by
+-- Agda's layout rules, so the parent scope is directly inherited.
+
+-- Sum type used only in §12 (return type of forgeBlock2).
+data _⊎_ (A B : Set) : Set where
+  inl : A → A ⊎ B
+  inr : B → A ⊎ B
+
+------------------------------------------------------------------------
+-- 1. New types
+------------------------------------------------------------------------
+
+data Lane : Set where
+  Priority : Lane
+  Regular  : Lane
+
+postulate
+  EBId      : Set
+  _≟EBId_   : EBId → EBId → Bool
+  _≟Tip_    : TipPoint → TipPoint → Bool
+
+record EB : Set where
+  constructor mkEB
+  field
+    ebId   : EBId
+    ebTip  : TipPoint    -- must equal Mempool2.tip when the EB is accepted
+    ebTxs  : List Tx     -- previously validated; re-apply only
+
+data RBContent : Set where
+  RBFromEB   : EBId    → RBContent   -- on-chain result: apply the named EB
+  RBFromPrio : List Tx → RBContent   -- on-chain result: apply this tx list
+
+record RB : Set where
+  constructor mkRB
+  field
+    rbTip     : TipPoint
+    rbContent : RBContent
+
+-- Re-application: skips script execution (txs were already validated).
+-- Only safe for txs taken from a previously accepted EB.
+postulate reapplyAll : LedgerState → List Tx → Maybe LedgerState
+
+------------------------------------------------------------------------
+-- 2. Capacity postulates
+------------------------------------------------------------------------
+
+postulate
+  -- 1 × blockCapacityTxMeasure from the protocol parameters.
+  -- Used as the admission limit for the priority lane (and hence for
+  -- RBs and, provisionally, for EBs — see TODO above).
+  rbCapacityAt  : TipPoint → Capacity
+
+  -- Separate capacity for the regular lane; policy TBD.
+  regCapacityAt : TipPoint → Capacity
+
+------------------------------------------------------------------------
+-- 3. Two-lane mempool state
+------------------------------------------------------------------------
+
+-- Mirrors a two-lane InternalState.  The three cached ledger states
+-- form a strict stack:
+--
+--   ledgerAt(tip)
+--      │  reapplyAll (ebTxs currentEB)
+--      ▼
+--   ebLedger          ← base for priority-lane validation
+--      │  applyAll priorityTxs
+--      ▼
+--   fastLedger        ← base for regular-lane validation
+--      │  applyAll regularTxs
+--      ▼
+--   ledger
+--
+-- When currentEB = nothing, ebLedger = ledgerAt(tip).
+
+record Mempool2 : Set where
+  constructor mkMempool2
+  field
+    tip            : TipPoint
+    -- EB layer
+    currentEB      : Maybe EB
+    ebLedger       : LedgerState
+    -- Priority (fast) lane
+    priorityTxs    : TxSeq
+    fastLedger     : LedgerState
+    lastPrioTicket : TicketNo
+    prioCap        : Capacity        -- = rbCapacityAt tip
+    -- Regular lane
+    regularTxs     : TxSeq
+    ledger         : LedgerState
+    lastRegTicket  : TicketNo
+    regCap         : Capacity        -- = regCapacityAt tip
+open Mempool2
+
+emptyAt2 : TipPoint → Mempool2
+emptyAt2 p =
+  mkMempool2 p nothing (ledgerAt p)
+             [] (ledgerAt p) 0 (rbCapacityAt  p)
+             [] (ledgerAt p) 0 (regCapacityAt p)
+
+------------------------------------------------------------------------
+-- 4. Three-layer sequential validity
+------------------------------------------------------------------------
+
+-- Layer 1: EB is consistent with the chain tip.
+EBLayerValid : Mempool2 → Set
+EBLayerValid m with currentEB m
+... | nothing  = ebLedger m ≡ ledgerAt (tip m)
+... | just eb  = reapplyAll (ledgerAt (tip m)) (EB.ebTxs eb)
+                   ≡ just (ebLedger m)
+
+-- Layer 2: priority lane is consistent with the EB post-state.
+PriorityLayerValid : Mempool2 → Set
+PriorityLayerValid m =
+  applyAll (ebLedger m) (map tx (priorityTxs m)) ≡ just (fastLedger m)
+
+-- Layer 3: regular lane is consistent with the fast-lane post-state.
+RegularLayerValid : Mempool2 → Set
+RegularLayerValid m =
+  applyAll (fastLedger m) (map tx (regularTxs m)) ≡ just (ledger m)
+
+-- NB: RegularLayerValid depends on PriorityLayerValid through fastLedger.
+-- Removing a priority tx invalidates both Layer 2 and Layer 3.
+
+------------------------------------------------------------------------
+-- 5. Size helpers
+------------------------------------------------------------------------
+
+currentPrioSize : Mempool2 → Measure
+currentPrioSize m = foldl addSize zeroSize (map msr (priorityTxs m))
+
+currentRegSize : Mempool2 → Measure
+currentRegSize m = foldl addSize zeroSize (map msr (regularTxs m))
+
+fitsWith2 : Capacity → Measure → Measure → Bool
+fitsWith2 c cur new = fits (addSize cur new) c
+
+------------------------------------------------------------------------
+-- 6. addTx — lane-aware admission
+------------------------------------------------------------------------
+
+-- Priority lane: validated against ebLedger.
+-- Blocked when the lane has reached one RB's worth (prioCap).
+-- Caller should stop submitting priority txs on Blocked.
+--
+-- Regular lane: validated against fastLedger.
+-- Blocked when regCap is reached; caller discards the tx and continues
+-- downloading — the node keeps going until the priority lane is full.
+
+data AddResult2 : Set where
+  Added    : Mempool2 → AddResult2
+  Rejected : Mempool2 → AddResult2   -- invalid in this ledger state
+  Blocked  : Mempool2 → AddResult2   -- lane full; mempool unchanged
+
+addTx2 : Lane → Tx → Mempool2 → AddResult2
+
+addTx2 Priority t m
+  with fitsWith2 (prioCap m) (currentPrioSize m) (measure t)
+... | false = Blocked m
+... | true  with applyTx (ebLedger m) t
+...   | nothing = Rejected m
+...   | just ℓ′ =
+        let n′ = suc (lastPrioTicket m)
+            tk = mkTicket t n′ (measure t)
+        in Added (mkMempool2
+             (tip m) (currentEB m) (ebLedger m)
+             (priorityTxs m ++ tk ∷ []) ℓ′ n′ (prioCap m)
+             (regularTxs m) (ledger m) (lastRegTicket m) (regCap m))
+
+addTx2 Regular t m
+  with fitsWith2 (regCap m) (currentRegSize m) (measure t)
+... | false = Blocked m
+... | true  with applyTx (fastLedger m) t
+...   | nothing = Rejected m
+...   | just ℓ′ =
+        let n′ = suc (lastRegTicket m)
+            tk = mkTicket t n′ (measure t)
+        in Added (mkMempool2
+             (tip m) (currentEB m) (ebLedger m)
+             (priorityTxs m) (fastLedger m) (lastPrioTicket m) (prioCap m)
+             (regularTxs m ++ tk ∷ []) ℓ′ n′ (regCap m))
+
+------------------------------------------------------------------------
+-- 7. addEB — receive an EB from a peer
+------------------------------------------------------------------------
+
+-- An EB arrives like a transaction: downloaded from peers, not yet
+-- on-chain.  Its transactions are re-applied (not fully validated) to
+-- derive the new ebLedger.  Both lanes are then revalidated against the
+-- new stack.  A stale EB (wrong tip) or an internally inconsistent EB
+-- (reapplyAll fails) is silently discarded.
+
+addEB : EB → Mempool2 → Maybe Mempool2
+addEB eb m with EB.ebTip eb ≟Tip tip m
+... | false = nothing    -- stale: EB targets a different tip
+... | true  with reapplyAll (ledgerAt (tip m)) (EB.ebTxs eb)
+...   | nothing = nothing    -- EB's tx list fails re-application; discard
+...   | just ℓ_eb =
+          let ℓ_fast , prio′ = revalidate ℓ_eb   (priorityTxs m)
+              ℓ_reg  , reg′  = revalidate ℓ_fast (regularTxs m)
+          in just (mkMempool2
+               (tip m) (just eb) ℓ_eb
+               prio′ ℓ_fast (lastPrioTicket m) (prioCap m)
+               reg′  ℓ_reg  (lastRegTicket m)  (regCap m))
+
+------------------------------------------------------------------------
+-- 8. syncWithLedger — tip change discards the current EB
+------------------------------------------------------------------------
+
+-- When the chain tip advances, the EB (which was built for the old tip)
+-- is no longer valid and is discarded.  Both lanes are revalidated from
+-- scratch against the new bare tip ledger state.
+
+syncWithLedger2 : TipPoint → Mempool2 → Mempool2
+syncWithLedger2 newTip m =
+  let s₀             = ledgerAt newTip
+      ℓ_fast , prio′ = revalidate s₀      (priorityTxs m)
+      ℓ_reg  , reg′  = revalidate ℓ_fast (regularTxs m)
+  in mkMempool2
+       newTip nothing s₀
+       prio′ ℓ_fast (lastPrioTicket m) (rbCapacityAt  newTip)
+       reg′  ℓ_reg  (lastRegTicket m)  (regCapacityAt newTip)
+
+------------------------------------------------------------------------
+-- 9. removeTxsEvenIfValid — lane-aware
+------------------------------------------------------------------------
+
+-- Removing a priority tx changes fastLedger, so the regular lane must
+-- also be revalidated (cascading).  Removing a regular tx only affects
+-- the regular lane; the priority lane and fastLedger are unchanged.
+
+removePrioTxs : List TxId → Mempool2 → Mempool2
+removePrioTxs ids m =
+  let kept0          = filter (λ tk → if inSet ids (txId (tx tk))
+                                      then false else true)
+                              (priorityTxs m)
+      ℓ_fast , prio′ = revalidate (ebLedger m)  kept0
+      ℓ_reg  , reg′  = revalidate ℓ_fast        (regularTxs m)
+  in mkMempool2
+       (tip m) (currentEB m) (ebLedger m)
+       prio′ ℓ_fast (lastPrioTicket m) (prioCap m)
+       reg′  ℓ_reg  (lastRegTicket m)  (regCap m)
+
+removeRegTxs : List TxId → Mempool2 → Mempool2
+removeRegTxs ids m =
+  let kept0         = filter (λ tk → if inSet ids (txId (tx tk))
+                                     then false else true)
+                             (regularTxs m)
+      ℓ_reg , reg′  = revalidate (fastLedger m) kept0
+  in mkMempool2
+       (tip m) (currentEB m) (ebLedger m)
+       (priorityTxs m) (fastLedger m) (lastPrioTicket m) (prioCap m)
+       reg′ ℓ_reg (lastRegTicket m) (regCap m)
+
+------------------------------------------------------------------------
+-- 10. Block forging
+------------------------------------------------------------------------
+
+-- Unspecified policy deciding whether to produce an EB or an RB.
+postulate shouldForgeEB : Mempool2 → Bool
+
+-- EB content: priority txs first, then regular txs to fill remaining
+-- space.  The combined list must fit within prioCap (provisional limit;
+-- see TODO in §12 prose).
+-- TODO: no protocol-parameter-based size limit on EBs for now.
+postulate ebSnapshot : Mempool2 → List Tx
+
+-- Split a TxSeq at a capacity bound (mirrors snapshotTake from §11).
+postulate splitAtCap : Capacity → TxSeq → TxSeq × TxSeq
+
+-- RB content when not referencing an EB: priority txs up to prioCap.
+rbSnapshot : Mempool2 → RBContent
+rbSnapshot m =
+  RBFromPrio (map tx (proj₁ (splitAtCap (prioCap m) (priorityTxs m))))
+
+-- When referencing an existing EB the caller supplies the EBId directly;
+-- we model only the tx-list path here.
+postulate freshEBId : EBId
+
+forgeBlock2 : Mempool2 → EB ⊎ RB
+forgeBlock2 m =
+  if shouldForgeEB m
+  then inl (mkEB freshEBId (tip m) (ebSnapshot m))
+  else inr (mkRB (tip m) (rbSnapshot m))
+```
+
+### Revalidation cascade
+
+| Event | EB layer | Priority lane | Regular lane |
+|---|---|---|---|
+| `addEB` (new EB accepted) | reapply | revalidate | revalidate |
+| priority tx added | — | extend | — |
+| priority tx removed | — | revalidate | revalidate |
+| regular tx added | — | — | extend |
+| regular tx removed | — | — | revalidate |
+| `syncWithLedger` (tip change) | discard | revalidate | revalidate |
+
+### Notes on this sketch
+
+- **`reapplyAll` vs `applyAll`:** EB txs use `reapplyAll` (cheaper,
+  no script re-execution) because they were already fully validated
+  when the EB was created. Newly submitted txs continue to use `applyTx`
+  (full validation) on first admission.
+- **Independent ticket counters:** `lastPrioTicket` and `lastRegTicket`
+  are separate; a priority tx and a regular tx can both hold ticket
+  number 1. Any snapshot API (e.g. `snapshotTxsAfter`) must therefore
+  take a `Lane` argument.
+- **Regular-lane Blocked vs Priority-lane Blocked:** both return
+  `Blocked`, but the caller's reaction differs: a `Blocked` on the
+  priority lane means *stop downloading*; a `Blocked` on the regular
+  lane means *discard this tx and try the next one* — keep going until
+  the priority lane is full.
+- **EB capacity TODO:** the provisional use of `prioCap` (one RB's
+  worth) as the EB size bound is a policy placeholder. The formal model
+  isolates this in `ebSnapshot` so the bound can be changed without
+  touching the state invariants or the admission logic.
 
 ## Changelog
 
