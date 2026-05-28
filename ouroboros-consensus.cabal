@@ -243,6 +243,7 @@ library
     Ouroboros.Consensus.Peras.Cert.V1
     Ouroboros.Consensus.Peras.Crypto.BLS
     Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
+    Ouroboros.Consensus.Peras.Crypto.Mock
     Ouroboros.Consensus.Peras.Error.V1
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
