@@ -138,8 +138,8 @@ chainSyncBlocksServer tracer chainDB ccfg version leiosDb flr = ChainSyncServer 
     Follower m blk (WithPoint blk (Serialised blk))
   wrapFollower prevAnnVar f =
     Follower
-      { followerInstruction = followerInstruction f >>= traverse (traverse resolve)
-      , followerInstructionBlocking = followerInstructionBlocking f >>= traverse resolve
+      { followerInstruction = followerInstruction f >>= traverse onUpdate
+      , followerInstructionBlocking = followerInstructionBlocking f >>= onUpdate
       , followerForward = \pts -> do
           changed <- followerForward f pts
           case changed of
@@ -148,6 +148,12 @@ chainSyncBlocksServer tracer chainDB ccfg version leiosDb flr = ChainSyncServer 
       , followerClose = followerClose f
       }
    where
+    onUpdate ::
+      ChainUpdate blk (WithPoint blk (Header blk, Serialised blk)) ->
+      m (ChainUpdate blk (WithPoint blk (Serialised blk)))
+    onUpdate (AddBlock wp) = AddBlock <$> resolve wp
+    onUpdate (RollBack pt) = setPrev pt >> pure (RollBack pt)
+
     resolve ::
       WithPoint blk (Header blk, Serialised blk) ->
       m (WithPoint blk (Serialised blk))
@@ -163,6 +169,8 @@ chainSyncBlocksServer tracer chainDB ccfg version leiosDb flr = ChainSyncServer 
             pure $ maybe sblk encode mRes
       pure (WithPoint sblk' pt)
 
+    -- possible race? 'pt' could be GC'd from the VolatileDB between the
+    -- follower emitting it and this lookup; we then fall back to Nothing.
     setPrev :: Point blk -> m ()
     setPrev pt = case pointToWithOriginRealPoint pt of
       Origin -> atomically $ writeTVar prevAnnVar Nothing
