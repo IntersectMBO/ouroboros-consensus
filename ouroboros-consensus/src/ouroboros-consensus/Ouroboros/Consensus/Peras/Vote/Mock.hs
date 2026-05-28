@@ -15,6 +15,7 @@
 -- | Mocked Peras votes without crypto.
 module Ouroboros.Consensus.Peras.Vote.Mock
   ( MockPerasVote (..)
+  , forgeMockPerasVote
   , validateMockPerasVote
   ) where
 
@@ -53,9 +54,6 @@ data MockPerasVote blk
   { mockVoteRound :: PerasRoundNo
   , mockVoteBlock :: Point blk
   , mockVoteSeatIndex :: PerasSeatIndex
-  , mockVoteWeight :: VoteWeight
-  -- ^ This field is unique to the mocked vote, and allows us to bypass the
-  -- need for a 'VoteWeightDistr' when creating validated votes in tests.
   }
 
 deriving instance StandardHash blk => Show (MockPerasVote blk)
@@ -98,11 +96,6 @@ instance
         { mockVoteRound
         , mockVoteBlock
         , mockVoteSeatIndex
-        , mockVoteWeight = 0
-        -- NOTE: weights are never sent over the wire, but computed locally from
-        -- the voting committee. We might need to change this in the future if
-        -- we ever need roundtrip tests using mocked votes, but for now this is
-        -- sufficient for our needs.
         }
 
 instance
@@ -131,12 +124,17 @@ instance
         { mockVoteRound
         , mockVoteBlock
         , mockVoteSeatIndex
-        , mockVoteWeight = 0
-        -- NOTE: weights are never sent over the wire, but computed locally from
-        -- the voting committee. We might need to change this in the future if
-        -- we ever need roundtrip tests using mocked votes, but for now this is
-        -- sufficient for our needs.
         }
+
+forgeMockPerasVote ::
+  forall blk.
+  PerasVote blk ~ MockPerasVote blk =>
+  PerasParams ->
+  PerasRoundNo ->
+  Point blk ->
+  PerasSeatIndex ->
+  Either (PerasError blk) (ValidatedPerasVote blk)
+forgeMockPerasVote _params roundNo point seatIndex = undefined
 
 -- | Helper to write 'BlockSupportsPeras.verifyPerasVote'.
 --
@@ -148,9 +146,4 @@ validateMockPerasVote ::
   VoteWeightDistr ->
   PerasVote blk ->
   Either (PerasError blk) (ValidatedPerasVote blk)
-validateMockPerasVote _params _voteWeightDistr vote =
-  Right
-    ValidatedPerasVote
-      { vpvVote = vote
-      , vpvVoteWeight = mockVoteWeight vote
-      }
+validateMockPerasVote _params _voteWeightDistr vote = undefined
