@@ -51,22 +51,18 @@ import Ouroboros.Consensus.Protocol.Praos.Views (LedgerView (..))
 
 data RealBlock
 
-type instance PerasCrypto RealBlock = BLS.PerasBLSCrypto
-type instance PerasVotingCommitteeScheme RealBlock = WFALS
 type instance HeaderHash RealBlock = ShortByteString
-
 instance StandardHash RealBlock
 
 instance BlockSupportsPeras RealBlock where
   type PerasVote RealBlock = V1.PerasVote RealBlock
   type PerasCert RealBlock = V1.PerasCert RealBlock
   type PerasError RealBlock = V1.PerasError RealBlock
+  type PerasCrypto RealBlock = BLS.PerasBLSCrypto
+  type PerasVotingCommitteeScheme RealBlock = WFALS
 
-  -- TODO: uncomment as soon as we add this method to 'BlockSupportsPeras'
-  -- forgePerasVoteIfEligible = implForgePerasVoteIfEligible
-  forgePerasCert = undefined
-  verifyPerasVote = undefined
-  verifyPerasCert = undefined
+  -- TODO: extract actual Peras certificates from blocks
+  getPerasCertInBlock _ = Nothing
 
 instance PraosStateSupportsPerasVoting RealBlock where
   praosStatePerasVotingCommitteeInput _ perasParams tickedPraosState = do
@@ -104,7 +100,7 @@ class
   -- This is used to construct the 'PerasVotingCommittee' used for voting at a given ledger/praos state.
   praosStatePerasVotingCommitteeInput ::
     proxy blk ->
-    PerasParams ->
+    PerasParams blk ->
     Ticked PraosState ->
     Either
       (PerasError blk)
@@ -113,7 +109,7 @@ class
   -- | How to build a new 'PerasVotingCommittee' from a 'Ticked PraosState'. The implementation provided here relies on 'praosStatePerasVotingCommitteeInput'.
   praosStateGetPerasVotingCommittee ::
     proxy blk ->
-    PerasParams ->
+    PerasParams blk ->
     Ticked PraosState ->
     Either
       (PerasError blk)

@@ -122,7 +122,7 @@ newtype PerasQuorumWeightThresholdSafetyMargin
 -- https://tweag.github.io/cardano-peras/peras-design.pdf#section.2.1
 --
 -- TODO: make fields strict when we have concrete default values for them.
-data PerasParams = PerasParams
+data PerasParams blk = PerasParams
   { perasIgnoranceRounds :: !PerasIgnoranceRounds
   , perasCooldownRounds :: !PerasCooldownRounds
   , perasBlockMinSlots :: !PerasBlockMinSlots
@@ -139,7 +139,7 @@ data PerasParams = PerasParams
 -- | Instantiate default Peras protocol parameters.
 --
 -- NOTE: in the future this will depend on a concrete 'BlockConfig'.
-mkPerasParams :: PerasParams
+mkPerasParams :: PerasParams blk
 mkPerasParams =
   -- Many of these parameters are provided with sensible default values for now,
   -- waiting for a final decision (in a future stage of the project) on the

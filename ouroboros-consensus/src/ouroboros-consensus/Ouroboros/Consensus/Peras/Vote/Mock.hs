@@ -9,14 +9,11 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Mocked Peras votes without crypto.
 module Ouroboros.Consensus.Peras.Vote.Mock
   ( MockPerasVote (..)
-  , forgeMockPerasVote
-  , validateMockPerasVote
   ) where
 
 import Cardano.Binary (decodeListLenOf, encodeListLen)
@@ -32,17 +29,12 @@ import Ouroboros.Consensus.Block.Abstract
   , StandardHash
   )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( BlockSupportsPeras (..)
-  , BoostedBlock
+  ( BoostedBlock
   , IsPerasVote (..)
   , PerasRoundNo
   , PerasSeatIndex (..)
-  , ValidatedPerasVote (..)
-  , VoteWeight
-  , VoteWeightDistr
   )
 import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode (..))
-import Ouroboros.Consensus.Peras.Params (PerasParams)
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Network.Util (ShowProxy (..))
 
@@ -125,25 +117,3 @@ instance
         , mockVoteBlock
         , mockVoteSeatIndex
         }
-
-forgeMockPerasVote ::
-  forall blk.
-  PerasVote blk ~ MockPerasVote blk =>
-  PerasParams ->
-  PerasRoundNo ->
-  Point blk ->
-  PerasSeatIndex ->
-  Either (PerasError blk) (ValidatedPerasVote blk)
-forgeMockPerasVote _params roundNo point seatIndex = undefined
-
--- | Helper to write 'BlockSupportsPeras.verifyPerasVote'.
---
--- WARNING: we do not perform any validation whatsoever for mocked votes.
-validateMockPerasVote ::
-  forall blk.
-  PerasVote blk ~ MockPerasVote blk =>
-  PerasParams ->
-  VoteWeightDistr ->
-  PerasVote blk ->
-  Either (PerasError blk) (ValidatedPerasVote blk)
-validateMockPerasVote _params _voteWeightDistr vote = undefined

@@ -7,7 +7,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -17,9 +16,7 @@
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 module Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasCrypto
-  , PerasVotingCommitteeScheme
-  , PerasVotingCommittee
+  ( PerasVotingCommittee
   , PerasVotingCommitteeError
   , PerasVotingCommitteeInput
   , BlockSupportsPeras (..)
@@ -53,21 +50,20 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , module Ouroboros.Consensus.Peras.Types
   ) where
 
-import Control.Arrow ((&&&))
 import Control.Exception (assert)
+import Control.Exception.Base (Exception)
 import Data.Bifunctor (bimap)
 import Data.Containers.NonEmpty (NE)
 import Data.Kind (Type)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map (Map)
 import qualified Data.Map.NonEmpty as NEMap
-import Data.Ord (comparing)
 import Data.Traversable (for)
-import Data.Typeable (Proxy, Typeable)
+import Data.Typeable (Typeable)
 import Data.Void (Void, absurd)
 import GHC.Generics (Generic)
-import NoThunks.Class
-import Ouroboros.Consensus.Block.Abstract
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block.Abstract (Point, StandardHash)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
@@ -121,22 +117,32 @@ class
   , Eq (PerasVote blk)
   , NoThunks (PerasVote blk)
   , IsPerasVote (PerasVote blk) blk
+  , Typeable (BoostedBlock (PerasVote blk))
+  , Show (BoostedBlock (PerasVote blk))
+  , Eq (BoostedBlock (PerasVote blk))
+  , NoThunks (BoostedBlock (PerasVote blk))
   , -- PerasCert constraints
     Typeable (PerasCert blk)
   , Show (PerasCert blk)
   , Eq (PerasCert blk)
   , NoThunks (PerasCert blk)
   , IsPerasCert (PerasCert blk) blk
+  , Typeable (BoostedBlock (PerasCert blk))
+  , Show (BoostedBlock (PerasCert blk))
+  , Eq (BoostedBlock (PerasCert blk))
+  , NoThunks (BoostedBlock (PerasCert blk))
   , -- PerasError constraints
     Typeable (PerasError blk)
   , Show (PerasError blk)
   , Eq (PerasError blk)
   , NoThunks (PerasError blk)
   , IsPerasError (PerasError blk) blk
+  , Exception (PerasError blk)
   , -- Compatiblity with committee/crypto
     CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
   , ElectionId (PerasCrypto blk) ~ PerasRoundNo
-  , VoteCandidate (PerasCrypto blk) ~ Point blk
+  , VoteCandidate (PerasCrypto blk) ~ BoostedBlock (PerasVote blk)
+  , VoteCandidate (PerasCrypto blk) ~ BoostedBlock (PerasCert blk)
   , PerasVoteCompatibleWithVotingCommittee
       (PerasVote blk)
       (PerasCrypto blk)
@@ -172,13 +178,13 @@ class
   type PerasVotingCommitteeScheme blk = VoidPerasVotingCommitteeScheme
 
   type PerasEpochContext blk = (context :: Type) | context -> blk
-  type PerasEpochContext blk = (PerasVotingCommittee blk, PerasParams)
+  type PerasEpochContext blk = (PerasVotingCommittee blk, PerasParams blk)
 
-  pecPerasParams :: PerasEpochContext blk -> PerasParams
+  pecPerasParams :: PerasEpochContext blk -> PerasParams blk
   default pecPerasParams ::
-    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams) =>
+    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams blk) =>
     PerasEpochContext blk ->
-    PerasParams
+    PerasParams blk
   pecPerasParams (_committee, params) = params
 
   forgePerasVoteIfEligible ::
@@ -189,7 +195,7 @@ class
     Point blk ->
     Either (PerasError blk) (Maybe (ValidatedPerasVote blk))
   default forgePerasVoteIfEligible ::
-    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams) =>
+    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams blk) =>
     PerasEpochContext blk ->
     PoolId ->
     PrivateKey (PerasCrypto blk) ->
@@ -202,7 +208,7 @@ class
         Committee.checkShouldVote committee ourId ourPrivateKey roundNo
     for mWitness $ \witness -> do
       let voteWeight = eligiblePartyVoteWeight committee witness
-          abstractVote = Committee.forgeVote witness ourPrivateKey roundNo point
+          abstractVote = Committee.forgeVote witness ourPrivateKey roundNo (pointToBoostedBlock point)
       concreteVote <-
         bimap injectConversionError id $
           toPerasVote @(PerasVote blk) abstractVote
@@ -217,7 +223,7 @@ class
     PerasVote blk ->
     Either (PerasError blk) (ValidatedPerasVote blk)
   default verifyPerasVote ::
-    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams) =>
+    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams blk) =>
     PerasEpochContext blk ->
     PerasVote blk ->
     Either (PerasError blk) (ValidatedPerasVote blk)
@@ -243,7 +249,7 @@ class
     PerasVoteCollectionWithQuorum blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
   default forgePerasCert ::
-    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams) =>
+    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams blk) =>
     PerasEpochContext blk ->
     PerasVoteCollectionWithQuorum blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
@@ -268,7 +274,7 @@ class
     PerasCert blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
   default verifyPerasCert ::
-    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams) =>
+    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams blk) =>
     PerasEpochContext blk ->
     PerasCert blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
@@ -376,7 +382,7 @@ newtype VoidPerasError blk
   = VoidPerasError
   { unVoidPerasError :: Void
   }
-  deriving newtype (Show, Eq, NoThunks, ShowProxy)
+  deriving newtype (Show, Eq, NoThunks, Generic, Typeable, ShowProxy, Exception)
 
 instance IsPerasError (VoidPerasError blk) blk where
   injectVotingCommitteeError _ =
@@ -701,10 +707,9 @@ toUniqueVotesWithSameTarget ::
   , crypto ~ PerasCrypto blk
   , committee ~ PerasVotingCommitteeScheme blk
   , ElectionId crypto ~ PerasRoundNo
-  , VoteCandidate crypto ~ Point blk
   , PerasVoteCompatibleWithVotingCommittee vote crypto committee
   , CryptoSupportsVotingCommittee crypto committee
-  , StandardHash blk
+  , Eq (VoteCandidate crypto)
   ) =>
   PerasVoteCollectionWithQuorum blk ->
   Either

@@ -49,7 +49,6 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
-  , VoidPerasError
   )
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -63,12 +62,11 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Peras.Cert.Mock
   ( MockPerasCert (..)
-  , forgeMockPerasCert
-  , validateMockPerasCert
   )
+import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCommittee, MockPerasCrypto)
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.Vote.Mock
   ( MockPerasVote (..)
-  , validateMockPerasVote
   )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
@@ -291,13 +289,11 @@ instance
   ) =>
   BlockSupportsPeras (HardForkBlock xs)
   where
+  type PerasCrypto (HardForkBlock xs) = MockPerasCrypto (HardForkBlock xs)
+  type PerasVotingCommitteeScheme (HardForkBlock xs) = (MockPerasCommittee (HardForkBlock xs))
   type PerasVote (HardForkBlock xs) = MockPerasVote (HardForkBlock xs)
   type PerasCert (HardForkBlock xs) = MockPerasCert (HardForkBlock xs)
-  type PerasError (HardForkBlock xs) = VoidPerasError (HardForkBlock xs)
-
-  verifyPerasVote = validateMockPerasVote
-  verifyPerasCert = validateMockPerasCert
-  forgePerasCert = forgeMockPerasCert
+  type PerasError (HardForkBlock xs) = MockPerasError (HardForkBlock xs)
 
   -- TODO: extract actual Peras certificates from blocks
   getPerasCertInBlock _ = Nothing

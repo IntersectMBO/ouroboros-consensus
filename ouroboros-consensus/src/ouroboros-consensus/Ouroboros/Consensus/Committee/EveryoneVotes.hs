@@ -1,12 +1,15 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | A simple voting committee where pools with positive stake can vote.
 module Ouroboros.Consensus.Committee.EveryoneVotes
@@ -73,7 +76,7 @@ import Ouroboros.Consensus.Committee.WFA
 data EveryoneVotes
 
 instance
-  CryptoSupportsAggregateVoteSigning crypto =>
+  (Ord (ElectionId crypto), CryptoSupportsAggregateVoteSigning crypto) =>
   CryptoSupportsVotingCommittee crypto EveryoneVotes
   where
   data VotingCommittee crypto EveryoneVotes
@@ -137,6 +140,13 @@ instance
   eligiblePartyVoteWeight = implEligiblePartyVoteWeight
   forgeCert = implForgeCert
   verifyCert = implVerifyCert
+
+  voteTarget (EveryoneVotesVote _ electionId candidate _) =
+    (electionId, candidate)
+  compareVotesById
+    (EveryoneVotesVote seatIndex1 electionId1 _ _)
+    (EveryoneVotesVote seatIndex2 electionId2 _ _) =
+      compare (electionId1, seatIndex1) (electionId2, seatIndex2)
 
 -- | Construct a 'EveryoneVotesVotingCommittee' for a given epoch
 mkEveryoneVotesVotingCommittee ::

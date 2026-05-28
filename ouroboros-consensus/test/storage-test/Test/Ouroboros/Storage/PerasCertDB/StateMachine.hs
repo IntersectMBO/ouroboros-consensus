@@ -19,9 +19,12 @@ module Test.Ouroboros.Storage.PerasCertDB.StateMachine (tests) where
 import Control.Monad (join)
 import Control.Monad.State
 import Control.Tracer (nullTracer)
+import Data.Containers.NonEmpty (NE)
 import Data.Function ((&))
 import qualified Data.List.NonEmpty as NE
+import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Set.NonEmpty as NESet
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -52,7 +55,7 @@ tests =
     [ adjustQuickCheckTests (* 100) $ testProperty "q-d" $ prop_qd
     ]
 
-perasTestParams :: PerasParams
+perasTestParams :: PerasParams blk
 perasTestParams = mkPerasParams
 
 prop_qd :: Actions Model -> Property
@@ -87,6 +90,7 @@ instance StateModel Model where
     genAddCert = do
       roundNo <- genRoundNo
       boostedBlock <- genPoint
+      voters <- genVoters
       now <- genRelativeTime
       let certWithTime =
             WithArrivalTime now $
@@ -95,6 +99,7 @@ instance StateModel Model where
                     MockPerasCert
                       { mockCertRound = roundNo
                       , mockCertBlock = boostedBlock
+                      , mockCertVoters = voters
                       }
                 , vpcCertBoost = perasWeight perasTestParams
                 }
@@ -115,6 +120,13 @@ instance StateModel Model where
         , (1, pure $ PerasRoundNo 2)
         , (8, PerasRoundNo <$> arbitrary)
         ]
+
+    genVoters :: Gen (NE (Set PerasSeatIndex))
+    genVoters =
+      NESet.fromList <$> (liftA2 (NE.:|) genSeatIndex (listOf genSeatIndex))
+
+    genSeatIndex = PerasSeatIndex <$> arbitrary
+
     genHash = TestHash . NE.fromList . getNonEmpty <$> arbitrary
 
   initialState = Model Model.initModel
