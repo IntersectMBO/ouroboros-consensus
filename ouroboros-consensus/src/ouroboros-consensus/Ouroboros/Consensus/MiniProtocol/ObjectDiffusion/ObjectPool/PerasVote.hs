@@ -1,6 +1,4 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE StandaloneDeriving #-}
 
 -- | Instantiate 'ObjectPoolReader' and 'ObjectPoolWriter' using Peras
 -- votes from the 'PerasVoteDB' (or the 'ChainDB' which is wrapping the
@@ -12,20 +10,26 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
   , makePerasVotePoolWriterFromChainDB
   ) where
 
-import Control.Monad (join)
-import Data.Either (partitionEithers)
-import Data.Functor (void)
+import Data.Foldable (traverse_)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
-import GHC.Exception (throw)
-import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( BlockSupportsPeras (PerasVote)
+  , IsPerasVote
+  , PerasVoteId
+  , ValidatedPerasVote (vpvVote)
+  , getPerasVoteId
+  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( SystemTime (..)
   , WithArrivalTime (..)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
+  ( ObjectPoolReader (..)
+  , ObjectPoolWriter (..)
+  )
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle, verifyPerasVoteInContext)
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
@@ -35,6 +39,9 @@ import Ouroboros.Consensus.Storage.PerasVoteDB.API
   )
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB.API as PerasVoteDB
 import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , MonadSTM (STM, atomically)
+  )
 
 -- | TODO: replace by `Data.Map.take` as soon as we move to GHC 9.8
 takeAscMap :: Int -> Map k v -> Map k v
@@ -101,23 +108,23 @@ makePerasVotePoolWriterFromVoteDB ::
   , BlockSupportsPeras blk
   ) =>
   SystemTime m ->
-  -- | TODO: replace with a 'PerasVotingCommittee blk'
-  STM m VoteWeightDistr ->
   PerasVoteDB m blk ->
+  PerasEpochContextResolverHandle m blk ->
   ObjectPoolWriter (PerasVoteId blk) (PerasVote blk) m
-makePerasVotePoolWriterFromVoteDB systemTime getVoteWeightDistrSTM perasVoteDB =
+makePerasVotePoolWriterFromVoteDB systemTime perasVoteDB resolverHandle =
   ObjectPoolWriter
     { opwObjectId = getPerasVoteId
-    , opwAddObjects = \votes ->
-        processVotes
-          systemTime
-          (PerasVoteDB.getVoteIds perasVoteDB)
-          -- TODO: in the future we won't need just the vote weight distribution for
-          -- validating votes, but also the whole committee selection context
-          -- (containing vote weights of committee members = voters)
-          (\vote -> getVoteWeightDistrSTM >>= \sd -> pure $ verifyPerasVote mkPerasParams sd vote)
-          (void . join . atomically . PerasVoteDB.addVote perasVoteDB)
-          votes
+    , opwAddObjects = \votes -> do
+        now <- systemTimeCurrent systemTime
+        atomically $ do
+          alreadyInDb <- PerasVoteDB.getVoteIds perasVoteDB
+          let votesNotAlreadyInDb = filter ((`Set.notMember` alreadyInDb) . getPerasVoteId) votes
+          validatedVotes <- traverse (verifyPerasVoteInContext resolverHandle) votesNotAlreadyInDb
+          -- Some votes are invalid => reject the whole batch
+          -- We could combine the two 'traverse' operations into one in which case
+          -- any validated vote would be immediately added no matter what is the
+          -- validity of the other votes in the batch.
+          traverse_ (PerasVoteDB.addVote perasVoteDB . WithArrivalTime now) validatedVotes
     , opwHasObject = do
         voteIds <- PerasVoteDB.getVoteIds perasVoteDB
         pure $ \voteId -> Set.member voteId voteIds
@@ -131,83 +138,24 @@ makePerasVotePoolWriterFromChainDB ::
   , BlockSupportsPeras blk
   ) =>
   SystemTime m ->
-  -- \| TODO: replace with a 'PerasVotingCommittee blk'
-  STM m VoteWeightDistr ->
   ChainDB m blk ->
+  PerasEpochContextResolverHandle m blk ->
   ObjectPoolWriter (PerasVoteId blk) (PerasVote blk) m
-makePerasVotePoolWriterFromChainDB systemTime getVoteWeightDistrSTM chainDB =
+makePerasVotePoolWriterFromChainDB systemTime chainDB resolverHandle =
   ObjectPoolWriter
     { opwObjectId = getPerasVoteId
-    , opwAddObjects = \votes ->
-        processVotes
-          systemTime
-          (ChainDB.getPerasVoteIds chainDB)
-          -- TODO: in the future we won't need just the vote weight distribution for
-          -- validating votes, but also the whole committee selection context
-          -- (containing vote weights of committee members = voters)
-          (\vote -> getVoteWeightDistrSTM >>= \sd -> pure $ verifyPerasVote mkPerasParams sd vote)
-          -- We do not want to block the writer thread on waiting for ChainSel
-          -- side-effects to complete, so we use the async version of adding
-          -- votes to the ChainDB and ignore the returned promise.
-          -- The async action (if any) is still launched and executed behind the
-          -- scenes even though we drop the promise.
-          (void . ChainDB.addPerasVoteWithAsyncCertHandling chainDB)
-          votes
+    , opwAddObjects = \votes -> do
+        now <- systemTimeCurrent systemTime
+        validatedVotes <- atomically $ do
+          alreadyInDb <- ChainDB.getPerasVoteIds chainDB
+          let votesNotAlreadyInDb = filter ((`Set.notMember` alreadyInDb) . getPerasVoteId) votes
+          traverse (verifyPerasVoteInContext resolverHandle) votesNotAlreadyInDb
+        -- Some votes are invalid => reject the whole batch
+        -- We could combine the two 'traverse' operations into one in which case
+        -- any validated vote would be immediately added no matter what is the
+        -- validity of the other votes in the batch.
+        traverse_ (ChainDB.addPerasVoteWithAsyncCertHandling chainDB . WithArrivalTime now) validatedVotes
     , opwHasObject = do
         voteIds <- ChainDB.getPerasVoteIds chainDB
         pure $ \voteId -> Set.member voteId voteIds
     }
-
-data PerasVoteInboundException
-  = forall blk.
-    Show (PerasError blk) =>
-    PerasVoteValidationError [PerasError blk]
-
-deriving instance Show PerasVoteInboundException
-
-instance Exception PerasVoteInboundException
-
--- | Process a batch of inbound Peras votes received from a peer.
---
--- Votes whose ID is already present in the database (as determined by
--- @alreadyInDbSTM@) are silently skipped. The remaining votes are validated;
--- if /any/ vote in the batch fails validation, the entire batch is rejected
--- by throwing a 'PerasVoteInboundException' (which should make us disconnect
--- from the distant peer, see 'withPeer' bracket function from
--- `ouroboros-network`). Otherwise, each valid vote is timestamped with the
--- current wall-clock time and added to the database via @addVote@.
-processVotes ::
-  ( MonadSTM m
-  , Show (PerasError blk)
-  , IsPerasVote (PerasVote blk) blk
-  ) =>
-  SystemTime m ->
-  STM m (Set (PerasVoteId blk)) ->
-  (PerasVote blk -> STM m (Either (PerasError blk) (ValidatedPerasVote blk))) ->
-  (WithArrivalTime (ValidatedPerasVote blk) -> m ()) ->
-  [PerasVote blk] ->
-  m ()
-processVotes systemTime alreadyInDbSTM validateVote addVote votes = do
-  validationResults <- atomically $ do
-    alreadyInDb <- alreadyInDbSTM
-    let votesNotAlreadyInDb = filter (not . (`Set.member` alreadyInDb) . getPerasVoteId) votes
-    mapM validateVote votesNotAlreadyInDb
-  now <- systemTimeCurrent systemTime
-  case partitionEithers validationResults of
-    -- All votes are valid => add them to the pool
-    ([], validatedVotes) ->
-      mapM_
-        (addVote . WithArrivalTime now)
-        validatedVotes
-    -- Some votes are invalid => reject the whole batch
-    --
-    -- N.B. it has been requested in PR review
-    -- https://github.com/IntersectMBO/ouroboros-consensus/pull/1768#discussion_r2747873186
-    -- to gather all validation errors and report them together in the exception
-    -- rather than just report the first error encountered.
-    -- This assumes that vote validation is cheap, which may not be true in
-    -- practice depending on the actual crypto/committee selection scheme.
-    -- Hence we may revisit this to lazily abort validation upon the first error
-    -- encountered.
-    (errs, _) ->
-      throw (PerasVoteValidationError errs)

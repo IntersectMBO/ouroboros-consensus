@@ -12,6 +12,7 @@
 module Test.Util.Orphans.ToExpr () where
 
 import qualified Control.Monad.Class.MonadTime.SI as SI
+import Data.Set.NonEmpty (NESet)
 import Data.TreeDiff
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
@@ -131,6 +132,8 @@ deriving anyclass instance ToExpr VoteWeight
 deriving anyclass instance ToExpr (PerasVoteId blk)
 
 deriving anyclass instance ToExpr a => ToExpr (WithArrivalTime a)
+
+deriving anyclass instance ToExpr a => ToExpr (NESet a)
 
 instance ToExpr PerasSeatIndex where toExpr = defaultExprViaShow
 

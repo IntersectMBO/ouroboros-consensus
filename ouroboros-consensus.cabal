@@ -241,10 +241,12 @@ library
     Ouroboros.Consensus.Peras.Cert.Inclusion
     Ouroboros.Consensus.Peras.Cert.Mock
     Ouroboros.Consensus.Peras.Cert.V1
+    Ouroboros.Consensus.Peras.Context
     Ouroboros.Consensus.Peras.Crypto.BLS
     Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
     Ouroboros.Consensus.Peras.Crypto.Mock
     Ouroboros.Consensus.Peras.Error.V1
+    Ouroboros.Consensus.Peras.Error.Mock
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Types
@@ -355,6 +357,7 @@ library
     Ouroboros.Consensus.Util.Versioned
 
   build-depends:
+    extra,
     aeson,
     array,
     base >=4.14 && <4.23,
@@ -509,6 +512,7 @@ library unstable-consensus-testlib
     Test.Util.WithEq
 
   build-depends:
+    nonempty-containers,
     base,
     base16-bytestring,
     binary,
@@ -687,6 +691,9 @@ test-suite consensus-test
     Test.Consensus.Peras.Cert.Inclusion
     Test.Consensus.Peras.Serialisation
     Test.Consensus.Peras.Util
+    Test.Consensus.Peras.Util.V1
+    Test.Consensus.Peras.Util.Mock
+    Test.Consensus.Peras.Util.Internal
     Test.Consensus.Peras.Voting.Adapter
     Test.Consensus.Peras.Voting.Rules
     Test.Consensus.Peras.WeightSnapshot
@@ -821,6 +828,7 @@ test-suite storage-test
     Test.Ouroboros.Storage.VolatileDB.StateMachine
 
   build-depends:
+    nonempty-containers,
     aeson,
     base,
     bifunctors,

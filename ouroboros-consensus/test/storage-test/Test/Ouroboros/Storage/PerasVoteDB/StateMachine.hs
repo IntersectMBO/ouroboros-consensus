@@ -100,7 +100,7 @@ tests =
             prop_qd
     ]
 
-perasTestParams :: PerasParams
+perasTestParams :: PerasParams blk
 perasTestParams = mkPerasParams
 
 prop_qd :: Actions Model -> Property
@@ -186,7 +186,6 @@ instance StateModel Model where
                       { mockVoteRound = roundNo
                       , mockVoteBlock = point
                       , mockVoteSeatIndex = seatIndex
-                      , mockVoteWeight = weight
                       }
                 , vpvVoteWeight = weight
                 }

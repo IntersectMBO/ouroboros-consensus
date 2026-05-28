@@ -86,6 +86,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
+import Data.Set.NonEmpty.Internal (NESet (..))
 import Data.TreeDiff
 import Data.Void (Void)
 import Data.Word
@@ -116,12 +117,11 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Peras.Cert.Mock
   ( MockPerasCert (..)
-  , forgeMockPerasCert
-  , validateMockPerasCert
   )
+import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCommittee, MockPerasCrypto)
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.Vote.Mock
   ( MockPerasVote (..)
-  , validateMockPerasVote
   )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
@@ -737,13 +737,11 @@ instance LedgerSupportsPeras TestBlock where
 -- NOTE: this is a mocked up implementation without crypto!
 
 instance BlockSupportsPeras TestBlock where
+  type PerasCrypto TestBlock = MockPerasCrypto TestBlock
+  type PerasVotingCommitteeScheme TestBlock = MockPerasCommittee TestBlock
   type PerasVote TestBlock = MockPerasVote TestBlock
   type PerasCert TestBlock = MockPerasCert TestBlock
-  type PerasError TestBlock = VoidPerasError TestBlock
-
-  verifyPerasVote = validateMockPerasVote
-  verifyPerasCert = validateMockPerasCert
-  forgePerasCert = forgeMockPerasCert
+  type PerasError TestBlock = MockPerasError TestBlock
   getPerasCertInBlock = tbPerasCert . testBody
 
 instance HasHardForkHistory TestBlock where
@@ -965,6 +963,8 @@ instance Hashable TestHeader
 instance Hashable TestBlock
 instance Hashable (Block SlotNo TestHeaderHash)
 instance Hashable (Point TestBlock)
+instance Hashable PerasSeatIndex
+instance Hashable (NESet PerasSeatIndex)
 instance Hashable (MockPerasCert TestBlock)
 instance (Hashable a, Hashable (WithOrigin a)) => Hashable (WithOrigin a)
 instance (StandardHash b, Hashable (HeaderHash b)) => Hashable (ChainHash b)

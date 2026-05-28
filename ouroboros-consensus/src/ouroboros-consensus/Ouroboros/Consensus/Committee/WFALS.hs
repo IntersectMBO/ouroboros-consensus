@@ -1,12 +1,14 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | Weighted Fait-Accompli with Local Sortition (wFA^LS) committee selection.
 --
@@ -106,6 +108,7 @@ data WFALS
 instance
   ( CryptoSupportsAggregateVoteSigning crypto
   , CryptoSupportsBatchVRFVerification crypto
+  , Ord (ElectionId crypto)
   ) =>
   CryptoSupportsVotingCommittee crypto WFALS
   where
@@ -208,6 +211,19 @@ instance
   eligiblePartyVoteWeight = implEligiblePartyVoteWeight
   forgeCert = implForgeCert
   verifyCert = implVerifyCert
+
+  voteTarget = \case
+    WFALSPersistentVote _ electionId candidate _ ->
+      (electionId, candidate)
+    WFALSNonPersistentVote _ electionId candidate _ _ ->
+      (electionId, candidate)
+  compareVotesById vote1 vote2 = compare (getVoteId vote1) (getVoteId vote2)
+   where
+    getVoteId = \case
+      WFALSPersistentVote seatIndex electionId _ _ ->
+        (seatIndex, electionId)
+      WFALSNonPersistentVote seatIndex electionId _ _ _ ->
+        (seatIndex, electionId)
 
 -- | Construct a 'WFALSVotingCommittee' for a given epoch
 mkWFALSVotingCommittee ::
