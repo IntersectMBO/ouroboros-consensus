@@ -9,8 +9,8 @@
 -- | Concrete Peras error types for the V1 voting protocol.
 --
 -- NOTE: this module is meant to be imported qualified.
-module Ouroboros.Consensus.Peras.Error.V1
-  ( PerasError (..)
+module Ouroboros.Consensus.Peras.Error.Mock
+  ( MockPerasError (..)
   ) where
 
 import Control.Exception (Exception)
@@ -22,40 +22,35 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasVotingCommitteeError
   , VoteWeight
   )
-import Ouroboros.Consensus.Committee.WFA (WFAError)
 import Ouroboros.Consensus.Peras.Types (PerasConversionError)
 
 -- | Collection of voting-related errors for Peras
-data PerasError blk
-  = PerasVotingWFAError
-      WFAError
-  | PerasVotingCommitteeError
+data MockPerasError blk
+  = PerasVotingCommitteeError
       (PerasVotingCommitteeError blk)
   | PerasVotingConversionError
       PerasConversionError
   | PerasQuorumNotReachedError
       VoteWeight
-  | PerasTemporaryPublicKeyHackError
-      String
 
 deriving instance
   Show (PerasVotingCommitteeError blk) =>
-  Show (PerasError blk)
+  Show (MockPerasError blk)
 deriving instance
   Eq (PerasVotingCommitteeError blk) =>
-  Eq (PerasError blk)
+  Eq (MockPerasError blk)
 deriving instance
   NoThunks (PerasVotingCommitteeError blk) =>
-  NoThunks (PerasError blk)
+  NoThunks (MockPerasError blk)
 deriving instance
-  Generic (PerasError blk)
+  Generic (MockPerasError blk)
 deriving instance
-  Typeable (PerasError blk)
+  Typeable (MockPerasError blk)
 deriving instance
   (Show (PerasVotingCommitteeError blk), Typeable blk) =>
-  Exception (PerasError blk)
+  Exception (MockPerasError blk)
 
-instance IsPerasError (PerasError blk) blk where
+instance IsPerasError (MockPerasError blk) blk where
   injectVotingCommitteeError = PerasVotingCommitteeError
   injectConversionError = PerasVotingConversionError
   injectQuorumNotReachedError = PerasQuorumNotReachedError

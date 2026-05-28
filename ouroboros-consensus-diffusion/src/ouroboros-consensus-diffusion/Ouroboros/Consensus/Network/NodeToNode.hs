@@ -380,7 +380,14 @@ mkHandlers
             , 10 -- TODO: see https://github.com/tweag/cardano-peras/issues/97
             , 10 -- TODO: see https://github.com/tweag/cardano-peras/issues/97
             )
-            (makePerasCertPoolWriterFromChainDB systemTime getChainDB)
+            ( makePerasCertPoolWriterFromChainDB
+                systemTime
+                getChainDB
+                -- [TODO EPOCH CONTEXT PLUMBING]: when actual plumbing for Peras is ready, we will have to
+                -- extract the 'PerasEpochContextResolverHandle' from the 'ExtLedgerState' to pass
+                -- it here
+                undefined
+            )
             version
             controlMessageSTM
       , hPerasCertDiffusionServer = \version peer ->
@@ -398,14 +405,11 @@ mkHandlers
             )
             ( makePerasVotePoolWriterFromChainDB
                 systemTime
-                -- TODO: when actual plumbing for Peras is ready, we will have to
-                -- extract the committee selection data from the chainDB to pass
-                -- it here, instead of relying on an empty the weight distribution.
-                --
-                -- Note that the empty weight distribution will cause all votes to
-                -- be considered invalid.
-                (pure (VoteWeightDistr mempty))
                 getChainDB
+                -- [TODO EPOCH CONTEXT PLUMBING]: when actual plumbing for Peras is ready, we will have to
+                -- extract the 'PerasEpochContextResolverHandle' from the 'ExtLedgerState' to pass
+                -- it here
+                undefined
             )
             version
             controlMessageSTM

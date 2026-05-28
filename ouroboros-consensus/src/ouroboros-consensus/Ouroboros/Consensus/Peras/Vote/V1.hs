@@ -81,6 +81,7 @@ instance
   Coercible (HeaderHash blk) ShortByteString =>
   IsPerasVote (PerasVote blk) blk
   where
+  getPerasVoteSeatIndex = pvSeatIndex
   getPerasVoteRound = pvRoundNo
   getPerasVoteBlock = pvBoostedBlock
 
