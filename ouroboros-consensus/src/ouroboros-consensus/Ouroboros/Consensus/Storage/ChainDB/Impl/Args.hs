@@ -26,6 +26,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Context (extractPerasEpochContextResolverHandleFromExtLedgerState)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( GetLoEFragment
@@ -229,7 +230,8 @@ completeChainDbArgs
       , cdbPerasVoteDbArgs =
           PerasVoteDB.PerasVoteDbArgs
             { PerasVoteDB.pvdbaTracer = PerasVoteDB.pvdbaTracer (cdbPerasVoteDbArgs defArgs)
-            , PerasVoteDB.pvdbaPerasParams = mkPerasParams
+            , PerasVoteDB.pvdbaPerasEpochContextResolverHandle =
+                extractPerasEpochContextResolverHandleFromExtLedgerState initLedger
             }
       , cdbsArgs =
           (cdbsArgs defArgs)

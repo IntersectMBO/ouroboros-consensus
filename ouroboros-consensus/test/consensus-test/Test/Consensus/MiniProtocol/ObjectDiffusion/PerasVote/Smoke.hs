@@ -1,22 +1,16 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke
   ( tests
-  , genPerasSeatIndex
-  , genVoteWeight
-  , genPerasVote
-  , genValidatedPerasVote
   ) where
 
 import Control.Monad (join)
 import Control.Tracer (contramap, nullTracer)
 import qualified Data.Map as Map
-import Data.Ratio ((%))
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -25,7 +19,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
-import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle, constPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
   , PerasVoteDB
@@ -41,15 +35,16 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Inbound
 import Ouroboros.Network.Protocol.ObjectDiffusion.Outbound (objectDiffusionOutboundPeer)
 import Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
   ( ListWithUniqueIds (..)
-  , WithId
-  , genListWithUniqueIds
-  , genPointTestBlock
   , genProtocolConstants
-  , genWithArrivalTime
-  , getId
-  , mockSystemTime
   , prop_smoke_object_diffusion
   )
+import Test.Consensus.Peras.Util
+  ( genListWithUniqueIds
+  , genMockPerasEpochContext
+  , genWithArrivalTime
+  , mockSystemTime
+  )
+import Test.Consensus.Peras.Util.Mock (genMockValidatedPerasVote)
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck (testProperty)
@@ -62,53 +57,15 @@ tests =
     [ testProperty "PerasVoteDiffusion smoke test" prop_smoke
     ]
 
-genPerasSeatIndex :: Gen PerasSeatIndex
-genPerasSeatIndex = PerasSeatIndex <$> arbitrary
-
-genVoteWeight :: Gen VoteWeight
-genVoteWeight = do
-  weight <- (1 %) <$> choose (2, 10)
-  pure (VoteWeight weight)
-
-genPerasVote :: Gen (PerasVote TestBlock)
-genPerasVote = do
-  mockVoteRound <- PerasRoundNo <$> arbitrary
-  mockVoteBlock <- genPointTestBlock
-  mockVoteSeatIndex <- genPerasSeatIndex
-  mockVoteWeight <- genVoteWeight
-  pure $
-    MockPerasVote
-      { mockVoteRound
-      , mockVoteBlock
-      , mockVoteSeatIndex
-      , mockVoteWeight
-      }
-
-instance WithId (MockPerasVote blk) (PerasVoteId blk) where
-  getId = getPerasVoteId
-
-instance
-  IsPerasVote (PerasVote blk) blk =>
-  WithId (WithArrivalTime (ValidatedPerasVote blk)) (PerasVoteId blk)
-  where
-  getId = getPerasVoteId . vpvVote . forgetArrivalTime
-
-genValidatedPerasVote :: Gen (ValidatedPerasVote TestBlock)
-genValidatedPerasVote = do
-  mockVote <- genPerasVote
-  pure
-    ValidatedPerasVote
-      { vpvVote = mockVote
-      , vpvVoteWeight = mockVoteWeight mockVote
-      }
-
 newVoteDB ::
   ( IOLike m
   , BlockSupportsPeras blk
   ) =>
-  [WithArrivalTime (ValidatedPerasVote blk)] -> m (PerasVoteDB m blk)
-newVoteDB votes = do
-  db <- PerasVoteDB.createDB (PerasVoteDB.PerasVoteDbArgs nullTracer mkPerasParams)
+  PerasEpochContextResolverHandle m blk ->
+  [WithArrivalTime (ValidatedPerasVote blk)] ->
+  m (PerasVoteDB m blk)
+newVoteDB resolverHandle votes = do
+  db <- PerasVoteDB.createDB (PerasVoteDB.PerasVoteDbArgs nullTracer resolverHandle)
   mapM_
     ( \vote -> do
         result <- join $ atomically $ PerasVoteDB.addVote db vote
@@ -123,40 +80,40 @@ newVoteDB votes = do
 prop_smoke :: Property
 prop_smoke =
   forAll genProtocolConstants $ \protocolConstants ->
-    forAll (genListWithUniqueIds (genWithArrivalTime genValidatedPerasVote)) $
-      \(ListWithUniqueIds watValidatedVotes) ->
-        let
-          mkPoolInterfaces ::
-            IOLike m =>
-            m
-              ( ObjectPoolReader (PerasVoteId TestBlock) (PerasVote TestBlock) PerasVoteTicketNo m
-              , ObjectPoolWriter (PerasVoteId TestBlock) (PerasVote TestBlock) m
-              , m [PerasVote TestBlock]
-              )
-          mkPoolInterfaces = do
-            outboundPool <- newVoteDB watValidatedVotes
-            inboundPool <- newVoteDB []
+    forAll genMockPerasEpochContext $ \epochContext ->
+      forAll
+        (genListWithUniqueIds getPerasVoteRound (genWithArrivalTime (genMockValidatedPerasVote epochContext))) $
+        \(ListWithUniqueIds watValidatedVotes) ->
+          let
+            mkPoolInterfaces ::
+              IOLike m =>
+              m
+                ( ObjectPoolReader (PerasVoteId TestBlock) (PerasVote TestBlock) PerasVoteTicketNo m
+                , ObjectPoolWriter (PerasVoteId TestBlock) (PerasVote TestBlock) m
+                , m [PerasVote TestBlock]
+                )
+            mkPoolInterfaces = do
+              epochContextResolverHandle <- constPerasEpochContextResolverHandle epochContext
 
-            let outboundPoolReader = makePerasVotePoolReaderFromVoteDB outboundPool
-                inboundPoolWriter =
-                  makePerasVotePoolWriterFromVoteDB
-                    mockSystemTime
-                    (pure (VoteWeightDistr mempty)) -- mocked votes are self-validating
-                    inboundPool
-                getAllInboundPoolContent = do
-                  votesMap <-
-                    atomically $
-                      PerasVoteDB.getVotesAfter inboundPool zeroPerasVoteTicketNo
-                  pure $ vpvVote . forgetArrivalTime <$> Map.elems votesMap
+              outboundPool <- newVoteDB epochContextResolverHandle watValidatedVotes
+              inboundPool <- newVoteDB epochContextResolverHandle []
 
-            return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)
-         in
-          prop_smoke_object_diffusion
-            protocolConstants
-            (map (vpvVote . forgetArrivalTime) watValidatedVotes)
-            runOutboundPeer
-            runInboundPeer
-            mkPoolInterfaces
+              let outboundPoolReader = makePerasVotePoolReaderFromVoteDB outboundPool
+                  inboundPoolWriter = makePerasVotePoolWriterFromVoteDB mockSystemTime inboundPool epochContextResolverHandle
+                  getAllInboundPoolContent = do
+                    votesMap <-
+                      atomically $
+                        PerasVoteDB.getVotesAfter inboundPool zeroPerasVoteTicketNo
+                    pure $ vpvVote . forgetArrivalTime <$> Map.elems votesMap
+
+              return (outboundPoolReader, inboundPoolWriter, getAllInboundPoolContent)
+           in
+            prop_smoke_object_diffusion
+              protocolConstants
+              (map (vpvVote . forgetArrivalTime) watValidatedVotes)
+              runOutboundPeer
+              runInboundPeer
+              mkPoolInterfaces
  where
   runOutboundPeer outbound outboundChannel tracer =
     runPeer

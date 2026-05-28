@@ -69,7 +69,7 @@ data PerasVoteDbModelError = MultipleWinnersInRound PerasRoundNo
 data Model blk = Model
   { open :: Bool
   -- ^ Is the database open?
-  , params :: PerasParams
+  , params :: PerasParams blk
   -- ^ Configuration parameters
   , lastTicketNo :: PerasVoteTicketNo
   -- ^ The last issued ticket number
@@ -98,7 +98,7 @@ instance
   where
   toExpr = defaultExprViaShow
 
-initModel :: PerasParams -> Model blk
+initModel :: PerasParams blk -> Model blk
 initModel cfg =
   Model
     { open = False

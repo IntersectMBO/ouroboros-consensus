@@ -144,13 +144,12 @@ import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Peras.Cert.Mock
   ( MockPerasCert (..)
-  , forgeMockPerasCert
-  , validateMockPerasCert
   )
+import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCommittee, MockPerasCrypto)
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
 import Ouroboros.Consensus.Peras.Vote.Mock
   ( MockPerasVote (..)
-  , validateMockPerasVote
   )
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -713,13 +712,11 @@ instance
   Typeable ptype =>
   BlockSupportsPeras (TestBlockWith ptype)
   where
+  type PerasCrypto (TestBlockWith ptype) = MockPerasCrypto (TestBlockWith ptype)
+  type PerasVotingCommitteeScheme (TestBlockWith ptype) = MockPerasCommittee (TestBlockWith ptype)
   type PerasVote (TestBlockWith ptype) = MockPerasVote (TestBlockWith ptype)
   type PerasCert (TestBlockWith ptype) = MockPerasCert (TestBlockWith ptype)
-  type PerasError (TestBlockWith ptype) = VoidPerasError (TestBlockWith ptype)
-
-  verifyPerasVote = validateMockPerasVote
-  verifyPerasCert = validateMockPerasCert
-  forgePerasCert = forgeMockPerasCert
+  type PerasError (TestBlockWith ptype) = MockPerasError (TestBlockWith ptype)
 
   -- TODO: extract actual Peras certificates from blocks
   getPerasCertInBlock _ = Nothing

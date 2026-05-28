@@ -74,7 +74,7 @@ instance Explainable PerasVotingRulesDecision where
 -- | Evaluate whether voting is allowed or not according to the voting rules
 isPerasVotingAllowed ::
   IsPerasCert cert blk =>
-  PerasVotingView cert ->
+  PerasVotingView cert blk ->
   PerasVotingRulesDecision
 isPerasVotingAllowed pvv =
   evalPred (perasVotingRules pvv) $ \e ->
@@ -125,7 +125,7 @@ instance Explainable PerasVotingRule where
 -- certificate was received in the first X slots after the start of the round.
 perasVR1A ::
   IsPerasCert cert blk =>
-  PerasVotingView cert ->
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR1A
   PerasVotingView
@@ -163,7 +163,7 @@ perasVR1A
 
 -- | VR-1B: the block being voted upon extends the most recently certified one.
 perasVR1B ::
-  PerasVotingView cert ->
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR1B
   PerasVotingView
@@ -188,7 +188,7 @@ perasVR1B
 -- cooldown period.
 perasVR2A ::
   IsPerasCert cert blk =>
-  PerasVotingView cert ->
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR2A
   PerasVotingView
@@ -221,7 +221,7 @@ perasVR2A
 -- period.
 perasVR2B ::
   IsPerasCert cert blk =>
-  PerasVotingView cert ->
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR2B
   PerasVotingView
@@ -265,7 +265,7 @@ perasVR2B
 -- the voting has regularly occurred in preceding rounds.
 perasVR1 ::
   IsPerasCert cert blk =>
-  PerasVotingView cert ->
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR1 pvv =
   perasVR1A pvv :/\: perasVR1B pvv
@@ -274,7 +274,7 @@ perasVR1 pvv =
 -- the chain is about to exit a cooldown period.
 perasVR2 ::
   IsPerasCert cert blk =>
-  PerasVotingView cert ->
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR2 pvv =
   perasVR2A pvv :/\: perasVR2B pvv
@@ -282,7 +282,7 @@ perasVR2 pvv =
 -- | Voting is allowed if either VR-1A and VR-1B hold, or VR-2A and VR-2B hold.
 perasVotingRules ::
   IsPerasCert cert blk =>
-  PerasVotingView cert ->
+  PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVotingRules pvv =
   perasVR1 pvv :\/: perasVR2 pvv
