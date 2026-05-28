@@ -216,7 +216,7 @@ lsmTestArguments secParam salt fp =
     { argFlavorArgs =
         LedgerDbBackendArgsV2 $
           SomeBackendArgs $
-            LSM.LSMArgs (mkFsPath $ FilePath.splitDirectories fp) salt (LSM.stdMkBlockIOFS fp)
+            LSM.LSMArgs (mkFsPath $ FilePath.splitDirectories fp) Nothing salt (LSM.stdMkBlockIOFS fp)
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
