@@ -39,6 +39,8 @@ import System.FS.API.Types (Handle)
 import System.FS.CRC (CRC (CRC))
 import System.Random (StdGen)
 import qualified System.Random.Internal as Random
+import Data.Set.NonEmpty (NESet)
+import qualified Data.Set.NonEmpty as NESet
 
 {-------------------------------------------------------------------------------
   Serialise
@@ -94,6 +96,10 @@ instance NoThunks a => NoThunks (MultiSet a) where
 instance (NoThunks k, NoThunks v) => NoThunks (NEMap k v) where
   showTypeOf _ = "NEMap"
   wNoThunks ctxt = wNoThunks ctxt . NEMap.toMap
+
+instance (NoThunks v) => NoThunks (NESet v) where
+  showTypeOf _ = "NESet"
+  wNoThunks ctxt = wNoThunks ctxt . NESet.toSet
 
 instance NoThunks StdGen where
   showTypeOf _ = "StdGen"
