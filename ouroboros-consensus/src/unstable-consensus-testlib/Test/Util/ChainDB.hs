@@ -21,7 +21,7 @@ import Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Peras.Params (mkPerasParams)
+import Ouroboros.Consensus.Peras.Context (extractPerasEpochContextResolverHandleFromExtLedgerState)
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
   )
@@ -140,7 +140,8 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
     , cdbPerasVoteDbArgs =
         PerasVoteDbArgs
           { pvdbaTracer = nullTracer
-          , pvdbaPerasParams = mkPerasParams
+          , pvdbaPerasEpochContextResolverHandle =
+              extractPerasEpochContextResolverHandleFromExtLedgerState mcdbInitLedger
           }
     , cdbsArgs =
         ChainDbSpecificArgs

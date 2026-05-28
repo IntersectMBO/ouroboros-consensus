@@ -205,7 +205,7 @@ certInclusionDecisionTag = \case
 --  - 25% chance of being 2
 --  - 12.5% chance of being 3
 --  ... and so on
-genPerasParams :: Gen PerasParams
+genPerasParams :: Gen (PerasParams blk)
 genPerasParams = do
   _A <- fromIntegral . (+ 1) <$> geometric 0.5
   pure

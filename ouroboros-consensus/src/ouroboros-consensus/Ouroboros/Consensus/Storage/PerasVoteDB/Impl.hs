@@ -35,6 +35,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (..))
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle, resolveRoundNoWithHandle)
 import Ouroboros.Consensus.Peras.Vote.Aggregation
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
 import Ouroboros.Consensus.Util.Args
@@ -169,14 +170,14 @@ deriving instance
 type PerasVoteDbArgs :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 data PerasVoteDbArgs f m blk = PerasVoteDbArgs
   { pvdbaTracer :: Tracer m (TraceEvent blk)
-  , pvdbaPerasParams :: HKD f PerasParams
+  , pvdbaPerasEpochContextResolverHandle :: HKD f (PerasEpochContextResolverHandle m blk)
   }
 
 defaultArgs :: Monad m => Incomplete PerasVoteDbArgs m blk
 defaultArgs =
   PerasVoteDbArgs
     { pvdbaTracer = nullTracer
-    , pvdbaPerasParams = noDefault
+    , pvdbaPerasEpochContextResolverHandle = noDefault
     }
 
 createDB ::
@@ -186,7 +187,7 @@ createDB ::
   ) =>
   Complete PerasVoteDbArgs m blk ->
   m (PerasVoteDB m blk)
-createDB args@PerasVoteDbArgs{pvdbaPerasParams} = do
+createDB args@PerasVoteDbArgs{pvdbaPerasEpochContextResolverHandle} = do
   pvdeState <-
     newTVarWithInvariantIO
       (either Just (const Nothing) . invariantForPerasVoteDbState)
@@ -198,7 +199,7 @@ createDB args@PerasVoteDbArgs{pvdbaPerasParams} = do
           }
   pure
     PerasVoteDB
-      { addVote = implAddVote pvdbaPerasParams env
+      { addVote = implAddVote pvdbaPerasEpochContextResolverHandle env
       , getVoteIds = implGetVoteIds env
       , getVotesAfter = implGetVotesAfter env
       , getForgedCertForRound = implGetForgedCertForRound env
@@ -219,11 +220,11 @@ implAddVote ::
   ( IOLike m
   , BlockSupportsPeras blk
   ) =>
-  PerasParams ->
+  PerasEpochContextResolverHandle m blk ->
   PerasVoteDbEnv m blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
   STM m (m (AddPerasVoteResult blk))
-implAddVote params PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
+implAddVote resolverHandle PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
   let voteId = getPerasVoteId vote
   addPerasVoteRes <- do
     WithFingerprint pvds fp <- readTVar pvdeState
@@ -243,12 +244,16 @@ implAddVote params PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
   voteAlreadyInDB pvds = pure (PerasVoteAlreadyInDB, pvds)
 
   tryAddVote pvds voteId = do
+    -- We need to get the 'PerasEpochContext' corresponding to the vote 'PerasRoundNo'
+    epochContext <-
+      either throwSTM pure =<< resolveRoundNoWithHandle resolverHandle (getPerasVoteRound vote)
+
     let pvsVoteIds' = Set.insert voteId (pvdsVoteIds pvds)
         pvsLastTicketNo' = succ (pvdsLastTicketNo pvds)
         pvsVotesByTicket' = Map.insert pvsLastTicketNo' vote (pvdsVotesByTicket pvds)
 
     (addPerasVoteRes, pvsRoundVoteStates') <-
-      case updatePerasRoundVoteStates vote params (pvdsRoundVoteStates pvds) of
+      case updatePerasRoundVoteStates vote epochContext (pvdsRoundVoteStates pvds) of
         -- Added vote and reached a quorum, forging a new certificate
         Right (VoteGeneratedNewCert cert, pvsRoundVoteStates') ->
           pure (AddedPerasVoteAndGeneratedNewCert cert, pvsRoundVoteStates')

@@ -188,7 +188,7 @@ instance Serialise (PerasVoteId blk) where
 -- both are either absolute or relative (normalized) values. Under the current
 -- current implementation of 'PerasParams', this function only makes sense when
 -- both values are relative (normalized) values.
-weightAboveThreshold :: PerasParams -> VoteWeight -> Bool
+weightAboveThreshold :: PerasParams blk -> VoteWeight -> Bool
 weightAboveThreshold params voteWeight =
   weight >= quorumThreshold + safetyMargin
  where

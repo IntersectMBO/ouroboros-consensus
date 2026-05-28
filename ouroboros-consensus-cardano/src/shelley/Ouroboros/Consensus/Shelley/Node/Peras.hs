@@ -16,16 +16,14 @@ module Ouroboros.Consensus.Shelley.Node.Peras () where
 import Cardano.Ledger.Api
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
-  , VoidPerasError
   )
 import Ouroboros.Consensus.Peras.Cert.Mock
   ( MockPerasCert (..)
-  , forgeMockPerasCert
-  , validateMockPerasCert
   )
+import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCommittee, MockPerasCrypto)
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.Vote.Mock
   ( MockPerasVote (..)
-  , validateMockPerasVote
   )
 import Ouroboros.Consensus.Shelley.Ledger.Block
   ( ShelleyBlock
@@ -53,13 +51,13 @@ instance
   ShelleyCompatible proto DijkstraEra =>
   BlockSupportsPeras (ShelleyBlock proto DijkstraEra)
   where
+  type PerasCrypto (ShelleyBlock proto DijkstraEra) = MockPerasCrypto (ShelleyBlock proto DijkstraEra)
+  type
+    PerasVotingCommitteeScheme (ShelleyBlock proto DijkstraEra) =
+      MockPerasCommittee (ShelleyBlock proto DijkstraEra)
   type PerasVote (ShelleyBlock proto DijkstraEra) = MockPerasVote (ShelleyBlock proto DijkstraEra)
   type PerasCert (ShelleyBlock proto DijkstraEra) = MockPerasCert (ShelleyBlock proto DijkstraEra)
-  type PerasError (ShelleyBlock proto DijkstraEra) = VoidPerasError (ShelleyBlock proto DijkstraEra)
-
-  verifyPerasVote = validateMockPerasVote
-  verifyPerasCert = validateMockPerasCert
-  forgePerasCert = forgeMockPerasCert
+  type PerasError (ShelleyBlock proto DijkstraEra) = MockPerasError (ShelleyBlock proto DijkstraEra)
 
   -- TODO: extract actual Peras certificates from blocks
   getPerasCertInBlock _ = Nothing

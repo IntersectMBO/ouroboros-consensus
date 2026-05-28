@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -8,20 +9,23 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Mocked Peras certificates without crypto.
 module Ouroboros.Consensus.Peras.Cert.Mock
   ( MockPerasCert (..)
-  , forgeMockPerasCert
-  , validateMockPerasCert
   ) where
 
 import Cardano.Binary (decodeListLenOf, encodeListLen)
 import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
+import Data.Containers.NonEmpty (NE)
 import Data.Data (Proxy (..))
+import qualified Data.List.NonEmpty as NonEmpty
+import Data.Set (Set)
+import qualified Data.Set.NonEmpty as NESet
+import Data.Set.NonEmpty.Internal (NESet (..))
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
@@ -31,26 +35,14 @@ import Ouroboros.Consensus.Block.Abstract
   , StandardHash
   )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( BlockSupportsPeras (..)
-  , BoostedBlock
+  ( BoostedBlock
   , IsPerasCert (..)
-  , PerasParams (..)
   , PerasRoundNo
-  , PerasVoteCollection (pvcTarget, pvcVotes)
-  , PerasVoteCollectionWithQuorum (..)
-  , PerasVoteTarget (..)
-  , ValidatedPerasCert (..), PerasSeatIndex, ValidatedPerasVote (vpvVote), IsPerasVote (getPerasVoteSeatIndex)
+  , PerasSeatIndex
   )
 import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode (..))
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Network.Util (ShowProxy (..))
-import Data.Containers.NonEmpty (NE)
-import Data.Set (Set)
-import qualified Data.Set.NonEmpty as NESet
-import Ouroboros.Consensus.BlockchainTime (WithArrivalTime(forgetArrivalTime))
-import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
-import qualified Data.Map.NonEmpty as NEMap
-import qualified Data.List.NonEmpty as NonEmpty
 
 -- | Mocked Peras certificates without crypto.
 --
@@ -102,11 +94,12 @@ instance
         , mockCertBlock
         , mockCertVoters
         }
-   where decodeNonEmptySet = do
-            xs <- decode
-            case NonEmpty.nonEmpty xs of
-              Nothing -> fail "Expected a non-empty set of PerasSeatIndex"
-              Just neSet -> pure $ NESet.fromList neSet
+   where
+    decodeNonEmptySet = do
+      xs <- decode
+      case NonEmpty.nonEmpty xs of
+        Nothing -> fail "Expected a non-empty set of PerasSeatIndex"
+        Just neSet -> pure $ NESet.fromList neSet
 
 instance
   ConvertRawHash blk =>
@@ -135,44 +128,17 @@ instance
         , mockCertBlock
         , mockCertVoters
         }
-   where decodeNodeToNodeNonEmptySet _ccfg _version = do
-            xs <- decode
-            case NonEmpty.nonEmpty xs of
-              Nothing -> fail "Expected a non-empty set of PerasSeatIndex"
-              Just neSet -> pure $ NESet.fromList neSet
+   where
+    decodeNodeToNodeNonEmptySet _ccfg _version = do
+      xs <- decode
+      case NonEmpty.nonEmpty xs of
+        Nothing -> fail "Expected a non-empty set of PerasSeatIndex"
+        Just neSet -> pure $ NESet.fromList neSet
 
--- | Helper to write 'BlockSupportsPeras.forgePerasCert'.
-forgeMockPerasCert ::
-  forall blk.
-  (PerasCert blk ~ MockPerasCert blk, PerasVote blk ~ MockPerasVote blk)=>
-  PerasParams ->
-  PerasVoteCollectionWithQuorum blk ->
-  Either (PerasError blk) (ValidatedPerasCert blk)
-forgeMockPerasCert params votes = do
-  let target = pvcTarget . forgetQuorum $ votes
-  let voters = NESet.fromList . fmap getPerasVoteSeatIndex . NEMap.elems . pvcVotes . forgetQuorum $ votes
-  Right
-    ValidatedPerasCert
-      { vpcCert =
-          MockPerasCert
-            { mockCertRound = pvtRoundNo target
-            , mockCertBlock = pvtBlock target
-            , mockCertVoters = voters
-            }
-      , vpcCertBoost = perasWeight params
-      }
+--------------------------------------------------------------------------------
+-- Orphan instances
+--------------------------------------------------------------------------------
 
--- | Helper to write 'BlockSupportsPeras.verifyPerasCert'.
---
--- WARNING: we do not perform any validation whatsoever for mocked certificates.
-validateMockPerasCert ::
-  forall blk.
-  PerasParams ->
-  PerasCert blk ->
-  Either (PerasError blk) (ValidatedPerasCert blk)
-validateMockPerasCert params cert =
-  Right
-    ValidatedPerasCert
-      { vpcCert = cert
-      , vpcCertBoost = perasWeight params
-      }
+-- NOTE: we need this to be able to derive a couple of other classes for
+-- 'NESet PerasSeatIndex'.
+deriving instance Generic (NESet a)
