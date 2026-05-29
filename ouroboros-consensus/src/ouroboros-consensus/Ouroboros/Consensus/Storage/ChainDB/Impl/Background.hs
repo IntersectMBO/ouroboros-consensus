@@ -42,12 +42,14 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
   ) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
+import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Exception (assert)
 import Control.Monad (forM_, forever, void)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Foldable (toList)
+import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import Data.Sequence.Strict (StrictSeq (..))
 import qualified Data.Sequence.Strict as Seq
@@ -56,7 +58,8 @@ import Data.Void (Void)
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
-import LeiosDemoDb (LeiosDbHandle (..))
+import LeiosDemoDb (LeiosDbHandle (..), LeiosEbNotification (..))
+import LeiosDemoTypes (pointEbHash)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -111,12 +114,44 @@ launchBgTasks leiosDb cdb@CDB{..} replayed = do
   !copyAndSnapshotThread <-
     launch "ChainDB.copyAndSnapshotRunner" $
       copyAndSnapshotRunner cdb gcSchedule replayed cdbCopyFuse
+  -- Forwards EB-closure notifications from the LeiosDb subscription
+  -- channel into 'cdbChainSelQueue'.  The thread does no other work:
+  -- the drain of 'cdbPendingCertRBs' and the reprocess happen inside
+  -- 'chainSelSync', keeping all mutations of the cache on one thread.
+  !closureArrivedThread <-
+    launch "ChainDB.closureArrivedForwarder" $
+      closureArrivedForwarder leiosDb cdb
   atomically $
     writeTVar cdbKillBgThreads $
-      sequence_ [addBlockThread, gcThread, copyAndSnapshotThread]
+      sequence_
+        [ addBlockThread
+        , gcThread
+        , copyAndSnapshotThread
+        , closureArrivedThread
+        ]
  where
   launch :: String -> m Void -> m (m ())
   launch = fmap cancelThread .: forkLinkedThread cdbRegistry
+
+-- | Subscribe to 'LeiosEbNotification's and post a
+-- 'ChainSelClosureArrived' for each 'AcquiredEbTxs'.  'AcquiredEb'
+-- (body only, txs still missing) does not yet complete a closure and
+-- is ignored; if the txs arrive later, the LeiosDb fires a separate
+-- 'AcquiredEbTxs' that this thread does process.
+closureArrivedForwarder ::
+  IOLike m =>
+  LeiosDbHandle m ->
+  ChainDbEnv m blk ->
+  m Void
+closureArrivedForwarder leiosDb CDB{cdbTracer, cdbChainSelQueue} = do
+  chan <- subscribeEbNotifications leiosDb
+  forever $
+    atomically (readTChan chan) >>= \case
+      AcquiredEb{} -> pure ()
+      AcquiredEbTxs pt ->
+        addClosureArrived addBlockTracer cdbChainSelQueue (pointEbHash pt)
+ where
+  addBlockTracer = TraceAddBlockEvent >$< cdbTracer
 
 {-------------------------------------------------------------------------------
   Copying blocks from the VolatileDB to the ImmutableDB
@@ -551,6 +586,8 @@ addBlockRunner leiosDb fuse cdb@CDB{..} = do
                     varBlockProcessed
                     (FailedToAddBlock "Failed to add block synchronously")
                 pure ()
+              -- No promise field, nothing to drain on async death.
+              ChainSelClosureArrived{} -> pure ()
             closeChainSelQueue cdbChainSelQueue
         )
         ( \message -> do
@@ -562,6 +599,8 @@ addBlockRunner leiosDb fuse cdb@CDB{..} = do
                   PoppedBlockFromQueue $
                     FallingEdgeWith $
                       blockRealPoint blockToAdd
+              ChainSelClosureArrived eb ->
+                trace $ PoppedClosureArrivedFromQueue eb
             chainSelSync leiosConn cdb message
             lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
         )

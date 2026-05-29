@@ -390,6 +390,26 @@ chainSelSync leiosDb cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = do
   for_ loeHeaders $ \hdr ->
     chainSelectionForBlock leiosDb cdb BlockCache.empty hdr noPunishment
   lift $ atomically $ putTMVar varProcessed ()
+-- An EB closure became locally available.  Drain every
+-- 'cdbPendingCertRBs' entry that named this EB and rerun chain
+-- selection on each drained RB.  Removal does not bump the
+-- fingerprint: ChainSel does not need to retry from a fingerprint
+-- diff here, because the loop below calls 'chainSelectionForBlock'
+-- directly on each newly-eligible RB.  Mirrors the no-bump-on-remove
+-- convention of 'cdbInvalid' GC pruning.
+chainSelSync leiosDb cdb@CDB{..} (ChainSelClosureArrived eb) = do
+  drainedRBHashes <- lift $ atomically $ do
+    WithFingerprint pending fp <- readTVar cdbPendingCertRBs
+    let (drained, remaining) = Map.partition (== eb) pending
+    writeTVar cdbPendingCertRBs (WithFingerprint remaining fp)
+    pure (Map.keys drained)
+  for_ drainedRBHashes $ \rbHash -> do
+    -- The block was in VolDB when 'maybeMarkPending' inserted it.
+    -- Sub-commit 6 (prune 'cdbPendingCertRBs' on VolDB GC) will
+    -- eliminate the GC race with this lookup; until then we accept
+    -- the same race the LoE arm above accepts.
+    hdr <- lift $ VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader rbHash
+    chainSelectionForBlock leiosDb cdb BlockCache.empty hdr noPunishment
 chainSelSync leiosDb cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   (isMember, invalid, curChain) <-
     lift $
