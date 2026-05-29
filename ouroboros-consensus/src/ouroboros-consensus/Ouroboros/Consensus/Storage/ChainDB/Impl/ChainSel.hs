@@ -44,7 +44,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
 import LeiosDemoDb (LeiosDbConnection, LeiosDbHandle (..))
-import LeiosDemoTypes (EbAnnouncement (..))
+import LeiosDemoTypes (EbAnnouncement (..), EbHash, IsCertRB (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))
@@ -97,7 +97,7 @@ import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.AnchoredFragment
 import Ouroboros.Consensus.Util.Enclose (encloseWith)
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
+import Ouroboros.Consensus.Util.STM (Fingerprint (..), WithFingerprint (..))
 import Ouroboros.Network.AnchoredFragment
   ( Anchor
   , AnchoredFragment
@@ -118,6 +118,10 @@ initialChainSelection ::
   , BlockSupportsDiffusionPipelining blk
   ) =>
   LeiosDbConnection m ->
+  -- | Exposes 'readCompletedClosuresSTM'.  The 'LeiosDbConnection' in
+  -- the previous argument is for validation; it does not expose the
+  -- closure cache.
+  LeiosDbHandle m ->
   ImmutableDB m blk ->
   VolatileDB m blk ->
   LedgerDB.LedgerDB' m blk ->
@@ -125,10 +129,16 @@ initialChainSelection ::
   Tracer m (TraceInitChainSelEvent blk) ->
   TopLevelConfig blk ->
   StrictTVar m (WithFingerprint (InvalidBlocks blk)) ->
+  -- | Pre-populated here by a one-shot walk over the persisted
+  -- volatile DAG.  The cache is not persisted across restarts, so a
+  -- persisted chain whose CertRB closures are still missing would
+  -- otherwise crash 'resolveLeiosBlock' on the first selection.
+  StrictTVar m (WithFingerprint (Map (HeaderHash blk) EbHash)) ->
   LoE () ->
   m (ChainAndLedger m blk)
 initialChainSelection
   leiosDb
+  leiosDbHandle
   immutableDB
   volatileDB
   lgrDB
@@ -136,6 +146,7 @@ initialChainSelection
   tracer
   cfg
   varInvalid
+  varPendingCertRBs
   loE = do
     -- TODO: Improve the user experience by trimming any potential
     -- blocks from the future from the VolatileDB.
@@ -156,13 +167,42 @@ initialChainSelection
     -- and a node operator can correct the problem by either wiping
     -- out the VolatileDB or waiting enough time until the blocks are
     -- not from the **far** future anymore.
-    (i :: Anchor blk, succsOf) <- atomically $ do
+    -- Read the four inputs of the startup walk in one transaction so
+    -- the walk operates on a consistent snapshot.  No concurrent
+    -- writer touches these at this point (background tasks are
+    -- launched only after 'openDBInternal' returns), but a single
+    -- snapshot keeps this code consistent with 'maybeMarkPending' and
+    -- 'chainSelectionForBlock', which both rely on STM read-set
+    -- validation against concurrent updates.
+    (i :: Anchor blk, succsOf, lookupLeiosFields, acquired) <- atomically $ do
       invalid <- forgetFingerprint <$> readTVar varInvalid
-      (,)
+      (,,,)
         <$> ImmutableDB.getTipAnchor immutableDB
         <*> ( ignoreInvalidSuc volatileDB invalid
                 <$> VolatileDB.filterByPredecessor volatileDB
             )
+        <*> VolatileDB.getLeiosFields volatileDB
+        <*> readCompletedClosuresSTM leiosDbHandle
+
+    -- Walk the volatile DAG from the immutable-tip anchor and seed
+    -- 'varPendingCertRBs' with every CertRB whose certified EB
+    -- closure is still missing locally.  See
+    -- 'computeInitialPendingCertRBs' for the walk itself.
+    let pendingMap =
+          computeInitialPendingCertRBs
+            (AF.anchorToHash i)
+            succsOf
+            lookupLeiosFields
+            acquired
+        pendingHashes = Map.keysSet pendingMap
+        -- Drop pending hashes from candidate successors.  Mirrors
+        -- 'succsOf'' in 'chainSelectionForBlock' but uses the
+        -- snapshot directly: this pass runs before any block reaches
+        -- the steady-state path.
+        succsOfFiltered = Set.filter (`Set.notMember` pendingHashes) . succsOf
+    atomically $
+      writeTVar varPendingCertRBs $
+        WithFingerprint pendingMap (Fingerprint 0)
 
     -- This is safe: the LedgerDB tip doesn't change in between the previous
     -- atomically block and this call to 'withTipForker'.
@@ -174,7 +214,7 @@ initialChainSelection
         Left{} -> error "Unreachable, VolatileTip MUST be in the LedgerDB"
         Right frk -> pure frk
 
-    chains <- constructChains i succsOf
+    chains <- constructChains i succsOfFiltered
 
     -- We use the empty fragment anchored at @i@ as the current chain (and
     -- ledger) and the default in case there is no better candidate.
@@ -1524,3 +1564,75 @@ maybeMarkPending CDB{..} hdr = case headerIsCertRB hdr of
                       (Map.insert (headerHash hdr) ebHash pending)
                       (succ fp)
           _ -> pure ()
+
+-- | Startup counterpart to 'maybeMarkPending': walk the volatile DAG
+-- from the immutable-tip anchor and collect every CertRB whose
+-- certified EB closure is not yet locally available.
+--
+-- Called once from 'initialChainSelection'.  The result seeds
+-- 'cdbPendingCertRBs' before any block reaches the steady-state path,
+-- which is required because the cache is not persisted and a restart
+-- can pick up a persisted CertRB whose closure is still missing.
+--
+-- Pure: every input is a snapshot taken in a single STM transaction
+-- by the caller.
+--
+-- An entry is recorded for @child@ when:
+--
+--   * @child@ is in the VolDB and 'getLeiosFields' says it is a CertRB;
+--   * its parent (the @parent@ argument to 'visit') carries an
+--     'EbAnnouncement'; and
+--   * the announced 'EbHash' is not in the completed-closure set.
+--
+-- A CertRB on an unannouncing parent (no 'EbAnnouncement') is forged.
+-- Validation rejects it later, same as in 'maybeMarkPending'.  We
+-- omit it here on purpose: if we recorded such a CertRB, we would
+-- need a synthetic 'EbHash' for the map value, and the closure-arrival
+-- handler would never drain it (no real EB ever certifies it).
+computeInitialPendingCertRBs ::
+  forall blk.
+  Ord (HeaderHash blk) =>
+  -- | Hash of the immutable-tip anchor; 'GenesisHash' is accepted.
+  ChainHash blk ->
+  -- | From 'VolatileDB.filterByPredecessor'.
+  (ChainHash blk -> Set (HeaderHash blk)) ->
+  -- | From 'VolatileDB.getLeiosFields'.  Total for blocks in the
+  -- VolDB snapshot; returns 'Nothing' for hashes outside it.
+  (HeaderHash blk -> Maybe (IsCertRB, Maybe EbAnnouncement)) ->
+  -- | From 'readCompletedClosuresSTM'.
+  Set EbHash ->
+  Map (HeaderHash blk) EbHash
+computeInitialPendingCertRBs immHash succsOf lookupLeiosFields acquired =
+  go immHash Map.empty
+ where
+  parentAnnouncement :: ChainHash blk -> Maybe EbAnnouncement
+  parentAnnouncement = \case
+    -- A depth-1 child of genesis has no parent announcement; any
+    -- CertRB at that depth is forged and is omitted (see haddock).
+    GenesisHash -> Nothing
+    BlockHash hash -> snd =<< lookupLeiosFields hash
+
+  go ::
+    ChainHash blk ->
+    Map (HeaderHash blk) EbHash ->
+    Map (HeaderHash blk) EbHash
+  go parent acc =
+    Set.foldl' (visit (parentAnnouncement parent)) acc (succsOf parent)
+
+  visit ::
+    Maybe EbAnnouncement ->
+    Map (HeaderHash blk) EbHash ->
+    HeaderHash blk ->
+    Map (HeaderHash blk) EbHash
+  visit parentAnn acc child =
+    -- Descend into 'child''s subtree first, then decide whether to
+    -- record 'child' itself.  The VolDB DAG is finite and acyclic by
+    -- construction, so the recursion terminates.
+    let acc' = go (BlockHash child) acc
+     in case lookupLeiosFields child of
+          Just (CertRB, _)
+            | Just ann <- parentAnn
+            , let eb = ebAnnouncementHash ann
+            , eb `Set.notMember` acquired ->
+                Map.insert child eb acc'
+          _ -> acc'

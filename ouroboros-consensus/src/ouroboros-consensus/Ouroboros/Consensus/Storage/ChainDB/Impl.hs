@@ -187,6 +187,7 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
       chainAndLedger <-
         ChainSel.initialChainSelection
           leiosConn
+          leiosDb
           immutableDB
           volatileDB
           lgrDB
@@ -194,6 +195,7 @@ openDBInternal leiosDb args launchBgTasks = runWithTempRegistry $ do
           initChainSelTracer
           (Args.cdbsTopLevelConfig cdbSpecificArgs)
           varInvalid
+          varPendingCertRBs
           (void initialLoE)
       traceWith initChainSelTracer InitialChainSelected
 
