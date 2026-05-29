@@ -55,6 +55,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , ChainSelMessage (..)
   , ChainSelQueue -- opaque
   , addBlockToAdd
+  , addClosureArrived
   , addReprocessLoEBlocks
   , closeChainSelQueue
   , getChainSelMessage
@@ -566,6 +567,12 @@ data ChainSelMessage m blk
     ChainSelReprocessLoEBlocks
       -- | Used for 'ChainSelectionPromise'.
       !(StrictTMVar m ())
+  | -- | An EB closure has become locally available. The matching
+    -- 'chainSelSync' arm drains any 'cdbPendingCertRBs' entries that
+    -- name this EB and reruns chain selection for each drained RB.
+    -- Enqueued by 'closureArrivedForwarder'; fire-and-forget, so no
+    -- promise field.
+    ChainSelClosureArrived !EbHash
 
 -- | Create a new 'ChainSelQueue' with the given size.
 newChainSelQueue :: (IOLike m, StandardHash blk, Typeable blk) => Word -> m (ChainSelQueue m blk)
@@ -625,6 +632,24 @@ addReprocessLoEBlocks tracer ChainSelQueue{varChainSelQueue} = do
       ChainSelReprocessLoEBlocks varProcessed
   return $ ChainSelectionPromise waitUntilRan
 
+-- | Notify ChainSel that an EB closure has become locally available.
+-- The matching 'chainSelSync' arm drains 'cdbPendingCertRBs' entries
+-- naming this EB and reruns chain selection for each drained RB.
+--
+-- Fire-and-forget: no caller waits on the result, so no
+-- 'ChainSelectionPromise'.
+addClosureArrived ::
+  IOLike m =>
+  Tracer m (TraceAddBlockEvent blk) ->
+  ChainSelQueue m blk ->
+  EbHash ->
+  m ()
+addClosureArrived tracer ChainSelQueue{varChainSelQueue} eb = do
+  traceWith tracer $ AddedClosureArrivedToQueue eb
+  atomically $
+    writeTBQueue varChainSelQueue $
+      ChainSelClosureArrived eb
+
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
 -- queue is empty; in that case, reports the starvation (and its end) via the
 -- given tracer.
@@ -662,6 +687,9 @@ getChainSelMessage starvationTracer starvationVar chainSelQueue =
       traceWith starvationTracer $ ChainSelStarvation (FallingEdgeWith pt)
       atomically . writeTVar starvationVar . ChainSelStarvationEndedAt =<< getMonotonicTime
     ChainSelReprocessLoEBlocks{} -> pure ()
+    -- Starvation is measured between block arrivals; closure arrivals
+    -- are not blocks, so they do not end the measure.
+    ChainSelClosureArrived{} -> pure ()
 
 -- TODO Can't use tryReadTBQueue from io-classes because it is broken for IOSim
 -- (but not for IO). https://github.com/input-output-hk/io-sim/issues/195
@@ -683,6 +711,9 @@ closeChainSelQueue ChainSelQueue{varChainSelQueue = queue} = do
   blockAdd = \case
     ChainSelAddBlock ab -> Just ab
     ChainSelReprocessLoEBlocks _ -> Nothing
+    -- Fire-and-forget: no 'BlockToAdd' carrying a promise to fail on
+    -- close.
+    ChainSelClosureArrived{} -> Nothing
 
 -- | To invoke when the given 'ChainSelMessage' has been processed by ChainSel.
 -- This is used to remove the respective point from the multiset of points in
@@ -696,6 +727,10 @@ processedChainSelMessage ChainSelQueue{varChainSelPoints} = \case
   ChainSelAddBlock BlockToAdd{blockToAdd = blk} ->
     modifyTVar varChainSelPoints $ MultiSet.delete (blockRealPoint blk)
   ChainSelReprocessLoEBlocks{} ->
+    pure ()
+  -- 'varChainSelPoints' tracks queued block points only; closure
+  -- arrivals are not queued via 'addBlockToAdd'.
+  ChainSelClosureArrived{} ->
     pure ()
 
 -- | Return a function to test the membership
@@ -848,6 +883,13 @@ data TraceAddBlockEvent blk
     AddedReprocessLoEBlocksToQueue
   | -- | ChainSel will reprocess blocks that were postponed by the LoE.
     PoppedReprocessLoEBlocksFromQueue
+  | -- | A 'ChainSelClosureArrived' message was added to the queue,
+    -- announcing that the given EB's closure has become locally
+    -- available.
+    AddedClosureArrivedToQueue !EbHash
+  | -- | The 'ChainSelClosureArrived' message for the given EB was
+    -- popped from the queue.
+    PoppedClosureArrivedFromQueue !EbHash
   | -- | A block was added to the Volatile DB
     AddedBlockToVolatileDB (RealPoint blk) BlockNo IsEBB Enclosing
   | -- | The block fits onto the current chain, we'll try to use it to extend
