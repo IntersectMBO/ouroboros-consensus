@@ -174,7 +174,7 @@ roundtripAnd check enc dec checkCddlValid a =
         case mkA' bs of
           Left err -> Left (showByteString bsRem err)
           Right a' ->
-            a == a' ?! pShowNeq a a
+            a == a' ?! pShowNeq a a'
       cddlValid =
         monadicIO $
           run (checkCddlValid $ Lazy.toStrict bs) >>= \case
