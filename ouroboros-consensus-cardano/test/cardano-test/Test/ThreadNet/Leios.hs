@@ -106,7 +106,6 @@ import Test.QuickCheck
   , counterexample
   , forAll
   , ioProperty
-  , property
   , tabulate
   , (.&&.)
   , (.||.)
@@ -377,7 +376,24 @@ prop_leios_late_join seed =
           Left e ->
             counterexample ("late join slot: " <> show lateJoinSlot) $
               counterexample ("threw: " <> show e) False
-          Right _ -> property True
+          Right _ ->
+            let nodeChains =
+                  Chain.toOldestFirst . nodeOutputFinalChain <$> testOutput.testOutputNodes
+                -- Compare only the part of the chain produced in the
+                -- first 3/4 of the simulation.  The late joiner has the
+                -- remaining slots to catch up to this prefix; blocks
+                -- past the cutoff may not yet have propagated to it.
+                catchUpCutoff = SlotNo (numSlots * 3 `div` 4)
+                catchUpPrefix = takeWhile ((<= catchUpCutoff) . blockSlot)
+                chainPrefixes = catchUpPrefix <$> nodeChains
+             in conjoin
+                  [ not (null nodeChains)
+                      & counterexample "test output was empty"
+                  , all (== head (Map.elems chainPrefixes)) chainPrefixes
+                      & counterexample "nodes disagree on the catch-up-bounded prefix"
+                      & counterexample ("prefix lengths: " <> show (fmap length chainPrefixes))
+                  ]
+                  & counterexample ("late join slot: " <> show lateJoinSlot)
  where
   numSlots = 200 :: Word64
 
