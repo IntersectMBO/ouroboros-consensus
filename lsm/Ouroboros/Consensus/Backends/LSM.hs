@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Backends.LSM
   , lsmSnapshotSinker
   ) where
 
+import qualified Cardano.Ledger.Compactible as SL
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import Codec.CBOR.Read (DeserialiseFailure)
@@ -153,6 +154,8 @@ lsmBackendTrace f = BackendTrace . SomeBackendTrace . f
 -- | Type alias for convenience
 type UTxOTable m = LSM.Table m TxInBytes TxOutBytes Void
 
+type InstantStakeTable m = LSM.Table m (SL.Credential SL.Staking) (SL.CompactForm SL.Coin) Void
+
 instance NoThunks (LSM.Table m txin txout Void) where
   showTypeOf _ = "Table"
   wNoThunks _ _ = pure Nothing
@@ -216,9 +219,48 @@ instance LSM.SerialiseKey TxInBytes where
   serialiseKey = unTxInBytes
   deserialiseKey = TxInBytes
 
+instance LSM.SerialiseKey (SL.Credential SL.Staking) where
+  serialiseKey txin =
+    let barr = packByteArray True txin
+     in LSM.RawBytes (VP.Vector 0 (PBA.sizeofByteArray barr) barr)
+  deserialiseKey (LSM.RawBytes vec) =
+    case unpack vec of
+      Left err ->
+        error $
+          unlines
+            [ "There was an error deserializing a TxIn from the LSM backend."
+            , "This will likely result in a restart-crash loop."
+            , "The error: " <> show err
+            ]
+      Right v -> v
+
+instance LSM.SerialiseValue (SL.CompactForm SL.Coin) where
+  serialiseValue txin =
+    let barr = packByteArray True txin
+     in LSM.RawBytes (VP.Vector 0 (PBA.sizeofByteArray barr) barr)
+  deserialiseValue (LSM.RawBytes vec) =
+    case unpack vec of
+      Left err ->
+        error $
+          unlines
+            [ "There was an error deserializing a TxIn from the LSM backend."
+            , "This will likely result in a restart-crash loop."
+            , "The error: " <> show err
+            ]
+      Right v -> v
+
+-- TODO @js depending on what the ledger gives us, we might want to overwrite
+-- the entry or apply a diff
+deriving via
+  LSM.ResolveAsFirst (SL.CompactForm SL.Coin)
+  instance
+    LSM.ResolveValue (SL.CompactForm SL.Coin)
+
 {-------------------------------------------------------------------------------
  LSM table management
 -------------------------------------------------------------------------------}
+
+data Tables m = Tables !(UTxOTable m) !(InstantStakeTable m)
 
 newLSMTablesHandle ::
   forall m era.
@@ -227,7 +269,7 @@ newLSMTablesHandle ::
   SomeHasFS m ->
   SL.NewEpochState era ->
   Word64 ->
-  UTxOTable m ->
+  Tables m ->
   m (TablesHandle m era)
 newLSMTablesHandle tracer shfs@(SomeHasFS fs) st utxoSize table = do
   pure
@@ -236,48 +278,65 @@ newLSMTablesHandle tracer shfs@(SomeHasFS fs) st utxoSize table = do
         -- via 'implRead' and place that subset into the supplied ticked
         -- NES. 'duplWithDiffs' will then diff subset-before against
         -- subset-after and push the block's changes to the table.
-        stateWith = \keys nes -> do
-          SL.UTxO utxos <- implRead tracer table keys
+        stateWith = \keys iskeys nes -> do
+          utxos <- implRead tracer uTable keys toTxInBytes fromTxInBytes (fromTxOutBytes Proxy)
+          -- TODO @js we would need to put only this instant stake into the NES
+          _istake <- implRead tracer iTable iskeys id id id
           pure $ nes & slUtxoL .~ SL.UTxO utxos
       , stateWithUTxO = \utxos -> st & slUtxoL .~ utxos
-      , applyDiff = \d ->
+      , applyDiff = \du di ->
           encloseTimedWith (TraceLedgerTablesHandlePush >$< tracer) $ do
-            handle' <- implApplyDiff tracer shfs table utxoSize st d
-            LSM.closeTable table
+            handle' <- implApplyDiff tracer shfs uTable iTable utxoSize st du di
+            LSM.closeTable uTable
+            LSM.closeTable iTable
             pure handle'
-      , duplWithDiffs = implDuplicateWithDiffs tracer shfs table utxoSize
-      , duplicateHandle =
-          encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) (LSM.duplicate table)
-            >>= newLSMTablesHandle tracer shfs st utxoSize
+      , duplWithDiffs = implDuplicateWithDiffs tracer shfs uTable iTable utxoSize
+      , duplicateHandle = do
+          uTable' <-
+            encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) (LSM.duplicate uTable)
+          iTable' <-
+            encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) (LSM.duplicate iTable)
+          newLSMTablesHandle tracer shfs st utxoSize $ Tables uTable' iTable'
       , readUTxOWhole =
           encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $
-            drainTableFiltered table (const True)
+            drainTableFiltered uTable (const True)
       , readUTxOFiltered = \p ->
           encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $
-            drainTableFiltered table p
-      , readTxOuts = implRead tracer table
+            drainTableFiltered uTable p
+      , readTxOuts = \keys -> SL.UTxO <$> implRead tracer uTable keys toTxInBytes fromTxInBytes (fromTxOutBytes Proxy)
       , closeHandle =
-          encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) (LSM.closeTable table)
+          encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) (LSM.closeTable uTable)
       , getStatsHandle = Statistics $ fromIntegral utxoSize
       , takeHandleSnapshot = \ds ->
           encloseTimedWith (lsmBackendTrace LSMSnap >$< tracer) $ do
             LSM.saveSnapshot
               (fromString (snapshotToDirName ds))
               (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
-              table
+              uTable
             writeUTxOSizeFile fs (snapshotToUTxOSizeFilePath ds) $ fromIntegral utxoSize
+            LSM.saveSnapshot
+              (fromString (snapshotToDirName ds))
+              (LSM.SnapshotLabel $ Text.pack $ "InstantStakeTable table")
+              iTable
             pure (Nothing, UTxOHDLSMSnapshot)
-      , castHandle = \st' ->
-          encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) (LSM.duplicate table)
-            >>= newLSMTablesHandle tracer shfs st' utxoSize
+      , castHandle = \st' -> do
+          uTable' <-
+            encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) (LSM.duplicate uTable)
+          iTable' <-
+            encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) (LSM.duplicate iTable)
+          newLSMTablesHandle tracer shfs st' utxoSize $ Tables uTable' iTable'
       , injectValues = \nes ->
           encloseTimedWith (TraceLedgerTablesHandlePush >$< tracer) $ do
             let (SL.UTxO utxos, nes') = nes & slUtxoL <<.~ SL.UTxO Map.empty
-            table' <- LSM.duplicate table
-            mapM_ (go table') . chunks 1000 . Map.toList $ utxos
-            newLSMTablesHandle tracer shfs nes' (utxoSize + fromIntegral (Map.size utxos)) table'
+            uTable' <- LSM.duplicate uTable
+            mapM_ (go uTable') . chunks 1000 . Map.toList $ utxos
+            iTable' <- LSM.duplicate iTable
+            newLSMTablesHandle tracer shfs nes' (utxoSize + fromIntegral (Map.size utxos)) $
+              Tables uTable' iTable'
       }
  where
+  Tables uTable iTable = table
+
   go :: UTxOTable m -> [(SL.TxIn, SL.TxOut era)] -> m ()
   go table' items =
     LSM.inserts table' $
@@ -334,28 +393,30 @@ drainTableFiltered table p =
     LSM.EntryWithBlob{} -> m
 
 implRead ::
-  (IOLike m, MemPack (SL.TxOut era)) =>
+  (LSM.SerialiseKey k, LSM.SerialiseValue v, LSM.ResolveValue v, Ord k', IOLike m) =>
   Tracer m LedgerDBV2Trace ->
-  UTxOTable m ->
-  Set SL.TxIn ->
-  m (SL.UTxO era)
-implRead tracer table keys =
+  LSM.Table m k v Void ->
+  Set k' ->
+  (k' -> k) ->
+  (k -> k') ->
+  (v -> v') ->
+  m (Map.Map k' v')
+implRead tracer table keys injk ejk ejv =
   encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $ do
     let vec' = V.create $ do
           vec <- VM.new (Set.size keys)
           Monad.foldM_
-            (\i x -> VM.write vec i (toTxInBytes x) >> pure (i + 1))
+            (\i x -> VM.write vec i (injk x) >> pure (i + 1))
             0
             keys
           pure vec
     res <-
       encloseTimedWith (lsmBackendTrace LSMLookup >$< tracer) $ LSM.lookups table vec'
     pure
-      . SL.UTxO
       . Foldable.foldl'
         ( \m (k, item) ->
             case item of
-              LSM.Found v -> Map.insert (fromTxInBytes k) (fromTxOutBytes (Proxy) v) m
+              LSM.Found v -> Map.insert (ejk k) (ejv v) m
               LSM.NotFound -> m
               LSM.FoundWithBlob{} -> m
         )
@@ -367,17 +428,21 @@ implApplyDiff ::
   Tracer m LedgerDBV2Trace ->
   SomeHasFS m ->
   UTxOTable m ->
+  InstantStakeTable m ->
   Word64 ->
   SL.NewEpochState era ->
   Diff.Diff SL.TxIn (SL.TxOut era) ->
+  Diff.Diff (SL.Credential SL.Staking) (SL.CompactForm SL.Coin) ->
   m (TablesHandle m era)
-implApplyDiff tracer shfs table size st (Diff.Diff diffs) = do
+implApplyDiff tracer shfs table itable size st (Diff.Diff utxodiffs) (Diff.Diff istakediffs) = do
   table' <-
     encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) $ LSM.duplicate table
-  let vec = V.create $ do
+  itable' <-
+    encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) $ LSM.duplicate itable
+  let vec diffs injK injV = V.create $ do
         vec' <- VM.new (Map.size diffs)
         Monad.foldM_
-          (\idx (k, item) -> VM.write vec' idx (toTxInBytes k, (f item)) >> pure (idx + 1))
+          (\idx (k, item) -> VM.write vec' idx (injK k, (f injV item)) >> pure (idx + 1))
           0
           $ Map.toList diffs
         pure vec'
@@ -388,34 +453,51 @@ implApplyDiff tracer shfs table size st (Diff.Diff diffs) = do
               Diff.Delete -> (i, d + 1)
           )
           (0, 0)
-          diffs
+          utxodiffs
   let !size' =
         assert (size + ins >= size) $
           assert (size + ins - dels <= size + ins) $
             size + ins - dels
-  encloseTimedWith (lsmBackendTrace LSMUpdate >$< tracer) $ LSM.updates table' vec
-  newLSMTablesHandle tracer shfs st size' table'
+  encloseTimedWith (lsmBackendTrace LSMUpdate >$< tracer) $
+    LSM.updates table' (vec utxodiffs toTxInBytes (toTxOutBytes Proxy))
+  encloseTimedWith (lsmBackendTrace LSMUpdate >$< tracer) $
+    LSM.updates itable' (vec istakediffs id id)
+  newLSMTablesHandle tracer shfs st size' $ Tables table' itable'
  where
-  f (Diff.Insert v) = LSM.Insert (toTxOutBytes (Proxy) v) Nothing
-  f Diff.Delete = LSM.Delete
+  f injv (Diff.Insert v) = LSM.Insert (injv v) Nothing
+  f _ Diff.Delete = LSM.Delete
 
 implDuplicateWithDiffs ::
   (IOLike m, MemPack (SL.TxOut era), Eq (SL.TxOut era)) =>
   Tracer m LedgerDBV2Trace ->
   SomeHasFS m ->
   UTxOTable m ->
+  InstantStakeTable m ->
   Word64 ->
   SL.NewEpochState era ->
   SL.NewEpochState era ->
   m (SL.NewEpochState era, TablesHandle m era)
-implDuplicateWithDiffs tracer shfs table size st0 st1 =
+implDuplicateWithDiffs tracer shfs table itable size st0 st1 =
   encloseTimedWith (TraceLedgerTablesHandlePush >$< tracer) $ do
     let SL.UTxO utxo0 = st0 ^. slUtxoL
         (SL.UTxO utxo1, st1') = st1 & slUtxoL <<.~ SL.UTxO Map.empty
+
+        istake0 = eraInstantStake $ st0 ^. slInstantStakeL
+        istake1 = eraInstantStake $ st1 ^. slInstantStakeL
+
     -- 'st1'' has 'slUtxoL' cleared; it is also what we hand back for
     -- the outer 'ShelleyLedgerState' so the LedgerDB doesn't carry a
     -- per-block subset Map next to the on-disk table.
-    h <- implApplyDiff tracer shfs table size st1' $ Diff.diff utxo0 utxo1
+    h <-
+      implApplyDiff
+        tracer
+        shfs
+        table
+        itable
+        size
+        st1'
+        (Diff.diff utxo0 utxo1)
+        (Diff.diff istake0 istake1)
     pure (st1', h)
 
 mkLSMFactory ::
@@ -429,14 +511,21 @@ mkLSMFactory tracer session shfs = MkHandle $ \st -> do
   table <-
     encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $ LSM.newTable session
   let SL.UTxO utxos = st ^. slUtxoL
-  mapM_ (go table) $ chunks 1000 $ Map.toList utxos
-  newLSMTablesHandle tracer shfs st (fromIntegral (Map.size utxos)) table
+  mapM_ (go table toTxInBytes (toTxOutBytes Proxy)) $ chunks 1000 $ Map.toList utxos
+
+  itable <-
+    encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $ LSM.newTable session
+  let istake = eraInstantStake $ st ^. slInstantStakeL
+  mapM_ (go itable id id) $ chunks 1000 $ Map.toList istake
+  newLSMTablesHandle tracer shfs st (fromIntegral (Map.size utxos)) $ Tables table itable
  where
-  go :: forall era. MemPack (SL.TxOut era) => UTxOTable m -> [(SL.TxIn, SL.TxOut era)] -> m ()
-  go table items =
+  go ::
+    (LSM.SerialiseKey k', LSM.SerialiseValue v', LSM.ResolveValue v') =>
+    LSM.Table m k' v' Void -> (k -> k') -> (v -> v') -> [(k, v)] -> m ()
+  go table injk injv items =
     LSM.inserts table $
       V.fromListN (length items) $
-        map (\(k, v) -> (toTxInBytes k, toTxOutBytes (Proxy @era) v, Nothing)) items
+        map (\(k, v) -> (injk k, injv v, Nothing)) items
 
 readUTxOSizeFile :: MonadThrow m => SomeHasFS m -> FsPath -> ExceptT () m Word64
 readUTxOSizeFile (SomeHasFS hfs) p = do
@@ -473,10 +562,17 @@ mkLSMFromSnapshot tracer session shfs = MkHandleFromSnapshot $ \ds st -> do
           session
           (fromString $ snapshotToDirName ds)
           (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
+  i <-
+    lift $
+      encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $
+        LSM.openTableFromSnapshot
+          session
+          (fromString $ snapshotToDirName ds)
+          (LSM.SnapshotLabel $ Text.pack $ "InstantStake table")
   -- LSM keeps UTxOs on disk only; the pure 'NewEpochState' carries an
   -- empty 'slUtxoL' (which is also what 'encodeShelleyLedgerState'
   -- writes), so we return @st@ unchanged.
-  (st,,Nothing) <$> lift (newLSMTablesHandle tracer shfs st msz h)
+  (st,,Nothing) <$> lift (newLSMTablesHandle tracer shfs st msz $ Tables h i)
 
 {-------------------------------------------------------------------------------
   Snapshot streaming

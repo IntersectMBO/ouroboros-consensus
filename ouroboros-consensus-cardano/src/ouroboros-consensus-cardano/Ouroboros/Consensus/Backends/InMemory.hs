@@ -58,6 +58,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend (LedgerDBV2Trace (..))
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr, readIncremental)
+import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose (encloseTimedWith)
 import Ouroboros.Consensus.Util.IOLike
 import Streaming (Of, Stream, hoist)
@@ -81,10 +82,12 @@ newInMemoryTablesHandle tracer shfs@(SomeHasFS hasFS) ls =
             -- key set is irrelevant here. BBODY then runs against the
             -- full UTxO and 'duplWithDiffs' can keep the resulting
             -- post-block NES verbatim.
-            stateWith = \_keys nes ->
+            stateWith = \_keys _is nes ->
               encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $
                 pure $
-                  nes & slUtxoL .~ (ls ^. slUtxoL)
+                  nes
+                    & slUtxoL .~ (ls ^. slUtxoL)
+                    & slInstantStakeL .~ (ls ^. slInstantStakeL)
           , -- the post-block NES already carries the full UTxO, so
             -- return it verbatim for the outer 'ShelleyLedgerState'
             -- and build the new handle around the same value.
@@ -114,7 +117,7 @@ newInMemoryTablesHandle tracer shfs@(SomeHasFS hasFS) ls =
                   SL.UTxO $
                     Map.restrictKeys (SL.unUTxO (ls ^. slUtxoL)) keys
           , -- we don't apply AVVM diffs, the ledger already applied them
-            applyDiff = \_ ->
+            applyDiff = \_ _ ->
               encloseTimedWith (TraceLedgerTablesHandlePush >$< tracer) $ pure h
           , -- closing has no effect, but trace it for lifecycle visibility
             closeHandle =
@@ -123,15 +126,23 @@ newInMemoryTablesHandle tracer shfs@(SomeHasFS hasFS) ls =
             getStatsHandle = Statistics $ Map.size $ SL.unUTxO $ ls ^. slUtxoL
           , takeHandleSnapshot = \ds -> do
               createDirectoryIfMissing hasFS True $ snapshotToDirPath ds
-              withFile hasFS (snapshotToUTxOFilePath ds) (WriteMode MustBeNew) $ \hf ->
-                fmap (\(_, x) -> (Just x, UTxOHDMemSnapshot)) $
-                  hPutAllCRC hasFS hf $
-                    CBOR.toLazyByteString $
-                      mconcat
-                        [ CBOR.encodeListLen 1
-                        , toPlainEncoding (SL.eraProtVerLow @era) $
-                            encodeMap encodeMemPack encodeMemPack (SL.unUTxO (ls ^. slUtxoL))
-                        ]
+              (_, crc1) <- withFile hasFS (snapshotToUTxOFilePath ds) (WriteMode MustBeNew) $ \hf ->
+                hPutAllCRC hasFS hf $
+                  CBOR.toLazyByteString $
+                    mconcat
+                      [ CBOR.encodeListLen 1
+                      , toPlainEncoding (SL.eraProtVerLow @era) $
+                          encodeMap encodeMemPack encodeMemPack (SL.unUTxO (ls ^. slUtxoL))
+                      ]
+              (_, crc2) <- withFile hasFS (snapshotToInstantStakeFilePath ds) (WriteMode MustBeNew) $ \hf ->
+                hPutAllCRC hasFS hf $
+                  CBOR.toLazyByteString $
+                    mconcat
+                      [ CBOR.encodeListLen 1
+                      , toPlainEncoding (SL.eraProtVerLow @era) $
+                          encodeMap encodeMemPack encodeMemPack (ls ^. slInstantStakeL)
+                      ]
+              pure (Just $ crcOfConcat crc1 crc2, UTxOHDMemSnapshot)
           , castHandle =
               \st ->
                 encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $
@@ -174,6 +185,8 @@ mkInMemoryFromSnapshot tracer shfs =
     ( MemPack (SL.TxOut era)
     , Share (SL.TxOut era) ~ Interns (SL.Credential SL.Staking)
     , DecShareCBOR (SL.TxOut era)
+    , Share (SL.InstantStake era) ~ Interns (SL.Credential SL.Staking)
+    , DecShareCBOR (SL.InstantStake era)
     , SL.EraCertState era
     ) =>
     DiskSnapshot ->
@@ -189,12 +202,14 @@ mkInMemoryFromSnapshot tracer shfs =
                 . SL.certDStateL
                 . SL.accountsL
                 . SL.accountsMapL
-    (utxo, Identity crcTables) <-
+    (utxo, Identity crcTables1) <-
       ExceptT $
         readIncremental
           shfs
           Identity
           ( do
+              -- TODO @js now I realize we are going to put each one in one
+              -- file, so this length is unnecessary.
               l <- CBOR.decodeListLen
               case l of
                 1 -> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))
@@ -202,20 +217,40 @@ mkInMemoryFromSnapshot tracer shfs =
           )
           (snapshotToUTxOFilePath ds)
 
+    (istake, Identity crcTables2) <-
+      ExceptT $
+        readIncremental
+          shfs
+          Identity
+          ( do
+              l <- CBOR.decodeListLen
+              case l of
+                1 -> SL.eraDecoder @era (decShareCBOR certInterns)
+                _ -> fail $ "Wrong number of tables: " <> show l
+          )
+          (snapshotToInstantStakeFilePath ds)
+    let _ = istake :: SL.InstantStake era
+
     -- InMemory keeps the UTxOs in the pure 'NewEpochState': re-populate
     -- 'slUtxoL' from the @utxo@ file before constructing the handle and
     -- hand back the same NES so the consumer can put it into the
     -- 'ShelleyStateHandle'\'s pure-state field.
-    let ls' = ls & slUtxoL .~ SL.UTxO utxo
+    let ls' =
+          ls
+            & slUtxoL .~ SL.UTxO utxo
+            & slInstantStakeL .~ (istake ^. instantStakeMapL)
     h <-
       lift $
         encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $
           pure $
             newInMemoryTablesHandle tracer shfs ls'
-    pure (ls', h, Just crcTables)
+    pure (ls', h, Just (crcOfConcat crcTables1 crcTables2))
 
 snapshotToUTxOFilePath :: DiskSnapshot -> FsPath
 snapshotToUTxOFilePath ds = snapshotToDirPath ds </> mkFsPath ["utxo"]
+
+snapshotToInstantStakeFilePath :: DiskSnapshot -> FsPath
+snapshotToInstantStakeFilePath ds = snapshotToDirPath ds </> mkFsPath ["instantStake"]
 
 {-------------------------------------------------------------------------------
   Snapshot streaming

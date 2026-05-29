@@ -39,6 +39,8 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , MkHandleFromSnapshot (..)
   , BackendError (..)
   , slUtxoL
+  , slInstantStakeL
+  , instantStakeMapL
 
     -- * Ledger config
   , ShelleyLedgerConfig (..)
@@ -74,6 +76,7 @@ import Cardano.Ledger.Binary.Plain
   , enforceSize
   )
 import qualified Cardano.Ledger.Block as Core
+import qualified Cardano.Ledger.Compactible as SL
 import qualified Cardano.Ledger.Conway.State as SL
 import Cardano.Ledger.Core
   ( Era
@@ -97,9 +100,11 @@ import Control.Monad.Trans (lift)
 import qualified Control.State.Transition.Extended as STS
 import Data.Coerce
 import Data.Functor.Identity
+import Data.Map (Map)
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.MemPack
 import Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
@@ -393,6 +398,16 @@ type instance LedgerTablesHandle m (ShelleyBlock proto era) = TablesHandle m era
 slUtxoL :: Lens' (SL.NewEpochState era) (SL.UTxO era)
 slUtxoL = SL.nesEsL . SL.esLStateL . SL.lsUTxOStateL . SL.utxoL
 
+slInstantStakeL ::
+  Lens' (SL.NewEpochState era) (Map (SL.Credential SL.Staking) (SL.CompactForm SL.Coin))
+slInstantStakeL = SL.nesEsL . SL.esLStateL . SL.lsUTxOStateL . SL.instantStakeL . instantStakeMapL
+
+-- TODO @js: we need this function from the Ledger. Both ShelleyInstantStake and
+-- ConwayInstantStake can implement it.
+instantStakeMapL ::
+  Lens' (SL.InstantStake era) (Map (SL.Credential SL.Staking) (SL.CompactForm SL.Coin))
+instantStakeMapL = undefined
+
 data MkHandle m = MkHandle
   { fromNewEpochState ::
       forall era.
@@ -408,6 +423,8 @@ data MkHandleFromSnapshot m = MkHandleFromSnapshot
       , IOLike m
       , Share (SL.TxOut era) ~ Interns (SL.Credential SL.Staking)
       , DecShareCBOR (SL.TxOut era)
+      , Share (SL.InstantStake era) ~ Interns (SL.Credential SL.Staking)
+      , DecShareCBOR (SL.InstantStake era)
       , SL.EraCertState era
       , Eq (SL.TxOut era)
       ) =>
@@ -425,7 +442,11 @@ data BackendError = BackendReadErr ReadIncrementalErr | BackendCorruptedData
   deriving Show
 
 data TablesHandle m era = TablesHandle
-  { stateWith :: Set SL.TxIn -> SL.NewEpochState era -> m (SL.NewEpochState era)
+  { stateWith ::
+      Set SL.TxIn ->
+      Set (SL.Credential SL.Staking) ->
+      SL.NewEpochState era ->
+      m (SL.NewEpochState era)
   -- ^ Populate the @slUtxoL@ field of the supplied (already-ticked)
   -- 'NewEpochState' so that BBODY can be applied to it. The 'Set' is
   -- the block's input keys.
@@ -439,7 +460,10 @@ data TablesHandle m era = TablesHandle
   , stateWithUTxO :: SL.UTxO era -> SL.NewEpochState era
   -- ^ Only used for the AVVMs, create a NewEpochState as if the
   -- given UTxOs had been read from the disk.
-  , applyDiff :: Diff.Diff SL.TxIn (SL.TxOut era) -> m (TablesHandle m era)
+  , applyDiff ::
+      Diff.Diff SL.TxIn (SL.TxOut era) ->
+      Diff.Diff (SL.Credential SL.Staking) (SL.CompactForm SL.Coin) ->
+      m (TablesHandle m era)
   -- ^ Only used for AVVMs. Push a bunch of diffs to this reference
   -- without duplicating it. In the OnDisk backend
   -- this will mutate the database.
@@ -674,7 +698,7 @@ applyHelper f cfg blk stBefore = do
   -- what keeps the TICK rule's effects -- epoch number, gov state,
   -- snapshots, 'FuturePParams' -- visible to BBODY.
   tickedShelleyLedgerState' <-
-    lift $ stateWith h (getBlockKeySets blk) tickedShelleyLedgerState
+    lift $ stateWith h (getBlockKeySets blk) Set.empty tickedShelleyLedgerState
   LedgerResult evs st' <-
     ExceptT $
       pure $
