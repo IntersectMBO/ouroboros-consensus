@@ -51,6 +51,7 @@ import Control.Tracer
 import Data.Foldable (toList)
 import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Data.Sequence.Strict (StrictSeq (..))
 import qualified Data.Sequence.Strict as Seq
 import Data.Time.Clock
@@ -349,6 +350,33 @@ garbageCollect CDB{..} slotNo = do
   atomically $ do
     LedgerDB.garbageCollect cdbLedgerDB slotNo
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
+    -- Drop pending-CertRB entries whose announcing block VolDB has
+    -- just removed.
+    --
+    -- Two invariants make this sound and explain why it rarely fires:
+    --
+    -- - A pending CertRB R (in 'cdbPendingCertRBs') is never on the
+    --   immutable chain.  ChainSel filters R out of every candidate
+    --   while R is pending, so R is never selected, and only the
+    --   selected chain is copied to ImmutableDB.
+    --
+    -- - If VolDB GC removes R, then R's slot is strictly older than
+    --   the immutable tip.  Together with the first invariant, R
+    --   must hang off a stale fork branching from an immutable
+    --   block strictly older than the immutable tip.
+    --
+    -- In the late-join scenario the pending CertRB sits on the
+    -- unique canonical chain, so the immutable tip parks behind it
+    -- and GC never reaches it.  This prune therefore fires only
+    -- when the selected chain bypasses a fork carrying a pending
+    -- CertRB.
+    --
+    -- No fingerprint bump on removal; matches 'cdbInvalid' above.
+    lookupLeiosFields <- VolatileDB.getLeiosFields cdbVolatileDB
+    modifyTVar cdbPendingCertRBs $
+      fmap $
+        Map.filterWithKey $
+          \h _ -> isJust (lookupLeiosFields h)
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
 
 {-------------------------------------------------------------------------------

@@ -404,10 +404,13 @@ chainSelSync leiosDb cdb@CDB{..} (ChainSelClosureArrived eb) = do
     writeTVar cdbPendingCertRBs (WithFingerprint remaining fp)
     pure (Map.keys drained)
   for_ drainedRBHashes $ \rbHash -> do
-    -- The block was in VolDB when 'maybeMarkPending' inserted it.
-    -- Sub-commit 6 (prune 'cdbPendingCertRBs' on VolDB GC) will
-    -- eliminate the GC race with this lookup; until then we accept
-    -- the same race the LoE arm above accepts.
+    -- The block is still in VolDB.  'maybeMarkPending' inserted it
+    -- when it was, and VolDB GC cannot have removed it since: the
+    -- immutable tip cannot advance past R while R is pending
+    -- (ChainSel filters R out of every candidate), so GC's cutoff
+    -- parks behind R's slot.  See the prune in
+    -- 'Background.garbageCollect' for the dual statement on the
+    -- VolDB-GC side.
     hdr <- lift $ VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader rbHash
     chainSelectionForBlock leiosDb cdb BlockCache.empty hdr noPunishment
 chainSelSync leiosDb cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
