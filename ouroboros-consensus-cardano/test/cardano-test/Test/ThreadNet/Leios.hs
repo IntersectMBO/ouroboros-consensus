@@ -360,7 +360,13 @@ prop_leios seed =
 -- have been produced.
 prop_leios_late_join :: Seed -> Property
 prop_leios_late_join seed =
-  forAll (choose (1, fromIntegral numSlots - 1)) $ \lateJoinSlot ->
+  -- Cap the join slot at 'numSlots/4' so the late node always has at
+  -- least 3/4 of the run to catch up.  Pairs with the
+  -- catch-up-bounded prefix in the chain-agreement assertion: blocks
+  -- past slot @numSlots * 3 / 4@ are exempt from the comparison, and
+  -- everything before is reachable by a node that joined no later
+  -- than @numSlots / 4@.
+  forAll (choose (1, fromIntegral numSlots `div` 4)) $ \lateJoinSlot ->
     let
       joinPlan =
         NodeJoinPlan $
