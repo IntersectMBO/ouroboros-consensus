@@ -426,7 +426,7 @@ translateLedgerStateShelleyToAllegraWrapper =
           h' <-
             -- Written this way to ensure we don't try to hold the intermediate handle
             castHandle h (shelleyLedgerState ls')
-              >>= flip applyDiff (Diff.fromMapDeletes $ SL.unUTxO avvms)
+              >>= flip (flip applyDiff (Diff.fromMapDeletes $ SL.unUTxO avvms)) mempty
 
           pure $ ShelleyStateHandle ls' h'
       }

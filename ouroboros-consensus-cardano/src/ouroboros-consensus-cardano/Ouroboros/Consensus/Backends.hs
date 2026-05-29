@@ -17,6 +17,7 @@ module Ouroboros.Consensus.Backends
 import Cardano.Ledger.Binary.Decoding
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.State as SL
 import Codec.Serialise
 import qualified Control.Monad as Monad
 import Control.Monad.Except
@@ -128,6 +129,8 @@ loadSnapshot expectedBackend mkFromSnapshot mkH ccfg fs@(SomeHasFS hfs) ds = do
                     ( MemPack (SL.TxOut era)
                     , Share (SL.TxOut era) ~ Interns (SL.Credential SL.Staking)
                     , DecShareCBOR (SL.TxOut era)
+                    , Share (SL.InstantStake era) ~ Interns (SL.Credential SL.Staking)
+                    , DecShareCBOR (SL.InstantStake era)
                     , SL.EraCertState era
                     , Eq (SL.TxOut era)
                     ) =>
