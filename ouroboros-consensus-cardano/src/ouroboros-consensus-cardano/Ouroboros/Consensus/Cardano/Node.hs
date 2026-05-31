@@ -939,12 +939,14 @@ protocolInfoCardano paramsCardano
           let assumeUnsound = \case
                 PraosCredentialsUnsound _ sk -> sk
                 PraosCredentialsAgent{} -> error "can't derive topLevelConfigVotingKey from agent"
-          Just
-            . rawSerialiseUnsoundPureSignKeyKES
-            . assumeUnsound
-            . praosCanBeLeaderCredentialsSource
-            . shelleyLeaderCredentialsCanBeLeader
-            $ credssShelleyBased !! 0
+          case credssShelleyBased of
+            [] -> Nothing
+            (c : _) ->
+              Just
+                . rawSerialiseUnsoundPureSignKeyKES
+                . assumeUnsound
+                . praosCanBeLeaderCredentialsSource
+                $ shelleyLeaderCredentialsCanBeLeader c
       }
 
   -- When the initial ledger state is not in the Byron era, register various
