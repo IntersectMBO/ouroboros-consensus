@@ -282,7 +282,7 @@ encodeLeiosFetch encodeP encodeEb encodeTx = encode
         <> foldMap encodeTx txs
     MsgDone ->
       CBOR.encodeListLen 1
-        <> CBOR.encodeWord 4
+        <> CBOR.encodeWord 9
 
 decodeLeiosFetch ::
   forall
