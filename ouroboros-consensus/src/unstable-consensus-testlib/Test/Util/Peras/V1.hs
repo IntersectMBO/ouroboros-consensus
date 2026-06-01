@@ -6,7 +6,7 @@
 {-# LANGUAGE TypeFamilies #-}
 
 -- | Common utilities for writing tests for Peras types.
-module Test.Consensus.Peras.Util.V1
+module Test.Util.Peras.V1
   ( -- * Predicates
     perasVoteIsPersistent
   , perasCertContainsOnlyPersistentVotes
@@ -49,7 +49,7 @@ import Ouroboros.Consensus.Peras.Types
   , PerasSeatIndex (..)
   )
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
-import Test.Consensus.Peras.Util.Internal (genRoundNo, genSeatIndex, mkBucket)
+import Test.Util.Peras.Internal (genRoundNo, genSeatIndex, mkBucket)
 import Test.QuickCheck
   ( Arbitrary (..)
   , Gen
