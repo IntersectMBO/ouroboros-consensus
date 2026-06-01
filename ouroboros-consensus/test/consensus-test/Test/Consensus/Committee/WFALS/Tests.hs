@@ -65,7 +65,6 @@ import Test.QuickCheck
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
-import Test.Util.TestEnv (adjustQuickCheckTests)
 import Test.Util.Committee
   ( eqWithShowCmp
   , genEpochNonce
@@ -76,6 +75,7 @@ import Test.Util.Committee
   , tabulatePoolStake
   , unfairWFATiebreaker
   )
+import Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
 tests =

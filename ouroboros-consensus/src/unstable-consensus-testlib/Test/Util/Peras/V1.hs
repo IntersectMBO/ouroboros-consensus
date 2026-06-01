@@ -26,6 +26,7 @@ import Control.Monad (forM)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as ShortByteString
+import Data.Coerce (coerce)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Maybe (catMaybes, fromMaybe)
@@ -35,7 +36,7 @@ import Data.Traversable (mapAccumM)
 import Data.Word (Word8)
 import GHC.Word (Word16)
 import Ouroboros.Consensus.Block (HeaderHash)
-import Ouroboros.Consensus.Block.Abstract (WithOrigin (..))
+import Ouroboros.Consensus.Block.Abstract (ConvertRawHash (..), WithOrigin (..))
 import Ouroboros.Consensus.Block.RealPoint (RealPoint (..), toBytes32RealPoint)
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
@@ -49,7 +50,6 @@ import Ouroboros.Consensus.Peras.Types
   , PerasSeatIndex (..)
   )
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
-import Test.Util.Peras.Internal (genRoundNo, genSeatIndex, mkBucket)
 import Test.QuickCheck
   ( Arbitrary (..)
   , Gen
@@ -60,6 +60,7 @@ import Test.QuickCheck
   , tabulate
   , vectorOf
   )
+import Test.Util.Peras.Internal (genRoundNo, genSeatIndex, mkBucket)
 
 -- * Predicates
 
@@ -87,6 +88,10 @@ perasCertContainsOnlyPersistentVotes cert =
 
 data BlockWith32BytesHeaderHash
 type instance HeaderHash BlockWith32BytesHeaderHash = ShortByteString
+instance ConvertRawHash (BlockWith32BytesHeaderHash) where
+  toShortRawHash _ = coerce
+  fromShortRawHash _ = coerce
+  hashSize _ = 32
 
 genBoostedBlock :: Gen PerasBoostedBlock
 genBoostedBlock = PerasBoostedBlock <$> genWithOrigin genBytes32RealPoint
