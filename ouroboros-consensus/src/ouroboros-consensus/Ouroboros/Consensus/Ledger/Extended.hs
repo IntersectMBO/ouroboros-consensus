@@ -26,6 +26,7 @@ module Ouroboros.Consensus.Ledger.Extended
   , decodeExtLedgerState
   , encodeDiskExtLedgerState
   , encodeExtLedgerState
+  , getPerasEpochContextResolverHandle
 
     -- * Type family instances
   , LedgerTables (..)
@@ -47,8 +48,13 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextResolver
+  , PerasEpochContextResolverHandle (..)
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Util.IOLike (MonadSTM (STM))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
@@ -70,8 +76,18 @@ deriving instance LedgerSupportsProtocol blk => Show (ExtValidationError blk)
 data ExtLedgerState blk mk = ExtLedgerState
   { ledgerState :: !(LedgerState blk mk)
   , headerState :: !(HeaderState blk)
+  -- , perasEpochContextResolver :: !(PerasEpochContextResolver blk) [TODO EPOCH CONTEXT PLUMBING]
   }
   deriving Generic
+
+-- In the future we will have a ledgerPerasEpochContextResolver field in ExtLedgerState
+-- [TODO EPOCH CONTEXT PLUMBING]
+ledgerPerasEpochContextResolver :: ExtLedgerState blk mk -> PerasEpochContextResolver blk
+ledgerPerasEpochContextResolver = undefined
+
+getPerasEpochContextResolverHandle ::
+  MonadSTM m => STM m (ExtLedgerState blk mk) -> PerasEpochContextResolverHandle m blk
+getPerasEpochContextResolverHandle getLedgerStateSTM = PerasEpochContextResolverHandle $ ledgerPerasEpochContextResolver <$> getLedgerStateSTM
 
 deriving instance
   (EqMK mk, LedgerSupportsProtocol blk) =>
@@ -137,6 +153,7 @@ data instance Ticked ExtLedgerState blk mk = TickedExtLedgerState
   { tickedLedgerState :: Ticked LedgerState blk mk
   , ledgerView :: LedgerView (BlockProtocol blk)
   , tickedHeaderState :: Ticked (HeaderState blk)
+  -- , tickedPerasEpochContextResolver :: PerasEpochContextResolver blk [TODO EPOCH CONTEXT PLUMBING]
   }
 
 instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState blk) where

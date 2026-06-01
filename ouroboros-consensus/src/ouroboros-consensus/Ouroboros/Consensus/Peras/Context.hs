@@ -6,12 +6,11 @@
 module Ouroboros.Consensus.Peras.Context
   ( PerasEpochContextResolver
   , PerasEpochContextNotFoundForRound (..)
-  , PerasEpochContextResolverHandle
+  , PerasEpochContextResolverHandle (..)
   , verifyPerasVoteInContext
   , verifyPerasCertInContext
   , resolveRoundNoWithHandle
   , constPerasEpochContextResolverHandle
-  , extractPerasEpochContextResolverHandleFromExtLedgerState
   )
 where
 
@@ -28,13 +27,11 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , ValidatedPerasVote
   , getPerasVoteRound
   )
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , MonadSTM
   , MonadThrow
   , NoThunks
-  , StrictTVar
   , newTVarIO
   , readTVar
   , throwSTM
@@ -48,7 +45,7 @@ data PerasEpochContextNotFoundForRound = PerasEpochContextNotFoundForRound Peras
   deriving (Show, Eq, Generic, NoThunks, Exception)
 
 newtype PerasEpochContextResolverHandle m blk
-  = PerasEpochContextResolverHandle (StrictTVar m (PerasEpochContextResolver blk))
+  = PerasEpochContextResolverHandle (STM m (PerasEpochContextResolver blk))
 
 resolveRoundNoWithHandle ::
   MonadSTM m =>
@@ -56,7 +53,7 @@ resolveRoundNoWithHandle ::
   PerasRoundNo ->
   STM m (Either PerasEpochContextNotFoundForRound (PerasEpochContext blk))
 resolveRoundNoWithHandle (PerasEpochContextResolverHandle resolverHandle) roundNo = do
-  resolver <- readTVar resolverHandle
+  resolver <- resolverHandle
   pure $ resolver roundNo
 
 verifyPerasVoteInContext ::
@@ -95,10 +92,7 @@ verifyPerasCertInContext handle cert = do
 
 constPerasEpochContextResolverHandle ::
   IOLike m => PerasEpochContext blk -> m (PerasEpochContextResolverHandle m blk)
-constPerasEpochContextResolverHandle epochContext =
+constPerasEpochContextResolverHandle epochContext = do
   let resolver = \_ -> Right epochContext
-   in PerasEpochContextResolverHandle <$> newTVarIO resolver
-
-extractPerasEpochContextResolverHandleFromExtLedgerState ::
-  ExtLedgerState blk mk -> PerasEpochContextResolverHandle m blk
-extractPerasEpochContextResolverHandleFromExtLedgerState = undefined -- TODO: implement as part of future effort
+  resolverVar <- newTVarIO resolver
+  pure $ PerasEpochContextResolverHandle (readTVar resolverVar)

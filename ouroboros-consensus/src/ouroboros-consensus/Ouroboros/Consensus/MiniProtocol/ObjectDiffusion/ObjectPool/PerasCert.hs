@@ -29,7 +29,7 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
   , ObjectPoolWriter (..)
   )
 import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle, verifyPerasCertInContext)
-import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
+import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB, getPerasEpochContextResolverHandle)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertDB
@@ -136,23 +136,23 @@ makePerasCertPoolWriterFromChainDB ::
   ) =>
   SystemTime m ->
   ChainDB m blk ->
-  PerasEpochContextResolverHandle m blk ->
   ObjectPoolWriter PerasRoundNo (PerasCert blk) m
-makePerasCertPoolWriterFromChainDB systemTime chainDB resolverHandle =
-  ObjectPoolWriter
-    { opwObjectId = getPerasCertRound
-    , opwAddObjects = \certs -> do
-        now <- systemTimeCurrent systemTime
-        validatedCerts <- atomically $ do
-          alreadyInDb <- ChainDB.getPerasCertIds chainDB
-          let certsNotAlreadyInDb = filter ((`Set.notMember` alreadyInDb) . getPerasCertRound) certs
-          traverse (verifyPerasCertInContext resolverHandle) certsNotAlreadyInDb
-        -- Some certs are invalid => reject the whole batch
-        -- We could combine the two 'traverse' operations into one in which case
-        -- any validated cert would be immediately added no matter what is the
-        -- validity of the other certs in the batch.
-        traverse_ (ChainDB.addPerasCertAsync chainDB . WithArrivalTime now) validatedCerts
-    , opwHasObject = do
-        certIds <- ChainDB.getPerasCertIds chainDB
-        pure $ \roundNo -> Set.member roundNo certIds
-    }
+makePerasCertPoolWriterFromChainDB systemTime chainDB =
+  let resolverHandle = getPerasEpochContextResolverHandle chainDB
+   in ObjectPoolWriter
+        { opwObjectId = getPerasCertRound
+        , opwAddObjects = \certs -> do
+            now <- systemTimeCurrent systemTime
+            validatedCerts <- atomically $ do
+              alreadyInDb <- ChainDB.getPerasCertIds chainDB
+              let certsNotAlreadyInDb = filter ((`Set.notMember` alreadyInDb) . getPerasCertRound) certs
+              traverse (verifyPerasCertInContext resolverHandle) certsNotAlreadyInDb
+            -- Some certs are invalid => reject the whole batch
+            -- We could combine the two 'traverse' operations into one in which case
+            -- any validated cert would be immediately added no matter what is the
+            -- validity of the other certs in the batch.
+            traverse_ (ChainDB.addPerasCertAsync chainDB . WithArrivalTime now) validatedCerts
+        , opwHasObject = do
+            certIds <- ChainDB.getPerasCertIds chainDB
+            pure $ \roundNo -> Set.member roundNo certIds
+        }

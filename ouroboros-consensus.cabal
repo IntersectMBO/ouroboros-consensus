@@ -117,7 +117,6 @@ library
     Ouroboros.Consensus.BlockchainTime.WallClock.Simple
     Ouroboros.Consensus.BlockchainTime.WallClock.Types
     Ouroboros.Consensus.BlockchainTime.WallClock.Util
-    Ouroboros.Consensus.Committee.AcrossEpochs
     Ouroboros.Consensus.Committee.Class
     Ouroboros.Consensus.Committee.Crypto
     Ouroboros.Consensus.Committee.Crypto.BLS
