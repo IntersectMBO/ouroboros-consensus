@@ -41,6 +41,9 @@ import Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
   , genProtocolConstants
   , prop_smoke_object_diffusion
   )
+import Test.QuickCheck
+import Test.Tasty
+import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.Peras
   ( genListWithUniqueIds
   , genMockPerasEpochContext
@@ -48,9 +51,6 @@ import Test.Util.Peras
   , genWithArrivalTime
   , mockSystemTime
   )
-import Test.QuickCheck
-import Test.Tasty
-import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.TestBlock
 
 tests :: TestTree
@@ -83,8 +83,8 @@ prop_smoke =
   forAll genProtocolConstants $ \protocolConstants ->
     forAll genMockPerasEpochContext $ \epochContext ->
       forAll
-        (genListWithUniqueIds getPerasCertRound (genWithArrivalTime (genMockValidatedPerasCert epochContext))) $
-        \(ListWithUniqueIds watValidatedCerts) ->
+        (genListWithUniqueIds getPerasCertRound (genWithArrivalTime (genMockValidatedPerasCert epochContext)))
+        $ \(ListWithUniqueIds watValidatedCerts) ->
           let
             mkPoolInterfaces ::
               forall m.

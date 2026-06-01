@@ -6,6 +6,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -25,13 +26,12 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
-import Data.ByteString.Short (ShortByteString)
-import Data.Coerce (Coercible)
+import Codec.Serialise (Serialise (..))
 import Data.Typeable (Typeable)
 import Data.Word (Word8)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Abstract (HeaderHash)
+import Ouroboros.Consensus.Block.Abstract (ConvertRawHash)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BoostedBlock
   , IsPerasVote (..)
@@ -49,10 +49,12 @@ import Ouroboros.Consensus.Committee.EveryoneVotes
   , Vote (..)
   )
 import Ouroboros.Consensus.Committee.WFALS (Vote (..), WFALS)
+import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode (..))
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCrypto
   , VRFOutput
   )
+import Ouroboros.Network.Util.ShowProxy
 
 -- | Concrete Peras votes using BLS signatures
 --
@@ -78,7 +80,7 @@ data PerasVote tag
 
 type instance BoostedBlock (PerasVote tag) = PerasBoostedBlock
 instance
-  Coercible (HeaderHash blk) ShortByteString =>
+  ConvertRawHash blk =>
   IsPerasVote (PerasVote blk) blk
   where
   getPerasVoteSeatIndex = pvSeatIndex
@@ -141,6 +143,18 @@ instance ToCBOR PerasVoteEligibilityProof where
       encodeListLen 2
         <> toCBOR (1 :: Word8)
         <> toCBOR vrfOutput
+
+instance Typeable tag => SerialiseNodeToNode blk (PerasVote tag) where
+  encodeNodeToNode _ccfg _version = toCBOR
+
+  decodeNodeToNode _ccfg _version = fromCBOR
+
+instance Typeable tag => Serialise (PerasVote tag) where
+  encode = toCBOR
+  decode = fromCBOR
+
+instance ShowProxy tag => ShowProxy (PerasVote tag) where
+  showProxy _ = "PerasVote " <> showProxy (Proxy @tag)
 
 -- * Compatibility with voting committee implementations
 

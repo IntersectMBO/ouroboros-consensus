@@ -9,6 +9,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -30,21 +31,20 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
+import Codec.Serialise (Serialise (..))
 import Control.Monad (when)
 import Control.Monad.Error.Class (MonadError (..))
-import Data.ByteString.Short (ShortByteString)
-import Data.Coerce (Coercible)
 import Data.Containers.NonEmpty (HasNonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, isJust)
-import Data.Typeable (Typeable)
+import Data.Typeable (Proxy (..), Typeable)
 import Data.Word (Word16)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
-import Ouroboros.Consensus.Block.Abstract (HeaderHash)
+import Ouroboros.Consensus.Block.Abstract (ConvertRawHash)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BoostedBlock
   , IsPerasCert (..)
@@ -66,12 +66,14 @@ import Ouroboros.Consensus.Committee.EveryoneVotes
   )
 import Ouroboros.Consensus.Committee.WFA (SeatIndex (..))
 import Ouroboros.Consensus.Committee.WFALS (Cert (..), WFALS)
+import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode (..))
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCrypto
   )
 import Ouroboros.Consensus.Peras.Vote.V1 (PerasVoteEligibilityProof (..))
 import Ouroboros.Consensus.Util.Bitmap (Bitmap)
 import qualified Ouroboros.Consensus.Util.Bitmap as Bitmap
+import Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 
 -- | Concrete Peras certificates using BLS signatures
 --
@@ -94,7 +96,7 @@ data PerasCert tag
   deriving anyclass NoThunks
 
 instance
-  Coercible (HeaderHash blk) ShortByteString =>
+  ConvertRawHash blk =>
   IsPerasCert (PerasCert blk) blk
   where
   getPerasCertRound =
@@ -125,6 +127,18 @@ instance Typeable tag => ToCBOR (PerasCert tag) where
       <> toCBOR (pcBoostedBlock cert)
       <> toCBOR (pcVoters cert)
       <> toCBOR (pcSignature cert)
+
+instance Typeable tag => SerialiseNodeToNode blk (PerasCert tag) where
+  encodeNodeToNode _ccfg _version = toCBOR
+
+  decodeNodeToNode _ccfg _version = fromCBOR
+
+instance Typeable tag => Serialise (PerasCert tag) where
+  encode = toCBOR
+  decode = fromCBOR
+
+instance ShowProxy tag => ShowProxy (PerasCert tag) where
+  showProxy _ = "PerasCert " <> showProxy (Proxy @tag)
 
 -- | Voters contained in a certificate with their appropriate eligibility proof
 newtype PerasCertVoters

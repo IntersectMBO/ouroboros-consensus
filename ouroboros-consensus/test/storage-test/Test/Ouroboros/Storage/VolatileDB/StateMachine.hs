@@ -78,13 +78,13 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.ToExpr ()
+import Test.Util.Peras.Mock (genMockPerasVoterIndices)
 import Test.Util.QuickCheck
 import Test.Util.SOP
 import Test.Util.ToExpr ()
 import Test.Util.Tracer (recordingTracerIORef)
 import Text.Show.Pretty (ppShow)
 import Prelude hiding (elem)
-import Test.Util.Peras.Mock (genMockPerasVoterIndices)
 
 type Block = TestBlock
 
