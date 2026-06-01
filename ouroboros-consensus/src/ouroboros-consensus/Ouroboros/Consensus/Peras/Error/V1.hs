@@ -50,8 +50,6 @@ deriving instance
 deriving instance
   Generic (PerasError blk)
 deriving instance
-  Typeable (PerasError blk)
-deriving instance
   (Show (PerasVotingCommitteeError blk), Typeable blk) =>
   Exception (PerasError blk)
 

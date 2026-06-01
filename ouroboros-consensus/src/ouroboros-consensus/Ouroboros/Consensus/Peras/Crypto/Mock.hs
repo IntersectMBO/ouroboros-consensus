@@ -36,7 +36,6 @@ import Data.List.Extra ((!?))
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Set.NonEmpty as NESet
-import Data.Typeable (Typeable)
 import Data.Word (Word16)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -167,35 +166,35 @@ instance
     { -- Stake distribution
       weightDistr :: NonEmpty (PoolId, VoteWeight)
     }
-    deriving stock (Show, Eq, Generic, Typeable)
+    deriving stock (Show, Eq, Generic)
     deriving anyclass NoThunks
 
   newtype VotingCommitteeInput crypto (MockPerasCommittee blk)
     = MockPerasVotingCommitteeInput (NonEmpty (PoolId, LedgerStake))
-    deriving stock (Show, Eq, Generic, Typeable)
+    deriving stock (Show, Eq, Generic)
     deriving anyclass NoThunks
 
   newtype VotingCommitteeError crypto (MockPerasCommittee blk)
     = -- Seat index is out of bounds for the voting committee
       MissingSeatIndex PerasSeatIndex
-    deriving stock (Show, Eq, Generic, Typeable)
+    deriving stock (Show, Eq, Generic)
     deriving anyclass (NoThunks, Exception)
 
   data EligibilityWitness crypto (MockPerasCommittee blk)
     = MockPerasCommitteeMember
         !PerasSeatIndex
         !VoteWeight
-    deriving stock (Show, Eq, Generic, Typeable)
+    deriving stock (Show, Eq, Generic)
     deriving anyclass NoThunks
 
   newtype Vote crypto (MockPerasCommittee blk)
     = MockPerasCommitteeVote (MockPerasVote blk)
-    deriving stock (Show, Eq, Generic, Typeable)
+    deriving stock (Show, Eq, Generic)
     deriving anyclass NoThunks
 
   newtype Cert crypto (MockPerasCommittee blk)
     = MockPerasCommitteeCert (MockPerasCert blk)
-    deriving stock (Show, Eq, Generic, Typeable)
+    deriving stock (Show, Eq, Generic)
     deriving anyclass NoThunks
 
   mkVotingCommittee (MockPerasVotingCommitteeInput stakeDistr) =
