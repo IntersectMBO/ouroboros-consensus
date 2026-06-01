@@ -830,7 +830,6 @@ test-suite storage-test
     Test.Ouroboros.Storage.VolatileDB.StateMachine
 
   build-depends:
-    nonempty-containers,
     aeson,
     base,
     bifunctors,
@@ -855,6 +854,7 @@ test-suite storage-test
     io-sim,
     mempack,
     mtl,
+    nonempty-containers,
     nothunks,
     ouroboros-consensus:{lsm, ouroboros-consensus},
     ouroboros-network:{api, api-tests-lib, protocols-tests-lib},

@@ -45,8 +45,6 @@ deriving instance
 deriving instance
   Generic (MockPerasError blk)
 deriving instance
-  Typeable (MockPerasError blk)
-deriving instance
   (Show (PerasVotingCommitteeError blk), Typeable blk) =>
   Exception (MockPerasError blk)
 

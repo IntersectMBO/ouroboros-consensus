@@ -17,7 +17,6 @@ where
 
 import Control.Exception (Exception)
 import Control.Monad.Class.MonadSTM (STM)
-import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
@@ -46,7 +45,7 @@ type PerasEpochContextResolver blk =
   PerasRoundNo -> Either PerasEpochContextNotFoundForRound (PerasEpochContext blk)
 
 data PerasEpochContextNotFoundForRound = PerasEpochContextNotFoundForRound PerasRoundNo
-  deriving (Show, Eq, Generic, NoThunks, Typeable, Exception)
+  deriving (Show, Eq, Generic, NoThunks, Exception)
 
 newtype PerasEpochContextResolverHandle m blk
   = PerasEpochContextResolverHandle (StrictTVar m (PerasEpochContextResolver blk))
