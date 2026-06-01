@@ -22,6 +22,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Set.NonEmpty as NESet
 import Data.TreeDiff (ToExpr (..), defaultExprViaShow)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block (SlotNo, WithOrigin (..), pointSlot)
@@ -245,6 +246,12 @@ addVote vote model
   -- The extended set of votes including the new one
   extendedVotes =
     Set.insert voteEntry existingVotes
+  -- The extended set of voters including the new one
+  extendedVoters =
+    NESet.unsafeFromSet -- Safe due to insert below
+      . Set.insert voter
+      . Set.map veVoter
+      $ existingVotes
   -- Get the total weight of a set of votes
   getTotalWeight =
     VoteWeight
@@ -278,6 +285,7 @@ addVote vote model
           MockPerasCert
             { mockCertRound = roundNo
             , mockCertBlock = votedBlock
+            , mockCertVoters = extendedVoters
             }
       , vpcCertBoost = perasWeight (params model)
       }

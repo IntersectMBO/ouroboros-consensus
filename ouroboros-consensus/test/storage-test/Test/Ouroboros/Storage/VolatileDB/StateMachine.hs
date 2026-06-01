@@ -84,6 +84,7 @@ import Test.Util.ToExpr ()
 import Test.Util.Tracer (recordingTracerIORef)
 import Text.Show.Pretty (ppShow)
 import Prelude hiding (elem)
+import Test.Util.Peras.Mock (genMockPerasVoterIndices)
 
 type Block = TestBlock
 
@@ -412,10 +413,12 @@ generatorCmdImpl Model{..} =
   genPerasCert = do
     mockCertRound <- PerasRoundNo <$> arbitrary
     mockCertBlock <- blockPoint <$> genRandomBlock
+    mockCertVoters <- genMockPerasVoterIndices
     pure $
       MockPerasCert
         { mockCertRound
         , mockCertBlock
+        , mockCertVoters
         }
 
   genHash :: Gen (HeaderHash Block)

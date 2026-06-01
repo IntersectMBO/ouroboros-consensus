@@ -1,21 +1,40 @@
 {-# LANGUAGE TypeApplications #-}
 
-module Test.Util.Peras.Internal where
+module Test.Util.Peras.Internal
+  ( genPerasParams
+  , genRoundNo
+  , genSeatIndex
+  , genPoolId
+  , genLedgerStake
+  , ListWithUniqueIds (..)
+  , NonEmptyListWithUniqueIds (..)
+  , genListWithUniqueIds
+  , genNonEmptyListWithUniqueIds
+  , nonEmptyListOf
+  , genRelativeTime
+  , genWithArrivalTime
+  , genPointTestBlock
+  , mockSystemTime
+  , mkBucket
+  ) where
 
 import Data.Containers.ListUtils (nubOrdOn)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Word (Word64)
-import Ouroboros.Consensus.Block.SupportsPeras (PerasRoundNo (..))
+import Ouroboros.Consensus.Block.SupportsPeras (PerasRoundNo (..), PerasParams, mkPerasParams)
 import Ouroboros.Consensus.BlockchainTime (RelativeTime (..), SystemTime (..), WithArrivalTime (..))
 import Ouroboros.Consensus.Committee.Types (LedgerStake (..), PoolId)
 import Ouroboros.Consensus.Peras.Types (PerasSeatIndex (..))
 import Ouroboros.Network.Block (Point (..), SlotNo (..))
 import Ouroboros.Network.Point (Block (..), WithOrigin (..))
-import Test.QuickCheck (Arbitrary (arbitrary), Gen, NonEmptyList (getNonEmpty))
+import Test.QuickCheck (Arbitrary (arbitrary), Gen, NonEmptyList (getNonEmpty), choose)
 import Test.QuickCheck.Gen (frequency, listOf, listOf1)
-import Test.Util.TestBlock (TestBlock, TestHash (..))
 import Test.Util.Committee (mkPoolId)
+import Test.Util.TestBlock (TestBlock, TestHash (..))
+
+genPerasParams :: Gen (PerasParams blk)
+genPerasParams = pure mkPerasParams
 
 genRoundNo :: Gen PerasRoundNo
 genRoundNo = PerasRoundNo <$> arbitrary
@@ -27,7 +46,7 @@ genPoolId :: Gen PoolId
 genPoolId = mkPoolId <$> arbitrary
 
 genLedgerStake :: Gen LedgerStake
-genLedgerStake = LedgerStake <$> arbitrary
+genLedgerStake = LedgerStake . toRational <$> choose @Int (1, 100)
 
 newtype ListWithUniqueIds a = ListWithUniqueIds [a]
   deriving (Eq, Show, Ord)

@@ -1,25 +1,40 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 
-module Test.Util.Peras.Mock where
+module Test.Util.Peras.Mock
+  ( genMockPerasVotingCommitteeInput
+  , genMockPerasVotingCommittee
+  , genMockPerasEpochContext
+  , genMockPerasVote
+  , genMockValidatedPerasVote
+  , genMockPerasCert
+  , genMockPerasCertFullCommittee
+  , genMockValidatedPerasCert
+  , genMockPerasVoterIndices
+  , pickSeatIndexFromCommittee
+  , genVotersSubset
+  ) where
 
 import Data.Containers.NonEmpty (NE)
 import Data.Either (fromRight)
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Set (Set)
 import qualified Data.Set.NonEmpty as NESet
-import Ouroboros.Consensus.Block (BlockSupportsPeras (PerasEpochContext), PerasParams (perasWeight))
+import Ouroboros.Consensus.Block
+  ( BlockSupportsPeras (..)
+  , PerasParams (..)
+  )
 import Ouroboros.Consensus.Block.SupportsPeras
   ( ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
-  , mkPerasParams
   )
 import Ouroboros.Consensus.Committee.Class
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Crypto.Mock
   ( MockPerasCommittee
   , MockPerasCrypto
-  , VotingCommittee (MockPerasVotingCommittee)
-  , VotingCommitteeInput (MockPerasVotingCommitteeInput)
+  , VotingCommittee (..)
+  , VotingCommitteeInput (..)
   , getEligibility
   , unsafeIntToSeatIndex
   )
@@ -27,6 +42,14 @@ import Ouroboros.Consensus.Peras.Types (PerasSeatIndex (..))
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Test.QuickCheck (Gen, choose)
 import Test.Util.Peras.Internal
+  ( NonEmptyListWithUniqueIds (..)
+  , genLedgerStake
+  , genNonEmptyListWithUniqueIds
+  , genPerasParams
+  , genPointTestBlock
+  , genPoolId
+  , genRoundNo
+  )
 import Test.Util.TestBlock (TestBlock)
 
 genMockPerasVotingCommitteeInput ::
@@ -42,16 +65,13 @@ genMockPerasVotingCommittee =
   fromRight (error "mkVotingCommittee of O.C.Peras.Crypto.Mock can't fail") . mkVotingCommittee
     <$> genMockPerasVotingCommitteeInput
 
-genPerasParams :: Gen (PerasParams TestBlock)
-genPerasParams = pure mkPerasParams
-
 genMockPerasEpochContext :: Gen (PerasEpochContext TestBlock)
 genMockPerasEpochContext = (,) <$> genMockPerasVotingCommittee <*> genPerasParams
 
 pickSeatIndexFromCommittee ::
   VotingCommittee (MockPerasCrypto TestBlock) (MockPerasCommittee TestBlock) -> Gen PerasSeatIndex
-pickSeatIndexFromCommittee (MockPerasVotingCommittee weightDistr) = do
-  let maxIndex = length weightDistr - 1
+pickSeatIndexFromCommittee committee = do
+  let maxIndex = length (weightDistr committee) - 1
   unsafeIntToSeatIndex <$> choose (0, maxIndex)
 
 genVotersSubset ::
@@ -60,6 +80,12 @@ genVotersSubset ::
 genVotersSubset committee = do
   NonEmptyListWithUniqueIds seatIndices <-
     genNonEmptyListWithUniqueIds id (pickSeatIndexFromCommittee committee)
+  pure $ NESet.fromList seatIndices
+
+genMockPerasVoterIndices :: Gen (NE (Set PerasSeatIndex))
+genMockPerasVoterIndices = do
+  NonEmptyListWithUniqueIds seatIndices <-
+    genNonEmptyListWithUniqueIds id (unsafeIntToSeatIndex <$> choose (0, 100))
   pure $ NESet.fromList seatIndices
 
 genMockPerasVote ::
@@ -106,9 +132,24 @@ genMockPerasCert committee = do
       , mockCertBlock = block
       }
 
+genMockPerasCertFullCommittee ::
+  VotingCommittee (MockPerasCrypto TestBlock) (MockPerasCommittee TestBlock) ->
+  Gen (MockPerasCert TestBlock)
+genMockPerasCertFullCommittee committee = do
+  let maxIndex = length (weightDistr committee) - 1
+  let voters = NESet.fromList (NonEmpty.fromList (unsafeIntToSeatIndex <$> [0 .. maxIndex]))
+  roundNo <- genRoundNo
+  block <- genPointTestBlock
+  pure
+    MockPerasCert
+      { mockCertVoters = voters
+      , mockCertRound = roundNo
+      , mockCertBlock = block
+      }
+
 genMockValidatedPerasCert :: PerasEpochContext TestBlock -> Gen (ValidatedPerasCert TestBlock)
 genMockValidatedPerasCert (committee, params) = do
-  cert <- genMockPerasCert committee
+  cert <- genMockPerasCertFullCommittee committee
   pure $
     ValidatedPerasCert
       { vpcCert = cert

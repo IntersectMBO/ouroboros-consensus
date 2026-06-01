@@ -14,6 +14,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasVotingCommittee
@@ -382,7 +383,7 @@ newtype VoidPerasError blk
   = VoidPerasError
   { unVoidPerasError :: Void
   }
-  deriving newtype (Show, Eq, NoThunks, Generic, Typeable, ShowProxy, Exception)
+  deriving newtype (Show, Eq, NoThunks, Generic, ShowProxy, Exception)
 
 instance IsPerasError (VoidPerasError blk) blk where
   injectVotingCommitteeError _ =
@@ -406,11 +407,7 @@ type instance PublicKey (VoidPerasCrypto blk) = Void
 
 instance CryptoSupportsVoteSigning (VoidPerasCrypto blk) where
   type VoteSigningKey (VoidPerasCrypto blk) = Void
-
-  -- \| Key used for verifying votes
   type VoteVerificationKey (VoidPerasCrypto blk) = Void
-
-  -- \| Cryptographic signature of a vote
   data VoteSignature (VoidPerasCrypto blk) = VoidVoteSignature {unVoidVoteSignature :: Void}
   getVoteSigningKey _proxy privateKey = absurd privateKey
   getVoteVerificationKey _proxy publicKey = absurd publicKey
