@@ -36,6 +36,7 @@ import LeiosDemoDb
 import LeiosDemoTypes
   ( EbAnnouncement (..)
   , ForgedLeiosEb (..)
+  , IsCertRB (..)
   , LeiosPoint (..)
   , TraceLeiosKernel (..)
   , forgeLeiosEb
@@ -97,6 +98,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       actualBodySize
       protocolVersion
       mayEbAnn
+      (case mayLeiosCert of SJust _ -> CertRB; SNothing -> NotCertRB)
   let blk = mkShelleyBlock $ SL.Block hdr body
   return $
     assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $

@@ -145,7 +145,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (Praos c) where
           currentKesPeriod - startOfKesPeriod
       | otherwise =
           0
-  mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer mayEbAnn = do
+  mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer mayEbAnn isCertRB = do
     PraosFields{praosSignature, praosToSign} <- forgePraosFields hk cbl il mkBhBodyBytes
     pure $ Header praosToSign praosSignature
    where
@@ -168,6 +168,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (Praos c) where
           , hbOCert = praosToSignOCert
           , hbProtVer = protVer
           , hbLeiosEbAnnouncement = maybe SNothing SJust mayEbAnn
+          , hbIsCertRB = isCertRB
           }
 
   protocolStateLeiosInfo _ cs =
@@ -187,6 +188,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsProtocol (Praos c) where
       , hvSlotNo = hbSlotNo headerBody
       , hvSigned = headerBody
       , hvSignature = headerSig
+      , hvIsCertRB = hbIsCertRB headerBody
       }
   pHeaderIssuer = hbVk . headerBody
   pHeaderIssueNo = SL.ocertN . hbOCert . headerBody

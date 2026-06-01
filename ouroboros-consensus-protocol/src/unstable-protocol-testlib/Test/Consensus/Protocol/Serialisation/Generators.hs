@@ -22,6 +22,7 @@ import qualified Data.ByteString as BS
 import LeiosDemoTypes
   ( EbAnnouncement (EbAnnouncement)
   , EbHash (MkEbHash)
+  , IsCertRB (..)
   )
 import Ouroboros.Consensus.Protocol.Praos (PraosState (PraosState))
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
@@ -33,7 +34,7 @@ import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Cardano.StrictContainers.Instances ()
 import Test.Crypto.KES ()
-import Test.QuickCheck (Arbitrary (..), Gen, choose, oneof)
+import Test.QuickCheck (Arbitrary (..), Gen, choose, elements, oneof)
 
 instance Arbitrary EbHash where
   arbitrary = MkEbHash . BS.pack <$> vectorOfWord8 32
@@ -74,6 +75,10 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> ocert
           <*> arbitrary
           <*> arbitrary
+          <*> arbitrary
+
+instance Arbitrary IsCertRB where
+  arbitrary = elements [NotCertRB, CertRB]
 
 instance Praos.PraosCrypto c => Arbitrary (Header c) where
   arbitrary = do

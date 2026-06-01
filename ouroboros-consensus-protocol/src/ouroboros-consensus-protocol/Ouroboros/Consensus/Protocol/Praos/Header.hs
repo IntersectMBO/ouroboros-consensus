@@ -7,6 +7,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ViewPatterns #-}
 
@@ -79,10 +80,10 @@ import Cardano.Protocol.TPraos.BHeader (PrevHash)
 import Cardano.Protocol.TPraos.OCert (OCert)
 import Cardano.Slotting.Block (BlockNo)
 import Cardano.Slotting.Slot (SlotNo)
-import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.Word (Word32)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement)
+import LeiosDemoTypes (EbAnnouncement, IsCertRB (..))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 
@@ -113,6 +114,9 @@ data HeaderBody crypto = HeaderBody
   -- ^ Optional Leios endorser-block announcement (Dijkstra-only;
   -- 'SNothing' on earlier eras). Placed on the Praos header for
   -- early-diffusion of EB references before the body arrives.
+  , hbIsCertRB :: !IsCertRB
+  -- ^ Stub for the CIP-0164 header bit signalling that this RB
+  -- certifies a previously-announced EB.
   }
   deriving Generic
 
@@ -182,7 +186,9 @@ headerHash = extractHash . hashAnnotated
 -- Serialisation
 --------------------------------------------------------------------------------
 
--- | 10-field encoding when 'SNothing' (pre-Leios-compatible), 11 when 'SJust'.
+-- | Canonical 12-field encoding carrying @(IsCertRB, Maybe EbAnnouncement)@.
+-- Decode also accepts len=10 (pre-Leios) and len=11 (announcement-only) for
+-- back-compat with existing on-disk data, but those shapes are never emitted.
 instance Crypto crypto => EncCBOR (HeaderBody crypto) where
   encCBOR
     HeaderBody
@@ -197,24 +203,28 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
       , hbOCert
       , hbProtVer
       , hbLeiosEbAnnouncement
+      , hbIsCertRB
       } =
-      let (len, encEbAnnouncement) = case hbLeiosEbAnnouncement of
-            SNothing -> (10 :: Word, mempty)
-            SJust ebAnnouncement -> (11, encCBOR ebAnnouncement)
-       in mconcat
-            [ encodeListLen len
-            , encCBOR hbBlockNo
-            , encCBOR hbSlotNo
-            , encCBOR hbPrev
-            , encCBOR hbVk
-            , encodeVerKeyVRF hbVrfVk
-            , encCBOR hbVrfRes
-            , encCBOR hbBodySize
-            , encCBOR hbBodyHash
-            , encCBOR hbOCert
-            , encCBOR hbProtVer
-            , encEbAnnouncement
-            ]
+      -- Canonical encoding: len=12 always, carrying @(Bool, Maybe
+      -- EbAnnouncement)@.  Pre-Leios headers (len=10, no
+      -- announcement) and announcement-only headers (len=11) are
+      -- still accepted on decode for back-compat with existing
+      -- on-disk data, but never emitted.
+      mconcat
+        [ encodeListLen 12
+        , encCBOR hbBlockNo
+        , encCBOR hbSlotNo
+        , encCBOR hbPrev
+        , encCBOR hbVk
+        , encodeVerKeyVRF hbVrfVk
+        , encCBOR hbVrfRes
+        , encCBOR hbBodySize
+        , encCBOR hbBodyHash
+        , encCBOR hbOCert
+        , encCBOR hbProtVer
+        , encCBOR hbIsCertRB
+        , encCBOR (strictMaybeToMaybe hbLeiosEbAnnouncement)
+        ]
 
 instance Crypto crypto => DecCBOR (HeaderBody crypto) where
   decCBOR = do
@@ -229,9 +239,18 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
     hbBodyHash <- decCBOR
     hbOCert <- unCBORGroup <$> decCBOR
     hbProtVer <- decCBOR
-    hbLeiosEbAnnouncement <- case len of
-      10 -> pure SNothing
-      11 -> SJust <$> decCBOR
+    -- Canonical: len=12 with @(Bool, Maybe EbAnnouncement)@.
+    -- len=10 (pre-Leios) and len=11 (announcement-only, no CertRB
+    -- bit) are accepted for back-compat but no longer emitted.
+    (hbLeiosEbAnnouncement, hbIsCertRB) <- case len of
+      10 -> pure (SNothing, NotCertRB)
+      11 -> do
+        ebAnn <- decCBOR @EbAnnouncement
+        pure (SJust ebAnn, NotCertRB)
+      12 -> do
+        isCertRB <- decCBOR @IsCertRB
+        mayEbAnn <- decCBOR @(Maybe EbAnnouncement)
+        pure (maybeToStrictMaybe mayEbAnn, isCertRB)
       _ -> fail $ "Praos HeaderBody CBOR has wrong length: " <> show len
     pure
       HeaderBody
@@ -246,6 +265,7 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
         , hbOCert
         , hbProtVer
         , hbLeiosEbAnnouncement
+        , hbIsCertRB
         }
 
 encodeHeaderRaw ::
