@@ -7,6 +7,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Voting interface for Peras derived from the Praos ledger view.
+--
+-- [TODO EPOCH CONTEXT PLUMBING]
 module Ouroboros.Consensus.Protocol.Praos.Peras
   ( PraosStateSupportsPerasVoting (..)
   , praosStatePerasVotingCommitteeInputV1

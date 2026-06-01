@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Storage.ChainDB.API
     ChainDB (..)
   , getCurrentTip
   , getTipBlockNo
+  , getPerasEpochContextResolverHandle
 
     -- * Adding a block
   , AddBlockPromise (..)
@@ -90,6 +91,11 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+  ( ExtLedgerState
+  , ExtValidationError
+  )
+import qualified Ouroboros.Consensus.Ledger.Extended as ExtLedger
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
@@ -491,6 +497,12 @@ getTipBlockNo ::
   (Monad (STM m), HasHeader (Header blk)) =>
   ChainDB m blk -> STM m (WithOrigin BlockNo)
 getTipBlockNo = fmap Network.getTipBlockNo . getCurrentTip
+
+getPerasEpochContextResolverHandle ::
+  MonadSTM m =>
+  ChainDB m blk ->
+  PerasEpochContextResolverHandle m blk
+getPerasEpochContextResolverHandle = ExtLedger.getPerasEpochContextResolverHandle . getCurrentLedger
 
 {-------------------------------------------------------------------------------
   Adding a block
