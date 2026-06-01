@@ -1,6 +1,6 @@
 {-# LANGUAGE TypeApplications #-}
 
-module Test.Consensus.Peras.Util.Internal where
+module Test.Util.Peras.Internal where
 
 import Data.Containers.ListUtils (nubOrdOn)
 import Data.List.NonEmpty (NonEmpty)
@@ -12,10 +12,10 @@ import Ouroboros.Consensus.Committee.Types (LedgerStake (..), PoolId)
 import Ouroboros.Consensus.Peras.Types (PerasSeatIndex (..))
 import Ouroboros.Network.Block (Point (..), SlotNo (..))
 import Ouroboros.Network.Point (Block (..), WithOrigin (..))
-import Test.Consensus.Committee.Utils (mkPoolId)
 import Test.QuickCheck (Arbitrary (arbitrary), Gen, NonEmptyList (getNonEmpty))
 import Test.QuickCheck.Gen (frequency, listOf, listOf1)
 import Test.Util.TestBlock (TestBlock, TestHash (..))
+import Test.Util.Committee (mkPoolId)
 
 genRoundNo :: Gen PerasRoundNo
 genRoundNo = PerasRoundNo <$> arbitrary

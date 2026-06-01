@@ -182,6 +182,7 @@ import Test.Util.ChunkInfo
 import Test.Util.Header (attachSlotTimeToFragment)
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.ToExpr ()
+import Test.Util.Peras (genMockPerasVotingCommittee, genVotersSubset)
 import Test.Util.QuickCheck
 import Test.Util.RefEnv (RefEnv)
 import qualified Test.Util.RefEnv as RE
@@ -1290,6 +1291,8 @@ generator loe genBlock genPerasBlock m@Model{..} =
           ]
     -- Include the boosted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
+    -- Generate some voters to populate the certificate
+    voters <- genMockPerasVotingCommittee >>= genVotersSubset
     -- Build the certificate
     now <- genRelativeTime
     let certWithTime =
@@ -1299,6 +1302,7 @@ generator loe genBlock genPerasBlock m@Model{..} =
                   MockPerasCert
                     { mockCertRound = roundNo
                     , mockCertBlock = blockPoint blk
+                    , mockCertVoters = voters
                     }
               , vpcCertBoost = boost
               }
@@ -1334,7 +1338,6 @@ generator loe genBlock genPerasBlock m@Model{..} =
                     { mockVoteRound = roundNo
                     , mockVoteBlock = blockPoint blk
                     , mockVoteSeatIndex = seatIndex
-                    , mockVoteWeight = weight
                     }
               , vpvVoteWeight = weight
               }
@@ -2146,10 +2149,14 @@ genBlkPair chunkInfo loe Model{..} =
     boostedBlock <-
       -- NOTE: we don't care about this boosted block, it could be @Genesis@
       blockPoint <$> genSuccOfCurrentChainTip
+    voters <-
+      genMockPerasVotingCommittee >>= genVotersSubset
+
     pure
       MockPerasCert
         { mockCertRound = roundNo
         , mockCertBlock = boostedBlock
+        , mockCertVoters = voters
         }
 
 -- | Generate a random security parameter (k)

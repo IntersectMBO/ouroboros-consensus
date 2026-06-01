@@ -1,14 +1,18 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 
-module Test.Consensus.Peras.Util.Mock where
+module Test.Util.Peras.Mock where
 
 import Data.Containers.NonEmpty (NE)
 import Data.Either (fromRight)
 import Data.Set (Set)
 import qualified Data.Set.NonEmpty as NESet
 import Ouroboros.Consensus.Block (BlockSupportsPeras (PerasEpochContext), PerasParams (perasWeight))
-import Ouroboros.Consensus.Block.SupportsPeras (PerasParams, ValidatedPerasCert (..), ValidatedPerasVote (..), mkPerasParams)
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( ValidatedPerasCert (..)
+  , ValidatedPerasVote (..)
+  , mkPerasParams
+  )
 import Ouroboros.Consensus.Committee.Class
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Crypto.Mock
@@ -21,8 +25,8 @@ import Ouroboros.Consensus.Peras.Crypto.Mock
   )
 import Ouroboros.Consensus.Peras.Types (PerasSeatIndex (..))
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
-import Test.Consensus.Peras.Util.Internal
 import Test.QuickCheck (Gen, choose)
+import Test.Util.Peras.Internal
 import Test.Util.TestBlock (TestBlock)
 
 genMockPerasVotingCommitteeInput ::

@@ -41,7 +41,7 @@ import Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
   , genProtocolConstants
   , prop_smoke_object_diffusion
   )
-import Test.Consensus.Peras.Util
+import Test.Util.Peras
   ( genListWithUniqueIds
   , genMockPerasEpochContext
   , genMockValidatedPerasCert
