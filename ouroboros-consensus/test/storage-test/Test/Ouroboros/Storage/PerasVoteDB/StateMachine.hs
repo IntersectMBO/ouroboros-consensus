@@ -37,6 +37,7 @@ import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract (Point (..), SlotNo (..))
 import Ouroboros.Consensus.Block.SupportsPeras
   ( IsPerasVote (..)
+  , PerasEpochContext
   , PerasParams
   , PerasRoundNo (..)
   , PerasSeatIndex (..)
@@ -51,6 +52,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , WithArrivalTime (..)
   )
+import Ouroboros.Consensus.Peras.Context (constPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
@@ -84,6 +86,7 @@ import Test.QuickCheck.StateModel
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.Peras (genMockPerasVotingCommittee)
 import Test.Util.TestBlock
   ( TestBlock
   , TestHash (..)
@@ -131,6 +134,7 @@ newtype Model = Model (Model.Model TestBlock)
 instance StateModel Model where
   data Action Model a where
     CreateDB ::
+      PerasEpochContext TestBlock ->
       Action Model ()
     AddVote ::
       WithArrivalTime (ValidatedPerasVote TestBlock) ->
@@ -170,7 +174,9 @@ instance StateModel Model where
           ]
    where
     genCreateDB = do
-      pure CreateDB
+      committee <- genMockPerasVotingCommittee
+      let params = perasTestParams
+      pure $ CreateDB (committee, params)
 
     genAddVote = do
       roundNo <- genRoundNo
@@ -234,7 +240,7 @@ instance StateModel Model where
 
   nextState (Model m) action _ =
     case action of
-      CreateDB -> Model $ Model.openDB m
+      CreateDB _context -> Model $ Model.openDB m
       AddVote vote -> Model $ snd $ Model.addVote vote m
       GetVoteIds -> Model $ m
       GetVotesAfter _ -> Model $ m
@@ -243,7 +249,7 @@ instance StateModel Model where
 
   precondition (Model m) action =
     case action of
-      CreateDB -> not (Model.open m)
+      CreateDB _context -> not (Model.open m)
       AddVote _ -> Model.open m
       GetVoteIds -> Model.open m
       GetVotesAfter _ -> Model.open m
@@ -259,8 +265,9 @@ instance HasVariables (Action Model a) where
 instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
   perform _ action _ =
     case action of
-      CreateDB -> do
-        let args = PerasVoteDB.PerasVoteDbArgs nullTracer perasTestParams
+      CreateDB context -> do
+        resolverHandle <- lift $ constPerasEpochContextResolverHandle context
+        let args = PerasVoteDB.PerasVoteDbArgs nullTracer resolverHandle
         voteDB <- lift $ PerasVoteDB.createDB args
         put voteDB
       AddVote vote -> do

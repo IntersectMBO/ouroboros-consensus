@@ -59,12 +59,12 @@ import Ouroboros.Network.Protocol.ObjectDiffusion.Type
   , NumObjectsUnacknowledged (..)
   , ObjectDiffusion
   )
-import Test.Consensus.Peras.Util (ListWithUniqueIds (..), genListWithUniqueIds)
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.IOLike ()
+import Test.Util.Peras (ListWithUniqueIds (..), genListWithUniqueIds)
 
 tests :: TestTree
 tests =

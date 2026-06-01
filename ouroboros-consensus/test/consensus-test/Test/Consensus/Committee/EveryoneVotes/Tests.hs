@@ -40,16 +40,6 @@ import Ouroboros.Consensus.Committee.WFA
   )
 import Test.Consensus.Committee.TestCrypto (TestCrypto)
 import qualified Test.Consensus.Committee.TestCrypto as TestCrypto
-import Test.Consensus.Committee.Utils
-  ( eqWithShowCmp
-  , genPools
-  , genPositiveStake
-  , mkBucket
-  , onError
-  , tabulateNumPools
-  , tabulatePoolStake
-  , unfairWFATiebreaker
-  )
 import Test.QuickCheck
   ( Gen
   , Property
@@ -65,6 +55,16 @@ import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.TestEnv (adjustQuickCheckTests)
+import Test.Util.Committee
+  ( eqWithShowCmp
+  , genPools
+  , genPositiveStake
+  , mkBucket
+  , onError
+  , tabulateNumPools
+  , tabulatePoolStake
+  , unfairWFATiebreaker
+  )
 
 tests :: TestTree
 tests =

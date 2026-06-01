@@ -19,7 +19,10 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
-import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle, constPerasEpochContextResolverHandle)
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextResolverHandle
+  , constPerasEpochContextResolverHandle
+  )
 import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
   , PerasVoteDB
@@ -38,16 +41,16 @@ import Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
   , genProtocolConstants
   , prop_smoke_object_diffusion
   )
-import Test.Consensus.Peras.Util
-  ( genListWithUniqueIds
-  , genMockPerasEpochContext
-  , genWithArrivalTime
-  , mockSystemTime
-  )
-import Test.Consensus.Peras.Util.Mock (genMockValidatedPerasVote)
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.Peras
+  ( genListWithUniqueIds
+  , genMockPerasEpochContext
+  , genMockValidatedPerasVote
+  , genWithArrivalTime
+  , mockSystemTime
+  )
 import Test.Util.TestBlock
 
 tests :: TestTree
@@ -82,8 +85,8 @@ prop_smoke =
   forAll genProtocolConstants $ \protocolConstants ->
     forAll genMockPerasEpochContext $ \epochContext ->
       forAll
-        (genListWithUniqueIds getPerasVoteRound (genWithArrivalTime (genMockValidatedPerasVote epochContext))) $
-        \(ListWithUniqueIds watValidatedVotes) ->
+        (genListWithUniqueIds getPerasVoteRound (genWithArrivalTime (genMockValidatedPerasVote epochContext)))
+        $ \(ListWithUniqueIds watValidatedVotes) ->
           let
             mkPoolInterfaces ::
               IOLike m =>
