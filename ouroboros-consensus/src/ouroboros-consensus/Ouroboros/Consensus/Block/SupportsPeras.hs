@@ -13,8 +13,8 @@
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasVotingCommittee

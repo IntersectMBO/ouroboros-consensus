@@ -17,13 +17,14 @@ import Cardano.Ledger.Api
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   )
-import Ouroboros.Consensus.Peras.Cert.Mock
-  ( MockPerasCert (..)
-  )
-import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCommittee, MockPerasCrypto)
-import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
-import Ouroboros.Consensus.Peras.Vote.Mock
-  ( MockPerasVote (..)
+import Ouroboros.Consensus.Committee.WFALS (WFALS)
+import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
+import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
+import Ouroboros.Consensus.Protocol.Praos.Peras
+  ( PraosStateSupportsPerasVoting (..)
+  , praosStatePerasVotingCommitteeInputV1
   )
 import Ouroboros.Consensus.Shelley.Ledger.Block
   ( ShelleyBlock
@@ -44,20 +45,21 @@ instance ShelleyCompatible proto AlonzoEra => BlockSupportsPeras (ShelleyBlock p
 instance ShelleyCompatible proto BabbageEra => BlockSupportsPeras (ShelleyBlock proto BabbageEra)
 instance ShelleyCompatible proto ConwayEra => BlockSupportsPeras (ShelleyBlock proto ConwayEra)
 
--- NOTE: this is a mocked up implementation without crypto!
--- TODO: replace this with a concrete implementation using 'Peras.Vote.V1' and
--- 'Peras.Cert.V1' for era >= DijkstraEra.
 instance
   ShelleyCompatible proto DijkstraEra =>
   BlockSupportsPeras (ShelleyBlock proto DijkstraEra)
   where
-  type PerasCrypto (ShelleyBlock proto DijkstraEra) = MockPerasCrypto (ShelleyBlock proto DijkstraEra)
-  type
-    PerasVotingCommitteeScheme (ShelleyBlock proto DijkstraEra) =
-      MockPerasCommittee (ShelleyBlock proto DijkstraEra)
-  type PerasVote (ShelleyBlock proto DijkstraEra) = MockPerasVote (ShelleyBlock proto DijkstraEra)
-  type PerasCert (ShelleyBlock proto DijkstraEra) = MockPerasCert (ShelleyBlock proto DijkstraEra)
-  type PerasError (ShelleyBlock proto DijkstraEra) = MockPerasError (ShelleyBlock proto DijkstraEra)
+  type PerasVote (ShelleyBlock proto DijkstraEra) = V1.PerasVote (ShelleyBlock proto DijkstraEra)
+  type PerasCert (ShelleyBlock proto DijkstraEra) = V1.PerasCert (ShelleyBlock proto DijkstraEra)
+  type PerasError (ShelleyBlock proto DijkstraEra) = V1.PerasError (ShelleyBlock proto DijkstraEra)
+  type PerasCrypto (ShelleyBlock proto DijkstraEra) = BLS.PerasBLSCrypto
+  type PerasVotingCommitteeScheme (ShelleyBlock proto DijkstraEra) = WFALS
 
   -- TODO: extract actual Peras certificates from blocks
   getPerasCertInBlock _ = Nothing
+
+instance
+  ShelleyCompatible proto DijkstraEra =>
+  PraosStateSupportsPerasVoting (ShelleyBlock proto DijkstraEra)
+  where
+  praosStatePerasVotingCommitteeInput = praosStatePerasVotingCommitteeInputV1

@@ -79,8 +79,8 @@ import Test.QuickCheck
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
-import Test.Util.TestEnv (adjustQuickCheckTests)
 import Test.Util.Committee (genEpochNonce)
+import Test.Util.TestEnv (adjustQuickCheckTests)
 
 -- * Test crypto based on BLS signatures
 

@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -169,17 +170,17 @@ decodeBytes32RealPoint = do
 
 fromBytes32RealPoint ::
   forall blk.
-  Coercible (HeaderHash blk) ShortByteString =>
+  ConvertRawHash blk =>
   Bytes32RealPoint ->
   RealPoint blk
 fromBytes32RealPoint (Bytes32RealPoint s h) =
-  RealPoint s (coerce h)
+  RealPoint s (fromShortRawHash (Proxy @blk) h)
 
 toBytes32RealPoint ::
   forall blk.
-  Coercible (HeaderHash blk) ShortByteString =>
+  ConvertRawHash blk =>
   RealPoint blk ->
   Bytes32RealPoint
 toBytes32RealPoint (RealPoint s h) =
-  assert (ByteString.length (coerce h) == 32) $
-    Bytes32RealPoint s (coerce h)
+  assert (ByteString.length (toShortRawHash (Proxy @blk) h) == 32) $
+    Bytes32RealPoint s (toShortRawHash (Proxy @blk) h)
