@@ -383,10 +383,6 @@ mkHandlers
             ( makePerasCertPoolWriterFromChainDB
                 systemTime
                 getChainDB
-                -- [TODO EPOCH CONTEXT PLUMBING]: when actual plumbing for Peras is ready, we will have to
-                -- extract the 'PerasEpochContextResolverHandle' from the 'ExtLedgerState' to pass
-                -- it here
-                undefined
             )
             version
             controlMessageSTM
@@ -406,10 +402,6 @@ mkHandlers
             ( makePerasVotePoolWriterFromChainDB
                 systemTime
                 getChainDB
-                -- [TODO EPOCH CONTEXT PLUMBING]: when actual plumbing for Peras is ready, we will have to
-                -- extract the 'PerasEpochContextResolverHandle' from the 'ExtLedgerState' to pass
-                -- it here
-                undefined
             )
             version
             controlMessageSTM
