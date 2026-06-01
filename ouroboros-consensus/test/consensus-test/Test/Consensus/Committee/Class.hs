@@ -25,7 +25,6 @@ import Ouroboros.Consensus.Committee.Crypto
   )
 import Test.Consensus.Committee.TestCrypto (TestCrypto)
 import qualified Test.Consensus.Committee.TestCrypto as TestCrypto
-import Test.Consensus.Committee.Utils (mkBucket)
 import Test.QuickCheck
   ( Arbitrary (..)
   , Gen
@@ -42,6 +41,7 @@ import Test.QuickCheck
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (Testable (..), testProperty)
 import Test.Util.TestEnv (adjustQuickCheckTests)
+import Test.Util.Committee (mkBucket)
 
 tests :: TestTree
 tests =

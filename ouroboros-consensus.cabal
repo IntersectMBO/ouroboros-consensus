@@ -469,6 +469,7 @@ library unstable-consensus-testlib
     Test.Util.ChainDB
     Test.Util.ChainUpdates
     Test.Util.ChunkInfo
+    Test.Util.Committee
     Test.Util.Corruption
     Test.Util.FileLock
     Test.Util.HardFork.Future
@@ -485,6 +486,12 @@ library unstable-consensus-testlib
     Test.Util.Orphans.SignableRepresentation
     Test.Util.Orphans.ToExpr
     Test.Util.Paths
+    Test.Util.Peras
+    Test.Util.Peras.Cert.Inclusion
+    Test.Util.Peras.Internal
+    Test.Util.Peras.Mock
+    Test.Util.Peras.Serialisation
+    Test.Util.Peras.V1
     Test.Util.QSM
     Test.Util.QuickCheck
     Test.Util.Range
@@ -662,7 +669,6 @@ test-suite consensus-test
     Test.Consensus.Committee.EveryoneVotes
     Test.Consensus.Committee.EveryoneVotes.Tests
     Test.Consensus.Committee.TestCrypto
-    Test.Consensus.Committee.Utils
     Test.Consensus.Committee.WFALS
     Test.Consensus.Committee.WFALS.Conformance
     Test.Consensus.Committee.WFALS.Model
@@ -689,10 +695,6 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ObjectDiffusion.Smoke
     Test.Consensus.Peras.Cert.Inclusion
     Test.Consensus.Peras.Serialisation
-    Test.Consensus.Peras.Util
-    Test.Consensus.Peras.Util.V1
-    Test.Consensus.Peras.Util.Mock
-    Test.Consensus.Peras.Util.Internal
     Test.Consensus.Peras.Voting.Adapter
     Test.Consensus.Peras.Voting.Rules
     Test.Consensus.Peras.WeightSnapshot
