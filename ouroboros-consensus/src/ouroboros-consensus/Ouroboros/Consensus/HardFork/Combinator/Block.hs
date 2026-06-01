@@ -35,7 +35,6 @@ import Data.SOP.Index
 import qualified Data.SOP.Match as Match
 import Data.SOP.Strict
 import Data.Typeable (Typeable)
-import Data.Word
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -167,21 +166,6 @@ instance CanHardFork xs => HasNestedContent Header (HardForkBlock xs) where
       NestedCtxt Header (HardForkBlock xs') a -> a -> NS Header xs'
     go (NestedCtxt (NCZ ctxt)) x = Z (nest (DepPair (NestedCtxt ctxt) x))
     go (NestedCtxt (NCS ctxt)) x = S (go (NestedCtxt ctxt) x)
-
-{-------------------------------------------------------------------------------
-  ConvertRawHash
--------------------------------------------------------------------------------}
-
-instance CanHardFork xs => ConvertRawHash (HardForkBlock xs) where
-  toShortRawHash _ = getOneEraHash
-  fromShortRawHash _ = OneEraHash
-  hashSize _ = getSameValue hashSizes
-   where
-    hashSizes :: NP (K Word32) xs
-    hashSizes = hcpure proxySingle hashSizeOne
-
-    hashSizeOne :: forall blk. SingleEraBlock blk => K Word32 blk
-    hashSizeOne = K $ hashSize (Proxy @blk)
 
 {-------------------------------------------------------------------------------
   HasAnnTip

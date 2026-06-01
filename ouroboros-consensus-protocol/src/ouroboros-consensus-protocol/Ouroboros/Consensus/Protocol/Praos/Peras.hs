@@ -3,16 +3,17 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Voting interface for Peras derived from the Praos ledger view.
 module Ouroboros.Consensus.Protocol.Praos.Peras
   ( PraosStateSupportsPerasVoting (..)
+  , praosStatePerasVotingCommitteeInputV1
   ) where
 
 import Data.Bifunctor (Bifunctor (..))
-import Data.ByteString.Short (ShortByteString)
-import Ouroboros.Consensus.Block.Abstract (HeaderHash, StandardHash)
+import Ouroboros.Consensus.Block.Abstract (StandardHash)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   , IsPerasError (..)
@@ -24,6 +25,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   )
 import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee)
 import qualified Ouroboros.Consensus.Committee.Class as Committee
+import Ouroboros.Consensus.Committee.Crypto (PublicKey)
 import Ouroboros.Consensus.Committee.WFA
   ( mkExtWFAStakeDistr
   , wFATiebreakerWithEpochNonce
@@ -32,63 +34,19 @@ import Ouroboros.Consensus.Committee.WFALS
   ( VotingCommitteeInput (..)
   , WFALS
   )
-import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
+import Ouroboros.Consensus.HardFork.Combinator.Abstract (CanHardFork)
+import Ouroboros.Consensus.HardFork.Combinator.Basics (HardForkBlock)
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
 import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
   ( unsafeExtendPerasStakeDistrWithPublicKeysFromEnv
   )
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
 import Ouroboros.Consensus.Peras.Params (PerasParams (..))
-import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import Ouroboros.Consensus.Protocol.Praos
   ( PraosState (..)
   , Ticked (..)
   )
 import Ouroboros.Consensus.Protocol.Praos.Views (LedgerView (..))
-
---------------------------------------------------------------------------------
--- This is a mocked up instance
-
-data RealBlock
-
-type instance HeaderHash RealBlock = ShortByteString
-instance StandardHash RealBlock
-
-instance BlockSupportsPeras RealBlock where
-  type PerasVote RealBlock = V1.PerasVote RealBlock
-  type PerasCert RealBlock = V1.PerasCert RealBlock
-  type PerasError RealBlock = V1.PerasError RealBlock
-  type PerasCrypto RealBlock = BLS.PerasBLSCrypto
-  type PerasVotingCommitteeScheme RealBlock = WFALS
-
-  -- TODO: extract actual Peras certificates from blocks
-  getPerasCertInBlock _ = Nothing
-
-instance PraosStateSupportsPerasVoting RealBlock where
-  praosStatePerasVotingCommitteeInput _ perasParams tickedPraosState = do
-    let epochNonce =
-          praosStateEpochNonce
-            . tickedPraosStateChainDepState
-            $ tickedPraosState
-    -- TODO: replace the following hack with proper on-chain key registration.
-    stakeDistrWithPublicKeys <-
-      bimap V1.PerasTemporaryPublicKeyHackError id
-        . unsafeExtendPerasStakeDistrWithPublicKeysFromEnv
-        . lvPoolDistr
-        . tickedPraosStateLedgerView
-        $ tickedPraosState
-    extWFAStakeDistr <-
-      bimap V1.PerasVotingWFAError id $
-        mkExtWFAStakeDistr
-          (wFATiebreakerWithEpochNonce epochNonce)
-          stakeDistrWithPublicKeys
-    pure $
-      WFALSVotingCommitteeInput
-        epochNonce
-        (perasTargetCommitteeSize perasParams)
-        extWFAStakeDistr
-
---------------------------------------------------------------------------------
 
 class
   ( BlockSupportsPeras blk
@@ -119,3 +77,40 @@ class
       praosStatePerasVotingCommitteeInput p perasParams tickedPraosState
     bimap injectVotingCommitteeError id $
       Committee.mkVotingCommittee committeeInput
+
+praosStatePerasVotingCommitteeInputV1 ::
+  PublicKey crypto ~ BLS.PerasPublicKey =>
+  proxy blk ->
+  PerasParams blk ->
+  Ticked PraosState ->
+  Either (V1.PerasError blk) (VotingCommitteeInput crypto WFALS)
+praosStatePerasVotingCommitteeInputV1 _ perasParams tickedPraosState = do
+  let epochNonce =
+        praosStateEpochNonce
+          . tickedPraosStateChainDepState
+          $ tickedPraosState
+  -- TODO: replace the following hack with proper on-chain key registration.
+  stakeDistrWithPublicKeys <-
+    bimap V1.PerasTemporaryPublicKeyHackError id
+      . unsafeExtendPerasStakeDistrWithPublicKeysFromEnv
+      . lvPoolDistr
+      . tickedPraosStateLedgerView
+      $ tickedPraosState
+  extWFAStakeDistr <-
+    bimap V1.PerasVotingWFAError id $
+      mkExtWFAStakeDistr
+        (wFATiebreakerWithEpochNonce epochNonce)
+        stakeDistrWithPublicKeys
+  pure $
+    WFALSVotingCommitteeInput
+      epochNonce
+      (perasTargetCommitteeSize perasParams)
+      extWFAStakeDistr
+
+instance
+  ( StandardHash (HardForkBlock xs)
+  , CanHardFork xs
+  ) =>
+  PraosStateSupportsPerasVoting (HardForkBlock xs)
+  where
+  praosStatePerasVotingCommitteeInput = praosStatePerasVotingCommitteeInputV1

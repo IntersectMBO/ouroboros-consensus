@@ -44,12 +44,14 @@ import Data.SOP.Constraint
 import Data.SOP.Functors
 import Data.SOP.Strict
 import Data.Typeable
+import Data.Word (Word32)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   )
+import Ouroboros.Consensus.Committee.WFALS (WFALS)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
@@ -60,14 +62,10 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
-import Ouroboros.Consensus.Peras.Cert.Mock
-  ( MockPerasCert (..)
-  )
-import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCommittee, MockPerasCrypto)
-import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
-import Ouroboros.Consensus.Peras.Vote.Mock
-  ( MockPerasVote (..)
-  )
+import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
+import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -274,26 +272,34 @@ instance CanHardFork xs => LedgerSupportsPeras (HardForkBlock xs) where
   BlockSupportsPeras
 -------------------------------------------------------------------------------}
 
--- NOTE: this is a mocked up implementation without crypto!
-
--- TODO: when replacing this with a real votes and certificates, we need to make
--- sure that their binary representation would be compatible with the one the
--- HFC would produce if it were in charge of dispatching them. Concretely, this
--- means adding an envelope around the actual votes and certificates indicating
--- which era they belong to. This is to allow for the possibility of having the
--- HFC dispatch different types of votes and certificates in the future.
-
+-- TODO: we need to change the binary representation of votes and certs to carry
+-- era-specific/versionning information, to allow future evolutions
 instance
   ( StandardHash (HardForkBlock xs)
   , CanHardFork xs
   ) =>
   BlockSupportsPeras (HardForkBlock xs)
   where
-  type PerasCrypto (HardForkBlock xs) = MockPerasCrypto (HardForkBlock xs)
-  type PerasVotingCommitteeScheme (HardForkBlock xs) = (MockPerasCommittee (HardForkBlock xs))
-  type PerasVote (HardForkBlock xs) = MockPerasVote (HardForkBlock xs)
-  type PerasCert (HardForkBlock xs) = MockPerasCert (HardForkBlock xs)
-  type PerasError (HardForkBlock xs) = MockPerasError (HardForkBlock xs)
+  type PerasVote (HardForkBlock xs) = V1.PerasVote (HardForkBlock xs)
+  type PerasCert (HardForkBlock xs) = V1.PerasCert (HardForkBlock xs)
+  type PerasError (HardForkBlock xs) = V1.PerasError (HardForkBlock xs)
+  type PerasCrypto (HardForkBlock xs) = BLS.PerasBLSCrypto
+  type PerasVotingCommitteeScheme (HardForkBlock xs) = WFALS
 
   -- TODO: extract actual Peras certificates from blocks
   getPerasCertInBlock _ = Nothing
+
+{-------------------------------------------------------------------------------
+  ConvertRawHash
+-------------------------------------------------------------------------------}
+
+instance CanHardFork xs => ConvertRawHash (HardForkBlock xs) where
+  toShortRawHash _ = getOneEraHash
+  fromShortRawHash _ = OneEraHash
+  hashSize _ = getSameValue hashSizes
+   where
+    hashSizes :: NP (K Word32) xs
+    hashSizes = hcpure proxySingle hashSizeOne
+
+    hashSizeOne :: forall blk. SingleEraBlock blk => K Word32 blk
+    hashSizeOne = K $ hashSize (Proxy @blk)

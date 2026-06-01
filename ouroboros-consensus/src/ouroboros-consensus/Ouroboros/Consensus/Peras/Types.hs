@@ -38,8 +38,7 @@ import Cardano.Binary
   )
 import Codec.Serialise.Class (Serialise (..))
 import Control.DeepSeq (NFData)
-import Data.ByteString.Short (ShortByteString)
-import Data.Coerce (Coercible, coerce)
+import Data.Coerce (coerce)
 import Data.Containers.NonEmpty (HasNonEmpty (..))
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
@@ -48,7 +47,7 @@ import Data.Proxy (Proxy (..))
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Abstract (HeaderHash, Point, WithOrigin)
+import Ouroboros.Consensus.Block.Abstract (ConvertRawHash, Point, WithOrigin)
 import Ouroboros.Consensus.Block.RealPoint
   ( Bytes32RealPoint
   , decodeBytes32RealPoint
@@ -124,7 +123,7 @@ instance ToCBOR PerasBoostedBlock where
   toCBOR = encodeWithOrigin encodeBytes32RealPoint . unPerasBoostedBlock
 
 instance
-  Coercible (HeaderHash blk) ShortByteString =>
+  ConvertRawHash blk =>
   BoostedBlockCompatibleWithPoint PerasBoostedBlock blk
   where
   boostedBlockToPoint =
