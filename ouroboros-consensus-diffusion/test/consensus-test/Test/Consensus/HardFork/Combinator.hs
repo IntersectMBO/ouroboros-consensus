@@ -254,6 +254,9 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
                 genesisHeaderState $
                   initHardForkState
                     (WrapChainDepState initChainDepState)
+            , perasEpochContextResolver =
+                -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+                undefined
             }
       }
 

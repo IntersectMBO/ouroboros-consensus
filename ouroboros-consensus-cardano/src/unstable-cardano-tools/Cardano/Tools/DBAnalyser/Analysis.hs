@@ -706,7 +706,12 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
 
     F.writeDataPoint outFileHandle outFormat slotDataPoint
 
-    LedgerDB.push intLedgerDB $ ExtLedgerState (prependDiffs tkLdgrSt newLedger) newHeader
+    LedgerDB.push intLedgerDB $
+      ExtLedgerState
+        (prependDiffs tkLdgrSt newLedger)
+        newHeader
+        -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+        undefined
    where
     rp = blockRealPoint blk
 

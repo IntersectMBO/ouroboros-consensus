@@ -215,6 +215,8 @@ protocolInfoByron
               -- balances.
               ledgerState = initByronLedgerState genesisConfig Nothing
             , headerState = genesisHeaderState S.empty
+            , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+              perasEpochContextResolver = undefined
             }
       }
    where

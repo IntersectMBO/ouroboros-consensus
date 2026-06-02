@@ -6,6 +6,7 @@ module Ouroboros.Consensus.Block.SupportsProtocol (BlockSupportsProtocol (..), s
 
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras (..))
 import Ouroboros.Consensus.Protocol.Abstract
 
 {-------------------------------------------------------------------------------
@@ -21,6 +22,10 @@ class
   , NoThunks (BlockConfig blk)
   , NoThunks (CodecConfig blk)
   , NoThunks (StorageConfig blk)
+  , -- Peras context requirements
+    Show (PerasEpochContext blk)
+  , Eq (PerasEpochContext blk)
+  , NoThunks (PerasEpochContext blk)
   ) =>
   BlockSupportsProtocol blk
   where

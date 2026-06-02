@@ -47,6 +47,8 @@ protocolInfoMockPBFT params eraParams =
         ExtLedgerState
           (genesisSimpleLedgerState addrDist)
           (genesisHeaderState S.empty)
+          -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+          undefined
     }
  where
   ledgerView :: PBftLedgerView PBftMockCrypto
