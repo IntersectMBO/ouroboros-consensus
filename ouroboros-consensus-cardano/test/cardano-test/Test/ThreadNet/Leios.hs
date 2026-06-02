@@ -384,16 +384,15 @@ prop_leios_late_join seed =
         r <- try @SomeException $ evaluate testOutput
         pure $ case r of
           Left e ->
+            -- DEBUG: try to grab traces too. If forcing the traces
+            -- also throws (because they share the failing chunk of
+            -- IOSim output), wrap in another 'try' and degrade
+            -- gracefully.
             counterexample ("late join slot: " <> show lateJoinSlot) $
               counterexample ("threw: " <> show e) False
           Right _ -> property True
  where
-  -- Shorter than 'prop_leios' (200 slots): staging causes node 3's chain
-  -- to stall, which makes downstream diffusion (LoP, fragment growth,
-  -- BlockFetch retries) do O(numSlots × backlog) work per slot until
-  -- Phase 2 (emergency EB fetch, issue #890) lands. Once Phase 2 is in,
-  -- restore to 200.
-  numSlots = 50 :: Word64
+  numSlots = 60 :: Word64 -- TODO restore to 200 once perf is fixed
 
 -- | Independently compute cumulative tx bytes by resolving each block in the
 -- chain (filling in EB closures from the LeiosDB) and summing individual

@@ -132,24 +132,34 @@ decodeLeiosPoint = do
   enforceSize (fromString "LeiosPoint") 2
   MkLeiosPoint <$> decode <*> decodeEbHash
 
--- | Encode a 'LeiosPoint' as the CBOR payload to embed in a
+-- | Encode the (point, size) pair as the CBOR payload to embed in a
 -- 'Cardano.Ledger.BaseTypes.LeiosCert'. Consensus uses this when
--- forging a CertRB; the receiver decodes it via 'decodeLeiosCertPoint'
--- to learn which EB closure to fetch / splice.
-encodeLeiosCertPoint :: LeiosPoint -> BS.ByteString
-encodeLeiosCertPoint = CBOR.toStrictByteString . encodeLeiosPoint
+-- forging a CertRB; the receiver decodes it via 'decodeLeiosCertInfo'
+-- to learn which EB closure to fetch / splice and what its expected
+-- on-the-wire size is (needed for the fetch logic's
+-- 'msgLeiosBlock' response validation).
+encodeLeiosCertInfo :: LeiosPoint -> BytesSize -> BS.ByteString
+encodeLeiosCertInfo point bytesSize =
+  CBOR.toStrictByteString $
+    CBOR.encodeListLen 2
+      <> encodeLeiosPoint point
+      <> encode bytesSize
 
--- | Inverse of 'encodeLeiosCertPoint': decode the 'LeiosPoint' embedded
--- in a 'LeiosCert.leiosCertPayload'. Returns 'Left' with the
--- deserialise error on a malformed payload.
-decodeLeiosCertPoint ::
+-- | Inverse of 'encodeLeiosCertInfo': decode the @(LeiosPoint,
+-- BytesSize)@ pair embedded in a 'LeiosCert.leiosCertPayload'. Returns
+-- 'Left' with the deserialise error on a malformed payload.
+decodeLeiosCertInfo ::
   Cardano.Ledger.BaseTypes.LeiosCert ->
-  Either DeserialiseFailure LeiosPoint
-decodeLeiosCertPoint cert =
-  case CBOR.deserialiseFromBytes decodeLeiosPoint $
+  Either DeserialiseFailure (LeiosPoint, BytesSize)
+decodeLeiosCertInfo cert =
+  case CBOR.deserialiseFromBytes go $
     BSL.fromStrict (Cardano.Ledger.BaseTypes.leiosCertPayload cert) of
     Left err -> Left err
-    Right (_, point) -> Right point
+    Right (_, x) -> Right x
+ where
+  go = do
+    enforceSize (fromString "LeiosCertInfo") 2
+    (,) <$> decodeLeiosPoint <*> decode
 
 -- | Types used in Praos headers
 data EbAnnouncement = EbAnnouncement

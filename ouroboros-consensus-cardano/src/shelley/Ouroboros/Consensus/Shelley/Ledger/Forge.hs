@@ -38,7 +38,7 @@ import LeiosDemoTypes
   , ForgedLeiosEb (..)
   , LeiosPoint (..)
   , TraceLeiosKernel (..)
-  , encodeLeiosCertPoint
+  , encodeLeiosCertInfo
   , forgeLeiosEb
   , leiosEbBytesSize
   , minCertificationGap
@@ -159,6 +159,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                     { pointSlotNo = prevSlotNo
                     , pointEbHash = ebAnnouncementHash ann
                     }
+                ebSize = ebAnnouncementSize ann
             mClosure <- leiosDbQueryCompletedEbByPoint fbLeiosDb ebPoint
             case mClosure of
               Nothing -> do
@@ -181,7 +182,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                     pure
                       ( SJust
                           ( LeiosCert
-                              (encodeLeiosCertPoint ebPoint)
+                              (encodeLeiosCertInfo ebPoint ebSize)
                           )
                       )
 

@@ -70,7 +70,7 @@ import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
-import LeiosDemoTypes (LeiosPoint)
+import LeiosDemoTypes (BytesSize, LeiosPoint)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
@@ -571,21 +571,24 @@ class ResolveLeiosBlock blk where
 
   -- | Closure-availability check for the CertRB staging area (issue #890).
   --
-  -- The Leios cert in the block body carries the certified EB point as
-  -- a CBOR payload ('LeiosCert.leiosCertPayload'); this method decodes
-  -- it and asks the local 'LeiosDb' whether the closure is present.
+  -- The Leios cert in the block body carries the certified EB point and
+  -- its expected on-the-wire body size as a CBOR payload (see
+  -- 'LeiosCert.leiosCertPayload' / 'encodeLeiosCertInfo'); this method
+  -- decodes them and asks the local 'LeiosDb' whether the closure is
+  -- present.
   --
-  -- Returns @Just point@ when the block carries a Leios cert and the
-  -- referenced EB closure is *not* in the local 'LeiosDb' — the caller
-  -- can then park the CertRB in a staging area and add @point@ to the
-  -- fetch work set. Returns 'Nothing' when the block has no Leios cert,
+  -- Returns @Just (point, size)@ when the block carries a Leios cert
+  -- and the referenced EB closure is *not* in the local 'LeiosDb' —
+  -- the caller can then park the CertRB (along with the size, which
+  -- the fetch logic needs to validate the eventual response) in a
+  -- staging area. Returns 'Nothing' when the block has no Leios cert,
   -- or when the closure is already present (so the block is safe to
   -- admit to ChainSel).
   checkLeiosBlockResolvable ::
     Monad m =>
     LeiosDbConnection m ->
     blk ->
-    m (Maybe LeiosPoint)
+    m (Maybe (LeiosPoint, BytesSize))
   checkLeiosBlockResolvable _ _ = return Nothing
 
   -- | The EB point announced by this header, if any. 'Nothing' for headers

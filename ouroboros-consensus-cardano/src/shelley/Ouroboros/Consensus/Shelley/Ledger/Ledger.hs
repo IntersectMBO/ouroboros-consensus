@@ -119,7 +119,7 @@ import LeiosDemoTypes
   ( EbAnnouncement (..)
   , LeiosPoint (..)
   , TxHash
-  , decodeLeiosCertPoint
+  , decodeLeiosCertInfo
   )
 import Lens.Micro
 import Lens.Micro.Extras (view)
@@ -1005,15 +1005,14 @@ instance
                   , pointEbHash = ebAnnouncementHash ann
                   }
             case mAnnouncedEb of
-              -- Issue #890: closure missing locally. Instead of
-              -- crashing, leave the body unchanged (empty txs) so the
-              -- chain can advance. The block's txs effectively don't
-              -- apply, but the node stays operational. The CertRB
-              -- staging area (wrapChainDbViewForLeiosStaging) is the
-              -- intended primary defence; this branch is the in-apply
-              -- safety net for the fork / racy-ChainSel cases the gate
-              -- can't catch.
-              Nothing -> pure blk
+              Nothing ->
+                error $
+                  "Issue #890 gate missed: apply-time resolve found EB "
+                    <> show ann
+                    <> " at last-slot "
+                    <> show (praosStateLastSlot praosSt)
+                    <> " absent. Cert payload bytes: "
+                    <> show cert
               Just announcedEb ->
                 pure $
                   blk{shelleyBlockRaw = Core.Block hdr body'}
@@ -1042,15 +1041,15 @@ instance
     case body ^. leiosCertBlockBodyL of
       SNothing -> pure Nothing
       SJust cert ->
-        case decodeLeiosCertPoint cert of
+        case decodeLeiosCertInfo cert of
           Left err ->
             error $
               "checkLeiosBlockResolvable: malformed LeiosCert payload: "
                 <> show err
-          Right point -> do
+          Right (point, size) -> do
             mAnnouncedEb <- leiosDbQueryCompletedEbByPoint leiosDb point
             pure $ case mAnnouncedEb of
-              Nothing -> Just point
+              Nothing -> Just (point, size)
               Just _ -> Nothing
    where
     Core.Block _ body = shelleyBlockRaw blk
