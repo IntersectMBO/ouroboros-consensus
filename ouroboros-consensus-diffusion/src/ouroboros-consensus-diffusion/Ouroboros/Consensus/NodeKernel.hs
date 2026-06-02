@@ -52,7 +52,7 @@ import Data.Bifunctor (second)
 import qualified Data.ByteString as BS
 import Data.Data (Typeable)
 import Data.Either (partitionEithers)
-import Data.Foldable (traverse_)
+import Data.Foldable (Foldable (foldl'), traverse_)
 import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)

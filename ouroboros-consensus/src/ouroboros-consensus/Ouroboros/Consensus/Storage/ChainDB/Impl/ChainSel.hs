@@ -36,6 +36,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Bifunctor (first)
+import Data.Foldable (Foldable (foldl'))
 import Data.Function (on)
 import Data.Functor.Contravariant ((>$<))
 import Data.List (sortBy)
