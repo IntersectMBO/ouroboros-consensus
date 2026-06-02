@@ -81,8 +81,10 @@ module Ouroboros.Consensus.Storage.ChainDB.API
 
 import Control.Monad (void)
 import Control.ResourceRegistry
+import Data.Map.Strict (Map)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (BytesSize, LeiosPoint)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.HeaderStateHistory
@@ -170,6 +172,12 @@ data ChainDB m blk = ChainDB
   -- https://github.com/IntersectMBO/ouroboros-consensus/blob/main/docs/website/contents/for-developers/HandlingBlocksFromTheFuture.md#handling-blocks-from-the-future
   , chainSelAsync :: m (ChainSelectionPromise m)
   -- ^ Trigger reprocessing of blocks postponed by the LoE.
+  , getPendingCertRBs :: STM m (Map LeiosPoint BytesSize)
+  -- ^ EB closures that chain selection is waiting on (a volatile CertRB
+  -- certifies them but the closure is not yet local), keyed by the EB's
+  -- 'LeiosPoint' with its announced byte size.  The late-join fetch
+  -- mirrors these into the Leios outstanding set so the missing closures
+  -- get pulled from peers.
   , getCurrentChain :: STM m (AnchoredFragment (Header blk))
   -- ^ Get the current chain fragment
   --

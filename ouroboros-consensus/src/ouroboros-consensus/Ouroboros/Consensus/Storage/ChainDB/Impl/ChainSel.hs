@@ -50,7 +50,12 @@ import qualified Data.Set as Set
 import Data.Traversable (for)
 import GHC.Stack (HasCallStack)
 import LeiosDemoDb (LeiosDbHandle (..))
-import LeiosDemoTypes (EbAnnouncement (ebAnnouncementHash), EbHash)
+import LeiosDemoTypes
+  ( BytesSize
+  , EbAnnouncement (ebAnnouncementHash, ebAnnouncementSize)
+  , EbHash
+  , LeiosPoint (..)
+  )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
@@ -703,16 +708,22 @@ constructPreferableCandidates CDB{..} weights curChain hdrCache p = do
   -- O(1) because the handle caches the snapshot (see
   -- 'readCompletedClosures').
   acquiredClosures <- readCompletedClosures cdbLeiosDbHandle
-  certRBsWithPendingEbClosures <-
+  pendingCertRBs <-
     computeCertRBsWithPendingEbClosures
       cdbVolatileDB
       succsOfValid
       acquiredClosures
       (pointHash (castPoint (AF.anchorPoint curChain) :: Point blk))
+  -- Publish the current pending set, keyed by the missing EB's
+  -- 'LeiosPoint' with that EB's announced byte size, so the late-join
+  -- fetch ('NodeKernel.pendingEbReconciler') knows which EB closures to
+  -- pull and with what expected size.
+  atomically $ writeTVar cdbPendingEBs (Map.map snd pendingCertRBs)
 
   let
     -- Let these two functions ignore invalid blocks and CertRBs whose
     -- certified EB closure is still pending.
+    certRBsWithPendingEbClosures = Set.fromList (fst <$> Map.elems pendingCertRBs)
     succsOf =
       Set.filter (`Set.notMember` certRBsWithPendingEbClosures) . succsOfValid
     lookupBlockInfo =
@@ -1448,10 +1459,13 @@ ignorePendingCertRBs pending getter hash
   | Set.member hash pending = Nothing
   | otherwise = getter hash
 
--- | Volatile CertRB blocks whose certified EB closure is not in the
--- local downloaded-closures tracker.  Both lookup wrappers consult the
--- returned set to hide such blocks from candidate construction, so that
--- 'resolveLeiosBlock' is never asked to recover a closure we do not have.
+-- | Volatile CertRBs whose certified EB closure is not in the local
+-- downloaded-closures tracker, keyed by the missing EB's 'LeiosPoint'
+-- (the value is the CertRB's own header hash).  Candidate construction
+-- hides these blocks so that 'resolveLeiosBlock' is never asked to
+-- recover a closure we do not have; the 'LeiosPoint' keys let the
+-- late-join fetch ('NodeKernel.pendingEbReconciler') pull exactly the
+-- closures still needed.
 --
 -- Walks the VolatileDB forward from the immutable tip via 'succsOf',
 -- reading each header's Leios fields ('VolatileDB.getLeiosFields', which
@@ -1460,12 +1474,14 @@ ignorePendingCertRBs pending getter hash
 -- 'updateChainDepState' (in "Ouroboros.Consensus.Protocol.Praos")
 -- overwrites the tracked announcement on every block, so the announcement
 -- a CertRB certifies is exactly the one carried by the block before it.
--- We therefore carry the parent's announcement down the walk and flag a
--- CertRB as pending iff that EB's closure is not in the completed-closure
+-- The certified EB's 'LeiosPoint' is therefore @(parent slot, parent
+-- announcement hash)@, matching the point 'resolveLeiosBlock' queries.
+-- We carry the parent's slot+announcement down the walk and flag a CertRB
+-- as pending iff that EB's closure is not in the completed-closure
 -- snapshot.
 computeCertRBsWithPendingEbClosures ::
   forall m blk.
-  (IOLike m, HasHeader blk, ResolveLeiosBlock blk) =>
+  (IOLike m, ResolveLeiosBlock blk) =>
   VolatileDB m blk ->
   (ChainHash blk -> Set (HeaderHash blk)) ->
   -- | EBs whose closure is locally complete (see
@@ -1473,30 +1489,36 @@ computeCertRBsWithPendingEbClosures ::
   Set EbHash ->
   -- | Where to start the walk.  Should be the immutable-tip 'ChainHash'.
   ChainHash blk ->
-  m (Set (HeaderHash blk))
+  m (Map LeiosPoint (HeaderHash blk, BytesSize))
 computeCertRBsWithPendingEbClosures volDB succsOf acquiredClosures start = do
-  leiosFields <- atomically $ VolatileDB.getLeiosFields volDB
+  (leiosFields, blockInfo) <-
+    atomically $
+      (,)
+        <$> VolatileDB.getLeiosFields volDB
+        <*> VolatileDB.getBlockInfo volDB
   let
     go ::
       ChainHash blk ->
       -- \^ the block (or anchor) whose successors we visit
-      Maybe EbAnnouncement ->
-      -- \^ the EB announcement carried by that block, if any
-      Set (HeaderHash blk) ->
-      Set (HeaderHash blk)
+      Maybe (SlotNo, EbAnnouncement) ->
+      -- \^ that block's slot and EB announcement, if it announced one
+      Map LeiosPoint (HeaderHash blk, BytesSize) ->
+      Map LeiosPoint (HeaderHash blk, BytesSize)
     go parent parentAnn acc0 =
       foldl' visit acc0 (Set.toList (succsOf parent))
      where
       visit acc h = go (BlockHash h) thisAnn acc'
        where
-        (isCertRB, thisAnn) = fromMaybe (NotCertRB, Nothing) (leiosFields h)
+        (isCertRB, mAnn) = fromMaybe (NotCertRB, Nothing) (leiosFields h)
+        thisAnn = (,) <$> (VolatileDB.biSlotNo <$> blockInfo h) <*> mAnn
         acc'
           | CertRB <- isCertRB
-          , Just ann <- parentAnn
-          , ebAnnouncementHash ann `Set.notMember` acquiredClosures =
-              Set.insert h acc
+          , Just (parentSlot, ann) <- parentAnn
+          , let ebHash = ebAnnouncementHash ann
+          , ebHash `Set.notMember` acquiredClosures =
+              Map.insert (MkLeiosPoint parentSlot ebHash) (h, ebAnnouncementSize ann) acc
           | otherwise = acc
-  pure $ go start Nothing Set.empty
+  pure $ go start Nothing Map.empty
  where
   -- The body reads the Leios fields snapshotted by the VolatileDB rather
   -- than calling the class methods directly, but the constraint keeps

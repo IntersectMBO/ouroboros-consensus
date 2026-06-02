@@ -63,6 +63,7 @@ import Data.Maybe (isJust)
 import qualified Data.Measure
 import Data.Proxy
 import Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Void (Void)
 import LeiosDemoDb
@@ -73,7 +74,9 @@ import LeiosDemoDb
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
-  ( LeiosOutstanding
+  ( EbAnnouncement (ebAnnouncementHash)
+  , EbHash
+  , LeiosOutstanding
   , LeiosPeerVars
   , LeiosVote (..)
   , TraceLeiosKernel (..)
@@ -291,6 +294,7 @@ initNodeKernel ::
   ( IOLike m
   , SI.MonadTimer m
   , RunNode blk
+  , ResolveLeiosBlock blk
   , Ord addrNTN
   , Hashable addrNTN
   , Typeable addrNTN
@@ -450,6 +454,37 @@ initNodeKernel
     getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
     getLeiosReady <- MVar.newEmptyMVar
 
+    -- Mirror ChainSel's pending-EB set into the Leios outstanding
+    -- 'missingEbBodies' so the LeiosFetch client pulls the closures for
+    -- CertRBs that ChainSel is holding back.  A late-joining node would
+    -- otherwise never request these EBs, because no peer re-offers an EB
+    -- announced before the node joined.  We use the announced byte size
+    -- ('getPendingCertRBs' carries it) so the fetch request matches the
+    -- body the peer returns.
+    lastAppliedPendingEBs <- newTVarIO Map.empty
+    void $
+      forkLinkedThread registry "NodeKernel.pendingEbReconciler" $
+        forever $ do
+          (added, removed) <- atomically $ do
+            new <- ChainDB.getPendingCertRBs chainDB
+            old <- readTVar lastAppliedPendingEBs
+            when (new == old) retry
+            writeTVar lastAppliedPendingEBs new
+            pure (Map.difference new old, Map.difference old new)
+          MVar.modifyMVar_ getLeiosOutstanding $ \outstanding -> do
+            let bodies0 = Leios.missingEbBodies outstanding
+                -- Add entries for newly-pending EBs at their announced
+                -- size; never overwrite an existing (offer-supplied) size.
+                bodies1 =
+                  Map.foldlWithKey'
+                    (\acc point sz -> Map.insertWith (\_new old' -> old') point sz acc)
+                    bodies0
+                    added
+                -- Drop entries we no longer need.
+                bodies2 = bodies1 `Map.difference` removed
+            pure outstanding{Leios.missingEbBodies = bodies2}
+          void $ MVar.tryPutMVar getLeiosReady ()
+
     -- The Leios fetch logic: 0.5s loop that takes 'getLeiosReady', reads
     -- the peers' offerings, runs 'leiosFetchLogicIteration' to decide what
     -- to fetch next from each peer, and pushes the resulting requests onto
@@ -466,6 +501,32 @@ initNodeKernel
           iterationStart <- getMonotonicTime
           leiosPeersVars <- MVar.readMVar getLeiosPeersVars
           offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
+          -- Fallback peer source: the certified-EB hashes implied by each
+          -- peer's ChainSync candidate fragment.  A peer whose candidate
+          -- contains a CertRB has validated that EB's closure locally, so it
+          -- can serve a closure that no peer has explicitly offered (the
+          -- late-join case).  A CertRB certifies the EB announced by its
+          -- immediate predecessor, so we track the running announcement while
+          -- folding the fragment oldest-to-newest.
+          candidateCertEbs <- atomically $ do
+            handles <- cschcMap varChainSyncHandles
+            fmap (Map.mapKeysMonotonic Leios.MkPeerId) $
+              forM handles $ \csHandle -> do
+                csState <- readTVar (cschState csHandle)
+                let step (prevAnn, ebHashes) hwt =
+                      let hdr = hwtHeader hwt
+                          ebHashes'
+                            | CertRB <- headerIsCertRB hdr
+                            , Just ebHash <- prevAnn =
+                                Set.insert ebHash ebHashes
+                            | otherwise = ebHashes
+                       in (ebAnnouncementHash <$> headerEbAnnouncement hdr, ebHashes')
+                pure $
+                  snd $
+                    foldl'
+                      step
+                      (Nothing :: Maybe EbHash, Set.empty)
+                      (AF.toOldestFirst (csCandidate csState))
           newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
             filteredOutstanding <- Leios.filterMissingWork leiosConn outstanding
             traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: filtered"
@@ -473,6 +534,7 @@ initNodeKernel
                   Leios.leiosFetchLogicIteration
                     Leios.demoLeiosFetchStaticEnv
                     offerings
+                    candidateCertEbs
                     filteredOutstanding
             pure (outstanding', decisions)
           traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: decided"

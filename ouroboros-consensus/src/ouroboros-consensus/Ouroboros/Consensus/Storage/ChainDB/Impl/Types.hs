@@ -96,6 +96,7 @@ import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import LeiosDemoDb.Common (LeiosDbHandle)
+import LeiosDemoTypes (BytesSize, LeiosPoint)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
@@ -387,6 +388,13 @@ data ChainDbEnv m blk = CDB
   -- ^ Exposes the closure cache ('readCompletedClosures').  Held as
   -- the handle (not a 'LeiosDbConnection'): the cache is read
   -- concurrently and connections are not thread-safe.
+  , cdbPendingEBs :: !(StrictTVar m (Map LeiosPoint BytesSize))
+  -- ^ EB closures that chain selection is currently waiting on because a
+  -- volatile CertRB certifies them but the closure has not been fetched
+  -- yet, keyed by the EB's 'LeiosPoint' with its announced byte size.
+  -- Maintained by ChainSel ('computeCertRBsWithPendingEbClosures') and
+  -- exposed via 'getPendingCertRBs' so the late-join fetch knows which
+  -- closures to pull and with what expected size.
   }
   deriving Generic
 
