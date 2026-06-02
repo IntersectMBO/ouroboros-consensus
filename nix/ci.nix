@@ -50,7 +50,7 @@ let
     };
   } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
     windows = {
-      haskell96 = mkHaskellJobsFor pkgs.hsPkgs.projectCross.ucrt64;
+      haskell912 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc912.projectCross.ucrt64;
     };
   });
 
