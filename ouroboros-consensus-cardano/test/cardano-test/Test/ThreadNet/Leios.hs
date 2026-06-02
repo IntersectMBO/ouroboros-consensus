@@ -41,7 +41,6 @@ import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as StrictTVar
 import Control.DeepSeq (force)
-import Control.Exception (SomeException, evaluate, try)
 import Control.Monad (foldM, replicateM)
 import Control.Monad.IOSim (runSimOrThrow)
 import qualified Control.Tracer as Tracer
@@ -112,8 +111,6 @@ import Test.QuickCheck
   , conjoin
   , counterexample
   , forAll
-  , ioProperty
-  , property
   , tabulate
   , (.&&.)
   , (.||.)
@@ -352,15 +349,21 @@ prop_leios seed =
       | (s1, s2) <- zip certifyingBlocks (drop 1 certifyingBlocks)
       ]
 
--- | A late-joining node must not crash on a CertRB whose certified EB
--- closure it never observed live.
+-- | A late-joining node must catch up and converge with its peers.
 --
 -- 4 nodes, 200 slots. Nodes 0–2 join at slot 0; node 3 joins at a random
--- slot in @[1, numSlots - 1]@, after at least some CertRBs may already
--- have been produced.
+-- slot, after some CertRBs may already have been produced.  With the
+-- late-join machinery in place the node must both (a) not crash in
+-- 'resolveLeiosBlock' on a CertRB whose certified EB closure it never
+-- observed live, and (b) fetch the missing closures and end up on the
+-- same chain as everyone else.
 prop_leios_late_join :: Seed -> Property
 prop_leios_late_join seed =
-  forAll (choose (1, fromIntegral numSlots - 1)) $ \lateJoinSlot ->
+  -- Cap the join slot at numSlots/4 so the late node always has at least
+  -- 3/4 of the run to catch up. Samples near numSlots would otherwise fail
+  -- the chain-consistency assertion for catch-up-bandwidth reasons
+  -- unrelated to the late-join logic under test.
+  forAll (choose (1, fromIntegral numSlots `div` 4)) $ \lateJoinSlot ->
     let
       joinPlan =
         NodeJoinPlan $
@@ -375,18 +378,22 @@ prop_leios_late_join seed =
 
       (testOutput, _) =
         runThreadNet seed (NumSlots numSlots) numCoreNodes joinPlan
+
+      nodeChains =
+        Chain.toOldestFirst . nodeOutputFinalChain <$> testOutput.testOutputNodes
      in
-      -- 'runThreadNet' rethrows simulation exceptions when its result is
-      -- forced. Catch them here so the property reports a failure with the
-      -- 'lateJoinSlot' counterexample rather than letting the exception
-      -- propagate.
-      ioProperty $ do
-        r <- try @SomeException $ evaluate testOutput
-        pure $ case r of
-          Left e ->
-            counterexample ("late join slot: " <> show lateJoinSlot) $
-              counterexample ("threw: " <> show e) False
-          Right _ -> property True
+      conjoin
+        [ not (null nodeChains)
+            & counterexample "test output was empty"
+        , -- ChainSel hides a CertRB whose EB closure is missing instead of
+          -- crashing; the EB-completion re-trigger ('ebCompletionRunner')
+          -- plus the late-join fetch then let the node select it, so all
+          -- nodes converge on the same chain.
+          all (== head (Map.elems nodeChains)) nodeChains
+            & counterexample "nodes have different chains"
+            & counterexample ("chain lengths: " <> show (fmap length nodeChains))
+        ]
+        & counterexample ("late join slot: " <> show lateJoinSlot)
  where
   numSlots = 200 :: Word64
 
