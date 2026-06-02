@@ -519,7 +519,7 @@ runChainSync
               , loPBucket = csvLoPBucket
               , setLatestSlot = csvSetLatestSlot
               , jumping = csvJumping
-              , onHeaderArrival = \_ -> pure (pure ())
+              , onHeaderArrival = \_ _ -> pure (pure ())
               }
 
     -- Set up the server

@@ -192,7 +192,7 @@ runTest TestSetup = withRegistry $ \registry -> do
                 , loPBucket = csvLoPBucket
                 , setLatestSlot = csvSetLatestSlot
                 , jumping = csvJumping
-                , onHeaderArrival = \_ -> pure (pure ())
+                , onHeaderArrival = \_ _ -> pure (pure ())
                 }
 
       bracketedClient ::
