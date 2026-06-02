@@ -356,25 +356,13 @@ mkHandlers
                   MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
-                    let MkLeiosPoint{pointEbHash = ebHash} = point
-                    MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
-                      pure $
-                        if Set.member ebHash (Leios.acquiredEbBodies outstanding)
-                          then outstanding
-                          else
-                            outstanding
-                              { Leios.missingEbBodies =
-                                  Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
-                              }
-                    peerVars <- do
-                      peersVars <- MVar.readMVar getLeiosPeersVars
-                      case Map.lookup (Leios.MkPeerId peer) peersVars of
-                        Nothing -> error "impossible!"
-                        Just x -> pure x
-                    MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
-                      let !offers1' = Set.insert ebHash offers1
-                      pure (offers1', offers2)
-                    void $ MVar.tryPutMVar getLeiosReady ()
+                    Leios.recordEbOffer
+                      getLeiosOutstanding
+                      getLeiosPeersVars
+                      getLeiosReady
+                      (Leios.MkPeerId peer)
+                      point
+                      ebBytesSize
                   MsgLeiosBlockTxsOffer p -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
                     let MkLeiosPoint{pointEbHash = ebHash} = p
