@@ -679,7 +679,7 @@ postulate
      output `txs` is a subsequence of its input plus possibly one new
      element at the end (for `addTx`).
 
-## 12. Proposed extension: two-lane mempool with EB/RB block types
+## 12. Proposed extension: two-lane mempool with EB/RB (Ranking Block) block types
 
 **Status:** sketch — not type-checked. Extends §11; reuses `applyAll`,
 `revalidate`, `TxSeq`, `TicketNo`, `Measure`, `fits`, `inSet` from there.
@@ -694,31 +694,31 @@ Two block types are introduced:
   re-application (no script re-execution) to update the ledger state.
   At most one EB per slot is valid; this constraint is enforced by
   checks in the EB itself and is not rechecked here. An EB only reaches
-  the chain by being referenced inside an RB.
+  the chain by being referenced inside a Ranking Block. An EB may
+  contain transactions from either lane in any order.
 
-- **RB (Regular Block):** the on-chain block. Its payload is either an
+- **RB (Ranking Block):** the on-chain block. Its payload is either an
   `EBId` (reference to a previously-circulated EB) or a list of
   priority-lane transactions. The referenced EB must have been built on
-  the same chain tip as the RB.
+  the same chain tip as the Ranking Block.
 
 Two transaction lanes replace the single sequence:
 
 - **Priority lane:** validated against `ebLedger` (chain tip + EB
-  re-application). Fills RBs and the priority portion of EBs. Admission
-  stops when the lane reaches one RB's worth of transactions (by byte
-  size or either ExUnit dimension).
+  re-application). Fills Ranking Blocks (RBs). Admission stops when the
+  lane reaches one RB's worth of transactions (by byte size or either
+  ExUnit dimension).
 
 - **Regular lane:** validated against `fastLedger` (chain tip + EB +
-  priority txs). Fills the remainder of EBs after priority txs.
-  When the regular lane is full, incoming regular txs are discarded
-  but downloading continues; the node keeps accepting txs until the
-  priority lane is full.
+  priority txs). Can fill EBs alongside priority txs. When the regular
+  lane is full, incoming regular txs are discarded but downloading
+  continues; the node keeps accepting txs until the priority lane is full.
 
 Capacity rules:
 
-- **RB / priority-lane limit:** one block's `TxMeasure` as given by the
-  protocol parameters (byte size, script ExUnits memory, script ExUnits
-  CPU, reference-script bytes).
+- **Ranking Block (RB) / priority-lane limit:** one block's `TxMeasure`
+  as given by the protocol parameters (byte size, script ExUnits memory,
+  script ExUnits CPU, reference-script bytes).
 - **EB limit:** no protocol-parameter-based limit for now.
   The priority-lane cap (one RB's worth) is used as a provisional
   bound when filling an EB. **TODO:** this design choice is provisional;
@@ -987,19 +987,17 @@ removeRegTxs ids m =
 -- 10. Block forging
 ------------------------------------------------------------------------
 
--- Unspecified policy deciding whether to produce an EB or an RB.
+-- Unspecified policy deciding whether to produce an EB or a Ranking Block (RB).
 postulate shouldForgeEB : Mempool2 → Bool
 
--- EB content: priority txs first, then regular txs to fill remaining
--- space.  The combined list must fit within prioCap (provisional limit;
--- see TODO in §12 prose).
+-- EB content: any transactions from either lane, in any order.
 -- TODO: no protocol-parameter-based size limit on EBs for now.
 postulate ebSnapshot : Mempool2 → List Tx
 
 -- Split a TxSeq at a capacity bound (mirrors snapshotTake from §11).
 postulate splitAtCap : Capacity → TxSeq → TxSeq × TxSeq
 
--- RB content when not referencing an EB: priority txs up to prioCap.
+-- Ranking Block (RB) content when not referencing an EB: priority txs up to prioCap.
 rbSnapshot : Mempool2 → RBContent
 rbSnapshot m =
   RBFromPrio (map tx (proj₁ (splitAtCap (prioCap m) (priorityTxs m))))
@@ -1041,10 +1039,10 @@ forgeBlock2 m =
   priority lane means *stop downloading*; a `Blocked` on the regular
   lane means *discard this tx and try the next one* — keep going until
   the priority lane is full.
-- **EB capacity TODO:** the provisional use of `prioCap` (one RB's
-  worth) as the EB size bound is a policy placeholder. The formal model
-  isolates this in `ebSnapshot` so the bound can be changed without
-  touching the state invariants or the admission logic.
+- **EB capacity TODO:** the provisional use of `prioCap` (one Ranking
+  Block's worth) as the EB size bound is a policy placeholder. The
+  formal model isolates this in `ebSnapshot` so the bound can be
+  changed without touching the state invariants or the admission logic.
 
 ## Changelog
 
