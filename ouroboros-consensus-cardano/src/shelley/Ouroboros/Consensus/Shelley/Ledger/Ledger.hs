@@ -142,7 +142,7 @@ import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosState (..))
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (Header, headerBody)
-  , HeaderBody (hbLeiosEbAnnouncement, hbSlotNo)
+  , HeaderBody (hbIsCertRB, hbLeiosEbAnnouncement, hbSlotNo)
   )
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -1044,6 +1044,12 @@ instance
    where
     annBody :: HeaderBody c
     Header{headerBody = annBody} = shelleyHeaderRaw hdr
+
+  headerIsCertRB hdr =
+    hbIsCertRB (headerBody (shelleyHeaderRaw hdr))
+
+  headerEbAnnouncement hdr =
+    strictMaybeToMaybe $ hbLeiosEbAnnouncement (headerBody (shelleyHeaderRaw hdr))
 
 -- | Deserialise a transaction supplied as Leios-stored bytes.
 deserialiseLeiosTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Tx TopTx era

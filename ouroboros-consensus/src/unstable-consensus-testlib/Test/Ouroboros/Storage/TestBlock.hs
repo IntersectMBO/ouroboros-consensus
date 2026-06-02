@@ -145,7 +145,9 @@ data TestBlock = TestBlock
   deriving anyclass (NFData, NoThunks, Serialise)
 
 -- | Default 'ResolveLeiosBlock' — storage TestBlock never carries Leios certs.
-instance ResolveLeiosBlock TestBlock
+instance ResolveLeiosBlock TestBlock where
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
 
 -- | Hash of a 'TestHeader'
 newtype TestHeaderHash = TestHeaderHash Int

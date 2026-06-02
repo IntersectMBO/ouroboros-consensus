@@ -40,7 +40,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC ()
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB (IsCertRB (..), ResolveLeiosBlock (..))
 
 {-------------------------------------------------------------------------------
   Hard fork eras
@@ -115,9 +115,21 @@ instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) DijkstraEra
   lives in "Ouroboros.Consensus.Shelley.Ledger.Ledger".
 -------------------------------------------------------------------------------}
 
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) ShelleyEra)
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AllegraEra)
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) MaryEra)
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AlonzoEra)
-instance ResolveLeiosBlock (ShelleyBlock (Praos c) BabbageEra)
-instance ResolveLeiosBlock (ShelleyBlock (Praos c) ConwayEra)
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) ShelleyEra) where
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AllegraEra) where
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) MaryEra) where
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AlonzoEra) where
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
+instance ResolveLeiosBlock (ShelleyBlock (Praos c) BabbageEra) where
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
+instance ResolveLeiosBlock (ShelleyBlock (Praos c) ConwayEra) where
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing

@@ -138,6 +138,9 @@ data SimpleBlock' c ext ext' = SimpleBlock
 instance
   (Typeable c, Typeable ext, Typeable ext') =>
   ResolveLeiosBlock (SimpleBlock' c ext ext')
+  where
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
 
 instance
   (HashAlgorithm (SimpleHash c), Typeable c, Typeable ext, Serialise ext') =>

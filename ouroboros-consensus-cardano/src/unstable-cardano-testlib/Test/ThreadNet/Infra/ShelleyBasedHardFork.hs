@@ -120,7 +120,9 @@ type ShelleyBasedHardForkBlock proto1 era1 proto2 era2 =
 -- Real-era resolution (the Dijkstra splice) lives in
 -- "Ouroboros.Consensus.Cardano.Block"; these test stacks never enter
 -- Dijkstra.
-instance ResolveLeiosBlock (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
+instance ResolveLeiosBlock (ShelleyBasedHardForkBlock proto1 era1 proto2 era2) where
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
 
 {-------------------------------------------------------------------------------
   Pattern synonyms, for encapsulation and legibility

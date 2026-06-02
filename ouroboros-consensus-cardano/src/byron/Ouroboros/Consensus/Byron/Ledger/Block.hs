@@ -56,7 +56,7 @@ import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Byron.EBBs as EBBs
 import Ouroboros.Consensus.Byron.Ledger.Conversions
 import Ouroboros.Consensus.Byron.Ledger.Orphans ()
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB (IsCertRB (..), ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.SizeInBytes (SizeInBytes)
@@ -105,7 +105,9 @@ instance Condense ByronBlock where
 instance ShowProxy ByronBlock
 
 -- | Default 'ResolveLeiosBlock' — Byron blocks never carry Leios certs.
-instance ResolveLeiosBlock ByronBlock
+instance ResolveLeiosBlock ByronBlock where
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
 
 instance NFData ByronBlock where
   rnf ByronBlock{byronBlockRaw, byronBlockSlotNo, byronBlockHash} =

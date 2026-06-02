@@ -138,6 +138,9 @@ instance
 instance
   (Typeable m, Typeable a) =>
   ResolveLeiosBlock (DualBlock m a)
+  where
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
 
 instance Condense m => Condense (DualBlock m a) where
   condense = condense . dualBlockMain

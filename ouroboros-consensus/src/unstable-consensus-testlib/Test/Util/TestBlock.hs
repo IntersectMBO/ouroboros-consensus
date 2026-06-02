@@ -320,7 +320,9 @@ isStrictDescendentOf b1 b2 = b1 `isDescendentOf` b2 && b1 /= b2
 instance ShowProxy TestBlock
 
 -- | Default 'ResolveLeiosBlock' — test blocks never carry Leios certificates.
-instance Typeable ptype => ResolveLeiosBlock (TestBlockWith ptype)
+instance Typeable ptype => ResolveLeiosBlock (TestBlockWith ptype) where
+  headerIsCertRB _ = NotCertRB
+  headerEbAnnouncement _ = Nothing
 
 newtype instance Header (TestBlockWith ptype)
   = TestHeader {testHeader :: TestBlockWith ptype}
