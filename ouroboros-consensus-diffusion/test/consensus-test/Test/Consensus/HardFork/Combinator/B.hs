@@ -118,6 +118,8 @@ instance ConsensusProtocol ProtocolB where
   updateChainDepState _ _ _ _ = return ()
   reupdateChainDepState _ _ _ _ = ()
 
+instance ChainDepStateSupportsPeras ProtocolB
+
 data BlockB = BlkB
   { blkB_header :: Header BlockB
   }

@@ -8,11 +8,13 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DefaultSignatures #-}
 
 module Ouroboros.Consensus.Protocol.Abstract
   ( -- * Abstract definition of the Ouroboros protocol
     ConsensusConfig
   , ConsensusProtocol (..)
+  , ChainDepStateSupportsPeras (..)
 
     -- * Chain order
   , SelectView (..)
@@ -46,6 +48,7 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Ticked
+import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce))
 
 -- | Static configuration required to run the consensus protocol
 --
@@ -75,6 +78,7 @@ class
   , NoThunks (ValidationErr p)
   , NoThunks (TiebreakerView p)
   , Typeable p -- so that p can appear in exceptions
+  , ChainDepStateSupportsPeras p
   ) =>
   ConsensusProtocol p
   where
@@ -357,3 +361,11 @@ instance ChainOrder (TiebreakerView p) => ChainOrder (SelectView p) where
       ShouldSwitch r -> ShouldSwitch (SelectViewTiebreak r)
       ShouldNotSwitch e -> ShouldNotSwitch e
     GT -> ShouldNotSwitch GT
+
+class ChainDepStateSupportsPeras p where
+  -- | Extract the epoch nonce from the given 'ChainDepState'.
+  -- PRECONDITION: this function will only return a meaningful result if the
+  -- 'ChainDepState' is from a protocol of a block that supports Peras
+  getEpochNonce :: proxy p -> ChainDepState p -> Nonce
+  default getEpochNonce :: proxy p -> ChainDepState p -> Nonce
+  getEpochNonce _ _ = NeutralNonce
