@@ -164,7 +164,6 @@ import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Data.Aeson as Aeson
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Word (Word64)
 import LeiosDemoDb
   ( LeiosDbConnection
   , LeiosDbHandle (..)
@@ -600,9 +599,9 @@ forkBlockForging ::
 forkBlockForging IS{..} blockForging =
   forkLinkedWatcher registry threadLabel $
     knownSlotWatcher btime $ \currentSlot ->
-      withRegistry $ \rr -> do
-        leiosConn <- allocate_ rr (LeiosDb.open leiosDB) LeiosDb.close
-        ptrace' [] "forge" currentSlot (const ()) $ \forgeCtx ->
+      ptrace' [] "forge" currentSlot (const ()) $ \forgeCtx ->
+        withRegistry $ \rr -> do
+          leiosConn <- allocate_ rr (LeiosDb.open leiosDB) LeiosDb.close
           withEarlyExit_ (go rr currentSlot leiosConn forgeCtx)
  where
   threadLabel :: String
@@ -617,7 +616,7 @@ forkBlockForging IS{..} blockForging =
     (r -> r') ->
     (Leios.CallCtx -> WithEarlyExit m r) ->
     WithEarlyExit m r
-  ptrace pctx = Leios.ptrace (Tracer (lift . traceWith (leiosKernelTracer tracers))) pctx threadLabel
+  ptrace pctx = Leios.ptrace (Tracer (lift . traceWith (leiosKernelTracer tracers))) pctx "Forge"
 
   ptrace' ::
     (Show a, Show r', Aeson.ToJSON a, Aeson.ToJSON r') =>
@@ -627,7 +626,7 @@ forkBlockForging IS{..} blockForging =
     (r -> r') ->
     (Leios.CallCtx -> m r) ->
     m r
-  ptrace' pctx = Leios.ptrace (Tracer (traceWith (leiosKernelTracer tracers))) pctx threadLabel
+  ptrace' pctx = Leios.ptrace (Tracer (traceWith (leiosKernelTracer tracers))) pctx "Forge"
 
   go :: ResourceRegistry m -> SlotNo -> LeiosDbConnection m -> Leios.CallCtx -> WithEarlyExit m ()
   go reg currentSlot leiosConn forgeCall = do
@@ -749,7 +748,7 @@ forkBlockForging IS{..} blockForging =
     _ <- evaluate tickedLedgerState
     trace $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
 
-    (rbTxs, rbTxsList, ebTxs, ebTxsList, restTxs', mempoolSnapshot) <- ptrace (Just forgeCall) "partition-mempool" () (const ()) $ \partMempCall -> do
+    (rbTxs, rbTxsList, ebTxs, ebTxsList) <- ptrace forgeCall "partition-mempool" () (const ()) $ \partMempCall -> do
       -- Get a snapshot of the mempool that is consistent with the ledger
       --
       -- NOTE: It is possible that due to adoption of new blocks the
@@ -759,16 +758,13 @@ forkBlockForging IS{..} blockForging =
       -- may not be adopted, but it won't be invalid.
       let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
 
-      mempoolSnapshot <- ptrace (Just partMempCall) "get-snap" () (const ()) $ \_ -> do
-        mp <-
-          lift $
-            getSnapshotFor
-              mempool
-              currentSlot
-              tickedLedgerState
-              readTables
-        _ <- evaluate (length (snaposhotTxs2 mp))
-        return mp
+      mempoolSnapshot <- ptrace partMempCall "get-snap" () (const ()) $ \_ ->
+        lift $
+          getSnapshotFor
+            mempool
+            currentSlot
+            tickedLedgerState
+            readTables
 
       lift $ roforkerClose forker
 
@@ -780,7 +776,7 @@ forkBlockForging IS{..} blockForging =
           rbTxsList = fmap TxSeq.txTicketTx . TxSeq.toList $ rbTxs
 
           mayEndorserBlockCapacity = ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
-          (ebTxs, restTxs') = case mayEndorserBlockCapacity of
+          (ebTxs, _restTxs') = case mayEndorserBlockCapacity of
             Nothing -> (TxSeq.fromList [], TxSeq.fromList [])
             Just endorserBlockCapacity -> TxSeq.splitAfterTxSize restTxs endorserBlockCapacity
           ebTxsList = fmap TxSeq.txTicketTx . TxSeq.toList $ ebTxs
@@ -790,10 +786,9 @@ forkBlockForging IS{..} blockForging =
 
       -- force the mempool's computation before the tracer event
       -- REVIEW: also force ebTxs?
-      ptrace (Just partMempCall) "eval-all" () (const ()) $ \_ -> do
-        _ <- evaluate (length rbTxs)
-        _ <- evaluate (length ebTxs)
-        void $ evaluate (length restTxs')
+      -- ptrace (Just partMempCall) "eval-all" () (const ()) $ \_ -> do
+      --   _ <- evaluate (length rbTxs)
+      --   void $ evaluate (length ebTxs)
 
       trace $
         TraceForgingMempoolSnapshot
@@ -801,9 +796,9 @@ forkBlockForging IS{..} blockForging =
           bcPrevPoint
           (castHash $ snapshotStateHash mempoolSnapshot)
           (snapshotSlotNo mempoolSnapshot) -- TODO(bladyjoker): mempoolHash and mempoolSlotNo only for tracing? Why?
-      return (rbTxs, rbTxsList, ebTxs, ebTxsList, restTxs', mempoolSnapshot)
+      return (rbTxs, rbTxsList, ebTxs, ebTxsList)
 
-    (newBlock, mayForgedEb) <- ptrace (Just forgeCall) "forge-block" () (const ()) $ \_ -> do
+    (newBlock, mayForgedEb) <- ptrace forgeCall "forge-block" () (const ()) $ \_ -> do
       -- Actually produce the block
       let forgeBlockArgs =
             ForgeBlockArgs
@@ -826,8 +821,8 @@ forkBlockForging IS{..} blockForging =
             { fbLedgerTip = ledgerTipPoint (ledgerState unticked)
             , fbNewBlock = newBlock
             , fbNewBlockSize = TxSeq.txSeqMeasure rbTxs
-            , fbMempoolSize = snapshotMempoolSize mempoolSnapshot
-            , fbMempoolRestSize = TxSeq.txSeqMeasure restTxs'
+            , fbMempoolSize = mempty
+            , fbMempoolRestSize = mempty
             }
 
       for_ mayForgedEb $ \forgedEb ->
@@ -836,77 +831,89 @@ forkBlockForging IS{..} blockForging =
             { slot = currentSlot
             , eb = forgedEb.body
             , ebMeasure = mSize $ TxSeq.txSeqMeasure ebTxs
-            , mempoolRestMeasure = mSize $ TxSeq.txSeqMeasure restTxs'
             }
       return (newBlock, mayForgedEb)
 
-    ptrace (Just forgeCall) "add-block" () (const ()) $ \_ -> do
-      -- Add the block to the chain DB
-      let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
-      -- Make sure that if an async exception is thrown while a block is
-      -- added to the chain db, we will remove txs from the mempool.
+    -- Add the block to the chain DB
+    let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
+    -- Make sure that if an async exception is thrown while a block is
+    -- added to the chain db, we will remove txs from the mempool.
 
-      -- 'addBlockAsync' is a non-blocking action, so `mask_` would suffice,
-      -- but the finalizer is a blocking operation, hence we need to use
-      -- 'uninterruptibleMask_' to make sure that async exceptions do not
-      -- interrupt it.
-      uninterruptibleMask_ $ do
-        result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
+    -- 'addBlockAsync' is a non-blocking action, so `mask_` would suffice,
+    -- but the finalizer is a blocking operation, hence we need to use
+    -- 'uninterruptibleMask_' to make sure that async exceptions do not
+    -- interrupt it.
+    uninterruptibleMask_ $ do
+      mayCurTip <- lift $ ptrace' forgeCall "add-block" (show $ blockPoint newBlock) show $ \_ -> do
+        result <- ChainDB.addBlockAsync chainDB noPunish newBlock
         -- Block until we have processed the block
-        mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
+        atomically $ ChainDB.blockProcessed result
 
-        -- Check whether we adopted our block
-        when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $ do
-          isInvalid <-
-            lift $
+      -- Check whether we adopted our block
+      when (mayCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $ do
+        void
+          $ lift
+          $ ptrace'
+            forgeCall
+            "is-invalid"
+            (show mayCurTip)
+            ( \case
+                Nothing -> "DidntAdopt"
+                Just reason -> "InvalidBlock: " <> show reason
+            )
+          $ \_ -> do
+            isInvalid <-
               atomically $
-                ($ blockHash newBlock) . forgetFingerprint
-                  <$> ChainDB.getIsInvalidBlock chainDB
-          case isInvalid of
-            Nothing ->
-              trace $ TraceDidntAdoptBlock currentSlot newBlock
-            Just reason -> do
-              trace $ TraceForgedInvalidBlock currentSlot newBlock reason
-              -- We just produced a block that is invalid according to the
-              -- ledger in the ChainDB, while the mempool said it is valid.
-              -- There is an inconsistency between the two!
-              --
-              -- Remove all the transactions in that block, otherwise we'll
-              -- run the risk of forging the same invalid block again. This
-              -- means that we'll throw away some good transactions in the
-              -- process.
-              whenJust
-                (NE.nonEmpty (map (txId . txForgetValidated) rbTxsList))
-                (lift . removeTxsEvenIfValid mempool)
-          exitEarly
+                ($ blockHash newBlock) . forgetFingerprint <$> ChainDB.getIsInvalidBlock chainDB
+            case isInvalid of
+              Nothing ->
+                trace' $
+                  TraceDidntAdoptBlock
+                    currentSlot
+                    newBlock
+              Just reason -> do
+                trace' $ TraceForgedInvalidBlock currentSlot newBlock reason
+                -- We just produced a block that is invalid according to the
+                -- ledger in the ChainDB, while the mempool said it is valid.
+                -- There is an inconsistency between the two!
+                --
+                -- Remove all the transactions in that block, otherwise we'll
+                -- run the risk of forging the same invalid block again. This
+                -- means that we'll throw away some good transactions in the
+                -- process.
+                whenJust
+                  (NE.nonEmpty (map (txId . txForgetValidated) rbTxsList))
+                  (removeTxsEvenIfValid mempool)
+            return isInvalid
+        exitEarly
 
-        -- We successfully produced /and/ adopted a block
-        --
-        -- NOTE: we are tracing the transactions we retrieved from the Mempool,
-        -- not the transactions actually /in the block/.
-        -- The transactions in the block should be a prefix of the transactions
-        -- in the mempool. If this is not the case, this is a bug.
-        -- Unfortunately, we can't
-        -- assert this here because the ability to extract transactions from a
-        -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
-        -- e.g., @DualBlock@.
-        trace $ TraceAdoptedBlock currentSlot newBlock rbTxsList
+      -- We successfully produced /and/ adopted a block
+      --
+      -- NOTE: we are tracing the transactions we retrieved from the Mempool,
+      -- not the transactions actually /in the block/.
+      -- The transactions in the block should be a prefix of the transactions
+      -- in the mempool. If this is not the case, this is a bug.
+      -- Unfortunately, we can't
+      -- assert this here because the ability to extract transactions from a
+      -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
+      -- e.g., @DualBlock@.
+      trace $ TraceAdoptedBlock currentSlot newBlock rbTxsList
 
     uninterruptibleMask_ $ do
       -- Store generated EB so it can be diffused
       for_ mayForgedEb $ \(eb :: ForgedLeiosEb) -> do
-        ptrace (Just forgeCall) "leios.store-eb" eb.point (const ()) $ \storeEbCall -> do
-          ptrace (Just storeEbCall) "leiosDbInsertEbPoint" eb.point id $
+        ptrace forgeCall "leios.store-eb" eb.point (const ()) $ \storeEbCall -> do
+          ptrace storeEbCall "insert-eb-point" eb.point id $
             const $
               lift $
                 leiosDbInsertEbPoint leiosConn eb.point (Leios.leiosEbBytesSize eb.body)
 
-          ptrace (Just storeEbCall) "leiosDbInsertEbBody" eb.point id $
+          ptrace storeEbCall "insert-eb-body" eb.point id $
             const $
               lift $
                 leiosDbInsertEbBody leiosConn eb.point eb.body
 
-          ptrace (Just storeEbCall) "leiosDbInsertTxs" eb.point (const ()) $
+          ptrace storeEbCall "insert-txs" eb.point (const ()) $
             const $
               void $
                 lift $
@@ -915,9 +922,9 @@ forkBlockForging IS{..} blockForging =
         traceLeios TraceLeiosBlockStored{slot = currentSlot, eb = eb.body}
 
   trace :: TraceForgeEvent blk -> WithEarlyExit m ()
-  trace =
-    lift
-      . traceWith (forgeTracer tracers)
+  trace = lift . trace'
+  trace' =
+    traceWith (forgeTracer tracers)
       . TraceLabelCreds (forgeLabel blockForging)
 
   traceLeios = lift . traceWith (leiosKernelTracer tracers)
