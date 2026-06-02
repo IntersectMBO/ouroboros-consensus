@@ -161,7 +161,7 @@ oneBenchRun
           , CSClient.idling = CSClient.noIdling
           , CSClient.loPBucket = CSClient.noLoPBucket
           , CSClient.jumping = CSClient.noJumping
-          , CSClient.onHeaderArrival = \_ -> pure (pure ())
+          , CSClient.onHeaderArrival = \_ _ -> pure (pure ())
           }
 
     server :: ChainSyncServer H (Point B) (Tip B) IO ()

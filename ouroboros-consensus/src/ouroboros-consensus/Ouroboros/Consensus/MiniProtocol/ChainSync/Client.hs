@@ -815,12 +815,16 @@ data DynamicEnv m blk = DynamicEnv
   , idling :: Idling m
   , loPBucket :: LoPBucket m
   , jumping :: Jumping.Jumping m blk
-  , onHeaderArrival :: Header blk -> STM m (m ())
+  , onHeaderArrival ::
+      Header blk ->
+      AnchoredFragment (HeaderWithTime blk) ->
+      STM m (m ())
   -- ^ Fires once per header the client has adopted into the candidate
-  -- fragment. The STM transaction runs alongside 'setCandidate' so the
-  -- body can read the just-committed fragment atomically with the
-  -- arrival event; it returns the work to run after commit, where
-  -- non-STM follow-up belongs (MVar writes, traces, busy-waits).
+  -- fragment. The fragment passed in is the just-committed one (it
+  -- ends with the arrived header). The STM transaction runs alongside
+  -- 'setCandidate' so the body can do further STM reads atomically
+  -- with the arrival event; it returns the work to run after commit,
+  -- where non-STM follow-up belongs (MVar writes, traces, busy-waits).
   -- Fires after 'Jumping.jgOnRollForward', so jumpers do not see
   -- headers they skipped. Default: a no-op that returns a no-op.
   }
@@ -1545,7 +1549,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
           postCommit <- atomically $ do
             updateJumpInfoSTM jumping kis'''
             setCandidate (theirFrag kis''')
-            onHeaderArrival hdr
+            onHeaderArrival hdr (theirFrag kis''')
           postCommit
           atomically $
             traceWith headerMetricsTracer (slotNo, arrivalTime)

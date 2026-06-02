@@ -76,7 +76,9 @@ import qualified LeiosDemoLogic as Leios
 import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
 import LeiosDemoTypes
-  ( LeiosEb
+  ( EbAnnouncement (..)
+  , IsCertRB (..)
+  , LeiosEb
   , LeiosPoint (..)
   , LeiosTx
   , LeiosVote
@@ -90,7 +92,7 @@ import Network.TypedProtocol.Codec
 import Network.TypedProtocol.Peer (Peer (Effect))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
-import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
+import Ouroboros.Consensus.HeaderValidation (HeaderWithTime, hwtHeader)
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
@@ -107,10 +109,14 @@ import Ouroboros.Consensus.Node.Tracers (leiosKernelTracer)
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( ResolveLeiosBlock (..)
+  )
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
+import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block
   ( Serialised (..)
   , decodePoint
@@ -782,6 +788,7 @@ mkApps ::
   , Ord addrNTN
   , Exception e
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
   , ShowProxy blk
   , ShowProxy (Header blk)
   , ShowProxy (TxId (GenTx blk))
@@ -809,6 +816,99 @@ mkApps kernel Tracers{..} mkCodecs ByteLimits{..} genChainSyncTimeout lopBucketC
   Apps{..}
  where
   NodeKernel{getDiffusionPipeliningSupport} = kernel
+  NodeKernel
+    { getLeiosOutstanding
+    , getLeiosPeersVars
+    , getLeiosReady
+    , getTracers = leiosTracers
+    } = kernel
+
+  leiosPeerTracer them = TraceLabelPeer them `contramap` Node.leiosPeerTracer leiosTracers
+
+  -- Implicit-offer body for the ChainSync client's onHeaderArrival
+  -- hook.  When the just-arrived header is a CertRB, the parent's
+  -- 'EbAnnouncement' is read from the just-committed candidate
+  -- fragment and an EB-closure offer is recorded for the peer that
+  -- streamed the header.
+  --
+  -- A peer that has adopted a CertRB necessarily holds the full EB
+  -- closure (body + txs), so the implicit offer covers both: the
+  -- 'recordEbOffer' call enters the body offer (the equivalent of
+  -- 'MsgLeiosBlockOffer' on the explicit path), and the subsequent
+  -- 'offerings' mutation enters the txs offer (the equivalent of
+  -- 'MsgLeiosBlockTxsOffer').  Without the txs side, 'choosePeerTx'
+  -- in the kernel's fetch logic has no candidate peer for the txs
+  -- and the closure stays incomplete, which keeps the CertRB pending
+  -- in ChainSel.
+  --
+  -- The parent lookup is fragment-only: if 'hdr' is the first header
+  -- after the candidate-fragment anchor, the parent is unreachable
+  -- from here and the offer is skipped.  Missing one offer is
+  -- best-effort -- every other peer streaming the same CertRB fires
+  -- its own implicit offer, so the late joiner still receives the
+  -- closure.  A VolatileDB fallback would require exposing
+  -- 'getLeiosFields' through the ChainDB API and is left as a
+  -- follow-up.
+  --
+  -- Synchronous exceptions are caught and traced so a Leios-side
+  -- failure does not kill ChainSync.  The explicit-offer path in
+  -- 'mkHandlers' does not install this catch yet; unifying the two
+  -- arms is a separate cleanup.
+  onHeaderArrival them hdr candidate = case headerIsCertRB hdr of
+    NotCertRB -> pure (pure ())
+    CertRB -> pure $ case candidate of
+      _ AF.:> parent AF.:> _hdr ->
+        case headerEbAnnouncement (hwtHeader parent) of
+          Nothing -> pure ()
+          Just ann ->
+            let
+              pid = Leios.MkPeerId them
+              ebHash = ebAnnouncementHash ann
+              point =
+                MkLeiosPoint (blockSlot (hwtHeader parent)) ebHash
+             in
+              handle
+                ( \(e :: SomeException) ->
+                    traceWith (leiosPeerTracer them) $
+                      MkTraceLeiosPeer $
+                        "implicit EB offer failed: " <> show e
+                )
+                ( do
+                    -- 1. Record the EB body offer (populates 'offers1'
+                    --    on the peer, 'missingEbBodies' globally).
+                    Leios.recordEbOffer
+                      getLeiosOutstanding
+                      getLeiosPeersVars
+                      getLeiosReady
+                      pid
+                      point
+                      (ebAnnouncementSize ann)
+                    -- 2. Mark the peer as offering the txs closure too.
+                    --    A peer that has adopted the CertRB necessarily
+                    --    holds the full closure (body + txs), so we treat
+                    --    the implicit offer as a closure offer.  Without
+                    --    this, 'choosePeerTx' has no candidate peer and
+                    --    the txs stay unfetched, leaving the closure
+                    --    incomplete and the CertRB pending in ChainSel.
+                    peerVars <- waitLeiosPeerVars getLeiosPeersVars pid
+                    MVar.modifyMVar_ (Leios.offerings peerVars) $ \(o1, o2) -> do
+                      let !o2' = Set.insert ebHash o2
+                      pure (o1, o2')
+                    void $ MVar.tryPutMVar getLeiosReady ()
+                )
+      _ -> pure ()
+
+  -- Busy-wait for the per-peer Leios state, mirroring the retry
+  -- inside 'recordEbOffer'.  See its haddock for the race rationale.
+  waitLeiosPeerVars peersVarsMVar pid =
+    let loop = do
+          peersVars <- MVar.readMVar peersVarsMVar
+          case Map.lookup pid peersVars of
+            Just x -> pure x
+            Nothing -> do
+              threadDelay (0.010 :: DiffTime)
+              loop
+     in loop
 
   aChainSyncClient ::
     NodeToNodeVersion ->
@@ -865,7 +965,7 @@ mkApps kernel Tracers{..} mkCodecs ByteLimits{..} genChainSyncTimeout lopBucketC
                   , CsClient.loPBucket = csvLoPBucket csState
                   , CsClient.setLatestSlot = csvSetLatestSlot csState
                   , CsClient.jumping = csvJumping csState
-                  , CsClient.onHeaderArrival = \_hdr -> pure (pure ())
+                  , CsClient.onHeaderArrival = onHeaderArrival them
                   }
           return (ChainSyncInitiatorResult r, trailing)
 
