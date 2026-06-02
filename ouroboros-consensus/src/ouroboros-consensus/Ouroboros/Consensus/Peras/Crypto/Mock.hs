@@ -7,6 +7,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -29,6 +30,7 @@ module Ouroboros.Consensus.Peras.Crypto.Mock
   ) where
 
 import Cardano.Prelude (Bifunctor (second))
+import Codec.Serialise (Serialise)
 import Control.Exception.Base (Exception)
 import Data.Either.Extra (maybeToEither)
 import qualified Data.List as List
@@ -36,10 +38,11 @@ import Data.List.Extra ((!?))
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Set.NonEmpty as NESet
+import Data.Typeable (Typeable)
 import Data.Word (Word16)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Abstract (Point)
+import Ouroboros.Consensus.Block.Abstract (HeaderHash, Point, StandardHash)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( PerasCertCompatibleWithVotingCommittee (..)
   , PerasRoundNo
@@ -78,11 +81,7 @@ type instance PublicKey (MockPerasCrypto blk) = ()
 
 instance CryptoSupportsVoteSigning (MockPerasCrypto blk) where
   type VoteSigningKey (MockPerasCrypto blk) = ()
-
-  -- \| Key used for verifying votes
   type VoteVerificationKey (MockPerasCrypto blk) = ()
-
-  -- \| Cryptographic signature of a vote
   data VoteSignature (MockPerasCrypto blk) = MockVoteSignature
   getVoteSigningKey _proxy privateKey = privateKey
   getVoteVerificationKey _proxy publicKey = publicKey
@@ -166,36 +165,24 @@ instance
     { -- Stake distribution
       weightDistr :: NonEmpty (PoolId, VoteWeight)
     }
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass NoThunks
 
   newtype VotingCommitteeInput crypto (MockPerasCommittee blk)
     = MockPerasVotingCommitteeInput (NonEmpty (PoolId, LedgerStake))
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass NoThunks
 
   newtype VotingCommitteeError crypto (MockPerasCommittee blk)
     = -- Seat index is out of bounds for the voting committee
       MissingSeatIndex PerasSeatIndex
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass (NoThunks, Exception)
 
   data EligibilityWitness crypto (MockPerasCommittee blk)
     = MockPerasCommitteeMember
         !PerasSeatIndex
         !VoteWeight
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass NoThunks
 
   newtype Vote crypto (MockPerasCommittee blk)
     = MockPerasCommitteeVote (MockPerasVote blk)
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass NoThunks
 
   newtype Cert crypto (MockPerasCommittee blk)
     = MockPerasCommitteeCert (MockPerasCert blk)
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass NoThunks
 
   mkVotingCommittee (MockPerasVotingCommitteeInput stakeDistr) =
     let LedgerStake totalStake = sum (snd <$> stakeDistr)
@@ -249,6 +236,47 @@ instance
         MockPerasVote{mockVoteRound = mockVoteRound2, mockVoteSeatIndex = mockVoteSeatIndex2}
       ) =
       compare (mockVoteRound1, mockVoteSeatIndex1) (mockVoteRound2, mockVoteSeatIndex2)
+
+deriving instance Show (VotingCommittee crypto (MockPerasCommittee blk))
+deriving instance Eq (VotingCommittee crypto (MockPerasCommittee blk))
+deriving instance NoThunks (VotingCommittee crypto (MockPerasCommittee blk))
+deriving instance Serialise (VotingCommittee crypto (MockPerasCommittee blk))
+deriving instance Generic (VotingCommittee crypto (MockPerasCommittee blk))
+
+deriving instance Show (VotingCommitteeInput crypto (MockPerasCommittee blk))
+deriving instance Eq (VotingCommitteeInput crypto (MockPerasCommittee blk))
+deriving instance NoThunks (VotingCommitteeInput crypto (MockPerasCommittee blk))
+deriving instance Serialise (VotingCommitteeInput crypto (MockPerasCommittee blk))
+deriving instance Generic (VotingCommitteeInput crypto (MockPerasCommittee blk))
+
+deriving instance Show (VotingCommitteeError crypto (MockPerasCommittee blk))
+deriving instance Eq (VotingCommitteeError crypto (MockPerasCommittee blk))
+deriving instance NoThunks (VotingCommitteeError crypto (MockPerasCommittee blk))
+deriving instance Serialise (VotingCommitteeError crypto (MockPerasCommittee blk))
+deriving instance Generic (VotingCommitteeError crypto (MockPerasCommittee blk))
+deriving instance
+  ( Typeable crypto
+  , Typeable blk
+  ) =>
+  Exception (VotingCommitteeError crypto (MockPerasCommittee blk))
+
+deriving instance StandardHash blk => Show (Vote crypto (MockPerasCommittee blk))
+deriving instance StandardHash blk => Eq (Vote crypto (MockPerasCommittee blk))
+deriving instance StandardHash blk => NoThunks (Vote crypto (MockPerasCommittee blk))
+deriving instance Serialise (HeaderHash blk) => Serialise (Vote crypto (MockPerasCommittee blk))
+deriving instance Generic (Vote crypto (MockPerasCommittee blk))
+
+deriving instance StandardHash blk => Show (Cert crypto (MockPerasCommittee blk))
+deriving instance StandardHash blk => Eq (Cert crypto (MockPerasCommittee blk))
+deriving instance StandardHash blk => NoThunks (Cert crypto (MockPerasCommittee blk))
+deriving instance Serialise (HeaderHash blk) => Serialise (Cert crypto (MockPerasCommittee blk))
+deriving instance Generic (Cert crypto (MockPerasCommittee blk))
+
+deriving instance Show (EligibilityWitness crypto (MockPerasCommittee blk))
+deriving instance Eq (EligibilityWitness crypto (MockPerasCommittee blk))
+deriving instance NoThunks (EligibilityWitness crypto (MockPerasCommittee blk))
+deriving instance Serialise (EligibilityWitness crypto (MockPerasCommittee blk))
+deriving instance Generic (EligibilityWitness crypto (MockPerasCommittee blk))
 
 instance
   PerasVoteCompatibleWithVotingCommittee

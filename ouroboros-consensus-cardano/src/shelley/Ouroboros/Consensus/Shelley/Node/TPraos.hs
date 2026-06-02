@@ -295,4 +295,6 @@ protocolInfoTPraosShelleyBased
       ExtLedgerState
         { ledgerState = initLedgerState
         , headerState = genesisHeaderState initChainDepState
+        , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+          perasEpochContextResolver = undefined
         }

@@ -76,24 +76,26 @@ deriving instance LedgerSupportsProtocol blk => Show (ExtValidationError blk)
 data ExtLedgerState blk mk = ExtLedgerState
   { ledgerState :: !(LedgerState blk mk)
   , headerState :: !(HeaderState blk)
-  -- , perasEpochContextResolver :: !(PerasEpochContextResolver blk) [TODO EPOCH CONTEXT PLUMBING]
+  , perasEpochContextResolver :: !(PerasEpochContextResolver blk)
   }
   deriving Generic
 
--- In the future we will have a ledgerPerasEpochContextResolver field in ExtLedgerState
--- [TODO EPOCH CONTEXT PLUMBING]
-ledgerPerasEpochContextResolver :: ExtLedgerState blk mk -> PerasEpochContextResolver blk
-ledgerPerasEpochContextResolver = undefined
-
 getPerasEpochContextResolverHandle ::
   MonadSTM m => STM m (ExtLedgerState blk mk) -> PerasEpochContextResolverHandle m blk
-getPerasEpochContextResolverHandle getLedgerStateSTM = PerasEpochContextResolverHandle $ ledgerPerasEpochContextResolver <$> getLedgerStateSTM
+getPerasEpochContextResolverHandle getLedgerStateSTM =
+  PerasEpochContextResolverHandle $ perasEpochContextResolver <$> getLedgerStateSTM
 
 deriving instance
-  (EqMK mk, LedgerSupportsProtocol blk) =>
+  ( EqMK mk
+  , LedgerSupportsProtocol blk
+  , Eq (PerasEpochContext blk)
+  ) =>
   Eq (ExtLedgerState blk mk)
 deriving instance
-  (ShowMK mk, LedgerSupportsProtocol blk) =>
+  ( ShowMK mk
+  , LedgerSupportsProtocol blk
+  , Show (PerasEpochContext blk)
+  ) =>
   Show (ExtLedgerState blk mk)
 
 -- | We override 'showTypeOf' to show the type of the block
@@ -101,7 +103,10 @@ deriving instance
 -- This makes debugging a bit easier, as the block gets used to resolve all
 -- kinds of type families.
 instance
-  (NoThunksMK mk, LedgerSupportsProtocol blk) =>
+  ( NoThunksMK mk
+  , LedgerSupportsProtocol blk
+  , NoThunks (PerasEpochContext blk)
+  ) =>
   NoThunks (ExtLedgerState blk mk)
   where
   showTypeOf _ = show $ typeRep (Proxy @(ExtLedgerState blk))
@@ -153,19 +158,23 @@ data instance Ticked ExtLedgerState blk mk = TickedExtLedgerState
   { tickedLedgerState :: Ticked LedgerState blk mk
   , ledgerView :: LedgerView (BlockProtocol blk)
   , tickedHeaderState :: Ticked (HeaderState blk)
-  -- , tickedPerasEpochContextResolver :: PerasEpochContextResolver blk [TODO EPOCH CONTEXT PLUMBING]
+  , tickedPerasEpochContextResolver :: PerasEpochContextResolver blk
   }
 
 instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState blk) where
   getTip = castPoint . getTip . tickedLedgerState
 
 instance
-  LedgerSupportsProtocol blk =>
+  ( LedgerSupportsProtocol blk
+  , Show (PerasEpochContext blk)
+  , Eq (PerasEpochContext blk)
+  , NoThunks (PerasEpochContext blk)
+  ) =>
   IsLedger ExtLedgerState blk
   where
   type LedgerErr ExtLedgerState blk = ExtValidationError blk
 
-  applyChainTickLedgerResult evs cfg slot (ExtLedgerState ledger header) =
+  applyChainTickLedgerResult evs cfg slot (ExtLedgerState ledger header perasResolver) =
     castLedgerResult ledgerResult <&> \tickedLedgerState ->
       let ledgerView :: LedgerView (BlockProtocol blk)
           ledgerView = protocolLedgerView lcfg tickedLedgerState
@@ -183,6 +192,10 @@ instance
     lcfg = configLedger $ getExtLedgerCfg cfg
 
     ledgerResult = applyChainTickLedgerResult evs lcfg slot ledger
+
+    -- [TODO EPOCH CONTEXT PLUMBING] We need to understand if this needs extra
+    -- care or not.
+    tickedPerasEpochContextResolver = perasResolver
 
 applyHelper ::
   forall blk.
@@ -218,9 +231,19 @@ applyHelper f opts cfg blk TickedExtLedgerState{..} = do
         ledgerView
         (getHeader blk)
         tickedHeaderState
-  pure $ (\l -> ExtLedgerState l hdr) <$> castLedgerResult ledgerResult
+  -- [TODO EPOCH CONTEXT PLUMBING] We need to understand if this needs extra care or not.
+  let perasResolver = tickedPerasEpochContextResolver
+  pure $ (\l -> ExtLedgerState l hdr perasResolver) <$> castLedgerResult ledgerResult
 
-instance (GetBlockKeySets blk, LedgerSupportsProtocol blk) => ApplyBlock ExtLedgerState blk where
+instance
+  ( GetBlockKeySets blk
+  , LedgerSupportsProtocol blk
+  , Show (PerasEpochContext blk)
+  , Eq (PerasEpochContext blk)
+  , NoThunks (PerasEpochContext blk)
+  ) =>
+  ApplyBlock ExtLedgerState blk
+  where
   applyBlockLedgerResultWithValidation doValidate =
     applyHelper (applyBlockLedgerResultWithValidation doValidate)
 
@@ -228,7 +251,7 @@ instance (GetBlockKeySets blk, LedgerSupportsProtocol blk) => ApplyBlock ExtLedg
     applyHelper applyBlockLedgerResult
 
   reapplyBlockLedgerResult evs cfg blk TickedExtLedgerState{..} =
-    (\l -> ExtLedgerState l hdr) <$> castLedgerResult ledgerResult
+    (\l -> ExtLedgerState l hdr perasResolver) <$> castLedgerResult ledgerResult
    where
     ledgerResult =
       reapplyBlockLedgerResult
@@ -243,6 +266,9 @@ instance (GetBlockKeySets blk, LedgerSupportsProtocol blk) => ApplyBlock ExtLedg
         (getHeader blk)
         tickedHeaderState
 
+    -- [TODO EPOCH CONTEXT PLUMBING] We need to understand if this needs extra care or not.
+    perasResolver = tickedPerasEpochContextResolver
+
 {-------------------------------------------------------------------------------
   Serialisation
 -------------------------------------------------------------------------------}
@@ -251,17 +277,20 @@ encodeExtLedgerState ::
   (LedgerState blk mk -> Encoding) ->
   (ChainDepState (BlockProtocol blk) -> Encoding) ->
   (AnnTip blk -> Encoding) ->
+  (PerasEpochContextResolver blk -> Encoding) ->
   ExtLedgerState blk mk ->
   Encoding
 encodeExtLedgerState
   encodeLedgerState
   encodeChainDepState
   encodeAnnTip
-  ExtLedgerState{ledgerState, headerState} =
+  encodePerasEpochContextResolver
+  ExtLedgerState{ledgerState, headerState, perasEpochContextResolver} =
     mconcat
-      [ encodeListLen 2
+      [ encodeListLen 3
       , encodeLedgerState ledgerState
       , encodeHeaderState' headerState
+      , encodePerasEpochContextResolver perasEpochContextResolver
       ]
    where
     encodeHeaderState' =
@@ -274,10 +303,12 @@ encodeDiskExtLedgerState ::
   ( EncodeDisk blk (LedgerState blk EmptyMK)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , EncodeDisk blk (AnnTip blk)
+  , EncodeDisk blk (PerasEpochContextResolver blk)
   ) =>
   (CodecConfig blk -> ExtLedgerState blk EmptyMK -> Encoding)
 encodeDiskExtLedgerState cfg =
   encodeExtLedgerState
+    (encodeDisk cfg)
     (encodeDisk cfg)
     (encodeDisk cfg)
     (encodeDisk cfg)
@@ -286,15 +317,18 @@ decodeExtLedgerState ::
   (forall s. Decoder s (LedgerState blk EmptyMK)) ->
   (forall s. Decoder s (ChainDepState (BlockProtocol blk))) ->
   (forall s. Decoder s (AnnTip blk)) ->
+  (forall s. Decoder s (PerasEpochContextResolver blk)) ->
   (forall s. Decoder s (ExtLedgerState blk EmptyMK))
 decodeExtLedgerState
   decodeLedgerState
   decodeChainDepState
-  decodeAnnTip = do
-    decodeListLenOf 2
+  decodeAnnTip
+  decodePerasEpochContextResolver = do
+    decodeListLenOf 3
     ledgerState <- decodeLedgerState
     headerState <- decodeHeaderState'
-    return ExtLedgerState{ledgerState, headerState}
+    perasEpochContextResolver <- decodePerasEpochContextResolver
+    return ExtLedgerState{ledgerState, headerState, perasEpochContextResolver}
    where
     decodeHeaderState' =
       decodeHeaderState
@@ -306,10 +340,12 @@ decodeDiskExtLedgerState ::
   ( DecodeDisk blk (LedgerState blk EmptyMK)
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (AnnTip blk)
+  , DecodeDisk blk (PerasEpochContextResolver blk)
   ) =>
   (CodecConfig blk -> forall s. Decoder s (ExtLedgerState blk EmptyMK))
 decodeDiskExtLedgerState cfg =
   decodeExtLedgerState
+    (decodeDisk cfg)
     (decodeDisk cfg)
     (decodeDisk cfg)
     (decodeDisk cfg)
@@ -322,55 +358,57 @@ instance
   (NoThunks (TxIn blk), NoThunks (TxOut blk), HasLedgerTables LedgerState blk) =>
   HasLedgerTables ExtLedgerState blk
   where
-  projectLedgerTables (ExtLedgerState lstate _) =
+  projectLedgerTables (ExtLedgerState lstate _ _) =
     projectLedgerTables lstate
-  withLedgerTables (ExtLedgerState lstate hstate) tables =
+  withLedgerTables (ExtLedgerState lstate hstate perasResolver) tables =
     ExtLedgerState
       (lstate `withLedgerTables` tables)
       hstate
+      perasResolver
 
 instance
   (NoThunks (TxIn blk), NoThunks (TxOut blk), HasLedgerTables (Ticked LedgerState) blk) =>
   HasLedgerTables (Ticked ExtLedgerState) blk
   where
-  projectLedgerTables (TickedExtLedgerState lstate _view _hstate) =
+  projectLedgerTables (TickedExtLedgerState lstate _view _hstate _perasResolver) =
     projectLedgerTables lstate
   withLedgerTables
-    (TickedExtLedgerState lstate view hstate)
+    (TickedExtLedgerState lstate view hstate perasResolver)
     tables =
       TickedExtLedgerState
         (lstate `withLedgerTables` tables)
         view
         hstate
+        perasResolver
 
 instance
   CanStowLedgerTables (LedgerState blk) =>
   CanStowLedgerTables (ExtLedgerState blk)
   where
-  stowLedgerTables (ExtLedgerState lstate hstate) =
-    ExtLedgerState (stowLedgerTables lstate) hstate
+  stowLedgerTables (ExtLedgerState lstate hstate perasResolver) =
+    ExtLedgerState (stowLedgerTables lstate) hstate perasResolver
 
-  unstowLedgerTables (ExtLedgerState lstate hstate) =
-    ExtLedgerState (unstowLedgerTables lstate) hstate
+  unstowLedgerTables (ExtLedgerState lstate hstate perasResolver) =
+    ExtLedgerState (unstowLedgerTables lstate) hstate perasResolver
 
 instance
   CanUpgradeLedgerTables LedgerState blk =>
   CanUpgradeLedgerTables ExtLedgerState blk
   where
-  upgradeTables (ExtLedgerState st0 _) (ExtLedgerState st1 _) =
+  upgradeTables (ExtLedgerState st0 _ _) (ExtLedgerState st1 _ _) =
     upgradeTables st0 st1
 
 instance
   (txout ~ TxOut blk, IndexedMemPack LedgerState blk txout) =>
   IndexedMemPack ExtLedgerState blk txout
   where
-  indexedTypeName p (ExtLedgerState st _) = indexedTypeName p st
-  indexedPackedByteCount (ExtLedgerState st _) = indexedPackedByteCount st
-  indexedPackM (ExtLedgerState st _) = indexedPackM st
-  indexedUnpackM (ExtLedgerState st _) = indexedUnpackM st
+  indexedTypeName p (ExtLedgerState st _ _) = indexedTypeName p st
+  indexedPackedByteCount (ExtLedgerState st _ _) = indexedPackedByteCount st
+  indexedPackM (ExtLedgerState st _ _) = indexedPackM st
+  indexedUnpackM (ExtLedgerState st _ _) = indexedUnpackM st
 
 instance LedgerTablesAreTrivial LedgerState blk => LedgerTablesAreTrivial ExtLedgerState blk where
-  convertMapKind (ExtLedgerState st hst) = ExtLedgerState (convertMapKind st) hst
+  convertMapKind (ExtLedgerState st hst perasResolver) = ExtLedgerState (convertMapKind st) hst perasResolver
 
 instance SerializeTablesWithHint LedgerState blk => SerializeTablesWithHint ExtLedgerState blk where
   decodeTablesWithHint st = decodeTablesWithHint (ledgerState st)

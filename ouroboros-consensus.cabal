@@ -1462,7 +1462,6 @@ library unstable-byron-testlib
   exposed-modules:
     Ouroboros.Consensus.ByronDual.Ledger
     Ouroboros.Consensus.ByronDual.Node
-    Ouroboros.Consensus.ByronDual.Node.Peras
     Ouroboros.Consensus.ByronDual.Node.Serialisation
     Test.Consensus.Byron.Examples
     Test.Consensus.Byron.Generators

@@ -25,7 +25,8 @@ import Ouroboros.Consensus.Block
   , PerasParams (..)
   )
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( ValidatedPerasCert (..)
+  ( DefaultPerasEpochContext (..)
+  , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
   )
 import Ouroboros.Consensus.Committee.Class
@@ -66,7 +67,7 @@ genMockPerasVotingCommittee =
     <$> genMockPerasVotingCommitteeInput
 
 genMockPerasEpochContext :: Gen (PerasEpochContext TestBlock)
-genMockPerasEpochContext = (,) <$> genMockPerasVotingCommittee <*> genPerasParams
+genMockPerasEpochContext = DefaultPerasEpochContext <$> genMockPerasVotingCommittee <*> genPerasParams
 
 pickSeatIndexFromCommittee ::
   VotingCommittee (MockPerasCrypto TestBlock) (MockPerasCommittee TestBlock) -> Gen PerasSeatIndex
@@ -103,7 +104,8 @@ genMockPerasVote committee = do
       }
 
 genMockValidatedPerasVote :: PerasEpochContext TestBlock -> Gen (ValidatedPerasVote TestBlock)
-genMockValidatedPerasVote (committee, _params) = do
+genMockValidatedPerasVote context = do
+  let committee = dpecCommittee context
   vote <- genMockPerasVote committee
   let eligibilityWitness =
         maybe
@@ -148,7 +150,9 @@ genMockPerasCertFullCommittee committee = do
       }
 
 genMockValidatedPerasCert :: PerasEpochContext TestBlock -> Gen (ValidatedPerasCert TestBlock)
-genMockValidatedPerasCert (committee, params) = do
+genMockValidatedPerasCert context = do
+  let committee = dpecCommittee context
+  let params = dpecParams context
   cert <- genMockPerasCertFullCommittee committee
   pure $
     ValidatedPerasCert

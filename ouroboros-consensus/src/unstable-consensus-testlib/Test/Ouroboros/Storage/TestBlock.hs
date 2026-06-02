@@ -760,6 +760,8 @@ testInitExtLedger =
   ExtLedgerState
     { ledgerState = testInitLedger
     , headerState = genesisHeaderState ()
+    , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+      perasEpochContextResolver = undefined
     }
 
 -- Only for a single node

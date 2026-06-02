@@ -59,6 +59,8 @@ protocolInfoPraos numCoreNodes nid params eraParams eta0 evolvingStakeDist =
         ExtLedgerState
           { ledgerState = genesisSimpleLedgerState addrDist
           , headerState = genesisHeaderState (PraosChainDepState [])
+          , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+            perasEpochContextResolver = undefined
           }
     }
  where

@@ -228,6 +228,8 @@ fromShelleyLedgerExamples
       ExtLedgerState
         ledgerState
         (genesisHeaderState chainDepState)
+        -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+        undefined
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
 
@@ -367,6 +369,8 @@ fromShelleyLedgerExamplesPraos
       ExtLedgerState
         ledgerState
         (genesisHeaderState chainDepState)
+        -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+        undefined
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
 

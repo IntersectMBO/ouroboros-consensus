@@ -207,7 +207,7 @@ mkHeaderStateWithTime ::
   LedgerConfig blk ->
   ExtLedgerState blk mk ->
   HeaderStateWithTime blk
-mkHeaderStateWithTime lcfg (ExtLedgerState lst hst) =
+mkHeaderStateWithTime lcfg (ExtLedgerState lst hst _) =
   mkHeaderStateWithTimeFromSummary summary hst
  where
   -- A summary can always translate the tip slot of the ledger state it was

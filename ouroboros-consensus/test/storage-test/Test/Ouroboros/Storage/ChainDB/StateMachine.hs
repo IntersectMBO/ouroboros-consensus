@@ -1629,6 +1629,7 @@ deriving instance
   , Show blk
   , Show (PerasVote blk)
   , Show (PerasCert blk)
+  , Show (PerasEpochContext blk)
   ) =>
   ToExpr (Model blk IO Concrete)
 
