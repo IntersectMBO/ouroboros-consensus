@@ -50,7 +50,7 @@ import qualified Data.Set as Set
 import Data.Traversable (for)
 import GHC.Stack (HasCallStack)
 import LeiosDemoDb (LeiosDbHandle (..))
-import LeiosDemoTypes (EbHash)
+import LeiosDemoTypes (EbAnnouncement (ebAnnouncementHash), EbHash)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
@@ -1450,17 +1450,22 @@ ignorePendingCertRBs pending getter hash
 
 -- | Volatile CertRB blocks whose certified EB closure is not in the
 -- local downloaded-closures tracker.  Both lookup wrappers consult the
--- returned set to hide such blocks from candidate construction.
+-- returned set to hide such blocks from candidate construction, so that
+-- 'resolveLeiosBlock' is never asked to recover a closure we do not have.
 --
--- TODO: currently a stub returning the empty set, so the late-join
--- test still crashes in 'resolveLeiosBlock'.  The real implementation
--- walks the VolatileDB forward from the immutable tip and, for each
--- header satisfying 'headerIsCertRB', extracts the certified 'EbHash'
--- from the parent header's 'headerEbAnnouncement' and checks it
--- against the supplied closure-completed snapshot.
+-- Walks the VolatileDB forward from the immutable tip via 'succsOf',
+-- reading each header's Leios fields ('VolatileDB.getLeiosFields', which
+-- snapshots 'headerIsCertRB' / 'headerEbAnnouncement' at parse time).  A
+-- CertRB certifies the EB announced by its /immediate parent/:
+-- 'updateChainDepState' (in "Ouroboros.Consensus.Protocol.Praos")
+-- overwrites the tracked announcement on every block, so the announcement
+-- a CertRB certifies is exactly the one carried by the block before it.
+-- We therefore carry the parent's announcement down the walk and flag a
+-- CertRB as pending iff that EB's closure is not in the completed-closure
+-- snapshot.
 computeCertRBsWithPendingEbClosures ::
   forall m blk.
-  (IOLike m, ResolveLeiosBlock blk) =>
+  (IOLike m, HasHeader blk, ResolveLeiosBlock blk) =>
   VolatileDB m blk ->
   (ChainHash blk -> Set (HeaderHash blk)) ->
   -- | EBs whose closure is locally complete (see
@@ -1469,10 +1474,31 @@ computeCertRBsWithPendingEbClosures ::
   -- | Where to start the walk.  Should be the immutable-tip 'ChainHash'.
   ChainHash blk ->
   m (Set (HeaderHash blk))
-computeCertRBsWithPendingEbClosures _volDB _succsOf _acquiredClosures _start =
-  pure Set.empty
+computeCertRBsWithPendingEbClosures volDB succsOf acquiredClosures start = do
+  leiosFields <- atomically $ VolatileDB.getLeiosFields volDB
+  let
+    go ::
+      ChainHash blk ->
+      -- \^ the block (or anchor) whose successors we visit
+      Maybe EbAnnouncement ->
+      -- \^ the EB announcement carried by that block, if any
+      Set (HeaderHash blk) ->
+      Set (HeaderHash blk)
+    go parent parentAnn acc0 =
+      foldl' visit acc0 (Set.toList (succsOf parent))
+     where
+      visit acc h = go (BlockHash h) thisAnn acc'
+       where
+        (isCertRB, thisAnn) = fromMaybe (NotCertRB, Nothing) (leiosFields h)
+        acc'
+          | CertRB <- isCertRB
+          , Just ann <- parentAnn
+          , ebAnnouncementHash ann `Set.notMember` acquiredClosures =
+              Set.insert h acc
+          | otherwise = acc
+  pure $ go start Nothing Set.empty
  where
-  -- The stub body does not need 'ResolveLeiosBlock blk'; the real
-  -- implementation will call 'headerIsCertRB' on volatile headers, so
-  -- keep the constraint documented in the signature.
+  -- The body reads the Leios fields snapshotted by the VolatileDB rather
+  -- than calling the class methods directly, but the constraint keeps
+  -- this function tied to block types that actually carry Leios headers.
   _ = keepRedundantConstraint (Proxy @(ResolveLeiosBlock blk))
