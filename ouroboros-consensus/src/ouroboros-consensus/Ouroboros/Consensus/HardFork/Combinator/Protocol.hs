@@ -10,6 +10,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE InstanceSigs #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Protocol
   ( HardForkTiebreakerView (..)
@@ -55,13 +56,14 @@ import Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
   )
 import Ouroboros.Consensus.HardFork.Combinator.State
   ( HardForkState
-  , Translate (..)
+  , Translate (..), getHardForkState
   )
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.Translation as HFTranslation
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util ((.:))
+import qualified Data.SOP.Telescope as Tele
 
 {-------------------------------------------------------------------------------
   ChainSelection
@@ -127,6 +129,13 @@ instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
 
   -- Security parameter must be equal across /all/ eras
   protocolSecurityParam = hardForkConsensusConfigK
+
+instance ChainDepStateSupportsPeras (HardForkProtocol xs) where
+  getEpochNonce _ =     hcollapse
+      -- [TODO EPOCH CONTEXT PLUMBING] STOPPED THERE
+      . hcmap proxySingle (K . getEpochNonce . unwrapChainDepState . hmap currentState)
+      . Tele.tip
+      . getHardForkState
 
 {-------------------------------------------------------------------------------
   BlockSupportsProtocol
