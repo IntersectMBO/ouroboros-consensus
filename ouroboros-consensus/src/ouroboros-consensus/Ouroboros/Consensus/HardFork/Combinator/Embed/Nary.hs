@@ -53,6 +53,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -244,12 +245,17 @@ instance Inject HeaderState where
               WrapChainDepState headerStateChainDep
       }
 
+-- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+instance Inject PerasEpochContextResolver where
+  inject = undefined
+
 instance Inject (Flip ExtLedgerState mk) where
   inject iidx (Flip ExtLedgerState{..}) =
     Flip $
       ExtLedgerState
         { ledgerState = unFlip $ inject iidx (Flip ledgerState)
         , headerState = inject iidx headerState
+        , perasEpochContextResolver = inject iidx perasEpochContextResolver
         }
 
 {-------------------------------------------------------------------------------
@@ -279,6 +285,7 @@ injectInitialExtLedgerState cfg extLedgerState0 =
   ExtLedgerState
     { ledgerState = targetEraLedgerState
     , headerState = targetEraHeaderState
+    , perasEpochContextResolver = targetEraPerasEpochContextResolver
     }
  where
   cfgs :: NP TopLevelConfig (x ': xs)
@@ -326,3 +333,7 @@ injectInitialExtLedgerState cfg extLedgerState0 =
 
   targetEraHeaderState :: HeaderState (HardForkBlock (x ': xs))
   targetEraHeaderState = genesisHeaderState targetEraChainDepState
+
+  -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+  targetEraPerasEpochContextResolver :: PerasEpochContextResolver (HardForkBlock (x ': xs))
+  targetEraPerasEpochContextResolver = undefined

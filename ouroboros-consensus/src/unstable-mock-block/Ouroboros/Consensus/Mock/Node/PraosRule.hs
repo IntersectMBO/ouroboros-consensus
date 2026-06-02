@@ -65,6 +65,8 @@ protocolInfoPraosRule
           ExtLedgerState
             { ledgerState = genesisSimpleLedgerState addrDist
             , headerState = genesisHeaderState ()
+            , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+              perasEpochContextResolver = undefined
             }
       }
    where

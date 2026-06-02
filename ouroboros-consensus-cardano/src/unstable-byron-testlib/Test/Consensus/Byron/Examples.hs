@@ -223,6 +223,8 @@ exampleExtLedgerState =
   ExtLedgerState
     { ledgerState = exampleLedgerState
     , headerState = exampleHeaderState
+    , -- [TODO EPOCH CONTEXT PLUMBING] we need t ofix this
+      perasEpochContextResolver = undefined
     }
 
 exampleHeaderHash :: ByronHash

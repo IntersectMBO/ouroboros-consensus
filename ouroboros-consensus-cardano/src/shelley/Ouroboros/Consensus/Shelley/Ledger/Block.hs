@@ -59,6 +59,7 @@ import Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
+import Codec.Serialise (Serialise)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Coerce (coerce)
 import Data.Typeable (Typeable)
@@ -130,6 +131,7 @@ class
   , Crypto (ProtoCrypto proto)
   , -- Peras constraints
     BlockSupportsPeras (ShelleyBlock proto era)
+  , Serialise (PerasEpochContext (ShelleyBlock proto era))
   , -- Backwards compatibility
     Plain.FromCBOR (LegacyPParams era)
   , Plain.ToCBOR (LegacyPParams era)

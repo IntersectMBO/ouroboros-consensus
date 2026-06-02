@@ -265,6 +265,11 @@ class
   , Serialise (BridgeLedger m a)
   , Serialise (BridgeBlock m a)
   , Serialise (BridgeTx m a)
+  , -- Requirements for Peras epoch context
+    Show (PerasEpochContext (DualBlock m a))
+  , Eq (PerasEpochContext (DualBlock m a))
+  , NoThunks (PerasEpochContext (DualBlock m a))
+  , Serialise (PerasEpochContext (DualBlock m a))
   , Show (BridgeTx m a)
   ) =>
   Bridge m a

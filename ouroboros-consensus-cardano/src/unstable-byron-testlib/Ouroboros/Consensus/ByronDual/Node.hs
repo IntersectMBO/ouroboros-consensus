@@ -27,7 +27,6 @@ import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Node
 import Ouroboros.Consensus.Byron.Protocol
 import Ouroboros.Consensus.ByronDual.Ledger
-import Ouroboros.Consensus.ByronDual.Node.Peras ()
 import Ouroboros.Consensus.ByronDual.Node.Serialisation ()
 import Ouroboros.Consensus.ByronSpec.Ledger
 import qualified Ouroboros.Consensus.ByronSpec.Ledger.Genesis as Genesis
@@ -127,6 +126,8 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
                   , dualLedgerStateBridge = initBridge
                   }
             , headerState = genesisHeaderState S.empty
+            , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+              perasEpochContextResolver = undefined
             }
       }
   , return $ dualByronBlockForging . byronLeaderCredentials <$> credss
