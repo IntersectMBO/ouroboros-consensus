@@ -569,6 +569,25 @@ class ResolveLeiosBlock blk where
     Monad m => LeiosDbConnection m -> LeiosPoint -> blk -> m (Maybe blk)
   resolveLeiosBlockHdr _ _ _ = return Nothing
 
+  -- | Closure-availability check for the CertRB staging area (issue #890).
+  --
+  -- The Leios cert in the block body carries the certified EB point as
+  -- a CBOR payload ('LeiosCert.leiosCertPayload'); this method decodes
+  -- it and asks the local 'LeiosDb' whether the closure is present.
+  --
+  -- Returns @Just point@ when the block carries a Leios cert and the
+  -- referenced EB closure is *not* in the local 'LeiosDb' — the caller
+  -- can then park the CertRB in a staging area and add @point@ to the
+  -- fetch work set. Returns 'Nothing' when the block has no Leios cert,
+  -- or when the closure is already present (so the block is safe to
+  -- admit to ChainSel).
+  checkLeiosBlockResolvable ::
+    Monad m =>
+    LeiosDbConnection m ->
+    blk ->
+    m (Maybe LeiosPoint)
+  checkLeiosBlockResolvable _ _ = return Nothing
+
   -- | The EB point announced by this header, if any. 'Nothing' for headers
   -- in eras that don't carry Leios announcements. Lets the chain-sync
   -- server hold only the minimum needed to splice the next cert block, and

@@ -19,6 +19,7 @@ module LeiosDemoTypes (module LeiosDemoTypes) where
 
 import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR, enforceSize, serialize', toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
+import qualified Cardano.Ledger.BaseTypes
 import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
 import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
 import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
@@ -27,7 +28,9 @@ import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
-import Codec.Serialise (Serialise, decode, encode)
+import qualified Codec.CBOR.Read as CBOR
+import qualified Codec.CBOR.Write as CBOR
+import Codec.Serialise (DeserialiseFailure, Serialise, decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
@@ -39,6 +42,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Lazy as BSL
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.Map (Map)
@@ -127,6 +131,25 @@ decodeLeiosPoint :: Decoder s LeiosPoint
 decodeLeiosPoint = do
   enforceSize (fromString "LeiosPoint") 2
   MkLeiosPoint <$> decode <*> decodeEbHash
+
+-- | Encode a 'LeiosPoint' as the CBOR payload to embed in a
+-- 'Cardano.Ledger.BaseTypes.LeiosCert'. Consensus uses this when
+-- forging a CertRB; the receiver decodes it via 'decodeLeiosCertPoint'
+-- to learn which EB closure to fetch / splice.
+encodeLeiosCertPoint :: LeiosPoint -> BS.ByteString
+encodeLeiosCertPoint = CBOR.toStrictByteString . encodeLeiosPoint
+
+-- | Inverse of 'encodeLeiosCertPoint': decode the 'LeiosPoint' embedded
+-- in a 'LeiosCert.leiosCertPayload'. Returns 'Left' with the
+-- deserialise error on a malformed payload.
+decodeLeiosCertPoint ::
+  Cardano.Ledger.BaseTypes.LeiosCert ->
+  Either DeserialiseFailure LeiosPoint
+decodeLeiosCertPoint cert =
+  case CBOR.deserialiseFromBytes decodeLeiosPoint $
+    BSL.fromStrict (Cardano.Ledger.BaseTypes.leiosCertPayload cert) of
+    Left err -> Left err
+    Right (_, point) -> Right point
 
 -- | Types used in Praos headers
 data EbAnnouncement = EbAnnouncement

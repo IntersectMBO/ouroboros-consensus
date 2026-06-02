@@ -69,6 +69,7 @@ import LeiosDemoDb
   ( LeiosDbConnection
   , LeiosDbHandle (subscribeEbNotifications)
   , LeiosEbNotification (..)
+  , withLeiosDb
   )
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
@@ -80,6 +81,11 @@ import LeiosDemoTypes
   , VoterId (MkVoterId)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosStagingArea
+  ( LeiosStagingArea (..)
+  , newLeiosStagingArea
+  , runStagingAreaDrain
+  )
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
@@ -120,7 +126,8 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
-  ( AddBlockResult (..)
+  ( AddBlockPromise (..)
+  , AddBlockResult (..)
   , ChainDB
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -291,6 +298,7 @@ initNodeKernel ::
   ( IOLike m
   , SI.MonadTimer m
   , RunNode blk
+  , ResolveLeiosBlock blk
   , Ord addrNTN
   , Hashable addrNTN
   , Typeable addrNTN
@@ -327,6 +335,11 @@ initNodeKernel
           , peerSharingRegistry
           , varChainSyncHandles
           , varGsmState
+          , leiosOutstanding = getLeiosOutstanding
+          , leiosReady = getLeiosReady
+          , leiosPeersVars = getLeiosPeersVars
+          , leiosVoteStateIS = leiosVoteState
+          , leiosCertRbStaging
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
@@ -444,11 +457,10 @@ initNodeKernel
           txChannelsVar
           sharedTxStateVar
 
-    -- Leios fetch-logic state.
-    leiosVoteState <- newLeiosVoteState
-    getLeiosPeersVars <- MVar.newMVar Map.empty
-    getLeiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
-    getLeiosReady <- MVar.newEmptyMVar
+    -- Leios fetch-logic state is created up-front in 'initInternalState'
+    -- because the wrapped 'ChainDbView' (issue #890 CertRB staging) needs
+    -- to register fetch work and wake the fetch loop. We just destructure
+    -- the IS-level vars above.
 
     -- The Leios fetch logic: 0.5s loop that takes 'getLeiosReady', reads
     -- the peers' offerings, runs 'leiosFetchLogicIteration' to decide what
@@ -493,6 +505,26 @@ initNodeKernel
             MkTraceLeiosKernel $
               "leiosFetchLogic: duration " ++ show duration
           SI.threadDelay $ loopInterval - duration
+
+    -- CertRB staging drain (issue #890): on every EB closure arrival,
+    -- check whether a staged CertRB was waiting for it; if so, hand it to
+    -- 'ChainDB.addBlockAsync' so ChainSel can finally consider it.
+    void $
+      forkLinkedThread registry "NodeKernel.leiosCertRbDrain" $ do
+        let drainTr = leiosKernelTracer tracers
+        chan <- subscribeEbNotifications leiosDB
+        runStagingAreaDrain leiosCertRbStaging chan $ \point blk -> do
+          traceWith drainTr $
+            MkTraceLeiosKernel $
+              "CertRB staging: EB closure arrived, releasing "
+                ++ "block staged on "
+                ++ show point
+          _ <-
+            ChainDB.addBlockAsync
+              chainDB
+              InvalidBlockPunishment.noPunishment
+              blk
+          pure ()
 
     -- The Leios voting thread: when this node has a voting key, subscribe
     -- to local "EB closure acquired" notifications and emit a vote for
@@ -596,6 +628,15 @@ data InternalState m addrNTN addrNTC blk = IS
   , mempool :: Mempool m blk
   , peerSharingRegistry :: PeerSharingRegistry addrNTN m
   , leiosDB :: LeiosDbHandle m
+  , -- Leios state created here so the wrapped 'ChainDbView' (issue #890
+    -- CertRB staging) can register fetch work; consumed in 'initNodeKernel'.
+    leiosOutstanding :: MVar.MVar m (LeiosOutstanding (ConnectionId addrNTN))
+  , leiosReady :: MVar.MVar m ()
+  , leiosPeersVars ::
+      MVar.MVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
+  , leiosVoteStateIS :: LeiosVoteState m
+  , -- | CertRBs whose EB closure isn't locally available yet (issue #890).
+    leiosCertRbStaging :: LeiosStagingArea m blk
   }
 
 initInternalState ::
@@ -605,6 +646,7 @@ initInternalState ::
   , Ord addrNTN
   , Typeable addrNTN
   , RunNode blk
+  , ResolveLeiosBlock blk
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   m (InternalState m addrNTN addrNTC blk)
@@ -645,6 +687,14 @@ initInternalState
 
     fetchClientRegistry <- newFetchClientRegistry
 
+    -- Leios state created up front so the wrapped 'ChainDbView' below can
+    -- register fetch work / wake the fetch loop without forward references.
+    leiosVoteStateIS <- newLeiosVoteState
+    leiosPeersVars <- MVar.newMVar Map.empty
+    leiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
+    leiosReady <- MVar.newEmptyMVar
+    leiosCertRbStaging <- newLeiosStagingArea
+
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault
             (toConsensusMode $ gnkaLoEAndGDDArgs genesisArgs)
@@ -652,13 +702,22 @@ initInternalState
             (ChainDB.getCurrentChain chainDB)
             getUseBootstrapPeers
             (GSM.gsmStateToLedgerJudgement <$> readTVar varGsmState)
+        chainDbView =
+          wrapChainDbViewForLeiosStaging
+            (leiosKernelTracer tracers)
+            chainDB
+            leiosDB
+            leiosCertRbStaging
+            leiosOutstanding
+            leiosReady
+            (BlockFetchClientInterface.defaultChainDbView chainDB)
         blockFetchInterface ::
           BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
         blockFetchInterface =
           BlockFetchClientInterface.mkBlockFetchConsensusInterface
             (dbfTracer tracers)
             (configBlock cfg)
-            (BlockFetchClientInterface.defaultChainDbView chainDB)
+            chainDbView
             varChainSyncHandles
             blockFetchSize
             readFetchMode
@@ -672,6 +731,85 @@ toConsensusMode :: forall a. LoEAndGDDConfig a -> ConsensusMode
 toConsensusMode = \case
   LoEAndGDDDisabled -> PraosMode
   LoEAndGDDEnabled _ -> GenesisMode
+
+-- | CertRB staging gate for issue #890.
+--
+-- Wraps a 'ChainDbView' so that incoming CertRBs whose announced EB closure
+-- is not yet in the local LeiosDb are *not* handed to ChainSel — they're
+-- parked in 'stagingTVar' and the missing EB is registered as Leios fetch
+-- work. Once the EB closure arrives, a separate drain thread (forked in
+-- 'initNodeKernel') re-submits the parked block via the unwrapped
+-- 'ChainDB.addBlockAsync'.
+--
+-- 'getIsFetched' is also widened so the BlockFetch decision logic doesn't
+-- keep refetching the same block while it's staged.
+wrapChainDbViewForLeiosStaging ::
+  forall m blk peer.
+  ( IOLike m
+  , HasHeader blk
+  , ResolveLeiosBlock blk
+  ) =>
+  Tracer m TraceLeiosKernel ->
+  ChainDB m blk ->
+  LeiosDbHandle m ->
+  LeiosStagingArea m blk ->
+  MVar.MVar m (LeiosOutstanding peer) ->
+  MVar.MVar m () ->
+  BlockFetchClientInterface.ChainDbView m blk ->
+  BlockFetchClientInterface.ChainDbView m blk
+wrapChainDbViewForLeiosStaging
+  tracer
+  chainDB
+  leiosDbHandle
+  stagingArea
+  outstandingMVar
+  readyMVar
+  defView =
+    defView
+      { BlockFetchClientInterface.addBlockAsync = stagingAwareAddBlock
+      , BlockFetchClientInterface.getIsFetched = do
+          baseFetched <- BlockFetchClientInterface.getIsFetched defView
+          staged <- isStagedBlock stagingArea
+          pure $ \p -> baseFetched p || staged p
+      }
+   where
+    stagingAwareAddBlock punish blk = do
+      mMissing <-
+        withLeiosDb leiosDbHandle $ \conn ->
+          checkLeiosBlockResolvable conn blk
+      case mMissing of
+        Nothing ->
+          BlockFetchClientInterface.addBlockAsync defView punish blk
+        Just point -> do
+          traceWith tracer $
+            MkTraceLeiosKernel $
+              "CertRB staging: parking block "
+                ++ show (Block.blockPoint blk)
+                ++ "; missing EB "
+                ++ show point
+          atomically $ stageCertRB stagingArea point blk
+          MVar.modifyMVar_ outstandingMVar $ \o ->
+            pure
+              o
+                { Leios.missingEbBodies =
+                    Map.insertWith
+                      (\_new old -> old)
+                      point
+                      0
+                      (Leios.missingEbBodies o)
+                }
+          _ <- MVar.tryPutMVar readyMVar ()
+          -- Deferred promise: claim "written" so BlockFetch logic
+          -- doesn't immediately refetch; report processed as failed
+          -- (the staged block is not yet on the chain).
+          pure
+            AddBlockPromise
+              { blockWrittenToDisk = pure True
+              , blockProcessed =
+                  pure $
+                    FailedToAddBlock
+                      "CertRB staged, awaiting EB closure"
+              }
 
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
