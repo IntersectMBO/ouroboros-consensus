@@ -267,6 +267,12 @@ instance CanHardFork xs => LedgerSupportsPeras (HardForkBlock xs) where
       . hcmap proxySingle (K . getLatestPerasCertRound . unFlip)
       . State.tip
       . hardForkLedgerStatePerEra
+  
+  getStakeDistr =
+    hcollapse
+      . hcmap proxySingle (K . getStakeDistr . unFlip)
+      . State.tip
+      . hardForkLedgerStatePerEra
 
 {-------------------------------------------------------------------------------
   BlockSupportsPeras

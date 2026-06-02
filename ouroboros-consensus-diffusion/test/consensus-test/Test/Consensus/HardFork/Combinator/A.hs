@@ -135,6 +135,8 @@ instance ConsensusProtocol ProtocolA where
   updateChainDepState _ _ _ _ = return ()
   reupdateChainDepState _ _ _ _ = ()
 
+instance ChainDepStateSupportsPeras ProtocolA
+
 data BlockA = BlkA
   { blkA_header :: Header BlockA
   , blkA_body :: [GenTx BlockA]

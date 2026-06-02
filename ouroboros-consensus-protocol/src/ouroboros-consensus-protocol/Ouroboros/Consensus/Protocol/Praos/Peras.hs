@@ -10,8 +10,8 @@
 --
 -- [TODO EPOCH CONTEXT PLUMBING]
 module Ouroboros.Consensus.Protocol.Praos.Peras
-  ( PraosStateSupportsPerasVoting (..)
-  , praosStatePerasVotingCommitteeInputV1
+  ( LedgerStateHeaderStateSupportsPerasVoting (..)
+  , ledgerStateHeaderStateMkPerasVotingCommitteeInputV1
   ) where
 
 import Data.Bifunctor (Bifunctor (..))
@@ -37,7 +37,7 @@ import Ouroboros.Consensus.Committee.WFALS
   , WFALS
   )
 import Ouroboros.Consensus.HardFork.Combinator.Abstract (CanHardFork)
-import Ouroboros.Consensus.HardFork.Combinator.Basics (HardForkBlock)
+import Ouroboros.Consensus.HardFork.Combinator.Basics (HardForkBlock, LedgerState)
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
 import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
   ( unsafeExtendPerasStakeDistrWithPublicKeysFromEnv
@@ -46,58 +46,58 @@ import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
 import Ouroboros.Consensus.Peras.Params (PerasParams (..))
 import Ouroboros.Consensus.Protocol.Praos
   ( PraosState (..)
-  , Ticked (..)
+  , Ticked (..), Praos
   )
 import Ouroboros.Consensus.Protocol.Praos.Views (LedgerView (..))
+import Ouroboros.Consensus.HeaderValidation (HeaderState, headerStateChainDep)
+import Ouroboros.Consensus.Block.Abstract (BlockProtocol)
+import Cardano.Ledger.State (PoolDistr)
+import Cardano.Ledger.BaseTypes (Nonce)
+import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
+import Ouroboros.Consensus.HardFork.Combinator.Protocol (HardForkChainDepState)
 
 class
   ( BlockSupportsPeras blk
   , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk) -- TODO remove this constraint when it becomes a superclass constraint of 'BlockSupportsPeras'
   ) =>
-  PraosStateSupportsPerasVoting blk
+  LedgerStateHeaderStateSupportsPerasVoting blk
   where
-  -- | How to extract a 'PerasVotingCommitteeInput' from a 'Ticked PraosState'.
-  -- This is used to construct the 'PerasVotingCommittee' used for voting at a given ledger/praos state.
-  praosStatePerasVotingCommitteeInput ::
-    proxy blk ->
+  ledgerStateHeaderStateMkPerasVotingCommitteeInput ::
     PerasParams blk ->
-    Ticked PraosState ->
+    LedgerState blk mk ->
+    HeaderState blk ->
     Either
       (PerasError blk)
       (PerasVotingCommitteeInput blk)
 
-  -- | How to build a new 'PerasVotingCommittee' from a 'Ticked PraosState'. The implementation provided here relies on 'praosStatePerasVotingCommitteeInput'.
-  praosStateGetPerasVotingCommittee ::
-    proxy blk ->
+  ledgerStateHeaderStateMkPerasVotingCommittee ::
     PerasParams blk ->
-    Ticked PraosState ->
+    LedgerState blk mk ->
+    HeaderState blk ->
     Either
       (PerasError blk)
       (PerasVotingCommittee blk)
-  praosStateGetPerasVotingCommittee p perasParams tickedPraosState = do
+  ledgerStateHeaderStateMkPerasVotingCommittee perasParams ledgerState headerState = do
     committeeInput <-
-      praosStatePerasVotingCommitteeInput p perasParams tickedPraosState
+      ledgerStateHeaderStateMkPerasVotingCommitteeInput perasParams ledgerState headerState
     bimap injectVotingCommitteeError id $
       Committee.mkVotingCommittee committeeInput
 
-praosStatePerasVotingCommitteeInputV1 ::
-  PublicKey crypto ~ BLS.PerasPublicKey =>
-  proxy blk ->
+ledgerStateHeaderStateMkPerasVotingCommitteeInputV1 ::
+  (PublicKey crypto ~ BLS.PerasPublicKey) =>
+  (LedgerState blk mk -> PoolDistr) ->
+  (ChainDepState (BlockProtocol blk) -> Nonce) ->
   PerasParams blk ->
-  Ticked PraosState ->
+  LedgerState blk mk ->
+  HeaderState blk ->
   Either (V1.PerasError blk) (VotingCommitteeInput crypto WFALS)
-praosStatePerasVotingCommitteeInputV1 _ perasParams tickedPraosState = do
-  let epochNonce =
-        praosStateEpochNonce
-          . tickedPraosStateChainDepState
-          $ tickedPraosState
+ledgerStateHeaderStateMkPerasVotingCommitteeInputV1 extractPoolDistr extractEpochNonce perasParams ledgerState headerState = do
+  let epochNonce = extractEpochNonce . headerStateChainDep $ headerState
+      poolDistr = extractPoolDistr ledgerState
   -- TODO: replace the following hack with proper on-chain key registration.
   stakeDistrWithPublicKeys <-
-    bimap V1.PerasTemporaryPublicKeyHackError id
-      . unsafeExtendPerasStakeDistrWithPublicKeysFromEnv
-      . lvPoolDistr
-      . tickedPraosStateLedgerView
-      $ tickedPraosState
+    bimap V1.PerasTemporaryPublicKeyHackError id $
+      unsafeExtendPerasStakeDistrWithPublicKeysFromEnv poolDistr
   extWFAStakeDistr <-
     bimap V1.PerasVotingWFAError id $
       mkExtWFAStakeDistr
@@ -113,6 +113,11 @@ instance
   ( StandardHash (HardForkBlock xs)
   , CanHardFork xs
   ) =>
-  PraosStateSupportsPerasVoting (HardForkBlock xs)
+  LedgerStateHeaderStateSupportsPerasVoting (HardForkBlock xs)
   where
-  praosStatePerasVotingCommitteeInput = praosStatePerasVotingCommitteeInputV1
+  ledgerStateHeaderStateMkPerasVotingCommitteeInput = ledgerStateHeaderStateMkPerasVotingCommitteeInputV1 extractPoolDistr extractEpochNonce where
+    extractPoolDistr :: LedgerState (HardForkBlock xs) mk -> PoolDistr
+    extractPoolDistr = undefined
+
+    extractEpochNonce :: HardForkChainDepState xs -> Nonce
+    extractEpochNonce = undefined
