@@ -691,6 +691,22 @@ data TraceLeiosKernel
   | TraceLeiosVoted {vote :: LeiosVote}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
   | TraceLeiosDbException LeiosDbException
+  | -- | A CertRB was admitted to the staging area because its certified
+    -- EB closure isn't locally available. This is a critical event: it
+    -- means the node would have crashed in 'resolveLeiosBlock' (issue
+    -- #890) and the staging-area / Phase-2 emergency-fetch path is
+    -- compensating. Carries the staged block's point, the missing EB
+    -- point, and the number of peers whose ChainSync candidate
+    -- contained the block (they're treated as implicit offerers of the
+    -- EB by the fetch loop).
+    TraceCertRBStaged
+      { stagedBlockPoint :: String
+      , stagedEbPoint :: LeiosPoint
+      , stagedKnownPeers :: Int
+      }
+  | -- | A staged CertRB has been released back into ChainSel because
+    -- the EB closure (body + txs) is now locally available.
+    TraceCertRBReleased {releasedEbPoint :: LeiosPoint}
 
 deriving instance Show TraceLeiosKernel
 
@@ -747,6 +763,22 @@ traceLeiosKernelToObject = \case
       ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
+  TraceCertRBStaged{stagedBlockPoint, stagedEbPoint, stagedKnownPeers} ->
+    let MkLeiosPoint (SlotNo ebSlot) ebHash = stagedEbPoint
+     in mconcat
+          [ "kind" .= Aeson.String "CertRBStaged"
+          , "blockPoint" .= stagedBlockPoint
+          , "ebHash" .= prettyEbHash ebHash
+          , "ebSlot" .= ebSlot
+          , "knownPeers" .= stagedKnownPeers
+          ]
+  TraceCertRBReleased{releasedEbPoint} ->
+    let MkLeiosPoint (SlotNo ebSlot) ebHash = releasedEbPoint
+     in mconcat
+          [ "kind" .= Aeson.String "CertRBReleased"
+          , "ebHash" .= prettyEbHash ebHash
+          , "ebSlot" .= ebSlot
+          ]
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String

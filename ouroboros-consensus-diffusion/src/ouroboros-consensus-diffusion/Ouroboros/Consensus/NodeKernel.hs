@@ -504,8 +504,14 @@ initNodeKernel
               synthOfferings =
                 Map.fromListWith
                   (\(a, b) (c, d) -> (a <> c, b <> d))
+                  -- Peers that know the staged CertRB have applied it on
+                  -- their chain, so they hold the full closure — EB body
+                  -- AND tx closure. Synthesise the EB hash into both
+                  -- sets so 'choosePeerEb' (body) and 'choosePeerTx'
+                  -- (txs) both pick them up.
                   [ ( peer
-                    , (Set.singleton (pointEbHash point), Set.empty)
+                    , let ebs = Set.singleton (pointEbHash point)
+                       in (ebs, ebs)
                     )
                   | (point, entry) <- Map.toList stagedAugmented
                   , peer <- Set.toList (stagedPeers entry)
@@ -571,11 +577,7 @@ initNodeKernel
         let drainTr = leiosKernelTracer tracers
         chan <- subscribeEbNotifications leiosDB
         runStagingAreaDrain leiosCertRbStaging chan $ \point blk -> do
-          traceWith drainTr $
-            MkTraceLeiosKernel $
-              "CertRB staging: EB closure arrived, releasing "
-                ++ "block staged on "
-                ++ show point
+          traceWith drainTr TraceCertRBReleased{releasedEbPoint = point}
           _ <-
             ChainDB.addBlockAsync
               chainDB
@@ -845,15 +847,12 @@ wrapChainDbViewForLeiosStaging
           BlockFetchClientInterface.addBlockAsync defView punish blk
         Just (point, size) -> do
           peers <- atomically $ peersThatKnowBlock varChainSyncHandles blk
-          traceWith tracer $
-            MkTraceLeiosKernel $
-              "CertRB staging: parking block "
-                ++ show (Block.blockPoint blk)
-                ++ "; missing EB "
-                ++ show point
-                ++ "; known to "
-                ++ show (Set.size peers)
-                ++ " peer(s)"
+          traceWith tracer
+            TraceCertRBStaged
+              { stagedBlockPoint = show (Block.blockPoint blk)
+              , stagedEbPoint = point
+              , stagedKnownPeers = Set.size peers
+              }
           atomically $ stageCertRB stagingArea point size peers blk
           _ <- MVar.tryPutMVar readyMVar ()
           -- Deferred promise: claim "written" so BlockFetch logic
