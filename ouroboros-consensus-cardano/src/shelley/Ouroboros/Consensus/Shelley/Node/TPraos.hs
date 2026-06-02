@@ -308,3 +308,12 @@ protocolInfoTPraosShelleyBased
     initChainDepState =
       TPraosState Origin $
         SL.initialChainDepState initialNonce (SL.sgGenDelegs genesis)
+
+    initExtLedgerState :: ExtLedgerState (ShelleyBlock (TPraos c) era) ValuesMK
+    initExtLedgerState =
+      ExtLedgerState
+        { ledgerState = initLedgerState
+        , headerState = genesisHeaderState initChainDepState
+        , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+          perasEpochContextResolver = undefined
+        }

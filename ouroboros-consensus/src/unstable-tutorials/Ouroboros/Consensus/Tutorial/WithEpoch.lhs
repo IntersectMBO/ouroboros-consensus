@@ -71,6 +71,7 @@ And imports, of course:
 >   BlockProtocol, castHeaderFields, BlockConfig, CodecConfig,
 >   StorageConfig, Point, castPoint, WithOrigin (..), EpochNo (EpochNo),
 >   pointSlot, blockPoint, BlockNo (..))
+> import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras)
 > import Ouroboros.Consensus.Block.SupportsProtocol
 >   (BlockSupportsProtocol (..))
 > import Ouroboros.Consensus.Protocol.Abstract
@@ -206,6 +207,11 @@ defined earlier:
 > type instance HeaderHash BlockD = Hash
 
 > instance StandardHash BlockD
+
+We also need to instantiate `BlockSupportsPeras` for `BlockC`. For this, we can
+use the default emtpy implementation.
+
+> instance BlockSupportsPeras BlockD
 
 Then we define a function `computeBlockHash` which computes a `Hash` for a
 `BlockD` - basically aggregating all the data in the block besides the hash

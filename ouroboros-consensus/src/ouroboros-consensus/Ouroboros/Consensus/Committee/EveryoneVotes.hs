@@ -6,6 +6,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -28,6 +29,7 @@ module Ouroboros.Consensus.Committee.EveryoneVotes
 
 import Cardano.Ledger.BaseTypes (NonZero)
 import Cardano.Ledger.BaseTypes.NonZero (NonZero (..), nonZero)
+import Control.Exception (Exception)
 import Control.Monad.Zip (MonadZip (..))
 import qualified Data.Array as Array
 import Data.Bifunctor (Bifunctor (..))
@@ -38,6 +40,7 @@ import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Data.Set (Set)
 import qualified Data.Set.NonEmpty as NESet
+import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Committee.Class
@@ -110,8 +113,6 @@ instance
       InvalidCertSignature String
     | -- We triggered an unexpected cryptographic error
       CryptoError String
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass NoThunks
 
   data EligibilityWitness crypto EveryoneVotes
     = EveryoneVotesMember
@@ -146,6 +147,23 @@ instance
     (EveryoneVotesVote seatIndex1 electionId1 _ _)
     (EveryoneVotesVote seatIndex2 electionId2 _ _) =
       compare (electionId1, seatIndex1) (electionId2, seatIndex2)
+
+deriving instance Show (PublicKey crypto) => Show (VotingCommittee crypto EveryoneVotes)
+deriving instance Eq (PublicKey crypto) => Eq (VotingCommittee crypto EveryoneVotes)
+deriving instance NoThunks (PublicKey crypto) => NoThunks (VotingCommittee crypto EveryoneVotes)
+deriving instance Generic (VotingCommittee crypto EveryoneVotes)
+
+deriving instance Show (PublicKey crypto) => Show (VotingCommitteeInput crypto EveryoneVotes)
+deriving instance Eq (PublicKey crypto) => Eq (VotingCommitteeInput crypto EveryoneVotes)
+deriving instance
+  NoThunks (PublicKey crypto) => NoThunks (VotingCommitteeInput crypto EveryoneVotes)
+deriving instance Generic (VotingCommitteeInput crypto EveryoneVotes)
+
+deriving instance Show (VotingCommitteeError crypto EveryoneVotes)
+deriving instance Eq (VotingCommitteeError crypto EveryoneVotes)
+deriving instance NoThunks (VotingCommitteeError crypto EveryoneVotes)
+deriving instance Generic (VotingCommitteeError crypto EveryoneVotes)
+deriving instance Typeable crypto => Exception (VotingCommitteeError crypto EveryoneVotes)
 
 -- | Construct a 'EveryoneVotesVotingCommittee' for a given epoch
 mkEveryoneVotesVotingCommittee ::

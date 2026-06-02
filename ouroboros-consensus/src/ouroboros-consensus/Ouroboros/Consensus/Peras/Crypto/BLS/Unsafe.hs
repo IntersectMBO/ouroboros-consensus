@@ -82,9 +82,5 @@ unsafePerasBLSPublicKeysFromEnv =
       Nothing ->
         Left $ "Invalid public key format: " <> key
       Just pk ->
-        Right $
-          PerasPublicKey
-            { perasVoteVerKey = BLS.coercePublicKey @BLS.SIGN pk
-            , perasVRFVerKey = BLS.coercePublicKey @BLS.VRF pk
-            }
+        Right $ PerasPublicKey pk
 {-# NOINLINE unsafePerasBLSPublicKeysFromEnv #-}

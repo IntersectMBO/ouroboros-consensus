@@ -943,11 +943,13 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       ExtLedgerState
         { headerState = initHeaderState
         , ledgerState = HardForkLedgerState st'
+        , -- [TODO EPOCH CONTEX PLUMBING] we need to fix this
+          perasEpochContextResolver = undefined
         }
    where
     initHeaderState :: HeaderState (CardanoBlock c)
     initLedgerState :: LedgerState (CardanoBlock c) ValuesMK
-    ExtLedgerState initLedgerState initHeaderState =
+    ExtLedgerState initLedgerState initHeaderState _ =
       injectInitialExtLedgerState cfg $
         initExtLedgerStateByron
 

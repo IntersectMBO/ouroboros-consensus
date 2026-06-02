@@ -17,12 +17,12 @@ module Ouroboros.Consensus.Committee.Crypto.BLS
   ( -- * BLS crypto helpers to instantiate voting committees
     KeyRole (..)
   , KeyScope
-  , PrivateKey
+  , PrivateKey (privateKeyScope)
   , rawDeserialisePrivateKey
   , rawSerialisePrivateKey
   , coercePrivateKey
   , derivePublicKey
-  , PublicKey
+  , PublicKey (publicKeyScope)
   , rawDeserialisePublicKey
   , rawSerialisePublicKey
   , coercePublicKey
@@ -95,7 +95,8 @@ data PrivateKey r = PrivateKey
   { unPrivateKey :: !(SignKeyDSIGN BLS12381MinSigDSIGN)
   , privateKeyScope :: !KeyScope
   }
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
 
 rawDeserialisePrivateKey ::
   KeyScope ->
@@ -134,9 +135,10 @@ derivePublicKey sk =
 type PublicKey :: KeyRole -> Type
 data PublicKey r = PublicKey
   { unPublicKey :: !(VerKeyDSIGN BLS12381MinSigDSIGN)
-  , publicKeyScope :: !(KeyScope)
+  , publicKeyScope :: !KeyScope
   }
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
 
 rawDeserialisePublicKey ::
   KeyScope ->

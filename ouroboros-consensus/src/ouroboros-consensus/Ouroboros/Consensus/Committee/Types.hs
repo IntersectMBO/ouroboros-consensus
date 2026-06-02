@@ -12,10 +12,11 @@ module Ouroboros.Consensus.Committee.Types
   , Cumulative (..)
   ) where
 
+import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.BaseTypes (HasZero)
-import Cardano.Ledger.Core (KeyHash, KeyRole (..))
+import Cardano.Ledger.Core (KeyHash (..), KeyRole (..))
 import Cardano.Prelude (Generic)
-import Codec.Serialise (Serialise)
+import Codec.Serialise (Serialise (..))
 import Control.DeepSeq (NFData)
 import Data.Semigroup (Sum (..))
 import Data.Word (Word64)
@@ -28,12 +29,23 @@ newtype PoolId = PoolId
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
 
+instance Serialise PoolId where
+  encode (PoolId hash) =
+    encode (Hash.hashToBytes (unKeyHash hash))
+  decode = do
+    bytes <- decode
+    case Hash.hashFromBytes bytes of
+      Just hash ->
+        return (PoolId (KeyHash hash))
+      Nothing ->
+        fail ("failed to decode PoolId, invalid hash bytes: " <> show bytes)
+
 -- | Stake of a voter as reflected by the ledger state
 newtype LedgerStake = LedgerStake
   { unLedgerStake :: Rational
   }
   deriving stock (Show, Eq, Ord, Generic)
-  deriving newtype (Num, HasZero)
+  deriving newtype (Num, HasZero, Serialise)
   deriving anyclass NoThunks
 
 -- | Relative voting power of a voter in the committee selection scheme
@@ -50,12 +62,14 @@ newtype VoteWeight = VoteWeight
 newtype TargetCommitteeSize = TargetCommitteeSize
   { unTargetCommitteeSize :: Word64
   }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
+  deriving newtype Serialise
   deriving anyclass NoThunks
 
 -- | Wrapper to tag accumulated resources
 newtype Cumulative a = Cumulative
   { unCumulative :: a
   }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
+  deriving newtype Serialise
   deriving anyclass NoThunks

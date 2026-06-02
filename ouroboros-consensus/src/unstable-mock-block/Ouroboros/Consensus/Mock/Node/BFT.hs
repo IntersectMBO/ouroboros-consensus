@@ -53,6 +53,8 @@ protocolInfoBft numCoreNodes nid securityParam eraParams =
         ExtLedgerState
           (genesisSimpleLedgerState addrDist)
           (genesisHeaderState ())
+          -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+          undefined
     }
  where
   signKey :: CoreNodeId -> SignKeyDSIGN MockDSIGN
