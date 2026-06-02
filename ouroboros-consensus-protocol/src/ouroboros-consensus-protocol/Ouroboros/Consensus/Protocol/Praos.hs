@@ -386,6 +386,9 @@ deriving instance PraosCrypto c => NoThunks (PraosValidationErr c)
 
 deriving instance PraosCrypto c => Show (PraosValidationErr c)
 
+instance ChainDepStateSupportsPeras (Praos c) where
+  getEpochNonce _ = praosStateEpochNonce
+
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ChainDepState (Praos c) = PraosState
   type IsLeader (Praos c) = PraosIsLeader c

@@ -143,6 +143,7 @@ import Ouroboros.Consensus.Util.CBOR
   )
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Versioned
+import Cardano.Ledger.Shelley.LedgerState (NewEpochState(..))
 
 {-------------------------------------------------------------------------------
   Config
@@ -923,3 +924,6 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
   getLatestPerasCertRound =
     strictMaybeToMaybe
       . shelleyLedgerLatestPerasCertRound
+  
+  getStakeDistr =
+    nesPd . shelleyLedgerState
