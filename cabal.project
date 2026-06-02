@@ -81,9 +81,6 @@ if os (windows)
 
 constraints:
   tasty <1.5.4,
-  plutus-core ^>=1.65,
-  plutus-ledger-api ^>=1.65,
-  plutus-tx ^>=1.65
 
 -- on f-f/allow-quickcheck-218 branch
 source-repository-package
