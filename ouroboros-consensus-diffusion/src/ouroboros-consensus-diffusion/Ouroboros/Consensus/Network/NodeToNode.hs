@@ -865,6 +865,7 @@ mkApps kernel Tracers{..} mkCodecs ByteLimits{..} genChainSyncTimeout lopBucketC
                   , CsClient.loPBucket = csvLoPBucket csState
                   , CsClient.setLatestSlot = csvSetLatestSlot csState
                   , CsClient.jumping = csvJumping csState
+                  , CsClient.onHeaderArrival = \_hdr -> pure (pure ())
                   }
           return (ChainSyncInitiatorResult r, trailing)
 
