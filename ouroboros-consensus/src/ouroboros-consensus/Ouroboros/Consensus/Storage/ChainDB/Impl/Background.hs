@@ -41,6 +41,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
   , addBlockRunner
   ) where
 
+import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Exception (assert)
 import Control.Monad (forM_, forever, void, when)
 import Control.Monad.Trans.Class (lift)
@@ -56,6 +57,7 @@ import Data.Void (Void)
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
+import LeiosDemoDb (subscribeEbNotifications)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
@@ -103,6 +105,10 @@ launchBgTasks cdb@CDB{..} replayed = do
     launch "ChainDB.addBlockRunner" $
       addBlockRunner cdbChainSelFuse cdb
 
+  !ebCompletionThread <-
+    launch "ChainDB.ebCompletionRunner" $
+      ebCompletionRunner cdb
+
   ledgerDbTasksTrigger <- newLedgerDbTasksTrigger replayed
   !ledgerDbMaintenaceThread <-
     forkLinkedWatcher cdbRegistry "ChainDB.ledgerDbTaskWatcher" $
@@ -122,6 +128,7 @@ launchBgTasks cdb@CDB{..} replayed = do
     writeTVar cdbKillBgThreads $
       sequence_
         [ addBlockThread
+        , ebCompletionThread
         , cancelThread ledgerDbMaintenaceThread
         , gcThread
         , copyToImmutableDBThread
@@ -657,3 +664,30 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
       )
  where
   starvationTracer = Tracer $ traceWith cdbTracer . TraceChainSelStarvationEvent
+
+-- | Re-run chain selection whenever a Leios EB closure becomes available.
+--
+-- 'computeCertRBsWithPendingEbClosures' hides a CertRB from candidate
+-- selection while its certified EB closure is missing.  Once the closure
+-- arrives (via diffusion or the late-join fetch) the filter stops hiding
+-- it, but nothing would re-run chain selection for that block.  This
+-- thread watches the LeiosDB notification stream and, on every
+-- acquisition, enqueues a LoE-style reprocess: the previously-deferred
+-- CertRB is a successor of a block on the current chain, so the reprocess
+-- reconsiders it and it can now be selected.
+--
+-- This deliberately re-uses the existing LoE reprocess path rather than
+-- tracking pending CertRBs in dedicated state: the filter is recomputed
+-- from scratch on every pass, so a blanket re-trigger is enough.
+ebCompletionRunner ::
+  IOLike m =>
+  ChainDbEnv m blk ->
+  m Void
+ebCompletionRunner CDB{..} = do
+  notifChan <- subscribeEbNotifications cdbLeiosDbHandle
+  forever $ do
+    _ <- atomically $ readTChan notifChan
+    void $
+      addReprocessLoEBlocks
+        (contramap TraceAddBlockEvent cdbTracer)
+        cdbChainSelQueue
