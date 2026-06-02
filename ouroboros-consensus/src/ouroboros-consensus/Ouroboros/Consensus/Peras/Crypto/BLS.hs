@@ -27,16 +27,18 @@ module Ouroboros.Consensus.Peras.Crypto.BLS
   , PerasBLSCryptoAggregateVoteSignature (..)
   ) where
 
-import Cardano.Binary (FromCBOR, ToCBOR (..))
+import Cardano.Binary (FromCBOR, ToCBOR (..), decodeListLenOf, encodeListLen)
 import Cardano.Crypto.DSIGN (BLS12381MinSigDSIGN, DSIGNAlgorithm (..))
 import Cardano.Crypto.Hash (Hash)
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.BaseTypes (Nonce (..), SlotNo (..))
 import Cardano.Ledger.Binary (runByteBuilder)
 import Cardano.Ledger.Hashes (HASH)
+import Codec.Serialise (Serialise (..))
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Builder.Extra as BS
 import qualified Data.ByteString.Short as BS
+import GHC.Base (Any)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (WithOrigin (..))
@@ -69,22 +71,41 @@ type instance ElectionId PerasBLSCrypto = PerasRoundNo
 type instance VoteCandidate PerasBLSCrypto = PerasBoostedBlock
 
 -- | Private key of a Peras committee member
-data PerasPrivateKey
-  = PerasPrivateKey
-  { perasVoteSignKey :: BLS.PrivateKey SIGN
-  , perasVRFSignKey :: BLS.PrivateKey VRF
-  }
+newtype PerasPrivateKey
+  = PerasPrivateKey (BLS.PrivateKey Any)
+  deriving stock Generic
+  deriving anyclass NoThunks
 
 type instance PrivateKey PerasBLSCrypto = PerasPrivateKey
 
 -- | Public key of a Peras committee member
 data PerasPublicKey
-  = PerasPublicKey
-  { perasVoteVerKey :: BLS.PublicKey SIGN
-  , perasVRFVerKey :: BLS.PublicKey VRF
-  }
+  = PerasPublicKey (BLS.PublicKey Any)
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
 
 type instance PublicKey PerasBLSCrypto = PerasPublicKey
+
+-- NOTE: we include the key scope in the serialised format of the public key
+instance Serialise PerasPublicKey where
+  encode (PerasPublicKey pk) = do
+    encodeListLen 2
+      <> encode (BLS.publicKeyScope pk)
+      <> encode (BLS.rawSerialisePublicKey pk)
+  decode = do
+    decodeListLenOf 2
+    keyScope <- decode
+    keyBytes <- decode
+    case BLS.rawDeserialisePublicKey keyScope keyBytes of
+      Just pk ->
+        pure (PerasPublicKey pk)
+      Nothing ->
+        fail
+          ( "Failed to decode PerasPublicKey, invalid public key bytes: "
+              <> show keyBytes
+              <> " with scope: "
+              <> show keyScope
+          )
 
 -- | Hash the message of a Peras vote
 --
@@ -157,10 +178,10 @@ instance CryptoSupportsVoteSigning PerasBLSCrypto where
     deriving newtype (FromCBOR, ToCBOR)
     deriving anyclass NoThunks
 
-  getVoteSigningKey _ =
-    perasVoteSignKey
-  getVoteVerificationKey _ =
-    perasVoteVerKey
+  getVoteSigningKey _ (PerasPrivateKey sk) =
+    BLS.coercePrivateKey @SIGN sk
+  getVoteVerificationKey _ (PerasPublicKey pk) =
+    BLS.coercePublicKey @SIGN pk
 
   signVote sk roundNo boostedBlock =
     PerasBLSCryptoVoteSignature
@@ -197,11 +218,11 @@ instance CryptoSupportsVRF PerasBLSCrypto where
     deriving newtype (FromCBOR, ToCBOR)
     deriving anyclass NoThunks
 
-  getVRFSigningKey _ =
-    perasVRFSignKey
+  getVRFSigningKey _ (PerasPrivateKey sk) =
+    BLS.coercePrivateKey @VRF sk
 
-  getVRFVerificationKey _ =
-    perasVRFVerKey
+  getVRFVerificationKey _ (PerasPublicKey pk) =
+    BLS.coercePublicKey @VRF pk
 
   mkVRFElectionInput epochNonce roundNo =
     PerasBLSCryptoVRFElectionInput $

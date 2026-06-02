@@ -6,6 +6,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -46,6 +47,8 @@ module Ouroboros.Consensus.Committee.WFALS
   ) where
 
 import Cardano.Ledger.BaseTypes (NonZero (..), Nonce, nonZero)
+import Codec.Serialise (Serialise)
+import Control.Exception (Exception)
 import Control.Monad (void)
 import Control.Monad.Zip (MonadZip (..))
 import qualified Data.Array as Array
@@ -58,6 +61,7 @@ import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes)
+import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Committee.Class
@@ -169,8 +173,6 @@ instance
       InvalidCertSignature String
     | -- We triggered an unexpected cryptographic error
       CryptoError String
-    deriving stock (Show, Eq, Generic)
-    deriving anyclass NoThunks
 
   data EligibilityWitness crypto WFALS
     = -- A persistent member of the voting committee
@@ -224,6 +226,23 @@ instance
         (seatIndex, electionId)
       WFALSNonPersistentVote seatIndex electionId _ _ _ ->
         (seatIndex, electionId)
+
+deriving instance Show (PublicKey crypto) => Show (VotingCommittee crypto WFALS)
+deriving instance Eq (PublicKey crypto) => Eq (VotingCommittee crypto WFALS)
+deriving instance NoThunks (PublicKey crypto) => NoThunks (VotingCommittee crypto WFALS)
+deriving instance Serialise (PublicKey crypto) => Serialise (VotingCommittee crypto WFALS)
+deriving instance Generic (VotingCommittee crypto WFALS)
+
+deriving instance Show (PublicKey crypto) => Show (VotingCommitteeInput crypto WFALS)
+deriving instance Eq (PublicKey crypto) => Eq (VotingCommitteeInput crypto WFALS)
+deriving instance NoThunks (PublicKey crypto) => NoThunks (VotingCommitteeInput crypto WFALS)
+deriving instance Generic (VotingCommitteeInput crypto WFALS)
+
+deriving instance Show (VotingCommitteeError crypto WFALS)
+deriving instance Eq (VotingCommitteeError crypto WFALS)
+deriving instance NoThunks (VotingCommitteeError crypto WFALS)
+deriving instance Generic (VotingCommitteeError crypto WFALS)
+deriving instance Typeable crypto => Exception (VotingCommitteeError crypto WFALS)
 
 -- | Construct a 'WFALSVotingCommittee' for a given epoch
 mkWFALSVotingCommittee ::

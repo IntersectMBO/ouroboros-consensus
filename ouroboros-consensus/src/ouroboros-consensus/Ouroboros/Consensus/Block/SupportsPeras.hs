@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasVotingCommittee
   , PerasVotingCommitteeError
   , PerasVotingCommitteeInput
+  , DefaultPerasEpochContext (..)
   , BlockSupportsPeras (..)
   , PerasVoteCompatibleWithVotingCommittee (..)
   , PerasCertCompatibleWithVotingCommittee (..)
@@ -51,6 +52,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , module Ouroboros.Consensus.Peras.Types
   ) where
 
+import Codec.Serialise (Serialise)
 import Control.Exception (assert)
 import Control.Exception.Base (Exception)
 import Data.Bifunctor (bimap)
@@ -104,6 +106,19 @@ type PerasVotingCommitteeInput blk =
     (PerasCrypto blk)
     (PerasVotingCommitteeScheme blk)
 
+-- | Default epoch context for Peras
+data DefaultPerasEpochContext blk
+  = DefaultPerasEpochContext
+  { dpecCommittee :: PerasVotingCommittee blk
+  , dpecParams :: PerasParams blk
+  }
+
+deriving instance Show (PerasVotingCommittee blk) => Show (DefaultPerasEpochContext blk)
+deriving instance Eq (PerasVotingCommittee blk) => Eq (DefaultPerasEpochContext blk)
+deriving instance NoThunks (PerasVotingCommittee blk) => NoThunks (DefaultPerasEpochContext blk)
+deriving instance Serialise (PerasVotingCommittee blk) => Serialise (DefaultPerasEpochContext blk)
+deriving instance Generic (DefaultPerasEpochContext blk)
+
 -- * BlockSupportsPeras class
 
 -- TODO: Add CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk) as a superclass constraint of 'BlockSupportsPeras'
@@ -139,8 +154,20 @@ class
   , NoThunks (PerasError blk)
   , IsPerasError (PerasError blk) blk
   , Exception (PerasError blk)
+  , -- PerasVotingCommittee constraints
+    Typeable (PerasVotingCommittee blk)
+  , Show (PerasVotingCommittee blk)
+  , Eq (PerasVotingCommittee blk)
+  , NoThunks (PerasVotingCommittee blk)
+  , -- PerasEpochContext constraints
+    Typeable (PerasEpochContext blk)
+  , Show (PerasEpochContext blk)
+  , Eq (PerasEpochContext blk)
+  , NoThunks (PerasEpochContext blk)
   , -- Compatiblity with committee/crypto
-    CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
+    Typeable (PerasCrypto blk)
+  , Typeable (PerasVotingCommitteeScheme blk)
+  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
   , ElectionId (PerasCrypto blk) ~ PerasRoundNo
   , VoteCandidate (PerasCrypto blk) ~ BoostedBlock (PerasVote blk)
   , VoteCandidate (PerasCrypto blk) ~ BoostedBlock (PerasCert blk)
@@ -179,14 +206,14 @@ class
   type PerasVotingCommitteeScheme blk = VoidPerasVotingCommitteeScheme
 
   type PerasEpochContext blk = (context :: Type) | context -> blk
-  type PerasEpochContext blk = (PerasVotingCommittee blk, PerasParams blk)
+  type PerasEpochContext blk = DefaultPerasEpochContext blk
 
   pecPerasParams :: PerasEpochContext blk -> PerasParams blk
   default pecPerasParams ::
-    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams blk) =>
+    PerasEpochContext blk ~ DefaultPerasEpochContext blk =>
     PerasEpochContext blk ->
     PerasParams blk
-  pecPerasParams (_committee, params) = params
+  pecPerasParams = dpecParams
 
   forgePerasVoteIfEligible ::
     PerasEpochContext blk ->
@@ -196,14 +223,15 @@ class
     Point blk ->
     Either (PerasError blk) (Maybe (ValidatedPerasVote blk))
   default forgePerasVoteIfEligible ::
-    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams blk) =>
+    PerasEpochContext blk ~ DefaultPerasEpochContext blk =>
     PerasEpochContext blk ->
     PoolId ->
     PrivateKey (PerasCrypto blk) ->
     PerasRoundNo ->
     Point blk ->
     Either (PerasError blk) (Maybe (ValidatedPerasVote blk))
-  forgePerasVoteIfEligible (committee, _params) ourId ourPrivateKey roundNo point = do
+  forgePerasVoteIfEligible context ourId ourPrivateKey roundNo point = do
+    let committee = dpecCommittee context
     mWitness <-
       bimap injectVotingCommitteeError id $
         Committee.checkShouldVote committee ourId ourPrivateKey roundNo
@@ -224,11 +252,12 @@ class
     PerasVote blk ->
     Either (PerasError blk) (ValidatedPerasVote blk)
   default verifyPerasVote ::
-    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams blk) =>
+    PerasEpochContext blk ~ DefaultPerasEpochContext blk =>
     PerasEpochContext blk ->
     PerasVote blk ->
     Either (PerasError blk) (ValidatedPerasVote blk)
-  verifyPerasVote (committee, _params) vote = do
+  verifyPerasVote context vote = do
+    let committee = dpecCommittee context
     -- NOTE: checking that the voted point is not from the future w.r.t. the
     -- starting slot of the 'PerasRoundNo' will have to be done at the HFC level
     -- since here we don't have 'PerasRoundNo' -> 'SlotNo' resolution device.
@@ -250,11 +279,12 @@ class
     PerasVoteCollectionWithQuorum blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
   default forgePerasCert ::
-    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams blk) =>
+    PerasEpochContext blk ~ DefaultPerasEpochContext blk =>
     PerasEpochContext blk ->
     PerasVoteCollectionWithQuorum blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
-  forgePerasCert (_committee, params) voteCollection = do
+  forgePerasCert context voteCollection = do
+    let params = dpecParams context
     abstractVoteCollection <-
       bimap injectConversionError id $
         toUniqueVotesWithSameTarget voteCollection
@@ -275,11 +305,13 @@ class
     PerasCert blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
   default verifyPerasCert ::
-    PerasEpochContext blk ~ (PerasVotingCommittee blk, PerasParams blk) =>
+    PerasEpochContext blk ~ DefaultPerasEpochContext blk =>
     PerasEpochContext blk ->
     PerasCert blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
-  verifyPerasCert (committee, params) cert = do
+  verifyPerasCert context cert = do
+    let committee = dpecCommittee context
+    let params = dpecParams context
     -- NOTE: checking that the voted point is not from the future w.r.t. the
     -- starting slot of the 'PerasRoundNo' will have to be done at the HFC level
     -- since here we don't have 'PerasRoundNo' -> 'SlotNo' resolution device.
@@ -431,6 +463,12 @@ instance CryptoSupportsVotingCommittee (VoidPerasCrypto blk) VoidPerasVotingComm
   verifyCert (VoidPerasVotingCommittee void) _ = absurd void
   voteTarget (Vote (VoidPerasVote void)) = absurd void
   compareVotesById (Vote (VoidPerasVote void)) _ = absurd void
+
+deriving instance Show (VotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme)
+deriving instance Eq (VotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme)
+deriving instance NoThunks (VotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme)
+deriving instance Serialise (VotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme)
+deriving instance Generic (VotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme)
 
 instance
   PerasVoteCompatibleWithVotingCommittee

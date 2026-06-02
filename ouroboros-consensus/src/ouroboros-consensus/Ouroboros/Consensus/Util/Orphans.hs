@@ -13,10 +13,13 @@ import Cardano.Binary (fromCBOR, toCBOR)
 import Cardano.Crypto.DSIGN.Class
 import Cardano.Crypto.DSIGN.Mock (MockDSIGN)
 import Cardano.Crypto.Hash (Hash, HashAlgorithm)
+import Cardano.Ledger.BaseTypes (Nonce)
 import Cardano.Ledger.Genesis (NoGenesis (..))
 import Codec.CBOR.Decoding (Decoder)
 import Codec.Serialise (Serialise (..))
 import Control.Tracer (Tracer)
+import Data.Array (Array)
+import qualified Data.Array as Array
 import Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
 import Data.Map.NonEmpty (NEMap)
@@ -53,6 +56,10 @@ instance (HashAlgorithm h, Typeable a) => Serialise (Hash h a) where
 instance Serialise (VerKeyDSIGN MockDSIGN) where
   encode = encodeVerKeyDSIGN
   decode = decodeVerKeyDSIGN
+
+instance Serialise Nonce where
+  encode = toCBOR
+  decode = fromCBOR
 
 {-------------------------------------------------------------------------------
   NoThunks
@@ -100,6 +107,10 @@ instance (NoThunks k, NoThunks v) => NoThunks (NEMap k v) where
 instance NoThunks v => NoThunks (NESet v) where
   showTypeOf _ = "NESet"
   wNoThunks ctxt = wNoThunks ctxt . NESet.toSet
+
+instance NoThunks a => NoThunks (Array i a) where
+  showTypeOf _ = "Array"
+  wNoThunks ctxt = wNoThunks ctxt . Array.elems
 
 instance NoThunks StdGen where
   showTypeOf _ = "StdGen"

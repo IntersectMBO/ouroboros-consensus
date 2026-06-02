@@ -26,6 +26,7 @@ module Ouroboros.Consensus.Peras.Params
   )
 where
 
+import Codec.Serialise (Serialise)
 import Data.Semigroup (Sum (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -44,7 +45,7 @@ newtype PerasIgnoranceRounds
   = PerasIgnoranceRounds {unPerasIgnoranceRounds :: Word64}
   deriving Show via Quiet PerasIgnoranceRounds
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
 
 -- | Minimum number of rounds to wait before voting again after a cooldown
 -- period starts.
@@ -52,7 +53,7 @@ newtype PerasCooldownRounds
   = PerasCooldownRounds {unPerasCooldownRounds :: Word64}
   deriving Show via Quiet PerasCooldownRounds
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
 
 -- | Minimum age in slots of a block before it can be voted for in order to get
 -- a boost.
@@ -60,14 +61,14 @@ newtype PerasBlockMinSlots
   = PerasBlockMinSlots {unPerasBlockMinSlots :: Word64}
   deriving Show via Quiet PerasBlockMinSlots
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
 
 -- | Maximum age for a certificate to be included in a block, in rounds.
 newtype PerasCertMaxRounds
   = PerasCertMaxRounds {unPerasCertMaxRounds :: Word64}
   deriving Show via Quiet PerasCertMaxRounds
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
 
 -- | Maximum number of slots to wait for after the start of a round to consider
 -- a certificate valid for voting.
@@ -75,21 +76,21 @@ newtype PerasCertArrivalThreshold
   = PerasCertArrivalThreshold {unPerasCertArrivalThreshold :: Word64}
   deriving Show via Quiet PerasCertArrivalThreshold
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
 
 -- | Length of a Peras round in slots.
 newtype PerasRoundLength
   = PerasRoundLength {unPerasRoundLength :: Word64}
   deriving Show via Quiet PerasRoundLength
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
 
 -- | Weight assigned to a block when boosted by a Peras certificate.
 newtype PerasWeight
   = PerasWeight {unPerasWeight :: Word64}
   deriving Show via Quiet PerasWeight
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
 
 deriving via Sum Word64 instance Semigroup PerasWeight
 deriving via Sum Word64 instance Monoid PerasWeight
@@ -99,7 +100,7 @@ newtype PerasQuorumWeightThreshold
   = PerasQuorumWeightThreshold {unPerasQuorumWeightThreshold :: Rational}
   deriving Show via Quiet PerasQuorumWeightThreshold
   deriving stock Generic
-  deriving newtype (Eq, Ord, NoThunks, Condense)
+  deriving newtype (Eq, Ord, NoThunks, Condense, Serialise)
 
 -- | Safety margin needed on top of the quorum vote weight threshold.
 --
@@ -110,7 +111,7 @@ newtype PerasQuorumWeightThresholdSafetyMargin
   = PerasQuorumWeightThresholdSafetyMargin {unPerasQuorumWeightThresholdSafetyMargin :: Rational}
   deriving Show via Quiet PerasQuorumWeightThresholdSafetyMargin
   deriving stock Generic
-  deriving newtype (Eq, Ord, NoThunks, Condense)
+  deriving newtype (Eq, Ord, NoThunks, Condense, Serialise)
 
 {-------------------------------------------------------------------------------
   Protocol parameters bundle
@@ -134,7 +135,7 @@ data PerasParams blk = PerasParams
   , perasQuorumWeightThresholdSafetyMargin :: !PerasQuorumWeightThresholdSafetyMargin
   , perasTargetCommitteeSize :: !Committee.TargetCommitteeSize
   }
-  deriving (Show, Eq, Generic, NoThunks)
+  deriving (Show, Eq, Generic, NoThunks, Serialise)
 
 -- | Instantiate default Peras protocol parameters.
 --

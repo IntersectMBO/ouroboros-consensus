@@ -221,6 +221,9 @@ oracularLedgerDB p =
           { TB.lastAppliedPoint = p
           , TB.payloadDependentState = TB.EmptyPLDS
           }
+    , Extended.perasEpochContextResolver =
+        -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+        undefined
     }
 
 -- | A convenient fact about 'TB.TestBlock'

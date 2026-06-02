@@ -24,6 +24,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.TxSeq
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver)
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
@@ -66,6 +67,7 @@ instance
   ( ToExpr (LedgerState blk EmptyMK)
   , ToExpr (ChainDepState (BlockProtocol blk))
   , ToExpr (TipInfo blk)
+  , ToExpr (PerasEpochContextResolver blk)
   ) =>
   ToExpr (ExtLedgerState blk EmptyMK)
 
@@ -139,6 +141,9 @@ instance ToExpr PerasSeatIndex where toExpr = defaultExprViaShow
 
 instance ToExpr (HeaderHash blk) => ToExpr (MockPerasVote blk)
 instance ToExpr (HeaderHash blk) => ToExpr (MockPerasCert blk)
+
+instance Show (PerasEpochContext blk) => ToExpr (PerasEpochContextResolver blk) where
+  toExpr = defaultExprViaShow
 
 {-------------------------------------------------------------------------------
   si-timers

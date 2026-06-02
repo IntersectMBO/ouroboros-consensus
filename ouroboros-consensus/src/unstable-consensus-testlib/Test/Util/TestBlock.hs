@@ -645,6 +645,8 @@ testInitExtLedgerWithState st =
   ExtLedgerState
     { ledgerState = testInitLedgerWithState st
     , headerState = genesisHeaderState ()
+    , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+      perasEpochContextResolver = undefined
     }
 
 data TestBlockLedgerConfig = TestBlockLedgerConfig
@@ -1002,8 +1004,8 @@ instance Serialise (AnnTip (TestBlockWith ptype)) where
   decode = defaultDecodeAnnTip decode
 
 instance PayloadSemantics ptype => Serialise (ExtLedgerState (TestBlockWith ptype) EmptyMK) where
-  encode = encodeExtLedgerState encode encode encode
-  decode = decodeExtLedgerState decode decode decode
+  encode = encodeExtLedgerState encode encode encode encode
+  decode = decodeExtLedgerState decode decode decode decode
 
 instance Serialise (RealPoint (TestBlockWith ptype)) where
   encode = encodeRealPoint encode

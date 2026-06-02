@@ -108,6 +108,9 @@ protocolInfoBinary
                     initHardForkState $
                       WrapChainDepState $
                         headerStateChainDep initHeaderState1
+              , perasEpochContextResolver =
+                  -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+                  undefined
               }
         }
     , \tr -> alignWith alignBlockForging <$> blockForging1 tr <*> blockForging2 tr

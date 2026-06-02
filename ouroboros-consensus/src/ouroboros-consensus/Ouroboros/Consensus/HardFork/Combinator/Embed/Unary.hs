@@ -68,6 +68,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
@@ -356,6 +357,7 @@ instance Isomorphic (Flip ExtLedgerState mk) where
       ExtLedgerState
         { ledgerState = unFlip $ project $ Flip ledgerState
         , headerState = project headerState
+        , perasEpochContextResolver = project perasEpochContextResolver
         }
 
   inject (Flip ExtLedgerState{..}) =
@@ -363,6 +365,7 @@ instance Isomorphic (Flip ExtLedgerState mk) where
       ExtLedgerState
         { ledgerState = unFlip $ inject $ Flip ledgerState
         , headerState = inject headerState
+        , perasEpochContextResolver = inject perasEpochContextResolver
         }
 
 instance Isomorphic AnnTip where
@@ -546,6 +549,11 @@ instance Isomorphic ProtocolInfo where
       { pInfoConfig = inject pInfoConfig
       , pInfoInitLedger = unFlip $ inject $ Flip pInfoInitLedger
       }
+
+-- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+instance Isomorphic PerasEpochContextResolver where
+  project = undefined
+  inject = undefined
 
 {-------------------------------------------------------------------------------
   Types that require take advantage of the fact that we have a single era

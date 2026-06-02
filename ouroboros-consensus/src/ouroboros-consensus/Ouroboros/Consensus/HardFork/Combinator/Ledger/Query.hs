@@ -217,7 +217,7 @@ instance
   answerPureBlockQuery
     (ExtLedgerCfg cfg)
     query
-    ext@(ExtLedgerState st@(HardForkLedgerState hardForkState) _) =
+    ext@(ExtLedgerState st@(HardForkLedgerState hardForkState) _ _) =
       case query of
         QueryIfCurrent queryIfCurrent ->
           interpretQueryIfCurrent
@@ -294,12 +294,15 @@ answerBlockQueryHelper
 distribExtLedgerState ::
   All SingleEraBlock xs =>
   ExtLedgerState (HardForkBlock xs) mk -> NS (Flip ExtLedgerState mk) xs
-distribExtLedgerState (ExtLedgerState ledgerState headerState) =
-  hmap (\(Pair hst lst) -> Flip $ ExtLedgerState (unFlip lst) hst) $
+distribExtLedgerState (ExtLedgerState ledgerState headerState perasResolver) =
+  hmap (\(Pair hst lst) -> Flip $ ExtLedgerState (unFlip lst) hst perasResolver') $
     mustMatchNS
       "HeaderState"
       (distribHeaderState headerState)
       (State.tip (hardForkLedgerStatePerEra ledgerState))
+ where
+  -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+  perasResolver' = undefined
 
 -- | Precondition: the 'headerStateTip' and 'headerStateChainDep' should be from
 -- the same era. In practice, this is _always_ the case, unless the
