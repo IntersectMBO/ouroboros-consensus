@@ -56,7 +56,7 @@ tests =
     ]
 
 perasTestParams :: PerasParams blk
-perasTestParams = mkPerasParams
+perasTestParams = defaultPerasParams
 
 prop_qd :: Actions Model -> Property
 prop_qd actions = QC.monadic f $ property () <$ runActions actions

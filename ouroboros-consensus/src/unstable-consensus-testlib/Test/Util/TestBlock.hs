@@ -148,6 +148,7 @@ import Ouroboros.Consensus.Peras.Cert.Mock
 import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCommittee, MockPerasCrypto)
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
+import Ouroboros.Consensus.Peras.State.Mock (ledgerStateHeaderStateMkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Peras.Vote.Mock
   ( MockPerasVote (..)
   )
@@ -703,6 +704,12 @@ instance PayloadSemantics ptype => LedgerSupportsProtocol (TestBlockWith ptype) 
     constantForecastInRange (strictMaybeToMaybe (tblcForecastRange cfg)) () (getTipSlot state)
 
 instance LedgerSupportsPeras (TestBlockWith ptype)
+instance Typeable ptype => LedgerStateHeaderStateSupportsPerasVoting (TestBlockWith ptype) where
+  -- TODO: this will blow up if we actually try to use it
+  -- Potential solutions:
+  -- 1. have an extra type parameter indicating if Peras support is expected for this instance of TestBlock, and choose between mock/void crypto depending on that
+  -- 2. extend LedgerState for 'TestBlock' to provide a non-default instance of 'LedgerSupportsPeras', i.e. return a non-empty stake distribution
+  ledgerStateHeaderStateMkPerasVotingCommitteeInput = ledgerStateHeaderStateMkMockPerasVotingCommitteeInput
 
 {-------------------------------------------------------------------------------
   BlockSupportsPeras

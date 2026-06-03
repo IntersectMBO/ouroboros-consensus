@@ -1,5 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.Protocol.ModChainSel
@@ -9,7 +11,7 @@ module Ouroboros.Consensus.Protocol.ModChainSel
   , ConsensusConfig (..)
   ) where
 
-import Data.Typeable (Typeable)
+import Data.Typeable (Proxy (..), Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Protocol.Abstract
@@ -20,6 +22,9 @@ newtype instance ConsensusConfig (ModChainSel p t) = McsConsensusConfig
   { mcsConfigP :: ConsensusConfig p
   }
   deriving Generic
+
+instance ChainDepStateSupportsPeras p => ChainDepStateSupportsPeras (ModChainSel p t) where
+  getEpochNonce (_ :: proxy (ModChainSel p t)) = getEpochNonce (Proxy @p)
 
 instance
   ( ConsensusProtocol p
