@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -24,6 +25,9 @@ import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Mock.Protocol.Praos
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Peras.Context
+  ( LedgerStateHeaderStateSupportsPerasVoting (ledgerStateHeaderStateMkPerasEpochContextResolver)
+  )
 import Ouroboros.Consensus.Util.IOLike
 
 type MockPraosBlock = SimplePraosBlock SimpleMockCrypto PraosMockCrypto
@@ -56,12 +60,14 @@ protocolInfoPraos numCoreNodes nid params eraParams eta0 evolvingStakeDist =
           , topLevelConfigCheckpoints = emptyCheckpointsMap
           }
     , pInfoInitLedger =
-        ExtLedgerState
-          { ledgerState = genesisSimpleLedgerState addrDist
-          , headerState = genesisHeaderState (PraosChainDepState [])
-          , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-            perasEpochContextResolver = undefined
-          }
+        let ledgerState = genesisSimpleLedgerState addrDist
+            headerState = genesisHeaderState (PraosChainDepState [])
+            perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+         in ExtLedgerState
+              { ledgerState
+              , headerState
+              , perasEpochContextResolver
+              }
     }
  where
   signKeyVRF :: CoreNodeId -> SignKeyVRF MockVRF

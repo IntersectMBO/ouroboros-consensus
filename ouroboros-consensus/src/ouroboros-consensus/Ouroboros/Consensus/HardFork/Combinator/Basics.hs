@@ -51,9 +51,14 @@ import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   )
-import Ouroboros.Consensus.Committee.WFALS (WFALS)
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Combinator.Abstract
+import Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork
+  ( CanHardFork
+  )
+import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
+  ( SingleEraBlock
+  , proxySingle
+  )
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import qualified Ouroboros.Consensus.HardFork.Combinator.State.Infra as State
@@ -66,6 +71,7 @@ import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Voting.V1 as V1
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -290,9 +296,9 @@ instance
   type PerasCert (HardForkBlock xs) = V1.PerasCert (HardForkBlock xs)
   type PerasError (HardForkBlock xs) = V1.PerasError (HardForkBlock xs)
   type PerasCrypto (HardForkBlock xs) = BLS.PerasBLSCrypto
-  type PerasVotingCommitteeScheme (HardForkBlock xs) = WFALS
+  type PerasVotingCommitteeScheme (HardForkBlock xs) = V1.PerasVotingCommitteeScheme
 
-  -- TODO: extract actual Peras certificates from blocks
+  -- [TODO EPOCH CONTEXT PLUMBING/EXTRACT CERT] extract actual Peras certificates from blocks
   getPerasCertInBlock _ = Nothing
 
 {-------------------------------------------------------------------------------

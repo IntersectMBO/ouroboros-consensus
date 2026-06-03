@@ -17,13 +17,20 @@ import Cardano.Ledger.Api
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   )
-import Ouroboros.Consensus.Committee.WFALS (WFALS)
-import Ouroboros.Consensus.Ledger.Extended (LedgerStateHeaderStateSupportsPerasVoting (..))
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
+import Ouroboros.Consensus.Peras.Context
+  ( LedgerStateHeaderStateSupportsPerasVoting (..)
+  , V1PerasEpochContextResolver
+  , unsafeBoundedPerasEpochContextWithMinMaxBounds
+  , v1AbsorbErrorInResolver
+  , v1InitPerasEpochContextResolver
+  , v1ResolveRoundNo
+  )
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
 import qualified Ouroboros.Consensus.Peras.State.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Voting.V1 as V1
 import Ouroboros.Consensus.Shelley.Ledger.Block
   ( ShelleyBlock
   , ShelleyCompatible
@@ -52,13 +59,47 @@ instance
   type PerasCert (ShelleyBlock proto DijkstraEra) = V1.PerasCert (ShelleyBlock proto DijkstraEra)
   type PerasError (ShelleyBlock proto DijkstraEra) = V1.PerasError (ShelleyBlock proto DijkstraEra)
   type PerasCrypto (ShelleyBlock proto DijkstraEra) = BLS.PerasBLSCrypto
-  type PerasVotingCommitteeScheme (ShelleyBlock proto DijkstraEra) = WFALS
+  type PerasVotingCommitteeScheme (ShelleyBlock proto DijkstraEra) = V1.PerasVotingCommitteeScheme
 
-  -- TODO: extract actual Peras certificates from blocks
+  -- [TODO EPOCH CONTEXT PLUMBING/EXTRACT CERT] extract actual Peras certificates from blocks
   getPerasCertInBlock _ = Nothing
+
+instance
+  ShelleyCompatible proto ShelleyEra =>
+  LedgerStateHeaderStateSupportsPerasVoting (ShelleyBlock proto ShelleyEra)
+instance
+  ShelleyCompatible proto AllegraEra =>
+  LedgerStateHeaderStateSupportsPerasVoting (ShelleyBlock proto AllegraEra)
+instance
+  ShelleyCompatible proto MaryEra =>
+  LedgerStateHeaderStateSupportsPerasVoting
+    ( ShelleyBlock
+        proto
+        MaryEra
+    )
+instance
+  ShelleyCompatible proto AlonzoEra =>
+  LedgerStateHeaderStateSupportsPerasVoting (ShelleyBlock proto AlonzoEra)
+instance
+  ShelleyCompatible proto BabbageEra =>
+  LedgerStateHeaderStateSupportsPerasVoting (ShelleyBlock proto BabbageEra)
+instance
+  ShelleyCompatible proto ConwayEra =>
+  LedgerStateHeaderStateSupportsPerasVoting (ShelleyBlock proto ConwayEra)
 
 instance
   ShelleyCompatible proto DijkstraEra =>
   LedgerStateHeaderStateSupportsPerasVoting (ShelleyBlock proto DijkstraEra)
   where
+  type
+    PerasEpochContextResolver (ShelleyBlock proto DijkstraEra) =
+      V1PerasEpochContextResolver (ShelleyBlock proto DijkstraEra)
+
   ledgerStateHeaderStateMkPerasVotingCommitteeInput = V1.ledgerStateHeaderStateMkPerasVotingCommitteeInput
+
+  ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState =
+    v1AbsorbErrorInResolver $
+      v1InitPerasEpochContextResolver . unsafeBoundedPerasEpochContextWithMinMaxBounds
+        <$> (ledgerStateHeaderStateMkPerasEpochContext ledgerState headerState)
+
+  resolveRoundNo = v1ResolveRoundNo

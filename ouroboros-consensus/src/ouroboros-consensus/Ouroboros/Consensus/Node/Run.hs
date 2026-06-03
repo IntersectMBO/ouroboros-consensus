@@ -36,6 +36,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
 import Ouroboros.Consensus.Storage.ChainDB
   ( ImmutableDbSerialiseConstraints
   , SerialiseDiskConstraints
@@ -112,6 +113,7 @@ class
   , BlockSupportsMetrics blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsSanityCheck blk
   , Show (CannotForge blk)
   , Show (ForgeStateInfo blk)

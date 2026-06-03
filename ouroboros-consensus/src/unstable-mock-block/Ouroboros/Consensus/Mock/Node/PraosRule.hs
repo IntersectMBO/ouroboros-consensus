@@ -1,3 +1,5 @@
+{-# LANGUAGE NamedFieldPuns #-}
+
 -- | Test the Praos chain selection rule but with explicit leader schedule
 module Ouroboros.Consensus.Mock.Node.PraosRule
   ( MockPraosRuleBlock
@@ -20,6 +22,7 @@ import Ouroboros.Consensus.Mock.Protocol.LeaderSchedule
 import Ouroboros.Consensus.Mock.Protocol.Praos
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Peras.Context (ledgerStateHeaderStateMkPerasEpochContextResolver)
 
 type MockPraosRuleBlock = SimplePraosRuleBlock SimpleMockCrypto
 
@@ -62,12 +65,14 @@ protocolInfoPraosRule
             , topLevelConfigCheckpoints = emptyCheckpointsMap
             }
       , pInfoInitLedger =
-          ExtLedgerState
-            { ledgerState = genesisSimpleLedgerState addrDist
-            , headerState = genesisHeaderState ()
-            , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-              perasEpochContextResolver = undefined
-            }
+          let ledgerState = genesisSimpleLedgerState addrDist
+              headerState = genesisHeaderState ()
+              perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+           in ExtLedgerState
+                { ledgerState
+                , headerState
+                , perasEpochContextResolver
+                }
       }
    where
     addrDist :: AddrDist

@@ -29,7 +29,11 @@ import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
   ( ObjectPoolReader (..)
   , ObjectPoolWriter (..)
   )
-import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle, verifyPerasVoteInContext)
+import Ouroboros.Consensus.Peras.Context
+  ( LedgerStateHeaderStateSupportsPerasVoting
+  , PerasEpochContextResolverHandle
+  , verifyPerasVoteInContext
+  )
 import Ouroboros.Consensus.Storage.ChainDB (getPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -107,6 +111,7 @@ makePerasVotePoolReaderFromChainDB chainDB =
 makePerasVotePoolWriterFromVoteDB ::
   ( IOLike m
   , BlockSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   ) =>
   SystemTime m ->
   PerasVoteDB m blk ->
@@ -137,6 +142,7 @@ makePerasVotePoolWriterFromVoteDB systemTime perasVoteDB resolverHandle =
 makePerasVotePoolWriterFromChainDB ::
   ( IOLike m
   , BlockSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   ) =>
   SystemTime m ->
   ChainDB m blk ->

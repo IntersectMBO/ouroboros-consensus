@@ -5,6 +5,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
@@ -32,40 +33,27 @@ module Ouroboros.Consensus.Ledger.Extended
     -- * Type family instances
   , LedgerTables (..)
   , Ticked (..)
-
-    -- * Peras support
-  , LedgerStateHeaderStateSupportsPerasVoting (..)
-
-    -- * Peras helpers for blocks using mock/void peras committee/crypto
-  , ledgerStateHeaderStateMkConstPerasEpochContextResolver
-  , ledgerStateHeaderStateMkConstPerasEpochContextResolverDischargeVoid
-  , ledgerStateHeaderStateMkConstPerasEpochContextResolverForMock
   ) where
 
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Control.DeepSeq (NFData)
 import Control.Monad.Except
-import Data.Bifunctor (Bifunctor (bimap))
 import Data.Functor ((<&>))
 import Data.Proxy
 import Data.Typeable
-import Data.Void (absurd)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee)
-import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Context
-  ( PerasEpochContextResolver (ConstPerasEpochContextResolver)
+  ( PerasEpochContextResolver
   , PerasEpochContextResolverHandle (..)
   )
-import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.IOLike (MonadSTM (STM))
@@ -102,13 +90,13 @@ getPerasEpochContextResolverHandle getLedgerStateSTM =
 deriving instance
   ( EqMK mk
   , LedgerSupportsProtocol blk
-  , Eq (PerasEpochContext blk)
+  , Eq (PerasEpochContextResolver blk)
   ) =>
   Eq (ExtLedgerState blk mk)
 deriving instance
   ( ShowMK mk
   , LedgerSupportsProtocol blk
-  , Show (PerasEpochContext blk)
+  , Show (PerasEpochContextResolver blk)
   ) =>
   Show (ExtLedgerState blk mk)
 
@@ -119,7 +107,7 @@ deriving instance
 instance
   ( NoThunksMK mk
   , LedgerSupportsProtocol blk
-  , NoThunks (PerasEpochContext blk)
+  , NoThunks (PerasEpochContextResolver blk)
   ) =>
   NoThunks (ExtLedgerState blk mk)
   where
@@ -180,9 +168,9 @@ instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState blk) where
 
 instance
   ( LedgerSupportsProtocol blk
-  , Show (PerasEpochContext blk)
-  , Eq (PerasEpochContext blk)
-  , NoThunks (PerasEpochContext blk)
+  , Show (PerasEpochContextResolver blk)
+  , Eq (PerasEpochContextResolver blk)
+  , NoThunks (PerasEpochContextResolver blk)
   ) =>
   IsLedger ExtLedgerState blk
   where
@@ -207,7 +195,7 @@ instance
 
     ledgerResult = applyChainTickLedgerResult evs lcfg slot ledger
 
-    -- [TODO EPOCH CONTEXT PLUMBING] We need to understand if this needs extra
+    -- [TODO EPOCH CONTEXT PLUMBING/UPDATING] We need to understand if this needs extra
     -- care or not.
     tickedPerasEpochContextResolver = perasResolver
 
@@ -245,16 +233,16 @@ applyHelper f opts cfg blk TickedExtLedgerState{..} = do
         ledgerView
         (getHeader blk)
         tickedHeaderState
-  -- [TODO EPOCH CONTEXT PLUMBING] We need to understand if this needs extra care or not.
+  -- [TODO EPOCH CONTEXT PLUMBING/UPDATING] We need to understand if this needs extra care or not.
   let perasResolver = tickedPerasEpochContextResolver
   pure $ (\l -> ExtLedgerState l hdr perasResolver) <$> castLedgerResult ledgerResult
 
 instance
   ( GetBlockKeySets blk
   , LedgerSupportsProtocol blk
-  , Show (PerasEpochContext blk)
-  , Eq (PerasEpochContext blk)
-  , NoThunks (PerasEpochContext blk)
+  , Show (PerasEpochContextResolver blk)
+  , Eq (PerasEpochContextResolver blk)
+  , NoThunks (PerasEpochContextResolver blk)
   ) =>
   ApplyBlock ExtLedgerState blk
   where
@@ -280,7 +268,7 @@ instance
         (getHeader blk)
         tickedHeaderState
 
-    -- [TODO EPOCH CONTEXT PLUMBING] We need to understand if this needs extra care or not.
+    -- [TODO EPOCH CONTEXT PLUMBING/UPDATING] We need to understand if this needs extra care or not.
     perasResolver = tickedPerasEpochContextResolver
 
 {-------------------------------------------------------------------------------
@@ -427,82 +415,3 @@ instance LedgerTablesAreTrivial LedgerState blk => LedgerTablesAreTrivial ExtLed
 instance SerializeTablesWithHint LedgerState blk => SerializeTablesWithHint ExtLedgerState blk where
   decodeTablesWithHint st = decodeTablesWithHint (ledgerState st)
   encodeTablesWithHint st tbs = encodeTablesWithHint (ledgerState st) tbs
-
--------------------------------------------------------------------------------
--- Peras support
--------------------------------------------------------------------------------
-
-class
-  ( BlockSupportsPeras blk
-  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk) -- TODO remove this constraint when it becomes a superclass constraint of 'BlockSupportsPeras'
-  ) =>
-  LedgerStateHeaderStateSupportsPerasVoting blk
-  where
-  ledgerStateHeaderStateMkPerasVotingCommitteeInput ::
-    PerasParams blk ->
-    LedgerState blk mk ->
-    HeaderState blk ->
-    Either
-      (PerasError blk)
-      (PerasVotingCommitteeInput blk)
-
-  ledgerStateHeaderStateMkPerasVotingCommittee ::
-    PerasParams blk ->
-    LedgerState blk mk ->
-    HeaderState blk ->
-    Either
-      (PerasError blk)
-      (PerasVotingCommittee blk)
-  ledgerStateHeaderStateMkPerasVotingCommittee perasParams ledgerState headerState = do
-    committeeInput <-
-      ledgerStateHeaderStateMkPerasVotingCommitteeInput perasParams ledgerState headerState
-    bimap injectVotingCommitteeError id $
-      Committee.mkVotingCommittee committeeInput
-
-  ledgerStateHeaderStateMkPerasEpochContext ::
-    LedgerState blk mk ->
-    HeaderState blk ->
-    Either
-      (PerasError blk)
-      (PerasEpochContext blk)
-  default ledgerStateHeaderStateMkPerasEpochContext ::
-    PerasEpochContext blk ~ DefaultPerasEpochContext blk =>
-    LedgerState blk mk ->
-    HeaderState blk ->
-    Either
-      (PerasError blk)
-      (PerasEpochContext blk)
-  ledgerStateHeaderStateMkPerasEpochContext ledgerState headerState = do
-    let dpecParams = defaultPerasParams
-    dpecCommittee <- ledgerStateHeaderStateMkPerasVotingCommittee dpecParams ledgerState headerState
-    pure $ DefaultPerasEpochContext{dpecParams, dpecCommittee}
-
-ledgerStateHeaderStateMkConstPerasEpochContextResolver ::
-  LedgerStateHeaderStateSupportsPerasVoting blk =>
-  LedgerState blk mk ->
-  HeaderState blk ->
-  Either
-    (PerasError blk)
-    (PerasEpochContextResolver blk)
-ledgerStateHeaderStateMkConstPerasEpochContextResolver ledgerState headerState =
-  ConstPerasEpochContextResolver <$> ledgerStateHeaderStateMkPerasEpochContext ledgerState headerState
-
-ledgerStateHeaderStateMkConstPerasEpochContextResolverForMock ::
-  (LedgerStateHeaderStateSupportsPerasVoting blk, PerasError blk ~ MockPerasError blk) =>
-  LedgerState blk mk ->
-  HeaderState blk ->
-  PerasEpochContextResolver blk
-ledgerStateHeaderStateMkConstPerasEpochContextResolverForMock ledgerState headerState =
-  case ledgerStateHeaderStateMkConstPerasEpochContextResolver ledgerState headerState of
-    Left mockErr -> error ("mkVotingCommittee for MockPerasCommittee should never fail, but got: " ++ show mockErr)
-    Right resolver -> resolver
-
-ledgerStateHeaderStateMkConstPerasEpochContextResolverDischargeVoid ::
-  (LedgerStateHeaderStateSupportsPerasVoting blk, PerasError blk ~ VoidPerasError blk) =>
-  LedgerState blk mk ->
-  HeaderState blk ->
-  PerasEpochContextResolver blk
-ledgerStateHeaderStateMkConstPerasEpochContextResolverDischargeVoid ledgerState headerState =
-  case ledgerStateHeaderStateMkConstPerasEpochContextResolver ledgerState headerState of
-    Left (VoidPerasError void) -> absurd void
-    Right resolver -> resolver

@@ -48,6 +48,9 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Peras.Context
+  ( LedgerStateHeaderStateSupportsPerasVoting (ledgerStateHeaderStateMkPerasEpochContextResolver)
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
@@ -311,9 +314,11 @@ protocolInfoTPraosShelleyBased
 
     initExtLedgerState :: ExtLedgerState (ShelleyBlock (TPraos c) era) ValuesMK
     initExtLedgerState =
-      ExtLedgerState
-        { ledgerState = initLedgerState
-        , headerState = genesisHeaderState initChainDepState
-        , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-          perasEpochContextResolver = undefined
-        }
+      let ledgerState = initLedgerState
+          headerState = genesisHeaderState initChainDepState
+          perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+       in ExtLedgerState
+            { ledgerState
+            , headerState
+            , perasEpochContextResolver
+            }

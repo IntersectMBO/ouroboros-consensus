@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -24,6 +25,9 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Peras.Context
+  ( LedgerStateHeaderStateSupportsPerasVoting (ledgerStateHeaderStateMkPerasEpochContextResolver)
+  )
 import Ouroboros.Consensus.Protocol.Abstract (protocolSecurityParam)
 import Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -99,19 +103,23 @@ protocolInfoBinary
               , topLevelConfigCheckpoints = emptyCheckpointsMap
               }
         , pInfoInitLedger =
-            ExtLedgerState
-              { ledgerState =
+            let ledgerState =
                   HardForkLedgerState $
                     initHardForkState (Flip initLedgerState1)
-              , headerState =
+                headerState =
                   genesisHeaderState $
                     initHardForkState $
                       WrapChainDepState $
                         headerStateChainDep initHeaderState1
-              , perasEpochContextResolver =
-                  -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-                  undefined
-              }
+                perasEpochContextResolver =
+                  ledgerStateHeaderStateMkPerasEpochContextResolver
+                    ledgerState
+                    headerState
+             in ExtLedgerState
+                  { ledgerState
+                  , headerState
+                  , perasEpochContextResolver
+                  }
         }
     , \tr -> alignWith alignBlockForging <$> blockForging1 tr <*> blockForging2 tr
     )

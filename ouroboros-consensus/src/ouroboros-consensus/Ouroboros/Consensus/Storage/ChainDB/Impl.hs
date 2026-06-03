@@ -60,6 +60,7 @@ import Ouroboros.Consensus.Ledger.Extended (getPerasEpochContextResolverHandle, 
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
@@ -101,6 +102,7 @@ withDB ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
   , InspectLedger blk
@@ -118,6 +120,7 @@ openDB ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
   , InspectLedger blk
@@ -134,6 +137,7 @@ openDBInternal ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
   , InspectLedger blk

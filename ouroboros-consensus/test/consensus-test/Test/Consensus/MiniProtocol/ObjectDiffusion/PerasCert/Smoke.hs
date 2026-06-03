@@ -22,7 +22,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
-import Ouroboros.Consensus.Peras.Context (constPerasEpochContextResolverHandle)
+import Ouroboros.Consensus.Peras.Context (mockPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( AddPerasCertResult (..)
   , PerasCertDB
@@ -95,7 +95,7 @@ prop_smoke =
                 , m [PerasCert TestBlock]
                 )
             mkPoolInterfaces = do
-              epochContextResolverHandle <- constPerasEpochContextResolverHandle epochContext
+              epochContextResolverHandle <- mockPerasEpochContextResolverHandle epochContext
 
               outboundPool <- newCertDB watValidatedCerts
               inboundPool <- newCertDB []

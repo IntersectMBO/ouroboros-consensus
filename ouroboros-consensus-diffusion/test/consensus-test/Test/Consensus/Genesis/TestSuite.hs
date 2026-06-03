@@ -47,6 +47,7 @@ import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
@@ -185,6 +186,7 @@ toTestTree ::
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
