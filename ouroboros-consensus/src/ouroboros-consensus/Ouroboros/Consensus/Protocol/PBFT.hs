@@ -286,6 +286,8 @@ data instance Ticked (PBftState c) = TickedPBftState
   , getTickedPBftState :: PBftState c
   }
 
+instance ChainDepStateSupportsPeras (PBft c)
+
 instance PBftCrypto c => ConsensusProtocol (PBft c) where
   type ValidationErr (PBft c) = PBftValidationErr c
   type ValidateView (PBft c) = PBftValidateView c

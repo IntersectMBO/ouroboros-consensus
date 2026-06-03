@@ -22,7 +22,7 @@ import Data.Containers.ListUtils (nubOrdOn)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Word (Word64)
-import Ouroboros.Consensus.Block.SupportsPeras (PerasParams, PerasRoundNo (..), mkPerasParams)
+import Ouroboros.Consensus.Block.SupportsPeras (PerasParams, PerasRoundNo (..), defaultPerasParams)
 import Ouroboros.Consensus.BlockchainTime (RelativeTime (..), SystemTime (..), WithArrivalTime (..))
 import Ouroboros.Consensus.Committee.Types (LedgerStake (..), PoolId)
 import Ouroboros.Consensus.Peras.Types (PerasSeatIndex (..))
@@ -34,7 +34,7 @@ import Test.Util.Committee (mkPoolId)
 import Test.Util.TestBlock (TestBlock, TestHash (..))
 
 genPerasParams :: Gen (PerasParams blk)
-genPerasParams = pure mkPerasParams
+genPerasParams = pure defaultPerasParams
 
 genRoundNo :: Gen PerasRoundNo
 genRoundNo = PerasRoundNo <$> arbitrary
