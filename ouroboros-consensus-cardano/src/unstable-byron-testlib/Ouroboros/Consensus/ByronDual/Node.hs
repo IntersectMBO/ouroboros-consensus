@@ -40,6 +40,7 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Context (ledgerStateHeaderStateMkPerasEpochContextResolver)
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
@@ -118,17 +119,19 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
             , topLevelConfigCheckpoints = emptyCheckpointsMap
             }
       , pInfoInitLedger =
-          ExtLedgerState
-            { ledgerState =
+          let ledgerState =
                 DualLedgerState
                   { dualLedgerStateMain = initConcreteState
                   , dualLedgerStateAux = initAbstractState
                   , dualLedgerStateBridge = initBridge
                   }
-            , headerState = genesisHeaderState S.empty
-            , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-              perasEpochContextResolver = undefined
-            }
+              headerState = genesisHeaderState S.empty
+              perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+           in ExtLedgerState
+                { ledgerState
+                , headerState
+                , perasEpochContextResolver
+                }
       }
   , return $ dualByronBlockForging . byronLeaderCredentials <$> credss
   )

@@ -115,6 +115,9 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
+import Ouroboros.Consensus.Peras.Context
+  ( LedgerStateHeaderStateSupportsPerasVoting (PerasEpochContextResolver)
+  )
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
@@ -193,6 +196,7 @@ deriving instance
 
 deriving instance
   ( LedgerSupportsProtocol blk
+  , Show (PerasEpochContextResolver blk)
   , Show (PerasVote blk)
   , Show (PerasCert blk)
   , Show blk
@@ -461,6 +465,7 @@ empty loe initLedger =
 addBlock ::
   forall blk.
   ( LedgerSupportsProtocol blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , IsPerasCert (PerasCert blk) blk
   ) =>
@@ -496,6 +501,7 @@ addPerasCert ::
   , LedgerTablesAreTrivial ExtLedgerState blk
   , Ord (PerasCert blk)
   , IsPerasCert (PerasCert blk) blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   ) =>
   TopLevelConfig blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
@@ -508,6 +514,7 @@ addPerasVote ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , Ord (PerasVote blk)
   , Ord (PerasCert blk)
   , PerasCert blk ~ MockPerasCert blk
@@ -532,6 +539,7 @@ chainSelection ::
   ( LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
   , IsPerasCert (PerasCert blk) blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   ) =>
   TopLevelConfig blk ->
   Model blk ->
@@ -661,6 +669,7 @@ chainSelection cfg m =
 addBlocks ::
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , IsPerasCert (PerasCert blk) blk
   ) =>
   TopLevelConfig blk ->
@@ -675,6 +684,7 @@ addBlockPromise ::
   ( LedgerSupportsProtocol blk
   , MonadSTM m
   , LedgerTablesAreTrivial ExtLedgerState blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , IsPerasCert (PerasCert blk) blk
   ) =>
   TopLevelConfig blk ->
@@ -699,6 +709,7 @@ updateLoE ::
   forall blk.
   ( LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , IsPerasCert (PerasCert blk) blk
   ) =>
   TopLevelConfig blk ->
@@ -899,7 +910,10 @@ data ValidatedChain blk
 -- 'invalid' of the given 'Model'.
 validate ::
   forall blk.
-  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial ExtLedgerState blk) =>
+  ( LedgerSupportsProtocol blk
+  , LedgerTablesAreTrivial ExtLedgerState blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
+  ) =>
   TopLevelConfig blk ->
   Model blk ->
   Chain blk ->
@@ -962,6 +976,7 @@ validChains ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , IsPerasCert (PerasCert blk) blk
   ) =>
   TopLevelConfig blk ->
@@ -1221,6 +1236,7 @@ wipeVolatileDB ::
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , IsPerasCert (PerasCert blk) blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   ) =>
   TopLevelConfig blk ->
   Model blk ->

@@ -145,7 +145,8 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Peras.Cert.Mock
   ( MockPerasCert (..)
   )
-import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCommittee, MockPerasCrypto)
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting (..), MockPerasEpochContextResolver, mockAbsorbErrorInResolver, mockPerasEpochContextResolver, mockResolveRoundNo)
+import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCrypto, MockPerasVotingCommitteeScheme)
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
 import Ouroboros.Consensus.Peras.State.Mock (ledgerStateHeaderStateMkMockPerasVotingCommitteeInput)
@@ -641,14 +642,17 @@ deriving anyclass instance
   NoThunks (Ticked LedgerState (TestBlockWith ptype) mk)
 
 testInitExtLedgerWithState ::
+  Typeable ptype =>
   PayloadDependentState ptype mk -> ExtLedgerState (TestBlockWith ptype) mk
 testInitExtLedgerWithState st =
-  ExtLedgerState
-    { ledgerState = testInitLedgerWithState st
-    , headerState = genesisHeaderState ()
-    , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-      perasEpochContextResolver = undefined
-    }
+  let ledgerState = testInitLedgerWithState st
+      headerState = genesisHeaderState ()
+      perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+   in ExtLedgerState
+        { ledgerState
+        , headerState
+        , perasEpochContextResolver
+        }
 
 data TestBlockLedgerConfig = TestBlockLedgerConfig
   { tblcHardForkParams :: !HardFork.EraParams
@@ -705,11 +709,17 @@ instance PayloadSemantics ptype => LedgerSupportsProtocol (TestBlockWith ptype) 
 
 instance LedgerSupportsPeras (TestBlockWith ptype)
 instance Typeable ptype => LedgerStateHeaderStateSupportsPerasVoting (TestBlockWith ptype) where
-  -- TODO: this will blow up if we actually try to use it
-  -- Potential solutions:
-  -- 1. have an extra type parameter indicating if Peras support is expected for this instance of TestBlock, and choose between mock/void crypto depending on that
-  -- 2. extend LedgerState for 'TestBlock' to provide a non-default instance of 'LedgerSupportsPeras', i.e. return a non-empty stake distribution
+  type
+    PerasEpochContextResolver (TestBlockWith ptype) =
+      MockPerasEpochContextResolver (TestBlockWith ptype)
+
   ledgerStateHeaderStateMkPerasVotingCommitteeInput = ledgerStateHeaderStateMkMockPerasVotingCommitteeInput
+
+  ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState =
+    mockAbsorbErrorInResolver $
+      mockPerasEpochContextResolver <$> ledgerStateHeaderStateMkPerasEpochContext ledgerState headerState
+
+  resolveRoundNo = mockResolveRoundNo
 
 {-------------------------------------------------------------------------------
   BlockSupportsPeras
@@ -722,12 +732,14 @@ instance
   BlockSupportsPeras (TestBlockWith ptype)
   where
   type PerasCrypto (TestBlockWith ptype) = MockPerasCrypto (TestBlockWith ptype)
-  type PerasVotingCommitteeScheme (TestBlockWith ptype) = MockPerasCommittee (TestBlockWith ptype)
+  type
+    PerasVotingCommitteeScheme (TestBlockWith ptype) =
+      MockPerasVotingCommitteeScheme (TestBlockWith ptype)
   type PerasVote (TestBlockWith ptype) = MockPerasVote (TestBlockWith ptype)
   type PerasCert (TestBlockWith ptype) = MockPerasCert (TestBlockWith ptype)
   type PerasError (TestBlockWith ptype) = MockPerasError (TestBlockWith ptype)
 
-  -- TODO: extract actual Peras certificates from blocks
+  -- No certs are stored in 'TestBlockWith'
   getPerasCertInBlock _ = Nothing
 
 {-------------------------------------------------------------------------------

@@ -16,7 +16,10 @@ import Ouroboros.Consensus.Committee.Types (LedgerStake (..), PoolId (..))
 import Ouroboros.Consensus.HardFork.Combinator.Basics (LedgerState)
 import Ouroboros.Consensus.HeaderValidation (HeaderState (..))
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
-import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCommittee, VotingCommitteeInput (..))
+import Ouroboros.Consensus.Peras.Crypto.Mock
+  ( MockPerasVotingCommitteeScheme
+  , VotingCommitteeInput (..)
+  )
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError (..))
 
 -- | NOTE: this function will return an error on an empty stake distr, which is what the default instance of 'LedgerSupportsPeras' returns.
@@ -26,7 +29,7 @@ ledgerStateHeaderStateMkMockPerasVotingCommitteeInput ::
   PerasParams blk ->
   LedgerState blk mk ->
   HeaderState blk ->
-  Either (MockPerasError blk) (VotingCommitteeInput crypto (MockPerasCommittee blk))
+  Either (MockPerasError blk) (VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk))
 ledgerStateHeaderStateMkMockPerasVotingCommitteeInput _perasParams ledgerState _headerState = do
   let PoolDistr{unPoolDistr} = getPoolDistr ledgerState
       stakeDistr = nonEmpty $ fmap (bimap PoolId (LedgerStake . individualPoolStake)) . Map.toList $ unPoolDistr

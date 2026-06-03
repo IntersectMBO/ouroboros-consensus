@@ -35,7 +35,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (..))
-import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle, resolveRoundNoWithHandle)
+import Ouroboros.Consensus.Peras.Context
 import Ouroboros.Consensus.Peras.Vote.Aggregation
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
 import Ouroboros.Consensus.Util.Args
@@ -184,6 +184,7 @@ createDB ::
   forall m blk.
   ( IOLike m
   , BlockSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   ) =>
   Complete PerasVoteDbArgs m blk ->
   m (PerasVoteDB m blk)
@@ -219,6 +220,7 @@ createDB args@PerasVoteDbArgs{pvdbaPerasEpochContextResolverHandle} = do
 implAddVote ::
   ( IOLike m
   , BlockSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   ) =>
   PerasEpochContextResolverHandle m blk ->
   PerasVoteDbEnv m blk ->

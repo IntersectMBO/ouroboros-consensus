@@ -46,6 +46,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
@@ -73,6 +74,7 @@ mkInitDb ::
   forall m blk backend.
   ( LedgerSupportsProtocol blk
   , HasHardForkHistory blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , Backend m backend blk
   , IOLike m
   ) =>

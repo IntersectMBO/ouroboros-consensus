@@ -32,6 +32,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Node as Node
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
 import Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
@@ -59,6 +60,7 @@ import Text.Printf (printf)
 openLedgerDB ::
   forall blk.
   ( LedgerSupportsProtocol blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , InspectLedger blk
   , HasHardForkHistory blk
   ) =>

@@ -68,6 +68,7 @@ import Ouroboros.Consensus.HardFork.Combinator
   ( HasPartialConsensusConfig
   )
 import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosTiebreakerView
@@ -126,6 +127,7 @@ class
   , Crypto (ProtoCrypto proto)
   , -- Peras constraints
     BlockSupportsPeras (ShelleyBlock proto era)
+  , LedgerStateHeaderStateSupportsPerasVoting (ShelleyBlock proto era)
   , Show (PerasEpochContext (ShelleyBlock proto era))
   , Eq (PerasEpochContext (ShelleyBlock proto era))
   , NoThunks (PerasEpochContext (ShelleyBlock proto era))

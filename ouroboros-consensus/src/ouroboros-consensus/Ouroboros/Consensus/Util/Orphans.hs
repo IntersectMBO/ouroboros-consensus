@@ -24,6 +24,7 @@ import Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
 import Data.Map.NonEmpty (NEMap)
 import qualified Data.Map.NonEmpty as NEMap
+import Data.Maybe.Strict (StrictMaybe, maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
 import Data.SOP.BasicFunctors
@@ -61,6 +62,10 @@ instance Serialise (VerKeyDSIGN MockDSIGN) where
 instance Serialise Nonce where
   encode = toCBOR
   decode = fromCBOR
+
+instance Serialise a => Serialise (StrictMaybe a) where
+  encode = encode . strictMaybeToMaybe
+  decode = maybeToStrictMaybe <$> decode
 
 {-------------------------------------------------------------------------------
   NoThunks

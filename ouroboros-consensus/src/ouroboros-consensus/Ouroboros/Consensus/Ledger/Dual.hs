@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -92,6 +93,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
@@ -1189,3 +1191,12 @@ instance
       , dualLedgerStateAux
       , dualLedgerStateBridge
       } = dls
+
+{-------------------------------------------------------------------------------
+  BlockSupportsPeras
+-------------------------------------------------------------------------------}
+
+-- NOTE: DualByron does not support Peras, so we can use the empty instance here.
+instance (StandardHash m, Typeable m, Typeable a) => BlockSupportsPeras (DualBlock m a)
+
+instance LedgerStateHeaderStateSupportsPerasVoting (DualBlock m a)

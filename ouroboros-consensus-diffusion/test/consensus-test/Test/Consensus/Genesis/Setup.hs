@@ -43,6 +43,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientException (..)
   )
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
@@ -161,6 +162,7 @@ runGenesisTest ::
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
@@ -224,6 +226,7 @@ runConformanceTest ::
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk

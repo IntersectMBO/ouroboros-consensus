@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -43,6 +44,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (ledgerStateHeaderStateMkPerasEpochContextResolver)
 import Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Common
@@ -225,11 +227,13 @@ fromShelleyLedgerExamples
         }
     chainDepState = TPraosState (NotOrigin 1) pleChainDepState
     extLedgerState =
-      ExtLedgerState
-        ledgerState
-        (genesisHeaderState chainDepState)
-        -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-        undefined
+      let headerState = genesisHeaderState chainDepState
+          perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+       in ExtLedgerState
+            { ledgerState
+            , headerState
+            , perasEpochContextResolver
+            }
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
 
@@ -366,11 +370,13 @@ fromShelleyLedgerExamplesPraos
       translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto)) $
         TPraosState (NotOrigin 1) pleChainDepState
     extLedgerState =
-      ExtLedgerState
-        ledgerState
-        (genesisHeaderState chainDepState)
-        -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-        undefined
+      let headerState = genesisHeaderState chainDepState
+          perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+       in ExtLedgerState
+            { ledgerState
+            , headerState
+            , perasEpochContextResolver
+            }
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
 

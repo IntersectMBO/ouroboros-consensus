@@ -243,6 +243,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import Ouroboros.Consensus.Storage.ImmutableDB.Stream
@@ -267,8 +268,9 @@ import System.FS.CRC
 -- instantiated with a @blk@.
 type LedgerDbSerialiseConstraints blk =
   ( Serialise (HeaderHash blk)
-  , Serialise (PerasEpochContext blk)
-  , Serialise (PerasEpochContext blk)
+  , Serialise (PerasEpochContextResolver blk)
+  , EncodeDisk blk (PerasEpochContextResolver blk)
+  , DecodeDisk blk (PerasEpochContextResolver blk)
   , EncodeDisk blk (LedgerState blk EmptyMK)
   , DecodeDisk blk (LedgerState blk EmptyMK)
   , EncodeDisk blk (AnnTip blk)

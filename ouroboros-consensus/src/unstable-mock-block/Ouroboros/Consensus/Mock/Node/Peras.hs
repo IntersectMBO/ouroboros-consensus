@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Mock.Node.Peras () where
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras (..))
 import Ouroboros.Consensus.Mock.Ledger.Block (SimpleBlock, SimpleCrypto)
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting (..))
 
 {-------------------------------------------------------------------------------
   BlockSupportsPeras
@@ -23,3 +24,7 @@ import Ouroboros.Consensus.Mock.Ledger.Block (SimpleBlock, SimpleCrypto)
 instance
   (SimpleCrypto c, Typeable ext) =>
   BlockSupportsPeras (SimpleBlock c ext)
+
+instance
+  (SimpleCrypto c, Typeable ext) =>
+  LedgerStateHeaderStateSupportsPerasVoting (SimpleBlock c ext)

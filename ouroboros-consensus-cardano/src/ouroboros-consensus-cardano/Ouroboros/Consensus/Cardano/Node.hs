@@ -91,6 +91,9 @@ import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Peras.Context
+  ( LedgerStateHeaderStateSupportsPerasVoting (ledgerStateHeaderStateMkPerasEpochContextResolver)
+  )
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
 import Ouroboros.Consensus.Protocol.Praos.Common
@@ -932,12 +935,14 @@ protocolInfoCardano paramsCardano
   -- testing/benchmarking).
   initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c) ValuesMK
   initExtLedgerStateCardano =
-    ExtLedgerState
-      { headerState = initHeaderState
-      , ledgerState = overShelleyBasedLedgerState initLedgerState
-      , -- [TODO EPOCH CONTEX PLUMBING] we need to fix this
-        perasEpochContextResolver = undefined
-      }
+    let ledgerState = overShelleyBasedLedgerState initLedgerState
+        headerState = initHeaderState
+        perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+     in ExtLedgerState
+          { ledgerState
+          , headerState
+          , perasEpochContextResolver
+          }
    where
     overShelleyBasedLedgerState (HardForkLedgerState st) =
       HardForkLedgerState $ hap (fn id :* registerAny) st
