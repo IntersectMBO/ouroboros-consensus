@@ -1,15 +1,22 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeApplications #-}
 
--- | Temporary hack for retrieving BLS public keys from a JSON file specified
--- in the environment variable 'PERAS_PUBLIC_KEY_FILE'.
+-- | Temporary hack for retrieving BLS keys from the environment.
+--
+-- * Our private key can be read directly from the value of the environment
+-- variable 'PERAS_PRIVATE_KEY'.
+--
+-- * Public keys from all nodes (including oneself) can be read from a JSON file
+-- specified in the environment variable 'PERAS_PUBLIC_KEY_FILE'.
+--
+-- NOTE: keys read using this module always have the "TESTNET" scope.
 --
 -- WARNING: this is a temporary hack for testing purposes, and should not be
 -- used under any circumstances in production. This will be replaced with proper
 -- on-chain key registration in the future.
 module Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
-  ( unsafeExtendPerasStakeDistrWithPublicKeysFromEnv
+  ( unsafePerasBLSPrivateKeyFromEnv
+  , unsafeExtendPerasStakeDistrWithPublicKeysFromEnv
   , unsafePerasBLSPublicKeysFromEnv
   ) where
 
@@ -20,9 +27,33 @@ import qualified Data.Map.Strict as Map
 import Data.String (IsString (..))
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
 import Ouroboros.Consensus.Committee.Types (LedgerStake (..), PoolId (..))
-import Ouroboros.Consensus.Peras.Crypto.BLS (PerasPublicKey (..))
+import Ouroboros.Consensus.Peras.Crypto.BLS (PerasPrivateKey (..), PerasPublicKey (..))
 import System.Environment (lookupEnv)
 import System.IO.Unsafe (unsafePerformIO)
+
+keyScope :: BLS.KeyScope
+keyScope = "TESTNET"
+
+-- | Read a private key from the environment variable 'PERAS_PRIVATE_KEY'
+unsafePerasBLSPrivateKeyFromEnv :: Either String PerasPrivateKey
+unsafePerasBLSPrivateKeyFromEnv =
+  unsafePerformIO $
+    lookupEnv envVar >>= \case
+      Nothing -> do
+        pure $ Left $ "Environment variable " <> envVar <> "not set."
+      Just rawKey -> do
+        pure $ decodeKey rawKey
+ where
+  envVar =
+    "PERAS_PRIVATE_KEY"
+
+  decodeKey key =
+    case BLS.rawDeserialisePrivateKey keyScope (fromString key) of
+      Nothing ->
+        Left $ "Invalid private key format: " <> key
+      Just sk ->
+        Right $ PerasPrivateKey sk
+{-# NOINLINE unsafePerasBLSPrivateKeyFromEnv #-}
 
 -- | Extend a given 'PoolDistr' with the corresponding BLS public keys for each
 -- pool retrieved from the JSON file specified in the environment variable
@@ -73,9 +104,6 @@ unsafePerasBLSPublicKeysFromEnv =
  where
   envVar =
     "PERAS_PUBLIC_KEY_FILE"
-
-  keyScope =
-    "TESTNET"
 
   decodeKey key =
     case BLS.rawDeserialisePublicKey keyScope (fromString key) of
