@@ -119,7 +119,6 @@ import LeiosDemoTypes
   ( EbAnnouncement (..)
   , LeiosPoint (..)
   , TxHash
-  , decodeLeiosCertInfo
   )
 import Lens.Micro
 import Lens.Micro.Extras (view)
@@ -1011,7 +1010,7 @@ instance
                     <> show ann
                     <> " at last-slot "
                     <> show (praosStateLastSlot praosSt)
-                    <> " absent. Cert payload bytes: "
+                    <> " absent; cert: "
                     <> show cert
               Just announcedEb ->
                 pure $
@@ -1037,20 +1036,9 @@ instance
    where
     Core.Block hdr body = shelleyBlockRaw blk
 
-  checkLeiosBlockResolvable leiosDb blk =
-    case body ^. leiosCertBlockBodyL of
-      SNothing -> pure Nothing
-      SJust cert ->
-        case decodeLeiosCertInfo cert of
-          Left err ->
-            error $
-              "checkLeiosBlockResolvable: malformed LeiosCert payload: "
-                <> show err
-          Right (point, size) -> do
-            mAnnouncedEb <- leiosDbQueryCompletedEbByPoint leiosDb point
-            pure $ case mAnnouncedEb of
-              Nothing -> Just (point, size)
-              Just _ -> Nothing
+  blockHasLeiosCert blk = case body ^. leiosCertBlockBodyL of
+    SNothing -> False
+    SJust _ -> True
    where
     Core.Block _ body = shelleyBlockRaw blk
 
@@ -1059,10 +1047,12 @@ instance
       SNothing -> Nothing
       SJust ann ->
         Just
-          MkLeiosPoint
-            { pointSlotNo = hbSlotNo annBody
-            , pointEbHash = ebAnnouncementHash ann
-            }
+          ( MkLeiosPoint
+              { pointSlotNo = hbSlotNo annBody
+              , pointEbHash = ebAnnouncementHash ann
+              }
+          , ebAnnouncementSize ann
+          )
    where
     annBody :: HeaderBody c
     Header{headerBody = annBody} = shelleyHeaderRaw hdr

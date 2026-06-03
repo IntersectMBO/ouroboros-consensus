@@ -55,12 +55,13 @@ source-repository-package
     cardano-diffusion
     network-mux
 
--- Points to ouroboros-ledger/ch1bo/leios-staging-area
+
+-- Points to ouroboros-ledger/leios-prototype
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: dff221b6915bd694f1b0a740d010b13e436bbe06
-  --sha256: sha256-QAk7lH9cKNxWxCMtwMGjvX2bW5tdT+cAdWkibLy6VOE=
+  tag: c47305fcf47bd77437b837d0dfb9cb4181bfbc77
+  --sha256: sha256-U9luV5wuSytDg4zbXZnyQo29Jn4fZ10GKI8Q/QTrYrU=
   subdir:
     libs/cardano-ledger-core
     eras/dijkstra/impl

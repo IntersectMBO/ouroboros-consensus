@@ -19,7 +19,6 @@ module LeiosDemoTypes (module LeiosDemoTypes) where
 
 import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR, enforceSize, serialize', toCBOR)
 import qualified Cardano.Crypto.Hash as Hash
-import qualified Cardano.Ledger.BaseTypes
 import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
 import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
 import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
@@ -146,14 +145,18 @@ encodeLeiosCertInfo point bytesSize =
       <> encode bytesSize
 
 -- | Inverse of 'encodeLeiosCertInfo': decode the @(LeiosPoint,
--- BytesSize)@ pair embedded in a 'LeiosCert.leiosCertPayload'. Returns
--- 'Left' with the deserialise error on a malformed payload.
+-- BytesSize)@ pair from a raw CBOR payload. Returns 'Left' with the
+-- deserialise error on malformed bytes.
+--
+-- (The deployed 'Cardano.Ledger.BaseTypes.LeiosCert' is the empty
+-- placeholder, so this isn't used by the hot-fix path; the (en|de)coder
+-- pair is kept as a utility for a follow-up that wants to ship the
+-- (point, size) on-chain.)
 decodeLeiosCertInfo ::
-  Cardano.Ledger.BaseTypes.LeiosCert ->
+  BS.ByteString ->
   Either DeserialiseFailure (LeiosPoint, BytesSize)
-decodeLeiosCertInfo cert =
-  case CBOR.deserialiseFromBytes go $
-    BSL.fromStrict (Cardano.Ledger.BaseTypes.leiosCertPayload cert) of
+decodeLeiosCertInfo bs =
+  case CBOR.deserialiseFromBytes go (BSL.fromStrict bs) of
     Left err -> Left err
     Right (_, x) -> Right x
  where

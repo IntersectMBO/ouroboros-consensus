@@ -569,33 +569,19 @@ class ResolveLeiosBlock blk where
     Monad m => LeiosDbConnection m -> LeiosPoint -> blk -> m (Maybe blk)
   resolveLeiosBlockHdr _ _ _ = return Nothing
 
-  -- | Closure-availability check for the CertRB staging area (issue #890).
+  -- | Whether this block's body carries a 'LeiosCert' (a CertRB).
   --
-  -- The Leios cert in the block body carries the certified EB point and
-  -- its expected on-the-wire body size as a CBOR payload (see
-  -- 'LeiosCert.leiosCertPayload' / 'encodeLeiosCertInfo'); this method
-  -- decodes them and asks the local 'LeiosDb' whether the closure is
-  -- present.
-  --
-  -- Returns @Just (point, size)@ when the block carries a Leios cert
-  -- and the referenced EB closure is *not* in the local 'LeiosDb' —
-  -- the caller can then park the CertRB (along with the size, which
-  -- the fetch logic needs to validate the eventual response) in a
-  -- staging area. Returns 'Nothing' when the block has no Leios cert,
-  -- or when the closure is already present (so the block is safe to
-  -- admit to ChainSel).
-  checkLeiosBlockResolvable ::
-    Monad m =>
-    LeiosDbConnection m ->
-    blk ->
-    m (Maybe (LeiosPoint, BytesSize))
-  checkLeiosBlockResolvable _ _ = return Nothing
+  -- The CertRB staging area gate inspects this cheaply before going on
+  -- to compute the announced EB point and querying the 'LeiosDb'.
+  blockHasLeiosCert :: blk -> Bool
+  blockHasLeiosCert _ = False
 
-  -- | The EB point announced by this header, if any. 'Nothing' for headers
-  -- in eras that don't carry Leios announcements. Lets the chain-sync
-  -- server hold only the minimum needed to splice the next cert block, and
-  -- skip decoding entirely when the announcer didn't announce.
-  headerLeiosAnnouncement :: Header blk -> Maybe LeiosPoint
+  -- | The EB announcement carried by this header (point + on-the-wire
+  -- body size), if any. 'Nothing' for headers in eras that don't carry
+  -- Leios announcements. The CertRB staging gate reads this off the
+  -- parent header on the current chain to learn which EB the new
+  -- block's cert refers to.
+  headerLeiosAnnouncement :: Header blk -> Maybe (LeiosPoint, BytesSize)
   headerLeiosAnnouncement _ = Nothing
 
 {-------------------------------------------------------------------------------

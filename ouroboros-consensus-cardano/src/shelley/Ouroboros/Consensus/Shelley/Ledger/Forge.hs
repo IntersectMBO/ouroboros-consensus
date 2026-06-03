@@ -38,7 +38,6 @@ import LeiosDemoTypes
   , ForgedLeiosEb (..)
   , LeiosPoint (..)
   , TraceLeiosKernel (..)
-  , encodeLeiosCertInfo
   , forgeLeiosEb
   , leiosEbBytesSize
   , minCertificationGap
@@ -159,7 +158,6 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                     { pointSlotNo = prevSlotNo
                     , pointEbHash = ebAnnouncementHash ann
                     }
-                ebSize = ebAnnouncementSize ann
             mClosure <- leiosDbQueryCompletedEbByPoint fbLeiosDb ebPoint
             case mClosure of
               Nothing -> do
@@ -179,12 +177,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                     traceWith fbLeiosTracer $
                       MkTraceLeiosKernel $
                         "Certifying EB at " <> show ebPoint
-                    pure
-                      ( SJust
-                          ( LeiosCert
-                              (encodeLeiosCertInfo ebPoint ebSize)
-                          )
-                      )
+                    pure (SJust LeiosCert)
 
   -- Produce an EB from fbEbTxs, store it into fbLeiosDb, and return the
   -- announcement to embed in the header. An honest forger only emits an

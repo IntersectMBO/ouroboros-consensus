@@ -38,6 +38,7 @@ import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import Cardano.Network.PeerSelection.LocalRootPeers
   ( OutboundConnectionsState (..)
   )
+import Control.Applicative ((<|>))
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
@@ -56,6 +57,7 @@ import Data.Foldable (traverse_)
 import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
+import Data.List (find)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
@@ -67,7 +69,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Void (Void)
 import LeiosDemoDb
-  ( LeiosDbConnection
+  ( LeiosDbConnection (..)
   , LeiosDbHandle (subscribeEbNotifications)
   , LeiosEbNotification (..)
   , withLeiosDb
@@ -75,7 +77,8 @@ import LeiosDemoDb
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
-  ( LeiosOutstanding
+  ( BytesSize
+  , LeiosOutstanding
   , LeiosPeerVars
   , LeiosPoint
   , LeiosVote (..)
@@ -765,7 +768,6 @@ initInternalState
         chainDbView =
           wrapChainDbViewForLeiosStaging
             (leiosKernelTracer tracers)
-            chainDB
             leiosDB
             leiosCertRbStaging
             varChainSyncHandles
@@ -806,13 +808,11 @@ toConsensusMode = \case
 wrapChainDbViewForLeiosStaging ::
   forall m blk addrNTN.
   ( IOLike m
-  , HasHeader blk
-  , HasHeader (Header blk)
+  , GetPrevHash blk
   , Ord addrNTN
   , ResolveLeiosBlock blk
   ) =>
   Tracer m TraceLeiosKernel ->
-  ChainDB m blk ->
   LeiosDbHandle m ->
   LeiosStagingArea m (Leios.PeerId (ConnectionId addrNTN)) blk ->
   ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk ->
@@ -823,7 +823,6 @@ wrapChainDbViewForLeiosStaging ::
   BlockFetchClientInterface.ChainDbView m blk
 wrapChainDbViewForLeiosStaging
   tracer
-  chainDB
   leiosDbHandle
   stagingArea
   varChainSyncHandles
@@ -837,35 +836,81 @@ wrapChainDbViewForLeiosStaging
           pure $ \p -> baseFetched p || staged p
       }
    where
-    _ = chainDB
-    stagingAwareAddBlock punish blk = do
-      mMissing <-
-        withLeiosDb leiosDbHandle $ \conn ->
-          checkLeiosBlockResolvable conn blk
-      case mMissing of
-        Nothing ->
+    stagingAwareAddBlock punish blk
+      | not (blockHasLeiosCert blk) =
           BlockFetchClientInterface.addBlockAsync defView punish blk
-        Just (point, size) -> do
-          peers <- atomically $ peersThatKnowBlock varChainSyncHandles blk
-          traceWith tracer
-            TraceCertRBStaged
-              { stagedBlockPoint = show (Block.blockPoint blk)
-              , stagedEbPoint = point
-              , stagedKnownPeers = Set.size peers
-              }
-          atomically $ stageCertRB stagingArea point size peers blk
-          _ <- MVar.tryPutMVar readyMVar ()
-          -- Deferred promise: claim "written" so BlockFetch logic
-          -- doesn't immediately refetch; report processed as failed
-          -- (the staged block is not yet on the chain).
-          pure
-            AddBlockPromise
-              { blockWrittenToDisk = pure True
-              , blockProcessed =
-                  pure $
-                    FailedToAddBlock
-                      "CertRB staged, awaiting EB closure"
-              }
+      | otherwise = do
+          mAnn <- atomically $ do
+            candidates <- candidateFragments
+            currentChain <- BlockFetchClientInterface.getCurrentChain defView
+            pure $
+              findParentAnnouncement
+                (Block.blockPrevHash blk)
+                currentChain
+                candidates
+          case mAnn of
+            -- Parent isn't visible on the current chain or any
+            -- ChainSync candidate, or didn't announce. Can't determine
+            -- the EB. Admit and let ChainSel / apply-time error
+            -- decide. Fork-time / out-of-order arrivals blind spot:
+            -- see issue #890 PR description.
+            Nothing ->
+              BlockFetchClientInterface.addBlockAsync defView punish blk
+            Just (point, size) -> do
+              mEb <- withLeiosDb leiosDbHandle $ \conn ->
+                leiosDbQueryCompletedEbByPoint conn point
+              case mEb of
+                Just _ ->
+                  BlockFetchClientInterface.addBlockAsync defView punish blk
+                Nothing -> stage point size punish blk
+
+    candidateFragments = do
+      handles <- cschcMap varChainSyncHandles
+      traverse (fmap csCandidate . readTVar . cschState) handles
+
+    stage point size _punish blk = do
+      peers <- atomically $ peersThatKnowBlock varChainSyncHandles blk
+      traceWith tracer
+        TraceCertRBStaged
+          { stagedBlockPoint = show (Block.blockPoint blk)
+          , stagedEbPoint = point
+          , stagedKnownPeers = Set.size peers
+          }
+      atomically $ stageCertRB stagingArea point size peers blk
+      _ <- MVar.tryPutMVar readyMVar ()
+      -- Deferred promise: claim "written" so BlockFetch logic
+      -- doesn't immediately refetch; report processed as failed
+      -- (the staged block is not yet on the chain).
+      pure
+        AddBlockPromise
+          { blockWrittenToDisk = pure True
+          , blockProcessed =
+              pure $
+                FailedToAddBlock
+                  "CertRB staged, awaiting EB closure"
+          }
+
+-- | Find the parent header in the current chain or any ChainSync
+-- candidate fragment, and read its 'headerLeiosAnnouncement'.
+-- Candidates are scanned because the parent may not yet be on the
+-- selected chain (BlockFetch can deliver a child before its parent
+-- reaches ChainSel).
+findParentAnnouncement ::
+  forall blk peer.
+  (HasHeader (Header blk), ResolveLeiosBlock blk) =>
+  ChainHash blk ->
+  AF.AnchoredFragment (Header blk) ->
+  Map.Map peer (AF.AnchoredFragment (HeaderWithTime blk)) ->
+  Maybe (LeiosPoint, BytesSize)
+findParentAnnouncement prev currentChain candidates = case prev of
+  GenesisHash -> Nothing
+  BlockHash h ->
+    let onChain =
+          find (\hdr -> Block.blockHash hdr == h) (AF.toNewestFirst currentChain)
+        onCandidate =
+          find (\hdr -> Block.blockHash hdr == h) $
+            concatMap (fmap hwtHeader . AF.toNewestFirst) (Map.elems candidates)
+     in (onChain <|> onCandidate) >>= headerLeiosAnnouncement
 
 -- | Re-derive each staged entry's peer set by unioning in any peer
 -- whose *current* ChainSync candidate contains the staged block.

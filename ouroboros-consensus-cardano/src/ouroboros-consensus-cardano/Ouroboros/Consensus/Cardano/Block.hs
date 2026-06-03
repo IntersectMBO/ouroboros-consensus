@@ -1541,10 +1541,9 @@ instance
       fmap BlockDijkstra <$> resolveLeiosBlockHdr db prevAnn dijkstraBlk
     _ -> pure Nothing
 
-  checkLeiosBlockResolvable db blk = case blk of
-    BlockDijkstra dijkstraBlk ->
-      checkLeiosBlockResolvable db dijkstraBlk
-    _ -> pure Nothing
+  blockHasLeiosCert blk = case blk of
+    BlockDijkstra dijkstraBlk -> blockHasLeiosCert dijkstraBlk
+    _ -> False
 
   headerLeiosAnnouncement hdr = case hdr of
     HeaderDijkstra dHdr -> headerLeiosAnnouncement dHdr
