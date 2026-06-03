@@ -36,6 +36,7 @@ import LeiosDemoDb
 import LeiosDemoTypes
   ( EbAnnouncement (..)
   , ForgedLeiosEb (..)
+  , IsCertRB (..)
   , LeiosPoint (..)
   , TraceLeiosKernel (..)
   , forgeLeiosEb
@@ -85,6 +86,9 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       Nothing -> pure (Nothing, SNothing)
   let body = mkBody mayLeiosCert
       actualBodySize = SL.bBodySize protocolVersion body
+      isCertRB = case mayLeiosCert of
+        SJust _ -> CertRB
+        SNothing -> NotCertRB
   hdr <-
     mkHeader @_ @(ProtoCrypto proto)
       hotKey
@@ -97,6 +101,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       actualBodySize
       protocolVersion
       mayEbAnn
+      isCertRB
   let blk = mkShelleyBlock $ SL.Block hdr body
   return $
     assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $

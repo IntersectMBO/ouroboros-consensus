@@ -82,7 +82,7 @@ import Cardano.Slotting.Slot (SlotNo)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Word (Word32)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement)
+import LeiosDemoTypes (EbAnnouncement, IsCertRB (..))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 
@@ -113,6 +113,9 @@ data HeaderBody crypto = HeaderBody
   -- ^ Optional Leios endorser-block announcement (Dijkstra-only;
   -- 'SNothing' on earlier eras). Placed on the Praos header for
   -- early-diffusion of EB references before the body arrives.
+  , hbIsCertRB :: !IsCertRB
+  -- ^ CIP-0164 header bit signalling that this RB certifies a
+  -- previously-announced EB.
   }
   deriving Generic
 
@@ -182,7 +185,12 @@ headerHash = extractHash . hashAnnotated
 -- Serialisation
 --------------------------------------------------------------------------------
 
--- | 10-field encoding when 'SNothing' (pre-Leios-compatible), 11 when 'SJust'.
+-- | Canonical encoding: len=12 carrying @(IsCertRB, StrictMaybe
+-- EbAnnouncement)@. Decode also accepts len=10 (pre-Leios) and len=11
+-- (announcement-only) for back-compat with existing on-disk data; new
+-- encodings never produce those shapes. Two valid encodings for the
+-- same logical header would have made hashing / signature over the
+-- encoded form non-canonical.
 instance Crypto crypto => EncCBOR (HeaderBody crypto) where
   encCBOR
     HeaderBody
@@ -197,24 +205,23 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
       , hbOCert
       , hbProtVer
       , hbLeiosEbAnnouncement
+      , hbIsCertRB
       } =
-      let (len, encEbAnnouncement) = case hbLeiosEbAnnouncement of
-            SNothing -> (10 :: Word, mempty)
-            SJust ebAnnouncement -> (11, encCBOR ebAnnouncement)
-       in mconcat
-            [ encodeListLen len
-            , encCBOR hbBlockNo
-            , encCBOR hbSlotNo
-            , encCBOR hbPrev
-            , encCBOR hbVk
-            , encodeVerKeyVRF hbVrfVk
-            , encCBOR hbVrfRes
-            , encCBOR hbBodySize
-            , encCBOR hbBodyHash
-            , encCBOR hbOCert
-            , encCBOR hbProtVer
-            , encEbAnnouncement
-            ]
+      mconcat
+        [ encodeListLen 12
+        , encCBOR hbBlockNo
+        , encCBOR hbSlotNo
+        , encCBOR hbPrev
+        , encCBOR hbVk
+        , encodeVerKeyVRF hbVrfVk
+        , encCBOR hbVrfRes
+        , encCBOR hbBodySize
+        , encCBOR hbBodyHash
+        , encCBOR hbOCert
+        , encCBOR hbProtVer
+        , encCBOR hbIsCertRB
+        , encCBOR hbLeiosEbAnnouncement
+        ]
 
 instance Crypto crypto => DecCBOR (HeaderBody crypto) where
   decCBOR = do
@@ -229,9 +236,15 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
     hbBodyHash <- decCBOR
     hbOCert <- unCBORGroup <$> decCBOR
     hbProtVer <- decCBOR
-    hbLeiosEbAnnouncement <- case len of
-      10 -> pure SNothing
-      11 -> SJust <$> decCBOR
+    (hbLeiosEbAnnouncement, hbIsCertRB) <- case len of
+      10 -> pure (SNothing, NotCertRB)
+      11 -> do
+        ann <- decCBOR
+        pure (SJust ann, NotCertRB)
+      12 -> do
+        isCertRB <- decCBOR
+        ann <- decCBOR
+        pure (ann, isCertRB)
       _ -> fail $ "Praos HeaderBody CBOR has wrong length: " <> show len
     pure
       HeaderBody
@@ -246,6 +259,7 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
         , hbOCert
         , hbProtVer
         , hbLeiosEbAnnouncement
+        , hbIsCertRB
         }
 
 encodeHeaderRaw ::
