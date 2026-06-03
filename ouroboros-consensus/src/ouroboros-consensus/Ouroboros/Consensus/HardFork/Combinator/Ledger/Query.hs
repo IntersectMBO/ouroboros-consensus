@@ -294,7 +294,7 @@ answerBlockQueryHelper
 distribExtLedgerState ::
   All SingleEraBlock xs =>
   ExtLedgerState (HardForkBlock xs) mk -> NS (Flip ExtLedgerState mk) xs
-distribExtLedgerState (ExtLedgerState ledgerState headerState perasResolver) =
+distribExtLedgerState (ExtLedgerState ledgerState headerState _perasResolver) =
   hmap (\(Pair hst lst) -> Flip $ ExtLedgerState (unFlip lst) hst perasResolver') $
     mustMatchNS
       "HeaderState"

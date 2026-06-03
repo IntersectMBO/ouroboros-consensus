@@ -27,6 +27,9 @@ import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import qualified Ouroboros.Consensus.HeaderValidation as HV
+import Ouroboros.Consensus.Ledger.Extended
+  ( ledgerStateHeaderStateMkConstPerasEpochContextResolverForMock
+  )
 import qualified Ouroboros.Consensus.Ledger.Extended as Extended
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
@@ -201,8 +204,7 @@ inTheYearOneBillion =
 
 oracularLedgerDB :: Point B -> Extended.ExtLedgerState B mk
 oracularLedgerDB p =
-  Extended.ExtLedgerState
-    { Extended.headerState =
+  let headerState =
         HV.HeaderState
           { HV.headerStateTip = case pointToWithOriginRealPoint p of
               Origin -> Origin
@@ -216,15 +218,21 @@ oracularLedgerDB p =
                     }
           , HV.headerStateChainDep = ()
           }
-    , Extended.ledgerState =
+      ledgerState =
         TB.TestLedger
           { TB.lastAppliedPoint = p
           , TB.payloadDependentState = TB.EmptyPLDS
           }
-    , Extended.perasEpochContextResolver =
-        -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-        undefined
-    }
+   in Extended.ExtLedgerState
+        { Extended.headerState =
+            headerState
+        , Extended.ledgerState =
+            ledgerState
+        , Extended.perasEpochContextResolver =
+            ledgerStateHeaderStateMkConstPerasEpochContextResolverForMock
+              ledgerState
+              headerState
+        }
 
 -- | A convenient fact about 'TB.TestBlock'
 testBlockHashBlockNo :: TB.TestHash -> BlockNo

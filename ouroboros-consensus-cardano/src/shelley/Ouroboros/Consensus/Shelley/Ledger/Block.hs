@@ -126,6 +126,9 @@ class
   , Crypto (ProtoCrypto proto)
   , -- Peras constraints
     BlockSupportsPeras (ShelleyBlock proto era)
+  , Show (PerasEpochContext (ShelleyBlock proto era))
+  , Eq (PerasEpochContext (ShelleyBlock proto era))
+  , NoThunks (PerasEpochContext (ShelleyBlock proto era))
   , Serialise (PerasEpochContext (ShelleyBlock proto era))
   , -- Backwards compatibility
     Plain.FromCBOR (LegacyPParams era)

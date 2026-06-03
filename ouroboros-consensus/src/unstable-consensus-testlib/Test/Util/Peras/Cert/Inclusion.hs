@@ -27,7 +27,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasCertMaxRounds (..)
   , PerasParams (..)
   , PerasRoundNo (..)
-  , mkPerasParams
+  , defaultPerasParams
   )
 import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( LatestCertOnChainView (..)
@@ -209,7 +209,7 @@ genPerasParams :: Gen (PerasParams blk)
 genPerasParams = do
   _A <- fromIntegral . (+ 1) <$> geometric 0.5
   pure
-    mkPerasParams
+    defaultPerasParams
       { perasCertMaxRounds = PerasCertMaxRounds _A
       }
 

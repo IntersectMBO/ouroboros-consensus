@@ -14,7 +14,6 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# LANGUAGE TypeApplications #-}
 
 -- | Instances requires for consensus/ledger integration
 module Ouroboros.Consensus.Byron.Ledger.Ledger
@@ -94,8 +93,6 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IndexedMemPack
-import Cardano.Ledger.State (PoolDistr(..))
-import Cardano.Ledger.Coin (knownNonZeroCompactCoin, knownNonZeroCoin)
 
 {-------------------------------------------------------------------------------
   LedgerState
@@ -585,4 +582,4 @@ instance CanUpgradeLedgerTables LedgerState ByronBlock where
 -------------------------------------------------------------------------------}
 
 -- | Default instance with no Peras support
-instance LedgerSupportsPeras ByronBlock where
+instance LedgerSupportsPeras ByronBlock

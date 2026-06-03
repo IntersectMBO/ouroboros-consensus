@@ -19,7 +19,7 @@ module Ouroboros.Consensus.Peras.Params
 
     -- * Protocol parameters bundle
   , PerasParams (..)
-  , mkPerasParams
+  , defaultPerasParams
 
     -- * Convenience re-exports
   , Committee.TargetCommitteeSize (..)
@@ -140,8 +140,8 @@ data PerasParams blk = PerasParams
 -- | Instantiate default Peras protocol parameters.
 --
 -- NOTE: in the future this will depend on a concrete 'BlockConfig'.
-mkPerasParams :: PerasParams blk
-mkPerasParams =
+defaultPerasParams :: PerasParams blk
+defaultPerasParams =
   -- Many of these parameters are provided with sensible default values for now,
   -- waiting for a final decision (in a future stage of the project) on the
   -- exact values to use. See https://github.com/tweag/cardano-peras/issues/97.

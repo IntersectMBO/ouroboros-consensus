@@ -8,7 +8,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Peras.Context
-  ( PerasEpochContextResolver
+  ( PerasEpochContextResolver (ConstPerasEpochContextResolver)
   , BoundedPerasEpochContext (..)
   , resolveRoundNo
   , PerasEpochContextNotFoundForRound (..)
