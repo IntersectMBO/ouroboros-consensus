@@ -60,6 +60,7 @@ import Data.Hashable (Hashable)
 import Data.List (find)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import qualified Data.Measure
@@ -78,11 +79,13 @@ import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
   ( BytesSize
+  , EbHash
   , LeiosOutstanding
   , LeiosPeerVars
   , LeiosPoint
   , LeiosVote (..)
   , TraceLeiosKernel (..)
+  , TxHash
   , VoterId (MkVoterId)
   , pointEbHash
   )
@@ -500,11 +503,30 @@ initNodeKernel
             traverse
               (fmap csCandidate . readTVar . cschState)
               (Map.mapKeys Leios.MkPeerId handlesNow)
+          -- DB-derived view of what's still missing. We use this to
+          -- synthesise 'missingEbTxs' entries for staged points whose
+          -- body has arrived but whose tx closure is incomplete —
+          -- needed at least on restart (no fresh 'MsgLeiosBlock' will
+          -- arrive to populate the in-memory state via the natural
+          -- novel=True path) and as a safety net for the rare race
+          -- where body arrival fires outside the MVar window that
+          -- normally populates 'missingEbTxs'.
+          fetchWork <- LeiosDb.leiosDbQueryFetchWork leiosConn
           let stagedAugmented =
                 augmentStagedPeers candidates stagedNow
+              livePeers = Map.keysSet leiosPeersVars
+              stagedPoints = Map.keysSet stagedAugmented
               synthMissing =
                 Map.map stagedSize stagedAugmented
+              -- Only synth offerings for peers we can actually send to
+              -- (in 'leiosPeersVars'). Otherwise the decision logic
+              -- would target peers whose request slot is missing from
+              -- the eventual 'Map.intersectionWith' send step → silent
+              -- drop, while 'requestedEbPeers' / 'requestedTxPeers' is
+              -- already updated, locking the EB out from future
+              -- retries.
               synthOfferings =
+                (`Map.restrictKeys` livePeers) $
                 Map.fromListWith
                   (\(a, b) (c, d) -> (a <> c, b <> d))
                   -- Peers that know the staged CertRB have applied it on
@@ -519,19 +541,65 @@ initNodeKernel
                   | (point, entry) <- Map.toList stagedAugmented
                   , peer <- Set.toList (stagedPeers entry)
                   ]
+              -- Synthetic missingEbTxs for staged points whose body is
+              -- already in leios.db (per fetchWork: ebTxs rows exist
+              -- but txs aren't all in). One entry per (offset, txHash,
+              -- size) tuple.
+              synthMissingTxs ::
+                Map.Map LeiosPoint (IntMap.IntMap (TxHash, BytesSize))
+              synthMissingTxs =
+                Map.map
+                  ( IntMap.fromList
+                      . map (\(i, txHash, bs) -> (i, (txHash, bs)))
+                  )
+                  ( LeiosDb.missingEbTxs fetchWork
+                      `Map.restrictKeys` stagedPoints
+                  )
+              -- Inverse index for the synth-added txs: choosePeerTx
+              -- consults 'reverseEbIndexByTx[txHash]' and errors with
+              -- "impossible!" if it's missing. Mirror the population
+              -- the natural body-arrival path does.
+              synthReverseEbIndexByTx ::
+                Map.Map TxHash (Map.Map EbHash (Int, BytesSize))
+              synthReverseEbIndexByTx =
+                Map.fromListWith
+                  Map.union
+                  [ (txHash, Map.singleton (pointEbHash point) (i, bs))
+                  | (point, txs) <- Map.toList synthMissingTxs
+                  , (i, (txHash, bs)) <- IntMap.toList txs
+                  ]
               augmentedOfferings =
                 Map.unionWith
                   (\(a, b) (c, d) -> (a <> c, b <> d))
                   offerings
                   synthOfferings
           newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
-            let realMissingKeys = Map.keysSet (Leios.missingEbBodies outstanding)
-                synthOnlyKeys =
-                  Map.keysSet synthMissing `Set.difference` realMissingKeys
+            let realMissingBodyKeys = Map.keysSet (Leios.missingEbBodies outstanding)
+                synthOnlyBodyKeys =
+                  Map.keysSet synthMissing `Set.difference` realMissingBodyKeys
+                realMissingTxKeys = Map.keysSet (Leios.missingEbTxs outstanding)
+                synthOnlyTxKeys =
+                  Map.keysSet synthMissingTxs `Set.difference` realMissingTxKeys
+                realReverseKeys = Map.keysSet (Leios.reverseEbIndexByTx outstanding)
+                synthOnlyReverseKeys =
+                  Map.keysSet synthReverseEbIndexByTx `Set.difference` realReverseKeys
                 augmentedOutstanding =
                   outstanding
                     { Leios.missingEbBodies =
-                        Map.union (Leios.missingEbBodies outstanding) synthMissing
+                        -- Left-biased: keep real entry (carries in-flight
+                        -- request state) over the synth's bare size.
+                        Map.union
+                          (Leios.missingEbBodies outstanding)
+                          synthMissing
+                    , Leios.missingEbTxs =
+                        Map.union
+                          (Leios.missingEbTxs outstanding)
+                          synthMissingTxs
+                    , Leios.reverseEbIndexByTx =
+                        Map.unionWith
+                          Map.union
+                          (Leios.reverseEbIndexByTx outstanding)
+                          synthReverseEbIndexByTx
                     }
             filteredOutstanding <-
               Leios.filterMissingWork leiosConn augmentedOutstanding
@@ -541,26 +609,55 @@ initNodeKernel
                     Leios.demoLeiosFetchStaticEnv
                     augmentedOfferings
                     filteredOutstanding
-                -- Strip the synthetic-only missingEbBodies entries
-                -- before persisting; the rest (requestedEbPeers,
-                -- requestedBytesSize, ...) is real and must be kept
-                -- so the eventual MsgLeiosBlock response is accepted.
+                -- Strip synthetic-only entries before persisting; the
+                -- rest of 'outstanding''' (requestedEbPeers,
+                -- requestedTxPeers, requestedBytesSize, …) is real and
+                -- must be kept so the eventual responses are accepted.
                 outstanding' =
                   outstanding''
                     { Leios.missingEbBodies =
                         Map.withoutKeys
                           (Leios.missingEbBodies outstanding'')
-                          synthOnlyKeys
+                          synthOnlyBodyKeys
+                    , Leios.missingEbTxs =
+                        Map.withoutKeys
+                          (Leios.missingEbTxs outstanding'')
+                          synthOnlyTxKeys
+                    , Leios.reverseEbIndexByTx =
+                        Map.withoutKeys
+                          (Leios.reverseEbIndexByTx outstanding'')
+                          synthOnlyReverseKeys
                     }
             pure (outstanding', decisions)
           traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: decided"
           let newRequests =
                 Leios.packRequests Leios.demoLeiosFetchStaticEnv newDecisions
+              numStaged = Map.size stagedNow
+              numLiveStagedPeers =
+                sum [ Set.size (stagedPeers e)
+                    | e <- Map.elems stagedAugmented ]
+              decisionsTargetedKeys = Map.keysSet newRequests
+              droppableKeys =
+                decisionsTargetedKeys `Set.difference` livePeers
           traceWith leiosTr $
             MkTraceLeiosKernel $
               "leiosFetchLogic: "
                 ++ show (sum (fmap length newRequests))
                 ++ " new reqs"
+          traceWith leiosTr $
+            MkTraceLeiosKernel $
+              "leiosFetchLogic: staged="
+                ++ show numStaged
+                ++ " liveStagedPeerLinks="
+                ++ show numLiveStagedPeers
+                ++ " synthTxsEntries="
+                ++ show (Map.size synthMissingTxs)
+          unless (Set.null droppableKeys) $
+            traceWith leiosTr $
+              MkTraceLeiosKernel $
+                "leiosFetchLogic: WARNING dropping "
+                  ++ show (Set.size droppableKeys)
+                  ++ " peer-targeted decisions because target not in leiosPeersVars"
           (\f -> sequence_ $ Map.intersectionWith f leiosPeersVars newRequests) $ \vars reqs ->
             atomically $
               StrictSTM.modifyTVar (Leios.requestsToSend vars) (<> reqs)
@@ -697,9 +794,9 @@ data InternalState m addrNTN addrNTC blk = IS
   , leiosPeersVars ::
       MVar.MVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , leiosVoteStateIS :: LeiosVoteState m
-  , -- | CertRBs whose EB closure isn't locally available yet (issue #890).
-    leiosCertRbStaging ::
+  , leiosCertRbStaging ::
       LeiosStagingArea m (Leios.PeerId (ConnectionId addrNTN)) blk
+  -- ^ CertRBs whose EB closure isn't locally available yet (issue #890).
   }
 
 initInternalState ::
@@ -816,9 +913,9 @@ wrapChainDbViewForLeiosStaging ::
   LeiosDbHandle m ->
   LeiosStagingArea m (Leios.PeerId (ConnectionId addrNTN)) blk ->
   ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk ->
-  MVar.MVar m () ->
-  -- ^ 'getLeiosReady' — pinged after a stage so the fetch loop wakes
+  -- | 'getLeiosReady' — pinged after a stage so the fetch loop wakes
   -- promptly and can synthesise the new entry into its next iteration.
+  MVar.MVar m () ->
   BlockFetchClientInterface.ChainDbView m blk ->
   BlockFetchClientInterface.ChainDbView m blk
 wrapChainDbViewForLeiosStaging
@@ -870,7 +967,8 @@ wrapChainDbViewForLeiosStaging
 
     stage point size _punish blk = do
       peers <- atomically $ peersThatKnowBlock varChainSyncHandles blk
-      traceWith tracer
+      traceWith
+        tracer
         TraceCertRBStaged
           { stagedBlockPoint = show (Block.blockPoint blk)
           , stagedEbPoint = point
@@ -916,6 +1014,14 @@ findParentAnnouncement prev currentChain candidates = case prev of
 -- whose *current* ChainSync candidate contains the staged block.
 -- Handles peers that connect (or extend their candidate through this
 -- block) after staging.
+-- | Recompute each staged entry's peer set from the current ChainSync
+-- candidates: any peer whose candidate fragment still contains the
+-- staged block. We REPLACE the persisted 'stagedPeers' (rather than
+-- union with it) so that peers which have since disconnected — and
+-- whose handles are therefore no longer in 'candidates' — drop out.
+-- Otherwise the fetch synth would keep aiming requests at peers that
+-- aren't in 'leiosPeersVars' anymore, and 'Map.intersectionWith' in
+-- the fetch loop would silently drop them.
 augmentStagedPeers ::
   (HasHeader blk, HasHeader (Header blk), Ord peer) =>
   Map.Map peer (AF.AnchoredFragment (HeaderWithTime blk)) ->
@@ -925,7 +1031,7 @@ augmentStagedPeers candidates staged =
   Map.map go staged
  where
   go entry =
-    let extra =
+    let live =
           Set.fromList
             [ peer
             | (peer, frag) <- Map.toList candidates
@@ -933,7 +1039,7 @@ augmentStagedPeers candidates staged =
                 ((== Block.blockHash (stagedBlock entry)) . Block.blockHash)
                 (AF.toOldestFirst frag)
             ]
-     in entry{stagedPeers = stagedPeers entry `Set.union` extra}
+     in entry{stagedPeers = live}
 
 -- | Scan all ChainSync candidates for ones whose fragment contains a
 -- header with the same hash as @blk@. Those peers' chains have admitted
