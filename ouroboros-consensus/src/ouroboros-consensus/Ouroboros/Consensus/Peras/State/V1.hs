@@ -14,8 +14,8 @@ import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee (..))
 import Ouroboros.Consensus.Committee.Crypto (PublicKey)
 import Ouroboros.Consensus.Committee.WFA (mkExtWFAStakeDistr, wFATiebreakerWithEpochNonce)
 import Ouroboros.Consensus.Committee.WFALS (VotingCommitteeInput (..), WFALS)
-import Ouroboros.Consensus.HardFork.Combinator.Basics (LedgerState)
 import Ouroboros.Consensus.HeaderValidation (HeaderState (..))
+import Ouroboros.Consensus.Ledger.Abstract (LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
 import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe

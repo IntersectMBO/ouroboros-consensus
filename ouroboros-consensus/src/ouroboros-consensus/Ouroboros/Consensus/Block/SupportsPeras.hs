@@ -24,6 +24,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , BlockSupportsPeras (..)
   , PerasVoteCompatibleWithVotingCommittee (..)
   , PerasCertCompatibleWithVotingCommittee (..)
+  , VoidPerasVotingCommitteeScheme
   , VoidPerasVote (..)
   , VoidPerasCert (..)
   , VoidPerasError (..)

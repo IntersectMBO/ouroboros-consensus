@@ -17,7 +17,6 @@
 module Ouroboros.Consensus.Peras.Crypto.Mock
   ( MockPerasVotingCommitteeScheme
   , MockPerasCrypto
-  , MockPerasCommittee
   , VotingCommittee (..)
   , VotingCommitteeInput (..)
   , VotingCommitteeError (..)
@@ -68,8 +67,6 @@ import Ouroboros.Consensus.Committee.Types (LedgerStake (..), PoolId)
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Types (PerasSeatIndex (..))
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
-
-data MockPerasVotingCommitteeScheme
 
 data MockPerasCrypto blk
 
@@ -150,7 +147,7 @@ instance CryptoSupportsAggregateVoteSigning (MockPerasCrypto blk) where
 --         ()
 --------------------------------------------------------------------------------
 
-data MockPerasCommittee blk
+data MockPerasVotingCommitteeScheme blk
 
 instance
   ( Ord (ElectionId crypto)
@@ -158,31 +155,31 @@ instance
   , VoteCandidate crypto ~ Point blk
   , CryptoSupportsAggregateVoteSigning crypto
   ) =>
-  CryptoSupportsVotingCommittee crypto (MockPerasCommittee blk)
+  CryptoSupportsVotingCommittee crypto (MockPerasVotingCommitteeScheme blk)
   where
-  newtype VotingCommittee crypto (MockPerasCommittee blk)
+  newtype VotingCommittee crypto (MockPerasVotingCommitteeScheme blk)
     = MockPerasVotingCommittee
     { -- Stake distribution
       weightDistr :: NonEmpty (PoolId, VoteWeight)
     }
 
-  newtype VotingCommitteeInput crypto (MockPerasCommittee blk)
+  newtype VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk)
     = MockPerasVotingCommitteeInput (NonEmpty (PoolId, LedgerStake))
 
-  newtype VotingCommitteeError crypto (MockPerasCommittee blk)
+  newtype VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk)
     = -- Seat index is out of bounds for the voting committee
       MissingSeatIndex PerasSeatIndex
 
-  data EligibilityWitness crypto (MockPerasCommittee blk)
-    = MockPerasCommitteeMember
+  data EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk)
+    = MockPerasVotingCommitteeSchemeMember
         !PerasSeatIndex
         !VoteWeight
 
-  newtype Vote crypto (MockPerasCommittee blk)
-    = MockPerasCommitteeVote (MockPerasVote blk)
+  newtype Vote crypto (MockPerasVotingCommitteeScheme blk)
+    = MockPerasVotingCommitteeSchemeVote (MockPerasVote blk)
 
-  newtype Cert crypto (MockPerasCommittee blk)
-    = MockPerasCommitteeCert (MockPerasCert blk)
+  newtype Cert crypto (MockPerasVotingCommitteeScheme blk)
+    = MockPerasVotingCommitteeSchemeCert (MockPerasCert blk)
 
   mkVotingCommittee (MockPerasVotingCommitteeInput stakeDistr) =
     let LedgerStake totalStake = sum (snd <$> stakeDistr)
@@ -190,115 +187,119 @@ instance
      in Right MockPerasVotingCommittee{weightDistr = second normalize <$> stakeDistr}
   checkShouldVote MockPerasVotingCommittee{weightDistr} poolId _ _ =
     case findWithIndex (\(pid, _) -> pid == poolId) weightDistr of
-      Just (rawIndex, (_pid, voteWeight)) -> Right . Just $ MockPerasCommitteeMember (unsafeIntToSeatIndex rawIndex) voteWeight
+      Just (rawIndex, (_pid, voteWeight)) -> Right . Just $ MockPerasVotingCommitteeSchemeMember (unsafeIntToSeatIndex rawIndex) voteWeight
       _ -> Right Nothing
    where
     findWithIndex :: (a -> Bool) -> NonEmpty a -> Maybe (Int, a)
     findWithIndex p xs = List.find (p . snd) (zip [0 ..] (NonEmpty.toList xs))
-  forgeVote (MockPerasCommitteeMember seatIndex _) _ roundNo block =
-    MockPerasCommitteeVote $
+  forgeVote (MockPerasVotingCommitteeSchemeMember seatIndex _) _ roundNo block =
+    MockPerasVotingCommitteeSchemeVote $
       MockPerasVote
         { mockVoteRound = roundNo
         , mockVoteBlock = block
         , mockVoteSeatIndex = seatIndex
         }
-  verifyVote MockPerasVotingCommittee{weightDistr} (MockPerasCommitteeVote mockVote) =
+  verifyVote MockPerasVotingCommittee{weightDistr} (MockPerasVotingCommitteeSchemeVote mockVote) =
     let seatIndex = mockVoteSeatIndex mockVote
      in case NonEmpty.toList weightDistr !? seatIndexToInt seatIndex of
-          Just (_pid, voteWeight) -> Right $ MockPerasCommitteeMember seatIndex voteWeight
+          Just (_pid, voteWeight) -> Right $ MockPerasVotingCommitteeSchemeMember seatIndex voteWeight
           _ -> Left (MissingSeatIndex seatIndex)
-  eligiblePartyVoteWeight _ (MockPerasCommitteeMember _seatIndex voteWeight) = voteWeight
+  eligiblePartyVoteWeight _ (MockPerasVotingCommitteeSchemeMember _seatIndex voteWeight) = voteWeight
   forgeCert uniqueVoteWithSameTarget = do
     let roundNo = getElectionIdFromVotes uniqueVoteWithSameTarget
         block = getVoteCandidateFromVotes uniqueVoteWithSameTarget
         rawVotes = getRawVotes uniqueVoteWithSameTarget
-    let voters = NESet.fromList $ (\(MockPerasCommitteeVote mockVote) -> mockVoteSeatIndex mockVote) <$> rawVotes
+    let voters =
+          NESet.fromList $
+            (\(MockPerasVotingCommitteeSchemeVote mockVote) -> mockVoteSeatIndex mockVote) <$> rawVotes
     pure $
-      MockPerasCommitteeCert $
+      MockPerasVotingCommitteeSchemeCert $
         MockPerasCert
           { mockCertRound = roundNo
           , mockCertBlock = block
           , mockCertVoters = voters
           }
-  verifyCert committee (MockPerasCommitteeCert mockCert) = do
+  verifyCert committee (MockPerasVotingCommitteeSchemeCert mockCert) = do
     let voterList = NESet.toList $ mockCertVoters mockCert
     traverse
       (\seatIndex -> maybeToEither (MissingSeatIndex seatIndex) (getEligibility committee seatIndex))
       voterList
 
-  voteTarget (MockPerasCommitteeVote MockPerasVote{mockVoteRound, mockVoteBlock}) =
+  voteTarget (MockPerasVotingCommitteeSchemeVote MockPerasVote{mockVoteRound, mockVoteBlock}) =
     (mockVoteRound, mockVoteBlock)
   compareVotesById
-    ( MockPerasCommitteeVote
+    ( MockPerasVotingCommitteeSchemeVote
         MockPerasVote{mockVoteRound = mockVoteRound1, mockVoteSeatIndex = mockVoteSeatIndex1}
       )
-    ( MockPerasCommitteeVote
+    ( MockPerasVotingCommitteeSchemeVote
         MockPerasVote{mockVoteRound = mockVoteRound2, mockVoteSeatIndex = mockVoteSeatIndex2}
       ) =
       compare (mockVoteRound1, mockVoteSeatIndex1) (mockVoteRound2, mockVoteSeatIndex2)
 
-deriving instance Show (VotingCommittee crypto (MockPerasCommittee blk))
-deriving instance Eq (VotingCommittee crypto (MockPerasCommittee blk))
-deriving instance NoThunks (VotingCommittee crypto (MockPerasCommittee blk))
-deriving instance Serialise (VotingCommittee crypto (MockPerasCommittee blk))
-deriving instance Generic (VotingCommittee crypto (MockPerasCommittee blk))
+deriving instance Show (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Eq (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance NoThunks (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Serialise (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Generic (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
 
-deriving instance Show (VotingCommitteeInput crypto (MockPerasCommittee blk))
-deriving instance Eq (VotingCommitteeInput crypto (MockPerasCommittee blk))
-deriving instance NoThunks (VotingCommitteeInput crypto (MockPerasCommittee blk))
-deriving instance Serialise (VotingCommitteeInput crypto (MockPerasCommittee blk))
-deriving instance Generic (VotingCommitteeInput crypto (MockPerasCommittee blk))
+deriving instance Show (VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Eq (VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance NoThunks (VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Serialise (VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Generic (VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk))
 
-deriving instance Show (VotingCommitteeError crypto (MockPerasCommittee blk))
-deriving instance Eq (VotingCommitteeError crypto (MockPerasCommittee blk))
-deriving instance NoThunks (VotingCommitteeError crypto (MockPerasCommittee blk))
-deriving instance Serialise (VotingCommitteeError crypto (MockPerasCommittee blk))
-deriving instance Generic (VotingCommitteeError crypto (MockPerasCommittee blk))
+deriving instance Show (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Eq (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance NoThunks (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Serialise (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Generic (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
 deriving instance
   ( Typeable crypto
   , Typeable blk
   ) =>
-  Exception (VotingCommitteeError crypto (MockPerasCommittee blk))
+  Exception (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
 
-deriving instance StandardHash blk => Show (Vote crypto (MockPerasCommittee blk))
-deriving instance StandardHash blk => Eq (Vote crypto (MockPerasCommittee blk))
-deriving instance StandardHash blk => NoThunks (Vote crypto (MockPerasCommittee blk))
-deriving instance Serialise (HeaderHash blk) => Serialise (Vote crypto (MockPerasCommittee blk))
-deriving instance Generic (Vote crypto (MockPerasCommittee blk))
+deriving instance StandardHash blk => Show (Vote crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance StandardHash blk => Eq (Vote crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance StandardHash blk => NoThunks (Vote crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance
+  Serialise (HeaderHash blk) => Serialise (Vote crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Generic (Vote crypto (MockPerasVotingCommitteeScheme blk))
 
-deriving instance StandardHash blk => Show (Cert crypto (MockPerasCommittee blk))
-deriving instance StandardHash blk => Eq (Cert crypto (MockPerasCommittee blk))
-deriving instance StandardHash blk => NoThunks (Cert crypto (MockPerasCommittee blk))
-deriving instance Serialise (HeaderHash blk) => Serialise (Cert crypto (MockPerasCommittee blk))
-deriving instance Generic (Cert crypto (MockPerasCommittee blk))
+deriving instance StandardHash blk => Show (Cert crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance StandardHash blk => Eq (Cert crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance StandardHash blk => NoThunks (Cert crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance
+  Serialise (HeaderHash blk) => Serialise (Cert crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Generic (Cert crypto (MockPerasVotingCommitteeScheme blk))
 
-deriving instance Show (EligibilityWitness crypto (MockPerasCommittee blk))
-deriving instance Eq (EligibilityWitness crypto (MockPerasCommittee blk))
-deriving instance NoThunks (EligibilityWitness crypto (MockPerasCommittee blk))
-deriving instance Serialise (EligibilityWitness crypto (MockPerasCommittee blk))
-deriving instance Generic (EligibilityWitness crypto (MockPerasCommittee blk))
+deriving instance Show (EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Eq (EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance NoThunks (EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Serialise (EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk))
+deriving instance Generic (EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk))
 
 instance
   PerasVoteCompatibleWithVotingCommittee
     (MockPerasVote blk)
     (MockPerasCrypto blk) -- We can theoretically use an arbitrary crypto scheme, but we must abide by 'vote -> crypto' fun dep
-    (MockPerasCommittee blk)
+    (MockPerasVotingCommitteeScheme blk)
   where
-  toPerasVote (MockPerasCommitteeVote mockVote) =
+  toPerasVote (MockPerasVotingCommitteeSchemeVote mockVote) =
     Right $ mockVote
   fromPerasVote mockVote =
-    Right $ MockPerasCommitteeVote mockVote
+    Right $ MockPerasVotingCommitteeSchemeVote mockVote
 
 instance
   PerasCertCompatibleWithVotingCommittee
     (MockPerasCert blk)
     (MockPerasCrypto blk) -- We can theoretically use an arbitrary crypto scheme, but we must abide by 'vote -> crypto' fun dep
-    (MockPerasCommittee blk)
+    (MockPerasVotingCommitteeScheme blk)
   where
-  toPerasCert (MockPerasCommitteeCert mockCert) =
+  toPerasCert (MockPerasVotingCommitteeSchemeCert mockCert) =
     Right $ mockCert
   fromPerasCert mockCert =
-    Right $ MockPerasCommitteeCert mockCert
+    Right $ MockPerasVotingCommitteeSchemeCert mockCert
 
 seatIndexToInt :: PerasSeatIndex -> Int
 seatIndexToInt (PerasSeatIndex seatIndex) = fromIntegral @Word16 @Int seatIndex
@@ -310,9 +311,9 @@ unsafeIntToSeatIndex int
   | otherwise = error $ "unsafeIntToSeatIndex: Int out of bounds for PerasSeatIndex: " <> show int
 
 getEligibility ::
-  VotingCommittee crypto (MockPerasCommittee blk) ->
+  VotingCommittee crypto (MockPerasVotingCommitteeScheme blk) ->
   PerasSeatIndex ->
-  Maybe (EligibilityWitness crypto (MockPerasCommittee blk))
+  Maybe (EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk))
 getEligibility MockPerasVotingCommittee{weightDistr} seatIndex = do
   (_poolId, voteWeight) <- NonEmpty.toList weightDistr !? seatIndexToInt seatIndex
-  pure $ MockPerasCommitteeMember seatIndex voteWeight
+  pure $ MockPerasVotingCommitteeSchemeMember seatIndex voteWeight

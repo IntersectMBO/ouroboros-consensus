@@ -7,6 +7,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
@@ -48,6 +49,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Context (ledgerStateHeaderStateMkPerasEpochContextResolver)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.LeaderSchedule
   ( LeaderSchedule (..)
@@ -245,19 +247,20 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
       { pInfoConfig =
           topLevelConfig nid
       , pInfoInitLedger =
-          ExtLedgerState
-            { ledgerState =
+          let ledgerState =
                 HardForkLedgerState $
                   initHardForkState
                     (Flip initLedgerState)
-            , headerState =
+              headerState =
                 genesisHeaderState $
                   initHardForkState
                     (WrapChainDepState initChainDepState)
-            , perasEpochContextResolver =
-                -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-                undefined
-            }
+              perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+           in ExtLedgerState
+                { ledgerState
+                , headerState
+                , perasEpochContextResolver
+                }
       }
 
   blockForging :: Monad m => [MkBlockForging m TestBlock]

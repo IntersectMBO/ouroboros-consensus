@@ -301,7 +301,7 @@ distribExtLedgerState (ExtLedgerState ledgerState headerState _perasResolver) =
       (distribHeaderState headerState)
       (State.tip (hardForkLedgerStatePerEra ledgerState))
  where
-  -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
+  -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
   perasResolver' = undefined
 
 -- | Precondition: the 'headerStateTip' and 'headerStateChainDep' should be from

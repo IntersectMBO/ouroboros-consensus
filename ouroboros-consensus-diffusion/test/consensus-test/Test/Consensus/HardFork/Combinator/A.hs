@@ -88,6 +88,7 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.Serialisation
@@ -621,6 +622,8 @@ instance SerialiseNodeToClient BlockA PartialLedgerConfigA
 instance SerialiseNodeToClient BlockA (EpochInfo Identity, PartialLedgerConfigA) where
   encodeNodeToClient = error "BlockA being used as a SingleEraBlock"
   decodeNodeToClient = error "BlockA being used as a SingleEraBlock"
+
+instance LedgerStateHeaderStateSupportsPerasVoting BlockA
 
 instance SerialiseConstraintsHFC BlockA
 instance SerialiseDiskConstraints BlockA

@@ -118,8 +118,10 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Peras.Cert.Mock
   ( MockPerasCert (..)
   )
-import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCommittee, MockPerasCrypto)
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting (..), MockPerasEpochContextResolver, mockAbsorbErrorInResolver, mockPerasEpochContextResolver, mockResolveRoundNo)
+import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCrypto, MockPerasVotingCommitteeScheme)
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.State.Mock (ledgerStateHeaderStateMkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Peras.Vote.Mock
   ( MockPerasVote (..)
   )
@@ -730,6 +732,17 @@ instance LedgerSupportsProtocol TestBlock where
 instance LedgerSupportsPeras TestBlock where
   getLatestPerasCertRound = latestPerasCertRound
 
+instance LedgerStateHeaderStateSupportsPerasVoting TestBlock where
+  type PerasEpochContextResolver TestBlock = MockPerasEpochContextResolver TestBlock
+
+  ledgerStateHeaderStateMkPerasVotingCommitteeInput = ledgerStateHeaderStateMkMockPerasVotingCommitteeInput
+
+  ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState =
+    mockAbsorbErrorInResolver $
+      mockPerasEpochContextResolver <$> ledgerStateHeaderStateMkPerasEpochContext ledgerState headerState
+
+  resolveRoundNo = mockResolveRoundNo
+
 {-------------------------------------------------------------------------------
   BlockSupportsPeras
 -------------------------------------------------------------------------------}
@@ -738,7 +751,7 @@ instance LedgerSupportsPeras TestBlock where
 
 instance BlockSupportsPeras TestBlock where
   type PerasCrypto TestBlock = MockPerasCrypto TestBlock
-  type PerasVotingCommitteeScheme TestBlock = MockPerasCommittee TestBlock
+  type PerasVotingCommitteeScheme TestBlock = MockPerasVotingCommitteeScheme TestBlock
   type PerasVote TestBlock = MockPerasVote TestBlock
   type PerasCert TestBlock = MockPerasCert TestBlock
   type PerasError TestBlock = MockPerasError TestBlock
@@ -757,12 +770,14 @@ testInitLedger = TestLedger GenesisPoint GenesisHash Nothing
 
 testInitExtLedger :: ExtLedgerState TestBlock EmptyMK
 testInitExtLedger =
-  ExtLedgerState
-    { ledgerState = testInitLedger
-    , headerState = genesisHeaderState ()
-    , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-      perasEpochContextResolver = undefined
-    }
+  let ledgerState = testInitLedger
+      headerState = genesisHeaderState ()
+      perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+   in ExtLedgerState
+        { ledgerState
+        , headerState
+        , perasEpochContextResolver
+        }
 
 -- Only for a single node
 mkTestConfig :: SecurityParam -> ChunkSize -> TopLevelConfig TestBlock

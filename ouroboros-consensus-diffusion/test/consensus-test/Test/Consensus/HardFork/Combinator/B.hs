@@ -72,6 +72,7 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.Serialisation
@@ -463,6 +464,8 @@ instance HasBinaryBlockInfo BlockB where
       { headerOffset = 2
       , headerSize = fromIntegral $ Lazy.length (serialise blkB_header)
       }
+
+instance LedgerStateHeaderStateSupportsPerasVoting BlockB
 
 instance SerialiseConstraintsHFC BlockB
 instance SerialiseDiskConstraints BlockB

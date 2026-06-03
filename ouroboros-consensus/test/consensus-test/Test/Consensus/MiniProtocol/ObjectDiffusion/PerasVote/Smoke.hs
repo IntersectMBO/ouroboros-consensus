@@ -19,10 +19,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
-import Ouroboros.Consensus.Peras.Context
-  ( PerasEpochContextResolverHandle
-  , constPerasEpochContextResolverHandle
-  )
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting, PerasEpochContextResolverHandle, mockPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
   , PerasVoteDB
@@ -63,6 +60,7 @@ tests =
 newVoteDB ::
   ( IOLike m
   , BlockSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   ) =>
   PerasEpochContextResolverHandle m blk ->
   [WithArrivalTime (ValidatedPerasVote blk)] ->
@@ -96,7 +94,7 @@ prop_smoke =
                 , m [PerasVote TestBlock]
                 )
             mkPoolInterfaces = do
-              epochContextResolverHandle <- constPerasEpochContextResolverHandle epochContext
+              epochContextResolverHandle <- mockPerasEpochContextResolverHandle epochContext
 
               outboundPool <- newVoteDB epochContextResolverHandle watValidatedVotes
               inboundPool <- newVoteDB epochContextResolverHandle []

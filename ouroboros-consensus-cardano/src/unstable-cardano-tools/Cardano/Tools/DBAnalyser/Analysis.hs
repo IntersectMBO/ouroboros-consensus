@@ -69,6 +69,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.Mempool.Impl.Common
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting, ledgerStateHeaderStateMkPerasEpochContextResolver)
 import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
@@ -90,6 +91,7 @@ runAnalysis ::
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , CanStowLedgerTables (LedgerState blk)
   , Show (TxIn blk)
   , Show (TxOut blk)
@@ -416,6 +418,7 @@ showEBBs AnalysisEnv{db, registry, startFrom, limit, tracer} = do
 storeLedgerStateAt ::
   forall blk.
   ( LedgerSupportsProtocol blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , HasAnalysis blk
   ) =>
   SlotNo ->
@@ -499,6 +502,7 @@ checkNoThunksEvery ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , CanStowLedgerTables (LedgerState blk)
   ) =>
   Word64 ->
@@ -556,6 +560,7 @@ traceLedgerProcessing ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   ) =>
   Analysis blk StartFromLedgerState
 traceLedgerProcessing
@@ -613,6 +618,7 @@ benchmarkLedgerOps ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , HasAnalysis blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   ) =>
   Maybe FilePath ->
   LedgerApplicationMode ->
@@ -707,11 +713,14 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     F.writeDataPoint outFileHandle outFormat slotDataPoint
 
     LedgerDB.push intLedgerDB $
-      ExtLedgerState
-        (prependDiffs tkLdgrSt newLedger)
-        newHeader
-        -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-        undefined
+      let ledgerState = (prependDiffs tkLdgrSt newLedger)
+          headerState = newHeader
+          perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+       in ExtLedgerState
+            { ledgerState
+            , headerState
+            , perasEpochContextResolver
+            }
    where
     rp = blockRealPoint blk
 
@@ -781,6 +790,7 @@ getBlockApplicationMetrics ::
   forall blk.
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   ) =>
   NumberOfBlocks -> Maybe FilePath -> Analysis blk StartFromLedgerState
 getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
