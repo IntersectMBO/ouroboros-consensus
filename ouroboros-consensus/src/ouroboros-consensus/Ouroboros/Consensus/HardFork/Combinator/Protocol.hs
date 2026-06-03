@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -10,7 +11,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# LANGUAGE InstanceSigs #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Protocol
   ( HardForkTiebreakerView (..)
@@ -29,6 +29,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol
   , Ticked (..)
   ) where
 
+import Cardano.Ledger.BaseTypes (Nonce)
 import Control.Monad.Except
 import Data.Functor.Product
 import Data.SOP.BasicFunctors
@@ -56,14 +57,13 @@ import Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
   )
 import Ouroboros.Consensus.HardFork.Combinator.State
   ( HardForkState
-  , Translate (..), getHardForkState
+  , Translate (..)
   )
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.Translation as HFTranslation
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util ((.:))
-import qualified Data.SOP.Telescope as Tele
 
 {-------------------------------------------------------------------------------
   ChainSelection
@@ -130,12 +130,15 @@ instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
   -- Security parameter must be equal across /all/ eras
   protocolSecurityParam = hardForkConsensusConfigK
 
-instance ChainDepStateSupportsPeras (HardForkProtocol xs) where
-  getEpochNonce _ =     hcollapse
-      -- [TODO EPOCH CONTEXT PLUMBING] STOPPED THERE
-      . hcmap proxySingle (K . getEpochNonce . unwrapChainDepState . hmap currentState)
-      . Tele.tip
-      . getHardForkState
+instance CanHardFork xs => ChainDepStateSupportsPeras (HardForkProtocol xs) where
+  getEpochNonce _ =
+    hcollapse
+      . hcmap proxySingle getEpochNonce'
+      . State.tip
+   where
+    getEpochNonce' :: forall blk. SingleEraBlock blk => WrapChainDepState blk -> K Nonce blk
+    getEpochNonce' (WrapChainDepState st) =
+      K (getEpochNonce (Proxy @(BlockProtocol blk)) st)
 
 {-------------------------------------------------------------------------------
   BlockSupportsProtocol

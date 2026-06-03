@@ -449,7 +449,7 @@ empty loe initLedger =
     { volatileDbBlocks = Map.empty
     , immutableDbChain = Chain.Genesis
     , perasCertModel = PerasCertDBModel.openDB PerasCertDBModel.initModel
-    , perasVoteModel = PerasVoteDBModel.openDB (PerasVoteDBModel.initModel mkPerasParams)
+    , perasVoteModel = PerasVoteDBModel.openDB (PerasVoteDBModel.initModel defaultPerasParams)
     , cps = CPS.initChainProducerState Chain.Genesis
     , currentLedger = initLedger
     , initLedger = initLedger
@@ -1247,7 +1247,7 @@ wipeVolatileDB cfg m =
     (closeDB m)
       { volatileDbBlocks = Map.empty
       , perasCertModel = PerasCertDBModel.openDB PerasCertDBModel.initModel
-      , perasVoteModel = PerasVoteDBModel.openDB (PerasVoteDBModel.initModel mkPerasParams)
+      , perasVoteModel = PerasVoteDBModel.openDB (PerasVoteDBModel.initModel defaultPerasParams)
       , cps = CPS.switchFork newChain (cps m)
       , currentLedger = newLedger
       , invalid = Map.empty

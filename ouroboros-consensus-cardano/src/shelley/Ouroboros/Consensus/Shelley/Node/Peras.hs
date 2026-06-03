@@ -18,18 +18,17 @@ import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   )
 import Ouroboros.Consensus.Committee.WFALS (WFALS)
+import Ouroboros.Consensus.Ledger.Extended (LedgerStateHeaderStateSupportsPerasVoting (..))
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
+import qualified Ouroboros.Consensus.Peras.State.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
-import Ouroboros.Consensus.Protocol.Praos.Peras
-  ( PraosStateSupportsPerasVoting (..)
-  , praosStatePerasVotingCommitteeInputV1
-  )
 import Ouroboros.Consensus.Shelley.Ledger.Block
   ( ShelleyBlock
   , ShelleyCompatible
   )
+import Ouroboros.Consensus.Shelley.Ledger.Ledger ()
 
 {-------------------------------------------------------------------------------
   BlockSupportsPeras
@@ -60,6 +59,6 @@ instance
 
 instance
   ShelleyCompatible proto DijkstraEra =>
-  PraosStateSupportsPerasVoting (ShelleyBlock proto DijkstraEra)
+  LedgerStateHeaderStateSupportsPerasVoting (ShelleyBlock proto DijkstraEra)
   where
-  praosStatePerasVotingCommitteeInput = praosStatePerasVotingCommitteeInputV1
+  ledgerStateHeaderStateMkPerasVotingCommitteeInput = V1.ledgerStateHeaderStateMkPerasVotingCommitteeInput
