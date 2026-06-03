@@ -54,6 +54,7 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId (CoreNodeId)
+import Ouroboros.Consensus.Peras.Context (ledgerStateHeaderStateMkPerasEpochContextResolver)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
@@ -209,15 +210,19 @@ protocolInfoByron
             , topLevelConfigCheckpoints = emptyCheckpointsMap
             }
       , pInfoInitLedger =
-          ExtLedgerState
-            { -- Important: don't pass the compacted genesis config to
-              -- 'initByronLedgerState', it needs the full one, including the AVVM
-              -- balances.
-              ledgerState = initByronLedgerState genesisConfig Nothing
-            , headerState = genesisHeaderState S.empty
-            , -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-              perasEpochContextResolver = undefined
-            }
+          let
+            -- Important: don't pass the compacted genesis config to
+            -- 'initByronLedgerState', it needs the full one, including the AVVM
+            -- balances.
+            ledgerState = initByronLedgerState genesisConfig Nothing
+            headerState = genesisHeaderState S.empty
+            perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+           in
+            ExtLedgerState
+              { ledgerState
+              , headerState
+              , perasEpochContextResolver
+              }
       }
    where
     compactedGenesisConfig = compactGenesisConfig genesisConfig

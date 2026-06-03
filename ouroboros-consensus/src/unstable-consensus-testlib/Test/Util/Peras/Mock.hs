@@ -32,8 +32,8 @@ import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.Committee.Class
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Crypto.Mock
-  ( MockPerasCommittee
-  , MockPerasCrypto
+  ( MockPerasCrypto
+  , MockPerasVotingCommitteeScheme
   , VotingCommittee (..)
   , VotingCommitteeInput (..)
   , getEligibility
@@ -54,14 +54,14 @@ import Test.Util.Peras.Internal
 import Test.Util.TestBlock (TestBlock)
 
 genMockPerasVotingCommitteeInput ::
-  Gen (VotingCommitteeInput (MockPerasCrypto TestBlock) (MockPerasCommittee TestBlock))
+  Gen (VotingCommitteeInput (MockPerasCrypto TestBlock) (MockPerasVotingCommitteeScheme TestBlock))
 genMockPerasVotingCommitteeInput = do
   NonEmptyListWithUniqueIds poolIds <- genNonEmptyListWithUniqueIds id genPoolId
   poolIdsWithStakes <- traverse (\poolId -> (poolId,) <$> genLedgerStake) poolIds
   pure $ MockPerasVotingCommitteeInput poolIdsWithStakes
 
 genMockPerasVotingCommittee ::
-  Gen (VotingCommittee (MockPerasCrypto TestBlock) (MockPerasCommittee TestBlock))
+  Gen (VotingCommittee (MockPerasCrypto TestBlock) (MockPerasVotingCommitteeScheme TestBlock))
 genMockPerasVotingCommittee =
   fromRight (error "mkVotingCommittee of O.C.Peras.Crypto.Mock can't fail") . mkVotingCommittee
     <$> genMockPerasVotingCommitteeInput
@@ -70,13 +70,14 @@ genMockPerasEpochContext :: Gen (PerasEpochContext TestBlock)
 genMockPerasEpochContext = DefaultPerasEpochContext <$> genMockPerasVotingCommittee <*> genPerasParams
 
 pickSeatIndexFromCommittee ::
-  VotingCommittee (MockPerasCrypto TestBlock) (MockPerasCommittee TestBlock) -> Gen PerasSeatIndex
+  VotingCommittee (MockPerasCrypto TestBlock) (MockPerasVotingCommitteeScheme TestBlock) ->
+  Gen PerasSeatIndex
 pickSeatIndexFromCommittee committee = do
   let maxIndex = length (weightDistr committee) - 1
   unsafeIntToSeatIndex <$> choose (0, maxIndex)
 
 genVotersSubset ::
-  VotingCommittee (MockPerasCrypto TestBlock) (MockPerasCommittee TestBlock) ->
+  VotingCommittee (MockPerasCrypto TestBlock) (MockPerasVotingCommitteeScheme TestBlock) ->
   Gen (NE (Set PerasSeatIndex))
 genVotersSubset committee = do
   NonEmptyListWithUniqueIds seatIndices <-
@@ -90,7 +91,7 @@ genMockPerasVoterIndices = do
   pure $ NESet.fromList seatIndices
 
 genMockPerasVote ::
-  VotingCommittee (MockPerasCrypto TestBlock) (MockPerasCommittee TestBlock) ->
+  VotingCommittee (MockPerasCrypto TestBlock) (MockPerasVotingCommitteeScheme TestBlock) ->
   Gen (MockPerasVote TestBlock)
 genMockPerasVote committee = do
   seatIndex <- pickSeatIndexFromCommittee committee
@@ -121,7 +122,7 @@ genMockValidatedPerasVote context = do
       }
 
 genMockPerasCert ::
-  VotingCommittee (MockPerasCrypto TestBlock) (MockPerasCommittee TestBlock) ->
+  VotingCommittee (MockPerasCrypto TestBlock) (MockPerasVotingCommitteeScheme TestBlock) ->
   Gen (MockPerasCert TestBlock)
 genMockPerasCert committee = do
   votersSubset <- genVotersSubset committee
@@ -135,7 +136,7 @@ genMockPerasCert committee = do
       }
 
 genMockPerasCertFullCommittee ::
-  VotingCommittee (MockPerasCrypto TestBlock) (MockPerasCommittee TestBlock) ->
+  VotingCommittee (MockPerasCrypto TestBlock) (MockPerasVotingCommitteeScheme TestBlock) ->
   Gen (MockPerasCert TestBlock)
 genMockPerasCertFullCommittee committee = do
   let maxIndex = length (weightDistr committee) - 1

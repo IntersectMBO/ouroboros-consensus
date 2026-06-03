@@ -1,3 +1,5 @@
+{-# LANGUAGE NamedFieldPuns #-}
+
 module Ouroboros.Consensus.Mock.Node.BFT
   ( MockBftBlock
   , blockForgingBft
@@ -10,11 +12,12 @@ import Ouroboros.Consensus.Block.Forging (BlockForging)
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Mock.Node
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..), NodeId (..))
+import Ouroboros.Consensus.Peras.Context
 import Ouroboros.Consensus.Protocol.BFT
 
 type MockBftBlock = SimpleBftBlock SimpleMockCrypto BftMockCrypto
@@ -50,11 +53,14 @@ protocolInfoBft numCoreNodes nid securityParam eraParams =
           , topLevelConfigCheckpoints = emptyCheckpointsMap
           }
     , pInfoInitLedger =
-        ExtLedgerState
-          (genesisSimpleLedgerState addrDist)
-          (genesisHeaderState ())
-          -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-          undefined
+        let ledgerState = genesisSimpleLedgerState addrDist
+            headerState = genesisHeaderState ()
+            perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+         in ExtLedgerState
+              { ledgerState
+              , headerState
+              , perasEpochContextResolver
+              }
     }
  where
   signKey :: CoreNodeId -> SignKeyDSIGN MockDSIGN

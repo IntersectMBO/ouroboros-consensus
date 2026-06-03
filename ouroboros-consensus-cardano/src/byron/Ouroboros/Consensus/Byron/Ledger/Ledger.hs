@@ -472,8 +472,7 @@ encodeByronExtLedgerState =
     encodeByronLedgerState
     encodeByronChainDepState
     encodeByronAnnTip
-    -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-    undefined
+    encode
 
 encodeByronHeaderState :: HeaderState ByronBlock -> Encoding
 encodeByronHeaderState =

@@ -10,6 +10,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Protocol
@@ -61,6 +62,15 @@ import Ouroboros.Consensus.HardFork.Combinator.State
   )
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.Translation as HFTranslation
+import Ouroboros.Consensus.Peras.Context
+  ( LedgerStateHeaderStateSupportsPerasVoting (..)
+  , V1PerasEpochContextResolver
+  , unsafeBoundedPerasEpochContextWithMinMaxBounds
+  , v1AbsorbErrorInResolver
+  , v1InitPerasEpochContextResolver
+  , v1ResolveRoundNo
+  )
+import qualified Ouroboros.Consensus.Peras.State.V1 as V1
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util ((.:))
@@ -139,6 +149,26 @@ instance CanHardFork xs => ChainDepStateSupportsPeras (HardForkProtocol xs) wher
     getEpochNonce' :: forall blk. SingleEraBlock blk => WrapChainDepState blk -> K Nonce blk
     getEpochNonce' (WrapChainDepState st) =
       K (getEpochNonce (Proxy @(BlockProtocol blk)) st)
+
+{-------------------------------------------------------------------------------
+  LedgerStateHeaderStateSupportsPerasVoting
+-------------------------------------------------------------------------------}
+
+instance
+  ( StandardHash (HardForkBlock xs)
+  , CanHardFork xs
+  ) =>
+  LedgerStateHeaderStateSupportsPerasVoting (HardForkBlock xs)
+  where
+  type PerasEpochContextResolver (HardForkBlock xs) = V1PerasEpochContextResolver (HardForkBlock xs)
+
+  ledgerStateHeaderStateMkPerasVotingCommitteeInput = V1.ledgerStateHeaderStateMkPerasVotingCommitteeInput
+  ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState =
+    v1AbsorbErrorInResolver $
+      v1InitPerasEpochContextResolver . unsafeBoundedPerasEpochContextWithMinMaxBounds
+        <$> (ledgerStateHeaderStateMkPerasEpochContext ledgerState headerState)
+
+  resolveRoundNo = v1ResolveRoundNo
 
 {-------------------------------------------------------------------------------
   BlockSupportsProtocol
