@@ -259,10 +259,3 @@ forgeDualByronBlock cfg curBlockNo curSlotNo tickedLedger vtxs isLeader =
           (tickedDualLedgerStateBridge tickedLedger)
           (hashVerKey . deriveVerKeyDSIGN . pbftIsLeaderSignKey $ isLeader)
       )
-
-{-------------------------------------------------------------------------------
-  BlockSupportsPeras
--------------------------------------------------------------------------------}
-
--- NOTE: DualByron does not support Peras, so we can use the empty instance here.
-instance BlockSupportsPeras DualByronBlock

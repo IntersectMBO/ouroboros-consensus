@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
@@ -44,6 +45,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.Context (ledgerStateHeaderStateMkPerasEpochContextResolver)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
@@ -220,12 +222,14 @@ exampleHeaderState = HeaderState (NotOrigin exampleAnnTip) exampleChainDepState
 
 exampleExtLedgerState :: ExtLedgerState ByronBlock ValuesMK
 exampleExtLedgerState =
-  ExtLedgerState
-    { ledgerState = exampleLedgerState
-    , headerState = exampleHeaderState
-    , -- [TODO EPOCH CONTEXT PLUMBING] we need t ofix this
-      perasEpochContextResolver = undefined
-    }
+  let ledgerState = exampleLedgerState
+      headerState = exampleHeaderState
+      perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+   in ExtLedgerState
+        { ledgerState
+        , headerState
+        , perasEpochContextResolver
+        }
 
 exampleHeaderHash :: ByronHash
 exampleHeaderHash = blockHash exampleBlock

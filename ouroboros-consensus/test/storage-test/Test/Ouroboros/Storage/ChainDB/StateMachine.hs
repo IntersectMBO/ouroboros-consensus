@@ -128,6 +128,9 @@ import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
+import Ouroboros.Consensus.Peras.Context
+  ( LedgerStateHeaderStateSupportsPerasVoting (PerasEpochContextResolver)
+  )
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB hiding
@@ -369,6 +372,7 @@ type TestConstraints blk =
   ( ConsensusProtocol (BlockProtocol blk)
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , Eq (ChainDepState (BlockProtocol blk))
@@ -1625,6 +1629,7 @@ deriving instance
   , ToExpr (TipInfo blk)
   , ToExpr (LedgerState blk EmptyMK)
   , ToExpr (ExtValidationError blk)
+  , ToExpr (PerasEpochContextResolver blk)
   , StandardHash blk
   , Show blk
   , Show (PerasVote blk)

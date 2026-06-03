@@ -53,7 +53,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
   , WithArrivalTime (..)
   )
-import Ouroboros.Consensus.Peras.Context (constPerasEpochContextResolverHandle)
+import Ouroboros.Consensus.Peras.Context (mockPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
@@ -272,7 +272,7 @@ instance RunModel Model (StateT (PerasVoteDB IO TestBlock) IO) where
   perform _ action _ =
     case action of
       CreateDB context -> do
-        resolverHandle <- lift $ constPerasEpochContextResolverHandle context
+        resolverHandle <- lift $ mockPerasEpochContextResolverHandle context
         let args = PerasVoteDB.PerasVoteDbArgs nullTracer resolverHandle
         voteDB <- lift $ PerasVoteDB.createDB args
         put voteDB

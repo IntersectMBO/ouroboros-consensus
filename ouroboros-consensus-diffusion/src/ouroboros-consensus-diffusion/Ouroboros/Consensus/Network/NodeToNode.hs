@@ -85,6 +85,7 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -278,6 +279,7 @@ mkHandlers ::
   , MonadTimer m
   , HasTxId (GenTx blk)
   , BlockSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
   , Ord addrNTN

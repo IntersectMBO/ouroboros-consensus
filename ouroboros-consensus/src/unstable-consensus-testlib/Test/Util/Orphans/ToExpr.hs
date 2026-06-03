@@ -24,7 +24,12 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.TxSeq
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
-import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver)
+import Ouroboros.Consensus.Peras.Context
+  ( EmptyPerasEpochContextResolver
+  , MockPerasEpochContextResolver
+  , PerasEpochContextResolver
+  , V1PerasEpochContextResolver
+  )
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
@@ -142,7 +147,11 @@ instance ToExpr PerasSeatIndex where toExpr = defaultExprViaShow
 instance ToExpr (HeaderHash blk) => ToExpr (MockPerasVote blk)
 instance ToExpr (HeaderHash blk) => ToExpr (MockPerasCert blk)
 
-instance Show (PerasEpochContext blk) => ToExpr (PerasEpochContextResolver blk) where
+instance ToExpr EmptyPerasEpochContextResolver where
+  toExpr = defaultExprViaShow
+instance Show (PerasEpochContext blk) => ToExpr (MockPerasEpochContextResolver blk) where
+  toExpr = defaultExprViaShow
+instance Show (PerasEpochContext blk) => ToExpr (V1PerasEpochContextResolver blk) where
   toExpr = defaultExprViaShow
 
 {-------------------------------------------------------------------------------

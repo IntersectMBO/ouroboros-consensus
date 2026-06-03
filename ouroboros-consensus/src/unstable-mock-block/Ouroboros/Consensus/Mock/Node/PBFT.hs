@@ -20,6 +20,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool (txForgetValidated)
 import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting (..))
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 
@@ -44,11 +45,14 @@ protocolInfoMockPBFT params eraParams =
           , topLevelConfigCheckpoints = emptyCheckpointsMap
           }
     , pInfoInitLedger =
-        ExtLedgerState
-          (genesisSimpleLedgerState addrDist)
-          (genesisHeaderState S.empty)
-          -- [TODO EPOCH CONTEXT PLUMBING] we need to fix this
-          undefined
+        let ledgerState = genesisSimpleLedgerState addrDist
+            headerState = genesisHeaderState S.empty
+            perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+         in ExtLedgerState
+              { ledgerState
+              , headerState
+              , perasEpochContextResolver
+              }
     }
  where
   ledgerView :: PBftLedgerView PBftMockCrypto
