@@ -1,3 +1,4 @@
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
@@ -8,7 +9,6 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE DefaultSignatures #-}
 
 module Ouroboros.Consensus.Protocol.Abstract
   ( -- * Abstract definition of the Ouroboros protocol
@@ -36,6 +36,7 @@ module Ouroboros.Consensus.Protocol.Abstract
   , SecurityParam (..)
   ) where
 
+import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce))
 import Cardano.Slotting.Slot (WithOrigin (At))
 import Control.Monad.Except
 import Data.Function (on)
@@ -48,7 +49,6 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Ticked
-import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce))
 
 -- | Static configuration required to run the consensus protocol
 --

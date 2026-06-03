@@ -248,6 +248,8 @@ library
     Ouroboros.Consensus.Peras.Error.Mock
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
+    Ouroboros.Consensus.Peras.State.Mock
+    Ouroboros.Consensus.Peras.State.V1
     Ouroboros.Consensus.Peras.Types
     Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Vote.Mock
@@ -965,7 +967,6 @@ library protocol
     Ouroboros.Consensus.Protocol.Praos.AgentClient
     Ouroboros.Consensus.Protocol.Praos.Common
     Ouroboros.Consensus.Protocol.Praos.Header
-    Ouroboros.Consensus.Protocol.Praos.Peras
     Ouroboros.Consensus.Protocol.Praos.Views
     Ouroboros.Consensus.Protocol.Praos.VRF
     Ouroboros.Consensus.Protocol.TPraos

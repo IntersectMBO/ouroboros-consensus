@@ -30,7 +30,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasIgnoranceRounds (..)
   , PerasParams (..)
   , PerasRoundNo (..)
-  , mkPerasParams
+  , defaultPerasParams
   , onPerasRoundNo
   )
 import Ouroboros.Consensus.BlockchainTime
@@ -226,7 +226,7 @@ genPerasParams = do
   _R <- fromIntegral . (+ 1) <$> geometric 0.5
   _K <- fromIntegral . (+ 1) <$> geometric 0.5
   pure
-    mkPerasParams
+    defaultPerasParams
       { perasBlockMinSlots = PerasBlockMinSlots _L
       , perasCertArrivalThreshold = PerasCertArrivalThreshold _X
       , perasIgnoranceRounds = PerasIgnoranceRounds _R

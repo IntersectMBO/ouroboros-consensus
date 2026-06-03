@@ -32,6 +32,7 @@ data MockPerasError blk
       PerasConversionError
   | PerasQuorumNotReachedError
       VoteWeight
+  | InputStakeDistrIsEmpty
 
 deriving instance
   Show (PerasVotingCommitteeError blk) =>
