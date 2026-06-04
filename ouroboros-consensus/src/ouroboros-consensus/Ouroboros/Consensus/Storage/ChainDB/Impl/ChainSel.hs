@@ -23,6 +23,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   , chainSelectionForBlock
   , initialChainSelection
   , reconsiderBlockAsync
+  , registerHeaderListener
   , triggerChainSelectionAsync
 
     -- * Exported for testing purposes
@@ -330,6 +331,33 @@ reconsiderBlockAsync ::
 reconsiderBlockAsync CDB{cdbChainSelQueue} =
   addReconsiderBlock cdbChainSelQueue
 
+-- | Append a listener to the AddBlock listener list.
+--
+-- See 'Ouroboros.Consensus.Storage.ChainDB.API.registerHeaderListener' for
+-- the API contract.
+registerHeaderListener ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  (Header blk -> STM m ()) ->
+  m ()
+registerHeaderListener CDB{cdbHeaderListeners} listener =
+  atomically $
+    modifyTVar cdbHeaderListeners (++ [HeaderListener listener])
+
+-- | Run every listener registered via 'registerHeaderListener' on the just
+-- arrived header. Returns the STM action so the caller can sequence it
+-- with adjacent STM operations.
+runHeaderListeners ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  Header blk ->
+  STM m ()
+runHeaderListeners CDB{cdbHeaderListeners} hdr = do
+  listeners <- readTVar cdbHeaderListeners
+  mapM_ (\(HeaderListener f) -> f hdr) listeners
+
 -- | Add a block to the ChainDB, /synchronously/.
 --
 -- This is the only operation that actually changes the ChainDB. It will store
@@ -443,6 +471,14 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
         lift $
           encloseWith (traceEv >$< addBlockTracer) $
             VolatileDB.putBlock cdbVolatileDB b
+        -- Run header listeners between writing the block to the
+        -- VolatileDB and running chain selection on it. The listener
+        -- transaction commits before any downstream observer (a thread
+        -- woken by 'deliverWrittenToDisk', chain selection itself) can
+        -- observe the new block, so subsystems that maintain state
+        -- derived from the new block see their write committed at the
+        -- same point external code sees the block.
+        lift $ atomically $ runHeaderListeners cdb hdr
         lift $ deliverWrittenToDisk True
         chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
 

@@ -24,6 +24,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , ChainDbHandle (..)
   , ChainDbState (..)
   , ChainSelectionPromise (..)
+  , HeaderListener (..)
   , SerialiseDiskConstraints
   , getEnv
   , getEnv1
@@ -383,8 +384,23 @@ data ChainDbEnv m blk = CDB
   -- ^ Information on the last starvation of ChainSel, whether ongoing or
   -- ended recently.
   , cdbPerasCertDB :: !(PerasCertDB m blk)
+  , cdbHeaderListeners :: !(StrictTVar m [HeaderListener m blk])
+  -- ^ Listeners registered via 'registerHeaderListener'. Invoked in
+  -- registration order inside one STM transaction in the AddBlock arm
+  -- of 'chainSelSync', after the block is written to the VolatileDB
+  -- and before chain selection runs on it.
   }
   deriving Generic
+
+-- | An STM callback that runs on each successful AddBlock.
+--
+-- The wrapper exists so that the 'NoThunks' instance for 'ChainDbEnv'
+-- can pass over the function via WHNF; functions have no useful
+-- structural thunk check.
+newtype HeaderListener m blk = HeaderListener
+  { runHeaderListener :: Header blk -> STM m ()
+  }
+  deriving NoThunks via OnlyCheckWhnfNamed "HeaderListener" (HeaderListener m blk)
 
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
 -- (but avoid including @m@ because we cannot impose @Typeable m@ as a

@@ -190,6 +190,30 @@ data ChainDB m blk = ChainDB
   -- enqueue and the dequeue, ChainSel logs the same event it would have
   -- logged on 'addBlockAsync' for a too-old block and otherwise does
   -- nothing. The exception path is not used.
+  , registerHeaderListener :: (Header blk -> STM m ()) -> m ()
+  -- ^ Register a listener fired on every successful 'addBlockAsync' add,
+  -- between writing the block to the VolatileDB and running chain
+  -- selection on it. The listener receives the just-arrived header.
+  --
+  -- All registered listeners run inside a single STM transaction. A
+  -- listener can observe writes from earlier-registered listeners in the
+  -- same fire; a throw from any listener aborts the joint transaction
+  -- (the in-flight add then completes with 'FailedToAddBlock', the
+  -- ChainSel thread survives, every listener's commit for this block is
+  -- lost). Listener bodies must not call 'throwSTM' and must not retry
+  -- indefinitely; 'retry' inside the joint transaction stalls
+  -- 'addBlockAsync' processing.
+  --
+  -- Listener bodies must be small: a handful of TVar reads and writes,
+  -- no IO, no blocking. The transaction is on the AddBlock hot path.
+  --
+  -- A caller that needs parent information or the block body looks it up
+  -- from its own state; the listener does not receive it.
+  --
+  -- Listeners that register after 'addBlockAsync' processing has started
+  -- may miss blocks added in the registration window. Wiring registrants
+  -- before the chain-selection runner starts is the caller's
+  -- responsibility.
   , getCurrentChain :: STM m (AnchoredFragment (Header blk))
   -- ^ Get the current chain fragment
   --

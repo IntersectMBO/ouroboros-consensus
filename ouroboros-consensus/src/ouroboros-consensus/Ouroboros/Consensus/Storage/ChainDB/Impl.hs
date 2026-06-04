@@ -244,6 +244,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     chainSelFuse <- newFuse "chain selection"
     chainSelQueue <- newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
     varChainSelStarvation <- newTVarIO ChainSelStarvationOngoing
+    varHeaderListeners <- newTVarIO []
 
     let env =
           CDB
@@ -270,6 +271,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
+            , cdbHeaderListeners = varHeaderListeners
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -280,6 +282,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             { addBlockAsync = getEnv2 h ChainSel.addBlockAsync
             , chainSelAsync = getEnv h ChainSel.triggerChainSelectionAsync
             , reconsiderBlockAsync = getEnv1 h ChainSel.reconsiderBlockAsync
+            , registerHeaderListener = getEnv1 h ChainSel.registerHeaderListener
             , getCurrentChain = getEnvSTM h Query.getCurrentChain
             , getCurrentChainWithTime = getEnvSTM h Query.getCurrentChainWithTime
             , getTipBlock = getEnv h Query.getTipBlock
