@@ -142,7 +142,7 @@ import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosState (..))
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (Header, headerBody)
-  , HeaderBody (hbLeiosEbAnnouncement, hbSlotNo)
+  , HeaderBody (hbIsCertRB, hbLeiosEbAnnouncement, hbSlotNo)
   )
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -1041,6 +1041,11 @@ instance
             { pointSlotNo = hbSlotNo annBody
             , pointEbHash = ebAnnouncementHash ann
             }
+   where
+    annBody :: HeaderBody c
+    Header{headerBody = annBody} = shelleyHeaderRaw hdr
+
+  headerIsCertRB hdr = hbIsCertRB annBody
    where
     annBody :: HeaderBody c
     Header{headerBody = annBody} = shelleyHeaderRaw hdr

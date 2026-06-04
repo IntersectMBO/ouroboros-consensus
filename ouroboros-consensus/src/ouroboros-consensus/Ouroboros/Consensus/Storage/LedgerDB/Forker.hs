@@ -46,6 +46,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , AnnLedgerError'
   , ResolveBlock
   , ResolveLeiosBlock (..)
+  , IsCertRB (..)
   , SuccessForkerAction (..)
   , ValidateArgs (..)
   , ValidateResult (..)
@@ -70,7 +71,7 @@ import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
-import LeiosDemoTypes (LeiosPoint)
+import LeiosDemoTypes (IsCertRB (..), LeiosPoint)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
@@ -575,6 +576,14 @@ class ResolveLeiosBlock blk where
   -- skip decoding entirely when the announcer didn't announce.
   headerLeiosAnnouncement :: Header blk -> Maybe LeiosPoint
   headerLeiosAnnouncement _ = Nothing
+
+  -- | Whether this header denotes a CertRB (a block that certifies a
+  -- previously-announced Leios EB).  Used by ChainSel to filter
+  -- candidate CertRBs whose certified EB closure is not locally
+  -- available. Defaults to 'NotCertRB' for headers in eras that don't
+  -- carry the bit.
+  headerIsCertRB :: Header blk -> IsCertRB
+  headerIsCertRB _ = NotCertRB
 
 {-------------------------------------------------------------------------------
   Validation

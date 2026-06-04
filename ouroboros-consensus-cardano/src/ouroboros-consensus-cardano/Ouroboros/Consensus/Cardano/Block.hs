@@ -238,7 +238,7 @@ import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyCompatible)
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
+import Ouroboros.Consensus.Storage.LedgerDB (IsCertRB (..), ResolveLeiosBlock (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -1544,3 +1544,7 @@ instance
   headerLeiosAnnouncement hdr = case hdr of
     HeaderDijkstra dHdr -> headerLeiosAnnouncement dHdr
     _ -> Nothing
+
+  headerIsCertRB hdr = case hdr of
+    HeaderDijkstra dHdr -> headerIsCertRB dHdr
+    _ -> NotCertRB
