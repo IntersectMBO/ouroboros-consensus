@@ -57,6 +57,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , ChainSelQueue -- opaque
   , addBlockToAdd
   , addPerasCertToQueue
+  , addReconsiderBlock
   , addReprocessLoEBlocks
   , closeChainSelQueue
   , getChainSelMessage
@@ -587,6 +588,21 @@ data ChainSelMessage m blk
     ChainSelReprocessLoEBlocks
       -- | Used for 'ChainSelectionPromise'.
       !(StrictTMVar m ())
+  | -- | Reconsider a block already stored in the VolatileDB.
+    --
+    -- The block was previously added to the VolatileDB but was rejected by an
+    -- external filter (see e.g. the Leios late-join filter) at the time it was
+    -- added. The caller asks ChainSel to evaluate it again because the
+    -- condition that rejected it may now have cleared.
+    --
+    -- The point intentionally does not enter @varChainSelPoints@: the block
+    -- is already on disk, not pending-add, so 'memberChainSelQueue' (which
+    -- answers "is this block pending its first selection?") does not include
+    -- it.
+    --
+    -- See 'terminateStarvationMeasure' for the starvation-tracing asymmetry
+    -- with 'ChainSelAddBlock'.
+    ChainSelReconsiderBlock !(RealPoint blk)
 
 -- | Create a new 'ChainSelQueue' with the given size.
 newChainSelQueue :: (IOLike m, StandardHash blk, Typeable blk) => Word -> m (ChainSelQueue m blk)
@@ -652,6 +668,20 @@ addPerasCertToQueue tracer ChainSelQueue{varChainSelQueue} cert = do
  where
   addedToQueue = AddedPerasCertToQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
 
+-- | Enqueue a request to re-run chain selection for a block already in the
+-- VolatileDB.
+--
+-- The point does not enter 'varChainSelPoints'; the block is on disk, not
+-- pending-add. Blocks when the queue is full (same backpressure as the other
+-- producers).
+addReconsiderBlock ::
+  IOLike m =>
+  ChainSelQueue m blk ->
+  RealPoint blk ->
+  m ()
+addReconsiderBlock ChainSelQueue{varChainSelQueue} p =
+  atomically $ writeTBQueue varChainSelQueue (ChainSelReconsiderBlock p)
+
 -- | Try to add blocks again that were postponed due to the LoE.
 addReprocessLoEBlocks ::
   IOLike m =>
@@ -708,6 +738,9 @@ getChainSelMessage starvationTracer starvationVar chainSelQueue =
       atomically . writeTVar starvationVar . ChainSelStarvationEndedAt =<< getMonotonicTime
     ChainSelAddPerasCert{} -> pure ()
     ChainSelReprocessLoEBlocks{} -> pure ()
+    -- The falling edge fires only for 'ChainSelAddBlock'; reconsider is not
+    -- block-arrival and is not counted as the end of a starvation period.
+    ChainSelReconsiderBlock{} -> pure ()
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
@@ -721,6 +754,11 @@ closeChainSelQueue ChainSelQueue{varChainSelQueue = queue} = do
       tryPutTMVar varProcessed ()
     ChainSelReprocessLoEBlocks varProcessed ->
       tryPutTMVar varProcessed ()
+    -- 'ChainSelReconsiderBlock' has no promise to deliver; dropping it on
+    -- flush is fine because the block is still in the VolatileDB and the
+    -- caller can re-enqueue if it still cares.
+    ChainSelReconsiderBlock{} ->
+      pure False
 
 -- | To invoke when the given 'ChainSelMessage' has been processed by ChainSel.
 -- This is used to remove the respective point from the multiset of points in
@@ -736,6 +774,10 @@ processedChainSelMessage ChainSelQueue{varChainSelPoints} = \case
   ChainSelAddPerasCert{} ->
     pure ()
   ChainSelReprocessLoEBlocks{} ->
+    pure ()
+  -- The point was not inserted into 'varChainSelPoints' on enqueue, so there
+  -- is nothing to remove here.
+  ChainSelReconsiderBlock{} ->
     pure ()
 
 -- | Return a function to test the membership
@@ -893,6 +935,9 @@ data TraceAddBlockEvent blk
     AddedReprocessLoEBlocksToQueue (Enclosing' Word)
   | -- | ChainSel will reprocess blocks that were postponed by the LoE.
     PoppedReprocessLoEBlocksFromQueue
+  | -- | A 'reconsiderBlockAsync' request was popped from the queue. ChainSel
+    -- will look the block up in the VolatileDB and re-run selection on it.
+    PoppedReconsiderBlockFromQueue (RealPoint blk)
   | -- | A block was added to the Volatile DB
     AddedBlockToVolatileDB (RealPoint blk) BlockNo IsEBB Enclosing
   | -- | The block fits onto the current chain, we'll try to use it to extend

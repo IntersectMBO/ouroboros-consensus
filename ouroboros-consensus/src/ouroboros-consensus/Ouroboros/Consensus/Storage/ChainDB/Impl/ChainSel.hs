@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
   , chainSelSync
   , chainSelectionForBlock
   , initialChainSelection
+  , reconsiderBlockAsync
   , triggerChainSelectionAsync
 
     -- * Exported for testing purposes
@@ -316,6 +317,19 @@ triggerChainSelectionAsync ::
 triggerChainSelectionAsync CDB{cdbTracer, cdbChainSelQueue} =
   addReprocessLoEBlocks (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
 
+-- | Schedule a re-run of ChainSel for a block already in the VolatileDB.
+--
+-- See 'Ouroboros.Consensus.Storage.ChainDB.API.reconsiderBlockAsync' for the
+-- API contract.
+reconsiderBlockAsync ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  RealPoint blk ->
+  m ()
+reconsiderBlockAsync CDB{cdbChainSelQueue} =
+  addReconsiderBlock cdbChainSelQueue
+
 -- | Add a block to the ChainDB, /synchronously/.
 --
 -- This is the only operation that actually changes the ChainDB. It will store
@@ -458,6 +472,23 @@ chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   deliverProcessed tip =
     atomically $
       putTMVar varBlockProcessed (SuccesfullyAddedBlock tip)
+-- Re-run chain selection for a block already stored in the VolatileDB.
+--
+-- The block is looked up via the non-throwing 'getBlockComponent'. A
+-- 'Nothing' means the block was garbage-collected from the VolatileDB
+-- between the enqueue of this message and now. VolatileDB GC is slot-based:
+-- any block whose slot is strictly below the ImmutableDB tip slot can be
+-- dropped, including blocks on stale forks. The arm logs
+-- 'IgnoreBlockOlderThanImmTip' in that case and returns.
+chainSelSync cdb@CDB{..} (ChainSelReconsiderBlock p) = do
+  let hash = realPointHash p
+      addBlockTracer = TraceAddBlockEvent >$< cdbTracer
+  mHdr <- lift $ VolatileDB.getBlockComponent cdbVolatileDB GetHeader hash
+  case mHdr of
+    Nothing ->
+      lift $ traceWith addBlockTracer $ IgnoreBlockOlderThanImmTip p
+    Just hdr ->
+      chainSelectionForBlock cdb BlockCache.empty hdr noPunishment
 -- Process a Peras certificate by adding it to the PerasCertDB and potentially
 -- performing chain selection if a candidate is now better than our selection.
 chainSelSync cdb@CDB{..} (ChainSelAddPerasCert cert varProcessed) = do

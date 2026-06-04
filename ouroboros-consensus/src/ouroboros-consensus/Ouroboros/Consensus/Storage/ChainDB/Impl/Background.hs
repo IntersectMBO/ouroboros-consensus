@@ -638,6 +638,11 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
               pure ()
             ChainSelAddPerasCert _cert varProcessed ->
               void $ tryPutTMVar varProcessed ()
+            -- 'ChainSelReconsiderBlock' carries no promise, so there is
+            -- nothing to notify on cancellation. The block stays in the
+            -- VolatileDB; the caller can re-enqueue if needed.
+            ChainSelReconsiderBlock{} ->
+              pure ()
           closeChainSelQueue cdbChainSelQueue
       )
       ( \message -> do
@@ -650,6 +655,8 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
               traceWith cdbTracer $
                 TraceAddPerasCertEvent $
                   PoppedPerasCertFromQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
+            ChainSelReconsiderBlock p ->
+              trace $ PoppedReconsiderBlockFromQueue p
           chainSelSync cdb message
           lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
       )

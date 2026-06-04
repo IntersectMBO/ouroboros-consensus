@@ -170,6 +170,26 @@ data ChainDB m blk = ChainDB
   -- https://github.com/IntersectMBO/ouroboros-consensus/blob/main/docs/website/contents/for-developers/HandlingBlocksFromTheFuture.md#handling-blocks-from-the-future
   , chainSelAsync :: m (ChainSelectionPromise m)
   -- ^ Trigger reprocessing of blocks postponed by the LoE.
+  , reconsiderBlockAsync :: RealPoint blk -> m ()
+  -- ^ Ask ChainSel to re-run for a block already stored in the VolatileDB.
+  --
+  -- The block was added to the VolatileDB earlier but rejected at selection
+  -- time by an external filter (e.g. the Leios late-join pending-CertRB
+  -- filter). The caller invokes this entry when the condition that rejected
+  -- the block may have cleared, so the block should be considered again.
+  --
+  -- The new request is enqueued on the same queue as 'addBlockAsync'. The
+  -- block's point is /not/ counted by 'getIsFetched' or 'getMaxSlotNo': the
+  -- block is already on disk, so the queue's pending-add multiset is the
+  -- wrong place for it.
+  --
+  -- The call may block when the queue is full; this is the same
+  -- backpressure path as 'addBlockAsync'.
+  --
+  -- If the block has been garbage-collected from the VolatileDB between the
+  -- enqueue and the dequeue, ChainSel logs the same event it would have
+  -- logged on 'addBlockAsync' for a too-old block and otherwise does
+  -- nothing. The exception path is not used.
   , getCurrentChain :: STM m (AnchoredFragment (Header blk))
   -- ^ Get the current chain fragment
   --
