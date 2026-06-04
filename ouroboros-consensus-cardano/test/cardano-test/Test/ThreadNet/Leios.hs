@@ -407,7 +407,7 @@ prop_leios_late_join seed =
               counterexample ("threw: " <> show e) False
           Right _ -> property True
  where
-  numSlots = 60 :: Word64 -- TODO restore to 200 once perf is fixed
+  numSlots = 200 :: Word64
 
 -- | Independently compute cumulative tx bytes by resolving each block in the
 -- chain (filling in EB closures from the LeiosDB) and summing individual
