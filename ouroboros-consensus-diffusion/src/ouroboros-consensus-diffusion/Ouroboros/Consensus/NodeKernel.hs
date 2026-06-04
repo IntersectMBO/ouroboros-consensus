@@ -1014,14 +1014,17 @@ findParentAnnouncement prev currentChain candidates = case prev of
 -- whose *current* ChainSync candidate contains the staged block.
 -- Handles peers that connect (or extend their candidate through this
 -- block) after staging.
--- | Recompute each staged entry's peer set from the current ChainSync
--- candidates: any peer whose candidate fragment still contains the
--- staged block. We REPLACE the persisted 'stagedPeers' (rather than
--- union with it) so that peers which have since disconnected — and
--- whose handles are therefore no longer in 'candidates' — drop out.
--- Otherwise the fetch synth would keep aiming requests at peers that
--- aren't in 'leiosPeersVars' anymore, and 'Map.intersectionWith' in
--- the fetch loop would silently drop them.
+-- | Re-derive each staged entry's peer set by unioning in any peer
+-- whose *current* ChainSync candidate contains the staged block —
+-- handles peers that connect (or extend through this block) after
+-- staging. We deliberately UNION (rather than replace) so that
+-- original attesters who were known to have the block at stage time
+-- stay in the set even if their candidate fragment has since rolled
+-- past it (the block is in their immutable DB and they can still
+-- serve it via LeiosFetch). The 'Map.restrictKeys livePeers' filter
+-- in 'leiosFetchLogic's synth step drops any peers that have
+-- disconnected from 'leiosPeersVars' so 'Map.intersectionWith' won't
+-- silently drop their requests.
 augmentStagedPeers ::
   (HasHeader blk, HasHeader (Header blk), Ord peer) =>
   Map.Map peer (AF.AnchoredFragment (HeaderWithTime blk)) ->
@@ -1031,7 +1034,7 @@ augmentStagedPeers candidates staged =
   Map.map go staged
  where
   go entry =
-    let live =
+    let extra =
           Set.fromList
             [ peer
             | (peer, frag) <- Map.toList candidates
@@ -1039,7 +1042,7 @@ augmentStagedPeers candidates staged =
                 ((== Block.blockHash (stagedBlock entry)) . Block.blockHash)
                 (AF.toOldestFirst frag)
             ]
-     in entry{stagedPeers = live}
+     in entry{stagedPeers = stagedPeers entry `Set.union` extra}
 
 -- | Scan all ChainSync candidates for ones whose fragment contains a
 -- header with the same hash as @blk@. Those peers' chains have admitted

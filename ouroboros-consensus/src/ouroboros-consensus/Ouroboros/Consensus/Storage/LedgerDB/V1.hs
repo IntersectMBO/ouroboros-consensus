@@ -85,65 +85,69 @@ mkInitDb ::
   ResolveBlock m blk ->
   SnapshotManagerV1 m blk ->
   GetVolatileSuffix m blk ->
-  InitDB (DbChangelog' blk, BackingStore' m blk) m blk
-mkInitDb args bss getBlock snapManager getVolatileSuffix =
-  InitDB
-    { initFromGenesis = do
-        st <- lgrGenesis
-        let genesis = forgetLedgerTables st
-            chlog = DbCh.empty genesis
-        backingStore <- newBackingStore bsTracer baArgs lgrHasFS' genesis (projectLedgerTables st)
-        pure (chlog, backingStore)
-    , initFromSnapshot = \ds ->
-        runExceptT
-          ( loadSnapshot
-              bsTracer
-              baArgs
-              (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
-              lgrHasFS'
-              ds
-          )
-    , initReapplyBlock = \cfg blk (chlog, bstore) -> do
-        !chlog' <- reapplyThenPush cfg blk (readKeySets bstore) chlog
-        -- It's OK to flush without a lock here, since the `LedgerDB` has not
-        -- finished initializing, only this thread has access to the backing
-        -- store.
-        chlog'' <-
-          unsafeIgnoreWriteLock $
-            if shouldFlush flushFreq (flushableLength chlog')
-              then do
-                let (toFlush, toKeep) = splitForFlushing chlog'
-                mapM_ (flushIntoBackingStore bstore) toFlush
-                pure toKeep
-              else pure chlog'
-        pure (chlog'', bstore)
-    , currentTip = \(ch, _) -> ledgerState . current $ ch
-    , mkLedgerDb = \(db, ldbBackingStore) -> do
-        (varDB, prevApplied) <-
-          (,) <$> newTVarIO db <*> newTVarIO Set.empty
-        flushLock <- mkLedgerDBLock
-        nextForkerKey <- newTVarIO (ForkerKey 0)
-        ldbLeiosDb <- open lgrLeiosDb
-        let env =
-              LedgerDBEnv
-                { ldbChangelog = varDB
-                , ldbBackingStore = ldbBackingStore
-                , ldbLock = flushLock
-                , ldbPrevApplied = prevApplied
-                , ldbNextForkerKey = nextForkerKey
-                , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
-                , ldbTracer = lgrTracer
-                , ldbCfg = lgrConfig
-                , ldbHasFS = lgrHasFS'
-                , ldbShouldFlush = shouldFlush flushFreq
-                , ldbQueryBatchSize = lgrQueryBatchSize
-                , ldbResolveBlock = getBlock
-                , ldbGetVolatileSuffix = getVolatileSuffix
-                , ldbLeiosDb
-                }
-        h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
-        pure $ implMkLedgerDb h snapManager
-    }
+  m (InitDB (DbChangelog' blk, BackingStore' m blk) m blk)
+mkInitDb args bss getBlock snapManager getVolatileSuffix = do
+  -- Open the LeiosDb connection once, up front, and share it between the
+  -- immutable-DB replay path ('initReapplyBlock') and the post-replay
+  -- 'LedgerDBEnv'. See V2.mkInitDb for the longer rationale.
+  ldbLeiosDb <- open lgrLeiosDb
+  pure $
+    InitDB
+      { initFromGenesis = do
+          st <- lgrGenesis
+          let genesis = forgetLedgerTables st
+              chlog = DbCh.empty genesis
+          backingStore <- newBackingStore bsTracer baArgs lgrHasFS' genesis (projectLedgerTables st)
+          pure (chlog, backingStore)
+      , initFromSnapshot = \ds ->
+          runExceptT
+            ( loadSnapshot
+                bsTracer
+                baArgs
+                (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
+                lgrHasFS'
+                ds
+            )
+      , initReapplyBlock = \cfg blk (chlog, bstore) -> do
+          !chlog' <- reapplyThenPushLeios ldbLeiosDb cfg blk (readKeySets bstore) chlog
+          -- It's OK to flush without a lock here, since the `LedgerDB` has not
+          -- finished initializing, only this thread has access to the backing
+          -- store.
+          chlog'' <-
+            unsafeIgnoreWriteLock $
+              if shouldFlush flushFreq (flushableLength chlog')
+                then do
+                  let (toFlush, toKeep) = splitForFlushing chlog'
+                  mapM_ (flushIntoBackingStore bstore) toFlush
+                  pure toKeep
+                else pure chlog'
+          pure (chlog'', bstore)
+      , currentTip = \(ch, _) -> ledgerState . current $ ch
+      , mkLedgerDb = \(db, ldbBackingStore) -> do
+          (varDB, prevApplied) <-
+            (,) <$> newTVarIO db <*> newTVarIO Set.empty
+          flushLock <- mkLedgerDBLock
+          nextForkerKey <- newTVarIO (ForkerKey 0)
+          let env =
+                LedgerDBEnv
+                  { ldbChangelog = varDB
+                  , ldbBackingStore = ldbBackingStore
+                  , ldbLock = flushLock
+                  , ldbPrevApplied = prevApplied
+                  , ldbNextForkerKey = nextForkerKey
+                  , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
+                  , ldbTracer = lgrTracer
+                  , ldbCfg = lgrConfig
+                  , ldbHasFS = lgrHasFS'
+                  , ldbShouldFlush = shouldFlush flushFreq
+                  , ldbQueryBatchSize = lgrQueryBatchSize
+                  , ldbResolveBlock = getBlock
+                  , ldbGetVolatileSuffix = getVolatileSuffix
+                  , ldbLeiosDb
+                  }
+          h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
+          pure $ implMkLedgerDb h snapManager
+      }
  where
   !bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< tr
   !tr = lgrTracer
@@ -380,6 +384,7 @@ mkInternals ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
   ) =>
   LedgerDBHandle m (ExtLedgerState blk) blk ->
   SnapshotManagerV1 m blk ->
@@ -450,12 +455,14 @@ implIntPush env st = do
 implIntReapplyThenPush ::
   ( IOLike m
   , ApplyBlock l blk
+  , ResolveLeiosBlock blk
   , l ~ ExtLedgerState blk
   ) =>
   LedgerDBEnv m l blk -> blk -> m ()
 implIntReapplyThenPush env blk = do
   chlog <- readTVarIO $ ldbChangelog env
-  chlog' <- reapplyThenPush (ldbCfg env) blk (readKeySets (ldbBackingStore env)) chlog
+  chlog' <-
+    reapplyThenPushLeios (ldbLeiosDb env) (ldbCfg env) blk (readKeySets (ldbBackingStore env)) chlog
   atomically $ writeTVar (ldbChangelog env) chlog'
 
 {-------------------------------------------------------------------------------

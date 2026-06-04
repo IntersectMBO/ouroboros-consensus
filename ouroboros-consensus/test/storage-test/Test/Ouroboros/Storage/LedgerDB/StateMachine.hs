@@ -596,16 +596,17 @@ openLedgerDB flavArgs env cfg fs = do
   (ldb, _, od) <-
     runWithTempRegistry $
       (\x -> (x, ())) <$> case lgrBackendArgs args of
-        LedgerDbBackendArgsV1 bss ->
+        LedgerDbBackendArgsV1 bss -> do
           let snapManager = V1.snapshotManager args
-              initDb =
-                V1.mkInitDb
-                  args
-                  bss
-                  getBlock
-                  snapManager
-                  (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
-           in lift $ openDBInternal args initDb snapManager stream replayGoal
+          initDb <-
+            lift $
+              V1.mkInitDb
+                args
+                bss
+                getBlock
+                snapManager
+                (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg)
+          lift $ openDBInternal args initDb snapManager stream replayGoal
         LedgerDbBackendArgsV2 (V2.SomeBackendArgs bArgs) -> do
           res <-
             mkResources
@@ -620,7 +621,9 @@ openLedgerDB flavArgs env cfg fs = do
                   (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
                   (LedgerDBSnapshotEvent >$< lgrTracer args)
                   (lgrHasFS args)
-          let initDb = V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
+          initDb <-
+            lift $
+              V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
           lift $ openDBInternal args initDb snapManager stream replayGoal
   case NE.nonEmpty volBlocks of
     Nothing -> pure ()

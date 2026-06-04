@@ -303,6 +303,21 @@ prop_leios seed =
       & tabulate "Certifying blocks" [show $ length certifyingBlocks]
       & tabulate "Effective throughput" [show throughput]
 
+  -- FIXME: This only exercises the in-memory replay via
+  -- 'foldWithResolution' (essentially the volatile-range
+  -- 'Forker.applyBlock' code path). It does NOT cover the
+  -- immutable-DB replay path used at node startup
+  -- ('replayStartingWith' → V1/V2 'reapplyBlock'). Bug
+  -- discovered on the staging-branch testnet: that replay path
+  -- was silently bypassing 'resolveLeiosBlock', causing CertRB
+  -- bodies to be re-applied as empty (no EB-txs spliced in),
+  -- which left the post-restart ledger state missing every
+  -- EB-tx output and triggered 'BadInputsUTxO' on the first
+  -- volatile block that spent one of those outputs. A
+  -- ThreadNet variant that snapshots one node mid-run, kills
+  -- it, and restarts from disk would catch this — see the
+  -- proto-devnet kill-and-restart drill in
+  -- ouroboros-leios/demo/proto-devnet for the manual analogue.
   ebCertificateInclusion =
     let expectedLedger = nodeOutputFinalLedger someNode
         foldedLedger = replayNodeChain pInfoConfig pInfoInitLedger someNode
