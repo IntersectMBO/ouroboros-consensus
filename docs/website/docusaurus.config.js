@@ -46,7 +46,23 @@ const config = {
     },
   },
 
-  themes: ['@docusaurus/theme-mermaid'],
+  themes: [
+    '@docusaurus/theme-mermaid',
+    [
+      // Local, offline search. Builds a Lunr index at build time and serves it
+      // as static assets, so it needs no external service. See:
+      // https://github.com/easyops-cn/docusaurus-search-local
+      require.resolve('@easyops-cn/docusaurus-search-local'),
+      /** @type {import('@easyops-cn/docusaurus-search-local').PluginOptions} */
+      ({
+        hashed: true,
+        indexBlog: false,
+        highlightSearchTermsOnTargetPage: true,
+        explicitSearchResultPath: true,
+        docsDir: 'contents',
+      }),
+    ],
+  ],
 
   presets: [
     [
