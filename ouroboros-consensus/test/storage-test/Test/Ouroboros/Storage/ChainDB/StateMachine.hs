@@ -100,6 +100,8 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Ord (Down (..))
 import Data.Proxy
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.TreeDiff
 import Data.Typeable
 import Data.Void (Void)
@@ -216,6 +218,10 @@ data Cmd blk it flr
   | Stream (StreamFrom blk) (StreamTo blk)
   | -- | Update the LoE fragment and run chain selection.
     UpdateLoE (AnchoredFragment blk)
+  | -- | Re-run chain selection for a block already in the VolatileDB.
+    Reconsider (RealPoint blk)
+  | -- | Replace the set of header hashes that chain selection must skip.
+    SetBlocksToIgnore (Set (HeaderHash blk))
   | IteratorNext it
   | -- | Only for blocks that may have been garbage collected.
     IteratorNextGCed it
@@ -409,6 +415,8 @@ data ChainDBEnv m blk = ChainDBEnv
   , args :: ChainDbArgs Identity m blk
   -- ^ Needed to reopen a ChainDB, i.e., open a new one.
   , varLoEFragment :: StrictTVar m (AnchoredFragment (HeaderWithTime blk))
+  , varBlocksToIgnore :: StrictTVar m (Set (HeaderHash blk))
+  -- ^ Backs 'cdbsBlocksToIgnore'. 'SetBlocksToIgnore' writes it.
   }
 
 open ::
@@ -454,6 +462,8 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
     GetIsValid pt -> isValidResult <$> ($ pt) <$> atomically getIsValid
     GetMaxSlotNo -> MaxSlot <$> atomically getMaxSlotNo
     UpdateLoE frag -> Point <$> updateLoE st frag
+    Reconsider pt -> Point <$> reconsiderBlock st pt
+    SetBlocksToIgnore hashes -> Point <$> setBlocksToIgnore st hashes
     Stream from to -> iter =<< stream registry allComponents from to
     IteratorNext it -> IterResult <$> iteratorNext (unWithEq it)
     IteratorNextGCed it -> iterResultGCed <$> iteratorNext (unWithEq it)
@@ -488,6 +498,24 @@ run cfg env@ChainDBEnv{varDB, ..} cmd =
   updateLoE ChainDBState{chainDB} frag = do
     let headersFrag = AF.mapAnchoredFragment getHeader frag
     atomically $ writeTVar varLoEFragment $ attachSlotTimeToFragment cfg headersFrag
+    ChainDB.triggerChainSelection chainDB
+    atomically $ getTipPoint chainDB
+
+  reconsiderBlock :: ChainDBState m blk -> RealPoint blk -> m (Point blk)
+  reconsiderBlock ChainDBState{chainDB} pt = do
+    ChainDB.reconsiderBlockAsync chainDB pt
+    -- 'reconsiderBlockAsync' only enqueues the request. Drain the queue with
+    -- the synchronous 'triggerChainSelection' before reading the tip: the
+    -- queue is FIFO with a single consumer, so it returns only once the
+    -- reconsider enqueued above has been processed.
+    ChainDB.triggerChainSelection chainDB
+    atomically $ getTipPoint chainDB
+
+  setBlocksToIgnore :: ChainDBState m blk -> Set (HeaderHash blk) -> m (Point blk)
+  setBlocksToIgnore ChainDBState{chainDB} hashes = do
+    atomically $ writeTVar varBlocksToIgnore hashes
+    -- Trigger chain selection so the new set takes effect before we read the
+    -- tip, the same way 'updateLoE' does for the LoE fragment.
     ChainDB.triggerChainSelection chainDB
     atomically $ getTipPoint chainDB
 
@@ -711,6 +739,8 @@ runPure cfg = \case
   GetMaxSlotNo -> ok MaxSlot $ query Model.getMaxSlotNo
   GetIsValid pt -> ok isValidResult $ query (Model.isValid pt)
   UpdateLoE frag -> ok Point $ update (Model.updateLoE cfg frag)
+  Reconsider pt -> ok Point $ update (Model.reconsiderBlock cfg pt)
+  SetBlocksToIgnore hashes -> ok Point $ update (Model.setBlocksToIgnore cfg hashes)
   Stream from to -> err iter $ updateE (Model.stream k from to)
   IteratorNext it -> ok IterResult $ update (Model.iteratorNext it allComponents)
   IteratorNextGCed it -> ok iterResultGCed $ update (Model.iteratorNext it allComponents)
@@ -1100,6 +1130,8 @@ generator loe genBlock m@Model{..} =
               LoEDisabled -> 0
               LoEEnabled () -> if empty then 1 else 10
          in (freq, UpdateLoE <$> genLoEFragment)
+      , (if empty then 0 else 10, genReconsider)
+      , (if empty || not (Model.isOpen dbModel) then 0 else 10, genSetBlocksToIgnore)
       , -- Iterators
         (if empty then 1 else 10, uncurry Stream <$> genBounds)
       , (if null iterators then 0 else 20, genIteratorNext)
@@ -1206,6 +1238,28 @@ generator loe genBlock m@Model{..} =
   genGetIsValid :: Gen (Cmd blk it flr)
   genGetIsValid =
     GetIsValid <$> genRealPoint
+
+  genReconsider :: Gen (Cmd blk it flr)
+  genReconsider = Reconsider <$> genRealPoint
+
+  genSetBlocksToIgnore :: Gen (Cmd blk it flr)
+  genSetBlocksToIgnore =
+    SetBlocksToIgnore . Set.fromList <$> genHashes
+   where
+    -- Header hashes that chain selection must skip. We pick from the volatile
+    -- blocks that are not on the current chain (see the precondition), since
+    -- those are the not-yet-selected blocks the filter is meant to hold back,
+    -- and often clear the set so previously skipped blocks become selectable.
+    genHashes =
+      frequency
+        [ (1, pure [])
+        , (if null offChainHashes then 0 else 4, sublistOf offChainHashes)
+        ]
+    offChainHashes =
+      filter (`Set.notMember` currentChainHashes) $
+        blockHash <$> Map.elems (Model.volatileDbBlocks dbModel)
+    currentChainHashes =
+      Set.fromList $ map blockHash $ Chain.toOldestFirst $ Model.currentChain dbModel
 
   genGetBlockComponent :: Gen (Cmd blk it flr)
   genGetBlockComponent = do
@@ -1390,6 +1444,18 @@ precondition Model{..} (At cmd) =
       UpdateLoE frag -> Boolean $ Chain.pointOnChain (AF.anchorPoint frag) immChain
        where
         immChain = Model.immutableChain (configSecurityParam cfg) dbModel
+      -- Runs chain selection, so the ChainDB must be open. Only skip blocks
+      -- that are not on the current chain: the producer of 'cdbsBlocksToIgnore'
+      -- only holds back blocks not yet selected; a block already on the chain
+      -- was validated, so it is never skipped. This also keeps the model and
+      -- the real implementation in step on 'Reopen', which re-derives the
+      -- chain from scratch.
+      SetBlocksToIgnore hashes ->
+        Boolean (Model.isOpen dbModel)
+          .&& Boolean (Set.disjoint hashes currentChainHashes)
+       where
+        currentChainHashes =
+          Set.fromList $ map blockHash $ Chain.toOldestFirst $ Model.currentChain dbModel
       _ -> Top
  where
   garbageCollectable :: RealPoint blk -> Logic
@@ -1963,6 +2029,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
     varNextId <- uncheckedNewTVarM 0
     nodeDBs <- emptyNodeDBs
     varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
+    varBlocksToIgnore <- newTVarIO Set.empty
     args <-
       mkArgs
         testCfg
@@ -1972,6 +2039,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
         nodeDBs
         tracer
         (loe $> varLoEFragment)
+        varBlocksToIgnore
 
     (hist, model, res, trace) <- bracket
       (open args >>= newTVarIO)
@@ -1987,6 +2055,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
                 , varNextId
                 , varVolatileDbFs = nodeDBsVol nodeDBs
                 , varLoEFragment
+                , varBlocksToIgnore
                 , args
                 }
             sm' = sm loe env (genBlk chunkInfo loe) testCfg testInitExtLedger
@@ -2137,8 +2206,9 @@ mkArgs ::
   NodeDBs (StrictTMVar m MockFS) ->
   CT.Tracer m (TraceEvent Blk) ->
   LoE (StrictTVar m (AnchoredFragment (HeaderWithTime Blk))) ->
+  StrictTVar m (Set (HeaderHash Blk)) ->
   m (ChainDbArgs Identity m Blk)
-mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment = do
+mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment varBlocksToIgnore = do
   mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
   let args =
         fromMinimalChainDbArgs
@@ -2157,6 +2227,7 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment = do
             (cdbsArgs args)
               { ChainDB.cdbsBlocksToAddSize = 2
               , ChainDB.cdbsLoE = traverse (atomically . readTVar) varLoEFragment
+              , ChainDB.cdbsBlocksToIgnore = readTVar varBlocksToIgnore
               }
         , cdbImmDbArgs =
             (cdbImmDbArgs args)

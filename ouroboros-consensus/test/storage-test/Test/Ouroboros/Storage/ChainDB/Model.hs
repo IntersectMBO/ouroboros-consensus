@@ -78,7 +78,9 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , getFragmentBetween
   , immutableDbChain
   , initLedger
+  , reconsiderBlock
   , reopen
+  , setBlocksToIgnore
   , updateLoE
   , validChains
   , volatileDbBlocks
@@ -158,6 +160,10 @@ data Model blk = Model
   , iterators :: Map IteratorId [blk]
   , valid :: Set (HeaderHash blk)
   , invalid :: InvalidBlocks blk
+  , blocksToIgnore :: Set (HeaderHash blk)
+  -- ^ Header hashes that chain selection must skip, mirroring
+  -- 'cdbsBlocksToIgnore' in the real ChainDB. Blocked blocks stay in the
+  -- block set but are never part of a selected chain.
   , loeFragment :: LoE (AnchoredFragment blk)
   , isOpen :: Bool
   -- ^ While the model tracks whether it is closed or not, the queries and
@@ -418,6 +424,7 @@ empty loe initLedger =
     , iterators = Map.empty
     , valid = Set.empty
     , invalid = Map.empty
+    , blocksToIgnore = Set.empty
     , isOpen = True
     , loeFragment = loe $> Fragment.Empty Fragment.AnchorGenesis
     }
@@ -447,6 +454,14 @@ addBlock cfg blk m
     -- If the block is as old as the tip of the ImmutableDB, i.e. older
     -- than @k@, we ignore it, as we can never switch to it.
     olderThanImmTip hdr immBlockNo
+      ||
+      -- If it is already in the VolatileDB, the real ChainDB ignores it and
+      -- does not run chain selection again. Re-running it here would let a
+      -- 'blocksToIgnore' that changed since the block was added affect the
+      -- result, whereas the real implementation only consults the current set
+      -- on the next genuine selection trigger (an 'AddBlock' of a new block, a
+      -- 'Reconsider', or an LoE reprocess).
+      Map.member (blockHash blk) (volatileDbBlocks m)
       ||
       -- If it's an invalid block we've seen before, ignore it.
       Map.member (blockHash blk) (invalid m)
@@ -487,6 +502,7 @@ chainSelection cfg m =
     , iterators = iterators m
     , valid = valid'
     , invalid = invalid'
+    , blocksToIgnore = blocksToIgnore m
     , isOpen = True
     , loeFragment = loeFragment m
     }
@@ -497,7 +513,23 @@ chainSelection cfg m =
   -- @invalid@, see 'validChains', thus no need to union.
   invalid' :: InvalidBlocks blk
   candidates :: [(Chain blk, ExtLedgerState blk EmptyMK)]
-  (invalid', candidates) = validChains cfg m (blocks m)
+  (invalid', candidates) = validChains cfg m selectableBlocks
+
+  -- The blocks chain selection may consider. Blocked volatile blocks are
+  -- removed, mirroring 'ignoreBlocked' and 'ignoreBlockedSuc' in the real
+  -- ChainDB: a blocked block (and anything reachable only through it) never
+  -- appears in a candidate. Immutable blocks are never removed; the real
+  -- filter only wraps the VolatileDB.
+  --
+  -- Blocked blocks are never on the current chain (see the 'SetBlocksToIgnore'
+  -- precondition), matching the producer of 'cdbsBlocksToIgnore', which only
+  -- holds back blocks not yet selected. So removing them never drops the
+  -- current selection, and 'reopen' (which re-derives the chain) stays
+  -- consistent.
+  selectableBlocks :: Map (HeaderHash blk) blk
+  selectableBlocks =
+    Map.withoutKeys (volatileDbBlocks m) (blocksToIgnore m)
+      <> immutableDbBlocks m
 
   immutableChainHashes =
     map blockHash
@@ -639,6 +671,44 @@ updateLoE ::
 updateLoE cfg f m = (tipPoint m', m')
  where
   m' = chainSelection cfg $ m{loeFragment = loeFragment m $> f}
+
+-- | Replace the set of header hashes that chain selection must skip, run chain
+-- selection, and return the new tip. The real test command writes the TVar
+-- backing 'cdbsBlocksToIgnore' and then triggers chain selection, so the new
+-- set takes effect at once; this mirrors that. (In production the source is
+-- read lazily on the next selection; the test triggers one so the effect is
+-- observable and the model stays in step with the incremental implementation.)
+setBlocksToIgnore ::
+  forall blk.
+  ( LedgerTablesAreTrivial (ExtLedgerState blk)
+  , LedgerSupportsProtocol blk
+  ) =>
+  TopLevelConfig blk ->
+  Set (HeaderHash blk) ->
+  Model blk ->
+  (Point blk, Model blk)
+setBlocksToIgnore cfg hashes m = (tipPoint m', m')
+ where
+  m' = chainSelection cfg m{blocksToIgnore = hashes}
+
+-- | Re-run chain selection and return the new tip. Mirrors
+-- 'reconsiderBlockAsync': a block already stored may now be selectable because
+-- the condition that kept it out of the selection (e.g. membership in
+-- 'blocksToIgnore') has cleared. The model reconsiders every block, so the
+-- point argument is not used; a block that is absent or still blocked leaves
+-- the selection unchanged, as in the real ChainDB.
+reconsiderBlock ::
+  forall blk.
+  ( LedgerTablesAreTrivial (ExtLedgerState blk)
+  , LedgerSupportsProtocol blk
+  ) =>
+  TopLevelConfig blk ->
+  RealPoint blk ->
+  Model blk ->
+  (Point blk, Model blk)
+reconsiderBlock cfg _ m = (tipPoint m', m')
+ where
+  m' = chainSelection cfg m
 
 {-------------------------------------------------------------------------------
   Iterators
