@@ -19,7 +19,11 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasVote
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting, PerasEpochContextResolverHandle, mockPerasEpochContextResolverHandle)
+import Ouroboros.Consensus.Peras.Context
+  ( LedgerStateHeaderStateSupportsPerasVoting
+  , PerasEpochContextResolverHandle
+  , mockPerasEpochContextResolverHandle
+  )
 import Ouroboros.Consensus.Storage.PerasVoteDB
   ( AddPerasVoteResult (..)
   , PerasVoteDB
