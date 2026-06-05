@@ -14,7 +14,6 @@ module Ouroboros.Consensus.Storage.ChainDB.API
     ChainDB (..)
   , getCurrentTip
   , getTipBlockNo
-  , getPerasEpochContextResolverHandle
 
     -- * Adding a block
   , AddBlockPromise (..)
@@ -98,8 +97,8 @@ import Ouroboros.Consensus.Ledger.Extended
   ( ExtLedgerState
   , ExtValidationError
   )
-import qualified Ouroboros.Consensus.Ledger.Extended as ExtLedger
 import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle)
+import Ouroboros.Consensus.Peras.Voting.View (PerasVotingViewHandle (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
@@ -470,6 +469,17 @@ data ChainDB m blk = ChainDB
   -- given one, in ascending order.
   , getPerasVoteIds :: STM m (Set (PerasVoteId blk))
   -- ^ Get the set of all Peras vote IDs currently in the database.
+  , getPerasVotingViewHandle ::
+      PerasVotingViewHandle m blk
+  -- ^ Returns a handle to obtain a 'PerasVotingView' that is used to decide
+  -- when to vote with respects to the voting rules.
+  --
+  -- NOTE: This needs to be part of the API because the implementation of the ChainDB
+  -- has access, during initialization, to the 'TopLevelConfig', but it isn't
+  -- stored/exposed by the API itself.
+  , getPerasEpochContextResolverHandle ::
+      PerasEpochContextResolverHandle m blk
+  -- ^ Returns a handle to obtain the 'PerasEpochContext' for a given 'PerasRoundNo'
   , waitForImmutableBlock :: RealPoint blk -> m (Either SeekBlockError (RealPoint blk))
   -- ^ Wait until the immutable tip's slot is equal or greater than the given slot:
   --   - returns the block when it becomes the immutable tip,
@@ -504,12 +514,6 @@ getTipBlockNo ::
   (Monad (STM m), HasHeader (Header blk)) =>
   ChainDB m blk -> STM m (WithOrigin BlockNo)
 getTipBlockNo = fmap Network.getTipBlockNo . getCurrentTip
-
-getPerasEpochContextResolverHandle ::
-  MonadSTM m =>
-  ChainDB m blk ->
-  PerasEpochContextResolverHandle m blk
-getPerasEpochContextResolverHandle = ExtLedger.getPerasEpochContextResolverHandle . getCurrentLedger
 
 {-------------------------------------------------------------------------------
   Adding a block

@@ -142,9 +142,9 @@ isPerasVotingAllowedModel
     vr2b =
       case latestCertOnChain of
         NotOrigin cert ->
-          (currRoundNo > getPerasCertRound (lcocCert cert))
+          (currRoundNo > lcocCertRoundNo cert)
             && ( (currRoundNo `rmod` _K)
-                   == (getPerasCertRound (lcocCert cert) `rmod` _K)
+                   == (lcocCertRoundNo cert `rmod` _K)
                )
         Origin ->
           currRoundNo `rmod` _K == _K - 1
@@ -287,8 +287,8 @@ genTestCert roundNo = do
 
 -- * Certificate and voting views
 
-genLatestCertSeen :: PerasRoundNo -> Gen (LatestCertSeenView TestCert)
-genLatestCertSeen roundNo = do
+genLatestCertSeenView :: PerasRoundNo -> Gen (LatestCertSeenView TestCert)
+genLatestCertSeenView roundNo = do
   cert <- genTestCert roundNo
   arrivalSlot <- genSlotNo
   roundStartSlot <- genSlotNo
@@ -301,20 +301,20 @@ genLatestCertSeen roundNo = do
       , lcsCandidateBlockExtendsCert = candidateBlockExtendsCert
       }
 
-genLatestCertOnChain :: PerasRoundNo -> Gen (LatestCertOnChainView TestCert)
-genLatestCertOnChain roundNo = do
+genLatestCertOnChainView :: PerasRoundNo -> Gen (LatestCertOnChainView TestCert)
+genLatestCertOnChainView roundNo = do
   cert <- genTestCert roundNo
   pure $
     LatestCertOnChainView
-      { lcocCert = cert
+      { lcocCertRoundNo = getPerasCertRound cert
       }
 
 genPerasVotingView :: Gen (PerasVotingView TestCert TestBlock)
 genPerasVotingView = do
   perasParams <- genPerasParams
   currRoundNo <- genPerasRoundNo
-  latestCertSeen <- genWithOrigin (genLatestCertSeen currRoundNo)
-  latestCertOnChain <- genWithOrigin (genLatestCertOnChain currRoundNo)
+  latestCertSeen <- genWithOrigin (genLatestCertSeenView currRoundNo)
+  latestCertOnChain <- genWithOrigin (genLatestCertOnChainView currRoundNo)
   pure
     PerasVotingView
       { perasParams
