@@ -145,7 +145,13 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Peras.Cert.Mock
   ( MockPerasCert (..)
   )
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting (..), MockPerasEpochContextResolver, mockAbsorbErrorInResolver, mockPerasEpochContextResolver, mockResolveRoundNo)
+import Ouroboros.Consensus.Peras.Context
+  ( LedgerStateHeaderStateSupportsPerasVoting (..)
+  , MockPerasEpochContextResolver
+  , mockAbsorbErrorInResolver
+  , mockPerasEpochContextResolver
+  , mockResolveRoundNo
+  )
 import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCrypto, MockPerasVotingCommitteeScheme)
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
