@@ -352,6 +352,19 @@ data ChainDB m blk = ChainDB
   -- Note that the corresponding block doesn't have to be part of the
   -- current chain, it could be part of some fork, or even be a
   -- disconnected block.
+  , getLastGcSlot :: STM m (WithOrigin SlotNo)
+  -- ^ The slot of the most recent VolatileDB garbage collection, or
+  -- 'Origin' if none has run yet.
+  --
+  -- After a GC for slot @s@, the VolatileDB no longer holds blocks with
+  -- slot @< s@ (it may keep some at @>= s@; GC is file-granular). A reader
+  -- that sees slot @s@ here can rely on that GC having completed: the value
+  -- is written in the same transaction as the GC's other bookkeeping, after
+  -- 'Ouroboros.Consensus.Storage.VolatileDB.API.garbageCollect' has
+  -- returned for @s@.
+  --
+  -- Carries no chain-selection meaning; it lets a consumer bound state that
+  -- mirrors the volatile window.
   , stream ::
       forall b.
       ResourceRegistry m ->

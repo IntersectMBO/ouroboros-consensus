@@ -114,6 +114,7 @@ library
     LeiosDemoOnlyTestFetch
     LeiosDemoOnlyTestNotify
     LeiosDemoTypes
+    LeiosLateJoinState
     LeiosVoteState
     Ouroboros.Consensus.Block
     Ouroboros.Consensus.Block.Abstract

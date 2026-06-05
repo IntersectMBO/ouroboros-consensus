@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getIsFetched
   , getIsInvalidBlock
   , getIsValid
+  , getLastGcSlot
   , getMaxSlotNo
   , getPastLedger
   , getPerasWeightSnapshot
@@ -229,6 +230,13 @@ getChainSelStarvation ::
   ChainDbEnv m blk ->
   STM m ChainSelStarvation
 getChainSelStarvation CDB{..} = readTVar cdbChainSelStarvation
+
+getLastGcSlot ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  STM m (WithOrigin SlotNo)
+getLastGcSlot CDB{..} = readTVar cdbLastGcSlot
 
 getIsValid ::
   forall m blk.

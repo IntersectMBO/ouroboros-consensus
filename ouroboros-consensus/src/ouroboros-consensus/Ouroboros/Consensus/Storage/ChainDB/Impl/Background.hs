@@ -402,6 +402,7 @@ garbageCollectBlocks CDB{..} slotNo = do
   VolatileDB.garbageCollect cdbVolatileDB slotNo
   atomically $ do
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
+    writeTVar cdbLastGcSlot (NotOrigin slotNo)
   PerasCertDB.garbageCollect cdbPerasCertDB slotNo
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
 

@@ -200,6 +200,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     perasCertDB <- PerasCertDB.openDB argsPerasCertDB
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
+    varLastGcSlot <- newTVarIO Origin
 
     let initChainSelTracer = TraceInitChainSelEvent >$< tracer
 
@@ -259,6 +260,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbFollowers = varFollowers
             , cdbTopLevelConfig = Args.cdbsTopLevelConfig cdbSpecificArgs
             , cdbInvalid = varInvalid
+            , cdbLastGcSlot = varLastGcSlot
             , cdbNextIteratorKey = varNextIteratorKey
             , cdbNextFollowerKey = varNextFollowerKey
             , cdbImmutableDBLock = immdbLock
@@ -294,6 +296,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getIsFetched = getEnvSTM h Query.getIsFetched
             , getIsValid = getEnvSTM h Query.getIsValid
             , getMaxSlotNo = getEnvSTM h Query.getMaxSlotNo
+            , getLastGcSlot = getEnvSTM h Query.getLastGcSlot
             , stream = Iterator.stream h
             , newFollower = Follower.newFollower h
             , getIsInvalidBlock = getEnvSTM h Query.getIsInvalidBlock

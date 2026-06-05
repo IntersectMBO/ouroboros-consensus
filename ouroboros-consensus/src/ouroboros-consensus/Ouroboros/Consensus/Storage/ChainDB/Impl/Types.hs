@@ -360,6 +360,12 @@ data ChainDbEnv m blk = CDB
   --
   -- The 'Fingerprint' changes every time a hash is added to the map, but
   -- not when hashes are garbage-collected from the map.
+  , cdbLastGcSlot :: !(StrictTVar m (WithOrigin SlotNo))
+  -- ^ Backs 'Ouroboros.Consensus.Storage.ChainDB.API.getLastGcSlot'.
+  -- Initialised to 'Origin' in 'openDBInternal' and written by
+  -- 'garbageCollectBlocks' in the same transaction as the 'cdbInvalid'
+  -- prune. No 'ChainDbArgs' field backs it: the slot is produced by GC,
+  -- not injected by the caller.
   , cdbNextIteratorKey :: !(StrictTVar m IteratorKey)
   , cdbNextFollowerKey :: !(StrictTVar m FollowerKey)
   , cdbChainSelFuse :: !(Fuse m)
