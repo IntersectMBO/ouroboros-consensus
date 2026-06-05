@@ -220,7 +220,6 @@ perasVR2A
 -- This enforces chain quality and common prefix before leaving a cooldown
 -- period.
 perasVR2B ::
-  IsPerasCert cert blk =>
   PerasVotingView cert blk ->
   Pred PerasVotingRule
 perasVR2B
@@ -236,10 +235,10 @@ perasVR2B
         -- There is a certificate on chain ==> we must check its round number
         NotOrigin cert ->
           -- The certificate comes from a round older than the current one
-          (currRoundNo :>: getPerasCertRound (lcocCert cert))
+          (currRoundNo :>: lcocCertRoundNo cert)
             -- The certificate round is c⋅K rounds away from the current one
             :/\: ( (currRoundNo `rmod` _K)
-                     :==: (getPerasCertRound (lcocCert cert) `rmod` _K)
+                     :==: (lcocCertRoundNo cert `rmod` _K)
                  )
         -- There is no certificate on chain ==> check if we are recovering
         -- from an initial cooldown after having initially failed to

@@ -69,7 +69,10 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.Mempool.Impl.Common
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting, ledgerStateHeaderStateMkPerasEpochContextResolver)
+import Ouroboros.Consensus.Peras.Context
+  ( LedgerStateHeaderStateSupportsPerasVoting
+  , ledgerStateHeaderStateMkPerasEpochContextResolver
+  )
 import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)

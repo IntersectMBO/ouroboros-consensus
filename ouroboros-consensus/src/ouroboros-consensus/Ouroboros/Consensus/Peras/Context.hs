@@ -38,6 +38,7 @@ module Ouroboros.Consensus.Peras.Context
   , verifyPerasCertInContext
   , unsafeBoundedPerasEpochContextWithMinMaxBounds
   , mockPerasEpochContextResolverHandle
+  , forgePerasVoteIfEligibleInContext
   )
 where
 
@@ -52,6 +53,7 @@ import Data.Kind (Type)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
+import Ouroboros.Consensus.Block.Abstract (Point)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   , DefaultPerasEpochContext (..)
@@ -70,6 +72,8 @@ import Ouroboros.Consensus.Block.SupportsPeras
   )
 import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee)
 import qualified Ouroboros.Consensus.Committee.Class as Committee
+import Ouroboros.Consensus.Committee.Crypto (PrivateKey)
+import Ouroboros.Consensus.Committee.Types (PoolId)
 import Ouroboros.Consensus.HeaderValidation (HeaderState)
 import Ouroboros.Consensus.Ledger.Abstract (LedgerState)
 import Ouroboros.Consensus.Peras.Params (PerasParams)
@@ -406,3 +410,23 @@ verifyPerasCertInContext handle cert = do
           case verifyPerasCert context cert of
             Left err -> throwSTM err
             Right validatedCert -> pure validatedCert
+
+forgePerasVoteIfEligibleInContext ::
+  ( MonadSTM m
+  , MonadThrow (STM m)
+  , BlockSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
+  ) =>
+  PerasEpochContextResolverHandle m blk ->
+  PoolId ->
+  PrivateKey (PerasCrypto blk) ->
+  PerasRoundNo ->
+  Point blk ->
+  STM m (Maybe (ValidatedPerasVote blk))
+forgePerasVoteIfEligibleInContext handle poolId privateKey roundNo point = do
+  resolveRoundNoWithHandle handle roundNo >>= \case
+    Left err -> throwSTM err
+    Right context ->
+      case forgePerasVoteIfEligible context poolId privateKey roundNo point of
+        Left err -> throwSTM err
+        Right maybeValidatedVote -> pure maybeValidatedVote
