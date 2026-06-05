@@ -27,6 +27,8 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getPerasCertIds
   , getPerasVotesAfter
   , getPerasVoteIds
+  , getPerasVotingView
+  , getPerasEpochContextResolver
   , getLatestPerasCertOnChainRound
   , getStatistics
   , getTipBlock
@@ -62,6 +64,17 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Peras.Context
+  ( LedgerStateHeaderStateSupportsPerasVoting (resolveRoundNo)
+  , PerasEpochContextResolver
+  )
+import Ouroboros.Consensus.Peras.Voting.View
+  ( PerasVotingView
+  , WithBoostedBlockStatus
+  , mkPerasVotingView
+  , perasChainAtCandidateBlock
+  , runPerasQry
+  )
 import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , takeVolatileSuffix
@@ -368,6 +381,55 @@ getPerasVotesAfter CDB{..} = PerasVoteDB.getVotesAfter cdbPerasVoteDB
 getPerasVoteIds ::
   ChainDbEnv m blk -> STM m (Set (PerasVoteId blk))
 getPerasVoteIds CDB{..} = PerasVoteDB.getVoteIds cdbPerasVoteDB
+
+getPerasEpochContextResolver ::
+  MonadSTM m =>
+  ChainDbEnv m blk ->
+  STM m (PerasEpochContextResolver blk)
+getPerasEpochContextResolver =
+  fmap perasEpochContextResolver . getCurrentLedger
+
+fixWithBoostedBlockStatusInDbAPI ::
+  WithArrivalTime (ValidatedPerasCert blk) ->
+  WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))
+fixWithBoostedBlockStatusInDbAPI _cert = undefined
+
+-- [TODO EPOCH CONTEXT PLUMBING/CHAIN DB LATEST CERT SEEN]
+
+getPerasVotingView ::
+  ( BlockSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , IOLike m
+  , LedgerSupportsPeras blk
+  , ConsensusProtocol (BlockProtocol blk)
+  , GetHeader blk
+  ) =>
+  TopLevelConfig blk ->
+  PerasRoundNo ->
+  ChainDbEnv m blk ->
+  STM m (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk)
+getPerasVotingView _topLevelConfig roundNo env = do
+  resolver <- getPerasEpochContextResolver env
+  perasParams <- case resolveRoundNo resolver roundNo of
+    Left err -> throwSTM err
+    Right perasContext -> pure $ pecPerasParams perasContext
+  latestCertSeen <-
+    withOriginFromMaybe . fmap fixWithBoostedBlockStatusInDbAPI <$> getLatestPerasCertSeen env
+  latestCertOnChainRoundNo <- withOriginFromMaybe <$> getLatestPerasCertOnChainRound env
+  let blockMinSlots = perasBlockMinSlots perasParams
+  currentChain <- getCurrentChain env
+  let qry =
+        perasChainAtCandidateBlock blockMinSlots roundNo currentChain >>= \chainAtCandidateBlock ->
+          mkPerasVotingView
+            perasParams
+            roundNo
+            latestCertSeen
+            latestCertOnChainRoundNo
+            chainAtCandidateBlock
+  summary <- undefined -- [TODO EPOCH CONTEXT PLUMBING/SOMEHOW GET SUMMARY]
+  case runPerasQry summary qry of
+    Left err -> throwSTM err
+    Right view -> pure view
 
 -- | Wait until the slot of the given point is smaller or equal than the immutable tip slot,
 --   and then return:
