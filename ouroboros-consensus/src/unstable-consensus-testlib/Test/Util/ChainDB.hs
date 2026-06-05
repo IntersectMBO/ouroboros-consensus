@@ -14,6 +14,7 @@ module Test.Util.ChainDB
 import Control.Concurrent.Class.MonadSTM.Strict hiding (StrictTVar)
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer (nullTracer)
+import qualified Data.Set as Set
 import LeiosDemoDb (LeiosDbHandle)
 import Ouroboros.Consensus.Config
   ( TopLevelConfig (topLevelConfigLedger)
@@ -155,6 +156,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsTracer = nullTracer
           , cdbsTopLevelConfig = mcdbTopLevelConfig
           , cdbsLoE = pure LoEDisabled
+          , cdbsBlocksToIgnore = pure Set.empty
           , cdbsLeiosDb = mcdbLeiosDb
           }
     }

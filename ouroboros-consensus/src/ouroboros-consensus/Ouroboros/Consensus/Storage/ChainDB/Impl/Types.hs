@@ -24,6 +24,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , ChainDbHandle (..)
   , ChainDbState (..)
   , ChainSelectionPromise (..)
+  , BlocksToIgnore (..)
   , HeaderListener (..)
   , SerialiseDiskConstraints
   , getEnv
@@ -93,6 +94,7 @@ import Data.Map.Strict (Map)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
+import Data.Set (Set)
 import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word64)
@@ -380,6 +382,11 @@ data ChainDbEnv m blk = CDB
   -- switch back to a chain containing it. The fragment is usually anchored at
   -- a recent immutable tip; if it does not, it will conservatively be treated
   -- as the empty fragment anchored in the current immutable tip.
+  , cdbBlocksToIgnore :: !(BlocksToIgnore m blk)
+  -- ^ Header hashes that chain selection must skip. Chain selection reads this
+  -- inside its existing STM snapshot and will not select any chain that
+  -- includes one of these blocks. The blocks stay in the VolatileDB and become
+  -- selectable again once they leave the set. See 'cdbsBlocksToIgnore'.
   , cdbChainSelStarvation :: !(StrictTVar m ChainSelStarvation)
   -- ^ Information on the last starvation of ChainSel, whether ongoing or
   -- ended recently.
@@ -401,6 +408,17 @@ newtype HeaderListener m blk = HeaderListener
   { runHeaderListener :: Header blk -> STM m ()
   }
   deriving NoThunks via OnlyCheckWhnfNamed "HeaderListener" (HeaderListener m blk)
+
+-- | An STM source of the header hashes that chain selection must skip.
+--
+-- The wrapper exists so that the 'NoThunks' instance for 'ChainDbEnv' can
+-- pass over the action via WHNF; 'STM' actions have no useful structural
+-- thunk check, and unlike @m@ actions they are not covered by the 'IOLike'
+-- superclass.
+newtype BlocksToIgnore m blk = BlocksToIgnore
+  { runBlocksToIgnore :: STM m (Set (HeaderHash blk))
+  }
+  deriving NoThunks via OnlyCheckWhnfNamed "BlocksToIgnore" (BlocksToIgnore m blk)
 
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
 -- (but avoid including @m@ because we cannot impose @Typeable m@ as a

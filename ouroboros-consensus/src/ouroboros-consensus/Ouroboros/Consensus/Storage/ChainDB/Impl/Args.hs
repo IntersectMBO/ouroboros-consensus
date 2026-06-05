@@ -24,6 +24,8 @@ import Control.Tracer (Tracer, nullTracer)
 import Data.Function ((&))
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Time.Clock (secondsToDiffTime)
 import qualified LeiosDemoDb.Common
 import Ouroboros.Consensus.Block
@@ -94,6 +96,12 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
     cdbsLoE :: GetLoEFragment m blk
   -- ^ If this is 'LoEEnabled', it contains an action that returns the
   -- current LoE fragment.
+  , cdbsBlocksToIgnore :: STM m (Set (HeaderHash blk))
+  -- ^ Header hashes that chain selection must skip. Chain selection will not
+  -- select any chain that includes one of these blocks; the blocks still stay
+  -- in the VolatileDB and can be selected later once they leave the set. The
+  -- action is read inside chain selection's existing STM snapshot on every
+  -- run, so the set may change between runs. The default is to ignore nothing.
   , cdbsLeiosDb :: HKD f (LeiosDemoDb.Common.LeiosDbHandle m)
   -- ^ Handle for the Leios demo DB. Each downstream consumer should 'open'
   -- its own per-thread 'LeiosDbConnection' from this handle.
@@ -120,7 +128,7 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
 --   have, because of batching) < the number of blocks sync in @gcInterval@.
 --   E.g., when syncing at 1k-2k blocks/s, this means 10k-20k blocks. During
 --   normal operation, we receive 1 block/20s, meaning at most 1 block.
-defaultSpecificArgs :: Monad m => Incomplete ChainDbSpecificArgs m blk
+defaultSpecificArgs :: IOLike m => Incomplete ChainDbSpecificArgs m blk
 defaultSpecificArgs =
   ChainDbSpecificArgs
     { cdbsBlocksToAddSize = 10
@@ -131,6 +139,7 @@ defaultSpecificArgs =
     , cdbsHasFSGsmDB = noDefault
     , cdbsTopLevelConfig = noDefault
     , cdbsLoE = pure LoEDisabled
+    , cdbsBlocksToIgnore = pure Set.empty
     , cdbsLeiosDb = noDefault
     }
 

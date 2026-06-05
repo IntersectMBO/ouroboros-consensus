@@ -125,6 +125,7 @@ initialChainSelection ::
   Tracer m (TraceInitChainSelEvent blk) ->
   TopLevelConfig blk ->
   StrictTVar m (WithFingerprint (InvalidBlocks blk)) ->
+  STM m (Set (HeaderHash blk)) ->
   LoE () ->
   PerasWeightSnapshot blk ->
   m (AnchoredFragment (Header blk))
@@ -135,6 +136,7 @@ initialChainSelection
   tracer
   cfg
   varInvalid
+  getBlocksToIgnore
   loE
   weights = do
     -- TODO: Improve the user experience by trimming any potential
@@ -158,9 +160,11 @@ initialChainSelection
     -- not from the **far** future anymore.
     (i :: Anchor blk, succsOf) <- atomically $ do
       invalid <- forgetFingerprint <$> readTVar varInvalid
+      blocked <- getBlocksToIgnore
       (,)
         <$> ImmutableDB.getTipAnchor immutableDB
-        <*> ( ignoreInvalidSuc volatileDB invalid
+        <*> ( ignoreBlockedSuc volatileDB blocked
+                . ignoreInvalidSuc volatileDB invalid
                 <$> VolatileDB.filterByPredecessor volatileDB
             )
 
@@ -395,8 +399,10 @@ chainSelSync ::
 chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
   (succsOf, lookupBlockInfo, curChain, weights) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
+    blocked <- runBlocksToIgnore cdbBlocksToIgnore
     (,,,)
-      <$> ( ignoreInvalidSuc cdbVolatileDB invalid
+      <$> ( ignoreBlockedSuc cdbVolatileDB blocked
+              . ignoreInvalidSuc cdbVolatileDB invalid
               <$> VolatileDB.filterByPredecessor cdbVolatileDB
           )
       <*> VolatileDB.getBlockInfo cdbVolatileDB
@@ -660,12 +666,13 @@ chainSelectionForBlock ::
   InvalidBlockPunishment m ->
   Electric m ()
 chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
-  (invalid, curChain, weights) <-
+  (invalid, curChain, weights, blocked) <-
     atomically $
-      (,,)
+      (,,,)
         <$> (forgetFingerprint <$> readTVar cdbInvalid)
         <*> Query.getCurrentChain cdb
         <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
+        <*> runBlocksToIgnore cdbBlocksToIgnore
 
   -- The current chain we're working with here is not longer than @k@ blocks
   -- (see 'getCurrentChain' and 'cdbChain'), which is easier to reason about
@@ -692,6 +699,14 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
           punish
           InvalidBlockPunishment.BlockItself
 
+    -- Chain selection must skip this block. It stays in the VolatileDB and
+    -- becomes selectable again once it leaves the set. The wrappers in
+    -- 'constructPreferableCandidates' keep it out of candidates reached
+    -- through the VolatileDB; this branch also covers the block just handed
+    -- to us, which the "extends current chain" branch would otherwise add
+    -- directly without consulting those wrappers.
+    | Set.member (headerHash hdr) blocked ->
+        traceWith addBlockTracer $ StoreButDontChange p
     -- Try to select a chain involving the block.
     | otherwise -> do
         -- Construct all 'ChainDiff's involving the block.
@@ -753,9 +768,12 @@ constructPreferableCandidates ::
 constructPreferableCandidates CDB{..} weights curChain hdrCache p = do
   (succsOf, lookupBlockInfo) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
+    blocked <- runBlocksToIgnore cdbBlocksToIgnore
     (,)
-      <$> (ignoreInvalidSuc p invalid <$> VolatileDB.filterByPredecessor cdbVolatileDB)
-      <*> (ignoreInvalid p invalid <$> VolatileDB.getBlockInfo cdbVolatileDB)
+      <$> ( ignoreBlockedSuc p blocked . ignoreInvalidSuc p invalid
+              <$> VolatileDB.filterByPredecessor cdbVolatileDB
+          )
+      <*> (ignoreBlocked p blocked . ignoreInvalid p invalid <$> VolatileDB.getBlockInfo cdbVolatileDB)
 
   loeFrag <- fmap sanitizeLoEFrag <$> cdbLoE
   traceWith
@@ -1448,6 +1466,29 @@ ignoreInvalidSuc ::
   (ChainHash blk -> Set (HeaderHash blk))
 ignoreInvalidSuc _ invalid succsOf =
   Set.filter (`Map.notMember` invalid) . succsOf
+
+-- | Wrap a @getter@ function so that it returns 'Nothing' for blocks that
+-- chain selection must skip (see 'cdbBlocksToIgnore').
+ignoreBlocked ::
+  HasHeader blk =>
+  proxy blk ->
+  Set (HeaderHash blk) ->
+  (HeaderHash blk -> Maybe a) ->
+  (HeaderHash blk -> Maybe a)
+ignoreBlocked _ blocked getter hash
+  | Set.member hash blocked = Nothing
+  | otherwise = getter hash
+
+-- | Wrap a @successors@ function so that blocks that chain selection must skip
+-- are not returned as successors (see 'cdbBlocksToIgnore').
+ignoreBlockedSuc ::
+  HasHeader blk =>
+  proxy blk ->
+  Set (HeaderHash blk) ->
+  (ChainHash blk -> Set (HeaderHash blk)) ->
+  (ChainHash blk -> Set (HeaderHash blk))
+ignoreBlockedSuc _ blocked succsOf =
+  Set.filter (`Set.notMember` blocked) . succsOf
 
 -- | Compare two 'ChainDiff's w.r.t. the chain order.
 --

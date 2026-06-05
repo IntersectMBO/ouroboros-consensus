@@ -214,6 +214,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         initChainSelTracer
         (Args.cdbsTopLevelConfig cdbSpecificArgs)
         varInvalid
+        (Args.cdbsBlocksToIgnore cdbSpecificArgs)
         (void initialLoE)
         (forgetFingerprint initialWeights)
     traceWith initChainSelTracer InitialChainSelected
@@ -269,6 +270,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbKillBgThreads = varKillBgThreads
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
+            , cdbBlocksToIgnore = BlocksToIgnore $ Args.cdbsBlocksToIgnore cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
             , cdbHeaderListeners = varHeaderListeners
