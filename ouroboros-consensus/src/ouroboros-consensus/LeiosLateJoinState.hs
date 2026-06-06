@@ -9,8 +9,9 @@
 -- in the LeiosKernel area, not in the ChainDB (which stays Leios-free).
 --
 -- This module provides the state record 'LeiosLateJoinState' (the
--- 'headerAnnouncementsCache', the pending-CertRB 'announcementsMap', and the
--- 'pendingTriggers' queue), the 'gcPruner' that bounds the cache, the derived
+-- 'headerAnnouncementsCache', the pending-CertRB 'announcementsMap', the
+-- 'certRbsByAnnouncer' reverse index, and the 'pendingTriggers' queue), the
+-- 'gcPruner' that bounds the cache, the derived
 -- ignore-set 'getBlockedCertRBs' that ChainSel reads, and the AddBlock listener
 -- 'leiosAddBlockListener' that writes the cache and 'announcementsMap'. The
 -- listener is not registered with the ChainDB yet (a later commit wires it), so
@@ -27,6 +28,7 @@ import LeiosDemoTypes (EbHash, IsCertRB (..), LeiosPoint, pointEbHash)
 import Ouroboros.Consensus.Block
   ( ChainHash (..)
   , GetPrevHash (..)
+  , HasHeader
   , Header
   , HeaderHash
   , RealPoint
@@ -64,6 +66,17 @@ data LeiosLateJoinState m blk = LeiosLateJoinState
   -- ^ The LeiosDb read for the set of EBs whose closure is local, captured at
   -- construction so 'getBlockedCertRBs' can subtract it from 'announcementsMap'
   -- in one transaction.
+  , certRbsByAnnouncer ::
+      !(StrictTVar m (Map (HeaderHash blk) (Set (HeaderHash blk))))
+  -- ^ Reverse index for the child-before-parent race: announcer (parent)
+  -- header hash -> the CertRB children that certify the EB it announced, kept
+  -- only for CertRBs whose announcer had not been added when they arrived. Two
+  -- ChainSync clients can interleave AddBlock, so a CertRB can enter chain
+  -- selection before its parent; its own listener pass then has no cached
+  -- announcement to read the EB hash from. 'leiosAddBlockListener' records such
+  -- an orphan here and 'sweepOrphanedCertRbs' picks it up when the announcer is
+  -- added, dropping the entry then. The map therefore holds only CertRBs whose
+  -- announcer has not arrived yet; 'gcPruner' does not touch it.
   }
 
 -- | Create a 'LeiosLateJoinState' with empty maps and an empty trigger queue.
@@ -80,6 +93,7 @@ newLeiosLateJoinState ::
 newLeiosLateJoinState readCompleted = do
   cache <- newTVarIO Map.empty
   annMap <- newTVarIO Map.empty
+  orphanedCertRbs <- newTVarIO Map.empty
   triggers <- newTQueueIO
   pure
     LeiosLateJoinState
@@ -87,6 +101,7 @@ newLeiosLateJoinState readCompleted = do
       , announcementsMap = annMap
       , pendingTriggers = triggers
       , readCompletedClosuresSTM = readCompleted
+      , certRbsByAnnouncer = orphanedCertRbs
       }
 
 -- | The CertRBs ChainSel must hold back: 'announcementsMap' keys whose
@@ -166,6 +181,10 @@ leiosAddBlockListener st hdr = do
       cache <- readTVar (headerAnnouncementsCache st)
       forM_ (parentAnnouncement hdr cache) $
         blockCertRbIfClosureMissing st (headerHash hdr)
+      recordIfOrphan st hdr cache
+  -- This block may itself be the announcer of CertRB children that arrived
+  -- before it. Hold each back if the announced EB's closure is still missing.
+  sweepOrphanedCertRbs st hdr
 
 -- | The EB hash announced by this header's parent, read from a cache snapshot.
 -- 'Nothing' when the parent is not cached yet, or it announced no EB.
@@ -196,3 +215,47 @@ blockCertRbIfClosureMissing st rbHash ebHash = do
   completed <- readCompletedClosuresSTM st
   when (ebHash `Set.notMember` completed) $
     modifyTVar (announcementsMap st) (Map.insert rbHash ebHash)
+
+-- | Record a CertRB under its announcer when the announcer is not cached yet.
+--
+-- Handles the child-before-parent race: when two ChainSync clients interleave
+-- their AddBlock writes, a CertRB can be added before the RB that announced its
+-- EB. Its own listener pass then finds no cached announcement and cannot read
+-- the EB hash to hold it back. Recording it under the announcer's hash lets
+-- 'sweepOrphanedCertRbs' pick it up when the announcer is added. When the
+-- announcer is already cached, the direct path in 'leiosAddBlockListener'
+-- handles the CertRB and this records nothing.
+recordIfOrphan ::
+  (IOLike m, GetPrevHash blk) =>
+  LeiosLateJoinState m blk ->
+  Header blk ->
+  Map (HeaderHash blk) (SlotNo, Maybe LeiosPoint) ->
+  STM m ()
+recordIfOrphan st hdr cache = case headerPrevHash hdr of
+  BlockHash parentHash
+    | not (Map.member parentHash cache) ->
+        modifyTVar (certRbsByAnnouncer st) $
+          Map.insertWith Set.union parentHash (Set.singleton (headerHash hdr))
+  _ -> pure ()
+
+-- | Hold back CertRB children that were added before this header, their
+-- announcer.
+--
+-- Reads the orphans 'recordIfOrphan' filed under this header's hash, drops the
+-- entry (the announcer is now added, so any later child of it takes the direct
+-- path), and holds each orphan back if the EB this header announced is still
+-- missing its closure. Does nothing when this header announced no EB: then it
+-- certifies nothing for its children to wait on.
+sweepOrphanedCertRbs ::
+  (IOLike m, ResolveLeiosBlock blk, HasHeader (Header blk)) =>
+  LeiosLateJoinState m blk ->
+  Header blk ->
+  STM m ()
+sweepOrphanedCertRbs st hdr =
+  forM_ (headerLeiosAnnouncement hdr) $ \leiosPoint -> do
+    orphans <-
+      Map.findWithDefault Set.empty (headerHash hdr)
+        <$> readTVar (certRbsByAnnouncer st)
+    modifyTVar (certRbsByAnnouncer st) (Map.delete (headerHash hdr))
+    forM_ orphans $ \childHash ->
+      blockCertRbIfClosureMissing st childHash (pointEbHash leiosPoint)
