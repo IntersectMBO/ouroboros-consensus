@@ -10,19 +10,33 @@
 --
 -- This module provides the state record 'LeiosLateJoinState' (the
 -- 'headerAnnouncementsCache', the pending-CertRB 'announcementsMap', and the
--- 'pendingTriggers' queue), the 'gcPruner' that bounds the cache, and the
--- derived ignore-set 'getBlockedCertRBs' that ChainSel reads. The writers that
--- populate the maps and the queue are added by later commits; for now the state
--- is allocated empty and nothing writes it.
+-- 'pendingTriggers' queue), the 'gcPruner' that bounds the cache, the derived
+-- ignore-set 'getBlockedCertRBs' that ChainSel reads, and the AddBlock listener
+-- 'leiosAddBlockListener' that writes the cache and 'announcementsMap'. The
+-- listener is not registered with the ChainDB yet (a later commit wires it), so
+-- it does not run and behaviour is unchanged. 'pendingTriggers' still has no
+-- writer.
 module LeiosLateJoinState (module LeiosLateJoinState) where
 
+import Control.Monad (forM_, when)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
-import LeiosDemoTypes (EbHash, LeiosPoint)
-import Ouroboros.Consensus.Block (HeaderHash, RealPoint, SlotNo, WithOrigin (..))
+import LeiosDemoTypes (EbHash, IsCertRB (..), LeiosPoint, pointEbHash)
+import Ouroboros.Consensus.Block
+  ( ChainHash (..)
+  , GetPrevHash (..)
+  , Header
+  , HeaderHash
+  , RealPoint
+  , SlotNo
+  , WithOrigin (..)
+  , blockSlot
+  , headerHash
+  )
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB (..))
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Util.IOLike
 
 -- | LeiosKernel state for the late-join feature.
@@ -122,3 +136,63 @@ gcPruner chainDB st = go Origin
   -- Keep entries whose block the VolatileDB still holds (slot >= gcSlot).
   dropCollected :: WithOrigin SlotNo -> Map k (SlotNo, a) -> Map k (SlotNo, a)
   dropCollected gcSlot = Map.filter (\(slot, _) -> NotOrigin slot >= gcSlot)
+
+-- | The AddBlock listener body: update the late-join bookkeeping for one block.
+--
+-- ChainDB runs this synchronously, in STM scope, between writing the block to
+-- the VolatileDB and running chain selection on it (registered via
+-- 'registerHeaderListener'). Sharing the transaction that adds the block closes
+-- the window an asynchronous listener would leave: there is no moment when the
+-- block is in the VolatileDB but absent from this state, so a closure arriving
+-- "in between" cannot strand the block.
+--
+-- For every block it records the slot and announced EB point in
+-- 'headerAnnouncementsCache'. For a CertRB whose certified EB closure is not yet
+-- local, it adds the block to 'announcementsMap' so 'getBlockedCertRBs' holds it
+-- back. The certified EB hash comes from the parent's cached announcement, not
+-- from the block itself: a CertRB certifies the EB its parent announced
+-- (CIP-0164).
+leiosAddBlockListener ::
+  (IOLike m, ResolveLeiosBlock blk, GetPrevHash blk) =>
+  LeiosLateJoinState m blk ->
+  Header blk ->
+  STM m ()
+leiosAddBlockListener st hdr = do
+  modifyTVar (headerAnnouncementsCache st) $
+    Map.insert (headerHash hdr) (blockSlot hdr, headerLeiosAnnouncement hdr)
+  case headerIsCertRB hdr of
+    NotCertRB -> pure ()
+    CertRB -> do
+      cache <- readTVar (headerAnnouncementsCache st)
+      forM_ (parentAnnouncement hdr cache) $
+        blockCertRbIfClosureMissing st (headerHash hdr)
+
+-- | The EB hash announced by this header's parent, read from a cache snapshot.
+-- 'Nothing' when the parent is not cached yet, or it announced no EB.
+parentAnnouncement ::
+  GetPrevHash blk =>
+  Header blk ->
+  Map (HeaderHash blk) (SlotNo, Maybe LeiosPoint) ->
+  Maybe EbHash
+parentAnnouncement hdr cache = case headerPrevHash hdr of
+  GenesisHash -> Nothing
+  BlockHash parentHash -> pointEbHash <$> (snd =<< Map.lookup parentHash cache)
+
+-- | Hold a CertRB back when the EB closure it certifies is not local yet.
+--
+-- Inserts the CertRB into 'announcementsMap'. 'getBlockedCertRBs' subtracts the
+-- completed closures again, so a closure that arrives after this check is still
+-- handled there; the only cost of inserting when the closure is in fact already
+-- present is one redundant entry, dropped on the next 'getBlockedCertRBs' read.
+blockCertRbIfClosureMissing ::
+  (IOLike m, Ord (HeaderHash blk)) =>
+  LeiosLateJoinState m blk ->
+  -- | The CertRB's header hash.
+  HeaderHash blk ->
+  -- | The EB hash it certifies.
+  EbHash ->
+  STM m ()
+blockCertRbIfClosureMissing st rbHash ebHash = do
+  completed <- readCompletedClosuresSTM st
+  when (ebHash `Set.notMember` completed) $
+    modifyTVar (announcementsMap st) (Map.insert rbHash ebHash)
