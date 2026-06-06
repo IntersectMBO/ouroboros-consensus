@@ -63,11 +63,12 @@ openLedgerDB ::
   , HasHardForkHistory blk
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
+  Point blk ->
   IO
     ( LedgerDB.LedgerDB' IO blk
     , LedgerDB.TestInternals' IO blk
     )
-openLedgerDB args =
+openLedgerDB args replayGoal =
   runWithTempRegistry $
     (,()) <$> do
       (ldb, od) <- case LedgerDB.lgrBackendArgs args of
@@ -92,7 +93,7 @@ openLedgerDB args =
                   snapManager
                   (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
                   res
-          lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+          lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream replayGoal
       pure (ldb, od)
 
 emptyStream :: Applicative m => ImmutableDB.StreamAPI m blk a
@@ -167,16 +168,22 @@ analyse dbaConfig args =
 
     withImmutableDB immutableDbArgs $ \(immutableDB, internal) -> do
       SomeAnalysis (Proxy :: Proxy startFrom) ana <- pure $ runAnalysis analysis
+
+      let getPointForSlot :: SlotNo -> IO (Point blk)
+          getPointForSlot slot = ImmutableDB.getHashForSlot internal slot >>= \case
+            Just hash -> pure $ BlockPoint slot hash
+            Nothing -> fail $ "No block with given slot in the ImmutableDB: " <> show slot
+
       startFrom <- case sing :: Sing startFrom of
-        SStartFromPoint ->
+        SStartFromPoint -> do
           FromPoint <$> case startSlot of
             Origin -> pure GenesisPoint
-            NotOrigin slot ->
-              ImmutableDB.getHashForSlot internal slot >>= \case
-                Just hash -> pure $ BlockPoint slot hash
-                Nothing -> fail $ "No block with given slot in the ImmutableDB: " <> show slot
+            NotOrigin slot -> getPointForSlot slot
+
         SStartFromLedgerState -> do
-          (ledgerDB, intLedgerDB) <- openLedgerDB ldbArgs
+          (ledgerDB, intLedgerDB) <- openLedgerDB ldbArgs =<< case startSlot of
+            Origin -> pure genesisPoint
+            NotOrigin slot -> getPointForSlot slot
           -- This marker divides the "loading" phase of the program, where the
           -- system is principally occupied with reading snapshot data from
           -- disk, from the "processing" phase, where we are streaming blocks
