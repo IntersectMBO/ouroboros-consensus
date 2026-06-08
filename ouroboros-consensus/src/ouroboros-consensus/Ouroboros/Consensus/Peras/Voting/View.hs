@@ -41,6 +41,7 @@ import Control.Monad.Reader (MonadReader (..), Reader, runReader)
 import Ouroboros.Consensus.Block.Abstract
   ( GetHeader (..)
   , Header
+  , Point
   , SlotNo (..)
   , castPoint
   )
@@ -154,7 +155,7 @@ perasChainAtCandidateBlock blockMinSlots currRoundNo currChain = do
   Voting interface
 -------------------------------------------------------------------------------}
 
--- | View of the latest certificate seen by the voter
+-- | View of the latest certificate seen by the voter.
 --
 -- NOTE: the voting rules depend on the candidate block indirectly. This is
 -- reflected in the fact that the voting view does not contain the candidate
@@ -174,7 +175,7 @@ data LatestCertSeenView cert
   }
   deriving Show
 
--- | View of the latest certificate present in our preferred chain
+-- | View of the latest certificate present in our preferred chain.
 --
 -- NOTE: if we add more fields here in the future, do not forget to add
 -- strictness annotations as needed.
@@ -182,17 +183,16 @@ newtype LatestCertOnChainView cert
   = LatestCertOnChainView
   { lcocCertRoundNo :: PerasRoundNo
   -- ^ 'PerasRoundNo' of the latest certificate present in our preferred chain
-  -- (we don't actually need the whole cert here)
+  -- (we don't actually need the whole certificate here).
   }
   deriving Show
 
 -- | Interface needed to evaluate the Peras voting rules
 --
--- NOTE: the voting rules depend on the candidate block indirectly. This is
--- reflected in the fact that the voting view does not contain the candidate
--- block or its point, but only whether the candidate block extends the block
--- boosted by the most recent certificate seen by the voter, which is provided
--- to the rules via 'lcsCandidateBlockExtendsCert' inside 'latestCertSeen'.
+-- NOTE: the voting rules depend on the candidate block only indirectly. The
+-- only reason to include the point of the block being voted for
+-- ('candidateBlock') here is to be able to return it as part of the result of
+-- 'isPerasVotingAllowed' in the positive case.
 data PerasVotingView cert blk = PerasVotingView
   { perasParams :: !(PerasParams blk)
   -- ^ Peras protocol parameters
@@ -202,6 +202,11 @@ data PerasVotingView cert blk = PerasVotingView
   -- ^ The most recent certificate seen by the voter
   , latestCertOnChain :: !(WithOrigin (LatestCertOnChainView cert))
   -- ^ The most recent certificate present in our preferred chain
+  , candidateBlock :: Point blk
+  -- ^ The candidate block being voted for.
+  --
+  -- NOTE: this is the tip of the 'chainAtCandidateBlock' used to initialize
+  -- the voting view.
   }
   deriving Show
 
@@ -209,16 +214,16 @@ data PerasVotingView cert blk = PerasVotingView
 -- chain's immutable prefix and volatile suffix.
 data WithBoostedBlockStatus cert
   = -- | Certificate boosting a block within the immutable prefix
-    CertWithImmutableBlock cert
+    CertBoostingImmutableBlock cert
   | -- | Certificate boosting a block within the volatile suffix
-    CertWithVolatileBlock cert
+    CertBoostingVolatileBlock cert
   deriving Show
 
 -- | Deconstruct a certificate from its provenance wrapper
 forgetBoostedBlockStatus :: WithBoostedBlockStatus cert -> cert
 forgetBoostedBlockStatus = \case
-  CertWithVolatileBlock cert -> cert
-  CertWithImmutableBlock cert -> cert
+  CertBoostingVolatileBlock cert -> cert
+  CertBoostingImmutableBlock cert -> cert
 
 -- | Construct a 'PerasVotingView'.
 --
@@ -257,6 +262,7 @@ mkPerasVotingView
         , currRoundNo = currRoundNo
         , latestCertSeen = latestCertSeenView
         , latestCertOnChain = latestCertOnChainView
+        , candidateBlock = candidateBlock
         }
    where
     mkLatestCertSeenView certWithProvenance = do
@@ -289,16 +295,22 @@ mkPerasVotingView
     -- NOTE: the case of an extremely old certificate boosting a block beyond
     -- the volatile suffix is covered by also providing the status of the
     -- boosted block w.r.t. the chain's immutable prefix and volatile suffix.
-    candidateBlockExtendsCert (CertWithImmutableBlock _) =
+    candidateBlockExtendsCert (CertBoostingImmutableBlock _) =
       -- This case is vacuously true: an immutable block is always part of
       -- any volatile suffix, so the candidate block trivially extends it.
       True
-    candidateBlockExtendsCert (CertWithVolatileBlock cert) =
+    candidateBlockExtendsCert (CertBoostingVolatileBlock cert) =
       -- Check whether the boosted block is within the volatile fragment leading
       -- to the candidate block.
       AF.withinFragmentBounds
         (castPoint (getPerasCertPoint cert))
         chainAtCandidateBlock
+
+    candidateBlock =
+      AF.anchorToPoint
+        . AF.castAnchor
+        . AF.headAnchor
+        $ chainAtCandidateBlock
 
 newtype PerasVotingViewHandle m blk
   = PerasVotingViewHandle
