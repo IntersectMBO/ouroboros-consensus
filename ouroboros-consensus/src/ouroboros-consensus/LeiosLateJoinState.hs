@@ -11,19 +11,21 @@
 -- This module provides the state record 'LeiosLateJoinState' (the
 -- 'headerAnnouncementsCache', the pending-CertRB 'announcementsMap', the
 -- 'certRbsByAnnouncer' reverse index, and the 'pendingTriggers' queue), the
--- 'gcPruner' that bounds the cache, the derived
--- ignore-set 'getBlockedCertRBs' that ChainSel reads, and the AddBlock listener
--- 'leiosAddBlockListener' that writes the cache and 'announcementsMap'. The
--- listener is not registered with the ChainDB yet (a later commit wires it), so
--- it does not run and behaviour is unchanged. 'pendingTriggers' still has no
--- writer.
+-- 'gcPruner' that bounds the cache, the derived ignore-set 'getBlockedCertRBs'
+-- that ChainSel reads, the AddBlock listener 'leiosAddBlockListener' that writes
+-- the cache and 'announcementsMap', and the 'runTriggerWorker' loop that drains
+-- 'pendingTriggers' into ChainDB reselect requests. Neither the listener nor the
+-- worker is wired to the ChainDB yet (a later commit registers the listener and
+-- forks the worker), so they do not run and behaviour is unchanged.
+-- 'pendingTriggers' still has no writer.
 module LeiosLateJoinState (module LeiosLateJoinState) where
 
-import Control.Monad (forM_, when)
+import Control.Monad (forM_, forever, when)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Void (Void)
 import LeiosDemoTypes (EbHash, IsCertRB (..), LeiosPoint, pointEbHash)
 import Ouroboros.Consensus.Block
   ( ChainHash (..)
@@ -151,6 +153,38 @@ gcPruner chainDB st = go Origin
   -- Keep entries whose block the VolatileDB still holds (slot >= gcSlot).
   dropCollected :: WithOrigin SlotNo -> Map k (SlotNo, a) -> Map k (SlotNo, a)
   dropCollected gcSlot = Map.filter (\(slot, _) -> NotOrigin slot >= gcSlot)
+
+-- | Drain 'pendingTriggers' and ask ChainDB to re-run chain selection on each
+-- block.
+--
+-- One blocking read per iteration: wait for the next 'RealPoint', then call
+-- 'reconsiderBlockAsync' to enqueue a reselection for it. 'reconsiderBlockAsync'
+-- writes to ChainDB's bounded chain-selection queue and may block when that
+-- queue is full. The worker is allowed to block there: the only producer of
+-- 'pendingTriggers' is the asynchronous AcquiredEbTxs subscriber, never the
+-- synchronous AddBlock listener, so this backpressure never reaches the
+-- transaction that adds a block. During a late-join burst many CertRBs unblock
+-- as their closures arrive, all onto one queue with one consumer running chain
+-- selection per message, so blocking here is expected, not a fault.
+--
+-- The constraint is 'IOLike m' alone: the worker only enqueues a reselection
+-- request, it does not run chain selection, so it needs none of the ledger
+-- constraints the chain-selection thread carries.
+--
+-- Reconsidering a block the VolatileDB has since garbage-collected is a no-op:
+-- ChainDB finds no block for the point and ignores the request, so the worker
+-- needs no separate guard for that.
+--
+-- Loops forever; intended to run as a linked background thread. Nothing forks it
+-- yet, so behaviour is unchanged.
+runTriggerWorker ::
+  IOLike m =>
+  ChainDB m blk ->
+  LeiosLateJoinState m blk ->
+  m Void
+runTriggerWorker chainDB st = forever $ do
+  rp <- atomically $ readTQueue (pendingTriggers st)
+  reconsiderBlockAsync chainDB rp
 
 -- | The AddBlock listener body: update the late-join bookkeeping for one block.
 --
