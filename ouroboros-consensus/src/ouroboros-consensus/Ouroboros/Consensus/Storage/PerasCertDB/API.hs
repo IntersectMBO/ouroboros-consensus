@@ -3,10 +3,15 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertDB (..)
+  , WithBoostedBlockStatus (..)
+  , forgetBoostedBlockStatus
   , AddPerasCertResult (..)
   , PerasCertTicketNo
   , zeroPerasCertTicketNo
@@ -67,7 +72,7 @@ data PerasCertDB m blk = PerasCertDB
   -- The 'Fingerprint' is updated every time a new certificate is added, but it
   -- stays the same when certificates are garbage-collected.
   , getLatestCertSeen ::
-      STM m (Maybe (WithArrivalTime (ValidatedPerasCert blk)))
+      STM m (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
   -- ^ This field impacts voting directly because having seen a certificate is a
   -- precondition for voting in any round except for the very first one
   -- (at origin).
@@ -83,6 +88,34 @@ data PerasCertDB m blk = PerasCertDB
   -- NOTE: Use the `join . atomically` pattern to consume its output.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "PerasCertDB" (PerasCertDB m blk)
+
+-- | Indicate whether the block being boosted by a certificate is expected to
+-- still be part of the volatile chain suffix or not.
+--
+-- This is relevant for Peras voting because we need to know if a candidate
+-- block extends the chain that contains the block being boosted by the latest
+-- certificate seen. For this purpose, we want to limit the voting rules to only
+-- look within the volatile chain suffix, and assume that, if the boosted block
+-- is no longer in the volatile suffix, then it trivially extends the candidate
+-- block (because it must have been copied into the immutable chain prefix). For
+-- this reason, we need to manually keep track of whether the boosted block of
+-- this certificate has already been garbage collected from the volatile suffix
+-- or not.
+data WithBoostedBlockStatus cert
+  = -- | Certificate boosting a block within the volatile chain suffix
+    CertBoostingBlockInVolatileDB cert
+  | -- | Certificate boosting a block that no longer belongs to the volatile
+    -- chain suffix. This typically means that the block has been copied to the
+    -- immutable prefix, and then garbage collected from the volatile suffix.
+    CertBoostingBlockNoLongerInVolatileDB cert
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+-- | Deconstruct a certificate from its provenance wrapper
+forgetBoostedBlockStatus :: WithBoostedBlockStatus cert -> cert
+forgetBoostedBlockStatus = \case
+  CertBoostingBlockInVolatileDB cert -> cert
+  CertBoostingBlockNoLongerInVolatileDB cert -> cert
 
 -- | A sequence number, incremented every time we receive a new certificate.
 --
@@ -140,10 +173,9 @@ prop_getCertsAfterZero db = do
     pure (allCerts, certIds)
   allCertValues <- sequence (Map.elems allCertActions)
   let allCertIds =
-        Set.fromList $
-          fmap
-            (getPerasCertRound . forgetArrivalTime)
-            allCertValues
+        Set.fromList
+          . fmap getPerasCertRound
+          $ allCertValues
   pure $
     length allCertActions == Set.size certIds
       && allCertIds == certIds
@@ -176,7 +208,7 @@ prop_garbageCollectRemovesOldCerts db slotNo = do
     _ <- garbageCollect db slotNo
     getCertsAfter db zeroPerasCertTicketNo
   allCertValues <- sequence (Map.elems allCertActions)
-  let targetSlots = pointSlot . getPerasCertPoint . forgetArrivalTime <$> allCertValues
+  let targetSlots = pointSlot . getPerasCertPoint <$> allCertValues
   pure $
     all (>= NotOrigin slotNo) targetSlots
 
@@ -194,7 +226,7 @@ prop_addCertLatestCertSeenMonotonic db cert =
     prevLatest <- getLatestCertSeen db
     _ <- addCert db cert
     newLatest <- getLatestCertSeen db
-    let getRound = getPerasCertRound . forgetArrivalTime
+    let getRound = getPerasCertRound . forgetBoostedBlockStatus
     pure $ case (prevLatest, newLatest) of
       (_, Nothing) -> False -- after adding a cert, the latest cert seen should not go back to 'Nothing'
       (Nothing, Just _) -> True -- if there was no cert seen before, any new cert should be greater than or equal to it
@@ -203,7 +235,7 @@ prop_addCertLatestCertSeenMonotonic db cert =
 -- | 'getLatestCertSeen' is not affected by garbage collection.
 prop_garbageCollectPreservesLatestCertSeen ::
   ( MonadSTM m
-  , Eq (PerasCert blk)
+  , IsPerasCert (PerasCert blk) blk
   ) =>
   PerasCertDB m blk ->
   SlotNo ->
@@ -213,4 +245,5 @@ prop_garbageCollectPreservesLatestCertSeen db slotNo =
     prevLatest <- getLatestCertSeen db
     _ <- garbageCollect db slotNo
     newLatest <- getLatestCertSeen db
-    pure $ prevLatest == newLatest
+    let getRound = getPerasCertRound . forgetBoostedBlockStatus
+    pure $ fmap getRound prevLatest == fmap getRound newLatest

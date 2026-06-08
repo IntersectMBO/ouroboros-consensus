@@ -359,7 +359,8 @@ getPerasWeightSnapshot ::
 getPerasWeightSnapshot CDB{..} = PerasCertDB.getWeightSnapshot cdbPerasCertDB
 
 getLatestPerasCertSeen ::
-  ChainDbEnv m blk -> STM m (Maybe (WithArrivalTime (ValidatedPerasCert blk)))
+  ChainDbEnv m blk ->
+  STM m (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
 getLatestPerasCertSeen CDB{..} = PerasCertDB.getLatestCertSeen cdbPerasCertDB
 
 getPerasCertsAfter ::
@@ -389,13 +390,6 @@ getPerasEpochContextResolver ::
 getPerasEpochContextResolver =
   fmap perasEpochContextResolver . getCurrentLedger
 
-fixWithBoostedBlockStatusInDbAPI ::
-  WithArrivalTime (ValidatedPerasCert blk) ->
-  WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))
-fixWithBoostedBlockStatusInDbAPI _cert = undefined
-
--- [TODO EPOCH CONTEXT PLUMBING/CHAIN DB LATEST CERT SEEN]
-
 getPerasVotingView ::
   ( BlockSupportsPeras blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
@@ -414,8 +408,11 @@ getPerasVotingView _topLevelConfig roundNo env = do
     Left err -> throwSTM err
     Right perasContext -> pure $ pecPerasParams perasContext
   latestCertSeen <-
-    withOriginFromMaybe . fmap fixWithBoostedBlockStatusInDbAPI <$> getLatestPerasCertSeen env
-  latestCertOnChainRoundNo <- withOriginFromMaybe <$> getLatestPerasCertOnChainRound env
+    withOriginFromMaybe
+      <$> getLatestPerasCertSeen env
+  latestCertOnChainRoundNo <-
+    withOriginFromMaybe
+      <$> getLatestPerasCertOnChainRound env
   let blockMinSlots = perasBlockMinSlots perasParams
   currentChain <- getCurrentChain env
   let qry =

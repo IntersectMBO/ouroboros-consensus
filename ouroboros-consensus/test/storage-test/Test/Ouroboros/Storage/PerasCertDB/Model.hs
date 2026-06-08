@@ -25,10 +25,14 @@ import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , mkPerasWeightSnapshot
   )
+import Ouroboros.Consensus.Storage.PerasCertDB.API
+  ( WithBoostedBlockStatus (..)
+  , forgetBoostedBlockStatus
+  )
 
 data Model blk = Model
   { certs :: Set (WithArrivalTime (ValidatedPerasCert blk))
-  , latestCertSeen :: Maybe (WithArrivalTime (ValidatedPerasCert blk))
+  , latestCertSeen :: Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk)))
   , open :: Bool
   }
   deriving Generic
@@ -54,11 +58,16 @@ addCert model@Model{certs, latestCertSeen} cert
   | otherwise = model{certs = certs', latestCertSeen = latestCertSeen'}
  where
   certs' = Set.insert cert certs
-  latestCertSeen' = case latestCertSeen of
-    Nothing -> Just cert
-    Just prev
-      | getPerasCertRound cert > getPerasCertRound prev -> Just cert
-      | otherwise -> Just prev
+  latestCertSeen' =
+    case latestCertSeen of
+      Nothing ->
+        Just (CertBoostingBlockInVolatileDB cert)
+      Just prev
+        | getPerasCertRound cert
+            > getPerasCertRound (forgetBoostedBlockStatus prev) ->
+            Just (CertBoostingBlockInVolatileDB cert)
+        | otherwise ->
+            Just prev
 
 hasRoundNo ::
   IsPerasCert (PerasCert blk) blk =>
@@ -80,14 +89,25 @@ getWeightSnapshot Model{certs} =
     ]
 
 getLatestCertSeen ::
-  Model blk -> Maybe (WithArrivalTime (ValidatedPerasCert blk))
+  Model blk ->
+  Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk)))
 getLatestCertSeen Model{latestCertSeen} =
   latestCertSeen
 
 garbageCollect ::
   IsPerasCert (PerasCert blk) blk =>
   SlotNo -> Model blk -> Model blk
-garbageCollect slotNo model@Model{certs} =
-  model{certs = Set.filter keepCert certs}
+garbageCollect slotNo model@Model{certs, latestCertSeen} =
+  model
+    { certs = Set.filter keepCert certs
+    , latestCertSeen = updateIfBoostingGarbageCollectedBlock <$> latestCertSeen
+    }
  where
   keepCert cert = pointSlot (getPerasCertPoint cert) >= NotOrigin slotNo
+
+  updateIfBoostingGarbageCollectedBlock cert
+    | pointSlot (getPerasCertPoint (forgetBoostedBlockStatus cert))
+        < NotOrigin slotNo =
+        CertBoostingBlockNoLongerInVolatileDB (forgetBoostedBlockStatus cert)
+    | otherwise =
+        cert
