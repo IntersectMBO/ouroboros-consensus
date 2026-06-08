@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | LeiosKernel state and background work for the late-join feature.
@@ -13,19 +14,26 @@
 -- 'certRbsByAnnouncer' reverse index, and the 'pendingTriggers' queue), the
 -- 'gcPruner' that bounds the cache, the derived ignore-set 'getBlockedCertRBs'
 -- that ChainSel reads, the AddBlock listener 'leiosAddBlockListener' that writes
--- the cache and 'announcementsMap', and the 'runTriggerWorker' loop that drains
--- 'pendingTriggers' into ChainDB reselect requests. Neither the listener nor the
--- worker is wired to the ChainDB yet (a later commit registers the listener and
--- forks the worker), so they do not run and behaviour is unchanged.
--- 'pendingTriggers' still has no writer.
+-- the cache and 'announcementsMap', the 'runTriggerWorker' loop that drains
+-- 'pendingTriggers' into ChainDB reselect requests, and the
+-- 'runAcquiredEbTxsSubscriber' loop that fills 'pendingTriggers' when an EB
+-- closure arrives. None of the listener, the worker, or the subscriber is wired
+-- to the ChainDB or LeiosDb yet (a later commit registers the listener and forks
+-- the two loops), so they do not run and behaviour is unchanged.
 module LeiosLateJoinState (module LeiosLateJoinState) where
 
+import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Monad (forM_, forever, when)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Void (Void)
+import LeiosDemoDb.Common
+  ( LeiosDbHandle
+  , LeiosEbNotification (..)
+  , subscribeEbNotifications
+  )
 import LeiosDemoTypes (EbHash, IsCertRB (..), LeiosPoint, pointEbHash)
 import Ouroboros.Consensus.Block
   ( ChainHash (..)
@@ -33,7 +41,7 @@ import Ouroboros.Consensus.Block
   , HasHeader
   , Header
   , HeaderHash
-  , RealPoint
+  , RealPoint (..)
   , SlotNo
   , WithOrigin (..)
   , blockSlot
@@ -185,6 +193,66 @@ runTriggerWorker ::
 runTriggerWorker chainDB st = forever $ do
   rp <- atomically $ readTQueue (pendingTriggers st)
   reconsiderBlockAsync chainDB rp
+
+-- | Drain the LeiosDb EB-notification channel and unblock the CertRBs each
+-- arriving closure releases.
+--
+-- 'subscribeEbNotifications' returns a channel scoped to this call, so a
+-- notification emitted after subscribing is delivered exactly once. Each
+-- iteration reads one notification and acts on it in the same transaction: for
+-- an 'AcquiredEbTxs' (the EB closure is now complete locally) it calls
+-- 'unblockCertRbsForClosure'; an 'AcquiredEb' is the body alone, the closure is
+-- not yet complete, so it is ignored. Reading the notification and updating the
+-- bookkeeping in one transaction is invariant I1: no reader ever sees a CertRB
+-- that is neither in 'announcementsMap' nor queued.
+--
+-- The constraint is 'IOLike m' plus 'Ord (HeaderHash blk)' for the
+-- 'announcementsMap' and cache lookups in 'unblockCertRbsForClosure'; the loop
+-- only enqueues reselections, so it needs none of the ledger constraints the
+-- chain-selection thread carries.
+--
+-- This is the sole writer of 'pendingTriggers'; the AddBlock listener never
+-- writes it. Loops forever; intended to run as a linked background thread.
+-- Nothing forks it yet, so behaviour is unchanged.
+runAcquiredEbTxsSubscriber ::
+  (IOLike m, Ord (HeaderHash blk)) =>
+  LeiosDbHandle m ->
+  LeiosLateJoinState m blk ->
+  m Void
+runAcquiredEbTxsSubscriber leiosDb st = do
+  notifications <- subscribeEbNotifications leiosDb
+  forever $
+    atomically $
+      readTChan notifications >>= \case
+        AcquiredEbTxs point -> unblockCertRbsForClosure st (pointEbHash point)
+        AcquiredEb{} -> pure ()
+
+-- | Remove from 'announcementsMap' every CertRB waiting on this EB and enqueue
+-- one reselection per removed CertRB.
+--
+-- The closure for @ebHash@ has just become local. 'getBlockedCertRBs' already
+-- stops holding these CertRBs back (it subtracts the completed closures), so the
+-- removal here only keeps the map bounded; the enqueue is what drives the
+-- reselection. Both happen in one transaction with the channel read, so each
+-- CertRB is enqueued exactly once: a re-arriving notification for the same EB
+-- finds the entries already gone (invariant I2).
+--
+-- A removed CertRB whose cache entry the 'gcPruner' has already dropped is
+-- skipped: the VolatileDB no longer holds that block, so reconsidering it would
+-- be a no-op anyway (invariant I4). 'certRbsByAnnouncer' is not touched: it holds
+-- only orphaned CertRBs, disjoint from 'announcementsMap'.
+unblockCertRbsForClosure ::
+  (IOLike m, Ord (HeaderHash blk)) =>
+  LeiosLateJoinState m blk ->
+  EbHash ->
+  STM m ()
+unblockCertRbsForClosure st ebHash = do
+  (matched, kept) <- Map.partition (== ebHash) <$> readTVar (announcementsMap st)
+  writeTVar (announcementsMap st) kept
+  cache <- readTVar (headerAnnouncementsCache st)
+  forM_ (Map.keys matched) $ \rbHash ->
+    forM_ (Map.lookup rbHash cache) $ \(slot, _ann) ->
+      writeTQueue (pendingTriggers st) (RealPoint slot rbHash)
 
 -- | The AddBlock listener body: update the late-join bookkeeping for one block.
 --
