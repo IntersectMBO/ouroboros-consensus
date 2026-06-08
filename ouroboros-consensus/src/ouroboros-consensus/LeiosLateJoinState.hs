@@ -17,9 +17,11 @@
 -- the cache and 'announcementsMap', the 'runTriggerWorker' loop that drains
 -- 'pendingTriggers' into ChainDB reselect requests, and the
 -- 'runAcquiredEbTxsSubscriber' loop that fills 'pendingTriggers' when an EB
--- closure arrives. None of the listener, the worker, or the subscriber is wired
--- to the ChainDB or LeiosDb yet (a later commit registers the listener and forks
--- the two loops), so they do not run and behaviour is unchanged.
+-- closure arrives, and the 'runStartupWalk' that seeds the cache and
+-- 'announcementsMap' from the VolatileDB before the first chain selection. None
+-- of the listener, the worker, the subscriber, or the startup walk is wired to
+-- the ChainDB or LeiosDb yet (a later commit registers the listener, runs the
+-- walk, and forks the two loops), so they do not run and behaviour is unchanged.
 module LeiosLateJoinState (module LeiosLateJoinState) where
 
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
@@ -47,9 +49,14 @@ import Ouroboros.Consensus.Block
   , blockSlot
   , headerHash
   )
-import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB (..))
+import Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..), ChainDB (..))
+import Ouroboros.Consensus.Storage.ImmutableDB.API (ImmutableDB)
+import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
+import Ouroboros.Consensus.Storage.VolatileDB.API (VolatileDB)
+import qualified Ouroboros.Consensus.Storage.VolatileDB.API as VolatileDB
 import Ouroboros.Consensus.Util.IOLike
+import qualified Ouroboros.Network.AnchoredFragment as AF
 
 -- | LeiosKernel state for the late-join feature.
 data LeiosLateJoinState m blk = LeiosLateJoinState
@@ -361,3 +368,88 @@ sweepOrphanedCertRbs st hdr =
     modifyTVar (certRbsByAnnouncer st) (Map.delete (headerHash hdr))
     forM_ orphans $ \childHash ->
       blockCertRbIfClosureMissing st childHash (pointEbHash leiosPoint)
+
+-- | Seed the late-join bookkeeping from the blocks the VolatileDB already holds,
+-- before the first chain selection runs.
+--
+-- The AddBlock listener fires only on new arrivals. A node that restarts with
+-- blocks it could not select last run (their EB closures were missing) has no
+-- entry for those blocks in 'headerAnnouncementsCache' or 'announcementsMap', so
+-- the first 'initialChainSelection' would select a stuck CertRB and crash in
+-- 'resolveLeiosBlock'. This walk replays 'leiosAddBlockListener' over every
+-- volatile header, parents before children, so 'getBlockedCertRBs' holds back
+-- exactly the volatile CertRBs whose closure is still missing.
+--
+-- It first seeds the immutable-tip anchor's own announcement: the anchor is the
+-- one parent the forest walk never reads (the walk starts at the anchor's
+-- successors), and a volatile CertRB whose announcer is the anchor must still
+-- find that announcement in the cache.
+--
+-- The walk writes no 'pendingTriggers' entry (the listener never does), so it
+-- queues no reselection; the first 'initialChainSelection' reads
+-- 'getBlockedCertRBs' directly. The caller must run this before
+-- 'initialChainSelection' and against a ChainDB that is not yet running AddBlock,
+-- so no concurrent GC drops a block mid-walk and no listener fires concurrently.
+-- Nothing calls it yet, so behaviour is unchanged.
+runStartupWalk ::
+  (IOLike m, ResolveLeiosBlock blk, GetPrevHash blk) =>
+  ImmutableDB m blk ->
+  VolatileDB m blk ->
+  LeiosLateJoinState m blk ->
+  m ()
+runStartupWalk immutableDB volatileDB st = do
+  anchor <- atomically $ ImmutableDB.getTipAnchor immutableDB
+  seedAnchorAnnouncement immutableDB st anchor
+  headers <- walkVolatileForest volatileDB (AF.anchorToHash anchor)
+  forM_ headers $ \hdr -> atomically $ leiosAddBlockListener st hdr
+
+-- | Record the immutable-tip anchor's own announcement in
+-- 'headerAnnouncementsCache' (the cache only, not 'announcementsMap': the anchor
+-- is already applied, so it is never held back).
+--
+-- The forest walk starts at the anchor's successors and never reads the anchor
+-- header, so a CertRB whose announcer is the anchor would find no cached
+-- announcement and could not be held back. Seeding the anchor closes that case.
+--
+-- The anchor is the ImmutableDB tip by definition, so its header is read from the
+-- ImmutableDB. A restarted late joiner can have an emptied VolatileDB with the
+-- tip living in the ImmutableDB, where a VolatileDB read would throw
+-- 'MissingBlock'. A genesis anchor has no header to seed.
+seedAnchorAnnouncement ::
+  (IOLike m, HasHeader blk, ResolveLeiosBlock blk) =>
+  ImmutableDB m blk ->
+  LeiosLateJoinState m blk ->
+  AF.Anchor blk ->
+  m ()
+seedAnchorAnnouncement immutableDB st = \case
+  AF.AnchorGenesis -> pure ()
+  AF.Anchor slot hash _bno -> do
+    hdr <- ImmutableDB.getKnownBlockComponent immutableDB GetHeader (RealPoint slot hash)
+    atomically $
+      modifyTVar (headerAnnouncementsCache st) $
+        Map.insert hash (slot, headerLeiosAnnouncement hdr)
+
+-- | Every header the VolatileDB holds above the immutable-tip anchor, parents
+-- strictly before children.
+--
+-- Breadth-first from the anchor: the FIFO frontier dequeues a block before its
+-- successors are enqueued, so reversing the accumulated list gives parent-first
+-- order. The forest roots are the anchor's successors; the anchor block itself
+-- lives in the ImmutableDB and is handled by 'seedAnchorAnnouncement'.
+--
+-- 'getKnownBlockComponent' never misses here: 'filterByPredecessor' returns only
+-- hashes the VolatileDB holds, and the caller runs the walk against a paused
+-- ChainDB, so no concurrent GC drops a block between the two reads.
+walkVolatileForest ::
+  (IOLike m, HasHeader blk) =>
+  VolatileDB m blk ->
+  -- | The immutable-tip anchor, parent of the forest roots.
+  ChainHash blk ->
+  m [Header blk]
+walkVolatileForest volatileDB anchor = do
+  succsOf <- atomically $ VolatileDB.filterByPredecessor volatileDB
+  let go [] visited = pure (reverse visited)
+      go (hash : queue) visited = do
+        hdr <- VolatileDB.getKnownBlockComponent volatileDB GetHeader hash
+        go (queue ++ Set.toList (succsOf (BlockHash hash))) (hdr : visited)
+  go (Set.toList (succsOf anchor)) []
