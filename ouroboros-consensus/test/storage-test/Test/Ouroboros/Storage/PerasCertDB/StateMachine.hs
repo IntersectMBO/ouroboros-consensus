@@ -34,7 +34,11 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
-import Ouroboros.Consensus.Storage.PerasCertDB.API (AddPerasCertResult (..), PerasCertDB)
+import Ouroboros.Consensus.Storage.PerasCertDB.API
+  ( AddPerasCertResult (..)
+  , PerasCertDB
+  , WithBoostedBlockStatus
+  )
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.STM
@@ -71,7 +75,8 @@ instance StateModel Model where
     OpenDB :: Action Model ()
     AddCert :: WithArrivalTime (ValidatedPerasCert TestBlock) -> Action Model AddPerasCertResult
     GetWeightSnapshot :: Action Model (PerasWeightSnapshot TestBlock)
-    GetLatestCertSeen :: Action Model (Maybe (WithArrivalTime (ValidatedPerasCert TestBlock)))
+    GetLatestCertSeen ::
+      Action Model (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert TestBlock))))
     GarbageCollect :: SlotNo -> Action Model ()
 
   arbitraryAction _ (Model model)

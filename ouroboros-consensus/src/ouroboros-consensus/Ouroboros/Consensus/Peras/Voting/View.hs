@@ -3,7 +3,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeOperators #-}
@@ -64,6 +63,10 @@ import Ouroboros.Consensus.Peras.Params
   , PerasParams (..)
   )
 import Ouroboros.Consensus.Peras.Types (PerasRoundNo)
+import Ouroboros.Consensus.Storage.PerasCertDB.API
+  ( WithBoostedBlockStatus (..)
+  , forgetBoostedBlockStatus
+  )
 import Ouroboros.Consensus.Util.IOLike (MonadSTM (..))
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -210,21 +213,6 @@ data PerasVotingView cert blk = PerasVotingView
   }
   deriving Show
 
--- | Indicate the status of a block boosted by a certificate w.r.t. the
--- chain's immutable prefix and volatile suffix.
-data WithBoostedBlockStatus cert
-  = -- | Certificate boosting a block within the immutable prefix
-    CertBoostingImmutableBlock cert
-  | -- | Certificate boosting a block within the volatile suffix
-    CertBoostingVolatileBlock cert
-  deriving Show
-
--- | Deconstruct a certificate from its provenance wrapper
-forgetBoostedBlockStatus :: WithBoostedBlockStatus cert -> cert
-forgetBoostedBlockStatus = \case
-  CertBoostingVolatileBlock cert -> cert
-  CertBoostingImmutableBlock cert -> cert
-
 -- | Construct a 'PerasVotingView'.
 --
 -- NOTE: this assumes that the client code computes all the needed inputs
@@ -294,14 +282,16 @@ mkPerasVotingView
     --
     -- NOTE: the case of an extremely old certificate boosting a block beyond
     -- the volatile suffix is covered by also providing the status of the
-    -- boosted block w.r.t. the chain's immutable prefix and volatile suffix.
-    candidateBlockExtendsCert (CertBoostingImmutableBlock _) =
-      -- This case is vacuously true: an immutable block is always part of
-      -- any volatile suffix, so the candidate block trivially extends it.
+    -- boosted block w.r.t. the volatile suffix.
+    candidateBlockExtendsCert (CertBoostingBlockNoLongerInVolatileDB _) =
+      -- This case is vacuously true: the boosted block is from a slot that has
+      -- already been garbage collected from the volatile suffix, which implies
+      -- that it extends any volatile suffix.
       True
-    candidateBlockExtendsCert (CertBoostingVolatileBlock cert) =
-      -- Check whether the boosted block is within the volatile fragment leading
-      -- to the candidate block.
+    candidateBlockExtendsCert (CertBoostingBlockInVolatileDB cert) =
+      -- The block boosted by the latest certificate seen is still in the
+      -- VolatileDB, so we can check whether it is within the bounds of the
+      -- anchored fragment leading to the candidate block.
       AF.withinFragmentBounds
         (castPoint (getPerasCertPoint cert))
         chainAtCandidateBlock
@@ -314,4 +304,6 @@ mkPerasVotingView
 
 newtype PerasVotingViewHandle m blk
   = PerasVotingViewHandle
-      (PerasRoundNo -> STM m (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk))
+      ( PerasRoundNo ->
+        STM m (PerasVotingView (WithArrivalTime (ValidatedPerasCert blk)) blk)
+      )
