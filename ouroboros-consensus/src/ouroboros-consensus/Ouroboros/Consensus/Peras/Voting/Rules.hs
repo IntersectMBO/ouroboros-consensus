@@ -30,7 +30,9 @@ where
 
 import Ouroboros.Consensus.Block (WithOrigin (..))
 import Ouroboros.Consensus.Block.Abstract
-  ( SlotNo (..)
+  ( Point
+  , SlotNo (..)
+  , StandardHash
   )
 import Ouroboros.Consensus.Block.SupportsPeras
   ( IsPerasCert (..)
@@ -61,25 +63,27 @@ import Ouroboros.Consensus.Util.Pred
 -- | Whether we are allowed to vote according to the rules.
 --
 -- This type additionally carries the evidence for the decision taken.
-data PerasVotingRulesDecision
-  = Vote (Evidence True PerasVotingRule)
+data PerasVotingRulesDecision blk
+  = Vote (Evidence True PerasVotingRule) (Point blk)
   | NoVote (Evidence False PerasVotingRule)
   deriving Show
 
-instance Explainable PerasVotingRulesDecision where
+instance StandardHash blk => Explainable (PerasVotingRulesDecision blk) where
   explain mode = \case
-    Vote (ETrue e) -> "Vote(" <> explain mode e <> ")"
-    NoVote (EFalse e) -> "NoVote(" <> explain mode e <> ")"
+    Vote (ETrue e) candidate ->
+      "Vote(" <> show candidate <> "," <> explain mode e <> ")"
+    NoVote (EFalse e) ->
+      "NoVote(" <> explain mode e <> ")"
 
 -- | Evaluate whether voting is allowed or not according to the voting rules
 isPerasVotingAllowed ::
   IsPerasCert cert blk =>
   PerasVotingView cert blk ->
-  PerasVotingRulesDecision
+  PerasVotingRulesDecision blk
 isPerasVotingAllowed pvv =
   evalPred (perasVotingRules pvv) $ \e ->
     case e of
-      ETrue{} -> Vote e
+      ETrue{} -> Vote e (candidateBlock pvv)
       EFalse{} -> NoVote e
 
 -- | Voting rules
