@@ -248,7 +248,6 @@ initLedgerDB s c = do
           , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrConfig = LedgerDB.configLedgerDb (testCfg s) OmitLedgerEvents
           , lgrQueryBatchSize = DefaultQueryBatchSize
-          , lgrStartSnapshot = Nothing
           }
   ldb <-
     runWithTempRegistry

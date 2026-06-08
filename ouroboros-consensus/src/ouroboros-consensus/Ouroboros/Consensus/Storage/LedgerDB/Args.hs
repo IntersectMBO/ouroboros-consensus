@@ -58,10 +58,6 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   , lgrTracer :: !(Tracer m (TraceEvent blk))
   , lgrBackendArgs :: LedgerDbBackendArgs m blk
   , lgrQueryBatchSize :: QueryBatchSize
-  , lgrStartSnapshot :: Maybe DiskSnapshot
-  -- ^ If provided, the ledgerdb will start using said snapshot and fallback
-  -- to genesis. It will ignore any other existing snapshots. Useful for
-  -- db-analyser.
   }
 
 -- | Default arguments
@@ -80,7 +76,6 @@ defaultArgs backendArgs =
     , -- This value is the closest thing to a pre-UTxO-HD node, and as such it
       -- will be the default for end-users.
       lgrBackendArgs = LedgerDbBackendArgsV2 backendArgs
-    , lgrStartSnapshot = Nothing
     }
 
 newtype LedgerDbBackendArgs m blk

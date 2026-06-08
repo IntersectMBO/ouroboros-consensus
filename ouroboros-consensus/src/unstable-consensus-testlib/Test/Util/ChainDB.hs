@@ -132,7 +132,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , lgrConfig = configLedgerDb mcdbTopLevelConfig OmitLedgerEvents
           , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrQueryBatchSize = DefaultQueryBatchSize
-          , lgrStartSnapshot = Nothing
           }
     , cdbPerasCertDbArgs =
         PerasCertDbArgs

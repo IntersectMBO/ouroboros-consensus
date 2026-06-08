@@ -533,7 +533,6 @@ initialize ::
   Point blk ->
   InitDB db m blk ->
   SnapshotManager m blk st ->
-  Maybe DiskSnapshot ->
   m (InitLog blk, db)
 initialize
   replayTracer
@@ -542,11 +541,8 @@ initialize
   stream
   replayGoal
   dbIface
-  snapManager
-  fromSnapshot =
-    case fromSnapshot of
-      Nothing -> listSnapshots snapManager >>= tryNewestFirst id
-      Just snap -> tryNewestFirst id [snap]
+  snapManager =
+    listSnapshots snapManager >>= tryNewestFirst id
    where
     InitDB{initFromGenesis, initFromSnapshot} = dbIface
 
