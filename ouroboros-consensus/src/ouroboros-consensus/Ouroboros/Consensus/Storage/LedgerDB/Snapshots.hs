@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
@@ -53,6 +54,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , TablesCodecVersion (..)
   , NumOfDiskSnapshots (..)
   , defaultSnapshotPolicyArgs
+  , mithrilSnapshotPolicyArgs
 
     -- * Codec
   , readExtLedgerState
@@ -628,6 +630,33 @@ defaultSnapshotPolicyArgs =
   SnapshotPolicyArgs
     (SnapshotFrequency $ SnapshotFrequencyArgs UseDefault UseDefault UseDefault UseDefault)
     UseDefault
+
+-- | Snapshot Policy arguments to be used by Mithril
+--
+-- The snapshot interval is derived as follows:
+--   * The epoch in Shelley is 432,000 slots long.
+--
+-- The snapshot offset is derived as follows:
+--   * 21,600 slots per epoch in Byron
+--   * The Byron era was 208 epochs long
+--   * The Shelley era starts at 208 * 21,600 = 4,492,800 slots
+--   * Half of a Shelley epoch is 432,000 / 2 = 216,000
+--   * The resulting offset of the first snapshot in Shelley is 4,492,800 + 216,000 = 4,708,800
+--   * Finally, if we want to start taking snapshot while still syncing Byron,
+--     we must start at slot 4,708,800 % 432,000 = 388,800
+mithrilSnapshotPolicyArgs :: SnapshotPolicyArgs
+mithrilSnapshotPolicyArgs =
+  SnapshotPolicyArgs
+    { spaFrequency =
+        SnapshotFrequency $
+          SnapshotFrequencyArgs
+            { sfaInterval = Override (unsafeNonZero 432_000)
+            , sfaOffset = Override 388_800
+            , sfaRateLimit = UseDefault
+            , sfaDelaySnapshotRange = UseDefault
+            }
+    , spaNum = UseDefault
+    }
 
 -- | Default on-disk policy suitable to use with cardano-node
 defaultSnapshotPolicy ::
