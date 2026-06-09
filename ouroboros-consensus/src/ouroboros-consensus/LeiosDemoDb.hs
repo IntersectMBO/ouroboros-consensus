@@ -6,6 +6,7 @@ module LeiosDemoDb
   , LeiosDbConnection (..)
   , LeiosFetchWork (..)
   , CompletedEbs
+  , TraceLeiosDb (..)
 
     -- * In-memory implementation
   , emptyInMemoryLeiosDb
@@ -46,3 +47,4 @@ import LeiosDemoDb.SQLite
   , sql_insert_tx
   , sql_schema
   )
+import LeiosDemoDb.Trace (TraceLeiosDb (..))
