@@ -28,7 +28,7 @@ module Ouroboros.Consensus.Ledger.Extended
   , decodeExtLedgerState
   , encodeDiskExtLedgerState
   , encodeExtLedgerState
-  , getPerasEpochContextResolverHandle
+  , mkPerasEpochContextResolverHandle
 
     -- * Type family instances
   , LedgerTables (..)
@@ -82,9 +82,9 @@ data ExtLedgerState blk mk = ExtLedgerState
   }
   deriving Generic
 
-getPerasEpochContextResolverHandle ::
+mkPerasEpochContextResolverHandle ::
   MonadSTM m => STM m (ExtLedgerState blk mk) -> PerasEpochContextResolverHandle m blk
-getPerasEpochContextResolverHandle getLedgerStateSTM =
+mkPerasEpochContextResolverHandle getLedgerStateSTM =
   PerasEpochContextResolverHandle $ perasEpochContextResolver <$> getLedgerStateSTM
 
 deriving instance
