@@ -80,50 +80,59 @@ mkInitDb ::
   SnapshotManagerV2 m blk ->
   GetVolatileSuffix m blk ->
   Resources m backend ->
-  InitDB (LedgerSeq' m blk) m blk
+  m (InitDB (LedgerSeq' m blk) m blk)
 mkInitDb args getBlock snapManager getVolatileSuffix res = do
-  InitDB
-    { initFromGenesis = do
-        genesis <- lgrGenesis
-        sr <- createAndPopulateStateRefFromGenesis v2Tracer res genesis
-        pure $ LedgerSeq . AS.Empty $ sr
-    , initFromSnapshot = \ds ->
-        runExceptT
-          ( first (LedgerSeq . AS.Empty)
-              <$> openStateRefFromSnapshot
-                v2Tracer
-                (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
-                lgrHasFS
-                res
-                ds
-          )
-    , initReapplyBlock = reapplyThenPush
-    , currentTip = ledgerState . current
-    , mkLedgerDb = \lseq -> do
-        varDB <- newTVarIO lseq
-        prevApplied <- newTVarIO Set.empty
-        lock <- RAWLock.new ()
-        nextForkerKey <- newTVarIO (ForkerKey 0)
-        ldbLeiosDb <- open lgrLeiosDb
-        let env =
-              LedgerDBEnv
-                { ldbSeq = varDB
-                , ldbPrevApplied = prevApplied
-                , ldbNextForkerKey = nextForkerKey
-                , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
-                , ldbTracer = tr
-                , ldbCfg = lgrConfig
-                , ldbHasFS = lgrHasFS
-                , ldbResolveBlock = getBlock
-                , ldbQueryBatchSize = lgrQueryBatchSize
-                , ldbOpenHandlesLock = lock
-                , ldbGetVolatileSuffix = getVolatileSuffix
-                , ldbBackendResources = SomeResources res
-                , ldbLeiosDb
-                }
-        h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
-        pure $ implMkLedgerDb h snapManager
-    }
+  -- Open the LeiosDb connection once, up front, and share it between
+  -- the immutable-DB replay path ('initReapplyBlock') and the
+  -- post-replay 'LedgerDB' env ('ldbLeiosDb'). The replay path needs
+  -- the connection so 'reapplyThenPush' can splice EB bodies into
+  -- CertRBs via 'resolveLeiosBlock' — without it, replayed CertRBs
+  -- would be applied with empty wire bodies and the resulting ledger
+  -- state would diverge from the one produced by the original fresh
+  -- sync (missing every EB-tx output).
+  ldbLeiosDb <- open lgrLeiosDb
+  pure $
+    InitDB
+      { initFromGenesis = do
+          genesis <- lgrGenesis
+          sr <- createAndPopulateStateRefFromGenesis v2Tracer res genesis
+          pure $ LedgerSeq . AS.Empty $ sr
+      , initFromSnapshot = \ds ->
+          runExceptT
+            ( first (LedgerSeq . AS.Empty)
+                <$> openStateRefFromSnapshot
+                  v2Tracer
+                  (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
+                  lgrHasFS
+                  res
+                  ds
+            )
+      , initReapplyBlock = reapplyThenPush ldbLeiosDb
+      , currentTip = ledgerState . current
+      , mkLedgerDb = \lseq -> do
+          varDB <- newTVarIO lseq
+          prevApplied <- newTVarIO Set.empty
+          lock <- RAWLock.new ()
+          nextForkerKey <- newTVarIO (ForkerKey 0)
+          let env =
+                LedgerDBEnv
+                  { ldbSeq = varDB
+                  , ldbPrevApplied = prevApplied
+                  , ldbNextForkerKey = nextForkerKey
+                  , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
+                  , ldbTracer = tr
+                  , ldbCfg = lgrConfig
+                  , ldbHasFS = lgrHasFS
+                  , ldbResolveBlock = getBlock
+                  , ldbQueryBatchSize = lgrQueryBatchSize
+                  , ldbOpenHandlesLock = lock
+                  , ldbGetVolatileSuffix = getVolatileSuffix
+                  , ldbBackendResources = SomeResources res
+                  , ldbLeiosDb
+                  }
+          h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
+          pure $ implMkLedgerDb h snapManager
+      }
  where
   LedgerDbArgs
     { lgrConfig
@@ -174,6 +183,8 @@ mkInternals ::
   forall m l blk.
   ( IOLike m
   , ApplyBlock l blk
+  , ResolveLeiosBlock blk
+  , l ~ ExtLedgerState blk
   ) =>
   LedgerDB m l blk ->
   LedgerDBHandle m l blk ->
@@ -205,12 +216,14 @@ mkInternals ldb h snapManager =
           ldb
           ( \frk -> do
               st <- atomically $ forkerGetLedgerState frk
-              tables <- forkerReadTables frk (getBlockKeySets blk)
+              let cds = headerStateChainDep (headerState st)
+              blk' <- resolveLeiosBlock (ldbLeiosDb env) cds blk
+              tables <- forkerReadTables frk (getBlockKeySets blk')
               let st' =
                     tickThenReapply
                       (ledgerDbCfgComputeLedgerEvents (ldbCfg env))
                       (ledgerDbCfg $ ldbCfg env)
-                      blk
+                      blk'
                       (st `withLedgerTables` tables)
               forkerPush frk st' >> Monad.join (atomically (forkerCommit frk))
               pruneLedgerSeq env

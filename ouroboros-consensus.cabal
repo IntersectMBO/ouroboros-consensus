@@ -106,6 +106,7 @@ library
     LeiosDemoOnlyTestFetch
     LeiosDemoOnlyTestNotify
     LeiosDemoTypes
+    LeiosStagingArea
     LeiosVoteState
     Ouroboros.Consensus.Block
     Ouroboros.Consensus.Block.Abstract

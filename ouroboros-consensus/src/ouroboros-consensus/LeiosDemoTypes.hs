@@ -27,7 +27,9 @@ import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
-import Codec.Serialise (Serialise, decode, encode)
+import qualified Codec.CBOR.Read as CBOR
+import qualified Codec.CBOR.Write as CBOR
+import Codec.Serialise (DeserialiseFailure, Serialise, decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
@@ -39,6 +41,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Lazy as BSL
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.Map (Map)
@@ -127,6 +130,39 @@ decodeLeiosPoint :: Decoder s LeiosPoint
 decodeLeiosPoint = do
   enforceSize (fromString "LeiosPoint") 2
   MkLeiosPoint <$> decode <*> decodeEbHash
+
+-- | Encode the (point, size) pair as the CBOR payload to embed in a
+-- 'Cardano.Ledger.BaseTypes.LeiosCert'. Consensus uses this when
+-- forging a CertRB; the receiver decodes it via 'decodeLeiosCertInfo'
+-- to learn which EB closure to fetch / splice and what its expected
+-- on-the-wire size is (needed for the fetch logic's
+-- 'msgLeiosBlock' response validation).
+encodeLeiosCertInfo :: LeiosPoint -> BytesSize -> BS.ByteString
+encodeLeiosCertInfo point bytesSize =
+  CBOR.toStrictByteString $
+    CBOR.encodeListLen 2
+      <> encodeLeiosPoint point
+      <> encode bytesSize
+
+-- | Inverse of 'encodeLeiosCertInfo': decode the @(LeiosPoint,
+-- BytesSize)@ pair from a raw CBOR payload. Returns 'Left' with the
+-- deserialise error on malformed bytes.
+--
+-- (The deployed 'Cardano.Ledger.BaseTypes.LeiosCert' is the empty
+-- placeholder, so this isn't used by the hot-fix path; the (en|de)coder
+-- pair is kept as a utility for a follow-up that wants to ship the
+-- (point, size) on-chain.)
+decodeLeiosCertInfo ::
+  BS.ByteString ->
+  Either DeserialiseFailure (LeiosPoint, BytesSize)
+decodeLeiosCertInfo bs =
+  case CBOR.deserialiseFromBytes go (BSL.fromStrict bs) of
+    Left err -> Left err
+    Right (_, x) -> Right x
+ where
+  go = do
+    enforceSize (fromString "LeiosCertInfo") 2
+    (,) <$> decodeLeiosPoint <*> decode
 
 -- | Types used in Praos headers
 data EbAnnouncement = EbAnnouncement
@@ -658,6 +694,22 @@ data TraceLeiosKernel
   | TraceLeiosVoted {vote :: LeiosVote}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
   | TraceLeiosDbException LeiosDbException
+  | -- | A CertRB was admitted to the staging area because its certified
+    -- EB closure isn't locally available. This is a critical event: it
+    -- means the node would have crashed in 'resolveLeiosBlock' (issue
+    -- #890) and the staging-area / Phase-2 emergency-fetch path is
+    -- compensating. Carries the staged block's point, the missing EB
+    -- point, and the number of peers whose ChainSync candidate
+    -- contained the block (they're treated as implicit offerers of the
+    -- EB by the fetch loop).
+    TraceCertRBStaged
+      { stagedBlockPoint :: String
+      , stagedEbPoint :: LeiosPoint
+      , stagedKnownPeers :: Int
+      }
+  | -- | A staged CertRB has been released back into ChainSel because
+    -- the EB closure (body + txs) is now locally available.
+    TraceCertRBReleased {releasedEbPoint :: LeiosPoint}
 
 deriving instance Show TraceLeiosKernel
 
@@ -714,6 +766,22 @@ traceLeiosKernelToObject = \case
       ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
+  TraceCertRBStaged{stagedBlockPoint, stagedEbPoint, stagedKnownPeers} ->
+    let MkLeiosPoint (SlotNo ebSlot) ebHash = stagedEbPoint
+     in mconcat
+          [ "kind" .= Aeson.String "CertRBStaged"
+          , "blockPoint" .= stagedBlockPoint
+          , "ebHash" .= prettyEbHash ebHash
+          , "ebSlot" .= ebSlot
+          , "knownPeers" .= stagedKnownPeers
+          ]
+  TraceCertRBReleased{releasedEbPoint} ->
+    let MkLeiosPoint (SlotNo ebSlot) ebHash = releasedEbPoint
+     in mconcat
+          [ "kind" .= Aeson.String "CertRBReleased"
+          , "ebHash" .= prettyEbHash ebHash
+          , "ebSlot" .= ebSlot
+          ]
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String

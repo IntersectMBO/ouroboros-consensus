@@ -80,16 +80,17 @@ openDB
   getBlock
   getVolatileSuffix =
     case lgrBackendArgs args of
-      LedgerDbBackendArgsV1 bss ->
+      LedgerDbBackendArgsV1 bss -> do
         let snapManager = V1.snapshotManager args
-            initDb =
-              V1.mkInitDb
-                args
-                bss
-                getBlock
-                snapManager
-                getVolatileSuffix
-         in lift $ doOpenDB args initDb snapManager stream replayGoal
+        initDb <-
+          lift $
+            V1.mkInitDb
+              args
+              bss
+              getBlock
+              snapManager
+              getVolatileSuffix
+        lift $ doOpenDB args initDb snapManager stream replayGoal
       LedgerDbBackendArgsV2 (SomeBackendArgs bArgs) -> do
         -- Note this is the only step that cares about the temporary
         -- registry. Note also that the final state is an polymorphic and
@@ -108,7 +109,7 @@ openDB
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
                 snapTracer
                 (lgrHasFS args)
-        let initDb = V2.mkInitDb args getBlock snapManager getVolatileSuffix res
+        initDb <- lift $ V2.mkInitDb args getBlock snapManager getVolatileSuffix res
         lift $ doOpenDB args initDb snapManager stream replayGoal
        where
         !tr = lgrTracer args

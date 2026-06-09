@@ -81,16 +81,17 @@ openLedgerDB args =
   runWithTempRegistry $
     (,()) <$> do
       (ldb, _, od) <- case LedgerDB.lgrBackendArgs args of
-        LedgerDB.LedgerDbBackendArgsV1 bss ->
+        LedgerDB.LedgerDbBackendArgsV1 bss -> do
           let snapManager = LedgerDB.V1.snapshotManager args
-              initDb =
-                LedgerDB.V1.mkInitDb
-                  args
-                  bss
-                  (\_ -> pure (error "no stream"))
-                  snapManager
-                  (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
-           in lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+          initDb <-
+            lift $
+              LedgerDB.V1.mkInitDb
+                args
+                bss
+                (\_ -> pure (error "no stream"))
+                snapManager
+                (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
+          lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
         LedgerDB.LedgerDbBackendArgsV2 (LedgerDB.V2.SomeBackendArgs bArgs) -> do
           res <-
             LedgerDB.V2.mkResources
@@ -105,13 +106,14 @@ openLedgerDB args =
                   (configCodec . getExtLedgerCfg . LedgerDB.ledgerDbCfg $ LedgerDB.lgrConfig args)
                   (LedgerDBSnapshotEvent >$< LedgerDB.lgrTracer args)
                   (LedgerDB.lgrHasFS args)
-          let initDb =
-                LedgerDB.V2.mkInitDb
-                  args
-                  (\_ -> pure (error "no stream"))
-                  snapManager
-                  (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
-                  res
+          initDb <-
+            lift $
+              LedgerDB.V2.mkInitDb
+                args
+                (\_ -> pure (error "no stream"))
+                snapManager
+                (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
+                res
           lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
       pure (ldb, od)
 

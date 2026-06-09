@@ -70,7 +70,7 @@ import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
-import LeiosDemoTypes (LeiosPoint)
+import LeiosDemoTypes (BytesSize, LeiosPoint)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
@@ -569,11 +569,19 @@ class ResolveLeiosBlock blk where
     Monad m => LeiosDbConnection m -> LeiosPoint -> blk -> m (Maybe blk)
   resolveLeiosBlockHdr _ _ _ = return Nothing
 
-  -- | The EB point announced by this header, if any. 'Nothing' for headers
-  -- in eras that don't carry Leios announcements. Lets the chain-sync
-  -- server hold only the minimum needed to splice the next cert block, and
-  -- skip decoding entirely when the announcer didn't announce.
-  headerLeiosAnnouncement :: Header blk -> Maybe LeiosPoint
+  -- | Whether this block's body carries a 'LeiosCert' (a CertRB).
+  --
+  -- The CertRB staging area gate inspects this cheaply before going on
+  -- to compute the announced EB point and querying the 'LeiosDb'.
+  blockHasLeiosCert :: blk -> Bool
+  blockHasLeiosCert _ = False
+
+  -- | The EB announcement carried by this header (point + on-the-wire
+  -- body size), if any. 'Nothing' for headers in eras that don't carry
+  -- Leios announcements. The CertRB staging gate reads this off the
+  -- parent header on the current chain to learn which EB the new
+  -- block's cert refers to.
+  headerLeiosAnnouncement :: Header blk -> Maybe (LeiosPoint, BytesSize)
   headerLeiosAnnouncement _ = Nothing
 
 {-------------------------------------------------------------------------------

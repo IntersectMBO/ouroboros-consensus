@@ -123,6 +123,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
     -- the ledger state](#g:hydratingTheLedgerState) and then finally call the
     -- ledger, which might throw errors.
   , reapplyThenPush
+  , reapplyThenPushLeios
 
     -- *** Hydrating the ledger state #hydratingTheLedgerState#
 
@@ -196,8 +197,10 @@ import Data.SOP (K, unK)
 import Data.SOP.Functors
 import Data.Word
 import GHC.Generics (Generic)
+import LeiosDemoDb (LeiosDbConnection)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
@@ -361,6 +364,38 @@ reapplyThenPush ::
 reapplyThenPush cfg ap ksReader db =
   (\current' -> pruneToImmTipOnly $ extend current' db)
     <$> reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap ksReader db
+
+-- | Leios-aware variant of 'reapplyThenPush' used by the production
+-- code path.
+--
+-- For Leios CertRBs the wire-encoded body carries only a 'LeiosCert'
+-- (no txs); the actual transactions live in the EB closure. Mirroring
+-- 'Forker.applyBlock', we splice the EB body back in via
+-- 'resolveLeiosBlock' before ticking the ledger — otherwise the
+-- immutable-DB replay path would apply CertRBs as empty bodies,
+-- leaving the ledger state missing every EB-tx output that was
+-- created during the original fresh sync.
+--
+-- The non-Leios 'reapplyThenPush' is retained because the V1
+-- DbChangelog test suite operates on bare 'LedgerState' (not
+-- 'ExtLedgerState') and so cannot satisfy the 'l ~ ExtLedgerState blk'
+-- constraint that 'headerStateChainDep' requires.
+reapplyThenPushLeios ::
+  ( Monad m
+  , ApplyBlock l blk
+  , ResolveLeiosBlock blk
+  , l ~ ExtLedgerState blk
+  ) =>
+  LeiosDbConnection m ->
+  LedgerDbCfg l ->
+  blk ->
+  KeySetsReader m l ->
+  DbChangelog l ->
+  m (DbChangelog l)
+reapplyThenPushLeios leiosDb cfg b ksReader db = do
+  let cds = headerStateChainDep (headerState (current db))
+  b' <- resolveLeiosBlock leiosDb cds b
+  reapplyThenPush cfg b' ksReader db
 
 -- | Prune oldest ledger states according to the given 'LedgerDbPrune' strategy.
 --

@@ -159,7 +159,7 @@ chainSyncBlocksServer tracer chainDB ccfg version leiosDb flr = ChainSyncServer 
       m (WithPoint blk (Serialised blk))
     resolve (WithPoint (hdr, sblk) pt) = do
       mPrevAnn <- readTVarIO prevAnnVar
-      atomically $ writeTVar prevAnnVar (headerLeiosAnnouncement hdr)
+      atomically $ writeTVar prevAnnVar (fst <$> headerLeiosAnnouncement hdr)
       sblk' <- case mPrevAnn of
         Nothing -> pure sblk
         Just prevAnn -> case decode sblk of
@@ -176,7 +176,7 @@ chainSyncBlocksServer tracer chainDB ccfg version leiosDb flr = ChainSyncServer 
       Origin -> atomically $ writeTVar prevAnnVar Nothing
       NotOrigin rp -> do
         mHdr <- ChainDB.getBlockComponent chainDB GetHeader rp
-        atomically $ writeTVar prevAnnVar (mHdr >>= headerLeiosAnnouncement)
+        atomically $ writeTVar prevAnnVar (fst <$> (mHdr >>= headerLeiosAnnouncement))
 
     decode :: Serialised blk -> Either CBOR.Read.DeserialiseFailure blk
     decode (Serialised bs) =

@@ -57,13 +57,16 @@ import Cardano.Ledger.BaseTypes
 import Data.Function (on)
 import Data.Word
 import GHC.Generics
+import LeiosDemoDb (LeiosDbConnection)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam
+import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq hiding
   ( anchor
@@ -237,30 +240,46 @@ closeLedgerSeq (LedgerSeq l) =
 --
 -- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
-  (IOLike m, ApplyBlock l blk) =>
+  (IOLike m, ApplyBlock l blk, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  LeiosDbConnection m ->
   LedgerDbCfg l ->
   blk ->
   LedgerSeq m l ->
   m (LedgerSeq m l)
-reapplyThenPush cfg ap db = do
-  newSt <- reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
+reapplyThenPush leiosDb cfg ap db = do
+  newSt <- reapplyBlock leiosDb (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap db
   let (m, db') = pruneToImmTipOnly $ extend newSt db
   m
   pure db'
 
+-- | Reapply a block to the tip of the 'LedgerSeq'.
+--
+-- For Leios CertRBs, the wire-encoded body carries only a 'LeiosCert' (no
+-- txs); the actual transactions live in the EB closure. Mirroring
+-- 'Forker.applyBlock', we splice the EB body back in via 'resolveLeiosBlock'
+-- before ticking the ledger — otherwise the immutable-DB replay path would
+-- apply CertRBs as empty bodies, leaving the ledger state missing every
+-- EB-tx output that was created during the original fresh sync.
 reapplyBlock ::
   forall m l blk.
-  (ApplyBlock l blk, IOLike m) =>
+  ( ApplyBlock l blk
+  , IOLike m
+  , ResolveLeiosBlock blk
+  , l ~ ExtLedgerState blk
+  ) =>
+  LeiosDbConnection m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
   blk ->
   LedgerSeq m l ->
   m (StateRef m l)
-reapplyBlock evs cfg b db = do
-  let ks = getBlockKeySets b
-      StateRef st tbs = currentHandle db
+reapplyBlock leiosDb evs cfg b db = do
+  let StateRef st tbs = currentHandle db
+      cds = headerStateChainDep (headerState st)
+  b' <- resolveLeiosBlock leiosDb cds b
+  let ks = getBlockKeySets b'
   vals <- read tbs st ks
-  let st' = tickThenReapply evs cfg b (st `withLedgerTables` vals)
+  let st' = tickThenReapply evs cfg b' (st `withLedgerTables` vals)
       newst = forgetLedgerTables st'
 
   newtbs <- duplicateWithDiffs tbs st st'

@@ -1006,7 +1006,11 @@ instance
             case mAnnouncedEb of
               Nothing ->
                 error $
-                  "FIXME(bladyjoker): What exactly does this mean? Announced EB is being certified by the current chain but it's not available?"
+                  "Issue #890 gate missed: apply-time resolve found EB "
+                    <> show ann
+                    <> " at last-slot "
+                    <> show (praosStateLastSlot praosSt)
+                    <> " absent; cert: "
                     <> show cert
               Just announcedEb ->
                 pure $
@@ -1032,15 +1036,23 @@ instance
    where
     Core.Block hdr body = shelleyBlockRaw blk
 
+  blockHasLeiosCert blk = case body ^. leiosCertBlockBodyL of
+    SNothing -> False
+    SJust _ -> True
+   where
+    Core.Block _ body = shelleyBlockRaw blk
+
   headerLeiosAnnouncement hdr =
     case hbLeiosEbAnnouncement annBody of
       SNothing -> Nothing
       SJust ann ->
         Just
-          MkLeiosPoint
-            { pointSlotNo = hbSlotNo annBody
-            , pointEbHash = ebAnnouncementHash ann
-            }
+          ( MkLeiosPoint
+              { pointSlotNo = hbSlotNo annBody
+              , pointEbHash = ebAnnouncementHash ann
+              }
+          , ebAnnouncementSize ann
+          )
    where
     annBody :: HeaderBody c
     Header{headerBody = annBody} = shelleyHeaderRaw hdr
