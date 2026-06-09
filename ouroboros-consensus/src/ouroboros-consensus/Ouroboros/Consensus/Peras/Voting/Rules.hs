@@ -1,4 +1,6 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -16,6 +18,7 @@
 -- do not denote ignored variables.
 module Ouroboros.Consensus.Peras.Voting.Rules
   ( isPerasVotingAllowed
+  , isPerasVotingAllowedInContext
   , PerasVotingRule (..)
   , PerasVotingRulesDecision (..)
   , perasVR1A
@@ -41,13 +44,17 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasIgnoranceRounds (..)
   , PerasParams (..)
   , PerasRoundNo (..)
+  , ValidatedPerasCert
   , onPerasRoundNo
   )
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Peras.Voting.View
   ( LatestCertOnChainView (..)
   , LatestCertSeenView (..)
   , PerasVotingView (..)
+  , PerasVotingViewHandle (..)
   )
+import Ouroboros.Consensus.Util.IOLike (MonadSTM (..))
 import Ouroboros.Consensus.Util.Pred
   ( Evidence (..)
   , Explainable (..)
@@ -85,6 +92,14 @@ isPerasVotingAllowed pvv =
     case e of
       ETrue{} -> Vote e (candidateBlock pvv)
       EFalse{} -> NoVote e
+
+isPerasVotingAllowedInContext ::
+  (IsPerasCert (WithArrivalTime (ValidatedPerasCert blk)) blk, MonadSTM m) =>
+  PerasVotingViewHandle m blk ->
+  PerasRoundNo ->
+  STM m (PerasVotingRulesDecision blk)
+isPerasVotingAllowedInContext (PerasVotingViewHandle getPerasVotingView) =
+  fmap isPerasVotingAllowed . getPerasVotingView
 
 -- | Voting rules
 --
