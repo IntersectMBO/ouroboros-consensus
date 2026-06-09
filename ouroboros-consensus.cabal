@@ -250,6 +250,7 @@ library
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.State.Mock
     Ouroboros.Consensus.Peras.State.V1
+    Ouroboros.Consensus.Peras.Time
     Ouroboros.Consensus.Peras.Types
     Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Vote.Mock
