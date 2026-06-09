@@ -64,6 +64,7 @@ import Ouroboros.Consensus.Peras.Context
   ( LedgerStateHeaderStateSupportsPerasVoting
   , PerasEpochContextResolverHandle (PerasEpochContextResolverHandle)
   )
+import Ouroboros.Consensus.Peras.Time (TimeResolutionContextHandle (..))
 import Ouroboros.Consensus.Peras.Voting.View (PerasVotingViewHandle (PerasVotingViewHandle))
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
@@ -325,10 +326,17 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getPerasVoteIds = getEnvSTM h Query.getPerasVoteIds
             , getPerasVotingViewHandle =
                 PerasVotingViewHandle $ \roundNo ->
-                  getEnvSTM h (Query.getPerasVotingView (Args.cdbsTopLevelConfig cdbSpecificArgs) roundNo)
+                  getEnvSTM
+                    h
+                    (Query.getPerasVotingView (topLevelConfigLedger $ Args.cdbsTopLevelConfig cdbSpecificArgs) roundNo)
             , getPerasEpochContextResolverHandle =
                 PerasEpochContextResolverHandle $
                   getEnvSTM h Query.getPerasEpochContextResolver
+            , getTimeResolutionContextHandle =
+                TimeResolutionContextHandle $
+                  getEnvSTM
+                    h
+                    (Query.getTimeResolutionContext (topLevelConfigLedger $ Args.cdbsTopLevelConfig cdbSpecificArgs))
             , waitForImmutableBlock = getEnv1 h Query.waitForImmutableBlock
             , getLatestPerasCertOnChainRound = getEnvSTM h Query.getLatestPerasCertOnChainRound
             }

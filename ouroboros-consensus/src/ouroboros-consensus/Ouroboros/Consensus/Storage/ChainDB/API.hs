@@ -96,6 +96,7 @@ import Ouroboros.Consensus.Ledger.Extended
   , ExtValidationError
   )
 import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle)
+import Ouroboros.Consensus.Peras.Time (TimeResolutionContextHandle)
 import Ouroboros.Consensus.Peras.Voting.View (PerasVotingViewHandle (..))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
@@ -475,6 +476,8 @@ data ChainDB m blk = ChainDB
   -- NOTE: This needs to be part of the API because the implementation of the ChainDB
   -- has access, during initialization, to the 'TopLevelConfig', but it isn't
   -- stored/exposed by the API itself.
+  , getTimeResolutionContextHandle ::
+      TimeResolutionContextHandle m blk
   , getPerasEpochContextResolverHandle ::
       PerasEpochContextResolverHandle m blk
   -- ^ Returns a handle to obtain the 'PerasEpochContext' for a given 'PerasRoundNo'
