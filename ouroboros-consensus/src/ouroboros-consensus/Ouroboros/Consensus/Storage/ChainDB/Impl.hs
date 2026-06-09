@@ -57,7 +57,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
-import Ouroboros.Consensus.Ledger.Extended (getPerasEpochContextResolverHandle, ledgerState)
+import Ouroboros.Consensus.Ledger.Extended (ledgerState, mkPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -208,7 +208,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         PerasVoteDB.PerasVoteDbArgs
           { PerasVoteDB.pvdbaTracer = PerasVoteDB.pvdbaTracer incompleteArgsPerasVoteDB
           , PerasVoteDB.pvdbaPerasEpochContextResolverHandle =
-              getPerasEpochContextResolverHandle (LedgerDB.getVolatileTip lgrDB)
+              mkPerasEpochContextResolverHandle (LedgerDB.getVolatileTip lgrDB)
           }
 
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
