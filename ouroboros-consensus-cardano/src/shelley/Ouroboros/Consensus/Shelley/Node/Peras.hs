@@ -14,6 +14,11 @@
 module Ouroboros.Consensus.Shelley.Node.Peras () where
 
 import Cardano.Ledger.Api
+import qualified Cardano.Ledger.BaseTypes as Ledger
+import qualified Cardano.Ledger.Dijkstra.BlockBody as Dijkstra
+import qualified Cardano.Ledger.Shelley.API as SL
+import Data.Maybe.Strict (strictMaybeToMaybe)
+import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   )
@@ -32,7 +37,7 @@ import qualified Ouroboros.Consensus.Peras.State.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Voting.V1 as V1
 import Ouroboros.Consensus.Shelley.Ledger.Block
-  ( ShelleyBlock
+  ( ShelleyBlock (..)
   , ShelleyCompatible
   )
 import Ouroboros.Consensus.Shelley.Ledger.Ledger ()
@@ -61,8 +66,17 @@ instance
   type PerasCrypto (ShelleyBlock proto DijkstraEra) = BLS.PerasBLSCrypto
   type PerasVotingCommitteeScheme (ShelleyBlock proto DijkstraEra) = V1.PerasVotingCommitteeScheme
 
-  -- [TODO EPOCH CONTEXT PLUMBING/EXTRACT CERT] extract actual Peras certificates from blocks
-  getPerasCertInBlock _ = Nothing
+  getPerasCertInBlock blk = do
+    -- [TODO PERAS CERTS IN BLOCKS] there will be a bytearray here after
+    -- integrating a newer version of Ledger. From there, we would need to
+    -- deserialize into a V1.PerasCert. For now, we could simply blow up if
+    -- the decoding fails.
+    Ledger.PerasCert <-
+      strictMaybeToMaybe $
+        SL.blockBody (shelleyBlockRaw blk)
+          ^. Dijkstra.perasCertBlockBodyL
+
+    Nothing -- to be replaced with the deserialized certificate
 
 instance
   ShelleyCompatible proto ShelleyEra =>
