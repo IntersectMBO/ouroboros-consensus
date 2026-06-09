@@ -75,6 +75,14 @@ common common-test
     -threaded
     -rtsopts
 
+  -- Cap the RTS heap so a runaway test aborts with a heap-overflow exception
+  -- instead of letting the OS OOM-kill the test process. Every test-suite
+  -- imports common-test, and common-bench imports common-test, so this cap
+  -- reaches every test and benchmark. A stanza that sets its own
+  -- -with-rtsopts overrides this one (GHC keeps only the last -with-rtsopts),
+  -- so such a stanza must fold the cap back in itself (see leios-db-bench).
+  ghc-options: -with-rtsopts=-M10G
+
 common common-bench
   import: common-test
   ghc-options:
@@ -974,7 +982,9 @@ benchmark leios-db-bench
   type: exitcode-stdio-1.0
   hs-source-dirs: ouroboros-consensus/bench/leios-db-bench
   main-is: Main.hs
-  ghc-options: -with-rtsopts=-N4
+  -- Folds in the -M10G heap cap from common-test, which this stanza's own
+  -- -with-rtsopts would otherwise drop.
+  ghc-options: "-with-rtsopts=-M10G -N4"
   build-depends:
     async,
     base,
