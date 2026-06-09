@@ -38,8 +38,9 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
   ) where
 
 import Cardano.Slotting.EpochInfo
+import Control.Monad ((<=<))
 import Data.Kind (Type)
-import Data.SOP (K (..))
+import Data.SOP (K (..), unI)
 import Data.SOP.Constraint
 import Data.SOP.Functors
 import Data.SOP.Strict
@@ -75,6 +76,8 @@ import qualified Ouroboros.Consensus.Peras.Voting.V1 as V1
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (ShowProxy)
+import Type.Reflection (someTypeRep)
+import Unsafe.Coerce (unsafeCoerce)
 
 {-------------------------------------------------------------------------------
   Hard fork protocol, block, and ledger state
@@ -298,8 +301,28 @@ instance
   type PerasCrypto (HardForkBlock xs) = BLS.PerasBLSCrypto
   type PerasVotingCommitteeScheme (HardForkBlock xs) = V1.PerasVotingCommitteeScheme
 
-  -- [TODO EPOCH CONTEXT PLUMBING/EXTRACT CERT] extract actual Peras certificates from blocks
-  getPerasCertInBlock _ = Nothing
+  getPerasCertInBlock =
+    hcollapse
+      . hcmap
+        proxySingle
+        (K . (unsafeCastPerasCertV1 <=< getPerasCertInBlock) . unI)
+      . getOneEraBlock
+      . getHardForkBlock
+
+-- [TODO PERAS CERTS IN BLOCKS] this is a nasty hack
+unsafeCastPerasCertV1 ::
+  forall x xs.
+  ( Typeable xs
+  , Typeable (PerasCert x)
+  ) =>
+  PerasCert x ->
+  Maybe (V1.PerasCert (HardForkBlock xs))
+unsafeCastPerasCertV1 cert = do
+  let xCertRep = someTypeRep (Proxy @(PerasCert x))
+  let xsCertRep = someTypeRep (Proxy @(V1.PerasCert (HardForkBlock xs)))
+  if typeRepTyCon xCertRep == typeRepTyCon xsCertRep
+    then Just (unsafeCoerce cert)
+    else Nothing
 
 {-------------------------------------------------------------------------------
   ConvertRawHash
