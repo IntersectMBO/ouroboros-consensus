@@ -33,17 +33,17 @@ module Ouroboros.Consensus.Peras.Time
   , steiEpochStartSlot
   , steiEpochEndSlot
   , steiEpochSize
-  , steiIsNewEpoch
+  , steiIsFirstSlotOfEpoch
   , stpriPerasRoundNo
   , stpriPerasRoundStartSlot
   , stpriPerasRoundEndSlot
   , stpriPerasRoundLength
-  , stpriIsNewPerasRound
+  , stpriIsFirstSlotOfPerasRound
   , prteiEpochNo
   , prteiEpochStartPerasRound
   , prteiEpochEndPerasRound
   , prteiEpochSizeInPerasRounds
-  , prteiIsNewEpoch
+  , prteiIsFirstPerasRoundOfEpoch
 
     -- * Time resolution within a context
   , runQueryInContext
@@ -181,8 +181,10 @@ steiEpochEndSlot = etsiEpochEndSlot . steiEpochToSlotInfo
 steiEpochSize :: SlotToEpochInfo -> EpochSize
 steiEpochSize = etsiEpochSize . steiEpochToSlotInfo
 
-steiIsNewEpoch :: SlotToEpochInfo -> Bool
-steiIsNewEpoch stei = steiSlotsSpentInEpoch stei == 0
+-- TODO: check with consensus team if that is resilient enough to detect epoch
+-- boundaries
+steiIsFirstSlotOfEpoch :: SlotToEpochInfo -> Bool
+steiIsFirstSlotOfEpoch stei = steiSlotsSpentInEpoch stei == 0
 
 data PerasRoundToSlotInfo = PerasRoundToSlotInfo
   { prtsiPerasRoundNo :: !PerasRoundNo
@@ -211,8 +213,8 @@ stpriPerasRoundEndSlot = prtsiPerasRoundEndSlot . stpriPerasRoundToSlotInfo
 stpriPerasRoundLength :: SlotToPerasRoundInfo -> PerasRoundLength
 stpriPerasRoundLength = prtsiPerasRoundLength . stpriPerasRoundToSlotInfo
 
-stpriIsNewPerasRound :: SlotToPerasRoundInfo -> Bool
-stpriIsNewPerasRound stpri = stpriSlotsSpentInPerasRound stpri == 0
+stpriIsFirstSlotOfPerasRound :: SlotToPerasRoundInfo -> Bool
+stpriIsFirstSlotOfPerasRound stpri = stpriSlotsSpentInPerasRound stpri == 0
 
 data EpochToPerasRoundInfo = EpochToPerasRoundInfo
   { etpriEpochNo :: !EpochNo
@@ -241,8 +243,8 @@ prteiEpochEndPerasRound = etpriEpochEndPerasRound . prteiEpochToPerasRoundInfo
 prteiEpochSizeInPerasRounds :: PerasRoundToEpochInfo -> Word64
 prteiEpochSizeInPerasRounds = etpriEpochSizeInPerasRounds . prteiEpochToPerasRoundInfo
 
-prteiIsNewEpoch :: PerasRoundToEpochInfo -> Bool
-prteiIsNewEpoch prtei = prteiPerasRoundsSpentInEpoch prtei == 0
+prteiIsFirstPerasRoundOfEpoch :: PerasRoundToEpochInfo -> Bool
+prteiIsFirstPerasRoundOfEpoch prtei = prteiPerasRoundsSpentInEpoch prtei == 0
 
 runQueryInContext ::
   HasHardForkHistory blk =>
