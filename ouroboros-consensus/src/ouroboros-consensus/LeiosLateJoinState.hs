@@ -453,3 +453,46 @@ walkVolatileForest volatileDB anchor = do
         hdr <- VolatileDB.getKnownBlockComponent volatileDB GetHeader hash
         go (queue ++ Set.toList (succsOf (BlockHash hash))) (hdr : visited)
   go (Set.toList (succsOf anchor)) []
+
+-- | Build the LeiosKernel late-join state and return the two callbacks the boot
+-- code places in the ChainDB lifecycle.
+--
+-- One 'LeiosLateJoinState' is built; both callbacks close over it, so the
+-- ignore-set the boot code reads ('getBlockedCertRBs' on the same state) sees
+-- the entries the seed hook writes and every later listener write.
+--
+--   * The seed hook runs 'runStartupWalk' against the ImmutableDB and
+--     VolatileDB. It must run before the first 'initialChainSelection', so the
+--     ignore-set already holds back the volatile CertRBs whose closure is
+--     missing.
+--   * The register action installs 'leiosAddBlockListener' via
+--     'registerHeaderListener'. It must run before the live AddBlock runner, so
+--     no block is added without updating the bookkeeping first.
+--
+-- This routine touches no ChainDB internals and forks nothing: the trigger
+-- worker, the AcquiredEbTxs subscriber, and the 'gcPruner' are forked by the
+-- boot code, and placing both callbacks at the right lifecycle points is the
+-- boot code's job. Nothing calls this yet, so behaviour is unchanged.
+--
+-- The closures-read is a bare @'STM' m ('Set' 'EbHash')@: it matches
+-- 'newLeiosLateJoinState' and needs no 'LeiosDbHandle' import.
+--
+-- 'NoThunks' on @'HeaderHash' blk@, which 'newLeiosLateJoinState' needs, comes
+-- free here from @'GetPrevHash' blk@ (via 'HasHeader' and 'StandardHash'), so it
+-- is not listed.
+initLeiosKernelLateJoin ::
+  (IOLike m, ResolveLeiosBlock blk, GetPrevHash blk) =>
+  -- | The LeiosDb completed-closures read, held in the state.
+  STM m (Set EbHash) ->
+  m
+    ( LeiosLateJoinState m blk
+    , ImmutableDB m blk -> VolatileDB m blk -> m ()
+    , ChainDB m blk -> m ()
+    )
+initLeiosKernelLateJoin readClosures = do
+  st <- newLeiosLateJoinState readClosures
+  pure
+    ( st
+    , \immutableDB volatileDB -> runStartupWalk immutableDB volatileDB st
+    , \chainDB -> registerHeaderListener chainDB (leiosAddBlockListener st)
+    )
