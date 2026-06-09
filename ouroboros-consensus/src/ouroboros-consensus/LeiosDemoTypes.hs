@@ -44,10 +44,6 @@ import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
 import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
 import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
-import Codec.CBOR.Decoding (Decoder)
-import qualified Codec.CBOR.Decoding as CBOR
-import Codec.CBOR.Encoding (Encoding)
-import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise, decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar

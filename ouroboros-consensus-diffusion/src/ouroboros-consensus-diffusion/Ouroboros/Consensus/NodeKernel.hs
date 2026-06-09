@@ -69,7 +69,6 @@ import Data.Void (Void)
 import LeiosDemoDb
   ( LeiosDbConnection (..)
   , LeiosDbHandle (..)
-  , LeiosEbNotification (..)
   , withLeiosDb
   )
 import qualified LeiosDemoDb as LeiosDb
@@ -79,9 +78,7 @@ import LeiosDemoTypes
   , LeiosOutstanding
   , LeiosPeerVars
   , LeiosPoint
-  , LeiosVote (..)
   , TraceLeiosKernel (..)
-  , VoterId (MkVoterId)
   , pointEbHash
   )
 import qualified LeiosDemoTypes as Leios
@@ -304,7 +301,6 @@ initNodeKernel ::
   ( IOLike m
   , SI.MonadTimer m
   , RunNode blk
-  , ResolveLeiosBlock blk
   , Ord addrNTN
   , Hashable addrNTN
   , Typeable addrNTN
@@ -741,7 +737,6 @@ initInternalState ::
   , Ord addrNTN
   , Typeable addrNTN
   , RunNode blk
-  , ResolveLeiosBlock blk
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   m (InternalState m addrNTN addrNTC blk)
