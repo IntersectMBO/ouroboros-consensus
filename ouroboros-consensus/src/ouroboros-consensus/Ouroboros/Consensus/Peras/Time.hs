@@ -128,19 +128,19 @@ absorbNoPerasEnabled :: PerasEnabled a -> Either TimeResolutionError a
 absorbNoPerasEnabled = fromPerasEnabled (Left TimeResolutionPerasNotEnabled) . fmap Right
 
 data SlotToTimeInfo = SlotToTimeInfo
-  { sttiSlotNo :: SlotNo
-  , sttiSlotStartTime :: RelativeTime
-  , sttiSlotEndTime :: RelativeTime
-  , sttiSlotLength :: SlotLength
+  { sttiSlotNo :: !SlotNo
+  , sttiSlotStartTime :: !RelativeTime
+  , sttiSlotEndTime :: !RelativeTime
+  , sttiSlotLength :: !SlotLength
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
 data TimeToSlotInfo = TimeToSlotInfo
-  { ttsiSlotToTimeInfo :: SlotToTimeInfo
-  , ttsiTimeSpentInSlot :: NominalDiffTime
-  , ttsiTimeLeftInSlot :: NominalDiffTime
-  , ttsiCurrentTime :: RelativeTime
+  { ttsiSlotToTimeInfo :: !SlotToTimeInfo
+  , ttsiTimeSpentInSlot :: !NominalDiffTime
+  , ttsiTimeLeftInSlot :: !NominalDiffTime
+  , ttsiCurrentTime :: !RelativeTime
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -155,19 +155,19 @@ ttsiSlotLength :: TimeToSlotInfo -> SlotLength
 ttsiSlotLength = sttiSlotLength . ttsiSlotToTimeInfo
 
 data EpochToSlotInfo = EpochToSlotInfo
-  { etsiEpochNo :: EpochNo
-  , etsiEpochStartSlot :: SlotNo
-  , etsiEpochEndSlot :: SlotNo
-  , etsiEpochSize :: EpochSize
+  { etsiEpochNo :: !EpochNo
+  , etsiEpochStartSlot :: !SlotNo
+  , etsiEpochEndSlot :: !SlotNo
+  , etsiEpochSize :: !EpochSize
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
 data SlotToEpochInfo = SlotToEpochInfo
-  { steiEpochToSlotInfo :: EpochToSlotInfo
-  , steiCurrentSlot :: SlotNo
-  , steiSlotsSpentInEpoch :: Word64
-  , steiSlotsLeftInEpoch :: Word64
+  { steiEpochToSlotInfo :: !EpochToSlotInfo
+  , steiCurrentSlot :: !SlotNo
+  , steiSlotsSpentInEpoch :: !Word64
+  , steiSlotsLeftInEpoch :: !Word64
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -185,19 +185,19 @@ steiIsNewEpoch :: SlotToEpochInfo -> Bool
 steiIsNewEpoch stei = steiSlotsSpentInEpoch stei == 0
 
 data PerasRoundToSlotInfo = PerasRoundToSlotInfo
-  { prtsiPerasRoundNo :: PerasRoundNo
-  , prtsiPerasRoundStartSlot :: SlotNo
-  , prtsiPerasRoundEndSlot :: SlotNo
-  , prtsiPerasRoundLength :: PerasRoundLength
+  { prtsiPerasRoundNo :: !PerasRoundNo
+  , prtsiPerasRoundStartSlot :: !SlotNo
+  , prtsiPerasRoundEndSlot :: !SlotNo
+  , prtsiPerasRoundLength :: !PerasRoundLength
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
 data SlotToPerasRoundInfo = SlotToPerasRoundInfo
-  { stpriPerasRoundToSlotInfo :: PerasRoundToSlotInfo
-  , stpriCurrentSlot :: SlotNo
-  , stpriSlotsSpentInPerasRound :: Word64
-  , stpriSlotsLeftInPerasRound :: Word64
+  { stpriPerasRoundToSlotInfo :: !PerasRoundToSlotInfo
+  , stpriCurrentSlot :: !SlotNo
+  , stpriSlotsSpentInPerasRound :: !Word64
+  , stpriSlotsLeftInPerasRound :: !Word64
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -215,19 +215,19 @@ stpriIsNewPerasRound :: SlotToPerasRoundInfo -> Bool
 stpriIsNewPerasRound stpri = stpriSlotsSpentInPerasRound stpri == 0
 
 data EpochToPerasRoundInfo = EpochToPerasRoundInfo
-  { etpriEpochNo :: EpochNo
-  , etpriEpochStartPerasRound :: PerasRoundNo
-  , etpriEpochEndPerasRound :: PerasRoundNo
-  , etpriEpochSizeInPerasRounds :: Word64
+  { etpriEpochNo :: !EpochNo
+  , etpriEpochStartPerasRound :: !PerasRoundNo
+  , etpriEpochEndPerasRound :: !PerasRoundNo
+  , etpriEpochSizeInPerasRounds :: !Word64
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
 data PerasRoundToEpochInfo = PerasRoundToEpochInfo
-  { prteiEpochToPerasRoundInfo :: EpochToPerasRoundInfo
-  , prteiCurrentPerasRound :: PerasRoundNo
-  , prteiPerasRoundsSpentInEpoch :: Word64
-  , prteiPerasRoundsLeftInEpoch :: Word64
+  { prteiEpochToPerasRoundInfo :: !EpochToPerasRoundInfo
+  , prteiCurrentPerasRound :: !PerasRoundNo
+  , prteiPerasRoundsSpentInEpoch :: !Word64
+  , prteiPerasRoundsLeftInEpoch :: !Word64
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
