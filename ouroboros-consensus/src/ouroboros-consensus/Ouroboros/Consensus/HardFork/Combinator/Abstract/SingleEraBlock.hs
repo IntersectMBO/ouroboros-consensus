@@ -73,6 +73,7 @@ class
   , ConfigSupportsNode blk
   , NodeInitStorage blk
   , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsPeras blk
   , BlockSupportsMetrics blk
   , SerialiseNodeToClient blk (PartialLedgerConfig blk)
   , -- LedgerTables
