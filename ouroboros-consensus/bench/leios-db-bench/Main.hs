@@ -30,6 +30,7 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Async (async, mapConcurrently_, wait)
 import Control.Monad (forM, forM_, replicateM_, when)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
+import Control.Tracer (debugTracer, showTracing)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
@@ -174,7 +175,7 @@ data BenchEnv = BenchEnv
 -- This setup cost is not included in the timed measurements.
 setupBenchEnv :: FilePath -> IO BenchEnv
 setupBenchEnv tmpDir = do
-  db <- newLeiosDBSQLite (tmpDir <> "/bench.db")
+  db <- newLeiosDBSQLite (showTracing debugTracer) (tmpDir <> "/bench.db")
   putStr "Inserting EBs: " >> hFlush stdout
   forM_ [0 .. numPrePopulatedEbs - 1] $ \i -> do
     withLeiosDb db (`insertOneEb` i)

@@ -101,6 +101,7 @@ library
     LeiosDemoDb.Common
     LeiosDemoDb.InMemory
     LeiosDemoDb.SQLite
+    LeiosDemoDb.Trace
     LeiosDemoException
     LeiosDemoLogic
     LeiosDemoOnlyTestFetch
@@ -981,6 +982,7 @@ benchmark leios-db-bench
     base,
     bytestring,
     cardano-slotting,
+    contra-tracer,
     io-classes:si-timers,
     ouroboros-consensus,
     temporary,

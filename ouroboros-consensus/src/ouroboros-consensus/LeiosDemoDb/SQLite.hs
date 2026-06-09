@@ -25,12 +25,13 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , writeTChan
   )
 import Control.Exception (throwIO)
-import Control.Monad (void)
+import Control.Monad (unless, void)
 import Control.Monad.Class.MonadThrow
   ( bracket
   , generalBracket
   )
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
+import Control.Tracer (Tracer, traceWith)
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -52,6 +53,7 @@ import LeiosDemoDb.Common
   , LeiosEbNotification (..)
   , LeiosFetchWork (..)
   )
+import LeiosDemoDb.Trace (TraceLeiosDb (..))
 import LeiosDemoException (LeiosDbException (..))
 import LeiosDemoTypes
   ( BytesSize
@@ -73,33 +75,37 @@ import System.Random (randomIO)
 
 -- | Create a new Leios database connection from environment variable.
 -- This looks up the LEIOS_DB_PATH environment variable and opens the database.
-newLeiosDBSQLiteFromEnv :: IO (LeiosDbHandle IO)
-newLeiosDBSQLiteFromEnv = do
+newLeiosDBSQLiteFromEnv :: Tracer IO TraceLeiosDb -> IO (LeiosDbHandle IO)
+newLeiosDBSQLiteFromEnv tracer = do
   dbPath <-
     lookupEnv "LEIOS_DB_PATH" >>= \case
       Nothing -> die "You must define the LEIOS_DB_PATH variable for this demo."
       Just x -> pure x
-  newLeiosDBSQLite dbPath
+  newLeiosDBSQLite tracer dbPath
 
 -- | Create a new Leios database using the SQLite implementation at given file
 -- path.
 --
 -- Each call to 'open' on the returned handle creates a new SQLite connection.
 -- Connections are not thread-safe and should not be shared across threads.
-newLeiosDBSQLite :: FilePath -> IO (LeiosDbHandle IO)
-newLeiosDBSQLite dbPath = do
+newLeiosDBSQLite :: Tracer IO TraceLeiosDb -> FilePath -> IO (LeiosDbHandle IO)
+newLeiosDBSQLite tracer dbPath = do
   notificationChan <- atomically newBroadcastTChan
   pure $
     LeiosDbHandle
       { subscribeEbNotifications =
           atomically (dupTChan notificationChan)
-      , open = openSQLiteConnection dbPath notificationChan
+      , open = openSQLiteConnection tracer dbPath notificationChan
       }
 
 -- * Connection management
 
-openSQLiteConnection :: FilePath -> StrictTChan IO LeiosEbNotification -> IO (LeiosDbConnection IO)
-openSQLiteConnection dbPath notificationChan = do
+openSQLiteConnection ::
+  Tracer IO TraceLeiosDb ->
+  FilePath ->
+  StrictTChan IO LeiosEbNotification ->
+  IO (LeiosDbConnection IO)
+openSQLiteConnection tracer dbPath notificationChan = do
   shouldInitSchema <- not <$> doesFileExist dbPath
   db <- open2 (fromString dbPath) [SQLOpenReadWrite, SQLOpenCreate] SQLVFSDefault
   traverse_ (dbExec db) $
@@ -119,11 +125,11 @@ openSQLiteConnection dbPath notificationChan = do
       , leiosDbLookupEbPoint = sqlLookupEbPoint db
       , leiosDbInsertEbPoint = sqlInsertEbPoint db
       , leiosDbLookupEbBody = sqlLookupEbBody db
-      , leiosDbInsertEbBody = sqlInsertEbBody db notify
+      , leiosDbInsertEbBody = sqlInsertEbBody tracer db notify
       , leiosDbInsertTxs = sqlInsertTxs db notify
-      , leiosDbBatchRetrieveTxs = sqlBatchRetrieveTxs db
-      , leiosDbFilterMissingEbBodies = sqlFilterMissingEbBodies db
-      , leiosDbFilterMissingTxs = sqlFilterMissingTxs db
+      , leiosDbBatchRetrieveTxs = sqlBatchRetrieveTxs tracer db
+      , leiosDbFilterMissingEbBodies = sqlFilterMissingEbBodies tracer db
+      , leiosDbFilterMissingTxs = sqlFilterMissingTxs tracer db
       , leiosDbQueryFetchWork = sqlQueryFetchWork db
       , leiosDbQueryCompletedEbByPoint = sqlQueryCompletedEbByPoint db
       , leiosDbQueryCertificateByPoint = return . Just . trustNoVerifyLeiosCertificate
@@ -174,8 +180,14 @@ sqlLookupEbBody db ebHash =
               loop ((txHash, size) : acc)
     loop []
 
-sqlInsertEbBody :: DB.Database -> (LeiosEbNotification -> IO ()) -> LeiosPoint -> LeiosEb -> IO ()
-sqlInsertEbBody db notify point eb = do
+sqlInsertEbBody ::
+  Tracer IO TraceLeiosDb ->
+  DB.Database ->
+  (LeiosEbNotification -> IO ()) ->
+  LeiosPoint ->
+  LeiosEb ->
+  IO ()
+sqlInsertEbBody tracer db notify point eb = do
   let items = leiosEbBodyItems eb
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
@@ -187,8 +199,11 @@ sqlInsertEbBody db notify point eb = do
             dbBindInt64 stmt 2 (fromIntegral txOffset)
             dbBindBlob stmt 3 (let MkTxHash bytes = txHash in bytes)
             dbBindInt64 stmt 4 (fromIntegral txBytesSize)
-            dbStep1 stmt
-            dbReset stmt
+            dbStepInsertOrTrace
+              tracer
+              "ebTxs"
+              (show point.pointEbHash <> "@" <> show txOffset)
+              stmt
         )
         items
     -- Initialize missingTxCount (accounts for txs already in the DB)
@@ -239,8 +254,13 @@ sqlInsertTxs db notify txs = do
   forM_ completed $ notify . AcquiredEbTxs
   pure completed
 
-sqlBatchRetrieveTxs :: DB.Database -> EbHash -> [Int] -> IO [(Int, TxHash, Maybe ByteString)]
-sqlBatchRetrieveTxs db ebHash offsets =
+sqlBatchRetrieveTxs ::
+  Tracer IO TraceLeiosDb ->
+  DB.Database ->
+  EbHash ->
+  [Int] ->
+  IO [(Int, TxHash, Maybe ByteString)]
+sqlBatchRetrieveTxs tracer db ebHash offsets =
   dbWithBEGIN db $ do
     -- First, insert offsets into temp table
     dbWithPrepare db (fromString sql_insert_memTxPoints) $ \stmtInsert ->
@@ -248,8 +268,11 @@ sqlBatchRetrieveTxs db ebHash offsets =
         ( \offset -> do
             dbBindBlob stmtInsert 1 (let MkEbHash bytes = ebHash in bytes)
             dbBindInt64 stmtInsert 2 (fromIntegral offset)
-            dbStep1 stmtInsert
-            dbReset stmtInsert
+            dbStepInsertOrTrace
+              tracer
+              "mem.txPoints"
+              (show ebHash <> "@" <> show offset)
+              stmtInsert
         )
         offsets
 
@@ -272,16 +295,16 @@ sqlBatchRetrieveTxs db ebHash offsets =
       dbStep1 stmtFlush
     pure results
 
-sqlFilterMissingEbBodies :: DB.Database -> [LeiosPoint] -> IO [LeiosPoint]
-sqlFilterMissingEbBodies db points =
+sqlFilterMissingEbBodies ::
+  Tracer IO TraceLeiosDb -> DB.Database -> [LeiosPoint] -> IO [LeiosPoint]
+sqlFilterMissingEbBodies tracer db points =
   -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries.
   dbWithBEGIN db $ do
     let pointsByHash = Map.fromList [(p.pointEbHash, p) | p <- points]
     dbWithPrepare db (fromString sql_insert_memEbHashes) $ \stmtInsert ->
-      forM_ points $ \p -> do
-        dbBindBlob stmtInsert 1 p.pointEbHash.ebHashBytes
-        dbStep1 stmtInsert
-        dbReset stmtInsert
+      forM_ (Map.keys pointsByHash) $ \ebHash -> do
+        dbBindBlob stmtInsert 1 ebHash.ebHashBytes
+        dbStepInsertOrTrace tracer "mem.ebHashes" (show ebHash) stmtInsert
     result <- dbWithPrepare db (fromString sql_filter_missing_eb_bodies) $ \stmt -> do
       let loop acc =
             dbStep stmt >>= \case
@@ -296,17 +319,17 @@ sqlFilterMissingEbBodies db points =
       dbStep1 stmtFlush
     pure result
 
-sqlFilterMissingTxs :: DB.Database -> [TxHash] -> IO [TxHash]
-sqlFilterMissingTxs db txHashes =
+sqlFilterMissingTxs ::
+  Tracer IO TraceLeiosDb -> DB.Database -> [TxHash] -> IO [TxHash]
+sqlFilterMissingTxs tracer db txHashes =
   -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries:
   --   WHERE t.txHashBytes IN (SELECT unhex(value) FROM json_each(?))
   -- This would eliminate the need for mem.txHashes table and insert/flush overhead.
   dbWithBEGIN db $ do
     dbWithPrepare db (fromString sql_insert_memTxHashes) $ \stmtInsert ->
-      forM_ txHashes $ \(MkTxHash bytes) -> do
+      forM_ txHashes $ \txHash@(MkTxHash bytes) -> do
         dbBindBlob stmtInsert 1 bytes
-        dbStep1 stmtInsert
-        dbReset stmtInsert
+        dbStepInsertOrTrace tracer "mem.txHashes" (show txHash) stmtInsert
     result <- dbWithPrepare db (fromString sql_filter_missing_txs) $ \stmt -> do
       let loop acc =
             dbStep stmt >>= \case
@@ -631,6 +654,27 @@ dbStepInsert stmt =
       Left e -> DB.getStatementDatabase stmt >>= \db -> throwDbException db e
       Right DB.Done -> pure True
       Right DB.Row -> error "dbStepInsert: unexpected Row result"
+
+-- | Step an INSERT statement, absorbing UNIQUE/PRIMARY KEY violations and
+-- emitting a 'TraceLeiosDbInsertCollision' for each one. The caller supplies a
+-- table label and a key description for the trace.
+--
+-- After a constraint error, sqlite3_reset reports the same error code; the
+-- normal 'dbReset' would re-throw it, so we use raw 'DB.reset' and discard the
+-- return value. This also leaves the statement in a clean state for the
+-- subsequent bracket-time 'dbFinalize' to succeed.
+dbStepInsertOrTrace ::
+  HasCallStack =>
+  Tracer IO TraceLeiosDb ->
+  String ->
+  String ->
+  DB.Statement ->
+  IO ()
+dbStepInsertOrTrace tracer table key stmt = do
+  novel <- dbStepInsert stmt
+  _ <- DB.reset stmt
+  unless novel $
+    traceWith tracer (TraceLeiosDbInsertCollision table key)
 
 -- ** Error "handling"
 

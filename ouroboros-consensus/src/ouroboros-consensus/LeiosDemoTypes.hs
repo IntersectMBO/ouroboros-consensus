@@ -52,6 +52,7 @@ import qualified Data.Vector as V
 import Data.Word (Word16, Word32, Word64)
 import Debug.Trace (trace)
 import GHC.Generics (Generic)
+import LeiosDemoDb.Trace (TraceLeiosDb (..))
 import LeiosDemoException (LeiosDbException (..), jsonLeiosDbException)
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified LeiosDemoOnlyTestFetch as LeiosFetch
@@ -658,6 +659,7 @@ data TraceLeiosKernel
   | TraceLeiosVoted {vote :: LeiosVote}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
   | TraceLeiosDbException LeiosDbException
+  | TraceLeiosDb TraceLeiosDb
   | -- | A CertRB was admitted to the staging area because its certified
     -- EB closure isn't locally available. This is a critical event: it
     -- means the node would have crashed in 'resolveLeiosBlock' (issue
@@ -730,6 +732,12 @@ traceLeiosKernelToObject = \case
       ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
+  TraceLeiosDb (TraceLeiosDbInsertCollision table key) ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosDbInsertCollision"
+      , "table" .= table
+      , "key" .= key
+      ]
   TraceCertRBStaged{stagedBlockPoint, stagedEbPoint, stagedKnownPeers} ->
     let MkLeiosPoint (SlotNo ebSlot) ebHash = stagedEbPoint
      in mconcat

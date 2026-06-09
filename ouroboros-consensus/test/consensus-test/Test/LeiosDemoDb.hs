@@ -16,6 +16,7 @@ import Control.DeepSeq (force)
 import Control.Exception (bracket)
 import Control.Monad (forM, forM_, replicateM)
 import Control.Monad.Class.MonadTime.SI (diffTime, getMonotonicTime)
+import Control.Tracer (nullTracer)
 import qualified Data.ByteString as BS
 import Data.Function ((&))
 import qualified Data.Map.Strict as Map
@@ -90,7 +91,7 @@ withFreshDb SQLite action = do
   bracket
     ( do
         tmpDir <- createTempDirectory sysTmp "leios-test"
-        db <- newLeiosDBSQLite (tmpDir <> "/test.db")
+        db <- newLeiosDBSQLite nullTracer (tmpDir <> "/test.db")
         pure (db, removeDirectoryRecursive tmpDir)
     )
     snd
