@@ -345,7 +345,6 @@ initNodeKernel
           , leiosOutstanding = getLeiosOutstanding
           , leiosReady = getLeiosReady
           , leiosPeersVars = getLeiosPeersVars
-          , leiosVoteStateIS = leiosVoteState
           , leiosCertRbStaging
           } = st
 
@@ -645,6 +644,7 @@ initNodeKernel
     -- to local "EB closure acquired" notifications and emit a vote for
     -- each acquired EB (which the LeiosNotify server then publishes to
     -- peers). 'Nothing' disables voting on this node.
+    leiosVoteState <- newLeiosVoteState
     void $
       forkLinkedThread registry "NodeKernel.leiosVoting" $ do
         let votingTr = leiosKernelTracer tracers
@@ -749,7 +749,6 @@ data InternalState m addrNTN addrNTC blk = IS
   , leiosReady :: MVar.MVar m ()
   , leiosPeersVars ::
       MVar.MVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
-  , leiosVoteStateIS :: LeiosVoteState m
   , leiosCertRbStaging ::
       LeiosStagingArea m (Leios.PeerId (ConnectionId addrNTN)) blk
   -- ^ CertRBs whose EB closure isn't locally available yet (issue #890).
@@ -805,7 +804,6 @@ initInternalState
 
     -- Leios state created up front so the wrapped 'ChainDbView' below can
     -- register fetch work / wake the fetch loop without forward references.
-    leiosVoteStateIS <- newLeiosVoteState
     leiosPeersVars <- MVar.newMVar Map.empty
     leiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
     leiosReady <- MVar.newEmptyMVar

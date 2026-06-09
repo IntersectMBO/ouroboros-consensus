@@ -27,9 +27,7 @@ import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
-import qualified Codec.CBOR.Read as CBOR
-import qualified Codec.CBOR.Write as CBOR
-import Codec.Serialise (DeserialiseFailure, Serialise, decode, encode)
+import Codec.Serialise (Serialise, decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
@@ -41,7 +39,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
-import qualified Data.ByteString.Lazy as BSL
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.Map (Map)
@@ -130,39 +127,6 @@ decodeLeiosPoint :: Decoder s LeiosPoint
 decodeLeiosPoint = do
   enforceSize (fromString "LeiosPoint") 2
   MkLeiosPoint <$> decode <*> decodeEbHash
-
--- | Encode the (point, size) pair as the CBOR payload to embed in a
--- 'Cardano.Ledger.BaseTypes.LeiosCert'. Consensus uses this when
--- forging a CertRB; the receiver decodes it via 'decodeLeiosCertInfo'
--- to learn which EB closure to fetch / splice and what its expected
--- on-the-wire size is (needed for the fetch logic's
--- 'msgLeiosBlock' response validation).
-encodeLeiosCertInfo :: LeiosPoint -> BytesSize -> BS.ByteString
-encodeLeiosCertInfo point bytesSize =
-  CBOR.toStrictByteString $
-    CBOR.encodeListLen 2
-      <> encodeLeiosPoint point
-      <> encode bytesSize
-
--- | Inverse of 'encodeLeiosCertInfo': decode the @(LeiosPoint,
--- BytesSize)@ pair from a raw CBOR payload. Returns 'Left' with the
--- deserialise error on malformed bytes.
---
--- (The deployed 'Cardano.Ledger.BaseTypes.LeiosCert' is the empty
--- placeholder, so this isn't used by the hot-fix path; the (en|de)coder
--- pair is kept as a utility for a follow-up that wants to ship the
--- (point, size) on-chain.)
-decodeLeiosCertInfo ::
-  BS.ByteString ->
-  Either DeserialiseFailure (LeiosPoint, BytesSize)
-decodeLeiosCertInfo bs =
-  case CBOR.deserialiseFromBytes go (BSL.fromStrict bs) of
-    Left err -> Left err
-    Right (_, x) -> Right x
- where
-  go = do
-    enforceSize (fromString "LeiosCertInfo") 2
-    (,) <$> decodeLeiosPoint <*> decode
 
 -- | Types used in Praos headers
 data EbAnnouncement = EbAnnouncement
