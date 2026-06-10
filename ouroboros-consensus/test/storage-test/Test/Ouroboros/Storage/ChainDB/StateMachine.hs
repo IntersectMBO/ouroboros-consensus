@@ -124,12 +124,11 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Context
-  ( LedgerStateHeaderStateSupportsPerasVoting (PerasEpochContextResolver)
+  ( StateSupportsPerasEpochContext (PerasEpochContextResolver)
   )
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Protocol.Abstract
@@ -371,8 +370,6 @@ type AllComponents blk =
 type TestConstraints blk =
   ( ConsensusProtocol (BlockProtocol blk)
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , Eq (ChainDepState (BlockProtocol blk))
@@ -393,6 +390,7 @@ type TestConstraints blk =
   , CanUpgradeLedgerTables LedgerState blk
   , ImmutableEraParams blk
   , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , PerasVote blk ~ MockPerasVote blk
   , PerasCert blk ~ MockPerasCert blk
   )
@@ -2240,8 +2238,10 @@ smUnused loe k chunkInfo =
     envUnused
     (genBlk chunkInfo loe)
     (genPerasBoostedBlk chunkInfo loe)
-    (mkTestCfg k chunkInfo)
-    testInitExtLedger
+    cfg
+    (testInitExtLedger (configLedger cfg))
+ where
+  cfg = mkTestCfg k chunkInfo
 
 prop_sequential :: LoE () -> SmallChunkInfo -> Property
 prop_sequential loe smallChunkInfo@(SmallChunkInfo chunkInfo) =
@@ -2293,7 +2293,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
           mkArgs
             testCfg
             chunkInfo
-            (testInitExtLedger `withLedgerTables` emptyLedgerTables)
+            (testInitExtLedger (configLedger testCfg) `withLedgerTables` emptyLedgerTables)
             threadRegistry
             nodeDBs
             tracer
@@ -2315,7 +2315,14 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
                 , varLoEFragment
                 , args
                 }
-            sm' = sm loe env (genBlk chunkInfo loe) (genPerasBoostedBlk chunkInfo loe) testCfg testInitExtLedger
+            sm' =
+              sm
+                loe
+                env
+                (genBlk chunkInfo loe)
+                (genPerasBoostedBlk chunkInfo loe)
+                testCfg
+                (testInitExtLedger (configLedger testCfg))
         (hist, model, res) <- QSM.runCommands' sm' cmds'
         trace <- getTrace
         return (hist, model, res, trace)

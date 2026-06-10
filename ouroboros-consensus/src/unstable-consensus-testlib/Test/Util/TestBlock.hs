@@ -136,7 +136,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
+import Ouroboros.Consensus.Ledger.SupportsPeras (ALedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -146,16 +146,13 @@ import Ouroboros.Consensus.Peras.Cert.Mock
   ( MockPerasCert (..)
   )
 import Ouroboros.Consensus.Peras.Context
-  ( LedgerStateHeaderStateSupportsPerasVoting (..)
-  , MockPerasEpochContextResolver
-  , mockAbsorbErrorInResolver
-  , mockPerasEpochContextResolver
-  , mockResolveRoundNo
+  ( MockPerasEpochContextResolver
+  , StateSupportsPerasEpochContext (..)
   )
 import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCrypto, MockPerasVotingCommitteeScheme)
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
-import Ouroboros.Consensus.Peras.State.Mock (ledgerStateHeaderStateMkMockPerasVotingCommitteeInput)
+import Ouroboros.Consensus.Peras.State.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Peras.Vote.Mock
   ( MockPerasVote (..)
   )
@@ -653,7 +650,11 @@ testInitExtLedgerWithState ::
 testInitExtLedgerWithState st =
   let ledgerState = testInitLedgerWithState st
       headerState = genesisHeaderState ()
-      perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+      perasEpochContextResolver =
+        initPerasEpochContextResolver
+          (configLedger singleNodeTestConfig)
+          ledgerState
+          headerState
    in ExtLedgerState
         { ledgerState
         , headerState
@@ -713,19 +714,17 @@ instance PayloadSemantics ptype => LedgerSupportsProtocol (TestBlockWith ptype) 
   ledgerViewForecastAt cfg state =
     constantForecastInRange (strictMaybeToMaybe (tblcForecastRange cfg)) () (getTipSlot state)
 
-instance LedgerSupportsPeras (TestBlockWith ptype)
-instance Typeable ptype => LedgerStateHeaderStateSupportsPerasVoting (TestBlockWith ptype) where
+-- [TODO RESOLVER PLUMBING: currently, it will make ExtLedgerState ticking fails, because it will attempt to create a BoundedEpochContext]
+instance ALedgerSupportsPeras (LedgerState (TestBlockWith ptype) mk)
+
+instance ALedgerSupportsPeras (Ticked LedgerState (TestBlockWith ptype) mk)
+
+instance Typeable ptype => StateSupportsPerasEpochContext (TestBlockWith ptype) where
   type
     PerasEpochContextResolver (TestBlockWith ptype) =
       MockPerasEpochContextResolver (TestBlockWith ptype)
 
-  ledgerStateHeaderStateMkPerasVotingCommitteeInput = ledgerStateHeaderStateMkMockPerasVotingCommitteeInput
-
-  ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState =
-    mockAbsorbErrorInResolver $
-      mockPerasEpochContextResolver <$> ledgerStateHeaderStateMkPerasEpochContext ledgerState headerState
-
-  resolveRoundNo = mockResolveRoundNo
+  mkPerasVotingCommitteeInput = mkMockPerasVotingCommitteeInput
 
 {-------------------------------------------------------------------------------
   BlockSupportsPeras
@@ -815,8 +814,8 @@ data instance CodecConfig TestBlock = TestBlockCodecConfig
 data instance StorageConfig TestBlock = TestBlockStorageConfig
   deriving (Show, Generic, NoThunks)
 
-instance HasHardForkHistory TestBlock where
-  type HardForkIndices TestBlock = '[TestBlock]
+instance HasHardForkHistory (TestBlockWith ptype) where
+  type HardForkIndices (TestBlockWith ptype) = '[TestBlockWith ptype]
   hardForkSummary = neverForksHardForkSummary tblcHardForkParams
 
 data instance BlockQuery TestBlock fp result where

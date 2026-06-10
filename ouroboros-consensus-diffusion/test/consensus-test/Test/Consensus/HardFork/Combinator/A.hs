@@ -66,6 +66,7 @@ import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.Forecast
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Condense
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
@@ -81,14 +82,14 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
+import Ouroboros.Consensus.Ledger.SupportsPeras (ALedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.Serialisation
@@ -135,8 +136,6 @@ instance ConsensusProtocol ProtocolA where
   tickChainDepState _ _ _ _ = TickedTrivial
   updateChainDepState _ _ _ _ = return ()
   reupdateChainDepState _ _ _ _ = ()
-
-instance ChainDepStateSupportsPeras ProtocolA
 
 data BlockA = BlkA
   { blkA_header :: Header BlockA
@@ -311,7 +310,9 @@ instance LedgerSupportsProtocol BlockA where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
-instance LedgerSupportsPeras BlockA
+instance ALedgerSupportsPeras (LedgerState BlockA mk)
+
+instance ALedgerSupportsPeras (Ticked LedgerState BlockA mk)
 
 -- NOTE: this block does not support Peras, so we can use the empty instance here.
 instance BlockSupportsPeras BlockA
@@ -623,7 +624,14 @@ instance SerialiseNodeToClient BlockA (EpochInfo Identity, PartialLedgerConfigA)
   encodeNodeToClient = error "BlockA being used as a SingleEraBlock"
   decodeNodeToClient = error "BlockA being used as a SingleEraBlock"
 
-instance LedgerStateHeaderStateSupportsPerasVoting BlockA
+-- NOTE: BlockA is only ever used wrapped in the
+-- hard fork combinator (which implements 'hardForkSummary' directly and never
+-- delegates to the underlying era), so this method is never actually called.
+instance HasHardForkHistory BlockA where
+  type HardForkIndices BlockA = '[BlockA]
+  hardForkSummary = error "BlockA being used as a SingleEraBlock"
+
+instance StateSupportsPerasEpochContext BlockA
 
 instance SerialiseConstraintsHFC BlockA
 instance SerialiseDiskConstraints BlockA

@@ -45,7 +45,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.NodeId
-import Ouroboros.Consensus.Peras.Context (ledgerStateHeaderStateMkPerasEpochContextResolver)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
@@ -224,7 +223,7 @@ exampleExtLedgerState :: ExtLedgerState ByronBlock ValuesMK
 exampleExtLedgerState =
   let ledgerState = exampleLedgerState
       headerState = exampleHeaderState
-      perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+      perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
    in ExtLedgerState
         { ledgerState
         , headerState

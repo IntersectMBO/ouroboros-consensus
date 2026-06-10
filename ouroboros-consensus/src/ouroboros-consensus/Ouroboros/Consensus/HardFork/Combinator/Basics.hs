@@ -67,7 +67,9 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Instances ()
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.SupportsPeras
+  ( ALedgerSupportsPeras (..)
+  )
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
 import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe (unsafePerasBLSPrivateKeyFromEnv)
@@ -271,7 +273,7 @@ distribTopLevelConfig ei tlc =
   LedgerSupportsPeras
 -------------------------------------------------------------------------------}
 
-instance CanHardFork xs => LedgerSupportsPeras (HardForkBlock xs) where
+instance CanHardFork xs => ALedgerSupportsPeras (LedgerState (HardForkBlock xs) mk) where
   getLatestPerasCertRound =
     hcollapse
       . hcmap proxySingle (K . getLatestPerasCertRound . unFlip)

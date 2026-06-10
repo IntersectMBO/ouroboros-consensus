@@ -123,7 +123,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.SupportsPeras (ALedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Shelley.Ledger.Block
@@ -916,10 +916,18 @@ instance CanUpgradeLedgerTables LedgerState (ShelleyBlock proto era) where
   LedgerSupportsPeras
 -------------------------------------------------------------------------------}
 
-instance LedgerSupportsPeras (ShelleyBlock proto era) where
+instance ALedgerSupportsPeras (LedgerState (ShelleyBlock proto era) mk) where
   getLatestPerasCertRound =
     strictMaybeToMaybe
       . shelleyLedgerLatestPerasCertRound
 
   getPoolDistr =
     nesPd . shelleyLedgerState
+
+instance ALedgerSupportsPeras (Ticked LedgerState (ShelleyBlock proto era) mk) where
+  getLatestPerasCertRound =
+    strictMaybeToMaybe
+      . tickedShelleyLedgerLatestPerasCertRound
+
+  getPoolDistr =
+    nesPd . tickedShelleyLedgerState

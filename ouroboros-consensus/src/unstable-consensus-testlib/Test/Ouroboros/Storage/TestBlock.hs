@@ -109,7 +109,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.SupportsPeras (ALedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -119,15 +119,12 @@ import Ouroboros.Consensus.Peras.Cert.Mock
   ( MockPerasCert (..)
   )
 import Ouroboros.Consensus.Peras.Context
-  ( LedgerStateHeaderStateSupportsPerasVoting (..)
-  , MockPerasEpochContextResolver
-  , mockAbsorbErrorInResolver
-  , mockPerasEpochContextResolver
-  , mockResolveRoundNo
+  ( MockPerasEpochContextResolver
+  , StateSupportsPerasEpochContext (..)
   )
 import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCrypto, MockPerasVotingCommitteeScheme)
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
-import Ouroboros.Consensus.Peras.State.Mock (ledgerStateHeaderStateMkMockPerasVotingCommitteeInput)
+import Ouroboros.Consensus.Peras.State.Mock (mkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Peras.Vote.Mock
   ( MockPerasVote (..)
   )
@@ -735,19 +732,16 @@ instance LedgerSupportsProtocol TestBlock where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
-instance LedgerSupportsPeras TestBlock where
+instance ALedgerSupportsPeras (LedgerState TestBlock mk) where
   getLatestPerasCertRound = latestPerasCertRound
 
-instance LedgerStateHeaderStateSupportsPerasVoting TestBlock where
+instance ALedgerSupportsPeras (Ticked LedgerState TestBlock mk) where
+  getLatestPerasCertRound = getLatestPerasCertRound . getTickedTestLedger
+
+instance StateSupportsPerasEpochContext TestBlock where
   type PerasEpochContextResolver TestBlock = MockPerasEpochContextResolver TestBlock
 
-  ledgerStateHeaderStateMkPerasVotingCommitteeInput = ledgerStateHeaderStateMkMockPerasVotingCommitteeInput
-
-  ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState =
-    mockAbsorbErrorInResolver $
-      mockPerasEpochContextResolver <$> ledgerStateHeaderStateMkPerasEpochContext ledgerState headerState
-
-  resolveRoundNo = mockResolveRoundNo
+  mkPerasVotingCommitteeInput = mkMockPerasVotingCommitteeInput
 
 {-------------------------------------------------------------------------------
   BlockSupportsPeras
@@ -778,11 +772,11 @@ instance InspectLedger TestBlock
 testInitLedger :: LedgerState TestBlock EmptyMK
 testInitLedger = TestLedger GenesisPoint GenesisHash Nothing
 
-testInitExtLedger :: ExtLedgerState TestBlock EmptyMK
-testInitExtLedger =
+testInitExtLedger :: LedgerConfig TestBlock -> ExtLedgerState TestBlock EmptyMK
+testInitExtLedger ledgerConfig =
   let ledgerState = testInitLedger
       headerState = genesisHeaderState ()
-      perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+      perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
    in ExtLedgerState
         { ledgerState
         , headerState

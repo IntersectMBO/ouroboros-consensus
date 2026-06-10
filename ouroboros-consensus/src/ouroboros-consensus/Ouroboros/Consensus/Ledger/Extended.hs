@@ -5,9 +5,11 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -28,6 +30,7 @@ module Ouroboros.Consensus.Ledger.Extended
   , decodeExtLedgerState
   , encodeDiskExtLedgerState
   , encodeExtLedgerState
+  , initPerasEpochContextResolver
   , mkPerasEpochContextResolverHandle
 
     -- * Type family instances
@@ -38,21 +41,51 @@ module Ouroboros.Consensus.Ledger.Extended
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Control.DeepSeq (NFData)
+import Control.Exception.Base (Exception)
 import Control.Monad.Except
+import Data.Bifunctor (Bifunctor (bimap))
 import Data.Functor ((<&>))
 import Data.Proxy
 import Data.Typeable
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import NoThunks.Class (NoThunks (..))
-import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Block.Abstract
+  ( BlockConfig
+  , BlockProtocol
+  , CodecConfig
+  , EpochNo (..)
+  , GetHeader (getHeader)
+  , HeaderHash
+  , SlotNo
+  , StandardHash
+  , StorageConfig
+  , WithOrigin (..)
+  , castPoint
+  )
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Context
-  ( PerasEpochContextResolver
+  ( IsPerasEpochContextResolver
+      ( absorbErrorIntoResolver
+      , advancePerasEpochContextResolverWithBoundedEpochContext
+      , errorIntoResolver
+      , initPerasEpochContextResolverWithBoundedEpochContext
+      )
+  , PerasEpochContextResolver
   , PerasEpochContextResolverHandle (..)
+  , StateSupportsPerasEpochContext (mkBoundedPerasEpochContext)
+  )
+import Ouroboros.Consensus.Peras.Time
+  ( EpochToPerasRoundInfo
+  , TimeResolutionContext (..)
+  , TimeResolutionError
+  , resolveEpochToPerasRoundInfo
+  , resolveSlotToEpochInfo
+  , steiEpochNo
   )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
@@ -127,6 +160,53 @@ instance
 instance IsLedger LedgerState blk => GetTip (ExtLedgerState blk) where
   getTip = castPoint . getTip . ledgerState
 
+-- | We may decide that a 'PerasEpochContextResolver' is always initiated with empty/error value, and rely on the first ticking to properly initialize it. But in the current architecture, that would work only if the first ticking happens when the prev slot is either 'Origin', or a slot from a previous epoch compared to the target slot.
+-- Given that we have no assumption that this would work, we made a polymorphic system where a 'BoundedEpochContext' can be created from either a ticked or unticked ledger+header state (see 'ALedgerSupportsPeras' and 'AChainDepSupportsPeras' classes); so that 'PerasEpochContextResolver' can be initialized from unticked 'LedgerState' and 'HeaderState', but then ticked by using the 'Ticked LedgerState' and 'Ticked HeaderState'. If in the future we move on to a system where the resolver is always initialized with empty/error value, we can remove the polymorphic system and only create a 'BoundedPerasEpochContext' from 'Ticked LedgerState' and 'Ticked HeaderState'.
+initPerasEpochContextResolver ::
+  StateSupportsPerasEpochContext blk =>
+  LedgerConfig blk ->
+  LedgerState blk mk ->
+  HeaderState blk ->
+  PerasEpochContextResolver blk
+initPerasEpochContextResolver ledgerConfig ledgerState headerState =
+  let timeResolutionContext = TimeResolutionContext ledgerConfig ledgerState
+   in case annTipSlotNo <$> headerStateTip headerState of
+        Origin -> errorIntoResolver $ "initPerasEpochContextResolver: headerStateTip is Origin, not a valid slot"
+        NotOrigin slotNo ->
+          case resolveSlotToEpochInfo timeResolutionContext slotNo of
+            Left err -> errorIntoResolver err
+            Right stei ->
+              let epochNo = steiEpochNo stei
+               in case resolveEpochToPerasRoundInfo timeResolutionContext epochNo of
+                    Left err -> errorIntoResolver err
+                    Right epochToPerasRoundInfo ->
+                      absorbErrorIntoResolver $
+                        initPerasEpochContextResolverWithBoundedEpochContext
+                          <$> mkBoundedPerasEpochContext epochToPerasRoundInfo ledgerState headerState
+
+-- | NOTE: it doesn't seem to bring much to differentiate a 'PerasEpochContextResolver' from a ticked one at type level, since they need to carry exactly the same information. We tried, and it didn't improve readability.
+tickPerasEpochContextResolver ::
+  StateSupportsPerasEpochContext blk =>
+  LedgerConfig blk ->
+  -- | The previous 'ExtLedgerState' (before ticking)
+  ExtLedgerState blk mk ->
+  -- | The target 'SlotNo' and ticked subfields of the 'Ticked ExtLedgerState'
+  (SlotNo, Ticked LedgerState blk mk', Ticked (HeaderState blk)) ->
+  PerasEpochContextResolver blk
+tickPerasEpochContextResolver ledgerConfig ExtLedgerState{..} (targetSlot, tickedLedger, tickedHeader) =
+  -- Supposedly the 'TimeResolutionContext' must be built from the unticked ledger state
+  -- because we have no way to make a summary out of a 'Ticked LedgerState'.
+  -- TODO: check that this is correct.
+  let timeResolutionContext = TimeResolutionContext ledgerConfig ledgerState
+      woPrevSlot = annTipSlotNo <$> headerStateTip headerState
+   in case isNextEpochWithPerasInfo timeResolutionContext woPrevSlot targetSlot of
+        Left err -> errorIntoResolver err
+        Right Nothing -> perasEpochContextResolver
+        Right (Just newEpochPerasInfo) ->
+          absorbErrorIntoResolver $
+            advancePerasEpochContextResolverWithBoundedEpochContext perasEpochContextResolver
+              <$> (mkBoundedPerasEpochContext newEpochPerasInfo tickedLedger tickedHeader)
+
 {-------------------------------------------------------------------------------
   The extended ledger configuration
 -------------------------------------------------------------------------------}
@@ -166,17 +246,55 @@ data instance Ticked ExtLedgerState blk mk = TickedExtLedgerState
 instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState blk) where
   getTip = castPoint . getTip . tickedLedgerState
 
+data DetectNextEpochError
+  = DetectNextEpochTimeResolutionError TimeResolutionError
+  | DetectNextEpochManyEpochsCrossed !(WithOrigin SlotNo) !(WithOrigin EpochNo) !SlotNo !EpochNo
+  | DetectNextEpochNewSlotInPast !SlotNo !EpochNo !SlotNo !EpochNo
+  deriving (Show, Exception)
+
+isNextEpoch ::
+  HasHardForkHistory blk =>
+  TimeResolutionContext blk ->
+  WithOrigin SlotNo ->
+  SlotNo ->
+  Either DetectNextEpochError (Maybe EpochNo)
+isNextEpoch context mPrevSlot nextSlot = case mPrevSlot of
+  Origin ->
+    bimap DetectNextEpochTimeResolutionError id (resolveSlotToEpochInfo context nextSlot) >>= \stei -> case steiEpochNo stei of
+      zero@(EpochNo 0) -> Right (Just zero)
+      n -> Left $ DetectNextEpochManyEpochsCrossed Origin Origin nextSlot n
+  NotOrigin prevSlot -> do
+    steiPrev <- bimap DetectNextEpochTimeResolutionError id $ (resolveSlotToEpochInfo context prevSlot)
+    steiNext <- bimap DetectNextEpochTimeResolutionError id (resolveSlotToEpochInfo context nextSlot)
+    case (steiEpochNo steiPrev, steiEpochNo steiNext) of
+      (n, m)
+        | n < m ->
+            if EpochNo (unEpochNo n + 1) == m
+              then Right (Just m)
+              else Left $ DetectNextEpochManyEpochsCrossed (NotOrigin prevSlot) (NotOrigin n) nextSlot m
+      (n, m) | n == m -> Right Nothing
+      (n, m) -> Left $ DetectNextEpochNewSlotInPast prevSlot n nextSlot m
+
+isNextEpochWithPerasInfo ::
+  HasHardForkHistory blk =>
+  TimeResolutionContext blk ->
+  WithOrigin SlotNo ->
+  SlotNo ->
+  Either DetectNextEpochError (Maybe EpochToPerasRoundInfo)
+isNextEpochWithPerasInfo context mPrevSlot nextSlot =
+  isNextEpoch context mPrevSlot nextSlot >>= \case
+    Nothing -> Right Nothing
+    Just epochNo -> bimap DetectNextEpochTimeResolutionError Just (resolveEpochToPerasRoundInfo context epochNo)
+
 instance
   ( LedgerSupportsProtocol blk
-  , Show (PerasEpochContextResolver blk)
-  , Eq (PerasEpochContextResolver blk)
-  , NoThunks (PerasEpochContextResolver blk)
+  , StateSupportsPerasEpochContext blk
   ) =>
   IsLedger ExtLedgerState blk
   where
   type LedgerErr ExtLedgerState blk = ExtValidationError blk
 
-  applyChainTickLedgerResult evs cfg slot (ExtLedgerState ledger header perasResolver) =
+  applyChainTickLedgerResult evs cfg slot extState@ExtLedgerState{ledgerState, headerState} =
     castLedgerResult ledgerResult <&> \tickedLedgerState ->
       let ledgerView :: LedgerView (BlockProtocol blk)
           ledgerView = protocolLedgerView lcfg tickedLedgerState
@@ -187,17 +305,17 @@ instance
               (configConsensus $ getExtLedgerCfg cfg)
               ledgerView
               slot
-              header
+              headerState
+
+          tickedPerasEpochContextResolver :: PerasEpochContextResolver blk
+          tickedPerasEpochContextResolver =
+            tickPerasEpochContextResolver lcfg extState (slot, tickedLedgerState, tickedHeaderState)
        in TickedExtLedgerState{..}
    where
     lcfg :: LedgerConfig blk
     lcfg = configLedger $ getExtLedgerCfg cfg
 
-    ledgerResult = applyChainTickLedgerResult evs lcfg slot ledger
-
-    -- [TODO EPOCH CONTEXT PLUMBING/UPDATING] We need to understand if this needs extra
-    -- care or not.
-    tickedPerasEpochContextResolver = perasResolver
+    ledgerResult = applyChainTickLedgerResult evs lcfg slot ledgerState
 
 applyHelper ::
   forall blk.
@@ -233,16 +351,18 @@ applyHelper f opts cfg blk TickedExtLedgerState{..} = do
         ledgerView
         (getHeader blk)
         tickedHeaderState
-  -- [TODO EPOCH CONTEXT PLUMBING/UPDATING] We need to understand if this needs extra care or not.
+  -- Only when ticking the 'ExtLedgerState' do we need to update the
+  -- 'PerasEpochContextResolver'. When applying block on top of a 'Ticked
+  -- ExtLedgerState', the 'PerasEpochContextResolver' has already been put to
+  -- the right state by the ticking.
   let perasResolver = tickedPerasEpochContextResolver
+
   pure $ (\l -> ExtLedgerState l hdr perasResolver) <$> castLedgerResult ledgerResult
 
 instance
   ( GetBlockKeySets blk
   , LedgerSupportsProtocol blk
-  , Show (PerasEpochContextResolver blk)
-  , Eq (PerasEpochContextResolver blk)
-  , NoThunks (PerasEpochContextResolver blk)
+  , StateSupportsPerasEpochContext blk
   ) =>
   ApplyBlock ExtLedgerState blk
   where
@@ -268,7 +388,10 @@ instance
         (getHeader blk)
         tickedHeaderState
 
-    -- [TODO EPOCH CONTEXT PLUMBING/UPDATING] We need to understand if this needs extra care or not.
+    -- Only when ticking the 'ExtLedgerState' do we need to update the
+    -- 'PerasEpochContextResolver'. When applying block on top of a 'Ticked
+    -- ExtLedgerState', the 'PerasEpochContextResolver' has already been put to
+    -- the right state by the ticking.
     perasResolver = tickedPerasEpochContextResolver
 
 {-------------------------------------------------------------------------------

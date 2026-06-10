@@ -193,7 +193,6 @@ showTracers ::
   , Show (CannotForge blk)
   , Show (TxMeasurePhase1 blk)
   , Show (TxMeasurePhase2 blk)
-  , Show (TxMeasure blk)
   , Show (PerasVote blk)
   , Show (PerasCert blk)
   , Show remotePeer

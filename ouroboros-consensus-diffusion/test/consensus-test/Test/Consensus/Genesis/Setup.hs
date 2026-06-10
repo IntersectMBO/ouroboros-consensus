@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 
 module Test.Consensus.Genesis.Setup
@@ -43,7 +44,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientException (..)
   )
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
@@ -161,13 +162,11 @@ runGenesisTest ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk
   , HasPointScheduleTestParams blk
@@ -226,7 +225,7 @@ runConformanceTest ::
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk

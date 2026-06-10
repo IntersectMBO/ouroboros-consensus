@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -7,6 +8,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -14,7 +16,8 @@ module Ouroboros.Consensus.Protocol.Abstract
   ( -- * Abstract definition of the Ouroboros protocol
     ConsensusConfig
   , ConsensusProtocol (..)
-  , ChainDepStateSupportsPeras (..)
+  , ChainDepSupportsPeras
+  , AChainDepSupportsPeras (..)
 
     -- * Chain order
   , SelectView (..)
@@ -40,7 +43,7 @@ import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce))
 import Cardano.Slotting.Slot (WithOrigin (At))
 import Control.Monad.Except
 import Data.Function (on)
-import Data.Kind (Type)
+import Data.Kind (Constraint, Type)
 import Data.Proxy (Proxy)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -78,7 +81,6 @@ class
   , NoThunks (ValidationErr p)
   , NoThunks (TiebreakerView p)
   , Typeable p -- so that p can appear in exceptions
-  , ChainDepStateSupportsPeras p
   ) =>
   ConsensusProtocol p
   where
@@ -362,10 +364,21 @@ instance ChainOrder (TiebreakerView p) => ChainOrder (SelectView p) where
       ShouldNotSwitch e -> ShouldNotSwitch e
     GT -> ShouldNotSwitch GT
 
-class ChainDepStateSupportsPeras p where
+type ChainDepSupportsPeras :: Type -> Constraint
+type ChainDepSupportsPeras p = AChainDepSupportsPeras (ChainDepState p)
+
+class AChainDepSupportsPeras chainDep where
   -- | Extract the epoch nonce from the given 'ChainDepState'.
   -- PRECONDITION: this function will only return a meaningful result if the
   -- 'ChainDepState' is from a protocol of a block that supports Peras
-  getEpochNonce :: proxy p -> ChainDepState p -> Nonce
-  default getEpochNonce :: proxy p -> ChainDepState p -> Nonce
-  getEpochNonce _ _ = NeutralNonce
+  getEpochNonce :: chainDep -> Nonce
+  default getEpochNonce :: chainDep -> Nonce
+  getEpochNonce _ = NeutralNonce
+
+-- | Protocols with a trivial (unit) 'ChainDepState' do not contribute an epoch
+-- nonce, so they use the default 'NeutralNonce'. These canonical instances
+-- cover all such protocols (e.g. BFT, leader schedules), which would otherwise
+-- each need an (overlapping) instance for @()@.
+instance AChainDepSupportsPeras ()
+
+instance AChainDepSupportsPeras (Ticked ())

@@ -1,6 +1,7 @@
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.PeerSimulator.NodeLifecycle
@@ -35,7 +36,7 @@ import Ouroboros.Consensus.Ledger.Tables.MapKind (ValuesMK)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandleCollection (..)
   )
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
@@ -136,7 +137,7 @@ mkChainDb ::
   IOLike m =>
   ( LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
@@ -191,7 +192,7 @@ restoreNode ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
@@ -223,7 +224,7 @@ lifecycleStart ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk

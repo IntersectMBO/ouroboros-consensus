@@ -300,7 +300,9 @@ data instance Ticked TPraosState = TickedChainDepState
   , tickedTPraosStateLedgerView :: SL.TPraosLedgerView
   }
 
-instance ChainDepStateSupportsPeras (TPraos c)
+instance AChainDepSupportsPeras TPraosState
+
+instance AChainDepSupportsPeras (Ticked TPraosState)
 
 instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type ChainDepState (TPraos c) = TPraosState

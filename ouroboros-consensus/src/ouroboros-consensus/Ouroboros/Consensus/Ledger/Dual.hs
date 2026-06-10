@@ -91,9 +91,11 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsPeras (ALedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
+import Ouroboros.Consensus.Protocol.Abstract (AChainDepSupportsPeras, ChainDepState)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
@@ -1201,10 +1203,22 @@ instance
       } = dls
 
 {-------------------------------------------------------------------------------
-  BlockSupportsPeras
+  Peras
 -------------------------------------------------------------------------------}
 
--- NOTE: DualByron does not support Peras, so we can use the empty instance here.
+-- NOTE: DualByron does not support Peras, so we can use the empty instances here.
 instance (StandardHash m, Typeable m, Typeable a) => BlockSupportsPeras (DualBlock m a)
 
-instance LedgerStateHeaderStateSupportsPerasVoting (DualBlock m a)
+instance ALedgerSupportsPeras (LedgerState (DualBlock m a) mk)
+
+instance ALedgerSupportsPeras (Ticked LedgerState (DualBlock m a) mk)
+
+instance
+  ( Bridge m a
+  , StandardHash m
+  , Typeable m
+  , Typeable a
+  , AChainDepSupportsPeras (ChainDepState (BlockProtocol m))
+  , AChainDepSupportsPeras (Ticked (ChainDepState (BlockProtocol m)))
+  ) =>
+  StateSupportsPerasEpochContext (DualBlock m a)

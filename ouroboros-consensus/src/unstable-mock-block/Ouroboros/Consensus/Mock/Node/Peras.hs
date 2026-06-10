@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -12,9 +13,15 @@
 module Ouroboros.Consensus.Mock.Node.Peras () where
 
 import Data.Typeable (Typeable)
+import Ouroboros.Consensus.Block (BlockProtocol)
 import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras (..))
 import Ouroboros.Consensus.Mock.Ledger.Block (SimpleBlock, SimpleCrypto)
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting (..))
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext (..))
+import Ouroboros.Consensus.Protocol.Abstract
+  ( AChainDepSupportsPeras
+  , ChainDepState
+  )
+import Ouroboros.Consensus.Ticked (Ticked)
 
 {-------------------------------------------------------------------------------
   BlockSupportsPeras
@@ -26,5 +33,9 @@ instance
   BlockSupportsPeras (SimpleBlock c ext)
 
 instance
-  (SimpleCrypto c, Typeable ext) =>
-  LedgerStateHeaderStateSupportsPerasVoting (SimpleBlock c ext)
+  ( SimpleCrypto c
+  , Typeable ext
+  , AChainDepSupportsPeras (ChainDepState (BlockProtocol (SimpleBlock c ext)))
+  , AChainDepSupportsPeras (Ticked (ChainDepState (BlockProtocol (SimpleBlock c ext))))
+  ) =>
+  StateSupportsPerasEpochContext (SimpleBlock c ext)

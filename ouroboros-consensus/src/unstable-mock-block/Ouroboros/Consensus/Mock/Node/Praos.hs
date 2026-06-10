@@ -25,9 +25,6 @@ import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Mock.Protocol.Praos
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
-import Ouroboros.Consensus.Peras.Context
-  ( LedgerStateHeaderStateSupportsPerasVoting (ledgerStateHeaderStateMkPerasEpochContextResolver)
-  )
 import Ouroboros.Consensus.Util.IOLike
 
 type MockPraosBlock = SimplePraosBlock SimpleMockCrypto PraosMockCrypto
@@ -41,34 +38,35 @@ protocolInfoPraos ::
   PraosEvolvingStake ->
   ProtocolInfo MockPraosBlock
 protocolInfoPraos numCoreNodes nid params eraParams eta0 evolvingStakeDist =
-  ProtocolInfo
-    { pInfoConfig =
-        TopLevelConfig
-          { topLevelConfigProtocol =
-              PraosConfig
-                { praosParams = params
-                , praosSignKeyVRF = signKeyVRF nid
-                , praosInitialEta = eta0
-                , praosInitialStake = genesisStakeDist addrDist
-                , praosEvolvingStake = evolvingStakeDist
-                , praosVerKeys = verKeys
-                }
-          , topLevelConfigLedger = SimpleLedgerConfig addrDist eraParams defaultMockConfig
-          , topLevelConfigBlock = SimpleBlockConfig
-          , topLevelConfigCodec = SimpleCodecConfig
-          , topLevelConfigStorage = SimpleStorageConfig (praosSecurityParam params)
-          , topLevelConfigCheckpoints = emptyCheckpointsMap
-          }
-    , pInfoInitLedger =
-        let ledgerState = genesisSimpleLedgerState addrDist
-            headerState = genesisHeaderState (PraosChainDepState [])
-            perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
-         in ExtLedgerState
-              { ledgerState
-              , headerState
-              , perasEpochContextResolver
+  let ledgerConfig = SimpleLedgerConfig addrDist eraParams defaultMockConfig
+   in ProtocolInfo
+        { pInfoConfig =
+            TopLevelConfig
+              { topLevelConfigProtocol =
+                  PraosConfig
+                    { praosParams = params
+                    , praosSignKeyVRF = signKeyVRF nid
+                    , praosInitialEta = eta0
+                    , praosInitialStake = genesisStakeDist addrDist
+                    , praosEvolvingStake = evolvingStakeDist
+                    , praosVerKeys = verKeys
+                    }
+              , topLevelConfigLedger = ledgerConfig
+              , topLevelConfigBlock = SimpleBlockConfig
+              , topLevelConfigCodec = SimpleCodecConfig
+              , topLevelConfigStorage = SimpleStorageConfig (praosSecurityParam params)
+              , topLevelConfigCheckpoints = emptyCheckpointsMap
               }
-    }
+        , pInfoInitLedger =
+            let ledgerState = genesisSimpleLedgerState addrDist
+                headerState = genesisHeaderState (PraosChainDepState [])
+                perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+             in ExtLedgerState
+                  { ledgerState
+                  , headerState
+                  , perasEpochContextResolver
+                  }
+        }
  where
   signKeyVRF :: CoreNodeId -> SignKeyVRF MockVRF
   signKeyVRF (CoreNodeId n) = SignKeyMockVRF n

@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
@@ -66,10 +67,11 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.SupportsPeras (ALedgerSupportsPeras (..), LedgerSupportsPeras)
 import Ouroboros.Consensus.Peras.Context
-  ( LedgerStateHeaderStateSupportsPerasVoting (resolveRoundNo)
-  , PerasEpochContextResolver
+  ( PerasEpochContextResolver
+  , StateSupportsPerasEpochContext
+  , resolveRoundNo
   )
 import Ouroboros.Consensus.Peras.Time (TimeResolutionContext (..))
 import Ouroboros.Consensus.Peras.Voting.View
@@ -395,13 +397,11 @@ getPerasEpochContextResolver =
   fmap perasEpochContextResolver . getCurrentLedger
 
 getPerasVotingView ::
-  ( BlockSupportsPeras blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  ( StateSupportsPerasEpochContext blk
   , IOLike m
-  , LedgerSupportsPeras blk
   , ConsensusProtocol (BlockProtocol blk)
   , GetHeader blk
-  , HasHardForkHistory blk
+  , BlockSupportsPeras blk
   ) =>
   LedgerConfig blk ->
   PerasRoundNo ->

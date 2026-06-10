@@ -49,7 +49,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
-import Ouroboros.Consensus.Peras.Context (ledgerStateHeaderStateMkPerasEpochContextResolver)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.LeaderSchedule
   ( LeaderSchedule (..)
@@ -243,25 +242,27 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
 
   protocolInfo :: CoreNodeId -> ProtocolInfo TestBlock
   protocolInfo nid =
-    ProtocolInfo
-      { pInfoConfig =
-          topLevelConfig nid
-      , pInfoInitLedger =
-          let ledgerState =
-                HardForkLedgerState $
-                  initHardForkState
-                    (Flip initLedgerState)
-              headerState =
-                genesisHeaderState $
-                  initHardForkState
-                    (WrapChainDepState initChainDepState)
-              perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
-           in ExtLedgerState
-                { ledgerState
-                , headerState
-                , perasEpochContextResolver
-                }
-      }
+    let topConfig = topLevelConfig nid
+        ledgerConfig = topLevelConfigLedger topConfig
+     in ProtocolInfo
+          { pInfoConfig =
+              topConfig
+          , pInfoInitLedger =
+              let ledgerState =
+                    HardForkLedgerState $
+                      initHardForkState
+                        (Flip initLedgerState)
+                  headerState =
+                    genesisHeaderState $
+                      initHardForkState
+                        (WrapChainDepState initChainDepState)
+                  perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+               in ExtLedgerState
+                    { ledgerState
+                    , headerState
+                    , perasEpochContextResolver
+                    }
+          }
 
   blockForging :: Monad m => [MkBlockForging m TestBlock]
   blockForging =

@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -47,7 +48,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.Node.GsmState as GSM
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
@@ -560,7 +561,7 @@ nodeLifecycle ::
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
@@ -621,7 +622,7 @@ runPointSchedule ::
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
   , LedgerSupportsPeras blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk

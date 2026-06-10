@@ -96,7 +96,7 @@ And imports, of course:
 > import Ouroboros.Consensus.Ledger.Tables.Utils
 
 > import Ouroboros.Consensus.Util.IndexedMemPack
-> import Ouroboros.Consensus.Protocol.Abstract (ChainDepStateSupportsPeras)
+> import Ouroboros.Consensus.Protocol.Abstract (AChainDepSupportsPeras)
   
 Epochs
 ------
@@ -527,7 +527,7 @@ of `ConsensusProtocol PrtclD` we will represent the epoch snapshot using the
 Now we can instantiate `ConsensusProtocol PrtclD` proper with the types and
 functions defined above:
 
-> instance ChainDepStateSupportsPeras PrtclD where
+> instance AChainDepSupportsPeras ChainDepStateD
 
 > instance ConsensusProtocol PrtclD where
 

@@ -100,7 +100,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
+import Ouroboros.Consensus.Ledger.SupportsPeras (ALedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mock.Ledger.Address
 import Ouroboros.Consensus.Mock.Ledger.State
@@ -519,7 +519,9 @@ instance MockProtocolSpecific c ext => CommonProtocolParams (SimpleBlock c ext) 
 instance LedgerSupportsPeerSelection (SimpleBlock c ext) where
   getPeers = const []
 
-instance LedgerSupportsPeras (SimpleBlock c ext)
+instance ALedgerSupportsPeras (LedgerState (SimpleBlock c ext) mk)
+
+instance ALedgerSupportsPeras (Ticked LedgerState (SimpleBlock c ext) mk)
 
 {-------------------------------------------------------------------------------
   LedgerTables

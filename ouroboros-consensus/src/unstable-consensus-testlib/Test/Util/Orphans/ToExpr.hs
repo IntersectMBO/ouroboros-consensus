@@ -147,7 +147,7 @@ instance ToExpr PerasSeatIndex where toExpr = defaultExprViaShow
 instance ToExpr (HeaderHash blk) => ToExpr (MockPerasVote blk)
 instance ToExpr (HeaderHash blk) => ToExpr (MockPerasCert blk)
 
-instance ToExpr EmptyPerasEpochContextResolver where
+instance ToExpr (EmptyPerasEpochContextResolver blk) where
   toExpr = defaultExprViaShow
 instance Show (PerasEpochContext blk) => ToExpr (MockPerasEpochContextResolver blk) where
   toExpr = defaultExprViaShow
