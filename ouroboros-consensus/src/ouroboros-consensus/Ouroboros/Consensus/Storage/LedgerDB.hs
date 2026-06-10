@@ -142,14 +142,12 @@ openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager s
       replayGoal
       initDb
       snapManager
-      lgrStartSnapshot
   (ledgerDb, internal) <- mkLedgerDb initDb db
   return (ledgerDb, internal)
  where
   LedgerDbArgs
     { lgrConfig
     , lgrTracer
-    , lgrStartSnapshot
     } = args
 
   replayTracer = LedgerReplayEvent >$< lgrTracer

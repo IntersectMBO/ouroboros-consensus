@@ -541,7 +541,6 @@ openLedgerDB flavArgs env cfg fs = do
           tracer
           flavArgs
           DefaultQueryBatchSize
-          Nothing
   (ldb, od) <-
     runWithTempRegistry $
       (\x -> (x, ())) <$> case lgrBackendArgs args of

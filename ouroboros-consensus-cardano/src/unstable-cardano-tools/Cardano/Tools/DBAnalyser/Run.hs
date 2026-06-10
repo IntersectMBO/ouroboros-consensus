@@ -13,6 +13,7 @@ import Cardano.Ledger.BaseTypes
 import Cardano.Tools.DBAnalyser.Analysis
 import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
+import Control.Monad (unless)
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..), nullTracer)
@@ -35,10 +36,15 @@ import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
+import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (TraceEvent (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+  ( DiskSnapshot (..)
+  , listSnapshots
+  )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
@@ -63,11 +69,20 @@ openLedgerDB ::
   , HasHardForkHistory blk
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
+  ImmutableDB.ImmutableDB IO blk ->
+  -- | The replay goal, i.e. the point up to which blocks from the ImmutableDB
+  -- are replayed on top of the chosen snapshot. The chosen snapshot is the
+  -- newest one that is not more recent than this point, and blocks are replayed
+  -- on top of it until the ledger state is exactly at this point. For
+  -- db-analyser this is the @--analyse-from@ point, so that an analysis
+  -- starting from a ledger state begins exactly there, regardless of which
+  -- snapshots happen to exist on disk.
+  Point blk ->
   IO
     ( LedgerDB.LedgerDB' IO blk
     , LedgerDB.TestInternals' IO blk
     )
-openLedgerDB args =
+openLedgerDB args immutableDB replayGoal =
   runWithTempRegistry $
     (,()) <$> do
       (ldb, od) <- case LedgerDB.lgrBackendArgs args of
@@ -92,11 +107,35 @@ openLedgerDB args =
                   snapManager
                   (LedgerDB.praosGetVolatileSuffix $ LedgerDB.ledgerDbCfgSecParam $ LedgerDB.lgrConfig args)
                   res
-          lift $ LedgerDB.openDBInternal args initDb snapManager emptyStream genesisPoint
+          lift $ do
+            warnUnlessSnapshotAtGoal snapManager
+            LedgerDB.openDBInternal args initDb snapManager replayStream replayGoal
       pure (ldb, od)
+ where
+  -- Stream blocks from the ImmutableDB, stopping as soon as we reach a block
+  -- that is more recent than the replay goal. As a result, the replay leaves
+  -- the ledger state exactly at the replay goal (the last block at or before
+  -- it), rather than streaming all the way to the ImmutableDB tip.
+  replayStream = ImmutableDB.streamAPI' shouldStop GetBlock immutableDB
+   where
+    shouldStop blk
+      | NotOrigin (blockSlot blk) > pointSlot replayGoal = pure ImmutableDB.NoMoreItems
+      | otherwise = pure $ ImmutableDB.NextItem blk
 
-emptyStream :: Applicative m => ImmutableDB.StreamAPI m blk a
-emptyStream = ImmutableDB.StreamAPI $ \_ k -> k $ Right $ pure ImmutableDB.NoMoreItems
+  -- Warn when there is no snapshot exactly at the requested replay goal. In
+  -- that case the LedgerDB is initialised from the newest older snapshot and
+  -- blocks are replayed up to the goal, which can be considerably slower than
+  -- starting from a snapshot that already sits at the requested slot.
+  warnUnlessSnapshotAtGoal snapManager =
+    case pointSlot replayGoal of
+      Origin -> pure ()
+      NotOrigin slot -> do
+        snapshots <- listSnapshots snapManager
+        unless (any ((== unSlotNo slot) . dsNumber) snapshots) $
+          hPutStrLn stderr $
+            "Warning: no ledger snapshot exists exactly at slot "
+              <> show (unSlotNo slot)
+              <> "; starting from the newest older snapshot and replaying blocks up to that slot."
 
 analyse ::
   forall blk.
@@ -167,16 +206,23 @@ analyse dbaConfig args =
 
     withImmutableDB immutableDbArgs $ \(immutableDB, internal) -> do
       SomeAnalysis (Proxy :: Proxy startFrom) ana <- pure $ runAnalysis analysis
+
+      let getPointForSlot :: SlotNo -> IO (Point blk)
+          getPointForSlot slot =
+            ImmutableDB.getHashForSlot internal slot >>= \case
+              Just hash -> pure $ BlockPoint slot hash
+              Nothing -> fail $ "No block with given slot in the ImmutableDB: " <> show slot
+
       startFrom <- case sing :: Sing startFrom of
-        SStartFromPoint ->
+        SStartFromPoint -> do
           FromPoint <$> case startSlot of
             Origin -> pure GenesisPoint
-            NotOrigin slot ->
-              ImmutableDB.getHashForSlot internal slot >>= \case
-                Just hash -> pure $ BlockPoint slot hash
-                Nothing -> fail $ "No block with given slot in the ImmutableDB: " <> show slot
+            NotOrigin slot -> getPointForSlot slot
         SStartFromLedgerState -> do
-          (ledgerDB, intLedgerDB) <- openLedgerDB ldbArgs
+          (ledgerDB, intLedgerDB) <-
+            openLedgerDB ldbArgs immutableDB =<< case startSlot of
+              Origin -> pure genesisPoint
+              NotOrigin slot -> getPointForSlot slot
           -- This marker divides the "loading" phase of the program, where the
           -- system is principally occupied with reading snapshot data from
           -- disk, from the "processing" phase, where we are streaming blocks
