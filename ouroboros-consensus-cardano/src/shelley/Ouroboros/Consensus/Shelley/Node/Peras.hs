@@ -14,8 +14,8 @@
 module Ouroboros.Consensus.Shelley.Node.Peras () where
 
 import Cardano.Ledger.Api
-import qualified Cardano.Ledger.BaseTypes as Ledger
 import qualified Cardano.Ledger.Dijkstra.BlockBody as Dijkstra
+import qualified Cardano.Ledger.Dijkstra.BlockBody as Ledger
 import qualified Cardano.Ledger.Shelley.API as SL
 import Data.Maybe.Strict (strictMaybeToMaybe)
 import Lens.Micro ((^.))
@@ -71,7 +71,7 @@ instance
     -- integrating a newer version of Ledger. From there, we would need to
     -- deserialize into a V1.PerasCert. For now, we could simply blow up if
     -- the decoding fails.
-    Ledger.PerasCert <-
+    Ledger.PerasCert _ <-
       strictMaybeToMaybe $
         SL.blockBody (shelleyBlockRaw blk)
           ^. Dijkstra.perasCertBlockBodyL

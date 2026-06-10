@@ -945,11 +945,12 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
     let ledgerState = HardForkLedgerState st'
         headerState = initHeaderState
         perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
-    pure ExtLedgerState
-          { ledgerState
-          , headerState
-          , perasEpochContextResolver
-          }
+    pure
+      ExtLedgerState
+        { ledgerState
+        , headerState
+        , perasEpochContextResolver
+        }
    where
     initHeaderState :: HeaderState (CardanoBlock c)
     initLedgerState :: LedgerState (CardanoBlock c) ValuesMK
