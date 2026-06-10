@@ -129,6 +129,7 @@ basicChainSyncClient
         , CSClient.loPBucket = csvLoPBucket csState
         , CSClient.setLatestSlot = csvSetLatestSlot csState
         , CSClient.jumping = csvJumping csState
+        , CSClient.onHeaderArrival = \_ _ -> pure (pure ())
         }
    where
     dummyHeaderInFutureCheck ::

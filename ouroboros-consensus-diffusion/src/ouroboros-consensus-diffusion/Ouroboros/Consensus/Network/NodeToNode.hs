@@ -982,6 +982,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
                   , CsClient.loPBucket = csvLoPBucket csState
                   , CsClient.setLatestSlot = csvSetLatestSlot csState
                   , CsClient.jumping = csvJumping csState
+                  , CsClient.onHeaderArrival = \_ _ -> pure (pure ())
                   }
           return (ChainSyncInitiatorResult r, trailing)
 
