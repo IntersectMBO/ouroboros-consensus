@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -62,15 +63,6 @@ import Ouroboros.Consensus.HardFork.Combinator.State
   )
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.Translation as HFTranslation
-import Ouroboros.Consensus.Peras.Context
-  ( LedgerStateHeaderStateSupportsPerasVoting (..)
-  , V1PerasEpochContextResolver
-  , unsafeBoundedPerasEpochContextWithMinMaxBounds
-  , v1AbsorbErrorInResolver
-  , v1InitPerasEpochContextResolver
-  , v1ResolveRoundNo
-  )
-import qualified Ouroboros.Consensus.Peras.State.V1 as V1
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util ((.:))
@@ -140,35 +132,27 @@ instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
   -- Security parameter must be equal across /all/ eras
   protocolSecurityParam = hardForkConsensusConfigK
 
-instance CanHardFork xs => ChainDepStateSupportsPeras (HardForkProtocol xs) where
-  getEpochNonce _ =
+instance CanHardFork xs => AChainDepStateSupportsPeras (HardForkChainDepState xs) where
+  getEpochNonce =
     hcollapse
       . hcmap proxySingle getEpochNonce'
       . State.tip
    where
     getEpochNonce' :: forall blk. SingleEraBlock blk => WrapChainDepState blk -> K Nonce blk
     getEpochNonce' (WrapChainDepState st) =
-      K (getEpochNonce (Proxy @(BlockProtocol blk)) st)
+      K (getEpochNonce st)
 
-{-------------------------------------------------------------------------------
-  LedgerStateHeaderStateSupportsPerasVoting
--------------------------------------------------------------------------------}
-
-instance
-  ( StandardHash (HardForkBlock xs)
-  , CanHardFork xs
-  ) =>
-  LedgerStateHeaderStateSupportsPerasVoting (HardForkBlock xs)
-  where
-  type PerasEpochContextResolver (HardForkBlock xs) = V1PerasEpochContextResolver (HardForkBlock xs)
-
-  ledgerStateHeaderStateMkPerasVotingCommitteeInput = V1.ledgerStateHeaderStateMkPerasVotingCommitteeInput
-  ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState =
-    v1AbsorbErrorInResolver $
-      v1InitPerasEpochContextResolver . unsafeBoundedPerasEpochContextWithMinMaxBounds
-        <$> (ledgerStateHeaderStateMkPerasEpochContext ledgerState headerState)
-
-  resolveRoundNo = v1ResolveRoundNo
+instance CanHardFork xs => AChainDepStateSupportsPeras (Ticked (HardForkChainDepState xs)) where
+  getEpochNonce =
+    hcollapse
+      . hcmap proxySingle getEpochNonce'
+      . State.tip
+      . tickedHardForkChainDepStatePerEra
+   where
+    getEpochNonce' ::
+      forall blk. SingleEraBlock blk => (Ticked :.: WrapChainDepState) blk -> K Nonce blk
+    getEpochNonce' (Comp (WrapTickedChainDepState st)) =
+      K (getEpochNonce st)
 
 {-------------------------------------------------------------------------------
   BlockSupportsProtocol

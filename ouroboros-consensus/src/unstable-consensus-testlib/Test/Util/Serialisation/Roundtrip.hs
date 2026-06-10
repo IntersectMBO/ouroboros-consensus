@@ -88,7 +88,7 @@ import Ouroboros.Consensus.Node.Run
   )
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Peras.Context
-  ( LedgerStateHeaderStateSupportsPerasVoting (PerasEpochContextResolver)
+  ( StateSupportsPerasEpochContext (PerasEpochContextResolver)
   )
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)

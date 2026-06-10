@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 
 -- | A 'TestSuite' data structure for quick access to 'ConformanceTest' values.
 -- It encodes a hierarchical nested structure allowing it to compile into a
@@ -40,13 +41,12 @@ import Ouroboros.Consensus.Block
   , Header
   )
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
@@ -184,12 +184,11 @@ toTestTree ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk
   , HasPointScheduleTestParams blk

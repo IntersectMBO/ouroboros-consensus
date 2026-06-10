@@ -51,7 +51,7 @@ First, some imports we'll need:
 >    Header, StorageConfig, ChainHash, HasHeader(..), HeaderFields(..),
 >    HeaderHash, Point, StandardHash)
 > import Ouroboros.Consensus.Protocol.Abstract
->    (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..), NoTiebreaker(..), ChainDepStateSupportsPeras)
+>    (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..), NoTiebreaker(..))
 > import Ouroboros.Consensus.Ticked ( Ticked, Ticked(TickedTrivial) )
 > import Ouroboros.Consensus.Block
 >    (BlockSupportsProtocol (tiebreakerView, validateView), BlockSupportsPeras)
@@ -134,7 +134,6 @@ simple one here:
 
 Next, we instantiate the `ConsensusProtocol` for `SP`:
 
-> instance ChainDepStateSupportsPeras SP
 > instance ConsensusProtocol SP where
 >   type TiebreakerView SP = NoTiebreaker
 

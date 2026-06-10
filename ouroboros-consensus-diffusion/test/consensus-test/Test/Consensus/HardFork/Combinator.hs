@@ -18,6 +18,7 @@ module Test.Consensus.HardFork.Combinator (tests) where
 
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.MemPack
 import Data.SOP.BasicFunctors
 import Data.SOP.Counting
@@ -49,7 +50,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
-import Ouroboros.Consensus.Peras.Context (ledgerStateHeaderStateMkPerasEpochContextResolver)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.LeaderSchedule
   ( LeaderSchedule (..)
@@ -78,7 +78,6 @@ import Test.Util.HardFork.Future
 import Test.Util.SanityCheck (prop_sanityChecks)
 import Test.Util.Slots (NumSlots (..))
 import Test.Util.Time (dawnOfTime)
-import Data.Maybe.Strict (StrictMaybe(..))
 
 tests :: TestTree
 tests =
@@ -244,28 +243,29 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
 
   protocolInfo :: CoreNodeId -> ProtocolInfo TestBlock
   protocolInfo nid =
-    ProtocolInfo
-      { pInfoConfig =
-          topLevelConfig nid
-      , pInfoInitLedger =
-          let ledgerState =
-                HardForkLedgerState $
-                  initHardForkState
-                    (Flip initLedgerState)
-              headerState =
-                genesisHeaderState $
-                  initHardForkState
-                    (WrapChainDepState initChainDepState)
-              perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
-              latestPerasCertOnChainRound =
-                SNothing
-           in ExtLedgerState
-                { ledgerState
-                , headerState
-                , perasEpochContextResolver
-                , latestPerasCertOnChainRound
-                }
-      }
+    let topConfig = topLevelConfig nid
+        ledgerConfig = topLevelConfigLedger topConfig
+     in ProtocolInfo
+          { pInfoConfig =
+              topConfig
+          , pInfoInitLedger =
+              let ledgerState =
+                    HardForkLedgerState $
+                      initHardForkState
+                        (Flip initLedgerState)
+                  headerState =
+                    genesisHeaderState $
+                      initHardForkState
+                        (WrapChainDepState initChainDepState)
+                  perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+                  latestPerasCertOnChainRound = SNothing
+               in ExtLedgerState
+                    { ledgerState
+                    , headerState
+                    , perasEpochContextResolver
+                    , latestPerasCertOnChainRound
+                    }
+          }
 
   blockForging :: Monad m => [MkBlockForging m TestBlock]
   blockForging =

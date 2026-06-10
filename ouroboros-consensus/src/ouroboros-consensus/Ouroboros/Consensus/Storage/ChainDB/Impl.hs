@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -54,15 +55,14 @@ import GHC.Stack (HasCallStack)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState, mkPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Cert.Inclusion (PerasCertInclusionViewHandle (..))
 import Ouroboros.Consensus.Peras.Context
-  ( LedgerStateHeaderStateSupportsPerasVoting
-  , PerasEpochContextResolverHandle (PerasEpochContextResolverHandle)
+  ( PerasEpochContextResolverHandle (PerasEpochContextResolverHandle)
+  , StateSupportsPerasEpochContext
   )
 import Ouroboros.Consensus.Peras.Time (TimeResolutionContextHandle (..))
 import Ouroboros.Consensus.Peras.Voting.View (PerasVotingViewHandle (PerasVotingViewHandle))
@@ -106,11 +106,10 @@ withDB ::
   forall m blk a.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   ) =>
@@ -123,11 +122,10 @@ openDB ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   ) =>
@@ -139,11 +137,10 @@ openDBInternal ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , HasCallStack

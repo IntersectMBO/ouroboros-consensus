@@ -11,7 +11,7 @@ module Main (main) where
 
 import Bench.Consensus.ChainSyncClient.Driver (mainWith)
 import Cardano.Crypto.DSIGN.Mock
-import Cardano.Ledger.BaseTypes (knownNonZeroBounded, StrictMaybe (..))
+import Cardano.Ledger.BaseTypes (StrictMaybe (..), knownNonZeroBounded)
 import Control.Monad (void)
 import Control.ResourceRegistry
 import Control.Tracer (contramap, debugTracer, nullTracer)
@@ -27,6 +27,7 @@ import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import qualified Ouroboros.Consensus.HeaderValidation as HV
+import Ouroboros.Consensus.Ledger.Extended (initPerasEpochContextResolver)
 import qualified Ouroboros.Consensus.Ledger.Extended as Extended
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
@@ -42,9 +43,6 @@ import Ouroboros.Consensus.Node.NetworkProtocolVersion
   )
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
-import Ouroboros.Consensus.Peras.Context
-  ( LedgerStateHeaderStateSupportsPerasVoting (ledgerStateHeaderStateMkPerasEpochContextResolver)
-  )
 import Ouroboros.Consensus.Protocol.BFT
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Util.IOLike
@@ -229,7 +227,8 @@ oracularLedgerDB p =
         , Extended.ledgerState =
             ledgerState
         , Extended.perasEpochContextResolver =
-            ledgerStateHeaderStateMkPerasEpochContextResolver
+            initPerasEpochContextResolver
+              (topLevelConfigLedger topConfig)
               ledgerState
               headerState
         , Extended.latestPerasCertOnChainRound =

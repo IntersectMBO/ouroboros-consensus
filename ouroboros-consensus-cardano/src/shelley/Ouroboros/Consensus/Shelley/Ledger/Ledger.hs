@@ -122,7 +122,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.SupportsPeras (ALedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Shelley.Ledger.Block
@@ -372,11 +372,11 @@ instance
           internsFromMap $
             shelleyLedgerState st
               ^. SL.nesEsL
-              . SL.esLStateL
-              . SL.lsCertStateL
-              . SL.certDStateL
-              . SL.accountsL
-              . SL.accountsMapL
+                . SL.esLStateL
+                . SL.lsCertStateL
+                . SL.certDStateL
+                . SL.accountsL
+                . SL.accountsMapL
      in LedgerTables . ValuesMK <$> (eraDecoder @era $ decodeMap decodeMemPack (decShareCBOR certInterns))
 
 instance
@@ -491,10 +491,10 @@ slUtxoL :: SL.NewEpochState era -> SL.UTxO era -> (SL.UTxO era, SL.NewEpochState
 slUtxoL st vals =
   st
     & SL.nesEsL
-    . SL.esLStateL
-    . SL.lsUTxOStateL
-    . SL.utxoL
-    <<.~ vals
+      . SL.esLStateL
+      . SL.lsUTxOStateL
+      . SL.utxoL
+      <<.~ vals
 
 {-------------------------------------------------------------------------------
   GetTip
@@ -868,5 +868,10 @@ instance CanUpgradeLedgerTables LedgerState (ShelleyBlock proto era) where
   LedgerSupportsPeras
 -------------------------------------------------------------------------------}
 
-instance LedgerSupportsPeras (ShelleyBlock proto era) where
-  getPoolDistr = nesPd . shelleyLedgerState
+instance ALedgerStateSupportsPeras (LedgerState (ShelleyBlock proto era) mk) where
+  getPoolDistr =
+    nesPd . shelleyLedgerState
+
+instance ALedgerStateSupportsPeras (Ticked LedgerState (ShelleyBlock proto era) mk) where
+  getPoolDistr =
+    nesPd . tickedShelleyLedgerState

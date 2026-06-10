@@ -7,6 +7,7 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -77,7 +78,6 @@ import Ouroboros.Consensus.HardFork.History (Bound (boundSlot))
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   , ledgerViewForecastAt
@@ -165,7 +165,6 @@ instance
 instance
   ( ShelleyCompatible proto ShelleyEra
   , LedgerSupportsProtocol (ShelleyBlock proto ShelleyEra)
-  , LedgerSupportsPeras (ShelleyBlock proto ShelleyEra)
   , TxLimits (ShelleyBlock proto ShelleyEra)
   , Crypto (ProtoCrypto proto)
   ) =>
@@ -174,7 +173,6 @@ instance
 instance
   ( ShelleyCompatible proto AllegraEra
   , LedgerSupportsProtocol (ShelleyBlock proto AllegraEra)
-  , LedgerSupportsPeras (ShelleyBlock proto AllegraEra)
   , TxLimits (ShelleyBlock proto AllegraEra)
   , Crypto (ProtoCrypto proto)
   ) =>
@@ -182,7 +180,6 @@ instance
 instance
   ( ShelleyCompatible proto MaryEra
   , LedgerSupportsProtocol (ShelleyBlock proto MaryEra)
-  , LedgerSupportsPeras (ShelleyBlock proto MaryEra)
   , TxLimits (ShelleyBlock proto MaryEra)
   , Crypto (ProtoCrypto proto)
   ) =>
@@ -190,7 +187,6 @@ instance
 instance
   ( ShelleyCompatible proto AlonzoEra
   , LedgerSupportsProtocol (ShelleyBlock proto AlonzoEra)
-  , LedgerSupportsPeras (ShelleyBlock proto AlonzoEra)
   , TxLimits (ShelleyBlock proto AlonzoEra)
   , Crypto (ProtoCrypto proto)
   ) =>
@@ -198,7 +194,6 @@ instance
 instance
   ( ShelleyCompatible proto BabbageEra
   , LedgerSupportsProtocol (ShelleyBlock proto BabbageEra)
-  , LedgerSupportsPeras (ShelleyBlock proto BabbageEra)
   , TxLimits (ShelleyBlock proto BabbageEra)
   , Crypto (ProtoCrypto proto)
   ) =>
@@ -206,7 +201,6 @@ instance
 instance
   ( ShelleyCompatible proto ConwayEra
   , LedgerSupportsProtocol (ShelleyBlock proto ConwayEra)
-  , LedgerSupportsPeras (ShelleyBlock proto ConwayEra)
   , TxLimits (ShelleyBlock proto ConwayEra)
   , Crypto (ProtoCrypto proto)
   ) =>
@@ -214,7 +208,6 @@ instance
 instance
   ( ShelleyCompatible proto DijkstraEra
   , LedgerSupportsProtocol (ShelleyBlock proto DijkstraEra)
-  , LedgerSupportsPeras (ShelleyBlock proto DijkstraEra)
   , TxLimits (ShelleyBlock proto DijkstraEra)
   , Crypto (ProtoCrypto proto)
   ) =>
@@ -614,9 +607,9 @@ instance
             internsFromMap $
               shelleyLedgerState st
                 ^. SL.nesEsL
-                . SL.esLStateL
-                . SL.lsCertStateL
-                . SL.certDStateL
-                . SL.accountsL
-                . SL.accountsMapL
+                  . SL.esLStateL
+                  . SL.lsCertStateL
+                  . SL.certDStateL
+                  . SL.accountsL
+                  . SL.accountsMapL
        in LedgerTables . ValuesMK <$> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))

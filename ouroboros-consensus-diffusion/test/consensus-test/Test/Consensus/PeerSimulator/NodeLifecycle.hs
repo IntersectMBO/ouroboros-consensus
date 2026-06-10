@@ -1,6 +1,7 @@
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.PeerSimulator.NodeLifecycle
@@ -22,7 +23,6 @@ import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
@@ -34,7 +34,7 @@ import Ouroboros.Consensus.Ledger.Tables.MapKind (ValuesMK)
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandleCollection (..)
   )
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
@@ -134,12 +134,11 @@ data NodeLifecycle blk m = NodeLifecycle
 mkChainDb ::
   IOLike m =>
   ( LedgerSupportsProtocol blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk
   ) =>
@@ -188,12 +187,11 @@ mkChainDb resources = do
 restoreNode ::
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk
   ) =>
@@ -219,12 +217,11 @@ lifecycleStart ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
   , InspectLedger blk
-  , HasHardForkHistory blk
   , ConvertRawHash blk
   , CanUpgradeLedgerTables LedgerState blk
   ) =>

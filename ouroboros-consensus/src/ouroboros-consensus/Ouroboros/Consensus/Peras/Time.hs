@@ -118,7 +118,7 @@ mkTimeResolutionContextHandle ::
 mkTimeResolutionContextHandle cfg mkState = TimeResolutionContextHandle $ TimeResolutionContext cfg <$> mkState
 
 data TimeResolutionError
-  = TimeResolutionErrorPastHorizon PastHorizonException
+  = TimeResolutionErrorPastHorizon !PastHorizonException
   | TimeResolutionPerasNotEnabled
   deriving (Show, Exception)
 

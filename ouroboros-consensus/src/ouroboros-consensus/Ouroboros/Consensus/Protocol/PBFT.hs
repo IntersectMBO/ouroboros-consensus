@@ -1,21 +1,20 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE UndecidableInstances #-}
-
-#if __GLASGOW_HASKELL__ >= 908
--- GHC is a bit pickier for data family instances, but trying to remove this
--- one forces us to reorganize the Protocol.* modules. TODO eventually.
+-- We have a few orphan instances here: the @Ticked (PBftState c)@ data family
+-- instance, and the Peras @AChainDepStateSupportsPeras@ instances for @PBftState@
+-- (whose type lives in Protocol.PBFT.State) and its ticked form. Removing them
+-- would force us to reorganize the Protocol.* modules. TODO eventually.
 {-# OPTIONS_GHC -Wno-orphans #-}
-#endif
 
 module Ouroboros.Consensus.Protocol.PBFT
   ( PBft
@@ -286,7 +285,9 @@ data instance Ticked (PBftState c) = TickedPBftState
   , getTickedPBftState :: PBftState c
   }
 
-instance ChainDepStateSupportsPeras (PBft c)
+instance AChainDepStateSupportsPeras (PBftState c)
+
+instance AChainDepStateSupportsPeras (Ticked (PBftState c))
 
 instance PBftCrypto c => ConsensusProtocol (PBft c) where
   type ValidationErr (PBft c) = PBftValidationErr c

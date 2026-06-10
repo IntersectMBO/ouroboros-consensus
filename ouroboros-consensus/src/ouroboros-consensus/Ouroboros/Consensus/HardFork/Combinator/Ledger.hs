@@ -97,8 +97,14 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.SupportsPeras (ALedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (..)
+  , V1PerasEpochContextResolver
+  )
+import qualified Ouroboros.Consensus.Peras.State.V1 as V1
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack)
@@ -321,6 +327,37 @@ instance All SingleEraBlock xs => HasHardForkHistory (HardForkBlock xs) where
   hardForkSummary cfg =
     State.reconstructSummaryLedger cfg
       . hardForkLedgerStatePerEra
+
+{-------------------------------------------------------------------------------
+  Peras
+-------------------------------------------------------------------------------}
+
+-- | 'ALedgerStateSupportsPeras' for the /ticked/ hard fork ledger state, mirroring
+-- the instance for the unticked ledger state in
+-- "Ouroboros.Consensus.HardFork.Combinator.Basics".
+instance
+  CanHardFork xs =>
+  ALedgerStateSupportsPeras (Ticked LedgerState (HardForkBlock xs) mk)
+  where
+  getPoolDistr =
+    hcollapse
+      . hcmap proxySingle (K . getPoolDistr . getFlipTickedLedgerState)
+      . State.tip
+      . tickedHardForkLedgerStatePerEra
+
+-- | Defined here rather than alongside the other hard fork protocol instances
+-- because its superclasses ('HasHardForkHistory' and the ticked
+-- 'ALedgerStateSupportsPeras' instance above) are not in scope in
+-- "Ouroboros.Consensus.HardFork.Combinator.Protocol".
+instance
+  ( StandardHash (HardForkBlock xs)
+  , CanHardFork xs
+  ) =>
+  StateSupportsPerasEpochContext (HardForkBlock xs)
+  where
+  type PerasEpochContextResolver (HardForkBlock xs) = V1PerasEpochContextResolver (HardForkBlock xs)
+
+  mkPerasVotingCommitteeInput = V1.mkPerasVotingCommitteeInput @(HardForkBlock xs)
 
 {-------------------------------------------------------------------------------
   HeaderValidation

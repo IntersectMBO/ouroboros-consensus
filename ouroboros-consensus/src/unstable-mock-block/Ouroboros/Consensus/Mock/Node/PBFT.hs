@@ -21,7 +21,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool (txForgetValidated)
 import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting (..))
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 
@@ -32,31 +31,32 @@ protocolInfoMockPBFT ::
   HardFork.EraParams ->
   ProtocolInfo MockPBftBlock
 protocolInfoMockPBFT params eraParams =
-  ProtocolInfo
-    { pInfoConfig =
-        TopLevelConfig
-          { topLevelConfigProtocol =
-              PBftConfig
-                { pbftParams = params
-                }
-          , topLevelConfigLedger = SimpleLedgerConfig ledgerView eraParams defaultMockConfig
-          , topLevelConfigBlock = SimpleBlockConfig
-          , topLevelConfigCodec = SimpleCodecConfig
-          , topLevelConfigStorage = SimpleStorageConfig (pbftSecurityParam params)
-          , topLevelConfigCheckpoints = emptyCheckpointsMap
-          }
-    , pInfoInitLedger =
-        let ledgerState = genesisSimpleLedgerState addrDist
-            headerState = genesisHeaderState S.empty
-            perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
-            latestPerasCertOnChainRound = SNothing
-         in ExtLedgerState
-              { ledgerState
-              , headerState
-              , perasEpochContextResolver
-              , latestPerasCertOnChainRound
+  let ledgerConfig = SimpleLedgerConfig ledgerView eraParams defaultMockConfig
+   in ProtocolInfo
+        { pInfoConfig =
+            TopLevelConfig
+              { topLevelConfigProtocol =
+                  PBftConfig
+                    { pbftParams = params
+                    }
+              , topLevelConfigLedger = ledgerConfig
+              , topLevelConfigBlock = SimpleBlockConfig
+              , topLevelConfigCodec = SimpleCodecConfig
+              , topLevelConfigStorage = SimpleStorageConfig (pbftSecurityParam params)
+              , topLevelConfigCheckpoints = emptyCheckpointsMap
               }
-    }
+        , pInfoInitLedger =
+            let ledgerState = genesisSimpleLedgerState addrDist
+                headerState = genesisHeaderState S.empty
+                perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+                latestPerasCertOnChainRound = SNothing
+             in ExtLedgerState
+                  { ledgerState
+                  , headerState
+                  , perasEpochContextResolver
+                  , latestPerasCertOnChainRound
+                  }
+        }
  where
   ledgerView :: PBftLedgerView PBftMockCrypto
   ledgerView =

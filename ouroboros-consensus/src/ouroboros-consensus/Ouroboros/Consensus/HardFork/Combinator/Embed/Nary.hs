@@ -30,6 +30,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 
 import Data.Bifunctor (first)
 import Data.Coerce (Coercible, coerce)
+import Data.Maybe.Strict (StrictMaybe)
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Counting (Exactly (..))
@@ -52,16 +53,15 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
   ( ExtLedgerState (..)
+  , initPerasEpochContextResolver
   )
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Peras.Context
-  ( LedgerStateHeaderStateSupportsPerasVoting (..)
-  , PerasEpochContextResolver
+  ( PerasEpochContextResolver (..)
   )
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Data.Maybe.Strict (StrictMaybe)
 
 {-------------------------------------------------------------------------------
   Injection for a single block into a HardForkBlock
@@ -340,8 +340,7 @@ injectInitialExtLedgerState cfg extLedgerState0 =
   targetEraHeaderState = genesisHeaderState targetEraChainDepState
 
   targetEraPerasEpochContextResolver :: PerasEpochContextResolver (HardForkBlock (x ': xs))
-  targetEraPerasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver targetEraLedgerState targetEraHeaderState
+  targetEraPerasEpochContextResolver = initPerasEpochContextResolver (configLedger cfg) targetEraLedgerState targetEraHeaderState
 
   targetEraLatestPerasCertOnChainRound :: StrictMaybe PerasRoundNo
   targetEraLatestPerasCertOnChainRound = latestPerasCertOnChainRound extLedgerState0
-

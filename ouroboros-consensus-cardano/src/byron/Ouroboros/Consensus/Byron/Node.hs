@@ -34,6 +34,7 @@ import qualified Cardano.Crypto as Crypto
 import Control.Monad (guard)
 import Data.Coerce (coerce)
 import Data.Maybe
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Text (Text)
 import Data.Void (Void)
 import Ouroboros.Consensus.Block
@@ -54,14 +55,12 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId (CoreNodeId)
-import Ouroboros.Consensus.Peras.Context (ledgerStateHeaderStateMkPerasEpochContextResolver)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Network.Magic (NetworkMagic (..))
-import Data.Maybe.Strict (StrictMaybe(..))
 
 {-------------------------------------------------------------------------------
   Credentials
@@ -217,7 +216,7 @@ protocolInfoByron
             -- balances.
             ledgerState = initByronLedgerState genesisConfig Nothing
             headerState = genesisHeaderState S.empty
-            perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+            perasEpochContextResolver = initPerasEpochContextResolver compactedGenesisConfig ledgerState headerState
             latestPerasCertOnChainRound = SNothing
            in
             ExtLedgerState

@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -14,7 +15,7 @@ module Ouroboros.Consensus.Protocol.Abstract
   ( -- * Abstract definition of the Ouroboros protocol
     ConsensusConfig
   , ConsensusProtocol (..)
-  , ChainDepStateSupportsPeras (..)
+  , AChainDepStateSupportsPeras (..)
 
     -- * Chain order
   , SelectView (..)
@@ -78,7 +79,6 @@ class
   , NoThunks (ValidationErr p)
   , NoThunks (TiebreakerView p)
   , Typeable p -- so that p can appear in exceptions
-  , ChainDepStateSupportsPeras p
   ) =>
   ConsensusProtocol p
   where
@@ -362,10 +362,18 @@ instance ChainOrder (TiebreakerView p) => ChainOrder (SelectView p) where
       ShouldNotSwitch e -> ShouldNotSwitch e
     GT -> ShouldNotSwitch GT
 
-class ChainDepStateSupportsPeras p where
+class AChainDepStateSupportsPeras chainDep where
   -- | Extract the epoch nonce from the given 'ChainDepState'.
   -- PRECONDITION: this function will only return a meaningful result if the
   -- 'ChainDepState' is from a protocol of a block that supports Peras
-  getEpochNonce :: proxy p -> ChainDepState p -> Nonce
-  default getEpochNonce :: proxy p -> ChainDepState p -> Nonce
-  getEpochNonce _ _ = NeutralNonce
+  getEpochNonce :: chainDep -> Nonce
+  default getEpochNonce :: chainDep -> Nonce
+  getEpochNonce _ = NeutralNonce
+
+-- | Protocols with a trivial (unit) 'ChainDepState' do not contribute an epoch
+-- nonce, so they use the default 'NeutralNonce'. These canonical instances
+-- cover all such protocols (e.g. BFT, leader schedules), which would otherwise
+-- each need an (overlapping) instance for @()@.
+instance AChainDepStateSupportsPeras ()
+
+instance AChainDepStateSupportsPeras (Ticked ())

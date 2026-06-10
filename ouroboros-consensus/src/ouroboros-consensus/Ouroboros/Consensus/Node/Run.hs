@@ -31,12 +31,11 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ChainDB
   ( ImmutableDbSerialiseConstraints
   , SerialiseDiskConstraints
@@ -94,7 +93,6 @@ class
 
 class
   ( LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   , LedgerSupportsMempool blk
@@ -113,7 +111,7 @@ class
   , BlockSupportsMetrics blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , BlockSupportsSanityCheck blk
   , Show (CannotForge blk)
   , Show (ForgeStateInfo blk)

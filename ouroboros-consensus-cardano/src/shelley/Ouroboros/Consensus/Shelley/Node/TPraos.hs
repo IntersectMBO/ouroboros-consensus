@@ -48,9 +48,6 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
-import Ouroboros.Consensus.Peras.Context
-  ( LedgerStateHeaderStateSupportsPerasVoting (ledgerStateHeaderStateMkPerasEpochContextResolver)
-  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
@@ -214,7 +211,7 @@ protocolInfoTPraosShelleyBased
     assertWithMsg (validateGenesis genesis) $ do
       ledgerState <- mkInitLedgerState
       let headerState = genesisHeaderState initChainDepState
-      let perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+      let perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
       let latestPerasCertOnChainRound = SNothing
       let initExtLedgerState =
             ExtLedgerState
