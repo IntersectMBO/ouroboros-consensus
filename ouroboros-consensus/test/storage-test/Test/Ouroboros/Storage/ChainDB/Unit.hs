@@ -32,6 +32,7 @@ import Control.Monad.State (MonadState, StateT, evalStateT, get, put)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry (closeRegistry, unsafeNewRegistry)
 import Data.Maybe (isJust)
+import qualified Data.Set as Set
 import qualified LeiosDemoDb as LeiosDb
 import Ouroboros.Consensus.Block.RealPoint
   ( RealPoint (..)
@@ -600,9 +601,10 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
     iteratorRegistry <- unsafeNewRegistry
     varNextId <- uncheckedNewTVarM 0
     varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
+    varBlocksToIgnore <- newTVarIO Set.empty
     nodeDbs <- emptyNodeDBs
     (tracer, getTrace) <- recordingTracerTVar
-    args <- chainDbArgs threadRegistry nodeDbs tracer
+    args <- chainDbArgs threadRegistry nodeDbs tracer varBlocksToIgnore
     varDB <- open args >>= newTVarIO
     let env =
           ChainDBEnv
@@ -612,6 +614,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
             , varVolatileDbFs = nodeDBsVol nodeDbs
             , args
             , varLoEFragment
+            , varBlocksToIgnore
             }
     pure (env, getTrace)
 
@@ -620,7 +623,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
     closeRegistry (registry env)
     closeRegistry (cdbsRegistry . cdbsArgs $ args env)
 
-  chainDbArgs registry nodeDbs tracer = do
+  chainDbArgs registry nodeDbs tracer varBlocksToIgnore = do
     mcdbLeiosDb <- LeiosDb.newLeiosDBInMemory
     let args =
           fromMinimalChainDbArgs
@@ -632,7 +635,12 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont =
               , mcdbNodeDBs = nodeDbs
               , mcdbLeiosDb
               }
-    pure $ updateTracer tracer args
+    pure $
+      updateTracer tracer $
+        args
+          { cdbsArgs =
+              (cdbsArgs args){cdbsBlocksToIgnore = readTVar varBlocksToIgnore}
+          }
 
 -- | Run a 'Cmd' against the real ChainDB via 'SM.run'.
 runCmd ::
