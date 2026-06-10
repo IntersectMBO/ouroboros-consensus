@@ -13,7 +13,13 @@ import Cardano.Binary (fromCBOR, toCBOR)
 import Cardano.Crypto.DSIGN.Class
 import Cardano.Crypto.DSIGN.Mock (MockDSIGN)
 import Cardano.Crypto.Hash (Hash, HashAlgorithm)
-import Cardano.Ledger.BaseTypes (Nonce)
+import Cardano.Ledger.BaseTypes (Nonce, shelleyProtVer)
+import Cardano.Ledger.Binary
+  ( DecCBOR (..)
+  , EncCBOR (..)
+  , toPlainDecoder
+  , toPlainEncoding
+  )
 import Cardano.Ledger.Genesis (NoGenesis (..))
 import Codec.CBOR.Decoding (Decoder)
 import Codec.Serialise (Serialise (..))
@@ -58,9 +64,11 @@ instance Serialise (VerKeyDSIGN MockDSIGN) where
   encode = encodeVerKeyDSIGN
   decode = decodeVerKeyDSIGN
 
+-- [TODO PERAS STATE SERIALIZATION] we probably want to remove this and pass a
+-- proper era-based version
 instance Serialise Nonce where
-  encode = toCBOR
-  decode = fromCBOR
+  encode = toPlainEncoding shelleyProtVer . encCBOR
+  decode = toPlainDecoder Nothing shelleyProtVer decCBOR
 
 instance Serialise a => Serialise (StrictMaybe a) where
   encode = encode . strictMaybeToMaybe

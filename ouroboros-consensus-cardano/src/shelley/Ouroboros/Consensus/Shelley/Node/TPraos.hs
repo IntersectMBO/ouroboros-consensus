@@ -207,11 +207,14 @@ protocolInfoTPraosShelleyBased
   transitionCfg
   protVer =
     assertWithMsg (validateGenesis genesis) $ do
-      initLedgerState <- mkInitLedgerState
+      ledgerState <- mkInitLedgerState
+      let headerState = genesisHeaderState initChainDepState
+      let perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
       let initExtLedgerState =
             ExtLedgerState
-              { ledgerState = initLedgerState
-              , headerState = genesisHeaderState initChainDepState
+              { ledgerState
+              , headerState
+              , perasEpochContextResolver
               }
       pure
         ( ProtocolInfo
@@ -311,14 +314,3 @@ protocolInfoTPraosShelleyBased
     initChainDepState =
       TPraosState Origin $
         SL.initialChainDepState initialNonce (SL.sgGenDelegs genesis)
-
-    initExtLedgerState :: ExtLedgerState (ShelleyBlock (TPraos c) era) ValuesMK
-    initExtLedgerState =
-      let ledgerState = initLedgerState
-          headerState = genesisHeaderState initChainDepState
-          perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
-       in ExtLedgerState
-            { ledgerState
-            , headerState
-            , perasEpochContextResolver
-            }
