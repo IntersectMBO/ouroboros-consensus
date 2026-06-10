@@ -1045,6 +1045,14 @@ instance
     annBody :: HeaderBody c
     Header{headerBody = annBody} = shelleyHeaderRaw hdr
 
+  headerEbAnnouncement hdr =
+    case hbLeiosEbAnnouncement annBody of
+      SNothing -> Nothing
+      SJust ann -> Just ann
+   where
+    annBody :: HeaderBody c
+    Header{headerBody = annBody} = shelleyHeaderRaw hdr
+
   headerIsCertRB hdr = hbIsCertRB annBody
    where
     annBody :: HeaderBody c

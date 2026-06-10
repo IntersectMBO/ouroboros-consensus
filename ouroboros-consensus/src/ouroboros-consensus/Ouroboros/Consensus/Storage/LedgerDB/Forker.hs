@@ -71,7 +71,7 @@ import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
-import LeiosDemoTypes (IsCertRB (..), LeiosPoint)
+import LeiosDemoTypes (EbAnnouncement, IsCertRB (..), LeiosPoint)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
@@ -576,6 +576,14 @@ class ResolveLeiosBlock blk where
   -- skip decoding entirely when the announcer didn't announce.
   headerLeiosAnnouncement :: Header blk -> Maybe LeiosPoint
   headerLeiosAnnouncement _ = Nothing
+
+  -- | The full EB announcement this header carries, if any, including the EB
+  -- body size. 'headerLeiosAnnouncement' projects this down to a 'LeiosPoint'
+  -- and drops the size; the implicit EB-closure offer needs the size to
+  -- populate the fetch state, so this method keeps it. 'Nothing' for headers
+  -- in eras that don't carry Leios announcements.
+  headerEbAnnouncement :: Header blk -> Maybe EbAnnouncement
+  headerEbAnnouncement _ = Nothing
 
   -- | Whether this header denotes a CertRB (a block that certifies a
   -- previously-announced Leios EB).  Used by ChainSel to filter

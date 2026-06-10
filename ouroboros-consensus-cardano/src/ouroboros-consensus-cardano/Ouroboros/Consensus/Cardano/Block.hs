@@ -1545,6 +1545,10 @@ instance
     HeaderDijkstra dHdr -> headerLeiosAnnouncement dHdr
     _ -> Nothing
 
+  headerEbAnnouncement hdr = case hdr of
+    HeaderDijkstra dHdr -> headerEbAnnouncement dHdr
+    _ -> Nothing
+
   headerIsCertRB hdr = case hdr of
     HeaderDijkstra dHdr -> headerIsCertRB dHdr
     _ -> NotCertRB
