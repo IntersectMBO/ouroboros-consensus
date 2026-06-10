@@ -113,7 +113,6 @@ import Test.QuickCheck
   , counterexample
   , forAll
   , ioProperty
-  , property
   , tabulate
   , (.&&.)
   , (.||.)
@@ -392,9 +391,36 @@ prop_leios_late_join seed =
           Left e ->
             counterexample ("late join slot: " <> show lateJoinSlot) $
               counterexample ("threw: " <> show e) False
-          Right _ -> property True
+          Right _ ->
+            prefixesAgree (nodeBoundedPrefixes testOutput)
+              & counterexample ("late join slot: " <> show lateJoinSlot)
  where
   numSlots = 200 :: Word64
+
+  -- The last slot the late joiner is expected to have caught up to by run
+  -- end. Blocks forged after it may legitimately not have reached the late
+  -- joiner yet, so they are excluded from the prefix comparison. The join
+  -- slot is capped at @numSlots / 4@ (see the 'forAll' above), so a node that
+  -- joins on time has the remaining slots to catch up to this cutoff.
+  catchUpCutoff = SlotNo (numSlots * 3 `div` 4)
+
+  -- Each node's final chain (oldest first) truncated at 'catchUpCutoff'.
+  nodeBoundedPrefixes testOutput =
+    boundedPrefix . Chain.toOldestFirst . nodeOutputFinalChain
+      <$> testOutput.testOutputNodes
+   where
+    boundedPrefix = takeWhile ((<= catchUpCutoff) . blockSlot)
+
+  -- Every node's bounded prefix must equal the others'. Total 'case' over
+  -- 'Map.elems', mirroring the sibling 'propConsistentChains': an empty node
+  -- set (or all-empty prefixes) agrees via the '[]' arm.
+  prefixesAgree prefixes =
+    ( case Map.elems prefixes of
+        [] -> True
+        c : cs -> all (== c) cs
+    )
+      & counterexample "nodes disagree on the catch-up-bounded prefix"
+      & counterexample ("prefix lengths: " <> show (length <$> prefixes))
 
 -- | Independently compute cumulative tx bytes by resolving each block in the
 -- chain (filling in EB closures from the LeiosDB) and summing individual
