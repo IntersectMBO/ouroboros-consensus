@@ -85,7 +85,11 @@ import Cardano.Ledger.Binary.Plain
 import qualified Cardano.Ledger.Block as Core
 import Cardano.Ledger.Core (Era, TopTx, Tx, eraDecoder, ppMaxBHSizeL, ppMaxTxSizeL)
 import qualified Cardano.Ledger.Core as Core
-import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
+import Cardano.Ledger.Dijkstra.BlockBody
+  ( DijkstraBlockBody (DijkstraBlockBodyResolved)
+  , leiosCertBlockBodyL
+  , perasCertBlockBodyL
+  )
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
@@ -1029,10 +1033,14 @@ instance
         case mEb of
           Nothing -> error $ "Announced EB unavailable: " <> show cert
           Just eb ->
-            pure $ Just $ blk{shelleyBlockRaw = Core.Block hdr body'}
+            pure $ Just blk{shelleyBlockRaw = Core.Block hdr body'}
            where
             txSeq = toLeiosTxSeq @DijkstraEra eb
-            body' = body & Core.txSeqBlockBodyL .~ txSeq
+            body' =
+              DijkstraBlockBodyResolved
+                txSeq
+                (body ^. leiosCertBlockBodyL)
+                (body ^. perasCertBlockBodyL)
    where
     Core.Block hdr body = shelleyBlockRaw blk
 
