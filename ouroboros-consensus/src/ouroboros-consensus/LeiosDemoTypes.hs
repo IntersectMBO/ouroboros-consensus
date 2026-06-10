@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -40,6 +41,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
+import Data.Functor (void)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.Map (Map)
@@ -65,7 +67,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , txMeasureMetricTxSizeBytes
   )
 import Ouroboros.Consensus.Util (ShowProxy (..))
-import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
+import Ouroboros.Consensus.Util.IOLike (DiffTime, IOLike, NoThunks, threadDelay)
 import Text.Pretty.Simple (pShow)
 
 -- * Hashes and identities
@@ -243,6 +245,58 @@ newLeiosPeerVars = do
   offerings <- MVar.newMVar (Set.empty, Set.empty)
   requestsToSend <- StrictSTM.newTVarIO Seq.empty
   pure MkLeiosPeerVars{offerings, requestsToSend}
+
+-- | Record an EB body offer from a peer.
+--
+-- The single writer of the body-offer effect. Both the explicit
+-- 'MsgLeiosBlockOffer' arm of the LeiosNotify client and the ChainSync client's
+-- implicit-offer hook call this, so a CertRB header arrival has the same effect
+-- on 'LeiosOutstanding' as an explicit offer.
+recordEbOffer ::
+  (IOLike m, Ord peerKey) =>
+  MVar m (LeiosOutstanding peerKey) ->
+  MVar m (Map (PeerId peerKey) (LeiosPeerVars m)) ->
+  MVar m () ->
+  PeerId peerKey ->
+  LeiosPoint ->
+  BytesSize ->
+  m ()
+recordEbOffer getLeiosOutstanding getLeiosPeersVars getLeiosReady pid point ebBytesSize = do
+  let MkLeiosPoint{pointEbHash = ebHash} = point
+
+  -- Idempotent global insert. Two peers offering the same EB hit the same
+  -- 'missingEbBodies' key; the 'acquiredEbBodies' guard drops re-offers of EBs
+  -- we already store.
+  MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
+    pure $
+      if Set.member ebHash (acquiredEbBodies outstanding)
+        then outstanding
+        else
+          outstanding
+            { missingEbBodies =
+                Map.insert point ebBytesSize (missingEbBodies outstanding)
+            }
+
+  -- Retry on a missing per-peer entry rather than crash. The ChainSync client
+  -- can call this for a peer before that peer's LeiosNotify-client initializer
+  -- has inserted its 'LeiosPeerVars'. The retry is bounded by the connection
+  -- lifetime: if the LeiosNotify mini-protocol dies before initializing, mux
+  -- teardown propagates and kills this loop.
+  peerVars <-
+    let loop = do
+          peersVars <- MVar.readMVar getLeiosPeersVars
+          case Map.lookup pid peersVars of
+            Just x -> pure x
+            Nothing -> do
+              threadDelay (0.010 :: DiffTime)
+              loop
+     in loop
+
+  MVar.modifyMVar_ (offerings peerVars) $ \(offers1, offers2) -> do
+    let !offers1' = Set.insert ebHash offers1
+    pure (offers1', offers2)
+
+  void $ MVar.tryPutMVar getLeiosReady ()
 
 -- | Main data structure used in the Leios fetching logic.
 --
