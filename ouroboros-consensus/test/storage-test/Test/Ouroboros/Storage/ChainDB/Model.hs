@@ -4,6 +4,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -116,7 +117,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
 import Ouroboros.Consensus.Peras.Context
-  ( LedgerStateHeaderStateSupportsPerasVoting (PerasEpochContextResolver)
+  ( StateSupportsPerasEpochContext (PerasEpochContextResolver)
   )
 import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
@@ -468,7 +469,7 @@ empty loe initLedger =
 addBlock ::
   forall blk.
   ( LedgerSupportsProtocol blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , BlockSupportsPeras blk
   ) =>
@@ -502,8 +503,8 @@ addPerasCert ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , Ord (PerasCert blk)
   ) =>
   TopLevelConfig blk ->
@@ -523,8 +524,8 @@ addPerasVote ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , Ord (PerasVote blk)
   , Ord (PerasCert blk)
   , PerasCert blk ~ MockPerasCert blk
@@ -547,8 +548,8 @@ chainSelection ::
   forall blk.
   ( LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   TopLevelConfig blk ->
   Model blk ->
@@ -678,8 +679,8 @@ chainSelection cfg m =
 addBlocks ::
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   TopLevelConfig blk ->
   [blk] ->
@@ -693,8 +694,8 @@ addBlockPromise ::
   ( LedgerSupportsProtocol blk
   , MonadSTM m
   , LedgerTablesAreTrivial ExtLedgerState blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   TopLevelConfig blk ->
   blk ->
@@ -718,8 +719,8 @@ updateLoE ::
   forall blk.
   ( LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   TopLevelConfig blk ->
   AnchoredFragment blk ->
@@ -921,8 +922,8 @@ validate ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   TopLevelConfig blk ->
   Model blk ->
@@ -986,8 +987,8 @@ validChains ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   TopLevelConfig blk ->
   Model blk ->
@@ -1251,8 +1252,8 @@ wipeVolatileDB ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   TopLevelConfig blk ->
   Model blk ->

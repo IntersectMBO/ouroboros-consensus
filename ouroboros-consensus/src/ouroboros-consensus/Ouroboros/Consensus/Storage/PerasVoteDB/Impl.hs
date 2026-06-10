@@ -184,7 +184,7 @@ createDB ::
   forall m blk.
   ( IOLike m
   , BlockSupportsPeras blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   Complete PerasVoteDbArgs m blk ->
   m (PerasVoteDB m blk)
@@ -220,7 +220,7 @@ createDB args@PerasVoteDbArgs{pvdbaPerasEpochContextResolverHandle} = do
 implAddVote ::
   ( IOLike m
   , BlockSupportsPeras blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , StateSupportsPerasEpochContext blk
   ) =>
   PerasEpochContextResolverHandle m blk ->
   PerasVoteDbEnv m blk ->

@@ -23,7 +23,6 @@ import Ouroboros.Consensus.Mock.Protocol.LeaderSchedule
 import Ouroboros.Consensus.Mock.Protocol.Praos
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
-import Ouroboros.Consensus.Peras.Context (ledgerStateHeaderStateMkPerasEpochContextResolver)
 
 type MockPraosRuleBlock = SimplePraosRuleBlock SimpleMockCrypto
 
@@ -42,41 +41,42 @@ protocolInfoPraosRule
   eraParams
   schedule
   evolvingStake =
-    ProtocolInfo
-      { pInfoConfig =
-          TopLevelConfig
-            { topLevelConfigProtocol =
-                WLSConfig
-                  { wlsConfigSchedule = schedule
-                  , wlsConfigP =
-                      PraosConfig
-                        { praosParams = params
-                        , praosSignKeyVRF = NeverUsedSignKeyVRF
-                        , praosInitialEta = 0
-                        , praosInitialStake = genesisStakeDist addrDist
-                        , praosEvolvingStake = evolvingStake
-                        , praosVerKeys = verKeys
-                        }
-                  , wlsConfigNodeId = nid
-                  }
-            , topLevelConfigLedger = SimpleLedgerConfig () eraParams defaultMockConfig
-            , topLevelConfigBlock = SimpleBlockConfig
-            , topLevelConfigCodec = SimpleCodecConfig
-            , topLevelConfigStorage = SimpleStorageConfig (praosSecurityParam params)
-            , topLevelConfigCheckpoints = emptyCheckpointsMap
-            }
-      , pInfoInitLedger =
-          let ledgerState = genesisSimpleLedgerState addrDist
-              headerState = genesisHeaderState ()
-              perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
-              latestPerasCertOnChainRound = SNothing
-           in ExtLedgerState
-                { ledgerState
-                , headerState
-                , perasEpochContextResolver
-                , latestPerasCertOnChainRound
+    let ledgerConfig = SimpleLedgerConfig () eraParams defaultMockConfig
+     in ProtocolInfo
+          { pInfoConfig =
+              TopLevelConfig
+                { topLevelConfigProtocol =
+                    WLSConfig
+                      { wlsConfigSchedule = schedule
+                      , wlsConfigP =
+                          PraosConfig
+                            { praosParams = params
+                            , praosSignKeyVRF = NeverUsedSignKeyVRF
+                            , praosInitialEta = 0
+                            , praosInitialStake = genesisStakeDist addrDist
+                            , praosEvolvingStake = evolvingStake
+                            , praosVerKeys = verKeys
+                            }
+                      , wlsConfigNodeId = nid
+                      }
+                , topLevelConfigLedger = ledgerConfig
+                , topLevelConfigBlock = SimpleBlockConfig
+                , topLevelConfigCodec = SimpleCodecConfig
+                , topLevelConfigStorage = SimpleStorageConfig (praosSecurityParam params)
+                , topLevelConfigCheckpoints = emptyCheckpointsMap
                 }
-      }
+          , pInfoInitLedger =
+              let ledgerState = genesisSimpleLedgerState addrDist
+                  headerState = genesisHeaderState ()
+                  perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+                  latestPerasCertOnChainRound = SNothing
+               in ExtLedgerState
+                    { ledgerState
+                    , headerState
+                    , perasEpochContextResolver
+                    , latestPerasCertOnChainRound
+                    }
+          }
    where
     addrDist :: AddrDist
     addrDist = mkAddrDist numCoreNodes

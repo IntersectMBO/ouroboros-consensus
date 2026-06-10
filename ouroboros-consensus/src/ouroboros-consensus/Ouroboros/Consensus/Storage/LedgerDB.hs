@@ -20,11 +20,10 @@ import Control.ResourceRegistry
 import Control.Tracer ((>$<))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
@@ -49,11 +48,10 @@ openDB ::
   forall m blk st.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
   , InspectLedger blk
   , HasCallStack
-  , HasHardForkHistory blk
   ) =>
   -- | Stateless initializaton arguments
   Complete LedgerDbArgs m blk ->

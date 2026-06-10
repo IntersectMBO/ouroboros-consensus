@@ -44,7 +44,6 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Peras.Context (ledgerStateHeaderStateMkPerasEpochContextResolver)
 import Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Common
@@ -217,7 +216,7 @@ fromShelleyLedgerExamples
     chainDepState = TPraosState (NotOrigin 1) pleChainDepState
     extLedgerState =
       let headerState = genesisHeaderState chainDepState
-          perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+          perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
           latestPerasCertOnChainRound = SNothing
        in ExtLedgerState
             { ledgerState
@@ -362,7 +361,7 @@ fromShelleyLedgerExamplesPraos
         TPraosState (NotOrigin 1) pleChainDepState
     extLedgerState =
       let headerState = genesisHeaderState chainDepState
-          perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+          perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
           latestPerasCertOnChainRound = SNothing
        in ExtLedgerState
             { ledgerState

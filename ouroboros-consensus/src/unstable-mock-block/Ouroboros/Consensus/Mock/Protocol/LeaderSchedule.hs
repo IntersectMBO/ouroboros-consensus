@@ -35,8 +35,6 @@ data instance ConsensusConfig (WithLeaderSchedule p) = WLSConfig
   }
   deriving Generic
 
-instance ChainDepStateSupportsPeras (WithLeaderSchedule p)
-
 instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
   type TiebreakerView (WithLeaderSchedule p) = TiebreakerView p
 

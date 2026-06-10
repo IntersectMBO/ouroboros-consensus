@@ -9,6 +9,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Block
@@ -59,7 +60,6 @@ import Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
-import Codec.Serialise (Serialise)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Coerce (coerce)
 import Data.Typeable (Typeable)
@@ -70,7 +70,7 @@ import Ouroboros.Consensus.HardFork.Combinator
   ( HasPartialConsensusConfig
   )
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosTiebreakerView
@@ -132,18 +132,14 @@ class
   , Crypto (ProtoCrypto proto)
   , -- Peras constraints
     BlockSupportsPeras (ShelleyBlock proto era)
-  , LedgerStateHeaderStateSupportsPerasVoting (ShelleyBlock proto era)
-  , Show (PerasEpochContext (ShelleyBlock proto era))
-  , Eq (PerasEpochContext (ShelleyBlock proto era))
-  , NoThunks (PerasEpochContext (ShelleyBlock proto era))
-  , Serialise (PerasEpochContext (ShelleyBlock proto era))
+  , StateSupportsPerasEpochContext (ShelleyBlock proto era)
   , -- Backwards compatibility
     Plain.FromCBOR (LegacyPParams era)
   , Plain.ToCBOR (LegacyPParams era)
   ) =>
   ShelleyCompatible proto era
 
-instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) where
+instance StandardHash (ShelleyBlock proto era) => ConvertRawHash (ShelleyBlock proto era) where
   toShortRawHash _ = Crypto.hashToBytesShort . unShelleyHash
   fromShortRawHash _ = ShelleyHash . hashFromBytesShortE
   hashSize _ = fromIntegral $ Crypto.hashSize (Proxy @HASH)
@@ -252,7 +248,7 @@ instance ShelleyCompatible proto era => GetPrevHash (ShelleyBlock proto era) whe
       . pHeaderPrevHash
       . shelleyHeaderRaw
 
-instance ShelleyCompatible proto era => StandardHash (ShelleyBlock proto era)
+instance StandardHash (ShelleyBlock proto era)
 
 instance ShelleyCompatible proto era => HasAnnTip (ShelleyBlock proto era)
 

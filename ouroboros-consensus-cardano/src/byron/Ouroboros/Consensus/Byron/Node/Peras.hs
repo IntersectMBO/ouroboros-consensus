@@ -10,7 +10,6 @@ module Ouroboros.Consensus.Byron.Node.Peras () where
 
 import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras)
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
-import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting (..))
 
 {-------------------------------------------------------------------------------
   BlockSupportsPeras
@@ -18,5 +17,3 @@ import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVot
 
 -- NOTE: Byron does not support Peras, so we can use the empty instance here.
 instance BlockSupportsPeras ByronBlock
-
-instance LedgerStateHeaderStateSupportsPerasVoting ByronBlock

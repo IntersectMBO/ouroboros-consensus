@@ -29,8 +29,9 @@ import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
 import Ouroboros.Consensus.Peras.Context
   ( EmptyPerasEpochContextResolver
   , MockPerasEpochContextResolver
+  , PerasEpochContextNotFoundForRound
   , PerasEpochContextResolver
-  , V1PerasEpochContextResolver, PerasEpochContextNotFoundForRound
+  , V1PerasEpochContextResolver
   )
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
@@ -152,7 +153,7 @@ instance ToExpr (HeaderHash blk) => ToExpr (MockPerasCert blk)
 
 instance ToExpr (PerasVotingCommitteeError blk) => ToExpr (MockPerasError blk)
 
-instance ToExpr EmptyPerasEpochContextResolver where
+instance ToExpr (EmptyPerasEpochContextResolver blk) where
   toExpr = defaultExprViaShow
 instance Show (PerasEpochContext blk) => ToExpr (MockPerasEpochContextResolver blk) where
   toExpr = defaultExprViaShow
