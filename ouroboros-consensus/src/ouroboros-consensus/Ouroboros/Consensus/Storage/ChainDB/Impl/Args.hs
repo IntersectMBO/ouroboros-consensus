@@ -35,7 +35,8 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
-  ( GetLoEFragment
+  ( ChainDB
+  , GetLoEFragment
   , LoE (LoEDisabled)
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -102,6 +103,17 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs
   -- in the VolatileDB and can be selected later once they leave the set. The
   -- action is read inside chain selection's existing STM snapshot on every
   -- run, so the set may change between runs. The default is to ignore nothing.
+  , cdbsInitChainSelectionHook :: ImmutableDB.ImmutableDB m blk -> VolatileDB.VolatileDB m blk -> m ()
+  -- ^ Run inside 'openDBInternal' on the raw ImmutableDB and VolatileDB
+  -- handles, just before the initial chain selection reads
+  -- 'cdbsBlocksToIgnore'. A consumer that maintains 'cdbsBlocksToIgnore' uses
+  -- this to seed that state from the on-disk blocks before the first selection.
+  -- The default is a no-op. ChainDB does not look at the bodies of either hook.
+  , cdbsPostOpenHook :: ChainDB m blk -> m ()
+  -- ^ Run inside 'openDBInternal' on the built ChainDB, after the record exists
+  -- and before the background tasks start. A consumer uses this to install a
+  -- header listener (via 'registerHeaderListener') before any block can be
+  -- added. The default is a no-op.
   , cdbsLeiosDb :: HKD f (LeiosDemoDb.Common.LeiosDbHandle m)
   -- ^ Handle for the Leios demo DB. Each downstream consumer should 'open'
   -- its own per-thread 'LeiosDbConnection' from this handle.
@@ -140,6 +152,8 @@ defaultSpecificArgs =
     , cdbsTopLevelConfig = noDefault
     , cdbsLoE = pure LoEDisabled
     , cdbsBlocksToIgnore = pure Set.empty
+    , cdbsInitChainSelectionHook = \_ _ -> pure ()
+    , cdbsPostOpenHook = \_ -> pure ()
     , cdbsLeiosDb = noDefault
     }
 

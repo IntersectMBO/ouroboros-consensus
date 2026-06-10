@@ -157,6 +157,8 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , cdbsTopLevelConfig = mcdbTopLevelConfig
           , cdbsLoE = pure LoEDisabled
           , cdbsBlocksToIgnore = pure Set.empty
+          , cdbsInitChainSelectionHook = \_ _ -> pure ()
+          , cdbsPostOpenHook = \_ -> pure ()
           , cdbsLeiosDb = mcdbLeiosDb
           }
     }

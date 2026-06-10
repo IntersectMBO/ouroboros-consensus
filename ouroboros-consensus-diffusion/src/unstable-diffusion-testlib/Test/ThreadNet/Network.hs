@@ -92,6 +92,14 @@ import qualified LeiosDemoDb
 import LeiosDemoOnlyTestFetch (LeiosFetch)
 import LeiosDemoOnlyTestNotify (LeiosNotify)
 import qualified LeiosDemoTypes
+import LeiosLateJoinState
+  ( LeiosLateJoinState
+  , gcPruner
+  , getBlockedCertRBs
+  , initLeiosKernelLateJoin
+  , runAcquiredEbTxsSubscriber
+  , runTriggerWorker
+  )
 import Network.TypedProtocol.Codec
   ( AnyMessage (..)
   , CodecFailure
@@ -769,7 +777,11 @@ runThreadNetwork
       NodeDBs (StrictTMVar m MockFS) ->
       LeiosState (MonadSTMStrict.StrictTVar m) ->
       CoreNodeId ->
-      m (LeiosDemoDb.LeiosDbHandle m, ChainDbArgs Identity m blk)
+      m
+        ( LeiosDemoDb.LeiosDbHandle m
+        , ChainDbArgs Identity m blk
+        , LeiosLateJoinState m blk
+        )
     mkArgs
       registry
       cfg
@@ -783,6 +795,13 @@ runThreadNetwork
       leiosState
       _coreNodeId = do
         leiosDbHandle <- LeiosDemoDb.newLeiosDBInMemoryWith (lsLeiosDb leiosState)
+        -- Late-join wiring: build the LeiosKernel state and the two ChainDB
+        -- lifecycle callbacks. The seed hook runs the startup walk before the
+        -- first chain selection; the register action installs the AddBlock
+        -- listener before the AddBlock runner starts. 'getBlockedCertRBs' on the
+        -- same state is the ignore-set chain selection reads.
+        (leiosLateJoinState, seedHook, registerListener) <-
+          initLeiosKernelLateJoin (LeiosDemoDb.readCompletedClosuresSTM leiosDbHandle)
         let args =
               fromMinimalChainDbArgs
                 MinimalChainDbArgs
@@ -794,30 +813,33 @@ runThreadNetwork
                   , mcdbLeiosDb = leiosDbHandle
                   }
         let tr = instrumentationTracer <> nullDebugTracer
-        pure $
-          (,) leiosDbHandle $
-            args
-              { cdbImmDbArgs =
-                  (cdbImmDbArgs args)
-                    { ImmutableDB.immCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
-                    , ImmutableDB.immTracer = TraceImmutableDBEvent >$< tr
-                    }
-              , cdbVolDbArgs =
-                  (cdbVolDbArgs args)
-                    { VolatileDB.volCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
-                    , VolatileDB.volTracer = TraceVolatileDBEvent >$< tr
-                    }
-              , cdbLgrDbArgs =
-                  (cdbLgrDbArgs args)
-                    { LedgerDB.lgrTracer = TraceLedgerDBEvent >$< tr
-                    }
-              , cdbsArgs =
-                  (cdbsArgs args)
-                    { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
-                      cdbsGcDelay = 0
-                    , cdbsTracer = instrumentationTracer <> nullDebugTracer
-                    }
-              }
+        let chainDbArgs =
+              args
+                { cdbImmDbArgs =
+                    (cdbImmDbArgs args)
+                      { ImmutableDB.immCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
+                      , ImmutableDB.immTracer = TraceImmutableDBEvent >$< tr
+                      }
+                , cdbVolDbArgs =
+                    (cdbVolDbArgs args)
+                      { VolatileDB.volCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
+                      , VolatileDB.volTracer = TraceVolatileDBEvent >$< tr
+                      }
+                , cdbLgrDbArgs =
+                    (cdbLgrDbArgs args)
+                      { LedgerDB.lgrTracer = TraceLedgerDBEvent >$< tr
+                      }
+                , cdbsArgs =
+                    (cdbsArgs args)
+                      { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
+                        cdbsGcDelay = 0
+                      , cdbsTracer = instrumentationTracer <> nullDebugTracer
+                      , cdbsBlocksToIgnore = getBlockedCertRBs leiosLateJoinState
+                      , cdbsInitChainSelectionHook = seedHook
+                      , cdbsPostOpenHook = registerListener
+                      }
+                }
+        pure (leiosDbHandle, chainDbArgs, leiosLateJoinState)
        where
         prj af = case AF.headBlockNo af of
           At bno -> bno
@@ -893,7 +915,7 @@ runThreadNetwork
           selTracer = wrapTracer $ nodeEventsSelects nodeInfoEvents
           headerAddTracer = wrapTracer $ nodeEventsHeaderAdds nodeInfoEvents
           pipeliningTracer = nodeEventsPipelining nodeInfoEvents
-      (leiosDbHandle, chainDbArgs) <-
+      (leiosDbHandle, chainDbArgs, leiosLateJoinState) <-
         mkArgs
           registry
           pInfoConfig
@@ -909,6 +931,21 @@ runThreadNetwork
       chainDB <-
         snd
           <$> allocate registry (const (ChainDB.openDB chainDbArgs)) ChainDB.closeDB
+
+      -- Late-join background loops. None of them is fence-constrained (the two
+      -- fences are the ChainDB hooks set in 'mkArgs'), so they fork after the
+      -- ChainDB is open: the trigger worker drains reselect requests, the
+      -- subscriber turns arriving EB closures into reselect requests, and the
+      -- pruner bounds the announcements cache to the VolatileDB window.
+      void $
+        forkLinkedThread registry "leiosTriggerWorker" $
+          runTriggerWorker chainDB leiosLateJoinState
+      void $
+        forkLinkedThread registry "leiosAcquiredEbTxsSubscriber" $
+          runAcquiredEbTxsSubscriber leiosDbHandle leiosLateJoinState
+      void $
+        forkLinkedThread registry "leiosGcPruner" $
+          gcPruner chainDB leiosLateJoinState
 
       let customForgeBlock ::
             BlockForging m blk ->

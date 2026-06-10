@@ -205,6 +205,10 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     let initChainSelTracer = TraceInitChainSelEvent >$< tracer
 
     traceWith initChainSelTracer StartedInitChainSelection
+    -- Seed fence: run the init hook on the raw DB handles before the initial
+    -- chain selection reads 'cdbsBlocksToIgnore', so the first selection already
+    -- sees whatever the hook put in that set.
+    Args.cdbsInitChainSelectionHook cdbSpecificArgs immutableDB volatileDB
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
     initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
     chain <-
@@ -340,6 +344,11 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         OpenedDB
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
+
+    -- Register fence: run the post-open hook on the built ChainDB before
+    -- 'launchBgTasks' forks the AddBlock runner, so any header listener the hook
+    -- installs is in place before a block can be added.
+    Args.cdbsPostOpenHook cdbSpecificArgs chainDB
 
     when launchBgTasks $ Background.launchBgTasks env replayed
 
