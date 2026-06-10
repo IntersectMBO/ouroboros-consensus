@@ -170,7 +170,7 @@ analyse dbaConfig args =
           V2LSM ->
             LedgerDB.LedgerDbBackendArgsV2 $
               LedgerDB.V2.SomeBackendArgs $
-                LSM.LSMArgs (mkFsPath ["lsm"]) lsmSalt (LSM.stdMkBlockIOFS dbDir)
+                LSM.LSMArgs (mkFsPath ["lsm"]) Nothing lsmSalt (LSM.stdMkBlockIOFS dbDir)
 
         args' =
           ChainDB.completeChainDbArgs

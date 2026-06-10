@@ -85,7 +85,7 @@ tests =
   lsm salt =
     LedgerDB.LedgerDbBackendArgsV2 $
       LedgerDB.V2.SomeBackendArgs $
-        LedgerDB.V2.LSM.LSMArgs (mkFsPath []) salt mkSimBlockIOFS
+        LedgerDB.V2.LSM.LSMArgs (mkFsPath []) Nothing salt mkSimBlockIOFS
    where
     mkSimBlockIOFS =
       uncurry LedgerDB.V2.LSM.SomeHasFSAndBlockIO
