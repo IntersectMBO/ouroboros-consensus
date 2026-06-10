@@ -80,6 +80,9 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
+import Cardano.Binary (DecoderError)
+import qualified Data.ByteString.Lazy as Lazy
+import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk, EncodeDisk)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -116,7 +119,6 @@ import Ouroboros.Network.Protocol.LocalTxSubmission.Type
 -- | Protocol handlers for node-to-client (local) communication
 data Handlers m peer blk = Handlers
   { hChainSyncServer ::
-      BlockNodeToClientVersion blk ->
       LeiosDbConnection m ->
       ChainDB.Follower m blk (ChainDB.WithPoint blk (Header blk, Serialised blk)) ->
       ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
@@ -137,7 +139,8 @@ mkHandlers ::
   , BlockSupportsLedgerQuery blk
   , ConfigSupportsNode blk
   , ResolveLeiosBlock blk
-  , SerialiseNodeToClient blk blk
+  , DecodeDisk blk (Lazy.ByteString -> Either DecoderError blk)
+  , EncodeDisk blk blk
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   NodeKernel m addrNTN addrNTC blk ->
@@ -447,10 +450,9 @@ mkApps ::
   NodeKernel m addrNTN addrNTC blk ->
   Tracers m addrNTC blk e ->
   Codecs blk e m bCS bTX bSQ bTM ->
-  BlockNodeToClientVersion blk ->
   Handlers m addrNTC blk ->
   Apps m addrNTC bCS bTX bSQ bTM ()
-mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} version Handlers{..} =
+mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} Handlers{..} =
   Apps{..}
  where
   aChainSyncServer ::
@@ -469,7 +471,7 @@ mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} vers
             cChainSyncCodec
             channel
             $ chainSyncServerPeer
-            $ hChainSyncServer version leiosConn flr
+            $ hChainSyncServer leiosConn flr
 
   aTxSubmissionServer ::
     addrNTC ->

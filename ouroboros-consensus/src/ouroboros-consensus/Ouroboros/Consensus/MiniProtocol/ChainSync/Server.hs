@@ -19,21 +19,16 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Server
   , chainSyncServerForFollower
   ) where
 
+import Cardano.Binary (DecoderError)
+import qualified Codec.CBOR.Decoding as CBOR.Decoding
 import qualified Codec.CBOR.Read as CBOR.Read
 import qualified Codec.CBOR.Write as CBOR.Write
+import qualified Data.ByteString.Lazy as Lazy
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer
 import LeiosDemoDb (LeiosDbConnection)
 import LeiosDemoTypes (LeiosPoint)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Node.NetworkProtocolVersion
-  ( BlockNodeToClientVersion
-  )
-import Ouroboros.Consensus.Node.Serialisation
-  ( SerialiseNodeToClient
-  , decodeNodeToClient
-  , encodeNodeToClient
-  )
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( BlockComponent (GetHeader, GetRawBlock)
   , ChainDB
@@ -117,16 +112,16 @@ chainSyncBlocksServer ::
   ( IOLike m
   , HasHeader (Header blk)
   , ResolveLeiosBlock blk
-  , SerialiseNodeToClient blk blk
+  , DecodeDisk blk (Lazy.ByteString -> Either DecoderError blk)
+  , EncodeDisk blk blk
   ) =>
   Tracer m (TraceChainSyncServerEvent blk) ->
   ChainDB m blk ->
   CodecConfig blk ->
-  BlockNodeToClientVersion blk ->
   LeiosDbConnection m ->
   Follower m blk (WithPoint blk (Header blk, Serialised blk)) ->
   ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
-chainSyncBlocksServer tracer chainDB ccfg version leiosDb flr = ChainSyncServer $ do
+chainSyncBlocksServer tracer chainDB ccfg leiosDb flr = ChainSyncServer $ do
   prevAnnVar <- newTVarIO Nothing
   runChainSyncServer $
     chainSyncServerForFollower tracer (ChainDB.getCurrentTip chainDB) $
@@ -162,12 +157,23 @@ chainSyncBlocksServer tracer chainDB ccfg version leiosDb flr = ChainSyncServer 
       atomically $ writeTVar prevAnnVar (fst <$> headerLeiosAnnouncement hdr)
       sblk' <- case mPrevAnn of
         Nothing -> pure sblk
-        Just prevAnn -> case decode sblk of
+        Just prevAnn -> case decodeRaw sblk of
           Left _ -> pure sblk
           Right blk -> do
             mRes <- resolveLeiosBlockHdr leiosDb prevAnn blk
             pure $ maybe sblk encode mRes
       pure (WithPoint sblk' pt)
+
+    decodeRaw :: Serialised blk -> Either String blk
+    decodeRaw (Serialised bs) =
+      case CBOR.Read.deserialiseFromBytes annotator bs of
+        Left e -> Left (show e)
+        Right (_, applyBytes) -> case applyBytes bs of
+          Left e -> Left (show e)
+          Right blk -> Right blk
+     where
+      annotator :: forall s. CBOR.Decoding.Decoder s (Lazy.ByteString -> Either DecoderError blk)
+      annotator = decodeDisk ccfg
 
     -- possible race? 'pt' could be GC'd from the VolatileDB between the
     -- follower emitting it and this lookup; we then fall back to Nothing.
@@ -178,12 +184,8 @@ chainSyncBlocksServer tracer chainDB ccfg version leiosDb flr = ChainSyncServer 
         mHdr <- ChainDB.getBlockComponent chainDB GetHeader rp
         atomically $ writeTVar prevAnnVar (fst <$> (mHdr >>= headerLeiosAnnouncement))
 
-    decode :: Serialised blk -> Either CBOR.Read.DeserialiseFailure blk
-    decode (Serialised bs) =
-      snd <$> CBOR.Read.deserialiseFromBytes (decodeNodeToClient ccfg version) bs
-
     encode :: blk -> Serialised blk
-    encode = Serialised . CBOR.Write.toLazyByteString . encodeNodeToClient ccfg version
+    encode = Serialised . CBOR.Write.toLazyByteString . encodeDisk ccfg
 
 -- | A chain sync server.
 --

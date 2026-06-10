@@ -1117,6 +1117,7 @@ library diffusion
     base,
     bytestring,
     cardano-base,
+    cardano-binary,
     cardano-diffusion:{api, cardano-diffusion, protocols},
     cardano-slotting,
     cborg,

@@ -708,7 +708,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       nodeKernel
       rnTraceNTC
       (NTC.defaultCodecs codecConfig blockVersion networkVersion)
-      blockVersion
       (NTC.mkHandlers nodeKernelArgs nodeKernel)
 
   mkDiffusionApplications ::
