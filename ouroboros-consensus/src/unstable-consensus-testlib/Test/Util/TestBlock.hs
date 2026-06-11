@@ -748,6 +748,10 @@ instance
   -- No certs are stored in 'TestBlockWith'
   getPerasCertInBlock _ = Nothing
 
+  readPerasPrivateKeyFromEnv _proxy = Right ()
+
+  blockDoesReallySupportsPeras _proxy = True
+
 {-------------------------------------------------------------------------------
   Test infrastructure: config
 -------------------------------------------------------------------------------}
