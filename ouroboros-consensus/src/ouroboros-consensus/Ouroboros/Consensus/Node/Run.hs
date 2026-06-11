@@ -131,7 +131,6 @@ class
   , ShowProxy (PerasCert blk)
   , (forall fp. ShowQuery (BlockQuery blk fp))
   , CanUpgradeLedgerTables LedgerState blk
-  , PrivateKey (PerasCrypto blk) ~ BLS.PerasPrivateKey
   ) =>
   RunNode blk
 

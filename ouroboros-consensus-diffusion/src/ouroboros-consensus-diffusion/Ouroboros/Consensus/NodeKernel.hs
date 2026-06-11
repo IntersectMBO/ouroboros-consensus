@@ -92,13 +92,11 @@ import Ouroboros.Consensus.Node.Genesis
   , LoEAndGDDNodeKernelArgs (..)
   , setGetLoEFragment
   )
-import Ouroboros.Consensus.Committee.Crypto (PrivateKey)
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import qualified Ouroboros.Consensus.Peras.Time as Time
 import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting, forgePerasVoteIfEligibleInContext)
-import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
-import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe (unsafePerasBLSPrivateKeyFromEnv, unsafePerasPoolIdFromEnv)
+import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe (unsafePerasPoolIdFromEnv)
 import Ouroboros.Consensus.Peras.Voting.Trace (TracePerasVotingEvent (..))
 import Ouroboros.Consensus.Peras.Voting.Rules
   ( PerasVotingRulesDecision (..)
@@ -457,7 +455,6 @@ voteMintingController ::
   ( IOLike m
   , HasHardForkHistory blk, BlockSupportsPeras blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
-  , PrivateKey (PerasCrypto blk) ~ BLS.PerasPrivateKey
   ) =>
   SystemTime m ->
   InternalState m remotePeer localPeer blk ->
@@ -487,7 +484,7 @@ voteMintingController systemTime IS{chainDB, tracers} slotNo = do
       exitEarly
     Right poolId -> pure poolId
 
-  privateKey <- case unsafePerasBLSPrivateKeyFromEnv of
+  privateKey <- case readPerasPrivateKeyFromEnv proxy of
     Left err -> do
       trace $ TraceCantReadEnv err
       exitEarly
@@ -513,6 +510,9 @@ voteMintingController systemTime IS{chainDB, tracers} slotNo = do
   lift $ ChainDB.addPerasVoteSync chainDB vote
 
   where
+    proxy :: Proxy blk
+    proxy = Proxy
+
     trace :: TracePerasVotingEvent blk -> WithEarlyExit m ()
     trace = lift . traceWith (perasVotingLogicTracer tracers)
 
