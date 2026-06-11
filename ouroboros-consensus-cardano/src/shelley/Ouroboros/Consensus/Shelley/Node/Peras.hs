@@ -32,6 +32,7 @@ import Ouroboros.Consensus.Peras.Context
   , v1ResolveRoundNo
   )
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
+import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe (unsafePerasBLSPrivateKeyFromEnv)
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
 import qualified Ouroboros.Consensus.Peras.State.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
@@ -77,6 +78,10 @@ instance
           ^. Dijkstra.perasCertBlockBodyL
 
     Nothing -- to be replaced with the deserialized certificate
+
+  readPerasPrivateKeyFromEnv _proxy = unsafePerasBLSPrivateKeyFromEnv
+
+  blockDoesReallySupportsPeras _proxy = True
 
 instance
   ShelleyCompatible proto ShelleyEra =>

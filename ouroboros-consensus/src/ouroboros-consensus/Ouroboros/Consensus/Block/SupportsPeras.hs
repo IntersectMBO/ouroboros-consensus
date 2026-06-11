@@ -7,6 +7,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -14,6 +15,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 module Ouroboros.Consensus.Block.SupportsPeras
@@ -53,6 +55,8 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , module Ouroboros.Consensus.Peras.Types
   ) where
 
+import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Ledger.Hashes (KeyHash (..))
 import Codec.Serialise (Serialise)
 import Control.Exception (assert)
 import Control.Exception.Base (Exception)
@@ -83,11 +87,13 @@ import Ouroboros.Consensus.Committee.Crypto
   , PublicKey
   , VoteCandidate
   )
-import Ouroboros.Consensus.Committee.Types (PoolId)
+import Ouroboros.Consensus.Committee.Types (PoolId (..))
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Types
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.Orphans ()
+import System.Environment (lookupEnv)
+import System.IO.Unsafe (unsafePerformIO)
 
 -- | Voting committee for Peras indexed by block type
 type PerasVotingCommittee blk =
@@ -343,6 +349,58 @@ class
     Maybe (PerasCert blk)
   getPerasCertInBlock _ =
     Nothing
+
+  blockDoesReallySupportsPeras ::
+    proxy blk ->
+    Bool
+  default blockDoesReallySupportsPeras ::
+    PerasCrypto blk ~ VoidPerasCrypto blk =>
+    proxy blk ->
+    Bool
+  blockDoesReallySupportsPeras _ = False
+
+  -- | Read the private key for Peras voting from the env vars
+  --
+  -- NOTE: this is a temporary workaround for testnet, this is supposed to be
+  -- replaced for Peras-to-mainnet with proper key registration and retrieval
+  -- mechanisms.
+  readPerasPrivateKeyFromEnv ::
+    proxy blk ->
+    Either String (PrivateKey (PerasCrypto blk))
+  default readPerasPrivateKeyFromEnv ::
+    PerasCrypto blk ~ VoidPerasCrypto blk =>
+    proxy blk ->
+    Either String (PrivateKey (PerasCrypto blk))
+  readPerasPrivateKeyFromEnv _ =
+    Left "VoidPerasCrypto has no way to instantiate a private key"
+
+  -- | Read the PoolId from the environment variable 'PERAS_POOL_ID'
+  --
+  -- NOTE: this is a temporary workaround for testnet, we still need to figure
+  -- out how to properly thread the PoolId throughout a node creation for
+  -- Peras-to-mainnet.
+  readPerasPoolIdFromEnv ::
+    proxy blk ->
+    Either String PoolId
+  default readPerasPoolIdFromEnv ::
+    proxy blk ->
+    Either String PoolId
+  readPerasPoolIdFromEnv _ =
+    unsafePerformIO $
+      lookupEnv envVar >>= \case
+        Nothing -> do
+          pure $ Left $ "Environment variable " <> envVar <> "not set."
+        Just rawKey -> do
+          pure $ decodeKey rawKey
+   where
+    envVar =
+      "PERAS_POOL_ID"
+
+    decodeKey key =
+      case Hash.hashFromStringAsHex key of
+        Just hash -> Right $ PoolId (KeyHash hash)
+        Nothing -> Left $ "failed to decode PoolId, invalid hash bytes: " <> show key
+  {-# NOINLINE readPerasPoolIdFromEnv #-}
 
 -- * Conversion between concrete Peras types and abstract committee types
 
