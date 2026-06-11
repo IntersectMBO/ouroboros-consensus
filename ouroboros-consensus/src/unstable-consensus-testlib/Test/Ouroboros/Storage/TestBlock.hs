@@ -763,6 +763,10 @@ instance BlockSupportsPeras TestBlock where
   type PerasError TestBlock = MockPerasError TestBlock
   getPerasCertInBlock = tbPerasCert . testBody
 
+  readPerasPrivateKeyFromEnv _proxy = Right ()
+
+  blockDoesReallySupportsPeras _proxy = True
+
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
   hardForkSummary = neverForksHardForkSummary id
