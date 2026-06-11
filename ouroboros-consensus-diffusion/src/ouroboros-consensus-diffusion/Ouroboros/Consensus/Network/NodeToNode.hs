@@ -120,7 +120,8 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import LeiosVoteState
-  ( LeiosVoteState (..)
+  ( AddVoteResult (..)
+  , LeiosVoteState (..)
   , LeiosVoteSubscription (..)
   , subscribeVotes
   )
@@ -482,9 +483,18 @@ mkHandlers
                     void $ MVar.tryPutMVar getLeiosReady ()
                   MsgLeiosVotes vs -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs
-                    mapM_ addVote vs
-                    forM_ vs $ \vote ->
+                    forM_ vs $ \vote -> do
+                      result <- addVote vote
                       traceWith kernelTracer TraceLeiosVoteAcquired{vote}
+                      -- A remote vote can be the one that tips this
+                      -- node's tally past 'minCertificationThreshold';
+                      -- trace certification whenever 'addVote' surfaces
+                      -- a cert for the point.
+                      case result of
+                        Added _ (Just _) ->
+                          let Leios.MkLeiosVote{Leios.point = pt} = vote
+                           in traceWith kernelTracer TraceLeiosCertified{point = pt}
+                        _ -> pure ()
               )
       , hLeiosNotifyServer = \_version _peer -> Effect $ do
           chan <- subscribeEbNotifications leiosDB

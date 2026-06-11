@@ -67,7 +67,7 @@ import Data.Fixed (Pico)
 import Data.Function (on)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
-import Data.List (findIndex, nubBy, sortOn)
+import Data.List (findIndex, foldl', nubBy, sortOn)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Ratio ((%))
@@ -77,7 +77,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.String (fromString)
 import qualified Data.Vector as V
-import Data.Word (Word16, Word32, Word64)
+import Data.Word (Word8, Word16, Word32, Word64)
 import Debug.Trace (trace)
 import GHC.Generics (Generic)
 import LeiosDemoDb.Trace (TraceLeiosDb (..))
@@ -1036,6 +1036,33 @@ minCertificationGap = 10
 -- | Minimum fraction of stake to create a valid 'LeiosCertificate'.
 minCertificationThreshold :: Rational
 minCertificationThreshold = 3 % 4
+
+-- | Encode a set of signer indices into the @⌈N/8⌉@-byte MSB-first
+-- bitfield that 'Leios.LeiosCert.signers' carries. Inverse of the
+-- bitfield decoder inside 'validateLeiosCertificate'.
+--
+-- Indices outside the committee bound are silently dropped — the
+-- producer should never pass any, and 'validateLeiosCertificate' on
+-- the consumer side rejects oversized bitfields anyway.
+encodeSignersBitfield ::
+  -- | Committee size @N@
+  Int ->
+  -- | Voter indices that signed
+  [Int] ->
+  ByteString
+encodeSignersBitfield committeeSize idxs =
+  BS.pack [byteFor b | b <- [0 .. expectedBytes - 1]]
+ where
+  expectedBytes = (committeeSize + 7) `div` 8
+
+  signers = Set.fromList [i | i <- idxs, i >= 0, i < committeeSize]
+
+  byteFor b =
+    foldl' (\acc bitIx -> if Set.member (b * 8 + bitIx) signers
+                          then Bits.setBit acc (7 - bitIx)
+                          else acc)
+      (0 :: Word8)
+      [0 .. 7]
 
 leiosMempoolSize :: ByteSize32
 leiosMempoolSize = ByteSize32 24_090_112 -- 2 * (leiosEBMaxClosureSize + RB block size (mainnet = 90112))
