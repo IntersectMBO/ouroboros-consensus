@@ -70,6 +70,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
+import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe (unsafePerasBLSPrivateKeyFromEnv)
 import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Voting.V1 as V1
@@ -308,6 +309,10 @@ instance
         (K . (unsafeCastPerasCertV1 <=< getPerasCertInBlock) . unI)
       . getOneEraBlock
       . getHardForkBlock
+
+  readPerasPrivateKeyFromEnv _proxy = unsafePerasBLSPrivateKeyFromEnv
+
+  blockDoesReallySupportsPeras _proxy = True
 
 -- [TODO PERAS CERTS IN BLOCKS] this is a nasty hack
 unsafeCastPerasCertV1 ::
