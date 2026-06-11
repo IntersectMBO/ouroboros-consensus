@@ -512,7 +512,9 @@ data InitDB db m blk = InitDB
 -- * We cannot deserialise them, or
 --
 -- * they are /ahead/ of the chain, they refer to a slot which is later than the
---     last slot in the immutable db.
+--     last slot in the immutable db (or the same slot, if the immutable db
+--     tip is an EBB, as the snapshot could then be for the EBB's same-slot
+--     successor block, which is not in the immutable db).
 --
 -- We do /not/ attempt to use multiple ledger states from disk to construct the
 -- ledger DB. Instead we load only a /single/ ledger state from disk, and
@@ -531,6 +533,9 @@ initialize ::
   LedgerDbCfg ExtLedgerState blk ->
   StreamAPI m blk blk ->
   Point blk ->
+  -- | Whether the block at the replay goal is an EBB. Used to decide whether
+  -- snapshots are ahead of the immutable db, see @snapshotTooRecent@.
+  IsEBB ->
   InitDB db m blk ->
   SnapshotManager m blk st ->
   m (InitLog blk, db)
@@ -540,11 +545,35 @@ initialize
   cfg
   stream
   replayGoal
+  replayGoalIsEBB
   dbIface
   snapManager =
     listSnapshots snapManager >>= tryNewestFirst id
    where
     InitDB{initFromGenesis, initFromSnapshot} = dbIface
+
+    -- \| Whether the given snapshot is ahead of the replay goal (the tip of
+    -- the immutable db), in which case it must be discarded, as replaying
+    -- from it would require blocks that are not in the immutable db.
+    --
+    -- Snapshots are named after the slot of the ledger state they contain,
+    -- so a snapshot named after a slot later than the replay goal is
+    -- necessarily too recent.
+    --
+    -- A snapshot named after the very slot of the replay goal is usually
+    -- fine (this is the common case for the most recent snapshot on a clean
+    -- restart), with one oddity: if the block at the replay goal is an EBB,
+    -- the snapshot could instead be for the EBB's successor block, which
+    -- shares its slot with the EBB but is not in the immutable db. The
+    -- snapshot name alone cannot distinguish the two cases, so we
+    -- conservatively discard such snapshots; EBBs are rare enough for this
+    -- not to matter.
+    snapshotTooRecent :: DiskSnapshot -> Bool
+    snapshotTooRecent s = case pointSlot replayGoal of
+      Origin -> True
+      At p -> case replayGoalIsEBB of
+        IsEBB -> dsNumber s >= unSlotNo p
+        IsNotEBB -> dsNumber s > unSlotNo p
 
     tryNewestFirst ::
       (InitLog blk -> InitLog blk) ->
@@ -568,10 +597,7 @@ initialize
           dbIface
       return (acc InitFromGenesis, db)
     tryNewestFirst acc (s : ss) = do
-      if ( case pointSlot replayGoal of
-             Origin -> True
-             At p -> dsNumber s > unSlotNo p
-         )
+      if snapshotTooRecent s
         then do
           deleteSnapshotIfTemporary snapManager s
           traceWith snapTracer . InvalidSnapshot s $ InitFailureTooRecent s replayGoal

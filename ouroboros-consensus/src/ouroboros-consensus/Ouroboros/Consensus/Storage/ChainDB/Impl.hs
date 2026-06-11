@@ -146,7 +146,7 @@ openDBInternal ::
   m (ChainDB m blk, Internal m blk)
 openDBInternal args launchBgTasks = runWithTempRegistry $ do
   ( immutableDB
-    , immutableDbTipPoint
+    , immutableDbTip
     , volatileDB
     , ledgerDbGetVolatileSuffix
     , setGetCurrentChainForLedgerDB
@@ -154,8 +154,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $ TraceOpenEvent StartedOpeningDB
     traceWith tracer $ TraceOpenEvent StartedOpeningImmutableDB
     immutableDB <- ImmutableDB.openDB argsImmutableDb
-    immutableDbTipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
-    let immutableDbTipChunk =
+    immutableDbTip <- atomically $ ImmutableDB.getTip immutableDB
+    let immutableDbTipPoint = ImmutableDB.tipToPoint immutableDbTip
+        immutableDbTipChunk =
           chunkIndexOfPoint (ImmutableDB.immChunkInfo argsImmutableDb) immutableDbTipPoint
     traceWith tracer $
       TraceOpenEvent $
@@ -169,7 +170,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <- mkLedgerDbGetVolatileSuffix
     pure
       ( immutableDB
-      , immutableDbTipPoint
+      , immutableDbTip
       , volatileDB
       , ledgerDbGetVolatileSuffix
       , setGetCurrentChainForLedgerDB
@@ -184,7 +185,11 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     LedgerDB.openDB
       argsLgrDb
       (ImmutableDB.streamAPI immutableDB)
-      immutableDbTipPoint
+      (ImmutableDB.tipToPoint immutableDbTip)
+      ( case immutableDbTip of
+          Origin -> IsNotEBB
+          NotOrigin tip -> ImmutableDB.tipIsEBB tip
+      )
       (Query.getAnyKnownBlock immutableDB volatileDB)
       ledgerDbGetVolatileSuffix
 

@@ -109,7 +109,10 @@ openLedgerDB args immutableDB replayGoal =
                   res
           lift $ do
             warnUnlessSnapshotAtGoal snapManager
-            LedgerDB.openDBInternal args initDb snapManager replayStream replayGoal
+            -- The replay goal is the @--analyse-from@ point, which is not
+            -- necessarily the ImmutableDB tip, so we do not know whether it
+            -- is an EBB. Assume it is not, like the vast majority of blocks.
+            LedgerDB.openDBInternal args initDb snapManager replayStream replayGoal IsNotEBB
       pure (ldb, od)
  where
   -- Stream blocks from the ImmutableDB, stopping as soon as we reach a block

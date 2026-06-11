@@ -63,6 +63,8 @@ openDB ::
   StreamAPI m blk blk ->
   -- | The Replay goal i.e. the tip of the stream of blocks.
   Point blk ->
+  -- | Whether the block at the replay goal is an EBB, see 'initialize'.
+  IsEBB ->
   -- | How to get blocks from the ChainDB
   ResolveBlock m blk ->
   GetVolatileSuffix m blk ->
@@ -71,6 +73,7 @@ openDB
   args
   stream
   replayGoal
+  replayGoalIsEBB
   getBlock
   getVolatileSuffix =
     case lgrBackendArgs args of
@@ -93,7 +96,7 @@ openDB
                 snapTracer
                 (lgrHasFS args)
         let initDb = V2.mkInitDb args getBlock snapManager getVolatileSuffix res
-        lift $ doOpenDB args initDb snapManager stream replayGoal
+        lift $ doOpenDB args initDb snapManager stream replayGoal replayGoalIsEBB
        where
         !tr = lgrTracer args
         !snapTracer = LedgerDBSnapshotEvent >$< tr
@@ -114,9 +117,10 @@ doOpenDB ::
   SnapshotManager m blk st ->
   StreamAPI m blk blk ->
   Point blk ->
+  IsEBB ->
   m (LedgerDB' m blk)
-doOpenDB args initDb snapManager stream replayGoal =
-  fst <$> openDBInternal args initDb snapManager stream replayGoal
+doOpenDB args initDb snapManager stream replayGoal replayGoalIsEBB =
+  fst <$> openDBInternal args initDb snapManager stream replayGoal replayGoalIsEBB
 
 -- | Open the ledger DB and expose internals for testing purposes
 openDBInternal ::
@@ -130,8 +134,9 @@ openDBInternal ::
   SnapshotManager m blk st ->
   StreamAPI m blk blk ->
   Point blk ->
+  IsEBB ->
   m (LedgerDB' m blk, TestInternals' m blk)
-openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager stream replayGoal = do
+openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager stream replayGoal replayGoalIsEBB = do
   createDirectoryIfMissing fs True (mkFsPath [])
   (_initLog, db) <-
     initialize
@@ -140,6 +145,7 @@ openDBInternal args@(LedgerDbArgs{lgrHasFS = SomeHasFS fs}) initDb snapManager s
       lgrConfig
       stream
       replayGoal
+      replayGoalIsEBB
       initDb
       snapManager
   (ledgerDb, internal) <- mkLedgerDb initDb db

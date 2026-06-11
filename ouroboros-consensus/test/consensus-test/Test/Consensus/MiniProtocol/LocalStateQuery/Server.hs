@@ -257,6 +257,8 @@ initLedgerDB s c = do
               args
               streamAPI
               (Chain.headPoint c)
+              -- These tests do not use EBBs.
+              IsNotEBB
               (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
               (LedgerDB.praosGetVolatileSuffix s)
           pure (db, ())
