@@ -258,6 +258,7 @@ library
     Ouroboros.Consensus.Peras.Vote.Mock
     Ouroboros.Consensus.Peras.Vote.V1
     Ouroboros.Consensus.Peras.Voting.Rules
+    Ouroboros.Consensus.Peras.Voting.Trace
     Ouroboros.Consensus.Peras.Voting.View
     Ouroboros.Consensus.Peras.Voting.V1
     Ouroboros.Consensus.Peras.Weight
