@@ -4,6 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Ouroboros.Consensus.Node.Tracers
   ( -- * All tracers of a node bundled together
@@ -193,7 +194,6 @@ showTracers ::
   , Show (CannotForge blk)
   , Show (TxMeasurePhase1 blk)
   , Show (TxMeasurePhase2 blk)
-  , Show (TxMeasure blk)
   , Show (PerasVote blk)
   , Show (PerasCert blk)
   , Show remotePeer
