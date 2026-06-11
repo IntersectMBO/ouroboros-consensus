@@ -100,7 +100,6 @@ import Ouroboros.Consensus.Peras.Cert.Inclusion
 import Ouroboros.Consensus.Peras.Cert.Opaque (toOpaquePerasCert)
 import qualified Ouroboros.Consensus.Peras.Time as Time
 import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting, forgePerasVoteIfEligibleInContext)
-import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe (unsafePerasPoolIdFromEnv)
 import Ouroboros.Consensus.Peras.Voting.Trace (TracePerasVotingEvent (..))
 import Ouroboros.Consensus.Peras.Voting.Rules
   ( PerasVotingRulesDecision (..)
@@ -414,9 +413,9 @@ initNodeKernel
           sharedTxStateVar
 
     whenPerasEnabled $ void $
-      forkLinkedWatcher registry "NodeKernel.voteMinting" $
+      forkLinkedWatcher registry "NodeKernel.perasVoteForging" $
         knownSlotWatcher btime $
-          \currentSlot -> withEarlyExit_ $ voteMintingController systemTime st currentSlot
+          \currentSlot -> withEarlyExit_ $ perasVoteForgingController systemTime st currentSlot
 
     return
       NodeKernel
@@ -460,7 +459,7 @@ initNodeKernel
         blockForging' <- traverse (forkBlockForging st) blockForging
         go blockForging'
 
-voteMintingController ::
+perasVoteForgingController ::
   forall m remotePeer localPeer blk.
   ( IOLike m
   , HasHardForkHistory blk, BlockSupportsPeras blk
@@ -470,25 +469,12 @@ voteMintingController ::
   InternalState m remotePeer localPeer blk ->
   SlotNo ->
   WithEarlyExit m ()
-voteMintingController systemTime IS{chainDB, tracers} slotNo = do
-  roundInfo <- lift $ atomically $ Time.resolveSlotToPerasRoundInfoWithHandle
-    (ChainDB.getTimeResolutionContextHandle chainDB)
-    slotNo
-  let roundNo = Time.stpriPerasRoundNo roundInfo
-  when (not $ Time.stpriIsFirstSlotOfPerasRound roundInfo) $ do
-    trace $ TraceNoVoteAfterFirstSlotInRound roundNo (Time.stpriSlotsSpentInPerasRound roundInfo)
-    exitEarly
+perasVoteForgingController systemTime IS{chainDB, tracers} slotNo = do
 
-  -- Do the voting rules state that we should vote?
-  votingDecision <- lift $ atomically $ isPerasVotingAllowedInContext
-    (ChainDB.getPerasVotingViewHandle chainDB)
-    roundNo
-  trace $ TraceVotingRuleEvent votingDecision
-  candidateBlock <- case votingDecision of
-    NoVote _ -> exitEarly
-    Vote _ point -> pure point
-
-  poolId <- case unsafePerasPoolIdFromEnv of
+  -- Get crypto data from environment variables
+  -- TODO: move the code outside of the vote forging controller once
+  -- they are properly obtained from the ledger/context.
+  poolId <- case readPerasPoolIdFromEnv (Proxy @blk) of
     Left err -> do
       trace $ TraceCantReadEnv err
       exitEarly
@@ -500,28 +486,50 @@ voteMintingController systemTime IS{chainDB, tracers} slotNo = do
       exitEarly
     Right privateKey -> pure privateKey
 
-  (now :: RelativeTime) <- lift $ systemTimeCurrent systemTime
-  (voteM :: Maybe (ValidatedPerasVote blk)) <- lift $ atomically $ forgePerasVoteIfEligibleInContext
-    (ChainDB.getPerasEpochContextResolverHandle chainDB)
-    poolId
-    privateKey
-    roundNo
-    candidateBlock
+  (voteM :: Maybe (ValidatedPerasVote blk), traceEvents :: [TracePerasVotingEvent blk]) <- lift $ atomically $ do
 
-  vote <- case voteM of
-    Nothing -> do
-      trace $ TraceNotElectedInRound roundNo
-      exitEarly
-    Just vote -> pure $ WithArrivalTime now vote
+    -- Resolve Peras round number
+    roundInfo <- Time.resolveSlotToPerasRoundInfoWithHandle
+      (ChainDB.getTimeResolutionContextHandle chainDB)
+      slotNo
+    let roundNo = Time.stpriPerasRoundNo roundInfo
+    case Time.stpriIsFirstSlotOfPerasRound roundInfo of
+      False -> pure (Nothing, [TraceNoVoteAfterFirstSlotInRound roundNo (Time.stpriSlotsSpentInPerasRound roundInfo)])
+      True -> do
 
-  -- Add vote to DB
-  -- TODO: process new return types, possibly log, once the following is merged:
-  -- https://github.com/IntersectMBO/ouroboros-consensus/pull/2029
-  lift $ ChainDB.addPerasVoteSync chainDB vote
+        -- Do the voting rules state that we should vote?
+        votingDecision <- isPerasVotingAllowedInContext
+          (ChainDB.getPerasVotingViewHandle chainDB)
+          roundNo
+        let traceVotingRule = TraceVotingRuleEvent votingDecision
+        case votingDecision of
+          NoVote _ -> pure (Nothing, [traceVotingRule])
+          Vote _ candidateBlock -> do
+
+            -- Forge the vote, if allowed
+            (voteM :: Maybe (ValidatedPerasVote blk)) <- forgePerasVoteIfEligibleInContext
+              (ChainDB.getPerasEpochContextResolverHandle chainDB)
+              poolId
+              privateKey
+              roundNo
+              candidateBlock
+            case voteM of
+              Nothing -> pure (Nothing, [traceVotingRule, TraceNotElectedInRound roundNo])
+              Just vote -> pure (Just vote, [traceVotingRule])
+
+  traverse_ trace traceEvents
+  case mVote of
+    Nothing -> exitEarly
+    Just vote -> do
+      now <- lift $ systemTimeCurrent systemTime
+      -- Add vote to DB
+      -- TODO: process new return types, possibly log, once the following is merged:
+      -- https://github.com/IntersectMBO/ouroboros-consensus/pull/2029
+      lift $ ChainDB.addPerasVoteSync chainDB $ WithArrivalTime now vote
 
   where
     trace :: TracePerasVotingEvent blk -> WithEarlyExit m ()
-    trace = lift . traceWith (perasVotingLogicTracer tracers)
+    trace = lift . traceWith (perasVoteForgingTracer tracers)
 
 castTraceFetchDecision ::
   forall remotePeer blk.

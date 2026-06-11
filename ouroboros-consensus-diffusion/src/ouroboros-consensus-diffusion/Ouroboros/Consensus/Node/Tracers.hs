@@ -96,7 +96,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
       f (TraceLabelPeer remotePeer (TracePerasVoteDiffusionOutbound blk))
   , perasCertInclusionTracer ::
       f TracePerasCertInclusionEvent
-  , perasVotingLogicTracer :: f (TracePerasVotingEvent blk)
+  , perasVoteForgingTracer :: f (TracePerasVotingEvent blk)
   , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
   , blockchainTimeTracer :: f (TraceBlockchainTimeEvent UTCTime)
   , forgeStateInfoTracer :: f (TraceLabelCreds (ForgeStateInfo blk))
@@ -134,7 +134,7 @@ instance
       , perasVoteDiffusionInboundTracer = f perasVoteDiffusionInboundTracer
       , perasVoteDiffusionOutboundTracer = f perasVoteDiffusionOutboundTracer
       , perasCertInclusionTracer = f perasCertInclusionTracer
-      , perasVotingLogicTracer = f perasVotingLogicTracer
+      , perasVoteForgingTracer = f perasVoteForgingTracer
       , forgeTracer = f forgeTracer
       , blockchainTimeTracer = f blockchainTimeTracer
       , forgeStateInfoTracer = f forgeStateInfoTracer
@@ -175,7 +175,7 @@ nullTracers =
     , perasCertDiffusionInboundTracer = nullTracer
     , perasCertDiffusionOutboundTracer = nullTracer
     , perasVoteDiffusionInboundTracer = nullTracer
-    , perasVotingLogicTracer = nullTracer
+    , perasVoteForgingTracer = nullTracer
     , perasVoteDiffusionOutboundTracer = nullTracer
     , perasCertInclusionTracer = nullTracer
     , forgeTracer = nullTracer
@@ -231,7 +231,7 @@ showTracers tr =
     , perasVoteDiffusionInboundTracer = show >$< tr
     , perasVoteDiffusionOutboundTracer = show >$< tr
     , perasCertInclusionTracer = show >$< tr
-    , perasVotingLogicTracer = show >$< tr
+    , perasVoteForgingTracer = show >$< tr
     , forgeTracer = show >$< tr
     , blockchainTimeTracer = show >$< tr
     , forgeStateInfoTracer = show >$< tr
