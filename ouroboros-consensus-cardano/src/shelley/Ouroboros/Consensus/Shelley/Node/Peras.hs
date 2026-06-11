@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -18,6 +19,7 @@ import qualified Cardano.Ledger.Dijkstra.BlockBody as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.BlockBody as Ledger
 import qualified Cardano.Ledger.Shelley.API as SL
 import Data.Maybe.Strict (strictMaybeToMaybe)
+import Data.Proxy (Proxy (..))
 import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
@@ -67,17 +69,23 @@ instance
   type PerasCrypto (ShelleyBlock proto DijkstraEra) = BLS.PerasBLSCrypto
   type PerasVotingCommitteeScheme (ShelleyBlock proto DijkstraEra) = V1.PerasVotingCommitteeScheme
 
+  -- [TODO PERAS CERTS IN BLOCKS] this is a temporary solution. In the future,
+  -- the ledger will likely be in charge of giving us a proper PerasCert.
+  -- That said, validation could still happen on the consensus side, since that
+  -- requires access to the committee composition.
   getPerasCertInBlock blk = do
-    -- [TODO PERAS CERTS IN BLOCKS] there will be a bytearray here after
-    -- integrating a newer version of Ledger. From there, we would need to
-    -- deserialize into a V1.PerasCert. For now, we could simply blow up if
-    -- the decoding fails.
-    Ledger.PerasCert _ <-
+    Ledger.PerasCert byteArray <-
       strictMaybeToMaybe $
         SL.blockBody (shelleyBlockRaw blk)
           ^. Dijkstra.perasCertBlockBodyL
-
-    Nothing -- to be replaced with the deserialized certificate
+    case ( V1.fromOpaqueByteArray
+             (Proxy @(ShelleyBlock proto DijkstraEra))
+             byteArray
+         ) of
+      Right cert -> Just cert
+      -- NOTE: could also return 'Nothing', but for now we probably don't want
+      -- to silently ignore deserialization errors.
+      Left err -> error err
 
   readPerasPrivateKeyFromEnv _proxy = unsafePerasBLSPrivateKeyFromEnv
 
