@@ -101,6 +101,13 @@ newLeiosVoteState getCommittee = do
                     Right weight -> do
                       writeTVar seenVotes $! Set.insert vote seen
                       writeTChan votesChan vote
+
+                      -- FIXME: This code is not only ugly, but we need to also
+                      -- keep track of which committee the cert is for. We shall
+                      -- only use the cert (return on queryCert) if we are in
+                      -- the same epoch as when it was aggregated / the
+                      -- committee still the same.
+
                       -- Update the per-point tally, assembling (and
                       -- caching) the certificate the first time the
                       -- threshold is crossed.
