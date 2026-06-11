@@ -35,8 +35,14 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     -- * Streaming
   , YieldArgs (YieldLSM)
   , mkLSMYieldArgs
+  , mkExportedLSMYieldArgs
   , SinkArgs (SinkLSM)
   , mkLSMSinkArgs
+  , mkExportedLSMSinkArgs
+
+    -- * Standalone (exported) snapshots
+  , lsmDbExportSnapshot
+  , lsmDbImportSnapshot
 
     -- * Exported for tests
   , LSM.Salt
@@ -94,11 +100,18 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import qualified Streaming as S
 import qualified Streaming.Prelude as S
+import qualified System.Directory as D
 import System.FS.API
 import System.FS.API.Lazy (hGetAll, hPutAll)
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
-import System.FilePath (splitDirectories, splitFileName)
+import System.FilePath
+  ( makeRelative
+  , splitDirectories
+  , splitFileName
+  , takeDirectory
+  , takeFileName
+  )
 import System.Random
 import Prelude hiding (read)
 
@@ -721,6 +734,11 @@ instance
         (Session m)
         -- \| Only to be closed by 'releaseYieldArgs'
         (SomeHasFSAndBlockIO m)
+        -- \| Cleanup hook run by 'releaseYieldArgs' /after/ the session has been
+        -- closed. Used to remove the temporary scratch session created when
+        -- yielding from a standalone (exported) snapshot. 'pure ()' for a plain
+        -- database yield.
+        (m ())
 
   data SinkArgs m LSM l blk
     = SinkLSM
@@ -733,19 +751,32 @@ instance
         -- \| DiskSnapshot
         DiskSnapshot
         (Session m)
+        -- \| \"After save\" hook, run by 'sink' /while the session is still
+        -- open/, right after the snapshot has been saved into it. Used to
+        -- export the freshly saved snapshot to a standalone directory. 'pure ()'
+        -- for a plain database sink.
+        (m ())
+        -- \| Cleanup hook run by 'releaseSinkArgs' /after/ the session has been
+        -- closed. Used to remove the temporary scratch session created when
+        -- sinking to a standalone (exported) snapshot. 'pure ()' for a plain
+        -- database sink.
+        (m ())
 
-  releaseYieldArgs (YieldLSM _ hdl session (SomeHasFSAndBlockIO _ bio)) = do
+  releaseYieldArgs (YieldLSM _ hdl session (SomeHasFSAndBlockIO _ bio) cleanup) = do
     close hdl
     LSM.closeSession session
+    cleanup
     BIO.close bio
 
-  releaseSinkArgs (SinkLSM _ _ (SomeHasFSAndBlockIO _ bio) _ session) = do
+  releaseSinkArgs (SinkLSM _ _ (SomeHasFSAndBlockIO _ bio) _ session _afterSave cleanup) = do
     LSM.closeSession session
+    cleanup
     BIO.close bio
 
-  yield _ (YieldLSM chunkSize hdl _ _) = yieldLsmS chunkSize hdl
+  yield _ (YieldLSM chunkSize hdl _ _ _) = yieldLsmS chunkSize hdl
 
-  sink _ (SinkLSM chunkSize shfs _ ds session) = sinkLsmS chunkSize shfs ds session
+  sink _ (SinkLSM chunkSize shfs _ ds session afterSave _cleanup) =
+    sinkLsmS chunkSize shfs ds session afterSave
 
 data SomeHasFSAndBlockIO m where
   SomeHasFSAndBlockIO ::
@@ -789,8 +820,11 @@ sinkLsmS ::
   SomeHasFS m ->
   DiskSnapshot ->
   Session m ->
+  -- | \"After save\" hook, run while the session is still open, right after the
+  -- snapshot has been saved into it.
+  m () ->
   Sink m l blk
-sinkLsmS writeChunkSize (SomeHasFS hfs) ds session st stream = do
+sinkLsmS writeChunkSize (SomeHasFS hfs) ds session afterSave st stream = do
   r <-
     bracket
       (lift $ LSM.newTable session)
@@ -803,6 +837,7 @@ sinkLsmS writeChunkSize (SomeHasFS hfs) ds session st stream = do
               (LSM.SnapshotLabel $ T.pack "UTxO table")
               lsmTable
           lift $ writeUTxOSizeFile hfs (snapshotToUTxOSizeFilePath ds) utxosSize
+          lift afterSave
           pure r
       )
   pure (fmap (,Nothing) r)
@@ -852,7 +887,185 @@ mkLSMYieldArgs lsmDbPath ds mkFS mkGen = do
       (LSM.toSnapshotName (snapshotToDirName ds))
       (LSM.SnapshotLabel $ T.pack "UTxO table")
   h <- newLSMLedgerTablesHandle nullTracer (const (pure ())) 0 tb
-  pure $ YieldLSM 1000 h session shfsbio
+  pure $ YieldLSM 1000 h session shfsbio (pure ())
+
+-- | Create Yield arguments for a standalone (exported) LSM snapshot.
+--
+-- Unlike 'mkLSMYieldArgs', which reads a snapshot out of a live LSM database,
+-- this opens a /temporary/ scratch session next to the exported snapshot,
+-- imports the exported snapshot into it, and then streams it as usual. The
+-- scratch session is removed by 'releaseYieldArgs'.
+--
+-- The scratch session is created in the parent directory of the exported
+-- snapshot, so that it lives on the same volume (a requirement of importing).
+mkExportedLSMYieldArgs ::
+  ( IOLike m
+  , LSMConstraints l blk
+  ) =>
+  -- | The directory containing the exported snapshot. Must not have a trailing
+  -- slash!
+  FilePath ->
+  -- | The complete name of the snapshot, so @<slotno>[_<suffix>]@.
+  DiskSnapshot ->
+  -- | Usually 'stdMkBlockIOFS'
+  (FilePath -> WithTempRegistry () m (SomeHasFSAndBlockIO m)) ->
+  -- | Usually 'newStdGen'
+  (m StdGen) ->
+  m (YieldArgs m LSM l blk)
+mkExportedLSMYieldArgs exportDir ds mkFS mkGen = do
+  shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <-
+    runWithTempRegistry $ (\x -> (x, ())) <$> mkFS (takeDirectory exportDir)
+  nonce <- fst . genWord64 <$> mkGen
+  let scratch = scratchSessionPath nonce
+  freshDirectory hasFS scratch
+  let snapName = LSM.toSnapshotName (snapshotToDirName ds)
+  session <-
+    LSM.newSession
+      nullTracer
+      hasFS
+      blockIO
+      nonce
+      scratch
+  LSM.importSnapshot
+    session
+    snapName
+    (mkFsPath [takeFileName exportDir])
+  tb <-
+    LSM.openTableFromSnapshot
+      session
+      snapName
+      (LSM.SnapshotLabel $ T.pack "UTxO table")
+  -- A scratch session used only for reading; it never exports snapshots.
+  h <- newLSMLedgerTablesHandle nullTracer (const (pure ())) 0 tb
+  pure $ YieldLSM 1000 h session shfsbio (removeDirectoryRecursive hasFS scratch)
+
+-- | Create Sink arguments for a standalone (exported) LSM snapshot.
+--
+-- Unlike 'mkLSMSinkArgs', which sinks into a live LSM database, this sinks into
+-- a /temporary/ scratch session next to the destination directory, and then
+-- exports the resulting snapshot to that directory (see 'LSM.exportSnapshot').
+-- The scratch session is removed by 'releaseSinkArgs'.
+--
+-- The scratch session is created in the parent directory of the destination, so
+-- that it lives on the same volume (a requirement of 'LSM.exportSnapshot').
+mkExportedLSMSinkArgs ::
+  IOLike m =>
+  -- | The destination directory for the exported snapshot. It will be
+  -- (re)created, and must not have a trailing slash!
+  FilePath ->
+  -- | The complete name of the snapshot, so @<slotno>[_<suffix>]@.
+  DiskSnapshot ->
+  -- | Usually 'ioHasFS', for the LedgerDB snapshot (@state@/@meta@) files.
+  SomeHasFS m ->
+  -- | Usually 'stdMkBlockIOFS'
+  (FilePath -> WithTempRegistry () m (SomeHasFSAndBlockIO m)) ->
+  -- | Usually 'newStdGen'
+  (m StdGen) ->
+  m (SinkArgs m LSM l blk)
+mkExportedLSMSinkArgs exportDir ds snapFs mkBlockIOFS mkGen = do
+  shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <-
+    runWithTempRegistry $ (\x -> (x, ())) <$> mkBlockIOFS (takeDirectory exportDir)
+  (nonce, gen') <- genWord64 <$> mkGen
+  let salt = fst $ genWord64 gen'
+      scratch = scratchSessionPath nonce
+      exportFsPath = mkFsPath [takeFileName exportDir]
+  freshDirectory hasFS scratch
+  -- 'LSM.exportSnapshot' requires the destination directory to not exist.
+  whenM (doesDirectoryExist hasFS exportFsPath) $
+    removeDirectoryRecursive hasFS exportFsPath
+  session <- LSM.newSession nullTracer hasFS blockIO salt scratch
+  let afterSave =
+        LSM.exportSnapshot session (LSM.toSnapshotName (snapshotToDirName ds)) exportFsPath
+  pure (SinkLSM 1000 snapFs shfsbio ds session afterSave (removeDirectoryRecursive hasFS scratch))
+
+-- | Export a snapshot out of a (offline) LSM database into a standalone
+-- directory, which must not exist yet.
+--
+-- The database session and the destination must live on the same volume.
+lsmDbExportSnapshot ::
+  -- | The LSM database (session) directory.
+  FilePath ->
+  -- | The name of the snapshot to export, so @<slotno>[_<suffix>]@.
+  String ->
+  -- | The destination directory, which must not exist yet.
+  FilePath ->
+  IO ()
+lsmDbExportSnapshot dbPath snapName exportDir = do
+  salt <- fst . genWord64 <$> newStdGen
+  withRootFS $ \hasFS blockIO -> do
+    sessionDir <- toRootFsPath dbPath
+    exportFs <- toRootFsPath exportDir
+    bracket
+      (LSM.openSession nullTracer hasFS blockIO salt sessionDir)
+      LSM.closeSession
+      (\session -> LSM.exportSnapshot session (LSM.toSnapshotName snapName) exportFs)
+
+-- | Import a snapshot from a standalone directory into a new (offline) LSM
+-- database, created at the given (empty or absent) directory.
+--
+-- The database session and the source must live on the same volume.
+lsmDbImportSnapshot ::
+  -- | The LSM database (session) directory. Created if it does not exist; must
+  -- be empty otherwise.
+  FilePath ->
+  -- | The name to give the imported snapshot, so @<slotno>[_<suffix>]@.
+  String ->
+  -- | The source directory containing the exported snapshot.
+  FilePath ->
+  IO ()
+lsmDbImportSnapshot dbPath snapName srcDir =
+  withRootFS $ \hasFS blockIO -> do
+    sessionDir <- toRootFsPath dbPath
+    srcFs <- toRootFsPath srcDir
+    createDirectoryIfMissing hasFS True sessionDir
+    salt <- fst . genWord64 <$> newStdGen
+    bracket
+      ( LSM.newSession
+          nullTracer
+          hasFS
+          blockIO
+          salt
+          sessionDir
+      )
+      LSM.closeSession
+      (\s -> LSM.importSnapshot s (LSM.toSnapshotName snapName) srcFs)
+
+-- | Mount the filesystem at the root, run an action with the resulting handles,
+-- and close the underlying block IO afterwards.
+--
+-- Mounting at the root means that any 'FsPath' (the session directory itself,
+-- as well as the import/export directories) can be expressed relative to a
+-- single mount point, even when they live in unrelated parts of the filesystem
+-- (as long as they are on the same volume, which the caller must guarantee).
+withRootFS ::
+  (forall h. (Eq h, Typeable h) => HasFS IO h -> BIO.HasBlockIO IO h -> IO a) ->
+  IO a
+withRootFS act = do
+  SomeHasFSAndBlockIO hasFS blockIO <-
+    runWithTempRegistry $ (\x -> (x, ())) <$> stdMkBlockIOFS "/"
+  act hasFS blockIO
+    `finally` BIO.close blockIO
+
+-- | A 'FsPath' (relative to the filesystem root) for a temporary scratch
+-- session directory, named after a nonce to make collisions unlikely.
+scratchSessionPath :: Word64 -> FsPath
+scratchSessionPath nonce = mkFsPath ["lsm-convert-scratch-" <> show nonce]
+
+-- | Interpret a (possibly relative) 'FilePath' as a 'FsPath' relative to the
+-- filesystem root, so that it can be used with a session mounted at the root.
+toRootFsPath :: FilePath -> IO FsPath
+toRootFsPath p = do
+  absPath <- D.makeAbsolute p
+  pure $ mkFsPath $ splitDirectories $ makeRelative "/" absPath
+
+-- | Ensure a directory exists and is empty.
+freshDirectory :: Monad m => HasFS m h -> FsPath -> m ()
+freshDirectory hasFS p = do
+  whenM (doesDirectoryExist hasFS p) $ removeDirectoryRecursive hasFS p
+  createDirectoryIfMissing hasFS True p
+
+whenM :: Monad m => m Bool -> m () -> m ()
+whenM mb act = mb >>= \b -> Monad.when b act
 
 -- | Create Sink arguments for LSM
 mkLSMSinkArgs ::
@@ -879,4 +1092,4 @@ mkLSMSinkArgs (splitFileName -> (lsmDbParentPath, lsmDbPath)) ds snapFs mkBlockI
   createDirectory hasFS lsmDbPath'
   salt <- fst . genWord64 <$> mkGen
   session <- LSM.newSession nullTracer hasFS blockIO salt lsmDbPath'
-  pure (SinkLSM 1000 snapFs shfsbio ds session)
+  pure (SinkLSM 1000 snapFs shfsbio ds session (pure ()) (pure ()))

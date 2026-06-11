@@ -1,245 +1,338 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns #-}
-#if __GLASGOW_HASKELL__ >= 912
-{-# LANGUAGE MultilineStrings #-}
-#endif
 
 module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
-import Control.Concurrent
+import Control.Concurrent (threadDelay)
+import Control.Exception (SomeException, displayException, try)
 import Control.Monad (forever, void)
-import Control.Monad.Except
-import DBAnalyser.Parsers
+import Control.Monad.Except (runExceptT)
+import DBAnalyser.Parsers (CardanoBlockArgs, parseCardanoArgs)
 import qualified Data.List as L
-#if __GLASGOW_HASKELL__ < 912
-import qualified Data.Text as T
-#endif
 import Main.Utf8
 import Options.Applicative
-import Options.Applicative.Help (Doc)
-#if __GLASGOW_HASKELL__ < 912
-import Options.Applicative.Help.Pretty (Pretty (pretty))
-#endif
 import Ouroboros.Consensus.Cardano.SnapshotConversion
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
+  ( lsmDbExportSnapshot
+  , lsmDbImportSnapshot
+  )
 import System.Exit
 import System.FSNotify
-import System.FilePath
+import System.FilePath (splitDirectories, splitFileName, (</>))
 
-data Config
-  = -- | Run in daemon mode
-    DaemonConfig
-      -- | Where the input snapshot will be in
-      SnapshotsDirectoryWithFormat
-      -- | Where to put the converted snapshots
-      SnapshotsDirectory
-  | -- | Run in normal mode
-    NoDaemonConfig
-      -- | Where and in which format the input snapshot is in
-      Snapshot'
-      -- | Where and in which format the output snapshot must be in
-      Snapshot'
+{-------------------------------------------------------------------------------
+  Commands
+-------------------------------------------------------------------------------}
 
--- | Helper for parsing a directory that contains both the snapshots directory
--- and the particular snapshot.
-data Snapshot'
-  = StandaloneSnapshot' FilePath StandaloneFormat
-  | LSMSnapshot' FilePath LSMDatabaseFilePath
+-- | The various ways in which the tool can be invoked.
+--
+-- 'Daemon' and 'Convert' operate purely on /standalone (exported) LSM
+-- snapshots/ and Mem snapshots; they never touch a live LSM database, and so
+-- carry the 'CardanoBlockArgs' needed to decode ledger states.
+--
+-- 'LsmExport' and 'LsmImport' operate directly on a (offline) LSM database; no
+-- ledger decoding is involved, hence no 'CardanoBlockArgs'.
+data Command
+  = Daemon DaemonOpts CardanoBlockArgs
+  | Convert ConvertOpts CardanoBlockArgs
+  | LsmExport LsmDbOpts
+  | LsmImport LsmDbOpts
 
-snapshot'ToSnapshot :: Snapshot' -> Snapshot
-snapshot'ToSnapshot (LSMSnapshot' s lsmfp) =
-  let (snapFp, snapName) = splitFileName s
-   in case snapshotFromPath snapName of
-        Just snap -> Snapshot (LSMSnapshot (SnapshotsDirectory snapFp) lsmfp) snap
-        Nothing -> error $ "Malformed input, last fragment of the input \"" <> s <> "\"is not a snapshot name"
-snapshot'ToSnapshot (StandaloneSnapshot' s fmt) =
-  let (snapFp, snapName) = splitFileName s
-   in case snapshotFromPath snapName of
-        Just snap -> Snapshot (StandaloneSnapshot (SnapshotsDirectory snapFp) fmt) snap
-        Nothing -> error $ "Malformed input, last fragment of the input \"" <> s <> "\"is not a snapshot name"
+-- | Options for the daemon: watch a directory for completed snapshots and
+-- convert each exported LSM snapshot into a Mem snapshot.
+data DaemonOpts = DaemonOpts
+  { daemonMonitorMetaDir :: FilePath
+  -- ^ The directory holding the @state@/@meta@ files of the snapshots produced
+  -- by the node (watched for completed snapshots).
+  , daemonLsmSnapshotsExportDir :: FilePath
+  -- ^ The directory into which the node exports its LSM snapshots. The exported
+  -- snapshot for a snapshot named @N@ is expected at @<this>/N@.
+  , daemonMemSnapshotDir :: FilePath
+  -- ^ The directory into which to write the converted Mem snapshots.
+  }
+
+-- | Options for a one-shot conversion between an exported LSM snapshot and a Mem
+-- snapshot (in either direction).
+data ConvertOpts = ConvertOpts
+  { convertSnapshotInDir :: FilePath
+  -- ^ The input snapshot (a directory named after the slot, holding at least the
+  -- @state@/@meta@ files).
+  , convertImportInDir :: Maybe FilePath
+  -- ^ If set, the input is an exported LSM snapshot whose tables live at
+  -- @<this>/<input snapshot name>@; otherwise the input is a Mem snapshot.
+  , convertSnapshotOutDir :: FilePath
+  -- ^ The output snapshot (a directory named after the slot).
+  , convertExportOutDir :: Maybe FilePath
+  -- ^ If set, the output is an exported LSM snapshot whose tables are written to
+  -- @<this>/<output snapshot name>@; otherwise the output is a Mem snapshot.
+  }
+
+-- | Options for the @lsm export@/@lsm import@ commands.
+data LsmDbOpts = LsmDbOpts
+  { lsmDbDir :: FilePath
+  -- ^ The LSM database (session) directory.
+  , lsmRootDir :: FilePath
+  -- ^ The export-to (for @export@) or import-from (for @import@) root directory.
+  -- The exported snapshot named @N@ lives at @<this>/N@.
+  , lsmSnapName :: String
+  -- ^ The snapshot name, e.g. @163470034@ or @163470034_my-suffix@.
+  }
 
 main :: IO ()
 main = withStdTerminalHandles $ do
   cryptoInit
-  (conf, args) <- getCommandLineConfig
+  cmd <- execParser opts
+  case cmd of
+    Daemon o args -> runDaemon o args
+    Convert o args -> runConvert o args
+    LsmExport o -> runLsmDb o lsmDbExportSnapshot
+    LsmImport o -> runLsmDb o lsmDbImportSnapshot
+
+{-------------------------------------------------------------------------------
+  Running the commands
+-------------------------------------------------------------------------------}
+
+runConvert :: ConvertOpts -> CardanoBlockArgs -> IO ()
+runConvert o args = do
   pInfo <- mkProtocolInfo args
-  case conf of
-    NoDaemonConfig (snapshot'ToSnapshot -> f) (snapshot'ToSnapshot -> t) -> do
-      eRes <- runExceptT (convertSnapshot True pInfo f t)
-      case eRes of
-        Left err -> do
-          putStrLn $ show err
-          exitFailure
-        Right () -> exitSuccess
-    DaemonConfig from@(getSnapshotDir . snapshotDirectory -> ledgerDbPath) to -> do
-      withManager $ \manager -> do
-        putStrLn $ "Watching " <> show ledgerDbPath
-        void $
-          watchTree
-            manager
-            ledgerDbPath
-            ( \case
-                CloseWrite ep _ IsFile -> "meta" `L.isSuffixOf` ep
-                _ -> False
-            )
-            ( \case
-                CloseWrite ep _ IsFile -> do
-                  case reverse $ splitDirectories ep of
-                    (_ : snapName@(snapshotFromPath -> Just ds) : _) -> do
-                      putStrLn $ "Converting snapshot " <> ep <> " to " <> (getSnapshotDir to </> snapName)
-                      res <-
-                        runExceptT $
-                          convertSnapshot
-                            False
-                            pInfo
-                            (Snapshot from ds)
-                            (Snapshot (StandaloneSnapshot to Mem) ds)
-                      case res of
-                        Left err ->
-                          putStrLn $ show err
-                        Right () ->
-                          putStrLn "Done"
-                    _ -> pure ()
+  from <- mkSnapshot (convertSnapshotInDir o) (convertImportInDir o)
+  to <- mkSnapshot (convertSnapshotOutDir o) (convertExportOutDir o)
+  eRes <- runExceptT (convertSnapshot True pInfo from to)
+  case eRes of
+    Left err -> putStrLn (show err) >> exitFailure
+    Right () -> exitSuccess
+
+runDaemon :: DaemonOpts -> CardanoBlockArgs -> IO ()
+runDaemon o args = do
+  pInfo <- mkProtocolInfo args
+  let monitorDir = daemonMonitorMetaDir o
+  withManager $ \manager -> do
+    putStrLn $ "Watching " <> show monitorDir
+    void $
+      watchTree
+        manager
+        monitorDir
+        ( \case
+            CloseWrite ep _ IsFile -> "meta" `L.isSuffixOf` ep
+            _ -> False
+        )
+        ( \case
+            CloseWrite ep _ IsFile ->
+              case reverse $ splitDirectories ep of
+                (_ : name@(snapshotFromPath -> Just ds) : _) -> do
+                  let exportedDir = daemonLsmSnapshotsExportDir o </> name
+                      from =
+                        Snapshot
+                          ( ExportedLSMSnapshot
+                              (SnapshotsDirectory monitorDir)
+                              (ExportedSnapshotPath exportedDir)
+                          )
+                          ds
+                      to =
+                        Snapshot
+                          (StandaloneSnapshot (SnapshotsDirectory (daemonMemSnapshotDir o)) Mem)
+                          ds
+                  putStrLn $
+                    "Converting snapshot " <> ep <> " to " <> (daemonMemSnapshotDir o </> name)
+                  res <- runExceptT (convertSnapshot False pInfo from to)
+                  case res of
+                    Left err -> putStrLn $ show err
+                    Right () -> putStrLn "Done"
                 _ -> pure ()
-            )
-        forever $ threadDelay 1000000
+            _ -> pure ()
+        )
+    forever $ threadDelay 1000000
+
+-- | Validate the snapshot name and run an LSM database operation (export or
+-- import) on the snapshot directory @<root>/<name>@, reporting the result.
+runLsmDb :: LsmDbOpts -> (FilePath -> String -> FilePath -> IO ()) -> IO ()
+runLsmDb o op = do
+  void $ requireSnapshotName name
+  res <- try $ op (lsmDbDir o) name (lsmRootDir o </> name)
+  case res of
+    Left (e :: SomeException) -> putStrLn (displayException e) >> exitFailure
+    Right () -> putStrLn "Done" >> exitSuccess
+ where
+  name = lsmSnapName o
+
+-- | Parse a snapshot name, exiting with a helpful message if it is malformed.
+requireSnapshotName :: String -> IO DiskSnapshot
+requireSnapshotName name =
+  case snapshotFromPath name of
+    Just ds -> pure ds
+    Nothing -> do
+      putStrLn $
+        "\""
+          <> name
+          <> "\" is not a valid snapshot name. It should be named after the slot"
+          <> " number of the contained state and an optional suffix, such as"
+          <> " `163470034` or `163470034_my-suffix`."
+      exitFailure
+
+-- | Interpret a snapshot path plus an optional exported-LSM root directory as a
+-- 'Snapshot'. When the root is given, the snapshot is an exported LSM snapshot
+-- whose tables live at @<root>/<snapshot name>@; otherwise it is a Mem snapshot.
+mkSnapshot :: FilePath -> Maybe FilePath -> IO Snapshot
+mkSnapshot snapPath mExportRoot = do
+  let (parent, name) = splitFileName snapPath
+  ds <- requireSnapshotName name
+  pure $
+    Snapshot
+      ( case mExportRoot of
+          Just root ->
+            ExportedLSMSnapshot
+              (SnapshotsDirectory parent)
+              (ExportedSnapshotPath (root </> name))
+          Nothing -> StandaloneSnapshot (SnapshotsDirectory parent) Mem
+      )
+      ds
 
 {-------------------------------------------------------------------------------
   Optparse-applicative
 -------------------------------------------------------------------------------}
 
-getCommandLineConfig :: IO (Config, CardanoBlockArgs)
-getCommandLineConfig =
-  execParser $
-    info
-      ( (,)
-          <$> parseConfig
-          <*> parseCardanoArgs <**> helper
-      )
-      ( fullDesc
-          <> header "Utility for converting snapshots among the different snapshot formats used by cardano-node."
-          <> progDescDoc programDescription
-      )
-
-parseConfig :: Parser Config
-parseConfig =
-  ( DaemonConfig
-      <$> ( LSMSnapshot
-              <$> (SnapshotsDirectory <$> strOption (long "monitor-lsm-snapshots-in"))
-              <*> (LSMDatabaseFilePath <$> strOption (long "lsm-database"))
+opts :: ParserInfo Command
+opts =
+  info
+    (commandParser <**> helper)
+    ( fullDesc
+        <> header
+          "Utility for managing and converting the ledger snapshots used by cardano-node."
+        <> progDesc
+          ( "Conversions operate on Mem snapshots and standalone (exported) LSM"
+              <> " snapshots, never on live LSM databases. Use the `lsm` commands to"
+              <> " export snapshots out of, or import snapshots into, an offline LSM"
+              <> " database."
           )
-      <*> (SnapshotsDirectory <$> strOption (long "output-mem-snapshots-in"))
-  )
-    <|> ( NoDaemonConfig
-            <$> ( ( LSMSnapshot'
-                      <$> (strOption (long "input-lsm-snapshot"))
-                      <*> (LSMDatabaseFilePath <$> strOption (long "input-lsm-database"))
-                  )
-                    <|> ( StandaloneSnapshot'
-                            <$> strOption (long "input-mem")
-                            <*> pure Mem
-                        )
-                )
-            <*> ( ( LSMSnapshot'
-                      <$> (strOption (long "output-lsm-snapshot"))
-                      <*> (LSMDatabaseFilePath <$> strOption (long "output-lsm-database"))
-                  )
-                    <|> ( StandaloneSnapshot'
-                            <$> strOption (long "output-mem")
-                            <*> pure Mem
-                        )
-                )
+    )
+
+commandParser :: Parser Command
+commandParser =
+  hsubparser
+    ( command
+        "daemon"
+        ( info
+            daemonCmd
+            ( progDesc $
+                "Watch a directory for completed snapshots and convert each exported"
+                  <> " LSM snapshot into a Mem snapshot as it is produced. Meaningful"
+                  <> " only for a node producing LSM snapshots."
+            )
         )
+        <> command
+          "convert"
+          ( info
+              convertCmd
+              ( progDesc $
+                  "Convert a single snapshot between an exported LSM snapshot and a Mem"
+                    <> " snapshot. The input/output paths must be named after the slot"
+                    <> " number of the contained state (e.g. `100` or `100_my-suffix`)."
+              )
+          )
+        <> command
+          "lsm"
+          ( info
+              lsmCmd
+              (progDesc "Export snapshots out of / import snapshots into an offline LSM database.")
+          )
+    )
 
-#if __GLASGOW_HASKELL__ >= 912
-programDescription :: Maybe Doc
-programDescription =
-  Just
-    """
-    # Running in oneshot mode
+daemonCmd :: Parser Command
+daemonCmd =
+  Daemon
+    <$> ( DaemonOpts
+            <$> strOption
+              ( long "monitor-snapshots-in"
+                  <> metavar "DIR"
+                  <> help "Directory with the node's snapshots (state/meta), watched for completion."
+              )
+            <*> strOption
+              ( long "lsm-exported-path"
+                  <> metavar "DIR"
+                  <> help "Directory into which the node exports its LSM snapshots."
+              )
+            <*> strOption
+              ( long "output-snapshots-in"
+                  <> metavar "DIR"
+                  <> help "Directory into which to write the converted Mem snapshots."
+              )
+        )
+    <*> parseCardanoArgs
 
-        `snapshot-converter` can be invoked to convert a single snapshot to a different
-        format. The two formats supported at the moment are: Mem and LSM.
+convertCmd :: Parser Command
+convertCmd =
+  Convert
+    <$> ( ConvertOpts
+            <$> strOption
+              ( long "snapshot-in"
+                  <> metavar "PATH"
+                  <> help "The input snapshot (directory named after the slot)."
+              )
+            <*> optional
+              ( strOption
+                  ( long "lsm-import-from"
+                      <> metavar "DIR"
+                      <> help "If set, the input is an exported LSM snapshot rooted here."
+                  )
+              )
+            <*> strOption
+              ( long "snapshot-out"
+                  <> metavar "PATH"
+                  <> help "The output snapshot (directory named after the slot)."
+              )
+            <*> optional
+              ( strOption
+                  ( long "lsm-export-to"
+                      <> metavar "DIR"
+                      <> help "If set, the output is an exported LSM snapshot rooted here."
+                  )
+              )
+        )
+    <*> parseCardanoArgs
 
-        As snapshots in Mem are fully contained in one directory, providing
-        that one is enough. On the other hand, converting an LSM snapshot requires a
-        reference to the snapshot directory as well as the LSM database directory.
+lsmCmd :: Parser Command
+lsmCmd =
+  hsubparser
+    ( command
+        "export"
+        ( info
+            ( LsmExport
+                <$> lsmDbOpts "lsm-export-to" "Root directory to export the snapshot into (as <DIR>/<snapshot>)."
+            )
+            (progDesc "Export a snapshot out of an offline LSM database into a standalone directory.")
+        )
+        <> command
+          "import"
+          ( info
+              ( LsmImport
+                  <$> lsmDbOpts "lsm-import-from" "Root directory holding the exported snapshot (at <DIR>/<snapshot>)."
+              )
+              ( progDesc
+                  "Import an exported snapshot into a new (offline) LSM database."
+              )
+          )
+    )
 
-        To run in oneshot mode, you have to provide input and output parameters as in:
-        ```
-        # mem to lsm
-        $ snapshot-converter --input-mem <PATH> --output-lsm-snapshot <PATH> --output-lsm-database <PATH> --config <PATH>
-
-        # lsm to mem
-        $ snapshot-converter --input-lsm-snapshot <PATH> --input-lsm-database <PATH> --output-mem <PATH> --config <PATH>
-        ```
-
-        Note that the input and output paths need to be named after the slot number
-        of the contained ledger state, this means for example that a snapshot for
-        slot 100 has to be contained in a directory `100[_suffix]` and has to be
-        written to a directory `100[_some_other_suffix]`. Providing a wrong slot
-        number will throw an error.
-
-        This naming convention is the same expected by `cardano-node`.
-
-    # Running in daemon mode
-
-        `snapshot-converter` can be invoked as a daemon to monitor and convert
-        snapshots produced by a `cardano-node` into Mem format as they are
-        written by the node. This is only meaningful to run if your node
-        produces LSM snapshots:
-        ```
-        # lsm to mem
-        $ snapshot-converter --monitor-lsm-snapshots-in <PATH> --lsm-database <PATH> --output-mem-snapshots-in <PATH> --config <PATH>
-        ```
-    """
-#else
-programDescription :: Maybe Doc
-programDescription =
-  Just
-   . pretty
-   . T.pack
-   $ unlines
-     [ "# Running in oneshot mode"
-     , ""
-     , "    `snapshot-converter` can be invoked to convert a single snapshot to a different"
-     , "    format. The two formats supported at the moment are: Mem and LSM."
-     , ""
-     , "    As snapshots in Mem are fully contained in one directory, providing"
-     , "    that one is enough. On the other hand, converting an LSM snapshot requires a"
-     , "    reference to the snapshot directory as well as the LSM database directory."
-     , ""
-     , "    To run in oneshot mode, you have to provide input and output parameters as in:"
-     , "    ```"
-     , "    # mem to lsm"
-     , "    $ snapshot-converter --input-mem <PATH> --output-lsm-snapshot <PATH> --output-lsm-database <PATH> --config <PATH>"
-     , ""
-     , "    # lsm to mem"
-     , "    $ snapshot-converter --input-lsm-snapshot <PATH> --input-lsm-database <PATH> --output-mem <PATH> --config <PATH>"
-     , "    ```"
-     , ""
-     , "    Note that the input and output paths need to be named after the slot number"
-     , "    of the contained ledger state, this means for example that a snapshot for"
-     , "    slot 100 has to be contained in a directory `100[_suffix]` and has to be"
-     , "    written to a directory `100[_some_other_suffix]`. Providing a wrong slot"
-     , "    number will throw an error."
-     , ""
-     , "    This naming convention is the same expected by `cardano-node`."
-     , ""
-     , "# Running in daemon mode"
-     , ""
-     , "    `snapshot-converter` can be invoked as a daemon to monitor and convert"
-     , "    snapshots produced by a `cardano-node` into Mem format as they are"
-     , "    written by the node. This is only meaningful to run if your node"
-     , "    produces LSM snapshots:"
-     , ""
-     , "    ```"
-     , "    # lsm to mem"
-     , "    $ snapshot-converter --monitor-lsm-snapshots-in <PATH> --lsm-database <PATH> --output-mem-snapshots-in <PATH> --config <PATH>"
-     , "    ```"
-     ]
-#endif
+lsmDbOpts :: String -> String -> Parser LsmDbOpts
+lsmDbOpts dirFlag dirHelp =
+  LsmDbOpts
+    <$> strOption
+      ( long "lsm-database"
+          <> metavar "DIR"
+          <> help "The LSM database (session) directory."
+      )
+    <*> strOption
+      ( long dirFlag
+          <> metavar "DIR"
+          <> help dirHelp
+      )
+    <*> strOption
+      ( long "snapshot"
+          <> metavar "NAME"
+          <> help "The snapshot name, e.g. 163470034 or 163470034_my-suffix."
+      )

@@ -179,6 +179,17 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
         initialNonce
         (cfgHardForkTriggers cc)
 
+  mkLSMConfig CardanoBlockArgs{configFile} = do
+    -- The export path is interpreted relative to the LedgerDB filesystem root,
+    -- not the config file, so we read the config without adjusting file paths.
+    cc :: CardanoConfig <-
+      either (error . show) return
+        =<< Aeson.eitherDecodeFileStrict' configFile
+    pure
+      LSMConfig
+        { lsmConfigExportPath = lsmLedgerDBExportPath cc
+        }
+
 -- | An empty Dijkstra genesis to be provided when none is specified in the config.
 emptyDijkstraGenesis :: SL.DijkstraGenesis
 emptyDijkstraGenesis =
@@ -210,6 +221,10 @@ data CardanoConfig = CardanoConfig
   -- ^ @DijkstraGenesisFile@ field
   , cfgHardForkTriggers :: CardanoHardForkTriggers
   -- ^ @Test*HardForkAtEpoch@ for each Shelley era
+  , lsmLedgerDBExportPath :: Maybe FilePath
+  -- ^ @LedgerDB.LSMExportPath@ field: the directory (relative to the LSM-trees
+  -- LedgerDB filesystem root) into which the LSM backend exports snapshots as it
+  -- takes them. Only meaningful for the LSM backend.
   }
 
 instance AdjustFilePaths CardanoConfig where
@@ -252,6 +267,13 @@ instance Aeson.FromJSON CardanoConfig where
 
     dijkstraGenesisPath <- v Aeson..:? "DijkstraGenesisFile"
 
+    -- The LSM settings live in the @LedgerDB@ object (the rest of which is
+    -- parsed by the node, not here). @LSMExportPath@ is a directory path.
+    lsmLedgerDBExportPath <-
+      v Aeson..:? "LedgerDB" >>= \case
+        Nothing -> pure Nothing
+        Just ledgerDB -> ledgerDB Aeson..:? "LSMExportPath"
+
     triggers <- do
       let parseTrigger ::
             forall blk era.
@@ -290,6 +312,7 @@ instance Aeson.FromJSON CardanoConfig where
         , conwayGenesisPath = conwayGenesisPath
         , dijkstraGenesisPath = dijkstraGenesisPath
         , cfgHardForkTriggers = CardanoHardForkTriggers triggers
+        , lsmLedgerDBExportPath = lsmLedgerDBExportPath
         }
 
 instance HasAnalysis (CardanoBlock StandardCrypto) where
