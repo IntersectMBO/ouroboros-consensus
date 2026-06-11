@@ -99,6 +99,7 @@ import Ouroboros.Consensus.Ledger.Extended
   ( ExtLedgerState
   , ExtValidationError
   )
+import Ouroboros.Consensus.Peras.Cert.Inclusion (PerasCertInclusionViewHandle)
 import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Peras.Time (TimeResolutionContextHandle)
 import Ouroboros.Consensus.Peras.Voting.View (PerasVotingViewHandle (..))
@@ -483,6 +484,8 @@ data ChainDB m blk = ChainDB
   -- NOTE: This needs to be part of the API because the implementation of the ChainDB
   -- has access, during initialization, to the 'TopLevelConfig', but it isn't
   -- stored/exposed by the API itself.
+  , getPerasCertInclusionViewHandle ::
+      PerasCertInclusionViewHandle m blk
   , getTimeResolutionContextHandle ::
       TimeResolutionContextHandle m blk
   , getPerasEpochContextResolverHandle ::

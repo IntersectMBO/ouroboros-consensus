@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Node.Tracers
     -- * Specific tracers
   , TraceForgeEvent (..)
   , TraceLabelCreds (..)
+  , TracePerasCertInclusionEvent (..)
   ) where
 
 import Control.Exception (SomeException)
@@ -47,6 +48,9 @@ import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote
 import Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
+import Ouroboros.Consensus.Peras.Cert.Inclusion.Trace
+  ( TracePerasCertInclusionEvent (..)
+  )
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace (..)
   )
@@ -89,6 +93,8 @@ data Tracers' remotePeer localPeer blk f = Tracers
       f (TraceLabelPeer remotePeer (TracePerasVoteDiffusionInbound blk))
   , perasVoteDiffusionOutboundTracer ::
       f (TraceLabelPeer remotePeer (TracePerasVoteDiffusionOutbound blk))
+  , perasCertInclusionTracer ::
+      f (TracePerasCertInclusionEvent blk)
   , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
   , blockchainTimeTracer :: f (TraceBlockchainTimeEvent UTCTime)
   , forgeStateInfoTracer :: f (TraceLabelCreds (ForgeStateInfo blk))
@@ -125,6 +131,7 @@ instance
       , perasCertDiffusionOutboundTracer = f perasCertDiffusionOutboundTracer
       , perasVoteDiffusionInboundTracer = f perasVoteDiffusionInboundTracer
       , perasVoteDiffusionOutboundTracer = f perasVoteDiffusionOutboundTracer
+      , perasCertInclusionTracer = f perasCertInclusionTracer
       , forgeTracer = f forgeTracer
       , blockchainTimeTracer = f blockchainTimeTracer
       , forgeStateInfoTracer = f forgeStateInfoTracer
@@ -166,6 +173,7 @@ nullTracers =
     , perasCertDiffusionOutboundTracer = nullTracer
     , perasVoteDiffusionInboundTracer = nullTracer
     , perasVoteDiffusionOutboundTracer = nullTracer
+    , perasCertInclusionTracer = nullTracer
     , forgeTracer = nullTracer
     , blockchainTimeTracer = nullTracer
     , forgeStateInfoTracer = nullTracer
@@ -218,6 +226,7 @@ showTracers tr =
     , perasCertDiffusionOutboundTracer = show >$< tr
     , perasVoteDiffusionInboundTracer = show >$< tr
     , perasVoteDiffusionOutboundTracer = show >$< tr
+    , perasCertInclusionTracer = show >$< tr
     , forgeTracer = show >$< tr
     , blockchainTimeTracer = show >$< tr
     , forgeStateInfoTracer = show >$< tr

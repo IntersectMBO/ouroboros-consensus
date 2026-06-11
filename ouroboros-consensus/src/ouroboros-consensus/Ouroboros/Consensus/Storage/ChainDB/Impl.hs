@@ -60,6 +60,7 @@ import Ouroboros.Consensus.Ledger.Extended (ledgerState, mkPerasEpochContextReso
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Cert.Inclusion (PerasCertInclusionViewHandle (..))
 import Ouroboros.Consensus.Peras.Context
   ( LedgerStateHeaderStateSupportsPerasVoting
   , PerasEpochContextResolverHandle (PerasEpochContextResolverHandle)
@@ -334,6 +335,11 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                   getEnvSTM
                     h
                     (Query.getPerasVotingView (topLevelConfigLedger $ Args.cdbsTopLevelConfig cdbSpecificArgs) roundNo)
+            , getPerasCertInclusionViewHandle =
+                PerasCertInclusionViewHandle $ \roundNo ->
+                  getEnvSTM
+                    h
+                    (Query.getPerasCertInclusionView roundNo)
             , getPerasEpochContextResolverHandle =
                 PerasEpochContextResolverHandle $
                   getEnvSTM h Query.getPerasEpochContextResolver
