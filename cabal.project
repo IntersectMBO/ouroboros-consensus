@@ -44,7 +44,7 @@ if os (windows)
   constraints:
     bitvec -simd
 
--- Points to ouroboros-network/leios-prototype-remake
+-- Points to ouroboros-network/leios-prototype
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
@@ -55,12 +55,12 @@ source-repository-package
     cardano-diffusion
     network-mux
 
-
 -- Points to ouroboros-ledger/leios-prototype
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
   tag: 4bf2edca4ccbf18d4e2574b1544a2cf7ffc992eb
+  --sha256: sha256-rFFN26bjo0Wji9htl5Bj5Et7m3FsREv72vdP91fo8+o=
   subdir:
     libs/cardano-ledger-core
     eras/dijkstra/impl
