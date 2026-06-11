@@ -6,6 +6,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.NodeKernel
   ( -- * Node kernel
@@ -22,7 +23,7 @@ module Ouroboros.Consensus.NodeKernel
   , toConsensusMode
   ) where
 
-import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+import Cardano.Base.FeatureFlags (CardanoFeatureFlag (..))
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Cardano.Network.NodeToNode
@@ -52,7 +53,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
 import Data.Proxy
-import Data.Set (Set)
+import Data.Set (Set, member)
 import qualified Data.Text as Text
 import Data.Void (Void)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -61,6 +62,7 @@ import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -90,8 +92,18 @@ import Ouroboros.Consensus.Node.Genesis
   , LoEAndGDDNodeKernelArgs (..)
   , setGetLoEFragment
   )
+import Ouroboros.Consensus.Committee.Crypto (PrivateKey)
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
+import qualified Ouroboros.Consensus.Peras.Time as Time
+import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting, forgePerasVoteIfEligibleInContext)
+import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
+import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe (unsafePerasBLSPrivateKeyFromEnv, unsafePerasPoolIdFromEnv)
+import Ouroboros.Consensus.Peras.Voting.Trace (TracePerasVotingEvent (..))
+import Ouroboros.Consensus.Peras.Voting.Rules
+  ( PerasVotingRulesDecision (..)
+  , isPerasVotingAllowedInContext
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockResult (..)
@@ -253,11 +265,13 @@ initNodeKernel
   args@NodeKernelArgs
     { registry
     , cfg
+    , featureFlags
     , tracers
     , chainDB
     , initChainDB
     , blockFetchConfiguration
     , btime
+    , systemTime
     , gsmArgs
     , peerSharingRng
     , txSubmissionRng
@@ -397,6 +411,11 @@ initNodeKernel
           txChannelsVar
           sharedTxStateVar
 
+    when (PerasFlag `member` featureFlags) $ void $
+      forkLinkedWatcher registry "NodeKernel.voteMinting" $
+        knownSlotWatcher btime $
+          \currentSlot -> withEarlyExit_ $ voteMintingController systemTime st currentSlot
+
     return
       NodeKernel
         { getChainDB = chainDB
@@ -432,6 +451,70 @@ initNodeKernel
         traverse_ cancelThread forgingThreads
         blockForging' <- traverse (forkBlockForging st) blockForging
         go blockForging'
+
+voteMintingController ::
+  forall m remotePeer localPeer blk.
+  ( IOLike m
+  , HasHardForkHistory blk, BlockSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , PrivateKey (PerasCrypto blk) ~ BLS.PerasPrivateKey
+  ) =>
+  SystemTime m ->
+  InternalState m remotePeer localPeer blk ->
+  SlotNo ->
+  WithEarlyExit m ()
+voteMintingController systemTime IS{chainDB, tracers} slotNo = do
+  roundInfo <- lift $ atomically $ Time.resolveSlotToPerasRoundInfoWithHandle
+    (ChainDB.getTimeResolutionContextHandle chainDB)
+    slotNo
+  let roundNo = Time.stpriPerasRoundNo roundInfo
+  when (not $ Time.stpriIsFirstSlotOfPerasRound roundInfo) $ do
+    trace $ TraceNoVoteAfterFirstSlotInRound roundNo (Time.stpriSlotsSpentInPerasRound roundInfo)
+    exitEarly
+
+  -- Do the voting rules state that we should vote?
+  votingDecision <- lift $ atomically $ isPerasVotingAllowedInContext
+    (ChainDB.getPerasVotingViewHandle chainDB)
+    roundNo
+  trace $ TraceVotingRuleEvent votingDecision
+  candidateBlock <- case votingDecision of
+    NoVote _ -> exitEarly
+    Vote _ point -> pure point
+
+  poolId <- case unsafePerasPoolIdFromEnv of
+    Left err -> do
+      trace $ TraceCantReadEnv err
+      exitEarly
+    Right poolId -> pure poolId
+
+  privateKey <- case unsafePerasBLSPrivateKeyFromEnv of
+    Left err -> do
+      trace $ TraceCantReadEnv err
+      exitEarly
+    Right privateKey -> pure privateKey
+
+  (now :: RelativeTime) <- lift $ systemTimeCurrent systemTime
+  (voteM :: Maybe (ValidatedPerasVote blk)) <- lift $ atomically $ forgePerasVoteIfEligibleInContext
+    (ChainDB.getPerasEpochContextResolverHandle chainDB)
+    poolId
+    privateKey
+    roundNo
+    candidateBlock
+
+  vote <- case voteM of
+    Nothing -> do
+      trace $ TraceNotElectedInRound roundNo
+      exitEarly
+    Just vote -> pure $ WithArrivalTime now vote
+
+  -- Add vote to DB
+  -- TODO: process new return types, possibly log, once the following is merged:
+  -- https://github.com/IntersectMBO/ouroboros-consensus/pull/2029
+  lift $ ChainDB.addPerasVoteSync chainDB vote
+
+  where
+    trace :: TracePerasVotingEvent blk -> WithEarlyExit m ()
+    trace = lift . traceWith (perasVotingLogicTracer tracers)
 
 castTraceFetchDecision ::
   forall remotePeer blk.
