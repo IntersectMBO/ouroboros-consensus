@@ -16,8 +16,9 @@ maintainer: operations@iohk.io
 category: Network
 build-type: Simple
 data-files:
+  cardano-blueprint/src/codecs/base.cddl
+  cardano-blueprint/src/network/node-to-node/leios-notify/messages.cddl
   ouroboros-consensus-cardano/cddl/**/*.cddl
-  ouroboros-consensus-cardano/cddl/base.cddl
 
 extra-doc-files:
   docs/haddocks/*.svg
@@ -109,6 +110,7 @@ library
     LeiosDemoTypes
     LeiosStagingArea
     LeiosVoteState
+    LeiosVoting
     Ouroboros.Consensus.Block
     Ouroboros.Consensus.Block.Abstract
     Ouroboros.Consensus.Block.EBB
@@ -154,6 +156,7 @@ library
     Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams
     Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection
     Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
+    Ouroboros.Consensus.HardFork.Combinator.Leios
     Ouroboros.Consensus.HardFork.Combinator.Lifting
     Ouroboros.Consensus.HardFork.Combinator.Mempool
     Ouroboros.Consensus.HardFork.Combinator.NetworkVersion
@@ -1742,6 +1745,7 @@ test-suite cardano-test
     base,
     base16-bytestring,
     bytestring,
+    cardano-crypto-class,
     cardano-ledger-allegra:testlib,
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
     cardano-ledger-api,

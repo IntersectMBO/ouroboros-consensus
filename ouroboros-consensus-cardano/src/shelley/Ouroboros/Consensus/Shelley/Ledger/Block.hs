@@ -71,6 +71,9 @@ import Ouroboros.Consensus.HardFork.Combinator
   )
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Protocol.Abstract
+  ( ChainDepState
+  , TiebreakerView
+  )
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosTiebreakerView
   )

@@ -36,6 +36,7 @@ import LeiosDemoDb
 import LeiosDemoTypes
   ( EbAnnouncement (..)
   , ForgedLeiosEb (..)
+  , LeiosCertificate (..)
   , LeiosPoint (..)
   , TraceLeiosKernel (..)
   , forgeLeiosEb
@@ -173,10 +174,12 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                       MkTraceLeiosKernel $
                         "EB downloaded but no certificate: " <> show ebPoint
                     pure SNothing
-                  Just _ -> do
+                  Just cert -> do
                     traceWith fbLeiosTracer $
-                      MkTraceLeiosKernel $
-                        "Certifying EB at " <> show ebPoint
+                      TraceLeiosBlockCertified
+                        { atSlot = fbCurrentSlotNo
+                        , certifiedPoint = cert.leiosCertificateEbPoint
+                        }
                     pure (SJust LeiosCert)
 
   -- Produce an EB from fbEbTxs, store it into fbLeiosDb, and return the

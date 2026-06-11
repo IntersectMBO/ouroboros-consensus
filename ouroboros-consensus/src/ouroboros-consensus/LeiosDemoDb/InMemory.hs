@@ -29,6 +29,8 @@ import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import LeiosDemoDb.Common
   ( CompletedEbs
   , LeiosDbConnection (..)
@@ -60,12 +62,19 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- ^ Announced EB points with their expected sizes
   , imEbBodies :: !(Map EbHash (IntMap {- txOffset -} EbTxEntry))
   , imEbSlots :: !(Map EbHash SlotNo)
+  , imAnnouncedCompletedEbs :: !(Set EbHash)
+  -- ^ EBs for which we have already broadcast an 'AcquiredEbTxs'
+  -- notification. The completion predicate stays true once an EB is
+  -- complete, so any later batch containing one of its txs would
+  -- re-trigger it without this guard; downstream consumers
+  -- (e.g. 'runLeiosVoting') treat the re-notification as fatal
+  -- ('AlreadyKnown' from 'addVote').
   }
   deriving stock Generic
   deriving anyclass NoThunks
 
 emptyInMemoryLeiosDb :: InMemoryLeiosDb
-emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty
+emptyInMemoryLeiosDb = InMemoryLeiosDb mempty mempty mempty mempty mempty
 
 -- | EB transaction entry (references txs by hash, no bytes stored here)
 data EbTxEntry = EbTxEntry
@@ -193,13 +202,27 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
         then s
         else s{imTxs = Map.insert txHash (txBytes, txBytesSize) (imTxs s)}
   state <- readTVar stateVar
-  let completed =
+  -- Candidates are EBs whose completion predicate currently holds and
+  -- which reference at least one of the txs in this batch. We then
+  -- drop any candidate already announced; the predicate stays true
+  -- forever once an EB completes, so without this guard any later
+  -- batch with one of its txs would re-trigger 'AcquiredEbTxs'.
+  let candidates =
         [ MkLeiosPoint slot ebHash
         | (ebHash, entries) <- Map.toList (imEbBodies state)
         , any (\e -> eteTxHash e `elem` insertedTxHashes) (IntMap.elems entries)
         , all (\e -> Map.member (eteTxHash e) (imTxs state)) (IntMap.elems entries)
         , slot <- maybeToList $ Map.lookup ebHash (imEbSlots state)
         ]
+      completed =
+        filter
+          (\p -> not (Set.member (pointEbHash p) (imAnnouncedCompletedEbs state)))
+          candidates
+  modifyTVar stateVar $ \s ->
+    s
+      { imAnnouncedCompletedEbs =
+          foldr (Set.insert . pointEbHash) (imAnnouncedCompletedEbs s) completed
+      }
   forM_ completed $ writeTChan notificationChan . AcquiredEbTxs
   pure completed
 

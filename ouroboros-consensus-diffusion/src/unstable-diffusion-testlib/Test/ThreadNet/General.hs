@@ -63,7 +63,6 @@ import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Consensus.Protocol.LeaderSchedule
 import Ouroboros.Consensus.Protocol.Praos.AgentClient (MonadKESAgent)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
@@ -227,7 +226,6 @@ runTestNetwork ::
   , TxGen blk
   , TracingConstraints blk
   , HasCallStack
-  , ResolveLeiosBlock blk
   ) =>
   TestConfig ->
   TestConfigB blk ->

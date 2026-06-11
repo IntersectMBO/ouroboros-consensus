@@ -345,7 +345,6 @@ runThreadNetwork ::
   , TxGen blk
   , TracingConstraints blk
   , HasCallStack
-  , ResolveLeiosBlock blk
   ) =>
   Tracer m (TraceThreadNet blk) ->
   SystemTime m ->

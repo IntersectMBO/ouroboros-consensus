@@ -44,6 +44,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Ledger as X
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams as X ()
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection as X ()
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.Query as X
+import Ouroboros.Consensus.HardFork.Combinator.Leios as X ()
 import Ouroboros.Consensus.HardFork.Combinator.Mempool as X
 import Ouroboros.Consensus.HardFork.Combinator.Node as X ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining as X ()

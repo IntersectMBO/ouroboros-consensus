@@ -9,6 +9,7 @@
     allow-import-from-derivation = true;
   };
   inputs = {
+    self.submodules = true;
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     haskellNix = {

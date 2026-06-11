@@ -17,16 +17,33 @@
 
 module LeiosDemoTypes (module LeiosDemoTypes) where
 
-import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR, enforceSize, serialize', toCBOR)
+import Cardano.Binary
+  ( Decoder
+  , Encoding
+  , FromCBOR (fromCBOR)
+  , ToCBOR
+  , enforceSize
+  , serialize'
+  , toCBOR
+  , toStrictByteString
+  )
+import qualified Cardano.Binary as CBOR
+import Cardano.Crypto.DSIGN
+  ( SigDSIGN
+  , SignKeyDSIGN
+  , VerKeyDSIGN
+  , decodeSigDSIGN
+  , encodeSigDSIGN
+  , signDSIGN
+  , verifyDSIGN
+  )
+import Cardano.Crypto.DSIGN.BLS12381 (BLS12381MinSigDSIGN, BLS12381SignContext (..))
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
 import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
 import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
-import Codec.CBOR.Decoding (Decoder)
-import qualified Codec.CBOR.Decoding as CBOR
-import Codec.CBOR.Encoding (Encoding)
-import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise, decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
@@ -39,8 +56,11 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
+import Data.Fixed (Pico)
+import Data.Function (on)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
+import Data.List (findIndex, nubBy, sortOn)
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Sequence (Seq)
@@ -113,6 +133,13 @@ instance ShowProxy LeiosPoint where showProxy _ = "LeiosPoint"
 -- TODO: prettyprinter instance Pretty?
 instance Show LeiosPoint where
   show = prettyLeiosPoint
+
+instance SignableRepresentation LeiosPoint where
+  getSignableRepresentation point =
+    toStrictByteString $
+      -- REVIEW: Flat concatenation expected as what is signed?
+      encode point.pointSlotNo
+        <> encodeEbHash point.pointEbHash
 
 prettyLeiosPoint :: LeiosPoint -> String
 prettyLeiosPoint (MkLeiosPoint (SlotNo slotNo) (MkEbHash bytes)) =
@@ -494,55 +521,51 @@ decodeLeiosEb = do
 
 -- * Voting
 
+-- | Leios uses BLS as a signature scheme. NOTE: We cannot use the
+-- cardano-ledger KeyRole infrastructure as this is fixed to use Ed25519DSIGN.
+type LeiosDSIGN = BLS12381MinSigDSIGN
+
+type LeiosSigningKey = SignKeyDSIGN LeiosDSIGN
+
+type LeiosVerificationKey = VerKeyDSIGN LeiosDSIGN
+
+type LeiosSignature = SigDSIGN LeiosDSIGN
+
+-- TODO: Seems not to be exposed, but will move into the DSIGN instance anyways
+minSigPoPDST :: BLS12381SignContext
+minSigPoPDST = BLS12381SignContext (Just "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_") Nothing
+
+-- ** Committee
+
 -- | A selected committee in which each 'VoterId' has a 'Weight'.
-data Committee
+newtype Committee = UnsafeCommittee {voters :: [(Weight, LeiosVerificationKey)]}
+  deriving Show
 
--- | A vote in the Leios protocol.
-data LeiosVote = MkLeiosVote
-  { point :: LeiosPoint
-  -- ^ Point that gets signed. The slot also identifies the voting round.
-  , voterId :: VoterId
-  -- ^ Identity within a 'Committee' who signed this vote.
-  , voteSignature :: VoteSignature
-  -- ^ The cryptographic signature of the vote.
-  }
-  deriving (Generic, Eq, Ord, Show)
+-- | Create a 'Committee' from a mapping of verification keys and some
+-- associated weight. Duplicate entries by verification key are ignored. The
+-- final 'Weight' in the committee is normalized by the total of the input map.
+-- TODO: The total can only be calculated here in "everyone votes" scheme.
+mkCommitteeEveryoneVotes :: Real w => [(LeiosVerificationKey, w)] -> Committee
+mkCommitteeEveryoneVotes inputs =
+  UnsafeCommittee
+    . sortOn fst
+    $ [ (toRational weight / totalWeight, vk)
+      | (vk, weight) <- nubBy ((==) `on` fst) inputs
+      ]
+ where
+  totalWeight = toRational . sum $ snd <$> inputs
 
-instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
+-- | Resolve a 'VoterId' to its corresponding 'VotingKey' in the 'Committee'.
+resolveVoterId :: Committee -> VoterId -> Maybe (Weight, LeiosVerificationKey)
+resolveVoterId committee (MkVoterId idx)
+  | i >= 0 && i < length voters = Just $ voters !! i
+  | otherwise = Nothing
+ where
+  i = fromIntegral idx
 
--- | Encode a 'LeiosVote' into CBOR.
--- NOTE: Encodes points flat into the vote for smaller votes.
-encodeLeiosVote :: LeiosVote -> Encoding
-encodeLeiosVote MkLeiosVote{point, voterId, voteSignature} =
-  CBOR.encodeListLen 4
-    <> encode point.pointSlotNo
-    <> encodeEbHash point.pointEbHash
-    <> encodeVoterId voterId
-    <> CBOR.encodeBool voteSignature -- FIXME: encode bytes
+  voters = committee.voters
 
--- | Dedoe a 'LeiosVote' from CBOR.
-decodeLeiosVote :: Decoder s LeiosVote
-decodeLeiosVote = do
-  enforceSize (fromString "LeiosVote") 4
-  pointSlotNo <- decode
-  pointEbHash <- decodeEbHash
-  voterId <- decodeVoterId
-  voteSignature <- CBOR.decodeBool -- FIXME: decode bytes
-  pure
-    MkLeiosVote
-      { point = MkLeiosPoint{pointSlotNo, pointEbHash}
-      , voterId
-      , voteSignature
-      }
-
-voteToObject :: LeiosVote -> Aeson.Object
-voteToObject MkLeiosVote{point, voterId, voteSignature} =
-  mconcat
-    [ "slot" .= point.pointSlotNo
-    , "ebHash" .= prettyEbHash point.pointEbHash
-    , "voterId" .= voterId.voterIndex
-    , "voteSignature" .= voteSignature
-    ]
+-- ** VoterId
 
 -- | Voter in a committee, identified by their seat index.
 newtype VoterId = MkVoterId {voterIndex :: Word16}
@@ -554,18 +577,87 @@ encodeVoterId (MkVoterId idx) = CBOR.encodeWord16 idx
 decodeVoterId :: Decoder s VoterId
 decodeVoterId = MkVoterId <$> CBOR.decodeWord16
 
--- FIXME: proper signing of votes using BLS (SigDSIGN BLS12381MinSigDSIGN)
-type VoteSignature = Bool
+-- | Determine the 'VoterId' on a 'Committee'.
+getVoterId :: LeiosVerificationKey -> Committee -> Maybe VoterId
+getVoterId vk committee =
+  MkVoterId . fromIntegral <$> findIndex ((== vk) . snd) committee.voters
+
+-- ** Vote
+
+-- | A vote in the Leios protocol.
+data LeiosVote = MkLeiosVote
+  { point :: LeiosPoint
+  -- ^ Point that gets signed. The slot also identifies the voting round.
+  , voterId :: VoterId
+  -- ^ Identity within a 'Committee' who signed this vote.
+  , voteSignature :: LeiosSignature
+  -- ^ The cryptographic signature of the vote.
+  }
+  deriving (Generic, Eq, Show)
+
+instance Ord LeiosVote where
+  compare v1 v2 =
+    compare v1.point v2.point
+      <> compare v1.voterId v2.voterId
+
+instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
+
+-- | Encode a 'LeiosVote' into CBOR.
+-- NOTE: Encodes points flat into the vote for smaller votes.
+encodeLeiosVote :: LeiosVote -> Encoding
+encodeLeiosVote MkLeiosVote{point, voterId, voteSignature} =
+  CBOR.encodeListLen 4
+    <> encode point.pointSlotNo
+    <> encodeEbHash point.pointEbHash
+    <> encodeVoterId voterId
+    <> encodeSigDSIGN voteSignature
+
+-- | Dedoe a 'LeiosVote' from CBOR.
+decodeLeiosVote :: Decoder s LeiosVote
+decodeLeiosVote = do
+  enforceSize (fromString "LeiosVote") 4
+  pointSlotNo <- decode
+  pointEbHash <- decodeEbHash
+  voterId <- decodeVoterId
+  voteSignature <- decodeSigDSIGN
+  pure
+    MkLeiosVote
+      { point = MkLeiosPoint{pointSlotNo, pointEbHash}
+      , voterId
+      , voteSignature
+      }
+
+voteToObject :: LeiosVote -> Aeson.Object
+voteToObject MkLeiosVote{point, voterId} =
+  mconcat
+    [ "slot" .= point.pointSlotNo
+    , "ebHash" .= prettyEbHash point.pointEbHash
+    , "voterId" .= voterId.voterIndex
+    ]
+
+-- | Create a vote for given 'LeiosPoint' and signing key.
+signLeiosVote :: LeiosSigningKey -> VoterId -> LeiosPoint -> LeiosVote
+signLeiosVote sk voterId point =
+  MkLeiosVote
+    { point
+    , voterId
+    , voteSignature = signDSIGN minSigPoPDST point sk
+    }
 
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
 validateLeiosVote :: Committee -> LeiosVote -> Either VoteInvalid Weight
-validateLeiosVote _ MkLeiosVote{voteSignature} =
-  -- FIXME: proper signing of votes
-  if not voteSignature
-    then Left InvalidSignature
-    else Right 1 -- FIXME: proper weights
+validateLeiosVote committee MkLeiosVote{point, voterId, voteSignature} =
+  case resolveVoterId committee voterId of
+    Nothing -> Left SignerNotInCommittee
+    Just (weight, vk) ->
+      case verifyDSIGN minSigPoPDST vk point voteSignature of
+        Left _ -> Left InvalidSignature
+        Right () -> Right weight
 
-data VoteInvalid = InvalidSignature
+data VoteInvalid
+  = InvalidSignature
+  | SignerNotInCommittee
+  deriving (Eq, Show)
 
 type Weight = Rational
 
@@ -656,7 +748,11 @@ data TraceLeiosKernel
       , mempoolRestMeasure :: m
       }
   | TraceLeiosBlockStored {slot :: SlotNo, eb :: LeiosEb}
-  | TraceLeiosVoted {vote :: LeiosVote}
+  | -- NOTE: We avoid 'Header blk' or 'Point blk' here and a slot should be
+    -- sufficient because it the certying block must be directly succeeding the
+    -- forging/announcing anyways.
+    TraceLeiosBlockCertified {atSlot :: SlotNo, certifiedPoint :: LeiosPoint}
+  | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
@@ -720,10 +816,20 @@ traceLeiosKernelToObject = \case
       , "slot" .= slot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
       ]
-  TraceLeiosVoted{vote} ->
+  TraceLeiosBlockCertified{atSlot, certifiedPoint} ->
+    mconcat
+      [ "kind" .= Aeson.String "TraceLeiosBlockCertified"
+      , "atSlot" .= atSlot
+      , "ebSlot" .= certifiedPoint.pointSlotNo
+      , "ebHash" .= prettyEbHash certifiedPoint.pointEbHash
+      ]
+  TraceLeiosVoted{vote, weight} ->
     mconcat
       [ "kind" .= Aeson.String "LeiosVoted"
       , "vote" .= voteToObject vote
+      , -- NOTE: 1 ADA delegation is 2.2 × 10^-11 of the total stake. So 10^-12
+        -- is reasonable precision here.
+        "weight" .= fromRational @Pico weight
       ]
   TraceLeiosVoteAcquired{vote} ->
     mconcat

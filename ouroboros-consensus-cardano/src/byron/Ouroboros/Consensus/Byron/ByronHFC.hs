@@ -45,6 +45,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
+import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -54,6 +55,14 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 
 -- | Byron as the single era in the hard fork combinator
 type ByronBlockHFC = HardForkBlock '[ByronBlock]
+
+-- Byron-only HFC stacks never carry Leios certificates, so the class default
+-- (no-op resolution) is the correct semantics here. The non-degenerate Cardano
+-- HFC has its own NS-dispatching instance in
+-- "Ouroboros.Consensus.Cardano.Block". 'HasLeiosVoting' for any HFC stack is
+-- provided by the generic NS-dispatching instance in
+-- "Ouroboros.Consensus.HardFork.Combinator.Leios".
+instance ResolveLeiosBlock ByronBlockHFC
 
 {-------------------------------------------------------------------------------
   NoHardForks instance

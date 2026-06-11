@@ -51,10 +51,12 @@ module Ouroboros.Consensus.Cardano.Node
 
 import Cardano.Binary (DecoderError (..), enforceSize)
 import Cardano.Chain.Slotting (EpochSlots)
-import Cardano.Crypto.KES (rawSerialiseUnsoundPureSignKeyKES)
+import Cardano.Crypto.DSIGN (DSIGNAlgorithm (rawDeserialiseSignKeyDSIGN))
+import Cardano.Crypto.Hash.Class (hashToBytes)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
+import Cardano.Ledger.Hashes (KeyHash (..), hashKey)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
@@ -63,6 +65,7 @@ import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Control.Exception (assert)
 import qualified Control.Tracer as Tracer
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as Short
 import Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
@@ -101,7 +104,6 @@ import Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosCanBeLeader (..)
-  , PraosCredentialsSource (..)
   , instantiatePraosCredentials
   )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..))
@@ -936,17 +938,16 @@ protocolInfoCardano paramsCardano
       , topLevelConfigCheckpoints = cardanoCheckpoints
       , -- FIXME: REMOVE THIS. Accesses and re-uses KES signing key material.
         topLevelConfigVotingKey = do
-          let assumeUnsound = \case
-                PraosCredentialsUnsound _ sk -> sk
-                PraosCredentialsAgent{} -> error "can't derive topLevelConfigVotingKey from agent"
           case credssShelleyBased of
             [] -> Nothing
             (c : _) ->
-              Just
-                . rawSerialiseUnsoundPureSignKeyKES
-                . assumeUnsound
-                . praosCanBeLeaderCredentialsSource
-                $ shelleyLeaderCredentialsCanBeLeader c
+              rawDeserialiseSignKeyDSIGN
+                -- Pad the 28 bytes of blake2b_224 to get 32 bytes for BLS
+                . (<> BS.pack (replicate 4 0))
+                . hashToBytes
+                . unKeyHash
+                . hashKey
+                $ shelleyBlockIssuerVKey c
       }
 
   -- When the initial ledger state is not in the Byron era, register various

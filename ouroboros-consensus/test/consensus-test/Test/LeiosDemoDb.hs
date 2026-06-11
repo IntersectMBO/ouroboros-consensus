@@ -134,6 +134,8 @@ mkTestGroups impl =
       , testCase "no offerBlockTxs before last update" $ withFreshDb impl test_noOfferBlockTxsBeforeComplete
       , testCase "offerBlockTxs on last update" $ withFreshDb impl test_offerBlockTxs
       , testCase "no re-notification of completed EBs" $ withFreshDb impl test_noReNotifyCompletedEbs
+      , testCase "no re-notification when re-inserting an EB's own tx" $
+          withFreshDb impl test_noReNotifyOnRelatedTxReinsert
       ]
   , testGroup
       "queryFetchWork"
@@ -599,6 +601,49 @@ test_noReNotifyCompletedEbs db = do
     case maybeNotif of
       Nothing -> pure ()
       Just _ -> assertFailure "completed EB should not be re-notified"
+
+-- | Re-inserting a tx that is _referenced_ by an already-completed EB
+-- must not re-fire 'AcquiredEbTxs'. This is the practical case where
+-- the previous 'no re-notification' check (which only used an unrelated
+-- tx) lets a bug through: the completion predicate
+-- @any (\\e -> eteTxHash e \`elem\` insertedTxHashes)@ matches again on
+-- any subsequent batch containing an EB-referenced tx, since the
+-- 'all txs present' clause remains true once the EB is complete.
+-- The voting layer treats the duplicate 'AcquiredEbTxs' as a fatal
+-- 'AlreadyKnown' from 'addVote'.
+test_noReNotifyOnRelatedTxReinsert :: LeiosDbHandle IO -> IO ()
+test_noReNotifyOnRelatedTxReinsert db = do
+  chan <- subscribeEbNotifications db
+  let point = mkTestPoint (SlotNo 1) 1
+      eb = mkTestEb 2
+      ebTxList = V.toList (leiosEbTxs eb)
+  withLeiosDb db $ \con -> do
+    leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
+    leiosDbInsertEbBody con point eb
+    acquiredEb <- atomically $ tryReadTChan chan
+    case acquiredEb of
+      Just (AcquiredEb{}) -> pure ()
+      _ -> assertFailure "expected AcquiredEb notification"
+    -- Insert all EB-referenced txs → EB completes, one AcquiredEbTxs.
+    let txsToInsert = [(txHash, maxTxBytesZero) | (txHash, _) <- ebTxList]
+    _ <- leiosDbInsertTxs con txsToInsert
+    acquiredTxs <- atomically $ tryReadTChan chan
+    case acquiredTxs of
+      Just (AcquiredEbTxs p) -> p @?= point
+      _ -> assertFailure "expected AcquiredEbTxs notification"
+    -- Re-insert one of the EB's own txs (a no-op at the tx storage
+    -- level — it's already present). The completed EB must NOT be
+    -- re-notified.
+    case ebTxList of
+      ((txHash, _) : _) -> do
+        _ <- leiosDbInsertTxs con [(txHash, maxTxBytesZero)]
+        maybeNotif <- atomically $ tryReadTChan chan
+        case maybeNotif of
+          Nothing -> pure ()
+          Just _ ->
+            assertFailure
+              "completed EB should not be re-notified on re-insert of its own tx"
+      [] -> assertFailure "test EB has no txs"
 
 -- * Property tests for queryFetchWork
 

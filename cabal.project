@@ -60,8 +60,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: c47305fcf47bd77437b837d0dfb9cb4181bfbc77
-  --sha256: sha256-U9luV5wuSytDg4zbXZnyQo29Jn4fZ10GKI8Q/QTrYrU=
+  tag: 4bf2edca4ccbf18d4e2574b1544a2cf7ffc992eb
   subdir:
     libs/cardano-ledger-core
     eras/dijkstra/impl

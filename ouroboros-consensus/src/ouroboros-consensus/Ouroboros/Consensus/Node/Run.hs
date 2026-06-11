@@ -23,6 +23,7 @@ module Ouroboros.Consensus.Node.Run
   ) where
 
 import Data.Typeable (Typeable)
+import LeiosVoting (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Abstract
@@ -122,6 +123,8 @@ class
   , ShowProxy (TxId (GenTx blk))
   , (forall fp. ShowQuery (BlockQuery blk fp))
   , LedgerSupportsLedgerDB blk
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   RunNode blk
 
