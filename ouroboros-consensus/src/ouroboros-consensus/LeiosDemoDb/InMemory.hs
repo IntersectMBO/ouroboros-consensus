@@ -46,7 +46,6 @@ import LeiosDemoTypes
   , TxHash (..)
   , leiosEbBodyItems
   , leiosEbBytesSize
-  , trustNoVerifyLeiosCertificate
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
@@ -113,7 +112,6 @@ newLeiosDBInMemoryWith stateVar = do
               , leiosDbFilterMissingTxs = imFilterMissingTxs stateVar
               , leiosDbQueryFetchWork = imQueryFetchWork stateVar
               , leiosDbQueryCompletedEbByPoint = imQueryCompletedEbByPoint stateVar
-              , leiosDbQueryCertificateByPoint = return . Just . trustNoVerifyLeiosCertificate
               }
       }
 

@@ -42,6 +42,10 @@ data LeiosVoteState m = LeiosVoteState
   , subscribeVotes :: m (LeiosVoteSubscription m)
   -- ^ Subscribe to new votes arriving in the LeiosVoteState. This will only
   -- serve new additions, starting from when this function was called.
+  , queryCert :: LeiosPoint -> m (Maybe Leios.LeiosCert)
+  -- ^ Look up the assembled certificate for a 'LeiosPoint', or
+  -- 'Nothing' if its collected votes haven't crossed
+  -- 'minCertificationThreshold'.
   }
 
 data AddVoteResult
@@ -123,6 +127,9 @@ newLeiosVoteState getCommittee = do
             LeiosVoteSubscription
               { getNextVote = readTChan chan
               }
+      , queryCert = \pt -> atomically $ do
+          states <- readTVar pointStates
+          pure $ Map.lookup pt states >>= psCert
       }
 
 -- | Build a 'Leios.LeiosCert' from a point's collected votes against

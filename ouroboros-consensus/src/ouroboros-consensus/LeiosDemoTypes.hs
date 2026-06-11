@@ -35,13 +35,11 @@ import Cardano.Crypto.DSIGN
   , VerKeyDSIGN
   , decodeSigDSIGN
   , encodeSigDSIGN
-  , genKeyDSIGN
   , signDSIGN
   , verifyDSIGN
   )
 import Cardano.Crypto.DSIGN.BLS12381 (BLS12381MinSigDSIGN, BLS12381SignContext (..))
 import qualified Cardano.Crypto.Leios as Leios
-import qualified Cardano.Crypto.Seed
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
@@ -662,32 +660,6 @@ data VoteInvalid
 -- * Certifying
 
 type Weight = Rational
-
--- | Placeholder 'Leios.LeiosCert' for points that haven't been certified
--- through the real BLS aggregation flow yet. The 'signers' bitfield is
--- empty and the aggregated signature is a constant dummy signature.
---
--- 'validateLeiosCertificate' will reject this against a real committee
--- (empty signers ⇒ zero weight ⇒ below threshold), which is the intended
--- starting point: the threadnet tests will surface the gap and drive the
--- real cert-construction code in.
-trustNoVerifyLeiosCertificate :: LeiosPoint -> Leios.LeiosCert
-trustNoVerifyLeiosCertificate (MkLeiosPoint slot (MkEbHash bytes)) =
-  Leios.LeiosCert
-    { Leios.slotNo = slot
-    , Leios.endorserBlockHash = Leios.MkEbHash bytes
-    , Leios.signers = BS.empty
-    , Leios.aggregatedSignature = dummyAggregatedSignature
-    }
-
--- | Constant BLS signature used to populate placeholder certificates;
--- replace once the real vote-aggregation path lands.
-dummyAggregatedSignature :: LeiosSignature
-dummyAggregatedSignature =
-  signDSIGN
-    minSigPoPDST
-    (toStrictByteString $ encode (SlotNo 0))
-    (genKeyDSIGN @LeiosDSIGN (Cardano.Crypto.Seed.mkSeedFromBytes (BS.replicate 32 0xaa)))
 
 -- | Validate a 'Leios.LeiosCert' against a selected 'Committee' and a
 -- minimum weight threshold.

@@ -31,6 +31,7 @@ import Data.Text (Text)
 import GHC.Stack
 import LeiosDemoDb (LeiosDbConnection)
 import LeiosDemoTypes (TraceLeiosKernel)
+import LeiosVoteState (LeiosVoteState)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
@@ -263,4 +264,5 @@ data ForgeBlockArgs m blk = ForgeBlockArgs
   , fbChainDepState :: Maybe (ChainDepState (BlockProtocol blk))
   , fbLeiosDb :: LeiosDbConnection m
   , fbLeiosTracer :: Tracer m TraceLeiosKernel
+  , fbLeiosVoteState :: LeiosVoteState m
   }

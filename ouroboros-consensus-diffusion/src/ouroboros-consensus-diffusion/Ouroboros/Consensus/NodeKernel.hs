@@ -341,6 +341,7 @@ initNodeKernel
           , leiosReady = getLeiosReady
           , leiosPeersVars = getLeiosPeersVars
           , leiosCertRbStaging
+          , leiosVoteState
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
@@ -637,8 +638,6 @@ initNodeKernel
     -- to local "EB closure acquired" notifications and emit a vote for
     -- each acquired EB (which the LeiosNotify server then publishes to
     -- peers). 'Nothing' disables voting on this node.
-    let getCommittee = getLeiosCommittee . ledgerState <$> ChainDB.getCurrentLedger chainDB
-    leiosVoteState <- newLeiosVoteState getCommittee
     void $
       forkLinkedThread registry "NodeKernel.leiosVoting" $
         runLeiosVoting
@@ -728,6 +727,10 @@ data InternalState m addrNTN addrNTC blk = IS
   , leiosCertRbStaging ::
       LeiosStagingArea m (Leios.PeerId (ConnectionId addrNTN)) blk
   -- ^ CertRBs whose EB closure isn't locally available yet (issue #890).
+  , leiosVoteState :: LeiosVoteState m
+  -- ^ Accumulator for Leios votes; assembles certificates once a
+  -- point's tally crosses 'minCertificationThreshold'. Source of
+  -- 'fbLeiosVoteState' threaded into 'ForgeBlockArgs'.
   }
 
 initInternalState ::
@@ -812,6 +815,10 @@ initInternalState
             getDiffusionPipeliningSupport
 
     peerSharingRegistry <- newPeerSharingRegistry
+
+    leiosVoteState <-
+      newLeiosVoteState
+        (getLeiosCommittee . ledgerState <$> ChainDB.getCurrentLedger chainDB)
 
     return IS{..}
 
@@ -1234,6 +1241,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             , Block.fbChainDepState = Just untickedChainDepState
             , Block.fbLeiosDb = leiosConn
             , Block.fbLeiosTracer = leiosKernelTracer tracers
+            , Block.fbLeiosVoteState = leiosVoteState
             }
 
     trace blockForging $

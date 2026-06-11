@@ -8,6 +8,7 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
+import Cardano.Crypto.Leios (LeiosCert)
 import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.Core as Core (TopTx, Tx)
 import qualified Cardano.Ledger.Core as SL
@@ -16,7 +17,6 @@ import qualified Cardano.Ledger.Core as SL
   , mkBasicBlockBody
   , txSeqBlockBodyL
   )
-import Cardano.Crypto.Leios (LeiosCert)
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
 import qualified Cardano.Ledger.Shelley.BlockBody as SL (bBodySize)
@@ -31,7 +31,6 @@ import LeiosDemoDb
   ( leiosDbInsertEbBody
   , leiosDbInsertEbPoint
   , leiosDbInsertTxs
-  , leiosDbQueryCertificateByPoint
   , leiosDbQueryCompletedEbByPoint
   )
 import LeiosDemoTypes
@@ -43,6 +42,7 @@ import LeiosDemoTypes
   , leiosEbBytesSize
   , minCertificationGap
   )
+import LeiosVoteState (LeiosVoteState (queryCert))
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -159,6 +159,9 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                     { pointSlotNo = prevSlotNo
                     , pointEbHash = ebAnnouncementHash ann
                     }
+            -- TODO: Why exactly do we guard against this? Also, shouldn't we
+            -- detect it the other way around: if we have a cert, but not
+            -- downloaded it ourselves -> warning!
             mClosure <- leiosDbQueryCompletedEbByPoint fbLeiosDb ebPoint
             case mClosure of
               Nothing -> do
@@ -167,7 +170,12 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                     "EB not yet downloaded: " <> show ebPoint
                 pure SNothing
               Just _ -> do
-                mCert <- leiosDbQueryCertificateByPoint fbLeiosDb ebPoint
+                -- Pull the assembled certificate from this node's
+                -- 'LeiosVoteState' — populated as votes accumulate and
+                -- cross 'minCertificationThreshold' (see
+                -- "LeiosVoteState"). Replaces the previous LeiosDb
+                -- placeholder cert (an empty bitfield + dummy sig).
+                mCert <- queryCert fbLeiosVoteState ebPoint
                 case mCert of
                   Nothing -> do
                     traceWith fbLeiosTracer $

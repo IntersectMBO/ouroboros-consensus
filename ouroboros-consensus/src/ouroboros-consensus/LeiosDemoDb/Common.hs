@@ -15,7 +15,6 @@ import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
 import GHC.Stack (HasCallStack)
-import qualified Cardano.Crypto.Leios as Leios
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
@@ -81,7 +80,6 @@ data LeiosDbConnection m = LeiosDbConnection
   , leiosDbFilterMissingTxs :: HasCallStack => [TxHash] -> m [TxHash]
   -- ^ Batch filter: returns the subset of input TxHashes that we do NOT have.
   , leiosDbQueryCompletedEbByPoint :: HasCallStack => LeiosPoint -> m (Maybe [(TxHash, ByteString)])
-  , leiosDbQueryCertificateByPoint :: HasCallStack => LeiosPoint -> m (Maybe Leios.LeiosCert)
   }
 
 instance NoThunks (LeiosDbHandle m) where
