@@ -764,14 +764,14 @@ data TraceLeiosKernel
     -- point, and the number of peers whose ChainSync candidate
     -- contained the block (they're treated as implicit offerers of the
     -- EB by the fetch loop).
-    TraceCertRBStaged
+    TraceLeiosCertRBStaged
       { stagedBlockPoint :: String
       , stagedEbPoint :: LeiosPoint
       , stagedKnownPeers :: Int
       }
   | -- | A staged CertRB has been released back into ChainSel because
     -- the EB closure (body + txs) is now locally available.
-    TraceCertRBReleased {releasedEbPoint :: LeiosPoint}
+    TraceLeiosCertRBReleased {releasedEbPoint :: LeiosPoint}
 
 deriving instance Show TraceLeiosKernel
 
@@ -818,7 +818,7 @@ traceLeiosKernelToObject = \case
       ]
   TraceLeiosBlockCertified{atSlot, certifiedPoint} ->
     mconcat
-      [ "kind" .= Aeson.String "TraceLeiosBlockCertified"
+      [ "kind" .= Aeson.String "LeiosBlockCertified"
       , "atSlot" .= atSlot
       , "ebSlot" .= certifiedPoint.pointSlotNo
       , "ebHash" .= prettyEbHash certifiedPoint.pointEbHash
@@ -844,19 +844,19 @@ traceLeiosKernelToObject = \case
       , "table" .= table
       , "key" .= key
       ]
-  TraceCertRBStaged{stagedBlockPoint, stagedEbPoint, stagedKnownPeers} ->
+  TraceLeiosCertRBStaged{stagedBlockPoint, stagedEbPoint, stagedKnownPeers} ->
     let MkLeiosPoint (SlotNo ebSlot) ebHash = stagedEbPoint
      in mconcat
-          [ "kind" .= Aeson.String "CertRBStaged"
+          [ "kind" .= Aeson.String "LeiosCertRBStaged"
           , "blockPoint" .= stagedBlockPoint
           , "ebHash" .= prettyEbHash ebHash
           , "ebSlot" .= ebSlot
           , "knownPeers" .= stagedKnownPeers
           ]
-  TraceCertRBReleased{releasedEbPoint} ->
+  TraceLeiosCertRBReleased{releasedEbPoint} ->
     let MkLeiosPoint (SlotNo ebSlot) ebHash = releasedEbPoint
      in mconcat
-          [ "kind" .= Aeson.String "CertRBReleased"
+          [ "kind" .= Aeson.String "LeiosCertRBReleased"
           , "ebHash" .= prettyEbHash ebHash
           , "ebSlot" .= ebSlot
           ]

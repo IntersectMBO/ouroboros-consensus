@@ -625,7 +625,7 @@ initNodeKernel
         let drainTr = leiosKernelTracer tracers
         chan <- subscribeEbNotifications leiosDB
         runStagingAreaDrain leiosCertRbStaging chan $ \point blk -> do
-          traceWith drainTr TraceCertRBReleased{releasedEbPoint = point}
+          traceWith drainTr TraceLeiosCertRBReleased{releasedEbPoint = point}
           _ <-
             ChainDB.addBlockAsync
               chainDB
@@ -898,7 +898,7 @@ wrapChainDbViewForLeiosStaging
       peers <- atomically $ peersThatKnowBlock varChainSyncHandles blk
       traceWith
         tracer
-        TraceCertRBStaged
+        TraceLeiosCertRBStaged
           { stagedBlockPoint = show (Block.blockPoint blk)
           , stagedEbPoint = point
           , stagedKnownPeers = Set.size peers
