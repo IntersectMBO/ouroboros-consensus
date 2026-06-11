@@ -472,24 +472,44 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
   ApplyVal b -> do
     extSt <- atomically (forkerGetLedgerState fo)
     let cds = headerStateChainDep (headerState extSt)
-    -- TODO: consider moving the cert validation into the Dijkstra ledger as a
-    -- proper ledger rule, however we should verify the cert before the EB
-    -- closure is resolved (which is an IO action)
-    case getLeiosCommittee (ledgerState extSt) of
-      Nothing ->
-        -- Block can't be a CertRB and we need to fully validate it
+    if blockHasLeiosCert b
+      then do
+        -- CertRB: the body is just a Leios certificate plus the announced EB
+        -- closure. Validate the cert against the parent ledger state's
+        -- committee; if the cert is valid, the EB has already been individually
+        -- validated upstream (tx-by-tx, when txs were first inserted into the
+        -- LeiosDb), so once spliced in we can re-apply rather than re-running
+        -- the full validation.
+        -- TODO: Even use an apply with no validation at all
+        --
+        -- REVIEW: Ideally we'd be making the cert check a proper Dijkstra
+        -- ledger rule. However, we must verify the cert *before* the EB closure
+        -- is resolved (which is an IO action involving
+        -- 'leiosDbQueryCompletedEbByPoint'). The ledger rules are pure 'STS'
+        -- steps; you can't interleave a DB read with them. Keeping the sequence
+        -- @validate → resolve → reapply@ in this layer is the straight-line way
+        -- to enforce the ordering.
+        cm <- case getLeiosCommittee (ledgerState extSt) of
+          Just c -> pure c
+          Nothing ->
+            -- CertRB on an era without a Leios committee is itself a
+            -- protocol violation: the era machinery shouldn't have
+            -- let one through.
+            -- FIXME: make this less fatal
+            error "applyBlock: CertRB seen but no Leios committee for this era"
+        case validateLeiosBlockCert cm b of
+          Left invalid ->
+            -- FIXME: make this less fatal
+            error $ "applyBlock: invalid Leios cert: " <> show invalid
+          Right validatedB -> do
+            b' <- resolveLeiosBlock leiosDb cds validatedB
+            withValues b' (return . Right . tickThenReapply evs cfg b')
+      else
+        -- Not a CertRB: ordinary Praos block
         withValues b $ \v ->
           case runExcept $ tickThenApply evs cfg b v of
             Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b) lerr))
             Right st -> pure (Right st)
-      Just cm -> case validateLeiosBlockCert cm b of
-        Left invalid -> error $ "applyBlock: invalid Leios cert: " <> show invalid
-        Right validatedB -> do
-          -- Block may be a CertRB, in that case we can skip validation
-          -- TODO: should switch to no validation at all
-          b' <- resolveLeiosBlock leiosDb cds validatedB
-          -- FIXME: reapply only when it was a certRB
-          withValues b' (return . Right . tickThenReapply evs cfg b')
   ReapplyRef r -> do
     b <- doResolveBlock r
     applyBlock leiosDb evs cfg (ReapplyVal b) fo doResolveBlock
