@@ -70,7 +70,11 @@ import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
-import LeiosDemoTypes (BytesSize, LeiosPoint)
+import LeiosDemoTypes
+  ( BytesSize
+  , HasLeiosVoting (..)
+  , LeiosPoint
+  )
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
@@ -319,6 +323,7 @@ validate ::
   , HasCallStack
   , ApplyBlock l blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , l ~ ExtLedgerState blk
   ) =>
   ComputeLedgerEvents ->
@@ -389,7 +394,7 @@ validate evs args = do
 -- | Switch to a fork by rolling back a number of blocks and then pushing the
 -- new blocks.
 switch ::
-  (ApplyBlock l blk, MonadSTM m, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  (ApplyBlock l blk, MonadSTM m, ResolveLeiosBlock blk, HasLeiosVoting blk, l ~ ExtLedgerState blk) =>
   LeiosDbConnection m ->
   (forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
@@ -449,6 +454,7 @@ applyBlock ::
   ( ApplyBlock l blk
   , MonadSTM m
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -464,15 +470,26 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
     b' <- resolveLeiosBlock leiosDb cds b
     withValues b' (return . Right . tickThenReapply evs cfg b')
   ApplyVal b -> do
-    cds <- headerStateChainDep . headerState <$> atomically (forkerGetLedgerState fo)
-    b' <- resolveLeiosBlock leiosDb cds b
-    withValues
-      b'
-      ( \v ->
-          case runExcept $ tickThenApply evs cfg b' v of
-            Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b') lerr))
+    extSt <- atomically (forkerGetLedgerState fo)
+    let cds = headerStateChainDep (headerState extSt)
+    -- TODO: consider moving the cert validation into the Dijkstra ledger as a
+    -- proper ledger rule, however we should verify the cert before the EB
+    -- closure is resolved (which is an IO action)
+    case getLeiosCommittee (ledgerState extSt) of
+      Nothing ->
+        -- Block can't be a CertRB and we need to fully validate it
+        withValues b $ \v ->
+          case runExcept $ tickThenApply evs cfg b v of
+            Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b) lerr))
             Right st -> pure (Right st)
-      )
+      Just cm -> case validateLeiosBlockCert cm b of
+        Left invalid -> error $ "applyBlock: invalid Leios cert: " <> show invalid
+        Right validatedB -> do
+          -- Block may be a CertRB, in that case we can skip validation
+          -- TODO: should switch to no validation at all
+          b' <- resolveLeiosBlock leiosDb cds validatedB
+          -- FIXME: reapply only when it was a certRB
+          withValues b' (return . Right . tickThenReapply evs cfg b')
   ReapplyRef r -> do
     b <- doResolveBlock r
     applyBlock leiosDb evs cfg (ReapplyVal b) fo doResolveBlock
@@ -492,7 +509,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker.
 applyThenPush ::
-  (ApplyBlock l blk, MonadSTM m, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  (ApplyBlock l blk, MonadSTM m, ResolveLeiosBlock blk, HasLeiosVoting blk, l ~ ExtLedgerState blk) =>
   LeiosDbConnection m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -508,7 +525,7 @@ applyThenPush leiosDb evs cfg ap fo doResolve = do
 
 -- | Apply and push a sequence of blocks (oldest first).
 applyThenPushMany ::
-  (ApplyBlock l blk, MonadSTM m, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  (ApplyBlock l blk, MonadSTM m, ResolveLeiosBlock blk, HasLeiosVoting blk, l ~ ExtLedgerState blk) =>
   LeiosDbConnection m ->
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->

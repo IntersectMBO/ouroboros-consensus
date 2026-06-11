@@ -29,15 +29,19 @@ import Cardano.Binary
   )
 import qualified Cardano.Binary as CBOR
 import Cardano.Crypto.DSIGN
-  ( SigDSIGN
+  ( DSIGNAggregatable (uncheckedAggregateVerKeysDSIGN)
+  , SigDSIGN
   , SignKeyDSIGN
   , VerKeyDSIGN
   , decodeSigDSIGN
   , encodeSigDSIGN
+  , genKeyDSIGN
   , signDSIGN
   , verifyDSIGN
   )
 import Cardano.Crypto.DSIGN.BLS12381 (BLS12381MinSigDSIGN, BLS12381SignContext (..))
+import qualified Cardano.Crypto.Leios as Leios
+import qualified Cardano.Crypto.Seed
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
@@ -45,6 +49,9 @@ import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
 import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
 import Codec.Serialise (Serialise, decode, encode)
+import Control.Arrow (left)
+import Control.Monad (guard)
+import Data.Foldable (foldlM)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
@@ -80,6 +87,7 @@ import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import qualified Numeric
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , TxMeasureMetrics
@@ -655,31 +663,134 @@ data VoteInvalid
 
 type Weight = Rational
 
-newtype LeiosCertificate = LeiosCertificate
-  { leiosCertificateEbPoint :: LeiosPoint -- FIXME(bladyjoker): Mocked
-  }
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass NoThunks
+-- | Placeholder 'Leios.LeiosCert' for points that haven't been certified
+-- through the real BLS aggregation flow yet. The 'signers' bitfield is
+-- empty and the aggregated signature is a constant dummy signature.
+--
+-- 'validateLeiosCertificate' will reject this against a real committee
+-- (empty signers ⇒ zero weight ⇒ below threshold), which is the intended
+-- starting point: the threadnet tests will surface the gap and drive the
+-- real cert-construction code in.
+trustNoVerifyLeiosCertificate :: LeiosPoint -> Leios.LeiosCert
+trustNoVerifyLeiosCertificate (MkLeiosPoint slot (MkEbHash bytes)) =
+  Leios.LeiosCert
+    { Leios.slotNo = slot
+    , Leios.endorserBlockHash = Leios.MkEbHash bytes
+    , Leios.signers = BS.empty
+    , Leios.aggregatedSignature = dummyAggregatedSignature
+    }
 
--- FIXME: drop this
-trustNoVerifyLeiosCertificate :: LeiosPoint -> LeiosCertificate
-trustNoVerifyLeiosCertificate = LeiosCertificate
+-- | Constant BLS signature used to populate placeholder certificates;
+-- replace once the real vote-aggregation path lands.
+dummyAggregatedSignature :: LeiosSignature
+dummyAggregatedSignature =
+  signDSIGN
+    minSigPoPDST
+    (toStrictByteString $ encode (SlotNo 0))
+    (genKeyDSIGN @LeiosDSIGN (Cardano.Crypto.Seed.mkSeedFromBytes (BS.replicate 32 0xaa)))
 
--- | Validate a 'LeiosVote' against a selected 'Committee'.
+-- | Validate a 'Leios.LeiosCert' against a selected 'Committee' and a
+-- minimum weight threshold.
+--
+-- The 'signers' field is a @⌈N/8⌉@-byte MSB-first bitfield over the
+-- committee: bit @i@ is set iff voter at committee index @i@
+-- contributed to the aggregated signature. We
+--
+-- 1. resolve the set bits to committee entries, summing the weights;
+-- 2. short-circuit with 'CertificateInsufficientWeight' if the sum is
+--    below the threshold (cheap, avoids the BLS pairing when the
+--    bitfield can't reach quorum on its own);
+-- 3. aggregate the signers' verification keys with
+--    'uncheckedAggregateVerKeysDSIGN' (committee selection already
+--    validated each member's PoP) and verify the certificate's
+--    'aggregatedSignature' against that aggregate key over the
+--    @(slotNo, endorserBlockHash)@ message — failure becomes
+--    'CertificateSignature'.
 validateLeiosCertificate ::
   Committee ->
   -- | Threshold
   Weight ->
-  LeiosCertificate ->
-  -- | Total weight
+  Leios.LeiosCert ->
+  -- | Total weight of the contributing voters
   Either CertificateInvalid Weight
-validateLeiosCertificate = undefined
+validateLeiosCertificate committee threshold cert = do
+  idxs <- maybe (Left CertificateSignature) Right $ signerIndices (Leios.signers cert)
+  (total, vks) <- foldlM accumSigner (0, []) idxs
+  if total < threshold
+    then Left CertificateInsufficientWeight{got = total, required = threshold}
+    else do
+      aggVk <- left (const CertificateSignature) $
+        uncheckedAggregateVerKeysDSIGN (reverse vks)
+      let point =
+            MkLeiosPoint
+              (Leios.slotNo cert)
+              (toLocalEbHash (Leios.endorserBlockHash cert))
+      case verifyDSIGN minSigPoPDST aggVk point (Leios.aggregatedSignature cert) of
+        Left _ -> Left CertificateSignature
+        Right () -> Right total
+ where
+  voters = committee.voters
+  committeeSize = length voters
+
+  -- 'Leios.EbHash' (cardano-crypto-leios) and consensus's 'EbHash'
+  -- are structurally identical newtypes over 'ByteString'; convert
+  -- so we can build the 'LeiosPoint' the signers actually signed.
+  toLocalEbHash (Leios.MkEbHash bs) = MkEbHash bs
+
+  accumSigner ::
+    (Weight, [LeiosVerificationKey]) ->
+    Int ->
+    Either CertificateInvalid (Weight, [LeiosVerificationKey])
+  accumSigner (accW, accVks) i =
+    case resolveVoterId committee (MkVoterId (fromIntegral i)) of
+      Nothing -> Left $ CertificateSignerNotInCommittee (MkVoterId (fromIntegral i))
+      Just (weight, vk) -> Right (accW + weight, vk : accVks)
+
+  -- Decode an MSB-first bitfield to the list of set-bit indices, in
+  -- ascending order. Returns 'Nothing' if the bitfield has extra bytes
+  -- beyond the committee's @⌈N/8⌉@ bound (malformed certificate).
+  signerIndices :: ByteString -> Maybe [Int]
+  signerIndices bs
+    | BS.length bs > expectedBytes = Nothing
+    | otherwise = Just $ do
+        (byteIx, byte) <- zip [0 ..] (BS.unpack bs)
+        bitIx <- [0 .. 7]
+        let globalIx = byteIx * 8 + bitIx
+        guard (globalIx < committeeSize)
+        guard (Bits.testBit byte (7 - bitIx))
+        pure globalIx
+   where
+    expectedBytes = (committeeSize + 7) `div` 8
 
 data CertificateInvalid
   = CertificateSignerNotInCommittee !VoterId
   | CertificateInsufficientWeight {got :: !Weight, required :: !Weight}
   | CertificateSignature
   deriving (Eq, Show)
+
+-- * Era-level Leios dispatch
+
+-- | Per-era hooks for Leios voting and CertRB admission. Default
+-- methods make this a no-op for non-Leios eras.
+--
+-- Lives here rather than in 'LeiosVoting' so it can be referenced from
+-- the LedgerDB layer ('applyBlock') without pulling 'ChainDB' (which
+-- 'runLeiosVoting' depends on) into scope.
+class HasLeiosVoting blk where
+  -- | The voting committee for the given (pre-tick) ledger state, or
+  -- 'Nothing' if the era does not participate in Leios voting.
+  getLeiosCommittee :: LedgerState blk EmptyMK -> Maybe Committee
+  getLeiosCommittee _ = Nothing
+
+  -- | Validate the Leios certificate carried by this block (if any)
+  -- against the given committee. Returns the (unchanged) block on
+  -- success so call sites can pipeline this before 'resolveLeiosBlock',
+  -- mirroring its shape. Default for non-Leios eras: nothing to check.
+  validateLeiosBlockCert ::
+    Committee ->
+    blk ->
+    Either CertificateInvalid blk
+  validateLeiosBlockCert _ blk = Right blk
 
 -- * Tracing
 
@@ -857,6 +968,13 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosVoteAcquired"
       , "vote" .= voteToObject vote
       ]
+  TraceLeiosCertified{point} ->
+    let MkLeiosPoint (SlotNo ebSlot) ebHash = point
+     in mconcat
+          [ "kind" .= Aeson.String "LeiosCertified"
+          , "ebHash" .= prettyEbHash ebHash
+          , "ebSlot" .= ebSlot
+          ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
   TraceLeiosDb (TraceLeiosDbInsertCollision table key) ->

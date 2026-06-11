@@ -8,7 +8,7 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
-import Cardano.Ledger.BaseTypes (LeiosCert (..), StrictMaybe (..))
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.Core as Core (TopTx, Tx)
 import qualified Cardano.Ledger.Core as SL
   ( BlockBody
@@ -16,6 +16,7 @@ import qualified Cardano.Ledger.Core as SL
   , mkBasicBlockBody
   , txSeqBlockBodyL
   )
+import Cardano.Crypto.Leios (LeiosCert)
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
 import qualified Cardano.Ledger.Shelley.BlockBody as SL (bBodySize)
@@ -36,7 +37,6 @@ import LeiosDemoDb
 import LeiosDemoTypes
   ( EbAnnouncement (..)
   , ForgedLeiosEb (..)
-  , LeiosCertificate (..)
   , LeiosPoint (..)
   , TraceLeiosKernel (..)
   , forgeLeiosEb
@@ -178,9 +178,9 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                     traceWith fbLeiosTracer $
                       TraceLeiosBlockCertified
                         { atSlot = fbCurrentSlotNo
-                        , certifiedPoint = cert.leiosCertificateEbPoint
+                        , certifiedPoint = ebPoint
                         }
-                    pure (SJust LeiosCert)
+                    pure (SJust cert)
 
   -- Produce an EB from fbEbTxs, store it into fbLeiosDb, and return the
   -- announcement to embed in the header. An honest forger only emits an

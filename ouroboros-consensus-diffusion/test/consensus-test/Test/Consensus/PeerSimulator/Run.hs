@@ -51,6 +51,7 @@ import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
@@ -562,6 +563,7 @@ nodeLifecycle ::
   , HasPointScheduleTestParams blk
   , Eq (Header blk)
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   ProtocolInfoArgs blk ->
   SchedulerConfig ->
@@ -623,6 +625,7 @@ runPointSchedule ::
   , Eq (Header blk)
   , Eq blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   ProtocolInfoArgs blk ->
   SchedulerConfig ->

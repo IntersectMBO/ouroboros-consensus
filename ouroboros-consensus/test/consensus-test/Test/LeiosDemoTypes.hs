@@ -1,28 +1,39 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Test.LeiosDemoTypes (tests) where
 
+import qualified Cardano.Crypto.Leios as Leios
 import Cardano.Binary (serialize')
 import Cardano.Crypto.DSIGN
   ( DSIGNAlgorithm (deriveVerKeyDSIGN)
+  , DSIGNAggregatable (..)
   , genKeyDSIGN
   , seedSizeDSIGN
+  , signDSIGN
   )
+import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Data.ByteString as BS
 import Data.Data (Proxy (..))
 import Data.List (sort)
 import qualified Data.Vector as V
 import LeiosDemoTypes
   ( BytesSize
+  , CertificateInvalid (..)
   , Committee (..)
+  , EbHash (..)
   , LeiosDSIGN
   , LeiosEb (..)
+  , LeiosPoint (..)
   , LeiosSigningKey
   , TxHash (..)
   , encodeLeiosEb
   , leiosEbBytesSize
   , maxTxsPerEb
+  , minCertificationThreshold
+  , minSigPoPDST
   , mkCommitteeEveryoneVotes
+  , validateLeiosCertificate
   )
 import Test.Crypto.Util (arbitrarySeedOfSize)
 import Test.QuickCheck
@@ -32,11 +43,13 @@ import Test.QuickCheck
   , counterexample
   , forAll
   , frequency
+  , generate
   , vectorOf
   , (.&&.)
   , (===)
   )
 import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.HUnit (testCase, assertFailure, assertBool, (@?=))
 import Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
@@ -45,6 +58,12 @@ tests =
     "LeiosDemoTypes"
     [ testProperty "leiosEbBytesSize consistent with encodeLeiosEb" prop_ebBytesSizeConsistent
     , testProperty "mkCommitteeEveryoneVotes normalizes and sorts" prop_committeeNormalizedAndSorted
+    , testCase
+        "validateLeiosCertificate rejects cert with bad aggregated sig"
+        unit_validateLeiosCertificate_badSig
+    , testCase
+        "validateLeiosCertificate accepts cert with valid aggregated sig"
+        unit_validateLeiosCertificate_goodSig
     ]
 
 -- | Minimum tx size as per the ASSUMPTION in 'leiosEbBytesSize'.
@@ -128,3 +147,81 @@ prop_committeeNormalizedAndSorted =
               counterexample "weights sum to 1" (sum weights === 1)
                 .&&. counterexample "weights sorted ascending" (weights === sort weights)
                 .&&. counterexample "preserves cardinality" (length weights === n)
+
+-- | 'validateLeiosCertificate' must reject a certificate whose
+-- 'aggregatedSignature' does not verify against the aggregated keys of
+-- the signers in the bitfield (over the cert's @(slotNo,
+-- endorserBlockHash)@). Build a committee, mark every member as a
+-- signer, but sign a *different* point — the aggregate verify must
+-- fail with 'CertificateSignature'.
+--
+-- This is the Hemingway-bridge test for the BLS aggregate-verify
+-- branch: without that check, validateLeiosCertificate currently
+-- accepts the cert (weight ≥ threshold) and returns 'Right'.
+unit_validateLeiosCertificate_badSig :: IO ()
+unit_validateLeiosCertificate_badSig = do
+  -- 4 committee members, all signing.
+  sks <- generate (vectorOf 4 genLeiosSigningKey)
+  let vks = deriveVerKeyDSIGN <$> sks
+      -- Equal weights so every member contributes the same amount.
+      committee = mkCommitteeEveryoneVotes (zip vks (repeat (1 :: Int)))
+      -- 4 signers ⇒ ⌈4/8⌉ = 1 byte with the high 4 bits set.
+      signersBitfield = BS.singleton 0xF0
+      certEbHash = Leios.MkEbHash (BS.replicate 32 0xAA)
+      certPoint = MkLeiosPoint (SlotNo 10) (consEbHash certEbHash)
+      -- Each member signs a *different* point (slot 999), then we
+      -- aggregate. The aggregate sig won't verify against 'certPoint'.
+      wrongPoint = MkLeiosPoint (SlotNo 999) (consEbHash certEbHash)
+      individualSigs = [signDSIGN minSigPoPDST wrongPoint sk | sk <- sks]
+  aggSig <- case aggregateSigsDSIGN individualSigs of
+    Right s -> pure s
+    Left e -> assertFailure $ "aggregateSigsDSIGN failed: " <> e
+  let cert =
+        Leios.LeiosCert
+          { Leios.slotNo = certPoint.pointSlotNo
+          , Leios.endorserBlockHash = certEbHash
+          , Leios.signers = signersBitfield
+          , Leios.aggregatedSignature = aggSig
+          }
+  case validateLeiosCertificate committee minCertificationThreshold cert of
+    Left CertificateSignature -> pure ()
+    Left other ->
+      assertFailure $
+        "expected CertificateSignature, got: " <> show other
+    Right total ->
+      assertBool
+        ("expected Left CertificateSignature, got Right " <> show total)
+        False
+ where
+  -- Convert between the two structurally-identical 'EbHash' newtypes
+  -- (cardano-crypto-leios vs. consensus's local 'LeiosDemoTypes').
+  consEbHash (Leios.MkEbHash bs) = MkEbHash bs
+
+-- | The mirror of the bad-sig test: when every committee member signs
+-- the certificate's @(slotNo, endorserBlockHash)@ and the signatures
+-- are aggregated correctly, 'validateLeiosCertificate' must accept.
+unit_validateLeiosCertificate_goodSig :: IO ()
+unit_validateLeiosCertificate_goodSig = do
+  sks <- generate (vectorOf 4 genLeiosSigningKey)
+  let vks = deriveVerKeyDSIGN <$> sks
+      committee = mkCommitteeEveryoneVotes (zip vks (repeat (1 :: Int)))
+      signersBitfield = BS.singleton 0xF0
+      certEbHash = Leios.MkEbHash (BS.replicate 32 0xAA)
+      certPoint = MkLeiosPoint (SlotNo 10) (consEbHash certEbHash)
+      individualSigs = [signDSIGN minSigPoPDST certPoint sk | sk <- sks]
+  aggSig <- case aggregateSigsDSIGN individualSigs of
+    Right s -> pure s
+    Left e -> assertFailure $ "aggregateSigsDSIGN failed: " <> e
+  let cert =
+        Leios.LeiosCert
+          { Leios.slotNo = certPoint.pointSlotNo
+          , Leios.endorserBlockHash = certEbHash
+          , Leios.signers = signersBitfield
+          , Leios.aggregatedSignature = aggSig
+          }
+  case validateLeiosCertificate committee minCertificationThreshold cert of
+    Right total -> total @?= 1
+    Left invalid ->
+      assertFailure $ "expected Right, got Left " <> show invalid
+ where
+  consEbHash (Leios.MkEbHash bs) = MkEbHash bs

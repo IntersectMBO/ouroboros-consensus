@@ -46,6 +46,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( ChunkInfo
   )
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
@@ -144,6 +145,7 @@ mkChainDb ::
   , ConvertRawHash blk
   , CanUpgradeLedgerTables (LedgerState blk)
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   LiveResources blk m ->
   m (ChainDB m blk, m (WithOrigin SlotNo))
@@ -198,6 +200,7 @@ restoreNode ::
   , ConvertRawHash blk
   , CanUpgradeLedgerTables (LedgerState blk)
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   LiveResources blk m ->
   LiveIntervalResult blk ->
@@ -229,6 +232,7 @@ lifecycleStart ::
   , ConvertRawHash blk
   , CanUpgradeLedgerTables (LedgerState blk)
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   (LiveInterval blk m -> m ()) ->
   LiveResources blk m ->

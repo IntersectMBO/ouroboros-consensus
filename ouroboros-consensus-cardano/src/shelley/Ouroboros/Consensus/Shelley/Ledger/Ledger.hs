@@ -137,6 +137,7 @@ import LeiosDemoTypes
   ( EbAnnouncement (..)
   , LeiosPoint (..)
   , TxHash
+  , minCertificationThreshold
   , mkCommitteeEveryoneVotes
   , pointEbHash
   , pointSlotNo
@@ -1029,36 +1030,28 @@ instance
               "FIXME(bladyjoker): Certifying but not previously announced EB! Whai would you do that!? "
                 <> show cert
           SJust ann -> do
-            -- TODO: get this from ledger state / pparams
-            let committee = undefined
-            let threshold = minCertificationThreshold
-            -- FIXME: Should the LeiosCertificate move into the cardano-ledger? -> validate certificate in the ledger?
-            -- Alternative: keep 'SL.Certificate' a black box and decode it into 'LeiosCertificate' here?
-            case validateLeiosCertificate committee threshold cert of
-              Left invalid -> error $ "TODO: handle invalid cert: " <> show invalid
-              Right _total -> do
-                mAnnouncedEb <-
-                  leiosDbQueryCompletedEbByPoint
-                    leiosDb
-                    MkLeiosPoint
-                      { pointSlotNo = fromWithOrigin (SlotNo 0) (praosStateLastSlot praosSt)
-                      , pointEbHash = ebAnnouncementHash ann
-                      }
-                case mAnnouncedEb of
-                  Nothing ->
-                    error $
+            mAnnouncedEb <-
+              leiosDbQueryCompletedEbByPoint
+                leiosDb
+                MkLeiosPoint
+                  { pointSlotNo = fromWithOrigin (SlotNo 0) (praosStateLastSlot praosSt)
+                  , pointEbHash = ebAnnouncementHash ann
+                  }
+            case mAnnouncedEb of
+              Nothing ->
+                error $
                   "CertRB resolution error: apply-time resolve found EB "
                     <> show ann
                     <> " at last-slot "
                     <> show (praosStateLastSlot praosSt)
                     <> " absent; cert: "
                     <> show cert
-                  Just announcedEb ->
-                    pure $
-                      blk{shelleyBlockRaw = Core.Block hdr body'}
-                   where
-                    txSeq = toLeiosTxSeq @DijkstraEra announcedEb
-                    body' = body & Core.txSeqBlockBodyL .~ txSeq
+              Just announcedEb ->
+                pure $
+                  blk{shelleyBlockRaw = Core.Block hdr body'}
+               where
+                txSeq = toLeiosTxSeq @DijkstraEra announcedEb
+                body' = body & Core.txSeqBlockBodyL .~ txSeq
    where
     Core.Block hdr body = shelleyBlockRaw blk
 
@@ -1161,3 +1154,13 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
         . (<> BS.pack (replicate 4 0))
         . hashToBytes
         . unKeyHash
+
+  validateLeiosBlockCert committee blk =
+    case body ^. leiosCertBlockBodyL of
+      SNothing -> Right blk
+      SJust cert ->
+        case validateLeiosCertificate committee minCertificationThreshold cert of
+          Left invalid -> Left invalid
+          Right _total -> Right blk
+   where
+    Core.Block _hdr body = shelleyBlockRaw blk

@@ -32,6 +32,7 @@ import Data.Tuple (Solo (..))
 import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection, LeiosDbHandle (open))
+import LeiosDemoTypes (HasLeiosVoting)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -74,6 +75,7 @@ mkInitDb ::
   , Backend m backend blk
   , IOLike m
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   Complete LedgerDbArgs m blk ->
   ResolveBlock m blk ->
@@ -157,6 +159,7 @@ implMkLedgerDb ::
   , HasHardForkHistory blk
   , ApplyBlock l blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , l ~ ExtLedgerState blk
   ) =>
   LedgerDBHandle m l blk ->
@@ -304,6 +307,7 @@ implValidate ::
   , StandardHash l
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , l ~ ExtLedgerState blk
   ) =>
   LedgerDBHandle m l blk ->

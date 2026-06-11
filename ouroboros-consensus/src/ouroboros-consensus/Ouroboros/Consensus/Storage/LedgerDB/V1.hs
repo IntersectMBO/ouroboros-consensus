@@ -30,6 +30,7 @@ import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics (Generic)
 import LeiosDemoDb (LeiosDbConnection, LeiosDbHandle (open))
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -79,6 +80,7 @@ mkInitDb ::
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   Complete LedgerDbArgs m blk ->
   V1.LedgerDbBackendArgs m (ExtLedgerState blk) ->
@@ -175,6 +177,7 @@ implMkLedgerDb ::
   , LedgerSupportsProtocol blk
   , ApplyBlock l blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , l ~ ExtLedgerState blk
   , HasHardForkHistory blk
   ) =>
@@ -273,6 +276,7 @@ implValidate ::
   , StandardHash l
   , ApplyBlock l blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   , l ~ ExtLedgerState blk
   ) =>
   LedgerDBHandle m l blk ->
