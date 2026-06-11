@@ -24,7 +24,6 @@ module Ouroboros.Consensus.Node.Run
 
 import Data.Typeable (Typeable)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Committee.Crypto (PrivateKey)
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
@@ -39,7 +38,6 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Peras.Context (LedgerStateHeaderStateSupportsPerasVoting)
-import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
 import Ouroboros.Consensus.Storage.ChainDB
   ( ImmutableDbSerialiseConstraints
   , SerialiseDiskConstraints
@@ -131,7 +129,6 @@ class
   , ShowProxy (PerasCert blk)
   , (forall fp. ShowQuery (BlockQuery blk fp))
   , CanUpgradeLedgerTables LedgerState blk
-  , PrivateKey (PerasCrypto blk) ~ BLS.PerasPrivateKey
   ) =>
   RunNode blk
 
