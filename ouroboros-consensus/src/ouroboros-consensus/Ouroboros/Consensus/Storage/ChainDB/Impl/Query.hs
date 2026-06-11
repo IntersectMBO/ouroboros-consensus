@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getPerasVotesAfter
   , getPerasVoteIds
   , getPerasVotingView
+  , getPerasCertInclusionView
   , getPerasEpochContextResolver
   , getTimeResolutionContext
   , getLatestPerasCertOnChainRound
@@ -67,6 +68,7 @@ import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Peras.Cert.Inclusion (PerasCertInclusionView, mkPerasCertInclusionView)
 import Ouroboros.Consensus.Peras.Context
   ( LedgerStateHeaderStateSupportsPerasVoting (resolveRoundNo)
   , PerasEpochContextResolver
@@ -95,6 +97,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertTicketNo
+  , forgetBoostedBlockStatus
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteTicketNo
@@ -432,6 +435,37 @@ getPerasVotingView ledgerConfig roundNo env = do
   case runPerasQry summary qry of
     Left err -> throwSTM err
     Right view -> pure view
+
+getPerasCertInclusionView ::
+  ( IOLike m
+  , BlockSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , LedgerSupportsPeras blk
+  ) =>
+  PerasRoundNo ->
+  ChainDbEnv m blk ->
+  STM m (Maybe (PerasCertInclusionView (WithArrivalTime (ValidatedPerasCert blk)) blk))
+getPerasCertInclusionView roundNo env = do
+  resolver <- getPerasEpochContextResolver env
+  perasParams <- case resolveRoundNo resolver roundNo of
+    Left err -> throwSTM err
+    Right perasContext -> pure $ pecPerasParams perasContext
+  latestCertSeen <-
+    withOriginFromMaybe
+      . fmap forgetBoostedBlockStatus
+      <$> getLatestPerasCertSeen env
+  latestCertOnChainRoundNo <-
+    withOriginFromMaybe
+      <$> getLatestPerasCertOnChainRound env
+  certsInChainDB <-
+    getPerasCertIds env
+  pure $
+    mkPerasCertInclusionView
+      perasParams
+      roundNo
+      latestCertSeen
+      latestCertOnChainRoundNo
+      certsInChainDB
 
 getTimeResolutionContext ::
   MonadSTM m =>

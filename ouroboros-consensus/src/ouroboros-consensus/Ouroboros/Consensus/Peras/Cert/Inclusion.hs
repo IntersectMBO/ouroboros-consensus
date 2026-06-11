@@ -17,9 +17,11 @@ module Ouroboros.Consensus.Peras.Cert.Inclusion
   , LatestCertOnChainView (..)
   , PerasCertInclusionView (..)
   , mkPerasCertInclusionView
+  , PerasCertInclusionViewHandle (..)
   , PerasCertInclusionRule (..)
   , PerasCertInclusionRulesDecision (..)
   , needCert
+  , needCertInContext
   , noCertsFromTwoRoundsAgo
   , needCertRules
   ) where
@@ -31,10 +33,13 @@ import Ouroboros.Consensus.Block
   , PerasCertMaxRounds (..)
   , PerasParams (..)
   , PerasRoundNo (..)
+  , ValidatedPerasCert
   , WithOrigin (..)
   , withOriginToMaybe
   )
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
+import Ouroboros.Consensus.Util.IOLike (MonadSTM (..))
 import Ouroboros.Consensus.Util.Pred
   ( Evidence (..)
   , Explainable (..)
@@ -132,6 +137,12 @@ mkPerasCertInclusionView
           { lcocRoundNo = roundNo
           }
 
+newtype PerasCertInclusionViewHandle m blk
+  = PerasCertInclusionViewHandle
+      ( PerasRoundNo ->
+        STM m (Maybe (PerasCertInclusionView (WithArrivalTime (ValidatedPerasCert blk)) blk))
+      )
+
 {-------------------------------------------------------------------------------
   Certificate inclusion rules
 -------------------------------------------------------------------------------}
@@ -167,6 +178,14 @@ needCert pciv =
     case e of
       ETrue{} -> IncludeCert e (lcsCert (latestCertSeen pciv))
       EFalse{} -> DoNotIncludeCert e
+
+needCertInContext ::
+  MonadSTM m =>
+  PerasCertInclusionViewHandle m blk ->
+  PerasRoundNo ->
+  STM m (Maybe (PerasCertInclusionRulesDecision (WithArrivalTime (ValidatedPerasCert blk))))
+needCertInContext (PerasCertInclusionViewHandle getPerasCertInclusionView) =
+  fmap (fmap needCert) . getPerasCertInclusionView
 
 -- | Certificate inclusion rules.
 --

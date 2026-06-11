@@ -22,7 +22,7 @@ module Ouroboros.Consensus.NodeKernel
   , toConsensusMode
   ) where
 
-import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+import Cardano.Base.FeatureFlags (CardanoFeatureFlag (..))
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Cardano.Network.NodeToNode
@@ -53,6 +53,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
 import Data.Proxy
 import Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Void (Void)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -92,6 +93,11 @@ import Ouroboros.Consensus.Node.Genesis
   )
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
+import Ouroboros.Consensus.Peras.Cert.Inclusion
+  ( PerasCertInclusionRulesDecision (..)
+  , needCertInContext
+  )
+import qualified Ouroboros.Consensus.Peras.Time as Time
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockResult (..)
@@ -265,6 +271,7 @@ initNodeKernel
     , genesisArgs
     , getDiffusionPipeliningSupport
     , miniProtocolParameters
+    , featureFlags
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -397,6 +404,11 @@ initNodeKernel
           txChannelsVar
           sharedTxStateVar
 
+    whenPerasEnabled $
+      void $
+        forkLinkedWatcher registry "NodeKernel.perasCertInclusion" $
+          perasCertInclusionController st
+
     return
       NodeKernel
         { getChainDB = chainDB
@@ -420,6 +432,13 @@ initNodeKernel
         , getTxMempoolSem = txMempoolSem
         }
    where
+    -- Start a thread conditionally when the PerasFlag is provided and the
+    -- current block type supports Peras.
+    whenPerasEnabled =
+      when $
+        Set.member PerasFlag featureFlags
+          && blockDoesReallySupportsPeras (Proxy @blk)
+
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
       STM m [MkBlockForging m blk] ->
@@ -432,6 +451,47 @@ initNodeKernel
         traverse_ cancelThread forgingThreads
         blockForging' <- traverse (forkBlockForging st) blockForging
         go blockForging'
+
+    perasCertInclusionController _st =
+      knownSlotWatcher btime $ \currSlotNo ->
+        withEarlyExit_ $ do
+          mbCertToInclude <- lift $ atomically $ do
+            currRoundNoInfo <-
+              Time.resolveSlotToPerasRoundInfoWithHandle
+                (ChainDB.getTimeResolutionContextHandle chainDB)
+                currSlotNo
+
+            let currRoundNo = Time.stpriPerasRoundNo currRoundNoInfo
+
+            -- [TODO PERAS CERT INCLUSION] decide if we need to do this on every
+            -- slot, or if it's sufficient to do so at the beginning of a round.
+
+            mbCertInclusionDecision <-
+              needCertInContext
+                (ChainDB.getPerasCertInclusionViewHandle chainDB)
+                currRoundNo
+            case mbCertInclusionDecision of
+              -- NOTE: if constructing a certificate inclusion decision fails,
+              -- this indicates that we don't have seen any certificate we could
+              -- include in a block yet, so we can just ignore this case.
+              Nothing ->
+                pure Nothing
+              Just (DoNotIncludeCert _) ->
+                pure Nothing
+              Just (IncludeCert _ cert) ->
+                pure (Just (currRoundNo, vpcCert (forgetArrivalTime cert)))
+
+          case mbCertToInclude of
+            Nothing ->
+              trace $ TracePerasCertInclusionShouldNotIncludeCert currSlotNo
+            Just (roundNo, cert) ->
+              -- [TODO PERAS CERT INCLUSION] update some shared state here that
+              -- the block forging logic will read when deciding whether to
+              -- include a certificate in the block it's forging.
+              trace $ TracePerasCertInclusionShouldIncludeCert currSlotNo roundNo cert
+     where
+      trace :: TracePerasCertInclusionEvent blk -> WithEarlyExit m ()
+      trace ev = lift $ traceWith (perasCertInclusionTracer tracers) ev
 
 castTraceFetchDecision ::
   forall remotePeer blk.
