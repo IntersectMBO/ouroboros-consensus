@@ -18,9 +18,12 @@ module Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe
   ( unsafePerasBLSPrivateKeyFromEnv
   , unsafeExtendPerasStakeDistrWithPublicKeysFromEnv
   , unsafePerasBLSPublicKeysFromEnv
+  , unsafePerasPoolIdFromEnv
   ) where
 
+
 import Cardano.Ledger.State (IndividualPoolStake (..), PoolDistr (..))
+import Codec.Serialise (deserialise)
 import Data.Aeson (eitherDecodeFileStrict')
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -33,6 +36,20 @@ import System.IO.Unsafe (unsafePerformIO)
 
 keyScope :: BLS.KeyScope
 keyScope = "TESTNET"
+
+-- | Read a private key from the environment variable 'PERAS_POOL_ID'
+unsafePerasPoolIdFromEnv :: Either String PoolId
+unsafePerasPoolIdFromEnv =
+  unsafePerformIO $
+    lookupEnv envVar >>= \case
+      Nothing -> do
+        pure $ Left $ "Environment variable " <> envVar <> "not set."
+      Just rawKey -> do
+        pure $ deserialise $ fromString rawKey
+ where
+  envVar =
+    "PERAS_POOL_ID"
+{-# NOINLINE unsafePerasPoolIdFromEnv #-}
 
 -- | Read a private key from the environment variable 'PERAS_PRIVATE_KEY'
 unsafePerasBLSPrivateKeyFromEnv :: Either String PerasPrivateKey
