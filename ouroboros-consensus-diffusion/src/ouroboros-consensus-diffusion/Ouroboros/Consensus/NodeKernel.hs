@@ -409,7 +409,7 @@ initNodeKernel
           txChannelsVar
           sharedTxStateVar
 
-    when (PerasFlag `member` featureFlags) $ void $
+    when (PerasFlag `member` featureFlags && blockDoesReallySupportsPeras proxy) $ void $
       forkLinkedWatcher registry "NodeKernel.voteMinting" $
         knownSlotWatcher btime $
           \currentSlot -> withEarlyExit_ $ voteMintingController systemTime st currentSlot
@@ -437,6 +437,9 @@ initNodeKernel
         , getTxMempoolSem = txMempoolSem
         }
    where
+    proxy :: Proxy blk
+    proxy = Proxy
+
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
       STM m [MkBlockForging m blk] ->
