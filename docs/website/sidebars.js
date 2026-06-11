@@ -68,6 +68,7 @@ const sidebars = {
               'references/haddocks',
               'references/data_flow',
               'references/block_diagrams_of_data',
+              'references/consensus_tools',
               'references/additional_material',
               'references/technical_reports',
               { type: 'category',
