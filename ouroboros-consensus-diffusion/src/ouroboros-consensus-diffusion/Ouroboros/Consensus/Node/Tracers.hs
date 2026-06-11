@@ -46,6 +46,7 @@ import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasCert
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.PerasVote
 import Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
+import Ouroboros.Consensus.Peras.Voting.Trace (TracePerasVotingEvent)
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace (..)
   )
@@ -88,6 +89,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
       f (TraceLabelPeer remotePeer (TracePerasVoteDiffusionInbound blk))
   , perasVoteDiffusionOutboundTracer ::
       f (TraceLabelPeer remotePeer (TracePerasVoteDiffusionOutbound blk))
+  , perasVotingLogicTracer :: f (TracePerasVotingEvent blk)
   , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
   , blockchainTimeTracer :: f (TraceBlockchainTimeEvent UTCTime)
   , forgeStateInfoTracer :: f (TraceLabelCreds (ForgeStateInfo blk))
@@ -124,6 +126,7 @@ instance
       , perasCertDiffusionOutboundTracer = f perasCertDiffusionOutboundTracer
       , perasVoteDiffusionInboundTracer = f perasVoteDiffusionInboundTracer
       , perasVoteDiffusionOutboundTracer = f perasVoteDiffusionOutboundTracer
+      , perasVotingLogicTracer = f perasVotingLogicTracer
       , forgeTracer = f forgeTracer
       , blockchainTimeTracer = f blockchainTimeTracer
       , forgeStateInfoTracer = f forgeStateInfoTracer
@@ -164,6 +167,7 @@ nullTracers =
     , perasCertDiffusionInboundTracer = nullTracer
     , perasCertDiffusionOutboundTracer = nullTracer
     , perasVoteDiffusionInboundTracer = nullTracer
+    , perasVotingLogicTracer = nullTracer
     , perasVoteDiffusionOutboundTracer = nullTracer
     , forgeTracer = nullTracer
     , blockchainTimeTracer = nullTracer
@@ -218,6 +222,7 @@ showTracers tr =
     , perasCertDiffusionOutboundTracer = show >$< tr
     , perasVoteDiffusionInboundTracer = show >$< tr
     , perasVoteDiffusionOutboundTracer = show >$< tr
+    , perasVotingLogicTracer = show >$< tr
     , forgeTracer = show >$< tr
     , blockchainTimeTracer = show >$< tr
     , forgeStateInfoTracer = show >$< tr
