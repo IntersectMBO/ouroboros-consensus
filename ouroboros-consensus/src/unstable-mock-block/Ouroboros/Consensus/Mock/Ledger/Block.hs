@@ -113,6 +113,7 @@ import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
+import Ouroboros.Network.Tx (HasRawTxId (..))
 import Test.Util.Orphans.Serialise ()
 
 {-------------------------------------------------------------------------------
@@ -658,6 +659,10 @@ instance
 
 instance HasTxId (GenTx (SimpleBlock c ext)) where
   txId = SimpleGenTxId . simpleGenTxId
+
+instance HasRawTxId (TxId (GenTx (SimpleBlock c ext))) where
+  type RawTxId (TxId (GenTx (SimpleBlock c ext))) = Mock.TxId
+  getRawTxId = unSimpleGenTxId
 
 instance (Typeable p, Typeable c) => NoThunks (GenTx (SimpleBlock p c)) where
   showTypeOf _ = show $ typeRep (Proxy @(GenTx (SimpleBlock p c)))

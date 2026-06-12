@@ -160,13 +160,13 @@ import Ouroboros.Network.Protocol.TxSubmission2.Client
 import Ouroboros.Network.Protocol.TxSubmission2.Codec
 import Ouroboros.Network.Protocol.TxSubmission2.Server
 import Ouroboros.Network.Protocol.TxSubmission2.Type
+import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V1
 import Ouroboros.Network.TxSubmission.Inbound.V2
   ( PeerTxAPI
   , TraceTxLogic
   , TxDecisionPolicy (..)
   , TxSubmissionLogicVersion (..)
-  , defaultTxDecisionPolicy
   , txSubmissionInboundV2
   , withPeer
   )
@@ -356,7 +356,9 @@ mkHandlers
                       (Node.txInboundTracer tracers)
                   )
                   txSubmissionInitDelay
+                  (txDecisionPolicy miniProtocolParameters)
                   (getMempoolWriter getMempool)
+                  txWireSize
                   api
             TxSubmissionLogicV1 ->
               Left $
@@ -622,6 +624,7 @@ showTracers ::
   , Show (Header blk)
   , Show (GenTx blk)
   , Show (GenTxId blk)
+  , HasRawTxId (GenTxId blk)
   , HasHeader blk
   , HasNestedContent Header blk
   ) =>
@@ -782,6 +785,7 @@ mkApps ::
   , Show addrNTN
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasRawTxId (GenTxId blk)
   ) =>
   -- | Needed for bracketing only
   NodeKernel m addrNTN addrNTC blk ->
@@ -797,7 +801,7 @@ mkApps ::
   ReportPeerMetrics m (ConnectionId addrNTN) ->
   Handlers m addrNTN blk ->
   Apps m addrNTN bCS bBF bTX bPCD bPVD bKA bPS NodeToNodeInitiatorResult ()
-mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucketConfig csjConfig ReportPeerMetrics{..} Handlers{..} =
+mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucketConfig csjConfig ReportPeerMetrics{..} Handlers{..} =
   Apps{..}
  where
   (chainSyncRng, chainSyncRng') = splitGen rng
@@ -984,16 +988,13 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
         runServer legacyTxSubmissionServer
       Right newTxSubmissionServer ->
         withPeer
-          (TraceLabelPeer them `contramap` tTxLogicTracer)
-          (getTxChannelsVar kernel)
-          (getTxMempoolSem kernel)
-          defaultTxDecisionPolicy
-          (getSharedTxStateVar kernel)
+          (getTxDecisionPolicy kernel)
           ( mapTxSubmissionMempoolReader txForgetValidated $
               getMempoolReader (getMempool kernel)
           )
-          (getMempoolWriter (getMempool kernel))
-          txWireSize
+          (getSharedTxStateVar kernel)
+          (getPeerTxRegistry kernel)
+          (getTxCountersVar kernel)
           them
           $ \api ->
             runServer (newTxSubmissionServer api)

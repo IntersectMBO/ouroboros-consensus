@@ -91,6 +91,7 @@ import Control.Arrow ((+++))
 import Control.Monad (guard)
 import Control.Monad.Except (Except, liftEither)
 import Control.Monad.Identity (Identity (..))
+import Data.ByteString.Short (ShortByteString)
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
 import Data.Measure (Measure)
@@ -119,6 +120,7 @@ import Ouroboros.Consensus.Util (ShowProxy (..), coerceMapKeys, coerceSet)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
 import Ouroboros.Network.SizeInBytes
+import Ouroboros.Network.Tx (HasRawTxId (..))
 
 data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx TopTx era)
   deriving stock Generic
@@ -230,6 +232,10 @@ instance ShelleyBasedEra era => HasTxId (GenTx (ShelleyBlock proto era)) where
 instance ShelleyBasedEra era => ConvertRawTxId (GenTx (ShelleyBlock proto era)) where
   toRawTxIdHash (ShelleyTxId i) =
     Hash.hashToBytesShort . SL.extractHash . SL.unTxId $ i
+
+instance ShelleyBasedEra era => HasRawTxId (TxId (GenTx (ShelleyBlock proto era))) where
+  type RawTxId (TxId (GenTx (ShelleyBlock proto era))) = ShortByteString
+  getRawTxId = toRawTxIdHash
 
 instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
   extractTxs =
