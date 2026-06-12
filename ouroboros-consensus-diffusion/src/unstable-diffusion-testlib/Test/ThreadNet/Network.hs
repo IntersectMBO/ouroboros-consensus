@@ -94,11 +94,9 @@ import LeiosDemoOnlyTestNotify (LeiosNotify)
 import qualified LeiosDemoTypes
 import LeiosLateJoinState
   ( LeiosLateJoinState
-  , gcPruner
-  , getBlockedCertRBs
+  , forkLateJoinWorkers
   , initLeiosKernelLateJoin
-  , runAcquiredEbTxsSubscriber
-  , runTriggerWorker
+  , setLateJoinHooks
   )
 import Network.TypedProtocol.Codec
   ( AnyMessage (..)
@@ -813,32 +811,33 @@ runThreadNetwork
                   , mcdbLeiosDb = leiosDbHandle
                   }
         let tr = instrumentationTracer <> nullDebugTracer
+        -- 'setLateJoinHooks' sets the three late-join fields (the ignore-set and
+        -- the seed/register hooks); the production node boot calls the same
+        -- helper, so the two boot paths cannot drift.
         let chainDbArgs =
-              args
-                { cdbImmDbArgs =
-                    (cdbImmDbArgs args)
-                      { ImmutableDB.immCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
-                      , ImmutableDB.immTracer = TraceImmutableDBEvent >$< tr
-                      }
-                , cdbVolDbArgs =
-                    (cdbVolDbArgs args)
-                      { VolatileDB.volCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
-                      , VolatileDB.volTracer = TraceVolatileDBEvent >$< tr
-                      }
-                , cdbLgrDbArgs =
-                    (cdbLgrDbArgs args)
-                      { LedgerDB.lgrTracer = TraceLedgerDBEvent >$< tr
-                      }
-                , cdbsArgs =
-                    (cdbsArgs args)
-                      { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
-                        cdbsGcDelay = 0
-                      , cdbsTracer = instrumentationTracer <> nullDebugTracer
-                      , cdbsBlocksToIgnore = getBlockedCertRBs leiosLateJoinState
-                      , cdbsInitChainSelectionHook = seedHook
-                      , cdbsPostOpenHook = registerListener
-                      }
-                }
+              setLateJoinHooks leiosLateJoinState seedHook registerListener $
+                args
+                  { cdbImmDbArgs =
+                      (cdbImmDbArgs args)
+                        { ImmutableDB.immCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
+                        , ImmutableDB.immTracer = TraceImmutableDBEvent >$< tr
+                        }
+                  , cdbVolDbArgs =
+                      (cdbVolDbArgs args)
+                        { VolatileDB.volCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
+                        , VolatileDB.volTracer = TraceVolatileDBEvent >$< tr
+                        }
+                  , cdbLgrDbArgs =
+                      (cdbLgrDbArgs args)
+                        { LedgerDB.lgrTracer = TraceLedgerDBEvent >$< tr
+                        }
+                  , cdbsArgs =
+                      (cdbsArgs args)
+                        { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
+                          cdbsGcDelay = 0
+                        , cdbsTracer = instrumentationTracer <> nullDebugTracer
+                        }
+                  }
         pure (leiosDbHandle, chainDbArgs, leiosLateJoinState)
        where
         prj af = case AF.headBlockNo af of
@@ -932,20 +931,11 @@ runThreadNetwork
         snd
           <$> allocate registry (const (ChainDB.openDB chainDbArgs)) ChainDB.closeDB
 
-      -- Late-join background loops. None of them is fence-constrained (the two
-      -- fences are the ChainDB hooks set in 'mkArgs'), so they fork after the
-      -- ChainDB is open: the trigger worker drains reselect requests, the
-      -- subscriber turns arriving EB closures into reselect requests, and the
-      -- pruner bounds the announcements cache to the VolatileDB window.
-      void $
-        forkLinkedThread registry "leiosTriggerWorker" $
-          runTriggerWorker chainDB leiosLateJoinState
-      void $
-        forkLinkedThread registry "leiosAcquiredEbTxsSubscriber" $
-          runAcquiredEbTxsSubscriber leiosDbHandle leiosLateJoinState
-      void $
-        forkLinkedThread registry "leiosGcPruner" $
-          gcPruner chainDB leiosLateJoinState
+      -- Late-join background loops (trigger worker, AcquiredEbTxs subscriber, GC
+      -- pruner). None is fence-constrained (the two fences are the ChainDB hooks
+      -- set in 'mkArgs'), so they fork after the ChainDB is open. The production
+      -- node boot forks the same loops via the same helper.
+      forkLateJoinWorkers registry chainDB leiosDbHandle leiosLateJoinState
 
       let customForgeBlock ::
             BlockForging m blk ->

@@ -25,7 +25,8 @@
 module LeiosLateJoinState (module LeiosLateJoinState) where
 
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
-import Control.Monad (forM_, forever, when)
+import Control.Monad (forM_, forever, void, when)
+import Control.ResourceRegistry (ResourceRegistry, forkLinkedThread)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -50,11 +51,19 @@ import Ouroboros.Consensus.Block
   , headerHash
   )
 import Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..), ChainDB (..))
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
+  ( ChainDbArgs
+  , cdbsArgs
+  , cdbsBlocksToIgnore
+  , cdbsInitChainSelectionHook
+  , cdbsPostOpenHook
+  )
 import Ouroboros.Consensus.Storage.ImmutableDB.API (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Storage.VolatileDB.API (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB.API as VolatileDB
+import Ouroboros.Consensus.Util.Args (Complete)
 import Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -496,3 +505,64 @@ initLeiosKernelLateJoin readClosures = do
     , \immutableDB volatileDB -> runStartupWalk immutableDB volatileDB st
     , \chainDB -> registerHeaderListener chainDB (leiosAddBlockListener st)
     )
+
+-- | Set the three late-join fields on a node's 'ChainDbArgs'.
+--
+-- Both the production node boot ('Ouroboros.Consensus.Node') and the threadnet
+-- harness ('Test.ThreadNet.Network') call this on the args they build, so the
+-- two boot paths set the same fields and cannot drift. All three fields are
+-- generic STM/m callbacks, so ChainDB still names nothing Leios.
+--
+--   * 'cdbsBlocksToIgnore' is the ignore-set chain selection reads on every run.
+--   * 'cdbsInitChainSelectionHook' is the seed fence: it runs the startup walk
+--     before the first chain selection reads the ignore-set.
+--   * 'cdbsPostOpenHook' is the register fence: it installs the AddBlock listener
+--     before the AddBlock runner starts.
+--
+-- The two hooks are 'initLeiosKernelLateJoin''s seed hook and register action.
+-- They fire inside @openDBInternal@, not at the call site, so the fences hold
+-- wherever 'Ouroboros.Consensus.Storage.ChainDB.openDB' runs.
+setLateJoinHooks ::
+  IOLike m =>
+  LeiosLateJoinState m blk ->
+  -- | The seed hook from 'initLeiosKernelLateJoin'.
+  (ImmutableDB m blk -> VolatileDB m blk -> m ()) ->
+  -- | The register action from 'initLeiosKernelLateJoin'.
+  (ChainDB m blk -> m ()) ->
+  Complete ChainDbArgs m blk ->
+  Complete ChainDbArgs m blk
+setLateJoinHooks st seedHook register args =
+  args
+    { cdbsArgs =
+        (cdbsArgs args)
+          { cdbsBlocksToIgnore = getBlockedCertRBs st
+          , cdbsInitChainSelectionHook = seedHook
+          , cdbsPostOpenHook = register
+          }
+    }
+
+-- | Fork the three late-join background loops on the node registry, after the
+-- ChainDB is open.
+--
+-- Called by both the production node boot and the threadnet harness. None of the
+-- loops is fence-constrained (the two fences are the ChainDB hooks
+-- 'setLateJoinHooks' installs); they only enqueue reselections and reselect.
+-- Fork them after the ChainDB is allocated so the registry cancels them before
+-- closing it.
+forkLateJoinWorkers ::
+  (IOLike m, Ord (HeaderHash blk)) =>
+  ResourceRegistry m ->
+  ChainDB m blk ->
+  LeiosDbHandle m ->
+  LeiosLateJoinState m blk ->
+  m ()
+forkLateJoinWorkers registry chainDB leiosDb st = do
+  void $
+    forkLinkedThread registry "leiosTriggerWorker" $
+      runTriggerWorker chainDB st
+  void $
+    forkLinkedThread registry "leiosAcquiredEbTxsSubscriber" $
+      runAcquiredEbTxsSubscriber leiosDb st
+  void $
+    forkLinkedThread registry "leiosGcPruner" $
+      gcPruner chainDB st

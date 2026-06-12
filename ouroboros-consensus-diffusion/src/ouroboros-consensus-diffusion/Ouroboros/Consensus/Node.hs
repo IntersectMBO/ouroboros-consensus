@@ -110,6 +110,12 @@ import Data.Set (Set)
 import Data.Time (NominalDiffTime)
 import Data.Typeable (Typeable)
 import LeiosDemoDb (LeiosDbHandle)
+import qualified LeiosDemoDb
+import LeiosLateJoinState
+  ( forkLateJoinWorkers
+  , initLeiosKernelLateJoin
+  , setLateJoinHooks
+  )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
@@ -532,6 +538,16 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           forM_ (sanityCheckConfig cfg) $ \issue ->
             traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
 
+          -- Late-join wiring: build the LeiosKernel state and the two ChainDB
+          -- lifecycle callbacks before opening the ChainDB. The seed hook runs
+          -- the startup walk before the first chain selection; the register
+          -- action installs the AddBlock listener before the AddBlock runner
+          -- starts. 'getBlockedCertRBs' on the same state is the ignore-set
+          -- chain selection reads. 'setLateJoinHooks' places all three on the
+          -- 'ChainDbArgs'; the workers fork below, after the ChainDB is open.
+          (leiosLateJoinState, leiosSeedHook, leiosRegisterListener) <-
+            initLeiosKernelLateJoin (LeiosDemoDb.readCompletedClosuresSTM rnLeiosDb)
+
           (chainDB, finalArgs) <-
             openChainDB
               registry
@@ -542,10 +558,19 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               llrnLdbFlavorArgs
               rnLeiosDb
               llrnChainDbArgsDefaults
-              ( setLoEinChainDbArgs
+              -- 'setLateJoinHooks' goes outermost so its writes win over the
+              -- caller's 'llrnCustomiseChainDbArgs' and the default no-ops.
+              ( setLateJoinHooks leiosLateJoinState leiosSeedHook leiosRegisterListener
+                  . setLoEinChainDbArgs
                   . maybeValidateAll
                   . llrnCustomiseChainDbArgs
               )
+
+          -- Late-join background loops. None is fence-constrained (the two
+          -- fences are the ChainDB hooks set above), so they fork after the
+          -- ChainDB is open, on the node registry so teardown cancels them
+          -- before the ChainDB closes.
+          forkLateJoinWorkers registry chainDB rnLeiosDb leiosLateJoinState
 
           continueWithCleanChainDB chainDB $ do
             btime <-
