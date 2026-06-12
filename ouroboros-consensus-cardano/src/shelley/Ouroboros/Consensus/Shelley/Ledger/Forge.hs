@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -21,6 +22,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, IsLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
+import Ouroboros.Consensus.Shelley.Eras (ShelleyBasedEra (..))
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
   ( shelleyProtocolVersion
@@ -51,6 +53,8 @@ forgeShelleyBlock ::
   TickedLedgerState (ShelleyBlock proto era) mk ->
   -- | Txs to include
   [Validated (GenTx (ShelleyBlock proto era))] ->
+  -- | Optional Peras certificate to include in the block
+  Maybe OpaquePerasCert ->
   IsLeader proto ->
   m (ShelleyBlock proto era)
 forgeShelleyBlock
@@ -61,6 +65,7 @@ forgeShelleyBlock
   curSlot
   tickedLedger
   txs
+  mbPerasCert
   isLeader = do
     hdr <-
       mkHeader @_ @(ProtoCrypto proto)
@@ -82,7 +87,11 @@ forgeShelleyBlock
 
     body =
       SL.mkBasicBlockBody
-        & SL.txSeqBlockBodyL .~ Seq.fromList (fmap extractTx txs)
+        & SL.txSeqBlockBodyL
+        .~ Seq.fromList (fmap extractTx txs)
+        -- [TODO PERAS CERTS IN BLOCK] add the necessary plumbing to pass down
+        -- a certificate to be optionally included in a block here
+        & maybe id injectPerasCertInBlockBody mbPerasCert
 
     actualBodySize = SL.blockBodySize protocolVersion body
 
