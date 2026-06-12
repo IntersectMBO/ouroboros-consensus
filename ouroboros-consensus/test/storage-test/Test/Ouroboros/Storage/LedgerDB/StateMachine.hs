@@ -559,7 +559,8 @@ openLedgerDB flavArgs env cfg fs = do
                   (LedgerDBSnapshotEvent >$< lgrTracer args)
                   (lgrHasFS args)
           let initDb = V2.mkInitDb args getBlock snapManager (praosGetVolatileSuffix $ ledgerDbCfgSecParam cfg) res
-          lift $ openDBInternal args initDb snapManager stream replayGoal
+          -- These tests do not use EBBs.
+          lift $ openDBInternal args initDb snapManager stream replayGoal IsNotEBB
   case NE.nonEmpty volBlocks of
     Nothing -> pure ()
     Just volBlocks' -> do
