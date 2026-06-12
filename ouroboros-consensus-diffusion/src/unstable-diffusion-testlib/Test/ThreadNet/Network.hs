@@ -144,6 +144,7 @@ import Ouroboros.Network.Protocol.Limits (ProtocolTimeLimitsWithRnd (..), waitFo
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
 import Ouroboros.Network.Protocol.TxSubmission2.Type
+import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V2
   ( TxSubmissionInitDelay (..)
   , TxSubmissionLogicVersion (..)
@@ -1055,8 +1056,7 @@ runThreadNetwork
             Seed s -> mkStdGen s
           (kaRng, rng') = splitGen rng
           (gsmRng, rng'') = splitGen rng'
-          (psRng, rng3) = splitGen rng''
-          (txRng, chainSyncRng) = splitGen rng3
+          (psRng, chainSyncRng) = splitGen rng''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs =
             NodeKernelArgs
@@ -1078,7 +1078,6 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
-              , txSubmissionRng = txRng
               , miniProtocolParameters =
                   MiniProtocolParameters
                     { chainSyncPipeliningHighMark = 4
@@ -1782,6 +1781,7 @@ type TracingConstraints blk =
   , Show (TxMeasure blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
   , HasNestedContent Header blk
+  , HasRawTxId (GenTxId blk)
   )
 
 {-------------------------------------------------------------------------------

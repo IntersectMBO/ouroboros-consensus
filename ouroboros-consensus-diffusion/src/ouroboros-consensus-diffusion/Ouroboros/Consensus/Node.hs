@@ -910,7 +910,7 @@ mkNodeKernelArgs
   txSubmissionInitDelay =
     do
       let (kaRng, rng') = splitGen rng
-          (psRng, txRng) = splitGen rng'
+          (psRng, _) = splitGen rng'
       return
         NodeKernelArgs
           { tracers
@@ -938,7 +938,6 @@ mkNodeKernelArgs
           , getUseBootstrapPeers
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
-          , txSubmissionRng = txRng
           , publicPeerSelectionStateVar
           , genesisArgs
           , getDiffusionPipeliningSupport

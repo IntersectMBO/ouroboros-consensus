@@ -56,6 +56,7 @@ import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent
   )
 import Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
+import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Types
 import Ouroboros.Network.TxSubmission.Outbound
 
@@ -174,6 +175,7 @@ showTracers ::
   , Show (CannotForge blk)
   , Show (TxMeasure blk)
   , Show remotePeer
+  , HasRawTxId (GenTxId blk)
   , LedgerSupportsProtocol blk
   ) =>
   Tracer m String -> Tracers m remotePeer localPeer blk
