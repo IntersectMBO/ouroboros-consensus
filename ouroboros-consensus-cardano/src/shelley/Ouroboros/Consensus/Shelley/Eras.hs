@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
@@ -47,6 +48,7 @@ import qualified Cardano.Ledger.Conway.Rules as SL
   )
 import qualified Cardano.Ledger.Conway.State as CG
 import Cardano.Ledger.Dijkstra (ApplyTxError (DijkstraApplyTxError), DijkstraEra)
+import qualified Cardano.Ledger.Dijkstra.BlockBody as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as Dijkstra
 import qualified Cardano.Ledger.Dijkstra.Rules as SL
   ( DijkstraLedgerPredFailure (..)
@@ -63,11 +65,17 @@ import Data.Data (Proxy (Proxy))
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
+import Data.Typeable (eqT, (:~:) (..))
 import Lens.Micro
 import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( BlockSupportsPeras (..)
+  , OpaquePerasCert (..)
+  )
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( WhetherToIntervene (..)
   )
+import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 
 {-------------------------------------------------------------------------------
@@ -131,6 +139,19 @@ class
 
   mkEraMkMempoolApplyTxError ::
     proxy era -> Maybe (Text -> SL.ApplyTxError era)
+
+  -- | Inject a Peras certificate into a block body.
+  --
+  -- Note that the certificate we inject into a block body could potentially
+  -- come from a different era than that of the block body itself.
+  --
+  -- The default implementation is the identity function, which is appropriate
+  -- for eras that don't support Peras certificates.
+  injectPerasCertInBlockBody ::
+    OpaquePerasCert ->
+    BlockBody era ->
+    BlockBody era
+  injectPerasCertInBlockBody _ = id
 
 data ConwayEraGovDict era where
   ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
@@ -216,6 +237,14 @@ instance ShelleyBasedEra DijkstraEra where
   -- use MempoolFailure type family instead of just PredicateFailure type
   -- family
   mkEraMkMempoolApplyTxError _prx = Nothing
+
+  injectPerasCertInBlockBody = \case
+    OpaquePerasCert (_ :: Proxy blk) (cert :: PerasCert blk)
+      | Just Refl <- eqT @(PerasCert blk) @(V1.PerasCert blk) ->
+          Dijkstra.perasCertBlockBodyL
+            .~ SJust (Dijkstra.PerasCert (V1.toOpaqueByteArray cert))
+      | otherwise ->
+          id
 
 applyAlonzoBasedTx ::
   forall era.
