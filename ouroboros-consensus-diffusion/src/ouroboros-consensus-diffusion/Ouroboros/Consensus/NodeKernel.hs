@@ -773,7 +773,7 @@ initInternalState
         leiosDB
         varChainSyncHandles
         leiosReady
-        chainDB
+        (BlockFetchClientInterface.defaultChainDbView chainDB)
         120
 
     let readFetchMode =

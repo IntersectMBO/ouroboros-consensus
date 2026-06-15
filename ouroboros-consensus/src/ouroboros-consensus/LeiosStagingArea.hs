@@ -74,9 +74,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
-  , ChainDB
   )
-import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.LedgerDB
   ( ResolveLeiosBlock (..)
@@ -165,7 +163,12 @@ newLeiosStagingArea ::
   -- | Pinged after a stage so the Leios fetch loop wakes promptly
   -- and synthesises the new entry into its next iteration.
   MVar.MVar m () ->
-  ChainDB m blk ->
+  -- | Base 'ChainDbView' to wrap. The drain admits released blocks
+  -- via this view's 'addBlockAsync' (i.e. the unwrapped one,
+  -- bypassing the staging gate); the returned 'wrappedChainDbView'
+  -- has the gate installed on 'addBlockAsync' and widens
+  -- 'getIsFetched'.
+  BlockFetchClientInterface.ChainDbView m blk ->
   -- | GC tick interval. Choose long enough to amortise the per-entry
   -- STM scan; minutes are fine since GC is a safety backstop, not
   -- the common-case release path.
@@ -177,10 +180,10 @@ newLeiosStagingArea
   leiosDb
   varChainSyncHandles
   readyMVar
-  chainDB
+  defView
   gcInterval = do
     -- XXX: Should use stm-containers
-    tv <- uncheckedNewTVarM Map.empty
+    tv <- uncheckedNewTVarM (Map.empty :: Map LeiosPoint (StagedEntry m (PeerId peer) blk))
     notifications <- subscribeEbNotifications leiosDb
     void $ forkLinkedThread registry "LeiosStagingArea.drain" (drainLoop tv notifications)
     void $ forkLinkedThread registry "LeiosStagingArea.gc" (gcLoop tv)
@@ -239,16 +242,14 @@ newLeiosStagingArea
     -- BlockFetch view wrapper
     wrapView tv =
       defView
-        { BlockFetchClientInterface.addBlockAsync = stagingGate tv defView
+        { BlockFetchClientInterface.addBlockAsync = stagingGate tv
         , BlockFetchClientInterface.getIsFetched = do
             baseFetched <- BlockFetchClientInterface.getIsFetched defView
             staged <- isStagedBlockSTM tv
             pure $ \p -> baseFetched p || staged p
         }
-     where
-      defView = BlockFetchClientInterface.defaultChainDbView chainDB
 
-    stagingGate tv defView punish blk
+    stagingGate tv punish blk
       | not (blockHasLeiosCert blk) =
           BlockFetchClientInterface.addBlockAsync defView punish blk
       | otherwise = do
@@ -348,8 +349,8 @@ newLeiosStagingArea
               Just blk -> do
                 traceWith tracer TraceLeiosCertRBReleased{releasedEbPoint = point}
                 void $
-                  ChainDB.addBlockAsync
-                    chainDB
+                  BlockFetchClientInterface.addBlockAsync
+                    defView
                     InvalidBlockPunishment.noPunishment
                     blk
 
