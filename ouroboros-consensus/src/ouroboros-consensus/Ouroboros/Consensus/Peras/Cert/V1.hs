@@ -22,9 +22,8 @@
 -- performed on the certificate later on.
 module Ouroboros.Consensus.Peras.Cert.V1
   ( PerasCert (..)
+  , retagPerasCert
   , PerasCertVoters (..)
-  , toOpaqueByteArray
-  , fromOpaqueByteArray
   ) where
 
 import Cardano.Binary
@@ -33,26 +32,15 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
-import qualified Codec.CBOR.Read as CBOR
-import qualified Codec.CBOR.Write as CBOR
 import Codec.Serialise (Serialise (..))
 import Control.Monad (when)
 import Control.Monad.Error.Class (MonadError (..))
-import Data.Array.Byte (ByteArray)
-import Data.ByteString.Lazy (ByteString)
-import qualified Data.ByteString.Lazy as LazyByteString
-import qualified Data.ByteString.Lazy as LazyBytesString
-import qualified Data.ByteString.Short as ShortByteString
 import Data.Containers.NonEmpty (HasNonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, isJust)
-import Data.MemPack.Buffer
-  ( byteArrayFromShortByteString
-  , byteArrayToShortByteString
-  )
 import Data.Typeable (Proxy (..), Typeable)
 import Data.Word (Word16)
 import GHC.Generics (Generic)
@@ -107,6 +95,16 @@ data PerasCert tag
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
+
+-- | Retag a 'PerasCert' to change its phantom type tag.
+retagPerasCert :: forall tag' tag. PerasCert tag -> PerasCert tag'
+retagPerasCert cert =
+  PerasCert
+    { pcRoundNo = pcRoundNo cert
+    , pcBoostedBlock = pcBoostedBlock cert
+    , pcVoters = pcVoters cert
+    , pcSignature = pcSignature cert
+    }
 
 instance
   ConvertRawHash blk =>
@@ -406,43 +404,3 @@ instance
           Nothing
         nonPersistentSeats ->
           Just (NonEmpty.fromList nonPersistentSeats)
-
--- * Temporary transformation to and from the opaque PerasCert defined in Ledger
-
--- TODO: we might want to add round-trip tests for these, even for the testnet.
-
-toOpaqueByteArray ::
-  Typeable blk =>
-  PerasCert blk ->
-  ByteArray
-toOpaqueByteArray cert =
-  byteArrayFromShortByteString
-    . ShortByteString.toShort
-    . CBOR.toStrictByteString
-    . toCBOR
-    $ cert
-
-fromOpaqueByteArray ::
-  Typeable blk =>
-  Proxy blk ->
-  ByteArray ->
-  Either String (PerasCert blk)
-fromOpaqueByteArray _ byteArray = do
-  handleParseErrors
-    . CBOR.deserialiseFromBytes fromCBOR
-    . LazyBytesString.fromStrict
-    . ShortByteString.fromShort
-    . byteArrayToShortByteString
-    $ byteArray
-
-handleParseErrors ::
-  Either CBOR.DeserialiseFailure (ByteString, PerasCert blk) ->
-  Either String (PerasCert blk)
-handleParseErrors = \case
-  Left err -> failure err
-  Right (trailing, cert)
-    | not (LazyByteString.null trailing) -> failure "trailing bytes"
-    | otherwise -> pure cert
- where
-  failure err =
-    Left $ "Failed to deserialize PerasCert from byte array: " <> show err

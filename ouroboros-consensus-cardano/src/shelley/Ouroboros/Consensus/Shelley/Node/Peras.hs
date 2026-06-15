@@ -24,6 +24,10 @@ import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   )
+import Ouroboros.Consensus.Peras.Cert.Opaque
+  ( fromOpaquePerasCert
+  , opaquePerasCertFromByteArray
+  )
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import Ouroboros.Consensus.Peras.Context
   ( LedgerStateHeaderStateSupportsPerasVoting (..)
@@ -78,14 +82,11 @@ instance
       strictMaybeToMaybe $
         SL.blockBody (shelleyBlockRaw blk)
           ^. Dijkstra.perasCertBlockBodyL
-    case ( V1.fromOpaqueByteArray
-             (Proxy @(ShelleyBlock proto DijkstraEra))
-             byteArray
-         ) of
-      Right cert -> Just cert
-      -- NOTE: could also return 'Nothing', but for now we probably don't want
-      -- to silently ignore deserialization errors.
-      Left err -> error err
+    -- NOTE: could also return 'Nothing', but for now we probably don't want to
+    -- silently ignore deserialization errors.
+    either (error . show) Just $
+      opaquePerasCertFromByteArray byteArray
+        >>= fromOpaquePerasCert (Proxy @(ShelleyBlock proto DijkstraEra))
 
   readPerasPrivateKeyFromEnv _proxy = unsafePerasBLSPrivateKeyFromEnv
 
