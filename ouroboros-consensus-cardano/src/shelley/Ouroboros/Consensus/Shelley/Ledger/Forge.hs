@@ -50,12 +50,12 @@ forgeShelleyBlock ::
   BlockNo ->
   -- | Current slot number
   SlotNo ->
+  -- | Optional Peras certificate to include in the block
+  Maybe OpaquePerasCert ->
   -- | Current ledger
   TickedLedgerState (ShelleyBlock proto era) mk ->
   -- | Txs to include
   [Validated (GenTx (ShelleyBlock proto era))] ->
-  -- | Optional Peras certificate to include in the block
-  Maybe OpaquePerasCert ->
   IsLeader proto ->
   m (ShelleyBlock proto era)
 forgeShelleyBlock
@@ -64,9 +64,9 @@ forgeShelleyBlock
   cfg
   curNo
   curSlot
+  mbPerasCert
   tickedLedger
   txs
-  mbPerasCert
   isLeader = do
     hdr <-
       mkHeader @_ @(ProtoCrypto proto)

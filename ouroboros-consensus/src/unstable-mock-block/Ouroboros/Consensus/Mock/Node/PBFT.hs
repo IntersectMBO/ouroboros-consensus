@@ -112,7 +112,7 @@ pbftBlockForging canBeLeader =
             canBeLeader
             slot
             tickedPBftState
-    , forgeBlock = \cfg slot bno lst txs proof ->
+    , forgeBlock = \cfg slot bno _mbPerasCert lst txs proof ->
         return $
           forgeSimple
             forgePBftExt
