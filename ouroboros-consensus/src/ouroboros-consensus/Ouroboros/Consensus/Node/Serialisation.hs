@@ -36,12 +36,14 @@ module Ouroboros.Consensus.Node.Serialisation
   , Some (..)
   ) where
 
+import Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import qualified Cardano.Binary as KeyHash
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise (Serialise (decode, encode))
 import Data.Kind
 import Data.SOP.BasicFunctors
+import Data.Typeable (Typeable)
 import Data.Void (absurd)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
@@ -50,6 +52,8 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , GenTxId
   )
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (Some (..))
 import Ouroboros.Network.Block
@@ -221,6 +225,14 @@ instance SerialiseNodeToNode blk (VoidPerasVote blk) where
 instance SerialiseNodeToNode blk (VoidPerasCert blk) where
   encodeNodeToNode _ _ = absurd . unVoidPerasCert
   decodeNodeToNode _ _ = fail "VoidPerasCert cannot be decoded"
+
+instance Typeable tag => SerialiseNodeToNode blk (V1.PerasVote tag) where
+  encodeNodeToNode _ccfg _version = toCBOR
+  decodeNodeToNode _ccfg _version = fromCBOR
+
+instance Typeable tag => SerialiseNodeToNode blk (V1.PerasCert tag) where
+  encodeNodeToNode _ccfg _version = toCBOR
+  decodeNodeToNode _ccfg _version = fromCBOR
 
 deriving newtype instance
   SerialiseNodeToClient blk (GenTxId blk) =>
