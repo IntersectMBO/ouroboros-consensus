@@ -478,13 +478,13 @@ perasVoteForgingController systemTime IS{chainDB, tracers} slotNo = do
   -- they are properly obtained from the ledger/context.
   poolId <- case readPerasPoolIdFromEnv (Proxy @blk) of
     Left err -> do
-      trace $ TraceCantReadEnv err
+      trace $ TracePerasVotingCantReadEnv err
       exitEarly
     Right poolId -> pure poolId
 
   privateKey <- case readPerasPrivateKeyFromEnv (Proxy @blk) of
     Left err -> do
-      trace $ TraceCantReadEnv err
+      trace $ TracePerasVotingCantReadEnv err
       exitEarly
     Right privateKey -> pure privateKey
 
@@ -528,11 +528,14 @@ perasVoteForgingController systemTime IS{chainDB, tracers} slotNo = do
   case mVote of
     Nothing -> exitEarly
     Just vote -> do
+      trace $ TracePerasVotingForgedVote vote
       now <- lift $ systemTimeCurrent systemTime
+      let stampedVote = WithArrivalTime now vote
       -- Add vote to DB
       -- TODO: process new return types, possibly log, once the following is merged:
       -- https://github.com/IntersectMBO/ouroboros-consensus/pull/2029
-      lift $ ChainDB.addPerasVoteSync chainDB $ WithArrivalTime now vote
+      lift $ ChainDB.addPerasVoteSync chainDB stampedVote
+      trace $ TracePerasVotingAddedVoteToDB stampedVote
 
   where
     trace :: TracePerasVotingEvent blk -> WithEarlyExit m ()
