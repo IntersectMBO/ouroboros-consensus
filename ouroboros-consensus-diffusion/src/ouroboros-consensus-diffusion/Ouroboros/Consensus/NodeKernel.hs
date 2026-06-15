@@ -54,7 +54,6 @@ import Data.Foldable (traverse_)
 import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
-import Data.List (find)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
@@ -68,13 +67,11 @@ import Data.Void (Void)
 import LeiosDemoDb
   ( LeiosDbConnection (..)
   , LeiosDbHandle (..)
-  , withLeiosDb
   )
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
-  ( BytesSize
-  , LeiosOutstanding
+  ( LeiosOutstanding
   , LeiosPeerVars
   , LeiosPoint
   , TraceLeiosKernel (..)
@@ -85,7 +82,6 @@ import LeiosStagingArea
   ( LeiosStagingArea (..)
   , StagedCertRB (..)
   , newLeiosStagingArea
-  , runStagingAreaDrain
   )
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
 import LeiosVoting (getLeiosCommittee, runLeiosVoting)
@@ -128,8 +124,7 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
-  ( AddBlockPromise (..)
-  , AddBlockResult (..)
+  ( AddBlockResult (..)
   , ChainDB
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -616,22 +611,6 @@ initNodeKernel
           traceWith leiosTr $ MkTraceLeiosKernel $ "leiosFetchLogic: duration " ++ show duration
           threadDelay $ loopInterval - duration
 
-    -- CertRB staging drain (issue #890): on every EB closure arrival,
-    -- check whether a staged CertRB was waiting for it; if so, hand it to
-    -- 'ChainDB.addBlockAsync' so ChainSel can finally consider it.
-    void $
-      forkLinkedThread registry "NodeKernel.leiosCertRbDrain" $ do
-        let drainTr = leiosKernelTracer tracers
-        chan <- subscribeEbNotifications leiosDB
-        runStagingAreaDrain leiosCertRbStaging chan $ \point blk -> do
-          traceWith drainTr TraceLeiosCertRBReleased{releasedEbPoint = point}
-          _ <-
-            ChainDB.addBlockAsync
-              chainDB
-              InvalidBlockPunishment.noPunishment
-              blk
-          pure ()
-
     -- The Leios voting thread: when this node has a voting key, subscribe
     -- to local "EB closure acquired" notifications and emit a vote for
     -- each acquired EB (which the LeiosNotify server then publishes to
@@ -781,7 +760,21 @@ initInternalState
     leiosPeersVars <- MVar.newMVar Map.empty
     leiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
     leiosReady <- MVar.newEmptyMVar
-    leiosCertRbStaging <- newLeiosStagingArea
+
+    -- 120 s GC tick: long enough for ChainSync candidate churn
+    -- (rollbacks, peer disconnects detected via KeepAlive) to settle
+    -- so we don't evict on transient drops from 'peersThatKnowBlock';
+    -- short enough that a wedged staging entry doesn't sit there long
+    -- and the parked BlockFetch client thread gets a verdict promptly.
+    leiosCertRbStaging <-
+      newLeiosStagingArea
+        (leiosKernelTracer tracers)
+        registry
+        leiosDB
+        varChainSyncHandles
+        leiosReady
+        chainDB
+        120
 
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault
@@ -790,14 +783,7 @@ initInternalState
             (ChainDB.getCurrentChain chainDB)
             getUseBootstrapPeers
             (GSM.gsmStateToLedgerJudgement <$> readTVar varGsmState)
-        chainDbView =
-          wrapChainDbViewForLeiosStaging
-            (leiosKernelTracer tracers)
-            leiosDB
-            leiosCertRbStaging
-            varChainSyncHandles
-            leiosReady
-            (BlockFetchClientInterface.defaultChainDbView chainDB)
+        chainDbView = wrappedChainDbView leiosCertRbStaging
         blockFetchInterface ::
           BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
         blockFetchInterface =
@@ -819,160 +805,6 @@ toConsensusMode = \case
   LoEAndGDDDisabled -> PraosMode
   LoEAndGDDEnabled _ -> GenesisMode
 
--- | CertRB staging gate for issue #890.
---
--- Wraps a 'ChainDbView' so that incoming CertRBs whose announced EB closure
--- is not yet in the local LeiosDb are *not* handed to ChainSel — they're
--- parked in 'stagingTVar' and the missing EB is registered as Leios fetch
--- work. Once the EB closure arrives, a separate drain thread (forked in
--- 'initNodeKernel') re-submits the parked block via the unwrapped
--- 'ChainDB.addBlockAsync'.
---
--- 'getIsFetched' is also widened so the BlockFetch decision logic doesn't
--- keep refetching the same block while it's staged.
-wrapChainDbViewForLeiosStaging ::
-  forall m blk addrNTN.
-  ( IOLike m
-  , GetPrevHash blk
-  , Ord addrNTN
-  , ResolveLeiosBlock blk
-  ) =>
-  Tracer m TraceLeiosKernel ->
-  LeiosDbHandle m ->
-  LeiosStagingArea m (Leios.PeerId (ConnectionId addrNTN)) blk ->
-  ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk ->
-  -- | 'getLeiosReady' — pinged after a stage so the fetch loop wakes
-  -- promptly and can synthesise the new entry into its next iteration.
-  MVar.MVar m () ->
-  BlockFetchClientInterface.ChainDbView m blk ->
-  BlockFetchClientInterface.ChainDbView m blk
-wrapChainDbViewForLeiosStaging
-  tracer
-  leiosDbHandle
-  stagingArea
-  varChainSyncHandles
-  readyMVar
-  defView =
-    defView
-      { BlockFetchClientInterface.addBlockAsync = stagingAwareAddBlock
-      , BlockFetchClientInterface.getIsFetched = do
-          baseFetched <- BlockFetchClientInterface.getIsFetched defView
-          staged <- isStagedBlock stagingArea
-          pure $ \p -> baseFetched p || staged p
-      }
-   where
-    stagingAwareAddBlock punish blk
-      | not (blockHasLeiosCert blk) =
-          BlockFetchClientInterface.addBlockAsync defView punish blk
-      | otherwise = do
-          -- Look up the parent header in the ChainSync candidate
-          -- fragments. A CertRB delivered via BlockFetch is always
-          -- fulfilling some candidate, so the parent (announcing the
-          -- certified EB) is on that candidate by construction. We
-          -- deliberately don't consult 'getCurrentChain' here: the
-          -- locally selected chain is incidental — if the block
-          -- extends our chain, the peer that delivered it tracks the
-          -- same chain via ChainSync and the parent is in its
-          -- candidate fragment too.
-          mAnn <- atomically $ do
-            candidates <- candidateFragments
-            pure $ findParentAnnouncement (Block.blockPrevHash blk) candidates
-          case mAnn of
-            -- Parent isn't visible on the current chain or any
-            -- ChainSync candidate, or didn't announce. Can't determine
-            -- the EB. Admit and let ChainSel / apply-time error
-            -- decide. Fork-time / out-of-order arrivals blind spot:
-            -- see issue #890 PR description.
-            Nothing ->
-              BlockFetchClientInterface.addBlockAsync defView punish blk
-            Just (point, size) -> do
-              mEb <- withLeiosDb leiosDbHandle $ \conn ->
-                leiosDbQueryCompletedEbByPoint conn point
-              case mEb of
-                Just _ ->
-                  BlockFetchClientInterface.addBlockAsync defView punish blk
-                Nothing -> stage point size punish blk
-
-    candidateFragments = do
-      handles <- cschcMap varChainSyncHandles
-      traverse (fmap csCandidate . readTVar . cschState) handles
-
-    stage point size _punish blk = do
-      peers <- atomically $ peersThatKnowBlock varChainSyncHandles blk
-      traceWith
-        tracer
-        TraceLeiosCertRBStaged
-          { stagedBlockPoint = show (Block.blockPoint blk)
-          , stagedEbPoint = point
-          , stagedKnownPeers = Set.size peers
-          }
-      atomically $ stageCertRB stagingArea point size peers blk
-      _ <- MVar.tryPutMVar readyMVar ()
-      -- Block this BlockFetch client thread until the staging
-      -- drain releases this entry (closure arrived; block was
-      -- admitted to ChainDB via the unwrapped 'addBlockAsync' on
-      -- the drain side). This stops the BlockFetch decision
-      -- module from re-fetching the same CertRB in a tight loop
-      -- during the staging window — the previous "lie about
-      -- 'blockWrittenToDisk = pure True'" approach plus the
-      -- 'getIsFetched' widening together don't suppress refetch
-      -- in the steady-state late-join scenario, and the resulting
-      -- decision-loop spin is the dominant retainer of iosim
-      -- 'SimTrace' state (PR open point #3).
-      --
-      -- Cost: head-of-line blocking on this peer's BlockFetch
-      -- pipeline. The closure fetch runs on a separate
-      -- LeiosFetch channel of the same connection, so progress
-      -- is not deadlocked. CPU cost is zero — STM 'retry'.
-      --
-      -- Caveat: if the closure never arrives (all peers offering
-      -- it disconnect), this STM blocks forever and the client
-      -- thread leaks. Tracked alongside PR open point #4 (no GC
-      -- of staged entries); the GC pass will need to also wake
-      -- parked threads with a 'FailedToAddBlock' verdict before
-      -- evicting an entry.
-      atomically $ do
-        snapshot <- stagedSnapshot stagingArea
-        when (Map.member point snapshot) retry
-      -- Drain has admitted the block via the unwrapped
-      -- 'addBlockAsync'; surface success so the BlockFetch
-      -- client counts it as fetched and moves on.
-      pure
-        AddBlockPromise
-          { blockWrittenToDisk = pure True
-          , blockProcessed =
-              pure $ SuccesfullyAddedBlock (Block.blockPoint blk)
-          }
-
--- | Find the parent header in any ChainSync candidate fragment and
--- read its 'headerLeiosAnnouncement'.
---
--- A CertRB delivered via BlockFetch is by construction fulfilling
--- some candidate, so the parent (whose header carries the EB
--- announcement) lives in at least one of the live candidate
--- fragments. The locally selected chain is intentionally not
--- consulted: a parent that's only on the selected chain but on no
--- candidate would mean the chain has rolled past the point where any
--- peer is currently fetching — in which case the staging gate has
--- nothing useful to decide anyway.
-findParentAnnouncement ::
-  forall blk peer.
-  (HasHeader (Header blk), ResolveLeiosBlock blk) =>
-  ChainHash blk ->
-  Map.Map peer (AF.AnchoredFragment (HeaderWithTime blk)) ->
-  Maybe (LeiosPoint, BytesSize)
-findParentAnnouncement prev candidates = case prev of
-  GenesisHash -> Nothing
-  BlockHash h ->
-    find
-      (\hdr -> Block.blockHash hdr == h)
-      (concatMap (fmap hwtHeader . AF.toNewestFirst) (Map.elems candidates))
-      >>= headerLeiosAnnouncement
-
--- | Re-derive each staged entry's peer set by unioning in any peer
--- whose *current* ChainSync candidate contains the staged block.
--- Handles peers that connect (or extend their candidate through this
--- block) after staging.
 -- | Re-derive each staged entry's peer set by unioning in any peer
 -- whose *current* ChainSync candidate contains the staged block —
 -- handles peers that connect (or extend through this block) after
@@ -1002,33 +834,6 @@ augmentStagedPeers candidates staged =
                 (AF.toOldestFirst frag)
             ]
      in entry{stagedPeers = stagedPeers entry `Set.union` extra}
-
--- | Scan all ChainSync candidates for ones whose fragment contains a
--- header with the same hash as @blk@. Those peers' chains have admitted
--- this block, so they almost certainly hold (or can quickly obtain) the
--- certified EB closure.
-peersThatKnowBlock ::
-  ( IOLike m
-  , HasHeader blk
-  , HasHeader (Header blk)
-  , Ord peer
-  ) =>
-  ChainSyncClientHandleCollection peer m blk ->
-  blk ->
-  STM m (Set.Set (Leios.PeerId peer))
-peersThatKnowBlock varChainSyncHandles blk = do
-  handles <- cschcMap varChainSyncHandles
-  let hsh = Block.blockHash blk
-  fmap (Set.fromList . Map.elems) $
-    flip Map.traverseMaybeWithKey handles $ \peer h -> do
-      st <- readTVar (cschState h)
-      let frag = csCandidate st
-      pure $
-        if any
-          ((== hsh) . Block.blockHash)
-          (AF.toOldestFirst frag)
-          then Just (Leios.MkPeerId peer)
-          else Nothing
 
 forkBlockForging ::
   forall m addrNTN addrNTC blk.

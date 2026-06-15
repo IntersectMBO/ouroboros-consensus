@@ -772,6 +772,17 @@ data TraceLeiosKernel
   | -- | A staged CertRB has been released back into ChainSel because
     -- the EB closure (body + txs) is now locally available.
     TraceLeiosCertRBReleased {releasedEbPoint :: LeiosPoint}
+  | -- | A staged CertRB has been evicted by the staging-area GC: no
+    -- live peer's ChainSync candidate contains the staged block
+    -- anymore so the closure is unreachable. The parked BlockFetch
+    -- client thread is woken with a 'FailedToAddBlock' verdict; the
+    -- block itself is dropped. If a peer that does have the closure
+    -- subsequently offers the chain, BlockFetch will re-fetch and
+    -- the block will be re-staged or admitted as normal.
+    TraceLeiosCertRBEvicted
+      { evictedBlockPoint :: String
+      , evictedEbPoint :: LeiosPoint
+      }
 
 deriving instance Show TraceLeiosKernel
 
@@ -857,6 +868,14 @@ traceLeiosKernelToObject = \case
     let MkLeiosPoint (SlotNo ebSlot) ebHash = releasedEbPoint
      in mconcat
           [ "kind" .= Aeson.String "LeiosCertRBReleased"
+          , "ebHash" .= prettyEbHash ebHash
+          , "ebSlot" .= ebSlot
+          ]
+  TraceLeiosCertRBEvicted{evictedBlockPoint, evictedEbPoint} ->
+    let MkLeiosPoint (SlotNo ebSlot) ebHash = evictedEbPoint
+     in mconcat
+          [ "kind" .= Aeson.String "LeiosCertRBEvicted"
+          , "blockPoint" .= evictedBlockPoint
           , "ebHash" .= prettyEbHash ebHash
           , "ebSlot" .= ebSlot
           ]
