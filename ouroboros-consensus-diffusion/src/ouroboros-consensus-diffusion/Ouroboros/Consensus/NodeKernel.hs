@@ -38,7 +38,6 @@ import Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import Cardano.Network.PeerSelection.LocalRootPeers
   ( OutboundConnectionsState (..)
   )
-import Control.Applicative ((<|>))
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
@@ -866,14 +865,18 @@ wrapChainDbViewForLeiosStaging
       | not (blockHasLeiosCert blk) =
           BlockFetchClientInterface.addBlockAsync defView punish blk
       | otherwise = do
+          -- Look up the parent header in the ChainSync candidate
+          -- fragments. A CertRB delivered via BlockFetch is always
+          -- fulfilling some candidate, so the parent (announcing the
+          -- certified EB) is on that candidate by construction. We
+          -- deliberately don't consult 'getCurrentChain' here: the
+          -- locally selected chain is incidental — if the block
+          -- extends our chain, the peer that delivered it tracks the
+          -- same chain via ChainSync and the parent is in its
+          -- candidate fragment too.
           mAnn <- atomically $ do
             candidates <- candidateFragments
-            currentChain <- BlockFetchClientInterface.getCurrentChain defView
-            pure $
-              findParentAnnouncement
-                (Block.blockPrevHash blk)
-                currentChain
-                candidates
+            pure $ findParentAnnouncement (Block.blockPrevHash blk) candidates
           case mAnn of
             -- Parent isn't visible on the current chain or any
             -- ChainSync candidate, or didn't announce. Can't determine
@@ -941,27 +944,30 @@ wrapChainDbViewForLeiosStaging
               pure $ SuccesfullyAddedBlock (Block.blockPoint blk)
           }
 
--- | Find the parent header in the current chain or any ChainSync
--- candidate fragment, and read its 'headerLeiosAnnouncement'.
--- Candidates are scanned because the parent may not yet be on the
--- selected chain (BlockFetch can deliver a child before its parent
--- reaches ChainSel).
+-- | Find the parent header in any ChainSync candidate fragment and
+-- read its 'headerLeiosAnnouncement'.
+--
+-- A CertRB delivered via BlockFetch is by construction fulfilling
+-- some candidate, so the parent (whose header carries the EB
+-- announcement) lives in at least one of the live candidate
+-- fragments. The locally selected chain is intentionally not
+-- consulted: a parent that's only on the selected chain but on no
+-- candidate would mean the chain has rolled past the point where any
+-- peer is currently fetching — in which case the staging gate has
+-- nothing useful to decide anyway.
 findParentAnnouncement ::
   forall blk peer.
   (HasHeader (Header blk), ResolveLeiosBlock blk) =>
   ChainHash blk ->
-  AF.AnchoredFragment (Header blk) ->
   Map.Map peer (AF.AnchoredFragment (HeaderWithTime blk)) ->
   Maybe (LeiosPoint, BytesSize)
-findParentAnnouncement prev currentChain candidates = case prev of
+findParentAnnouncement prev candidates = case prev of
   GenesisHash -> Nothing
   BlockHash h ->
-    let onChain =
-          find (\hdr -> Block.blockHash hdr == h) (AF.toNewestFirst currentChain)
-        onCandidate =
-          find (\hdr -> Block.blockHash hdr == h) $
-            concatMap (fmap hwtHeader . AF.toNewestFirst) (Map.elems candidates)
-     in (onChain <|> onCandidate) >>= headerLeiosAnnouncement
+    find
+      (\hdr -> Block.blockHash hdr == h)
+      (concatMap (fmap hwtHeader . AF.toNewestFirst) (Map.elems candidates))
+      >>= headerLeiosAnnouncement
 
 -- | Re-derive each staged entry's peer set by unioning in any peer
 -- whose *current* ChainSync candidate contains the staged block.
