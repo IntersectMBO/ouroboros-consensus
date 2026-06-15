@@ -297,6 +297,7 @@ initNodeKernel ::
   , RunNode blk
   , Ord addrNTN
   , Hashable addrNTN
+  , Show addrNTN
   , Typeable addrNTN
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
@@ -565,7 +566,14 @@ initNodeKernel
                     }
             filteredOutstanding <-
               Leios.filterMissingWork leiosConn augmentedOutstanding
-            traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: filtered"
+            traceWith leiosTr $
+              MkTraceLeiosKernel $
+                "leiosFetchLogic: outstanding "
+                  <> Leios.prettyLeiosOutstanding filteredOutstanding
+            traceWith leiosTr $
+              MkTraceLeiosKernel $
+                "leiosFetchLogic: offerings "
+                  <> Leios.prettyOfferings augmentedOfferings
             let (!outstanding', decisions) =
                   Leios.leiosFetchLogicIteration
                     Leios.demoLeiosFetchStaticEnv
