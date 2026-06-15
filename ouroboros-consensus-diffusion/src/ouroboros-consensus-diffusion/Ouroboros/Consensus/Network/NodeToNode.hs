@@ -450,9 +450,30 @@ mkHandlers
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
                     let MkLeiosPoint{pointEbHash = ebHash} = point
+                    -- Sanitize peer-supplied offer metadata before
+                    -- mutating the shared fetch state. The previous
+                    -- unconditional Map.insert was last-writer-wins on
+                    -- (slot, hash) keys and on bytes-size: a bad
+                    -- size-0 offer could overwrite a correct size and
+                    -- make the next honest body fail validation, and
+                    -- two offers for the same EB content at different
+                    -- slots could shift the per-hash fetch state to
+                    -- the wrong slot and wedge the staging release.
+                    --
+                    -- Drop a zero-sized offer outright (no honest
+                    -- forger ever announces a 0-byte EB) and refuse
+                    -- to overwrite an existing entry that shares the
+                    -- same content hash: the first-seen (slot, size)
+                    -- wins. The per-peer 'offerings' below is still
+                    -- updated so the peer remains a valid serving
+                    -- candidate.
                     MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
                       pure $
-                        if Set.member ebHash (Leios.acquiredEbBodies outstanding)
+                        if ebBytesSize == 0
+                          || Set.member ebHash (Leios.acquiredEbBodies outstanding)
+                          || any
+                            ((== ebHash) . pointEbHash)
+                            (Map.keys (Leios.missingEbBodies outstanding))
                           then outstanding
                           else
                             outstanding
