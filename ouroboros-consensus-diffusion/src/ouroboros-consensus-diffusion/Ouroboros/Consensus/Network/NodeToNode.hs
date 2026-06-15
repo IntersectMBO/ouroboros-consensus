@@ -450,20 +450,18 @@ mkHandlers
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
                     let MkLeiosPoint{pointEbHash = ebHash} = point
-                    -- Sanitize peer-supplied offer metadata before
-                    -- mutating the shared fetch state. The previous
-                    -- unconditional Map.insert was last-writer-wins on
-                    -- (slot, hash) keys and on bytes-size: a bad
-                    -- size-0 offer could overwrite a correct size and
-                    -- make the next honest body fail validation, and
-                    -- two offers for the same EB content at different
-                    -- slots could shift the per-hash fetch state to
-                    -- the wrong slot and wedge the staging release.
-                    --
-                    -- Drop a zero-sized offer outright (no honest
-                    -- forger ever announces a 0-byte EB) and refuse
-                    -- to overwrite an existing entry that shares the
-                    -- same content hash: the first-seen (slot, size)
+                    -- FIXME: EB announcements are not implemented. The
+                    -- fetch state is built entirely from peer offers,
+                    -- which is the wrong source of truth — the
+                    -- authoritative size lives in
+                    -- 'headerLeiosAnnouncement' on the parent RB
+                    -- header (signed by the forger). Until announcement
+                    -- handling lands, the sanitisation below is the
+                    -- best we can do against malformed offers:
+                    -- drop a zero-sized offer outright (no honest
+                    -- forger ever announces a 0-byte EB) and refuse to
+                    -- overwrite an existing entry that shares the same
+                    -- content hash, so the first-seen (slot, size)
                     -- wins. The per-peer 'offerings' below is still
                     -- updated so the peer remains a valid serving
                     -- candidate.

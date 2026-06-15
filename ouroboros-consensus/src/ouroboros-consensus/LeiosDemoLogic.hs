@@ -560,6 +560,13 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
   traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   let MkLeiosPoint _ebSlot ebHash = point
   do
+    -- FIXME: 'ebBytesSize' here is the size we recorded from the peer
+    -- offer at 'MsgLeiosBlockOffer' time (carried through the request),
+    -- not the chain-authoritative 'leiosEbBytesSize' from the parent
+    -- RB's 'headerLeiosAnnouncement'. EB announcements are not yet
+    -- implemented; once they are, validate against the announced size
+    -- so that a peer cannot poison this check by sending a bad-size
+    -- offer first.
     let ebBytesSize' = leiosEbBytesSize eb
     when (ebBytesSize' /= ebBytesSize) $ do
       error $ "MsgLeiosBlock size mismatch: " <> show (ebBytesSize', ebBytesSize)
