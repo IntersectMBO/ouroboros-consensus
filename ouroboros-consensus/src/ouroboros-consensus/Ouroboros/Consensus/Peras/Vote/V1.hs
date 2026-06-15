@@ -16,6 +16,7 @@
 -- NOTE: this module is meant to be imported qualified.
 module Ouroboros.Consensus.Peras.Vote.V1
   ( PerasVote (..)
+  , retagPerasVote
   , PerasVoteEligibilityProof (..)
   ) where
 
@@ -77,6 +78,17 @@ data PerasVote tag
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
+
+-- | Retag a 'PerasVote' to change its phantom type tag.
+retagPerasVote :: forall tag' tag. PerasVote tag -> PerasVote tag'
+retagPerasVote vote =
+  PerasVote
+    { pvRoundNo = pvRoundNo vote
+    , pvBoostedBlock = pvBoostedBlock vote
+    , pvSeatIndex = pvSeatIndex vote
+    , pvEligibilityProof = pvEligibilityProof vote
+    , pvSignature = pvSignature vote
+    }
 
 type instance BoostedBlock (PerasVote tag) = PerasBoostedBlock
 instance
