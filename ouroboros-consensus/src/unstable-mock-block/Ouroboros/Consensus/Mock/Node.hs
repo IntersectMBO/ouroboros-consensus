@@ -99,7 +99,7 @@ simpleBlockForging aCanBeLeader aForgeExt =
     , canBeLeader = aCanBeLeader
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \cfg bno slot lst txs proof ->
+    , forgeBlock = \cfg bno slot _mbPerasCert lst txs proof ->
         return $
           forgeSimple
             aForgeExt

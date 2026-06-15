@@ -66,10 +66,12 @@ import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
 import Lens.Micro
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Peras.Cert.Opaque (OpaquePerasCert
-  , opaquePerasCertToByteArray)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( WhetherToIntervene (..)
+  )
+import Ouroboros.Consensus.Peras.Cert.Opaque
+  ( OpaquePerasCert
+  , opaquePerasCertToByteArray
   )
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 
