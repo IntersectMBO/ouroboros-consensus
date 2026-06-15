@@ -141,7 +141,7 @@ praosBlockForging cid initHotKey = do
               . second forgeStateUpdateInfoFromUpdateInfo
               . evolveKey sno
       , checkCanForge = \_ _ _ _ _ -> return ()
-      , forgeBlock = \cfg bno sno tickedLedgerSt txs isLeader -> do
+      , forgeBlock = \cfg bno sno _mbPerasCert tickedLedgerSt txs isLeader -> do
           hotKey <- readMVar varHotKey
           return $
             forgeSimple

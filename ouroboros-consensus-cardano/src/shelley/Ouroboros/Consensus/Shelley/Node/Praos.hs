@@ -87,15 +87,15 @@ praosSharedBlockForging
           praosCheckCanForge
             (configConsensus cfg)
             curSlot
-      , forgeBlock = \cfg blkNo slotNo ledgerState txs ->
+      , forgeBlock = \cfg blkNo slotNo mbPerasCert ledgerState txs ->
           forgeShelleyBlock
             hotKey
             canBeLeader
             cfg
             blkNo
             slotNo
+            mbPerasCert
             ledgerState
             txs
-            Nothing -- [TODO PERAS CERT IN BLOCKS] pass opaque cert from outer context
       , finalize = HotKey.finalize hotKey
       }

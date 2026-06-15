@@ -363,7 +363,7 @@ blockForgingA =
     , canBeLeader = ()
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge = \_ _ _ _ _ -> return ()
-    , forgeBlock = \cfg bno slot st txs proof ->
+    , forgeBlock = \cfg bno slot _mbPerasCert st txs proof ->
         return $
           forgeBlockA cfg bno slot st (fmap txForgetValidated txs) proof
     , finalize = return ()

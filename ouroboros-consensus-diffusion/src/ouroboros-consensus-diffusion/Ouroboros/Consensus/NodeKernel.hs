@@ -786,6 +786,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           cfg
           bcBlockNo
           currentSlot
+          Nothing -- [TODO PERAS CERT INCLUSION] this is the entry point to inject certs in blocks
           tickedLedgerState
           txs
           proof
