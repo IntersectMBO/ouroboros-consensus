@@ -240,6 +240,7 @@ library
     Ouroboros.Consensus.Peras.Cert.Inclusion
     Ouroboros.Consensus.Peras.Cert.Inclusion.Trace
     Ouroboros.Consensus.Peras.Cert.Mock
+    Ouroboros.Consensus.Peras.Cert.Opaque
     Ouroboros.Consensus.Peras.Cert.V1
     Ouroboros.Consensus.Peras.Context
     Ouroboros.Consensus.Peras.Crypto.BLS

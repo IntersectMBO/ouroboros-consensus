@@ -20,6 +20,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Peras.Cert.Opaque (OpaquePerasCert)
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, IsLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import Ouroboros.Consensus.Shelley.Eras (ShelleyBasedEra (..))
@@ -87,10 +88,7 @@ forgeShelleyBlock
 
     body =
       SL.mkBasicBlockBody
-        & SL.txSeqBlockBodyL
-        .~ Seq.fromList (fmap extractTx txs)
-        -- [TODO PERAS CERTS IN BLOCK] add the necessary plumbing to pass down
-        -- a certificate to be optionally included in a block here
+        & (SL.txSeqBlockBodyL .~ Seq.fromList (fmap extractTx txs))
         & maybe id injectPerasCertInBlockBody mbPerasCert
 
     actualBodySize = SL.blockBodySize protocolVersion body

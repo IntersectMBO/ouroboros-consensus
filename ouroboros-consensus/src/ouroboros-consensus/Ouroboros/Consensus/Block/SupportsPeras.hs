@@ -38,7 +38,6 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , getPerasVoteTarget
   , IsPerasCert (..)
   , IsPerasError (..)
-  , OpaquePerasCert (..)
 
     -- * Types and functions related to Peras vote collection and quorum checking
   , PerasVoteCollectionWithQuorum (forgetQuorum)
@@ -96,7 +95,6 @@ import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.Orphans ()
 import System.Environment (lookupEnv)
 import System.IO.Unsafe (unsafePerformIO)
-import Data.Proxy (Proxy)
 
 -- | Voting committee for Peras indexed by block type
 type PerasVotingCommittee blk =
@@ -667,21 +665,6 @@ class
   injectVotingCommitteeError :: PerasVotingCommitteeError blk -> err
   injectConversionError :: PerasConversionError -> err
   injectQuorumNotReachedError :: VoteWeight -> err
-
--------------------------------------------------------------------------------
-
--- * Opaque Peras certificates to be stored in blocks
-
--- | Existential wrapper for Peras certificates to be stored in blocks.
---
--- This allows us to have blocks that contain a potentially older type of
--- Peras certificate than the one used in the current era.
-data OpaquePerasCert where
-  OpaquePerasCert ::
-    (Typeable blk, Typeable (PerasCert blk)) =>
-    Proxy blk ->
-    PerasCert blk ->
-    OpaquePerasCert
 
 -------------------------------------------------------------------------------
 

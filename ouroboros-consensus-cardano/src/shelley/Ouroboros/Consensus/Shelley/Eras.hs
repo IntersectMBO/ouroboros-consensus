@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
@@ -65,17 +64,13 @@ import Data.Data (Proxy (Proxy))
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
-import Data.Typeable (eqT, (:~:) (..))
 import Lens.Micro
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.SupportsPeras
-  ( BlockSupportsPeras (..)
-  , OpaquePerasCert (..)
-  )
+import Ouroboros.Consensus.Peras.Cert.Opaque (OpaquePerasCert
+  , opaquePerasCertToByteArray)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( WhetherToIntervene (..)
   )
-import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 
 {-------------------------------------------------------------------------------
@@ -238,13 +233,9 @@ instance ShelleyBasedEra DijkstraEra where
   -- family
   mkEraMkMempoolApplyTxError _prx = Nothing
 
-  injectPerasCertInBlockBody = \case
-    OpaquePerasCert (_ :: Proxy blk) (cert :: PerasCert blk)
-      | Just Refl <- eqT @(PerasCert blk) @(V1.PerasCert blk) ->
-          Dijkstra.perasCertBlockBodyL
-            .~ SJust (Dijkstra.PerasCert (V1.toOpaqueByteArray cert))
-      | otherwise ->
-          id
+  injectPerasCertInBlockBody cert =
+    Dijkstra.perasCertBlockBodyL
+      .~ SJust (Dijkstra.PerasCert (opaquePerasCertToByteArray cert))
 
 applyAlonzoBasedTx ::
   forall era.
