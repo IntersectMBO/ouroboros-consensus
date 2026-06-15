@@ -50,7 +50,6 @@ import Ouroboros.Consensus.Committee.EveryoneVotes
   , Vote (..)
   )
 import Ouroboros.Consensus.Committee.WFALS (Vote (..), WFALS)
-import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode (..))
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCrypto
   , VRFOutput
@@ -155,11 +154,6 @@ instance ToCBOR PerasVoteEligibilityProof where
       encodeListLen 2
         <> toCBOR (1 :: Word8)
         <> toCBOR vrfOutput
-
-instance Typeable tag => SerialiseNodeToNode blk (PerasVote tag) where
-  encodeNodeToNode _ccfg _version = toCBOR
-
-  decodeNodeToNode _ccfg _version = fromCBOR
 
 instance Typeable tag => Serialise (PerasVote tag) where
   encode = toCBOR

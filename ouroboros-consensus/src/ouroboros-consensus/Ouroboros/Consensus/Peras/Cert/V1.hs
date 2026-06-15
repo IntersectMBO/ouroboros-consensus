@@ -67,7 +67,6 @@ import Ouroboros.Consensus.Committee.EveryoneVotes
   )
 import Ouroboros.Consensus.Committee.WFA (SeatIndex (..))
 import Ouroboros.Consensus.Committee.WFALS (Cert (..), WFALS)
-import Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToNode (..))
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCrypto
   )
@@ -137,11 +136,6 @@ instance Typeable tag => ToCBOR (PerasCert tag) where
       <> toCBOR (pcBoostedBlock cert)
       <> toCBOR (pcVoters cert)
       <> toCBOR (pcSignature cert)
-
-instance Typeable tag => SerialiseNodeToNode blk (PerasCert tag) where
-  encodeNodeToNode _ccfg _version = toCBOR
-
-  decodeNodeToNode _ccfg _version = fromCBOR
 
 instance Typeable tag => Serialise (PerasCert tag) where
   encode = toCBOR
