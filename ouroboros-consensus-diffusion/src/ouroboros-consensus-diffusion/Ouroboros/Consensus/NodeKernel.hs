@@ -39,6 +39,8 @@ import Control.DeepSeq (force)
 import Control.Monad
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.Except
+import Control.Monad.Trans.Maybe (runMaybeT, hoistMaybe)
+import Control.Monad.Writer (runWriterT, tell)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
@@ -50,7 +52,7 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, isNothing)
 import Data.Proxy
 import Data.Set (Set, member)
 import qualified Data.Text as Text
@@ -486,36 +488,41 @@ perasVoteForgingController systemTime IS{chainDB, tracers} slotNo = do
       exitEarly
     Right privateKey -> pure privateKey
 
-  (voteM :: Maybe (ValidatedPerasVote blk), traceEvents :: [TracePerasVotingEvent blk]) <- lift $ atomically $ do
+  -- We run all 3 STM computations in a WriterT monad so that we can have proper logging,
+  -- while keeping everything in the same transaction. We also use MaybeT because there is
+  -- a natural abort/continue logic within the transaction. Unfortunately, we can't leverage
+  -- the outer WithEarlyExit monad, because we _always_ want to get the trace.
+  (mVote, traceEvents :: [TracePerasVotingEvent blk]) <- lift $ atomically $ runWriterT $ runMaybeT $ do
 
     -- Resolve Peras round number
-    roundInfo <- Time.resolveSlotToPerasRoundInfoWithHandle
+    roundInfo <- dyel $ Time.resolveSlotToPerasRoundInfoWithHandle
       (ChainDB.getTimeResolutionContextHandle chainDB)
       slotNo
     let roundNo = Time.stpriPerasRoundNo roundInfo
-    case Time.stpriIsFirstSlotOfPerasRound roundInfo of
-      False -> pure (Nothing, [TraceNoVoteAfterFirstSlotInRound roundNo (Time.stpriSlotsSpentInPerasRound roundInfo)])
-      True -> do
+        slotInRound = Time.stpriSlotsSpentInPerasRound roundInfo
 
-        -- Do the voting rules state that we should vote?
-        votingDecision <- isPerasVotingAllowedInContext
-          (ChainDB.getPerasVotingViewHandle chainDB)
-          roundNo
-        let traceVotingRule = TraceVotingRuleEvent votingDecision
-        case votingDecision of
-          NoVote _ -> pure (Nothing, [traceVotingRule])
-          Vote _ candidateBlock -> do
+    when (not $ Time.stpriIsFirstSlotOfPerasRound roundInfo) $ do
+      lift $ tell [TracePerasVotingNoVoteAfterFirstSlotInRound roundNo slotInRound]
+      hoistMaybe Nothing
 
-            -- Forge the vote, if allowed
-            (voteM :: Maybe (ValidatedPerasVote blk)) <- forgePerasVoteIfEligibleInContext
-              (ChainDB.getPerasEpochContextResolverHandle chainDB)
-              poolId
-              privateKey
-              roundNo
-              candidateBlock
-            case voteM of
-              Nothing -> pure (Nothing, [traceVotingRule, TraceNotElectedInRound roundNo])
-              Just vote -> pure (Just vote, [traceVotingRule])
+    -- Do the voting rules state that we should vote?
+    votingDecision <- dyel $ isPerasVotingAllowedInContext
+      (ChainDB.getPerasVotingViewHandle chainDB)
+      roundNo
+    lift $ tell [TracePerasVotingRuleEvent votingDecision]
+    candidateBlock <- case votingDecision of
+      NoVote _ -> hoistMaybe Nothing
+      Vote _ block -> pure block
+
+    -- Forge the vote, if allowed
+    mVote <- dyel $ forgePerasVoteIfEligibleInContext
+      (ChainDB.getPerasEpochContextResolverHandle chainDB)
+      poolId
+      privateKey
+      roundNo
+      candidateBlock
+    when (isNothing mVote) $ lift $ tell $ [TracePerasVotingNotAVoterInRound roundNo]
+    hoistMaybe mVote
 
   traverse_ trace traceEvents
   case mVote of
@@ -530,6 +537,9 @@ perasVoteForgingController systemTime IS{chainDB, tracers} slotNo = do
   where
     trace :: TracePerasVotingEvent blk -> WithEarlyExit m ()
     trace = lift . traceWith (perasVoteForgingTracer tracers)
+
+    -- Do you even lift, bro?
+    dyel = lift . lift
 
 castTraceFetchDecision ::
   forall remotePeer blk.
