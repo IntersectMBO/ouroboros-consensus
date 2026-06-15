@@ -11,7 +11,7 @@ module LeiosDemoDb.InMemory
   , newLeiosDBInMemoryWith
   ) where
 
-import Cardano.Prelude (Generic, forM_, maybeToList, when)
+import Cardano.Prelude (Generic, forM_, listToMaybe, maybeToList, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
@@ -54,21 +54,28 @@ import Ouroboros.Consensus.Util.IOLike
   , atomically
   )
 
--- | In-memory database state
+-- | In-memory database state.
 data InMemoryLeiosDb = InMemoryLeiosDb
   { imTxs :: !(Map TxHash (ByteString, BytesSize))
-  -- ^ Global transaction storage (normalized)
-  , imEbPoints :: !(IntMap {- SlotNo -} (EbHash, BytesSize))
-  -- ^ Announced EB points with their expected sizes
+  -- ^ Global transaction storage.
+  , imEbPoints :: !(Map LeiosPoint BytesSize)
+  -- ^ Inserted EB points with their expected sizes. The same EB
+  -- content can be inserted at multiple slots; each
+  -- @(slot, hash)@ point has its own entry and completes
+  -- independently.
+  , imEbBodiesDownloaded :: !(Set LeiosPoint)
+  -- ^ Subset of 'imEbPoints' for which 'leiosDbInsertEbBody' has been
+  -- called. Only these points are considered for completion.
   , imEbBodies :: !(Map EbHash (IntMap {- txOffset -} EbTxEntry))
-  , imEbSlots :: !(Map EbHash SlotNo)
-  , imAnnouncedCompletedEbs :: !(Set EbHash)
-  -- ^ EBs for which we have already broadcast an 'AcquiredEbTxs'
-  -- notification. The completion predicate stays true once an EB is
-  -- complete, so any later batch containing one of its txs would
-  -- re-trigger it without this guard; downstream consumers
-  -- (e.g. 'runLeiosVoting') treat the re-notification as fatal
-  -- ('AlreadyKnown' from 'addVote').
+  -- ^ EB tx-hash list, keyed by content hash. Shared across every
+  -- point that references the same EB.
+  , imCompletedEbs :: !(Set LeiosPoint)
+  -- ^ Points for which 'AcquiredEbTxs' has already been broadcast.
+  -- The completion predicate stays true once an EB is complete, so
+  -- any later batch containing one of its txs would re-trigger it
+  -- without this guard; downstream consumers (e.g. 'runLeiosVoting')
+  -- treat the re-notification as fatal ('AlreadyKnown' from
+  -- 'addVote').
   }
   deriving stock Generic
   deriving anyclass NoThunks
@@ -123,29 +130,23 @@ imScanEbPoints :: IOLike m => StrictTVar m InMemoryLeiosDb -> m [(SlotNo, EbHash
 imScanEbPoints stateVar = atomically $ do
   state <- readTVar stateVar
   pure
-    [ (SlotNo (fromIntegral slot), hash)
-    | (slot, (hash, _size)) <- IntMap.toAscList (imEbPoints state)
+    [ (p.pointSlotNo, p.pointEbHash)
+    | p <- Map.keys (imEbPoints state)
     ]
 
 imLookupEbPoint :: IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe SlotNo)
 imLookupEbPoint stateVar ebHash = atomically $ do
   state <- readTVar stateVar
   pure $
-    foldr
-      (\(slot, (h, _)) acc -> if h == ebHash then Just (SlotNo (fromIntegral slot)) else acc)
-      Nothing
-      (IntMap.toList (imEbPoints state))
+    listToMaybe
+      [p.pointSlotNo | p <- Map.keys (imEbPoints state), p.pointEbHash == ebHash]
 
+-- | Insert a point. Subsequent calls at the same point are no-ops
+-- (the first-seen size sticks; the body-downloaded set is untouched).
 imInsertEbPoint :: IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> BytesSize -> m ()
 imInsertEbPoint stateVar point ebBytesSize = atomically $
   modifyTVar stateVar $ \s ->
-    s
-      { imEbPoints =
-          IntMap.insert
-            (fromIntegral $ unSlotNo point.pointSlotNo)
-            (point.pointEbHash, ebBytesSize)
-            (imEbPoints s)
-      }
+    s{imEbPoints = Map.insertWith (\_ old -> old) point ebBytesSize (imEbPoints s)}
 
 imLookupEbBody :: IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m [(TxHash, BytesSize)]
 imLookupEbBody stateVar ebHash = atomically $ do
@@ -182,8 +183,15 @@ imInsertEbBody stateVar notificationChan point eb = do
             ]
     modifyTVar stateVar $ \s ->
       s
-        { imEbBodies = Map.insert point.pointEbHash entries (imEbBodies s)
-        , imEbSlots = Map.insert point.pointEbHash point.pointSlotNo (imEbSlots s)
+        { -- The tx-hash list is fully determined by the EB content
+          -- hash, so a second insertion at the same hash is a no-op.
+          imEbBodies =
+            Map.insertWith (\_ old -> old) point.pointEbHash entries (imEbBodies s)
+        , -- Mark this point as downloaded. Other points referencing
+          -- the same EB hash are unaffected; each needs its own
+          -- 'leiosDbInsertEbBody' to be considered complete.
+          imEbBodiesDownloaded =
+            Set.insert point (imEbBodiesDownloaded s)
         }
     writeTChan notificationChan $ AcquiredEb point (leiosEbBytesSize eb)
 
@@ -202,26 +210,36 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
         then s
         else s{imTxs = Map.insert txHash (txBytes, txBytesSize) (imTxs s)}
   state <- readTVar stateVar
-  -- Candidates are EBs whose completion predicate currently holds and
-  -- which reference at least one of the txs in this batch. We then
-  -- drop any candidate already announced; the predicate stays true
-  -- forever once an EB completes, so without this guard any later
-  -- batch with one of its txs would re-trigger 'AcquiredEbTxs'.
-  let candidates =
-        [ MkLeiosPoint slot ebHash
-        | (ebHash, entries) <- Map.toList (imEbBodies state)
-        , any (\e -> eteTxHash e `elem` insertedTxHashes) (IntMap.elems entries)
-        , all (\e -> Map.member (eteTxHash e) (imTxs state)) (IntMap.elems entries)
-        , slot <- maybeToList $ Map.lookup ebHash (imEbSlots state)
+  -- Candidates: every point whose body has been downloaded, whose
+  -- hash is touched by this batch, and whose closure is now complete.
+  -- A point not in 'imEbBodiesDownloaded' is skipped — its body
+  -- hasn't been inserted, so it can't be complete. Two points
+  -- referencing the same EB hash both light up if both have had
+  -- their body inserted.
+  let touchedByBatch =
+        Set.fromList
+          [ ebHash
+          | (ebHash, entries) <- Map.toList (imEbBodies state)
+          , any (\e -> eteTxHash e `elem` insertedTxHashes) (IntMap.elems entries)
+          ]
+      hashComplete h = case Map.lookup h (imEbBodies state) of
+        Nothing -> False
+        Just entries ->
+          all (\e -> Map.member (eteTxHash e) (imTxs state)) (IntMap.elems entries)
+      candidates =
+        [ point
+        | point <- Set.toList (imEbBodiesDownloaded state)
+        , Set.member (pointEbHash point) touchedByBatch
+        , hashComplete (pointEbHash point)
         ]
       completed =
         filter
-          (\p -> not (Set.member (pointEbHash p) (imAnnouncedCompletedEbs state)))
+          (\p -> not (Set.member p (imCompletedEbs state)))
           candidates
   modifyTVar stateVar $ \s ->
     s
-      { imAnnouncedCompletedEbs =
-          foldr (Set.insert . pointEbHash) (imAnnouncedCompletedEbs s) completed
+      { imCompletedEbs =
+          foldr Set.insert (imCompletedEbs s) completed
       }
   forM_ completed $ writeTChan notificationChan . AcquiredEbTxs
   pure completed
@@ -255,21 +273,21 @@ imQueryFetchWork stateVar = atomically $ do
   state <- readTVar stateVar
   let missingEbBodies =
         Map.fromList
-          [ (MkLeiosPoint (SlotNo (fromIntegral slot)) ebHash, ebBytesSize)
-          | (slot, (ebHash, ebBytesSize)) <- IntMap.toAscList (imEbPoints state)
-          , not $ Map.member ebHash (imEbBodies state)
+          [ (point, ebBytesSize)
+          | (point, ebBytesSize) <- Map.toList (imEbPoints state)
+          , not (Set.member point (imEbBodiesDownloaded state))
           ]
-  let missingEbTxs =
+      missingEbTxs =
         Map.fromList
-          [ (MkLeiosPoint slot ebHash, missingEntries)
-          | (ebHash, entries) <- Map.toList (imEbBodies state)
-          , slot <- maybeToList $ Map.lookup ebHash (imEbSlots state)
-          , let missingEntries =
+          [ (point, missing)
+          | point <- Set.toList (imEbBodiesDownloaded state)
+          , Just entries <- [Map.lookup (pointEbHash point) (imEbBodies state)]
+          , let missing =
                   [ (offset, eteTxHash e, eteTxBytesSize e)
                   | (offset, e) <- IntMap.toList entries
-                  , not $ Map.member (eteTxHash e) (imTxs state)
+                  , not (Map.member (eteTxHash e) (imTxs state))
                   ]
-          , not $ null missingEntries
+          , not (null missing)
           ]
   pure LeiosFetchWork{missingEbBodies, missingEbTxs}
 
