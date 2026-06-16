@@ -389,7 +389,7 @@ leiosFetchLogicIteration env offerings =
     Maybe (PeerId pid, Map EbHash Int)
   choosePeerTx peerIds acc txOffsets targetTxBytesSize =
     foldr (\a _ -> Just a) Nothing $
-      [ (peerId, Map.map fst txOffsets')
+      [ (peerId, Map.map fst txOffsetsMatching)
       | (peerId, (_ebIds, ebIds)) <-
           Map.toList $ -- TODO prioritize/shuffle?
             (`Map.withoutKeys` peerIds) $ -- not already requested from this peer
@@ -398,9 +398,16 @@ leiosFetchLogicIteration env offerings =
           <= Leios.maxRequestedBytesSizePerPeer env
       , -- peer can be sent more requests
       let txOffsets' = txOffsets `Map.restrictKeys` ebIds
-      , case Map.lookupMax txOffsets' of
-          Nothing -> False
-          Just (_ebHash, (_txOffset, txBytesSize)) -> targetTxBytesSize == txBytesSize -- peer has offered at least one EB closure that includes this tx with the same size
+          -- Filter to entries whose recorded tx size matches the target's
+          -- authority. The recorded size in 'reverseEbIndexByTx' can disagree
+          -- across EBs (e.g. a malformed body delivered under a different EB
+          -- hash); a single tx hash uniquely determines content, so any entry
+          -- with a different size is bogus and must not carry the request.
+          txOffsetsMatching =
+            Map.filter (\(_, txBytesSize) -> txBytesSize == targetTxBytesSize) txOffsets'
+      , -- peer has offered at least one EB closure recording this
+      -- tx at the authoritative size
+      not (Map.null txOffsetsMatching)
       ]
 
 packRequests ::
