@@ -92,17 +92,29 @@ import System.Random (genWord64, newStdGen)
 --
 -- Allocates a 'BlockIOFS' and an 'LSM.Session' into the temporary registry;
 -- both are torn down by 'brRelease'.
+--
+-- When the optional export path is provided, every snapshot the backend takes
+-- is additionally exported to that directory via 'LSM.exportSnapshot' (see
+-- 'ExportSnapshot'), so it can be read (e.g. by the snapshot-converter daemon)
+-- without interfering with the running session.
 lsmBackendArgsIO ::
   forall c.
   SerialiseHFC (CardanoEras c) =>
-  FsPath -> FilePath -> Word64 -> LedgerDbBackendArgs IO (CardanoBlock c)
-lsmBackendArgsIO lsmPath fastStoragePath salt = LedgerDbBackendArgs $ \trcr shfs -> do
+  -- | Path of the LSM database within the fast-storage mount.
+  FsPath ->
+  -- | Optional path (within the same mount) to which snapshots are exported.
+  Maybe FsPath ->
+  FilePath ->
+  Word64 ->
+  LedgerDbBackendArgs IO (CardanoBlock c)
+lsmBackendArgsIO lsmPath mExportPath fastStoragePath salt = LedgerDbBackendArgs $ \trcr shfs -> do
   (fs, blockio) <-
     allocateTemp
       (ioHasBlockIO (MountPoint fastStoragePath) defaultIOCtxParams)
       (\(_, bio) -> BIO.close bio >> pure True)
       impossibleToNotTransfer
   lift $ createDirectoryIfMissing fs True lsmPath
+  whenJust mExportPath $ lift . createDirectoryIfMissing fs True
   session <-
     allocateTemp
       ( encloseTimedWith (lsmBackendTrace LSMOpenSession >$< trcr) $
@@ -116,11 +128,17 @@ lsmBackendArgsIO lsmPath fastStoragePath salt = LedgerDbBackendArgs $ \trcr shfs
       (\s -> LSM.closeSession s >> pure True)
       impossibleToNotTransfer
   let
+    -- Export each saved snapshot to the configured directory, if any.
+    exportSnap :: ExportSnapshot IO
+    exportSnap = case mExportPath of
+      Nothing -> const (pure ())
+      Just p -> \snap -> LSM.exportSnapshot session snap p
+
     mkH :: MkHandle IO
-    mkH = mkLSMFactory trcr session shfs
+    mkH = mkLSMFactory trcr exportSnap session shfs
 
     mkHs :: MkHandleFromSnapshot IO
-    mkHs = mkLSMFromSnapshot trcr session shfs
+    mkHs = mkLSMFromSnapshot trcr exportSnap session shfs
    in
     pure
       BackendResources
@@ -149,6 +167,11 @@ data LSMBackendTrace
 -- flow through the LedgerDB tracer.
 lsmBackendTrace :: (a -> LSMBackendTrace) -> a -> LedgerDBV2Trace
 lsmBackendTrace f = BackendTrace . SomeBackendTrace . f
+
+-- | Action that exports a freshly-saved LSM snapshot to a configured
+-- destination directory, so it can be read without interfering with the
+-- running LSM session. When no export path is configured this is a no-op.
+type ExportSnapshot m = LSM.SnapshotName -> m ()
 
 -- | Type alias for convenience
 type UTxOTable m = LSM.Table m TxInBytes TxOutBytes Void
@@ -224,12 +247,13 @@ newLSMTablesHandle ::
   forall m era.
   (IOLike m, MemPack (SL.TxOut era), Eq (SL.TxOut era)) =>
   Tracer m LedgerDBV2Trace ->
+  ExportSnapshot m ->
   SomeHasFS m ->
   SL.NewEpochState era ->
   Word64 ->
   UTxOTable m ->
   m (TablesHandle m era)
-newLSMTablesHandle tracer shfs@(SomeHasFS fs) st utxoSize table = do
+newLSMTablesHandle tracer exportSnap shfs@(SomeHasFS fs) st utxoSize table = do
   pure
     TablesHandle
       { -- LSM keeps the UTxO on disk: read just the block's input keys
@@ -242,13 +266,13 @@ newLSMTablesHandle tracer shfs@(SomeHasFS fs) st utxoSize table = do
       , stateWithUTxO = \utxos -> st & slUtxoL .~ utxos
       , applyDiff = \d ->
           encloseTimedWith (TraceLedgerTablesHandlePush >$< tracer) $ do
-            handle' <- implApplyDiff tracer shfs table utxoSize st d
+            handle' <- implApplyDiff tracer exportSnap shfs table utxoSize st d
             LSM.closeTable table
             pure handle'
-      , duplWithDiffs = implDuplicateWithDiffs tracer shfs table utxoSize
+      , duplWithDiffs = implDuplicateWithDiffs tracer exportSnap shfs table utxoSize
       , duplicateHandle =
           encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) (LSM.duplicate table)
-            >>= newLSMTablesHandle tracer shfs st utxoSize
+            >>= newLSMTablesHandle tracer exportSnap shfs st utxoSize
       , readUTxOWhole =
           encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $
             drainTableFiltered table (const True)
@@ -261,21 +285,23 @@ newLSMTablesHandle tracer shfs@(SomeHasFS fs) st utxoSize table = do
       , getStatsHandle = Statistics $ fromIntegral utxoSize
       , takeHandleSnapshot = \ds ->
           encloseTimedWith (lsmBackendTrace LSMSnap >$< tracer) $ do
+            let snapName = fromString (snapshotToDirName ds)
             LSM.saveSnapshot
-              (fromString (snapshotToDirName ds))
+              snapName
               (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
               table
             writeUTxOSizeFile fs (snapshotToUTxOSizeFilePath ds) $ fromIntegral utxoSize
+            exportSnap snapName
             pure (Nothing, UTxOHDLSMSnapshot)
       , castHandle = \st' ->
           encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) (LSM.duplicate table)
-            >>= newLSMTablesHandle tracer shfs st' utxoSize
+            >>= newLSMTablesHandle tracer exportSnap shfs st' utxoSize
       , injectValues = \nes ->
           encloseTimedWith (TraceLedgerTablesHandlePush >$< tracer) $ do
             let (SL.UTxO utxos, nes') = nes & slUtxoL <<.~ SL.UTxO Map.empty
             table' <- LSM.duplicate table
             mapM_ (go table') . chunks 1000 . Map.toList $ utxos
-            newLSMTablesHandle tracer shfs nes' (utxoSize + fromIntegral (Map.size utxos)) table'
+            newLSMTablesHandle tracer exportSnap shfs nes' (utxoSize + fromIntegral (Map.size utxos)) table'
       }
  where
   go :: UTxOTable m -> [(SL.TxIn, SL.TxOut era)] -> m ()
@@ -365,13 +391,14 @@ implRead tracer table keys =
 implApplyDiff ::
   (IOLike m, MemPack (SL.TxOut era), Eq (SL.TxOut era)) =>
   Tracer m LedgerDBV2Trace ->
+  ExportSnapshot m ->
   SomeHasFS m ->
   UTxOTable m ->
   Word64 ->
   SL.NewEpochState era ->
   Diff.Diff SL.TxIn (SL.TxOut era) ->
   m (TablesHandle m era)
-implApplyDiff tracer shfs table size st (Diff.Diff diffs) = do
+implApplyDiff tracer exportSnap shfs table size st (Diff.Diff diffs) = do
   table' <-
     encloseTimedWith (TraceLedgerTablesHandleDuplicate >$< tracer) $ LSM.duplicate table
   let vec = V.create $ do
@@ -394,7 +421,7 @@ implApplyDiff tracer shfs table size st (Diff.Diff diffs) = do
           assert (size + ins - dels <= size + ins) $
             size + ins - dels
   encloseTimedWith (lsmBackendTrace LSMUpdate >$< tracer) $ LSM.updates table' vec
-  newLSMTablesHandle tracer shfs st size' table'
+  newLSMTablesHandle tracer exportSnap shfs st size' table'
  where
   f (Diff.Insert v) = LSM.Insert (toTxOutBytes (Proxy) v) Nothing
   f Diff.Delete = LSM.Delete
@@ -402,35 +429,37 @@ implApplyDiff tracer shfs table size st (Diff.Diff diffs) = do
 implDuplicateWithDiffs ::
   (IOLike m, MemPack (SL.TxOut era), Eq (SL.TxOut era)) =>
   Tracer m LedgerDBV2Trace ->
+  ExportSnapshot m ->
   SomeHasFS m ->
   UTxOTable m ->
   Word64 ->
   SL.NewEpochState era ->
   SL.NewEpochState era ->
   m (SL.NewEpochState era, TablesHandle m era)
-implDuplicateWithDiffs tracer shfs table size st0 st1 =
+implDuplicateWithDiffs tracer exportSnap shfs table size st0 st1 =
   encloseTimedWith (TraceLedgerTablesHandlePush >$< tracer) $ do
     let SL.UTxO utxo0 = st0 ^. slUtxoL
         (SL.UTxO utxo1, st1') = st1 & slUtxoL <<.~ SL.UTxO Map.empty
     -- 'st1'' has 'slUtxoL' cleared; it is also what we hand back for
     -- the outer 'ShelleyLedgerState' so the LedgerDB doesn't carry a
     -- per-block subset Map next to the on-disk table.
-    h <- implApplyDiff tracer shfs table size st1' $ Diff.diff utxo0 utxo1
+    h <- implApplyDiff tracer exportSnap shfs table size st1' $ Diff.diff utxo0 utxo1
     pure (st1', h)
 
 mkLSMFactory ::
   forall m.
   IOLike m =>
   Tracer m LedgerDBV2Trace ->
+  ExportSnapshot m ->
   LSM.Session m ->
   SomeHasFS m ->
   MkHandle m
-mkLSMFactory tracer session shfs = MkHandle $ \st -> do
+mkLSMFactory tracer exportSnap session shfs = MkHandle $ \st -> do
   table <-
     encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $ LSM.newTable session
   let SL.UTxO utxos = st ^. slUtxoL
   mapM_ (go table) $ chunks 1000 $ Map.toList utxos
-  newLSMTablesHandle tracer shfs st (fromIntegral (Map.size utxos)) table
+  newLSMTablesHandle tracer exportSnap shfs st (fromIntegral (Map.size utxos)) table
  where
   go :: forall era. MemPack (SL.TxOut era) => UTxOTable m -> [(SL.TxIn, SL.TxOut era)] -> m ()
   go table items =
@@ -460,10 +489,11 @@ readUTxOSizeFile (SomeHasFS hfs) p = do
 mkLSMFromSnapshot ::
   IOLike m =>
   Tracer m LedgerDBV2Trace ->
+  ExportSnapshot m ->
   LSM.Session m ->
   SomeHasFS m ->
   MkHandleFromSnapshot m
-mkLSMFromSnapshot tracer session shfs = MkHandleFromSnapshot $ \ds st -> do
+mkLSMFromSnapshot tracer exportSnap session shfs = MkHandleFromSnapshot $ \ds st -> do
   msz <-
     withExceptT (const BackendCorruptedData) $ readUTxOSizeFile shfs (snapshotToUTxOSizeFilePath ds)
   h <-
@@ -476,7 +506,7 @@ mkLSMFromSnapshot tracer session shfs = MkHandleFromSnapshot $ \ds st -> do
   -- LSM keeps UTxOs on disk only; the pure 'NewEpochState' carries an
   -- empty 'slUtxoL' (which is also what 'encodeShelleyLedgerState'
   -- writes), so we return @st@ unchanged.
-  (st,,Nothing) <$> lift (newLSMTablesHandle tracer shfs st msz h)
+  (st,,Nothing) <$> lift (newLSMTablesHandle tracer exportSnap shfs st msz h)
 
 {-------------------------------------------------------------------------------
   Snapshot streaming

@@ -32,7 +32,7 @@ main = withStdTerminalHandles $ do
     V2InMem -> pure Backends.inMemoryBackendArgs
     V2LSM -> do
       salt <- fst . genWord64 <$> newStdGen
-      pure $ LSM.lsmBackendArgsIO (mkFsPath ["lsm"]) (dbDir cfg) salt
+      pure $ LSM.lsmBackendArgsIO (mkFsPath ["lsm"]) Nothing (dbDir cfg) salt
   void $ analyse cfg blockArgs backendArgs
 
 getCmdLine :: IO (DBAnalyserConfig, CardanoBlockArgs)
