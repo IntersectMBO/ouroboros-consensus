@@ -23,6 +23,7 @@ import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot
   , mkPerasWeightSnapshot
   )
+import Ouroboros.Consensus.Storage.PerasCertDB.API (AddPerasCertResult (..))
 
 data Model blk = Model
   { certs :: Set (WithArrivalTime (ValidatedPerasCert blk))
@@ -44,10 +45,10 @@ openDB model = model{open = True}
 
 addCert ::
   StandardHash blk =>
-  Model blk -> WithArrivalTime (ValidatedPerasCert blk) -> Model blk
+  Model blk -> WithArrivalTime (ValidatedPerasCert blk) -> (AddPerasCertResult, Model blk)
 addCert model@Model{certs, latestCertSeen} cert
-  | certs `hasRoundNo` cert = model
-  | otherwise = model{certs = certs', latestCertSeen = latestCertSeen'}
+  | certs `hasRoundNo` cert = (PerasCertAlreadyInDB, model)
+  | otherwise = (AddedPerasCertToDB, model{certs = certs', latestCertSeen = latestCertSeen'})
  where
   certs' = Set.insert cert certs
   latestCertSeen' = case latestCertSeen of
