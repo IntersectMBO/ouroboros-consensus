@@ -570,17 +570,12 @@ class ResolveLeiosBlock blk where
   resolveLeiosBlockHdr _ _ _ = return Nothing
 
   -- | Whether this block's body carries a 'LeiosCert' (a CertRB).
-  --
-  -- The CertRB staging area gate inspects this cheaply before going on
-  -- to compute the announced EB point and querying the 'LeiosDb'.
   blockHasLeiosCert :: blk -> Bool
   blockHasLeiosCert _ = False
 
   -- | The EB announcement carried by this header (point + on-the-wire
   -- body size), if any. 'Nothing' for headers in eras that don't carry
-  -- Leios announcements. The CertRB staging gate reads this off the
-  -- parent header on the current chain to learn which EB the new
-  -- block's cert refers to.
+  -- Leios announcements.
   headerLeiosAnnouncement :: Header blk -> Maybe (LeiosPoint, BytesSize)
   headerLeiosAnnouncement _ = Nothing
 

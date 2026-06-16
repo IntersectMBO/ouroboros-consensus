@@ -26,7 +26,6 @@ import qualified Test.Consensus.Util.Versioned (tests)
 import qualified Test.LeiosDemoDb (tests)
 import qualified Test.LeiosDemoLogic (tests)
 import qualified Test.LeiosDemoTypes (tests)
-import qualified Test.LeiosStagingArea (tests)
 import qualified Test.LeiosVoteState (tests)
 import Test.Tasty
 import Test.Util.TestEnv
@@ -82,7 +81,6 @@ tests =
         [ Test.LeiosDemoTypes.tests
         , Test.LeiosDemoDb.tests
         , Test.LeiosDemoLogic.tests
-        , Test.LeiosStagingArea.tests
         , Test.LeiosVoteState.tests
         ]
     ]

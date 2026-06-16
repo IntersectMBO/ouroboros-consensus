@@ -790,33 +790,6 @@ data TraceLeiosKernel
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
-  | -- | A CertRB was admitted to the staging area because its certified
-    -- EB closure isn't locally available. This is a critical event: it
-    -- means the node would have crashed in 'resolveLeiosBlock' (issue
-    -- #890) and the staging-area / Phase-2 emergency-fetch path is
-    -- compensating. Carries the staged block's point, the missing EB
-    -- point, and the number of peers whose ChainSync candidate
-    -- contained the block (they're treated as implicit offerers of the
-    -- EB by the fetch loop).
-    TraceLeiosCertRBStaged
-      { stagedBlockPoint :: String
-      , stagedEbPoint :: LeiosPoint
-      , stagedKnownPeers :: Int
-      }
-  | -- | A staged CertRB has been released back into ChainSel because
-    -- the EB closure (body + txs) is now locally available.
-    TraceLeiosCertRBReleased {releasedEbPoint :: LeiosPoint}
-  | -- | A staged CertRB has been evicted by the staging-area GC: no
-    -- live peer's ChainSync candidate contains the staged block
-    -- anymore so the closure is unreachable. The parked BlockFetch
-    -- client thread is woken with a 'FailedToAddBlock' verdict; the
-    -- block itself is dropped. If a peer that does have the closure
-    -- subsequently offers the chain, BlockFetch will re-fetch and
-    -- the block will be re-staged or admitted as normal.
-    TraceLeiosCertRBEvicted
-      { evictedBlockPoint :: String
-      , evictedEbPoint :: LeiosPoint
-      }
 
 deriving instance Show TraceLeiosKernel
 
@@ -889,30 +862,6 @@ traceLeiosKernelToObject = \case
       , "table" .= table
       , "key" .= key
       ]
-  TraceLeiosCertRBStaged{stagedBlockPoint, stagedEbPoint, stagedKnownPeers} ->
-    let MkLeiosPoint (SlotNo ebSlot) ebHash = stagedEbPoint
-     in mconcat
-          [ "kind" .= Aeson.String "LeiosCertRBStaged"
-          , "blockPoint" .= stagedBlockPoint
-          , "ebHash" .= prettyEbHash ebHash
-          , "ebSlot" .= ebSlot
-          , "knownPeers" .= stagedKnownPeers
-          ]
-  TraceLeiosCertRBReleased{releasedEbPoint} ->
-    let MkLeiosPoint (SlotNo ebSlot) ebHash = releasedEbPoint
-     in mconcat
-          [ "kind" .= Aeson.String "LeiosCertRBReleased"
-          , "ebHash" .= prettyEbHash ebHash
-          , "ebSlot" .= ebSlot
-          ]
-  TraceLeiosCertRBEvicted{evictedBlockPoint, evictedEbPoint} ->
-    let MkLeiosPoint (SlotNo ebSlot) ebHash = evictedEbPoint
-     in mconcat
-          [ "kind" .= Aeson.String "LeiosCertRBEvicted"
-          , "blockPoint" .= evictedBlockPoint
-          , "ebHash" .= prettyEbHash ebHash
-          , "ebSlot" .= ebSlot
-          ]
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String

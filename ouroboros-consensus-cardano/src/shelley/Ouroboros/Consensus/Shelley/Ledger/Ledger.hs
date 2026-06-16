@@ -1036,7 +1036,7 @@ instance
             case mAnnouncedEb of
               Nothing ->
                 error $
-                  "Issue #890 gate missed: apply-time resolve found EB "
+                  "apply-time Leios resolve: announced EB "
                     <> show ann
                     <> " at last-slot "
                     <> show (praosStateLastSlot praosSt)
