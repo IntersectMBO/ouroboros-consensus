@@ -69,10 +69,7 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( WhetherToIntervene (..)
   )
-import Ouroboros.Consensus.Peras.Cert.Opaque
-  ( OpaquePerasCert
-  , opaquePerasCertToByteArray
-  )
+import Ouroboros.Consensus.Peras.Cert.Opaque (OpaquePerasCert (..))
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 
 {-------------------------------------------------------------------------------
@@ -235,9 +232,9 @@ instance ShelleyBasedEra DijkstraEra where
   -- family
   mkEraMkMempoolApplyTxError _prx = Nothing
 
-  injectPerasCertInBlockBody cert =
+  injectPerasCertInBlockBody (OpaquePerasCert byteArray) =
     Dijkstra.perasCertBlockBodyL
-      .~ SJust (Dijkstra.PerasCert (opaquePerasCertToByteArray cert))
+      .~ SJust (Dijkstra.PerasCert byteArray)
 
 applyAlonzoBasedTx ::
   forall era.

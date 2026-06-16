@@ -8,16 +8,14 @@
 {-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Peras.Cert.Opaque
-  ( OpaquePerasCert
+  ( OpaquePerasCertError (..)
+  , OpaquePerasCert (..)
   , toOpaquePerasCert
   , fromOpaquePerasCert
-  , opaquePerasCertToByteArray
-  , opaquePerasCertFromByteArray
   ) where
 
 import Cardano.Binary (Decoder, FromCBOR (..))
 import Cardano.Ledger.Binary (ToCBOR (..))
-import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
@@ -32,7 +30,6 @@ import Data.MemPack.Buffer
   )
 import Data.Proxy (Proxy)
 import Data.Typeable (Proxy (..), Typeable, eqT, typeRep, (:~:) (..))
-import GHC.Base (Any)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras (..))
@@ -40,47 +37,13 @@ import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 
 -- * Opaque Peras certificates to be stored in blocks
 
--- | Supported versions of Peras certificates that can be stored in blocks.
-data OpaquePerasCertVersion = V1
-  deriving (Eq, Show, Generic, NoThunks)
-
-instance ToCBOR OpaquePerasCertVersion where
-  toCBOR = \case
-    V1 -> CBOR.encodeWord8 1
-
-instance FromCBOR OpaquePerasCertVersion where
-  fromCBOR = do
-    CBOR.decodeWord8 >>= \case
-      1 -> pure V1
-      version ->
-        fail $ "Unknown OpaquePerasCertVersion: " <> show version
-
--- | Error type for unsupported Peras certificate versions.
+-- | Error type for opaque Peras certificate operations.
 newtype OpaquePerasCertError = OpaquePerasCertError String
   deriving (Eq, Show, Generic, NoThunks)
 
--- | Existential wrapper for Peras certificates to be stored in blocks.
---
--- This allows us to have blocks that contain a potentially different type of
--- Peras certificate than the one used in the current era.
-data OpaquePerasCert where
-  OpaquePerasCertV1 :: V1.PerasCert Any -> OpaquePerasCert
-
-instance ToCBOR OpaquePerasCert where
-  toCBOR = \case
-    OpaquePerasCertV1 (cert :: V1.PerasCert blk) ->
-      CBOR.encodeListLen 2
-        <> toCBOR V1
-        <> toCBOR (V1.retagPerasCert @() cert)
-
-instance FromCBOR OpaquePerasCert where
-  fromCBOR = do
-    CBOR.decodeListLenOf 2
-    version <- fromCBOR
-    case version of
-      V1 -> do
-        cert <- fromCBOR @(V1.PerasCert ())
-        pure (OpaquePerasCertV1 (V1.retagPerasCert cert))
+-- | Opaque Peras certificates to be stored in blocks.
+newtype OpaquePerasCert = OpaquePerasCert {unOpaquePerasCert :: ByteArray}
+  deriving (Eq, Show, Generic, NoThunks)
 
 -- | Create an 'OpaquePerasCert' from a given 'PerasCert'.
 toOpaquePerasCert ::
@@ -92,39 +55,12 @@ toOpaquePerasCert ::
 toOpaquePerasCert (cert :: PerasCert blk)
   | Just Refl <- eqT @(PerasCert blk) @(V1.PerasCert blk) =
       Right $
-        OpaquePerasCertV1 $
-          V1.retagPerasCert cert
+        OpaquePerasCert (toByteArray (toCBOR cert))
   | otherwise =
       Left $
         OpaquePerasCertError $
           "Unsupported PerasCert type for OpaquePerasCert: "
             <> show (typeRep (Proxy @(PerasCert blk)))
-
--- | Extract a 'PerasCert' from an 'OpaquePerasCert'.
-fromOpaquePerasCert ::
-  ( Typeable blk
-  , Typeable (PerasCert blk)
-  ) =>
-  Proxy blk ->
-  OpaquePerasCert ->
-  Either OpaquePerasCertError (PerasCert blk)
-fromOpaquePerasCert (Proxy :: Proxy blk) = \case
-  OpaquePerasCertV1 cert
-    | Just Refl <- eqT @(PerasCert blk) @(V1.PerasCert blk) ->
-        Right $
-          V1.retagPerasCert cert
-    | otherwise ->
-        Left $
-          OpaquePerasCertError $
-            "OpaquePerasCert version does not match expected PerasCert type: "
-              <> show (typeRep (Proxy @(PerasCert blk)))
-
--- | Serialise an opaque Peras certificate into a byte array.
-opaquePerasCertToByteArray ::
-  OpaquePerasCert ->
-  ByteArray
-opaquePerasCertToByteArray =
-  toByteArray . toCBOR
  where
   toByteArray ::
     CBOR.Encoding ->
@@ -134,17 +70,27 @@ opaquePerasCertToByteArray =
       . ShortByteString.toShort
       . CBOR.toStrictByteString
 
--- | Deserialize an opaque Peras certificate from a byte array.
-opaquePerasCertFromByteArray ::
-  ByteArray ->
-  Either OpaquePerasCertError OpaquePerasCert
-opaquePerasCertFromByteArray =
-  fromByteArray fromCBOR
+-- | Extract a 'PerasCert' from an 'OpaquePerasCert'.
+fromOpaquePerasCert ::
+  ( Typeable blk
+  , Typeable (PerasCert blk)
+  ) =>
+  Proxy blk ->
+  OpaquePerasCert ->
+  Either OpaquePerasCertError (PerasCert blk)
+fromOpaquePerasCert (Proxy :: Proxy blk) (OpaquePerasCert byteArray)
+  | Just Refl <- eqT @(PerasCert blk) @(V1.PerasCert blk) =
+      fromByteArray fromCBOR byteArray
+  | otherwise =
+      Left $
+        OpaquePerasCertError $
+          "Unsupported PerasCert type for OpaquePerasCert: "
+            <> show (typeRep (Proxy @(PerasCert blk)))
  where
   fromByteArray ::
-    (forall s. Decoder s OpaquePerasCert) ->
+    (forall s. Decoder s (PerasCert blk)) ->
     ByteArray ->
-    Either OpaquePerasCertError OpaquePerasCert
+    Either OpaquePerasCertError (PerasCert blk)
   fromByteArray decoder =
     handleParseErrors
       . CBOR.deserialiseFromBytes decoder
