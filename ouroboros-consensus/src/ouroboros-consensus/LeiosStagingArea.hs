@@ -242,14 +242,14 @@ newLeiosStagingArea
     -- BlockFetch view wrapper
     wrapView tv =
       defView
-        { BlockFetchClientInterface.addBlockAsync = stagingGate tv
+        { BlockFetchClientInterface.addBlockAsync = addBlockAsync tv
         , BlockFetchClientInterface.getIsFetched = do
             baseFetched <- BlockFetchClientInterface.getIsFetched defView
             staged <- isStagedBlockSTM tv
             pure $ \p -> baseFetched p || staged p
         }
 
-    stagingGate tv punish blk
+    addBlockAsync tv punish blk
       | not (blockHasLeiosCert blk) =
           BlockFetchClientInterface.addBlockAsync defView punish blk
       | otherwise = do
@@ -262,22 +262,33 @@ newLeiosStagingArea
           -- extends our chain, the peer that delivered it tracks the
           -- same chain via ChainSync and the parent is in its
           -- candidate fragment too.
-          mAnn <- atomically $ do
+          mHeader <- atomically $ do
             candidates <- candidateFragments varChainSyncHandles
-            pure $ findParentAnnouncement (Block.blockPrevHash blk) candidates
-          case mAnn of
-            -- Parent isn't visible on any ChainSync candidate, or
-            -- didn't announce. Can't determine the EB; admit and
-            -- let ChainSel / apply-time error decide.
-            Nothing ->
-              BlockFetchClientInterface.addBlockAsync defView punish blk
-            Just (point, size) -> do
-              mEb <- withLeiosDb leiosDb $ \conn ->
-                leiosDbQueryCompletedEbByPoint conn point
-              case mEb of
-                Just _ ->
-                  BlockFetchClientInterface.addBlockAsync defView punish blk
-                Nothing -> stageAndPark tv point size blk
+            pure $ findParentHeader (Block.blockPrevHash blk) candidates
+          case mHeader of
+            Nothing -> error "LeiosStagingArea was asked to resolve a block for which we don't have a header chain"
+            Just h ->
+              case headerLeiosAnnouncement h of
+                -- Parent header was not announcing an EB, but we have a CertRB
+                -- -> this is illegal in Leios.
+                --
+                -- TODO: Ideally, this would be more cohesive with other block
+                -- validation? It's quite similar to the situation when block
+                -- fetch would not resolve a header received via chain sync.
+                Nothing ->
+                  pure
+                    AddBlockPromise
+                      { blockWrittenToDisk = pure False
+                      , blockProcessed =
+                          pure $ FailedToAddBlock "CertRB but no announcement, this is an invalid block"
+                      }
+                Just (point, size) -> do
+                  mEb <- withLeiosDb leiosDb $ \conn ->
+                    leiosDbQueryCompletedEbByPoint conn point
+                  case mEb of
+                    Nothing -> stageAndPark tv point size blk
+                    Just _ ->
+                      BlockFetchClientInterface.addBlockAsync defView punish blk
 
     -- \| Park the calling BlockFetch client thread on its own outcome
     -- handle registered with the staging area. The drain fills the
@@ -381,30 +392,19 @@ newLeiosStagingArea
               , evictedEbPoint = point
               }
 
--- | Find the parent header in any ChainSync candidate fragment and
--- read its 'headerLeiosAnnouncement'.
---
--- A CertRB delivered via BlockFetch is by construction fulfilling
--- some candidate, so the parent (whose header carries the EB
--- announcement) lives in at least one of the live candidate
--- fragments. The locally selected chain is intentionally not
--- consulted: a parent that's only on the selected chain but on no
--- candidate would mean the chain has rolled past the point where any
--- peer is currently fetching — in which case the staging gate has
--- nothing useful to decide anyway.
-findParentAnnouncement ::
+-- | Find the parent header in any ChainSync candidate fragment.
+findParentHeader ::
   forall blk peer.
-  (HasHeader (Header blk), ResolveLeiosBlock blk) =>
+  HasHeader (Header blk) =>
   ChainHash blk ->
   Map.Map peer (AF.AnchoredFragment (HeaderWithTime blk)) ->
-  Maybe (LeiosPoint, BytesSize)
-findParentAnnouncement prev candidates = case prev of
+  Maybe (Header blk)
+findParentHeader prev candidates = case prev of
   GenesisHash -> Nothing
   BlockHash h ->
     find
       (\hdr -> Block.blockHash hdr == h)
       (concatMap (fmap hwtHeader . AF.toNewestFirst) (Map.elems candidates))
-      >>= headerLeiosAnnouncement
 
 -- | Snapshot every peer's current ChainSync candidate fragment.
 candidateFragments ::
