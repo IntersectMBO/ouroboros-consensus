@@ -118,8 +118,8 @@ tests =
         "two CertRBs over the same EB hash both release independently"
         test_multiSlotRelease
     , testCase
-        "gate ignores currentChain when looking up parent"
-        test_gateIgnoresCurrentChain
+        "gate admits directly when EB closure is already local"
+        test_admitsWhenClosureLocal
     ]
 
 ------------------------------------------------------------
@@ -164,28 +164,30 @@ test_gcEvict = withRegistry $ \registry -> do
   admitted <- readAdmitted fixture
   admitted @?= []
 
--- | The gate must consult ChainSync candidate fragments only, not
--- the current selected chain. If the parent is on currentChain but
--- on no candidate, the gate must blind-admit (parent announcement
--- not visible), not stage.
-test_gateIgnoresCurrentChain :: IO ()
-test_gateIgnoresCurrentChain = withRegistry $ \registry -> do
+-- | When the EB closure is already in the local LeiosDb at the time
+-- a CertRB arrives, the gate must admit it directly without staging.
+-- This exercises the @leiosDbQueryCompletedEbByPoint = Just@
+-- short-circuit, distinct from the drain path which parks first and
+-- releases on a later notification.
+test_admitsWhenClosureLocal :: IO ()
+test_admitsWhenClosureLocal = withRegistry $ \registry -> do
+  fixture <- mkFixture largeGcInterval registry
   let ebPoint = MkLeiosPoint (SlotNo 1) (mkTestEbHash 1)
-      parent = mkParent 0 (Just (ebPoint, 1024))
+      eb = mkTestEb 1
+      size = leiosEbBytesSize eb
+      parent = mkParent 0 (Just (ebPoint, size))
       child = mkChild 1 parent
-  fixture <- mkFixture shortGcInterval registry
-  -- Put the parent on the mocked current chain — but NOT on any
-  -- ChainSync candidate. A gate that consults currentChain would
-  -- find the announcement and stage; the post-fix gate only looks at
-  -- candidates, doesn't find the announcement, and blind-admits.
-  setCurrentChain fixture (AF.fromOldestFirst AF.AnchorGenesis [getHeader parent])
+  addCandidateContaining fixture [parent]
+  -- Closure is local *before* the CertRB is offered. No async wrap
+  -- here: if the gate parked, the call would block until the
+  -- per-test timeout fires.
+  completeClosure fixture ebPoint eb
   promise <- addBlockViaGate fixture child
   result <- atomically (blockProcessed promise)
   case result of
     SuccesfullyAddedBlock _ -> pure ()
     FailedToAddBlock e ->
-      assertFailure $
-        "expected blind admit (gate ignores currentChain), got: " <> e
+      assertFailure $ "expected direct admit, got: " <> e
   admitted <- readAdmitted fixture
   length admitted @?= 1
 
@@ -322,26 +324,19 @@ data Fixture = Fixture
   , leiosDb :: LeiosDbHandle IO
   , candidateVar :: StrictTVar IO (Map TestPeer (ChainSyncClientHandle IO LeiosBlock))
   , admittedVar :: StrictTVar IO [LeiosBlock]
-  , currentChainVar ::
-      StrictTVar IO (AF.AnchoredFragment (Header LeiosBlock))
   }
-
-setCurrentChain :: Fixture -> AF.AnchoredFragment (Header LeiosBlock) -> IO ()
-setCurrentChain fixture frag =
-  atomically $ modifyTVar (currentChainVar fixture) (const frag)
 
 mkFixture :: DiffTime -> ResourceRegistry IO -> IO Fixture
 mkFixture gcInterval registry = do
   leiosDb <- newLeiosDBInMemory
   admittedVar <- uncheckedNewTVarM []
   candidateVar <- uncheckedNewTVarM Map.empty
-  currentChainVar <- uncheckedNewTVarM (AF.Empty AF.AnchorGenesis)
   let handles = mockHandleCollection candidateVar
   ready <- MVar.newEmptyMVar
   let defView =
         BlockFetchClientInterface.ChainDbView
           { BlockFetchClientInterface.getCurrentChain =
-              readTVar currentChainVar
+              pure (AF.Empty AF.AnchorGenesis)
           , BlockFetchClientInterface.getCurrentChainWithTime =
               pure (AF.Empty AF.AnchorGenesis)
           , BlockFetchClientInterface.getIsFetched =
@@ -369,7 +364,7 @@ mkFixture gcInterval registry = do
       ready
       defView
       gcInterval
-  pure Fixture{area, leiosDb, candidateVar, admittedVar, currentChainVar}
+  pure Fixture{area, leiosDb, candidateVar, admittedVar}
 
 -- | A minimal 'ChainSyncClientHandleCollection' backed by a single
 -- 'StrictTVar' map. Only the read-side ('cschcMap') and the
