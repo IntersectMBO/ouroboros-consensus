@@ -94,7 +94,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , perasVoteDiffusionOutboundTracer ::
       f (TraceLabelPeer remotePeer (TracePerasVoteDiffusionOutbound blk))
   , perasCertInclusionTracer ::
-      f (TracePerasCertInclusionEvent blk)
+      f TracePerasCertInclusionEvent
   , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
   , blockchainTimeTracer :: f (TraceBlockchainTimeEvent UTCTime)
   , forgeStateInfoTracer :: f (TraceLabelCreds (ForgeStateInfo blk))
