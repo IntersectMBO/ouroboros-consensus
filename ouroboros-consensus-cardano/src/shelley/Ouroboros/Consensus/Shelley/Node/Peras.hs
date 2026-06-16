@@ -24,10 +24,7 @@ import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   )
-import Ouroboros.Consensus.Peras.Cert.Opaque
-  ( fromOpaquePerasCert
-  , opaquePerasCertFromByteArray
-  )
+import Ouroboros.Consensus.Peras.Cert.Opaque (OpaquePerasCert (..), fromOpaquePerasCert)
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import Ouroboros.Consensus.Peras.Context
   ( LedgerStateHeaderStateSupportsPerasVoting (..)
@@ -85,8 +82,9 @@ instance
     -- NOTE: could also return 'Nothing', but for now we probably don't want to
     -- silently ignore deserialization errors.
     either (error . show) Just $
-      opaquePerasCertFromByteArray byteArray
-        >>= fromOpaquePerasCert (Proxy @(ShelleyBlock proto DijkstraEra))
+      fromOpaquePerasCert
+        (Proxy @(ShelleyBlock proto DijkstraEra))
+        (OpaquePerasCert byteArray)
 
   readPerasPrivateKeyFromEnv _proxy = unsafePerasBLSPrivateKeyFromEnv
 

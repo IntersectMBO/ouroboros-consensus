@@ -53,7 +53,6 @@ import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
 import Data.Proxy
 import Data.Set (Set)
-import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Void (Void)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -97,6 +96,7 @@ import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( PerasCertInclusionRulesDecision (..)
   , needCertInContext
   )
+import Ouroboros.Consensus.Peras.Cert.Opaque (toOpaquePerasCert)
 import qualified Ouroboros.Consensus.Peras.Time as Time
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -271,7 +271,6 @@ initNodeKernel
     , genesisArgs
     , getDiffusionPipeliningSupport
     , miniProtocolParameters
-    , featureFlags
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -404,11 +403,6 @@ initNodeKernel
           txChannelsVar
           sharedTxStateVar
 
-    whenPerasEnabled $
-      void $
-        forkLinkedWatcher registry "NodeKernel.perasCertInclusion" $
-          perasCertInclusionController st
-
     return
       NodeKernel
         { getChainDB = chainDB
@@ -432,13 +426,6 @@ initNodeKernel
         , getTxMempoolSem = txMempoolSem
         }
    where
-    -- Start a thread conditionally when the PerasFlag is provided and the
-    -- current block type supports Peras.
-    whenPerasEnabled =
-      when $
-        Set.member PerasFlag featureFlags
-          && blockDoesReallySupportsPeras (Proxy @blk)
-
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
       STM m [MkBlockForging m blk] ->
@@ -451,47 +438,6 @@ initNodeKernel
         traverse_ cancelThread forgingThreads
         blockForging' <- traverse (forkBlockForging st) blockForging
         go blockForging'
-
-    perasCertInclusionController _st =
-      knownSlotWatcher btime $ \currSlotNo ->
-        withEarlyExit_ $ do
-          mbCertToInclude <- lift $ atomically $ do
-            currRoundNoInfo <-
-              Time.resolveSlotToPerasRoundInfoWithHandle
-                (ChainDB.getTimeResolutionContextHandle chainDB)
-                currSlotNo
-
-            let currRoundNo = Time.stpriPerasRoundNo currRoundNoInfo
-
-            -- [TODO PERAS CERT INCLUSION] decide if we need to do this on every
-            -- slot, or if it's sufficient to do so at the beginning of a round.
-
-            mbCertInclusionDecision <-
-              needCertInContext
-                (ChainDB.getPerasCertInclusionViewHandle chainDB)
-                currRoundNo
-            case mbCertInclusionDecision of
-              -- NOTE: if constructing a certificate inclusion decision fails,
-              -- this indicates that we don't have seen any certificate we could
-              -- include in a block yet, so we can just ignore this case.
-              Nothing ->
-                pure Nothing
-              Just (DoNotIncludeCert _) ->
-                pure Nothing
-              Just (IncludeCert _ cert) ->
-                pure (Just (currRoundNo, vpcCert (forgetArrivalTime cert)))
-
-          case mbCertToInclude of
-            Nothing ->
-              trace $ TracePerasCertInclusionShouldNotIncludeCert currSlotNo
-            Just (roundNo, cert) ->
-              -- [TODO PERAS CERT INCLUSION] update some shared state here that
-              -- the block forging logic will read when deciding whether to
-              -- include a certificate in the block it's forging.
-              trace $ TracePerasCertInclusionShouldIncludeCert currSlotNo roundNo cert
-     where
-      trace :: TracePerasCertInclusionEvent blk -> WithEarlyExit m ()
-      trace ev = lift $ traceWith (perasCertInclusionTracer tracers) ev
 
 castTraceFetchDecision ::
   forall remotePeer blk.
@@ -778,6 +724,54 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             , ledgerTipPoint (ledgerState unticked)
             )
 
+    -- Decide if we need to include a Peras certificate in this block.
+    (currentRoundNo, perasCertDecision) <- lift $ atomically $ do
+      let timeResolverHandle = ChainDB.getTimeResolutionContextHandle chainDB
+      let certInclusionViewHandle = ChainDB.getPerasCertInclusionViewHandle chainDB
+
+      currentRoundNo <-
+        Time.stpriPerasRoundNo
+          <$> Time.resolveSlotToPerasRoundInfoWithHandle
+            timeResolverHandle
+            currentSlot
+
+      decision <-
+        needCertInContext certInclusionViewHandle currentRoundNo
+
+      pure (currentRoundNo, decision)
+
+    mbPerasCert <-
+      case perasCertDecision of
+        -- NOTE: if constructing a certificate inclusion decision fails, this
+        -- indicates that we have not seen any certificate we could include in
+        -- a block yet, so we can just ignore this case.
+        Nothing -> do
+          tracePerasCertInclusion $
+            TracePerasCertInclusionShouldNotIncludeCert
+              currentSlot
+          pure Nothing
+        Just (DoNotIncludeCert _) -> do
+          tracePerasCertInclusion $
+            TracePerasCertInclusionShouldNotIncludeCert
+              currentSlot
+          pure Nothing
+        Just (IncludeCert _ cert) ->
+          case toOpaquePerasCert (vpcCert (forgetArrivalTime cert)) of
+            Left opaquePerasCertError -> do
+              tracePerasCertInclusion $
+                TracePerasCertInclusionFailedToConstructOpaqueCert
+                  currentSlot
+                  currentRoundNo
+                  opaquePerasCertError
+              pure Nothing
+            Right opaquePerasCert -> do
+              tracePerasCertInclusion $
+                TracePerasCertInclusionShouldIncludeCert
+                  currentSlot
+                  currentRoundNo
+                  opaquePerasCert
+              pure $ Just opaquePerasCert
+
     -- Actually produce the block
     newBlock <-
       lift $
@@ -786,7 +780,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           cfg
           bcBlockNo
           currentSlot
-          Nothing -- [TODO PERAS CERT INCLUSION] this is the entry point to inject certs in blocks
+          mbPerasCert
           tickedLedgerState
           txs
           proof
@@ -855,6 +849,11 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     lift
       . traceWith (forgeTracer tracers)
       . TraceLabelCreds (forgeLabel blockForging)
+
+  tracePerasCertInclusion :: TracePerasCertInclusionEvent -> WithEarlyExit m ()
+  tracePerasCertInclusion =
+    lift
+      . traceWith (perasCertInclusionTracer tracers)
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
