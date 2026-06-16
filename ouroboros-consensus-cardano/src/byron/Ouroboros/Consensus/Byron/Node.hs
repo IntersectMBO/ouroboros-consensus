@@ -186,8 +186,9 @@ data ProtocolParamsByron = ProtocolParamsByron
   }
 
 protocolInfoByron ::
+  Monad m =>
   ProtocolParamsByron ->
-  ProtocolInfo ByronBlock
+  ProtocolInfo m ByronBlock
 protocolInfoByron
   ProtocolParamsByron
     { byronGenesis = genesisConfig
@@ -208,14 +209,19 @@ protocolInfoByron
             , topLevelConfigStorage = ByronStorageConfig blockConfig
             , topLevelConfigCheckpoints = emptyCheckpointsMap
             }
-      , pInfoInitLedger =
-          ExtLedgerState
-            { -- Important: don't pass the compacted genesis config to
-              -- 'initByronLedgerState', it needs the full one, including the AVVM
-              -- balances.
-              ledgerState = initByronLedgerState genesisConfig Nothing
-            , headerState = genesisHeaderState S.empty
-            }
+      , pInfoInitLedger = \() ->
+          pure
+            ExtStateHandle
+              { unExtStateHandle =
+                  ByronStateHandle $
+                    -- Important: don't pass the compacted genesis config to
+                    -- 'initByronLedgerState', it needs the full one, including the AVVM
+                    -- balances.
+                    initByronLedgerState
+                      genesisConfig
+                      Nothing
+              , extHeaderState = genesisHeaderState S.empty
+              }
       }
    where
     compactedGenesisConfig = compactGenesisConfig genesisConfig

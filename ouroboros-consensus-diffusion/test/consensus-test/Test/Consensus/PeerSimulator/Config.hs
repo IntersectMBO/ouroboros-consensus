@@ -18,6 +18,7 @@ import Ouroboros.Consensus.HardFork.History
   ( EraParams (eraGenesisWin)
   )
 import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..), ExtStateHandle (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol (GenesisWindow)
 import Ouroboros.Consensus.Node.ProtocolInfo
   ( NumCoreNodes (NumCoreNodes)
@@ -40,6 +41,7 @@ import Test.Util.Orphans.IOLike ()
 import Test.Util.TestBlock
   ( BlockConfig (TestBlockConfig)
   , CodecConfig (TestBlockCodecConfig)
+  , StateHandle (TestStateHandle)
   , StorageConfig (TestBlockStorageConfig)
   , TestBlock
   , TestBlockLedgerConfig (..)
@@ -94,6 +96,11 @@ instance a ~ () => HasPointScheduleTestParams (TestBlockWith a) where
   mkProtocolInfo k forecast window _ =
     ProtocolInfo
       { pInfoConfig = defaultCfg k forecast window
-      , pInfoInitLedger = testInitExtLedger
+      , pInfoInitLedger = \() ->
+          pure $
+            ExtStateHandle
+              (TestStateHandle (ledgerState testInitExtLedger))
+              (headerState testInitExtLedger)
       }
+  mkLedgerTablesFactory _ _ = ()
   getChunkInfoFromTopLevelConfig = mkTestChunkInfo

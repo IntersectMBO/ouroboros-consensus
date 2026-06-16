@@ -35,6 +35,7 @@ import Test.Tasty.Bench
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.Options (changeOption)
 import Test.Tasty.Runners (parseOptions, tryIngredients)
+import Test.Util.TestBlock (StateHandle (TestStateHandle))
 
 main :: IO ()
 main = withStdTerminalHandles $ do
@@ -152,6 +153,7 @@ openMempoolWithCapacity capacity =
     Mocked.MempoolAndModelParams
       { Mocked.immpInitialState = TestBlock.initialLedgerState
       , Mocked.immpLedgerConfig = TestBlock.sampleLedgerConfig
+      , Mocked.immpMakeStateHandle = TestStateHandle
       }
 
 mkNTryAddTxs :: Int -> [MempoolCmd TestBlock.TestBlock]

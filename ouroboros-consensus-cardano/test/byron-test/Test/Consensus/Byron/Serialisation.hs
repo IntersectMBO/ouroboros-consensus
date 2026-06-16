@@ -93,7 +93,7 @@ prop_detectCorruption_RegularBlock (RegularBlock blk) =
 testCfg :: TopLevelConfig ByronBlock
 testCfg = pInfoConfig protocolInfo
  where
-  protocolInfo :: ProtocolInfo ByronBlock
+  protocolInfo :: ProtocolInfo IO ByronBlock
   protocolInfo =
     protocolInfoByron $
       ProtocolParamsByron

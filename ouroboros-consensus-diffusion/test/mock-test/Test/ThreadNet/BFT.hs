@@ -109,13 +109,15 @@ prop_simple_bft_convergence
         testConfigB
         TestConfigMB
           { nodeInfo = \nid ->
-              plainTestNodeInitialization
-                ( protocolInfoBft
-                    numCoreNodes
-                    nid
-                    k
-                    (HardFork.defaultEraParams k slotLength)
-                )
-                (pure $ fmap (MkBlockForging . pure) $ blockForgingBft nid)
+              pure $
+                plainTestNodeInitialization
+                  ( protocolInfoBft
+                      numCoreNodes
+                      nid
+                      k
+                      (HardFork.defaultEraParams k slotLength)
+                  )
+                  (pure $ fmap (MkBlockForging . pure) $ blockForgingBft nid)
           , mkRekeyM = Nothing
+          , ledgerTablesFactory = pure ()
           }

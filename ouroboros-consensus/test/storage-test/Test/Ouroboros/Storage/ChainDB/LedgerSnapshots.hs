@@ -30,28 +30,22 @@ import Data.Traversable (for)
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..), ExtStateHandle (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.Args (LedgerDbBackendArgs)
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as LedgerDB.V2.InMemory
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util (dropLast)
-import Ouroboros.Consensus.Util.Args
+import Ouroboros.Consensus.Util.Args (OverrideOrDefault (Override))
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (Enclosing' (FallingEdgeWith))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredFragment (Anchor, AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import System.FS.API (SomeHasFS)
-import System.FS.API.Types (mkFsPath)
-import System.FS.BlockIO.Sim (simHasBlockIO')
-import qualified System.FS.Sim.MockFS as MockFS
 import Test.Tasty
 import Test.Tasty.QuickCheck hiding (NonZero)
 import Test.Util.ChainDB
@@ -64,51 +58,21 @@ tests :: TestTree
 tests =
   testGroup
     "LedgerSnapshots"
-    [ testProperty "InMemV2" $ prop_ledgerSnapshots inMemV2
-    , testProperty "LSM" $ \salt -> prop_ledgerSnapshots (lsm salt)
-    , testGroup
+    [ testProperty "snapshots" prop_ledgerSnapshots
+    , testProperty
         "addBlocks while a snapshot is enqueued"
-        [ testProperty "InMemV2" $ prop_addBlocksWhileSnapshotting inMemV2
-        , testProperty "LSM" $ \salt -> prop_addBlocksWhileSnapshotting (lsm salt)
-        ]
+        prop_addBlocksWhileSnapshotting
     ]
- where
-  inMemV2 :: IOLike m => LedgerDbBackendArgs m TestBlock
-  inMemV2 =
-    LedgerDB.LedgerDbBackendArgsV2 $
-      LedgerDB.V2.SomeBackendArgs LedgerDB.V2.InMemory.InMemArgs
 
-  lsm ::
-    IOLike m =>
-    LedgerDB.V2.LSM.Salt ->
-    LedgerDbBackendArgs m TestBlock
-  lsm salt =
-    LedgerDB.LedgerDbBackendArgsV2 $
-      LedgerDB.V2.SomeBackendArgs $
-        LedgerDB.V2.LSM.LSMArgs (mkFsPath []) Nothing salt mkSimBlockIOFS
-   where
-    mkSimBlockIOFS =
-      uncurry LedgerDB.V2.LSM.SomeHasFSAndBlockIO
-        <$> allocateTemp
-          (simHasBlockIO' MockFS.empty)
-          (\_ -> pure True)
-          impossibleToNotTransfer
-
-prop_ledgerSnapshots ::
-  (forall m. IOLike m => LedgerDbBackendArgs m TestBlock) ->
-  TestSetup ->
-  Property
-prop_ledgerSnapshots lgrDbBackendArgs testSetup =
-  case runSim (runTest lgrDbBackendArgs testSetup) of
+prop_ledgerSnapshots :: TestSetup -> Property
+prop_ledgerSnapshots testSetup =
+  case runSim (runTest testSetup) of
     Right testOutcome -> checkTestOutcome testSetup testOutcome
     Left err -> counterexample ("Failure: " <> show err) False
 
-prop_addBlocksWhileSnapshotting ::
-  (forall m. IOLike m => LedgerDbBackendArgs m TestBlock) ->
-  TestSetup ->
-  Property
-prop_addBlocksWhileSnapshotting lgrDbBackendArgs testSetup =
-  case runSim (runAddBlocks lgrDbBackendArgs testSetup) of
+prop_addBlocksWhileSnapshotting :: TestSetup -> Property
+prop_addBlocksWhileSnapshotting testSetup =
+  case runSim (runAddBlocks testSetup) of
     Right outcome -> do
       label
         (show (blocksAddedWhileSnapshotting outcome) <> " blocks were added while a snapshot was enqueued")
@@ -134,10 +98,9 @@ instance Monoid AddBlockCount where
 runAddBlocks ::
   forall m.
   IOLike m =>
-  LedgerDbBackendArgs m TestBlock ->
   TestSetup ->
   m AddBlockCount
-runAddBlocks lgrDbBackendArgs testSetup = withRegistry \registry -> do
+runAddBlocks testSetup = withRegistry \registry -> do
   isSnapshottingTMVar :: StrictTMVar m () <- newEmptyTMVarIO
 
   (chainDB, _lgrHasFS) <- openChainDB registry (isSnapshottingTracer isSnapshottingTMVar)
@@ -165,15 +128,19 @@ runAddBlocks lgrDbBackendArgs testSetup = withRegistry \registry -> do
                 { mcdbTopLevelConfig
                 , mcdbNodeDBs
                 , mcdbChunkInfo = mkTestChunkInfo mcdbTopLevelConfig
-                , mcdbInitLedger = testInitExtLedger
+                , mcdbInitLedger = \() ->
+                    pure $
+                      ExtStateHandle
+                        (TestStateHandle (ledgerState testInitExtLedger))
+                        (headerState testInitExtLedger)
+                , mcdbBackendArgs = testBackendArgsWithSnapshots ()
                 , mcdbRegistry = registry
                 }
           updLgrDbArgs a =
             a
               { ChainDB.cdbLgrDbArgs =
                   (ChainDB.cdbLgrDbArgs a)
-                    { LedgerDB.lgrBackendArgs = lgrDbBackendArgs
-                    , LedgerDB.lgrSnapshotPolicyArgs = tsSnapshotPolicyArgs testSetup
+                    { LedgerDB.lgrSnapshotPolicyArgs = tsSnapshotPolicyArgs testSetup
                     }
               }
       pure $ updLgrDbArgs $ ChainDB.updateTracer cdbTracer cdbArgs
@@ -349,10 +316,9 @@ data TestOutcome = TestOutcome
 runTest ::
   forall m.
   IOLike m =>
-  LedgerDbBackendArgs m TestBlock ->
   TestSetup ->
   m TestOutcome
-runTest lgrDbBackendArgs testSetup = withRegistry \registry -> do
+runTest testSetup = withRegistry \registry -> do
   (withTime -> tracer, getTrace) <- recordingTracerTVar
 
   isSnapshottingTMVar :: StrictTMVar m () <- newEmptyTMVarIO
@@ -389,15 +355,19 @@ runTest lgrDbBackendArgs testSetup = withRegistry \registry -> do
                 { mcdbTopLevelConfig
                 , mcdbNodeDBs
                 , mcdbChunkInfo = mkTestChunkInfo mcdbTopLevelConfig
-                , mcdbInitLedger = testInitExtLedger
+                , mcdbInitLedger = \() ->
+                    pure $
+                      ExtStateHandle
+                        (TestStateHandle (ledgerState testInitExtLedger))
+                        (headerState testInitExtLedger)
+                , mcdbBackendArgs = testBackendArgsWithSnapshots ()
                 , mcdbRegistry = registry
                 }
           updLgrDbArgs a =
             a
               { ChainDB.cdbLgrDbArgs =
                   (ChainDB.cdbLgrDbArgs a)
-                    { LedgerDB.lgrBackendArgs = lgrDbBackendArgs
-                    , LedgerDB.lgrSnapshotPolicyArgs = tsSnapshotPolicyArgs testSetup
+                    { LedgerDB.lgrSnapshotPolicyArgs = tsSnapshotPolicyArgs testSetup
                     }
               }
       pure $ updLgrDbArgs $ ChainDB.updateTracer cdbTracer cdbArgs

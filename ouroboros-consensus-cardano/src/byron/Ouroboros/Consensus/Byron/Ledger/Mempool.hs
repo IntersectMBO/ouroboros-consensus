@@ -64,7 +64,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Control.Monad (void)
-import Control.Monad.Except (Except, throwError)
+import Control.Monad.Except (Except, runExcept, throwError)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
@@ -82,7 +82,6 @@ import Ouroboros.Consensus.Byron.Ledger.Serialisation
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
 
@@ -115,7 +114,24 @@ type instance ApplyTxErr ByronBlock = CC.ApplyMempoolPayloadErr
 -- orphaned instance
 instance ShowProxy CC.ApplyMempoolPayloadErr
 
+-- | Byron has no on-disk tables; nothing to read per-tx.
+data instance TxLocalData ByronBlock = ByronTxLocalData
+  deriving stock Generic
+  deriving anyclass NoThunks
+
+-- | The mempool acc /is/ the ticked ledger state for Byron: each tx is applied
+-- in place to that state.
+newtype instance MempoolAcc ByronBlock = ByronMempoolAcc
+  {unByronMempoolAcc :: Ticked LedgerState ByronBlock}
+  deriving stock Generic
+  deriving anyclass NoThunks
+
 instance LedgerSupportsMempool ByronBlock where
+  emptyAcc = ByronMempoolAcc
+  accTickedState = unByronMempoolAcc
+
+  prepareTx _cfg _slot _ts _acc _tx = pure ByronTxLocalData
+
   -- Check that the annotation is the canonical encoding. This is currently
   -- enforced by 'decodeByronGenTx', see its docstring for more context.
   txInvariant tx =
@@ -123,43 +139,28 @@ instance LedgerSupportsMempool ByronBlock where
    where
     tx' = toMempoolPayload tx
 
-  applyTx cfg _wti slot tx st =
-    (\st' -> (st', ValidatedByronTx tx))
-      <$> applyByronGenTx validationMode cfg slot tx st
+  applyTx cfg _wti slot (ByronMempoolAcc st) tx _tld =
+    case runExcept (applyByronGenTx validationMode cfg slot tx st) of
+      Left err -> throwError err
+      Right st' -> pure (ValidatedByronTx tx, ByronMempoolAcc st')
    where
     validationMode = CC.ValidationMode CC.BlockValidation Utxo.TxValidation
 
-  reapplyTx cfg slot vtx st =
-    applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st
+  reapplyTx cfg slot (ByronMempoolAcc st) vtx _tld =
+    case runExcept (applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st) of
+      Left err -> throwError err
+      Right st' -> pure (ByronMempoolAcc st')
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 
   txForgetValidated = forgetValidatedByronTx
-
-  getTransactionKeySets _ = emptyLedgerTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 
 instance TxLimits ByronBlock where
   type TxMeasure ByronBlock = IgnoringOverflow ByteSize32
 
-  txWireSize =
-    (+ 2)
-      -- 2 bytes overhead added by `EncCBOR (AMempoolPayload
-      -- ByteString)` instance
-      . fromIntegral
-      . Strict.length
-      . CC.mempoolPayloadRecoverBytes
-      . toMempoolPayload
-
-  blockCapacityTxMeasure _cfg st =
-    IgnoringOverflow $
-      ByteSize32 $
-        CC.getMaxBlockSize cvs - byronBlockEncodingOverhead
-   where
-    cvs = tickedByronLedgerState st
-
-  txMeasure _cfg st tx =
+  txMeasure _cfg st _tld tx =
     if txszNat > maxTxSize
       then throwError err
       else
@@ -182,6 +183,22 @@ instance TxLimits ByronBlock where
       CC.MempoolTxErr $
         Utxo.UTxOValidationTxValidationError $
           Utxo.TxValidationTxTooLarge txszNat maxTxSize
+
+  txWireSize =
+    (+ 2)
+      -- 2 bytes overhead added by `EncCBOR (AMempoolPayload
+      -- ByteString)` instance
+      . fromIntegral
+      . Strict.length
+      . CC.mempoolPayloadRecoverBytes
+      . toMempoolPayload
+
+  blockCapacityTxMeasure _cfg st =
+    IgnoringOverflow $
+      ByteSize32 $
+        CC.getMaxBlockSize cvs - byronBlockEncodingOverhead
+   where
+    cvs = tickedByronLedgerState st
 
 data instance TxId (GenTx ByronBlock)
   = ByronTxId !Utxo.TxId
@@ -292,10 +309,10 @@ applyByronGenTx ::
   LedgerConfig ByronBlock ->
   SlotNo ->
   GenTx ByronBlock ->
-  TickedLedgerState ByronBlock mk1 ->
-  Except (ApplyTxErr ByronBlock) (TickedLedgerState ByronBlock mk2)
+  TickedLedgerState ByronBlock ->
+  Except (ApplyTxErr ByronBlock) (TickedLedgerState ByronBlock)
 applyByronGenTx validationMode cfg slot genTx st =
-  (\state -> st{tickedByronLedgerState = state})
+  (\st' -> st{tickedByronLedgerState = st'})
     <$> CC.applyMempoolPayload
       validationMode
       cfg

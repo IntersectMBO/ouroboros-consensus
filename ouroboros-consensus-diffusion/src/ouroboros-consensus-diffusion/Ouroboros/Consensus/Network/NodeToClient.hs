@@ -60,6 +60,7 @@ import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import qualified Network.TypedProtocol.Stateful.Codec as Stateful
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -125,6 +126,7 @@ mkHandlers ::
   , LedgerSupportsProtocol blk
   , BlockSupportsLedgerQuery blk
   , ConfigSupportsNode blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   NodeKernelArgs m addrNTN addrNTC blk ->
   NodeKernel m addrNTN addrNTC blk ->
@@ -141,7 +143,7 @@ mkHandlers NodeKernelArgs{cfg, tracers} NodeKernel{getChainDB, getMempool} =
           getMempool
     , hStateQueryServer = \reg ->
         localStateQueryServer (ExtLedgerCfg cfg) $ \target ->
-          ChainDB.allocInRegistryReadOnlyForkerAtPoint getChainDB target reg
+          ChainDB.allocInRegistryReadOnlyHandleAtPoint getChainDB target reg
     , hTxMonitorServer =
         localTxMonitorServer
           getMempool

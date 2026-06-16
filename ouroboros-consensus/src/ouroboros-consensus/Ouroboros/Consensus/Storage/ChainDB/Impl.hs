@@ -57,6 +57,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
@@ -107,6 +108,7 @@ withDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
@@ -123,6 +125,7 @@ openDB ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
@@ -138,6 +141,7 @@ openDBInternal ::
   , HasHardForkHistory blk
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
+  , BlockSupportsLedgerHD m blk
   , HasCallStack
   ) =>
   Complete Args.ChainDbArgs m blk ->
@@ -297,12 +301,13 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , closeDB = closeDB h
             , isOpen = isOpen h
             , getCurrentLedger = getEnvSTM h Query.getCurrentLedger
+            , getCurrentLedgerRef = getEnvSTM h Query.getCurrentLedgerRef
             , getImmutableLedger = getEnvSTM h Query.getImmutableLedger
             , getPastLedger = getEnvSTM1 h Query.getPastLedger
             , getHeaderStateHistory = getEnvSTM h Query.getHeaderStateHistory
-            , allocInRegistryReadOnlyForkerAtPoint = getEnv2 h Query.allocInRegistryReadOnlyForkerAtPoint
-            , openReadOnlyForkerAtPoint = getEnv1 h Query.openReadOnlyForkerAtPoint
-            , withReadOnlyForkerAtPoint = getEnvTrans2 h Query.withReadOnlyForkerAtPoint
+            , allocInRegistryReadOnlyHandleAtPoint = getEnv2 h Query.allocInRegistryReadOnlyHandleAtPoint
+            , openReadOnlyHandleAtPoint = getEnv1 h Query.openReadOnlyHandleAtPoint
+            , withReadOnlyHandleAtPoint = getEnvTrans2 h Query.withReadOnlyHandleAtPoint
             , getStatistics = getEnv h Query.getStatistics
             , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot

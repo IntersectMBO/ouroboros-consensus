@@ -49,8 +49,10 @@ module Test.Ouroboros.Storage.TestBlock
   , testBlockToLazyByteString
 
     -- * Ledger
+  , StateHandle (TestStateHandle)
   , TestBlockError (..)
   , TestBlockOtherHeaderEnvelopeError (..)
+  , TickedStateHandle (TickedTestStateHandle)
   , mkTestConfig
   , testInitExtLedger
 
@@ -66,8 +68,6 @@ module Test.Ouroboros.Storage.TestBlock
 import Cardano.Binary (DecoderError)
 import Cardano.Crypto.DSIGN
 import Cardano.Ledger.BaseTypes (unNonZero)
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Codec.Serialise (Serialise (decode, encode), serialise)
@@ -87,7 +87,6 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
 import Data.TreeDiff
-import Data.Void (Void)
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
@@ -110,7 +109,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.NodeId
@@ -123,7 +121,6 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB
 import Ouroboros.Consensus.Util.Condense
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import System.FS.API.Lazy
@@ -566,86 +563,7 @@ data TestBlockError
 
 type instance LedgerCfg LedgerState TestBlock = HardFork.EraParams
 
-instance GetTip (LedgerState TestBlock) where
-  getTip = castPoint . lastAppliedPoint
-
-instance GetTip (Ticked LedgerState TestBlock) where
-  getTip = castPoint . getTip . getTickedTestLedger
-
-type instance AuxLedgerEvent TestBlock = VoidLedgerEvent
-
-instance IsLedger LedgerState TestBlock where
-  type LedgerErr LedgerState TestBlock = TestBlockError
-
-  applyChainTickLedgerResult _ _ _ =
-    pureLedgerResult
-      . TickedTestLedger
-      . noNewTickingDiffs
-
-type instance TxIn TestBlock = Void
-type instance TxOut TestBlock = Void
-instance LedgerTablesAreTrivial LedgerState TestBlock where
-  convertMapKind (TestLedger x y z) = TestLedger x y z
-instance LedgerTablesAreTrivial (Ticked LedgerState) TestBlock where
-  convertMapKind (TickedTestLedger x) = TickedTestLedger (convertMapKind x)
-deriving via
-  Void
-  instance
-    IndexedMemPack LedgerState TestBlock Void
-instance HasLedgerTables LedgerState TestBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
-instance HasLedgerTables (Ticked LedgerState) TestBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
-instance CanStowLedgerTables (LedgerState TestBlock) where
-  stowLedgerTables = convertMapKind
-  unstowLedgerTables = convertMapKind
-instance SerializeTablesWithHint LedgerState TestBlock where
-  decodeTablesWithHint _ = do
-    _ <- CBOR.decodeMapLen
-    pure (LedgerTables $ ValuesMK Map.empty)
-  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
-instance CanUpgradeLedgerTables LedgerState TestBlock where
-  upgradeTables _ _ = id
-
-instance ApplyBlock LedgerState TestBlock where
-  applyBlockLedgerResultWithValidation _ _ _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})
-    | blockPrevHash tb /= lastAppliedHash =
-        throwError $ InvalidHash lastAppliedHash (blockPrevHash tb)
-    | not $ tbIsValid testBody =
-        throwError $ InvalidBlock
-    | otherwise =
-        return $
-          pureLedgerResult $
-            TestLedger
-              (Chain.blockPoint tb)
-              (BlockHash (blockHash tb))
-              ( let
-                  -- NOTE: this bypasses the degenerate global implementation of
-                  -- 'BlockSupportsPeras.getPerasCertInBlock' for 'TestBlock',
-                  -- which currently always returns 'Nothing'.
-                  --
-                  -- TODO: refactor this to use 'getPerasCertInBlock' after the
-                  -- HFC plumbing for 'BlockSupportsPeras' is in place.
-                  certRoundInBlock = tbPerasCertRound testBody
-                 in
-                  -- the highest Peras certificate round number  we've seen so far
-                  case (certRoundInBlock, latestPerasCertRound) of
-                    (Nothing, Nothing) -> Nothing
-                    (Just rb, Nothing) -> Just rb
-                    (Nothing, Just rl) -> Just rl
-                    (Just rb, Just rl) -> Just (rb `max` rl)
-              )
-
-  applyBlockLedgerResult = defaultApplyBlockLedgerResult
-  reapplyBlockLedgerResult =
-    defaultReapplyBlockLedgerResult (error . ("reapplyBlockLedgerResult: impossible " <>) . show)
-
-instance GetBlockKeySets TestBlock where
-  getBlockKeySets _blk = emptyLedgerTables
-
-data instance LedgerState TestBlock mk
+data instance LedgerState TestBlock
   = TestLedger
   { -- The ledger state simply consists of the last applied block
     lastAppliedPoint :: !(Point TestBlock)
@@ -658,9 +576,89 @@ data instance LedgerState TestBlock mk
   deriving anyclass (Serialise, NoThunks)
 
 -- Ticking has no effect on the test ledger state
-newtype instance Ticked LedgerState TestBlock mk = TickedTestLedger
-  { getTickedTestLedger :: LedgerState TestBlock mk
+newtype instance Ticked LedgerState TestBlock = TickedTestLedger
+  { getTickedTestLedger :: LedgerState TestBlock
   }
+  deriving stock Generic
+  deriving anyclass NoThunks
+
+instance GetTip LedgerState TestBlock where
+  getTip = castPoint . lastAppliedPoint
+
+instance GetTip (Ticked LedgerState) TestBlock where
+  getTip = castPoint . getTip . getTickedTestLedger
+
+type instance AuxLedgerEvent TestBlock = VoidLedgerEvent
+
+-- | The storage 'TestBlock' carries no on-disk tables.
+type instance LedgerTablesHandle m TestBlock = ()
+
+instance BlockSupportsLedgerHD m TestBlock where
+  newtype StateHandle m TestBlock = TestStateHandle (LedgerState TestBlock)
+    deriving Generic
+    deriving anyclass NoThunks
+  newtype TickedStateHandle m TestBlock
+    = TickedTestStateHandle (Ticked LedgerState TestBlock)
+    deriving Generic
+    deriving anyclass NoThunks
+
+  newStateHandle st () = TestStateHandle st
+
+  state (TestStateHandle s) = s
+  tickedState (TickedTestStateHandle s) = s
+
+  close _ = pure ()
+  closeTicked _ = pure ()
+
+  duplicate a = pure a
+  duplicateTicked a = pure a
+
+  getStats _ = Statistics 0
+
+instance IsLedger LedgerState TestBlock where
+  type LedgerErr LedgerState TestBlock = TestBlockError
+
+  applyChainTickLedgerResult _ _ _ (TestStateHandle st) =
+    pure $ pureLedgerResult $ TickedTestStateHandle $ TickedTestLedger st
+
+instance ApplyBlock LedgerState TestBlock where
+  applyBlockLedgerResultWithValidation
+    _
+    _
+    _
+    tb@TestBlock{..}
+    (TickedTestStateHandle (TickedTestLedger TestLedger{..}))
+      | blockPrevHash tb /= lastAppliedHash =
+          throwError $ InvalidHash lastAppliedHash (blockPrevHash tb)
+      | not $ tbIsValid testBody =
+          throwError InvalidBlock
+      | otherwise =
+          pure $
+            pureLedgerResult $
+              TestStateHandle $
+                TestLedger
+                  (Chain.blockPoint tb)
+                  (BlockHash (blockHash tb))
+                  ( let
+                      -- NOTE: this bypasses the degenerate global implementation of
+                      -- 'BlockSupportsPeras.getPerasCertInBlock' for 'TestBlock',
+                      -- which currently always returns 'Nothing'.
+                      --
+                      -- TODO: refactor this to use 'getPerasCertInBlock' after the
+                      -- HFC plumbing for 'BlockSupportsPeras' is in place.
+                      certRoundInBlock = tbPerasCertRound testBody
+                     in
+                      -- the highest Peras certificate round number we've seen so far
+                      case (certRoundInBlock, latestPerasCertRound) of
+                        (Nothing, Nothing) -> Nothing
+                        (Just rb, Nothing) -> Just rb
+                        (Nothing, Just rl) -> Just rl
+                        (Just rb, Just rl) -> Just (rb `max` rl)
+                  )
+
+  applyBlockLedgerResult = defaultApplyBlockLedgerResult
+  reapplyBlockLedgerResult =
+    defaultReapplyBlockLedgerResult (error . ("reapplyBlockLedgerResult: impossible " <>) . show)
 
 instance UpdateLedger TestBlock
 
@@ -732,10 +730,10 @@ instance InspectLedger TestBlock
 
 -- Use defaults
 
-testInitLedger :: LedgerState TestBlock EmptyMK
+testInitLedger :: LedgerState TestBlock
 testInitLedger = TestLedger GenesisPoint GenesisHash Nothing
 
-testInitExtLedger :: ExtLedgerState TestBlock EmptyMK
+testInitExtLedger :: ExtLedgerState TestBlock
 testInitExtLedger =
   ExtLedgerState
     { ledgerState = testInitLedger
@@ -825,8 +823,8 @@ instance EncodeDisk TestBlock (Header TestBlock)
 instance DecodeDisk TestBlock (Lazy.ByteString -> Header TestBlock) where
   decodeDisk _ = const <$> decode
 
-instance EncodeDisk TestBlock (LedgerState TestBlock EmptyMK)
-instance DecodeDisk TestBlock (LedgerState TestBlock EmptyMK)
+instance EncodeDisk TestBlock (LedgerState TestBlock)
+instance DecodeDisk TestBlock (LedgerState TestBlock)
 
 instance EncodeDisk TestBlock (AnnTip TestBlock) where
   encodeDisk _ = encodeAnnTipIsEBB encode
@@ -956,7 +954,7 @@ instance ToExpr (Tip TestBlock)
 
 deriving instance ToExpr TestBlockError
 deriving instance ToExpr (TipInfoIsEBB TestBlock)
-deriving instance ToExpr (LedgerState TestBlock EmptyMK)
+deriving instance ToExpr (LedgerState TestBlock)
 deriving instance ToExpr (HeaderError TestBlock)
 deriving instance ToExpr TestBlockOtherHeaderEnvelopeError
 deriving instance ToExpr (HeaderEnvelopeError TestBlock)

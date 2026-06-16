@@ -37,8 +37,9 @@
 --  - the rest of the ledger state: a CBOR serialization of an @ExtLedgerState
 --    blk EmptyMK@, stored in the @./state@ file in the snapshot directory.
 --
--- V2 backends will provide means of loading a snapshot via the method
--- 'openStateRefFromSnapshot'.
+-- V2 backends will provide means of loading a snapshot via the
+-- 'Ouroboros.Consensus.Storage.LedgerDB.V2.Backend.brLoadSnapshot' field of
+-- 'Ouroboros.Consensus.Storage.LedgerDB.V2.Backend.BackendResources'.
 module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   ( -- * Snapshots
     CRCError (..)
@@ -126,7 +127,6 @@ import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Util (Flag (..), lastMaybe)
 import Ouroboros.Consensus.Util.Args (OverrideOrDefault (..), provideDefault)
@@ -180,6 +180,7 @@ data SnapshotFailure blk
   | -- | This snapshot was of the ledger state at genesis, even though we never
     -- take snapshots at genesis, so this is unexpected.
     InitFailureGenesis
+  | InitFailureOther String
   deriving (Show, Eq, Generic)
 
 data ReadSnapshotErr
@@ -271,7 +272,7 @@ data SnapshotManager m blk st = SnapshotManager
       st ->
       -- \^ The state needed for taking the snapshot:
       -- - In V1: this will be the DbChangelog and the Backing store
-      -- - In V2: this will be a StateRef
+      -- - In V2: this will be a StateHandle
       m (Maybe (DiskSnapshot, RealPoint blk))
       -- \^ If a Snapshot was taken, its information and the point at which it
       -- was taken.
@@ -369,17 +370,17 @@ readExtLedgerState ::
   forall m blk.
   IOLike m =>
   SomeHasFS m ->
-  (forall s. Decoder s (ExtLedgerState blk EmptyMK)) ->
+  (forall s. Decoder s (ExtLedgerState blk)) ->
   (forall s. Decoder s (HeaderHash blk)) ->
   FsPath ->
-  ExceptT ReadIncrementalErr m (ExtLedgerState blk EmptyMK, CRC)
+  ExceptT ReadIncrementalErr m (ExtLedgerState blk, CRC)
 readExtLedgerState hasFS decLedger decHash =
   do
     ExceptT
     . fmap (fmap (fmap runIdentity))
     . readIncremental hasFS Identity decoder
  where
-  decoder :: Decoder s (ExtLedgerState blk EmptyMK)
+  decoder :: Decoder s (ExtLedgerState blk)
   decoder = decodeLBackwardsCompatible (Proxy @blk) decLedger decHash
 
 -- | Write an extended ledger state to disk
@@ -387,15 +388,15 @@ writeExtLedgerState ::
   forall m blk.
   MonadThrow m =>
   SomeHasFS m ->
-  (ExtLedgerState blk EmptyMK -> Encoding) ->
+  (ExtLedgerState blk -> Encoding) ->
   FsPath ->
-  ExtLedgerState blk EmptyMK ->
+  ExtLedgerState blk ->
   m CRC
 writeExtLedgerState (SomeHasFS hasFS) encLedger path cs = do
   withFile hasFS path (WriteMode MustBeNew) $ \h ->
     snd <$> hPutAllCRC hasFS h (CBOR.toLazyByteString $ encoder cs)
  where
-  encoder :: ExtLedgerState blk EmptyMK -> Encoding
+  encoder :: ExtLedgerState blk -> Encoding
   encoder = encodeL encLedger
 
 -- | Trim the number of on disk snapshots so that at most 'onDiskNumSnapshots'

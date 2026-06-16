@@ -26,21 +26,20 @@ import Data.List.NonEmpty hiding (length)
 import Data.Void (Void, vacuous)
 import Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.Ledger.Basics (LedgerState, getTip)
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Mempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
-import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (..))
-import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util.IOLike (STM, atomically, retry)
 import System.Random (randomIO)
 import Test.Consensus.Mempool.Fairness.TestBlock
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?), (@?=))
 import Test.Util.TestBlock
-  ( testBlockLedgerConfigFrom
+  ( StateHandle (TestStateHandle)
+  , testBlockLedgerConfigFrom
   , testInitLedgerWithState
   )
 
@@ -94,23 +93,18 @@ testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOf
   --  Obtain a mempool.
   ----------------------------------------------------------------------------
   let
+    -- The test never updates the ledger state, so a fixed initial handle is
+    -- safe to reuse for every 'withCurrentLedgerStateDup' call. The
+    -- 'TestStateHandle' newtype is trivial and its 'close'/'duplicate' are
+    -- no-ops, so the mempool's lifecycle on the returned handle is benign.
+    initLs :: LedgerState TestBlock
+    initLs = testInitLedgerWithState NoPayLoadDependentState
+
     ledgerItf :: Mempool.LedgerInterface IO TestBlock
     ledgerItf =
       Mempool.LedgerInterface
-        { Mempool.getCurrentLedgerState =
-            pure $
-              MempoolLedgerDBView
-                (testInitLedgerWithState NoPayLoadDependentState)
-                ( pure $
-                    Right $
-                      ReadOnlyForker
-                        { roforkerClose = pure ()
-                        , roforkerReadTables = const $ pure emptyLedgerTables
-                        , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
-                        , roforkerGetLedgerState = pure $ testInitLedgerWithState NoPayLoadDependentState
-                        , roforkerReadStatistics = pure $ Statistics 0
-                        }
-                )
+        { Mempool.getCurrentLedgerTip = pure (getTip initLs)
+        , Mempool.withCurrentLedgerStateDup = \k -> k (TestStateHandle initLs)
         }
 
     eraParams =

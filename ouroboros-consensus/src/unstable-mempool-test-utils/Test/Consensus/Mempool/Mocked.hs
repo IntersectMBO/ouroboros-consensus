@@ -31,23 +31,24 @@ import Ouroboros.Consensus.HeaderValidation as Header
 import Ouroboros.Consensus.Ledger.Abstract
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
-import Ouroboros.Consensus.Ledger.Tables.Utils
-  ( emptyLedgerTables
-  , forgetLedgerTables
-  , restrictValuesMK
-  )
 import Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.Mempool.API
   ( AddTxOnBehalfOf
   , MempoolAddTxResult
   )
-import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (MempoolLedgerDBView))
-import Ouroboros.Consensus.Storage.LedgerDB.Forker
 
+-- | Mocked mempool, parameterised over a function that wraps the in-memory
+-- 'LedgerState' into a 'StateHandle' on demand.
+--
+-- The TVar holds the in-memory 'LedgerState' only. Every call into the
+-- mempool that needs a handle invokes 'immpMakeStateHandle' to build one. For
+-- blocks whose 'StateHandle' is just a newtype around 'LedgerState' (Byron,
+-- the test blocks, mock blocks) the caller can pass the data constructor
+-- directly.
 data MockedMempool m blk = MockedMempool
   { getLedgerInterface :: !(Mempool.LedgerInterface m blk)
-  , getLedgerStateTVar :: !(StrictTVar m (LedgerState blk ValuesMK))
+  , getLedgerStateTVar :: !(StrictTVar m (LedgerState blk))
   , getMempool :: !(Mempool m blk)
   }
 
@@ -62,42 +63,37 @@ instance NFData (MockedMempool m blk) where
   -- benchmarks, maybe this definition is enough.
   rnf MockedMempool{} = ()
 
-data InitialMempoolAndModelParams blk = MempoolAndModelParams
-  { immpInitialState :: !(LedgerState blk ValuesMK)
+data InitialMempoolAndModelParams m blk = MempoolAndModelParams
+  { immpInitialState :: !(LedgerState blk)
   -- ^ Initial ledger state for the mocked Ledger DB interface.
   , immpLedgerConfig :: !(Ledger.LedgerConfig blk)
   -- ^ Ledger configuration, which is needed to open the mempool.
+  , immpMakeStateHandle :: !(LedgerState blk -> StateHandle m blk)
+  -- ^ How to wrap a pure 'LedgerState' into a 'StateHandle'. For blocks
+  -- with no on-disk tables this is just the 'StateHandle' constructor
+  -- (e.g. @ByronStateHandle@).
   }
 
 openMockedMempool ::
   ( Ledger.LedgerSupportsMempool blk
   , Ledger.HasTxId (Ledger.GenTx blk)
   , Header.ValidateEnvelope blk
+  , BlockSupportsLedgerHD IO blk
   ) =>
   Mempool.MempoolCapacityBytesOverride ->
   Tracer IO (Mempool.TraceEventMempool blk) ->
-  InitialMempoolAndModelParams blk ->
+  InitialMempoolAndModelParams IO blk ->
   IO (MockedMempool IO blk)
 openMockedMempool capacityOverride tracer initialParams = do
   currentLedgerStateTVar <- newTVarIO (immpInitialState initialParams)
-  let ledgerItf =
+  let mkHandle = immpMakeStateHandle initialParams
+      ledgerItf =
         Mempool.LedgerInterface
-          { Mempool.getCurrentLedgerState = do
-              st <- readTVar currentLedgerStateTVar
-              pure $
-                MempoolLedgerDBView
-                  (forgetLedgerTables st)
-                  ( pure $
-                      Right $
-                        ReadOnlyForker
-                          { roforkerClose = pure ()
-                          , roforkerGetLedgerState = pure (forgetLedgerTables st)
-                          , roforkerReadTables = \keys ->
-                              pure $ ltliftA2 restrictValuesMK (projectLedgerTables st) keys
-                          , roforkerReadStatistics = pure $ Statistics 0
-                          , roforkerRangeReadTables = \_ -> pure (emptyLedgerTables, Nothing)
-                          }
-                  )
+          { Mempool.getCurrentLedgerTip =
+              Ledger.getTip <$> readTVar currentLedgerStateTVar
+          , Mempool.withCurrentLedgerStateDup = \k -> do
+              st <- atomically $ readTVar currentLedgerStateTVar
+              k (mkHandle st)
           }
   mempool <-
     Mempool.openMempoolWithoutSyncThread
@@ -115,7 +111,7 @@ openMockedMempool capacityOverride tracer initialParams = do
 
 setLedgerState ::
   MockedMempool IO blk ->
-  LedgerState blk ValuesMK ->
+  LedgerState blk ->
   IO ()
 setLedgerState MockedMempool{getLedgerStateTVar} newSt =
   atomically $ writeTVar getLedgerStateTVar newSt

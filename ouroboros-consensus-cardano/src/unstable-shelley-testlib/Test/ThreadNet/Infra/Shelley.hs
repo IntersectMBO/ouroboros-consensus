@@ -112,6 +112,7 @@ import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Eras (ShelleyEra)
 import Ouroboros.Consensus.Shelley.Ledger
   ( GenTx (..)
+  , MkHandle
   , ShelleyBasedEra
   , ShelleyBlock
   , ShelleyCompatible
@@ -467,7 +468,8 @@ mkProtocolShelley ::
   SL.Nonce ->
   ProtVer ->
   CoreNode c ->
-  ( ProtocolInfo (ShelleyBlock (TPraos c) ShelleyEra)
+  MkHandle m ->
+  ( ProtocolInfo m (ShelleyBlock (TPraos c) ShelleyEra)
   , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
   )
 mkProtocolShelley genesis initialNonce protVer coreNode =

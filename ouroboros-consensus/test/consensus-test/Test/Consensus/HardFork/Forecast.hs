@@ -6,9 +6,12 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -24,6 +27,7 @@ import Control.Monad (forM, replicateM, unless, when)
 import Control.Monad.Except (Except, runExcept, throwError)
 import Data.Either (isRight)
 import Data.Foldable (toList)
+import Data.Kind
 import Data.List (intercalate)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -55,7 +59,6 @@ import Ouroboros.Consensus.HardFork.History
   )
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HardFork.History.Util
-import Ouroboros.Consensus.Ledger.Tables.Combinators (K2 (..))
 import Ouroboros.Consensus.Util (Some (..), repeatedly, splits)
 import Test.Consensus.HardFork.Infra
 import Test.QuickCheck
@@ -76,6 +79,13 @@ import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck (testProperty)
 import Test.Util.QuickCheck
+
+-- | Phantom-indexed unit/identity wrapper: 'K2 a x y = a'. Used here only as
+-- a 'CrossEraForecaster' state slot when the ledger state has no era index
+-- worth threading. (Originally lived in 'Ledger.Tables.Combinators' before
+-- the @MapKind@ vocabulary was removed.)
+type K2 :: forall k. Type -> k -> Type
+newtype K2 a b = K2 a
 
 tests :: TestTree
 tests =

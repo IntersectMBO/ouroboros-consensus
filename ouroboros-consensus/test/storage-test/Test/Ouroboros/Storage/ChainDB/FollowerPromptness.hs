@@ -32,6 +32,7 @@ import qualified Data.Set as Set
 import Data.Time.Clock (secondsToDiffTime)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..), ExtStateHandle (..))
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
@@ -178,7 +179,12 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
     chainDbArgs <- do
       let mcdbTopLevelConfig = singleNodeTestConfigWithK securityParam
           mcdbChunkInfo = mkTestChunkInfo mcdbTopLevelConfig
-          mcdbInitLedger = testInitExtLedger
+          mcdbInitLedger = \() ->
+            pure $
+              ExtStateHandle
+                (TestStateHandle (ledgerState testInitExtLedger))
+                (headerState testInitExtLedger)
+          mcdbBackendArgs = testBackendArgs ()
           mcdbRegistry = registry
       mcdbNodeDBs <- emptyNodeDBs
       let cdbArgs = fromMinimalChainDbArgs MinimalChainDbArgs{..}

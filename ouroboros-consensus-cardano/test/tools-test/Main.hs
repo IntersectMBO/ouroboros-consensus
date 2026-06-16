@@ -6,6 +6,7 @@ import Cardano.Tools.DBAnalyser.Types
 import qualified Cardano.Tools.DBImmutaliser.Run as DBImmutaliser
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import Cardano.Tools.DBSynthesizer.Types
+import qualified Ouroboros.Consensus.Backends as Backends
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
 import qualified Test.Cardano.Tools.Headers
@@ -107,7 +108,8 @@ blockCountTest logStep = do
   DBImmutaliser.run testImmutaliserConfig
 
   logStep "running analysis"
-  resultAnalysis <- DBAnalyser.analyse testAnalyserConfig testBlockArgs
+  resultAnalysis <-
+    DBAnalyser.analyse testAnalyserConfig testBlockArgs Backends.inMemoryBackendArgs
 
   let blockCount = blockCountCreate + blockCountAppend
   resultAnalysis == Just (ResultCountBlock blockCount)

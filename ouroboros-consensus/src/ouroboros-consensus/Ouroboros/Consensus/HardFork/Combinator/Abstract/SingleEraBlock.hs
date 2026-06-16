@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
@@ -32,6 +33,7 @@ import Data.SOP.Match
 import Data.SOP.Strict
 import qualified Data.Text as Text
 import Data.Void
+import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Combinator.Info
@@ -49,7 +51,6 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
-import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
@@ -75,10 +76,6 @@ class
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsMetrics blk
   , SerialiseNodeToClient blk (PartialLedgerConfig blk)
-  , -- LedgerTables
-    CanStowLedgerTables (LedgerState blk)
-  , HasLedgerTables LedgerState blk
-  , HasLedgerTables (Ticked LedgerState) blk
   , -- Instances required to support testing
     Eq (GenTx blk)
   , Eq (Validated (GenTx blk))
@@ -89,6 +86,10 @@ class
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
+  , Show (LedgerState blk)
+  , Eq (LedgerState blk)
+  , NoThunks (LedgerState blk)
+  , forall m. BlockSupportsLedgerHD m blk
   ) =>
   SingleEraBlock blk
   where
@@ -106,7 +107,7 @@ class
     EraParams ->
     -- | Start of this era
     Bound ->
-    LedgerState blk mk ->
+    LedgerState blk ->
     Maybe EpochNo
 
   -- | Era information (for use in error messages)
@@ -120,7 +121,7 @@ singleEraTransition' ::
   WrapPartialLedgerConfig blk ->
   EraParams ->
   Bound ->
-  LedgerState blk mk ->
+  LedgerState blk ->
   Maybe EpochNo
 singleEraTransition' = singleEraTransition . unwrapPartialLedgerConfig
 

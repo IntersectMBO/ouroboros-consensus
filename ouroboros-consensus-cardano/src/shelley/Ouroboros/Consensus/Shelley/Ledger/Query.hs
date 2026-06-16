@@ -16,10 +16,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
-#if __GLASGOW_HASKELL__ < 908
-{-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
-#endif
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Query
   ( BlockQuery (.., GetLedgerPeerSnapshot)
@@ -30,11 +27,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Query
   , decodeShelleyResult
   , encodeShelleyQuery
   , encodeShelleyResult
-
-    -- * BlockSupportsHFLedgerQuery instances
-  , answerShelleyLookupQueries
-  , answerShelleyTraversingQueries
-  , shelleyQFTraverseTablesPredicate
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
@@ -58,10 +50,8 @@ import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (decode, encode)
 import Data.Bifunctor (second)
-import Data.Coerce
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.MemPack
 import Data.Sequence (Seq (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -70,7 +60,6 @@ import Lens.Micro
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -93,10 +82,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Query.LegacyPParams
 import Ouroboros.Consensus.Shelley.Ledger.Query.LegacyShelleyGenesis
 import Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
-import Ouroboros.Consensus.Storage.LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Util (ShowProxy (..), coerceSet)
-import Ouroboros.Consensus.Util.IndexedMemPack
+import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Network.Block
   ( Point (..)
   , Serialised (..)
@@ -541,9 +527,9 @@ instance
     hst = headerState ext
     st = shelleyLedgerState lst
 
-  answerBlockQueryLookup = answerShelleyLookupQueries id id coerce
+  answerBlockQueryLookup = answerShelleyLookupQueries
 
-  answerBlockQueryTraverse = answerShelleyTraversingQueries id coerce shelleyQFTraverseTablesPredicate
+  answerBlockQueryTraverse = answerShelleyTraversingQueries
 
   -- \| Is the given query supported by the given 'ShelleyNodeToClientVersion'?
   blockQueryIsSupportedOnVersion = \case
@@ -1157,136 +1143,55 @@ genesisConfigEnDecoding v
 -------------------------------------------------------------------------------}
 
 answerShelleyLookupQueries ::
-  forall proto era m result blk.
+  forall proto era m result.
   ( Monad m
   , ShelleyCompatible proto era
   ) =>
-  -- | Inject ledger tables
-  ( LedgerTables (ShelleyBlock proto era) KeysMK ->
-    LedgerTables blk KeysMK
-  ) ->
-  -- | Eject TxOut
-  (TxOut blk -> LC.TxOut era) ->
-  -- | Eject TxIn
-  (TxIn blk -> SL.TxIn) ->
   ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFLookupTables result ->
-  ReadOnlyForker' m blk ->
+  Handle ExtLedgerState m (ShelleyBlock proto era) ->
   m result
-answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
+answerShelleyLookupQueries cfg q forker@(ExtStateHandle ref _) =
   case q of
-    GetUTxOByTxIn txins ->
-      answerGetUtxOByTxIn txins
+    GetUTxOByTxIn txins -> do
+      SL.UTxO values <- readTxOuts (stateRefHandle ref) txins
+      pure $
+        SL.UTxO $
+          Map.filterWithKey
+            (\k _v -> k `Set.member` txins)
+            values
     GetCBOR q' ->
       -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
       -- as the @GetCBOR@ query already is about opportunistically assuming
       -- both client and server are running the same version; cf. the
       -- @GetCBOR@ Haddocks.
       mkSerialised (encodeShelleyResult maxBound q')
-        <$> answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q' forker
- where
-  answerGetUtxOByTxIn ::
-    Set.Set SL.TxIn ->
-    m (SL.UTxO era)
-  answerGetUtxOByTxIn txins = do
-    LedgerTables (ValuesMK values) <-
-      LedgerDB.roforkerReadTables
-        forker
-        (injTables (LedgerTables $ KeysMK $ coerceSet txins))
-    pure $
-      SL.UTxO $
-        Map.mapKeys ejTxIn $
-          Map.mapMaybeWithKey
-            ( \k v ->
-                if ejTxIn k `Set.member` txins
-                  then Just $ ejTxOut v
-                  else Nothing
-            )
-            values
-
-shelleyQFTraverseTablesPredicate ::
-  forall proto era proto' era' result.
-  (ShelleyBasedEra era, ShelleyBasedEra era') =>
-  BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
-  TxOut (ShelleyBlock proto' era') ->
-  Bool
-shelleyQFTraverseTablesPredicate q = case q of
-  GetUTxOByAddress addr -> filterGetUTxOByAddressOne addr
-  GetUTxOWhole -> const True
-  GetCBOR q' -> shelleyQFTraverseTablesPredicate q'
- where
-  filterGetUTxOByAddressOne ::
-    Set Addr ->
-    LC.TxOut era' ->
-    Bool
-  filterGetUTxOByAddressOne addrs =
-    let
-      compactAddrSet = Set.map compactAddr addrs
-      checkAddr out =
-        case out ^. SL.addrEitherTxOutL of
-          Left addr -> addr `Set.member` addrs
-          Right cAddr -> cAddr `Set.member` compactAddrSet
-     in
-      checkAddr
+        <$> answerShelleyLookupQueries cfg q' forker
 
 answerShelleyTraversingQueries ::
-  forall proto era m result blk.
-  ( ShelleyCompatible proto era
-  , Ord (TxIn blk)
-  , Eq (TxOut blk)
-  , MemPack (TxIn blk)
-  , IndexedMemPack LedgerState blk (TxOut blk)
-  ) =>
+  forall proto era m result.
+  ShelleyCompatible proto era =>
   Monad m =>
-  -- | Eject TxOut
-  (TxOut blk -> LC.TxOut era) ->
-  -- | Eject TxIn
-  (TxIn blk -> SL.TxIn) ->
-  -- | Get filter by query
-  ( forall result'.
-    BlockQuery (ShelleyBlock proto era) QFTraverseTables result' ->
-    TxOut blk ->
-    Bool
-  ) ->
   ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
-  ReadOnlyForker' m blk ->
+  Handle ExtLedgerState m (ShelleyBlock proto era) ->
   m result
-answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
-  GetUTxOByAddress{} -> loop (filt q) NoPreviousQuery emptyUtxo
-  GetUTxOWhole -> loop (filt q) NoPreviousQuery emptyUtxo
+answerShelleyTraversingQueries cfg q forker@(ExtStateHandle ref _) = case q of
+  GetUTxOByAddress addr ->
+    readUTxOFiltered (stateRefHandle ref) $
+      let
+        compactAddrSet = Set.map compactAddr addr
+        checkAddr out =
+          case out ^. SL.addrEitherTxOutL of
+            Left address -> address `Set.member` addr
+            Right cAddr -> cAddr `Set.member` compactAddrSet
+       in
+        checkAddr
+  GetUTxOWhole -> readUTxOWhole (stateRefHandle ref)
   GetCBOR q' ->
     -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
     -- as the @GetCBOR@ query already is about opportunistically assuming
     -- both client and server are running the same version; cf. the
     -- @GetCBOR@ Haddocks.
     mkSerialised (encodeShelleyResult maxBound q')
-      <$> answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q' forker
- where
-  emptyUtxo = SL.UTxO Map.empty
-
-  combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
-
-  partial ::
-    (TxOut blk -> Bool) ->
-    LedgerTables blk ValuesMK ->
-    Map SL.TxIn (LC.TxOut era)
-  partial queryPredicate (LedgerTables (ValuesMK vs)) =
-    Map.mapKeys ejTxIn $
-      Map.mapMaybeWithKey
-        ( \_k v ->
-            if queryPredicate v
-              then Just $ ejTxOut v
-              else Nothing
-        )
-        vs
-
-  loop queryPredicate !prev !acc = do
-    (extValues, k) <- LedgerDB.roforkerRangeReadTables forker prev
-    case k of
-      Nothing -> pure acc
-      Just k' ->
-        loop
-          queryPredicate
-          (PreviousQueryWasUpTo k')
-          (combUtxo acc $ partial queryPredicate extValues)
+      <$> answerShelleyTraversingQueries cfg q' forker

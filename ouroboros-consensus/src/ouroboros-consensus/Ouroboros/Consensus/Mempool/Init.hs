@@ -21,6 +21,7 @@ import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Mempool.Query
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Mempool.Update
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
 import Ouroboros.Network.Block (Point)
@@ -37,6 +38,7 @@ openMempool ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   ResourceRegistry m ->
   LedgerInterface m blk ->
@@ -58,6 +60,7 @@ forkSyncStateOnTipPointChange ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   MempoolEnv m blk ->
   ResourceRegistry m ->
@@ -80,7 +83,7 @@ forkSyncStateOnTipPointChange menv reg =
   -- Using the tip ('Point') allows for quicker equality checks
   getCurrentTip :: STM m (Point blk)
   getCurrentTip =
-    ledgerTipPoint . mldViewState <$> getCurrentLedgerState (mpEnvLedger menv)
+    getCurrentLedgerTip (mpEnvLedger menv)
 
 -- | Unlike 'openMempool', this function does not fork a background thread
 -- that synchronises with the ledger state whenever the later changes.
@@ -92,6 +95,7 @@ openMempoolWithoutSyncThread ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   LedgerInterface m blk ->
   LedgerConfig blk ->
@@ -108,6 +112,7 @@ mkMempool ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , ValidateEnvelope blk
+  , BlockSupportsLedgerHD m blk
   ) =>
   MempoolEnv m blk -> Mempool m blk
 mkMempool mpEnv =
@@ -123,9 +128,7 @@ mkMempool mpEnv =
  where
   snapshotFromIS is =
     snapshotFromValidTxs
-      [ TxSeq.TxTicket tx tn tz
-      | TxSeq.TxTicket (ValidatedTxWithDiffs tx _) tn tz <- TxSeq.toList $ isTxs is
-      ]
+      (TxSeq.toList $ isTxs is)
       (isTip is)
       (isSlotNo is)
 

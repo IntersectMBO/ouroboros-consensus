@@ -21,43 +21,27 @@ module Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
   , genesis
   ) where
 
-import Cardano.Binary
-  ( FromCBOR (..)
-  , ToCBOR (..)
-  , serialize'
-  , unsafeDeserialize'
-  )
 import Cardano.Ledger.BaseTypes (NonZero (..))
 import qualified Cardano.Slotting.Slot as WithOrigin
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise)
-import qualified Codec.Serialise as S
-import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty ((:|)))
-import qualified Data.Map.Diff.Strict.Internal as DS
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe.Strict
-import Data.MemPack
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.TreeDiff
 import Data.Word
 import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
-import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block (Point (Point))
 import Ouroboros.Network.Point (Block (Block))
 import qualified Test.QuickCheck as QC
-import Test.Tasty.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.TestBlock hiding
   ( TestBlock
@@ -102,7 +86,7 @@ instance QC.Arbitrary (Point TestBlock) where
 -- | Unit of value associated with the output produced by a transaction.
 newtype TValue = TValue ()
   deriving stock (Show, Eq, Ord, Generic)
-  deriving newtype (Serialise, NoThunks, ToExpr, MemPack)
+  deriving newtype (Serialise, NoThunks, ToExpr)
 
 {-------------------------------------------------------------------------------
   A ledger semantics for TestBlock
@@ -115,166 +99,47 @@ data TxErr
   deriving anyclass (NoThunks, Serialise, ToExpr)
 
 instance PayloadSemantics Tx where
-  data PayloadDependentState Tx mk
-    = UTxTok
-    { utxtoktables :: LedgerTables TestBlock mk
+  -- \| With the no-MK port the UTxO map lives directly inside
+  -- 'PayloadDependentState'; there is no separate 'LedgerTables'
+  -- container anymore.
+  data PayloadDependentState Tx = UTxTok
+    { utxo :: Map Token TValue
     , -- \| All the tokens that ever existed. We use this to
       -- make sure a token is not created more than once. See
       -- the definition of 'applyPayload' in the
       -- 'PayloadSemantics' of 'Tx'.
       utxhist :: Set Token
     }
-    deriving stock Generic
+    deriving stock (Show, Eq, Generic)
+    deriving anyclass (NoThunks, Serialise, ToExpr)
 
   type PayloadDependentError Tx = TxErr
 
-  -- We need to exercise the HD backend. This requires that we store key-values
-  -- ledger tables and the block application semantics satisfy:
-  --
-  -- \* a key is deleted at most once
-  -- \* a key is inserted at most once
-  --
-  applyPayload st Tx{consumed, produced} =
-    fmap track $ delete consumed st >>= uncurry insert produced
+  applyPayload st Tx{consumed, produced = (tok, val)} = do
+    st' <- deleteTok consumed st
+    insertTok tok val st'
    where
-    insert ::
+    insertTok ::
       Token ->
       TValue ->
-      PayloadDependentState Tx ValuesMK ->
-      Either TxErr (PayloadDependentState Tx ValuesMK)
-    insert tok val st'@UTxTok{utxtoktables, utxhist} =
-      if tok `Set.member` utxhist
-        then Left $ TokenWasAlreadyCreated tok
-        else
+      PayloadDependentState Tx ->
+      Either TxErr (PayloadDependentState Tx)
+    insertTok t v s@UTxTok{utxo, utxhist}
+      | t `Set.member` utxhist = Left $ TokenWasAlreadyCreated t
+      | otherwise =
           Right $
-            st'
-              { utxtoktables = Map.insert tok val `onValues` utxtoktables
-              , utxhist = Set.insert tok utxhist
+            s
+              { utxo = Map.insert t v utxo
+              , utxhist = Set.insert t utxhist
               }
-    delete ::
+    deleteTok ::
       Token ->
-      PayloadDependentState Tx ValuesMK ->
-      Either TxErr (PayloadDependentState Tx ValuesMK)
-    delete tok st'@UTxTok{utxtoktables} =
-      if Map.member tok `queryKeys` utxtoktables
-        then
-          Right $
-            st'
-              { utxtoktables = Map.delete tok `onValues` utxtoktables
-              }
-        else Left $ TokenDoesNotExist tok
-
-    track :: PayloadDependentState Tx ValuesMK -> PayloadDependentState Tx TrackingMK
-    track stAfter =
-      stAfter
-        { utxtoktables =
-            LedgerTables $ rawCalculateDifference utxtokBefore utxtokAfter
-        }
-     where
-      utxtokBefore = getLedgerTables $ utxtoktables st
-      utxtokAfter = getLedgerTables $ utxtoktables stAfter
-
-  getPayloadKeySets Tx{consumed} =
-    LedgerTables $ KeysMK $ Set.singleton consumed
-
-deriving instance Eq (LedgerTables TestBlock mk) => Eq (PayloadDependentState Tx mk)
-deriving instance
-  NoThunks (LedgerTables TestBlock mk) => NoThunks (PayloadDependentState Tx mk)
-deriving instance
-  Show (LedgerTables TestBlock mk) => Show (PayloadDependentState Tx mk)
-deriving instance
-  Serialise (LedgerTables TestBlock mk) => Serialise (PayloadDependentState Tx mk)
-
-onValues ::
-  (Map Token TValue -> Map Token TValue) ->
-  LedgerTables TestBlock ValuesMK ->
-  LedgerTables TestBlock ValuesMK
-onValues f (LedgerTables testUtxtokTable) = LedgerTables $ updateMap testUtxtokTable
- where
-  updateMap :: ValuesMK Token TValue -> ValuesMK Token TValue
-  updateMap (ValuesMK utxovals) =
-    ValuesMK $ f utxovals
-
-queryKeys ::
-  (Map Token TValue -> a) ->
-  LedgerTables TestBlock ValuesMK ->
-  a
-queryKeys f (LedgerTables (ValuesMK utxovals)) = f utxovals
-
-{-------------------------------------------------------------------------------
-  Instances required for on-disk storage of ledger state tables
--------------------------------------------------------------------------------}
-
-type instance TxIn TestBlock = Token
-type instance TxOut TestBlock = TValue
-
-instance CanUpgradeLedgerTables LedgerState TestBlock where
-  upgradeTables _ _ = id
-
-instance IndexedMemPack LedgerState TestBlock TValue where
-  indexedTypeName _ _ = typeName @TValue
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
-
-instance SerializeTablesWithHint LedgerState TestBlock where
-  encodeTablesWithHint = defaultEncodeTablesWithHint
-  decodeTablesWithHint = defaultDecodeTablesWithHint
-
-instance HasLedgerTables LedgerState TestBlock where
-  projectLedgerTables st = utxtoktables $ payloadDependentState st
-  withLedgerTables st table =
-    st
-      { payloadDependentState =
-          (payloadDependentState st){utxtoktables = table}
-      }
-
-instance HasLedgerTables (Ticked LedgerState) TestBlock where
-  projectLedgerTables (TickedTestLedger st) = projectLedgerTables st
-  withLedgerTables (TickedTestLedger st) tables =
-    TickedTestLedger $ withLedgerTables st tables
-
-instance Serialise (LedgerTables TestBlock EmptyMK) where
-  encode (LedgerTables (_ :: EmptyMK Token TValue)) =
-    CBOR.encodeNull
-  decode = LedgerTables EmptyMK <$ CBOR.decodeNull
-
-instance ToCBOR Token where
-  toCBOR (Token pt) = S.encode pt
-
-instance FromCBOR Token where
-  fromCBOR = fmap Token S.decode
-
-instance MemPack Token where
-  packM = packM . serialize'
-  packedByteCount = packedByteCount . serialize'
-  unpackM = unsafeDeserialize' <$> unpackM
-
-instance CanStowLedgerTables (LedgerState TestBlock) where
-  stowLedgerTables = stowErr "stowLedgerTables"
-  unstowLedgerTables = stowErr "unstowLedgerTables"
-
-stowErr :: String -> a
-stowErr fname = error $ "Function " <> fname <> " should not be used in these tests."
-
-deriving anyclass instance ToExpr v => ToExpr (DS.Delta v)
-deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Diff k v)
-deriving anyclass instance ToExpr v => ToExpr (StrictMaybe v)
-deriving anyclass instance
-  ToExpr (mk Token TValue) => ToExpr (LedgerTables TestBlock mk)
-deriving instance
-  ToExpr (LedgerTables TestBlock mk) => ToExpr (PayloadDependentState Tx mk)
-
-deriving newtype instance ToExpr (ValuesMK Token TValue)
-
-instance ToExpr v => ToExpr (DS.DeltaHistory v) where
-  toExpr h = App "DeltaHistory" [genericToExpr . toList . DS.getDeltaHistory $ h]
-
-instance ToExpr (ExtLedgerState TestBlock ValuesMK) where
-  toExpr = genericToExpr
-
-instance ToExpr (LedgerState (TestBlockWith Tx) ValuesMK) where
-  toExpr = genericToExpr
+      PayloadDependentState Tx ->
+      Either TxErr (PayloadDependentState Tx)
+    deleteTok t s@UTxTok{utxo}
+      | Map.member t utxo =
+          Right $ s{utxo = Map.delete t utxo}
+      | otherwise = Left $ TokenDoesNotExist t
 
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
@@ -282,43 +147,15 @@ instance HasHardForkHistory TestBlock where
 
 {-------------------------------------------------------------------------------
   TestBlock generation
+-------------------------------------------------------------------------------}
 
-  When we added support for storing parts of the ledger state on disk we needed
-  to exercise this new functionality. Therefore, we modified this test so that
-  the ledger state associated to the test block contained tables (key-value
-  maps) to be stored on disk. This ledger state needs to follow an evolution
-  pattern similar to the UTxO one (see the 'PayloadSemantics' instance for more
-  details). As a result, block application might fail on a given payload.
-
-  The tests in this module assume that no invalid blocks are generated. Thus we
-  have to satisfy this assumption in the block generators. To keep the
-  generators simple, eg independent on the ledger state, we follow this strategy
-  to block generation:
-
-  - The block payload consist of a single transaction:
-      - input: Point
-      - output: (Point, SlotNo)
-  - The ledger state is a map from Point to ().
-  - We start always in an initial state in which 'GenesisPoint' maps to ().
-  - When we generate a block for point p, the payload of the block will be:
-      - input: point p - 1
-      - ouptput: (point p, ())
-
-  A consequence of adopting the strategy above is that the initial state is
-  coupled to the generator's semantics.
- -------------------------------------------------------------------------------}
-
-genesis :: ExtLedgerState TestBlock ValuesMK
+genesis :: ExtLedgerState TestBlock
 genesis = testInitExtLedgerWithState initialTestLedgerState
 
-initialTestLedgerState :: PayloadDependentState Tx ValuesMK
+initialTestLedgerState :: PayloadDependentState Tx
 initialTestLedgerState =
   UTxTok
-    { utxtoktables =
-        LedgerTables $
-          ValuesMK $
-            Map.singleton initialToken $
-              TValue ()
+    { utxo = Map.singleton initialToken (TValue ())
     , utxhist = Set.singleton initialToken
     }
  where
@@ -367,10 +204,10 @@ extLedgerDbConfig secParam =
     , ledgerDbCfgComputeLedgerEvents = OmitLedgerEvents
     }
 
--- | TODO: for the time being 'TestBlock' does not have any codec config
+-- | TODO @js: for the time being 'TestBlock' does not have any codec config
 data instance CodecConfig TestBlock = TestBlockCodecConfig
   deriving (Show, Generic, NoThunks)
 
--- | TODO: for the time being 'TestBlock' does not have any storage config
+-- | TODO @js: for the time being 'TestBlock' does not have any storage config
 data instance StorageConfig TestBlock = TestBlockStorageConfig
   deriving (Show, Generic, NoThunks)

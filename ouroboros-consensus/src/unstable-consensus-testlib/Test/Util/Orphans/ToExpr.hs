@@ -60,11 +60,11 @@ instance (ToExpr blk, ToExpr (HeaderHash blk)) => ToExpr (AnchoredFragment blk) 
 -------------------------------------------------------------------------------}
 
 instance
-  ( ToExpr (LedgerState blk EmptyMK)
+  ( ToExpr (LedgerState blk)
   , ToExpr (ChainDepState (BlockProtocol blk))
   , ToExpr (TipInfo blk)
   ) =>
-  ToExpr (ExtLedgerState blk EmptyMK)
+  ToExpr (ExtLedgerState blk)
 
 instance
   ( ToExpr (ChainDepState (BlockProtocol blk))
@@ -183,5 +183,5 @@ instance
   ) =>
   ToExpr (MempoolAddTxResult blk)
   where
-  toExpr (MempoolTxAdded vtx _) = App "Added" [toExpr vtx]
+  toExpr (MempoolTxAdded vtx) = App "Added" [toExpr vtx]
   toExpr (MempoolTxRejected tx e) = App "Rejected" [toExpr tx, App (show e) []]

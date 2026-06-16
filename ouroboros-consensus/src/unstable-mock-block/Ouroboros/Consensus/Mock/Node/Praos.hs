@@ -29,13 +29,14 @@ import Ouroboros.Consensus.Util.IOLike
 type MockPraosBlock = SimplePraosBlock SimpleMockCrypto PraosMockCrypto
 
 protocolInfoPraos ::
+  Monad m =>
   NumCoreNodes ->
   CoreNodeId ->
   PraosParams ->
   HardFork.EraParams ->
   Natural ->
   PraosEvolvingStake ->
-  ProtocolInfo MockPraosBlock
+  ProtocolInfo m MockPraosBlock
 protocolInfoPraos numCoreNodes nid params eraParams eta0 evolvingStakeDist =
   ProtocolInfo
     { pInfoConfig =
@@ -55,11 +56,13 @@ protocolInfoPraos numCoreNodes nid params eraParams eta0 evolvingStakeDist =
           , topLevelConfigStorage = SimpleStorageConfig (praosSecurityParam params)
           , topLevelConfigCheckpoints = emptyCheckpointsMap
           }
-    , pInfoInitLedger =
-        ExtLedgerState
-          { ledgerState = genesisSimpleLedgerState addrDist
-          , headerState = genesisHeaderState (PraosChainDepState [])
-          }
+    , pInfoInitLedger = \() ->
+        pure
+          ExtStateHandle
+            { unExtStateHandle =
+                SimpleStateHandle (genesisSimpleLedgerState addrDist)
+            , extHeaderState = genesisHeaderState (PraosChainDepState [])
+            }
     }
  where
   signKeyVRF :: CoreNodeId -> SignKeyVRF MockVRF

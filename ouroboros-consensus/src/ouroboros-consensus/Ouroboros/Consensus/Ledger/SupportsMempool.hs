@@ -6,14 +6,11 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , ByteSize32 (..)
-  , WhatToDoWithTxDiffs (..)
-  , InputTxDiffs
   , ConvertRawTxId (..)
   , GenTx
   , GenTxId
@@ -23,9 +20,10 @@ module Ouroboros.Consensus.Ledger.SupportsMempool
   , IgnoringOverflow (..)
   , Invalidated (..)
   , LedgerSupportsMempool (..)
-  , ReapplyTxsResult (..)
+  , MempoolAcc
   , TxId
   , TxLimits (..)
+  , TxLocalData
   , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
@@ -38,7 +36,6 @@ import Control.Monad.Except
 import Data.ByteString.Short (ShortByteString)
 import Data.Coerce (coerce)
 import Data.DerivingVia (InstantiatedAt (..))
-import qualified Data.Foldable as Foldable
 import Data.Kind (Type)
 import Data.Measure (Measure)
 import qualified Data.Measure
@@ -49,7 +46,6 @@ import NoThunks.Class
 import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
@@ -88,150 +84,142 @@ data WhetherToIntervene
     Intervene
   deriving Show
 
--- | When we are revalidating the transactions in the mempool, we either will
--- store the resulting differences (when re-syncing with the LedgerDB) or we
--- simply don't care (when acquiring a mempool snapshot for forging a block).
-type data WhatToDoWithTxDiffs = Collect | Discard
+-- $note-mempool-redesign
+--
+-- == Note [Tx-local data + accumulator]
+--
+-- Each tx in the mempool carries its own block-specific 'TxLocalData'
+-- (typically the UTxO entries read from disk for its inputs). That
+-- data lives /alongside/ the validated tx in the mempool sequence, not
+-- in a global cache.
+--
+-- The mempool also maintains a 'MempoolAcc': a block-specific
+-- accumulator that represents the chain-ticked ledger state /after/
+-- all currently-cached mempool txs have been (re)applied. New txs are
+-- validated against it; on removal, it is rebuilt by folding
+-- 'reapplyTx' over the kept txs (cheaply — their 'TxLocalData' is
+-- already on hand). On a tip change, both the per-tx data and the acc
+-- are rebuilt from scratch via 'prepareTx' + 'reapplyTx'.
+--
+-- This replaces an earlier design where a single 'MempoolCache' tried
+-- to play both roles (per-tx cache /and/ aggregated view) and could
+-- get into inconsistent states when txs were evicted.
 
--- | This type family serves to make sure that when we are going to discard the
--- differences, we don't even have differences around that we might misuse.
-type family InputTxDiffs blk wtd where
-  InputTxDiffs blk Discard = ()
-  InputTxDiffs blk Collect = LedgerTables blk DiffMK
+-- | Per-tx data attached to each tx in the mempool sequence.
+--
+-- Typically the UTxO entries the tx's inputs reference, materialised
+-- from disk by 'prepareTx'. For Byron this is @()@; for the HFC
+-- it is era-tagged ('NS TxLocalData' over the eras).
+--
+-- Stored next to the tx; rebuilt only when the chain tip changes
+-- (i.e. on 'syncWithLedger').
+type TxLocalData :: Type -> Type
+data family TxLocalData blk
+
+-- | The mempool's aggregated view: the chain-ticked ledger state plus
+-- whatever cumulative state the block's validation needs (for
+-- Shelley, the combined 'Diff' of every tx in the mempool so far).
+--
+-- Maintained by 'applyTx' / 'reapplyTx' and rebuilt deterministically
+-- whenever the sequence of mempool txs changes (e.g. by
+-- 'removeTxs' or 'syncWithLedger').
+type MempoolAcc :: Type -> Type
+data family MempoolAcc blk
 
 class
   ( UpdateLedger blk
   , TxLimits blk
   , NoThunks (GenTx blk)
   , NoThunks (Validated (GenTx blk))
+  , NoThunks (TxLocalData blk)
+  , NoThunks (MempoolAcc blk)
   , Show (GenTx blk)
   , Show (Validated (GenTx blk))
   , Show (ApplyTxErr blk)
   ) =>
   LedgerSupportsMempool blk
   where
+  -- | The empty accumulator at the given chain-ticked ledger state.
+  -- Used to seed any (re)build.
+  emptyAcc :: TickedLedgerState blk -> MempoolAcc blk
+
+  -- | Project the (possibly evolved) ticked ledger state out of the acc.
+  -- For Byron this is the same value Byron's 'applyTx' mutates; for
+  -- Shelley it carries non-UTxO ledger state changes (governance,
+  -- fees, …) accumulated by prior tx applies.
+  accTickedState :: MempoolAcc blk -> TickedLedgerState blk
+
+  -- | Read disk-resident data this tx needs into a fresh
+  -- 'TxLocalData'. The /only/ monadic entry point; after this runs,
+  -- all later operations on this tx ('txMeasure', 'applyTx',
+  -- 'reapplyTx') are pure.
+  --
+  -- The accumulator is passed in so the block instance can skip
+  -- reads for keys already covered by a prior mempool tx's diff (a
+  -- parent-child dependency).
+  prepareTx ::
+    Monad m =>
+    LedgerConfig blk ->
+    SlotNo ->
+    TickedStateHandle m blk ->
+    MempoolAcc blk ->
+    GenTx blk ->
+    m (TxLocalData blk)
+
   -- | Check whether the internal invariants of the transaction hold.
   txInvariant :: GenTx blk -> Bool
   txInvariant = const True
 
-  -- | Apply an unvalidated transaction
+  -- | Apply an unvalidated transaction.
   --
-  -- The mempool expects that the ledger checks the sanity of the transaction'
-  -- size. The mempool implementation will add any valid transaction as long as
-  -- there is at least one byte free in the mempool.
+  -- The mempool expects that the ledger checks the sanity of the
+  -- transaction's size. The mempool implementation will add any valid
+  -- transaction as long as there is at least one byte free in the
+  -- mempool.
   --
-  -- The resulting ledger state contains the diffs produced by applying this
-  -- transaction alone.
+  -- Pure: the values needed by this tx must already be in the
+  -- 'TxLocalData' (the caller is responsible for calling 'prepareTx'
+  -- first). The returned acc has this tx's contribution merged in;
+  -- callers append the tx to the mempool sequence together with its
+  -- 'TxLocalData'.
+  --
+  -- On error the acc is not returned: the caller still holds the input
+  -- acc and the failed tx is simply discarded.
   applyTx ::
     LedgerConfig blk ->
     WhetherToIntervene ->
     -- | Slot number of the block containing the tx
     SlotNo ->
+    MempoolAcc blk ->
     GenTx blk ->
-    -- | Contain only the values for the tx to apply
-    TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk DiffMK, Validated (GenTx blk))
+    TxLocalData blk ->
+    Except
+      (ApplyTxErr blk)
+      (Validated (GenTx blk), MempoolAcc blk)
 
   -- | Apply a previously validated transaction to a potentially different
-  -- ledger state
+  -- ledger state.
   --
-  -- When we re-apply a transaction to a potentially different ledger state
-  -- expensive checks such as cryptographic hashes can be skipped, but other
-  -- checks (such as checking for double spending) must still be done.
+  -- When we re-apply a transaction to a potentially different ledger
+  -- state, expensive checks such as cryptographic hashes can be skipped,
+  -- but other checks (such as checking for double spending) must still
+  -- be done.
   --
-  -- The returned ledger state contains the resulting values too so that this
-  -- function can be used to reapply a list of transactions, providing as a
-  -- first state one that contains the values for all the transactions.
+  -- A failing 'reapplyTx' means the tx is no longer valid wrt the
+  -- current acc (typically because a parent tx was removed, or the
+  -- chain advanced): the caller evicts it from the mempool.
   reapplyTx ::
     HasCallStack =>
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
+    MempoolAcc blk ->
     Validated (GenTx blk) ->
-    -- | Contains at least the values for the tx to reapply
-    TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk ValuesMK)
-
-  -- | Apply a list of previously validated transactions to a new ledger state.
-  --
-  -- It is never the case that we reapply one single transaction, we always
-  -- reapply a list of transactions (and even one transaction can just be lifted
-  -- into the unary list).
-  --
-  -- When reapplying a list of transactions, in the hard-fork instance we want
-  -- to first project everything into the particular block instance and then we
-  -- can inject/project the ledger tables only once. For single era blocks, this
-  -- is by default implemented as a fold using 'reapplyTx'.
-  --
-  -- Notice: It is crucial that the list of validated transactions returned is
-  -- in the same order as they were given, as we will use those later on to
-  -- filter a list of 'TxTicket's.
-  reapplyTxs ::
-    LedgerConfig blk ->
-    -- | Slot number of the block containing the tx
-    SlotNo ->
-    [(Validated (GenTx blk), InputTxDiffs blk wtd, extra)] ->
-    TickedLedgerState blk ValuesMK ->
-    ReapplyTxsResult extra blk wtd
-  reapplyTxs cfg slot txs st =
-    (\(err, val, st') -> ReapplyTxsResult err (reverse val) (forgetLedgerTables st')) $
-      foldReapplyTxs fst3 txs
-   where
-    fst3 (a, _, _) = a
-
-    foldReapplyTxs ::
-      (a -> Validated (GenTx blk)) ->
-      [a] ->
-      ([Invalidated blk], [a], TickedLedgerState blk ValuesMK)
-    foldReapplyTxs projectTx =
-      Foldable.foldl'
-        ( \(accE, accV, st') a ->
-            case runExcept (reapplyTx cfg slot (projectTx a) st') of
-              Left err -> (Invalidated (projectTx a) err : accE, accV, st')
-              Right st'' -> (accE, a : accV, st'')
-        )
-        ([], [], st)
+    TxLocalData blk ->
+    Except (ApplyTxErr blk) (MempoolAcc blk)
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
-
-  -- | Given a transaction, get the key-sets that we need to apply it to a
-  -- ledger state. This is implemented in the Ledger. An example of non-obvious
-  -- needed keys in Cardano are those of reference scripts for computing the
-  -- transaction size.
-  getTransactionKeySets :: GenTx blk -> LedgerTables blk KeysMK
-
-  -- Mempools live in a single slot so in the hard fork block case
-  -- it is cheaper to perform these operations on LedgerStates, saving
-  -- the time of projecting and injecting ledger tables.
-  --
-  -- The cost of this when adding transactions is very small compared
-  -- to eg the networking costs of mempool synchronization, but still
-  -- it is worthwile locking the mempool for as short as possible.
-  --
-  -- Eventually the Ledger will provide these diffs, so we might even
-  -- be able to remove this optimization altogether.
-
-  -- | Prepend diffs on ledger states
-  --
-  -- Intended to be non-default in the HardFork instance for optimizing
-  -- performance.
-  prependMempoolDiffs ::
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk DiffMK
-  prependMempoolDiffs = prependDiffs
-
-  -- | Apply diffs on ledger states
-  --
-  -- Intended to be non-default in the HardFork instance for optimizing
-  -- performance.
-  applyMempoolDiffs ::
-    LedgerTables blk ValuesMK ->
-    LedgerTables blk KeysMK ->
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk ValuesMK
-  applyMempoolDiffs = applyDiffForKeysOnTables
 
   -- | The ledger rules' error type for the mempool's current era might allow
   -- the mempool to reject a tx for its own reasons.
@@ -240,24 +228,14 @@ class
   -- node-to-client mini protocol sends when a tx is rejected.
   mkMempoolApplyTxError ::
     -- | for the HFC
-    TickedLedgerState blk mk ->
+    TickedLedgerState blk ->
     Text ->
     Maybe (ApplyTxErr blk)
 
 -- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error
-nothingMkMempoolApplyTxError :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
+nothingMkMempoolApplyTxError :: TickedLedgerState blk -> Text -> Maybe (ApplyTxErr blk)
 nothingMkMempoolApplyTxError _ _ = Nothing
-
-data ReapplyTxsResult extra blk wtd
-  = ReapplyTxsResult
-  { invalidatedTxs :: ![Invalidated blk]
-  -- ^ txs that are now invalid. Order doesn't matter
-  , validatedTxs :: ![(Validated (GenTx blk), InputTxDiffs blk wtd, extra)]
-  -- ^ txs that are valid again, order must be the same as the order in
-  -- which txs were received
-  , resultingState :: !(TickedLedgerState blk EmptyMK)
-  }
 
 -- | A generalized transaction, 'GenTx', identifier.
 type TxId :: Type -> Type
@@ -330,52 +308,50 @@ class
   -- | The (possibly multi-dimensional) size of a transaction in a block.
   type TxMeasure blk
 
-  -- | The size of the transaction from the perspective of diffusion layer
-  txWireSize :: GenTx blk -> Network.SizeInBytes
-
-  -- | The various sizes (bytes, Plutus script ExUnits, etc) of a tx /when it's
-  -- in a block/
+  -- | Compute the measure of a transaction (e.g. size, ExUnits).
   --
-  -- This size is used to compute how many transaction we can put in a block
-  -- when forging one.
+  -- Pure: uses the chain-ticked state for protocol parameters and the
+  -- tx's 'TxLocalData' for any UTxO values it needs (e.g. reference
+  -- scripts in Alonzo+).
   --
-  -- The byte size component in particular might differ from the size of the
-  -- serialisation used to send and receive the transaction across the network.
-  -- For example, CBOR-in-CBOR could be used when sending the transaction
-  -- across the network, requiring a few extra bytes compared to the actual
-  -- in-block serialisation. Another example is the transaction of the
-  -- hard-fork combinator which will include an envelope indicating its era
-  -- when sent across the network. However, when embedded in the respective
-  -- era's block, there is no need for such envelope. An example from upstream
-  -- is that the Cardano ledger's "Segregated Witness" encoding scheme
-  -- contributes to the encoding overhead.
+  -- INVARIANT @Right x = txMeasure cfg st tld tx@ implies
+  -- @x 'Measure.<=' 'blockCapacityTxMeasure' cfg st@. Otherwise, the
+  -- mempool could block forever.
   --
-  -- INVARIANT Assuming no hash collisions, the size should be the same in any
-  -- state in which the transaction is valid. For example, it's acceptable to
-  -- simply omit the size of ref scripts that could not be found, since their
-  -- absence implies the tx is invalid. In fact, that invalidity could be
-  -- reported by this function, but it need not be.
-  --
-  -- INVARIANT @Right x = txMeasure cfg st tx@ implies @x 'Measure.<='
-  -- 'blockCapacityTxMeasure cfg st'. Otherwise, the mempool could block
-  -- forever.
-  --
-  -- Returns an exception if and only if the transaction violates the per-tx
-  -- limits.
+  -- Returns an exception if and only if the transaction violates the
+  -- per-tx limits.
   txMeasure ::
-    -- | used at least by HFC's composition logic
     LedgerConfig blk ->
-    -- | This state needs values as a transaction measure might depend on
-    -- those. For example in Cardano they look at the reference scripts.
-    TickedLedgerState blk ValuesMK ->
+    TickedLedgerState blk ->
+    TxLocalData blk ->
     GenTx blk ->
     Except (ApplyTxErr blk) (TxMeasure blk)
 
+  -- | The size of the transaction from the perspective of diffusion layer
+  txWireSize :: GenTx blk -> Network.SizeInBytes
+
   -- | What is the allowed capacity for the txs in an individual block?
+  --
+  -- The various sizes (bytes, Plutus script ExUnits, etc) of a tx /when it's
+  -- in a block/.
+  --
+  -- This size is used to compute how many transactions we can put in a block
+  -- when forging one.
+  --
+  -- The byte size component in particular might differ from the size of the
+  -- serialisation used to send and receive the transaction across the
+  -- network. For example, CBOR-in-CBOR could be used when sending the
+  -- transaction across the network, requiring a few extra bytes compared to
+  -- the actual in-block serialisation. Another example is the transaction of
+  -- the hard-fork combinator which will include an envelope indicating its
+  -- era when sent across the network. However, when embedded in the
+  -- respective era's block, there is no need for such envelope. An example
+  -- from upstream is that the Cardano ledger's "Segregated Witness" encoding
+  -- scheme contributes to the encoding overhead.
   blockCapacityTxMeasure ::
     -- | at least for symmetry with 'txMeasure'
     LedgerConfig blk ->
-    TickedLedgerState blk mk ->
+    TickedLedgerState blk ->
     TxMeasure blk
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@

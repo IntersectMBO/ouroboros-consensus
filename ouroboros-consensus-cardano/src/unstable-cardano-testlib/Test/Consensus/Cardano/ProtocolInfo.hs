@@ -179,7 +179,7 @@ mkSimpleTestProtocolInfo ::
   ShelleySlotLengthInSeconds ->
   SL.ProtVer ->
   CardanoHardForkTriggers ->
-  ProtocolInfo (CardanoBlock c)
+  ProtocolInfo IO (CardanoBlock c)
 mkSimpleTestProtocolInfo
   decentralizationParam
   securityParam
@@ -260,7 +260,7 @@ mkTestProtocolInfo ::
   SL.ProtVer ->
   -- | Specification of the era to which the initial state should hard-fork to.
   CardanoHardForkTriggers ->
-  ( ProtocolInfo (CardanoBlock c)
+  ( ProtocolInfo m (CardanoBlock c)
   , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
   )
 mkTestProtocolInfo

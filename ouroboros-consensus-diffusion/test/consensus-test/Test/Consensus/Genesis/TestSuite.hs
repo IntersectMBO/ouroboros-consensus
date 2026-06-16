@@ -2,6 +2,8 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- | A 'TestSuite' data structure for quick access to 'ConformanceTest' values.
 -- It encodes a hierarchical nested structure allowing it to compile into a
@@ -26,6 +28,7 @@ module Test.Consensus.Genesis.TestSuite
   , toTestTree
   ) where
 
+import Control.Monad.IOSim (IOSim)
 import Data.Foldable (toList)
 import Data.Map.Monoidal (MonoidalMap)
 import qualified Data.Map.Monoidal as MMap
@@ -40,16 +43,13 @@ import Ouroboros.Consensus.Block
   )
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
-import Ouroboros.Consensus.Ledger.Basics (LedgerState)
+import Ouroboros.Consensus.Ledger.Basics (BlockSupportsLedgerHD)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
-import Ouroboros.Consensus.Storage.LedgerDB.API
-  ( CanUpgradeLedgerTables
-  )
 import Ouroboros.Consensus.Util.Condense (Condense, CondenseList)
 import Ouroboros.Network.Util.ShowProxy (ShowProxy)
 import Test.Consensus.Genesis.Setup
@@ -189,7 +189,7 @@ toTestTree ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables LedgerState blk
+  , forall s. BlockSupportsLedgerHD (IOSim s) blk
   , HasPointScheduleTestParams blk
   , Eq (Header blk)
   , Eq blk

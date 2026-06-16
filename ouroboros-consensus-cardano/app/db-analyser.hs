@@ -19,11 +19,21 @@ import Options.Applicative
   , progDesc
   , (<**>)
   )
+import qualified Ouroboros.Consensus.Backends as Backends
+import qualified Ouroboros.Consensus.Backends.LSM as LSM
+import System.FS.API (mkFsPath)
+import System.Random (genWord64, newStdGen)
 
 main :: IO ()
 main = withStdTerminalHandles $ do
   cryptoInit
-  void $ uncurry analyse =<< getCmdLine
+  (cfg, blockArgs) <- getCmdLine
+  backendArgs <- case ldbBackend cfg of
+    V2InMem -> pure Backends.inMemoryBackendArgs
+    V2LSM -> do
+      salt <- fst . genWord64 <$> newStdGen
+      pure $ LSM.lsmBackendArgsIO (mkFsPath ["lsm"]) Nothing (dbDir cfg) salt
+  void $ analyse cfg blockArgs backendArgs
 
 getCmdLine :: IO (DBAnalyserConfig, CardanoBlockArgs)
 getCmdLine = execParser opts

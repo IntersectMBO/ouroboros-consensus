@@ -36,17 +36,17 @@ import Cardano.Slotting.Time (mkSlotLength)
 import Control.Monad.Except (Except)
 import qualified Control.Tracer as Tracer
 import Data.Bifunctor (first)
+import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Text as T
 import qualified Data.Text as Text
-import Lens.Micro ((^.))
+import Lens.Micro
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -164,7 +164,8 @@ protocolInfoShelley ::
   SL.ShelleyGenesis ->
   ProtocolParamsShelleyBased c ->
   SL.ProtVer ->
-  ( ProtocolInfo (ShelleyBlock (TPraos c) ShelleyEra)
+  MkHandle m ->
+  ( ProtocolInfo m (ShelleyBlock (TPraos c) ShelleyEra)
   , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
   )
 protocolInfoShelley
@@ -185,7 +186,8 @@ protocolInfoTPraosShelleyBased ::
   L.TransitionConfig era ->
   -- | see 'shelleyProtVer', mutatis mutandi
   SL.ProtVer ->
-  ( ProtocolInfo (ShelleyBlock (TPraos c) era)
+  MkHandle m ->
+  ( ProtocolInfo m (ShelleyBlock (TPraos c) era)
   , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock (TPraos c) era)]
   )
 protocolInfoTPraosShelleyBased
@@ -194,7 +196,8 @@ protocolInfoTPraosShelleyBased
     , shelleyBasedLeaderCredentials = credentialss
     }
   transitionCfg
-  protVer =
+  protVer
+  mkH =
     assertWithMsg (validateGenesis genesis) $
       ( ProtocolInfo
           { pInfoConfig = topLevelConfig
@@ -272,27 +275,32 @@ protocolInfoTPraosShelleyBased
         , shelleyStorageConfigSecurityParam = tpraosSecurityParam tpraosParams
         }
 
-    initLedgerState :: LedgerState (ShelleyBlock (TPraos c) era) ValuesMK
+    newEpochState =
+      ( L.injectIntoTestState transitionCfg $
+          L.createInitialState transitionCfg
+      )
+
+    initLedgerState :: LedgerState (ShelleyBlock (TPraos c) era)
     initLedgerState =
-      unstowLedgerTables
-        ShelleyLedgerState
-          { shelleyLedgerTip = Origin
-          , shelleyLedgerState =
-              L.injectIntoTestState transitionCfg $
-                L.createInitialState transitionCfg
-          , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
-          , shelleyLedgerTables = emptyLedgerTables
-          , shelleyLedgerLatestPerasCertRound = SNothing
-          }
+      ShelleyLedgerState
+        { shelleyLedgerTip = Origin
+        , shelleyLedgerState = newEpochState & slUtxoL .~ SL.UTxO Map.empty
+        , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
+        , shelleyLedgerLatestPerasCertRound = SNothing
+        }
 
     initChainDepState :: TPraosState
     initChainDepState =
       TPraosState Origin $
         SL.initialChainDepState initialNonce (SL.sgGenDelegs genesis)
 
-    initExtLedgerState :: ExtLedgerState (ShelleyBlock (TPraos c) era) ValuesMK
-    initExtLedgerState =
-      ExtLedgerState
-        { ledgerState = initLedgerState
-        , headerState = genesisHeaderState initChainDepState
-        }
+    initExtLedgerState ::
+      LedgerTablesFactory m (ShelleyBlock (TPraos c) era) ->
+      m (ExtStateHandle m (ShelleyBlock (TPraos c) era))
+    initExtLedgerState = \() -> do
+      h <- fromNewEpochState mkH newEpochState
+      pure
+        ExtStateHandle
+          { unExtStateHandle = ShelleyStateHandle initLedgerState h
+          , extHeaderState = genesisHeaderState initChainDepState
+          }

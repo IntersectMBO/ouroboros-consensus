@@ -96,8 +96,6 @@ import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Storage.ImmutableDB.API (SeekBlockError (..))
 import Ouroboros.Consensus.Storage.LedgerDB
   ( GetForkerError
-  , ReadOnlyForker'
-  , Statistics
   )
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertTicketNo
@@ -106,6 +104,7 @@ import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteTicketNo
   )
 import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike
@@ -215,11 +214,17 @@ data ChainDB m blk = ChainDB
   -- to the chain it is on)
   --
   -- INVARIANT @'hwtHeader' <$> 'getCurrentChainWithTime' = 'getCurrentChain'@
-  , getCurrentLedger :: STM m (ExtLedgerState blk EmptyMK)
-  -- ^ Get current ledger
-  , getImmutableLedger :: STM m (ExtLedgerState blk EmptyMK)
+  , getCurrentLedger :: STM m (ExtLedgerState blk)
+  -- ^ Get the current ledger state.
+  , getCurrentLedgerRef :: STM m (Handle ExtLedgerState m blk)
+  -- ^ Get a 'Handle' to the current ledger state.
+  --
+  -- Unlike 'getCurrentLedger', the returned handle can be used to look up
+  -- on-disk table contents (read-only). It must /not/ be closed by the caller
+  -- — its lifetime is tied to the LedgerDB.
+  , getImmutableLedger :: STM m (ExtLedgerState blk)
   -- ^ Get the immutable ledger, i.e., typically @k@ blocks back.
-  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk EmptyMK))
+  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk))
   -- ^ Get the ledger for the given point.
   --
   -- When the given point is not among the last @k@ blocks of the current
@@ -228,27 +233,27 @@ data ChainDB m blk = ChainDB
   , getHeaderStateHistory :: STM m (HeaderStateHistory blk)
   -- ^ Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
   -- last @k@ blocks of the current chain.
-  , allocInRegistryReadOnlyForkerAtPoint ::
+  , allocInRegistryReadOnlyHandleAtPoint ::
       Target (Point blk) ->
       ResourceRegistry m ->
-      m (Either GetForkerError (ResourceKey m, ReadOnlyForker' m blk))
+      m (Either GetForkerError (ResourceKey m, Handle ExtLedgerState m blk))
   -- ^ Allocate a read only forker at the given point in the given resource
   -- registry.
   --
   -- This function is to be used by LocalStateQuery server. Note ChainSel uses
   -- the LedgerDB directly, none of these methods are used there.
-  , openReadOnlyForkerAtPoint ::
+  , openReadOnlyHandleAtPoint ::
       Target (Point blk) ->
-      m (Either GetForkerError (ReadOnlyForker' m blk))
+      m (Either GetForkerError (Handle ExtLedgerState m blk))
   -- ^ Open a forker at the given point. This resource is untracked.
   --
   -- It is intended to be used by the Mempool as closing the mempool means the
   -- system is shutting down, so the resources does not need to be tracked. Note
   -- ChainSel uses the LedgerDB directly, none of these methods are used there.
-  , withReadOnlyForkerAtPoint ::
+  , withReadOnlyHandleAtPoint ::
       forall r.
       Target (Point blk) ->
-      (Either GetForkerError (ReadOnlyForker' m blk) -> WithEarlyExit m r) ->
+      (Either GetForkerError (Handle ExtLedgerState m blk) -> WithEarlyExit m r) ->
       WithEarlyExit m r
   -- ^ Run a continuation with a forker at the given target.
   --

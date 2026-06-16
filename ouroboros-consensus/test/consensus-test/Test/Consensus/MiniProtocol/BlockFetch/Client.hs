@@ -43,6 +43,7 @@ import qualified Network.TypedProtocol.Driver.Simple as Driver
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..), ExtStateHandle (..))
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -287,7 +288,12 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
               MinimalChainDbArgs
                 { mcdbTopLevelConfig = topLevelConfig
                 , mcdbChunkInfo = mkTestChunkInfo topLevelConfig
-                , mcdbInitLedger = testInitExtLedger
+                , mcdbInitLedger = \() ->
+                    pure $
+                      ExtStateHandle
+                        (TestStateHandle (ledgerState testInitExtLedger))
+                        (headerState testInitExtLedger)
+                , mcdbBackendArgs = testBackendArgs ()
                 , mcdbRegistry = registry
                 , mcdbNodeDBs = nodeDBs
                 }

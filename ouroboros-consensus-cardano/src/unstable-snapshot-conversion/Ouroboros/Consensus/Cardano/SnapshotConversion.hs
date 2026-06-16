@@ -1,14 +1,22 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
 
 -- | Convert snapshots among different formats. This is exposed in
 -- @cardano-node@ as a subcommand and also via the @snapshot-converter@
 -- executable.
+--
+-- The conversion is era-aware: only Shelley-based eras carry an on-disk
+-- UTxO blob, so for them we dispatch to the per-era 'SnapshotYielder' /
+-- 'SnapshotSinker' provided by the backend modules; Byron snapshots have
+-- only a state file and no UTxO, so the streaming step is a no-op.
 module Ouroboros.Consensus.Cardano.SnapshotConversion
   ( SnapshotsDirectory (..)
   , LSMDatabaseFilePath (..)
@@ -19,25 +27,49 @@ module Ouroboros.Consensus.Cardano.SnapshotConversion
   , convertSnapshot
   ) where
 
-import Codec.Serialise
+import Cardano.Ledger.Binary.Decoding (DecShareCBOR, Interns, Share)
+import qualified Cardano.Ledger.Core as SL
+import qualified Cardano.Ledger.Shelley.API as SL
+import Codec.CBOR.Read (DeserialiseFailure)
+import Codec.Serialise (decode)
 import Control.Monad (when)
 import qualified Control.Monad as Monad
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
 import Data.Bifunctor
 import Data.Char (toLower)
+import Data.MemPack (MemPack)
+import Data.SOP.BasicFunctors (K (..))
+import Data.SOP.Strict (NP (..), NS, hap, hcollapse, hmap, type (-.->) (..))
+import qualified Data.SOP.Telescope as Telescope
 import qualified Data.Text.Lazy as T
+import Ouroboros.Consensus.Backends.InMemory
+  ( inMemorySnapshotSinker
+  , inMemorySnapshotYielder
+  )
+import Ouroboros.Consensus.Backends.LSM
+  ( lsmSnapshotSinker
+  , lsmSnapshotYielder
+  )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node ()
-import Ouroboros.Consensus.Cardano.StreamingLedgerTables
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Combinator (LedgerState (HardForkLedgerState))
+import Ouroboros.Consensus.HardFork.Combinator.State.Types
+  ( Current (..)
+  , HardForkState (..)
+  )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.ProtocolInfo
-import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, shelleyLedgerState)
+import Ouroboros.Consensus.Shelley.Ledger.SnapshotStream
+  ( SnapshotSinker (..)
+  , SnapshotYielder (..)
+  )
+import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.IOLike hiding (yield)
 import System.Console.ANSI
@@ -48,7 +80,6 @@ import System.FS.IO
 import qualified System.FilePath as F
 import System.IO
 import System.ProgressBar
-import System.Random
 
 data SnapshotsDirectory = SnapshotsDirectory {getSnapshotDir :: FilePath}
 
@@ -132,11 +163,11 @@ instance StandardHash blk => Show (Error blk) where
   Environments
 -------------------------------------------------------------------------------}
 
-data InEnv backend = InEnv
-  { inState :: LedgerState (CardanoBlock StandardCrypto) EmptyMK
-  -- ^ Ledger state (without tables) that will be used to index the snapshot.
-  , inStream :: IO (SomeBackend YieldArgs)
-  -- ^ Yield arguments for producing a stream of TxOuts
+data InEnv = InEnv
+  { inState :: LedgerState (CardanoBlock StandardCrypto)
+  -- ^ Ledger state that will be used to dispatch the per-era streaming.
+  , inYielder :: IO (SnapshotYielder IO)
+  -- ^ Yielder producing the stream of @(TxIn, TxOut)@ pairs.
   , inProgressMsg :: String
   -- ^ A progress message (just for displaying)
   , inCRC :: CRC
@@ -145,9 +176,9 @@ data InEnv backend = InEnv
   -- ^ The CRC of the input snapshot from the metadata file
   }
 
-data OutEnv backend = OutEnv
-  { outStream :: IO (SomeBackend SinkArgs)
-  -- ^ Sink arguments for consuming a stream of TxOuts
+data OutEnv = OutEnv
+  { outSinker :: IO (SnapshotSinker IO)
+  -- ^ Sinker consuming the stream of @(TxIn, TxOut)@ pairs.
   , outDeleteExtra :: Maybe FilePath
   -- ^ In case some other directory needs to be wiped out
   , outProgressMsg :: String
@@ -156,18 +187,9 @@ data OutEnv backend = OutEnv
   -- ^ The backend used for the output snapshot, to write it in the metadata
   }
 
-data SomeBackend c where
-  SomeBackend ::
-    StreamingBackend IO backend LedgerState (CardanoBlock StandardCrypto) =>
-    c IO backend LedgerState (CardanoBlock StandardCrypto) -> SomeBackend c
-
-instance NoThunks (SomeBackend c) where
-  wNoThunks _ (SomeBackend _) = pure Nothing
-  showTypeOf _ = "SomeBackend"
-
 convertSnapshot ::
   Bool ->
-  ProtocolInfo (CardanoBlock StandardCrypto) ->
+  ProtocolInfo IO (CardanoBlock StandardCrypto) ->
   Snapshot ->
   Snapshot ->
   ExceptT (Error (CardanoBlock StandardCrypto)) IO ()
@@ -191,7 +213,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       then lift $ niceAnimatedProgressBar inProgressMsg outProgressMsg
       else pure Nothing
 
-  eRes <- lift $ runExceptT (stream inState inStream outStream)
+  eRes <- lift $ runExceptT (stream inState inYielder outSinker)
 
   case eRes of
     Left err -> throwError $ ReadTablesError err
@@ -244,7 +266,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
     ExceptT
       (Error (CardanoBlock StandardCrypto))
       IO
-      (LedgerState (CardanoBlock StandardCrypto) EmptyMK, CRC)
+      (LedgerState (CardanoBlock StandardCrypto), CRC)
   getState ds = do
     eState <- lift $ do
       when interactive $ putStr $ "Reading ledger state from " <> snapshotToDirName ds <> "..."
@@ -284,7 +306,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
     writeSnapshotMetadata outSomeHasFS outSnap bknd
 
   checkSnapSlot ::
-    LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
+    LedgerState (CardanoBlock StandardCrypto) ->
     DiskSnapshot ->
     ExceptT (Error (CardanoBlock StandardCrypto)) IO ()
   checkSnapSlot st ds =
@@ -298,7 +320,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       (pointSlot $ getTip st)
 
   -- Produce an InEnv from the given arguments
-  getInEnv :: ExceptT (Error (CardanoBlock StandardCrypto)) IO (InEnv backend)
+  getInEnv :: ExceptT (Error (CardanoBlock StandardCrypto)) IO InEnv
   getInEnv = case from of
     Snapshot (StandaloneSnapshot _ Mem) _ -> do
       metadataCrc <- getMetadata inSnap UTxOHDMemSnapshot
@@ -307,7 +329,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       pure $
         InEnv
           st
-          (pure $ SomeBackend $ mkInMemYieldArgs inSomeHasFS inSnap st)
+          (pure $ inMemorySnapshotYielder inSomeHasFS inSnap)
           ("InMemory@[" <> snapshotToDirName inSnap <> "]")
           c
           metadataCrc
@@ -318,60 +340,97 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       pure $
         InEnv
           st
-          (SomeBackend <$> mkLSMYieldArgs lsmDbPath inSnap stdMkBlockIOFS newStdGen)
+          ( let (mount, dbPath) = splitLsmPath lsmDbPath
+             in lsmSnapshotYielder mount dbPath inSnap
+          )
           ("LSM@[" <> lsmDbPath <> "]")
           c
           metadataCrc
 
   -- Produce an OutEnv from the given arguments
   getOutEnv ::
-    LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-    ExceptT (Error (CardanoBlock StandardCrypto)) IO (OutEnv backend)
+    LedgerState (CardanoBlock StandardCrypto) ->
+    ExceptT (Error (CardanoBlock StandardCrypto)) IO OutEnv
   getOutEnv st = case to of
     Snapshot (StandaloneSnapshot _ Mem) _ -> do
       checkSnapSlot st outSnap
       pure $
         OutEnv
-          (pure $ SomeBackend $ mkInMemSinkArgs outSomeHasFS outSnap st)
+          (pure $ inMemorySnapshotSinker outSomeHasFS outSnap)
           Nothing
           ("InMemory@[" <> snapshotToDirName outSnap <> "]")
           UTxOHDMemSnapshot
     Snapshot (LSMSnapshot _ (LSMDatabaseFilePath lsmDbPath)) _ -> do
       checkSnapSlot st outSnap
+      let (mount, dbPath) = splitLsmPath lsmDbPath
       pure $
         OutEnv
-          ( SomeBackend
-              <$> mkLSMSinkArgs
-                lsmDbPath
-                outSnap
-                outSomeHasFS
-                stdMkBlockIOFS
-                newStdGen
-          )
+          (lsmSnapshotSinker mount dbPath outSomeHasFS outSnap)
           (Just lsmDbPath)
           ("LSM@[" <> lsmDbPath <> "]")
           UTxOHDLSMSnapshot
 
-  stream ::
-    LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-    IO (SomeBackend YieldArgs) ->
-    IO (SomeBackend SinkArgs) ->
-    ExceptT DeserialiseFailure IO (Maybe CRC, Maybe CRC)
-  stream st mYieldArgs mSinkArgs =
-    ExceptT $
-      bracket
-        ((,) <$> mYieldArgs <*> mSinkArgs)
-        ( \( SomeBackend (yArgs :: YieldArgs IO backend1 l (CardanoBlock StandardCrypto))
-             , (SomeBackend (sArgs :: SinkArgs IO backend2 l (CardanoBlock StandardCrypto)))
-             ) -> do
-              releaseYieldArgs yArgs
-              releaseSinkArgs sArgs
-        )
-        ( \( SomeBackend (yArgs :: YieldArgs IO backend1 l (CardanoBlock StandardCrypto))
-             , (SomeBackend (sArgs :: SinkArgs IO backend2 l (CardanoBlock StandardCrypto)))
-             ) -> do
-              runExceptT $ yield (Proxy @backend1) yArgs st $ sink (Proxy @backend2) sArgs st
-        )
+-- | Split an absolute LSM database path into a filesystem mount point
+-- (the parent directory, used to construct the 'HasFS') and a relative
+-- 'FsPath' within that mount (the database directory's name). The
+-- backend modules expect this split because they construct their
+-- 'HasBlockIO' against a 'MountPoint' and then open the LSM database
+-- under a path inside that mount.
+splitLsmPath :: FilePath -> (FilePath, FsPath)
+splitLsmPath p = (F.takeDirectory p, mkFsPath [F.takeFileName p])
+
+-- | Stream the UTxO entries from the yielder to the sinker.
+--
+-- Dispatches on the era of the supplied 'LedgerState': Byron carries no
+-- UTxO blob, so the stream is empty (returning @(Nothing, Nothing)@);
+-- each Shelley-based era projects its @NewEpochState@ from the per-era
+-- state and threads it through the yielder, which decodes entries
+-- against the era's share context.
+stream ::
+  LedgerState (CardanoBlock StandardCrypto) ->
+  IO (SnapshotYielder IO) ->
+  IO (SnapshotSinker IO) ->
+  ExceptT DeserialiseFailure IO (Maybe CRC, Maybe CRC)
+stream (HardForkLedgerState hfs) mkYielder mkSinker =
+  hcollapse $ hap perEra perEraState
+ where
+  -- @ns@ projects the current era's pure 'LedgerState' out of the
+  -- HFC telescope. The per-era 'Fn' below receives it and runs the
+  -- per-era streaming. Byron's slot in the NP is a no-op that
+  -- short-circuits without ever opening a yielder or sinker.
+  perEraState :: NS LedgerState (CardanoEras StandardCrypto)
+  perEraState = hmap currentState (Telescope.tip (getHardForkState hfs))
+
+  perEra ::
+    NP
+      (LedgerState -.-> K (ExceptT DeserialiseFailure IO (Maybe CRC, Maybe CRC)))
+      (CardanoEras StandardCrypto)
+  perEra =
+    Fn (\_ -> K (pure (Nothing, Nothing)))
+      :* shelleyFn
+      :* shelleyFn
+      :* shelleyFn
+      :* shelleyFn
+      :* shelleyFn
+      :* shelleyFn
+      :* shelleyFn
+      :* Nil
+
+  shelleyFn ::
+    forall proto era.
+    ( MemPack (SL.TxOut era)
+    , DecShareCBOR (SL.TxOut era)
+    , Share (SL.TxOut era) ~ Interns (SL.Credential SL.Staking)
+    , SL.EraCertState era
+    ) =>
+    (LedgerState -.-> K (ExceptT DeserialiseFailure IO (Maybe CRC, Maybe CRC)))
+      (ShelleyBlock proto era)
+  shelleyFn = Fn $ \(shelleyLedgerState -> nes) ->
+    K $ ExceptT $ do
+      yielder <- mkYielder
+      sinker <- mkSinker
+      runExceptT (runYielder yielder nes (runSinker sinker))
+        `finally` (releaseYielder yielder >> releaseSinker sinker)
 
 {-------------------------------------------------------------------------------
   User interaction

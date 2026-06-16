@@ -41,31 +41,23 @@ import Ouroboros.Consensus.Cardano.Block
   )
 import Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints)
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Combinator.Ledger
-  ( getFlipTickedLedgerState
-  , tickedHardForkLedgerStatePerEra
+import Ouroboros.Consensus.HardFork.Combinator.Basics
+  ( hardForkLedgerStatePerEra
   )
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
   ( currentState
   , getHardForkState
   )
 import Ouroboros.Consensus.Ledger.Basics
-  ( ComputeLedgerEvents (..)
-  , LedgerConfig
+  ( LedgerConfig
   , LedgerState
-  , TickedLedgerState
-  , applyChainTick
-  )
-import Ouroboros.Consensus.Ledger.Tables (ValuesMK)
-import Ouroboros.Consensus.Ledger.Tables.Utils
-  ( applyDiffs
-  , forgetLedgerTables
   )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, mkShelleyTx)
-import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( tickedShelleyLedgerState
+import Ouroboros.Consensus.Shelley.Ledger
+  ( ShelleyBlock
+  , mkShelleyTx
+  , shelleyLedgerState
   )
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL (mkWitnessVKey)
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
@@ -148,9 +140,9 @@ migrateUTxO ::
   MigrationInfo c ->
   SlotNo ->
   LedgerConfig (CardanoBlock c) ->
-  LedgerState (CardanoBlock c) ValuesMK ->
+  LedgerState (CardanoBlock c) ->
   Maybe (GenTx (CardanoBlock c))
-migrateUTxO migrationInfo curSlot lcfg lst
+migrateUTxO migrationInfo _curSlot _lcfg lst
   | Just utxo <- mbUTxO =
       let picked :: Map SL.TxIn (SL.TxOut ShelleyEra)
           picked = Map.filter pick $ SL.unUTxO utxo
@@ -223,14 +215,13 @@ migrateUTxO migrationInfo curSlot lcfg lst
                   & SL.witsTxL . SL.bootAddrTxWitsL .~ Set.singleton byronWit
   | otherwise = Nothing
  where
+  -- Inspect the unticked current era. If we're already in Shelley, return its
+  -- UTxO; otherwise the migration tx is not yet applicable (the original
+  -- implementation chain-ticked first to detect a just-completed Byron-Shelley
+  -- transition, but the new Handle-based 'applyChainTick' is monadic and the
+  -- 'TxGen' interface only hands us a pure 'LedgerState').
   mbUTxO :: Maybe (SL.UTxO ShelleyEra)
-  mbUTxO =
-    fmap getUTxOShelley
-      . ejectShelleyTickedLedgerState
-      . applyDiffs lst
-      . applyChainTick OmitLedgerEvents lcfg curSlot
-      . forgetLedgerTables
-      $ lst
+  mbUTxO = fmap getUTxOShelley (ejectShelleyLedgerState lst)
 
   MigrationInfo
     { byronMagic
@@ -280,22 +271,21 @@ ejectShelleyNS = \case
   _ -> Nothing
 
 getUTxOShelley ::
-  TickedLedgerState (ShelleyBlock proto era) mk ->
+  LedgerState (ShelleyBlock proto era) ->
   SL.UTxO era
-getUTxOShelley tls =
+getUTxOShelley ls =
   SL.utxosUtxo $
     SL.lsUTxOState $
       SL.esLState $
         SL.nesEs $
-          tickedShelleyLedgerState tls
+          shelleyLedgerState ls
 
-ejectShelleyTickedLedgerState ::
-  TickedLedgerState (CardanoBlock c) mk ->
-  Maybe (TickedLedgerState (ShelleyBlock (TPraos c) ShelleyEra) mk)
-ejectShelleyTickedLedgerState ls =
-  fmap (getFlipTickedLedgerState . currentState) $
+ejectShelleyLedgerState ::
+  LedgerState (CardanoBlock c) ->
+  Maybe (LedgerState (ShelleyBlock (TPraos c) ShelleyEra))
+ejectShelleyLedgerState ls =
+  fmap currentState $
     ejectShelleyNS $
       Tele.tip $
         getHardForkState $
-          tickedHardForkLedgerStatePerEra $
-            ls
+          hardForkLedgerStatePerEra ls

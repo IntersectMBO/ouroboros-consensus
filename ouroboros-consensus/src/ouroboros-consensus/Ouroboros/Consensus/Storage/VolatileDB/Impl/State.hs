@@ -35,7 +35,7 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.State
 
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import Control.Monad
-import Control.Monad.State.Strict hiding (withState)
+import Control.Monad.State.Strict
 import Control.RAWLock (RAWLock)
 import qualified Control.RAWLock as RAWLock
 import Control.ResourceRegistry

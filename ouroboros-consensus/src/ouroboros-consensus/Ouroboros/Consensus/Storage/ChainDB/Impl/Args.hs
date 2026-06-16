@@ -25,7 +25,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( GetLoEFragment
@@ -38,8 +37,6 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerDbBackendArgs)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.PerasVoteDB as PerasVoteDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -137,17 +134,13 @@ defaultSpecificArgs =
 -- and 'defaultSpecificArgs' for a list of which fields are not given a default
 -- and must therefore be set explicitly.
 defaultArgs ::
-  ( IOLike m
-  , LedgerDB.LedgerDbSerialiseConstraints blk
-  , LedgerSupportsProtocol blk
-  , LedgerDB.CanUpgradeLedgerTables LedgerState blk
-  ) =>
+  IOLike m =>
   Incomplete ChainDbArgs m blk
 defaultArgs =
   ChainDbArgs
     ImmutableDB.defaultArgs
     VolatileDB.defaultArgs
-    (LedgerDB.defaultArgs $ LedgerDB.SomeBackendArgs InMemory.InMemArgs)
+    LedgerDB.defaultArgs
     PerasCertDB.defaultArgs
     PerasVoteDB.defaultArgs
     defaultSpecificArgs
@@ -168,11 +161,11 @@ ensureValidateAll args =
     }
 
 completeChainDbArgs ::
-  (ConsensusProtocol (BlockProtocol blk), IOLike m) =>
+  ConsensusProtocol (BlockProtocol blk) =>
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger
-  ExtLedgerState blk ValuesMK ->
+  (LedgerTablesFactory m blk -> m (ExtStateHandle m blk)) ->
   ImmutableDB.ChunkInfo ->
   -- | Check integrity
   (blk -> Bool) ->
@@ -214,7 +207,7 @@ completeChainDbArgs
             }
       , cdbLgrDbArgs =
           (cdbLgrDbArgs defArgs)
-            { LedgerDB.lgrGenesis = pure initLedger
+            { LedgerDB.lgrGenesis = initLedger
             , LedgerDB.lgrHasFS = mkVolFS $ RelativeMountPoint "ledger"
             , LedgerDB.lgrConfig =
                 LedgerDB.configLedgerDb

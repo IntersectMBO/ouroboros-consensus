@@ -17,21 +17,14 @@ module Test.Consensus.HardFork.Combinator (tests) where
 
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import qualified Data.Map.Strict as Map
-import Data.MemPack
-import Data.SOP.BasicFunctors
 import Data.SOP.Counting
-import Data.SOP.Functors (Flip (..))
 import Data.SOP.InPairs (RequiringBoth (..))
 import qualified Data.SOP.InPairs as InPairs
-import Data.SOP.Index (Index (..), hcimap)
 import Data.SOP.OptNP (OptNP (..))
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
-import qualified Data.SOP.Telescope as Telescope
-import Data.Void (Void, absurd)
 import Data.Word
 import GHC.Generics (Generic)
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
@@ -54,7 +47,6 @@ import Ouroboros.Consensus.Protocol.LeaderSchedule
   , leaderScheduleFor
   )
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Mock
 import Quiet (Quiet (..))
@@ -226,10 +218,12 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
   testConfigMB =
     TestConfigMB
       { nodeInfo = \a ->
-          plainTestNodeInitialization
-            (protocolInfo a)
-            (return blockForging)
+          pure $
+            plainTestNodeInitialization
+              (protocolInfo a)
+              (pure blockForging)
       , mkRekeyM = Nothing
+      , ledgerTablesFactory = pure ()
       }
 
   labelEraSizeA :: String
@@ -238,22 +232,23 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
    where
     EraSize sz = eraSizeA
 
-  protocolInfo :: CoreNodeId -> ProtocolInfo TestBlock
+  protocolInfo :: Applicative m => CoreNodeId -> ProtocolInfo m TestBlock
   protocolInfo nid =
     ProtocolInfo
       { pInfoConfig =
           topLevelConfig nid
-      , pInfoInitLedger =
-          ExtLedgerState
-            { ledgerState =
-                HardForkLedgerState $
-                  initHardForkState
-                    (Flip initLedgerState)
-            , headerState =
-                genesisHeaderState $
-                  initHardForkState
-                    (WrapChainDepState initChainDepState)
-            }
+      , pInfoInitLedger = \() ->
+          pure $
+            ExtStateHandle
+              { unExtStateHandle =
+                  HardForkStateHandle
+                    (initHardForkState (BlockAStateHandle initLedgerState))
+                    ()
+              , extHeaderState =
+                  genesisHeaderState $
+                    initHardForkState
+                      (WrapChainDepState initChainDepState)
+              }
       }
 
   blockForging :: Monad m => [MkBlockForging m TestBlock]
@@ -264,7 +259,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
             OptNil
     ]
 
-  initLedgerState :: LedgerState BlockA ValuesMK
+  initLedgerState :: LedgerState BlockA
   initLedgerState =
     LgrA
       { lgrA_tip = GenesisPoint
@@ -403,28 +398,6 @@ instance TxGen TestBlock where
   testGenTxs _ _ _ _ _ _ = return []
 
 {-------------------------------------------------------------------------------
-  Canonical TxIn
--------------------------------------------------------------------------------}
-
-instance HasCanonicalTxIn '[BlockA, BlockB] where
-  newtype CanonicalTxIn '[BlockA, BlockB] = BlockABTxIn
-    { getBlockABTxIn :: Void
-    }
-    deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
-
-  injectCanonicalTxIn IZ key = absurd key
-  injectCanonicalTxIn (IS IZ) key = absurd key
-  injectCanonicalTxIn (IS (IS idx')) _ = case idx' of {}
-
-  ejectCanonicalTxIn _ key = absurd $ getBlockABTxIn key
-
-instance HasHardForkTxOut '[BlockA, BlockB] where
-  type HardForkTxOut '[BlockA, BlockB] = DefaultHardForkTxOut '[BlockA, BlockB]
-  injectHardForkTxOut = injectHardForkTxOutDefault
-  ejectHardForkTxOut = ejectHardForkTxOutDefault
-
-{-------------------------------------------------------------------------------
   Hard fork
 -------------------------------------------------------------------------------}
 
@@ -435,10 +408,12 @@ instance CanHardFork '[BlockA, BlockB] where
 
   hardForkEraTranslation =
     EraTranslation
-      { translateLedgerState = PCons ledgerState_AtoB PNil
-      , translateLedgerTables = PCons ledgerTables_AtoB PNil
-      , translateChainDepState = PCons chainDepState_AtoB PNil
+      { translateChainDepState = PCons chainDepState_AtoB PNil
       , crossEraForecast = PCons forecast_AtoB PNil
+      }
+  hardForkStateHandleTranslation _ =
+    StateHandleTranslation
+      { translateLedgerState = PCons stateHandle_AtoB PNil
       }
   hardForkChainSel = Tails.mk2 NoTiebreakerAcrossEras
   hardForkInjectTxs = InPairs.mk2 injectTx_AtoB
@@ -473,91 +448,25 @@ instance SupportedNetworkProtocolVersion TestBlock where
 
 instance SerialiseHFC '[BlockA, BlockB]
 
--- Use defaults
-
-instance SerializeTablesWithHint LedgerState (HardForkBlock '[BlockA, BlockB]) where
-  encodeTablesWithHint = defaultEncodeTablesWithHint
-  decodeTablesWithHint = defaultDecodeTablesWithHint
-
-instance
-  IndexedMemPack
-    LedgerState
-    (HardForkBlock '[BlockA, BlockB])
-    (DefaultHardForkTxOut '[BlockA, BlockB])
-  where
-  indexedTypeName _ _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
-  indexedPackedByteCount _ txout =
-    hcollapse $
-      hcmap
-        (Proxy @MemPackTxOut)
-        (K . packedByteCount . unwrapTxOut)
-        txout
-  indexedPackM _ =
-    hcollapse
-      . hcimap
-        (Proxy @MemPackTxOut)
-        ( \_ (WrapTxOut txout) -> K $ do
-            packM txout
-        )
-  indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
-    hsequence'
-      $ hcmap
-        (Proxy @MemPackTxOut)
-        (const $ Comp $ WrapTxOut <$> unpackM)
-      $ Telescope.tip idx
-
-instance
-  IndexedMemPack
-    (Ticked LedgerState)
-    (HardForkBlock '[BlockA, BlockB])
-    (DefaultHardForkTxOut '[BlockA, BlockB])
-  where
-  indexedTypeName _ _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
-  indexedPackedByteCount _ txout =
-    hcollapse $
-      hcmap
-        (Proxy @MemPackTxOut)
-        (K . packedByteCount . unwrapTxOut)
-        txout
-  indexedPackM _ =
-    hcollapse
-      . hcimap
-        (Proxy @MemPackTxOut)
-        ( \_ (WrapTxOut txout) -> K $ do
-            packM txout
-        )
-  indexedUnpackM (TickedHardForkLedgerState _ (HardForkState idx)) = do
-    hsequence'
-      $ hcmap
-        (Proxy @MemPackTxOut)
-        (const $ Comp $ WrapTxOut <$> unpackM)
-      $ Telescope.tip idx
-
 {-------------------------------------------------------------------------------
   Translation
 -------------------------------------------------------------------------------}
 
-ledgerState_AtoB ::
+stateHandle_AtoB ::
+  Applicative m =>
   RequiringBoth
     WrapLedgerConfig
-    TranslateLedgerState
+    (TranslateLedgerState m)
     BlockA
     BlockB
-ledgerState_AtoB =
+stateHandle_AtoB =
   InPairs.ignoringBoth $
     TranslateLedgerState
-      { translateLedgerStateWith = \_ LgrA{..} ->
-          LgrB
-            { lgrB_tip = castPoint lgrA_tip
-            }
+      { translateLedgerStateWith = \_epoch (BlockAStateHandle LgrA{..}) ->
+          pure $
+            BlockBStateHandle
+              LgrB{lgrB_tip = castPoint lgrA_tip}
       }
-
-ledgerTables_AtoB :: TranslateLedgerTables BlockA BlockB
-ledgerTables_AtoB =
-  TranslateLedgerTables
-    { translateTxInWith = id
-    , translateTxOutWith = id
-    }
 
 chainDepState_AtoB ::
   RequiringBoth
@@ -586,20 +495,3 @@ injectTx_AtoB ::
     BlockB
 injectTx_AtoB =
   InPairs.ignoringBoth $ Pair2 cannotInjectTx cannotInjectValidatedTx
-
-{-------------------------------------------------------------------------------
-  Query HF
--------------------------------------------------------------------------------}
-
-instance BlockSupportsHFLedgerQuery '[BlockA, BlockB] where
-  answerBlockQueryHFLookup IZ _ q = case q of {}
-  answerBlockQueryHFLookup (IS IZ) _cfg q = case q of {}
-  answerBlockQueryHFLookup (IS (IS idx)) _cfg _q = case idx of {}
-
-  answerBlockQueryHFTraverse IZ _cfg q = case q of {}
-  answerBlockQueryHFTraverse (IS IZ) _cfg q = case q of {}
-  answerBlockQueryHFTraverse (IS (IS idx)) _cfg _q = case idx of {}
-
-  queryLedgerGetTraversingFilter IZ q = case q of {}
-  queryLedgerGetTraversingFilter (IS IZ) q = case q of {}
-  queryLedgerGetTraversingFilter (IS (IS idx)) _q = case idx of {}

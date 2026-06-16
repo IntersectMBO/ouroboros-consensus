@@ -124,21 +124,23 @@ prop_simple_leader_schedule_convergence
         testConfigB
         TestConfigMB
           { nodeInfo = \nid ->
-              plainTestNodeInitialization
-                ( protocolInfoPraosRule
-                    numCoreNodes
-                    nid
-                    PraosParams
-                      { praosSecurityParam = k
-                      , praosSlotsPerEpoch = unEpochSize epochSize
-                      , praosLeaderF = dummyF
-                      }
-                    (HardFork.defaultEraParams k slotLength)
-                    schedule
-                    emptyPraosEvolvingStake
-                )
-                (pure $ fmap (MkBlockForging . pure) $ blockForgingPraosRule)
+              pure $
+                plainTestNodeInitialization
+                  ( protocolInfoPraosRule
+                      numCoreNodes
+                      nid
+                      PraosParams
+                        { praosSecurityParam = k
+                        , praosSlotsPerEpoch = unEpochSize epochSize
+                        , praosLeaderF = dummyF
+                        }
+                      (HardFork.defaultEraParams k slotLength)
+                      schedule
+                      emptyPraosEvolvingStake
+                  )
+                  (pure $ fmap (MkBlockForging . pure) $ blockForgingPraosRule)
           , mkRekeyM = Nothing
+          , ledgerTablesFactory = pure ()
           }
 
 {-------------------------------------------------------------------------------

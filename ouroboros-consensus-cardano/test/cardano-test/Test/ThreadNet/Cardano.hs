@@ -33,14 +33,14 @@ import qualified Control.Tracer as Tracer
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
 import Data.Proxy (Proxy (..))
-import Data.SOP.Functors
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import Lens.Micro
+import Ouroboros.Consensus.Backends.InMemory (mkInMemoryFactory)
 import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.BlockchainTime
-import Ouroboros.Consensus.Byron.Ledger (LedgerState (..))
+import Ouroboros.Consensus.Byron.Ledger (LedgerState (..), StateHandle (..))
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
 import Ouroboros.Consensus.Byron.Ledger.Conversions
 import Ouroboros.Consensus.Byron.Node
@@ -53,7 +53,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
   ( isHardForkNodeToNodeEnabled
   )
 import Ouroboros.Consensus.HardFork.Combinator.State (Current (..))
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import Ouroboros.Consensus.Ledger.Extended (ExtStateHandle (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -66,6 +66,9 @@ import Ouroboros.Consensus.Protocol.Praos.AgentClient
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as Mock
+import System.FS.Sim.STM (simHasFS')
 import Test.Consensus.Cardano.ProtocolInfo
   ( hardForkOnDefaultProtocolVersions
   , mkTestProtocolInfo
@@ -275,16 +278,25 @@ prop_simple_cardano_convergence
         testConfigB
         TestConfigMB
           { nodeInfo = \coreNodeId@(CoreNodeId nid) ->
-              mkProtocolCardanoAndHardForkTxs
-                pbftParams
-                coreNodeId
-                genesisByron
-                generatedSecrets
-                propPV
-                genesisShelley
-                setupInitialNonce
-                (coreNodes !! fromIntegral nid)
+              pure $
+                mkProtocolCardanoAndHardForkTxs
+                  pbftParams
+                  coreNodeId
+                  genesisByron
+                  generatedSecrets
+                  propPV
+                  genesisShelley
+                  setupInitialNonce
+                  (coreNodes !! fromIntegral nid)
           , mkRekeyM = Nothing
+          , ledgerTablesFactory = do
+              -- 'HFLedgerTablesFactory' for 'CardanoEras' is 'MkHandle m'.
+              -- 'runThreadNetwork' only uses this factory to seed the
+              -- initial 'VDown' ledger state; per-node ChainDB initialization
+              -- uses the backend's own factory. A placeholder sim-fs is
+              -- therefore sufficient (no snapshots are taken in these tests).
+              shfs <- SomeHasFS <$> simHasFS' Mock.empty
+              pure $ mkInMemoryFactory Tracer.nullTracer shfs
           }
 
     maxForkLength :: NumBlocks
@@ -521,7 +533,7 @@ mkProtocolCardanoAndHardForkTxs
           generatedSecretsByron
           propPV
 
-    protocolInfo :: ProtocolInfo (CardanoBlock c)
+    protocolInfo :: ProtocolInfo m (CardanoBlock c)
     blockForging :: Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
     (setByronProtVer -> protocolInfo, blockForging) =
       mkTestProtocolInfo
@@ -564,25 +576,38 @@ byronEpochSize (SecurityParam k) =
   unEpochSlots $ kEpochSlots $ CC.Common.BlockCount $ unNonZero k
 
 -- | By default, the initial major Byron protocol version is @0@, but we want to
--- set it to 'byronMajorVersion'.
-setByronProtVer :: ProtocolInfo (CardanoBlock c) -> ProtocolInfo (CardanoBlock c)
-setByronProtVer =
-  modifyInitLedger $ modifyExtLedger $ modifyHFLedgerState $ \st ->
-    let cvs = byronLedgerState st
-        us =
-          (CC.cvsUpdateState cvs)
-            { CC.adoptedProtocolVersion =
-                CC.Update.ProtocolVersion byronMajorVersion byronInitialMinorVersion 0
-            }
-     in st{byronLedgerState = cvs{CC.cvsUpdateState = us}}
+-- set it to 'byronMajorVersion'. Operates on the 'ExtStateHandle' returned by
+-- 'pInfoInitLedger': the Byron 'StateHandle' is just a newtype wrapper around
+-- the pure 'LedgerState ByronBlock', so we can modify the chain-validation
+-- state in-place. Tests only enter this branch when the initial era is Byron,
+-- i.e. the telescope tip is 'TZ'.
+setByronProtVer ::
+  forall m c.
+  Functor m =>
+  ProtocolInfo m (CardanoBlock c) -> ProtocolInfo m (CardanoBlock c)
+setByronProtVer pinfo =
+  pinfo{pInfoInitLedger = \tctx -> fmap modifyExtStateHandle (pInfoInitLedger pinfo tctx)}
  where
-  modifyInitLedger f pinfo = pinfo{pInfoInitLedger = f (pInfoInitLedger pinfo)}
-  modifyExtLedger f elgr = elgr{ledgerState = f (ledgerState elgr)}
+  modifyExtStateHandle ::
+    ExtStateHandle m (CardanoBlock c) -> ExtStateHandle m (CardanoBlock c)
+  modifyExtStateHandle h@ExtStateHandle{unExtStateHandle = sh} =
+    h{unExtStateHandle = modifyHFStateHandle sh}
 
-  modifyHFLedgerState ::
-    (LedgerState x mk -> LedgerState x mk) ->
-    LedgerState (HardForkBlock (x : xs)) mk ->
-    LedgerState (HardForkBlock (x : xs)) mk
-  modifyHFLedgerState f (HardForkLedgerState (HardForkState (TZ st))) =
-    HardForkLedgerState (HardForkState (TZ st{currentState = Flip $ f (unFlip $ currentState st)}))
-  modifyHFLedgerState _ st = st
+  modifyHFStateHandle ::
+    StateHandle m (CardanoBlock c) -> StateHandle m (CardanoBlock c)
+  modifyHFStateHandle
+    (HardForkStateHandle (HardForkState (TZ current)) tctx) =
+      let ByronStateHandle bls = currentState current
+          cvs = byronLedgerState bls
+          us =
+            (CC.cvsUpdateState cvs)
+              { CC.adoptedProtocolVersion =
+                  CC.Update.ProtocolVersion byronMajorVersion byronInitialMinorVersion 0
+              }
+          bls' = bls{byronLedgerState = cvs{CC.cvsUpdateState = us}}
+       in HardForkStateHandle
+            ( HardForkState
+                (TZ current{currentState = ByronStateHandle bls'})
+            )
+            tctx
+  modifyHFStateHandle sh = sh

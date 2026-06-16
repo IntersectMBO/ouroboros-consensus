@@ -4,6 +4,18 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
+-- | Sparse diffs over a backing @Map k v@.
+--
+-- A 'Diff' carries a set of pending updates (inserts and deletes) keyed by
+-- @k@. Diffs are used by the mempool to express the UTxO changes a
+-- transaction induces without materialising the full map, and by the
+-- hard-fork combinator to express the UTxO changes an era translation
+-- induces (notably the Shelley→Allegra AVVM deletions).
+--
+-- The 'Semigroup' on 'Delta' is right-biased: when two diffs disagree on
+-- the same key the later operation wins (insert-then-delete ⇒ delete,
+-- delete-then-insert ⇒ insert). 'Diff' lifts that to maps via
+-- @Map.unionWith (\<\>)@.
 module Ouroboros.Consensus.Ledger.Tables.Diff
   ( -- * Types
     Delta (..)
@@ -121,7 +133,7 @@ fromMap = Diff
 fromMapInserts :: Map k v -> Diff k v
 fromMapInserts = Diff . Map.map Insert
 
-fromMapDeletes :: Map k v -> Diff k v
+fromMapDeletes :: Map k v -> Diff k v'
 fromMapDeletes = Diff . Map.map (const Delete)
 
 fromSetDeletes :: Set k -> Diff k v
@@ -133,7 +145,7 @@ fromList = Diff . Map.fromList
 fromListInserts :: Ord k => [(k, v)] -> Diff k v
 fromListInserts = Diff . Map.fromList . fmap (second Insert)
 
-fromListDeletes :: Ord k => [(k, v)] -> Diff k v
+fromListDeletes :: Ord k => [(k, v)] -> Diff k v'
 fromListDeletes = Diff . Map.fromList . fmap (second (const Delete))
 
 {------------------------------------------------------------------------------

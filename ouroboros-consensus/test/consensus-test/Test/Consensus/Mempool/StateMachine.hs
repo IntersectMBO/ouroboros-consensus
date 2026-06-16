@@ -13,6 +13,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -43,22 +44,15 @@ import qualified Data.TreeDiff.OMap as TD
 import GHC.Generics
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Abstract hiding (TxIn, TxOut)
+import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.SupportsProtocol
-  ( LedgerSupportsProtocol
-  )
-import qualified Ouroboros.Consensus.Ledger.Tables.Basics as Ledger
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool
-import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (..), tickLedgerState)
 import Ouroboros.Consensus.Mempool.TxSeq
 import Ouroboros.Consensus.Mock.Ledger.Address
 import Ouroboros.Consensus.Mock.Ledger.Block
 import Ouroboros.Consensus.Mock.Ledger.State
-import Ouroboros.Consensus.Mock.Ledger.UTxO (Expiry, Tx, TxIn, TxOut)
+import Ouroboros.Consensus.Mock.Ledger.UTxO (Expiry, Tx)
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
-import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense (condense)
 import Ouroboros.Consensus.Util.IOLike hiding (bracket)
@@ -72,7 +66,11 @@ import Test.Consensus.Mempool.Util
   , testInitLedger
   , testLedgerConfigNoSizeLimits
   )
+#if !MIN_VERSION_QuickCheck(2,18,0)
 import Test.QuickCheck
+#else
+import Test.QuickCheck hiding (withNumTests)
+#endif
 import Test.QuickCheck.Monadic
 import Test.StateMachine hiding ((:>))
 import Test.StateMachine.DotDrawing
@@ -80,9 +78,13 @@ import Test.StateMachine.Types (History (..), HistoryEvent (..))
 import qualified Test.StateMachine.Types as QC
 import qualified Test.StateMachine.Types.Rank2 as Rank2
 import Test.Tasty
+#if !MIN_VERSION_QuickCheck(2,18,0)
 import Test.Tasty.QuickCheck
+#else
+import Test.Tasty.QuickCheck hiding (withNumTests)
+#endif
 import Test.Util.Orphans.ToExpr ()
-import qualified Test.Util.QuickCheck as QC
+import Test.Util.QuickCheck
 import Test.Util.ToExpr ()
 
 {-------------------------------------------------------------------------------
@@ -91,7 +93,7 @@ import Test.Util.ToExpr ()
 
 -- | The model
 data Model blk r = Model
-  { modelMempoolIntermediateState :: !(TickedLedgerState blk ValuesMK)
+  { modelMempoolIntermediateState :: !(TickedLedgerState blk)
   -- ^ The current tip on the mempool
   , modelTxs :: ![(GenTx blk, TicketNo)]
   , modelAllValidTxs :: ![(GenTx blk, TicketNo)]
@@ -106,9 +108,9 @@ data Model blk r = Model
   , modelConfig :: !(LedgerCfg LedgerState blk)
   , --  * LedgerDB
 
-    modelLedgerDBTip :: !(LedgerState blk ValuesMK)
+    modelLedgerDBTip :: !(LedgerState blk)
   -- ^ The current tip on the ledgerdb
-  , modelLedgerDBOtherStates :: !(Set (LedgerState blk ValuesMK))
+  , modelLedgerDBOtherStates :: !(Set (LedgerState blk))
   -- ^ The old states which are still on the LedgerDB.
   , modelIsSyncing :: !Bool
   }
@@ -132,15 +134,15 @@ data Action blk r
     SyncLedger
   | -- | Ask for the current snapshot
     GetSnapshot
-  -- TODO: maybe add 'GetSnapshotFor (Point blk)', but this requires to keep
-  -- track of some more states to make it meaningful.
+  -- TODO @js: maybe add 'GetSnapshotFor (Point blk)', but this requires to
+  -- keep track of some more states to make it meaningful.
   deriving Generic1
   deriving (Rank2.Functor, Rank2.Foldable, Rank2.Traversable, CommandNames)
 
 -- | Events external to the mempool
 data Event blk r
   = ChangeLedger
-      !(LedgerState blk ValuesMK)
+      !(LedgerState blk)
   deriving Generic1
   deriving (Rank2.Functor, Rank2.Foldable, Rank2.Traversable, CommandNames)
 
@@ -193,14 +195,13 @@ instance CommandNames (Command blk) where
 data MakeAtomic = Atomic | NonAtomic | DontCare
 
 generator ::
-  ( Arbitrary (LedgerState blk ValuesMK)
-  , UnTick blk
+  ( Arbitrary (LedgerState blk)
   , StandardHash blk
-  , GetTip (LedgerState blk)
+  , GetTip LedgerState blk
   ) =>
   MakeAtomic ->
   -- | Transaction generator based on an state
-  (Int -> LedgerState blk ValuesMK -> Gen [GenTx blk]) ->
+  (Int -> LedgerState blk -> Gen [GenTx blk]) ->
   Model blk Symbolic ->
   Maybe (Gen (Command blk Symbolic))
 generator ma gTxs model =
@@ -210,10 +211,10 @@ generator ma gTxs model =
         ( 100
         , Action . TryAddTxs <$> case ma of
             Atomic -> do
-              gTxs 1 . unTick $ modelMempoolIntermediateState
+              gTxs 1 modelLedgerDBTip
             _ -> do
               n <- getPositive <$> arbitrary
-              gTxs n . unTick $ modelMempoolIntermediateState
+              gTxs n modelLedgerDBTip
         )
       , (10, pure $ Action SyncLedger)
       ,
@@ -242,8 +243,7 @@ generator ma gTxs model =
       ]
  where
   Model
-    { modelMempoolIntermediateState
-    , modelLedgerDBTip
+    { modelLedgerDBTip
     , modelLedgerDBOtherStates
     } = model
 
@@ -262,14 +262,10 @@ data Response blk r
 -------------------------------------------------------------------------------}
 
 initModel ::
-  ( LedgerSupportsMempool blk
-  , ValidateEnvelope blk
-  ) =>
-  LedgerConfig blk ->
-  TxMeasure blk ->
-  LedgerState blk ValuesMK ->
-  Model blk r
-initModel cfg capacity initialState =
+  TxMeasure TestBlock ->
+  LedgerState TestBlock ->
+  Model TestBlock r
+initModel capacity initialState =
   Model
     { modelMempoolIntermediateState = ticked
     , modelLedgerDBOtherStates = Set.empty
@@ -279,11 +275,11 @@ initModel cfg capacity initialState =
     , modelAllValidTxs = []
     , modelLastSeenTicketNo = zeroTicketNo
     , modelCapacity = capacity
-    , modelConfig = cfg
+    , modelConfig = testLedgerConfigNoSizeLimits
     , modelIsSyncing = False
     }
  where
-  ticked = tick cfg initialState
+  ticked = tick initialState
 
 mock ::
   Model blk Symbolic ->
@@ -300,14 +296,10 @@ mock model = \case
 -------------------------------------------------------------------------------}
 
 doSync ::
-  ( ValidateEnvelope blk
-  , LedgerSupportsMempool blk
-  , Eq (TickedLedgerState blk ValuesMK)
-  ) =>
-  Model blk r ->
-  Model blk r
+  Model TestBlock r ->
+  Model TestBlock r
 doSync model =
-  if st == st'
+  if getTip st == getTip st'
     then model
     else
       let
@@ -320,7 +312,7 @@ doSync model =
           , modelCurrentSize = newSize
           }
  where
-  st' = tick modelConfig modelLedgerDBTip
+  st' = tick modelLedgerDBTip
 
   Model
     { modelMempoolIntermediateState = st
@@ -331,9 +323,9 @@ doSync model =
     } = model
 
 doChangeLedger ::
-  (StandardHash blk, GetTip (LedgerState blk)) =>
+  (StandardHash blk, GetTip LedgerState blk) =>
   Model blk r ->
-  LedgerState blk ValuesMK ->
+  LedgerState blk ->
   Model blk r
 doChangeLedger model l' =
   model
@@ -348,12 +340,9 @@ doChangeLedger model l' =
     } = model
 
 doTryAddTxs ::
-  ( LedgerSupportsMempool blk
-  , ValidateEnvelope blk
-  ) =>
-  Model blk r ->
-  [GenTx blk] ->
-  Model blk r
+  Model TestBlock r ->
+  [GenTx TestBlock] ->
+  Model TestBlock r
 doTryAddTxs model [] = model
 doTryAddTxs model txs =
   case Foldable.find
@@ -385,16 +374,10 @@ doTryAddTxs model txs =
     } = model
 
 transition ::
-  ( Eq (TickedLedgerState blk ValuesMK)
-  , LedgerSupportsMempool blk
-  , ToExpr (GenTx blk)
-  , ValidateEnvelope blk
-  , ToExpr (Command blk r)
-  ) =>
-  Model blk r ->
-  Command blk r ->
-  Response blk r ->
-  Model blk r
+  Model TestBlock r ->
+  Command TestBlock r ->
+  Response TestBlock r ->
+  Model TestBlock r
 transition model cmd resp = case (cmd, resp) of
   (Action (TryAddTxs txs), AddResult _res) -> (doTryAddTxs model txs){modelIsSyncing = False}
   (Event (ChangeLedger l), Void) -> (doChangeLedger model l){modelIsSyncing = False}
@@ -414,24 +397,26 @@ transition model cmd resp = case (cmd, resp) of
 -- | Apply a list of transactions short-circuiting if the mempool gets full.
 -- Emulates almost exactly the behaviour of 'implTryTryAddTxs'.
 foldTxs ::
-  forall blk.
-  ( LedgerSupportsMempool blk
-  , BasicEnvelopeValidation blk
-  ) =>
-  LedgerConfig blk ->
+  LedgerConfig TestBlock ->
   TicketNo ->
-  TxMeasure blk ->
-  TxMeasure blk ->
-  TickedLedgerState blk ValuesMK ->
-  [(GenTx blk, Maybe TicketNo)] ->
-  ( [(GenTx blk, TicketNo)]
+  TxMeasure TestBlock ->
+  TxMeasure TestBlock ->
+  TickedLedgerState TestBlock ->
+  [(GenTx TestBlock, Maybe TicketNo)] ->
+  ( [(GenTx TestBlock, TicketNo)]
   , TicketNo
-  , TxMeasure blk
-  , TickedLedgerState blk ValuesMK
+  , TxMeasure TestBlock
+  , TickedLedgerState TestBlock
   )
 foldTxs cfg nextTk capacity initialFilled initialState =
   go ([], nextTk, initialFilled, initialState)
  where
+  -- For 'SimpleBlock' the per-tx 'TxLocalData' is trivial: 'prepareTx'
+  -- returns 'SimpleTxLocalData' unconditionally and 'applyTx' threads the
+  -- updated UTxO through 'SimpleMempoolAcc'. So we can stay in pure code
+  -- here without needing 'prepareTx''s @m@.
+  tld = SimpleTxLocalData
+
   go (acc, tk, curSize, st) [] =
     ( reverse acc
     , tk
@@ -440,9 +425,12 @@ foldTxs cfg nextTk capacity initialFilled initialState =
     )
   go (acc, tk, curSize, st) ((tx, txtk) : next) =
     let slot = case getTipSlot st of
-          Origin -> minimumPossibleSlotNo (Proxy @blk)
+          Origin -> minimumPossibleSlotNo (Proxy @TestBlock)
           At v -> v + 1
-     in case runExcept $ (,) <$> txMeasure cfg st tx <*> applyTx cfg DoNotIntervene slot tx st of
+     in case runExcept $
+          (,)
+            <$> txMeasure cfg st tld tx
+            <*> applyTx cfg DoNotIntervene slot (SimpleMempoolAcc st) tx tld of
           Left{} ->
             go
               ( acc
@@ -451,7 +439,7 @@ foldTxs cfg nextTk capacity initialFilled initialState =
               , st
               )
               next
-          Right (txsz, (st', vtx))
+          Right (txsz, (vtx, SimpleMempoolAcc st'))
             | ( curSize Measure.<= curSize `Measure.plus` txsz
                   -- Overflow
                   && curSize `Measure.plus` txsz Measure.<= capacity
@@ -462,7 +450,7 @@ foldTxs cfg nextTk capacity initialFilled initialState =
                   ( (txForgetValidated vtx, fromMaybe tk txtk) : acc
                   , succ tk
                   , curSize `Measure.plus` txsz
-                  , applyDiffs st st'
+                  , st'
                   )
                   next
             | otherwise ->
@@ -474,21 +462,13 @@ foldTxs cfg nextTk capacity initialFilled initialState =
                   )
                   next
 
+-- | Pure tick for 'TestBlock'. Mirrors 'applyChainTickLedgerResult' for
+-- @SimpleBlock@, which is also pure-bodied (UTxO lives inside 'MockState';
+-- ticking is structural).
 tick ::
-  ( ValidateEnvelope blk
-  , LedgerSupportsMempool blk
-  ) =>
-  LedgerConfig blk ->
-  LedgerState blk ValuesMK ->
-  TickedLedgerState blk ValuesMK
-tick cfg st = applyDiffs st ticked
- where
-  ticked =
-    snd
-      . tickLedgerState cfg
-      . ForgeInUnknownSlot
-      . forgetLedgerTables
-      $ st
+  LedgerState TestBlock ->
+  TickedLedgerState TestBlock
+tick (SimpleLedgerState st) = TickedSimpleLedgerState (SimpleLedgerState st)
 
 {-------------------------------------------------------------------------------
   SUT side
@@ -514,63 +494,50 @@ deriving instance
 --
 -- The ledger interface will serve the values from this datatype.
 data MockedLedgerDB blk = MockedLedgerDB
-  { ldbTip :: !(LedgerState blk ValuesMK)
+  { ldbTip :: !(LedgerState blk)
   -- ^ The current LedgerDB tip
-  , reachableTips :: !(Set (LedgerState blk ValuesMK))
+  , reachableTips :: !(Set (LedgerState blk))
   -- ^ States which are still reachable in the LedgerDB
   }
   deriving Generic
 
 -- | Create a ledger interface and provide the tvar to modify it when switching
 -- ledgers.
+--
+-- For 'TestBlock' the @StateHandle@ is the 'SimpleStateHandle' newtype wrapper
+-- around the bare 'LedgerState'; @duplicate@ / @close@ are no-ops, so
+-- 'withCurrentLedgerStateDup' just reads the TVar and hands the wrapped state
+-- to the continuation.
 newLedgerInterface ::
-  ( NoThunks (MockedLedgerDB blk)
-  , LedgerSupportsMempool blk
-  , IOLike m
-  ) =>
-  LedgerState blk ValuesMK ->
-  m (LedgerInterface m blk, StrictTVar m (MockedLedgerDB blk))
+  IOLike m =>
+  LedgerState TestBlock ->
+  m (LedgerInterface m TestBlock, StrictTVar m (MockedLedgerDB TestBlock))
 newLedgerInterface initialLedger = do
   t <- newTVarIO $ MockedLedgerDB initialLedger Set.empty
   pure
     ( LedgerInterface
-        { getCurrentLedgerState = do
-            st <- ldbTip <$> readTVar t
-            pure $
-              MempoolLedgerDBView
-                (forgetLedgerTables st)
-                ( pure $
-                    Right $
-                      ReadOnlyForker
-                        { roforkerClose = pure ()
-                        , roforkerReadStatistics = pure $ Statistics 0
-                        , roforkerReadTables = pure . ltliftA2 restrictValuesMK (projectLedgerTables st)
-                        , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
-                        , roforkerGetLedgerState = pure $ forgetLedgerTables st
-                        }
-                )
+        { getCurrentLedgerTip = getTip . ldbTip <$> readTVar t
+        , withCurrentLedgerStateDup = \k -> do
+            st <- atomically $ ldbTip <$> readTVar t
+            k (SimpleStateHandle st)
         }
     , t
     )
 
 -- | Make a SUT
 mkSUT ::
-  forall m blk.
-  ( NoThunks (MockedLedgerDB blk)
-  , IOLike m
+  forall m.
+  ( IOLike m
   , MonadTimer m
-  , LedgerSupportsProtocol blk
-  , LedgerSupportsMempool blk
-  , HasTxId (GenTx blk)
   ) =>
-  LedgerConfig blk ->
-  LedgerState blk ValuesMK ->
-  m (SUT m blk, CT.Tracer m String)
+  LedgerConfig TestBlock ->
+  LedgerState TestBlock ->
+  m (SUT m TestBlock, CT.Tracer m String)
 mkSUT cfg initialLedger = do
   (lif, t) <- newLedgerInterface initialLedger
-  trcrChan <- atomically newTChan :: m (StrictTChan m (Either String (TraceEventMempool blk)))
+  trcrChan <- atomically newTChan :: m (StrictTChan m (Either String (TraceEventMempool TestBlock)))
   let trcr =
-        CT.Tracer $ -- Dbg.traceShowM @(Either String (TraceEventMempool blk))
+        CT.Tracer $
           atomically . writeTChan trcrChan
   mempool <-
     openMempoolWithoutSyncThread
@@ -583,7 +550,6 @@ mkSUT cfg initialLedger = do
 
 semantics ::
   ( LedgerSupportsMempool blk
-  , ValidateEnvelope blk
   , IOLike m
   ) =>
   CT.Tracer m String ->
@@ -617,25 +583,13 @@ semantics trcr cmd r = do
 -------------------------------------------------------------------------------}
 
 precondition :: Model blk Symbolic -> Command blk Symbolic -> Logic
--- precondition cfg Model {modelCurrentSize} (Action (TryAddTxs txs)) =
---   Boolean $ not (null txs) && modelCurrentSize > 0 && sum (map tSize rights $ init txs) < modelCurrentSize
 precondition m (Action SyncLedger) = Boolean $ not (modelIsSyncing m)
 precondition _ _ = Top
 
 postcondition ::
-  ( LedgerSupportsMempool blk
-  , Eq (GenTx blk)
-  , --  , Show (TickedLedgerState blk ValuesMK)
-    UnTick blk
-  , ValidateEnvelope blk
-  , ToExpr (Command blk Concrete)
-  , ToExpr (GenTx blk)
-  , Show (Ledger.TxIn blk)
-  , Show (Ledger.TxOut blk)
-  ) =>
-  Model blk Concrete ->
-  Command blk Concrete ->
-  Response blk Concrete ->
+  Model TestBlock Concrete ->
+  Command TestBlock Concrete ->
+  Response TestBlock Concrete ->
   Logic
 postcondition model (Action GetSnapshot) (GotSnapshot txs) =
   Annotate "Mismatch getting snapshot" $
@@ -678,9 +632,8 @@ shrinker _ _ = []
 -------------------------------------------------------------------------------}
 
 sm ::
-  ( LedgerSupportsMempool blk
-  , IOLike m
-  , ValidateEnvelope blk
+  ( IOLike m
+  , LedgerSupportsMempool blk
   ) =>
   StateMachine (Model blk) (Command blk) m (Response blk) ->
   CT.Tracer m String ->
@@ -689,20 +642,15 @@ sm ::
 sm sm0 trcr ior = sm0{QC.semantics = \c -> semantics trcr c ior}
 
 smUnused ::
-  ( blk ~ TestBlock
-  , LedgerSupportsMempool blk
-  , LedgerSupportsProtocol blk
-  , Monad m
-  ) =>
-  LedgerConfig blk ->
-  LedgerState blk ValuesMK ->
-  TxMeasure blk ->
+  Monad m =>
+  LedgerState TestBlock ->
+  TxMeasure TestBlock ->
   MakeAtomic ->
-  (Int -> LedgerState blk ValuesMK -> Gen [GenTx blk]) ->
-  StateMachine (Model blk) (Command blk) m (Response blk)
-smUnused cfg initialState capacity ma gTxs =
+  (Int -> LedgerState TestBlock -> Gen [GenTx TestBlock]) ->
+  StateMachine (Model TestBlock) (Command TestBlock) m (Response TestBlock)
+smUnused initialState capacity ma gTxs =
   StateMachine
-    { QC.initModel = initModel cfg capacity initialState
+    { QC.initModel = initModel capacity initialState
     , QC.transition = transition
     , QC.precondition = precondition
     , QC.postcondition =
@@ -723,18 +671,12 @@ smUnused cfg initialState capacity ma gTxs =
 -------------------------------------------------------------------------------}
 
 prop_mempoolSequential ::
-  forall blk.
-  ( HasTxId (GenTx blk)
-  , blk ~ TestBlock
-  , LedgerSupportsMempool blk
-  , LedgerSupportsProtocol blk
-  ) =>
-  LedgerConfig blk ->
-  TxMeasure blk ->
+  LedgerConfig TestBlock ->
+  TxMeasure TestBlock ->
   -- | Initial state
-  LedgerState blk ValuesMK ->
+  LedgerState TestBlock ->
   -- | Transaction generator
-  (Int -> LedgerState blk ValuesMK -> Gen [GenTx blk]) ->
+  (Int -> LedgerState TestBlock -> Gen [GenTx TestBlock]) ->
   Property
 prop_mempoolSequential cfg capacity initialState gTxs = forAllCommands sm0 Nothing $
   \cmds ->
@@ -760,7 +702,7 @@ prop_mempoolSequential cfg capacity initialState gTxs = forAllCommands sm0 Nothi
             $ res === Ok
       )
  where
-  sm0 = smUnused cfg initialState capacity DontCare gTxs
+  sm0 = smUnused initialState capacity DontCare gTxs
 
   bucketiseBy v n =
     let
@@ -769,16 +711,11 @@ prop_mempoolSequential cfg capacity initialState gTxs = forAllCommands sm0 Nothi
       "[" <> show l <> "-" <> show (l + n) <> ")"
 
 prop_mempoolParallel ::
-  ( HasTxId (GenTx blk)
-  , blk ~ TestBlock
-  , LedgerSupportsMempool blk
-  , LedgerSupportsProtocol blk
-  ) =>
-  LedgerConfig blk ->
-  TxMeasure blk ->
-  LedgerState blk ValuesMK ->
+  LedgerConfig TestBlock ->
+  TxMeasure TestBlock ->
+  LedgerState TestBlock ->
   MakeAtomic ->
-  (Int -> LedgerState blk ValuesMK -> Gen [GenTx blk]) ->
+  (Int -> LedgerState TestBlock -> Gen [GenTx TestBlock]) ->
   Property
 prop_mempoolParallel cfg capacity initialState ma gTxs = forAllParallelCommandsNTimes sm0 Nothing 100 $
   \cmds -> monadicIO $ do
@@ -791,7 +728,7 @@ prop_mempoolParallel cfg capacity initialState ma gTxs = forAllParallelCommandsN
       (Just (GraphOptions "./mempoolParallel.png" Png))
       res
  where
-  sm0 = smUnused cfg initialState capacity ma gTxs
+  sm0 = smUnused initialState capacity ma gTxs
 
 -- | See 'MakeAtomic' on the reasoning behind having these tests.
 tests :: TestTree
@@ -799,17 +736,17 @@ tests =
   testGroup
     "QSM"
     [ testProperty "sequential" $
-        QC.withNumTests 1000 $
+        withNumTests 1000 $
           prop_mempoolSequential testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger $
             \i -> fmap (fmap fst . fst) . genTxs i
     , testGroup
         "parallel"
         [ testProperty "atomic" $
-            QC.withNumTests 10000 $
+            withNumTests 10000 $
               prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
                 \i -> fmap (fmap fst . fst) . genTxs i
         , testProperty "non atomic" $
-            QC.withNumTests 10 $
+            withNumTests 10 $
               prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger NonAtomic $
                 \i -> fmap (fmap fst . fst) . genTxs i
         ]
@@ -826,20 +763,20 @@ txMaxBytes' :: IgnoringOverflow ByteSize32
 txMaxBytes' = IgnoringOverflow $ ByteSize32 maxBound
 
 instance
-  (StandardHash blk, GetTip (LedgerState blk)) =>
-  Eq (LedgerState blk ValuesMK)
+  (StandardHash blk, GetTip LedgerState blk) =>
+  Eq (LedgerState blk)
   where
   (==) = (==) `on` getTip
 
 instance
-  (UnTick blk, StandardHash blk, GetTip (LedgerState blk)) =>
-  Eq (TickedLedgerState blk ValuesMK)
+  (StandardHash blk, GetTip (Ticked LedgerState) blk) =>
+  Eq (TickedLedgerState blk)
   where
-  (==) = (==) `on` (getTip . unTick)
+  (==) = (==) `on` getTip
 
 instance
-  (StandardHash blk, GetTip (LedgerState blk)) =>
-  Ord (LedgerState blk ValuesMK)
+  (StandardHash blk, GetTip LedgerState blk) =>
+  Ord (LedgerState blk)
   where
   compare = compare `on` getTip
 
@@ -853,8 +790,8 @@ instance NoThunks (Mempool IO TestBlock) where
 instance
   ( ToExpr (TxId (GenTx blk))
   , ToExpr (GenTx blk)
-  , ToExpr (LedgerState blk ValuesMK)
-  , ToExpr (TickedLedgerState blk ValuesMK)
+  , ToExpr (LedgerState blk)
+  , ToExpr (TickedLedgerState blk)
   , LedgerSupportsMempool blk
   ) =>
   ToExpr (Model blk r)
@@ -873,8 +810,8 @@ instance
 instance
   ( ToExpr (TxId (GenTx blk))
   , ToExpr (GenTx blk)
-  , ToExpr (TickedLedgerState blk ValuesMK)
-  , ToExpr (LedgerState blk ValuesMK)
+  , ToExpr (TickedLedgerState blk)
+  , ToExpr (LedgerState blk)
   , LedgerSupportsMempool blk
   ) =>
   Show (Model blk r)
@@ -900,7 +837,7 @@ instance ToExpr (Action TestBlock r) where
   toExpr SyncLedger = App "SyncLedger" []
   toExpr GetSnapshot = App "GetSnapshot" []
 
-instance ToExpr (LedgerState blk ValuesMK) => ToExpr (Event blk r) where
+instance ToExpr (LedgerState blk) => ToExpr (Event blk r) where
   toExpr (ChangeLedger ls) =
     App "ChangeLedger" [toExpr ls]
 
@@ -909,9 +846,7 @@ instance ToExpr (Command TestBlock r) where
   toExpr (Event ev) = toExpr ev
 
 instance ToExpr (Command blk r) => Show (Command blk r) where
-  show =
-    -- unwords . take 2 . words .
-    show . toExpr
+  show = show . toExpr
 
 instance
   ( ToExpr (GenTx blk)
@@ -943,13 +878,11 @@ instance
   ) =>
   Show (Response blk r)
   where
-  show =
-    -- unwords . take 2 . words .
-    show . toExpr
+  show = show . toExpr
 
-deriving instance NoThunks (LedgerState blk ValuesMK) => NoThunks (MockedLedgerDB blk)
+deriving instance NoThunks (LedgerState blk) => NoThunks (MockedLedgerDB blk)
 
-instance Arbitrary (LedgerState TestBlock ValuesMK) where
+instance Arbitrary (LedgerState TestBlock) where
   arbitrary = do
     n <- getPositive <$> arbitrary
     (txs, _) <- genValidTxs n testInitLedger
@@ -957,15 +890,14 @@ instance Arbitrary (LedgerState TestBlock ValuesMK) where
       Left _ -> error "Must not happen"
       Right st -> pure st
 
-instance ToExpr (TickedLedgerState TestBlock ValuesMK) where
+instance ToExpr (TickedLedgerState TestBlock) where
   toExpr (TickedSimpleLedgerState st) = App "Ticked" [toExpr st]
 
-instance ToExpr (LedgerState TestBlock ValuesMK) where
-  toExpr (SimpleLedgerState st tbs) =
+instance ToExpr (LedgerState TestBlock) where
+  toExpr (SimpleLedgerState st) =
     App "LedgerState" $
       [ Lst
           [ toExpr (pointSlot $ mockTip st, pointHash $ mockTip st)
-          , toExpr tbs
           ]
       ]
 
@@ -975,15 +907,3 @@ instance ToExpr Addr where
 deriving instance ToExpr (GenTx TestBlock)
 deriving instance ToExpr Tx
 deriving instance ToExpr Expiry
-
-instance ToExpr (LedgerTables TestBlock ValuesMK) where
-  toExpr (LedgerTables (ValuesMK v)) = Lst [toExpr (condense txin, condense txout) | (txin, txout) <- Map.toList v]
-
-instance ToExpr (ValuesMK TxIn TxOut) where
-  toExpr (ValuesMK m) = App "Values" [toExpr m]
-
-class UnTick blk where
-  unTick :: forall mk. TickedLedgerState blk mk -> LedgerState blk mk
-
-instance UnTick TestBlock where
-  unTick = getTickedSimpleLedgerState

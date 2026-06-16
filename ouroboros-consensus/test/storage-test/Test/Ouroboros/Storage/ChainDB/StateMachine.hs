@@ -9,6 +9,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -119,12 +121,11 @@ import Ouroboros.Consensus.HardFork.Combinator.Abstract
   ( ImmutableEraParams
   )
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Abstract hiding (close)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
@@ -178,6 +179,7 @@ import Test.Util.ChunkInfo
 import Test.Util.Header (attachSlotTimeToFragment)
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.ToExpr ()
+import Test.Util.PureApplyBlock (PureExtApplyBlock)
 import Test.Util.QuickCheck
 import Test.Util.RefEnv (RefEnv)
 import qualified Test.Util.RefEnv as RE
@@ -357,7 +359,7 @@ type TestConstraints blk =
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , Eq (ChainDepState (BlockProtocol blk))
-  , Eq (LedgerState blk EmptyMK)
+  , Eq (LedgerState blk)
   , Eq blk
   , Show blk
   , HasHeader blk
@@ -369,9 +371,8 @@ type TestConstraints blk =
   , ConvertRawHash blk
   , HasHardForkHistory blk
   , SerialiseDiskConstraints blk
-  , Show (LedgerState blk EmptyMK)
-  , LedgerTablesAreTrivial LedgerState blk
-  , CanUpgradeLedgerTables LedgerState blk
+  , Show (LedgerState blk)
+  , PureExtApplyBlock blk
   , ImmutableEraParams blk
   )
 
@@ -414,7 +415,7 @@ data ChainDBEnv m blk = ChainDBEnv
   }
 
 open ::
-  (IOLike m, TestConstraints blk) =>
+  (IOLike m, TestConstraints blk, BlockSupportsLedgerHD m blk) =>
   ChainDbArgs Identity m blk -> m (ChainDBState m blk)
 open args = do
   (chainDB, internal) <- openDBInternal args False
@@ -424,7 +425,7 @@ open args = do
 
 -- PRECONDITION: the ChainDB is closed
 reopen ::
-  (IOLike m, TestConstraints blk) =>
+  (IOLike m, TestConstraints blk, BlockSupportsLedgerHD m blk) =>
   ChainDBEnv m blk -> m ()
 reopen ChainDBEnv{varDB, args} = do
   chainDBState <- open args
@@ -437,7 +438,7 @@ close ChainDBState{chainDB, addBlockAsync} = do
 
 run ::
   forall m blk.
-  (IOLike m, TestConstraints blk) =>
+  (IOLike m, TestConstraints blk, BlockSupportsLedgerHD m blk) =>
   TopLevelConfig blk ->
   ChainDBEnv m blk ->
   Cmd blk (TestIterator m blk) (TestFollower m blk) ->
@@ -784,7 +785,7 @@ runPure cfg = \case
   openOrClosed f = first (Resp . Right . Unit) . f
 
 runIO ::
-  TestConstraints blk =>
+  (TestConstraints blk, BlockSupportsLedgerHD IO blk) =>
   TopLevelConfig blk ->
   ChainDBEnv IO blk ->
   Cmd blk (TestIterator IO blk) (TestFollower IO blk) ->
@@ -943,7 +944,7 @@ initModel ::
   HasHeader blk =>
   LoE () ->
   TopLevelConfig blk ->
-  ExtLedgerState blk EmptyMK ->
+  ExtLedgerState blk ->
   Model blk m r
 initModel loe cfg initLedger =
   Model
@@ -1549,7 +1550,7 @@ postcondition cfg model cmd resp =
 
 semantics ::
   forall blk.
-  TestConstraints blk =>
+  (TestConstraints blk, BlockSupportsLedgerHD IO blk) =>
   TopLevelConfig blk ->
   ChainDBEnv IO blk ->
   At Cmd blk IO Concrete ->
@@ -1560,13 +1561,13 @@ semantics cfg env (At cmd) =
 
 -- | The state machine proper
 sm ::
-  TestConstraints blk =>
+  (TestConstraints blk, BlockSupportsLedgerHD IO blk) =>
   LoE () ->
   ChainDBEnv IO blk ->
   (Model blk IO Symbolic -> Gen (blk, Persistent [blk])) ->
   (Model blk IO Symbolic -> Gen (blk, Persistent [blk])) ->
   TopLevelConfig blk ->
-  ExtLedgerState blk EmptyMK ->
+  ExtLedgerState blk ->
   StateMachine
     (Model blk IO)
     (At Cmd blk IO)
@@ -1602,7 +1603,7 @@ deriving instance
   , ToExpr (HeaderHash blk)
   , ToExpr (ChainDepState (BlockProtocol blk))
   , ToExpr (TipInfo blk)
-  , ToExpr (LedgerState blk EmptyMK)
+  , ToExpr (LedgerState blk)
   , ToExpr (ExtValidationError blk)
   , StandardHash blk
   , Show blk
@@ -2247,7 +2248,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
           mkArgs
             testCfg
             chunkInfo
-            (testInitExtLedger `withLedgerTables` emptyLedgerTables)
+            testInitExtLedger
             threadRegistry
             nodeDBs
             tracer
@@ -2413,7 +2414,7 @@ mkArgs ::
   IOLike m =>
   TopLevelConfig Blk ->
   ImmutableDB.ChunkInfo ->
-  ExtLedgerState Blk ValuesMK ->
+  ExtLedgerState Blk ->
   ResourceRegistry m ->
   NodeDBs (StrictTMVar m MockFS) ->
   CT.Tracer m (TraceEvent Blk) ->
@@ -2425,7 +2426,12 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment =
           MinimalChainDbArgs
             { mcdbTopLevelConfig = cfg
             , mcdbChunkInfo = chunkInfo
-            , mcdbInitLedger = initLedger
+            , mcdbInitLedger = \() ->
+                pure $
+                  ExtStateHandle
+                    (TestStateHandle (ledgerState initLedger))
+                    (headerState initLedger)
+            , mcdbBackendArgs = testBackendArgs ()
             , mcdbRegistry = registry
             , mcdbNodeDBs = nodeDBs
             }

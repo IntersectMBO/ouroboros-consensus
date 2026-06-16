@@ -15,6 +15,7 @@ import Data.Functor.Contravariant ((>$<))
 import Data.SOP.Strict (index_NS)
 import qualified Data.SOP.Telescope as Telescope
 import Network.TypedProtocol.Proofs (connect)
+import Ouroboros.Consensus.Backends.InMemory (mkInMemoryFactory)
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Config (topLevelConfigLedger)
 import qualified Ouroboros.Consensus.Config as Consensus
@@ -22,7 +23,8 @@ import Ouroboros.Consensus.HardFork.Combinator
   ( getHardForkState
   , hardForkLedgerStatePerEra
   )
-import Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import Ouroboros.Consensus.Ledger.Basics (state)
+import Ouroboros.Consensus.Ledger.Extended (ExtStateHandle (..), closeExt)
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
@@ -42,6 +44,9 @@ import Ouroboros.Network.Protocol.LocalTxSubmission.Examples
 import Ouroboros.Network.Protocol.LocalTxSubmission.Server
   ( localTxSubmissionServerPeer
   )
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as Mock
+import System.FS.Sim.STM (simHasFS')
 import Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
   ( deserialiseTx
   )
@@ -67,7 +72,7 @@ tests =
   localServerPassesRegressionTests era =
     testCase ("Passes the regression tests (" ++ show era ++ ")") $ do
       let
-        pInfo :: ProtocolInfo (CardanoBlock StandardCrypto)
+        pInfo :: ProtocolInfo IO (CardanoBlock StandardCrypto)
         pInfo =
           mkSimpleTestProtocolInfo
             (Shelley.DecentralizationParam 1)
@@ -77,13 +82,23 @@ tests =
             protocolVersionZero
             (hardForkInto era)
 
-        eraIndex =
-          index_NS
-            . Telescope.tip
-            . getHardForkState
-            . hardForkLedgerStatePerEra
-            . ledgerState
-            $ pInfoInitLedger pInfo
+      -- Materialise the initial 'ExtStateHandle' via 'pInfoInitLedger', which
+      -- is now monadic and takes the HFC table factory. The handle is
+      -- duplicate-safe (the in-memory backend's @duplicate@ / @close@ are no-ops)
+      -- and the mocked mempool never writes new state into its TVar in this
+      -- test, so we can reuse the same handle for every 'immpMakeStateHandle'
+      -- call.
+      shfs <- SomeHasFS <$> simHasFS' Mock.empty
+      let mkH = mkInMemoryFactory nullTracer shfs
+      initHandle@(ExtStateHandle initStateHandle _) <- pInfoInitLedger pInfo mkH
+      let initLedgerState = state initStateHandle
+
+          eraIndex =
+            index_NS
+              . Telescope.tip
+              . getHardForkState
+              . hardForkLedgerStatePerEra
+              $ initLedgerState
 
       eraIndex @=? fromEnum era
 
@@ -95,10 +110,10 @@ tests =
         tracer = nullTracer
         mempoolParams =
           Mocked.MempoolAndModelParams
-            { Mocked.immpInitialState =
-                ledgerState $ pInfoInitLedger pInfo
+            { Mocked.immpInitialState = initLedgerState
             , Mocked.immpLedgerConfig =
                 topLevelConfigLedger $ pInfoConfig pInfo
+            , Mocked.immpMakeStateHandle = const initStateHandle
             }
 
       mempool <-
@@ -108,6 +123,7 @@ tests =
           mempoolParams
 
       mempool `should_process` [_137]
+      closeExt initHandle
    where
     -- Reported in https://github.com/IntersectMBO/ouroboros-consensus/issues/137
     _137 :: GenTx (CardanoBlock StandardCrypto)
