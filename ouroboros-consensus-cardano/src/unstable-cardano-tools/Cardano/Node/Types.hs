@@ -182,7 +182,7 @@ data NodeDijkstraProtocolConfiguration
 -- | Configuration relating to a hard forks themselves, not the specific eras.
 data NodeHardForkProtocolConfiguration
   = NodeHardForkProtocolConfiguration
-  { npcTestEnableDevelopmentHardForkEras :: Bool
+  { npcExperimentalHardForksEnabled :: Bool
   -- ^ During the development and integration of new eras we wish to be
   -- able to test the hard fork transition into the new era, but we do not
   -- wish to generally have the node advertise that it understands the new
