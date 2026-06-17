@@ -511,7 +511,7 @@ addPerasCert ::
   Model blk ->
   (AddPerasCertChainSelOutcome, Model blk)
 addPerasCert cfg cert m
-  | pointSlot (getPerasCertBoostedBlock cert) < Chain.headSlot (immutableChain secParam m) =
+  | pointSlot (getPerasCertPoint cert) < Chain.headSlot (immutableChain secParam m) =
       (PerasCertIgnoredTooOld, m)
   | otherwise =
       let (certRes, perasCertModel') = PerasCertDBModel.addCert (perasCertModel m) cert
