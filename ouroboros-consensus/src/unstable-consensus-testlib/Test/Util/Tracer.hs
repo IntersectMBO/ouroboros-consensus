@@ -18,7 +18,7 @@ recordingTracerIORef :: IO (Tracer IO ev, IO [ev])
 recordingTracerIORef =
   newIORef [] >>= \ref ->
     return
-      ( Tracer $ \ev -> atomicModifyIORef' ref $ \evs -> (ev : evs, ())
+      ( Tracer . emit $ \ev -> atomicModifyIORef' ref $ \evs -> (ev : evs, ())
       , reverse <$> readIORef ref
       )
 
@@ -29,7 +29,7 @@ recordingTracerTVar :: MonadSTM m => m (Tracer m ev, m [ev])
 recordingTracerTVar =
   uncheckedNewTVarM [] >>= \ref ->
     return
-      ( Tracer $ \ev -> atomically $ modifyTVar ref (ev :)
+      ( Tracer . emit $ \ev -> atomically $ modifyTVar ref (ev :)
       , atomically $ reverse <$> readTVar ref
       )
 

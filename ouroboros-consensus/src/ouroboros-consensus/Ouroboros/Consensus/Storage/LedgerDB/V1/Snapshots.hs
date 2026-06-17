@@ -144,7 +144,6 @@ import qualified Control.Monad as Monad
 import Control.Monad.Except
 import Control.Monad.Trans.Class
 import Control.Tracer
-import Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config

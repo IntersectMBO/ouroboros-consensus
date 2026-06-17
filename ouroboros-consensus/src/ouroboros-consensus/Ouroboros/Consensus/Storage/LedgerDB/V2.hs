@@ -21,7 +21,6 @@ import qualified Control.RAWLock as RAWLock
 import Control.Tracer
 import Data.Bifunctor (first)
 import qualified Data.Foldable as Foldable
-import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe
