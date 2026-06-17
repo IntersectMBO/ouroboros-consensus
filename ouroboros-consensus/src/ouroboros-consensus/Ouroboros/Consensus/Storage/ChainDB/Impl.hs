@@ -48,7 +48,6 @@ import Control.ResourceRegistry
   )
 import Control.Tracer
 import Data.Functor ((<&>))
-import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import GHC.Stack (HasCallStack)

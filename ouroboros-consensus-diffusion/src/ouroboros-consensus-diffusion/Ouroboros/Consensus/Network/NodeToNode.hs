@@ -781,20 +781,21 @@ showTracers ::
   , Show (GenTxId blk)
   , HasHeader blk
   , HasNestedContent Header blk
+  , Monad m
   ) =>
   Tracer m String -> Tracers m ntnAddr blk e
 showTracers tr =
   Tracers
-    { tChainSyncTracer = showTracing tr
-    , tChainSyncSerialisedTracer = showTracing tr
-    , tBlockFetchTracer = showTracing tr
-    , tBlockFetchSerialisedTracer = showTracing tr
-    , tTxSubmission2Tracer = showTracing tr
-    , tKeepAliveTracer = showTracing tr
-    , tPeerSharingTracer = showTracing tr
-    , tTxLogicTracer = showTracing tr
-    , tLeiosNotifyTracer = showTracing tr
-    , tLeiosFetchTracer = showTracing tr
+    { tChainSyncTracer = show >$< tr
+    , tChainSyncSerialisedTracer = show >$< tr
+    , tBlockFetchTracer = show >$< tr
+    , tBlockFetchSerialisedTracer = show >$< tr
+    , tTxSubmission2Tracer = show >$< tr
+    , tKeepAliveTracer = show >$< tr
+    , tPeerSharingTracer = show >$< tr
+    , tTxLogicTracer = show >$< tr
+    , tLeiosNotifyTracer = show >$< tr
+    , tLeiosFetchTracer = show >$< tr
     }
 
 {-------------------------------------------------------------------------------

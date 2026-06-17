@@ -425,7 +425,7 @@ runThreadNetwork
           sharedRegistry
           clock
           -- traces when/why the mini protocol instances start and stop
-          nullDebugTracer
+          nullTracer
           (version, blockVersion)
           (codecConfig, calcMessageDelay)
           vertexStatusVars
@@ -792,7 +792,7 @@ runThreadNetwork
                   , mcdbNodeDBs = nodeDBs
                   , mcdbLeiosDb = leiosDbHandle
                   }
-        let tr = instrumentationTracer <> nullDebugTracer
+        let tr = instrumentationTracer <> nullTracer
         pure $
           (,) leiosDbHandle $
             args
@@ -814,7 +814,7 @@ runThreadNetwork
                   (cdbsArgs args)
                     { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
                       cdbsGcDelay = 0
-                    , cdbsTracer = instrumentationTracer <> nullDebugTracer
+                    , cdbsTracer = instrumentationTracer <> nullTracer
                     }
               }
        where
@@ -823,7 +823,7 @@ runThreadNetwork
           Origin -> error "selTracer"
 
         -- prop_general relies on this tracer
-        instrumentationTracer = Tracer $ \case
+        instrumentationTracer = Tracer . emit $ \case
           ChainDB.TraceAddBlockEvent
             (ChainDB.AddBlockValidation (ChainDB.InvalidBlock e p)) ->
               traceWith invalidTracer (p, e)
@@ -885,7 +885,7 @@ runThreadNetwork
       -- prop_general relies on these tracers
       let invalidTracer = nodeEventsInvalids nodeInfoEvents
           updatesTracer = nodeEventsUpdates nodeInfoEvents
-          wrapTracer tr = Tracer $ \(p, bno) -> do
+          wrapTracer tr = Tracer . emit $ \(p, bno) -> do
             s <- OracularClock.getCurrentSlot clock
             traceWith tr (s, p, bno)
           addTracer = wrapTracer $ nodeEventsAdds nodeInfoEvents
@@ -1016,7 +1016,7 @@ runThreadNetwork
         -- prop_general relies on these tracers
         instrumentationTracers =
           nullTracers
-            { chainSyncClientTracer = Tracer $ \case
+            { chainSyncClientTracer = Tracer . emit $ \case
                 TraceLabelPeer _ (CSClient.TraceDownloadedHeader hdr) ->
                   case blockPoint hdr of
                     GenesisPoint -> pure ()
@@ -1027,7 +1027,7 @@ runThreadNetwork
                         headerAddTracer
                         (RealPoint s h, blockNo hdr)
                 _ -> pure ()
-            , forgeTracer = Tracer $ \(TraceLabelCreds _ ev) -> do
+            , forgeTracer = Tracer . emit $ \(TraceLabelCreds _ ev) -> do
                 traceWith (nodeEventsForges nodeInfoEvents) ev
                 traceWith nodeTracer (FromForge ev)
                 case ev of
@@ -1039,7 +1039,7 @@ runThreadNetwork
             }
 
         -- traces the node's local events other than those from the -- ChainDB
-        tracers = instrumentationTracers <> nullDebugTracers
+        tracers = instrumentationTracers <> nullTracers
 
       let
         -- use a backoff delay of exactly one slot length (which the
@@ -1165,7 +1165,7 @@ runThreadNetwork
               -- these tracers report every message sent/received by this
               -- node
               chainSyncRng
-              nullDebugProtocolTracers
+              NTN.nullTracers
               (customNodeToNodeCodecs pInfoConfig)
               NTN.noByteLimits
               -- see #1882, tests that can't cope with timeouts.
@@ -1842,31 +1842,6 @@ mkTestOutput vertexInfos = do
 {-------------------------------------------------------------------------------
   Constraints needed for verbose tracing
 -------------------------------------------------------------------------------}
-
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugTracer :: (Applicative m, Show a) => Tracer m a
-nullDebugTracer = nullTracer `asTypeOf` showTracing debugTracer
-
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugTracers ::
-  ( Monad m
-  , Show peer
-  , LedgerSupportsProtocol blk
-  , TracingConstraints blk
-  ) =>
-  Tracers m peer Void blk
-nullDebugTracers = nullTracers `asTypeOf` showTracers debugTracer
-
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugProtocolTracers ::
-  ( Monad m
-  , HasHeader blk
-  , TracingConstraints blk
-  , Show peer
-  ) =>
-  NTN.Tracers m peer blk failure
-nullDebugProtocolTracers =
-  NTN.nullTracers `asTypeOf` NTN.showTracers debugTracer
 
 -- These constraints are when using @showTracer(s) debugTracer@ instead of
 -- @nullTracer(s)@.

@@ -15,12 +15,13 @@ module Test.Consensus.PeerSimulator.NodeLifecycle
   ) where
 
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), traceWith)
+import Control.Tracer (Tracer, mkTracer, traceWith)
 import Data.Functor (void)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import qualified LeiosDemoDb as LeiosDb
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
@@ -46,7 +47,6 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( ChunkInfo
   )
-import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
@@ -168,7 +168,7 @@ mkChainDb resources = do
               , mcdbNodeDBs = lrCdb
               , mcdbLeiosDb
               }
-    let args = updateTracer (Tracer (traceWith lrTracer . TraceChainDBEvent)) args0
+    let args = updateTracer (mkTracer (traceWith lrTracer . TraceChainDBEvent)) args0
     pure $
       args
         { ChainDB.cdbsArgs =

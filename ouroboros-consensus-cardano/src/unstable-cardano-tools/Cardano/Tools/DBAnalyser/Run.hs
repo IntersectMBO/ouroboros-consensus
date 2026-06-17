@@ -16,12 +16,13 @@ import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), nullTracer)
+import Control.Tracer (Tracer (..), emit, nullTracer)
 import Data.Functor.Contravariant ((>$<))
 import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
 import LeiosDemoDb (newLeiosDBInMemory)
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -40,7 +41,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
-import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.LedgerDB (TraceEvent (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as LedgerDB.V1
@@ -257,7 +257,7 @@ analyse dbaConfig args =
   mkTracer _ False = return nullTracer
   mkTracer lock True = do
     startTime <- getMonotonicTime
-    return $ Tracer $ \ev -> withLock $ do
+    return $ Tracer . emit $ \ev -> withLock $ do
       traceTime <- getMonotonicTime
       let diff = diffTime traceTime startTime
       hPutStrLn stderr $ printf "[%.6fs] %s" (realToFrac diff :: Double) (show ev)

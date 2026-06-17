@@ -393,7 +393,8 @@ nullTracers =
     }
 
 showTracers ::
-  ( Show peer
+  ( Monad m
+  , Show peer
   , Show (GenTx blk)
   , Show (GenTxId blk)
   , Show (ApplyTxErr blk)
@@ -403,10 +404,10 @@ showTracers ::
   Tracer m String -> Tracers m peer blk e
 showTracers tr =
   Tracers
-    { tChainSyncTracer = showTracing tr
-    , tTxSubmissionTracer = showTracing tr
-    , tStateQueryTracer = showTracing tr
-    , tTxMonitorTracer = showTracing tr
+    { tChainSyncTracer = show >$< tr
+    , tTxSubmissionTracer = show >$< tr
+    , tStateQueryTracer = show >$< tr
+    , tTxMonitorTracer = show >$< tr
     }
 
 {-------------------------------------------------------------------------------

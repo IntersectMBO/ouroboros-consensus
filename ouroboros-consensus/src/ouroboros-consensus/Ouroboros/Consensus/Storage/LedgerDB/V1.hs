@@ -21,7 +21,6 @@ import Control.Monad.Trans (lift)
 import Control.Tracer
 import qualified Data.Foldable as Foldable
 import Data.Functor ((<&>))
-import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (isJust)

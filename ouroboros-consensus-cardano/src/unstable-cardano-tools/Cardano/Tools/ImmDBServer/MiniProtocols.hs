@@ -242,11 +242,6 @@ responderContextToConnectionIdString ctx =
  where
   connId = N2N.rcConnectionId ctx
 
-traceMaybe :: Monad m => (a -> Maybe b) -> Tracer m b -> Tracer m a
-traceMaybe f tr = Tracer $ \x -> case f x of
-  Nothing -> pure ()
-  Just y -> traceWith tr y
-
 maybeShowSendRecvLF ::
   Show addr =>
   N2N.ResponderContext addr ->

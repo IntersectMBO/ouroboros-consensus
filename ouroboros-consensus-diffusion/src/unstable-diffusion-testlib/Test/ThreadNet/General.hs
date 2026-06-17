@@ -44,7 +44,7 @@ import Control.Monad.IOSim
   , traceM
   , traceResult
   )
-import Control.Tracer (Tracer (..), nullTracer)
+import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -268,7 +268,7 @@ runTestNetwork
               (BTime.SystemStart dawnOfTime)
               nullTracer
       runThreadNetwork
-        (Tracer traceM)
+        (mkTracer traceM)
         systemTime
         ThreadNetworkArgs
           { tnaForgeEbbEnv = forgeEbbEnv

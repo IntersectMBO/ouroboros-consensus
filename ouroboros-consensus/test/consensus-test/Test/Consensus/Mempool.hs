@@ -38,7 +38,7 @@ import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.Except (runExcept)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.Monad.State (State, evalState, get, modify)
-import Control.Tracer (Tracer (..))
+import Control.Tracer (mkTracer)
 import Data.Bifunctor (first, second)
 import Data.Either (isRight)
 import Data.Functor ((<&>))
@@ -757,7 +757,7 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
     -- Set up the Tracer
     varEvents <- uncheckedNewTVarM []
     -- TODO use IOSim's dynamicTracer
-    let tracer = Tracer $ \ev -> atomically $ modifyTVar varEvents (ev :)
+    let tracer = mkTracer $ \ev -> atomically $ modifyTVar varEvents (ev :)
 
     -- Open the mempool and add the initial transactions
     mempool <-

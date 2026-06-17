@@ -21,7 +21,6 @@ import Control.Tracer
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Lazy as BL
-import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
