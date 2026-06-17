@@ -769,11 +769,6 @@ initInternalState
     leiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
     leiosReady <- MVar.newEmptyMVar
 
-    -- 120 s GC tick: long enough for ChainSync candidate churn
-    -- (rollbacks, peer disconnects detected via KeepAlive) to settle
-    -- so we don't evict on transient drops from 'peersThatKnowBlock';
-    -- short enough that a wedged staging entry doesn't sit there long
-    -- and the parked BlockFetch client thread gets a verdict promptly.
     leiosCertRbStaging <-
       newLeiosStagingArea
         (leiosKernelTracer tracers)
@@ -782,7 +777,12 @@ initInternalState
         varChainSyncHandles
         leiosReady
         (BlockFetchClientInterface.defaultChainDbView chainDB)
-        120
+        -- NOTE: This is the maximum time a CertRB is staged before it is
+        -- evicted. 30 Seconds is a good value because it is big enough for a
+        -- closure to arrive even when fetched late, but still small enough to
+        -- not trip block fetch timeouts (the staging area blocks BlockFetch
+        -- client threads).
+        30
 
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault
