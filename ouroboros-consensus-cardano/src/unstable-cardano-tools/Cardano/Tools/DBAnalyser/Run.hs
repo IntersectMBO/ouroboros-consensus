@@ -67,6 +67,7 @@ openLedgerDB ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasHardForkHistory blk
   ) =>

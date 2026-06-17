@@ -272,12 +272,6 @@ distribTopLevelConfig ei tlc =
 -------------------------------------------------------------------------------}
 
 instance CanHardFork xs => LedgerSupportsPeras (HardForkBlock xs) where
-  getLatestPerasCertRound =
-    hcollapse
-      . hcmap proxySingle (K . getLatestPerasCertRound . unFlip)
-      . State.tip
-      . hardForkLedgerStatePerEra
-
   getPoolDistr =
     hcollapse
       . hcmap proxySingle (K . getPoolDistr . unFlip)

@@ -215,11 +215,13 @@ protocolInfoTPraosShelleyBased
       ledgerState <- mkInitLedgerState
       let headerState = genesisHeaderState initChainDepState
       let perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+      let latestPerasCertOnChainRound = SNothing
       let initExtLedgerState =
             ExtLedgerState
               { ledgerState
               , headerState
               , perasEpochContextResolver
+              , latestPerasCertOnChainRound
               }
       pure
         ( ProtocolInfo
@@ -312,7 +314,6 @@ protocolInfoTPraosShelleyBased
             , shelleyLedgerState = injected
             , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
             , shelleyLedgerTables = emptyLedgerTables
-            , shelleyLedgerLatestPerasCertRound = SNothing
             }
 
     initChainDepState :: TPraosState

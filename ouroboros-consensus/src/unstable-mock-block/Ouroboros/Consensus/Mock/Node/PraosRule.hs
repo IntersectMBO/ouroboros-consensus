@@ -9,6 +9,7 @@ module Ouroboros.Consensus.Mock.Node.PraosRule
 
 import Cardano.Crypto.KES
 import Cardano.Crypto.VRF
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block.Forging (BlockForging)
@@ -68,10 +69,12 @@ protocolInfoPraosRule
           let ledgerState = genesisSimpleLedgerState addrDist
               headerState = genesisHeaderState ()
               perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+              latestPerasCertOnChainRound = SNothing
            in ExtLedgerState
                 { ledgerState
                 , headerState
                 , perasEpochContextResolver
+                , latestPerasCertOnChainRound
                 }
       }
    where

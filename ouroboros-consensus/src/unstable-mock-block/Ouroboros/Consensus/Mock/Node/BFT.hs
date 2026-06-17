@@ -7,6 +7,7 @@ module Ouroboros.Consensus.Mock.Node.BFT
   ) where
 
 import Cardano.Crypto.DSIGN
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block.Forging (BlockForging)
 import Ouroboros.Consensus.Config
@@ -56,10 +57,12 @@ protocolInfoBft numCoreNodes nid securityParam eraParams =
         let ledgerState = genesisSimpleLedgerState addrDist
             headerState = genesisHeaderState ()
             perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+            latestPerasCertOnChainRound = SNothing
          in ExtLedgerState
               { ledgerState
               , headerState
               , perasEpochContextResolver
+              , latestPerasCertOnChainRound
               }
     }
  where

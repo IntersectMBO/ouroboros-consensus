@@ -24,6 +24,7 @@ module Cardano.Tools.DBAnalyser.Analysis
   , runAnalysis
   ) where
 
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Slotting.Slot as Slotting
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting as F
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
@@ -95,6 +96,7 @@ runAnalysis ::
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
   , CanStowLedgerTables (LedgerState blk)
   , Show (TxIn blk)
   , Show (TxOut blk)
@@ -239,7 +241,13 @@ data TraceEvent blk
       Int64
       Int64
 
-instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) where
+instance
+  ( HasAnalysis blk
+  , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  ) =>
+  Show (TraceEvent blk)
+  where
   show (StartedEvent analysisName) = "Started " <> (show analysisName)
   show DoneEvent = "Done"
   show (BlockSlotEvent bn sn h) =
@@ -422,6 +430,7 @@ storeLedgerStateAt ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
   , HasAnalysis blk
   ) =>
   SlotNo ->
@@ -506,6 +515,7 @@ checkNoThunksEvery ::
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
   , CanStowLedgerTables (LedgerState blk)
   ) =>
   Word64 ->
@@ -564,6 +574,7 @@ traceLedgerProcessing ::
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
   ) =>
   Analysis blk StartFromLedgerState
 traceLedgerProcessing
@@ -719,10 +730,12 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
       let ledgerState = (prependDiffs tkLdgrSt newLedger)
           headerState = newHeader
           perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+          latestPerasCertOnChainRound = SNothing
        in ExtLedgerState
             { ledgerState
             , headerState
             , perasEpochContextResolver
+            , latestPerasCertOnChainRound
             }
    where
     rp = blockRealPoint blk
@@ -794,6 +807,7 @@ getBlockApplicationMetrics ::
   ( HasAnalysis blk
   , LedgerSupportsProtocol blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
   ) =>
   NumberOfBlocks -> Maybe FilePath -> Analysis blk StartFromLedgerState
 getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do

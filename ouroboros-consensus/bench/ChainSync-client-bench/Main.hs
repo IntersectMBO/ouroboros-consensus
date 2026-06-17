@@ -11,7 +11,7 @@ module Main (main) where
 
 import Bench.Consensus.ChainSyncClient.Driver (mainWith)
 import Cardano.Crypto.DSIGN.Mock
-import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
+import Cardano.Ledger.BaseTypes (knownNonZeroBounded, StrictMaybe (..))
 import Control.Monad (void)
 import Control.ResourceRegistry
 import Control.Tracer (contramap, debugTracer, nullTracer)
@@ -232,6 +232,8 @@ oracularLedgerDB p =
             ledgerStateHeaderStateMkPerasEpochContextResolver
               ledgerState
               headerState
+        , Extended.latestPerasCertOnChainRound =
+            SNothing
         }
 
 -- | A convenient fact about 'TB.TestBlock'

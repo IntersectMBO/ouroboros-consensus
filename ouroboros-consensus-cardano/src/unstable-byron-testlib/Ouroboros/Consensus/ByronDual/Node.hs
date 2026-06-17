@@ -19,6 +19,7 @@ import qualified Cardano.Chain.Genesis as Impl
 import qualified Cardano.Chain.UTxO as Impl
 import qualified Cardano.Chain.Update as Impl
 import qualified Cardano.Chain.Update.Validation.Interface as Impl
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Data.Either (fromRight)
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe)
@@ -127,10 +128,12 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
                   }
               headerState = genesisHeaderState S.empty
               perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+              latestPerasCertOnChainRound = SNothing
            in ExtLedgerState
                 { ledgerState
                 , headerState
                 , perasEpochContextResolver
+                , latestPerasCertOnChainRound
                 }
       }
   , return $ dualByronBlockForging . byronLeaderCredentials <$> credss

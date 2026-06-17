@@ -1751,6 +1751,7 @@ nullDebugTracers ::
   ( Monad m
   , Show peer
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , TracingConstraints blk
   ) =>
   Tracers m peer Void blk

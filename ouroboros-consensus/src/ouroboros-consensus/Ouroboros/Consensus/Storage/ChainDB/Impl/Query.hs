@@ -47,7 +47,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getChainSelStarvation
   ) where
 
-import Cardano.Ledger.BaseTypes (WithOrigin (..))
+import Cardano.Ledger.BaseTypes (WithOrigin (..), strictMaybeToMaybe)
 import Control.Monad (void)
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
@@ -67,8 +67,10 @@ import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
-import Ouroboros.Consensus.Peras.Cert.Inclusion (PerasCertInclusionView, mkPerasCertInclusionView)
+import Ouroboros.Consensus.Peras.Cert.Inclusion
+  ( PerasCertInclusionView
+  , mkPerasCertInclusionView
+  )
 import Ouroboros.Consensus.Peras.Context
   ( LedgerStateHeaderStateSupportsPerasVoting (resolveRoundNo)
   , PerasEpochContextResolver
@@ -401,7 +403,6 @@ getPerasVotingView ::
   ( BlockSupportsPeras blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
   , IOLike m
-  , LedgerSupportsPeras blk
   , ConsensusProtocol (BlockProtocol blk)
   , GetHeader blk
   , HasHardForkHistory blk
@@ -440,7 +441,6 @@ getPerasCertInclusionView ::
   ( IOLike m
   , BlockSupportsPeras blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
-  , LedgerSupportsPeras blk
   ) =>
   PerasRoundNo ->
   ChainDbEnv m blk ->
@@ -510,12 +510,12 @@ waitForImmutableBlock CDB{cdbImmutableDB} targetRealPoint = do
     result@Right{} -> pure result
 
 getLatestPerasCertOnChainRound ::
-  (IOLike m, LedgerSupportsPeras blk) =>
+  IOLike m =>
   ChainDbEnv m blk ->
   STM m (Maybe PerasRoundNo)
 getLatestPerasCertOnChainRound CDB{..} = do
-  volatileLedger <- ledgerState <$> LedgerDB.getVolatileTip cdbLedgerDB
-  pure (getLatestPerasCertRound volatileLedger)
+  strictMaybeToMaybe . latestPerasCertOnChainRound
+    <$> LedgerDB.getVolatileTip cdbLedgerDB
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent

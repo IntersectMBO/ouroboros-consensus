@@ -89,7 +89,18 @@ newtype PerasRoundNo
   }
   deriving Show via Quiet PerasRoundNo
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, Num, Bounded, NoThunks, Serialise, NFData, ToCBOR, FromCBOR)
+  deriving newtype
+    ( Enum
+    , Eq
+    , Ord
+    , Num
+    , Bounded
+    , NoThunks
+    , NFData
+    , Serialise
+    , ToCBOR
+    , FromCBOR
+    )
 
 instance Condense PerasRoundNo where
   condense = show . unPerasRoundNo

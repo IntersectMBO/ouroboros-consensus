@@ -10,18 +10,10 @@ where
 import Cardano.Ledger.Coin (knownNonZeroCoin)
 import Cardano.Ledger.State (PoolDistr (..))
 import qualified Data.Map as Map
-import Ouroboros.Consensus.Block.SupportsPeras (PerasRoundNo)
 import Ouroboros.Consensus.Ledger.Abstract (LedgerState)
 
 -- | Extract Peras information stored in the ledger state
 class LedgerSupportsPeras blk where
-  -- | Extract the round number of the latest Peras certificate stored in the
-  -- given ledger state (if any). This is needed to coordinate the end of a
-  -- cooldown period.
-  getLatestPerasCertRound :: LedgerState blk mk -> Maybe PerasRoundNo
-  default getLatestPerasCertRound :: LedgerState blk mk -> Maybe PerasRoundNo
-  getLatestPerasCertRound _ = Nothing
-
   -- | Extract the stake distribution from the given ledger state.
   -- PRECONDITION: this function will only return a meaningful result if the
   -- ledger state is from a block that supports Peras

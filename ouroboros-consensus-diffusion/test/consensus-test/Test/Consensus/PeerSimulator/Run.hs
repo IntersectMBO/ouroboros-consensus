@@ -30,7 +30,6 @@ import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
@@ -170,7 +169,13 @@ debugScheduler conf = conf{scDebug = True}
 -- Execution is started asynchronously, returning an action that kills the thread,
 -- to allow extraction of a potential exception.
 startChainSyncConnectionThread ::
-  (IOLike m, MonadTimer m, LedgerSupportsProtocol blk, ShowProxy blk, ShowProxy (Header blk)) =>
+  ( IOLike m
+  , MonadTimer m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , ShowProxy blk
+  , ShowProxy (Header blk)
+  ) =>
   ResourceRegistry m ->
   Tracer m (TraceEvent blk) ->
   TopLevelConfig blk ->
@@ -415,6 +420,7 @@ startNode ::
   , MonadTime m
   , MonadTimer m
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , ShowProxy blk
   , ShowProxy (Header blk)
   , BlockSupportsDiffusionPipelining blk
@@ -559,7 +565,6 @@ nodeLifecycle ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk
@@ -620,7 +625,6 @@ runPointSchedule ::
   , ShowProxy (Header blk)
   , ConfigSupportsNode blk
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
   , ChainDB.SerialiseDiskConstraints blk
   , BlockSupportsDiffusionPipelining blk

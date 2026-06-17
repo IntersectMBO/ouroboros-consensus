@@ -654,10 +654,12 @@ testInitExtLedgerWithState st =
   let ledgerState = testInitLedgerWithState st
       headerState = genesisHeaderState ()
       perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+      latestPerasCertOnChainRound = SNothing
    in ExtLedgerState
         { ledgerState
         , headerState
         , perasEpochContextResolver
+        , latestPerasCertOnChainRound
         }
 
 data TestBlockLedgerConfig = TestBlockLedgerConfig

@@ -776,6 +776,7 @@ mkApps ::
   , Exception e
   , NFData e
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , ShowProxy blk
   , ShowProxy (Header blk)
   , ShowProxy (TxId (GenTx blk))

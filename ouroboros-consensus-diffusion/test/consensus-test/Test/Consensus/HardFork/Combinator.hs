@@ -78,6 +78,7 @@ import Test.Util.HardFork.Future
 import Test.Util.SanityCheck (prop_sanityChecks)
 import Test.Util.Slots (NumSlots (..))
 import Test.Util.Time (dawnOfTime)
+import Data.Maybe.Strict (StrictMaybe(..))
 
 tests :: TestTree
 tests =
@@ -256,10 +257,13 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
                   initHardForkState
                     (WrapChainDepState initChainDepState)
               perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+              latestPerasCertOnChainRound =
+                SNothing
            in ExtLedgerState
                 { ledgerState
                 , headerState
                 , perasEpochContextResolver
+                , latestPerasCertOnChainRound
                 }
       }
 

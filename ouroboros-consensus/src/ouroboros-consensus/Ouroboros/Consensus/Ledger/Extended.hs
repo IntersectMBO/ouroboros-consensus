@@ -35,11 +35,14 @@ module Ouroboros.Consensus.Ledger.Extended
   , Ticked (..)
   ) where
 
+import Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Control.DeepSeq (NFData)
 import Control.Monad.Except
+import Control.Monad.Trans.Except (except)
 import Data.Functor ((<&>))
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy
 import Data.Typeable
 import GHC.Generics (Generic)
@@ -51,11 +54,14 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Context
-  ( PerasEpochContextResolver
+  ( LedgerStateHeaderStateSupportsPerasVoting (..)
+  , PerasEpochContextNotFoundForRound
+  , PerasEpochContextResolver
   , PerasEpochContextResolverHandle (..)
   )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Util.CBOR (decodeStrictMaybe, encodeStrictMaybe)
 import Ouroboros.Consensus.Util.IOLike (MonadSTM (STM))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -66,11 +72,25 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 data ExtValidationError blk
   = ExtValidationErrorLedger !(LedgerErr LedgerState blk)
   | ExtValidationErrorHeader !(HeaderError blk)
+  | ExtValidationErrorPerasEpochContextResolver !PerasEpochContextNotFoundForRound
+  | ExtValidationErrorPerasCertInBlock !(PerasError blk)
   deriving Generic
 
-deriving instance LedgerSupportsProtocol blk => Eq (ExtValidationError blk)
-deriving instance LedgerSupportsProtocol blk => NoThunks (ExtValidationError blk)
-deriving instance LedgerSupportsProtocol blk => Show (ExtValidationError blk)
+deriving instance
+  ( Eq (PerasError blk)
+  , LedgerSupportsProtocol blk
+  ) =>
+  Eq (ExtValidationError blk)
+deriving instance
+  ( NoThunks (PerasError blk)
+  , LedgerSupportsProtocol blk
+  ) =>
+  NoThunks (ExtValidationError blk)
+deriving instance
+  ( Show (PerasError blk)
+  , LedgerSupportsProtocol blk
+  ) =>
+  Show (ExtValidationError blk)
 
 -- | Extended ledger state
 --
@@ -79,6 +99,7 @@ data ExtLedgerState blk mk = ExtLedgerState
   { ledgerState :: !(LedgerState blk mk)
   , headerState :: !(HeaderState blk)
   , perasEpochContextResolver :: !(PerasEpochContextResolver blk)
+  , latestPerasCertOnChainRound :: !(StrictMaybe PerasRoundNo)
   }
   deriving Generic
 
@@ -161,6 +182,7 @@ data instance Ticked ExtLedgerState blk mk = TickedExtLedgerState
   , ledgerView :: LedgerView (BlockProtocol blk)
   , tickedHeaderState :: Ticked (HeaderState blk)
   , tickedPerasEpochContextResolver :: PerasEpochContextResolver blk
+  , tickedLatestPerasCertOnChainRound :: StrictMaybe PerasRoundNo
   }
 
 instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState blk) where
@@ -171,37 +193,49 @@ instance
   , Show (PerasEpochContextResolver blk)
   , Eq (PerasEpochContextResolver blk)
   , NoThunks (PerasEpochContextResolver blk)
+  , Show (PerasError blk)
+  , Eq (PerasError blk)
+  , NoThunks (PerasError blk)
   ) =>
   IsLedger ExtLedgerState blk
   where
   type LedgerErr ExtLedgerState blk = ExtValidationError blk
 
-  applyChainTickLedgerResult evs cfg slot (ExtLedgerState ledger header perasResolver) =
-    castLedgerResult ledgerResult <&> \tickedLedgerState ->
-      let ledgerView :: LedgerView (BlockProtocol blk)
-          ledgerView = protocolLedgerView lcfg tickedLedgerState
+  applyChainTickLedgerResult
+    evs
+    cfg
+    slot
+    (ExtLedgerState ledger header perasResolver latestPerasCertOnChainRound) =
+      castLedgerResult ledgerResult <&> \tickedLedgerState ->
+        let ledgerView :: LedgerView (BlockProtocol blk)
+            ledgerView = protocolLedgerView lcfg tickedLedgerState
 
-          tickedHeaderState :: Ticked (HeaderState blk)
-          tickedHeaderState =
-            tickHeaderState
-              (configConsensus $ getExtLedgerCfg cfg)
-              ledgerView
-              slot
-              header
-       in TickedExtLedgerState{..}
-   where
-    lcfg :: LedgerConfig blk
-    lcfg = configLedger $ getExtLedgerCfg cfg
+            tickedHeaderState :: Ticked (HeaderState blk)
+            tickedHeaderState =
+              tickHeaderState
+                (configConsensus $ getExtLedgerCfg cfg)
+                ledgerView
+                slot
+                header
+         in TickedExtLedgerState{..}
+     where
+      lcfg :: LedgerConfig blk
+      lcfg = configLedger $ getExtLedgerCfg cfg
 
-    ledgerResult = applyChainTickLedgerResult evs lcfg slot ledger
+      ledgerResult = applyChainTickLedgerResult evs lcfg slot ledger
 
-    -- [TODO EPOCH CONTEXT PLUMBING/UPDATING] We need to understand if this needs extra
-    -- care or not.
-    tickedPerasEpochContextResolver = perasResolver
+      -- [TODO EPOCH CONTEXT PLUMBING/UPDATING] We need to understand if this needs extra
+      -- care or not.
+      tickedPerasEpochContextResolver = perasResolver
+      tickedLatestPerasCertOnChainRound = latestPerasCertOnChainRound
 
 applyHelper ::
   forall blk.
-  (HasCallStack, LedgerSupportsProtocol blk) =>
+  ( HasCallStack
+  , LedgerSupportsProtocol blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
+  ) =>
   ( HasCallStack =>
     ComputeLedgerEvents ->
     LedgerCfg LedgerState blk ->
@@ -233,13 +267,59 @@ applyHelper f opts cfg blk TickedExtLedgerState{..} = do
         ledgerView
         (getHeader blk)
         tickedHeaderState
+
   -- [TODO EPOCH CONTEXT PLUMBING/UPDATING] We need to understand if this needs extra care or not.
   let perasResolver = tickedPerasEpochContextResolver
-  pure $ (\l -> ExtLedgerState l hdr perasResolver) <$> castLedgerResult ledgerResult
+
+  -- Update the latest Peras certificate round if the new block contains a
+  -- certificate from a round more recent than the currently cached one.
+  latestPerasCertOnChainRound <-
+    case getPerasCertInBlock blk of
+      -- The block does not contain a Peras certificate => keep the previous one
+      Nothing -> do
+        pure tickedLatestPerasCertOnChainRound
+      -- The block contains a Peras certificate => make sure it is valid,
+      -- extract its round number, and compare it with the previously stored one
+      Just certInBlock -> do
+        certInBlockRound <-
+          validatePerasCertAndExtractRoundNo
+            perasResolver
+            certInBlock
+        case tickedLatestPerasCertOnChainRound of
+          SNothing ->
+            pure (SJust certInBlockRound)
+          SJust prevLatestCertOnChainRound ->
+            pure (SJust (certInBlockRound `max` prevLatestCertOnChainRound))
+  pure $
+    (\l -> ExtLedgerState l hdr perasResolver latestPerasCertOnChainRound)
+      <$> castLedgerResult ledgerResult
+
+-- | Validate a given Peras certificate and extract its round number.
+validatePerasCertAndExtractRoundNo ::
+  forall blk.
+  ( BlockSupportsPeras blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
+  ) =>
+  PerasEpochContextResolver blk ->
+  PerasCert blk ->
+  Except (LedgerErr ExtLedgerState blk) PerasRoundNo
+validatePerasCertAndExtractRoundNo perasResolver cert = do
+  let roundNo = getPerasCertRound cert
+  context <-
+    withExcept ExtValidationErrorPerasEpochContextResolver $
+      except $
+        resolveRoundNo perasResolver roundNo
+  validatedCert <-
+    withExcept ExtValidationErrorPerasCertInBlock $
+      except $
+        verifyPerasCert context cert
+  pure (getPerasCertRound validatedCert)
 
 instance
   ( GetBlockKeySets blk
   , LedgerSupportsProtocol blk
+  , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
   , Show (PerasEpochContextResolver blk)
   , Eq (PerasEpochContextResolver blk)
   , NoThunks (PerasEpochContextResolver blk)
@@ -253,7 +333,8 @@ instance
     applyHelper applyBlockLedgerResult
 
   reapplyBlockLedgerResult evs cfg blk TickedExtLedgerState{..} =
-    (\l -> ExtLedgerState l hdr perasResolver) <$> castLedgerResult ledgerResult
+    (\l -> ExtLedgerState l hdr perasResolver latestPerasCertOnChainRound)
+      <$> castLedgerResult ledgerResult
    where
     ledgerResult =
       reapplyBlockLedgerResult
@@ -270,6 +351,7 @@ instance
 
     -- [TODO EPOCH CONTEXT PLUMBING/UPDATING] We need to understand if this needs extra care or not.
     perasResolver = tickedPerasEpochContextResolver
+    latestPerasCertOnChainRound = tickedLatestPerasCertOnChainRound
 
 {-------------------------------------------------------------------------------
   Serialisation
@@ -287,18 +369,27 @@ encodeExtLedgerState
   encodeChainDepState
   encodeAnnTip
   encodePerasEpochContextResolver
-  ExtLedgerState{ledgerState, headerState, perasEpochContextResolver} =
+  ExtLedgerState
+    { ledgerState
+    , headerState
+    , perasEpochContextResolver
+    , latestPerasCertOnChainRound
+    } =
     mconcat
-      [ encodeListLen 3
+      [ encodeListLen 4
       , encodeLedgerState ledgerState
       , encodeHeaderState' headerState
       , encodePerasEpochContextResolver perasEpochContextResolver
+      , encodeLatestPerasCertOnChainRound latestPerasCertOnChainRound
       ]
    where
     encodeHeaderState' =
       encodeHeaderState
         encodeChainDepState
         encodeAnnTip
+
+    encodeLatestPerasCertOnChainRound :: StrictMaybe PerasRoundNo -> Encoding
+    encodeLatestPerasCertOnChainRound = encodeStrictMaybe toCBOR
 
 encodeDiskExtLedgerState ::
   forall blk.
@@ -326,16 +417,26 @@ decodeExtLedgerState
   decodeChainDepState
   decodeAnnTip
   decodePerasEpochContextResolver = do
-    decodeListLenOf 3
+    decodeListLenOf 4
     ledgerState <- decodeLedgerState
     headerState <- decodeHeaderState'
     perasEpochContextResolver <- decodePerasEpochContextResolver
-    return ExtLedgerState{ledgerState, headerState, perasEpochContextResolver}
+    latestPerasCertOnChainRound <- decodeLatestPerasCertOnChainRound
+    return
+      ExtLedgerState
+        { ledgerState
+        , headerState
+        , perasEpochContextResolver
+        , latestPerasCertOnChainRound
+        }
    where
     decodeHeaderState' =
       decodeHeaderState
         decodeChainDepState
         decodeAnnTip
+
+    decodeLatestPerasCertOnChainRound :: forall s. Decoder s (StrictMaybe PerasRoundNo)
+    decodeLatestPerasCertOnChainRound = decodeStrictMaybe fromCBOR
 
 decodeDiskExtLedgerState ::
   forall blk.
@@ -360,57 +461,60 @@ instance
   (NoThunks (TxIn blk), NoThunks (TxOut blk), HasLedgerTables LedgerState blk) =>
   HasLedgerTables ExtLedgerState blk
   where
-  projectLedgerTables (ExtLedgerState lstate _ _) =
+  projectLedgerTables (ExtLedgerState lstate _ _ _) =
     projectLedgerTables lstate
-  withLedgerTables (ExtLedgerState lstate hstate perasResolver) tables =
+  withLedgerTables (ExtLedgerState lstate hstate perasResolver latestPerasCertOnChainRound) tables =
     ExtLedgerState
       (lstate `withLedgerTables` tables)
       hstate
       perasResolver
+      latestPerasCertOnChainRound
 
 instance
   (NoThunks (TxIn blk), NoThunks (TxOut blk), HasLedgerTables (Ticked LedgerState) blk) =>
   HasLedgerTables (Ticked ExtLedgerState) blk
   where
-  projectLedgerTables (TickedExtLedgerState lstate _view _hstate _perasResolver) =
+  projectLedgerTables (TickedExtLedgerState lstate _view _hstate _perasResolver _latestPerasCertOnChainRound) =
     projectLedgerTables lstate
   withLedgerTables
-    (TickedExtLedgerState lstate view hstate perasResolver)
+    (TickedExtLedgerState lstate view hstate perasResolver latestPerasCertOnChainRound)
     tables =
       TickedExtLedgerState
         (lstate `withLedgerTables` tables)
         view
         hstate
         perasResolver
+        latestPerasCertOnChainRound
 
 instance
   CanStowLedgerTables (LedgerState blk) =>
   CanStowLedgerTables (ExtLedgerState blk)
   where
-  stowLedgerTables (ExtLedgerState lstate hstate perasResolver) =
-    ExtLedgerState (stowLedgerTables lstate) hstate perasResolver
+  stowLedgerTables (ExtLedgerState lstate hstate perasResolver latestPerasCertOnChainRound) =
+    ExtLedgerState (stowLedgerTables lstate) hstate perasResolver latestPerasCertOnChainRound
 
-  unstowLedgerTables (ExtLedgerState lstate hstate perasResolver) =
-    ExtLedgerState (unstowLedgerTables lstate) hstate perasResolver
+  unstowLedgerTables (ExtLedgerState lstate hstate perasResolver latestPerasCertOnChainRound) =
+    ExtLedgerState (unstowLedgerTables lstate) hstate perasResolver latestPerasCertOnChainRound
 
 instance
   CanUpgradeLedgerTables LedgerState blk =>
   CanUpgradeLedgerTables ExtLedgerState blk
   where
-  upgradeTables (ExtLedgerState st0 _ _) (ExtLedgerState st1 _ _) =
+  upgradeTables (ExtLedgerState st0 _ _ _) (ExtLedgerState st1 _ _ _) =
     upgradeTables st0 st1
 
 instance
   (txout ~ TxOut blk, IndexedMemPack LedgerState blk txout) =>
   IndexedMemPack ExtLedgerState blk txout
   where
-  indexedTypeName p (ExtLedgerState st _ _) = indexedTypeName p st
-  indexedPackedByteCount (ExtLedgerState st _ _) = indexedPackedByteCount st
-  indexedPackM (ExtLedgerState st _ _) = indexedPackM st
-  indexedUnpackM (ExtLedgerState st _ _) = indexedUnpackM st
+  indexedTypeName p (ExtLedgerState st _ _ _) = indexedTypeName p st
+  indexedPackedByteCount (ExtLedgerState st _ _ _) = indexedPackedByteCount st
+  indexedPackM (ExtLedgerState st _ _ _) = indexedPackM st
+  indexedUnpackM (ExtLedgerState st _ _ _) = indexedUnpackM st
 
 instance LedgerTablesAreTrivial LedgerState blk => LedgerTablesAreTrivial ExtLedgerState blk where
-  convertMapKind (ExtLedgerState st hst perasResolver) = ExtLedgerState (convertMapKind st) hst perasResolver
+  convertMapKind (ExtLedgerState st hst perasResolver latestPerasCertOnChainRound) =
+    ExtLedgerState (convertMapKind st) hst perasResolver latestPerasCertOnChainRound
 
 instance SerializeTablesWithHint LedgerState blk => SerializeTablesWithHint ExtLedgerState blk where
   decodeTablesWithHint st = decodeTablesWithHint (ledgerState st)
