@@ -299,7 +299,7 @@ instance Serialise TPraosState where
 
 data instance Ticked TPraosState = TickedChainDepState
   { tickedTPraosStateChainDepState :: SL.ChainDepState
-  , tickedTPraosStateLedgerView :: SL.LedgerView
+  , tickedTPraosStateLedgerView :: SL.TPraosLedgerView
   }
 
 instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
@@ -307,7 +307,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type IsLeader (TPraos c) = TPraosIsLeader c
   type CanBeLeader (TPraos c) = PraosCanBeLeader c
   type TiebreakerView (TPraos c) = PraosTiebreakerView c
-  type LedgerView (TPraos c) = SL.LedgerView
+  type LedgerView (TPraos c) = SL.TPraosLedgerView
   type ValidationErr (TPraos c) = SL.ChainTransitionError c
   type ValidateView (TPraos c) = TPraosValidateView c
 
@@ -350,7 +350,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
    where
     chainState = tickedTPraosStateChainDepState cs
     lv = tickedTPraosStateLedgerView cs
-    d = SL.lvD lv
+    d = SL.tplvD lv
     asc = tpraosLeaderF $ tpraosParams cfg
     firstSlot =
       firstSlotOfEpochOfSlot
@@ -365,7 +365,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
     rho = VRF.evalCertified () rho' praosCanBeLeaderSignKeyVRF
     y = VRF.evalCertified () y' praosCanBeLeaderSignKeyVRF
 
-    SL.GenDelegs dlgMap = SL.lvGenDelegs lv
+    SL.GenDelegs dlgMap = SL.tplvGenDelegs lv
 
   tickChainDepState
     cfg@TPraosConfig{..}
@@ -437,7 +437,7 @@ meetsLeaderThreshold ::
   Bool
 meetsLeaderThreshold
   TPraosConfig{tpraosParams}
-  SL.LedgerView{lvPoolDistr}
+  SL.TPraosLedgerView{tplvPoolDistr}
   keyHash
   certNat =
     SL.checkLeaderValue
@@ -445,7 +445,7 @@ meetsLeaderThreshold
       r
       (tpraosLeaderF tpraosParams)
    where
-    SL.PoolDistr poolDistr _totalActiveStake = lvPoolDistr
+    SL.PoolDistr poolDistr _totalActiveStake = tplvPoolDistr
     r =
       maybe 0 SL.individualPoolStake $
         Map.lookup keyHash poolDistr
