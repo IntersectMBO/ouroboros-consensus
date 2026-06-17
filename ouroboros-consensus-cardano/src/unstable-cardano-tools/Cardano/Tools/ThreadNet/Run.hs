@@ -34,6 +34,7 @@ import Cardano.Ledger.BaseTypes (TxIx (..))
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Keys as Ledger
 import qualified Cardano.Ledger.Shelley.API as SL
+import Cardano.Ledger.Shelley.Transition (tcShelleyGenesisL)
 import Cardano.Ledger.Val (Val (coin, (<->)), inject)
 import Cardano.Node.Protocol.Shelley (readLeaderCredentials)
 import Cardano.Node.Types (ProtocolFilepaths (..))
@@ -65,29 +66,32 @@ import Ouroboros.Consensus.BlockchainTime (mkSlotLength)
 import Ouroboros.Consensus.Cardano.Block
   ( CardanoBlock
   , GenTx (GenTxConway, GenTxDijkstra)
-  , HardForkLedgerConfig (..)
   , LedgerState (LedgerStateConway, LedgerStateDijkstra)
   , ShelleyBasedEra
   , StandardCrypto
   )
 import Ouroboros.Consensus.Cardano.Condense ()
-import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams, protocolInfoCardano)
-import Ouroboros.Consensus.Config (TopLevelConfig (topLevelConfigLedger))
+import Ouroboros.Consensus.Cardano.Node
+  ( CardanoProtocolParams (..)
+  , protocolInfoCardano
+  )
+import Ouroboros.Consensus.Config (TopLevelConfig)
 import Ouroboros.Consensus.Ledger.Abstract (ValuesMK, getValuesMK)
-import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..), ProtocolInfo (pInfoConfig))
+import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..), unCoreNodeId)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
   ( LedgerTables (getLedgerTables)
   , ShelleyBlock
-  , ShelleyPartialLedgerConfig (shelleyLedgerConfig)
   , mkShelleyTx
-  , shelleyLedgerGenesis
   )
 import qualified Ouroboros.Consensus.Shelley.Ledger.Ledger as SL
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (sgEpochLength))
 import System.Exit (die)
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as MockFS
+import qualified System.FS.Sim.STM as Sim
 import System.IO (hClose, hFlush, hPutStrLn, openFile)
 import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..))
 import Test.Cardano.Ledger.Shelley.Generator.ShelleyEraGen ()
@@ -192,25 +196,10 @@ runThreadNet args@RunThreadNetArgs{..} =
 
     -- TODO(bladyjoker): Only to extract slot/epoch info
     firstCoreNode = maybe (error $ show ("No nodes specified", callStack)) fst $ uncons (tnCoreNodes rtnaThreadNet)
-    (pinfo, _) = protocolInfoCardano @_ @IO (cnCardanoProtocolParams firstCoreNode)
 
     shelleyGenesis :: ShelleyGenesis =
-      shelleyLedgerGenesis
-        . shelleyLedgerConfig
-        . ( \( CardanoLedgerConfig
-                 _cfgByron
-                 cfgShelley
-                 _cfgAllegra
-                 _cfgMary
-                 _cfgAlonzo
-                 _cfgBabbage
-                 _cfgConway
-                 _cfgDijkstra
-               ) -> cfgShelley
-          )
-        . topLevelConfigLedger
-        . pInfoConfig
-        $ pinfo
+      cardanoLedgerTransitionConfig (cnCardanoProtocolParams firstCoreNode)
+        ^. tcShelleyGenesisL
     slotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength shelleyGenesis
     epochLength = sgEpochLength shelleyGenesis
 
@@ -230,14 +219,16 @@ runThreadNet args@RunThreadNetArgs{..} =
       testConfig
       testConfigB
       TestConfigMB
-        { nodeInfo = \(CoreNodeId ix) ->
-            let (protocolInfo, mkBlockForging) =
-                  protocolInfoCardano . cnCardanoProtocolParams . (!! fromIntegral ix) . tnCoreNodes $ rtnaThreadNet
-             in TestNodeInitialization
-                  { tniProtocolInfo = protocolInfo
-                  , tniCrucialTxs = []
-                  , tniBlockForging = mkBlockForging nullTracer
-                  }
+        { nodeInfo = \(CoreNodeId ix) -> do
+            fs <- SomeHasFS <$> Sim.simHasFS' MockFS.empty
+            (protocolInfo, mkBlockForging) <-
+              protocolInfoCardano fs . cnCardanoProtocolParams . (!! fromIntegral ix) . tnCoreNodes $ rtnaThreadNet
+            pure
+              TestNodeInitialization
+                { tniProtocolInfo = protocolInfo
+                , tniCrucialTxs = []
+                , tniBlockForging = mkBlockForging nullTracer
+                }
         , mkRekeyM = Nothing
         }
 

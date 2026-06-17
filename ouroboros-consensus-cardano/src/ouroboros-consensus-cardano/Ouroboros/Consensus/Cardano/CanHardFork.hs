@@ -414,8 +414,9 @@ crossEraForecastByronToShelleyWrapper =
     | forecastFor < maxFor =
         return $
           WrapLedgerView $
-            SL.mkInitialShelleyLedgerView
-              (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
+            SL.forecastToTPraosLedgerView $
+              SL.mkInitialShelleyForecast
+                (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
     | otherwise =
         throwError $
           OutsideForecastRange

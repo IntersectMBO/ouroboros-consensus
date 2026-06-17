@@ -35,7 +35,6 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import Lens.Micro
-import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Byron.Ledger (LedgerState (..))
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
@@ -58,11 +57,13 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.PBFT
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace
-  , KESAgentContext
   )
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as MockFS
+import qualified System.FS.Sim.STM as Sim
 import Test.Consensus.Cardano.ProtocolInfo
   ( hardForkOnDefaultProtocolVersions
   , mkTestProtocolInfo
@@ -488,7 +489,7 @@ mkProtocolCardanoAndHardForkTxs ::
   ShelleyGenesis ->
   SL.Nonce ->
   Shelley.CoreNode c ->
-  TestNodeInitialization m (CardanoBlock c)
+  m (TestNodeInitialization m (CardanoBlock c))
 mkProtocolCardanoAndHardForkTxs
   pbftParams
   coreNodeId
@@ -497,12 +498,30 @@ mkProtocolCardanoAndHardForkTxs
   propPV
   genesisShelley
   initialNonce
-  coreNodeShelley =
-    TestNodeInitialization
-      { tniCrucialTxs = crucialTxs
-      , tniProtocolInfo = protocolInfo
-      , tniBlockForging = blockForging Tracer.nullTracer
-      }
+  coreNodeShelley = do
+    fs <- SomeHasFS <$> Sim.simHasFS' MockFS.empty
+    (setByronProtVer -> protocolInfo, blockForging) <-
+      mkTestProtocolInfo
+        fs
+        (coreNodeId, coreNodeShelley)
+        genesisShelley
+        propPV
+        initialNonce
+        genesisByron
+        generatedSecretsByron
+        (Just $ PBftSignatureThreshold 1) -- Trivialize the PBFT signature
+        -- window so that the forks induced by
+        -- the network partition are as deep
+        -- as possible.
+        -- This test only enters the Shelley era.
+        (SL.ProtVer shelleyMajorVersion 0)
+        hardForkOnDefaultProtocolVersions
+    pure
+      TestNodeInitialization
+        { tniCrucialTxs = crucialTxs
+        , tniProtocolInfo = protocolInfo
+        , tniBlockForging = blockForging Tracer.nullTracer
+        }
    where
     crucialTxs :: [GenTx (CardanoBlock c)]
     crucialTxs =
@@ -518,24 +537,6 @@ mkProtocolCardanoAndHardForkTxs
           genesisByron
           generatedSecretsByron
           propPV
-
-    protocolInfo :: ProtocolInfo (CardanoBlock c)
-    blockForging :: Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
-    (setByronProtVer -> protocolInfo, blockForging) =
-      mkTestProtocolInfo
-        (coreNodeId, coreNodeShelley)
-        genesisShelley
-        propPV
-        initialNonce
-        genesisByron
-        generatedSecretsByron
-        (Just $ PBftSignatureThreshold 1) -- Trivialize the PBFT signature
-        -- window so that the forks induced by
-        -- the network partition are as deep
-        -- as possible.
-        -- This test only enters the Shelley era.
-        (SL.ProtVer shelleyMajorVersion 0)
-        hardForkOnDefaultProtocolVersions
 
 {-------------------------------------------------------------------------------
   Constants

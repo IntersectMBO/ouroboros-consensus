@@ -63,7 +63,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
 
 import Cardano.Crypto.DSIGN (DSIGNAlgorithm (deriveVerKeyDSIGN), rawDeserialiseSignKeyDSIGN)
 import Cardano.Crypto.Hash.Class (hashToBytes)
-import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
@@ -97,9 +96,7 @@ import Cardano.Ledger.Core
   )
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Dijkstra.BlockBody
-  ( DijkstraBlockBody (DijkstraBlockBodyResolved)
-  , leiosCertBlockBodyL
-  , perasCertBlockBodyL
+  ( leiosCertBlockBodyL
   )
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
@@ -183,8 +180,8 @@ import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( EnvelopeCheckError
+  , ShelleyProtocolHeader
   , envelopeChecks
-  , mkHeaderView
   )
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Storage.LedgerDB
@@ -734,7 +731,7 @@ applyHelper ::
   ShelleyCompatible proto era =>
   ( SL.Globals ->
     SL.NewEpochState era ->
-    SL.Block SL.BHeaderView era ->
+    SL.Block (ShelleyProtocolHeader proto) era ->
     Either
       (SL.BlockTransitionError era)
       ( LedgerResult
@@ -761,10 +758,7 @@ applyHelper f cfg blk stBefore = do
     f
       globals
       tickedShelleyLedgerState
-      ( let b = shelleyBlockRaw blk
-            h' = mkHeaderView (SL.blockHeader b)
-         in SL.Block h' (SL.blockBody b)
-      )
+      (shelleyBlockRaw blk)
 
   let track ::
         LedgerState (ShelleyBlock proto era) ValuesMK ->
@@ -1013,7 +1007,17 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
 
 {-------------------------------------------------------------------------------
   ResolveLeiosBlock
+
+  Only Dijkstra carries Leios certificates; earlier Shelley-based eras get
+  the default no-op instance.
 -------------------------------------------------------------------------------}
+
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) ShelleyEra)
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AllegraEra)
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) MaryEra)
+instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AlonzoEra)
+instance ResolveLeiosBlock (ShelleyBlock (Praos c) BabbageEra)
+instance ResolveLeiosBlock (ShelleyBlock (Praos c) ConwayEra)
 
 instance
   forall c.
@@ -1066,11 +1070,7 @@ instance
             pure $ Just blk{shelleyBlockRaw = Core.Block hdr body'}
            where
             txSeq = toLeiosTxSeq @DijkstraEra eb
-            body' =
-              DijkstraBlockBodyResolved
-                txSeq
-                (body ^. leiosCertBlockBodyL)
-                (body ^. perasCertBlockBodyL)
+            body' = body & Core.txSeqBlockBodyL .~ txSeq
    where
     Core.Block hdr body = shelleyBlockRaw blk
 
@@ -1159,7 +1159,8 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
     case body ^. leiosCertBlockBodyL of
       SNothing -> Right blk
       SJust cert ->
-        case validateLeiosCertificate committee minCertificationThreshold cert of
+        -- FIXME: This would need to know what was signed now (from the previous header / chain dep state)
+        case validateLeiosCertificate committee minCertificationThreshold cert undefined of
           Left invalid -> Left invalid
           Right _total -> Right blk
    where

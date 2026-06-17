@@ -7,6 +7,7 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.PeerSelection () where
 
+import Cardano.Base.IP (unIPv4, unIPv6)
 import Cardano.Ledger.BaseTypes
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -56,14 +57,14 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
 
     relayToLedgerRelayAccessPoint :: SL.StakePoolRelay -> Maybe LedgerRelayAccessPoint
     relayToLedgerRelayAccessPoint (SL.SingleHostAddr (SJust (Port port)) (SJust ipv4) _) =
-      Just $ LedgerRelayAccessAddress (IPv4 ipv4) (fromIntegral port)
+      Just $ LedgerRelayAccessAddress (IPv4 (unIPv4 ipv4)) (fromIntegral port)
     relayToLedgerRelayAccessPoint
       ( SL.SingleHostAddr
           (SJust (Port port))
           SNothing
           (SJust ipv6)
         ) =
-        Just $ LedgerRelayAccessAddress (IPv6 ipv6) (fromIntegral port)
+        Just $ LedgerRelayAccessAddress (IPv6 (unIPv6 ipv6)) (fromIntegral port)
     -- no IP address or no port number
     relayToLedgerRelayAccessPoint (SL.SingleHostAddr SNothing _ _) = Nothing
     relayToLedgerRelayAccessPoint (SL.SingleHostAddr _ SNothing _) = Nothing

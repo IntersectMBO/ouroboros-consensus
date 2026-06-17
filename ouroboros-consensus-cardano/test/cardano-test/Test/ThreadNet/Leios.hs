@@ -103,6 +103,10 @@ import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import qualified Test.Cardano.Ledger.Alonzo.Examples as Alonzo
 import qualified Test.Cardano.Ledger.Conway.Examples as Conway
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as MockFS
+import qualified System.FS.Sim.STM as Sim
+import System.IO.Unsafe (unsafePerformIO)
 import qualified Test.Cardano.Ledger.Dijkstra.Examples as Dijkstra
 import qualified Test.Cardano.Ledger.Shelley.Examples as Shelley (leTranslationContext)
 import Test.Consensus.Cardano.ProtocolInfo (Era (Dijkstra), hardForkInto)
@@ -512,19 +516,24 @@ runThreadNet initSeed numSlots numCoreNodes joinPlan =
       testConfig
       testConfigB
       TestConfigMB
-        { nodeInfo = \(CoreNodeId nid) ->
-            let (protocolInfo, blockForging) = protocolInfoCardano (cardanoProtocolParams nid)
-             in TestNodeInitialization
-                  { tniProtocolInfo = protocolInfo
-                  , tniCrucialTxs = []
-                  , tniBlockForging = blockForging Tracer.nullTracer
-                  }
+        { nodeInfo = \(CoreNodeId nid) -> do
+            fs <- SomeHasFS <$> Sim.simHasFS' MockFS.empty
+            (protocolInfo, blockForging) <- protocolInfoCardano fs (cardanoProtocolParams nid)
+            pure
+              TestNodeInitialization
+                { tniProtocolInfo = protocolInfo
+                , tniCrucialTxs = []
+                , tniBlockForging = blockForging Tracer.nullTracer
+                }
         , mkRekeyM = Nothing
         }
   , protocolInfo0
   )
  where
-  protocolInfo0 = fst $ protocolInfoCardano @StandardCrypto @IO (cardanoProtocolParams (0 :: Word64))
+  protocolInfo0 = unsafePerformIO $ do
+    fs <- SomeHasFS <$> Sim.simHasFS' MockFS.empty
+    fst <$> protocolInfoCardano @StandardCrypto @IO fs (cardanoProtocolParams (0 :: Word64))
+  {-# NOINLINE protocolInfo0 #-}
 
   cardanoProtocolParams nid =
     CardanoProtocolParams

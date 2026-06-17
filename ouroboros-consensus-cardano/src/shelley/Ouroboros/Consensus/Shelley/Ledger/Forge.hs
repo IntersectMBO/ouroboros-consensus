@@ -13,13 +13,13 @@ import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.Core as Core (TopTx, Tx)
 import qualified Cardano.Ledger.Core as SL
   ( BlockBody
+  , blockBodySize
   , hashBlockBody
   , mkBasicBlockBody
   , txSeqBlockBodyL
   )
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
-import qualified Cardano.Ledger.Shelley.BlockBody as SL (bBodySize)
 import Cardano.Prelude (nonEmpty)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
@@ -85,7 +85,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       Just Refl -> decideLeios
       Nothing -> pure (Nothing, SNothing)
   let body = mkBody mayLeiosCert
-      actualBodySize = SL.bBodySize protocolVersion body
+      actualBodySize = SL.blockBodySize protocolVersion body
   hdr <-
     mkHeader @_ @(ProtoCrypto proto)
       hotKey

@@ -75,7 +75,6 @@ import qualified Control.Monad.Except as Exc
 import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
-import Data.Functor.Contravariant ((>$<))
 import Data.Functor.Identity (Identity (Identity))
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.List as List
@@ -265,7 +264,7 @@ data ThreadNetworkArgs m blk = ThreadNetworkArgs
   { tnaForgeEbbEnv :: Maybe (ForgeEbbEnv blk)
   , tnaFuture :: Future
   , tnaJoinPlan :: NodeJoinPlan
-  , tnaNodeInfo :: CoreNodeId -> TestNodeInitialization m blk
+  , tnaNodeInfo :: CoreNodeId -> m (TestNodeInitialization m blk)
   , tnaNumCoreNodes :: NumCoreNodes
   , tnaNumSlots :: NumSlots
   , tnaMessageDelay :: CalcMessageDelay blk
@@ -344,7 +343,6 @@ runThreadNetwork ::
   , MonadTimer m
   , RunNode blk
   , TxGen blk
-  , TracingConstraints blk
   , HasCallStack
   ) =>
   Tracer m (TraceThreadNet blk) ->
@@ -403,8 +401,8 @@ runThreadNetwork
       forM coreNodeIds $ \nid -> do
         -- assume they all start with the empty chain and the same initial
         -- ledger
-        let nodeInitData = mkProtocolInfo (CoreNodeId 0)
-            TestNodeInitialization{tniProtocolInfo} = nodeInitData
+        nodeInitData <- mkProtocolInfo (CoreNodeId 0)
+        let TestNodeInitialization{tniProtocolInfo} = nodeInitData
             ProtocolInfo{pInfoInitLedger} = tniProtocolInfo
             ExtLedgerState{ledgerState} = pInfoInitLedger
         v <-
@@ -417,8 +415,8 @@ runThreadNetwork
     let uedges = edgesNodeTopology nodeTopology
     edgeStatusVars <- fmap (Map.fromList . concat) $ do
       -- assume they all use the same CodecConfig
-      let nodeInitData = mkProtocolInfo (CoreNodeId 0)
-          TestNodeInitialization{tniProtocolInfo} = nodeInitData
+      nodeInitData <- mkProtocolInfo (CoreNodeId 0)
+      let TestNodeInitialization{tniProtocolInfo} = nodeInitData
           ProtocolInfo{pInfoConfig} = tniProtocolInfo
           codecConfig = configCodec pInfoConfig
       forM uedges $ \uedge -> do
@@ -525,15 +523,14 @@ runThreadNetwork
       nodeInfo
       nextInstrSlotVar =
         void $ forkLinkedThread sharedRegistry label $ do
-          loop 0 tniProtocolInfo tniBlockForging NodeRestart restarts0
+          TestNodeInitialization
+            { tniCrucialTxs
+            , tniProtocolInfo
+            , tniBlockForging
+            } <- mkProtocolInfo coreNodeId
+          loop tniCrucialTxs 0 tniProtocolInfo tniBlockForging NodeRestart restarts0
        where
         label = "vertex-" <> condense coreNodeId
-
-        TestNodeInitialization
-          { tniCrucialTxs
-          , tniProtocolInfo
-          , tniBlockForging
-          } = mkProtocolInfo coreNodeId
 
         restarts0 :: Map SlotNo NodeRestart
         restarts0 = Map.mapMaybe (Map.lookup coreNodeId) m
@@ -541,13 +538,14 @@ runThreadNetwork
           NodeRestarts m = nodeRestarts
 
         loop ::
+          [GenTx blk] ->
           SlotNo ->
           ProtocolInfo blk ->
           m [MkBlockForging m blk] ->
           NodeRestart ->
           Map SlotNo NodeRestart ->
           m ()
-        loop s pInfo mkBlockForging nr rs = do
+        loop tniCrucialTxs s pInfo mkBlockForging nr rs = do
           -- a registry solely for the resources of this specific node instance
           (again, finalChain, finalLdgr) <- withRegistry $ \nodeRegistry -> do
             -- change the node's key and prepare a delegation transaction if
@@ -624,7 +622,7 @@ runThreadNetwork
 
           case again of
             Nothing -> pure ()
-            Just (s', pInfo', blockForging', nr', rs') -> loop s' pInfo' blockForging' nr' rs'
+            Just (s', pInfo', blockForging', nr', rs') -> loop tniCrucialTxs s' pInfo' blockForging' nr' rs'
 
     -- \| Instrumentation: record the tip's block number at the onset of the
     -- slot.
