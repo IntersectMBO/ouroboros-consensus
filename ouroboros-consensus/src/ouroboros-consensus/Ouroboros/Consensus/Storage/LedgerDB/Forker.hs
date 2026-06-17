@@ -467,6 +467,9 @@ applyBlock ::
 applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b -> do
     cds <- headerStateChainDep . headerState <$> atomically (forkerGetLedgerState fo)
+    -- FIXME: This produces now a block that fails BBODY validation.
+    -- We had patched the hash computation in the past, but we want
+    -- to get rid of the inlining on the applyBlock path instead.
     b' <- resolveLeiosBlock leiosDb cds b
     withValues b' (return . Right . tickThenReapply evs cfg b')
   ApplyVal b -> do
@@ -497,11 +500,14 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
             -- let one through.
             -- FIXME: make this less fatal
             error "applyBlock: CertRB seen but no Leios committee for this era"
-        case validateLeiosBlockCert cm b of
+        case validateLeiosBlockCert cm cds b of
           Left invalid ->
             -- FIXME: make this less fatal
             error $ "applyBlock: invalid Leios cert: " <> show invalid
           Right validatedB -> do
+            -- FIXME: This produces now a block that fails BBODY validation.
+            -- We had patched the hash computation in the past, but we want
+            -- to get rid of the inlining on the applyBlock path instead.
             b' <- resolveLeiosBlock leiosDb cds validatedB
             withValues b' (return . Right . tickThenReapply evs cfg b')
       else
@@ -589,6 +595,8 @@ type ResolveBlock m blk = RealPoint blk -> m blk
 -- block types that do not carry such certificates, the default 'return
 -- blk' is correct.
 class ResolveLeiosBlock blk where
+  -- TODO: DRY with resolveLeiosBlockHdr and/or replace anyways by a
+  -- resolveLeiosClosure that yields [GenTx blk]
   resolveLeiosBlock ::
     Monad m =>
     LeiosDbConnection m ->

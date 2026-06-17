@@ -617,6 +617,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
         , triggerHardForkAlonzo
         , triggerHardForkBabbage
         , triggerHardForkConway
+        , triggerHardForkDijkstra
         }
     , cardanoLedgerTransitionConfig
     , cardanoCheckpoints
@@ -825,7 +826,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
   partialLedgerConfigConway =
     mkPartialLedgerConfigShelley
       transitionConfigConway
-      TriggerHardForkNotDuringThisExecution
+      (toTriggerHardFork triggerHardForkDijkstra)
 
   -- Dijkstra
 

@@ -56,7 +56,7 @@ import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.PBFT
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
-  ( KESAgentClientTrace
+  ( KESAgentContext
   )
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()

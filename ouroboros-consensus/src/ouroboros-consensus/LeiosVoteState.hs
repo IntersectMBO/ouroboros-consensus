@@ -1,10 +1,8 @@
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
 module LeiosVoteState (module LeiosVoteState) where
 
-import Cardano.Crypto.DSIGN (DSIGNAggregatable (aggregateSigsDSIGN))
 import qualified Cardano.Crypto.Leios as Leios
 import Control.Concurrent.Class.MonadSTM.Strict
   ( MonadSTM
@@ -22,15 +20,13 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import LeiosDemoTypes
-  ( Committee (..)
-  , EbHash (..)
+  ( Committee
   , LeiosPoint (..)
   , LeiosSignature
   , LeiosVote (..)
   , VoteInvalid (..)
-  , VoterId (..)
+  , VoterId
   , Weight
-  , encodeSignersBitfield
   , minCertificationThreshold
   , validateLeiosVote
   )
@@ -124,7 +120,17 @@ newLeiosVoteState getCommittee = do
                             Just _ -> pst'
                             Nothing
                               | totalW >= minCertificationThreshold ->
-                                  pst'{psCert = assembleCert committee pt pst'}
+                                  -- Voters were validated against this committee before
+                                  -- being added and the per-voter signatures already
+                                  -- passed individual verification, so aggregation must
+                                  -- succeed. TODO: replace 'error' with a tracer.
+                                  case Leios.aggregateLeiosCert committee (fmap snd pst'.psVoters) of
+                                    Left e ->
+                                      error $
+                                        "LeiosVoteState.addVote: aggregateLeiosCert "
+                                          <> "failed on validated votes; should not happen: "
+                                          <> show e
+                                    Right cert -> pst'{psCert = Just cert}
                               | otherwise -> pst'
                       writeTVar pointStates $! Map.insert pt pst'' states
                       pure $ Added weight pst''.psCert
@@ -138,29 +144,3 @@ newLeiosVoteState getCommittee = do
           states <- readTVar pointStates
           pure $ Map.lookup pt states >>= psCert
       }
-
--- | Build a 'Leios.LeiosCert' from a point's collected votes against
--- the given committee. Returns 'Nothing' if BLS aggregation of the
--- individual signatures fails (shouldn't happen with well-formed
--- BLS sigs).
-assembleCert :: Committee -> LeiosPoint -> PointState -> Maybe Leios.LeiosCert
-assembleCert committee pt pst =
-  case aggregateSigsDSIGN sigs of
-    Left _ -> Nothing
-    Right aggSig ->
-      Just
-        Leios.LeiosCert
-          { Leios.slotNo = pt.pointSlotNo
-          , Leios.endorserBlockHash = toLeiosEbHash pt.pointEbHash
-          , Leios.signers = encodeSignersBitfield committeeSize voterIdxs
-          , Leios.aggregatedSignature = aggSig
-          }
- where
-  committeeSize = length committee.voters
-
-  votersList = Map.toAscList pst.psVoters
-  voterIdxs = [fromIntegral (voterIndex vid) | (vid, _) <- votersList]
-  sigs = [s | (_, (_, s)) <- votersList]
-
-  -- Convert consensus's local 'EbHash' to 'cardano-crypto-leios'-flavoured 'Leios.EbHash'.
-  toLeiosEbHash (MkEbHash bs) = Leios.MkEbHash bs
