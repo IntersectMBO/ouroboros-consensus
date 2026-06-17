@@ -85,6 +85,7 @@ import Test.Util.Range
 import Test.Util.Shrink (andId, dropId)
 import Test.Util.Slots (NumSlots (..))
 import Test.Util.Time (dawnOfTime)
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 
 {-------------------------------------------------------------------------------
   Configuring tests
@@ -283,7 +284,12 @@ data BlockRejection blk = BlockRejection
   , brReason :: !(ExtValidationError blk)
   , brRejector :: !NodeId
   }
-  deriving Show
+
+deriving instance
+  ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  ) =>
+  Show (BlockRejection blk)
 
 data PropGeneralArgs blk = PropGeneralArgs
   { pgaBlockProperty :: blk -> Property

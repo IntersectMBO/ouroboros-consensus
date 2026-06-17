@@ -10,6 +10,7 @@ module Ouroboros.Consensus.Mock.Node.PBFT
   ) where
 
 import Cardano.Crypto.DSIGN
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Data.Bimap as Bimap
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -48,10 +49,12 @@ protocolInfoMockPBFT params eraParams =
         let ledgerState = genesisSimpleLedgerState addrDist
             headerState = genesisHeaderState S.empty
             perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+            latestPerasCertOnChainRound = SNothing
          in ExtLedgerState
               { ledgerState
               , headerState
               , perasEpochContextResolver
+              , latestPerasCertOnChainRound
               }
     }
  where

@@ -61,6 +61,7 @@ import Ouroboros.Consensus.Peras.Context
   )
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Data.Maybe.Strict (StrictMaybe)
 
 {-------------------------------------------------------------------------------
   Injection for a single block into a HardForkBlock
@@ -256,9 +257,9 @@ instance Inject (Flip ExtLedgerState mk) where
       ExtLedgerState
         { ledgerState = unFlip $ inject iidx (Flip ledgerState)
         , headerState = inject iidx headerState
-        , perasEpochContextResolver -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
-          =
-            undefined
+        , -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
+          perasEpochContextResolver = undefined
+        , latestPerasCertOnChainRound = undefined
         }
 
 {-------------------------------------------------------------------------------
@@ -289,6 +290,7 @@ injectInitialExtLedgerState cfg extLedgerState0 =
     { ledgerState = targetEraLedgerState
     , headerState = targetEraHeaderState
     , perasEpochContextResolver = targetEraPerasEpochContextResolver
+    , latestPerasCertOnChainRound = targetEraLatestPerasCertOnChainRound
     }
  where
   cfgs :: NP TopLevelConfig (x ': xs)
@@ -339,3 +341,7 @@ injectInitialExtLedgerState cfg extLedgerState0 =
 
   targetEraPerasEpochContextResolver :: PerasEpochContextResolver (HardForkBlock (x ': xs))
   targetEraPerasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver targetEraLedgerState targetEraHeaderState
+
+  targetEraLatestPerasCertOnChainRound :: StrictMaybe PerasRoundNo
+  targetEraLatestPerasCertOnChainRound = latestPerasCertOnChainRound extLedgerState0
+

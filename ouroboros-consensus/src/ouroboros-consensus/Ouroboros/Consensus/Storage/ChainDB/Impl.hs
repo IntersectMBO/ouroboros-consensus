@@ -58,7 +58,6 @@ import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState, mkPerasEpochContextResolverHandle)
 import Ouroboros.Consensus.Ledger.Inspect
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Cert.Inclusion (PerasCertInclusionViewHandle (..))
 import Ouroboros.Consensus.Peras.Context
@@ -107,7 +106,6 @@ withDB ::
   forall m blk a.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
@@ -125,7 +123,6 @@ openDB ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
@@ -142,7 +139,6 @@ openDBInternal ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk

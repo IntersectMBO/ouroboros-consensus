@@ -117,6 +117,7 @@ import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Assert
 import System.FS.API (SomeHasFS (..))
+import Cardano.Ledger.BaseTypes (StrictMaybe(..))
 
 {-------------------------------------------------------------------------------
   SerialiseHFC
@@ -944,16 +945,18 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
     let ledgerState = HardForkLedgerState st'
         headerState = initHeaderState
         perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+        latestPerasCertOnChainRound = SNothing
     pure
       ExtLedgerState
         { ledgerState
         , headerState
         , perasEpochContextResolver
+        , latestPerasCertOnChainRound
         }
    where
     initHeaderState :: HeaderState (CardanoBlock c)
     initLedgerState :: LedgerState (CardanoBlock c) ValuesMK
-    ExtLedgerState initLedgerState initHeaderState _ =
+    ExtLedgerState initLedgerState initHeaderState _ _ =
       injectInitialExtLedgerState cfg $
         initExtLedgerStateByron
 

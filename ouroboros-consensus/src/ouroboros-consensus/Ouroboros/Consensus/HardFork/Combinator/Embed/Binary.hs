@@ -30,6 +30,7 @@ import Ouroboros.Consensus.Peras.Context
   )
 import Ouroboros.Consensus.Protocol.Abstract (protocolSecurityParam)
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Data.Maybe.Strict (StrictMaybe(..))
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -115,10 +116,13 @@ protocolInfoBinary
                   ledgerStateHeaderStateMkPerasEpochContextResolver
                     ledgerState
                     headerState
+                latestPerasCertOnChainRound =
+                  SNothing
              in ExtLedgerState
                   { ledgerState
                   , headerState
                   , perasEpochContextResolver
+                  , latestPerasCertOnChainRound
                   }
         }
     , \tr -> alignWith alignBlockForging <$> blockForging1 tr <*> blockForging2 tr

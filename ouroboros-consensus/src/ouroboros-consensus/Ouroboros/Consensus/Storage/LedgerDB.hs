@@ -50,6 +50,7 @@ openDB ::
   ( IOLike m
   , LedgerSupportsProtocol blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , HasCallStack
   , HasHardForkHistory blk

@@ -213,16 +213,17 @@ fromShelleyLedgerExamples
         , shelleyLedgerState = leNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = LedgerTables EmptyMK
-        , shelleyLedgerLatestPerasCertRound = SNothing
         }
     chainDepState = TPraosState (NotOrigin 1) pleChainDepState
     extLedgerState =
       let headerState = genesisHeaderState chainDepState
           perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+          latestPerasCertOnChainRound = SNothing
        in ExtLedgerState
             { ledgerState
             , headerState
             , perasEpochContextResolver
+            , latestPerasCertOnChainRound
             }
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext
@@ -355,7 +356,6 @@ fromShelleyLedgerExamplesPraos
         , shelleyLedgerState = leNewEpochState
         , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
         , shelleyLedgerTables = emptyLedgerTables
-        , shelleyLedgerLatestPerasCertRound = SNothing
         }
     chainDepState =
       translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto)) $
@@ -363,10 +363,12 @@ fromShelleyLedgerExamplesPraos
     extLedgerState =
       let headerState = genesisHeaderState chainDepState
           perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+          latestPerasCertOnChainRound = SNothing
        in ExtLedgerState
             { ledgerState
             , headerState
             , perasEpochContextResolver
+            , latestPerasCertOnChainRound
             }
 
     ledgerConfig = exampleShelleyLedgerConfig leTranslationContext

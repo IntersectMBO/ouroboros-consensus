@@ -356,9 +356,9 @@ instance Isomorphic (Flip ExtLedgerState mk) where
       ExtLedgerState
         { ledgerState = unFlip $ project $ Flip ledgerState
         , headerState = project headerState
-        , perasEpochContextResolver -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
-          =
-            undefined
+        , -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
+          perasEpochContextResolver = undefined
+        , latestPerasCertOnChainRound = undefined
         }
 
   inject (Flip ExtLedgerState{..}) =
@@ -366,9 +366,9 @@ instance Isomorphic (Flip ExtLedgerState mk) where
       ExtLedgerState
         { ledgerState = unFlip $ inject $ Flip ledgerState
         , headerState = inject headerState
-        , perasEpochContextResolver -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
-          =
-            undefined
+        , -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
+          perasEpochContextResolver = undefined
+        , latestPerasCertOnChainRound = undefined
         }
 
 instance Isomorphic AnnTip where

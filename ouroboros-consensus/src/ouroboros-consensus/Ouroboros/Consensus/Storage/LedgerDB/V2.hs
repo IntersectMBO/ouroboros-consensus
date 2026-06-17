@@ -72,6 +72,7 @@ newtype SnapshotExc blk = SnapshotExc {getSnapshotFailure :: SnapshotFailure blk
 mkInitDb ::
   forall m blk backend.
   ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , HasHardForkHistory blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
   , Backend m backend blk

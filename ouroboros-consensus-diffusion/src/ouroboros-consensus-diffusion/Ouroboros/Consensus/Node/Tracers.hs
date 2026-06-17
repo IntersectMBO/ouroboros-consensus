@@ -202,10 +202,9 @@ showTracers ::
   , Show (CannotForge blk)
   , Show (TxMeasurePhase1 blk)
   , Show (TxMeasurePhase2 blk)
-  , Show (PerasVote blk)
-  , Show (PerasCert blk)
   , Show remotePeer
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   Tracer m String -> Tracers m remotePeer localPeer blk
 showTracers tr =
@@ -415,6 +414,7 @@ data TraceForgeEvent blk
 
 deriving instance
   ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , Eq blk
   , Eq (Validated (GenTx blk))
   , Eq (ForgeStateUpdateError blk)
@@ -425,6 +425,7 @@ deriving instance
   Eq (TraceForgeEvent blk)
 deriving instance
   ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , Show blk
   , Show (Validated (GenTx blk))
   , Show (ForgeStateUpdateError blk)

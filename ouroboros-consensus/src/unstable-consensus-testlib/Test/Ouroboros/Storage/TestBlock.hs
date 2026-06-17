@@ -65,7 +65,7 @@ module Test.Ouroboros.Storage.TestBlock
 
 import Cardano.Binary (DecoderError)
 import Cardano.Crypto.DSIGN
-import Cardano.Ledger.BaseTypes (unNonZero)
+import Cardano.Ledger.BaseTypes (unNonZero, StrictMaybe (..))
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
@@ -125,7 +125,7 @@ import Ouroboros.Consensus.Peras.Context
   , mockPerasEpochContextResolver
   , mockResolveRoundNo
   )
-import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCrypto, MockPerasVotingCommitteeScheme)
+import Ouroboros.Consensus.Peras.Crypto.Mock (MockPerasCrypto, MockPerasVotingCommitteeScheme, VotingCommitteeError)
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.State.Mock (ledgerStateHeaderStateMkMockPerasVotingCommitteeInput)
 import Ouroboros.Consensus.Peras.Vote.Mock
@@ -735,8 +735,7 @@ instance LedgerSupportsProtocol TestBlock where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
-instance LedgerSupportsPeras TestBlock where
-  getLatestPerasCertRound = latestPerasCertRound
+instance LedgerSupportsPeras TestBlock
 
 instance LedgerStateHeaderStateSupportsPerasVoting TestBlock where
   type PerasEpochContextResolver TestBlock = MockPerasEpochContextResolver TestBlock
@@ -783,10 +782,12 @@ testInitExtLedger =
   let ledgerState = testInitLedger
       headerState = genesisHeaderState ()
       perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+      latestPerasCertOnChainRound = SNothing
    in ExtLedgerState
         { ledgerState
         , headerState
         , perasEpochContextResolver
+        , latestPerasCertOnChainRound
         }
 
 -- Only for a single node
@@ -1017,6 +1018,8 @@ deriving instance ToExpr TestBlockOtherHeaderEnvelopeError
 deriving instance ToExpr (HeaderEnvelopeError TestBlock)
 deriving instance ToExpr BftValidationErr
 deriving instance ToExpr (ExtValidationError TestBlock)
+
+deriving anyclass instance ToExpr (VotingCommitteeError (MockPerasCrypto TestBlock) (MockPerasVotingCommitteeScheme TestBlock))
 
 deriving anyclass instance ToExpr FsPath
 deriving anyclass instance ToExpr BlocksPerFile

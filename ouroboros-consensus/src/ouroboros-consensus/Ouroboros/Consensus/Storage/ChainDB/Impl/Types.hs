@@ -394,7 +394,11 @@ data ChainDbEnv m blk = CDB
 -- (but avoid including @m@ because we cannot impose @Typeable m@ as a
 -- constraint and still have it work with the simulator)
 instance
-  (IOLike m, LedgerSupportsProtocol blk, BlockSupportsDiffusionPipelining blk) =>
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  , BlockSupportsDiffusionPipelining blk
+  ) =>
   NoThunks (ChainDbEnv m blk)
   where
   showTypeOf _ = "ChainDbEnv m " ++ show (typeRep (Proxy @blk))
@@ -542,7 +546,23 @@ data InvalidBlockInfo blk = InvalidBlockInfo
   { invalidBlockReason :: !(ExtValidationError blk)
   , invalidBlockSlotNo :: !SlotNo
   }
-  deriving (Eq, Show, Generic, NoThunks)
+
+deriving instance
+  ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  ) =>
+  Show (InvalidBlockInfo blk)
+deriving instance
+  ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  ) =>
+  Eq (InvalidBlockInfo blk)
+deriving instance
+  ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
+  ) =>
+  NoThunks (InvalidBlockInfo blk)
+deriving instance Generic (InvalidBlockInfo blk)
 
 {-------------------------------------------------------------------------------
   Blocks to add
@@ -796,9 +816,8 @@ data TraceEvent blk
 deriving instance
   ( Show (Header blk)
   , Show (TraceAddBlockEvent blk)
-  , Show (PerasVote blk)
-  , Show (PerasCert blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   ) =>
   Show (TraceEvent blk)
@@ -950,6 +969,7 @@ data TraceAddBlockEvent blk
 deriving instance
   ( Eq (Header blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , Eq (ReasonForSwitch (WithEmptyFragment (WeightedSelectView (BlockProtocol blk))))
   , Eq (ReasonForSwitch (SelectView (BlockProtocol blk)))
@@ -958,6 +978,7 @@ deriving instance
 deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , InspectLedger blk
   , Show (ReasonForSwitch (WithEmptyFragment (WeightedSelectView (BlockProtocol blk))))
   , Show (ReasonForSwitch (SelectView (BlockProtocol blk)))
@@ -977,11 +998,13 @@ data TraceValidationEvent blk
 deriving instance
   ( Eq (Header blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   Eq (TraceValidationEvent blk)
 deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   Show (TraceValidationEvent blk)
 
@@ -1011,11 +1034,13 @@ data TraceInitChainSelEvent blk
 deriving instance
   ( Eq (Header blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   Eq (TraceInitChainSelEvent blk)
 deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   ) =>
   Show (TraceInitChainSelEvent blk)
 

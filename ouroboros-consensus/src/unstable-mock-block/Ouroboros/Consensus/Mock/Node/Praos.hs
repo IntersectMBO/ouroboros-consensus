@@ -11,6 +11,7 @@ module Ouroboros.Consensus.Mock.Node.Praos
 
 import Cardano.Crypto.KES
 import Cardano.Crypto.VRF
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Data.Bifunctor (second)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -63,10 +64,12 @@ protocolInfoPraos numCoreNodes nid params eraParams eta0 evolvingStakeDist =
         let ledgerState = genesisSimpleLedgerState addrDist
             headerState = genesisHeaderState (PraosChainDepState [])
             perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+            latestPerasCertOnChainRound = SNothing
          in ExtLedgerState
               { ledgerState
               , headerState
               , perasEpochContextResolver
+              , latestPerasCertOnChainRound
               }
     }
  where

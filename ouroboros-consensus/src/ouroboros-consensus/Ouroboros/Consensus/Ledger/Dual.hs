@@ -538,6 +538,10 @@ dualExtValidationErrorMain ::
 dualExtValidationErrorMain = \case
   ExtValidationErrorLedger e -> ExtValidationErrorLedger (dualLedgerErrorMain e)
   ExtValidationErrorHeader e -> ExtValidationErrorHeader (castHeaderError e)
+  ExtValidationErrorPerasEpochContextResolver e -> ExtValidationErrorPerasEpochContextResolver e
+
+-- NOTE: the pattern below is redundant because PerasError (DualBlock m a) ~ VoidPerasError m
+-- ExtValidationErrorPerasCertInBlock e -> ExtValidationErrorPerasCertInBlock e
 
 {-------------------------------------------------------------------------------
   LedgerSupportsProtocol

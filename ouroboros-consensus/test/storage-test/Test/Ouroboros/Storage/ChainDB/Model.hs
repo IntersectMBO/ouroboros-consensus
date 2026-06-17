@@ -88,7 +88,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , wipeVolatileDB
   ) where
 
-import Cardano.Ledger.BaseTypes (unNonZero)
+import Cardano.Ledger.BaseTypes (strictMaybeToMaybe, unNonZero)
 import Codec.Serialise (Serialise, serialise)
 import Control.Monad (unless)
 import Control.Monad.Except (runExcept)
@@ -113,7 +113,6 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
 import Ouroboros.Consensus.Peras.Context
@@ -199,9 +198,8 @@ deriving instance
 
 deriving instance
   ( LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , Show (PerasEpochContextResolver blk)
-  , Show (PerasVote blk)
-  , Show (PerasCert blk)
   , Show blk
   ) =>
   Show (Model blk)
@@ -247,11 +245,13 @@ getBlockComponentByPoint blockComponent pt m =
     (`getBlockComponent` blockComponent) <$> getBlockByPoint pt m
 
 getLatestPerasCertOnChainRound ::
-  LedgerSupportsPeras blk =>
   Model blk ->
   Maybe PerasRoundNo
 getLatestPerasCertOnChainRound m = do
-  getLatestPerasCertRound (ledgerState (currentLedger m))
+  strictMaybeToMaybe
+    . latestPerasCertOnChainRound
+    . currentLedger
+    $ m
 
 hasBlockByPoint ::
   HasHeader blk =>
@@ -470,7 +470,7 @@ addBlock ::
   ( LedgerSupportsProtocol blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
   , LedgerTablesAreTrivial ExtLedgerState blk
-  , IsPerasCert (PerasCert blk) blk
+  , BlockSupportsPeras blk
   ) =>
   TopLevelConfig blk ->
   blk ->
@@ -502,9 +502,9 @@ addPerasCert ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
-  , Ord (PerasCert blk)
-  , IsPerasCert (PerasCert blk) blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
+  , Ord (PerasCert blk)
   ) =>
   TopLevelConfig blk ->
   WithArrivalTime (ValidatedPerasCert blk) ->
@@ -524,11 +524,10 @@ addPerasVote ::
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
   , Ord (PerasVote blk)
   , Ord (PerasCert blk)
   , PerasCert blk ~ MockPerasCert blk
-  , IsPerasVote (PerasVote blk) blk
-  , IsPerasCert (PerasCert blk) blk
   ) =>
   TopLevelConfig blk ->
   WithArrivalTime (ValidatedPerasVote blk) ->
@@ -548,8 +547,8 @@ chainSelection ::
   forall blk.
   ( LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
-  , IsPerasCert (PerasCert blk) blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
   ) =>
   TopLevelConfig blk ->
   Model blk ->
@@ -680,7 +679,7 @@ addBlocks ::
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
-  , IsPerasCert (PerasCert blk) blk
+  , BlockSupportsPeras blk
   ) =>
   TopLevelConfig blk ->
   [blk] ->
@@ -695,7 +694,7 @@ addBlockPromise ::
   , MonadSTM m
   , LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
-  , IsPerasCert (PerasCert blk) blk
+  , BlockSupportsPeras blk
   ) =>
   TopLevelConfig blk ->
   blk ->
@@ -720,7 +719,7 @@ updateLoE ::
   ( LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerSupportsProtocol blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
-  , IsPerasCert (PerasCert blk) blk
+  , BlockSupportsPeras blk
   ) =>
   TopLevelConfig blk ->
   AnchoredFragment blk ->
@@ -923,6 +922,7 @@ validate ::
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
   ) =>
   TopLevelConfig blk ->
   Model blk ->
@@ -987,7 +987,7 @@ validChains ::
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
-  , IsPerasCert (PerasCert blk) blk
+  , BlockSupportsPeras blk
   ) =>
   TopLevelConfig blk ->
   Model blk ->
@@ -1251,8 +1251,8 @@ wipeVolatileDB ::
   forall blk.
   ( LedgerSupportsProtocol blk
   , LedgerTablesAreTrivial ExtLedgerState blk
-  , IsPerasCert (PerasCert blk) blk
   , LedgerStateHeaderStateSupportsPerasVoting blk
+  , BlockSupportsPeras blk
   ) =>
   TopLevelConfig blk ->
   Model blk ->

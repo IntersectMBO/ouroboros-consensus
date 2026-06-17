@@ -61,6 +61,7 @@ import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Network.Magic (NetworkMagic (..))
+import Data.Maybe.Strict (StrictMaybe(..))
 
 {-------------------------------------------------------------------------------
   Credentials
@@ -217,11 +218,13 @@ protocolInfoByron
             ledgerState = initByronLedgerState genesisConfig Nothing
             headerState = genesisHeaderState S.empty
             perasEpochContextResolver = ledgerStateHeaderStateMkPerasEpochContextResolver ledgerState headerState
+            latestPerasCertOnChainRound = SNothing
            in
             ExtLedgerState
               { ledgerState
               , headerState
               , perasEpochContextResolver
+              , latestPerasCertOnChainRound
               }
       }
    where
