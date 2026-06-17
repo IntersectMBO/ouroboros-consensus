@@ -1423,6 +1423,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Node.Serialisation
     Ouroboros.Consensus.Shelley.Node.TPraos
     Ouroboros.Consensus.Shelley.Protocol.Abstract
+    Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
     Ouroboros.Consensus.Shelley.Protocol.Praos
     Ouroboros.Consensus.Shelley.Protocol.TPraos
     Ouroboros.Consensus.Shelley.ShelleyHFC
@@ -1432,6 +1433,7 @@ library cardano
     base,
     base-deriving-via,
     bytestring,
+    cardano-base,
     cardano-binary,
     cardano-crypto,
     cardano-crypto-class:cardano-crypto-class,
@@ -1458,6 +1460,7 @@ library cardano
     crypton,
     deepseq,
     formatting >=6.3 && <7.3,
+    fs-api,
     measures,
     mempack,
     microlens,
@@ -1619,6 +1622,7 @@ library unstable-shelley-testlib
     cardano-strict-containers,
     containers,
     contra-tracer,
+    fs-api,
     kes-agent,
     kes-agent-crypto,
     microlens,
@@ -1708,6 +1712,8 @@ library unstable-cardano-testlib
     cborg,
     containers,
     contra-tracer,
+    fs-api,
+    fs-sim,
     mempack,
     microlens,
     mtl,
@@ -1750,6 +1756,7 @@ test-suite cardano-test
     base16-bytestring,
     bytestring,
     cardano-crypto-class,
+    cardano-crypto-leios:{cardano-crypto-leios, testlib},
     cardano-ledger-allegra:testlib,
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
     cardano-ledger-api,
@@ -1771,6 +1778,8 @@ test-suite cardano-test
     deepseq,
     directory,
     filepath,
+    fs-api,
+    fs-sim,
     io-classes:strict-stm,
     io-sim,
     microlens,

@@ -1,6 +1,4 @@
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Hard fork eras.
@@ -18,9 +16,11 @@ module Ouroboros.Consensus.Shelley.HFEras
   , StandardShelleyBlock
   ) where
 
+import Cardano.Ledger.Dijkstra.Era (DijkstraEraBlockHeader (..))
 import Cardano.Protocol.Crypto
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
+import Ouroboros.Consensus.Protocol.Praos.Header (Header)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import Ouroboros.Consensus.Shelley.Eras
@@ -40,7 +40,6 @@ import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC ()
-import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 
 {-------------------------------------------------------------------------------
   Hard fork eras
@@ -80,44 +79,11 @@ instance
   TPraos.PraosCrypto c =>
   ShelleyCompatible (TPraos c) AlonzoEra
 
--- This instance is required since the ledger view forecast function for
--- Praos/Babbage still goes through the forecast for TPraos. Once this is
--- addressed, we could remove this instance.
-instance
-  (Praos.PraosCrypto c, TPraos.PraosCrypto c) =>
-  ShelleyCompatible (TPraos c) BabbageEra
-
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) BabbageEra
-
--- This instance is required since the ledger view forecast function for
--- Praos/Conway still goes through the forecast for TPraos. Once this is
--- addressed, we could remove this instance.
-instance
-  (Praos.PraosCrypto c, TPraos.PraosCrypto c) =>
-  ShelleyCompatible (TPraos c) ConwayEra
 
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) ConwayEra
 
--- This instance is required since the ledger view forecast function for
--- Praos/Dijkstra still goes through the forecast for TPraos. Once this is
--- addressed, we could remove this instance.
-instance
-  (Praos.PraosCrypto c, TPraos.PraosCrypto c) =>
-  ShelleyCompatible (TPraos c) DijkstraEra
-
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) DijkstraEra
 
-{-------------------------------------------------------------------------------
-  ResolveLeiosBlock
-
-  Explicit no-op instance per Shelley-based (proto, era) combination
-  in CardanoEras. The real Dijkstra splice (Praos + DijkstraEra)
-  lives in "Ouroboros.Consensus.Shelley.Ledger.Ledger".
--------------------------------------------------------------------------------}
-
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) ShelleyEra)
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AllegraEra)
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) MaryEra)
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AlonzoEra)
-instance ResolveLeiosBlock (ShelleyBlock (Praos c) BabbageEra)
-instance ResolveLeiosBlock (ShelleyBlock (Praos c) ConwayEra)
+instance Crypto c => DijkstraEraBlockHeader (Header c) DijkstraEra where
+  prevNonceBlockHeaderL = error "Not implemented. Peras placeholder"
