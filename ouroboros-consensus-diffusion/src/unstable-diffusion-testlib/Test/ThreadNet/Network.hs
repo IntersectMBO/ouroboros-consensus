@@ -52,6 +52,7 @@ import Cardano.Network.NodeToNode
   , IsBigLedgerPeer (..)
   , MiniProtocolParameters (..)
   , ResponderContext (..)
+  , defaultMiniProtocolParameters
   )
 import Cardano.Network.PeerSelection
   ( PeerTrustable (..)
@@ -1108,7 +1109,7 @@ runThreadNetwork
               , peerSharingRng = psRng
               , txSubmissionRng = txRng
               , miniProtocolParameters =
-                  MiniProtocolParameters
+                  defaultMiniProtocolParameters
                     { chainSyncPipeliningHighMark = 4
                     , chainSyncPipeliningLowMark = 2
                     , blockFetchPipeliningMax = 10

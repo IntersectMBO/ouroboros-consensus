@@ -209,6 +209,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ The node's top-level static configuration
   , getFetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
   -- ^ The fetch client registry, used for the block fetch clients.
+  , getKeepAliveRegistry :: KeepAliveRegistry (ConnectionId addrNTN) m
+  -- ^ The keep-alive registry, used by block-fetch decision logic to read
+  -- per-peer GSV measurements collected by the keep-alive mini-protocol.
   , getFetchMode :: STM m FetchMode
   -- ^ The fetch mode, used by diffusion.
   , getGsmState :: STM m GSM.GsmState
@@ -345,6 +348,7 @@ initNodeKernel
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
+    keepAliveRegistry <- newKeepAliveRegistry
 
     do
       let GsmNodeKernelArgs{..} = gsmArgs
@@ -448,6 +452,7 @@ initNodeKernel
           (contramap (fmap castTraceFetchClientState) $ blockFetchClientTracer tracers)
           blockFetchInterface
           fetchClientRegistry
+          keepAliveRegistry
           blockFetchConfiguration
 
     void $
@@ -653,6 +658,7 @@ initNodeKernel
         , getMempool = mempool
         , getTopLevelConfig = cfg
         , getFetchClientRegistry = fetchClientRegistry
+        , getKeepAliveRegistry = keepAliveRegistry
         , getFetchMode = readFetchMode blockFetchInterface
         , getGsmState = readTVar varGsmState
         , getChainSyncHandles = varChainSyncHandles

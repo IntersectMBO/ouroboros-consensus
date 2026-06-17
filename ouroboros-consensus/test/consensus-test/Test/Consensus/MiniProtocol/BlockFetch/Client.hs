@@ -68,6 +68,7 @@ import Ouroboros.Network.BlockFetch
   , bracketKeepAliveClient
   , bracketSyncWithFetchClient
   , newFetchClientRegistry
+  , newKeepAliveRegistry
   )
 import Ouroboros.Network.BlockFetch.Client (blockFetchClient)
 import Ouroboros.Network.BlockFetch.ConsensusInterface
@@ -121,7 +122,7 @@ prop_blockFetch bfcts@BlockFetchClientTestSetup{..} =
                  property $ case blockFetchMode of
                    PraosFetchMode FetchModeDeadline -> all (> 0) bfcoFetchedBlocks
                    PraosFetchMode FetchModeBulkSync -> all (> 0) bfcoFetchedBlocks
-                   FetchModeGenesis -> any (> 0) bfcoFetchedBlocks
+                   GenesisFetchMode -> any (> 0) bfcoFetchedBlocks
              ]
  where
   BlockFetchClientOutcome{..} = runSimOrThrow $ runBlockFetchTest bfcts
@@ -154,6 +155,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
   varFetchedBlocks <- uncheckedNewTVarM (0 <$ peerUpdates)
 
   fetchClientRegistry <- newFetchClientRegistry
+  keepAliveRegistry <- newKeepAliveRegistry
   clock <-
     LogicalClock.new registry $
       LogicalClock.sufficientTimeFor $
@@ -179,10 +181,11 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
         nullTracer
         blockFetchConsensusInterface
         fetchClientRegistry
+        keepAliveRegistry
         blockFetchCfg
 
   let runBlockFetchClient peerId =
-        bracketFetchClient fetchClientRegistry ntnVersion peerId \clientCtx -> do
+        bracketFetchClient fetchClientRegistry keepAliveRegistry ntnVersion peerId \clientCtx -> do
           let bfClient =
                 blockFetchClient
                   ntnVersion
@@ -245,7 +248,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
       -- miniprotocol, even if it does not do anything.
       forkKeepAlive peerId =
         forkLinkedThread registry "KeepAlive" $
-          bracketKeepAliveClient fetchClientRegistry peerId \_ ->
+          bracketKeepAliveClient keepAliveRegistry peerId \_ ->
             infiniteDelay
 
   blockFetchThreads <-
@@ -405,7 +408,7 @@ instance Arbitrary BlockFetchClientTestSetup where
       elements
         [ PraosFetchMode FetchModeBulkSync
         , PraosFetchMode FetchModeDeadline
-        , FetchModeGenesis
+        , GenesisFetchMode
         ]
     blockFetchCfg <- do
       let

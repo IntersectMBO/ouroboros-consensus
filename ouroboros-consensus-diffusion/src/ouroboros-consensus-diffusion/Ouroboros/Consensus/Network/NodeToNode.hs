@@ -1050,6 +1050,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       labelThisThread "BlockFetchClient"
       bracketFetchClient
         (getFetchClientRegistry kernel)
+        (getKeepAliveRegistry kernel)
         version
         them
         $ \clientCtx -> do
@@ -1171,7 +1172,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
                 dqCtx
                 (KeepAliveInterval 10)
 
-      ((), trailing) <- bracketKeepAliveClient (getFetchClientRegistry kernel) them kacApp
+      ((), trailing) <- bracketKeepAliveClient (getKeepAliveRegistry kernel) them kacApp
       return (NoInitiatorResult, trailing)
 
   aKeepAliveServer ::
@@ -1326,6 +1327,7 @@ initiator ::
   OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr PeerTrustable b m a Void
 initiator miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
+    Set.empty -- TODO: use feature flags for Leios
     miniProtocolParameters
     -- TODO: currently consensus is using 'ConnectionId' for its 'peer' type.
     -- This is currently ok, as we might accept multiple connections from the
@@ -1340,6 +1342,8 @@ initiator miniProtocolParameters version versionData Apps{..} =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aBlockFetchClient version ctx)))
         , txSubmissionProtocol =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aTxSubmission2Client version ctx)))
+        , perasCertDiffusionProtocol = perasUnsupportedInitiator
+        , perasVoteDiffusionProtocol = perasUnsupportedInitiator
         , keepAliveProtocol =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aKeepAliveClient version ctx)))
         , peerSharingProtocol =
@@ -1351,6 +1355,7 @@ initiator miniProtocolParameters version versionData Apps{..} =
     <> mempty
       { withHot =
           WithHot
+            -- TODO: Also move the leios protocols into NodeToNodeProtocols?
             [ MiniProtocol
                 { miniProtocolNum = leiosNotifyMiniProtocolNum
                 , miniProtocolStart = StartOnDemand
@@ -1383,6 +1388,7 @@ initiatorAndResponder ::
   OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr PeerTrustable b m a c
 initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
+    Set.empty
     miniProtocolParameters
     ( NodeToNodeProtocols
         { chainSyncProtocol =
@@ -1400,6 +1406,8 @@ initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
                 (MiniProtocolCb (\initiatorCtx -> aTxSubmission2Client version initiatorCtx))
                 (MiniProtocolCb (\responderCtx -> aTxSubmission2Server version responderCtx))
             )
+        , perasCertDiffusionProtocol = perasUnsupportedInitiatorResponder
+        , perasVoteDiffusionProtocol = perasUnsupportedInitiatorResponder
         , keepAliveProtocol =
             ( InitiatorAndResponderProtocol
                 (MiniProtocolCb (\initiatorCtx -> aKeepAliveClient version initiatorCtx))
@@ -1437,6 +1445,24 @@ initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
                 }
             ]
       }
+
+-- | Placeholder for the Peras certificate/vote diffusion mini-protocols. The
+-- network layer only invokes these when the negotiated 'NodeToNodeVersionData'
+-- advertises 'PerasSupported'; consensus currently negotiates
+-- 'PerasUnsupported', so these slots are never run. If/when Peras lands at the
+-- consensus layer, replace these with real applications.
+perasUnsupportedInitiator ::
+  RunMiniProtocol 'Mux.InitiatorMode initiatorCtx responderCtx bytes m a Void
+perasUnsupportedInitiator =
+  InitiatorProtocolOnly
+    (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
+
+perasUnsupportedInitiatorResponder ::
+  RunMiniProtocol 'Mux.InitiatorResponderMode initiatorCtx responderCtx bytes m a c
+perasUnsupportedInitiatorResponder =
+  InitiatorAndResponderProtocol
+    (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
+    (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
 
 leiosNotifyProtocolLimits :: MiniProtocolLimits
 leiosNotifyProtocolLimits =
