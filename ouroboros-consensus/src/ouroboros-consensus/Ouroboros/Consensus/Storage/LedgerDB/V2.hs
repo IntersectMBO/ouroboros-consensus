@@ -84,8 +84,8 @@ mkInitDb ::
 mkInitDb args getBlock snapManager getVolatileSuffix res = do
   InitDB
     { initFromGenesis = do
-        genesis <- lgrGenesis
-        sr <- createAndPopulateStateRefFromGenesis v2Tracer res genesis
+        (genesisSt, genesisValues) <- lgrGenesis
+        sr <- createAndPopulateStateRefFromGenesis v2Tracer res genesisSt genesisValues
         pure $ LedgerSeq . AS.Empty $ sr
     , initFromSnapshot = \ds ->
         runExceptT
@@ -158,6 +158,9 @@ implMkLedgerDb h snapManager =
           , getPastLedgerState = \s -> getEnvSTM h (flip implGetPastLedgerState s)
           , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
           , openForkerAtTarget = openNewForkerAtTarget h
+          , getReadOnlyForkerWithRangeAtPoint = \tgt ->
+              fmap (\(frk, prov) -> (readOnlyForker frk, prov))
+                <$> openNewForkerWithRangeAtTarget h tgt
           , validateFork = getEnv5 h (implValidate h)
           , getPrevApplied = getEnvSTM h implGetPrevApplied
           , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
@@ -189,26 +192,29 @@ mkInternals ldb h snapManager =
               st
     , wipeLedgerDB = destroySnapshots snapManager
     , truncateSnapshots = getEnv h $ implIntTruncateSnapshots snapManager . ldbHasFS
-    , push = \st -> do
+    , push = \st diff -> getEnv h $ \env ->
         withTipForker
           ldb
           ( \frk -> do
-              forkerPush frk st >> Monad.join (atomically (forkerCommit frk))
-              getEnv h pruneLedgerSeq
+              forkerPush frk st diff
+                >> Monad.join (atomically (forkerCommit frk))
+              pruneLedgerSeq env
           )
     , reapplyThenPushNOW = \blk -> getEnv h $ \env -> do
         withTipForker
           ldb
           ( \frk -> do
               st <- atomically $ forkerGetLedgerState frk
-              tables <- forkerReadTables frk (getBlockKeySets blk)
-              let st' =
+              tables <- forkerReadTables frk (blockKeys blk)
+              let (st', diff) =
                     tickThenReapply
                       (ledgerDbCfgComputeLedgerEvents (ldbCfg env))
                       (ledgerDbCfg $ ldbCfg env)
                       blk
-                      (st `withLedgerTables` tables)
-              forkerPush frk st' >> Monad.join (atomically (forkerCommit frk))
+                      tables
+                      st
+              forkerPush frk st' diff
+                >> Monad.join (atomically (forkerCommit frk))
               pruneLedgerSeq env
           )
     , closeLedgerDB = implCloseDB h
@@ -234,13 +240,13 @@ implIntTruncateSnapshots snapManager (SomeHasFS fs) = do
 implGetVolatileTip ::
   (MonadSTM m, GetTip (l blk)) =>
   LedgerDBEnv m l blk ->
-  STM m (l blk EmptyMK)
+  STM m (l blk)
 implGetVolatileTip = fmap current . getVolatileLedgerSeq
 
 implGetImmutableTip ::
   (MonadSTM m, GetTip (l blk)) =>
   LedgerDBEnv m l blk ->
-  STM m (l blk EmptyMK)
+  STM m (l blk)
 implGetImmutableTip = fmap anchor . getVolatileLedgerSeq
 
 implGetPastLedgerState ::
@@ -250,7 +256,7 @@ implGetPastLedgerState ::
   , StandardHash (l blk)
   , HeaderHash (l blk) ~ HeaderHash blk
   ) =>
-  LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l blk EmptyMK))
+  LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l blk))
 implGetPastLedgerState env point =
   getPastLedgerAt point <$> getVolatileLedgerSeq env
 
@@ -415,7 +421,7 @@ implCloseDB (LDBHandle varState) = do
   The LedgerDBEnv
 -------------------------------------------------------------------------------}
 
-type LedgerDBEnv :: (Type -> Type) -> StateKind -> Type -> Type
+type LedgerDBEnv :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 data LedgerDBEnv m l blk = LedgerDBEnv
   { ldbSeq :: !(StrictTVar m (LedgerSeq m l blk))
   -- ^ INVARIANT: the tip of the 'LedgerDB' is always in sync with the tip of
@@ -467,9 +473,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
 deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , NoThunks (l blk EmptyMK)
-  , NoThunks (TxIn blk)
-  , NoThunks (TxOut blk)
+  , NoThunks (l blk)
   , NoThunks (LedgerCfg l blk)
   ) =>
   NoThunks (LedgerDBEnv m l blk)
@@ -478,7 +482,7 @@ deriving instance
   The LedgerDBHandle
 -------------------------------------------------------------------------------}
 
-type LedgerDBHandle :: (Type -> Type) -> StateKind -> Type -> Type
+type LedgerDBHandle :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 newtype LedgerDBHandle m l blk
   = LDBHandle (StrictTVar m (LedgerDBState m l blk))
   deriving Generic
@@ -491,9 +495,7 @@ data LedgerDBState m l blk
 deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , NoThunks (l blk EmptyMK)
-  , NoThunks (TxIn blk)
-  , NoThunks (TxOut blk)
+  , NoThunks (l blk)
   , NoThunks (LedgerCfg l blk)
   ) =>
   NoThunks (LedgerDBState m l blk)
@@ -631,7 +633,7 @@ openNewForkerAtTarget ::
   ( HeaderHash (l blk) ~ HeaderHash blk
   , IOLike m
   , IsLedger l blk
-  , HasLedgerTables l blk
+  , BlockSupportsUTxOHD blk
   , LedgerSupportsProtocol blk
   , StandardHash (l blk)
   ) =>
@@ -641,12 +643,40 @@ openNewForkerAtTarget ::
 openNewForkerAtTarget h pt = getEnv h $ \ldbEnv ->
   openStateRefAtTarget ldbEnv (Right pt) >>= traverse (newForker ldbEnv)
 
+-- | Like 'openNewForkerAtTarget', but additionally returns an
+-- 'EraRangeReaderProvider' built from the same (duplicated) tables handle.
+--
+-- The provider is built from @tables st@, which is the handle 'newForker' then
+-- installs in the forker's 'LedgerSeq'; the two therefore share a lifetime, and
+-- closing the forker invalidates the provider. This is exactly the lifetime the
+-- LSQ server wants: it pages the range reader only while the forker is acquired.
+openNewForkerWithRangeAtTarget ::
+  ( HeaderHash (l blk) ~ HeaderHash blk
+  , IOLike m
+  , IsLedger l blk
+  , BlockSupportsUTxOHD blk
+  , LedgerSupportsProtocol blk
+  , StandardHash (l blk)
+  ) =>
+  LedgerDBHandle m l blk ->
+  Target (Point blk) ->
+  m (Either GetForkerError (Forker m l blk, EraRangeReaderProvider m blk))
+openNewForkerWithRangeAtTarget h pt = getEnv h $ \ldbEnv ->
+  openStateRefAtTarget ldbEnv (Right pt)
+    >>= traverse
+      ( \st -> do
+          let batchSize = fromIntegral $ defaultQueryBatchSize $ ldbQueryBatchSize ldbEnv
+              provider = mkEraRangeReaderProvider (tables st) batchSize
+          frk <- newForker ldbEnv st
+          pure (frk, provider)
+      )
+
 withForkerByRollback ::
   ( HeaderHash (l blk) ~ HeaderHash blk
   , IOLike m
   , IsLedger l blk
   , StandardHash (l blk)
-  , HasLedgerTables l blk
+  , BlockSupportsUTxOHD blk
   , LedgerSupportsProtocol blk
   ) =>
   LedgerDBHandle m l blk ->
@@ -676,8 +706,8 @@ implForkerClose env = do
 
 newForker ::
   ( IOLike m
-  , HasLedgerTables l blk
-  , NoThunks (l blk EmptyMK)
+  , BlockSupportsUTxOHD blk
+  , NoThunks (l blk)
   , GetTip (l blk)
   , StandardHash (l blk)
   ) =>
@@ -701,7 +731,6 @@ newForker ldbEnv st = do
   pure $
     Forker
       { forkerReadTables = implForkerReadTables forkerEnv
-      , forkerRangeReadTables = implForkerRangeReadTables (ldbQueryBatchSize ldbEnv) forkerEnv
       , forkerGetLedgerState = implForkerGetLedgerState forkerEnv
       , forkerReadStatistics = implForkerReadStatistics forkerEnv
       , forkerPush = implForkerPush forkerEnv
