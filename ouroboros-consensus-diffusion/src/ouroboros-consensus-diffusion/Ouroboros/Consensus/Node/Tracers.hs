@@ -51,6 +51,7 @@ import Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
 import Ouroboros.Consensus.Peras.Cert.Inclusion.Trace
   ( TracePerasCertInclusionEvent (..)
   )
+import Ouroboros.Consensus.Peras.Voting.Trace (TracePerasVoteForgingEvent)
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
   ( KESAgentClientTrace (..)
   )
@@ -95,6 +96,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
       f (TraceLabelPeer remotePeer (TracePerasVoteDiffusionOutbound blk))
   , perasCertInclusionTracer ::
       f TracePerasCertInclusionEvent
+  , perasVoteForgingTracer :: f (TracePerasVoteForgingEvent blk)
   , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
   , blockchainTimeTracer :: f (TraceBlockchainTimeEvent UTCTime)
   , forgeStateInfoTracer :: f (TraceLabelCreds (ForgeStateInfo blk))
@@ -132,6 +134,7 @@ instance
       , perasVoteDiffusionInboundTracer = f perasVoteDiffusionInboundTracer
       , perasVoteDiffusionOutboundTracer = f perasVoteDiffusionOutboundTracer
       , perasCertInclusionTracer = f perasCertInclusionTracer
+      , perasVoteForgingTracer = f perasVoteForgingTracer
       , forgeTracer = f forgeTracer
       , blockchainTimeTracer = f blockchainTimeTracer
       , forgeStateInfoTracer = f forgeStateInfoTracer
@@ -172,6 +175,7 @@ nullTracers =
     , perasCertDiffusionInboundTracer = nullTracer
     , perasCertDiffusionOutboundTracer = nullTracer
     , perasVoteDiffusionInboundTracer = nullTracer
+    , perasVoteForgingTracer = nullTracer
     , perasVoteDiffusionOutboundTracer = nullTracer
     , perasCertInclusionTracer = nullTracer
     , forgeTracer = nullTracer
@@ -228,6 +232,7 @@ showTracers tr =
     , perasVoteDiffusionInboundTracer = show >$< tr
     , perasVoteDiffusionOutboundTracer = show >$< tr
     , perasCertInclusionTracer = show >$< tr
+    , perasVoteForgingTracer = show >$< tr
     , forgeTracer = show >$< tr
     , blockchainTimeTracer = show >$< tr
     , forgeStateInfoTracer = show >$< tr
