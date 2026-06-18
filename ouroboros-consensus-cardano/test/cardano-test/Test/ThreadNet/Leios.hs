@@ -36,6 +36,13 @@ import Cardano.Ledger.Api.Tx.In (TxIn (..))
 import Cardano.Ledger.BaseTypes (ProtVer (..), StrictMaybe (..), TxIx (..), knownNonZeroBounded)
 import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core (TopTx, sizeTxF, txSeqBlockBodyL)
+import qualified Cardano.Ledger.Shelley.LedgerState as SL
+  ( esLState
+  , lsCertState
+  , lsUTxOState
+  , nesEs
+  , utxosInstantStake
+  )
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
@@ -97,6 +104,8 @@ import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Shelley.Ledger.Block (shelleyBlockRaw)
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( shelleyCumulativeTxBytes
+  , shelleyLedgerState
+  , shelleyLedgerTip
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
@@ -345,17 +354,55 @@ prop_leios seed =
   ebCertificateInclusion =
     let expectedLedger = nodeOutputFinalLedger someNode
         foldedLedger = replayNodeChain pInfoConfig pInfoInitLedger someNode
-        -- Comparing the full HFC ledger state via '===' dumps the whole
-        -- 8-era Telescope on failure, which is unreadable. Project both
-        -- to the active Dijkstra slot (Leios is Dijkstra-only) and
-        -- compare those — that's where any divergence shows up.
         dijkstraOf st = case st of
           LedgerStateDijkstra d -> d
           _ -> error "ebCertificateInclusion: expected Dijkstra ledger state"
-     in ( not (null certificateBlocks)
-            & counterexample "no certifying blocks — test is vacuous"
-        )
-          .&&. (dijkstraOf foldedLedger === dijkstraOf expectedLedger)
+        lhs = dijkstraOf foldedLedger
+        rhs = dijkstraOf expectedLedger
+        -- The full @ShelleyLedgerState DijkstraEra@ is huge, so we
+        -- compare salient projections individually. The first failing
+        -- assertion narrows the divergence to a specific field.
+        nesLhs = shelleyLedgerState lhs
+        nesRhs = shelleyLedgerState rhs
+        lsLhs = SL.esLState (SL.nesEs nesLhs)
+        lsRhs = SL.esLState (SL.nesEs nesRhs)
+        chain = Chain.toOldestFirst (nodeOutputFinalChain someNode)
+        chainCertRBs =
+          [ blockSlot blk
+          | blk@(BlockDijkstra dBlk) <- chain
+          , let SL.Block _ body = shelleyBlockRaw dBlk
+          , SJust _ <- [body ^. leiosCertBlockBodyL]
+          ]
+        chainSummary =
+          "chain length = "
+            <> show (length chain)
+            <> ", CertRBs in chain = "
+            <> show (length chainCertRBs)
+            <> " at slots "
+            <> show chainCertRBs
+            <> "\nblock slots = "
+            <> show (map blockSlot chain)
+            <> "\nfoldedLedger tip = "
+            <> show (shelleyLedgerTip lhs)
+            <> ", instantStake = "
+            <> show (SL.utxosInstantStake (SL.lsUTxOState lsLhs))
+            <> "\nexpectedLedger tip = "
+            <> show (shelleyLedgerTip rhs)
+            <> ", instantStake = "
+            <> show (SL.utxosInstantStake (SL.lsUTxOState lsRhs))
+     in conjoin
+          [ not (null certificateBlocks)
+              & counterexample "no certifying blocks — test is vacuous"
+          , shelleyLedgerTip lhs === shelleyLedgerTip rhs
+              & counterexample "[ebCertificateInclusion] shelleyLedgerTip"
+          , shelleyCumulativeTxBytes lhs === shelleyCumulativeTxBytes rhs
+              & counterexample "[ebCertificateInclusion] shelleyCumulativeTxBytes"
+          , SL.lsUTxOState lsLhs === SL.lsUTxOState lsRhs
+              & counterexample "[ebCertificateInclusion] lsUTxOState"
+          , SL.lsCertState lsLhs === SL.lsCertState lsRhs
+              & counterexample "[ebCertificateInclusion] lsCertState"
+          ]
+          & counterexample chainSummary
 
   cumulativeTxBytes =
     let actual = case nodeOutputFinalLedger someNode of

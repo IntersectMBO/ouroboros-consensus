@@ -88,6 +88,11 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Tables.Utils
+  ( calculateDifference
+  , prependDiffs
+  , trackingToDiffs
+  )
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( GenTx
   , LedgerSupportsMempool (..)
@@ -548,7 +553,20 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                     case runExcept $ tickThenApply evs cfg b lsAfterEB of
                       Left lerr ->
                         pure (Left (AnnLedgerError tip (blockRealPoint b) lerr))
-                      Right st -> pure (Right st)
+                      Right blockDiff ->
+                        -- The closure's table modifications happened
+                        -- between 'lsBeforeEB' and 'lsAfterEB' and are
+                        -- /not/ in 'blockDiff' (which is a diff relative
+                        -- to 'lsAfterEB'). 'forkerPush' interprets the
+                        -- pushed diff as being on top of 'extSt' (the
+                        -- LedgerDB anchor), so without composition the
+                        -- closure inputs/outputs would be silently
+                        -- dropped from the changelog and unavailable to
+                        -- the next block's 'forkerReadTables'.
+                        let closureDiff =
+                              trackingToDiffs
+                                (calculateDifference lsBeforeEB lsAfterEB)
+                         in pure (Right (prependDiffs closureDiff blockDiff))
       Nothing ->
         -- Not a CertRB: ordinary Praos block
         withValues b $ \v ->

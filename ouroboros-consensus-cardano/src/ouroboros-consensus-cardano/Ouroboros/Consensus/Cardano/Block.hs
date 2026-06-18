@@ -1562,28 +1562,28 @@ instance
 
   applyLeiosClosure cfg slot txs extSt =
     case ledgerState extSt of
-      HardForkLedgerState
-        ( State.HardForkState
-            ( TeleDijkstra
-                byron
-                shelley
-                allegra
-                mary
-                alonzo
-                babbage
-                conway
-                (State.Current bound (Flip dijkstraLst))
-              )
-          ) ->
-          let dijkstraTxs = [tx | GenTxDijkstra tx <- txs]
-              -- The Dijkstra 'ResolveLeiosBlock' instance only needs the
-              -- per-era ledger state and globals — neither the HFC
-              -- 'ExtLedgerState' wrapper nor the header state — so we
-              -- dispatch to its underlying helper directly with a
-              -- projected ledger state and globals.
-              globals = dijkstraGlobalsFromCfg cfg
-              dijkstraInnerTxs = [tx | ShelleyTx _ tx <- dijkstraTxs]
-           in case applyDijkstraLeiosClosureTxs globals slot dijkstraInnerTxs dijkstraLst of
+        HardForkLedgerState
+          ( State.HardForkState
+              ( TeleDijkstra
+                  byron
+                  shelley
+                  allegra
+                  mary
+                  alonzo
+                  babbage
+                  conway
+                  (State.Current bound (Flip dijkstraLst))
+                )
+            ) ->
+            let dijkstraTxs = [tx | GenTxDijkstra tx <- txs]
+                -- The Dijkstra 'ResolveLeiosBlock' instance only needs the
+                -- per-era ledger state and globals — neither the HFC
+                -- 'ExtLedgerState' wrapper nor the header state — so we
+                -- dispatch to its underlying helper directly with a
+                -- projected ledger state and globals.
+                globals = dijkstraGlobalsFromCfg cfg
+                dijkstraInnerTxs = [tx | ShelleyTx _ tx <- dijkstraTxs]
+             in case applyDijkstraLeiosClosureTxs globals slot dijkstraInnerTxs dijkstraLst of
                 Left lerr ->
                   -- 'applyTxValidation ValidateNone' skips all predicate
                   -- checks, so this branch is not reachable under normal
@@ -1603,7 +1603,7 @@ instance
                           (State.Current bound (Flip dijkstraLst'))
                       newHFLS = HardForkLedgerState (State.HardForkState newTele)
                    in Right extSt{ledgerState = newHFLS}
-      _ -> Right extSt
+        _ -> Right extSt
    where
     -- Extract 'Globals' from the Dijkstra slot of the HFC ledger config.
     -- 'Globals' is network-wide (same across all Shelley-based eras), but
