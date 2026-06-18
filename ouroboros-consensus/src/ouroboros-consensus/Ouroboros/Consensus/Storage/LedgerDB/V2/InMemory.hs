@@ -372,7 +372,7 @@ yieldCborMapS ::
   Stream (Of ByteString) m (Maybe CRC) ->
   Stream (Of (a, b)) (ExceptT DeserialiseFailure m) (Stream (Of ByteString) m (Maybe CRC))
 yieldCborMapS decK decV = execStateT $ do
-  hoist lift (decodeCbor decodeListLen >> decodeCbor decodeMapLenOrIndef) >>= \case
+  hoist lift (decodeCbor decodeMapLenOrIndef) >>= \case
     Nothing -> go
     Just n -> replicateM_ n yieldKV
  where
@@ -417,7 +417,7 @@ sinkInMemoryS ::
   Sink m l blk
 sinkInMemoryS writeChunkSize encK encV (SomeHasFS fs) ds _ s =
   ExceptT $ withFile fs (snapshotToTablesPath ds) (WriteMode MustBeNew) $ \hdl -> do
-    let bs = toStrictByteString (encodeListLen 1 <> encodeMapLenIndef)
+    let bs = toStrictByteString encodeMapLenIndef
     let !crc0 = updateCRC bs initCRC
     void $ hPutSome fs hdl bs
     e <- runExceptT $ go hdl crc0 writeChunkSize mempty s
