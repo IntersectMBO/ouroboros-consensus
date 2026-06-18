@@ -655,6 +655,31 @@ delIf predicate x = if predicate x then Nothing else Just x
 
 -----
 
+-- | Cancel all of a peer's outstanding fetch requests in bulk, e.g. when it
+-- disconnects: refund its share of the request budget and drop it from the
+-- per-EB/per-tx request sets, so those items can be re-requested from other
+-- peers.
+--
+-- Note this is O(size of the request maps): it scans 'requestedEbPeers' /
+-- 'requestedTxPeers' for the peer rather than knowing its keys directly. A
+-- future optimisation would track a per-peer in-flight set to make this
+-- O(that peer's outstanding requests).
+removePeerFromOutstanding ::
+  Ord pid =>
+  PeerId pid ->
+  LeiosOutstanding pid ->
+  LeiosOutstanding pid
+removePeerFromOutstanding peerId o =
+  o
+    { Leios.requestedBytesSize =
+        Leios.requestedBytesSize o - Map.findWithDefault 0 peerId (Leios.requestedBytesSizePerPeer o)
+    , Leios.requestedBytesSizePerPeer = Map.delete peerId (Leios.requestedBytesSizePerPeer o)
+    , Leios.requestedEbPeers = Map.mapMaybe (delIf Set.null . Set.delete peerId) (Leios.requestedEbPeers o)
+    , Leios.requestedTxPeers = Map.mapMaybe (delIf Set.null . Set.delete peerId) (Leios.requestedTxPeers o)
+    }
+
+-----
+
 -- | Reverse this peer's per-request accounting for a received EB body, but only
 -- if the peer is still tracked.
 --

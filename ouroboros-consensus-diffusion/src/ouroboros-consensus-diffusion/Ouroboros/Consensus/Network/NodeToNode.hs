@@ -312,6 +312,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
+      Leios.LeiosPeerVars m ->
       LeiosNotifyClientPeerPipelined LeiosPoint () LeiosVote m ()
   , hLeiosNotifyServer ::
       NodeToNodeVersion ->
@@ -432,17 +433,10 @@ mkHandlers
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
-      , hLeiosNotifyClient = \_version controlMessageSTM peer -> toLeiosNotifyClientPeerPipelined $ Effect $ do
+      , hLeiosNotifyClient = \_version controlMessageSTM peer peerVars -> toLeiosNotifyClientPeerPipelined $ Effect $ do
           let tracer = leiosPeerTracer peer
               kernelTracer = Node.leiosKernelTracer tracers
               LeiosVoteState{addVote} = leiosVoteState
-          -- Allocate this peer's vars once and keep them in scope; the message
-          -- handlers below can write to 'peerVars' directly. The map insertion
-          -- exists only to publish them to the LeiosFetch client and the fetch
-          -- decision logic.
-          peerVars <- Leios.newLeiosPeerVars
-          MVar.modifyMVar_ getLeiosPeersVars $
-            pure . Map.insert (Leios.MkPeerId peer) peerVars
           pure $
             leiosNotifyClientPeerPipelined
               ( atomically controlMessageSTM <&> \case
@@ -1244,6 +1238,43 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       $ peerSharingServerPeer
       $ hPeerSharingServer version them
 
+  -- | Owns the per-peer 'LeiosPeerVars' entry in 'getLeiosPeersVars': allocates
+  -- and registers it on connect and, on every exit path, unregisters it and
+  -- refunds that peer's outstanding fetch requests. Modelled on
+  -- 'bracketFetchClient'. This bracket is the sole writer of the
+  -- 'getLeiosPeersVars' map itself; the LeiosNotify client (which fills in the
+  -- entry's 'offerings') runs inside it, while the LeiosFetch client and the
+  -- fetch decision loop read the entry and write its 'requestsToSend'.
+  --
+  -- The unregister's 'removePeerFromOutstanding' (which takes
+  -- 'getLeiosOutstanding') is safe against the fetch decision loop: that loop
+  -- re-reads the live peers *inside* its own 'getLeiosOutstanding' critical
+  -- section and only increments those, so the refund is serialised with the
+  -- increment. Since this unregister deletes the 'getLeiosPeersVars' entry
+  -- before refunding, the loop either still sees the peer (and the refund runs
+  -- afterwards, cancelling the increment) or no longer sees it (and never
+  -- increments it) -- so it cannot re-insert a departed peer's accounting after
+  -- teardown has refunded it.
+  bracketLeiosPeer ::
+    ConnectionId addrNTN ->
+    (Leios.LeiosPeerVars m -> m a) ->
+    m a
+  bracketLeiosPeer them =
+    bracket
+      ( do
+          peerVars <- Leios.newLeiosPeerVars
+          MVar.modifyMVar_ (getLeiosPeersVars kernel) $
+            pure . Map.insert pid peerVars
+          pure peerVars
+      )
+      ( \_peerVars -> do
+          MVar.modifyMVar_ (getLeiosPeersVars kernel) $ pure . Map.delete pid
+          MVar.modifyMVar_ (getLeiosOutstanding kernel) $
+            pure . Leios.removePeerFromOutstanding pid
+      )
+   where
+    pid = Leios.MkPeerId them
+
   aLeiosNotifyClient ::
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
@@ -1257,15 +1288,16 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       }
     channel = do
       labelThisThread "LeiosNotifyClient"
-      ((), trailing) <-
-        runPipelinedPeerWithLimits
-          (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
-          (cLeiosNotifyCodec (mkCodecs version))
-          blLeiosNotify
-          timeLimitsLeiosNotify
-          channel
-          $ hLeiosNotifyClient version controlMessageSTM them
-      pure (NoInitiatorResult, trailing)
+      bracketLeiosPeer them $ \peerVars -> do
+        ((), trailing) <-
+          runPipelinedPeerWithLimits
+            (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
+            (cLeiosNotifyCodec (mkCodecs version))
+            blLeiosNotify
+            timeLimitsLeiosNotify
+            channel
+            $ hLeiosNotifyClient version controlMessageSTM them peerVars
+        pure (NoInitiatorResult, trailing)
 
   aLeiosNotifyServer ::
     NodeToNodeVersion ->

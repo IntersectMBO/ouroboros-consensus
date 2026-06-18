@@ -536,6 +536,14 @@ initNodeKernel
                   offerings
                   synthOfferings
           newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
+            -- Re-read the live peers while holding the -- 'getLeiosOutstanding'
+            -- lock. This is used to avoid losing an update to
+            -- 'getLeiosOutstanding' that 'removePeerFromOutstanding' may have
+            -- made (due to a 'bracketLeiosPeer' exiting) after the peers were
+            -- read just above. Basically: don't assign new requests to a peer
+            -- that just disconnected, since the replies would never arrive /AND/
+            -- those requests would then remain in 'getLeiosOutstanding' forever.
+            stillLivePeers <- MVar.readMVar getLeiosPeersVars
             -- Short-circuit synth-add for EBs whose body is already in
             -- 'acquiredEbBodies' (analogous to MsgLeiosBlockOffer's
             -- check at 'NodeToNode.hs'). Avoids per-tick "synth re-adds,
@@ -577,7 +585,7 @@ initNodeKernel
             let (!outstanding', decisions) =
                   Leios.leiosFetchLogicIteration
                     Leios.demoLeiosFetchStaticEnv
-                    augmentedOfferings
+                    (Map.restrictKeys augmentedOfferings (Map.keysSet stillLivePeers))
                     filteredOutstanding
             pure (outstanding', decisions)
           traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: decided"
