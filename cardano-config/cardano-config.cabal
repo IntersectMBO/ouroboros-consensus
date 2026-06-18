@@ -38,6 +38,7 @@ library
 
   build-depends:
     aeson,
+    autodocodec,
     base,
     bytestring,
     cardano-crypto-class,
@@ -57,6 +58,7 @@ library
     DataKinds
     DeriveGeneric
     DerivingStrategies
+    DerivingVia
     FlexibleContexts
     FlexibleInstances
     GeneralizedNewtypeDeriving

@@ -3,9 +3,9 @@ module Cardano.Configuration.File.Mempool
   ( MempoolConfiguration (..)
   ) where
 
-import Control.Applicative ((<|>))
-import Data.Aeson
-import Data.Aeson.Types (Parser)
+import Autodocodec
+import Cardano.Configuration.Basics (diffTimeCodec)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Time.Clock (DiffTime)
 import Data.Word
 import GHC.Generics (Generic)
@@ -13,35 +13,37 @@ import GHC.Generics (Generic)
 -- | The mempool configuration. All fields are optional; when unset the node
 -- applies its own defaults.
 data MempoolConfiguration = MempoolConfiguration
-  { -- | Overriding the maximum size of the mempool, in bytes.
-    mempoolCapacityOverride :: Maybe Word64
+  { mempoolCapacityOverride :: Maybe Word64
   , mempoolTimeoutSoft :: Maybe DiffTime
   , mempoolTimeoutHard :: Maybe DiffTime
   , mempoolTimeoutCapacity :: Maybe DiffTime
   }
   deriving (Generic, Show)
+  deriving (FromJSON, ToJSON) via (Autodocodec MempoolConfiguration)
 
-instance FromJSON MempoolConfiguration where
-  parseJSON =
-    withObject "MempoolConfiguration" $ \v ->
+instance HasCodec MempoolConfiguration where
+  codec =
+    object "MempoolConfiguration" $
       MempoolConfiguration
-        <$> parseMempoolCapacityBytesOverride v
-        <*> v .:? "MempoolTimeoutSoft"
-        <*> v .:? "MempoolTimeoutHard"
-        <*> v .:? "MempoolTimeoutCapacity"
+        <$> optionalFieldWithDefaultWith
+          "MempoolCapacityBytesOverride"
+          mempoolCapacityOverrideCodec
+          Nothing
+          "Override for the maximum mempool size in bytes, or the string \"NoOverride\""
+          .= mempoolCapacityOverride
+        <*> optionalFieldWith "MempoolTimeoutSoft" diffTimeCodec "Soft mempool timeout, in seconds" .= mempoolTimeoutSoft
+        <*> optionalFieldWith "MempoolTimeoutHard" diffTimeCodec "Hard mempool timeout, in seconds" .= mempoolTimeoutHard
+        <*> optionalFieldWith "MempoolTimeoutCapacity" diffTimeCodec "Capacity mempool timeout, in seconds" .= mempoolTimeoutCapacity
 
--- | Parse the optional mempool capacity override, accepting either a byte count
--- or the string @"NoOverride"@, as the node does.
-parseMempoolCapacityBytesOverride :: Object -> Parser (Maybe Word64)
-parseMempoolCapacityBytesOverride v = parseOverride <|> parseNoOverride
+-- | The mempool capacity override is either a byte count or the string
+-- @"NoOverride"@ (which, like omitting the key, means \"use the default\").
+mempoolCapacityOverrideCodec :: JSONCodec (Maybe Word64)
+mempoolCapacityOverrideCodec =
+  dimapCodec toOverride fromOverride $
+    eitherCodec
+      (codec @Word64)
+      (literalTextCodec "NoOverride")
  where
-  parseOverride = v .:? "MempoolCapacityBytesOverride"
-  parseNoOverride =
-    v .:? "MempoolCapacityBytesOverride" >>= \case
-      Just ("NoOverride" :: String) -> pure Nothing
-      Just invalid ->
-        fail $
-          "Invalid value for 'MempoolCapacityBytesOverride'. "
-            <> "Expecting byte count or NoOverride. Value was: "
-            <> show invalid
-      Nothing -> pure Nothing
+  toOverride = either Just (const Nothing)
+  fromOverride (Just c) = Left c
+  fromOverride Nothing = Right "NoOverride"

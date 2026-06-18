@@ -14,15 +14,23 @@ module Cardano.Configuration.File.Storage
   , LedgerDbBackendSelector (..)
   ) where
 
+import Autodocodec
 import Cardano.Configuration.Common
-import Control.Applicative ((<|>))
-import Data.Aeson
-import Data.Aeson.Types (Parser)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Default
 import Data.Functor.Identity
 import Data.Maybe (fromMaybe)
+import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Word
 import GHC.Generics
+
+-- | A non-zero snapshot interval, in slots: the node rejects 0.
+snapshotIntervalCodec :: JSONCodec Word64
+snapshotIntervalCodec = bimapCodec validate id codec
+ where
+  validate 0 = Left "Non-positive SnapshotInterval: 0"
+  validate w = Right w
 
 -- | An explicit set of snapshot policy options. All fields are optional; when
 -- unset the node applies its own defaults.
@@ -43,37 +51,23 @@ data SnapshotOptions = SnapshotOptions
   }
   deriving (Generic, Show)
 
--- | Parse the snapshot interval, failing on a non-positive value as the node
--- does.
-parseSnapshotInterval :: Object -> Parser (Maybe Word64)
-parseSnapshotInterval v = do
-  interval <- v .:? "SnapshotInterval"
-  case interval of
-    Just 0 -> fail "Non-positive SnapshotInterval: 0"
-    _ -> pure interval
-
-instance FromJSON SnapshotOptions where
-  parseJSON = withObject "SnapshotOptions" $ \v -> do
-    interval <- parseSnapshotInterval v
-    offset <- v .:? "SlotOffset"
-    rateLimit <- v .:? "RateLimit"
-    lo <- v .:? "MinDelay"
-    hi <- v .:? "MaxDelay"
-    num <- v .:? "NumOfDiskSnapshots"
-    case (lo, hi) of
-      (Just l, Just h)
-        | l > h ->
-            fail $ "Invalid snapshot delay range, MinDelay > MaxDelay: " <> show l <> " > " <> show h
-      _ -> pure ()
-    pure
-      SnapshotOptions
-        { snapshotInterval = interval
-        , slotOffset = offset
-        , snapshotRateLimit = rateLimit
-        , minDelay = lo
-        , maxDelay = hi
-        , numOfDiskSnapshots = num
-        }
+instance HasCodec SnapshotOptions where
+  codec =
+    bimapCodec validateDelays id $
+      object "SnapshotOptions" $
+        SnapshotOptions
+          <$> optionalFieldWith "SnapshotInterval" snapshotIntervalCodec "Slots between snapshots (non-zero)" .= snapshotInterval
+          <*> optionalField "SlotOffset" "Slot at which the snapshot schedule is anchored" .= slotOffset
+          <*> optionalField "RateLimit" "Minimum seconds between snapshots" .= snapshotRateLimit
+          <*> optionalField "MinDelay" "Lower bound (seconds) of the random snapshot delay" .= minDelay
+          <*> optionalField "MaxDelay" "Upper bound (seconds) of the random snapshot delay" .= maxDelay
+          <*> optionalField "NumOfDiskSnapshots" "How many snapshots to keep on disk" .= numOfDiskSnapshots
+   where
+    validateDelays so@SnapshotOptions{minDelay = Just lo, maxDelay = Just hi}
+      | lo > hi =
+          Left $ "Invalid snapshot delay range, MinDelay > MaxDelay: " <> show lo <> " > " <> show hi
+      | otherwise = Right so
+    validateDelays so = Right so
 
 -- | The snapshot policy: either a named, predefined policy (e.g. @"Mithril"@)
 -- or an explicit set of options.
@@ -82,53 +76,61 @@ data SnapshotPolicy
   | CustomSnapshotPolicy SnapshotOptions
   deriving (Generic, Show)
 
-instance FromJSON SnapshotPolicy where
-  parseJSON v =
-    NamedSnapshotPolicy <$> parseJSON v
-      <|> CustomSnapshotPolicy <$> parseJSON v
+instance HasCodec SnapshotPolicy where
+  codec =
+    dimapCodec toPolicy fromPolicy $
+      disjointEitherCodec (codec @String) (codec @SnapshotOptions)
+   where
+    toPolicy = either NamedSnapshotPolicy CustomSnapshotPolicy
+    fromPolicy (NamedSnapshotPolicy n) = Left n
+    fromPolicy (CustomSnapshotPolicy o) = Right o
 
 -- | Selector for the backend that keeps track of differences in the UTxO set.
 data LedgerDbBackendSelector
   = -- | The in-memory backend.
     V2InMemory
-  | -- | The LSM-tree backend. The first field is an optional custom path to the
-    -- database (the @LSMDatabasePath@ key); if it is not provided, the default
-    -- is used. The second field is an optional directory into which the backend
-    -- exports snapshots as it takes them (the @LSMExportPath@ key). Both are
-    -- only meaningful for the LSM backend.
-    V2LSM (Maybe FilePath) (Maybe FilePath)
+  | -- | The LSM-tree backend, with an optional custom path to the database. If
+    -- it is not provided, the default is used.
+    V2LSM (Maybe FilePath)
   deriving (Generic, Show)
 
 instance Default LedgerDbBackendSelector where
   def = V2InMemory
 
-parseLedgerDbBackend :: Object -> Parser LedgerDbBackendSelector
-parseLedgerDbBackend v = do
-  backend <- v .:? "Backend" .!= "V2InMemory"
-  case backend :: String of
-    "V2InMemory" -> pure V2InMemory
-    "V2LSM" -> V2LSM <$> v .:? "LSMDatabasePath" <*> v .:? "LSMExportPath"
-    x -> fail $ "Malformed LedgerDB Backend: " <> x
+-- | The @Backend@ and @LSMDatabasePath@ keys, parsed together as they describe
+-- a single choice of backend.
+backendCodec :: JSONObjectCodec LedgerDbBackendSelector
+backendCodec =
+  bimapCodec toSelector fromSelector $
+    (,)
+      <$> optionalFieldWithDefault "Backend" ("V2InMemory" :: Text) "Which LedgerDB backend to use (V2InMemory or V2LSM)" .= fst
+      <*> optionalField "LSMDatabasePath" "Custom path to the LSM database (V2LSM only)" .= snd
+ where
+  toSelector ("V2InMemory", _) = Right V2InMemory
+  toSelector ("V2LSM", p) = Right (V2LSM p)
+  toSelector (other, _) = Left $ "Malformed LedgerDB Backend: " <> T.unpack other
+  fromSelector V2InMemory = ("V2InMemory", Nothing)
+  fromSelector (V2LSM p) = ("V2LSM", p)
 
 -- | The Ledger DB configuration
 data LedgerDbConfiguration = LedgerDbConfiguration
   { snapshots :: Maybe SnapshotPolicy
-  , -- | When reading a big amount of data from the backend (for example by
-    -- QueryUTxOByAddress), do it in chunks of what size.
-    queryBatchSize :: Maybe Word64
+  , queryBatchSize :: Maybe Word64
   , backendSelector :: LedgerDbBackendSelector
   }
   deriving (Generic, Show)
+  deriving (FromJSON, ToJSON) via (Autodocodec LedgerDbConfiguration)
+
+instance HasCodec LedgerDbConfiguration where
+  codec =
+    object "LedgerDB" $
+      LedgerDbConfiguration
+        <$> optionalField "Snapshots" "Snapshot policy: \"Mithril\" or an object of snapshot options" .= snapshots
+        <*> optionalField "QueryBatchSize" "Chunk size for large backend reads" .= queryBatchSize
+        <*> backendCodec .= backendSelector
 
 instance Default LedgerDbConfiguration where
   def = LedgerDbConfiguration Nothing Nothing def
-
-instance FromJSON LedgerDbConfiguration where
-  parseJSON = withObject "LedgerDB" $ \v ->
-    LedgerDbConfiguration
-      <$> v .:? "Snapshots"
-      <*> v .:? "QueryBatchSize"
-      <*> parseLedgerDbBackend v
 
 -- | Finally resolve the storage configuration with a final 'NodeDatabasePaths'.
 adjustDbPath :: StorageConfiguration Maybe -> NodeDatabasePaths -> StorageConfiguration Identity
@@ -148,9 +150,13 @@ data StorageConfiguration f = StorageConfiguration
 deriving instance Show (StorageConfiguration Maybe)
 deriving instance Show (StorageConfiguration Identity)
 
-instance FromJSON (StorageConfiguration Maybe) where
-  parseJSON =
-    withObject "StorageConfiguration" $ \v ->
+deriving via (Autodocodec (StorageConfiguration Maybe)) instance FromJSON (StorageConfiguration Maybe)
+
+deriving via (Autodocodec (StorageConfiguration Maybe)) instance ToJSON (StorageConfiguration Maybe)
+
+instance HasCodec (StorageConfiguration Maybe) where
+  codec =
+    object "StorageConfiguration" $
       StorageConfiguration
-        <$> v .:? "DatabasePath"
-        <*> v .:? "LedgerDB"
+        <$> optionalField "DatabasePath" "Directory (or split directories) where the state is stored" .= databasePath
+        <*> optionalField "LedgerDB" "The LedgerDB configuration" .= ledgerDbConfiguration

@@ -1,17 +1,13 @@
 -- | Basic types for configuration
 module Cardano.Configuration.Basics
-  ( -- * Defaults
-    (.:=)
+  ( -- * Codecs
+    diffTimeCodec
   ) where
 
-import Data.Aeson
-import Data.Aeson.Types (Parser)
-import Data.Default
+import Autodocodec (JSONCodec, dimapCodec, scientificCodec)
+import Data.Time.Clock (DiffTime)
 
---------------------------------------------------------------------------------
-
--- | If the key is missing, use the default value
-(.:=) :: (FromJSON a, Default a) => Object -> Key -> Parser a
-a .:= b = a .:? b .!= def
-
-infixr 8 .:=
+-- | A codec for 'DiffTime', represented in JSON as a (possibly fractional)
+-- number of seconds, matching the node.
+diffTimeCodec :: JSONCodec DiffTime
+diffTimeCodec = dimapCodec realToFrac realToFrac scientificCodec

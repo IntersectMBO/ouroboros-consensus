@@ -3,8 +3,9 @@ module Cardano.Configuration.File.Testing
   ( TestingConfiguration (..)
   ) where
 
+import Autodocodec
 import Cardano.Configuration.File.Protocol
-import Data.Aeson
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Word
 import GHC.Generics (Generic)
 
@@ -29,26 +30,25 @@ data TestingConfiguration = TestingConfiguration
   , experimentalGenesis :: Maybe (Hashed FilePath)
   }
   deriving (Generic, Show)
+  deriving (FromJSON, ToJSON) via (Autodocodec TestingConfiguration)
 
-instance FromJSON TestingConfiguration where
-  parseJSON =
-    withObject "Configuration" $ \v -> do
-      -- The experimental era's hard-fork knobs and genesis only apply when the
-      -- experimental eras are enabled, matching the node.
-      enabled <- v .:? "ExperimentalHardForksEnabled" .!= False
-      TestingConfiguration enabled
-        <$> v .:? "TestShelleyHardForkAtEpoch"
-        <*> v .:? "TestShelleyHardForkAtVersion"
-        <*> v .:? "TestAllegraHardForkAtEpoch"
-        <*> v .:? "TestAllegraHardForkAtVersion"
-        <*> v .:? "TestMaryHardForkAtEpoch"
-        <*> v .:? "TestMaryHardForkAtVersion"
-        <*> v .:? "TestAlonzoHardForkAtEpoch"
-        <*> v .:? "TestAlonzoHardForkAtVersion"
-        <*> v .:? "TestBabbageHardForkAtEpoch"
-        <*> v .:? "TestBabbageHardForkAtVersion"
-        <*> v .:? "TestConwayHardForkAtEpoch"
-        <*> v .:? "TestConwayHardForkAtVersion"
-        <*> (if enabled then v .:? "TestDijkstraHardForkAtEpoch" else pure Nothing)
-        <*> (if enabled then v .:? "TestDijkstraHardForkAtVersion" else pure Nothing)
-        <*> (if enabled then Just <$> parseEraGenesis "Dijkstra" v else pure Nothing)
+instance HasCodec TestingConfiguration where
+  codec =
+    object "TestingConfiguration" $
+      TestingConfiguration
+        <$> optionalFieldWithDefault "ExperimentalHardForksEnabled" False "Enable the experimental eras" .= experimentalHardForksEnabled
+        <*> optionalField "TestShelleyHardForkAtEpoch" "Force the Shelley hard fork at this epoch" .= testShelleyHardForkAtEpoch
+        <*> optionalField "TestShelleyHardForkAtVersion" "Force the Shelley hard fork at this protocol version" .= testShelleyHardForkAtVersion
+        <*> optionalField "TestAllegraHardForkAtEpoch" "Force the Allegra hard fork at this epoch" .= testAllegraHardForkAtEpoch
+        <*> optionalField "TestAllegraHardForkAtVersion" "Force the Allegra hard fork at this protocol version" .= testAllegraHardForkAtVersion
+        <*> optionalField "TestMaryHardForkAtEpoch" "Force the Mary hard fork at this epoch" .= testMaryHardForkAtEpoch
+        <*> optionalField "TestMaryHardForkAtVersion" "Force the Mary hard fork at this protocol version" .= testMaryHardForkAtVersion
+        <*> optionalField "TestAlonzoHardForkAtEpoch" "Force the Alonzo hard fork at this epoch" .= testAlonzoHardForkAtEpoch
+        <*> optionalField "TestAlonzoHardForkAtVersion" "Force the Alonzo hard fork at this protocol version" .= testAlonzoHardForkAtVersion
+        <*> optionalField "TestBabbageHardForkAtEpoch" "Force the Babbage hard fork at this epoch" .= testBabbageHardForkAtEpoch
+        <*> optionalField "TestBabbageHardForkAtVersion" "Force the Babbage hard fork at this protocol version" .= testBabbageHardForkAtVersion
+        <*> optionalField "TestConwayHardForkAtEpoch" "Force the Conway hard fork at this epoch" .= testConwayHardForkAtEpoch
+        <*> optionalField "TestConwayHardForkAtVersion" "Force the Conway hard fork at this protocol version" .= testConwayHardForkAtVersion
+        <*> optionalField "TestDijkstraHardForkAtEpoch" "Force the Dijkstra hard fork at this epoch" .= testDijkstraHardForkAtEpoch
+        <*> optionalField "TestDijkstraHardForkAtVersion" "Force the Dijkstra hard fork at this protocol version" .= testDijkstraHardForkAtVersion
+        <*> optionalHashedFileObjectCodec "DijkstraGenesisFile" "DijkstraGenesisHash" .= experimentalGenesis

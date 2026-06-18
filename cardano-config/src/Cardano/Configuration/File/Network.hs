@@ -5,22 +5,25 @@ module Cardano.Configuration.File.Network
   , LocalConnectionsConfig (..)
   ) where
 
-import Cardano.Configuration.Basics
-import Data.Aeson
+import Autodocodec
+import Cardano.Configuration.Basics (diffTimeCodec)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Time.Clock (DiffTime)
 import Data.Word
 import GHC.Generics (Generic)
 
--- | TODO
+-- | Limits on the number of accepted connections.
 data AcceptedConnectionsLimit = AcceptedConnectionsLimit Word32 Word32 DiffTime
   deriving (Generic, Show)
+  deriving (FromJSON, ToJSON) via (Autodocodec AcceptedConnectionsLimit)
 
-instance FromJSON AcceptedConnectionsLimit where
-  parseJSON = withObject "AcceptedConnectionsLimit" $ \v ->
-    AcceptedConnectionsLimit
-      <$> v .: "hardLimit"
-      <*> v .: "softLimit"
-      <*> v .: "delay"
+instance HasCodec AcceptedConnectionsLimit where
+  codec =
+    object "AcceptedConnectionsLimit" $
+      AcceptedConnectionsLimit
+        <$> requiredField "hardLimit" "Hard limit on the number of connections" .= (\(AcceptedConnectionsLimit h _ _) -> h)
+        <*> requiredField "softLimit" "Soft limit on the number of connections" .= (\(AcceptedConnectionsLimit _ s _) -> s)
+        <*> requiredFieldWith "delay" diffTimeCodec "Delay, in seconds, applied once the soft limit is reached" .= (\(AcceptedConnectionsLimit _ _ d) -> d)
 
 -- | Options related to Networking configuration. Most of the fields are
 -- @Maybe@ such that the networking layer can then set the appropriate
@@ -56,39 +59,40 @@ data NetworkConfiguration = NetworkConfiguration
   , pncTxSubmissionInitDelay :: Maybe DiffTime
   }
   deriving (Generic, Show)
+  deriving (FromJSON, ToJSON) via (Autodocodec NetworkConfiguration)
 
-instance FromJSON NetworkConfiguration where
-  parseJSON =
-    withObject "Configuration" $ \v ->
+instance HasCodec NetworkConfiguration where
+  codec =
+    object "NetworkConfiguration" $
       NetworkConfiguration
-        <$> v .:? "DiffusionMode" .!= "InitiatorAndResponder"
-        <*> v .:= "MaxConcurrencyBulkSync"
-        <*> v .:= "MaxConcurrencyDeadline"
-        <*> v .:= "ProtocolIdleTimeout"
-        <*> v .:= "TimeWaitTimeout"
-        <*> v .:= "EgressPollInterval"
-        <*> v .:= "ChainSyncIdleTimeout"
-        <*> v .:= "AcceptedConnectionsLimit"
-        <*> v .:= "TargetNumberOfRootPeers"
-        <*> v .:= "TargetNumberOfKnownPeers"
-        <*> v .:= "TargetNumberOfEstablishedPeers"
-        <*> v .:= "TargetNumberOfActivePeers"
-        <*> v .:= "TargetNumberOfKnownBigLedgerPeers"
-        <*> v .:= "TargetNumberOfEstablishedBigLedgerPeers"
-        <*> v .:= "TargetNumberOfActiveBigLedgerPeers"
-        <*> v .:= "SyncTargetNumberOfRootPeers"
-        <*> v .:= "SyncTargetNumberOfKnownPeers"
-        <*> v .:= "SyncTargetNumberOfEstablishedPeers"
-        <*> v .:= "SyncTargetNumberOfActivePeers"
-        <*> v .:= "SyncTargetNumberOfKnownBigLedgerPeers"
-        <*> v .:= "SyncTargetNumberOfEstablishedBigLedgerPeers"
-        <*> v .:= "SyncTargetNumberOfActiveBigLedgerPeers"
-        <*> v .:= "MinBigLedgerPeersForTrustedState"
-        <*> v .:= "PeerSharing"
-        <*> v .:= "ResponderCoreAffinityPolicy"
-        <*> v .:= "ExperimentalProtocolsEnabled"
-        <*> v .:= "TxSubmissionLogicVersion"
-        <*> v .:= "TxSubmissionInitDelay"
+        <$> optionalFieldWithDefault "DiffusionMode" "InitiatorAndResponder" "Initiator-only or initiator-and-responder" .= pncDiffusionMode
+        <*> optionalField "MaxConcurrencyBulkSync" "Bulk-sync block-fetch concurrency" .= pncMaxConcurrencyBulkSync
+        <*> optionalField "MaxConcurrencyDeadline" "Deadline block-fetch concurrency" .= pncMaxConcurrencyDeadline
+        <*> optionalFieldWith "ProtocolIdleTimeout" diffTimeCodec "Protocol idle timeout, in seconds" .= pncProtocolIdleTimeout
+        <*> optionalFieldWith "TimeWaitTimeout" diffTimeCodec "TIME-WAIT timeout, in seconds" .= pncTimeWaitTimeout
+        <*> optionalFieldWith "EgressPollInterval" diffTimeCodec "Egress poll interval, in seconds" .= pncEgressPollInterval
+        <*> optionalFieldWith "ChainSyncIdleTimeout" diffTimeCodec "ChainSync idle timeout, in seconds" .= pncChainSyncIdleTimeout
+        <*> optionalField "AcceptedConnectionsLimit" "Limits on accepted connections" .= pncAcceptedConnectionsLimit
+        <*> optionalField "TargetNumberOfRootPeers" "Deadline target of root peers" .= pncDeadlineTargetOfRootPeers
+        <*> optionalField "TargetNumberOfKnownPeers" "Deadline target of known peers" .= pncDeadlineTargetOfKnownPeers
+        <*> optionalField "TargetNumberOfEstablishedPeers" "Deadline target of established peers" .= pncDeadlineTargetOfEstablishedPeers
+        <*> optionalField "TargetNumberOfActivePeers" "Deadline target of active peers" .= pncDeadlineTargetOfActivePeers
+        <*> optionalField "TargetNumberOfKnownBigLedgerPeers" "Deadline target of known big ledger peers" .= pncDeadlineTargetOfKnownBigLedgerPeers
+        <*> optionalField "TargetNumberOfEstablishedBigLedgerPeers" "Deadline target of established big ledger peers" .= pncDeadlineTargetOfEstablishedBigLedgerPeers
+        <*> optionalField "TargetNumberOfActiveBigLedgerPeers" "Deadline target of active big ledger peers" .= pncDeadlineTargetOfActiveBigLedgerPeers
+        <*> optionalField "SyncTargetNumberOfRootPeers" "Sync target of root peers" .= pncSyncTargetOfRootPeers
+        <*> optionalField "SyncTargetNumberOfKnownPeers" "Sync target of known peers" .= pncSyncTargetOfKnownPeers
+        <*> optionalField "SyncTargetNumberOfEstablishedPeers" "Sync target of established peers" .= pncSyncTargetOfEstablishedPeers
+        <*> optionalField "SyncTargetNumberOfActivePeers" "Sync target of active peers" .= pncSyncTargetOfActivePeers
+        <*> optionalField "SyncTargetNumberOfKnownBigLedgerPeers" "Sync target of known big ledger peers" .= pncSyncTargetOfKnownBigLedgerPeers
+        <*> optionalField "SyncTargetNumberOfEstablishedBigLedgerPeers" "Sync target of established big ledger peers" .= pncSyncTargetOfEstablishedBigLedgerPeers
+        <*> optionalField "SyncTargetNumberOfActiveBigLedgerPeers" "Sync target of active big ledger peers" .= pncSyncTargetOfActiveBigLedgerPeers
+        <*> optionalField "MinBigLedgerPeersForTrustedState" "Minimum big ledger peers for trusted state" .= pncMinBigLedgerPeersForTrustedState
+        <*> optionalField "PeerSharing" "Whether to enable peer sharing" .= pncPeerSharing
+        <*> optionalField "ResponderCoreAffinityPolicy" "Whether responders are pinned to a core" .= pncResponderCoreAffinityPolicy
+        <*> optionalField "ExperimentalProtocolsEnabled" "Enable experimental network protocols" .= pncExperimentalProtocolsEnabled
+        <*> optionalField "TxSubmissionLogicVersion" "Which tx-submission inbound logic to run" .= pncTxSubmissionLogicVersion
+        <*> optionalFieldWith "TxSubmissionInitDelay" diffTimeCodec "Tx-submission initial delay, in seconds" .= pncTxSubmissionInitDelay
 
 -- | Connections for local clients
 data LocalConnectionsConfig = LocalConnectionsConfig
@@ -97,11 +101,12 @@ data LocalConnectionsConfig = LocalConnectionsConfig
   , pncRpcSocketPath :: Maybe FilePath
   }
   deriving (Generic, Show)
+  deriving (FromJSON, ToJSON) via (Autodocodec LocalConnectionsConfig)
 
-instance FromJSON LocalConnectionsConfig where
-  parseJSON =
-    withObject "Configuration" $ \v ->
+instance HasCodec LocalConnectionsConfig where
+  codec =
+    object "LocalConnectionsConfig" $
       LocalConnectionsConfig
-        <$> v .:? "SocketPath"
-        <*> v .:? "EnableRpc"
-        <*> v .:? "RpcSocketPath"
+        <$> optionalField "SocketPath" "Path of the socket for local clients" .= pncSocketPath
+        <*> optionalField "EnableRpc" "Whether to enable the gRPC server" .= pncEnableRpc
+        <*> optionalField "RpcSocketPath" "Path of the gRPC server socket" .= pncRpcSocketPath

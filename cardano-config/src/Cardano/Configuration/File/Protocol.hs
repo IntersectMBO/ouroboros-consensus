@@ -5,18 +5,18 @@ module Cardano.Configuration.File.Protocol
 
     -- * Hashed files
   , Hashed (..)
-  , parseEraGenesis
+  , optionalHashedFileObjectCodec
 
     -- * Particular eras
   , ByronGenesisConfiguration (..)
   ) where
 
-import Cardano.Crypto.Hash
-import Control.Applicative ((<|>))
-import Data.Aeson
-import Data.Aeson.Types
+import Autodocodec
+import Cardano.Crypto.Hash (Blake2b_256, Hash)
+import Data.Aeson (FromJSON, ToJSON)
+import Data.ByteString (ByteString)
 import Data.Functor.Identity (Identity)
-import Data.String (fromString)
+import Data.Text (Text)
 import Data.Word
 import GHC.Generics
 
@@ -27,13 +27,30 @@ data Hashed a = Hashed
   }
   deriving (Generic, Show)
 
--- | Parse the genesis file (and optional hash) for the era with the given key
--- prefix, e.g. @\"Shelley\"@ reads @ShelleyGenesisFile@ and @ShelleyGenesisHash@.
-parseEraGenesis :: String -> Object -> Parser (Hashed FilePath)
-parseEraGenesis era v =
+-- | A codec for a Blake2b-256 hash, reusing its aeson instances (a hex string).
+hashCodec :: JSONCodec (Hash Blake2b_256 ByteString)
+hashCodec = codecViaAeson "Blake2b_256 hash"
+
+-- | An object-codec fragment reading a file path and its optional hash from two
+-- sibling keys of the enclosing object.
+hashedFileObjectCodec :: Text -> Text -> JSONObjectCodec (Hashed FilePath)
+hashedFileObjectCodec fileKey hashKey =
   Hashed
-    <$> v .: fromString (era <> "GenesisFile")
-    <*> v .:? fromString (era <> "GenesisHash")
+    <$> requiredField fileKey "Path to the file" .= hashed
+    <*> optionalFieldWith hashKey hashCodec "Hash of the file" .= hash
+
+-- | An optional hashed file: 'Nothing' when the file key is absent.
+optionalHashedFileObjectCodec :: Text -> Text -> JSONObjectCodec (Maybe (Hashed FilePath))
+optionalHashedFileObjectCodec fileKey hashKey =
+  dimapCodec toG fromG $
+    (,)
+      <$> optionalField fileKey "Path to the file" .= fst
+      <*> optionalFieldWith hashKey hashCodec "Hash of the file" .= snd
+ where
+  toG (Nothing, _) = Nothing
+  toG (Just f, mh) = Just (Hashed f mh)
+  fromG Nothing = (Nothing, Nothing)
+  fromG (Just (Hashed f mh)) = (Just f, mh)
 
 -- | Configuration for byron era
 data ByronGenesisConfiguration = ByronGenesisConfiguration
@@ -46,25 +63,19 @@ data ByronGenesisConfiguration = ByronGenesisConfiguration
   }
   deriving (Generic, Show)
 
-instance FromJSON ByronGenesisConfiguration where
-  parseJSON =
-    withObject "Configuration" $ \v -> do
-      byronGenesisFile <- Hashed <$> v .: "ByronGenesisFile" <*> v .:? "ByronGenesisHash"
-      byronReqNetworkMagic <- v .:? "RequiresNetworkMagic" .!= "RequiresNoMagic"
-      byronPbftSignatureThresh <- v .:? "PBftSignatureThreshold"
-      protVerMajor <- v .: "LastKnownBlockVersion-Major"
-      protVerMinor <- v .: "LastKnownBlockVersion-Minor"
-      protVerAlt <- v .: "LastKnownBlockVersion-Alt" .!= 0
+byronGenesisObjectCodec :: JSONObjectCodec ByronGenesisConfiguration
+byronGenesisObjectCodec =
+  ByronGenesisConfiguration
+    <$> hashedFileObjectCodec "ByronGenesisFile" "ByronGenesisHash" .= byronGenesisFile
+    <*> optionalFieldWithDefault "RequiresNetworkMagic" "RequiresNoMagic" "Whether network magic is required" .= byronReqNetworkMagic
+    <*> optionalFieldWith "PBftSignatureThreshold" (codecViaAeson "Double") "Byron PBFT signature threshold" .= byronPbftSignatureThresh
+    <*> requiredField "LastKnownBlockVersion-Major" "Last known block version, major" .= byronSupportedProtocolVersionMajor
+    <*> requiredField "LastKnownBlockVersion-Minor" "Last known block version, minor" .= byronSupportedProtocolVersionMinor
+    <*> optionalFieldWithDefault "LastKnownBlockVersion-Alt" 0 "Last known block version, alt" .= byronSupportedProtocolVersionAlt
 
-      pure
-        ByronGenesisConfiguration
-          { byronGenesisFile
-          , byronReqNetworkMagic
-          , byronPbftSignatureThresh
-          , byronSupportedProtocolVersionMajor = protVerMajor
-          , byronSupportedProtocolVersionMinor = protVerMinor
-          , byronSupportedProtocolVersionAlt = protVerAlt
-          }
+-- | The genesis file (and optional hash) for the checkpoints.
+checkpointsObjectCodec :: JSONObjectCodec (Maybe (Hashed FilePath))
+checkpointsObjectCodec = optionalHashedFileObjectCodec "CheckpointsFile" "CheckpointsFileHash"
 
 -- | Configuration for the protocol
 data ProtocolConfiguration f = ProtocolConfiguration
@@ -80,13 +91,17 @@ data ProtocolConfiguration f = ProtocolConfiguration
 deriving instance Show (ProtocolConfiguration Maybe)
 deriving instance Show (ProtocolConfiguration Identity)
 
-instance FromJSON (ProtocolConfiguration Maybe) where
-  parseJSON =
-    withObject "Configuration" $ \v ->
+deriving via (Autodocodec (ProtocolConfiguration Maybe)) instance FromJSON (ProtocolConfiguration Maybe)
+
+deriving via (Autodocodec (ProtocolConfiguration Maybe)) instance ToJSON (ProtocolConfiguration Maybe)
+
+instance HasCodec (ProtocolConfiguration Maybe) where
+  codec =
+    object "ProtocolConfiguration" $
       ProtocolConfiguration
-        <$> parseJSON (Object v)
-        <*> parseEraGenesis "Shelley" v
-        <*> parseEraGenesis "Alonzo" v
-        <*> parseEraGenesis "Conway" v
-        <*> v .:? "StartAsNonProducingNode"
-        <*> ((fmap Just . Hashed <$> v .: "CheckpointsFile" <*> v .:? "CheckpointsFileHash") <|> pure Nothing)
+        <$> byronGenesisObjectCodec .= byronGenesis
+        <*> hashedFileObjectCodec "ShelleyGenesisFile" "ShelleyGenesisHash" .= shelleyGenesis
+        <*> hashedFileObjectCodec "AlonzoGenesisFile" "AlonzoGenesisHash" .= alonzoGenesis
+        <*> hashedFileObjectCodec "ConwayGenesisFile" "ConwayGenesisHash" .= conwayGenesis
+        <*> optionalField "StartAsNonProducingNode" "Start without producing blocks" .= startAsNonProducingNode
+        <*> checkpointsObjectCodec .= checkpointsFile

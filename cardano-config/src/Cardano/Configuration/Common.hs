@@ -5,9 +5,9 @@ module Cardano.Configuration.Common
   , parseStartAsNonProducingNode
   ) where
 
-import Data.Aeson
+import Autodocodec
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Default
-import qualified Data.Text as T
 import GHC.Generics
 import Options.Applicative
 
@@ -25,13 +25,24 @@ data NodeDatabasePaths
 instance Default NodeDatabasePaths where
   def = SingleDB "mainnet/db"
 
-instance FromJSON NodeDatabasePaths where
-  parseJSON v =
-    withText "OneDatabase" (pure . SingleDB . T.unpack) v
-      <|> withObject
-        "MultipleDatabases"
-        (\v' -> SplitDB <$> v' .: "ImmutablePath" <*> v' .: "VolatilePath")
-        v
+instance HasCodec NodeDatabasePaths where
+  codec =
+    dimapCodec toNDP fromNDP $
+      disjointEitherCodec
+        (codec @FilePath)
+        ( object "SplitDB" $
+            (,)
+              <$> requiredField "ImmutablePath" "Directory for the immutable database" .= fst
+              <*> requiredField "VolatilePath" "Directory for the volatile database" .= snd
+        )
+   where
+    toNDP = either SingleDB (\(i, v) -> SplitDB i v)
+    fromNDP (SingleDB fp) = Left fp
+    fromNDP (SplitDB i v) = Right (i, v)
+
+deriving via (Autodocodec NodeDatabasePaths) instance FromJSON NodeDatabasePaths
+
+deriving via (Autodocodec NodeDatabasePaths) instance ToJSON NodeDatabasePaths
 
 parseNodeDatabasePaths :: Parser (Maybe NodeDatabasePaths)
 parseNodeDatabasePaths =
