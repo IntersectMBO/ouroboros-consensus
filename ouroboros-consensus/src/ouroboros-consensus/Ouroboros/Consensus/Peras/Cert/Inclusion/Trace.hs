@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -18,10 +19,13 @@ import Ouroboros.Consensus.Peras.Types (PerasRoundNo)
 -- This is useful to know when a certificate needs to be included in a block
 -- to coordinate the end of a cooldown period.
 data TracePerasCertInclusionEvent
-  = -- | A certificate needs to be included in a block.
-    TracePerasCertInclusionShouldIncludeCert SlotNo PerasRoundNo OpaquePerasCert
+  = -- | There is no latest seen certificate, so there is no certificate to
+    -- possibly include in a block.
+    TracePerasCertInclusionNoCertToInclude SlotNo
+  | -- | A certificate needs to be included in a block.
+    TracePerasCertInclusionShouldIncludeCert String SlotNo PerasRoundNo OpaquePerasCert
   | -- | A certificate does not need to be included in a block.
-    TracePerasCertInclusionShouldNotIncludeCert SlotNo
+    TracePerasCertInclusionShouldNotIncludeCert String SlotNo
   | -- | We failed to construct an opaque Peras certificate.
-    TracePerasCertInclusionFailedToConstructOpaqueCert SlotNo PerasRoundNo OpaquePerasCertError
+    TracePerasCertInclusionFailedToConstructOpaqueCert String SlotNo PerasRoundNo OpaquePerasCertError
   deriving (Eq, Show, Generic, NoThunks)
