@@ -11,9 +11,8 @@ import Control.Exception (assert)
 import qualified Control.Tracer as Tracer
 import Data.Align (alignWith)
 import Data.SOP.Counting (exactlyTwo)
-import Data.SOP.Functors (Flip (..))
 import Data.SOP.OptNP (NonEmptyOptNP, OptNP (..))
-import Data.SOP.Strict (NP (..))
+import Data.SOP.Strict (NP (..), NS (..))
 import Data.Text (Text)
 import Data.These (These (..))
 import Ouroboros.Consensus.Block
@@ -102,13 +101,17 @@ protocolInfoBinary
             ExtLedgerState
               { ledgerState =
                   HardForkLedgerState $
-                    initHardForkState (Flip initLedgerState1)
+                    initHardForkState initLedgerState1
               , headerState =
                   genesisHeaderState $
                     initHardForkState $
                       WrapChainDepState $
                         headerStateChainDep initHeaderState1
               }
+        , -- The chain starts in the first era, so the genesis values are that
+          -- era's, injected as the @Z@ arm of @Values (HardForkBlock '[..]) =
+          -- NS WrapValues@.
+          pInfoInitLedgerTables = Z (WrapValues initLedgerTables1)
         }
     , \tr -> alignWith alignBlockForging <$> blockForging1 tr <*> blockForging2 tr
     )
@@ -127,6 +130,7 @@ protocolInfoBinary
           { ledgerState = initLedgerState1
           , headerState = initHeaderState1
           }
+      , pInfoInitLedgerTables = initLedgerTables1
       } = protocolInfo1
 
     ProtocolInfo
