@@ -69,6 +69,7 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Data.Void (Void)
 import LeiosDemoDb
@@ -533,13 +534,23 @@ mkHandlers
               processEbNotification <|> processVote
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
           reqVar <-
+            -- Wait for the LeiosNotify client to publish this peer's vars. We
+            -- also watch 'controlMessageSTM': if the peer is being disconnected
+            -- from before the entry ever appears, it never will, and this loop
+            -- would otherwise spin forever. On 'Terminate' we hand back an empty
+            -- queue, so 'nextLeiosFetchClientCommand' observes 'stopSTM' on its
+            -- first transaction and terminates the client immediately.
             let loop = do
-                  leiosPeersVars <- MVar.readMVar getLeiosPeersVars
-                  case Map.lookup (Leios.MkPeerId peer) leiosPeersVars of
-                    Just x -> pure $ Leios.requestsToSend x
-                    Nothing -> do
-                      threadDelay (0.010 :: DiffTime)
-                      loop
+                  terminating <- atomically $ (== Terminate) <$> controlMessageSTM
+                  if terminating
+                    then TVar.Unchecked.newTVarIO Seq.empty
+                    else do
+                      leiosPeersVars <- MVar.readMVar getLeiosPeersVars
+                      case Map.lookup (Leios.MkPeerId peer) leiosPeersVars of
+                        Just x -> pure $ Leios.requestsToSend x
+                        Nothing -> do
+                          threadDelay (0.010 :: DiffTime)
+                          loop
              in loop
           leiosConn <- LeiosDb.open leiosDB
           pure $
