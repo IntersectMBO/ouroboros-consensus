@@ -5,7 +5,9 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -213,7 +215,6 @@ module Ouroboros.Consensus.Cardano.Block
   ) where
 
 import qualified Cardano.Ledger.Shelley.API as SL (Globals)
-import Cardano.Protocol.TPraos.API (PraosCrypto)
 import Data.Kind
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
@@ -240,20 +241,20 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , GenTxId
   )
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
-import Ouroboros.Consensus.Protocol.Praos (Praos)
+import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyCompatible)
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( ShelleyPartialLedgerConfig (..)
-  , applyDijkstraLeiosClosureTxs
-  , resolveDijkstraLeiosClosureTxs
   , shelleyLedgerGlobals
+  )
+import Ouroboros.Consensus.Shelley.Ledger.Leios
+  ( applyDijkstraLeiosClosureTxs
   )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
   ( GenTx (ShelleyTx)
-  , mkShelleyTx
   )
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
@@ -1542,28 +1543,22 @@ pattern ChainDepStateDijkstra st <-
 -- Block and chain-dep state are scrutinised together so the dispatch is
 -- a single case; era mismatches fall through to the no-op default.
 instance
+  forall c.
   ( PraosCrypto c
   , ShelleyCompatible (Praos c) DijkstraEra
   ) =>
   ResolveLeiosBlock (HardForkBlock (CardanoEras c))
   where
-  resolveLeiosBlock db cds blk =
-    case (cds, blk) of
-      (ChainDepStateDijkstra praosSt, BlockDijkstra dijkstraBlk) ->
-        BlockDijkstra <$> resolveLeiosBlock db praosSt dijkstraBlk
-      _ -> pure blk
-
-  resolveLeiosClosure db cds blk =
-    case (cds, blk) of
-      (ChainDepStateDijkstra praosSt, BlockDijkstra dijkstraBlk) ->
-        fmap (fmap (fmap (GenTxDijkstra . mkShelleyTx))) $
-          resolveDijkstraLeiosClosureTxs db praosSt dijkstraBlk
-      _ -> pure Nothing
-
-  resolveLeiosBlockHdr db prevAnn blk = case blk of
+  resolveLeiosClosure db point blk = case blk of
     BlockDijkstra dijkstraBlk ->
-      fmap BlockDijkstra <$> resolveLeiosBlockHdr db prevAnn dijkstraBlk
-    _ -> pure Nothing
+      fmap GenTxDijkstra <$> resolveLeiosClosure db point dijkstraBlk
+    _ -> pure []
+
+  inlineLeiosClosure blk txs = case blk of
+    BlockDijkstra dijkstraBlk ->
+      BlockDijkstra $
+        inlineLeiosClosure dijkstraBlk [tx | GenTxDijkstra tx <- txs]
+    _ -> blk
 
   applyLeiosClosure cfg slot txs extSt =
     case ledgerState extSt of
@@ -1580,9 +1575,15 @@ instance
                 (State.Current bound (Flip dijkstraLst))
               )
           ) ->
-          let dijkstraTxs = [tx | GenTxDijkstra (ShelleyTx _ tx) <- txs]
+          let dijkstraTxs = [tx | GenTxDijkstra tx <- txs]
+              -- The Dijkstra 'ResolveLeiosBlock' instance only needs the
+              -- per-era ledger state and globals — neither the HFC
+              -- 'ExtLedgerState' wrapper nor the header state — so we
+              -- dispatch to its underlying helper directly with a
+              -- projected ledger state and globals.
               globals = dijkstraGlobalsFromCfg cfg
-           in case applyDijkstraLeiosClosureTxs globals slot dijkstraTxs dijkstraLst of
+              dijkstraInnerTxs = [tx | ShelleyTx _ tx <- dijkstraTxs]
+           in case applyDijkstraLeiosClosureTxs globals slot dijkstraInnerTxs dijkstraLst of
                 Left lerr ->
                   -- 'applyTxValidation ValidateNone' skips all predicate
                   -- checks, so this branch is not reachable under normal
@@ -1618,10 +1619,15 @@ instance
             getPerEraLedgerConfig (hardForkLedgerConfigPerEra hfcCfg)
        in shelleyLedgerGlobals (shelleyLedgerConfig (unwrapPartialLedgerConfig dijkstraPCfg))
 
-  blockHasLeiosCert blk = case blk of
-    BlockDijkstra dijkstraBlk -> blockHasLeiosCert dijkstraBlk
+  blockLeiosCert blk = case blk of
+    BlockDijkstra dijkstraBlk -> blockLeiosCert dijkstraBlk
     _ -> Nothing
 
   headerLeiosAnnouncement hdr = case hdr of
     HeaderDijkstra dHdr -> headerLeiosAnnouncement dHdr
+    _ -> Nothing
+
+  protocolStateLeiosAnnouncement cds = case cds of
+    ChainDepStateDijkstra praosSt ->
+      protocolStateLeiosAnnouncement @(ShelleyBlock (Praos c) DijkstraEra) praosSt
     _ -> Nothing
