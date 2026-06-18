@@ -646,23 +646,6 @@ data VoteInvalid
   | SignerNotInCommittee
   deriving (Eq, Show)
 
--- * Certifying
-
--- | Validate a 'LeiosCert' against a selected 'Committee' and a minimum weight
--- threshold.
-validateLeiosCertificate ::
-  Committee ->
-  -- | Threshold
-  Weight ->
-  LeiosCert ->
-  -- | The point that was signed
-  -- FIXME: This should actually be a praos block header hash or an authenticated EbAnnouncement (later)
-  LeiosPoint ->
-  -- | Total weight of the contributing voters
-  Either VerificationError Weight
-validateLeiosCertificate committee threshold cert point =
-  verifyLeiosCert committee threshold point cert
-
 -- * Era-level Leios dispatch
 
 -- | Per-era hooks for Leios voting and CertRB admission. Default
@@ -676,19 +659,6 @@ class HasLeiosVoting blk where
   -- 'Nothing' if the era does not participate in Leios voting.
   getLeiosCommittee :: LedgerState blk EmptyMK -> Maybe Committee
   getLeiosCommittee _ = Nothing
-
-  -- | Validate the Leios certificate carried by this block (if any)
-  -- against the given committee and the parent's chain-dependent state
-  -- (which carries the EB announcement that the cert is attesting).
-  -- Returns the (unchanged) block on success so call sites can pipeline
-  -- this before 'resolveLeiosBlock', mirroring its shape. Default for
-  -- non-Leios eras: nothing to check.
-  validateLeiosBlockCert ::
-    Committee ->
-    ChainDepState (BlockProtocol blk) ->
-    blk ->
-    Either VerificationError blk
-  validateLeiosBlockCert _ _ blk = Right blk
 
 -- * Tracing
 
