@@ -92,3 +92,18 @@ executable cardano-config-schema
   default-extensions:
     LambdaCase
     OverloadedStrings
+
+test-suite cardano-config-test
+  import: warnings
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  hs-source-dirs: test
+  build-depends:
+    aeson,
+    base,
+    cardano-config,
+
+  default-language: Haskell2010
+  default-extensions:
+    LambdaCase
+    ScopedTypeVariables
