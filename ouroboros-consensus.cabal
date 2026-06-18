@@ -417,6 +417,7 @@ library lsm
     bytestring,
     containers,
     contra-tracer,
+    directory,
     filepath,
     fs-api,
     io-classes:mtl,
@@ -1923,12 +1924,9 @@ executable snapshot-converter
     fsnotify,
     mtl,
     optparse-applicative,
-    ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools, unstable-snapshot-conversion},
+    ouroboros-consensus:{cardano, lsm, ouroboros-consensus, unstable-cardano-tools, unstable-snapshot-conversion},
     with-utf8,
 
-  if impl(ghc <9.12)
-    build-depends:
-      text
   other-modules:
     DBAnalyser.Parsers
 

@@ -54,6 +54,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block (genesisPoint)
 import System.FS.API
+import System.FilePath (splitDirectories)
 import System.IO
 import System.Random (genWord64, newStdGen)
 import Text.Printf (printf)
@@ -160,6 +161,7 @@ analyse dbaConfig args =
     lock <- newMVar ()
     chainDBTracer <- mkTracer lock verbose
     analysisTracer <- mkTracer lock True
+    LSMConfig{lsmConfigExportPath} <- mkLSMConfig args
     lsmSalt <- fst . genWord64 <$> newStdGen
     ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
       mkProtocolInfo args
@@ -173,7 +175,11 @@ analyse dbaConfig args =
           V2LSM ->
             LedgerDB.LedgerDbBackendArgsV2 $
               LedgerDB.V2.SomeBackendArgs $
-                LSM.LSMArgs (mkFsPath ["lsm"]) Nothing lsmSalt (LSM.stdMkBlockIOFS dbDir)
+                LSM.LSMArgs
+                  (mkFsPath ["lsm"])
+                  (mkFsPath . splitDirectories <$> lsmConfigExportPath)
+                  lsmSalt
+                  (LSM.stdMkBlockIOFS dbDir)
 
         args' =
           ChainDB.completeChainDbArgs

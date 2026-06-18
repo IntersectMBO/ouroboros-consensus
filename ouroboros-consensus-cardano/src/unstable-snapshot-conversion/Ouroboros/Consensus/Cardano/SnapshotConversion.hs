@@ -11,7 +11,7 @@
 -- executable.
 module Ouroboros.Consensus.Cardano.SnapshotConversion
   ( SnapshotsDirectory (..)
-  , LSMDatabaseFilePath (..)
+  , ExportedSnapshotPath (..)
   , Snapshot (..)
   , SnapshotsDirectoryWithFormat (..)
   , snapshotDirectory
@@ -52,14 +52,23 @@ import System.Random
 
 data SnapshotsDirectory = SnapshotsDirectory {getSnapshotDir :: FilePath}
 
-data LSMDatabaseFilePath = LSMDatabaseFilePath {getLSMDatabaseDir :: FilePath}
+-- | The directory holding a standalone (exported) LSM snapshot, i.e. the LSM
+-- ledger tables exported out of a session via @lsm-tree@'s @exportSnapshot@.
+--
+-- This is paired with a 'SnapshotsDirectory' that holds the @state@/@meta@
+-- files, just like the parts of an LSM snapshot inside a running node are split
+-- between the ChainDB @ledger@ directory and the LSM session directory.
+data ExportedSnapshotPath = ExportedSnapshotPath {getExportedSnapshotPath :: FilePath}
 
 data StandaloneFormat
   = Mem
 
 data SnapshotsDirectoryWithFormat
   = StandaloneSnapshot SnapshotsDirectory StandaloneFormat
-  | LSMSnapshot SnapshotsDirectory LSMDatabaseFilePath
+  | -- | A standalone (exported) LSM snapshot. Conversions never operate on a
+    -- live LSM database; they only ever read from or write to exported
+    -- snapshots (see 'ExportedSnapshotPath').
+    ExportedLSMSnapshot SnapshotsDirectory ExportedSnapshotPath
 
 data Snapshot = Snapshot
   { snapshotSnapShotDir :: SnapshotsDirectoryWithFormat
@@ -68,7 +77,7 @@ data Snapshot = Snapshot
 
 snapshotDirectory :: SnapshotsDirectoryWithFormat -> SnapshotsDirectory
 snapshotDirectory (StandaloneSnapshot fp _) = fp
-snapshotDirectory (LSMSnapshot fp _) = fp
+snapshotDirectory (ExportedLSMSnapshot fp _) = fp
 
 {-------------------------------------------------------------------------------
  Errors
@@ -148,8 +157,6 @@ data InEnv backend = InEnv
 data OutEnv backend = OutEnv
   { outStream :: IO (SomeBackend SinkArgs)
   -- ^ Sink arguments for consuming a stream of TxOuts
-  , outDeleteExtra :: Maybe FilePath
-  -- ^ In case some other directory needs to be wiped out
   , outProgressMsg :: String
   -- ^ A progress message (just for displaying)
   , outBackend :: SnapshotBackend
@@ -174,9 +181,9 @@ convertSnapshot ::
 convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
   InEnv{..} <- getInEnv
 
-  o@OutEnv{..} <- getOutEnv inState
+  OutEnv{..} <- getOutEnv inState
 
-  wipeOutputPaths o
+  wipePath interactive (getSnapshotDir outSnapDir F.</> snapshotToDirName outSnap)
 
   when interactive $ lift $ putStr "Copying state file..." >> hFlush stdout
   inStateFile <- lift $ unsafeToFilePath inHasFS (snapshotToStatePath inSnap)
@@ -231,13 +238,6 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
   inSomeHasFS, outSomeHasFS :: SomeHasFS IO
   inSomeHasFS = SomeHasFS inHasFS
   outSomeHasFS = SomeHasFS outHasFS
-
-  wipeOutputPaths OutEnv{..} = do
-    wipePath interactive (getSnapshotDir outSnapDir F.</> snapshotToDirName outSnap)
-    maybe
-      (pure ())
-      (wipePath interactive)
-      outDeleteExtra
 
   getState ::
     DiskSnapshot ->
@@ -311,15 +311,15 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
           ("InMemory@[" <> snapshotToDirName inSnap <> "]")
           c
           metadataCrc
-    Snapshot (LSMSnapshot _ (getLSMDatabaseDir -> lsmDbPath)) _ -> do
+    Snapshot (ExportedLSMSnapshot _ (getExportedSnapshotPath -> exportDir)) _ -> do
       metadataCrc <- getMetadata inSnap UTxOHDLSMSnapshot
       (st, c) <- getState inSnap
       checkSnapSlot st inSnap
       pure $
         InEnv
           st
-          (SomeBackend <$> mkLSMYieldArgs lsmDbPath inSnap stdMkBlockIOFS newStdGen)
-          ("LSM@[" <> lsmDbPath <> "]")
+          (SomeBackend <$> mkExportedLSMYieldArgs exportDir inSnap stdMkBlockIOFS newStdGen)
+          ("LSM (exported)@[" <> exportDir <> "]")
           c
           metadataCrc
 
@@ -333,23 +333,21 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       pure $
         OutEnv
           (pure $ SomeBackend $ mkInMemSinkArgs outSomeHasFS outSnap st)
-          Nothing
           ("InMemory@[" <> snapshotToDirName outSnap <> "]")
           UTxOHDMemSnapshot
-    Snapshot (LSMSnapshot _ (LSMDatabaseFilePath lsmDbPath)) _ -> do
+    Snapshot (ExportedLSMSnapshot _ (ExportedSnapshotPath exportDir)) _ -> do
       checkSnapSlot st outSnap
       pure $
         OutEnv
           ( SomeBackend
-              <$> mkLSMSinkArgs
-                lsmDbPath
+              <$> mkExportedLSMSinkArgs
+                exportDir
                 outSnap
                 outSomeHasFS
                 stdMkBlockIOFS
                 newStdGen
           )
-          (Just lsmDbPath)
-          ("LSM@[" <> lsmDbPath <> "]")
+          ("LSM (exported)@[" <> exportDir <> "]")
           UTxOHDLSMSnapshot
 
   stream ::
