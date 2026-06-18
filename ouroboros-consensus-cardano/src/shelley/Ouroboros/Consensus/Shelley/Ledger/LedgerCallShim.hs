@@ -46,7 +46,6 @@ module Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim
   , reapplyTxShim
   ) where
 
-import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL

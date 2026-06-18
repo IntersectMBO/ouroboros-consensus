@@ -35,7 +35,6 @@ import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Ticked (Ticked)
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Test.Util.TestBlock (TestBlockWith)
 import qualified Test.Util.TestBlock as TestBlock
 
@@ -147,8 +146,6 @@ instance Ledger.LedgerTablesAreTrivial Ledger.LedgerState TestBlock where
 instance Ledger.LedgerTablesAreTrivial (Ticked Ledger.LedgerState) TestBlock where
   convertMapKind (TestBlock.TickedTestLedger x) =
     TestBlock.TickedTestLedger (Ledger.convertMapKind x)
-
-deriving via Void instance IndexedMemPack Ledger.LedgerState TestBlock Void
 
 instance Ledger.HasLedgerTables Ledger.LedgerState TestBlock where
   projectLedgerTables _ = emptyLedgerTables

@@ -28,15 +28,13 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
 import Data.SOP.Strict
-import Data.SOP.Telescope as Tele
 import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Set as Set
 import Lens.Micro
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Cardano
 import Ouroboros.Consensus.Cardano.Block
-  ( CardanoEras
-  , GenTx (..)
+  ( GenTx (..)
   , ShelleyEra
   )
 import Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints)
@@ -47,11 +45,7 @@ import Ouroboros.Consensus.Ledger.Basics
   , Values
   )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
-import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, mkShelleyTx)
-import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( tickedShelleyLedgerState
-  )
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL (mkWitnessVKey)
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import Test.ThreadNet.TxGen

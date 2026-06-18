@@ -53,7 +53,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block (Point (Point))
 import Ouroboros.Network.Point (Block (Block))
 import qualified Test.QuickCheck as QC
@@ -210,12 +209,6 @@ type instance TxOut TestBlock = TValue
 
 instance CanUpgradeLedgerTables LedgerState TestBlock where
   upgradeTables _ _ = id
-
-instance IndexedMemPack LedgerState TestBlock TValue where
-  indexedTypeName _ _ = typeName @TValue
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
 
 instance SerializeTablesWithHint LedgerState TestBlock where
   encodeTablesWithHint = defaultEncodeTablesWithHint

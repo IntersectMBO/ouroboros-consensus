@@ -75,7 +75,6 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Condense
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block
   ( Serialised
@@ -210,11 +209,6 @@ instance SerializeTablesWithHint LedgerState BlockB where
     _ <- CBOR.decodeMapLen
     pure (LedgerTables $ ValuesMK Map.empty)
   encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
-
-deriving via
-  Void
-  instance
-    IndexedMemPack LedgerState BlockB Void
 
 type PartialLedgerCfgB = ()
 

@@ -326,7 +326,6 @@ library
     Ouroboros.Consensus.Util.Enclose
     Ouroboros.Consensus.Util.FileLock
     Ouroboros.Consensus.Util.HList
-    Ouroboros.Consensus.Util.IndexedMemPack
     Ouroboros.Consensus.Util.IOLike
     Ouroboros.Consensus.Util.LeakyBucket
     Ouroboros.Consensus.Util.MonadSTM.NormalForm

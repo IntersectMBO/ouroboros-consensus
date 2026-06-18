@@ -140,7 +140,6 @@ import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( EnvelopeCheckError
-  , ShelleyProtocolHeader
   , envelopeChecks
   )
 import Ouroboros.Consensus.Util
@@ -151,7 +150,6 @@ import Ouroboros.Consensus.Util.CBOR
   , encodeWithOrigin
   , unpackEither
   )
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Versioned
 
 {-------------------------------------------------------------------------------
@@ -385,15 +383,6 @@ instance MemPack BigEndianTxIn where
 -- through 'BigEndianTxIn'. See 'encodeValues'\/'decodeValues'.
 type instance TxIn (ShelleyBlock proto era) = SL.TxIn
 type instance TxOut (ShelleyBlock proto era) = Core.TxOut era
-
-instance
-  (txout ~ Core.TxOut era, MemPack txout) =>
-  IndexedMemPack LedgerState (ShelleyBlock proto era) txout
-  where
-  indexedTypeName _ _ = typeName @txout
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
 
 instance
   ShelleyCompatible proto era =>
