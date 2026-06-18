@@ -119,6 +119,7 @@ import Ouroboros.Consensus.Util.LeakyBucket
   ( atomicallyWithMonotonicTime
   )
 import Ouroboros.Consensus.Util.Orphans ()
+import Ouroboros.Consensus.Util.Pred (Explainable (explain), ExplanationMode (..))
 import Ouroboros.Consensus.Util.STM
 import Ouroboros.Network.AnchoredFragment
   ( AnchoredFragment
@@ -747,19 +748,21 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
         -- a block yet, so we can just ignore this case.
         Nothing -> do
           tracePerasCertInclusion $
-            TracePerasCertInclusionShouldNotIncludeCert
+            TracePerasCertInclusionNoCertToInclude
               currentSlot
           pure Nothing
-        Just (DoNotIncludeCert _) -> do
+        Just decision@(DoNotIncludeCert _) -> do
           tracePerasCertInclusion $
             TracePerasCertInclusionShouldNotIncludeCert
+              (explain Deep decision)
               currentSlot
           pure Nothing
-        Just (IncludeCert _ cert) ->
+        Just decision@(IncludeCert _ cert) ->
           case toOpaquePerasCert (vpcCert (forgetArrivalTime cert)) of
             Left opaquePerasCertError -> do
               tracePerasCertInclusion $
                 TracePerasCertInclusionFailedToConstructOpaqueCert
+                  (explain Deep decision)
                   currentSlot
                   currentRoundNo
                   opaquePerasCertError
@@ -767,6 +770,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             Right opaquePerasCert -> do
               tracePerasCertInclusion $
                 TracePerasCertInclusionShouldIncludeCert
+                  (explain Deep decision)
                   currentSlot
                   currentRoundNo
                   opaquePerasCert
