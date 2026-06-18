@@ -1155,7 +1155,6 @@ test-suite mock-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Ledger.Mock
-    Test.Consensus.Ledger.Mock.LedgerTables
     Test.ThreadNet.BFT
     Test.ThreadNet.LeaderSchedule
     Test.ThreadNet.PBFT
@@ -1477,7 +1476,6 @@ test-suite byron-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Byron.Golden
-    Test.Consensus.Byron.LedgerTables
     Test.Consensus.Byron.Serialisation
     Test.ThreadNet.Byron
     Test.ThreadNet.DualByron
