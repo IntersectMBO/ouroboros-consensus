@@ -139,7 +139,6 @@ defaultArgs ::
   ( IOLike m
   , LedgerDB.LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , LedgerDB.CanUpgradeLedgerTables LedgerState blk
   ) =>
   Incomplete ChainDbArgs m blk
 defaultArgs =
@@ -170,8 +169,8 @@ completeChainDbArgs ::
   (ConsensusProtocol (BlockProtocol blk), IOLike m) =>
   ResourceRegistry m ->
   TopLevelConfig blk ->
-  -- | Initial ledger
-  ExtLedgerState blk ValuesMK ->
+  -- | Initial ledger (the pure state together with its full table values)
+  (ExtLedgerState blk, Values blk) ->
   ImmutableDB.ChunkInfo ->
   -- | Check integrity
   (blk -> Bool) ->
