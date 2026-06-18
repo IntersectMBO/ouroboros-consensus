@@ -130,7 +130,6 @@ import LeiosDemoTypes
   , mkCommitteeEveryoneVotes
   , pointEbHash
   , pointSlotNo
-  , validateLeiosCertificate
   )
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
@@ -1036,36 +1035,3 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
         . (<> BS.pack (replicate 4 0))
         . hashToBytes
         . unKeyHash
-
-  validateLeiosBlockCert committee praosSt blk =
-    case body ^. leiosCertBlockBodyL of
-      SNothing -> Right blk
-      SJust cert ->
-        -- The voters signed the announced EB's 'LeiosPoint' — slot of
-        -- the announcing block plus the announced EB hash. The parent's
-        -- 'PraosState' carries both (see 'resolveLeiosBlock', which uses
-        -- the same pair to fetch the EB body).
-        -- FIXME: voters should be signing the announcing block header's
-        -- hash; we still go through the LeiosPoint placeholder.
-        case praosStateLeiosAnnouncement praosSt of
-          SNothing ->
-            -- A CertRB without a parent announcement is a protocol
-            -- violation; the apply-block path shouldn't have let one
-            -- through. Treat as invalid signature for now.
-            Left InvalidSignature
-          SJust ann ->
-            let signedPoint =
-                  MkLeiosPoint
-                    { pointSlotNo =
-                        fromWithOrigin (SlotNo 0) (praosStateLastSlot praosSt)
-                    , pointEbHash = ebAnnouncementHash ann
-                    }
-             in case validateLeiosCertificate
-                  committee
-                  minCertificationThreshold
-                  cert
-                  signedPoint of
-                  Left invalid -> Left invalid
-                  Right _total -> Right blk
-   where
-    Core.Block _hdr body = shelleyBlockRaw blk

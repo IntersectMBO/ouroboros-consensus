@@ -80,6 +80,8 @@ import LeiosDemoTypes
   , HasLeiosVoting (..)
   , LeiosCert
   , LeiosPoint
+  , minCertificationThreshold
+  , verifyLeiosCert
   )
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -491,7 +493,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
     extSt <- atomically (forkerGetLedgerState fo)
     let cds = headerStateChainDep (headerState extSt)
     case blockLeiosCert b of
-      Just _cert -> do
+      Just cert -> do
         -- CertRB apply path. The block's body on the wire is empty (it
         -- carries only the Leios certificate, not the EB's txs). The
         -- sequence:
@@ -512,39 +514,40 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
         -- Steps 1 and 2 happen here rather than as Dijkstra ledger
         -- rules because step 2 involves an IO read of the LeiosDB
         -- which can't be interleaved with the pure STS evaluation.
-        cm <- case getLeiosCommittee (ledgerState extSt) of
-          Just c -> pure c
+        case protocolStateLeiosAnnouncement @blk cds of
           Nothing ->
-            -- CertRB on an era without a Leios committee is itself a protocol
-            -- violation: the era machinery shouldn't have let one through.
-            -- FIXME: make this less fatal
-            error "applyBlock: CertRB seen but no Leios committee for this era"
-        case validateLeiosBlockCert cm cds b of
-          Left invalid ->
-            -- FIXME: make this less fatal. This is like a ledger error.
-            error $ "applyBlock: invalid Leios cert: " <> show invalid
-          Right validatedB -> do
-            case protocolStateLeiosAnnouncement @blk cds of
+            -- TODO: make this less fatal or impossible to reach
+            error $ "applyBlock: nothing announced!?"
+          Just (announcedPoint, _) -> do
+            cm <- case getLeiosCommittee (ledgerState extSt) of
+              Just c -> pure c
               Nothing ->
-                -- FIXME: make this less fatal or impossible to reach
-                error $ "applyBlock: nothing announced!?"
-              Just (announcedPoint, _) -> do
+                -- CertRB on an era without a Leios committee is itself a protocol
+                -- violation: the era machinery shouldn't have let one through.
+                -- TODO: make this less fatal
+                error "applyBlock: CertRB seen but no Leios committee for this era"
+            -- FIXME: This should not be about a LeiosPoint, but an RbHash
+            case verifyLeiosCert cm minCertificationThreshold announcedPoint cert of
+              Left invalid ->
+                -- TODO: make this less fatal. This is like a ledger error.
+                error $ "applyBlock: invalid Leios cert: " <> show invalid
+              Right _weight -> do
                 -- Load EB txs from disk
-                closureTxs <- resolveLeiosClosure leiosDb announcedPoint validatedB
+                closureTxs <- resolveLeiosClosure leiosDb announcedPoint b
                 -- UTXO-HD of the whole closure
-                let blkKeys = getBlockKeySets validatedB
+                let blkKeys = getBlockKeySets b
                     closureKeys = foldMap (castLedgerTables . getTransactionKeySets) closureTxs
                 lsBeforeEB <- withLedgerTables extSt <$> forkerReadTables fo (closureKeys <> blkKeys)
                 let tip = castPoint $ getTip lsBeforeEB
                 -- FIXME: Use the announcing block slot for txs
-                case applyLeiosClosure cfg (blockSlot validatedB) closureTxs lsBeforeEB of
+                case applyLeiosClosure cfg (blockSlot b) closureTxs lsBeforeEB of
                   Left lerr ->
                     -- REVIEW: Better annotation than CertRB point possible?
-                    pure (Left (AnnLedgerError tip (blockRealPoint validatedB) lerr))
+                    pure (Left (AnnLedgerError tip (blockRealPoint b) lerr))
                   Right lsAfterEB ->
-                    case runExcept $ tickThenApply evs cfg validatedB lsAfterEB of
+                    case runExcept $ tickThenApply evs cfg b lsAfterEB of
                       Left lerr ->
-                        pure (Left (AnnLedgerError tip (blockRealPoint validatedB) lerr))
+                        pure (Left (AnnLedgerError tip (blockRealPoint b) lerr))
                       Right st -> pure (Right st)
       Nothing ->
         -- Not a CertRB: ordinary Praos block
