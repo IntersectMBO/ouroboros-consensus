@@ -23,9 +23,9 @@ import Cardano.Binary (DecoderError)
 import qualified Codec.CBOR.Decoding as CBOR.Decoding
 import qualified Codec.CBOR.Read as CBOR.Read
 import qualified Codec.CBOR.Write as CBOR.Write
-import qualified Data.ByteString.Lazy as Lazy
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer
+import qualified Data.ByteString.Lazy as Lazy
 import LeiosDemoDb (LeiosDbConnection)
 import LeiosDemoTypes (LeiosPoint)
 import Ouroboros.Consensus.Block

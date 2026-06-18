@@ -389,7 +389,7 @@ leiosFetchLogicIteration env offerings =
     Maybe (PeerId pid, Map EbHash Int)
   choosePeerTx peerIds acc txOffsets targetTxBytesSize =
     foldr (\a _ -> Just a) Nothing $
-      [ (peerId, Map.map fst txOffsets')
+      [ (peerId, Map.map fst txOffsetsMatching)
       | (peerId, (_ebIds, ebIds)) <-
           Map.toList $ -- TODO prioritize/shuffle?
             (`Map.withoutKeys` peerIds) $ -- not already requested from this peer
@@ -398,9 +398,16 @@ leiosFetchLogicIteration env offerings =
           <= Leios.maxRequestedBytesSizePerPeer env
       , -- peer can be sent more requests
       let txOffsets' = txOffsets `Map.restrictKeys` ebIds
-      , case Map.lookupMax txOffsets' of
-          Nothing -> False
-          Just (_ebHash, (_txOffset, txBytesSize)) -> targetTxBytesSize == txBytesSize -- peer has offered at least one EB closure that includes this tx with the same size
+          -- Filter to entries whose recorded tx size matches the target's
+          -- authority. The recorded size in 'reverseEbIndexByTx' can disagree
+          -- across EBs (e.g. a malformed body delivered under a different EB
+          -- hash); a single tx hash uniquely determines content, so any entry
+          -- with a different size is bogus and must not carry the request.
+          txOffsetsMatching =
+            Map.filter (\(_, txBytesSize) -> txBytesSize == targetTxBytesSize) txOffsets'
+      , -- peer has offered at least one EB closure recording this
+      -- tx at the authoritative size
+      not (Map.null txOffsetsMatching)
       ]
 
 packRequests ::
@@ -560,6 +567,13 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
   traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
   let MkLeiosPoint _ebSlot ebHash = point
   do
+    -- FIXME: 'ebBytesSize' here is the size we recorded from the peer
+    -- offer at 'MsgLeiosBlockOffer' time (carried through the request),
+    -- not the chain-authoritative 'leiosEbBytesSize' from the parent
+    -- RB's 'headerLeiosAnnouncement'. EB announcements are not yet
+    -- implemented; once they are, validate against the announced size
+    -- so that a peer cannot poison this check by sending a bad-size
+    -- offer first.
     let ebBytesSize' = leiosEbBytesSize eb
     when (ebBytesSize' /= ebBytesSize) $ do
       error $ "MsgLeiosBlock size mismatch: " <> show (ebBytesSize', ebBytesSize)

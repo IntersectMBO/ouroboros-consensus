@@ -450,9 +450,28 @@ mkHandlers
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
                     let MkLeiosPoint{pointEbHash = ebHash} = point
+                    -- FIXME: EB announcements are not implemented. The
+                    -- fetch state is built entirely from peer offers,
+                    -- which is the wrong source of truth — the
+                    -- authoritative size lives in
+                    -- 'headerLeiosAnnouncement' on the parent RB
+                    -- header (signed by the forger). Until announcement
+                    -- handling lands, the sanitisation below is the
+                    -- best we can do against malformed offers:
+                    -- drop a zero-sized offer outright (no honest
+                    -- forger ever announces a 0-byte EB) and refuse to
+                    -- overwrite an existing entry that shares the same
+                    -- content hash, so the first-seen (slot, size)
+                    -- wins. The per-peer 'offerings' below is still
+                    -- updated so the peer remains a valid serving
+                    -- candidate.
                     MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
                       pure $
-                        if Set.member ebHash (Leios.acquiredEbBodies outstanding)
+                        if ebBytesSize == 0
+                          || Set.member ebHash (Leios.acquiredEbBodies outstanding)
+                          || any
+                            ((== ebHash) . pointEbHash)
+                            (Map.keys (Leios.missingEbBodies outstanding))
                           then outstanding
                           else
                             outstanding

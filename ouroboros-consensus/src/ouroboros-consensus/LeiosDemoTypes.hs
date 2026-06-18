@@ -91,7 +91,8 @@ import Text.Pretty.Simple (pShow)
 -- * Hashes and identities
 
 newtype PeerId a = MkPeerId a
-  deriving (Eq, Ord)
+  deriving stock Show
+  deriving newtype (Eq, Ord)
 
 -- Hash algorithm used in leios for EBs and txs
 type HASH = Hash.Blake2b_256
@@ -325,6 +326,28 @@ emptyLeiosOutstanding =
     , reverseEbIndexByTx = Map.empty
     , blockingPerEb = Map.empty
     }
+
+-- | Pretty-print the per-peer 'offerings' map (one tuple per peer: the EB-body
+-- offers and the EB-tx-closure offers it has sent). Each offered EB hash is
+-- shown truncated.
+prettyOfferings :: Show pid => Map (PeerId pid) (Set EbHash, Set EbHash) -> String
+prettyOfferings m =
+  unlines $
+    map ("    [leios] " ++) $
+      [ show peer
+          ++ " bodies="
+          ++ shortSet bodies
+          ++ " closures="
+          ++ shortSet closures
+      | (peer, (bodies, closures)) <- Map.toList m
+      ]
+ where
+  shortSet s = case Set.toList s of
+    [] -> "{}"
+    xs ->
+      "{"
+        ++ unwords (map (take 8 . prettyEbHash) xs)
+        ++ "}"
 
 prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
@@ -772,6 +795,17 @@ data TraceLeiosKernel
   | -- | A staged CertRB has been released back into ChainSel because
     -- the EB closure (body + txs) is now locally available.
     TraceLeiosCertRBReleased {releasedEbPoint :: LeiosPoint}
+  | -- | A staged CertRB has been evicted by the staging-area GC: no
+    -- live peer's ChainSync candidate contains the staged block
+    -- anymore so the closure is unreachable. The parked BlockFetch
+    -- client thread is woken with a 'FailedToAddBlock' verdict; the
+    -- block itself is dropped. If a peer that does have the closure
+    -- subsequently offers the chain, BlockFetch will re-fetch and
+    -- the block will be re-staged or admitted as normal.
+    TraceLeiosCertRBEvicted
+      { evictedBlockPoint :: String
+      , evictedEbPoint :: LeiosPoint
+      }
 
 deriving instance Show TraceLeiosKernel
 
@@ -857,6 +891,14 @@ traceLeiosKernelToObject = \case
     let MkLeiosPoint (SlotNo ebSlot) ebHash = releasedEbPoint
      in mconcat
           [ "kind" .= Aeson.String "LeiosCertRBReleased"
+          , "ebHash" .= prettyEbHash ebHash
+          , "ebSlot" .= ebSlot
+          ]
+  TraceLeiosCertRBEvicted{evictedBlockPoint, evictedEbPoint} ->
+    let MkLeiosPoint (SlotNo ebSlot) ebHash = evictedEbPoint
+     in mconcat
+          [ "kind" .= Aeson.String "LeiosCertRBEvicted"
+          , "blockPoint" .= evictedBlockPoint
           , "ebHash" .= prettyEbHash ebHash
           , "ebSlot" .= ebSlot
           ]
