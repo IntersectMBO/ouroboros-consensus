@@ -87,7 +87,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
@@ -278,7 +277,7 @@ data VertexStatus m blk
   = -- | The vertex does not currently have a node instance; its previous
     -- instance stopped with this chain and ledger state (empty/initial before
     -- first instance)
-    VDown (Chain blk) (LedgerState blk EmptyMK)
+    VDown (Chain blk) (LedgerState blk)
   | -- | The vertex has a node instance, but it is about to transition to
     -- 'VDown' as soon as its edges transition to 'EDown'.
     VFalling
@@ -384,8 +383,7 @@ runThreadNetwork
             ExtLedgerState{ledgerState} = pInfoInitLedger
         v <-
           uncheckedNewTVarM $
-            VDown Genesis $
-              forgetLedgerTables ledgerState
+            VDown Genesis ledgerState
         pure (nid, v)
 
     -- fork the directed edges, which also allocates their status variables
@@ -644,8 +642,8 @@ runThreadNetwork
       SlotNo ->
       (SlotNo -> STM m ()) ->
       STM m (Point blk) ->
-      ( (ReadOnlyForker' m blk -> WithEarlyExit m (ExtLedgerState blk EmptyMK)) ->
-        m (ExtLedgerState blk EmptyMK)
+      ( (ReadOnlyForker' m blk -> WithEarlyExit m (ExtLedgerState blk)) ->
+        m (ExtLedgerState blk)
       ) ->
       Mempool m blk ->
       ResourceRegistry m ->
@@ -707,32 +705,36 @@ runThreadNetwork
       OracularClock m ->
       TopLevelConfig blk ->
       Seed ->
-      ( (ReadOnlyForker' m blk -> WithEarlyExit m (LedgerState blk ValuesMK)) ->
-        m (LedgerState blk ValuesMK)
+      -- | How to get a read-only forker together with its range reader (used to
+      -- read the whole UTxO; see 'testReadAllValues').
+      ( ( (ReadOnlyForker' m blk, EraRangeReaderProvider m blk) ->
+          m (LedgerState blk, Values blk)
+        ) ->
+        m (LedgerState blk, Values blk)
       ) ->
-      -- \^ How to get the current ledger state
       Mempool m blk ->
       m ()
-    forkTxProducer coreNodeId registry clock cfg nodeSeed mforker mempool =
+    forkTxProducer coreNodeId registry clock cfg nodeSeed getForkerWithRange mempool =
       void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> do
-        fullLedgerSt <- mforker $ \forker -> lift $ do
-          emptySt <- atomically . roforkerGetLedgerState $ forker
-          let doRangeQuery = roforkerRangeReadTables forker
-          fmap ledgerState $ do
-            (fullUTxO, _) <- doRangeQuery NoPreviousQuery
-            pure $! withLedgerTables emptySt fullUTxO
+        (ledgerSt, fullUTxO) <- getForkerWithRange $ \(forker, provider) -> do
+          st <- atomically $ roforkerGetLedgerState forker
+          -- Read the whole UTxO via the era range reader (the @mk@-free forker
+          -- can no longer read a whole table through 'roforkerReadTables').
+          fullUTxO <- testReadAllValues provider (ledgerState st)
+          pure (ledgerState st, fullUTxO)
         -- Combine the node's seed with the current slot number, to make sure
         -- we generate different transactions in each slot.
         let txs =
               runGen
                 (nodeSeed `combineWith` unSlotNo curSlotNo)
-                (testGenTxs coreNodeId numCoreNodes curSlotNo cfg txGenExtra fullLedgerSt)
+                (testGenTxs coreNodeId numCoreNodes curSlotNo cfg txGenExtra ledgerSt fullUTxO)
         void $ addTxs mempool txs
 
     mkArgs ::
       ResourceRegistry m ->
       TopLevelConfig blk ->
-      ExtLedgerState blk ValuesMK ->
+      ExtLedgerState blk ->
+      Values blk ->
       Tracer m (RealPoint blk, ExtValidationError blk) ->
       -- \^ invalid block tracer
       Tracer m (RealPoint blk, BlockNo) ->
@@ -749,6 +751,7 @@ runThreadNetwork
       registry
       cfg
       initLedger
+      initLedgerTables
       invalidTracer
       addTracer
       selTracer
@@ -762,6 +765,7 @@ runThreadNetwork
                   { mcdbTopLevelConfig = cfg
                   , mcdbChunkInfo = ImmutableDB.simpleChunkInfo epochSize0
                   , mcdbInitLedger = initLedger
+                  , mcdbInitLedgerTables = initLedgerTables
                   , mcdbRegistry = registry
                   , mcdbNodeDBs = nodeDBs
                   }
@@ -867,6 +871,7 @@ runThreadNetwork
               registry
               pInfoConfig
               pInfoInitLedger
+              pInfoInitLedgerTables
               invalidTracer
               addTracer
               selTracer
@@ -883,7 +888,7 @@ runThreadNetwork
             TopLevelConfig blk ->
             BlockNo ->
             SlotNo ->
-            TickedLedgerState blk mk ->
+            TickedLedgerState blk ->
             [Validated (GenTx blk)] ->
             IsLeader (BlockProtocol blk) ->
             m blk
@@ -911,7 +916,7 @@ runThreadNetwork
                   cfg'
                   currentBno
                   currentSlot
-                  (forgetLedgerTables tickedLdgSt)
+                  tickedLdgSt
                   txs
                   prf
               Just forgeEbbEnv -> do
@@ -935,19 +940,30 @@ runThreadNetwork
                         ebbBno
                         (pointHash p)
 
+                -- The EBB consumes no inputs, so the values it needs are empty;
+                -- read its (empty) key set against the tip to obtain a
+                -- correctly-typed empty @Values blk@ (the @mk@-free apply takes
+                -- the values as a separate argument).
+                tables <-
+                  fmap fromJust $
+                    withEarlyExit $
+                      ChainDB.withReadOnlyForkerAtPoint chainDB VolatileTip $ \case
+                        Left e -> error $ show e
+                        Right frk -> lift $ roforkerReadTables frk (blockKeys ebb)
+
                 -- fail if the EBB is invalid
                 -- if it is valid, we retick to the /same/ slot
                 let apply = applyLedgerBlock OmitLedgerEvents (configLedger pInfoConfig)
-                    tables = emptyLedgerTables -- EBBs need no input tables
-                tickedLdgSt' <- case Exc.runExcept $ apply ebb (tickedLdgSt `withLedgerTables` tables) of
+                tickedLdgSt' <- case Exc.runExcept $ apply ebb tables tickedLdgSt of
                   Left e -> Exn.throw $ JitEbbError @blk e
-                  Right st ->
+                  Right (st, _diff) ->
                     pure $
-                      applyChainTick
-                        OmitLedgerEvents
-                        (configLedger pInfoConfig)
-                        currentSlot
-                        (forgetLedgerTables st)
+                      fst $
+                        applyChainTick
+                          OmitLedgerEvents
+                          (configLedger pInfoConfig)
+                          currentSlot
+                          st
 
                 -- forge the block usings the ledger state that includes
                 -- the EBB
@@ -957,7 +973,7 @@ runThreadNetwork
                     cfg'
                     currentBno
                     currentSlot
-                    (forgetLedgerTables tickedLdgSt')
+                    tickedLdgSt'
                     txs
                     prf
 
@@ -1145,6 +1161,22 @@ runThreadNetwork
               Left e -> error $ show e
               Right l -> f l
 
+      -- Like 'getForker' but also yields the 'EraRangeReaderProvider' so the tx
+      -- producer can read the whole UTxO (the @mk@-free forker can no longer do
+      -- a whole-table read; see 'testReadAllValues').
+      let getForkerWithRange ::
+            forall r.
+            ((ReadOnlyForker' m blk, EraRangeReaderProvider m blk) -> m r) ->
+            m r
+          getForkerWithRange f =
+            ChainDB.allocInRegistryReadOnlyForkerAtPoint chainDB VolatileTip registry
+              >>= \case
+                Left e -> error $ show e
+                Right (rk, frk, prov) -> do
+                  r <- f (frk, prov)
+                  _ <- release rk
+                  pure r
+
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the
       -- @txs0@ argument, which in practice contains delegation certificates
@@ -1182,7 +1214,7 @@ runThreadNetwork
         (seed `combineWith` unCoreNodeId coreNodeId)
         -- Uses the same varRNG as the block producer, but we split the RNG
         -- each time, so this is fine.
-        getForker
+        getForkerWithRange
         mempool
 
       return (nodeKernel, LimitedApp app)
@@ -1647,7 +1679,7 @@ data NodeOutput blk = NodeOutput
   { nodeOutputAdds :: Map SlotNo (Set (RealPoint blk, BlockNo))
   , nodeOutputCannotForges :: Map SlotNo [CannotForge blk]
   , nodeOutputFinalChain :: Chain blk
-  , nodeOutputFinalLedger :: LedgerState blk EmptyMK
+  , nodeOutputFinalLedger :: LedgerState blk
   , nodeOutputForges :: Map SlotNo blk
   , nodeOutputHeaderAdds :: Map SlotNo [(RealPoint blk, BlockNo)]
   , nodeOutputInvalids :: Map (RealPoint blk) [ExtValidationError blk]
@@ -1669,7 +1701,7 @@ mkTestOutput ::
   [ ( CoreNodeId
     , m (NodeInfo blk MockFS [])
     , Chain blk
-    , LedgerState blk EmptyMK
+    , LedgerState blk
     )
   ] ->
   m (TestOutput blk)
