@@ -1312,6 +1312,9 @@ library cardano
     Ouroboros.Consensus.Byron.Node.Serialisation
     Ouroboros.Consensus.Byron.Protocol
     Ouroboros.Consensus.Cardano
+    Ouroboros.Consensus.Cardano.Api.Genesis
+    Ouroboros.Consensus.Cardano.Api.Keys
+    Ouroboros.Consensus.Cardano.Api.Serialise
     Ouroboros.Consensus.Cardano.Block
     Ouroboros.Consensus.Cardano.CanHardFork
     Ouroboros.Consensus.Cardano.Condense
@@ -1353,6 +1356,7 @@ library cardano
     aeson,
     base,
     base-deriving-via,
+    base16-bytestring,
     bytestring,
     cardano-base,
     cardano-binary,
@@ -1396,6 +1400,8 @@ library cardano
     strict-sop-core,
     text,
     these,
+    transformers,
+    transformers-except,
     validation >=1.2,
 
 library unstable-byronspec
