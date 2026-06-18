@@ -66,6 +66,7 @@ protocolInfoPraosRule
             { ledgerState = genesisSimpleLedgerState addrDist
             , headerState = genesisHeaderState ()
             }
+      , pInfoInitLedgerTables = genesisSimpleLedgerTables addrDist
       }
    where
     addrDist :: AddrDist
