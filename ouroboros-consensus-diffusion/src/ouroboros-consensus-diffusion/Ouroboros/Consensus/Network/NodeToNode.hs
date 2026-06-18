@@ -69,6 +69,7 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Data.Void (Void)
 import LeiosDemoDb
@@ -311,6 +312,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
+      Leios.LeiosPeerVars m ->
       LeiosNotifyClientPeerPipelined LeiosPoint () LeiosVote m ()
   , hLeiosNotifyServer ::
       NodeToNodeVersion ->
@@ -431,14 +433,10 @@ mkHandlers
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
       , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
-      , hLeiosNotifyClient = \_version controlMessageSTM peer -> toLeiosNotifyClientPeerPipelined $ Effect $ do
+      , hLeiosNotifyClient = \_version controlMessageSTM peer peerVars -> toLeiosNotifyClientPeerPipelined $ Effect $ do
           let tracer = leiosPeerTracer peer
               kernelTracer = Node.leiosKernelTracer tracers
               LeiosVoteState{addVote} = leiosVoteState
-          MVar.modifyMVar_ getLeiosPeersVars $ \leiosPeersVars -> do
-            x <- Leios.newLeiosPeerVars
-            let !leiosPeersVars' = Map.insert (Leios.MkPeerId peer) x leiosPeersVars
-            pure leiosPeersVars'
           pure $
             leiosNotifyClientPeerPipelined
               ( atomically controlMessageSTM <&> \case
@@ -478,11 +476,6 @@ mkHandlers
                               { Leios.missingEbBodies =
                                   Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
                               }
-                    peerVars <- do
-                      peersVars <- MVar.readMVar getLeiosPeersVars
-                      case Map.lookup (Leios.MkPeerId peer) peersVars of
-                        Nothing -> error "impossible!"
-                        Just x -> pure x
                     MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
                       let !offers1' = Set.insert ebHash offers1
                       pure (offers1', offers2)
@@ -490,11 +483,6 @@ mkHandlers
                   MsgLeiosBlockTxsOffer p -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
                     let MkLeiosPoint{pointEbHash = ebHash} = p
-                    peerVars <- do
-                      peersVars <- MVar.readMVar getLeiosPeersVars
-                      case Map.lookup (Leios.MkPeerId peer) peersVars of
-                        Nothing -> error "impossible!"
-                        Just x -> pure x
                     MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
                       let !offers2' = Set.insert ebHash offers2
                       pure (offers1, offers2')
@@ -540,13 +528,23 @@ mkHandlers
               processEbNotification <|> processVote
       , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
           reqVar <-
+            -- Wait for the LeiosNotify client to publish this peer's vars. We
+            -- also watch 'controlMessageSTM': if the peer is being disconnected
+            -- from before the entry ever appears, it never will, and this loop
+            -- would otherwise spin forever. On 'Terminate' we hand back an empty
+            -- queue, so 'nextLeiosFetchClientCommand' observes 'stopSTM' on its
+            -- first transaction and terminates the client immediately.
             let loop = do
-                  leiosPeersVars <- MVar.readMVar getLeiosPeersVars
-                  case Map.lookup (Leios.MkPeerId peer) leiosPeersVars of
-                    Just x -> pure $ Leios.requestsToSend x
-                    Nothing -> do
-                      threadDelay (0.010 :: DiffTime)
-                      loop
+                  terminating <- atomically $ (== Terminate) <$> controlMessageSTM
+                  if terminating
+                    then TVar.Unchecked.newTVarIO Seq.empty
+                    else do
+                      leiosPeersVars <- MVar.readMVar getLeiosPeersVars
+                      case Map.lookup (Leios.MkPeerId peer) leiosPeersVars of
+                        Just x -> pure $ Leios.requestsToSend x
+                        Nothing -> do
+                          threadDelay (0.010 :: DiffTime)
+                          loop
              in loop
           leiosConn <- LeiosDb.open leiosDB
           pure $
@@ -1240,6 +1238,43 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       $ peerSharingServerPeer
       $ hPeerSharingServer version them
 
+  -- \| Owns the per-peer 'LeiosPeerVars' entry in 'getLeiosPeersVars': allocates
+  -- and registers it on connect and, on every exit path, unregisters it and
+  -- refunds that peer's outstanding fetch requests. Modelled on
+  -- 'bracketFetchClient'. This bracket is the sole writer of the
+  -- 'getLeiosPeersVars' map itself; the LeiosNotify client (which fills in the
+  -- entry's 'offerings') runs inside it, while the LeiosFetch client and the
+  -- fetch decision loop read the entry and write its 'requestsToSend'.
+  --
+  -- The unregister's 'removePeerFromOutstanding' (which takes
+  -- 'getLeiosOutstanding') is safe against the fetch decision loop: that loop
+  -- re-reads the live peers *inside* its own 'getLeiosOutstanding' critical
+  -- section and only increments those, so the refund is serialised with the
+  -- increment. Since this unregister deletes the 'getLeiosPeersVars' entry
+  -- before refunding, the loop either still sees the peer (and the refund runs
+  -- afterwards, cancelling the increment) or no longer sees it (and never
+  -- increments it) -- so it cannot re-insert a departed peer's accounting after
+  -- teardown has refunded it.
+  bracketLeiosPeer ::
+    ConnectionId addrNTN ->
+    (Leios.LeiosPeerVars m -> m a) ->
+    m a
+  bracketLeiosPeer them =
+    bracket
+      ( do
+          peerVars <- Leios.newLeiosPeerVars
+          MVar.modifyMVar_ (getLeiosPeersVars kernel) $
+            pure . Map.insert pid peerVars
+          pure peerVars
+      )
+      ( \_peerVars -> do
+          MVar.modifyMVar_ (getLeiosPeersVars kernel) $ pure . Map.delete pid
+          MVar.modifyMVar_ (getLeiosOutstanding kernel) $
+            pure . Leios.removePeerFromOutstanding pid
+      )
+   where
+    pid = Leios.MkPeerId them
+
   aLeiosNotifyClient ::
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
@@ -1253,15 +1288,16 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       }
     channel = do
       labelThisThread "LeiosNotifyClient"
-      ((), trailing) <-
-        runPipelinedPeerWithLimits
-          (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
-          (cLeiosNotifyCodec (mkCodecs version))
-          blLeiosNotify
-          timeLimitsLeiosNotify
-          channel
-          $ hLeiosNotifyClient version controlMessageSTM them
-      pure (NoInitiatorResult, trailing)
+      bracketLeiosPeer them $ \peerVars -> do
+        ((), trailing) <-
+          runPipelinedPeerWithLimits
+            (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
+            (cLeiosNotifyCodec (mkCodecs version))
+            blLeiosNotify
+            timeLimitsLeiosNotify
+            channel
+            $ hLeiosNotifyClient version controlMessageSTM them peerVars
+        pure (NoInitiatorResult, trailing)
 
   aLeiosNotifyServer ::
     NodeToNodeVersion ->

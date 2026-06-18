@@ -311,6 +311,17 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   --
   -- * 'blockingPerEb' is only decremented when txs are actually inserted
   --   into the DB (via @MsgLeiosBlockTxs@ handling).
+  --
+  -- TODO: 'blockingPerEb' can go permanently stale for txs shared across EBs.
+  -- 'msgLeiosBlockTxs' only decrements the entry for the EB it was requesting;
+  -- a tx that also belongs to another EB B is then in the DB, so 'filterMissingWork'
+  -- drops it from B's missing set and B never fetches it itself -- so B's
+  -- 'blockingPerEb' is never decremented for that tx and stays > 0. This is
+  -- currently harmless only because nothing reads 'blockingPerEb' as a gate: the
+  -- downstream @MsgLeiosBlockTxsOffer@ is actually driven by the DB emitting
+  -- 'AcquiredEbTxs' for every EB its @completed@ computation finds finished
+  -- (cross-EB aware), not by this field. Before using 'blockingPerEb' to gate
+  -- anything, reconcile it against shared-tx arrivals (or derive it from the DB).
   }
 
 emptyLeiosOutstanding :: LeiosOutstanding pid
