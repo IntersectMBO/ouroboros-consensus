@@ -16,25 +16,14 @@ module Test.Consensus.Mempool.Fairness.TestBlock
   , unGenTx
   ) where
 
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise
 import Control.DeepSeq (NFData)
-import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Void (Void)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
-import Ouroboros.Consensus.Ledger.Abstract
-  ( LedgerTables (..)
-  , ValuesMK (..)
-  , convertMapKind
-  )
-import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
-import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Storage.LedgerDB
-import Ouroboros.Consensus.Ticked (Ticked)
 import Test.Util.TestBlock (TestBlockWith)
 import qualified Test.Util.TestBlock as TestBlock
 
@@ -59,15 +48,18 @@ data Tx = Tx {txNumber :: Int, txSize :: Ledger.ByteSize32}
 -------------------------------------------------------------------------------}
 
 instance TestBlock.PayloadSemantics Tx where
-  data PayloadDependentState Tx mk = NoPayLoadDependentState
+  data PayloadDependentState Tx = NoPayLoadDependentState
     deriving (Show, Eq, Ord, Generic, NoThunks)
     deriving anyclass Serialise
 
   type PayloadDependentError Tx = ()
 
-  applyPayload NoPayLoadDependentState _tx = Right NoPayLoadDependentState
+  type PayloadTxIn Tx = Void
+  type PayloadTxOut Tx = Void
 
-  getPayloadKeySets = const emptyLedgerTables
+  applyPayload _vals NoPayLoadDependentState _tx = Right (NoPayLoadDependentState, mempty)
+
+  getPayloadKeySets = const Set.empty
 
 data instance Block.CodecConfig TestBlock = TestBlockCodecConfig
   deriving (Show, Generic, NoThunks)
@@ -100,21 +92,15 @@ mkGenTx :: Int -> Ledger.ByteSize32 -> Ledger.GenTx TestBlock
 mkGenTx anId aSize = TestBlockGenTx $ Tx{txNumber = anId, txSize = aSize}
 
 instance Ledger.LedgerSupportsMempool TestBlock where
-  applyTx _cfg _shouldIntervene _slot gtx st =
-    pure
-      ( TestBlock.TickedTestLedger $
-          convertMapKind $
-            TestBlock.getTickedTestLedger
-              st
-      , ValidatedGenTx gtx
-      )
+  applyTx _cfg _shouldIntervene _slot gtx _values st =
+    pure (st, mempty, ValidatedGenTx gtx)
 
-  reapplyTx _cfg _slot _gtx gst =
-    pure gst
+  reapplyTx _cfg _slot _gtx _values gst =
+    pure (gst, mempty)
 
   txForgetValidated (ValidatedGenTx tx) = tx
 
-  getTransactionKeySets _ = emptyLedgerTables
+  getTransactionKeySets _ = Set.empty
 
   mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
 
@@ -129,41 +115,14 @@ instance Ledger.TxLimits TestBlock where
     Ledger.TxMeasure (Ledger.IgnoringOverflow $ Ledger.ByteSize32 1) Ledger.TrivialTxMeasurePhase2
 
   txMeasurePhase1 _cfg _st = pure . Ledger.IgnoringOverflow . txSize . unGenTx
-  txMeasurePhase2 _cfg _st _tx = pure Ledger.TrivialTxMeasurePhase2
+  txMeasurePhase2 _cfg _values _st _tx = pure Ledger.TrivialTxMeasurePhase2
 
 {-------------------------------------------------------------------------------
-  Ledger support (empty tables)
+  Ledger support (trivial tables)
 -------------------------------------------------------------------------------}
 
+-- The block's @'Test.Util.TestBlock.BlockSupportsUTxOHD'@ (and the rest of the
+-- UTxO-HD axis) is provided generically by 'TestBlockWith' through the trivial
+-- @'PayloadTxIn' = 'PayloadTxOut' = 'Void'@ instance above.
+
 type instance Ledger.ApplyTxErr TestBlock = ()
-
-type instance Ledger.TxIn TestBlock = Void
-type instance Ledger.TxOut TestBlock = Void
-
-instance Ledger.LedgerTablesAreTrivial Ledger.LedgerState TestBlock where
-  convertMapKind (TestBlock.TestLedger x NoPayLoadDependentState) =
-    TestBlock.TestLedger x NoPayLoadDependentState
-instance Ledger.LedgerTablesAreTrivial (Ticked Ledger.LedgerState) TestBlock where
-  convertMapKind (TestBlock.TickedTestLedger x) =
-    TestBlock.TickedTestLedger (Ledger.convertMapKind x)
-
-instance Ledger.HasLedgerTables Ledger.LedgerState TestBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
-
-instance Ledger.HasLedgerTables (Ticked Ledger.LedgerState) TestBlock where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
-
-instance Ledger.CanStowLedgerTables (Ledger.LedgerState TestBlock) where
-  stowLedgerTables = convertMapKind
-  unstowLedgerTables = convertMapKind
-
-instance CanUpgradeLedgerTables Ledger.LedgerState TestBlock where
-  upgradeTables _ _ = id
-
-instance Ledger.SerializeTablesWithHint Ledger.LedgerState TestBlock where
-  decodeTablesWithHint _ = do
-    _ <- CBOR.decodeMapLen
-    pure (LedgerTables $ ValuesMK Map.empty)
-  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
