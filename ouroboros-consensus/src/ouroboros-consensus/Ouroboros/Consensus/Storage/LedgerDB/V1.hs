@@ -21,7 +21,6 @@ import Control.Monad.Trans (lift)
 import Control.Tracer
 import qualified Data.Foldable as Foldable
 import Data.Functor ((<&>))
-import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (isJust)
@@ -30,6 +29,7 @@ import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics (Generic)
 import LeiosDemoDb (LeiosDbConnection, LeiosDbHandle (open))
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -79,6 +79,8 @@ mkInitDb ::
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
   , ResolveLeiosBlock blk
+  , ApplyLeiosTx blk
+  , HasLeiosVoting blk
   ) =>
   Complete LedgerDbArgs m blk ->
   V1.LedgerDbBackendArgs m (ExtLedgerState blk) ->
@@ -175,6 +177,8 @@ implMkLedgerDb ::
   , LedgerSupportsProtocol blk
   , ApplyBlock l blk
   , ResolveLeiosBlock blk
+  , ApplyLeiosTx blk
+  , HasLeiosVoting blk
   , l ~ ExtLedgerState blk
   , HasHardForkHistory blk
   ) =>
@@ -273,6 +277,8 @@ implValidate ::
   , StandardHash l
   , ApplyBlock l blk
   , ResolveLeiosBlock blk
+  , ApplyLeiosTx blk
+  , HasLeiosVoting blk
   , l ~ ExtLedgerState blk
   ) =>
   LedgerDBHandle m l blk ->

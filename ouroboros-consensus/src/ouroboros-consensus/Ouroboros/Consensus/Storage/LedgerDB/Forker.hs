@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -13,6 +14,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -44,8 +46,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
     -- * Validation
   , AnnLedgerError (..)
   , AnnLedgerError'
+  , ApplyLeiosTx
   , ResolveBlock
   , ResolveLeiosBlock (..)
+  , resolveLeiosBlock
   , SuccessForkerAction (..)
   , ValidateArgs (..)
   , ValidateResult (..)
@@ -62,6 +66,7 @@ import Control.Monad.Except
   ( runExcept
   )
 import Data.Bifunctor (first)
+import Data.Functor ((<&>))
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
@@ -70,12 +75,28 @@ import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
-import LeiosDemoTypes (BytesSize, LeiosPoint)
+import LeiosDemoTypes
+  ( BytesSize
+  , HasLeiosVoting (..)
+  , LeiosCert
+  , LeiosPoint
+  , minCertificationThreshold
+  , verifyLeiosCert
+  )
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Tables.Utils
+  ( calculateDifference
+  , prependDiffs
+  , trackingToDiffs
+  )
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( GenTx
+  , LedgerSupportsMempool (..)
+  )
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
@@ -319,6 +340,8 @@ validate ::
   , HasCallStack
   , ApplyBlock l blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
+  , ApplyLeiosTx blk
   , l ~ ExtLedgerState blk
   ) =>
   ComputeLedgerEvents ->
@@ -389,7 +412,13 @@ validate evs args = do
 -- | Switch to a fork by rolling back a number of blocks and then pushing the
 -- new blocks.
 switch ::
-  (ApplyBlock l blk, MonadSTM m, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  ( ApplyBlock l blk
+  , MonadSTM m
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
+  , ApplyLeiosTx blk
+  , l ~ ExtLedgerState blk
+  ) =>
   LeiosDbConnection m ->
   (forall r. Word64 -> (Forker m l -> m r) -> m (Either GetForkerError r)) ->
   ComputeLedgerEvents ->
@@ -449,6 +478,8 @@ applyBlock ::
   ( ApplyBlock l blk
   , MonadSTM m
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
+  , ApplyLeiosTx blk
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -464,15 +495,84 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
     b' <- resolveLeiosBlock leiosDb cds b
     withValues b' (return . Right . tickThenReapply evs cfg b')
   ApplyVal b -> do
-    cds <- headerStateChainDep . headerState <$> atomically (forkerGetLedgerState fo)
-    b' <- resolveLeiosBlock leiosDb cds b
-    withValues
-      b'
-      ( \v ->
-          case runExcept $ tickThenApply evs cfg b' v of
-            Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b') lerr))
+    extSt <- atomically (forkerGetLedgerState fo)
+    let cds = headerStateChainDep (headerState extSt)
+    case blockLeiosCert b of
+      Just cert -> do
+        -- CertRB apply path. The block's body on the wire is empty (it
+        -- carries only the Leios certificate, not the EB's txs). The
+        -- sequence:
+        --
+        --   1. 'verifyLeiosCert' against the current committee and the
+        --      announced (expected signed) EB.
+        --   2. 'resolveLeiosClosure' to fetch the EB's txs from the
+        --      LeiosDB.
+        --   3. Load utxos (ledger tables) for the closure txs.
+        --   4. 'applyLeiosClosure' folds those txs onto the /unticked/
+        --      parent ledger via the per-era ledger 'ApplyTx' class
+        --      with 'ValidateNone' (txs were validated upstream when
+        --      inserted into the LeiosDb).
+        --   5. 'tickThenApply' the CertRB on the post-closure state;
+        --      BBODY's 'hbBodyHash' check matches because the on-wire
+        --      body is genuinely empty.
+        --
+        -- Steps 1 and 2 happen here rather than as Dijkstra ledger
+        -- rules because step 2 involves an IO read of the LeiosDB
+        -- which can't be interleaved with the pure STS evaluation.
+        case protocolStateLeiosAnnouncement @blk cds of
+          Nothing ->
+            -- TODO: make this less fatal or impossible to reach
+            error $ "applyBlock: nothing announced!?"
+          Just (announcedPoint, _) -> do
+            cm <- case getLeiosCommittee (ledgerState extSt) of
+              Just c -> pure c
+              Nothing ->
+                -- CertRB on an era without a Leios committee is itself a protocol
+                -- violation: the era machinery shouldn't have let one through.
+                -- TODO: make this less fatal
+                error "applyBlock: CertRB seen but no Leios committee for this era"
+            -- FIXME: This should not be about a LeiosPoint, but an RbHash
+            case verifyLeiosCert cm minCertificationThreshold announcedPoint cert of
+              Left invalid ->
+                -- TODO: make this less fatal. This is like a ledger error.
+                error $ "applyBlock: invalid Leios cert: " <> show invalid
+              Right _weight -> do
+                -- Load EB txs from disk
+                closureTxs <- resolveLeiosClosure leiosDb announcedPoint b
+                -- UTXO-HD of the whole closure
+                let blkKeys = getBlockKeySets b
+                    closureKeys = foldMap (castLedgerTables . getTransactionKeySets) closureTxs
+                lsBeforeEB <- withLedgerTables extSt <$> forkerReadTables fo (closureKeys <> blkKeys)
+                let tip = castPoint $ getTip lsBeforeEB
+                -- FIXME: Use the announcing block slot for txs
+                case applyLeiosClosure cfg (blockSlot b) closureTxs lsBeforeEB of
+                  Left lerr ->
+                    -- REVIEW: Better annotation than CertRB point possible?
+                    pure (Left (AnnLedgerError tip (blockRealPoint b) lerr))
+                  Right lsAfterEB ->
+                    case runExcept $ tickThenApply evs cfg b lsAfterEB of
+                      Left lerr ->
+                        pure (Left (AnnLedgerError tip (blockRealPoint b) lerr))
+                      Right blockDiff ->
+                        -- The closure's table modifications happened
+                        -- between 'lsBeforeEB' and 'lsAfterEB' and are
+                        -- /not/ in 'blockDiff' (which is a diff relative
+                        -- to 'lsAfterEB'). 'forkerPush' interprets the
+                        -- pushed diff as being on top of 'extSt' (the
+                        -- LedgerDB anchor), so without composition the
+                        -- closure inputs/outputs would be silently
+                        -- dropped from the changelog and unavailable to
+                        -- the next block's 'forkerReadTables'.
+                        let closureDiff =
+                              trackingToDiffs
+                                (calculateDifference lsBeforeEB lsAfterEB)
+                         in pure (Right (prependDiffs closureDiff blockDiff))
+      Nothing ->
+        -- Not a CertRB: ordinary Praos block
+        withValues b $ \v ->
+          case runExcept $ tickThenApply evs cfg b v of
+            Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b) lerr))
             Right st -> pure (Right st)
-      )
   ReapplyRef r -> do
     b <- doResolveBlock r
     applyBlock leiosDb evs cfg (ReapplyVal b) fo doResolveBlock
@@ -492,7 +592,13 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker.
 applyThenPush ::
-  (ApplyBlock l blk, MonadSTM m, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  ( ApplyBlock l blk
+  , MonadSTM m
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
+  , ApplyLeiosTx blk
+  , l ~ ExtLedgerState blk
+  ) =>
   LeiosDbConnection m ->
   ComputeLedgerEvents ->
   LedgerCfg l ->
@@ -508,7 +614,13 @@ applyThenPush leiosDb evs cfg ap fo doResolve = do
 
 -- | Apply and push a sequence of blocks (oldest first).
 applyThenPushMany ::
-  (ApplyBlock l blk, MonadSTM m, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  ( ApplyBlock l blk
+  , MonadSTM m
+  , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
+  , ApplyLeiosTx blk
+  , l ~ ExtLedgerState blk
+  ) =>
   LeiosDbConnection m ->
   (Pushing blk -> m ()) ->
   ComputeLedgerEvents ->
@@ -531,6 +643,16 @@ applyThenPushMany leiosDb trace evs cfg aps fo doResolveBlock = pushAndTrace aps
   Finding blocks
 -------------------------------------------------------------------------------}
 
+-- | Constraint alias for the per-tx ledger-application machinery the
+-- Leios apply path uses. The CertRB apply flow folds the EB closure's
+-- txs onto the unticked parent ledger state via 'applyLeiosClosure'
+-- (which, for Dijkstra, drops down to the ledger's 'ApplyTx' class),
+-- and we need 'getTransactionKeySets' to read the right values upfront.
+--
+-- Aliased rather than using 'LedgerSupportsMempool' directly so call
+-- sites read as a Leios concern rather than a mempool concern.
+type ApplyLeiosTx blk = LedgerSupportsMempool blk
+
 -- | Resolve a block
 --
 -- Resolving a block reference to the actual block lives in @m@ because
@@ -552,37 +674,83 @@ type ResolveBlock m blk = RealPoint blk -> m blk
 -- block types that do not carry such certificates, the default 'return
 -- blk' is correct.
 class ResolveLeiosBlock blk where
-  resolveLeiosBlock ::
+  -- | For a CertRB, look up the EB closure that the cert in this block's
+  -- body attests to and return it as a list of transactions (in the order
+  -- they appear in the EB). 'Nothing' for non-CertRB blocks.
+  --
+  -- This is the apply-path variant: the caller applies the closure txs
+  -- onto the parent ledger state via 'applyLeiosClosure', then applies
+  -- the CertRB itself (empty body) via 'tickThenApply'. The wire body is
+  -- genuinely empty (so 'hbBodyHash' matches) and the closure txs are
+  -- folded into the unticked ledger state, mirroring how a non-CertRB
+  -- Praos block's body txs would be applied — but sourced from the
+  -- LeiosDB rather than the block body.
+  resolveLeiosClosure ::
     Monad m =>
     LeiosDbConnection m ->
-    ChainDepState (BlockProtocol blk) ->
+    LeiosPoint ->
     blk ->
-    m blk
-  resolveLeiosBlock _ _ blk = return blk
+    m [GenTx blk]
+  resolveLeiosClosure _ _ _ = pure []
 
-  -- | Variant taking the previously-announced EB point (extracted from the
-  -- announcer's header via 'headerLeiosAnnouncement') instead of the full
-  -- 'ChainDepState'; used by the local ChainSync server. Returns 'Nothing'
-  -- when no resolution was needed (so the caller can reuse the original
-  -- 'Serialised blk' bytes without re-encoding).
-  resolveLeiosBlockHdr ::
-    Monad m => LeiosDbConnection m -> LeiosPoint -> blk -> m (Maybe blk)
-  resolveLeiosBlockHdr _ _ _ = return Nothing
-
-  -- | Whether this block's body carries a 'LeiosCert' (a CertRB).
+  -- | Apply an EB closure's transactions onto an /unticked/ ledger state,
+  -- without validation. The closure has already been individually
+  -- validated when each tx was inserted into the LeiosDb, so we trust it
+  -- here (era-level @ApplyTxValidation ValidateNone@). Returns the
+  -- unticked post-closure ledger state, ready to feed into
+  -- 'tickThenApply' for the CertRB itself.
   --
-  -- The CertRB staging area gate inspects this cheaply before going on
-  -- to compute the announced EB point and querying the 'LeiosDb'.
-  blockHasLeiosCert :: blk -> Bool
-  blockHasLeiosCert _ = False
+  -- Sidesteps the consensus' Ticked-state mempool API by dropping down to
+  -- the per-era ledger 'ApplyTx' class, which works directly on the pure
+  -- per-era @LedgerState era@.
+  applyLeiosClosure ::
+    LedgerCfg (ExtLedgerState blk) ->
+    SlotNo ->
+    [GenTx blk] ->
+    ExtLedgerState blk ValuesMK ->
+    Either (LedgerErr (ExtLedgerState blk)) (ExtLedgerState blk ValuesMK)
+  applyLeiosClosure _ _ _ st = Right st
+
+  -- | Inline transactions of an EB closure into a 'blk'. The returned 'blk' may be deemed invalid, but
+  -- this is useful nonetheless for some use cases. Returns 'Nothing' when no
+  -- resolution was needed so the caller can reuse the original blk directly.
+  inlineLeiosClosure :: blk -> [GenTx blk] -> blk
+  inlineLeiosClosure blk _ = blk
+
+  -- | Get the 'LeiosCert' of this block if it carries one (is a CertRB).
+  -- 'Nothing' default implementation for eras that don't have Leios certs.
+  blockLeiosCert :: blk -> Maybe LeiosCert
+  blockLeiosCert _ = Nothing
 
   -- | The EB announcement carried by this header (point + on-the-wire
   -- body size), if any. 'Nothing' for headers in eras that don't carry
-  -- Leios announcements. The CertRB staging gate reads this off the
-  -- parent header on the current chain to learn which EB the new
-  -- block's cert refers to.
+  -- Leios announcements.
   headerLeiosAnnouncement :: Header blk -> Maybe (LeiosPoint, BytesSize)
   headerLeiosAnnouncement _ = Nothing
+
+  -- | The EB most recent announcement in the 'HeaderState', if any. 'Nothing'
+  -- for headers in eras that don't carry Leios announcements.
+  protocolStateLeiosAnnouncement ::
+    ChainDepState (BlockProtocol blk) -> Maybe (LeiosPoint, BytesSize)
+  protocolStateLeiosAnnouncement _ = Nothing
+
+-- | Resolve and inline EB closure transactions as announced on the previous
+-- header. NOTE: This produces a block that would fail full validation.
+resolveLeiosBlock ::
+  forall blk m.
+  Monad m =>
+  ResolveLeiosBlock blk =>
+  LeiosDbConnection m ->
+  ChainDepState (BlockProtocol blk) ->
+  blk ->
+  m blk
+resolveLeiosBlock leiosDb cds b =
+  case protocolStateLeiosAnnouncement @blk cds of
+    Nothing -> pure b
+    Just (announcedPoint, _) ->
+      -- NOTE: This produces a block that would fail full validation.
+      resolveLeiosClosure leiosDb announcedPoint b
+        <&> inlineLeiosClosure b
 
 {-------------------------------------------------------------------------------
   Validation

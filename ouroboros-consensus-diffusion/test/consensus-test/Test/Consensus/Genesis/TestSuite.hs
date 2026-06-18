@@ -49,6 +49,7 @@ import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.API
@@ -200,6 +201,7 @@ toTestTree ::
   , Terse blk
   , Condense (NodeState blk)
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   TestSuite blk key -> [TestTree]
 toTestTree (TestSuite m) =

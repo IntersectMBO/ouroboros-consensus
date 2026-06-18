@@ -63,7 +63,6 @@ import LeiosDemoTypes
   , TxHash (..)
   , leiosEbBodyItems
   , leiosEbBytesSize
-  , trustNoVerifyLeiosCertificate
   )
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import System.Directory (doesFileExist)
@@ -132,7 +131,6 @@ openSQLiteConnection tracer dbPath notificationChan = do
       , leiosDbFilterMissingTxs = sqlFilterMissingTxs tracer db
       , leiosDbQueryFetchWork = sqlQueryFetchWork db
       , leiosDbQueryCompletedEbByPoint = sqlQueryCompletedEbByPoint db
-      , leiosDbQueryCertificateByPoint = return . Just . trustNoVerifyLeiosCertificate
       }
 
 -- * Top-level implementations

@@ -5,7 +5,9 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -212,13 +214,14 @@ module Ouroboros.Consensus.Cardano.Block
   , EraMismatch (..)
   ) where
 
-import Cardano.Protocol.TPraos.API (PraosCrypto)
+import qualified Cardano.Ledger.Shelley.API as SL (Globals)
 import Data.Kind
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
 import Data.SOP.Strict
 import Ouroboros.Consensus.Block (BlockProtocol)
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
+import Ouroboros.Consensus.Config (configLedger)
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
@@ -226,18 +229,33 @@ import Ouroboros.Consensus.HeaderValidation
   ( OtherHeaderEnvelopeError
   , TipInfo
   )
-import Ouroboros.Consensus.Ledger.Abstract (LedgerError)
+import Ouroboros.Consensus.Ledger.Abstract (LedgerCfg, LedgerError)
+import Ouroboros.Consensus.Ledger.Extended
+  ( ExtLedgerState
+  , getExtLedgerCfg
+  , ledgerState
+  )
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , GenTxId
   )
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
-import Ouroboros.Consensus.Protocol.Praos (Praos)
+import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyCompatible)
+import Ouroboros.Consensus.Shelley.Ledger.Ledger
+  ( ShelleyPartialLedgerConfig (..)
+  , shelleyLedgerGlobals
+  )
+import Ouroboros.Consensus.Shelley.Ledger.Leios
+  ( applyDijkstraLeiosClosureTxs
+  )
+import Ouroboros.Consensus.Shelley.Ledger.Mempool
+  ( GenTx (ShelleyTx)
+  )
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -1525,26 +1543,91 @@ pattern ChainDepStateDijkstra st <-
 -- Block and chain-dep state are scrutinised together so the dispatch is
 -- a single case; era mismatches fall through to the no-op default.
 instance
+  forall c.
   ( PraosCrypto c
   , ShelleyCompatible (Praos c) DijkstraEra
   ) =>
   ResolveLeiosBlock (HardForkBlock (CardanoEras c))
   where
-  resolveLeiosBlock db cds blk =
-    case (cds, blk) of
-      (ChainDepStateDijkstra praosSt, BlockDijkstra dijkstraBlk) ->
-        BlockDijkstra <$> resolveLeiosBlock db praosSt dijkstraBlk
-      _ -> pure blk
-
-  resolveLeiosBlockHdr db prevAnn blk = case blk of
+  resolveLeiosClosure db point blk = case blk of
     BlockDijkstra dijkstraBlk ->
-      fmap BlockDijkstra <$> resolveLeiosBlockHdr db prevAnn dijkstraBlk
-    _ -> pure Nothing
+      fmap GenTxDijkstra <$> resolveLeiosClosure db point dijkstraBlk
+    _ -> pure []
 
-  blockHasLeiosCert blk = case blk of
-    BlockDijkstra dijkstraBlk -> blockHasLeiosCert dijkstraBlk
-    _ -> False
+  inlineLeiosClosure blk txs = case blk of
+    BlockDijkstra dijkstraBlk ->
+      BlockDijkstra $
+        inlineLeiosClosure dijkstraBlk [tx | GenTxDijkstra tx <- txs]
+    _ -> blk
+
+  applyLeiosClosure cfg slot txs extSt =
+    case ledgerState extSt of
+        HardForkLedgerState
+          ( State.HardForkState
+              ( TeleDijkstra
+                  byron
+                  shelley
+                  allegra
+                  mary
+                  alonzo
+                  babbage
+                  conway
+                  (State.Current bound (Flip dijkstraLst))
+                )
+            ) ->
+            let dijkstraTxs = [tx | GenTxDijkstra tx <- txs]
+                -- The Dijkstra 'ResolveLeiosBlock' instance only needs the
+                -- per-era ledger state and globals — neither the HFC
+                -- 'ExtLedgerState' wrapper nor the header state — so we
+                -- dispatch to its underlying helper directly with a
+                -- projected ledger state and globals.
+                globals = dijkstraGlobalsFromCfg cfg
+                dijkstraInnerTxs = [tx | ShelleyTx _ tx <- dijkstraTxs]
+             in case applyDijkstraLeiosClosureTxs globals slot dijkstraInnerTxs dijkstraLst of
+                Left lerr ->
+                  -- 'applyTxValidation ValidateNone' skips all predicate
+                  -- checks, so this branch is not reachable under normal
+                  -- circumstances; surface as a panic for visibility.
+                  error $
+                    "applyLeiosClosure: ValidateNone produced an error: " <> show lerr
+                Right dijkstraLst' ->
+                  let newTele =
+                        TeleDijkstra
+                          byron
+                          shelley
+                          allegra
+                          mary
+                          alonzo
+                          babbage
+                          conway
+                          (State.Current bound (Flip dijkstraLst'))
+                      newHFLS = HardForkLedgerState (State.HardForkState newTele)
+                   in Right extSt{ledgerState = newHFLS}
+        _ -> Right extSt
+   where
+    -- Extract 'Globals' from the Dijkstra slot of the HFC ledger config.
+    -- 'Globals' is network-wide (same across all Shelley-based eras), but
+    -- the per-era 'PartialLedgerConfig' is where it lives, so we project
+    -- through the Dijkstra slot specifically.
+    dijkstraGlobalsFromCfg ::
+      LedgerCfg (ExtLedgerState (CardanoBlock c)) -> SL.Globals
+    dijkstraGlobalsFromCfg extCfg =
+      let hfcCfg = configLedger (getExtLedgerCfg extCfg)
+          -- The 'CardanoEras c' NP is 8-wide: Byron, Shelley, Allegra, Mary,
+          -- Alonzo, Babbage, Conway, Dijkstra.
+          _ :* _ :* _ :* _ :* _ :* _ :* _ :* dijkstraPCfg :* Nil =
+            getPerEraLedgerConfig (hardForkLedgerConfigPerEra hfcCfg)
+       in shelleyLedgerGlobals (shelleyLedgerConfig (unwrapPartialLedgerConfig dijkstraPCfg))
+
+  blockLeiosCert blk = case blk of
+    BlockDijkstra dijkstraBlk -> blockLeiosCert dijkstraBlk
+    _ -> Nothing
 
   headerLeiosAnnouncement hdr = case hdr of
     HeaderDijkstra dHdr -> headerLeiosAnnouncement dHdr
+    _ -> Nothing
+
+  protocolStateLeiosAnnouncement cds = case cds of
+    ChainDepStateDijkstra praosSt ->
+      protocolStateLeiosAnnouncement @(ShelleyBlock (Praos c) DijkstraEra) praosSt
     _ -> Nothing

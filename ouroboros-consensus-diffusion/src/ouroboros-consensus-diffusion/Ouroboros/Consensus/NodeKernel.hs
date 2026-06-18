@@ -209,6 +209,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ The node's top-level static configuration
   , getFetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
   -- ^ The fetch client registry, used for the block fetch clients.
+  , getKeepAliveRegistry :: KeepAliveRegistry (ConnectionId addrNTN) m
+  -- ^ The keep-alive registry, used by block-fetch decision logic to read
+  -- per-peer GSV measurements collected by the keep-alive mini-protocol.
   , getFetchMode :: STM m FetchMode
   -- ^ The fetch mode, used by diffusion.
   , getGsmState :: STM m GSM.GsmState
@@ -341,9 +344,11 @@ initNodeKernel
           , leiosReady = getLeiosReady
           , leiosPeersVars = getLeiosPeersVars
           , leiosCertRbStaging
+          , leiosVoteState
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
+    keepAliveRegistry <- newKeepAliveRegistry
 
     do
       let GsmNodeKernelArgs{..} = gsmArgs
@@ -447,6 +452,7 @@ initNodeKernel
           (contramap (fmap castTraceFetchClientState) $ blockFetchClientTracer tracers)
           blockFetchInterface
           fetchClientRegistry
+          keepAliveRegistry
           blockFetchConfiguration
 
     void $
@@ -637,8 +643,6 @@ initNodeKernel
     -- to local "EB closure acquired" notifications and emit a vote for
     -- each acquired EB (which the LeiosNotify server then publishes to
     -- peers). 'Nothing' disables voting on this node.
-    let getCommittee = getLeiosCommittee . ledgerState <$> ChainDB.getCurrentLedger chainDB
-    leiosVoteState <- newLeiosVoteState getCommittee
     void $
       forkLinkedThread registry "NodeKernel.leiosVoting" $
         runLeiosVoting
@@ -654,6 +658,7 @@ initNodeKernel
         , getMempool = mempool
         , getTopLevelConfig = cfg
         , getFetchClientRegistry = fetchClientRegistry
+        , getKeepAliveRegistry = keepAliveRegistry
         , getFetchMode = readFetchMode blockFetchInterface
         , getGsmState = readTVar varGsmState
         , getChainSyncHandles = varChainSyncHandles
@@ -728,6 +733,10 @@ data InternalState m addrNTN addrNTC blk = IS
   , leiosCertRbStaging ::
       LeiosStagingArea m (Leios.PeerId (ConnectionId addrNTN)) blk
   -- ^ CertRBs whose EB closure isn't locally available yet (issue #890).
+  , leiosVoteState :: LeiosVoteState m
+  -- ^ Accumulator for Leios votes; assembles certificates once a
+  -- point's tally crosses 'minCertificationThreshold'. Source of
+  -- 'fbLeiosVoteState' threaded into 'ForgeBlockArgs'.
   }
 
 initInternalState ::
@@ -813,6 +822,10 @@ initInternalState
 
     peerSharingRegistry <- newPeerSharingRegistry
 
+    leiosVoteState <-
+      newLeiosVoteState
+        (getLeiosCommittee . ledgerState <$> ChainDB.getCurrentLedger chainDB)
+
     return IS{..}
 
 toConsensusMode :: forall a. LoEAndGDDConfig a -> ConsensusMode
@@ -863,7 +876,7 @@ wrapChainDbViewForLeiosStaging
       }
    where
     stagingAwareAddBlock punish blk
-      | not (blockHasLeiosCert blk) =
+      | Nothing <- blockLeiosCert blk =
           BlockFetchClientInterface.addBlockAsync defView punish blk
       | otherwise = do
           mAnn <- atomically $ do
@@ -1234,6 +1247,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             , Block.fbChainDepState = Just untickedChainDepState
             , Block.fbLeiosDb = leiosConn
             , Block.fbLeiosTracer = leiosKernelTracer tracers
+            , Block.fbLeiosVoteState = leiosVoteState
             }
 
     trace blockForging $

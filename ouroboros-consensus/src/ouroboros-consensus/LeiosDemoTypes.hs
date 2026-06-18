@@ -15,7 +15,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-partial-fields #-}
 
-module LeiosDemoTypes (module LeiosDemoTypes) where
+module LeiosDemoTypes (module LeiosDemoTypes, module Cardano.Crypto.Leios) where
 
 import Cardano.Binary
   ( Decoder
@@ -29,18 +29,28 @@ import Cardano.Binary
   )
 import qualified Cardano.Binary as CBOR
 import Cardano.Crypto.DSIGN
-  ( SigDSIGN
-  , SignKeyDSIGN
-  , VerKeyDSIGN
-  , decodeSigDSIGN
+  ( decodeSigDSIGN
   , encodeSigDSIGN
   , signDSIGN
   , verifyDSIGN
   )
-import Cardano.Crypto.DSIGN.BLS12381 (BLS12381MinSigDSIGN, BLS12381SignContext (..))
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Crypto.Leios
+  ( Committee (..)
+  , LeiosCert (..)
+  , LeiosSignature
+  , LeiosSigningKey
+  , LeiosVerificationKey
+  , VerificationError
+  , VoterId (..)
+  , Weight
+  , bitFieldToBytes
+  , leiosSignContext
+  , verifyLeiosCert
+  )
 import Cardano.Crypto.Util (SignableRepresentation (..))
-import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
+import Cardano.Ledger.Binary (DecCBOR (..), EncCBOR (..))
+import qualified Cardano.Ledger.Binary as Binary
 import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
 import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
@@ -60,9 +70,10 @@ import Data.Fixed (Pico)
 import Data.Function (on)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
-import Data.List (findIndex, nubBy, sortOn)
+import Data.List (nubBy, sortOn)
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Ratio ((%))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
@@ -79,11 +90,14 @@ import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import qualified Numeric
+import Ouroboros.Consensus.Block.Abstract (BlockProtocol)
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , TxMeasureMetrics
   , txMeasureMetricTxSizeBytes
   )
+import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
 import Text.Pretty.Simple (pShow)
@@ -162,7 +176,7 @@ data EbAnnouncement = EbAnnouncement
   , ebAnnouncementSize :: BytesSize
   }
   deriving stock (Generic, Show, Eq, Ord)
-  deriving anyclass (NoThunks, EncCBOR, DecCBOR)
+  deriving anyclass NoThunks
 
 instance ToCBOR EbAnnouncement where
   toCBOR ebAnn = CBOR.encodeListLen 2 <> encode (ebAnnouncementHash ebAnn) <> encode (ebAnnouncementSize ebAnn)
@@ -171,6 +185,17 @@ instance FromCBOR EbAnnouncement where
   fromCBOR = do
     enforceSize "EbAnnouncement" 2
     EbAnnouncement <$> decode <*> decode
+
+instance EncCBOR EbAnnouncement where
+  encCBOR ebAnn =
+    Binary.encodeListLen 2
+      <> encCBOR (ebAnnouncementHash ebAnn)
+      <> encCBOR (ebAnnouncementSize ebAnn)
+
+instance DecCBOR EbAnnouncement where
+  decCBOR =
+    Binary.decodeRecordNamed "EbAnnouncement" (const 2) $
+      EbAnnouncement <$> decCBOR <*> decCBOR
 
 -- * Fetch logic types
 
@@ -437,15 +462,6 @@ data ForgedLeiosEb = ForgedLeiosEb
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
 
-newtype LeiosCertificate = LeiosCertificate
-  { leiosCertificateEbPoint :: LeiosPoint -- FIXME(bladyjoker): Mocked
-  }
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass NoThunks
-
-trustNoVerifyLeiosCertificate :: LeiosPoint -> LeiosCertificate
-trustNoVerifyLeiosCertificate = LeiosCertificate
-
 forgeLeiosEb :: EraTx era => SlotNo -> NonEmpty (Tx TopTx era) -> ForgedLeiosEb
 forgeLeiosEb slot txs =
   ForgedLeiosEb{point, body, txClosure}
@@ -521,33 +537,14 @@ decodeLeiosEb = do
 
 -- * Voting
 
--- | Leios uses BLS as a signature scheme. NOTE: We cannot use the
--- cardano-ledger KeyRole infrastructure as this is fixed to use Ed25519DSIGN.
-type LeiosDSIGN = BLS12381MinSigDSIGN
-
-type LeiosSigningKey = SignKeyDSIGN LeiosDSIGN
-
-type LeiosVerificationKey = VerKeyDSIGN LeiosDSIGN
-
-type LeiosSignature = SigDSIGN LeiosDSIGN
-
--- TODO: Seems not to be exposed, but will move into the DSIGN instance anyways
-minSigPoPDST :: BLS12381SignContext
-minSigPoPDST = BLS12381SignContext (Just "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_") Nothing
-
--- ** Committee
-
--- | A selected committee in which each 'VoterId' has a 'Weight'.
-newtype Committee = UnsafeCommittee {voters :: [(Weight, LeiosVerificationKey)]}
-  deriving Show
-
 -- | Create a 'Committee' from a mapping of verification keys and some
 -- associated weight. Duplicate entries by verification key are ignored. The
 -- final 'Weight' in the committee is normalized by the total of the input map.
 -- TODO: The total can only be calculated here in "everyone votes" scheme.
 mkCommitteeEveryoneVotes :: Real w => [(LeiosVerificationKey, w)] -> Committee
 mkCommitteeEveryoneVotes inputs =
-  UnsafeCommittee
+  Committee
+    . V.fromList
     . sortOn fst
     $ [ (toRational weight / totalWeight, vk)
       | (vk, weight) <- nubBy ((==) `on` fst) inputs
@@ -557,30 +554,20 @@ mkCommitteeEveryoneVotes inputs =
 
 -- | Resolve a 'VoterId' to its corresponding 'VotingKey' in the 'Committee'.
 resolveVoterId :: Committee -> VoterId -> Maybe (Weight, LeiosVerificationKey)
-resolveVoterId committee (MkVoterId idx)
-  | i >= 0 && i < length voters = Just $ voters !! i
-  | otherwise = Nothing
- where
-  i = fromIntegral idx
-
-  voters = committee.voters
+resolveVoterId committee (VoterId idx) = committee.committeeVoters V.!? fromIntegral idx
 
 -- ** VoterId
 
--- | Voter in a committee, identified by their seat index.
-newtype VoterId = MkVoterId {voterIndex :: Word16}
-  deriving (Ord, Eq, Show)
-
 encodeVoterId :: VoterId -> Encoding
-encodeVoterId (MkVoterId idx) = CBOR.encodeWord16 idx
+encodeVoterId (VoterId idx) = CBOR.encodeWord16 idx
 
 decodeVoterId :: Decoder s VoterId
-decodeVoterId = MkVoterId <$> CBOR.decodeWord16
+decodeVoterId = VoterId <$> CBOR.decodeWord16
 
 -- | Determine the 'VoterId' on a 'Committee'.
 getVoterId :: LeiosVerificationKey -> Committee -> Maybe VoterId
 getVoterId vk committee =
-  MkVoterId . fromIntegral <$> findIndex ((== vk) . snd) committee.voters
+  VoterId . fromIntegral <$> V.findIndex ((== vk) . snd) committee.committeeVoters
 
 -- ** Vote
 
@@ -641,7 +628,7 @@ signLeiosVote sk voterId point =
   MkLeiosVote
     { point
     , voterId
-    , voteSignature = signDSIGN minSigPoPDST point sk
+    , voteSignature = signDSIGN leiosSignContext point sk
     }
 
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
@@ -650,7 +637,7 @@ validateLeiosVote committee MkLeiosVote{point, voterId, voteSignature} =
   case resolveVoterId committee voterId of
     Nothing -> Left SignerNotInCommittee
     Just (weight, vk) ->
-      case verifyDSIGN minSigPoPDST vk point voteSignature of
+      case verifyDSIGN leiosSignContext vk point voteSignature of
         Left _ -> Left InvalidSignature
         Right () -> Right weight
 
@@ -659,7 +646,19 @@ data VoteInvalid
   | SignerNotInCommittee
   deriving (Eq, Show)
 
-type Weight = Rational
+-- * Era-level Leios dispatch
+
+-- | Per-era hooks for Leios voting and CertRB admission. Default
+-- methods make this a no-op for non-Leios eras.
+--
+-- Lives here rather than in 'LeiosVoting' so it can be referenced from
+-- the LedgerDB layer ('applyBlock') without pulling 'ChainDB' (which
+-- 'runLeiosVoting' depends on) into scope.
+class HasLeiosVoting blk where
+  -- | The voting committee for the given (pre-tick) ledger state, or
+  -- 'Nothing' if the era does not participate in Leios voting.
+  getLeiosCommittee :: LedgerState blk EmptyMK -> Maybe Committee
+  getLeiosCommittee _ = Nothing
 
 -- * Tracing
 
@@ -754,6 +753,7 @@ data TraceLeiosKernel
     TraceLeiosBlockCertified {atSlot :: SlotNo, certifiedPoint :: LeiosPoint}
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
+  | TraceLeiosCertified {point :: LeiosPoint}
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
   | -- | A CertRB was admitted to the staging area because its certified
@@ -836,6 +836,13 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosVoteAcquired"
       , "vote" .= voteToObject vote
       ]
+  TraceLeiosCertified{point} ->
+    let MkLeiosPoint (SlotNo ebSlot) ebHash = point
+     in mconcat
+          [ "kind" .= Aeson.String "LeiosCertified"
+          , "ebHash" .= prettyEbHash ebHash
+          , "ebSlot" .= ebSlot
+          ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
   TraceLeiosDb (TraceLeiosDbInsertCollision table key) ->
@@ -893,6 +900,10 @@ maxTxsPerEb =
 
 minCertificationGap :: Word64
 minCertificationGap = 10
+
+-- | Minimum fraction of stake to create a valid 'LeiosCertificate'.
+minCertificationThreshold :: Rational
+minCertificationThreshold = 3 % 4
 
 leiosMempoolSize :: ByteSize32
 leiosMempoolSize = ByteSize32 24_090_112 -- 2 * (leiosEBMaxClosureSize + RB block size (mainnet = 90112))

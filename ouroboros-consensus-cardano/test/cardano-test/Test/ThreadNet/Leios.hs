@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -35,6 +36,13 @@ import Cardano.Ledger.Api.Tx.In (TxIn (..))
 import Cardano.Ledger.BaseTypes (ProtVer (..), StrictMaybe (..), TxIx (..), knownNonZeroBounded)
 import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core (TopTx, sizeTxF, txSeqBlockBodyL)
+import qualified Cardano.Ledger.Shelley.LedgerState as SL
+  ( esLState
+  , lsCertState
+  , lsUTxOState
+  , nesEs
+  , utxosInstantStake
+  )
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
@@ -96,10 +104,16 @@ import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Shelley.Ledger.Block (shelleyBlockRaw)
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( shelleyCumulativeTxBytes
+  , shelleyLedgerState
+  , shelleyLedgerTip
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as MockFS
+import qualified System.FS.Sim.STM as Sim
+import System.IO.Unsafe (unsafePerformIO)
 import qualified Test.Cardano.Ledger.Alonzo.Examples as Alonzo
 import qualified Test.Cardano.Ledger.Conway.Examples as Conway
 import qualified Test.Cardano.Ledger.Dijkstra.Examples as Dijkstra
@@ -184,12 +198,21 @@ prop_leios :: Seed -> Property
 prop_leios seed =
   conjoin
     [ blocksProduced
+        & counterexample "[failed] blocksProduced"
     , ebCertificateInclusion
+        & counterexample "[failed] ebCertificateInclusion"
     , cumulativeTxBytes
+        & counterexample "[failed] cumulativeTxBytes"
     , propConsistentChains
-    , certificationGapIsCorrect
-        .||. length certifyingBlocks <= 1
+        & counterexample "[failed] propConsistentChains"
+    , ( certificationGapIsCorrect
+          .||. length certificateBlocks <= 1
+      )
+        & counterexample "[failed] certificationGap"
     , propVoting
+        & counterexample "[failed] propVoting"
+    , propCertifying
+        & counterexample "[failed] propCertifying"
     ]
  where
   numNodes = 3 :: Int
@@ -251,6 +274,16 @@ prop_leios seed =
     TraceLeiosVoteAcquired{vote} -> Just (vote.point, Set.singleton vote.voterId)
     _ -> Nothing
 
+  propCertifying =
+    conjoin
+      [ length reachedQuorumPoints > 0
+          & counterexample "never reached quorum"
+      ]
+
+  reachedQuorumPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
+    TraceLeiosCertified{point} -> Just point
+    _ -> Nothing
+
   mempoolTraces = [ev | FromNode _ (FromMempool ev) <- traces]
 
   mempoolAddedTxs = flip mapMaybe mempoolTraces $ \case
@@ -263,7 +296,7 @@ prop_leios seed =
 
   nodeChains = Chain.toOldestFirst . nodeOutputFinalChain <$> testOutput.testOutputNodes
 
-  certifyingBlocks =
+  certificateBlocks =
     -- NOTE: Assumes all nodeChains are consistent
     toList . Set.fromList $
       [ blockSlot blk
@@ -300,7 +333,7 @@ prop_leios seed =
       & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
       & tabulate "Praos blocks forged" [show $ length forgedBlocks]
       & tabulate "Leios blocks forged" [show $ length forgedEBs]
-      & tabulate "Certifying blocks" [show $ length certifyingBlocks]
+      & tabulate "Certifying blocks" [show $ length certificateBlocks]
       & tabulate "Effective throughput" [show throughput]
 
   -- FIXME: This only exercises the in-memory replay via
@@ -321,10 +354,55 @@ prop_leios seed =
   ebCertificateInclusion =
     let expectedLedger = nodeOutputFinalLedger someNode
         foldedLedger = replayNodeChain pInfoConfig pInfoInitLedger someNode
-     in ( not (null certifyingBlocks)
-            & counterexample "no certifying blocks — test is vacuous"
-        )
-          .&&. (foldedLedger === expectedLedger)
+        dijkstraOf st = case st of
+          LedgerStateDijkstra d -> d
+          _ -> error "ebCertificateInclusion: expected Dijkstra ledger state"
+        lhs = dijkstraOf foldedLedger
+        rhs = dijkstraOf expectedLedger
+        -- The full @ShelleyLedgerState DijkstraEra@ is huge, so we
+        -- compare salient projections individually. The first failing
+        -- assertion narrows the divergence to a specific field.
+        nesLhs = shelleyLedgerState lhs
+        nesRhs = shelleyLedgerState rhs
+        lsLhs = SL.esLState (SL.nesEs nesLhs)
+        lsRhs = SL.esLState (SL.nesEs nesRhs)
+        chain = Chain.toOldestFirst (nodeOutputFinalChain someNode)
+        chainCertRBs =
+          [ blockSlot blk
+          | blk@(BlockDijkstra dBlk) <- chain
+          , let SL.Block _ body = shelleyBlockRaw dBlk
+          , SJust _ <- [body ^. leiosCertBlockBodyL]
+          ]
+        chainSummary =
+          "chain length = "
+            <> show (length chain)
+            <> ", CertRBs in chain = "
+            <> show (length chainCertRBs)
+            <> " at slots "
+            <> show chainCertRBs
+            <> "\nblock slots = "
+            <> show (map blockSlot chain)
+            <> "\nfoldedLedger tip = "
+            <> show (shelleyLedgerTip lhs)
+            <> ", instantStake = "
+            <> show (SL.utxosInstantStake (SL.lsUTxOState lsLhs))
+            <> "\nexpectedLedger tip = "
+            <> show (shelleyLedgerTip rhs)
+            <> ", instantStake = "
+            <> show (SL.utxosInstantStake (SL.lsUTxOState lsRhs))
+     in conjoin
+          [ not (null certificateBlocks)
+              & counterexample "no certifying blocks — test is vacuous"
+          , shelleyLedgerTip lhs === shelleyLedgerTip rhs
+              & counterexample "[ebCertificateInclusion] shelleyLedgerTip"
+          , shelleyCumulativeTxBytes lhs === shelleyCumulativeTxBytes rhs
+              & counterexample "[ebCertificateInclusion] shelleyCumulativeTxBytes"
+          , SL.lsUTxOState lsLhs === SL.lsUTxOState lsRhs
+              & counterexample "[ebCertificateInclusion] lsUTxOState"
+          , SL.lsCertState lsLhs === SL.lsCertState lsRhs
+              & counterexample "[ebCertificateInclusion] lsCertState"
+          ]
+          & counterexample chainSummary
 
   cumulativeTxBytes =
     let actual = case nodeOutputFinalLedger someNode of
@@ -363,8 +441,8 @@ prop_leios seed =
                 <> show minCertificationGap
                 <> ")"
             )
-          & prettyCounterexampleList "certifying block slots" 120 certifyingBlocks
-      | (s1, s2) <- zip certifyingBlocks (drop 1 certifyingBlocks)
+          & prettyCounterexampleList "certifying block slots" 120 certificateBlocks
+      | (s1, s2) <- zip certificateBlocks (drop 1 certificateBlocks)
       ]
 
 -- | A late-joining node must not crash on a CertRB whose certified EB
@@ -421,22 +499,17 @@ sumChainTxBytes ::
   ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->
   NodeOutput (CardanoBlock StandardCrypto) ->
   Word64
-sumChainTxBytes topConfig initLedger node = runSimOrThrow $ do
-  let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
-  stateVar <- StrictTVar.newTVarIO db
-  leiosDb <- newLeiosDBInMemoryWith stateVar
-  withLeiosDb leiosDb $ \leiosConn -> do
-    let chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
-        cfg = ExtLedgerCfg topConfig
-    fst <$> foldM (step leiosConn cfg) (0, initLedger) chain
+sumChainTxBytes _topConfig _initLedger node =
+  sum (map blockTxSizeSum chain)
  where
-  step leiosDb cfg (total, st) blk = do
-    blk' <- resolveLeiosBlock leiosDb (headerStateChainDep (headerState st)) blk
-    let txBytes = blockTxSizeSum blk'
-        st' = applyDiffs st $ tickThenReapply OmitLedgerEvents cfg blk' st
-    pure (total + txBytes, st')
+  chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
 
-  -- FIXME(bladyjoker): Why not use blockTxBytes?
+  -- 'shelleyCumulativeTxBytes' is bumped by the LEDGERS rule, which only
+  -- sees the on-wire block body. Production's CertRB apply path folds
+  -- the EB closure through the LEDGER (singular) rule with
+  -- 'ValidateNone', which does /not/ bump the counter — so the
+  -- independent sum mirrors that by only summing the wire-body txs.
+  -- A CertRB carries an empty body on the wire, so it contributes 0.
   blockTxSizeSum (BlockDijkstra shelleyBlk) =
     let SL.Block _ body = shelleyBlockRaw shelleyBlk
      in sumTxSizes (body ^. txSeqBlockBodyL)
@@ -464,15 +537,16 @@ replayNodeChain topConfig initLedger node = runSimOrThrow $ do
     foldedState <- foldWithResolution leiosConn cfg chain initLedger
     pure $ forgetLedgerTables . ledgerState $ foldedState
 
--- | Fold a chain of blocks over an initial ledger state, resolving Leios
--- blocks (filling in EB transaction closures for certifying blocks) before
--- each application.
+-- | Fold a chain of blocks over an initial ledger state, mirroring the
+-- LedgerDB's apply path so the replayed final ledger matches the one the
+-- chain converged to during the simulation.
 --
--- We use 'tickThenReapply' because the blocks have already been validated
--- by the ChainDB. We use 'applyDiffs' instead of 'applyDiffForKeys'
--- because we need to accumulate the full UTxO — 'applyDiffForKeys' only
--- retains entries referenced by the current block, which is designed for
--- the LedgerDB's backing store architecture.
+-- For a CertRB, this mirrors 'Forker.applyBlock' 'ApplyVal': the EB
+-- closure's txs are folded onto the parent ledger via 'applyLeiosClosure'
+-- (ledger-level 'applyTxValidation ValidateNone') and then the
+-- (empty-body) CertRB is applied with 'tickThenReapply' on top — so the
+-- LEDGERS rule sees an empty body and 'shelleyCumulativeTxBytes' is not
+-- bumped for closure txs.
 foldWithResolution ::
   Monad m =>
   LeiosDbConnection m ->
@@ -484,8 +558,25 @@ foldWithResolution leiosDb cfg blks initState =
   foldM step initState blks
  where
   step state blk = do
-    blk' <- resolveLeiosBlock leiosDb (headerStateChainDep (headerState state)) blk
-    pure $ applyDiffs state $ tickThenReapply OmitLedgerEvents cfg blk' state
+    -- Mirror the production apply path (Forker.applyBlock 'ApplyVal' arm):
+    -- for a CertRB, fold the EB closure's txs onto the parent ledger via
+    -- 'applyLeiosClosure' (no validation), then 'tickThenReapply' the
+    -- (empty-body) CertRB on top. For non-CertRB blocks, this collapses
+    -- to plain 'tickThenReapply'.
+    let cds = headerStateChainDep (headerState state)
+    stateAfterClosure <- case blockLeiosCert blk of
+      Nothing -> pure state
+      Just _cert -> case protocolStateLeiosAnnouncement @(CardanoBlock StandardCrypto) cds of
+        Nothing ->
+          error "foldWithResolution: CertRB but no announcement on parent chain-dep state"
+        Just (point, _) -> do
+          closureTxs <- resolveLeiosClosure leiosDb point blk
+          case applyLeiosClosure cfg (blockSlot blk) closureTxs state of
+            Left err -> error $ "foldWithResolution: applyLeiosClosure failed: " <> show err
+            Right st -> pure st
+    pure $
+      applyDiffs stateAfterClosure $
+        tickThenReapply OmitLedgerEvents cfg blk stateAfterClosure
 
 -- * Running the thread net
 
@@ -500,19 +591,24 @@ runThreadNet initSeed numSlots numCoreNodes joinPlan =
       testConfig
       testConfigB
       TestConfigMB
-        { nodeInfo = \(CoreNodeId nid) ->
-            let (protocolInfo, blockForging) = protocolInfoCardano (cardanoProtocolParams nid)
-             in TestNodeInitialization
-                  { tniProtocolInfo = protocolInfo
-                  , tniCrucialTxs = []
-                  , tniBlockForging = blockForging Tracer.nullTracer
-                  }
+        { nodeInfo = \(CoreNodeId nid) -> do
+            fs <- SomeHasFS <$> Sim.simHasFS' MockFS.empty
+            (protocolInfo, blockForging) <- protocolInfoCardano fs (cardanoProtocolParams nid)
+            pure
+              TestNodeInitialization
+                { tniProtocolInfo = protocolInfo
+                , tniCrucialTxs = []
+                , tniBlockForging = blockForging Tracer.nullTracer
+                }
         , mkRekeyM = Nothing
         }
   , protocolInfo0
   )
  where
-  protocolInfo0 = fst $ protocolInfoCardano @StandardCrypto @IO (cardanoProtocolParams (0 :: Word64))
+  protocolInfo0 = unsafePerformIO $ do
+    fs <- SomeHasFS <$> Sim.simHasFS' MockFS.empty
+    fst <$> protocolInfoCardano @StandardCrypto @IO fs (cardanoProtocolParams (0 :: Word64))
+  {-# NOINLINE protocolInfo0 #-}
 
   cardanoProtocolParams nid =
     CardanoProtocolParams

@@ -40,6 +40,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.LedgerDB (TraceEvent (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as LedgerDB.V1
@@ -71,6 +72,7 @@ openLedgerDB ::
   , HasHardForkHistory blk
   , LedgerDB.LedgerSupportsLedgerDB blk
   , LedgerDB.ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   IO

@@ -123,7 +123,7 @@ prop_committeeNormalizedAndSorted =
       forAll (vectorOf n (chooseInt (1, 1000))) $ \ws ->
         let inputs = zip (deriveVerKeyDSIGN <$> sks) ws
             committee = mkCommitteeEveryoneVotes inputs
-            weights = fst <$> voters committee
+            weights = fst <$> V.toList (committeeVoters committee)
          in counterexample ("committee: " <> show committee) $
               counterexample "weights sum to 1" (sum weights === 1)
                 .&&. counterexample "weights sorted ascending" (weights === sort weights)

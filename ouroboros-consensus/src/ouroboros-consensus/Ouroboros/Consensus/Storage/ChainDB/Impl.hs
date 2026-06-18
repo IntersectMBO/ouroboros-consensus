@@ -48,10 +48,10 @@ import Control.ResourceRegistry
   )
 import Control.Tracer
 import Data.Functor ((<&>))
-import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import GHC.Stack (HasCallStack)
+import LeiosDemoTypes (HasLeiosVoting)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -76,7 +76,11 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
-import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB, ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB
+  ( ApplyLeiosTx
+  , LedgerSupportsLedgerDB
+  , ResolveLeiosBlock
+  )
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -109,6 +113,8 @@ withDB ::
   , SerialiseDiskConstraints blk
   , LedgerSupportsLedgerDB blk
   , ResolveLeiosBlock blk
+  , ApplyLeiosTx blk
+  , HasLeiosVoting blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
@@ -127,6 +133,8 @@ openDB ::
   , SerialiseDiskConstraints blk
   , LedgerSupportsLedgerDB blk
   , ResolveLeiosBlock blk
+  , ApplyLeiosTx blk
+  , HasLeiosVoting blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
@@ -145,6 +153,8 @@ openDBInternal ::
   , HasCallStack
   , LedgerSupportsLedgerDB blk
   , ResolveLeiosBlock blk
+  , ApplyLeiosTx blk
+  , HasLeiosVoting blk
   ) =>
   Complete Args.ChainDbArgs m blk ->
   -- | 'True' = Launch background tasks

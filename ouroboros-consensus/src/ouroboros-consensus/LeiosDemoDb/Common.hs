@@ -18,7 +18,6 @@ import GHC.Stack (HasCallStack)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
-  , LeiosCertificate
   , LeiosEb
   , LeiosPoint
   , TxHash
@@ -81,7 +80,6 @@ data LeiosDbConnection m = LeiosDbConnection
   , leiosDbFilterMissingTxs :: HasCallStack => [TxHash] -> m [TxHash]
   -- ^ Batch filter: returns the subset of input TxHashes that we do NOT have.
   , leiosDbQueryCompletedEbByPoint :: HasCallStack => LeiosPoint -> m (Maybe [(TxHash, ByteString)])
-  , leiosDbQueryCertificateByPoint :: HasCallStack => LeiosPoint -> m (Maybe LeiosCertificate)
   }
 
 instance NoThunks (LeiosDbHandle m) where

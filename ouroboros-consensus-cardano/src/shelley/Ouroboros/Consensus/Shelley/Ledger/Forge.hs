@@ -8,17 +8,18 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
-import Cardano.Ledger.BaseTypes (LeiosCert (..), StrictMaybe (..))
+import Cardano.Crypto.Leios (LeiosCert)
+import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import qualified Cardano.Ledger.Core as Core (TopTx, Tx)
 import qualified Cardano.Ledger.Core as SL
   ( BlockBody
+  , blockBodySize
   , hashBlockBody
   , mkBasicBlockBody
   , txSeqBlockBodyL
   )
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
-import qualified Cardano.Ledger.Shelley.BlockBody as SL (bBodySize)
 import Cardano.Prelude (nonEmpty)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
@@ -30,19 +31,18 @@ import LeiosDemoDb
   ( leiosDbInsertEbBody
   , leiosDbInsertEbPoint
   , leiosDbInsertTxs
-  , leiosDbQueryCertificateByPoint
   , leiosDbQueryCompletedEbByPoint
   )
 import LeiosDemoTypes
   ( EbAnnouncement (..)
   , ForgedLeiosEb (..)
-  , LeiosCertificate (..)
   , LeiosPoint (..)
   , TraceLeiosKernel (..)
   , forgeLeiosEb
   , leiosEbBytesSize
   , minCertificationGap
   )
+import LeiosVoteState (LeiosVoteState (queryCert))
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -85,7 +85,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       Just Refl -> decideLeios
       Nothing -> pure (Nothing, SNothing)
   let body = mkBody mayLeiosCert
-      actualBodySize = SL.bBodySize protocolVersion body
+      actualBodySize = SL.blockBodySize protocolVersion body
   hdr <-
     mkHeader @_ @(ProtoCrypto proto)
       hotKey
@@ -159,6 +159,9 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                     { pointSlotNo = prevSlotNo
                     , pointEbHash = ebAnnouncementHash ann
                     }
+            -- TODO: Why exactly do we guard against this? Also, shouldn't we
+            -- detect it the other way around: if we have a cert, but not
+            -- downloaded it ourselves -> warning!
             mClosure <- leiosDbQueryCompletedEbByPoint fbLeiosDb ebPoint
             case mClosure of
               Nothing -> do
@@ -167,7 +170,12 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                     "EB not yet downloaded: " <> show ebPoint
                 pure SNothing
               Just _ -> do
-                mCert <- leiosDbQueryCertificateByPoint fbLeiosDb ebPoint
+                -- Pull the assembled certificate from this node's
+                -- 'LeiosVoteState' — populated as votes accumulate and
+                -- cross 'minCertificationThreshold' (see
+                -- "LeiosVoteState"). Replaces the previous LeiosDb
+                -- placeholder cert (an empty bitfield + dummy sig).
+                mCert <- queryCert fbLeiosVoteState ebPoint
                 case mCert of
                   Nothing -> do
                     traceWith fbLeiosTracer $
@@ -178,9 +186,9 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                     traceWith fbLeiosTracer $
                       TraceLeiosBlockCertified
                         { atSlot = fbCurrentSlotNo
-                        , certifiedPoint = cert.leiosCertificateEbPoint
+                        , certifiedPoint = ebPoint
                         }
-                    pure (SJust LeiosCert)
+                    pure (SJust cert)
 
   -- Produce an EB from fbEbTxs, store it into fbLeiosDb, and return the
   -- announcement to embed in the header. An honest forger only emits an

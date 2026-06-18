@@ -102,6 +102,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (eitherToMaybe)
 import Ouroboros.Consensus.Util.IndexedMemPack
+import System.FS.API (SomeHasFS)
 import Test.ThreadNet.TxGen
 import Test.ThreadNet.TxGen.Shelley ()
 
@@ -399,34 +400,53 @@ protocolInfoShelleyBasedHardFork ::
   ( KESAgentContext (ProtoCrypto proto2) m
   , ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   ) =>
+  SomeHasFS m ->
   ProtocolParamsShelleyBased (ProtoCrypto proto1) ->
   SL.ProtVer ->
   SL.ProtVer ->
   L.TransitionConfig era2 ->
   TriggerHardFork ->
-  ( ProtocolInfo (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
-  , Tracer.Tracer m KESAgentClientTrace ->
-    m [MkBlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
-  )
+  m
+    ( ProtocolInfo (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
+    , Tracer.Tracer m KESAgentClientTrace ->
+      m [MkBlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
+    )
 protocolInfoShelleyBasedHardFork
+  fs
   protocolParamsShelleyBased
   protVer1
   protVer2
   transCfg2
-  hardForkTrigger =
-    protocolInfoBinary
-      -- Era 1
-      protocolInfo1
-      blockForging1
-      eraParams1
-      tpraosParams
-      toPartialLedgerConfig1
-      -- Era 2
-      protocolInfo2
-      blockForging2
-      eraParams2
-      tpraosParams
-      toPartialLedgerConfig2
+  hardForkTrigger = do
+    (protocolInfo1, blockForging1) <-
+      protocolInfoTPraosShelleyBased
+        fs
+        protocolParamsShelleyBased
+        (transCfg2 ^. L.tcPreviousEraConfigL)
+        protVer1
+    (protocolInfo2, blockForging2) <-
+      protocolInfoTPraosShelleyBased
+        fs
+        ProtocolParamsShelleyBased
+          { shelleyBasedInitialNonce
+          , shelleyBasedLeaderCredentials
+          }
+        transCfg2
+        protVer2
+    pure $
+      protocolInfoBinary
+        -- Era 1
+        protocolInfo1
+        blockForging1
+        eraParams1
+        tpraosParams
+        toPartialLedgerConfig1
+        -- Era 2
+        protocolInfo2
+        blockForging2
+        eraParams2
+        tpraosParams
+        toPartialLedgerConfig2
    where
     ProtocolParamsShelleyBased
       { shelleyBasedInitialNonce
@@ -437,15 +457,6 @@ protocolInfoShelleyBasedHardFork
 
     genesis :: SL.ShelleyGenesis
     genesis = transCfg2 ^. L.tcShelleyGenesisL
-
-    protocolInfo1 :: ProtocolInfo (ShelleyBlock proto1 era1)
-    blockForging1 ::
-      Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock proto1 era1)]
-    (protocolInfo1, blockForging1) =
-      protocolInfoTPraosShelleyBased
-        protocolParamsShelleyBased
-        (transCfg2 ^. L.tcPreviousEraConfigL)
-        protVer1
 
     eraParams1 :: History.EraParams
     eraParams1 = shelleyEraParams genesis
@@ -460,18 +471,6 @@ protocolInfoShelleyBasedHardFork
         }
 
     -- Era 2
-
-    protocolInfo2 :: ProtocolInfo (ShelleyBlock proto2 era2)
-    blockForging2 ::
-      Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock proto2 era2)]
-    (protocolInfo2, blockForging2) =
-      protocolInfoTPraosShelleyBased
-        ProtocolParamsShelleyBased
-          { shelleyBasedInitialNonce
-          , shelleyBasedLeaderCredentials
-          }
-        transCfg2
-        protVer2
 
     eraParams2 :: History.EraParams
     eraParams2 = shelleyEraParams genesis

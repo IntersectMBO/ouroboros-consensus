@@ -180,7 +180,7 @@ data VolatileDbArgs f m blk = VolatileDbArgs
 -- corrupt/invalid block?
 
 -- | Default arguments
-defaultArgs :: Applicative m => Incomplete VolatileDbArgs m blk
+defaultArgs :: Monad m => Incomplete VolatileDbArgs m blk
 defaultArgs =
   VolatileDbArgs
     { volCheckIntegrity = noDefault

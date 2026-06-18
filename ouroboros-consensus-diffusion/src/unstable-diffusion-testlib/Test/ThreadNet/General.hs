@@ -44,7 +44,7 @@ import Control.Monad.IOSim
   , traceM
   , traceResult
   )
-import Control.Tracer (Tracer (..), nullTracer)
+import Control.Tracer (mkTracer, nullTracer)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -209,7 +209,7 @@ deriving instance
 -- that 'TestConfigB' can occur in contexts (such as in 'PropGeneralArgs') for
 -- which the @m@ parameter is irrelevant and hence unknown.
 data TestConfigMB m blk = TestConfigMB
-  { nodeInfo :: CoreNodeId -> TestNodeInitialization m blk
+  { nodeInfo :: CoreNodeId -> m (TestNodeInitialization m blk)
   , mkRekeyM :: Maybe (m (RekeyM m blk))
   -- ^ 'runTestNetwork' immediately runs this action once in order to
   -- initialize an 'RekeyM' value that it then reuses throughout the test
@@ -268,7 +268,7 @@ runTestNetwork
               (BTime.SystemStart dawnOfTime)
               nullTracer
       runThreadNetwork
-        (Tracer traceM)
+        (mkTracer traceM)
         systemTime
         ThreadNetworkArgs
           { tnaForgeEbbEnv = forgeEbbEnv

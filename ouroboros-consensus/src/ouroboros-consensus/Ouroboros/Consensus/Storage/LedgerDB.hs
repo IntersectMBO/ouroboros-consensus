@@ -20,6 +20,7 @@ import Control.Monad.Trans.Class
 import Control.ResourceRegistry
 import Data.Functor.Contravariant ((>$<))
 import Data.Word
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
@@ -57,6 +58,8 @@ openDB ::
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
   , ResolveLeiosBlock blk
+  , ApplyLeiosTx blk
+  , HasLeiosVoting blk
   ) =>
   -- | Stateless initializaton arguments
   Complete LedgerDbArgs m blk ->

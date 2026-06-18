@@ -63,13 +63,12 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
 
 import Cardano.Crypto.DSIGN (DSIGNAlgorithm (deriveVerKeyDSIGN), rawDeserialiseSignKeyDSIGN)
 import Cardano.Crypto.Hash.Class (hashToBytes)
-import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
+import Cardano.Crypto.Leios (VerificationError (..))
+import Cardano.Ledger.BaseTypes (strictMaybeToMaybe)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
-  ( decCBOR
-  , decShareCBOR
-  , decodeFullAnnotator
+  ( decShareCBOR
   , decodeMap
   , decodeMemPack
   , internsFromMap
@@ -89,24 +88,19 @@ import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core
   ( Era
   , KeyHash (..)
-  , TopTx
-  , Tx
   , eraDecoder
   , ppMaxBHSizeL
   , ppMaxTxSizeL
   )
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Dijkstra.BlockBody
-  ( DijkstraBlockBody (DijkstraBlockBodyResolved)
-  , leiosCertBlockBodyL
-  , perasCertBlockBodyL
+  ( leiosCertBlockBodyL
   )
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import Cardano.Ledger.State (individualPoolStake, poolDistrDistrL)
 import qualified Cardano.Ledger.State as SL
-import Cardano.Protocol.TPraos.API (PraosCrypto)
 import Cardano.Slotting.EpochInfo
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -118,26 +112,24 @@ import qualified Control.Exception as Exception
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BL
 import Data.Coerce
 import Data.Foldable (toList)
 import Data.Functor.Identity
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
-import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import Data.MemPack
-import Data.Sequence.Strict (StrictSeq)
-import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (LeiosDbConnection (..))
 import LeiosDemoTypes
   ( EbAnnouncement (..)
   , LeiosPoint (..)
-  , TxHash
+  , minCertificationThreshold
   , mkCommitteeEveryoneVotes
+  , pointEbHash
+  , pointSlotNo
   )
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
@@ -160,10 +152,6 @@ import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosState (..))
-import Ouroboros.Consensus.Protocol.Praos.Header
-  ( Header (Header, headerBody)
-  , HeaderBody (hbLeiosEbAnnouncement, hbSlotNo)
-  )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
   ( AllegraEra
@@ -179,8 +167,8 @@ import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( EnvelopeCheckError
+  , ShelleyProtocolHeader
   , envelopeChecks
-  , mkHeaderView
   )
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Storage.LedgerDB
@@ -730,7 +718,7 @@ applyHelper ::
   ShelleyCompatible proto era =>
   ( SL.Globals ->
     SL.NewEpochState era ->
-    SL.Block SL.BHeaderView era ->
+    SL.Block (ShelleyProtocolHeader proto) era ->
     Either
       (SL.BlockTransitionError era)
       ( LedgerResult
@@ -757,10 +745,7 @@ applyHelper f cfg blk stBefore = do
     f
       globals
       tickedShelleyLedgerState
-      ( let b = shelleyBlockRaw blk
-            h' = mkHeaderView (SL.blockHeader b)
-         in SL.Block h' (SL.blockBody b)
-      )
+      (shelleyBlockRaw blk)
 
   let track ::
         LedgerState (ShelleyBlock proto era) ValuesMK ->
@@ -1006,106 +991,6 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
   getLatestPerasCertRound =
     strictMaybeToMaybe
       . shelleyLedgerLatestPerasCertRound
-
-{-------------------------------------------------------------------------------
-  ResolveLeiosBlock
--------------------------------------------------------------------------------}
-
-instance
-  forall c.
-  (PraosCrypto c, ShelleyCompatible (Praos c) DijkstraEra) =>
-  ResolveLeiosBlock (ShelleyBlock (Praos c) DijkstraEra)
-  where
-  resolveLeiosBlock leiosDb praosSt blk =
-    case body ^. leiosCertBlockBodyL of
-      SNothing -> pure blk
-      SJust cert ->
-        case praosStateLeiosAnnouncement praosSt of
-          SNothing ->
-            error $
-              "FIXME(bladyjoker): Certifying but not previously announced EB! Whai would you do that!? "
-                <> show cert
-          SJust ann -> do
-            mAnnouncedEb <-
-              leiosDbQueryCompletedEbByPoint
-                leiosDb
-                MkLeiosPoint
-                  { pointSlotNo = fromWithOrigin (SlotNo 0) (praosStateLastSlot praosSt)
-                  , pointEbHash = ebAnnouncementHash ann
-                  }
-            case mAnnouncedEb of
-              Nothing ->
-                error $
-                  "Issue #890 gate missed: apply-time resolve found EB "
-                    <> show ann
-                    <> " at last-slot "
-                    <> show (praosStateLastSlot praosSt)
-                    <> " absent; cert: "
-                    <> show cert
-              Just announcedEb ->
-                pure $
-                  blk{shelleyBlockRaw = Core.Block hdr body'}
-               where
-                txSeq = toLeiosTxSeq @DijkstraEra announcedEb
-                body' = body & Core.txSeqBlockBodyL .~ txSeq
-   where
-    Core.Block hdr body = shelleyBlockRaw blk
-
-  resolveLeiosBlockHdr leiosDb prevAnn blk =
-    case body ^. leiosCertBlockBodyL of
-      SNothing -> pure Nothing
-      SJust cert -> do
-        mEb <- leiosDbQueryCompletedEbByPoint leiosDb prevAnn
-        case mEb of
-          Nothing -> error $ "Announced EB unavailable: " <> show cert
-          Just eb ->
-            pure $ Just blk{shelleyBlockRaw = Core.Block hdr body'}
-           where
-            txSeq = toLeiosTxSeq @DijkstraEra eb
-            body' =
-              DijkstraBlockBodyResolved
-                txSeq
-                (body ^. leiosCertBlockBodyL)
-                (body ^. perasCertBlockBodyL)
-   where
-    Core.Block hdr body = shelleyBlockRaw blk
-
-  blockHasLeiosCert blk = case body ^. leiosCertBlockBodyL of
-    SNothing -> False
-    SJust _ -> True
-   where
-    Core.Block _ body = shelleyBlockRaw blk
-
-  headerLeiosAnnouncement hdr =
-    case hbLeiosEbAnnouncement annBody of
-      SNothing -> Nothing
-      SJust ann ->
-        Just
-          ( MkLeiosPoint
-              { pointSlotNo = hbSlotNo annBody
-              , pointEbHash = ebAnnouncementHash ann
-              }
-          , ebAnnouncementSize ann
-          )
-   where
-    annBody :: HeaderBody c
-    Header{headerBody = annBody} = shelleyHeaderRaw hdr
-
--- | Deserialise a transaction supplied as Leios-stored bytes.
-deserialiseLeiosTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Tx TopTx era
-deserialiseLeiosTx bs =
-  case decodeFullAnnotator (Core.eraProtVerLow @era) "Leios Tx" decCBOR (BL.fromStrict bs) of
-    Left err -> error $ "Failed to deserialise Leios tx: " <> show err
-    Right tx -> tx
-
--- | Turn the @[(TxHash, ByteString)]@ tuple list returned by
--- 'leiosDbQueryCompletedEbByPoint' into the @StrictSeq (Tx TopTx era)@
--- that 'Core.txSeqBlockBodyL' wants.
-toLeiosTxSeq ::
-  forall era.
-  ShelleyBasedEra era =>
-  [(TxHash, BS.ByteString)] -> StrictSeq (Tx TopTx era)
-toLeiosTxSeq = StrictSeq.fromList . fmap (deserialiseLeiosTx @era . snd)
 
 {-------------------------------------------------------------------------------
   HasLeiosVoting

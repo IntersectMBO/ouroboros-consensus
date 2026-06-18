@@ -120,7 +120,8 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import LeiosVoteState
-  ( LeiosVoteState (..)
+  ( AddVoteResult (..)
+  , LeiosVoteState (..)
   , LeiosVoteSubscription (..)
   , subscribeVotes
   )
@@ -482,9 +483,18 @@ mkHandlers
                     void $ MVar.tryPutMVar getLeiosReady ()
                   MsgLeiosVotes vs -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs
-                    mapM_ addVote vs
-                    forM_ vs $ \vote ->
+                    forM_ vs $ \vote -> do
+                      result <- addVote vote
                       traceWith kernelTracer TraceLeiosVoteAcquired{vote}
+                      -- A remote vote can be the one that tips this
+                      -- node's tally past 'minCertificationThreshold';
+                      -- trace certification whenever 'addVote' surfaces
+                      -- a cert for the point.
+                      case result of
+                        Added _ (Just _) ->
+                          let Leios.MkLeiosVote{Leios.point = pt} = vote
+                           in traceWith kernelTracer TraceLeiosCertified{point = pt}
+                        _ -> pure ()
               )
       , hLeiosNotifyServer = \_version _peer -> Effect $ do
           chan <- subscribeEbNotifications leiosDB
@@ -771,20 +781,21 @@ showTracers ::
   , Show (GenTxId blk)
   , HasHeader blk
   , HasNestedContent Header blk
+  , Monad m
   ) =>
   Tracer m String -> Tracers m ntnAddr blk e
 showTracers tr =
   Tracers
-    { tChainSyncTracer = showTracing tr
-    , tChainSyncSerialisedTracer = showTracing tr
-    , tBlockFetchTracer = showTracing tr
-    , tBlockFetchSerialisedTracer = showTracing tr
-    , tTxSubmission2Tracer = showTracing tr
-    , tKeepAliveTracer = showTracing tr
-    , tPeerSharingTracer = showTracing tr
-    , tTxLogicTracer = showTracing tr
-    , tLeiosNotifyTracer = showTracing tr
-    , tLeiosFetchTracer = showTracing tr
+    { tChainSyncTracer = show >$< tr
+    , tChainSyncSerialisedTracer = show >$< tr
+    , tBlockFetchTracer = show >$< tr
+    , tBlockFetchSerialisedTracer = show >$< tr
+    , tTxSubmission2Tracer = show >$< tr
+    , tKeepAliveTracer = show >$< tr
+    , tPeerSharingTracer = show >$< tr
+    , tTxLogicTracer = show >$< tr
+    , tLeiosNotifyTracer = show >$< tr
+    , tLeiosFetchTracer = show >$< tr
     }
 
 {-------------------------------------------------------------------------------
@@ -1039,6 +1050,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       labelThisThread "BlockFetchClient"
       bracketFetchClient
         (getFetchClientRegistry kernel)
+        (getKeepAliveRegistry kernel)
         version
         them
         $ \clientCtx -> do
@@ -1160,7 +1172,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
                 dqCtx
                 (KeepAliveInterval 10)
 
-      ((), trailing) <- bracketKeepAliveClient (getFetchClientRegistry kernel) them kacApp
+      ((), trailing) <- bracketKeepAliveClient (getKeepAliveRegistry kernel) them kacApp
       return (NoInitiatorResult, trailing)
 
   aKeepAliveServer ::
@@ -1315,6 +1327,7 @@ initiator ::
   OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr PeerTrustable b m a Void
 initiator miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
+    Set.empty -- TODO: use feature flags for Leios
     miniProtocolParameters
     -- TODO: currently consensus is using 'ConnectionId' for its 'peer' type.
     -- This is currently ok, as we might accept multiple connections from the
@@ -1329,6 +1342,8 @@ initiator miniProtocolParameters version versionData Apps{..} =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aBlockFetchClient version ctx)))
         , txSubmissionProtocol =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aTxSubmission2Client version ctx)))
+        , perasCertDiffusionProtocol = perasUnsupportedInitiator
+        , perasVoteDiffusionProtocol = perasUnsupportedInitiator
         , keepAliveProtocol =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aKeepAliveClient version ctx)))
         , peerSharingProtocol =
@@ -1340,6 +1355,7 @@ initiator miniProtocolParameters version versionData Apps{..} =
     <> mempty
       { withHot =
           WithHot
+            -- TODO: Also move the leios protocols into NodeToNodeProtocols?
             [ MiniProtocol
                 { miniProtocolNum = leiosNotifyMiniProtocolNum
                 , miniProtocolStart = StartOnDemand
@@ -1372,6 +1388,7 @@ initiatorAndResponder ::
   OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr PeerTrustable b m a c
 initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
+    Set.empty
     miniProtocolParameters
     ( NodeToNodeProtocols
         { chainSyncProtocol =
@@ -1389,6 +1406,8 @@ initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
                 (MiniProtocolCb (\initiatorCtx -> aTxSubmission2Client version initiatorCtx))
                 (MiniProtocolCb (\responderCtx -> aTxSubmission2Server version responderCtx))
             )
+        , perasCertDiffusionProtocol = perasUnsupportedInitiatorResponder
+        , perasVoteDiffusionProtocol = perasUnsupportedInitiatorResponder
         , keepAliveProtocol =
             ( InitiatorAndResponderProtocol
                 (MiniProtocolCb (\initiatorCtx -> aKeepAliveClient version initiatorCtx))
@@ -1426,6 +1445,24 @@ initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
                 }
             ]
       }
+
+-- | Placeholder for the Peras certificate/vote diffusion mini-protocols. The
+-- network layer only invokes these when the negotiated 'NodeToNodeVersionData'
+-- advertises 'PerasSupported'; consensus currently negotiates
+-- 'PerasUnsupported', so these slots are never run. If/when Peras lands at the
+-- consensus layer, replace these with real applications.
+perasUnsupportedInitiator ::
+  RunMiniProtocol 'Mux.InitiatorMode initiatorCtx responderCtx bytes m a Void
+perasUnsupportedInitiator =
+  InitiatorProtocolOnly
+    (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
+
+perasUnsupportedInitiatorResponder ::
+  RunMiniProtocol 'Mux.InitiatorResponderMode initiatorCtx responderCtx bytes m a c
+perasUnsupportedInitiatorResponder =
+  InitiatorAndResponderProtocol
+    (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
+    (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
 
 leiosNotifyProtocolLimits :: MiniProtocolLimits
 leiosNotifyProtocolLimits =

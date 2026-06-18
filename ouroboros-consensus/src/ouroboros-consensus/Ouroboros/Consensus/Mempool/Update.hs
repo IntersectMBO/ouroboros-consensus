@@ -17,7 +17,6 @@ import Control.Monad.Class.MonadTimer.SI (MonadTimer, timeout)
 import Control.Monad.Except (runExcept)
 import Control.Tracer
 import qualified Data.Foldable as Foldable
-import Data.Functor.Contravariant ((>$<))
 import Data.Functor.Identity (Identity (Identity))
 import Data.Kind (Type)
 import qualified Data.List.NonEmpty as NE

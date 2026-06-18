@@ -5,7 +5,10 @@
 
 -- | Leios voting: cast a vote on each acquired EB, governed by the voting
 -- committee selected by the active era from its ledger state.
-module LeiosVoting (module LeiosVoting) where
+module LeiosVoting
+  ( module LeiosVoting
+  , HasLeiosVoting (..)
+  ) where
 
 import Cardano.Crypto.DSIGN (DSIGNAlgorithm (deriveVerKeyDSIGN))
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
@@ -13,14 +16,13 @@ import Control.Monad (forever)
 import Control.Tracer (Tracer, traceWith)
 import LeiosDemoDb (LeiosDbHandle (..), LeiosEbNotification (..))
 import LeiosDemoTypes
-  ( Committee
+  ( HasLeiosVoting (..)
   , LeiosSigningKey
   , TraceLeiosKernel (..)
   , getVoterId
   , signLeiosVote
   )
 import LeiosVoteState (AddVoteResult (..), LeiosVoteState (..))
-import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
@@ -61,24 +63,25 @@ runLeiosVoting tracer chainDB leiosDB voteState = \case
       case getLeiosCommittee ls >>= getVoterId vk of
         Nothing -> pure ()
         Just voterId -> do
+          -- TODO: check if its not too late to vote before/after validation
           -- TODO: validate EB closures against selected chain
           let vote = signVote voterId point
           -- NOTE: Self-validation of vote could be skipped, but useful for
           -- determining and tracing the weight.
           addVote vote >>= \case
-            Added weight -> do
+            Added weight mCert -> do
               traceWith tracer TraceLeiosVoted{vote, weight}
               traceWith tracer TraceLeiosVoteAcquired{vote}
+              -- Trace certification whenever the tally for this point
+              -- is past 'minCertificationThreshold'. May fire more than
+              -- once per point if subsequent votes also come in here;
+              -- consumers (e.g. ThreadNet's 'propCertifying') dedupe
+              -- by point.
+              case mCert of
+                Just _ -> traceWith tracer TraceLeiosCertified{point}
+                Nothing -> pure ()
             err ->
               error $ "runLeiosVoting: unexpected error on addVote: " <> show err
  where
   getCurrentLedgerState =
     atomically $ ledgerState <$> ChainDB.getCurrentLedger chainDB
-
--- * Committee selection
-
-class HasLeiosVoting blk where
-  -- | The voting committee for the current ledger state, or 'Nothing' if
-  -- the era does not participate in Leios voting.
-  getLeiosCommittee :: LedgerState blk EmptyMK -> Maybe Committee
-  getLeiosCommittee _ = Nothing
