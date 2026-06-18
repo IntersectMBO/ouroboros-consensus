@@ -5,9 +5,11 @@
     },
     "LedgerDB": {
         "Backend": "V2InMemory",
-        "NumOfDiskSnapshots": 2,
         "QueryBatchSize": 100000,
-        "SlotOffset": 388800,
-        "SnapshotInterval": 432000
+        "Snapshots": {
+            "NumOfDiskSnapshots": 2,
+            "SlotOffset": 388800,
+            "SnapshotInterval": 432000
+        }
     }
 }

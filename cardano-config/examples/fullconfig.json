@@ -13,10 +13,12 @@
   "LastKnownBlockVersion-Minor": 0,
   "LedgerDB": {
     "Backend": "V2InMemory",
-    "NumOfDiskSnapshots": 2,
     "QueryBatchSize": 100000,
-    "SlotOffset": 388800,
-    "SnapshotInterval": 432000
+    "Snapshots": {
+      "NumOfDiskSnapshots": 2,
+      "SlotOffset": 388800,
+      "SnapshotInterval": 432000
+    }
   },
   "MaxKnownMajorProtocolVersion": 2,
   "MinNodeVersion": "10.6.0",

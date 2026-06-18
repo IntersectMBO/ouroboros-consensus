@@ -6,6 +6,10 @@ module Cardano.Configuration.File.Storage
     -- * LedgerDB
   , LedgerDbConfiguration (..)
 
+    -- ** Snapshots
+  , SnapshotPolicy (..)
+  , SnapshotOptions (..)
+
     -- ** Backend
   , LedgerDbBackendSelector (..)
   ) where
@@ -20,6 +24,69 @@ import Data.Maybe (fromMaybe)
 import Data.Word
 import GHC.Generics
 
+-- | An explicit set of snapshot policy options. All fields are optional; when
+-- unset the node applies its own defaults.
+data SnapshotOptions = SnapshotOptions
+  { snapshotInterval :: Maybe Word64
+  -- ^ How many slots between attempts to write a snapshot to disk (non-zero).
+  , slotOffset :: Maybe Word64
+  -- ^ The slot at which the snapshot schedule is anchored: snapshots are taken
+  -- at @slotOffset + n * snapshotInterval@.
+  , snapshotRateLimit :: Maybe Word64
+  -- ^ The minimum wall-clock time, in seconds, between two snapshots.
+  , minDelay :: Maybe Word64
+  -- ^ Lower bound, in seconds, of the random delay before taking a snapshot.
+  , maxDelay :: Maybe Word64
+  -- ^ Upper bound, in seconds, of the random delay before taking a snapshot.
+  , numOfDiskSnapshots :: Maybe Word64
+  -- ^ How many snapshots the node should keep on disk.
+  }
+  deriving (Generic, Show)
+
+-- | Parse the snapshot interval, failing on a non-positive value as the node
+-- does.
+parseSnapshotInterval :: Object -> Parser (Maybe Word64)
+parseSnapshotInterval v = do
+  interval <- v .:? "SnapshotInterval"
+  case interval of
+    Just 0 -> fail "Non-positive SnapshotInterval: 0"
+    _ -> pure interval
+
+instance FromJSON SnapshotOptions where
+  parseJSON = withObject "SnapshotOptions" $ \v -> do
+    interval <- parseSnapshotInterval v
+    offset <- v .:? "SlotOffset"
+    rateLimit <- v .:? "RateLimit"
+    lo <- v .:? "MinDelay"
+    hi <- v .:? "MaxDelay"
+    num <- v .:? "NumOfDiskSnapshots"
+    case (lo, hi) of
+      (Just l, Just h)
+        | l > h ->
+            fail $ "Invalid snapshot delay range, MinDelay > MaxDelay: " <> show l <> " > " <> show h
+      _ -> pure ()
+    pure
+      SnapshotOptions
+        { snapshotInterval = interval
+        , slotOffset = offset
+        , snapshotRateLimit = rateLimit
+        , minDelay = lo
+        , maxDelay = hi
+        , numOfDiskSnapshots = num
+        }
+
+-- | The snapshot policy: either a named, predefined policy (e.g. @"Mithril"@)
+-- or an explicit set of options.
+data SnapshotPolicy
+  = NamedSnapshotPolicy String
+  | CustomSnapshotPolicy SnapshotOptions
+  deriving (Generic, Show)
+
+instance FromJSON SnapshotPolicy where
+  parseJSON v =
+    NamedSnapshotPolicy <$> parseJSON v
+      <|> CustomSnapshotPolicy <$> parseJSON v
+
 -- | Selector for the backend that keeps track of differences in the UTxO set.
 data LedgerDbBackendSelector
   = -- | The in-memory backend.
@@ -32,46 +99,6 @@ data LedgerDbBackendSelector
 instance Default LedgerDbBackendSelector where
   def = V2InMemory
 
--- | The Ledger DB configuration
-data LedgerDbConfiguration = LedgerDbConfiguration
-  { -- | How many slots between attempts to write a snapshot to disk. Must be
-    -- non-zero.
-    snapshotInterval :: Maybe Word64
-  , -- | The slot at which the snapshot schedule is anchored: snapshots are
-    -- taken at @slotOffset + n * snapshotInterval@.
-    slotOffset :: Maybe Word64
-  , -- | The minimum wall-clock time, in seconds, that must elapse between two
-    -- snapshots.
-    snapshotRateLimit :: Maybe Word64
-  , -- | How many snapshots should the node keep on the disk.
-    numOfDiskSnapshots :: Maybe Word64
-  , -- | When reading a big amount of data from the backend (for example by
-    -- QueryUTxOByAddress), do it in chunks of what size.
-    queryBatchSize :: Maybe Word64
-  , backendSelector :: LedgerDbBackendSelector
-  }
-  deriving (Generic, Show)
-
-instance Default LedgerDbConfiguration where
-  def = LedgerDbConfiguration Nothing Nothing Nothing Nothing Nothing def
-
--- | Finally resolve the storage configuration with a final 'NodeDatabasePaths'.
-adjustDbPath :: StorageConfiguration Maybe -> NodeDatabasePaths -> StorageConfiguration Identity
-adjustDbPath sc db =
-  sc
-    { databasePath = Identity db
-    , ledgerDbConfiguration = Identity $ fromMaybe def $ ledgerDbConfiguration sc
-    }
-
--- | Parse the snapshot interval, failing on a non-positive value as the node
--- does.
-parseSnapshotInterval :: Object -> Parser (Maybe Word64)
-parseSnapshotInterval v = do
-  interval <- v .:? "SnapshotInterval"
-  case interval of
-    Just 0 -> fail "Non-positive SnapshotInterval: 0"
-    _ -> pure interval
-
 parseLedgerDbBackend :: Object -> Parser LedgerDbBackendSelector
 parseLedgerDbBackend v = do
   backend <- v .:? "Backend" .!= "V2InMemory"
@@ -80,44 +107,33 @@ parseLedgerDbBackend v = do
     "V2LSM" -> V2LSM <$> v .:? "LSMDatabasePath"
     x -> fail $ "Malformed LedgerDB Backend: " <> x
 
--- | Parse the nested @LedgerDB@ object. The top-level (deprecated)
--- @SnapshotInterval@ and @NumOfDiskSnapshots@ are passed in as fallbacks; the
--- nested values take precedence, matching the node.
-parseLedgerDbConfig ::
-  Maybe Word64 ->
-  Maybe Word64 ->
-  Value ->
-  Parser LedgerDbConfiguration
-parseLedgerDbConfig topInterval topNum =
-  withObject "LedgerDB" $ \v -> do
-    interval <- (<|> topInterval) <$> parseSnapshotInterval v
-    num <- (<|> topNum) <$> v .:? "NumOfDiskSnapshots"
-    offset <- v .:? "SlotOffset"
-    rateLimit <- v .:? "RateLimit"
-    qsize <- v .:? "QueryBatchSize"
-    selector <- parseLedgerDbBackend v
-    pure
-      LedgerDbConfiguration
-        { snapshotInterval = interval
-        , slotOffset = offset
-        , snapshotRateLimit = rateLimit
-        , numOfDiskSnapshots = num
-        , queryBatchSize = qsize
-        , backendSelector = selector
-        }
+-- | The Ledger DB configuration
+data LedgerDbConfiguration = LedgerDbConfiguration
+  { snapshots :: Maybe SnapshotPolicy
+  , -- | When reading a big amount of data from the backend (for example by
+    -- QueryUTxOByAddress), do it in chunks of what size.
+    queryBatchSize :: Maybe Word64
+  , backendSelector :: LedgerDbBackendSelector
+  }
+  deriving (Generic, Show)
 
-parseLedgerDbConfiguration :: Object -> Parser (Maybe LedgerDbConfiguration)
-parseLedgerDbConfiguration v = do
-  topInterval <- parseSnapshotInterval v
-  topNum <- v .:? "NumOfDiskSnapshots"
-  v .:? "LedgerDB" >>= \case
-    Nothing
-      | Nothing <- topInterval
-      , Nothing <- topNum ->
-          pure Nothing
-      | otherwise ->
-          pure $ Just def{snapshotInterval = topInterval, numOfDiskSnapshots = topNum}
-    Just ldb -> Just <$> parseLedgerDbConfig topInterval topNum ldb
+instance Default LedgerDbConfiguration where
+  def = LedgerDbConfiguration Nothing Nothing def
+
+instance FromJSON LedgerDbConfiguration where
+  parseJSON = withObject "LedgerDB" $ \v ->
+    LedgerDbConfiguration
+      <$> v .:? "Snapshots"
+      <*> v .:? "QueryBatchSize"
+      <*> parseLedgerDbBackend v
+
+-- | Finally resolve the storage configuration with a final 'NodeDatabasePaths'.
+adjustDbPath :: StorageConfiguration Maybe -> NodeDatabasePaths -> StorageConfiguration Identity
+adjustDbPath sc db =
+  sc
+    { databasePath = Identity db
+    , ledgerDbConfiguration = Identity $ fromMaybe def $ ledgerDbConfiguration sc
+    }
 
 -- | The storage configuration
 data StorageConfiguration f = StorageConfiguration
@@ -131,7 +147,7 @@ deriving instance Show (StorageConfiguration Identity)
 
 instance FromJSON (StorageConfiguration Maybe) where
   parseJSON =
-    withObject "StorageConfiguration" $ \v -> do
-      dbPath <- v .:? "DatabasePath"
-      ldb <- parseLedgerDbConfiguration v
-      pure $ StorageConfiguration dbPath ldb
+    withObject "StorageConfiguration" $ \v ->
+      StorageConfiguration
+        <$> v .:? "DatabasePath"
+        <*> v .:? "LedgerDB"
