@@ -176,7 +176,7 @@ initializationGsmState ::
   ( L.GetTip (L.LedgerState blk)
   , Monad m
   ) =>
-  m (L.LedgerState blk L.EmptyMK) ->
+  m (L.LedgerState blk) ->
   -- | 'Nothing' if @blk@ has no age limit
   Maybe (WrapDurationUntilTooOld m blk) ->
   MarkerFileView m ->
@@ -463,7 +463,7 @@ realDurationUntilTooOld ::
   , MonadSTM m
   ) =>
   L.LedgerConfig blk ->
-  STM m (L.LedgerState blk L.EmptyMK) ->
+  STM m (L.LedgerState blk) ->
   -- | If the volatile tip is older than this, then the node will exit the
   -- @CaughtUp@ state.
   --
