@@ -435,10 +435,13 @@ mkHandlers
           let tracer = leiosPeerTracer peer
               kernelTracer = Node.leiosKernelTracer tracers
               LeiosVoteState{addVote} = leiosVoteState
-          MVar.modifyMVar_ getLeiosPeersVars $ \leiosPeersVars -> do
-            x <- Leios.newLeiosPeerVars
-            let !leiosPeersVars' = Map.insert (Leios.MkPeerId peer) x leiosPeersVars
-            pure leiosPeersVars'
+          -- Allocate this peer's vars once and keep them in scope; the message
+          -- handlers below can write to 'peerVars' directly. The map insertion
+          -- exists only to publish them to the LeiosFetch client and the fetch
+          -- decision logic.
+          peerVars <- Leios.newLeiosPeerVars
+          MVar.modifyMVar_ getLeiosPeersVars $
+            pure . Map.insert (Leios.MkPeerId peer) peerVars
           pure $
             leiosNotifyClientPeerPipelined
               ( atomically controlMessageSTM <&> \case
@@ -478,11 +481,6 @@ mkHandlers
                               { Leios.missingEbBodies =
                                   Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
                               }
-                    peerVars <- do
-                      peersVars <- MVar.readMVar getLeiosPeersVars
-                      case Map.lookup (Leios.MkPeerId peer) peersVars of
-                        Nothing -> error "impossible!"
-                        Just x -> pure x
                     MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
                       let !offers1' = Set.insert ebHash offers1
                       pure (offers1', offers2)
@@ -490,11 +488,6 @@ mkHandlers
                   MsgLeiosBlockTxsOffer p -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockTxsOffer " <> Leios.prettyLeiosPoint p
                     let MkLeiosPoint{pointEbHash = ebHash} = p
-                    peerVars <- do
-                      peersVars <- MVar.readMVar getLeiosPeersVars
-                      case Map.lookup (Leios.MkPeerId peer) peersVars of
-                        Nothing -> error "impossible!"
-                        Just x -> pure x
                     MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
                       let !offers2' = Set.insert ebHash offers2
                       pure (offers1, offers2')
