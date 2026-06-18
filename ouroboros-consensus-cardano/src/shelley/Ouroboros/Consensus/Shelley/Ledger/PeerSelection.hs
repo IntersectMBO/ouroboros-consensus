@@ -24,7 +24,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
 
 instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto era) where
-  getPeers ShelleyLedgerState{shelleyLedgerState} =
+  getPeers st =
     catMaybes
       [ (PoolStake stake,) <$> ledgerRelayAccessPoints relays
       | (_stakePool, (stake, relays)) <- stakeOrdered
@@ -32,7 +32,7 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
    where
     stakeOrdered =
       sortOn (Down . fst . snd) . Map.toList $
-        SL.queryStakePoolRelays shelleyLedgerState
+        SL.queryStakePoolRelays (shelleyLedgerState st)
 
     relayToLedgerRelayAccessPoint :: SL.StakePoolRelay -> Maybe LedgerRelayAccessPoint
     relayToLedgerRelayAccessPoint (SL.SingleHostAddr (SJust (Port port)) (SJust ipv4) _) =

@@ -46,7 +46,6 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -57,6 +56,7 @@ import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Inspect ()
+import Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim (splitUTxO)
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
 import Ouroboros.Consensus.Shelley.Node.Common
   ( ProtocolParamsShelleyBased (..)
@@ -204,8 +204,21 @@ protocolInfoTPraosShelleyBased
   transitionCfg
   protVer =
     assertWithMsg (validateGenesis genesis) $ do
-      initLedgerState <- mkInitLedgerState
-      let initExtLedgerState =
+      -- The genesis 'NewEpochState' carries the initial UTxO. We keep it out of
+      -- the stored ledger state: the entries become 'pInfoInitLedgerTables', the
+      -- genesis values fed to the LedgerDB. 'injectIntoTestState' is monadic (it
+      -- takes the snapshot fs), as in prepare-11.1.
+      genesisNewEpochState <-
+        L.injectIntoTestState hasFS transitionCfg (L.createInitialState transitionCfg)
+      let (genesisStateNoUTxO, initLedgerTables) = splitUTxO genesisNewEpochState
+          initLedgerState =
+            ShelleyLedgerState
+              { shelleyLedgerTip = Origin
+              , shelleyLedgerStateNoUTxO = genesisStateNoUTxO
+              , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
+              , shelleyLedgerLatestPerasCertRound = SNothing
+              }
+          initExtLedgerState =
             ExtLedgerState
               { ledgerState = initLedgerState
               , headerState = genesisHeaderState initChainDepState
@@ -214,6 +227,7 @@ protocolInfoTPraosShelleyBased
         ( ProtocolInfo
             { pInfoConfig = topLevelConfig
             , pInfoInitLedger = initExtLedgerState
+            , pInfoInitLedgerTables = initLedgerTables
             }
         , \tr -> pure $ mkBlockForging tr <$> credentialss
         )
@@ -286,23 +300,6 @@ protocolInfoTPraosShelleyBased
         { shelleyStorageConfigSlotsPerKESPeriod = tpraosSlotsPerKESPeriod tpraosParams
         , shelleyStorageConfigSecurityParam = tpraosSecurityParam tpraosParams
         }
-
-    mkInitLedgerState :: m (LedgerState (ShelleyBlock (TPraos c) era) ValuesMK)
-    mkInitLedgerState = do
-      injected <-
-        L.injectIntoTestState
-          hasFS
-          transitionCfg
-          (L.createInitialState transitionCfg)
-      pure $
-        unstowLedgerTables
-          ShelleyLedgerState
-            { shelleyLedgerTip = Origin
-            , shelleyLedgerState = injected
-            , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
-            , shelleyLedgerTables = emptyLedgerTables
-            , shelleyLedgerLatestPerasCertRound = SNothing
-            }
 
     initChainDepState :: TPraosState
     initChainDepState =

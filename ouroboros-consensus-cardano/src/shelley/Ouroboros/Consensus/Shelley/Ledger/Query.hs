@@ -58,10 +58,8 @@ import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (decode, encode)
 import Data.Bifunctor (second)
-import Data.Coerce
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.MemPack
 import Data.Sequence (Seq (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -69,7 +67,6 @@ import Data.Typeable (Typeable)
 import Lens.Micro
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
@@ -94,8 +91,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Util (ShowProxy (..), coerceSet)
-import Ouroboros.Consensus.Util.IndexedMemPack
+import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Network.Block
   ( Point (..)
   , Serialised (..)
@@ -533,9 +529,10 @@ instance
     hst = headerState ext
     st = shelleyLedgerState lst
 
-  answerBlockQueryLookup = answerShelleyLookupQueries id id coerce
+  answerBlockQueryLookup = answerShelleyLookupQueries id id
 
-  answerBlockQueryTraverse = answerShelleyTraversingQueries id coerce shelleyQFTraverseTablesPredicate
+  answerBlockQueryTraverse cfg q provider _forker =
+    answerShelleyTraversingQueries id shelleyQFTraverseTablesPredicate cfg q provider
 
   -- \| Is the given query supported by the given 'ShelleyNodeToClientVersion'?
   blockQueryIsSupportedOnVersion = \case
@@ -1129,19 +1126,16 @@ answerShelleyLookupQueries ::
   ( Monad m
   , ShelleyCompatible proto era
   ) =>
-  -- | Inject ledger tables
-  ( LedgerTables (ShelleyBlock proto era) KeysMK ->
-    LedgerTables blk KeysMK
-  ) ->
-  -- | Eject TxOut
-  (TxOut blk -> LC.TxOut era) ->
-  -- | Eject TxIn
-  (TxIn blk -> SL.TxIn) ->
+  -- | Inject the era's keys into the block's keys (@id@ for a single-era block,
+  -- the @NS@-arm injection for the hard-fork combinator).
+  (Keys (ShelleyBlock proto era) -> Keys blk) ->
+  -- | Project the block's values onto the era's values (the inverse direction).
+  (Values blk -> Values (ShelleyBlock proto era)) ->
   ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFLookupTables result ->
   ReadOnlyForker' m blk ->
   m result
-answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
+answerShelleyLookupQueries injKeys projValues cfg q forker =
   case q of
     GetUTxOByTxIn txins ->
       answerGetUtxOByTxIn txins
@@ -1151,26 +1145,15 @@ answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
       -- both client and server are running the same version; cf. the
       -- @GetCBOR@ Haddocks.
       mkSerialised (encodeShelleyResult maxBound q')
-        <$> answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q' forker
+        <$> answerShelleyLookupQueries injKeys projValues cfg q' forker
  where
   answerGetUtxOByTxIn ::
-    Set.Set SL.TxIn ->
+    Set SL.TxIn ->
     m (SL.UTxO era)
   answerGetUtxOByTxIn txins = do
-    LedgerTables (ValuesMK values) <-
-      LedgerDB.roforkerReadTables
-        forker
-        (injTables (LedgerTables $ KeysMK $ coerceSet txins))
-    pure $
-      SL.UTxO $
-        Map.mapKeys ejTxIn $
-          Map.mapMaybeWithKey
-            ( \k v ->
-                if ejTxIn k `Set.member` txins
-                  then Just $ ejTxOut v
-                  else Nothing
-            )
-            values
+    values <-
+      projValues <$> LedgerDB.roforkerReadTables forker (injKeys txins)
+    pure $ SL.UTxO $ values `Map.restrictKeys` txins
 
 shelleyQFTraverseTablesPredicate ::
   forall proto era proto' era' result.
@@ -1197,30 +1180,33 @@ shelleyQFTraverseTablesPredicate q = case q of
      in
       checkAddr
 
+-- | The value-threaded traverse loop. Range reads are era-level
+-- and not exposed through the forker; instead the LSQ server hands us an
+-- 'EraRangeReaderProvider', which, given the projection onto the current era's
+-- values, yields an 'EraRangeReader' for that era. Each page is era-typed
+-- (@'Values' ('ShelleyBlock' proto era)@), so we fold it directly and recompute
+-- the next cursor as the page's maximum key, stopping when a page comes back
+-- empty.
 answerShelleyTraversingQueries ::
   forall proto era m result blk.
   ( ShelleyCompatible proto era
-  , Ord (TxIn blk)
-  , Eq (TxOut blk)
-  , MemPack (TxIn blk)
-  , IndexedMemPack LedgerState blk (TxOut blk)
+  , Monad m
   ) =>
-  Monad m =>
-  -- | Eject TxOut
-  (TxOut blk -> LC.TxOut era) ->
-  -- | Eject TxIn
-  (TxIn blk -> SL.TxIn) ->
+  -- | Project the block's values onto the current era's values (@id@ for a
+  -- single-era block, the @NS@-arm projection for the hard-fork combinator);
+  -- used to build the era-level range reader from the provider.
+  (Values blk -> Values (ShelleyBlock proto era)) ->
   -- | Get filter by query
   ( forall result'.
     BlockQuery (ShelleyBlock proto era) QFTraverseTables result' ->
-    TxOut blk ->
+    TxOut (ShelleyBlock proto era) ->
     Bool
   ) ->
   ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
-  ReadOnlyForker' m blk ->
+  EraRangeReaderProvider m blk ->
   m result
-answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
+answerShelleyTraversingQueries projValues filt cfg q provider = case q of
   GetUTxOByAddress{} -> loop (filt q) NoPreviousQuery emptyUtxo
   GetUTxOWhole -> loop (filt q) NoPreviousQuery emptyUtxo
   GetCBOR q' ->
@@ -1229,32 +1215,21 @@ answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
     -- both client and server are running the same version; cf. the
     -- @GetCBOR@ Haddocks.
     mkSerialised (encodeShelleyResult maxBound q')
-      <$> answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q' forker
+      <$> answerShelleyTraversingQueries projValues filt cfg q' provider
  where
+  reader :: EraRangeReader m (ShelleyBlock proto era)
+  reader = getEraRangeReader provider projValues
+
   emptyUtxo = SL.UTxO Map.empty
 
   combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
 
-  partial ::
-    (TxOut blk -> Bool) ->
-    LedgerTables blk ValuesMK ->
-    Map SL.TxIn (LC.TxOut era)
-  partial queryPredicate (LedgerTables (ValuesMK vs)) =
-    Map.mapKeys ejTxIn $
-      Map.mapMaybeWithKey
-        ( \_k v ->
-            if queryPredicate v
-              then Just $ ejTxOut v
-              else Nothing
-        )
-        vs
-
   loop queryPredicate !prev !acc = do
-    (extValues, k) <- LedgerDB.roforkerRangeReadTables forker prev
-    case k of
+    vs <- eraRangeReadTables reader prev
+    case Map.lookupMax vs of
       Nothing -> pure acc
-      Just k' ->
+      Just (k', _) ->
         loop
           queryPredicate
           (PreviousQueryWasUpTo k')
-          (combUtxo acc $ partial queryPredicate extValues)
+          (combUtxo acc (Map.filter queryPredicate vs))
