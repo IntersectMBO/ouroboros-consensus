@@ -609,59 +609,41 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
         leiosDbInsertEbBody db point eb
         traceWith ktracer $ TraceLeiosBlockAcquired point
     -- update NodeKernel state
+    --
+    -- 'refundEbRequest' reverses this peer's per-request accounting (but skips
+    -- it if the peer has already been cancelled in bulk by a disconnect); the
+    -- global acquisition state below is updated unconditionally, since we did
+    -- receive the EB.
     let !outstanding' =
-          if not novel
-            then
-              outstanding
-                { Leios.requestedBytesSize = Leios.requestedBytesSize outstanding - ebBytesSize
-                , Leios.requestedBytesSizePerPeer =
-                    Map.alter
-                      ( \case
-                          Nothing -> error "impossible!"
-                          Just x -> delIf (== 0) $ x - ebBytesSize
-                      )
-                      peerId
-                      (Leios.requestedBytesSizePerPeer outstanding)
-                , Leios.requestedEbPeers =
-                    Map.update (delIf Set.null . Set.delete peerId) ebHash (Leios.requestedEbPeers outstanding)
-                }
-            else
-              outstanding
-                { Leios.acquiredEbBodies = Set.insert ebHash (Leios.acquiredEbBodies outstanding)
-                , Leios.missingEbBodies = Map.delete point (Leios.missingEbBodies outstanding)
-                , Leios.blockingPerEb =
-                    Map.insert
-                      point
-                      (let MkLeiosEb v = eb in V.length v)
-                      (Leios.blockingPerEb outstanding)
-                , Leios.missingEbTxs =
-                    Map.insert
-                      point
-                      ( V.ifoldl
-                          (\acc i x -> IntMap.insert i x acc)
-                          IntMap.empty
-                          (let MkLeiosEb v = eb in v)
-                      )
-                      (Leios.missingEbTxs outstanding)
-                , Leios.reverseEbIndexByTx =
-                    V.ifoldl
-                      ( \acc i (txHash, txBytesSize) ->
-                          Map.insertWith Map.union txHash (Map.singleton ebHash (i, txBytesSize)) acc
-                      )
-                      (Leios.reverseEbIndexByTx outstanding)
-                      (let MkLeiosEb v = eb in v)
-                , Leios.requestedBytesSize = Leios.requestedBytesSize outstanding - ebBytesSize
-                , Leios.requestedBytesSizePerPeer =
-                    Map.alter
-                      ( \case
-                          Nothing -> error "impossible!"
-                          Just x -> delIf (== 0) $ x - ebBytesSize
-                      )
-                      peerId
-                      (Leios.requestedBytesSizePerPeer outstanding)
-                , Leios.requestedEbPeers =
-                    Map.update (delIf Set.null . Set.delete peerId) ebHash (Leios.requestedEbPeers outstanding)
-                }
+          refundEbRequest peerId ebHash ebBytesSize $
+            if novel
+              then
+                outstanding
+                  { Leios.acquiredEbBodies = Set.insert ebHash (Leios.acquiredEbBodies outstanding)
+                  , Leios.missingEbBodies = Map.delete point (Leios.missingEbBodies outstanding)
+                  , Leios.blockingPerEb =
+                      Map.insert
+                        point
+                        (let MkLeiosEb v = eb in V.length v)
+                        (Leios.blockingPerEb outstanding)
+                  , Leios.missingEbTxs =
+                      Map.insert
+                        point
+                        ( V.ifoldl
+                            (\acc i x -> IntMap.insert i x acc)
+                            IntMap.empty
+                            (let MkLeiosEb v = eb in v)
+                        )
+                        (Leios.missingEbTxs outstanding)
+                  , Leios.reverseEbIndexByTx =
+                      V.ifoldl
+                        ( \acc i (txHash, txBytesSize) ->
+                            Map.insertWith Map.union txHash (Map.singleton ebHash (i, txBytesSize)) acc
+                        )
+                        (Leios.reverseEbIndexByTx outstanding)
+                        (let MkLeiosEb v = eb in v)
+                  }
+              else outstanding
     pure outstanding'
   void $ MVar.tryPutMVar readyVar ()
   traceWith tracer $ MkTraceLeiosPeer $ "[done] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
@@ -670,6 +652,59 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
 
 delIf :: (a -> Bool) -> a -> Maybe a
 delIf predicate x = if predicate x then Nothing else Just x
+
+-----
+
+-- | Reverse this peer's per-request accounting for a received EB body, but only
+-- if the peer is still tracked.
+--
+-- If the peer has already been cancelled in bulk (e.g. it disconnected and its
+-- requests were refunded en masse via its 'requestedBytesSizePerPeer' total),
+-- that entry is gone; re-applying the per-request refund here would
+-- double-subtract 'requestedBytesSize' and underflow. So we gate on the peer
+-- still being present. The membership check, the refund, and the bulk
+-- cancellation all run within the same 'outstandingVar' critical section, so
+-- whichever happens first claims the refund and the other no-ops.
+refundEbRequest ::
+  Ord pid =>
+  PeerId pid ->
+  EbHash ->
+  BytesSize ->
+  LeiosOutstanding pid ->
+  LeiosOutstanding pid
+refundEbRequest peerId ebHash ebBytesSize o
+  | Map.member peerId (Leios.requestedBytesSizePerPeer o) =
+      o
+        { Leios.requestedBytesSize = Leios.requestedBytesSize o - ebBytesSize
+        , Leios.requestedBytesSizePerPeer =
+            Map.update (\x -> delIf (== 0) (x - ebBytesSize)) peerId (Leios.requestedBytesSizePerPeer o)
+        , Leios.requestedEbPeers =
+            Map.update (delIf Set.null . Set.delete peerId) ebHash (Leios.requestedEbPeers o)
+        }
+  | otherwise = o
+
+-----
+
+-- | Like 'refundEbRequest', but for a received batch of EB txs: installs the
+-- already-computed 'requestedTxPeers'' (this peer removed from each requested
+-- tx) and refunds the bytes, gated on the peer still being tracked (see
+-- 'refundEbRequest').
+refundTxRequest ::
+  Ord pid =>
+  PeerId pid ->
+  Map TxHash (Set (PeerId pid)) ->
+  BytesSize ->
+  LeiosOutstanding pid ->
+  LeiosOutstanding pid
+refundTxRequest peerId requestedTxPeers' txsBytesSize o
+  | Map.member peerId (Leios.requestedBytesSizePerPeer o) =
+      o
+        { Leios.requestedBytesSize = Leios.requestedBytesSize o - txsBytesSize
+        , Leios.requestedBytesSizePerPeer =
+            Map.update (\x -> delIf (== 0) (x - txsBytesSize)) peerId (Leios.requestedBytesSizePerPeer o)
+        , Leios.requestedTxPeers = requestedTxPeers'
+        }
+  | otherwise = o
 
 -----
 
@@ -737,37 +772,31 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = d
         beatOtherPeers =
           (`IntMap.restrictKeys` offsetsSet) $
             Map.findWithDefault IntMap.empty point (Leios.missingEbTxs outstanding)
+    -- 'refundTxRequest' reverses this peer's per-request accounting (but skips
+    -- it if the peer has already been cancelled in bulk by a disconnect); the
+    -- global state below is updated unconditionally, since we did receive the
+    -- txs.
     let !outstanding' =
-          outstanding
-            { Leios.missingEbTxs =
-                Map.update
-                  (delIf IntMap.null . (`IntMap.withoutKeys` offsetsSet))
-                  point
-                  (Leios.missingEbTxs outstanding)
-            , Leios.reverseEbIndexByTx = reverseEbIndexByTx'
-            , Leios.blockingPerEb =
-                if IntMap.null beatOtherPeers
-                  then Leios.blockingPerEb outstanding
-                  else
-                    Map.alter
-                      ( \case
-                          Nothing -> Nothing
-                          Just x -> delIf (== 0) $ x - IntMap.size beatOtherPeers
-                      )
-                      point
-                      (Leios.blockingPerEb outstanding)
-            , Leios.requestedBytesSize =
-                Leios.requestedBytesSize outstanding - fromIntegral txsBytesSize
-            , Leios.requestedBytesSizePerPeer =
-                Map.alter
-                  ( \case
-                      Nothing -> error "impossible!"
-                      Just x -> delIf (== 0) $ x - fromIntegral txsBytesSize
-                  )
-                  peerId
-                  (Leios.requestedBytesSizePerPeer outstanding)
-            , Leios.requestedTxPeers = requestedTxPeers'
-            }
+          refundTxRequest peerId requestedTxPeers' (fromIntegral txsBytesSize) $
+            outstanding
+              { Leios.missingEbTxs =
+                  Map.update
+                    (delIf IntMap.null . (`IntMap.withoutKeys` offsetsSet))
+                    point
+                    (Leios.missingEbTxs outstanding)
+              , Leios.reverseEbIndexByTx = reverseEbIndexByTx'
+              , Leios.blockingPerEb =
+                  if IntMap.null beatOtherPeers
+                    then Leios.blockingPerEb outstanding
+                    else
+                      Map.alter
+                        ( \case
+                            Nothing -> Nothing
+                            Just x -> delIf (== 0) $ x - IntMap.size beatOtherPeers
+                        )
+                        point
+                        (Leios.blockingPerEb outstanding)
+              }
     pure outstanding'
   void $ MVar.tryPutMVar readyVar ()
   traceWith tracer $ MkTraceLeiosPeer $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
