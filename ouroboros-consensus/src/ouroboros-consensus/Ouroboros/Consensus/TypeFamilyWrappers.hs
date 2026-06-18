@@ -26,6 +26,9 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapTxMeasurePhase1 (..)
   , WrapTxMeasurePhase2 (..)
   , WrapTxOut (..)
+  , WrapKeys (..)
+  , WrapValues (..)
+  , WrapDiff (..)
   , WrapValidatedGenTx (..)
 
     -- * Protocol based
@@ -94,6 +97,12 @@ newtype WrapTxMeasurePhase2 blk = WrapTxMeasurePhase2 {unwrapTxMeasurePhase2 :: 
 
 newtype WrapTxIn blk = WrapTxIn {unwrapTxIn :: TxIn blk}
 newtype WrapTxOut blk = WrapTxOut {unwrapTxOut :: TxOut blk}
+
+-- UTxO-HD: the opaque per-block table payloads, wrapped so they can be carried
+-- in an 'NS' at the hard-fork level.
+newtype WrapKeys blk = WrapKeys {unwrapKeys :: Keys blk}
+newtype WrapValues blk = WrapValues {unwrapValues :: Values blk}
+newtype WrapDiff blk = WrapDiff {unwrapDiff :: Diff blk}
 
 {-------------------------------------------------------------------------------
   Consensus based

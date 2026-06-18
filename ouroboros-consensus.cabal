@@ -196,13 +196,7 @@ library
     Ouroboros.Consensus.Ledger.SupportsPeerSelection
     Ouroboros.Consensus.Ledger.SupportsPeras
     Ouroboros.Consensus.Ledger.SupportsProtocol
-    Ouroboros.Consensus.Ledger.Tables
-    Ouroboros.Consensus.Ledger.Tables.Basics
-    Ouroboros.Consensus.Ledger.Tables.Combinators
     Ouroboros.Consensus.Ledger.Tables.Diff
-    Ouroboros.Consensus.Ledger.Tables.Kinds
-    Ouroboros.Consensus.Ledger.Tables.MapKind
-    Ouroboros.Consensus.Ledger.Tables.Utils
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API
     Ouroboros.Consensus.Mempool.Capacity
@@ -418,7 +412,6 @@ library lsm
     base,
     blockio ^>=0.2,
     bytestring,
-    containers,
     contra-tracer,
     directory,
     filepath,
@@ -433,6 +426,9 @@ library lsm
     random,
     resource-registry,
     serialise,
+    sop-core,
+    sop-extras,
+    strict-sop-core,
     streaming,
     text,
     transformers,
@@ -1335,6 +1331,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Ledger.Inspect
     Ouroboros.Consensus.Shelley.Ledger.Integrity
     Ouroboros.Consensus.Shelley.Ledger.Ledger
+    Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim
     Ouroboros.Consensus.Shelley.Ledger.Mempool
     Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
     Ouroboros.Consensus.Shelley.Ledger.PeerSelection
