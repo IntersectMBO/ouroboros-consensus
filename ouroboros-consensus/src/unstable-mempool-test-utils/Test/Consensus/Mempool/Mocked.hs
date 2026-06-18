@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Mempool with a mocked ledger interface
 module Test.Consensus.Mempool.Mocked
@@ -31,11 +32,6 @@ import Ouroboros.Consensus.HeaderValidation as Header
 import Ouroboros.Consensus.Ledger.Abstract
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
-import Ouroboros.Consensus.Ledger.Tables.Utils
-  ( emptyLedgerTables
-  , forgetLedgerTables
-  , restrictValuesMK
-  )
 import Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.Mempool.API
@@ -47,7 +43,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
 
 data MockedMempool m blk = MockedMempool
   { getLedgerInterface :: !(Mempool.LedgerInterface m blk)
-  , getLedgerStateTVar :: !(StrictTVar m (LedgerState blk ValuesMK))
+  , getLedgerStateTVar :: !(StrictTVar m (LedgerState blk, Values blk))
   , getMempool :: !(Mempool m blk)
   }
 
@@ -63,13 +59,17 @@ instance NFData (MockedMempool m blk) where
   rnf MockedMempool{} = ()
 
 data InitialMempoolAndModelParams blk = MempoolAndModelParams
-  { immpInitialState :: !(LedgerState blk ValuesMK)
+  { immpInitialState :: !(LedgerState blk)
   -- ^ Initial ledger state for the mocked Ledger DB interface.
+  , immpInitialValues :: !(Values blk)
+  -- ^ Initial ledger tables (UTxO values), now carried alongside the
+  -- @mk@-free state.
   , immpLedgerConfig :: !(Ledger.LedgerConfig blk)
   -- ^ Ledger configuration, which is needed to open the mempool.
   }
 
 openMockedMempool ::
+  forall blk.
   ( Ledger.LedgerSupportsMempool blk
   , Ledger.HasTxId (Ledger.GenTx blk)
   , Header.ValidateEnvelope blk
@@ -79,23 +79,24 @@ openMockedMempool ::
   InitialMempoolAndModelParams blk ->
   IO (MockedMempool IO blk)
 openMockedMempool capacityOverride tracer initialParams = do
-  currentLedgerStateTVar <- newTVarIO (immpInitialState initialParams)
+  currentLedgerStateTVar <-
+    newTVarIO (immpInitialState initialParams, immpInitialValues initialParams)
   let ledgerItf =
         Mempool.LedgerInterface
           { Mempool.getCurrentLedgerState = do
-              st <- readTVar currentLedgerStateTVar
+              (st, values) <- readTVar currentLedgerStateTVar
               pure $
                 MempoolLedgerDBView
-                  (forgetLedgerTables st)
+                  st
                   ( pure $
                       Right $
                         ReadOnlyForker
                           { roforkerClose = pure ()
-                          , roforkerGetLedgerState = pure (forgetLedgerTables st)
+                          , roforkerGetLedgerState = pure st
                           , roforkerReadTables = \keys ->
-                              pure $ ltliftA2 restrictValuesMK (projectLedgerTables st) keys
-                          , roforkerReadStatistics = pure $ Statistics 0
-                          , roforkerRangeReadTables = \_ -> pure (emptyLedgerTables, Nothing)
+                              pure $ restrictValues @blk keys values
+                          , roforkerReadStatistics =
+                              pure $ Statistics (valuesSize @blk values)
                           }
                   )
           }
@@ -115,7 +116,7 @@ openMockedMempool capacityOverride tracer initialParams = do
 
 setLedgerState ::
   MockedMempool IO blk ->
-  LedgerState blk ValuesMK ->
+  (LedgerState blk, Values blk) ->
   IO ()
 setLedgerState MockedMempool{getLedgerStateTVar} newSt =
   atomically $ writeTVar getLedgerStateTVar newSt
