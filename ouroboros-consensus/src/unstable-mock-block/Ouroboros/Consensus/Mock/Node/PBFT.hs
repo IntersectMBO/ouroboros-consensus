@@ -47,6 +47,7 @@ protocolInfoMockPBFT params eraParams =
         ExtLedgerState
           (genesisSimpleLedgerState addrDist)
           (genesisHeaderState S.empty)
+    , pInfoInitLedgerTables = genesisSimpleLedgerTables addrDist
     }
  where
   ledgerView :: PBftLedgerView PBftMockCrypto
