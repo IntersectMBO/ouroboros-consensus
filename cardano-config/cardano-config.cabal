@@ -35,10 +35,12 @@ library
     Cardano.Configuration.File.Protocol
     Cardano.Configuration.File.Storage
     Cardano.Configuration.File.Testing
+    Cardano.Configuration.Schema
 
   build-depends:
     aeson,
     autodocodec,
+    autodocodec-schema,
     base,
     bytestring,
     cardano-crypto-class,
