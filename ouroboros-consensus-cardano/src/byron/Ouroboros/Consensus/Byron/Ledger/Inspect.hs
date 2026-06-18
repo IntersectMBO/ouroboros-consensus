@@ -97,7 +97,7 @@ data UpdateState
 -- | All proposal updates, from new to old
 protocolUpdates ::
   LedgerConfig ByronBlock ->
-  LedgerState ByronBlock mk ->
+  LedgerState ByronBlock ->
   [ProtocolUpdate]
 protocolUpdates genesis st =
   concat
