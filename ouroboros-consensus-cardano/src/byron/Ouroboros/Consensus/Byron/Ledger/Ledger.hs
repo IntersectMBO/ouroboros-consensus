@@ -90,7 +90,6 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Util (ShowProxy (..))
-import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   LedgerState
@@ -223,8 +222,6 @@ instance SingleEraBlockSupportsUTxOHD ByronBlock where
   valuesToList _ = []
   valuesFromList _ = ()
   diffToList _ = []
-
-deriving via Void instance IndexedMemPack LedgerState ByronBlock Void
 
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces

@@ -120,7 +120,6 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB
 import Ouroboros.Consensus.Util.Condense
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import System.FS.API.Lazy
@@ -601,8 +600,6 @@ instance SingleEraBlockSupportsUTxOHD TestBlock where
   valuesToList _ = []
   valuesFromList _ = ()
   diffToList _ = []
-
-deriving via Void instance IndexedMemPack LedgerState TestBlock Void
 
 instance ApplyBlock LedgerState TestBlock where
   applyBlockLedgerResultWithValidation _ _ _ tb@TestBlock{..} _values (TickedTestLedger TestLedger{..})

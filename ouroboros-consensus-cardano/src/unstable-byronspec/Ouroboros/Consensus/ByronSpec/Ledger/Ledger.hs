@@ -37,7 +37,6 @@ import qualified Ouroboros.Consensus.ByronSpec.Ledger.Rules as Rules
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ticked
-import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   State
@@ -150,8 +149,6 @@ instance SingleEraBlockSupportsUTxOHD ByronSpecBlock where
   valuesToList _ = []
   valuesFromList _ = ()
   diffToList _ = []
-
-deriving via Void instance IndexedMemPack LedgerState ByronSpecBlock Void
 
 {-------------------------------------------------------------------------------
   Applying blocks

@@ -47,7 +47,6 @@ import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
-import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack (..))
 import Test.Util.TestBlock hiding (TestBlock)
 
 {-------------------------------------------------------------------------------
@@ -199,12 +198,6 @@ instance HasLedgerTables (Ticked LedgerState) TestBlock where
 instance CanStowLedgerTables (LedgerState TestBlock) where
   stowLedgerTables = error "Mempool bench TestBlock unused: stowLedgerTables"
   unstowLedgerTables = error "Mempool bench TestBlock unused: unstowLedgerTables"
-
-instance IndexedMemPack LedgerState TestBlock () where
-  indexedTypeName _ _ = typeName @()
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
 
 {-------------------------------------------------------------------------------
   Mempool support

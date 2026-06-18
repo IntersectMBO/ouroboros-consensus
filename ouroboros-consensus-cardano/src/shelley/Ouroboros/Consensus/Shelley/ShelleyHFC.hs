@@ -36,7 +36,6 @@ import Control.Monad (guard)
 import Control.Monad.Except (runExcept, throwError)
 import Data.Coerce
 import qualified Data.Map.Strict as Map
-import Data.MemPack
 import Data.SOP.BasicFunctors
 import Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import Data.SOP.Index (Index (..))
@@ -78,7 +77,6 @@ import Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   Synonym for convenience
@@ -436,11 +434,3 @@ instance
         provider
     IS idx' -> case idx' of {}
 
-instance
-  (txout ~ SL.TxOut era, MemPack txout) =>
-  IndexedMemPack LedgerState (HardForkBlock '[ShelleyBlock proto era]) txout
-  where
-  indexedTypeName _ _ = typeName @txout
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM

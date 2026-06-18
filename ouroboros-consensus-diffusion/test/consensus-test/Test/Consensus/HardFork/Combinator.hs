@@ -54,7 +54,6 @@ import Ouroboros.Consensus.Protocol.LeaderSchedule
   , leaderScheduleFor
   )
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Mock
 import Quiet (Quiet (..))
@@ -484,60 +483,6 @@ instance SerialiseHFC '[BlockA, BlockB]
 instance SerializeTablesWithHint LedgerState (HardForkBlock '[BlockA, BlockB]) where
   encodeTablesWithHint = defaultEncodeTablesWithHint
   decodeTablesWithHint = defaultDecodeTablesWithHint
-
-instance
-  IndexedMemPack
-    LedgerState
-    (HardForkBlock '[BlockA, BlockB])
-    (DefaultHardForkTxOut '[BlockA, BlockB])
-  where
-  indexedTypeName _ _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
-  indexedPackedByteCount _ txout =
-    hcollapse $
-      hcmap
-        (Proxy @MemPackTxOut)
-        (K . packedByteCount . unwrapTxOut)
-        txout
-  indexedPackM _ =
-    hcollapse
-      . hcimap
-        (Proxy @MemPackTxOut)
-        ( \_ (WrapTxOut txout) -> K $ do
-            packM txout
-        )
-  indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
-    hsequence'
-      $ hcmap
-        (Proxy @MemPackTxOut)
-        (const $ Comp $ WrapTxOut <$> unpackM)
-      $ Telescope.tip idx
-
-instance
-  IndexedMemPack
-    (Ticked LedgerState)
-    (HardForkBlock '[BlockA, BlockB])
-    (DefaultHardForkTxOut '[BlockA, BlockB])
-  where
-  indexedTypeName _ _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
-  indexedPackedByteCount _ txout =
-    hcollapse $
-      hcmap
-        (Proxy @MemPackTxOut)
-        (K . packedByteCount . unwrapTxOut)
-        txout
-  indexedPackM _ =
-    hcollapse
-      . hcimap
-        (Proxy @MemPackTxOut)
-        ( \_ (WrapTxOut txout) -> K $ do
-            packM txout
-        )
-  indexedUnpackM (TickedHardForkLedgerState _ (HardForkState idx)) = do
-    hsequence'
-      $ hcmap
-        (Proxy @MemPackTxOut)
-        (const $ Comp $ WrapTxOut <$> unpackM)
-      $ Telescope.tip idx
 
 {-------------------------------------------------------------------------------
   Translation

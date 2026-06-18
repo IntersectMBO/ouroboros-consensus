@@ -92,7 +92,6 @@ import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (repeatedlyM)
 import Ouroboros.Consensus.Util.Condense
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block
   ( Serialised
@@ -216,8 +215,6 @@ instance LedgerTablesAreTrivial LedgerState BlockA where
   convertMapKind (LgrA x y) = LgrA x y
 instance LedgerTablesAreTrivial (Ticked LedgerState) BlockA where
   convertMapKind (TickedLedgerStateA x) = TickedLedgerStateA (convertMapKind x)
-
-deriving via Void instance IndexedMemPack LedgerState BlockA Void
 
 instance HasLedgerTables LedgerState BlockA where
   projectLedgerTables _ = emptyLedgerTables
