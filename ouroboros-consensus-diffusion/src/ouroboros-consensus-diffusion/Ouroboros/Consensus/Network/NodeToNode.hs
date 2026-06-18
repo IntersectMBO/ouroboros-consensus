@@ -1238,7 +1238,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       $ peerSharingServerPeer
       $ hPeerSharingServer version them
 
-  -- | Owns the per-peer 'LeiosPeerVars' entry in 'getLeiosPeersVars': allocates
+  -- \| Owns the per-peer 'LeiosPeerVars' entry in 'getLeiosPeersVars': allocates
   -- and registers it on connect and, on every exit path, unregisters it and
   -- refunds that peer's outstanding fetch requests. Modelled on
   -- 'bracketFetchClient'. This bracket is the sole writer of the

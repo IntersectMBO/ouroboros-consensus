@@ -674,8 +674,10 @@ removePeerFromOutstanding peerId o =
     { Leios.requestedBytesSize =
         Leios.requestedBytesSize o - Map.findWithDefault 0 peerId (Leios.requestedBytesSizePerPeer o)
     , Leios.requestedBytesSizePerPeer = Map.delete peerId (Leios.requestedBytesSizePerPeer o)
-    , Leios.requestedEbPeers = Map.mapMaybe (delIf Set.null . Set.delete peerId) (Leios.requestedEbPeers o)
-    , Leios.requestedTxPeers = Map.mapMaybe (delIf Set.null . Set.delete peerId) (Leios.requestedTxPeers o)
+    , Leios.requestedEbPeers =
+        Map.mapMaybe (delIf Set.null . Set.delete peerId) (Leios.requestedEbPeers o)
+    , Leios.requestedTxPeers =
+        Map.mapMaybe (delIf Set.null . Set.delete peerId) (Leios.requestedTxPeers o)
     }
 
 -----
