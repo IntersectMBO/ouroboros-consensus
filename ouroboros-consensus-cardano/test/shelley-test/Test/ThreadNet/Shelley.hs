@@ -354,7 +354,8 @@ prop_simple_real_tpraos_convergence
                 -- slots to reach the epoch transition but the last several
                 -- slots end up empty.
                 Shelley.tickedShelleyLedgerState $
-                  applyChainTick OmitLedgerEvents ledgerConfig sentinel lsUnticked
+                  fst $
+                    applyChainTick OmitLedgerEvents ledgerConfig sentinel lsUnticked
 
               msg =
                 "The ticked final ledger state of "
@@ -392,7 +393,7 @@ prop_simple_real_tpraos_convergence
         DoGeneratePPUs -> True
         DoNotGeneratePPUs -> False
 
-      finalLedgers :: [(NodeId, LedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) EmptyMK)]
+      finalLedgers :: [(NodeId, LedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra))]
       finalLedgers =
         Map.toList $ nodeOutputFinalLedger <$> testOutputNodes testOutput
 
