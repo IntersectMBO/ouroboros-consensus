@@ -33,8 +33,7 @@ import Data.Bifunctor (second)
 import Data.Coerce (Coercible, coerce)
 import Data.SOP.BasicFunctors
 import Data.SOP.Counting (Exactly (..))
-import Data.SOP.Functors (Flip (..))
-import Data.SOP.Index (Index (..), himap)
+import Data.SOP.Index (Index (..), himap, injectNS)
 import Data.SOP.Strict
 import qualified Data.Text as T
 import Ouroboros.Consensus.Block
@@ -51,11 +50,8 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation (AnnTip)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Ledger.Basics (Values)
 import Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)
-import Ouroboros.Consensus.Ledger.Tables
-  ( EmptyMK
-  , ValuesMK
-  )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
@@ -105,11 +101,9 @@ combineEras perEraExamples =
     , exampleQuery = fmap (second unComp) $ viaInject (fmap (second Comp) . exampleQuery)
     , exampleResult = viaInject exampleResult
     , exampleAnnTip = viaInject exampleAnnTip
-    , exampleLedgerState =
-        fmap (second unFlip) $ viaInject (fmap (second Flip) . exampleLedgerState)
+    , exampleLedgerState = viaInject exampleLedgerState
     , exampleChainDepState = coerce $ viaInject @WrapChainDepState (coerce exampleChainDepState)
-    , exampleExtLedgerState =
-        fmap (second unFlip) $ viaInject (fmap (second Flip) . exampleExtLedgerState)
+    , exampleExtLedgerState = viaInject exampleExtLedgerState
     , exampleSlotNo = coerce $ viaInject @(K SlotNo) (coerce exampleSlotNo)
     , exampleLedgerConfig = exampleLedgerConfigCardano
     , exampleLedgerTables = exampleLedgerTablesCardano
@@ -137,11 +131,19 @@ combineEras perEraExamples =
       eraName = singleEraName $ singleEraInfo es
 
   exampleLedgerTablesCardano ::
-    Labelled (LedgerTables (HardForkBlock (CardanoEras Crypto)) ValuesMK)
+    Labelled (Values (HardForkBlock (CardanoEras Crypto)))
   exampleLedgerTablesCardano =
-    mconcat $
-      hcollapse $
-        himap (\ix -> K . map (second (injectLedgerTables ix)) . exampleLedgerTables) perEraExamplesPrefixed
+    mconcat $ hcollapse $ himap injTables perEraExamplesPrefixed
+   where
+    injTables ::
+      forall a.
+      Index (CardanoEras Crypto) a ->
+      Examples a ->
+      K (Labelled (Values (HardForkBlock (CardanoEras Crypto)))) a
+    injTables ix =
+      K
+        . map (second (injectNS ix . WrapValues @a))
+        . exampleLedgerTables
 
   exampleLedgerConfigCardano ::
     Labelled (HardForkLedgerConfig (CardanoEras Crypto))
@@ -220,9 +222,9 @@ instance Inject Examples where
       , exampleQuery = inj (Proxy @(SomeBlockQuery :.: BlockQuery)) exampleQuery
       , exampleResult = inj (Proxy @SomeResult) exampleResult
       , exampleAnnTip = inj (Proxy @AnnTip) exampleAnnTip
-      , exampleLedgerState = inj (Proxy @(Flip LedgerState EmptyMK)) exampleLedgerState
+      , exampleLedgerState = inj (Proxy @LedgerState) exampleLedgerState
       , exampleChainDepState = inj (Proxy @WrapChainDepState) exampleChainDepState
-      , exampleExtLedgerState = inj (Proxy @(Flip ExtLedgerState EmptyMK)) exampleExtLedgerState
+      , exampleExtLedgerState = inj (Proxy @ExtLedgerState) exampleExtLedgerState
       , exampleSlotNo = exampleSlotNo
       , exampleLedgerTables = inj (Proxy @WrapLedgerTables) exampleLedgerTables
       , -- We cannot create a HF Ledger Config out of just one of the eras
@@ -240,12 +242,12 @@ instance Inject Examples where
 
 -- | This wrapper is used only in the 'Example' instance of 'Inject' so that we
 -- can use a type that matches the kind expected by 'inj'.
-newtype WrapLedgerTables blk = WrapLedgerTables (LedgerTables blk ValuesMK)
+newtype WrapLedgerTables blk = WrapLedgerTables (Values blk)
 
 instance Inject WrapLedgerTables where
   inject idx (WrapLedgerTables lt) =
     WrapLedgerTables $
-      injectLedgerTables (forgetInjectionIndex idx) lt
+      injectNS (forgetInjectionIndex idx) (WrapValues lt)
 
 {-------------------------------------------------------------------------------
   Setup
@@ -388,15 +390,15 @@ codecConfig =
     Shelley.ShelleyCodecConfig
 
 ledgerStateByron ::
-  LedgerState ByronBlock mk ->
-  LedgerState (CardanoBlock Crypto) mk
+  LedgerState ByronBlock ->
+  LedgerState (CardanoBlock Crypto)
 ledgerStateByron stByron =
   HardForkLedgerState $ HardForkState $ TZ cur
  where
   cur =
     State.Current
       { currentStart = History.initBound
-      , currentState = Flip stByron
+      , currentState = stByron
       }
 
 {-------------------------------------------------------------------------------
