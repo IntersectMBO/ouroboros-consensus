@@ -189,13 +189,21 @@ prop_leios :: Seed -> Property
 prop_leios seed =
   conjoin
     [ blocksProduced
+        & counterexample "[failed] blocksProduced"
     , ebCertificateInclusion
+        & counterexample "[failed] ebCertificateInclusion"
     , cumulativeTxBytes
+        & counterexample "[failed] cumulativeTxBytes"
     , propConsistentChains
-    , certificationGapIsCorrect
-        .||. length certificateBlocks <= 1
+        & counterexample "[failed] propConsistentChains"
+    , ( certificationGapIsCorrect
+          .||. length certificateBlocks <= 1
+      )
+        & counterexample "[failed] certificationGap"
     , propVoting
+        & counterexample "[failed] propVoting"
     , propCertifying
+        & counterexample "[failed] propCertifying"
     ]
  where
   numNodes = 3 :: Int
@@ -337,10 +345,17 @@ prop_leios seed =
   ebCertificateInclusion =
     let expectedLedger = nodeOutputFinalLedger someNode
         foldedLedger = replayNodeChain pInfoConfig pInfoInitLedger someNode
+        -- Comparing the full HFC ledger state via '===' dumps the whole
+        -- 8-era Telescope on failure, which is unreadable. Project both
+        -- to the active Dijkstra slot (Leios is Dijkstra-only) and
+        -- compare those — that's where any divergence shows up.
+        dijkstraOf st = case st of
+          LedgerStateDijkstra d -> d
+          _ -> error "ebCertificateInclusion: expected Dijkstra ledger state"
      in ( not (null certificateBlocks)
             & counterexample "no certifying blocks — test is vacuous"
         )
-          .&&. (foldedLedger === expectedLedger)
+          .&&. (dijkstraOf foldedLedger === dijkstraOf expectedLedger)
 
   cumulativeTxBytes =
     let actual = case nodeOutputFinalLedger someNode of
