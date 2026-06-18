@@ -32,9 +32,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Basics
   ( HardForkBlock (..)
   , LedgerState (HardForkLedgerState)
   )
-import Ouroboros.Consensus.HardFork.Combinator.Protocol
-  ( HardForkChainDepState
-  )
+import Ouroboros.Consensus.HardFork.Combinator.Protocol ()
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
   ( Current (..)

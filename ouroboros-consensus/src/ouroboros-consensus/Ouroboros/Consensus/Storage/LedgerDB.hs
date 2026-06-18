@@ -58,6 +58,7 @@ openDB ::
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
   , ResolveLeiosBlock blk
+  , ApplyLeiosTx blk
   , HasLeiosVoting blk
   ) =>
   -- | Stateless initializaton arguments

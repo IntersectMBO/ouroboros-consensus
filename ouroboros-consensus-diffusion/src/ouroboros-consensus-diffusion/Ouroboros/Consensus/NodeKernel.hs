@@ -876,7 +876,7 @@ wrapChainDbViewForLeiosStaging
       }
    where
     stagingAwareAddBlock punish blk
-      | not (blockHasLeiosCert blk) =
+      | Nothing <- blockLeiosCert blk =
           BlockFetchClientInterface.addBlockAsync defView punish blk
       | otherwise = do
           mAnn <- atomically $ do
