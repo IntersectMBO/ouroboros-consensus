@@ -145,9 +145,6 @@ analyse ::
   ( Node.RunNode blk
   , Show (Header blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
-  , Show (TxIn blk)
-  , Show (TxOut blk)
-  , Show (Diff blk)
   , HasAnalysis blk
   , HasProtocolInfo blk
   , LedgerSupportsMempool.HasTxs blk

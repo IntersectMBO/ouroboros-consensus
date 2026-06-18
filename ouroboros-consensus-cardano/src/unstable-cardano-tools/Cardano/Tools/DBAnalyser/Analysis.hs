@@ -89,9 +89,6 @@ runAnalysis ::
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
-  , Show (TxIn blk)
-  , Show (TxOut blk)
-  , Show (Diff blk)
   ) =>
   AnalysisName -> SomeAnalysis blk
 runAnalysis analysisName = case go analysisName of
@@ -838,9 +835,6 @@ reproMempoolForge ::
   , LedgerSupportsMempool.HasTxs blk
   , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
-  , Show (TxIn blk)
-  , Show (TxOut blk)
-  , Show (Diff blk)
   ) =>
   Int ->
   Analysis blk StartFromLedgerState
@@ -916,8 +910,8 @@ reproMempoolForge numBlks env = do
       do
         results <- Mempool.addTxs mempool $ LedgerSupportsMempool.extractTxs blk'
         let rejs =
-              [ (LedgerSupportsMempool.txId tx, rej)
-              | rej@(Mempool.MempoolTxRejected tx _) <- results
+              [ (LedgerSupportsMempool.txId tx, err)
+              | Mempool.MempoolTxRejected tx err <- results
               ]
         unless (null rejs) $ do
           fail $
