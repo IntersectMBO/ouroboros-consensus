@@ -6,6 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -51,7 +52,6 @@ import Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import qualified Ouroboros.Consensus.HeaderValidation as HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils (applyDiffs)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Util.CallStack (HasCallStack)
 import Ouroboros.Network.AnchoredSeq (Anchorable, AnchoredSeq (..))
@@ -205,7 +205,7 @@ mkHeaderStateWithTimeFromSummary summary hst =
 mkHeaderStateWithTime ::
   (HasCallStack, HasHardForkHistory blk, HasAnnTip blk) =>
   LedgerConfig blk ->
-  ExtLedgerState blk mk ->
+  ExtLedgerState blk ->
   HeaderStateWithTime blk
 mkHeaderStateWithTime lcfg (ExtLedgerState lst hst) =
   mkHeaderStateWithTimeFromSummary summary hst
@@ -262,16 +262,21 @@ fromChain ::
   ) =>
   TopLevelConfig blk ->
   -- | Initial ledger state
-  ExtLedgerState blk ValuesMK ->
+  ExtLedgerState blk ->
+  -- | Initial values (the full in-memory tables)
+  Values blk ->
   Chain blk ->
   HeaderStateHistory blk
-fromChain cfg initState chain =
+fromChain cfg initState initValues chain =
   HeaderStateHistory (AS.fromOldestFirst anchorSnapshot snapshots)
  where
   anchorSnapshot NE.:| snapshots =
-    fmap (mkHeaderStateWithTime (configLedger cfg))
+    fmap (mkHeaderStateWithTime (configLedger cfg) . fst)
       . NE.scanl
-        (\st blk -> applyDiffs st $ tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk st)
-        initState
+        ( \(st, vals) blk ->
+            let (st', diff) = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk vals st
+             in (st', forward @blk [diff] vals)
+        )
+        (initState, initValues)
       . Chain.toOldestFirst
       $ chain
