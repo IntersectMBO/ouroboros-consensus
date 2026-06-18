@@ -24,10 +24,14 @@ import TextBuilder (TextBuilder)
 
 data WithLedgerState blk = WithLedgerState
   { wlsBlk :: blk
-  , wlsStateBefore :: LedgerState blk ValuesMK
-  -- ^ This ledger state contains only the values to be consumed by the block
-  , wlsStateAfter :: LedgerState blk ValuesMK
-  -- ^ This ledger state contains only the values produced by the block
+  , wlsStateBefore :: LedgerState blk
+  -- ^ The (mk-free) ledger state before the block was applied.
+  , wlsValuesBefore :: Values blk
+  -- ^ The values to be consumed by the block (read against 'wlsStateBefore').
+  , wlsStateAfter :: LedgerState blk
+  -- ^ The (mk-free) ledger state after the block was applied.
+  , wlsValuesAfter :: Values blk
+  -- ^ The values produced by the block.
   }
 
 class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis blk where

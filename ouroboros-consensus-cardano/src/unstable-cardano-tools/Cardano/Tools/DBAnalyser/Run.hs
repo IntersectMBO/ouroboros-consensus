@@ -147,10 +147,11 @@ analyse ::
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
   , Show (TxIn blk)
   , Show (TxOut blk)
+  , Show (Diff blk)
   , HasAnalysis blk
   , HasProtocolInfo blk
   , LedgerSupportsMempool.HasTxs blk
-  , CanStowLedgerTables (LedgerState blk)
+  , LSM.BlockSupportsLSM blk
   ) =>
   DBAnalyserConfig ->
   Args blk ->
@@ -162,7 +163,11 @@ analyse dbaConfig args =
     analysisTracer <- mkVerboseTracer lock True
     LSMConfig{lsmConfigExportPath} <- mkLSMConfig args
     lsmSalt <- fst . genWord64 <$> newStdGen
-    ProtocolInfo{pInfoInitLedger = genesisLedger, pInfoConfig = cfg} <-
+    ProtocolInfo
+      { pInfoInitLedger = genesisLedger
+      , pInfoInitLedgerTables = genesisLedgerTables
+      , pInfoConfig = cfg
+      } <-
       mkProtocolInfo args
     snapshotDelayRng <- newStdGen
     let shfs = Node.stdMkChainDbHasFS dbDir
@@ -184,7 +189,7 @@ analyse dbaConfig args =
           ChainDB.completeChainDbArgs
             registry
             cfg
-            genesisLedger
+            (genesisLedger, genesisLedgerTables)
             chunkInfo
             (const True)
             shfs

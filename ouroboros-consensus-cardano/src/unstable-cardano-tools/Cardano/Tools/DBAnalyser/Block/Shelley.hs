@@ -78,7 +78,7 @@ instance
 
   knownEBBs = const Map.empty
 
-  emitTraces (WithLedgerState _blk lsb lsa) =
+  emitTraces (WithLedgerState _blk lsb _vsb lsa _vsa) =
     catMaybes
       [ let be = SL.nesEL . shelleyLedgerState $ lsb
             ae = SL.nesEL . shelleyLedgerState $ lsa
