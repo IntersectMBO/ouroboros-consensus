@@ -59,21 +59,16 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
     -- * Low-level UTxO manipulations
   , slUtxoL
   , BigEndianTxIn (..)
-
-    -- * Leios closure resolution
-  , resolveDijkstraLeiosClosureTxs
-  , applyDijkstraLeiosClosureTxs
   ) where
 
 import Cardano.Crypto.DSIGN (DSIGNAlgorithm (deriveVerKeyDSIGN), rawDeserialiseSignKeyDSIGN)
 import Cardano.Crypto.Hash.Class (hashToBytes)
 import Cardano.Crypto.Leios (VerificationError (..))
+import Cardano.Ledger.BaseTypes (strictMaybeToMaybe)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
-  ( decCBOR
-  , decShareCBOR
-  , decodeFullAnnotator
+  ( decShareCBOR
   , decodeMap
   , decodeMemPack
   , internsFromMap
@@ -93,8 +88,6 @@ import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core
   ( Era
   , KeyHash (..)
-  , TopTx
-  , Tx
   , eraDecoder
   , ppMaxBHSizeL
   , ppMaxTxSizeL
@@ -106,10 +99,8 @@ import Cardano.Ledger.Dijkstra.BlockBody
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import Cardano.Ledger.Shelley.Rules (ledgerPpL)
 import Cardano.Ledger.State (individualPoolStake, poolDistrDistrL)
 import qualified Cardano.Ledger.State as SL
-import Cardano.Protocol.TPraos.API (PraosCrypto)
 import Cardano.Slotting.EpochInfo
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -118,29 +109,23 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (decode, encode)
 import Control.Arrow (left, second)
 import qualified Control.Exception as Exception
-import Control.Monad (foldM)
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BL
 import Data.Coerce
 import Data.Foldable (toList)
 import Data.Functor.Identity
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
-import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe, strictMaybeToMaybe)
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import Data.MemPack
-import Data.Sequence.Strict (StrictSeq)
-import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (LeiosDbConnection (..))
 import LeiosDemoTypes
   ( EbAnnouncement (..)
   , LeiosPoint (..)
-  , TxHash
   , minCertificationThreshold
   , mkCommitteeEveryoneVotes
   , pointEbHash
@@ -168,10 +153,6 @@ import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosState (..))
-import Ouroboros.Consensus.Protocol.Praos.Header
-  ( Header (Header, headerBody)
-  , HeaderBody (hbLeiosEbAnnouncement, hbSlotNo)
-  )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
   ( AllegraEra
@@ -1011,212 +992,6 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
   getLatestPerasCertRound =
     strictMaybeToMaybe
       . shelleyLedgerLatestPerasCertRound
-
-{-------------------------------------------------------------------------------
-  ResolveLeiosBlock
-
-  Only Dijkstra carries Leios certificates; earlier Shelley-based eras get
-  the default no-op instance.
--------------------------------------------------------------------------------}
-
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) ShelleyEra)
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AllegraEra)
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) MaryEra)
-instance ResolveLeiosBlock (ShelleyBlock (TPraos c) AlonzoEra)
-instance ResolveLeiosBlock (ShelleyBlock (Praos c) BabbageEra)
-instance ResolveLeiosBlock (ShelleyBlock (Praos c) ConwayEra)
-
-instance
-  forall c.
-  (PraosCrypto c, ShelleyCompatible (Praos c) DijkstraEra) =>
-  ResolveLeiosBlock (ShelleyBlock (Praos c) DijkstraEra)
-  where
-  resolveLeiosBlock leiosDb praosSt blk =
-    case body ^. leiosCertBlockBodyL of
-      SNothing -> pure blk
-      SJust cert ->
-        case praosStateLeiosAnnouncement praosSt of
-          SNothing ->
-            error $
-              "FIXME(bladyjoker): Certifying but not previously announced EB! Whai would you do that!? "
-                <> show cert
-          SJust ann -> do
-            mAnnouncedEb <-
-              leiosDbQueryCompletedEbByPoint
-                leiosDb
-                MkLeiosPoint
-                  { pointSlotNo = fromWithOrigin (SlotNo 0) (praosStateLastSlot praosSt)
-                  , pointEbHash = ebAnnouncementHash ann
-                  }
-            case mAnnouncedEb of
-              Nothing ->
-                error $
-                  "CertRB resolution error: apply-time resolve found EB "
-                    <> show ann
-                    <> " at last-slot "
-                    <> show (praosStateLastSlot praosSt)
-                    <> " absent; cert: "
-                    <> show cert
-              Just announcedEb ->
-                pure $
-                  blk{shelleyBlockRaw = Core.Block hdr body'}
-               where
-                txSeq = toLeiosTxSeq @DijkstraEra announcedEb
-                body' = body & Core.txSeqBlockBodyL .~ txSeq
-   where
-    Core.Block hdr body = shelleyBlockRaw blk
-
-  resolveLeiosBlockHdr leiosDb prevAnn blk =
-    case body ^. leiosCertBlockBodyL of
-      SNothing -> pure Nothing
-      SJust cert -> do
-        mEb <- leiosDbQueryCompletedEbByPoint leiosDb prevAnn
-        case mEb of
-          Nothing -> error $ "Announced EB unavailable: " <> show cert
-          Just eb ->
-            pure $ Just blk{shelleyBlockRaw = Core.Block hdr body'}
-           where
-            txSeq = toLeiosTxSeq @DijkstraEra eb
-            body' = body & Core.txSeqBlockBodyL .~ txSeq
-   where
-    Core.Block hdr body = shelleyBlockRaw blk
-
-  blockLeiosCert blk =
-    blockBody ^. leiosCertBlockBodyL & strictMaybeToMaybe
-   where
-    ShelleyBlock{shelleyBlockRaw = Core.Block{blockBody}} = blk
-
-  headerLeiosAnnouncement hdr =
-    case hbLeiosEbAnnouncement annBody of
-      SNothing -> Nothing
-      SJust ann ->
-        Just
-          ( MkLeiosPoint
-              { pointSlotNo = hbSlotNo annBody
-              , pointEbHash = ebAnnouncementHash ann
-              }
-          , ebAnnouncementSize ann
-          )
-   where
-    annBody :: HeaderBody c
-    Header{headerBody = annBody} = shelleyHeaderRaw hdr
-
--- | Deserialise a transaction supplied as Leios-stored bytes.
-deserialiseLeiosTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Tx TopTx era
-deserialiseLeiosTx bs =
-  case decodeFullAnnotator (Core.eraProtVerLow @era) "Leios Tx" decCBOR (BL.fromStrict bs) of
-    Left err -> error $ "Failed to deserialise Leios tx: " <> show err
-    Right tx -> tx
-
--- | Apply an EB closure's transactions onto an /unticked/ Shelley-based
--- ledger state, /without/ validation. Side-steps consensus' Ticked-state
--- mempool API by dropping down to the per-era ledger 'ApplyTx' class
--- ('Cardano.Ledger.Shelley.API.Mempool.applyTxValidation'), which works
--- directly on @LedgerState era@ — leaving us with an unticked state we
--- can hand to 'tickThenApply' for the CertRB.
---
--- We trust the closure: each tx was individually validated when inserted
--- into the LeiosDb, so re-running validation here is redundant and risks
--- spurious failures on UTxO drift. Hence 'SL.ValidateNone'.
---
--- The UTxO must be stowed inside 'NewEpochState' before the fold (the
--- ledger API only sees the in-state UTxO, not the consensus
--- 'shelleyLedgerTables') and unstowed back afterwards.
-applyDijkstraLeiosClosureTxs ::
-  forall proto.
-  ShelleyCompatible proto DijkstraEra =>
-  SL.Globals ->
-  SlotNo ->
-  [Tx TopTx DijkstraEra] ->
-  LedgerState (ShelleyBlock proto DijkstraEra) ValuesMK ->
-  Either
-    (SL.ApplyTxError DijkstraEra)
-    (LedgerState (ShelleyBlock proto DijkstraEra) ValuesMK)
-applyDijkstraLeiosClosureTxs globals slot txs st = do
-  ms' <- foldM (applyOne env) ms0 txs
-  let nes' =
-        nes
-          { SL.nesEs =
-              (SL.nesEs nes){SL.esLState = ms'}
-          }
-      st' = stowed{shelleyLedgerState = nes'}
-  pure (unstowLedgerTables st')
- where
-  stowed = stowLedgerTables st
-  nes = shelleyLedgerState stowed
-  env = SL.mkMempoolEnv nes slot
-  ms0 = SL.mkMempoolState nes
-
-  applyOne envv ms tx = do
-    let stAnnTx =
-          SL.mkStAnnTx
-            (SL.epochInfo globals)
-            (SL.systemStart globals)
-            (envv ^. ledgerPpL)
-            (ms ^. SL.utxoG)
-            tx
-    fst <$> SL.applyTxValidation STS.ValidateNone globals envv ms stAnnTx
-
--- | For a Dijkstra-era CertRB, look up the EB closure that the cert in this
--- block's body attests to and return it as a list of ledger transactions
--- (in EB order). 'Nothing' for non-CertRB blocks.
---
--- This sibling of 'resolveLeiosBlock' returns the closure as raw
--- 'Tx TopTx DijkstraEra' values rather than splicing them into the block
--- body; callers wrap them into 'GenTx' to apply them onto the ticked
--- ledger via 'applyTx' (see 'Ouroboros.Consensus.Cardano.Block').
---
--- Defined here (rather than as a class method) because the GenTx
--- constructor lives in 'Shelley.Ledger.Mempool', and 'Ledger' must not
--- depend on 'Mempool' (cycle).
-resolveDijkstraLeiosClosureTxs ::
-  forall c m.
-  Monad m =>
-  LeiosDbConnection m ->
-  PraosState ->
-  ShelleyBlock (Praos c) DijkstraEra ->
-  m (Maybe [Tx TopTx DijkstraEra])
-resolveDijkstraLeiosClosureTxs leiosDb praosSt blk =
-  case body ^. leiosCertBlockBodyL of
-    SNothing -> pure Nothing
-    SJust cert ->
-      case praosStateLeiosAnnouncement praosSt of
-        SNothing ->
-          error $
-            "resolveDijkstraLeiosClosureTxs: certifying but no parent announcement: "
-              <> show cert
-        SJust ann -> do
-          mAnnouncedEb <-
-            leiosDbQueryCompletedEbByPoint
-              leiosDb
-              MkLeiosPoint
-                { pointSlotNo = fromWithOrigin (SlotNo 0) (praosStateLastSlot praosSt)
-                , pointEbHash = ebAnnouncementHash ann
-                }
-          case mAnnouncedEb of
-            Nothing ->
-              error $
-                "resolveDijkstraLeiosClosureTxs: announced EB missing in LeiosDb: "
-                  <> show ann
-                  <> " at last-slot "
-                  <> show (praosStateLastSlot praosSt)
-                  <> " (cert: "
-                  <> show cert
-                  <> ")"
-            Just announcedEb ->
-              pure . Just $
-                fmap (deserialiseLeiosTx @DijkstraEra . snd) announcedEb
- where
-  Core.Block _hdr body = shelleyBlockRaw blk
-
--- | Turn the @[(TxHash, ByteString)]@ tuple list returned by
--- 'leiosDbQueryCompletedEbByPoint' into the @StrictSeq (Tx TopTx era)@
--- that 'Core.txSeqBlockBodyL' wants.
-toLeiosTxSeq ::
-  forall era.
-  ShelleyBasedEra era =>
-  [(TxHash, BS.ByteString)] -> StrictSeq (Tx TopTx era)
-toLeiosTxSeq = StrictSeq.fromList . fmap (deserialiseLeiosTx @era . snd)
 
 {-------------------------------------------------------------------------------
   HasLeiosVoting

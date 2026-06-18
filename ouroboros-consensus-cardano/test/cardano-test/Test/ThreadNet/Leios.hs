@@ -189,21 +189,9 @@ prop_leios :: Seed -> Property
 prop_leios seed =
   conjoin
     [ blocksProduced
-    , -- FIXME: re-enable once the test suite's chain replay matches the
-      -- production apply path for CertRBs. The production path now
-      -- folds the EB closure's txs onto the unticked parent ledger via
-      -- 'applyLeiosClosure' (which drops down to the ledger
-      -- 'ApplyTxValidation ValidateNone' on the inner @LedgerState
-      -- DijkstraEra@), then 'tickThenApply' the empty-bodied CertRB on
-      -- top. The replay ('foldWithResolution' / 'sumChainTxBytes') still
-      -- uses the OLD body-splicing variant + 'tickThenReapply', which
-      -- routes closure txs through the LEDGERS rule (and so bumps
-      -- 'shelleyCumulativeTxBytes'). The cumulative-tx-bytes counter
-      -- and full ledger-state equality both diverge until the replay
-      -- is migrated to the same apply path.
-      -- , ebCertificateInclusion
-      -- , cumulativeTxBytes
-      propConsistentChains
+    , ebCertificateInclusion
+    , cumulativeTxBytes
+    , propConsistentChains
     , certificationGapIsCorrect
         .||. length certificateBlocks <= 1
     , propVoting
@@ -449,22 +437,17 @@ sumChainTxBytes ::
   ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->
   NodeOutput (CardanoBlock StandardCrypto) ->
   Word64
-sumChainTxBytes topConfig initLedger node = runSimOrThrow $ do
-  let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
-  stateVar <- StrictTVar.newTVarIO db
-  leiosDb <- newLeiosDBInMemoryWith stateVar
-  withLeiosDb leiosDb $ \leiosConn -> do
-    let chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
-        cfg = ExtLedgerCfg topConfig
-    fst <$> foldM (step leiosConn cfg) (0, initLedger) chain
+sumChainTxBytes _topConfig _initLedger node =
+  sum (map blockTxSizeSum chain)
  where
-  step leiosDb cfg (total, st) blk = do
-    blk' <- resolveLeiosBlock leiosDb (headerStateChainDep (headerState st)) blk
-    let txBytes = blockTxSizeSum blk'
-        st' = applyDiffs st $ tickThenReapply OmitLedgerEvents cfg blk' st
-    pure (total + txBytes, st')
+  chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
 
-  -- FIXME(bladyjoker): Why not use blockTxBytes?
+  -- 'shelleyCumulativeTxBytes' is bumped by the LEDGERS rule, which only
+  -- sees the on-wire block body. Production's CertRB apply path folds
+  -- the EB closure through the LEDGER (singular) rule with
+  -- 'ValidateNone', which does /not/ bump the counter — so the
+  -- independent sum mirrors that by only summing the wire-body txs.
+  -- A CertRB carries an empty body on the wire, so it contributes 0.
   blockTxSizeSum (BlockDijkstra shelleyBlk) =
     let SL.Block _ body = shelleyBlockRaw shelleyBlk
      in sumTxSizes (body ^. txSeqBlockBodyL)
@@ -496,19 +479,12 @@ replayNodeChain topConfig initLedger node = runSimOrThrow $ do
 -- LedgerDB's apply path so the replayed final ledger matches the one the
 -- chain converged to during the simulation.
 --
--- FIXME: this replay still uses the OLD CertRB application strategy —
--- splice the EB closure into the block body with 'resolveLeiosBlock'
--- and then 'tickThenReapply'. The production apply path (in
--- 'Ouroboros.Consensus.Storage.LedgerDB.Forker.applyBlock') was
--- migrated to: fold the closure txs onto the unticked parent ledger via
--- 'applyLeiosClosure' (ledger-level 'applyTxValidation ValidateNone'),
--- then 'tickThenApply' the empty-bodied CertRB on top. As a result this
--- replay diverges from the simulation's final ledger
--- ('ebCertificateInclusion' fails) and the per-chain
--- 'shelleyCumulativeTxBytes' accumulator diverges from the independent
--- byte sum ('cumulativeTxBytes' fails — the production path applies
--- closure txs via LEDGER (singular) which does not bump the counter,
--- while the replay's spliced-body path goes through LEDGERS).
+-- For a CertRB, this mirrors 'Forker.applyBlock' 'ApplyVal': the EB
+-- closure's txs are folded onto the parent ledger via 'applyLeiosClosure'
+-- (ledger-level 'applyTxValidation ValidateNone') and then the
+-- (empty-body) CertRB is applied with 'tickThenReapply' on top — so the
+-- LEDGERS rule sees an empty body and 'shelleyCumulativeTxBytes' is not
+-- bumped for closure txs.
 foldWithResolution ::
   Monad m =>
   LeiosDbConnection m ->
@@ -520,8 +496,25 @@ foldWithResolution leiosDb cfg blks initState =
   foldM step initState blks
  where
   step state blk = do
-    blk' <- resolveLeiosBlock leiosDb (headerStateChainDep (headerState state)) blk
-    pure $ applyDiffs state $ tickThenReapply OmitLedgerEvents cfg blk' state
+    -- Mirror the production apply path (Forker.applyBlock 'ApplyVal' arm):
+    -- for a CertRB, fold the EB closure's txs onto the parent ledger via
+    -- 'applyLeiosClosure' (no validation), then 'tickThenReapply' the
+    -- (empty-body) CertRB on top. For non-CertRB blocks, this collapses
+    -- to plain 'tickThenReapply'.
+    let cds = headerStateChainDep (headerState state)
+    stateAfterClosure <- case blockLeiosCert blk of
+      Nothing -> pure state
+      Just _cert -> case protocolStateLeiosAnnouncement @(CardanoBlock StandardCrypto) cds of
+        Nothing ->
+          error "foldWithResolution: CertRB but no announcement on parent chain-dep state"
+        Just (point, _) -> do
+          closureTxs <- resolveLeiosClosure leiosDb point blk
+          case applyLeiosClosure cfg (blockSlot blk) closureTxs state of
+            Left err -> error $ "foldWithResolution: applyLeiosClosure failed: " <> show err
+            Right st -> pure st
+    pure $
+      applyDiffs stateAfterClosure $
+        tickThenReapply OmitLedgerEvents cfg blk stateAfterClosure
 
 -- * Running the thread net
 
