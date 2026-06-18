@@ -12,22 +12,27 @@ module Cardano.Node.Protocol.Cardano
   , CardanoProtocolInstantiationError (..)
   ) where
 
-import Cardano.Api.Any (Error (..))
 import qualified Cardano.Chain.Update as Byron
 import qualified Cardano.Ledger.Api.Transition as SL
 import Cardano.Ledger.BaseTypes
 import Cardano.Ledger.Dijkstra.PParams
-import qualified Cardano.Node.Protocol.Alonzo as Alonzo
-import qualified Cardano.Node.Protocol.Byron as Byron
-import qualified Cardano.Node.Protocol.Conway as Conway
-import Cardano.Node.Protocol.Shelley (readGenesisAny)
-import qualified Cardano.Node.Protocol.Shelley as Shelley
 import Cardano.Node.Types
 import Control.Monad.Trans.Except (ExceptT)
 import Control.Monad.Trans.Except.Extra (firstExceptT)
 import Data.Maybe (fromMaybe)
 import Ouroboros.Consensus.Cardano
 import qualified Ouroboros.Consensus.Cardano as Consensus
+import Ouroboros.Consensus.Cardano.Api.Genesis
+  ( ByronProtocolInstantiationError
+  , GenesisReadError
+  , PraosLeaderCredentialsError
+  , genesisHashToPraosNonce
+  , readByronGenesis
+  , readByronLeaderCredentials
+  , readGenesisAny
+  , readShelleyLeaderCredentials
+  )
+import Ouroboros.Consensus.Cardano.Api.Serialise (Error (..))
 import Ouroboros.Consensus.Cardano.Condense ()
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..))
 import Ouroboros.Consensus.Config (emptyCheckpointsMap)
@@ -101,30 +106,30 @@ mkConsensusProtocolCardano
   files = do
     byronGenesis <-
       firstExceptT CardanoProtocolInstantiationErrorByron $
-        Byron.readGenesis
+        readByronGenesis
           npcByronGenesisFile
           npcByronGenesisFileHash
           npcByronReqNetworkMagic
 
     byronLeaderCredentials <-
       firstExceptT CardanoProtocolInstantiationErrorByron $
-        Byron.readLeaderCredentials byronGenesis files
+        readByronLeaderCredentials byronGenesis files
 
     (shelleyGenesis, shelleyGenesisHash) <-
       firstExceptT CardanoProtocolInstantiationShelleyGenesisReadError $
-        Shelley.readGenesis
+        readGenesisAny
           npcShelleyGenesisFile
           npcShelleyGenesisFileHash
 
     (alonzoGenesis, _alonzoGenesisHash) <-
       firstExceptT CardanoProtocolInstantiationAlonzoGenesisReadError $
-        Alonzo.readGenesis
+        readGenesisAny
           npcAlonzoGenesisFile
           npcAlonzoGenesisFileHash
 
     (conwayGenesis, _conwayGenesisHash) <-
       firstExceptT CardanoProtocolInstantiationConwayGenesisReadError $
-        Conway.readGenesis
+        readGenesisAny
           npcConwayGenesisFile
           npcConwayGenesisFileHash
 
@@ -145,7 +150,7 @@ mkConsensusProtocolCardano
 
     shelleyLeaderCredentials <-
       firstExceptT CardanoProtocolInstantiationPraosLeaderCredentialsError $
-        Shelley.readLeaderCredentials files
+        readShelleyLeaderCredentials files
 
     let transitionLedgerConfig =
           SL.mkLatestTransitionConfig shelleyGenesis alonzoGenesis conwayGenesis dijkstraGenesis
@@ -179,7 +184,7 @@ mkConsensusProtocolCardano
           }
         Consensus.ProtocolParamsShelleyBased
           { shelleyBasedInitialNonce =
-              Shelley.genesisHashToPraosNonce
+              genesisHashToPraosNonce
                 shelleyGenesisHash
           , shelleyBasedLeaderCredentials = shelleyLeaderCredentials
           }
@@ -275,19 +280,17 @@ emptyDijkstraGenesis =
 
 data CardanoProtocolInstantiationError
   = CardanoProtocolInstantiationErrorByron
-      Byron.ByronProtocolInstantiationError
+      ByronProtocolInstantiationError
   | CardanoProtocolInstantiationShelleyGenesisReadError
-      Shelley.GenesisReadError
+      GenesisReadError
   | CardanoProtocolInstantiationAlonzoGenesisReadError
-      Shelley.GenesisReadError
+      GenesisReadError
   | CardanoProtocolInstantiationConwayGenesisReadError
-      Shelley.GenesisReadError
+      GenesisReadError
   | CardanoProtocolInstantiationDijkstraGenesisReadError
-      Shelley.GenesisReadError
+      GenesisReadError
   | CardanoProtocolInstantiationPraosLeaderCredentialsError
-      Shelley.PraosLeaderCredentialsError
-  | CardanoProtocolInstantiationErrorAlonzo
-      Alonzo.AlonzoProtocolInstantiationError
+      PraosLeaderCredentialsError
   deriving Show
 
 instance Error CardanoProtocolInstantiationError where
@@ -302,6 +305,4 @@ instance Error CardanoProtocolInstantiationError where
   displayError (CardanoProtocolInstantiationDijkstraGenesisReadError err) =
     "Dijkstra related: " <> displayError err
   displayError (CardanoProtocolInstantiationPraosLeaderCredentialsError err) =
-    displayError err
-  displayError (CardanoProtocolInstantiationErrorAlonzo err) =
     displayError err

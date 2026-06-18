@@ -6,9 +6,9 @@ module Cardano.Tools.DBSynthesizer.Run
   , synthesize
   ) where
 
-import Cardano.Api.Any (displayError)
 import Cardano.Node.Protocol.Cardano (mkConsensusProtocolCardano)
 import Cardano.Node.Types
+import Ouroboros.Consensus.Cardano.Api.Serialise (displayError)
 import Cardano.Tools.DBSynthesizer.Forging
 import Cardano.Tools.DBSynthesizer.Orphans ()
 import Cardano.Tools.DBSynthesizer.Types

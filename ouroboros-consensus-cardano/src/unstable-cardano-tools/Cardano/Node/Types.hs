@@ -1,20 +1,20 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- DUPLICATE -- adapted from: cardano-node/src/Cardano/Node/Types.hs
 
+-- | The node's per-era protocol configuration records, as parsed from a node
+-- configuration file. These are the inputs to 'mkConsensusProtocolCardano' in
+-- "Cardano.Node.Protocol.Cardano".
+--
+-- The reusable genesis\/credential file types ('GenesisFile', 'GenesisHash',
+-- 'ProtocolFilepaths') are defined in
+-- "Ouroboros.Consensus.Cardano.Api.Genesis" and re-exported here.
 module Cardano.Node.Types
   ( -- * Configuration
     AdjustFilePaths (..)
-  , ConfigError (..)
-  , ConfigYamlFilePath (..)
-  , DbFile (..)
   , GenesisFile (..)
   , GenesisHash (..)
-  , MaxConcurrencyBulkSync (..)
-  , MaxConcurrencyDeadline (..)
   , ProtocolFilepaths (..)
 
     -- * Consensus protocol configuration
@@ -23,105 +23,21 @@ module Cardano.Node.Types
   , NodeConwayProtocolConfiguration (..)
   , NodeDijkstraProtocolConfiguration (..)
   , NodeHardForkProtocolConfiguration (..)
-  , NodeProtocolConfigurationCardano (..)
   , NodeShelleyProtocolConfiguration (..)
-  , VRFPrivateKeyFilePermissionError (..)
-  , renderVRFPrivateKeyFilePermissionError
   ) where
 
 import qualified Cardano.Chain.Update as Byron
 import Cardano.Crypto (RequiresNetworkMagic)
-import qualified Cardano.Crypto.Hash as Crypto
-import Data.Aeson
-import Data.String (IsString)
-import Data.Text as Text (Text, pack, unpack)
 import Data.Word (Word16, Word8)
 import Ouroboros.Consensus.Block.Abstract (EpochNo)
-
--- | Errors for the cardano-config module.
-data ConfigError
-  = ConfigErrorFileNotFound FilePath
-  | ConfigErrorNoEKG
-  deriving Show
-
--- | Filepath of the configuration yaml file. This file determines
--- all the configuration settings required for the cardano node
--- (logging, tracing, protocol, slot length etc)
-newtype ConfigYamlFilePath = ConfigYamlFilePath
-  {unConfigPath :: FilePath}
-  deriving newtype (Eq, Show)
-
-newtype DbFile = DbFile
-  {unDB :: FilePath}
-  deriving newtype (Eq, Show)
-
-newtype GenesisFile = GenesisFile
-  {unGenesisFile :: FilePath}
-  deriving stock (Eq, Ord)
-  deriving newtype (IsString, Show)
-
-instance FromJSON GenesisFile where
-  parseJSON (String genFp) = pure . GenesisFile $ Text.unpack genFp
-  parseJSON invalid =
-    fail $
-      "Parsing of GenesisFile failed due to type mismatch. "
-        <> "Encountered: "
-        <> show invalid
-
-newtype MaxConcurrencyBulkSync = MaxConcurrencyBulkSync
-  {unMaxConcurrencyBulkSync :: Word}
-  deriving stock (Eq, Ord)
-  deriving newtype (FromJSON, Show)
-
-newtype MaxConcurrencyDeadline = MaxConcurrencyDeadline
-  {unMaxConcurrencyDeadline :: Word}
-  deriving stock (Eq, Ord)
-  deriving newtype (FromJSON, Show)
-
-{-
--- | Newtype wrapper which provides 'FromJSON' instance for 'DiffusionMode'.
---
-newtype NodeDiffusionMode
-  = NodeDiffusionMode { getDiffusionMode :: DiffusionMode }
-  deriving newtype Show
-
-instance FromJSON NodeDiffusionMode where
-    parseJSON (String str) =
-      case str of
-        "InitiatorOnly"
-          -> pure $ NodeDiffusionMode InitiatorOnlyDiffusionMode
-        "InitiatorAndResponder"
-          -> pure $ NodeDiffusionMode InitiatorAndResponderDiffusionMode
-        _ -> fail "Parsing NodeDiffusionMode failed: can be either 'InitiatorOnly' or 'InitiatorAndResponder'"
-    parseJSON _ = fail "Parsing NodeDiffusionMode failed"
--}
+import Ouroboros.Consensus.Cardano.Api.Genesis
+  ( GenesisFile (..)
+  , GenesisHash (..)
+  , ProtocolFilepaths (..)
+  )
 
 class AdjustFilePaths a where
   adjustFilePaths :: (FilePath -> FilePath) -> a -> a
-
-data ProtocolFilepaths
-  = ProtocolFilepaths
-  { byronCertFile :: !(Maybe FilePath)
-  , byronKeyFile :: !(Maybe FilePath)
-  , shelleyKESFile :: !(Maybe FilePath)
-  , shelleyVRFFile :: !(Maybe FilePath)
-  , shelleyCertFile :: !(Maybe FilePath)
-  , shelleyBulkCredsFile :: !(Maybe FilePath)
-  }
-  deriving (Eq, Show)
-
-newtype GenesisHash = GenesisHash (Crypto.Hash Crypto.Blake2b_256 Crypto.ByteString)
-  deriving newtype (Eq, Show, ToJSON, FromJSON)
-
-data NodeProtocolConfigurationCardano
-  = NodeProtocolConfigurationCardano
-      NodeByronProtocolConfiguration
-      NodeShelleyProtocolConfiguration
-      NodeAlonzoProtocolConfiguration
-      NodeConwayProtocolConfiguration
-      NodeDijkstraProtocolConfiguration
-      NodeHardForkProtocolConfiguration
-  deriving (Eq, Show)
 
 data NodeShelleyProtocolConfiguration
   = NodeShelleyProtocolConfiguration
@@ -225,16 +141,6 @@ data NodeHardForkProtocolConfiguration
   }
   deriving (Eq, Show)
 
-instance AdjustFilePaths NodeProtocolConfigurationCardano where
-  adjustFilePaths f (NodeProtocolConfigurationCardano pcb pcs pca pcc pcd pch) =
-    NodeProtocolConfigurationCardano
-      (adjustFilePaths f pcb)
-      (adjustFilePaths f pcs)
-      (adjustFilePaths f pca)
-      (adjustFilePaths f pcc)
-      (adjustFilePaths f pcd)
-      pch
-
 instance AdjustFilePaths NodeByronProtocolConfiguration where
   adjustFilePaths
     f
@@ -280,25 +186,3 @@ instance AdjustFilePaths GenesisFile where
 
 instance AdjustFilePaths a => AdjustFilePaths (Maybe a) where
   adjustFilePaths f = fmap (adjustFilePaths f)
-
-data VRFPrivateKeyFilePermissionError
-  = OtherPermissionsExist FilePath
-  | GroupPermissionsExist FilePath
-  | GenericPermissionsExist FilePath
-  deriving Show
-
-renderVRFPrivateKeyFilePermissionError :: VRFPrivateKeyFilePermissionError -> Text
-renderVRFPrivateKeyFilePermissionError err =
-  case err of
-    OtherPermissionsExist fp ->
-      "VRF private key file at: "
-        <> Text.pack fp
-        <> " has \"other\" file permissions. Please remove all \"other\" file permissions."
-    GroupPermissionsExist fp ->
-      "VRF private key file at: "
-        <> Text.pack fp
-        <> "has \"group\" file permissions. Please remove all \"group\" file permissions."
-    GenericPermissionsExist fp ->
-      "VRF private key file at: "
-        <> Text.pack fp
-        <> "has \"generic\" file permissions. Please remove all \"generic\" file permissions."
