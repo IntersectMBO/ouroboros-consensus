@@ -828,20 +828,28 @@ instance
   ) =>
   StreamingBackend m LSM l blk
   where
-  data YieldArgs m LSM l blk
-    = -- \| Yield an LSM snapshot
-      YieldLSM
-        Int
-        (LedgerTablesHandle m l blk)
-        -- \| Only to be closed by 'releaseYieldArgs'
-        (Session m)
-        -- \| Only to be closed by 'releaseYieldArgs'
-        (SomeHasFSAndBlockIO m)
-        -- \| Cleanup hook run by 'releaseYieldArgs' /after/ the session has been
-        -- closed. Used to remove the temporary scratch session created when
-        -- yielding from a standalone (exported) snapshot. 'pure ()' for a plain
-        -- database yield.
-        (m ())
+  data YieldArgs m LSM l blk where
+    -- \| Yield an LSM snapshot. The tables handle is opened at an arbitrary block
+    -- @hfblk@ (the hard-fork block, for a Cardano snapshot) and 'readRange'
+    -- projects it onto the single era @blk@ that is actually streamed: the
+    -- on-disk table is era-agnostic bytes, and the projection's /type/ fixes the
+    -- era whose @'MemPack'@ codec decodes the entries (see 'yieldLsmS'). A live
+    -- database yield ('mkLSMYieldArgs') uses @hfblk ~ blk@ with @'id'@.
+    YieldLSM ::
+      Int ->
+      LedgerTablesHandle m l hfblk ->
+      -- \| Project the handle's tables onto the streamed era @blk@.
+      (Values hfblk -> Values blk) ->
+      -- \| Only to be closed by 'releaseYieldArgs'
+      Session m ->
+      -- \| Only to be closed by 'releaseYieldArgs'
+      SomeHasFSAndBlockIO m ->
+      -- \| Cleanup hook run by 'releaseYieldArgs' /after/ the session has been
+      -- closed. Used to remove the temporary scratch session created when
+      -- yielding from a standalone (exported) snapshot. 'pure ()' for a plain
+      -- database yield.
+      m () ->
+      YieldArgs m LSM l blk
 
   data SinkArgs m LSM l blk
     = SinkLSM
@@ -865,7 +873,7 @@ instance
         -- database sink.
         (m ())
 
-  releaseYieldArgs (YieldLSM _ hdl session (SomeHasFSAndBlockIO _ bio) cleanup) = do
+  releaseYieldArgs (YieldLSM _ hdl _proj session (SomeHasFSAndBlockIO _ bio) cleanup) = do
     close hdl
     LSM.closeSession session
     cleanup
@@ -876,7 +884,7 @@ instance
     cleanup
     BIO.close bio
 
-  yield _ (YieldLSM chunkSize hdl _ _ _) = yieldLsmS chunkSize hdl
+  yield _ (YieldLSM chunkSize hdl proj _ _ _) = yieldLsmS chunkSize hdl proj
 
   sink _ (SinkLSM chunkSize shfs _ ds session afterSave _cleanup) =
     sinkLsmS chunkSize shfs ds session afterSave
@@ -892,26 +900,29 @@ instance IOLike m => NoThunks (Resources m LSM) where
   Streaming
 -------------------------------------------------------------------------------}
 
--- | Stream the table by paging the value-threaded 'readRange' at the era @blk@
--- (the snapshot-streaming path is single-era, so @'Yield'@ yields concrete
--- @('TxIn' blk, 'TxOut' blk)@ pairs), recomputing the next cursor as the page's
--- maximum key and stopping on the first empty page.
+-- | Stream the table by paging the value-threaded 'readRange', projecting the
+-- handle's block @hfblk@ onto the single era @blk@ that is streamed (so
+-- @'Yield'@ yields concrete @('TxIn' blk, 'TxOut' blk)@ pairs), recomputing the
+-- next cursor as the page's maximum key and stopping on the first empty page.
+-- The projection's /type/ selects the era whose @'MemPack'@ codec the cursor
+-- uses to (de)serialise on-disk entries; the LSM backend ignores its /value/.
 yieldLsmS ::
-  forall m l blk.
+  forall m l hfblk blk.
   ( Monad m
   , SingleEraBlockSupportsUTxOHD blk
   , MemPack (TxIn blk)
   , MemPack (TxOut blk)
   ) =>
   Int ->
-  LedgerTablesHandle m l blk ->
+  LedgerTablesHandle m l hfblk ->
+  (Values hfblk -> Values blk) ->
   Yield m l blk
-yieldLsmS readChunkSize tb _hint k = do
+yieldLsmS readChunkSize tb proj _hint k = do
   r <- k (go (NoPreviousQuery :: RangeQueryPrevious blk))
   lift $ S.effects r
  where
   go prev = do
-    valsX <- lift $ S.lift $ readRange tb (id :: Values blk -> Values blk) prev readChunkSize
+    valsX <- lift $ S.lift $ readRange tb proj prev readChunkSize
     case valuesToList @blk valsX of
       [] -> pure $ pure Nothing
       entries -> do
@@ -975,6 +986,7 @@ sinkLsmS writeChunkSize (SomeHasFS hfs) ds session afterSave _st stream = do
 
 -- | Create Yield arguments for LSM
 mkLSMYieldArgs ::
+  forall m l blk.
   ( IOLike m
   , BlockSupportsLSM blk
   ) =>
@@ -1000,8 +1012,8 @@ mkLSMYieldArgs lsmDbPath ds mkFS mkGen = do
       session
       (LSM.toSnapshotName (snapshotToDirName ds))
       (LSM.SnapshotLabel $ T.pack "UTxO table")
-  h <- newLSMLedgerTablesHandle nullTracer (const (pure ())) 0 tb
-  pure $ YieldLSM 1000 h session shfsbio (pure ())
+  h <- newLSMLedgerTablesHandle nullTracer (const (pure ())) 0 tb :: m (LedgerTablesHandle m l blk)
+  pure $ YieldLSM 1000 h id session shfsbio (pure ())
 
 -- | Create Yield arguments for a standalone (exported) LSM snapshot.
 --
@@ -1013,9 +1025,14 @@ mkLSMYieldArgs lsmDbPath ds mkFS mkGen = do
 -- The scratch session is created in the parent directory of the exported
 -- snapshot, so that it lives on the same volume (a requirement of importing).
 mkExportedLSMYieldArgs ::
+  forall hfblk m l blk.
   ( IOLike m
-  , BlockSupportsLSM blk
+  , BlockSupportsLSM hfblk
   ) =>
+  -- | Project the handle's tables (opened at @hfblk@, e.g. the hard-fork block)
+  -- onto the single era @blk@ that is streamed. Its type selects the era's
+  -- on-disk @'MemPack'@ codec; see 'yieldLsmS'.
+  (Values hfblk -> Values blk) ->
   -- | The directory containing the exported snapshot. Must not have a trailing
   -- slash!
   FilePath ->
@@ -1026,7 +1043,7 @@ mkExportedLSMYieldArgs ::
   -- | Usually 'newStdGen'
   (m StdGen) ->
   m (YieldArgs m LSM l blk)
-mkExportedLSMYieldArgs exportDir ds mkFS mkGen = do
+mkExportedLSMYieldArgs proj exportDir ds mkFS mkGen = do
   shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <-
     runWithTempRegistry $ (\x -> (x, ())) <$> mkFS (takeDirectory exportDir)
   nonce <- fst . genWord64 <$> mkGen
@@ -1050,8 +1067,8 @@ mkExportedLSMYieldArgs exportDir ds mkFS mkGen = do
       snapName
       (LSM.SnapshotLabel $ T.pack "UTxO table")
   -- A scratch session used only for reading; it never exports snapshots.
-  h <- newLSMLedgerTablesHandle nullTracer (const (pure ())) 0 tb
-  pure $ YieldLSM 1000 h session shfsbio (removeDirectoryRecursive hasFS scratch)
+  h <- newLSMLedgerTablesHandle nullTracer (const (pure ())) 0 tb :: m (LedgerTablesHandle m l hfblk)
+  pure $ YieldLSM 1000 h proj session shfsbio (removeDirectoryRecursive hasFS scratch)
 
 -- | Create Sink arguments for a standalone (exported) LSM snapshot.
 --
