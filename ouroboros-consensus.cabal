@@ -1619,7 +1619,6 @@ library unstable-cardano-testlib
     cardano-crypto-wrapper,
     cardano-ledger-alonzo:testlib,
     cardano-ledger-api:cardano-ledger-api,
-    cardano-ledger-binary,
     cardano-ledger-byron,
     cardano-ledger-conway:{cardano-ledger-conway, testlib},
     cardano-ledger-core:{cardano-ledger-core, testlib},

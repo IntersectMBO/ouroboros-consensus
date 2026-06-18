@@ -36,39 +36,20 @@ module Test.ThreadNet.Infra.ShelleyBasedHardFork
   ) where
 
 import qualified Cardano.Ledger.Api.Transition as L
-import Cardano.Ledger.Binary.Decoding
-  ( decShareCBOR
-  , decodeMap
-  , decodeMemPack
-  , internsFromMap
-  )
-import Cardano.Ledger.Binary.Encoding
-  ( encodeMap
-  , encodeMemPack
-  , toPlainEncoding
-  )
-import qualified Cardano.Ledger.Conway.State as SL
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
-import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import Codec.CBOR.Decoding
-import Codec.CBOR.Encoding
 import Control.Monad.Except (runExcept)
 import qualified Control.Tracer as Tracer
 import Data.Coerce
 import qualified Data.Map.Strict as Map
-import Data.MemPack
-import Data.Proxy
+import Data.MemPack (MemPack)
 import Data.SOP.BasicFunctors
-import Data.SOP.Functors (Flip (..))
 import qualified Data.SOP.InPairs as InPairs
-import Data.SOP.Index (Index (..), hcimap)
+import Data.SOP.Index (Index (..), injectNS)
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
-import qualified Data.SOP.Telescope as Telescope
 import Data.Void (Void)
 import Lens.Micro ((%~), (&), (.~), (^.))
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.Cardano.CanHardFork
   ( crossEraForecastAcrossShelley
@@ -87,7 +68,6 @@ import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
@@ -101,7 +81,6 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (eitherToMaybe)
-import Ouroboros.Consensus.Util.IndexedMemPack
 import System.FS.API (SomeHasFS)
 import Test.ThreadNet.TxGen
 import Test.ThreadNet.TxGen.Shelley ()
@@ -253,7 +232,11 @@ instance
   hardForkEraTranslation =
     EraTranslation
       { translateLedgerState = PCons translateLedgerState PNil
-      , translateLedgerTables = PCons translateLedgerTables PNil
+      , translateDiff =
+          PCons (TranslateDiff (translateLedgerTablesWith translateLedgerTables)) PNil
+      , -- A pure-upgrade boundary: the on-disk values upgrade their @TxOut@s when
+        -- the first block's values are read (the @TxIn@ is era-stable).
+        translateValues = PCons (TranslateValues (Map.map SL.upgradeTxOut)) PNil
       , translateChainDepState = PCons translateChainDepStateAcrossShelley PNil
       , crossEraForecast = PCons crossEraForecastAcrossShelley PNil
       }
@@ -268,14 +251,15 @@ instance
       InPairs.RequireBoth $
         \_cfg1 cfg2 ->
           HFC.TranslateLedgerState
-            { translateLedgerStateWith = \_epochNo ->
-                noNewTickingDiffs
-                  . unFlip
-                  . unComp
-                  . SL.translateEra'
-                    (shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2))
-                  . Comp
-                  . Flip
+            { translateLedgerStateWith = \_epochNo ls ->
+                -- Pure-upgrade boundary: the state translates with no new diffs.
+                ( unComp
+                    . SL.translateEra'
+                      (shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2))
+                    . Comp
+                    $ ls
+                , mempty
+                )
             }
 
     translateLedgerTables ::
@@ -370,35 +354,55 @@ answerShelleyBasedQueryHF f idx cfgs q forker = case idx of
   IS IZ -> f idx cfgs q forker
   IS (IS idx') -> case idx' of {}
 
+-- | Project the current era's values out of the hard-fork @NS@ (the forker read
+-- returns values tagged with the era we injected the keys at, so the requested
+-- arm is present).
+projectShelleyBasedValues ::
+  Index '[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2] x ->
+  Values (HardForkBlock '[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2]) ->
+  Values x
+projectShelleyBasedValues idx0 =
+  maybe (error "projectShelleyBasedValues: values in unexpected era") unwrapValues
+    . go idx0
+ where
+  go :: Index xs x -> NS WrapValues xs -> Maybe (WrapValues x)
+  go IZ (Z x) = Just x
+  go (IS idx) (S ns) = go idx ns
+  go _ _ = Nothing
+
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
   BlockSupportsHFLedgerQuery '[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2]
   where
-  answerBlockQueryHFLookup =
+  answerBlockQueryHFLookup idx cfg q forker =
     answerShelleyBasedQueryHF
-      ( \idx ->
+      ( \idx' cfg' q' forker' ->
           answerShelleyLookupQueries
-            (injectLedgerTables idx)
-            (ejectHardForkTxOutDefault idx)
-            (coerce . ejectCanonicalTxIn idx)
+            (injectNS idx' . WrapKeys)
+            (projectShelleyBasedValues idx')
+            cfg'
+            q'
+            forker'
       )
+      idx
+      cfg
+      q
+      forker
 
-  answerBlockQueryHFTraverse =
+  answerBlockQueryHFTraverse idx cfg q provider forker =
     answerShelleyBasedQueryHF
-      ( \idx ->
+      ( \idx' cfg' q' _forker' ->
           answerShelleyTraversingQueries
-            (ejectHardForkTxOutDefault idx)
-            (coerce . ejectCanonicalTxIn idx)
-            (queryLedgerGetTraversingFilter @('[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2]) idx)
+            (projectShelleyBasedValues idx')
+            shelleyQFTraverseTablesPredicate
+            cfg'
+            q'
+            provider
       )
-
-  queryLedgerGetTraversingFilter IZ q = \case
-    Z (WrapTxOut x) -> shelleyQFTraverseTablesPredicate q x
-    S (Z (WrapTxOut x)) -> shelleyQFTraverseTablesPredicate q x
-  queryLedgerGetTraversingFilter (IS IZ) q = \case
-    Z (WrapTxOut x) -> shelleyQFTraverseTablesPredicate q x
-    S (Z (WrapTxOut x)) -> shelleyQFTraverseTablesPredicate q x
-  queryLedgerGetTraversingFilter (IS (IS idx)) _q = case idx of {}
+      idx
+      cfg
+      q
+      forker
 
 {-------------------------------------------------------------------------------
   Protocol info
@@ -529,171 +533,4 @@ instance
     TxGenExtra (ShelleyBasedHardForkBlock proto1 era1 proto2 era2) =
       NP WrapTxGenExtra (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
   testGenTxs = testGenTxsHfc
-
-{-------------------------------------------------------------------------------
-  Canonical TxIn
--------------------------------------------------------------------------------}
-
-instance
-  ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
-  HasCanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
-  where
-  newtype CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
-    = ShelleyHFCTxIn
-    { getShelleyHFCTxIn :: BigEndianTxIn
-    }
-    deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
-
-  injectCanonicalTxIn IZ txIn = ShelleyHFCTxIn txIn
-  injectCanonicalTxIn (IS IZ) txIn = ShelleyHFCTxIn (coerce txIn)
-  injectCanonicalTxIn (IS (IS idx')) _ = case idx' of {}
-
-  ejectCanonicalTxIn IZ txIn = getShelleyHFCTxIn txIn
-  ejectCanonicalTxIn (IS IZ) txIn = coerce (getShelleyHFCTxIn txIn)
-  ejectCanonicalTxIn (IS (IS idx')) _ = case idx' of {}
-
-instance
-  ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
-  HasHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
-  where
-  type
-    HardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
-      DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
-  injectHardForkTxOut = injectHardForkTxOutDefault
-  ejectHardForkTxOut = ejectHardForkTxOutDefault
-
-instance
-  ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
-  SerializeTablesWithHint
-    LedgerState
-    (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-  where
-  encodeTablesWithHint ::
-    LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK ->
-    LedgerTables
-      (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-      ValuesMK ->
-    Encoding
-  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
-    let
-      np =
-        (Fn $ const $ K $ encOne (Proxy @era1))
-          :* (Fn $ const $ K $ encOne (Proxy @era2))
-          :* Nil
-     in
-      hcollapse $ hap np $ Telescope.tip idx
-   where
-    encOne :: forall era. SL.Era era => Proxy era -> Encoding
-    encOne _ =
-      toPlainEncoding (SL.eraProtVerLow @era) $
-        encodeMap
-          (encodeMemPack . getShelleyHFCTxIn)
-          ( \case
-              Z txout -> encodeMemPack $ unwrapTxOut txout
-              S (Z txout) -> encodeMemPack $ unwrapTxOut txout
-          )
-          tbs
-
-  decodeTablesWithHint ::
-    forall s.
-    LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK ->
-    Decoder
-      s
-      ( LedgerTables
-          (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-          ValuesMK
-      )
-  decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
-    let
-      np =
-        (Fn $ Comp . fmap K . getOne (Z . WrapTxOut) . unFlip . currentState)
-          :* (Fn $ Comp . fmap K . getOne (S . Z . WrapTxOut) . unFlip . currentState)
-          :* Nil
-     in
-      hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
-   where
-    getOne ::
-      forall proto era.
-      ShelleyCompatible proto era =>
-      ( TxOut (ShelleyBlock proto era) ->
-        TxOut (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-      ) ->
-      LedgerState (ShelleyBlock proto era) EmptyMK ->
-      Decoder
-        s
-        ( LedgerTables
-            (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-            ValuesMK
-        )
-    getOne toShelleyTxOut st =
-      let certInterns =
-            internsFromMap $
-              shelleyLedgerState st
-                ^. SL.nesEsL
-                  . SL.esLStateL
-                  . SL.lsCertStateL
-                  . SL.certDStateL
-                  . SL.accountsL
-                  . SL.accountsMapL
-       in LedgerTables . ValuesMK
-            <$> SL.eraDecoder @era
-              (decodeMap (ShelleyHFCTxIn <$> decodeMemPack) (toShelleyTxOut <$> decShareCBOR certInterns))
-
-instance
-  ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
-  IndexedMemPack
-    LedgerState
-    (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-    (DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-  where
-  indexedTypeName _ _ =
-    typeName @(DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-  indexedPackedByteCount _ txout =
-    hcollapse $
-      hcmap
-        (Proxy @MemPackTxOut)
-        (K . packedByteCount . unwrapTxOut)
-        txout
-  indexedPackM _ =
-    hcollapse
-      . hcimap
-        (Proxy @MemPackTxOut)
-        ( \_ (WrapTxOut txout) -> K $ do
-            packM txout
-        )
-  indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
-    hsequence'
-      $ hcmap
-        (Proxy @MemPackTxOut)
-        (const $ Comp $ WrapTxOut <$> unpackM)
-      $ Telescope.tip idx
-
-instance
-  ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
-  IndexedMemPack
-    (Ticked LedgerState)
-    (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-    (DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-  where
-  indexedTypeName _ _ =
-    typeName @(DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
-  indexedPackedByteCount _ txout =
-    hcollapse $
-      hcmap
-        (Proxy @MemPackTxOut)
-        (K . packedByteCount . unwrapTxOut)
-        txout
-  indexedPackM _ =
-    hcollapse
-      . hcimap
-        (Proxy @MemPackTxOut)
-        ( \_ (WrapTxOut txout) -> K $ do
-            packM txout
-        )
-  indexedUnpackM (TickedHardForkLedgerState _ (HardForkState idx)) = do
-    hsequence'
-      $ hcmap
-        (Proxy @MemPackTxOut)
-        (const $ Comp $ WrapTxOut <$> unpackM)
-      $ Telescope.tip idx
+  testReadAllValues = testReadAllValuesHfc
