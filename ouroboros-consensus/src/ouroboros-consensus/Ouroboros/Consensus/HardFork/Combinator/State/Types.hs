@@ -21,6 +21,7 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types
   , translateLedgerTablesWith
   , TranslateDiff (..)
   , TranslateValues (..)
+  , TranslateKeys (..)
   ) where
 
 import Control.Monad.Except
@@ -177,6 +178,15 @@ newtype TranslateDiff x y = TranslateDiff
 -- diff).
 newtype TranslateValues x y = TranslateValues
   { translateValuesWith :: Values x -> Values y
+  }
+
+-- | Translate a set of on-disk 'Keys' across an era transition. Used by the
+-- hard-fork combinator's 'Ouroboros.Consensus.Ledger.Basics.restrictValues' to
+-- upgrade keys read against an older era (e.g. a mempool transaction's inputs)
+-- up to the era of the values read from the backing store, before restricting.
+-- The counterpart to 'TranslateValues' for the key side.
+newtype TranslateKeys x y = TranslateKeys
+  { translateKeysWith :: Keys x -> Keys y
   }
 
 -- | How to translate the on-disk table entries (@TxIn@\/@TxOut@) across an era

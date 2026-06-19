@@ -908,12 +908,36 @@ instance CanHardFork xs => BlockSupportsUTxOHD (HardForkBlock xs) where
     applyOne (Pair (WrapDiff dd) (WrapValues vv)) =
       WrapValues (forward @blk [dd] vv)
 
-  -- Keys and values always share an era in practice; match and restrict
-  -- per-era.
-  restrictValues keys vals = case Match.matchNS keys vals of
-    Right matched -> hcmap proxySingle restrictOne matched
-    Left _ -> error "restrictValues: keys and values in different eras"
+  -- Restrict the values to the keys. The common case is same-era (keys and
+  -- values carry the same era tag), so we match them and restrict per-era.
+  -- Across an era boundary either side can be the older one:
+  --
+  --  * the keys can be older than the values, e.g. the mempool reads a
+  --    transaction's input keys (tagged at the transaction's era) against the
+  --    values held by the backing store at the newer ledger tip; or
+  --  * the values can be older than the keys, e.g. the keys are taken at the
+  --    tip but the values were read from the backing store at the previous era.
+  --
+  -- We upgrade whichever side is older up to the other's era (using the per-era
+  -- 'translateKeys'\/'translateValues' carried on the 'CanHardFork' class,
+  -- mirroring 'forward') before matching and restricting.
+  restrictValues keys0 vals0 = go keys0 vals0
    where
+    tk = translateKeys (hardForkEraTranslation @xs)
+    tv = translateValues (hardForkEraTranslation @xs)
+
+    go :: NS WrapKeys xs -> NS WrapValues xs -> NS WrapValues xs
+    go keys vals
+      | iK == iV =
+          case Match.matchNS keys vals of
+            Right matched -> hcmap proxySingle restrictOne matched
+            Left _ -> error "restrictValues: matchNS failed at equal era index"
+      | iK < iV = go (liftKeysOneEra tk keys) vals
+      | otherwise = go keys (liftValuesOneEra tv vals)
+     where
+      iK = index_NS keys
+      iV = index_NS vals
+
     restrictOne ::
       forall blk.
       SingleEraBlock blk =>
@@ -954,3 +978,16 @@ liftValuesOneEra (PCons t _) (Z (WrapValues v)) =
   S (Z (WrapValues (translateValuesWith t v)))
 liftValuesOneEra (PCons _ ts) (S v) = S (liftValuesOneEra ts v)
 liftValuesOneEra PNil v = v
+
+-- | Upgrade an era-tagged 'Keys' one era forward, using the adjacent
+-- 'translateKeys'. Used by the hard-fork 'restrictValues' to lift keys read
+-- against an older era up to the era of the values being restricted (one step
+-- per call).
+liftKeysOneEra ::
+  InPairs TranslateKeys xs ->
+  NS WrapKeys xs ->
+  NS WrapKeys xs
+liftKeysOneEra (PCons t _) (Z (WrapKeys k)) =
+  S (Z (WrapKeys (translateKeysWith t k)))
+liftKeysOneEra (PCons _ ts) (S v) = S (liftKeysOneEra ts v)
+liftKeysOneEra PNil v = v

@@ -418,6 +418,7 @@ instance CanHardFork '[BlockA, BlockB] where
       { translateLedgerState = PCons ledgerState_AtoB PNil
       , translateDiff = PCons (TranslateDiff id) PNil
       , translateValues = PCons (TranslateValues id) PNil
+      , translateKeys = PCons (TranslateKeys id) PNil
       , translateChainDepState = PCons chainDepState_AtoB PNil
       , crossEraForecast = PCons forecast_AtoB PNil
       }
