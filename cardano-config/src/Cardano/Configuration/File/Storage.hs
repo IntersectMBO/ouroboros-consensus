@@ -89,28 +89,32 @@ instance HasCodec SnapshotPolicy where
 data LedgerDbBackendSelector
   = -- | The in-memory backend.
     V2InMemory
-  | -- | The LSM-tree backend, with an optional custom path to the database. If
-    -- it is not provided, the default is used.
-    V2LSM (Maybe FilePath)
+  | -- | The LSM-tree backend. The first field is an optional custom path to the
+    -- database (the @LSMDatabasePath@ key); if it is not provided, the default
+    -- is used. The second field is an optional directory into which the backend
+    -- exports snapshots as it takes them (the @LSMExportPath@ key). Both are
+    -- only meaningful for the LSM backend.
+    V2LSM (Maybe FilePath) (Maybe FilePath)
   deriving (Generic, Show)
 
 instance Default LedgerDbBackendSelector where
   def = V2InMemory
 
--- | The @Backend@ and @LSMDatabasePath@ keys, parsed together as they describe
--- a single choice of backend.
+-- | The @Backend@, @LSMDatabasePath@ and @LSMExportPath@ keys, parsed together
+-- as they describe a single choice of backend.
 backendCodec :: JSONObjectCodec LedgerDbBackendSelector
 backendCodec =
   bimapCodec toSelector fromSelector $
-    (,)
-      <$> optionalFieldWithDefault "Backend" ("V2InMemory" :: Text) "Which LedgerDB backend to use (V2InMemory or V2LSM)" .= fst
-      <*> optionalField "LSMDatabasePath" "Custom path to the LSM database (V2LSM only)" .= snd
+    (,,)
+      <$> optionalFieldWithDefault "Backend" ("V2InMemory" :: Text) "Which LedgerDB backend to use (V2InMemory or V2LSM)" .= (\(b, _, _) -> b)
+      <*> optionalField "LSMDatabasePath" "Custom path to the LSM database (V2LSM only)" .= (\(_, p, _) -> p)
+      <*> optionalField "LSMExportPath" "Directory into which the LSM backend exports snapshots (V2LSM only)" .= (\(_, _, e) -> e)
  where
-  toSelector ("V2InMemory", _) = Right V2InMemory
-  toSelector ("V2LSM", p) = Right (V2LSM p)
-  toSelector (other, _) = Left $ "Malformed LedgerDB Backend: " <> T.unpack other
-  fromSelector V2InMemory = ("V2InMemory", Nothing)
-  fromSelector (V2LSM p) = ("V2LSM", p)
+  toSelector ("V2InMemory", _, _) = Right V2InMemory
+  toSelector ("V2LSM", p, e) = Right (V2LSM p e)
+  toSelector (other, _, _) = Left $ "Malformed LedgerDB Backend: " <> T.unpack other
+  fromSelector V2InMemory = ("V2InMemory", Nothing, Nothing)
+  fromSelector (V2LSM p e) = ("V2LSM", p, e)
 
 -- | The Ledger DB configuration
 data LedgerDbConfiguration = LedgerDbConfiguration
