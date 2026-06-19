@@ -21,7 +21,6 @@ module Test.Ouroboros.Storage.ChainDB.Model.Test (tests) where
 import GHC.Stack
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Ledger.Tables
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract (shouldSwitch)
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -51,7 +50,7 @@ tests =
     ]
 
 addBlocks :: LoE () -> [TestBlock] -> M.Model TestBlock
-addBlocks loe blks = M.addBlocks cfg blks (M.empty loe (convertMapKind testInitExtLedger))
+addBlocks loe blks = M.addBlocks cfg blks (M.empty loe testInitExtLedger)
  where
   cfg = singleNodeTestConfig
 
