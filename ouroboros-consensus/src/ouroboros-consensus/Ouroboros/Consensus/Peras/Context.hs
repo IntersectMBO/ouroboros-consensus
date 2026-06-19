@@ -49,10 +49,10 @@ import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract (BlockProtocol, Point)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
-  , DefaultPerasEpochContext (..)
   , IsPerasCert (getPerasCertRound)
   , IsPerasError (injectVotingCommitteeError)
   , PerasCert
+  , PerasEpochContext (..)
   , PerasRoundNo
   , PerasVote
   , PerasVotingCommittee
@@ -132,11 +132,11 @@ class
   , IsPerasError (PerasError blk) blk
   , Show (PerasError blk)
   , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
-  , Show (PerasEpochContext blk)
-  , Eq (PerasEpochContext blk)
-  , NoThunks (PerasEpochContext blk)
-  , Typeable (PerasEpochContext blk)
-  , Serialise (PerasEpochContext blk)
+  , Show (PerasVotingCommittee blk)
+  , Eq (PerasVotingCommittee blk)
+  , NoThunks (PerasVotingCommittee blk)
+  , Typeable (PerasVotingCommittee blk)
+  , Serialise (PerasVotingCommittee blk)
   , IsPerasEpochContextResolver (PerasEpochContextResolver blk) blk
   , Show (PerasEpochContextResolver blk)
   , Eq (PerasEpochContextResolver blk)
@@ -194,7 +194,7 @@ class
   default mkPerasEpochContext ::
     ( ALedgerStateSupportsPeras ledger
     , AChainDepStateSupportsPeras chainDep
-    , PerasEpochContext blk ~ DefaultPerasEpochContext blk
+    , PerasEpochContext blk ~ PerasEpochContext blk
     ) =>
     ledger ->
     chainDep ->
@@ -202,9 +202,9 @@ class
       (PerasError blk)
       (PerasEpochContext blk)
   mkPerasEpochContext ledgerState headerState = do
-    dpecCommittee <- mkPerasVotingCommittee ledgerState headerState
+    pecCommittee <- mkPerasVotingCommittee ledgerState headerState
     pure $
-      DefaultPerasEpochContext{dpecParams = (getPerasParams (Proxy @blk) ledgerState), dpecCommittee}
+      PerasEpochContext{pecParams = (getPerasParams (Proxy @blk) ledgerState), pecCommittee}
 
   mkBoundedPerasEpochContext ::
     (ALedgerStateSupportsPeras ledger, AChainDepStateSupportsPeras chainDep) =>

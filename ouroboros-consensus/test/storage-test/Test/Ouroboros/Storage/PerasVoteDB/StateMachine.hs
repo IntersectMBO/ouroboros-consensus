@@ -36,9 +36,8 @@ import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract (Point (..), SlotNo (..))
 import Ouroboros.Consensus.Block.SupportsPeras
-  ( DefaultPerasEpochContext (..)
-  , IsPerasVote (..)
-  , PerasEpochContext
+  ( IsPerasVote (..)
+  , PerasEpochContext (..)
   , PerasParams
   , PerasRoundNo (..)
   , PerasSeatIndex (..)
@@ -179,9 +178,9 @@ instance StateModel Model where
       let params = perasTestParams
       pure $
         CreateDB $
-          DefaultPerasEpochContext
-            { dpecCommittee = committee
-            , dpecParams = params
+          PerasEpochContext
+            { pecCommittee = committee
+            , pecParams = params
             }
 
     genAddVote = do
