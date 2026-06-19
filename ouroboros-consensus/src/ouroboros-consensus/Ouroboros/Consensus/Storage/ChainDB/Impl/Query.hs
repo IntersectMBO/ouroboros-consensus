@@ -416,7 +416,7 @@ getPerasVotingView ledgerConfig roundNo env = do
   resolver <- getPerasEpochContextResolver env
   perasParams <- case resolveRoundNo resolver roundNo of
     Left err -> throwSTM err
-    Right perasContext -> pure $ pecPerasParams perasContext
+    Right perasContext -> pure $ pecParams perasContext
   latestCertSeen <-
     withOriginFromMaybe
       <$> getLatestPerasCertSeen env
@@ -450,7 +450,7 @@ getPerasCertInclusionView roundNo env = do
   resolver <- getPerasEpochContextResolver env
   perasParams <- case resolveRoundNo resolver roundNo of
     Left err -> throwSTM err
-    Right perasContext -> pure $ pecPerasParams perasContext
+    Right perasContext -> pure $ pecParams perasContext
   latestCertSeen <-
     withOriginFromMaybe
       . fmap forgetBoostedBlockStatus
