@@ -5,6 +5,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -26,6 +28,8 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
     -- * Convenience
   , forgetInjectionIndex
   , oracularInjectionIndex
+  , injectConstraint
+  , injectSingleEraBlock
   ) where
 
 import Data.Bifunctor (first)
@@ -179,6 +183,23 @@ injectHardForkState iidx x =
       )
       (go (InjectionIndex tele))
 
+injectSingleEraBlock ::
+  CanHardFork xs =>
+  Index xs x ->
+  (SingleEraBlock x => r) ->
+  r
+injectSingleEraBlock = injectConstraint (Proxy @SingleEraBlock)
+
+injectConstraint ::
+  All c xs =>
+  proxy c ->
+  Index xs x ->
+  (c x => r) ->
+  r
+injectConstraint proxy idx r = case idx of
+  IZ -> r
+  IS idx' -> injectConstraint proxy idx' r
+
 {-------------------------------------------------------------------------------
   Instances
 -------------------------------------------------------------------------------}
@@ -259,7 +280,7 @@ instance Inject (Flip ExtLedgerState mk) where
         , headerState = inject iidx headerState
         , -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
           perasEpochContextResolver = undefined
-        , latestPerasCertOnChainRound = undefined
+        , latestPerasCertOnChainRound = latestPerasCertOnChainRound
         }
 
 {-------------------------------------------------------------------------------
