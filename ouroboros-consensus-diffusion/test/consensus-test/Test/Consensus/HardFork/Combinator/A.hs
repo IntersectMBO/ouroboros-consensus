@@ -43,8 +43,6 @@ module Test.Consensus.HardFork.Combinator.A
 import Cardano.Binary (DecoderError)
 import Cardano.Ledger.BaseTypes.NonZero
 import Cardano.Slotting.EpochInfo
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise
 import Control.Monad (guard)
 import qualified Data.Binary as B

@@ -49,7 +49,6 @@ import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Data.Proxy (Proxy (..))
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM (BlockSupportsLSM (..))
 import Ouroboros.Consensus.Util.IOLike
