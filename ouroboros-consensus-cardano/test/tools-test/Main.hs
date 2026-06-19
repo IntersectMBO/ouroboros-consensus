@@ -8,6 +8,11 @@ import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import Cardano.Tools.DBSynthesizer.Types
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
+import Ouroboros.Consensus.Cardano.Node (protocolInfoCardano)
+import Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..))
+import System.FS.API (SomeHasFS (..))
+import System.FS.API.Types (MountPoint (MountPoint))
+import System.FS.IO (ioHasFS)
 import qualified Test.Cardano.Tools.Headers
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -87,19 +92,23 @@ testBlockArgs = Cardano.CardanoBlockArgs nodeConfig Nothing
 blockCountTest :: (String -> IO ()) -> Assertion
 blockCountTest logStep = do
   logStep "running synthesis - create"
-  (options, protocol) <-
+  (conf, params) <-
     either assertFailure pure
       =<< DBSynthesizer.initialize
         testNodeFilePaths
         testNodeCredentials
         testSynthOptionsCreate
-  resultCreate <- DBSynthesizer.synthesize genTxs options protocol
+  let fs = SomeHasFS (ioHasFS (MountPoint (confNodeConfigDir conf)))
+      epochSize = sgEpochLength (confShelleyGenesis conf)
+      chainDBDir = confDbDir conf
+  protocol <- protocolInfoCardano fs params
+  resultCreate <- DBSynthesizer.synthesize genTxs (confOptions conf) epochSize chainDBDir protocol
   let blockCountCreate = resultForged resultCreate
   blockCountCreate > 0 @? "no blocks have been forged during create step"
 
   logStep "running synthesis - append"
   resultAppend <-
-    DBSynthesizer.synthesize genTxs options{confOptions = testSynthOptionsAppend} protocol
+    DBSynthesizer.synthesize genTxs testSynthOptionsAppend epochSize chainDBDir protocol
   let blockCountAppend = resultForged resultAppend
   blockCountAppend > 0 @? "no blocks have been forged during append step"
 

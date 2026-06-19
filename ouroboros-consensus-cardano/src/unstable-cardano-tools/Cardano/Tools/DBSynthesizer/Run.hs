@@ -41,11 +41,9 @@ import qualified Ouroboros.Consensus.Node.InitStorage as Node
   ( nodeImmutableDbChunkInfo
   )
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentClientTrace)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
-import Ouroboros.Consensus.Shelley.Node
-  ( ShelleyGenesis (..)
-  , validateGenesis
-  )
+import Ouroboros.Consensus.Shelley.Node (validateGenesis)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
@@ -56,9 +54,6 @@ import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.Block hiding (GenesisHash)
 import Ouroboros.Network.Point (WithOrigin (..))
 import System.Directory
-import System.FS.API (SomeHasFS (..))
-import System.FS.API.Types (MountPoint (MountPoint))
-import System.FS.IO (ioHasFS)
 import System.FilePath (takeDirectory, (</>))
 import System.Random (newStdGen)
 
@@ -168,26 +163,27 @@ parseRequiresNetworkMagic magic = case magic of
   "RequiresMagic" -> RequiresMagic
   other -> error $ "initialize: unknown RequiresNetworkMagic value: " <> other
 
+-- | Forge a ChainDB from a ready-made Cardano 'ProtocolInfo' and its block
+-- forgers (as produced by 'protocolInfoCardano'). Constructing the protocol
+-- from a node configuration is the caller's responsibility, keeping this
+-- function free of any node/api configuration machinery.
 synthesize ::
   ( TopLevelConfig (CardanoBlock StandardCrypto) ->
     GenTxs (CardanoBlock StandardCrypto)
   ) ->
-  DBSynthesizerConfig ->
-  (CardanoProtocolParams StandardCrypto) ->
+  DBSynthesizerOptions ->
+  Slot.EpochSize ->
+  -- | The directory of the ChainDB to forge into.
+  FilePath ->
+  ( ProtocolInfo (CardanoBlock StandardCrypto)
+  , Tracer IO KESAgentClientTrace ->
+    IO [BlockForging.MkBlockForging IO (CardanoBlock StandardCrypto)]
+  ) ->
   IO ForgeResult
-synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir, confNodeConfigDir} runP =
+synthesize genTxs confOptions epochSize confDbDir (ProtocolInfo{pInfoConfig, pInfoInitLedger}, mkForgers) =
   withRegistry $ \registry -> do
-    let fs = SomeHasFS (ioHasFS (MountPoint confNodeConfigDir))
-    ( ProtocolInfo
-        { pInfoConfig
-        , pInfoInitLedger
-        }
-      , mkForgers
-      ) <-
-      protocolInfoCardano fs runP
     snapshotDelayRng <- newStdGen
     let
-      epochSize = sgEpochLength confShelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
       flavargs = LedgerDB.LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
       dbArgs =
