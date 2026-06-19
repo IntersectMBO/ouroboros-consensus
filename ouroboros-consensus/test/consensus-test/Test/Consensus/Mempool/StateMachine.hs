@@ -330,8 +330,6 @@ doSync ::
   ( ValidateEnvelope blk
   , LedgerSupportsMempool blk
   , UnTick blk
-  , StandardHash blk
-  , GetTip (LedgerState blk)
   ) =>
   Model blk r ->
   Model blk r
@@ -382,8 +380,6 @@ doTryAddTxs ::
   ( LedgerSupportsMempool blk
   , ValidateEnvelope blk
   , UnTick blk
-  , StandardHash blk
-  , GetTip (LedgerState blk)
   ) =>
   Model blk r ->
   [GenTx blk] ->
@@ -420,8 +416,6 @@ doTryAddTxs model txs =
 
 transition ::
   ( UnTick blk
-  , StandardHash blk
-  , GetTip (LedgerState blk)
   , LedgerSupportsMempool blk
   , ToExpr (GenTx blk)
   , ValidateEnvelope blk
@@ -631,9 +625,6 @@ mkSUT cfg initialLedger = do
 
 semantics ::
   ( LedgerSupportsMempool blk
-  , ValidateEnvelope blk
-  , StandardHash blk
-  , GetTip (LedgerState blk)
   , IOLike m
   ) =>
   CT.Tracer m String ->
@@ -676,8 +667,6 @@ postcondition ::
   ( LedgerSupportsMempool blk
   , Eq (GenTx blk)
   , UnTick blk
-  , StandardHash blk
-  , GetTip (LedgerState blk)
   , ValidateEnvelope blk
   , ToExpr (Command blk Concrete)
   , ToExpr (GenTx blk)
@@ -730,7 +719,6 @@ shrinker _ _ = []
 sm ::
   ( LedgerSupportsMempool blk
   , IOLike m
-  , ValidateEnvelope blk
   ) =>
   StateMachine (Model blk) (Command blk) m (Response blk) ->
   CT.Tracer m String ->
@@ -777,7 +765,6 @@ prop_mempoolSequential ::
   ( HasTxId (GenTx blk)
   , blk ~ TestBlock
   , LedgerSupportsMempool blk
-  , LedgerSupportsProtocol blk
   ) =>
   LedgerConfig blk ->
   TxMeasure blk ->
@@ -822,7 +809,6 @@ prop_mempoolParallel ::
   ( HasTxId (GenTx blk)
   , blk ~ TestBlock
   , LedgerSupportsMempool blk
-  , LedgerSupportsProtocol blk
   ) =>
   LedgerConfig blk ->
   TxMeasure blk ->

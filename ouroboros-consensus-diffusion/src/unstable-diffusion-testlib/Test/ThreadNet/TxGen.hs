@@ -177,7 +177,7 @@ testGenTxsHfc coreNodeId numCoreNodes curSlotNo cfg extras state values =
 -- hard-fork @NS@ at the current era's index.
 testReadAllValuesHfc ::
   forall m xs.
-  (Monad m, All SingleEraBlockSupportsUTxOHD xs, CanHardFork xs) =>
+  (Monad m, All SingleEraBlockSupportsUTxOHD xs) =>
   EraRangeReaderProvider m (HardForkBlock xs) ->
   LedgerState (HardForkBlock xs) ->
   m (Values (HardForkBlock xs))
