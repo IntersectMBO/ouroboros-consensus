@@ -40,16 +40,12 @@ import Ouroboros.Consensus.Block
   )
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
-import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
-import Ouroboros.Consensus.Storage.LedgerDB.API
-  ( CanUpgradeLedgerTables
-  )
 import Ouroboros.Consensus.Util.Condense (Condense, CondenseList)
 import Ouroboros.Network.Util.ShowProxy (ShowProxy)
 import Test.Consensus.Genesis.Setup
@@ -189,7 +185,6 @@ toTestTree ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables LedgerState blk
   , HasPointScheduleTestParams blk
   , Eq (Header blk)
   , Eq blk

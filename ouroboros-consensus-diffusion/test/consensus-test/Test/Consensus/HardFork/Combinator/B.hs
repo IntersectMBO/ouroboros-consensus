@@ -28,7 +28,6 @@ module Test.Consensus.HardFork.Combinator.B
   , GenTx (..)
   , Header (..)
   , LedgerState (..)
-  , LedgerTables (..)
   , NestedCtxt_ (..)
   , StorageConfig (..)
   , TxId (..)
@@ -36,13 +35,10 @@ module Test.Consensus.HardFork.Combinator.B
 
 import Cardano.Binary (DecoderError)
 import Cardano.Ledger.BaseTypes (unNonZero)
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise
 import qualified Data.Binary as B
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
-import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Void
@@ -66,7 +62,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Run
@@ -171,11 +166,11 @@ instance BasicEnvelopeValidation BlockB
 
 instance ValidateEnvelope BlockB
 
-data instance LedgerState BlockB mk = LgrB
+data instance LedgerState BlockB = LgrB
   { lgrB_tip :: Point BlockB
   }
   deriving (Show, Eq, Generic, Serialise)
-  deriving NoThunks via OnlyCheckWhnfNamed "LgrB" (LedgerState BlockB mk)
+  deriving NoThunks via OnlyCheckWhnfNamed "LgrB" (LedgerState BlockB)
 
 {-------------------------------------------------------------------------------
   Ledger Tables
@@ -184,41 +179,39 @@ data instance LedgerState BlockB mk = LgrB
 type instance TxIn BlockB = Void
 type instance TxOut BlockB = Void
 
-instance LedgerTablesAreTrivial LedgerState BlockB where
-  convertMapKind (LgrB x) = LgrB x
-instance LedgerTablesAreTrivial (Ticked LedgerState) BlockB where
-  convertMapKind (TickedLedgerStateB x) = TickedLedgerStateB (convertMapKind x)
+-- | BlockB has no on-disk tables: its 'Keys'\/'Values'\/'Diff' are all trivial
+-- (@()@), so every operation is a no-op.
+instance BlockSupportsUTxOHD BlockB where
+  type Keys BlockB = ()
+  type Values BlockB = ()
+  type Diff BlockB = ()
+  blockKeys _ = ()
+  forward _ = id
+  restrictValues _ = id
+  valuesSize _ = 0
+  encodeValues _ = mempty
+  decodeValues _ = pure ()
 
-instance HasLedgerTables LedgerState BlockB where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
+instance SingleEraUTxOHDBlock BlockB where
+  emptyValues = ()
+  emptyDiffs = ()
 
-instance HasLedgerTables (Ticked LedgerState) BlockB where
-  projectLedgerTables _ = emptyLedgerTables
-  withLedgerTables st _ = convertMapKind st
-
-instance CanStowLedgerTables (LedgerState BlockB) where
-  stowLedgerTables = convertMapKind
-  unstowLedgerTables = convertMapKind
-
-instance CanUpgradeLedgerTables LedgerState BlockB where
-  upgradeTables _ _ = id
-
-instance SerializeTablesWithHint LedgerState BlockB where
-  decodeTablesWithHint _ = do
-    _ <- CBOR.decodeMapLen
-    pure (LedgerTables $ ValuesMK Map.empty)
-  encodeTablesWithHint _ _ = CBOR.encodeMapLen 0
+instance SingleEraBlockSupportsUTxOHD BlockB where
+  rangeReadValues _ _ = ((), Nothing)
+  keysToList _ = []
+  valuesToList _ = []
+  valuesFromList _ = ()
+  diffToList _ = []
 
 type PartialLedgerCfgB = ()
 
 type instance LedgerCfg LedgerState BlockB = PartialLedgerCfgB
 
 -- | Ticking has no state on the B ledger state
-newtype instance Ticked LedgerState BlockB mk = TickedLedgerStateB
-  { getTickedLedgerStateB :: LedgerState BlockB mk
+newtype instance Ticked LedgerState BlockB = TickedLedgerStateB
+  { getTickedLedgerStateB :: LedgerState BlockB
   }
-  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrB" (Ticked LedgerState BlockB mk)
+  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrB" (Ticked LedgerState BlockB)
 
 instance GetTip (LedgerState BlockB) where
   getTip = castPoint . lgrB_tip
@@ -231,18 +224,14 @@ type instance AuxLedgerEvent BlockB = VoidLedgerEvent
 instance IsLedger LedgerState BlockB where
   type LedgerErr LedgerState BlockB = Void
 
-  applyChainTickLedgerResult _ _ _ =
-    pureLedgerResult
-      . TickedLedgerStateB
-      . noNewTickingDiffs
+  applyChainTickLedgerResult _ _ _ st =
+    pureLedgerResult (TickedLedgerStateB st, ())
 
 instance ApplyBlock LedgerState BlockB where
-  applyBlockLedgerResultWithValidation = \_ _ _ b _ -> return $ pureLedgerResult $ LgrB (blockPoint b)
+  applyBlockLedgerResultWithValidation = \_ _ _ b _values _ticked ->
+    return $ pureLedgerResult (LgrB (blockPoint b), ())
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
-
-instance GetBlockKeySets BlockB where
-  getBlockKeySets _blk = emptyLedgerTables
 
 instance UpdateLedger BlockB
 
@@ -271,7 +260,7 @@ forgeBlockB ::
   TopLevelConfig BlockB ->
   BlockNo ->
   SlotNo ->
-  TickedLedgerState BlockB mk ->
+  TickedLedgerState BlockB ->
   [GenTx BlockB] ->
   IsLeader (BlockProtocol BlockB) ->
   BlockB
@@ -324,7 +313,7 @@ instance LedgerSupportsMempool BlockB where
 
   txForgetValidated = \case {}
 
-  getTransactionKeySets _tx = emptyLedgerTables
+  getTransactionKeySets _tx = ()
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 
@@ -334,7 +323,7 @@ instance TxLimits BlockB where
   txWireSize = const . fromIntegral $ (0 :: Int)
   blockCapacityTxMeasure _cfg _st = TxMeasure (IgnoringOverflow $ ByteSize32 $ 100 * 1024) TrivialTxMeasurePhase2 -- arbitrary
   txMeasurePhase1 _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
-  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+  txMeasurePhase2 _cfg _values _st _tx = pure TrivialTxMeasurePhase2
 
 data instance TxId (GenTx BlockB)
   deriving stock (Show, Eq, Ord, Generic)
@@ -465,8 +454,8 @@ instance SerialiseNodeToNodeConstraints BlockB where
 
 deriving instance Serialise (AnnTip BlockB)
 
-instance EncodeDisk BlockB (LedgerState BlockB EmptyMK)
-instance DecodeDisk BlockB (LedgerState BlockB EmptyMK)
+instance EncodeDisk BlockB (LedgerState BlockB)
+instance DecodeDisk BlockB (LedgerState BlockB)
 
 instance EncodeDisk BlockB BlockB
 instance DecodeDisk BlockB (Lazy.ByteString -> Either DecoderError BlockB) where
