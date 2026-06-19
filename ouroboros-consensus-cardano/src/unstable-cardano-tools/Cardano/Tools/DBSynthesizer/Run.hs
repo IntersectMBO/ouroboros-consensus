@@ -1,4 +1,5 @@
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Cardano.Tools.DBSynthesizer.Run
@@ -7,10 +8,14 @@ module Cardano.Tools.DBSynthesizer.Run
   ) where
 
 import Cardano.Api.Any (displayError)
+import qualified Cardano.Chain.Update as Byron (ApplicationName (..))
+import qualified Cardano.Configuration.File as Cfg
+import qualified Cardano.Configuration.File.Protocol as Cfg
+import Cardano.Crypto (RequiresNetworkMagic (..))
 import Cardano.Node.Protocol.Cardano (mkConsensusProtocolCardano)
 import Cardano.Node.Types
+import qualified Cardano.Slotting.Slot as Slot
 import Cardano.Tools.DBSynthesizer.Forging
-import Cardano.Tools.DBSynthesizer.Orphans ()
 import Cardano.Tools.DBSynthesizer.Types
 import Control.Monad (filterM)
 import Control.Monad.Trans.Except (ExceptT)
@@ -22,17 +27,10 @@ import Control.Monad.Trans.Except.Extra
   )
 import Control.ResourceRegistry
 import Control.Tracer
-import Data.Aeson as Aeson
-  ( FromJSON
-  , Result (..)
-  , Value
-  , eitherDecodeFileStrict'
-  , eitherDecodeStrict'
-  , fromJSON
-  )
+import Data.Aeson (FromJSON, eitherDecodeFileStrict')
 import Data.Bool (bool)
-import Data.ByteString as BS (ByteString, readFile)
 import Data.Functor (($>))
+import Data.Functor.Identity (runIdentity)
 import qualified Data.Set as Set
 import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano.Block
@@ -55,7 +53,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Util.IOLike (atomically)
-import Ouroboros.Network.Block
+import Ouroboros.Network.Block hiding (GenesisHash)
 import Ouroboros.Network.Point (WithOrigin (..))
 import System.Directory
 import System.FS.API (SomeHasFS (..))
@@ -74,76 +72,101 @@ initialize NodeFilePaths{nfpConfig, nfpChainDB} creds synthOptions = do
   let relativeToConfig :: FilePath -> FilePath
       relativeToConfig = (configDir </>)
   runExceptT $ do
-    conf <- initConf configDir relativeToConfig
-    proto <- initProtocol relativeToConfig conf
-    pure (conf, proto)
- where
-  initConf :: FilePath -> (FilePath -> FilePath) -> ExceptT String IO DBSynthesizerConfig
-  initConf configDir relativeToConfig = do
-    inp <- handleIOExceptT show (BS.readFile nfpConfig)
-    configStub <- adjustFilePaths relativeToConfig <$> readJson inp
-    shelleyGenesis <- readFileJson $ ncsShelleyGenesisFile configStub
+    -- The node configuration is parsed by the shared cardano-config package.
+    -- Genesis file paths in the configuration are relative to the
+    -- configuration file's directory.
+    ncff <- handleIOExceptT show (Cfg.parseConfigurationFiles nfpConfig)
+    let protoCfg = runIdentity (Cfg.protocolConfiguration ncff)
+        testCfg = runIdentity (Cfg.testingConfiguration ncff)
+
+    shelleyGenesis <-
+      readFileJson (relativeToConfig (Cfg.hashed (Cfg.shelleyGenesis protoCfg)))
     _ <- hoistEither $ validateGenesis shelleyGenesis
-    let
-      protocolCredentials =
-        ProtocolFilepaths
-          { byronCertFile = Nothing
-          , byronKeyFile = Nothing
-          , shelleyKESFile = credKESFile creds
-          , shelleyVRFFile = credVRFFile creds
-          , shelleyCertFile = credCertFile creds
-          , shelleyBulkCredsFile = credBulkFile creds
-          }
-    pure
-      DBSynthesizerConfig
-        { confConfigStub = configStub
-        , confOptions = synthOptions
-        , confProtocolCredentials = protocolCredentials
-        , confShelleyGenesis = shelleyGenesis
-        , confDbDir = nfpChainDB
-        , confNodeConfigDir = configDir
-        }
 
-  initProtocol ::
-    (FilePath -> FilePath) ->
-    DBSynthesizerConfig ->
-    ExceptT String IO (CardanoProtocolParams StandardCrypto)
-  initProtocol relativeToConfig DBSynthesizerConfig{confConfigStub, confProtocolCredentials} = do
-    hfConfig :: NodeHardForkProtocolConfiguration <-
-      hoistEither hfConfig_
-    byronConfig :: NodeByronProtocolConfiguration <-
-      adjustFilePaths relativeToConfig <$> hoistEither byConfig_
+    let protocolCredentials =
+          ProtocolFilepaths
+            { byronCertFile = Nothing
+            , byronKeyFile = Nothing
+            , shelleyKESFile = credKESFile creds
+            , shelleyVRFFile = credVRFFile creds
+            , shelleyCertFile = credCertFile creds
+            , shelleyBulkCredsFile = credBulkFile creds
+            }
+        conf =
+          DBSynthesizerConfig
+            { confOptions = synthOptions
+            , confProtocolCredentials = protocolCredentials
+            , confShelleyGenesis = shelleyGenesis
+            , confDbDir = nfpChainDB
+            , confNodeConfigDir = configDir
+            }
 
-    firstExceptT displayError $
-      mkConsensusProtocolCardano
-        byronConfig
-        shelleyConfig
-        alonzoConfig
-        conwayConfig
-        dijkstraConfig
-        hfConfig
-        (Just confProtocolCredentials)
-   where
-    shelleyConfig = NodeShelleyProtocolConfiguration (GenesisFile $ ncsShelleyGenesisFile confConfigStub) Nothing
-    alonzoConfig = NodeAlonzoProtocolConfiguration (GenesisFile $ ncsAlonzoGenesisFile confConfigStub) Nothing
-    conwayConfig = NodeConwayProtocolConfiguration (GenesisFile $ ncsConwayGenesisFile confConfigStub) Nothing
-    dijkstraConfig =
-      fmap
-        (\x -> NodeDijkstraProtocolConfiguration (GenesisFile x) Nothing)
-        (ncsDijkstraGenesisFile confConfigStub)
-    hfConfig_ = eitherParseJson $ ncsNodeConfig confConfigStub
-    byConfig_ = eitherParseJson $ ncsNodeConfig confConfigStub
-
-readJson :: (Monad m, FromJSON a) => ByteString -> ExceptT String m a
-readJson = hoistEither . eitherDecodeStrict'
+    proto <-
+      firstExceptT displayError $
+        mkConsensusProtocolCardano
+          (byronProtocolConfiguration relativeToConfig protoCfg)
+          (NodeShelleyProtocolConfiguration (genesisFile relativeToConfig (Cfg.shelleyGenesis protoCfg)) Nothing)
+          (NodeAlonzoProtocolConfiguration (genesisFile relativeToConfig (Cfg.alonzoGenesis protoCfg)) Nothing)
+          (NodeConwayProtocolConfiguration (genesisFile relativeToConfig (Cfg.conwayGenesis protoCfg)) Nothing)
+          ( (\h -> NodeDijkstraProtocolConfiguration (genesisFile relativeToConfig h) Nothing)
+              <$> Cfg.experimentalGenesis testCfg
+          )
+          (hardForkProtocolConfiguration testCfg)
+          (Just protocolCredentials)
+    pure (conf, proto)
 
 readFileJson :: FromJSON a => FilePath -> ExceptT String IO a
 readFileJson f = handleIOExceptT show (eitherDecodeFileStrict' f) >>= hoistEither
 
-eitherParseJson :: FromJSON a => Aeson.Value -> Either String a
-eitherParseJson v = case fromJSON v of
-  Error err -> Left err
-  Success a -> Right a
+-- | The genesis file path from a 'Cfg.Hashed' entry, made relative to the
+-- configuration file's directory.
+genesisFile :: (FilePath -> FilePath) -> Cfg.Hashed FilePath -> GenesisFile
+genesisFile relativeToConfig = GenesisFile . relativeToConfig . Cfg.hashed
+
+-- | Adapt the @cardano-config@ byron-era configuration into the
+-- 'NodeByronProtocolConfiguration' that 'mkConsensusProtocolCardano' expects.
+-- The byron software version is hard-coded, mirroring the node.
+byronProtocolConfiguration ::
+  (FilePath -> FilePath) ->
+  Cfg.ProtocolConfiguration Maybe ->
+  NodeByronProtocolConfiguration
+byronProtocolConfiguration relativeToConfig protoCfg =
+  NodeByronProtocolConfiguration
+    { npcByronGenesisFile = genesisFile relativeToConfig (Cfg.byronGenesisFile byronCfg)
+    , npcByronGenesisFileHash = GenesisHash <$> Cfg.hash (Cfg.byronGenesisFile byronCfg)
+    , npcByronReqNetworkMagic = parseRequiresNetworkMagic (Cfg.byronReqNetworkMagic byronCfg)
+    , npcByronPbftSignatureThresh = Cfg.byronPbftSignatureThresh byronCfg
+    , npcByronApplicationName = Byron.ApplicationName "cardano-sl"
+    , npcByronApplicationVersion = 1
+    , npcByronSupportedProtocolVersionMajor = Cfg.byronSupportedProtocolVersionMajor byronCfg
+    , npcByronSupportedProtocolVersionMinor = Cfg.byronSupportedProtocolVersionMinor byronCfg
+    , npcByronSupportedProtocolVersionAlt = Cfg.byronSupportedProtocolVersionAlt byronCfg
+    }
+ where
+  byronCfg = Cfg.byronGenesis protoCfg
+
+-- | Adapt the @cardano-config@ testing configuration into the
+-- 'NodeHardForkProtocolConfiguration' that 'mkConsensusProtocolCardano'
+-- expects.
+hardForkProtocolConfiguration ::
+  Cfg.TestingConfiguration -> NodeHardForkProtocolConfiguration
+hardForkProtocolConfiguration testCfg =
+  NodeHardForkProtocolConfiguration
+    { npcTestEnableDevelopmentHardForkEras = Cfg.experimentalHardForksEnabled testCfg
+    , npcTestShelleyHardForkAtEpoch = Slot.EpochNo <$> Cfg.testShelleyHardForkAtEpoch testCfg
+    , npcTestAllegraHardForkAtEpoch = Slot.EpochNo <$> Cfg.testAllegraHardForkAtEpoch testCfg
+    , npcTestMaryHardForkAtEpoch = Slot.EpochNo <$> Cfg.testMaryHardForkAtEpoch testCfg
+    , npcTestAlonzoHardForkAtEpoch = Slot.EpochNo <$> Cfg.testAlonzoHardForkAtEpoch testCfg
+    , npcTestBabbageHardForkAtEpoch = Slot.EpochNo <$> Cfg.testBabbageHardForkAtEpoch testCfg
+    , npcTestConwayHardForkAtEpoch = Slot.EpochNo <$> Cfg.testConwayHardForkAtEpoch testCfg
+    , npcTestDijkstraHardForkAtEpoch = Slot.EpochNo <$> Cfg.testDijkstraHardForkAtEpoch testCfg
+    }
+
+parseRequiresNetworkMagic :: String -> RequiresNetworkMagic
+parseRequiresNetworkMagic magic = case magic of
+  "RequiresNoMagic" -> RequiresNoMagic
+  "RequiresMagic" -> RequiresMagic
+  other -> error $ "initialize: unknown RequiresNetworkMagic value: " <> other
 
 synthesize ::
   ( TopLevelConfig (CardanoBlock StandardCrypto) ->
