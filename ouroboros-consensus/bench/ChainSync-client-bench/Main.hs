@@ -126,6 +126,7 @@ oneBenchRun
               HeaderStateHistory.fromChain
                 topConfig
                 (oracularLedgerDB GenesisPoint)
+                mempty
                 Chain.Genesis
         , CSClient.getIsInvalidBlock = pure invalidBlock
         , CSClient.getPastLedger = pure . Just . oracularLedgerDB
@@ -199,7 +200,7 @@ inTheYearOneBillion =
                 * 1e9
     }
 
-oracularLedgerDB :: Point B -> Extended.ExtLedgerState B mk
+oracularLedgerDB :: Point B -> Extended.ExtLedgerState B
 oracularLedgerDB p =
   Extended.ExtLedgerState
     { Extended.headerState =
