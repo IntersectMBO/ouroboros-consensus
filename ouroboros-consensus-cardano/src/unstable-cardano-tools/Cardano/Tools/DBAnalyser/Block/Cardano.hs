@@ -18,10 +18,8 @@ import qualified Cardano.Chain.Block as Byron.Block
 import qualified Cardano.Chain.Genesis as Byron.Genesis
 import qualified Cardano.Chain.UTxO as Byron.UTxO
 import qualified Cardano.Chain.Update as Byron.Update
-import Cardano.Crypto (RequiresNetworkMagic (..))
-import qualified Cardano.Crypto as Crypto
+import qualified Cardano.Configuration as Cfg
 import qualified Cardano.Crypto.Hash.Class as CryptoClass
-import Cardano.Crypto.Raw (Raw)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as SL
 import Cardano.Ledger.BaseTypes (boundRational, unsafeNonZero)
@@ -30,24 +28,21 @@ import Cardano.Ledger.Dijkstra.PParams
 import qualified Cardano.Ledger.Shelley.LedgerState as Shelley.LedgerState
 import qualified Cardano.Ledger.Shelley.UTxO as Shelley.UTxO
 import Cardano.Ledger.TxIn (TxIn)
-import Cardano.Node.Types (AdjustFilePaths (..))
 import Cardano.Protocol.Crypto
-import qualified Cardano.Tools.DBAnalyser.Block.Byron as BlockByron
+import Cardano.Tools.DBAnalyser.Block.Byron ()
 import Cardano.Tools.DBAnalyser.Block.Shelley ()
 import Cardano.Tools.DBAnalyser.HasAnalysis
-import Control.Monad (when)
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Types as Aeson
-import qualified Data.ByteString as BS
 import qualified Data.Compact as Compact
+import Data.Functor.Identity (Identity, runIdentity)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromJust, fromMaybe)
+import Data.Maybe (fromJust, fromMaybe, isJust, isNothing)
+import Data.Maybe.Strict (StrictMaybe (..), strictMaybe, strictMaybeToMaybe)
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
-import Data.String (IsString (..))
+import Data.Word (Word64)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger.Ledger as Byron.Ledger
@@ -71,16 +66,14 @@ import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Shelley.HFEras ()
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Block
-  ( IsShelleyBlock
-  , ShelleyBlock
-  , ShelleyBlockLedgerEra
+  ( ShelleyBlock
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import System.Directory (makeAbsolute)
 import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (MountPoint))
 import System.FS.IO (ioHasFS)
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath (takeDirectory)
 import TextBuilder (TextBuilder)
 import qualified TextBuilder as Builder
 
@@ -139,44 +132,29 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
   mkProtocolInfo CardanoBlockArgs{configFile, threshold} = do
     absoluteConfig <- makeAbsolute configFile
     let configDir = takeDirectory absoluteConfig
-        relativeToConfig :: FilePath -> FilePath
-        relativeToConfig = (configDir </>)
 
-    cc :: CardanoConfig <-
-      either (error . show) (return . adjustFilePaths relativeToConfig)
-        =<< Aeson.eitherDecodeFileStrict' configFile
+    -- The node configuration is parsed and resolved by the shared
+    -- 'cardano-config' package, which also loads every era's genesis file
+    -- (resolving genesis paths relative to the configuration file's directory)
+    -- and hands them back already decoded.
+    nc <- resolveNodeConfiguration configFile
+    let protoCfg = Cfg.protocolConfiguration nc
 
-    genesisByron <-
-      BlockByron.openGenesisByron (byronGenesisPath cc) (byronGenesisHash cc) (requiresNetworkMagic cc)
-    genesisShelley <-
-      either (error . show) return
-        =<< Aeson.eitherDecodeFileStrict' (shelleyGenesisPath cc)
-    genesisAlonzo <-
-      either (error . show) return
-        =<< Aeson.eitherDecodeFileStrict' (alonzoGenesisPath cc)
-    genesisConway <-
-      either (error . show) return
-        =<< Aeson.eitherDecodeFileStrict' (conwayGenesisPath cc)
-    genesisDijkstra <- case dijkstraGenesisPath cc of
-      Nothing -> pure emptyDijkstraGenesis
-      Just fp ->
-        either (error . show) return
-          =<< Aeson.eitherDecodeFileStrict' fp
+        genesisByron = Cfg.byronGenesisConfig nc
+        genesisShelley = Cfg.shelleyGenesisConfig nc
+        genesisAlonzo = Cfg.alonzoGenesisConfig nc
+        genesisConway = Cfg.conwayGenesisConfig nc
+        genesisDijkstra =
+          strictMaybe emptyDijkstraGenesis id (Cfg.experimentalGenesisConfig nc)
 
-    let transCfg =
+        transCfg =
           SL.mkLatestTransitionConfig genesisShelley genesisAlonzo genesisConway genesisDijkstra
 
-    initialNonce <- case shelleyGenesisHash cc of
-      Just h -> pure h
-      Nothing -> do
-        content <- BS.readFile (shelleyGenesisPath cc)
-        pure $
-          Nonce $
-            CryptoClass.castHash $
-              CryptoClass.hashWith id $
-                content
+        -- The initial nonce is the Blake2b-256 hash of the Shelley genesis
+        -- file, which 'cardano-config' records alongside the file path.
+        initialNonce = Nonce $ CryptoClass.castHash $ Cfg.hash (Cfg.shelleyGenesis protoCfg)
 
-    let fs = SomeHasFS (ioHasFS (MountPoint configDir))
+        fs = SomeHasFS (ioHasFS (MountPoint configDir))
 
     mkCardanoProtocolInfo
       fs
@@ -184,18 +162,31 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
       threshold
       transCfg
       initialNonce
-      (cfgHardForkTriggers cc)
+      (mkHardForkTriggers (Cfg.testingConfiguration nc))
 
   mkLSMConfig CardanoBlockArgs{configFile} = do
     -- The export path is interpreted relative to the LedgerDB filesystem root,
-    -- not the config file, so we read the config without adjusting file paths.
-    cc :: CardanoConfig <-
-      either (error . show) return
-        =<< Aeson.eitherDecodeFileStrict' configFile
+    -- not the config file, so we do not adjust file paths here.
+    nc <- resolveNodeConfiguration configFile
+    let storeCfg = Cfg.storageConfiguration nc
+        ldbCfg = runIdentity (Cfg.ledgerDbConfiguration storeCfg)
+        exportPath = case Cfg.backendSelector ldbCfg of
+          SJust (Cfg.V2LSM _ e) -> strictMaybeToMaybe e
+          _ -> Nothing
     pure
       LSMConfig
-        { lsmConfigExportPath = lsmLedgerDBExportPath cc
+        { lsmConfigExportPath = exportPath
         }
+
+-- | Parse and resolve the node configuration with the shared 'cardano-config'
+-- package. db-analyser drives the configuration from the config file alone, with
+-- no command-line overrides, so 'Cfg.resolveConfigurationFromFile' resolves it
+-- against cardano-config's all-defaults CLI arguments and the file layer wins.
+resolveNodeConfiguration :: FilePath -> IO Cfg.NodeConfiguration
+resolveNodeConfiguration configFile =
+  Cfg.resolveConfigurationFromFile configFile >>= \case
+    Left err -> error ("db-analyser: invalid node configuration: " <> show err)
+    Right (nc, _warns) -> pure nc
 
 -- | An empty Dijkstra genesis to be provided when none is specified in the config.
 emptyDijkstraGenesis :: SL.DijkstraGenesis
@@ -209,118 +200,50 @@ emptyDijkstraGenesis =
           }
    in SL.DijkstraGenesis{SL.dgUpgradePParams = upgradePParamsDef}
 
-data CardanoConfig = CardanoConfig
-  { requiresNetworkMagic :: RequiresNetworkMagic
-  -- ^ @RequiresNetworkMagic@ field
-  , byronGenesisPath :: FilePath
-  -- ^ @ByronGenesisFile@ field
-  , byronGenesisHash :: Maybe (Crypto.Hash Raw)
-  -- ^ @ByronGenesisHash@ field
-  , shelleyGenesisPath :: FilePath
-  -- ^ @ShelleyGenesisFile@ field
-  -- | @ShelleyGenesisHash@ field
-  , shelleyGenesisHash :: Maybe Nonce
-  , alonzoGenesisPath :: FilePath
-  -- ^ @AlonzoGenesisFile@ field
-  , conwayGenesisPath :: FilePath
-  -- ^ @ConwayGenesisFile@ field
-  , dijkstraGenesisPath :: Maybe FilePath
-  -- ^ @DijkstraGenesisFile@ field
-  , cfgHardForkTriggers :: CardanoHardForkTriggers
-  -- ^ @Test*HardForkAtEpoch@ for each Shelley era
-  , lsmLedgerDBExportPath :: Maybe FilePath
-  -- ^ @LedgerDB.LSMExportPath@ field: the directory (relative to the LSM-trees
-  -- LedgerDB filesystem root) into which the LSM backend exports snapshots as it
-  -- takes them. Only meaningful for the LSM backend.
-  }
-
-instance AdjustFilePaths CardanoConfig where
-  adjustFilePaths f cc =
-    cc
-      { byronGenesisPath = f $ byronGenesisPath cc
-      , shelleyGenesisPath = f $ shelleyGenesisPath cc
-      , alonzoGenesisPath = f $ alonzoGenesisPath cc
-      , conwayGenesisPath = f $ conwayGenesisPath cc
-      , dijkstraGenesisPath = f <$> dijkstraGenesisPath cc
-      -- Byron, Shelley, Alonzo, and Conway are the only eras that have genesis
-      -- data. The actual genesis block is a Byron block, therefore we needed a
-      -- genesis file. To transition to Shelley, we needed to add some additional
-      -- genesis data (eg some initial values of new protocol parametrers like
-      -- @d@). Similarly in Alonzo (eg Plutus interpreter parameters/limits) and
-      -- in Conway too (ie keys of the new genesis delegates).
-      --
-      -- In contrast, the Allegra, Mary, and Babbage eras did not introduce any new
-      -- genesis data.
-      }
-
-instance Aeson.FromJSON CardanoConfig where
-  parseJSON = Aeson.withObject "CardanoConfigFile" $ \v -> do
-    requiresNetworkMagic <- v Aeson..: "RequiresNetworkMagic"
-
-    byronGenesisPath <- v Aeson..: "ByronGenesisFile"
-    byronGenesisHash <- v Aeson..:? "ByronGenesisHash"
-
-    shelleyGenesisPath <- v Aeson..: "ShelleyGenesisFile"
-    shelleyGenesisHash <-
-      v Aeson..:? "ShelleyGenesisHash" >>= \case
-        Nothing -> pure Nothing
-        Just hex -> case CryptoClass.hashFromTextAsHex hex of
-          Nothing -> fail "could not parse ShelleyGenesisHash as a hex string"
-          Just h -> pure $ Just $ Nonce h
-
-    alonzoGenesisPath <- v Aeson..: "AlonzoGenesisFile"
-
-    conwayGenesisPath <- v Aeson..: "ConwayGenesisFile"
-
-    dijkstraGenesisPath <- v Aeson..:? "DijkstraGenesisFile"
-
-    -- The LSM settings live in the @LedgerDB@ object (the rest of which is
-    -- parsed by the node, not here). @LSMExportPath@ is a directory path.
-    lsmLedgerDBExportPath <-
-      v Aeson..:? "LedgerDB" >>= \case
-        Nothing -> pure Nothing
-        Just ledgerDB -> ledgerDB Aeson..:? "LSMExportPath"
-
-    triggers <- do
-      let parseTrigger ::
-            forall blk era.
-            (IsShelleyBlock blk, ShelleyBlockLedgerEra blk ~ era) =>
-            (Aeson.Parser :.: CardanoHardForkTrigger) blk
-          parseTrigger =
-            Comp $
-              (fmap CardanoTriggerHardForkAtEpoch <$> (v Aeson..:? nm))
-                Aeson..!= CardanoTriggerHardForkAtDefaultVersion
-           where
-            nm = fromString $ "Test" <> L.eraName @era <> "HardForkAtEpoch"
-
-      triggers <- hsequence' $ hcpure (Proxy @IsShelleyBlock) parseTrigger
-
-      let isBad :: NP CardanoHardForkTrigger xs -> Bool
-          isBad = \case
-            CardanoTriggerHardForkAtDefaultVersion
-              :* CardanoTriggerHardForkAtEpoch{}
-              :* _ -> True
-            _ :* np -> isBad np
-            Nil -> False
-      fmap (\() -> triggers) $
-        when (isBad triggers) $
-          fail $
-            "if the Cardano config file sets a Test*HardForkEpoch,"
-              <> " it must also set it for all previous eras."
-
-    pure $
-      CardanoConfig
-        { requiresNetworkMagic = requiresNetworkMagic
-        , byronGenesisPath = byronGenesisPath
-        , byronGenesisHash = byronGenesisHash
-        , shelleyGenesisPath = shelleyGenesisPath
-        , shelleyGenesisHash = shelleyGenesisHash
-        , alonzoGenesisPath = alonzoGenesisPath
-        , conwayGenesisPath = conwayGenesisPath
-        , dijkstraGenesisPath = dijkstraGenesisPath
-        , cfgHardForkTriggers = CardanoHardForkTriggers triggers
-        , lsmLedgerDBExportPath = lsmLedgerDBExportPath
+-- | Build the 'CardanoHardForkTriggers' from the @Testing@ section of the
+-- configuration: each era hard-forks at its configured epoch, or at the
+-- default protocol version when no epoch is given.
+--
+-- If an era is configured to hard-fork at a specific epoch, then so must all
+-- earlier eras; otherwise the configuration is rejected.
+mkHardForkTriggers :: Cfg.TestingConfiguration Identity -> CardanoHardForkTriggers
+mkHardForkTriggers testCfg
+  | any (\(earlier, later) -> isNothing earlier && isJust later) (zip epochs (drop 1 epochs)) =
+      error
+        "if the Cardano config file sets a Test*HardForkAtEpoch, it must also set it for all previous eras."
+  | otherwise =
+      CardanoHardForkTriggers'
+        { triggerHardForkShelley = toTrigger (epochOf Cfg.testShelleyHardForkAtEpoch)
+        , triggerHardForkAllegra = toTrigger (epochOf Cfg.testAllegraHardForkAtEpoch)
+        , triggerHardForkMary = toTrigger (epochOf Cfg.testMaryHardForkAtEpoch)
+        , triggerHardForkAlonzo = toTrigger (epochOf Cfg.testAlonzoHardForkAtEpoch)
+        , triggerHardForkBabbage = toTrigger (epochOf Cfg.testBabbageHardForkAtEpoch)
+        , triggerHardForkConway = toTrigger (epochOf Cfg.testConwayHardForkAtEpoch)
+        , triggerHardForkDijkstra = toTrigger (epochOf Cfg.testDijkstraHardForkAtEpoch)
         }
+ where
+  -- cardano-config records the configured epochs as 'StrictMaybe'; db-analyser
+  -- works with plain 'Maybe' here.
+  epochOf ::
+    (Cfg.TestingConfiguration Identity -> StrictMaybe Word64) -> Maybe Word64
+  epochOf f = strictMaybeToMaybe (f testCfg)
+
+  -- In Shelley-era order; mirrors the field order of 'CardanoHardForkTriggers''.
+  epochs =
+    [ epochOf Cfg.testShelleyHardForkAtEpoch
+    , epochOf Cfg.testAllegraHardForkAtEpoch
+    , epochOf Cfg.testMaryHardForkAtEpoch
+    , epochOf Cfg.testAlonzoHardForkAtEpoch
+    , epochOf Cfg.testBabbageHardForkAtEpoch
+    , epochOf Cfg.testConwayHardForkAtEpoch
+    , epochOf Cfg.testDijkstraHardForkAtEpoch
+    ]
+
+  toTrigger :: Maybe Word64 -> CardanoHardForkTrigger blk
+  toTrigger =
+    maybe
+      CardanoTriggerHardForkAtDefaultVersion
+      (CardanoTriggerHardForkAtEpoch . EpochNo)
 
 instance HasAnalysis (CardanoBlock StandardCrypto) where
   countTxOutputs = analyseBlock countTxOutputs

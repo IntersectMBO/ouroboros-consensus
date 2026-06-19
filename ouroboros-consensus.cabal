@@ -1800,6 +1800,7 @@ library unstable-cardano-tools
     base16-bytestring,
     bytestring,
     cardano-binary,
+    cardano-config ^>=1,
     cardano-crypto,
     cardano-crypto-class,
     cardano-crypto-wrapper,
