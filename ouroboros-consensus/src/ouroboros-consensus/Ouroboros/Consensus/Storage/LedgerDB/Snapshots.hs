@@ -195,12 +195,23 @@ data ReadSnapshotErr
 
 data TablesCodecVersion
   = -- | Used in cardano-node 10.7. Previous versions have no codec version.
-    -- [ {_ (txid, big-endian txix) => txout} ]
+    -- The values map is wrapped in a redundant one-element CBOR list:
+    --
+    -- > [ {_ (txid, big-endian txix) => txout} ]
     TablesCodecVersion1
+  | -- | The values map is written bare, dropping the one-element list wrapper:
+    --
+    -- > {_ (txid, big-endian txix) => txout}
+    --
+    -- Readers accept both versions (see 'decodeValues' call sites); only the
+    -- leading list header differs, so a V1 snapshot is read by first consuming
+    -- it. Writers always emit V2.
+    TablesCodecVersion2
   deriving (Eq, Show)
 
 instance ToJSON TablesCodecVersion where
   toJSON TablesCodecVersion1 = Aeson.Number 1
+  toJSON TablesCodecVersion2 = Aeson.Number 2
 
 instance FromJSON TablesCodecVersion where
   parseJSON v = enforceVersion =<< parseJSON v
@@ -208,6 +219,7 @@ instance FromJSON TablesCodecVersion where
 enforceVersion :: Word8 -> Parser TablesCodecVersion
 enforceVersion v = case v of
   1 -> pure TablesCodecVersion1
+  2 -> pure TablesCodecVersion2
   _ -> fail "Unknown or outdated tables codec version"
 
 data SnapshotMetadata = SnapshotMetadata

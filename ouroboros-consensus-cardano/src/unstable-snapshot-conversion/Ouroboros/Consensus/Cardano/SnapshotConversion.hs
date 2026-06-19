@@ -207,7 +207,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
   let crcOut = maybe inCRC (crcOfConcat inCRC) mCRCOut
 
   when interactive $ lift $ putStr "Generating new metadata file..." >> hFlush stdout
-  lift $ putMetadata (SnapshotMetadata outBackend crcOut TablesCodecVersion1)
+  lift $ putMetadata (SnapshotMetadata outBackend crcOut TablesCodecVersion2)
 
   when interactive $ lift $ putColored Green True "Done"
  where
@@ -315,8 +315,14 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
     (Values (CardanoBlock StandardCrypto) -> Values (ShelleyBlock proto era)) ->
     IO (SomeBackend (ShelleyBlock proto era) YieldArgs)
   mkInStream stEra proj = case from of
-    Snapshot (StandaloneSnapshot _ Mem) _ ->
-      pure $ SomeBackend $ mkInMemYieldArgs inSomeHasFS inSnap stEra
+    Snapshot (StandaloneSnapshot _ Mem) _ -> do
+      -- Read the input snapshot's on-disk values codec version so we can read
+      -- both the legacy list-wrapped (V1) and the bare-map (V2) framings. If
+      -- the metadata is missing, assume the current (V2) framing.
+      inVersion <-
+        either (const TablesCodecVersion2) snapshotTablesCodecVersion
+          <$> runExceptT (loadSnapshotMetadata inSomeHasFS inSnap)
+      pure $ SomeBackend $ mkInMemYieldArgs inVersion inSomeHasFS inSnap stEra
     Snapshot (ExportedLSMSnapshot _ (getExportedSnapshotPath -> exportDir)) _ ->
       SomeBackend
         <$> mkExportedLSMYieldArgs @(CardanoBlock StandardCrypto) proj exportDir inSnap stdMkBlockIOFS newStdGen

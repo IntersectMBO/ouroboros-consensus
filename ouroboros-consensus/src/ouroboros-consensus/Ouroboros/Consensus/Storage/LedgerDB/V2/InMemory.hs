@@ -218,7 +218,7 @@ implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFS) suffix st = do
       SnapshotMetadata
         { snapshotBackend = UTxOHDMemSnapshot
         , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
-        , snapshotTablesCodecVersion = TablesCodecVersion1
+        , snapshotTablesCodecVersion = TablesCodecVersion2
         }
 
 -- | Read snapshot from disk.
@@ -254,13 +254,22 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) ds = do
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin -> throwE InitFailureGenesis
     NotOrigin pt -> do
+      -- The on-disk values codec is versioned in the snapshot metadata. V1
+      -- (cardano-node 10.7) wraps the values map in a redundant one-element CBOR
+      -- list; V2 drops it. Read both seamlessly by consuming the leading list
+      -- header for V1 before decoding the map. Writers always emit V2.
+      let tablesDecoder = case snapshotTablesCodecVersion snapshotMeta of
+            TablesCodecVersion1 ->
+              CBOR.decodeListLenOf 1 *> decodeValues @blk (ledgerState extLedgerSt)
+            TablesCodecVersion2 ->
+              decodeValues @blk (ledgerState extLedgerSt)
       (values, Identity crcTables) <-
         withExceptT (InitFailureRead . ReadSnapshotFailed) $
           ExceptT $
             readIncremental
               fs
               Identity
-              (decodeValues @blk (ledgerState extLedgerSt))
+              tablesDecoder
               (snapshotToTablesPath ds)
       let computedCRC = crcOfConcat checksumAsRead crcTables
       Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
@@ -315,6 +324,8 @@ instance IOLike m => StreamingBackend m Mem l blk where
         (SomeHasFS m)
         -- \| The snapshot
         DiskSnapshot
+        -- \| The on-disk values codec version of the snapshot being read
+        TablesCodecVersion
         (Decoders blk)
 
   data SinkArgs m Mem l blk
@@ -326,8 +337,8 @@ instance IOLike m => StreamingBackend m Mem l blk where
         DiskSnapshot
 
   releaseYieldArgs _ = pure ()
-  yield _ (YieldInMemory fs ds (Decoders decK decV)) =
-    yieldInMemoryS fs ds decK decV
+  yield _ (YieldInMemory fs ds version (Decoders decK decV)) =
+    yieldInMemoryS version fs ds decK decV
 
   releaseSinkArgs _ = pure ()
   sink _ (SinkInMemory chunkSize encK encV shfs ds) =
@@ -367,11 +378,17 @@ streamingFile (SomeHasFS fs') path cont =
 yieldCborMapS ::
   forall m a b.
   MonadST m =>
+  -- | The on-disk values codec version. V1 wraps the map in a one-element CBOR
+  -- list, which we consume before reading the map; V2 is the bare map.
+  TablesCodecVersion ->
   (forall s. Decoder s a) ->
   (forall s. Decoder s b) ->
   Stream (Of ByteString) m (Maybe CRC) ->
   Stream (Of (a, b)) (ExceptT DeserialiseFailure m) (Stream (Of ByteString) m (Maybe CRC))
-yieldCborMapS decK decV = execStateT $ do
+yieldCborMapS version decK decV = execStateT $ do
+  case version of
+    TablesCodecVersion1 -> Monad.void $ hoist lift (decodeCbor (decodeListLenOf 1))
+    TablesCodecVersion2 -> pure ()
   hoist lift (decodeCbor decodeMapLenOrIndef) >>= \case
     Nothing -> go
     Just n -> replicateM_ n yieldKV
@@ -397,14 +414,15 @@ yieldCborMapS decK decV = execStateT $ do
 
 yieldInMemoryS ::
   (MonadThrow m, MonadST m) =>
+  TablesCodecVersion ->
   SomeHasFS m ->
   DiskSnapshot ->
   (forall s. Decoder s (TxIn blk)) ->
   (forall s. Decoder s (TxOut blk)) ->
   Yield m l blk
-yieldInMemoryS fs ds decK decV _ k =
+yieldInMemoryS version fs ds decK decV _ k =
   streamingFile fs (snapshotToTablesPath ds) $ \s -> do
-    k $ yieldCborMapS decK decV s
+    k $ yieldCborMapS version decK decV s
 
 sinkInMemoryS ::
   forall m l blk.
