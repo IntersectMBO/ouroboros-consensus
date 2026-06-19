@@ -322,7 +322,6 @@ allocInRegistryReadOnlyForkerAtPoint cdb tgt rr = do
     Right (frk, prov) -> pure (Right (rk, frk, prov))
 
 openReadOnlyForkerWithRangeAtPoint ::
-  IOLike m =>
   ChainDbEnv m blk ->
   Target (Point blk) ->
   m

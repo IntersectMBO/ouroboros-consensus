@@ -826,8 +826,6 @@ instance
 instance
   ( IOLike m
   , SingleEraBlockSupportsUTxOHD blk
-  , MemPack (TxIn blk)
-  , MemPack (TxOut blk)
   ) =>
   StreamingBackend m LSM l blk
   where
@@ -913,8 +911,6 @@ yieldLsmS ::
   forall m l hfblk blk.
   ( Monad m
   , SingleEraBlockSupportsUTxOHD blk
-  , MemPack (TxIn blk)
-  , MemPack (TxOut blk)
   ) =>
   Int ->
   LedgerTablesHandle m l hfblk ->
@@ -941,8 +937,6 @@ sinkLsmS ::
   , MonadST m
   , MonadEvaluate m
   , SingleEraBlockSupportsUTxOHD blk
-  , MemPack (TxIn blk)
-  , MemPack (TxOut blk)
   ) =>
   Int ->
   SomeHasFS m ->

@@ -87,7 +87,6 @@ deriving newtype instance
 
 -- | The UTxO field lens. This is the /only/ reference to it in consensus.
 utxoL ::
-  Core.EraTxOut era =>
   Lens' (SL.NewEpochState era) (SL.UTxO era)
 utxoL = SL.nesEsL . SL.esLStateL . SL.lsUTxOStateL . SL.utxoL
 
@@ -136,7 +135,6 @@ splitUTxO nes =
 -- for a ledger computation. This is a lens /set/, so any stale field is
 -- overwritten rather than merged: the supplied values are authoritative.
 stowUTxO ::
-  Core.EraTxOut era =>
   Map SL.TxIn (Core.TxOut era) ->
   NewEpochStateNoUTxOs era ->
   SL.NewEpochState era
@@ -146,7 +144,7 @@ stowUTxO values (NewEpochStateNoUTxOs nes) = nes & utxoL .~ SL.UTxO values
 -- clear the field (re-establishing the invariant), and compute the diff of the
 -- result against the values that were stowed in.
 clearUTxOWithDiff ::
-  (Core.EraTxOut era, Eq (Core.TxOut era)) =>
+  Core.EraTxOut era =>
   -- | The values that were read in (the pre-image).
   Map SL.TxIn (Core.TxOut era) ->
   SL.NewEpochState era ->

@@ -374,8 +374,6 @@ testUtxoUpgradeTranslation ::
   , Core.TranslateEra dstEra NewEpochState
   , Core.TranslationError dstEra NewEpochState ~ Void
   , Core.PreviousEra dstEra ~ srcEra
-  , Eq (Core.TxOut dstEra)
-  , Show (Core.TxOut dstEra)
   ) =>
   String ->
   RequiringBoth
@@ -430,8 +428,6 @@ testValuesUpgrade ::
   , Core.EraTxOut srcEra
   , Core.EraTxOut dstEra
   , Core.PreviousEra dstEra ~ srcEra
-  , Eq (Core.TxOut dstEra)
-  , Show (Core.TxOut dstEra)
   ) =>
   String ->
   TranslateValues (ShelleyBlock srcProto srcEra) (ShelleyBlock dstProto dstEra) ->
@@ -454,13 +450,10 @@ testValuesUpgrade propLabel valuesTranslation =
 testValuesRoundtrip ::
   forall proto era.
   ( ShelleyCompatible proto era
-  , Core.EraTxOut era
   , Arbitrary (NewEpochState era)
   , Show (NewEpochState era)
   , Arbitrary (LedgerState (ShelleyBlock proto era))
   , Show (LedgerState (ShelleyBlock proto era))
-  , Eq (Core.TxOut era)
-  , Show (Core.TxOut era)
   ) =>
   String ->
   TestTree

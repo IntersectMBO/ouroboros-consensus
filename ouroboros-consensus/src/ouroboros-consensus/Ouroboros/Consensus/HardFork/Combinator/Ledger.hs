@@ -38,6 +38,7 @@ import Control.Monad.Except (throwError, withExcept)
 import qualified Control.State.Transition.Extended as STS
 import Data.Functor ((<&>))
 import Data.Functor.Product
+import Data.List (foldl')
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
