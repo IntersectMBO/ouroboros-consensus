@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -5,6 +6,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
@@ -16,6 +18,8 @@ module Test.Consensus.Cardano.Translation (tests) where
 
 import qualified Cardano.Chain.Block as Byron
 import qualified Cardano.Chain.UTxO as Byron
+import qualified Codec.CBOR.Read as CBOR
+import qualified Codec.CBOR.Write as CBOR
 import Cardano.Ledger.Alonzo ()
 import Cardano.Ledger.BaseTypes (TxIx (..))
 import qualified Cardano.Ledger.Core as Core
@@ -31,6 +35,7 @@ import Cardano.Ledger.Shelley.Translation
 import Cardano.Ledger.Shelley.UTxO (UTxO (..))
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Cardano.Slotting.Slot (EpochNo (..))
+import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.Map.Strict as Map
 import Data.SOP.InPairs (RequiringBoth (..), provideBoth)
 import Data.Void (Void)
@@ -51,7 +56,7 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
   , TranslateValues (..)
   )
 import Ouroboros.Consensus.Ledger.Basics
-  ( BlockSupportsUTxOHD (Diff)
+  ( BlockSupportsUTxOHD (Diff, decodeValues, encodeValues)
   , LedgerCfg
   , LedgerConfig
   , LedgerState
@@ -63,6 +68,7 @@ import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
   ( ShelleyBlock
+  , ShelleyCompatible
   , ShelleyLedgerConfig
   , mkShelleyLedgerConfig
   , shelleyLedgerState
@@ -91,6 +97,27 @@ type Proto = TPraos Crypto
 
 tests :: TestTree
 tests =
+  testGroup
+    "Translation"
+    [ updateTablesOnEraTransition
+    , valuesCodecRoundtrip
+    ]
+
+valuesCodecRoundtrip :: TestTree
+valuesCodecRoundtrip =
+  testGroup
+    "LedgerTables values codec roundtrip"
+    [ testValuesRoundtrip @(TPraos Crypto) @ShelleyEra "Shelley"
+    , testValuesRoundtrip @(TPraos Crypto) @AllegraEra "Allegra"
+    , testValuesRoundtrip @(TPraos Crypto) @MaryEra "Mary"
+    , testValuesRoundtrip @(TPraos Crypto) @AlonzoEra "Alonzo"
+    , testValuesRoundtrip @(Praos Crypto) @BabbageEra "Babbage"
+    , testValuesRoundtrip @(Praos Crypto) @ConwayEra "Conway"
+    , testValuesRoundtrip @(Praos Crypto) @DijkstraEra "Dijkstra"
+    ]
+
+updateTablesOnEraTransition :: TestTree
+updateTablesOnEraTransition =
   testGroup
     "UpdateTablesOnEraTransition"
     [ testTablesTranslation
@@ -409,6 +436,40 @@ testValuesUpgrade propLabel valuesTranslation =
           cover 50 (not (Map.null srcValues)) "UTxO set is not empty" $
             translateValuesWith valuesTranslation srcValues
               === Map.map Core.upgradeTxOut srcValues
+
+-- | Round-trip the on-disk values codec ('encodeValues'\/'decodeValues') for a
+-- single era on a /populated/ UTxO. The canonical example tables are empty, so
+-- without this the @BigEndianTxIn@-keyed, credential-shared 'TxOut' codec was
+-- never exercised on real entries. We obtain values by splitting an arbitrary
+-- 'NewEpochState'; 'decodeValues' takes a ledger state as the era hint (it
+-- supplies credential interns for sharing), but decoding is value-preserving
+-- for any state, so an arbitrary one suffices.
+testValuesRoundtrip ::
+  forall proto era.
+  ( ShelleyCompatible proto era
+  , Core.EraTxOut era
+  , Arbitrary (NewEpochState era)
+  , Show (NewEpochState era)
+  , Arbitrary (LedgerState (ShelleyBlock proto era))
+  , Show (LedgerState (ShelleyBlock proto era))
+  , Eq (Core.TxOut era)
+  , Show (Core.TxOut era)
+  ) =>
+  String ->
+  TestTree
+testValuesRoundtrip propLabel =
+  testProperty propLabel $
+    \(nes :: NewEpochState era)
+     (st :: LedgerState (ShelleyBlock proto era)) ->
+      let values = snd (splitUTxO nes)
+          bytes = CBOR.toLazyByteString (encodeValues @(ShelleyBlock proto era) values)
+       in checkCoverage $
+            cover 50 (not (Map.null values)) "UTxO set is not empty" $
+              case CBOR.deserialiseFromBytes (decodeValues @(ShelleyBlock proto era) st) bytes of
+                Right (leftover, decoded) ->
+                  counterexample "leftover bytes after decoding" (Lazy.null leftover)
+                    .&&. (decoded === values)
+                Left err -> counterexample (show err) (property False)
 
 {-------------------------------------------------------------------------------
     Specific predicates
