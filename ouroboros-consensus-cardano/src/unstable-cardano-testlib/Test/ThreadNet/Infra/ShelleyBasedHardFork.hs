@@ -237,6 +237,8 @@ instance
       , -- A pure-upgrade boundary: the on-disk values upgrade their @TxOut@s when
         -- the first block's values are read (the @TxIn@ is era-stable).
         translateValues = PCons (TranslateValues (Map.map SL.upgradeTxOut)) PNil
+      , -- The @TxIn@ key type is era-stable, so the keys are unchanged.
+        translateKeys = PCons (TranslateKeys id) PNil
       , translateChainDepState = PCons translateChainDepStateAcrossShelley PNil
       , crossEraForecast = PCons crossEraForecastAcrossShelley PNil
       }

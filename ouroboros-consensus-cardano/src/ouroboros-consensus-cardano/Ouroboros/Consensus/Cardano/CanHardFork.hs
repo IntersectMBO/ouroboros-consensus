@@ -167,6 +167,17 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
                     PCons (TranslateValues (Map.map SL.upgradeTxOut)) $
                       PCons (TranslateValues (Map.map SL.upgradeTxOut)) $
                         PNil
+      , translateKeys =
+          -- Byron has no keys; the Shelley-based boundaries leave the keys
+          -- unchanged (the @TxIn@ key type is era-stable across Shelley eras).
+          PCons (TranslateKeys (const mempty)) $
+            PCons (TranslateKeys id) $
+              PCons (TranslateKeys id) $
+                PCons (TranslateKeys id) $
+                  PCons (TranslateKeys id) $
+                    PCons (TranslateKeys id) $
+                      PCons (TranslateKeys id) $
+                        PNil
       , translateChainDepState =
           PCons translateChainDepStateByronToShelleyWrapper $
             PCons translateChainDepStateAcrossShelley $

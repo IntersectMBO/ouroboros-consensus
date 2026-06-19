@@ -25,6 +25,8 @@ data EraTranslation xs = EraTranslation
       !(InPairs TranslateDiff xs)
   , translateValues ::
       !(InPairs TranslateValues xs)
+  , translateKeys ::
+      !(InPairs TranslateKeys xs)
   , translateChainDepState ::
       !(InPairs (RequiringBoth WrapConsensusConfig (Translate WrapChainDepState)) xs)
   , crossEraForecast ::
@@ -40,6 +42,7 @@ trivialEraTranslation =
     { translateLedgerState = PNil
     , translateDiff = PNil
     , translateValues = PNil
+    , translateKeys = PNil
     , crossEraForecast = PNil
     , translateChainDepState = PNil
     }
