@@ -45,7 +45,7 @@ import Ouroboros.Consensus.Ledger.Basics
   , Values
   )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, mkShelleyTx)
+import Ouroboros.Consensus.Shelley.Ledger (mkShelleyTx)
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL (mkWitnessVKey)
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import Test.ThreadNet.TxGen

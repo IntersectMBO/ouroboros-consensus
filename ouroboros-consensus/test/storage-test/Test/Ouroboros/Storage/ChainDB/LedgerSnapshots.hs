@@ -27,7 +27,6 @@ import Control.Tracer
 import Data.Foldable (for_)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (mapMaybe)
-import Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
 import Data.Time (secondsToDiffTime)
 import Data.Traversable (for)
