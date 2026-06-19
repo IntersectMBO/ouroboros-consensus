@@ -126,14 +126,16 @@ projectCardanoValues idx0 =
 mkInMemYieldArgs ::
   forall proto era.
   ShelleyCompatible proto era =>
+  TablesCodecVersion ->
   SomeHasFS IO ->
   DiskSnapshot ->
   LedgerState (ShelleyBlock proto era) ->
   YieldArgs IO V2.Mem LedgerState (ShelleyBlock proto era)
-mkInMemYieldArgs fs ds st =
+mkInMemYieldArgs version fs ds st =
   YieldInMemory
     fs
     ds
+    version
     ( Decoders
         (eraDecoder @era (getOriginalTxIn <$> decodeMemPack))
         (eraDecoder @era (decShareCBOR certInterns))

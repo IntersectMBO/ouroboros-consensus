@@ -18,6 +18,8 @@ module Test.Consensus.Cardano.Translation (tests) where
 
 import qualified Cardano.Chain.Block as Byron
 import qualified Cardano.Chain.UTxO as Byron
+import Codec.CBOR.Decoding (decodeListLenOf)
+import Codec.CBOR.Encoding (encodeListLen)
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Cardano.Ledger.Alonzo ()
@@ -462,14 +464,25 @@ testValuesRoundtrip propLabel =
     \(nes :: NewEpochState era)
      (st :: LedgerState (ShelleyBlock proto era)) ->
       let values = snd (splitUTxO nes)
-          bytes = CBOR.toLazyByteString (encodeValues @(ShelleyBlock proto era) values)
+          -- V2: the bare map that writers now emit.
+          v2 =
+            CBOR.deserialiseFromBytes
+              (decodeValues @(ShelleyBlock proto era) st)
+              (CBOR.toLazyByteString (encodeValues @(ShelleyBlock proto era) values))
+          -- V1: the legacy one-element-list wrapper, read by consuming the list
+          -- header first (mirrors 'loadSnapshot's TablesCodecVersion1 path).
+          v1 =
+            CBOR.deserialiseFromBytes
+              (decodeListLenOf 1 *> decodeValues @(ShelleyBlock proto era) st)
+              (CBOR.toLazyByteString (encodeListLen 1 <> encodeValues @(ShelleyBlock proto era) values))
+          ok lbl res = case res of
+            Right (leftover, decoded) ->
+              counterexample (lbl <> ": leftover bytes after decoding") (Lazy.null leftover)
+                .&&. counterexample lbl (decoded === values)
+            Left err -> counterexample (lbl <> ": " <> show err) (property False)
        in checkCoverage $
             cover 50 (not (Map.null values)) "UTxO set is not empty" $
-              case CBOR.deserialiseFromBytes (decodeValues @(ShelleyBlock proto era) st) bytes of
-                Right (leftover, decoded) ->
-                  counterexample "leftover bytes after decoding" (Lazy.null leftover)
-                    .&&. (decoded === values)
-                Left err -> counterexample (show err) (property False)
+              conjoin [ok "V2" v2, ok "V1" v1]
 
 {-------------------------------------------------------------------------------
     Specific predicates
