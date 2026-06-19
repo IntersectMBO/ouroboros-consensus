@@ -155,9 +155,9 @@ instance ToExpr (PerasVotingCommitteeError blk) => ToExpr (MockPerasError blk)
 
 instance ToExpr (EmptyPerasEpochContextResolver blk) where
   toExpr = defaultExprViaShow
-instance Show (PerasEpochContext blk) => ToExpr (MockPerasEpochContextResolver blk) where
+instance Show (PerasVotingCommittee blk) => ToExpr (MockPerasEpochContextResolver blk) where
   toExpr = defaultExprViaShow
-instance Show (PerasEpochContext blk) => ToExpr (V1PerasEpochContextResolver blk) where
+instance Show (PerasVotingCommittee blk) => ToExpr (V1PerasEpochContextResolver blk) where
   toExpr = defaultExprViaShow
 
 deriving anyclass instance ToExpr PerasEpochContextNotFoundForRound
