@@ -91,9 +91,12 @@ instance FromJSON SnapshotPolicy where
 data LedgerDbBackendSelector
   = -- | The in-memory backend.
     V2InMemory
-  | -- | The LSM-tree backend, with an optional custom path to the database. If
-    -- it is not provided, the default is used.
-    V2LSM (Maybe FilePath)
+  | -- | The LSM-tree backend. The first field is an optional custom path to the
+    -- database (the @LSMDatabasePath@ key); if it is not provided, the default
+    -- is used. The second field is an optional directory into which the backend
+    -- exports snapshots as it takes them (the @LSMExportPath@ key). Both are
+    -- only meaningful for the LSM backend.
+    V2LSM (Maybe FilePath) (Maybe FilePath)
   deriving (Generic, Show)
 
 instance Default LedgerDbBackendSelector where
@@ -104,7 +107,7 @@ parseLedgerDbBackend v = do
   backend <- v .:? "Backend" .!= "V2InMemory"
   case backend :: String of
     "V2InMemory" -> pure V2InMemory
-    "V2LSM" -> V2LSM <$> v .:? "LSMDatabasePath"
+    "V2LSM" -> V2LSM <$> v .:? "LSMDatabasePath" <*> v .:? "LSMExportPath"
     x -> fail $ "Malformed LedgerDB Backend: " <> x
 
 -- | The Ledger DB configuration
