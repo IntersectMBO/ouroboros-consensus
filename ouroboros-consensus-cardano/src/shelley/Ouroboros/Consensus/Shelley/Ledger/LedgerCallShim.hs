@@ -1,3 +1,9 @@
+{-# LANGUAGE CPP #-}
+#if __GLASGOW_HASKELL__ >= 910
+{-# OPTIONS_GHC -Wno-x-shelley-empty-utxo #-}
+#else
+{-# OPTIONS_GHC -Wno-warnings-deprecations #-}
+#endif
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -34,7 +40,7 @@ module Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim
   ( -- * The UTxO-free new-epoch state
     NewEpochStateNoUTxOs -- opaque: the data constructor is intentionally hidden
   , mkNewEpochStateNoUTxOs
-  , nesView
+  , newEpochStateWithEmptyUTxO
   , splitUTxO
   , stowUTxO
 
@@ -96,10 +102,22 @@ mkNewEpochStateNoUTxOs nes =
   assert (Map.null (SL.unUTxO (nes ^. utxoL))) $
     NewEpochStateNoUTxOs (nes & utxoL .~ mempty)
 
--- | Read-only access to the wrapped state. Safe to expose: the field is empty,
--- so callers cannot learn any UTxO entries from it.
-nesView :: NewEpochStateNoUTxOs era -> SL.NewEpochState era
-nesView (NewEpochStateNoUTxOs nes) = nes
+-- | Project the wrapped 'SL.NewEpochState'.
+--
+-- ⚠️  The returned state's UTxO field is EMPTY /by design/. Under UTxO-HD the
+-- live UTxO is kept in the ledger tables (the LedgerDB backend), not in the
+-- ledger state. Reading @utxo@ from this value will silently give you an empty
+-- map — to read the chain's UTxO, go through the LedgerDB forker \/ ledger
+-- tables instead. This accessor is the right one for the /non-UTxO/ parts of the
+-- state (protocol parameters, stake distribution, pools, …).
+newEpochStateWithEmptyUTxO :: NewEpochStateNoUTxOs era -> SL.NewEpochState era
+newEpochStateWithEmptyUTxO (NewEpochStateNoUTxOs nes) = nes
+
+#if __GLASGOW_HASKELL__ >= 910
+{-# WARNING in "x-shelley-empty-utxo" newEpochStateWithEmptyUTxO "This NewEpochState's UTxO is EMPTY by design: UTxO-HD keeps the live UTxO in the ledger tables, not the ledger state, so reading its UTxO yields an empty map. Read the UTxO via the LedgerDB forker / ledger tables. If you only need the non-UTxO parts, suppress with -Wno-x-shelley-empty-utxo (GHC >= 9.10) or -Wno-warnings-deprecations." #-}
+#else
+{-# WARNING newEpochStateWithEmptyUTxO "This NewEpochState's UTxO is EMPTY by design: UTxO-HD keeps the live UTxO in the ledger tables, not the ledger state, so reading its UTxO yields an empty map. Read the UTxO via the LedgerDB forker / ledger tables. If you only need the non-UTxO parts, suppress with -Wno-x-shelley-empty-utxo (GHC >= 9.10) or -Wno-warnings-deprecations." #-}
+#endif
 
 -- | Split a 'SL.NewEpochState' that /does/ carry a UTxO (genesis, or a snapshot
 -- with a populated field) into the UTxO-free state and the extracted entries.
@@ -164,7 +182,7 @@ applyTickShim ::
   NewEpochStateNoUTxOs era ->
   (NewEpochStateNoUTxOs era, [STS.Event (Core.EraRule "TICK" era)])
 applyTickShim evs globals slot nesNoUTxO =
-  let nes = nesView nesNoUTxO
+  let nes = newEpochStateWithEmptyUTxO nesNoUTxO
       (nes', events) = case evs of
         ComputeLedgerEvents -> SL.applyTick STS.EPReturn globals nes slot
         OmitLedgerEvents -> (SL.applyTickNoEvents globals nes slot, [])

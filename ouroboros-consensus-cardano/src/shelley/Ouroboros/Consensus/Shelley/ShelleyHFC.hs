@@ -1,3 +1,9 @@
+{-# LANGUAGE CPP #-}
+#if __GLASGOW_HASKELL__ >= 910
+{-# OPTIONS_GHC -Wno-x-shelley-empty-utxo #-}
+#else
+{-# OPTIONS_GHC -Wno-warnings-deprecations #-}
+#endif
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE EmptyCase #-}
@@ -72,7 +78,7 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim
   ( mkNewEpochStateNoUTxOs
-  , nesView
+  , newEpochStateWithEmptyUTxO
   )
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
@@ -354,7 +360,7 @@ instance
     -- The state's UTxO field is empty (the UTxO lives in the backend); the NES
     -- translation preserves that, and the value-level UTxO upgrade is handled
     -- separately by 'translateShelleyValues'.
-    state' <- SL.translateEra ctxt (nesView stateNoUTxO)
+    state' <- SL.translateEra ctxt (newEpochStateWithEmptyUTxO stateNoUTxO)
     return $
       Comp $
         ShelleyLedgerState
