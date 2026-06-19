@@ -44,9 +44,11 @@ import Ouroboros.Consensus.HardFork.Combinator
   ( InPairs (..)
   , hardForkEraTranslation
   , translateLedgerState
+  , translateValues
   )
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
   ( TranslateLedgerState (..)
+  , TranslateValues (..)
   )
 import Ouroboros.Consensus.Ledger.Basics
   ( BlockSupportsUTxOHD (Diff)
@@ -111,21 +113,29 @@ tests =
         shelleyToAllegraLedgerStateTranslation
         shelleyAvvmAddressesAreDeletesInUtxoDiff
         (\st -> cover 50 (nonEmptyAvvmAddresses st) "AVVM set is not empty")
+    , testValuesUpgrade
+        "Shelley to Allegra (value upgrade)"
+        shelleyToAllegraValuesTranslation
     , testUtxoUpgradeTranslation
         "Allegra to Mary"
         allegraToMaryLedgerStateTranslation
+        allegraToMaryValuesTranslation
     , testUtxoUpgradeTranslation
         "Mary to Alonzo"
         maryToAlonzoLedgerStateTranslation
+        maryToAlonzoValuesTranslation
     , testUtxoUpgradeTranslation
         "Alonzo to Babbage"
         alonzoToBabbageLedgerStateTranslation
+        alonzoToBabbageValuesTranslation
     , testUtxoUpgradeTranslation
         "Babbage to Conway"
         babbageToConwayLedgerStateTranslation
+        babbageToConwayValuesTranslation
     , testUtxoUpgradeTranslation
         "Conway to Dijkstra"
         conwayToDijkstraLedgerStateTranslation
+        conwayToDijkstraValuesTranslation
     ]
 
 {-------------------------------------------------------------------------------
@@ -203,6 +213,63 @@ PCons
         (RequiringBoth WrapLedgerConfig TranslateLedgerState)
         (CardanoEras Crypto)
     tls = translateLedgerState hardForkEraTranslation
+
+-- | The per-boundary on-disk value translations, exactly as wired into the
+-- production 'EraTranslation'. We assert these against the expected 'TxOut'
+-- upgrade so that a mis-wired 'translateValues' (e.g. 'id', the wrong upgrade,
+-- or a dropped boundary) is caught — this is the path the node actually uses to
+-- promote on-disk values across an era transition.
+shelleyToAllegraValuesTranslation ::
+  TranslateValues
+    (ShelleyBlock (TPraos Crypto) ShelleyEra)
+    (ShelleyBlock (TPraos Crypto) AllegraEra)
+allegraToMaryValuesTranslation ::
+  TranslateValues
+    (ShelleyBlock (TPraos Crypto) AllegraEra)
+    (ShelleyBlock (TPraos Crypto) MaryEra)
+maryToAlonzoValuesTranslation ::
+  TranslateValues
+    (ShelleyBlock (TPraos Crypto) MaryEra)
+    (ShelleyBlock (TPraos Crypto) AlonzoEra)
+alonzoToBabbageValuesTranslation ::
+  TranslateValues
+    (ShelleyBlock (TPraos Crypto) AlonzoEra)
+    (ShelleyBlock (Praos Crypto) BabbageEra)
+babbageToConwayValuesTranslation ::
+  TranslateValues
+    (ShelleyBlock (Praos Crypto) BabbageEra)
+    (ShelleyBlock (Praos Crypto) ConwayEra)
+conwayToDijkstraValuesTranslation ::
+  TranslateValues
+    (ShelleyBlock (Praos Crypto) ConwayEra)
+    (ShelleyBlock (Praos Crypto) DijkstraEra)
+PCons
+  -- Byron->Shelley moves the Byron UTxO into the Shelley tables via the diff
+  -- (tested by 'byronUtxosAreInsertsInShelleyUtxoDiff'); its value translation
+  -- is @const mempty@, so there is nothing to assert here.
+  _
+  ( PCons
+      shelleyToAllegraValuesTranslation
+      ( PCons
+          allegraToMaryValuesTranslation
+          ( PCons
+              maryToAlonzoValuesTranslation
+              ( PCons
+                  alonzoToBabbageValuesTranslation
+                  ( PCons
+                      babbageToConwayValuesTranslation
+                      ( PCons
+                          conwayToDijkstraValuesTranslation
+                          PNil
+                        )
+                    )
+                )
+            )
+        )
+    ) = tvs
+   where
+    tvs :: InPairs TranslateValues (CardanoEras Crypto)
+    tvs = translateValues hardForkEraTranslation
 
 -- | Check that the tables are correctly translated from one era to the next.
 testTablesTranslation ::
@@ -282,8 +349,10 @@ testUtxoUpgradeTranslation ::
     TranslateLedgerState
     (ShelleyBlock srcProto srcEra)
     (ShelleyBlock dstProto dstEra) ->
+  -- | The on-disk value translation as wired in the production 'EraTranslation'.
+  TranslateValues (ShelleyBlock srcProto srcEra) (ShelleyBlock dstProto dstEra) ->
   TestTree
-testUtxoUpgradeTranslation propLabel translateWithConfig =
+testUtxoUpgradeTranslation propLabel translateWithConfig valuesTranslation =
   testProperty propLabel $
     \(ts :: TestSetup (ShelleyBlock srcProto srcEra) (ShelleyBlock dstProto dstEra))
      (srcNes :: NewEpochState srcEra) ->
@@ -302,10 +371,44 @@ testUtxoUpgradeTranslation propLabel translateWithConfig =
         dstNes :: NewEpochState dstEra
         dstNes = Core.translateEra' (shelleyLedgerTranslationContext tsDestLedgerConfig) srcNes
         (_, dstValues) = splitUTxO dstNes
+        expected = Map.map Core.upgradeTxOut srcValues
      in checkCoverage $
           cover 50 (not (Map.null srcValues)) "UTxO set is not empty" $
-            Diff.null destDiff
-              .&&. (dstValues === Map.map Core.upgradeTxOut srcValues)
+            conjoin
+              [ -- The consensus state translation emits no table diff here.
+                property (Diff.null destDiff)
+              , -- The ledger's era translation upgrades the UTxO entries.
+                dstValues === expected
+              , -- The production on-disk value translation does the same: this
+                -- is the path the node uses to promote values across the era.
+                translateValuesWith valuesTranslation srcValues === expected
+              ]
+
+-- | Assert only that a boundary's on-disk value translation upgrades each
+-- 'TxOut' (the 'TxIn' key is era-stable). Unlike 'testUtxoUpgradeTranslation'
+-- this makes no claim about the state-level diff, so it also fits boundaries
+-- that carry diff-level changes (e.g. Shelley->Allegra deletes the AVVM
+-- addresses) yet still upgrade the surviving values.
+testValuesUpgrade ::
+  forall srcProto srcEra dstProto dstEra.
+  ( Arbitrary (NewEpochState srcEra)
+  , Show (NewEpochState srcEra)
+  , Core.EraTxOut srcEra
+  , Core.EraTxOut dstEra
+  , Core.PreviousEra dstEra ~ srcEra
+  , Eq (Core.TxOut dstEra)
+  , Show (Core.TxOut dstEra)
+  ) =>
+  String ->
+  TranslateValues (ShelleyBlock srcProto srcEra) (ShelleyBlock dstProto dstEra) ->
+  TestTree
+testValuesUpgrade propLabel valuesTranslation =
+  testProperty propLabel $ \(srcNes :: NewEpochState srcEra) ->
+    let (_, srcValues) = splitUTxO srcNes
+     in checkCoverage $
+          cover 50 (not (Map.null srcValues)) "UTxO set is not empty" $
+            translateValuesWith valuesTranslation srcValues
+              === Map.map Core.upgradeTxOut srcValues
 
 {-------------------------------------------------------------------------------
     Specific predicates
