@@ -6,8 +6,11 @@
 -- Keys that are merely left unset for the node to default appear as optional
 -- without a value.
 --
--- Tracing is not covered here: the node resolves it through its tracing system
--- (hermod/@trace-dispatcher@), whose configuration schema lives in that package.
+-- Tracing keys are surfaced here only as an informational placeholder (the
+-- @Tracing@ component): the node resolves them through its tracing system
+-- (hermod/@trace-dispatcher@), whose authoritative configuration schema lives in
+-- that package. They appear so that users can see the keys exist; their contents
+-- are not validated here.
 module Cardano.Configuration.Schema
   ( -- * Whole configuration
     wholeConfigSchema
@@ -21,6 +24,7 @@ module Cardano.Configuration.Schema
   , localConnectionsSchema
   , mempoolSchema
   , testingSchema
+  , tracingSchema
   ) where
 
 import Autodocodec.Schema (jsonSchemaViaCodec)
@@ -30,6 +34,7 @@ import Cardano.Configuration.File.Network (LocalConnectionsConfig, NetworkConfig
 import Cardano.Configuration.File.Protocol (ProtocolConfiguration)
 import Cardano.Configuration.File.Storage (StorageConfiguration)
 import Cardano.Configuration.File.Testing (TestingConfiguration)
+import Cardano.Configuration.File.Tracing (TracingConfiguration)
 import Data.Aeson (Value (..), object, toJSON, (.=))
 import qualified Data.Aeson.KeyMap as KM
 import Data.Foldable (toList)
@@ -56,10 +61,15 @@ mempoolSchema = polish rawMempoolSchema
 testingSchema :: Value
 testingSchema = polish rawTestingSchema
 
+-- | The tracing keys, surfaced as an informational placeholder. Their contents
+-- are owned and validated by @trace-dispatcher@, not by @cardano-config@.
+tracingSchema :: Value
+tracingSchema = polish rawTracingSchema
+
 -- The raw schemas as emitted by autodocodec-schema (descriptions in @$comment@,
 -- no @$schema@). Used internally for merging; 'polish' makes them public.
 rawStorageSchema, rawConsensusSchema, rawProtocolSchema, rawNetworkSchema :: Value
-rawLocalConnectionsSchema, rawMempoolSchema, rawTestingSchema :: Value
+rawLocalConnectionsSchema, rawMempoolSchema, rawTestingSchema, rawTracingSchema :: Value
 rawStorageSchema = toJSON (jsonSchemaViaCodec @(StorageConfiguration Maybe))
 rawConsensusSchema = toJSON (jsonSchemaViaCodec @(ConsensusConfiguration Maybe))
 rawProtocolSchema = toJSON (jsonSchemaViaCodec @(ProtocolConfiguration Maybe))
@@ -67,6 +77,7 @@ rawNetworkSchema = toJSON (jsonSchemaViaCodec @NetworkConfiguration)
 rawLocalConnectionsSchema = toJSON (jsonSchemaViaCodec @LocalConnectionsConfig)
 rawMempoolSchema = toJSON (jsonSchemaViaCodec @MempoolConfiguration)
 rawTestingSchema = toJSON (jsonSchemaViaCodec @TestingConfiguration)
+rawTracingSchema = toJSON (jsonSchemaViaCodec @TracingConfiguration)
 
 rawComponentSchemas :: [(Text, Value)]
 rawComponentSchemas =
@@ -77,6 +88,7 @@ rawComponentSchemas =
   , ("LocalConnections", rawLocalConnectionsSchema)
   , ("Mempool", rawMempoolSchema)
   , ("Testing", rawTestingSchema)
+  , ("Tracing", rawTracingSchema)
   ]
 
 -- | The JSON Schema of each configuration component, keyed by name.
@@ -87,9 +99,10 @@ configurationSchemas = [(name, polish s) | (name, s) <- rawComponentSchemas]
 -- by merging the component schemas (every component reads its keys from the
 -- same top-level object).
 --
--- Note: this does not include the tracing keys (resolved by the node's tracing
--- system), nor the alternative split-file form in which a component key (e.g.
--- @Storage@) is instead a path to a sub-file.
+-- Note: the tracing keys appear only as an opaque placeholder (resolved by the
+-- node's tracing system; see the module header). This also does not cover the
+-- alternative split-file form in which a component key (e.g. @Storage@) is
+-- instead a path to a sub-file.
 wholeConfigSchema :: Value
 wholeConfigSchema =
   polish $

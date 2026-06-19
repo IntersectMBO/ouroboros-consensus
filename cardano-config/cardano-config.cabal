@@ -35,6 +35,7 @@ library
     Cardano.Configuration.File.Protocol
     Cardano.Configuration.File.Storage
     Cardano.Configuration.File.Testing
+    Cardano.Configuration.File.Tracing
     Cardano.Configuration.Schema
 
   build-depends:

@@ -16,6 +16,7 @@ module Cardano.Configuration.File
   , LocalConnectionsConfig (..)
   , TestingConfiguration (..)
   , MempoolConfiguration (..)
+  , TracingConfiguration (..)
   ) where
 
 import Cardano.Configuration.File.Consensus
@@ -24,6 +25,7 @@ import Cardano.Configuration.File.Network
 import Cardano.Configuration.File.Protocol
 import Cardano.Configuration.File.Storage
 import Cardano.Configuration.File.Testing
+import Cardano.Configuration.File.Tracing
 import Control.Exception
 import qualified Data.ByteString as BS
 import Data.Functor.Identity (Identity (..))
@@ -48,6 +50,8 @@ data NodeConfigurationFromFileF f
   , localConnectionsConfig :: LocalConnectionsConfig
   , testingConfiguration :: TestingConfiguration
   , mempoolConfiguration :: MempoolConfiguration
+  , -- | Tracing keys, captured opaquely; see 'TracingConfiguration'.
+    tracingConfiguration :: TracingConfiguration
   }
   deriving Generic
 
@@ -103,6 +107,7 @@ parseConfigurationVersion1 root v =
     <*> parseJSON v
     <*> parseJSON v
     <*> parseJSON v
+    <*> parseJSON v
 
 -- | Parse the configuration file, but do not parse the children files
 -- referenced from it yet.
@@ -135,3 +140,4 @@ parseConfigurationFiles cfgFile = do
     <*> pure (localConnectionsConfig cfg)
     <*> pure (testingConfiguration cfg)
     <*> pure (mempoolConfiguration cfg)
+    <*> pure (tracingConfiguration cfg)
