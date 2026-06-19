@@ -24,14 +24,13 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
-import Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
-import Ouroboros.Consensus.Ledger.Tables.MapKind (ValuesMK)
+import Ouroboros.Consensus.Ledger.Basics (BlockSupportsUTxOHD (Values))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandleCollection (..)
   )
@@ -44,9 +43,6 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.Args
   )
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( ChunkInfo
-  )
-import Ouroboros.Consensus.Storage.LedgerDB.API
-  ( CanUpgradeLedgerTables
   )
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -99,7 +95,8 @@ data LiveResources blk m = LiveResources
   , lrSTracer :: ChainDB m blk -> m (Tracer m ())
   , lrConfig :: TopLevelConfig blk
   , lrChunkInfo :: ChunkInfo
-  , lrInitLedger :: ExtLedgerState blk ValuesMK
+  , lrInitLedger :: ExtLedgerState blk
+  , lrInitLedgerTables :: Values blk
   , lrCdb :: NodeDBs (StrictTMVar m MockFS)
   -- ^ The chain DB state consists of several transient parts and the
   -- immutable DB's virtual file system.
@@ -140,7 +137,6 @@ mkChainDb ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   LiveResources blk m ->
   m (ChainDB m blk, m (WithOrigin SlotNo))
@@ -160,6 +156,7 @@ mkChainDb resources = do
                   { mcdbTopLevelConfig = lrConfig
                   , mcdbChunkInfo = lrChunkInfo
                   , mcdbInitLedger = lrInitLedger
+                  , mcdbInitLedgerTables = lrInitLedgerTables
                   , mcdbRegistry = lrRegistry
                   , mcdbNodeDBs = lrCdb
                   }
@@ -180,7 +177,7 @@ mkChainDb resources = do
   void $ forkLinkedThread lrRegistry "AddBlockRunner" (void intAddBlockRunner)
   pure (chainDB, intCopyToImmutableDB)
  where
-  LiveResources{lrRegistry, lrTracer, lrConfig, lrCdb, lrLoEVar, lrChunkInfo, lrInitLedger} = resources
+  LiveResources{lrRegistry, lrTracer, lrConfig, lrCdb, lrLoEVar, lrChunkInfo, lrInitLedger, lrInitLedgerTables} = resources
 
 -- | Allocate all the resources that depend on the results of previous live
 -- intervals, the ChainDB and its persisted state.
@@ -193,7 +190,6 @@ restoreNode ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   LiveResources blk m ->
   LiveIntervalResult blk ->
@@ -223,7 +219,6 @@ lifecycleStart ::
   , InspectLedger blk
   , HasHardForkHistory blk
   , ConvertRawHash blk
-  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   (LiveInterval blk m -> m ()) ->
   LiveResources blk m ->
