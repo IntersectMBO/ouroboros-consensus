@@ -869,7 +869,13 @@ tests =
   -- 'DBState' values are projected straight out of it.
   initDBState = DBState testInitLedger (mockUtxo (simpleLedgerState testInitLedger))
 
-  genTxsFor i = fmap (fmap fst . fst) . genTxs i . dbsState
+  -- The mempool's 'applyTx' returns a table-free state (its 'mockUtxo' is
+  -- cleared, with the live UTxO carried in the 'DBState' values), so feed the
+  -- transaction generator a state whose 'mockUtxo' is the model's values.
+  genTxsFor i dbs = fmap (fmap fst . fst) $ genTxs i (withValues dbs)
+   where
+    withValues (DBState (SimpleLedgerState ms) vals) =
+      SimpleLedgerState ms{mockUtxo = vals}
 
 {-------------------------------------------------------------------------------
   Instances
