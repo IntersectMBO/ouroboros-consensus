@@ -1,5 +1,10 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE CPP #-}
+#if __GLASGOW_HASKELL__ >= 910
+{-# OPTIONS_GHC -Wno-x-shelley-empty-utxo #-}
+#else
+{-# OPTIONS_GHC -Wno-warnings-deprecations #-}
+#endif
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}

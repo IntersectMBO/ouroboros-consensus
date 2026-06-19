@@ -1,4 +1,9 @@
 {-# LANGUAGE CPP #-}
+#if __GLASGOW_HASKELL__ >= 910
+{-# OPTIONS_GHC -Wno-x-shelley-empty-utxo #-}
+#else
+{-# OPTIONS_GHC -Wno-warnings-deprecations #-}
+#endif
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -133,7 +138,7 @@ import Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim
   , applyBlockShim
   , applyTickShim
   , mkNewEpochStateNoUTxOs
-  , nesView
+  , newEpochStateWithEmptyUTxO
   )
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -302,11 +307,22 @@ data instance LedgerState (ShelleyBlock proto era) = ShelleyLedgerState
   }
   deriving Generic
 
--- | The (UTxO-free) Shelley 'SL.NewEpochState'. Reading it is safe: the UTxO
--- field is empty, so callers cannot learn UTxO entries from it.
+-- | The Shelley 'SL.NewEpochState'.
+--
+-- ⚠️  Its UTxO field is EMPTY by design: under UTxO-HD the live UTxO lives in the
+-- ledger tables (the LedgerDB backend), not the ledger state. Use this for the
+-- /non-UTxO/ parts only (protocol parameters, stake distribution, pools, …); to
+-- read the UTxO, go through the LedgerDB forker \/ ledger tables. See
+-- 'newEpochStateWithEmptyUTxO'.
 shelleyLedgerState ::
   LedgerState (ShelleyBlock proto era) -> SL.NewEpochState era
-shelleyLedgerState = nesView . shelleyLedgerStateNoUTxO
+shelleyLedgerState = newEpochStateWithEmptyUTxO . shelleyLedgerStateNoUTxO
+
+#if __GLASGOW_HASKELL__ >= 910
+{-# WARNING in "x-shelley-empty-utxo" shelleyLedgerState "This NewEpochState's UTxO is EMPTY by design: UTxO-HD keeps the live UTxO in the ledger tables, not the ledger state, so reading its UTxO yields an empty map. Read the UTxO via the LedgerDB forker / ledger tables. If you only need the non-UTxO parts, suppress with -Wno-x-shelley-empty-utxo (GHC >= 9.10) or -Wno-warnings-deprecations." #-}
+#else
+{-# WARNING shelleyLedgerState "This NewEpochState's UTxO is EMPTY by design: UTxO-HD keeps the live UTxO in the ledger tables, not the ledger state, so reading its UTxO yields an empty map. Read the UTxO via the LedgerDB forker / ledger tables. If you only need the non-UTxO parts, suppress with -Wno-x-shelley-empty-utxo (GHC >= 9.10) or -Wno-warnings-deprecations." #-}
+#endif
 
 deriving instance
   ShelleyBasedEra era =>
@@ -485,10 +501,19 @@ data instance Ticked LedgerState (ShelleyBlock proto era) = TickedShelleyLedgerS
   }
   deriving Generic
 
--- | The (UTxO-free) ticked Shelley 'SL.NewEpochState'.
+-- | The ticked Shelley 'SL.NewEpochState'.
+--
+-- ⚠️  Its UTxO field is EMPTY by design (see 'shelleyLedgerState'): the live
+-- UTxO lives in the ledger tables, not the state.
 tickedShelleyLedgerState ::
   Ticked LedgerState (ShelleyBlock proto era) -> SL.NewEpochState era
-tickedShelleyLedgerState = nesView . tickedShelleyLedgerStateNoUTxO
+tickedShelleyLedgerState = newEpochStateWithEmptyUTxO . tickedShelleyLedgerStateNoUTxO
+
+#if __GLASGOW_HASKELL__ >= 910
+{-# WARNING in "x-shelley-empty-utxo" tickedShelleyLedgerState "This ticked NewEpochState's UTxO is EMPTY by design: UTxO-HD keeps the live UTxO in the ledger tables, not the ledger state. Read the UTxO via the LedgerDB forker / ledger tables. If you only need the non-UTxO parts, suppress with -Wno-x-shelley-empty-utxo (GHC >= 9.10) or -Wno-warnings-deprecations." #-}
+#else
+{-# WARNING tickedShelleyLedgerState "This ticked NewEpochState's UTxO is EMPTY by design: UTxO-HD keeps the live UTxO in the ledger tables, not the ledger state. Read the UTxO via the LedgerDB forker / ledger tables. If you only need the non-UTxO parts, suppress with -Wno-x-shelley-empty-utxo (GHC >= 9.10) or -Wno-warnings-deprecations." #-}
+#endif
 
 untickedShelleyLedgerTipPoint ::
   TickedLedgerState (ShelleyBlock proto era) ->
@@ -786,7 +811,7 @@ encodeShelleyLedgerState
       mconcat $
         [ CBOR.encodeListLen 4
         , encodeWithOrigin encodeShelleyTip shelleyLedgerTip
-        , toCBOR (nesView shelleyLedgerStateNoUTxO)
+        , toCBOR (newEpochStateWithEmptyUTxO shelleyLedgerStateNoUTxO)
         , encodeShelleyTransition shelleyLedgerTransition
         , encodeStrictMaybe toCBOR shelleyLedgerLatestPerasCertRound
         ]
