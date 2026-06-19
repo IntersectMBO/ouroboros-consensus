@@ -1,20 +1,9 @@
 module Cardano.Tools.DBSynthesizer.Types (module Cardano.Tools.DBSynthesizer.Types) where
 
 import Cardano.Node.Types (ProtocolFilepaths)
-import Data.Aeson as Aeson (Value)
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block.Abstract (SlotNo)
 import Ouroboros.Consensus.Shelley.Node (ShelleyGenesis)
-
-data NodeConfigStub = NodeConfigStub
-  { ncsNodeConfig :: !Aeson.Value
-  , ncsAlonzoGenesisFile :: !FilePath
-  , ncsShelleyGenesisFile :: !FilePath
-  , ncsByronGenesisFile :: !FilePath
-  , ncsConwayGenesisFile :: !FilePath
-  , ncsDijkstraGenesisFile :: !(Maybe FilePath)
-  }
-  deriving Show
 
 data NodeFilePaths = NodeFilePaths
   { nfpConfig :: !FilePath
@@ -52,8 +41,7 @@ data DBSynthesizerOptions = DBSynthesizerOptions
   deriving Show
 
 data DBSynthesizerConfig = DBSynthesizerConfig
-  { confConfigStub :: NodeConfigStub
-  , confOptions :: DBSynthesizerOptions
+  { confOptions :: DBSynthesizerOptions
   , confProtocolCredentials :: ProtocolFilepaths
   , confShelleyGenesis :: ShelleyGenesis
   , confDbDir :: FilePath
