@@ -109,13 +109,13 @@ resolveConfiguration cli file =
               }
     , networkConfiguration = runIdentity $ File.networkConfiguration file
     , localConnectionsConfig =
-        let lcc = File.localConnectionsConfig file
+        let lcc = runIdentity $ File.localConnectionsConfig file
          in File.LocalConnectionsConfig
               (CLI.socketPath cli <|> File.pncSocketPath lcc)
               (File.pncEnableRpc lcc)
               (File.pncRpcSocketPath lcc)
-    , testingConfiguration = File.testingConfiguration file
-    , mempoolConfiguration = File.mempoolConfiguration file
+    , testingConfiguration = runIdentity $ File.testingConfiguration file
+    , mempoolConfiguration = runIdentity $ File.mempoolConfiguration file
     , configFilePath = CLI.configFilePath cli
     , topologyFile = CLI.topologyFile cli
     , validateDatabase = CLI.validateDatabase cli

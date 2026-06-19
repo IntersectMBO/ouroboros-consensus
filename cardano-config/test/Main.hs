@@ -22,6 +22,7 @@ main = do
       , decodeCase "examples/network.json" (eitherDecodeFileStrict' "examples/network.json" :: IO (Either String NetworkConfiguration))
       , parseCase "examples/fullconfig.json"
       , parseCase "examples/split.json"
+      , parseCase "examples/split-all.json"
       ]
   let failed = length (filter not results)
   if failed == 0

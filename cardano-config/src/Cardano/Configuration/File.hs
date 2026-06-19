@@ -47,10 +47,12 @@ data NodeConfigurationFromFileF f
   , consensusConfiguration :: f (ConsensusConfiguration Maybe)
   , protocolConfiguration :: f (ProtocolConfiguration Maybe)
   , networkConfiguration :: f NetworkConfiguration
-  , localConnectionsConfig :: LocalConnectionsConfig
-  , testingConfiguration :: TestingConfiguration
-  , mempoolConfiguration :: MempoolConfiguration
-  , -- | Tracing keys, captured opaquely; see 'TracingConfiguration'.
+  , localConnectionsConfig :: f LocalConnectionsConfig
+  , testingConfiguration :: f TestingConfiguration
+  , mempoolConfiguration :: f MempoolConfiguration
+  , -- | Tracing keys, captured opaquely; see 'TracingConfiguration'. Unlike the
+    -- other components this is never read from a sub-file: the node's tracing
+    -- system resolves its own @HermodTracing@ file indirection.
     tracingConfiguration :: TracingConfiguration
   }
   deriving Generic
@@ -104,9 +106,9 @@ parseConfigurationVersion1 root v =
     <*> subFileParser root "Consensus" parseJSON v
     <*> subFileParser root "Protocol" parseJSON v
     <*> subFileParser root "Network" parseJSON v
-    <*> parseJSON v
-    <*> parseJSON v
-    <*> parseJSON v
+    <*> subFileParser root "LocalConnections" parseJSON v
+    <*> subFileParser root "Testing" parseJSON v
+    <*> subFileParser root "Mempool" parseJSON v
     <*> parseJSON v
 
 -- | Parse the configuration file, but do not parse the children files
@@ -137,7 +139,7 @@ parseConfigurationFiles cfgFile = do
     <*> (Identity <$> consensusConfiguration cfg)
     <*> (Identity <$> protocolConfiguration cfg)
     <*> (Identity <$> networkConfiguration cfg)
-    <*> pure (localConnectionsConfig cfg)
-    <*> pure (testingConfiguration cfg)
-    <*> pure (mempoolConfiguration cfg)
+    <*> (Identity <$> localConnectionsConfig cfg)
+    <*> (Identity <$> testingConfiguration cfg)
+    <*> (Identity <$> mempoolConfiguration cfg)
     <*> pure (tracingConfiguration cfg)

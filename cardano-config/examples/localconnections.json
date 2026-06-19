@@ -1,0 +1,4 @@
+{
+    "SocketPath": "node.socket",
+    "EnableRpc": false
+}
