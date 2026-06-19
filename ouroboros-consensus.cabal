@@ -1850,20 +1850,6 @@ executable db-immutaliser
     ouroboros-consensus:unstable-cardano-tools,
     with-utf8,
 
-executable db-synthesizer
-  import: common-exe
-  hs-source-dirs: ouroboros-consensus-cardano/app
-  main-is: db-synthesizer.hs
-  build-depends:
-    base,
-    cardano-crypto-class,
-    optparse-applicative,
-    ouroboros-consensus,
-    unstable-cardano-tools,
-    with-utf8,
-
-  other-modules: DBSynthesizer.Parsers
-
 executable db-truncater
   import: common-exe
   hs-source-dirs: ouroboros-consensus-cardano/app
@@ -1947,6 +1933,7 @@ test-suite tools-test
   build-depends:
     aeson,
     base,
+    fs-api,
     ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools, unstable-consensus-testlib, unstable-protocol-testlib},
     QuickCheck,
     tasty,
