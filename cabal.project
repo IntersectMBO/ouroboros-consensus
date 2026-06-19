@@ -18,7 +18,29 @@ index-state:
   -- Bump this if you need newer packages from CHaP
   , cardano-haskell-packages 2026-07-02T10:10:00Z
 
+allow-newer:
+  -- cardano-config needs trace-dispatcher-2.13 (hermod #18 ConfigSource); the
+  -- ConfigSource change is additive, so the network/diffusion stack builds against it too.
+  , *:trace-dispatcher
+
 packages: .
+
+-- cardano-config
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-config
+  tag: 50994eb21ae1d99528ce468cc5fba08ba67ca1ee
+  --sha256: sha256-h+tYgNmkT+kBQcuE4ujOmbv6WoT8uLVPE2phjtPz4LQ=
+
+-- trace-dispatcher (hermod tracing) — provides the ConfigSource-based tracing
+-- configuration parser that cardano-config uses to resolve the HermodTracing key.
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/hermod-tracing
+  tag: 3d7aeb85d9ef01df48a44c751e45609b4c6dea00
+  --sha256: sha256-r4bVm4x2akrCLcg5f0TG6aovCGqNnZkiiBckA3YCz7Q=
+  subdir:
+    trace-dispatcher
 
 -- kes-agent on branch f-f/allow-crypto-class-2.5
 source-repository-package
