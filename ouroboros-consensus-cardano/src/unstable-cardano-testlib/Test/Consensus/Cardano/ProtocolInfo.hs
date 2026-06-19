@@ -17,6 +17,7 @@ module Test.Consensus.Cardano.ProtocolInfo
 
     -- * ProtocolInfo elaboration
   , mkSimpleTestProtocolInfo
+  , mkSimpleTestProtocolInfoForging
   , mkTestProtocolInfo
   , protocolVersionZero
   ) where
@@ -189,10 +190,44 @@ mkSimpleTestProtocolInfo
   byronSlotLenghtInSeconds
   shelleySlotLengthInSeconds
   protocolVersion
+  hardForkTriggers =
+    (\(protocolInfo, _, _) -> protocolInfo)
+      <$> mkSimpleTestProtocolInfoForging
+        decentralizationParam
+        securityParam
+        byronSlotLenghtInSeconds
+        shelleySlotLengthInSeconds
+        protocolVersion
+        hardForkTriggers
+
+-- | Like 'mkSimpleTestProtocolInfo', but additionally returns the block
+-- forgers and the Shelley genesis. Callers that forge (eg db-synthesizer)
+-- need the forgers, and the genesis for its epoch length.
+mkSimpleTestProtocolInfoForging ::
+  forall c.
+  (CardanoHardForkConstraints c, AgentCrypto c) =>
+  -- | Network decentralization parameter.
+  Shelley.DecentralizationParam ->
+  SecurityParam ->
+  ByronSlotLengthInSeconds ->
+  ShelleySlotLengthInSeconds ->
+  SL.ProtVer ->
+  CardanoHardForkTriggers ->
+  IO
+    ( ProtocolInfo (CardanoBlock c)
+    , Tracer.Tracer IO KESAgentClientTrace -> IO [MkBlockForging IO (CardanoBlock c)]
+    , ShelleyGenesis
+    )
+mkSimpleTestProtocolInfoForging
+  decentralizationParam
+  securityParam
+  byronSlotLenghtInSeconds
+  shelleySlotLengthInSeconds
+  protocolVersion
   hardForkTriggers = do
     fs <- SomeHasFS <$> Sim.simHasFS' MockFS.empty
-    fst
-      <$> mkTestProtocolInfo @IO
+    (protocolInfo, blockForging) <-
+      mkTestProtocolInfo @IO
         fs
         (CoreNodeId 0, coreNodeShelley)
         shelleyGenesis
@@ -203,6 +238,7 @@ mkSimpleTestProtocolInfo
         (Just $ PBftSignatureThreshold 1)
         protocolVersion
         hardForkTriggers
+    pure (protocolInfo, blockForging, shelleyGenesis)
    where
     aByronProtocolVersion =
       CC.Update.ProtocolVersion 0 0 0

@@ -1,23 +1,7 @@
 module Cardano.Tools.DBSynthesizer.Types (module Cardano.Tools.DBSynthesizer.Types) where
 
-import Cardano.Node.Types (ProtocolFilepaths)
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block.Abstract (SlotNo)
-import Ouroboros.Consensus.Shelley.Node (ShelleyGenesis)
-
-data NodeFilePaths = NodeFilePaths
-  { nfpConfig :: !FilePath
-  , nfpChainDB :: !FilePath
-  }
-  deriving Show
-
-data NodeCredentials = NodeCredentials
-  { credCertFile :: !(Maybe FilePath)
-  , credVRFFile :: !(Maybe FilePath)
-  , credKESFile :: !(Maybe FilePath)
-  , credBulkFile :: !(Maybe FilePath)
-  }
-  deriving Show
 
 data ForgeLimit
   = ForgeLimitBlock !Word64
@@ -37,14 +21,5 @@ data DBSynthesizerOpenMode
 data DBSynthesizerOptions = DBSynthesizerOptions
   { synthLimit :: !ForgeLimit
   , synthOpenMode :: !DBSynthesizerOpenMode
-  }
-  deriving Show
-
-data DBSynthesizerConfig = DBSynthesizerConfig
-  { confOptions :: DBSynthesizerOptions
-  , confProtocolCredentials :: ProtocolFilepaths
-  , confShelleyGenesis :: ShelleyGenesis
-  , confDbDir :: FilePath
-  , confNodeConfigDir :: FilePath
   }
   deriving Show
