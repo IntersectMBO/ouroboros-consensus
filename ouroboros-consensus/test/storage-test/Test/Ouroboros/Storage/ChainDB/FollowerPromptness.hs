@@ -23,7 +23,7 @@ import Cardano.Ledger.BaseTypes (nonZero)
 import Control.Monad (forever)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), contramapM, traceWith)
+import Control.Tracer (Tracer (..), contramapM, mkTracer, traceWith)
 import Data.Foldable (for_)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -129,7 +129,7 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
 
   (withTime -> tracer, getTrace) <- recordingTracerTVar
 
-  let chainDBTracer = Tracer \case
+  let chainDBTracer = mkTracer \case
         ChainDBImpl.TraceAddBlockEvent ev -> do
           traceWith tracer $ "ChainDB: " <> show ev
           case ev of

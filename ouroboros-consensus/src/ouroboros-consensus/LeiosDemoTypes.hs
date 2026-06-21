@@ -38,14 +38,20 @@ import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.Leios
   ( Committee (..)
   , LeiosCert (..)
+  , LeiosDSIGN
   , LeiosSignature
   , LeiosSigningKey
   , LeiosVerificationKey
+  , LeiosVoter (..)
   , VerificationError
   , VoterId (..)
   , Weight
-  , bitFieldToBytes
+  , committeeSize
+  , decodeVoterId
+  , encodeVoterId
+  , getVoterId
   , leiosSignContext
+  , resolveVoter
   , verifyLeiosCert
   )
 import Cardano.Crypto.Util (SignableRepresentation (..))
@@ -79,7 +85,8 @@ import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.String (fromString)
-import qualified Data.Vector as V
+import Data.Vector.Strict (Vector)
+import qualified Data.Vector.Strict as V
 import Data.Word (Word16, Word32, Word64)
 import Debug.Trace (trace)
 import GHC.Generics (Generic)
@@ -90,14 +97,12 @@ import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import qualified Numeric
-import Ouroboros.Consensus.Block.Abstract (BlockProtocol)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , TxMeasureMetrics
   , txMeasureMetricTxSizeBytes
   )
-import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks)
 import Text.Pretty.Simple (pShow)
@@ -222,7 +227,7 @@ data LeiosBlockTxsRequest
     MkLeiosBlockTxsRequest
       !LeiosPoint
       [(Word16, Word64)]
-      !(V.Vector TxHash)
+      !(Vector TxHash)
 
 prettyLeiosBlockTxsRequest :: LeiosBlockTxsRequest -> String
 prettyLeiosBlockTxsRequest (MkLeiosBlockTxsRequest p bitmaps _txHashes) =
@@ -445,7 +450,7 @@ hashLeiosTx =
 -- | An Endorser Block as it is submitted through the network.
 -- TODO: Keep track of the slot of an EB?
 data LeiosEb = MkLeiosEb
-  { leiosEbTxs :: !(V.Vector (TxHash, BytesSize))
+  { leiosEbTxs :: !(Vector (TxHash, BytesSize))
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -497,7 +502,7 @@ leiosEbBodyItems eb =
 
 leiosEbBytesSize :: LeiosEb -> BytesSize
 leiosEbBytesSize (MkLeiosEb items) =
-  cborIntBytesSize (V.length items) + V.sum (V.map (each . snd) items)
+  cborIntBytesSize (length items) + sum (fmap (each . snd) items)
  where
   each sz = cborBytesSize 32 + cborIntBytesSize sz
 
@@ -518,11 +523,11 @@ hashLeiosEb =
 
 encodeLeiosEb :: LeiosEb -> Encoding
 encodeLeiosEb (MkLeiosEb v) =
-  V.foldl
+  foldl
     ( \acc (MkTxHash bytes, txBytesSize) ->
         acc <> CBOR.encodeBytes bytes <> CBOR.encodeWord32 txBytesSize
     )
-    (CBOR.encodeMapLen $ fromIntegral $ V.length v)
+    (CBOR.encodeMapLen $ fromIntegral $ length v)
     v
 
 decodeLeiosEb :: Decoder s LeiosEb
@@ -545,29 +550,12 @@ mkCommitteeEveryoneVotes :: Real w => [(LeiosVerificationKey, w)] -> Committee
 mkCommitteeEveryoneVotes inputs =
   Committee
     . V.fromList
-    . sortOn fst
-    $ [ (toRational weight / totalWeight, vk)
+    . sortOn voterWeight
+    $ [ LeiosVoter{voterWeight = toRational weight / totalWeight, voterVKey = vk}
       | (vk, weight) <- nubBy ((==) `on` fst) inputs
       ]
  where
   totalWeight = toRational . sum $ snd <$> inputs
-
--- | Resolve a 'VoterId' to its corresponding 'VotingKey' in the 'Committee'.
-resolveVoterId :: Committee -> VoterId -> Maybe (Weight, LeiosVerificationKey)
-resolveVoterId committee (VoterId idx) = committee.committeeVoters V.!? fromIntegral idx
-
--- ** VoterId
-
-encodeVoterId :: VoterId -> Encoding
-encodeVoterId (VoterId idx) = CBOR.encodeWord16 idx
-
-decodeVoterId :: Decoder s VoterId
-decodeVoterId = VoterId <$> CBOR.decodeWord16
-
--- | Determine the 'VoterId' on a 'Committee'.
-getVoterId :: LeiosVerificationKey -> Committee -> Maybe VoterId
-getVoterId vk committee =
-  VoterId . fromIntegral <$> V.findIndex ((== vk) . snd) committee.committeeVoters
 
 -- ** Vote
 
@@ -634,12 +622,12 @@ signLeiosVote sk voterId point =
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
 validateLeiosVote :: Committee -> LeiosVote -> Either VoteInvalid Weight
 validateLeiosVote committee MkLeiosVote{point, voterId, voteSignature} =
-  case resolveVoterId committee voterId of
+  case resolveVoter committee voterId of
     Nothing -> Left SignerNotInCommittee
-    Just (weight, vk) ->
-      case verifyDSIGN leiosSignContext vk point voteSignature of
+    Just voter ->
+      case verifyDSIGN leiosSignContext voter.voterVKey point voteSignature of
         Left _ -> Left InvalidSignature
-        Right () -> Right weight
+        Right () -> Right voter.voterWeight
 
 data VoteInvalid
   = InvalidSignature
@@ -724,7 +712,7 @@ messageLeiosFetchToObject = \case
   MsgLeiosBlockTxs (MkLeiosPoint ebSlot ebHash) bitmaps txs ->
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosBlockTxs"
-      , "numTxs" .= Aeson.Number (fromIntegral (V.length txs))
+      , "numTxs" .= Aeson.Number (fromIntegral (length txs))
       , "txsBytesSize" .= Aeson.Number (fromIntegral $ sum $ fmap (BS.length . cbor) txs)
       , "ebSlot" .= ebSlot
       , "ebHash" .= prettyEbHash ebHash
@@ -805,7 +793,7 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosBlockForged"
       , "slot" .= slot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
-      , "numTxs" .= V.length (leiosEbTxs eb)
+      , "numTxs" .= length (leiosEbTxs eb)
       , "ebSize" .= leiosEbBytesSize eb
       , "closureSize" .= unByteSize32 (txMeasureMetricTxSizeBytes ebMeasure)
       , "mempoolRestSize" .= unByteSize32 (txMeasureMetricTxSizeBytes mempoolRestMeasure)

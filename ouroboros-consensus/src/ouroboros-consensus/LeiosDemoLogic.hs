@@ -32,8 +32,8 @@ import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
-import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV
+import qualified Data.Vector.Strict as V
+import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
 import LeiosDemoDb
   ( LeiosDbConnection

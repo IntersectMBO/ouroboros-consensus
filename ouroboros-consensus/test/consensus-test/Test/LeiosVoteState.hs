@@ -26,11 +26,11 @@ import LeiosDemoTypes
   , LeiosSigningKey
   , LeiosVote (..)
   , VoteInvalid (..)
-  , VoterId (MkVoterId)
+  , VoterId (..)
+  , committeeSize
   , getVoterId
   , mkCommitteeEveryoneVotes
   , signLeiosVote
-  , voters
   )
 import LeiosVoteState
   ( AddVoteResult (..)
@@ -218,8 +218,8 @@ prop_signerNotInCommittee =
     forAll (genKeyNotIn testCommittee) $ \key ->
       forAll genPoint $ \p -> property $ runSimOrThrow $ do
         -- VoterId must be outside of committe, otherwise this is just a bad signature
-        let committeeSize = length $ testCommittee.committee.voters
-        let vote = signLeiosVote key (MkVoterId $ fromIntegral committeeSize) p
+        let n = committeeSize testCommittee.committee
+        let vote = signLeiosVote key (VoterId $ fromIntegral n) p
         st <- newLeiosVoteState (pure (Just testCommittee.committee))
         sub <- subscribeVotes st
         r <- addVote st vote

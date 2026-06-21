@@ -21,7 +21,7 @@ import qualified Data.ByteString as BS
 import Data.Function ((&))
 import qualified Data.Map.Strict as Map
 import Data.Time.Clock (DiffTime)
-import qualified Data.Vector as V
+import qualified Data.Vector.Strict as V
 import LeiosDemoDb
   ( LeiosDbHandle (..)
   , LeiosEbNotification (..)
