@@ -256,8 +256,21 @@ the repo root alongside this file).
 ## Status
 
 - [x] **Phase 0** — skin types in `Basics.hs` (+ exports), lib green (239 modules). *Done: the 6 skin defs + export group; unused so far, so lib stayed green.*
+### ⚠ Finding (Phase 1): `main`'s quantified MK constraints are infeasible single-arg
+
+`main`'s `IsLedger` requires `forall mk. EqMK mk => Eq (l blk mk)` (and Show/
+NoThunks). That works only because `main`'s `mk` is *two-arg* (`mk k v`), so the
+payload is the plain type *variables* `k`/`v`. The skin's `mk` is *single-arg*
+(forced — the HFC has no `TxIn`/`TxOut`), so each payload is a type-family
+application (`Keys blk`), and **GHC forbids type families in quantified
+constraints** (`GHC-22979`). So `EqMK`/`ShowMK`/`NoThunksMK` are *not* restored;
+`IsLedger` uses **concrete-`mk` constraints** (`Eq (l blk EmptyMK)`, …) instead.
+Consequence: that one superclass block does not cancel against `main` (a small,
+localised residue). Add more concrete map-kinds there if downstream needs them.
+
 - [~] **Phase 1** — `mk` on state functors lib-wide (red stretch) ← current. **Foundation in `Basics.hs` done:** `MapKind`/`LedgerStateKind`/`StateKind` kind vocab; `LedgerTables`/`EmptyMK`/`KeysMK`/`ValuesMK`/`DiffMK` skin newtypes; `HasLedgerTables` class + `forgetLedgerTables`/`emptyLedgerTables`; `data family LedgerState blk mk` (kind `Type -> LedgerStateKind`); `LedgerCfg :: StateKind -> Type -> Type`; `decodeValues :: LedgerState blk EmptyMK -> …`.
-  - **NEXT (the cascade):** the generic ledger-state variable `l` in `IsLedger`, `GetTip`, `ApplyBlock`, `LedgerResult` etc. is still kinded `Type -> Type`; re-kind it to `StateKind` and thread `l blk` → `l blk mk` (and `applyChainTick` back to `… -> l blk EmptyMK -> … (Ticked l blk DiffMK)`). Head of cascade: `Basics.hs:202` and `:261` (`LedgerCfg l blk` with `l :: * -> *`). After `Basics` is internally consistent, GHC's first-failing-module masking lifts and the errors move downstream (Extended → TypeFamilyWrappers `Flip` restore → the 4 lib `data instance`s → the apply-path/signature sweep).
+  - **`Basics.hs` now internally consistent** (`IsLedger` re-kinded to `StateKind` + concrete-mk constraints; `GetTip :: LedgerStateKind -> Constraint`, `getTip :: l mk -> Point l`; `applyChainTickLedgerResult`/`applyChainTick` re-dressed to `l blk EmptyMK -> (LedgerResult blk) (Ticked l blk DiffMK)` matching `main`; `QuantifiedConstraints` enabled). Errors have moved downstream.
+  - **NEXT (the cascade, in dependency order):** `Ledger/Abstract.hs` (the `ApplyBlock` class — re-dress `applyBlockLedgerResult` etc. to `main`'s `Ticked l blk ValuesMK -> … (l blk DiffMK)`), then `Extended.hs` (`ExtLedgerState blk mk` + its tables wrapper), `TypeFamilyWrappers.hs` (restore `Flip`/`FlipTickedLedgerState`), the 4 lib `data instance`s (HFC `Basics`/`Ledger`, `Dual`, `LedgerSeq`), then the apply-path/signature sweep across the rest of the lib. Use `git show e6fad0630:<file>` per file as the cancellation target.
   - **Reference:** `mk-skin-spike-hfc.patch` (validated interface shapes); `git show e6fad0630:<file>` per file = the cancellation target.
 - [ ] Phase 2 — abstract apply path
 - [ ] Phase 3 — Storage
