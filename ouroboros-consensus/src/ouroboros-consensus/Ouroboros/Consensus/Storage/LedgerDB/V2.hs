@@ -74,7 +74,6 @@ mkInitDb ::
   , Backend m backend blk
   , IOLike m
   , ResolveLeiosBlock blk
-  , ApplyLeiosTx blk
   , HasLeiosVoting blk
   ) =>
   Complete LedgerDbArgs m blk ->
@@ -159,7 +158,6 @@ implMkLedgerDb ::
   , HasHardForkHistory blk
   , ApplyBlock l blk
   , ResolveLeiosBlock blk
-  , ApplyLeiosTx blk
   , HasLeiosVoting blk
   , l ~ ExtLedgerState blk
   ) =>
@@ -308,7 +306,6 @@ implValidate ::
   , StandardHash l
   , LedgerSupportsProtocol blk
   , ResolveLeiosBlock blk
-  , ApplyLeiosTx blk
   , HasLeiosVoting blk
   , l ~ ExtLedgerState blk
   ) =>

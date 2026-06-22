@@ -36,6 +36,7 @@ import Cardano.Ledger.Api.Tx.In (TxIn (..))
 import Cardano.Ledger.BaseTypes (ProtVer (..), StrictMaybe (..), TxIx (..), knownNonZeroBounded)
 import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core (TopTx, sizeTxF, txSeqBlockBodyL)
+import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
   ( esLState
   , lsCertState
@@ -43,7 +44,6 @@ import qualified Cardano.Ledger.Shelley.LedgerState as SL
   , nesEs
   , utxosInstantStake
   )
-import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
@@ -82,7 +82,7 @@ import Ouroboros.Consensus.Cardano
   )
 import Ouroboros.Consensus.Cardano.Block (pattern BlockDijkstra, pattern LedgerStateDijkstra)
 import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..), protocolInfoCardano)
-import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig)
+import Ouroboros.Consensus.Config (SecurityParam (..), TopLevelConfig, configLedger)
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
 import Ouroboros.Consensus.Ledger.Abstract
   ( ComputeLedgerEvents (OmitLedgerEvents)
@@ -571,9 +571,11 @@ foldWithResolution leiosDb cfg blks initState =
           error "foldWithResolution: CertRB but no announcement on parent chain-dep state"
         Just (point, _) -> do
           closureTxs <- resolveLeiosClosure leiosDb point blk
-          case applyLeiosClosure cfg (blockSlot blk) closureTxs state of
+          let ls = ledgerState state
+              lcfg = configLedger (getExtLedgerCfg cfg)
+          case applyLeiosClosure lcfg (blockSlot blk) closureTxs ls of
             Left err -> error $ "foldWithResolution: applyLeiosClosure failed: " <> show err
-            Right st -> pure st
+            Right ls' -> pure state{ledgerState = ls'}
     pure $
       applyDiffs stateAfterClosure $
         tickThenReapply OmitLedgerEvents cfg blk stateAfterClosure

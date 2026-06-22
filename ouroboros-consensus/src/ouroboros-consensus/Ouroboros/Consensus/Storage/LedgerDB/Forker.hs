@@ -46,7 +46,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
     -- * Validation
   , AnnLedgerError (..)
   , AnnLedgerError'
-  , ApplyLeiosTx
   , ResolveBlock
   , ResolveLeiosBlock (..)
   , resolveLeiosBlock
@@ -85,17 +84,15 @@ import LeiosDemoTypes
   )
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config (configLedger)
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
 import Ouroboros.Consensus.Ledger.Tables.Utils
   ( calculateDifference
   , prependDiffs
   , trackingToDiffs
-  )
-import Ouroboros.Consensus.Ledger.SupportsMempool
-  ( GenTx
-  , LedgerSupportsMempool (..)
   )
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
@@ -341,7 +338,6 @@ validate ::
   , ApplyBlock l blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , ApplyLeiosTx blk
   , l ~ ExtLedgerState blk
   ) =>
   ComputeLedgerEvents ->
@@ -416,7 +412,6 @@ switch ::
   , MonadSTM m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , ApplyLeiosTx blk
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -479,7 +474,6 @@ applyBlock ::
   , MonadSTM m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , ApplyLeiosTx blk
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -541,32 +535,44 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                 closureTxs <- resolveLeiosClosure leiosDb announcedPoint b
                 -- UTXO-HD of the whole closure
                 let blkKeys = getBlockKeySets b
-                    closureKeys = foldMap (castLedgerTables . getTransactionKeySets) closureTxs
+                    closureKeys = foldMap (castLedgerTables . leiosClosureTxKeySets) closureTxs
                 lsBeforeEB <- withLedgerTables extSt <$> forkerReadTables fo (closureKeys <> blkKeys)
                 let tip = castPoint $ getTip lsBeforeEB
                 -- FIXME: Use the announcing block slot for txs
-                case applyLeiosClosure cfg (blockSlot b) closureTxs lsBeforeEB of
+                case applyLeiosClosure
+                  (configLedger (getExtLedgerCfg cfg))
+                  (blockSlot b)
+                  closureTxs
+                  (ledgerState lsBeforeEB) of
                   Left lerr ->
                     -- REVIEW: Better annotation than CertRB point possible?
-                    pure (Left (AnnLedgerError tip (blockRealPoint b) lerr))
-                  Right lsAfterEB ->
-                    case runExcept $ tickThenApply evs cfg b lsAfterEB of
-                      Left lerr ->
-                        pure (Left (AnnLedgerError tip (blockRealPoint b) lerr))
-                      Right blockDiff ->
-                        -- The closure's table modifications happened
-                        -- between 'lsBeforeEB' and 'lsAfterEB' and are
-                        -- /not/ in 'blockDiff' (which is a diff relative
-                        -- to 'lsAfterEB'). 'forkerPush' interprets the
-                        -- pushed diff as being on top of 'extSt' (the
-                        -- LedgerDB anchor), so without composition the
-                        -- closure inputs/outputs would be silently
-                        -- dropped from the changelog and unavailable to
-                        -- the next block's 'forkerReadTables'.
-                        let closureDiff =
-                              trackingToDiffs
-                                (calculateDifference lsBeforeEB lsAfterEB)
-                         in pure (Right (prependDiffs closureDiff blockDiff))
+                    pure
+                      ( Left
+                          ( AnnLedgerError
+                              tip
+                              (blockRealPoint b)
+                              (ExtValidationErrorLedger lerr)
+                          )
+                      )
+                  Right newLst ->
+                    let lsAfterEB = lsBeforeEB{ledgerState = newLst}
+                     in case runExcept $ tickThenApply evs cfg b lsAfterEB of
+                          Left lerr ->
+                            pure (Left (AnnLedgerError tip (blockRealPoint b) lerr))
+                          Right blockDiff ->
+                            -- The closure's table modifications happened
+                            -- between 'lsBeforeEB' and 'lsAfterEB' and are
+                            -- /not/ in 'blockDiff' (which is a diff relative
+                            -- to 'lsAfterEB'). 'forkerPush' interprets the
+                            -- pushed diff as being on top of 'extSt' (the
+                            -- LedgerDB anchor), so without composition the
+                            -- closure inputs/outputs would be silently
+                            -- dropped from the changelog and unavailable to
+                            -- the next block's 'forkerReadTables'.
+                            let closureDiff =
+                                  trackingToDiffs
+                                    (calculateDifference lsBeforeEB lsAfterEB)
+                             in pure (Right (prependDiffs closureDiff blockDiff))
       Nothing ->
         -- Not a CertRB: ordinary Praos block
         withValues b $ \v ->
@@ -596,7 +602,6 @@ applyThenPush ::
   , MonadSTM m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , ApplyLeiosTx blk
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -618,7 +623,6 @@ applyThenPushMany ::
   , MonadSTM m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
-  , ApplyLeiosTx blk
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -655,16 +659,6 @@ applyThenPushMany leiosDb trace evs cfg aps fo doResolveBlock = pushAndTrace aps
 -- validation mode.
 type ResolveBlock m blk = RealPoint blk -> m blk
 
--- | Constraint alias for the per-tx ledger-application machinery the
--- Leios apply path uses. The CertRB apply flow folds the EB closure's
--- txs onto the unticked parent ledger state via 'applyLeiosClosure'
--- (which, for Dijkstra, drops down to the ledger's 'ApplyTx' class),
--- and we need 'getTransactionKeySets' to read the right values upfront.
---
--- Aliased rather than using 'LedgerSupportsMempool' directly so call
--- sites read as a Leios concern rather than a mempool concern.
-type ApplyLeiosTx blk = LedgerSupportsMempool blk
-
 -- | Resolve a block before it is applied to the ledger.
 --
 -- In Leios, a Dijkstra-era block may carry only a 'LeiosCert' on its body
@@ -693,6 +687,19 @@ class ResolveLeiosBlock blk where
     m [GenTx blk]
   resolveLeiosClosure _ _ _ = pure []
 
+  -- | The ledger keys read by a closure tx — what 'forkerReadTables' needs
+  -- to load before 'applyLeiosClosure' can run. Leios-enabled instances
+  -- should override with their 'LedgerSupportsMempool.getTransactionKeySets'.
+  --
+  -- The default panics: a non-Leios block has @'resolveLeiosClosure' = pure
+  -- []@ so this method is never reached on the apply path. We can't return
+  -- 'emptyLedgerTables' as a defensive default because building one needs
+  -- 'LedgerTableConstraints' which isn't in scope at the class-default site.
+  -- TODO: could be avoided if we move this into resolveLeiosClosure?
+  leiosClosureTxKeySets :: GenTx blk -> LedgerTables (LedgerState blk) KeysMK
+  leiosClosureTxKeySets _ =
+    error "leiosClosureTxKeySets: not Leios-enabled for this block type"
+
   -- | Apply an EB closure's transactions onto an /unticked/ ledger state,
   -- without validation. The closure has already been individually
   -- validated when each tx was inserted into the LeiosDb, so we trust it
@@ -704,11 +711,11 @@ class ResolveLeiosBlock blk where
   -- the per-era ledger 'ApplyTx' class, which works directly on the pure
   -- per-era @LedgerState era@.
   applyLeiosClosure ::
-    LedgerCfg (ExtLedgerState blk) ->
+    LedgerCfg (LedgerState blk) ->
     SlotNo ->
     [GenTx blk] ->
-    ExtLedgerState blk ValuesMK ->
-    Either (LedgerErr (ExtLedgerState blk)) (ExtLedgerState blk ValuesMK)
+    LedgerState blk ValuesMK ->
+    Either (LedgerErr (LedgerState blk)) (LedgerState blk ValuesMK)
   applyLeiosClosure _ _ _ st = Right st
 
   -- | Inline transactions of an EB closure into a 'blk'. The returned 'blk' may be deemed invalid, but

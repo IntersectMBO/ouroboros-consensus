@@ -63,7 +63,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
 
 import Cardano.Crypto.DSIGN (DSIGNAlgorithm (deriveVerKeyDSIGN), rawDeserialiseSignKeyDSIGN)
 import Cardano.Crypto.Hash.Class (hashToBytes)
-import Cardano.Crypto.Leios (VerificationError (..))
 import Cardano.Ledger.BaseTypes (strictMaybeToMaybe)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
@@ -93,9 +92,6 @@ import Cardano.Ledger.Core
   , ppMaxTxSizeL
   )
 import qualified Cardano.Ledger.Core as Core
-import Cardano.Ledger.Dijkstra.BlockBody
-  ( leiosCertBlockBodyL
-  )
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
@@ -124,12 +120,7 @@ import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
 import LeiosDemoTypes
-  ( EbAnnouncement (..)
-  , LeiosPoint (..)
-  , minCertificationThreshold
-  , mkCommitteeEveryoneVotes
-  , pointEbHash
-  , pointSlotNo
+  ( mkCommitteeEveryoneVotes
   )
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
@@ -151,7 +142,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
-import Ouroboros.Consensus.Protocol.Praos (Praos, PraosState (..))
+import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
   ( AllegraEra
