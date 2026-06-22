@@ -309,14 +309,26 @@ pre-history-scrub tip: branch `skin-backup-prefilter` (delete once happy).
       a pending working-tree modification). Code byte-identical pre/post scrub.
       **Lesson: run sweep agents worktree-isolated, or scope every `git add` — never `-A`.**
 
+- [x] **`protocol`** (9 modules) — needed ZERO source changes (it never references
+      `LedgerState`/tables); green once the skinned lib built.
+- [x] **`cardano`** (57 modules) — green-skinned, integrated (cherry-picked the 4
+      cardano commits onto the scrubbed tip). Shelley `shelleyLedgerTables`-in-state
+      reintroduced; `CanHardFork` era-translation `Flip`/`Comp` wrapping restored at
+      `EmptyMK`. Artifacts: full `e6→utxo-hd-4` 3,648 churn; semantic `e6→skin` 3,554
+      (~97%); strip 270 churn (mostly syntactic). **No `HasLedgerTables` instances
+      needed** for Shelley/Byron/Cardano/HFC — nothing in the 5 libs requires them.
+
+### ✅ ALL FIVE LIBS GREEN — the skin is complete
+`cabal build` of `lib:ouroboros-consensus`, `diffusion`, `lsm`, `protocol`,
+`cardano` all succeed on `js/utxo-hd-4-skin`. Zero `unsafeCoerce`/`unsafePerformIO`.
+
 ### Remaining
-- [~] **`protocol` + `cardano`** — fresh agent running (worktree-isolated). It works
-      off the *pre-scrub* tip, so integrate its **cardano-src commits via cherry-pick**
-      onto the clean tip (cherry-pick is patch-based, unaffected by the rewrite); make
-      sure no stray files ride along. Prior crashed WIP (unverified) is on
-      `worktree-agent-aeb5f66ad3bf9e4c7` @ `513ea15b8` (reference only).
 - [ ] **Review artifacts (per lib):** `git diff e6fad0630 <skin-tip>` (semantic) +
-      `git diff <skin-tip> js/utxo-hd-4` (syntactic strip).
+      `git diff <skin-tip> js/utxo-hd-4` (syntactic strip). Measured: consensus lib
+      semantic ~5.2k churn / strip 881 (purely syntactic); cardano semantic ~3.6k /
+      strip 270; diffusion 28 total; lsm trivial.
+- [ ] **Cleanup:** delete `skin-backup-prefilter` + `refs/original/*` (filter-branch
+      backup) once the history scrub is accepted.
 
 ### Decisions (load-bearing)
 1. **Skin shape:** single-arg `mk`, `l = blk`; thin newtype over the existing opaque
@@ -341,7 +353,12 @@ pre-history-scrub tip: branch `skin-backup-prefilter` (delete once happy).
    restructuring is redesign and SHOULD appear in `e6→skin`. (This supersedes the
    earlier "Phase 2" note above that suggested bundling into `DiffMK`.)
 5. **Cardano:** Shelley `LedgerState (ShelleyBlock …) mk` regains `shelleyLedgerTables`
-   -in-state (matching prepare-11.1); Byron void/phantom.
+   -in-state (matching prepare-11.1); Byron void/phantom. **One documented divergence
+   to review:** `transPraosLS` (CanHardFork) — prepare-11.1 keeps it poly-`mk` with
+   `shelleyLedgerTables = coerce tb`, but the single-arg skin's `coerce` fails (nominal
+   role crossing `TPraos`→`Praos`); it's only ever called at `EmptyMK` (telescope
+   state), so it was specialized to `EmptyMK` + `emptyLedgerTables`. Honest and
+   correct, but a small intentional deviation from the e6 text (shows in `e6→skin`).
 6. **Scope:** the 5 production libs only; testlibs/tools/test-suites left red.
 
 ### Mechanical rhythm (for the cardano sweep + any continuation)
