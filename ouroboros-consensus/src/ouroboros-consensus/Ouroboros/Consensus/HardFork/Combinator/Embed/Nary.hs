@@ -61,9 +61,7 @@ import Ouroboros.Consensus.Ledger.Extended
   )
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Peras.Context
-  ( PerasEpochContextResolver (..)
-  )
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 
