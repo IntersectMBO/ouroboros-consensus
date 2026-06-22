@@ -5,6 +5,7 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -102,17 +103,17 @@ type family TxOut blk
   Tip
 -------------------------------------------------------------------------------}
 
-type GetTip :: Type -> Constraint
+type GetTip :: LedgerStateKind -> Constraint
 class GetTip l where
   -- | Point of the most recently applied block
   --
   -- Should be 'GenesisPoint' when no blocks have been applied yet
-  getTip :: l -> Point l
+  getTip :: forall mk. l mk -> Point l
 
-getTipHash :: GetTip l => l -> ChainHash l
+getTipHash :: GetTip l => l mk -> ChainHash l
 getTipHash = pointHash . getTip
 
-getTipSlot :: GetTip l => l -> WithOrigin SlotNo
+getTipSlot :: GetTip l => l mk -> WithOrigin SlotNo
 getTipSlot = pointSlot . getTip
 
 type GetTipSTM :: (Type -> Type) -> Type -> Constraint
@@ -192,12 +193,14 @@ type family AuxLedgerEvent blk :: Type
 data ComputeLedgerEvents = ComputeLedgerEvents | OmitLedgerEvents
   deriving (Eq, Show, Generic, NoThunks)
 
-type IsLedger :: (Type -> Type) -> Type -> Constraint
+type IsLedger :: StateKind -> Type -> Constraint
 class
-  ( -- Requirements on the ledger state itself
-    Eq (l blk)
-  , NoThunks (l blk)
-  , Show (l blk)
+  ( -- Requirements on the ledger state itself (concrete map-kinds — the skin
+    -- cannot use @main@'s quantified @EqMK@\/@ShowMK@\/@NoThunksMK@ form; see
+    -- the note by the skin definitions).
+    Eq (l blk EmptyMK)
+  , NoThunks (l blk EmptyMK)
+  , Show (l blk EmptyMK)
   , -- Requirements on 'LedgerCfg'
     NoThunks (LedgerCfg l blk)
   , -- Requirements on 'LedgerErr'
@@ -260,8 +263,8 @@ class
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     SlotNo ->
-    l blk ->
-    LedgerResult blk (Ticked l blk, Diff blk)
+    l blk EmptyMK ->
+    LedgerResult blk (Ticked l blk DiffMK)
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick ::
@@ -269,8 +272,8 @@ applyChainTick ::
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   SlotNo ->
-  l blk ->
-  (Ticked l blk, Diff blk)
+  l blk EmptyMK ->
+  Ticked l blk DiffMK
 applyChainTick = lrResult ...: applyChainTickLedgerResult
 
 {-------------------------------------------------------------------------------
@@ -360,6 +363,17 @@ newtype ValuesMK l = ValuesMK (Values l)
 -- | The diff phase: a thin wrapper over the opaque 'Diff'.
 type DiffMK :: MapKind
 newtype DiffMK l = DiffMK (Diff l)
+
+-- NOTE: @main@ requires the ledger-state Eq\/Show\/NoThunks superclasses on
+-- 'IsLedger' in a quantified form (@forall mk. EqMK mk => Eq (l blk mk)@), which
+-- relies on @mk@ being a two-argument map-kind so the payload appears as the
+-- plain type /variables/ @k@\/@v@. The single-arg skin (forced by the hard-fork
+-- combinator, which has no @TxIn@\/@TxOut@) makes each payload a type-family
+-- application (@'Keys' blk@ etc.), and GHC forbids type families in quantified
+-- constraints. So the skin cannot reproduce that quantified form; 'IsLedger'
+-- instead requires the concrete map-kinds the code uses. This one superclass
+-- block therefore does not cancel against @main@ in the review diff (a small,
+-- localised residue; see @mk-skin-plan.md@).
 
 -- | @main@'s vocabulary for getting\/setting a 'LedgerState'\'s tables, restored
 -- over the skin so call sites (@projectLedgerTables@\/@withLedgerTables@\/
