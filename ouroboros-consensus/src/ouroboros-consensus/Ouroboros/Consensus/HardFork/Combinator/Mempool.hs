@@ -319,7 +319,7 @@ applyHelper ::
   SlotNo ->
   txIn (HardForkBlock xs) ->
   Values (HardForkBlock xs) ->
-  TickedLedgerState (HardForkBlock xs) ->
+  TickedLedgerState (HardForkBlock xs) EmptyMK ->
   Except
     (HardForkApplyTxErr xs)
     ( TickedLedgerState (HardForkBlock xs) EmptyMK

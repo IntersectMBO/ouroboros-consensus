@@ -1782,14 +1782,14 @@ checkTime cfgEnv dynEnv intEnv =
   readLedgerState ::
     forall a.
     KnownIntersectionState blk ->
-    (LedgerState blk -> Maybe a) ->
+    (LedgerState blk EmptyMK -> Maybe a) ->
     WithEarlyExit m (Intersects blk a)
   readLedgerState kis prj = castM $ readLedgerStateHelper kis prj
 
   readLedgerStateHelper ::
     forall a.
     KnownIntersectionState blk ->
-    (LedgerState blk -> Maybe a) ->
+    (LedgerState blk EmptyMK -> Maybe a) ->
     m (WithEarlyExit m (Intersects blk a))
   readLedgerStateHelper kis prj = atomically $ do
     -- We must first find the most recent intersection with the current
@@ -1860,7 +1860,7 @@ checkTime cfgEnv dynEnv intEnv =
   -- that far into the future.
   projectLedgerView ::
     SlotNo ->
-    LedgerState blk ->
+    LedgerState blk EmptyMK ->
     Maybe (LedgerView (BlockProtocol blk))
   projectLedgerView slot lst =
     let forecast = ledgerViewForecastAt (configLedger cfg) lst

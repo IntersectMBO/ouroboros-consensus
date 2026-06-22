@@ -22,6 +22,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger
   , HardForkLedgerWarning (..)
 
     -- * Type family instances
+  , FlipTickedLedgerState (..)
   , Ticked (..)
 
     -- * Low-level API (exported for the benefit of testing)
