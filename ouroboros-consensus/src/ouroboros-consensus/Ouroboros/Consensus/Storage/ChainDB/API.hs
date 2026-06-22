@@ -92,6 +92,7 @@ import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
@@ -222,11 +223,11 @@ data ChainDB m blk = ChainDB
   -- to the chain it is on)
   --
   -- INVARIANT @'hwtHeader' <$> 'getCurrentChainWithTime' = 'getCurrentChain'@
-  , getCurrentLedger :: STM m (ExtLedgerState blk)
+  , getCurrentLedger :: STM m (ExtLedgerState blk EmptyMK)
   -- ^ Get current ledger
-  , getImmutableLedger :: STM m (ExtLedgerState blk)
+  , getImmutableLedger :: STM m (ExtLedgerState blk EmptyMK)
   -- ^ Get the immutable ledger, i.e., typically @k@ blocks back.
-  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk))
+  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk EmptyMK))
   -- ^ Get the ledger for the given point.
   --
   -- When the given point is not among the last @k@ blocks of the current
