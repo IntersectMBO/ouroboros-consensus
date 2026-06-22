@@ -20,7 +20,7 @@ implGetSnapshotFor ::
   -- | Get snapshot for this slot number (usually the current slot)
   SlotNo ->
   -- | The ledger state at which we want the snapshot, ticked to @slot@.
-  TickedLedgerState blk ->
+  TickedLedgerState blk EmptyMK ->
   -- | The tick diff (from the unticked state to @ticked@), used to forward the
   -- read values up to the ticked state.
   Diff blk ->

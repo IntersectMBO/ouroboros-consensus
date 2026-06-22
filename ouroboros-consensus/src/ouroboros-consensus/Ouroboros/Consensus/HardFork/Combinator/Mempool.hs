@@ -148,9 +148,9 @@ instance
     f ::
       SingleEraBlock x =>
       Index xs x ->
-      Ticked LedgerState x ->
+      FlipTickedLedgerState EmptyMK x ->
       K (Maybe (ApplyTxErr (HardForkBlock xs))) x
-    f idx tlst =
+    f idx (FlipTickedLedgerState tlst) =
       K $ injectApplyTxErr idx <$> mkMempoolApplyTxError tlst txt
 
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
@@ -188,9 +188,9 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
         SingleEraBlock blk =>
         Index xs blk ->
         WrapPartialLedgerConfig blk ->
-        Ticked LedgerState blk ->
+        FlipTickedLedgerState EmptyMK blk ->
         K (TxMeasure (HardForkBlock xs)) blk
-      aux idx pcfg st' =
+      aux idx pcfg (FlipTickedLedgerState st') =
         K $
           let TxMeasure p1 p2 =
                 blockCapacityTxMeasure
@@ -228,9 +228,9 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
         SingleEraBlock blk =>
         Index xs blk ->
         WrapLedgerConfig blk ->
-        (Product GenTx (Ticked LedgerState)) blk ->
+        (Product GenTx (FlipTickedLedgerState EmptyMK)) blk ->
         K (Except (HardForkApplyTxErr xs) (HardForkTxMeasurePhase1 xs)) blk
-      aux idx cfg (Pair tx' st') =
+      aux idx cfg (Pair tx' (FlipTickedLedgerState st')) =
         K
           $ mapExcept
             ( ( HardForkApplyTxErrFromEra
@@ -278,9 +278,9 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
         SingleEraBlock blk =>
         Index xs blk ->
         WrapLedgerConfig blk ->
-        Product WrapValues (Product GenTx (Ticked LedgerState)) blk ->
+        Product WrapValues (Product GenTx (FlipTickedLedgerState EmptyMK)) blk ->
         K (Except (HardForkApplyTxErr xs) (HardForkTxMeasurePhase2 xs)) blk
-      aux idx cfg (Pair (WrapValues vals) (Pair tx' st')) =
+      aux idx cfg (Pair (WrapValues vals) (Pair tx' (FlipTickedLedgerState st'))) =
         K
           $ mapExcept
             ( ( HardForkApplyTxErrFromEra
@@ -303,7 +303,7 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
 
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs blk = ApplyResult
-  { arState :: Ticked LedgerState blk EmptyMK
+  { arState :: FlipTickedLedgerState EmptyMK blk
   , arDiff :: WrapDiff blk
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
@@ -368,7 +368,7 @@ applyHelper
             result <-
               hsequence' $
                 hcizipWith proxySingle modeApplyCurrent cfgs matched'
-            let st' :: State.HardForkState (Ticked LedgerState) xs
+            let st' :: State.HardForkState (FlipTickedLedgerState EmptyMK) xs
                 st' = arState `hmap` result
 
                 diffs :: Diff (HardForkBlock xs)
@@ -416,12 +416,12 @@ applyHelper
       SingleEraBlock blk =>
       Index xs blk ->
       WrapLedgerConfig blk ->
-      Product WrapValues (Product txIn (Ticked LedgerState)) blk ->
+      Product WrapValues (Product txIn (FlipTickedLedgerState EmptyMK)) blk ->
       ( Except (HardForkApplyTxErr xs)
           :.: ApplyResult xs
       )
         blk
-    modeApplyCurrent index cfg (Pair (WrapValues vals) (Pair tx' st)) =
+    modeApplyCurrent index cfg (Pair (WrapValues vals) (Pair tx' (FlipTickedLedgerState st))) =
       Comp $
         withExcept (injectApplyTxErr index) $
           do
@@ -433,7 +433,7 @@ applyHelper
                   ApplyResult
                     { arValidatedTx = injectValidatedGenTx index vtx
                     , arDiff = WrapDiff diff
-                    , arState = st'
+                    , arState = FlipTickedLedgerState st'
                     }
               ModeReapply -> do
                 let vtx' = unwrapValidatedGenTx tx'
@@ -443,7 +443,7 @@ applyHelper
                   ApplyResult
                     { arValidatedTx = injectValidatedGenTx index vtx'
                     , arDiff = WrapDiff diff
-                    , arState = st'
+                    , arState = FlipTickedLedgerState st'
                     }
 
 newtype instance TxId (GenTx (HardForkBlock xs)) = HardForkGenTxId
