@@ -1759,7 +1759,7 @@ checkTime cfgEnv dynEnv intEnv =
   checkArrivalTime ::
     KnownIntersectionState blk ->
     arrival ->
-    WithEarlyExit m (Intersects blk (LedgerState blk, RelativeTime))
+    WithEarlyExit m (Intersects blk (LedgerState blk EmptyMK, RelativeTime))
   checkArrivalTime kis arrival = do
     Intersects kis' (lst, judgment) <- do
       readLedgerState kis $ \lst ->

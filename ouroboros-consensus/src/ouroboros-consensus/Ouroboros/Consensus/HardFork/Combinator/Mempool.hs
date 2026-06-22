@@ -303,7 +303,7 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
 
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs blk = ApplyResult
-  { arState :: Ticked LedgerState blk
+  { arState :: Ticked LedgerState blk EmptyMK
   , arDiff :: WrapDiff blk
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
