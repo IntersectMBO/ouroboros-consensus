@@ -23,7 +23,7 @@ instance
 askCurrentLedger ::
   CanHardFork xs =>
   (forall blk. CommonProtocolParams blk => LedgerState blk EmptyMK -> a) ->
-  LedgerState (HardForkBlock xs) EmptyMK ->
+  LedgerState (HardForkBlock xs) mk ->
   a
 askCurrentLedger f =
   hcollapse

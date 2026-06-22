@@ -322,7 +322,7 @@ applyHelper ::
   TickedLedgerState (HardForkBlock xs) ->
   Except
     (HardForkApplyTxErr xs)
-    ( TickedLedgerState (HardForkBlock xs)
+    ( TickedLedgerState (HardForkBlock xs) EmptyMK
     , Diff (HardForkBlock xs)
     , Validated (GenTx (HardForkBlock xs))
     )
@@ -487,7 +487,7 @@ instance All HasTxs xs => HasTxs (HardForkBlock xs) where
 ledgerInfo ::
   forall blk.
   SingleEraBlock blk =>
-  State.Current (Ticked LedgerState) blk -> LedgerEraInfo blk
+  State.Current (FlipTickedLedgerState EmptyMK) blk -> LedgerEraInfo blk
 ledgerInfo _ = LedgerEraInfo $ singleEraInfo (Proxy @blk)
 
 injectApplyTxErr :: SListI xs => Index xs blk -> ApplyTxErr blk -> HardForkApplyTxErr xs
