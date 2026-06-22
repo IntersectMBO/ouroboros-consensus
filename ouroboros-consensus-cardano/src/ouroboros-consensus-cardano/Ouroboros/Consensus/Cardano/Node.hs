@@ -63,6 +63,7 @@ import Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
 import Data.SOP.BasicFunctors
 import Data.SOP.Counting
+import Data.SOP.Functors (Flip (..))
 import Data.SOP.Index
 import Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
@@ -86,7 +87,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Basics (Values)
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK, Values)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -943,7 +944,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
   -- The initial 'ExtLedgerState' and the genesis 'Values' fed to the LedgerDB.
   -- Monadic because the per-era genesis-funds injection ('injectIntoTestState')
   -- takes the snapshot fs, as in prepare-11.1.
-  mkInitGenesis :: m (ExtLedgerState (CardanoBlock c), Values (CardanoBlock c))
+  mkInitGenesis :: m (ExtLedgerState (CardanoBlock c) EmptyMK, Values (CardanoBlock c))
   mkInitGenesis = do
     -- Inject the genesis config's initial funds/staking (testing/benchmarking)
     -- into whichever era we landed in, threading the new entries alongside the
@@ -968,7 +969,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
     -- hard fork) together with the genesis values that extension produced (e.g.
     -- the Byron->Shelley UTxO dump). See 'injectInitialExtLedgerState'.
     initHeaderState :: HeaderState (CardanoBlock c)
-    initState :: HardForkState LedgerState (CardanoEras c)
+    initState :: HardForkState (Flip LedgerState EmptyMK) (CardanoEras c)
     genesisValues :: Values (CardanoBlock c)
     ( ExtLedgerState (HardForkLedgerState initState) initHeaderState
       , genesisValues
@@ -977,7 +978,9 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
 
     registerAny ::
       NP
-        (Product WrapValues LedgerState -.-> (m :.: Product WrapValues LedgerState))
+        ( Product WrapValues (Flip LedgerState EmptyMK)
+            -.-> (m :.: Product WrapValues (Flip LedgerState EmptyMK))
+        )
         (CardanoShelleyEras c)
     registerAny =
       hcmap (Proxy @IsShelleyBlock) injectIntoTestState $
@@ -993,10 +996,12 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
     injectIntoTestState ::
       ShelleyBasedEra era =>
       WrapTransitionConfig (ShelleyBlock proto era) ->
-      (Product WrapValues LedgerState -.-> (m :.: Product WrapValues LedgerState))
+      ( Product WrapValues (Flip LedgerState EmptyMK)
+          -.-> (m :.: Product WrapValues (Flip LedgerState EmptyMK))
+      )
         (ShelleyBlock proto era)
     injectIntoTestState (WrapTransitionConfig tcfg) =
-      fn $ \(Pair (WrapValues vals) st) -> Comp $ do
+      fn $ \(Pair (WrapValues vals) (Flip st)) -> Comp $ do
         -- Stow the genesis values into the (empty) UTxO field so the ledger's
         -- 'injectIntoTestState' adds the config's funds on top, then split the
         -- combined UTxO back out (the state is stored UTxO-free).
@@ -1009,7 +1014,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
         pure $
           Pair
             (WrapValues valsAll)
-            (st{Shelley.shelleyLedgerStateNoUTxO = stateNoUTxO})
+            (Flip st{Shelley.shelleyLedgerStateNoUTxO = stateNoUTxO})
 
   -- \| For each element in the list, a block forging thread will be started.
   --
