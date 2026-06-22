@@ -138,8 +138,8 @@ class
     -- | The values the tx consumes (read against the virtual tip and forwarded
     -- through the diffs of the txs already in the mempool).
     Values blk ->
-    TickedLedgerState blk ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk, Diff blk, Validated (GenTx blk))
+    TickedLedgerState blk EmptyMK ->
+    Except (ApplyTxErr blk) (TickedLedgerState blk EmptyMK, Diff blk, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -159,8 +159,8 @@ class
     Validated (GenTx blk) ->
     -- | At least the values the tx consumes.
     Values blk ->
-    TickedLedgerState blk ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk, Diff blk)
+    TickedLedgerState blk EmptyMK ->
+    Except (ApplyTxErr blk) (TickedLedgerState blk EmptyMK, Diff blk)
 
   -- | Apply a list of previously validated transactions to a new ledger state.
   --
@@ -184,7 +184,7 @@ class
     [(Validated (GenTx blk), InputTxDiffs blk wtd, extra)] ->
     -- | At least the values all the txs consume.
     Values blk ->
-    TickedLedgerState blk ->
+    TickedLedgerState blk EmptyMK ->
     ReapplyTxsResult extra blk wtd
   reapplyTxs cfg slot txs vals0 st0 =
     let (accE, accV, st', _vals) =
@@ -212,13 +212,13 @@ class
   -- node-to-client mini protocol sends when a tx is rejected.
   mkMempoolApplyTxError ::
     -- | for the HFC
-    TickedLedgerState blk ->
+    TickedLedgerState blk EmptyMK ->
     Text ->
     Maybe (ApplyTxErr blk)
 
 -- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error
-nothingMkMempoolApplyTxError :: TickedLedgerState blk -> Text -> Maybe (ApplyTxErr blk)
+nothingMkMempoolApplyTxError :: TickedLedgerState blk EmptyMK -> Text -> Maybe (ApplyTxErr blk)
 nothingMkMempoolApplyTxError _ _ = Nothing
 
 data ReapplyTxsResult extra blk wtd
@@ -228,7 +228,7 @@ data ReapplyTxsResult extra blk wtd
   , validatedTxs :: ![(Validated (GenTx blk), InputTxDiffs blk wtd, extra)]
   -- ^ txs that are valid again, order must be the same as the order in
   -- which txs were received
-  , resultingState :: !(TickedLedgerState blk)
+  , resultingState :: !(TickedLedgerState blk EmptyMK)
   }
 
 -- | A generalized transaction, 'GenTx', identifier.
@@ -387,7 +387,7 @@ class
   txMeasurePhase1 ::
     -- | used at least by HFC's composition logic
     LedgerConfig blk ->
-    TickedLedgerState blk ->
+    TickedLedgerState blk EmptyMK ->
     GenTx blk ->
     Except (ApplyTxErr blk) (TxMeasurePhase1 blk)
 
@@ -398,7 +398,7 @@ class
     -- example in Cardano they look at the reference scripts), so the values are
     -- passed explicitly rather than resolved against an empty UTxO.
     Values blk ->
-    TickedLedgerState blk ->
+    TickedLedgerState blk EmptyMK ->
     GenTx blk ->
     Except (ApplyTxErr blk) (TxMeasurePhase2 blk)
 
@@ -406,7 +406,7 @@ class
   blockCapacityTxMeasure ::
     -- | at least for symmetry with 'txMeasure'
     LedgerConfig blk ->
-    TickedLedgerState blk ->
+    TickedLedgerState blk EmptyMK ->
     TxMeasure blk
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
