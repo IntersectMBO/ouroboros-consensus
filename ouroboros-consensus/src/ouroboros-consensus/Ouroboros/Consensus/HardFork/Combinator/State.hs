@@ -141,8 +141,8 @@ mostRecentTransitionInfo HardForkLedgerConfig{..} st =
     Current (Flip LedgerState EmptyMK) blk ->
     K TransitionInfo blk
   getTransition cfg (K eraParams) Current{..} = K $
-    case singleEraTransition' cfg eraParams currentStart currentState of
-      Nothing -> TransitionUnknown (ledgerTipSlot currentState)
+    case singleEraTransition' cfg eraParams currentStart (unFlip currentState) of
+      Nothing -> TransitionUnknown (ledgerTipSlot (unFlip currentState))
       Just e -> TransitionKnown e
 
 reconstructSummaryLedger ::
@@ -275,7 +275,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     Current (Product (Flip LedgerState EmptyMK) a) blk ->
     (Maybe :.: K History.Bound) blk
   whenExtend pcfg (K eraParams) cur =
-    let Pair curState _ = currentState cur
+    let Pair (Flip curState) _ = currentState cur
      in Comp $
           K <$> do
             transition <-
@@ -308,9 +308,9 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     , Current
         { currentStart = currentEnd
         , currentState =
-            let Pair curState (WrapDiff diff) = currentState cur
+            let Pair (Flip curState) (WrapDiff diff) = currentState cur
                 (st', diff') = translateLedgerStateWith f (History.boundEpoch currentEnd) curState
-             in Pair st' (WrapDiff $ translateDiffWith f' diff <> diff')
+             in Pair (Flip st') (WrapDiff $ translateDiffWith f' diff <> diff')
         }
     )
 

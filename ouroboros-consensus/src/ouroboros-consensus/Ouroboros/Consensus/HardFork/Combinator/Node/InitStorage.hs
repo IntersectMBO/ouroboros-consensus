@@ -59,7 +59,7 @@ instance CanHardFork xs => NodeInitStorage (HardForkBlock xs) where
       SingleEraBlock blk =>
       Index xs blk ->
       StorageConfig blk ->
-      LedgerState blk ->
+      LedgerState blk EmptyMK ->
       K (m ()) blk
     aux index cfg' currentLedger =
       K $
