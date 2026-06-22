@@ -17,16 +17,24 @@ carries on-disk tables as opaque `Keys`/`Values`/`Diff blk` payloads. The diff
 vs the review base (`e6fad0630`, prepare-11.1) is ~196 source files / ~12k
 changed lines and is hard to review as one unit.
 
-We are building an **intermediate tree `I`** in which the ledger state carries a
-`mk` parameter *again* — but `mk` is a **thin newtype skin over the new opaque
-payloads**, not the old machinery. The point: re-dressing the finished design in
-`prepare-11.1`'s `mk` *vocabulary* makes `prepare-11.1 → I` cancel all the
-vocabulary churn, leaving roughly the genuine structural redesign — which is the
-right thing for a human to read. Then `I → HEAD` is the mechanical skin-strip.
+We are building an **intermediate tree `I`** (branch `js/utxo-hd-4-skin`) in which
+the ledger state carries a `mk` parameter *again* — but `mk` is a **thin newtype
+skin over the new opaque payloads**, not the old machinery.
 
-**Review artifacts produced at the end:**
-- `git diff e6fad0630 <I-tip>` — the **semantic** diff (small-ish; the conceptual core).
-- `git diff <I-tip> js/utxo-hd-4` — the **mechanical** strip (trust-by-inspection).
+**The goal is ISOLATION of syntactic vs semantic changes — NOT line reduction.**
+Re-dressing the finished design in `prepare-11.1`'s `mk` *vocabulary* splits the
+review into two diffs:
+- `git diff e6fad0630 <I-tip>` — the **semantic** diff: the genuine redesign
+  expressed *in prepare-11.1's `mk` syntax*, with **zero mk-removal churn mixed
+  in** (mk is still present, like prepare-11.1).
+- `git diff <I-tip> js/utxo-hd-4` — the **syntactic strip**: a *purely mechanical*
+  mk-removal pass, trust-by-inspection (or regenerable).
+
+⚠️ **Do not expect `e6 → I` to be smaller than `e6 → full`.** It is roughly the
+same size — the redesign is simply large. What the skin buys is the clean
+*factoring*: the mk-parameter syntax swap is pulled out into the strip, so the
+semantic diff is no longer interleaved with mk-removal noise. See "Result" below
+for the measured confirmation.
 
 **`I` is throwaway.** It is review scaffolding; the branch that merges is the
 original `js/utxo-hd-4` (HEAD). The skin commits are dropped before merge.
@@ -38,20 +46,21 @@ original `js/utxo-hd-4` (HEAD). The skin commits are dropped before merge.
 throwaway so it need not build them. Only the five libs need to typecheck for
 `prepare-11.1 → I` to be a trustworthy review artifact.
 
-### Measured expectation (from two spikes, see end of file)
-- ~51% of the branch churn is in `Port …` commits (vocabulary-dominated → mostly cancels).
-- On **Storage**, ~80–85% of the churn cancels under the skin; ~15–20% is the
-  genuine structural residue (range-read rework, `duplicateWithDiffs` arity, the
-  `(state, diff)` apply flow). Expect a similar shape elsewhere.
+### Early spike estimates (turned out partly misleading — see "Result")
+The two spikes suggested ~51% of churn is vocabulary (cancellable) and Storage
+~85% cancels. **Caveat:** those figures conflated *line cancellation* (which the
+consensus lib barely shows — it IS the structural redesign) with *isolation*
+(which works). The 51% was the testlibs/ports (out of scope); 85% was Storage
+specifically. Read them as "isolation is feasible," not "the diff shrinks."
 
 ### Cost / risk (eyes open)
 Building `I` is **"the original `mk`-removal run in reverse"**: re-adding `mk` to
-the `LedgerState`/`Ticked`/`ExtLedgerState` data families forces editing **every
+the `LedgerState`/`Ticked`/`ExtLedgerState` data families breaks **every
 `data instance` lib-wide in one shot — no green checkpoint until nearly done**.
-Estimate ~2–4 days for `lib:ouroboros-consensus`, plus cardano + testlibs. The
-type-level feasibility is **confirmed** (no `unsafeCoerce`, no kind-hell — see
-spikes), but it was validated on a type model, **not a full build**; the residual
-risk is the real `sop-core` `NS`/`Telescope` + `AllowAmbiguousTypes` interaction.
+Type-level feasibility **confirmed in practice** (the whole consensus lib + 2 more
+libs are green with **zero `unsafeCoerce`/`unsafePerformIO`**); the spike's
+unverified risks (real `sop-core` `NS`/`Telescope`, `AllowAmbiguousTypes`) did not
+bite.
 
 ---
 
@@ -267,67 +276,85 @@ and the strip is a trust-by-inspection mechanical pass. (Line count of `e6 → s
 ≈ `e6 → full` — irrelevant; the redesign is simply large. What matters is it's
 cleanly factored from the syntax swap.)
 
-**Skinned + green:** `lib:ouroboros-consensus` (239 modules), `diffusion`, `lsm`
-(all on `js/utxo-hd-4-skin`). **Partial:** `cardano` — a fresh agent crashed
-(API error) mid-port; WIP (Byron+Shelley, 13 files/173 churn, UNVERIFIED) preserved
-on branch `worktree-agent-aeb5f66ad3bf9e4c7` @ `513ea15b8`. `protocol` not yet
-confirmed. Cardano is the lib that should cancel *best* (Shelley regains
-`shelleyLedgerTables`-in-state, matching prepare-11.1) — finish it with a fresh
-agent (clean start from `js/utxo-hd-4-skin` recommended; WIP is reference only).
+**Measured per lib (line cancellation vs isolation):**
+- `lib:ouroboros-consensus`: full `e6→utxo-hd-4` = 5,419 churn; semantic `e6→skin`
+  = 5,190 (~96% — barely smaller, because this lib *is* the structural redesign:
+  ~1,369 lines are the `Tables/` machinery deletion alone). Strip = 881, and it's
+  **purely syntactic** (the isolation win).
+- `diffusion`: full diff is only 28 churn — never a review problem; skin moot.
+- `lsm`: 1 module, 4 `EmptyMK` additions — trivial.
+- `cardano`: expected to cancel *best* (Shelley regains `shelleyLedgerTables`
+  -in-state, matching prepare-11.1) — in progress.
 
-## Status
+Takeaway: **isolation is the deliverable and it works; line-shrink does not happen
+for the libs and was never the right metric.**
 
-- [x] **Phase 0** — skin types in `Basics.hs` (+ exports), lib green (239 modules). *Done: the 6 skin defs + export group; unused so far, so lib stayed green.*
-### ⚠ Finding (Phase 1): `prepare-11.1`'s quantified MK constraints are infeasible single-arg
+## Status & decisions (current)
 
-`prepare-11.1`'s `IsLedger` requires `forall mk. EqMK mk => Eq (l blk mk)` (and Show/
-NoThunks). That works only because `prepare-11.1`'s `mk` is *two-arg* (`mk k v`), so the
-payload is the plain type *variables* `k`/`v`. The skin's `mk` is *single-arg*
-(forced — the HFC has no `TxIn`/`TxOut`), so each payload is a type-family
-application (`Keys blk`), and **GHC forbids type families in quantified
-constraints** (`GHC-22979`). So `EqMK`/`ShowMK`/`NoThunksMK` are *not* restored;
-`IsLedger` uses **concrete-`mk` constraints** (`Eq (l blk EmptyMK)`, …) instead.
-Consequence: that one superclass block does not cancel against `prepare-11.1` (a small,
-localised residue). Add more concrete map-kinds there if downstream needs them.
+**Branch `js/utxo-hd-4-skin`** (off untouched merge target `js/utxo-hd-4` @ `341ab6f55`).
+Only `mk-skin-plan.md` is tracked as a non-code file. Safety backup of the
+pre-history-scrub tip: branch `skin-backup-prefilter` (delete once happy).
 
-- [x] **Phase 1 — `lib:ouroboros-consensus` is GREEN (`All good`, 239 modules).** The whole skin landed: abstract layer + Storage/LedgerDB + all data instances + the full HFC (core *and* consumer tail), with **zero `unsafeCoerce`/`unsafePerformIO`**. 32 commits on `js/utxo-hd-4-skin` (off untouched `js/utxo-hd-4` @ `341ab6f55`). Option 2 (phantom `mk`, `Flip LedgerState EmptyMK` telescope) confirmed feasible end-to-end. **Next: the other libs** — `diffusion`, `lsm`, `cardano` (+ `protocol`, likely trivial). Same pattern; same `git show e6fad0630:<file>` template tactic; lib-specific ghciwatch targets/error-files. Then Phase 6 (verify each lib green) + Phase 7 (produce `git diff e6fad0630 <skin-tip>` semantic diff + `git diff <skin-tip> js/utxo-hd-4` strip diff for review).
-- [~] (historical) Phase 1 detail — **Foundation in `Basics.hs` done:** `MapKind`/`LedgerStateKind`/`StateKind` kind vocab; `LedgerTables`/`EmptyMK`/`KeysMK`/`ValuesMK`/`DiffMK` skin newtypes; `HasLedgerTables` class + `forgetLedgerTables`/`emptyLedgerTables`; `data family LedgerState blk mk` (kind `Type -> LedgerStateKind`); `LedgerCfg :: StateKind -> Type -> Type`; `decodeValues :: LedgerState blk EmptyMK -> …`.
-  - **`Basics.hs` now internally consistent** (`IsLedger` re-kinded to `StateKind` + concrete-mk constraints; `GetTip :: LedgerStateKind -> Constraint`, `getTip :: l mk -> Point l`; `applyChainTickLedgerResult`/`applyChainTick` re-dressed to `l blk EmptyMK -> (LedgerResult blk) (Ticked l blk DiffMK)` matching `prepare-11.1`; `QuantifiedConstraints` enabled). Errors have moved downstream.
-  - **NEXT — `Ledger/Abstract.hs` (the `ApplyBlock` apply-path re-dress).** The branch carries values as an explicit `Values blk` param and returns `(l blk, Diff blk)`; `prepare-11.1` carries them in the ticked state and returns the diff in the ticked state's tables. Re-dress to `prepare-11.1` (verified shapes):
-    - `applyBlockLedgerResultWithValidation :: … -> blk -> Ticked l blk ValuesMK -> Except (LedgerErr l blk) (LedgerResult blk (l blk DiffMK))` (drop the `Values blk ->` arg; `Ticked l blk` → `Ticked l blk ValuesMK`; `(l blk, Diff blk)` → `l blk DiffMK`). Same for `applyBlockLedgerResult`, `reapplyBlockLedgerResult`, `defaultApplyBlockLedgerResult`, `defaultReapplyBlockLedgerResult`.
-    - Restore `class GetBlockKeySets blk where getBlockKeySets :: blk -> LedgerTables blk KeysMK` (the branch replaced it with `blockKeys :: blk -> Keys blk` on `BlockSupportsUTxOHD`; for cancellation, restore `getBlockKeySets` as a `LedgerTables … KeysMK` wrapper over `blockKeys`).
-    - `tickThenApply`/`tickThenReapply`/`applyDiffForKeys` exist in `prepare-11.1`'s `Abstract.hs` and thread values through the ticked state — re-dress to `prepare-11.1`'s bodies.
-    - **Per-instance follow-on (the bulk):** every `ApplyBlock` instance (Shelley, HFC, Byron, mock, dual) unwraps `ValuesMK` at entry (`projectLedgerTables`) and wraps the diff into `DiffMK` at exit (`withLedgerTables`) — the core logic is unchanged; only the boundary packaging moves ("rearranging tuples").
-  - **Apply-path altitude DECIDED (important):** the skin re-dresses only the **state `mk`-vocabulary** (`l blk` → `l blk EmptyMK`, etc.); it **keeps the branch's genuine apply restructuring visible** (explicit `Values blk` param, `(state, Diff)` tuples, `forward`) — that is redesign, not packaging, and *should* show in the review. So `applyChainTick` stays `… l blk EmptyMK -> (Ticked l blk EmptyMK, Diff blk)` (tuple, not prepare-11.1's bundled `DiffMK`), and `ApplyBlock` keeps `Values blk -> Ticked l blk EmptyMK -> … (l blk EmptyMK, Diff blk)`. **Bodies are unchanged — only state type positions get `EmptyMK`.**
+### Done
+- [x] **`lib:ouroboros-consensus`** — fully skinned, `All good (239 modules)`,
+      **zero `unsafeCoerce`/`unsafePerformIO`**.
+- [x] **`diffusion`** — green-skinned, integrated.
+- [x] **`lsm`** — green-skinned, integrated. (Also fixed a latent consensus-lib bug:
+      the streaming `Yield`/`Sink` aliases must be `l blk EmptyMK`, not `l blk` —
+      only the LSM backend threads a handle through them, so it surfaced there.)
+- [x] **History scrubbed.** An early *non-isolated* agent's `git add -A` folded the
+      repo-root working files (design notes, decks, logs, spike patches) into the
+      branch. Removed from ALL commits via `git filter-branch` (kept `mk-skin-plan.md`;
+      `.gitattributes` reset to base throughout, the user's `diff=cbor` change kept as
+      a pending working-tree modification). Code byte-identical pre/post scrub.
+      **Lesson: run sweep agents worktree-isolated, or scope every `git add` — never `-A`.**
 
-  - **DONE so far (committed, all WIP-red) — the entire abstract ledger layer:** `Basics`, `Abstract` (apply-path), the core `Ledger/*` (`CommonProtocolParams`/`SupportsPeerSelection`/`SupportsPeras` = poly `mk`; `Inspect` = `mk1`/`mk2`; `SupportsMempool` = `EmptyMK`; `SupportsProtocol` = `EmptyMK`), `Block/Forging`, `Mempool/Capacity`, `Forecast` (`b mk`), `HeaderValidation`, `BlockchainTime/WallClock/HardFork`, `MiniProtocol/ChainSync/Client/InFutureCheck`, `HardFork/Combinator/State/Types` (`TranslateLedgerState` field + `CrossEraForecaster`'s `state x EmptyMK`), `HardFork/Combinator/Translation`, **`Ledger/Extended`** (`ExtLedgerState blk mk` data type + `Ticked` instance + deriving with `Eq/Show/NoThunks (LedgerState blk mk)` constraints + apply helper + disk codecs with `forall blk mk.`; `typeRep` uses `Proxy @(ExtLedgerState blk)` to dodge `Typeable mk`).
-  - **Two reusable techniques learned:** (1) **stable-read loop** to beat ghciwatch staleness — wait until the error file is *both* not-"still compiling" *and* unchanged between two polls (a plain "not compiling" check races the reload). (2) grep over-matches functor-unapplied sites (`LedgerErr LedgerState blk`, `IsLedger LedgerState blk`, instance heads) — those are **correct, leave them**; only `LedgerState blk`/`Ticked … blk`/`ExtLedgerState blk` in *value/field* position need `mk`.
-  - **DONE: the ENTIRE `Storage/LedgerDB` subsystem** — `Forker`, `Snapshots`, `API`, `V2/LedgerSeq` (handle + `StateRef`), `V2/Backend`, `V2/Forker`, `V2/InMemory`, `Args`, `V2.hs` (driver: `LedgerDBEnv`/`LedgerDBHandle` had **explicit kind sigs** → `StateKind`). Plus `HeaderStateHistory`, `Node/ProtocolInfo`, `ChainDB/API`/`Init`/`Impl/Args`/`Impl/Query`, `Ledger/Query` (QFNoTables). Pattern recap: data types with explicit `type X :: … -> (Type -> Type) -> …` kind sigs need that arg → `StateKind`; types without infer it from their state fields once those are `… EmptyMK`. `EmptyMK` must be added to **explicit import lists** (modules importing `Ledger.Extended`/`Basics (…)` don't get it free — `Extended` doesn't re-export it).
-  - **DONE: `Ledger/Dual`** (data instances + apply bodies + serialisation — green), `SingleEraBlock` constraints, `ChainSel`/`ChainDB Impl/Query`. The whole lib is green **except the HFC combinator** (`Combinator/Basics`/`Ledger`/`State` + the `Flip` sweep) and its immediate consumers (`Mempool/Impl/Common`, `MiniProtocol/ChainSync/Client`).
+### Remaining
+- [~] **`protocol` + `cardano`** — fresh agent running (worktree-isolated). It works
+      off the *pre-scrub* tip, so integrate its **cardano-src commits via cherry-pick**
+      onto the clean tip (cherry-pick is patch-based, unaffected by the rewrite); make
+      sure no stray files ride along. Prior crashed WIP (unverified) is on
+      `worktree-agent-aeb5f66ad3bf9e4c7` @ `513ea15b8` (reference only).
+- [ ] **Review artifacts (per lib):** `git diff e6fad0630 <skin-tip>` (semantic) +
+      `git diff <skin-tip> js/utxo-hd-4` (syntactic strip).
 
-  - **⚠ HFC FORK — decide before doing `Combinator/Basics`:** prepare-11.1's HFC state is `newtype instance LedgerState (HardForkBlock xs) mk = HardForkLedgerState { hardForkLedgerStatePerEra :: HardForkState (Flip LedgerState mk) xs }` — i.e. the telescope functor is `Flip LedgerState mk` (from `Data.SOP.Functors`). The branch dropped `Flip` (decision 1): `HardForkState LedgerState xs`. Two ways to skin:
-    1. **Revert decision 1 — restore `Flip` lib-wide** (`State.hs` + ~15 HFC files, ~120 `Flip`/`unFlip`/`FlipTickedLedgerState` sites). Then `prepare-11.1 → I` *cancels* all that churn (cleanest review). This is a real reverse-`Flip`-sweep.
-    2. **Keep decision 1; make `mk` PHANTOM on the HFC state** (telescope stays bare `HardForkState LedgerState xs`, add `mk` as an unused param). Trivial; clean strip. But the ~120 `Flip` sites then *show* in `prepare-11.1 → I` (genuine, reviewable, just uncancelled). The per-era tables already live in the opaque `Values (HardForkBlock xs) = NS WrapValues xs` (separate from the telescope, matching the branch), so the phantom is honest — no sibling tables field needed.
-    Recommendation: option 2 unless reviewers want the HFC `Flip` churn gone. Either way the HFC tables representation (canonical→`NS`) genuinely differs from prepare-11.1 and *will* show in `prepare-11.1 → I` (the semantic core — correct).
+### Decisions (load-bearing)
+1. **Skin shape:** single-arg `mk`, `l = blk`; thin newtype over the existing opaque
+   `Keys/Values/Diff`. prepare-11.1's `CanMapMK`/combinator zoo is NOT resurrected
+   (stays deleted — intended, shows in `e6→skin`).
+2. **HFC = option 2 (phantom `mk`).** HFC `LedgerState (HardForkBlock xs) mk` has `mk`
+   phantom; telescope functor is `Flip LedgerState EmptyMK` (`FlipTickedLedgerState
+   EmptyMK` for ticked). `Flip` had to return regardless (a 2-arg `LedgerState x`
+   isn't a `Type`), but pinned at `EmptyMK` — no `mk`-threading through HFC bodies,
+   clean strip. The genuine canonical→`NS WrapValues` tables change correctly shows in
+   `e6→skin`.
+3. **EqMK infeasible single-arg:** prepare-11.1's `forall mk. EqMK mk => Eq (l blk mk)`
+   needs two-arg `mk` (plain type vars); single-arg's payload is a type family
+   (`Keys blk`), and GHC forbids type families in quantified constraints (`GHC-22979`).
+   So `IsLedger` uses **concrete-`mk` constraints** (`Eq (l blk EmptyMK)`, …). That one
+   superclass block doesn't cancel — small localised residue.
+4. **Apply-path altitude:** re-dress only the **state `mk`-vocabulary**; KEEP the
+   branch's genuine apply restructuring visible (explicit `Values blk` param,
+   `(state, Diff)` tuples, `forward`). So `applyChainTick` stays
+   `… l blk EmptyMK -> (Ticked l blk EmptyMK, Diff blk)` (a tuple — NOT prepare-11.1's
+   bundled `DiffMK`); only state positions get `EmptyMK`, bodies unchanged. That
+   restructuring is redesign and SHOULD appear in `e6→skin`. (This supersedes the
+   earlier "Phase 2" note above that suggested bundling into `DiffMK`.)
+5. **Cardano:** Shelley `LedgerState (ShelleyBlock …) mk` regains `shelleyLedgerTables`
+   -in-state (matching prepare-11.1); Byron void/phantom.
+6. **Scope:** the 5 production libs only; testlibs/tools/test-suites left red.
 
-    **DECIDED: option 2** (phantom `mk`). NB it still needs `Flip` restored — once `LedgerState` is 2-arg, `LedgerState x` isn't a `Type`, so the telescope element must be `Flip LedgerState EmptyMK x`. So option 2 = restore `Flip` at fixed `EmptyMK` (no `mk` threading through HFC bodies; phantom `mk` on the HFC state). **Done:** `Combinator/Basics` (phantom `mk`, telescope `HardForkState (Flip LedgerState EmptyMK) xs`, `Data.SOP.Functors` import, `unFlip` in the Peras instance) — green. `State.hs` type sigs done.
-    **REMAINING HFC body-sweep (the last lib chunk):** mirror prepare-11.1's `Flip`/`unFlip` wrapping but with `EmptyMK` instead of `mk`:
-    - `State.hs` bodies (~26 errors): every `currentState`/telescope element is now `Flip LedgerState EmptyMK blk`, so wrap reads with `unFlip` and writes with `Flip` (e.g. `singleEraTransition' … (unFlip currentState)`, `ledgerTipSlot (unFlip …)`; `extendToSlot`/`howExtend` construct `Current (Product (Flip LedgerState EmptyMK) WrapDiff)` — wrap/unwrap `Flip`). `git show e6fad0630:…/State.hs` is the template (it does exactly this at `Flip LedgerState mk`).
-    - `Combinator/Ledger.hs` (the HFC `IsLedger`/`ApplyBlock`/`forward`/value-ops over `NS WrapValues`): same `Flip`/`unFlip` wrapping for the telescope + thread the phantom `mk` on `LedgerState (HardForkBlock xs) mk` signatures (apply states → `EmptyMK`).
-    - Consumers already in the wavefront: `Mempool/Impl/Common` (2), `MiniProtocol/ChainSync/Client` (1).
-    Method: for each HFC file, diff against `git show e6fad0630:<file>` and reproduce its `Flip`/`unFlip` structure, substituting `mk`→`EmptyMK` and keeping the branch's genuine redesign (the `NS WrapValues` tables, `Product LedgerState WrapDiff` diff-threading in `extendToSlot`, the opaque `Values`/`Diff` apply flow).
+### Mechanical rhythm (for the cardano sweep + any continuation)
+Per module: save → **stable-read** the ghciwatch error file (wait until NOT "still
+compiling" AND unchanged between two polls — a plain check races the reload) → for
+each flagged `LedgerState`/`Ticked`/`ExtLedgerState` in **value/field/functor**
+position add the right `mk`: **`EmptyMK`** (tableless states), **poly `mk`**
+(read-only accessors), **`Flip <F> EmptyMK`** (`NS`/`Current`/`HardForkState`/
+`Product` functor args, with `unFlip`/`getFlipTickedLedgerState`/`Flip` in bodies).
+Add `EmptyMK` to explicit import lists where missing. **Leave alone**
+functor-unapplied/constraint/instance-head sites (`LedgerErr l blk`, `IsLedger l blk`,
+`LedgerCfg l blk`, `GetTip (l blk)`). Template per file: `git show e6fad0630:<file>`
+(it does this at `mk`; substitute `mk → EmptyMK`). Commit per module-group.
 
-  - ~~CURRENT FRONTIER:~~ `Ledger/Dual` (data instances done — `mk` to the main sub-state, aux `EmptyMK` + separate `Values a`; remaining: its `IsLedger`/`ApplyBlock` **apply bodies/helper sigs**, ~16, the involved part), `HardFork/Combinator/Abstract/SingleEraBlock`, and then the **last hard data instance: the HFC combinator** (`Combinator/Basics`/`Ledger` — `LedgerState (HardForkBlock xs) mk` = the `NS`+`Flip LedgerState EmptyMK` telescope + `NS WrapValues` tables field; see spike patch `mk-skin-spike-hfc.patch`). Then `Node/*`, `MiniProtocol/*`, then the `diffusion`/`lsm`/`cardano` libs.
-  - **The mechanical rhythm (repeat to the end):** save → `cat /tmp/ghciwatch-skin.errors` → for each `LedgerState blk`/`TickedLedgerState blk` flagged (`Expecting one more argument`), add the right `mk`: **poly `mk`** for read-only accessors, **`EmptyMK`** for tableless ticked/committed states, **`mk1`/`mk2`** for before/after pairs, **`ValuesMK`/`DiffMK`** only where the redesign genuinely carries tables in the state (rare — usually it carries them separately). `sed -i 's/TickedLedgerState blk\b\( *->\)/TickedLedgerState blk EmptyMK\1/g'` per file is the workhorse. Commit per few modules. GHC masks downstream behind the first failing module, so errors march outward one wavefront at a time.
-  - **CURRENT FRONTIER:** `Forecast.hs`, `HardFork/Abstract.hs`, `Mempool/API.hs` (incl. the `ForgeInUnknownSlot`/`ForgeInKnownSlot` data-constructor fields — those carry `LedgerState blk`/`TickedLedgerState blk`, add `EmptyMK`).
-  - **THEN, in dependency order:** the rest of the lib sweep → `Extended.hs` (`ExtLedgerState blk mk` + tables wrapper), `TypeFamilyWrappers.hs` (restore `Flip`/`FlipTickedLedgerState`), the 4 lib `data instance`s (HFC `Basics`/`Ledger`, `Dual`, `LedgerSeq` — the **non-mechanical** ones: Shelley-style tables field for concrete blocks, `NS`+`Flip` telescope for HFC), `Storage/*`, `Node/*`, `MiniProtocol/*`; then the `diffusion`/`lsm`/`cardano` libs. Use `git show e6fad0630:<file>` per file as the cancellation target.
-  - **Reference:** `mk-skin-spike-hfc.patch` (validated interface shapes); `git show e6fad0630:<file>` per file = the cancellation target.
-- [ ] Phase 2 — abstract apply path
-- [ ] Phase 3 — Storage
-- [ ] Phase 4 — HFC / Mempool / Node / MiniProtocol
-- [ ] Phase 5 — cardano + testlibs
-- [ ] Phase 6 — verify `I` typechecks
-- [ ] Phase 7 — produce review artifacts
-
-Update this checklist + a one-line note per phase as you go, so the plan stays the
-migration record across machines.
+> Note: the "Order of attack" / "Phase N" sections above are the *original plan*,
+> kept for context; this section is the authoritative current state.
