@@ -54,6 +54,7 @@ import Ouroboros.Consensus.HardFork.History.Qry
   )
 import Ouroboros.Consensus.Ledger.Abstract
   ( LedgerConfig
+  , EmptyMK
   , LedgerState
   )
 import Ouroboros.Consensus.Util.Time
@@ -81,7 +82,7 @@ data HeaderInFutureCheck m blk arrival judgment = HeaderInFutureCheck
   -- ^ This is ideally called _immediately_ upon the header arriving.
   , judgeHeaderArrival ::
       LedgerConfig blk ->
-      LedgerState blk ->
+      LedgerState blk EmptyMK ->
       arrival ->
       Except PastHorizonException judgment
   -- ^ Judge what to do about the header's arrival time.
