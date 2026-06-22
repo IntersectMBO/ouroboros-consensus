@@ -295,13 +295,14 @@ castShelleyTip (ShelleyTip sn bn hh) =
 -- 'SL.NewEpochState' has a UTxO field which we hold empty here (the entries live
 -- in the backend); 'applyBlockLedgerResultWithValidation' injects the read
 -- values, runs the ledger rules, and extracts the resulting diff.
-data instance LedgerState (ShelleyBlock proto era) = ShelleyLedgerState
+data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState
   { shelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
   , shelleyLedgerStateNoUTxO :: !(NewEpochStateNoUTxOs era)
   -- ^ The new-epoch state with its UTxO field held empty; the UTxO lives in
   -- the backend (see 'Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim'). Use
   -- the 'shelleyLedgerState' accessor for the (UTxO-free) 'SL.NewEpochState'.
   , shelleyLedgerTransition :: !ShelleyTransition
+  , shelleyLedgerTables :: !(LedgerTables (ShelleyBlock proto era) mk)
   , shelleyLedgerLatestPerasCertRound :: !(StrictMaybe PerasRoundNo)
   }
   deriving Generic
@@ -314,7 +315,7 @@ data instance LedgerState (ShelleyBlock proto era) = ShelleyLedgerState
 -- read the UTxO, go through the LedgerDB forker \/ ledger tables. See
 -- 'newEpochStateWithEmptyUTxO'.
 shelleyLedgerState ::
-  LedgerState (ShelleyBlock proto era) -> SL.NewEpochState era
+  LedgerState (ShelleyBlock proto era) mk -> SL.NewEpochState era
 shelleyLedgerState = newEpochStateWithEmptyUTxO . shelleyLedgerStateNoUTxO
 
 #if __GLASGOW_HASKELL__ >= 910
@@ -324,14 +325,37 @@ shelleyLedgerState = newEpochStateWithEmptyUTxO . shelleyLedgerStateNoUTxO
 #endif
 
 deriving instance
-  ShelleyBasedEra era =>
-  Eq (LedgerState (ShelleyBlock proto era))
+  (ShelleyBasedEra era, Eq (LedgerTables (ShelleyBlock proto era) mk)) =>
+  Eq (LedgerState (ShelleyBlock proto era) mk)
 deriving instance
-  ShelleyBasedEra era =>
-  NoThunks (LedgerState (ShelleyBlock proto era))
+  (ShelleyBasedEra era, NoThunks (LedgerTables (ShelleyBlock proto era) mk)) =>
+  NoThunks (LedgerState (ShelleyBlock proto era) mk)
 deriving instance
-  ShelleyBasedEra era =>
-  Show (LedgerState (ShelleyBlock proto era))
+  (ShelleyBasedEra era, Show (LedgerTables (ShelleyBlock proto era) mk)) =>
+  Show (LedgerState (ShelleyBlock proto era) mk)
+
+-- | The skin's 'LedgerTables' wrapper and its map-kind payloads carry no
+-- derived instances (@main@ derives them via the @EqMK@\/@ShowMK@\/@NoThunksMK@
+-- machinery, which the single-arg skin cannot reproduce). The Shelley ledger
+-- state holds a 'LedgerTables' field, so we provide the (transparent) instances
+-- it needs at the map-kinds that actually appear in a Shelley state value
+-- position — i.e. 'EmptyMK', the live UTxO being threaded externally as the
+-- @'Values'@\/@'Diff'@ of 'BlockSupportsUTxOHD'.
+deriving newtype instance
+  Eq (mk (ShelleyBlock proto era)) =>
+  Eq (LedgerTables (ShelleyBlock proto era) mk)
+deriving newtype instance
+  Show (mk (ShelleyBlock proto era)) =>
+  Show (LedgerTables (ShelleyBlock proto era) mk)
+deriving newtype instance
+  NoThunks (mk (ShelleyBlock proto era)) =>
+  NoThunks (LedgerTables (ShelleyBlock proto era) mk)
+
+deriving stock instance Eq (EmptyMK (ShelleyBlock proto era))
+deriving stock instance Show (EmptyMK (ShelleyBlock proto era))
+instance NoThunks (EmptyMK (ShelleyBlock proto era)) where
+  showTypeOf _ = "EmptyMK"
+  wNoThunks _ EmptyMK = return Nothing
 
 -- | Information required to determine the hard fork point from Shelley to the
 -- next ledger
@@ -359,7 +383,7 @@ newtype ShelleyTransition = ShelleyTransitionInfo
   deriving newtype NoThunks
 
 shelleyLedgerTipPoint ::
-  LedgerState (ShelleyBlock proto era) ->
+  LedgerState (ShelleyBlock proto era) mk ->
   Point (ShelleyBlock proto era)
 shelleyLedgerTipPoint = shelleyTipToPoint . shelleyLedgerTip
 
@@ -486,7 +510,7 @@ instance GetTip (Ticked LedgerState (ShelleyBlock proto era)) where
 -------------------------------------------------------------------------------}
 
 -- | Ticking only affects the state itself
-data instance Ticked LedgerState (ShelleyBlock proto era) = TickedShelleyLedgerState
+data instance Ticked LedgerState (ShelleyBlock proto era) mk = TickedShelleyLedgerState
   { untickedShelleyLedgerTip :: !(WithOrigin (ShelleyTip proto era))
   , tickedShelleyLedgerTransition :: !ShelleyTransition
   -- ^ We are counting blocks within an epoch, this means:
@@ -497,6 +521,7 @@ data instance Ticked LedgerState (ShelleyBlock proto era) = TickedShelleyLedgerS
   , tickedShelleyLedgerStateNoUTxO :: !(NewEpochStateNoUTxOs era)
   -- ^ Like 'shelleyLedgerStateNoUTxO': the UTxO field is held empty. Use the
   -- 'tickedShelleyLedgerState' accessor for the (UTxO-free) 'SL.NewEpochState'.
+  , tickedShelleyLedgerTables :: !(LedgerTables (ShelleyBlock proto era) mk)
   , tickedShelleyLedgerLatestPerasCertRound :: !(StrictMaybe PerasRoundNo)
   }
   deriving Generic
@@ -506,7 +531,7 @@ data instance Ticked LedgerState (ShelleyBlock proto era) = TickedShelleyLedgerS
 -- ⚠️  Its UTxO field is EMPTY by design (see 'shelleyLedgerState'): the live
 -- UTxO lives in the ledger tables, not the state.
 tickedShelleyLedgerState ::
-  Ticked LedgerState (ShelleyBlock proto era) -> SL.NewEpochState era
+  Ticked LedgerState (ShelleyBlock proto era) mk -> SL.NewEpochState era
 tickedShelleyLedgerState = newEpochStateWithEmptyUTxO . tickedShelleyLedgerStateNoUTxO
 
 #if __GLASGOW_HASKELL__ >= 910
@@ -516,7 +541,7 @@ tickedShelleyLedgerState = newEpochStateWithEmptyUTxO . tickedShelleyLedgerState
 #endif
 
 untickedShelleyLedgerTipPoint ::
-  TickedLedgerState (ShelleyBlock proto era) ->
+  TickedLedgerState (ShelleyBlock proto era) mk ->
   Point (ShelleyBlock proto era)
 untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
@@ -547,6 +572,7 @@ instance ShelleyCompatible proto era => IsLedger LedgerState (ShelleyBlock proto
                       then ShelleyTransitionInfo{shelleyAfterVoting = 0}
                       else shelleyLedgerTransition
                 , tickedShelleyLedgerStateNoUTxO = tickedNoUTxO
+                , tickedShelleyLedgerTables = emptyLedgerTables
                 , tickedShelleyLedgerLatestPerasCertRound =
                     shelleyLedgerLatestPerasCertRound
                 }
@@ -609,12 +635,12 @@ applyHelper ::
   LedgerConfig (ShelleyBlock proto era) ->
   ShelleyBlock proto era ->
   Values (ShelleyBlock proto era) ->
-  Ticked LedgerState (ShelleyBlock proto era) ->
+  Ticked LedgerState (ShelleyBlock proto era) EmptyMK ->
   Either
     (SL.BlockTransitionError era)
     ( LedgerResult
         (ShelleyBlock proto era)
-        (LedgerState (ShelleyBlock proto era), Diff (ShelleyBlock proto era))
+        (LedgerState (ShelleyBlock proto era) EmptyMK, Diff (ShelleyBlock proto era))
     )
 applyHelper evs doValidate cfg blk values stBefore = do
   let TickedShelleyLedgerState
@@ -649,6 +675,7 @@ applyHelper evs doValidate cfg blk values stBefore = do
                     (if blockSlot blk >= votingDeadline then succ else id) $
                       shelleyAfterVoting tickedShelleyLedgerTransition
                 }
+          , shelleyLedgerTables = emptyLedgerTables
           , shelleyLedgerLatestPerasCertRound =
               shelleyLedgerLatestPerasCertRound'
           }
@@ -798,7 +825,7 @@ decodeShelleyTransition = do
 
 encodeShelleyLedgerState ::
   ShelleyCompatible proto era =>
-  LedgerState (ShelleyBlock proto era) ->
+  LedgerState (ShelleyBlock proto era) EmptyMK ->
   Encoding
 encodeShelleyLedgerState
   ShelleyLedgerState
@@ -819,13 +846,13 @@ encodeShelleyLedgerState
 decodeShelleyLedgerState ::
   forall era proto s.
   ShelleyCompatible proto era =>
-  Decoder s (LedgerState (ShelleyBlock proto era))
+  Decoder s (LedgerState (ShelleyBlock proto era) EmptyMK)
 decodeShelleyLedgerState =
   decodeVersion
     [ (serialisationFormatVersion2, Decode decodeShelleyLedgerState2)
     ]
  where
-  decodeShelleyLedgerState2 :: Decoder s' (LedgerState (ShelleyBlock proto era))
+  decodeShelleyLedgerState2 :: Decoder s' (LedgerState (ShelleyBlock proto era) EmptyMK)
   decodeShelleyLedgerState2 = do
     enforceSize "ShelleyLedgerState" 4
     shelleyLedgerTip <- decodeWithOrigin decodeShelleyTip
@@ -839,6 +866,7 @@ decodeShelleyLedgerState =
         { shelleyLedgerTip
         , shelleyLedgerStateNoUTxO
         , shelleyLedgerTransition
+        , shelleyLedgerTables = emptyLedgerTables
         , shelleyLedgerLatestPerasCertRound
         }
 

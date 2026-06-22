@@ -52,7 +52,7 @@ forgeByronBlock ::
   -- | Current slot number
   SlotNo ->
   -- | Current ledger
-  TickedLedgerState ByronBlock ->
+  TickedLedgerState ByronBlock mk ->
   -- | Txs to include
   [Validated (GenTx ByronBlock)] ->
   -- | Leader proof ('IsLeader')
@@ -137,7 +137,7 @@ forgeRegularBlock ::
   -- | Current slot number
   SlotNo ->
   -- | Current ledger
-  TickedLedgerState ByronBlock ->
+  TickedLedgerState ByronBlock mk ->
   -- | Txs to include
   [Validated (GenTx ByronBlock)] ->
   -- | Leader proof ('IsLeader')
