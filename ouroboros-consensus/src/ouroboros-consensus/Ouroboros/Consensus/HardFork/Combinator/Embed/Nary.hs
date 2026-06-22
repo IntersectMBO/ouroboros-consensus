@@ -34,6 +34,7 @@ import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Counting (Exactly (..))
 import Data.SOP.Dict (Dict (..))
+import Data.SOP.Functors (Flip (..))
 import qualified Data.SOP.InPairs as InPairs
 import Data.SOP.Index
 import Data.SOP.Strict
@@ -48,7 +49,7 @@ import Ouroboros.Consensus.HeaderValidation
   , HeaderState (..)
   , genesisHeaderState
   )
-import Ouroboros.Consensus.Ledger.Basics (Values, emptyValues, forward)
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK, Values, emptyValues, forward)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Storage.Serialisation
@@ -224,9 +225,9 @@ instance Inject AnnTip where
   inject =
     (undistribAnnTip .: injectNS' (Proxy @AnnTip)) . forgetInjectionIndex
 
-instance Inject LedgerState where
+instance Inject (Flip LedgerState EmptyMK) where
   inject iidx =
-    HardForkLedgerState . injectHardForkState iidx
+    Flip . HardForkLedgerState . injectHardForkState iidx
 
 instance Inject WrapChainDepState where
   inject = coerce .: injectHardForkState
@@ -241,12 +242,13 @@ instance Inject HeaderState where
               WrapChainDepState headerStateChainDep
       }
 
-instance Inject ExtLedgerState where
-  inject iidx ExtLedgerState{..} =
-    ExtLedgerState
-      { ledgerState = inject iidx ledgerState
-      , headerState = inject iidx headerState
-      }
+instance Inject (Flip ExtLedgerState EmptyMK) where
+  inject iidx (Flip ExtLedgerState{..}) =
+    Flip $
+      ExtLedgerState
+        { ledgerState = unFlip $ inject iidx (Flip ledgerState)
+        , headerState = inject iidx headerState
+        }
 
 {-------------------------------------------------------------------------------
   Initial ExtLedgerState
@@ -269,8 +271,8 @@ injectInitialExtLedgerState ::
   forall x xs.
   CanHardFork (x ': xs) =>
   TopLevelConfig (HardForkBlock (x ': xs)) ->
-  ExtLedgerState x ->
-  (ExtLedgerState (HardForkBlock (x ': xs)), Values (HardForkBlock (x ': xs)))
+  ExtLedgerState x EmptyMK ->
+  (ExtLedgerState (HardForkBlock (x ': xs)) EmptyMK, Values (HardForkBlock (x ': xs)))
 injectInitialExtLedgerState cfg extLedgerState0 =
   ( ExtLedgerState
       { ledgerState = targetEraLedgerState
@@ -293,15 +295,15 @@ injectInitialExtLedgerState cfg extLedgerState0 =
   -- importantly the Byron->Shelley genesis-UTxO dump), so we keep it (rather
   -- than discarding it) and turn it into the genesis 'Values' the LedgerDB
   -- needs alongside the ledger state.
-  targetEraLedgerStateInner :: HardForkState LedgerState (x ': xs)
+  targetEraLedgerStateInner :: HardForkState (Flip LedgerState EmptyMK) (x ': xs)
   genesisDiff :: NS WrapDiff (x ': xs)
   (targetEraLedgerStateInner, genesisDiff) =
     State.extendToSlot
       (configLedger cfg)
       (SlotNo 0)
-      (initHardForkState (ledgerState extLedgerState0))
+      (initHardForkState (Flip (ledgerState extLedgerState0)))
 
-  targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs))
+  targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs)) EmptyMK
   targetEraLedgerState = HardForkLedgerState targetEraLedgerStateInner
 
   -- The genesis diff is all-inserts (deletes against an empty UTxO are no-ops),
