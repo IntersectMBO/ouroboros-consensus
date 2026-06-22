@@ -29,6 +29,9 @@ module Ouroboros.Consensus.Ledger.Basics
   , KeysMK (..)
   , ValuesMK (..)
   , DiffMK (..)
+  , HasLedgerTables (..)
+  , emptyLedgerTables
+  , forgetLedgerTables
 
     -- * On-disk table vocabulary
   , TxIn
@@ -166,7 +169,7 @@ pureLedgerResult a =
 -- | Static environment required for the ledger
 --
 -- Types that inhabit this family will come from the Ledger code.
-type LedgerCfg :: (Type -> Type) -> Type -> Type
+type LedgerCfg :: StateKind -> Type -> Type
 type family LedgerCfg l blk :: Type
 
 -- | Event emitted by the ledger
@@ -290,8 +293,8 @@ applyChainTick = lrResult ...: applyChainTickLedgerResult
 -- The main operations we can do with a 'LedgerState' are /ticking/ (defined in
 -- 'IsLedger'), and /applying a block/ (defined in
 -- 'Ouroboros.Consensus.Ledger.Abstract.ApplyBlock').
-type LedgerState :: Type -> Type
-data family LedgerState blk
+type LedgerState :: Type -> LedgerStateKind
+data family LedgerState blk mk
 
 type TickedLedgerState blk = Ticked LedgerState blk
 
@@ -333,6 +336,10 @@ type MapKind = Type -> Type
 -- | The kind of a ledger-state-like type once it carries an 'mk' argument.
 type LedgerStateKind = MapKind -> Type
 
+-- | The kind of an unapplied ledger-state functor (the generic @l@ in
+-- @l blk mk@), e.g. 'LedgerState' itself.
+type StateKind = Type -> LedgerStateKind
+
 -- | The on-disk tables of a block, in the chosen map-kind. A thin newtype over
 -- @mk blk@ (e.g. @'LedgerTables' blk 'ValuesMK' ≅ 'Values' blk@).
 type LedgerTables :: Type -> MapKind -> Type
@@ -353,6 +360,29 @@ newtype ValuesMK l = ValuesMK (Values l)
 -- | The diff phase: a thin wrapper over the opaque 'Diff'.
 type DiffMK :: MapKind
 newtype DiffMK l = DiffMK (Diff l)
+
+-- | @main@'s vocabulary for getting\/setting a 'LedgerState'\'s tables, restored
+-- over the skin so call sites (@projectLedgerTables@\/@withLedgerTables@\/
+-- @forgetLedgerTables@) read exactly as on @main@ and cancel in the review diff.
+--
+-- This is /not/ @main@'s combinator class (no @LedgerTableConstraints@\/
+-- @ltliftA2@ zoo). It is a per-@blk@ class over @'LedgerState' blk mk@;
+-- 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState' gets its own thin
+-- wrapper. To be stripped with the rest of the skin.
+type HasLedgerTables :: Type -> Constraint
+class BlockSupportsUTxOHD blk => HasLedgerTables blk where
+  projectLedgerTables :: LedgerState blk mk -> LedgerTables blk mk
+  withLedgerTables ::
+    LedgerState blk any -> LedgerTables blk mk -> LedgerState blk mk
+
+-- | The empty tables.
+emptyLedgerTables :: LedgerTables blk EmptyMK
+emptyLedgerTables = LedgerTables EmptyMK
+
+-- | Drop a 'LedgerState'\'s tables.
+forgetLedgerTables ::
+  HasLedgerTables blk => LedgerState blk mk -> LedgerState blk EmptyMK
+forgetLedgerTables st = withLedgerTables st emptyLedgerTables
 
 {-------------------------------------------------------------------------------
   UTxO-HD block axis
@@ -430,7 +460,7 @@ class (Semigroup (Diff blk), Semigroup (Keys blk)) => BlockSupportsUTxOHD blk wh
   -- current era to pick which @NS@ arm to decode into. Single-era instances
   -- ignore it. The snapshot loads the state before the tables, so it is always
   -- available at the call site.
-  decodeValues :: forall s. LedgerState blk -> Decoder s (Values blk)
+  decodeValues :: forall s. LedgerState blk EmptyMK -> Decoder s (Values blk)
 
 -- | The on-disk table operations that only /single-era/ blocks support, split
 -- out of 'BlockSupportsUTxOHD'.

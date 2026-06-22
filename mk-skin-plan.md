@@ -31,6 +31,13 @@ right thing for a human to read. Then `I → HEAD` is the mechanical skin-strip.
 **`I` is throwaway.** It is review scaffolding; the branch that merges is the
 original `js/utxo-hd-4` (HEAD). The skin commits are dropped before merge.
 
+**Scope (decided): the five production libraries only** —
+`lib:{ouroboros-consensus, diffusion, protocol, cardano, lsm}`. The testlibs
+(`unstable-*`), tools, test-suites and benchmarks are **deliberately left red** in
+`I`: they are themselves "recipe" code with little review value, and `I` is
+throwaway so it need not build them. Only the five libs need to typecheck for
+`prepare-11.1 → I` to be a trustworthy review artifact.
+
 ### Measured expectation (from two spikes, see end of file)
 - ~51% of the branch churn is in `Port …` commits (vocabulary-dominated → mostly cancels).
 - On **Storage**, ~80–85% of the churn cancels under the skin; ~15–20% is the
@@ -80,6 +87,18 @@ newtype ValuesMK l = ValuesMK (Values l)   -- associated types on
 newtype DiffMK   l = DiffMK   (Diff   l)   -- BlockSupportsUTxOHD
 -- so  LedgerTables blk ValuesMK ≅ Values blk,  etc.
 ```
+
+**Resolved during Phase 1 (grounded in `git show e6fad0630`):** `main` is *already*
+`blk`-indexed for tables — `newtype LedgerTables blk mk` (`Type -> MapKind ->
+Type`), `type family TxIn blk`, and the handle is `LedgerTablesHandle m l blk`
+with `read :: l blk EmptyMK -> LedgerTables blk KeysMK -> m (LedgerTables blk
+ValuesMK)` (functor `l` applied to `blk`+`mk`, tables `blk`-indexed). So the clean
+`l = blk` skin reproduces `main`'s signatures **verbatim** and is also the
+feasible one — the two spikes were *not* in conflict (Spike A's `blk` model =
+`main`'s shape). The only divergence is single-arg `mk` (`KeysMK blk = KeysMK
+(Keys blk)`) vs `main`'s two-arg (`KeysMK k v = Set k`), invisible in applied
+positions. `HasLedgerTables` is a per-`blk` class over `LedgerState blk mk` (the
+spike's shape); `ExtLedgerState` gets its own handling in `Extended.hs`.
 
 **Crucial nuances:**
 
@@ -160,8 +179,9 @@ explicit `blockKeys` extraction.
 HFC is the hard part; the `Flip` functor + sibling tables field (decision above)
 is the load-bearing arrangement.
 
-**Phase 5 — cardano (byron/shelley/cardano) + testlibs/tools.** Re-dress. Lots of
-files, mostly mechanical once the lib shape is settled.
+**Phase 5 — cardano lib (byron/shelley/cardano).** Re-dress. Lots of files,
+mostly mechanical once the lib shape is settled. **Testlibs / tools /
+test-suites are out of scope** (left red — see "Scope" above).
 
 **Phase 6 — verify `I` typechecks** (lib, then `diffusion`, `lsm`, `cardano`).
 Full green not strictly required for review, but the closer to green, the more
@@ -236,7 +256,9 @@ the repo root alongside this file).
 ## Status
 
 - [x] **Phase 0** — skin types in `Basics.hs` (+ exports), lib green (239 modules). *Done: the 6 skin defs + export group; unused so far, so lib stayed green.*
-- [ ] Phase 1 — `mk` on state functors lib-wide (red stretch) ← current
+- [~] **Phase 1** — `mk` on state functors lib-wide (red stretch) ← current. **Foundation in `Basics.hs` done:** `MapKind`/`LedgerStateKind`/`StateKind` kind vocab; `LedgerTables`/`EmptyMK`/`KeysMK`/`ValuesMK`/`DiffMK` skin newtypes; `HasLedgerTables` class + `forgetLedgerTables`/`emptyLedgerTables`; `data family LedgerState blk mk` (kind `Type -> LedgerStateKind`); `LedgerCfg :: StateKind -> Type -> Type`; `decodeValues :: LedgerState blk EmptyMK -> …`.
+  - **NEXT (the cascade):** the generic ledger-state variable `l` in `IsLedger`, `GetTip`, `ApplyBlock`, `LedgerResult` etc. is still kinded `Type -> Type`; re-kind it to `StateKind` and thread `l blk` → `l blk mk` (and `applyChainTick` back to `… -> l blk EmptyMK -> … (Ticked l blk DiffMK)`). Head of cascade: `Basics.hs:202` and `:261` (`LedgerCfg l blk` with `l :: * -> *`). After `Basics` is internally consistent, GHC's first-failing-module masking lifts and the errors move downstream (Extended → TypeFamilyWrappers `Flip` restore → the 4 lib `data instance`s → the apply-path/signature sweep).
+  - **Reference:** `mk-skin-spike-hfc.patch` (validated interface shapes); `git show e6fad0630:<file>` per file = the cancellation target.
 - [ ] Phase 2 — abstract apply path
 - [ ] Phase 3 — Storage
 - [ ] Phase 4 — HFC / Mempool / Node / MiniProtocol
