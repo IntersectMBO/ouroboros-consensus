@@ -415,7 +415,7 @@ implRead ::
   ) =>
   Tracer m LedgerDBV2Trace ->
   UTxOTable m ->
-  l blk ->
+  l blk EmptyMK ->
   Keys blk ->
   m (Values blk)
 implRead tracer t _st keys =
@@ -472,7 +472,7 @@ implTakeHandleSnapshot ::
   Tracer m LedgerDBV2Trace ->
   (LSM.SnapshotName -> m ()) ->
   UTxOTable m ->
-  l blk ->
+  l blk EmptyMK ->
   String ->
   m (Maybe CRC)
 implTakeHandleSnapshot tracer exportSnapshot t _ snapshotName = do
