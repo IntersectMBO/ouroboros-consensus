@@ -370,13 +370,13 @@ instance Bridge m a => GetTip (Ticked LedgerState (DualBlock m a)) where
 --
 -- The auxiliary (spec) ledger keeps its whole UTxO in memory, so we carry its
 -- @'Values' a@ explicitly alongside the auxiliary state.
-data instance Ticked LedgerState (DualBlock m a) = TickedDualLedgerState
-  { tickedDualLedgerStateMain :: Ticked LedgerState m
-  , tickedDualLedgerStateAux :: Ticked LedgerState a
+data instance Ticked LedgerState (DualBlock m a) mk = TickedDualLedgerState
+  { tickedDualLedgerStateMain :: Ticked LedgerState m mk
+  , tickedDualLedgerStateAux :: Ticked LedgerState a EmptyMK
   , tickedDualLedgerStateAuxValues :: Values a
   -- ^ The ticked auxiliary ledger's full UTxO.
   , tickedDualLedgerStateBridge :: BridgeLedger m a
-  , tickedDualLedgerStateAuxOrig :: LedgerState a
+  , tickedDualLedgerStateAuxOrig :: LedgerState a EmptyMK
   -- ^ The original, unticked ledger for the auxiliary block
   --
   -- The reason we keep this in addition to the ticked ledger state is that
@@ -385,7 +385,7 @@ data instance Ticked LedgerState (DualBlock m a) = TickedDualLedgerState
   , tickedDualLedgerStateAuxOrigValues :: Values a
   -- ^ The original, unticked auxiliary ledger's full UTxO.
   }
-  deriving NoThunks via AllowThunk (Ticked LedgerState (DualBlock m a))
+  deriving NoThunks via AllowThunk (Ticked LedgerState (DualBlock m a) mk)
 
 type instance AuxLedgerEvent (DualBlock m a) = AuxLedgerEvent m
 
@@ -557,28 +557,30 @@ instance
   emptyValues = emptyValues @m
   emptyDiffs = emptyDiffs @m
 
-data instance LedgerState (DualBlock m a) = DualLedgerState
-  { dualLedgerStateMain :: LedgerState m
-  , dualLedgerStateAux :: LedgerState a
+data instance LedgerState (DualBlock m a) mk = DualLedgerState
+  { dualLedgerStateMain :: LedgerState m mk
+  , dualLedgerStateAux :: LedgerState a EmptyMK
   , dualLedgerStateAuxValues :: Values a
   , dualLedgerStateBridge :: BridgeLedger m a
   }
-  deriving NoThunks via AllowThunk (LedgerState (DualBlock m a))
+  deriving NoThunks via AllowThunk (LedgerState (DualBlock m a) mk)
 
 instance Bridge m a => UpdateLedger (DualBlock m a)
 
 deriving instance
   ( Bridge m a
-  , Show (LedgerState a)
+  , Show (LedgerState m mk)
+  , Show (LedgerState a EmptyMK)
   , Show (Values a)
   ) =>
-  Show (LedgerState (DualBlock m a))
+  Show (LedgerState (DualBlock m a) mk)
 deriving instance
   ( Bridge m a
-  , Eq (LedgerState a)
+  , Eq (LedgerState m mk)
+  , Eq (LedgerState a EmptyMK)
   , Eq (Values a)
   ) =>
-  Eq (LedgerState (DualBlock m a))
+  Eq (LedgerState (DualBlock m a) mk)
 
 {-------------------------------------------------------------------------------
   Utilities for working with the extended ledger state
