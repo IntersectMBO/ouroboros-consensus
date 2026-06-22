@@ -109,7 +109,7 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   -- ^ Create an duplicate of a handle. This will be used when opening read-only
   -- forkers and also to open the first handle for a forker used in chain
   -- selection.
-  , read :: !(l blk -> Keys blk -> m (Values blk))
+  , read :: !(l blk EmptyMK -> Keys blk -> m (Values blk))
   -- ^ Read values for the given keys from the tables, and deserialize them as
   -- if they were from the same era as the given ledger state.
   , readRange :: !(RangeReadTables m blk)
@@ -117,7 +117,7 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   -- @QFTraverseTables@ queries (see 'EraRangeReader' / 'withEraRangeReader').
   -- The caller supplies the projection onto the current era @x@; see
   -- 'RangeReadTables' for the per-backend semantics and cursor contract.
-  , takeHandleSnapshot :: !(l blk -> String -> m (Maybe CRC))
+  , takeHandleSnapshot :: !(l blk EmptyMK -> String -> m (Maybe CRC))
   -- ^ Take a snapshot of a handle. The given ledger state is used to decide the
   -- encoding of the values based on the current era.
   --
@@ -170,17 +170,17 @@ mkEraRangeReaderProvider h batchSize =
 -- The table data lives entirely behind the 'LedgerTablesHandle', which the rest
 -- of the LedgerDB threads around backend-agnostically.
 data StateRef m l blk = StateRef
-  { state :: !(l blk)
+  { state :: !(l blk EmptyMK)
   , tables :: !(LedgerTablesHandle m l blk)
   }
   deriving Generic
 
-deriving instance (IOLike m, NoThunks (l blk)) => NoThunks (StateRef m l blk)
+deriving instance (IOLike m, NoThunks (l blk EmptyMK)) => NoThunks (StateRef m l blk)
 
-instance Eq (l blk) => Eq (StateRef m l blk) where
+instance Eq (l blk EmptyMK) => Eq (StateRef m l blk) where
   (==) = (==) `on` state
 
-instance Show (l blk) => Show (StateRef m l blk) where
+instance Show (l blk EmptyMK) => Show (StateRef m l blk) where
   show = show . state
 
 instance GetTip (l blk) => Anchorable (WithOrigin SlotNo) (StateRef m l blk) (StateRef m l blk) where
@@ -196,10 +196,10 @@ newtype LedgerSeq m l blk = LedgerSeq
   }
   deriving Generic
 
-deriving newtype instance (IOLike m, NoThunks (l blk)) => NoThunks (LedgerSeq m l blk)
+deriving newtype instance (IOLike m, NoThunks (l blk EmptyMK)) => NoThunks (LedgerSeq m l blk)
 
-deriving newtype instance Eq (l blk) => Eq (LedgerSeq m l blk)
-deriving newtype instance Show (l blk) => Show (LedgerSeq m l blk)
+deriving newtype instance Eq (l blk EmptyMK) => Eq (LedgerSeq m l blk)
+deriving newtype instance Show (l blk EmptyMK) => Show (LedgerSeq m l blk)
 
 type LedgerSeq' m blk = LedgerSeq m ExtLedgerState blk
 
@@ -212,7 +212,7 @@ empty ::
   ( GetTip (l blk)
   , IOLike m
   ) =>
-  l blk ->
+  l blk EmptyMK ->
   init ->
   (init -> m (LedgerTablesHandle m l blk)) ->
   m (LedgerSeq m l blk)
@@ -223,7 +223,7 @@ empty' ::
   ( GetTip (l blk)
   , IOLike m
   ) =>
-  l blk ->
+  l blk EmptyMK ->
   Values blk ->
   (Values blk -> m (LedgerTablesHandle m l blk)) ->
   m (LedgerSeq m l blk)
@@ -379,7 +379,7 @@ rollbackN n ldb
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> l3s == current ldb
 -- True
-current :: GetTip (l blk) => LedgerSeq m l blk -> l blk
+current :: GetTip (l blk) => LedgerSeq m l blk -> l blk EmptyMK
 current = state . currentHandle
 
 currentHandle :: GetTip (l blk) => LedgerSeq m l blk -> StateRef m l blk
@@ -391,7 +391,7 @@ currentHandle = headAnchor . getLedgerSeq
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> l0s == anchor ldb
 -- True
-anchor :: LedgerSeq m l blk -> l blk
+anchor :: LedgerSeq m l blk -> l blk EmptyMK
 anchor = state . anchorHandle
 
 anchorHandle :: LedgerSeq m l blk -> StateRef m l blk
@@ -405,7 +405,7 @@ anchorHandle = AS.anchor . getLedgerSeq
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> [(0, l3s), (1, l2s), (2, l1s)] == snapshots ldb
 -- True
-snapshots :: LedgerSeq m l blk -> [(Word64, l blk)]
+snapshots :: LedgerSeq m l blk -> [(Word64, l blk EmptyMK)]
 snapshots =
   zip [0 ..]
     . map state
@@ -462,7 +462,7 @@ getPastLedgerAt ::
   ) =>
   Point blk ->
   LedgerSeq m l blk ->
-  Maybe (l blk)
+  Maybe (l blk EmptyMK)
 getPastLedgerAt pt db = current <$> rollback pt db
 
 -- | Roll back the volatile states up to the specified point.
@@ -533,8 +533,8 @@ immutableTipSlot =
 -- | Transform the underlying volatile 'AnchoredSeq' using the given functions.
 volatileStatesBimap ::
   AS.Anchorable (WithOrigin SlotNo) a b =>
-  (l blk -> a) ->
-  (l blk -> b) ->
+  (l blk EmptyMK -> a) ->
+  (l blk EmptyMK -> b) ->
   LedgerSeq m l blk ->
   AS.AnchoredSeq (WithOrigin SlotNo) a b
 volatileStatesBimap f g =
