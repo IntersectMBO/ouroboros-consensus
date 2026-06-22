@@ -20,7 +20,7 @@ changed lines and is hard to review as one unit.
 We are building an **intermediate tree `I`** in which the ledger state carries a
 `mk` parameter *again* — but `mk` is a **thin newtype skin over the new opaque
 payloads**, not the old machinery. The point: re-dressing the finished design in
-`main`'s `mk` *vocabulary* makes `prepare-11.1 → I` cancel all the
+`prepare-11.1`'s `mk` *vocabulary* makes `prepare-11.1 → I` cancel all the
 vocabulary churn, leaving roughly the genuine structural redesign — which is the
 right thing for a human to read. Then `I → HEAD` is the mechanical skin-strip.
 
@@ -88,34 +88,34 @@ newtype DiffMK   l = DiffMK   (Diff   l)   -- BlockSupportsUTxOHD
 -- so  LedgerTables blk ValuesMK ≅ Values blk,  etc.
 ```
 
-**Resolved during Phase 1 (grounded in `git show e6fad0630`):** `main` is *already*
+**Resolved during Phase 1 (grounded in `git show e6fad0630`):** `prepare-11.1` is *already*
 `blk`-indexed for tables — `newtype LedgerTables blk mk` (`Type -> MapKind ->
 Type`), `type family TxIn blk`, and the handle is `LedgerTablesHandle m l blk`
 with `read :: l blk EmptyMK -> LedgerTables blk KeysMK -> m (LedgerTables blk
 ValuesMK)` (functor `l` applied to `blk`+`mk`, tables `blk`-indexed). So the clean
-`l = blk` skin reproduces `main`'s signatures **verbatim** and is also the
+`l = blk` skin reproduces `prepare-11.1`'s signatures **verbatim** and is also the
 feasible one — the two spikes were *not* in conflict (Spike A's `blk` model =
-`main`'s shape). The only divergence is single-arg `mk` (`KeysMK blk = KeysMK
-(Keys blk)`) vs `main`'s two-arg (`KeysMK k v = Set k`), invisible in applied
+`prepare-11.1`'s shape). The only divergence is single-arg `mk` (`KeysMK blk = KeysMK
+(Keys blk)`) vs `prepare-11.1`'s two-arg (`KeysMK k v = Set k`), invisible in applied
 positions. `HasLedgerTables` is a per-`blk` class over `LedgerState blk mk` (the
 spike's shape); `ExtLedgerState` gets its own handling in `Extended.hs`.
 
 **Crucial nuances:**
 
-1. **Single-arg `mk`, unlike `main`.** `main`'s `MapKind` is two-arg (`EmptyMK k
+1. **Single-arg `mk`, unlike `prepare-11.1`.** `prepare-11.1`'s `MapKind` is two-arg (`EmptyMK k
    v`, `ValuesMK k v = ValuesMK (Map k v)`). Ours is one-arg (`KeysMK l`). In
    *applied* form the signatures read identically — `LedgerState blk EmptyMK`,
-   `LedgerTables blk DiffMK` — so they **cancel textually** against `main`. We do
-   NOT resurrect `main`'s `CanMapMK`/`CanMapKeysMK`/`ZeroableMK`/`mapKeysMK`
+   `LedgerTables blk DiffMK` — so they **cancel textually** against `prepare-11.1`. We do
+   NOT resurrect `prepare-11.1`'s `CanMapMK`/`CanMapKeysMK`/`ZeroableMK`/`mapKeysMK`
    combinator zoo; that machinery stays deleted in `I` and shows up in
    `prepare-11.1 → I` as a deletion. **That is intended, bounded residue** — the
    redesign genuinely deleted it.
 
 2. **Revert decision 1.** The HFC telescope functor goes back to `Flip
-   LedgerState mk` (`main`'s known-good shape). The telescope itself stays
+   LedgerState mk` (`prepare-11.1`'s known-good shape). The telescope itself stays
    **table-free** (`NS (Flip LedgerState EmptyMK) xs`); the running `mk` lives in
    the **HFC-level tables field beside the telescope** (`NS WrapValues xs` etc.),
-   exactly as `main` arranges it. Spike A proved both body-level failures vanish
+   exactly as `prepare-11.1` arranges it. Spike A proved both body-level failures vanish
    under this arrangement. So `Flip`/`unFlip`/`FlipTickedLedgerState` come back.
 
 3. **The Shelley `shelleyLedgerTables` field comes back** on `LedgerState
@@ -123,12 +123,12 @@ spike's shape); `ExtLedgerState` gets its own handling in `Extended.hs`.
 
 4. Also restore the `HasLedgerTables` vocabulary the call sites use —
    `projectLedgerTables` / `withLedgerTables` / `forgetLedgerTables` /
-   `emptyLedgerTables` — over the skin, so the call sites cancel against `main`.
+   `emptyLedgerTables` — over the skin, so the call sites cancel against `prepare-11.1`.
    Defer this to Phase 1 (its methods mention `l mk`).
 
 **Build target for each file:** drive `git diff e6fad0630:<file> <file>` toward
 zero *except* for the genuine structural changes. Keep `git show e6fad0630:<file>`
-open and match `main`'s signature text where the redesign didn't truly change the
+open and match `prepare-11.1`'s signature text where the redesign didn't truly change the
 shape.
 
 ---
@@ -160,19 +160,19 @@ above to `Basics.hs` + exports. They are unused so far ⇒ lib stays green. Comm
 - `GetTip`, `Eq`/`Show`/`NoThunks` quantified-over-`mk` instances.
 
 **Phase 2 — abstract apply path (`Ledger/Abstract`, `IsLedger`, `ApplyBlock`).**
-Re-dress to `main`'s signatures over the skin:
+Re-dress to `prepare-11.1`'s signatures over the skin:
 - `applyChainTick :: … -> l EmptyMK -> Ticked l DiffMK` (re-bundle the current
   `(ticked, diff)` return into the ticked state's `DiffMK` field).
 - `applyBlock`/`tickThenApply`: `… -> Ticked l ValuesMK -> … l DiffMK` (or
-  `TrackingMK` to match `main` — check `main`'s exact result mk).
-- `blockKeys` ↔ `main`'s `getBlockKeySets :: … -> LedgerTables l KeysMK` shape.
+  `TrackingMK` to match `prepare-11.1` — check `prepare-11.1`'s exact result mk).
+- `blockKeys` ↔ `prepare-11.1`'s `getBlockKeySets :: … -> LedgerTables l KeysMK` shape.
 
 **Phase 3 — Storage (`Storage/LedgerDB/**`).** Per Spike B: re-wrap the handle
 record (`read :: … -> LedgerTables l KeysMK -> m (LedgerTables l ValuesMK)`),
 `Forker`, `LedgerSeq`, the LedgerDB API, snapshots, V2 InMemory backend. **Leave**
 the structural residue (it does not cancel and is the review target): the
 `EraRangeReader`/`RangeReadTables` range-read rework, `duplicateWithDiffs` going
-from `Diff` to `main`'s two-state shape (can't be faked — stays different), the
+from `Diff` to `prepare-11.1`'s two-state shape (can't be faked — stays different), the
 explicit `blockKeys` extraction.
 
 **Phase 4 — HFC combinator, Mempool, Node, MiniProtocol.** Re-dress signatures.
@@ -235,12 +235,12 @@ the repo root alongside this file).
 - Body failures (`withLedgerTables` on the telescope; rebuilding a telescope
   element at the wrong mk) **both vanish** when the telescope stays table-free and
   the running `mk` lives in the sibling HFC tables field — i.e. revert decision 1
-  to `main`'s `Flip LedgerState mk` functor.
+  to `prepare-11.1`'s `Flip LedgerState mk` functor.
 - Unverified: real `sop-core` `NS`/`Telescope` with `All`/`SListI`; re-quantified
   `GetTip`/`NoThunks`/serialisation instances.
 
 **Spike B — Storage / "rearranging tuples": ~80–85% cancels.**
-- Of ~650 changed Storage lines, ~85% become byte-identical to `main` once
+- Of ~650 changed Storage lines, ~85% become byte-identical to `prepare-11.1` once
   re-dressed (the 148 `mk`-on-state lines dominate; the re-dressed handle `read`
   field was confirmed byte-identical to `e6fad0630`).
 - Irreducible residue (the genuine Storage redesign, ~15–20%): `readRange`/
@@ -256,26 +256,26 @@ the repo root alongside this file).
 ## Status
 
 - [x] **Phase 0** — skin types in `Basics.hs` (+ exports), lib green (239 modules). *Done: the 6 skin defs + export group; unused so far, so lib stayed green.*
-### ⚠ Finding (Phase 1): `main`'s quantified MK constraints are infeasible single-arg
+### ⚠ Finding (Phase 1): `prepare-11.1`'s quantified MK constraints are infeasible single-arg
 
-`main`'s `IsLedger` requires `forall mk. EqMK mk => Eq (l blk mk)` (and Show/
-NoThunks). That works only because `main`'s `mk` is *two-arg* (`mk k v`), so the
+`prepare-11.1`'s `IsLedger` requires `forall mk. EqMK mk => Eq (l blk mk)` (and Show/
+NoThunks). That works only because `prepare-11.1`'s `mk` is *two-arg* (`mk k v`), so the
 payload is the plain type *variables* `k`/`v`. The skin's `mk` is *single-arg*
 (forced — the HFC has no `TxIn`/`TxOut`), so each payload is a type-family
 application (`Keys blk`), and **GHC forbids type families in quantified
 constraints** (`GHC-22979`). So `EqMK`/`ShowMK`/`NoThunksMK` are *not* restored;
 `IsLedger` uses **concrete-`mk` constraints** (`Eq (l blk EmptyMK)`, …) instead.
-Consequence: that one superclass block does not cancel against `main` (a small,
+Consequence: that one superclass block does not cancel against `prepare-11.1` (a small,
 localised residue). Add more concrete map-kinds there if downstream needs them.
 
 - [~] **Phase 1** — `mk` on state functors lib-wide (red stretch) ← current. **Foundation in `Basics.hs` done:** `MapKind`/`LedgerStateKind`/`StateKind` kind vocab; `LedgerTables`/`EmptyMK`/`KeysMK`/`ValuesMK`/`DiffMK` skin newtypes; `HasLedgerTables` class + `forgetLedgerTables`/`emptyLedgerTables`; `data family LedgerState blk mk` (kind `Type -> LedgerStateKind`); `LedgerCfg :: StateKind -> Type -> Type`; `decodeValues :: LedgerState blk EmptyMK -> …`.
-  - **`Basics.hs` now internally consistent** (`IsLedger` re-kinded to `StateKind` + concrete-mk constraints; `GetTip :: LedgerStateKind -> Constraint`, `getTip :: l mk -> Point l`; `applyChainTickLedgerResult`/`applyChainTick` re-dressed to `l blk EmptyMK -> (LedgerResult blk) (Ticked l blk DiffMK)` matching `main`; `QuantifiedConstraints` enabled). Errors have moved downstream.
-  - **NEXT — `Ledger/Abstract.hs` (the `ApplyBlock` apply-path re-dress).** The branch carries values as an explicit `Values blk` param and returns `(l blk, Diff blk)`; `main` carries them in the ticked state and returns the diff in the ticked state's tables. Re-dress to `main` (verified shapes):
+  - **`Basics.hs` now internally consistent** (`IsLedger` re-kinded to `StateKind` + concrete-mk constraints; `GetTip :: LedgerStateKind -> Constraint`, `getTip :: l mk -> Point l`; `applyChainTickLedgerResult`/`applyChainTick` re-dressed to `l blk EmptyMK -> (LedgerResult blk) (Ticked l blk DiffMK)` matching `prepare-11.1`; `QuantifiedConstraints` enabled). Errors have moved downstream.
+  - **NEXT — `Ledger/Abstract.hs` (the `ApplyBlock` apply-path re-dress).** The branch carries values as an explicit `Values blk` param and returns `(l blk, Diff blk)`; `prepare-11.1` carries them in the ticked state and returns the diff in the ticked state's tables. Re-dress to `prepare-11.1` (verified shapes):
     - `applyBlockLedgerResultWithValidation :: … -> blk -> Ticked l blk ValuesMK -> Except (LedgerErr l blk) (LedgerResult blk (l blk DiffMK))` (drop the `Values blk ->` arg; `Ticked l blk` → `Ticked l blk ValuesMK`; `(l blk, Diff blk)` → `l blk DiffMK`). Same for `applyBlockLedgerResult`, `reapplyBlockLedgerResult`, `defaultApplyBlockLedgerResult`, `defaultReapplyBlockLedgerResult`.
     - Restore `class GetBlockKeySets blk where getBlockKeySets :: blk -> LedgerTables blk KeysMK` (the branch replaced it with `blockKeys :: blk -> Keys blk` on `BlockSupportsUTxOHD`; for cancellation, restore `getBlockKeySets` as a `LedgerTables … KeysMK` wrapper over `blockKeys`).
-    - `tickThenApply`/`tickThenReapply`/`applyDiffForKeys` exist in `main`'s `Abstract.hs` and thread values through the ticked state — re-dress to `main`'s bodies.
+    - `tickThenApply`/`tickThenReapply`/`applyDiffForKeys` exist in `prepare-11.1`'s `Abstract.hs` and thread values through the ticked state — re-dress to `prepare-11.1`'s bodies.
     - **Per-instance follow-on (the bulk):** every `ApplyBlock` instance (Shelley, HFC, Byron, mock, dual) unwraps `ValuesMK` at entry (`projectLedgerTables`) and wraps the diff into `DiffMK` at exit (`withLedgerTables`) — the core logic is unchanged; only the boundary packaging moves ("rearranging tuples").
-  - **Apply-path altitude DECIDED (important):** the skin re-dresses only the **state `mk`-vocabulary** (`l blk` → `l blk EmptyMK`, etc.); it **keeps the branch's genuine apply restructuring visible** (explicit `Values blk` param, `(state, Diff)` tuples, `forward`) — that is redesign, not packaging, and *should* show in the review. So `applyChainTick` stays `… l blk EmptyMK -> (Ticked l blk EmptyMK, Diff blk)` (tuple, not main's bundled `DiffMK`), and `ApplyBlock` keeps `Values blk -> Ticked l blk EmptyMK -> … (l blk EmptyMK, Diff blk)`. **Bodies are unchanged — only state type positions get `EmptyMK`.**
+  - **Apply-path altitude DECIDED (important):** the skin re-dresses only the **state `mk`-vocabulary** (`l blk` → `l blk EmptyMK`, etc.); it **keeps the branch's genuine apply restructuring visible** (explicit `Values blk` param, `(state, Diff)` tuples, `forward`) — that is redesign, not packaging, and *should* show in the review. So `applyChainTick` stays `… l blk EmptyMK -> (Ticked l blk EmptyMK, Diff blk)` (tuple, not prepare-11.1's bundled `DiffMK`), and `ApplyBlock` keeps `Values blk -> Ticked l blk EmptyMK -> … (l blk EmptyMK, Diff blk)`. **Bodies are unchanged — only state type positions get `EmptyMK`.**
 
   - **DONE so far (committed, all WIP-red) — the entire abstract ledger layer:** `Basics`, `Abstract` (apply-path), the core `Ledger/*` (`CommonProtocolParams`/`SupportsPeerSelection`/`SupportsPeras` = poly `mk`; `Inspect` = `mk1`/`mk2`; `SupportsMempool` = `EmptyMK`; `SupportsProtocol` = `EmptyMK`), `Block/Forging`, `Mempool/Capacity`, `Forecast` (`b mk`), `HeaderValidation`, `BlockchainTime/WallClock/HardFork`, `MiniProtocol/ChainSync/Client/InFutureCheck`, `HardFork/Combinator/State/Types` (`TranslateLedgerState` field + `CrossEraForecaster`'s `state x EmptyMK`), `HardFork/Combinator/Translation`, **`Ledger/Extended`** (`ExtLedgerState blk mk` data type + `Ticked` instance + deriving with `Eq/Show/NoThunks (LedgerState blk mk)` constraints + apply helper + disk codecs with `forall blk mk.`; `typeRep` uses `Proxy @(ExtLedgerState blk)` to dodge `Typeable mk`).
   - **Two reusable techniques learned:** (1) **stable-read loop** to beat ghciwatch staleness — wait until the error file is *both* not-"still compiling" *and* unchanged between two polls (a plain "not compiling" check races the reload). (2) grep over-matches functor-unapplied sites (`LedgerErr LedgerState blk`, `IsLedger LedgerState blk`, instance heads) — those are **correct, leave them**; only `LedgerState blk`/`Ticked … blk`/`ExtLedgerState blk` in *value/field* position need `mk`.

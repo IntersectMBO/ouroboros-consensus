@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Ledger.Basics
     -- * The mk-skin (review intermediate — see mk-skin-plan.md)
   , MapKind
   , LedgerStateKind
+  , StateKind
   , LedgerTables (..)
   , EmptyMK (..)
   , KeysMK (..)

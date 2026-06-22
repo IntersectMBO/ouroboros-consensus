@@ -166,7 +166,7 @@ instance
     ledgerResult = applyChainTickLedgerResult evs lcfg slot ledger
 
 applyHelper ::
-  forall blk mk.
+  forall blk.
   (HasCallStack, LedgerSupportsProtocol blk) =>
   ( HasCallStack =>
     ComputeLedgerEvents ->
