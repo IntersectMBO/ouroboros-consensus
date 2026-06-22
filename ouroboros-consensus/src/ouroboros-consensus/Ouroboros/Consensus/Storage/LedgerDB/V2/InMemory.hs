@@ -127,7 +127,7 @@ implRead ::
   forall m l blk.
   (IOLike m, BlockSupportsUTxOHD blk) =>
   Values blk ->
-  l blk ->
+  l blk EmptyMK ->
   Keys blk ->
   m (Values blk)
 implRead values _ keys = pure (restrictValues @blk keys values)
@@ -152,7 +152,7 @@ implTakeHandleSnapshot ::
   (IOLike m, BlockSupportsUTxOHD blk) =>
   Values blk ->
   HasFS m h ->
-  l blk ->
+  l blk EmptyMK ->
   String ->
   m (Maybe CRC)
 implTakeHandleSnapshot values hasFS _ snapshotName = do
