@@ -34,6 +34,7 @@ import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import Ouroboros.Consensus.HardFork.History.EpochInfo
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -86,12 +87,12 @@ instance
 
 instance
   ShelleyCompatible proto era =>
-  EncodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era))
+  EncodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era) EmptyMK)
   where
   encodeDisk _ = encodeShelleyLedgerState
 instance
   ShelleyCompatible proto era =>
-  DecodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era))
+  DecodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era) EmptyMK)
   where
   decodeDisk _ = decodeShelleyLedgerState
 
