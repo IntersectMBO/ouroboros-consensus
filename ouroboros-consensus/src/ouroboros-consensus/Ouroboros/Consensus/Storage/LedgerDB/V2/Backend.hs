@@ -61,7 +61,7 @@ class NoThunks (Resources m backend) => Backend m backend blk where
   createAndPopulateStateRefFromGenesis ::
     Tracer m LedgerDBV2Trace ->
     Resources m backend ->
-    ExtLedgerState blk ->
+    ExtLedgerState blk EmptyMK ->
     Values blk ->
     m (StateRef m ExtLedgerState blk)
 
