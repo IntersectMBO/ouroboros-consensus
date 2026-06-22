@@ -253,6 +253,28 @@ the repo root alongside this file).
 
 ---
 
+## RESULT (the isolation goal — achieved)
+
+The success criterion is **isolation of syntactic vs semantic**, not line reduction.
+Verified on `lib:ouroboros-consensus`: the strip `js/utxo-hd-4-skin → js/utxo-hd-4`
+(881 churn) is **purely syntactic** — word-diff shows every changed token is an
+`mk`-vocabulary removal or its direct fragment (surviving `blk`, unwrapped
+`unFlip`/`getFlipTickedLedgerState` inner expr, `StateKind`→`(Type -> Type)`
+kind-sig reverts, removed skin pragma/comment/constraint). No reordered args, no
+changed calls, no behavioural edits. So `e6fad0630 → skin` carries the genuine
+redesign **in prepare-11.1's `mk` syntax with zero mk-removal churn mixed in**,
+and the strip is a trust-by-inspection mechanical pass. (Line count of `e6 → skin`
+≈ `e6 → full` — irrelevant; the redesign is simply large. What matters is it's
+cleanly factored from the syntax swap.)
+
+**Skinned + green:** `lib:ouroboros-consensus` (239 modules), `diffusion`, `lsm`
+(all on `js/utxo-hd-4-skin`). **Partial:** `cardano` — a fresh agent crashed
+(API error) mid-port; WIP (Byron+Shelley, 13 files/173 churn, UNVERIFIED) preserved
+on branch `worktree-agent-aeb5f66ad3bf9e4c7` @ `513ea15b8`. `protocol` not yet
+confirmed. Cardano is the lib that should cancel *best* (Shelley regains
+`shelleyLedgerTables`-in-state, matching prepare-11.1) — finish it with a fresh
+agent (clean start from `js/utxo-hd-4-skin` recommended; WIP is reference only).
+
 ## Status
 
 - [x] **Phase 0** — skin types in `Basics.hs` (+ exports), lib green (239 modules). *Done: the 6 skin defs + export group; unused so far, so lib stayed green.*
