@@ -313,7 +313,7 @@ hardForkForgeBlock ::
   TopLevelConfig (HardForkBlock xs) ->
   BlockNo ->
   SlotNo ->
-  TickedLedgerState (HardForkBlock xs) ->
+  TickedLedgerState (HardForkBlock xs) EmptyMK ->
   [Validated (GenTx (HardForkBlock xs))] ->
   HardForkIsLeader xs ->
   m (HardForkBlock xs)
@@ -382,7 +382,7 @@ hardForkForgeBlock
       Product
         ( Product
             WrapIsLeader
-            (Ticked LedgerState)
+            (FlipTickedLedgerState EmptyMK)
         )
         ([] :.: WrapValidatedGenTx)
         blk ->
@@ -392,7 +392,7 @@ hardForkForgeBlock
       cfg'
       (Comp mBlockForging')
       ( Pair
-          (Pair (WrapIsLeader isLeader') ledgerState')
+          (Pair (WrapIsLeader isLeader') (FlipTickedLedgerState ledgerState'))
           (Comp txs')
         ) =
         forgeBlock
