@@ -21,6 +21,15 @@ module Ouroboros.Consensus.Ledger.Basics
   , LedgerState
   , TickedLedgerState
 
+    -- * The mk-skin (review intermediate — see mk-skin-plan.md)
+  , MapKind
+  , LedgerStateKind
+  , LedgerTables (..)
+  , EmptyMK (..)
+  , KeysMK (..)
+  , ValuesMK (..)
+  , DiffMK (..)
+
     -- * On-disk table vocabulary
   , TxIn
   , TxOut
@@ -292,6 +301,58 @@ instance StandardHash blk => StandardHash (LedgerState blk)
 
 type LedgerConfig blk = LedgerCfg LedgerState blk
 type LedgerError blk = LedgerErr LedgerState blk
+
+{-------------------------------------------------------------------------------
+  The mk-skin (review intermediate — see mk-skin-plan.md)
+
+  A thin newtype layer that re-expresses the opaque 'Keys'\/'Values'\/'Diff blk'
+  payloads in @main@'s map-kind vocabulary, so that the review diff against the
+  prepare-11.1 base cancels the vocabulary churn and leaves the genuine
+  structural redesign.
+
+  This is deliberately /not/ @main@'s machinery:
+
+    * @l@ is the block (@l = blk@), the only well-kinded reading;
+
+    * the map-kind is single-argument (@'MapKind' = Type -> Type@), so each
+      wrapper is a thin newtype over the /existing/ opaque payload — there is no
+      @CanMapMK@\/@mapKeysMK@ combinator zoo and no canonical machinery;
+
+    * @'LedgerTables' blk 'ValuesMK' ≅ 'Values' blk@, and likewise for
+      'KeysMK'\/'DiffMK'.
+
+  The whole layer (and the @mk@ argument of 'LedgerState') is to be stripped in
+  the final commit; see @mk-skin-plan.md@.
+-------------------------------------------------------------------------------}
+
+-- | The kind of a map-kind: a wrapper that turns a block into the table payload
+-- of one phase (keys\/values\/diff). Single-argument, unlike @main@'s @k -> v ->
+-- Type@.
+type MapKind = Type -> Type
+
+-- | The kind of a ledger-state-like type once it carries an 'mk' argument.
+type LedgerStateKind = MapKind -> Type
+
+-- | The on-disk tables of a block, in the chosen map-kind. A thin newtype over
+-- @mk blk@ (e.g. @'LedgerTables' blk 'ValuesMK' ≅ 'Values' blk@).
+type LedgerTables :: Type -> MapKind -> Type
+newtype LedgerTables l mk = LedgerTables (mk l)
+
+-- | No tables.
+type EmptyMK :: MapKind
+data EmptyMK l = EmptyMK
+
+-- | The keys phase: a thin wrapper over the opaque 'Keys'.
+type KeysMK :: MapKind
+newtype KeysMK l = KeysMK (Keys l)
+
+-- | The values phase: a thin wrapper over the opaque 'Values'.
+type ValuesMK :: MapKind
+newtype ValuesMK l = ValuesMK (Values l)
+
+-- | The diff phase: a thin wrapper over the opaque 'Diff'.
+type DiffMK :: MapKind
+newtype DiffMK l = DiffMK (Diff l)
 
 {-------------------------------------------------------------------------------
   UTxO-HD block axis
