@@ -264,7 +264,7 @@ class
     LedgerCfg l blk ->
     SlotNo ->
     l blk EmptyMK ->
-    LedgerResult blk (Ticked l blk DiffMK)
+    LedgerResult blk (Ticked l blk EmptyMK, Diff blk)
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick ::
@@ -273,7 +273,7 @@ applyChainTick ::
   LedgerCfg l blk ->
   SlotNo ->
   l blk EmptyMK ->
-  Ticked l blk DiffMK
+  (Ticked l blk EmptyMK, Diff blk)
 applyChainTick = lrResult ...: applyChainTickLedgerResult
 
 {-------------------------------------------------------------------------------
