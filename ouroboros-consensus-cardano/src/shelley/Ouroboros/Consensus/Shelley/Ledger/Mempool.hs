@@ -374,12 +374,12 @@ validateMaybe ::
   SL.ApplyTxError era ->
   Maybe a ->
   V.Validation (TxErrorSG era) a
-validateMaybe err mb = V.validate (TxErrorSG err) id mb
+validateMaybe err mb = maybe (V.Failure (TxErrorSG err)) V.Success mb
 
 runValidation ::
   V.Validation (TxErrorSG era) a ->
   Except (SL.ApplyTxError era) a
-runValidation = liftEither . (unTxErrorSG +++ id) . V.toEither
+runValidation = liftEither . (unTxErrorSG +++ id) . (^. V.either)
 
 -----
 
