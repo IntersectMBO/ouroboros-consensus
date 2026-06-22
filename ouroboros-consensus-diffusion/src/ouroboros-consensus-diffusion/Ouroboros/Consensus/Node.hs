@@ -108,7 +108,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
-import Ouroboros.Consensus.Ledger.Abstract (Values)
+import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, Values)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
@@ -850,7 +850,7 @@ openChainDB ::
   ResourceRegistry m ->
   TopLevelConfig blk ->
   -- | Initial ledger (the pure state together with its genesis values)
-  (ExtLedgerState blk, Values blk) ->
+  (ExtLedgerState blk EmptyMK, Values blk) ->
   -- | Immutable FS, see 'NodeDatabasePaths'
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile FS, see 'NodeDatabasePaths'
