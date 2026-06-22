@@ -175,7 +175,7 @@ type Consensus
 data ChainDbView m blk = ChainDbView
   { getCurrentChain :: STM m (AnchoredFragment (Header blk))
   , getHeaderStateHistory :: STM m (HeaderStateHistory blk)
-  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk))
+  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk EmptyMK))
   , getIsInvalidBlock ::
       STM
         m

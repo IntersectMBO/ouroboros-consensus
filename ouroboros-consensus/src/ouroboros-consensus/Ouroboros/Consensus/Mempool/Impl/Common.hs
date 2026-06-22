@@ -116,7 +116,7 @@ data InternalState blk = IS
   -- 'MempoolSnapshot' (see 'snapshotHasTx').
   --
   -- This should always be in-sync with the transactions in 'isTxs'.
-  , isLedgerState :: !(TickedLedgerState blk)
+  , isLedgerState :: !(TickedLedgerState blk EmptyMK)
   -- ^ The cached ledger state after applying the transactions in the
   -- Mempool against the chain's ledger state. New transactions will be
   -- validated against this ledger.
@@ -214,7 +214,7 @@ newtype LedgerInterface m blk = LedgerInterface
   }
 
 data MempoolLedgerDBView m blk = MempoolLedgerDBView
-  { mldViewState :: LedgerState blk
+  { mldViewState :: LedgerState blk EmptyMK
   -- ^ The ledger state currently at the tip of the LedgerDB
   , mldViewGetForker :: m (Either GetForkerError (ReadOnlyForker m LedgerState blk))
   -- ^ An action to get a forker at 'mldViewState' or an error in the unlikely
