@@ -83,7 +83,7 @@ import Ouroboros.Consensus.Util.IOLike
 -- | An independent handle to a point in the LedgerDB, which can be advanced to
 -- evaluate forks in the chain.
 -- TODO @js split l in l blk
-type Forker :: (Type -> Type) -> (Type -> Type) -> Type -> Type
+type Forker :: (Type -> Type) -> StateKind -> Type -> Type
 data Forker m l blk = Forker
   { forkerClose :: !(m ())
   -- ^ Close the current forker (idempotent).
@@ -108,7 +108,7 @@ data Forker m l blk = Forker
   -- 'Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq.LedgerTablesHandle' and
   -- are surfaced to the LSQ server via a dedicated accessor. See
   -- 'EraRangeReader' and 'withEraRangeReader'.
-  , forkerGetLedgerState :: !(STM m (l blk))
+  , forkerGetLedgerState :: !(STM m (l blk EmptyMK))
   -- ^ Get the full ledger state without tables.
   --
   -- If an empty ledger state is all you need, use 'getVolatileTip',
@@ -119,7 +119,7 @@ data Forker m l blk = Forker
   -- Returns 'Nothing' if the implementation is backed by @lsm-tree@.
   , -- Updates
 
-    forkerPush :: !(l blk -> Diff blk -> m ())
+    forkerPush :: !(l blk EmptyMK -> Diff blk -> m ())
   -- ^ Advance the fork handle by pushing a new ledger state (and the diff it
   -- produced) to the tip of the current fork.
   , forkerCommit :: !(STM m (m ()))
@@ -288,13 +288,13 @@ ledgerStateReadOnlyForker frk =
 -- - Forging loop.
 --
 -- - Mempool.
-type ReadOnlyForker :: (Type -> Type) -> (Type -> Type) -> Type -> Type
+type ReadOnlyForker :: (Type -> Type) -> StateKind -> Type -> Type
 data ReadOnlyForker m l blk = ReadOnlyForker
   { roforkerClose :: !(m ())
   -- ^ See 'forkerClose'
   , roforkerReadTables :: !(Keys blk -> m (Values blk))
   -- ^ See 'forkerReadTables'
-  , roforkerGetLedgerState :: !(STM m (l blk))
+  , roforkerGetLedgerState :: !(STM m (l blk EmptyMK))
   -- ^ See 'forkerGetLedgerState'
   , roforkerReadStatistics :: !(m Statistics)
   -- ^ See 'forkerReadStatistics'
@@ -457,7 +457,7 @@ switch withForkerAtFromTip evs cfg numRollbacks trace newBlocks doResolve onSucc
 --     1. Are we passing the block by value or by reference?
 --
 --     2. Are we applying or reapplying the block?
-type Ap :: (Type -> Type) -> (Type -> Type) -> Type -> Type
+type Ap :: (Type -> Type) -> StateKind -> Type -> Type
 data Ap m l blk where
   ReapplyVal :: blk -> Ap m l blk
   ApplyVal :: blk -> Ap m l blk
@@ -479,7 +479,7 @@ applyBlock ::
   Ap m l blk ->
   Forker m l blk ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) (l blk, Diff blk))
+  m (Either (AnnLedgerError l blk) (l blk EmptyMK, Diff blk))
 applyBlock evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b ->
     withValues b (\vs l -> return $ Right $ tickThenReapply evs cfg b vs l)
@@ -500,8 +500,8 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
  where
   withValues ::
     blk ->
-    (Values blk -> l blk -> m (Either (AnnLedgerError l blk) (l blk, Diff blk))) ->
-    m (Either (AnnLedgerError l blk) (l blk, Diff blk))
+    (Values blk -> l blk EmptyMK -> m (Either (AnnLedgerError l blk) (l blk EmptyMK, Diff blk))) ->
+    m (Either (AnnLedgerError l blk) (l blk EmptyMK, Diff blk))
   withValues blk f = do
     l <- atomically $ forkerGetLedgerState fo
     vs <- forkerReadTables fo (blockKeys blk)
