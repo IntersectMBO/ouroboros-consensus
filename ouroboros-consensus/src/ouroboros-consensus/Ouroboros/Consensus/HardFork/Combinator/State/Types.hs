@@ -138,7 +138,7 @@ newtype CrossEraForecaster state view x y = CrossEraForecaster
   { crossEraForecastWith ::
       Bound -> -- 'Bound' of the transition (start of the new era)
       SlotNo -> -- 'SlotNo' we're constructing a forecast for
-      state x ->
+      state x EmptyMK ->
       Except OutsideForecastRange (view y)
   }
 

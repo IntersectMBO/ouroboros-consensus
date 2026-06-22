@@ -65,26 +65,26 @@ deriving instance LedgerSupportsProtocol blk => Show (ExtValidationError blk)
 -- | Extended ledger state
 --
 -- This is the combination of the header state and the ledger state proper.
-data ExtLedgerState blk = ExtLedgerState
-  { ledgerState :: !(LedgerState blk)
+data ExtLedgerState blk mk = ExtLedgerState
+  { ledgerState :: !(LedgerState blk mk)
   , headerState :: !(HeaderState blk)
   }
   deriving Generic
 
 deriving instance
-  LedgerSupportsProtocol blk =>
-  Eq (ExtLedgerState blk)
+  (LedgerSupportsProtocol blk, Eq (LedgerState blk mk)) =>
+  Eq (ExtLedgerState blk mk)
 deriving instance
-  LedgerSupportsProtocol blk =>
-  Show (ExtLedgerState blk)
+  (LedgerSupportsProtocol blk, Show (LedgerState blk mk)) =>
+  Show (ExtLedgerState blk mk)
 
 -- | We override 'showTypeOf' to show the type of the block
 --
 -- This makes debugging a bit easier, as the block gets used to resolve all
 -- kinds of type families.
 instance
-  LedgerSupportsProtocol blk =>
-  NoThunks (ExtLedgerState blk)
+  (LedgerSupportsProtocol blk, NoThunks (LedgerState blk mk)) =>
+  NoThunks (ExtLedgerState blk mk)
   where
   showTypeOf _ = show $ typeRep (Proxy @(ExtLedgerState blk))
 
@@ -131,8 +131,8 @@ type instance LedgerCfg ExtLedgerState blk = ExtLedgerCfg blk
   The ticked extended ledger state
 -------------------------------------------------------------------------------}
 
-data instance Ticked ExtLedgerState blk = TickedExtLedgerState
-  { tickedLedgerState :: Ticked LedgerState blk
+data instance Ticked ExtLedgerState blk mk = TickedExtLedgerState
+  { tickedLedgerState :: Ticked LedgerState blk mk
   , ledgerView :: LedgerView (BlockProtocol blk)
   , tickedHeaderState :: Ticked (HeaderState blk)
   }
@@ -166,26 +166,26 @@ instance
     ledgerResult = applyChainTickLedgerResult evs lcfg slot ledger
 
 applyHelper ::
-  forall blk.
+  forall blk mk.
   (HasCallStack, LedgerSupportsProtocol blk) =>
   ( HasCallStack =>
     ComputeLedgerEvents ->
     LedgerCfg LedgerState blk ->
     blk ->
     Values blk ->
-    Ticked LedgerState blk ->
+    Ticked LedgerState blk EmptyMK ->
     Except
       (LedgerErr LedgerState blk)
-      (LedgerResult blk (LedgerState blk, Diff blk))
+      (LedgerResult blk (LedgerState blk EmptyMK, Diff blk))
   ) ->
   ComputeLedgerEvents ->
   LedgerCfg ExtLedgerState blk ->
   blk ->
   Values blk ->
-  Ticked ExtLedgerState blk ->
+  Ticked ExtLedgerState blk EmptyMK ->
   Except
     (LedgerErr ExtLedgerState blk)
-    (LedgerResult blk (ExtLedgerState blk, Diff blk))
+    (LedgerResult blk (ExtLedgerState blk EmptyMK, Diff blk))
 applyHelper f opts cfg blk vals TickedExtLedgerState{..} = do
   ledgerResult <-
     withExcept ExtValidationErrorLedger $
@@ -233,10 +233,10 @@ instance (LedgerSupportsProtocol blk, BlockSupportsUTxOHD blk) => ApplyBlock Ext
 -------------------------------------------------------------------------------}
 
 encodeExtLedgerState ::
-  (LedgerState blk -> Encoding) ->
+  (LedgerState blk mk -> Encoding) ->
   (ChainDepState (BlockProtocol blk) -> Encoding) ->
   (AnnTip blk -> Encoding) ->
-  ExtLedgerState blk ->
+  ExtLedgerState blk mk ->
   Encoding
 encodeExtLedgerState
   encodeLedgerState
@@ -255,12 +255,12 @@ encodeExtLedgerState
         encodeAnnTip
 
 encodeDiskExtLedgerState ::
-  forall blk.
-  ( EncodeDisk blk (LedgerState blk)
+  forall blk mk.
+  ( EncodeDisk blk (LedgerState blk mk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , EncodeDisk blk (AnnTip blk)
   ) =>
-  (CodecConfig blk -> ExtLedgerState blk -> Encoding)
+  (CodecConfig blk -> ExtLedgerState blk mk -> Encoding)
 encodeDiskExtLedgerState cfg =
   encodeExtLedgerState
     (encodeDisk cfg)
@@ -268,10 +268,10 @@ encodeDiskExtLedgerState cfg =
     (encodeDisk cfg)
 
 decodeExtLedgerState ::
-  (forall s. Decoder s (LedgerState blk)) ->
+  (forall s. Decoder s (LedgerState blk mk)) ->
   (forall s. Decoder s (ChainDepState (BlockProtocol blk))) ->
   (forall s. Decoder s (AnnTip blk)) ->
-  (forall s. Decoder s (ExtLedgerState blk))
+  (forall s. Decoder s (ExtLedgerState blk mk))
 decodeExtLedgerState
   decodeLedgerState
   decodeChainDepState
@@ -287,12 +287,12 @@ decodeExtLedgerState
         decodeAnnTip
 
 decodeDiskExtLedgerState ::
-  forall blk.
-  ( DecodeDisk blk (LedgerState blk)
+  forall blk mk.
+  ( DecodeDisk blk (LedgerState blk mk)
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (AnnTip blk)
   ) =>
-  (CodecConfig blk -> forall s. Decoder s (ExtLedgerState blk))
+  (CodecConfig blk -> forall s. Decoder s (ExtLedgerState blk mk))
 decodeDiskExtLedgerState cfg =
   decodeExtLedgerState
     (decodeDisk cfg)
