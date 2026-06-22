@@ -800,7 +800,7 @@ class StreamingBackend m backend l blk where
   releaseSinkArgs :: SinkArgs m backend l blk -> m ()
 
 type Yield m l blk =
-  l blk ->
+  l blk EmptyMK ->
   ( ( Stream
         (Of (TxIn blk, TxOut blk))
         (ExceptT DeserialiseFailure m)
@@ -811,7 +811,7 @@ type Yield m l blk =
   ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
 
 type Sink m l blk =
-  l blk ->
+  l blk EmptyMK ->
   Stream
     (Of (TxIn blk, TxOut blk))
     (ExceptT DeserialiseFailure m)
