@@ -78,6 +78,7 @@ import Ouroboros.Consensus.HardFork.History
   )
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.Serialisation (Some (..))
@@ -367,15 +368,15 @@ interpretQueryIfCurrent = go
     All SingleEraBlock xs' =>
     NP ExtLedgerCfg xs' ->
     QueryIfCurrent xs' QFNoTables result ->
-    NS ExtLedgerState xs' ->
+    NS (Flip ExtLedgerState EmptyMK) xs' ->
     HardForkQueryResult xs' result
-  go (c :* _) (QZ qry) (Z st) =
+  go (c :* _) (QZ qry) (Z (Flip st)) =
     Right $ answerPureBlockQuery c qry st
   go (_ :* cs) (QS qry) (S st) =
     first shiftMismatch $ go cs qry st
   go _ (QZ qry) (S st) =
-    Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle (ledgerInfo) st)
-  go _ (QS qry) (Z st) =
+    Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle (ledgerInfo . unFlip) st)
+  go _ (QS qry) (Z (Flip st)) =
     Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
 interpretQueryIfCurrentLookup ::
@@ -394,13 +395,13 @@ interpretQueryIfCurrentLookup cfg q forker = do
     NP (Index xs) xs' ->
     NP ExtLedgerCfg xs' ->
     QueryIfCurrent xs' QFLookupTables result ->
-    NS ExtLedgerState xs' ->
+    NS (Flip ExtLedgerState EmptyMK) xs' ->
     m (HardForkQueryResult xs' result)
   go (idx :* _) (c :* _) (QZ qry) _ =
     Right <$> answerBlockQueryHFLookup idx c qry forker
   go (_ :* idx) (_ :* cs) (QS qry) (S st) =
     first shiftMismatch <$> go idx cs qry st
-  go _ _ (QS qry) (Z st) =
+  go _ _ (QS qry) (Z (Flip st)) =
     pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
 interpretQueryIfCurrentTraverse ::
@@ -420,13 +421,13 @@ interpretQueryIfCurrentTraverse provider cfg q forker = do
     NP (Index xs) xs' ->
     NP ExtLedgerCfg xs' ->
     QueryIfCurrent xs' QFTraverseTables result ->
-    NS ExtLedgerState xs' ->
+    NS (Flip ExtLedgerState EmptyMK) xs' ->
     m (HardForkQueryResult xs' result)
   go (idx :* _) (c :* _) (QZ qry) _ =
     Right <$> answerBlockQueryHFTraverse idx c qry provider forker
   go (_ :* idx) (_ :* cs) (QS qry) (S st) =
     first shiftMismatch <$> go idx cs qry st
-  go _ _ (QS qry) (Z st) =
+  go _ _ (QS qry) (Z (Flip st)) =
     pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
 {-------------------------------------------------------------------------------
@@ -485,7 +486,7 @@ answerQueryAnytime HardForkLedgerConfig{..} =
           (unwrapPartialLedgerConfig c)
           ps
           (currentStart cur)
-          (currentState cur)
+          (unFlip $ currentState cur)
 
 {-------------------------------------------------------------------------------
   Hard fork queries
