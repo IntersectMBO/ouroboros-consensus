@@ -175,11 +175,11 @@ tickOne ::
   ComputeLedgerEvents ->
   Index xs blk ->
   WrapPartialLedgerConfig blk ->
-  LedgerState blk EmptyMK ->
+  Flip LedgerState EmptyMK blk ->
   (LedgerResult (HardForkBlock xs) :.: Product (FlipTickedLedgerState EmptyMK) WrapDiff) blk
-tickOne ei slot evs sopIdx partialCfg st =
+tickOne ei slot evs sopIdx partialCfg (Flip st) =
   Comp
-    . fmap (\(ticked, diff) -> Pair ticked (WrapDiff diff))
+    . fmap (\(ticked, diff) -> Pair (FlipTickedLedgerState ticked) (WrapDiff diff))
     . embedLedgerResult (injectLedgerEvent sopIdx)
     $ applyChainTickLedgerResult evs (completeLedgerConfig' ei partialCfg) slot st
 
@@ -227,7 +227,7 @@ instance
 
       reassemble ::
         HardForkState (Product (Flip LedgerState EmptyMK) WrapDiff) xs ->
-        (LedgerState (HardForkBlock xs), NS WrapDiff xs)
+        (LedgerState (HardForkBlock xs) EmptyMK, NS WrapDiff xs)
       reassemble hs =
         ( HardForkLedgerState (hmap (\(Pair s _) -> s) hs)
         , State.tip (hmap (\(Pair _ d) -> d) hs)
@@ -258,12 +258,12 @@ apply ::
       :.: Product (Flip LedgerState EmptyMK) WrapDiff
   )
     blk
-apply doValidate opts index (WrapLedgerConfig cfg) (Pair (Pair (I block) (WrapValues values)) tickedSt) =
+apply doValidate opts index (WrapLedgerConfig cfg) (Pair (Pair (I block) (WrapValues values)) (FlipTickedLedgerState tickedSt)) =
   Comp
     $ withExcept (injectLedgerError index)
     $ fmap
       ( Comp
-          . fmap (\(st', diff) -> Pair st' (WrapDiff diff))
+          . fmap (\(st', diff) -> Pair (Flip st') (WrapDiff diff))
           . embedLedgerResult (injectLedgerEvent index)
       )
     $ applyBlockLedgerResultWithValidation doValidate opts cfg block values tickedSt
@@ -370,9 +370,9 @@ instance
       viewOne ::
         SingleEraBlock blk =>
         WrapPartialLedgerConfig blk ->
-        TickedLedgerState blk ->
+        FlipTickedLedgerState EmptyMK blk ->
         WrapLedgerView blk
-      viewOne cfg st =
+      viewOne cfg (FlipTickedLedgerState st) =
         WrapLedgerView $
           protocolLedgerView (completeLedgerConfig' ei cfg) st
 
@@ -402,9 +402,9 @@ instance
         SingleEraBlock blk =>
         WrapPartialLedgerConfig blk ->
         K EraParams blk ->
-        Current LedgerState blk ->
+        Current (Flip LedgerState EmptyMK) blk ->
         Current (AnnForecast LedgerState WrapLedgerView) blk
-      forecastOne cfg (K params) (Current start st) =
+      forecastOne cfg (K params) (Current start (Flip st)) =
         Current
           { currentStart = start
           , currentState =
@@ -638,8 +638,8 @@ inspectHardForkLedger = go
       [ map liftEvent $
           inspectLedger
             c
-            (currentState before)
-            (currentState after)
+            (unFlip (currentState before))
+            (unFlip (currentState after))
       , case (pss, confirmedBefore, confirmedAfter) of
           (_, Nothing, Nothing) ->
             []
@@ -691,13 +691,13 @@ inspectHardForkLedger = go
         (unwrapPartialLedgerConfig pc)
         ps
         (currentStart before)
-        (currentState before)
+        (unFlip (currentState before))
     confirmedAfter =
       singleEraTransition
         (unwrapPartialLedgerConfig pc)
         ps
         (currentStart after)
-        (currentState after)
+        (unFlip (currentState after))
   go Nil _ _ before _ =
     case before of {}
   go (_ :* pcs) (_ :* pss) (_ :* cs) (S before) (S after) =
@@ -969,7 +969,7 @@ instance CanHardFork xs => BlockSupportsUTxOHD (HardForkBlock xs) where
     hcollapse $
       hcimap
         proxySingle
-        (\idx eraSt -> K (injectNS idx . WrapValues <$> decodeValues eraSt))
+        (\idx eraSt -> K (injectNS idx . WrapValues <$> decodeValues (unFlip eraSt)))
         (State.tip st)
 
 -- | Upgrade an era-tagged 'Values' one era forward, using the adjacent
