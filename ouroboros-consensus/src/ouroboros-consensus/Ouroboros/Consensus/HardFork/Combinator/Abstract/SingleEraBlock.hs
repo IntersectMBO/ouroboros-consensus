@@ -88,9 +88,9 @@ class
   , Eq (Validated (GenTx blk))
   , Eq (ApplyTxErr blk)
   , Show blk
-  , Show (LedgerState blk)
-  , Eq (LedgerState blk)
-  , NoThunks (LedgerState blk)
+  , Show (LedgerState blk EmptyMK)
+  , Eq (LedgerState blk EmptyMK)
+  , NoThunks (LedgerState blk EmptyMK)
   , Show (Header blk)
   , Show (CannotForge blk)
   , Show (ForgeStateInfo blk)
@@ -113,7 +113,7 @@ class
     EraParams ->
     -- | Start of this era
     Bound ->
-    LedgerState blk ->
+    LedgerState blk EmptyMK ->
     Maybe EpochNo
 
   -- | Era information (for use in error messages)
@@ -127,7 +127,7 @@ singleEraTransition' ::
   WrapPartialLedgerConfig blk ->
   EraParams ->
   Bound ->
-  LedgerState blk ->
+  LedgerState blk EmptyMK ->
   Maybe EpochNo
 singleEraTransition' = singleEraTransition . unwrapPartialLedgerConfig
 

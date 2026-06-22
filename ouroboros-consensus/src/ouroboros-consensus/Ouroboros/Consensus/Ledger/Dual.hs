@@ -438,17 +438,17 @@ applyHelper ::
     LedgerCfg LedgerState m ->
     m ->
     Values m ->
-    Ticked LedgerState m ->
-    Except (LedgerErr LedgerState m) (LedgerResult m (LedgerState m, Diff m))
+    Ticked LedgerState m EmptyMK ->
+    Except (LedgerErr LedgerState m) (LedgerResult m (LedgerState m EmptyMK, Diff m))
   ) ->
   ComputeLedgerEvents ->
   DualLedgerConfig m a ->
   DualBlock m a ->
   Values (DualBlock m a) ->
-  Ticked LedgerState (DualBlock m a) ->
+  Ticked LedgerState (DualBlock m a) EmptyMK ->
   Except
     (DualLedgerError m a)
-    (LedgerResult (DualBlock m a) (LedgerState (DualBlock m a), Diff (DualBlock m a)))
+    (LedgerResult (DualBlock m a) (LedgerState (DualBlock m a) EmptyMK, Diff (DualBlock m a)))
 applyHelper f opts cfg block@DualBlock{..} vals TickedDualLedgerState{..} = do
   (ledgerResult, (aux', auxValues')) <-
     agreeOnError
@@ -993,12 +993,12 @@ applyMaybeBlock ::
   -- | Ticked values
   Values blk ->
   -- | Ticked state
-  Ticked LedgerState blk ->
+  Ticked LedgerState blk EmptyMK ->
   -- | Original, unticked state
-  LedgerState blk ->
+  LedgerState blk EmptyMK ->
   -- | Original, unticked values
   Values blk ->
-  Except (LedgerError blk) (LedgerState blk, Values blk)
+  Except (LedgerError blk) (LedgerState blk EmptyMK, Values blk)
 applyMaybeBlock _ _ Nothing _ _ origSt origVals = return (origSt, origVals)
 applyMaybeBlock evs cfg (Just block) tvals tst _ _ = do
   (st', diff) <- applyLedgerBlock evs cfg block tvals tst
@@ -1014,10 +1014,10 @@ reapplyMaybeBlock ::
   LedgerConfig blk ->
   Maybe blk ->
   Values blk ->
-  Ticked LedgerState blk ->
-  LedgerState blk ->
+  Ticked LedgerState blk EmptyMK ->
+  LedgerState blk EmptyMK ->
   Values blk ->
-  (LedgerState blk, Values blk)
+  (LedgerState blk EmptyMK, Values blk)
 reapplyMaybeBlock _ _ Nothing _ _ origSt origVals = (origSt, origVals)
 reapplyMaybeBlock evs cfg (Just block) tvals tst _ _ =
   let (st', diff) = reapplyLedgerBlock evs cfg block tvals tst
@@ -1177,9 +1177,9 @@ decodeDualGenTxErr decodeMain = do
     <*> decode
 
 encodeDualLedgerState ::
-  (Bridge m a, Serialise (LedgerState a), Serialise (Values a)) =>
-  (LedgerState m -> Encoding) ->
-  LedgerState (DualBlock m a) ->
+  (Bridge m a, Serialise (LedgerState a EmptyMK), Serialise (Values a)) =>
+  (LedgerState m mk -> Encoding) ->
+  LedgerState (DualBlock m a) mk ->
   Encoding
 encodeDualLedgerState encodeMain DualLedgerState{..} =
   mconcat
@@ -1191,9 +1191,9 @@ encodeDualLedgerState encodeMain DualLedgerState{..} =
     ]
 
 decodeDualLedgerState ::
-  (Bridge m a, Serialise (LedgerState a), Serialise (Values a)) =>
-  Decoder s (LedgerState m) ->
-  Decoder s (LedgerState (DualBlock m a))
+  (Bridge m a, Serialise (LedgerState a EmptyMK), Serialise (Values a)) =>
+  Decoder s (LedgerState m mk) ->
+  Decoder s (LedgerState (DualBlock m a) mk)
 decodeDualLedgerState decodeMain = do
   enforceSize "DualLedgerState" 4
   DualLedgerState
