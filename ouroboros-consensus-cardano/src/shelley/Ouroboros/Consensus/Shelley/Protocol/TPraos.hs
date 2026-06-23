@@ -38,6 +38,7 @@ import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , ProtocolHeaderSupportsEnvelope (..)
+  , default_pHeaderLeiosContainsCert
   , ProtocolHeaderSupportsKES (..)
   , ProtocolHeaderSupportsLedger (..)
   , ProtocolHeaderSupportsProtocol (..)
@@ -59,6 +60,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
   pHeaderBlock = SL.bheaderBlockNo . SL.bhbody
   pHeaderSize = fromIntegral . originalBytesSize
   pHeaderBlockSize = fromIntegral @Word32 @Natural . SL.bsize . SL.bhbody
+  pHeaderLeiosContainsCert = default_pHeaderLeiosContainsCert
 
   type EnvelopeCheckError _ = ChainPredicateFailure
 
@@ -90,7 +92,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (TPraos c) where
           currentKesPeriod - startOfKesPeriod
       | otherwise =
           0
-  mkHeader hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer _mayEbAnn = do
+  mkHeader hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer _mayEbAnn _containsCert = do
     TPraosFields{tpraosSignature, tpraosToSign} <-
       forgeTPraosFields hotKey canBeLeader isLeader mkBhBody
     pure $ SL.BHeader tpraosToSign tpraosSignature

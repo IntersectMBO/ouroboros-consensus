@@ -41,21 +41,31 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
   , addBlockRunner
   ) where
 
+import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import Control.Exception (assert)
-import Control.Monad (forM_, forever, void, when)
+import Control.Monad (forM_, forever, guard, void, when)
 import Control.Monad.Trans.Class (lift)
 import Control.RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Sequence.Strict (StrictSeq (..))
 import qualified Data.Sequence.Strict as Seq
+import qualified Data.Set as Set
 import Data.Time.Clock
 import Data.Void (Void)
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
+import LeiosDemoDb.Common
+  ( LeiosEbNotification (..)
+  , leiosDbGarbageCollect
+  , leiosDbPromoteToImmutable
+  , subscribeEbNotifications
+  )
+import LeiosDemoTypes (LeiosPoint, pointEbHash)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
@@ -117,6 +127,10 @@ launchBgTasks cdb@CDB{..} replayed = do
     launch "ChainDB.copyToImmutableDBRunner" $
       copyToImmutableDBRunner cdb ledgerDbTasksTrigger gcSchedule
 
+  !leiosAcquiredThread <-
+    launch "ChainDB.leiosAcquiredEbsRunner" $
+      leiosAcquiredEbsRunner cdb
+
   atomically $
     writeTVar cdbKillBgThreads $
       sequence_
@@ -124,10 +138,44 @@ launchBgTasks cdb@CDB{..} replayed = do
         , cancelThread ledgerDbMaintenaceThread
         , gcThread
         , copyToImmutableDBThread
+        , leiosAcquiredThread
         ]
  where
   launch :: String -> m Void -> m (m ())
   launch = fmap cancelThread .: forkLinkedThread cdbRegistry
+
+-- | Grow the ChainDB-owned acquired-EB-closures set ('cdbAcquiredLeiosEbs')
+-- from the LeiosDb's closure-completion notifications, and enqueue a reprocess
+-- of the cert-RBs parked on each newly-acquired EB.
+--
+-- This is the runtime half of maintaining that set; the other half is the seed
+-- at ChainDB open (see 'cdbAcquiredLeiosEbs'). One notification at a time: add
+-- the EB to the set, and if it was novel, enqueue a 'ChainSelReprocessLeiosEb'
+-- so the @addBlockRunner@ reconsiders the parked cert-RBs in FIFO order with
+-- the other chain work -- one EB per message, competing for queue slots like
+-- any other writer. The novelty check makes duplicate 'AcquiredEbTxs'
+-- (which the LeiosDb may emit) idempotent: a re-add enqueues nothing. The set
+-- is updated before the (possibly blocking) enqueue, so a backed-up queue does
+-- not stop ChainSel from observing the closure via the set in the meantime.
+leiosAcquiredEbsRunner ::
+  IOLike m =>
+  ChainDbEnv m blk ->
+  m Void
+leiosAcquiredEbsRunner CDB{..} = do
+  chan <- subscribeEbNotifications cdbLeiosDb
+  forever $
+    atomically (readTChan chan) >>= \case
+      AcquiredEb{} -> pure ()
+      AcquiredEbTxs point -> do
+        let ebHash = pointEbHash point
+        novel <- atomically $ do
+          acquired <- readTVar cdbAcquiredLeiosEbs
+          if Set.member ebHash acquired
+            then pure False
+            else do
+              writeTVar cdbAcquiredLeiosEbs (Set.insert ebHash acquired)
+              pure True
+        when novel $ addReprocessLeiosEb ebHash cdbChainSelQueue
 
 {-------------------------------------------------------------------------------
   Copying blocks from the VolatileDB to the ImmutableDB
@@ -187,6 +235,14 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
       -- We're the only one modifying the ImmutableDB, so the tip cannot
       -- have changed since we last checked it.
       ImmutableDB.appendBlock cdbImmutableDB blk
+      -- This block is now immutable. If it is a cert-RB, immutalise the EB it
+      -- /certifies/ -- the one its predecessor announced -- before the later,
+      -- slot-scheduled VolatileDB-side GC can evict its body and closure. By the
+      -- parking invariant a cert-RB is only selected once its certified EB's
+      -- closure is acquired, so an immutalised cert-RB's closure is necessarily
+      -- present (and complete) now. See 'leiosDbPromoteToImmutable'.
+      getBI <- atomically $ VolatileDB.getBlockInfo cdbVolatileDB
+      forM_ (certifiedEb getBI hash) $ leiosDbPromoteToImmutable cdbLeiosDb
       -- TODO the invariant of 'cdbChain' is shortly violated between
       -- these two lines: the tip was updated on the line above, but the
       -- anchor point is only updated on the line below.
@@ -197,6 +253,24 @@ copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
   (,()) <$> atomically (ImmutableDB.getTipSlot cdbImmutableDB)
  where
   trace = traceWith (contramap TraceCopyToImmutableDBEvent cdbTracer)
+
+  -- The EB the given block certifies, if it is a cert-RB: the EB its
+  -- predecessor announced. Mirrors 'isUnacquiredCertRB'. The predecessor of any
+  -- block being copied is either another copied block or the prior immutable
+  -- tip -- all still in the VolatileDB, whose GC is strict older-than and runs
+  -- only after a copy -- so the lookup succeeds.
+  certifiedEb ::
+    (HeaderHash blk -> Maybe (VolatileDB.BlockInfo blk)) ->
+    HeaderHash blk ->
+    Maybe LeiosPoint
+  certifiedEb getBI h = do
+    info <- getBI h
+    guard (VolatileDB.biHasLeiosCert info)
+    predHash <- case VolatileDB.biPrevHash info of
+      GenesisHash -> Nothing
+      BlockHash predHash -> Just predHash
+    predInfo <- getBI predHash
+    strictMaybeToMaybe (VolatileDB.biLeiosAnnouncedEb predInfo)
 
   -- \| Remove the header corresponding to the given point from the beginning
   -- of the current chain fragment.
@@ -274,6 +348,11 @@ copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
     gcSlotNo <- copyToImmutableDB cdb
 
     triggerLedgerDbTasks ledgerDbTasksTrigger gcSlotNo numToWrite
+    -- Prune the acquired-EB set now, as the GC is scheduled. The GC (and the
+    -- LeiosDb closure eviction it drives) only runs at least 'cdbGcDelay' later,
+    -- so the set stops advertising a closure well before that closure can be
+    -- evicted.
+    pruneAcquiredLeiosEbs cdb gcSlotNo
     scheduleGC' gcSlotNo
 
   scheduleGC' :: WithOrigin SlotNo -> m ()
@@ -403,7 +482,37 @@ garbageCollectBlocks CDB{..} slotNo = do
   atomically $ do
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
   PerasCertDB.garbageCollect cdbPerasCertDB slotNo
+  -- Evict LeiosDb EB bodies and closures no longer needed now that everything
+  -- up to 'slotNo' is immutable. Driven by the same scheduled slot as the other
+  -- stores; currently a no-op (see 'leiosDbGarbageCollect').
+  leiosDbGarbageCollect cdbLeiosDb slotNo
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
+
+-- | Prune the acquired-EB set ('cdbAcquiredLeiosEbs') down to the EBs that
+-- still have an announcer at or after the given (immutable tip) slot. An EB is
+-- dropped only when /every/ announcer of it is /strictly/ older than the
+-- immutable tip.
+--
+-- The strictness is essential: the announcement made by the immutable tip
+-- itself is certified by the tip's /successor/, which is still in the volatile
+-- suffix -- so a live RB may yet certify that EB, and it must be kept. Only when
+-- an announcer is strictly older than the tip is its certifying successor (the
+-- next block) necessarily at or before the tip, hence immutable; then the EB
+-- can no longer be newly certified and ChainSel will never reconsider it.
+--
+-- Called as a VolatileDB GC is /scheduled/ (see 'copyToImmutableDBRunner'),
+-- which is at least @cdbGcDelay@ before that GC -- and the LeiosDb closure
+-- eviction it drives -- actually runs. So the acquired set stops advertising a
+-- closure well before the closure itself can be evicted.
+pruneAcquiredLeiosEbs ::
+  IOLike m => ChainDbEnv m blk -> WithOrigin SlotNo -> m ()
+pruneAcquiredLeiosEbs CDB{..} immTip = atomically $ do
+  getAnnouncers <- VolatileDB.getLeiosAnnouncers cdbVolatileDB
+  let keep eb = any ((>= immTip) . pointSlot) (getAnnouncers eb)
+  acquired <- readTVar cdbAcquiredLeiosEbs
+  let acquired' = Set.filter keep acquired
+  when (Set.size acquired' /= Set.size acquired) $
+    writeTVar cdbAcquiredLeiosEbs acquired'
 
 {-------------------------------------------------------------------------------
   Scheduling garbage collections
@@ -626,6 +735,8 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
           case message of
             ChainSelReprocessLoEBlocks varProcessed ->
               void $ tryPutTMVar varProcessed ()
+            -- Fire-and-forget: no promise to fulfil.
+            ChainSelReprocessLeiosEb _ -> pure ()
             ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
               _ <-
                 tryPutTMVar
@@ -644,6 +755,7 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
           lift $ case message of
             ChainSelReprocessLoEBlocks _ ->
               trace PoppedReprocessLoEBlocksFromQueue
+            ChainSelReprocessLeiosEb _ -> pure ()
             ChainSelAddBlock BlockToAdd{blockToAdd} ->
               trace $ PoppedBlockFromQueue $ blockRealPoint blockToAdd
             ChainSelAddPerasCert cert _varProcessed ->

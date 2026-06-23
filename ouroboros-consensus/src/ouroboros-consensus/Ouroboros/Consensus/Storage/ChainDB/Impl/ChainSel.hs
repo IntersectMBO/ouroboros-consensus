@@ -45,6 +45,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust, fromMaybe, isJust)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
+import LeiosDemoTypes (EbHash, pointEbHash)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
@@ -123,6 +124,12 @@ initialChainSelection ::
   Tracer m (TraceInitChainSelEvent blk) ->
   TopLevelConfig blk ->
   StrictTVar m (WithFingerprint (InvalidBlocks blk)) ->
+  -- | Action reading the set of Leios EBs whose closure has been acquired (see
+  -- 'cdbAcquiredLeiosEbs'). RBs whose certificate references an unacquired EB
+  -- are skipped, exactly as in 'constructPreferableCandidates'; only the
+  -- successor filter is needed here, since 'constructChains' only ever reaches a
+  -- block as a successor of the immutable anchor (never as a standalone tip).
+  STM m (Set EbHash) ->
   LoE () ->
   PerasWeightSnapshot blk ->
   m (AnchoredFragment (Header blk))
@@ -133,6 +140,7 @@ initialChainSelection
   tracer
   cfg
   varInvalid
+  getAcquiredEbs
   loE
   weights = do
     -- TODO: Improve the user experience by trimming any potential
@@ -156,11 +164,14 @@ initialChainSelection
     -- not from the **far** future anymore.
     (i :: Anchor blk, succsOf) <- atomically $ do
       invalid <- forgetFingerprint <$> readTVar varInvalid
-      (,)
-        <$> ImmutableDB.getTipAnchor immutableDB
-        <*> ( ignoreInvalidSuc volatileDB invalid
-                <$> VolatileDB.filterByPredecessor volatileDB
-            )
+      acquiredEbs <- getAcquiredEbs
+      anchor <- ImmutableDB.getTipAnchor immutableDB
+      rawSuccsOf <- VolatileDB.filterByPredecessor volatileDB
+      rawLookupBlockInfo <- VolatileDB.getBlockInfo volatileDB
+      let succsOf =
+            ignoreInvalidSuc volatileDB invalid $
+              ignoreUnacquiredCertRBSuc acquiredEbs rawLookupBlockInfo rawSuccsOf
+      pure (anchor, succsOf)
 
     chains <- constructChains i succsOf
 
@@ -392,6 +403,52 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = lift $ do
     Nothing -> pure ()
 
   atomically $ putTMVar varProcessed ()
+-- Reprocess the cert-RBs parked on a now-acquired EB closure: the Leios
+-- analogue of the LoE reprocess above. While the closure was missing, the
+-- cert-carrying successors of the RBs that announced this EB were hidden from
+-- candidate construction by the cert-filter ('ignoreUnacquiredCertRB' /
+-- 'ignoreUnacquiredCertRBSuc'). Now that it is present, find them via the
+-- VolatileDB announcer index and run candidate construction over them; the
+-- cert-filter inside 'constructPreferableCandidates' now lets them through.
+-- Enqueued by @leiosAcquiredEbsRunner@ when the closure is acquired.
+chainSelSync cdb@CDB{..} (ChainSelReprocessLeiosEb ebHash) = lift $ do
+  (getAnnouncers, succsOf, lookupBlockInfo, curChain, weights) <- atomically $ do
+    invalid <- forgetFingerprint <$> readTVar cdbInvalid
+    (,,,,)
+      <$> VolatileDB.getLeiosAnnouncers cdbVolatileDB
+      <*> ( ignoreInvalidSuc cdbVolatileDB invalid
+              <$> VolatileDB.filterByPredecessor cdbVolatileDB
+          )
+      <*> VolatileDB.getBlockInfo cdbVolatileDB
+      <*> Query.getCurrentChain cdb
+      <*> (forgetFingerprint <$> Query.getPerasWeightSnapshot cdb)
+  let
+    -- The cert-RBs parked on this EB are the cert-carrying successors of the
+    -- RBs that announced it.
+    reprocessPoints :: [RealPoint blk]
+    reprocessPoints =
+      [ RealPoint (VolatileDB.biSlotNo bi) succHash
+      | annPoint <- Set.toList (getAnnouncers ebHash)
+      , succHash <- Set.toList (succsOf (pointHash annPoint))
+      , Just bi <- [lookupBlockInfo succHash]
+      , VolatileDB.biHasLeiosCert bi
+      ]
+
+    chainSelEnv = mkChainSelEnv cdb BlockCache.empty weights curChain Nothing
+
+  chainDiffs :: [[(ChainDiff (Header blk), ReasonForSwitch' blk)]] <-
+    for
+      reprocessPoints
+      $ constructPreferableCandidates cdb weights curChain Map.empty
+
+  -- Consider all candidates at once, to avoid transient chain switches.
+  case NE.nonEmpty $ concat chainDiffs of
+    Just chainDiffs' ->
+      -- As on LoE reprocess, we don't log the reason for a switch, hence 'void'.
+      void $
+        chainSelection chainSelEnv chainDiffs' $
+          switchTo cdb weights Nothing
+    Nothing -> pure ()
 chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
   (isMember, invalid, curChain) <-
     lift $
@@ -686,9 +743,23 @@ constructPreferableCandidates ::
 constructPreferableCandidates CDB{..} weights curChain hdrCache p = do
   (succsOf, lookupBlockInfo) <- atomically $ do
     invalid <- forgetFingerprint <$> readTVar cdbInvalid
-    (,)
-      <$> (ignoreInvalidSuc p invalid <$> VolatileDB.filterByPredecessor cdbVolatileDB)
-      <*> (ignoreInvalid p invalid <$> VolatileDB.getBlockInfo cdbVolatileDB)
+    -- Hide RBs whose Leios certificate references an EB whose closure has not
+    -- yet been acquired (issue #890's successor): they are parked in the
+    -- VolatileDB until the EB arrives, both as candidate tips (via
+    -- 'ignoreUnacquiredCertRB' on the lookup) and as successors (via
+    -- 'ignoreUnacquiredCertRBSuc'). This is a /transient/ exclusion (the EB may
+    -- arrive later and make the block selectable) — unlike the permanent
+    -- 'ignoreInvalid'/'ignoreInvalidSuc' exclusion of invalid blocks.
+    acquiredEbs <- readTVar cdbAcquiredLeiosEbs
+    rawSuccsOf <- VolatileDB.filterByPredecessor cdbVolatileDB
+    rawLookupBlockInfo <- VolatileDB.getBlockInfo cdbVolatileDB
+    let succsOf =
+          ignoreInvalidSuc p invalid $
+            ignoreUnacquiredCertRBSuc acquiredEbs rawLookupBlockInfo rawSuccsOf
+        lookupBlockInfo =
+          ignoreInvalid p invalid $
+            ignoreUnacquiredCertRB acquiredEbs rawLookupBlockInfo
+    pure (succsOf, lookupBlockInfo)
 
   loeFrag <- fmap sanitizeLoEFrag <$> cdbLoE
   traceWith
@@ -856,7 +927,8 @@ switchTo ::
   PerasWeightSnapshot blk ->
   -- | Which block we performed chain selection for (if any). This is 'Nothing'
   -- when reprocessing blocks that were postponed due to the Limit on Eagerness
-  -- (cf 'ChainSelReprocessLoEBlocks').
+  -- (cf 'ChainSelReprocessLoEBlocks') or due to EBs arriving after the RBs that
+  -- certified them.
   Maybe (RealPoint blk) ->
   -- | Chain diff to switch to
   ChainDiff (Header blk) ->
@@ -1381,6 +1453,72 @@ ignoreInvalidSuc ::
   (ChainHash blk -> Set (HeaderHash blk))
 ignoreInvalidSuc _ invalid succsOf =
   Set.filter (`Map.notMember` invalid) . succsOf
+
+-- | Whether a block is an RB carrying a Leios certificate whose required EB
+-- closure has not yet been acquired. A cert-RB depends on the EB announced by
+-- its /predecessor/ ('biLeiosAnnouncedEb'); until that EB's closure is in the
+-- acquired set ('cdbAcquiredLeiosEbs'), ChainSel must not select the cert-RB,
+-- because applying it would fail in 'resolveLeiosBlock'.
+--
+-- The wrappers below ('ignoreUnacquiredCertRB'/'ignoreUnacquiredCertRBSuc')
+-- hide such a block from chain selection by the same mechanism that
+-- 'ignoreInvalid'/'ignoreInvalidSuc' use for invalid blocks, but the two are
+-- /not/ the same situation: an invalid block is rejected permanently, whereas a
+-- cert-RB with a missing EB closure is only /temporarily/ unselectable — it
+-- becomes eligible as soon as the EB's closure is acquired (whereupon ChainSel
+-- reprocesses it).
+--
+-- The given @lookupBlockInfo@ should be the /raw/ 'VolatileDB.getBlockInfo' so
+-- that the predecessor's announcement is read regardless of any other
+-- filtering.
+isUnacquiredCertRB ::
+  Set EbHash ->
+  (HeaderHash blk -> Maybe (VolatileDB.BlockInfo blk)) ->
+  HeaderHash blk ->
+  Bool
+isUnacquiredCertRB acquiredEbs lookupBlockInfo h = case lookupBlockInfo h of
+  Nothing -> False
+  Just info
+    | not (VolatileDB.biHasLeiosCert info) -> False
+    | otherwise -> case VolatileDB.biPrevHash info of
+        -- A cert-RB on genesis announces no EB, so it cannot certify anything:
+        -- malformed. Header validation rejects such a block
+        -- ('Praos.LeiosCertRBWithoutAnnouncement'), so this is unreachable for
+        -- header-validated blocks; we still report it unacquired (hence never
+        -- selectable) as a defensive fallback.
+        GenesisHash -> True
+        BlockHash ph ->
+          case lookupBlockInfo ph
+            >>= strictMaybeToMaybe . VolatileDB.biLeiosAnnouncedEb of
+            -- Either the predecessor is not (yet) in the VolatileDB — in which
+            -- case the block is unselectable anyway, for want of its predecessor
+            -- — or the predecessor is present but announced no EB, which is
+            -- malformed and rejected by header validation (as above). Either
+            -- way, report it unacquired.
+            Nothing -> True
+            Just ebPt -> pointEbHash ebPt `Set.notMember` acquiredEbs
+
+-- | Wrap @getBlockInfo@ so that a cert-RB whose required EB closure has not been
+-- acquired ('isUnacquiredCertRB') is reported as absent — hiding it from chain
+-- selection both as a candidate tip and (with 'ignoreUnacquiredCertRBSuc') as a
+-- successor, so it is parked in the VolatileDB until its EB arrives.
+ignoreUnacquiredCertRB ::
+  Set EbHash ->
+  (HeaderHash blk -> Maybe (VolatileDB.BlockInfo blk)) ->
+  (HeaderHash blk -> Maybe (VolatileDB.BlockInfo blk))
+ignoreUnacquiredCertRB acquiredEbs lookupBlockInfo h
+  | isUnacquiredCertRB acquiredEbs lookupBlockInfo h = Nothing
+  | otherwise = lookupBlockInfo h
+
+-- | Wrap a @successors@ function so that cert-RBs whose required EB closure has
+-- not been acquired are not returned as successors. See 'ignoreUnacquiredCertRB'.
+ignoreUnacquiredCertRBSuc ::
+  Set EbHash ->
+  (HeaderHash blk -> Maybe (VolatileDB.BlockInfo blk)) ->
+  (ChainHash blk -> Set (HeaderHash blk)) ->
+  (ChainHash blk -> Set (HeaderHash blk))
+ignoreUnacquiredCertRBSuc acquiredEbs lookupBlockInfo succsOf =
+  Set.filter (not . isUnacquiredCertRB acquiredEbs lookupBlockInfo) . succsOf
 
 -- | Compare two 'ChainDiff's w.r.t. the chain order.
 --

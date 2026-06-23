@@ -56,6 +56,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Read (DeserialiseFailure)
 import Control.Applicative ((<|>))
 import qualified Control.Concurrent.Class.MonadMVar as MVar
+import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import Control.DeepSeq (NFData)
@@ -69,7 +70,6 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Data.Void (Void)
 import LeiosDemoDb
@@ -146,6 +146,7 @@ import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
@@ -243,6 +244,7 @@ data Handlers m addr blk = Handlers
       ConnectionId addr ->
       IsBigLedgerPeer ->
       CsClient.DynamicEnv m blk ->
+      Leios.LeiosPeerVars m ->
       ChainSyncClientPipelined
         (Header blk)
         (Point blk)
@@ -322,6 +324,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ControlMessageSTM m ->
       ConnectionId addr ->
+      Leios.LeiosPeerVars m ->
       LeiosFetchClientPeerPipelined LeiosPoint LeiosEb LeiosTx m ()
   , hLeiosFetchServer ::
       NodeToNodeVersion ->
@@ -337,6 +340,7 @@ mkHandlers ::
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , LedgerSupportsProtocol blk
+  , ResolveLeiosBlock blk
   , Ord addrNTN
   , Hashable addrNTN
   ) =>
@@ -363,7 +367,7 @@ mkHandlers
     }
   txSubmissionLogicVersion =
     Handlers
-      { hChainSyncClient = \peer _isBigLedgerpeer dynEnv ->
+      { hChainSyncClient = \peer _isBigLedgerpeer dynEnv peerVars ->
           CsClient.chainSyncClient
             CsClient.ConfigEnv
               { CsClient.cfg = getTopLevelConfig
@@ -378,6 +382,8 @@ mkHandlers
               , CsClient.tracer =
                   contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers)
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
+              , CsClient.leiosCertRbCallback =
+                  Leios.leiosCertRbCallback (getLeiosOutstanding, getLeiosReady) peerVars
               }
             dynEnv
       , hChainSyncServer = \peer _version ->
@@ -526,26 +532,8 @@ mkHandlers
           pure . leiosNotifyServerPeer $
             atomically $
               processEbNotification <|> processVote
-      , hLeiosFetchClient = \_version controlMessageSTM peer -> toLeiosFetchClientPeerPipelined $ Effect $ do
-          reqVar <-
-            -- Wait for the LeiosNotify client to publish this peer's vars. We
-            -- also watch 'controlMessageSTM': if the peer is being disconnected
-            -- from before the entry ever appears, it never will, and this loop
-            -- would otherwise spin forever. On 'Terminate' we hand back an empty
-            -- queue, so 'nextLeiosFetchClientCommand' observes 'stopSTM' on its
-            -- first transaction and terminates the client immediately.
-            let loop = do
-                  terminating <- atomically $ (== Terminate) <$> controlMessageSTM
-                  if terminating
-                    then TVar.Unchecked.newTVarIO Seq.empty
-                    else do
-                      leiosPeersVars <- MVar.readMVar getLeiosPeersVars
-                      case Map.lookup (Leios.MkPeerId peer) leiosPeersVars of
-                        Just x -> pure $ Leios.requestsToSend x
-                        Nothing -> do
-                          threadDelay (0.010 :: DiffTime)
-                          loop
-             in loop
+      , hLeiosFetchClient = \_version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
+          let reqVar = Leios.requestsToSend peerVars
           leiosConn <- LeiosDb.open leiosDB
           pure $
             leiosFetchClientPeerPipelined $
@@ -569,7 +557,6 @@ mkHandlers
     NodeKernel
       { getLeiosDB = leiosDB
       , getLeiosVoteState = leiosVoteState
-      , getLeiosPeersVars
       , getLeiosOutstanding
       , getLeiosReady
       } = nodeKernel
@@ -989,30 +976,32 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
           lopBucketConfig
           csjConfig
           getDiffusionPipeliningSupport
-        $ \csState -> do
-          (r, trailing) <-
-            runPipelinedPeerWithLimitsRnd
-              (contramap (TraceLabelPeer them) tChainSyncTracer)
-              chainSyncRng
-              (cChainSyncCodec (mkCodecs version))
-              blChainSync
-              (chainSyncTimeouts peerTrustable)
-              channel
-              $ chainSyncClientPeerPipelined
-              $ hChainSyncClient
-                them
-                isBigLedgerPeer
-                CsClient.DynamicEnv
-                  { CsClient.version
-                  , CsClient.controlMessageSTM
-                  , CsClient.headerMetricsTracer = TraceLabelPeer them `contramap` reportHeader
-                  , CsClient.setCandidate = csvSetCandidate csState
-                  , CsClient.idling = csvIdling csState
-                  , CsClient.loPBucket = csvLoPBucket csState
-                  , CsClient.setLatestSlot = csvSetLatestSlot csState
-                  , CsClient.jumping = csvJumping csState
-                  }
-          return (ChainSyncInitiatorResult r, trailing)
+        $ \csState ->
+          bracketLeiosPeer them $ \peerVars -> do
+            (r, trailing) <-
+              runPipelinedPeerWithLimitsRnd
+                (contramap (TraceLabelPeer them) tChainSyncTracer)
+                chainSyncRng
+                (cChainSyncCodec (mkCodecs version))
+                blChainSync
+                (chainSyncTimeouts peerTrustable)
+                channel
+                $ chainSyncClientPeerPipelined
+                $ hChainSyncClient
+                  them
+                  isBigLedgerPeer
+                  CsClient.DynamicEnv
+                    { CsClient.version
+                    , CsClient.controlMessageSTM
+                    , CsClient.headerMetricsTracer = TraceLabelPeer them `contramap` reportHeader
+                    , CsClient.setCandidate = csvSetCandidate csState
+                    , CsClient.idling = csvIdling csState
+                    , CsClient.loPBucket = csvLoPBucket csState
+                    , CsClient.setLatestSlot = csvSetLatestSlot csState
+                    , CsClient.jumping = csvJumping csState
+                    }
+                  peerVars
+            return (ChainSyncInitiatorResult r, trailing)
 
   aChainSyncServer ::
     NodeToNodeVersion ->
@@ -1238,13 +1227,15 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       $ peerSharingServerPeer
       $ hPeerSharingServer version them
 
-  -- \| Owns the per-peer 'LeiosPeerVars' entry in 'getLeiosPeersVars': allocates
-  -- and registers it on connect and, on every exit path, unregisters it and
-  -- refunds that peer's outstanding fetch requests. Modelled on
-  -- 'bracketFetchClient'. This bracket is the sole writer of the
-  -- 'getLeiosPeersVars' map itself; the LeiosNotify client (which fills in the
-  -- entry's 'offerings') runs inside it, while the LeiosFetch client and the
-  -- fetch decision loop read the entry and write its 'requestsToSend'.
+  -- \| Bracket owning this connection's shared per-peer 'LeiosPeerVars' entry in
+  -- 'getLeiosPeersVars'. Every mini-protocol that needs the peer vars (ChainSync,
+  -- LeiosNotify, LeiosFetch) wraps itself in this. On entry it get-or-creates the
+  -- entry -- the first to run allocates and registers it, the rest share it -- and
+  -- on exit it unregisters the entry and refunds that peer's outstanding fetch
+  -- requests ('removePeerFromOutstanding'). There is no ref count: a hot peer's
+  -- mini-protocols tear down together, so whichever exits first runs the cleanup
+  -- and the rest are idempotent no-ops; a straggler that allocated its own entry
+  -- cleans it up on its own exit. Modelled on 'bracketFetchClient'.
   --
   -- The unregister's 'removePeerFromOutstanding' (which takes
   -- 'getLeiosOutstanding') is safe against the fetch decision loop: that loop
@@ -1261,14 +1252,23 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     m a
   bracketLeiosPeer them =
     bracket
+      -- Get-or-create: any peer-vars mini-protocol can be the first to run and
+      -- allocate; the others share the existing vars. No ref count: a hot peer's
+      -- mini-protocols tear down together, so whichever exits first runs the full
+      -- cleanup below, and the rest find it already gone (idempotent). A straggler
+      -- that allocated its own entry cleans that up on its own exit.
       ( do
-          peerVars <- Leios.newLeiosPeerVars
-          MVar.modifyMVar_ (getLeiosPeersVars kernel) $
-            pure . Map.insert pid peerVars
-          pure peerVars
+          fresh <- Leios.newLeiosPeerVars
+          atomically $ do
+            peersVars <- LazySTM.readTVar (getLeiosPeersVars kernel)
+            case Map.lookup pid peersVars of
+              Just existing -> pure existing
+              Nothing -> do
+                LazySTM.writeTVar (getLeiosPeersVars kernel) $ Map.insert pid fresh peersVars
+                pure fresh
       )
       ( \_peerVars -> do
-          MVar.modifyMVar_ (getLeiosPeersVars kernel) $ pure . Map.delete pid
+          atomically $ LazySTM.modifyTVar' (getLeiosPeersVars kernel) $ Map.delete pid
           MVar.modifyMVar_ (getLeiosOutstanding kernel) $
             pure . Leios.removePeerFromOutstanding pid
       )
@@ -1327,15 +1327,16 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       }
     channel = do
       labelThisThread "LeiosFetchClient"
-      ((), trailing) <-
-        runPipelinedPeerWithLimits
-          (TraceLabelPeer them `contramap` tLeiosFetchTracer)
-          (cLeiosFetchCodec (mkCodecs version))
-          blLeiosFetch
-          timeLimitsLeiosFetch
-          channel
-          $ hLeiosFetchClient version controlMessageSTM them
-      pure (NoInitiatorResult, trailing)
+      bracketLeiosPeer them $ \peerVars -> do
+        ((), trailing) <-
+          runPipelinedPeerWithLimits
+            (TraceLabelPeer them `contramap` tLeiosFetchTracer)
+            (cLeiosFetchCodec (mkCodecs version))
+            blLeiosFetch
+            timeLimitsLeiosFetch
+            channel
+            $ hLeiosFetchClient version controlMessageSTM them peerVars
+        pure (NoInitiatorResult, trailing)
 
   aLeiosFetchServer ::
     NodeToNodeVersion ->

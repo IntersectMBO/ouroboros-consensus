@@ -570,19 +570,37 @@ class ResolveLeiosBlock blk where
   resolveLeiosBlockHdr _ _ _ = return Nothing
 
   -- | Whether this block's body carries a 'LeiosCert' (a CertRB).
-  --
-  -- The CertRB staging area gate inspects this cheaply before going on
-  -- to compute the announced EB point and querying the 'LeiosDb'.
   blockHasLeiosCert :: blk -> Bool
   blockHasLeiosCert _ = False
 
   -- | The EB announcement carried by this header (point + on-the-wire
   -- body size), if any. 'Nothing' for headers in eras that don't carry
-  -- Leios announcements. The CertRB staging gate reads this off the
-  -- parent header on the current chain to learn which EB the new
-  -- block's cert refers to.
+  -- Leios announcements.
   headerLeiosAnnouncement :: Header blk -> Maybe (LeiosPoint, BytesSize)
   headerLeiosAnnouncement _ = Nothing
+
+  -- | Whether this header records that the block's body carries a Leios
+  -- certificate (a CertRB; the @hbLeiosContainsCert@ bit). 'False' for
+  -- headers in eras without Leios support. Lets a peer recognise a CertRB
+  -- from its header alone — e.g. the ChainSync client uses it to synthesise
+  -- a LeiosFetch offer for the EB the CertRB certifies (announced by its
+  -- predecessor).
+  headerContainsLeiosCert :: Header blk -> Bool
+  headerContainsLeiosCert _ = False
+
+  -- | The most-recently-announced (and not-yet-certified) Leios EB recorded
+  -- in this chain-dep state (point + on-the-wire body size), if any — i.e. the
+  -- EB that a CertRB extending this state certifies (via
+  -- @praosStateLeiosAnnouncement@). The proxy only fixes the block type; the
+  -- announcement is read from the chain-dep state. 'Nothing' for protocols
+  -- without Leios support. Used, for example, by the ChainSync client to learn
+  -- which EB a just-arrived CertRB certifies (the previous header might not be
+  -- available).
+  chainDepStateLeiosAnnouncement ::
+    proxy blk ->
+    ChainDepState (BlockProtocol blk) ->
+    Maybe (LeiosPoint, BytesSize)
+  chainDepStateLeiosAnnouncement _ _ = Nothing
 
 {-------------------------------------------------------------------------------
   Validation

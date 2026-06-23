@@ -509,6 +509,7 @@ runChainSync
                   pipelineDecisionLowHighMark 10 20
               , getDiffusionPipeliningSupport =
                   diffusionPipelining
+              , leiosCertRbCallback = \_ _ -> pure ()
               }
             DynamicEnv
               { version = maxBound :: NodeToNodeVersion

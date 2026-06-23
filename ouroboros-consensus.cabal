@@ -108,7 +108,6 @@ library
     LeiosDemoOnlyTestFetch
     LeiosDemoOnlyTestNotify
     LeiosDemoTypes
-    LeiosStagingArea
     LeiosVoteState
     LeiosVoting
     Ouroboros.Consensus.Block
@@ -721,7 +720,6 @@ test-suite consensus-test
     Test.LeiosDemoDb
     Test.LeiosDemoLogic
     Test.LeiosDemoTypes
-    Test.LeiosStagingArea
     Test.LeiosVoteState
 
   build-depends:

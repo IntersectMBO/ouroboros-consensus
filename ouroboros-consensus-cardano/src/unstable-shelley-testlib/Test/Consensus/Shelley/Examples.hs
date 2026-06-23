@@ -287,6 +287,7 @@ fromShelleyLedgerExamplesPraos
           , hbOCert = SL.bheaderOCert bhBody
           , hbProtVer = SL.bprotver bhBody
           , hbLeiosEbAnnouncement = SNothing
+          , hbLeiosContainsCert = False
           }
       hSig = coerce bhSig
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader

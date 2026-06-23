@@ -151,6 +151,7 @@ oneBenchRun
               pipelineDecisionLowHighMark 10 20
           , CSClient.getDiffusionPipeliningSupport =
               DiffusionPipeliningOn
+          , CSClient.leiosCertRbCallback = \_ _ -> pure ()
           }
         CSClient.DynamicEnv
           { CSClient.version = maxBound :: NodeToNodeVersion

@@ -57,6 +57,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types
   , ChainSelQueue -- opaque
   , addBlockToAdd
   , addPerasCertToQueue
+  , addReprocessLeiosEb
   , addReprocessLoEBlocks
   , closeChainSelQueue
   , getChainSelMessage
@@ -91,9 +92,12 @@ import Data.Map.Strict (Map)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
+import Data.Set (Set)
 import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word64)
+import LeiosDemoDb.Common (LeiosDbHandle)
+import LeiosDemoTypes (EbHash)
 import GHC.Generics (Generic)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
@@ -146,7 +150,7 @@ import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
-import Ouroboros.Consensus.Util.STM (WithFingerprint)
+import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import Ouroboros.Network.AnchoredFragment (Anchor, AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block (MaxSlotNo (..))
@@ -382,12 +386,44 @@ data ChainDbEnv m blk = CDB
   -- ^ Information on the last starvation of ChainSel, whether ongoing or
   -- ended recently.
   , cdbPerasCertDB :: !(PerasCertDB m blk)
+  , cdbAcquiredLeiosEbs :: !(StrictTVar m (Set EbHash))
+  -- ^ The set of Leios endorser blocks (EBs) whose tx closure has been
+  -- acquired and whose announcer is no older than the immutable tip. ChainSel
+  -- consults it (membership) to avoid selecting an RB that certifies an EB
+  -- whose closure is not yet available. Owned by the ChainDB: seeded at open
+  -- from the LeiosDb (via 'leiosDbScanCompleteEbClosuresNotOlderThanSlot', filtered by the
+  -- immutable tip), grown by 'leiosAcquiredEbsRunner' from LeiosDb
+  -- closure-completion notifications, and pruned by 'pruneAcquiredLeiosEbs' as
+  -- a GC is scheduled (dropping EBs no longer announced by a VolatileDB block
+  -- at or after the immutable tip). On growth, 'leiosAcquiredEbsRunner' also
+  -- enqueues a 'ChainSelReprocessLeiosEb' so the @addBlockRunner@ reprocesses
+  -- the parked cert-RBs in FIFO order. Empty (and never written) when Leios is
+  -- not in play.
+  --
+  -- TODO: the prune is an O(set) sweep of the VolatileDB announcer index each
+  -- time a GC is scheduled; it could be made incremental given a feed of EB
+  -- announcements to maintain a slot index from.
+  , cdbLeiosDb :: !(LeiosDbHandle m)
+  -- ^ The LeiosDb handle. The LeiosDb is one of the stores the ChainDB owns and
+  -- orchestrates -- alongside the ImmutableDB, VolatileDB, LedgerDB and
+  -- PerasCertDB -- so, like them, the ChainDB drives its lifecycle. Concretely
+  -- it uses the handle to:
+  --
+  --     * seed 'cdbAcquiredLeiosEbs' at open, via
+  --       'leiosDbScanCompleteEbClosuresNotOlderThanSlot';
+  --     * grow 'cdbAcquiredLeiosEbs' from closure-completion notifications
+  --       ('subscribeEbNotifications'), in @leiosAcquiredEbsRunner@;
+  --     * promote a copied cert-RB's certified EB into immutable storage
+  --       ('leiosDbPromoteToImmutable'), in @copyToImmutableDB@;
+  --     * garbage-collect volatile LeiosDb data as the immutable tip advances
+  --       ('leiosDbGarbageCollect'), in @garbageCollectBlocks@.
   }
   deriving Generic
 
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
 -- (but avoid including @m@ because we cannot impose @Typeable m@ as a
 -- constraint and still have it work with the simulator)
+
 instance
   (IOLike m, LedgerSupportsProtocol blk, BlockSupportsDiffusionPipelining blk) =>
   NoThunks (ChainDbEnv m blk)
@@ -587,6 +623,12 @@ data ChainSelMessage m blk
     ChainSelReprocessLoEBlocks
       -- | Used for 'ChainSelectionPromise'.
       !(StrictTMVar m ())
+  | -- | Reprocess the cert-RBs parked on a now-acquired EB closure: the Leios
+    -- analogue of 'ChainSelReprocessLoEBlocks'. Enqueued by
+    -- @leiosAcquiredEbsRunner@ when an EB's closure is acquired, so the parked
+    -- cert-RBs are reconsidered in FIFO order with the other chain work. No
+    -- promise: it is fire-and-forget.
+    ChainSelReprocessLeiosEb !EbHash
 
 -- | Create a new 'ChainSelQueue' with the given size.
 newChainSelQueue :: (IOLike m, StandardHash blk, Typeable blk) => Word -> m (ChainSelQueue m blk)
@@ -670,6 +712,16 @@ addReprocessLoEBlocks tracer ChainSelQueue{varChainSelQueue} = do
     AddedReprocessLoEBlocksToQueue (FallingEdgeWith (fromIntegral queueSize))
   return $ ChainSelectionPromise waitUntilRan
 
+-- | Reprocess any CertRBs that certify this EB.
+addReprocessLeiosEb ::
+  IOLike m =>
+  EbHash ->
+  ChainSelQueue m blk ->
+  m ()
+addReprocessLeiosEb ebHash ChainSelQueue{varChainSelQueue} =
+  atomically $ writeTBQueue varChainSelQueue (ChainSelReprocessLeiosEb ebHash)
+
+
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
 -- queue is empty; in that case, reports the starvation (and its end) via the
 -- given tracer.
@@ -708,6 +760,9 @@ getChainSelMessage starvationTracer starvationVar chainSelQueue =
       atomically . writeTVar starvationVar . ChainSelStarvationEndedAt =<< getMonotonicTime
     ChainSelAddPerasCert{} -> pure ()
     ChainSelReprocessLoEBlocks{} -> pure ()
+    ChainSelReprocessLeiosEb{} -> do
+      -- TODO we don't have a pt for the tracer message
+      atomically . writeTVar starvationVar . ChainSelStarvationEndedAt =<< getMonotonicTime
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
@@ -721,6 +776,8 @@ closeChainSelQueue ChainSelQueue{varChainSelQueue = queue} = do
       tryPutTMVar varProcessed ()
     ChainSelReprocessLoEBlocks varProcessed ->
       tryPutTMVar varProcessed ()
+    ChainSelReprocessLeiosEb{} ->
+      pure False
 
 -- | To invoke when the given 'ChainSelMessage' has been processed by ChainSel.
 -- This is used to remove the respective point from the multiset of points in
@@ -736,6 +793,8 @@ processedChainSelMessage ChainSelQueue{varChainSelPoints} = \case
   ChainSelAddPerasCert{} ->
     pure ()
   ChainSelReprocessLoEBlocks{} ->
+    pure ()
+  ChainSelReprocessLeiosEb{} ->
     pure ()
 
 -- | Return a function to test the membership

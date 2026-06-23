@@ -75,7 +75,9 @@ data InMemoryLeiosDb = InMemoryLeiosDb
   -- any later batch containing one of its txs would re-trigger it
   -- without this guard; downstream consumers (e.g. 'runLeiosVoting')
   -- treat the re-notification as fatal ('AlreadyKnown' from
-  -- 'addVote').
+  -- 'addVote'). Each point carries the EB's hash and its announcer slot,
+  -- so this is also the source for
+  -- 'leiosDbScanCompleteEbClosuresNotOlderThanSlot'.
   }
   deriving stock Generic
   deriving anyclass NoThunks
@@ -105,6 +107,20 @@ newLeiosDBInMemoryWith stateVar = do
     LeiosDbHandle
       { subscribeEbNotifications =
           atomically (dupTChan notificationChan)
+      , -- This is consulted only once, at ChainDB open, before any mini-protocol
+        -- runs (see 'Ouroboros.Consensus.Storage.ChainDB.Impl.openDBInternal').
+        -- An in-memory DB has no on-disk persistence, so for a fresh process it
+        -- is empty at that point and this could simply be @pure []@. We keep the
+        -- real scan because the ThreadNet harness persists the 'stateVar' across
+        -- simulated node restarts (it lives in the per-node 'NodeInfo' alongside
+        -- the MockFS DBs; see @Test.ThreadNet.Network@), so on a restart the
+        -- ChainDB reopens against a non-empty DB and this seeds the restored
+        -- acquired-EB-closures set — the restart-recovery path.
+        leiosDbScanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
+      , -- No-op for now; see 'leiosDbGarbageCollect'.
+        leiosDbGarbageCollect = \_slotNo -> pure ()
+      , -- No-op for now; see 'leiosDbPromoteToImmutable'.
+        leiosDbPromoteToImmutable = \_point -> pure ()
       , open =
           pure $
             LeiosDbConnection
@@ -241,8 +257,29 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
       { imCompletedEbs =
           foldr Set.insert (imCompletedEbs s) completed
       }
+  -- Emit a closure-completion notification for each newly-complete EB. The
+  -- ChainDB subscribes to these to grow the acquired-EB-closures set it owns.
   forM_ completed $ writeTChan notificationChan . AcquiredEbTxs
   pure completed
+
+-- | Implements 'leiosDbScanCompleteEbClosuresNotOlderThanSlot': the already-completed EBs
+-- announced no older than the given slot.
+--
+-- Derived from 'imCompletedEbs': an EB's greatest announcer slot is no older
+-- than @sinceSlot@ exactly when at least one of its completed points has a slot
+-- @>= sinceSlot@, so we collect (and dedupe) the hashes of those points. This
+-- is precise across all of an EB's announcer slots, as in the SQLite backend.
+imScanCompleteEbClosuresSince ::
+  IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m [EbHash]
+imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
+  s <- readTVar stateVar
+  pure $
+    Set.toList $
+      Set.fromList
+        [ pointEbHash p
+        | p <- Set.toList (imCompletedEbs s)
+        , pointSlotNo p >= sinceSlot
+        ]
 
 imBatchRetrieveTxs ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]

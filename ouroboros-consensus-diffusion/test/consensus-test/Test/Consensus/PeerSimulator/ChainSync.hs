@@ -119,6 +119,7 @@ basicChainSyncClient
           -- do not care about this in these tests.
           CSClient.historicityCheck = HistoricityCheck.noCheck
         , CSClient.getDiffusionPipeliningSupport = DiffusionPipeliningOn
+        , CSClient.leiosCertRbCallback = \_ _ -> pure ()
         }
       CSClient.DynamicEnv
         { CSClient.version = maxBound

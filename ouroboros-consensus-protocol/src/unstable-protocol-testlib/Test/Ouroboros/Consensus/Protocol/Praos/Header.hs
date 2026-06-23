@@ -448,6 +448,7 @@ genHeaderBody context = do
   (hbOCert, kesPeriod) <- genCert hbSlotNo context
   let hbProtVer = protocolVersionZero
       hbLeiosEbAnnouncement = SNothing
+      hbLeiosContainsCert = False
       headerBody = HeaderBody{..}
   pure $ (headerBody, kesPeriod)
  where
