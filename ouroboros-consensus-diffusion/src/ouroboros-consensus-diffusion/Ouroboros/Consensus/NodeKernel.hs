@@ -22,7 +22,7 @@ module Ouroboros.Consensus.NodeKernel
   , toConsensusMode
   ) where
 
-import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+import Cardano.Base.FeatureFlags (CardanoFeatureFlag (..))
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
 import Cardano.Network.LedgerStateJudgement (LedgerStateJudgement (..))
 import Cardano.Network.NodeToNode
@@ -39,6 +39,8 @@ import Control.DeepSeq (force)
 import Control.Monad
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import Control.Monad.Except
+import Control.Monad.Trans.Maybe (hoistMaybe, runMaybeT)
+import Control.Monad.Writer (runWriterT, tell)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
@@ -50,9 +52,9 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, isNothing)
 import Data.Proxy
-import Data.Set (Set)
+import Data.Set (Set, member)
 import qualified Data.Text as Text
 import Data.Void (Void)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -92,6 +94,21 @@ import Ouroboros.Consensus.Node.Genesis
   )
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
+import Ouroboros.Consensus.Peras.Cert.Inclusion
+  ( PerasCertInclusionRulesDecision (..)
+  , needCertInContext
+  )
+import Ouroboros.Consensus.Peras.Cert.Opaque (toOpaquePerasCert)
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext
+  , forgePerasVoteIfEligibleInContext
+  )
+import qualified Ouroboros.Consensus.Peras.Time as Time
+import Ouroboros.Consensus.Peras.Voting.Rules
+  ( PerasVotingRulesDecision (..)
+  , isPerasVotingAllowedInContext
+  )
+import Ouroboros.Consensus.Peras.Voting.Trace (TracePerasVoteForgingEvent (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockResult (..)
@@ -113,6 +130,7 @@ import Ouroboros.Consensus.Util.LeakyBucket
   ( atomicallyWithMonotonicTime
   )
 import Ouroboros.Consensus.Util.Orphans ()
+import Ouroboros.Consensus.Util.Pred (Explainable (explain), ExplanationMode (..))
 import Ouroboros.Consensus.Util.STM
 import Ouroboros.Network.AnchoredFragment
   ( AnchoredFragment
@@ -253,11 +271,13 @@ initNodeKernel
   args@NodeKernelArgs
     { registry
     , cfg
+    , featureFlags
     , tracers
     , chainDB
     , initChainDB
     , blockFetchConfiguration
     , btime
+    , systemTime
     , gsmArgs
     , peerSharingRng
     , txSubmissionRng
@@ -397,6 +417,12 @@ initNodeKernel
           txChannelsVar
           sharedTxStateVar
 
+    whenPerasEnabled $
+      void $
+        forkLinkedWatcher registry "NodeKernel.perasVoteForging" $
+          knownSlotWatcher btime $
+            \currentSlot -> withEarlyExit_ $ perasVoteForgingController systemTime st currentSlot
+
     return
       NodeKernel
         { getChainDB = chainDB
@@ -420,6 +446,13 @@ initNodeKernel
         , getTxMempoolSem = txMempoolSem
         }
    where
+    -- Start a thread conditionally when the PerasFlag is provided and the
+    -- current block type supports Peras.
+    whenPerasEnabled =
+      when $
+        PerasFlag `member` featureFlags
+          && blockDoesReallySupportsPeras (Proxy @blk)
+
     blockForgingController ::
       InternalState m remotePeer localPeer blk ->
       STM m [MkBlockForging m blk] ->
@@ -432,6 +465,92 @@ initNodeKernel
         traverse_ cancelThread forgingThreads
         blockForging' <- traverse (forkBlockForging st) blockForging
         go blockForging'
+
+perasVoteForgingController ::
+  forall m remotePeer localPeer blk.
+  ( IOLike m
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  ) =>
+  SystemTime m ->
+  InternalState m remotePeer localPeer blk ->
+  SlotNo ->
+  WithEarlyExit m ()
+perasVoteForgingController systemTime IS{chainDB, tracers} slotNo = do
+  -- Get crypto data from environment variables
+  -- TODO: move the code outside of the vote forging controller once
+  -- they are properly obtained from the ledger/context.
+  poolId <- case readPerasPoolIdFromEnv (Proxy @blk) of
+    Left err -> do
+      trace $ TracePerasVotingCantReadEnv err
+      exitEarly
+    Right poolId -> pure poolId
+
+  privateKey <- case readPerasPrivateKeyFromEnv (Proxy @blk) of
+    Left err -> do
+      trace $ TracePerasVotingCantReadEnv err
+      exitEarly
+    Right privateKey -> pure privateKey
+
+  -- We run all 3 STM computations in a WriterT monad so that we can have proper logging,
+  -- while keeping everything in the same transaction. We also use MaybeT because there is
+  -- a natural abort/continue logic within the transaction. Unfortunately, we can't leverage
+  -- the outer WithEarlyExit monad, because we _always_ want to get the trace.
+  (mVote, traceEvents :: [TracePerasVoteForgingEvent blk]) <- lift $ atomically $ runWriterT $ runMaybeT $ do
+    -- Resolve Peras round number
+    -- TODO: When we have benchmarks for Peras, it might be beneficial to have some bit of state
+    -- to check whether we must vote for this round, instead of always trying to resolve the slot
+    -- number at each iteration. We might store the next eligible slot as @perasRoundLength@ past
+    -- the previous one, or precompute every voting slot at epoch boundaries.
+    roundInfo <-
+      dyel $
+        Time.resolveSlotToPerasRoundInfoWithHandle
+          (ChainDB.getTimeResolutionContextHandle chainDB)
+          slotNo
+    let roundNo = Time.stpriPerasRoundNo roundInfo
+        slotInRound = Time.stpriSlotsSpentInPerasRound roundInfo
+
+    when (not $ Time.stpriIsFirstSlotOfPerasRound roundInfo) $ do
+      tell [TracePerasVotingNoVoteAfterFirstSlotInRound roundNo slotInRound]
+      hoistMaybe Nothing
+
+    -- Do the voting rules state that we should vote?
+    votingDecision <-
+      dyel $
+        isPerasVotingAllowedInContext
+          (ChainDB.getPerasVotingViewHandle chainDB)
+          roundNo
+    tell [TracePerasVotingRuleEvent votingDecision]
+    candidateBlock <- case votingDecision of
+      NoVote _ -> hoistMaybe Nothing
+      Vote _ block -> pure block
+
+    -- Forge the vote, if allowed
+    mVote <-
+      dyel $
+        forgePerasVoteIfEligibleInContext
+          (ChainDB.getPerasEpochContextResolverHandle chainDB)
+          poolId
+          privateKey
+          roundNo
+          candidateBlock
+    when (isNothing mVote) $ tell $ [TracePerasVotingNotAVoterInRound roundNo]
+    hoistMaybe mVote
+
+  traverse_ trace traceEvents
+  vote <- maybe exitEarly pure mVote
+  tickedVote <- lift $ addArrivalTime systemTime vote
+  trace $ TracePerasVotingForgedVote tickedVote
+  -- Add vote and potential cert to the DB
+  (addVoteResult, mAddCertChainSelOutcome) <- lift $ ChainDB.addPerasVoteSync chainDB tickedVote
+  trace $ TracePerasVotingAddVoteResult addVoteResult
+  traverse_ (trace . TracePerasVotingAddCertChainSelOutcome) mAddCertChainSelOutcome
+ where
+  trace :: TracePerasVoteForgingEvent blk -> WithEarlyExit m ()
+  trace = lift . traceWith (perasVoteForgingTracer tracers)
+
+  -- Do you even lift, bro?
+  dyel = lift . lift
 
 castTraceFetchDecision ::
   forall remotePeer blk.
@@ -718,6 +837,57 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             , ledgerTipPoint (ledgerState unticked)
             )
 
+    -- Decide if we need to include a Peras certificate in this block.
+    (currentRoundNo, perasCertDecision) <- lift $ atomically $ do
+      let timeResolverHandle = ChainDB.getTimeResolutionContextHandle chainDB
+      let certInclusionViewHandle = ChainDB.getPerasCertInclusionViewHandle chainDB
+
+      currentRoundNo <-
+        Time.stpriPerasRoundNo
+          <$> Time.resolveSlotToPerasRoundInfoWithHandle
+            timeResolverHandle
+            currentSlot
+
+      decision <-
+        needCertInContext certInclusionViewHandle currentRoundNo
+
+      pure (currentRoundNo, decision)
+
+    mbPerasCert <-
+      case perasCertDecision of
+        -- NOTE: if constructing a certificate inclusion decision fails, this
+        -- indicates that we have not seen any certificate we could include in
+        -- a block yet, so we can just ignore this case.
+        Nothing -> do
+          tracePerasCertInclusion $
+            TracePerasCertInclusionNoCertToInclude
+              currentSlot
+          pure Nothing
+        Just decision@(DoNotIncludeCert _) -> do
+          tracePerasCertInclusion $
+            TracePerasCertInclusionShouldNotIncludeCert
+              (explain Deep decision)
+              currentSlot
+          pure Nothing
+        Just decision@(IncludeCert _ cert) ->
+          case toOpaquePerasCert (vpcCert (forgetArrivalTime cert)) of
+            Left opaquePerasCertError -> do
+              tracePerasCertInclusion $
+                TracePerasCertInclusionFailedToConstructOpaqueCert
+                  (explain Deep decision)
+                  currentSlot
+                  currentRoundNo
+                  opaquePerasCertError
+              pure Nothing
+            Right opaquePerasCert -> do
+              tracePerasCertInclusion $
+                TracePerasCertInclusionShouldIncludeCert
+                  (explain Deep decision)
+                  currentSlot
+                  currentRoundNo
+                  opaquePerasCert
+              pure $ Just opaquePerasCert
+
     -- Actually produce the block
     newBlock <-
       lift $
@@ -726,6 +896,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           cfg
           bcBlockNo
           currentSlot
+          mbPerasCert
           tickedLedgerState
           txs
           proof
@@ -794,6 +965,11 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     lift
       . traceWith (forgeTracer tracers)
       . TraceLabelCreds (forgeLabel blockForging)
+
+  tracePerasCertInclusion :: TracePerasCertInclusionEvent -> WithEarlyExit m ()
+  tracePerasCertInclusion =
+    lift
+      . traceWith (perasCertInclusionTracer tracers)
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext

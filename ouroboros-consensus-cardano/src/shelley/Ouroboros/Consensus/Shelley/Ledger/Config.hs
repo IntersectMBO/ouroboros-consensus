@@ -32,6 +32,7 @@ import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.History.EraParams (PerasEnabled)
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( VRFTiebreakerFlavor (..)
   )
@@ -58,6 +59,7 @@ data instance BlockConfig (ShelleyBlock proto era) = ShelleyConfig
   -- verification key(s) corresponding to the node's signing key(s). For non
   -- block producing nodes, this can be set to the empty map.
   , shelleyVRFTiebreakerFlavor :: !VRFTiebreakerFlavor
+  , shelleyPerasParams :: PerasEnabled (PerasParams (ShelleyBlock proto era))
   }
   deriving stock Generic
 
@@ -70,8 +72,9 @@ mkShelleyBlockConfig ::
   SL.ProtVer ->
   SL.ShelleyGenesis ->
   [SL.VKey SL.BlockIssuer] ->
+  PerasEnabled (PerasParams (ShelleyBlock proto era)) ->
   BlockConfig (ShelleyBlock proto era)
-mkShelleyBlockConfig protVer genesis blockIssuerVKeys =
+mkShelleyBlockConfig protVer genesis blockIssuerVKeys mbPerasParams =
   ShelleyConfig
     { shelleyProtocolVersion = protVer
     , shelleySystemStart = SystemStart $ SL.sgSystemStart genesis
@@ -82,6 +85,7 @@ mkShelleyBlockConfig protVer genesis blockIssuerVKeys =
           | k <- blockIssuerVKeys
           ]
     , shelleyVRFTiebreakerFlavor
+    , shelleyPerasParams = mbPerasParams
     }
  where
   shelleyVRFTiebreakerFlavor

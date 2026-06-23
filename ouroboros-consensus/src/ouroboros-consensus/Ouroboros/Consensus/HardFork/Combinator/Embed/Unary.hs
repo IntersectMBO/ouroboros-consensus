@@ -356,6 +356,9 @@ instance Isomorphic (Flip ExtLedgerState mk) where
       ExtLedgerState
         { ledgerState = unFlip $ project $ Flip ledgerState
         , headerState = project headerState
+        , -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
+          perasEpochContextResolver = undefined
+        , latestPerasCertOnChainRound = undefined
         }
 
   inject (Flip ExtLedgerState{..}) =
@@ -363,6 +366,9 @@ instance Isomorphic (Flip ExtLedgerState mk) where
       ExtLedgerState
         { ledgerState = unFlip $ inject $ Flip ledgerState
         , headerState = inject headerState
+        , -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
+          perasEpochContextResolver = undefined
+        , latestPerasCertOnChainRound = undefined
         }
 
 instance Isomorphic AnnTip where
@@ -454,12 +460,13 @@ instance Functor m => Isomorphic (BlockForging m) where
               )
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
               (inject' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \cfg bno sno tickedLgrSt txs isLeader ->
+      , forgeBlock = \cfg bno sno mbPerasCert tickedLgrSt txs isLeader ->
           project' (Proxy @(I blk))
             <$> forgeBlock
               (inject cfg)
               bno
               sno
+              mbPerasCert
               (getFlipTickedLedgerState (inject (FlipTickedLedgerState tickedLgrSt)))
               (inject' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
@@ -500,12 +507,13 @@ instance Functor m => Isomorphic (BlockForging m) where
               (projTickedChainDepSt tickedChainDepSt)
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
               (project' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
-      , forgeBlock = \cfg bno sno tickedLgrSt txs isLeader ->
+      , forgeBlock = \cfg bno sno mbPerasCert tickedLgrSt txs isLeader ->
           inject' (Proxy @(I blk))
             <$> forgeBlock
               (project cfg)
               bno
               sno
+              mbPerasCert
               (getFlipTickedLedgerState (project (FlipTickedLedgerState tickedLgrSt)))
               (project' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
               (project' (Proxy @(WrapIsLeader blk)) isLeader)

@@ -1,9 +1,15 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | Weighted Fait-Accompli with Local Sortition (wFA^LS) committee selection.
 --
@@ -41,6 +47,8 @@ module Ouroboros.Consensus.Committee.WFALS
   ) where
 
 import Cardano.Ledger.BaseTypes (NonZero (..), Nonce, nonZero)
+import Codec.Serialise (Serialise)
+import Control.Exception (Exception)
 import Control.Monad (void)
 import Control.Monad.Zip (MonadZip (..))
 import qualified Data.Array as Array
@@ -53,6 +61,9 @@ import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes)
+import Data.Typeable (Typeable)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
   , UniqueVotesWithSameTarget
@@ -88,7 +99,7 @@ import Ouroboros.Consensus.Committee.WFA
   , PersistentCommitteeSize (..)
   , SeatIndex (..)
   , TotalNonPersistentStake (..)
-  , TotalPersistentStake
+  , TotalPersistentStake (..)
   , WFAError
   , getCandidateIfSeatWithinBounds
   , unsafeGetCandidateInSeat
@@ -101,6 +112,7 @@ data WFALS
 instance
   ( CryptoSupportsAggregateVoteSigning crypto
   , CryptoSupportsBatchVRFVerification crypto
+  , Ord (ElectionId crypto)
   ) =>
   CryptoSupportsVotingCommittee crypto WFALS
   where
@@ -125,7 +137,7 @@ instance
       persistentCommitteeSize :: !PersistentCommitteeSize
     , -- Expected number of non-persistent voters
       nonPersistentCommitteeSize :: !NonPersistentCommitteeSize
-    , --  Total stake of persistent voters
+    , -- Total stake of persistent voters
       totalPersistentStake :: !TotalPersistentStake
     , -- Total stake of non-persistent voters
       totalNonPersistentStake :: !TotalNonPersistentStake
@@ -161,7 +173,6 @@ instance
       InvalidCertSignature String
     | -- We triggered an unexpected cryptographic error
       CryptoError String
-    deriving (Show, Eq)
 
   data EligibilityWitness crypto WFALS
     = -- A persistent member of the voting committee
@@ -202,6 +213,36 @@ instance
   eligiblePartyVoteWeight = implEligiblePartyVoteWeight
   forgeCert = implForgeCert
   verifyCert = implVerifyCert
+
+  voteTarget = \case
+    WFALSPersistentVote _ electionId candidate _ ->
+      (electionId, candidate)
+    WFALSNonPersistentVote _ electionId candidate _ _ ->
+      (electionId, candidate)
+  compareVotesById vote1 vote2 = compare (getVoteId vote1) (getVoteId vote2)
+   where
+    getVoteId = \case
+      WFALSPersistentVote seatIndex electionId _ _ ->
+        (seatIndex, electionId)
+      WFALSNonPersistentVote seatIndex electionId _ _ _ ->
+        (seatIndex, electionId)
+
+deriving instance Show (PublicKey crypto) => Show (VotingCommittee crypto WFALS)
+deriving instance Eq (PublicKey crypto) => Eq (VotingCommittee crypto WFALS)
+deriving instance NoThunks (PublicKey crypto) => NoThunks (VotingCommittee crypto WFALS)
+deriving instance Serialise (PublicKey crypto) => Serialise (VotingCommittee crypto WFALS)
+deriving instance Generic (VotingCommittee crypto WFALS)
+
+deriving instance Show (PublicKey crypto) => Show (VotingCommitteeInput crypto WFALS)
+deriving instance Eq (PublicKey crypto) => Eq (VotingCommitteeInput crypto WFALS)
+deriving instance NoThunks (PublicKey crypto) => NoThunks (VotingCommitteeInput crypto WFALS)
+deriving instance Generic (VotingCommitteeInput crypto WFALS)
+
+deriving instance Show (VotingCommitteeError crypto WFALS)
+deriving instance Eq (VotingCommitteeError crypto WFALS)
+deriving instance NoThunks (VotingCommitteeError crypto WFALS)
+deriving instance Generic (VotingCommitteeError crypto WFALS)
+deriving instance Typeable crypto => Exception (VotingCommitteeError crypto WFALS)
 
 -- | Construct a 'WFALSVotingCommittee' for a given epoch
 mkWFALSVotingCommittee ::
@@ -392,18 +433,15 @@ implVerifyVote committee = \case
 
 -- | Compute the voting power of an eligible committee member
 --
--- NOTE: there is a subtle difference between the "Ledger stake" and the "Vote
--- weight" of a given voter. On one hand, the ledger stake is the stake as
--- reflected directly by the ledger stake distribution under consideration. On
--- the other hand, the "Vote" weight refers to the voting power of that voter,
--- i.e., the stake that a voter can effectively contribute to an election,
--- which might be different from their ledger stake depending on their committee
+-- In this voting committee scheme, the vote weight of a member depends on their
 -- membership type:
 --   * for a persistent committee member, their vote weight is equal to their
---     ledger stake throughout their entire tenure in the committee, whereas
---   * for a non-persistent committee member, their vote weight (provided that
---     they are actually selected to vote via local sortition) is equal to their
---     ledger stake normalized by the total non-persistent stake.
+--     (normalised) ledger stake throughout their entire tenure in the
+--     committee, whereas
+--   * for a non-persistent committee member, their vote weight is equal to
+--     their (normalised) non-persistent vote weight. This is computed as the
+--     number of seats granted to them by local sortition, scaled by their
+--     relative non-persistent stake w.r.t. other non-persistent voters.
 implEligiblePartyVoteWeight ::
   VotingCommittee crypto WFALS ->
   EligibilityWitness crypto WFALS ->
@@ -413,7 +451,7 @@ implEligiblePartyVoteWeight committee = \case
   WFALSPersistentMember
     _seatIndex
     (LedgerStake stake) ->
-      VoteWeight stake
+      mkVoteWeight stake
   -- Non-persistent members have their voting power proportional to their
   -- number of seats granted by local sortition and their stake (normalized
   -- by the total non-persistent stake)
@@ -422,13 +460,18 @@ implEligiblePartyVoteWeight committee = \case
     (LedgerStake stake)
     _vrfOutput
     numSeats ->
-      VoteWeight $
+      mkVoteWeight $
         fromIntegral (unLocalSortitionNumSeats (unNonZero numSeats))
           * stake
           / nonPersistentStake
-     where
-      TotalNonPersistentStake (Cumulative (LedgerStake nonPersistentStake)) =
-        totalNonPersistentStake committee
+ where
+  TotalPersistentStake (Cumulative (LedgerStake persistentStake)) =
+    totalPersistentStake committee
+  TotalNonPersistentStake (Cumulative (LedgerStake nonPersistentStake)) =
+    totalNonPersistentStake committee
+
+  mkVoteWeight absoluteStake =
+    VoteWeight (absoluteStake / (persistentStake + nonPersistentStake))
 
 -- | Forge a certificate attesting the winner of a given election
 implForgeCert ::

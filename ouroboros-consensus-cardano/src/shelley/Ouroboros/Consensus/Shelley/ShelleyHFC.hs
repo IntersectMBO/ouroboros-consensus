@@ -7,6 +7,8 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -73,11 +75,10 @@ import Ouroboros.Consensus.HardFork.Combinator hiding
   )
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
-import Ouroboros.Consensus.HardFork.History (Bound (boundSlot))
+import Ouroboros.Consensus.HardFork.History (Bound (boundSlot), pattern NoPerasEnabled)
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   , ledgerViewForecastAt
@@ -111,10 +112,10 @@ instance
   ) =>
   ImmutableEraParams (ShelleyBlock proto era)
   where
-  immutableEraParams =
+  immutableEraParams cfg =
     shelleyEraParamsNeverHardForks
-      . shelleyLedgerGenesis
-      . configLedger
+      (shelleyLedgerGenesis (configLedger cfg))
+      NoPerasEnabled
 
 instance
   ( ShelleyCompatible proto era
@@ -163,21 +164,105 @@ instance
 -- includes an era wrapper. Each block should do this from the start to be
 -- prepared for future hard forks without having to do any bit twiddling.
 instance
-  ( ShelleyCompatible proto era
-  , LedgerSupportsProtocol (ShelleyBlock proto era)
-  , LedgerSupportsPeras (ShelleyBlock proto era)
-  , TxLimits (ShelleyBlock proto era)
+  ( ShelleyCompatible proto ShelleyEra
+  , LedgerSupportsProtocol (ShelleyBlock proto ShelleyEra)
+  , TxLimits (ShelleyBlock proto ShelleyEra)
   , Crypto (ProtoCrypto proto)
   ) =>
-  SerialiseHFC '[ShelleyBlock proto era]
+  SerialiseHFC '[ShelleyBlock proto ShelleyEra]
 
 instance
-  ( ShelleyCompatible proto era
-  , LedgerSupportsProtocol (ShelleyBlock proto era)
-  , TxLimits (ShelleyBlock proto era)
+  ( ShelleyCompatible proto AllegraEra
+  , LedgerSupportsProtocol (ShelleyBlock proto AllegraEra)
+  , TxLimits (ShelleyBlock proto AllegraEra)
   , Crypto (ProtoCrypto proto)
   ) =>
-  SerialiseConstraintsHFC (ShelleyBlock proto era)
+  SerialiseHFC '[ShelleyBlock proto AllegraEra]
+instance
+  ( ShelleyCompatible proto MaryEra
+  , LedgerSupportsProtocol (ShelleyBlock proto MaryEra)
+  , TxLimits (ShelleyBlock proto MaryEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseHFC '[ShelleyBlock proto MaryEra]
+instance
+  ( ShelleyCompatible proto AlonzoEra
+  , LedgerSupportsProtocol (ShelleyBlock proto AlonzoEra)
+  , TxLimits (ShelleyBlock proto AlonzoEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseHFC '[ShelleyBlock proto AlonzoEra]
+instance
+  ( ShelleyCompatible proto BabbageEra
+  , LedgerSupportsProtocol (ShelleyBlock proto BabbageEra)
+  , TxLimits (ShelleyBlock proto BabbageEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseHFC '[ShelleyBlock proto BabbageEra]
+instance
+  ( ShelleyCompatible proto ConwayEra
+  , LedgerSupportsProtocol (ShelleyBlock proto ConwayEra)
+  , TxLimits (ShelleyBlock proto ConwayEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseHFC '[ShelleyBlock proto ConwayEra]
+instance
+  ( ShelleyCompatible proto DijkstraEra
+  , LedgerSupportsProtocol (ShelleyBlock proto DijkstraEra)
+  , TxLimits (ShelleyBlock proto DijkstraEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseHFC '[ShelleyBlock proto DijkstraEra]
+
+instance
+  ( ShelleyCompatible proto ShelleyEra
+  , LedgerSupportsProtocol (ShelleyBlock proto ShelleyEra)
+  , TxLimits (ShelleyBlock proto ShelleyEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto ShelleyEra)
+instance
+  ( ShelleyCompatible proto AllegraEra
+  , LedgerSupportsProtocol (ShelleyBlock proto AllegraEra)
+  , TxLimits (ShelleyBlock proto AllegraEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto AllegraEra)
+instance
+  ( ShelleyCompatible proto MaryEra
+  , LedgerSupportsProtocol (ShelleyBlock proto MaryEra)
+  , TxLimits (ShelleyBlock proto MaryEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto MaryEra)
+instance
+  ( ShelleyCompatible proto AlonzoEra
+  , LedgerSupportsProtocol (ShelleyBlock proto AlonzoEra)
+  , TxLimits (ShelleyBlock proto AlonzoEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto AlonzoEra)
+instance
+  ( ShelleyCompatible proto BabbageEra
+  , LedgerSupportsProtocol (ShelleyBlock proto BabbageEra)
+  , TxLimits (ShelleyBlock proto BabbageEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto BabbageEra)
+instance
+  ( ShelleyCompatible proto ConwayEra
+  , LedgerSupportsProtocol (ShelleyBlock proto ConwayEra)
+  , TxLimits (ShelleyBlock proto ConwayEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto ConwayEra)
+instance
+  ( ShelleyCompatible proto DijkstraEra
+  , LedgerSupportsProtocol (ShelleyBlock proto DijkstraEra)
+  , TxLimits (ShelleyBlock proto DijkstraEra)
+  , Crypto (ProtoCrypto proto)
+  ) =>
+  SerialiseConstraintsHFC (ShelleyBlock proto DijkstraEra)
 
 {-------------------------------------------------------------------------------
   Protocol type definition
@@ -367,7 +452,7 @@ instance
   SL.TranslateEra era (Flip LedgerState mk :.: ShelleyBlock proto)
   where
   translateEra ctxt (Comp (Flip st)) = do
-    let ShelleyLedgerState tip state _transition tables latestPerasCertRound = st
+    let ShelleyLedgerState tip state _transition tables = st
     tip' <- mapM (SL.translateEra ctxt) tip
     state' <- SL.translateEra ctxt state
     return $
@@ -378,7 +463,6 @@ instance
             , shelleyLedgerState = state'
             , shelleyLedgerTransition = ShelleyTransitionInfo 0
             , shelleyLedgerTables = translateShelleyTables tables
-            , shelleyLedgerLatestPerasCertRound = latestPerasCertRound
             }
 
 translateShelleyTables ::

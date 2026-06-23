@@ -15,6 +15,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -123,9 +125,13 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (PerasEpochContextResolver)
+  )
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB hiding
   ( TraceFollowerEvent (..)
@@ -180,6 +186,7 @@ import Test.Util.ChunkInfo
 import Test.Util.Header (attachSlotTimeToFragment)
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.ToExpr ()
+import Test.Util.Peras (genMockPerasVoterIndices)
 import Test.Util.QuickCheck
 import Test.Util.RefEnv (RefEnv)
 import qualified Test.Util.RefEnv as RE
@@ -255,7 +262,17 @@ data Cmd blk it flr
     UpdateLedgerSnapshots
   | -- Corruption
     WipeVolatileDB
-  deriving (Generic, Show, Functor, Foldable, Traversable)
+  deriving (Generic, Functor, Foldable, Traversable)
+
+deriving instance
+  ( StandardHash blk
+  , Show blk
+  , Show it
+  , Show flr
+  , Show (PerasCert blk)
+  , Show (PerasVote blk)
+  ) =>
+  Show (Cmd blk it flr)
 
 -- = Invalid blocks
 --
@@ -357,7 +374,6 @@ type AllComponents blk =
 type TestConstraints blk =
   ( ConsensusProtocol (BlockProtocol blk)
   , LedgerSupportsProtocol blk
-  , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk
   , Eq (ChainDepState (BlockProtocol blk))
@@ -377,6 +393,10 @@ type TestConstraints blk =
   , LedgerTablesAreTrivial LedgerState blk
   , CanUpgradeLedgerTables LedgerState blk
   , ImmutableEraParams blk
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  , PerasVote blk ~ MockPerasVote blk
+  , PerasCert blk ~ MockPerasCert blk
   )
 
 deriving instance
@@ -1277,15 +1297,18 @@ generator loe genBlock genPerasBlock m@Model{..} =
           ]
     -- Include the boosted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
+    -- Generate some voters to populate the certificate
+    voters <- genMockPerasVoterIndices
     -- Build the certificate
     now <- genRelativeTime
     let certWithTime =
           WithArrivalTime now $
             ValidatedPerasCert
               { vpcCert =
-                  PerasCert
-                    { pcCertRound = roundNo
-                    , pcCertBoostedBlock = blockPoint blk
+                  MockPerasCert
+                    { mockCertRound = roundNo
+                    , mockCertBlock = blockPoint blk
+                    , mockCertVoters = voters
                     }
               , vpcCertBoost = boost
               }
@@ -1294,20 +1317,21 @@ generator loe genBlock genPerasBlock m@Model{..} =
   genAddPerasVote :: Gen (Cmd blk it flr)
   genAddPerasVote = do
     (blk, gapBlks) <- genPerasBlock m
-    -- Pick a round based on the remaining capacity (maxRoundVoteStake -
-    -- currentTotalStake) of existing rounds, with a flat probability for
+    -- Pick a round based on the remaining capacity (maxRoundVoteWeight -
+    -- currentTotalWeight) of existing rounds, with a flat probability for
     -- selecting a fresh new round. This ensures we never exceed the quorum
     -- threshold for multiple different blocks in the same round, avoiding the
     -- MultipleWinnersInRound error.
     let voteModel = Model.perasVoteModel dbModel
-        -- Compute total stake per round from the vote model
-        stakePerRound :: Map.Map PerasRoundNo Rational
-        stakePerRound =
+        weightFromVoteEntry = unVoteWeight . vpvVoteWeight . forgetArrivalTime . PerasVoteDBModel.veVote
+        -- Compute total weight per round from the vote model
+        weightPerRound :: Map.Map PerasRoundNo Rational
+        weightPerRound =
           Map.fromListWith
             (+)
             [ ( pvtRoundNo target
               , sum
-                  [ unPerasVoteStake (getPerasVoteStake (PerasVoteDBModel.veVote ve))
+                  [ weightFromVoteEntry ve
                   | ve <- Set.toList entries
                   ]
               )
@@ -1316,52 +1340,52 @@ generator loe genBlock genPerasBlock m@Model{..} =
 
         voteParams = PerasVoteDBModel.params voteModel
         quorum =
-          unPerasQuorumStakeThreshold (perasQuorumStakeThreshold voteParams)
-            + unPerasQuorumStakeThresholdSafetyMargin (perasQuorumStakeThresholdSafetyMargin voteParams)
-        -- Maximum total vote stake per round: 2 * quorum - epsilon.
+          unPerasQuorumWeightThreshold (perasQuorumWeightThreshold voteParams)
+            + unPerasQuorumWeightThresholdSafetyMargin (perasQuorumWeightThresholdSafetyMargin voteParams)
+        -- Maximum total vote weight per round: 2 * quorum - epsilon.
         -- Below this threshold it is impossible for two different blocks to
         -- both reach quorum in the same round.
         -- It would be more realistic to use just 'quorum', but by doing so we
         -- would only have very few voting rounds succeeding with a cert
         -- creation, because we can't concentrate votes on a few distinct
         -- candidates easily as we would observe in real world.
-        maxRoundVoteStake :: Rational
-        maxRoundVoteStake = 2 * quorum - (1 % 100)
-        -- Minimum vote stake
-        minVoteStake :: Rational
-        minVoteStake = 1 % 10
-        -- Maximum vote stake
-        maxVoteStake :: Rational
-        maxVoteStake = 1 % 2
+        maxRoundVoteWeight :: Rational
+        maxRoundVoteWeight = 2 * quorum - (1 % 100)
+        -- Minimum vote weight
+        minVoteWeight :: Rational
+        minVoteWeight = 1 % 10
+        -- Maximum vote weight
+        maxVoteWeight :: Rational
+        maxVoteWeight = 1 % 2
         -- Remaining capacity for each existing round
         roundCapacities :: [(PerasRoundNo, Rational)]
         roundCapacities =
           [ (r, cap)
-          | (r, totalStake) <- Map.toList stakePerRound
-          , let cap = maxRoundVoteStake - totalStake
-          , cap >= minVoteStake
+          | (r, totalWeight) <- Map.toList weightPerRound
+          , let cap = maxRoundVoteWeight - totalWeight
+          , cap >= minVoteWeight
           ]
         -- The next fresh round number
         freshRound :: PerasRoundNo
-        freshRound = case Map.lookupMax stakePerRound of
+        freshRound = case Map.lookupMax weightPerRound of
           Nothing -> PerasRoundNo 0
           Just (PerasRoundNo r, _) -> PerasRoundNo (r + 1)
-        -- Weight for a fresh round (same as a round with 0.25 * maxRoundVoteStake capacity remaining)
+        -- Weight for a fresh round (same as a round with 0.25 * maxRoundVoteWeight capacity remaining)
         freshWeight :: Int
-        freshWeight = max 1 $ floor (25 * maxRoundVoteStake)
+        freshWeight = max 1 $ floor (25 * maxRoundVoteWeight)
         -- Weighted choices: existing rounds by remaining capacity + fresh round
         choices :: [(Int, Gen (PerasRoundNo, Rational))]
         choices =
           [ (max 1 (floor (cap * 100)), pure (r, cap))
           | (r, cap) <- roundCapacities
           ]
-            ++ [(freshWeight, pure (freshRound, maxRoundVoteStake))]
+            ++ [(freshWeight, pure (freshRound, maxRoundVoteWeight))]
     (roundNo, capacity) <- frequency choices
-    -- Pick a vote stake between minVoteStake and min(capacity, maxVoteStake)
-    let upperBound = min capacity maxVoteStake
-    stakeNumerator <- choose (ceiling (minVoteStake * 100), floor (upperBound * 100)) :: Gen Int
-    let stake = PerasVoteStake (fromIntegral stakeNumerator % 100)
-    voterId <- PerasVoteDB.SM.genVoterId
+    -- Pick a vote weight between minVoteWeight and min(capacity, maxVoteWeight)
+    let upperBound = min capacity maxVoteWeight
+    weightNumerator <- choose (ceiling (minVoteWeight * 100), floor (upperBound * 100)) :: Gen Int
+    let weight = VoteWeight (fromIntegral weightNumerator % 100)
+    seatIndex <- PerasVoteDB.SM.genPerasSeatIndex
     -- Include the voted block itself in the persisted seenBlocks
     let seenBlks = fmap (blk :) gapBlks
     -- Build the vote
@@ -1370,12 +1394,12 @@ generator loe genBlock genPerasBlock m@Model{..} =
           WithArrivalTime now $
             ValidatedPerasVote
               { vpvVote =
-                  PerasVote
-                    { pvVoteRound = roundNo
-                    , pvVoteBlock = blockPoint blk
-                    , pvVoteVoterId = voterId
+                  MockPerasVote
+                    { mockVoteRound = roundNo
+                    , mockVoteBlock = blockPoint blk
+                    , mockVoteSeatIndex = seatIndex
                     }
-              , vpvVoteStake = stake
+              , vpvVoteWeight = weight
               }
     pure $ AddPerasVote voteWithTime seenBlks
 
@@ -1661,8 +1685,12 @@ deriving instance
   , ToExpr (TipInfo blk)
   , ToExpr (LedgerState blk EmptyMK)
   , ToExpr (ExtValidationError blk)
+  , ToExpr (PerasEpochContextResolver blk)
   , StandardHash blk
   , Show blk
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
+  , Show (PerasEpochContext blk)
   ) =>
   ToExpr (Model blk IO Concrete)
 
@@ -1812,7 +1840,7 @@ addPerasCertOutcomes = concatMap classifyEvent
   classifyEvent :: Event Blk m Symbolic -> [String]
   classifyEvent ev = case unAt (eventCmd ev) of
     AddPerasCert certWithTime _ ->
-      let targetPt = pcCertBoostedBlock (vpcCert (forgetArrivalTime certWithTime))
+      let targetPt = getPerasCertPoint (vpcCert (forgetArrivalTime certWithTime))
        in case (isBlockConnected targetPt (dbModel (eventBefore ev))) of
             False ->
               assert (chainSelOutcome ev == "no chain selection change") $
@@ -1830,7 +1858,7 @@ addPerasVoteOutcomes = concatMap classifyEvent
   classifyEvent :: Event Blk m Symbolic -> [String]
   classifyEvent ev = case unAt (eventCmd ev) of
     AddPerasVote voteWithTime _ ->
-      let targetPt = pvVoteBlock (vpvVote (forgetArrivalTime voteWithTime))
+      let targetPt = getPerasVotePoint (vpvVote (forgetArrivalTime voteWithTime))
           certsBefore = numCerts (eventBefore ev)
           certsAfter = numCerts (eventAfter ev)
           certProduced = certsAfter > certsBefore
@@ -2156,24 +2184,41 @@ genBlkPair chunkInfo loe Model{..} =
         [ (4, return True)
         , (1, return False)
         ]
-    perasCertRound <- do
-      let maxRoundNo =
-            case Model.roundNoOfLatestCertSeen dbModel of
-              Nothing -> 0
-              Just (PerasRoundNo r) -> r + 1
+    perasCert <- do
       frequency
-        [ (9, return Nothing)
+        [ (4, return Nothing)
         , let freq = case loe of
                 LoEDisabled -> 1
                 -- The LoE does not yet support Peras.
                 LoEEnabled () -> 0
-           in (freq, Just . PerasRoundNo <$> choose (0, maxRoundNo))
+           in (freq, Just <$> genPerasCert)
         ]
     return
       TestBody
         { tbForkNo = forkNo
         , tbIsValid = isValid
-        , tbPerasCertRound = perasCertRound
+        , tbPerasCert = perasCert
+        }
+
+  genPerasCert :: Gen (PerasCert TestBlock)
+  genPerasCert = do
+    let maxRoundNo =
+          case Model.roundNoOfLatestCertSeen dbModel of
+            Nothing -> 0
+            Just (PerasRoundNo r) -> r + 1
+    roundNo <-
+      PerasRoundNo <$> choose (0, maxRoundNo)
+    boostedBlock <-
+      -- NOTE: we don't care about this boosted block, it could be @Genesis@
+      blockPoint <$> genSuccOfCurrentChainTip
+    voters <-
+      genMockPerasVoterIndices
+
+    pure
+      MockPerasCert
+        { mockCertRound = roundNo
+        , mockCertBlock = boostedBlock
+        , mockCertVoters = voters
         }
 
 -- | Generate a random security parameter (k)
@@ -2251,8 +2296,10 @@ smUnused loe k chunkInfo =
     envUnused
     (genBlk chunkInfo loe)
     (genPerasBoostedBlk chunkInfo loe)
-    (mkTestCfg k chunkInfo)
-    testInitExtLedger
+    cfg
+    (testInitExtLedger (configLedger cfg))
+ where
+  cfg = mkTestCfg k chunkInfo
 
 prop_sequential :: LoE () -> SmallChunkInfo -> Property
 prop_sequential loe smallChunkInfo@(SmallChunkInfo chunkInfo) =
@@ -2304,7 +2351,7 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
           mkArgs
             testCfg
             chunkInfo
-            (testInitExtLedger `withLedgerTables` emptyLedgerTables)
+            (testInitExtLedger (configLedger testCfg) `withLedgerTables` emptyLedgerTables)
             threadRegistry
             nodeDBs
             tracer
@@ -2326,7 +2373,14 @@ runCmdsLockstep loe k (SmallChunkInfo chunkInfo) cmds =
                 , varLoEFragment
                 , args
                 }
-            sm' = sm loe env (genBlk chunkInfo loe) (genPerasBoostedBlk chunkInfo loe) testCfg testInitExtLedger
+            sm' =
+              sm
+                loe
+                env
+                (genBlk chunkInfo loe)
+                (genPerasBoostedBlk chunkInfo loe)
+                testCfg
+                (testInitExtLedger (configLedger testCfg))
         (hist, model, res) <- QSM.runCommands' sm' cmds'
         trace <- getTrace
         return (hist, model, res, trace)

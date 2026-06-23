@@ -1,9 +1,15 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | A simple voting committee where pools with positive stake can vote.
 module Ouroboros.Consensus.Committee.EveryoneVotes
@@ -23,6 +29,7 @@ module Ouroboros.Consensus.Committee.EveryoneVotes
 
 import Cardano.Ledger.BaseTypes (NonZero)
 import Cardano.Ledger.BaseTypes.NonZero (NonZero (..), nonZero)
+import Control.Exception (Exception)
 import Control.Monad.Zip (MonadZip (..))
 import qualified Data.Array as Array
 import Data.Bifunctor (Bifunctor (..))
@@ -33,6 +40,9 @@ import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Data.Set (Set)
 import qualified Data.Set.NonEmpty as NESet
+import Data.Typeable (Typeable)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
   , UniqueVotesWithSameTarget
@@ -49,7 +59,8 @@ import Ouroboros.Consensus.Committee.Crypto
   , VoteCandidate
   )
 import Ouroboros.Consensus.Committee.Types
-  ( LedgerStake (..)
+  ( Cumulative (..)
+  , LedgerStake (..)
   , PoolId
   , VoteWeight (..)
   )
@@ -57,6 +68,7 @@ import Ouroboros.Consensus.Committee.WFA
   ( ExtWFAStakeDistr (..)
   , NumPoolsWithPositiveStake (..)
   , SeatIndex
+  , TotalStake (..)
   , WFAError
   , getCandidateIfSeatWithinBounds
   , unsafeGetCandidateInSeat
@@ -66,7 +78,7 @@ import Ouroboros.Consensus.Committee.WFA
 data EveryoneVotes
 
 instance
-  CryptoSupportsAggregateVoteSigning crypto =>
+  (Ord (ElectionId crypto), CryptoSupportsAggregateVoteSigning crypto) =>
   CryptoSupportsVotingCommittee crypto EveryoneVotes
   where
   data VotingCommittee crypto EveryoneVotes
@@ -77,6 +89,8 @@ instance
       candidateSeats :: !(Map PoolId SeatIndex)
     , -- Number of active voters (i.e., those with non-zero stake)
       numActiveVoters :: !NumPoolsWithPositiveStake
+    , -- Total stake of all voters (i.e., the sum of the stakes)
+      totalActiveStake :: !TotalStake
     }
 
   data VotingCommitteeInput crypto EveryoneVotes
@@ -99,7 +113,6 @@ instance
       InvalidCertSignature String
     | -- We triggered an unexpected cryptographic error
       CryptoError String
-    deriving (Show, Eq)
 
   data EligibilityWitness crypto EveryoneVotes
     = EveryoneVotesMember
@@ -128,6 +141,30 @@ instance
   forgeCert = implForgeCert
   verifyCert = implVerifyCert
 
+  voteTarget (EveryoneVotesVote _ electionId candidate _) =
+    (electionId, candidate)
+  compareVotesById
+    (EveryoneVotesVote seatIndex1 electionId1 _ _)
+    (EveryoneVotesVote seatIndex2 electionId2 _ _) =
+      compare (electionId1, seatIndex1) (electionId2, seatIndex2)
+
+deriving instance Show (PublicKey crypto) => Show (VotingCommittee crypto EveryoneVotes)
+deriving instance Eq (PublicKey crypto) => Eq (VotingCommittee crypto EveryoneVotes)
+deriving instance NoThunks (PublicKey crypto) => NoThunks (VotingCommittee crypto EveryoneVotes)
+deriving instance Generic (VotingCommittee crypto EveryoneVotes)
+
+deriving instance Show (PublicKey crypto) => Show (VotingCommitteeInput crypto EveryoneVotes)
+deriving instance Eq (PublicKey crypto) => Eq (VotingCommitteeInput crypto EveryoneVotes)
+deriving instance
+  NoThunks (PublicKey crypto) => NoThunks (VotingCommitteeInput crypto EveryoneVotes)
+deriving instance Generic (VotingCommitteeInput crypto EveryoneVotes)
+
+deriving instance Show (VotingCommitteeError crypto EveryoneVotes)
+deriving instance Eq (VotingCommitteeError crypto EveryoneVotes)
+deriving instance NoThunks (VotingCommitteeError crypto EveryoneVotes)
+deriving instance Generic (VotingCommitteeError crypto EveryoneVotes)
+deriving instance Typeable crypto => Exception (VotingCommitteeError crypto EveryoneVotes)
+
 -- | Construct a 'EveryoneVotesVotingCommittee' for a given epoch
 mkEveryoneVotesVotingCommittee ::
   VotingCommitteeInput crypto EveryoneVotes ->
@@ -150,6 +187,7 @@ mkEveryoneVotesVotingCommittee
         { extWFAStakeDistr = stakeDistr
         , candidateSeats = seats
         , numActiveVoters = numPoolsWithPositiveStake stakeDistr
+        , totalActiveStake = totalStake stakeDistr
         }
 
 -- | Check whether we should vote in a given election
@@ -233,15 +271,23 @@ implVerifyVote committee = \case
 -- | Compute the voting power of an eligible committee member.
 --
 -- In this simple voting committee, the vote weight of a member is equal to
--- their ledger stake, as long as it is positive.
+-- their (normalised) ledger stake, as long as it is positive.
 implEligiblePartyVoteWeight ::
   VotingCommittee crypto EveryoneVotes ->
   EligibilityWitness crypto EveryoneVotes ->
   VoteWeight
-implEligiblePartyVoteWeight _committee member =
-  VoteWeight (unLedgerStake (unNonZero voterStake))
+implEligiblePartyVoteWeight committee = \case
+  EveryoneVotesMember _ nonZeroStake ->
+    mkVoteWeight
+      . unLedgerStake
+      . unNonZero
+      $ nonZeroStake
  where
-  EveryoneVotesMember _ voterStake = member
+  TotalStake (Cumulative (LedgerStake activeStake)) =
+    totalActiveStake committee
+
+  mkVoteWeight absoluteStake =
+    VoteWeight (absoluteStake / activeStake)
 
 -- | Forge a certificate attesting the winner of a given election
 implForgeCert ::

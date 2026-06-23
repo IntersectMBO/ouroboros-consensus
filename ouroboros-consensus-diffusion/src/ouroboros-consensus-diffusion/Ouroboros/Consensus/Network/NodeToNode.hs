@@ -85,6 +85,7 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -276,8 +277,10 @@ mkHandlers ::
   ( IOLike m
   , MonadTime m
   , MonadTimer m
-  , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , BlockSupportsPeras blk
+  , StateSupportsPerasEpochContext blk
+  , LedgerSupportsMempool blk
   , LedgerSupportsProtocol blk
   , Ord addrNTN
   , Hashable addrNTN
@@ -379,7 +382,10 @@ mkHandlers
             , 10 -- TODO: see https://github.com/tweag/cardano-peras/issues/97
             , 10 -- TODO: see https://github.com/tweag/cardano-peras/issues/97
             )
-            (makePerasCertPoolWriterFromChainDB systemTime getChainDB)
+            ( makePerasCertPoolWriterFromChainDB
+                systemTime
+                getChainDB
+            )
             version
             controlMessageSTM
       , hPerasCertDiffusionServer = \version peer ->
@@ -397,13 +403,6 @@ mkHandlers
             )
             ( makePerasVotePoolWriterFromChainDB
                 systemTime
-                -- TODO: when actual plumbing for Peras is ready, we will have to
-                -- extract the committee selection data from the chainDB to pass
-                -- it here, instead of relying on an empty the stake distribution.
-                --
-                -- Note that the empty stake distribution will cause all votes to
-                -- be considered invalid.
-                (pure (PerasVoteStakeDistr mempty))
                 getChainDB
             )
             version
@@ -622,6 +621,8 @@ showTracers ::
   , Show (Header blk)
   , Show (GenTx blk)
   , Show (GenTxId blk)
+  , Show (PerasVote blk)
+  , Show (PerasCert blk)
   , HasHeader blk
   , HasNestedContent Header blk
   ) =>
@@ -775,10 +776,13 @@ mkApps ::
   , Exception e
   , NFData e
   , LedgerSupportsProtocol blk
+  , BlockSupportsPeras blk
   , ShowProxy blk
   , ShowProxy (Header blk)
   , ShowProxy (TxId (GenTx blk))
   , ShowProxy (GenTx blk)
+  , ShowProxy (PerasVote blk)
+  , ShowProxy (PerasCert blk)
   , Show addrNTN
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)

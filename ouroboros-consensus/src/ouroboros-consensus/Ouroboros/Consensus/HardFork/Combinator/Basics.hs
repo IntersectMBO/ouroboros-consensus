@@ -38,17 +38,28 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
   ) where
 
 import Cardano.Slotting.EpochInfo
+import Control.Monad ((<=<))
 import Data.Kind (Type)
-import Data.SOP (K (..))
+import Data.SOP (K (..), unI)
 import Data.SOP.Constraint
 import Data.SOP.Functors
 import Data.SOP.Strict
 import Data.Typeable
+import Data.Word (Word32)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( BlockSupportsPeras (..)
+  )
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Combinator.Abstract
+import Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork
+  ( CanHardFork
+  )
+import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
+  ( SingleEraBlock
+  , proxySingle
+  )
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import qualified Ouroboros.Consensus.HardFork.Combinator.State.Infra as State
@@ -56,10 +67,20 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Instances ()
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.SupportsPeras
+  ( ALedgerStateSupportsPeras (..)
+  )
+import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Crypto.BLS as BLS
+import Ouroboros.Consensus.Peras.Crypto.BLS.Unsafe (unsafePerasBLSPrivateKeyFromEnv)
+import qualified Ouroboros.Consensus.Peras.Error.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Voting.V1 as V1
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (ShowProxy)
+import Type.Reflection (someTypeRep)
+import Unsafe.Coerce (unsafeCoerce)
 
 {-------------------------------------------------------------------------------
   Hard fork protocol, block, and ledger state
@@ -252,9 +273,69 @@ distribTopLevelConfig ei tlc =
   LedgerSupportsPeras
 -------------------------------------------------------------------------------}
 
-instance CanHardFork xs => LedgerSupportsPeras (HardForkBlock xs) where
-  getLatestPerasCertRound =
+instance CanHardFork xs => ALedgerStateSupportsPeras (LedgerState (HardForkBlock xs) mk) where
+  getPoolDistr =
     hcollapse
-      . hcmap proxySingle (K . getLatestPerasCertRound . unFlip)
+      . hcmap proxySingle (K . getPoolDistr . unFlip)
       . State.tip
       . hardForkLedgerStatePerEra
+
+{-------------------------------------------------------------------------------
+  BlockSupportsPeras
+-------------------------------------------------------------------------------}
+
+-- TODO: we need to change the binary representation of votes and certs to carry
+-- era-specific/versionning information, to allow future evolutions
+instance
+  ( StandardHash (HardForkBlock xs)
+  , CanHardFork xs
+  ) =>
+  BlockSupportsPeras (HardForkBlock xs)
+  where
+  type PerasVote (HardForkBlock xs) = V1.PerasVote (HardForkBlock xs)
+  type PerasCert (HardForkBlock xs) = V1.PerasCert (HardForkBlock xs)
+  type PerasError (HardForkBlock xs) = V1.PerasError (HardForkBlock xs)
+  type PerasCrypto (HardForkBlock xs) = BLS.PerasBLSCrypto
+  type PerasVotingCommitteeScheme (HardForkBlock xs) = V1.PerasVotingCommitteeScheme
+
+  getPerasCertInBlock =
+    hcollapse
+      . hcmap
+        proxySingle
+        (K . (unsafeCastPerasCertV1 <=< getPerasCertInBlock) . unI)
+      . getOneEraBlock
+      . getHardForkBlock
+
+  readPerasPrivateKeyFromEnv _proxy = unsafePerasBLSPrivateKeyFromEnv
+
+  blockDoesReallySupportsPeras _proxy = True
+
+-- [TODO PERAS CERTS IN BLOCKS] this is a nasty hack
+unsafeCastPerasCertV1 ::
+  forall x xs.
+  ( Typeable xs
+  , Typeable (PerasCert x)
+  ) =>
+  PerasCert x ->
+  Maybe (V1.PerasCert (HardForkBlock xs))
+unsafeCastPerasCertV1 cert = do
+  let xCertRep = someTypeRep (Proxy @(PerasCert x))
+  let xsCertRep = someTypeRep (Proxy @(V1.PerasCert (HardForkBlock xs)))
+  if typeRepTyCon xCertRep == typeRepTyCon xsCertRep
+    then Just (unsafeCoerce cert)
+    else Nothing
+
+{-------------------------------------------------------------------------------
+  ConvertRawHash
+-------------------------------------------------------------------------------}
+
+instance CanHardFork xs => ConvertRawHash (HardForkBlock xs) where
+  toShortRawHash _ = getOneEraHash
+  fromShortRawHash _ = OneEraHash
+  hashSize _ = getSameValue hashSizes
+   where
+    hashSizes :: NP (K Word32) xs
+    hashSizes = hcpure proxySingle hashSizeOne
+
+    hashSizeOne :: forall blk. SingleEraBlock blk => K Word32 blk
+    hashSizeOne = K $ hashSize (Proxy @blk)

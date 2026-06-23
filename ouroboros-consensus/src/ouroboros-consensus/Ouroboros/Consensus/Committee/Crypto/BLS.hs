@@ -1,4 +1,6 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -15,12 +17,12 @@ module Ouroboros.Consensus.Committee.Crypto.BLS
   ( -- * BLS crypto helpers to instantiate voting committees
     KeyRole (..)
   , KeyScope
-  , PrivateKey
+  , PrivateKey (privateKeyScope)
   , rawDeserialisePrivateKey
   , rawSerialisePrivateKey
   , coercePrivateKey
   , derivePublicKey
-  , PublicKey
+  , PublicKey (publicKeyScope)
   , rawDeserialisePublicKey
   , rawSerialisePublicKey
   , coercePublicKey
@@ -68,7 +70,9 @@ import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Proxy (Proxy (..))
+import GHC.Generics (Generic)
 import GHC.Natural (Natural)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Committee.Crypto (NormalizedVRFOutput (..))
 
 -- * BLS crypto helpers to instantiate voting committees
@@ -91,7 +95,8 @@ data PrivateKey r = PrivateKey
   { unPrivateKey :: !(SignKeyDSIGN BLS12381MinSigDSIGN)
   , privateKeyScope :: !KeyScope
   }
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
 
 rawDeserialisePrivateKey ::
   KeyScope ->
@@ -130,9 +135,10 @@ derivePublicKey sk =
 type PublicKey :: KeyRole -> Type
 data PublicKey r = PublicKey
   { unPublicKey :: !(VerKeyDSIGN BLS12381MinSigDSIGN)
-  , publicKeyScope :: !(KeyScope)
+  , publicKeyScope :: !KeyScope
   }
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
 
 rawDeserialisePublicKey ::
   KeyScope ->
@@ -163,8 +169,9 @@ type Signature :: KeyRole -> Type
 newtype Signature r = Signature
   { unSignature :: SigDSIGN BLS12381MinSigDSIGN
   }
-  deriving stock (Eq, Show)
+  deriving stock (Show, Eq, Generic)
   deriving newtype (FromCBOR, ToCBOR)
+  deriving anyclass NoThunks
 
 -- | BLS proof of possession type
 newtype ProofOfPossession = ProofOfPossession

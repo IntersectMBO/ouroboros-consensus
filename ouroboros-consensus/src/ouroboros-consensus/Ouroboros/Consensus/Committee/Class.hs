@@ -67,6 +67,16 @@ class
   -- | Abstract certificate attesting the winner of a given election
   data Cert crypto committee :: Type
 
+  -- | Project the target (election and candidate) from an abstract vote
+  voteTarget ::
+    Vote crypto committee -> (ElectionId crypto, VoteCandidate crypto)
+
+  -- | Compare votes by ID, where EQ means that two votes have the same
+  -- ID and are either total duplicates, or are equivocating (i.e., they have
+  -- the same ID but a different target)
+  compareVotesById ::
+    Vote crypto committee -> Vote crypto committee -> Ordering
+
   -- | Construct a voting committee
   mkVotingCommittee ::
     VotingCommitteeInput crypto committee ->
@@ -100,7 +110,20 @@ class
       (VotingCommitteeError crypto committee)
       (EligibilityWitness crypto committee)
 
-  -- | Compute the voting weight of a eligibile party
+  -- | Compute the (relative) voting power of an eligibile party
+  --
+  -- WARNING: there is a key difference between the "Ledger stake" and the "Vote
+  -- weight" of a given voter. On one hand, the ledger stake is the stake as
+  -- reflected directly by the ledger stake distribution under consideration
+  -- (in its corresponding absolute unit). On the other hand, the "Vote weight"
+  -- refers to the relative (i.e. normalised) voting power of that voter w.r.t.
+  -- the rest of the committee.
+  --
+  -- It is up to the implementation of the voting committee to decide how to
+  -- compute this value, but it should be implemented so that detecting a
+  -- quorum can be done by comparing the total vote weight of the votes received
+  -- against a fixed threshold, e.g., "a quorum is reached if the total weight
+  -- of the votes received exceeds 75% or 0.75 (of the total voting stake)".
   eligiblePartyVoteWeight ::
     VotingCommittee crypto committee ->
     EligibilityWitness crypto committee ->
@@ -213,25 +236,20 @@ ensureUniqueVotesWithSameTarget getTarget cmpVotes votes =
 -- guarantee that the input votes satisfy the contract.
 unsafeUniqueVotesWithSameTarget ::
   forall crypto committee.
-  ( Eq (ElectionId crypto)
+  ( CryptoSupportsVotingCommittee crypto committee
+  , Eq (ElectionId crypto)
   , Eq (VoteCandidate crypto)
   ) =>
-  -- | How to project the target from an abstract vote
-  (Vote crypto committee -> (ElectionId crypto, VoteCandidate crypto)) ->
-  -- | How to compare votes by ID, where EQ means that two votes have the same
-  -- ID and are either total duplicates, or are equivocating (i.e., they have
-  -- the same ID but a different target)
-  (Vote crypto committee -> Vote crypto committee -> Ordering) ->
   -- | Collection of votes to check
   NE [Vote crypto committee] ->
   UniqueVotesWithSameTarget crypto committee
-unsafeUniqueVotesWithSameTarget getTarget cmpVotes votes =
+unsafeUniqueVotesWithSameTarget votes =
   assert
     ( isRight
         ( checkUniqueVotesWithSameTarget
             (Proxy @crypto)
-            getTarget
-            cmpVotes
+            voteTarget
+            compareVotesById
             votes
         )
     )
@@ -241,7 +259,7 @@ unsafeUniqueVotesWithSameTarget getTarget cmpVotes votes =
       (firstVote :| nextVotes)
  where
   firstVote :| nextVotes = votes
-  (electionId, candidate) = getTarget firstVote
+  (electionId, candidate) = voteTarget firstVote
 
 -- | Validate that a non-empty collection of votes is well-formed for
 -- certificate forging: all votes target the same election and candidate

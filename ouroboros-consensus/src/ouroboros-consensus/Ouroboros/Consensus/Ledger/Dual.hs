@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -90,8 +91,11 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsPeras (ALedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
+import Ouroboros.Consensus.Protocol.Abstract (AChainDepStateSupportsPeras, ChainDepState)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
@@ -265,6 +269,11 @@ class
   , Serialise (BridgeLedger m a)
   , Serialise (BridgeBlock m a)
   , Serialise (BridgeTx m a)
+  , -- Requirements for Peras epoch context
+    Show (PerasEpochContext (DualBlock m a))
+  , Eq (PerasEpochContext (DualBlock m a))
+  , NoThunks (PerasEpochContext (DualBlock m a))
+  , Serialise (PerasEpochContext (DualBlock m a))
   , Show (BridgeTx m a)
   ) =>
   Bridge m a
@@ -531,6 +540,10 @@ dualExtValidationErrorMain ::
 dualExtValidationErrorMain = \case
   ExtValidationErrorLedger e -> ExtValidationErrorLedger (dualLedgerErrorMain e)
   ExtValidationErrorHeader e -> ExtValidationErrorHeader (castHeaderError e)
+  ExtValidationErrorPerasEpochContextResolver e -> ExtValidationErrorPerasEpochContextResolver e
+
+-- NOTE: the pattern below is redundant because PerasError (DualBlock m a) ~ VoidPerasError m
+-- ExtValidationErrorPerasCertInBlock e -> ExtValidationErrorPerasCertInBlock e
 
 {-------------------------------------------------------------------------------
   LedgerSupportsProtocol
@@ -1192,3 +1205,24 @@ instance
       , dualLedgerStateAux
       , dualLedgerStateBridge
       } = dls
+
+{-------------------------------------------------------------------------------
+  Peras
+-------------------------------------------------------------------------------}
+
+-- NOTE: DualByron does not support Peras, so we can use the empty instances here.
+instance (StandardHash m, Typeable m, Typeable a) => BlockSupportsPeras (DualBlock m a)
+
+instance ALedgerStateSupportsPeras (LedgerState (DualBlock m a) mk)
+
+instance ALedgerStateSupportsPeras (Ticked LedgerState (DualBlock m a) mk)
+
+instance
+  ( Bridge m a
+  , StandardHash m
+  , Typeable m
+  , Typeable a
+  , AChainDepStateSupportsPeras (ChainDepState (BlockProtocol m))
+  , AChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol m)))
+  ) =>
+  StateSupportsPerasEpochContext (DualBlock m a)

@@ -1,3 +1,7 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- | Deterministic portion of the Weighted Fait-Accompli committee selection scheme
@@ -13,6 +17,7 @@ module Ouroboros.Consensus.Committee.WFA
     -- * Cumulative stake distributions
   , SeatIndex (..)
   , NumPoolsWithPositiveStake (..)
+  , TotalStake (..)
   , WFAError (..)
   , WFATiebreaker (..)
   , wFATiebreakerWithEpochNonce
@@ -30,7 +35,8 @@ import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce, Nonce))
 import Cardano.Ledger.Binary (runByteBuilder)
 import Cardano.Ledger.Core (HASH, Hash, KeyHash (unKeyHash))
-import Control.Exception (assert)
+import Codec.Serialise (Serialise (..))
+import Control.Exception (Exception, assert)
 import Data.Array (Array, Ix, listArray)
 import qualified Data.Array as Array
 import qualified Data.ByteString.Builder.Extra as BS
@@ -39,6 +45,8 @@ import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Word (Word64)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Committee.Types
   ( Cumulative (..)
   , LedgerStake (..)
@@ -46,6 +54,7 @@ import Ouroboros.Consensus.Committee.Types
   , TargetCommitteeSize (..)
   , unPoolId
   )
+import Ouroboros.Consensus.Util.Orphans ()
 
 -- * Weighted Fait-Accompli committee selection scheme
 
@@ -54,28 +63,36 @@ newtype PersistentCommitteeSize
   = PersistentCommitteeSize
   { unPersistentCommitteeSize :: Word64
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving newtype Serialise
+  deriving anyclass NoThunks
 
 -- | Non-persistent committee size
 newtype NonPersistentCommitteeSize
   = NonPersistentCommitteeSize
   { unNonPersistentCommitteeSize :: Word64
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving newtype Serialise
+  deriving anyclass NoThunks
 
 -- | Total persistent stake
 newtype TotalPersistentStake
   = TotalPersistentStake
   { unTotalPersistentStake :: Cumulative LedgerStake
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving newtype Serialise
+  deriving anyclass NoThunks
 
 -- | Total non-persistent stake
 newtype TotalNonPersistentStake
   = TotalNonPersistentStake
   { unTotalNonPersistentStake :: Cumulative LedgerStake
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving newtype Serialise
+  deriving anyclass NoThunks
 
 -- | Errors that can occur when trying to split the stake distribution into
 -- persistent and seats via weighted Fait-Accompli.
@@ -88,7 +105,8 @@ data WFAError
     NotEnoughPoolsWithPositiveStake
       TargetCommitteeSize
       NumPoolsWithPositiveStake
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NoThunks, Exception, Serialise)
 
 -- | Split a stake distrubution into persistent and non-persistent committee
 -- seats according to the weighted Fait-Accompli scheme.
@@ -231,14 +249,27 @@ newtype SeatIndex
   = SeatIndex
   { unSeatIndex :: Word64
   }
-  deriving (Show, Eq, Ord, Enum, Ix)
+  deriving stock (Show, Eq, Ord, Ix, Generic)
+  deriving newtype (Enum, Serialise)
+  deriving anyclass NoThunks
 
 -- | Number of pools with positive stake in the underlying stake distribution
 newtype NumPoolsWithPositiveStake
   = NumPoolsWithPositiveStake
   { unNumPoolsWithPositiveStake :: Word64
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving newtype Serialise
+  deriving anyclass NoThunks
+
+-- | Total stake in the underlying stake distribution
+newtype TotalStake
+  = TotalStake
+  { unTotalStake :: Cumulative LedgerStake
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving newtype Serialise
+  deriving anyclass NoThunks
 
 -- | Tiebreaker for voters with the same stake in the cumulative stake.
 --
@@ -356,8 +387,22 @@ data ExtWFAStakeDistr a
   -- weighted Fait-Accompli instantiations with a target committee size larger
   -- than the number of pools with positive stake, which would lead to incorrect
   -- results (e.g. granting persistent seats to voters with zero stake).
+  , totalStake :: TotalStake
+  -- ^ Total stake in the underlying stake distribution. This is also
+  -- precomputed at the beginning of each epoch to allow for quick
+  -- transformations between absolute and relative stakes.
   }
-  deriving Show
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NoThunks, Serialise)
+
+instance Serialise a => Serialise (Array SeatIndex a) where
+  encode arr = do
+    let xs = Array.elems arr
+    encode xs
+  decode = do
+    xs <- decode
+    let bounds = (SeatIndex 0, SeatIndex (fromIntegral (length xs - 1)))
+    pure $ Array.listArray bounds xs
 
 -- | Construct an extended cumulative stake distribution.
 --
@@ -375,6 +420,7 @@ mkExtWFAStakeDistr tiebreaker pools
         ExtWFAStakeDistr
           { unExtWFAStakeDistr = stakeDistrArray
           , numPoolsWithPositiveStake = numPoolsWithPositiveStakeAcc
+          , totalStake = TotalStake totalStakeAcc
           }
  where
   stakeDistrArray =
@@ -388,7 +434,7 @@ mkExtWFAStakeDistr tiebreaker pools
   --   * seat 0's cumulative stake == total stake, and
   --   * last seat's cumulative stake = its own stake.
   -- In addition, count the number of pools with positive stake in the same pass.
-  ((_totalStake, numPoolsWithPositiveStakeAcc), cumulativeStakeAndPools) =
+  ((totalStakeAcc, numPoolsWithPositiveStakeAcc), cumulativeStakeAndPools) =
     List.mapAccumR
       accumStakeAndCountPoolsWithPositiveStake
       ( Cumulative (LedgerStake 0)

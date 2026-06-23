@@ -12,16 +12,29 @@
 module Test.Util.Orphans.ToExpr () where
 
 import qualified Control.Monad.Class.MonadTime.SI as SI
+import Data.Maybe.Strict (StrictMaybe)
+import Data.Set.NonEmpty (NESet)
 import Data.TreeDiff
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime, WithArrivalTime)
+import Ouroboros.Consensus.Committee.WFA (SeatIndex)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.TxSeq
+import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
+import Ouroboros.Consensus.Peras.Context
+  ( EmptyPerasEpochContextResolver
+  , MockPerasEpochContextResolver
+  , PerasEpochContextNotFoundForRound
+  , PerasEpochContextResolver
+  , V1PerasEpochContextResolver
+  )
+import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
+import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import Ouroboros.Consensus.Storage.ImmutableDB
@@ -63,6 +76,7 @@ instance
   ( ToExpr (LedgerState blk EmptyMK)
   , ToExpr (ChainDepState (BlockProtocol blk))
   , ToExpr (TipInfo blk)
+  , ToExpr (PerasEpochContextResolver blk)
   ) =>
   ToExpr (ExtLedgerState blk EmptyMK)
 
@@ -122,13 +136,36 @@ deriving instance ToExpr a => ToExpr (LoE a)
 
 deriving anyclass instance ToExpr PerasRoundNo
 
+deriving instance ToExpr a => ToExpr (StrictMaybe a)
+
 deriving anyclass instance ToExpr PerasWeight
 
-deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (PerasCert blk)
+deriving anyclass instance ToExpr VoteWeight
 
-deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (ValidatedPerasCert blk)
+deriving anyclass instance ToExpr (PerasVoteId blk)
 
 deriving anyclass instance ToExpr a => ToExpr (WithArrivalTime a)
+
+deriving anyclass instance ToExpr a => ToExpr (NESet a)
+
+instance ToExpr (HeaderHash blk) => ToExpr (MockPerasVote blk)
+instance ToExpr (HeaderHash blk) => ToExpr (MockPerasCert blk)
+
+instance ToExpr (PerasVotingCommitteeError blk) => ToExpr (MockPerasError blk)
+
+instance ToExpr (EmptyPerasEpochContextResolver blk) where
+  toExpr = defaultExprViaShow
+instance Show (PerasVotingCommittee blk) => ToExpr (MockPerasEpochContextResolver blk) where
+  toExpr = defaultExprViaShow
+instance Show (PerasVotingCommittee blk) => ToExpr (V1PerasEpochContextResolver blk) where
+  toExpr = defaultExprViaShow
+
+deriving anyclass instance ToExpr PerasEpochContextNotFoundForRound
+
+deriving anyclass instance ToExpr SeatIndex
+deriving anyclass instance ToExpr PerasSeatIndex
+
+deriving anyclass instance ToExpr PerasConversionError
 
 {-------------------------------------------------------------------------------
   si-timers

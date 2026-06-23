@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 -- | Utility functions for the voting committee tests.
-module Test.Consensus.Committee.Utils
+module Test.Util.Committee
   ( -- * General utilities
     mkPoolId
   , unfairWFATiebreaker

@@ -70,6 +70,7 @@ import Data.Void (Void)
 import Lens.Micro ((%~), (&), (.~), (^.))
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Forging (MkBlockForging)
+import Ouroboros.Consensus.Block.SupportsPeras (PerasParams (..), defaultPerasParams)
 import Ouroboros.Consensus.Cardano.CanHardFork
   ( crossEraForecastAcrossShelley
   , translateChainDepStateAcrossShelley
@@ -80,10 +81,13 @@ import Ouroboros.Consensus.HardFork.Combinator.Embed.Binary
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import Ouroboros.Consensus.HardFork.Combinator.State.Types as HFC
 import qualified Ouroboros.Consensus.HardFork.History as History
+import Ouroboros.Consensus.HardFork.History.EraParams
+  ( pattern NoPerasEnabled
+  , pattern PerasEnabled
+  )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
@@ -185,8 +189,8 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , ShelleyCompatible proto2 era2
   , LedgerSupportsProtocol (ShelleyBlock proto1 era1)
   , LedgerSupportsProtocol (ShelleyBlock proto2 era2)
-  , LedgerSupportsPeras (ShelleyBlock proto1 era1)
-  , LedgerSupportsPeras (ShelleyBlock proto2 era2)
+  , SerialiseConstraintsHFC (ShelleyBlock proto1 era1)
+  , SerialiseConstraintsHFC (ShelleyBlock proto2 era2)
   , TxLimits (ShelleyBlock proto1 era1)
   , TxLimits (ShelleyBlock proto2 era2)
   , TranslateTxMeasure
@@ -488,7 +492,10 @@ protocolInfoShelleyBasedHardFork
     genesis = transCfg2 ^. L.tcShelleyGenesisL
 
     eraParams1 :: History.EraParams
-    eraParams1 = shelleyEraParams genesis
+    eraParams1 =
+      shelleyEraParams
+        genesis
+        NoPerasEnabled
 
     toPartialLedgerConfig1 ::
       LedgerConfig (ShelleyBlock proto1 era1) ->
@@ -502,7 +509,10 @@ protocolInfoShelleyBasedHardFork
     -- Era 2
 
     eraParams2 :: History.EraParams
-    eraParams2 = shelleyEraParams genesis
+    eraParams2 =
+      shelleyEraParams
+        genesis
+        (PerasEnabled (perasRoundLength defaultPerasParams))
 
     toPartialLedgerConfig2 ::
       LedgerConfig (ShelleyBlock proto2 era2) ->

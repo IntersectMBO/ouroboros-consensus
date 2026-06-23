@@ -9,6 +9,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Block
@@ -69,6 +70,7 @@ import Ouroboros.Consensus.HardFork.Combinator
   ( HasPartialConsensusConfig
   )
 import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosTiebreakerView
@@ -128,13 +130,16 @@ class
     HasPartialConsensusConfig proto
   , DecCBOR (SL.PState era)
   , Crypto (ProtoCrypto proto)
+  , -- Peras constraints
+    BlockSupportsPeras (ShelleyBlock proto era)
+  , StateSupportsPerasEpochContext (ShelleyBlock proto era)
   , -- Backwards compatibility
     Plain.FromCBOR (LegacyPParams era)
   , Plain.ToCBOR (LegacyPParams era)
   ) =>
   ShelleyCompatible proto era
 
-instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) where
+instance StandardHash (ShelleyBlock proto era) => ConvertRawHash (ShelleyBlock proto era) where
   toShortRawHash _ = Crypto.hashToBytesShort . unShelleyHash
   fromShortRawHash _ = ShelleyHash . hashFromBytesShortE
   hashSize _ = fromIntegral $ Crypto.hashSize (Proxy @HASH)
@@ -243,7 +248,7 @@ instance ShelleyCompatible proto era => GetPrevHash (ShelleyBlock proto era) whe
       . pHeaderPrevHash
       . shelleyHeaderRaw
 
-instance ShelleyCompatible proto era => StandardHash (ShelleyBlock proto era)
+instance StandardHash (ShelleyBlock proto era)
 
 instance ShelleyCompatible proto era => HasAnnTip (ShelleyBlock proto era)
 
