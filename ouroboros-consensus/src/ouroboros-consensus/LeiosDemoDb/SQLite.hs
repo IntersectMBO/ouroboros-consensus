@@ -60,6 +60,7 @@ import LeiosDemoTypes
   , EbHash (..)
   , LeiosEb
   , LeiosPoint (..)
+  , RbHash
   , TxHash (..)
   , leiosEbBodyItems
   , leiosEbBytesSize
@@ -213,8 +214,12 @@ sqlInsertEbBody tracer db notify point eb = do
   notify $ AcquiredEb point (leiosEbBytesSize eb)
 
 sqlInsertTxs ::
-  DB.Database -> (LeiosEbNotification -> IO ()) -> [(TxHash, ByteString)] -> IO CompletedEbs
-sqlInsertTxs db notify txs = do
+  DB.Database ->
+  (LeiosEbNotification -> IO ()) ->
+  Maybe RbHash ->
+  [(TxHash, ByteString)] ->
+  IO CompletedEbs
+sqlInsertTxs db notify mAnnouncingRbHash txs = do
   completed <- dbWithBEGIN db $ do
     stmtInsert <- dbPrepare db (fromString sql_insert_tx)
     stmtDecr <- dbPrepare db (fromString sql_decrement_missing_tx_count)
@@ -249,7 +254,7 @@ sqlInsertTxs db notify txs = do
       dbStep1 stmt
     pure completed
   -- Emit notifications for each completed EB
-  forM_ completed $ notify . AcquiredEbTxs
+  forM_ completed $ \point -> notify (AcquiredEbTxs point mAnnouncingRbHash)
   pure completed
 
 sqlBatchRetrieveTxs ::
