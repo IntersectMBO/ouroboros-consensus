@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -48,6 +49,10 @@ import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
+import Ouroboros.Consensus.HardFork.History.EraParams
+  ( pattern NoPerasEnabled
+  , pattern PerasEnabled
+  )
 import Ouroboros.Consensus.HeaderValidation (AnnTip)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
@@ -252,28 +257,51 @@ instance Inject WrapLedgerTables where
 -------------------------------------------------------------------------------}
 
 byronEraParams :: History.EraParams
-byronEraParams = Byron.byronEraParams Byron.ledgerConfig
+byronEraParams =
+  Byron.byronEraParams
+    Byron.ledgerConfig
 
 shelleyEraParams :: History.EraParams
-shelleyEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+shelleyEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    NoPerasEnabled
 
 allegraEraParams :: History.EraParams
-allegraEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+allegraEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    NoPerasEnabled
 
 maryEraParams :: History.EraParams
-maryEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+maryEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    NoPerasEnabled
 
 alonzoEraParams :: History.EraParams
-alonzoEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+alonzoEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    NoPerasEnabled
 
 babbageEraParams :: History.EraParams
-babbageEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+babbageEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    NoPerasEnabled
 
 conwayEraParams :: History.EraParams
-conwayEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+conwayEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    NoPerasEnabled
 
 dijkstraEraParams :: History.EraParams
-dijkstraEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+dijkstraEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (PerasEnabled (perasRoundLength defaultPerasParams))
 
 -- | We use 10, 20, 30, 40, ... as the transition epochs
 shelleyTransitionEpoch :: EpochNo

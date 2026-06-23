@@ -85,6 +85,11 @@ import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
+import Ouroboros.Consensus.HardFork.History.EraParams
+  ( EraParams
+  , pattern NoPerasEnabled
+  , pattern PerasEnabled
+  )
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables
@@ -705,6 +710,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      NoPerasEnabled
 
   partialConsensusConfigShelley ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) ShelleyEra))
@@ -727,6 +733,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      NoPerasEnabled
 
   partialConsensusConfigAllegra ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) AllegraEra))
@@ -746,6 +753,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      NoPerasEnabled
 
   partialConsensusConfigMary ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) MaryEra))
@@ -765,6 +773,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      NoPerasEnabled
 
   partialConsensusConfigAlonzo ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) AlonzoEra))
@@ -784,6 +793,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      NoPerasEnabled
 
   partialConsensusConfigBabbage ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) BabbageEra))
@@ -813,6 +823,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      NoPerasEnabled
 
   partialConsensusConfigConway ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) ConwayEra))
@@ -832,6 +843,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
       cardanoProtocolVersion
       genesisShelley
       (shelleyBlockIssuerVKey <$> credssShelleyBased)
+      (PerasEnabled defaultPerasParams)
 
   partialConsensusConfigDijkstra ::
     PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) DijkstraEra))
@@ -848,18 +860,29 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
   k :: SecurityParam
   k = assert (kByron == kShelley) kByron
 
+  byronEraParams :: EraParams
+  byronEraParams =
+    Byron.byronEraParams
+      genesisByron
+
+  mkShelleyEraParams :: BlockConfig (ShelleyBlock proto era) -> EraParams
+  mkShelleyEraParams blockConfig =
+    Shelley.shelleyEraParams
+      genesisShelley
+      (fmap perasRoundLength (Shelley.shelleyPerasParams blockConfig))
+
   shape :: History.Shape (CardanoEras c)
   shape =
     History.Shape $
       Exactly $
-        K (Byron.byronEraParams genesisByron)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
+        K byronEraParams
+          :* K (mkShelleyEraParams blockConfigShelley)
+          :* K (mkShelleyEraParams blockConfigAllegra)
+          :* K (mkShelleyEraParams blockConfigMary)
+          :* K (mkShelleyEraParams blockConfigAlonzo)
+          :* K (mkShelleyEraParams blockConfigBabbage)
+          :* K (mkShelleyEraParams blockConfigConway)
+          :* K (mkShelleyEraParams blockConfigDijkstra)
           :* Nil
 
   ledgerConfig =

@@ -24,7 +24,7 @@ module Ouroboros.Consensus.HardFork.History.EraParams
   , defaultEraParams
   ) where
 
-import Cardano.Binary (DecoderError (DecoderErrorCustom), cborError)
+import Cardano.Binary (DecoderError (DecoderErrorCustom), FromCBOR, ToCBOR, cborError)
 import Cardano.Ledger.BaseTypes (unNonZero)
 import Codec.CBOR.Decoding (Decoder, decodeListLen, decodeWord8)
 import Codec.CBOR.Encoding (Encoding, encodeListLen, encodeWord8)
@@ -155,7 +155,7 @@ data EraParams = EraParams
 newtype PerasEnabled a = MkPerasEnabled (Maybe a)
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
-  deriving newtype (Functor, Applicative, Monad)
+  deriving newtype (Functor, Applicative, Monad, FromCBOR, ToCBOR)
 
 pattern PerasEnabled :: a -> PerasEnabled a
 pattern PerasEnabled x <- MkPerasEnabled (Just !x)

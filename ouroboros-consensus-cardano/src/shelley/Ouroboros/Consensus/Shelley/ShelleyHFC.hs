@@ -7,6 +7,7 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -74,7 +75,7 @@ import Ouroboros.Consensus.HardFork.Combinator hiding
   )
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
-import Ouroboros.Consensus.HardFork.History (Bound (boundSlot))
+import Ouroboros.Consensus.HardFork.History (Bound (boundSlot), pattern NoPerasEnabled)
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
@@ -111,10 +112,10 @@ instance
   ) =>
   ImmutableEraParams (ShelleyBlock proto era)
   where
-  immutableEraParams =
+  immutableEraParams cfg =
     shelleyEraParamsNeverHardForks
-      . shelleyLedgerGenesis
-      . configLedger
+      (shelleyLedgerGenesis (configLedger cfg))
+      NoPerasEnabled
 
 instance
   ( ShelleyCompatible proto era
