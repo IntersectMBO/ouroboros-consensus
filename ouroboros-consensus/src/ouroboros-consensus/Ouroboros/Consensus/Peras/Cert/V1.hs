@@ -35,6 +35,7 @@ import Cardano.Binary
 import Codec.Serialise (Serialise (..))
 import Control.Monad (when)
 import Control.Monad.Error.Class (MonadError (..))
+import Data.Coerce (coerce)
 import Data.Containers.NonEmpty (HasNonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.NonEmpty as NEMap
@@ -97,13 +98,7 @@ data PerasCert tag
 
 -- | Retag a 'PerasCert' to change its phantom type tag.
 retagPerasCert :: forall tag' tag. PerasCert tag -> PerasCert tag'
-retagPerasCert cert =
-  PerasCert
-    { pcRoundNo = pcRoundNo cert
-    , pcBoostedBlock = pcBoostedBlock cert
-    , pcVoters = pcVoters cert
-    , pcSignature = pcSignature cert
-    }
+retagPerasCert = coerce
 
 instance
   ConvertRawHash blk =>
