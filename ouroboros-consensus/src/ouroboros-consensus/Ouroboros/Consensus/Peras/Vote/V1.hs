@@ -28,6 +28,7 @@ import Cardano.Binary
   , encodeListLen
   )
 import Codec.Serialise (Serialise (..))
+import Data.Coerce (coerce)
 import Data.Typeable (Typeable)
 import Data.Word (Word8)
 import GHC.Generics (Generic)
@@ -80,14 +81,7 @@ data PerasVote tag
 
 -- | Retag a 'PerasVote' to change its phantom type tag.
 retagPerasVote :: forall tag' tag. PerasVote tag -> PerasVote tag'
-retagPerasVote vote =
-  PerasVote
-    { pvRoundNo = pvRoundNo vote
-    , pvBoostedBlock = pvBoostedBlock vote
-    , pvSeatIndex = pvSeatIndex vote
-    , pvEligibilityProof = pvEligibilityProof vote
-    , pvSignature = pvSignature vote
-    }
+retagPerasVote = coerce
 
 type instance BoostedBlock (PerasVote tag) = PerasBoostedBlock
 instance
