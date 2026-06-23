@@ -18,6 +18,7 @@ import GHC.Stack (HasCallStack)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
+  , RbHash
   , LeiosEb
   , LeiosPoint
   , TxHash

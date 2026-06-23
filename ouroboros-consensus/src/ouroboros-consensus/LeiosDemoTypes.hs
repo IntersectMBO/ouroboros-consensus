@@ -588,7 +588,7 @@ mkCommitteeEveryoneVotes inputs =
 
 -- | A vote in the Leios protocol.
 data LeiosVote = MkLeiosVote
-  { point :: LeiosPoint
+  { point :: RbHash
   -- ^ Point that gets signed. The slot also identifies the voting round.
   , voterId :: VoterId
   -- ^ Identity within a 'Committee' who signed this vote.
@@ -609,8 +609,7 @@ instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
 encodeLeiosVote :: LeiosVote -> Encoding
 encodeLeiosVote MkLeiosVote{point, voterId, voteSignature} =
   CBOR.encodeListLen 4
-    <> encode point.pointSlotNo
-    <> encodeEbHash point.pointEbHash
+    <> encodeRbHash point
     <> encodeVoterId voterId
     <> encodeSigDSIGN voteSignature
 
@@ -618,13 +617,12 @@ encodeLeiosVote MkLeiosVote{point, voterId, voteSignature} =
 decodeLeiosVote :: Decoder s LeiosVote
 decodeLeiosVote = do
   enforceSize (fromString "LeiosVote") 4
-  pointSlotNo <- decode
-  pointEbHash <- decodeEbHash
+  pointRbHash <- decodeRbHash
   voterId <- decodeVoterId
   voteSignature <- decodeSigDSIGN
   pure
     MkLeiosVote
-      { point = MkLeiosPoint{pointSlotNo, pointEbHash}
+      { point = pointRbHash
       , voterId
       , voteSignature
       }
@@ -632,13 +630,12 @@ decodeLeiosVote = do
 voteToObject :: LeiosVote -> Aeson.Object
 voteToObject MkLeiosVote{point, voterId} =
   mconcat
-    [ "slot" .= point.pointSlotNo
-    , "ebHash" .= prettyEbHash point.pointEbHash
+    [ "rbHash" .= prettyRbHash point
     , "voterId" .= voterId.voterIndex
     ]
 
 -- | Create a vote for given 'LeiosPoint' and signing key.
-signLeiosVote :: LeiosSigningKey -> VoterId -> LeiosPoint -> LeiosVote
+signLeiosVote :: LeiosSigningKey -> VoterId -> RbHash -> LeiosVote
 signLeiosVote sk voterId point =
   MkLeiosVote
     { point
@@ -775,7 +772,7 @@ data TraceLeiosKernel
     TraceLeiosBlockCertified {atSlot :: SlotNo, certifiedPoint :: LeiosPoint}
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
-  | TraceLeiosCertified {point :: LeiosPoint}
+  | TraceLeiosCertified {point :: LeiosPoint, rbHash :: RbHash}
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
   | -- | A CertRB was admitted to the staging area because its certified
@@ -865,13 +862,14 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosVoteAcquired"
       , "vote" .= voteToObject vote
       ]
-  TraceLeiosCertified{point} ->
+  TraceLeiosCertified{point, rbHash = announcingRbHash} ->
     let MkLeiosPoint (SlotNo ebSlot) ebHash = point
-     in mconcat
-          [ "kind" .= Aeson.String "LeiosCertified"
-          , "ebHash" .= prettyEbHash ebHash
-          , "ebSlot" .= ebSlot
-          ]
+    in mconcat
+      [ "kind" .= Aeson.String "LeiosCertified"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      , "rbHash" .= prettyRbHash announcingRbHash
+      ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
   TraceLeiosDb (TraceLeiosDbInsertCollision table key) ->

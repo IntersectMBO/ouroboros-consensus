@@ -63,13 +63,18 @@ import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
-import LeiosDemoDb (LeiosDbConnection, newLeiosDBInMemoryWith, withLeiosDb)
+import LeiosDemoDb
+  ( LeiosDbConnection
+  , newLeiosDBInMemoryWith
+  , withLeiosDb
+  )
 import LeiosDemoTypes
   ( LeiosPoint (..)
   , LeiosVote (..)
   , TraceLeiosKernel (..)
   , hashLeiosEb
   , minCertificationGap
+  , RbHash
   )
 import Lens.Micro ((%~), (^.))
 import Ouroboros.Consensus.Block (SlotNo (..), blockSlot)
@@ -242,14 +247,19 @@ prop_leios seed =
     TraceLeiosBlockTxsAcquired point -> Just point
     _ -> Nothing
 
+  -- 'acquiredPoints' translated to the RB hashes voters sign, so it can be
+  -- compared directly against 'votedPoints'.
+  acquiredRbHashes :: Set.Set RbHash
+  acquiredRbHashes = undefined -- TODO(geo2a)
+
   propVoting =
     conjoin
       [ length votedPoints > 0
           & counterexample "never voted"
-      , acquiredPoints `Set.isSubsetOf` votedPoints
+      , acquiredRbHashes `Set.isSubsetOf` votedPoints
           & counterexample "not voted on all acquired EBs"
-          & prettyCounterexampleList "acquired leios EBs" 120 acquiredPoints
-          & prettyCounterexampleList "voted on EBs" 120 votedPoints
+          & prettyCounterexampleList "acquired EB RB hashes" 120 acquiredRbHashes
+          & prettyCounterexampleList "voted on RB hashes" 120 votedPoints
       , ( Map.keysSet acquiredVotes === votedPoints
             .&&. all (\voters -> length voters == numNodes) acquiredVotes
         )
@@ -281,7 +291,7 @@ prop_leios seed =
       ]
 
   reachedQuorumPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
-    TraceLeiosCertified{point} -> Just point
+    TraceLeiosCertified{rbHash} -> Just rbHash
     _ -> Nothing
 
   mempoolTraces = [ev | FromNode _ (FromMempool ev) <- traces]

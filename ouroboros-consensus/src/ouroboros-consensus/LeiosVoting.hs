@@ -57,7 +57,10 @@ runLeiosVoting tracer chainDB leiosDB voteState = \case
             AcquiredEbTxs point -> f point
 
     -- Enter voting loop
-    forever $ getNext $ \point -> do
+    forever $ getNext $ \announcingPoint -> do
+      -- TODO: derive the RB hash from announcingPoint somehow,
+      --       possible via the data base.
+      let announcingRbHash = undefined announcingPoint
       -- TODO: check only once per era whether we are part of the committee?
       ls <- getCurrentLedgerState
       case getLeiosCommittee ls >>= getVoterId vk of
@@ -65,7 +68,7 @@ runLeiosVoting tracer chainDB leiosDB voteState = \case
         Just voterId -> do
           -- TODO: check if its not too late to vote before/after validation
           -- TODO: validate EB closures against selected chain
-          let vote = signVote voterId point
+          let vote = signVote voterId announcingRbHash
           -- NOTE: Self-validation of vote could be skipped, but useful for
           -- determining and tracing the weight.
           addVote vote >>= \case
@@ -78,7 +81,7 @@ runLeiosVoting tracer chainDB leiosDB voteState = \case
               -- consumers (e.g. ThreadNet's 'propCertifying') dedupe
               -- by point.
               case mCert of
-                Just _ -> traceWith tracer TraceLeiosCertified{point}
+                Just _ -> traceWith tracer TraceLeiosCertified{point = announcingPoint, rbHash = announcingRbHash}
                 Nothing -> pure ()
             err ->
               error $ "runLeiosVoting: unexpected error on addVote: " <> show err

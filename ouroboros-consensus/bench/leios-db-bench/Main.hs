@@ -232,10 +232,9 @@ insertOneEb conn ebIdx = do
         | txIdx <- [0 .. txsPerEb - 1]
         , let h = genTxHash ebIdx txIdx
         ]
-      rbHash = genRbHash ebIdx
   leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
-  leiosDbInsertEbBody conn point rbHash eb
-  _ <- leiosDbInsertTxs conn rbHash txs
+  leiosDbInsertEbBody conn point eb
+  _ <- leiosDbInsertTxs conn txs
   pure ()
 
 -- * Deterministic data generation
