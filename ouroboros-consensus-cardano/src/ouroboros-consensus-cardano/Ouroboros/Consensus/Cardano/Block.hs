@@ -1589,6 +1589,10 @@ instance
     BlockDijkstra dijkstraBlk -> blockLeiosCert dijkstraBlk
     _ -> Nothing
 
+  announcingRbHash blk = case blk of
+    BlockDijkstra dijkstraBlk -> announcingRbHash dijkstraBlk
+    _ -> Nothing
+
   headerLeiosAnnouncement hdr = case hdr of
     HeaderDijkstra dHdr -> headerLeiosAnnouncement dHdr
     _ -> Nothing

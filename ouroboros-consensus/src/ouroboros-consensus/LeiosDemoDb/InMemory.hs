@@ -43,6 +43,7 @@ import LeiosDemoTypes
   , EbHash (..)
   , LeiosEb
   , LeiosPoint (..)
+  , RbHash
   , TxHash (..)
   , leiosEbBodyItems
   , leiosEbBytesSize
@@ -189,9 +190,10 @@ imInsertTxs ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
+  Maybe RbHash ->
   [(TxHash, ByteString)] ->
   m CompletedEbs
-imInsertTxs stateVar notificationChan txs = atomically $ do
+imInsertTxs stateVar notificationChan mAnnouncingRbHash txs = atomically $ do
   let insertedTxHashes = [txHash | (txHash, _) <- txs]
   forM_ txs $ \(txHash, txBytes) -> do
     let txBytesSize = fromIntegral $ BS.length txBytes
@@ -221,7 +223,8 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
       { imAnnouncedCompletedEbs =
           foldr (Set.insert . pointEbHash) (imAnnouncedCompletedEbs s) completed
       }
-  forM_ completed $ writeTChan notificationChan . AcquiredEbTxs
+  forM_ completed $ \point ->
+    writeTChan notificationChan (AcquiredEbTxs point mAnnouncingRbHash)
   pure completed
 
 imBatchRetrieveTxs ::

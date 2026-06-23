@@ -63,16 +63,28 @@ import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
 import Data.Word (Word64)
-import LeiosDemoDb (LeiosDbConnection, newLeiosDBInMemoryWith, withLeiosDb)
+import LeiosDemoDb
+  ( LeiosDbConnection
+  , newLeiosDBInMemoryWith
+  , withLeiosDb
+  )
 import LeiosDemoTypes
-  ( LeiosPoint (..)
+  ( EbHash
+  , LeiosPoint (..)
   , LeiosVote (..)
+  , RbHash (..)
   , TraceLeiosKernel (..)
   , hashLeiosEb
   , minCertificationGap
   )
 import Lens.Micro ((%~), (^.))
-import Ouroboros.Consensus.Block (SlotNo (..), blockSlot)
+import Ouroboros.Consensus.Block
+  ( SlotNo (..)
+  , blockHash
+  , blockSlot
+  , getHeader
+  , toRawHash
+  )
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
   , Nonce (NeutralNonce)
@@ -242,20 +254,46 @@ prop_leios seed =
     TraceLeiosBlockTxsAcquired point -> Just point
     _ -> Nothing
 
+  -- For each EB announced on a node's selected chain, the hash of the ranking
+  -- block that announced it — the value voters sign (see 'runLeiosVoting' /
+  -- 'announcingRbHash' in "Ouroboros.Consensus.Storage.LedgerDB.Forker"). Built
+  -- from the nodes' final chains so an EB also announced by an orphaned block
+  -- maps to the canonical announcer the voters actually signed.
+  ebRbHashes :: Map.Map EbHash RbHash
+  ebRbHashes =
+    Map.fromList
+      [ ( pointEbHash annPoint
+        , MkRbHash (toRawHash (Proxy @(CardanoBlock StandardCrypto)) (blockHash blk))
+        )
+      | chain <- Map.elems nodeChains
+      , blk <- chain
+      , Just (annPoint, _) <- [headerLeiosAnnouncement (getHeader blk)]
+      ]
+
+  -- 'acquiredPoints' translated to the RB hashes voters sign, so it can be
+  -- compared directly against 'votedAnnouncingRbHashes'.
+  acquiredRbHashes :: Set.Set RbHash
+  acquiredRbHashes =
+    Set.fromList
+      [ rbHash
+      | point <- Set.toList acquiredPoints
+      , Just rbHash <- [Map.lookup point.pointEbHash ebRbHashes]
+      ]
+
   propVoting =
     conjoin
-      [ length votedPoints > 0
+      [ length votedAnnouncingRbHashes > 0
           & counterexample "never voted"
-      , acquiredPoints `Set.isSubsetOf` votedPoints
+      , acquiredRbHashes `Set.isSubsetOf` votedAnnouncingRbHashes
           & counterexample "not voted on all acquired EBs"
-          & prettyCounterexampleList "acquired leios EBs" 120 acquiredPoints
-          & prettyCounterexampleList "voted on EBs" 120 votedPoints
-      , ( Map.keysSet acquiredVotes === votedPoints
+          & prettyCounterexampleList "acquired EB RB hashes" 120 acquiredRbHashes
+          & prettyCounterexampleList "voted on RB hashes" 120 votedAnnouncingRbHashes
+      , ( Map.keysSet acquiredVotes === votedAnnouncingRbHashes
             .&&. all (\voters -> length voters == numNodes) acquiredVotes
         )
           & counterexample "created votes not diffused"
           & prettyCounterexampleMap "acquired votes" 120 acquiredVotes
-          & prettyCounterexampleList "voted on EBs" 120 votedPoints
+          & prettyCounterexampleList "voted on EBs" 120 votedAnnouncingRbHashes
           & counterexample
             ( "peer traces: "
                 <> unlines [show (nid, ev) | FromNode nid (FromLeiosPeer ev) <- traces]
@@ -266,12 +304,12 @@ prop_leios seed =
             )
       ]
 
-  votedPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
-    TraceLeiosVoted{vote} -> Just vote.point
+  votedAnnouncingRbHashes = Set.fromList . flip mapMaybe leiosTraces $ \case
+    TraceLeiosVoted{vote} -> Just vote.announcingRbHash
     _ -> Nothing
 
   acquiredVotes = Map.fromListWith mappend . flip mapMaybe leiosTraces $ \case
-    TraceLeiosVoteAcquired{vote} -> Just (vote.point, Set.singleton vote.voterId)
+    TraceLeiosVoteAcquired{vote} -> Just (vote.announcingRbHash, Set.singleton vote.voterId)
     _ -> Nothing
 
   propCertifying =
@@ -281,7 +319,7 @@ prop_leios seed =
       ]
 
   reachedQuorumPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
-    TraceLeiosCertified{point} -> Just point
+    TraceLeiosCertified{rbHash} -> Just rbHash
     _ -> Nothing
 
   mempoolTraces = [ev | FromNode _ (FromMempool ev) <- traces]

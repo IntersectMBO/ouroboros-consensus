@@ -34,7 +34,7 @@ import LeiosDemoDb
   , leiosDbInsertTxs
   , leiosDbLookupEbBody
   , leiosDbLookupEbPoint
-  , leiosDbQueryCompletedEbByPoint
+  , leiosDbQueryCompletedEbByHash
   , leiosDbQueryFetchWork
   , leiosDbScanEbPoints
   , newLeiosDBInMemory
@@ -45,6 +45,7 @@ import LeiosDemoTypes
   ( EbHash (..)
   , LeiosEb (..)
   , LeiosPoint (..)
+  , RbHash (..)
   , TxHash (..)
   , leiosEbBytesSize
   , leiosEbTxs
@@ -170,6 +171,11 @@ mkTestGroups impl =
 genEbHash :: Gen EbHash
 genEbHash = MkEbHash . BS.pack <$> vector 32
 
+-- | Generate a random RbHash (32 random bytes).
+-- With 256 bits of randomness, collisions are practically impossible.
+genRbHash :: Gen RbHash
+genRbHash = MkRbHash . BS.pack <$> vector 32
+
 -- | Generate a random TxHash (32 random bytes).
 genTxHash :: Gen TxHash
 genTxHash = MkTxHash . BS.pack <$> vector 32
@@ -216,6 +222,10 @@ mkTestTxHash seed = MkTxHash $ BS.pack $ replicate 32 (fromIntegral seed)
 -- | Create a test LeiosPoint.
 mkTestPoint :: SlotNo -> Word -> LeiosPoint
 mkTestPoint slot seed = MkLeiosPoint slot (mkTestEbHash seed)
+
+-- | A dummy announcing RB hash for DB tests that don't care about its value.
+testRbHash :: RbHash
+testRbHash = MkRbHash (BS.replicate 32 7)
 
 -- | Create a test LeiosEb with the given number of transactions.
 mkTestEb :: Int -> LeiosEb
@@ -380,7 +390,7 @@ prop_txsInsertThenRetrieve impl =
                   , let txBytes = BS.pack [fromIntegral off, 1, 2, 3] -- deterministic test bytes
                   ]
           -- Insert txs into global txs table
-          insertTime <- snd <$> timed (leiosDbInsertTxs con txsToInsert)
+          insertTime <- snd <$> timed (leiosDbInsertTxs con Nothing txsToInsert)
           -- Retrieve all offsets
           let allOffsets = [0 .. numTxs - 1]
           (results, retrieveTime) <- timed $ leiosDbBatchRetrieveTxs con point.pointEbHash allOffsets
@@ -434,7 +444,7 @@ test_singleSubscriber db = do
   case notification of
     AcquiredEb notifPoint _ ->
       notifPoint @?= point
-    AcquiredEbTxs _ ->
+    AcquiredEbTxs _ _ ->
       assertFailure "expected AcquiredEb, got AcquiredEbTxs"
 
 -- | Test that multiple subscribers each receive the notification.
@@ -472,7 +482,7 @@ test_correctData db = do
       notifPoint.pointSlotNo @?= point.pointSlotNo
       notifPoint.pointEbHash @?= point.pointEbHash
       notifSize @?= expectedSize
-    AcquiredEbTxs _ ->
+    AcquiredEbTxs _ _ ->
       assertFailure "expected AcquiredEb, got AcquiredEbTxs"
 
 -- | Test that a subscriber who subscribes after an insertion does not receive
@@ -539,7 +549,7 @@ test_noOfferBlockTxsBeforeComplete db = do
           [ (txHash, BS.pack [fromIntegral i, 1, 2, 3])
           | (i, (txHash, _size)) <- zip [0 :: Int, 1] ebTxList
           ]
-    _ <- leiosDbInsertTxs con txsToInsert
+    _ <- leiosDbInsertTxs con Nothing txsToInsert
     -- No LeiosOfferBlockTxs notification should be available
     maybeNotif <- atomically $ tryReadTChan chan
     case maybeNotif of
@@ -565,7 +575,7 @@ test_offerBlockTxs db = do
           [ (txHash, BS.pack [fromIntegral i, 1, 2, 3])
           | (i, (txHash, _size)) <- zip [0 :: Int ..] ebTxList
           ]
-    _ <- leiosDbInsertTxs con txsToInsert
+    _ <- leiosDbInsertTxs con Nothing txsToInsert
     -- FIXME: blocks forever if impl not working
     notification <- atomically $ readTChan chan
     assertOfferBlockTxs point notification
@@ -588,14 +598,14 @@ test_noReNotifyCompletedEbs db = do
       Just (AcquiredEb{}) -> pure ()
       _ -> assertFailure "expected AcquiredEb notification"
     let txsToInsert = [(txHash, maxTxBytesZero) | (txHash, _) <- ebTxList]
-    _ <- leiosDbInsertTxs con txsToInsert
+    _ <- leiosDbInsertTxs con Nothing txsToInsert
     -- Consume the AcquiredEbTxs notification
     acquiredTxs <- atomically $ tryReadTChan chan
     case acquiredTxs of
-      Just (AcquiredEbTxs p) -> p @?= point
+      Just (AcquiredEbTxs p _) -> p @?= point
       _ -> assertFailure "expected AcquiredEbTxs notification"
     -- Insert an unrelated tx
-    _ <- leiosDbInsertTxs con [(mkTestTxHash 99, maxTxBytesZero)]
+    _ <- leiosDbInsertTxs con Nothing [(mkTestTxHash 99, maxTxBytesZero)]
     -- No re-notification should occur for the already-completed EB
     maybeNotif <- atomically $ tryReadTChan chan
     case maybeNotif of
@@ -626,17 +636,17 @@ test_noReNotifyOnRelatedTxReinsert db = do
       _ -> assertFailure "expected AcquiredEb notification"
     -- Insert all EB-referenced txs → EB completes, one AcquiredEbTxs.
     let txsToInsert = [(txHash, maxTxBytesZero) | (txHash, _) <- ebTxList]
-    _ <- leiosDbInsertTxs con txsToInsert
+    _ <- leiosDbInsertTxs con Nothing txsToInsert
     acquiredTxs <- atomically $ tryReadTChan chan
     case acquiredTxs of
-      Just (AcquiredEbTxs p) -> p @?= point
+      Just (AcquiredEbTxs p _) -> p @?= point
       _ -> assertFailure "expected AcquiredEbTxs notification"
     -- Re-insert one of the EB's own txs (a no-op at the tx storage
     -- level — it's already present). The completed EB must NOT be
     -- re-notified.
     case ebTxList of
       ((txHash, _) : _) -> do
-        _ <- leiosDbInsertTxs con [(txHash, maxTxBytesZero)]
+        _ <- leiosDbInsertTxs con Nothing [(txHash, maxTxBytesZero)]
         maybeNotif <- atomically $ tryReadTChan chan
         case maybeNotif of
           Nothing -> pure ()
@@ -728,7 +738,7 @@ prop_fetchWorkCompleteTxs impl =
                     [ (txHash, baseTxBytes)
                     | (txHash, _size) <- ebTxList
                     ]
-              _ <- leiosDbInsertTxs con txsToInsert
+              _ <- leiosDbInsertTxs con Nothing txsToInsert
               (work, queryTime) <- timed $ leiosDbQueryFetchWork con
               pure $
                 conjoin
@@ -749,13 +759,13 @@ assertOfferBlock :: LeiosPoint -> LeiosEbNotification -> IO ()
 assertOfferBlock expectedPoint = \case
   AcquiredEb actualPoint _ ->
     actualPoint @?= expectedPoint
-  AcquiredEbTxs _ ->
+  AcquiredEbTxs _ _ ->
     assertFailure "expected AcquiredEb, got AcquiredEbTxs"
 
 -- | Assert that a notification is AcquiredEbTxs with the expected point.
 assertOfferBlockTxs :: LeiosPoint -> LeiosEbNotification -> IO ()
 assertOfferBlockTxs expectedPoint = \case
-  AcquiredEbTxs actualPoint ->
+  AcquiredEbTxs actualPoint _ ->
     actualPoint @?= expectedPoint
   AcquiredEb _ _ ->
     assertFailure "expected AcquiredEbTxs, got AcquiredEb"
@@ -817,7 +827,7 @@ prop_filterTxsCorrect impl =
         ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
           -- Insert some TXs
           forM_ toInsert $ \txHash ->
-            leiosDbInsertTxs con [(txHash, maxTxBytesZero)]
+            leiosDbInsertTxs con Nothing [(txHash, maxTxBytesZero)]
           -- Filter should return the ones NOT inserted
           let expectedMissing = filter (`notElem` toInsert) txHashes
           (result, filterTime) <- timed $ leiosDbFilterMissingTxs con txHashes
@@ -843,8 +853,8 @@ prop_completedEbComplete impl =
           leiosDbInsertEbBody con point eb
           let ebTxList = V.toList (leiosEbTxs eb)
               txsToInsert = [(txHash, txBytes) | (txHash, _size) <- ebTxList]
-          _ <- leiosDbInsertTxs con txsToInsert
-          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint con point
+          _ <- leiosDbInsertTxs con Nothing txsToInsert
+          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByHash con (pointEbHash point)
           let expectedHashes = map fst txsToInsert
               check = case result of
                 Nothing ->
@@ -871,7 +881,7 @@ prop_completedEbMissingTxs impl =
       ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
         leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
         leiosDbInsertEbBody con point eb
-        (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint con point
+        (result, queryTime) <- timed $ leiosDbQueryCompletedEbByHash con (pointEbHash point)
         pure $
           result === Nothing
             & counterexample "Expected Nothing when no txs are present"
@@ -891,8 +901,8 @@ prop_completedEbPartialTxs impl =
           let ebTxList = V.toList (leiosEbTxs eb)
               partialTxs = take (numTxs `div` 2) ebTxList
               txsToInsert = [(txHash, txBytes) | (txHash, _size) <- partialTxs]
-          _ <- leiosDbInsertTxs con txsToInsert
-          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint con point
+          _ <- leiosDbInsertTxs con Nothing txsToInsert
+          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByHash con (pointEbHash point)
           pure $
             result === Nothing
               & counterexample
@@ -911,7 +921,7 @@ prop_completedEbNoBody impl =
   forAll genPoint $ \point ->
     ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
       leiosDbInsertEbPoint con point 1000
-      (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint con point
+      (result, queryTime) <- timed $ leiosDbQueryCompletedEbByHash con (pointEbHash point)
       pure $
         result === Nothing
           & counterexample "Expected Nothing for EB with no body inserted"

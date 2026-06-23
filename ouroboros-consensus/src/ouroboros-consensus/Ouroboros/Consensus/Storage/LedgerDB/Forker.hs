@@ -79,6 +79,7 @@ import LeiosDemoTypes
   , HasLeiosVoting (..)
   , LeiosCert
   , LeiosPoint
+  , RbHash
   , minCertificationThreshold
   , verifyLeiosCert
   )
@@ -525,8 +526,13 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                 -- violation: the era machinery shouldn't have let one through.
                 -- TODO: make this less fatal
                 error "applyBlock: CertRB seen but no Leios committee for this era"
-            -- FIXME: This should not be about a LeiosPoint, but an RbHash
-            case verifyLeiosCert cm minCertificationThreshold announcedPoint cert of
+            let announcingRbHashValue = case announcingRbHash b of
+                  Just h -> h
+                  Nothing ->
+                    -- A CertRB always has a (non-genesis) announcing parent;
+                    -- the apply path shouldn't have produced one otherwise.
+                    error "applyBlock: cannot determine announcing RB hash for CertRB"
+            case verifyLeiosCert cm minCertificationThreshold announcingRbHashValue cert of
               Left invalid ->
                 -- TODO: make this less fatal. This is like a ledger error.
                 error $ "applyBlock: invalid Leios cert: " <> show invalid
@@ -740,6 +746,11 @@ class ResolveLeiosBlock blk where
   protocolStateLeiosAnnouncement ::
     ChainDepState (BlockProtocol blk) -> Maybe (LeiosPoint, BytesSize)
   protocolStateLeiosAnnouncement _ = Nothing
+
+  -- | For a CertRB, the hash of the ranking block that announced the EB this CertRB
+  -- certifies. 'Nothing' for non-Leios eras.
+  announcingRbHash :: blk -> Maybe RbHash
+  announcingRbHash _ = Nothing
 
 -- | Resolve and inline EB closure transactions as announced on the previous
 -- header. NOTE: This produces a block that would fail full validation.

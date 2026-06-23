@@ -54,7 +54,6 @@ import LeiosDemoTypes
   , EbHash (..)
   , LeiosEb (..)
   , LeiosPoint (..)
-  , RbHash (..)
   , TxHash (..)
   , leiosEbBytesSize
   )
@@ -232,10 +231,9 @@ insertOneEb conn ebIdx = do
         | txIdx <- [0 .. txsPerEb - 1]
         , let h = genTxHash ebIdx txIdx
         ]
-      rbHash = genRbHash ebIdx
   leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
-  leiosDbInsertEbBody conn point rbHash eb
-  _ <- leiosDbInsertTxs conn rbHash txs
+  leiosDbInsertEbBody conn point eb
+  _ <- leiosDbInsertTxs conn Nothing txs
   pure ()
 
 -- * Deterministic data generation
@@ -249,12 +247,6 @@ genEbHash :: Int -> EbHash
 genEbHash i = MkEbHash $ BS.take 32 (tag <> BS.replicate 32 0)
  where
   tag = BS8.pack ("ebHash:" <> show i)
-
--- | 'RbHash' from an index: \"rbHash:<index>\" padded to 32 bytes with zeros.
-genRbHash :: Int -> RbHash
-genRbHash i = MkRbHash $ BS.take 32 (tag <> BS.replicate 32 0)
- where
-  tag = BS8.pack ("rbHash:" <> show i)
 
 -- | 'LeiosEb' with 'txsPerEb' transactions (200 bytes each).
 genEb :: Int -> LeiosEb
