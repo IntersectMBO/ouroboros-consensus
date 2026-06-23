@@ -115,6 +115,7 @@ newtype PeerId a = MkPeerId a
 -- Hash algorithm used in leios for EBs and txs
 type HASH = Hash.Blake2b_256
 
+-- | Hash of an Endorser Block
 newtype EbHash = MkEbHash {ebHashBytes :: ByteString}
   deriving newtype (Eq, Ord, NoThunks, Serialise, DecCBOR, EncCBOR, ToCBOR, FromCBOR)
   deriving stock Generic
@@ -130,6 +131,32 @@ decodeEbHash = MkEbHash <$> CBOR.decodeBytes
 
 prettyEbHash :: EbHash -> String
 prettyEbHash (MkEbHash bytes) = BS8.unpack (BS16.encode bytes)
+
+-- | Hash of a Ranking Block
+--
+-- A Ranking Block is the Praos Block. While the regular Praos headers are parameterised
+-- over 'blk', we choose to keep 'RbHash' monomorphic. Use the 'ConvertRawHash' type class
+-- to convert between this type and 'HeaderHash'.
+newtype RbHash = MkRbHash {rbHashBytes :: ByteString}
+  deriving newtype (Eq, Ord, NoThunks, Serialise, DecCBOR, EncCBOR, ToCBOR, FromCBOR)
+  deriving stock Generic
+
+instance Show RbHash where
+  show = prettyRbHash
+
+encodeRbHash :: RbHash -> Encoding
+encodeRbHash (MkRbHash bytes) = CBOR.encodeBytes bytes
+
+decodeRbHash :: Decoder s RbHash
+decodeRbHash = MkRbHash <$> CBOR.decodeBytes
+
+prettyRbHash :: RbHash -> String
+prettyRbHash (MkRbHash bytes) = BS8.unpack (BS16.encode bytes)
+
+instance SignableRepresentation RbHash where
+  getSignableRepresentation point =
+    toStrictByteString $
+      encodeRbHash point
 
 newtype TxHash = MkTxHash ByteString
   deriving stock (Eq, Ord, Generic)
