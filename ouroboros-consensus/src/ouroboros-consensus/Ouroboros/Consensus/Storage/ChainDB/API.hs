@@ -474,7 +474,7 @@ data ChainDB m blk = ChainDB
       STM m (Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
   -- ^ Get all known Peras votes with a ticket number strictly greater than the
   -- given one, in ascending order.
-  , getPerasVoteIds :: STM m (Set (PerasVoteId blk))
+  , getPerasVoteIds :: STM m (Set (PerasVoteId))
   -- ^ Get the set of all Peras vote IDs currently in the database.
   , getPerasVotingViewHandle ::
       PerasVotingViewHandle m blk

@@ -142,7 +142,7 @@ deriving anyclass instance ToExpr PerasWeight
 
 deriving anyclass instance ToExpr VoteWeight
 
-deriving anyclass instance ToExpr (PerasVoteId blk)
+deriving anyclass instance ToExpr (PerasVoteId)
 
 deriving anyclass instance ToExpr a => ToExpr (WithArrivalTime a)
 

@@ -53,7 +53,7 @@ data PerasVoteDB m blk = PerasVoteDB
   -- NOTE: the resulting computation over 'm' is there solely for tracing
   -- purposes. Use the `join . atomically` pattern to consume its output.
   , getVoteIds ::
-      STM m (Set (PerasVoteId blk))
+      STM m (Set (PerasVoteId))
   -- ^ Get the set of all vote IDs currently in the database.
   , getVotesAfter ::
       PerasVoteTicketNo ->

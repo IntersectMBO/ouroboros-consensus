@@ -169,7 +169,7 @@ data PerasVoteTarget blk
   deriving anyclass NoThunks
 
 -- | The identifier of a vote in a Peras election
-data PerasVoteId blk
+data PerasVoteId
   = PerasVoteId
   { pviRoundNo :: !PerasRoundNo
   , pviSeatIndex :: !PerasSeatIndex
@@ -177,10 +177,10 @@ data PerasVoteId blk
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
 
-instance ShowProxy blk => ShowProxy (PerasVoteId blk) where
-  showProxy _ = "PerasVoteId " <> showProxy (Proxy @blk)
+instance ShowProxy (PerasVoteId) where
+  showProxy _ = "PerasVoteId"
 
-instance Serialise (PerasVoteId blk) where
+instance Serialise (PerasVoteId) where
   encode PerasVoteId{pviRoundNo, pviSeatIndex} =
     encodeListLen 2
       <> encode pviRoundNo
