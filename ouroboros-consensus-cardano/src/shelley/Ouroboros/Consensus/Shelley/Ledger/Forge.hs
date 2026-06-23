@@ -32,7 +32,7 @@ import LeiosDemoDb
   ( leiosDbInsertEbBody
   , leiosDbInsertEbPoint
   , leiosDbInsertTxs
-  , leiosDbQueryCompletedEbByPoint
+  ( leiosDbQueryCompletedEbByHash
   )
 import LeiosDemoTypes
   ( EbAnnouncement (..)
@@ -180,7 +180,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
             -- TODO: Why exactly do we guard against this? Also, shouldn't we
             -- detect it the other way around: if we have a cert, but not
             -- downloaded it ourselves -> warning!
-            mClosure <- leiosDbQueryCompletedEbByPoint fbLeiosDb ebPoint
+            mClosure <- leiosDbQueryCompletedEbByHash fbLeiosDb (pointEbHash ebPoint)
             case mClosure of
               Nothing -> do
                 traceWith fbLeiosTracer $

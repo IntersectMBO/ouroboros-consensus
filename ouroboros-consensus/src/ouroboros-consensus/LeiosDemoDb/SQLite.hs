@@ -130,7 +130,7 @@ openSQLiteConnection tracer dbPath notificationChan = do
       , leiosDbFilterMissingEbBodies = sqlFilterMissingEbBodies tracer db
       , leiosDbFilterMissingTxs = sqlFilterMissingTxs tracer db
       , leiosDbQueryFetchWork = sqlQueryFetchWork db
-      , leiosDbQueryCompletedEbByPoint = sqlQueryCompletedEbByPoint db
+      , leiosDbQueryCompletedEbByHash = sqlQueryCompletedEbByHash db
       }
 
 -- * Top-level implementations
@@ -369,10 +369,10 @@ sqlQueryFetchWork db =
       loop []
     pure LeiosFetchWork{missingEbBodies, missingEbTxs}
 
-sqlQueryCompletedEbByPoint :: DB.Database -> LeiosPoint -> IO (Maybe [(TxHash, ByteString)])
-sqlQueryCompletedEbByPoint db ebPoint =
+sqlQueryCompletedEbByHash :: DB.Database -> EbHash -> IO (Maybe [(TxHash, ByteString)])
+sqlQueryCompletedEbByHash db ebHash =
   dbWithBEGIN db $ dbWithPrepare db (fromString sqlQueryCompletedEbByPoint') $ \stmt -> do
-    dbBindBlob stmt 1 (ebHashBytes . pointEbHash $ ebPoint)
+    dbBindBlob stmt 1 (ebHashBytes ebHash)
     -- FIXME(bladyjoker): This should have a SlotNo as the second part of the key
     let loop acc =
           dbStep stmt >>= \case
