@@ -48,6 +48,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , ShelleyLedgerEvent (..)
   , ShelleyReapplyException (..)
   , getPParams
+  , praosLeiosAnnouncement
 
     -- * Serialisation
   , decodeShelleyAnnTip
@@ -134,7 +135,8 @@ import Data.Word
 import GHC.Generics (Generic)
 import LeiosDemoDb (LeiosDbConnection (..))
 import LeiosDemoTypes
-  ( EbAnnouncement (..)
+  ( BytesSize
+  , EbAnnouncement (..)
   , LeiosPoint (..)
   , TxHash
   , mkCommitteeEveryoneVotes
@@ -162,7 +164,7 @@ import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosState (..))
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (Header, headerBody)
-  , HeaderBody (hbLeiosEbAnnouncement, hbSlotNo)
+  , HeaderBody (hbLeiosContainsCert, hbLeiosEbAnnouncement, hbSlotNo)
   )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
@@ -1090,6 +1092,35 @@ instance
    where
     annBody :: HeaderBody c
     Header{headerBody = annBody} = shelleyHeaderRaw hdr
+
+  headerContainsLeiosCert hdr = hbLeiosContainsCert annBody
+   where
+    annBody :: HeaderBody c
+    Header{headerBody = annBody} = shelleyHeaderRaw hdr
+
+  chainDepStateLeiosAnnouncement _ = praosLeiosAnnouncement
+
+-- | The most-recently-announced (and not-yet-certified) Leios EB recorded in a
+-- Praos chain-dep state; see 'chainDepStateLeiosAnnouncement'. Shared by the
+-- Shelley @Dijkstra@ instance and the @CardanoBlock@ instance (which projects
+-- its chain-dep state to this one), so neither needs to name the crypto
+-- parameter.
+praosLeiosAnnouncement :: PraosState -> Maybe (LeiosPoint, BytesSize)
+praosLeiosAnnouncement praosSt =
+  case praosStateLeiosAnnouncement praosSt of
+    SNothing -> Nothing
+    SJust ann ->
+      Just
+        ( MkLeiosPoint
+            { pointSlotNo =
+                -- this should be unreachable, since the genesis
+                -- ledger state won't have announced an EB. TODO: So
+                -- the SlotNo 0 branch here is misleading.
+                fromWithOrigin (SlotNo 0) (praosStateLastSlot praosSt)
+            , pointEbHash = ebAnnouncementHash ann
+            }
+        , ebAnnouncementSize ann
+        )
 
 -- | Deserialise a transaction supplied as Leios-stored bytes.
 deserialiseLeiosTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Tx TopTx era
