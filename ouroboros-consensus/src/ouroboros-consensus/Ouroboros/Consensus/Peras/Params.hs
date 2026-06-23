@@ -1,7 +1,9 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
 -- | Peras protocol parameters
@@ -19,6 +21,7 @@ module Ouroboros.Consensus.Peras.Params
 
     -- * Protocol parameters bundle
   , PerasParams (..)
+  , retagPerasParams
   , defaultPerasParams
 
     -- * Convenience re-exports
@@ -26,7 +29,8 @@ module Ouroboros.Consensus.Peras.Params
   )
 where
 
-import Codec.Serialise (Serialise)
+import Codec.Serialise (Serialise (..))
+import Data.Coerce (coerce)
 import Data.Semigroup (Sum (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -136,6 +140,10 @@ data PerasParams blk = PerasParams
   , perasTargetCommitteeSize :: !Committee.TargetCommitteeSize
   }
   deriving (Show, Eq, Generic, NoThunks, Serialise)
+
+-- | Retag a 'PerasParams' to change its phantom type tag.
+retagPerasParams :: forall blk' blk. PerasParams blk -> PerasParams blk'
+retagPerasParams = coerce
 
 -- | Instantiate default Peras protocol parameters.
 --
