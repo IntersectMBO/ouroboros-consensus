@@ -107,9 +107,8 @@ newLeiosVoteState getCommittee = do
                       -- Update the per-point tally, assembling (and
                       -- caching) the certificate the first time the
                       -- threshold is crossed.
-                      let pt = vote.point
                       states <- readTVar pointStates
-                      let pst = Map.findWithDefault emptyPointState pt states
+                      let pst = Map.findWithDefault emptyPointState vote.announcingRbHash states
                           pst' =
                             pst
                               { psVoters =
@@ -132,7 +131,7 @@ newLeiosVoteState getCommittee = do
                                           <> show e
                                     Right cert -> pst'{psCert = Just cert}
                               | otherwise -> pst'
-                      writeTVar pointStates $! Map.insert pt pst'' states
+                      writeTVar pointStates $! Map.insert vote.announcingRbHash pst'' states
                       pure $ Added weight pst''.psCert
       , subscribeVotes = do
           chan <- atomically $ dupTChan votesChan

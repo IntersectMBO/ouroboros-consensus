@@ -254,18 +254,18 @@ prop_leios seed =
 
   propVoting =
     conjoin
-      [ length votedPoints > 0
+      [ length votedAnnouncingRbHashes > 0
           & counterexample "never voted"
-      , acquiredRbHashes `Set.isSubsetOf` votedPoints
+      , acquiredRbHashes `Set.isSubsetOf` votedAnnouncingRbHashes
           & counterexample "not voted on all acquired EBs"
           & prettyCounterexampleList "acquired EB RB hashes" 120 acquiredRbHashes
-          & prettyCounterexampleList "voted on RB hashes" 120 votedPoints
-      , ( Map.keysSet acquiredVotes === votedPoints
+          & prettyCounterexampleList "voted on RB hashes" 120 votedAnnouncingRbHashes
+      , ( Map.keysSet acquiredVotes === votedAnnouncingRbHashes
             .&&. all (\voters -> length voters == numNodes) acquiredVotes
         )
           & counterexample "created votes not diffused"
           & prettyCounterexampleMap "acquired votes" 120 acquiredVotes
-          & prettyCounterexampleList "voted on EBs" 120 votedPoints
+          & prettyCounterexampleList "voted on EBs" 120 votedAnnouncingRbHashes
           & counterexample
             ( "peer traces: "
                 <> unlines [show (nid, ev) | FromNode nid (FromLeiosPeer ev) <- traces]
@@ -276,12 +276,12 @@ prop_leios seed =
             )
       ]
 
-  votedPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
-    TraceLeiosVoted{vote} -> Just vote.point
+  votedAnnouncingRbHashes = Set.fromList . flip mapMaybe leiosTraces $ \case
+    TraceLeiosVoted{vote} -> Just vote.announcingRbHash
     _ -> Nothing
 
   acquiredVotes = Map.fromListWith mappend . flip mapMaybe leiosTraces $ \case
-    TraceLeiosVoteAcquired{vote} -> Just (vote.point, Set.singleton vote.voterId)
+    TraceLeiosVoteAcquired{vote} -> Just (vote.announcingRbHash, Set.singleton vote.voterId)
     _ -> Nothing
 
   propCertifying =

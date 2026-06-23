@@ -588,8 +588,9 @@ mkCommitteeEveryoneVotes inputs =
 
 -- | A vote in the Leios protocol.
 data LeiosVote = MkLeiosVote
-  { point :: RbHash
-  -- ^ Point that gets signed. The slot also identifies the voting round.
+  { announcingRbHash :: RbHash
+  -- ^ The message that gets signed, the hash of the ranking block
+  --   that announced an endorser block.
   , voterId :: VoterId
   -- ^ Identity within a 'Committee' who signed this vote.
   , voteSignature :: LeiosSignature
@@ -599,7 +600,7 @@ data LeiosVote = MkLeiosVote
 
 instance Ord LeiosVote where
   compare v1 v2 =
-    compare v1.point v2.point
+    compare v1.announcingRbHash v2.announcingRbHash
       <> compare v1.voterId v2.voterId
 
 instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
@@ -607,9 +608,9 @@ instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
 -- | Encode a 'LeiosVote' into CBOR.
 -- NOTE: Encodes points flat into the vote for smaller votes.
 encodeLeiosVote :: LeiosVote -> Encoding
-encodeLeiosVote MkLeiosVote{point, voterId, voteSignature} =
+encodeLeiosVote MkLeiosVote{announcingRbHash, voterId, voteSignature} =
   CBOR.encodeListLen 4
-    <> encodeRbHash point
+    <> encodeRbHash announcingRbHash
     <> encodeVoterId voterId
     <> encodeSigDSIGN voteSignature
 
@@ -622,34 +623,34 @@ decodeLeiosVote = do
   voteSignature <- decodeSigDSIGN
   pure
     MkLeiosVote
-      { point = pointRbHash
+      { announcingRbHash = pointRbHash
       , voterId
       , voteSignature
       }
 
 voteToObject :: LeiosVote -> Aeson.Object
-voteToObject MkLeiosVote{point, voterId} =
+voteToObject MkLeiosVote{announcingRbHash, voterId} =
   mconcat
-    [ "rbHash" .= prettyRbHash point
+    [ "rbHash" .= prettyRbHash announcingRbHash
     , "voterId" .= voterId.voterIndex
     ]
 
 -- | Create a vote for given 'LeiosPoint' and signing key.
 signLeiosVote :: LeiosSigningKey -> VoterId -> RbHash -> LeiosVote
-signLeiosVote sk voterId point =
+signLeiosVote sk voterId announcingRbHash =
   MkLeiosVote
-    { point
+    { announcingRbHash
     , voterId
-    , voteSignature = signDSIGN leiosSignContext point sk
+    , voteSignature = signDSIGN leiosSignContext announcingRbHash sk
     }
 
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
 validateLeiosVote :: Committee -> LeiosVote -> Either VoteInvalid Weight
-validateLeiosVote committee MkLeiosVote{point, voterId, voteSignature} =
+validateLeiosVote committee MkLeiosVote{announcingRbHash, voterId, voteSignature} =
   case resolveVoter committee voterId of
     Nothing -> Left SignerNotInCommittee
     Just voter ->
-      case verifyDSIGN leiosSignContext voter.voterVKey point voteSignature of
+      case verifyDSIGN leiosSignContext voter.voterVKey announcingRbHash voteSignature of
         Left _ -> Left InvalidSignature
         Right () -> Right voter.voterWeight
 
