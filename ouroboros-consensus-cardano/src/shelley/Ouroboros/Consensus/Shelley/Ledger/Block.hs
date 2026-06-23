@@ -54,7 +54,6 @@ import Cardano.Ledger.Core as SL
   ( eraDecoder
   , eraProtVerLow
   , toEraCBOR
-  , txSeqBlockBodyL
   )
 import qualified Cardano.Ledger.Core as SL (TranslationContext, hashBlockBody)
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
@@ -216,11 +215,10 @@ instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
     -- Compute the hash the body of the block (the transactions) and compare
     -- that against the hash of the body stored in the header.
     SL.hashBlockBody blockBody == pHeaderBodyHash shelleyHdr
-      -- Leios envelope: the header's cert bit must agree with the body, i.e.
-      -- it is set iff the body carries exactly one Leios certificate and no
-      -- txs (a "CertRB"). This binds the cheap header-only CertRB signal to
-      -- the actual body contents.
-      && pHeaderLeiosContainsCert shelleyHdr == (bodyHasLeiosCert && null bodyTxs)
+      -- Leios envelope: the header's cheap cert bit is set iff the body carries
+      -- a Leios certificate (i.e. it is a "CertRB"), binding the header-only
+      -- CertRB signal to the actual body contents.
+      && pHeaderLeiosContainsCert shelleyHdr == bodyHasLeiosCert
    where
     ShelleyHeader{shelleyHeaderRaw = shelleyHdr} = hdr
     ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} = blk
@@ -230,7 +228,6 @@ instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
     bodyHasLeiosCert = case eqT @era @DijkstraEra of
       Just Refl -> isSJust (blockBody ^. leiosCertBlockBodyL)
       Nothing -> False
-    bodyTxs = blockBody ^. SL.txSeqBlockBodyL
 
   headerIsEBB = const Nothing
 
