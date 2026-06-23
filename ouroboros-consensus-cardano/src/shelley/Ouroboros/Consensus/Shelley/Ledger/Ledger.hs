@@ -10,6 +10,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
@@ -115,7 +116,10 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import Ouroboros.Consensus.HardFork.History.EraParams (EraParams (..))
+import Ouroboros.Consensus.HardFork.History.EraParams
+  ( EraParams (..)
+  , pattern NoPerasEnabled
+  )
 import Ouroboros.Consensus.HardFork.History.Util
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.HeaderValidation
@@ -162,16 +166,15 @@ shelleyLedgerGenesis = getCompactGenesis . shelleyLedgerCompactGenesis
 
 shelleyEraParams ::
   SL.ShelleyGenesis ->
+  HardFork.PerasEnabled PerasRoundLength ->
   HardFork.EraParams
-shelleyEraParams genesis =
+shelleyEraParams genesis perasRoundLength =
   HardFork.EraParams
     { eraEpochSize = SL.sgEpochLength genesis
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.StandardSafeZone stabilityWindow
     , eraGenesisWin = GenesisWindow stabilityWindow
-    , -- TODO(geo2a): enabled Peras conditionally in the Dijkstra era
-      -- see https://github.com/tweag/cardano-peras/issues/112
-      eraPerasRoundLength = HardFork.NoPerasEnabled
+    , eraPerasRoundLength = perasRoundLength
     }
  where
   stabilityWindow =
@@ -180,14 +183,17 @@ shelleyEraParams genesis =
       (SL.sgActiveSlotCoeff genesis)
 
 -- | Separate variant of 'shelleyEraParams' to be used for a Shelley-only chain.
-shelleyEraParamsNeverHardForks :: SL.ShelleyGenesis -> HardFork.EraParams
-shelleyEraParamsNeverHardForks genesis =
+shelleyEraParamsNeverHardForks ::
+  SL.ShelleyGenesis ->
+  HardFork.PerasEnabled PerasRoundLength ->
+  HardFork.EraParams
+shelleyEraParamsNeverHardForks genesis perasRoundLength =
   HardFork.EraParams
     { eraEpochSize = SL.sgEpochLength genesis
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.UnsafeIndefiniteSafeZone
     , eraGenesisWin = GenesisWindow stabilityWindow
-    , eraPerasRoundLength = HardFork.NoPerasEnabled
+    , eraPerasRoundLength = perasRoundLength
     }
  where
   stabilityWindow =
@@ -716,11 +722,14 @@ applyHelper f cfg blk stBefore = do
   votingDeadline :: SlotNo
   votingDeadline = subSlots (2 * swindow) startOfNextEpoch
 
+-- [TODO PERAS PARAMS PLUMBING] this instance maybe should be split
 instance HasHardForkHistory (ShelleyBlock proto era) where
   type HardForkIndices (ShelleyBlock proto era) = '[ShelleyBlock proto era]
   hardForkSummary =
-    neverForksHardForkSummary $
-      shelleyEraParamsNeverHardForks . shelleyLedgerGenesis
+    neverForksHardForkSummary $ \cfg ->
+      shelleyEraParamsNeverHardForks
+        (shelleyLedgerGenesis cfg)
+        NoPerasEnabled
 
 instance
   ShelleyCompatible proto era =>

@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -43,6 +44,7 @@ import Lens.Micro ((^.))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as History
+import Ouroboros.Consensus.HardFork.History.EraParams (pattern NoPerasEnabled)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -289,7 +291,7 @@ protocolInfoTPraosShelleyBased
         protVer
         genesis
         (shelleyBlockIssuerVKey <$> credentialss)
-
+        NoPerasEnabled -- no era using TPraos supports Peras
     storageConfig :: StorageConfig (ShelleyBlock (TPraos c) era)
     storageConfig =
       ShelleyStorageConfig
