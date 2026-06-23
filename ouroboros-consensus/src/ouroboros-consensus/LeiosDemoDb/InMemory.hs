@@ -111,7 +111,7 @@ newLeiosDBInMemoryWith stateVar = do
               , leiosDbFilterMissingEbBodies = imFilterMissingEbBodies stateVar
               , leiosDbFilterMissingTxs = imFilterMissingTxs stateVar
               , leiosDbQueryFetchWork = imQueryFetchWork stateVar
-              , leiosDbQueryCompletedEbByPoint = imQueryCompletedEbByPoint stateVar
+              , leiosDbQueryCompletedEbByHash = imQueryCompletedEbByHash stateVar
               }
       }
 
@@ -271,11 +271,11 @@ imQueryFetchWork stateVar = atomically $ do
           ]
   pure LeiosFetchWork{missingEbBodies, missingEbTxs}
 
-imQueryCompletedEbByPoint ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe [(TxHash, ByteString)])
-imQueryCompletedEbByPoint stateVar ebPoint = atomically $ do
+imQueryCompletedEbByHash ::
+  IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe [(TxHash, ByteString)])
+imQueryCompletedEbByHash stateVar ebHash = atomically $ do
   state <- readTVar stateVar
-  case Map.lookup (pointEbHash ebPoint) (imEbBodies state) of
+  case Map.lookup ebHash (imEbBodies state) of
     Nothing -> pure Nothing
     Just entries ->
       let ebTxHashes = [eteTxHash e | e <- IntMap.elems entries]

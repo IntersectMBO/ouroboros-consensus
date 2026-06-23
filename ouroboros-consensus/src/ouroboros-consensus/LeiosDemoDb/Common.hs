@@ -79,7 +79,7 @@ data LeiosDbConnection m = LeiosDbConnection
   -- ^ Batch filter: returns the subset of input LeiosPoints whose EB bodies are missing.
   , leiosDbFilterMissingTxs :: HasCallStack => [TxHash] -> m [TxHash]
   -- ^ Batch filter: returns the subset of input TxHashes that we do NOT have.
-  , leiosDbQueryCompletedEbByPoint :: HasCallStack => LeiosPoint -> m (Maybe [(TxHash, ByteString)])
+  , leiosDbQueryCompletedEbByHash :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
   }
 
 instance NoThunks (LeiosDbHandle m) where

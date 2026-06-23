@@ -29,7 +29,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Function ((&))
 import Data.Maybe.Strict (strictMaybeToMaybe)
 import qualified Data.Sequence.Strict as StrictSeq
-import LeiosDemoDb (leiosDbQueryCompletedEbByPoint)
+import LeiosDemoDb (leiosDbQueryCompletedEbByHash)
 import LeiosDemoTypes (EbAnnouncement (..), LeiosPoint (..))
 import Lens.Micro ((.~), (^.))
 import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
@@ -80,9 +80,9 @@ instance
   where
   resolveLeiosClosure leiosDb point _blk = do
     mAnnouncedEb <-
-      leiosDbQueryCompletedEbByPoint
+      leiosDbQueryCompletedEbByHash
         leiosDb
-        point
+        (pointEbHash point)
     case mAnnouncedEb of
       Nothing ->
         pure []
