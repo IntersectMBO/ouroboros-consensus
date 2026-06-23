@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -14,14 +15,16 @@
 -- * Performing and scheduling garbage collections on the VolatileDB
 -- * Writing snapshots of the LedgerDB to disk and deleting old ones
 -- * Executing scheduled chain selections
-module Ouroboros.Consensus.Storage.ChainDB.Impl.Background (
-    -- * Launch background tasks
+module Ouroboros.Consensus.Storage.ChainDB.Impl.Background
+  ( -- * Launch background tasks
     launchBgTasks
+
     -- * Copying blocks from the VolatileDB to the ImmutableDB
-  , copyAndSnapshotRunner
   , copyToImmutableDB
+
     -- * Executing garbage collection
-  , garbageCollect
+  , garbageCollectBlocks
+
     -- * Scheduling garbage collections
   , GcParams (..)
   , GcSchedule
@@ -29,47 +32,63 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background (
   , gcScheduleRunner
   , newGcSchedule
   , scheduleGC
+
     -- ** Testing
   , ScheduledGc (..)
   , dumpGcSchedule
+
     -- * Adding blocks to the ChainDB
   , addBlockRunner
   ) where
 
-import           Cardano.Ledger.BaseTypes (unNonZero)
-import           Control.Exception (assert)
-import           Control.Monad (forM_, forever, void)
-import           Control.Monad.Trans.Class (lift)
-import           Control.ResourceRegistry
-import           Control.Tracer
-import           Data.Foldable (toList)
+import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
+import Control.Exception (assert)
+import Control.Monad (forM_, forever, guard, void, when)
+import Control.Monad.Trans.Class (lift)
+import Control.RAWLock
+import Control.ResourceRegistry
+import Control.Tracer
+import Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
-import           Data.Sequence.Strict (StrictSeq (..))
+import Data.Maybe.Strict (strictMaybeToMaybe)
+import Data.Sequence.Strict (StrictSeq (..))
 import qualified Data.Sequence.Strict as Seq
-import           Data.Time.Clock
-import           Data.Void (Void)
-import           Data.Word
-import           GHC.Generics (Generic)
-import           GHC.Stack (HasCallStack)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.HardFork.Abstract
-import           Ouroboros.Consensus.Ledger.Inspect
-import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockResult (..),
-                     BlockComponent (..))
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
-                     (chainSelSync)
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
+import qualified Data.Set as Set
+import Data.Time.Clock
+import Data.Void (Void)
+import Data.Word
+import GHC.Generics (Generic)
+import GHC.Stack (HasCallStack)
+import LeiosDemoDb.Common
+  ( LeiosEbNotification (..)
+  , leiosDbGarbageCollect
+  , leiosDbPromoteToImmutable
+  , subscribeEbNotifications
+  )
+import LeiosDemoTypes (LeiosPoint, pointEbHash)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.HardFork.Abstract
+import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Storage.ChainDB.API
+  ( AddBlockResult (..)
+  , BlockComponent (..)
+  )
+import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
+  ( chainSelSync
+  )
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
+import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import           Ouroboros.Consensus.Util
-import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Consensus.Util.Enclose (Enclosing' (..))
-import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Network.AnchoredFragment (AnchoredSeq (..))
+import Ouroboros.Consensus.Util
+import Ouroboros.Consensus.Util.Condense
+import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.STM (Watcher (..), forkLinkedWatcher)
+import Ouroboros.Network.AnchoredFragment (AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
 {-------------------------------------------------------------------------------
@@ -77,38 +96,96 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 -------------------------------------------------------------------------------}
 
 launchBgTasks ::
-     forall m blk.
-     ( IOLike m
-     , LedgerSupportsProtocol blk
-     , BlockSupportsDiffusionPipelining blk
-     , InspectLedger blk
-     , HasHardForkHistory blk
-     )
-  => ChainDbEnv m blk
-  -> Word64 -- ^ Number of immutable blocks replayed on ledger DB startup
-  -> m ()
+  forall m blk.
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsDiffusionPipelining blk
+  , InspectLedger blk
+  , HasHardForkHistory blk
+  ) =>
+  ChainDbEnv m blk ->
+  -- | Number of immutable blocks replayed on ledger DB startup
+  Word64 ->
+  m ()
 launchBgTasks cdb@CDB{..} replayed = do
-    !addBlockThread <- launch "ChainDB.addBlockRunner" $
+  !addBlockThread <-
+    launch "ChainDB.addBlockRunner" $
       addBlockRunner cdbChainSelFuse cdb
-    gcSchedule <- newGcSchedule
-    !gcThread <- launch "ChainDB.gcScheduleRunner" $
-      gcScheduleRunner gcSchedule $ garbageCollect cdb
-    !copyAndSnapshotThread <- launch "ChainDB.copyAndSnapshotRunner" $
-      copyAndSnapshotRunner cdb gcSchedule replayed cdbCopyFuse
-    atomically $ writeTVar cdbKillBgThreads $
-      sequence_ [addBlockThread, gcThread, copyAndSnapshotThread]
-  where
-    launch :: String -> m Void -> m (m ())
-    launch = fmap cancelThread .: forkLinkedThread cdbRegistry
+
+  ledgerDbTasksTrigger <- newLedgerDbTasksTrigger replayed
+  !ledgerDbMaintenaceThread <-
+    forkLinkedWatcher cdbRegistry "ChainDB.ledgerDbTaskWatcher" $
+      ledgerDbTaskWatcher cdb ledgerDbTasksTrigger
+
+  gcSchedule <- newGcSchedule
+  !gcThread <-
+    launch "ChainDB.gcBlocksScheduleRunner" $
+      gcScheduleRunner gcSchedule $
+        garbageCollectBlocks cdb
+
+  !copyToImmutableDBThread <-
+    launch "ChainDB.copyToImmutableDBRunner" $
+      copyToImmutableDBRunner cdb ledgerDbTasksTrigger gcSchedule
+
+  !leiosAcquiredThread <-
+    launch "ChainDB.leiosAcquiredEbsRunner" $
+      leiosAcquiredEbsRunner cdb
+
+  atomically $
+    writeTVar cdbKillBgThreads $
+      sequence_
+        [ addBlockThread
+        , cancelThread ledgerDbMaintenaceThread
+        , gcThread
+        , copyToImmutableDBThread
+        , leiosAcquiredThread
+        ]
+ where
+  launch :: String -> m Void -> m (m ())
+  launch = fmap cancelThread .: forkLinkedThread cdbRegistry
+
+-- | Grow the ChainDB-owned acquired-EB-closures set ('cdbAcquiredLeiosEbs')
+-- from the LeiosDb's closure-completion notifications, and enqueue a reprocess
+-- of the cert-RBs parked on each newly-acquired EB.
+--
+-- This is the runtime half of maintaining that set; the other half is the seed
+-- at ChainDB open (see 'cdbAcquiredLeiosEbs'). One notification at a time: add
+-- the EB to the set, and if it was novel, enqueue a 'ChainSelReprocessLeiosEb'
+-- so the @addBlockRunner@ reconsiders the parked cert-RBs in FIFO order with
+-- the other chain work -- one EB per message, competing for queue slots like
+-- any other writer. The novelty check makes duplicate 'AcquiredEbTxs'
+-- (which the LeiosDb may emit) idempotent: a re-add enqueues nothing. The set
+-- is updated before the (possibly blocking) enqueue, so a backed-up queue does
+-- not stop ChainSel from observing the closure via the set in the meantime.
+leiosAcquiredEbsRunner ::
+  IOLike m =>
+  ChainDbEnv m blk ->
+  m Void
+leiosAcquiredEbsRunner CDB{..} = do
+  chan <- subscribeEbNotifications cdbLeiosDb
+  forever $
+    atomically (readTChan chan) >>= \case
+      AcquiredEb{} -> pure ()
+      AcquiredEbTxs point -> do
+        let ebHash = pointEbHash point
+        novel <- atomically $ do
+          acquired <- readTVar cdbAcquiredLeiosEbs
+          if Set.member ebHash acquired
+            then pure False
+            else do
+              writeTVar cdbAcquiredLeiosEbs (Set.insert ebHash acquired)
+              pure True
+        when novel $ addReprocessLeiosEb ebHash cdbChainSelQueue
 
 {-------------------------------------------------------------------------------
   Copying blocks from the VolatileDB to the ImmutableDB
 -------------------------------------------------------------------------------}
 
--- | Copy the blocks older than @k@ from the VolatileDB to the ImmutableDB.
+-- | Copy the blocks older than the immutable tip from the VolatileDB to the
+-- ImmutableDB.
 --
--- These headers of these blocks can be retrieved by dropping the @k@ most
--- recent blocks from the fragment stored in 'cdbChain'.
+-- The headers of these blocks can be retrieved by considering headers in
+-- 'cdbChain' that are not also in 'getCurrentChain' (a suffix of 'cdbChain').
 --
 -- The copied blocks are removed from the fragment stored in 'cdbChain'.
 --
@@ -117,89 +194,114 @@ launchBgTasks cdb@CDB{..} replayed = do
 -- The 'SlotNo' of the tip of the ImmutableDB after copying the blocks is
 -- returned. This can be used for a garbage collection on the VolatileDB.
 copyToImmutableDB ::
-     forall m blk.
-     ( IOLike m
-     , ConsensusProtocol (BlockProtocol blk)
-     , HasHeader blk
-     , GetHeader blk
-     , HasCallStack
-     )
-  => ChainDbEnv m blk
-  -> Electric m (WithOrigin SlotNo)
-copyToImmutableDB CDB{..} = electric $ do
-    toCopy <- atomically $ do
-      curChain <- icWithoutTime <$> readTVar cdbChain
-      let nbToCopy = max 0 (AF.length curChain - fromIntegral (unNonZero k))
-          toCopy :: [Point blk]
-          toCopy = map headerPoint
-                 $ AF.toOldestFirst
-                 $ AF.takeOldest nbToCopy curChain
-      return toCopy
+  forall m blk.
+  ( IOLike m
+  , ConsensusProtocol (BlockProtocol blk)
+  , HasHeader blk
+  , GetHeader blk
+  , HasCallStack
+  ) =>
+  ChainDbEnv m blk ->
+  m (WithOrigin SlotNo)
+copyToImmutableDB cdb@CDB{..} = withWriteAccess cdbImmutableDBLock $ \() -> do
+  toCopy <- atomically $ do
+    curChain <- icWithoutTime <$> readTVar cdbChain
+    curChainVolSuffix <- Query.getCurrentChain cdb
+    let nbToCopy = max 0 $ AF.length curChain - AF.length curChainVolSuffix
+        toCopy :: [Point blk]
+        toCopy =
+          map headerPoint $
+            AF.toOldestFirst $
+              AF.takeOldest nbToCopy curChain
+    return toCopy
 
-    if null toCopy
-      -- This can't happen in practice, as we're only called when the fragment
-      -- is longer than @k@. However, in the tests, we will be calling this
-      -- function manually, which means it might be called when there are no
-      -- blocks to copy.
-      then trace NoBlocksToCopyToImmutableDB
-      else forM_ toCopy $ \pt -> do
-        let hash = case pointHash pt of
-              BlockHash h -> h
-              -- There is no actual genesis block that can occur on a chain
-              GenesisHash -> error "genesis block on current chain"
-        slotNoAtImmutableDBTip <- atomically $ ImmutableDB.getTipSlot cdbImmutableDB
-        assert (pointSlot pt >= slotNoAtImmutableDBTip) $ return ()
-        -- When the block is corrupt, the function below will throw an
-        -- exception. This exception will make sure that we shut down the node
-        -- and that the next time we start, validation will be enabled.
-        blk <- VolatileDB.getKnownBlockComponent cdbVolatileDB GetVerifiedBlock hash
-        -- We're the only one modifying the ImmutableDB, so the tip cannot
-        -- have changed since we last checked it.
-        ImmutableDB.appendBlock cdbImmutableDB blk
-        -- TODO the invariant of 'cdbChain' is shortly violated between
-        -- these two lines: the tip was updated on the line above, but the
-        -- anchor point is only updated on the line below.
-        atomically $ removeFromChain pt
-        trace $ CopiedBlockToImmutableDB pt
+  if null toCopy
+    -- This can't happen in practice, as we're only called when there are new
+    -- immutable blocks. However, in the tests, we will be calling this function
+    -- manually, which means it might be called when there are no blocks to
+    -- copy.
+    then trace NoBlocksToCopyToImmutableDB
+    else forM_ toCopy $ \pt -> do
+      let hash = case pointHash pt of
+            BlockHash h -> h
+            -- There is no actual genesis block that can occur on a chain
+            GenesisHash -> error "genesis block on current chain"
+      slotNoAtImmutableDBTip <- atomically $ ImmutableDB.getTipSlot cdbImmutableDB
+      assert (pointSlot pt >= slotNoAtImmutableDBTip) $ return ()
+      -- When the block is corrupt, the function below will throw an
+      -- exception. This exception will make sure that we shut down the node
+      -- and that the next time we start, validation will be enabled.
+      blk <- VolatileDB.getKnownBlockComponent cdbVolatileDB GetVerifiedBlock hash
+      -- We're the only one modifying the ImmutableDB, so the tip cannot
+      -- have changed since we last checked it.
+      ImmutableDB.appendBlock cdbImmutableDB blk
+      -- This block is now immutable. If it is a cert-RB, immutalise the EB it
+      -- /certifies/ -- the one its predecessor announced -- before the later,
+      -- slot-scheduled VolatileDB-side GC can evict its body and closure. By the
+      -- parking invariant a cert-RB is only selected once its certified EB's
+      -- closure is acquired, so an immutalised cert-RB's closure is necessarily
+      -- present (and complete) now. See 'leiosDbPromoteToImmutable'.
+      getBI <- atomically $ VolatileDB.getBlockInfo cdbVolatileDB
+      forM_ (certifiedEb getBI hash) $ leiosDbPromoteToImmutable cdbLeiosDb
+      -- TODO the invariant of 'cdbChain' is shortly violated between
+      -- these two lines: the tip was updated on the line above, but the
+      -- anchor point is only updated on the line below.
+      atomically $ removeFromChain pt
+      trace $ CopiedBlockToImmutableDB pt
 
-    -- Get the /possibly/ updated tip of the ImmutableDB
-    atomically $ ImmutableDB.getTipSlot cdbImmutableDB
-  where
-    SecurityParam k = configSecurityParam cdbTopLevelConfig
-    trace = traceWith (contramap TraceCopyToImmutableDBEvent cdbTracer)
+  -- Get the /possibly/ updated tip of the ImmutableDB
+  (,()) <$> atomically (ImmutableDB.getTipSlot cdbImmutableDB)
+ where
+  trace = traceWith (contramap TraceCopyToImmutableDBEvent cdbTracer)
 
-    -- | Remove the header corresponding to the given point from the beginning
-    -- of the current chain fragment.
-    --
-    -- PRECONDITION: the header must be the first one (oldest) in the chain
-    removeFromChain :: Point blk -> STM m ()
-    removeFromChain pt = do
-      -- The chain might have been extended in the meantime.
-      readTVar cdbChain >>= \case
-        InternalChain (hdr :< newChain) (_hwt :< newChainWithTime)
-          | headerPoint hdr == pt
-          -> writeTVar cdbChain $ InternalChain newChain newChainWithTime
-        -- We're the only one removing things from 'cdbChain', so this cannot
-        -- happen if the precondition was satisfied.
-        _ -> error "header to remove not on the current chain"
+  -- The EB the given block certifies, if it is a cert-RB: the EB its
+  -- predecessor announced. Mirrors 'isUnacquiredCertRB'. The predecessor of any
+  -- block being copied is either another copied block or the prior immutable
+  -- tip -- all still in the VolatileDB, whose GC is strict older-than and runs
+  -- only after a copy -- so the lookup succeeds.
+  certifiedEb ::
+    (HeaderHash blk -> Maybe (VolatileDB.BlockInfo blk)) ->
+    HeaderHash blk ->
+    Maybe LeiosPoint
+  certifiedEb getBI h = do
+    info <- getBI h
+    guard (VolatileDB.biHasLeiosCert info)
+    predHash <- case VolatileDB.biPrevHash info of
+      GenesisHash -> Nothing
+      BlockHash predHash -> Just predHash
+    predInfo <- getBI predHash
+    strictMaybeToMaybe (VolatileDB.biLeiosAnnouncedEb predInfo)
+
+  -- \| Remove the header corresponding to the given point from the beginning
+  -- of the current chain fragment.
+  --
+  -- PRECONDITION: the header must be the first one (oldest) in the chain
+  removeFromChain :: Point blk -> STM m ()
+  removeFromChain pt = do
+    -- The chain might have been extended in the meantime.
+    readTVar cdbChain >>= \case
+      InternalChain (hdr :< newChain) (_hwt :< newChainWithTime)
+        | headerPoint hdr == pt ->
+            writeTVar cdbChain $ InternalChain newChain newChainWithTime
+      -- We're the only one removing things from 'cdbChain', so this cannot
+      -- happen if the precondition was satisfied.
+      _ -> error "header to remove not on the current chain"
 
 {-------------------------------------------------------------------------------
-  Snapshotting
+  Copy to ImmutableDB
 -------------------------------------------------------------------------------}
 
--- | Copy blocks from the VolatileDB to ImmutableDB and take snapshots of the
--- LedgerDB
+-- | Copy blocks from the VolatileDB to ImmutableDB and trigger further tasks in
+-- other threads.
 --
--- We watch the chain for changes. Whenever the chain is longer than @k@, then
--- the headers older than @k@ are copied from the VolatileDB to the ImmutableDB
--- (using 'copyToImmutableDB'). Once that is complete,
+-- Wait until the current chain ('cdbChain') is longer than its volatile suffix
+-- ('getCurrentChain'). When this occurs, it indicates that new blocks have
+-- become immutable. These newly immutable blocks are then copied from the
+-- VolatileDB to the ImmutableDB (using 'copyToImmutableDB'). Once that is
+-- complete,
 --
--- * We periodically take a snapshot of the LedgerDB (depending on its config).
---   When enough blocks (depending on its config) have been replayed during
---   startup, a snapshot of the replayed LedgerDB will be written to disk at the
---   start of this function. NOTE: After this initial snapshot we do not take a
---   snapshot of the LedgerDB until the chain has changed again, irrespective of
---   the LedgerDB policy.
+-- * Trigger LedgerDB maintenance tasks, namely flushing, taking snapshots and
+--   garbage collection.
 --
 -- * Schedule GC of the VolatileDB ('scheduleGC') for the 'SlotNo' of the most
 --   recent block that was copied.
@@ -214,61 +316,149 @@ copyToImmutableDB CDB{..} = electric $ do
 -- GC can happen, when we restart the node and schedule the /next/ GC, it will
 -- /imply/ any previously scheduled GC, since GC is driven by slot number
 -- ("garbage collect anything older than @x@").
-copyAndSnapshotRunner ::
-     forall m blk.
-     ( IOLike m
-     , LedgerSupportsProtocol blk
-     )
-  => ChainDbEnv m blk
-  -> GcSchedule m
-  -> Word64 -- ^ Number of immutable blocks replayed on ledger DB startup
-  -> Fuse m
-  -> m Void
-copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse = do
-    -- this first flush will persist the differences that come from the initial
-    -- chain selection.
-    LedgerDB.tryFlush cdbLedgerDB
-    loop =<< LedgerDB.tryTakeSnapshot cdbLedgerDB Nothing replayed
-  where
-    SecurityParam k = configSecurityParam cdbTopLevelConfig
+copyToImmutableDBRunner ::
+  forall m blk.
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  ) =>
+  ChainDbEnv m blk ->
+  LedgerDbTasksTrigger m ->
+  GcSchedule m ->
+  m Void
+copyToImmutableDBRunner cdb@CDB{..} ledgerDbTasksTrigger gcSchedule = do
+  -- this first flush will persist the differences that come from the initial
+  -- chain selection.
+  LedgerDB.tryFlush cdbLedgerDB
+  forever copyAndTrigger
+ where
+  copyAndTrigger :: m ()
+  copyAndTrigger = do
+    -- Wait for 'cdbChain' to become longer than 'getCurrentChain'.
+    numToWrite <- atomically $ do
+      curChain <- icWithoutTime <$> readTVar cdbChain
+      curChainVolSuffix <- Query.getCurrentChain cdb
+      let numToWrite = AF.length curChain - AF.length curChainVolSuffix
+      check $ numToWrite > 0
+      return $ fromIntegral numToWrite
 
-    loop :: LedgerDB.SnapCounters -> m Void
-    loop counters = do
-      let LedgerDB.SnapCounters {
-              prevSnapshotTime
-            , ntBlocksSinceLastSnap
-            } = counters
+    -- Copy blocks to ImmutableDB
+    --
+    -- This is a synchronous operation: when it returns, the blocks have been
+    -- copied to disk (though not flushed, necessarily).
+    gcSlotNo <- copyToImmutableDB cdb
 
-      -- Wait for the chain to grow larger than @k@
-      numToWrite <- atomically $ do
-        curChain <- icWithoutTime <$> readTVar cdbChain
-        check $ fromIntegral (AF.length curChain) > unNonZero k
-        return $ fromIntegral (AF.length curChain) - unNonZero k
+    triggerLedgerDbTasks ledgerDbTasksTrigger gcSlotNo numToWrite
+    -- Prune the acquired-EB set now, as the GC is scheduled. The GC (and the
+    -- LeiosDb closure eviction it drives) only runs at least 'cdbGcDelay' later,
+    -- so the set stops advertising a closure well before that closure can be
+    -- evicted.
+    pruneAcquiredLeiosEbs cdb gcSlotNo
+    scheduleGC' gcSlotNo
 
-      -- Copy blocks to ImmutableDB
-      --
-      -- This is a synchronous operation: when it returns, the blocks have been
-      -- copied to disk (though not flushed, necessarily).
-      withFuse fuse (copyToImmutableDB cdb) >>= scheduleGC'
+  scheduleGC' :: WithOrigin SlotNo -> m ()
+  scheduleGC' Origin = return ()
+  scheduleGC' (NotOrigin slotNo) =
+    scheduleGC
+      (contramap TraceGCEvent cdbTracer)
+      slotNo
+      GcParams
+        { gcDelay = cdbGcDelay
+        , gcInterval = cdbGcInterval
+        }
+      gcSchedule
 
-      LedgerDB.tryFlush cdbLedgerDB
+{-------------------------------------------------------------------------------
+  LedgerDB maintenance tasks
+-------------------------------------------------------------------------------}
 
-      now <- getMonotonicTime
-      let ntBlocksSinceLastSnap' = ntBlocksSinceLastSnap + numToWrite
+-- | Trigger for the LedgerDB maintenance tasks, namely whenever the immutable
+-- DB tip slot advances when we finish copying blocks to it.
+newtype LedgerDbTasksTrigger m
+  = LedgerDbTasksTrigger (StrictTVar m LedgerDbTaskState)
 
-      loop =<< LedgerDB.tryTakeSnapshot cdbLedgerDB ((,now) <$> prevSnapshotTime) ntBlocksSinceLastSnap'
+data LedgerDbTaskState = LedgerDbTaskState
+  { ldbtsImmTip :: !(WithOrigin SlotNo)
+  , ldbtsPrevSnapshotTime :: !(Maybe Time)
+  , ldbtsBlocksSinceLastSnapshot :: !Word64
+  }
+  deriving stock Generic
+  deriving anyclass NoThunks
 
-    scheduleGC' :: WithOrigin SlotNo -> m ()
-    scheduleGC' Origin             = return ()
-    scheduleGC' (NotOrigin slotNo) =
-        scheduleGC
-          (contramap TraceGCEvent cdbTracer)
-          slotNo
-          GcParams {
-              gcDelay    = cdbGcDelay
-            , gcInterval = cdbGcInterval
-            }
-          gcSchedule
+newLedgerDbTasksTrigger ::
+  IOLike m =>
+  -- | Number of blocks replayed.
+  Word64 ->
+  m (LedgerDbTasksTrigger m)
+newLedgerDbTasksTrigger replayed = LedgerDbTasksTrigger <$> newTVarIO st
+ where
+  st =
+    LedgerDbTaskState
+      { ldbtsImmTip = Origin
+      , ldbtsPrevSnapshotTime = Nothing
+      , ldbtsBlocksSinceLastSnapshot = replayed
+      }
+
+triggerLedgerDbTasks ::
+  forall m.
+  IOLike m =>
+  LedgerDbTasksTrigger m ->
+  -- | New tip of the ImmutableDB.
+  WithOrigin SlotNo ->
+  -- | Number of blocks written to the ImmutableDB.
+  Word64 ->
+  m ()
+triggerLedgerDbTasks (LedgerDbTasksTrigger varSt) immTip numWritten =
+  atomically $ modifyTVar varSt $ \st ->
+    st
+      { ldbtsImmTip = immTip
+      , ldbtsBlocksSinceLastSnapshot = ldbtsBlocksSinceLastSnapshot st + numWritten
+      }
+
+-- | Run LedgerDB maintenance tasks when 'LedgerDbTasksTrigger' changes.
+--
+--  * Flushing of differences.
+--  * Taking snapshots.
+--  * Garbage collection.
+ledgerDbTaskWatcher ::
+  forall m blk.
+  (IOLike m, ConsensusProtocol (BlockProtocol blk), GetHeader blk, HasHeader blk) =>
+  ChainDbEnv m blk ->
+  LedgerDbTasksTrigger m ->
+  Watcher m LedgerDbTaskState (WithOrigin SlotNo)
+ledgerDbTaskWatcher cdb@CDB{..} (LedgerDbTasksTrigger varSt) =
+  Watcher
+    { wFingerprint = ldbtsImmTip
+    , wInitial = Nothing
+    , wReader = readTVar varSt
+    , wNotify =
+        \LedgerDbTaskState
+           { ldbtsImmTip
+           , ldbtsBlocksSinceLastSnapshot = blocksSinceLast
+           , ldbtsPrevSnapshotTime = prevSnapTime
+           } ->
+            whenJust (withOriginToMaybe ldbtsImmTip) $ \slotNo -> do
+              LedgerDB.tryFlush cdbLedgerDB
+
+              now <- getMonotonicTime
+              LedgerDB.SnapCounters
+                { prevSnapshotTime
+                , ntBlocksSinceLastSnap
+                } <-
+                LedgerDB.tryTakeSnapshot
+                  cdbLedgerDB
+                  (void $ copyToImmutableDB cdb)
+                  ((,now) <$> prevSnapTime)
+                  blocksSinceLast
+              when (ntBlocksSinceLastSnap == 0) $ traceMarkerIO "Took snapshot"
+              atomically $ modifyTVar varSt $ \st ->
+                st
+                  { ldbtsBlocksSinceLastSnapshot =
+                      ldbtsBlocksSinceLastSnapshot st - blocksSinceLast + ntBlocksSinceLastSnap
+                  , ldbtsPrevSnapshotTime = prevSnapshotTime
+                  }
+
+              LedgerDB.garbageCollect cdbLedgerDB slotNo
+    }
 
 {-------------------------------------------------------------------------------
   Executing garbage collection
@@ -276,9 +466,6 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse = do
 
 -- | Trigger a garbage collection for blocks older than the given 'SlotNo' on
 -- the VolatileDB.
---
--- Also removes the corresponding cached "previously applied points" from the
--- LedgerDB.
 --
 -- This is thread-safe as the VolatileDB locks itself while performing a GC.
 --
@@ -289,13 +476,43 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse = do
 --
 -- TODO will a long GC be a bottleneck? It will block any other calls to
 -- @putBlock@ and @getBlock@.
-garbageCollect :: forall m blk. IOLike m => ChainDbEnv m blk -> SlotNo -> m ()
-garbageCollect CDB{..} slotNo = do
-    VolatileDB.garbageCollect cdbVolatileDB slotNo
-    atomically $ do
-      LedgerDB.garbageCollect cdbLedgerDB slotNo
-      modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
-    traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
+garbageCollectBlocks :: forall m blk. IOLike m => ChainDbEnv m blk -> SlotNo -> m ()
+garbageCollectBlocks CDB{..} slotNo = do
+  VolatileDB.garbageCollect cdbVolatileDB slotNo
+  atomically $ do
+    modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
+  PerasCertDB.garbageCollect cdbPerasCertDB slotNo
+  -- Evict LeiosDb EB bodies and closures no longer needed now that everything
+  -- up to 'slotNo' is immutable. Driven by the same scheduled slot as the other
+  -- stores; currently a no-op (see 'leiosDbGarbageCollect').
+  leiosDbGarbageCollect cdbLeiosDb slotNo
+  traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
+
+-- | Prune the acquired-EB set ('cdbAcquiredLeiosEbs') down to the EBs that
+-- still have an announcer at or after the given (immutable tip) slot. An EB is
+-- dropped only when /every/ announcer of it is /strictly/ older than the
+-- immutable tip.
+--
+-- The strictness is essential: the announcement made by the immutable tip
+-- itself is certified by the tip's /successor/, which is still in the volatile
+-- suffix -- so a live RB may yet certify that EB, and it must be kept. Only when
+-- an announcer is strictly older than the tip is its certifying successor (the
+-- next block) necessarily at or before the tip, hence immutable; then the EB
+-- can no longer be newly certified and ChainSel will never reconsider it.
+--
+-- Called as a VolatileDB GC is /scheduled/ (see 'copyToImmutableDBRunner'),
+-- which is at least @cdbGcDelay@ before that GC -- and the LeiosDb closure
+-- eviction it drives -- actually runs. So the acquired set stops advertising a
+-- closure well before the closure itself can be evicted.
+pruneAcquiredLeiosEbs ::
+  IOLike m => ChainDbEnv m blk -> WithOrigin SlotNo -> m ()
+pruneAcquiredLeiosEbs CDB{..} immTip = atomically $ do
+  getAnnouncers <- VolatileDB.getLeiosAnnouncers cdbVolatileDB
+  let keep eb = any ((>= immTip) . pointSlot) (getAnnouncers eb)
+  acquired <- readTVar cdbAcquiredLeiosEbs
+  let acquired' = Set.filter keep acquired
+  when (Set.size acquired' /= Set.size acquired) $
+    writeTVar cdbAcquiredLeiosEbs acquired'
 
 {-------------------------------------------------------------------------------
   Scheduling garbage collections
@@ -369,54 +586,59 @@ garbageCollect CDB{..} slotNo = do
 -- precisely because of batching.
 newtype GcSchedule m = GcSchedule (StrictTVar m (StrictSeq ScheduledGc))
 
-data ScheduledGc = ScheduledGc {
-      scheduledGcTime :: !Time
-      -- ^ Time at which to run the garbage collection
-    , scheduledGcSlot :: !SlotNo
-      -- ^ For which slot to run the garbage collection
-    }
+data ScheduledGc = ScheduledGc
+  { scheduledGcTime :: !Time
+  -- ^ Time at which to run the garbage collection
+  , scheduledGcSlot :: !SlotNo
+  -- ^ For which slot to run the garbage collection
+  }
   deriving (Eq, Show, Generic, NoThunks)
 
 instance Condense ScheduledGc where
   condense (ScheduledGc time slot) = condense (time, slot)
 
-data GcParams = GcParams {
-      gcDelay    :: !DiffTime
-      -- ^ How long to wait until performing the GC. See 'cdbsGcDelay'.
-    , gcInterval :: !DiffTime
-      -- ^ The GC interval: the minimum time between two GCs. See
-      -- 'cdbsGcInterval'.
-    }
-  deriving (Show)
+data GcParams = GcParams
+  { gcDelay :: !DiffTime
+  -- ^ How long to wait until performing the GC. See 'cdbsGcDelay'.
+  , gcInterval :: !DiffTime
+  -- ^ The GC interval: the minimum time between two GCs. See
+  -- 'cdbsGcInterval'.
+  }
+  deriving Show
 
 newGcSchedule :: IOLike m => m (GcSchedule m)
 newGcSchedule = GcSchedule <$> newTVarIO Seq.empty
 
 scheduleGC ::
-     forall m blk. IOLike m
-  => Tracer m (TraceGCEvent blk)
-  -> SlotNo    -- ^ The slot to use for garbage collection
-  -> GcParams
-  -> GcSchedule m
-  -> m ()
+  forall m blk.
+  IOLike m =>
+  Tracer m (TraceGCEvent blk) ->
+  -- | The slot to use for garbage collection
+  SlotNo ->
+  GcParams ->
+  GcSchedule m ->
+  m ()
 scheduleGC tracer slotNo gcParams (GcSchedule varQueue) = do
-    timeScheduledForGC <- computeTimeForGC gcParams <$> getMonotonicTime
-    atomically $ modifyTVar varQueue $ \case
-      queue' :|> ScheduledGc { scheduledGcTime = lastTimeScheduledForGC }
-        | timeScheduledForGC == lastTimeScheduledForGC
-        -- Same interval, batch it
-        -> queue' :|> ScheduledGc timeScheduledForGC slotNo
-      queue
-        -- Different interval or empty, so append it
-        -> queue  :|> ScheduledGc timeScheduledForGC slotNo
-    traceWith tracer $ ScheduledGC slotNo timeScheduledForGC
+  timeScheduledForGC <- computeTimeForGC gcParams <$> getMonotonicTime
+  atomically $ modifyTVar varQueue $ \case
+    queue' :|> ScheduledGc{scheduledGcTime = lastTimeScheduledForGC}
+      | timeScheduledForGC == lastTimeScheduledForGC ->
+          -- Same interval, batch it
+          queue' :|> ScheduledGc timeScheduledForGC slotNo
+    queue ->
+      -- Different interval or empty, so append it
+      queue :|> ScheduledGc timeScheduledForGC slotNo
+  traceWith tracer $ ScheduledGC slotNo timeScheduledForGC
 
 computeTimeForGC ::
-     GcParams
-  -> Time  -- ^ Now
-  -> Time  -- ^ The time at which to perform the GC
-computeTimeForGC GcParams { gcDelay, gcInterval } (Time now) =
-    Time $ picosecondsToDiffTime $
+  GcParams ->
+  -- | Now
+  Time ->
+  -- | The time at which to perform the GC
+  Time
+computeTimeForGC GcParams{gcDelay, gcInterval} (Time now) =
+  Time $
+    picosecondsToDiffTime $
       -- We're rounding up to the nearest interval, because rounding down
       -- would mean GC'ing too early.
       roundUpToInterval
@@ -434,34 +656,38 @@ computeTimeForGC GcParams { gcDelay, gcInterval } (Time now) =
 -- > == 0
 roundUpToInterval :: (Integral a, Integral b) => b -> a -> a
 roundUpToInterval interval x
-    | m == 0
-    = d * fromIntegral interval
-    | otherwise
-    = (d + 1) * fromIntegral interval
-  where
-    (d, m) = x `divMod` fromIntegral interval
+  | m == 0 =
+      d * fromIntegral interval
+  | otherwise =
+      (d + 1) * fromIntegral interval
+ where
+  (d, m) = x `divMod` fromIntegral interval
 
 gcScheduleRunner ::
-     forall m. IOLike m
-  => GcSchedule m
-  -> (SlotNo -> m ())  -- ^ GC function
-  -> m Void
+  forall m.
+  IOLike m =>
+  GcSchedule m ->
+  -- | GC function
+  (SlotNo -> m ()) ->
+  m Void
 gcScheduleRunner (GcSchedule varQueue) runGc = forever $ do
-    -- Peek to know how long to wait
-    timeScheduledForGC <- atomically $
+  -- Peek to know how long to wait
+  timeScheduledForGC <-
+    atomically $
       readTVar varQueue >>= \case
-        Seq.Empty                             -> retry
-        ScheduledGc { scheduledGcTime } :<| _ -> return scheduledGcTime
+        Seq.Empty -> retry
+        ScheduledGc{scheduledGcTime} :<| _ -> return scheduledGcTime
 
-    currentTime <- getMonotonicTime
-    let toWait = max 0 (timeScheduledForGC `diffTime` currentTime)
-    threadDelay toWait
+  currentTime <- getMonotonicTime
+  let toWait = max 0 (timeScheduledForGC `diffTime` currentTime)
+  threadDelay toWait
 
-    -- After waiting, find the slot for which to GC and remove the entry from
-    -- the queue.
-    slotNo <- atomically $
+  -- After waiting, find the slot for which to GC and remove the entry from
+  -- the queue.
+  slotNo <-
+    atomically $
       readTVar varQueue >>= \case
-        ScheduledGc { scheduledGcSlot } :<| queue' -> do
+        ScheduledGc{scheduledGcSlot} :<| queue' -> do
           writeTVar varQueue queue'
           return scheduledGcSlot
 
@@ -470,8 +696,8 @@ gcScheduleRunner (GcSchedule varQueue) runGc = forever $ do
         -- while we were waiting.
         Seq.Empty -> error "queue empty after waiting"
 
-    -- Garbage collection is called synchronously
-    runGc slotNo
+  -- Garbage collection is called synchronously
+  runGc slotNo
 
 -- | Return the current contents of the 'GcSchedule' queue without modifying
 -- it.
@@ -487,43 +713,57 @@ dumpGcSchedule (GcSchedule varQueue) = toList <$> readTVar varQueue
 -- | Read blocks from 'cdbChainSelQueue' and add them synchronously to the
 -- ChainDB.
 addBlockRunner ::
-     ( IOLike m
-     , LedgerSupportsProtocol blk
-     , BlockSupportsDiffusionPipelining blk
-     , InspectLedger blk
-     , HasHardForkHistory blk
-     , HasCallStack
-     )
-  => Fuse m
-  -> ChainDbEnv m blk
-  -> m Void
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , BlockSupportsDiffusionPipelining blk
+  , InspectLedger blk
+  , HasHardForkHistory blk
+  , HasCallStack
+  ) =>
+  Fuse m ->
+  ChainDbEnv m blk ->
+  m Void
 addBlockRunner fuse cdb@CDB{..} = forever $ do
-    let trace = traceWith cdbTracer . TraceAddBlockEvent
-    trace $ PoppedBlockFromQueue RisingEdge
-    -- if the `chainSelSync` does not complete because it was killed by an async
-    -- exception (or it errored), notify the blocked thread
-    withFuse fuse $
-      bracketOnError
-        (lift $ getChainSelMessage starvationTracer cdbChainSelStarvation cdbChainSelQueue)
-        (\message -> lift $ atomically $ do
+  let trace = traceWith cdbTracer . TraceAddBlockEvent
+  trace PoppingFromQueue
+  -- if the `chainSelSync` does not complete because it was killed by an async
+  -- exception (or it errored), notify the blocked thread
+  withFuse fuse $
+    bracketOnError
+      (lift $ getChainSelMessage starvationTracer cdbChainSelStarvation cdbChainSelQueue)
+      ( \message -> lift $ atomically $ do
           case message of
             ChainSelReprocessLoEBlocks varProcessed ->
               void $ tryPutTMVar varProcessed ()
+            -- Fire-and-forget: no promise to fulfil.
+            ChainSelReprocessLeiosEb _ -> pure ()
             ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
-              _ <- tryPutTMVar varBlockWrittenToDisk
-                              False
-              _ <- tryPutTMVar varBlockProcessed
-                              (FailedToAddBlock "Failed to add block synchronously")
+              _ <-
+                tryPutTMVar
+                  varBlockWrittenToDisk
+                  False
+              _ <-
+                tryPutTMVar
+                  varBlockProcessed
+                  (FailedToAddBlock "Failed to add block synchronously")
               pure ()
-          closeChainSelQueue cdbChainSelQueue)
-        (\message -> do
+            ChainSelAddPerasCert _cert varProcessed ->
+              void $ tryPutTMVar varProcessed ()
+          closeChainSelQueue cdbChainSelQueue
+      )
+      ( \message -> do
           lift $ case message of
             ChainSelReprocessLoEBlocks _ ->
               trace PoppedReprocessLoEBlocksFromQueue
+            ChainSelReprocessLeiosEb _ -> pure ()
             ChainSelAddBlock BlockToAdd{blockToAdd} ->
-              trace $ PoppedBlockFromQueue $ FallingEdgeWith $
-                      blockRealPoint blockToAdd
+              trace $ PoppedBlockFromQueue $ blockRealPoint blockToAdd
+            ChainSelAddPerasCert cert _varProcessed ->
+              traceWith cdbTracer $
+                TraceAddPerasCertEvent $
+                  PoppedPerasCertFromQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
           chainSelSync cdb message
-          lift $ atomically $ processedChainSelMessage cdbChainSelQueue message)
-  where
-    starvationTracer = Tracer $ traceWith cdbTracer . TraceChainSelStarvationEvent
+          lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
+      )
+ where
+  starvationTracer = Tracer $ traceWith cdbTracer . TraceChainSelStarvationEvent

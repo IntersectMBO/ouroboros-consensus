@@ -14,8 +14,8 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Ouroboros.Consensus.Protocol.Praos (
-    ConsensusConfig (..)
+module Ouroboros.Consensus.Protocol.Praos
+  ( ConsensusConfig (..)
   , Praos
   , PraosCannotForge (..)
   , PraosCrypto
@@ -28,79 +28,110 @@ module Ouroboros.Consensus.Protocol.Praos (
   , Ticked (..)
   , forgePraosFields
   , praosCheckCanForge
+
     -- * For testing purposes
   , doValidateKESSignature
   , doValidateVRFSignature
   ) where
 
-import           Cardano.Binary (FromCBOR (..), ToCBOR (..), enforceSize)
+import Cardano.Binary (FromCBOR (..), ToCBOR (..), enforceSize)
 import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.VRF as VRF
-import           Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, (⭒))
+import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, StrictMaybe (..), (⭒))
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Chain as SL
-import           Cardano.Ledger.Hashes (HASH)
-import           Cardano.Ledger.Keys (DSIGN, KeyHash, KeyRole (BlockIssuer),
-                     VKey (VKey), coerceKeyRole, hashKey)
+import Cardano.Ledger.Hashes (HASH)
+import Cardano.Ledger.Keys
+  ( DSIGN
+  , KeyHash
+  , VKey (VKey)
+  , coerceKeyRole
+  , hashKey
+  )
 import qualified Cardano.Ledger.Keys as SL
-import           Cardano.Ledger.Slot (Duration (Duration), (+*))
+import Cardano.Ledger.Slot (Duration (Duration), (+*))
 import qualified Cardano.Ledger.State as SL
-import           Cardano.Protocol.Crypto (Crypto, KES, StandardCrypto, VRF)
+import Cardano.Protocol.Crypto (Crypto, KES, StandardCrypto, VRF)
 import qualified Cardano.Protocol.TPraos.API as SL
-import           Cardano.Protocol.TPraos.BHeader (BoundedNatural (bvValue),
-                     checkLeaderNatValue, prevHashToNonce)
-import           Cardano.Protocol.TPraos.OCert (KESPeriod (KESPeriod),
-                     OCert (OCert), OCertSignable)
+import Cardano.Protocol.TPraos.BHeader
+  ( BoundedNatural (bvValue)
+  , checkLeaderNatValue
+  , prevHashToNonce
+  )
+import Cardano.Protocol.TPraos.OCert
+  ( KESPeriod (KESPeriod)
+  , OCert (OCert)
+  , OCertSignable
+  )
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
-import           Cardano.Slotting.EpochInfo (EpochInfo, epochInfoEpoch,
-                     epochInfoFirst, hoistEpochInfo)
-import           Cardano.Slotting.Slot (EpochNo (EpochNo), SlotNo (SlotNo),
-                     WithOrigin, unSlotNo)
+import Cardano.Slotting.EpochInfo
+  ( EpochInfo
+  , epochInfoEpoch
+  , epochInfoFirst
+  , hoistEpochInfo
+  )
+import Cardano.Slotting.Slot
+  ( EpochNo (EpochNo)
+  , SlotNo (SlotNo)
+  , WithOrigin
+  , unSlotNo
+  )
 import qualified Codec.CBOR.Encoding as CBOR
-import           Codec.Serialise (Serialise (decode, encode))
-import           Control.Exception (throw)
-import           Control.Monad (unless)
-import           Control.Monad.Except (Except, runExcept, throwError)
-import           Data.Coerce (coerce)
-import           Data.Functor.Identity (runIdentity)
-import           Data.Map.Strict (Map)
+import Codec.Serialise (Serialise (decode, encode))
+import Control.Exception (throw)
+import Control.Monad (unless)
+import Control.Monad.Except (Except, runExcept, throwError)
+import Data.Coerce (coerce)
+import Data.Functor.Identity (runIdentity)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Proxy (Proxy (Proxy))
-import qualified Data.Set as Set
-import           Data.Word (Word64)
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
-import           Numeric.Natural (Natural)
-import           Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
+import Data.Proxy (Proxy (Proxy))
+import Data.Word (Word64)
+import GHC.Generics (Generic)
+import LeiosDemoTypes (EbAnnouncement)
+import NoThunks.Class (NoThunks)
+import Numeric.Natural (Natural)
+import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
 import qualified Ouroboros.Consensus.HardFork.History as History
-import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
+import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
-import           Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
-import           Ouroboros.Consensus.Protocol.Praos.Common
-import           Ouroboros.Consensus.Protocol.Praos.Header (HeaderBody)
+import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
+import Ouroboros.Consensus.Protocol.Praos.Common
+import Ouroboros.Consensus.Protocol.Praos.Header
+  ( HeaderBody
+  , hbLeiosEbAnnouncement
+  )
+import Ouroboros.Consensus.Protocol.Praos.VRF
+  ( InputVRF
+  , mkInputVRF
+  , vrfLeaderValue
+  , vrfNonceValue
+  )
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
-import           Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF,
-                     vrfLeaderValue, vrfNonceValue)
-import           Ouroboros.Consensus.Protocol.TPraos
-                     (ConsensusConfig (TPraosConfig, tpraosEpochInfo, tpraosParams),
-                     TPraos,
-                     TPraosState (tpraosStateChainDepState, tpraosStateLastSlot))
-import           Ouroboros.Consensus.Ticked (Ticked)
-import           Ouroboros.Consensus.Util.Versioned (VersionDecoder (Decode),
-                     decodeVersion, encodeVersion)
+import Ouroboros.Consensus.Protocol.TPraos
+  ( ConsensusConfig (TPraosConfig, tpraosEpochInfo, tpraosParams)
+  , TPraos
+  , TPraosState (tpraosStateChainDepState, tpraosStateLastSlot)
+  )
+import Ouroboros.Consensus.Ticked (Ticked)
+import Ouroboros.Consensus.Util.Versioned
+  ( VersionDecoder (Decode)
+  , decodeVersion
+  , encodeVersion
+  )
 
 data Praos c
 
 class
-  ( Crypto c,
-    DSIGN.Signable DSIGN (OCertSignable c),
-    KES.Signable (KES c) (HeaderBody c),
-    VRF.Signable (VRF c) InputVRF
+  ( Crypto c
+  , DSIGN.Signable DSIGN (OCertSignable c)
+  , KES.Signable (KES c) (HeaderBody c)
+  , VRF.Signable (VRF c) InputVRF
   ) =>
   PraosCrypto c
 
@@ -111,10 +142,10 @@ instance PraosCrypto StandardCrypto
 -------------------------------------------------------------------------------}
 
 data PraosFields c toSign = PraosFields
-  { praosSignature :: KES.SignedKES (KES c) toSign,
-    praosToSign    :: toSign
+  { praosSignature :: KES.SignedKES (KES c) toSign
+  , praosToSign :: toSign
   }
-  deriving (Generic)
+  deriving Generic
 
 deriving instance
   (NoThunks toSign, PraosCrypto c) =>
@@ -127,26 +158,26 @@ deriving instance
 -- | Fields arising from praos execution which must be included in
 -- the block signature.
 data PraosToSign c = PraosToSign
-  { -- | Verification key for the issuer of this block.
-    praosToSignIssuerVK :: SL.VKey 'SL.BlockIssuer,
-    praosToSignVrfVK    :: VRF.VerKeyVRF (VRF c),
-    -- | Verifiable random value. This is used both to prove the issuer is
-    -- eligible to issue a block, and to contribute to the evolving nonce.
-    praosToSignVrfRes   :: VRF.CertifiedVRF (VRF c) InputVRF,
-    -- | Lightweight delegation certificate mapping the cold (DSIGN) key to
-    -- the online KES key.
-    praosToSignOCert    :: OCert.OCert c
+  { praosToSignIssuerVK :: SL.VKey SL.BlockIssuer
+  -- ^ Verification key for the issuer of this block.
+  , praosToSignVrfVK :: VRF.VerKeyVRF (VRF c)
+  , praosToSignVrfRes :: VRF.CertifiedVRF (VRF c) InputVRF
+  -- ^ Verifiable random value. This is used both to prove the issuer is
+  -- eligible to issue a block, and to contribute to the evolving nonce.
+  , praosToSignOCert :: OCert.OCert c
+  -- ^ Lightweight delegation certificate mapping the cold (DSIGN) key to
+  -- the online KES key.
   }
-  deriving (Generic)
+  deriving Generic
 
 instance PraosCrypto c => NoThunks (PraosToSign c)
 
 deriving instance PraosCrypto c => Show (PraosToSign c)
 
 forgePraosFields ::
-  ( PraosCrypto c,
-    KES.Signable (KES c) toSign,
-    Monad m
+  ( PraosCrypto c
+  , KES.Signable (KES c) toSign
+  , Monad m
   ) =>
   HotKey c m ->
   CanBeLeader (Praos c) ->
@@ -156,28 +187,26 @@ forgePraosFields ::
 forgePraosFields
   hotKey
   PraosCanBeLeader
-    { praosCanBeLeaderColdVerKey,
-      praosCanBeLeaderSignKeyVRF,
-      praosCanBeLeaderOpCert
+    { praosCanBeLeaderColdVerKey
+    , praosCanBeLeaderSignKeyVRF
     }
-  PraosIsLeader {praosIsLeaderVrfRes}
+  PraosIsLeader{praosIsLeaderVrfRes}
   mkToSign = do
+    ocert <- HotKey.getOCert hotKey
+    let signedFields =
+          PraosToSign
+            { praosToSignIssuerVK = praosCanBeLeaderColdVerKey
+            , praosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF
+            , praosToSignVrfRes = praosIsLeaderVrfRes
+            , praosToSignOCert = ocert
+            }
+        toSign = mkToSign signedFields
     signature <- HotKey.sign hotKey toSign
     return
       PraosFields
-        { praosSignature = signature,
-          praosToSign = toSign
+        { praosSignature = signature
+        , praosToSign = toSign
         }
-    where
-      toSign = mkToSign signedFields
-
-      signedFields =
-        PraosToSign
-          { praosToSignIssuerVK = praosCanBeLeaderColdVerKey,
-            praosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF,
-            praosToSignVrfRes = praosIsLeaderVrfRes,
-            praosToSignOCert = praosCanBeLeaderOpCert
-          }
 
 {-------------------------------------------------------------------------------
   Protocol proper
@@ -185,26 +214,26 @@ forgePraosFields
 
 -- | Praos parameters that are node independent
 data PraosParams = PraosParams
-  { -- | See 'Globals.slotsPerKESPeriod'.
-    praosSlotsPerKESPeriod             :: !Word64,
-    -- | Active slots coefficient. This parameter represents the proportion
-    -- of slots in which blocks should be issued. This can be interpreted as
-    -- the probability that a party holding all the stake will be elected as
-    -- leader for a given slot.
-    praosLeaderF                       :: !SL.ActiveSlotCoeff,
-    -- | See 'Globals.securityParameter'.
-    praosSecurityParam                 :: !SecurityParam,
-    -- | Maximum number of KES iterations, see 'Globals.maxKESEvo'.
-    praosMaxKESEvo                     :: !Word64,
-    -- | All blocks invalid after this protocol version, see
-    -- 'Globals.maxMajorPV'.
-    praosMaxMajorPV                    :: !MaxMajorProtVer,
-    -- | The number of slots before the start of an epoch where the
-    -- corresponding epoch nonce is snapshotted. This has to be at least one
-    -- stability window such that the nonce is stable at the beginning of the
-    -- epoch. Ouroboros Genesis requires this to be even larger, see
-    -- 'SL.computeRandomnessStabilisationWindow'.
-    praosRandomnessStabilisationWindow :: !Word64
+  { praosSlotsPerKESPeriod :: !Word64
+  -- ^ See 'Globals.slotsPerKESPeriod'.
+  , praosLeaderF :: !SL.ActiveSlotCoeff
+  -- ^ Active slots coefficient. This parameter represents the proportion
+  -- of slots in which blocks should be issued. This can be interpreted as
+  -- the probability that a party holding all the stake will be elected as
+  -- leader for a given slot.
+  , praosSecurityParam :: !SecurityParam
+  -- ^ See 'Globals.securityParameter'.
+  , praosMaxKESEvo :: !Word64
+  -- ^ Maximum number of KES iterations, see 'Globals.maxKESEvo'.
+  , praosMaxMajorPV :: !MaxMajorProtVer
+  -- ^ All blocks invalid after this protocol version, see
+  -- 'Globals.maxMajorPV'.
+  , praosRandomnessStabilisationWindow :: !Word64
+  -- ^ The number of slots before the start of an epoch where the
+  -- corresponding epoch nonce is snapshotted. This has to be at least one
+  -- stability window such that the nonce is stable at the beginning of the
+  -- epoch. Ouroboros Genesis requires this to be even larger, see
+  -- 'SL.computeRandomnessStabilisationWindow'.
   }
   deriving (Generic, NoThunks)
 
@@ -213,23 +242,26 @@ data PraosParams = PraosParams
 newtype PraosIsLeader c = PraosIsLeader
   { praosIsLeaderVrfRes :: VRF.CertifiedVRF (VRF c) InputVRF
   }
-  deriving (Generic)
+  deriving Generic
 
 instance PraosCrypto c => NoThunks (PraosIsLeader c)
 
 -- | Static configuration
 data instance ConsensusConfig (Praos c) = PraosConfig
-  { praosParams :: !PraosParams,
-    praosEpochInfo :: !(EpochInfo (Except History.PastHorizonException))
-    -- it's useful for this record to be EpochInfo and one other thing,
-    -- because the one other thing can then be used as the
-    -- PartialConsensConfig in the HFC instance.
+  { praosParams :: !PraosParams
+  , praosEpochInfo :: !(EpochInfo (Except History.PastHorizonException))
+  -- it's useful for this record to be EpochInfo and one other thing,
+  -- because the one other thing can then be used as the
+  -- PartialConsensConfig in the HFC instance.
   }
-  deriving (Generic)
+  deriving Generic
 
 instance PraosCrypto c => NoThunks (ConsensusConfig (Praos c))
 
 type PraosValidateView c = Views.HeaderView c
+
+instance HasMaxMajorProtVer (Praos c) where
+  protoMaxMajorPV = praosMaxMajorPV . praosParams
 
 {-------------------------------------------------------------------------------
   ConsensusProtocol
@@ -241,20 +273,29 @@ type PraosValidateView c = Views.HeaderView c
 -- as a series of nonces which get updated in different ways over the course of
 -- an epoch.
 data PraosState = PraosState
-  { praosStateLastSlot            :: !(WithOrigin SlotNo),
-    -- | Operation Certificate counters
-    praosStateOCertCounters       :: !(Map (KeyHash 'BlockIssuer) Word64),
-    -- | Evolving nonce
-    praosStateEvolvingNonce       :: !Nonce,
-    -- | Candidate nonce
-    praosStateCandidateNonce      :: !Nonce,
-    -- | Epoch nonce
-    praosStateEpochNonce          :: !Nonce,
-    -- | Nonce constructed from the hash of the previous block
-    praosStateLabNonce            :: !Nonce,
-    -- | Nonce corresponding to the LAB nonce of the last block of the previous
-    -- epoch
-    praosStateLastEpochBlockNonce :: !Nonce
+  { praosStateLastSlot :: !(WithOrigin SlotNo)
+  , praosStateOCertCounters :: !(Map (KeyHash SL.BlockIssuer) Word64)
+  -- ^ Operation Certificate counters
+  , praosStateEvolvingNonce :: !Nonce
+  -- ^ Evolving nonce
+  , praosStateCandidateNonce :: !Nonce
+  -- ^ Candidate nonce
+  , praosStateEpochNonce :: !Nonce
+  -- ^ Epoch nonce
+  , praosStatePreviousEpochNonce :: !Nonce
+  -- ^ Previous epoch nonce
+  , praosStateLabNonce :: !Nonce
+  -- ^ Nonce constructed from the hash of the previous block
+  , praosStateLastEpochBlockNonce :: !Nonce
+  -- ^ Nonce corresponding to the LAB nonce of the last block of the previous
+  -- epoch
+  , praosStateLeiosAnnouncement :: !(StrictMaybe EbAnnouncement)
+  -- ^ The Leios 'EbAnnouncement' from the most recently applied header on
+  -- this chain — overwritten on every header tick (so a header with no
+  -- announcement clears the field). The 'ResolveLeiosBlock' instance for
+  -- the Dijkstra-era CardanoBlock reads this to look up the EB closure
+  -- that a certifying block's 'LeiosCert' refers to; only the
+  -- immediately-previous announcement is ever certified.
   }
   deriving (Generic, Show, Eq)
 
@@ -269,44 +310,64 @@ instance FromCBOR PraosState where
 instance Serialise PraosState where
   encode
     PraosState
-      { praosStateLastSlot,
-        praosStateOCertCounters,
-        praosStateEvolvingNonce,
-        praosStateCandidateNonce,
-        praosStateEpochNonce,
-        praosStateLabNonce,
-        praosStateLastEpochBlockNonce
+      { praosStateLastSlot
+      , praosStateOCertCounters
+      , praosStateEvolvingNonce
+      , praosStateCandidateNonce
+      , praosStateEpochNonce
+      , praosStatePreviousEpochNonce
+      , praosStateLabNonce
+      , praosStateLastEpochBlockNonce
+      , praosStateLeiosAnnouncement
       } =
-      encodeVersion 0 $
+      encodeVersion 1 $
         mconcat
-          [ CBOR.encodeListLen 7,
-            toCBOR praosStateLastSlot,
-            toCBOR praosStateOCertCounters,
-            toCBOR praosStateEvolvingNonce,
-            toCBOR praosStateCandidateNonce,
-            toCBOR praosStateEpochNonce,
-            toCBOR praosStateLabNonce,
-            toCBOR praosStateLastEpochBlockNonce
+          [ CBOR.encodeListLen 9
+          , toCBOR praosStateLastSlot
+          , toCBOR praosStateOCertCounters
+          , toCBOR praosStateEvolvingNonce
+          , toCBOR praosStateCandidateNonce
+          , toCBOR praosStateEpochNonce
+          , toCBOR praosStatePreviousEpochNonce
+          , toCBOR praosStateLabNonce
+          , toCBOR praosStateLastEpochBlockNonce
+          , toCBOR praosStateLeiosAnnouncement
           ]
 
   decode =
     decodeVersion
-      [(0, Decode decodePraosState)]
-    where
-      decodePraosState = do
-        enforceSize "PraosState" 7
-        PraosState
-          <$> fromCBOR
-          <*> fromCBOR
-          <*> fromCBOR
-          <*> fromCBOR
-          <*> fromCBOR
-          <*> fromCBOR
-          <*> fromCBOR
+      [ (0, Decode decodePraosStateV0)
+      , (1, Decode decodePraosStateV1)
+      ]
+   where
+    decodePraosStateV0 = do
+      enforceSize "PraosState" 8
+      PraosState
+        <$> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> pure SNothing
+    decodePraosStateV1 = do
+      enforceSize "PraosState" 9
+      PraosState
+        <$> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
+        <*> fromCBOR
 
 data instance Ticked PraosState = TickedPraosState
-  { tickedPraosStateChainDepState :: PraosState,
-    tickedPraosStateLedgerView :: Views.LedgerView
+  { tickedPraosStateChainDepState :: PraosState
+  , tickedPraosStateLedgerView :: Views.LedgerView
   }
 
 -- | Errors which we might encounter
@@ -347,8 +408,12 @@ data PraosValidationErr c
       !Word64 -- max KES evolutions
       !String -- error message given by Consensus Layer
   | NoCounterForKeyHashOCERT
-      !(KeyHash 'BlockIssuer) -- stake pool key hash
-  deriving (Generic)
+      !(KeyHash SL.BlockIssuer) -- stake pool key hash
+  -- TODO Leios validation-error constructors belongs here, for the header
+  -- checks described in 'updateChainDepState'. Deferred for now:
+  -- 'PraosValidationErr' is used downstream (e.g. cardano-node tracers), so
+  -- extending it would incur downstream integration work
+  deriving Generic
 
 deriving instance PraosCrypto c => Eq (PraosValidationErr c)
 
@@ -360,7 +425,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ChainDepState (Praos c) = PraosState
   type IsLeader (Praos c) = PraosIsLeader c
   type CanBeLeader (Praos c) = PraosCanBeLeader c
-  type SelectView (Praos c) = PraosChainSelectView c
+  type TiebreakerView (Praos c) = PraosTiebreakerView c
   type LedgerView (Praos c) = Views.LedgerView
   type ValidationErr (Praos c) = PraosValidationErr c
   type ValidateView (Praos c) = PraosValidateView c
@@ -370,8 +435,8 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   checkIsLeader
     cfg
     PraosCanBeLeader
-      { praosCanBeLeaderSignKeyVRF,
-        praosCanBeLeaderColdVerKey
+      { praosCanBeLeaderSignKeyVRF
+      , praosCanBeLeaderColdVerKey
       }
     slot
     cs =
@@ -382,48 +447,53 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
               { praosIsLeaderVrfRes = coerce rho
               }
         else Nothing
-      where
-        chainState = tickedPraosStateChainDepState cs
-        lv = tickedPraosStateLedgerView cs
-        eta0 = praosStateEpochNonce chainState
-        vkhCold = SL.hashKey praosCanBeLeaderColdVerKey
-        rho' = mkInputVRF slot eta0
+     where
+      chainState = tickedPraosStateChainDepState cs
+      lv = tickedPraosStateLedgerView cs
+      eta0 = praosStateEpochNonce chainState
+      vkhCold = SL.hashKey praosCanBeLeaderColdVerKey
+      rho' = mkInputVRF slot eta0
 
-        rho = VRF.evalCertified () rho' praosCanBeLeaderSignKeyVRF
+      rho = VRF.evalCertified () rho' praosCanBeLeaderSignKeyVRF
 
   -- Updating the chain dependent state for Praos.
   --
   -- If we are not in a new epoch, then nothing happens. If we are in a new
-  -- epoch, we do two things:
+  -- epoch, we do three things:
+  -- - Store the existing current epoch nonce as the "previous epoch" nonce.
+  --   This is needed to validate Peras certificates when they appear in blocks.
   -- - Update the epoch nonce to the combination of the candidate nonce and the
   --   nonce derived from the last block of the previous epoch.
-  -- - Update the "last block of previous epoch" nonce to the nonce derived from
-  --   the last applied block.
+  -- - Update the "last block of previous epoch" nonce to the nonce derived
+  --   from the last applied block.
   tickChainDepState
-    PraosConfig {praosEpochInfo}
+    PraosConfig{praosEpochInfo}
     lv
     slot
     st =
       TickedPraosState
-        { tickedPraosStateChainDepState = st',
-          tickedPraosStateLedgerView = lv
+        { tickedPraosStateChainDepState = st'
+        , tickedPraosStateLedgerView = lv
         }
-      where
-        newEpoch =
-          isNewEpoch
-            (History.toPureEpochInfo praosEpochInfo)
-            (praosStateLastSlot st)
-            slot
-        st' =
-          if newEpoch
-            then
-              st
-                { praosStateEpochNonce =
-                    praosStateCandidateNonce st
-                      ⭒ praosStateLastEpochBlockNonce st,
-                  praosStateLastEpochBlockNonce = praosStateLabNonce st
-                }
-            else st
+     where
+      newEpoch =
+        isNewEpoch
+          (History.toPureEpochInfo praosEpochInfo)
+          (praosStateLastSlot st)
+          slot
+      st' =
+        if newEpoch
+          then
+            st
+              { praosStateEpochNonce =
+                  praosStateCandidateNonce st
+                    ⭒ praosStateLastEpochBlockNonce st
+              , praosStatePreviousEpochNonce =
+                  praosStateEpochNonce st
+              , praosStateLastEpochBlockNonce =
+                  praosStateLabNonce st
+              }
+          else st
 
   -- Validate and update the chain dependent state as a result of processing a
   -- new header.
@@ -435,12 +505,24 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   --
   updateChainDepState
     cfg@( PraosConfig
-            PraosParams {praosLeaderF}
+            PraosParams{praosLeaderF}
             _
           )
     b
     slot
     tcs = do
+      -- TODO enforce the Leios header checks here (needs 'PraosValidationErr'
+      -- constructors; see above):
+      --   * LeiosCertRBWithoutAnnouncement - the set cert bit requires
+      --     predecessor's chain-dep state has an announcement (genesis
+      --     chain-dep state has no announcement, so the first header can't set
+      --     its cert bit)
+      --   * LeiosCertTooYoung - check the slot gap against L
+      --   * LeiosEbTooBig - the maximum EB body size
+      --   * LeiosEbTxsTooBig - the maximum EB closure size
+      --   * LeiosEbCertExclusivity - the set cert bit requires the no txs
+      --   * etc
+
       -- First, we check the KES signature, which validates that the issuer is
       -- in fact who they say they are.
       validateKESSignature cfg lv (praosStateOCertCounters cs) b
@@ -449,9 +531,9 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
       validateVRFSignature (praosStateEpochNonce cs) lv praosLeaderF b
       -- Finally, we apply the changes from this header to the chain state.
       pure $ reupdateChainDepState cfg b slot tcs
-      where
-        lv = tickedPraosStateLedgerView tcs
-        cs = tickedPraosStateChainDepState tcs
+     where
+      lv = tickedPraosStateLedgerView tcs
+      cs = tickedPraosStateChainDepState tcs
 
   -- Re-update the chain dependent state as a result of processing a header.
   --
@@ -462,65 +544,65 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   -- - Update the operational certificate counter.
   reupdateChainDepState
     _cfg@( PraosConfig
-             PraosParams {praosRandomnessStabilisationWindow}
+             PraosParams{praosRandomnessStabilisationWindow}
              ei
            )
     b
     slot
     tcs =
       cs
-        { praosStateLastSlot = NotOrigin slot,
-          praosStateLabNonce = prevHashToNonce (Views.hvPrevHash b),
-          praosStateEvolvingNonce = newEvolvingNonce,
-          praosStateCandidateNonce =
+        { praosStateLastSlot = NotOrigin slot
+        , praosStateLabNonce = prevHashToNonce (Views.hvPrevHash b)
+        , praosStateEvolvingNonce = newEvolvingNonce
+        , praosStateCandidateNonce =
             if slot +* Duration praosRandomnessStabilisationWindow < firstSlotNextEpoch
               then newEvolvingNonce
-              else praosStateCandidateNonce cs,
-          praosStateOCertCounters =
+              else praosStateCandidateNonce cs
+        , praosStateOCertCounters =
             Map.insert hk n $ praosStateOCertCounters cs
+        , praosStateLeiosAnnouncement = hbLeiosEbAnnouncement (Views.hvSigned b)
         }
-      where
-        epochInfoWithErr =
-          hoistEpochInfo
-            (either throw pure . runExcept)
-            ei
-        firstSlotNextEpoch = runIdentity $ do
-          EpochNo currentEpochNo <- epochInfoEpoch epochInfoWithErr slot
-          let nextEpoch = EpochNo $ currentEpochNo + 1
-          epochInfoFirst epochInfoWithErr nextEpoch
-        cs = tickedPraosStateChainDepState tcs
-        eta = vrfNonceValue (Proxy @c) $ Views.hvVrfRes b
-        newEvolvingNonce = praosStateEvolvingNonce cs ⭒ eta
-        OCert _ n _ _ = Views.hvOCert b
-        hk = hashKey $ Views.hvVK b
+     where
+      epochInfoWithErr =
+        hoistEpochInfo
+          (either throw pure . runExcept)
+          ei
+      firstSlotNextEpoch = runIdentity $ do
+        EpochNo currentEpochNo <- epochInfoEpoch epochInfoWithErr slot
+        let nextEpoch = EpochNo $ currentEpochNo + 1
+        epochInfoFirst epochInfoWithErr nextEpoch
+      cs = tickedPraosStateChainDepState tcs
+      eta = vrfNonceValue (Proxy @c) $ Views.hvVrfRes b
+      newEvolvingNonce = praosStateEvolvingNonce cs ⭒ eta
+      OCert _ n _ _ = Views.hvOCert b
+      hk = hashKey $ Views.hvVK b
 
 -- | Check whether this node meets the leader threshold to issue a block.
 meetsLeaderThreshold ::
   forall c.
   ConsensusConfig (Praos c) ->
   LedgerView (Praos c) ->
-  SL.KeyHash 'SL.StakePool ->
+  SL.KeyHash SL.StakePool ->
   VRF.CertifiedVRF (VRF c) InputVRF ->
   Bool
 meetsLeaderThreshold
-  PraosConfig {praosParams}
-  Views.LedgerView {Views.lvPoolDistr}
+  PraosConfig{praosParams}
+  Views.LedgerView{Views.lvPoolDistr}
   keyHash
   rho =
     checkLeaderNatValue
       (vrfLeaderValue (Proxy @c) rho)
       r
       (praosLeaderF praosParams)
-    where
-      SL.PoolDistr poolDistr _totalActiveStake = lvPoolDistr
-      r =
-        maybe 0 SL.individualPoolStake $
-          Map.lookup keyHash poolDistr
+   where
+    SL.PoolDistr poolDistr _totalActiveStake = lvPoolDistr
+    r =
+      maybe 0 SL.individualPoolStake $
+        Map.lookup keyHash poolDistr
 
 validateVRFSignature ::
   forall c.
-  ( PraosCrypto c
-  ) =>
+  PraosCrypto c =>
   Nonce ->
   Views.LedgerView ->
   ActiveSlotCoeff ->
@@ -545,8 +627,9 @@ doValidateVRFSignature eta0 pd f b = do
     Just (SL.IndividualPoolStake sigma _totalPoolStake vrfHK) -> do
       let vrfHKStake = SL.fromVRFVerKeyHash vrfHK
           vrfHKBlock = VRF.hashVerKeyVRF vrfK
-      vrfHKStake == vrfHKBlock
-        ?! VRFKeyWrongVRFKey hk vrfHKStake vrfHKBlock
+      vrfHKStake
+        == vrfHKBlock
+          ?! VRFKeyWrongVRFKey hk vrfHKStake vrfHKBlock
       VRF.verifyCertified
         ()
         vrfK
@@ -555,25 +638,25 @@ doValidateVRFSignature eta0 pd f b = do
         ?! VRFKeyBadProof slot eta0 vrfCert
       checkLeaderNatValue vrfLeaderVal sigma f
         ?! VRFLeaderValueTooBig (bvValue vrfLeaderVal) sigma f
-  where
-    hk = coerceKeyRole . hashKey . Views.hvVK $ b
-    vrfK = Views.hvVrfVK b
-    vrfCert = Views.hvVrfRes b
-    vrfLeaderVal = vrfLeaderValue (Proxy @c) vrfCert
-    slot = Views.hvSlotNo b
+ where
+  hk = coerceKeyRole . hashKey . Views.hvVK $ b
+  vrfK = Views.hvVrfVK b
+  vrfCert = Views.hvVrfRes b
+  vrfLeaderVal = vrfLeaderValue (Proxy @c) vrfCert
+  slot = Views.hvSlotNo b
 
 validateKESSignature ::
   PraosCrypto c =>
   ConsensusConfig (Praos c) ->
   LedgerView (Praos c) ->
-  Map (KeyHash 'BlockIssuer) Word64 ->
+  Map (KeyHash SL.BlockIssuer) Word64 ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
 validateKESSignature
   _cfg@( PraosConfig
-              PraosParams{praosMaxKESEvo, praosSlotsPerKESPeriod}
-              _ei
-          )
+           PraosParams{praosMaxKESEvo, praosSlotsPerKESPeriod}
+           _ei
+         )
   Views.LedgerView{Views.lvPoolDistr = SL.PoolDistr lvPoolDistr _totalActiveStake}
   ocertCounters =
     doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod lvPoolDistr ocertCounters
@@ -585,7 +668,7 @@ doValidateKESSignature ::
   Word64 ->
   Word64 ->
   Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
-  Map (KeyHash BlockIssuer) Word64 ->
+  Map (KeyHash SL.BlockIssuer) Word64 ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
 doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
@@ -597,10 +680,10 @@ doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution o
     -- this is required to prevent an arithmetic underflow, in the case of kp_ <
     -- c0_ we get the above `KESBeforeStartOCERT` failure in the transition.
 
-    DSIGN.verifySignedDSIGN () vkcold (OCert.ocertToSignable oc) tau ?!:
-      InvalidSignatureOCERT n c0
-    KES.verifySignedKES () vk_hot t (Views.hvSigned b) (Views.hvSignature b) ?!:
-      InvalidKesSignatureOCERT kp_ c0_ t praosMaxKESEvo
+    DSIGN.verifySignedDSIGN () vkcold (OCert.ocertToSignable oc) tau
+      ?!: InvalidSignatureOCERT n c0
+    KES.verifySignedKES () vk_hot t (Views.hvSigned b) (Views.hvSignature b)
+      ?!: InvalidKesSignatureOCERT kp_ c0_ t praosMaxKESEvo
 
     case currentIssueNo of
       Nothing -> do
@@ -608,22 +691,24 @@ doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution o
       Just m -> do
         m <= n ?! CounterTooSmallOCERT m n
         n <= m + 1 ?! CounterOverIncrementedOCERT m n
-    where
-      oc@(OCert vk_hot n c0@(KESPeriod c0_) tau) = Views.hvOCert b
-      (VKey vkcold) = Views.hvVK b
-      SlotNo s = Views.hvSlotNo b
-      hk = hashKey $ Views.hvVK b
-      kp@(KESPeriod kp_) =
-        if praosSlotsPerKESPeriod == 0
-          then error "kesPeriod: slots per KES period was set to zero"
-          else KESPeriod . fromIntegral $ s `div` praosSlotsPerKESPeriod
+ where
+  oc@(OCert vk_hot n c0@(KESPeriod c0_) tau) = Views.hvOCert b
+  (VKey vkcold) = Views.hvVK b
+  SlotNo s = Views.hvSlotNo b
+  hk = hashKey $ Views.hvVK b
+  kp@(KESPeriod kp_) =
+    if praosSlotsPerKESPeriod == 0
+      then error "kesPeriod: slots per KES period was set to zero"
+      else KESPeriod . fromIntegral $ s `div` praosSlotsPerKESPeriod
 
-      currentIssueNo :: Maybe Word64
-      currentIssueNo
-        | Map.member hk ocertCounters = Map.lookup hk ocertCounters
-        | Set.member (coerceKeyRole hk) (Map.keysSet stakeDistribution) =
-          Just 0
-        | otherwise = Nothing
+  currentIssueNo :: Maybe Word64
+  currentIssueNo
+    | r@Just{} <- Map.lookup hk ocertCounters =
+        r
+    | Map.member (coerceKeyRole hk) stakeDistribution =
+        Just 0
+    | otherwise =
+        Nothing
 
 {-------------------------------------------------------------------------------
   CannotForge
@@ -640,12 +725,12 @@ data PraosCannotForge c
     -- end period of the key, is caught when trying to update the key in
     -- 'updateForgeState'.
     PraosCannotForgeKeyNotUsableYet
-      !OCert.KESPeriod
-      -- ^ Current KES period according to the wallclock slot, i.e., the KES
+      -- | Current KES period according to the wallclock slot, i.e., the KES
       -- period in which we want to use the key.
       !OCert.KESPeriod
-      -- ^ Start KES period of the KES key.
-  deriving (Generic)
+      -- | Start KES period of the KES key.
+      !OCert.KESPeriod
+  deriving Generic
 
 deriving instance PraosCrypto c => Show (PraosCannotForge c)
 
@@ -655,22 +740,21 @@ praosCheckCanForge ::
   HotKey.KESInfo ->
   Either (PraosCannotForge c) ()
 praosCheckCanForge
-  PraosConfig {praosParams}
+  PraosConfig{praosParams}
   curSlot
   kesInfo
-    | let startPeriod = HotKey.kesStartPeriod kesInfo,
-      startPeriod > wallclockPeriod =
-      throwError $ PraosCannotForgeKeyNotUsableYet wallclockPeriod startPeriod
+    | let startPeriod = HotKey.kesStartPeriod kesInfo
+    , startPeriod > wallclockPeriod =
+        throwError $ PraosCannotForgeKeyNotUsableYet wallclockPeriod startPeriod
     | otherwise =
-      return ()
-    where
-      -- The current wallclock KES period
-      wallclockPeriod :: OCert.KESPeriod
-      wallclockPeriod =
-        OCert.KESPeriod $
-          fromIntegral $
-            unSlotNo curSlot `div` praosSlotsPerKESPeriod praosParams
-
+        return ()
+   where
+    -- The current wallclock KES period
+    wallclockPeriod :: OCert.KESPeriod
+    wallclockPeriod =
+      OCert.KESPeriod $
+        fromIntegral $
+          unSlotNo curSlot `div` praosSlotsPerKESPeriod praosParams
 
 {-------------------------------------------------------------------------------
   PraosProtocolSupportsNode
@@ -680,28 +764,28 @@ instance PraosCrypto c => PraosProtocolSupportsNode (Praos c) where
   type PraosProtocolSupportsNodeCrypto (Praos c) = c
 
   getPraosNonces _prx cdst =
-      PraosNonces {
-          candidateNonce   = praosStateCandidateNonce
-        , epochNonce       = praosStateEpochNonce
-        , evolvingNonce    = praosStateEvolvingNonce
-        , labNonce         = praosStateLabNonce
-        , previousLabNonce = praosStateLastEpochBlockNonce
-        }
-    where
-      PraosState {
-          praosStateCandidateNonce
-        , praosStateEpochNonce
-        , praosStateEvolvingNonce
-        , praosStateLabNonce
-        , praosStateLastEpochBlockNonce
-        } = cdst
+    PraosNonces
+      { candidateNonce = praosStateCandidateNonce
+      , epochNonce = praosStateEpochNonce
+      , evolvingNonce = praosStateEvolvingNonce
+      , labNonce = praosStateLabNonce
+      , previousLabNonce = praosStateLastEpochBlockNonce
+      }
+   where
+    PraosState
+      { praosStateCandidateNonce
+      , praosStateEpochNonce
+      , praosStateEvolvingNonce
+      , praosStateLabNonce
+      , praosStateLastEpochBlockNonce
+      } = cdst
 
   getOpCertCounters _prx cdst =
-      praosStateOCertCounters
-    where
-      PraosState {
-          praosStateOCertCounters
-        } = cdst
+    praosStateOCertCounters
+   where
+    PraosState
+      { praosStateOCertCounters
+      } = cdst
 
 {-------------------------------------------------------------------------------
   Translation from transitional Praos
@@ -713,32 +797,33 @@ instance PraosCrypto c => PraosProtocolSupportsNode (Praos c) where
 -- - They share the same ADDRHASH algorithm
 -- - They share the same DSIGN verification keys
 -- - They share the same VRF verification keys
-instance
-  TranslateProto (TPraos c) (Praos c)
-  where
-  translateLedgerView _ SL.LedgerView {SL.lvPoolDistr, SL.lvChainChecks} =
-      Views.LedgerView
-        { Views.lvPoolDistr = lvPoolDistr,
-          Views.lvMaxHeaderSize = SL.ccMaxBHSize lvChainChecks,
-          Views.lvMaxBodySize = SL.ccMaxBBSize lvChainChecks,
-          Views.lvProtocolVersion = SL.ccProtocolVersion lvChainChecks
-        }
+instance TranslateProto (TPraos c) (Praos c) where
+  translateLedgerView _ SL.LedgerView{SL.lvPoolDistr, SL.lvChainChecks} =
+    Views.LedgerView
+      { Views.lvPoolDistr = lvPoolDistr
+      , Views.lvMaxHeaderSize = SL.ccMaxBHSize lvChainChecks
+      , Views.lvMaxBodySize = SL.ccMaxBBSize lvChainChecks
+      , Views.lvProtocolVersion = SL.ccProtocolVersion lvChainChecks
+      }
 
   translateChainDepState _ tpState =
     PraosState
-      { praosStateLastSlot = tpraosStateLastSlot tpState,
-        praosStateOCertCounters = Map.mapKeysMonotonic coerce certCounters,
-        praosStateEvolvingNonce = evolvingNonce,
-        praosStateCandidateNonce = candidateNonce,
-        praosStateEpochNonce = SL.ticknStateEpochNonce csTickn,
-        praosStateLabNonce = csLabNonce,
-        praosStateLastEpochBlockNonce = SL.ticknStatePrevHashNonce csTickn
+      { praosStateLastSlot = tpraosStateLastSlot tpState
+      , praosStateOCertCounters = Map.mapKeysMonotonic coerce certCounters
+      , praosStateEvolvingNonce = evolvingNonce
+      , praosStateCandidateNonce = candidateNonce
+      , praosStateEpochNonce = epochNonce
+      , praosStatePreviousEpochNonce = epochNonce -- same as current epoch nonce
+      , praosStateLabNonce = csLabNonce
+      , praosStateLastEpochBlockNonce = SL.ticknStatePrevHashNonce csTickn
+      , praosStateLeiosAnnouncement = SNothing
       }
-    where
-      SL.ChainDepState {SL.csProtocol, SL.csTickn, SL.csLabNonce} =
-        tpraosStateChainDepState tpState
-      SL.PrtclState certCounters evolvingNonce candidateNonce =
-        csProtocol
+   where
+    SL.ChainDepState{SL.csProtocol, SL.csTickn, SL.csLabNonce} =
+      tpraosStateChainDepState tpState
+    SL.PrtclState certCounters evolvingNonce candidateNonce =
+      csProtocol
+    epochNonce = SL.ticknStateEpochNonce csTickn
 
 {-------------------------------------------------------------------------------
   Util

@@ -1,10 +1,10 @@
-module Ouroboros.Consensus.Util.Time (
-    multipleNominalDelay
+module Ouroboros.Consensus.Util.Time
+  ( multipleNominalDelay
   , nominalDelay
   , secondsToNominalDiffTime
   ) where
 
-import           Data.Time (DiffTime, NominalDiffTime)
+import Data.Time (DiffTime, NominalDiffTime)
 
 {-------------------------------------------------------------------------------
   Operations

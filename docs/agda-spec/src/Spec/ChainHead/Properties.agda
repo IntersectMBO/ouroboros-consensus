@@ -81,7 +81,7 @@ instance
             e₂ = getEpoch forecast
             ne = (e₁ ≠ e₂)
             pp = getPParams forecast; open PParams
-            pd = getPoolDistr forecast
+            pd = extractPoolDistr (getPoolDelegatedStake forecast)
           case chainChecks? MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh of λ where
             (no ¬cc) → failure (genErrors ¬cc)
             (yes cc) → do
@@ -105,5 +105,5 @@ instance
           (let e₂ = getEpoch forecast; ne = (e₁ ≠ e₂)
            in computeTICKN ticknΓ ticknSt ne) | complete ticknΓ ticknSt _ _ ticknStep
       ... | success (⟦ η₀′ , _ ⟧ᵗˢ , _) | refl
-        with computePRTCL ⟦ getPoolDistr forecast , η₀′ ⟧ᵖᵉ prtclSt bh | complete ⟦ getPoolDistr forecast , η₀′ ⟧ᵖᵉ prtclSt _ _ prtclStep
+        with computePRTCL ⟦ extractPoolDistr (getPoolDelegatedStake forecast) , η₀′ ⟧ᵖᵉ prtclSt bh | complete ⟦ extractPoolDistr (getPoolDelegatedStake forecast) , η₀′ ⟧ᵖᵉ prtclSt _ _ prtclStep
       ... | success _ | refl = refl

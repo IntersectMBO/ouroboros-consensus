@@ -10,8 +10,8 @@
 {-# LANGUAGE TypeFamilies #-}
 
 -- | Classes for 'MapKind's and concrete 'MapKind's
-module Ouroboros.Consensus.Ledger.Tables.MapKind (
-    -- * Classes
+module Ouroboros.Consensus.Ledger.Tables.MapKind
+  ( -- * Classes
     CanMapKeysMK (..)
   , CanMapMK (..)
   , EqMK
@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Ledger.Tables.MapKind (
   , ShowMK
   , ZeroableMK (..)
   , bimapLedgerTables
+
     -- * Concrete MapKinds
   , CodecMK (..)
   , DiffMK (..)
@@ -31,16 +32,16 @@ module Ouroboros.Consensus.Ledger.Tables.MapKind (
 
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
-import           Data.Kind (Constraint)
-import           Data.Map.Strict (Map)
+import Data.Kind (Constraint)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Set (Set)
+import Data.Set (Set)
 import qualified Data.Set as Set
-import           GHC.Generics (Generic)
-import           NoThunks.Class
-import           Ouroboros.Consensus.Ledger.Tables.Basics
-import           Ouroboros.Consensus.Ledger.Tables.Diff (Diff (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
+import GHC.Generics (Generic)
+import NoThunks.Class
+import Ouroboros.Consensus.Ledger.Tables.Basics
+import Ouroboros.Consensus.Ledger.Tables.Diff (Diff (..))
+import Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
 
 {-------------------------------------------------------------------------------
   Classes
@@ -73,8 +74,9 @@ class (forall k v. (Eq k, Eq v) => Eq (mk k v)) => EqMK mk
 -- | For convenience, such that we don't have to include @QuantifiedConstraints@
 -- everywhere.
 type NoThunksMK :: MapKind -> Constraint
-class (forall k v. (NoThunks k, NoThunks v) => NoThunks (mk k v))
-   => NoThunksMK mk
+class
+  (forall k v. (NoThunks k, NoThunks v) => NoThunks (mk k v)) =>
+  NoThunksMK mk
 
 -- | Map both keys and values in ledger tables.
 --
@@ -82,20 +84,20 @@ class (forall k v. (NoThunks k, NoThunks v) => NoThunks (mk k v))
 -- `Data.Set.map', namely that only injective functions are suitable to be used
 -- here.
 bimapLedgerTables ::
-     forall x y mk. (
-          CanMapKeysMK mk
-        , CanMapMK mk
-        , Ord (TxIn y)
-        )
-  => (TxIn x -> TxIn y)
-  -> (TxOut x -> TxOut y)
-  -> LedgerTables x mk
-  -> LedgerTables y mk
+  forall x y mk.
+  ( CanMapKeysMK mk
+  , CanMapMK mk
+  , Ord (TxIn y)
+  ) =>
+  (TxIn x -> TxIn y) ->
+  (TxOut x -> TxOut y) ->
+  LedgerTables x mk ->
+  LedgerTables y mk
 bimapLedgerTables f g =
-    LedgerTables
-  . mapKeysMK f
-  . mapMK g
-  . getLedgerTables
+  LedgerTables
+    . mapKeysMK f
+    . mapMK g
+    . getLedgerTables
 
 {-------------------------------------------------------------------------------
   EmptyMK
@@ -138,7 +140,7 @@ instance CanMapKeysMK KeysMK where
   ValuesMK
 -------------------------------------------------------------------------------}
 
-newtype ValuesMK k v = ValuesMK { getValuesMK :: Map k v }
+newtype ValuesMK k v = ValuesMK {getValuesMK :: Map k v}
   deriving stock (Generic, Eq, Show)
   deriving anyclass NoThunks
   deriving anyclass (ShowMK, EqMK, NoThunksMK)
@@ -156,7 +158,7 @@ instance CanMapKeysMK ValuesMK where
   DiffMK
 -------------------------------------------------------------------------------}
 
-newtype DiffMK k v = DiffMK { getDiffMK :: Diff k v }
+newtype DiffMK k v = DiffMK {getDiffMK :: Diff k v}
   deriving stock (Generic, Eq, Show)
   deriving newtype Functor
   deriving anyclass NoThunks
@@ -166,8 +168,9 @@ instance ZeroableMK DiffMK where
   emptyMK = DiffMK mempty
 
 instance CanMapKeysMK DiffMK where
-  mapKeysMK f (DiffMK (Diff m)) = DiffMK . Diff $
-    Map.mapKeys f m
+  mapKeysMK f (DiffMK (Diff m)) =
+    DiffMK . Diff $
+      Map.mapKeys f m
 
 instance CanMapMK DiffMK where
   mapMK f (DiffMK d) = DiffMK $ fmap f d
@@ -188,15 +191,15 @@ instance CanMapMK TrackingMK where
 
 instance CanMapKeysMK TrackingMK where
   mapKeysMK f (TrackingMK vs d) =
-      TrackingMK
-        (getValuesMK . mapKeysMK f . ValuesMK $ vs)
-        (getDiffMK . mapKeysMK f . DiffMK $ d)
+    TrackingMK
+      (getValuesMK . mapKeysMK f . ValuesMK $ vs)
+      (getDiffMK . mapKeysMK f . DiffMK $ d)
 
 {-------------------------------------------------------------------------------
   SeqDiffMK
 -------------------------------------------------------------------------------}
 
-newtype SeqDiffMK  k v = SeqDiffMK { getSeqDiffMK :: DiffSeq k v }
+newtype SeqDiffMK k v = SeqDiffMK {getSeqDiffMK :: DiffSeq k v}
   deriving stock (Generic, Eq, Show)
   deriving anyclass NoThunks
   deriving anyclass (ShowMK, EqMK, NoThunksMK)
@@ -225,9 +228,9 @@ instance ZeroableMK SeqDiffMK where
 --
 -- We will serialize UTxO maps as unstowed ledger tables when storing snapshots
 -- while using an in-memory backend for the LedgerDB.
-data CodecMK k v = CodecMK {
-    encodeKey   :: !(k -> CBOR.Encoding)
+data CodecMK k v = CodecMK
+  { encodeKey :: !(k -> CBOR.Encoding)
   , encodeValue :: !(v -> CBOR.Encoding)
-  , decodeKey   :: !(forall s . CBOR.Decoder s k)
-  , decodeValue :: !(forall s . CBOR.Decoder s v)
+  , decodeKey :: !(forall s. CBOR.Decoder s k)
+  , decodeValue :: !(forall s. CBOR.Decoder s v)
   }

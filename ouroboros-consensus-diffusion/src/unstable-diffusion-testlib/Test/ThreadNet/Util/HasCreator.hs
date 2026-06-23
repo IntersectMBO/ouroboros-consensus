@@ -2,7 +2,7 @@
 -- it.
 module Test.ThreadNet.Util.HasCreator (HasCreator (..)) where
 
-import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 
 class HasCreator b where
-    getCreator :: b -> CoreNodeId
+  getCreator :: b -> CoreNodeId

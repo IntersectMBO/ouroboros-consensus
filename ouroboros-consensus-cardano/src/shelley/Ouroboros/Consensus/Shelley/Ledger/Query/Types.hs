@@ -2,15 +2,18 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | This module contains copies of older versions of types from Ledger in order
 -- to retain backwards-compatibility. Eventually, types likes this should be
 -- defined in Ledger instead of here, see
 -- <https://github.com/IntersectMBO/cardano-ledger/issues/4415>.
-module Ouroboros.Consensus.Shelley.Ledger.Query.Types (
-    IndividualPoolStake (..)
+module Ouroboros.Consensus.Shelley.Ledger.Query.Types
+  ( IndividualPoolStake (..)
   , PoolDistr (..)
   , fromLedgerIndividualPoolStake
   , fromLedgerPoolDistr
@@ -18,29 +21,29 @@ module Ouroboros.Consensus.Shelley.Ledger.Query.Types (
 
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.VRF as VRF
-import           Cardano.Ledger.Binary (DecCBOR (..), EncCBOR (..),
-                     decodeRecordNamed, encodeListLen)
-import           Cardano.Ledger.Hashes (HASH)
+import Cardano.Ledger.Binary
+import Cardano.Ledger.Core
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.State as SL
-import           Cardano.Protocol.Crypto (Crypto, VRF)
-import           Data.Map.Strict (Map)
+import Cardano.Protocol.Crypto (Crypto, VRF)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           GHC.Generics (Generic)
-import           NoThunks.Class
+import GHC.Generics (Generic)
+import NoThunks.Class
 
 -- | Copy of 'SL.IndividualPoolStake' before
 -- <https://github.com/IntersectMBO/cardano-ledger/pull/4324>.
-data IndividualPoolStake c = IndividualPoolStake {
-    individualPoolStake    :: !Rational
+data IndividualPoolStake c = IndividualPoolStake
+  { individualPoolStake :: !Rational
   , individualPoolStakeVrf :: !(Hash.Hash HASH (VRF.VerKeyVRF (VRF c)))
   }
   deriving stock (Show, Eq, Generic)
-  deriving anyclass (NoThunks)
+  deriving anyclass NoThunks
 
 fromLedgerIndividualPoolStake :: SL.IndividualPoolStake -> IndividualPoolStake c
-fromLedgerIndividualPoolStake ips = IndividualPoolStake {
-      individualPoolStake    = SL.individualPoolStake ips
+fromLedgerIndividualPoolStake ips =
+  IndividualPoolStake
+    { individualPoolStake = SL.individualPoolStake ips
     , individualPoolStakeVrf = SL.fromVRFVerKeyHash $ SL.individualPoolStakeVrf ips
     }
 
@@ -61,13 +64,14 @@ instance Crypto c => DecCBOR (IndividualPoolStake c) where
 
 -- | Copy of 'SL.PoolDistr' before
 -- <https://github.com/IntersectMBO/cardano-ledger/pull/4324>.
-newtype PoolDistr c = PoolDistr {
-    unPoolDistr :: Map (SL.KeyHash SL.StakePool) (IndividualPoolStake c)
+newtype PoolDistr c = PoolDistr
+  { unPoolDistr :: Map (SL.KeyHash SL.StakePool) (IndividualPoolStake c)
   }
   deriving stock (Show, Eq, Generic)
   deriving newtype (EncCBOR, DecCBOR)
 
 fromLedgerPoolDistr :: SL.PoolDistr -> PoolDistr c
-fromLedgerPoolDistr pd = PoolDistr {
-      unPoolDistr = Map.map fromLedgerIndividualPoolStake $ SL.unPoolDistr pd
+fromLedgerPoolDistr pd =
+  PoolDistr
+    { unPoolDistr = Map.map fromLedgerIndividualPoolStake $ SL.unPoolDistr pd
     }

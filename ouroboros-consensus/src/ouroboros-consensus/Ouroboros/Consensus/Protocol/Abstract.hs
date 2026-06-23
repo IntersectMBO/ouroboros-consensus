@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -8,28 +10,43 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.Protocol.Abstract (
-    -- * Abstract definition of the Ouroboros protocol
+module Ouroboros.Consensus.Protocol.Abstract
+  ( -- * Abstract definition of the Ouroboros protocol
     ConsensusConfig
   , ConsensusProtocol (..)
+
     -- * Chain order
+  , SelectView (..)
   , ChainOrder (..)
   , SimpleChainOrder (..)
+  , NoTiebreaker (..)
+
     -- * Translation
   , TranslateProto (..)
+
+    -- * Reasons for switching to a fork
+  , ShouldSwitch (..)
+  , SelectViewReasonForSwitch (..)
+  , shouldSwitch
+  , shouldSwitchToMaybe
+  , Comparing (..)
+
     -- * Convenience re-exports
   , SecurityParam (..)
   ) where
 
-import           Control.Monad.Except
-import           Data.Kind (Type)
-import           Data.Proxy (Proxy)
-import           Data.Typeable (Typeable)
-import           GHC.Stack
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Block.Abstract
-import           Ouroboros.Consensus.Config.SecurityParam
-import           Ouroboros.Consensus.Ticked
+import Cardano.Slotting.Slot (WithOrigin (At))
+import Control.Monad.Except
+import Data.Function (on)
+import Data.Kind (Type)
+import Data.Proxy (Proxy)
+import Data.Typeable (Typeable)
+import GHC.Generics (Generic)
+import GHC.Stack
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Config.SecurityParam
+import Ouroboros.Consensus.Ticked
 
 -- | Static configuration required to run the consensus protocol
 --
@@ -46,43 +63,47 @@ data family ConsensusConfig p :: Type
 --
 -- This class encodes the part that is independent from any particular
 -- block representation.
-class ( Show (ChainDepState   p)
-      , Show (ValidationErr   p)
-      , Show (SelectView      p)
-      , Show (LedgerView      p)
-      , Eq   (ChainDepState   p)
-      , Eq   (ValidationErr   p)
-      , ChainOrder (SelectView p)
-      , NoThunks (ConsensusConfig p)
-      , NoThunks (ChainDepState   p)
-      , NoThunks (ValidationErr   p)
-      , NoThunks (SelectView      p)
-      , Typeable p -- so that p can appear in exceptions
-      ) => ConsensusProtocol p where
+class
+  ( Show (ChainDepState p)
+  , Show (ValidationErr p)
+  , Show (TiebreakerView p)
+  , Show (LedgerView p)
+  , Eq (ChainDepState p)
+  , Eq (ValidationErr p)
+  , ChainOrder (TiebreakerView p)
+  , NoThunks (ConsensusConfig p)
+  , NoThunks (ChainDepState p)
+  , NoThunks (ValidationErr p)
+  , NoThunks (TiebreakerView p)
+  , Typeable p -- so that p can appear in exceptions
+  ) =>
+  ConsensusProtocol p
+  where
   -- | Protocol-specific state
   --
   -- NOTE: This chain is blockchain dependent, i.e., updated when new blocks
   -- come in (more precisely, new /headers/), and subject to rollback.
-  type family ChainDepState p :: Type
+  type ChainDepState p :: Type
 
   -- | Evidence that a node /is/ the leader
-  type family IsLeader p :: Type
+  type IsLeader p :: Type
 
   -- | Evidence that we /can/ be a leader
-  type family CanBeLeader p :: Type
+  type CanBeLeader p :: Type
 
-  -- | View on a header required for chain selection
+  -- | View on a header required for tiebreaking between chains of equal length.
   --
   -- Chain selection is implemented by the chain database, which takes care of
   -- two things independent of a choice of consensus protocol: we never switch
   -- to chains that fork off more than @k@ blocks ago, and we never adopt an
-  -- invalid chain. The actual comparison of chains however depends on the chain
-  -- selection protocol. We define chain selection in terms of a /select view/
-  -- on the headers at the tips of those chains: chain A is strictly preferred
-  -- over chain B whenever A's select view is preferred over B's select view
-  -- according to the 'ChainOrder' instance.
-  type family SelectView p :: Type
-  type SelectView p = BlockNo
+  -- invalid chain. We always prefer longer chains to shorter chains. The
+  -- comparison of chains A and B of equal length however depends on the chain
+  -- selection protocol: chain A is strictly preferred over chain B whenever A's
+  -- tiebreaker view is preferred over B's tiebreaker view according to the
+  -- 'ChainOrder' instance.
+  type TiebreakerView p :: Type
+
+  type TiebreakerView p = NoTiebreaker
 
   -- | Projection of the ledger state the Ouroboros protocol needs access to
   --
@@ -123,40 +144,43 @@ class ( Show (ChainDepState   p)
   -- in the consensus layer since that depends on the computation (and sampling)
   -- of entropy, which is done consensus side, not ledger side (the reward
   -- calculation does not depend on this).
-  type family LedgerView p :: Type
+  type LedgerView p :: Type
 
   -- | Validation errors
-  type family ValidationErr p :: Type
+  type ValidationErr p :: Type
 
   -- | View on a header required to validate it
-  type family ValidateView p :: Type
+  type ValidateView p :: Type
 
   -- | Check if a node is the leader
-  checkIsLeader :: HasCallStack
-                => ConsensusConfig       p
-                -> CanBeLeader           p
-                -> SlotNo
-                -> Ticked (ChainDepState p)
-                -> Maybe (IsLeader       p)
+  checkIsLeader ::
+    HasCallStack =>
+    ConsensusConfig p ->
+    CanBeLeader p ->
+    SlotNo ->
+    Ticked (ChainDepState p) ->
+    Maybe (IsLeader p)
 
   -- | Tick the 'ChainDepState'
   --
   -- We pass the 'LedgerView' to 'tickChainDepState'. Functions that /take/ a
   -- ticked 'ChainDepState' are not separately passed a ledger view; protocols
   -- that require it, can include it in their ticked 'ChainDepState' type.
-  tickChainDepState :: ConsensusConfig p
-                    -> LedgerView p
-                    -> SlotNo
-                    -> ChainDepState p
-                    -> Ticked (ChainDepState p)
+  tickChainDepState ::
+    ConsensusConfig p ->
+    LedgerView p ->
+    SlotNo ->
+    ChainDepState p ->
+    Ticked (ChainDepState p)
 
   -- | Apply a header
-  updateChainDepState :: HasCallStack
-                      => ConsensusConfig       p
-                      -> ValidateView          p
-                      -> SlotNo
-                      -> Ticked (ChainDepState p)
-                      -> Except (ValidationErr p) (ChainDepState p)
+  updateChainDepState ::
+    HasCallStack =>
+    ConsensusConfig p ->
+    ValidateView p ->
+    SlotNo ->
+    Ticked (ChainDepState p) ->
+    Except (ValidationErr p) (ChainDepState p)
 
   -- | Re-apply a header to the same 'ChainDepState' we have been able to
   -- successfully apply to before.
@@ -169,12 +193,13 @@ class ( Show (ChainDepState   p)
   -- It is worth noting that since we already know that the header is valid
   -- w.r.t. the provided 'ChainDepState', no validation checks should be
   -- performed.
-  reupdateChainDepState :: HasCallStack
-                        => ConsensusConfig       p
-                        -> ValidateView          p
-                        -> SlotNo
-                        -> Ticked (ChainDepState p)
-                        -> ChainDepState         p
+  reupdateChainDepState ::
+    HasCallStack =>
+    ConsensusConfig p ->
+    ValidateView p ->
+    SlotNo ->
+    Ticked (ChainDepState p) ->
+    ChainDepState p
 
   -- | We require that protocols support a @k@ security parameter
   protocolSecurityParam :: ConsensusConfig p -> SecurityParam
@@ -183,18 +208,20 @@ class ( Show (ChainDepState   p)
 class TranslateProto protoFrom protoTo where
   -- | Translate the ledger view.
   translateLedgerView ::
-    Proxy (protoFrom, protoTo) -> LedgerView protoFrom    -> LedgerView protoTo
+    Proxy (protoFrom, protoTo) -> LedgerView protoFrom -> LedgerView protoTo
+
   translateChainDepState ::
     Proxy (protoFrom, protoTo) -> ChainDepState protoFrom -> ChainDepState protoTo
 
 -- | Degenerate instance - we may always translate from a protocol to itself.
-instance TranslateProto singleProto singleProto
-  where
+instance TranslateProto singleProto singleProto where
   translateLedgerView _ = id
   translateChainDepState _ = id
 
 -- | The chain order of some type; in the Consensus layer, this will always be
--- the 'SelectView' of some 'ConsensusProtocol'.
+-- the 'SelectView'/'TiebreakerView' of some 'ConsensusProtocol'. Namely, the
+-- 'ChainOrder' instance of 'SelectView' primarily compares block numbers, but
+-- refers to the 'ChainOrder' instance of 'TiebreakerView' in case of a tie.
 --
 -- See 'preferCandidate' for the primary documentation.
 --
@@ -208,6 +235,8 @@ instance TranslateProto singleProto singleProto
 class Ord sv => ChainOrder sv where
   type ChainOrderConfig sv :: Type
 
+  type ReasonForSwitch sv :: Type
+
   -- | Compare a candidate chain to our own.
   --
   -- This method defines when a candidate chain is /strictly/ preferable to our
@@ -216,7 +245,8 @@ class Ord sv => ChainOrder sv where
   --
   -- === Requirements
   --
-  -- Write @ours ⊏ cand@ for @'preferCandidate' cfg ours cand@ for brevity.
+  -- Write @ours ⊏ cand@ for @'shouldSwitch' 'preferCandidate' cfg ours cand@
+  -- for brevity.
   --
   --  [__Consistency with 'Ord'__]: When @ours ⊏ cand@, then @ours < cand@.
   --
@@ -232,20 +262,26 @@ class Ord sv => ChainOrder sv where
   --
   --      However, forgoing 'SimpleChainOrder' can enable more sophisticated
   --      tiebreaking rules that eg exhibit desirable incentive behavior.
-  --
-  --  [__Chain extension precedence__]: @a@ must contain the underlying block
-  --      number, and use this as the primary way of comparing chains.
-  --
-  --      Suppose that we have a function @blockNo :: sv -> Natural@. Then for
-  --      all @a, b@ with @blockNo a < blockNo b@ we must have @a ⊏ b@.
-  --
-  --      Intuitively, this means that only the logic for breaking ties between
-  --      chains with equal block number is customizable via this class.
   preferCandidate ::
-       ChainOrderConfig sv
-    -> sv -- ^ Tip of our chain
-    -> sv -- ^ Tip of the candidate
-    -> Bool
+    ChainOrderConfig sv ->
+    -- | Tip of our chain
+    sv ->
+    -- | Tip of the candidate
+    sv ->
+    ShouldSwitch (ReasonForSwitch sv)
+
+data ShouldSwitch reason = ShouldNotSwitch Ordering | ShouldSwitch reason
+
+data Comparing a = Comparing {compareToThat :: a, compareThis :: a}
+  deriving Show
+
+shouldSwitch :: ShouldSwitch reason -> Bool
+shouldSwitch ShouldSwitch{} = True
+shouldSwitch ShouldNotSwitch{} = False
+
+shouldSwitchToMaybe :: ShouldSwitch reason -> Maybe reason
+shouldSwitchToMaybe (ShouldSwitch reason) = Just reason
+shouldSwitchToMaybe ShouldNotSwitch{} = Nothing
 
 -- | A @DerivingVia@ helper to implement 'preferCandidate' in terms of the 'Ord'
 -- instance.
@@ -255,6 +291,70 @@ newtype SimpleChainOrder sv = SimpleChainOrder sv
 instance Ord sv => ChainOrder (SimpleChainOrder sv) where
   type ChainOrderConfig (SimpleChainOrder sv) = ()
 
-  preferCandidate _cfg ours cand = ours < cand
+  -- All interesting protocols (PBFT, TPraos, Praos, HardForkProtocol) use a
+  -- proper TiebreakerView, so this is only for tests with Bft (or other testing
+  -- protocols), therefore we don't really elaborate the reasons.
+  type ReasonForSwitch (SimpleChainOrder sv) = ()
 
-deriving via SimpleChainOrder BlockNo instance ChainOrder BlockNo
+  preferCandidate _cfg ours cand =
+    if ours < cand
+      then ShouldSwitch ()
+      else ShouldNotSwitch (compare ours cand)
+
+-- | Use no tiebreaker to decide between chains of equal length, cf
+-- 'TiebreakerView' and 'ChainOrder'.
+data NoTiebreaker = NoTiebreaker
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving anyclass NoThunks
+  deriving ChainOrder via SimpleChainOrder NoTiebreaker
+
+{-------------------------------------------------------------------------------
+  Helpers
+-------------------------------------------------------------------------------}
+
+-- | Information from the tip of a chain required to compare it to other chains
+-- using its 'Ord' and 'ChainOrder' instance.
+--
+-- As the abstract Consensus layer targets longest chain protocols, the primary
+-- measure for comparing chains is the block number. However, in case of chains
+-- of equal length, we use the 'TiebreakerView' which is customizable by the
+-- particular @'ConsensusProtocol' p@.
+data SelectView p = SelectView
+  { svBlockNo :: !BlockNo
+  , svTiebreakerView :: !(TiebreakerView p)
+  }
+  deriving stock Generic
+
+deriving stock instance Show (TiebreakerView p) => Show (SelectView p)
+deriving stock instance Eq (TiebreakerView p) => Eq (SelectView p)
+
+instance NoThunks (TiebreakerView p) => NoThunks (SelectView p)
+
+-- | First compare block numbers, then compare the 'TiebreakerView'.
+instance Ord (TiebreakerView p) => Ord (SelectView p) where
+  compare =
+    mconcat
+      [ compare `on` svBlockNo
+      , compare `on` svTiebreakerView
+      ]
+
+data SelectViewReasonForSwitch p
+  = Longer (Comparing (WithOrigin BlockNo))
+  | SelectViewTiebreak (ReasonForSwitch (TiebreakerView p))
+
+deriving instance Show (ReasonForSwitch (TiebreakerView p)) => Show (SelectViewReasonForSwitch p)
+
+-- | @cand@ is preferred to @ours@ if either @cand@ is longer than @ours@, or
+-- @cand@ and @ours@ are of equal length and we have
+--
+-- > preferCandidate cfg ourTiebreaker candTiebreaker
+instance ChainOrder (TiebreakerView p) => ChainOrder (SelectView p) where
+  type ChainOrderConfig (SelectView p) = ChainOrderConfig (TiebreakerView p)
+  type ReasonForSwitch (SelectView p) = SelectViewReasonForSwitch p
+
+  preferCandidate cfg ours cand = case compare (svBlockNo ours) (svBlockNo cand) of
+    LT -> ShouldSwitch (Longer (Comparing (At (svBlockNo ours)) (At (svBlockNo cand))))
+    EQ -> case preferCandidate cfg (svTiebreakerView ours) (svTiebreakerView cand) of
+      ShouldSwitch r -> ShouldSwitch (SelectViewTiebreak r)
+      ShouldNotSwitch e -> ShouldNotSwitch e
+    GT -> ShouldNotSwitch GT

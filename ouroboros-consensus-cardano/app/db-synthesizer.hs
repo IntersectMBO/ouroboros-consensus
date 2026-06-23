@@ -23,18 +23,17 @@
 --   -a                       Append to an existing Chain DB
 module Main (main) where
 
-import           Cardano.Crypto.Init (cryptoInit)
-import           Cardano.Tools.DBSynthesizer.Run
-import           DBSynthesizer.Parsers
-import           Main.Utf8 (withStdTerminalHandles)
-import           System.Exit
-
+import Cardano.Crypto.Init (cryptoInit)
+import Cardano.Tools.DBSynthesizer.Run
+import DBSynthesizer.Parsers
+import Main.Utf8 (withStdTerminalHandles)
+import System.Exit
 
 main :: IO ()
 main = withStdTerminalHandles $ do
-    cryptoInit
-    (paths, creds, forgeOpts) <- parseCommandLine
-    let
-      genTxs _ _ _ _ = pure []
-    result <- initialize paths creds forgeOpts >>= either die (uncurry (synthesize genTxs))
-    putStrLn $ "--> done; result: " ++ show result
+  cryptoInit
+  (paths, creds, forgeOpts) <- parseCommandLine
+  let
+    genTxs _ _ _ _ = pure []
+  result <- initialize paths creds forgeOpts >>= either die (uncurry (synthesize genTxs))
+  putStrLn $ "--> done; result: " ++ show result

@@ -1,4 +1,5 @@
 # Ouroboros-Consensus
 
 # These owners will be the default owners for everything in the repository.
-* @nfrisby @jasagredo @amesgen @fraser-iohk @dnadales @geo2a @jorisdral
+# FIXME: no code owners for leios-prototype
+#* @nfrisby @jasagredo @dnadales @geo2a @bladyjoker

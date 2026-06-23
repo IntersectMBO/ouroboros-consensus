@@ -35,10 +35,9 @@ module Spec.Protocol
   (rs     : _) (open RationalExtStructure rs)
   where
 
-open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDistr; lookupPoolDistr)
 open import Spec.OperationalCertificate crypto nonces es bs af
 open import Spec.UpdateNonce crypto nonces es
-open import Spec.BaseTypes crypto using (OCertCounters)
+open import Spec.BaseTypes crypto using (OCertCounters; PoolDistr)
 open import Data.Rational as ℚ using (ℚ; 0ℚ; 1ℚ)
 open import Ledger.Prelude
 open Ledger.Prelude.ℤ using (pos)
@@ -99,6 +98,13 @@ hBLeader bhb = serHashToℕ (hash (encode "L" ∥ encode vrfRes))
 hBNonce : BHBody → Nonce
 hBNonce bhb = serHashToNonce (hash (encode "N" ∥ encode vrfRes))
   where open BHBody bhb
+
+lookupPoolDistr : PoolDistr → KeyHashˢ → Maybe (ℚ × KeyHashᵛ)
+lookupPoolDistr pd hk =
+  if hk ∈ dom (pd ˢ) then
+    just (lookupᵐ pd hk)
+  else
+    nothing
 
 \end{code}
 \begin{AgdaAlign}

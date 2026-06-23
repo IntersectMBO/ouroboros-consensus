@@ -1,5 +1,5 @@
 {-# LANGUAGE CPP #-}
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
 
 #if __GLASGOW_HASKELL__ >= 908
@@ -10,31 +10,48 @@
 -- different mechanisms but maybe we should rely on that instead to avoid
 -- duplication.
 
-module Test.Consensus.BlockTree (
-    BlockTree (..)
+module Test.Consensus.BlockTree
+  ( BlockTree (BlockTree, btTrunk, btBranches)
   , BlockTreeBranch (..)
   , PathAnchoredAtSource (..)
   , addBranch
   , addBranch'
   , allFragments
+  , deforestBlockTree
   , findFragment
   , findPath
+  , isAncestorOf
+  , isStrictAncestorOf
   , mkTrunk
+  , nonemptyPrefixesOf
+  , onTrunk
   , prettyBlockTree
   ) where
 
-import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
-import           Data.Foldable (asum)
-import           Data.Function ((&))
-import           Data.Functor ((<&>))
-import           Data.List (sortOn)
-import           Data.Maybe (fromJust, fromMaybe)
-import           Data.Ord (Down (Down))
+import Cardano.Slotting.Slot (SlotNo (unSlotNo), WithOrigin (..))
+import Data.Foldable (asum, fold)
+import Data.Function ((&))
+import Data.Functor ((<&>))
+import Data.List (inits, sortOn)
+import qualified Data.Map.Strict as M
+import Data.Maybe (fromJust, fromMaybe)
+import Data.Ord (Down (Down))
 import qualified Data.Vector as Vector
-import           Ouroboros.Consensus.Block.Abstract (blockNo, blockSlot,
-                     fromWithOrigin, pointSlot, unBlockNo)
+import Ouroboros.Consensus.Block.Abstract
+  ( GetHeader (..)
+  , HasHeader
+  , Header
+  , HeaderHash
+  , Point
+  , blockHash
+  , blockNo
+  , blockSlot
+  , fromWithOrigin
+  , pointSlot
+  , unBlockNo
+  )
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Text.Printf (printf)
+import Text.Printf (printf)
 
 -- | Represent a branch of a block tree by a prefix and a suffix. The full
 -- fragment (the prefix and suffix catenated) and the trunk suffix (the rest of
@@ -43,13 +60,13 @@ import           Text.Printf (printf)
 -- INVARIANT: the head of @btbPrefix@ is the anchor of @btbSuffix@.
 --
 -- INVARIANT: @btbFull == fromJust $ AF.join btbPrefix btbSuffix@.
-data BlockTreeBranch blk = BlockTreeBranch {
-    btbPrefix      :: AF.AnchoredFragment blk,
-    btbSuffix      :: AF.AnchoredFragment blk,
-    btbTrunkSuffix :: AF.AnchoredFragment blk,
-    btbFull        :: AF.AnchoredFragment blk
+data BlockTreeBranch blk = BlockTreeBranch
+  { btbPrefix :: AF.AnchoredFragment blk
+  , btbSuffix :: AF.AnchoredFragment blk
+  , btbTrunkSuffix :: AF.AnchoredFragment blk
+  , btbFull :: AF.AnchoredFragment blk
   }
-  deriving (Show)
+  deriving Show
 
 -- | Represent a block tree with a main trunk and branches leaving from the
 -- trunk in question. All the branches are represented by their prefix to and
@@ -67,17 +84,35 @@ data BlockTreeBranch blk = BlockTreeBranch {
 -- INVARIANT: for all @BlockTreeBranch{..}@ in the tree, @btTrunk == fromJust $
 -- AF.join btbPrefix btbTrunkSuffix@.
 --
+-- INVARIANT: In @RawBlockTree trunk branches deforested@, we must have
+-- @deforested == deforestRawBlockTree trunk branches@.
+--
 -- REVIEW: Find another name so as not to clash with 'BlockTree' from
 -- `unstable-consensus-testlib/Test/Util/TestBlock.hs`.
-data BlockTree blk = BlockTree {
-    btTrunk    :: AF.AnchoredFragment blk,
-    btBranches :: [BlockTreeBranch blk]
+data BlockTree blk = RawBlockTree
+  { btTrunk' :: AF.AnchoredFragment blk
+  , btBranches' :: [BlockTreeBranch blk]
+  , -- Cached deforestation of the block tree. This gets queried
+    -- many times and there's no reason to rebuild the tree every time.
+    btDeforested :: DeforestedBlockTree blk
   }
-  deriving (Show)
+  deriving Show
+
+pattern BlockTree :: AF.AnchoredFragment blk -> [BlockTreeBranch blk] -> BlockTree blk
+pattern BlockTree{btTrunk, btBranches} <- RawBlockTree btTrunk btBranches _
+
+{-# COMPLETE BlockTree #-}
+
+deforestBlockTree :: BlockTree blk -> DeforestedBlockTree blk
+deforestBlockTree = btDeforested
+
+-- Smart constructor to cache the deforested block tree at creation time.
+mkBlockTree :: HasHeader blk => AF.AnchoredFragment blk -> [BlockTreeBranch blk] -> BlockTree blk
+mkBlockTree trunk branches = RawBlockTree trunk branches (deforestRawBlockTree trunk branches)
 
 -- | Make a block tree made of only a trunk.
-mkTrunk :: AF.AnchoredFragment blk -> BlockTree blk
-mkTrunk btTrunk = BlockTree { btTrunk, btBranches = [] }
+mkTrunk :: HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk
+mkTrunk btTrunk = mkBlockTree btTrunk []
 
 -- | Add a branch to an existing block tree.
 --
@@ -94,7 +129,7 @@ addBranch branch bt = do
   -- NOTE: We could use the monadic bind for @Maybe@ here but we would rather
   -- catch bugs quicker.
   let btbFull = fromJust $ AF.join btbPrefix btbSuffix
-  pure $ bt { btBranches = BlockTreeBranch { .. } : btBranches bt }
+  pure $ mkBlockTree (btTrunk bt) (BlockTreeBranch{..} : btBranches bt)
 
 -- | Same as @addBranch@ but calls to 'error' if the former yields 'Nothing'.
 addBranch' :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> BlockTree blk
@@ -150,9 +185,9 @@ findPath source target blockTree = do
   sourceFragment <- findFragment source blockTree
   targetFragment <- findFragment target blockTree
   (_, _, _, targetSuffix) <- AF.intersect sourceFragment targetFragment
-  pure (
-    PathAnchoredAtSource (AF.anchorPoint targetSuffix == source),
-    targetSuffix
+  pure
+    ( PathAnchoredAtSource (AF.anchorPoint targetSuffix == source)
+    , targetSuffix
     )
 
 -- | Pretty prints a block tree for human readability. For instance:
@@ -167,59 +202,136 @@ prettyBlockTree blockTree =
   ["slots:   " ++ unwords (map (printf "%2d" . unSlotNo) [veryFirstSlot .. veryLastSlot])]
     ++ [printTrunk honestFragment]
     ++ (map (uncurry printBranch) adversarialFragments)
+ where
+  honestFragment = btTrunk blockTree
+  adversarialFragments =
+    sortOn (Down . pointSlot . AF.anchorPoint . snd) $
+      zip [1 ..] $
+        map btbSuffix (btBranches blockTree)
 
-  where
-    honestFragment = btTrunk blockTree
-    adversarialFragments =
-        sortOn (Down . pointSlot . AF.anchorPoint . snd)
-      $ zip [1..]
-      $ map btbSuffix (btBranches blockTree)
+  veryFirstSlot = firstNo $ honestFragment
 
-    veryFirstSlot = firstNo $ honestFragment
+  veryLastSlot =
+    foldl max 0 $
+      map
+        lastNo
+        (honestFragment : map snd adversarialFragments)
 
-    veryLastSlot =
-      foldl max 0 $
-        map
-          lastNo
-          (honestFragment : map snd adversarialFragments)
+  printTrunk :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
+  printTrunk = printLine (\_ -> "trunk:  ─")
 
-    printTrunk :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
-    printTrunk = printLine (\_ -> "trunk:  ─")
+  printBranch :: AF.HasHeader blk => Int -> AF.AnchoredFragment blk -> String
+  printBranch idx = printLine $ \firstSlot ->
+    let sidx = "  (" ++ show idx ++ ")"
+        pad = replicate 6 ' '
+        prefix = sidx ++ drop (length sidx) pad
+     in prefix ++ replicate (3 * fromIntegral (unSlotNo (firstSlot - veryFirstSlot))) ' ' ++ " ╰─"
 
-    printBranch :: AF.HasHeader blk => Int -> AF.AnchoredFragment blk -> String
-    printBranch idx = printLine $ \firstSlot ->
-      let sidx = "  (" ++ show idx ++ ")"
-          pad = replicate 6 ' '
-          prefix = sidx ++ drop (length sidx) pad
-       in
-       prefix ++ replicate (3 * fromIntegral (unSlotNo (firstSlot - veryFirstSlot))) ' ' ++ " ╰─"
+  printLine :: AF.HasHeader blk => (SlotNo -> String) -> AF.AnchoredFragment blk -> String
+  printLine printHeader fragment =
+    let firstSlot = firstNo fragment
+        lastSlot = lastNo fragment
+     in printHeader firstSlot ++ printFragment firstSlot lastSlot fragment
 
-    printLine :: AF.HasHeader blk => (SlotNo -> String) -> AF.AnchoredFragment blk -> String
-    printLine printHeader fragment =
-      let firstSlot = firstNo fragment
-          lastSlot = lastNo fragment
-      in printHeader firstSlot ++ printFragment firstSlot lastSlot fragment
+  printFragment :: AF.HasHeader blk => SlotNo -> SlotNo -> AF.AnchoredFragment blk -> String
+  printFragment firstSlot lastSlot fragment =
+    fragment
+      & AF.toOldestFirst
+      -- Turn the fragment into a list of (SlotNo, Just BlockNo)
+      & map
+        ( \block ->
+            (fromIntegral (unSlotNo (blockSlot block) - unSlotNo firstSlot), Just (unBlockNo (blockNo block)))
+        )
+      -- Update only the Vector elements that have blocks in them
+      & Vector.toList . (slotRange Vector.//)
+      & map (maybe "  " (printf "%2d"))
+      & unwords
+      & map (\c -> if c == ' ' then '─' else c)
+   where
+    -- Initialize a Vector with the length of the fragment containing only Nothings
+    slotRange = Vector.replicate (fromIntegral (unSlotNo lastSlot - unSlotNo firstSlot + 1)) Nothing
 
-    printFragment :: AF.HasHeader blk => SlotNo -> SlotNo -> AF.AnchoredFragment blk -> String
-    printFragment firstSlot lastSlot fragment =
-      fragment
-        & AF.toOldestFirst
-        -- Turn the fragment into a list of (SlotNo, Just BlockNo)
-        & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - unSlotNo firstSlot), Just (unBlockNo (blockNo block))))
-        -- Update only the Vector elements that have blocks in them
-        & Vector.toList . (slotRange Vector.//)
-        & map (maybe "  " (printf "%2d"))
-        & unwords
-        & map (\c -> if c == ' ' then '─' else c)
-      where
-        -- Initialize a Vector with the length of the fragment containing only Nothings
-        slotRange = Vector.replicate (fromIntegral (unSlotNo lastSlot - unSlotNo firstSlot + 1)) Nothing
+  lastNo :: AF.HasHeader blk => AF.AnchoredFragment blk -> SlotNo
+  lastNo = fromWithOrigin 0 . AF.headSlot
 
-    lastNo ::  AF.HasHeader blk => AF.AnchoredFragment blk -> SlotNo
-    lastNo = fromWithOrigin 0 . AF.headSlot
+  firstNo :: AF.AnchoredFragment blk -> SlotNo
+  firstNo frag =
+    case AF.anchor frag of
+      AF.AnchorGenesis -> 0
+      AF.Anchor slotNo _ _ -> slotNo + 1
 
-    firstNo :: AF.AnchoredFragment blk -> SlotNo
-    firstNo frag =
-      case AF.anchor frag of
-        AF.AnchorGenesis     -> 0
-        AF.Anchor slotNo _ _ -> slotNo + 1
+-- | An 'AF.AnchoredFragment' is a list where the last element (the anchor) is a ghost.
+-- Here they represent the partial ancestry of a block, where the anchor is either
+-- @Genesis@ (start of the chain, not itself an actual block) or the hash of a block.
+-- Say we have blocks B1 through B5 (each succeeded by the next) and anchor A. You
+-- can think of the chain as growing __from left to right__ like this:
+--
+-- >                    A :> B1 :> B2 :> B3 :> B4 :> B5
+--
+-- 'nonemptyPrefixesOf' builds the list of prefixes of an 'AF.AnchoredFragment' with at
+-- least one non-anchor entry. The name is a little confusing because the way we
+-- usually think of cons-lists these would be suffixes:
+--
+-- >            A :> B1     A :> B1 :> B2     A :> B1 :> B2 :> B3
+-- >      A :> B1 :> B2 :> B3 :> B4     A :> B1 :> B2 :> B3 :> B4 :> B5
+--
+-- However this is consistent with 'Ouroboros.Network.AnchoredSeq.isPrefixOf'.
+nonemptyPrefixesOf ::
+  AF.HasHeader blk => AF.AnchoredFragment blk -> [AF.AnchoredFragment blk]
+nonemptyPrefixesOf frag =
+  fmap (AF.fromOldestFirst (AF.anchor frag)) . drop 1 . inits . AF.toOldestFirst $ frag
+
+type DeforestedBlockTree blk = M.Map (HeaderHash blk) (AF.AnchoredFragment blk)
+
+deforestRawBlockTree ::
+  HasHeader blk =>
+  AF.AnchoredFragment blk ->
+  [BlockTreeBranch blk] ->
+  DeforestedBlockTree blk
+deforestRawBlockTree trunk branches =
+  let folder = foldMap $ \af -> either (const mempty) (flip M.singleton af . blockHash) $ AF.head af
+   in fold $
+        folder (prefixes (AF.Empty AF.AnchorGenesis) $ AF.toOldestFirst trunk)
+          : fmap (\btb -> folder $ prefixes (btbPrefix btb) $ AF.toOldestFirst $ btbSuffix btb) branches
+
+prefixes :: AF.HasHeader blk => AF.AnchoredFragment blk -> [blk] -> [AF.AnchoredFragment blk]
+prefixes = scanl (AF.:>)
+
+-- | A check used in some of the handlers, determining whether the first argument
+-- is on the chain that ends in the second argument.
+--
+-- REVIEW: Using 'AF.withinFragmentBounds' for this might be cheaper.
+--
+-- TODO: Unify with 'Test.Util.TestBlock.isAncestorOf' which basically does the
+-- same thing except not on 'WithOrigin'.
+isAncestorOf ::
+  (HasHeader blk, Eq blk) =>
+  BlockTree blk ->
+  WithOrigin blk ->
+  WithOrigin blk ->
+  Bool
+isAncestorOf tree (At ancestor) (At descendant) =
+  let deforested = btDeforested tree
+   in fromMaybe False $ do
+        afD <- M.lookup (blockHash descendant) deforested
+        afA <- M.lookup (blockHash ancestor) deforested
+        pure $ AF.isPrefixOf afA afD
+isAncestorOf _ (At _) Origin = False
+isAncestorOf _ Origin _ = True
+
+-- | Variant of 'isAncestorOf' that returns @False@ when the two blocks are
+-- equal.
+--
+-- TODO: Unify with 'Test.Util.TestBlock.isStrictAncestorOf' which basically does the
+-- same thing except not on 'WithOrigin'.
+isStrictAncestorOf ::
+  (HasHeader blk, Eq blk) =>
+  BlockTree blk ->
+  WithOrigin blk ->
+  WithOrigin blk ->
+  Bool
+isStrictAncestorOf bt b1 b2 = b1 /= b2 && isAncestorOf bt b1 b2
+
+-- | Check if a block (represented by its header 'Point') is on the 'BlockTree' trunk.
+onTrunk :: GetHeader blk => BlockTree blk -> Point (Header blk) -> Bool
+onTrunk blockTree = flip AF.withinFragmentBounds (AF.mapAnchoredFragment getHeader $ btTrunk blockTree)

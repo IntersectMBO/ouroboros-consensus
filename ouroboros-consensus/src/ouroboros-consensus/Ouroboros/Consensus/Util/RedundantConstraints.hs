@@ -1,14 +1,14 @@
 {-# LANGUAGE ConstraintKinds #-}
-
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
-module Ouroboros.Consensus.Util.RedundantConstraints (
-    keepRedundantConstraint
+module Ouroboros.Consensus.Util.RedundantConstraints
+  ( keepRedundantConstraint
+
     -- * Convenience re-export
   , Proxy (..)
   ) where
 
-import           Data.Proxy
+import Data.Proxy
 
 -- | Can be used to silence individual "redundant constraint" warnings
 --

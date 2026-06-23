@@ -7,8 +7,8 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Ouroboros.Consensus.Util.Versioned (
-    VersionDecoder (..)
+module Ouroboros.Consensus.Util.Versioned
+  ( VersionDecoder (..)
   , VersionError (..)
   , Versioned (..)
   , decodeVersion
@@ -16,18 +16,18 @@ module Ouroboros.Consensus.Util.Versioned (
   , decodeVersioned
   , encodeVersion
   , encodeVersioned
+
     -- * opaque
   , VersionNumber
   ) where
 
-import           Cardano.Binary (enforceSize)
+import Cardano.Binary (enforceSize)
 import qualified Codec.CBOR.Decoding as Dec
-import           Codec.Serialise (Serialise (..))
-import           Codec.Serialise.Decoding (Decoder, decodeWord8)
-import           Codec.Serialise.Encoding (Encoding, encodeListLen, encodeWord8)
-import           Control.Exception (Exception)
-import           Data.Word (Word8)
-
+import Codec.Serialise (Serialise (..))
+import Codec.Serialise.Decoding (Decoder, decodeWord8)
+import Codec.Serialise.Encoding (Encoding, encodeListLen, encodeWord8)
+import Control.Exception (Exception)
+import Data.Word (Word8)
 
 newtype VersionNumber = VersionNumber Word8
   deriving newtype (Eq, Ord, Num, Show)
@@ -38,61 +38,65 @@ instance Serialise VersionNumber where
 
 data Versioned a = Versioned
   { versionNumber :: !VersionNumber
-  , versioned     :: !a
-  } deriving (Eq, Show)
+  , versioned :: !a
+  }
+  deriving (Eq, Show)
 
 data VersionError
-  = IncompatibleVersion VersionNumber String
-    -- ^ We cannot deserialise the version of the data with the given
+  = -- | We cannot deserialise the version of the data with the given
     -- 'VersionNumber' because its data format is incompatible.
     --
     -- For example, the given format lacks data that was added in later
     -- version that cannot be reconstructed from scratch.
-  | UnknownVersion VersionNumber
-    -- ^ The given 'VersionNumber' is unknown and thus not supported.
-  | MigrationFailed VersionNumber String
-    -- ^ A migration from the given 'VersionNumber' failed. See 'Migrate'.
-  deriving stock    (Show)
-  deriving anyclass (Exception)
+    IncompatibleVersion VersionNumber String
+  | -- | The given 'VersionNumber' is unknown and thus not supported.
+    UnknownVersion VersionNumber
+  | -- | A migration from the given 'VersionNumber' failed. See 'Migrate'.
+    MigrationFailed VersionNumber String
+  deriving stock Show
+  deriving anyclass Exception
 
 -- | How to decode a version of a format.
 data VersionDecoder a where
   -- | This version is incompatible, fail with 'IncompatibleVersion' and the
   -- given message.
-  Incompatible :: String
-               -> VersionDecoder a
-
+  Incompatible ::
+    String ->
+    VersionDecoder a
   -- | Decode the version using the given 'Decoder'.
-  Decode       :: (forall s. Decoder s a)
-               -> VersionDecoder a
-
+  Decode ::
+    (forall s. Decoder s a) ->
+    VersionDecoder a
   -- | Decode an other format (@from@) and migrate from that. When migration
   -- fails, the version decoder will fail with @MigrationFailed@.
-  Migrate      :: VersionDecoder from
-               -> (from -> Either String to)
-               -> VersionDecoder to
+  Migrate ::
+    VersionDecoder from ->
+    (from -> Either String to) ->
+    VersionDecoder to
 
 -- | Return a 'Decoder' for the given 'VersionDecoder'.
 getVersionDecoder ::
-     VersionNumber
-  -> VersionDecoder a
-  -> forall s. Decoder s a
+  VersionNumber ->
+  VersionDecoder a ->
+  forall s.
+  Decoder s a
 getVersionDecoder vn = \case
-    Incompatible msg     -> fail $ show $ IncompatibleVersion vn msg
-    Decode dec           -> dec
-    Migrate vDec migrate -> do
-      from <- getVersionDecoder vn vDec
-      case migrate from of
-        Left msg -> fail $ show $ MigrationFailed vn msg
-        Right to -> return to
+  Incompatible msg -> fail $ show $ IncompatibleVersion vn msg
+  Decode dec -> dec
+  Migrate vDec migrate -> do
+    from <- getVersionDecoder vn vDec
+    case migrate from of
+      Left msg -> fail $ show $ MigrationFailed vn msg
+      Right to -> return to
 
 -- | Given a 'VersionNumber' and the encoding of an @a@, encode the
 -- corresponding @'Versioned' a@. Use 'decodeVersion' to decode it.
 encodeVersion ::
-     VersionNumber
-  -> Encoding
-  -> Encoding
-encodeVersion vn encodedA = mconcat
+  VersionNumber ->
+  Encoding ->
+  Encoding
+encodeVersion vn encodedA =
+  mconcat
     [ encodeListLen 2
     , encode vn
     , encodedA
@@ -106,10 +110,11 @@ encodeVersion vn encodedA = mconcat
 -- of 'lookup'). When no match is found, a decoder that fails with
 -- 'UnknownVersion' is returned.
 decodeVersion ::
-     [(VersionNumber, VersionDecoder a)]
-  -> forall s. Decoder s a
+  [(VersionNumber, VersionDecoder a)] ->
+  forall s.
+  Decoder s a
 decodeVersion versionDecoders =
-    versioned <$> decodeVersioned versionDecoders
+  versioned <$> decodeVersioned versionDecoders
 
 -- | Same as 'decodeVersion', but with a hook that gets called in case the
 -- encoding was not produced by a versioned encoder. This allows a transition
@@ -127,48 +132,49 @@ decodeVersion versionDecoders =
 -- length 2, as the new versioned decoder will be called in those cases, not the
 -- hook.
 decodeVersionWithHook ::
-     forall a.
-     (forall s. Maybe Int -> Decoder s a)
-  -> [(VersionNumber, VersionDecoder a)]
-  -> forall s. Decoder s a
+  forall a.
+  (forall s. Maybe Int -> Decoder s a) ->
+  [(VersionNumber, VersionDecoder a)] ->
+  forall s.
+  Decoder s a
 decodeVersionWithHook hook versionDecoders = do
-    tokenType <- Dec.peekTokenType
+  tokenType <- Dec.peekTokenType
 
-    if isListLen tokenType then do
+  if isListLen tokenType
+    then do
       len <- Dec.decodeListLen
       case len of
         2 -> goVersioned
         _ -> hook (Just len)
-
     else
       hook Nothing
+ where
+  isListLen :: Dec.TokenType -> Bool
+  isListLen = \case
+    Dec.TypeListLen -> True
+    Dec.TypeListLen64 -> True
+    _ -> False
 
-  where
-    isListLen :: Dec.TokenType -> Bool
-    isListLen = \case
-        Dec.TypeListLen   -> True
-        Dec.TypeListLen64 -> True
-        _                 -> False
-
-    goVersioned :: forall s. Decoder s a
-    goVersioned = do
-        vn <- decode
-        case lookup vn versionDecoders of
-          Nothing   -> fail $ show $ UnknownVersion vn
-          Just vDec -> getVersionDecoder vn vDec
-
-encodeVersioned ::
-     (          a -> Encoding)
-  -> (Versioned a -> Encoding)
-encodeVersioned enc (Versioned vn a) =
-    encodeVersion vn (enc a)
-
-decodeVersioned ::
-     [(VersionNumber, VersionDecoder a)]
-  -> forall s. Decoder s (Versioned a)
-decodeVersioned versionDecoders = do
-    enforceSize "Versioned" 2
+  goVersioned :: forall s. Decoder s a
+  goVersioned = do
     vn <- decode
     case lookup vn versionDecoders of
-      Nothing   -> fail $ show $ UnknownVersion vn
-      Just vDec -> Versioned vn <$> getVersionDecoder vn vDec
+      Nothing -> fail $ show $ UnknownVersion vn
+      Just vDec -> getVersionDecoder vn vDec
+
+encodeVersioned ::
+  (a -> Encoding) ->
+  (Versioned a -> Encoding)
+encodeVersioned enc (Versioned vn a) =
+  encodeVersion vn (enc a)
+
+decodeVersioned ::
+  [(VersionNumber, VersionDecoder a)] ->
+  forall s.
+  Decoder s (Versioned a)
+decodeVersioned versionDecoders = do
+  enforceSize "Versioned" 2
+  vn <- decode
+  case lookup vn versionDecoders of
+    Nothing -> fail $ show $ UnknownVersion vn
+    Just vDec -> Versioned vn <$> getVersionDecoder vn vDec
