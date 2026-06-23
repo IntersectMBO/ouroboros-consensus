@@ -23,6 +23,7 @@ module Ouroboros.Consensus.Committee.EveryoneVotes
 
 import Cardano.Ledger.BaseTypes (NonZero)
 import Cardano.Ledger.BaseTypes.NonZero (NonZero (..), nonZero)
+import Control.Exception (assert)
 import Control.Monad.Zip (MonadZip (..))
 import qualified Data.Array as Array
 import Data.Bifunctor (Bifunctor (..))
@@ -251,19 +252,29 @@ implForgeCert ::
   Either
     (VotingCommitteeError crypto EveryoneVotes)
     (Cert crypto EveryoneVotes)
-implForgeCert votes = do
-  aggSig <-
-    bimap CryptoError id $ do
-      aggregateVoteSignatures
-        (Proxy @crypto)
-        voteSignatures
-  pure $
-    EveryoneVotesCert
-      (getElectionIdFromVotes votes)
-      (getVoteCandidateFromVotes votes)
-      (NESet.fromList voters)
-      aggSig
+implForgeCert votes =
+  assert allUniqueVoterSeats $ do
+    aggSig <-
+      bimap CryptoError id $ do
+        aggregateVoteSignatures
+          (Proxy @crypto)
+          voteSignatures
+
+    pure $
+      EveryoneVotesCert
+        (getElectionIdFromVotes votes)
+        (getVoteCandidateFromVotes votes)
+        voterMap
+        aggSig
  where
+  -- We want to fail fast in case if the number of votes is not the same
+  -- as voters representation in EveryoneVotes. This assumption may be
+  -- violated in case if implementation uses incorrect ordering function
+  -- in the `ensureUniqueVotesWithSameTarget`
+  allUniqueVoterSeats =
+    NESet.size voterMap == length voters
+      && NESet.size voterMap == length voteSignatures
+  voterMap = NESet.fromList voters
   (voters, voteSignatures) =
     munzip $ flip fmap votesInAscendingSeatIndexOrder $ \case
       EveryoneVotesVote seatIndex _ _ sig ->
