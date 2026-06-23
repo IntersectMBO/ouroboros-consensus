@@ -302,7 +302,10 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     return $ EpochInEra (countEpochs e (boundEpoch eraStart))
   go (EAbsToRelPerasRoundNo expr) =
     runPerasEnabledT $ do
-      eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+      -- REVIEW: this is a fix with minimal diff.
+      -- Probably something better can be done here
+      _ <- PerasEnabledT . Just $ eraPerasRoundLength
+      let eraStartPerasRound = boundNextPerasRound eraStart
       absPerasRoundNo <- lift $ go expr
       lift . guard $ absPerasRoundNo >= eraStartPerasRound
       let roundInEra = countPerasRounds absPerasRoundNo eraStartPerasRound
@@ -333,12 +336,18 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
         || absEpoch == boundEpoch end && getSlotInEpoch s == 0
     return absEpoch
   go (ERelToAbsPerasRoundNo expr) = runPerasEnabledT $ do
-    eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+    -- REVIEW: this is a fix with minimal diff.
+    -- Probably something better can be done here
+    _ <- PerasEnabledT . Just $ eraPerasRoundLength
+    let eraStartPerasRound = boundNextPerasRound eraStart
     relPerasRound <- PerasEnabledT $ go expr
     let absPerasRound = addPerasRounds (getPerasRoundNoInEra relPerasRound) eraStartPerasRound
 
     guardEndPeras $ \end -> do
-      eraEndPerasRound <- PerasEnabledT . Just $ boundPerasRound end
+      -- REVIEW: this is a fix with minimal diff.
+      -- Probably something better can be done here
+      _ <- PerasEnabledT . Just $ eraPerasRoundLength
+      let eraEndPerasRound = boundNextPerasRound end
       pure $ absPerasRound <= eraEndPerasRound
     pure absPerasRound
 
@@ -388,11 +397,17 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     guardEnd $ \end -> s < boundSlot end
     return eraGenesisWin
   go (EPerasRoundLength expr) = runPerasEnabledT $ do
-    eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+    -- REVIEW: this is a fix with minimal diff.
+    -- Probably something better can be done here
+    _ <- PerasEnabledT . Just $ eraPerasRoundLength
+    let eraStartPerasRound = boundNextPerasRound eraStart
     absPerasRound <- lift $ go expr
     lift . guard $ absPerasRound >= eraStartPerasRound
     guardEndPeras $ \end -> do
-      eraEndPerasRound <- PerasEnabledT . Just $ boundPerasRound end
+      -- REVIEW: this is a fix with minimal diff.
+      -- Probably something better can be done here
+      _ <- PerasEnabledT . Just $ eraPerasRoundLength
+      let eraEndPerasRound = boundNextPerasRound end
       pure $ absPerasRound < eraEndPerasRound
     PerasEnabledT . Just $ eraPerasRoundLength
 
