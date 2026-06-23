@@ -117,7 +117,7 @@ initModel cfg =
 -- collection to track this information efficienty, at the cost of added
 -- complexity.
 hasVote ::
-  PerasVoteId blk ->
+  PerasVoteId ->
   Model blk ->
   Bool
 hasVote voteId model =
@@ -293,7 +293,7 @@ addVote vote model
 
 getVoteIds ::
   Model blk ->
-  Set (PerasVoteId blk)
+  Set (PerasVoteId)
 getVoteIds model =
   Set.unions $
     [ Set.map

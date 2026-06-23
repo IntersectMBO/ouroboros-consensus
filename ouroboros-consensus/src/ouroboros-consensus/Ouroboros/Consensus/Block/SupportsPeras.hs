@@ -50,6 +50,8 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , perasVoteCollectionAddVote
   , perasVoteCollectionCheckQuorum
   , toUniqueVotesWithSameTarget
+  , unsafePerasVoteCollection
+  , unsafePerasVoteCollectionWithQuorum
 
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Peras.Params
@@ -64,6 +66,7 @@ import Control.Exception.Base (Exception)
 import Data.Bifunctor (bimap)
 import Data.Containers.NonEmpty (NE)
 import Data.Kind (Type)
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map (Map)
 import qualified Data.Map.NonEmpty as NEMap
@@ -173,8 +176,14 @@ class
   , Eq (PerasEpochContext blk)
   , NoThunks (PerasEpochContext blk)
   , -- Compatiblity with committee/crypto
-    Typeable (PerasCrypto blk)
+    Show (PerasCrypto blk)
+  , Eq (PerasCrypto blk)
+  , Typeable (PerasCrypto blk)
+  , NoThunks (PerasCrypto blk)
+  , Show (PerasVotingCommitteeScheme blk)
+  , Eq (PerasVotingCommitteeScheme blk)
   , Typeable (PerasVotingCommitteeScheme blk)
+  , NoThunks (PerasVotingCommitteeScheme blk)
   , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
   , ElectionId (PerasCrypto blk) ~ PerasRoundNo
   , VoteCandidate (PerasCrypto blk) ~ BoostedBlock (PerasVote blk)
@@ -580,7 +589,7 @@ class
   getPerasVotePoint = boostedBlockToPoint . getPerasVoteBlock
 
 -- | Extract the vote ID from a Peras vote container
-getPerasVoteId :: IsPerasVote vote blk => vote -> PerasVoteId blk
+getPerasVoteId :: IsPerasVote vote blk => vote -> PerasVoteId
 getPerasVoteId vote =
   PerasVoteId
     { pviRoundNo = getPerasVoteRound vote
@@ -665,7 +674,7 @@ data PerasVoteCollection blk
   = PerasVoteCollection
   { pvcTarget :: !(PerasVoteTarget blk)
   -- ^ The target of the votes in this collection
-  , pvcVotes :: !(NE (Map (PerasVoteId blk) (WithArrivalTime (ValidatedPerasVote blk))))
+  , pvcVotes :: !(NE (Map (PerasVoteId) (WithArrivalTime (ValidatedPerasVote blk))))
   -- ^ Votes received for this target, indexed by vote ID
   , pvcTotalWeight :: !VoteWeight
   -- ^ Total weight of the votes received for this target
@@ -739,9 +748,34 @@ perasVoteCollectionAddVote vote pvc =
         , pvcTotalWeight pvc
         )
 
+unsafePerasVoteCollection ::
+  (IsPerasVote (PerasVote blk) blk, StandardHash blk) =>
+  (NE (Map (PerasVoteId) (WithArrivalTime (ValidatedPerasVote blk)))) ->
+  PerasVoteCollection blk
+unsafePerasVoteCollection votes =
+  let ((_, firstVote) :| _) = NEMap.toList votes
+      firstVoteTarget = getPerasVoteTarget firstVote
+   in -- no need to check for ID uniqueness since the votes are stored in a map keyed by vote ID
+      assert (all (\vote -> getPerasVoteTarget vote == firstVoteTarget) (NEMap.elems votes)) $
+        PerasVoteCollection
+          { pvcTarget = firstVoteTarget
+          , pvcVotes = votes
+          , pvcTotalWeight = sum (vpvVoteWeight . forgetArrivalTime <$> NEMap.elems votes)
+          }
+
 -- | A collection of Peras votes for a given target that has reached quorum
 newtype PerasVoteCollectionWithQuorum blk
   = PerasVoteCollectionWithQuorum {forgetQuorum :: PerasVoteCollection blk}
+
+unsafePerasVoteCollectionWithQuorum ::
+  (IsPerasVote (PerasVote blk) blk, StandardHash blk) =>
+  PerasParams blk ->
+  (NE (Map (PerasVoteId) (WithArrivalTime (ValidatedPerasVote blk)))) ->
+  PerasVoteCollectionWithQuorum blk
+unsafePerasVoteCollectionWithQuorum params votes =
+  let pvc = unsafePerasVoteCollection votes
+   in assert (weightAboveThreshold params (pvcTotalWeight pvc)) $
+        PerasVoteCollectionWithQuorum pvc
 
 deriving newtype instance
   ( StandardHash blk

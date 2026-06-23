@@ -206,7 +206,7 @@ instance SerialiseNodeToNode blk PerasSeatIndex where
   encodeNodeToNode _ccfg _version = KeyHash.toCBOR . unPerasSeatIndex
   decodeNodeToNode _ccfg _version = PerasSeatIndex <$> KeyHash.fromCBOR
 
-instance SerialiseNodeToNode blk (PerasVoteId blk) where
+instance SerialiseNodeToNode blk (PerasVoteId) where
   -- Consistent with the 'Serialise' instance for 'PerasVoteId' defined in Ouroboros.Consensus.Block.SupportsPeras
   encodeNodeToNode ccfg version PerasVoteId{..} =
     encodeListLen 2
