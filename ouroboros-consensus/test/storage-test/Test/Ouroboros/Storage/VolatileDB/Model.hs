@@ -19,6 +19,7 @@ module Test.Ouroboros.Storage.VolatileDB.Model
   , garbageCollectModel
   , getBlockComponentModel
   , getBlockInfoModel
+  , getLeiosAnnouncersModel
   , getMaxSlotNoModel
   , isOpenModel
   , putBlockModel
@@ -42,8 +43,10 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import Data.Set (Set)
 import qualified Data.Set as Set
+import LeiosDemoTypes (EbHash)
 import Data.TreeDiff
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -367,11 +370,22 @@ filterByPredecessorModel dbm = whenOpen dbm $ \predecessor ->
       (getBlockToPredecessor dbm)
 
 getBlockInfoModel ::
-  (GetPrevHash blk, HasBinaryBlockInfo blk) =>
+  (GetPrevHash blk, HasBinaryBlockInfo blk, ResolveLeiosBlock blk) =>
   DBModel blk ->
   Either (VolatileDBError blk) (HeaderHash blk -> Maybe (BlockInfo blk))
 getBlockInfoModel dbm = whenOpen dbm $ \hash ->
+  -- 'extractBlockInfo' reads the block's Leios dependency via its
+  -- 'ResolveLeiosBlock' instance, exactly as the real DB does, so the
+  -- 'BlockInfo's agree. (For the state-machine test's 'TestBlock' that instance
+  -- is the trivial default: no cert, no announcement.)
   extractBlockInfo <$> Map.lookup hash (blockIndex dbm)
+
+-- | The model uses no-op Leios extractors (see 'getBlockInfoModel'), so no
+-- block announces any EB and the announcer index is always empty.
+getLeiosAnnouncersModel ::
+  DBModel blk ->
+  Either (VolatileDBError blk) (EbHash -> Set (Point blk))
+getLeiosAnnouncersModel dbm = whenOpen dbm $ const Set.empty
 
 getMaxSlotNoModel ::
   HasHeader blk =>

@@ -32,11 +32,13 @@ module Ouroboros.Consensus.Storage.VolatileDB.API
 import Cardano.Binary (DecoderError)
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Maybe (isJust)
+import Data.Maybe.Strict (StrictMaybe)
 import Data.Set (Set)
 import Data.Typeable (Typeable)
 import Data.Word (Word16)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
+import LeiosDemoTypes (EbHash, LeiosPoint)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
@@ -83,6 +85,16 @@ data VolatileDB m blk = VolatileDB
   -- ^ Return a function that returns the 'BlockInfo' of the block with
   -- the given hash or 'Nothing' if the block is not found in the
   -- VolatileDB.
+  , getLeiosAnnouncers :: HasCallStack => STM m (EbHash -> Set (Point blk))
+  -- ^ Return a function mapping an announced endorser block (EB, by hash) to
+  -- the 'Point's of the blocks (RBs) in the VolatileDB that announce it (via
+  -- 'biLeiosAnnouncedEb'). Returns the empty set for an EB that no
+  -- VolatileDB block announces. Not a bijection: many RBs may announce the
+  -- same EB. The announcers are 'Point's so a consumer can filter them by slot
+  -- (e.g. against the immutable tip) without a separate 'getBlockInfo' lookup.
+  -- Keyed by 'EbHash' to match the acquired-EB set that drives reprocessing.
+  --
+  -- TODO(EbAnnouncement): see the note on 'biLeiosAnnouncedEb'.
   , garbageCollect :: HasCallStack => SlotNo -> m ()
   -- ^ Try to remove all blocks with a slot number less than the given
   -- one.
@@ -158,6 +170,26 @@ data BlockInfo blk = BlockInfo
   , biIsEBB :: !IsEBB
   , biHeaderOffset :: !Word16
   , biHeaderSize :: !Word16
+  , biHasLeiosCert :: !Bool
+  -- ^ Does this block carry a Leios certificate? If so, it depends on the EB
+  -- announced by its predecessor, and ChainSel must not select it until that
+  -- EB's closure has been acquired. This dependency is intrinsic to the
+  -- VolatileDB's role in chain selection, so it belongs here.
+  --
+  -- Derived from the block via 'blockHasLeiosCert' (see 'extractBlockInfo'),
+  -- which is why the VolatileDB carries a 'ResolveLeiosBlock' constraint on the
+  -- block type.
+  , biLeiosAnnouncedEb :: !(StrictMaybe LeiosPoint)
+  -- ^ The endorser block this block announces, if any. Note this is /not/ a
+  -- bijection: many RBs may announce the same EB.
+  --
+  -- TODO(EbAnnouncement): unlike 'biHasLeiosCert', the announcing-RB →
+  -- announced-EB relation does not really belong in the VolatileDB. It is
+  -- authoritatively carried by the RB header (which 'MsgLeiosBlockAnnouncement'
+  -- is meant to diffuse). We track it here for now to drive the announcer
+  -- index; once the in-memory EbAnnouncement data flow exists, this field (and
+  -- the VolatileDB's announcer index) should be relocated there. It is kept
+  -- separate from 'biHasLeiosCert' precisely so it can be ripped out cleanly.
   }
   deriving (Eq, Show, Generic, NoThunks)
 

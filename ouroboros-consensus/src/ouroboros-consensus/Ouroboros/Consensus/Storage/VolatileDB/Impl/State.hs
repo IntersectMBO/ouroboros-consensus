@@ -51,8 +51,11 @@ import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import Data.Maybe.Strict (StrictMaybe (..))
 import GHC.Stack
+import LeiosDemoTypes (pointEbHash)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB.API
 import qualified Ouroboros.Consensus.Storage.VolatileDB.Impl.FileInfo as FileInfo
@@ -104,6 +107,8 @@ data OpenState blk h = OpenState
   -- ^ Where to find each block based on its slot number.
   , currentSuccMap :: !(SuccessorsIndex blk)
   -- ^ The successors for each block.
+  , currentLeiosAnnouncerMap :: !(LeiosAnnouncerIndex blk)
+  -- ^ The blocks (RBs) announcing each endorser block.
   , currentMaxSlotNo :: !MaxSlotNo
   -- ^ Highest stored SlotNo.
   --
@@ -307,6 +312,7 @@ mkOpenState ::
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
   , HasNestedContent Header blk
+  , ResolveLeiosBlock blk
   , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   ) =>
   CodecConfig blk ->
@@ -342,11 +348,12 @@ mkOpenState ccfg hasFS@HasFS{..} checkInvariants validationPolicy tracer maxBloc
   toFsPath :: String -> FsPath
   toFsPath file = mkFsPath [file]
 
--- | Short-hand for all three index types
+-- | Short-hand for all index types
 type Indices blk =
   ( Index blk
   , ReverseIndex blk
   , SuccessorsIndex blk
+  , LeiosAnnouncerIndex blk
   )
 
 -- | Make the 'OpenState' by parsing all files.
@@ -359,6 +366,7 @@ mkOpenStateHelper ::
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
   , HasNestedContent Header blk
+  , ResolveLeiosBlock blk
   , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   ) =>
   CodecConfig blk ->
@@ -370,8 +378,8 @@ mkOpenStateHelper ::
   [(FileId, FsPath)] ->
   m (OpenState blk h)
 mkOpenStateHelper ccfg hasFS checkIntegrity validationPolicy tracer maxBlocksPerFile files = do
-  (currentMap', currentRevMap', currentSuccMap') <-
-    foldM validateFile (Index.empty, Map.empty, Map.empty) files
+  (currentMap', currentRevMap', currentSuccMap', currentAnnouncerMap') <-
+    foldM validateFile (Index.empty, Map.empty, Map.empty, LeiosAnnouncerIndex Map.empty) files
 
   let (currentWriteId, currentMap'') = case Index.lastFile currentMap' of
         -- The DB is empty. Create a new file with 'FileId' 0
@@ -406,11 +414,12 @@ mkOpenStateHelper ccfg hasFS checkIntegrity validationPolicy tracer maxBlocksPer
       , currentMap = currentMap''
       , currentRevMap = currentRevMap'
       , currentSuccMap = currentSuccMap'
+      , currentLeiosAnnouncerMap = currentAnnouncerMap'
       , currentMaxSlotNo = FileInfo.maxSlotNoInFiles (Index.elems currentMap')
       }
  where
   validateFile :: Indices blk -> (FileId, FsPath) -> m (Indices blk)
-  validateFile (currentMap, currentRevMap, currentSuccMap) (fd, file) = do
+  validateFile (currentMap, currentRevMap, currentSuccMap, currentAnnouncerMap) (fd, file) = do
     (parsedBlocks, mErr) <-
       parseBlockFile ccfg hasFS checkIntegrity validationPolicy file
     whenJust mErr $ \(e, offset) ->
@@ -432,8 +441,22 @@ mkOpenStateHelper ccfg hasFS checkIntegrity validationPolicy tracer maxBlocksPer
             )
             currentSuccMap
             acceptedBlocks
+        currentAnnouncerMap' =
+          LeiosAnnouncerIndex $
+            List.foldl'
+              ( \annMap ParsedBlockInfo{pbiBlockInfo} ->
+                  case biLeiosAnnouncedEb pbiBlockInfo of
+                    SNothing -> annMap
+                    SJust eb ->
+                      insertMapSet
+                        (pointEbHash eb)
+                        (BlockPoint (biSlotNo pbiBlockInfo) (biHash pbiBlockInfo))
+                        annMap
+              )
+              (getLeiosAnnouncerIndex currentAnnouncerMap)
+              acceptedBlocks
 
-    return (currentMap', currentRevMap', currentSuccMap')
+    return (currentMap', currentRevMap', currentSuccMap', currentAnnouncerMap')
 
   truncateError :: FsPath -> ParseError blk -> BlockOffset -> m ()
   truncateError file e offset = do

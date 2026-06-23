@@ -24,6 +24,7 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.Types
   , BlockSize (..)
   , FileId
   , InternalBlockInfo (..)
+  , LeiosAnnouncerIndex (..)
   , ReverseIndex
   , SuccessorsIndex
   ) where
@@ -32,6 +33,7 @@ import Data.Map.Strict (Map)
 import Data.Set (Set)
 import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (EbHash)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.VolatileDB.API (BlockInfo)
@@ -115,6 +117,24 @@ type ReverseIndex blk = Map (HeaderHash blk) (InternalBlockInfo blk)
 -- | For each block, we store the set of all blocks which have this block as
 -- a predecessor (set of successors).
 type SuccessorsIndex blk = Map (ChainHash blk) (Set (HeaderHash blk))
+
+-- | For each announced endorser block (EB, by hash), the 'Point's of the blocks
+-- (RBs) in the VolatileDB that announce it. Not a bijection: many RBs may
+-- announce the same EB. Used by ChainSel to find the RBs to reconsider once an
+-- EB's closure has been acquired, and to prune the acquired-EB set
+-- ('cdbAcquiredLeiosEbs') by announcer slot. The announcers are 'Point's (not
+-- bare hashes) so a consumer can filter them by slot -- e.g. against the
+-- immutable tip -- without a separate 'getBlockInfo' lookup. Keyed by 'EbHash'
+-- (not 'LeiosPoint') to match the acquired-EB set, which is what drives
+-- reprocessing.
+--
+-- TODO(EbAnnouncement): see the note on 'biLeiosAnnouncedEb' — this index
+-- should likely move out of the VolatileDB once the EbAnnouncement data flow
+-- exists.
+newtype LeiosAnnouncerIndex blk = LeiosAnnouncerIndex
+  { getLeiosAnnouncerIndex :: Map EbHash (Set (Point blk))
+  }
+  deriving (Generic, NoThunks)
 
 newtype BlockSize = BlockSize {unBlockSize :: Word32}
   deriving (Eq, Show, Generic, NoThunks)
