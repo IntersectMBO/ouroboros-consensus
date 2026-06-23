@@ -25,6 +25,7 @@ import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
 import Control.Monad (void)
 import Control.Tracer (traceWith)
+import Data.ByteString.Short (fromShort)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Typeable as Typeable
 import LeiosDemoDb
@@ -99,6 +100,23 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       protocolVersion
       mayEbAnn
   let blk = mkShelleyBlock $ SL.Block hdr body
+  case mayEbAnn of
+    Just ann -> do
+      let rbHashBytes =
+            fromShort $
+              toShortRawHash (Proxy @(ShelleyBlock proto era)) $
+                blk.shelleyBlockHeaderHash
+          ebPoint =
+            MkLeiosPoint
+              { pointSlotNo = fbCurrentSlotNo
+              , pointEbHash = ebAnnouncementHash ann
+              }
+      traceWith fbLeiosTracer $
+        TraceLeiosBlockAnnounced
+          { announcingRbHashBytes = rbHashBytes
+          , announcedEbPoint = ebPoint
+          }
+    Nothing -> pure ()
   return $
     assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
       blk

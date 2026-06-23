@@ -735,6 +735,13 @@ data TraceLeiosKernel
       , mempoolRestMeasure :: m
       }
   | TraceLeiosBlockStored {slot :: SlotNo, eb :: LeiosEb}
+  | -- | An RB header announces a freshly-forged EB on this chain.
+    -- Lets downstream consumers (e.g. the visualizer) attach the EB to
+    -- the announcing RB without having to correlate by timing.
+    TraceLeiosBlockAnnounced
+      { announcingRbHashBytes :: ByteString
+      , announcedEbPoint :: LeiosPoint
+      }
   | -- NOTE: We avoid 'Header blk' or 'Point blk' here and a slot should be
     -- sufficient because it the certying block must be directly succeeding the
     -- forging/announcing anyways.
@@ -803,6 +810,13 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosBlockStored"
       , "slot" .= slot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
+      ]
+  TraceLeiosBlockAnnounced{announcingRbHashBytes, announcedEbPoint} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockAnnounced"
+      , "rbHash" .= BS8.unpack (BS16.encode announcingRbHashBytes)
+      , "ebSlot" .= announcedEbPoint.pointSlotNo
+      , "ebHash" .= prettyEbHash announcedEbPoint.pointEbHash
       ]
   TraceLeiosBlockCertified{atSlot, certifiedPoint} ->
     mconcat
