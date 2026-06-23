@@ -54,16 +54,20 @@ import Cardano.Ledger.Core as SL
   ( eraDecoder
   , eraProtVerLow
   , toEraCBOR
+  , txSeqBlockBodyL
   )
 import qualified Cardano.Ledger.Core as SL (TranslationContext, hashBlockBody)
+import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Coerce (coerce)
-import Data.Typeable (Typeable)
+import Data.Maybe.Strict (isSJust)
+import Data.Typeable (Typeable, eqT)
 import GHC.Generics (Generic)
+import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Combinator
@@ -90,6 +94,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , pHeaderBlock
   , pHeaderBodyHash
   , pHeaderHash
+  , pHeaderLeiosContainsCert
   , pHeaderSlot
   )
 import Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
@@ -211,9 +216,21 @@ instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
     -- Compute the hash the body of the block (the transactions) and compare
     -- that against the hash of the body stored in the header.
     SL.hashBlockBody blockBody == pHeaderBodyHash shelleyHdr
+      -- Leios envelope: the header's cert bit must agree with the body, i.e.
+      -- it is set iff the body carries exactly one Leios certificate and no
+      -- txs (a "CertRB"). This binds the cheap header-only CertRB signal to
+      -- the actual body contents.
+      && pHeaderLeiosContainsCert shelleyHdr == (bodyHasLeiosCert && null bodyTxs)
    where
     ShelleyHeader{shelleyHeaderRaw = shelleyHdr} = hdr
     ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} = blk
+
+    -- The Leios certificate lives in the block body only in the Dijkstra era;
+    -- earlier eras have no such field, so no body ever carries a cert.
+    bodyHasLeiosCert = case eqT @era @DijkstraEra of
+      Just Refl -> isSJust (blockBody ^. leiosCertBlockBodyL)
+      Nothing -> False
+    bodyTxs = blockBody ^. SL.txSeqBlockBodyL
 
   headerIsEBB = const Nothing
 

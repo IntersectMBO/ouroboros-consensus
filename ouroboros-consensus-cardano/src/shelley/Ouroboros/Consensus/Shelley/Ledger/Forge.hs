@@ -24,6 +24,7 @@ import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
 import Control.Monad (void)
 import Control.Tracer (traceWith)
+import Data.Maybe.Strict (isSJust)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Typeable as Typeable
 import LeiosDemoDb
@@ -98,6 +99,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       actualBodySize
       protocolVersion
       mayEbAnn
+      (isSJust mayLeiosCert)
   let blk = mkShelleyBlock $ SL.Block hdr body
   return $
     assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $

@@ -74,6 +74,7 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> ocert
           <*> arbitrary
           <*> arbitrary
+          <*> arbitrary
 
 instance Praos.PraosCrypto c => Arbitrary (Header c) where
   arbitrary = do
