@@ -409,6 +409,10 @@ data PraosValidationErr c
       !String -- error message given by Consensus Layer
   | NoCounterForKeyHashOCERT
       !(KeyHash SL.BlockIssuer) -- stake pool key hash
+  -- TODO Leios validation-error constructors belongs here, for the header
+  -- checks described in 'updateChainDepState'. Deferred for now:
+  -- 'PraosValidationErr' is used downstream (e.g. cardano-node tracers), so
+  -- extending it would incur downstream integration work
   deriving Generic
 
 deriving instance PraosCrypto c => Eq (PraosValidationErr c)
@@ -507,6 +511,18 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
     b
     slot
     tcs = do
+      -- TODO enforce the Leios header checks here (needs 'PraosValidationErr'
+      -- constructors; see above):
+      --   * LeiosCertRBWithoutAnnouncement - the set cert bit requires
+      --     predecessor's chain-dep state has an announcement (genesis
+      --     chain-dep state has no announcement, so the first header can't set
+      --     its cert bit)
+      --   * LeiosCertTooYoung - check the slot gap against L
+      --   * LeiosEbTooBig - the maximum EB body size
+      --   * LeiosEbTxsTooBig - the maximum EB closure size
+      --   * LeiosEbCertExclusivity - the set cert bit requires the no txs
+      --   * etc
+
       -- First, we check the KES signature, which validates that the issuer is
       -- in fact who they say they are.
       validateKESSignature cfg lv (praosStateOCertCounters cs) b

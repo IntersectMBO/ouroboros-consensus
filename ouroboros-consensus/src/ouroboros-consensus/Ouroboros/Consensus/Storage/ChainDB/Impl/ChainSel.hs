@@ -1481,13 +1481,20 @@ isUnacquiredCertRB acquiredEbs lookupBlockInfo h = case lookupBlockInfo h of
   Just info
     | not (VolatileDB.biHasLeiosCert info) -> False
     | otherwise -> case VolatileDB.biPrevHash info of
-        -- A cert-RB whose predecessor is genesis announced no EB: malformed.
+        -- A cert-RB on genesis announces no EB, so it cannot certify anything:
+        -- malformed. Header validation rejects such a block
+        -- ('Praos.LeiosCertRBWithoutAnnouncement'), so this is unreachable for
+        -- header-validated blocks; we still report it unacquired (hence never
+        -- selectable) as a defensive fallback.
         GenesisHash -> True
         BlockHash ph ->
           case lookupBlockInfo ph
             >>= strictMaybeToMaybe . VolatileDB.biLeiosAnnouncedEb of
-            -- Predecessor not (yet) in the VolatileDB, or announced no EB: we
-            -- cannot confirm the closure is available, so treat as unacquired.
+            -- Either the predecessor is not (yet) in the VolatileDB — in which
+            -- case the block is unselectable anyway, for want of its predecessor
+            -- — or the predecessor is present but announced no EB, which is
+            -- malformed and rejected by header validation (as above). Either
+            -- way, report it unacquired.
             Nothing -> True
             Just ebPt -> pointEbHash ebPt `Set.notMember` acquiredEbs
 
