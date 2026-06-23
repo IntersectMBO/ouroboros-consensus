@@ -235,9 +235,15 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getLeiosVoteState :: LeiosVoteState m
   -- ^ Aggregated vote state across all peers. Empty in S4; populated
   -- by the voting thread in S5.
-  , getLeiosPeersVars :: MVar.MVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
-  -- ^ Per-peer offerings + outgoing request queues. Written to by
-  -- the LeiosNotify clients and read by the fetch logic.
+  , getLeiosPeersVars :: LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
+  -- ^ Per-peer offerings + outgoing request queues, keyed by
+  -- peer. Maintained by @bracketLeiosPeer@ (in the diffusion layer):
+  -- get-or-created by the first of this peer's peer-vars
+  -- mini-protocols (ChainSync, LeiosNotify, LeiosFetch) to start and
+  -- removed by the first to exit (if some start after others exit,
+  -- then they'll clean-up after themselves with /they/ exist). Read
+  -- by the fetch logic. A lazy 'TVar' because the contents (the
+  -- per-peer 'MVar's) are not 'NoThunks'.
   , getLeiosOutstanding :: MVar.MVar m (LeiosOutstanding (ConnectionId addrNTN))
   -- ^ Outstanding EB / TX work — written by the fetch logic, the
   -- LeiosNotify / LeiosFetch clients, and the LeiosCopier.
@@ -463,7 +469,7 @@ initNodeKernel
           traceWith leiosTr $ MkTraceLeiosKernel "leiosFetchLogic: wait for leios ready"
           () <- MVar.takeMVar getLeiosReady
           iterationStart <- getMonotonicTime
-          leiosPeersVars <- MVar.readMVar getLeiosPeersVars
+          leiosPeersVars <- LazySTM.readTVarIO getLeiosPeersVars
           offerings <- mapM (MVar.readMVar . Leios.offerings) leiosPeersVars
           let livePeers = Map.keysSet leiosPeersVars
           newDecisions <- MVar.modifyMVar getLeiosOutstanding $ \outstanding -> do
@@ -474,7 +480,7 @@ initNodeKernel
             -- read just above. Basically: don't assign new requests to a peer
             -- that just disconnected, since the replies would never arrive /AND/
             -- those requests would then remain in 'getLeiosOutstanding' forever.
-            stillLivePeers <- MVar.readMVar getLeiosPeersVars
+            stillLivePeers <- LazySTM.readTVarIO getLeiosPeersVars
             filteredOutstanding <-
               Leios.filterMissingWork leiosConn outstanding
             traceWith leiosTr $
@@ -607,7 +613,7 @@ data InternalState m addrNTN addrNTC blk = IS
     leiosOutstanding :: MVar.MVar m (LeiosOutstanding (ConnectionId addrNTN))
   , leiosReady :: MVar.MVar m ()
   , leiosPeersVars ::
-      MVar.MVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
+      LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   }
 
 initInternalState ::
@@ -657,7 +663,7 @@ initInternalState
 
     fetchClientRegistry <- newFetchClientRegistry
 
-    leiosPeersVars <- MVar.newMVar Map.empty
+    leiosPeersVars <- LazySTM.newTVarIO Map.empty
     leiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
     leiosReady <- MVar.newEmptyMVar
 

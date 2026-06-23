@@ -28,6 +28,7 @@ import qualified Data.IntSet as IntSet
 import Data.List (unfoldr)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Proxy (Proxy (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
@@ -58,6 +59,7 @@ import LeiosDemoTypes
   , LeiosFetchRequest (..)
   , LeiosFetchStaticEnv
   , LeiosOutstanding
+  , LeiosPeerVars
   , LeiosPoint (..)
   , LeiosTx (..)
   , PeerId (..)
@@ -70,6 +72,11 @@ import LeiosDemoTypes
   , maxTxsPerEb
   )
 import qualified LeiosDemoTypes as Leios
+import Ouroboros.Consensus.Block (BlockProtocol, Header)
+import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( ResolveLeiosBlock (chainDepStateLeiosAnnouncement, headerContainsLeiosCert)
+  )
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 
 -- | Wrap an action with exception tracing. Catches the exception,
@@ -827,3 +834,70 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = d
     pure outstanding'
   void $ MVar.tryPutMVar readyVar ()
   traceWith tracer $ MkTraceLeiosPeer $ "[done] " ++ Leios.prettyLeiosBlockTxsRequest req
+
+-----
+
+-- | Update a peer's LeiosFetch state as if its LeiosNotify client had offered
+-- the given EB — i.e. as a 'MsgLeiosBlockOffer' (EB body) plus a
+-- 'MsgLeiosBlockTxsOffer' (EB txs).
+--
+-- This is the LeiosFetch-side effect of a CertRB header arriving via ChainSync:
+-- given the peer's (already-resolved) LeiosNotify vars and the EB the CertRB
+-- certifies (the announcement recorded in the predecessor's chain-dep state,
+-- plus the EB's on-the-wire body size), we record the body as missing and this
+-- peer as offering both the body and its txs, then wake the fetch logic. (The
+-- block-aware decision of /whether/ to call this — recognising the CertRB,
+-- extracting its announcement, and waiting for the peer's LeiosNotify vars to
+-- register — stays in the ChainSync client's @leiosCertRbCallback@.)
+leiosCertRbOffer ::
+  IOLike m =>
+  ( MVar m (LeiosOutstanding pid)
+  , MVar m ()
+  ) ->
+  LeiosPeerVars m ->
+  -- | The EB the CertRB certifies: its point and on-the-wire body size.
+  (LeiosPoint, BytesSize) ->
+  m ()
+leiosCertRbOffer (outstandingVar, readyVar) peerVars (point, ebBytesSize) = do
+  let MkLeiosPoint _ebSlot ebHash = point
+  -- As if 'MsgLeiosBlockOffer': record the EB body as missing.
+  MVar.modifyMVar_ outstandingVar $ \outstanding ->
+    pure $
+      if Set.member ebHash (Leios.acquiredEbBodies outstanding)
+        then outstanding
+        else
+          outstanding
+            { Leios.missingEbBodies =
+                Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
+            }
+  -- As if 'MsgLeiosBlockOffer' (body) and 'MsgLeiosBlockTxsOffer' (txs): record
+  -- this peer as offering both.
+  MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) ->
+    pure (Set.insert ebHash offers1, Set.insert ebHash offers2)
+  void $ MVar.tryPutMVar readyVar ()
+
+-----
+
+-- | When a CertRB header arrives via ChainSync, update this peer's LeiosFetch
+-- state as if its LeiosNotify client had offered the EB that the CertRB
+-- certifies. The block-aware entry point: recognise the CertRB
+-- ('headerContainsLeiosCert') and read the EB it certifies — the announcement
+-- still recorded in the predecessor's chain-dep state, which the CertRB's own
+-- transition would overwrite ('chainDepStateLeiosAnnouncement'). A no-op when
+-- the header is not a CertRB or no announcement is recorded; otherwise the
+-- LeiosFetch-side effect is recorded via 'leiosCertRbOffer' against the peer's
+-- (already-resolved) LeiosNotify vars.
+leiosCertRbCallback ::
+  forall blk pid m.
+  (IOLike m, ResolveLeiosBlock blk) =>
+  ( MVar m (LeiosOutstanding pid)
+  , MVar m ()
+  ) ->
+  LeiosPeerVars m ->
+  Header blk ->
+  ChainDepState (BlockProtocol blk) ->
+  m ()
+leiosCertRbCallback kernelVars peerVars hdr cds =
+  when (headerContainsLeiosCert hdr) $
+    forM_ (chainDepStateLeiosAnnouncement (Proxy :: Proxy blk) cds) $ \announcement ->
+      leiosCertRbOffer kernelVars peerVars announcement
