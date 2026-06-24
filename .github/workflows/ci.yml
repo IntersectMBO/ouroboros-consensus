@@ -141,7 +141,7 @@ jobs:
     # Otherwise, we could restore a cache from a previous month, which makes
     # caches grow unboundedly.
     - name: "Restore cache for cabal-store"
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       id: restore-cabal-store
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
@@ -161,7 +161,7 @@ jobs:
     #
     # See https://github.com/actions/cache/tree/v3/save#always-save-cache.
     - name: "Save cache for cabal-store"
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@v6
       id: save-cabal-store
       if: steps.build-dependencies.outcome == 'success' && steps.restore-cabal-store.outputs.cache-hit != 'true'
       with:
@@ -279,7 +279,7 @@ jobs:
     # run on the `main` branch. If we run this workflow in the context of a PR,
     # then we will save the same results we just restored.
     - name: Cache benchmark baseline results
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: baseline-mempool-benchmarks.csv
         key:  baseline-mempool-benchmarks-${{ runner.os }}-${{ matrix.ghc }}-${{ github.run_id }}
