@@ -51,7 +51,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , perasVoteCollectionCheckQuorum
   , toUniqueVotesWithSameTarget
   , unsafePerasVoteCollection
-  , unsafePerasVoteCollectionWithQuorum
+  , unsafeAssumeQuorum
 
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Peras.Params
@@ -748,6 +748,8 @@ perasVoteCollectionAddVote vote pvc =
         , pvcTotalWeight pvc
         )
 
+-- | Unsafe constructor for 'PerasVoteCollection' with asserts to check the invariants.
+-- The only recorded use at the moment is in the HFC implementation, to turn an existing 'PerasVoteCollection' for the HardForkBlock into a 'PerasVoteCollectionWithQuorum' of a concrete era.
 unsafePerasVoteCollection ::
   (IsPerasVote (PerasVote blk) blk, StandardHash blk) =>
   (NE (Map (PerasVoteId) (WithArrivalTime (ValidatedPerasVote blk)))) ->
@@ -767,15 +769,13 @@ unsafePerasVoteCollection votes =
 newtype PerasVoteCollectionWithQuorum blk
   = PerasVoteCollectionWithQuorum {forgetQuorum :: PerasVoteCollection blk}
 
-unsafePerasVoteCollectionWithQuorum ::
+-- | Transforms a 'PerasVoteCollection' into a 'PerasVoteCollectionWithQuorum' without actually checking the quorum condition.
+-- The only recorded use at the moment is in the HFC implementation, to turn an existing 'PerasVoteCollectionWithQuorum' for the HardForkBlock into a 'PerasVoteCollectionWithQuorum' of a concrete era.
+unsafeAssumeQuorum ::
   (IsPerasVote (PerasVote blk) blk, StandardHash blk) =>
-  PerasParams blk ->
-  (NE (Map (PerasVoteId) (WithArrivalTime (ValidatedPerasVote blk)))) ->
+  PerasVoteCollection blk ->
   PerasVoteCollectionWithQuorum blk
-unsafePerasVoteCollectionWithQuorum params votes =
-  let pvc = unsafePerasVoteCollection votes
-   in assert (weightAboveThreshold params (pvcTotalWeight pvc)) $
-        PerasVoteCollectionWithQuorum pvc
+unsafeAssumeQuorum = PerasVoteCollectionWithQuorum
 
 deriving newtype instance
   ( StandardHash blk
