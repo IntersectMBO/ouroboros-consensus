@@ -81,7 +81,7 @@ jobs:
       CABAL: "3.16.1.0"
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Check CDDLs up-to-date with Blueprints
       continue-on-error: true
@@ -247,7 +247,7 @@ jobs:
         ghc: ["9.6.7", "9.10.3"]
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install base libraries
       uses: input-output-hk/actions/base@latest
@@ -327,7 +327,7 @@ jobs:
       run:
         working-directory: ./docs/website
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download haddocks
         uses: actions/download-artifact@v8
