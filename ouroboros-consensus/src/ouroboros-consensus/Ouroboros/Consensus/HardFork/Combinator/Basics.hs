@@ -7,6 +7,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -77,7 +78,8 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , ValidatedPerasCert (..)
   , ValidatedPerasVote (..)
   , retagPerasParams
-  , unsafePerasVoteCollectionWithQuorum
+  , unsafeAssumeQuorum
+  , unsafePerasVoteCollection
   )
 import Ouroboros.Consensus.BlockchainTime (WithArrivalTime (..))
 import Ouroboros.Consensus.Committee.Class
@@ -430,27 +432,23 @@ projectHFCUniqueVotesWithSameTarget uniqueVotesWithSameTarget =
 -- even thought we theoretically don't need to check it since we actually just transform an existing, properly built 'PerasVoteCollectionWithQuorum'.
 projectHFCPerasVoteCollectionWithQuorum ::
   All SingleEraBlockWithPeras xs =>
-  -- | Just needed for quorum checking is assert in the unsafe function call
-  PerasEpochContext (HardForkBlock xs) ->
   PerasVoteCollectionWithQuorum (HardForkBlock xs) ->
   Maybe (NS PerasVoteCollectionWithQuorum xs)
-projectHFCPerasVoteCollectionWithQuorum hfcContext hfcCollection =
+projectHFCPerasVoteCollectionWithQuorum hfcCollection =
   let votes = pvcVotes $ forgetQuorum hfcCollection
       neMapNs = projectHFCWatValidatedPerasVote <$> votes
    in case ensureSameEraNonEmptyMap neMapNs of
         Nothing -> Nothing
-        Just nsNeMap -> case ensureSameEraPair (projectHFCPerasContext hfcContext, nsNeMap) of
-          Nothing -> Nothing
-          Just nsPair ->
-            Just $
-              hcmap
-                proxySingleWithPeras
-                ( \(Pair context (Comp compedValMap)) ->
-                    unsafePerasVoteCollectionWithQuorum
-                      (pecParams context)
+        Just nsNeMap ->
+          Just $
+            hcmap
+              proxySingleWithPeras
+              ( \(Comp compedValMap) ->
+                  unsafeAssumeQuorum $
+                    unsafePerasVoteCollection
                       ((\(Comp v) -> v) <$> compedValMap)
-                )
-                nsPair
+              )
+              nsNeMap
 
 -- NOTE: this assumes PerasParams are the same for all eras.
 --
@@ -1106,6 +1104,20 @@ instance
         (Comp . fmap WrapPerasCommitteeCert . fromPerasCert . unwrapPerasCert)
       . getOneEraPerasCert
 
+-- | Downcast a 'Point' of the hard fork block to a 'Point' of a single era
+-- by decoding the raw hash via 'fromShortRawHash'. Used when delegating
+-- operations that take a 'Point' argument to a single-era implementation.
+downcastHardForkPoint ::
+  forall blk xs.
+  SingleEraBlock blk =>
+  Point (HardForkBlock xs) ->
+  Point blk
+downcastHardForkPoint = \case
+  GenesisPoint ->
+    GenesisPoint
+  BlockPoint s (OneEraHash h) ->
+    BlockPoint s (fromShortRawHash (Proxy @blk) h)
+
 -- TODO: we need to change the binary representation of votes and certs to carry
 -- era-specific/versionning information, to allow future evolutions
 instance
@@ -1143,7 +1155,7 @@ instance
                   poolId
                   privKey'
                   roundNo
-                  (castPoint point)
+                  (downcastHardForkPoint point)
           )
         $ nsPrivKeyContext
 
@@ -1167,7 +1179,7 @@ instance
           $ nsContextVote
 
   forgePerasCert context collection =
-    case projectHFCPerasVoteCollectionWithQuorum context collection of
+    case projectHFCPerasVoteCollectionWithQuorum collection of
       Nothing ->
         Left HardForkPerasErrorEraMismatch
       Just nsCollection -> case ensureSameEraPair (projectHFCPerasContext context, nsCollection) of

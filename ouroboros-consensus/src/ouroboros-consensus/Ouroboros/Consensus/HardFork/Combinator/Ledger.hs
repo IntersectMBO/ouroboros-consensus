@@ -357,7 +357,9 @@ instance
   where
   type PerasEpochContextResolver (HardForkBlock xs) = V1PerasEpochContextResolver (HardForkBlock xs)
 
-  mkPerasVotingCommitteeInput = V1.mkPerasVotingCommitteeInput @(HardForkBlock xs)
+  mkPerasVotingCommitteeInput = error "will never be called"
+
+  mkBoundedPerasEpochContext epochToPerasRoundInfo ledgerState headerState = undefined -- [TODO STOPPED THERE] here do the dispatch
 
 {-------------------------------------------------------------------------------
   HeaderValidation
