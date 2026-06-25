@@ -10,6 +10,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -42,9 +43,20 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
     -- ** Convenience re-exports
   , EpochInfo
   , Except
+
+    -- * Serialisation of n-ary sums
+  , decodeNS
+  , encodeNS
   ) where
 
+import Cardano.Binary (enforceSize)
 import Cardano.Slotting.EpochInfo
+import Codec.CBOR.Decoding (Decoder)
+import qualified Codec.CBOR.Decoding as Dec
+import Codec.CBOR.Encoding (Encoding)
+import qualified Codec.CBOR.Encoding as Enc
+import qualified Codec.Serialise as Serialise
+import Codec.Serialise.Class (Serialise)
 import Data.Bifunctor (bimap)
 import Data.Functor.Product (Product (..))
 import Data.Kind (Type)
@@ -54,7 +66,7 @@ import qualified Data.Map.NonEmpty as NEMap
 import Data.SOP (K (..), type (:.:) (..))
 import Data.SOP.Constraint
 import Data.SOP.Functors
-import Data.SOP.Index (himap, injectNS)
+import Data.SOP.Index (Index, himap, hizipWith, injectNS, nsFromIndex, nsToIndex)
 import Data.SOP.Match (matchNS)
 import Data.SOP.Strict
 import Data.Typeable
@@ -65,10 +77,10 @@ import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Block.SupportsPeras
   ( BlockSupportsPeras (..)
   , BoostedBlock
+  , BoostedBlockCompatibleWithPoint (..)
   , IsPerasCert (..)
   , IsPerasError (..)
   , IsPerasVote (..)
-  , PerasBoostedBlock
   , PerasCertCompatibleWithVotingCommittee (..)
   , PerasEpochContext (..)
   , PerasRoundNo
@@ -120,6 +132,39 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (ShowProxy)
 import Type.Reflection (someTypeRep)
 import Unsafe.Coerce (unsafeCoerce)
+
+{-------------------------------------------------------------------------------
+  Serialisation of n-ary sums ('NS')
+
+  Generic CBOR (de)serialisation of an 'NS': a length-2 list holding the 'Word8'
+  era index followed by the selected era's payload. Defined here, rather than in
+  "Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common" (which re-exports
+  them), so that instances sitting upstream of @Common@ -- such as the
+  'VotingCommittee' instance below -- can reuse them.
+-------------------------------------------------------------------------------}
+
+encodeNS :: SListI xs => NP (f -.-> K Encoding) xs -> NS f xs -> Encoding
+encodeNS es ns =
+  mconcat
+    [ Enc.encodeListLen 2
+    , Enc.encodeWord8 $ nsToIndex ns
+    , hcollapse $ hzipWith apFn es ns
+    ]
+
+decodeNS :: forall xs f s. SListI xs => NP (Decoder s :.: f) xs -> Decoder s (NS f xs)
+decodeNS ds = do
+  enforceSize "decodeNS" 2
+  i <- Dec.decodeWord8
+  case nsFromIndex i of
+    Nothing -> fail $ "decodeNS: invalid index " ++ show i
+    Just ns -> hcollapse $ hizipWith aux ds ns
+ where
+  aux ::
+    Index xs blk ->
+    (Decoder s :.: f) blk ->
+    K () blk ->
+    K (Decoder s (NS f xs)) blk
+  aux index (Comp dec) (K ()) = K $ injectNS index <$> dec
 
 {-------------------------------------------------------------------------------
   Hard fork protocol, block, and ledger state
@@ -406,7 +451,7 @@ newtype WrapUniqueVotesWithSameTarget x
   }
 
 projectHFCUniqueVotesWithSameTarget ::
-  All SingleEraBlockWithPeras xs =>
+  All SingleEraBlock xs =>
   UniqueVotesWithSameTarget
     (PerasCrypto (HardForkBlock xs))
     (PerasVotingCommitteeScheme (HardForkBlock xs)) ->
@@ -418,7 +463,7 @@ projectHFCUniqueVotesWithSameTarget uniqueVotesWithSameTarget =
     Just ns ->
       Just $
         hcmap
-          proxySingleWithPeras
+          proxySingle
           ( \(Comp votes) ->
               WrapUniqueVotesWithSameTarget
                 . unsafeUniqueVotesWithSameTarget
@@ -431,7 +476,7 @@ projectHFCUniqueVotesWithSameTarget uniqueVotesWithSameTarget =
 -- assert that quorum is reached when constructing the 'PerasVoteCollectionWithQuorum' through the unsafe function,
 -- even thought we theoretically don't need to check it since we actually just transform an existing, properly built 'PerasVoteCollectionWithQuorum'.
 projectHFCPerasVoteCollectionWithQuorum ::
-  All SingleEraBlockWithPeras xs =>
+  All SingleEraBlock xs =>
   PerasVoteCollectionWithQuorum (HardForkBlock xs) ->
   Maybe (NS PerasVoteCollectionWithQuorum xs)
 projectHFCPerasVoteCollectionWithQuorum hfcCollection =
@@ -442,7 +487,7 @@ projectHFCPerasVoteCollectionWithQuorum hfcCollection =
         Just nsNeMap ->
           Just $
             hcmap
-              proxySingleWithPeras
+              proxySingle
               ( \(Comp compedValMap) ->
                   unsafeAssumeQuorum $
                     unsafePerasVoteCollection
@@ -468,16 +513,10 @@ projectHFCPerasContext PerasEpochContext{pecCommittee, pecParams} =
     . getOneEraPerasVotingCommittee
     $ pecCommittee
 
-class
-  ( BoostedBlock (PerasVote blk) ~ boostedBlock
-  , BoostedBlock (PerasCert blk) ~ boostedBlock
-  ) =>
-  IsBoostedBlock boostedBlock blk
-class ElectionId (PerasCrypto blk) ~ electionId => IsElectionId electionId blk
 type instance ElectionId (OneEraPerasCrypto xs) = PerasRoundNo
-type instance BoostedBlock (OneEraPerasVote xs) = PerasBoostedBlock
-type instance BoostedBlock (OneEraPerasCert xs) = PerasBoostedBlock
-type instance VoteCandidate (OneEraPerasCrypto xs) = PerasBoostedBlock
+type instance BoostedBlock (OneEraPerasVote xs) = Point (HardForkBlock xs)
+type instance BoostedBlock (OneEraPerasCert xs) = Point (HardForkBlock xs)
+type instance VoteCandidate (OneEraPerasCrypto xs) = Point (HardForkBlock xs)
 type instance PrivateKey (OneEraPerasCrypto xs) = PerEraPerasPrivateKey xs
 type instance PublicKey (OneEraPerasCrypto xs) = OneEraPerasPublicKey xs
 
@@ -520,13 +559,6 @@ newtype WrapPerasCommitteeCert blk = WrapPerasCommitteeCert
 newtype OneEraPerasVotingCommitteeError xs = OneEraPerasVotingCommitteeError
   { getOneEraPerasVotingCommitteeError :: NS WrapPerasVotingCommitteeError xs
   }
-
-class
-  (SingleEraBlock x, IsBoostedBlock PerasBoostedBlock x, IsElectionId PerasRoundNo x) =>
-  SingleEraBlockWithPeras x
-
-proxySingleWithPeras :: Proxy SingleEraBlockWithPeras
-proxySingleWithPeras = Proxy
 
 -- type InnerF x = Either :.:
 
@@ -587,10 +619,10 @@ deriving newtype instance
 deriving newtype instance
   Eq (UniqueVotesWithSameTarget (PerasCrypto x) (PerasVotingCommitteeScheme x)) =>
   Eq (WrapUniqueVotesWithSameTarget x)
+deriving stock instance Generic (WrapUniqueVotesWithSameTarget x)
 deriving newtype instance
   NoThunks (UniqueVotesWithSameTarget (PerasCrypto x) (PerasVotingCommitteeScheme x)) =>
   NoThunks (WrapUniqueVotesWithSameTarget x)
-deriving stock instance Generic (WrapUniqueVotesWithSameTarget x)
 
 deriving newtype instance
   Show (PublicKey (PerasCrypto blk)) =>
@@ -598,10 +630,10 @@ deriving newtype instance
 deriving newtype instance
   Eq (PublicKey (PerasCrypto blk)) =>
   Eq (WrapPerasPublicKey blk)
+deriving stock instance Generic (WrapPerasPublicKey blk)
 deriving newtype instance
   NoThunks (PublicKey (PerasCrypto blk)) =>
   NoThunks (WrapPerasPublicKey blk)
-deriving stock instance Generic (WrapPerasPublicKey blk)
 
 deriving newtype instance
   Show (PrivateKey (PerasCrypto blk)) =>
@@ -609,14 +641,58 @@ deriving newtype instance
 deriving newtype instance
   Eq (PrivateKey (PerasCrypto blk)) =>
   Eq (WrapPerasPrivateKey blk)
+deriving stock instance Generic (WrapPerasPrivateKey blk)
 deriving newtype instance
   NoThunks (PrivateKey (PerasCrypto blk)) =>
   NoThunks (WrapPerasPrivateKey blk)
-deriving stock instance Generic (WrapPerasPrivateKey blk)
 
--- 'Show' / 'Eq' / 'NoThunks' for 'WrapPerasVotingCommittee' are in the
--- BlockSupportsPeras superclass-instances section below.
+deriving newtype instance
+  Show (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
+  Show (WrapPerasVotingCommittee blk)
+deriving newtype instance
+  Eq (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
+  Eq (WrapPerasVotingCommittee blk)
 deriving stock instance Generic (WrapPerasVotingCommittee blk)
+deriving newtype instance
+  NoThunks (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
+  NoThunks (WrapPerasVotingCommittee blk)
+deriving newtype instance
+  Serialise (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
+  Serialise (WrapPerasVotingCommittee blk)
+
+deriving via
+  LiftNS WrapPerasVotingCommittee xs
+  instance
+    CanHardFork xs =>
+    Show (VotingCommittee (OneEraPerasCrypto xs) (OneEraPerasVotingCommitteeScheme xs))
+deriving via
+  LiftNS WrapPerasVotingCommittee xs
+  instance
+    CanHardFork xs =>
+    Eq (VotingCommittee (OneEraPerasCrypto xs) (OneEraPerasVotingCommitteeScheme xs))
+deriving stock instance
+  Generic (VotingCommittee (OneEraPerasCrypto xs) (OneEraPerasVotingCommitteeScheme xs))
+deriving via
+  LiftNamedNS "OneEraPerasVotingCommittee" WrapPerasVotingCommittee xs
+  instance
+    CanHardFork xs =>
+    NoThunks (VotingCommittee (OneEraPerasCrypto xs) (OneEraPerasVotingCommitteeScheme xs))
+-- | Hand-written rather than @deriving via SerialiseNS@: that derivation needs
+-- @All (Compose Serialise WrapPerasVotingCommittee) xs@, which GHC cannot solve
+-- from the @CanHardFork xs@ (i.e. @All SingleEraBlock xs@) context for an abstract
+-- @xs@. We instead build the per-era codecs with @hcpure proxySingle@ -- each era's
+-- @Serialise (WrapPerasVotingCommittee blk)@ is reachable from @SingleEraBlock blk@
+-- via its @StateSupportsPerasEpochContext@ superclass -- and feed them to 'encodeNS'
+-- and 'decodeNS', producing the same wire format a @SerialiseNS@ derivation would.
+instance
+  CanHardFork xs =>
+  Serialise (VotingCommittee (OneEraPerasCrypto xs) (OneEraPerasVotingCommitteeScheme xs))
+  where
+  encode (OneEraPerasVotingCommittee ns) =
+    encodeNS (hcpure proxySingle (fn (K . Serialise.encode))) ns
+  decode =
+    OneEraPerasVotingCommittee
+      <$> decodeNS (hcpure proxySingle (Comp Serialise.decode))
 
 deriving newtype instance
   Show (VotingCommitteeInput (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
@@ -624,10 +700,10 @@ deriving newtype instance
 deriving newtype instance
   Eq (VotingCommitteeInput (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
   Eq (WrapPerasVotingCommitteeInput blk)
+deriving stock instance Generic (WrapPerasVotingCommitteeInput blk)
 deriving newtype instance
   NoThunks (VotingCommitteeInput (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
   NoThunks (WrapPerasVotingCommitteeInput blk)
-deriving stock instance Generic (WrapPerasVotingCommitteeInput blk)
 
 deriving newtype instance
   Show (VotingCommitteeError (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
@@ -635,10 +711,10 @@ deriving newtype instance
 deriving newtype instance
   Eq (VotingCommitteeError (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
   Eq (WrapPerasVotingCommitteeError blk)
+deriving stock instance Generic (WrapPerasVotingCommitteeError blk)
 deriving newtype instance
   NoThunks (VotingCommitteeError (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
   NoThunks (WrapPerasVotingCommitteeError blk)
-deriving stock instance Generic (WrapPerasVotingCommitteeError blk)
 
 deriving newtype instance
   Show (EligibilityWitness (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
@@ -646,10 +722,10 @@ deriving newtype instance
 deriving newtype instance
   Eq (EligibilityWitness (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
   Eq (WrapPerasEligibilityWitness blk)
+deriving stock instance Generic (WrapPerasEligibilityWitness blk)
 deriving newtype instance
   NoThunks (EligibilityWitness (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
   NoThunks (WrapPerasEligibilityWitness blk)
-deriving stock instance Generic (WrapPerasEligibilityWitness blk)
 
 deriving newtype instance
   Show (Vote (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
@@ -657,10 +733,10 @@ deriving newtype instance
 deriving newtype instance
   Eq (Vote (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
   Eq (WrapPerasCommitteeVote blk)
+deriving stock instance Generic (WrapPerasCommitteeVote blk)
 deriving newtype instance
   NoThunks (Vote (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
   NoThunks (WrapPerasCommitteeVote blk)
-deriving stock instance Generic (WrapPerasCommitteeVote blk)
 
 deriving newtype instance
   Show (Cert (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
@@ -668,10 +744,10 @@ deriving newtype instance
 deriving newtype instance
   Eq (Cert (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
   Eq (WrapPerasCommitteeCert blk)
+deriving stock instance Generic (WrapPerasCommitteeCert blk)
 deriving newtype instance
   NoThunks (Cert (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
   NoThunks (WrapPerasCommitteeCert blk)
-deriving stock instance Generic (WrapPerasCommitteeCert blk)
 
 deriving newtype instance
   Show (VoteSignature (PerasCrypto blk)) =>
@@ -679,10 +755,10 @@ deriving newtype instance
 deriving newtype instance
   Eq (VoteSignature (PerasCrypto blk)) =>
   Eq (WrapPerasVoteSignature blk)
+deriving stock instance Generic (WrapPerasVoteSignature blk)
 deriving newtype instance
   NoThunks (VoteSignature (PerasCrypto blk)) =>
   NoThunks (WrapPerasVoteSignature blk)
-deriving stock instance Generic (WrapPerasVoteSignature blk)
 
 deriving newtype instance
   Show (VoteVerificationKey (PerasCrypto blk)) =>
@@ -690,10 +766,10 @@ deriving newtype instance
 deriving newtype instance
   Eq (VoteVerificationKey (PerasCrypto blk)) =>
   Eq (WrapPerasVoteVerificationKey blk)
+deriving stock instance Generic (WrapPerasVoteVerificationKey blk)
 deriving newtype instance
   NoThunks (VoteVerificationKey (PerasCrypto blk)) =>
   NoThunks (WrapPerasVoteVerificationKey blk)
-deriving stock instance Generic (WrapPerasVoteVerificationKey blk)
 
 deriving newtype instance
   Show (VoteSigningKey (PerasCrypto blk)) =>
@@ -701,10 +777,10 @@ deriving newtype instance
 deriving newtype instance
   Eq (VoteSigningKey (PerasCrypto blk)) =>
   Eq (WrapPerasVoteSigningKey blk)
+deriving stock instance Generic (WrapPerasVoteSigningKey blk)
 deriving newtype instance
   NoThunks (VoteSigningKey (PerasCrypto blk)) =>
   NoThunks (WrapPerasVoteSigningKey blk)
-deriving stock instance Generic (WrapPerasVoteSigningKey blk)
 
 -- 'OneEra*' / 'PerEra*' wrappers: only 'Generic' is available (see NOTE above).
 deriving stock instance Generic (PerEraPerasPrivateKey xs)
@@ -717,7 +793,7 @@ instance
   ( CanHardFork xs
   , -- , All (IsBoostedBlock PerasBoostedBlock) xs
     -- , All (IsElectionId PerasRoundNo) xs
-    All SingleEraBlockWithPeras xs
+    All SingleEraBlock xs
   ) =>
   CryptoSupportsVoteSigning (OneEraPerasCrypto xs)
   where
@@ -732,18 +808,18 @@ instance
     }
 
   getVoteSigningKey _proxy (PerEraPerasPrivateKey privKey) =
-    PerEraPerasVoteSigningKey $ hcmap proxySingleWithPeras dispatchKey privKey
+    PerEraPerasVoteSigningKey $ hcmap proxySingle dispatchKey privKey
    where
     dispatchKey ::
-      forall blk. SingleEraBlockWithPeras blk => WrapPerasPrivateKey blk -> WrapPerasVoteSigningKey blk
+      forall blk. SingleEraBlock blk => WrapPerasPrivateKey blk -> WrapPerasVoteSigningKey blk
     dispatchKey = WrapPerasVoteSigningKey . getVoteSigningKey (Proxy @(PerasCrypto blk)) . unwrapPerasPrivateKey
 
   getVoteVerificationKey _proxy (OneEraPerasPublicKey pubKey) =
-    OneEraPerasVoteVerificationKey $ hcmap proxySingleWithPeras dispatchKey pubKey
+    OneEraPerasVoteVerificationKey $ hcmap proxySingle dispatchKey pubKey
    where
     dispatchKey ::
       forall blk.
-      SingleEraBlockWithPeras blk => WrapPerasPublicKey blk -> WrapPerasVoteVerificationKey blk
+      SingleEraBlock blk => WrapPerasPublicKey blk -> WrapPerasVoteVerificationKey blk
     dispatchKey =
       WrapPerasVoteVerificationKey
         . getVoteVerificationKey (Proxy @(PerasCrypto blk))
@@ -751,27 +827,43 @@ instance
 
   signVote signingKey roundNo boostedBlock =
     PerEraPerasVoteSignature
-      . hcmap
-        proxySingleWithPeras
-        (\(WrapPerasVoteSigningKey sk) -> WrapPerasVoteSignature $ signVote sk roundNo boostedBlock)
+      . hcmap proxySingle dispatchSign
       . getPerEraPerasVoteSigningKey
       $ signingKey
+   where
+    -- The single-era block @blk@ must be pinned explicitly: 'pointToBoostedBlock'
+    -- goes through 'BoostedBlockCompatibleWithPoint', which has no functional
+    -- dependency, so the era cannot be inferred from the (non-injective)
+    -- @BoostedBlock (PerasVote blk)@ result alone.
+    dispatchSign ::
+      forall blk.
+      SingleEraBlock blk =>
+      WrapPerasVoteSigningKey blk ->
+      WrapPerasVoteSignature blk
+    dispatchSign (WrapPerasVoteSigningKey sk) =
+      WrapPerasVoteSignature $
+        signVote sk roundNo (pointToBoostedBlock (downcastHardForkPoint @blk boostedBlock))
 
   verifyVoteSignature (OneEraPerasVoteVerificationKey verKey) roundNo boostedBlock (PerEraPerasVoteSignature voteSignature) =
     let nsSignatureVerKey = alignNpWithNs voteSignature verKey
      in hcollapse
-          . hcmap
-            proxySingleWithPeras
-            ( \(Pair (WrapPerasVoteSignature sig) (WrapPerasVoteVerificationKey vk)) ->
-                K $ verifyVoteSignature vk roundNo boostedBlock sig
-            )
+          . hcmap proxySingle dispatchVerify
           $ nsSignatureVerKey
+   where
+    dispatchVerify ::
+      forall blk.
+      SingleEraBlock blk =>
+      Product WrapPerasVoteSignature WrapPerasVoteVerificationKey blk ->
+      K (Either String ()) blk
+    dispatchVerify (Pair (WrapPerasVoteSignature sig) (WrapPerasVoteVerificationKey vk)) =
+      K $
+        verifyVoteSignature vk roundNo (pointToBoostedBlock (downcastHardForkPoint @blk boostedBlock)) sig
 
 instance
   ( CanHardFork xs
   , -- , All (IsBoostedBlock PerasBoostedBlock) xs
     -- , All (IsElectionId PerasRoundNo) xs
-    All SingleEraBlockWithPeras xs
+    All SingleEraBlock xs
   ) =>
   CryptoSupportsVotingCommittee (OneEraPerasCrypto xs) (OneEraPerasVotingCommitteeScheme xs)
   where
@@ -801,8 +893,20 @@ instance
 
   voteTarget =
     hcollapse
-      . hcmap proxySingleWithPeras (K . voteTarget . unwrapPerasCommitteeVote)
+      . hcmap proxySingle dispatchVoteTarget
       . getOneEraPerasCommitteeVote
+   where
+    -- The single-era block @blk@ must be pinned explicitly: 'boostedBlockToPoint'
+    -- goes through 'BoostedBlockCompatibleWithPoint', which has no functional
+    -- dependency, so the era cannot be inferred from the (non-injective)
+    -- @BoostedBlock (PerasVote blk)@ argument alone.
+    dispatchVoteTarget ::
+      forall blk.
+      SingleEraBlock blk =>
+      WrapPerasCommitteeVote blk ->
+      K (PerasRoundNo, Point (HardForkBlock xs)) blk
+    dispatchVoteTarget =
+      K . fmap (upcastToHardForkPoint @blk . boostedBlockToPoint) . voteTarget . unwrapPerasCommitteeVote
 
   compareVotesById vote1 vote2 =
     case ensureSameEraPair
@@ -812,7 +916,7 @@ instance
       Nothing -> error "compareVotesById: votes are from different eras"
       Just nsPair ->
         hcollapse
-          . hcmap proxySingleWithPeras (K . uncurry compareVotesById . unwrapVotePair)
+          . hcmap proxySingle (K . uncurry compareVotesById . unwrapVotePair)
           $ nsPair
    where
     unwrapVotePair (Pair (WrapPerasCommitteeVote v1) (WrapPerasCommitteeVote v2)) = (v1, v2)
@@ -823,7 +927,7 @@ instance
       OneEraPerasVotingCommittee
       . hcollect
       . hcmap
-        proxySingleWithPeras
+        proxySingle
         ( \(WrapPerasVotingCommitteeInput input) ->
             mkEitherF
               WrapPerasVotingCommitteeError
@@ -842,7 +946,7 @@ instance
           (fmap OneEraPerasEligibilityWitness . hsequence')
           . hcollect
           . hcmap
-            proxySingleWithPeras
+            proxySingle
             ( \(Pair (WrapPerasPrivateKey privKey') (WrapPerasVotingCommittee committee')) ->
                 mkEitherF
                   WrapPerasVotingCommitteeError
@@ -857,13 +961,21 @@ instance
             (getPerEraPerasPrivateKey privKey)
             (getOneEraPerasEligibilityWitness witness)
      in OneEraPerasCommitteeVote
-          . hcmap
-            proxySingleWithPeras
-            ( \(Pair (WrapPerasPrivateKey privKey') (WrapPerasEligibilityWitness witness')) ->
-                WrapPerasCommitteeVote $
-                  forgeVote witness' privKey' electionId candidate
-            )
+          . hcmap proxySingle dispatchForge
           $ nsPrivKeyWitness
+   where
+    -- The single-era block @blk@ must be pinned explicitly: 'pointToBoostedBlock'
+    -- goes through 'BoostedBlockCompatibleWithPoint', which has no functional
+    -- dependency, so the era cannot be inferred from the (non-injective)
+    -- @BoostedBlock (PerasVote blk)@ result alone.
+    dispatchForge ::
+      forall blk.
+      SingleEraBlock blk =>
+      Product WrapPerasPrivateKey WrapPerasEligibilityWitness blk ->
+      WrapPerasCommitteeVote blk
+    dispatchForge (Pair (WrapPerasPrivateKey privKey') (WrapPerasEligibilityWitness witness')) =
+      WrapPerasCommitteeVote $
+        forgeVote witness' privKey' electionId (pointToBoostedBlock (downcastHardForkPoint @blk candidate))
 
   verifyVote committee vote =
     case ensureSameEraPair
@@ -878,7 +990,7 @@ instance
           OneEraPerasEligibilityWitness
           . hcollect
           . hcmap
-            proxySingleWithPeras
+            proxySingle
             ( \(Pair (WrapPerasVotingCommittee committee') (WrapPerasCommitteeVote vote')) ->
                 mkEitherF
                   WrapPerasVotingCommitteeError
@@ -897,7 +1009,7 @@ instance
       Just nsCommitteeWitness ->
         hcollapse
           . hcmap
-            proxySingleWithPeras
+            proxySingle
             ( \(Pair (WrapPerasVotingCommittee committee') (WrapPerasEligibilityWitness witness')) ->
                 K $ eligiblePartyVoteWeight committee' witness'
             )
@@ -913,7 +1025,7 @@ instance
           OneEraPerasCommitteeCert
           . hcollect
           . hcmap
-            proxySingleWithPeras
+            proxySingle
             ( \(WrapUniqueVotesWithSameTarget votes) ->
                 mkEitherF
                   WrapPerasVotingCommitteeError
@@ -935,7 +1047,7 @@ instance
           (fmap OneEraPerasEligibilityWitness . hsequence')
           . hcollect
           . hcmap
-            proxySingleWithPeras
+            proxySingle
             ( \(Pair (WrapPerasVotingCommittee committee') (WrapPerasCommitteeCert cert')) ->
                 mkEitherF
                   WrapPerasVotingCommitteeError
@@ -974,73 +1086,38 @@ projectHFCWatValidatedPerasVote ::
 projectHFCWatValidatedPerasVote (WithArrivalTime arrivalTime validatedVote) =
   hmap (\v -> Comp (WithArrivalTime arrivalTime v)) (projectHFCValidatedPerasVote validatedVote)
 
-{-------------------------------------------------------------------------------
-  BlockSupportsPeras superclass instances for the OneEra* Peras types
-
-  These instances are needed by the (large) superclass context of
-  'BlockSupportsPeras (HardForkBlock xs)'. They all dispatch to the
-  corresponding per-era instances, which are available under
-  'SingleEraBlockWithPeras'.
--------------------------------------------------------------------------------}
-
-deriving newtype instance
-  Show (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
-  Show (WrapPerasVotingCommittee blk)
-deriving newtype instance
-  Eq (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
-  Eq (WrapPerasVotingCommittee blk)
-deriving newtype instance
-  NoThunks (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
-  NoThunks (WrapPerasVotingCommittee blk)
-
-deriving via
-  LiftNS WrapPerasVotingCommittee xs
-  instance
-    CanHardFork xs =>
-    Show (VotingCommittee (OneEraPerasCrypto xs) (OneEraPerasVotingCommitteeScheme xs))
-deriving via
-  LiftNS WrapPerasVotingCommittee xs
-  instance
-    CanHardFork xs =>
-    Eq (VotingCommittee (OneEraPerasCrypto xs) (OneEraPerasVotingCommitteeScheme xs))
-deriving via
-  LiftNamedNS "OneEraPerasVotingCommittee" WrapPerasVotingCommittee xs
-  instance
-    CanHardFork xs =>
-    NoThunks (VotingCommittee (OneEraPerasCrypto xs) (OneEraPerasVotingCommitteeScheme xs))
-
 instance
-  (CanHardFork xs, All SingleEraBlockWithPeras xs) =>
+  (CanHardFork xs, All SingleEraBlock xs) =>
   IsPerasVote (OneEraPerasVote xs) (HardForkBlock xs)
   where
   getPerasVoteRound =
     hcollapse
-      . hcmap proxySingleWithPeras (K . getPerasVoteRound . unwrapPerasVote)
+      . hcmap proxySingle (K . getPerasVoteRound . unwrapPerasVote)
       . getOneEraPerasVote
   getPerasVoteSeatIndex =
     hcollapse
-      . hcmap proxySingleWithPeras (K . getPerasVoteSeatIndex . unwrapPerasVote)
+      . hcmap proxySingle (K . getPerasVoteSeatIndex . unwrapPerasVote)
       . getOneEraPerasVote
   getPerasVoteBlock =
     hcollapse
-      . hcmap proxySingleWithPeras (K . getPerasVoteBlock . unwrapPerasVote)
+      . hcmap proxySingle (K . upcastToHardForkPoint . getPerasVotePoint . unwrapPerasVote)
       . getOneEraPerasVote
 
 instance
-  (CanHardFork xs, All SingleEraBlockWithPeras xs) =>
+  (CanHardFork xs, All SingleEraBlock xs) =>
   IsPerasCert (OneEraPerasCert xs) (HardForkBlock xs)
   where
   getPerasCertRound =
     hcollapse
-      . hcmap proxySingleWithPeras (K . getPerasCertRound . unwrapPerasCert)
+      . hcmap proxySingle (K . getPerasCertRound . unwrapPerasCert)
       . getOneEraPerasCert
   getPerasCertBlock =
     hcollapse
-      . hcmap proxySingleWithPeras (K . getPerasCertBlock . unwrapPerasCert)
+      . hcmap proxySingle (K . upcastToHardForkPoint . getPerasCertPoint . unwrapPerasCert)
       . getOneEraPerasCert
 
 instance
-  (CanHardFork xs, All SingleEraBlockWithPeras xs) =>
+  (CanHardFork xs, All SingleEraBlock xs) =>
   IsPerasError (HardForkPerasError xs) (HardForkBlock xs)
   where
   injectVotingCommitteeError err = case err of
@@ -1050,7 +1127,7 @@ instance
       HardForkPerasErrorOneEraPerasError
         . OneEraPerasError
         $ hcmap
-          proxySingleWithPeras
+          proxySingle
           (\(WrapPerasVotingCommitteeError e) -> WrapPerasError (injectVotingCommitteeError e))
           ns
 
@@ -1061,7 +1138,7 @@ instance
   injectQuorumNotReachedError = HardForkPerasErrorQuorumNotReachedError
 
 instance
-  (CanHardFork xs, All SingleEraBlockWithPeras xs) =>
+  (CanHardFork xs, All SingleEraBlock xs) =>
   PerasVoteCompatibleWithVotingCommittee
     (OneEraPerasVote xs)
     (OneEraPerasCrypto xs)
@@ -1071,19 +1148,19 @@ instance
     fmap OneEraPerasVote
       . hsequence'
       . hcmap
-        proxySingleWithPeras
+        proxySingle
         (Comp . fmap WrapPerasVote . toPerasVote . unwrapPerasCommitteeVote)
       . getOneEraPerasCommitteeVote
   fromPerasVote =
     fmap OneEraPerasCommitteeVote
       . hsequence'
       . hcmap
-        proxySingleWithPeras
+        proxySingle
         (Comp . fmap WrapPerasCommitteeVote . fromPerasVote . unwrapPerasVote)
       . getOneEraPerasVote
 
 instance
-  (CanHardFork xs, All SingleEraBlockWithPeras xs) =>
+  (CanHardFork xs, All SingleEraBlock xs) =>
   PerasCertCompatibleWithVotingCommittee
     (OneEraPerasCert xs)
     (OneEraPerasCrypto xs)
@@ -1093,14 +1170,14 @@ instance
     fmap OneEraPerasCert
       . hsequence'
       . hcmap
-        proxySingleWithPeras
+        proxySingle
         (Comp . fmap WrapPerasCert . toPerasCert . unwrapPerasCommitteeCert)
       . getOneEraPerasCommitteeCert
   fromPerasCert =
     fmap OneEraPerasCommitteeCert
       . hsequence'
       . hcmap
-        proxySingleWithPeras
+        proxySingle
         (Comp . fmap WrapPerasCommitteeCert . fromPerasCert . unwrapPerasCert)
       . getOneEraPerasCert
 
@@ -1118,12 +1195,26 @@ downcastHardForkPoint = \case
   BlockPoint s (OneEraHash h) ->
     BlockPoint s (fromShortRawHash (Proxy @blk) h)
 
+-- | Upcast a 'Point' from a single era into a 'Point' of the hard fork block
+-- by encoding the raw hash via 'toShortRawHash'. Used by accessor instances
+-- to return 'Point (HardForkBlock xs)' from single-era point values.
+upcastToHardForkPoint ::
+  forall blk xs.
+  SingleEraBlock blk =>
+  Point blk ->
+  Point (HardForkBlock xs)
+upcastToHardForkPoint = \case
+  GenesisPoint ->
+    GenesisPoint
+  BlockPoint s h ->
+    BlockPoint s (OneEraHash (toShortRawHash (Proxy @blk) h))
+
 -- TODO: we need to change the binary representation of votes and certs to carry
 -- era-specific/versionning information, to allow future evolutions
 instance
   ( StandardHash (HardForkBlock xs)
   , CanHardFork xs
-  , All SingleEraBlockWithPeras xs
+  , All SingleEraBlock xs
   ) =>
   BlockSupportsPeras (HardForkBlock xs)
   where
@@ -1145,7 +1236,7 @@ instance
         (fmap injectHFCValidatedPerasVote . hsequence')
         . hcollect
         . hcmap
-          proxySingleWithPeras
+          proxySingle
           ( \(Pair (WrapPerasPrivateKey privKey') context') ->
               mkEitherF
                 WrapPerasError
@@ -1169,7 +1260,7 @@ instance
           injectHFCValidatedPerasVote
           . hcollect
           . hcmap
-            proxySingleWithPeras
+            proxySingle
             ( \(Pair context' (WrapPerasVote vote')) ->
                 mkEitherF
                   WrapPerasError
@@ -1190,7 +1281,7 @@ instance
             injectHFCValidatedPerasCert
             . hcollect
             . hcmap
-              proxySingleWithPeras
+              proxySingle
               ( \(Pair context' collection') ->
                   mkEitherF
                     WrapPerasError
@@ -1209,7 +1300,7 @@ instance
           injectHFCValidatedPerasCert
           . hcollect
           . hcmap
-            proxySingleWithPeras
+            proxySingle
             ( \(Pair context' (WrapPerasCert cert')) ->
                 mkEitherF
                   WrapPerasError
