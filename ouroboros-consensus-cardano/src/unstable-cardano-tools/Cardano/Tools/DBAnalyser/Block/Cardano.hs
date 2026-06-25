@@ -42,7 +42,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Compact as Compact
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromJust, fromMaybe)
+import Data.Maybe (fromMaybe)
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
 import Data.SOP.Strict
@@ -100,13 +100,11 @@ analyseWithLedgerState ::
   forall a.
   (forall blk. HasAnalysis blk => WithLedgerState blk -> a) ->
   WithLedgerState (CardanoBlock StandardCrypto) ->
-  a
+  Maybe a
 analyseWithLedgerState f (WithLedgerState cb sb sa) =
-  hcollapse
-    . hcmap p (K . f)
-    . fromJust
-    . hsequence'
-    $ hzipWith3 zipLS (goLS sb) (goLS sa) oeb
+  fmap
+    (hcollapse . hcmap p (K . f))
+    (hsequence' $ hzipWith3 zipLS (goLS sb) (goLS sa) oeb)
  where
   p :: Proxy HasAnalysis
   p = Proxy
@@ -322,7 +320,7 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
     Map.mapKeys castHeaderHash . Map.map castChainHash $
       knownEBBs (Proxy @ByronBlock)
 
-  emitTraces = analyseWithLedgerState emitTraces
+  emitTraces = fromMaybe [] . analyseWithLedgerState emitTraces
 
   blockStats = analyseBlock blockStats
 
