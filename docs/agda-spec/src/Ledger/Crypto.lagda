@@ -172,7 +172,9 @@ record KESScheme (srl : Serializer) : Type₁ where
 
 \begin{figure*}[h]
 \begin{code}[hide]
-record VRFScheme : Type₁ where
+record VRFScheme (srl : Serializer) : Type₁ where
+  open Serializer srl
+
   field
         pks : PKScheme
 
@@ -183,18 +185,18 @@ record VRFScheme : Type₁ where
 \emph{Types \& functions}
 \begin{code}
         Seed Proof : Type
-        verify     : {T : Type} → VKey → Seed → Proof × T → Type
-        evaluate   : {T : Type} → SKey → Seed → Proof × T
+        verify     : VKey → Seed → Proof × Ser → Type
+        evaluate   : SKey → Seed → Proof × Ser
         _XOR_      : Seed → Seed → Seed
 \end{code}
 \emph{Properties}
 \begin{code}[hide]
-  field ⦃ Dec-verify ⦄ : {T : Type} → verify {T} ⁇³
+  field ⦃ Dec-verify ⦄ : verify ⁇³
         verify-correct :
 \end{code}
 \begin{code}        
-          ∀ {T : Type} ((sk , vk , _) : KeyPair) (seed : Seed)
-            → verify {T = T} vk seed (evaluate sk seed)
+          ∀ ((sk , vk , _) : KeyPair) (seed : Seed)
+            → verify vk seed (evaluate sk seed)
 \end{code}
 \begin{code}[hide]         
         ⦃ DecEq-Seed  ⦄ : DecEq Seed
@@ -211,7 +213,7 @@ record Crypto : Type₁ where
   field srl  : Serializer
         dsig : DSigScheme srl
         kes  : KESScheme srl
-        vrf  : VRFScheme
+        vrf  : VRFScheme srl
 
   open Serializer srl public
   open DSigScheme dsig renaming (VKey to VKeyˢ; Sig to Sigˢ; isSigned to isSignedˢ) public
