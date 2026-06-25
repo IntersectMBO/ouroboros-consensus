@@ -33,9 +33,6 @@ import Ouroboros.Consensus.Shelley.Node.Common ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Network.Block (mkSerialised)
-import Test.Cardano.Ledger.AllegraEraGen ()
-import Test.Cardano.Ledger.Alonzo.AlonzoEraGen ()
-import Test.Cardano.Ledger.MaryEraGen ()
 import Test.Cardano.Ledger.Shelley.Constants
   ( defaultConstants
   , numCoreNodes
@@ -46,7 +43,6 @@ import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators
   ( genCoherentBlock
   )
 import Test.Cardano.Ledger.Shelley.Serialisation.Generators ()
-import Test.Cardano.Ledger.ShelleyMA.Serialisation.Generators ()
 import Test.Cardano.Protocol.TPraos.Arbitrary (genBlock)
 import Test.Consensus.Protocol.Serialisation.Generators ()
 import Test.Consensus.Shelley.MockCrypto (CanMock)

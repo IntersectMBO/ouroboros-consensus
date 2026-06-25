@@ -81,6 +81,7 @@ if impl (ghc >= 9.14)
     , serialise:base
     , serialise:containers
     , serialise:time
+    , tdigest:base
     , these:base
     , time-compat:time
     , transformers:base
