@@ -82,12 +82,12 @@ if os (windows)
 constraints:
   tasty <1.5.4,
 
--- on f-f/allow-quickcheck-218 branch
+-- on latest main branch
 source-repository-package
   type: git
-  location: https://github.com/IntersectMBO/ouroboros-network
-  tag: 8b4dcb898b64615f574a7fbdcf119f77c7fbc598
-  --sha256: sha256-t1tGV5uZwyKnSSCbaJJAteMYKnQYeO39hUUycMRuC2M=
+  location: https://github.com/IntersectMBO/ouroboros-network.git
+  tag: d7736b7c4c51f7328bd9462dc75df0c04a7b06d0
+  --sha256: sha256-9sWmBNESHApZmwOi0CpSwn619NIw6/msvV5vH57eqx8=
   subdir:
     ouroboros-network
     cardano-diffusion
