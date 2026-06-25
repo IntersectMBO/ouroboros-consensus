@@ -19,7 +19,7 @@ import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Signing as Byron
 import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.Ledger.Address as SL (BootstrapAddress (..))
-import Cardano.Ledger.Api (EraTx, PParams, Tx, TxOut)
+import Cardano.Ledger.Api (AllegraEraTxBody, EraTx, PParams, Tx, TxOut)
 import Cardano.Ledger.Api.Tx.In (TxIn)
 import qualified Cardano.Ledger.Hashes as SL
 import Cardano.Ledger.Keys (DSIGN)
@@ -93,7 +93,7 @@ data CardanoTxGenExtra c = CardanoTxGenExtra
   , ctgeShelleyCoreNodes :: [Shelley.CoreNode c]
   , ctgeExtraTxGen ::
       forall era.
-      EraTx era =>
+      (EraTx era, AllegraEraTxBody era) =>
       SlotNo ->
       Shelley.CoreNode c ->
       PParams era ->
@@ -123,7 +123,7 @@ instance CardanoHardForkConstraints c => TxGen (CardanoBlock c) where
    where
     genFor ::
       forall era proto.
-      ShelleyBasedEra era =>
+      (ShelleyBasedEra era, AllegraEraTxBody era) =>
       (GenTx (ShelleyBlock proto era) -> GenTx (CardanoBlock c)) ->
       LedgerState (ShelleyBlock proto era) ValuesMK ->
       QC.Gen [GenTx (CardanoBlock c)]
@@ -236,18 +236,21 @@ migrateUTxO migrationInfo curSlot lcfg lst
           body =
             SL.mkBasicTxBody
               & SL.certsTxBodyL
-                .~ StrictSeq.fromList
-                  [ SL.RegTxCert $ Shelley.mkCredential stakingSK
-                  , SL.RegPoolTxCert $ poolParams unspentCoin
-                  , SL.DelegStakeTxCert
-                      (Shelley.mkCredential stakingSK)
-                      (Shelley.mkKeyHash poolSK)
-                  ]
-              & SL.inputsTxBodyL .~ Map.keysSet picked
+              .~ StrictSeq.fromList
+                [ SL.RegTxCert $ Shelley.mkCredential stakingSK
+                , SL.RegPoolTxCert $ poolParams unspentCoin
+                , SL.DelegStakeTxCert
+                    (Shelley.mkCredential stakingSK)
+                    (Shelley.mkKeyHash poolSK)
+                ]
+              & SL.inputsTxBodyL
+              .~ Map.keysSet picked
               & SL.outputsTxBodyL
-                .~ StrictSeq.singleton (SL.ShelleyTxOut shelleyAddr unspentCoin)
-              & SL.ttlTxBodyL .~ SlotNo maxBound
-              & SL.feeTxBodyL .~ fee
+              .~ StrictSeq.singleton (SL.ShelleyTxOut shelleyAddr unspentCoin)
+              & SL.ttlTxBodyL
+              .~ SlotNo maxBound
+              & SL.feeTxBodyL
+              .~ fee
 
           bodyHash :: SL.SafeHash SL.EraIndependentTxBody
           bodyHash = SL.hashAnnotated body
@@ -276,8 +279,12 @@ migrateUTxO migrationInfo curSlot lcfg lst
             else
               (Just . GenTxShelley . mkShelleyTx) $
                 SL.mkBasicTx body
-                  & SL.witsTxL . SL.addrTxWitsL .~ Set.fromList [delegWit, poolWit]
-                  & SL.witsTxL . SL.bootAddrTxWitsL .~ Set.singleton byronWit
+                  & SL.witsTxL
+                  . SL.addrTxWitsL
+                  .~ Set.fromList [delegWit, poolWit]
+                  & SL.witsTxL
+                  . SL.bootAddrTxWitsL
+                  .~ Set.singleton byronWit
   | otherwise = Nothing
  where
   mbUTxO :: Maybe (SL.UTxO ShelleyEra)

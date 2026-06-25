@@ -11,7 +11,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -222,7 +221,8 @@ runThreadNet args@RunThreadNetArgs{..} =
         { nodeInfo = \(CoreNodeId ix) -> do
             fs <- SomeHasFS <$> Sim.simHasFS' MockFS.empty
             (protocolInfo, mkBlockForging) <-
-              protocolInfoCardano fs . cnCardanoProtocolParams . (!! fromIntegral ix) . tnCoreNodes $ rtnaThreadNet
+              protocolInfoCardano fs . cnCardanoProtocolParams . (!! fromIntegral ix) . tnCoreNodes $
+                rtnaThreadNet
             pure
               TestNodeInitialization
                 { tniProtocolInfo = protocolInfo
@@ -454,17 +454,16 @@ instance TxGen (CardanoBlock StandardCrypto) where
     LedgerState (CardanoBlock StandardCrypto) ValuesMK ->
     Gen [GenTx (CardanoBlock StandardCrypto)]
   testGenTxs coreNodeId _numCores slotNo _topCfg RunThreadNetArgs{..} ls = case ls of
-    LedgerStateConway st -> genFor GenTxConway st
-    LedgerStateDijkstra st -> genFor GenTxDijkstra st
+    LedgerStateConway st -> fmap GenTxConway <$> genTxs st
+    LedgerStateDijkstra st -> fmap GenTxDijkstra <$> genTxs st
     _ -> error "not in conway/dijkstra"
    where
-    genFor ::
+    genTxs ::
       forall era proto.
-      SL.ShelleyBasedEra era =>
-      (GenTx (ShelleyBlock proto era) -> GenTx (CardanoBlock StandardCrypto)) ->
+      (SL.ShelleyBasedEra era, SL.AllegraEraTxBody era) =>
       LedgerState (ShelleyBlock proto era) ValuesMK ->
-      Gen [GenTx (CardanoBlock StandardCrypto)]
-    genFor wrap st =
+      Gen [GenTx (ShelleyBlock proto era)]
+    genTxs st =
       let
         pparams = getPParams st
         utxos = getUTxOs st
@@ -475,49 +474,63 @@ instance TxGen (CardanoBlock StandardCrypto) where
             take (fromIntegral rtnaTxsPerSlot) . interleave $
               do
                 txg <- tnTxGenerators rtnaThreadNet
-                let txs = wrap . mkShelleyTx <$> handleTxGenerator coreNodeId pparams utxos txg
+                let txs = mkShelleyTx <$> handleTxGenerator coreNodeId pparams utxos slotNo txg
                 return txs
 
 handleTxGenerator ::
-  SL.ShelleyBasedEra era =>
-  CoreNodeId -> SL.PParams era -> Map SL.TxIn (SL.TxOut era) -> TxGenerator -> [SL.Tx Core.TopTx era]
-handleTxGenerator coreNodeId pparams utxos TxGenerator{..} = do
+  (SL.ShelleyBasedEra era, SL.AllegraEraTxBody era) =>
+  CoreNodeId ->
+  SL.PParams era ->
+  Map SL.TxIn (SL.TxOut era) ->
+  SlotNo ->
+  TxGenerator ->
+  [SL.Tx Core.TopTx era]
+handleTxGenerator coreNodeId pparams utxos slotNo TxGenerator{..} = do
   guard (coreNodeId `Set.member` tgSubmitToNodes)
   case tgTxGeneratorKind of
-    TransferAllKind ta -> handleTransferAllTx pparams utxos ta
+    TransferAllKind ta -> handleTransferAllTx pparams utxos slotNo ta
 
 handleTransferAllTx ::
-  SL.ShelleyBasedEra era =>
-  SL.PParams era -> Map SL.TxIn (SL.TxOut era) -> TransferAll -> [SL.Tx Core.TopTx era]
-handleTransferAllTx pparams utxos TransferAll{..} = do
+  (SL.ShelleyBasedEra era, SL.AllegraEraTxBody era) =>
+  SL.PParams era -> Map SL.TxIn (SL.TxOut era) -> SlotNo -> TransferAll -> [SL.Tx Core.TopTx era]
+handleTransferAllTx pparams utxos slotNo TransferAll{..} = do
   let
     paymentKeyPair = mkKeyPair taPaymentSigningKey
     paymentCred = getPaymentCredFromKeyPair paymentKeyPair
   (txOutRef, txOut) <- Map.toList $ getUTxOsByPaymentCred utxos paymentCred
-  transferAllTxSequence (txOut, txOutRef, pparams, paymentKeyPair)
+  transferAllTxSequence
+    ( txOut
+    , txOutRef
+    , pparams
+    , paymentKeyPair
+    , SL.ValidityInterval{invalidBefore = SL.SNothing, invalidHereafter = SL.SJust (slotNo + 10)}
+    )
+
+type TransferAllTxArgs era kr =
+  (SL.TxOut era, SL.TxIn, SL.PParams era, KeyPair kr, SL.ValidityInterval)
 
 -- `transferAllTxSequence arg` makes a sequence of chained `transferAllTx` transactions.
 transferAllTxSequence ::
-  SL.ShelleyBasedEra era =>
-  (SL.TxOut era, SL.TxIn, SL.PParams era, KeyPair kr) -> [SL.Tx Core.TopTx era]
-transferAllTxSequence (txOut, txOutRef, pparams, paymentKeyPair) =
+  (SL.ShelleyBasedEra era, SL.AllegraEraTxBody era) =>
+  TransferAllTxArgs era kr -> [SL.Tx Core.TopTx era]
+transferAllTxSequence (txOut, txOutRef, pparams, paymentKeyPair, vi) =
   let
-    tx = buildTx $ transferAllTx (txOut, txOutRef, pparams, paymentKeyPair)
+    tx = buildTx $ transferAllTx (txOut, txOutRef, pparams, paymentKeyPair, vi)
     txOut' =
       maybe (error "sequence lookup failed") id $
         StrictSeq.lookup 0 $
           tx ^. (SL.bodyTxL . SL.outputsTxBodyL)
     txOutRef' = SL.TxIn (SL.txIdTx tx) (TxIx 0)
    in
-    tx : transferAllTxSequence (txOut', txOutRef', pparams, paymentKeyPair)
+    tx : transferAllTxSequence (txOut', txOutRef', pparams, paymentKeyPair, vi)
 
 -- `transferAllTx (txOut, txOutRef, pparams, paymentKeyPair)` makes a transaction that
 -- consumes the UTxO denoted by `txOutRef` and `txOut` that belogns to `paymentKeyPair`
 -- and produces a single output with the value consumed.
 transferAllTx ::
-  SL.ShelleyBasedEra era =>
-  (SL.TxOut era, SL.TxIn, SL.PParams era, KeyPair kr) -> SL.Tx Core.TopTx era -> SL.Tx Core.TopTx era
-transferAllTx (txOut, txOutRef, pparams, paymentKeyPair) = \tx ->
+  (SL.ShelleyBasedEra era, SL.AllegraEraTxBody era) =>
+  TransferAllTxArgs era kr -> SL.Tx Core.TopTx era -> SL.Tx Core.TopTx era
+transferAllTx (txOut, txOutRef, pparams, paymentKeyPair, vi) = \tx ->
   let
     inCoin = coin $ txOut ^. SL.valueTxOutL
     feeCoin = SL.getMinFeeTx pparams tx 0
@@ -526,20 +539,22 @@ transferAllTx (txOut, txOutRef, pparams, paymentKeyPair) = \tx ->
     txBody' =
       (tx ^. SL.bodyTxL)
         & SL.inputsTxBodyL
-          .~ Set.singleton txOutRef
+        .~ Set.singleton txOutRef
         & SL.outputsTxBodyL
-          .~ StrictSeq.fromList
-            [ SL.mkBasicTxOut (txOut ^. SL.addrTxOutL) (inject outCoin)
-            ]
+        .~ StrictSeq.fromList
+          [ SL.mkBasicTxOut (txOut ^. SL.addrTxOutL) (inject outCoin)
+          ]
         & SL.feeTxBodyL
-          .~ feeCoin
+        .~ feeCoin
+        & SL.vldtTxBodyL
+        .~ vi
    in
     if outCoin > inCoin
       then error "spent all" -- FIX(bladyjoker): Tx building must be able to graciously fail
       else
         tx
           & SL.bodyTxL
-            .~ txBody'
+          .~ txBody'
           & signTx (sKey paymentKeyPair)
 
 -- * Transaction building utils

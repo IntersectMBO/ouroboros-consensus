@@ -547,7 +547,6 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                 -- FIXME: Use the announcing block slot for txs
                 case applyLeiosClosure
                   (configLedger (getExtLedgerCfg cfg))
-                  (blockSlot b)
                   closureTxs
                   (ledgerState lsBeforeEB) of
                   Left lerr ->
@@ -718,11 +717,10 @@ class ResolveLeiosBlock blk where
   -- per-era @LedgerState era@.
   applyLeiosClosure ::
     LedgerCfg (LedgerState blk) ->
-    SlotNo ->
     [GenTx blk] ->
     LedgerState blk ValuesMK ->
     Either (LedgerErr (LedgerState blk)) (LedgerState blk ValuesMK)
-  applyLeiosClosure _ _ _ st = Right st
+  applyLeiosClosure _ _ st = Right st
 
   -- | Inline transactions of an EB closure into a 'blk'. The returned 'blk' may be deemed invalid, but
   -- this is useful nonetheless for some use cases. Returns 'Nothing' when no
