@@ -2,9 +2,9 @@ inputs: final: prev:
 
 let
   inherit (final) lib;
-  tool-index-state = "2026-05-08T14:12:57Z";
+  tool-index-state = "2026-06-18T04:19:00Z";
   tool = name: version: other:
-    final.haskell-nix.tool "ghc98" name ({
+    final.haskell-nix.tool "ghc912" name ({
       version = version;
       index-state = tool-index-state;
     } // other);
@@ -36,9 +36,8 @@ in
 
   xrefcheck = tool "xrefcheck" "0.3.1" { compiler-nix-name = "ghc96"; };
 
-  fourmolu = tool "fourmolu" "0.18.0.0" { };
-
   cuddle = tool "cuddle" "1.2.0.0" { };
+  fourmolu = tool "fourmolu" "0.20.0.0" { };
 
   # remove once our nixpkgs contains https://github.com/NixOS/nixpkgs/pull/394873
   cddlc = final.callPackage ./cddlc/package.nix { };

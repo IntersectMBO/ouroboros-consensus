@@ -31,14 +31,10 @@
       url = "github:nix-community/flake-compat";
       flake = false;
     };
-    hls = {
-      url = "github:haskell/haskell-language-server/2.11.0.0";
-      flake = false;
-    };
     agda-nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     # for cabal-docspec
     cabal-extras = {
-      url = "github:phadej/cabal-extras/cabal-docspec-0.0.0.20240703";
+      url = "github:phadej/cabal-extras/cabal-docspec-0.0.0.20250606";
       flake = false;
     };
     gentle-introduction = {
