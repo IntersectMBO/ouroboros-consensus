@@ -70,7 +70,7 @@ import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.NonEmpty (NEMap)
 import qualified Data.Map.NonEmpty as NEMap
-import Data.SOP (K (..), type (:.:) (..))
+import Data.SOP (K (..), type (:.:) (..), I (..))
 import Data.SOP.Constraint
 import Data.SOP.Functors
 import Data.SOP.Index (Index, himap, hizipWith, injectNS, nsFromIndex, nsToIndex)
@@ -1356,16 +1356,23 @@ instance
             )
           $ nsContextCert
 
-  getPerasCertInBlock = undefined -- [TODO IMPLEMENT]
+  getPerasCertInBlock (HardForkBlock (OneEraBlock nsBlock)) =
+    fmap OneEraPerasCert $
+      hsequence'
+        . hcmap proxySingle (\(I block) -> Comp $ WrapPerasCert <$> getPerasCertInBlock block)
+        $ nsBlock
 
-  -- hcollapse
-  --   . hcmap
-  --     proxySingle
-  --     (K . (unsafeCastPerasCertV1 <=< getPerasCertInBlock) . unI)
-  --   . getOneEraBlock
-  --   . getHardForkBlock
-
-  readPerasPrivateKeyFromEnv _proxy = undefined -- [TODO IMPLEMENT]
+  readPerasPrivateKeyFromEnv _proxy =
+    fmap PerEraPerasPrivateKey $
+      hsequence' $
+        hcpure proxySingle dispatchReadKey
+   where
+    dispatchReadKey ::
+      forall blk.
+      SingleEraBlock blk =>
+      (Either String :.: WrapPerasPrivateKey) blk
+    dispatchReadKey =
+      Comp $ WrapPerasPrivateKey <$> readPerasPrivateKeyFromEnv (Proxy @blk)
 
   blockDoesReallySupportsPeras _proxy = True
 
