@@ -19,7 +19,7 @@ import LeiosDemoTypes
   ( HasLeiosVoting (..)
   , LeiosSigningKey
   , TraceLeiosKernel (..)
-  , getVoterId
+  , getLeiosVoterId
   , signLeiosVote
   )
 import LeiosVoteState (AddVoteResult (..), LeiosVoteState (..))
@@ -60,7 +60,7 @@ runLeiosVoting tracer chainDB leiosDB voteState = \case
     forever $ getNext $ \point -> do
       -- TODO: check only once per era whether we are part of the committee?
       ls <- getCurrentLedgerState
-      case getLeiosCommittee ls >>= getVoterId vk of
+      case getLeiosCommittee ls >>= getLeiosVoterId vk of
         Nothing -> pure ()
         Just voterId -> do
           -- TODO: check if its not too late to vote before/after validation

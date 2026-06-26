@@ -14,7 +14,7 @@ import Data.List (sort)
 import qualified Data.Vector.Strict as V
 import LeiosDemoTypes
   ( BytesSize
-  , Committee (..)
+  , LeiosCommittee (..)
   , LeiosDSIGN
   , LeiosEb (..)
   , LeiosSigningKey
@@ -114,7 +114,7 @@ genLeiosSigningKey = do
   pure $ genKeyDSIGN seed
 
 -- | 'mkCommitteeEveryoneVotes' must produce weights that sum to 1 and are
--- sorted ascending (so 'VoterId' assignment by index is stable). Inputs are
+-- sorted ascending (so 'LeiosVoterId' assignment by index is stable). Inputs are
 -- generated with distinct verification keys, since dedup-by-key is a separate
 -- concern not exercised here.
 prop_committeeNormalizedAndSorted :: Property

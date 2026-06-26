@@ -3,7 +3,6 @@
 
 module LeiosVoteState (module LeiosVoteState) where
 
-import qualified Cardano.Crypto.Leios as Leios
 import Control.Concurrent.Class.MonadSTM.Strict
   ( MonadSTM
   , STM
@@ -20,13 +19,15 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import LeiosDemoTypes
-  ( Committee
+  ( LeiosCert
+  , LeiosCommittee
   , LeiosPoint (..)
   , LeiosSignature
   , LeiosVote (..)
+  , LeiosVoterId
   , VoteInvalid (..)
-  , VoterId
   , Weight
+  , aggregateLeiosCert
   , minCertificationThreshold
   , validateLeiosVote
   )
@@ -38,7 +39,7 @@ data LeiosVoteState m = LeiosVoteState
   , subscribeVotes :: m (LeiosVoteSubscription m)
   -- ^ Subscribe to new votes arriving in the LeiosVoteState. This will only
   -- serve new additions, starting from when this function was called.
-  , queryCert :: LeiosPoint -> m (Maybe Leios.LeiosCert)
+  , queryCert :: LeiosPoint -> m (Maybe LeiosCert)
   -- ^ Look up the assembled certificate for a 'LeiosPoint', or
   -- 'Nothing' if its collected votes haven't crossed
   -- 'minCertificationThreshold'.
@@ -51,7 +52,7 @@ data AddVoteResult
   | -- | The vote was added to the state, with the running per-point weight
     -- after this addition. The LeiosCert is 'Just' whenever the tally for the
     -- vote's point is at or above 'minCertificationThreshold'.
-    Added Weight (Maybe Leios.LeiosCert)
+    Added Weight (Maybe LeiosCert)
   deriving (Eq, Show)
 
 data LeiosVoteSubscription m = LeiosVoteSubscription {getNextVote :: STM m LeiosVote}
@@ -60,8 +61,8 @@ data LeiosVoteSubscription m = LeiosVoteSubscription {getNextVote :: STM m Leios
 -- Holds the contributing voters plus a memoised certificate once the
 -- threshold is crossed.
 data PointState = PointState
-  { psVoters :: !(Map VoterId (Weight, LeiosSignature))
-  , psCert :: !(Maybe Leios.LeiosCert)
+  { psVoters :: !(Map LeiosVoterId (Weight, LeiosSignature))
+  , psCert :: !(Maybe LeiosCert)
   -- ^ Assembled once when this point's total weight first reaches
   -- 'minCertificationThreshold'; reused for subsequent post-threshold
   -- votes so we don't keep rerunning BLS aggregation.
@@ -73,8 +74,8 @@ emptyPointState = PointState Map.empty Nothing
 -- | Create a new empty 'LeiosVoteState'.
 newLeiosVoteState ::
   MonadSTM m =>
-  -- | Get the current 'Committee'.
-  STM m (Maybe Committee) ->
+  -- | Get the current 'LeiosCommittee'.
+  STM m (Maybe LeiosCommittee) ->
   m (LeiosVoteState m)
 newLeiosVoteState getCommittee = do
   votesChan <- atomically newBroadcastTChan
@@ -124,7 +125,7 @@ newLeiosVoteState getCommittee = do
                                   -- being added and the per-voter signatures already
                                   -- passed individual verification, so aggregation must
                                   -- succeed. TODO: replace 'error' with a tracer.
-                                  case Leios.aggregateLeiosCert committee (fmap snd pst'.psVoters) of
+                                  case aggregateLeiosCert committee (fmap snd pst'.psVoters) of
                                     Left e ->
                                       error $
                                         "LeiosVoteState.addVote: aggregateLeiosCert "

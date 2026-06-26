@@ -36,22 +36,24 @@ import Cardano.Crypto.DSIGN
   )
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.Leios
-  ( Committee (..)
+  ( AggregationError (..)
   , LeiosCert (..)
+  , LeiosCommittee (..)
   , LeiosDSIGN
   , LeiosSignature
   , LeiosSigningKey
   , LeiosVerificationKey
   , LeiosVoter (..)
+  , LeiosVoterId (..)
   , VerificationError
-  , VoterId (..)
   , Weight
-  , committeeSize
-  , decodeVoterId
-  , encodeVoterId
-  , getVoterId
+  , aggregateLeiosCert
+  , leiosCommitteeSize
+  , decodeLeiosVoterId
+  , encodeLeiosVoterId
+  , getLeiosVoterId
   , leiosSignContext
-  , resolveVoter
+  , resolveLeiosVoter
   , verifyLeiosCert
   )
 import Cardano.Crypto.Util (SignableRepresentation (..))
@@ -542,13 +544,13 @@ decodeLeiosEb = do
 
 -- * Voting
 
--- | Create a 'Committee' from a mapping of verification keys and some
+-- | Create a 'LeiosCommittee' from a mapping of verification keys and some
 -- associated weight. Duplicate entries by verification key are ignored. The
 -- final 'Weight' in the committee is normalized by the total of the input map.
 -- TODO: The total can only be calculated here in "everyone votes" scheme.
-mkCommitteeEveryoneVotes :: Real w => [(LeiosVerificationKey, w)] -> Committee
+mkCommitteeEveryoneVotes :: Real w => [(LeiosVerificationKey, w)] -> LeiosCommittee
 mkCommitteeEveryoneVotes inputs =
-  Committee
+  LeiosCommittee
     . V.fromList
     . sortOn voterWeight
     $ [ LeiosVoter{voterWeight = toRational weight / totalWeight, voterVKey = vk}
@@ -563,8 +565,8 @@ mkCommitteeEveryoneVotes inputs =
 data LeiosVote = MkLeiosVote
   { point :: LeiosPoint
   -- ^ Point that gets signed. The slot also identifies the voting round.
-  , voterId :: VoterId
-  -- ^ Identity within a 'Committee' who signed this vote.
+  , voterId :: LeiosVoterId
+  -- ^ Identity within a 'LeiosCommittee' who signed this vote.
   , voteSignature :: LeiosSignature
   -- ^ The cryptographic signature of the vote.
   }
@@ -584,7 +586,7 @@ encodeLeiosVote MkLeiosVote{point, voterId, voteSignature} =
   CBOR.encodeListLen 4
     <> encode point.pointSlotNo
     <> encodeEbHash point.pointEbHash
-    <> encodeVoterId voterId
+    <> encodeLeiosVoterId voterId
     <> encodeSigDSIGN voteSignature
 
 -- | Dedoe a 'LeiosVote' from CBOR.
@@ -593,7 +595,7 @@ decodeLeiosVote = do
   enforceSize (fromString "LeiosVote") 4
   pointSlotNo <- decode
   pointEbHash <- decodeEbHash
-  voterId <- decodeVoterId
+  voterId <- decodeLeiosVoterId
   voteSignature <- decodeSigDSIGN
   pure
     MkLeiosVote
@@ -611,7 +613,7 @@ voteToObject MkLeiosVote{point, voterId} =
     ]
 
 -- | Create a vote for given 'LeiosPoint' and signing key.
-signLeiosVote :: LeiosSigningKey -> VoterId -> LeiosPoint -> LeiosVote
+signLeiosVote :: LeiosSigningKey -> LeiosVoterId -> LeiosPoint -> LeiosVote
 signLeiosVote sk voterId point =
   MkLeiosVote
     { point
@@ -620,9 +622,9 @@ signLeiosVote sk voterId point =
     }
 
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
-validateLeiosVote :: Committee -> LeiosVote -> Either VoteInvalid Weight
+validateLeiosVote :: LeiosCommittee -> LeiosVote -> Either VoteInvalid Weight
 validateLeiosVote committee MkLeiosVote{point, voterId, voteSignature} =
-  case resolveVoter committee voterId of
+  case resolveLeiosVoter committee voterId of
     Nothing -> Left SignerNotInCommittee
     Just voter ->
       case verifyDSIGN leiosSignContext voter.voterVKey point voteSignature of
@@ -645,7 +647,7 @@ data VoteInvalid
 class HasLeiosVoting blk where
   -- | The voting committee for the given (pre-tick) ledger state, or
   -- 'Nothing' if the era does not participate in Leios voting.
-  getLeiosCommittee :: LedgerState blk EmptyMK -> Maybe Committee
+  getLeiosCommittee :: LedgerState blk EmptyMK -> Maybe LeiosCommittee
   getLeiosCommittee _ = Nothing
 
 -- * Tracing
