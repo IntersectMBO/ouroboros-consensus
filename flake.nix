@@ -78,6 +78,7 @@
           ghc910-profiled = hydraJobs.native.haskell910.devShellProfiled;
           ghc912 = hydraJobs.native.haskell912.devShell;
           ghc912-profiled = hydraJobs.native.haskell912.devShellProfiled;
+          ghc914 = hydraJobs.native.haskell914.devShell;
 
           agda-spec = pkgs.agda-spec.shell;
 
