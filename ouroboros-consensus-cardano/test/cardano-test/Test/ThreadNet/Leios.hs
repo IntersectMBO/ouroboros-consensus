@@ -69,15 +69,22 @@ import LeiosDemoDb
   , withLeiosDb
   )
 import LeiosDemoTypes
-  ( LeiosPoint (..)
+  ( EbHash
+  , LeiosPoint (..)
   , LeiosVote (..)
+  , RbHash (..)
   , TraceLeiosKernel (..)
   , hashLeiosEb
   , minCertificationGap
-  , RbHash
   )
 import Lens.Micro ((%~), (^.))
-import Ouroboros.Consensus.Block (SlotNo (..), blockSlot)
+import Ouroboros.Consensus.Block
+  ( SlotNo (..)
+  , blockHash
+  , blockSlot
+  , getHeader
+  , toRawHash
+  )
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
   , Nonce (NeutralNonce)
@@ -247,10 +254,31 @@ prop_leios seed =
     TraceLeiosBlockTxsAcquired point -> Just point
     _ -> Nothing
 
+  -- For each EB announced on a node's selected chain, the hash of the ranking
+  -- block that announced it — the value voters sign (see 'runLeiosVoting' /
+  -- 'announcingRbHash' in "Ouroboros.Consensus.Storage.LedgerDB.Forker"). Built
+  -- from the nodes' final chains so an EB also announced by an orphaned block
+  -- maps to the canonical announcer the voters actually signed.
+  ebRbHashes :: Map.Map EbHash RbHash
+  ebRbHashes =
+    Map.fromList
+      [ ( pointEbHash annPoint
+        , MkRbHash (toRawHash (Proxy @(CardanoBlock StandardCrypto)) (blockHash blk))
+        )
+      | chain <- Map.elems nodeChains
+      , blk <- chain
+      , Just (annPoint, _) <- [headerLeiosAnnouncement (getHeader blk)]
+      ]
+
   -- 'acquiredPoints' translated to the RB hashes voters sign, so it can be
-  -- compared directly against 'votedPoints'.
+  -- compared directly against 'votedAnnouncingRbHashes'.
   acquiredRbHashes :: Set.Set RbHash
-  acquiredRbHashes = undefined -- TODO(geo2a)
+  acquiredRbHashes =
+    Set.fromList
+      [ rbHash
+      | point <- Set.toList acquiredPoints
+      , Just rbHash <- [Map.lookup point.pointEbHash ebRbHashes]
+      ]
 
   propVoting =
     conjoin

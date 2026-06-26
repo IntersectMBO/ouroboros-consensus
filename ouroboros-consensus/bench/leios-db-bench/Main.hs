@@ -234,7 +234,7 @@ insertOneEb conn ebIdx = do
         ]
   leiosDbInsertEbPoint conn point (leiosEbBytesSize eb)
   leiosDbInsertEbBody conn point eb
-  _ <- leiosDbInsertTxs conn txs
+  _ <- leiosDbInsertTxs conn Nothing txs
   pure ()
 
 -- * Deterministic data generation

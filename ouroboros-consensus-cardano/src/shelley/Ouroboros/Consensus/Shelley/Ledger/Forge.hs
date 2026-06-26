@@ -118,7 +118,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
           { announcingRbHashBytes = rbHashBytes
           , announcedEbPoint = ebPoint
           }
-      storeEb ebPoint forgedEb
+      storeEb ebPoint (MkRbHash rbHashBytes) forgedEb
     Nothing -> pure ()
   return $
     assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
@@ -237,12 +237,13 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
 
       pure (Just (forgedEb, ebAnn))
 
-  storeEb :: LeiosPoint -> ForgedLeiosEb -> m ()
-  storeEb point forgedEb = do
+  -- TODO(geo2a): 'RbHash' should go inside 'LeiosPoint'
+  storeEb :: LeiosPoint -> RbHash -> ForgedLeiosEb -> m ()
+  storeEb point announcingRbHash forgedEb = do
     let ebSize = leiosEbBytesSize (forgedEb.body)
     leiosDbInsertEbPoint fbLeiosDb point ebSize
     leiosDbInsertEbBody fbLeiosDb point (forgedEb.body)
-    void $ leiosDbInsertTxs fbLeiosDb (forgedEb.txClosure)
+    void $ leiosDbInsertTxs fbLeiosDb (Just announcingRbHash) (forgedEb.txClosure)
     traceWith fbLeiosTracer $
       TraceLeiosBlockStored
         { slot = point.pointSlotNo
