@@ -372,8 +372,7 @@ class
     PerasCrypto blk ~ VoidPerasCrypto blk =>
     proxy blk ->
     Either String (PrivateKey (PerasCrypto blk))
-  readPerasPrivateKeyFromEnv _ =
-    Left "VoidPerasCrypto has no way to instantiate a private key"
+  readPerasPrivateKeyFromEnv _ = Right ()
 
   -- | Read the PoolId from the environment variable 'PERAS_POOL_ID'
   --
@@ -496,16 +495,16 @@ data VoidPerasCrypto blk
 type instance ElectionId (VoidPerasCrypto blk) = PerasRoundNo
 type instance VoteCandidate (VoidPerasCrypto blk) = Point blk
 
-type instance PrivateKey (VoidPerasCrypto blk) = Void
+type instance PrivateKey (VoidPerasCrypto blk) = ()
 type instance PublicKey (VoidPerasCrypto blk) = Void
 
 instance CryptoSupportsVoteSigning (VoidPerasCrypto blk) where
-  type VoteSigningKey (VoidPerasCrypto blk) = Void
+  type VoteSigningKey (VoidPerasCrypto blk) = ()
   type VoteVerificationKey (VoidPerasCrypto blk) = Void
-  data VoteSignature (VoidPerasCrypto blk) = VoidVoteSignature {unVoidVoteSignature :: Void}
-  getVoteSigningKey _proxy privateKey = absurd privateKey
+  data VoteSignature (VoidPerasCrypto blk) = VoidVoteSignature {unVoidVoteSignature :: ()}
+  getVoteSigningKey _proxy _privateKey = ()
   getVoteVerificationKey _proxy publicKey = absurd publicKey
-  signVote signingKey _ _ = absurd signingKey
+  signVote _signingKey _ _ = VoidVoteSignature ()
   verifyVoteSignature verificationKey _ _ _ = absurd verificationKey
 
 instance CryptoSupportsVotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme where
