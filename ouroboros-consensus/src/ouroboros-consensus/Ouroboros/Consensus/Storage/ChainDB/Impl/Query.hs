@@ -441,7 +441,6 @@ getPerasVotingView ledgerConfig roundNo env = do
 getPerasCertInclusionView ::
   ( IOLike m
   , BlockSupportsPeras blk
-  , StateSupportsPerasEpochContext blk
   ) =>
   PerasRoundNo ->
   ChainDbEnv m blk ->

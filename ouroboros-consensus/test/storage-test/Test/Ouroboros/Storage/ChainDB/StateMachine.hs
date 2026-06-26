@@ -129,7 +129,8 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert (..))
 import Ouroboros.Consensus.Peras.Context
-  ( StateSupportsPerasEpochContext (PerasEpochContextResolver)
+  ( PerasEpochContextResolver
+  , StateSupportsPerasEpochContext
   )
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 import Ouroboros.Consensus.Protocol.Abstract
