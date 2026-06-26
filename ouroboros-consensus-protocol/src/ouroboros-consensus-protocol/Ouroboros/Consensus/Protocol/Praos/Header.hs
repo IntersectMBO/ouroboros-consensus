@@ -163,8 +163,8 @@ pattern Header ::
   KES.SignedKES (KES crypto) (HeaderBody crypto) ->
   Header crypto
 pattern Header{headerBody, headerSig} <- (getMemoRawType -> HeaderRaw headerBody headerSig)
-  where
-    Header body sig = mkMemoized (pvMajor (hbProtVer body)) $ HeaderRaw body sig
+ where
+  Header body sig = mkMemoized (pvMajor (hbProtVer body)) $ HeaderRaw body sig
 {-# COMPLETE Header #-}
 
 -- | Compute the size of the header

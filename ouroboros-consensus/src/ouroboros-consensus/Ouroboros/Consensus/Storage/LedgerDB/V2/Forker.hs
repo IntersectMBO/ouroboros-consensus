@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -10,7 +11,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
   , implForkerCommit
   , implForkerGetLedgerState
   , implForkerPush
-  , implForkerRangeReadTables
   , implForkerReadStatistics
   , implForkerReadTables
 
@@ -26,9 +26,7 @@ import Data.Maybe (fromMaybe)
 import GHC.Generics
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
-import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util (whenJust)
@@ -55,9 +53,7 @@ data ForkerEnv m l blk = ForkerEnv
 
 deriving instance
   ( IOLike m
-  , NoThunks (l blk EmptyMK)
-  , NoThunks (TxIn blk)
-  , NoThunks (TxOut blk)
+  , NoThunks (l blk)
   ) =>
   NoThunks (ForkerEnv m l blk)
 
@@ -68,33 +64,17 @@ deriving instance
 implForkerReadTables ::
   (IOLike m, GetTip (l blk)) =>
   ForkerEnv m l blk ->
-  LedgerTables blk KeysMK ->
-  m (LedgerTables blk ValuesMK)
+  Keys blk ->
+  m (Values blk)
 implForkerReadTables env ks =
   encloseTimedWith (ForkerReadTables >$< foeTracer env) $ do
     stateRef <- currentHandle <$> readTVarIO (foeLedgerSeq env)
     read (tables stateRef) (state stateRef) ks
 
-implForkerRangeReadTables ::
-  (IOLike m, GetTip (l blk), HasLedgerTables l blk) =>
-  QueryBatchSize ->
-  ForkerEnv m l blk ->
-  RangeQueryPrevious blk ->
-  m (LedgerTables blk ValuesMK, Maybe (TxIn blk))
-implForkerRangeReadTables qbs env rq0 =
-  encloseTimedWith (ForkerRangeReadTables >$< foeTracer env) $ do
-    let n = fromIntegral $ defaultQueryBatchSize qbs
-    stateRef <- currentHandle <$> readTVarIO (foeLedgerSeq env)
-    case rq0 of
-      NoPreviousQuery -> readRange (tables stateRef) (state stateRef) (Nothing, n)
-      PreviousQueryWasFinal -> pure (LedgerTables emptyMK, Nothing)
-      PreviousQueryWasUpTo k ->
-        readRange (tables stateRef) (state stateRef) (Just k, n)
-
 implForkerGetLedgerState ::
   (MonadSTM m, GetTip (l blk)) =>
   ForkerEnv m l blk ->
-  STM m (l blk EmptyMK)
+  STM m (l blk)
 implForkerGetLedgerState = fmap current . readTVar . foeLedgerSeq
 
 implForkerReadStatistics ::
@@ -106,23 +86,22 @@ implForkerReadStatistics env = do
   Statistics . tablesSize . tables . currentHandle <$> readTVarIO (foeLedgerSeq env)
 
 implForkerPush ::
-  (IOLike m, GetTip (l blk), HasLedgerTables l blk, HasCallStack) =>
+  (IOLike m, GetTip (l blk), HasCallStack) =>
   ForkerEnv m l blk ->
-  l blk DiffMK ->
+  l blk ->
+  Diff blk ->
   m ()
-implForkerPush env newState = do
+implForkerPush env newState diff = do
   encloseTimedWith (ForkerPush >$< foeTracer env) $ do
     lseq <- readTVarIO (foeLedgerSeq env)
-    let st0 = current lseq
-        st = forgetLedgerTables newState
 
     -- We don't need to track this resource anywhere because if an exception
     -- comes here, the exception will abort ChainSel and therefore the node is
     -- shutting down so the resources (the Session in LSM) will be closed. See
     -- "Resource management in the LedgerDB" in
     -- "Ouroboros.Consensus.Storage.LedgerDB.API".
-    tbs <- duplicateWithDiffs (tables $ currentHandle lseq) st0 newState
-    atomically $ writeTVar (foeLedgerSeq env) (extend (StateRef st tbs) lseq)
+    tbs <- duplicateWithDiffs (tables $ currentHandle lseq) diff
+    atomically $ writeTVar (foeLedgerSeq env) (extend (StateRef newState tbs) lseq)
 
 implForkerCommit ::
   (IOLike m, GetTip (l blk), StandardHash (l blk)) =>

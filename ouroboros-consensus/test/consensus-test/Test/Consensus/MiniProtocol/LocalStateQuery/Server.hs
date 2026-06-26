@@ -209,14 +209,14 @@ mkServer rr k chain = do
           (rk, res) <-
             allocate
               rr
-              (\_ -> LedgerDB.openReadOnlyForker lgrDB t)
+              (\_ -> LedgerDB.getReadOnlyForkerWithRangeAtPoint lgrDB t)
               ( \case
                   Left{} -> pure ()
-                  Right v -> roforkerClose v
+                  Right (v, _) -> roforkerClose v
               )
           case res of
             Left err -> release rk >> pure (Left err)
-            Right v -> pure (Right (rk, v))
+            Right (v, prov) -> pure (Right (rk, v, prov))
       )
  where
   cfg = ExtLedgerCfg $ testCfg k
@@ -243,7 +243,7 @@ initLedgerDB s c = do
         LedgerDbArgs
           { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
           , lgrHasFS = SomeHasFS $ simHasFS fs
-          , lgrGenesis = return testInitExtLedger
+          , lgrGenesis = return (testInitExtLedger, mempty)
           , lgrTracer = nullTracer
           , lgrBackendArgs = LedgerDbBackendArgsV2 $ V2.SomeBackendArgs InMemArgs
           , lgrConfig = LedgerDB.configLedgerDb (testCfg s) OmitLedgerEvents

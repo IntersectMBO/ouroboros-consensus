@@ -46,7 +46,6 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import Ouroboros.Consensus.Storage.LedgerDB
@@ -223,11 +222,20 @@ lsmTestArguments secParam salt fp =
  Model
 -------------------------------------------------------------------------------}
 
+-- | An (@mk@-free) extended ledger state together with its full UTxO
+-- 'Values'. The model threads the values explicitly now that the state no
+-- longer carries the on-disk tables.
+data StateAndTables = StateAndTables
+  { satState :: !(ExtLedgerState TestBlock)
+  , satValues :: !(Values TestBlock)
+  }
+  deriving (Generic, Show)
+
 type TheBlockChain =
   AS.AnchoredSeq
     (WithOrigin SlotNo)
-    (ExtLedgerState TestBlock ValuesMK)
-    (TestBlock, ExtLedgerState TestBlock ValuesMK)
+    (StateAndTables)
+    (TestBlock, StateAndTables)
 
 data Model
   = UnInit
@@ -240,11 +248,11 @@ data Model
 instance
   AS.Anchorable
     (WithOrigin SlotNo)
-    (ExtLedgerState TestBlock ValuesMK)
-    (TestBlock, ExtLedgerState TestBlock ValuesMK)
+    (StateAndTables)
+    (TestBlock, StateAndTables)
   where
   asAnchor = snd
-  getAnchorMeasure _ = getTipSlot
+  getAnchorMeasure _ = getTipSlot . satState
 
 instance HasVariables TheBlockChain where
   getAllVariables _ = mempty
@@ -287,7 +295,7 @@ instance StateModel Model where
     DropAndRestore :: Word64 -> LSM.Salt -> Action Model ()
     ForceTakeSnapshot :: Action Model ()
     GetState ::
-      Action Model (ExtLedgerState TestBlock EmptyMK, ExtLedgerState TestBlock EmptyMK)
+      Action Model (ExtLedgerState TestBlock, ExtLedgerState TestBlock)
     Init :: SecurityParam -> LSM.Salt -> Action Model ()
     ValidateAndCommit :: Word64 -> [TestBlock] -> Action Model ()
     -- \| This action is used only to observe the side effects of closing an
@@ -331,7 +339,7 @@ instance StateModel Model where
               blocks =
                 genBlocks
                   numNewBlocks
-                  (lastAppliedPoint . ledgerState . either id snd . AS.head $ chain')
+                  (lastAppliedPoint . ledgerState . satState . either id snd . AS.head $ chain')
             return $ ValidateAndCommit numRollback blocks
         )
       , (1, pure $ Some WipeLedgerDB)
@@ -341,7 +349,7 @@ instance StateModel Model where
 
   initialState = UnInit
 
-  nextState _ (Init secParam _) _var = Model (AS.Empty genesis) (Point Origin) secParam
+  nextState _ (Init secParam _) _var = Model (AS.Empty (StateAndTables genesis genesisValues)) (Point Origin) secParam
   nextState state GetState _var = state
   nextState state ForceTakeSnapshot _var = state
   nextState state@(Model _ i secParam) (ValidateAndCommit n blks) _var =
@@ -354,8 +362,9 @@ instance StateModel Model where
             max i $
               castPoint $
                 getTip $
-                  AS.headAnchor $
-                    AS.dropNewest (fromIntegral $ BT.unNonZero $ maxRollbacks secParam) ch'
+                  satState $
+                    AS.headAnchor $
+                      AS.dropNewest (fromIntegral $ BT.unNonZero $ maxRollbacks secParam) ch'
           )
           secParam
       UnInit{} -> error "impossible"
@@ -365,23 +374,30 @@ instance StateModel Model where
       StateT
         ( AS.AnchoredSeq
             (WithOrigin SlotNo)
-            (ExtLedgerState TestBlock ValuesMK)
-            (TestBlock, ExtLedgerState TestBlock ValuesMK)
+            (StateAndTables)
+            (TestBlock, StateAndTables)
         )
         (Except (ExtValidationError TestBlock))
         ()
     push b = do
       ls <- get
       let tip = either id snd $ AS.head ls
-      l' <- lift $ tickThenApply OmitLedgerEvents (ledgerDbCfg $ extLedgerDbConfig secParam) b tip
-      put (ls AS.:> (b, applyDiffs tip l'))
+      (l', diff) <-
+        lift $
+          tickThenApply
+            OmitLedgerEvents
+            (ledgerDbCfg $ extLedgerDbConfig secParam)
+            b
+            (satValues tip)
+            (satState tip)
+      put (ls AS.:> (b, StateAndTables l' (forward @TestBlock [diff] (satValues tip))))
 
     switch ::
       StateT
         ( AS.AnchoredSeq
             (WithOrigin SlotNo)
-            (ExtLedgerState TestBlock ValuesMK)
-            (TestBlock, ExtLedgerState TestBlock ValuesMK)
+            (StateAndTables)
+            (TestBlock, StateAndTables)
         )
         (Except (ExtValidationError TestBlock))
         ()
@@ -401,17 +417,17 @@ instance StateModel Model where
     n <= min (BT.unNonZero $ maxRollbacks secParam) (fromIntegral $ AS.length chain)
       &&
       -- Don't drop past the immutable tip
-      immTip <= castPoint (getTip (AS.headAnchor chain'))
+      immTip <= castPoint (getTip (satState (AS.headAnchor chain')))
       &&
       -- New blocks are successors of the truncated chain
       case blks of
         [] -> True
-        (b : _) -> tbSlot b == 1 + fromWithOrigin 0 (getTipSlot (AS.headAnchor chain'))
+        (b : _) -> tbSlot b == 1 + fromWithOrigin 0 (getTipSlot (satState (AS.headAnchor chain')))
    where
     chain' = AS.dropNewest (fromIntegral n) chain
   precondition (Model chain immTip _) (DropAndRestore n _) =
     -- don't drop past the immutable chain
-    immTip <= castPoint (getTip (AS.headAnchor chain'))
+    immTip <= castPoint (getTip (satState (AS.headAnchor chain')))
    where
     chain' = AS.dropNewest (fromIntegral n) chain
   precondition _ Init{} = False
@@ -534,7 +550,7 @@ openLedgerDB flavArgs env cfg fs = do
   let args =
         LedgerDbArgs
           defaultSnapshotPolicyArgs
-          (pure genesis)
+          (pure (genesis, genesisValues))
           fs
           cfg
           tracer
@@ -666,9 +682,9 @@ instance RunModel Model (StateT Environment IO) where
   -- each other it already implies that having the right volatile tip means that
   -- we have the right whole chain.
   postcondition (Model chain immTip _, _) GetState _ (imm, vol) =
-    let volSt = either forgetLedgerTables (forgetLedgerTables . snd) (AS.head chain)
+    let volSt = either satState (satState . snd) (AS.head chain)
         immSt =
-          forgetLedgerTables
+          satState
             ( AS.headAnchor $
                 fst $
                   fromMaybe (error "impossible, the immutable tip is not on the chain?") $
