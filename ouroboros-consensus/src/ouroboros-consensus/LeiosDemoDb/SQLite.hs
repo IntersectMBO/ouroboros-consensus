@@ -60,6 +60,7 @@ import LeiosDemoTypes
   , EbHash (..)
   , LeiosEb
   , LeiosPoint (..)
+  , RbHash
   , TxHash (..)
   , leiosEbBodyItems
   , leiosEbBytesSize
@@ -130,7 +131,7 @@ openSQLiteConnection tracer dbPath notificationChan = do
       , leiosDbFilterMissingEbBodies = sqlFilterMissingEbBodies tracer db
       , leiosDbFilterMissingTxs = sqlFilterMissingTxs tracer db
       , leiosDbQueryFetchWork = sqlQueryFetchWork db
-      , leiosDbQueryCompletedEbByPoint = sqlQueryCompletedEbByPoint db
+      , leiosDbQueryCompletedEbByHash = sqlQueryCompletedEbByHash db
       }
 
 -- * Top-level implementations
@@ -213,8 +214,12 @@ sqlInsertEbBody tracer db notify point eb = do
   notify $ AcquiredEb point (leiosEbBytesSize eb)
 
 sqlInsertTxs ::
-  DB.Database -> (LeiosEbNotification -> IO ()) -> [(TxHash, ByteString)] -> IO CompletedEbs
-sqlInsertTxs db notify txs = do
+  DB.Database ->
+  (LeiosEbNotification -> IO ()) ->
+  Maybe RbHash ->
+  [(TxHash, ByteString)] ->
+  IO CompletedEbs
+sqlInsertTxs db notify mAnnouncingRbHash txs = do
   completed <- dbWithBEGIN db $ do
     stmtInsert <- dbPrepare db (fromString sql_insert_tx)
     stmtDecr <- dbPrepare db (fromString sql_decrement_missing_tx_count)
@@ -249,7 +254,7 @@ sqlInsertTxs db notify txs = do
       dbStep1 stmt
     pure completed
   -- Emit notifications for each completed EB
-  forM_ completed $ notify . AcquiredEbTxs
+  forM_ completed $ \point -> notify (AcquiredEbTxs point mAnnouncingRbHash)
   pure completed
 
 sqlBatchRetrieveTxs ::
@@ -369,10 +374,10 @@ sqlQueryFetchWork db =
       loop []
     pure LeiosFetchWork{missingEbBodies, missingEbTxs}
 
-sqlQueryCompletedEbByPoint :: DB.Database -> LeiosPoint -> IO (Maybe [(TxHash, ByteString)])
-sqlQueryCompletedEbByPoint db ebPoint =
+sqlQueryCompletedEbByHash :: DB.Database -> EbHash -> IO (Maybe [(TxHash, ByteString)])
+sqlQueryCompletedEbByHash db ebHash =
   dbWithBEGIN db $ dbWithPrepare db (fromString sqlQueryCompletedEbByPoint') $ \stmt -> do
-    dbBindBlob stmt 1 (ebHashBytes . pointEbHash $ ebPoint)
+    dbBindBlob stmt 1 (ebHashBytes ebHash)
     -- FIXME(bladyjoker): This should have a SlotNo as the second part of the key
     let loop acc =
           dbStep stmt >>= \case

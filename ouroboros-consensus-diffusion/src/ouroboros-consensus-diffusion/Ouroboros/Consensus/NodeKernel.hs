@@ -77,7 +77,7 @@ import LeiosDemoTypes
   ( BytesSize
   , LeiosOutstanding
   , LeiosPeerVars
-  , LeiosPoint
+  , LeiosPoint (..)
   , TraceLeiosKernel (..)
   , pointEbHash
   )
@@ -897,7 +897,7 @@ wrapChainDbViewForLeiosStaging
               BlockFetchClientInterface.addBlockAsync defView punish blk
             Just (point, size) -> do
               mEb <- withLeiosDb leiosDbHandle $ \conn ->
-                leiosDbQueryCompletedEbByPoint conn point
+                leiosDbQueryCompletedEbByHash conn (pointEbHash point)
               case mEb of
                 Just _ ->
                   BlockFetchClientInterface.addBlockAsync defView punish blk

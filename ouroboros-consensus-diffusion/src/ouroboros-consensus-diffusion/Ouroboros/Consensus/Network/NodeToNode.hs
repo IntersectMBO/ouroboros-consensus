@@ -492,8 +492,8 @@ mkHandlers
                       -- a cert for the point.
                       case result of
                         Added _ (Just _) ->
-                          let Leios.MkLeiosVote{Leios.point = pt} = vote
-                           in traceWith kernelTracer TraceLeiosCertified{point = pt}
+                          let point = undefined -- TODO(geo2a): where to get the point from?? Used to come from the vote.
+                           in traceWith kernelTracer TraceLeiosCertified{point, rbHash = Leios.announcingRbHash vote}
                         _ -> pure ()
               )
       , hLeiosNotifyServer = \_version _peer -> Effect $ do
@@ -510,7 +510,7 @@ mkHandlers
                 readTChan chan >>= \case
                   AcquiredEb point ebSize ->
                     pure $ MsgLeiosBlockOffer point ebSize
-                  AcquiredEbTxs point ->
+                  AcquiredEbTxs point _ ->
                     pure $ MsgLeiosBlockTxsOffer point
 
           LeiosVoteSubscription{getNextVote} <- subscribeVotes leiosVoteState

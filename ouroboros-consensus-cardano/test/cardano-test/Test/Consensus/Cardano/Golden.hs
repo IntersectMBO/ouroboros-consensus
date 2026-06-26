@@ -8,12 +8,10 @@
 
 module Test.Consensus.Cardano.Golden (tests) where
 
-import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Data.ByteString as BS
 import LeiosDemoTypes
-  ( EbHash (..)
-  , LeiosPoint (..)
-  , LeiosVote
+  ( LeiosVote
+  , RbHash (..)
   , VoterId (..)
   , encodeLeiosVote
   , signLeiosVote
@@ -59,9 +57,9 @@ tests =
 -- key. Pinned by the corresponding golden file.
 typicalVote :: LeiosVote
 typicalVote =
-  signLeiosVote (generateWith genLeiosSigningKey 42) (VoterId 1000) point
+  signLeiosVote (generateWith genLeiosSigningKey 42) (VoterId 1000) rbHash
  where
-  point = MkLeiosPoint (SlotNo 42) (MkEbHash (BS.pack [0 .. 31]))
+  rbHash = MkRbHash (BS.pack [0 .. 31])
 
 instance
   CardanoHardForkConstraints c =>

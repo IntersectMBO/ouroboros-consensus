@@ -115,6 +115,7 @@ newtype PeerId a = MkPeerId a
 -- Hash algorithm used in leios for EBs and txs
 type HASH = Hash.Blake2b_256
 
+-- | Hash of an Endorser Block
 newtype EbHash = MkEbHash {ebHashBytes :: ByteString}
   deriving newtype (Eq, Ord, NoThunks, Serialise, DecCBOR, EncCBOR, ToCBOR, FromCBOR)
   deriving stock Generic
@@ -130,6 +131,32 @@ decodeEbHash = MkEbHash <$> CBOR.decodeBytes
 
 prettyEbHash :: EbHash -> String
 prettyEbHash (MkEbHash bytes) = BS8.unpack (BS16.encode bytes)
+
+-- | Hash of a Ranking Block
+--
+-- A Ranking Block is the Praos Block. While the regular Praos headers are parameterised
+-- over 'blk', we choose to keep 'RbHash' monomorphic. Use the 'ConvertRawHash' type class
+-- to convert between this type and 'HeaderHash'.
+newtype RbHash = MkRbHash {rbHashBytes :: ByteString}
+  deriving newtype (Eq, Ord, NoThunks, Serialise, DecCBOR, EncCBOR, ToCBOR, FromCBOR)
+  deriving stock Generic
+
+instance Show RbHash where
+  show = prettyRbHash
+
+encodeRbHash :: RbHash -> Encoding
+encodeRbHash (MkRbHash bytes) = CBOR.encodeBytes bytes
+
+decodeRbHash :: Decoder s RbHash
+decodeRbHash = MkRbHash <$> CBOR.decodeBytes
+
+prettyRbHash :: RbHash -> String
+prettyRbHash (MkRbHash bytes) = BS8.unpack (BS16.encode bytes)
+
+instance SignableRepresentation RbHash where
+  getSignableRepresentation point =
+    toStrictByteString $
+      encodeRbHash point
 
 newtype TxHash = MkTxHash ByteString
   deriving stock (Eq, Ord, Generic)
@@ -561,8 +588,9 @@ mkCommitteeEveryoneVotes inputs =
 
 -- | A vote in the Leios protocol.
 data LeiosVote = MkLeiosVote
-  { point :: LeiosPoint
-  -- ^ Point that gets signed. The slot also identifies the voting round.
+  { announcingRbHash :: RbHash
+  -- ^ The message that gets signed, the hash of the ranking block
+  --   that announced an endorser block.
   , voterId :: VoterId
   -- ^ Identity within a 'Committee' who signed this vote.
   , voteSignature :: LeiosSignature
@@ -572,7 +600,7 @@ data LeiosVote = MkLeiosVote
 
 instance Ord LeiosVote where
   compare v1 v2 =
-    compare v1.point v2.point
+    compare v1.announcingRbHash v2.announcingRbHash
       <> compare v1.voterId v2.voterId
 
 instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
@@ -580,10 +608,9 @@ instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
 -- | Encode a 'LeiosVote' into CBOR.
 -- NOTE: Encodes points flat into the vote for smaller votes.
 encodeLeiosVote :: LeiosVote -> Encoding
-encodeLeiosVote MkLeiosVote{point, voterId, voteSignature} =
+encodeLeiosVote MkLeiosVote{announcingRbHash, voterId, voteSignature} =
   CBOR.encodeListLen 4
-    <> encode point.pointSlotNo
-    <> encodeEbHash point.pointEbHash
+    <> encodeRbHash announcingRbHash
     <> encodeVoterId voterId
     <> encodeSigDSIGN voteSignature
 
@@ -591,41 +618,39 @@ encodeLeiosVote MkLeiosVote{point, voterId, voteSignature} =
 decodeLeiosVote :: Decoder s LeiosVote
 decodeLeiosVote = do
   enforceSize (fromString "LeiosVote") 4
-  pointSlotNo <- decode
-  pointEbHash <- decodeEbHash
+  pointRbHash <- decodeRbHash
   voterId <- decodeVoterId
   voteSignature <- decodeSigDSIGN
   pure
     MkLeiosVote
-      { point = MkLeiosPoint{pointSlotNo, pointEbHash}
+      { announcingRbHash = pointRbHash
       , voterId
       , voteSignature
       }
 
 voteToObject :: LeiosVote -> Aeson.Object
-voteToObject MkLeiosVote{point, voterId} =
+voteToObject MkLeiosVote{announcingRbHash, voterId} =
   mconcat
-    [ "slot" .= point.pointSlotNo
-    , "ebHash" .= prettyEbHash point.pointEbHash
+    [ "rbHash" .= prettyRbHash announcingRbHash
     , "voterId" .= voterId.voterIndex
     ]
 
 -- | Create a vote for given 'LeiosPoint' and signing key.
-signLeiosVote :: LeiosSigningKey -> VoterId -> LeiosPoint -> LeiosVote
-signLeiosVote sk voterId point =
+signLeiosVote :: LeiosSigningKey -> VoterId -> RbHash -> LeiosVote
+signLeiosVote sk voterId announcingRbHash =
   MkLeiosVote
-    { point
+    { announcingRbHash
     , voterId
-    , voteSignature = signDSIGN leiosSignContext point sk
+    , voteSignature = signDSIGN leiosSignContext announcingRbHash sk
     }
 
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
 validateLeiosVote :: Committee -> LeiosVote -> Either VoteInvalid Weight
-validateLeiosVote committee MkLeiosVote{point, voterId, voteSignature} =
+validateLeiosVote committee MkLeiosVote{announcingRbHash, voterId, voteSignature} =
   case resolveVoter committee voterId of
     Nothing -> Left SignerNotInCommittee
     Just voter ->
-      case verifyDSIGN leiosSignContext voter.voterVKey point voteSignature of
+      case verifyDSIGN leiosSignContext voter.voterVKey announcingRbHash voteSignature of
         Left _ -> Left InvalidSignature
         Right () -> Right voter.voterWeight
 
@@ -748,7 +773,7 @@ data TraceLeiosKernel
     TraceLeiosBlockCertified {atSlot :: SlotNo, certifiedPoint :: LeiosPoint}
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
-  | TraceLeiosCertified {point :: LeiosPoint}
+  | TraceLeiosCertified {point :: LeiosPoint, rbHash :: RbHash}
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
   | -- | A CertRB was admitted to the staging area because its certified
@@ -838,13 +863,14 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosVoteAcquired"
       , "vote" .= voteToObject vote
       ]
-  TraceLeiosCertified{point} ->
+  TraceLeiosCertified{point, rbHash = announcingRbHash} ->
     let MkLeiosPoint (SlotNo ebSlot) ebHash = point
-     in mconcat
-          [ "kind" .= Aeson.String "LeiosCertified"
-          , "ebHash" .= prettyEbHash ebHash
-          , "ebSlot" .= ebSlot
-          ]
+    in mconcat
+      [ "kind" .= Aeson.String "LeiosCertified"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      , "rbHash" .= prettyRbHash announcingRbHash
+      ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
   TraceLeiosDb (TraceLeiosDbInsertCollision table key) ->

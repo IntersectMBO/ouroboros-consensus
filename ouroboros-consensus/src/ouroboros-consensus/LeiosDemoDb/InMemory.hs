@@ -43,6 +43,7 @@ import LeiosDemoTypes
   , EbHash (..)
   , LeiosEb
   , LeiosPoint (..)
+  , RbHash
   , TxHash (..)
   , leiosEbBodyItems
   , leiosEbBytesSize
@@ -111,7 +112,7 @@ newLeiosDBInMemoryWith stateVar = do
               , leiosDbFilterMissingEbBodies = imFilterMissingEbBodies stateVar
               , leiosDbFilterMissingTxs = imFilterMissingTxs stateVar
               , leiosDbQueryFetchWork = imQueryFetchWork stateVar
-              , leiosDbQueryCompletedEbByPoint = imQueryCompletedEbByPoint stateVar
+              , leiosDbQueryCompletedEbByHash = imQueryCompletedEbByHash stateVar
               }
       }
 
@@ -189,9 +190,10 @@ imInsertTxs ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
+  Maybe RbHash ->
   [(TxHash, ByteString)] ->
   m CompletedEbs
-imInsertTxs stateVar notificationChan txs = atomically $ do
+imInsertTxs stateVar notificationChan mAnnouncingRbHash txs = atomically $ do
   let insertedTxHashes = [txHash | (txHash, _) <- txs]
   forM_ txs $ \(txHash, txBytes) -> do
     let txBytesSize = fromIntegral $ BS.length txBytes
@@ -221,7 +223,8 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
       { imAnnouncedCompletedEbs =
           foldr (Set.insert . pointEbHash) (imAnnouncedCompletedEbs s) completed
       }
-  forM_ completed $ writeTChan notificationChan . AcquiredEbTxs
+  forM_ completed $ \point ->
+    writeTChan notificationChan (AcquiredEbTxs point mAnnouncingRbHash)
   pure completed
 
 imBatchRetrieveTxs ::
@@ -271,11 +274,11 @@ imQueryFetchWork stateVar = atomically $ do
           ]
   pure LeiosFetchWork{missingEbBodies, missingEbTxs}
 
-imQueryCompletedEbByPoint ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe [(TxHash, ByteString)])
-imQueryCompletedEbByPoint stateVar ebPoint = atomically $ do
+imQueryCompletedEbByHash ::
+  IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe [(TxHash, ByteString)])
+imQueryCompletedEbByHash stateVar ebHash = atomically $ do
   state <- readTVar stateVar
-  case Map.lookup (pointEbHash ebPoint) (imEbBodies state) of
+  case Map.lookup ebHash (imEbBodies state) of
     Nothing -> pure Nothing
     Just entries ->
       let ebTxHashes = [eteTxHash e | e <- IntMap.elems entries]

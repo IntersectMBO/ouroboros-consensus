@@ -21,12 +21,12 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import LeiosDemoTypes
   ( Committee
-  , LeiosPoint (..)
   , LeiosSignature
   , LeiosVote (..)
   , VoteInvalid (..)
   , VoterId
   , Weight
+  , RbHash
   , minCertificationThreshold
   , validateLeiosVote
   )
@@ -38,8 +38,8 @@ data LeiosVoteState m = LeiosVoteState
   , subscribeVotes :: m (LeiosVoteSubscription m)
   -- ^ Subscribe to new votes arriving in the LeiosVoteState. This will only
   -- serve new additions, starting from when this function was called.
-  , queryCert :: LeiosPoint -> m (Maybe Leios.LeiosCert)
-  -- ^ Look up the assembled certificate for a 'LeiosPoint', or
+  , queryCert :: RbHash -> m (Maybe Leios.LeiosCert)
+  -- ^ Look up the assembled certificate for a 'RbHash', or
   -- 'Nothing' if its collected votes haven't crossed
   -- 'minCertificationThreshold'.
   }
@@ -56,7 +56,7 @@ data AddVoteResult
 
 data LeiosVoteSubscription m = LeiosVoteSubscription {getNextVote :: STM m LeiosVote}
 
--- | Per-'LeiosPoint' tally we maintain inside 'newLeiosVoteState'.
+-- | Per-'RbHash' tally we maintain inside 'newLeiosVoteState'.
 -- Holds the contributing voters plus a memoised certificate once the
 -- threshold is crossed.
 data PointState = PointState
@@ -79,7 +79,7 @@ newLeiosVoteState ::
 newLeiosVoteState getCommittee = do
   votesChan <- atomically newBroadcastTChan
   seenVotes <- atomically $ newTVar Set.empty
-  pointStates <- atomically $ newTVar (Map.empty :: Map LeiosPoint PointState)
+  pointStates <- atomically $ newTVar (Map.empty :: Map RbHash PointState)
   pure
     LeiosVoteState
       { addVote = \vote -> atomically $ do
@@ -107,9 +107,8 @@ newLeiosVoteState getCommittee = do
                       -- Update the per-point tally, assembling (and
                       -- caching) the certificate the first time the
                       -- threshold is crossed.
-                      let pt = vote.point
                       states <- readTVar pointStates
-                      let pst = Map.findWithDefault emptyPointState pt states
+                      let pst = Map.findWithDefault emptyPointState vote.announcingRbHash states
                           pst' =
                             pst
                               { psVoters =
@@ -132,7 +131,7 @@ newLeiosVoteState getCommittee = do
                                           <> show e
                                     Right cert -> pst'{psCert = Just cert}
                               | otherwise -> pst'
-                      writeTVar pointStates $! Map.insert pt pst'' states
+                      writeTVar pointStates $! Map.insert vote.announcingRbHash pst'' states
                       pure $ Added weight pst''.psCert
       , subscribeVotes = do
           chan <- atomically $ dupTChan votesChan

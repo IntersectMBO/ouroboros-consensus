@@ -29,9 +29,11 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Function ((&))
 import Data.Maybe.Strict (strictMaybeToMaybe)
 import qualified Data.Sequence.Strict as StrictSeq
-import LeiosDemoDb (leiosDbQueryCompletedEbByPoint)
-import LeiosDemoTypes (EbAnnouncement (..), LeiosPoint (..))
+import LeiosDemoDb (leiosDbQueryCompletedEbByHash)
+import LeiosDemoTypes (EbAnnouncement (..), LeiosPoint (..), RbHash (..))
+import Data.Proxy (Proxy (..))
 import Lens.Micro ((.~), (^.))
+import Ouroboros.Consensus.Block (ChainHash (..), blockPrevHash, toRawHash)
 import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables, unstowLedgerTables)
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto, PraosState (..))
@@ -80,9 +82,9 @@ instance
   where
   resolveLeiosClosure leiosDb point _blk = do
     mAnnouncedEb <-
-      leiosDbQueryCompletedEbByPoint
+      leiosDbQueryCompletedEbByHash
         leiosDb
-        point
+        (pointEbHash point)
     case mAnnouncedEb of
       Nothing ->
         pure []
@@ -159,6 +161,13 @@ instance
           (envv ^. ledgerPpL)
           (ms ^. SL.utxoG)
           tx
+
+  -- The announcing RB is this block's parent
+  announcingRbHash blk =
+    case blockPrevHash blk of
+      GenesisHash -> Nothing
+      BlockHash h ->
+        Just $ MkRbHash $ toRawHash (Proxy @(ShelleyBlock (Praos c) DijkstraEra)) h
 
 -- | Deserialise a transaction supplied as Leios-stored bytes.
 deserialiseLeiosTx :: forall era. ShelleyBasedEra era => BS.ByteString -> Tx TopTx era

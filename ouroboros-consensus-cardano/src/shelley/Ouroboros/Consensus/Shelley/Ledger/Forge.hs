@@ -29,20 +29,22 @@ import Data.ByteString.Short (fromShort)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Typeable as Typeable
 import LeiosDemoDb
-  ( leiosDbInsertEbBody
-  , leiosDbInsertEbPoint
-  , leiosDbInsertTxs
-  , leiosDbQueryCompletedEbByPoint
+  ( leiosDbQueryCompletedEbByHash
+  , LeiosDbConnection (..)
   )
 import LeiosDemoTypes
   ( EbAnnouncement (..)
   , ForgedLeiosEb (..)
   , LeiosPoint (..)
   , TraceLeiosKernel (..)
+  , RbHash (..)
+  , EbHash (..)
   , forgeLeiosEb
   , leiosEbBytesSize
   , minCertificationGap
+  , hashLeiosEb
   )
+import Data.ByteString.Short (fromShort)
 import LeiosVoteState (LeiosVoteState (queryCert))
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.Block
@@ -85,8 +87,8 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
     case Typeable.eqT @era @DijkstraEra of
       Just Refl -> decideLeios
       Nothing -> pure (Nothing, SNothing)
-  let body = mkBody mayLeiosCert
-      actualBodySize = SL.blockBodySize protocolVersion body
+  let rbBody = mkBody mayLeiosCert
+      actualRbBodySize = SL.blockBodySize protocolVersion rbBody
   hdr <-
     mkHeader @_ @(ProtoCrypto proto)
       hotKey
@@ -95,13 +97,13 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       fbCurrentSlotNo
       fbCurrentBlockNo
       prevHash
-      (SL.hashBlockBody @era body)
-      actualBodySize
+      (SL.hashBlockBody @era rbBody)
+      actualRbBodySize
       protocolVersion
-      mayEbAnn
-  let blk = mkShelleyBlock $ SL.Block hdr body
-  case mayEbAnn of
-    Just ann -> do
+      (snd <$> mayEbAnn)
+  let blk = mkShelleyBlock $ SL.Block hdr rbBody
+  case fst <$> mayEbAnn of
+    Just forgedEb -> do
       let rbHashBytes =
             fromShort $
               toShortRawHash (Proxy @(ShelleyBlock proto era)) $
@@ -109,13 +111,14 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
           ebPoint =
             MkLeiosPoint
               { pointSlotNo = fbCurrentSlotNo
-              , pointEbHash = ebAnnouncementHash ann
+              , pointEbHash = hashLeiosEb . body $ forgedEb
               }
       traceWith fbLeiosTracer $
         TraceLeiosBlockAnnounced
           { announcingRbHashBytes = rbHashBytes
           , announcedEbPoint = ebPoint
           }
+      storeEb ebPoint (MkRbHash rbHashBytes) forgedEb
     Nothing -> pure ()
   return $
     assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
@@ -154,13 +157,13 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   -- certificate available in LeiosDb), suppressing this block's own EB
   -- announcement. Otherwise fall back to forging a new EB (when the
   -- mempool has txs for one). Mirrors the prototype's 'decideForgeType'.
-  decideLeios :: m (Maybe EbAnnouncement, StrictMaybe LeiosCert)
+  decideLeios :: m (Maybe (ForgedLeiosEb, EbAnnouncement), StrictMaybe LeiosCert)
   decideLeios = do
     cert <- decideCertify
     case cert of
       SJust _ -> pure (Nothing, cert)
       SNothing -> do
-        ann <- mkAndStoreEb
+        ann <- mkEb
         pure (ann, SNothing)
 
   decideCertify :: m (StrictMaybe LeiosCert)
@@ -180,7 +183,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
             -- TODO: Why exactly do we guard against this? Also, shouldn't we
             -- detect it the other way around: if we have a cert, but not
             -- downloaded it ourselves -> warning!
-            mClosure <- leiosDbQueryCompletedEbByPoint fbLeiosDb ebPoint
+            mClosure <- leiosDbQueryCompletedEbByHash fbLeiosDb (pointEbHash ebPoint)
             case mClosure of
               Nothing -> do
                 traceWith fbLeiosTracer $
@@ -188,12 +191,12 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                     "EB not yet downloaded: " <> show ebPoint
                 pure SNothing
               Just _ -> do
-                -- Pull the assembled certificate from this node's
-                -- 'LeiosVoteState' — populated as votes accumulate and
-                -- cross 'minCertificationThreshold' (see
-                -- "LeiosVoteState"). Replaces the previous LeiosDb
-                -- placeholder cert (an empty bitfield + dummy sig).
-                mCert <- queryCert fbLeiosVoteState ebPoint
+                -- we get the hash of the previous block header because eb certification must
+                -- happen withing one block (this is the linear aspect of linear leios).
+                let announcingRbHash = case getTipHash fbCurrentTickedLedgerState of
+                      BlockHash h -> MkRbHash (toRawHash (Proxy @(ShelleyBlock proto era)) h)
+                      GenesisHash -> error "decideCertify: cannot certify on top of genesis"
+                mCert <- queryCert fbLeiosVoteState announcingRbHash
                 case mCert of
                   Nothing -> do
                     traceWith fbLeiosTracer $
@@ -212,12 +215,12 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   -- announcement to embed in the header. An honest forger only emits an
   -- EB when it has txs to put in it; empty mempool ⇒ no EB ⇒ no
   -- announcement (matches the original prototype).
-  mkAndStoreEb :: m (Maybe EbAnnouncement)
-  mkAndStoreEb = case nonEmpty (fmap extractTx fbEbTxs) of
+  mkEb :: m (Maybe (ForgedLeiosEb, EbAnnouncement))
+  mkEb = case nonEmpty (fmap extractTx fbEbTxs) of
     Nothing -> pure Nothing
     Just ebTxs -> do
       let forgedEb = forgeLeiosEb fbCurrentSlotNo ebTxs
-          ebHash = pointEbHash (forgedEb.point)
+          ebHash = hashLeiosEb forgedEb.body
           ebSize = leiosEbBytesSize (forgedEb.body)
           ebAnn =
             EbAnnouncement
@@ -231,12 +234,18 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
           , ebMeasure = ByteSize32 ebSize
           , mempoolRestMeasure = ByteSize32 0
           }
-      leiosDbInsertEbPoint fbLeiosDb (forgedEb.point) ebSize
-      leiosDbInsertEbBody fbLeiosDb (forgedEb.point) (forgedEb.body)
-      void $ leiosDbInsertTxs fbLeiosDb (forgedEb.txClosure)
-      traceWith fbLeiosTracer $
-        TraceLeiosBlockStored
-          { slot = fbCurrentSlotNo
-          , eb = forgedEb.body
-          }
-      pure (Just ebAnn)
+
+      pure (Just (forgedEb, ebAnn))
+
+  -- TODO(geo2a): 'RbHash' should go inside 'LeiosPoint'
+  storeEb :: LeiosPoint -> RbHash -> ForgedLeiosEb -> m ()
+  storeEb point announcingRbHash forgedEb = do
+    let ebSize = leiosEbBytesSize (forgedEb.body)
+    leiosDbInsertEbPoint fbLeiosDb point ebSize
+    leiosDbInsertEbBody fbLeiosDb point (forgedEb.body)
+    void $ leiosDbInsertTxs fbLeiosDb (Just announcingRbHash) (forgedEb.txClosure)
+    traceWith fbLeiosTracer $
+      TraceLeiosBlockStored
+        { slot = point.pointSlotNo
+        , eb = forgedEb.body
+        }
