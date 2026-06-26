@@ -103,6 +103,7 @@ import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext
   , forgePerasVoteIfEligibleInContext
   )
+import Ouroboros.Consensus.Peras.Time (forgetEraIndex)
 import qualified Ouroboros.Consensus.Peras.Time as Time
 import Ouroboros.Consensus.Peras.Voting.Rules
   ( PerasVotingRulesDecision (..)
@@ -504,9 +505,10 @@ perasVoteForgingController systemTime IS{chainDB, tracers} slotNo = do
     -- the previous one, or precompute every voting slot at epoch boundaries.
     roundInfo <-
       dyel $
-        Time.resolveSlotToPerasRoundInfoWithHandle
-          (ChainDB.getTimeResolutionContextHandle chainDB)
-          slotNo
+        forgetEraIndex
+          <$> Time.resolveSlotToPerasRoundInfoWithHandle
+            (ChainDB.getTimeResolutionContextHandle chainDB)
+            slotNo
     let roundNo = Time.stpriPerasRoundNo roundInfo
         slotInRound = Time.stpriSlotsSpentInPerasRound roundInfo
 
@@ -843,7 +845,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
       let certInclusionViewHandle = ChainDB.getPerasCertInclusionViewHandle chainDB
 
       currentRoundNo <-
-        Time.stpriPerasRoundNo
+        Time.stpriPerasRoundNo . forgetEraIndex
           <$> Time.resolveSlotToPerasRoundInfoWithHandle
             timeResolverHandle
             currentSlot

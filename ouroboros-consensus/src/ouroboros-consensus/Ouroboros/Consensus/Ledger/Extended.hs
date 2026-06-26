@@ -187,7 +187,7 @@ instance IsLedger LedgerState blk => GetTip (ExtLedgerState blk) where
 -- Given that we have no assumption that this would work, we made a polymorphic system where a 'BoundedEpochContext' can be created from either a ticked or unticked ledger+header state (see 'ALedgerStateSupportsPeras' and 'AChainDepStateSupportsPeras' classes); so that 'PerasEpochContextResolver' can be initialized from unticked 'LedgerState' and 'HeaderState', but then ticked by using the 'Ticked LedgerState' and 'Ticked HeaderState'. If in the future we move on to a system where the resolver is always initialized with empty/error value, we can remove the polymorphic system and only create a 'BoundedPerasEpochContext' from 'Ticked LedgerState' and 'Ticked HeaderState'.
 initPerasEpochContextResolver ::
   forall blk mk.
-  (All Top (HardForkIndices blk), StateSupportsPerasEpochContext blk) =>
+  StateSupportsPerasEpochContext blk =>
   LedgerConfig blk ->
   LedgerState blk mk ->
   HeaderState blk ->
@@ -214,7 +214,7 @@ initPerasEpochContextResolver ledgerConfig ledgerState headerState =
 -- | NOTE: it doesn't seem to bring much to differentiate a 'PerasEpochContextResolver' from a ticked one at type level, since they need to carry exactly the same information. We tried, and it didn't improve readability.
 tickPerasEpochContextResolver ::
   forall blk mk mk'.
-  (All Top (HardForkIndices blk), StateSupportsPerasEpochContext blk) =>
+  StateSupportsPerasEpochContext blk =>
   LedgerConfig blk ->
   -- | The previous 'ExtLedgerState' (before ticking)
   ExtLedgerState blk mk ->

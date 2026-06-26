@@ -70,7 +70,10 @@ import Ouroboros.Consensus.HardFork.Combinator
   ( HasPartialConsensusConfig
   )
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
+import Ouroboros.Consensus.Peras.Context
+  ( StateSupportsPerasEpochContext (MaybeEraIndexedEpochToPerasRoundInfo)
+  )
+import Ouroboros.Consensus.Peras.Time (EpochToPerasRoundInfo)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosTiebreakerView
@@ -133,6 +136,7 @@ class
   , -- Peras constraints
     BlockSupportsPeras (ShelleyBlock proto era)
   , StateSupportsPerasEpochContext (ShelleyBlock proto era)
+  , MaybeEraIndexedEpochToPerasRoundInfo (ShelleyBlock proto era) ~ EpochToPerasRoundInfo
   , -- Backwards compatibility
     Plain.FromCBOR (LegacyPParams era)
   , Plain.ToCBOR (LegacyPParams era)

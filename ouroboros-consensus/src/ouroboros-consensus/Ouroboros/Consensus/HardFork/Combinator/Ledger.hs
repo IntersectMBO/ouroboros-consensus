@@ -358,6 +358,7 @@ instance
 instance
   ( StandardHash (HardForkBlock xs)
   , CanHardFork xs
+  , All Top xs
   ) =>
   StateSupportsPerasEpochContext (HardForkBlock xs)
   where

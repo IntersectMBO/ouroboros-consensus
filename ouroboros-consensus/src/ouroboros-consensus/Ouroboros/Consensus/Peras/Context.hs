@@ -127,6 +127,7 @@ data PerasEpochContextNotFoundForRound = PerasEpochContextNotFoundForRound !Pera
 
 class
   ( HasHardForkHistory blk
+  , All Top (HardForkIndices blk)
   , forall mk. ALedgerStateSupportsPeras (LedgerState blk mk)
   , AChainDepStateSupportsPeras (ChainDepState (BlockProtocol blk))
   , forall mk'. ALedgerStateSupportsPeras (Ticked LedgerState blk mk')
