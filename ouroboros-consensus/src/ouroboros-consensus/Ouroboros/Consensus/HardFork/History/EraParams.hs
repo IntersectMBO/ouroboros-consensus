@@ -159,8 +159,8 @@ newtype PerasEnabled a = MkPerasEnabled (Maybe a)
 
 pattern PerasEnabled :: a -> PerasEnabled a
 pattern PerasEnabled x <- MkPerasEnabled (Just !x)
-  where
-    PerasEnabled !x = MkPerasEnabled (Just x)
+ where
+  PerasEnabled !x = MkPerasEnabled (Just x)
 
 pattern NoPerasEnabled :: PerasEnabled a
 pattern NoPerasEnabled = MkPerasEnabled Nothing

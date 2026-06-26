@@ -9,6 +9,31 @@
     , message: "Avoid confusion with Data.Constraint (Dict)"
     }
 
+  # The cardano-ledger entry points that read/write the Shelley NES UTxO field
+  # must only be called from the LedgerCallShim (block/tick/tx apply wrappers
+  # that take the UTxO values and the NES separately), so a stored ledger state
+  # can never carry a populated UTxO. 'applyTx' is the single exception: it is
+  # the era-dispatched 'defaultApplyShelleyBasedTx' the shim routes through.
+- functions:
+  - name: Cardano.Ledger.Shelley.API.applyTick
+    within: [Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim]
+    message: "Use applyTickShim from Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim"
+  - name: Cardano.Ledger.Shelley.API.applyTickNoEvents
+    within: [Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim]
+    message: "Use applyTickShim from Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim"
+  - name: Cardano.Ledger.Shelley.API.applyBlockEither
+    within: [Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim]
+    message: "Use applyBlockShim from Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim"
+  - name: Cardano.Ledger.Shelley.API.applyBlockEitherNoEvents
+    within: [Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim]
+    message: "Use applyBlockShim from Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim"
+  - name: Cardano.Ledger.Shelley.API.reapplyTx
+    within: [Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim]
+    message: "Use reapplyTxShim from Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim"
+  - name: Cardano.Ledger.Shelley.API.applyTx
+    within: [Ouroboros.Consensus.Shelley.Eras]
+    message: "Use applyTxShim from Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim (via applyShelleyBasedTx)"
+
 - ignore: {}
 
 - warn: {name: Ouroboros.Consensus.MiniProtocol.ChainSync.Client should be imported qualified or with an explicit import list}

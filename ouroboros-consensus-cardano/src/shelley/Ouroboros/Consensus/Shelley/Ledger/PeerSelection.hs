@@ -1,4 +1,9 @@
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE CPP #-}
+#if __GLASGOW_HASKELL__ >= 910
+{-# OPTIONS_GHC -Wno-x-shelley-empty-utxo #-}
+#else
+{-# OPTIONS_GHC -Wno-warnings-deprecations #-}
+#endif
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -24,7 +29,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Ledger
 
 instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto era) where
-  getPeers ShelleyLedgerState{shelleyLedgerState} =
+  getPeers st =
     catMaybes
       [ (PoolStake stake,) <$> ledgerRelayAccessPoints relays
       | (_stakePool, (stake, relays)) <- stakeOrdered
@@ -32,18 +37,18 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
    where
     stakeOrdered =
       sortOn (Down . fst . snd) . Map.toList $
-        SL.queryStakePoolRelays shelleyLedgerState
+        SL.queryStakePoolRelays (shelleyLedgerState st)
 
     relayToLedgerRelayAccessPoint :: SL.StakePoolRelay -> Maybe LedgerRelayAccessPoint
-    relayToLedgerRelayAccessPoint (SL.SingleHostAddr (SJust (Port port)) (SJust ipv4) _) =
-      Just $ LedgerRelayAccessAddress (IPv4 (unIPv4 ipv4)) (fromIntegral port)
+    relayToLedgerRelayAccessPoint (SL.SingleHostAddr (SJust (Port port)) (SJust ip4) _) =
+      Just $ LedgerRelayAccessAddress (IPv4 (unIPv4 ip4)) (fromIntegral port)
     relayToLedgerRelayAccessPoint
       ( SL.SingleHostAddr
           (SJust (Port port))
           SNothing
-          (SJust ipv6)
+          (SJust ip6)
         ) =
-        Just $ LedgerRelayAccessAddress (IPv6 (unIPv6 ipv6)) (fromIntegral port)
+        Just $ LedgerRelayAccessAddress (IPv6 (unIPv6 ip6)) (fromIntegral port)
     -- no IP address or no port number
     relayToLedgerRelayAccessPoint (SL.SingleHostAddr SNothing _ _) = Nothing
     relayToLedgerRelayAccessPoint (SL.SingleHostAddr _ SNothing _) = Nothing

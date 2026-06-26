@@ -196,13 +196,7 @@ library
     Ouroboros.Consensus.Ledger.SupportsPeerSelection
     Ouroboros.Consensus.Ledger.SupportsPeras
     Ouroboros.Consensus.Ledger.SupportsProtocol
-    Ouroboros.Consensus.Ledger.Tables
-    Ouroboros.Consensus.Ledger.Tables.Basics
-    Ouroboros.Consensus.Ledger.Tables.Combinators
     Ouroboros.Consensus.Ledger.Tables.Diff
-    Ouroboros.Consensus.Ledger.Tables.Kinds
-    Ouroboros.Consensus.Ledger.Tables.MapKind
-    Ouroboros.Consensus.Ledger.Tables.Utils
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API
     Ouroboros.Consensus.Mempool.Capacity
@@ -329,7 +323,6 @@ library
     Ouroboros.Consensus.Util.Enclose
     Ouroboros.Consensus.Util.FileLock
     Ouroboros.Consensus.Util.HList
-    Ouroboros.Consensus.Util.IndexedMemPack
     Ouroboros.Consensus.Util.IOLike
     Ouroboros.Consensus.Util.LeakyBucket
     Ouroboros.Consensus.Util.MonadSTM.NormalForm
@@ -415,7 +408,6 @@ library lsm
     base,
     blockio ^>=0.2,
     bytestring,
-    containers,
     contra-tracer,
     directory,
     filepath,
@@ -430,7 +422,10 @@ library lsm
     random,
     resource-registry,
     serialise,
+    sop-core,
+    sop-extras,
     streaming,
+    strict-sop-core,
     text,
     transformers,
     vector,
@@ -440,7 +435,6 @@ library unstable-consensus-testlib
   visibility: public
   hs-source-dirs: ouroboros-consensus/src/unstable-consensus-testlib
   exposed-modules:
-    Test.LedgerTables
     Test.Ouroboros.Consensus.ChainGenerator.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.BitVector
     Test.Ouroboros.Consensus.ChainGenerator.Counting
@@ -463,7 +457,6 @@ library unstable-consensus-testlib
     Test.Util.HardFork.OracularClock
     Test.Util.Header
     Test.Util.InvertedMap
-    Test.Util.LedgerStateOnlyTables
     Test.Util.LogicalClock
     Test.Util.MockChain
     Test.Util.Orphans.Arbitrary
@@ -1155,7 +1148,6 @@ test-suite mock-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Ledger.Mock
-    Test.Consensus.Ledger.Mock.LedgerTables
     Test.ThreadNet.BFT
     Test.ThreadNet.LeaderSchedule
     Test.ThreadNet.PBFT
@@ -1244,7 +1236,6 @@ test-suite consensus-diffusion-test
     cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
-    cborg,
     containers,
     contra-tracer,
     directory,
@@ -1253,7 +1244,6 @@ test-suite consensus-diffusion-test
     hashable,
     io-classes:{io-classes, si-timers, strict-stm},
     io-sim,
-    mempack,
     monoidal-containers ^>=0.6,
     mtl,
     nothunks,
@@ -1267,7 +1257,6 @@ test-suite consensus-diffusion-test
     reflection,
     resource-registry,
     serialise,
-    sop-core,
     sop-extras,
     strict-checked-vars,
     strict-sop-core,
@@ -1315,7 +1304,6 @@ library cardano
     Ouroboros.Consensus.Cardano.Block
     Ouroboros.Consensus.Cardano.CanHardFork
     Ouroboros.Consensus.Cardano.Condense
-    Ouroboros.Consensus.Cardano.Ledger
     Ouroboros.Consensus.Cardano.Node
     Ouroboros.Consensus.Cardano.QueryHF
     Ouroboros.Consensus.Shelley.Crypto
@@ -1328,6 +1316,7 @@ library cardano
     Ouroboros.Consensus.Shelley.Ledger.Inspect
     Ouroboros.Consensus.Shelley.Ledger.Integrity
     Ouroboros.Consensus.Shelley.Ledger.Ledger
+    Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim
     Ouroboros.Consensus.Shelley.Ledger.Mempool
     Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
     Ouroboros.Consensus.Shelley.Ledger.PeerSelection
@@ -1478,7 +1467,6 @@ test-suite byron-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Byron.Golden
-    Test.Consensus.Byron.LedgerTables
     Test.Consensus.Byron.Serialisation
     Test.ThreadNet.Byron
     Test.ThreadNet.DualByron
@@ -1558,7 +1546,6 @@ test-suite shelley-test
   other-modules:
     Test.Consensus.Shelley.Coherence
     Test.Consensus.Shelley.Golden
-    Test.Consensus.Shelley.LedgerTables
     Test.Consensus.Shelley.Serialisation
     Test.Consensus.Shelley.SupportedNetworkProtocolVersion
     Test.ThreadNet.Shelley
@@ -1567,11 +1554,7 @@ test-suite shelley-test
     base,
     bytestring,
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
-    cardano-ledger-api,
-    cardano-ledger-babbage:testlib,
-    cardano-ledger-conway:testlib,
     cardano-ledger-core,
-    cardano-ledger-dijkstra:testlib,
     cardano-ledger-shelley,
     cardano-protocol-tpraos,
     cardano-slotting,
@@ -1583,7 +1566,6 @@ test-suite shelley-test
     fs-api,
     fs-sim,
     measures,
-    mempack,
     microlens,
     ouroboros-consensus:{cardano, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib},
     QuickCheck,
@@ -1618,9 +1600,8 @@ library unstable-cardano-testlib
     cardano-crypto-wrapper,
     cardano-ledger-alonzo:testlib,
     cardano-ledger-api:cardano-ledger-api,
-    cardano-ledger-binary,
     cardano-ledger-byron,
-    cardano-ledger-conway:{cardano-ledger-conway, testlib},
+    cardano-ledger-conway:testlib,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-ledger-dijkstra:testlib,
     cardano-ledger-shelley,
@@ -1628,7 +1609,6 @@ library unstable-cardano-testlib
     cardano-protocol-tpraos,
     cardano-slotting,
     cardano-strict-containers,
-    cborg,
     containers,
     contra-tracer,
     fs-api,
@@ -1636,7 +1616,6 @@ library unstable-cardano-testlib
     mempack,
     microlens,
     mtl,
-    nothunks,
     ouroboros-consensus:{cardano, diffusion, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-protocol-testlib},
     ouroboros-network:api,
     QuickCheck,

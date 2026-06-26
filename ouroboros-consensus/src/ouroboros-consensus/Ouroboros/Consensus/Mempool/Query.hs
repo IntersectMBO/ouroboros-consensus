@@ -19,14 +19,16 @@ implGetSnapshotFor ::
   MempoolEnv m blk ->
   -- | Get snapshot for this slot number (usually the current slot)
   SlotNo ->
-  -- | The ledger state at which we want the
-  -- snapshot, ticked to @slot@.
-  TickedLedgerState blk DiffMK ->
+  -- | The ledger state at which we want the snapshot, ticked to @slot@.
+  TickedLedgerState blk EmptyMK ->
+  -- | The tick diff (from the unticked state to @ticked@), used to forward the
+  -- read values up to the ticked state.
+  Diff blk ->
   -- | A function that returns values corresponding to the given keys for
   -- the unticked ledger state.
-  (LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK)) ->
+  (Keys blk -> m (Values blk)) ->
   m (MempoolSnapshot blk)
-implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
+implGetSnapshotFor mpEnv slot ticked tickDiff readUntickedTables = do
   is <- atomically $ readTMVar istate
   let txs =
         [ TxSeq.TxTicket tx tn tz
@@ -38,16 +40,18 @@ implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
       -- We are looking for a snapshot exactly for the ledger state we already
       -- have cached, then just return it.
       pure $ snapshotFromValidTxs txs (castPoint $ isTip is) (isSlotNo is)
-    else do
-      values <-
-        if pointHash (isTip is) == castHash (getTipHash ticked)
-          -- We are looking for a snapshot at the same state ticked
-          -- to a different slot, so we can reuse the cached values
-          then pure (isTxValues is)
-          -- We are looking for a snapshot at a different state, so we
-          -- need to read the values from the ledgerdb.
-          else readUntickedTables (isTxKeys is)
-      pure $ computeSnapshot cfg slot ticked values txs
+    else case txs of
+      -- An empty mempool produces an empty snapshot regardless of the values,
+      -- so there is nothing to read (and no keys to union).
+      [] -> pure $ snapshotFromValidTxs [] (castPoint $ getTip ticked) slot
+      _ -> do
+        let keys =
+              foldr1 (<>) $
+                map
+                  (\(TxSeq.TxTicket tx _ _) -> getTransactionKeySets (txForgetValidated tx))
+                  txs
+        values <- readUntickedTables keys
+        pure $ computeSnapshot cfg slot ticked tickDiff values txs
  where
   MempoolEnv
     { mpEnvStateVar = istate

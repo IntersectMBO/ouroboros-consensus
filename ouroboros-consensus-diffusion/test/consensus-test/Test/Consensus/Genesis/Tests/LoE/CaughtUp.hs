@@ -258,6 +258,7 @@ openChainDB registry getLoEFragment = do
           MinimalChainDbArgs
             { mcdbChunkInfo = mkTestChunkInfo mcdbTopLevelConfig
             , mcdbInitLedger = testInitExtLedger
+            , mcdbInitLedgerTables = mempty
             , mcdbRegistry = registry
             , mcdbTopLevelConfig
             , mcdbNodeDBs

@@ -1,3 +1,9 @@
+{-# LANGUAGE CPP #-}
+#if __GLASGOW_HASKELL__ >= 910
+{-# OPTIONS_GHC -Wno-x-shelley-empty-utxo #-}
+#else
+{-# OPTIONS_GHC -Wno-warnings-deprecations #-}
+#endif
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -78,7 +84,7 @@ instance
 
   knownEBBs = const Map.empty
 
-  emitTraces (WithLedgerState _blk lsb lsa) =
+  emitTraces (WithLedgerState _blk lsb _vsb lsa _vsa) =
     catMaybes
       [ let be = SL.nesEL . shelleyLedgerState $ lsb
             ae = SL.nesEL . shelleyLedgerState $ lsa

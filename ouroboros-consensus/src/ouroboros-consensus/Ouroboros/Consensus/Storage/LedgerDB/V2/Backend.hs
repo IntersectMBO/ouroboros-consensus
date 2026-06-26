@@ -61,7 +61,8 @@ class NoThunks (Resources m backend) => Backend m backend blk where
   createAndPopulateStateRefFromGenesis ::
     Tracer m LedgerDBV2Trace ->
     Resources m backend ->
-    ExtLedgerState blk ValuesMK ->
+    ExtLedgerState blk EmptyMK ->
+    Values blk ->
     m (StateRef m ExtLedgerState blk)
 
   -- | Create a new handle from a snapshot.

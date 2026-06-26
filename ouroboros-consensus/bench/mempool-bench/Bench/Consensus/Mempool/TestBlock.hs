@@ -6,8 +6,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -23,6 +21,7 @@ module Bench.Consensus.Mempool.TestBlock
     -- * Transactions
   , Token (Token)
   , Tx (Tx)
+  , initialLedgerTables
   , mkTx
   , txSize
   ) where
@@ -43,11 +42,9 @@ import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
+import Ouroboros.Consensus.Ledger.Basics (BlockSupportsUTxOHD (Values))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
-import Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
-import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack (..))
 import Test.Util.TestBlock hiding (TestBlock)
 
 {-------------------------------------------------------------------------------
@@ -85,15 +82,16 @@ mkTx cons prod =
   Initial parameters
 -------------------------------------------------------------------------------}
 
-initialLedgerState :: LedgerState (TestBlockWith Tx) ValuesMK
+initialLedgerState :: LedgerState (TestBlockWith Tx)
 initialLedgerState =
   TestLedger
     { lastAppliedPoint = Block.GenesisPoint
-    , payloadDependentState =
-        TestPLDS
-          { getTestPLDS = ValuesMK Map.empty
-          }
+    , payloadDependentState = TestPLDS
     }
+
+-- | The genesis ledger tables: no tokens available yet.
+initialLedgerTables :: Values TestBlock
+initialLedgerTables = Map.empty
 
 sampleLedgerConfig :: Ledger.LedgerConfig TestBlock
 sampleLedgerConfig =
@@ -119,48 +117,30 @@ data TxApplicationError
   deriving anyclass (NoThunks, ToExpr, Serialise)
 
 instance PayloadSemantics Tx where
-  newtype PayloadDependentState Tx mk = TestPLDS
-    { getTestPLDS :: mk Token ()
-    }
-    deriving stock Generic
+  -- This block keeps all of its state in the on-disk tables, so the table-free
+  -- payload-dependent state is trivial.
+  data PayloadDependentState Tx = TestPLDS
+    deriving stock (Eq, Show, Generic)
+    deriving anyclass (Serialise, NoThunks)
 
   type PayloadDependentError Tx = TxApplicationError
 
-  applyPayload plds tx =
-    let
-      notFound = Set.filter (not . (`Map.member` tokMap)) consumed
-     in
-      if Set.null notFound
-        then Right $ TestPLDS (Ledger.rawAttachAndApplyDiffs toks fullDiff)
-        else Left $ TxApplicationError notFound
+  type PayloadTxIn Tx = Token
+  type PayloadTxOut Tx = ()
+
+  applyPayload tokMap plds tx =
+    if Set.null notFound
+      then Right (plds, consumedDiff <> producedDiff)
+      else Left $ TxApplicationError notFound
    where
-    TestPLDS toks@(ValuesMK tokMap) = plds
     Tx{consumed, produced} = tx
+    notFound = Set.filter (not . (`Map.member` tokMap)) consumed
 
     consumedDiff, producedDiff :: Diff.Diff Token ()
     consumedDiff = Diff.fromListDeletes [(t, ()) | t <- Set.toList consumed]
     producedDiff = Diff.fromListInserts [(t, ()) | t <- Set.toList produced]
 
-    fullDiff :: DiffMK Token ()
-    fullDiff = DiffMK $ consumedDiff <> producedDiff
-
-  getPayloadKeySets tx = LedgerTables $ KeysMK consumed
-   where
-    Tx{consumed} = tx
-
-deriving stock instance
-  EqMK mk =>
-  Eq (PayloadDependentState Tx mk)
-deriving stock instance
-  ShowMK mk =>
-  Show (PayloadDependentState Tx mk)
-deriving anyclass instance
-  NoThunksMK mk =>
-  NoThunks (PayloadDependentState Tx mk)
-
-instance Serialise (PayloadDependentState Tx EmptyMK) where
-  encode = error "Mempool bench TestBlock unused: encode"
-  decode = error "Mempool bench TestBlock unused: decode"
+  getPayloadKeySets = consumed
 
 -- | TODO: for the time being 'TestBlock' does not have any codec config
 data instance Block.CodecConfig TestBlock = TestBlockCodecConfig
@@ -169,42 +149,6 @@ data instance Block.CodecConfig TestBlock = TestBlockCodecConfig
 -- | TODO: for the time being 'TestBlock' does not have any storage config
 data instance Block.StorageConfig TestBlock = TestBlockStorageConfig
   deriving (Show, Generic, NoThunks)
-
-{-------------------------------------------------------------------------------
-  Ledger tables
--------------------------------------------------------------------------------}
-
-type instance TxIn TestBlock = Token
-type instance TxOut TestBlock = ()
-
-instance HasLedgerTables LedgerState TestBlock where
-  projectLedgerTables st =
-    LedgerTables $ getTestPLDS $ payloadDependentState st
-  withLedgerTables st table =
-    st
-      { payloadDependentState =
-          plds
-            { getTestPLDS = Ledger.getLedgerTables table
-            }
-      }
-   where
-    TestLedger{payloadDependentState = plds} = st
-
-instance HasLedgerTables (Ticked LedgerState) TestBlock where
-  projectLedgerTables (TickedTestLedger st) =
-    Ledger.projectLedgerTables st
-  withLedgerTables (TickedTestLedger st) tables =
-    TickedTestLedger $ Ledger.withLedgerTables st tables
-
-instance CanStowLedgerTables (LedgerState TestBlock) where
-  stowLedgerTables = error "Mempool bench TestBlock unused: stowLedgerTables"
-  unstowLedgerTables = error "Mempool bench TestBlock unused: unstowLedgerTables"
-
-instance IndexedMemPack LedgerState TestBlock () where
-  indexedTypeName _ _ = typeName @()
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
 
 {-------------------------------------------------------------------------------
   Mempool support
@@ -223,14 +167,14 @@ txSize (TestBlockGenTx tx) =
       1 + length (consumed tx) + length (produced tx)
 
 instance Ledger.LedgerSupportsMempool TestBlock where
-  applyTx _cfg _shouldIntervene _slot (TestBlockGenTx tx) tickedSt =
+  applyTx _cfg _shouldIntervene _slot (TestBlockGenTx tx) values tickedSt =
     except $
-      fmap ((,ValidatedGenTx (TestBlockGenTx tx)) . Ledger.trackingToDiffs) $
-        applyDirectlyToPayloadDependentState tickedSt tx
+      fmap (\(st', d) -> (st', d, ValidatedGenTx (TestBlockGenTx tx))) $
+        applyDirectlyToPayloadDependentState values tickedSt tx
 
-  reapplyTx cfg slot (ValidatedGenTx genTx) tickedSt =
-    Ledger.applyDiffs tickedSt . fst
-      <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx tickedSt
+  reapplyTx cfg slot (ValidatedGenTx genTx) values tickedSt =
+    (\(st', d, _) -> (st', d))
+      <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx values tickedSt
 
   -- FIXME: it is ok to use 'DoNotIntervene' here?
 
@@ -252,7 +196,7 @@ instance Ledger.TxLimits TestBlock where
     Ledger.TxMeasure (Ledger.IgnoringOverflow $ Ledger.ByteSize32 20) Ledger.TrivialTxMeasurePhase2
 
   txMeasurePhase1 _cfg _st = pure . Ledger.IgnoringOverflow . txSize
-  txMeasurePhase2 _cfg _st _tx = pure Ledger.TrivialTxMeasurePhase2
+  txMeasurePhase2 _cfg _values _st _tx = pure Ledger.TrivialTxMeasurePhase2
 
 newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx
   deriving stock Generic

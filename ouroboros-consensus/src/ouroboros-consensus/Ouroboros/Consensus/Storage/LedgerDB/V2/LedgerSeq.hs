@@ -7,6 +7,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -14,6 +16,10 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
   ( -- * LedgerHandles
     LedgerTablesHandle (..)
+  , EraRangeReader (..)
+  , EraRangeReaderProvider (..)
+  , withEraRangeReader
+  , mkEraRangeReaderProvider
 
     -- * The ledger seq
   , LedgerSeq (..)
@@ -57,8 +63,12 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( EraRangeReader (..)
+  , EraRangeReaderProvider (..)
+  , RangeReadTables
+  )
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq hiding
   ( anchor
@@ -88,14 +98,9 @@ import Prelude hiding (read)
 data LedgerTablesHandle m l blk = LedgerTablesHandle
   { close :: !(m ())
   -- ^ Close the handle
-  , duplicateWithDiffs :: !(l blk EmptyMK -> l blk DiffMK -> m (LedgerTablesHandle m l blk))
-  -- ^ Create a new handle by duplicating this one and push some diffs to it.
-  --
-  -- The first argument has to be the ledger state before applying
-  -- the block, the second argument should be the ledger state after
-  -- applying a block. See 'CanUpgradeLedgerTables'.
-  --
-  -- Note 'CanUpgradeLedgerTables' is only used in the InMemory backend.
+  , duplicateWithDiffs :: !(Diff blk -> m (LedgerTablesHandle m l blk))
+  -- ^ Create a new handle by duplicating this one and pushing a block's diff to
+  -- it (the diff is applied to the held values via 'forward').
   --
   -- This is expected to be used when applying new blocks onto a forker, which
   -- happens only in chain selection (see 'forkerPush') and initial chain
@@ -104,29 +109,14 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   -- ^ Create an duplicate of a handle. This will be used when opening read-only
   -- forkers and also to open the first handle for a forker used in chain
   -- selection.
-  , read :: !(l blk EmptyMK -> LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
+  , read :: !(l blk EmptyMK -> Keys blk -> m (Values blk))
   -- ^ Read values for the given keys from the tables, and deserialize them as
   -- if they were from the same era as the given ledger state.
-  , readRange ::
-      !(l blk EmptyMK -> (Maybe (TxIn blk), Int) -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
-  -- ^ Read the requested number of values, possibly starting from the given
-  -- key, from the tables, and deserialize them as if they were from the same
-  -- era as the given ledger state.
-  --
-  -- The returned value contains both the read values as well as the last key
-  -- retrieved. This is necessary in case the backend uses a serialization
-  -- format such that the order in the store (which will be used when reading)
-  -- might not match the order in a Haskell @Map@ (induced by @Ord@), so the
-  -- backend must tell which key it read last (if any).
-  --
-  -- The last key retrieved is part of the map too. It is intended to be fed
-  -- back into the next iteration of the range read. If the function returns
-  -- Nothing, it means the read returned no results, or in other words, we
-  -- reached the end of the ledger tables.
-  , readAll :: !(l blk EmptyMK -> m (LedgerTables blk ValuesMK))
-  -- ^ Costly read all operation, not to be used in Consensus but only in
-  -- snapshot-converter executable. The values will be read as if they were from
-  -- the same era as the given ledger state.
+  , readRange :: !(RangeReadTables m blk)
+  -- ^ Read one bounded page of the /current era/'s tables, for LSQ
+  -- @QFTraverseTables@ queries (see 'EraRangeReader' / 'withEraRangeReader').
+  -- The caller supplies the projection onto the current era @x@; see
+  -- 'RangeReadTables' for the per-backend semantics and cursor contract.
   , takeHandleSnapshot :: !(l blk EmptyMK -> String -> m (Maybe CRC))
   -- ^ Take a snapshot of a handle. The given ledger state is used to decide the
   -- encoding of the values based on the current era.
@@ -137,27 +127,48 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LedgerTablesHandle" (LedgerTablesHandle m l blk)
 
+-- | Build an 'EraRangeReader' for the current era @x@ from a tables handle.
+--
+-- The caller supplies the projection mapping the handle's stored values onto era
+-- @x@, and the batch size bounds each page (see 'EraRangeReader').
+--
+-- The era @x@ is assumed to be the /current/ era (the only era for which the
+-- backing store holds tables). 'QFTraverseTables' queries are always dispatched
+-- to the current era by the upstream 'QueryIfCurrent' handling, so a mismatch
+-- cannot reach here; this is relied upon rather than re-checked. TODO @js:
+-- revisit whether to encode this invariant explicitly.
+withEraRangeReader ::
+  SingleEraBlockSupportsUTxOHD x =>
+  LedgerTablesHandle m l blk ->
+  -- | Project the handle's stored values onto the current era @x@.
+  (Values blk -> Values x) ->
+  -- | Batch size (maximum entries per page).
+  Int ->
+  EraRangeReader m x
+withEraRangeReader h proj batchSize =
+  EraRangeReader $ \prev -> readRange h proj prev batchSize
+
+-- | Build an 'EraRangeReaderProvider' from a tables handle and a batch size.
+--
+-- The provider is valid only while the underlying handle is open (it is built
+-- from the read-only forker's handle and shares its lifetime).
+mkEraRangeReaderProvider ::
+  LedgerTablesHandle m l blk ->
+  -- | Batch size (maximum entries per page).
+  Int ->
+  EraRangeReaderProvider m blk
+mkEraRangeReaderProvider h batchSize =
+  EraRangeReaderProvider $ \proj -> withEraRangeReader h proj batchSize
+
 {-------------------------------------------------------------------------------
   StateRef, represents a full ledger state, i.e. with a handle for its tables
 -------------------------------------------------------------------------------}
 
--- | For single era blocks, it would be the same to hold a stowed ledger state
--- (@'LedgerTables' ('LedgerState' blk) 'EmptyMK'@), an unstowed one
--- (@'LedgerTables' ('LedgerState' blk) 'ValuesMK'@) or a tuple with the state
--- and the tables ('LedgerState' blk 'EmptyMK', 'LedgerTables' ('LedgerState'
--- blk) 'ValuesMK'), however, for a hard fork block, these are not equivalent.
+-- | A full ledger state: the pure state @l blk@ paired with a sibling handle
+-- holding its on-disk tables.
 --
--- If we were to hold a sequence of type @LedgerState blk EmptyMK@ with stowed
--- values, we would have to translate the entirety of the tables on epoch
--- boundaries.
---
--- If we were to hold a sequence of type @LedgerState blk ValuesMK@ we would
--- have the same problem as the @mk@ in the state actually refers to the @mk@ in
--- the @HardForkState@'ed state.
---
--- Therefore it sounds reasonable to hold a @LedgerState blk EmptyMK@ with no
--- values, and a @LedgerTables blk ValuesMK@ next to it, that will live its
--- entire lifetime as @LedgerTables@ of the @HardForkBlock@.
+-- The table data lives entirely behind the 'LedgerTablesHandle', which the rest
+-- of the LedgerDB threads around backend-agnostically.
 data StateRef m l blk = StateRef
   { state :: !(l blk EmptyMK)
   , tables :: !(LedgerTablesHandle m l blk)
@@ -207,16 +218,16 @@ empty ::
   m (LedgerSeq m l blk)
 empty st tbs new = LedgerSeq . AS.Empty . StateRef st <$> new tbs
 
--- | Creates an empty @LedgerSeq@
+-- | Creates an empty @LedgerSeq@ from a state and its full table values.
 empty' ::
   ( GetTip (l blk)
   , IOLike m
-  , HasLedgerTables l blk
   ) =>
-  l blk ValuesMK ->
-  (l blk ValuesMK -> m (LedgerTablesHandle m l blk)) ->
+  l blk EmptyMK ->
+  Values blk ->
+  (Values blk -> m (LedgerTablesHandle m l blk)) ->
   m (LedgerSeq m l blk)
-empty' st = empty (forgetLedgerTables st) st
+empty' = empty
 
 -- | Close all 'LedgerTablesHandle' in this 'LedgerSeq', in particular that on
 -- the anchor.
@@ -245,6 +256,7 @@ reapplyThenPush cfg ap db = do
   pure db'
 
 reapplyBlock ::
+  forall l blk m.
   (ApplyBlock l blk, IOLike m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
@@ -252,14 +264,12 @@ reapplyBlock ::
   LedgerSeq m l blk ->
   m (StateRef m l blk)
 reapplyBlock evs cfg b db = do
-  let ks = getBlockKeySets b
+  let ks = blockKeys b
       StateRef st tbs = currentHandle db
   vals <- read tbs st ks
-  let st' = tickThenReapply evs cfg b (st `withLedgerTables` vals)
-      newst = forgetLedgerTables st'
-
-  newtbs <- duplicateWithDiffs tbs st st'
-  pure (StateRef newst newtbs)
+  let (st', diff) = tickThenReapply evs cfg b vals st
+  newtbs <- duplicateWithDiffs tbs diff
+  pure (StateRef st' newtbs)
 
 -- | Prune older ledger states according to the given 'LedgerDbPrune' strategy.
 --
@@ -536,21 +546,17 @@ volatileStatesBimap f g =
 -------------------------------------------------------------------------------}
 
 -- $setup
--- >>> :set -XTypeFamilies -XUndecidableInstances -XFlexibleInstances -XTypeApplications -XMultiParamTypeClasses
+-- >>> :set -XTypeFamilies -XUndecidableInstances -XFlexibleInstances -XTypeApplications -XMultiParamTypeClasses -XRankNTypes
 -- >>> import qualified Ouroboros.Network.AnchoredSeq as AS
 -- >>> import Ouroboros.Network.Block
 -- >>> import Ouroboros.Network.Point
--- >>> import Ouroboros.Consensus.Ledger.Tables
--- >>> import Ouroboros.Consensus.Ledger.Tables.Utils
 -- >>> import Ouroboros.Consensus.Ledger.Basics
 -- >>> import Ouroboros.Consensus.Config
--- >>> import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
--- >>> import Ouroboros.Consensus.Util.IndexedMemPack
 -- >>> import Ouroboros.Consensus.Storage.LedgerDB.API
 -- >>> import Cardano.Ledger.BaseTypes.NonZero
 -- >>> import Data.Void
 -- >>> import Cardano.Slotting.Slot
--- >>> import Data.Proxy
+-- >>> import Prelude hiding (read)
 --
 -- >>> data B
 -- >>> type instance HeaderHash B = Int
@@ -560,12 +566,9 @@ volatileStatesBimap f g =
 -- >>> type instance TxIn B = Void
 -- >>> type instance TxOut B = Void
 --
--- >>> data instance LedgerState B (mk :: MapKind) = LS (Point B)
--- >>> instance Eq (LedgerState B EmptyMK) where LS p1 == LS p2 = p1 == p2
--- >>> :{
---  instance GetTip (LedgerState B) where
---    getTip (LS p) = castPoint p
--- :}
+-- >>> data instance LedgerState B = LS (Point B)
+-- >>> instance Eq (LedgerState B) where LS p1 == LS p2 = p1 == p2
+-- >>> instance GetTip (LedgerState B) where getTip (LS p) = castPoint p
 --
 -- >>> :{
 --  s = [ LS (Point Origin)
@@ -578,30 +581,35 @@ volatileStatesBimap f g =
 --
 -- >>> [l0s, l1s, l2s, l3s, l4s] = s
 --
+-- The on-disk tables of @B@ are trivial (@()@), so 'BlockSupportsUTxOHD' is
+-- discharged with no-op operations; the examples below only manipulate the
+-- sequence structure and never touch the handle's table payloads.
+--
 -- >>> :{
---  instance LedgerTablesAreTrivial LedgerState B where
---    convertMapKind (LS p) = LS p
---  instance HasLedgerTables LedgerState B where
---    projectLedgerTables _ = trivialLedgerTables (Proxy @LedgerState)
---    withLedgerTables st _ = convertMapKind st
---  instance IndexedMemPack LedgerState B Void where
---    indexedTypeName _ _ = typeName @Void
---    indexedPackedByteCount _ = packedByteCount
---    indexedPackM _ = packM
---    indexedUnpackM _ = unpackM
+--  instance BlockSupportsUTxOHD B where
+--    type Keys B = ()
+--    type Values B = ()
+--    type Diff B = ()
+--    blockKeys _ = ()
+--    forward _ = id
+--    restrictValues _ = id
+--    valuesSize _ = 0
+--    encodeValues _ = mempty
+--    decodeValues _ = pure ()
 -- :}
 --
 -- >>> :{
+--  emptyHandle :: LedgerTablesHandle IO LedgerState B
 --  emptyHandle =
 --     LedgerTablesHandle
---        (pure ())
---        (\_ _ -> pure emptyHandle)
---        (pure emptyHandle)
---        (\_ _ -> pure (trivialLedgerTables (Proxy @LedgerState)))
---        (\_ _ -> pure (trivialLedgerTables (Proxy @LedgerState), Nothing))
---        (\_ -> pure (trivialLedgerTables (Proxy @LedgerState)))
---        (\_ _ -> undefined)
---        0 :: LedgerTablesHandle IO LedgerState B
+--        { close = pure ()
+--        , duplicateWithDiffs = \_ -> pure emptyHandle
+--        , duplicate = pure emptyHandle
+--        , read = \_ _ -> pure ()
+--        , readRange = \proj _ _ -> pure (proj ())
+--        , takeHandleSnapshot = \_ _ -> undefined
+--        , tablesSize = 0
+--        }
 -- :}
 --
 -- >>> [l0, l1, l2, l3, l4] = map (flip StateRef emptyHandle) s

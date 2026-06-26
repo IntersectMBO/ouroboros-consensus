@@ -96,6 +96,8 @@ tests =
           Mocked.MempoolAndModelParams
             { Mocked.immpInitialState =
                 ledgerState $ pInfoInitLedger pInfo
+            , Mocked.immpInitialValues =
+                pInfoInitLedgerTables pInfo
             , Mocked.immpLedgerConfig =
                 topLevelConfigLedger $ pInfoConfig pInfo
             }

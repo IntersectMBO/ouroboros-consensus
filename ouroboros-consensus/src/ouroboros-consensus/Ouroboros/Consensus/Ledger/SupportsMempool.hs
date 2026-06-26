@@ -57,7 +57,6 @@ import NoThunks.Class
 import Numeric.Natural
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
@@ -105,7 +104,7 @@ type data WhatToDoWithTxDiffs = Collect | Discard
 -- differences, we don't even have differences around that we might misuse.
 type family InputTxDiffs blk wtd where
   InputTxDiffs blk Discard = ()
-  InputTxDiffs blk Collect = LedgerTables blk DiffMK
+  InputTxDiffs blk Collect = Diff blk
 
 class
   ( UpdateLedger blk
@@ -128,17 +127,19 @@ class
   -- size. The mempool implementation will add any valid transaction as long as
   -- there is at least one byte free in the mempool.
   --
-  -- The resulting ledger state contains the diffs produced by applying this
-  -- transaction alone.
+  -- The result carries the @'Diff' blk@ produced by applying this transaction
+  -- alone.
   applyTx ::
     LedgerConfig blk ->
     WhetherToIntervene ->
     -- | Slot number of the block containing the tx
     SlotNo ->
     GenTx blk ->
-    -- | Contain only the values for the tx to apply
-    TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk DiffMK, Validated (GenTx blk))
+    -- | The values the tx consumes (read against the virtual tip and forwarded
+    -- through the diffs of the txs already in the mempool).
+    Values blk ->
+    TickedLedgerState blk EmptyMK ->
+    Except (ApplyTxErr blk) (TickedLedgerState blk EmptyMK, Diff blk, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -147,18 +148,19 @@ class
   -- expensive checks such as cryptographic hashes can be skipped, but other
   -- checks (such as checking for double spending) must still be done.
   --
-  -- The returned ledger state contains the resulting values too so that this
-  -- function can be used to reapply a list of transactions, providing as a
-  -- first state one that contains the values for all the transactions.
+  -- The result carries the @'Diff' blk@ the tx produces; to reapply a list of
+  -- transactions, forward the values through that diff before reapplying the
+  -- next one (see 'reapplyTxs').
   reapplyTx ::
     HasCallStack =>
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
     Validated (GenTx blk) ->
-    -- | Contains at least the values for the tx to reapply
-    TickedLedgerState blk ValuesMK ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk ValuesMK)
+    -- | At least the values the tx consumes.
+    Values blk ->
+    TickedLedgerState blk EmptyMK ->
+    Except (ApplyTxErr blk) (TickedLedgerState blk EmptyMK, Diff blk)
 
   -- | Apply a list of previously validated transactions to a new ledger state.
   --
@@ -175,30 +177,24 @@ class
   -- in the same order as they were given, as we will use those later on to
   -- filter a list of 'TxTicket's.
   reapplyTxs ::
+    forall wtd extra.
     LedgerConfig blk ->
     -- | Slot number of the block containing the tx
     SlotNo ->
     [(Validated (GenTx blk), InputTxDiffs blk wtd, extra)] ->
-    TickedLedgerState blk ValuesMK ->
+    -- | At least the values all the txs consume.
+    Values blk ->
+    TickedLedgerState blk EmptyMK ->
     ReapplyTxsResult extra blk wtd
-  reapplyTxs cfg slot txs st =
-    (\(err, val, st') -> ReapplyTxsResult err (reverse val) (forgetLedgerTables st')) $
-      foldReapplyTxs fst3 txs
+  reapplyTxs cfg slot txs vals0 st0 =
+    let (accE, accV, st', _vals) =
+          Foldable.foldl' step ([], [], st0, vals0) txs
+     in ReapplyTxsResult accE (reverse accV) st'
    where
-    fst3 (a, _, _) = a
-
-    foldReapplyTxs ::
-      (a -> Validated (GenTx blk)) ->
-      [a] ->
-      ([Invalidated blk], [a], TickedLedgerState blk ValuesMK)
-    foldReapplyTxs projectTx =
-      Foldable.foldl'
-        ( \(accE, accV, st') a ->
-            case runExcept (reapplyTx cfg slot (projectTx a) st') of
-              Left err -> (Invalidated (projectTx a) err : accE, accV, st')
-              Right st'' -> (accE, a : accV, st'')
-        )
-        ([], [], st)
+    step (accE, accV, st, vals) a@(vtx, _, _) =
+      case runExcept (reapplyTx cfg slot vtx vals st) of
+        Left err -> (Invalidated vtx err : accE, accV, st, vals)
+        Right (st', diff) -> (accE, a : accV, st', forward @blk [diff] vals)
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
@@ -207,39 +203,7 @@ class
   -- ledger state. This is implemented in the Ledger. An example of non-obvious
   -- needed keys in Cardano are those of reference scripts for computing the
   -- transaction size.
-  getTransactionKeySets :: GenTx blk -> LedgerTables blk KeysMK
-
-  -- Mempools live in a single slot so in the hard fork block case
-  -- it is cheaper to perform these operations on LedgerStates, saving
-  -- the time of projecting and injecting ledger tables.
-  --
-  -- The cost of this when adding transactions is very small compared
-  -- to eg the networking costs of mempool synchronization, but still
-  -- it is worthwile locking the mempool for as short as possible.
-  --
-  -- Eventually the Ledger will provide these diffs, so we might even
-  -- be able to remove this optimization altogether.
-
-  -- | Prepend diffs on ledger states
-  --
-  -- Intended to be non-default in the HardFork instance for optimizing
-  -- performance.
-  prependMempoolDiffs ::
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk DiffMK
-  prependMempoolDiffs = prependDiffs
-
-  -- | Apply diffs on ledger states
-  --
-  -- Intended to be non-default in the HardFork instance for optimizing
-  -- performance.
-  applyMempoolDiffs ::
-    LedgerTables blk ValuesMK ->
-    LedgerTables blk KeysMK ->
-    TickedLedgerState blk DiffMK ->
-    TickedLedgerState blk ValuesMK
-  applyMempoolDiffs = applyDiffForKeysOnTables
+  getTransactionKeySets :: GenTx blk -> Keys blk
 
   -- | The ledger rules' error type for the mempool's current era might allow
   -- the mempool to reject a tx for its own reasons.
@@ -248,13 +212,13 @@ class
   -- node-to-client mini protocol sends when a tx is rejected.
   mkMempoolApplyTxError ::
     -- | for the HFC
-    TickedLedgerState blk mk ->
+    TickedLedgerState blk EmptyMK ->
     Text ->
     Maybe (ApplyTxErr blk)
 
 -- | Value of 'mkMempoolApplyTxError' when the block type can never
 -- construct the ledger error
-nothingMkMempoolApplyTxError :: TickedLedgerState blk mk -> Text -> Maybe (ApplyTxErr blk)
+nothingMkMempoolApplyTxError :: TickedLedgerState blk EmptyMK -> Text -> Maybe (ApplyTxErr blk)
 nothingMkMempoolApplyTxError _ _ = Nothing
 
 data ReapplyTxsResult extra blk wtd
@@ -423,8 +387,6 @@ class
   txMeasurePhase1 ::
     -- | used at least by HFC's composition logic
     LedgerConfig blk ->
-    -- | This state needs values as a transaction measure might depend on
-    -- those. For example in Cardano they look at the reference scripts.
     TickedLedgerState blk EmptyMK ->
     GenTx blk ->
     Except (ApplyTxErr blk) (TxMeasurePhase1 blk)
@@ -432,9 +394,11 @@ class
   txMeasurePhase2 ::
     -- | used at least by HFC's composition logic
     LedgerConfig blk ->
-    -- | This state needs values as a transaction measure might depend on
-    -- those. For example in Cardano they look at the reference scripts.
-    TickedLedgerState blk ValuesMK ->
+    -- | A transaction measure might depend on the values the tx consumes (for
+    -- example in Cardano they look at the reference scripts), so the values are
+    -- passed explicitly rather than resolved against an empty UTxO.
+    Values blk ->
+    TickedLedgerState blk EmptyMK ->
     GenTx blk ->
     Except (ApplyTxErr blk) (TxMeasurePhase2 blk)
 
@@ -442,7 +406,7 @@ class
   blockCapacityTxMeasure ::
     -- | at least for symmetry with 'txMeasure'
     LedgerConfig blk ->
-    TickedLedgerState blk mk ->
+    TickedLedgerState blk EmptyMK ->
     TxMeasure blk
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@

@@ -21,6 +21,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , Forker'
   , ForkerKey (..)
   , GetForkerError (..)
+  , EraRangeReader (..)
+  , EraRangeReaderProvider (..)
+  , RangeReadTables
   , RangeQuery (..)
   , RangeQueryPrevious (..)
   , Statistics (..)
@@ -95,23 +98,16 @@ data Forker m l blk = Forker
   -- and not by the LedgerDB.
   , -- Queries
 
-    forkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
-  -- ^ Read ledger tables from disk.
-  , forkerRangeReadTables ::
-      !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
-  -- ^ Range-read ledger tables from disk.
+    forkerReadTables :: !(Keys blk -> m (Values blk))
+  -- ^ Read ledger tables from disk (point reads).
   --
-  -- This range read will return as many values as the 'QueryBatchSize' that was
-  -- passed when opening the LedgerDB.
-  --
-  -- The second component of the returned tuple is the maximal key found by the
-  -- forker. This is only necessary because some backends have a different
-  -- sorting for the keys than the order defined in Haskell.
-  --
-  -- The last key retrieved is part of the map too. It is intended to be fed
-  -- back into the next iteration of the range read. If the function returns
-  -- Nothing, it means the read returned no results, or in other words, we
-  -- reached the end of the ledger tables.
+  -- Note: range reads ('QFTraverseTables' queries) are deliberately /not/ a
+  -- 'Forker' operation. They are a query-only, era-level concern (the on-disk
+  -- paging cursor is a single era's @TxIn@ and the 'HardForkBlock' has no
+  -- era-stable @TxIn@), so they live on the storage backend's
+  -- 'Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq.LedgerTablesHandle' and
+  -- are surfaced to the LSQ server via a dedicated accessor. See
+  -- 'EraRangeReader' and 'withEraRangeReader'.
   , forkerGetLedgerState :: !(STM m (l blk EmptyMK))
   -- ^ Get the full ledger state without tables.
   --
@@ -123,9 +119,9 @@ data Forker m l blk = Forker
   -- Returns 'Nothing' if the implementation is backed by @lsm-tree@.
   , -- Updates
 
-    forkerPush :: !(l blk DiffMK -> m ())
-  -- ^ Advance the fork handle by pushing a new ledger state to the tip of the
-  -- current fork.
+    forkerPush :: !(l blk EmptyMK -> Diff blk -> m ())
+  -- ^ Advance the fork handle by pushing a new ledger state (and the diff it
+  -- produced) to the tip of the current fork.
   , forkerCommit :: !(STM m (m ()))
   -- ^ Commit the fork, which was constructed using 'forkerPush', as the
   -- current version of the LedgerDB.
@@ -156,6 +152,66 @@ data RangeQueryPrevious l = NoPreviousQuery | PreviousQueryWasFinal | PreviousQu
 data RangeQuery l = RangeQuery
   { rqPrev :: !(RangeQueryPrevious l)
   , rqCount :: !Int
+  }
+
+-- | A paged range-reader over a /single era's/ on-disk tables, for
+-- @QFTraverseTables@ queries.
+--
+-- It is parameterised by a single era's @blk@, so @'TxIn' blk@, @'Values' blk@
+-- and 'rangeReadValues' are all available and the 'HardForkBlock' never appears.
+-- Each page returns /only/ the values: the caller recomputes the next cursor as
+-- the maximum key of the returned 'Values' and stops once a page comes back
+-- empty.
+newtype EraRangeReader m blk = EraRangeReader
+  { eraRangeReadTables ::
+      RangeQueryPrevious blk -> m (Values blk)
+  }
+
+-- | The type of a backend's current-era range read, used by the storage
+-- backend's @LedgerTablesHandle@ and surfaced to the LSQ server.
+--
+-- The caller supplies the projection from the backend's stored values (the
+-- hard-fork @NS@ for the 'HardForkBlock', or @id@ for a single-era block) to the
+-- current era @x@, plus the previous page's cursor and a batch size. It gets back
+-- one page of era-@x@ values.
+--
+--   * The InMemory backend applies the projection to its in-RAM values and pages
+--     purely with 'rangeReadValues'; no disk read.
+--   * A cursor backend (LSM) ignores the projection and pages its on-disk table
+--     directly via @x@'s @TxIn@\/@TxOut@ byte codecs, never materialising the
+--     whole table.
+--
+-- The serialisation constraints (@MemPack ('TxIn' x)@, @MemPack ('TxOut' x)@) are
+-- carried so the cursor backend can (de)serialise on-disk entries; they hold at
+-- a single era. The InMemory backend ignores them. The @TxOut@ encoding is
+-- forwards-deserialisable (bytes written at an earlier era decode under a later
+-- era's unpacker), so the on-disk format carries no era index and plain
+-- 'MemPack' suffices.
+type RangeReadTables m blk =
+  forall x.
+  SingleEraBlockSupportsUTxOHD x =>
+  (Values blk -> Values x) ->
+  RangeQueryPrevious x ->
+  Int ->
+  m (Values x)
+
+-- | A closure that, given the projection onto the current era @x@, yields the
+-- 'EraRangeReader' for that era.
+--
+-- It is built once per acquired read-only forker (see 'withEraRangeReader' /
+-- 'Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq.mkEraRangeReaderProvider')
+-- and is valid only for as long as that forker is open, as it captures the same
+-- tables handle.
+--
+-- It is a newtype rather than a bare @forall@ synonym so that it can be threaded
+-- through tuples\/'Either'\/record fields without requiring impredicative
+-- polymorphism: the rank-2 quantification stays under the constructor.
+newtype EraRangeReaderProvider m blk = EraRangeReaderProvider
+  { getEraRangeReader ::
+      forall x.
+      SingleEraBlockSupportsUTxOHD x =>
+      (Values blk -> Values x) ->
+      EraRangeReader m x
   }
 
 -- | This type captures the size of the ledger tables at a particular point in
@@ -207,7 +263,6 @@ ledgerStateReadOnlyForker frk =
   ReadOnlyForker
     { roforkerClose = roforkerClose
     , roforkerReadTables = roforkerReadTables
-    , roforkerRangeReadTables = roforkerRangeReadTables
     , roforkerGetLedgerState = ledgerState <$> roforkerGetLedgerState
     , roforkerReadStatistics = roforkerReadStatistics
     }
@@ -215,7 +270,6 @@ ledgerStateReadOnlyForker frk =
   ReadOnlyForker
     { roforkerClose
     , roforkerReadTables
-    , roforkerRangeReadTables
     , roforkerGetLedgerState
     , roforkerReadStatistics
     } = frk
@@ -238,11 +292,8 @@ type ReadOnlyForker :: (Type -> Type) -> StateKind -> Type -> Type
 data ReadOnlyForker m l blk = ReadOnlyForker
   { roforkerClose :: !(m ())
   -- ^ See 'forkerClose'
-  , roforkerReadTables :: !(LedgerTables blk KeysMK -> m (LedgerTables blk ValuesMK))
+  , roforkerReadTables :: !(Keys blk -> m (Values blk))
   -- ^ See 'forkerReadTables'
-  , roforkerRangeReadTables ::
-      !(RangeQueryPrevious blk -> m (LedgerTables blk ValuesMK, Maybe (TxIn blk)))
-  -- ^ See 'forkerRangeReadTables'.
   , roforkerGetLedgerState :: !(STM m (l blk EmptyMK))
   -- ^ See 'forkerGetLedgerState'
   , roforkerReadStatistics :: !(m Statistics)
@@ -263,7 +314,6 @@ readOnlyForker forker =
   ReadOnlyForker
     { roforkerClose = forkerClose forker
     , roforkerReadTables = forkerReadTables forker
-    , roforkerRangeReadTables = forkerRangeReadTables forker
     , roforkerGetLedgerState = forkerGetLedgerState forker
     , roforkerReadStatistics = forkerReadStatistics forker
     }
@@ -429,16 +479,16 @@ applyBlock ::
   Ap m l blk ->
   Forker m l blk ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) (l blk DiffMK))
+  m (Either (AnnLedgerError l blk) (l blk EmptyMK, Diff blk))
 applyBlock evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b ->
-    withValues b (return . Right . tickThenReapply evs cfg b)
+    withValues b (\vs l -> return $ Right $ tickThenReapply evs cfg b vs l)
   ApplyVal b ->
     withValues
       b
-      ( \v ->
-          case runExcept $ tickThenApply evs cfg b v of
-            Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b) lerr))
+      ( \vs l ->
+          case runExcept $ tickThenApply evs cfg b vs l of
+            Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip l) (blockRealPoint b) lerr))
             Right st -> pure (Right st)
       )
   ReapplyRef r -> do
@@ -450,16 +500,17 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
  where
   withValues ::
     blk ->
-    (l blk ValuesMK -> m (Either (AnnLedgerError l blk) (l blk DiffMK))) ->
-    m (Either (AnnLedgerError l blk) (l blk DiffMK))
+    (Values blk -> l blk EmptyMK -> m (Either (AnnLedgerError l blk) (l blk EmptyMK, Diff blk))) ->
+    m (Either (AnnLedgerError l blk) (l blk EmptyMK, Diff blk))
   withValues blk f = do
     l <- atomically $ forkerGetLedgerState fo
-    vs <- withLedgerTables l <$> forkerReadTables fo (getBlockKeySets blk)
-    f vs
+    vs <- forkerReadTables fo (blockKeys blk)
+    f vs l
 
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker.
 applyThenPush ::
+  forall l blk m.
   (ApplyBlock l blk, MonadSTM m) =>
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
@@ -471,7 +522,7 @@ applyThenPush evs cfg ap fo doResolve = do
   eLerr <- applyBlock evs cfg ap fo doResolve
   case eLerr of
     Left err -> pure (Left err)
-    Right st -> Right <$> forkerPush fo st
+    Right (newSt, diff) -> Right <$> forkerPush fo newSt diff
 
 -- | Apply and push a sequence of blocks (oldest first).
 applyThenPushMany ::

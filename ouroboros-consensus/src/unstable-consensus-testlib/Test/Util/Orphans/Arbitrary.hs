@@ -379,26 +379,26 @@ instance
   shrink = hctraverse' (Proxy @(Arbitrary `Compose` f)) shrink
 
 instance
-  (IsNonEmpty xs, SListI xs, All (Arbitrary `Compose` Flip LedgerState mk) xs) =>
-  Arbitrary (LedgerState (HardForkBlock xs) mk)
+  (IsNonEmpty xs, SListI xs, All (Arbitrary `Compose` LedgerState) xs) =>
+  Arbitrary (LedgerState (HardForkBlock xs))
   where
   arbitrary = case (dictKPast, dictCurrentLedgerState) of
     (Dict, Dict) -> inj <$> arbitrary
    where
     inj ::
-      Telescope (K Past) (Current (Flip LedgerState mk)) xs ->
-      LedgerState (HardForkBlock xs) mk
+      Telescope (K Past) (Current LedgerState) xs ->
+      LedgerState (HardForkBlock xs)
     inj = coerce
 
     dictKPast :: Dict (All (Arbitrary `Compose` (K Past))) xs
     dictKPast = all_NP $ hpure Dict
 
     dictCurrentLedgerState ::
-      Dict (All (Arbitrary `Compose` (Current (Flip LedgerState mk)))) xs
+      Dict (All (Arbitrary `Compose` (Current LedgerState))) xs
     dictCurrentLedgerState =
       mapAll
-        @(Arbitrary `Compose` Flip LedgerState mk)
-        @(Arbitrary `Compose` Current (Flip LedgerState mk))
+        @(Arbitrary `Compose` LedgerState)
+        @(Arbitrary `Compose` Current LedgerState)
         (\Dict -> Dict)
         Dict
 

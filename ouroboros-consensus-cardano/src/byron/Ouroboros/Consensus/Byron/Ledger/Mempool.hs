@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -82,7 +83,6 @@ import Ouroboros.Consensus.Byron.Ledger.Serialisation
   )
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
 
@@ -123,20 +123,21 @@ instance LedgerSupportsMempool ByronBlock where
    where
     tx' = toMempoolPayload tx
 
-  applyTx cfg _wti slot tx st =
-    (\st' -> (st', ValidatedByronTx tx))
+  applyTx cfg _wti slot tx _values st =
+    (\st' -> (st', (), ValidatedByronTx tx))
       <$> applyByronGenTx validationMode cfg slot tx st
    where
     validationMode = CC.ValidationMode CC.BlockValidation Utxo.TxValidation
 
-  reapplyTx cfg slot vtx st =
-    applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st
+  reapplyTx cfg slot vtx _values st =
+    (,())
+      <$> applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 
   txForgetValidated = forgetValidatedByronTx
 
-  getTransactionKeySets _ = emptyLedgerTables
+  getTransactionKeySets _ = ()
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 
@@ -187,7 +188,7 @@ instance TxLimits ByronBlock where
         Utxo.UTxOValidationTxValidationError $
           Utxo.TxValidationTxTooLarge txszNat maxTxSize
 
-  txMeasurePhase2 _ _ _ = pure TrivialTxMeasurePhase2
+  txMeasurePhase2 _ _ _ _ = pure TrivialTxMeasurePhase2
 
 data instance TxId (GenTx ByronBlock)
   = ByronTxId !Utxo.TxId

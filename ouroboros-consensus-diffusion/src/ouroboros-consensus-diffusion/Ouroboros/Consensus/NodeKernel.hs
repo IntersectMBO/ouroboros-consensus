@@ -67,7 +67,6 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -666,9 +665,10 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           -- At this point we have established that we are indeed slot leader
           trace blockForging $ TraceNodeIsLeader currentSlot
 
-          -- Tick the ledger state for the 'SlotNo' we're producing a block for
-          let tickedLedgerState :: Ticked LedgerState blk DiffMK
-              tickedLedgerState =
+          -- Tick the ledger state for the 'SlotNo' we're producing a block for.
+          -- Ticking also yields the tick diff, which the mempool snapshot
+          -- below needs to forward the read values to the ticked state.
+          let (tickedLedgerState, tickDiff) =
                 applyChainTick
                   OmitLedgerEvents
                   (configLedger cfg)
@@ -695,6 +695,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                 mempool
                 currentSlot
                 tickedLedgerState
+                tickDiff
                 (roforkerReadTables forker)
 
           let (txs, txssz) =
@@ -714,7 +715,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             , txssz
             , proof
             , snapshotMempoolSize mempoolSnapshot
-            , forgetLedgerTables tickedLedgerState
+            , tickedLedgerState
             , ledgerTipPoint (ledgerState unticked)
             )
 

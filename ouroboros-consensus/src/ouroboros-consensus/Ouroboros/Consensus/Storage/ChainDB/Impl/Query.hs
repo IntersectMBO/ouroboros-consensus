@@ -59,7 +59,7 @@ import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
-import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Peras.Weight
@@ -307,16 +307,31 @@ allocInRegistryReadOnlyForkerAtPoint ::
   ChainDbEnv m blk ->
   Target (Point blk) ->
   ResourceRegistry m ->
-  m (Either LedgerDB.GetForkerError (ResourceKey m, LedgerDB.ReadOnlyForker' m blk))
+  m
+    ( Either
+        LedgerDB.GetForkerError
+        (ResourceKey m, LedgerDB.ReadOnlyForker' m blk, LedgerDB.EraRangeReaderProvider m blk)
+    )
 allocInRegistryReadOnlyForkerAtPoint cdb tgt rr = do
   (rk, forker) <-
     allocate
       rr
-      (\_ -> openReadOnlyForkerAtPoint cdb tgt)
-      (either (const $ pure ()) LedgerDB.roforkerClose)
+      (\_ -> openReadOnlyForkerWithRangeAtPoint cdb tgt)
+      (either (const $ pure ()) (LedgerDB.roforkerClose . fst))
   case forker of
     Left err -> void (release rk) >> pure (Left err)
-    Right v -> pure (Right (rk, v))
+    Right (frk, prov) -> pure (Right (rk, frk, prov))
+
+openReadOnlyForkerWithRangeAtPoint ::
+  ChainDbEnv m blk ->
+  Target (Point blk) ->
+  m
+    ( Either
+        LedgerDB.GetForkerError
+        (LedgerDB.ReadOnlyForker' m blk, LedgerDB.EraRangeReaderProvider m blk)
+    )
+openReadOnlyForkerWithRangeAtPoint CDB{..} =
+  LedgerDB.getReadOnlyForkerWithRangeAtPoint cdbLedgerDB
 
 openReadOnlyForkerAtPoint ::
   IOLike m =>
