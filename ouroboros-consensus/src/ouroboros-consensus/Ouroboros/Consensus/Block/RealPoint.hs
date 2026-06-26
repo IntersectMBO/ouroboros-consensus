@@ -1,3 +1,5 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -22,12 +24,24 @@ module Ouroboros.Consensus.Block.RealPoint
   , realPointSlot
   , realPointToPoint
   , withOriginRealPointToPoint
+
+    -- * Bytes32RealPoint
+  , Bytes32RealPoint
+  , bytes32RealPointHash
+  , bytes32RealPointSlot
+  , decodeBytes32RealPoint
+  , encodeBytes32RealPoint
+  , fromBytes32RealPoint
+  , toBytes32RealPoint
   ) where
 
 import Cardano.Binary (enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise (decode, encode)
+import Control.Exception (assert)
+import Data.ByteString.Short (ShortByteString)
+import qualified Data.ByteString.Short as ByteString
 import Data.Coerce
 import Data.Proxy
 import Data.Typeable (Typeable, typeRep)
@@ -120,3 +134,54 @@ castRealPoint ::
   RealPoint blk ->
   RealPoint blk'
 castRealPoint (RealPoint s h) = RealPoint s (coerce h)
+
+{-------------------------------------------------------------------------------
+  Bytes32RealPoint
+-------------------------------------------------------------------------------}
+
+-- | A 'RealPoint' where the hash is always 32 bytes.
+--
+-- The length of the hash is enforced during decoding.
+data Bytes32RealPoint = Bytes32RealPoint !SlotNo !ShortByteString
+  deriving (Show, Eq, Generic, NoThunks)
+
+bytes32RealPointSlot :: Bytes32RealPoint -> SlotNo
+bytes32RealPointSlot (Bytes32RealPoint s _) = s
+
+bytes32RealPointHash :: Bytes32RealPoint -> ShortByteString
+bytes32RealPointHash (Bytes32RealPoint _ h) = h
+
+encodeBytes32RealPoint :: Bytes32RealPoint -> Encoding
+encodeBytes32RealPoint (Bytes32RealPoint s h) =
+  mconcat
+    [ encodeListLen 2
+    , encode s
+    , encode h
+    ]
+
+decodeBytes32RealPoint :: forall s. Decoder s Bytes32RealPoint
+decodeBytes32RealPoint = do
+  enforceSize "Bytes32RealPoint" 2
+  s <- decode
+  h <- decode
+  case ByteString.length h of
+    32 -> pure (Bytes32RealPoint s h)
+    len -> fail $ "decodeBytes32RealPoint: expected 32 bytes, got " <> show len
+
+fromBytes32RealPoint ::
+  forall blk.
+  ConvertRawHash blk =>
+  Bytes32RealPoint ->
+  RealPoint blk
+fromBytes32RealPoint (Bytes32RealPoint s h) =
+  RealPoint s (fromShortRawHash (Proxy @blk) h)
+
+toBytes32RealPoint ::
+  forall blk.
+  ConvertRawHash blk =>
+  RealPoint blk ->
+  Bytes32RealPoint
+toBytes32RealPoint (RealPoint s h) =
+  assert (hashSize (Proxy @blk) == 32) $
+    assert (ByteString.length (toShortRawHash (Proxy @blk) h) == 32) $
+      Bytes32RealPoint s (toShortRawHash (Proxy @blk) h)
