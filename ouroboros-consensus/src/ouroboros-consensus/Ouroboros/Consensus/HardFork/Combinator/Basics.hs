@@ -39,6 +39,13 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
   , completeLedgerConfig''
   , distribLedgerConfig
   , distribTopLevelConfig
+  , projectHFCPerasContext
+  , injectHFCPerasEpochContext
+  , projectHFCBoundedPerasEpochContext
+  , injectHFCBoundedPerasEpochContext
+  , EitherF (..)
+  , mkEitherF
+  , hcollect
 
     -- ** Convenience re-exports
   , EpochInfo
@@ -126,12 +133,10 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsPeras
   ( ALedgerStateSupportsPeras (..)
   )
-import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
+import Ouroboros.Consensus.Peras.Context (BoundedPerasEpochContext (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (ShowProxy)
-import Type.Reflection (someTypeRep)
-import Unsafe.Coerce (unsafeCoerce)
 
 {-------------------------------------------------------------------------------
   Serialisation of n-ary sums ('NS')
@@ -513,6 +518,47 @@ projectHFCPerasContext PerasEpochContext{pecCommittee, pecParams} =
     . getOneEraPerasVotingCommittee
     $ pecCommittee
 
+injectHFCPerasEpochContext ::
+  CanHardFork xs =>
+  NS PerasEpochContext xs ->
+  PerasEpochContext (HardForkBlock xs)
+injectHFCPerasEpochContext nsContext =
+  PerasEpochContext
+    { pecCommittee = OneEraPerasVotingCommittee $ hmap (WrapPerasVotingCommittee . pecCommittee) nsContext
+    , pecParams = hcollapse $ hmap (K . retagPerasParams . pecParams) nsContext
+    }
+
+projectHFCBoundedPerasEpochContext ::
+  All Top xs =>
+  BoundedPerasEpochContext (HardForkBlock xs) ->
+  NS BoundedPerasEpochContext xs
+projectHFCBoundedPerasEpochContext BoundedPerasEpochContext{startPerasRoundNo, endPerasRoundNo, epochContext} =
+  hmap
+    ( \(WrapPerasVotingCommittee committee) ->
+        BoundedPerasEpochContext
+          { startPerasRoundNo = startPerasRoundNo
+          , endPerasRoundNo = endPerasRoundNo
+          , epochContext =
+              PerasEpochContext
+                { pecCommittee = committee
+                , pecParams = retagPerasParams $ pecParams epochContext
+                }
+          }
+    )
+    . getOneEraPerasVotingCommittee
+    $ pecCommittee epochContext
+
+injectHFCBoundedPerasEpochContext ::
+  CanHardFork xs =>
+  NS BoundedPerasEpochContext xs ->
+  BoundedPerasEpochContext (HardForkBlock xs)
+injectHFCBoundedPerasEpochContext nsBoundedContext =
+  BoundedPerasEpochContext
+    { startPerasRoundNo = hcollapse $ hcmap proxySingle (K . startPerasRoundNo) nsBoundedContext
+    , endPerasRoundNo = hcollapse $ hcmap proxySingle (K . endPerasRoundNo) nsBoundedContext
+    , epochContext = injectHFCPerasEpochContext $ hmap epochContext nsBoundedContext
+    }
+
 type instance ElectionId (OneEraPerasCrypto xs) = PerasRoundNo
 type instance BoostedBlock (OneEraPerasVote xs) = Point (HardForkBlock xs)
 type instance BoostedBlock (OneEraPerasCert xs) = Point (HardForkBlock xs)
@@ -677,6 +723,7 @@ deriving via
   instance
     CanHardFork xs =>
     NoThunks (VotingCommittee (OneEraPerasCrypto xs) (OneEraPerasVotingCommitteeScheme xs))
+
 -- | Hand-written rather than @deriving via SerialiseNS@: that derivation needs
 -- @All (Compose Serialise WrapPerasVotingCommittee) xs@, which GHC cannot solve
 -- from the @CanHardFork xs@ (i.e. @All SingleEraBlock xs@) context for an abstract
@@ -1309,7 +1356,7 @@ instance
             )
           $ nsContextCert
 
-  getPerasCertInBlock = undefined
+  getPerasCertInBlock = undefined -- [TODO IMPLEMENT]
 
   -- hcollapse
   --   . hcmap
@@ -1318,24 +1365,9 @@ instance
   --   . getOneEraBlock
   --   . getHardForkBlock
 
-  readPerasPrivateKeyFromEnv _proxy = undefined
+  readPerasPrivateKeyFromEnv _proxy = undefined -- [TODO IMPLEMENT]
 
   blockDoesReallySupportsPeras _proxy = True
-
--- [TODO PERAS CERTS IN BLOCKS] this is a nasty hack
-unsafeCastPerasCertV1 ::
-  forall x xs.
-  ( Typeable xs
-  , Typeable (PerasCert x)
-  ) =>
-  PerasCert x ->
-  Maybe (V1.PerasCert (HardForkBlock xs))
-unsafeCastPerasCertV1 cert = do
-  let xCertRep = someTypeRep (Proxy @(PerasCert x))
-  let xsCertRep = someTypeRep (Proxy @(V1.PerasCert (HardForkBlock xs)))
-  if typeRepTyCon xCertRep == typeRepTyCon xsCertRep
-    then Just (unsafeCoerce cert)
-    else Nothing
 
 {-------------------------------------------------------------------------------
   ConvertRawHash

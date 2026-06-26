@@ -74,6 +74,7 @@ import qualified Data.ByteString.Short as Short
 import Data.Coerce
 import Data.Functor ((<&>))
 import Data.Kind (Type)
+import Data.SOP.Constraint (All, Top)
 import Data.Typeable
 import GHC.Generics (Generic)
 import GHC.Stack
@@ -1222,6 +1223,7 @@ instance
   , StandardHash m
   , Typeable m
   , Typeable a
+  , All Top (HardForkIndices (DualBlock m a))
   , AChainDepStateSupportsPeras (ChainDepState (BlockProtocol m))
   , AChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol m)))
   ) =>

@@ -190,6 +190,14 @@ deriving newtype instance
   SerialiseNodeToNode blk (GenTxId blk) =>
   SerialiseNodeToNode blk (WrapGenTxId blk)
 
+deriving newtype instance
+  SerialiseNodeToNode blk (PerasVote blk) =>
+  SerialiseNodeToNode blk (WrapPerasVote blk)
+
+deriving newtype instance
+  SerialiseNodeToNode blk (PerasCert blk) =>
+  SerialiseNodeToNode blk (WrapPerasCert blk)
+
 instance ConvertRawHash blk => SerialiseNodeToNode blk (Point blk) where
   encodeNodeToNode _ccfg _version = encodePoint $ encodeRawHash (Proxy @blk)
   decodeNodeToNode _ccfg _version = decodePoint $ decodeRawHash (Proxy @blk)

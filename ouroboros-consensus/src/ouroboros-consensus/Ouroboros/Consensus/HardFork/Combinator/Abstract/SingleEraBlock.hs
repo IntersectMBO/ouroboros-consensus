@@ -47,7 +47,11 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
-import Ouroboros.Consensus.Peras.Context (StateSupportsPerasEpochContext)
+import Ouroboros.Consensus.Peras.Context
+  ( MaybeEraIndexedEpochToPerasRoundInfo
+  , StateSupportsPerasEpochContext
+  )
+import Ouroboros.Consensus.Peras.Time (EpochToPerasRoundInfo)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Ticked
@@ -75,6 +79,7 @@ class
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsPeras blk
   , StateSupportsPerasEpochContext blk
+  , MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo
   , BlockSupportsMetrics blk
   , SerialiseNodeToClient blk (PartialLedgerConfig blk)
   , -- LedgerTables

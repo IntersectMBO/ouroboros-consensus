@@ -50,6 +50,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger
 import Control.Monad (guard)
 import Control.Monad.Except (throwError, withExcept)
 import qualified Control.State.Transition.Extended as STS
+import Data.Bifunctor (bimap)
 import Data.Functor ((<&>))
 import Data.Functor.Product
 import Data.Kind (Type)
@@ -104,7 +105,12 @@ import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext (..)
   , V1PerasEpochContextResolver
   )
-import qualified Ouroboros.Consensus.Peras.State.V1 as V1
+import Ouroboros.Consensus.Peras.Time
+  ( EpochToPerasRoundInfo
+  , EraIndexed
+  , eraIndexedToNS
+  , forgetEraIndex
+  )
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack)
@@ -357,9 +363,32 @@ instance
   where
   type PerasEpochContextResolver (HardForkBlock xs) = V1PerasEpochContextResolver (HardForkBlock xs)
 
-  mkPerasVotingCommitteeInput = error "will never be called"
+  type
+    MaybeEraIndexedEpochToPerasRoundInfo (HardForkBlock xs) =
+      EraIndexed (HardForkBlock xs) EpochToPerasRoundInfo
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = id
 
-  mkBoundedPerasEpochContext epochToPerasRoundInfo ledgerState headerState = undefined -- [TODO STOPPED THERE] here do the dispatch
+  mkPerasVotingCommitteeInput = error "mkPerasVotingCommitteeInput: cannot be implemented, but will never be called"
+
+  mkBoundedPerasEpochContext epochToPerasRoundInfo ledgerState headerState =
+    bimap
+      (HardForkPerasErrorOneEraPerasError . OneEraPerasError)
+      injectHFCBoundedPerasEpochContext
+      ( hcollect
+          . hcmap
+            proxySingle
+            ( \_ ->
+                mkEitherF
+                  WrapPerasError
+                  id
+                  $ mkBoundedPerasEpochContext
+                    (fromMaybeEraIndexedEpochToPerasRoundInfo (Proxy @(HardForkBlock xs)) epochToPerasRoundInfo)
+                    ledgerState
+                    headerState
+            )
+          $ eraIndexedToNS epochToPerasRoundInfo
+      )
 
 {-------------------------------------------------------------------------------
   HeaderValidation
