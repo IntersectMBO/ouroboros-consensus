@@ -145,7 +145,7 @@ instance StateModel Model where
             (AddPerasVoteResult TestBlock)
         )
     GetVoteIds ::
-      Action Model (Set (PerasVoteId TestBlock))
+      Action Model (Set PerasVoteId)
     GetVotesAfter ::
       PerasVoteTicketNo ->
       Action

@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
@@ -66,6 +67,7 @@ import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
 
 -- | BLS-based crypto scheme used in Peras voting committees
 data PerasBLSCrypto
+  deriving (Show, Eq, Generic, NoThunks)
 
 type instance ElectionId PerasBLSCrypto = PerasRoundNo
 type instance VoteCandidate PerasBLSCrypto = PerasBoostedBlock

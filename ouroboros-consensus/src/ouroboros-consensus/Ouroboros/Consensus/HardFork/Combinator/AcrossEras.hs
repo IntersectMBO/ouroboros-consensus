@@ -86,6 +86,7 @@ import qualified Data.SOP.Match as Match
 import Data.SOP.OptNP (NonEmptyOptNP)
 import Data.SOP.Strict
 import Data.Text (Text)
+import Data.Typeable (Typeable)
 import Data.Void
 import GHC.Generics (Generic)
 import GHC.Stack
@@ -100,7 +101,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Peras.Types (PerasConversionError)
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util (allEqual)
+import Ouroboros.Consensus.Util (ShowProxy, allEqual)
 import Ouroboros.Consensus.Util.Assert
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 
@@ -213,6 +214,9 @@ deriving instance NoThunks (OneEraPerasError xs) => NoThunks (HardForkPerasError
 
 instance CanHardFork xs => Exception (OneEraPerasError xs)
 instance CanHardFork xs => Exception (HardForkPerasError xs)
+
+instance Typeable xs => ShowProxy (OneEraPerasVote xs)
+instance Typeable xs => ShowProxy (OneEraPerasCert xs)
 
 {-------------------------------------------------------------------------------
   Hash

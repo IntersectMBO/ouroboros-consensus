@@ -103,6 +103,7 @@ import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext
   , forgePerasVoteIfEligibleInContext
   )
+import Ouroboros.Consensus.Peras.Time (forgetEraIndex)
 import qualified Ouroboros.Consensus.Peras.Time as Time
 import Ouroboros.Consensus.Peras.Voting.Rules
   ( PerasVotingRulesDecision (..)
@@ -504,7 +505,7 @@ perasVoteForgingController systemTime IS{chainDB, tracers} slotNo = do
     -- the previous one, or precompute every voting slot at epoch boundaries.
     let (Time.TimeResolutionContextHandle getContext) = ChainDB.getTimeResolutionContextHandle chainDB
     context <- dyel $ getContext
-    roundInfo <- case Time.resolveSlotToPerasRoundInfo context slotNo of
+    roundInfo <- case forgetEraIndex <$> Time.resolveSlotToPerasRoundInfo context slotNo of
       -- We don't know whether Peras is enabled at this point.
       -- Silently absorb the error and abort if it isn't.
       Left Time.TimeResolutionPerasNotEnabled -> hoistMaybe Nothing
@@ -846,7 +847,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
       let certInclusionViewHandle = ChainDB.getPerasCertInclusionViewHandle chainDB
 
       context <- getTimeResolutionContext
-      case Time.resolveSlotToPerasRoundInfo context currentSlot of
+      case forgetEraIndex <$> Time.resolveSlotToPerasRoundInfo context currentSlot of
         -- We don't know whether Peras is enabled at this point.
         -- Silently absorb the error and abort if it isn't.
         Left Time.TimeResolutionPerasNotEnabled -> pure Nothing

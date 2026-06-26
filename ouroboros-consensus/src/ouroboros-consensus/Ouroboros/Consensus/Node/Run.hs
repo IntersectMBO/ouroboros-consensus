@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- | Infrastructure required to run a node
 --
@@ -122,6 +123,8 @@ class
   , ShowProxy (Header blk)
   , ShowProxy (BlockQuery blk)
   , ShowProxy (TxId (GenTx blk))
+  , ShowProxy (PerasVote blk)
+  , ShowProxy (PerasCert blk)
   , (forall fp. ShowQuery (BlockQuery blk fp))
   , CanUpgradeLedgerTables LedgerState blk
   ) =>
