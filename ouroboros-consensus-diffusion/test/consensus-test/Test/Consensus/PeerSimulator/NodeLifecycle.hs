@@ -24,13 +24,13 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
+import Ouroboros.Consensus.Ledger.Basics (BlockSupportsUTxOHD (Values))
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.Inspect (InspectLedger)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
-import Ouroboros.Consensus.Ledger.Basics (BlockSupportsUTxOHD (Values))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandleCollection (..)
   )
@@ -177,7 +177,16 @@ mkChainDb resources = do
   void $ forkLinkedThread lrRegistry "AddBlockRunner" (void intAddBlockRunner)
   pure (chainDB, intCopyToImmutableDB)
  where
-  LiveResources{lrRegistry, lrTracer, lrConfig, lrCdb, lrLoEVar, lrChunkInfo, lrInitLedger, lrInitLedgerTables} = resources
+  LiveResources
+    { lrRegistry
+    , lrTracer
+    , lrConfig
+    , lrCdb
+    , lrLoEVar
+    , lrChunkInfo
+    , lrInitLedger
+    , lrInitLedgerTables
+    } = resources
 
 -- | Allocate all the resources that depend on the results of previous live
 -- intervals, the ChainDB and its persisted state.

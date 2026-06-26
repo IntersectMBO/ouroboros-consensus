@@ -610,26 +610,26 @@ instance ApplyBlock LedgerState TestBlock where
     | otherwise =
         return $
           pureLedgerResult $
-            (,())  $
-            TestLedger
-              (Chain.blockPoint tb)
-              (BlockHash (blockHash tb))
-              ( let
-                  -- NOTE: this bypasses the degenerate global implementation of
-                  -- 'BlockSupportsPeras.getPerasCertInBlock' for 'TestBlock',
-                  -- which currently always returns 'Nothing'.
-                  --
-                  -- TODO: refactor this to use 'getPerasCertInBlock' after the
-                  -- HFC plumbing for 'BlockSupportsPeras' is in place.
-                  certRoundInBlock = tbPerasCertRound testBody
-                 in
-                  -- the highest Peras certificate round number  we've seen so far
-                  case (certRoundInBlock, latestPerasCertRound) of
-                    (Nothing, Nothing) -> Nothing
-                    (Just rb, Nothing) -> Just rb
-                    (Nothing, Just rl) -> Just rl
-                    (Just rb, Just rl) -> Just (rb `max` rl)
-              )
+            (,()) $
+              TestLedger
+                (Chain.blockPoint tb)
+                (BlockHash (blockHash tb))
+                ( let
+                    -- NOTE: this bypasses the degenerate global implementation of
+                    -- 'BlockSupportsPeras.getPerasCertInBlock' for 'TestBlock',
+                    -- which currently always returns 'Nothing'.
+                    --
+                    -- TODO: refactor this to use 'getPerasCertInBlock' after the
+                    -- HFC plumbing for 'BlockSupportsPeras' is in place.
+                    certRoundInBlock = tbPerasCertRound testBody
+                   in
+                    -- the highest Peras certificate round number  we've seen so far
+                    case (certRoundInBlock, latestPerasCertRound) of
+                      (Nothing, Nothing) -> Nothing
+                      (Just rb, Nothing) -> Just rb
+                      (Nothing, Just rl) -> Just rl
+                      (Just rb, Just rl) -> Just (rb `max` rl)
+                )
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =

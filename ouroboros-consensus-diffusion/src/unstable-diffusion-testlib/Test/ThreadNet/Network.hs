@@ -704,7 +704,7 @@ runThreadNetwork
       OracularClock m ->
       TopLevelConfig blk ->
       Seed ->
-      -- | How to get a read-only forker together with its range reader (used to
+      -- \| How to get a read-only forker together with its range reader (used to
       -- read the whole UTxO; see 'testReadAllValues').
       ( ( (ReadOnlyForker' m blk, EraRangeReaderProvider m blk) ->
           m (LedgerState blk, Values blk)

@@ -38,10 +38,10 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
 import qualified Data.ByteString as BS
 import qualified Data.Compact as Compact
+import Data.Functor.Product (Product (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust, fromMaybe)
-import Data.Functor.Product (Product (..))
 import Data.SOP.BasicFunctors
 import qualified Data.SOP.Match as Match
 import Data.SOP.Strict
@@ -66,7 +66,6 @@ import Ouroboros.Consensus.HardFork.Combinator
   )
 import Ouroboros.Consensus.HardFork.Combinator.State (Current, currentState)
 import Ouroboros.Consensus.Ledger.Abstract hiding (TxIn, TxOut)
-import Ouroboros.Consensus.TypeFamilyWrappers (WrapValues (..))
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger.Block
@@ -75,6 +74,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
   , ShelleyBlockLedgerEra
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
+import Ouroboros.Consensus.TypeFamilyWrappers (WrapValues (..))
 import System.Directory (makeAbsolute)
 import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (MountPoint))

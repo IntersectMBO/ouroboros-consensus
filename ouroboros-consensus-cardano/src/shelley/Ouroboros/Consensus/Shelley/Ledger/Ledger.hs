@@ -132,6 +132,8 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
+import Ouroboros.Consensus.Shelley.Ledger.Block
+import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim
   ( NewEpochStateNoUTxOs
   , applyBlockShim
@@ -139,8 +141,6 @@ import Ouroboros.Consensus.Shelley.Ledger.LedgerCallShim
   , mkNewEpochStateNoUTxOs
   , newEpochStateWithEmptyUTxO
   )
-import Ouroboros.Consensus.Shelley.Ledger.Block
-import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( EnvelopeCheckError
@@ -397,6 +397,7 @@ instance MemPack BigEndianTxIn where
 -- is applied only at the (de)serialisation boundary, by casting the map keys
 -- through 'BigEndianTxIn'. See 'encodeValues'\/'decodeValues'.
 type instance TxIn (ShelleyBlock proto era) = SL.TxIn
+
 type instance TxOut (ShelleyBlock proto era) = Core.TxOut era
 
 instance

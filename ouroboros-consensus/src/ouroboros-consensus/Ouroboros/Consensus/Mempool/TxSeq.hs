@@ -153,16 +153,16 @@ viewFront (TxSeq txs) = case FingerTree.viewl txs of
 -- | An empty mempool sequence.
 pattern Empty :: Measure sz => TxSeq sz tx
 pattern Empty <- (viewFront -> Nothing)
-  where
-    Empty = TxSeq FingerTree.empty
+ where
+  Empty = TxSeq FingerTree.empty
 
 -- | \( O(1) \). Access or add a tx at the back of the mempool sequence.
 --
 -- New txs are always added at the back.
 pattern (:>) :: Measure sz => TxSeq sz tx -> TxTicket sz tx -> TxSeq sz tx
 pattern txs :> tx <- (viewBack -> Just (txs, tx))
-  where
-    TxSeq txs :> tx = TxSeq (txs FingerTree.|> tx) -- TODO: assert ordered by ticket no
+ where
+  TxSeq txs :> tx = TxSeq (txs FingerTree.|> tx) -- TODO: assert ordered by ticket no
 
 -- | \( O(1) \). Access a tx at the front of the mempool sequence.
 --

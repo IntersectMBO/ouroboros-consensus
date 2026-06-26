@@ -72,24 +72,24 @@ pattern DegenBlock ::
   b ->
   HardForkBlock '[b]
 pattern DegenBlock x <- (project' (Proxy @(I b)) -> x)
-  where
-    DegenBlock x = inject' (Proxy @(I b)) x
+ where
+  DegenBlock x = inject' (Proxy @(I b)) x
 
 pattern DegenHeader ::
   NoHardForks b =>
   Header b ->
   Header (HardForkBlock '[b])
 pattern DegenHeader x <- (project -> x)
-  where
-    DegenHeader x = inject x
+ where
+  DegenHeader x = inject x
 
 pattern DegenGenTx ::
   NoHardForks b =>
   GenTx b ->
   GenTx (HardForkBlock '[b])
 pattern DegenGenTx x <- (project -> x)
-  where
-    DegenGenTx x = inject x
+ where
+  DegenGenTx x = inject x
 
 pattern DegenGenTxId ::
   forall b.
@@ -97,8 +97,8 @@ pattern DegenGenTxId ::
   GenTxId b ->
   GenTxId (HardForkBlock '[b])
 pattern DegenGenTxId x <- (project' (Proxy @(WrapGenTxId b)) -> x)
-  where
-    DegenGenTxId x = inject' (Proxy @(WrapGenTxId b)) x
+ where
+  DegenGenTxId x = inject' (Proxy @(WrapGenTxId b)) x
 
 pattern DegenApplyTxErr ::
   forall b.
@@ -106,8 +106,8 @@ pattern DegenApplyTxErr ::
   ApplyTxErr b ->
   HardForkApplyTxErr '[b] -- ApplyTxErr (HardForkBlock '[b])
 pattern DegenApplyTxErr x <- (project' (Proxy @(WrapApplyTxErr b)) -> x)
-  where
-    DegenApplyTxErr x = inject' (Proxy @(WrapApplyTxErr b)) x
+ where
+  DegenApplyTxErr x = inject' (Proxy @(WrapApplyTxErr b)) x
 
 pattern DegenLedgerError ::
   forall b.
@@ -115,8 +115,8 @@ pattern DegenLedgerError ::
   LedgerError b ->
   HardForkLedgerError '[b] -- LedgerError (HardForkBlock '[b])
 pattern DegenLedgerError x <- (project' (Proxy @(WrapLedgerErr b)) -> x)
-  where
-    DegenLedgerError x = inject' (Proxy @(WrapLedgerErr b)) x
+ where
+  DegenLedgerError x = inject' (Proxy @(WrapLedgerErr b)) x
 
 pattern DegenOtherHeaderEnvelopeError ::
   forall b.
@@ -124,8 +124,8 @@ pattern DegenOtherHeaderEnvelopeError ::
   OtherHeaderEnvelopeError b ->
   HardForkEnvelopeErr '[b] -- OtherHeaderEnvelopeError (HardForkBlock '[b])
 pattern DegenOtherHeaderEnvelopeError x <- (project' (Proxy @(WrapEnvelopeErr b)) -> x)
-  where
-    DegenOtherHeaderEnvelopeError x = inject' (Proxy @(WrapEnvelopeErr b)) x
+ where
+  DegenOtherHeaderEnvelopeError x = inject' (Proxy @(WrapEnvelopeErr b)) x
 
 pattern DegenTipInfo ::
   forall b.
@@ -133,8 +133,8 @@ pattern DegenTipInfo ::
   TipInfo b ->
   OneEraTipInfo '[b] -- TipInfo (HardForkBlock '[b])
 pattern DegenTipInfo x <- (project' (Proxy @(WrapTipInfo b)) -> x)
-  where
-    DegenTipInfo x = inject' (Proxy @(WrapTipInfo b)) x
+ where
+  DegenTipInfo x = inject' (Proxy @(WrapTipInfo b)) x
 
 pattern DegenQuery ::
   () =>
@@ -142,39 +142,39 @@ pattern DegenQuery ::
   BlockQuery b fp result ->
   BlockQuery (HardForkBlock '[b]) fp a
 pattern DegenQuery x <- (projQuery' -> ProjHardForkQuery x)
-  where
-    DegenQuery x = injQuery x
+ where
+  DegenQuery x = injQuery x
 
 pattern DegenQueryResult ::
   result ->
   HardForkQueryResult '[b] result
 pattern DegenQueryResult x <- (projQueryResult -> x)
-  where
-    DegenQueryResult x = injQueryResult x
+ where
+  DegenQueryResult x = injQueryResult x
 
 pattern DegenCodecConfig ::
   NoHardForks b =>
   CodecConfig b ->
   CodecConfig (HardForkBlock '[b])
 pattern DegenCodecConfig x <- (project -> x)
-  where
-    DegenCodecConfig x = inject x
+ where
+  DegenCodecConfig x = inject x
 
 pattern DegenBlockConfig ::
   NoHardForks b =>
   BlockConfig b ->
   BlockConfig (HardForkBlock '[b])
 pattern DegenBlockConfig x <- (project -> x)
-  where
-    DegenBlockConfig x = inject x
+ where
+  DegenBlockConfig x = inject x
 
 pattern DegenLedgerState ::
   NoHardForks b =>
   LedgerState b ->
   LedgerState (HardForkBlock '[b])
 pattern DegenLedgerState x <- (project -> x)
-  where
-    DegenLedgerState x = inject x
+ where
+  DegenLedgerState x = inject x
 
 {-------------------------------------------------------------------------------
   Dealing with the config
@@ -217,5 +217,5 @@ pattern DegenTopLevelConfig ::
   TopLevelConfig b ->
   TopLevelConfig (HardForkBlock '[b])
 pattern DegenTopLevelConfig x <- (project -> x)
-  where
-    DegenTopLevelConfig x = inject x
+ where
+  DegenTopLevelConfig x = inject x

@@ -107,9 +107,9 @@ import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.MemPack (MemPack)
 import Data.Maybe (fromMaybe)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
+import Data.MemPack (MemPack)
 import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -210,8 +210,8 @@ newtype TestHash = UnsafeTestHash
 
 pattern TestHash :: NonEmpty Word64 -> TestHash
 pattern TestHash path <- UnsafeTestHash path
-  where
-    TestHash path = UnsafeTestHash (force path)
+ where
+  TestHash path = UnsafeTestHash (force path)
 
 {-# COMPLETE TestHash #-}
 
