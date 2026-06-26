@@ -4,7 +4,6 @@
 #else
 {-# OPTIONS_GHC -Wno-warnings-deprecations #-}
 #endif
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
