@@ -557,6 +557,7 @@ volatileStatesBimap f g =
 -- >>> import Cardano.Ledger.BaseTypes.NonZero
 -- >>> import Data.Void
 -- >>> import Cardano.Slotting.Slot
+-- >>> import Prelude hiding (read)
 --
 -- >>> data B
 -- >>> type instance HeaderHash B = Int

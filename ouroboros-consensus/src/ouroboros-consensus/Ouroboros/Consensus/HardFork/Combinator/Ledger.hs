@@ -36,9 +36,9 @@ import Codec.CBOR.Encoding (Encoding)
 import Control.Monad (guard)
 import Control.Monad.Except (throwError, withExcept)
 import qualified Control.State.Transition.Extended as STS
+import Data.Foldable as F
 import Data.Functor ((<&>))
 import Data.Functor.Product
-import Data.List (foldl')
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
@@ -884,7 +884,7 @@ instance CanHardFork xs => BlockSupportsUTxOHD (HardForkBlock xs) where
   -- its values were read against the previous era's state) upgrades the values
   -- up to the diff's era using the per-era 'translateValues' carried on the
   -- 'CanHardFork' class, then applies. No 'LedgerConfig' is needed.
-  forward diffs vals0 = foldl' step vals0 diffs
+  forward diffs vals0 = F.foldl' step vals0 diffs
    where
     ts = translateValues (hardForkEraTranslation @xs)
 

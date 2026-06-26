@@ -429,13 +429,12 @@ class
   -- default is the plain 'MemPack' codec, valid for eras whose key
   -- serialisation is already order-preserving (e.g. the trivial Byron key).
   packTxInBytes :: TxIn blk -> ByteArray
-  default packTxInBytes :: MemPack (TxIn blk) => TxIn blk -> ByteArray
+  default packTxInBytes :: TxIn blk -> ByteArray
   packTxInBytes = packByteArray True
 
   -- | Inverse of 'packTxInBytes': decode a @'TxIn'@ from its on-disk key bytes.
   unpackTxInBytes :: Buffer b => b -> Either SomeError (TxIn blk)
-  default unpackTxInBytes ::
-    (MemPack (TxIn blk), Buffer b) => b -> Either SomeError (TxIn blk)
+  default unpackTxInBytes :: Buffer b => b -> Either SomeError (TxIn blk)
   unpackTxInBytes = unpackEither
 
 -- | Operations only the single-era blocks support. The hard-fork combinator
