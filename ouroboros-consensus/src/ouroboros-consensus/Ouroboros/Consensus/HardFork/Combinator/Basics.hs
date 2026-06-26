@@ -37,6 +37,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
   , Except
   ) where
 
+import Data.SOP.Functors (Flip (..))
 import Cardano.Slotting.EpochInfo
 import Data.Kind (Type)
 import Data.SOP (K (..))
@@ -76,19 +77,19 @@ instance Typeable xs => ShowProxy (HardForkBlock xs)
 type instance BlockProtocol (HardForkBlock xs) = HardForkProtocol xs
 type instance HeaderHash (HardForkBlock xs) = OneEraHash xs
 
-newtype instance LedgerState (HardForkBlock xs) = HardForkLedgerState
-  { hardForkLedgerStatePerEra :: HardForkState LedgerState xs
+newtype instance LedgerState (HardForkBlock xs) mk = HardForkLedgerState
+  { hardForkLedgerStatePerEra :: HardForkState (Flip LedgerState EmptyMK) xs
   }
 
 deriving stock instance
   CanHardFork xs =>
-  Show (LedgerState (HardForkBlock xs))
+  Show (LedgerState (HardForkBlock xs) mk)
 deriving stock instance
   CanHardFork xs =>
-  Eq (LedgerState (HardForkBlock xs))
+  Eq (LedgerState (HardForkBlock xs) mk)
 deriving newtype instance
   CanHardFork xs =>
-  NoThunks (LedgerState (HardForkBlock xs))
+  NoThunks (LedgerState (HardForkBlock xs) mk)
 
 {-------------------------------------------------------------------------------
   Protocol config
@@ -254,6 +255,6 @@ distribTopLevelConfig ei tlc =
 instance CanHardFork xs => LedgerSupportsPeras (HardForkBlock xs) where
   getLatestPerasCertRound =
     hcollapse
-      . hcmap proxySingle (K . getLatestPerasCertRound)
+      . hcmap proxySingle (K . getLatestPerasCertRound . unFlip)
       . State.tip
       . hardForkLedgerStatePerEra

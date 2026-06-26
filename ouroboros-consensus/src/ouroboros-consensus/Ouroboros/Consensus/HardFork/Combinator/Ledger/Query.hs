@@ -34,6 +34,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
   , hardForkQueryInfo
   ) where
 
+import Data.SOP.Functors (Flip (..))
 import Cardano.Binary (enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as Dec
@@ -77,6 +78,7 @@ import Ouroboros.Consensus.HardFork.History
   )
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.Serialisation (Some (..))
@@ -284,9 +286,9 @@ answerBlockQueryHelper
 -- manually crafted.
 distribExtLedgerState ::
   All SingleEraBlock xs =>
-  ExtLedgerState (HardForkBlock xs) -> NS ExtLedgerState xs
+  ExtLedgerState (HardForkBlock xs) EmptyMK -> NS (Flip ExtLedgerState EmptyMK) xs
 distribExtLedgerState (ExtLedgerState ledgerState headerState) =
-  hmap (\(Pair hst lst) -> ExtLedgerState lst hst) $
+  hmap (\(Pair hst lst) -> Flip (ExtLedgerState (unFlip lst) hst)) $
     mustMatchNS
       "HeaderState"
       (distribHeaderState headerState)
@@ -358,7 +360,7 @@ interpretQueryIfCurrent ::
   All SingleEraBlock xs =>
   NP ExtLedgerCfg xs ->
   QueryIfCurrent xs QFNoTables result ->
-  NS ExtLedgerState xs ->
+  NS (Flip ExtLedgerState EmptyMK) xs ->
   HardForkQueryResult xs result
 interpretQueryIfCurrent = go
  where
@@ -366,15 +368,15 @@ interpretQueryIfCurrent = go
     All SingleEraBlock xs' =>
     NP ExtLedgerCfg xs' ->
     QueryIfCurrent xs' QFNoTables result ->
-    NS ExtLedgerState xs' ->
+    NS (Flip ExtLedgerState EmptyMK) xs' ->
     HardForkQueryResult xs' result
-  go (c :* _) (QZ qry) (Z st) =
+  go (c :* _) (QZ qry) (Z (Flip st)) =
     Right $ answerPureBlockQuery c qry st
   go (_ :* cs) (QS qry) (S st) =
     first shiftMismatch $ go cs qry st
   go _ (QZ qry) (S st) =
-    Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle (ledgerInfo) st)
-  go _ (QS qry) (Z st) =
+    Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle (ledgerInfo . unFlip) st)
+  go _ (QS qry) (Z (Flip st)) =
     Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
 interpretQueryIfCurrentLookup ::
@@ -393,13 +395,13 @@ interpretQueryIfCurrentLookup cfg q forker = do
     NP (Index xs) xs' ->
     NP ExtLedgerCfg xs' ->
     QueryIfCurrent xs' QFLookupTables result ->
-    NS ExtLedgerState xs' ->
+    NS (Flip ExtLedgerState EmptyMK) xs' ->
     m (HardForkQueryResult xs' result)
   go (idx :* _) (c :* _) (QZ qry) _ =
     Right <$> answerBlockQueryHFLookup idx c qry forker
   go (_ :* idx) (_ :* cs) (QS qry) (S st) =
     first shiftMismatch <$> go idx cs qry st
-  go _ _ (QS qry) (Z st) =
+  go _ _ (QS qry) (Z (Flip st)) =
     pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
 interpretQueryIfCurrentTraverse ::
@@ -419,13 +421,13 @@ interpretQueryIfCurrentTraverse provider cfg q forker = do
     NP (Index xs) xs' ->
     NP ExtLedgerCfg xs' ->
     QueryIfCurrent xs' QFTraverseTables result ->
-    NS ExtLedgerState xs' ->
+    NS (Flip ExtLedgerState EmptyMK) xs' ->
     m (HardForkQueryResult xs' result)
   go (idx :* _) (c :* _) (QZ qry) _ =
     Right <$> answerBlockQueryHFTraverse idx c qry provider forker
   go (_ :* idx) (_ :* cs) (QS qry) (S st) =
     first shiftMismatch <$> go idx cs qry st
-  go _ _ (QS qry) (Z st) =
+  go _ _ (QS qry) (Z (Flip st)) =
     pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
 {-------------------------------------------------------------------------------
@@ -449,7 +451,7 @@ interpretQueryAnytime ::
   HardForkLedgerConfig xs ->
   QueryAnytime result ->
   EraIndex xs ->
-  State.HardForkState LedgerState xs ->
+  State.HardForkState (Flip LedgerState EmptyMK) xs ->
   result
 interpretQueryAnytime cfg query (EraIndex era) st =
   answerQueryAnytime cfg query (State.situate era st)
@@ -458,7 +460,7 @@ answerQueryAnytime ::
   All SingleEraBlock xs =>
   HardForkLedgerConfig xs ->
   QueryAnytime result ->
-  Situated h LedgerState xs ->
+  Situated h (Flip LedgerState EmptyMK) xs ->
   result
 answerQueryAnytime HardForkLedgerConfig{..} =
   go cfgs (getExactly (getShape hardForkLedgerConfigShape))
@@ -470,7 +472,7 @@ answerQueryAnytime HardForkLedgerConfig{..} =
     NP WrapPartialLedgerConfig xs' ->
     NP (K EraParams) xs' ->
     QueryAnytime result ->
-    Situated h LedgerState xs' ->
+    Situated h (Flip LedgerState EmptyMK) xs' ->
     result
   go Nil _ _ ctxt = case ctxt of {}
   go (c :* cs) (K ps :* pss) GetEraStart ctxt = case ctxt of
@@ -484,7 +486,7 @@ answerQueryAnytime HardForkLedgerConfig{..} =
           (unwrapPartialLedgerConfig c)
           ps
           (currentStart cur)
-          (currentState cur)
+          (unFlip $ currentState cur)
 
 {-------------------------------------------------------------------------------
   Hard fork queries
@@ -514,7 +516,7 @@ interpretQueryHardFork ::
   All SingleEraBlock xs =>
   HardForkLedgerConfig xs ->
   QueryHardFork xs result ->
-  LedgerState (HardForkBlock xs) ->
+  LedgerState (HardForkBlock xs) EmptyMK ->
   result
 interpretQueryHardFork cfg query st =
   case query of
@@ -568,7 +570,7 @@ decodeQueryHardForkResult = \case
 ledgerInfo ::
   forall blk.
   SingleEraBlock blk =>
-  ExtLedgerState blk ->
+  ExtLedgerState blk EmptyMK ->
   LedgerEraInfo blk
 ledgerInfo _ = LedgerEraInfo $ singleEraInfo (Proxy @blk)
 

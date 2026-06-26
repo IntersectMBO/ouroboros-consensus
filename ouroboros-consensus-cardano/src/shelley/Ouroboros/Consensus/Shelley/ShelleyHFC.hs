@@ -41,6 +41,7 @@ import Control.Monad.Except (runExcept, throwError)
 import Data.Coerce
 import qualified Data.Map.Strict as Map
 import Data.SOP.BasicFunctors
+import Data.SOP.Functors (Flip (..))
 import Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import Data.SOP.Index (Index (..))
 import Data.SOP.Strict
@@ -178,12 +179,12 @@ type ProtocolShelley = HardForkProtocol '[ShelleyBlock (TPraos StandardCrypto) S
 -------------------------------------------------------------------------------}
 
 shelleyTransition ::
-  forall era proto.
+  forall era proto mk.
   ShelleyCompatible proto era =>
   PartialLedgerConfig (ShelleyBlock proto era) ->
   -- | Next era's initial major protocol version
   Word16 ->
-  LedgerState (ShelleyBlock proto era) ->
+  LedgerState (ShelleyBlock proto era) mk ->
   Maybe EpochNo
 shelleyTransition
   ShelleyPartialLedgerConfig{..}
@@ -296,7 +297,7 @@ forecastAcrossShelley ::
   Bound ->
   -- | Forecast for this slot
   SlotNo ->
-  LedgerState (ShelleyBlock protoFrom eraFrom) ->
+  LedgerState (ShelleyBlock protoFrom eraFrom) EmptyMK ->
   Except OutsideForecastRange (WrapLedgerView (ShelleyBlock protoTo eraTo))
 forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
   | forecastFor < maxFor =
@@ -350,10 +351,10 @@ instance
   , SL.TranslateEra era SL.NewEpochState
   , SL.TranslationError era SL.NewEpochState ~ Void
   ) =>
-  SL.TranslateEra era (LedgerState :.: ShelleyBlock proto)
+  SL.TranslateEra era (Flip LedgerState EmptyMK :.: ShelleyBlock proto)
   where
-  translateEra ctxt (Comp st) = do
-    let ShelleyLedgerState tip stateNoUTxO _transition latestPerasCertRound = st
+  translateEra ctxt (Comp (Flip st)) = do
+    let ShelleyLedgerState tip stateNoUTxO _transition _tables latestPerasCertRound = st
     tip' <- mapM (SL.translateEra ctxt) tip
     -- The state's UTxO field is empty (the UTxO lives in the backend); the NES
     -- translation preserves that, and the value-level UTxO upgrade is handled
@@ -361,12 +362,14 @@ instance
     state' <- SL.translateEra ctxt (newEpochStateWithEmptyUTxO stateNoUTxO)
     return $
       Comp $
-        ShelleyLedgerState
-          { shelleyLedgerTip = tip'
-          , shelleyLedgerStateNoUTxO = mkNewEpochStateNoUTxOs state'
-          , shelleyLedgerTransition = ShelleyTransitionInfo 0
-          , shelleyLedgerLatestPerasCertRound = latestPerasCertRound
-          }
+        Flip $
+          ShelleyLedgerState
+            { shelleyLedgerTip = tip'
+            , shelleyLedgerStateNoUTxO = mkNewEpochStateNoUTxOs state'
+            , shelleyLedgerTransition = ShelleyTransitionInfo 0
+            , shelleyLedgerTables = emptyLedgerTables
+            , shelleyLedgerLatestPerasCertRound = latestPerasCertRound
+            }
 
 -- | Translate the on-disk 'Values' (the UTxO) across a Shelley-based era
 -- transition: the keys ('SL.TxIn') are era-stable, so only the @TxOut@s are

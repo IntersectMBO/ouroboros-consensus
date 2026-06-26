@@ -155,7 +155,7 @@ byronTransition ::
   PartialLedgerConfig ByronBlock ->
   -- | Shelley major protocol version
   Word16 ->
-  LedgerState ByronBlock ->
+  LedgerState ByronBlock mk ->
   Maybe EpochNo
 byronTransition partialConfig shelleyMajorVersion state =
   takeAny

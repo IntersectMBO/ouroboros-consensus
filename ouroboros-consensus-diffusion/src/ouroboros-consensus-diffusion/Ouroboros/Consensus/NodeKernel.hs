@@ -970,7 +970,7 @@ getMempoolWriter mempool =
 getPeersFromCurrentLedger ::
   (IOLike m, LedgerSupportsPeerSelection blk) =>
   NodeKernel m addrNTN addrNTC blk ->
-  (LedgerState blk -> Bool) ->
+  (LedgerState blk EmptyMK -> Bool) ->
   STM m (Maybe [(PoolStake, NonEmpty LedgerRelayAccessPoint)])
 getPeersFromCurrentLedger kernel p = do
   immutableLedger <-
@@ -996,7 +996,7 @@ getPeersFromCurrentLedgerAfterSlot ::
 getPeersFromCurrentLedgerAfterSlot kernel slotNo =
   getPeersFromCurrentLedger kernel afterSlotNo
  where
-  afterSlotNo :: LedgerState blk -> Bool
+  afterSlotNo :: LedgerState blk mk -> Bool
   afterSlotNo st =
     case ledgerTipSlot st of
       Origin -> False

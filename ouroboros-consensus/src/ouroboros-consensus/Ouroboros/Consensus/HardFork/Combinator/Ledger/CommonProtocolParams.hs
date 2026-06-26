@@ -3,6 +3,8 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams () where
 
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
+import Data.SOP.Functors (Flip (..))
 import Data.SOP.BasicFunctors
 import Data.SOP.Strict
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -20,11 +22,11 @@ instance
 
 askCurrentLedger ::
   CanHardFork xs =>
-  (forall blk. CommonProtocolParams blk => LedgerState blk -> a) ->
-  LedgerState (HardForkBlock xs) ->
+  (forall blk. CommonProtocolParams blk => LedgerState blk EmptyMK -> a) ->
+  LedgerState (HardForkBlock xs) mk ->
   a
 askCurrentLedger f =
   hcollapse
-    . hcmap proxySingle (K . f)
+    . hcmap proxySingle (K . f . unFlip)
     . State.tip
     . hardForkLedgerStatePerEra

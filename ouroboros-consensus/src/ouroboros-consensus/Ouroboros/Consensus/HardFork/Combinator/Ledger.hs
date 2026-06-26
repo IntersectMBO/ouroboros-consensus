@@ -22,6 +22,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger
   , HardForkLedgerWarning (..)
 
     -- * Type family instances
+  , FlipTickedLedgerState (..)
   , Ticked (..)
 
     -- * Low-level API (exported for the benefit of testing)
@@ -29,6 +30,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger
   , mkHardForkForecast
   ) where
 
+import Data.SOP.Functors (Flip (..))
 import Codec.CBOR.Encoding (Encoding)
 import Control.Monad (guard)
 import Control.Monad.Except (throwError, withExcept)
@@ -102,24 +104,30 @@ data HardForkLedgerError xs
 instance CanHardFork xs => GetTip (LedgerState (HardForkBlock xs)) where
   getTip =
     castPoint
-      . State.getTip (castPoint . getTip)
+      . State.getTip (castPoint . getTip . unFlip)
       . hardForkLedgerStatePerEra
 
 instance CanHardFork xs => GetTip (Ticked LedgerState (HardForkBlock xs)) where
   getTip =
     castPoint
-      . State.getTip (castPoint . getTip)
+      . State.getTip (castPoint . getTip . getFlipTickedLedgerState)
       . tickedHardForkLedgerStatePerEra
 
 {-------------------------------------------------------------------------------
   Ticking
 -------------------------------------------------------------------------------}
 
-data instance Ticked LedgerState (HardForkBlock xs)
+-- | The skin's ticked-state telescope functor: each era's ticked state at a
+-- fixed 'EmptyMK' (the running tables live in the opaque @'Values'@, not here).
+newtype FlipTickedLedgerState mk blk = FlipTickedLedgerState
+  { getFlipTickedLedgerState :: Ticked LedgerState blk mk
+  }
+
+data instance Ticked LedgerState (HardForkBlock xs) mk
   = TickedHardForkLedgerState
   { tickedHardForkLedgerStateTransition :: !TransitionInfo
   , tickedHardForkLedgerStatePerEra ::
-      !(HardForkState (Ticked LedgerState) xs)
+      !(HardForkState (FlipTickedLedgerState EmptyMK) xs)
   }
 
 type instance AuxLedgerEvent (HardForkBlock xs) = OneEraLedgerEvent xs
@@ -154,7 +162,7 @@ instance CanHardFork xs => IsLedger LedgerState (HardForkBlock xs) where
     cfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
     ei = State.epochInfoLedger cfg st0
 
-    extended :: HardForkState LedgerState xs
+    extended :: HardForkState (Flip LedgerState EmptyMK) xs
     boundaryDiff :: NS WrapDiff xs
     (extended, boundaryDiff) = State.extendToSlot cfg slot st0
 
@@ -168,11 +176,11 @@ tickOne ::
   ComputeLedgerEvents ->
   Index xs blk ->
   WrapPartialLedgerConfig blk ->
-  LedgerState blk ->
-  (LedgerResult (HardForkBlock xs) :.: Product (Ticked LedgerState) WrapDiff) blk
-tickOne ei slot evs sopIdx partialCfg st =
+  Flip LedgerState EmptyMK blk ->
+  (LedgerResult (HardForkBlock xs) :.: Product (FlipTickedLedgerState EmptyMK) WrapDiff) blk
+tickOne ei slot evs sopIdx partialCfg (Flip st) =
   Comp
-    . fmap (\(ticked, diff) -> Pair ticked (WrapDiff diff))
+    . fmap (\(ticked, diff) -> Pair (FlipTickedLedgerState ticked) (WrapDiff diff))
     . embedLedgerResult (injectLedgerEvent sopIdx)
     $ applyChainTickLedgerResult evs (completeLedgerConfig' ei partialCfg) slot st
 
@@ -219,8 +227,8 @@ instance
           st
 
       reassemble ::
-        HardForkState (Product LedgerState WrapDiff) xs ->
-        (LedgerState (HardForkBlock xs), NS WrapDiff xs)
+        HardForkState (Product (Flip LedgerState EmptyMK) WrapDiff) xs ->
+        (LedgerState (HardForkBlock xs) EmptyMK, NS WrapDiff xs)
       reassemble hs =
         ( HardForkLedgerState (hmap (\(Pair s _) -> s) hs)
         , State.tip (hmap (\(Pair _ d) -> d) hs)
@@ -245,18 +253,18 @@ apply ::
   ComputeLedgerEvents ->
   Index xs blk ->
   WrapLedgerConfig blk ->
-  Product (Product I WrapValues) (Ticked LedgerState) blk ->
+  Product (Product I WrapValues) (FlipTickedLedgerState EmptyMK) blk ->
   ( Except (HardForkLedgerError xs)
       :.: LedgerResult (HardForkBlock xs)
-      :.: Product LedgerState WrapDiff
+      :.: Product (Flip LedgerState EmptyMK) WrapDiff
   )
     blk
-apply doValidate opts index (WrapLedgerConfig cfg) (Pair (Pair (I block) (WrapValues values)) tickedSt) =
+apply doValidate opts index (WrapLedgerConfig cfg) (Pair (Pair (I block) (WrapValues values)) (FlipTickedLedgerState tickedSt)) =
   Comp
     $ withExcept (injectLedgerError index)
     $ fmap
       ( Comp
-          . fmap (\(st', diff) -> Pair st' (WrapDiff diff))
+          . fmap (\(st', diff) -> Pair (Flip st') (WrapDiff diff))
           . embedLedgerResult (injectLedgerEvent index)
       )
     $ applyBlockLedgerResultWithValidation doValidate opts cfg block values tickedSt
@@ -363,9 +371,9 @@ instance
       viewOne ::
         SingleEraBlock blk =>
         WrapPartialLedgerConfig blk ->
-        TickedLedgerState blk ->
+        FlipTickedLedgerState EmptyMK blk ->
         WrapLedgerView blk
-      viewOne cfg st =
+      viewOne cfg (FlipTickedLedgerState st) =
         WrapLedgerView $
           protocolLedgerView (completeLedgerConfig' ei cfg) st
 
@@ -395,9 +403,9 @@ instance
         SingleEraBlock blk =>
         WrapPartialLedgerConfig blk ->
         K EraParams blk ->
-        Current LedgerState blk ->
+        Current (Flip LedgerState EmptyMK) blk ->
         Current (AnnForecast LedgerState WrapLedgerView) blk
-      forecastOne cfg (K params) (Current start st) =
+      forecastOne cfg (K params) (Current start (Flip st)) =
         Current
           { currentStart = start
           , currentState =
@@ -423,7 +431,7 @@ instance
 -- | Forecast annotated with details about the ledger it was derived from
 data AnnForecast state view blk = AnnForecast
   { annForecast :: Forecast (view blk)
-  , annForecastState :: state blk
+  , annForecastState :: state blk EmptyMK
   , annForecastTip :: WithOrigin SlotNo
   , annForecastEnd :: Maybe Bound
   }
@@ -612,8 +620,8 @@ inspectHardForkLedger ::
   NP WrapPartialLedgerConfig xs ->
   NP (K EraParams) xs ->
   NP TopLevelConfig xs ->
-  NS (Current LedgerState) xs ->
-  NS (Current LedgerState) xs ->
+  NS (Current (Flip LedgerState EmptyMK)) xs ->
+  NS (Current (Flip LedgerState EmptyMK)) xs ->
   [LedgerEvent (HardForkBlock xs)]
 inspectHardForkLedger = go
  where
@@ -622,8 +630,8 @@ inspectHardForkLedger = go
     NP WrapPartialLedgerConfig xs ->
     NP (K EraParams) xs ->
     NP TopLevelConfig xs ->
-    NS (Current LedgerState) xs ->
-    NS (Current LedgerState) xs ->
+    NS (Current (Flip LedgerState EmptyMK)) xs ->
+    NS (Current (Flip LedgerState EmptyMK)) xs ->
     [LedgerEvent (HardForkBlock xs)]
 
   go (pc :* _) (K ps :* pss) (c :* _) (Z before) (Z after) =
@@ -631,8 +639,8 @@ inspectHardForkLedger = go
       [ map liftEvent $
           inspectLedger
             c
-            (currentState before)
-            (currentState after)
+            (unFlip (currentState before))
+            (unFlip (currentState after))
       , case (pss, confirmedBefore, confirmedAfter) of
           (_, Nothing, Nothing) ->
             []
@@ -684,13 +692,13 @@ inspectHardForkLedger = go
         (unwrapPartialLedgerConfig pc)
         ps
         (currentStart before)
-        (currentState before)
+        (unFlip (currentState before))
     confirmedAfter =
       singleEraTransition
         (unwrapPartialLedgerConfig pc)
         ps
         (currentStart after)
-        (currentState after)
+        (unFlip (currentState after))
   go Nil _ _ before _ =
     case before of {}
   go (_ :* pcs) (_ :* pss) (_ :* cs) (S before) (S after) =
@@ -797,7 +805,7 @@ shiftUpdate = go
 ledgerInfo ::
   forall blk.
   SingleEraBlock blk =>
-  Current (Ticked LedgerState) blk -> LedgerEraInfo blk
+  Current (FlipTickedLedgerState EmptyMK) blk -> LedgerEraInfo blk
 ledgerInfo _ = LedgerEraInfo $ singleEraInfo (Proxy @blk)
 
 ledgerViewInfo ::
@@ -962,7 +970,7 @@ instance CanHardFork xs => BlockSupportsUTxOHD (HardForkBlock xs) where
     hcollapse $
       hcimap
         proxySingle
-        (\idx eraSt -> K (injectNS idx . WrapValues <$> decodeValues eraSt))
+        (\idx eraSt -> K (injectNS idx . WrapValues <$> decodeValues (unFlip eraSt)))
         (State.tip st)
 
 -- | Upgrade an era-tagged 'Values' one era forward, using the adjacent

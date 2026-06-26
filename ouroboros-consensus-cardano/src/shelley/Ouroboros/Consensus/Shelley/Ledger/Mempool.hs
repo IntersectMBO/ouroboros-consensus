@@ -288,10 +288,10 @@ applyShelleyTx ::
   SlotNo ->
   GenTx (ShelleyBlock proto era) ->
   Values (ShelleyBlock proto era) ->
-  TickedLedgerState (ShelleyBlock proto era) ->
+  TickedLedgerState (ShelleyBlock proto era) EmptyMK ->
   Except
     (ApplyTxErr (ShelleyBlock proto era))
-    ( TickedLedgerState (ShelleyBlock proto era)
+    ( TickedLedgerState (ShelleyBlock proto era) EmptyMK
     , Diff (ShelleyBlock proto era)
     , Validated (GenTx (ShelleyBlock proto era))
     )
@@ -317,10 +317,10 @@ reapplyShelleyTx ::
   SlotNo ->
   Validated (GenTx (ShelleyBlock proto era)) ->
   Values (ShelleyBlock proto era) ->
-  TickedLedgerState (ShelleyBlock proto era) ->
+  TickedLedgerState (ShelleyBlock proto era) EmptyMK ->
   Except
     (ApplyTxErr (ShelleyBlock proto era))
-    ( TickedLedgerState (ShelleyBlock proto era)
+    ( TickedLedgerState (ShelleyBlock proto era) EmptyMK
     , Diff (ShelleyBlock proto era)
     )
 reapplyShelleyTx cfg slot vgtx values st0 = do
@@ -360,7 +360,7 @@ runValidation = liftEither . (unTxErrorSG +++ id) . view V.either
 
 txsMaxBytes ::
   ShelleyCompatible proto era =>
-  TickedLedgerState (ShelleyBlock proto era) ->
+  TickedLedgerState (ShelleyBlock proto era) mk ->
   IgnoringOverflow ByteSize32
 txsMaxBytes st =
   -- `maxBlockBodySize` is expected to be bigger than `fixedBlockBodyOverhead`
@@ -372,7 +372,7 @@ txsMaxBytes st =
 
 txInBlockSize ::
   (ShelleyCompatible proto era, MaxTxSizeUTxO era) =>
-  TickedLedgerState (ShelleyBlock proto era) ->
+  TickedLedgerState (ShelleyBlock proto era) mk ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) (IgnoringOverflow ByteSize32)
 txInBlockSize st (ShelleyTx _txid tx') =
@@ -546,9 +546,9 @@ fromExUnits :: ExUnits -> ExUnits' Natural
 fromExUnits = unWrapExUnits
 
 blockCapacityAlonzoMeasure ::
-  forall proto era.
+  forall proto era mk.
   (ShelleyCompatible proto era, L.AlonzoEraPParams era) =>
-  TickedLedgerState (ShelleyBlock proto era) ->
+  TickedLedgerState (ShelleyBlock proto era) mk ->
   AlonzoMeasure
 blockCapacityAlonzoMeasure ledgerState =
   AlonzoMeasure
@@ -559,14 +559,14 @@ blockCapacityAlonzoMeasure ledgerState =
   pparams = getPParams $ tickedShelleyLedgerState ledgerState
 
 txMeasureAlonzo ::
-  forall proto era.
+  forall proto era mk.
   ( ShelleyCompatible proto era
   , L.AlonzoEraPParams era
   , L.AlonzoEraTxWits era
   , ExUnitsTooBigUTxO era
   , MaxTxSizeUTxO era
   ) =>
-  TickedLedgerState (ShelleyBlock proto era) ->
+  TickedLedgerState (ShelleyBlock proto era) mk ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) AlonzoMeasure
 txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
@@ -657,11 +657,11 @@ instance TxMeasurePhase2Metrics RefScriptSize where
   txMeasureMetricRefScriptsSizeBytes = unIgnoringOverflow . refScriptsSize
 
 blockCapacityConwayMeasure ::
-  forall proto era.
+  forall proto era mk.
   ( ShelleyCompatible proto era
   , SL.ConwayEraPParams era
   ) =>
-  TickedLedgerState (ShelleyBlock proto era) ->
+  TickedLedgerState (ShelleyBlock proto era) mk ->
   (AlonzoMeasure, RefScriptSize)
 blockCapacityConwayMeasure st =
   ( blockCapacityAlonzoMeasure st
@@ -673,14 +673,14 @@ blockCapacityConwayMeasure st =
   pparams = getPParams $ tickedShelleyLedgerState st
 
 txMeasureRefScripts ::
-  forall proto era.
+  forall proto era mk.
   ( ShelleyCompatible proto era
   , L.BabbageEraTxBody era
   , TxRefScriptsSizeTooBig era
   , SL.ConwayEraPParams era
   ) =>
   Values (ShelleyBlock proto era) ->
-  TickedLedgerState (ShelleyBlock proto era) ->
+  TickedLedgerState (ShelleyBlock proto era) mk ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) RefScriptSize
 txMeasureRefScripts values st (ShelleyTx _txid tx') =

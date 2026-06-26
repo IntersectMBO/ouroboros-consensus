@@ -70,9 +70,9 @@ class
   inspectLedger ::
     TopLevelConfig blk ->
     -- | Before
-    LedgerState blk ->
+    LedgerState blk mk1 ->
     -- | After
-    LedgerState blk ->
+    LedgerState blk mk2 ->
     [LedgerEvent blk]
 
   -- Defaults
@@ -87,9 +87,9 @@ class
     ) =>
     TopLevelConfig blk ->
     -- | Before
-    LedgerState blk ->
+    LedgerState blk mk1 ->
     -- | After
-    LedgerState blk ->
+    LedgerState blk mk2 ->
     [LedgerEvent blk]
   inspectLedger _ _ _ = []
    where

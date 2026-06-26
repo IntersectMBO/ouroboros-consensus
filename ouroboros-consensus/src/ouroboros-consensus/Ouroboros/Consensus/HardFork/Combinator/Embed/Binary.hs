@@ -11,6 +11,7 @@ import Control.Exception (assert)
 import qualified Control.Tracer as Tracer
 import Data.Align (alignWith)
 import Data.SOP.Counting (exactlyTwo)
+import Data.SOP.Functors (Flip (..))
 import Data.SOP.OptNP (NonEmptyOptNP, OptNP (..))
 import Data.SOP.Strict (NP (..), NS (..))
 import Data.Text (Text)
@@ -101,7 +102,7 @@ protocolInfoBinary
             ExtLedgerState
               { ledgerState =
                   HardForkLedgerState $
-                    initHardForkState initLedgerState1
+                    initHardForkState (Flip initLedgerState1)
               , headerState =
                   genesisHeaderState $
                     initHardForkState $

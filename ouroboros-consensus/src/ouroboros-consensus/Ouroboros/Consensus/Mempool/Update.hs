@@ -539,7 +539,7 @@ pureRemoveTxs ::
   LedgerConfig blk ->
   SlotNo ->
   -- | The base ticked ledger state to revalidate against
-  TickedLedgerState blk ->
+  TickedLedgerState blk EmptyMK ->
   -- | The tick diff (base → ticked), to forward the read values to the tip
   Diff blk ->
   -- | All the inputs for the kept txs, read against the base state
@@ -696,7 +696,7 @@ pureSyncWithLedger ::
   LedgerConfig blk ->
   SlotNo ->
   -- | The base ticked ledger state to revalidate against
-  TickedLedgerState blk ->
+  TickedLedgerState blk EmptyMK ->
   -- | The tick diff (base → ticked), to forward the read values to the tip
   Diff blk ->
   -- | All the inputs for the txs, read against the base state

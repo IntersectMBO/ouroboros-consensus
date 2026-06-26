@@ -27,7 +27,7 @@ class
   -- relation between this and forecasting.
   protocolLedgerView ::
     LedgerConfig blk ->
-    Ticked LedgerState blk ->
+    Ticked LedgerState blk EmptyMK ->
     LedgerView (BlockProtocol blk)
 
   -- | Get a forecast at the given ledger state.
@@ -68,7 +68,7 @@ class
   ledgerViewForecastAt ::
     HasCallStack =>
     LedgerConfig blk ->
-    LedgerState blk ->
+    LedgerState blk EmptyMK ->
     Forecast (LedgerView (BlockProtocol blk))
 
 -- | Relation between 'ledgerViewForecastAt' and 'applyChainTick'
@@ -77,7 +77,7 @@ _lemma_ledgerViewForecastAt_applyChainTick ::
   , Eq (LedgerView (BlockProtocol blk))
   ) =>
   LedgerConfig blk ->
-  LedgerState blk ->
+  LedgerState blk EmptyMK ->
   Forecast (LedgerView (BlockProtocol blk)) ->
   SlotNo ->
   Either String ()

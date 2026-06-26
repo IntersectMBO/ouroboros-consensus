@@ -53,7 +53,7 @@ data ForkerEnv m l blk = ForkerEnv
 
 deriving instance
   ( IOLike m
-  , NoThunks (l blk)
+  , NoThunks (l blk EmptyMK)
   ) =>
   NoThunks (ForkerEnv m l blk)
 
@@ -74,7 +74,7 @@ implForkerReadTables env ks =
 implForkerGetLedgerState ::
   (MonadSTM m, GetTip (l blk)) =>
   ForkerEnv m l blk ->
-  STM m (l blk)
+  STM m (l blk EmptyMK)
 implForkerGetLedgerState = fmap current . readTVar . foeLedgerSeq
 
 implForkerReadStatistics ::
@@ -88,7 +88,7 @@ implForkerReadStatistics env = do
 implForkerPush ::
   (IOLike m, GetTip (l blk), HasCallStack) =>
   ForkerEnv m l blk ->
-  l blk ->
+  l blk EmptyMK ->
   Diff blk ->
   m ()
 implForkerPush env newState diff = do

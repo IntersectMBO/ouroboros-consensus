@@ -55,9 +55,9 @@ instance ShelleyBasedEra era => InspectLedger (ShelleyBlock proto era) where
     updatesAfter = pparamsUpdate after
 
 pparamsUpdate ::
-  forall era proto.
+  forall era proto mk.
   ShelleyBasedEra era =>
-  LedgerState (ShelleyBlock proto era) ->
+  LedgerState (ShelleyBlock proto era) mk ->
   ShelleyLedgerUpdate era
 pparamsUpdate st =
   let nes = shelleyLedgerState st

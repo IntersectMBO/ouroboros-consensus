@@ -240,13 +240,13 @@ implIntTruncateSnapshots snapManager (SomeHasFS fs) = do
 implGetVolatileTip ::
   (MonadSTM m, GetTip (l blk)) =>
   LedgerDBEnv m l blk ->
-  STM m (l blk)
+  STM m (l blk EmptyMK)
 implGetVolatileTip = fmap current . getVolatileLedgerSeq
 
 implGetImmutableTip ::
   (MonadSTM m, GetTip (l blk)) =>
   LedgerDBEnv m l blk ->
-  STM m (l blk)
+  STM m (l blk EmptyMK)
 implGetImmutableTip = fmap anchor . getVolatileLedgerSeq
 
 implGetPastLedgerState ::
@@ -256,7 +256,7 @@ implGetPastLedgerState ::
   , StandardHash (l blk)
   , HeaderHash (l blk) ~ HeaderHash blk
   ) =>
-  LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l blk))
+  LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l blk EmptyMK))
 implGetPastLedgerState env point =
   getPastLedgerAt point <$> getVolatileLedgerSeq env
 
@@ -421,7 +421,7 @@ implCloseDB (LDBHandle varState) = do
   The LedgerDBEnv
 -------------------------------------------------------------------------------}
 
-type LedgerDBEnv :: (Type -> Type) -> (Type -> Type) -> Type -> Type
+type LedgerDBEnv :: (Type -> Type) -> StateKind -> Type -> Type
 data LedgerDBEnv m l blk = LedgerDBEnv
   { ldbSeq :: !(StrictTVar m (LedgerSeq m l blk))
   -- ^ INVARIANT: the tip of the 'LedgerDB' is always in sync with the tip of
@@ -473,7 +473,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
 deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , NoThunks (l blk)
+  , NoThunks (l blk EmptyMK)
   , NoThunks (LedgerCfg l blk)
   ) =>
   NoThunks (LedgerDBEnv m l blk)
@@ -482,7 +482,7 @@ deriving instance
   The LedgerDBHandle
 -------------------------------------------------------------------------------}
 
-type LedgerDBHandle :: (Type -> Type) -> (Type -> Type) -> Type -> Type
+type LedgerDBHandle :: (Type -> Type) -> StateKind -> Type -> Type
 newtype LedgerDBHandle m l blk
   = LDBHandle (StrictTVar m (LedgerDBState m l blk))
   deriving Generic
@@ -495,7 +495,7 @@ data LedgerDBState m l blk
 deriving instance
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , NoThunks (l blk)
+  , NoThunks (l blk EmptyMK)
   , NoThunks (LedgerCfg l blk)
   ) =>
   NoThunks (LedgerDBState m l blk)
@@ -703,7 +703,8 @@ implForkerClose env = do
 
 newForker ::
   ( IOLike m
-  , NoThunks (l blk)
+  , BlockSupportsUTxOHD blk
+  , NoThunks (l blk EmptyMK)
   , GetTip (l blk)
   , StandardHash (l blk)
   ) =>
