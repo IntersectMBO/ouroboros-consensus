@@ -41,8 +41,6 @@ let
     } // lib.optionalAttrs noCross {
       devShell =
         import ./shell.nix { inherit inputs pkgs hsPkgs; };
-      devShellIPE =
-        import ./shell.nix { inherit inputs pkgs; hsPkgs = hsPkgs.projectVariants.ipe; };
     };
 
   isLinux = buildSystem == "x86_64-linux";
@@ -57,12 +55,15 @@ let
       inherit (pkgs) cabal-docspec-check consensus-pdfs agda-spec;
 
       # also test latest GHC, but only on Linux to reduce CI load
-      haskell914 = mkHaskellJobsFor { } pkgs.hsPkgs.projectVariants.ghc914;
-    };
-  } // lib.optionalAttrs isLinux {
-    windows = {
-      # On the Windows cross we only build the distributed executables.
-      haskell914 = mkHaskellJobsFor { exesOnly = true; } pkgs.hsPkgs.projectVariants.ghc914.projectCross.ucrt64;
+      haskell914 = mkHaskellJobsFor { } pkgs.hsPkgs.projectVariants.ghc914 // {
+        devShellIPE =
+          import ./shell.nix { inherit inputs pkgs; hsPkgs = pkgs.hsPkgs.projectVariants.ghc914.projectVariants.ipe; };
+      };
+    } // lib.optionalAttrs isLinux {
+      windows = {
+        # On the Windows cross we only build the distributed executables.
+        haskell914 = mkHaskellJobsFor { exesOnly = true; } pkgs.hsPkgs.projectVariants.ghc914.projectCross.ucrt64;
+      };
     };
   });
 
