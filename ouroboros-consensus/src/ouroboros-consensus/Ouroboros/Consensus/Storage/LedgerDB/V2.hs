@@ -633,7 +633,6 @@ openNewForkerAtTarget ::
   ( HeaderHash (l blk) ~ HeaderHash blk
   , IOLike m
   , IsLedger l blk
-  , BlockSupportsUTxOHD blk
   , LedgerSupportsProtocol blk
   , StandardHash (l blk)
   ) =>
@@ -654,7 +653,6 @@ openNewForkerWithRangeAtTarget ::
   ( HeaderHash (l blk) ~ HeaderHash blk
   , IOLike m
   , IsLedger l blk
-  , BlockSupportsUTxOHD blk
   , LedgerSupportsProtocol blk
   , StandardHash (l blk)
   ) =>
@@ -676,7 +674,6 @@ withForkerByRollback ::
   , IOLike m
   , IsLedger l blk
   , StandardHash (l blk)
-  , BlockSupportsUTxOHD blk
   , LedgerSupportsProtocol blk
   ) =>
   LedgerDBHandle m l blk ->
@@ -706,7 +703,6 @@ implForkerClose env = do
 
 newForker ::
   ( IOLike m
-  , BlockSupportsUTxOHD blk
   , NoThunks (l blk)
   , GetTip (l blk)
   , StandardHash (l blk)
