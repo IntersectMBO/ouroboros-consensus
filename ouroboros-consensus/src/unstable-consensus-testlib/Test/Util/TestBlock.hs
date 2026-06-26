@@ -210,8 +210,8 @@ newtype TestHash = UnsafeTestHash
 
 pattern TestHash :: NonEmpty Word64 -> TestHash
 pattern TestHash path <- UnsafeTestHash path
-  where
-    TestHash path = UnsafeTestHash (force path)
+ where
+  TestHash path = UnsafeTestHash (force path)
 
 {-# COMPLETE TestHash #-}
 
