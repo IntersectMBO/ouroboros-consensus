@@ -78,11 +78,15 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Peras.Context
-  ( IsPerasEpochContextResolver (..)
-  , PerasEpochContextNotFoundForRound
+  ( PerasEpochContextNotFoundForRound
   , PerasEpochContextResolver
   , PerasEpochContextResolverHandle (..)
   , StateSupportsPerasEpochContext (..)
+  , absorbErrorIntoResolver
+  , advancePerasEpochContextResolverWithBoundedEpochContext
+  , errorIntoResolver
+  , initPerasEpochContextResolverWithBoundedEpochContext
+  , resolveRoundNo
   )
 import Ouroboros.Consensus.Peras.Time
   ( EpochToPerasRoundInfo
@@ -361,7 +365,6 @@ applyHelper ::
   forall blk.
   ( HasCallStack
   , LedgerSupportsProtocol blk
-  , StateSupportsPerasEpochContext blk
   , BlockSupportsPeras blk
   ) =>
   ( HasCallStack =>
@@ -428,9 +431,7 @@ applyHelper f opts cfg blk TickedExtLedgerState{..} = do
 -- | Validate a given Peras certificate and extract its round number.
 validatePerasCertAndExtractRoundNo ::
   forall blk.
-  ( BlockSupportsPeras blk
-  , StateSupportsPerasEpochContext blk
-  ) =>
+  BlockSupportsPeras blk =>
   PerasEpochContextResolver blk ->
   PerasCert blk ->
   Except (LedgerErr ExtLedgerState blk) PerasRoundNo

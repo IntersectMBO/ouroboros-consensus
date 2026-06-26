@@ -103,7 +103,6 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext (..)
-  , V1PerasEpochContextResolver
   )
 import Ouroboros.Consensus.Peras.Time
   ( EpochToPerasRoundInfo
@@ -362,8 +361,6 @@ instance
   ) =>
   StateSupportsPerasEpochContext (HardForkBlock xs)
   where
-  type PerasEpochContextResolver (HardForkBlock xs) = V1PerasEpochContextResolver (HardForkBlock xs)
-
   type
     MaybeEraIndexedEpochToPerasRoundInfo (HardForkBlock xs) =
       EraIndexed (HardForkBlock xs) EpochToPerasRoundInfo
