@@ -67,8 +67,8 @@ import Ouroboros.Consensus.Block.Abstract
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util ((...:))
-import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.CBOR (unpackEither)
+import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   On-disk table vocabulary

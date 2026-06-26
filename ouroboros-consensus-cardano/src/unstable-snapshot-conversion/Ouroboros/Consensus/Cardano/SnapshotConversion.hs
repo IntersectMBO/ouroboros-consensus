@@ -31,10 +31,10 @@ import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node ()
 import Ouroboros.Consensus.Cardano.StreamingLedgerTables
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM

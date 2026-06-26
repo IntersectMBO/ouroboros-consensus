@@ -93,7 +93,6 @@ import Ouroboros.Consensus.HeaderStateHistory
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Util ((..:))
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
@@ -113,6 +112,7 @@ import Ouroboros.Consensus.Storage.PerasVoteDB.API
   , PerasVoteTicketNo
   )
 import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Util ((..:))
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike

@@ -173,8 +173,8 @@ pattern DegenLedgerState ::
   LedgerState b ->
   LedgerState (HardForkBlock '[b])
 pattern DegenLedgerState x <- (project -> x)
-  where
-    DegenLedgerState x = inject x
+ where
+  DegenLedgerState x = inject x
 
 {-------------------------------------------------------------------------------
   Dealing with the config

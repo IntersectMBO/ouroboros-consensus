@@ -23,10 +23,6 @@ module Test.Consensus.Cardano.Translation (tests) where
 
 import qualified Cardano.Chain.Block as Byron
 import qualified Cardano.Chain.UTxO as Byron
-import Codec.CBOR.Decoding (decodeListLenOf)
-import Codec.CBOR.Encoding (encodeListLen)
-import qualified Codec.CBOR.Read as CBOR
-import qualified Codec.CBOR.Write as CBOR
 import Cardano.Ledger.Alonzo ()
 import Cardano.Ledger.BaseTypes (TxIx (..))
 import qualified Cardano.Ledger.Core as Core
@@ -42,6 +38,10 @@ import Cardano.Ledger.Shelley.Translation
 import Cardano.Ledger.Shelley.UTxO (UTxO (..))
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Cardano.Slotting.Slot (EpochNo (..))
+import Codec.CBOR.Decoding (decodeListLenOf)
+import Codec.CBOR.Encoding (encodeListLen)
+import qualified Codec.CBOR.Read as CBOR
+import qualified Codec.CBOR.Write as CBOR
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.Map.Strict as Map
 import Data.SOP.InPairs (RequiringBoth (..), provideBoth)
@@ -388,33 +388,33 @@ testUtxoUpgradeTranslation propLabel translateWithConfig valuesTranslation =
   testProperty propLabel $
     \(ts :: TestSetup (ShelleyBlock srcProto srcEra) (ShelleyBlock dstProto dstEra))
      (srcNes :: NewEpochState srcEra) ->
-    let TestSetup{tsSrcLedgerConfig, tsDestLedgerConfig, tsSrcLedgerState, tsEpochNo} = ts
-        translation :: TranslateLedgerState (ShelleyBlock srcProto srcEra) (ShelleyBlock dstProto dstEra)
-        translation =
-          provideBoth
-            translateWithConfig
-            (WrapLedgerConfig tsSrcLedgerConfig)
-            (WrapLedgerConfig tsDestLedgerConfig)
-        -- The consensus state translation must emit no UTxO table diff.
-        destDiff :: Diff (ShelleyBlock dstProto dstEra)
-        destDiff = snd $ translateLedgerStateWith translation tsEpochNo tsSrcLedgerState
-        -- Inject a populated UTxO, translate, eject.
-        (_, srcValues) = splitUTxO srcNes
-        dstNes :: NewEpochState dstEra
-        dstNes = Core.translateEra' (shelleyLedgerTranslationContext tsDestLedgerConfig) srcNes
-        (_, dstValues) = splitUTxO dstNes
-        expected = Map.map Core.upgradeTxOut srcValues
-     in checkCoverage $
-          cover 50 (not (Map.null srcValues)) "UTxO set is not empty" $
-            conjoin
-              [ -- The consensus state translation emits no table diff here.
-                property (Diff.null destDiff)
-              , -- The ledger's era translation upgrades the UTxO entries.
-                dstValues === expected
-              , -- The production on-disk value translation does the same: this
-                -- is the path the node uses to promote values across the era.
-                translateValuesWith valuesTranslation srcValues === expected
-              ]
+        let TestSetup{tsSrcLedgerConfig, tsDestLedgerConfig, tsSrcLedgerState, tsEpochNo} = ts
+            translation :: TranslateLedgerState (ShelleyBlock srcProto srcEra) (ShelleyBlock dstProto dstEra)
+            translation =
+              provideBoth
+                translateWithConfig
+                (WrapLedgerConfig tsSrcLedgerConfig)
+                (WrapLedgerConfig tsDestLedgerConfig)
+            -- The consensus state translation must emit no UTxO table diff.
+            destDiff :: Diff (ShelleyBlock dstProto dstEra)
+            destDiff = snd $ translateLedgerStateWith translation tsEpochNo tsSrcLedgerState
+            -- Inject a populated UTxO, translate, eject.
+            (_, srcValues) = splitUTxO srcNes
+            dstNes :: NewEpochState dstEra
+            dstNes = Core.translateEra' (shelleyLedgerTranslationContext tsDestLedgerConfig) srcNes
+            (_, dstValues) = splitUTxO dstNes
+            expected = Map.map Core.upgradeTxOut srcValues
+         in checkCoverage $
+              cover 50 (not (Map.null srcValues)) "UTxO set is not empty" $
+                conjoin
+                  [ -- The consensus state translation emits no table diff here.
+                    property (Diff.null destDiff)
+                  , -- The ledger's era translation upgrades the UTxO entries.
+                    dstValues === expected
+                  , -- The production on-disk value translation does the same: this
+                    -- is the path the node uses to promote values across the era.
+                    translateValuesWith valuesTranslation srcValues === expected
+                  ]
 
 -- | Assert only that a boundary's on-disk value translation upgrades each
 -- 'TxOut' (the 'TxIn' key is era-stable). Unlike 'testUtxoUpgradeTranslation'
@@ -461,26 +461,26 @@ testValuesRoundtrip propLabel =
   testProperty propLabel $
     \(nes :: NewEpochState era)
      (st :: LedgerState (ShelleyBlock proto era)) ->
-      let values = snd (splitUTxO nes)
-          -- V2: the bare map that writers now emit.
-          v2 =
-            CBOR.deserialiseFromBytes
-              (decodeValues @(ShelleyBlock proto era) st)
-              (CBOR.toLazyByteString (encodeValues @(ShelleyBlock proto era) values))
-          -- V1: the legacy one-element-list wrapper, read by consuming the list
-          -- header first (mirrors 'loadSnapshot's TablesCodecVersion1 path).
-          v1 =
-            CBOR.deserialiseFromBytes
-              (decodeListLenOf 1 *> decodeValues @(ShelleyBlock proto era) st)
-              (CBOR.toLazyByteString (encodeListLen 1 <> encodeValues @(ShelleyBlock proto era) values))
-          ok lbl res = case res of
-            Right (leftover, decoded) ->
-              counterexample (lbl <> ": leftover bytes after decoding") (Lazy.null leftover)
-                .&&. counterexample lbl (decoded === values)
-            Left err -> counterexample (lbl <> ": " <> show err) (property False)
-       in checkCoverage $
-            cover 50 (not (Map.null values)) "UTxO set is not empty" $
-              conjoin [ok "V2" v2, ok "V1" v1]
+        let values = snd (splitUTxO nes)
+            -- V2: the bare map that writers now emit.
+            v2 =
+              CBOR.deserialiseFromBytes
+                (decodeValues @(ShelleyBlock proto era) st)
+                (CBOR.toLazyByteString (encodeValues @(ShelleyBlock proto era) values))
+            -- V1: the legacy one-element-list wrapper, read by consuming the list
+            -- header first (mirrors 'loadSnapshot's TablesCodecVersion1 path).
+            v1 =
+              CBOR.deserialiseFromBytes
+                (decodeListLenOf 1 *> decodeValues @(ShelleyBlock proto era) st)
+                (CBOR.toLazyByteString (encodeListLen 1 <> encodeValues @(ShelleyBlock proto era) values))
+            ok lbl res = case res of
+              Right (leftover, decoded) ->
+                counterexample (lbl <> ": leftover bytes after decoding") (Lazy.null leftover)
+                  .&&. counterexample lbl (decoded === values)
+              Left err -> counterexample (lbl <> ": " <> show err) (property False)
+         in checkCoverage $
+              cover 50 (not (Map.null values)) "UTxO set is not empty" $
+                conjoin [ok "V2" v2, ok "V1" v1]
 
 {-------------------------------------------------------------------------------
     Specific predicates

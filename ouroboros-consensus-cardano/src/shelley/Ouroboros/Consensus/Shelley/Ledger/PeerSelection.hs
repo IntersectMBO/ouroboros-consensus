@@ -40,15 +40,15 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
         SL.queryStakePoolRelays (shelleyLedgerState st)
 
     relayToLedgerRelayAccessPoint :: SL.StakePoolRelay -> Maybe LedgerRelayAccessPoint
-    relayToLedgerRelayAccessPoint (SL.SingleHostAddr (SJust (Port port)) (SJust ipv4) _) =
-      Just $ LedgerRelayAccessAddress (IPv4 (unIPv4 ipv4)) (fromIntegral port)
+    relayToLedgerRelayAccessPoint (SL.SingleHostAddr (SJust (Port port)) (SJust ip4) _) =
+      Just $ LedgerRelayAccessAddress (IPv4 (unIPv4 ip4)) (fromIntegral port)
     relayToLedgerRelayAccessPoint
       ( SL.SingleHostAddr
           (SJust (Port port))
           SNothing
-          (SJust ipv6)
+          (SJust ip6)
         ) =
-        Just $ LedgerRelayAccessAddress (IPv6 (unIPv6 ipv6)) (fromIntegral port)
+        Just $ LedgerRelayAccessAddress (IPv6 (unIPv6 ip6)) (fromIntegral port)
     -- no IP address or no port number
     relayToLedgerRelayAccessPoint (SL.SingleHostAddr SNothing _ _) = Nothing
     relayToLedgerRelayAccessPoint (SL.SingleHostAddr _ SNothing _) = Nothing

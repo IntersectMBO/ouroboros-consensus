@@ -69,6 +69,9 @@ import Data.Maybe
 import Data.MemPack
 import qualified Data.Primitive as P
 import qualified Data.Primitive.ByteArray as PBA
+import Data.SOP.BasicFunctors
+import Data.SOP.Index (Index, hcimap, injectNS)
+import Data.SOP.Strict (hcmap, hcollapse)
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text as Text
@@ -81,9 +84,6 @@ import Database.LSMTree (Salt, Session, Table)
 import qualified Database.LSMTree as LSM
 import GHC.Generics
 import NoThunks.Class
-import Data.SOP.BasicFunctors
-import Data.SOP.Index (Index, hcimap, injectNS)
-import Data.SOP.Strict (hcmap, hcollapse)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
   ( CanHardFork
@@ -99,33 +99,33 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( RangeQueryPrevious (..)
   , RangeReadTables
   )
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.TypeFamilyWrappers
   ( WrapDiff (..)
   , WrapKeys (..)
   , WrapValues (..)
   )
-import Ouroboros.Consensus.Storage.LedgerDB.Args
-import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util (chunks, whenJust)
+import Ouroboros.Consensus.Util.CBOR (unpackEither)
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.CBOR (unpackEither)
 import qualified Streaming as S
 import qualified Streaming.Prelude as S
 import qualified System.Directory as D
 import System.FS.API
 import System.FS.API.Lazy (hGetAll, hPutAll)
-import System.FS.CRC (CRC)
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
 import qualified System.FS.IO as FS
+import System.FS.CRC (CRC)
 import System.FilePath
   ( makeRelative
   , splitDirectories
@@ -967,7 +967,9 @@ sinkLsmS writeChunkSize (SomeHasFS hfs) ds session afterSave _st stream = do
   writeToTable lsmTable accUTxOs =
     LSM.inserts lsmTable $
       V.fromList
-        [(toTxInBytes (Proxy @blk) txin, toTxOutBytes (Proxy @blk) txout, Nothing) | (txin, txout) <- accUTxOs]
+        [ (toTxInBytes (Proxy @blk) txin, toTxOutBytes (Proxy @blk) txout, Nothing)
+        | (txin, txout) <- accUTxOs
+        ]
 
   go utxosSize lsmTable 0 accUTxOs stream' = do
     lift $ writeToTable lsmTable accUTxOs

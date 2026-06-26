@@ -252,14 +252,14 @@ apply ::
   )
     blk
 apply doValidate opts index (WrapLedgerConfig cfg) (Pair (Pair (I block) (WrapValues values)) tickedSt) =
-  Comp $
-    withExcept (injectLedgerError index) $
-      fmap
-        ( Comp
-            . fmap (\(st', diff) -> Pair st' (WrapDiff diff))
-            . embedLedgerResult (injectLedgerEvent index)
-        )
-        $ applyBlockLedgerResultWithValidation doValidate opts cfg block values tickedSt
+  Comp
+    $ withExcept (injectLedgerError index)
+    $ fmap
+      ( Comp
+          . fmap (\(st', diff) -> Pair st' (WrapDiff diff))
+          . embedLedgerResult (injectLedgerEvent index)
+      )
+    $ applyBlockLedgerResultWithValidation doValidate opts cfg block values tickedSt
 
 {-------------------------------------------------------------------------------
   UpdateLedger

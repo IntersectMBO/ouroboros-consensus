@@ -38,13 +38,13 @@ import Ouroboros.Consensus.Cardano.Block
   )
 import Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints)
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.TypeFamilyWrappers (WrapValues (..))
 import Ouroboros.Consensus.Ledger.Basics
   ( LedgerConfig
   , Values
   )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Shelley.Ledger (mkShelleyTx)
+import Ouroboros.Consensus.TypeFamilyWrappers (WrapValues (..))
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL (mkWitnessVKey)
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import Test.ThreadNet.TxGen
@@ -250,4 +250,3 @@ migrateUTxO migrationInfo _curSlot _lcfg values
       , SL.sppRelays = StrictSeq.empty
       , SL.sppVrf = Shelley.mkKeyHashVrf @c vrfSK
       }
-
