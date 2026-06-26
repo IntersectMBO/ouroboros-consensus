@@ -32,6 +32,7 @@ import Data.SOP.Match
 import Data.SOP.Strict
 import qualified Data.Text as Text
 import Data.Void
+import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Combinator.Info
@@ -49,7 +50,6 @@ import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.Serialisation
-import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
@@ -75,15 +75,18 @@ class
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsMetrics blk
   , SerialiseNodeToClient blk (PartialLedgerConfig blk)
-  , -- LedgerTables
-    CanStowLedgerTables (LedgerState blk)
-  , HasLedgerTables LedgerState blk
-  , HasLedgerTables (Ticked LedgerState) blk
+  , -- UTxO-HD: each era supports the opaque table surface
+    BlockSupportsUTxOHD blk
+  , SingleEraUTxOHDBlock blk
+  , SingleEraBlockSupportsUTxOHD blk
   , -- Instances required to support testing
     Eq (GenTx blk)
   , Eq (Validated (GenTx blk))
   , Eq (ApplyTxErr blk)
   , Show blk
+  , Show (LedgerState blk)
+  , Eq (LedgerState blk)
+  , NoThunks (LedgerState blk)
   , Show (Header blk)
   , Show (CannotForge blk)
   , Show (ForgeStateInfo blk)
@@ -106,7 +109,7 @@ class
     EraParams ->
     -- | Start of this era
     Bound ->
-    LedgerState blk mk ->
+    LedgerState blk ->
     Maybe EpochNo
 
   -- | Era information (for use in error messages)
@@ -120,7 +123,7 @@ singleEraTransition' ::
   WrapPartialLedgerConfig blk ->
   EraParams ->
   Bound ->
-  LedgerState blk mk ->
+  LedgerState blk ->
   Maybe EpochNo
 singleEraTransition' = singleEraTransition . unwrapPartialLedgerConfig
 

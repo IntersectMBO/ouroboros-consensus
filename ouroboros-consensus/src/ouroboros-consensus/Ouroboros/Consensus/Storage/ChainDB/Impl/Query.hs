@@ -59,7 +59,6 @@ import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
-import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Peras.Weight
@@ -284,11 +283,11 @@ getMaxSlotNo CDB{..} = do
   return $ curChainMaxSlotNo `max` volatileDbMaxSlotNo `max` queuedMaxSlotNo
 
 -- | Get current ledger
-getCurrentLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk EmptyMK)
+getCurrentLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk)
 getCurrentLedger CDB{..} = LedgerDB.getVolatileTip cdbLedgerDB
 
 -- | Get the immutable ledger, i.e., typically @k@ blocks back.
-getImmutableLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk EmptyMK)
+getImmutableLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk)
 getImmutableLedger CDB{..} = LedgerDB.getImmutableTip cdbLedgerDB
 
 -- | Get the ledger for the given point.
@@ -299,7 +298,7 @@ getImmutableLedger CDB{..} = LedgerDB.getImmutableTip cdbLedgerDB
 getPastLedger ::
   ChainDbEnv m blk ->
   Point blk ->
-  STM m (Maybe (ExtLedgerState blk EmptyMK))
+  STM m (Maybe (ExtLedgerState blk))
 getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 
 allocInRegistryReadOnlyForkerAtPoint ::
@@ -307,16 +306,31 @@ allocInRegistryReadOnlyForkerAtPoint ::
   ChainDbEnv m blk ->
   Target (Point blk) ->
   ResourceRegistry m ->
-  m (Either LedgerDB.GetForkerError (ResourceKey m, LedgerDB.ReadOnlyForker' m blk))
+  m
+    ( Either
+        LedgerDB.GetForkerError
+        (ResourceKey m, LedgerDB.ReadOnlyForker' m blk, LedgerDB.EraRangeReaderProvider m blk)
+    )
 allocInRegistryReadOnlyForkerAtPoint cdb tgt rr = do
   (rk, forker) <-
     allocate
       rr
-      (\_ -> openReadOnlyForkerAtPoint cdb tgt)
-      (either (const $ pure ()) LedgerDB.roforkerClose)
+      (\_ -> openReadOnlyForkerWithRangeAtPoint cdb tgt)
+      (either (const $ pure ()) (LedgerDB.roforkerClose . fst))
   case forker of
     Left err -> void (release rk) >> pure (Left err)
-    Right v -> pure (Right (rk, v))
+    Right (frk, prov) -> pure (Right (rk, frk, prov))
+
+openReadOnlyForkerWithRangeAtPoint ::
+  ChainDbEnv m blk ->
+  Target (Point blk) ->
+  m
+    ( Either
+        LedgerDB.GetForkerError
+        (LedgerDB.ReadOnlyForker' m blk, LedgerDB.EraRangeReaderProvider m blk)
+    )
+openReadOnlyForkerWithRangeAtPoint CDB{..} =
+  LedgerDB.getReadOnlyForkerWithRangeAtPoint cdbLedgerDB
 
 openReadOnlyForkerAtPoint ::
   IOLike m =>

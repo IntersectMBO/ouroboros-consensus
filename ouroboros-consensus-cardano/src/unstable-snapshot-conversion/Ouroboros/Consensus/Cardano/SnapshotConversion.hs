@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -35,6 +34,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
@@ -88,6 +88,7 @@ data Error blk
   | BadDirectoryName FilePath
   | WrongSlotDirectoryName FilePath SlotNo
   | SnapshotAtGenesis
+  | SnapshotAtByronEra
   | InvalidMetadata String
   | BackendMismatch SnapshotBackend SnapshotBackend
   | CRCMismatch CRC CRC
@@ -98,6 +99,8 @@ data Error blk
 instance StandardHash blk => Show (Error blk) where
   show SnapshotAtGenesis =
     "The provided snapshot is at Genesis. This should be impossible, the cardano-node will never create those!"
+  show SnapshotAtByronEra =
+    "The provided snapshot is in the Byron era, which carries no UTxO-HD ledger tables to convert."
   show (SnapshotError err) =
     "Couldn't deserialize the snapshot. Are you running the same node version that created the snapshot? "
       <> show err
@@ -141,36 +144,15 @@ instance StandardHash blk => Show (Error blk) where
   Environments
 -------------------------------------------------------------------------------}
 
-data InEnv backend = InEnv
-  { inState :: LedgerState (CardanoBlock StandardCrypto) EmptyMK
-  -- ^ Ledger state (without tables) that will be used to index the snapshot.
-  , inStream :: IO (SomeBackend YieldArgs)
-  -- ^ Yield arguments for producing a stream of TxOuts
-  , inProgressMsg :: String
-  -- ^ A progress message (just for displaying)
-  , inCRC :: CRC
-  -- ^ The CRC of the input @state@ file as read
-  , inSnapReadCRC :: Maybe CRC
-  -- ^ The CRC of the input snapshot from the metadata file
-  }
-
-data OutEnv backend = OutEnv
-  { outStream :: IO (SomeBackend SinkArgs)
-  -- ^ Sink arguments for consuming a stream of TxOuts
-  , outProgressMsg :: String
-  -- ^ A progress message (just for displaying)
-  , outBackend :: SnapshotBackend
-  -- ^ The backend used for the output snapshot, to write it in the metadata
-  }
-
-data SomeBackend c where
+-- | A backend (in-memory or LSM) packed with its 'StreamingBackend' dictionary,
+-- at the single era @x@ that the snapshot's tables live in (see
+-- 'withCardanoCurrentEra'). The backend itself (@Mem@\/@LSM@) is existential;
+-- the era @x@ is fixed by the enclosing era scope so the input and output
+-- backends agree on the entry type streamed between them.
+data SomeBackend x c where
   SomeBackend ::
-    StreamingBackend IO backend LedgerState (CardanoBlock StandardCrypto) =>
-    c IO backend LedgerState (CardanoBlock StandardCrypto) -> SomeBackend c
-
-instance NoThunks (SomeBackend c) where
-  wNoThunks _ (SomeBackend _) = pure Nothing
-  showTypeOf _ = "SomeBackend"
+    StreamingBackend IO backend LedgerState x =>
+    c IO backend LedgerState x -> SomeBackend x c
 
 convertSnapshot ::
   Bool ->
@@ -179,9 +161,10 @@ convertSnapshot ::
   Snapshot ->
   ExceptT (Error (CardanoBlock StandardCrypto)) IO ()
 convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
-  InEnv{..} <- getInEnv
-
-  OutEnv{..} <- getOutEnv inState
+  inSnapReadCRC <- getMetadata inSnap inExpectedBackend
+  (inState, inCRC) <- getState inSnap
+  checkSnapSlot inState inSnap
+  checkSnapSlot inState outSnap
 
   wipePath interactive (getSnapshotDir outSnapDir F.</> snapshotToDirName outSnap)
 
@@ -198,30 +181,34 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       then lift $ niceAnimatedProgressBar inProgressMsg outProgressMsg
       else pure Nothing
 
-  eRes <- lift $ runExceptT (stream inState inStream outStream)
+  -- The snapshot's UTxO tables live in the era at its tip; stream both the
+  -- input and output at that single era. A Byron tip has no UTxO-HD tables.
+  (mCRCIn, mCRCOut) <-
+    withCardanoCurrentEra inState (throwError SnapshotAtByronEra) $ \_idx stEra proj -> do
+      eRes <- lift $ runExceptT (stream stEra (mkInStream stEra proj) (mkOutStream stEra))
+      case eRes of
+        Left err -> throwError $ ReadTablesError err
+        Right res -> pure res
 
-  case eRes of
-    Left err -> throwError $ ReadTablesError err
-    Right (mCRCIn, mCRCOut) -> do
-      lift $ maybe (pure ()) cancel tid
-      when interactive $ lift $ clearLine >> restoreCursor >> cursorUp 1 >> putColored Green True "Done"
-      let crcIn = maybe inCRC (crcOfConcat inCRC) mCRCIn
-      when interactive $
-        maybe
-          ( lift $
-              putColored Yellow True "The metadata file is missing, the snapshot is not guaranteed to be correct!"
-          )
-          ( \cs ->
-              Monad.when (cs /= crcIn) $ throwError $ CRCMismatch cs crcIn
-          )
-          inSnapReadCRC
+  lift $ maybe (pure ()) cancel tid
+  when interactive $ lift $ clearLine >> restoreCursor >> cursorUp 1 >> putColored Green True "Done"
+  let crcIn = maybe inCRC (crcOfConcat inCRC) mCRCIn
+  when interactive $
+    maybe
+      ( lift $
+          putColored Yellow True "The metadata file is missing, the snapshot is not guaranteed to be correct!"
+      )
+      ( \cs ->
+          Monad.when (cs /= crcIn) $ throwError $ CRCMismatch cs crcIn
+      )
+      inSnapReadCRC
 
-      let crcOut = maybe inCRC (crcOfConcat inCRC) mCRCOut
+  let crcOut = maybe inCRC (crcOfConcat inCRC) mCRCOut
 
-      when interactive $ lift $ putStr "Generating new metadata file..." >> hFlush stdout
-      lift $ putMetadata (SnapshotMetadata outBackend crcOut TablesCodecVersion1)
+  when interactive $ lift $ putStr "Generating new metadata file..." >> hFlush stdout
+  lift $ putMetadata (SnapshotMetadata outBackend crcOut TablesCodecVersion2)
 
-      when interactive $ lift $ putColored Green True "Done"
+  when interactive $ lift $ putColored Green True "Done"
  where
   inSnap, outSnap :: DiskSnapshot
   inSnap = snapshotDiskSnapshot from
@@ -244,7 +231,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
     ExceptT
       (Error (CardanoBlock StandardCrypto))
       IO
-      (LedgerState (CardanoBlock StandardCrypto) EmptyMK, CRC)
+      (LedgerState (CardanoBlock StandardCrypto), CRC)
   getState ds = do
     eState <- lift $ do
       when interactive $ putStr $ "Reading ledger state from " <> snapshotToDirName ds <> "..."
@@ -284,7 +271,7 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
     writeSnapshotMetadata outSomeHasFS outSnap bknd
 
   checkSnapSlot ::
-    LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
+    LedgerState (CardanoBlock StandardCrypto) ->
     DiskSnapshot ->
     ExceptT (Error (CardanoBlock StandardCrypto)) IO ()
   checkSnapSlot st ds =
@@ -297,77 +284,82 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       )
       (pointSlot $ getTip st)
 
-  -- Produce an InEnv from the given arguments
-  getInEnv :: ExceptT (Error (CardanoBlock StandardCrypto)) IO (InEnv backend)
-  getInEnv = case from of
-    Snapshot (StandaloneSnapshot _ Mem) _ -> do
-      metadataCrc <- getMetadata inSnap UTxOHDMemSnapshot
-      (st, c) <- getState inSnap
-      checkSnapSlot st inSnap
-      pure $
-        InEnv
-          st
-          (pure $ SomeBackend $ mkInMemYieldArgs inSomeHasFS inSnap st)
-          ("InMemory@[" <> snapshotToDirName inSnap <> "]")
-          c
-          metadataCrc
-    Snapshot (ExportedLSMSnapshot _ (getExportedSnapshotPath -> exportDir)) _ -> do
-      metadataCrc <- getMetadata inSnap UTxOHDLSMSnapshot
-      (st, c) <- getState inSnap
-      checkSnapSlot st inSnap
-      pure $
-        InEnv
-          st
-          (SomeBackend <$> mkExportedLSMYieldArgs exportDir inSnap stdMkBlockIOFS newStdGen)
-          ("LSM (exported)@[" <> exportDir <> "]")
-          c
-          metadataCrc
+  -- The expected backend of the input snapshot (to validate its metadata).
+  inExpectedBackend :: SnapshotBackend
+  inExpectedBackend = case from of
+    Snapshot (StandaloneSnapshot _ Mem) _ -> UTxOHDMemSnapshot
+    Snapshot ExportedLSMSnapshot{} _ -> UTxOHDLSMSnapshot
 
-  -- Produce an OutEnv from the given arguments
-  getOutEnv ::
-    LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-    ExceptT (Error (CardanoBlock StandardCrypto)) IO (OutEnv backend)
-  getOutEnv st = case to of
+  -- The backend to record for the output snapshot's metadata.
+  outBackend :: SnapshotBackend
+  outBackend = case to of
+    Snapshot (StandaloneSnapshot _ Mem) _ -> UTxOHDMemSnapshot
+    Snapshot ExportedLSMSnapshot{} _ -> UTxOHDLSMSnapshot
+
+  inProgressMsg, outProgressMsg :: String
+  inProgressMsg = case from of
+    Snapshot (StandaloneSnapshot _ Mem) _ -> "InMemory@[" <> snapshotToDirName inSnap <> "]"
+    Snapshot (ExportedLSMSnapshot _ (getExportedSnapshotPath -> exportDir)) _ ->
+      "LSM (exported)@[" <> exportDir <> "]"
+  outProgressMsg = case to of
+    Snapshot (StandaloneSnapshot _ Mem) _ -> "InMemory@[" <> snapshotToDirName outSnap <> "]"
+    Snapshot (ExportedLSMSnapshot _ (getExportedSnapshotPath -> exportDir)) _ ->
+      "LSM (exported)@[" <> exportDir <> "]"
+
+  -- Build the input (yield) backend at the snapshot's tip era. The LSM handle is
+  -- opened at the hard-fork block and 'readRange' projects it onto the era @blk@.
+  mkInStream ::
+    StreamableEra proto era =>
+    LedgerState (ShelleyBlock proto era) ->
+    (Values (CardanoBlock StandardCrypto) -> Values (ShelleyBlock proto era)) ->
+    IO (SomeBackend (ShelleyBlock proto era) YieldArgs)
+  mkInStream stEra proj = case from of
     Snapshot (StandaloneSnapshot _ Mem) _ -> do
-      checkSnapSlot st outSnap
-      pure $
-        OutEnv
-          (pure $ SomeBackend $ mkInMemSinkArgs outSomeHasFS outSnap st)
-          ("InMemory@[" <> snapshotToDirName outSnap <> "]")
-          UTxOHDMemSnapshot
-    Snapshot (ExportedLSMSnapshot _ (ExportedSnapshotPath exportDir)) _ -> do
-      checkSnapSlot st outSnap
-      pure $
-        OutEnv
-          ( SomeBackend
-              <$> mkExportedLSMSinkArgs
-                exportDir
-                outSnap
-                outSomeHasFS
-                stdMkBlockIOFS
-                newStdGen
-          )
-          ("LSM (exported)@[" <> exportDir <> "]")
-          UTxOHDLSMSnapshot
+      -- Read the input snapshot's on-disk values codec version so we can read
+      -- both the legacy list-wrapped (V1) and the bare-map (V2) framings. If
+      -- the metadata is missing, assume the current (V2) framing.
+      inVersion <-
+        either (const TablesCodecVersion2) snapshotTablesCodecVersion
+          <$> runExceptT (loadSnapshotMetadata inSomeHasFS inSnap)
+      pure $ SomeBackend $ mkInMemYieldArgs inVersion inSomeHasFS inSnap stEra
+    Snapshot (ExportedLSMSnapshot _ (getExportedSnapshotPath -> exportDir)) _ ->
+      SomeBackend
+        <$> mkExportedLSMYieldArgs @(CardanoBlock StandardCrypto) proj exportDir inSnap stdMkBlockIOFS newStdGen
+
+  -- Build the output (sink) backend at the snapshot's tip era.
+  mkOutStream ::
+    StreamableEra proto era =>
+    LedgerState (ShelleyBlock proto era) ->
+    IO (SomeBackend (ShelleyBlock proto era) SinkArgs)
+  mkOutStream stEra = case to of
+    Snapshot (StandaloneSnapshot _ Mem) _ ->
+      pure $ SomeBackend $ mkInMemSinkArgs outSomeHasFS outSnap stEra
+    Snapshot (ExportedLSMSnapshot _ (ExportedSnapshotPath exportDir)) _ ->
+      SomeBackend
+        <$> mkExportedLSMSinkArgs
+          exportDir
+          outSnap
+          outSomeHasFS
+          stdMkBlockIOFS
+          newStdGen
 
   stream ::
-    LedgerState (CardanoBlock StandardCrypto) EmptyMK ->
-    IO (SomeBackend YieldArgs) ->
-    IO (SomeBackend SinkArgs) ->
+    forall x.
+    LedgerState x ->
+    IO (SomeBackend x YieldArgs) ->
+    IO (SomeBackend x SinkArgs) ->
     ExceptT DeserialiseFailure IO (Maybe CRC, Maybe CRC)
   stream st mYieldArgs mSinkArgs =
     ExceptT $
       bracket
         ((,) <$> mYieldArgs <*> mSinkArgs)
-        ( \( SomeBackend (yArgs :: YieldArgs IO backend1 l (CardanoBlock StandardCrypto))
-             , (SomeBackend (sArgs :: SinkArgs IO backend2 l (CardanoBlock StandardCrypto)))
-             ) -> do
-              releaseYieldArgs yArgs
-              releaseSinkArgs sArgs
+        ( \(SomeBackend yArgs, SomeBackend sArgs) -> do
+            releaseYieldArgs yArgs
+            releaseSinkArgs sArgs
         )
-        ( \( SomeBackend (yArgs :: YieldArgs IO backend1 l (CardanoBlock StandardCrypto))
-             , (SomeBackend (sArgs :: SinkArgs IO backend2 l (CardanoBlock StandardCrypto)))
-             ) -> do
+        ( \( SomeBackend (yArgs :: YieldArgs IO backend1 LedgerState x)
+             , SomeBackend (sArgs :: SinkArgs IO backend2 LedgerState x)
+             ) ->
               runExceptT $ yield (Proxy @backend1) yArgs st $ sink (Proxy @backend2) sArgs st
         )
 

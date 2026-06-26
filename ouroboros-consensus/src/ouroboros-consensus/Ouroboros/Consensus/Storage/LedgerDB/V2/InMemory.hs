@@ -6,7 +6,9 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeData #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -40,7 +42,6 @@ import qualified Data.ByteString as BS
 import Data.ByteString.Builder.Extra (defaultChunkSize)
 import Data.Functor.Identity
 import qualified Data.List as List
-import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.MemPack
 import Data.Void
@@ -49,10 +50,11 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
-import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( RangeQueryPrevious (..)
+  )
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq hiding (tables)
@@ -75,9 +77,7 @@ import Prelude hiding (read)
 newInMemoryLedgerTablesHandle ::
   forall m l blk.
   ( IOLike m
-  , HasLedgerTables l blk
-  , CanUpgradeLedgerTables l blk
-  , SerializeTablesWithHint l blk
+  , BlockSupportsUTxOHD blk
   , StandardHash (l blk)
   , GetTip (l blk)
   ) =>
@@ -85,86 +85,83 @@ newInMemoryLedgerTablesHandle ::
   -- | FileSystem in order to take snapshots
   SomeHasFS m ->
   -- | The tables
-  LedgerTables blk ValuesMK ->
+  Values blk ->
   m (LedgerTablesHandle m l blk)
-newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) tables =
+newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) values =
   encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $
     let h =
           LedgerTablesHandle
             { close = encloseTimedWith (TraceLedgerTablesHandleClose >$< tracer) (pure ())
             , duplicate = encloseTimedWith (TraceLedgerTablesHandleCreate >$< tracer) $ pure h
-            , read = implRead tables
-            , readRange = implReadRange tables
-            , readAll = \_ -> pure tables
-            , duplicateWithDiffs = implDuplicateWithDiffs tracer tables someFS
-            , takeHandleSnapshot = implTakeHandleSnapshot tables hasFS
-            , tablesSize = Map.size . getValuesMK . getLedgerTables $ tables
+            , read = implRead values
+            , readRange = rangeRead
+            , duplicateWithDiffs = implDuplicateWithDiffs tracer values someFS
+            , takeHandleSnapshot = implTakeHandleSnapshot values hasFS
+            , tablesSize = valuesSize @blk values
             }
      in pure h
+ where
+  -- Range-read a bounded page of the current era's values. The values are
+  -- already in RAM, so we project them onto the current era @x@ and page with
+  -- 'rangeReadValues'. See 'RangeReadTables' for the cursor contract.
+  rangeRead ::
+    forall x.
+    SingleEraBlockSupportsUTxOHD x =>
+    (Values blk -> Values x) ->
+    RangeQueryPrevious x ->
+    Int ->
+    m (Values x)
+  rangeRead proj prev count =
+    pure $ fst $ rangeReadValues @x (start, n) (proj values)
+   where
+    (start, n) = case prev of
+      NoPreviousQuery -> (Nothing, count)
+      PreviousQueryWasUpTo k -> (Just k, count)
+      PreviousQueryWasFinal -> (Nothing, 0)
 
 {-# INLINE implRead #-}
-{-# INLINE implReadRange #-}
 {-# INLINE implDuplicateWithDiffs #-}
 {-# INLINE implTakeHandleSnapshot #-}
 
 implRead ::
-  ( IOLike m
-  , HasLedgerTables l blk
-  ) =>
-  LedgerTables blk ValuesMK ->
-  l blk EmptyMK ->
-  LedgerTables blk KeysMK ->
-  m (LedgerTables blk ValuesMK)
-implRead tables _ keys = do
-  pure $ flip (ltliftA2 (\(ValuesMK v) (KeysMK k) -> ValuesMK $ v `Map.restrictKeys` k)) keys tables
-
-implReadRange ::
-  (IOLike m, HasLedgerTables l blk) =>
-  LedgerTables blk ValuesMK ->
-  l blk EmptyMK ->
-  (Maybe (TxIn blk), Int) ->
-  m (LedgerTables blk ValuesMK, Maybe (TxIn blk))
-implReadRange (LedgerTables (ValuesMK m)) _ (f, t) =
-  let m' = Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
-   in pure (LedgerTables (ValuesMK m'), fst <$> Map.lookupMax m')
+  forall m l blk.
+  (IOLike m, BlockSupportsUTxOHD blk) =>
+  Values blk ->
+  l blk ->
+  Keys blk ->
+  m (Values blk)
+implRead values _ keys = pure (restrictValues @blk keys values)
 
 implDuplicateWithDiffs ::
+  forall m l blk.
   ( IOLike m
-  , HasLedgerTables l blk
-  , CanUpgradeLedgerTables l blk
+  , BlockSupportsUTxOHD blk
   , StandardHash (l blk)
   , GetTip (l blk)
-  , SerializeTablesWithHint l blk
   ) =>
   Tracer m LedgerDBV2Trace ->
-  LedgerTables blk ValuesMK ->
+  Values blk ->
   SomeHasFS m ->
-  l blk mk1 ->
-  l blk DiffMK ->
+  Diff blk ->
   m (LedgerTablesHandle m l blk)
-implDuplicateWithDiffs !tracer tables !someFS st0 !diffs = do
-  let newtables =
-        flip
-          (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d)))
-          (projectLedgerTables diffs)
-          . upgradeTables st0 diffs
-          $ tables
-  newInMemoryLedgerTablesHandle tracer someFS newtables
+implDuplicateWithDiffs !tracer values !someFS !diff =
+  newInMemoryLedgerTablesHandle tracer someFS (forward @blk [diff] values)
 
 implTakeHandleSnapshot ::
-  (IOLike m, SerializeTablesWithHint l blk) =>
-  LedgerTables blk ValuesMK ->
+  forall m l blk h.
+  (IOLike m, BlockSupportsUTxOHD blk) =>
+  Values blk ->
   HasFS m h ->
-  l blk EmptyMK ->
+  l blk ->
   String ->
   m (Maybe CRC)
-implTakeHandleSnapshot values hasFS hint snapshotName = do
+implTakeHandleSnapshot values hasFS _ snapshotName = do
   createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName]
   withFile hasFS (mkFsPath [snapshotName, "tables"]) (WriteMode MustBeNew) $ \hf ->
     fmap (Just . snd) $
       hPutAllCRC hasFS hf $
         CBOR.toLazyByteString $
-          valuesMKEncoder hint values
+          encodeValues @blk values
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -221,7 +218,7 @@ implTakeSnapshot ccfg tracer shfs@(SomeHasFS hasFS) suffix st = do
       SnapshotMetadata
         { snapshotBackend = UTxOHDMemSnapshot
         , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
-        , snapshotTablesCodecVersion = TablesCodecVersion1
+        , snapshotTablesCodecVersion = TablesCodecVersion2
         }
 
 -- | Read snapshot from disk.
@@ -232,7 +229,6 @@ loadSnapshot ::
   forall blk m.
   ( LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , CanUpgradeLedgerTables LedgerState blk
   , IOLike m
   ) =>
   Tracer m LedgerDBV2Trace ->
@@ -258,13 +254,22 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) ds = do
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin -> throwE InitFailureGenesis
     NotOrigin pt -> do
+      -- The on-disk values codec is versioned in the snapshot metadata. V1
+      -- (cardano-node 10.7) wraps the values map in a redundant one-element CBOR
+      -- list; V2 drops it. Read both seamlessly by consuming the leading list
+      -- header for V1 before decoding the map. Writers always emit V2.
+      let tablesDecoder = case snapshotTablesCodecVersion snapshotMeta of
+            TablesCodecVersion1 ->
+              CBOR.decodeListLenOf 1 *> decodeValues @blk (ledgerState extLedgerSt)
+            TablesCodecVersion2 ->
+              decodeValues @blk (ledgerState extLedgerSt)
       (values, Identity crcTables) <-
         withExceptT (InitFailureRead . ReadSnapshotFailed) $
           ExceptT $
             readIncremental
               fs
               Identity
-              (valuesMKDecoder extLedgerSt)
+              tablesDecoder
               (snapshotToTablesPath ds)
       let computedCRC = crcOfConcat checksumAsRead crcTables
       Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
@@ -283,7 +288,6 @@ instance
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   Backend m Mem blk
   where
@@ -295,9 +299,9 @@ instance
 
   mkResources _ _ _ = pure . Resources
   releaseResources _ _ = pure ()
-  createAndPopulateStateRefFromGenesis tracer (Resources shfs) values =
-    StateRef (forgetLedgerTables values)
-      <$> newInMemoryLedgerTablesHandle tracer shfs (ltprj values)
+  createAndPopulateStateRefFromGenesis tracer (Resources shfs) genesisState values =
+    StateRef genesisState
+      <$> newInMemoryLedgerTablesHandle tracer shfs values
   openStateRefFromSnapshot trcr ccfg shfs _ ds =
     loadSnapshot trcr ccfg shfs ds
   snapshotManager _ _ =
@@ -308,7 +312,6 @@ mkInMemoryArgs ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , CanUpgradeLedgerTables LedgerState blk
   ) =>
   a -> (LedgerDbBackendArgs m blk, a)
 mkInMemoryArgs = (,) $ LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
@@ -321,6 +324,8 @@ instance IOLike m => StreamingBackend m Mem l blk where
         (SomeHasFS m)
         -- \| The snapshot
         DiskSnapshot
+        -- \| The on-disk values codec version of the snapshot being read
+        TablesCodecVersion
         (Decoders blk)
 
   data SinkArgs m Mem l blk
@@ -332,8 +337,8 @@ instance IOLike m => StreamingBackend m Mem l blk where
         DiskSnapshot
 
   releaseYieldArgs _ = pure ()
-  yield _ (YieldInMemory fs ds (Decoders decK decV)) =
-    yieldInMemoryS fs ds decK decV
+  yield _ (YieldInMemory fs ds version (Decoders decK decV)) =
+    yieldInMemoryS version fs ds decK decV
 
   releaseSinkArgs _ = pure ()
   sink _ (SinkInMemory chunkSize encK encV shfs ds) =
@@ -373,12 +378,18 @@ streamingFile (SomeHasFS fs') path cont =
 yieldCborMapS ::
   forall m a b.
   MonadST m =>
+  -- | The on-disk values codec version. V1 wraps the map in a one-element CBOR
+  -- list, which we consume before reading the map; V2 is the bare map.
+  TablesCodecVersion ->
   (forall s. Decoder s a) ->
   (forall s. Decoder s b) ->
   Stream (Of ByteString) m (Maybe CRC) ->
   Stream (Of (a, b)) (ExceptT DeserialiseFailure m) (Stream (Of ByteString) m (Maybe CRC))
-yieldCborMapS decK decV = execStateT $ do
-  hoist lift (decodeCbor decodeListLen >> decodeCbor decodeMapLenOrIndef) >>= \case
+yieldCborMapS version decK decV = execStateT $ do
+  case version of
+    TablesCodecVersion1 -> Monad.void $ hoist lift (decodeCbor (decodeListLenOf 1))
+    TablesCodecVersion2 -> pure ()
+  hoist lift (decodeCbor decodeMapLenOrIndef) >>= \case
     Nothing -> go
     Just n -> replicateM_ n yieldKV
  where
@@ -403,14 +414,15 @@ yieldCborMapS decK decV = execStateT $ do
 
 yieldInMemoryS ::
   (MonadThrow m, MonadST m) =>
+  TablesCodecVersion ->
   SomeHasFS m ->
   DiskSnapshot ->
   (forall s. Decoder s (TxIn blk)) ->
   (forall s. Decoder s (TxOut blk)) ->
   Yield m l blk
-yieldInMemoryS fs ds decK decV _ k =
+yieldInMemoryS version fs ds decK decV _ k =
   streamingFile fs (snapshotToTablesPath ds) $ \s -> do
-    k $ yieldCborMapS decK decV s
+    k $ yieldCborMapS version decK decV s
 
 sinkInMemoryS ::
   forall m l blk.
@@ -423,7 +435,7 @@ sinkInMemoryS ::
   Sink m l blk
 sinkInMemoryS writeChunkSize encK encV (SomeHasFS fs) ds _ s =
   ExceptT $ withFile fs (snapshotToTablesPath ds) (WriteMode MustBeNew) $ \hdl -> do
-    let bs = toStrictByteString (encodeListLen 1 <> encodeMapLenIndef)
+    let bs = toStrictByteString encodeMapLenIndef
     let !crc0 = updateCRC bs initCRC
     void $ hPutSome fs hdl bs
     e <- runExceptT $ go hdl crc0 writeChunkSize mempty s

@@ -1,12 +1,15 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 -- | Definition is 'IsLedger'
 --
@@ -17,6 +20,15 @@ module Ouroboros.Consensus.Ledger.Basics
     LedgerCfg
   , LedgerState
   , TickedLedgerState
+
+    -- * On-disk table vocabulary
+  , TxIn
+  , TxOut
+
+    -- * UTxO-HD block axis
+  , BlockSupportsUTxOHD (..)
+  , SingleEraBlockSupportsUTxOHD (..)
+  , SingleEraUTxOHDBlock (..)
 
     -- * Definition of a ledger independent of a choice of block
   , ComputeLedgerEvents (..)
@@ -43,30 +55,52 @@ module Ouroboros.Consensus.Ledger.Basics
   , LedgerError
   ) where
 
+import Codec.CBOR.Decoding (Decoder)
+import Codec.CBOR.Encoding (Encoding)
+import Data.Array.Byte (ByteArray)
 import Data.Kind (Constraint, Type)
+import Data.MemPack (MemPack, packByteArray)
+import Data.MemPack.Buffer (Buffer)
+import Data.MemPack.Error (SomeError)
 import GHC.Generics
 import Ouroboros.Consensus.Block.Abstract
-import Ouroboros.Consensus.Ledger.Tables.Kinds
-import Ouroboros.Consensus.Ledger.Tables.MapKind
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util ((...:))
+import Ouroboros.Consensus.Util.CBOR (unpackEither)
 import Ouroboros.Consensus.Util.IOLike
+
+{-------------------------------------------------------------------------------
+  On-disk table vocabulary
+-------------------------------------------------------------------------------}
+
+-- | Each block has a notion of a @TxIn@: the key of the on-disk UTxO table.
+--
+-- This is era-stable across all Shelley-based eras. It is convenient per-block
+-- vocabulary for the Shelley\/dual instances that build their opaque 'Keys' out
+-- of it.
+type TxIn :: Type -> Type
+type family TxIn blk
+
+-- | Each block has a notion of a @TxOut@: the value of the on-disk UTxO table.
+type TxOut :: Type -> Type
+type family TxOut blk
 
 {-------------------------------------------------------------------------------
   Tip
 -------------------------------------------------------------------------------}
 
-type GetTip :: LedgerStateKind -> Constraint
+type GetTip :: Type -> Constraint
 class GetTip l where
   -- | Point of the most recently applied block
   --
   -- Should be 'GenesisPoint' when no blocks have been applied yet
-  getTip :: forall mk. l mk -> Point l
+  getTip :: l -> Point l
 
-getTipHash :: GetTip l => l mk -> ChainHash l
+getTipHash :: GetTip l => l -> ChainHash l
 getTipHash = pointHash . getTip
 
-getTipSlot :: GetTip l => l mk -> WithOrigin SlotNo
+getTipSlot :: GetTip l => l -> WithOrigin SlotNo
 getTipSlot = pointSlot . getTip
 
 type GetTipSTM :: (Type -> Type) -> Type -> Constraint
@@ -123,7 +157,7 @@ pureLedgerResult a =
 -- | Static environment required for the ledger
 --
 -- Types that inhabit this family will come from the Ledger code.
-type LedgerCfg :: StateKind -> Type -> Type
+type LedgerCfg :: (Type -> Type) -> Type -> Type
 type family LedgerCfg l blk :: Type
 
 -- | Event emitted by the ledger
@@ -146,12 +180,12 @@ type family AuxLedgerEvent blk :: Type
 data ComputeLedgerEvents = ComputeLedgerEvents | OmitLedgerEvents
   deriving (Eq, Show, Generic, NoThunks)
 
-type IsLedger :: StateKind -> Type -> Constraint
+type IsLedger :: (Type -> Type) -> Type -> Constraint
 class
   ( -- Requirements on the ledger state itself
-    forall mk. EqMK mk => Eq (l blk mk)
-  , forall mk. NoThunksMK mk => NoThunks (l blk mk)
-  , forall mk. ShowMK mk => Show (l blk mk)
+    Eq (l blk)
+  , NoThunks (l blk)
+  , Show (l blk)
   , -- Requirements on 'LedgerCfg'
     NoThunks (LedgerCfg l blk)
   , -- Requirements on 'LedgerErr'
@@ -164,6 +198,9 @@ class
     -- ticked ledger.
     GetTip (l blk)
   , GetTip (Ticked l blk)
+  , -- The block axis of UTxO-HD: provides the opaque @'Diff' blk@ that ticking
+    -- (and block application) produces, together with its 'Semigroup' instance.
+    BlockSupportsUTxOHD blk
   ) =>
   IsLedger l blk
   where
@@ -191,9 +228,13 @@ class
   -- it would mean a /previous/ block set up the ledger state in such a way
   -- that as soon as a certain slot was reached, /any/ block would be invalid.
   --
-  -- Ticking a ledger state may not use any data from the 'LedgerTables',
-  -- however it might produce differences in the tables, in particular because
-  -- era transitions happen when ticking a ledger state.
+  -- Ticking a ledger state needs no values from the on-disk tables (in
+  -- particular it does not read the UTxO), but it may nonetheless /produce/ a
+  -- @'Diff' blk@ out of nothing: era transitions happen when ticking, and some
+  -- of them delete entries from the UTxO (e.g. the AVVM addresses removed at
+  -- the Shelley-to-Allegra boundary). That diff is returned alongside the
+  -- ticked state and must be composed with the block-application diff (and
+  -- forwarded onto any values read against the pre-tick state).
   --
   -- PRECONDITION: The slot number must be strictly greater than the slot at
   -- the tip of the ledger (except for EBBs, obviously..).
@@ -202,13 +243,13 @@ class
   -- underlying ledger state, which should still refer to the most recent
   -- applied /block/. In other words, we should have:
   --
-  -- prop> ledgerTipPoint (applyChainTick cfg slot st) == ledgerTipPoint st
+  -- prop> ledgerTipPoint (fst (applyChainTick cfg slot st)) == ledgerTipPoint st
   applyChainTickLedgerResult ::
     ComputeLedgerEvents ->
     LedgerCfg l blk ->
     SlotNo ->
-    l blk EmptyMK ->
-    LedgerResult blk (Ticked l blk DiffMK)
+    l blk ->
+    LedgerResult blk (Ticked l blk, Diff blk)
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick ::
@@ -216,8 +257,8 @@ applyChainTick ::
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   SlotNo ->
-  l blk EmptyMK ->
-  Ticked l blk DiffMK
+  l blk ->
+  (Ticked l blk, Diff blk)
 applyChainTick = lrResult ...: applyChainTickLedgerResult
 
 {-------------------------------------------------------------------------------
@@ -233,15 +274,15 @@ applyChainTick = lrResult ...: applyChainTickLedgerResult
 -- expected instantiation is either a 'LedgerState' or some wrapper over it
 -- (like the 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState').
 --
--- This type is parametrized over @mk :: 'MapKind'@ to express the
--- 'LedgerTables' contained in such a 'LedgerState'. See 'LedgerTables' for a
--- more thorough description.
+-- The on-disk table data (the UTxO) is not a parameter of this state; it is
+-- carried separately as the opaque @Values blk@\/@Diff blk@ payloads of
+-- 'BlockSupportsUTxOHD', threaded through the read\/apply functions.
 --
 -- The main operations we can do with a 'LedgerState' are /ticking/ (defined in
 -- 'IsLedger'), and /applying a block/ (defined in
 -- 'Ouroboros.Consensus.Ledger.Abstract.ApplyBlock').
-type LedgerState :: Type -> LedgerStateKind
-data family LedgerState blk mk
+type LedgerState :: Type -> Type
+data family LedgerState blk
 
 type TickedLedgerState blk = Ticked LedgerState blk
 
@@ -251,3 +292,158 @@ instance StandardHash blk => StandardHash (LedgerState blk)
 
 type LedgerConfig blk = LedgerCfg LedgerState blk
 type LedgerError blk = LedgerErr LedgerState blk
+
+{-------------------------------------------------------------------------------
+  UTxO-HD block axis
+-------------------------------------------------------------------------------}
+
+-- | The per-block era\/table logic of UTxO-HD: the opaque table payloads
+-- (@Keys@\/@Values@\/@Diff blk@) plus the pure operations on them.
+--
+-- This lives in "Ouroboros.Consensus.Ledger.Basics" (rather than its own
+-- module) because 'IsLedger' has it as a superclass (it provides the @Diff blk@
+-- that ticking produces), so the two must share a module to avoid an import
+-- cycle.
+--
+-- Instances:
+--
+--   * Shelley carries the real instance: @Keys = Set TxIn@,
+--     @Values = Map TxIn TxOut@, @Diff = Diff TxIn TxOut@.
+--
+--   * Byron\/mock blocks have no on-disk tables, so their @Keys@\/@Values@\/
+--     @Diff@ are trivial (@Void@\/@()@).
+--
+--   * The hard-fork combinator uses era-tagged @NS@ payloads; 'forward'
+--     translates values across a rare era boundary using the per-era
+--     translations carried on the 'CanHardFork' class (no config needed).
+type BlockSupportsUTxOHD :: Type -> Constraint
+class (Semigroup (Diff blk), Semigroup (Keys blk)) => BlockSupportsUTxOHD blk where
+  -- | The keys a block consumes, e.g. the @TxIn@s spent by its transactions.
+  type Keys blk :: Type
+
+  -- | The values read for a set of 'Keys', e.g. the @TxOut@s those @TxIn@s
+  -- resolve to.
+  type Values blk :: Type
+
+  -- | The change a block produces to the tables: a 'Semigroup' so that a
+  -- sequence of diffs composes (later diffs winning).
+  type Diff blk :: Type
+
+  -- | Extract the keys a block consumes (phase 1). Pure and essentially free.
+  blockKeys :: blk -> Keys blk
+
+  -- | Apply diffs to read values, ordered oldest-to-newest. Pure and
+  -- config-free.
+  --
+  -- For single-era blocks this is just @'applyDiff' ('mconcat' diffs)@. For the
+  -- hard-fork combinator the common case is same-era (the diff and values share
+  -- the era tag); the rare boundary case (a ticked diff at era @E+1@ over values
+  -- still at era @E@) first upgrades the values @E → E+1@ using the per-era
+  -- translations carried on the 'CanHardFork' class (@hardForkEraTranslation@),
+  -- so no config is needed here.
+  --
+  -- @'forward' [] = 'id'@ must hold genuinely so that, per block, applying an
+  -- empty diff never rebuilds the values.
+  --
+  -- Note: @blk@ occurs only under the non-injective families 'Diff'\/'Values',
+  -- so call sites disambiguate with @'forward' \@blk diffs vals@.
+  forward :: [Diff blk] -> Values blk -> Values blk
+
+  -- | Restrict the values to the given keys. This is the point read of the
+  -- InMemory backend.
+  restrictValues :: Keys blk -> Values blk -> Values blk
+
+  -- | The number of entries, for the @tablesSize@ statistic.
+  valuesSize :: Values blk -> Int
+
+  -- | Serialise the values for an InMemory snapshot. No era tag: single-era
+  -- instances just use the era's @toCBOR@\/@toEraCBOR@. The hard-fork combinator
+  -- encodes the current era's @NS@ arm directly (the @NS@ already carries the
+  -- era).
+  encodeValues :: Values blk -> Encoding
+
+  -- | Deserialise the values for an InMemory snapshot.
+  --
+  -- Takes the already-loaded 'LedgerState' as an era hint: there is no on-disk
+  -- era tag (see 'encodeValues'), so the hard-fork combinator uses the state's
+  -- current era to pick which @NS@ arm to decode into. Single-era instances
+  -- ignore it. The snapshot loads the state before the tables, so it is always
+  -- available at the call site.
+  decodeValues :: forall s. LedgerState blk -> Decoder s (Values blk)
+
+-- | The on-disk table operations that only /single-era/ blocks support, split
+-- out of 'BlockSupportsUTxOHD'.
+--
+-- These are the operations that need to see the entries of a table at the
+-- /concrete era level/: paging for @QFTraverseTables@ queries, and the
+-- entry-level (de)construction the on-disk (LSM) backend needs to turn the
+-- opaque @'Keys'@\/@'Values'@\/@'Diff'@ into individual @('TxIn', 'TxOut')@
+-- rows. The 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkBlock' has
+-- /no/ instance: it answers such requests by dispatching to the current era
+-- (via @matchNS@, see the LSM backend's @BlockSupportsLSM@) and working there,
+-- so there is no single @TxIn@\/@TxOut@ at the @HardForkBlock@ level.
+-- The 'MemPack' codecs for the era's @TxIn@\/@TxOut@ are superclasses: the
+-- on-disk (LSM) backend serialises individual entries with them, and bundling
+-- them here means the hard-fork dispatch reaches them through @proxySingle@
+-- (via @SingleEraBlock@) with no extra per-era constraint.
+type SingleEraBlockSupportsUTxOHD :: Type -> Constraint
+class
+  ( BlockSupportsUTxOHD blk
+  , MemPack (TxIn blk)
+  , MemPack (TxOut blk)
+  ) =>
+  SingleEraBlockSupportsUTxOHD blk
+  where
+  -- | Read a bounded range of values, optionally starting just after a given
+  -- key. Returns the read values and the last key read (if any), to be fed back
+  -- for the next page.
+  rangeReadValues ::
+    (Maybe (TxIn blk), Int) -> Values blk -> (Values blk, Maybe (TxIn blk))
+
+  -- | The keys as a plain list of @'TxIn'@s (e.g. for point lookups on the
+  -- on-disk backend).
+  keysToList :: Keys blk -> [TxIn blk]
+
+  -- | The values as a plain list of entries (e.g. to populate / stream the
+  -- on-disk backend).
+  valuesToList :: Values blk -> [(TxIn blk, TxOut blk)]
+
+  -- | Rebuild the values from a list of entries (e.g. from a backend page /
+  -- point-lookup result).
+  valuesFromList :: [(TxIn blk, TxOut blk)] -> Values blk
+
+  -- | The diff as a plain list of per-key insert\/delete deltas (e.g. to batch
+  -- onto the on-disk backend).
+  diffToList :: Diff blk -> [(TxIn blk, Diff.Delta (TxOut blk))]
+
+  -- | Serialise a @'TxIn'@ to on-disk key bytes whose unsigned lexicographic
+  -- order matches the Haskell @'Ord' ('TxIn' blk)@.
+  --
+  -- The on-disk (LSM) backend stores entries keyed by these bytes and pages
+  -- them in byte order (range reads, snapshot streaming), so the byte order
+  -- /must/ agree with @'Ord' ('TxIn' blk)@ or pages would skip or repeat keys.
+  -- The era's plain 'MemPack' codec need not preserve order (Shelley's
+  -- 'Ouroboros.Consensus.Shelley.Ledger.SL.TxIn' is little-endian on the
+  -- index), so this is a distinct method the era implements correctly (Shelley casts
+  -- through @BigEndianTxIn@, mirroring 'encodeValues'\/'decodeValues'). The
+  -- default is the plain 'MemPack' codec, valid for eras whose key
+  -- serialisation is already order-preserving (e.g. the trivial Byron key).
+  packTxInBytes :: TxIn blk -> ByteArray
+  default packTxInBytes :: TxIn blk -> ByteArray
+  packTxInBytes = packByteArray True
+
+  -- | Inverse of 'packTxInBytes': decode a @'TxIn'@ from its on-disk key bytes.
+  unpackTxInBytes :: Buffer b => b -> Either SomeError (TxIn blk)
+  default unpackTxInBytes :: Buffer b => b -> Either SomeError (TxIn blk)
+  unpackTxInBytes = unpackEither
+
+-- | Operations only the single-era blocks support. The hard-fork combinator
+-- has no single era to point at, so it cannot provide 'emptyValues' \/ 'emptyDiffs'
+-- (and never needs them).
+type SingleEraUTxOHDBlock :: Type -> Constraint
+class BlockSupportsUTxOHD blk => SingleEraUTxOHDBlock blk where
+  -- | The empty set of values.
+  emptyValues :: Values blk
+
+  -- | The empty diff.
+  emptyDiffs :: Diff blk

@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -28,45 +27,24 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
 import Data.SOP.Strict
-import Data.SOP.Telescope as Tele
 import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Set as Set
 import Lens.Micro
 import Ouroboros.Consensus.Block (SlotNo (..))
 import Ouroboros.Consensus.Cardano
 import Ouroboros.Consensus.Cardano.Block
-  ( CardanoEras
-  , GenTx (..)
+  ( GenTx (..)
   , ShelleyEra
   )
 import Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints)
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Combinator.Ledger
-  ( getFlipTickedLedgerState
-  , tickedHardForkLedgerStatePerEra
-  )
-import Ouroboros.Consensus.HardFork.Combinator.State.Types
-  ( currentState
-  , getHardForkState
-  )
 import Ouroboros.Consensus.Ledger.Basics
-  ( ComputeLedgerEvents (..)
-  , LedgerConfig
-  , LedgerState
-  , TickedLedgerState
-  , applyChainTick
-  )
-import Ouroboros.Consensus.Ledger.Tables (ValuesMK)
-import Ouroboros.Consensus.Ledger.Tables.Utils
-  ( applyDiffs
-  , forgetLedgerTables
+  ( LedgerConfig
+  , Values
   )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
-import Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, mkShelleyTx)
-import Ouroboros.Consensus.Shelley.Ledger.Ledger
-  ( tickedShelleyLedgerState
-  )
+import Ouroboros.Consensus.Shelley.Ledger (mkShelleyTx)
+import Ouroboros.Consensus.TypeFamilyWrappers (WrapValues (..))
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL (mkWitnessVKey)
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import Test.ThreadNet.TxGen
@@ -80,9 +58,11 @@ data CardanoTxGenExtra c = CardanoTxGenExtra
 instance CardanoHardForkConstraints c => TxGen (CardanoBlock c) where
   type TxGenExtra (CardanoBlock c) = CardanoTxGenExtra c
 
+  testReadAllValues = testReadAllValuesHfc
+
   -- TODO also generate " typical " Byron and Shelley transactions
-  testGenTxs (CoreNodeId i) _ncn curSlot cfg extra ls =
-    pure $ maybeToList $ migrateUTxO migrationInfo curSlot lcfg ls
+  testGenTxs (CoreNodeId i) _ncn curSlot cfg extra _ls values =
+    pure $ maybeToList $ migrateUTxO migrationInfo curSlot lcfg values
    where
     lcfg = topLevelConfigLedger cfg
 
@@ -148,9 +128,10 @@ migrateUTxO ::
   MigrationInfo c ->
   SlotNo ->
   LedgerConfig (CardanoBlock c) ->
-  LedgerState (CardanoBlock c) ValuesMK ->
+  -- | The UTxO values, carried alongside the @mk@-free state.
+  Values (CardanoBlock c) ->
   Maybe (GenTx (CardanoBlock c))
-migrateUTxO migrationInfo curSlot lcfg lst
+migrateUTxO migrationInfo _curSlot _lcfg values
   | Just utxo <- mbUTxO =
       let picked :: Map SL.TxIn (SL.TxOut ShelleyEra)
           picked = Map.filter pick $ SL.unUTxO utxo
@@ -223,14 +204,14 @@ migrateUTxO migrationInfo curSlot lcfg lst
                   & SL.witsTxL . SL.bootAddrTxWitsL .~ Set.singleton byronWit
   | otherwise = Nothing
  where
+  -- The migration is Shelley-era-specific. In the @mk@-free design the UTxO
+  -- lives in the @'Values'@ (the @NS WrapValues@), so we read the Shelley arm
+  -- (the second Cardano era) directly; an empty\/other-era arm means no
+  -- migration this slot.
   mbUTxO :: Maybe (SL.UTxO ShelleyEra)
-  mbUTxO =
-    fmap getUTxOShelley
-      . ejectShelleyTickedLedgerState
-      . applyDiffs lst
-      . applyChainTick OmitLedgerEvents lcfg curSlot
-      . forgetLedgerTables
-      $ lst
+  mbUTxO = case values of
+    S (Z (WrapValues v)) -> Just (SL.UTxO v)
+    _ -> Nothing
 
   MigrationInfo
     { byronMagic
@@ -269,33 +250,3 @@ migrateUTxO migrationInfo curSlot lcfg lst
       , SL.sppRelays = StrictSeq.empty
       , SL.sppVrf = Shelley.mkKeyHashVrf @c vrfSK
       }
-
------
-
-ejectShelleyNS ::
-  NS f (CardanoEras c) ->
-  Maybe (f (ShelleyBlock (TPraos c) ShelleyEra))
-ejectShelleyNS = \case
-  S (Z x) -> Just x
-  _ -> Nothing
-
-getUTxOShelley ::
-  TickedLedgerState (ShelleyBlock proto era) mk ->
-  SL.UTxO era
-getUTxOShelley tls =
-  SL.utxosUtxo $
-    SL.lsUTxOState $
-      SL.esLState $
-        SL.nesEs $
-          tickedShelleyLedgerState tls
-
-ejectShelleyTickedLedgerState ::
-  TickedLedgerState (CardanoBlock c) mk ->
-  Maybe (TickedLedgerState (ShelleyBlock (TPraos c) ShelleyEra) mk)
-ejectShelleyTickedLedgerState ls =
-  fmap (getFlipTickedLedgerState . currentState) $
-    ejectShelleyNS $
-      Tele.tip $
-        getHardForkState $
-          tickedHardForkLedgerStatePerEra $
-            ls

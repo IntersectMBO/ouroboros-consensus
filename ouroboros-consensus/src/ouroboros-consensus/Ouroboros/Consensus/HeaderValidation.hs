@@ -638,7 +638,7 @@ mkHeaderWithTime ::
   , HasHeader (Header blk)
   ) =>
   LedgerConfig blk ->
-  LedgerState blk mk ->
+  LedgerState blk ->
   Header blk ->
   HeaderWithTime blk
 {-# INLINE mkHeaderWithTime #-}

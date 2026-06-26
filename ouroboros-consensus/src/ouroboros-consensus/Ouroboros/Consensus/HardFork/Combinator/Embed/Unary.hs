@@ -41,7 +41,6 @@ import Data.Coerce
 import Data.Kind (Constraint, Type)
 import Data.Proxy
 import Data.SOP.BasicFunctors
-import Data.SOP.Functors
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
@@ -180,9 +179,9 @@ deriving via IsomorphicUnary NS WrapTipInfo instance Isomorphic WrapTipInfo
 deriving via IsomorphicUnary NS WrapValidatedGenTx instance Isomorphic WrapValidatedGenTx
 
 deriving via
-  IsomorphicUnary HardForkState (Flip LedgerState mk)
+  IsomorphicUnary HardForkState LedgerState
   instance
-    Isomorphic (Flip LedgerState mk)
+    Isomorphic LedgerState
 deriving via
   IsomorphicUnary HardForkState WrapChainDepState
   instance
@@ -335,35 +334,31 @@ instance Isomorphic HeaderState where
       , headerStateChainDep = inject' (Proxy @(WrapChainDepState blk)) headerStateChainDep
       }
 
-instance Isomorphic (FlipTickedLedgerState mk) where
+instance Isomorphic (Ticked LedgerState) where
   project =
     State.currentState
       . Telescope.fromTZ
       . getHardForkState
       . tickedHardForkLedgerStatePerEra
-      . getFlipTickedLedgerState
 
   inject =
-    FlipTickedLedgerState
-      . TickedHardForkLedgerState TransitionImpossible
+    TickedHardForkLedgerState TransitionImpossible
       . HardForkState
       . Telescope.TZ
       . State.Current History.initBound
 
-instance Isomorphic (Flip ExtLedgerState mk) where
-  project (Flip ExtLedgerState{..}) =
-    Flip $
-      ExtLedgerState
-        { ledgerState = unFlip $ project $ Flip ledgerState
-        , headerState = project headerState
-        }
+instance Isomorphic ExtLedgerState where
+  project ExtLedgerState{..} =
+    ExtLedgerState
+      { ledgerState = project ledgerState
+      , headerState = project headerState
+      }
 
-  inject (Flip ExtLedgerState{..}) =
-    Flip $
-      ExtLedgerState
-        { ledgerState = unFlip $ inject $ Flip ledgerState
-        , headerState = inject headerState
-        }
+  inject ExtLedgerState{..} =
+    ExtLedgerState
+      { ledgerState = inject ledgerState
+      , headerState = inject headerState
+      }
 
 instance Isomorphic AnnTip where
   project :: forall blk. NoHardForks blk => AnnTip (HardForkBlock '[blk]) -> AnnTip blk
@@ -376,13 +371,13 @@ instance Functor m => Isomorphic (InitChainDB m) where
     forall blk.
     NoHardForks blk =>
     InitChainDB m (HardForkBlock '[blk]) -> InitChainDB m blk
-  project = InitChainDB.map (inject' (Proxy @(I blk))) (unFlip . project . Flip)
+  project = InitChainDB.map (inject' (Proxy @(I blk))) project
 
   inject ::
     forall blk.
     NoHardForks blk =>
     InitChainDB m blk -> InitChainDB m (HardForkBlock '[blk])
-  inject = InitChainDB.map (project' (Proxy @(I blk))) (unFlip . inject . Flip)
+  inject = InitChainDB.map (project' (Proxy @(I blk))) inject
 
 instance Isomorphic ProtocolClientInfo where
   project ProtocolClientInfo{..} =
@@ -460,7 +455,7 @@ instance Functor m => Isomorphic (BlockForging m) where
               (inject cfg)
               bno
               sno
-              (getFlipTickedLedgerState (inject (FlipTickedLedgerState tickedLgrSt)))
+              (inject tickedLgrSt)
               (inject' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
       }
@@ -506,7 +501,7 @@ instance Functor m => Isomorphic (BlockForging m) where
               (project cfg)
               bno
               sno
-              (getFlipTickedLedgerState (project (FlipTickedLedgerState tickedLgrSt)))
+              (project tickedLgrSt)
               (project' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
       }
@@ -534,7 +529,10 @@ instance Isomorphic ProtocolInfo where
   project ProtocolInfo{..} =
     ProtocolInfo
       { pInfoConfig = project pInfoConfig
-      , pInfoInitLedger = unFlip $ project $ Flip pInfoInitLedger
+      , pInfoInitLedger = project pInfoInitLedger
+      , -- @Values (HardForkBlock '[blk]) = NS WrapValues '[blk]@; project the
+        -- single era arm.
+        pInfoInitLedgerTables = unwrapValues (unZ pInfoInitLedgerTables)
       }
 
   inject ::
@@ -544,7 +542,8 @@ instance Isomorphic ProtocolInfo where
   inject ProtocolInfo{..} =
     ProtocolInfo
       { pInfoConfig = inject pInfoConfig
-      , pInfoInitLedger = unFlip $ inject $ Flip pInfoInitLedger
+      , pInfoInitLedger = inject pInfoInitLedger
+      , pInfoInitLedgerTables = Z (WrapValues pInfoInitLedgerTables)
       }
 
 {-------------------------------------------------------------------------------

@@ -51,7 +51,7 @@
 --     - __Chain sync client__: To validate headers of a chain that intersects
 --        with any of the past \(k\) blocks.
 --
--- - __Providing 'Ouroboros.Consensus.Ledger.Tables.Basics.LedgerTable's at any of the last \(k\) ledger states__: To apply blocks or transactions on top
+-- - __Providing the on-disk ledger tables (the @Values@ of 'Ouroboros.Consensus.Ledger.Basics.BlockSupportsUTxOHD') at any of the last \(k\) ledger states__: To apply blocks or transactions on top
 --     of ledger states, the LedgerDB must be able to provide the appropriate
 --     ledger tables at any of those ledger states.
 --
@@ -173,8 +173,7 @@
 -- >>> :}
 module Ouroboros.Consensus.Storage.LedgerDB.API
   ( -- * Main API
-    CanUpgradeLedgerTables (..)
-  , LedgerDB (..)
+    LedgerDB (..)
   , LedgerDB'
   , LedgerDbPrune (..)
   , LedgerDbSerialiseConstraints
@@ -228,7 +227,6 @@ import Control.Tracer
 import Data.ByteString (ByteString)
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
-import Data.MemPack
 import Data.Proxy
 import Data.Set (Set)
 import Data.Word
@@ -251,7 +249,6 @@ import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Point
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -266,25 +263,23 @@ import System.FS.CRC
 -- instantiated with a @blk@.
 type LedgerDbSerialiseConstraints blk =
   ( Serialise (HeaderHash blk)
-  , EncodeDisk blk (LedgerState blk EmptyMK)
-  , DecodeDisk blk (LedgerState blk EmptyMK)
+  , EncodeDisk blk (LedgerState blk)
+  , DecodeDisk blk (LedgerState blk)
   , EncodeDisk blk (AnnTip blk)
   , DecodeDisk blk (AnnTip blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
-  , IndexedMemPack LedgerState blk (TxOut blk)
-  , MemPack (TxIn blk)
-  , SerializeTablesWithHint LedgerState blk
+  , BlockSupportsUTxOHD blk
   )
 
 -- | The core API of the LedgerDB component
-type LedgerDB :: (Type -> Type) -> StateKind -> Type -> Type
+type LedgerDB :: (Type -> Type) -> (Type -> Type) -> Type -> Type
 data LedgerDB m l blk = LedgerDB
-  { getVolatileTip :: STM m (l blk EmptyMK)
+  { getVolatileTip :: STM m (l blk)
   -- ^ Get the empty ledger state at the (volatile) tip of the LedgerDB.
-  , getImmutableTip :: STM m (l blk EmptyMK)
+  , getImmutableTip :: STM m (l blk)
   -- ^ Get the empty ledger state at the immutable tip of the LedgerDB.
-  , getPastLedgerState :: Point blk -> STM m (Maybe (l blk EmptyMK))
+  , getPastLedgerState :: Point blk -> STM m (Maybe (l blk))
   -- ^ Get an empty ledger state at a requested point in the LedgerDB, if it
   -- exists.
   , getHeaderStateHistory ::
@@ -300,6 +295,19 @@ data LedgerDB m l blk = LedgerDB
   --
   -- Note this will allocate resources; see the "'Forker' management
   -- in the running node" comment above.
+  , getReadOnlyForkerWithRangeAtPoint ::
+      l ~ ExtLedgerState =>
+      Target (Point blk) ->
+      m (Either GetForkerError (ReadOnlyForker' m blk, EraRangeReaderProvider m blk))
+  -- ^ Acquire a read-only 'Forker' at the requested point together with the
+  -- 'EraRangeReaderProvider' for that forker's tables handle.
+  --
+  -- This is used /only/ by the LocalStateQuery server, to answer
+  -- @QFTraverseTables@ queries: range reads are a query-only, era-level concern
+  -- that lives on the storage backend's tables handle (see 'EraRangeReader'),
+  -- so they cannot be exposed through the abstract 'ReadOnlyForker'. The
+  -- provider is valid only for as long as the returned forker is open (it
+  -- captures the same handle).
   , validateFork ::
       (TraceValidateEvent blk -> m ()) ->
       BlockCache blk ->
@@ -359,8 +367,9 @@ data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
-  , push :: l blk DiffMK -> m ()
-  -- ^ Push a ledger state, and prune the 'LedgerDB' to its immutable tip.
+  , push :: l blk -> Diff blk -> m ()
+  -- ^ Push a ledger state (together with the diff it produced), and prune the
+  -- 'LedgerDB' to its immutable tip.
   --
   -- This does not modify the set of previously applied points.
   , reapplyThenPushNOW :: blk -> m ()
@@ -490,7 +499,7 @@ data InitDB db m blk = InitDB
   , initReapplyBlock :: !(LedgerDbCfg ExtLedgerState blk -> blk -> db -> m db)
   -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
   -- LedgerDB such that there are no volatile states.
-  , currentTip :: !(db -> LedgerState blk EmptyMK)
+  , currentTip :: !(db -> LedgerState blk)
   -- ^ Getting the current tip for tracing the Ledger Events.
   , mkLedgerDb ::
       !(db -> m (LedgerDB' m blk, TestInternals' m blk))
@@ -791,7 +800,7 @@ class StreamingBackend m backend l blk where
   releaseSinkArgs :: SinkArgs m backend l blk -> m ()
 
 type Yield m l blk =
-  l blk EmptyMK ->
+  l blk ->
   ( ( Stream
         (Of (TxIn blk, TxOut blk))
         (ExceptT DeserialiseFailure m)
@@ -802,7 +811,7 @@ type Yield m l blk =
   ExceptT DeserialiseFailure m (Maybe CRC, Maybe CRC)
 
 type Sink m l blk =
-  l blk EmptyMK ->
+  l blk ->
   Stream
     (Of (TxIn blk, TxOut blk))
     (ExceptT DeserialiseFailure m)

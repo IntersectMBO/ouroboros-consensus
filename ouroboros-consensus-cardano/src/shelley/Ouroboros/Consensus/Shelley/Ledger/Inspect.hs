@@ -1,3 +1,9 @@
+{-# LANGUAGE CPP #-}
+#if __GLASGOW_HASKELL__ >= 910
+{-# OPTIONS_GHC -Wno-x-shelley-empty-utxo #-}
+#else
+{-# OPTIONS_GHC -Wno-warnings-deprecations #-}
+#endif
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -49,9 +55,9 @@ instance ShelleyBasedEra era => InspectLedger (ShelleyBlock proto era) where
     updatesAfter = pparamsUpdate after
 
 pparamsUpdate ::
-  forall era proto mk.
+  forall era proto.
   ShelleyBasedEra era =>
-  LedgerState (ShelleyBlock proto era) mk ->
+  LedgerState (ShelleyBlock proto era) ->
   ShelleyLedgerUpdate era
 pparamsUpdate st =
   let nes = shelleyLedgerState st
