@@ -11,6 +11,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
   ( Inject (..)
@@ -61,7 +64,7 @@ import Ouroboros.Consensus.Ledger.Extended
   )
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver)
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver, V1PerasEpochContextResolver (..))
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -260,6 +263,21 @@ instance Inject (Flip LedgerState mk) where
 instance Inject WrapChainDepState where
   inject = coerce .: injectHardForkState
 
+class InjectPerasEpochContextResolver resolver blk | resolver -> blk where
+  injectPerasEpochContextResolver ::
+    CanHardFork xs =>
+    InjectionIndex xs blk ->
+    resolver ->
+    V1PerasEpochContextResolver (HardForkBlock xs)
+
+instance InjectPerasEpochContextResolver (V1PerasEpochContextResolver blk) where
+  injectPerasEpochContextResolver iidx = \case
+    V1PerasEpochContextResolverError err -> V1PerasEpochContextResolverError err
+    V1PerasEpochContextResolver currentBoundedContext mbPrevBoundedContext ->
+      let hfcCurrentBoundedContext = injectHFCBoundedPerasEpochContext $ injectNS (forgetInjectionIndex iidx) currentBoundedContext
+          hfcPrevBoundedContext = (injectHFCBoundedPerasEpochContext . injectNS (forgetInjectionIndex iidx)) <$> mbPrevBoundedContext
+       in V1PerasEpochContextResolver hfcCurrentBoundedContext hfcPrevBoundedContext
+
 instance Inject HeaderState where
   inject iidx HeaderState{..} =
     HeaderState
@@ -270,14 +288,13 @@ instance Inject HeaderState where
               WrapChainDepState headerStateChainDep
       }
 
-instance Inject (Flip ExtLedgerState mk) where
+instance (InjectPerasEpochContextResolver (PerasEpochContextResolver blk)) =>  Inject (Flip ExtLedgerState mk) where
   inject iidx (Flip ExtLedgerState{..}) =
     Flip $
       ExtLedgerState
         { ledgerState = unFlip $ inject iidx (Flip ledgerState)
         , headerState = inject iidx headerState
-        , -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
-          perasEpochContextResolver = undefined
+        , perasEpochContextResolver = injectPerasEpochContextResolver iidx perasEpochContextResolver
         , latestPerasCertOnChainRound = latestPerasCertOnChainRound
         }
 
