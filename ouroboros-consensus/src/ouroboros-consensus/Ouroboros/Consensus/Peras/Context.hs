@@ -15,6 +15,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Ouroboros.Consensus.Peras.Context
@@ -207,9 +208,30 @@ class
     pure $
       PerasEpochContext{pecParams = (getPerasParams (Proxy @blk) ledgerState), pecCommittee}
 
+  type MaybeEraIndexedEpochToPerasRoundInfo blk :: Type
+  type MaybeEraIndexedEpochToPerasRoundInfo blk = EpochToPerasRoundInfo
+
+  fromMaybeEraIndexedEpochToPerasRoundInfo ::
+    proxy blk -> MaybeEraIndexedEpochToPerasRoundInfo blk -> EpochToPerasRoundInfo
+  default fromMaybeEraIndexedEpochToPerasRoundInfo ::
+    proxy blk ->
+    MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo =>
+    MaybeEraIndexedEpochToPerasRoundInfo blk -> EpochToPerasRoundInfo
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+
+  toMaybeEraIndexedEpochToPerasRoundInfo ::
+    All Top (HardForkIndices blk) =>
+    proxy blk -> EraIndexed blk EpochToPerasRoundInfo -> MaybeEraIndexedEpochToPerasRoundInfo blk
+  default toMaybeEraIndexedEpochToPerasRoundInfo ::
+    All Top (HardForkIndices blk) =>
+    proxy blk ->
+    MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo =>
+    EraIndexed blk EpochToPerasRoundInfo -> MaybeEraIndexedEpochToPerasRoundInfo blk
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+
   mkBoundedPerasEpochContext ::
     (ALedgerStateSupportsPeras ledger, AChainDepStateSupportsPeras chainDep) =>
-    EraIndexed blk EpochToPerasRoundInfo ->
+    MaybeEraIndexedEpochToPerasRoundInfo blk ->
     ledger ->
     chainDep ->
     Either
@@ -219,15 +241,15 @@ class
     ( All Top (HardForkIndices blk)
     , ALedgerStateSupportsPeras ledger
     , AChainDepStateSupportsPeras chainDep
+    , MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo
     ) =>
-    EraIndexed blk EpochToPerasRoundInfo ->
+    MaybeEraIndexedEpochToPerasRoundInfo blk ->
     ledger ->
     chainDep ->
     Either
       (PerasError blk)
       (BoundedPerasEpochContext blk)
-  mkBoundedPerasEpochContext eraIndexedEpochToPerasRoundInfo ledgerState headerState = do
-    let EpochToPerasRoundInfo{etpriEpochStartPerasRound, etpriEpochEndPerasRound} = forgetEraIndex eraIndexedEpochToPerasRoundInfo
+  mkBoundedPerasEpochContext EpochToPerasRoundInfo{etpriEpochStartPerasRound, etpriEpochEndPerasRound} ledgerState headerState = do
     epochContext <- mkPerasEpochContext ledgerState headerState
     pure
       BoundedPerasEpochContext

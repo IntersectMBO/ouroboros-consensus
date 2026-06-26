@@ -208,7 +208,7 @@ class
   , EncodeDiskDep (NestedCtxt Header) (HardForkBlock xs)
   , -- Required for Peras
     SerialiseNodeToNode (HardForkBlock xs) (PerasVote (HardForkBlock xs))
-  , SerialiseNodeToNode (HardForkBlock xs) (PerasVote (HardForkBlock xs))
+  , SerialiseNodeToNode (HardForkBlock xs) (PerasCert (HardForkBlock xs))
   ) =>
   SerialiseHFC xs
   where

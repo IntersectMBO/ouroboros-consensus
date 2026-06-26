@@ -122,8 +122,6 @@ class
   , ShowProxy (Header blk)
   , ShowProxy (BlockQuery blk)
   , ShowProxy (TxId (GenTx blk))
-  , ShowProxy (PerasVote blk)
-  , ShowProxy (PerasCert blk)
   , (forall fp. ShowQuery (BlockQuery blk fp))
   , CanUpgradeLedgerTables LedgerState blk
   ) =>

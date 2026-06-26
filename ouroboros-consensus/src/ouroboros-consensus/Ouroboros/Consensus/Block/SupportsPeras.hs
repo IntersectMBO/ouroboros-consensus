@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
@@ -487,8 +488,10 @@ instance IsPerasError (VoidPerasError blk) blk where
 
 -- | Void Peras committee for @blk@.
 data VoidPerasVotingCommitteeScheme
+  deriving (Show, Eq, Generic, NoThunks)
 
 data VoidPerasCrypto blk
+  deriving (Show, Eq, Generic, NoThunks)
 
 type instance ElectionId (VoidPerasCrypto blk) = PerasRoundNo
 type instance VoteCandidate (VoidPerasCrypto blk) = Point blk
