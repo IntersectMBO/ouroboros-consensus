@@ -83,7 +83,8 @@ genPerasVote = do
   pvVoteRound <- PerasRoundNo <$> arbitrary
   pvVoteBlock <- genPointTestBlock
   pvVoteVoterId <- genPerasVoterId
-  pure $ PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId}
+  pvVoteStake <- genPerasVoteStake
+  pure $ PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId, pvVoteStake}
 
 instance WithId (PerasVote blk) (PerasVoteId blk) where
   getId = getPerasVoteId
@@ -92,10 +93,13 @@ instance WithId (WithArrivalTime (ValidatedPerasVote blk)) (PerasVoteId blk) whe
   getId = getPerasVoteId . vpvVote . forgetArrivalTime
 
 genValidatedPerasVote :: Gen (ValidatedPerasVote TestBlock)
-genValidatedPerasVote =
-  ValidatedPerasVote
-    <$> genPerasVote
-    <*> genPerasVoteStake
+genValidatedPerasVote = do
+  vote <- genPerasVote
+  pure $
+    ValidatedPerasVote
+      { vpvVote = vote
+      , vpvVoteStake = pvVoteStake vote
+      }
 
 newVoteDB ::
   (IOLike m, StandardHash blk, Typeable blk) =>
@@ -131,16 +135,9 @@ prop_smoke =
             inboundPool <- newVoteDB []
 
             let outboundPoolReader = makePerasVotePoolReaderFromVoteDB outboundPool
-                stakeDistr =
-                  PerasVoteStakeDistr $
-                    Map.fromList
-                      [ (pvVoteVoterId (vpvVote v), vpvVoteStake v)
-                      | WithArrivalTime _ v <- watValidatedVotes
-                      ]
                 inboundPoolWriter =
                   makePerasVotePoolWriterFromVoteDB
                     mockSystemTime
-                    (pure stakeDistr)
                     inboundPool
                 getAllInboundPoolContent = do
                   votesMap <-
