@@ -145,10 +145,18 @@ in
       final.texliveFull
     ];
 
+    # `cabal-docspec` doesn't use XDG, so we need to trick it with a fake
+    # `$CABAL_DIR`
+    #
+    # `--no-cabal-plan` now parses its arg as a package name (no dots/slashes),
+    # then uses it verbatim as the .cabal path, so we symlink the file under a
+    # dot-free name that doesn't clash with the existing `ouroboros-consensus/`
+    # dir
     buildPhase = ''
       export CABAL_DIR=$(mktemp -d)
       touch $CABAL_DIR/config $out
-      cabal-docspec --no-cabal-plan ouroboros-consensus.cabal
+      ln -s ouroboros-consensus.cabal consensus-docspec
+      cabal-docspec --no-cabal-plan consensus-docspec
     '';
   };
 }
