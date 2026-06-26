@@ -33,8 +33,8 @@ let
     } // lib.optionalAttrs noCross {
       devShell =
         import ./shell.nix { inherit inputs pkgs hsPkgs; };
-      devShellProfiled =
-        import ./shell.nix { inherit inputs pkgs; hsPkgs = hsPkgs.projectVariants.profiled; };
+      devShellIPE =
+        import ./shell.nix { inherit inputs pkgs; hsPkgs = hsPkgs.projectVariants.ipe; };
     };
 
   jobs = lib.filterAttrsRecursive (n: v: n != "recurseForDerivations") ({
@@ -44,14 +44,11 @@ let
       formattingLinting = import ./formatting-linting.nix pkgs;
       inherit (pkgs) cabal-docspec-check consensus-pdfs agda-spec;
 
-      # also test newer GHCs, but only on Linux to reduce CI load
-      haskell910 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc910;
-      haskell912 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc912;
+      # also test latest GHC, but only on Linux to reduce CI load
       haskell914 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc914;
     };
   } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
     windows = {
-      haskell912 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc912.projectCross.ucrt64;
       haskell914 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc914.projectCross.ucrt64;
     };
   });

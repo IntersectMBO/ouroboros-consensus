@@ -4,7 +4,7 @@ let
   inherit (final) lib;
   tool-index-state = "2026-06-18T04:19:00Z";
   tool = name: version: other:
-    final.haskell-nix.tool "ghc912" name ({
+    final.haskell-nix.tool "ghc914" name ({
       version = version;
       index-state = tool-index-state;
     } // other);
@@ -24,11 +24,17 @@ in
 
   cabal-gild = tool "cabal-gild" "1.8.4.1" { };
 
-  hlint = tool "hlint" "3.10" { };
+  hlint = tool "hlint" "3.10" {
+    compiler-nix-name = "ghc912";
+  };
 
   fourmolu = tool "fourmolu" "0.20.0.0" { };
 
-  cuddle = tool "cuddle" "1.8.0.0" { };
+  cuddle = tool "cuddle" "1.8.0.0" {
+    cabalProjectLocal = ''
+      allow-newer: cborg:base
+    '';
+  };
 
   haskellBuildUtils = prev.haskellBuildUtils.override {
     inherit (final.hsPkgs.args) compiler-nix-name;

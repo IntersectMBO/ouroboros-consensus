@@ -18,9 +18,20 @@ hsPkgs.shellFor {
     pkgs.cddlc
     pkgs.pretty-simple
     pkgs.scriv
-    pkgs.haskell-language-server
     (pkgs.python3.withPackages (p: [ p.beautifulsoup4 p.html5lib p.matplotlib p.pandas ]))
   ];
+
+  # This is the place for tools that are required to be built with the same GHC
+  # version as used in hsPkgs.
+  tools = {
+    haskell-language-server = {
+      src = inputs.hls;
+      configureArgs = "--disable-benchmarks --disable-tests";
+      cabalProjectLocal = ''
+        allow-newer: haddock-library:base
+      '';
+    };
+  };
 
   shellHook = ''
     export LANG="en_US.UTF-8"

@@ -28,12 +28,16 @@ let
         );
       });
   };
+  forAllPackages = cfg: args@{ config, lib, ... }: {
+    options.packages = lib.genAttrs config.package-keys (_:
+      lib.mkOption {
+        type = lib.types.submodule ({ ... }: cfg args);
+      });
+  };
   hsPkgs = haskell-nix.cabalProject {
     src = ouroborosConsensusSrc;
     compiler-nix-name = "ghc967";
     flake.variants = {
-      ghc910 = { compiler-nix-name = lib.mkForce "ghc9103"; };
-      ghc912 = { compiler-nix-name = lib.mkForce "ghc9124"; };
       ghc914 = { compiler-nix-name = lib.mkForce "ghc9141"; };
     };
     inputMap = {
@@ -101,6 +105,16 @@ let
           # https://well-typed.com/blog/2023/03/prof-late/
           profilingDetail = "late";
         }];
+      };
+      ipe = {
+        compilerSelection = lib.mkForce (p:
+          lib.mapAttrs (_: ghc: ghc.override { enableIPE = true; })
+            p.haskell-nix.compiler);
+        modules = [
+          (forAllPackages ({ ... }: {
+            ghcOptions = [ "-finfo-table-map" "-fdistinct-constructor-tables" ];
+          }))
+        ];
       };
     };
   };

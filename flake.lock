@@ -542,6 +542,23 @@
         "type": "github"
       }
     },
+    "hls_2": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1776586220,
+        "narHash": "sha256-xTveBr5UUfEetT2THbiKLEYhUdjTP5uHbOkkVFRSg5c=",
+        "owner": "haskell",
+        "repo": "haskell-language-server",
+        "rev": "096d797bddaca372156ce85d6b3f6926d6da0c88",
+        "type": "github"
+      },
+      "original": {
+        "owner": "haskell",
+        "ref": "2.14.0.0",
+        "repo": "haskell-language-server",
+        "type": "github"
+      }
+    },
     "hpc-coveralls": {
       "flake": false,
       "locked": {
@@ -737,6 +754,7 @@
         "gentle-introduction": "gentle-introduction",
         "hackageNix": "hackageNix",
         "haskellNix": "haskellNix",
+        "hls": "hls_2",
         "iohkNix": "iohkNix",
         "nixpkgs": [
           "haskellNix",

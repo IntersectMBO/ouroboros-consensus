@@ -31,6 +31,10 @@
       url = "github:nix-community/flake-compat";
       flake = false;
     };
+    hls = {
+      url = "github:haskell/haskell-language-server/2.14.0.0";
+      flake = false;
+    };
     agda-nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     # for cabal-docspec
     cabal-extras = {
@@ -73,12 +77,9 @@
         devShells = rec {
           default = ghc96;
           ghc96 = hydraJobs.native.haskell96.devShell;
-          ghc96-profiled = hydraJobs.native.haskell96.devShellProfiled;
-          ghc910 = hydraJobs.native.haskell910.devShell;
-          ghc910-profiled = hydraJobs.native.haskell910.devShellProfiled;
-          ghc912 = hydraJobs.native.haskell912.devShell;
-          ghc912-profiled = hydraJobs.native.haskell912.devShellProfiled;
+          ghc96-ipe = hydraJobs.native.haskell96.devShellIPE;
           ghc914 = hydraJobs.native.haskell914.devShell;
+          ghc914-ipe = hydraJobs.native.haskell914.devShellIPE;
 
           agda-spec = pkgs.agda-spec.shell;
 
