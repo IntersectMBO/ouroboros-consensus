@@ -32,6 +32,7 @@ import qualified Data.Sequence.Strict as StrictSeq
 import LeiosDemoDb (leiosDbQueryCompletedEbByPoint)
 import LeiosDemoTypes (EbAnnouncement (..), LeiosPoint (..))
 import Lens.Micro ((.~), (^.))
+import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables, unstowLedgerTables)
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto, PraosState (..))
@@ -135,7 +136,7 @@ instance
   -- The UTxO must be stowed inside 'NewEpochState' before the fold (the
   -- ledger API only sees the in-state UTxO, not the consensus
   -- 'shelleyLedgerTables') and unstowed back afterwards.
-  applyLeiosClosure cfg slot txs lst = do
+  applyLeiosClosure cfg txs lst = do
     ms' <-
       first (SL.BlockTransitionError . fmap injectFailure) $
         foldM (applyOne env) ms0 innerTxs
@@ -147,7 +148,7 @@ instance
     innerTxs = [tx | ShelleyTx _ tx <- txs]
     stowed = stowLedgerTables lst
     nes = shelleyLedgerState stowed
-    env = SL.mkMempoolEnv nes slot
+    env = SL.mkMempoolEnv nes (fromWithOrigin (SlotNo 0) (getTipSlot lst))
     ms0 = SL.mkMempoolState nes
 
     applyOne envv ms tx =

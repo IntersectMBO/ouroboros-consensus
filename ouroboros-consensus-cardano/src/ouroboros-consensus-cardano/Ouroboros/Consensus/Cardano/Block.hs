@@ -1551,7 +1551,7 @@ instance
         inlineLeiosClosure dijkstraBlk [tx | GenTxDijkstra tx <- txs]
     _ -> blk
 
-  applyLeiosClosure cfg slot txs lst =
+  applyLeiosClosure cfg txs lst =
     case lst of
       HardForkLedgerState
         ( State.HardForkState
@@ -1569,7 +1569,7 @@ instance
           let dijkstraTxs = [tx | GenTxDijkstra tx <- txs]
               CardanoLedgerConfig _ _ _ _ _ _ _ dijkstraPCfg = cfg
               dijkstraCfg = shelleyLedgerConfig dijkstraPCfg
-           in case applyLeiosClosure dijkstraCfg slot dijkstraTxs dijkstraLst of
+           in case applyLeiosClosure dijkstraCfg dijkstraTxs dijkstraLst of
                 Left dijkstraErr -> Left (LedgerErrorDijkstra dijkstraErr)
                 Right dijkstraLst' ->
                   let newTele =
