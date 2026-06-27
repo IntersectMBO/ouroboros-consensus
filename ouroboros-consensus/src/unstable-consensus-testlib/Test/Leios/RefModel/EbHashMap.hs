@@ -3,7 +3,8 @@
 {-# LANGUAGE LambdaCase #-}
 
 -- | A type for managing maps over 'EbHash' but entries can't exist
--- without a 'Election' that justifies them
+-- without an 'Election' that justifies them. For example, a node only
+-- ever wants some EB because some election(s) require that EB.
 --
 -- Note that there's at most two 'EbHash'es per 'Election'. That'll be
 -- the first-announced and then the certified EB if it's different
@@ -18,7 +19,7 @@ module EbHashMap (
     -- * Reference-counted bidirectional election/EB map
   , Refs (..)
   , InactiveRef (..)
-  , RefCount (..)
+  , RefCounts (..)
   , EbHashMap (..)
   , activeRef
     -- * Construction
@@ -70,20 +71,17 @@ data InactiveRef =
 activeRef :: Refs b -> EbHash
 activeRef (Refs _ act _) = act
 
--- | An EB's reference count (the number of elections naming it, active or
--- inactive) and a per-EB payload.
+-- | An EB's active and inactive reference counts (how many elections name it as
+-- their active EB, and how many as their inactive/superseded EB) and a per-EB
+-- payload.
 --
--- INVARIANT: the count is positive (i.e. strictly > 0); an entry exists iff
--- some election names it.
-data RefCount a = RefCount !Word16 !a
+-- INVARIANT: the total count is positive (i.e. active + inactive > 0); an entry
+-- exists iff some election names it.
+data RefCounts a = RefCounts !Word16 !Word16 !a
   deriving (Eq, Functor, Show)
 
-instance Semigroup a => Semigroup (RefCount a)
-  where
-    RefCount n x <> RefCount m y = RefCount (n + m) (x <> y)
-
-refCount :: RefCount a -> Word16
-refCount (RefCount n _) = n
+refCount :: RefCounts a -> Word16
+refCount (RefCounts a i _) = a + i
 
 -----
 
@@ -94,31 +92,51 @@ refCount (RefCount n _) = n
 -- some election, and each EB's count equals the number of elections naming it.
 data EbHashMap a b =
     EbHashMap
-      !(Map EbHash   (RefCount a))
+      !(Map EbHash   (RefCounts a))
       !(Map Election (Refs      b))
   deriving (Eq, Show)
 
 empty :: EbHashMap a b
 empty = EbHashMap Map.empty Map.empty
 
-incRef :: Semigroup a => EbHash -> a -> Map EbHash (RefCount a) -> Map EbHash (RefCount a)
-incRef eh a = Map.insertWith collide eh (RefCount 1 a)
+incRefActive :: Semigroup a => EbHash -> a -> Map EbHash (RefCounts a) -> Map EbHash (RefCounts a)
+incRefActive eh a = Map.alter step eh
   where
-    collide new old = old <> new
+    step Nothing                  = Just (RefCounts 1 0 a)
+    step (Just (RefCounts n i x)) = Just (RefCounts (n + 1) i (x <> a))
 
-decRef :: EbHash -> Map EbHash (RefCount a) -> Map EbHash (RefCount a)
-decRef = Map.update step
+-- | For one election: convert its reference to @old@ from active to inactive, and
+-- add an active reference to @new@ (payload @a@). (@old@'s total is unchanged; @new@
+-- gains one.) We never deactivate a reference without activating a different one.
+deactivateRef :: Semigroup a => EbHash -> EbHash -> a -> Map EbHash (RefCounts a) -> Map EbHash (RefCounts a)
+deactivateRef old new a = incRefActive new a . Map.adjust step old
   where
-    step (RefCount n x)
-      | n <= 1    = Nothing
-      | otherwise = Just (RefCount (n - 1) x)
+    step (RefCounts ac i x)
+      | ac == 0   = error "EbHashMap.deactivateRef: no active reference"
+      | otherwise = RefCounts (ac - 1) (i + 1) x
+
+decRefActive :: EbHash -> Map EbHash (RefCounts a) -> Map EbHash (RefCounts a)
+decRefActive = Map.update step
+  where
+    step (RefCounts a i x)
+      | a == 0     = error "EbHashMap.decRefActive: no active reference"
+      | a + i <= 1 = Nothing
+      | otherwise  = Just (RefCounts (a - 1) i x)
+
+decRefInactive :: EbHash -> Map EbHash (RefCounts a) -> Map EbHash (RefCounts a)
+decRefInactive = Map.update step
+  where
+    step (RefCounts a i x)
+      | i == 0     = error "EbHashMap.decRefInactive: no inactive reference"
+      | a + i <= 1 = Nothing
+      | otherwise  = Just (RefCounts a (i - 1) x)
 
 -- | This @b@ value is only the default; update it with 'supersede'
 upsert :: Semigroup a => EbHash -> Election -> a -> b -> EbHashMap a b -> EbHashMap a b
 upsert eh el a' b (EbHashMap ebs els) =
     case Map.lookup el els of
       Nothing ->
-        EbHashMap (incRef eh a' ebs) (setEl (Refs NoInactiveRefYet eh b))
+        EbHashMap (incRefActive eh a' ebs) (setEl (Refs NoInactiveRefYet eh b))
       Just (Refs _ act _)
         | act == eh -> EbHashMap (Map.adjust (fmap (<> a')) eh ebs) els
         | otherwise -> error "EbHashMap.insert: inserted the wrong EbHash"
@@ -132,9 +150,9 @@ updateEb eh f (EbHashMap ebs els) =
     Map.alterF
         (\case
             Nothing -> Nothing
-            Just (RefCount n x) -> do
+            Just (RefCounts n i x) -> do
                 !y <- f x
-                Just (Just (RefCount n y))
+                Just (Just (RefCounts n i y))
         )
         eh
         ebs
@@ -144,14 +162,14 @@ supersede :: Semigroup a => Election -> EbHash -> a -> b -> EbHashMap a b -> EbH
 supersede el eh a b (EbHashMap ebs els) =
     case Map.lookup el els of
       Nothing ->
-        EbHashMap (incRef eh a ebs) (Map.insert el (Refs NoInactiveRef eh b) els)
+        EbHashMap (incRefActive eh a ebs) (Map.insert el (Refs NoInactiveRef eh b) els)
       Just (Refs NoInactiveRefYet act _)
         | act == eh -> EbHashMap (Map.adjust (fmap (<> a)) eh ebs) (Map.insert el (Refs NoInactiveRef act b) els)
-        | otherwise -> EbHashMap (incRef eh a ebs) (Map.insert el (Refs (InactiveRef act) eh b) els)
+        | otherwise -> EbHashMap (deactivateRef act eh a ebs) (Map.insert el (Refs (InactiveRef act) eh b) els)
       Just (Refs NoInactiveRef _ _) -> error "EbHashMap.supersede: election already superseded"
       Just (Refs InactiveRef{} _ _) -> error "EbHashMap.supersede: election already superseded"
 
-lookupEb :: EbHash -> EbHashMap a b -> Maybe (RefCount a)
+lookupEb :: EbHash -> EbHashMap a b -> Maybe (RefCounts a)
 lookupEb eh (EbHashMap ebs _) = Map.lookup eh ebs
 
 lookupElection :: Election -> EbHashMap a b -> Maybe (Refs b)
@@ -170,19 +188,20 @@ pruneElections p (EbHashMap ebs els) =
     (dropped, kept) = Map.partitionWithKey (\el _ -> p el) els
     step acc (Refs inact act _) = dropRefs acc inact act
 
-dropRefs :: Map EbHash (RefCount a) -> InactiveRef -> EbHash -> Map EbHash (RefCount a)
+dropRefs :: Map EbHash (RefCounts a) -> InactiveRef -> EbHash -> Map EbHash (RefCounts a)
 dropRefs ebs inact act =
-    case inact of InactiveRef old -> decRef old (decRef act ebs); _ -> decRef act ebs
+    case inact of InactiveRef old -> decRefInactive old (decRefActive act ebs); _ -> decRefActive act ebs
 
 invariant :: EbHashMap a b -> Bool
 invariant (EbHashMap ebs els) =
        all neverEqual (Map.elems els)
     && Map.keys tally == Map.keys ebs
-    && and (Map.intersectionWith (\n (RefCount m _) -> n == m) tally ebs)
-    && all (\(RefCount n _) -> 0 < n) (Map.elems ebs)
+    && and (Map.intersectionWith (\(a, i) (RefCounts a' i' _) -> a == a' && i == i') tally ebs)
+    && all (\(RefCounts a i _) -> 0 < a + i) (Map.elems ebs)
   where
     neverEqual (Refs inact act _) = case inact of InactiveRef eh -> eh /= act; _ -> True
     tally = foldl' count Map.empty (Map.elems els)
     count m (Refs inact act _) =
-      let m1 = Map.insertWith (+) act (1 :: Word16) m
-      in case inact of InactiveRef old -> Map.insertWith (+) old 1 m1; _ -> m1
+      let m1 = Map.insertWith addPair act ((1, 0) :: (Word16, Word16)) m
+      in case inact of InactiveRef old -> Map.insertWith addPair old (0, 1) m1; _ -> m1
+    addPair (a1, i1) (a2, i2) = (a1 + a2, i1 + i2)

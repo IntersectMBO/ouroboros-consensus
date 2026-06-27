@@ -41,11 +41,11 @@ body100 = Body (EbHash 100) [TxRef (TxHash 1) 150, TxRef (TxHash 2) 150] 200
 ann :: Peer -> RbHeader -> Stimulus
 ann p h = LevWiredMsg p (MsgLeiosBlockAnnouncement h)
 
-offer :: Peer -> Election -> EbHash -> Stimulus
-offer p el eh = LevWiredMsg p (MsgLeiosBlockOffer el eh)
+offer :: Peer -> EbHash -> Stimulus
+offer p eh = LevWiredMsg p (MsgLeiosBlockOffer eh)
 
-txsOffer :: Peer -> Election -> EbHash -> Stimulus
-txsOffer p el eh = LevWiredMsg p (MsgLeiosBlockTxsOffer el eh)
+txsOffer :: Peer -> EbHash -> Stimulus
+txsOffer p eh = LevWiredMsg p (MsgLeiosBlockTxsOffer eh)
 
 runWith :: Ifaces Identity -> [Stimulus] -> (St, [Effect])
 runWith ifs = foldl' go (emptySt, [])
@@ -83,24 +83,24 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
 
   , testCase "BEH-Wanting: an announcement gates the want (AwaitingBody), no fetch yet" $ do
       let (st, fx) = run [LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100]
-      Map.lookup el100 (stWanted st) @?= Just (AwaitingBody (EbHash 100) 200 300)
+      wantStateOf st (EbHash 100) @?= Just (AwaitingBody 200 300)
       assertBool "no request before an offer" (not (any isReq fx))
 
   , testCase "BEH-Offers + BEH-BodyFetch: an offer for the first-announced EB issues ReqBody" $ do
-      let (_, fx) = run [LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) el100 (EbHash 100)]
+      let (_, fx) = run [LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)]
       assertBool "sends MsgLeiosBlockRequest" (Send (Peer 1) (MsgLeiosBlockRequest (EbHash 100)) `elem` fx)
 
   , testCase "BEH-ChunkJobs + BEH-ClosureFetch: body then closure-offer requests the chunked job's txs" $ do
-      let (st, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) el100 (EbHash 100)
-                         , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100), txsOffer (Peer 1) el100 (EbHash 100) ]
+      let (st, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)
+                         , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100), txsOffer (Peer 1) (EbHash 100) ]
       [ txs | Send _ (MsgLeiosBlockTxsRequest _ txs) <- fx ] @?= [NE.fromList [TxHash 1, TxHash 2]]
       assertBool "want advanced to AwaitingTxs"
-        (case Map.lookup el100 (stWanted st) of Just AwaitingTxs{} -> True; _ -> False)
+        (case wantStateOf st (EbHash 100) of Just AwaitingTxs{} -> True; _ -> False)
 
   , testCase "Job: jobBytes is the real summed tx size" $ do
-      let (st, _) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) el100 (EbHash 100)
+      let (st, _) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)
                         , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100) ]
-      jobBytes st el100 (EbHash 100) (JobId 0) @?= 300
+      jobBytes st (EbHash 100) (JobId 0) @?= 300
 
   , testCase "BEH-NotifyServe: a dequeue ships the buffered announcement and opens the gate" $ do
       let (st, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, LevPeerAdd (Peer 2) PeerSharingSampled
@@ -174,17 +174,17 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
       let (st, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100
                          , LevWiredMsg (Peer 1) (MsgLeiosBlockEquivocationProof Nothing hdr101) ]
       assertBool "no disconnect" (not (any isDisconnect fx))
-      Map.lookup el100 (stWanted st) @?= Just (AwaitingBody (EbHash 100) 200 300)
+      wantStateOf st (EbHash 100) @?= Just (AwaitingBody 200 300)
 
   , testCase "BEH-Offers: an offer for an equivocating (non-first) EB disconnects" $ do
       let (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100
                         , LevWiredMsg (Peer 1) (MsgLeiosBlockEquivocationProof Nothing hdr101)
-                        , offer (Peer 1) el100 (EbHash 101) ]
+                        , offer (Peer 1) (EbHash 101) ]
       assertBool "disconnects (unannounced offer)" (Disconnect (Peer 1) UnannouncedOffer `elem` fx)
 
   , testCase "BEH-Responses: a body whose closure size mismatches the announcement disconnects" $ do
       let badBody = Body (EbHash 100) [TxRef (TxHash 1) 1] 200
-          (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) el100 (EbHash 100)
+          (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)
                         , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) badBody) ]
       assertBool "disconnects with BodyMismatch" (Disconnect (Peer 1) BodyMismatch `elem` fx)
 
@@ -194,8 +194,8 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
       assertBool "disconnects with UnsolicitedResponse" (Disconnect (Peer 1) UnsolicitedResponse `elem` fx)
 
   , testCase "BEH-Responses: a tx-closure reply in the wrong order disconnects" $ do
-      let (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) el100 (EbHash 100)
-                        , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100), txsOffer (Peer 1) el100 (EbHash 100)
+      let (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)
+                        , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100), txsOffer (Peer 1) (EbHash 100)
                         , LevWiredMsg (Peer 1) (MsgLeiosBlockTxs (EbHash 100) [Tx (TxHash 2) 150, Tx (TxHash 1) 150]) ]
       assertBool "disconnects with TxsMismatch" (Disconnect (Peer 1) TxsMismatch `elem` fx)
 
@@ -208,30 +208,30 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
   , testCase "BEH-Completion: finishing a body write enqueues a body offer to gated peers" $ do
       let (st, _) = run [ LevPeerAdd (Peer 1) StakeSampled, LevPeerAdd (Peer 2) PeerSharingSampled
                         , credit (Peer 2), ann (Peer 1) hdr100, dequeue (Peer 2), credit (Peer 2)
-                        , LevDiskDone (WriteBody el100 body100) ]
+                        , LevDiskDone (WriteBody body100) ]
           q = maybe Set.empty fst (Map.lookup (Peer 2) (stPeerNotifyQueue st))
       assertBool "body offer enqueued" (Set.member (NotifyBlockOffer el100 (EbHash 100)) q)
 
   , testCase "BEH-Completion: voting + ChainSel are notified only when the last write lands (persist-gated)" $ do
       let txs    = [Tx (TxHash 1) 150, Tx (TxHash 2) 150]
-          setup  = [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) el100 (EbHash 100)
-                   , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100), txsOffer (Peer 1) el100 (EbHash 100)
+          setup  = [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)
+                   , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100), txsOffer (Peer 1) (EbHash 100)
                    , LevWiredMsg (Peer 1) (MsgLeiosBlockTxs (EbHash 100) txs) ]
           exposed fx = NotifyVotingAndChainSel el100 (EbHash 100) `elem` fx
-          (_, fx1)   = run (setup ++ [ LevDiskDone (WriteBody el100 body100) ])
-          (st2, fx2) = run (setup ++ [ LevDiskDone (WriteBody el100 body100)
-                                     , LevDiskDone (WriteClosure el100 (EbHash 100) txs) ])
+          (_, fx1)   = run (setup ++ [ LevDiskDone (WriteBody body100) ])
+          (st2, fx2) = run (setup ++ [ LevDiskDone (WriteBody body100)
+                                     , LevDiskDone (WriteClosure (EbHash 100) txs) ])
       assertBool "fetch-complete + first write expose nothing" (not (exposed fx1))
       assertBool "last write notifies voting and ChainSel"     (exposed fx2)
-      assertBool "and the want is cleared"                     (not (Map.member el100 (stWanted st2)))
+      assertBool "and the want is cleared"                     (isNothing (lookupElection el100 (stWanted st2)))
 
   , testCase "BEH-Wanting: a validated cert (no prior want) creates an AwaitingBody with the carried sizes" $ do
       let (st, _) = run [ LevCertValidated (AnnouncementTriple el100 (HeaderHash 10) (EbHash 100)) 200 300 ]
-      Map.lookup el100 (stWanted st) @?= Just (AwaitingBody (EbHash 100) 200 300)
+      wantStateOf st (EbHash 100) @?= Just (AwaitingBody 200 300)
 
   , testCase "§4 safety properties hold on the closure-fetch scenario" $ do
-      let (st, _) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) el100 (EbHash 100)
-                        , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100), txsOffer (Peer 1) el100 (EbHash 100) ]
+      let (st, _) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)
+                        , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100), txsOffer (Peer 1) (EbHash 100) ]
       assertBool "want announcement-gated"   (prop_wantAnnouncementGated st)
       assertBool "per-peer active-EB cap"     (prop_perPeerActiveEbCap env st)
       assertBool "offers announced/certified" (prop_offersAnnouncedOrCertified st)
@@ -257,10 +257,10 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
           m5 = fromMaybe m4 (updateEb ehA (Just . (<> [4])) m4)
           mC = supersede el3 ehC [6] () (upsert ehC el3 [5] () m5) -- supersede with active==eh combines
           m  = supersede el4 ehD [7] () mC                          -- supersede before any upsert
-      lookupEb ehA m @?= Just (RefCount 2 [1, 2, 3, 4])
-      lookupEb ehB m @?= Just (RefCount 1 [9])
-      lookupEb ehC m @?= Just (RefCount 1 [5, 6])
-      lookupEb ehD m @?= Just (RefCount 1 [7])
+      lookupEb ehA m @?= Just (RefCounts 1 1 [1, 2, 3, 4])  -- el2 active, el1 now inactive
+      lookupEb ehB m @?= Just (RefCounts 1 0 [9])
+      lookupEb ehC m @?= Just (RefCounts 1 0 [5, 6])
+      lookupEb ehD m @?= Just (RefCounts 1 0 [7])
       assertBool "invariant holds" (invariant m)
   ]
 
