@@ -1,5 +1,8 @@
-module RefModel where
+module RefModel (module RefModel) where
 
+import           EbHashMap (EbHash (..), Election (..), electionSlot, PoolId (..), Slot (..))
+import           EbHashMap (EbHashMap)
+import qualified EbHashMap as EM
 import           Data.Foldable (foldl', toList)
 import           Data.List (maximumBy, minimumBy, sortOn)
 import           Data.List.NonEmpty (NonEmpty)
@@ -20,20 +23,11 @@ import           Data.These (These (..))
 import           Data.Word (Word16, Word64)
 
 newtype ByteCount  = ByteCount  Word64 deriving (Eq, Num, Ord, Show)
-newtype Slot       = Slot       Word64 deriving (Eq, Ord, Show)
-newtype PoolId     = PoolId     Word64 deriving (Eq, Ord, Show)
 newtype Peer       = Peer       Word64 deriving (Eq, Ord, Show)
-newtype EbHash     = EbHash     Word64 deriving (Eq, Ord, Show)
 newtype HeaderHash = HeaderHash Word64 deriving (Eq, Ord, Show)
 newtype TxHash     = TxHash     Word64 deriving (Eq, Ord, Show)
 newtype JobId      = JobId      Word64 deriving (Eq, Ord, Show)
 newtype Time       = Time       Word64 deriving (Eq, Ord, Show)
-
-data Election = Election Slot PoolId            -- election = (slot, pool)
-  deriving (Eq, Ord, Show)
-
-electionSlot :: Election -> Slot
-electionSlot (Election s _) = s
 
 data Class = StakeSampled | PeerSharingSampled  -- BEH-PeerClass
   deriving (Eq, Ord, Show)
@@ -166,7 +160,7 @@ data St = St
   { stFirstAnnouncements :: Map Election AnnState                        -- §2 LstFirstAnnouncements
   , stPeerFirstAnnouncements :: Map Peer (Map Election AnnSeen)          -- §2 LstPeerFirstAnnouncements
   , stPeerOfferings :: Map Peer (Map Election (These CertSide OfferSide)) -- §2 LstPeerOfferings
-  , stPeerOfferGates :: Map Peer (Map Election EbHash)                   -- §2 LstPeerOfferGates
+  , stPeerOfferGates :: Map Peer (EbHashMap () ())                      -- §2 LstPeerOfferGates
   , stPeerNotifyQueue :: Map Peer (Set Notification, Int)                -- §2 LstPeerNotifyQueue
   , stWanted :: Map Election WantState                                   -- §2 LstWanted
   , stCertified :: Map Election (HeaderHash, EbHash)                     -- §2 LstCertified
@@ -669,8 +663,8 @@ sendNotification peer n st = case n of
 
 openGate :: Peer -> Election -> EbHash -> St -> St  -- §2 LstPeerOfferGates
 openGate peer el eh st =
-  st { stPeerOfferGates = Map.insert peer (Map.insert el eh perPeer) (stPeerOfferGates st) }
-  where perPeer = fromMaybe Map.empty (Map.lookup peer (stPeerOfferGates st))
+  st { stPeerOfferGates = Map.insert peer (EM.upsert eh el () () perPeer) (stPeerOfferGates st) }
+  where perPeer = fromMaybe EM.empty (Map.lookup peer (stPeerOfferGates st))
 
 hBlock :: Monad m => Ifaces m -> Env -> Time -> Peer -> EbHash -> Body -> St -> m (St, [Effect])  -- BEH-Responses · BEH-ChunkJobs · §3 LevBlock
 hBlock ifs env now peer eh body st = case frontReq st peer of
@@ -867,7 +861,7 @@ enqueueOffer :: Notification -> Election -> EbHash -> St -> (St, [Effect])  -- B
 enqueueOffer notif el eh st =
   foldl' (\(s, fx) peer -> let (s', fx') = enqueueTo peer notif s in (s', fx ++ fx')) (st, []) gated
   where
-    gated = [ peer | (peer, gates) <- Map.toList (stPeerOfferGates st), Map.lookup el gates == Just eh ]
+    gated = [ peer | (peer, gates) <- Map.toList (stPeerOfferGates st), (EM.activeRef <$> EM.lookupElection el gates) == Just eh ]
 
 enqueueBodyOffers :: Election -> EbHash -> St -> (St, [Effect])  -- BEH-NotifyServe · BEH-Completion
 enqueueBodyOffers el eh = enqueueOffer (NotifyBlockOffer el eh) el eh
@@ -882,7 +876,7 @@ pruneBelow s st = st
   , stCertified = pruneElectionMap s (stCertified st)
   , stPeerFirstAnnouncements = Map.map (pruneElectionMap s) (stPeerFirstAnnouncements st)
   , stPeerOfferings = Map.map (pruneElectionMap s) (stPeerOfferings st)
-  , stPeerOfferGates = Map.map (pruneElectionMap s) (stPeerOfferGates st)
+  , stPeerOfferGates = Map.map (EM.pruneElections (\el -> electionSlot el < s)) (stPeerOfferGates st)
   }
 
 pruneElectionMap :: Slot -> Map Election a -> Map Election a

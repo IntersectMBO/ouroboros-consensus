@@ -4,11 +4,15 @@ import           Data.Functor.Identity (Identity, runIdentity)
 import           Data.List (foldl')
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromMaybe, isNothing)
+import           Data.Monoid (Sum (..))
 import qualified Data.Set as Set
 
 import           Test.Tasty
 import           Test.Tasty.HUnit
+import           Test.Tasty.QuickCheck
 
+import           EbHashMap
 import           RefModel
 
 main :: IO ()
@@ -102,7 +106,7 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
       let (st, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, LevPeerAdd (Peer 2) PeerSharingSampled
                          , credit (Peer 2), ann (Peer 1) hdr100, dequeue (Peer 2) ]
       assertBool "relays the announcement to Peer 2" (Send (Peer 2) (MsgLeiosBlockAnnouncement hdr100) `elem` fx)
-      (Map.lookup (Peer 2) (stPeerOfferGates st) >>= Map.lookup el100) @?= Just (EbHash 100)
+      (activeRef <$> (Map.lookup (Peer 2) (stPeerOfferGates st) >>= lookupElection el100)) @?= Just (EbHash 100)
 
   , testCase "BEH-NotifyServe: an enqueue that grows the queue emits NotifyEnqueue" $ do
       let (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, LevPeerAdd (Peer 2) PeerSharingSampled
@@ -232,4 +236,100 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
       assertBool "per-peer active-EB cap"     (prop_perPeerActiveEbCap env st)
       assertBool "offers announced/certified" (prop_offersAnnouncedOrCertified st)
       assertBool "in-flight offered"          (prop_inflightOffered st)
+
+  , testProperty "EbHashMap: invariant + op postconditions hold across random op sequences"
+      (withMaxSuccess 2000 prop_ebHashMap)
+
+  , testCase "EbHashMap: per-EB payload combines via <> across references" $ do
+      let el1 = Election (Slot 1) (PoolId 0)
+          el2 = Election (Slot 2) (PoolId 0)
+          el3 = Election (Slot 3) (PoolId 0)
+          el4 = Election (Slot 4) (PoolId 0)
+          ehA = EbHash 10
+          ehB = EbHash 11
+          ehC = EbHash 12
+          ehD = EbHash 13
+          m0 = empty :: EbHashMap [Int] ()
+          m1 = upsert ehA el1 [1] () m0
+          m2 = upsert ehA el2 [2] () m1   -- second election names ehA: incRef combines
+          m3 = upsert ehA el1 [3] () m2   -- re-upsert same active: adjust combines
+          m4 = supersede el1 ehB [9] () m3 -- el1 switches to ehB; ehA untouched, now el1's inactive
+          m5 = fromMaybe m4 (updateEb ehA (Just . (<> [4])) m4)
+          mC = supersede el3 ehC [6] () (upsert ehC el3 [5] () m5) -- supersede with active==eh combines
+          m  = supersede el4 ehD [7] () mC                          -- supersede before any upsert
+      lookupEb ehA m @?= Just (RefCount 2 [1, 2, 3, 4])
+      lookupEb ehB m @?= Just (RefCount 1 [9])
+      lookupEb ehC m @?= Just (RefCount 1 [5, 6])
+      lookupEb ehD m @?= Just (RefCount 1 [7])
+      assertBool "invariant holds" (invariant m)
   ]
+
+-- EbHashMap property test --------------------------------------------------
+
+-- | A random operation over a small key space (so collisions, supersessions,
+-- and shared EbHashes across elections are common).
+data Op
+  = OpInsert    Election EbHash Int Int
+  | OpSupersede Election EbHash Int Int
+  | OpDelete    Election
+  | OpPrune     Slot
+  deriving Show
+
+genElection :: Gen Election
+genElection = Election <$> (Slot . fromIntegral <$> chooseInt (0, 5))
+                       <*> (PoolId . fromIntegral <$> chooseInt (0, 2))
+
+genEbHash :: Gen EbHash
+genEbHash = EbHash . fromIntegral <$> chooseInt (0, 4)
+
+instance Arbitrary Op where
+  arbitrary = oneof
+    [ OpInsert    <$> genElection <*> genEbHash <*> arbitrary <*> arbitrary
+    , OpSupersede <$> genElection <*> genEbHash <*> arbitrary <*> arbitrary
+    , OpDelete    <$> genElection
+    , OpPrune . Slot . fromIntegral <$> chooseInt (0, 6)
+    ]
+
+activeOf :: Election -> EbHashMap a b -> Maybe EbHash
+activeOf el m = activeRef <$> lookupElection el m
+
+-- | The ops error on misuse; only apply each when its precondition holds.
+insertValid :: Election -> EbHash -> EbHashMap a b -> Bool
+insertValid el eh m = maybe True (== eh) (activeOf el m)
+
+supersedeValid :: Election -> EbHash -> EbHashMap a b -> Bool
+supersedeValid el _ m = case lookupElection el m of
+  Nothing                          -> True   -- cert before announcement
+  Just (Refs NoInactiveRefYet _ _) -> True   -- first cert for this election
+  Just (Refs NoInactiveRef   _ _)  -> False  -- already superseded
+  Just (Refs (InactiveRef _) _ _)  -> False  -- already superseded
+
+apply :: Op -> EbHashMap (Sum Int) (Sum Int) -> EbHashMap (Sum Int) (Sum Int)
+apply op m = case op of
+  OpInsert el eh a b    -> if insertValid el eh m    then upsert eh el (Sum a) (Sum b) m    else m
+  OpSupersede el eh a b -> if supersedeValid el eh m then supersede el eh (Sum a) (Sum b) m else m
+  OpDelete el           -> deleteElection el m
+  OpPrune s             -> pruneElections (\e -> electionSlot e < s) m
+
+electionsOf :: EbHashMap a b -> [Election]
+electionsOf (EbHashMap _ els) = Map.keys els
+
+postcond :: Op -> EbHashMap (Sum Int) (Sum Int) -> EbHashMap (Sum Int) (Sum Int) -> Bool
+postcond op pre post = case op of
+  OpInsert el eh _ _    -> case lookupElection el pre of   -- a fresh announce sets the active
+                             Nothing -> activeOf el post == Just eh
+                             _       -> True
+  OpSupersede el eh _ _ -> not (supersedeValid el eh pre) || activeOf el post == Just eh
+  OpDelete el           -> isNothing (lookupElection el post)
+  OpPrune s             -> all (\e -> not (electionSlot e < s)) (electionsOf post)
+
+prop_ebHashMap :: [Op] -> Property
+prop_ebHashMap = go empty
+  where
+    go _ []         = property True
+    go m (op : ops) =
+      let m' = apply op m
+      in counterexample
+           (show op <> "\n  before: " <> show m <> "\n  after:  " <> show m')
+           (invariant m' && postcond op m m')
+         .&&. go m' ops
