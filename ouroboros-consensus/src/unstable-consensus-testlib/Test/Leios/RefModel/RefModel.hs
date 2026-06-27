@@ -4,10 +4,9 @@ import           EbHashMap (EbHash (..), Election (..), electionSlot, Slot (..))
 import           EbHashMap (EbHashMap)
 import qualified EbHashMap as EM
 import           Data.Foldable (foldl', toList)
-import           Data.List (maximumBy, minimumBy, sortOn)
+import           Data.List (sortOn)
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
-import           Data.Ord (comparing)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Map.NonEmpty (NEMap)
@@ -156,16 +155,16 @@ data PeerInfo = PeerInfo { peerClass :: Class, peerPhase :: Phase }  -- §2 LstP
 data Notification                                  -- §2 LstPeerNotifyQueue
   = NotifyAnnouncement RbHeader
   | NotifyEquivProof (Maybe RbHeader) RbHeader
-  | NotifyBlockOffer Election EbHash               -- MsgLeiosBlockOffer
-  | NotifyBlockTxsOffer Election EbHash            -- MsgLeiosBlockTxsOffer
+  | NotifyBlockOffer EbHash                        -- MsgLeiosBlockOffer
+  | NotifyBlockTxsOffer EbHash                     -- MsgLeiosBlockTxsOffer
   deriving (Eq, Ord, Show)
 
 data St = St
   { stFirstAnnouncements :: Map Election AnnState                        -- §2 LstFirstAnnouncements
   , stPeerFirstAnnouncements :: Map Peer (Map Election AnnSeen)          -- §2 LstPeerFirstAnnouncements
   , stPeerOfferings :: Map Peer (EbHashMap (Maybe LeiosNotifySide, Any) (Maybe ChainSyncSide)) -- §2 LstPeerOfferings
-  , stPeerOfferGates :: Map Peer (EbHashMap () ())                      -- §2 LstPeerOfferGates
-  , stPeerNotifyQueue :: Map Peer (Set Notification, Int)                -- §2 LstPeerNotifyQueue
+  , stPeerOfferGates :: Map Peer (EbHashMap (Maybe LeiosNotifySide) ()) -- §2 LstPeerOfferGates (payload: offer level sent so far)
+  , stPeerNotifyQueue :: Map Peer (Seq Notification, Int)               -- §2 LstPeerNotifyQueue (FIFO; cap = credits)
   , stWanted :: EbHashMap WantState ()                                  -- §2 LstWanted
   , stVolatileBody :: EbHashMap () ()                                   -- §2 LstVolatileBody
   , stVolatileClosure :: EbHashMap () ()                                -- §2 LstVolatileClosure (INVARIANT: subset of stVolatileBody)
@@ -521,10 +520,10 @@ recordedFirst st peer el = do
 
 genuineEquiv :: RbHeader -> RbHeader -> Bool        -- §3 LevBlockEquivocationProof validation
 genuineEquiv h1 h2 =
-     rbValid h1 && rbValid h2
-  && isJust (rbAnnounce h1) && isJust (rbAnnounce h2)
-  && rbElection h1 == rbElection h2
+     rbElection h1 == rbElection h2
   && rbHeaderHash h1 /= rbHeaderHash h2
+  && isJust (rbAnnounce h1) && isJust (rbAnnounce h2)
+  && rbValid h1 && rbValid h2
 
 advancePeerToTwo :: Peer -> Election -> RbHeader -> St -> Maybe St  -- §3 LstPeerFirstAnnouncements -> Two
 advancePeerToTwo peer el h1 st =
@@ -598,58 +597,47 @@ recordChainSyncSide peer el hh eh st =
 
 hRequestNext :: Monad m => Env -> Peer -> St -> m (St, [Effect])  -- BEH-NotifyServe · §3 LevNotificationRequestNext
 hRequestNext env peer st =
-  let (s, cap) = fromMaybe (Set.empty, 0) (Map.lookup peer (stPeerNotifyQueue st))
+  let (s, cap) = fromMaybe (Seq.empty, 0) (Map.lookup peer (stPeerNotifyQueue st))
   in if cap >= envNotifyMaxCapacity env
        then pure (st, [Disconnect peer ExcessNotifyCredits])
        else pure (setQueue peer (s, cap + 1) st, [])
 
 hNotifyDequeue :: Monad m => Env -> Peer -> St -> m (St, [Effect])  -- BEH-NotifyServe · §3 LevNotifyDequeue
 hNotifyDequeue env peer st =
-  let (s, cap) = fromMaybe (Set.empty, 0) (Map.lookup peer (stPeerNotifyQueue st))
-  in case pickMax s of
-       Nothing      -> error "hNotifyDequeue: LevNotifyDequeue on an empty queue"
-       Just (n, s')
-         | belowTip env (notifyElection n) -> pure (setQueue peer (s', cap) st, [])
-         | otherwise                       -> pure (sendNotification peer n (setQueue peer (s', cap - 1) st))
+  let (q, cap) = fromMaybe (Seq.empty, 0) (Map.lookup peer (stPeerNotifyQueue st))
+  in case q of
+       Empty -> error "hNotifyDequeue: LevNotifyDequeue on an empty queue"
+       n :<| q'
+         | discard   -> pure (setQueue peer (q', cap) st, [])
+         | otherwise -> pure (sendNotification peer n (setQueue peer (q', cap - 1) st))
+         where
+           discard = case n of
+             NotifyAnnouncement h   -> belowTip env (rbElection h)
+             NotifyEquivProof _ h2  -> belowTip env (rbElection h2)
+             NotifyBlockOffer eh    -> not (offerable peer eh OfferBody st)
+             NotifyBlockTxsOffer eh -> not (offerable peer eh OfferBodyAndClosure st)
 
-setQueue :: Peer -> (Set Notification, Int) -> St -> St
+setQueue :: Peer -> (Seq Notification, Int) -> St -> St
 setQueue peer v st = st { stPeerNotifyQueue = Map.insert peer v (stPeerNotifyQueue st) }
 
-enqueue :: Notification -> (Set Notification, Int) -> (Set Notification, Int)  -- BEH-NotifyServe
-enqueue n (q, cap) =
-  let q' = Set.insert n q
-  in if Set.size q' > cap
-       then (Set.delete (minimumBy (comparing notifyRank) (Set.toList q')) q', cap)
-       else (q', cap)
+enqueue :: Notification -> (Seq Notification, Int) -> (Seq Notification, Int)  -- BEH-NotifyServe (FIFO; drop the new message when full)
+enqueue n (q, cap)
+  | Seq.length q < cap = (q Seq.|> n, cap)
+  | otherwise          = (q, cap)
 
 enqueueTo :: Peer -> Notification -> St -> (St, [Effect])  -- BEH-NotifyServe
 enqueueTo peer n st =
-  let (q, cap) = fromMaybe (Set.empty, 0) (Map.lookup peer (stPeerNotifyQueue st))
+  let (q, cap) = fromMaybe (Seq.empty, 0) (Map.lookup peer (stPeerNotifyQueue st))
       (q', _)  = enqueue n (q, cap)
-  in (setQueue peer (q', cap) st, [ NotifyEnqueue peer | Set.size q' > Set.size q ])
+  in (setQueue peer (q', cap) st, [ NotifyEnqueue peer | Seq.length q' > Seq.length q ])
 
 enqueueToAll :: Notification -> St -> (St, [Effect])  -- BEH-NotifyServe relay
 enqueueToAll n st = foldl' (\(s, fx) peer -> let (s', fx') = enqueueTo peer n s in (s', fx ++ fx')) (st, []) (Map.keys (stPeerPresent st))
 
-pickMax :: Set Notification -> Maybe (Notification, Set Notification)  -- §2 notifyPriority · NEEDS-TO-BE-INCREMENTAL: two slot-ordered queues (announcements; non-announcements)
-pickMax s
-  | Set.null s = Nothing
-  | otherwise  = let n = maximumBy (comparing notifyRank) (Set.toList s) in Just (n, Set.delete n s)
-
-notifyRank :: Notification -> (NotificationPriority, Word64)         -- §2 notifyPriority (simplified; L_hdr tiers TODO)
-notifyRank (NotifyAnnouncement h)     = (3, slotW (rbElection h))
-notifyRank (NotifyEquivProof _ h2)    = (2, slotW (rbElection h2))
-notifyRank (NotifyBlockTxsOffer el _) = (1, slotW el)
-notifyRank (NotifyBlockOffer el _)    = (1, slotW el)
-
-slotW :: Election -> Word64
-slotW (Election (Slot s) _) = s
-
-notifyElection :: Notification -> Election             -- §2 notification's election (for BEH-ImmTipAdvance staleness)
-notifyElection (NotifyAnnouncement h)     = rbElection h
-notifyElection (NotifyEquivProof _ h2)    = rbElection h2
-notifyElection (NotifyBlockOffer el _)    = el
-notifyElection (NotifyBlockTxsOffer el _) = el
+offerable :: Peer -> EbHash -> OfferLevel -> St -> Bool  -- §2 LstPeerOfferGates: announced, and not yet offered at this level
+offerable peer eh lvl st = case EM.lookupEb eh (fromMaybe EM.empty (Map.lookup peer (stPeerOfferGates st))) of
+  Just (EM.RefCounts _ _ sent) -> sent < Just (LeiosNotifySide lvl)
+  Nothing                      -> False
 
 notifyMsgSlot :: St -> Peer -> WireMsg -> Maybe Slot   -- BEH-NotifyServe staleness: a LeiosNotify message's slot (youngest, for a multi-election EbHash offer)
 notifyMsgSlot _  _    (MsgLeiosBlockAnnouncement h)         = Just (electionSlot (rbElection h))
@@ -668,12 +656,18 @@ sendNotification peer n st = case n of
         eh = maybe (EbHash 0) annEbHash (rbAnnounce h)
     in (openGate peer el eh st, [Send peer (MsgLeiosBlockAnnouncement h)])
   NotifyEquivProof m1 h2   -> (st, [Send peer (MsgLeiosBlockEquivocationProof m1 h2)])
-  NotifyBlockOffer _ eh    -> (st, [Send peer (MsgLeiosBlockOffer eh)])
-  NotifyBlockTxsOffer _ eh -> (st, [Send peer (MsgLeiosBlockTxsOffer eh)])
+  NotifyBlockOffer eh      -> (bumpGate peer eh OfferBody st, [Send peer (MsgLeiosBlockOffer eh)])
+  NotifyBlockTxsOffer eh   -> (bumpGate peer eh OfferBodyAndClosure st, [Send peer (MsgLeiosBlockTxsOffer eh)])
 
-openGate :: Peer -> Election -> EbHash -> St -> St  -- §2 LstPeerOfferGates
+openGate :: Peer -> Election -> EbHash -> St -> St  -- §2 LstPeerOfferGates: announcement sent (no offer yet)
 openGate peer el eh st =
-  st { stPeerOfferGates = Map.insert peer (EM.upsert eh el () () perPeer) (stPeerOfferGates st) }
+  st { stPeerOfferGates = Map.insert peer (EM.upsert eh el Nothing () perPeer) (stPeerOfferGates st) }
+  where perPeer = fromMaybe EM.empty (Map.lookup peer (stPeerOfferGates st))
+
+bumpGate :: Peer -> EbHash -> OfferLevel -> St -> St  -- §2 LstPeerOfferGates: record the offer level sent
+bumpGate peer eh lvl st = case EM.updateEb eh (\sent -> Just (sent <> Just (LeiosNotifySide lvl))) perPeer of
+  Just m' -> st { stPeerOfferGates = Map.insert peer m' (stPeerOfferGates st) }
+  Nothing -> st
   where perPeer = fromMaybe EM.empty (Map.lookup peer (stPeerOfferGates st))
 
 hBlock :: Monad m => Ifaces m -> Env -> Time -> Peer -> EbHash -> Body -> St -> m (St, [Effect])  -- BEH-Responses · BEH-ChunkJobs · §3 LevBlock
@@ -769,11 +763,8 @@ hDiskDone :: Monad m => Ifaces m -> Env -> Time -> DiskWrite -> St -> m (St, [Ef
 hDiskDone _ifs _env _now w st = case w of
   WriteBody body ->
     let eh  = bodyEbHash body
-        els = electionsNaming eh st
-        st0 = st { stVolatileBody = addVolatile eh els (stVolatileBody st) }
-        (st1, fx1) = case youngestElection els of
-                       Just el -> enqueueBodyOffers el eh st0
-                       Nothing -> (st0, [])
+        st0 = st { stVolatileBody = addVolatile eh (electionsNaming eh st) (stVolatileBody st) }
+        (st1, fx1) = enqueueBodyOffers eh st0
         (st2, fx2) = decWrite eh st1
     in pure (st2, fx1 ++ fx2)
   WriteClosure eh _ -> pure (decWrite eh st)
@@ -789,9 +780,7 @@ completeEb :: EbHash -> St -> (St, [Effect])  -- BEH-Completion (per-EbHash; fan
 completeEb eh st =
   let els = electionsNaming eh st
       st0 = st { stVolatileClosure = addVolatile eh els (stVolatileClosure st) }
-      (st1, fx) = case youngestElection els of
-                    Just el -> enqueueClosureOffers el eh (removeWantEb eh st0)
-                    Nothing -> (removeWantEb eh st0, [])
+      (st1, fx) = enqueueClosureOffers eh (removeWantEb eh st0)
   in (st1, [ NotifyVotingAndChainSel el eh | el <- els ] ++ fx)
 
 hImmTipAdvanced :: Monad m => Env -> St -> m (St, [Effect])  -- BEH-ImmTipAdvance · §3 LevImmTipAdvanced
@@ -884,24 +873,14 @@ isComplete ifs eh = do
 setCertified :: Election -> (HeaderHash, EbHash) -> St -> St
 setCertified el v st = st { stCertified = Map.insert el v (stCertified st) }
 
-enqueueOffer :: Notification -> EbHash -> St -> (St, [Effect])  -- BEH-NotifyServe · BEH-Completion · NEEDS-TO-BE-INCREMENTAL: EbHash↦gated-downstream-peers index
-enqueueOffer notif eh st =
-  foldl' (\(s, fx) peer -> let (s', fx') = enqueueTo peer notif s in (s', fx ++ fx')) (st, []) gated
-  where
-    gated = [ peer | (peer, gates) <- Map.toList (stPeerOfferGates st), isJust (EM.lookupEb eh gates) ]
+enqueueBodyOffers :: EbHash -> St -> (St, [Effect])  -- BEH-NotifyServe · BEH-Completion (gate-checked at dequeue)
+enqueueBodyOffers eh = enqueueToAll (NotifyBlockOffer eh)
 
-enqueueBodyOffers :: Election -> EbHash -> St -> (St, [Effect])  -- BEH-NotifyServe · BEH-Completion
-enqueueBodyOffers el eh = enqueueOffer (NotifyBlockOffer el eh) eh
-
-enqueueClosureOffers :: Election -> EbHash -> St -> (St, [Effect])  -- BEH-NotifyServe · BEH-Completion
-enqueueClosureOffers el eh = enqueueOffer (NotifyBlockTxsOffer el eh) eh
+enqueueClosureOffers :: EbHash -> St -> (St, [Effect])  -- BEH-NotifyServe · BEH-Completion (gate-checked at dequeue)
+enqueueClosureOffers eh = enqueueToAll (NotifyBlockTxsOffer eh)
 
 addVolatile :: EbHash -> [Election] -> EbHashMap () () -> EbHashMap () ()  -- §2 LstVolatileBody/LstVolatileClosure
 addVolatile eh els m = foldl' (\acc el -> EM.upsert eh el () () acc) m els
-
-youngestElection :: [Election] -> Maybe Election  -- §3 offer representative (youngest naming election)
-youngestElection [] = Nothing
-youngestElection els = Just (maximumBy (comparing electionSlot) els)
 
 heldIn :: EbHash -> EbHashMap a b -> Bool  -- §2 LstVolatileBody/LstVolatileClosure membership
 heldIn eh m = isJust (EM.lookupEb eh m)
@@ -951,7 +930,7 @@ centralAnnounce _ifs env _now h st = case rbAnnounce h of
                    | heldIn eh (stVolatileClosure st2) = st2
                    | otherwise          = wantBody el eh (annBodySize ann) (annClosureSize ann) st2
                (st4, fx)  = enqueueToAll (NotifyAnnouncement h) st3
-               (st5, fx') = enqueueHeldOffers el eh st4
+               (st5, fx') = enqueueHeldOffers eh st4
            in pure (st5, fx ++ fx')
          Just (AnnOne h1)
            | rbHeaderHash h1 == rbHeaderHash h -> pure (st, [])
@@ -965,10 +944,10 @@ anchorVolatile el eh st = st
   { stVolatileBody    = if heldIn eh (stVolatileBody st)    then addVolatile eh [el] (stVolatileBody st)    else stVolatileBody st
   , stVolatileClosure = if heldIn eh (stVolatileClosure st) then addVolatile eh [el] (stVolatileClosure st) else stVolatileClosure st }
 
-enqueueHeldOffers :: Election -> EbHash -> St -> (St, [Effect])  -- BEH-Offers · BEH-Completion: offer a held EB to peers we are announcing it to
-enqueueHeldOffers el eh st
-  | heldIn eh (stVolatileClosure st) = enqueueToAll (NotifyBlockTxsOffer el eh) st
-  | heldIn eh (stVolatileBody st)    = enqueueToAll (NotifyBlockOffer el eh) st
+enqueueHeldOffers :: EbHash -> St -> (St, [Effect])  -- BEH-Offers · BEH-Completion: offer a held EB to peers we are announcing it to
+enqueueHeldOffers eh st
+  | heldIn eh (stVolatileClosure st) = enqueueToAll (NotifyBlockTxsOffer eh) st
+  | heldIn eh (stVolatileBody st)    = enqueueToAll (NotifyBlockOffer eh) st
   | otherwise                        = (st, [])
 
 copyAnnIntoOfferings :: Peer -> Election -> St -> St  -- BEH-Offers · §2 LstPeerOfferings

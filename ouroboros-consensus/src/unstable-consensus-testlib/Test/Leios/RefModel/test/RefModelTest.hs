@@ -6,7 +6,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe, isNothing)
 import           Data.Monoid (Sum (..))
-import qualified Data.Set as Set
+import qualified Data.Sequence as Seq
 
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -115,18 +115,18 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
 
   , testCase "BEH-NotifyServe back-pressure: with no credit nothing is buffered and no NotifyEnqueue fires" $ do
       let (st, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, LevPeerAdd (Peer 2) PeerSharingSampled, ann (Peer 1) hdr100 ]
-          q = maybe Set.empty fst (Map.lookup (Peer 2) (stPeerNotifyQueue st))
-      assertBool "queue empty without a credit" (Set.null q)
+          q = maybe Seq.empty fst (Map.lookup (Peer 2) (stPeerNotifyQueue st))
+      assertBool "queue empty without a credit" (Seq.null q)
       assertBool "no NotifyEnqueue for Peer 2"  (null [ () | NotifyEnqueue (Peer 2) <- fx ])
 
-  , testCase "BEH-NotifyServe back-pressure: a full queue evicts the notifyPriority-min, and only the enqueue with an unoccupied credit emits NotifyEnqueue" $ do
+  , testCase "BEH-NotifyServe back-pressure: a full FIFO drops the overflowing (newest) message, keeping the first" $ do
       let setup ps  = run ([ LevPeerAdd (Peer 1) StakeSampled, LevPeerAdd (Peer 2) PeerSharingSampled, credit (Peer 2) ] ++ ps)
-          qOf (st, _)   = maybe Set.empty fst (Map.lookup (Peer 2) (stPeerNotifyQueue st))
+          qOf (st, _)   = maybe Seq.empty fst (Map.lookup (Peer 2) (stPeerNotifyQueue st))
           enqOf (_, fx) = length [ () | NotifyEnqueue (Peer 2) <- fx ]
           stalerFirst  = setup [ ann (Peer 1) hdr100, ann (Peer 1) hdr200 ]
           fresherFirst = setup [ ann (Peer 1) hdr200, ann (Peer 1) hdr100 ]
-      qOf stalerFirst    @?= Set.singleton (NotifyAnnouncement hdr200)
-      qOf fresherFirst   @?= Set.singleton (NotifyAnnouncement hdr200)
+      qOf stalerFirst    @?= Seq.fromList [NotifyAnnouncement hdr100]
+      qOf fresherFirst   @?= Seq.fromList [NotifyAnnouncement hdr200]
       enqOf stalerFirst  @?= 1
       enqOf fresherFirst @?= 1
 
@@ -158,7 +158,7 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
                                    , credit (Peer 2), ann (Peer 1) hdr100 ]
           (st1, fx) = runIdentity (step nullIfaces envT (Time 0) (dequeue (Peer 2)) st0)
       assertBool "stale notification not sent" (null [ () | Send (Peer 2) _ <- fx ])
-      assertBool "stale notification discarded" (maybe True (Set.null . fst) (Map.lookup (Peer 2) (stPeerNotifyQueue st1)))
+      assertBool "stale notification discarded" (maybe True (Seq.null . fst) (Map.lookup (Peer 2) (stPeerNotifyQueue st1)))
 
   , testCase "BEH-ImmTipAdvance: promote is prompt, GC is deferred" $ do
       let envT    = env { envImmutableTip = Slot 7 }
@@ -205,12 +205,12 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
                       , LevWiredMsg (Peer 2) (MsgLeiosBlockTxsRequest (EbHash 100) (NE.fromList [TxHash 1, TxHash 2])) ]
       [ ts | Send _ (MsgLeiosBlockTxs _ ts) <- fx ] @?= [[Tx (TxHash 1) 1, Tx (TxHash 2) 1]]
 
-  , testCase "BEH-Completion: finishing a body write enqueues a body offer to gated peers" $ do
+  , testCase "BEH-Completion: finishing a body write enqueues a body offer" $ do
       let (st, _) = run [ LevPeerAdd (Peer 1) StakeSampled, LevPeerAdd (Peer 2) PeerSharingSampled
                         , credit (Peer 2), ann (Peer 1) hdr100, dequeue (Peer 2), credit (Peer 2)
                         , LevDiskDone (WriteBody body100) ]
-          q = maybe Set.empty fst (Map.lookup (Peer 2) (stPeerNotifyQueue st))
-      assertBool "body offer enqueued" (Set.member (NotifyBlockOffer el100 (EbHash 100)) q)
+          q = maybe Seq.empty fst (Map.lookup (Peer 2) (stPeerNotifyQueue st))
+      assertBool "body offer enqueued" (NotifyBlockOffer (EbHash 100) `elem` q)
 
   , testCase "BEH-Completion: voting + ChainSel are notified only when the last write lands (persist-gated)" $ do
       let txs    = [Tx (TxHash 1) 150, Tx (TxHash 2) 150]
