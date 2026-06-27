@@ -62,7 +62,7 @@ part is collected in the §6 appendix; it treats certs as first-class Leios mess
   also makes its EB wanted; **[SF]** when it names an EB other than our first-seen, the want
   switches to the certified EB — skew fallback (§6).
 
-- **`BEH-Offers`** (client; availability). `LevBlockOffer(peer, ebHash)` / `LevBlockTxsOffer(peer, ebHash)` (LeiosNotify),
+- **`BEH-Offers`** (client; availability). `LevBlockOffer(peer, election, ebHash)` / `LevBlockTxsOffer(peer, election, ebHash)` (LeiosNotify),
   `LevRollForward(peer, header)` (ChainSync; `header` announces `ebHash`): `peer` has `ebHash`'s body / full closure; a closure
   offer implies a body offer. Offers carry no size (sizes come from announcements). Junk-offer
   defense, judged per peer: a LeiosNotify offer is legitimate only for the first EB `peer` announced
@@ -81,12 +81,22 @@ part is collected in the §6 appendix; it treats certs as first-class Leios mess
 
 - **`BEH-NotifyServe`** (server). Each downstream peer has a notification queue
   (`LstPeerNotifyQueue`) the node feeds as it receives announcements/certs and completes closures. A credit
-  (`MsgLeiosNotificationRequestNext`) from the peer raises the queue's capacity by one; the server
-  sends the highest-priority entry whenever the queue is non-empty and sending isn't otherwise
-  blocked.
-  The queue is back-pressure, not a buffer: its capacity is the peer's outstanding credits, and
-  producing into a full queue evicts the lowest-priority entry (which may be the new one).
-  Honest peers keep hundreds of credits outstanding, so their queues never fill. The shared
+  (`MsgLeiosNotificationRequestNext`) from the peer raises the queue's capacity by one; a server thread
+  sends the highest-priority entry whenever the queue is non-empty and the thread is ready to write. Those
+  readiness conditions (socket writable, thread scheduled) are out of model, so the send is driven by the
+  `LevNotifyDequeue` pseudo-stimulus (§2/§3), which arises only when the queue is non-empty — a credit grows the
+  window, it never itself triggers a send.
+  The queue is back-pressure, not a buffer: its capacity is the peer's outstanding credits — but bounded by
+  `notifyMaxCapacity`: a peer that credits past that bound is over-crediting and is disconnected, so it cannot
+  inflate its capacity without bound. Producing into a full queue evicts the lowest-priority entry (which may be the
+  new one). Honest peers keep hundreds of credits outstanding, so their queues never fill.
+  A dequeued notification whose EB is already below the immutable tip is stale and is discarded rather than sent
+  (the queue is not pruned on tip advance). Symmetrically, a peer that *sends* us a LeiosNotify message whose slot
+  is far below our immutable tip is disconnected: that is stale garbage, not honest diffusion. Every LeiosNotify
+  message carries at least one slot — the election slot of its announcement/offer/cert; for a message spanning
+  several elections (an `EbHash` offer can map to more than one), the youngest such slot. The recipient compares
+  that slot to its current immutable tip and reads the difference as a duration; if it exceeds `notifyStaleHorizon`
+  (≈ 10 minutes), disconnect. The shared
   `notifyPriority` rule (§2) is evaluated against the current `now` at each send and eviction — it is
   time-varying, so the queue keeps no stored order (§2). Relay, from the central state:
   the first announcement when it first arrives; on equivocation, an equivocation proof (carrying
@@ -138,11 +148,12 @@ part is collected in the §6 appendix; it treats certs as first-class Leios mess
   instant the last part is in hand: either the last outstanding job's txs arriving (`LevBlockTxs`),
   or, when `BEH-ChunkJobs` finds the TxCache/Mempool already held everything, at chunk time (no jobs
   to await). Completion lands when those writes do (`LevDiskDone`). Fan out: immediately the fetch
-  side stops pursuing this EB; after the write lands, expose `ebHash`'s closure to the disk-reading
-  consumers — offering it to downstream peers (`BEH-NotifyServe`), voting, and notifying
-  ChainSel: it must be told that `ebHash`'s closure is now available (readable in the store), since it
-  may have a block whose adoption was waiting on exactly that closure, and the notification lets it
-  (re)process such a block (its acquired-set/reprocess machinery is out of the fetch core, §1
+  side stops pursuing this EB. Once the body's write lands, offer the body to downstream peers (a body
+  offer). Once the closure's last write lands — making `ebHash` durably complete — expose its closure to the disk-reading
+  consumers — offering it to downstream peers (`BEH-NotifyServe`), and notifying voting and ChainSel together
+  (one `NotifyVotingAndChainSel`): they must be told that `ebHash`'s closure is now available (readable in the
+  store), since ChainSel may have a block whose adoption was waiting on exactly that closure, and the notification
+  lets it (re)process such a block (its acquired-set/reprocess machinery is out of the fetch core, §1
   below). (persist-before-expose.)
 
 - **`BEH-FetchPriority`** (which EBs first). Certified EBs (a validated cert, via
@@ -174,7 +185,7 @@ is connection-scoped — gone on shutdown, rebuilt as peers reconnect.
 - **`BEH-Shutdown`.** Flush outstanding store writes so every acquired body and tx (both EB closures and TxCache) (**[SF]** cert)
   is on disk, and persist the TxCache window (§7). Nothing else of Leios's own state is persisted.
 - **`BEH-Startup`.** Begin with empty per-peer state (peers (re)connect via `LevPeerAdd`); rebuild the TxCache
-  from its persisted window and GC it against the wall clock (§7) *before* pruning the store; prune everything below the current immutable tip (`BEH-TipAdvance`). The
+  from its persisted window and GC it against the wall clock (§7) *before* pruning the store; prune everything below the current immutable tip (`BEH-ImmTipAdvance`). The
   central want/cert/announce state (`LstWanted`/`LstCertified`/`LstFirstAnnouncements`) is re-derived, not
   persisted — ChainSel re-validates the CertRBs on our selected chain (re-emitting
   `LevCertValidated`) and re-delivers their announcements (`LevRollForward`), and gossiped-only
@@ -200,9 +211,12 @@ is connection-scoped — gone on shutdown, rebuilt as peers reconnect.
   which is harmless (nothing is shared across peers). The graceful path is `LevPeerWindDown` then
   `LevPeerRemove` after the peer drains; an abrupt `LevPeerRemove` (the peer died) skips the wind-down.
 
-- **`BEH-TipAdvance`** (immutable tip → slot `s`). Schedule disk GC (drop volatile data below the new tip)
-  and promote (copy the now-immutable data from volatile storage to the immutable store), then range-delete
-  every slot-indexed state variable below the tip. This GC imposes a constraint on almost all of the
+- **`BEH-ImmTipAdvance`** (immutable tip → slot `s`). Promote promptly (copy the now-immutable data from volatile
+  storage to the immutable store) and range-delete every slot-indexed state variable below the tip. The disk GC
+  (drop volatile data below the new tip) is *delayed*, not prompt: like the ChainDB, the node lets a GC delay
+  elapse before dropping volatile data, so in-flight readers of soon-to-be-collected data are not cut off. The GC
+  is therefore a separate, harness-scheduled event (`LevGarbageCollect`, §3), not part of this advance. This prune
+  imposes a constraint on almost all of the
   state: each retained state variable must be slot-indexed so the prune is an index-accelerated
   range-delete `[.., s)`, never a scan. So the `Election`-keyed state variables — LeiosNotify
   `LstFirstAnnouncements`/`LstPeerFirstAnnouncements`/`LstPeerOfferings`/`LstPeerOfferGates` (**[SF]** §6's `LstAnnouncedCert`) and LeiosFetch
@@ -228,18 +242,18 @@ is connection-scoped — gone on shutdown, rebuilt as peers reconnect.
   diffuses, is served, and is voted on like any other EB. (The issuer's internal logic — EB construction,
   sortition — is out of scope; this is just the hand-off into this document's machinery.)
 
-**Out of the fetch core** (effect interfaces + boundary events): disk store; notifying ChainSel that
-an EB closure is acquired (its acquired-set/reprocess machinery); GC/promote bodies; voting. The ChainSync↔Leios bridge is not
+**Out of the fetch core** (effect interfaces + boundary events): disk store; notifying voting and ChainSel that
+an EB closure is acquired (ChainSel's acquired-set/reprocess machinery); GC/promote bodies; voting. The ChainSync↔Leios bridge is not
 modeled here. A ChainSync `MsgRollForward` delivers one RB `header`; the bridge echoes it as the stimulus
-`LevRollForward(peer, header, predEb)`, enriching the wire payload with the predecessor's announced-EB
-identity (`predEb` — just the relevant parts: its `HeaderHash`, EB hash, and election, from the preceding `HeaderState`)
+`LevRollForward(peer, header, predEb)`, enriching the wire payload with the predecessor's announcement
+triple (`predEb` — the announced-EB identity: its election, `HeaderHash`, and EB hash, from the preceding `HeaderState`)
 — needed because the cert-bit case below certifies the EB the predecessor announced, which `header` alone
 does not provide. Regardless of its cert bit, `header`
 announces the RB's own EB `ebHash` (`BEH-Wanting`),
 updating the central `LstFirstAnnouncements` but not `LstPeerFirstAnnouncements`, which is specific to LeiosNotify. When the cert
 bit is set, the RB's body certifies the earlier EB `ebHash′` that `predEb` identifies: the peer offers `ebHash′`'s body+closure
 (`BEH-Offers`, a backstop to LeiosNotify), and — separately — ChainSel validates that cert on first
-processing the CertRB and emits `LevCertValidated(headerHash′, ebHash′)`, which makes `ebHash′`
+processing the CertRB and emits `LevCertValidated(el′, headerHash′, ebHash′, bodySize′, closureSize′)`, which makes `ebHash′`
 wanted. **[SF]** §6's `BEH-CertFetch` is the other emitter of `LevCertValidated`, from a cert
 offered via `LevCertOffer`.
 
@@ -254,8 +268,8 @@ LeiosNotify:
   the first accepted announcement, plus the first equivocation, if any, once seen; in `Two` the left
   header is by convention the older, first-announced one. Drives `BEH-Wanting` and the
   server relay `BEH-NotifyServe`.
-- `LstPeerFirstAnnouncements : Peer ↦ Election ↦ AnnSeen`, `AnnSeen = One HeaderHash | Two HeaderHash` — the ≤2
-  announcement headers this peer sent; the ≤2 bound and equivocation-disconnect derive from it.
+- `LstPeerFirstAnnouncements : Peer ↦ Election ↦ AnnSeen`, `AnnSeen = One RbHeader | Two RbHeader` — the peer's
+  first-announced header for the election (and, via the `One`/`Two` tag, whether it has since equivocated); the ≤2 bound and equivocation-disconnect derive from it.
   (**[SF]** §6: a peer's cert assertion lives in `LstPeerOfferings`'s `CertSide`.)
 - `LstPeerOfferings : Peer ↦ Election ↦ These CertSide OfferSide` — availability; `These` makes the
   all-empty entry simply absence, with no meaningless empty record. `OfferSide = Body |
@@ -272,7 +286,7 @@ LeiosNotify:
   It does not gate announcement-sending — `LstFirstAnnouncements` already does that; `BEH-NotifyServe`
   skips an EB offer if its gate here isn't yet open.
 - `LstPeerNotifyQueue : Peer ↦ Set Notification` — per-downstream-peer pending notifications; capacity =
-  that peer's outstanding credits. Because `notifyPriority` depends on `now` (§ Helper functions), there is
+  that peer's outstanding credits, bounded by `notifyMaxCapacity`. Because `notifyPriority` depends on `now` (§ Helper functions), there is
   no fixed order to store and keep sorted: it is an unordered set, and priority is evaluated at the only two
   moments it is consulted — sending removes the `notifyPriority(now, ·)`-max, and producing into a full set
   evicts the `notifyPriority(now, ·)`-min (which may be the entry just produced). The order between two
@@ -284,17 +298,23 @@ LeiosFetch:
   GC range-deletes on the slot-major key. An election enters via its first `LevBlockAnnouncement` or via a
   validated cert (`LevCertValidated`), so `dom(LstWanted)
   ⊆ dom(LstFirstAnnouncements) ∪ dom(LstCertified)`. `WantState = AwaitingBody { ebHash, bodySize, closureSize } |
-  AwaitingTxs { ebHash, closureSize, jobs : NonEmpty (JobId ↦ Job) }` — `ebHash : EbHash` names which EB of the
+  AwaitingTxs { ebHash, outstanding }` — `ebHash : EbHash` names which EB of the
   election is wanted (**[SF]** a cert can switch it in place). Over all of time, `LstWanted[el].ebHash` takes
   at most two distinct values, because its two insertion sources each name one: the first announcement
   names its EB (later, different-EB announcements are equivocations, never wanted), and a
   validated cert names the certified EB (at most one EB per election is certifiable, by honest-majority
   anti-equivocation).
   They coincide in the baseline; **[SF]** skew is the only way the cert's EB differs from the first-announced.
-  `AwaitingTxs.jobs` holds only the
-  outstanding jobs (a job is removed once its `LevBlockTxs` arrives) and is non-empty: when the last job's
-  response would empty it, `complete(el)` runs and removes the `el` entry instead, so an `AwaitingTxs` never
-  rests with no jobs. `Job = { txs : NonEmptySet TxHash }`, txs fixed at chunk time (§5 would shrink it as
+  `outstanding = These (JobId ↦ Job) ℕ` pairs the jobs still awaiting a `LevBlockTxs` response with
+  `outstandingWrites − 1` — the count of this EB's disk writes (its body, its TxCache/Mempool-hit copy, and
+  one per fetched job) that have not yet reported `LevDiskDone`. The `These` is non-empty by construction, so
+  the `el` entry exists exactly while the closure is still being fetched or persisted. A job leaves the fetch
+  side once its `LevBlockTxs` arrives — at which point a closure write for it is scheduled, so
+  `outstandingWrites` rises. `complete(el)` (fetch side now empty) emits **nothing** and does **not** delete the
+  entry — writes remain outstanding, and the consumers (voting reads the body+closure from disk, ChainSel
+  reprocesses, downstream peers serve) all read the persisted closure, so the whole fan-out is persist-gated. The
+  entry is cleared, and that fan-out released, only by the `LevDiskDone` that lands the last write
+  (`outstandingWrites` reaching zero with the fetch side already empty) — `BEH-Completion`. `Job = { txs : NonEmpty TxHash }` (an ordered, non-empty list, in the body's tx order), txs fixed at chunk time (§5 would shrink it as
   constituent txs arrive by other means). Cached txs (`BEH-ChunkJobs`) never become jobs, so they are
   implicitly on hand.
 - `LstCertified : Election ↦ (HeaderHash, EbHash)` — validated cert per election (grown by `LevCertValidated`):
@@ -307,14 +327,16 @@ LeiosFetch:
   + `≤128`-announcement window, membership, two-trigger eviction, separate backing store, and persistence are
   all isolated in §7; the main spec only calls its hooks (`txCacheNoteAnnouncement` / `txCacheOnBody` /
   `txCacheOnAcquire` / `dbCopyFromTxCache`).
-- `LstPeerInflight : Peer ↦ Seq Req` (a FIFO), `Req = ReqBody Election EbHash | ReqJob Election EbHash JobId`
-  **[SF]** `| ReqCert Election HeaderHash` (a cert binds to an announcement, so it is keyed by `HeaderHash`, not `EbHash`) — the LeiosFetch protocol delivers replies in request-issue order
+- `LstPeerInflight : Peer ↦ Seq Req` (a FIFO), `Req = ReqBody { el, ebHash, bodySize, closureSize } | ReqJob { el, ebHash, jobId, job }`
+  **[SF]** `| ReqCert { el, headerHash }` (a cert binds to an announcement, so it is keyed by `HeaderHash`, not `EbHash`); each request also carries the data its reply is checked against — `ReqBody`'s announced `bodySize` and `closureSize`, `ReqJob`'s `job` (its txs and their summed size) — filled in from the want when the request is issued, so the §3 fetch rules below name a request by its `el`/`ebHash`/`jobId` identity. The LeiosFetch protocol delivers replies in request-issue order
   (at least today), so a response matches the front of the sequence, which is popped and used to validate
   it, never against current `LstWanted`: if the want moved
   on after we sent the request (cert switch, tip advance), the peer's reply is still valid, and it's
   our doing — not the peer's — that we no longer want it, so we drop the result without
-  disconnecting. The `Election` is carried only so the handler can advance `LstWanted[el]` (a write) in
-  O(log n). Each `Req` is tagged with its issue time (for `BEH-Timeout`). Not slot-GC'd — reclaimed by a
+  disconnecting. Conversely, a reply that matches no front entry — unsolicited, or out of request-issue
+  order — is adversarial: `disconnectFrom(peer)`. The `el` is carried only so the handler can advance `LstWanted[el]` (a write) in
+  O(log n). The timeout is not stored here: issuing a `Req` sets a per-request timer (`SetTimer peer req now`,
+  fired as `LevTimer`, `BEH-Timeout`), so the entry need carry no time of its own. Not slot-GC'd — reclaimed by a
   matching response, or by `LevPeerRemove` (which a `BEH-Timeout` triggers, via `disconnectFrom`); the §5 stagger clock is EB age, not this.
 
 Shared:
@@ -328,11 +350,11 @@ Shared:
 
 LeiosNotify:
 - `electionOf : Peer ↦ EbHash ↦ NonEmptySet Election` — per peer, the elections for which `peer`
-  (first-)announced (**[SF]** or cert-asserted) an EB hashing to `ebHash`. The offer-ingestion index: a
+  first-announced (**[SF]** or cert-asserted) an EB hashing to `ebHash`. The offer-ingestion index: a
   bare-`ebHash` offer is *validated* by `electionOf[peer][ebHash]` being non-empty (else junk ⇒ disconnect)
   and *recorded* into `LstPeerOfferings[peer][el]` for each `el` in that set — the body/closure is
   content-addressed, so holding it serves every election that peer named it for. A derived cache of
-  `LstPeerFirstAnnouncements` (+ the headers it references), GC'd in lockstep: as an election ages below the
+  `LstPeerFirstAnnouncements`, GC'd in lockstep: as an election ages below the
   immutable tip and is range-deleted there, it is removed from its first-announced `ebHash`'s set, and the
   `ebHash` key disappears when the set empties (`NonEmptySet ⇒ absence`). This is the one place a bare
   `EbHash` is mapped back to an `Election`.
@@ -346,9 +368,9 @@ LeiosNotify:
   (an EB with no offerers is simply absent — no empty value rests in the index).
 
 LeiosFetch:
-- `jobInflightPeers(ebHash, j) = |{ peer | ReqJob _ ebHash j ∈ LstPeerInflight[peer] }|`  (job-level rarest-first + §5 stagger)
+- `jobInflightPeers(ebHash, j) = |{ peer | ReqJob _ ebHash j _ ∈ LstPeerInflight[peer] }|`  (job-level rarest-first + §5 stagger)
 - `activeEbs(peer) = |{ ebHash | some Req for ebHash ∈ LstPeerInflight[peer] }|`  (per-peer active-EB cap, §3)
-- `peerSharingInFlightBytes(peer, ebHash) = Σ job sizes for ReqJob _ ebHash _ ∈ LstPeerInflight[peer]`  (PeerSharing peers' ~1 MB limit)
+- `peerSharingInFlightBytes(peer, ebHash) = Σ size(job) for ReqJob _ ebHash _ job ∈ LstPeerInflight[peer]`  (PeerSharing peers' ~1 MB limit)
 - (There is no reverse `tx ↦ {EB}` index, because cross-EB membership is deliberately not tracked; `BEH-ChunkJobs`/`BEH-Responses`.)
 
 Discipline. Nothing in this section is stored — it is all recomputed from the genuine core on demand. The
@@ -366,13 +388,22 @@ writes the core. So the spec stays simple now, and the optimized implementation 
   Because the tiering is relative to `now`, the order slides as the clock advances — a fresh announcement
   outranks a bottom-tier cert now, yet once it ages past `3·L_hdr` the higher-slot cert overtakes it — so it
   is recomputed per comparison rather than cached, and any `notifyPriority`-ranked collection (e.g.
-  `LstPeerNotifyQueue`) is consulted only when acting, never via a stored order. Shared by the
+  `LstPeerNotifyQueue`) is consulted only when acting, never via a single stored total order. Shared by the
   `LstPeerNotifyQueue` dequeuer and every enqueuer (`BEH-NotifyServe`).
+
+  **Aside.** No *single* total order can be stored, but an implementation can still avoid the per-comparison
+  scan by keeping *two* slot-ordered queues per peer — one of announcements, one of the rest (certs/offers/votes).
+  The within-tier order is slot order, which is static; only the two tier cut-points (`now − L_hdr`,
+  `now − 3·L_hdr`) slide. So dequeue-max is O(1): the highest-slot announcement wins if it is younger than
+  `3·L_hdr` (it heads the `L_hdr` or `3·L_hdr` tier), otherwise every announcement has fallen into the bottom
+  tier and the max is the higher-slot of the two queue heads. The full-queue eviction is the symmetric pop-min.
 
 ### Behind the disk store interface (dumb; shared)
 
-`dbWriteBody` · `dbWriteTxsIntoClosure` · **[SF]** `dbWriteCert` · `dbQueryPresent(keys)` (which of those
-bodies/txs/**[SF]** certs the store holds) · `dbGarbageCollect(slot)` · `dbPromote(point)` — presence facts
+the writes `dbWriteBody(body)` · `dbWriteTxsIntoClosure(ebHash, txs)` · **[SF]** `dbWriteCert(cert)` (each
+reports its durability back as a `LevDiskDone`); `dbQueryPresent(keys)` (which of those
+bodies/txs/**[SF]** certs the store holds); and the maintenance ops `dbGarbageCollect(slot)` · `dbPromote(point)`
+(fire-and-forget, no `LevDiskDone`) — presence facts
 only; no EB↔tx knowledge, no completion, no broadcast, so the logic composes EB-completeness (body present ∧
 all closure txs present) from these. The TxCache is a separate component (§7); the main spec reaches it only
 through its hooks, and `dbCopyFromTxCache(txs)` (in `BEH-ChunkJobs`) copies cache hits into the closure.
@@ -391,7 +422,10 @@ messages; unlike `Lst…` state, we neither own nor GC it.
 `jobSize` (~64–128 kB) · `peerSharingClosureByteLimit` (~1 MB) · `peerSharingLowWater`/`peerSharingHighWater` ·
 `requestTimeout` (generous, ≈ BlockFetch) · `frontSkew` (job-ordering bias, see §3 Job ordering) ·
 `L_hdr` (Leios header-diffusion window; `notifyPriority` tiers) · `stakeMaxActiveEbs` (~5) ·
-`peerSharingMaxActiveEbs` (~1–3) (per-peer active-EB cap). §5 (anticipated): `staggerPeers` (~1–2) · `staggerDelay` (~1–2 s).
+`peerSharingMaxActiveEbs` (~1–3) (per-peer active-EB cap) · `notifyMaxCapacity` (~300) (upper bound on a peer's
+notification-queue capacity, so a peer cannot inflate it without bound) · `notifyStaleHorizon` (~10 min, as a
+slot difference) (a LeiosNotify message whose slot is more than this below the immutable tip is stale garbage →
+disconnect). §5 (anticipated): `staggerPeers` (~1–2) · `staggerDelay` (~1–2 s).
 
 ### Messages and stimuli
 
@@ -401,7 +435,8 @@ messages; unlike `Lst…` state, we neither own nor GC it.
     - `MsgLeiosNotificationRequestNext`
     - `MsgLeiosBlockAnnouncement(header)`
     - `MsgLeiosBlockEquivocationProof(header₁?, header₂)`
-    - `MsgLeiosBlockOffer(ebHash)` / `MsgLeiosBlockTxsOffer(ebHash)`
+    - `MsgLeiosBlockOffer(election, ebHash)` / `MsgLeiosBlockTxsOffer(election, ebHash)` — the offer carries the
+      announcing election alongside the `ebHash` (see the cross-election dedup TODO in §5)
     - **[SF]** `MsgLeiosCertOffer(header)`
 - LeiosFetch:
     - `MsgLeiosBlockRequest(ebHash)` / `MsgLeiosBlock(ebHash, body)`
@@ -410,9 +445,9 @@ messages; unlike `Lst…` state, we neither own nor GC it.
 - ChainSync:
     - `MsgRollForward(header)` merely echoed from ChainSync, not directly received by Leios logic
 
-`MsgLeiosBlockTxsRequest(ebHash, txs)` carries the requested job's tx hashes —
+`MsgLeiosBlockTxsRequest(ebHash, txs)` carries the requested job's tx hashes in the job's order —
 the `jobId` is the client's own handle and never goes on the wire — and the matching `MsgLeiosBlockTxs(ebHash, txs)`
-carries those txs, paired to the outstanding `ReqJob` by FIFO order (§2). (TODO: since both ends already
+carries those txs in that same order, paired to the outstanding `ReqJob` by FIFO order (§2). (TODO: since both ends already
 hold `ebHash`'s body, they agree on `txset(ebHash)` and an ordering of it, so `MsgLeiosBlockTxsRequest`'s `txs` could be a compact
 intset/bitfield over that index rather than full tx hashes.)
 
@@ -424,17 +459,27 @@ intset/bitfield over that index rather than full tx hashes.)
   announced, which `header` alone does not identify. So the bridge enriches the stimulus with that EB's
   identity — just the relevant parts (EB hash + election), from the preceding `HeaderState`:
   `LevRollForward(peer, header, predEb)` (see §3).
-- `LevCertValidated(headerHash, ebHash)` ChainSel validated a CertRB's cert (`headerHash` = the certified
-announcement, `ebHash` = the EB it announced); peerless, deduped by election — at most
+- `LevCertValidated(el, headerHash, ebHash, bodySize, closureSize)` ChainSel validated a CertRB's cert; the payload is the certified
+EB's announcement triple (election `el`, certified announcement `headerHash`, EB hash `ebHash`) — the same
+announced-EB identity `LevRollForward` carries as `predEb` — plus the EB's announced `bodySize` and `closureSize`; peerless, deduped by election — at most
 once per election; updates `LstCertified[el]`/`LstWanted[el]`)
 - `LevPeerAdd(peer, class)`
 - `LevPeerWindDown(peer)`
 - `LevPeerRemove(peer)`
-- `LevTimer(timeout, req)`
-- `LevDiskDone(op)`
+- `LevTimer(timeout, peer, req)`
+- `LevDiskDone(w)` (`w` a `DiskWrite`; GC/promote do not report)
 - `LevImmTipAdvanced(slot)`
+- `LevGarbageCollect(slot)` a pseudo-stimulus: the delayed disk GC for a slot that became immutable a GC delay
+  ago. The delay is the ChainDB's concern (the immutable tip is ChainDB-owned, harness-updated), so the harness
+  raises this `slot`'s GC after that delay — distinct from the prompt `LevImmTipAdvanced` promote.
 - `LevSelfIssued(header, body)` an EB this node created, see `BEH-SelfIssued`
-- (§5) `LevTimer(staggerDelay, req)`.
+- `LevNotifyDequeue(peer)` a pseudo-stimulus: a downstream notification server thread's send opportunity. Its
+  readiness conditions (socket writable, thread scheduled) are out of model, so the bridge raises it; it arises
+  only when the queue is non-empty, and the rule (§3) then ships one queued notification (or, if it is stale —
+  below the immutable tip — discards it without sending). Separate from the `LevNotificationRequestNext` credit so
+  that credit-arrival and send-timing are not conflated; the harness keeps the queue's occupancy via the
+  `NotifyEnqueue` action and this event (its inverse).
+- (§5) `LevTimer(staggerDelay, peer, req)`.
 
 **Actions**.
 Outbound effects are inlined in the rules (no separate action vocabulary). Issuing a request = send the wire
@@ -442,7 +487,9 @@ request (`MsgLeiosBlockRequest` / `MsgLeiosBlockTxsRequest` / **[SF]** `MsgLeios
 record the matching `Req…` in `LstPeerInflight[peer]`. Others: serve the response (`MsgLeiosBlock` /
 `MsgLeiosBlockTxs` / **[SF]** `MsgLeiosCert`, the same message a client receives from upstream); relay a `MsgLeiosBlockAnnouncement` / `MsgLeiosBlockEquivocationProof` / **[SF]** `MsgLeiosCertOffer`; schedule
 `dbWriteBody`/`dbWriteTxsIntoClosure`/**[SF]** `dbWriteCert`/`dbCopyFromTxCache`; `disconnectFrom(peer)`; schedule
-`dbGarbageCollect`/`dbPromote`; set a timer; update state; emit closure-complete.
+`dbGarbageCollect`/`dbPromote`; set a timer; update state; notify voting and ChainSel; enqueue a notification into
+a downstream peer's queue (`NotifyEnqueue(peer)` — emitted whenever an enqueue grows the queue's occupancy, so the
+harness can mirror it; the `LevNotifyDequeue` send is its inverse).
 
 ---
 
@@ -450,24 +497,33 @@ record the matching `Req…` in `LstPeerInflight[peer]`. Others: serve the respo
 
 All updates within a rule are one atomic step. "consider fetching" = run the class-aware
 LeiosFetch decision (below). `complete(el)` is an impure helper (not a stimulus), invoked synchronously by
-`LevBlock`/`LevBlockTxs` once `el`'s body is present and no jobs remain: let `ebHash = LstWanted[el].ebHash`;
-remove `el` from `LstWanted`; emit closure-complete; defer the disk-reading fan-out until the relevant
-`LevDiskDone` (persist-before-expose) — once the write lands, that fan-out enqueues a closure offer into
-`LstPeerNotifyQueue[d]` for each downstream `d` with `LstPeerOfferGates[d][el] = ebHash`. A request is only issued to `peer` if `LstPeerPresent[peer]` exists with `phase = Active`. Offers update
-`LstPeerOfferings[peer][el]` (each `el ∈ electionOf[peer][ebHash]`) per the `These` state machine (§2): `LevBlockOffer`/`LevBlockTxsOffer` raise
-the first-announced EB's `OfferSide`; `LevRollForward` records `CertSide` and `BodyAndClosure`.
+`LevBlock`/`LevBlockTxs` once `el`'s fetch side empties (no jobs remain): it merely records that fetch is done —
+it emits nothing and does **not** remove `el` from `LstWanted`, since writes are still outstanding
+(`AwaitingTxs.outstanding`, §2). The entry is cleared, and the whole disk-reading fan-out (the combined
+voting + ChainSel notification, and the downstream closure offer) released, by the `LevDiskDone` that lands the
+last write (persist-before-expose). A request is only issued to `peer` if `LstPeerPresent[peer]` exists with `phase = Active`. Offers update
+`LstPeerOfferings[peer][el]` per the `These` state machine (§2): `LevBlockOffer`/`LevBlockTxsOffer` raise
+the `OfferSide` at the offer's own `election` (which must be one the peer first-announced `ebHash` under);
+`LevRollForward` records `CertSide` and `BodyAndClosure`.
 (**[SF]** §6's `LevCertOffer` also writes `CertSide`.)
 
 ### LeiosNotify rules
 
+- **Staleness precondition (all inbound LeiosNotify messages)**: before handling any announcement / equivocation
+  proof / offer / cert from `peer`, take the message's slot — the election slot it carries, or, for a message
+  spanning several elections (an `EbHash` offer resolves through `electionOf[peer]` to one or more), the youngest
+  of those slots. If the immutable tip exceeds it by more than `notifyStaleHorizon` (the slot difference read as a
+  duration, ≈ 10 min), the message is stale garbage ⇒ `disconnectFrom(peer)`; otherwise handle it as below. (A
+  credit, `LevNotificationRequestNext`, carries no slot and is exempt.)
+
 - **`LevBlockAnnouncement(peer, header)`**: validate `header` (signature/KES, etc.; invalid ⇒ `disconnectFrom(peer)`),
   and it must announce an EB (a LeiosNotify header that announces none is junk ⇒ `disconnectFrom(peer)`);
   let `ebHash`/`bodySize`/`closureSize` be its fields, `el = election(header)`, `h` = its `HeaderHash`. Per-peer check on `LstPeerFirstAnnouncements[peer][el]` (LeiosNotify only; a ChainSync `LevRollForward` skips
-  it): absent → `One h`; `One h` (same) → duplicate ⇒
-  `disconnectFrom(peer)`; `One h₁` (`h ≠ h₁`) → `Two h₁`; `Two _` (or any third distinct header) →
+  it): absent → `One header`; recorded `One header₁` with `h = h₁` → duplicate ⇒
+  `disconnectFrom(peer)`; `One header₁` with `h ≠ h₁` → `Two header₁`; `Two _` (or any third distinct header) →
   `disconnectFrom(peer)`. If accepted, note it to the TxCache (`txCacheNoteAnnouncement(ebHash)`, §7) and update central `LstFirstAnnouncements[el]`: absent → `One header`, and if `ebHash` is not complete nor below the immutable tip
   `LstWanted[el] = AwaitingBody{ ebHash, bodySize, closureSize }`, then enqueue the
-  announcement into every downstream `LstPeerNotifyQueue` and consider fetching; `One` → `Two` (different
+  announcement into every downstream `LstPeerNotifyQueue` (no fetch here — an announcement is not an offer); `One` → `Two` (different
   header) → record the equivocation, enqueue the equivocation proof downstream (**[SF]** §6
   suppresses this once the election is certified); already `Two` → nothing further. An equivocating
   `ebHash` is never wanted (**[SF]** until/unless certified, §6).
@@ -476,22 +532,23 @@ the first-announced EB's `OfferSide`; `LevRollForward` records `CertSide` and `B
   already sent us the first; `ebHashᵢ`/`hᵢ` are each header's EB / `HeaderHash`): validate it is a genuine
   equivocation — both headers validly signed (signature/KES, etc.), each announcing an EB, for the same
   election with `h₁ ≠ h₂` (using `header₁` if present else our recorded first
-  `LstPeerFirstAnnouncements[peer][el] = One h₁`; if neither, or if a header announces no EB, `disconnectFrom(peer)`). Advance `LstPeerFirstAnnouncements[peer][el]` to `Two` (inconsistent / already-`Two`
+  `LstPeerFirstAnnouncements[peer][el] = One header₁`; if neither, or if a header announces no EB, `disconnectFrom(peer)`). Advance `LstPeerFirstAnnouncements[peer][el]` to `Two` (inconsistent / already-`Two`
   with other headers → `disconnectFrom(peer)`). If `LstFirstAnnouncements[el]` is not yet `Two`, record the
   equivocation and enqueue the proof downstream (**[SF]** §6 suppresses this once the election is certified).
   If it was absent the proof carries `header₁` (else validation above disconnected): set `Two h₁ h₂` (left `h₁` =
   `ebHash₁`, the older, first-announced winner) and make `ebHash₁` wanted just as `LevBlockAnnouncement`'s `One` branch — gated
-  on `ebHash₁` being neither complete nor below the immutable tip. If it was `One h₁`, `ebHash₁` is already the
+  on `ebHash₁` being neither complete nor below the immutable tip. If it was `One header₁`, `ebHash₁` is already the
   recorded, wanted first; just advance to `Two`. The equivocating `ebHash₂` is never wanted.
 
-- **`LevBlockOffer(peer, ebHash)`** (LeiosNotify): `ebHash` must be one `peer` (first-)announced — i.e. `electionOf[peer][ebHash]`
-  is non-empty (anything else, e.g. an EB `peer` only relayed as an equivocation, ⇒ `disconnectFrom(peer)`).
-  Raise the `OfferSide` to at least `Body` in `LstPeerOfferings[peer][el]` for each `el ∈ electionOf[peer][ebHash]`.
-  Consider fetching if `ebHash` is wanted. No `LstWanted` creation, no size. (**[SF]** §6 also admits `peer`'s cert-asserted EB and its precedence
+- **`LevBlockOffer(peer, election, ebHash)`** (LeiosNotify): `peer` must have first-announced `ebHash` under
+  `election` (`LstPeerFirstAnnouncements[peer][election]`'s first-announcement names `ebHash`; an election `peer`
+  never announced, a mismatched `ebHash`, or an EB it only relayed as an equivocation ⇒ `disconnectFrom(peer)`).
+  Raise the `OfferSide` to at least `Body` in `LstPeerOfferings[peer][election]`. Consider fetching if `ebHash` is
+  wanted. No `LstWanted` creation, no size. (**[SF]** §6 also admits `peer`'s cert-asserted EB and its precedence
   over the first-announced.)
 
-- **`LevBlockTxsOffer(peer, ebHash)`** (LeiosNotify; implies a body offer): same `electionOf[peer][ebHash]` check; set
-  `OfferSide = BodyAndClosure` at each such `el`. Consider fetching if `ebHash` is wanted.
+- **`LevBlockTxsOffer(peer, election, ebHash)`** (LeiosNotify; implies a body offer): same first-announced check;
+  set `OfferSide = BodyAndClosure` at `LstPeerOfferings[peer][election]`. Consider fetching if `ebHash` is wanted.
 
 - **`LevRollForward(peer, header, predEb)`** (ChainSync): if `header` announces an EB `ebHash` (unlike
   LeiosNotify, a non-announcing chain header is a normal block — no disconnect, just no announcement effect),
@@ -499,11 +556,11 @@ the first-announced EB's `OfferSide`; `LevRollForward` records `CertSide` and `B
   the central `LstFirstAnnouncements[election(header)]` exactly as `LevBlockAnnouncement`'s central branch (set `LstWanted`,
   relay, detect equivocation) — but never `LstPeerFirstAnnouncements` (chain relay is exempt from the per-peer ≤2
   bound). This holds regardless of the cert bit. If the cert bit is set, the RB's body certifies the
-  earlier EB `ebHash′` that its predecessor announced — given by `predEb`, the predecessor's announced-EB identity
-  (its `HeaderHash` `headerHash′`, EB hash `ebHash′`, and election `el′`) from the preceding `HeaderState`, which the wire `MsgRollForward(header)` does not
+  earlier EB `ebHash′` that its predecessor announced — given by `predEb`, the predecessor's announcement triple
+  (its election `el′`, `HeaderHash` `headerHash′`, and EB hash `ebHash′`) from the preceding `HeaderState`, which the wire `MsgRollForward(header)` does not
   carry (hence the enriched stimulus, §2):
   record `peer`'s body+closure offer of `ebHash′` in `LstPeerOfferings[peer][el′]`
-  (`These (Cert headerHash′ ebHash′ _) BodyAndClosure`, latest wins). ChainSel validates that cert and emits `LevCertValidated(headerHash′, ebHash′)`.
+  (`These (Cert headerHash′ ebHash′ _) BodyAndClosure`, latest wins). ChainSel validates that cert and emits `LevCertValidated(el′, headerHash′, ebHash′, bodySize′, closureSize′)`.
   Cert-conflict disconnect: if `LstCertified[el′]` is already set with a `HeaderHash` other than `headerHash′`,
   this peer is offering a cert that cannot exist ⇒ `disconnectFrom(peer)`.
   Consider fetching. (**[SF]** §6: `ebHash′`'s offer takes precedence over a LeiosNotify offer for the
@@ -511,10 +568,23 @@ the first-announced EB's `OfferSide`; `LevRollForward` records `CertSide` and `B
   lack it, subject to the preferable-header suppression TODO there; and the cert-conflict disconnect above
   extends to the `LevCertOffer` vehicle.)
 
-- **`LevNotificationRequestNext(peer)`**: raises `LstPeerNotifyQueue[peer]`'s capacity by one; if non-empty, dequeue
-  the highest-priority notification (`notifyPriority`) and send it. Sending an announcement for `ebHash`
-  opens its gate (`LstPeerOfferGates[peer][el] := ebHash`), then consider offering that EB to `peer` if its
-  artifact is stored. (**[SF]** §6: sending a `MsgLeiosCertOffer` pivots `peer`'s gate — drop the superseded announced EB for that election from `LstPeerOfferGates[peer]`, add the certified EB.)
+- **`LevNotificationRequestNext(peer)`**: a credit — raises `LstPeerNotifyQueue[peer]`'s capacity by one. If that
+  would exceed `notifyMaxCapacity`, `peer` is over-crediting (extending more outstanding credits than the bound
+  permits) — disconnect instead of accruing it, so a peer cannot inflate its capacity without bound. The send itself
+  happens on `LevNotifyDequeue` (below); a credit only grows the window. Capacity is the credit's sole role: with no
+  capacity nothing can be enqueued, so a non-empty queue already witnesses an outstanding credit.
+
+- **`LevNotifyDequeue(peer)`**: a send opportunity for `peer`'s downstream notification server thread, whose
+  readiness conditions — socket writable, thread scheduled — are out of model, so the bridge raises this. It arises
+  only when `LstPeerNotifyQueue[peer]` is non-empty (the harness tracks occupancy via `NotifyEnqueue` and this
+  event): dequeue the highest-priority notification (`notifyPriority`). If its EB's slot is below the immutable tip
+  it is stale — the EB is already settled, and the queue is *not* pruned on `LevImmTipAdvance` (it is not slot-major
+  range-deletable) — so discard it without sending and without consuming a credit. Otherwise send it and consume
+  one credit. Sending an
+  announcement for `ebHash` opens its gate (`LstPeerOfferGates[peer][el] := ebHash`) — and nothing more: an EB is
+  offered to `peer` only if its gate was already open when the artifact completed, never by re-checking a backlog
+  here. (**[SF]** §6: sending a `MsgLeiosCertOffer` pivots `peer`'s gate — drop the superseded announced EB for that
+  election from `LstPeerOfferGates[peer]`, add the certified EB.)
 
 ### LeiosFetch rules
 
@@ -540,8 +610,8 @@ exist, both flagged below: PeerSharing rarest-first, and (§5, not yet) staggere
   LstPeerInflight[peer]`. No per-EB multiplicity cap and no cross-peer check — every offerer is asked
   independently (the active-EB cap above bounds the distinct EBs per peer, not the offerers per EB).
 - Stake closure — for a `StakeSampled` `peer ∈ offerersClosure(ebHash)` with `LstWanted[el] = AwaitingTxs`:
-  issue `ReqJob el ebHash j` to `peer` for each still-outstanding job `j ∈ LstWanted[el].jobs` with
-  `(peer, ReqJob el ebHash j) ∉ LstPeerInflight[peer]`. No per-EB job cap. Its only shared input is `LstWanted[el].jobs`
+  issue `ReqJob el ebHash j` to `peer` for each job `j` still on `LstWanted[el].outstanding`'s fetch side with
+  `(peer, ReqJob el ebHash j) ∉ LstPeerInflight[peer]`. No per-EB job cap. Its only shared input is that fetch side
   (which any peer's response shrinks) — central want-state, not another peer's state.
 - PeerShare closure — for a `PeerSharingSampled` `peer ∈ offerersClosure(ebHash)`: while
   `peerSharingInFlightBytes(peer, ebHash) < peerSharingClosureByteLimit`, pick a still-outstanding job not already in-flight
@@ -555,28 +625,35 @@ exist, both flagged below: PeerSharing rarest-first, and (§5, not yet) staggere
 - (§5, not yet) Staggered requesting adds the second cross-peer coupling — while an EB is young, hold
   each of its items to ≤ `staggerPeers` peers (again reading cross-peer in-flight).
 
-- **`LevBlock(peer, ebHash, body)`**: the front of `LstPeerInflight[peer]` must be `ReqBody _ ebHash` (§2; drop if not); let `el`
-  be its election. Validate hash = `ebHash` and actual size against `ebHash`'s announced `bodySize` (from
-  the request, not `LstWanted`); on mismatch drop (adversarial). Else, if `LstWanted[el]` still wants `ebHash`: `scheduleDisk dbWriteBody`, then `BEH-ChunkJobs` — `txCacheOnBody`
+- **`LevBlock(peer, ebHash, body)`**: the front of `LstPeerInflight[peer]` must be a `ReqBody` for `ebHash` (§2; `disconnectFrom(peer)` if not); let `el`
+  be its election. Validate hash = `ebHash`, and against the request (not `LstWanted`): the actual body size
+  equals the announced `bodySize`, and the body's tx references sum to the announced `closureSize`; on mismatch
+  `disconnectFrom(peer)` (adversarial). Else, if `LstWanted[el]` still wants `ebHash`: `submitDisk dbWriteBody(body)`, then `BEH-ChunkJobs` — `txCacheOnBody`
   (§7) hits and Mempool hits (`mempoolQueryPresent`) are copied in (`dbCopyFromTxCache` / `txCacheOnAcquire`),
-  the rest → jobs — set `LstWanted[el] = AwaitingTxs{ ebHash, jobs }`,
-  and if no jobs → `complete(el)`. Otherwise the want has moved on (cert switch / tip advance) — drop
+  the rest → jobs — set `LstWanted[el] = AwaitingTxs` for `ebHash` with those jobs on the fetch side and
+  `outstandingWrites` = the number of writes just scheduled (the body write, plus the hit-copy write when there were
+  hits); if there are no jobs → `complete(el)`
+  (fetch done; the entry stays until those writes land). Otherwise the want has moved on (cert switch / tip advance) — drop
   the result, no disconnect. Consider fetching.
 
-- **`LevBlockTxs(peer, ebHash, txs)`**: the front of `LstPeerInflight[peer]` must be a `ReqJob _ ebHash jobId` for `ebHash`
-  — the `jobId` is recovered from that front entry, not the wire (§2; drop if not); let `el` be its election. Validate against the request; on mismatch drop. Else: `scheduleDisk dbWriteTxsIntoClosure`; offer the txs to the TxCache (`txCacheOnAcquire`, §7).
-  If `LstWanted[el]` still wants `ebHash`, remove `jobId` from its outstanding jobs (only `el`
-  advances; if now empty → `complete(el)`); otherwise the want has moved on — drop, no disconnect.
+- **`LevBlockTxs(peer, ebHash, txs)`**: the front of `LstPeerInflight[peer]` must be a `ReqJob` for `ebHash`
+  — the `jobId` is recovered from that front entry, not the wire (§2; `disconnectFrom(peer)` if not); let `el` be its election. Validate against the request — the reply's txs must equal the requested job's txs in order; on mismatch `disconnectFrom(peer)` (adversarial). Else: `submitDisk dbWriteTxsIntoClosure(ebHash, txs)`; offer the txs to the TxCache (`txCacheOnAcquire`, §7).
+  If `LstWanted[el]` still wants `ebHash`, move `jobId` off the fetch side and raise `outstandingWrites` by one
+  (the closure write just scheduled); if the fetch side is now empty → `complete(el)`. Otherwise the want has
+  moved on — drop, no disconnect (the write still happens; its `LevDiskDone` is ignored, below).
   Consider fetching (PeerSharing peers refill toward `peerSharingHighWater`).
 
-- **`LevCertValidated(headerHash, ebHash)`** (the cert for announcement `headerHash`, which announced `ebHash`, has been validated — by ChainSel on a CertRB, or
-  **[SF]** by `BEH-CertFetch`; emitted only post-validation, so reliable (§6 covers ChainSel's tentative-header timing); `el` =
-  the announcement's election; **peerless** — the cert is cryptographic — and deduped by election, so it fires at
+- **`LevCertValidated(el, headerHash, ebHash, bodySize, closureSize)`** (the certified EB's announcement triple — election `el`, announcement `headerHash`, EB hash `ebHash` — whose cert has been validated — by ChainSel on a CertRB, or
+  **[SF]** by `BEH-CertFetch`; emitted only post-validation, so reliable (§6 covers ChainSel's tentative-header timing); the triple and the two sizes are supplied by the emitter, so `el` and the sizes are given rather than derived; **peerless** — the cert is cryptographic — and deduped by election, so it fires at
   most once per election): set `LstCertified[el] = (headerHash, ebHash)` (`BEH-FetchPriority` now ranks `ebHash` top) and
   ensure `LstWanted[el]` wants `ebHash` — but, exactly as `LevBlockAnnouncement`, only when `ebHash` is neither complete
   (consult the store via `dbQueryPresent`, as `BEH-Startup` does) nor below the immutable tip, since the cert routinely
   validates after we already fetched and completed the first-announced EB; if so, add an `AwaitingBody`
-  entry when absent (sizes from its announcement). Consider fetching. (**[SF]** §6: when `ebHash` *differs* from
+  entry when absent, using the `bodySize`/`closureSize` the stimulus carries — not a local lookup, since after a
+  restart the certified EB's announcement may have arrived only in a prior run, leaving `LstFirstAnnouncements[el]`
+  empty this execution. (ChainSel can recover these sizes either by reading the predecessor's header from disk
+  or by projecting them from the incoming ledger state's protocol state — which might require adding some fields
+  to the protocol state, but that is reasonable information to add.) Consider fetching. (**[SF]** §6: when `ebHash` *differs* from
   the first-seen EB `LstWanted[el]` was tracking, switch `LstWanted[el]` to `ebHash` in place — applying the
   same completeness check (we may already hold it, e.g. self-issued via `BEH-SelfIssued`): complete ⇒ drop the
   entry, body present ⇒ `AwaitingTxs`, else `AwaitingBody`; the first-seen's in-flight reqs are left to the
@@ -599,14 +676,30 @@ exist, both flagged below: PeerSharing rarest-first, and (§5, not yet) staggere
   `LstPeerFirstAnnouncements[peer]`/`LstPeerOfferings[peer]`/`LstPeerOfferGates[peer]`/`LstPeerNotifyQueue[peer]`/`LstPeerInflight[peer]`.
   The connection is gone, so no further message from `peer` can arrive. Consider fetching.
 
-- **`LevTimer(timeout, req)`**: `req` is overdue → `disconnectFrom(peer)` for the peer that owns it.
+- **`LevTimer(timeout, peer, req)`**: the timer carries the `peer` it was set for (no search). If `req` is still
+  in-flight to `peer` it is overdue → `disconnectFrom(peer)`; if `peer` already answered (the entry was popped),
+  the timer is stale and ignored.
 
-- **`LevDiskDone(op)`**: mark the bytes stored (now readable); release fan-out deferred on `op`.
+- **`LevDiskDone(w)`** (`w` is a `DiskWrite` — only writes report completion; GC/promote do not): the bytes are
+  now stored (readable). If `w` wrote a body, enqueue a body offer (`NotifyBlockOffer`) into `LstPeerNotifyQueue[d]`
+  for each downstream `d` with `LstPeerOfferGates[d][el] = ebHash`. Then account the write against the closure: if
+  `LstWanted[el]` is `AwaitingTxs` for `w`'s own `ebHash` (the **retarget guard** — a write for a superseded target
+  must not decrement the new one; `outstandingWrites` is reached exactly by the writes scheduled for the current
+  target), decrement `outstandingWrites`. When that empties the entry (`outstandingWrites` zero and the fetch side
+  already empty), clear `LstWanted[el]` and expose the now-persisted closure: emit `NotifyVotingAndChainSel`
+  (handing the closure to voting and ChainSel) and enqueue a closure offer (`NotifyBlockTxsOffer`) for those same
+  `d` — the last write, not every write. No disk query is needed: the in-memory count is exact (the number of `LevDiskDone`s
+  equals the writes scheduled).
 
-- **`LevImmTipAdvanced(s)`**: `scheduleDisk dbGarbageCollect(s)`/`dbPromote`; range-delete every slot-indexed state variable
-  below `s` (`BEH-TipAdvance`) — the `Election`-keyed
+- **`LevImmTipAdvanced(s)`**: `submitDisk dbPromote` promptly; range-delete every slot-indexed state variable
+  below `s` (`BEH-ImmTipAdvance`) — the `Election`-keyed
   `LstFirstAnnouncements`/`LstPeerFirstAnnouncements`/`LstPeerOfferings`/`LstPeerOfferGates`/`LstWanted`/`LstCertified` (**[SF]** §6's `LstAnnouncedCert`).
-  The TxCache is not pruned here (its own window/age eviction, §7) and `LstPeerInflight` is not GC'd here. Consider fetching.
+  The disk GC is *not* submitted here — it is delayed (`LevGarbageCollect`, below). The TxCache is not pruned here (its own window/age eviction, §7) and `LstPeerInflight` is not GC'd here. No fetch is triggered: pruning frees no in-flight capacity and adds no offer.
+
+- **`LevGarbageCollect(s)`**: `submitDisk dbGarbageCollect(s)` — the delayed half of `BEH-ImmTipAdvance`, raised by
+  the harness once the ChainDB's GC delay since slot `s` became immutable has elapsed. No state change (the model's
+  slot-indexed state was already pruned by the prompt `LevImmTipAdvanced`); this only tells the disk to drop the
+  now-safely-collectable volatile data.
 
 - **`LevSelfIssued(header, body)`** (peerless; `BEH-SelfIssued`): treat `header` as a first announcement —
   run `LevBlockAnnouncement`'s central-branch update (record `LstFirstAnnouncements[el]`, make wanted, relay
@@ -614,7 +707,7 @@ exist, both flagged below: PeerSharing rarest-first, and (§5, not yet) staggere
   we built the header), exactly as `LevRollForward` skips `LstPeerFirstAnnouncements`. Then run `BEH-ChunkJobs`
   on `body` directly — no in-flight `Req` to match, we already hold it: the Mempool holds the txs we built the
   EB from (modulo a churn race), so the closure is acquired via `mempoolQueryPresent`/`txCacheOnAcquire` and
-  `complete(el)` fires with no fetch. Consider fetching (for any txs the race left un-acquired).
+  `complete(el)` fires with no fetch; any txs the churn race left un-acquired stay as `AwaitingTxs` jobs, fetched once a peer offers this EB's closure (nothing is fetched here — no peer offers our freshly-issued EB yet).
 
 ---
 
@@ -659,8 +752,8 @@ exist, both flagged below: PeerSharing rarest-first, and (§5, not yet) staggere
   the offer→request latency past when it would otherwise be dropped, so the disconnect fires only on a genuine
   misbehaver. The exact delay — and whether a delay alone suffices vs. refcounting offered content — is unsettled.
 - Sizes and hashes match the announcement (safety). Every body/closure fetched or served matches both its
-  announced size and its content hash — a body hashes to its announced `ebHash`, a job's txs match the
-  requested job — and any mismatch is rejected (adversarial).
+  announced size and its content hash — a body hashes to its announced `ebHash` and its tx references sum to the
+  announced `closureSize`, a job's txs match the requested job — and any mismatch disconnects the peer (adversarial).
 - PeerShare closure cap (safety). `∀ peer : PeerSharing peer, ebHash: peerSharingInFlightBytes(peer, ebHash) ≤ peerSharingClosureByteLimit`.
 - Per-peer active-EB cap (safety). `∀ peer: activeEbs(peer) ≤ maxActiveEbs[class(peer)]` (per class, never conflated).
 - In-flight integrity (safety). Across the disconnect/response/timeout races — a response and a
@@ -690,6 +783,17 @@ exist, both flagged below: PeerSharing rarest-first, and (§5, not yet) staggere
 
 ## §5 Anticipated refinements (roadmap)
 
+- **Dedup offers/fetches across elections that share an `EbHash`.** An EB body is a list of tx-references, so its
+  `EbHash` is content-derived and election-independent: two honest producers electing at different `(slot, pool)`
+  from the same mempool yield byte-identical bodies and the *same* `EbHash`. The wire offers therefore carry the
+  *election* — `MsgLeiosBlockOffer(election, ebHash)` / `MsgLeiosBlockTxsOffer(election, ebHash)` — not the `ebHash`
+  alone. This is a correctness choice, not just tidiness: an `ebHash`-only offer is ambiguous on the receiver — it
+  cannot tell which `LstWanted[el]` the offer pertains to; "update them all" would oblige the *sender* to dedup or
+  trip a redundant-message disconnect, and "update one" raises *which one, and does it match what the sender meant?*.
+  So offers are per-election. The accepted residue: when two elections share an `ebHash` (which is assumed to be rare, for honest issuers), we fetch the
+  identical body and send a per-election duplicate offer to a peer gated for both. The simplest next refinement would be to dedup body fetches to the same extent we already dedup closure fetches: don't re-request the body if it's already persisted.
+  It seems unwise to pay the disk-latency to check for the body on _every_ announcement just to dedup the very rare case of the body already being present.
+  So instead, it seems like this refetch-elimination would require maintaining an in-memory set of which EB bodies are currently persisted---very akin to `LstTxCacheIndex`, although it'll be small enough to contain all un-promoted volatile bodies instead of TxCache's more aggressive eviction rules.
 - **Staggered requesting** (hold-off before broadening). Soften the "immediately request from
   every offerer" aggressiveness: while an EB is younger than `staggerDelay` (~1–2 s) measured
   from its own slot-time (not from when we received offers or issued requests), keep each item
@@ -728,6 +832,14 @@ exist, both flagged below: PeerSharing rarest-first, and (§5, not yet) staggere
   on its own, and can be fetched from a different offerer in parallel: the body analogue of chunking txs into
   jobs, needing no FEC. (FEC over the segments would be a further elaboration — any sufficient subset
   reconstructs, so a slow or missing peer costs only its parts. New parameter `bodyJobsSize`.)
+    - FIXME: we need to be able to _immediately_ confirm that the
+      chunk we receive from an upstream peer was the right chunk.  If
+      we go this Merkle tree route, then that means the chunk has to
+      be accompanied by the Merkle inclusion proof, which in turn
+      requires the upstream peer to have all the chunks.
+      That means this mechanism does not enable streaming.
+      It's only benefit is to enable parallel fetching from multiple peers.
+      For 512 kB, is that going to sufficiently matter?
 - **Chunk the closure incrementally (incremental offers for streaming closures).** The closure is already split into jobs, but a peer
   offers it all-or-nothing: `BodyAndClosure` advertises the complete closure, so a peer can only offer once it
   holds every tx. Independently of whether the body is chunked, a peer could offer the closure incrementally —
@@ -803,7 +915,7 @@ conflicting cert claim can be rejected at offer time (§3/§6); `LstAnnouncedCer
 - **`BEH-CertFetch`**. When any peer has offered a cert and we lack
   the validated cert, request it from that peer (`MsgLeiosCertRequest(headerHash)`, recording `ReqCert el headerHash`) aggressively (every offerer, no
   multiplicity cap, `BEH-Timeout` for dead peers). On the response, validate. Invalid → disconnect
-  only the provider. Valid → emit `LevCertValidated(headerHash, ebHash)` (its full §3 effect — including the
+  only the provider. Valid → emit `LevCertValidated(el, headerHash, ebHash, bodySize, closureSize)` (its full §3 effect — including the
   **[SF]** skew extension — then applies). ChainSel, on first processing a CertRB (its header diffused by ChainSync, its body by
   BlockFetch), is the other emitter of `LevCertValidated`
   (§1). TODO: while a cert-bearing `LevRollForward`'s header is still preferable to our current selection,
@@ -830,8 +942,8 @@ conflicting cert claim can be rejected at offer time (§3/§6); `LstAnnouncedCer
   (`BEH-CertFetch`) aggressively. `peer` must also stop sending vote notifications for `ebHash`.
 
 - **`LevCert(peer, cert)`**: validate `cert` against the `headerHash` of the `MsgLeiosCertRequest(headerHash)` it
-  answers — the front `ReqCert` of `LstPeerInflight[peer]` (§2; drop if the front isn't a `ReqCert`) — plus the
-  election committee. Invalid → `disconnectFrom(peer)`. Valid → `scheduleDisk dbWriteCert`, emit `LevCertValidated(headerHash, ebHash)`
+  answers — the front `ReqCert` of `LstPeerInflight[peer]` (§2; `disconnectFrom(peer)` if the front isn't a `ReqCert`) — plus the
+  election committee. Invalid → `disconnectFrom(peer)`. Valid → `submitDisk dbWriteCert`, emit `LevCertValidated(el, headerHash, ebHash, bodySize, closureSize)`
   (`ebHash` = the EB that announcement announced).
 
 - **`LevCertRequest(peer, headerHash)`**: if `dbQueryPresent` confirms the store holds the cert for
