@@ -120,6 +120,15 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
       assertBool "a body response is not blocked behind an in-flight txs request" (not (any isDisconnect fx))
       assertBool "eh100 advanced to AwaitingTxs" (case wantStateOf st (EbHash 100) of Just AwaitingTxs{} -> True; _ -> False)
 
+  , testCase "BEH-Responses: a second body for an already-fetched EB is ignored (no double write)" $ do
+      let (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, LevPeerAdd (Peer 2) StakeSampled
+                        , ann (Peer 1) hdr100, ann (Peer 2) hdr100
+                        , offer (Peer 1) (EbHash 100), offer (Peer 2) (EbHash 100)
+                        , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100)
+                        , LevWiredMsg (Peer 2) (MsgLeiosBlock (EbHash 100) body100) ]
+          bodyWrites = length [ () | SubmitDisk (Write (WriteBody _)) <- fx ]
+      bodyWrites @?= 1
+
   , testCase "Job: jobBytes is the real summed tx size" $ do
       let (st, _) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)
                         , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100) ]
@@ -275,6 +284,12 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
           (_, fx) = runWith ifs [ LevCertValidated (AnnouncementTriple el2 (HeaderHash 99) (EbHash 100)) 200 300 ]
       assertBool "fans NotifyVotingAndChainSel for the (re)certified EB"
         (NotifyVotingAndChainSel (EbHash 100) [] `elem` fx)
+
+  , testCase "BEH-Wanting: a duplicate LevCertValidated is idempotent (no crash)" $ do
+      let at = AnnouncementTriple el100 (HeaderHash 10) (EbHash 100)
+          (st, _) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100
+                        , LevCertValidated at 200 300, LevCertValidated at 200 300 ]
+      isCertifiedEb st el100 (EbHash 100) @?= True
 
   , testCase "BEH-Completion: announcing an already-available closure under a new election fans voting + ChainSel" $ do
       let ifs = nullIfaces { ifDb = (ifDb nullIfaces)

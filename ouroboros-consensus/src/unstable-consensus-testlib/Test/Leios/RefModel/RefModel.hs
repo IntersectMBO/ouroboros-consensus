@@ -3,6 +3,8 @@ module RefModel (module RefModel) where
 import           EbHashMap (EbHash (..), Election (..), electionSlot, Slot (..))
 import           EbHashMap (EbHashMap)
 import qualified EbHashMap as EM
+import           HeldEbHashSet (HeldEbHashSet)
+import qualified HeldEbHashSet as Held
 import           Data.Foldable (foldl', toList)
 import           Data.List (sortOn)
 import           Data.List.NonEmpty (NonEmpty)
@@ -176,22 +178,22 @@ data PeerOfferings = PeerOfferings !(EbHashMap (Maybe LeiosNotifySide, Any)) !(E
   deriving (Eq, Show)
 
 data St = St
-  { stFirstAnnouncements :: !(Election :-> AnnState)                        -- §2 LstFirstAnnouncements
+  { stFirstAnnouncements     :: !(Election :-> AnnState)                  -- §2 LstFirstAnnouncements
   , stPeerFirstAnnouncements :: !(Peer :-> Election :-> AnnSeen)          -- §2 LstPeerFirstAnnouncements
-  , stPeerOfferings :: !(Peer :-> PeerOfferings)                           -- §2 LstPeerOfferings
-  , stPeerOfferGates :: !(Peer :-> EbHashMap (Maybe OfferLevel))           -- §2 LstPeerOfferGates (payload: offer level sent so far)
-  , stPeerNotifyQueue :: !(Peer :-> (Seq Notification, Int))               -- §2 LstPeerNotifyQueue (FIFO; cap = credits)
-  , stWanted :: !(EbHashMap WantState)                                     -- §2 LstWanted
-  , stVolatileBody :: !(EbHashMap ())                                      -- §2 LstVolatileBody
-  , stVolatileClosure :: !(EbHashMap ())                                   -- §2 LstVolatileClosure (INVARIANT: subset of stVolatileBody)
-  , stCertified :: !(Election :-> (HeaderHash, EbHash))                     -- §2 LstCertified
-  , stPeerInflight :: !(Peer :-> MiniProtocol :-> Seq Req)                  -- §2 LstPeerInflight (one FIFO per LeiosFetch sub-protocol)
-  , stPeerPresent :: !(Peer :-> PeerInfo)                                   -- §2 LstPeerPresent
+  , stPeerOfferings          :: !(Peer :-> PeerOfferings)                 -- §2 LstPeerOfferings
+  , stPeerOfferGates         :: !(Peer :-> EbHashMap (Maybe OfferLevel))  -- §2 LstPeerOfferGates (payload: offer level sent so far)
+  , stPeerNotifyQueue        :: !(Peer :-> (Seq Notification, Int))       -- §2 LstPeerNotifyQueue (FIFO; cap = credits)
+  , stWanted                 :: !(EbHashMap WantState)                    -- §2 LstWanted
+  , stVolatileBody           :: !HeldEbHashSet                            -- §2 LstVolatileBody
+  , stVolatileClosure        :: !HeldEbHashSet                            -- §2 LstVolatileClosure (INVARIANT: subset of stVolatileBody)
+  , stCertified              :: !(Election :-> (HeaderHash, EbHash))      -- §2 LstCertified
+  , stPeerInflight           :: !(Peer :-> MiniProtocol :-> Seq Req)      -- §2 LstPeerInflight (one FIFO per LeiosFetch sub-protocol)
+  , stPeerPresent            :: !(Peer :-> PeerInfo)                      -- §2 LstPeerPresent
   }
   deriving (Eq, Show)
 
 emptySt :: St                                      -- BEH-Startup
-emptySt = St Map.empty Map.empty Map.empty Map.empty Map.empty EM.empty EM.empty EM.empty Map.empty Map.empty Map.empty
+emptySt = St Map.empty Map.empty Map.empty Map.empty Map.empty EM.empty Held.empty Held.empty Map.empty Map.empty Map.empty
 
 emptyPeerOfferings :: PeerOfferings                 -- §2 LstPeerOfferings
 emptyPeerOfferings = PeerOfferings EM.empty Map.empty
@@ -741,9 +743,8 @@ hBlock ifs env now peer eh body st = case frontReq st peer FetchBody of
     let st1 = popFront peer FetchBody st
     in if not (validBody env eh bs cs body)
          then pure (st1, [Disconnect peer BodyMismatch])
-         else if not (activelyWantsEh st eh)
-           then considerFetchAfter env now st1 []
-           else do
+         else case wantStateOf st eh of
+           Just (AwaitingBody _ _) -> do
              let txrefs = bodyTxlist body
                  txhs   = Set.fromList (map txRefHash txrefs)
              hits  <- txCacheOnBody (ifTxc ifs) eh txhs
@@ -757,6 +758,7 @@ hBlock ifs env now peer eh body st = case frontReq st peer FetchBody of
                          : [ SubmitDisk (Write (WriteClosure eh copied)) | not (null copied) ]
                  st2     = setTxs eh jobsMap (fromIntegral (length writes)) st1
              considerFetchAfter env now st2 writes
+           _ -> considerFetchAfter env now st1 []
   _ -> pure (st, [Disconnect peer UnsolicitedResponse])
 
 hBlockTxs :: Monad m => Ifaces m -> Env -> Time -> Peer -> EbHash -> [Tx] -> St -> m (St, [Effect])  -- BEH-Responses · §3 LevBlockTxs
@@ -793,14 +795,16 @@ hServeTxs ifs _env _now peer eh txs st = do
     else pure (st, [Disconnect peer RequestedAbsentData])
 
 hCertValidated :: Monad m => Ifaces m -> Env -> Time -> AnnouncementTriple -> ByteCount -> ByteCount -> St -> m (St, [Effect])  -- BEH-Wanting · BEH-FetchPriority · §3 LevCertValidated
-hCertValidated ifs env now (AnnouncementTriple el hh eh) bs cs st = do
-  txCacheEvictForValidCert (ifTxc ifs) el eh
-  let st1 = setCertified el (hh, eh) st
-  done <- isComplete ifs eh
-  let (st2, fx) | belowTip env el = (st1, [])
-                | done            = recordCompleteCert env el eh st1
-                | otherwise       = (supersedeWant el eh bs cs st1, [])
-  considerFetchAfter env now st2 fx
+hCertValidated ifs env now (AnnouncementTriple el hh eh) bs cs st
+  | Map.member el (stCertified st) = pure (st, [])
+  | otherwise = do
+      txCacheEvictForValidCert (ifTxc ifs) el eh
+      let st1 = setCertified el (hh, eh) st
+      done <- isComplete ifs eh
+      let (st2, fx) | belowTip env el = (st1, [])
+                    | done            = recordCompleteCert env el eh st1
+                    | otherwise       = (supersedeWant el eh bs cs st1, [])
+      considerFetchAfter env now st2 fx
 
 hPeerAdd :: Monad m => Env -> Peer -> Class -> St -> m (St, [Effect])  -- BEH-PeerChurn · §3 LevPeerAdd (prime the notify client: envNotifyMaxCapacity RequestNext)
 hPeerAdd env peer cls st = pure
@@ -970,18 +974,18 @@ enqueueBodyOffers eh = enqueueToAll (NotifyBlockOffer eh)
 enqueueClosureOffers :: EbHash -> St -> (St, [Effect])  -- BEH-NotifyServe · BEH-Completion (gate-checked at dequeue)
 enqueueClosureOffers eh = enqueueToAll (NotifyBlockTxsOffer eh)
 
-addVolatile :: EbHash -> [Election] -> EbHashMap () -> EbHashMap ()  -- §2 LstVolatileBody/LstVolatileClosure
-addVolatile eh els m = foldl' (\acc el -> EM.upsert eh el () acc) m els
+addVolatile :: EbHash -> [Election] -> HeldEbHashSet -> HeldEbHashSet  -- §2 LstVolatileBody/LstVolatileClosure
+addVolatile eh els m = foldl' (\acc el -> Held.insert eh el acc) m els
 
-heldIn :: EbHash -> EbHashMap a -> Bool  -- §2 LstVolatileBody/LstVolatileClosure membership
-heldIn eh m = isJust (EM.lookupEb eh m)
+heldIn :: EbHash -> HeldEbHashSet -> Bool  -- §2 LstVolatileBody/LstVolatileClosure membership
+heldIn = Held.member
 
 pruneBelow :: Slot -> St -> St                     -- BEH-ImmTipAdvance range-delete
 pruneBelow s st = st
   { stFirstAnnouncements = pruneElectionMap s (stFirstAnnouncements st)
   , stWanted = EM.pruneElections (\el -> electionSlot el < s) (stWanted st)
-  , stVolatileBody = EM.pruneElections (\el -> electionSlot el < s) (stVolatileBody st)
-  , stVolatileClosure = EM.pruneElections (\el -> electionSlot el < s) (stVolatileClosure st)
+  , stVolatileBody = Held.prune (\el -> electionSlot el < s) (stVolatileBody st)
+  , stVolatileClosure = Held.prune (\el -> electionSlot el < s) (stVolatileClosure st)
   , stCertified = pruneElectionMap s (stCertified st)
   , stPeerFirstAnnouncements = Map.map (pruneElectionMap s) (stPeerFirstAnnouncements st)
   , stPeerOfferings = Map.map (\(PeerOfferings m c) -> PeerOfferings (EM.pruneElections (\el -> electionSlot el < s) m) (pruneElectionMap s c)) (stPeerOfferings st)
@@ -1019,7 +1023,6 @@ centralAnnounce ifs env _now h st = case rbAnnounce h of
            let st1 = st { stFirstAnnouncements = Map.insert el (AnnOne h) (stFirstAnnouncements st) }
                nowAvailable =    heldIn eh (stVolatileClosure st1)
                               && not (belowTip env el)
-                              && (EM.activeRef <$> EM.lookupElection el (stVolatileClosure st1)) /= Just eh
                st2 = anchorVolatile el eh st1
                st3 | belowTip env el    = st2
                    | heldIn eh (stVolatileClosure st2) = st2
