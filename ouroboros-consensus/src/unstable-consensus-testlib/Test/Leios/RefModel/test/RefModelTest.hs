@@ -19,7 +19,7 @@ main :: IO ()
 main = defaultMain tests
 
 env :: Env
-env = Env 5 2 1000000 65536 30 300 600 (Slot 0)
+env = Env 5 2 1000000 65536 30 300 600 21600 (Slot 0)
 
 el100 :: Election
 el100 = Election (Slot 5) (PoolId 1)
@@ -42,10 +42,10 @@ ann :: Peer -> RbHeader -> Stimulus
 ann p h = LevWiredMsg p (MsgLeiosBlockAnnouncement h)
 
 offer :: Peer -> EbHash -> Stimulus
-offer p eh = LevWiredMsg p (MsgLeiosBlockOffer eh)
+offer p eh = LevWiredMsg p (MsgLeiosBlockOffer (electionSlot el100) eh)
 
 txsOffer :: Peer -> EbHash -> Stimulus
-txsOffer p eh = LevWiredMsg p (MsgLeiosBlockTxsOffer eh)
+txsOffer p eh = LevWiredMsg p (MsgLeiosBlockTxsOffer (electionSlot el100) eh)
 
 runWith :: Ifaces Identity -> [Stimulus] -> (St, [Effect])
 runWith ifs = foldl' go (emptySt, [])

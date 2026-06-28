@@ -88,11 +88,17 @@ annEbHashOf = fmap annEbHash . rbAnnounce
 data OfferLevel = OfferBody | OfferBodyAndClosure  -- §2 LstPeerOfferings / OfferLevel
   deriving (Eq, Ord, Show)
 
-newtype LeiosNotifySide = LeiosNotifySide OfferLevel  -- §2 LstPeerOfferings / LeiosNotifySide
-  deriving (Eq, Ord, Show)
-
-instance Semigroup LeiosNotifySide where           -- §2 LstPeerOfferings
+instance Semigroup OfferLevel where                -- §2 LstPeerOfferings (gate sent-level raises to the max)
   (<>) = max
+
+data LeiosNotifySide = LeiosNotifySide OfferLevel Time  -- §2 LstPeerOfferings: a peer's LeiosNotify offer level and when last (re)offered (RedundantOffer TTL)
+  deriving (Eq, Show)
+
+offerLevel :: LeiosNotifySide -> OfferLevel
+offerLevel (LeiosNotifySide lvl _) = lvl
+
+instance Semigroup LeiosNotifySide where           -- §2 LstPeerOfferings (tuple-Semigroup requirement; never merges two reals at runtime)
+  LeiosNotifySide l1 t1 <> LeiosNotifySide l2 t2 = LeiosNotifySide (max l1 l2) (max t1 t2)
 
 data ChainSyncSide = ChainSyncSide HeaderHash      -- §2 LstPeerOfferings / ChainSyncSide
   deriving (Eq, Show)
@@ -159,18 +165,24 @@ data Notification                                  -- §2 LstPeerNotifyQueue
   | NotifyBlockTxsOffer EbHash                     -- MsgLeiosBlockTxsOffer
   deriving (Eq, Ord, Show)
 
+infixr 1 :->
+type k :-> v = Map k v
+
+infix 9 :&
+type a :& b = EbHashMap a b
+
 data St = St
-  { stFirstAnnouncements :: Map Election AnnState                        -- §2 LstFirstAnnouncements
-  , stPeerFirstAnnouncements :: Map Peer (Map Election AnnSeen)          -- §2 LstPeerFirstAnnouncements
-  , stPeerOfferings :: Map Peer (EbHashMap (Maybe LeiosNotifySide, Any) (Maybe ChainSyncSide)) -- §2 LstPeerOfferings
-  , stPeerOfferGates :: Map Peer (EbHashMap (Maybe LeiosNotifySide) ()) -- §2 LstPeerOfferGates (payload: offer level sent so far)
-  , stPeerNotifyQueue :: Map Peer (Seq Notification, Int)               -- §2 LstPeerNotifyQueue (FIFO; cap = credits)
-  , stWanted :: EbHashMap WantState ()                                  -- §2 LstWanted
-  , stVolatileBody :: EbHashMap () ()                                   -- §2 LstVolatileBody
-  , stVolatileClosure :: EbHashMap () ()                                -- §2 LstVolatileClosure (INVARIANT: subset of stVolatileBody)
-  , stCertified :: Map Election (HeaderHash, EbHash)                     -- §2 LstCertified
-  , stPeerInflight :: Map Peer (Seq Req)                                 -- §2 LstPeerInflight
-  , stPeerPresent :: Map Peer PeerInfo                                   -- §2 LstPeerPresent
+  { stFirstAnnouncements :: !(Election :-> AnnState)                        -- §2 LstFirstAnnouncements
+  , stPeerFirstAnnouncements :: !(Peer :-> Election :-> AnnSeen)          -- §2 LstPeerFirstAnnouncements
+  , stPeerOfferings :: !(Peer :-> (Maybe LeiosNotifySide, Any) :& Maybe ChainSyncSide) -- §2 LstPeerOfferings
+  , stPeerOfferGates :: !(Peer :-> Maybe OfferLevel :& ()) -- §2 LstPeerOfferGates (payload: offer level sent so far)
+  , stPeerNotifyQueue :: !(Peer :-> (Seq Notification, Int))               -- §2 LstPeerNotifyQueue (FIFO; cap = credits)
+  , stWanted :: !(WantState :& ())                                  -- §2 LstWanted
+  , stVolatileBody :: !(() :& ())                                   -- §2 LstVolatileBody
+  , stVolatileClosure :: !(() :& ())                                -- §2 LstVolatileClosure (INVARIANT: subset of stVolatileBody)
+  , stCertified :: !(Election :-> (HeaderHash, EbHash))                     -- §2 LstCertified
+  , stPeerInflight :: !(Peer :-> (Seq Req))                                 -- §2 LstPeerInflight
+  , stPeerPresent :: !(Peer :-> PeerInfo)                                   -- §2 LstPeerPresent
   }
   deriving (Eq, Show)
 
@@ -185,6 +197,7 @@ data Env = Env
   , envRequestTimeout :: Word64                    -- §2 requestTimeout
   , envNotifyMaxCapacity :: Int                    -- §2 notifyMaxCapacity
   , envNotifyStaleHorizon :: Word64                -- §2 notifyStaleHorizon (slots; ≈ 10 min)
+  , envOfferDedupTtl :: Word64                     -- §2 offer-dedup TTL (wallclock; RedundantOffer epoch, < immutability)
   , envImmutableTip :: Slot                         -- ChainDB-owned, harness-updated
   }
   deriving (Eq, Show)
@@ -220,8 +233,8 @@ data WireMsg                                        -- §2 Wire messages
   = MsgLeiosNotificationRequestNext
   | MsgLeiosBlockAnnouncement RbHeader
   | MsgLeiosBlockEquivocationProof (Maybe RbHeader) RbHeader
-  | MsgLeiosBlockOffer EbHash
-  | MsgLeiosBlockTxsOffer EbHash
+  | MsgLeiosBlockOffer Slot EbHash
+  | MsgLeiosBlockTxsOffer Slot EbHash
   | MsgLeiosBlockRequest EbHash
   | MsgLeiosBlock EbHash Body
   | MsgLeiosBlockTxsRequest EbHash (NonEmpty TxHash)
@@ -342,11 +355,6 @@ electionsFirstAnnouncing st peer eh =
   | (el, seen) <- Map.toList (fromMaybe Map.empty (Map.lookup peer (stPeerFirstAnnouncements st)))
   , annEbHashOf (seenFirst seen) == Just eh ]
 
-youngestAnnouncedSlot :: St -> Peer -> EbHash -> Maybe Slot  -- BEH-NotifyServe staleness
-youngestAnnouncedSlot st peer eh = case map electionSlot (electionsFirstAnnouncing st peer eh) of
-  [] -> Nothing
-  ss -> Just (maximum ss)
-
 offerersBody :: St -> EbHash -> Set Peer          -- §2 offerersBody · BEH-BodyFetch
 offerersBody st eh = offerersAtLeast st eh OfferBody
 
@@ -361,10 +369,8 @@ offerersAtLeast st eh need = Set.fromList
 
 effectiveOffer :: EbHashMap (Maybe LeiosNotifySide, Any) (Maybe ChainSyncSide) -> EbHash -> Maybe OfferLevel  -- §2 LstPeerOfferings effective offer
 effectiveOffer m eh = case EM.lookupEb eh m of
-  Just (EM.RefCounts a _ (notify, Any chain)) | a > 0 -> max (unwrap <$> notify) (if chain then Just OfferBodyAndClosure else Nothing)
+  Just (EM.RefCounts a _ (notify, Any chain)) | a > 0 -> max (offerLevel <$> notify) (if chain then Just OfferBodyAndClosure else Nothing)
   _                                                   -> Nothing
-  where
-    unwrap (LeiosNotifySide lvl) = lvl
 
 offeredWanted :: St -> Peer -> [EbHash]  -- NEEDS-TO-BE-INCREMENTAL: per-peer offered∩wanted set
 offeredWanted st peer =
@@ -483,8 +489,8 @@ stepWired ifs env now peer msg st
       MsgLeiosNotificationRequestNext       -> hRequestNext env peer st
       MsgLeiosBlockAnnouncement h           -> hAnnouncement ifs env now peer h st
       MsgLeiosBlockEquivocationProof m1 h2  -> hEquivProof env peer m1 h2 st
-      MsgLeiosBlockOffer eh                 -> hOffer env now peer eh (LeiosNotifySide OfferBody) st
-      MsgLeiosBlockTxsOffer eh              -> hOffer env now peer eh (LeiosNotifySide OfferBodyAndClosure) st
+      MsgLeiosBlockOffer sl eh              -> hOffer env now peer sl eh OfferBody st
+      MsgLeiosBlockTxsOffer sl eh           -> hOffer env now peer sl eh OfferBodyAndClosure st
       MsgLeiosBlockRequest eh               -> hServeBody ifs env now peer eh st
       MsgLeiosBlock eh body                 -> hBlock ifs env now peer eh body st
       MsgLeiosBlockTxsRequest eh txs        -> hServeTxs ifs env now peer eh txs st
@@ -552,8 +558,8 @@ ensureWantedBodyAnn st el h = case rbAnnounce h of
   Just a  -> wantBody el (annEbHash a) (annBodySize a) (annClosureSize a) st
   Nothing -> st
 
-hOffer :: Monad m => Env -> Time -> Peer -> EbHash -> LeiosNotifySide -> St -> m (St, [Effect])  -- BEH-Offers · §3 LevBlockOffer / LevBlockTxsOffer
-hOffer env now peer eh lvl st = case electionsFirstAnnouncing st peer eh of
+hOffer :: Monad m => Env -> Time -> Peer -> Slot -> EbHash -> OfferLevel -> St -> m (St, [Effect])  -- BEH-Offers · §3 LevBlockOffer / LevBlockTxsOffer
+hOffer env now peer sl eh lvl st = case filter ((== sl) . electionSlot) (electionsFirstAnnouncing st peer eh) of
   []  -> pure (st, [Disconnect peer UnannouncedOffer])
   els -> case notifyOf (raiseOffer els st) of
            Nothing  -> pure (st, [Disconnect peer RedundantOffer])
@@ -562,8 +568,11 @@ hOffer env now peer eh lvl st = case electionsFirstAnnouncing st peer eh of
     raiseOffer els0 s = foldl' (\acc el -> anchorOffer peer el eh acc) s els0
     notifyOf s =
       let perPeer = fromMaybe EM.empty (Map.lookup peer (stPeerOfferings s))
-          bump (notify, chain) | notify >= Just lvl = Nothing
-                               | otherwise          = Just (notify <> Just lvl, chain)
+          bump (Just (LeiosNotifySide cl ct), chain)
+            | lvl > cl              = Just (Just (LeiosNotifySide lvl now), chain)
+            | staleOffer env now ct = Just (Just (LeiosNotifySide lvl now), chain)
+            | otherwise             = Nothing
+          bump (Nothing, chain)     = Just (Just (LeiosNotifySide lvl now), chain)
       in (\m -> s { stPeerOfferings = Map.insert peer m (stPeerOfferings s) }) <$> EM.updateEb eh bump perPeer
 
 hRollForward :: Monad m => Ifaces m -> Env -> Time -> Peer -> RbHeader -> Maybe AnnouncementTriple -> St -> m (St, [Effect])  -- BEH-Offers / BEH-Wanting · §3 LevRollForward
@@ -636,18 +645,21 @@ enqueueToAll n st = foldl' (\(s, fx) peer -> let (s', fx') = enqueueTo peer n s 
 
 offerable :: Peer -> EbHash -> OfferLevel -> St -> Bool  -- §2 LstPeerOfferGates: announced, and not yet offered at this level
 offerable peer eh lvl st = case EM.lookupEb eh (fromMaybe EM.empty (Map.lookup peer (stPeerOfferGates st))) of
-  Just (EM.RefCounts _ _ sent) -> sent < Just (LeiosNotifySide lvl)
+  Just (EM.RefCounts _ _ sent) -> sent < Just lvl
   Nothing                      -> False
 
-notifyMsgSlot :: St -> Peer -> WireMsg -> Maybe Slot   -- BEH-NotifyServe staleness: a LeiosNotify message's slot (youngest, for a multi-election EbHash offer)
+notifyMsgSlot :: St -> Peer -> WireMsg -> Maybe Slot   -- BEH-NotifyServe staleness: a LeiosNotify message's slot
 notifyMsgSlot _  _    (MsgLeiosBlockAnnouncement h)         = Just (electionSlot (rbElection h))
 notifyMsgSlot _  _    (MsgLeiosBlockEquivocationProof _ h2) = Just (electionSlot (rbElection h2))
-notifyMsgSlot st peer (MsgLeiosBlockOffer eh)             = youngestAnnouncedSlot st peer eh
-notifyMsgSlot st peer (MsgLeiosBlockTxsOffer eh)          = youngestAnnouncedSlot st peer eh
+notifyMsgSlot _  _    (MsgLeiosBlockOffer sl _)            = Just sl
+notifyMsgSlot _  _    (MsgLeiosBlockTxsOffer sl _)         = Just sl
 notifyMsgSlot _  _    _                                     = Nothing
 
 notifyStale :: Env -> Slot -> Bool                     -- BEH-NotifyServe staleness: slot-difference (as a duration) exceeds notifyStaleHorizon
 notifyStale env (Slot s) = case envImmutableTip env of Slot tip -> tip > s + envNotifyStaleHorizon env
+
+staleOffer :: Env -> Time -> Time -> Bool              -- §3 RedundantOffer TTL: the peer's prior offer is older than the dedup epoch
+staleOffer env (Time n) (Time t) = n >= t + envOfferDedupTtl env
 
 sendNotification :: Peer -> Notification -> St -> (St, [Effect])  -- BEH-NotifyServe
 sendNotification peer n st = case n of
@@ -656,8 +668,19 @@ sendNotification peer n st = case n of
         eh = maybe (EbHash 0) annEbHash (rbAnnounce h)
     in (openGate peer el eh st, [Send peer (MsgLeiosBlockAnnouncement h)])
   NotifyEquivProof m1 h2   -> (st, [Send peer (MsgLeiosBlockEquivocationProof m1 h2)])
-  NotifyBlockOffer eh      -> (bumpGate peer eh OfferBody st, [Send peer (MsgLeiosBlockOffer eh)])
-  NotifyBlockTxsOffer eh   -> (bumpGate peer eh OfferBodyAndClosure st, [Send peer (MsgLeiosBlockTxsOffer eh)])
+  NotifyBlockOffer eh      -> case gateSlot peer eh st of
+                                Just sl -> (bumpGate peer eh OfferBody st, [Send peer (MsgLeiosBlockOffer sl eh)])
+                                Nothing -> (st, [])
+  NotifyBlockTxsOffer eh   -> case gateSlot peer eh st of
+                                Just sl -> (bumpGate peer eh OfferBodyAndClosure st, [Send peer (MsgLeiosBlockTxsOffer sl eh)])
+                                Nothing -> (st, [])
+
+gateSlot :: Peer -> EbHash -> St -> Maybe Slot  -- §2 LstPeerOfferGates: a slot we announced eh to peer under · NEEDS-TO-BE-INCREMENTAL
+gateSlot peer eh st =
+  let EM.EbHashMap _ els = fromMaybe EM.empty (Map.lookup peer (stPeerOfferGates st))
+  in case [ electionSlot el | (el, EM.Refs _ act _) <- Map.toList els, act == eh ] of
+       (s : _) -> Just s
+       []      -> Nothing
 
 openGate :: Peer -> Election -> EbHash -> St -> St  -- §2 LstPeerOfferGates: announcement sent (no offer yet)
 openGate peer el eh st =
@@ -665,7 +688,7 @@ openGate peer el eh st =
   where perPeer = fromMaybe EM.empty (Map.lookup peer (stPeerOfferGates st))
 
 bumpGate :: Peer -> EbHash -> OfferLevel -> St -> St  -- §2 LstPeerOfferGates: record the offer level sent
-bumpGate peer eh lvl st = case EM.updateEb eh (\sent -> Just (sent <> Just (LeiosNotifySide lvl))) perPeer of
+bumpGate peer eh lvl st = case EM.updateEb eh (\sent -> Just (sent <> Just lvl)) perPeer of
   Just m' -> st { stPeerOfferGates = Map.insert peer m' (stPeerOfferGates st) }
   Nothing -> st
   where perPeer = fromMaybe EM.empty (Map.lookup peer (stPeerOfferGates st))
