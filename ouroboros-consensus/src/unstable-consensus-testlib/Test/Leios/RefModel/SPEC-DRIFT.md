@@ -3,37 +3,51 @@
 Things to reflect back into `Spec.md` (it's at the §1–§8 prose baseline; RefModel.hs has moved
 substantially during the EbHashMap / offer-path work). Don't fix Spec.md yet — this is the to-do list.
 
-## Design recommendation to the community + the dedup snag (decided: keep + TTL now, recommend abandoning)
+## Per-`EbHash` dedup + wallclock TTL — favored; `(Slot, PoolId, EbHash)` triple is the alternative
 
-- [ ] **Recommend abandoning cross-election EB dedup.** `Msg*Offer` should carry the **announcement
-      triple `(Slot, PoolId, EbHash)`** (i.e. election + EbHash), not just `EbHash`. The CIP's offer
-      already carries `(Slot, EbHash)`, and the model now provides + confirms that `Slot` (see §2/§3
-      Messages) — so only `PoolId` is missing from the full triple. We keep the `EbHash`-only hard-dedup
-      *for now* (it's a protocol-shape question, not ours to settle in isolation), but the lean is to drop
-      it. Election-keyed offers make dedup per-election, GC'd by our
-      own tip, with **no cross-node coupling**; the cost is the rare same-content-two-elections
-      double-fetch/-offer, which §5 already deemed acceptable and which `stVolatileBody` best-effort
-      re-fetch avoidance mostly recovers.
-- [ ] **Why `EbHash`-only is a snag** (document as the motivation): with `EbHash`-only offers,
-      `RedundantOffer` correctness becomes a **cross-node GC-epoch invariant**. An honest peer that GC'd
-      X's old election and re-offers X under a *new* election is wrongly `RedundantOffer`-disconnected
-      whenever our immutable tip lags its GC; symmetrically the downstream gate would have to be retained
-      for the **network-max GC window W (≈36 h)** rather than our own tip (≈12 h immutability), in both
-      directions, decoupled from our tip.
-- [ ] **Wallclock TTL that keeps the kept-dedup correct (IMPLEMENTED in RefModel.hs).** `RedundantOffer`
-      fires only when a non-level-raising offer arrives **within `envOfferDedupTtl` (~6 h)** of the peer's
-      prior offer of that `EbHash`; a staler one is treated as a fresh epoch and accepted. Robust because a
-      *legit* re-offer can't happen until the peer itself GC'd (its tip moved ~an immutability-window,
-      ≥~12 h at real time), so the TTL only has to sit anywhere between spam cadence and immutability —
-      every node picks its own, no W agreement. The only sub-TTL "legit" re-offerer is a node replaying
-      faster than real time (syncing), which we don't want as upstream anyway. Lives on the *received*-offer
-      state only (`stPeerOfferings`, via the `Time` now carried in `LeiosNotifySide`); slot-GC still bounds
-      memory, the TTL only governs the disconnect. New `Env` param **`envOfferDedupTtl`**.
+- [ ] **Favored: keep per-`EbHash` dedup with the wallclock TTL (IMPLEMENTED in RefModel.hs).** An offer is
+      a per-*content* claim ("I hold the body/closure for this `EbHash`"); the per-election information the
+      receiver actually acts on (younger elections raise fetch priority; voting needs the election set)
+      rides on the *announcement* stream, not on offers. So one offer per `EbHash` conveys everything an
+      offer is for, and a second offer of the same content under a different election adds nothing the
+      receiver will act on. Per-`EbHash` dedup suppresses that redundant traffic, and makes the frugal
+      behavior the path of least resistance: an honest sender's natural lifecycle (announce, offer once when
+      it holds the EB, never re-offer because it never loses-and-reacquires inside the window) is
+      automatically compliant — no re-offer timer, no per-election offer bookkeeping.
+- [ ] **The snag the TTL closes** (document as the TTL's motivation): with `EbHash`-only offers and no TTL,
+      `RedundantOffer` correctness would be a **cross-node GC-epoch invariant**. An honest peer that GC'd
+      X's old election and later re-offers X under a *new* election would be wrongly
+      `RedundantOffer`-disconnected whenever our immutable tip lags its GC; symmetrically the downstream gate
+      would have to be retained for the **network-max GC window W (≈36 h)** rather than our own tip (≈12 h
+      immutability), decoupled from our tip in both directions.
+- [ ] **How the TTL closes it.** `RedundantOffer` fires only when a non-level-raising offer arrives **within
+      `envOfferDedupTtl` (~6 h)** of the peer's prior offer of that `EbHash`; a staler one is treated as a
+      fresh epoch and accepted. Robust because a *legit* re-offer can't happen until the peer itself GC'd
+      (its tip moved ~an immutability-window, ≥~12 h at real time), so the TTL only has to sit anywhere
+      between spam cadence and immutability — every node picks its own, no W agreement. The only sub-TTL
+      "legit" re-offerer is a node replaying faster than real time (syncing), which we don't want as upstream
+      anyway. The TTL is a little ugly (a wallclock in the dedup) but simple, and its **safe interval is
+      enormous — not a tuning challenge**. Lives on the *received*-offer state only (`stPeerOfferings`, via
+      the `Time` in `LeiosNotifySide`); slot-GC still bounds memory, the TTL only governs the disconnect.
+      New `Env` param **`envOfferDedupTtl`**. The level-raise case (had body, now have closure) is permitted
+      regardless of the TTL (`lvl > cl`), and works cross-election because the level lives per-content.
+- [ ] **Alternative (no longer the lean): the announcement triple `(Slot, PoolId, EbHash)`, dedup keyed by
+      it** (or, halfway, `(Slot, EbHash)` — the CIP offer + our model already carry and confirm the `Slot`,
+      so only `PoolId` is missing). It is exact and clockless: distinct elections naming the same content are
+      distinct dedup keys, GC'd by our own tip with **no cross-node coupling**, so the snag above never
+      arises. But the exactness is about a distinction the offer layer doesn't need: it **permits** the rare
+      same-content-multiple-elections case to send one offer per election (redundant traffic the receiver
+      won't act on) and **decentralizes** the dedup duty onto every sender. Per-`EbHash` and triple keying
+      behave identically except in that rare multi-election case (an `EbHash` named by >1 election is
+      basically equivocation/coincidence) — and there, per-`EbHash` suppresses the redundancy while the
+      triple permits it. Net: the triple trades the TTL's wallclock for permitted redundancy + a sender
+      burden; given the TTL's safe interval isn't a tuning problem, keep-dedup-with-TTL comes out ahead.
 
 ## New abstraction not in Spec at all
 
-- [ ] **`EbHashMap a b`** (its own module). A bidirectional, reference-counted map: per-EB payload `a`
-      keyed by `EbHash`, refcounted by per-`Election` references (`b` the per-election payload). Each
+- [ ] **`EbHashMap a`** (its own module). A bidirectional, reference-counted map: per-EB payload `a`
+      keyed by `EbHash`, refcounted by per-`Election` references; the **election side carries no payload**
+      (the `b` parameter was dropped — `Refs = Refs !InactiveRef !EbHash`). Each
       election holds an *active* and optional *inactive* (superseded) EbHash ref; the EbHash entry's
       refcount = #elections naming it; GC by slot-major range-delete on the election side cascading to
       drop EbHash entries at refcount 0. `RefCounts` now splits **active vs inactive** counts (so
@@ -45,18 +59,22 @@ substantially during the EbHashMap / offer-path work). Don't fix Spec.md yet —
 
 ## §2 State
 
-- [ ] **`LstWanted`** is now keyed by `EbHash` (an `EbHashMap WantState ()`), not `Election ↦ WantState`.
+- [ ] **`LstWanted`** is now keyed by `EbHash` (an `EbHashMap WantState`), not `Election ↦ WantState`.
       `WantState` **dropped its embedded `ebHash`** (`AwaitingBody bs cs | AwaitingTxs (These …)`).
       Completion is **per-EbHash**, fanning out to every naming election (`electionsNaming`); a shared
       EbHash keeps its existing fetch progress (`Semigroup WantState` = keep-left).
-- [ ] **`LstPeerOfferings`** is now `Peer ↦ EbHashMap (Maybe LeiosNotifySide, Any) (Maybe ChainSyncSide)`,
-      not `Peer ↦ Election ↦ These CertSide OfferSide`.
+- [ ] **`LstPeerOfferings`** is now `Peer ↦ PeerOfferings`, a product of an
+      `EbHashMap (Maybe LeiosNotifySide, Any)` (offer levels, keyed by `EbHash`) **and** a separate
+      `Election ↦ ChainSyncSide` map (per-election ChainSync RB header hashes). Not
+      `Peer ↦ Election ↦ These CertSide OfferSide`.
       - `OfferSide` → **`OfferLevel`** (`OfferBody | OfferBodyAndClosure`). The per-EB payload's first
         component is `Maybe LeiosNotifySide`, where **`LeiosNotifySide = LeiosNotifySide OfferLevel Time`**
         carries the offer level *and* when it was last (re)offered (the `RedundantOffer` TTL clock);
         `offerLevel` projects the level. (`OfferLevel` has a `max` `Semigroup`.)
-      - `CertSide` → **`ChainSyncSide HeaderHash`** (per-election payload, `Maybe`; **dropped the EbHash** —
-        the EbHash is the Refs active ref now). The cert no longer touches the LeiosNotify level.
+      - `CertSide` → **`ChainSyncSide HeaderHash`**, now held in the separate `Election ↦ ChainSyncSide`
+        map (split out of the `EbHashMap` so its election side carries no payload; **dropped the EbHash** —
+        the EbHash is the Refs active ref now). The cert no longer touches the LeiosNotify level. The
+        recorded HeaderHash is now **read** (per-peer cert-conflict check, see §3), no longer write-only.
       - per-EB **`Any`** flag = "this EB was ChainSync-offered (cert via LevRollForward)"; kept distinct
         from the LeiosNotify level so `RedundantOffer` only consults the latter.
       - **`effectiveOffer`** = LeiosNotify level ⊔ (`Any` ⇒ body+closure), per-EB, no election scan.
@@ -120,8 +138,15 @@ substantially during the EbHashMap / offer-path work). Don't fix Spec.md yet —
       `LstVolatileClosure` (+ closure offers + `NotifyVotingAndChainSel` per naming election). Completion
       is per-EbHash (`completeEb`), not per-election.
 - [ ] **`LevRollForward` cert bit / `recordChainSyncSide`**: `supersede` sets the per-EB `Any` ChainSync
-      flag (leaving the LeiosNotify level untouched) + per-election `Just (ChainSyncSide hh)`; guarded
-      against a repeat cert. Spec records `These (Cert …) BodyAndClosure`.
+      flag (leaving the LeiosNotify level untouched) + inserts `ChainSyncSide hh` into the per-election
+      `Election ↦ ChainSyncSide` map; guarded against a repeat cert. Spec records `These (Cert …) BodyAndClosure`.
+- [ ] **`CertConflict` now also fires on a peer's *own* prior certified HeaderHash.** A certified
+      HeaderHash is a quorum-backed, unique-per-election fact, so a peer asserting two **different
+      certified** HeaderHashes for one election (two cert-carrying `LevRollForward`s) is provably lying —
+      `rollForwardCert` disconnects if the offered `atHeaderHash` conflicts with **either** our validated
+      `LstCertified` cert (the prior check) **or** the peer's own recorded `ChainSyncSide` for that
+      election. (Two *uncertified* announcements for one election remain ordinary equivocation — recorded
+      via the equiv machinery, never a disconnect; an honest peer can relay producer equivocation.)
 - [ ] **`LevCertValidated`**: uses `supersede` into the `EbHashMap` (and `deleteElection` when already
       complete); the in-place cert-switch is the EbHashMap active/inactive mechanism.
 

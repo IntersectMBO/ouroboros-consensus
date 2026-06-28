@@ -182,6 +182,14 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
                         , offer (Peer 1) (EbHash 101) ]
       assertBool "disconnects (unannounced offer)" (Disconnect (Peer 1) UnannouncedOffer `elem` fx)
 
+  , testCase "BEH-Offers: two different certified HeaderHashes for one election disconnects; a repeat does not" $ do
+      let certRf hh eb = LevRollForward (Peer 1) (RbHeader (HeaderHash hh) el100 Nothing True True)
+                                        (Just (AnnouncementTriple el100 (HeaderHash hh) (EbHash eb)))
+          (_, fxConflict) = run [ LevPeerAdd (Peer 1) StakeSampled, certRf 10 100, certRf 11 100 ]
+          (_, fxRepeat)   = run [ LevPeerAdd (Peer 1) StakeSampled, certRf 10 100, certRf 10 100 ]
+      assertBool "disconnects with CertConflict" (Disconnect (Peer 1) CertConflict `elem` fxConflict)
+      assertBool "an identical certified claim is idempotent" (not (any isDisconnect fxRepeat))
+
   , testCase "BEH-Responses: a body whose closure size mismatches the announcement disconnects" $ do
       let badBody = Body (EbHash 100) [TxRef (TxHash 1) 1] 200
           (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)
@@ -249,14 +257,14 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
           ehB = EbHash 11
           ehC = EbHash 12
           ehD = EbHash 13
-          m0 = empty :: EbHashMap [Int] ()
-          m1 = upsert ehA el1 [1] () m0
-          m2 = upsert ehA el2 [2] () m1   -- second election names ehA: incRef combines
-          m3 = upsert ehA el1 [3] () m2   -- re-upsert same active: adjust combines
-          m4 = supersede el1 ehB [9] () m3 -- el1 switches to ehB; ehA untouched, now el1's inactive
+          m0 = empty :: EbHashMap [Int]
+          m1 = upsert ehA el1 [1] m0
+          m2 = upsert ehA el2 [2] m1   -- second election names ehA: incRef combines
+          m3 = upsert ehA el1 [3] m2   -- re-upsert same active: adjust combines
+          m4 = supersede el1 ehB [9] m3 -- el1 switches to ehB; ehA untouched, now el1's inactive
           m5 = fromMaybe m4 (updateEb ehA (Just . (<> [4])) m4)
-          mC = supersede el3 ehC [6] () (upsert ehC el3 [5] () m5) -- supersede with active==eh combines
-          m  = supersede el4 ehD [7] () mC                          -- supersede before any upsert
+          mC = supersede el3 ehC [6] (upsert ehC el3 [5] m5) -- supersede with active==eh combines
+          m  = supersede el4 ehD [7] mC                          -- supersede before any upsert
       lookupEb ehA m @?= Just (RefCounts 1 1 [1, 2, 3, 4])  -- el2 active, el1 now inactive
       lookupEb ehB m @?= Just (RefCounts 1 0 [9])
       lookupEb ehC m @?= Just (RefCounts 1 0 [5, 6])
@@ -269,8 +277,8 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
 -- | A random operation over a small key space (so collisions, supersessions,
 -- and shared EbHashes across elections are common).
 data Op
-  = OpInsert    Election EbHash Int Int
-  | OpSupersede Election EbHash Int Int
+  = OpInsert    Election EbHash Int
+  | OpSupersede Election EbHash Int
   | OpDelete    Election
   | OpPrune     Slot
   deriving Show
@@ -284,44 +292,44 @@ genEbHash = EbHash . fromIntegral <$> chooseInt (0, 4)
 
 instance Arbitrary Op where
   arbitrary = oneof
-    [ OpInsert    <$> genElection <*> genEbHash <*> arbitrary <*> arbitrary
-    , OpSupersede <$> genElection <*> genEbHash <*> arbitrary <*> arbitrary
+    [ OpInsert    <$> genElection <*> genEbHash <*> arbitrary
+    , OpSupersede <$> genElection <*> genEbHash <*> arbitrary
     , OpDelete    <$> genElection
     , OpPrune . Slot . fromIntegral <$> chooseInt (0, 6)
     ]
 
-activeOf :: Election -> EbHashMap a b -> Maybe EbHash
+activeOf :: Election -> EbHashMap a -> Maybe EbHash
 activeOf el m = activeRef <$> lookupElection el m
 
 -- | The ops error on misuse; only apply each when its precondition holds.
-insertValid :: Election -> EbHash -> EbHashMap a b -> Bool
+insertValid :: Election -> EbHash -> EbHashMap a -> Bool
 insertValid el eh m = maybe True (== eh) (activeOf el m)
 
-supersedeValid :: Election -> EbHash -> EbHashMap a b -> Bool
+supersedeValid :: Election -> EbHash -> EbHashMap a -> Bool
 supersedeValid el _ m = case lookupElection el m of
-  Nothing                          -> True   -- cert before announcement
-  Just (Refs NoInactiveRefYet _ _) -> True   -- first cert for this election
-  Just (Refs NoInactiveRef   _ _)  -> False  -- already superseded
-  Just (Refs (InactiveRef _) _ _)  -> False  -- already superseded
+  Nothing                        -> True   -- cert before announcement
+  Just (Refs NoInactiveRefYet _) -> True   -- first cert for this election
+  Just (Refs NoInactiveRef   _)  -> False  -- already superseded
+  Just (Refs (InactiveRef _) _)  -> False  -- already superseded
 
-apply :: Op -> EbHashMap (Sum Int) (Sum Int) -> EbHashMap (Sum Int) (Sum Int)
+apply :: Op -> EbHashMap (Sum Int) -> EbHashMap (Sum Int)
 apply op m = case op of
-  OpInsert el eh a b    -> if insertValid el eh m    then upsert eh el (Sum a) (Sum b) m    else m
-  OpSupersede el eh a b -> if supersedeValid el eh m then supersede el eh (Sum a) (Sum b) m else m
-  OpDelete el           -> deleteElection el m
-  OpPrune s             -> pruneElections (\e -> electionSlot e < s) m
+  OpInsert el eh a    -> if insertValid el eh m    then upsert eh el (Sum a) m    else m
+  OpSupersede el eh a -> if supersedeValid el eh m then supersede el eh (Sum a) m else m
+  OpDelete el         -> deleteElection el m
+  OpPrune s           -> pruneElections (\e -> electionSlot e < s) m
 
-electionsOf :: EbHashMap a b -> [Election]
+electionsOf :: EbHashMap a -> [Election]
 electionsOf (EbHashMap _ els) = Map.keys els
 
-postcond :: Op -> EbHashMap (Sum Int) (Sum Int) -> EbHashMap (Sum Int) (Sum Int) -> Bool
+postcond :: Op -> EbHashMap (Sum Int) -> EbHashMap (Sum Int) -> Bool
 postcond op pre post = case op of
-  OpInsert el eh _ _    -> case lookupElection el pre of   -- a fresh announce sets the active
-                             Nothing -> activeOf el post == Just eh
-                             _       -> True
-  OpSupersede el eh _ _ -> not (supersedeValid el eh pre) || activeOf el post == Just eh
-  OpDelete el           -> isNothing (lookupElection el post)
-  OpPrune s             -> all (\e -> not (electionSlot e < s)) (electionsOf post)
+  OpInsert el eh _    -> case lookupElection el pre of   -- a fresh announce sets the active
+                           Nothing -> activeOf el post == Just eh
+                           _       -> True
+  OpSupersede el eh _ -> not (supersedeValid el eh pre) || activeOf el post == Just eh
+  OpDelete el         -> isNothing (lookupElection el post)
+  OpPrune s           -> all (\e -> not (electionSlot e < s)) (electionsOf post)
 
 prop_ebHashMap :: [Op] -> Property
 prop_ebHashMap = go empty
