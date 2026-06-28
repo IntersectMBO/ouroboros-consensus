@@ -64,7 +64,9 @@ servingIfaces :: Ifaces Identity
 servingIfaces = nullIfaces
   { ifDb = (ifDb nullIfaces)
       { dbQueryPresent   = pure
-      , dbReadClosureTxs = \_ hs -> pure [ Tx h 1 | h <- hs ] } }
+      , dbReadClosureTxs = \_ poss ->
+          let txrefs = Map.fromList (zip [0 ..] (bodyTxlist body100))
+          in pure [ Tx (txRefHash tr) 1 | i <- NE.toList poss, Just tr <- [Map.lookup i txrefs] ] } }
 
 
 isReq :: Effect -> Bool
@@ -105,7 +107,7 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
   , testCase "BEH-ChunkJobs + BEH-ClosureFetch: body then closure-offer requests the chunked job's txs" $ do
       let (st, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)
                          , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100), txsOffer (Peer 1) (EbHash 100) ]
-      [ txs | Send _ (MsgLeiosBlockTxsRequest _ txs) <- fx ] @?= [NE.fromList [TxHash 1, TxHash 2]]
+      [ poss | Send _ (MsgLeiosBlockTxsRequest _ poss) <- fx ] @?= [NE.fromList [0, 1]]
       assertBool "want advanced to AwaitingTxs"
         (case wantStateOf st (EbHash 100) of Just AwaitingTxs{} -> True; _ -> False)
 
@@ -273,7 +275,7 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
   , testCase "BEH-FetchServe: a tx request is served with the requested txs in order" $ do
       let (_, fx) = runWith servingIfaces
                       [ LevPeerAdd (Peer 2) PeerSharingSampled
-                      , LevWiredMsg (Peer 2) (MsgLeiosBlockTxsRequest (EbHash 100) (NE.fromList [TxHash 1, TxHash 2])) ]
+                      , LevWiredMsg (Peer 2) (MsgLeiosBlockTxsRequest (EbHash 100) (NE.fromList [0, 1])) ]
       [ ts | Send _ (MsgLeiosBlockTxs _ ts) <- fx ] @?= [[Tx (TxHash 1) 1, Tx (TxHash 2) 1]]
 
   , testCase "BEH-Completion: a cert for an already-complete EB still fans voting + ChainSel" $ do

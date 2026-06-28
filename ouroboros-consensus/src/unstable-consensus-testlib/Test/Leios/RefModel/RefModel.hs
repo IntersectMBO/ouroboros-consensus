@@ -102,11 +102,14 @@ instance Semigroup LeiosNotifySide where           -- §2 LstPeerOfferings (tupl
 data ChainSyncSide = ChainSyncSide HeaderHash      -- §2 LstPeerOfferings / ChainSyncSide
   deriving (Eq, Show)
 
-data Job = Job (NonEmpty TxHash) ByteCount               -- §2 Job (ordered txs + byte size)
+data Job = Job (NonEmpty (Word16, TxHash)) ByteCount     -- §2 Job (body positions + tx hashes + byte size)
   deriving (Eq, Ord, Show)
 
 jobTxs :: Job -> NonEmpty TxHash
-jobTxs (Job txs _) = txs
+jobTxs (Job pts _) = fmap snd pts
+
+jobPositions :: Job -> NonEmpty Word16
+jobPositions (Job pts _) = fmap fst pts
 
 jobByteSize :: Job -> ByteCount
 jobByteSize (Job _ n) = n
@@ -174,21 +177,24 @@ data Notification                                  -- §2 LstPeerNotifyQueue
 infixr 1 :->
 type k :-> v = Map k v
 
-data PeerOfferings = PeerOfferings !(EbHashMap (Maybe LeiosNotifySide, Any)) !(Election :-> ChainSyncSide)  -- §2 LstPeerOfferings (offer levels; per-election ChainSync header hashes)
+data PeerOfferings =  -- §2 LstPeerOfferings (offer levels; per-election ChainSync header hashes)
+    PeerOfferings
+        (EbHashMap (Maybe LeiosNotifySide, Any))
+        (Election :-> ChainSyncSide)
   deriving (Eq, Show)
 
 data St = St
-  { stFirstAnnouncements     :: !(Election :-> AnnState)                  -- §2 LstFirstAnnouncements
-  , stPeerFirstAnnouncements :: !(Peer :-> Election :-> AnnSeen)          -- §2 LstPeerFirstAnnouncements
-  , stPeerOfferings          :: !(Peer :-> PeerOfferings)                 -- §2 LstPeerOfferings
-  , stPeerOfferGates         :: !(Peer :-> EbHashMap (Maybe OfferLevel))  -- §2 LstPeerOfferGates (payload: offer level sent so far)
-  , stPeerNotifyQueue        :: !(Peer :-> (Seq Notification, Int))       -- §2 LstPeerNotifyQueue (FIFO; cap = credits)
-  , stWanted                 :: !(EbHashMap WantState)                    -- §2 LstWanted
-  , stVolatileBody           :: !HeldEbHashSet                            -- §2 LstVolatileBody
-  , stVolatileClosure        :: !HeldEbHashSet                            -- §2 LstVolatileClosure (INVARIANT: subset of stVolatileBody)
-  , stCertified              :: !(Election :-> (HeaderHash, EbHash))      -- §2 LstCertified
-  , stPeerInflight           :: !(Peer :-> MiniProtocol :-> Seq Req)      -- §2 LstPeerInflight (one FIFO per LeiosFetch sub-protocol)
-  , stPeerPresent            :: !(Peer :-> PeerInfo)                      -- §2 LstPeerPresent
+  { stFirstAnnouncements     :: Election :-> AnnState                  -- §2 LstFirstAnnouncements
+  , stPeerFirstAnnouncements :: Peer :-> Election :-> AnnSeen          -- §2 LstPeerFirstAnnouncements
+  , stPeerOfferings          :: Peer :-> PeerOfferings                 -- §2 LstPeerOfferings
+  , stPeerOfferGates         :: Peer :-> EbHashMap (Maybe OfferLevel)  -- §2 LstPeerOfferGates (payload: offer level sent so far)
+  , stPeerNotifyQueue        :: Peer :-> (Seq Notification, Int)       -- §2 LstPeerNotifyQueue (FIFO; cap = credits)
+  , stWanted                 :: EbHashMap WantState                    -- §2 LstWanted
+  , stVolatileBody           :: HeldEbHashSet                            -- §2 LstVolatileBody
+  , stVolatileClosure        :: HeldEbHashSet                            -- §2 LstVolatileClosure (INVARIANT: subset of stVolatileBody)
+  , stCertified              :: Election :-> (HeaderHash, EbHash)      -- §2 LstCertified
+  , stPeerInflight           :: Peer :-> MiniProtocol :-> Seq Req      -- §2 LstPeerInflight (one FIFO per LeiosFetch sub-protocol)
+  , stPeerPresent            :: Peer :-> PeerInfo                      -- §2 LstPeerPresent
   }
   deriving (Eq, Show)
 
@@ -237,7 +243,7 @@ data DbKey = DbBody EbHash | DbClosureTx EbHash TxHash  -- §2 dbQueryPresent ke
 data LeiosDb m = LeiosDb                            -- §2 disk store interface
   { dbQueryPresent :: Set DbKey -> m (Set DbKey)    -- BEH-Completion / BEH-FetchServe
   , dbReadBody :: EbHash -> m (Maybe Body)          -- BEH-Completion
-  , dbReadClosureTxs :: EbHash -> [TxHash] -> m [Tx]  -- BEH-FetchServe
+  , dbReadClosureTxs :: EbHash -> NonEmpty Word16 -> m [Tx]  -- BEH-FetchServe (txs at the requested body positions)
   }
 
 data TxCache m = TxCache                            -- §7 TxCache hooks
@@ -260,7 +266,7 @@ data WireMsg                                        -- §2 Wire messages
   | MsgLeiosBlockTxsOffer Slot EbHash
   | MsgLeiosBlockRequest EbHash
   | MsgLeiosBlock EbHash Body
-  | MsgLeiosBlockTxsRequest EbHash (NonEmpty TxHash)
+  | MsgLeiosBlockTxsRequest EbHash (NonEmpty Word16)
   | MsgLeiosBlockTxs EbHash [Tx]
   deriving (Eq, Show)
 
@@ -477,19 +483,19 @@ takeWhileBudget budget ((b, r) : rest)
   | b <= budget = r : takeWhileBudget (budget - b) rest
   | otherwise   = []
 
-chunk :: Env -> [TxRef] -> Map JobId Job            -- BEH-ChunkJobs · §2 Job (≈ jobSize batches)
+chunk :: Env -> [(Word16, TxRef)] -> Map JobId Job  -- BEH-ChunkJobs · §2 Job (≈ jobSize batches)
 chunk env trs =
-  Map.fromList (zip (map JobId [0 ..]) (map mkJob (batchBySize (envJobSize env) trs)))
-  where mkJob batch = Job (NE.fromList (map txRefHash batch)) (sum (map txRefSize batch))
+  Map.fromList (zip (map JobId [0 ..]) (map mkJob (batchBySize (txRefSize . snd) (envJobSize env) trs)))
+  where mkJob batch = Job (NE.fromList (map (fmap txRefHash) batch)) (sum (map (txRefSize . snd) batch))
 
-batchBySize :: ByteCount -> [TxRef] -> [[TxRef]]          -- §2 jobSize
-batchBySize _ [] = []
-batchBySize limit (x : xs) = go [x] (txRefSize x) xs
+batchBySize :: (a -> ByteCount) -> ByteCount -> [a] -> [[a]]   -- §2 jobSize
+batchBySize _    _     []       = []
+batchBySize size limit (x : xs) = go [x] (size x) xs
   where
     go acc _ [] = [reverse acc]
     go acc sz (t : ts)
-      | sz + txRefSize t > limit && not (null acc) = reverse acc : go [t] (txRefSize t) ts
-      | otherwise                                  = go (t : acc) (sz + txRefSize t) ts
+      | sz + size t > limit && not (null acc) = reverse acc : go [t] (size t) ts
+      | otherwise                             = go (t : acc) (sz + size t) ts
 
 hashes :: [Tx] -> Set TxHash
 hashes = Set.fromList . map txHash
@@ -531,7 +537,7 @@ stepWired ifs env now peer msg st = case notifyMsgSlot st peer msg of
       MsgLeiosBlockTxsOffer sl eh           -> hOffer env now peer sl eh OfferBodyAndClosure st
       MsgLeiosBlockRequest eh               -> hServeBody ifs env now peer eh st
       MsgLeiosBlock eh body                 -> hBlock ifs env now peer eh body st
-      MsgLeiosBlockTxsRequest eh txs        -> hServeTxs ifs env now peer eh txs st
+      MsgLeiosBlockTxsRequest eh poss       -> hServeTxs ifs env now peer eh poss st
       MsgLeiosBlockTxs eh txs               -> hBlockTxs ifs env now peer eh txs st
 
 hAnnouncement :: Monad m => Ifaces m -> Env -> Time -> Peer -> RbHeader -> St -> m (St, [Effect])  -- BEH-Wanting · §3 LevBlockAnnouncement
@@ -751,7 +757,7 @@ hBlock ifs env now peer eh body st = case frontReq st peer FetchBody of
              memHs <- mempoolQueryPresent (ifMem ifs) (txhs `Set.difference` hashes hits)
              txCacheOnAcquire (ifTxc ifs) memHs
              let onHand  = hashes hits `Set.union` hashes memHs
-                 toFetch = [ tr | tr <- toList txrefs, not (txRefHash tr `Set.member` onHand) ]
+                 toFetch = [ (i, tr) | (i, tr) <- zip [0 :: Word16 ..] (toList txrefs), not (txRefHash tr `Set.member` onHand) ]
                  jobsMap = chunk env toFetch
                  copied  = hits ++ memHs
                  writes  = SubmitDisk (Write (WriteBody body))
@@ -787,10 +793,10 @@ hServeBody ifs _env _now peer eh st = do
     Just body -> pure (st, [Send peer (MsgLeiosBlock eh body)])
     _         -> pure (st, [Disconnect peer RequestedAbsentData])
 
-hServeTxs :: Monad m => Ifaces m -> Env -> Time -> Peer -> EbHash -> NonEmpty TxHash -> St -> m (St, [Effect])  -- BEH-FetchServe · §3 LevBlockTxsRequest
-hServeTxs ifs _env _now peer eh txs st = do
-  served <- dbReadClosureTxs (ifDb ifs) eh (NE.toList txs)
-  if length served == NE.length txs
+hServeTxs :: Monad m => Ifaces m -> Env -> Time -> Peer -> EbHash -> NonEmpty Word16 -> St -> m (St, [Effect])  -- BEH-FetchServe · §3 LevBlockTxsRequest
+hServeTxs ifs _env _now peer eh poss st = do
+  served <- dbReadClosureTxs (ifDb ifs) eh poss
+  if length served == NE.length poss
     then pure (st, [Send peer (MsgLeiosBlockTxs eh served)])
     else pure (st, [Disconnect peer RequestedAbsentData])
 
@@ -893,7 +899,7 @@ hSelfIssued ifs env now h body st = case rbAnnounce h of
     memHs <- mempoolQueryPresent (ifMem ifs) txhs
     txCacheOnAcquire (ifTxc ifs) memHs
     let onHand  = hashes memHs
-        toFetch = [ tr | tr <- toList txrefs, not (txRefHash tr `Set.member` onHand) ]
+        toFetch = [ (i, tr) | (i, tr) <- zip [0 :: Word16 ..] (toList txrefs), not (txRefHash tr `Set.member` onHand) ]
         jobsMap = chunk env toFetch
         copied  = memHs
         writes  = SubmitDisk (Write (WriteBody body))
@@ -929,7 +935,7 @@ armTimer env (Time now) peer = SetTimer peer (Time (now + envRequestTimeout env)
 
 reqWire :: St -> Req -> WireMsg
 reqWire _ (ReqBody eh _ _)   = MsgLeiosBlockRequest eh
-reqWire _ (ReqJob eh _ job) = MsgLeiosBlockTxsRequest eh (jobTxs job)
+reqWire _ (ReqJob eh _ job) = MsgLeiosBlockTxsRequest eh (jobPositions job)
 
 frontReq :: St -> Peer -> MiniProtocol -> Maybe Req
 frontReq st peer mp = case inflightFifo st peer mp of
