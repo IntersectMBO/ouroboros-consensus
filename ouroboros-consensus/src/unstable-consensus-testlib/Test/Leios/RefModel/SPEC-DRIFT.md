@@ -150,6 +150,32 @@ substantially during the EbHashMap / offer-path work). Don't fix Spec.md yet —
 - [ ] **`LevCertValidated`**: uses `supersede` into the `EbHashMap` (and `deleteElection` when already
       complete); the in-place cert-switch is the EbHashMap active/inactive mechanism.
 
+## §7 TxCache occupancy (equivocation-resistant)
+
+- [ ] **Note once per election, at the central chokepoint.** `txCacheNoteAnnouncement` moved from the
+      per-peer ingress (`hAnnouncement`) to `centralAnnounce`'s first-announcement branch (the `Nothing`
+      case that sets `AnnOne`). Bugfix: at the ingress it fired once *per peer*, so K adversary connections
+      announcing K distinct EBs for one election forced K cache reservations (on-disk tx bytes), capped only
+      per-peer — *upstream* of the central one-per-election cap. Now the cache sees exactly
+      `LstFirstAnnouncements[el]`. Side-effect: rollforward-carried and self-issued announcements now prime
+      the cache too (they route through `centralAnnounce`), which the per-peer placement had missed.
+- [ ] **Cache hooks are election-keyed.** `txCacheNoteAnnouncement :: Election -> EbHash -> m ()` (was
+      `EbHash -> m ()`) so the cache can maintain the per-election index; the reference-awareness for an
+      EbHash shared across elections lives inside the cache (where the tx storage is), not in the model.
+- [ ] **New hook `txCacheEvictForValidCert :: Election -> EbHash -> m ()`.** Called in `hCertValidated` on
+      every valid cert, with the certified EbHash. Semantics: "election `el` is certified to `eh`; evict any
+      tx data retained for `el`'s *other* (superseded) EB." Bounds on-disk to one EB per election at all
+      times (transient two only during the switch): pre-cert the index tracks the first-announced; a cert to
+      a different EB evicts the uncertified first-announcement. "Equivocate and never certify" is already
+      handled by the note-once rule (only the first is ever retained).
+- [ ] **Acquire is gated by the *active* want.** `hBlock` and `hBlockTxs` only touch the cache (and persist
+      the closure) when the EB is some election's **active** want — new `activelyWantsEh` (active refcount
+      `> 0`, replacing the old `wantsEh = isJust`, which also counted an inactive/superseded ref). Without
+      this, a late response for a job requested *before* a cert-switch/eviction would re-acquire the dead
+      EB's txs (and write its closure), undoing the eviction — and an adversary can time exactly that.
+      `hBlockTxs` previously had no want-guard at all on `txCacheOnAcquire`/`WriteClosure`; `hBlock` had an
+      `isJust` guard, now tightened to the active test for symmetry.
+
 ## §4 Properties
 
 - [ ] "Offers are announced or certified" now keys off the EbHashMap supersede state

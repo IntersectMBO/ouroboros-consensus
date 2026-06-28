@@ -977,12 +977,12 @@ TxCache keeps a far tighter recent window), so the two are GC'd independently.
 
 The main spec touches it only through these hooks:
 
-- **`txCacheNoteAnnouncement(eb)`** — `LevBlockAnnouncement` calls this for every accepted announcement; the cache
+- **`txCacheNoteAnnouncement(eb)`** — `LevBlockAnnouncement` calls this for every accepted announcement (TODO correction: it starts as only the first-announcement per election and might change to a certified announcement for that election if that's different); the cache
   applies its own qualifying filter (below) and advances its window.
 - **`txCacheOnBody(eb, txset(eb)) → hits`** — `BEH-ChunkJobs` calls this when the body arrives; it returns the
   cached (already acquired) txs so they're not re-fetched, and records that `eb` references `txset(eb)`.
 - **`txCacheOnAcquire(txs)`** — called when some txs' bytes arrive (`LevBlockTxs`, or a Mempool hit); for each
-  tx the cache is still tracking (`refcount > 0` — some eligible in-window EB references it) it marks
+  tx the cache is still tracking (`refcount > 0` — some eligible in-window EB (TODO correction: announcement) references it) it marks
   `acquired` and stores the bytes; a tx no eligible in-window EB references is ignored (not stored).
 - **`dbCopyFromTxCache(txs)`** — copy hit bytes from the cache's backing store into the requesting EB's
   LeiosDB closure.

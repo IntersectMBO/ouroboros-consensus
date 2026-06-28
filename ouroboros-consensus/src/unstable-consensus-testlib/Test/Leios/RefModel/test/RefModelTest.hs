@@ -1,6 +1,8 @@
 module Main (main) where
 
+import           Control.Monad (foldM)
 import           Data.Functor.Identity (Identity, runIdentity)
+import           Data.IORef (modifyIORef', newIORef, readIORef)
 import           Data.List (foldl')
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
@@ -19,7 +21,7 @@ main :: IO ()
 main = defaultMain tests
 
 env :: Env
-env = Env 5 2 1000000 65536 30 300 600 21600 (Slot 0)
+env = Env 5 2 1000000 65536 16384 30 300 600 21600 (Slot 0)
 
 el100 :: Election
 el100 = Election (Slot 5) (PoolId 1)
@@ -76,10 +78,20 @@ isDisconnect _              = False
 
 tests :: TestTree
 tests = testGroup "Leios RefModel — Spec.md main spec"
-  [ testCase "BEH-PeerChurn: LevPeerAdd registers an Active peer, no effects" $ do
+  [ testCase "BEH-PeerChurn: LevPeerAdd registers an Active peer and primes the notify client" $ do
       let (st, fx) = run [LevPeerAdd (Peer 1) StakeSampled]
-      fx @?= []
+      fx @?= replicate (envNotifyMaxCapacity env) (Send (Peer 1) MsgLeiosNotificationRequestNext)
       fmap peerPhase (Map.lookup (Peer 1) (stPeerPresent st)) @?= Just Active
+
+  , testCase "BEH-NotifyServe (client): a consumed notification refills one RequestNext" $ do
+      let (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100 ]
+          reqNexts = length [ () | Send _ MsgLeiosNotificationRequestNext <- fx ]
+      reqNexts @?= envNotifyMaxCapacity env + 1
+
+  , testCase "BEH-NotifyServe (client): no refill for a WindingDown peer" $ do
+      let (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, LevPeerWindDown (Peer 1), ann (Peer 1) hdr100 ]
+          reqNexts = length [ () | Send _ MsgLeiosNotificationRequestNext <- fx ]
+      reqNexts @?= envNotifyMaxCapacity env
 
   , testCase "BEH-Wanting: an announcement gates the want (AwaitingBody), no fetch yet" $ do
       let (st, fx) = run [LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100]
@@ -96,6 +108,17 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
       [ txs | Send _ (MsgLeiosBlockTxsRequest _ txs) <- fx ] @?= [NE.fromList [TxHash 1, TxHash 2]]
       assertBool "want advanced to AwaitingTxs"
         (case wantStateOf st (EbHash 100) of Just AwaitingTxs{} -> True; _ -> False)
+
+  , testCase "BEH-Responses: body and txs responses use separate per-mini-protocol FIFOs" $ do
+      let body200  = Body (EbHash 200) [TxRef (TxHash 9) 300] 200
+          offer200 = LevWiredMsg (Peer 1) (MsgLeiosBlockTxsOffer (Slot 6) (EbHash 200))
+          (st, fx) = run [ LevPeerAdd (Peer 1) StakeSampled
+                         , ann (Peer 1) hdr200, offer200
+                         , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 200) body200)   -- eh200 -> AwaitingTxs: a ReqJob is now in flight
+                         , ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)            -- a ReqBody for eh100 is now in flight
+                         , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100) ] -- the body response must not be blocked behind the ReqJob
+      assertBool "a body response is not blocked behind an in-flight txs request" (not (any isDisconnect fx))
+      assertBool "eh100 advanced to AwaitingTxs" (case wantStateOf st (EbHash 100) of Just AwaitingTxs{} -> True; _ -> False)
 
   , testCase "Job: jobBytes is the real summed tx size" $ do
       let (st, _) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)
@@ -190,11 +213,42 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
       assertBool "disconnects with CertConflict" (Disconnect (Peer 1) CertConflict `elem` fxConflict)
       assertBool "an identical certified claim is idempotent" (not (any isDisconnect fxRepeat))
 
+  , testCase "BEH-Wanting: TxCache noted once per election (first-announced); a superseding cert evicts" $ do
+      ref <- newIORef ([] :: [(String, Election, EbHash)])
+      let recIfaces :: Ifaces IO
+          recIfaces = nullIfaces
+            { ifTxc = (ifTxc nullIfaces)
+                { txCacheNoteAnnouncement  = \el eh -> modifyIORef' ref (("note",  el, eh) :)
+                , txCacheEvictForValidCert = \el eh -> modifyIORef' ref (("evict", el, eh) :) } }
+          stimuli = [ LevPeerAdd (Peer 1) StakeSampled, LevPeerAdd (Peer 2) StakeSampled
+                    , ann (Peer 1) hdr100, ann (Peer 2) hdr101
+                    , LevCertValidated (AnnouncementTriple el100 (HeaderHash 11) (EbHash 101)) 200 300 ]
+      _ <- foldM (\st s -> fst <$> step recIfaces env (Time 0) s st) emptySt stimuli
+      evs <- reverse <$> readIORef ref
+      [ (el, eh) | ("note", el, eh) <- evs ] @?= [ (el100, EbHash 100) ]
+      assertBool "a superseding cert evicts the election" (("evict", el100, EbHash 101) `elem` evs)
+
   , testCase "BEH-Responses: a body whose closure size mismatches the announcement disconnects" $ do
       let badBody = Body (EbHash 100) [TxRef (TxHash 1) 1] 200
           (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)
                         , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) badBody) ]
       assertBool "disconnects with BodyMismatch" (Disconnect (Peer 1) BodyMismatch `elem` fx)
+
+  , testCase "BEH-Responses: a body containing an oversized tx is rejected (BodyMismatch)" $ do
+      let bigHdr  = RbHeader (HeaderHash 50) el100 (Just (EbAnn (EbHash 100) 200 20000)) False True
+          bigBody = Body (EbHash 100) [TxRef (TxHash 1) 20000] 200
+          (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) bigHdr, offer (Peer 1) (EbHash 100)
+                        , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) bigBody) ]
+      assertBool "disconnects with BodyMismatch (tx exceeds envMaxTxSize)" (Disconnect (Peer 1) BodyMismatch `elem` fx)
+
+  , testCase "BEH-Timeout: a peer's timer disconnects (RequestTimeout) while requests are outstanding" $ do
+      let (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)
+                        , LevTimer (Time 0) (Peer 1) ]
+      assertBool "disconnects with RequestTimeout" (Disconnect (Peer 1) RequestTimeout `elem` fx)
+
+  , testCase "BEH-Timeout: a peer's timer with no outstanding requests does not disconnect" $ do
+      let (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, LevTimer (Time 0) (Peer 1) ]
+      assertBool "no disconnect when nothing is outstanding" (not (any isDisconnect fx))
 
   , testCase "BEH-Responses: an unsolicited body (no matching in-flight request) disconnects" $ do
       let (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100
@@ -213,6 +267,27 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
                       , LevWiredMsg (Peer 2) (MsgLeiosBlockTxsRequest (EbHash 100) (NE.fromList [TxHash 1, TxHash 2])) ]
       [ ts | Send _ (MsgLeiosBlockTxs _ ts) <- fx ] @?= [[Tx (TxHash 1) 1, Tx (TxHash 2) 1]]
 
+  , testCase "BEH-Completion: a cert for an already-complete EB still fans voting + ChainSel" $ do
+      let ifs = nullIfaces { ifDb = (ifDb nullIfaces)
+                  { dbReadBody = \e -> pure (if e == EbHash 100 then Just body100 else Nothing)
+                  , dbQueryPresent = pure } }
+          el2 = Election (Slot 7) (PoolId 2)
+          (_, fx) = runWith ifs [ LevCertValidated (AnnouncementTriple el2 (HeaderHash 99) (EbHash 100)) 200 300 ]
+      assertBool "fans NotifyVotingAndChainSel for the (re)certified EB"
+        (NotifyVotingAndChainSel (EbHash 100) [] `elem` fx)
+
+  , testCase "BEH-Completion: announcing an already-available closure under a new election fans voting + ChainSel" $ do
+      let ifs = nullIfaces { ifDb = (ifDb nullIfaces)
+                  { dbReadBody = \e -> pure (if e == EbHash 100 then Just body100 else Nothing)
+                  , dbQueryPresent = pure } }
+          e2    = Election (Slot 7) (PoolId 2)
+          e3    = Election (Slot 8) (PoolId 3)
+          hdrE3 = RbHeader (HeaderHash 78) e3 (Just (EbAnn (EbHash 100) 200 300)) False True
+          (_, fx) = runWith ifs [ LevCertValidated (AnnouncementTriple e2 (HeaderHash 99) (EbHash 100)) 200 300
+                                , LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdrE3 ]
+      assertBool "fans NotifyVotingAndChainSel carrying the new announcing RB's HeaderHash"
+        (NotifyVotingAndChainSel (EbHash 100) [HeaderHash 78] `elem` fx)
+
   , testCase "BEH-Completion: finishing a body write enqueues a body offer" $ do
       let (st, _) = run [ LevPeerAdd (Peer 1) StakeSampled, LevPeerAdd (Peer 2) PeerSharingSampled
                         , credit (Peer 2), ann (Peer 1) hdr100, dequeue (Peer 2), credit (Peer 2)
@@ -225,7 +300,7 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
           setup  = [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100, offer (Peer 1) (EbHash 100)
                    , LevWiredMsg (Peer 1) (MsgLeiosBlock (EbHash 100) body100), txsOffer (Peer 1) (EbHash 100)
                    , LevWiredMsg (Peer 1) (MsgLeiosBlockTxs (EbHash 100) txs) ]
-          exposed fx = NotifyVotingAndChainSel el100 (EbHash 100) `elem` fx
+          exposed fx = NotifyVotingAndChainSel (EbHash 100) [HeaderHash 10] `elem` fx
           (_, fx1)   = run (setup ++ [ LevDiskDone (WriteBody body100) ])
           (st2, fx2) = run (setup ++ [ LevDiskDone (WriteBody body100)
                                      , LevDiskDone (WriteClosure (EbHash 100) txs) ])

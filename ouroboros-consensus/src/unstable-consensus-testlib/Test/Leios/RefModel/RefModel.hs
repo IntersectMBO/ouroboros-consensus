@@ -49,9 +49,6 @@ data RbHeader = RbHeader                         -- §Conventions · §3 LevRoll
   }
   deriving (Eq, Ord, Show)
 
-election :: RbHeader -> Election                 -- §Conventions election(header)
-election = rbElection
-
 data TxRef = TxRef { txRefHash :: TxHash, txRefSize :: ByteCount }  -- §Conventions tx (hash + size)
   deriving (Eq, Ord, Show)
 
@@ -97,7 +94,7 @@ data LeiosNotifySide = LeiosNotifySide OfferLevel Time  -- §2 LstPeerOfferings:
 offerLevel :: LeiosNotifySide -> OfferLevel
 offerLevel (LeiosNotifySide lvl _) = lvl
 
-instance Semigroup LeiosNotifySide where           -- §2 LstPeerOfferings (tuple-Semigroup requirement; never merges two reals at runtime)
+instance Semigroup LeiosNotifySide where           -- §2 LstPeerOfferings (tuple-Semigroup requirement; TODO unreachable)
   LeiosNotifySide l1 t1 <> LeiosNotifySide l2 t2 = LeiosNotifySide (max l1 l2) (max t1 t2)
 
 data ChainSyncSide = ChainSyncSide HeaderHash      -- §2 LstPeerOfferings / ChainSyncSide
@@ -155,6 +152,13 @@ data Req                                           -- §2 LstPeerInflight / Req
   | ReqJob EbHash JobId Job                        -- the job itself, for validation
   deriving (Eq, Ord, Show)
 
+data MiniProtocol = FetchBody | FetchTxs           -- §2 LeiosFetch sub-protocols (independent response FIFOs)
+  deriving (Eq, Ord, Show)
+
+reqProtocol :: Req -> MiniProtocol                 -- §2 LstPeerInflight: a Req's LeiosFetch sub-protocol
+reqProtocol ReqBody{} = FetchBody
+reqProtocol ReqJob{}  = FetchTxs
+
 data PeerInfo = PeerInfo { peerClass :: Class, peerPhase :: Phase }  -- §2 LstPeerPresent
   deriving (Eq, Show)
 
@@ -181,7 +185,7 @@ data St = St
   , stVolatileBody :: !(EbHashMap ())                                      -- §2 LstVolatileBody
   , stVolatileClosure :: !(EbHashMap ())                                   -- §2 LstVolatileClosure (INVARIANT: subset of stVolatileBody)
   , stCertified :: !(Election :-> (HeaderHash, EbHash))                     -- §2 LstCertified
-  , stPeerInflight :: !(Peer :-> (Seq Req))                                 -- §2 LstPeerInflight
+  , stPeerInflight :: !(Peer :-> MiniProtocol :-> Seq Req)                  -- §2 LstPeerInflight (one FIFO per LeiosFetch sub-protocol)
   , stPeerPresent :: !(Peer :-> PeerInfo)                                   -- §2 LstPeerPresent
   }
   deriving (Eq, Show)
@@ -209,6 +213,7 @@ data Env = Env
   , envPeerSharingMaxActiveEbs :: Int              -- §2 peerSharingMaxActiveEbs
   , envPeerSharingClosureByteLimit :: ByteCount          -- §2 peerSharingClosureByteLimit
   , envJobSize :: ByteCount                              -- §2 jobSize
+  , envMaxTxSize :: ByteCount                      -- §2 maxTxSize (EB-body validation: no single tx may exceed it)
   , envRequestTimeout :: Word64                    -- §2 requestTimeout
   , envNotifyMaxCapacity :: Int                    -- §2 notifyMaxCapacity
   , envNotifyStaleHorizon :: Word64                -- §2 notifyStaleHorizon (slots; ≈ 10 min)
@@ -234,7 +239,8 @@ data LeiosDb m = LeiosDb                            -- §2 disk store interface
   }
 
 data TxCache m = TxCache                            -- §7 TxCache hooks
-  { txCacheNoteAnnouncement :: EbHash -> m ()       -- BEH-Wanting
+  { txCacheNoteAnnouncement :: Election -> EbHash -> m ()       -- BEH-Wanting
+  , txCacheEvictForValidCert :: Election -> EbHash -> m ()      -- BEH-Wanting
   , txCacheOnBody :: EbHash -> Set TxHash -> m [Tx]  -- BEH-ChunkJobs
   , txCacheOnAcquire :: [Tx] -> m ()                -- BEH-Responses
   }
@@ -263,7 +269,7 @@ data Stimulus                                       -- §2 Stimuli
   | LevPeerAdd Peer Class                           -- BEH-PeerChurn
   | LevPeerWindDown Peer                            -- BEH-PeerChurn
   | LevPeerRemove Peer                              -- BEH-PeerChurn
-  | LevTimer Time Peer Req                          -- BEH-Timeout
+  | LevTimer Time Peer                              -- BEH-Timeout (a peer's reply-gap timer elapsed)
   | LevDiskDone DiskWrite                           -- §3 LevDiskDone (only writes signal completion)
   | LevImmTipAdvanced                               -- BEH-ImmTipAdvance (slot read from envImmutableTip)
   | LevGarbageCollect Slot                          -- BEH-ImmTipAdvance
@@ -290,11 +296,11 @@ data Offence                                        -- §3 disconnect reasons (c
   | UnannouncedOffer        -- offered an EB the peer never first-announced
   | RedundantOffer          -- an offer that raised no EB's LeiosNotify level
   | CertConflict            -- certified HeaderHash conflicting with a known cert (ours, or the peer's own prior claim) for the election
-  | BodyMismatch            -- body disagrees with the request (hash / size / closure size)
+  | BodyMismatch            -- invalid body: hash / size / closure-size mismatch, or a tx exceeds envMaxTxSize
   | TxsMismatch             -- closure txs disagree with the requested job (content or order)
   | UnsolicitedResponse     -- a response matching no front in-flight request
   | RequestedAbsentData     -- requested body/txs we do not hold
-  | RequestTimeout          -- an in-flight request went overdue
+  | RequestTimeout          -- a peer let envRequestTimeout elapse without replying while requests were outstanding
   | ExcessNotifyCredits     -- extended more notify credits than notifyMaxCapacity allows
   | StaleNotification       -- a LeiosNotify message whose slot is > notifyStaleHorizon below the immutable tip
   deriving (Eq, Ord, Show)
@@ -303,8 +309,8 @@ data Effect                                         -- §2 Actions
   = Send Peer WireMsg
   | Disconnect Peer Offence
   | SubmitDisk DiskOp
-  | SetTimer Peer Req Time
-  | NotifyVotingAndChainSel Election EbHash         -- BEH-Completion (persisted closure → voting + ChainSel)
+  | SetTimer Peer Time                              -- BEH-Timeout: (re)arm a peer's reply-gap timer (replaces any prior)
+  | NotifyVotingAndChainSel EbHash [HeaderHash]     -- BEH-Completion (closure available → voting + ChainSel; HeaderHashes of announcing RBs, immtip-or-newer, that ChainSel maps to the unblocked CertRBs via successors)
   | NotifyEnqueue Peer                              -- BEH-NotifyServe
   deriving (Eq, Show)
 
@@ -314,8 +320,11 @@ classOf st peer = (\pi_ -> (peerClass pi_, peerPhase pi_)) <$> Map.lookup peer (
 activePeers :: St -> [Peer]  -- NEEDS-TO-BE-INCREMENTAL: maintained set of Active peers
 activePeers st = [ peer | (peer, pi_) <- Map.toList (stPeerPresent st), peerPhase pi_ == Active ]
 
-inflightOf :: St -> Peer -> Seq Req
-inflightOf st peer = fromMaybe Seq.empty (Map.lookup peer (stPeerInflight st))
+inflightOf :: St -> Peer -> Seq Req               -- all in-flight Reqs to a peer (across sub-protocols)
+inflightOf st peer = mconcat (Map.elems (fromMaybe Map.empty (Map.lookup peer (stPeerInflight st))))
+
+inflightFifo :: St -> Peer -> MiniProtocol -> Seq Req  -- §2 LstPeerInflight: one sub-protocol's FIFO
+inflightFifo st peer mp = fromMaybe Seq.empty (Map.lookup mp =<< Map.lookup peer (stPeerInflight st))
 
 inflightHas :: St -> Peer -> Req -> Bool  -- NEEDS-TO-BE-INCREMENTAL: per-peer requested-Req set
 inflightHas st peer r = r `elem` inflightOf st peer
@@ -329,7 +338,8 @@ reqEb (ReqJob eh _ _)  = eh
 
 jobInflightPeers :: St -> EbHash -> JobId -> Int  -- §2 jobInflightPeers · NEEDS-TO-BE-INCREMENTAL: (EbHash,JobId)↦in-flight-peer-count index
 jobInflightPeers st eh j =
-  length [ () | (_, sq) <- Map.toList (stPeerInflight st)
+  length [ () | sqs <- Map.elems (stPeerInflight st)
+              , sq  <- Map.elems sqs
               , ReqJob eh' j' _ <- toList sq
               , eh' == eh, j' == j ]
 
@@ -347,8 +357,10 @@ jobBytes st eh j =
 wantStateOf :: St -> EbHash -> Maybe WantState  -- §2 LstWanted
 wantStateOf st eh = (\(EM.RefCounts _ _ ws) -> ws) <$> EM.lookupEb eh (stWanted st)
 
-wantsEh :: St -> EbHash -> Bool  -- §2 LstWanted
-wantsEh st eh = isJust (EM.lookupEb eh (stWanted st))
+activelyWantsEh :: St -> EbHash -> Bool  -- §2 LstWanted (the EB is some election's active want)
+activelyWantsEh st eh = case EM.lookupEb eh (stWanted st) of
+  Just (EM.RefCounts act _ _) -> act > 0
+  Nothing                     -> False
 
 wantedEbs :: St -> [EbHash]  -- §2 LstWanted · NEEDS-TO-BE-INCREMENTAL: maintained wanted-EB set
 wantedEbs st = let EM.EbHashMap ebs _ = stWanted st in Map.keys (Map.filter (\(EM.RefCounts act _ _) -> 0 < act) ebs)
@@ -487,20 +499,29 @@ step ifs env now stim st = case stim of
   LevWiredMsg peer msg     -> stepWired ifs env now peer msg st
   LevRollForward peer h pe -> hRollForward ifs env now peer h pe st
   LevCertValidated at bs cs -> hCertValidated ifs env now at bs cs st
-  LevPeerAdd peer cls      -> hPeerAdd peer cls st
+  LevPeerAdd peer cls      -> hPeerAdd env peer cls st
   LevPeerWindDown peer     -> hPeerWindDown env now peer st
   LevPeerRemove peer       -> hPeerRemove env now peer st
-  LevTimer _ peer req      -> hTimer peer req st
+  LevTimer _ peer          -> hTimer peer st
   LevDiskDone w            -> hDiskDone ifs env now w st
   LevImmTipAdvanced        -> hImmTipAdvanced env st
   LevGarbageCollect s      -> hGarbageCollect s st
   LevSelfIssued h body     -> hSelfIssued ifs env now h body st
   LevNotifyDequeue peer    -> hNotifyDequeue env peer st
 
-stepWired :: Monad m => Ifaces m -> Env -> Time -> Peer -> WireMsg -> St -> m (St, [Effect])
-stepWired ifs env now peer msg st
-  | Just s <- notifyMsgSlot st peer msg, notifyStale env s = pure (st, [Disconnect peer StaleNotification])
-  | otherwise = case msg of
+stepWired :: Monad m => Ifaces m -> Env -> Time -> Peer -> WireMsg -> St -> m (St, [Effect])  -- §3 (notify client: refill one RequestNext per consumed notification, unless winding down)
+stepWired ifs env now peer msg st = case notifyMsgSlot st peer msg of
+  Just s | notifyStale env s -> pure (st, [Disconnect peer StaleNotification])
+  mslot -> do
+    (st', fx) <- dispatch
+    pure (st', fx ++ [ Send peer MsgLeiosNotificationRequestNext | isJust mslot, active ]
+                   ++ [ armTimer env now peer | fetchResponse msg ])
+  where
+    active = case classOf st peer of Just (_, Active) -> True; _ -> False
+    fetchResponse MsgLeiosBlock{}    = True
+    fetchResponse MsgLeiosBlockTxs{} = True
+    fetchResponse _                  = False
+    dispatch = case msg of
       MsgLeiosNotificationRequestNext       -> hRequestNext env peer st
       MsgLeiosBlockAnnouncement h           -> hAnnouncement ifs env now peer h st
       MsgLeiosBlockEquivocationProof m1 h2  -> hEquivProof env peer m1 h2 st
@@ -514,14 +535,12 @@ stepWired ifs env now peer msg st
 hAnnouncement :: Monad m => Ifaces m -> Env -> Time -> Peer -> RbHeader -> St -> m (St, [Effect])  -- BEH-Wanting · §3 LevBlockAnnouncement
 hAnnouncement ifs env now peer h st = case rbAnnounce h of
   Nothing  -> pure (st, [Disconnect peer NotAnAnnouncement])
-  Just ann
+  Just _
     | not (rbValid h) -> pure (st, [Disconnect peer InvalidHeader])
     | otherwise ->
         case advancePeerAnn peer (rbElection h) h st of
           Nothing  -> pure (st, [Disconnect peer AnnouncementBound])
-          Just st1 -> do
-            txCacheNoteAnnouncement (ifTxc ifs) (annEbHash ann)
-            centralAnnounce ifs env now h (copyAnnIntoOfferings peer (rbElection h) st1)
+          Just st1 -> centralAnnounce ifs env now h (copyAnnIntoOfferings peer (rbElection h) st1)
 
 hEquivProof :: Monad m => Env -> Peer -> Maybe RbHeader -> RbHeader -> St -> m (St, [Effect])  -- BEH-Wanting · §3 LevBlockEquivocationProof
 hEquivProof env peer mh1 h2 st =
@@ -709,14 +728,20 @@ bumpGate peer eh lvl st = case EM.updateEb eh (\sent -> Just (sent <> Just lvl))
   Nothing -> st
   where perPeer = fromMaybe EM.empty (Map.lookup peer (stPeerOfferGates st))
 
+validBody :: Env -> EbHash -> ByteCount -> ByteCount -> Body -> Bool  -- BEH-Responses: EB-body validation (hash + sizes match the announcement; no single tx exceeds envMaxTxSize)
+validBody env eh bs cs body =
+     bodyEbHash body == eh
+  && bodyActualSize body == bs
+  && sum (map txRefSize (bodyTxlist body)) == cs
+  && all ((<= envMaxTxSize env) . txRefSize) (bodyTxlist body)
+
 hBlock :: Monad m => Ifaces m -> Env -> Time -> Peer -> EbHash -> Body -> St -> m (St, [Effect])  -- BEH-Responses · BEH-ChunkJobs · §3 LevBlock
-hBlock ifs env now peer eh body st = case frontReq st peer of
+hBlock ifs env now peer eh body st = case frontReq st peer FetchBody of
   Just (ReqBody eh' bs cs) | eh' == eh ->
-    let st1 = popFront peer st
-        closureBytes = sum (map txRefSize (bodyTxlist body))
-    in if bodyEbHash body /= eh || bodyActualSize body /= bs || closureBytes /= cs
+    let st1 = popFront peer FetchBody st
+    in if not (validBody env eh bs cs body)
          then pure (st1, [Disconnect peer BodyMismatch])
-         else if not (wantsEh st eh)
+         else if not (activelyWantsEh st eh)
            then considerFetchAfter env now st1 []
            else do
              let txrefs = bodyTxlist body
@@ -735,20 +760,22 @@ hBlock ifs env now peer eh body st = case frontReq st peer of
   _ -> pure (st, [Disconnect peer UnsolicitedResponse])
 
 hBlockTxs :: Monad m => Ifaces m -> Env -> Time -> Peer -> EbHash -> [Tx] -> St -> m (St, [Effect])  -- BEH-Responses · §3 LevBlockTxs
-hBlockTxs ifs env now peer eh txs st = case frontReq st peer of
+hBlockTxs ifs env now peer eh txs st = case frontReq st peer FetchTxs of
   Just (ReqJob eh' j job) | eh' == eh ->
-    let st1 = popFront peer st
+    let st1 = popFront peer FetchTxs st
     in if map txHash txs /= NE.toList (jobTxs job)
          then pure (st1, [Disconnect peer TxsMismatch])
-         else do
-           txCacheOnAcquire (ifTxc ifs) txs
-           let writes = [SubmitDisk (Write (WriteClosure eh txs))]
-           case wantStateOf st1 eh of
-             Just (AwaitingTxs t) ->
-               let jobs' = Map.delete j (txsFetch t)
-                   st2   = setTxs eh jobs' (txsWrites t + 1) st1
-               in considerFetchAfter env now st2 writes
-             _ -> considerFetchAfter env now st1 writes
+         else if not (activelyWantsEh st1 eh)
+           then considerFetchAfter env now st1 []
+           else do
+             txCacheOnAcquire (ifTxc ifs) txs
+             let writes = [SubmitDisk (Write (WriteClosure eh txs))]
+             case wantStateOf st1 eh of
+               Just (AwaitingTxs t) ->
+                 let jobs' = Map.delete j (txsFetch t)
+                     st2   = setTxs eh jobs' (txsWrites t + 1) st1
+                 in considerFetchAfter env now st2 writes
+               _ -> considerFetchAfter env now st1 writes
   _ -> pure (st, [Disconnect peer UnsolicitedResponse])
 
 hServeBody :: Monad m => Ifaces m -> Env -> Time -> Peer -> EbHash -> St -> m (St, [Effect])  -- BEH-FetchServe · §3 LevBlockRequest
@@ -767,18 +794,19 @@ hServeTxs ifs _env _now peer eh txs st = do
 
 hCertValidated :: Monad m => Ifaces m -> Env -> Time -> AnnouncementTriple -> ByteCount -> ByteCount -> St -> m (St, [Effect])  -- BEH-Wanting · BEH-FetchPriority · §3 LevCertValidated
 hCertValidated ifs env now (AnnouncementTriple el hh eh) bs cs st = do
+  txCacheEvictForValidCert (ifTxc ifs) el eh
   let st1 = setCertified el (hh, eh) st
   done <- isComplete ifs eh
-  let st2 | belowTip env el = st1
-          | done            = removeWantEl el st1
-          | otherwise       = supersedeWant el eh bs cs st1
-  considerFetchAfter env now st2 []
+  let (st2, fx) | belowTip env el = (st1, [])
+                | done            = recordCompleteCert env el eh st1
+                | otherwise       = (supersedeWant el eh bs cs st1, [])
+  considerFetchAfter env now st2 fx
 
-hPeerAdd :: Monad m => Peer -> Class -> St -> m (St, [Effect])  -- BEH-PeerChurn · §3 LevPeerAdd
-hPeerAdd peer cls st = pure
+hPeerAdd :: Monad m => Env -> Peer -> Class -> St -> m (St, [Effect])  -- BEH-PeerChurn · §3 LevPeerAdd (prime the notify client: envNotifyMaxCapacity RequestNext)
+hPeerAdd env peer cls st = pure
   ( st { stPeerPresent = Map.insert peer (PeerInfo cls Active) (stPeerPresent st)
        , stPeerOfferings = Map.insert peer emptyPeerOfferings (stPeerOfferings st) }
-  , [] )
+  , replicate (envNotifyMaxCapacity env) (Send peer MsgLeiosNotificationRequestNext) )
 
 hPeerWindDown :: Monad m => Env -> Time -> Peer -> St -> m (St, [Effect])  -- BEH-PeerChurn · §3 LevPeerWindDown
 hPeerWindDown env now peer st =
@@ -795,32 +823,51 @@ hPeerRemove env now peer st =
                , stPeerInflight = Map.delete peer (stPeerInflight st) }
   in considerFetchAfter env now st1 []
 
-hTimer :: Monad m => Peer -> Req -> St -> m (St, [Effect])  -- BEH-Timeout · §3 LevTimer
-hTimer peer req st = pure (st, [Disconnect peer RequestTimeout | inflightHas st peer req])
+hTimer :: Monad m => Peer -> St -> m (St, [Effect])  -- BEH-Timeout · §3 LevTimer (disconnect iff still expecting replies)
+hTimer peer st = pure (st, [Disconnect peer RequestTimeout | not (Seq.null (inflightOf st peer))])
 
 hDiskDone :: Monad m => Ifaces m -> Env -> Time -> DiskWrite -> St -> m (St, [Effect])  -- §3 LevDiskDone · BEH-Completion
-hDiskDone _ifs _env _now w st = case w of
+hDiskDone _ifs env _now w st = case w of
   WriteBody body ->
     let eh  = bodyEbHash body
         st0 = st { stVolatileBody = addVolatile eh (electionsNaming eh st) (stVolatileBody st) }
         (st1, fx1) = enqueueBodyOffers eh st0
-        (st2, fx2) = decWrite eh st1
+        (st2, fx2) = decWrite env eh st1
     in pure (st2, fx1 ++ fx2)
-  WriteClosure eh _ -> pure (decWrite eh st)
+  WriteClosure eh _ -> pure (decWrite env eh st)
 
-decWrite :: EbHash -> St -> (St, [Effect])  -- §3 LevDiskDone persist-before-expose (one DiskWrite finished)
-decWrite eh st = case wantStateOf st eh of
+decWrite :: Env -> EbHash -> St -> (St, [Effect])  -- §3 LevDiskDone persist-before-expose (one DiskWrite finished)
+decWrite env eh st = case wantStateOf st eh of
   Just (AwaitingTxs t) -> case decTxsState t of
     Just t' -> (updateWant eh (\_ -> Just (AwaitingTxs t')) st, [])
-    Nothing -> completeEb eh st
+    Nothing -> completeEb env eh st
   _ -> (st, [])
 
-completeEb :: EbHash -> St -> (St, [Effect])  -- BEH-Completion (per-EbHash; fan out to every interested election)
-completeEb eh st =
+annStateHeaders :: AnnState -> [RbHeader]  -- §2 LstFirstAnnouncements: the RbHeaders recorded for an election
+annStateHeaders (AnnOne h)     = [h]
+annStateHeaders (AnnTwo h1 h2) = [h1, h2]
+
+announcingHeaderHashes :: Env -> EbHash -> St -> [HeaderHash]  -- BEH-Completion · NEEDS-TO-BE-INCREMENTAL: reverse EbHash↦announcing-RB index (immtip-or-newer)
+announcingHeaderHashes env eh st =
+  [ rbHeaderHash h
+  | (el, ann) <- Map.toList (stFirstAnnouncements st)
+  , not (belowTip env el)
+  , h <- annStateHeaders ann
+  , annEbHashOf h == Just eh ]
+
+completeEb :: Env -> EbHash -> St -> (St, [Effect])  -- BEH-Completion (per-EbHash; notify voting + ChainSel with the announcing RBs)
+completeEb env eh st =
   let els = electionsNaming eh st
       st0 = st { stVolatileClosure = addVolatile eh els (stVolatileClosure st) }
       (st1, fx) = enqueueClosureOffers eh (removeWantEb eh st0)
-  in (st1, [ NotifyVotingAndChainSel el eh | el <- els ] ++ fx)
+  in (st1, NotifyVotingAndChainSel eh (announcingHeaderHashes env eh st) : fx)
+
+recordCompleteCert :: Env -> Election -> EbHash -> St -> (St, [Effect])  -- BEH-Completion: a cert for an already-complete EB (incl. restart) makes its closure available
+recordCompleteCert env el eh st =
+  let st1 = removeWantEl el st
+      st2 = st1 { stVolatileBody    = addVolatile eh [el] (stVolatileBody st1)
+                , stVolatileClosure = addVolatile eh [el] (stVolatileClosure st1) }
+  in (st2, [ NotifyVotingAndChainSel eh (announcingHeaderHashes env eh st2) ])
 
 hImmTipAdvanced :: Monad m => Env -> St -> m (St, [Effect])  -- BEH-ImmTipAdvance · §3 LevImmTipAdvanced
 hImmTipAdvanced env st =
@@ -855,8 +902,10 @@ considerFetching env now st = pure (foldl' go (st, []) (activePeers st))
   where
     go (s, fx) peer =
       let new = decide env s peer
+          wasIdle = Seq.null (inflightOf s peer)
           s'  = foldl' (issue peer) s new
-          fx' = fx ++ concatMap (sendReq s now peer) new
+          fx' = fx ++ concatMap (sendReq s peer) new
+                   ++ [ armTimer env now peer | wasIdle, not (null new) ]
       in (s', fx')
 
 considerFetchAfter :: Monad m => Env -> Time -> St -> [Effect] -> m (St, [Effect])
@@ -866,22 +915,25 @@ considerFetchAfter env now st fx = do
 
 issue :: Peer -> St -> Req -> St
 issue peer st r =
-  st { stPeerInflight = Map.insertWith (flip (<>)) peer (Seq.singleton r) (stPeerInflight st) }
+  st { stPeerInflight = Map.insertWith (Map.unionWith (flip (<>))) peer (Map.singleton (reqProtocol r) (Seq.singleton r)) (stPeerInflight st) }
 
-sendReq :: St -> Time -> Peer -> Req -> [Effect]
-sendReq st now peer r = [Send peer (reqWire st r), SetTimer peer r now]
+sendReq :: St -> Peer -> Req -> [Effect]  -- §3 issue a request
+sendReq st peer r = [Send peer (reqWire st r)]
+
+armTimer :: Env -> Time -> Peer -> Effect  -- §2 requestTimeout: (re)arm peer's reply-gap timer at now + envRequestTimeout
+armTimer env (Time now) peer = SetTimer peer (Time (now + envRequestTimeout env))
 
 reqWire :: St -> Req -> WireMsg
 reqWire _ (ReqBody eh _ _)   = MsgLeiosBlockRequest eh
 reqWire _ (ReqJob eh _ job) = MsgLeiosBlockTxsRequest eh (jobTxs job)
 
-frontReq :: St -> Peer -> Maybe Req
-frontReq st peer = case inflightOf st peer of
+frontReq :: St -> Peer -> MiniProtocol -> Maybe Req
+frontReq st peer mp = case inflightFifo st peer mp of
   r :<| _ -> Just r
   _       -> Nothing
 
-popFront :: Peer -> St -> St
-popFront peer st = st { stPeerInflight = Map.adjust dropFront peer (stPeerInflight st) }
+popFront :: Peer -> MiniProtocol -> St -> St
+popFront peer mp st = st { stPeerInflight = Map.adjust (Map.adjust dropFront mp) peer (stPeerInflight st) }
   where dropFront sq = case sq of _ :<| rest -> rest; Empty -> Empty
 
 wantBody :: Election -> EbHash -> ByteCount -> ByteCount -> St -> St  -- §2 LstWanted (announcement; keep existing progress if already wanted)
@@ -956,21 +1008,25 @@ advancePeerAnn peer el h st =
             (stPeerFirstAnnouncements st) }
 
 centralAnnounce :: Monad m => Ifaces m -> Env -> Time -> RbHeader -> St -> m (St, [Effect])  -- §3 LevBlockAnnouncement central branch
-centralAnnounce _ifs env _now h st = case rbAnnounce h of
+centralAnnounce ifs env _now h st = case rbAnnounce h of
   Nothing  -> pure (st, [])
   Just ann ->
     let el = rbElection h
         eh = annEbHash ann
     in case Map.lookup el (stFirstAnnouncements st) of
-         Nothing ->
+         Nothing -> do
+           txCacheNoteAnnouncement (ifTxc ifs) el eh
            let st1 = st { stFirstAnnouncements = Map.insert el (AnnOne h) (stFirstAnnouncements st) }
+               nowAvailable =    heldIn eh (stVolatileClosure st1)
+                              && not (belowTip env el)
+                              && (EM.activeRef <$> EM.lookupElection el (stVolatileClosure st1)) /= Just eh
                st2 = anchorVolatile el eh st1
                st3 | belowTip env el    = st2
                    | heldIn eh (stVolatileClosure st2) = st2
                    | otherwise          = wantBody el eh (annBodySize ann) (annClosureSize ann) st2
                (st4, fx)  = enqueueToAll (NotifyAnnouncement h) st3
                (st5, fx') = enqueueHeldOffers eh st4
-           in pure (st5, fx ++ fx')
+           pure (st5, fx ++ fx' ++ [ NotifyVotingAndChainSel eh (announcingHeaderHashes env eh st1) | nowAvailable ])
          Just (AnnOne h1)
            | rbHeaderHash h1 == rbHeaderHash h -> pure (st, [])
            | otherwise ->
@@ -1009,7 +1065,8 @@ nullIfaces = Ifaces
   { ifDb  = LeiosDb { dbQueryPresent = const (pure Set.empty)
                     , dbReadBody = const (pure Nothing)
                     , dbReadClosureTxs = \_ _ -> pure [] }
-  , ifTxc = TxCache { txCacheNoteAnnouncement = const (pure ())
+  , ifTxc = TxCache { txCacheNoteAnnouncement = \_ _ -> pure ()
+                    , txCacheEvictForValidCert = \_ _ -> pure ()
                     , txCacheOnBody = \_ _ -> pure []
                     , txCacheOnAcquire = const (pure ()) }
   , ifMem = Mempool { mempoolQueryPresent = const (pure []) }
@@ -1040,5 +1097,5 @@ prop_inflightOffered st = and
   [ case r of
       ReqBody eh _ _  -> peer `Set.member` offerersBody st eh
       ReqJob eh _ _ -> peer `Set.member` offerersClosure st eh
-  | (peer, sq) <- Map.toList (stPeerInflight st)
-  , r <- toList sq ]
+  | peer <- Map.keys (stPeerInflight st)
+  , r <- toList (inflightOf st peer) ]
