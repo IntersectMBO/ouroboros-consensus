@@ -198,21 +198,42 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
       assertBool "stale notification not sent" (null [ () | Send (Peer 2) _ <- fx ])
       assertBool "stale notification discarded" (maybe True (Seq.null . fst) (Map.lookup (Peer 2) (stPeerNotifyQueue st1)))
 
-  , testCase "BEH-ImmTipAdvance: promote is prompt, GC is deferred" $ do
-      let envT    = env { envImmutableTip = Slot 7 }
-          (_, fx) = runIdentity (step nullIfaces envT (Time 0) LevImmTipAdvanced emptySt)
-      assertBool "promotes slot 7"  (SubmitDisk (Promote (Slot 7)) `elem` fx)
-      assertBool "no GC at advance" (null [ () | SubmitDisk (GarbageCollect _) <- fx ])
-
-  , testCase "BEH-ImmTipAdvance: a deferred LevGarbageCollect submits the disk GC" $ do
-      let (_, fx) = runIdentity (step nullIfaces env (Time 0) (LevGarbageCollect (Slot 7)) emptySt)
-      fx @?= [SubmitDisk (GarbageCollect (Slot 7))]
+  , testCase "BEH-ImmTipAdvance: advancing the immutable tip prunes below-tip wants" $ do
+      let (st0, _)  = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100 ]
+          envT      = env { envImmutableTip = Slot 6 }
+          (st1, fx) = runIdentity (step nullIfaces envT (Time 0) LevImmTipAdvanced st0)
+      wantStateOf st0 (EbHash 100) @?= Just (AwaitingBody 200 300)
+      wantStateOf st1 (EbHash 100) @?= Nothing
+      fx @?= []
 
   , testCase "BEH-Wanting: a genuine equivocation is accepted; first EB stays wanted, equivocating never" $ do
       let (st, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100
                          , LevWiredMsg (Peer 1) (MsgLeiosBlockEquivocationProof Nothing hdr101) ]
       assertBool "no disconnect" (not (any isDisconnect fx))
       wantStateOf st (EbHash 100) @?= Just (AwaitingBody 200 300)
+
+  , testCase "BEH-Wanting: an equiv proof re-sending an already-announced first header disconnects" $ do
+      let (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100
+                        , LevWiredMsg (Peer 1) (MsgLeiosBlockEquivocationProof (Just hdr100) hdr101) ]
+      assertBool "disconnects with RedundantEquivProof" (Disconnect (Peer 1) RedundantEquivProof `elem` fx)
+
+  , testCase "BEH-Wanting: an equiv proof for an already-certified election is dropped silently" $ do
+      let at = AnnouncementTriple el100 (HeaderHash 10) (EbHash 100)
+          (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100
+                        , LevCertValidated at 200 300
+                        , LevWiredMsg (Peer 1) (MsgLeiosBlockEquivocationProof Nothing hdr101) ]
+      assertBool "no disconnect" (not (any isDisconnect fx))
+      assertBool "no equiv proof relayed" (null [ () | Send _ (MsgLeiosBlockEquivocationProof _ _) <- fx ])
+
+  , testCase "BEH-NotifyServe: relaying an equiv proof omits a first header already announced to that peer" $ do
+      let (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, LevPeerAdd (Peer 2) PeerSharingSampled
+                        , credit (Peer 2), ann (Peer 1) hdr100, dequeue (Peer 2)
+                        , credit (Peer 2), LevWiredMsg (Peer 1) (MsgLeiosBlockEquivocationProof Nothing hdr101)
+                        , dequeue (Peer 2) ]
+      assertBool "omits the already-announced first header"
+        (Send (Peer 2) (MsgLeiosBlockEquivocationProof Nothing hdr101) `elem` fx)
+      assertBool "does not re-send the first header"
+        (Send (Peer 2) (MsgLeiosBlockEquivocationProof (Just hdr100) hdr101) `notElem` fx)
 
   , testCase "BEH-Offers: an offer for an equivocating (non-first) EB disconnects" $ do
       let (_, fx) = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100
@@ -349,7 +370,7 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
                         , credit (Peer 2), ann (Peer 1) hdr100, dequeue (Peer 2), credit (Peer 2)
                         , LevDiskDone (WriteBody body100) ]
           q = maybe Seq.empty fst (Map.lookup (Peer 2) (stPeerNotifyQueue st))
-      assertBool "body offer enqueued" (NotifyBlockOffer (EbHash 100) `elem` q)
+      assertBool "body offer enqueued" (NotifyOffer (EbHash 100) OfferBody `elem` q)
 
   , testCase "BEH-Completion: voting + ChainSel are notified only when the last write lands (persist-gated)" $ do
       let txs    = [Tx (TxHash 1) 150, Tx (TxHash 2) 150]

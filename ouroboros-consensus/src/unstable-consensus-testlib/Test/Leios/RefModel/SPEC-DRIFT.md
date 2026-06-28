@@ -100,16 +100,24 @@ substantially during the EbHashMap / offer-path work). Don't fix Spec.md yet —
       "New abstraction" above) — the in-memory sets of EBs whose body / full closure we hold. INVARIANT
       closure ⊆ body. Maintained: body added on `LevDiskDone` body-write, closure added on completion, and
       **a fresh first-announcement or cert extends a held EB's references** (`anchorVolatile`); **trimmed
-      by Promotion** (`pruneBelow` at `LevImmTipAdvanced`, now a `Slot -> Bool` predicate). `LstVolatileClosure`
+      at `LevImmTipAdvanced`** (`pruneBelow`, now a `Slot -> Bool` predicate). `LstVolatileClosure`
       is ChainSel's queryable "available complete closures" set (no disk read); `NotifyVotingAndChainSel`
       is the "set grew" signal. **Reconstructed from disk on startup** (`initSt`; see the Startup section) —
       it is the only central state rebuilt across a restart.
 - [ ] **`Req` dropped its `Election`** (`ReqBody EbHash bs cs | ReqJob EbHash JobId Job`); likewise
       `DiskWrite` (`WriteBody Body | WriteClosure EbHash [Tx]`). Spec §2 carries `el` in both.
-- [ ] **`Notification`** offer ctors dropped the election (`NotifyBlockOffer EbHash` /
-      `NotifyBlockTxsOffer EbHash`).
+- [ ] **`Notification`** offer ctors dropped the election and merged into one
+      **`NotifyOffer EbHash OfferLevel`** (was `NotifyBlockOffer` / `NotifyBlockTxsOffer`); the `OfferLevel`
+      distinguishes body vs body+closure (`offerable` / `bumpGate` take it).
+- [ ] **`NotifyEquivProof RbHeader RbHeader`** carries *both* headers; the wire message keeps the optional
+      first header (`MsgLeiosBlockEquivocationProof (Maybe RbHeader) RbHeader`), with the omit-or-include
+      decision made at *send* time (see §3).
 - [ ] **NEW offence `RedundantOffer`** — an inbound offer that raises no LeiosNotify level disconnects
       (within the TTL; see §3).
+- [ ] **NEW equivocation-proof offences**: `HalfEquivocationProof` (the proof omits the first header and we
+      have no recorded first announcement from that peer to fill it in) and `RedundantEquivProof` (the proof
+      *includes* a first header the peer had already announced to us — it should have omitted it).
+      `BogusEquivocationProof` (not a genuine equivocation) is unchanged.
 - [ ] **NEW parameter `envOfferDedupTtl`** (~6 h, wallclock; the `RedundantOffer` dedup epoch, kept well
       below the immutability window) — §2 Parameters.
 
@@ -135,6 +143,10 @@ substantially during the EbHashMap / offer-path work). Don't fix Spec.md yet —
       **`dbReadClosureTxs :: EbHash -> NonEmpty Word16 -> m [Tx]`** (was `[TxHash]`), so `hServeTxs` is one
       DB call + a length check (no separate body read; an out-of-range position ⇒ short result ⇒
       `RequestedAbsentData`). The response `MsgLeiosBlockTxs(ebHash, [Tx])` is unchanged (request-only change).
+- [ ] **Removed `LevGarbageCollect` / `GarbageCollect` / `Promote`.** `DiskOp` is now just
+      `Write DiskWrite | RecordRef Slot EbHash`. They were trivial passthroughs: `LevImmTipAdvanced` does the
+      meaningful in-memory `pruneBelow` and now emits no effect, and disk-side GC/promotion is left unmodeled
+      (the model never simulated the disk's response to those ops anyway).
 
 ## §3 Rules
 
@@ -166,9 +178,22 @@ substantially during the EbHashMap / offer-path work). Don't fix Spec.md yet —
       `LstCertified` cert (the prior check) **or** the peer's own recorded `ChainSyncSide` for that
       election. (Two *uncertified* announcements for one election remain ordinary equivocation — recorded
       via the equiv machinery, never a disconnect; an honest peer can relay producer equivocation.)
-- [ ] **`LevCertValidated`**: uses `supersede` into the `EbHashMap` (and `deleteElection` when already
-      complete); the in-place cert-switch is the EbHashMap active/inactive mechanism. The "already
-      complete?" test and the body-present anchoring now live in the Startup section below.
+- [ ] **`LevBlockEquivocationProof` / `hEquivProof` + `centralEquiv`**: when the inbound proof omits the
+      first header it's reconstructed from the peer's recorded first announcement (`collateH1`:
+      `HalfEquivocationProof` if neither is available, `RedundantEquivProof` if the peer sent one we already
+      had). `centralEquiv` canonicalizes the stored/relayed `AnnTwo` so **our own first-announced header is
+      `h1`**, and `sendNotification` relays `NotifyEquivProof` with that first header dropped to `Nothing`
+      whenever `announcedToPeer` shows we already sent its announcement to that peer.
+- [ ] **An equiv proof for an already-certified election is dropped (fetch-moot; the cert resolves it).**
+      `hEquivProof` drops an inbound one **silently — not a disconnect**, since the sender may simply be
+      behind on the cert (it rides a different channel); `centralAnnounce`'s `AnnOne→AnnTwo` branch records
+      `AnnTwo` but skips the relay. **TODO (Skew Fallback):** once peers offer certs, a peer that offered us
+      the cert and *then* sends an equiv proof for that election is provably misbehaving ⇒ disconnect.
+- [ ] **`LevCertValidated`**: a `belowTip` (settled) cert is an **early-return** — no `setCertified`,
+      `RecordRef`, evict, or fetch (the election is past the immutable tip, and `stCertified`/refs are pruned
+      by exactly that condition). Otherwise it uses `supersede` into the `EbHashMap` (and `deleteElection`
+      when already complete); the in-place cert-switch is the EbHashMap active/inactive mechanism. The
+      "already complete?" test and the body-present anchoring live in the Startup section below.
 
 ## Startup / restart reconstruction (NEW — not in Spec)
 
@@ -182,7 +207,7 @@ substantially during the EbHashMap / offer-path work). Don't fix Spec.md yet —
       startup).
 - [ ] **NEW `DiskOp` `RecordRef Slot EbHash`** — persists a first-announced / certified reference.
       **Fire-and-forget: it yields no `LevDiskDone`** and is not part of the persist-before-expose write
-      count; `GarbageCollect` prunes it by slot, `Promote` ignores it. Emitted on every **first
+      count; the disk reclaims it by slot. Emitted on every **first
       announcement** (`centralAnnounce`'s `Nothing` branch) and every **`hCertValidated`**. (These are
       exactly the references `stVolatile*` ever holds — `electionsNaming` yields precisely the
       first-announced ∪ certified elections — so persisting just these reconstructs `stVolatile*`. OK to
@@ -220,8 +245,10 @@ substantially during the EbHashMap / offer-path work). Don't fix Spec.md yet —
       a different EB evicts the uncertified first-announcement. "Equivocate and never certify" is already
       handled by the note-once rule (only the first is ever retained).
 - [ ] **Acquire is gated by the *active* want.** `hBlock` and `hBlockTxs` only touch the cache (and persist
-      the closure) when the EB is some election's **active** want — new `activelyWantsEh` (active refcount
-      `> 0`, replacing the old `wantsEh = isJust`, which also counted an inactive/superseded ref). Without
+      the closure) when the EB is some election's **active** want — via `activeWantStateOf` (the want-state
+      iff active refcount `> 0`, one lookup that also subsumes the read of the want-state; it replaced the
+      separate `activelyWantsEh`, and both supersede the old `wantsEh = isJust`, which counted inactive/
+      superseded refs too). Without
       this, a late response for a job requested *before* a cert-switch/eviction would re-acquire the dead
       EB's txs (and write its closure), undoing the eviction — and an adversary can time exactly that.
       `hBlockTxs` previously had no want-guard at all on `txCacheOnAcquire`/`WriteClosure`; `hBlock` had an
