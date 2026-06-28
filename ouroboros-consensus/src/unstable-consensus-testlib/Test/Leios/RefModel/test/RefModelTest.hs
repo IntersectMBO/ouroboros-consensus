@@ -56,6 +56,10 @@ runWith ifs = foldl' go (emptySt, [])
 run :: [Stimulus] -> (St, [Effect])
 run = runWith nullIfaces
 
+runFrom :: St -> Ifaces Identity -> [Stimulus] -> (St, [Effect])
+runFrom st0 ifs = foldl' go (st0, [])
+  where go (st, fx) s = let (st', fx') = runIdentity (step ifs env (Time 0) s st) in (st', fx ++ fx')
+
 foldEnv :: Env -> [Stimulus] -> (St, [Effect])
 foldEnv e = foldl' go (emptySt, [])
   where go (st, fx) s = let (st', fx') = runIdentity (step nullIfaces e (Time 0) s st) in (st', fx ++ fx')
@@ -278,12 +282,14 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
                       , LevWiredMsg (Peer 2) (MsgLeiosBlockTxsRequest (EbHash 100) (NE.fromList [0, 1])) ]
       [ ts | Send _ (MsgLeiosBlockTxs _ ts) <- fx ] @?= [[Tx (TxHash 1) 1, Tx (TxHash 2) 1]]
 
-  , testCase "BEH-Completion: a cert for an already-complete EB still fans voting + ChainSel" $ do
+  , testCase "BEH-Completion: a cert for an EB reconstructed as complete on startup still fans voting + ChainSel" $ do
       let ifs = nullIfaces { ifDb = (ifDb nullIfaces)
                   { dbReadBody = \e -> pure (if e == EbHash 100 then Just body100 else Nothing)
-                  , dbQueryPresent = pure } }
+                  , dbQueryPresent = pure
+                  , dbReadAllRefs = pure [(Slot 7, EbHash 100)] } }
           el2 = Election (Slot 7) (PoolId 2)
-          (_, fx) = runWith ifs [ LevCertValidated (AnnouncementTriple el2 (HeaderHash 99) (EbHash 100)) 200 300 ]
+          st0 = runIdentity (initSt (ifDb ifs))
+          (_, fx) = runFrom st0 ifs [ LevCertValidated (AnnouncementTriple el2 (HeaderHash 99) (EbHash 100)) 200 300 ]
       assertBool "fans NotifyVotingAndChainSel for the (re)certified EB"
         (NotifyVotingAndChainSel (EbHash 100) [] `elem` fx)
 
@@ -296,14 +302,47 @@ tests = testGroup "Leios RefModel — Spec.md main spec"
   , testCase "BEH-Completion: announcing an already-available closure under a new election fans voting + ChainSel" $ do
       let ifs = nullIfaces { ifDb = (ifDb nullIfaces)
                   { dbReadBody = \e -> pure (if e == EbHash 100 then Just body100 else Nothing)
-                  , dbQueryPresent = pure } }
+                  , dbQueryPresent = pure
+                  , dbReadAllRefs = pure [(Slot 7, EbHash 100)] } }
           e2    = Election (Slot 7) (PoolId 2)
           e3    = Election (Slot 8) (PoolId 3)
           hdrE3 = RbHeader (HeaderHash 78) e3 (Just (EbAnn (EbHash 100) 200 300)) False True
-          (_, fx) = runWith ifs [ LevCertValidated (AnnouncementTriple e2 (HeaderHash 99) (EbHash 100)) 200 300
-                                , LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdrE3 ]
+          st0 = runIdentity (initSt (ifDb ifs))
+          (_, fx) = runFrom st0 ifs [ LevCertValidated (AnnouncementTriple e2 (HeaderHash 99) (EbHash 100)) 200 300
+                                    , LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdrE3 ]
       assertBool "fans NotifyVotingAndChainSel carrying the new announcing RB's HeaderHash"
         (NotifyVotingAndChainSel (EbHash 100) [HeaderHash 78] `elem` fx)
+
+  , testCase "BEH-Startup: a first announcement and a cert each persist a (slot, EbHash) reference" $ do
+      let (_, fxAnn)  = run [ LevPeerAdd (Peer 1) StakeSampled, ann (Peer 1) hdr100 ]
+          (_, fxCert) = run [ LevCertValidated (AnnouncementTriple el100 (HeaderHash 10) (EbHash 100)) 200 300 ]
+          ref         = SubmitDisk (RecordRef (electionSlot el100) (EbHash 100))
+      assertBool "first announcement records a ref" (ref `elem` fxAnn)
+      assertBool "cert records a ref"               (ref `elem` fxCert)
+
+  , testCase "BEH-Startup: initSt reconstructs the body, and the closure only when all txs are present" $ do
+      let mkDb present = (ifDb nullIfaces)
+            { dbReadBody     = \e -> pure (if e == EbHash 100 then Just body100 else Nothing)
+            , dbQueryPresent = present
+            , dbReadAllRefs  = pure [(Slot 7, EbHash 100)] }
+          stComplete = runIdentity (initSt (mkDb pure))
+          stBodyOnly = runIdentity (initSt (mkDb (const (pure mempty))))
+      heldIn (EbHash 100) (stVolatileBody stComplete)    @?= True
+      heldIn (EbHash 100) (stVolatileClosure stComplete) @?= True
+      heldIn (EbHash 100) (stVolatileBody stBodyOnly)    @?= True
+      heldIn (EbHash 100) (stVolatileClosure stBodyOnly) @?= False
+
+  , testCase "BEH-Startup: a cert anchors an already-held body to its own slot (survives GC of the announcing slot)" $ do
+      let ifs = nullIfaces { ifDb = (ifDb nullIfaces)
+                  { dbReadBody     = \e -> pure (if e == EbHash 100 then Just body100 else Nothing)
+                  , dbQueryPresent = const (pure mempty)          -- body present, closure incomplete
+                  , dbReadAllRefs  = pure [(Slot 5, EbHash 100)] } }   -- body anchored under slot 5
+          eNew     = Election (Slot 10) (PoolId 2)
+          st0      = runIdentity (initSt (ifDb ifs))
+          (st1, _) = runFrom st0 ifs [ LevCertValidated (AnnouncementTriple eNew (HeaderHash 99) (EbHash 100)) 200 300 ]
+      heldIn (EbHash 100) (stVolatileBody st1) @?= True
+      assertBool "the cert's slot keeps the body held after the announcing slot is collected"
+        (heldIn (EbHash 100) (stVolatileBody (pruneBelow (Slot 6) st1)))
 
   , testCase "BEH-Completion: finishing a body write enqueues a body offer" $ do
       let (st, _) = run [ LevPeerAdd (Peer 1) StakeSampled, LevPeerAdd (Peer 2) PeerSharingSampled

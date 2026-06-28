@@ -1,5 +1,6 @@
 module RefModel (module RefModel) where
 
+import           Control.Monad (foldM)
 import           EbHashMap (EbHash (..), Election (..), electionSlot, Slot (..))
 import           EbHashMap (EbHashMap)
 import qualified EbHashMap as EM
@@ -190,8 +191,8 @@ data St = St
   , stPeerOfferGates         :: Peer :-> EbHashMap (Maybe OfferLevel)  -- §2 LstPeerOfferGates (payload: offer level sent so far)
   , stPeerNotifyQueue        :: Peer :-> (Seq Notification, Int)       -- §2 LstPeerNotifyQueue (FIFO; cap = credits)
   , stWanted                 :: EbHashMap WantState                    -- §2 LstWanted
-  , stVolatileBody           :: HeldEbHashSet                            -- §2 LstVolatileBody
-  , stVolatileClosure        :: HeldEbHashSet                            -- §2 LstVolatileClosure (INVARIANT: subset of stVolatileBody)
+  , stVolatileBody           :: HeldEbHashSet                          -- §2 LstVolatileBody
+  , stVolatileClosure        :: HeldEbHashSet                          -- §2 LstVolatileClosure (INVARIANT: subset of stVolatileBody)
   , stCertified              :: Election :-> (HeaderHash, EbHash)      -- §2 LstCertified
   , stPeerInflight           :: Peer :-> MiniProtocol :-> Seq Req      -- §2 LstPeerInflight (one FIFO per LeiosFetch sub-protocol)
   , stPeerPresent            :: Peer :-> PeerInfo                      -- §2 LstPeerPresent
@@ -200,6 +201,21 @@ data St = St
 
 emptySt :: St                                      -- BEH-Startup
 emptySt = St Map.empty Map.empty Map.empty Map.empty Map.empty EM.empty Held.empty Held.empty Map.empty Map.empty Map.empty
+
+initSt :: Monad m => LeiosDb m -> m St              -- BEH-Startup: rebuild stVolatile* from persisted references (the other central state is not reconstructed)
+initSt db = foldM loadRef emptySt =<< dbReadAllRefs db
+  where
+    loadRef st (slot, eh) = do
+      mb <- dbReadBody db eh
+      case mb of
+        Nothing   -> pure st
+        Just body -> do
+          let keys = Set.fromList (map (DbClosureTx eh . txRefHash) (bodyTxlist body))
+          have <- dbQueryPresent db keys
+          let st1 = st { stVolatileBody = Held.insert eh slot (stVolatileBody st) }
+          pure $ if keys `Set.isSubsetOf` have
+                   then st1 { stVolatileClosure = Held.insert eh slot (stVolatileClosure st1) }
+                   else st1
 
 emptyPeerOfferings :: PeerOfferings                 -- §2 LstPeerOfferings
 emptyPeerOfferings = PeerOfferings EM.empty Map.empty
@@ -244,6 +260,7 @@ data LeiosDb m = LeiosDb                            -- §2 disk store interface
   { dbQueryPresent :: Set DbKey -> m (Set DbKey)    -- BEH-Completion / BEH-FetchServe
   , dbReadBody :: EbHash -> m (Maybe Body)          -- BEH-Completion
   , dbReadClosureTxs :: EbHash -> NonEmpty Word16 -> m [Tx]  -- BEH-FetchServe (txs at the requested body positions)
+  , dbReadAllRefs :: m [(Slot, EbHash)]             -- BEH-Startup (first-announced/certified references; reconstruct stVolatile*)
   }
 
 data TxCache m = TxCache                            -- §7 TxCache hooks
@@ -294,6 +311,7 @@ data DiskOp                                         -- §2 disk store interface 
   = Write DiskWrite
   | GarbageCollect Slot
   | Promote Slot
+  | RecordRef Slot EbHash                          -- BEH-Startup: persist a first-announced/certified reference (fire-and-forget, no LevDiskDone; pruned by GarbageCollect, ignored by Promote)
   deriving (Eq, Show)
 
 data Offence                                        -- §3 disconnect reasons (carried by Disconnect)
@@ -497,8 +515,8 @@ batchBySize size limit (x : xs) = go [x] (size x) xs
       | sz + size t > limit && not (null acc) = reverse acc : go [t] (size t) ts
       | otherwise                             = go (t : acc) (sz + size t) ts
 
-hashes :: [Tx] -> Set TxHash
-hashes = Set.fromList . map txHash
+txHashes :: [Tx] -> Set TxHash
+txHashes = Set.fromList . map txHash
 
 -----
 
@@ -754,9 +772,9 @@ hBlock ifs env now peer eh body st = case frontReq st peer FetchBody of
              let txrefs = bodyTxlist body
                  txhs   = Set.fromList (map txRefHash txrefs)
              hits  <- txCacheOnBody (ifTxc ifs) eh txhs
-             memHs <- mempoolQueryPresent (ifMem ifs) (txhs `Set.difference` hashes hits)
+             memHs <- mempoolQueryPresent (ifMem ifs) (txhs `Set.difference` txHashes hits)
              txCacheOnAcquire (ifTxc ifs) memHs
-             let onHand  = hashes hits `Set.union` hashes memHs
+             let onHand  = txHashes hits `Set.union` txHashes memHs
                  toFetch = [ (i, tr) | (i, tr) <- zip [0 :: Word16 ..] (toList txrefs), not (txRefHash tr `Set.member` onHand) ]
                  jobsMap = chunk env toFetch
                  copied  = hits ++ memHs
@@ -806,11 +824,10 @@ hCertValidated ifs env now (AnnouncementTriple el hh eh) bs cs st
   | otherwise = do
       txCacheEvictForValidCert (ifTxc ifs) el eh
       let st1 = setCertified el (hh, eh) st
-      done <- isComplete ifs eh
-      let (st2, fx) | belowTip env el = (st1, [])
-                    | done            = recordCompleteCert env el eh st1
-                    | otherwise       = (supersedeWant el eh bs cs st1, [])
-      considerFetchAfter env now st2 fx
+          (st2, fx) | belowTip env el                   = (st1, [])
+                    | heldIn eh (stVolatileClosure st1) = recordCompleteCert env el eh st1
+                    | otherwise                         = (anchorVolatile el eh (supersedeWant el eh bs cs st1), [])
+      considerFetchAfter env now st2 (SubmitDisk (RecordRef (electionSlot el) eh) : fx)
 
 hPeerAdd :: Monad m => Env -> Peer -> Class -> St -> m (St, [Effect])  -- BEH-PeerChurn · §3 LevPeerAdd (prime the notify client: envNotifyMaxCapacity RequestNext)
 hPeerAdd env peer cls st = pure
@@ -846,7 +863,7 @@ hDiskDone _ifs env _now w st = case w of
     in pure (st2, fx1 ++ fx2)
   WriteClosure eh _ -> pure (decWrite env eh st)
 
-decWrite :: Env -> EbHash -> St -> (St, [Effect])  -- §3 LevDiskDone persist-before-expose (one DiskWrite finished)
+decWrite :: Env -> EbHash -> St -> (St, [Effect])  -- §3 LevDiskDone
 decWrite env eh st = case wantStateOf st eh of
   Just (AwaitingTxs t) -> case decTxsState t of
     Just t' -> (updateWant eh (\_ -> Just (AwaitingTxs t')) st, [])
@@ -898,7 +915,7 @@ hSelfIssued ifs env now h body st = case rbAnnounce h of
         txhs = Set.fromList (map txRefHash txrefs)
     memHs <- mempoolQueryPresent (ifMem ifs) txhs
     txCacheOnAcquire (ifTxc ifs) memHs
-    let onHand  = hashes memHs
+    let onHand  = txHashes memHs
         toFetch = [ (i, tr) | (i, tr) <- zip [0 :: Word16 ..] (toList txrefs), not (txRefHash tr `Set.member` onHand) ]
         jobsMap = chunk env toFetch
         copied  = memHs
@@ -961,16 +978,6 @@ removeWantEl el st = st { stWanted = EM.deleteElection el (stWanted st) }
 removeWantEb :: EbHash -> St -> St  -- §2 LstWanted (drop every election actively wanting eh)
 removeWantEb eh st = st { stWanted = foldl' (flip EM.deleteElection) (stWanted st) (electionsNaming eh st) }
 
-isComplete :: Monad m => Ifaces m -> EbHash -> m Bool  -- BEH-Completion (restart-time check only, in LevCertValidated)
-isComplete ifs eh = do
-  mb <- dbReadBody (ifDb ifs) eh
-  case mb of
-    Nothing   -> pure False
-    Just body -> do
-      let need = Set.insert (DbBody eh) (Set.fromList (map (DbClosureTx eh . txRefHash) (bodyTxlist body)))
-      have <- dbQueryPresent (ifDb ifs) need
-      pure (need `Set.isSubsetOf` have)
-
 setCertified :: Election -> (HeaderHash, EbHash) -> St -> St
 setCertified el v st = st { stCertified = Map.insert el v (stCertified st) }
 
@@ -981,7 +988,7 @@ enqueueClosureOffers :: EbHash -> St -> (St, [Effect])  -- BEH-NotifyServe · BE
 enqueueClosureOffers eh = enqueueToAll (NotifyBlockTxsOffer eh)
 
 addVolatile :: EbHash -> [Election] -> HeldEbHashSet -> HeldEbHashSet  -- §2 LstVolatileBody/LstVolatileClosure
-addVolatile eh els m = foldl' (\acc el -> Held.insert eh el acc) m els
+addVolatile eh els m = foldl' (\acc el -> Held.insert eh (electionSlot el) acc) m els
 
 heldIn :: EbHash -> HeldEbHashSet -> Bool  -- §2 LstVolatileBody/LstVolatileClosure membership
 heldIn = Held.member
@@ -990,8 +997,8 @@ pruneBelow :: Slot -> St -> St                     -- BEH-ImmTipAdvance range-de
 pruneBelow s st = st
   { stFirstAnnouncements = pruneElectionMap s (stFirstAnnouncements st)
   , stWanted = EM.pruneElections (\el -> electionSlot el < s) (stWanted st)
-  , stVolatileBody = Held.prune (\el -> electionSlot el < s) (stVolatileBody st)
-  , stVolatileClosure = Held.prune (\el -> electionSlot el < s) (stVolatileClosure st)
+  , stVolatileBody = Held.prune (< s) (stVolatileBody st)
+  , stVolatileClosure = Held.prune (< s) (stVolatileClosure st)
   , stCertified = pruneElectionMap s (stCertified st)
   , stPeerFirstAnnouncements = Map.map (pruneElectionMap s) (stPeerFirstAnnouncements st)
   , stPeerOfferings = Map.map (\(PeerOfferings m c) -> PeerOfferings (EM.pruneElections (\el -> electionSlot el < s) m) (pruneElectionMap s c)) (stPeerOfferings st)
@@ -1014,7 +1021,7 @@ advancePeerAnn peer el h st =
     putSeen seen = st
       { stPeerFirstAnnouncements =
           Map.insert peer
-            (Map.insert el seen (fromMaybe Map.empty (Map.lookup peer (stPeerFirstAnnouncements st))))
+            (Map.insert el seen perPeer)
             (stPeerFirstAnnouncements st) }
 
 centralAnnounce :: Monad m => Ifaces m -> Env -> Time -> RbHeader -> St -> m (St, [Effect])  -- §3 LevBlockAnnouncement central branch
@@ -1035,7 +1042,8 @@ centralAnnounce ifs env _now h st = case rbAnnounce h of
                    | otherwise          = wantBody el eh (annBodySize ann) (annClosureSize ann) st2
                (st4, fx)  = enqueueToAll (NotifyAnnouncement h) st3
                (st5, fx') = enqueueHeldOffers eh st4
-           pure (st5, fx ++ fx' ++ [ NotifyVotingAndChainSel eh (announcingHeaderHashes env eh st1) | nowAvailable ])
+           pure (st5, fx ++ fx' ++ [ SubmitDisk (RecordRef (electionSlot el) eh) ]
+                              ++ [ NotifyVotingAndChainSel eh (announcingHeaderHashes env eh st1) | nowAvailable ])
          Just (AnnOne h1)
            | rbHeaderHash h1 == rbHeaderHash h -> pure (st, [])
            | otherwise ->
@@ -1073,7 +1081,8 @@ nullIfaces :: Applicative m => Ifaces m
 nullIfaces = Ifaces
   { ifDb  = LeiosDb { dbQueryPresent = const (pure Set.empty)
                     , dbReadBody = const (pure Nothing)
-                    , dbReadClosureTxs = \_ _ -> pure [] }
+                    , dbReadClosureTxs = \_ _ -> pure []
+                    , dbReadAllRefs = pure [] }
   , ifTxc = TxCache { txCacheNoteAnnouncement = \_ _ -> pure ()
                     , txCacheEvictForValidCert = \_ _ -> pure ()
                     , txCacheOnBody = \_ _ -> pure []
