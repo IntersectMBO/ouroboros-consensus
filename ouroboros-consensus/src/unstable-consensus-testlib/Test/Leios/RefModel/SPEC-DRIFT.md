@@ -56,6 +56,15 @@ substantially during the EbHashMap / offer-path work). Don't fix Spec.md yet —
       the EbHash↦… reverse indexes "Derived (NOT stored)"; RefModel bakes that reverse index into
       EbHashMap (a maintained bidirectional index). The "derived/deferred" framing for
       `electionOf`/`offerersBody`/`offerersClosure` needs revisiting.
+- [ ] **`HeldEbHashSet`** (its own module). The order-agnostic, **`Slot`-keyed** held-EB relation backing
+      `LstVolatileBody`/`LstVolatileClosure`: a `Map EbHash RefCount` (a multiset, for O(log) `member`)
+      plus a `Map Slot (NESet EbHash)` (the relation). Keyed by `Slot`, **not `Election`**: the keys are
+      only consumed by slot-granular GC (`prune`), and only a `(Slot, EbHash)` reference is persisted and
+      reconstructable on startup, so the `PoolId` half of an election would be dead weight here. `insert`
+      is **total** — a slot normally references at most two EBs (its first-announced and its certified
+      one), but slot battles and a bounded sequence of restarts can exceed that, so it never fails (the
+      `EbHashMap`'s ≤2-then-`error` contract does **not** apply). `member` is by `EbHash` (multiset count
+      `> 0`), independent of slot.
 
 ## §2 State
 
@@ -87,12 +96,14 @@ substantially during the EbHashMap / offer-path work). Don't fix Spec.md yet —
       `notifyPriority`-ordered `Set`. Overflow = **tail-drop** (drop the newest message being added).
       Remove `notifyPriority`, the whole **Helper-functions §2 entry and its two-slot-ordered-queues
       Aside** (moot), and the `Set`/priority eviction wording.
-- [ ] **NEW: `LstVolatileBody` / `LstVolatileClosure`** (`EbHashMap () ()` each) — the in-memory sets of
-      EBs whose body / full closure we hold. INVARIANT closure ⊆ body. Maintained: body added on
-      `LevDiskDone` body-write, closure added on completion; **trimmed by Promotion** (`pruneBelow` at
-      `LevImmTipAdvanced`). `LstVolatileClosure` is ChainSel's queryable "available complete closures" set
-      (no disk read); `NotifyVotingAndChainSel` is the "set grew" signal. (LeiosDb may ultimately own it;
-      Spec should still specify the maintenance.)
+- [ ] **NEW: `LstVolatileBody` / `LstVolatileClosure`** (a **`HeldEbHashSet`** each, its own module — see
+      "New abstraction" above) — the in-memory sets of EBs whose body / full closure we hold. INVARIANT
+      closure ⊆ body. Maintained: body added on `LevDiskDone` body-write, closure added on completion, and
+      **a fresh first-announcement or cert extends a held EB's references** (`anchorVolatile`); **trimmed
+      by Promotion** (`pruneBelow` at `LevImmTipAdvanced`, now a `Slot -> Bool` predicate). `LstVolatileClosure`
+      is ChainSel's queryable "available complete closures" set (no disk read); `NotifyVotingAndChainSel`
+      is the "set grew" signal. **Reconstructed from disk on startup** (`initSt`; see the Startup section) —
+      it is the only central state rebuilt across a restart.
 - [ ] **`Req` dropped its `Election`** (`ReqBody EbHash bs cs | ReqJob EbHash JobId Job`); likewise
       `DiskWrite` (`WriteBody Body | WriteClosure EbHash [Tx]`). Spec §2 carries `el` in both.
 - [ ] **`Notification`** offer ctors dropped the election (`NotifyBlockOffer EbHash` /
@@ -116,6 +127,14 @@ substantially during the EbHashMap / offer-path work). Don't fix Spec.md yet —
       keyed by `(Slot, EbHash)` (obviating the wallclock TTL), but we deliberately kept dedup per-`EbHash`
       + TTL for now — only `(a)` of the CIP-alignment was adopted. `notifyMsgSlot` now reads the stale
       horizon's slot straight off the offer message (the old `youngestAnnouncedSlot` is gone).
+- [ ] **`MsgLeiosBlockTxsRequest(ebHash, bitfield)`** — the txs argument is now a **bitfield of positions**
+      into the EB body's `bodyTxlist` (`NonEmpty Word16`, the set-bit positions), not `NonEmpty TxHash`.
+      Matches the real wire's `TxBitmaps`; the model takes the abstract position-set form (no `Data.Bits`).
+      `Job` carries `(Word16, TxHash)` pairs — `jobPositions` feeds the request, `jobTxs` still validates
+      the response against the expected hashes. The store resolves positions itself:
+      **`dbReadClosureTxs :: EbHash -> NonEmpty Word16 -> m [Tx]`** (was `[TxHash]`), so `hServeTxs` is one
+      DB call + a length check (no separate body read; an out-of-range position ⇒ short result ⇒
+      `RequestedAbsentData`). The response `MsgLeiosBlockTxs(ebHash, [Tx])` is unchanged (request-only change).
 
 ## §3 Rules
 
@@ -148,7 +167,39 @@ substantially during the EbHashMap / offer-path work). Don't fix Spec.md yet —
       election. (Two *uncertified* announcements for one election remain ordinary equivocation — recorded
       via the equiv machinery, never a disconnect; an honest peer can relay producer equivocation.)
 - [ ] **`LevCertValidated`**: uses `supersede` into the `EbHashMap` (and `deleteElection` when already
-      complete); the in-place cert-switch is the EbHashMap active/inactive mechanism.
+      complete); the in-place cert-switch is the EbHashMap active/inactive mechanism. The "already
+      complete?" test and the body-present anchoring now live in the Startup section below.
+
+## Startup / restart reconstruction (NEW — not in Spec)
+
+- [ ] **`initSt :: Monad m => LeiosDb m -> m St`** — on node startup, rebuild `LstVolatileBody` /
+      `LstVolatileClosure` from persisted references intersected with disk presence: for each recorded
+      `(Slot, EbHash)`, body on disk ⇒ add to `LstVolatileBody`; all of its closure txs present ⇒ also
+      `LstVolatileClosure`. **The other central state (`LstFirstAnnouncements`, `LstWanted`, `LstCertified`)
+      is deliberately NOT reconstructed.** MVP rationale: restarts are rare/bounded, so we accept the
+      laxity — we may repeat some work, and an equivocation slot may transiently drive a `HeldEbHashSet`
+      above two EBs (hence its total `insert`). Takes only `LeiosDb` (TxCache/Mempool can't matter at
+      startup).
+- [ ] **NEW `DiskOp` `RecordRef Slot EbHash`** — persists a first-announced / certified reference.
+      **Fire-and-forget: it yields no `LevDiskDone`** and is not part of the persist-before-expose write
+      count; `GarbageCollect` prunes it by slot, `Promote` ignores it. Emitted on every **first
+      announcement** (`centralAnnounce`'s `Nothing` branch) and every **`hCertValidated`**. (These are
+      exactly the references `stVolatile*` ever holds — `electionsNaming` yields precisely the
+      first-announced ∪ certified elections — so persisting just these reconstructs `stVolatile*`. OK to
+      record refs for EBs whose body/closure we never acquire; `initSt` simply finds nothing on disk.)
+- [ ] **NEW `LeiosDb` method `dbReadAllRefs :: m [(Slot, EbHash)]`** — read all persisted references (for
+      `initSt`).
+- [ ] **`hCertValidated` completeness is now in-memory; `isComplete` is deleted.** The "already complete"
+      test is `heldIn eh LstVolatileClosure` (authoritative across restart because `initSt` rebuilds the
+      set), not a disk read — so the handler no longer touches the disk (keeps `Ifaces` only for the
+      `txCacheEvictForValidCert` hook). The old `isComplete` (a restart-time `dbReadBody` + `dbQueryPresent`
+      check) is gone. The `supersedeWant` (not-yet-complete) branch additionally **`anchorVolatile`s the
+      cert's election into `LstVolatileBody`** (when the body is held): this keeps the in-memory held set
+      equal to what `initSt` would reconstruct from the persisted cert ref, and keeps the body anchored to
+      the cert's slot so it survives GC of the announcing election's slot. (`recordCompleteCert` already
+      anchored both sets.) No body-present *resume* branch was added: in steady state the in-flight
+      `AwaitingTxs` progress is preserved (the `WantState` keep-left `Semigroup` under `supersede`), and the
+      only restart case that re-fetches a body already on disk is the accepted MVP laxity.
 
 ## §7 TxCache occupancy (equivocation-resistant)
 
