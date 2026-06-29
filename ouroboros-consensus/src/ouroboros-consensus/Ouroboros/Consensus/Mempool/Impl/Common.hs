@@ -618,6 +618,8 @@ data TraceEventMempool blk
     -- an alternative fork. It is completely innocuous but we would like to
     -- double check that it happens very rarely or almost never.
     TraceMempoolTipMovedBetweenSTMBlocks
+  | TraceMempoolCacheHit (Point blk)
+  | TraceMempoolCacheMiss (Point blk)
   deriving Generic
 
 deriving instance
