@@ -2,14 +2,14 @@
 
 module Ledger.Types.Epoch where
 
-open import Ledger.Prelude hiding (compare; Rel)
+open import Ledger.Prelude hiding (compare)
 
 open import Agda.Builtin.FromNat
 open import Algebra using (Semiring)
 open import Relation.Binary
 open import Data.Nat.Properties using (+-*-semiring)
 open import Data.Rational using (ℚ)
-open import Data.Rational.Ext using (InPosUnitInterval)
+open import stdlib.Data.Rational.Ext using (InPosUnitInterval)
 
 additionVia : ∀{A : Set} → (A → A) → ℕ → A → A
 additionVia sucFun zero r = r
