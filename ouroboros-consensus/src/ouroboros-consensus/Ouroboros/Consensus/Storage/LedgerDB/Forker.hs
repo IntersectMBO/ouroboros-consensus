@@ -712,6 +712,8 @@ class ResolveLeiosBlock blk where
   -- unticked post-closure ledger state, ready to feed into
   -- 'tickThenApply' for the CertRB itself.
   --
+  -- The slot is obtained from the provided ledger state.
+  --
   -- Sidesteps the consensus' Ticked-state mempool API by dropping down to
   -- the per-era ledger 'ApplyTx' class, which works directly on the pure
   -- per-era @LedgerState era@.
