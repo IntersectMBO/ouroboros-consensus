@@ -180,15 +180,18 @@ data Mempool m blk = Mempool
   -- persistence.
   , removeTxsEvenIfValid :: NE.NonEmpty (GenTxId blk) -> m ()
   -- ^ Manually remove the given transactions from the mempool.
+  -- TODO(bladyjoker): Remove the concept of Snapshot and just use the TxSeq directly, much more flexible.
   , getSnapshot :: STM m (MempoolSnapshot blk)
   -- ^ Get a snapshot of the current mempool state. This allows for
   -- further pure queries on the snapshot.
   --
   -- This doesn't look at the ledger state at all.
+  -- TODO(bladyjoker): Remove the concept of Snapshot and just use the TxSeq directly, much more flexible.
   , getSnapshotFor ::
       SlotNo ->
       TickedLedgerState blk DiffMK ->
       (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+      TxMeasure blk ->
       m (MempoolSnapshot blk)
   -- ^ Get a snapshot of the mempool state that is valid with respect to
   -- the given ledger state
