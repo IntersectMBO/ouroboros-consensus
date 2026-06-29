@@ -235,7 +235,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getLeiosVoteState :: LeiosVoteState m
   -- ^ Aggregated vote state across all peers. Empty in S4; populated
   -- by the voting thread in S5.
-  , getLeiosPeersVars :: LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
+  , getLeiosPeersVars ::
+      LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   -- ^ Per-peer offerings + outgoing request queues, keyed by
   -- peer. Maintained by @bracketLeiosPeer@ (in the diffusion layer):
   -- get-or-created by the first of this peer's peer-vars
@@ -853,6 +854,9 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
 
           let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
+              rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+              ebCap = maybe Data.Measure.zero id $ ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
+              rbPlusEbCap = Data.Measure.plus rbCap ebCap
 
           mempoolSnapshot <-
             lift $
@@ -861,15 +865,13 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                 currentSlot
                 tickedLedgerState
                 readTables
+                rbPlusEbCap
 
-          let rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
-              mayEbCap = ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
-              (rbTxs, txssz) = snapshotTake mempoolSnapshot rbCap
-              ebTxs = case mayEbCap of
-                Nothing -> []
-                Just ebCap ->
-                  let (allTxs, _) = snapshotTake mempoolSnapshot (Data.Measure.plus rbCap ebCap)
-                   in drop (length rbTxs) allTxs
+          let (rbTxs, txssz) = snapshotTake mempoolSnapshot rbCap
+              ebTxs =
+                let (allTxs, _) = snapshotTake mempoolSnapshot (Data.Measure.plus rbCap ebCap)
+                 in drop (length rbTxs) allTxs
+
           -- NB respect the capacity of the ledger state we're extending,
           -- which is /not/ 'snapshotLedgerState'
 
