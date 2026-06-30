@@ -20,6 +20,9 @@
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
 #endif
 
+-- FIXME: resolve 'Validated' deprecations
+{-# OPTIONS_GHC -Wno-deprecations #-}
+
 -- | Shelley mempool integration
 --
 -- TODO nearly all of the logic in this module belongs in cardano-ledger, not
@@ -95,6 +98,7 @@ import Control.Arrow ((+++))
 import Control.Monad (guard)
 import Control.Monad.Except (Except, liftEither)
 import Control.Monad.Identity (Identity (..))
+import Data.ByteString.Short (ShortByteString)
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
 import Data.Measure (Measure)
@@ -121,10 +125,9 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Util (ShowProxy (..), coerceSet)
 import Ouroboros.Consensus.Util.Condense
-import Data.ByteString.Short (ShortByteString)
 import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
-import Ouroboros.Network.Tx (HasRawTxId (..))
 import Ouroboros.Network.SizeInBytes
+import Ouroboros.Network.Tx (HasRawTxId (..))
 
 data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx TopTx era)
   deriving stock Generic

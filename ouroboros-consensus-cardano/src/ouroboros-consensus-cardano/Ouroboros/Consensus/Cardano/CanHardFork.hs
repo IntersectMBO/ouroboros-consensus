@@ -18,6 +18,9 @@
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
 #endif
 
+-- FIXME: resolve 'Validated' deprecations
+{-# OPTIONS_GHC -Wno-deprecations #-}
+
 module Ouroboros.Consensus.Cardano.CanHardFork
   ( CardanoHardForkConstraints
   , TriggerHardFork (..)
