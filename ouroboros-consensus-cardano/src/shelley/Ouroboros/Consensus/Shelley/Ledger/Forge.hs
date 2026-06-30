@@ -35,7 +35,6 @@ import LeiosDemoDb
   )
 import LeiosDemoTypes
   ( EbAnnouncement (..)
-  , EbHash (..)
   , ForgedLeiosEb (..)
   , LeiosPoint (..)
   , RbHash (..)
