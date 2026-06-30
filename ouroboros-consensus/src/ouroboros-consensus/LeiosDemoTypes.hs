@@ -48,10 +48,10 @@ import Cardano.Crypto.Leios
   , VerificationError
   , Weight
   , aggregateLeiosCert
-  , leiosCommitteeSize
   , decodeLeiosVoterId
   , encodeLeiosVoterId
   , getLeiosVoterId
+  , leiosCommitteeSize
   , leiosSignContext
   , resolveLeiosVoter
   , verifyLeiosCert
@@ -634,7 +634,7 @@ voteToObject :: LeiosVote -> Aeson.Object
 voteToObject MkLeiosVote{announcingRbHash, voterId} =
   mconcat
     [ "rbHash" .= prettyRbHash announcingRbHash
-    , "voterId" .= voterId.voterIndex
+    , "voterId" .= voterId.leiosVoterIndex
     ]
 
 -- | Create a vote for given 'LeiosPoint' and signing key.

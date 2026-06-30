@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Test.LeiosDemoTypes (tests) where
@@ -124,7 +125,7 @@ prop_committeeNormalizedAndSorted =
       forAll (vectorOf n (chooseInt (1, 1000))) $ \ws ->
         let inputs = zip (deriveVerKeyDSIGN <$> sks) ws
             committee = mkCommitteeEveryoneVotes inputs
-            weights = voterWeight <$> V.toList (committeeVoters committee)
+            weights = voterWeight <$> V.toList committee.leiosCommitteeVoters
          in counterexample ("committee: " <> show committee) $
               counterexample "weights sum to 1" (sum weights === 1)
                 .&&. counterexample "weights sorted ascending" (weights === sort weights)
