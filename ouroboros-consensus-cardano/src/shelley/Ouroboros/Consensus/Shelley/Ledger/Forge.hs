@@ -1,5 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+-- TODO: Ledger has a few deprecations that we are ignoring for now
+{-# OPTIONS_GHC -Wno-deprecations #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 

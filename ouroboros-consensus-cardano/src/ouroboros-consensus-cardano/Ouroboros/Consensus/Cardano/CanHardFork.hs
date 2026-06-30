@@ -12,6 +12,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
+-- TODO: Ledger has a few deprecations that we are ignoring for now
+{-# OPTIONS_GHC -Wno-deprecations #-}
 #if __GLASGOW_HASKELL__ < 908
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
 #endif
