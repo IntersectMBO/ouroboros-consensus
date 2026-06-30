@@ -290,6 +290,37 @@ data Mempool m = Mempool                            -- §2 Reads of un-owned sta
 
 data Ifaces m = Ifaces { ifDb :: LeiosDb m, ifTxc :: TxCache m, ifMem :: Mempool m }
 
+-- TODO consider having the decision logic send body requests to
+-- upstream peers that agree with us on the first-announcement for
+-- some election without waiting for them to offer the body.
+--
+-- PRO: saves 0.5 RTT latency, by not waiting for offer (That doesn't
+-- actually add up to saving 1 RTT for body+closure, b/c body relay
+-- doesn't wait for closure.)
+--
+-- EQUAL: if we're always requesting everything from everyone anyway,
+-- there's no lost opportunities here
+--
+-- CON: it's convenient/"simpler" for the same flow/steps/phases/etc
+-- to be as similar as possible for bodies and closures. (TODO I
+-- suppose we could do this for closures too: if they already got the
+-- body from someone else, they could plausibly pre-request txs from
+-- us even before we have the body... but it's harder to bound how
+-- many _closure_ requests we'd have to remember... maybe we crudely
+-- limit it to at most 10 requests per election? and they have to wait
+-- for us to issue replies before sending more ... and now we have to
+-- send MsgLeiosBlockNeverAcquired for requests if the announcement
+-- ages out before we receive its body)
+--
+-- CON: but if we're doing any Staggered Requests, etc, then our
+-- _first requests_ are mere guesses instead of being sent only to the
+-- first peers that claim to be ready (slow-loris can lie either way,
+-- but consider the all honest case)
+--
+-- EQUAL: instead of tracking offer-gates for each downstream peer,
+-- we'd instead track which requests they've sent (DoS mitigation: we
+-- disconnect when a downstream peer requests data for an election
+-- that we haven't relayed (TODO how to handle LevCertValidated?))
 data WireMsg                                        -- §2 Wire messages
   = MsgLeiosNotificationRequestNext
   | MsgLeiosBlockAnnouncement RbHeader
