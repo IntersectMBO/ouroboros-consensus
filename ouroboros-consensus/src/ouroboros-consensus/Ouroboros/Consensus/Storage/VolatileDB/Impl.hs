@@ -141,12 +141,15 @@ import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB.API
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.FileInfo (FileInfo)
 import qualified Ouroboros.Consensus.Storage.VolatileDB.Impl.FileInfo as FileInfo
 import qualified Ouroboros.Consensus.Storage.VolatileDB.Impl.Index as Index
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Parser
+import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
+import LeiosDemoTypes (EbHash, pointEbHash)
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.State
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Types
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Util
@@ -205,6 +208,7 @@ openDB ::
   ( HasCallStack
   , IOLike m
   , GetPrevHash blk
+  , ResolveLeiosBlock blk
   , VolatileDbSerialiseConstraints blk
   ) =>
   Complete VolatileDbArgs m blk ->
@@ -237,6 +241,7 @@ openDB VolatileDbArgs{volHasFS = SomeHasFS hasFS, ..} = do
           , garbageCollect = garbageCollectImpl env
           , filterByPredecessor = filterByPredecessorImpl env
           , getBlockInfo = getBlockInfoImpl env
+          , getLeiosAnnouncers = getLeiosAnnouncersImpl env
           , getMaxSlotNo = getMaxSlotNoImpl env
           }
   return volatileDB
@@ -382,6 +387,7 @@ putBlockImpl ::
   , EncodeDisk blk blk
   , HasBinaryBlockInfo blk
   , HasNestedContent Header blk
+  , ResolveLeiosBlock blk
   , IOLike m
   ) =>
   VolatileDBEnv m blk ->
@@ -401,7 +407,8 @@ putBlockImpl
           fileIsFull <- state $ updateStateAfterWrite bytesWritten
           when fileIsFull $ nextFile hasFS
    where
-    blockInfo@BlockInfo{biHash, biSlotNo, biPrevHash} = extractBlockInfo blk
+    blockInfo@BlockInfo{biHash, biSlotNo, biPrevHash} =
+      extractBlockInfo blk
 
     updateStateAfterWrite ::
       forall h.
@@ -437,6 +444,14 @@ putBlockImpl
           , currentMap = currentMap'
           , currentRevMap = currentRevMap'
           , currentSuccMap = insertMapSet biPrevHash biHash currentSuccMap
+          , currentLeiosAnnouncerMap = case biLeiosAnnouncedEb blockInfo of
+              SNothing -> currentLeiosAnnouncerMap
+              SJust eb ->
+                LeiosAnnouncerIndex $
+                  insertMapSet
+                    (pointEbHash eb)
+                    (BlockPoint biSlotNo biHash)
+                    (getLeiosAnnouncerIndex currentLeiosAnnouncerMap)
           , currentMaxSlotNo = currentMaxSlotNo `max` MaxSlotNo biSlotNo
           }
 
@@ -527,7 +542,7 @@ garbageCollectFile ::
 garbageCollectFile hasFS (fileId, fileInfo) = do
   lift $ lift $ removeFile hasFS $ filePath fileId
 
-  st@OpenState{currentMap, currentRevMap, currentSuccMap} <- get
+  st@OpenState{currentMap, currentRevMap, currentSuccMap, currentLeiosAnnouncerMap} <- get
 
   let hashes = FileInfo.hashes fileInfo
       currentRevMap' = Map.withoutKeys currentRevMap hashes
@@ -537,12 +552,27 @@ garbageCollectFile hasFS (fileId, fileInfo) = do
           (Set.toList hashes)
       currentSuccMap' =
         List.foldl' (flip (uncurry deleteMapSet)) currentSuccMap deletedPairs
+      deletedAnnouncerPairs =
+        mapMaybe
+          ( \h -> do
+              ibi <- Map.lookup h currentRevMap
+              eb <- strictMaybeToMaybe (biLeiosAnnouncedEb (ibiBlockInfo ibi))
+              pure (pointEbHash eb, BlockPoint (biSlotNo (ibiBlockInfo ibi)) h)
+          )
+          (Set.toList hashes)
+      currentLeiosAnnouncerMap' =
+        LeiosAnnouncerIndex $
+          List.foldl'
+            (flip (uncurry deleteMapSet))
+            (getLeiosAnnouncerIndex currentLeiosAnnouncerMap)
+            deletedAnnouncerPairs
 
   put
     st
       { currentMap = Index.delete fileId currentMap
       , currentRevMap = currentRevMap'
       , currentSuccMap = currentSuccMap'
+      , currentLeiosAnnouncerMap = currentLeiosAnnouncerMap'
       }
 
 filterByPredecessorImpl ::
@@ -560,6 +590,14 @@ getBlockInfoImpl ::
   STM m (HeaderHash blk -> Maybe (BlockInfo blk))
 getBlockInfoImpl = getterSTM $ \st hash ->
   ibiBlockInfo <$> Map.lookup hash (currentRevMap st)
+
+getLeiosAnnouncersImpl ::
+  forall m blk.
+  (IOLike m, HasHeader blk) =>
+  VolatileDBEnv m blk ->
+  STM m (EbHash -> Set (Point blk))
+getLeiosAnnouncersImpl = getterSTM $ \st p ->
+  fromMaybe Set.empty (Map.lookup p (getLeiosAnnouncerIndex (currentLeiosAnnouncerMap st)))
 
 getMaxSlotNoImpl ::
   forall m blk.

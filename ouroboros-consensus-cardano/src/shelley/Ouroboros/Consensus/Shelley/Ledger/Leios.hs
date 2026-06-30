@@ -92,40 +92,6 @@ instance
       Just closureEntries ->
         pure $ mkShelleyTx . deserialiseLeiosTx . snd <$> closureEntries
 
-  inlineLeiosClosure blk txs = do
-    blk{shelleyBlockRaw = Core.Block hdr body'}
-   where
-    body' = body & Core.txSeqBlockBodyL .~ StrictSeq.fromList (fromGenTx <$> txs)
-
-    fromGenTx (ShelleyTx _ tx) = tx
-
-    Core.Block hdr body = shelleyBlockRaw blk
-
-  blockLeiosCert blk =
-    strictMaybeToMaybe $ blk.shelleyBlockRaw.blockBody ^. leiosCertBlockBodyL
-
-  headerLeiosAnnouncement hdr = do
-    ann <- strictMaybeToMaybe headerBody.hbLeiosEbAnnouncement
-    pure
-      ( MkLeiosPoint
-          { pointSlotNo = headerBody.hbSlotNo
-          , pointEbHash = ann.ebAnnouncementHash
-          }
-      , ann.ebAnnouncementSize
-      )
-   where
-    Header{headerBody} = shelleyHeaderRaw hdr
-
-  protocolStateLeiosAnnouncement st = do
-    ann <- strictMaybeToMaybe $ praosStateLeiosAnnouncement st
-    pure
-      ( MkLeiosPoint
-          { pointSlotNo = fromWithOrigin (SlotNo 0) st.praosStateLastSlot
-          , pointEbHash = ann.ebAnnouncementHash
-          }
-      , ann.ebAnnouncementSize
-      )
-
   leiosClosureTxKeySets = getTransactionKeySets
 
   -- Apply an EB closure's transactions onto an /unticked/ Dijkstra-era
@@ -162,6 +128,44 @@ instance
           (envv ^. ledgerPpL)
           (ms ^. SL.utxoG)
           tx
+
+  inlineLeiosClosure blk txs = do
+    blk{shelleyBlockRaw = Core.Block hdr body'}
+   where
+    body' = body & Core.txSeqBlockBodyL .~ StrictSeq.fromList (fromGenTx <$> txs)
+
+    fromGenTx (ShelleyTx _ tx) = tx
+
+    Core.Block hdr body = shelleyBlockRaw blk
+
+  blockLeiosCert blk =
+    strictMaybeToMaybe $ blk.shelleyBlockRaw.blockBody ^. leiosCertBlockBodyL
+
+  headerContainsLeiosCert hdr = headerBody.hbLeiosContainsCert
+   where
+    Header{headerBody} = shelleyHeaderRaw hdr
+
+  headerLeiosAnnouncement hdr = do
+    ann <- strictMaybeToMaybe headerBody.hbLeiosEbAnnouncement
+    pure
+      ( MkLeiosPoint
+          { pointSlotNo = headerBody.hbSlotNo
+          , pointEbHash = ann.ebAnnouncementHash
+          }
+      , ann.ebAnnouncementSize
+      )
+   where
+    Header{headerBody} = shelleyHeaderRaw hdr
+
+  protocolStateLeiosAnnouncement st = do
+    ann <- strictMaybeToMaybe $ praosStateLeiosAnnouncement st
+    pure
+      ( MkLeiosPoint
+          { pointSlotNo = fromWithOrigin (SlotNo 0) st.praosStateLastSlot
+          , pointEbHash = ann.ebAnnouncementHash
+          }
+      , ann.ebAnnouncementSize
+      )
 
   -- The announcing RB is this block's parent
   announcingRbHash blk =

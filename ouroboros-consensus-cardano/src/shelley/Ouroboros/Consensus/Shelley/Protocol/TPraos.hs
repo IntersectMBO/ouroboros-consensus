@@ -41,6 +41,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , ShelleyHash (..)
   , ShelleyProtocol
   , ShelleyProtocolHeader
+  , default_pHeaderLeiosContainsCert
   )
 import Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
   ( EnvelopeError
@@ -60,6 +61,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
   pHeaderBlock = SL.bheaderBlockNo . SL.bhbody
   pHeaderSize = fromIntegral . originalBytesSize
   pHeaderBlockSize = fromIntegral @Word32 @Natural . SL.bsize . SL.bhbody
+  pHeaderLeiosContainsCert = default_pHeaderLeiosContainsCert
 
   type EnvelopeCheckError _ = EnvelopeError
 
@@ -97,7 +99,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (TPraos c) where
       | otherwise =
           0
 
-  mkHeader hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer _leiosEbAnn = do
+  mkHeader hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer _mayEbAnn _containsCert = do
     TPraosFields{tpraosSignature, tpraosToSign} <-
       forgeTPraosFields hotKey canBeLeader isLeader mkBhBody
     pure $ SL.BHeader tpraosToSign tpraosSignature

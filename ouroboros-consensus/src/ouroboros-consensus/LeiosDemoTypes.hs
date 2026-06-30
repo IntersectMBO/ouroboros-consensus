@@ -112,7 +112,8 @@ import Text.Pretty.Simple (pShow)
 -- * Hashes and identities
 
 newtype PeerId a = MkPeerId a
-  deriving (Eq, Ord)
+  deriving stock Show
+  deriving newtype (Eq, Ord)
 
 -- Hash algorithm used in leios for EBs and txs
 type HASH = Hash.Blake2b_256
@@ -369,6 +370,17 @@ data LeiosOutstanding pid = MkLeiosOutstanding
   --
   -- * 'blockingPerEb' is only decremented when txs are actually inserted
   --   into the DB (via @MsgLeiosBlockTxs@ handling).
+  --
+  -- TODO: 'blockingPerEb' can go permanently stale for txs shared across EBs.
+  -- 'msgLeiosBlockTxs' only decrements the entry for the EB it was requesting;
+  -- a tx that also belongs to another EB B is then in the DB, so 'filterMissingWork'
+  -- drops it from B's missing set and B never fetches it itself -- so B's
+  -- 'blockingPerEb' is never decremented for that tx and stays > 0. This is
+  -- currently harmless only because nothing reads 'blockingPerEb' as a gate: the
+  -- downstream @MsgLeiosBlockTxsOffer@ is actually driven by the DB emitting
+  -- 'AcquiredEbTxs' for every EB its @completed@ computation finds finished
+  -- (cross-EB aware), not by this field. Before using 'blockingPerEb' to gate
+  -- anything, reconcile it against shared-tx arrivals (or derive it from the DB).
   }
 
 emptyLeiosOutstanding :: LeiosOutstanding pid
@@ -384,6 +396,28 @@ emptyLeiosOutstanding =
     , reverseEbIndexByTx = Map.empty
     , blockingPerEb = Map.empty
     }
+
+-- | Pretty-print the per-peer 'offerings' map (one tuple per peer: the EB-body
+-- offers and the EB-tx-closure offers it has sent). Each offered EB hash is
+-- shown truncated.
+prettyOfferings :: Show pid => Map (PeerId pid) (Set EbHash, Set EbHash) -> String
+prettyOfferings m =
+  unlines $
+    map ("    [leios] " ++) $
+      [ show peer
+          ++ " bodies="
+          ++ shortSet bodies
+          ++ " closures="
+          ++ shortSet closures
+      | (peer, (bodies, closures)) <- Map.toList m
+      ]
+ where
+  shortSet s = case Set.toList s of
+    [] -> "{}"
+    xs ->
+      "{"
+        ++ unwords (map (take 8 . prettyEbHash) xs)
+        ++ "}"
 
 prettyLeiosOutstanding :: LeiosOutstanding pid -> String
 prettyLeiosOutstanding x =
@@ -778,22 +812,6 @@ data TraceLeiosKernel
   | TraceLeiosCertified {rbHash :: RbHash}
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
-  | -- | A CertRB was admitted to the staging area because its certified
-    -- EB closure isn't locally available. This is a critical event: it
-    -- means the node would have crashed in 'resolveLeiosBlock' (issue
-    -- #890) and the staging-area / Phase-2 emergency-fetch path is
-    -- compensating. Carries the staged block's point, the missing EB
-    -- point, and the number of peers whose ChainSync candidate
-    -- contained the block (they're treated as implicit offerers of the
-    -- EB by the fetch loop).
-    TraceLeiosCertRBStaged
-      { stagedBlockPoint :: String
-      , stagedEbPoint :: LeiosPoint
-      , stagedKnownPeers :: Int
-      }
-  | -- | A staged CertRB has been released back into ChainSel because
-    -- the EB closure (body + txs) is now locally available.
-    TraceLeiosCertRBReleased {releasedEbPoint :: LeiosPoint}
 
 deriving instance Show TraceLeiosKernel
 
@@ -878,22 +896,6 @@ traceLeiosKernelToObject = \case
       , "table" .= table
       , "key" .= key
       ]
-  TraceLeiosCertRBStaged{stagedBlockPoint, stagedEbPoint, stagedKnownPeers} ->
-    let MkLeiosPoint (SlotNo ebSlot) ebHash = stagedEbPoint
-     in mconcat
-          [ "kind" .= Aeson.String "LeiosCertRBStaged"
-          , "blockPoint" .= stagedBlockPoint
-          , "ebHash" .= prettyEbHash ebHash
-          , "ebSlot" .= ebSlot
-          , "knownPeers" .= stagedKnownPeers
-          ]
-  TraceLeiosCertRBReleased{releasedEbPoint} ->
-    let MkLeiosPoint (SlotNo ebSlot) ebHash = releasedEbPoint
-     in mconcat
-          [ "kind" .= Aeson.String "LeiosCertRBReleased"
-          , "ebHash" .= prettyEbHash ebHash
-          , "ebSlot" .= ebSlot
-          ]
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String

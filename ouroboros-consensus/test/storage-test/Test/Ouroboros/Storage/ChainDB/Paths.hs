@@ -11,6 +11,7 @@ module Test.Ouroboros.Storage.ChainDB.Paths (tests) where
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
+import Data.Maybe.Strict (StrictMaybe (SNothing))
 import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))
@@ -246,6 +247,9 @@ headerToBlockInfo hdr =
     , -- We don't care about those two
       biHeaderOffset = 0
     , biHeaderSize = 0
+    , -- No Leios involvement in these path tests
+      biHasLeiosCert = False
+    , biLeiosAnnouncedEb = SNothing
     }
 
 headersToBlockInfo ::

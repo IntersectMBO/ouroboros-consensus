@@ -119,9 +119,7 @@ import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoTypes
-  ( mkCommitteeEveryoneVotes
-  )
+import LeiosDemoTypes (mkCommitteeEveryoneVotes)
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
 import Lens.Micro.Extras (view)

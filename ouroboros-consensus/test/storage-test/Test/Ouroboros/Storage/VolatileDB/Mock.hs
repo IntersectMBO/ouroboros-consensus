@@ -5,6 +5,7 @@
 module Test.Ouroboros.Storage.VolatileDB.Mock (openDBMock) where
 
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation
   ( EncodeDisk (..)
   , HasBinaryBlockInfo (..)
@@ -23,6 +24,7 @@ openDBMock ::
   , HasBinaryBlockInfo blk
   , EncodeDisk blk blk
   , HasNestedContent Header blk
+  , ResolveLeiosBlock blk
   ) =>
   BlocksPerFile ->
   CodecConfig blk ->
@@ -42,6 +44,7 @@ openDBMock maxBlocksPerFile ccfg = do
       , garbageCollect = updateE_ . garbageCollectModel
       , filterByPredecessor = querySTME $ filterByPredecessorModel
       , getBlockInfo = querySTME $ getBlockInfoModel
+      , getLeiosAnnouncers = querySTME $ getLeiosAnnouncersModel
       , getMaxSlotNo = querySTME $ getMaxSlotNoModel
       }
    where

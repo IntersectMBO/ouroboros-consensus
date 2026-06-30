@@ -137,6 +137,8 @@ mkTestGroups impl =
       , testCase "no re-notification of completed EBs" $ withFreshDb impl test_noReNotifyCompletedEbs
       , testCase "no re-notification when re-inserting an EB's own tx" $
           withFreshDb impl test_noReNotifyOnRelatedTxReinsert
+      , testCase "same EB hash at multiple slots notifies each completion" $
+          withFreshDb impl test_multipleSlotsSameHash
       ]
   , testGroup
       "queryFetchWork"
@@ -654,6 +656,51 @@ test_noReNotifyOnRelatedTxReinsert db = do
             assertFailure
               "completed EB should not be re-notified on re-insert of its own tx"
       [] -> assertFailure "test EB has no txs"
+
+-- | The same EB content can be forged at multiple slots; the DB must
+-- track each 'LeiosPoint' independently and emit one 'AcquiredEbTxs'
+-- per (slot, hash) when the closure completes, regardless of how many
+-- slots reference the same hash. Conflating the slots loses a
+-- notification.
+test_multipleSlotsSameHash :: LeiosDbHandle IO -> IO ()
+test_multipleSlotsSameHash db = do
+  chan <- subscribeEbNotifications db
+  let hashSeed = 1
+      point1 = mkTestPoint (SlotNo 1) hashSeed
+      point2 = mkTestPoint (SlotNo 2) hashSeed
+      eb = mkTestEb 2 -- same content at both points (deterministic from numTxs)
+      ebTxList = V.toList (leiosEbTxs eb)
+      drainNotifications = go []
+       where
+        go acc =
+          atomically (tryReadTChan chan) >>= \case
+            Nothing -> pure (reverse acc)
+            Just n -> go (n : acc)
+  withLeiosDb db $ \con -> do
+    -- Announce the same EB at two slots and insert the body twice.
+    leiosDbInsertEbPoint con point1 (leiosEbBytesSize eb)
+    leiosDbInsertEbPoint con point2 (leiosEbBytesSize eb)
+    leiosDbInsertEbBody con point1 eb
+    leiosDbInsertEbBody con point2 eb
+    -- Drain the two AcquiredEb notifications (order matches insertion).
+    acquiredEbs <- drainNotifications
+    let acquiredEbPoints =
+          [p | AcquiredEb p _ <- acquiredEbs]
+    acquiredEbPoints `setEquals` [point1, point2]
+    -- Insert every tx the EB references — closure completes for both rows.
+    _ <-
+      leiosDbInsertTxs
+        con
+        Nothing
+        [(txHash, maxTxBytesZero) | (txHash, _) <- ebTxList]
+    -- Both rows must notify completion, once each.
+    completionNotifs <- drainNotifications
+    let completionPoints =
+          [p | AcquiredEbTxs p _ <- completionNotifs]
+    completionPoints `setEquals` [point1, point2]
+    length completionNotifs @?= 2
+ where
+  setEquals xs ys = Map.fromList [(p, ()) | p <- xs] @?= Map.fromList [(p, ()) | p <- ys]
 
 -- * Property tests for queryFetchWork
 

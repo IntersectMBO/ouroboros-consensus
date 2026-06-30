@@ -95,8 +95,32 @@ newLeiosDBSQLite tracer dbPath = do
     LeiosDbHandle
       { subscribeEbNotifications =
           atomically (dupTChan notificationChan)
+      , leiosDbScanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbClosuresSince dbPath
+      , -- No-op for now; see 'leiosDbGarbageCollect'. A real implementation
+        -- would open a transient connection (like 'sqlScanCompleteEbClosuresSince')
+        -- and evict the no-longer-needed rows.
+        leiosDbGarbageCollect = \_slotNo -> pure ()
+      , -- No-op for now; see 'leiosDbPromoteToImmutable'. A real implementation
+        -- would copy the EB's body and closure rows into immutable storage.
+        leiosDbPromoteToImmutable = \_point -> pure ()
       , open = openSQLiteConnection tracer dbPath notificationChan
       }
+
+-- | Implements 'leiosDbScanCompleteEbClosuresNotOlderThanSlot': the complete-closure EBs
+-- announced no older than the given slot. Opens its own transient read-only
+-- connection. Only an existing DB can hold complete closures: a
+-- fresh DB file is created lazily by the first 'open', so when the file does
+-- not exist there is nothing to scan.
+sqlScanCompleteEbClosuresSince :: FilePath -> SlotNo -> IO [EbHash]
+sqlScanCompleteEbClosuresSince dbPath sinceSlot = do
+  dbExists <- doesFileExist dbPath
+  if not dbExists
+    then pure []
+    else do
+      db <- open2 (fromString dbPath) [SQLOpenReadWrite] SQLVFSDefault
+      hashes <- sqlScanCompleteEbHashesSince db sinceSlot
+      void $ DB.close db
+      pure hashes
 
 -- * Connection management
 
@@ -146,6 +170,18 @@ sqlScanEbPoints db =
               slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
               hash <- MkEbHash <$> DB.columnBlob stmt 1
               loop ((slot, hash) : acc)
+    loop []
+
+sqlScanCompleteEbHashesSince :: DB.Database -> SlotNo -> IO [EbHash]
+sqlScanCompleteEbHashesSince db sinceSlot =
+  dbWithBEGIN db $ dbWithPrepare db (fromString sql_scan_complete_ebs_since) $ \stmt -> do
+    dbBindInt64 stmt 1 (fromIntegral $ unSlotNo sinceSlot)
+    let loop acc =
+          dbStep stmt >>= \case
+            DB.Done -> pure (reverse acc)
+            DB.Row -> do
+              hash <- MkEbHash <$> DB.columnBlob stmt 0
+              loop (hash : acc)
     loop []
 
 sqlLookupEbPoint :: DB.Database -> EbHash -> IO (Maybe SlotNo)
@@ -253,7 +289,7 @@ sqlInsertTxs db notify mAnnouncingRbHash txs = do
     dbWithPrepare db (fromString sql_mark_notified_ebs) $ \stmt ->
       dbStep1 stmt
     pure completed
-  -- Emit notifications for each completed EB
+  -- Emit a closure-completion notification for each completed EB
   forM_ completed $ \point -> notify (AcquiredEbTxs point mAnnouncingRbHash)
   pure completed
 
@@ -427,6 +463,24 @@ sql_scan_ebs =
   "SELECT ebSlot, ebHashBytes\n\
   \FROM ebs\n\
   \ORDER BY ebSlot ASC\n\
+  \"
+
+-- | For 'sqlScanCompleteEbClosuresSince'
+--
+-- The two conditions are decoupled across rows: the same EB hash can have
+-- several @(ebSlot, ebHashBytes)@ rows (one per announcer slot), and
+-- 'missingTxCount' is maintained per row on body insert but per hash on tx
+-- arrival, so the /complete/ row and the /recent/ row can differ. Requiring
+-- both on a single row would wrongly drop a complete EB re-announced recently
+-- (its recent row never got a body insert, so its @missingTxCount@ is still
+-- NULL), leaving its cert-RB parked forever. Hence: keep a hash that has
+-- /any/ complete row and /any/ row at @ebSlot >= ?@.
+sql_scan_complete_ebs_since :: String
+sql_scan_complete_ebs_since =
+  "SELECT DISTINCT ebHashBytes FROM ebs\n\
+  \WHERE ebSlot >= ?\n\
+  \  AND ebHashBytes IN\n\
+  \      (SELECT ebHashBytes FROM ebs WHERE missingTxCount IS NOT NULL AND missingTxCount <= 0)\n\
   \"
 
 sql_lookup_eb :: String

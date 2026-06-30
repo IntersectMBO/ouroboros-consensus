@@ -50,7 +50,9 @@ import Control.Tracer
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
+import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
+import LeiosDemoDb.Common (leiosDbScanCompleteEbClosuresNotOlderThanSlot)
 import LeiosDemoTypes (HasLeiosVoting)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -212,6 +214,17 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
     initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
+    -- Seed the acquired-EB-closures set the ChainDB owns (see
+    -- 'cdbAcquiredLeiosEbs') now that the immutable tip is known: the complete
+    -- closures the LeiosDb holds whose announcer is no older than the immutable
+    -- tip. 'Background.leiosAcquiredEbsRunner' grows it thereafter from LeiosDb
+    -- closure-completion notifications.
+    initialAcquiredLeiosEbs <-
+      leiosDbScanCompleteEbClosuresNotOlderThanSlot
+        (Args.cdbsLeiosDb cdbSpecificArgs)
+        (fromWithOrigin (SlotNo 0) (pointSlot immutableDbTipPoint))
+    varAcquiredLeiosEbs <-
+      newTVarIO (Set.fromList initialAcquiredLeiosEbs)
     chain <-
       ChainSel.initialChainSelection
         immutableDB
@@ -220,6 +233,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         initChainSelTracer
         (Args.cdbsTopLevelConfig cdbSpecificArgs)
         varInvalid
+        (readTVar varAcquiredLeiosEbs)
         (void initialLoE)
         (forgetFingerprint initialWeights)
     traceWith initChainSelTracer InitialChainSelected
@@ -274,6 +288,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbKillBgThreads = varKillBgThreads
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
+            , cdbAcquiredLeiosEbs = varAcquiredLeiosEbs
+            , cdbLeiosDb = Args.cdbsLeiosDb cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
             , cdbPerasCertDB = perasCertDB
             }

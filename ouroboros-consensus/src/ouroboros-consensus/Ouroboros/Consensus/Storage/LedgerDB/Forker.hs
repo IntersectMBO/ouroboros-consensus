@@ -735,6 +735,15 @@ class ResolveLeiosBlock blk where
   blockLeiosCert :: blk -> Maybe LeiosCert
   blockLeiosCert _ = Nothing
 
+  -- | Whether this header records that the block's body carries a Leios
+  -- certificate (a CertRB; the @hbLeiosContainsCert@ bit). 'False' for
+  -- headers in eras without Leios support. Lets a peer recognise a CertRB
+  -- from its header alone — e.g. the ChainSync client uses it to synthesise
+  -- a LeiosFetch offer for the EB the CertRB certifies (announced by its
+  -- predecessor).
+  headerContainsLeiosCert :: Header blk -> Bool
+  headerContainsLeiosCert _ = False
+
   -- | The EB announcement carried by this header (point + on-the-wire
   -- body size), if any. 'Nothing' for headers in eras that don't carry
   -- Leios announcements.

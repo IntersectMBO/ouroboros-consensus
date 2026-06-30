@@ -38,6 +38,46 @@ data LeiosDbHandle m = LeiosDbHandle
   -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosEbNotification })
   , open :: m (LeiosDbConnection m)
   -- ^ Open a new connection to the LeiosDb.
+  , leiosDbScanCompleteEbClosuresNotOlderThanSlot :: HasCallStack => SlotNo -> m [EbHash]
+  -- ^ Scan the EBs whose tx closure is already complete and that were announced
+  -- by an RB no older than the given slot. The ChainDB calls this once at
+  -- startup -- passing the immutable tip slot -- to seed the acquired-EB
+  -- closures set it owns (see @cdbAcquiredLeiosEbs@); thereafter it learns of
+  -- newly-completed closures from 'subscribeEbNotifications' ('AcquiredEbTxs').
+  --
+  -- The slot is a plain query bound, not retained state: the LeiosDb does not
+  -- know about (nor track) the immutable tip; it just answers the query. The
+  -- acquired set itself -- the @complete ∩ announced-no-older-than-tip@
+  -- projection that ChainSel consults -- is owned by the ChainDB, since its
+  -- definition depends on the immutable tip, which is a ChainDB concept.
+  , leiosDbGarbageCollect :: HasCallStack => SlotNo -> m ()
+  -- ^ Evict LeiosDb data that is no longer needed now that everything up to the
+  -- given slot is immutable. The ChainDB drives this from its GC scheduler,
+  -- passing the same slot it uses to GC the VolatileDB\/PerasCertDB (see
+  -- @garbageCollectBlocks@); like those stores, the LeiosDb stays dumb about
+  -- /why/ -- it is handed a slot, nothing more (it never tracks the immutable
+  -- tip itself).
+  --
+  -- Currently a no-op. When implemented it can stay purely slot-based: the EBs
+  -- the immutable chain still needs (for ledger replay of an immutable cert-RB,
+  -- or for serving peers) are preserved by 'leiosDbPromoteToImmutable' before
+  -- they would age out here, so eviction itself need not reason about which EB
+  -- data is still required.
+  , leiosDbPromoteToImmutable :: HasCallStack => LeiosPoint -> m ()
+  -- ^ Promote the given EB's body and tx closure into immutable LeiosDb
+  -- storage, so they survive the slot-based 'leiosDbGarbageCollect' that will
+  -- later evict the volatile data. The ChainDB's copier (@copyToImmutableDB@)
+  -- drives this as it copies blocks to the ImmutableDB: for each cert-RB it
+  -- copies, it promotes the EB that cert-RB /certifies/ (the one its predecessor
+  -- announced). This is precise -- only EBs the immutable chain actually
+  -- references -- and gap-free: by the parking invariant a cert-RB is only
+  -- selected once its certified EB's closure is acquired, so an immutalised
+  -- cert-RB's closure is necessarily present (and complete). Promotion rides the
+  -- copy while eviction rides the later scheduled GC slot, so the data is always
+  -- promoted before it becomes eligible for eviction.
+  --
+  -- Currently a no-op -- the companion of 'leiosDbGarbageCollect': the immutable
+  -- storage it would promote into is not yet implemented.
   }
 
 data LeiosEbNotification

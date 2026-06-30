@@ -155,9 +155,11 @@ run Opts{..} = do
   forM_ (Map.toList . testOutputNodes $ testOutput) $ \(nodeId, nodeOut) -> do
     print $ "Node " <> show nodeId
     print $
-      ("> eb-slotno", imEbSlots . runIdentity . lsLeiosDb . nodeLeiosState $ nodeOut)
-    print $
       ("> eb-points", imEbPoints . runIdentity . lsLeiosDb . nodeLeiosState $ nodeOut)
+    print $
+      ( "> eb-bodies-downloaded"
+      , imEbBodiesDownloaded . runIdentity . lsLeiosDb . nodeLeiosState $ nodeOut
+      )
     print $
       ("> eb-txs", length . imTxs . runIdentity . lsLeiosDb . nodeLeiosState $ nodeOut)
 

@@ -26,25 +26,25 @@ import Control.Exception
 import Control.Monad (void)
 import Control.Tracer (traceWith)
 import Data.ByteString.Short (fromShort)
+import Data.Maybe.Strict (isSJust)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Typeable as Typeable
 import LeiosDemoDb
-  ( leiosDbQueryCompletedEbByHash
-  , LeiosDbConnection (..)
+  ( LeiosDbConnection (..)
+  , leiosDbQueryCompletedEbByHash
   )
 import LeiosDemoTypes
   ( EbAnnouncement (..)
+  , EbHash (..)
   , ForgedLeiosEb (..)
   , LeiosPoint (..)
-  , TraceLeiosKernel (..)
   , RbHash (..)
-  , EbHash (..)
+  , TraceLeiosKernel (..)
   , forgeLeiosEb
+  , hashLeiosEb
   , leiosEbBytesSize
   , minCertificationGap
-  , hashLeiosEb
   )
-import Data.ByteString.Short (fromShort)
 import LeiosVoteState (LeiosVoteState (queryCert))
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.Block
@@ -101,6 +101,8 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       actualRbBodySize
       protocolVersion
       (snd <$> mayEbAnn)
+      (isSJust mayLeiosCert)
+
   let blk = mkShelleyBlock $ SL.Block hdr rbBody
   case fst <$> mayEbAnn of
     Just forgedEb -> do

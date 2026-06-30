@@ -16,8 +16,11 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.Parser
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import Data.Bifunctor (bimap)
 import qualified Data.ByteString.Lazy as Lazy
+import Data.Maybe (isJust)
+import Data.Maybe.Strict (maybeToStrictMaybe)
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB.API (BlockInfo (..))
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Types
@@ -55,6 +58,7 @@ parseBlockFile ::
   , GetPrevHash blk
   , HasBinaryBlockInfo blk
   , HasNestedContent Header blk
+  , ResolveLeiosBlock blk
   , DecodeDisk blk (Lazy.ByteString -> Either Plain.DecoderError blk)
   ) =>
   CodecConfig blk ->
@@ -111,7 +115,7 @@ parseBlockFile ccfg hasFS isNotCorrupt validationPolicy fsPath =
 -------------------------------------------------------------------------------}
 
 extractBlockInfo ::
-  (GetPrevHash blk, HasBinaryBlockInfo blk) =>
+  (GetPrevHash blk, HasBinaryBlockInfo blk, ResolveLeiosBlock blk) =>
   blk ->
   BlockInfo blk
 extractBlockInfo blk =
@@ -123,6 +127,9 @@ extractBlockInfo blk =
     , biPrevHash = blockPrevHash blk
     , biHeaderOffset = headerOffset
     , biHeaderSize = headerSize
+    , biHasLeiosCert = isJust $ blockLeiosCert blk
+    , biLeiosAnnouncedEb =
+        maybeToStrictMaybe . fmap fst . headerLeiosAnnouncement $ getHeader blk
     }
  where
   BinaryBlockInfo{headerOffset, headerSize} = getBinaryBlockInfo blk

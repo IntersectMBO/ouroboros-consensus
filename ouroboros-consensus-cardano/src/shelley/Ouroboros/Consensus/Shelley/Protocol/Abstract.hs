@@ -19,6 +19,7 @@
 module Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , ProtocolHeaderSupportsEnvelope (..)
+  , default_pHeaderLeiosContainsCert
   , ProtocolHeaderSupportsKES (..)
   , ProtocolHeaderSupportsProtocol (..)
   , ShelleyHash (..)
@@ -118,6 +119,13 @@ class
   pHeaderSize :: ShelleyProtocolHeader proto -> Natural
   pHeaderBlockSize :: ShelleyProtocolHeader proto -> Natural
 
+  -- | Whether the header records that this block's body carries a Leios
+  -- certificate (i.e. it is a "CertRB"). Praos reads 'hbLeiosContainsCert';
+  -- protocols/headers without Leios support (e.g. TPraos) use
+  -- 'default_pHeaderLeiosContainsCert'. Used by 'blockMatchesHeader' to check
+  -- the header/body envelope.
+  pHeaderLeiosContainsCert :: ShelleyProtocolHeader proto -> Bool
+
   type EnvelopeCheckError proto :: Type
 
   -- | Carry out any protocol-specific envelope checks. For example, this might
@@ -127,6 +135,13 @@ class
     LedgerView proto ->
     ShelleyProtocolHeader proto ->
     Except (EnvelopeCheckError proto) ()
+
+-- | The 'pHeaderLeiosContainsCert' for protocols/headers without Leios support:
+-- a header that cannot carry a Leios certificate never claims to. Instances
+-- that have no Leios support should define
+-- @'pHeaderLeiosContainsCert' = 'default_pHeaderLeiosContainsCert'@ explicitly.
+default_pHeaderLeiosContainsCert :: ShelleyProtocolHeader proto -> Bool
+default_pHeaderLeiosContainsCert = const False
 
 -- | `ProtocolHeaderSupportsKES` describes functionality common to protocols
 --    using key evolving signature schemes. This includes verifying the header
@@ -167,6 +182,11 @@ class ProtocolHeaderSupportsKES proto where
     ProtVer ->
     -- | Optional Leios EB announcement. Only used by Praos.
     Maybe EbAnnouncement ->
+    -- | Whether this block's body carries a Leios certificate (i.e. it is a
+    -- "CertRB"). Only used by Praos, where it is recorded in the header
+    -- ('hbLeiosContainsCert') so a CertRB is recognisable from its header
+    -- alone and the header/body envelope can be checked.
+    Bool ->
     m (ShelleyProtocolHeader proto)
 
   -- | Extract the most recently announced (and not yet certified) Leios EB

@@ -108,7 +108,6 @@ library
     LeiosDemoOnlyTestFetch
     LeiosDemoOnlyTestNotify
     LeiosDemoTypes
-    LeiosStagingArea
     LeiosVoteState
     LeiosVoting
     Ouroboros.Consensus.Block
@@ -720,6 +719,7 @@ test-suite consensus-test
     Test.Consensus.Util.Pred
     Test.Consensus.Util.Versioned
     Test.LeiosDemoDb
+    Test.LeiosDemoLogic
     Test.LeiosDemoTypes
     Test.LeiosVoteState
 
@@ -743,6 +743,7 @@ test-suite consensus-test
     deepseq,
     diff-containers,
     directory,
+    dlist,
     file-embed,
     filepath,
     fingertree-rm,
