@@ -187,6 +187,9 @@ data PeerOfferings =  -- §2 LstPeerOfferings (offer levels; per-election ChainS
         (Election :-> ChainSyncSide)
   deriving (Eq, Show)
 
+-- TODO as a simpler starting point, replace EbHashMap a with Map Election a
+-- Check the stVolatileDb to avoid fetching an EB body you already have, but don't dedup beyond that.
+-- In particular, Msg*Offer identifies _the election_ instead of the SlotNo-EbHash pair.
 data St = St
   { stFirstAnnouncements     :: !(Election :-> AnnState)                  -- §2 LstFirstAnnouncements
   , stPeerFirstAnnouncements :: !(Peer :-> Election :-> AnnSeen)          -- §2 LstPeerFirstAnnouncements
@@ -263,6 +266,8 @@ belowTip env el = electionSlot el < envImmutableTip env
 data DbKey = DbBody EbHash | DbClosureTx EbHash TxHash  -- §2 dbQueryPresent keys
   deriving (Eq, Ord, Show)
 
+-- TODO as a simpler starting point, don't model this as IO; just specify the entire thing as if it were to live in-memory, like any other piece of Leios state
+-- Use a newtype Disk x = Disk x wrapper to highlight just the data that's too big to actually be in memory.
 data LeiosDb m = LeiosDb                            -- §2 disk store interface
   { dbQueryPresent :: Set DbKey -> m (Set DbKey)    -- BEH-Completion / BEH-FetchServe
   , dbReadBody :: EbHash -> m (Maybe Body)          -- BEH-Completion
@@ -270,6 +275,8 @@ data LeiosDb m = LeiosDb                            -- §2 disk store interface
   , dbReadAllRefs :: m [(Slot, EbHash)]             -- BEH-Startup (first-announced/certified references; reconstruct stVolatile*)
   }
 
+-- TODO as a simpler starting point, don't model this as IO; just specify the entire thing as if it were to live in-memory, like any other piece of Leios state
+-- Use a newtype Disk x = Disk x wrapper to highlight just the data that's too big to actually be in memory.
 data TxCache m = TxCache                            -- §7 TxCache hooks
   { txCacheNoteAnnouncement :: Election -> EbHash -> m ()       -- BEH-Wanting
   , txCacheEvictForValidCert :: Election -> EbHash -> m ()      -- BEH-Wanting
