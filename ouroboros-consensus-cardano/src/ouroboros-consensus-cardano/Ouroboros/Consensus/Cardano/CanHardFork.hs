@@ -12,6 +12,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
+-- TODO: Ledger has a few deprecations that we are ignoring for now
+{-# OPTIONS_GHC -Wno-deprecations #-}
 #if __GLASGOW_HASKELL__ < 908
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
 #endif
@@ -72,7 +74,9 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32
   , IgnoringOverflow
-  , TxMeasure
+  , TrivialTxMeasurePhase2 (..)
+  , TxMeasurePhase1
+  , TxMeasurePhase2
   )
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
@@ -124,7 +128,8 @@ type CardanoHardForkConstraints c =
 --     the calculation of later rewards. In this transition, we consume the
 --     'shelleyToAllegraAVVMsToDelete' as deletions in the ledger tables.
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
-  type HardForkTxMeasure (CardanoEras c) = DijkstraMeasure
+  type HardForkTxMeasurePhase1 (CardanoEras c) = AlonzoMeasure
+  type HardForkTxMeasurePhase2 (CardanoEras c) = RefScriptSize
 
   hardForkEraTranslation =
     EraTranslation
@@ -215,15 +220,15 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
         )
       $ PNil
 
-  hardForkInjTxMeasure =
+  hardForkInjTxMeasurePhase1 =
     fromByteSize
       `o` fromByteSize
       `o` fromByteSize
       `o` fromByteSize
-      `o` fromAlonzo
-      `o` fromAlonzo
-      `o` fromConway
-      `o` fromDijkstra
+      `o` id
+      `o` id
+      `o` id
+      `o` id
       `o` nil
    where
     nil :: SOP.NS f '[] -> a
@@ -231,19 +236,43 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
 
     infixr 9 `o`
     o ::
-      (TxMeasure x -> a) ->
-      (SOP.NS WrapTxMeasure xs -> a) ->
-      SOP.NS WrapTxMeasure (x : xs) ->
+      (TxMeasurePhase1 x -> a) ->
+      (SOP.NS WrapTxMeasurePhase1 xs -> a) ->
+      SOP.NS WrapTxMeasurePhase1 (x : xs) ->
       a
     o f g = \case
-      SOP.Z (WrapTxMeasure x) -> f x
+      SOP.Z (WrapTxMeasurePhase1 x) -> f x
       SOP.S y -> g y
 
-    fromByteSize :: IgnoringOverflow ByteSize32 -> DijkstraMeasure
-    fromByteSize x = fromAlonzo $ AlonzoMeasure x mempty
-    fromAlonzo x = fromConway $ ConwayMeasure x mempty
-    fromConway x = fromDijkstra $ DijkstraMeasure x
-    fromDijkstra x = x
+    fromByteSize :: IgnoringOverflow ByteSize32 -> AlonzoMeasure
+    fromByteSize x = AlonzoMeasure x mempty
+
+  hardForkInjTxMeasurePhase2 =
+    fromTrivial
+      `o` fromTrivial
+      `o` fromTrivial
+      `o` fromTrivial
+      `o` fromTrivial
+      `o` fromTrivial
+      `o` id
+      `o` id
+      `o` nil
+   where
+    nil :: SOP.NS f '[] -> a
+    nil = \case {}
+
+    infixr 9 `o`
+    o ::
+      (TxMeasurePhase2 x -> a) ->
+      (SOP.NS WrapTxMeasurePhase2 xs -> a) ->
+      SOP.NS WrapTxMeasurePhase2 (x : xs) ->
+      a
+    o f g = \case
+      SOP.Z (WrapTxMeasurePhase2 x) -> f x
+      SOP.S y -> g y
+
+    fromTrivial :: TrivialTxMeasurePhase2 -> RefScriptSize
+    fromTrivial TrivialTxMeasurePhase2 = mempty
 
 class TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
 instance TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
@@ -395,8 +424,9 @@ crossEraForecastByronToShelleyWrapper =
     | forecastFor < maxFor =
         return $
           WrapLedgerView $
-            SL.mkInitialShelleyLedgerView
-              (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
+            SL.forecastToTPraosLedgerView $
+              SL.mkInitialShelleyForecast
+                (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
     | otherwise =
         throwError $
           OutsideForecastRange

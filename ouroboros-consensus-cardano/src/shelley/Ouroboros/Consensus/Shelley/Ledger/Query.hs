@@ -67,7 +67,6 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import Lens.Micro
-import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Basics
@@ -429,7 +428,7 @@ instance
         mkSerialised (encodeShelleyResult maxBound query') $
           answerPureBlockQuery cfg query' ext
       GetFilteredDelegationsAndRewardAccounts creds ->
-        getFilteredDelegationsAndRewardAccounts st creds
+        SL.queryStakePoolDelegsAndRewards st creds
       GetGenesisConfig ->
         shelleyLedgerCompactGenesis lcfg
       DebugNewEpochState ->
@@ -451,13 +450,7 @@ instance
       GetPoolDistr mPoolIds ->
         fromLedgerPoolDistr $ answerPureBlockQuery cfg (GetPoolDistr2 mPoolIds) ext
       GetStakeDelegDeposits stakeCreds ->
-        let lookupDeposit =
-              SL.lookupDepositDState (view SL.certDStateL $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
-            lookupInsert acc cred =
-              case lookupDeposit cred of
-                Nothing -> acc
-                Just deposit -> Map.insert cred deposit acc
-         in Set.foldl' lookupInsert Map.empty stakeCreds
+        SL.queryAccountsDeposits st stakeCreds
       GetConstitution ->
         SL.queryConstitution st
       GetGovState ->
@@ -469,7 +462,7 @@ instance
       GetCommitteeMembersState coldCreds hotCreds statuses ->
         SL.queryCommitteeMembersState coldCreds hotCreds statuses st
       GetFilteredVoteDelegatees stakeCreds ->
-        getFilteredVoteDelegatees st stakeCreds
+        SL.queryDRepDelegatees st stakeCreds
       GetAccountState ->
         SL.queryChainAccountState st
       GetSPOStakeDistr keys ->
@@ -516,8 +509,7 @@ instance
       QueryStakePoolDefaultVote stakePool ->
         SL.queryStakePoolDefaultVote st stakePool
       GetPoolDistr2 mPoolIds ->
-        let stakeSet = SL.ssStakeSet . SL.esSnapshots $ getEpochState st
-         in SL.calculatePoolDistr' (maybe (const True) (flip Set.member) mPoolIds) stakeSet
+        SL.querySetSnapshotStakePoolDistr st (maybe Set.empty id mPoolIds)
       GetStakeDistribution2 ->
         SL.poolsByTotalStakeFraction globals st
       GetMaxMajorProtocolVersion ->
@@ -820,30 +812,6 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
 getEpochState :: SL.NewEpochState era -> SL.EpochState era
 getEpochState = SL.nesEs
 
-getDState :: SL.EraCertState era => SL.NewEpochState era -> SL.DState era
-getDState = view SL.certDStateL . SL.lsCertState . SL.esLState . SL.nesEs
-
-getFilteredDelegationsAndRewardAccounts ::
-  SL.EraCertState era =>
-  SL.NewEpochState era ->
-  Set (SL.Credential SL.Staking) ->
-  (Delegations, Map (SL.Credential SL.Staking) Coin)
-getFilteredDelegationsAndRewardAccounts = SL.queryStakePoolDelegsAndRewards
-
-getFilteredVoteDelegatees ::
-  (SL.EraCertState era, CG.ConwayEraAccounts era) =>
-  SL.NewEpochState era ->
-  Set (SL.Credential SL.Staking) ->
-  VoteDelegatees
-getFilteredVoteDelegatees ss creds
-  | Set.null creds =
-      Map.mapMaybe (^. CG.dRepDelegationAccountStateL) accountsMap
-  | otherwise =
-      Map.mapMaybe (^. CG.dRepDelegationAccountStateL) accountsMapRestricted
- where
-  accountsMap = getDState ss ^. SL.accountsL . SL.accountsMapL
-  accountsMapRestricted = Map.restrictKeys accountsMap creds
-
 {-------------------------------------------------------------------------------
   Serialisation
 -------------------------------------------------------------------------------}
@@ -1072,7 +1040,7 @@ encodeShelleyResult v query = case query of
   GetRatifyState{} -> LC.toEraCBOR @era
   GetFuturePParams{} -> LC.toEraCBOR @era
   GetLedgerPeerSnapshot'{} -> encodeLedgerPeerSnapshot (ledgerPeerSnapshotSupportsSRV v)
-  QueryStakePoolDefaultVote{} -> toCBOR
+  QueryStakePoolDefaultVote{} -> LC.toEraCBOR @era
   GetPoolDistr2{} -> LC.toEraCBOR @era
   GetStakeDistribution2{} -> LC.toEraCBOR @era
   GetMaxMajorProtocolVersion -> toCBOR
@@ -1121,7 +1089,7 @@ decodeShelleyResult v query = case query of
   GetRatifyState{} -> LC.fromEraCBOR @era
   GetFuturePParams{} -> LC.fromEraCBOR @era
   GetLedgerPeerSnapshot' _ ledgerPeersKind -> decodeLedgerPeerSnapshot ledgerPeersKind
-  QueryStakePoolDefaultVote{} -> fromCBOR
+  QueryStakePoolDefaultVote{} -> LC.fromEraCBOR @era
   GetPoolDistr2{} -> LC.fromEraCBOR @era
   GetStakeDistribution2 -> LC.fromEraCBOR @era
   GetMaxMajorProtocolVersion -> fromCBOR

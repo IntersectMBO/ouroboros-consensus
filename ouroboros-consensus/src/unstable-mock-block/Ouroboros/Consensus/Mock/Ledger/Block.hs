@@ -113,6 +113,7 @@ import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
+import Ouroboros.Network.Tx (HasRawTxId (..))
 import Test.Util.Orphans.Serialise ()
 
 {-------------------------------------------------------------------------------
@@ -625,7 +626,8 @@ instance
   mkMempoolApplyTxError _tls txt = Just $ MockMempoolError txt
 
 instance TxLimits (SimpleBlock c ext) where
-  type TxMeasure (SimpleBlock c ext) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase1 (SimpleBlock c ext) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 (SimpleBlock c ext) = TrivialTxMeasurePhase2
 
   txWireSize = fromIntegral . unByteSize32 . genTxSize
 
@@ -633,12 +635,14 @@ instance TxLimits (SimpleBlock c ext) where
   -- don't override it.
   --
   -- But not 'maxbound'!, since the mempool sometimes holds multiple blocks worth.
-  blockCapacityTxMeasure _cfg _st = IgnoringOverflow simpleBlockCapacity
+  blockCapacityTxMeasure _cfg _st = TxMeasure (IgnoringOverflow simpleBlockCapacity) TrivialTxMeasurePhase2
 
-  txMeasure cfg _st =
+  txMeasurePhase1 cfg _st =
     fmap IgnoringOverflow
       . checkTxSize (simpleLedgerMockConfig cfg)
       . simpleGenTx
+
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
 
 simpleBlockCapacity :: ByteSize32
 simpleBlockCapacity = ByteSize32 512
@@ -655,6 +659,10 @@ instance
 
 instance HasTxId (GenTx (SimpleBlock c ext)) where
   txId = SimpleGenTxId . simpleGenTxId
+
+instance HasRawTxId (TxId (GenTx (SimpleBlock c ext))) where
+  type RawTxId (TxId (GenTx (SimpleBlock c ext))) = Mock.TxId
+  getRawTxId = unSimpleGenTxId
 
 instance (Typeable p, Typeable c) => NoThunks (GenTx (SimpleBlock p c)) where
   showTypeOf _ = show $ typeRep (Proxy @(GenTx (SimpleBlock p c)))

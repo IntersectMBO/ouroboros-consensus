@@ -28,8 +28,8 @@ import Cardano.Slotting.Slot
 import Control.Arrow (second)
 import Control.Concurrent.Class.MonadSTM.Strict.TChan
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import Control.Monad.Except (runExcept)
-import qualified Control.Tracer as CT (Tracer (..), traceWith)
+import Control.Monad.Except (Except, runExcept)
+import qualified Control.Tracer as CT (Tracer, mkTracer, traceWith)
 import qualified Data.Foldable as Foldable
 import Data.Function (on)
 import qualified Data.Map.Strict as Map
@@ -442,7 +442,7 @@ foldTxs cfg nextTk capacity initialFilled initialState =
     let slot = case getTipSlot st of
           Origin -> minimumPossibleSlotNo (Proxy @blk)
           At v -> v + 1
-     in case runExcept $ (,) <$> txMeasure cfg st tx <*> applyTx cfg DoNotIntervene slot tx st of
+     in case runExcept $ (,) <$> txMeasureFull cfg st tx <*> applyTx cfg DoNotIntervene slot tx st of
           Left{} ->
             go
               ( acc
@@ -473,6 +473,17 @@ foldTxs cfg nextTk capacity initialFilled initialState =
                   , st
                   )
                   next
+
+txMeasureFull ::
+  LedgerSupportsMempool blk =>
+  LedgerConfig blk ->
+  TickedLedgerState blk ValuesMK ->
+  GenTx blk ->
+  Except (ApplyTxErr blk) (TxMeasure blk)
+txMeasureFull cfg st tx =
+  TxMeasure
+    <$> txMeasurePhase1 cfg (forgetLedgerTables st) tx
+    <*> txMeasurePhase2 cfg st tx
 
 tick ::
   ( ValidateEnvelope blk
@@ -570,16 +581,16 @@ mkSUT cfg initialLedger = do
   (lif, t) <- newLedgerInterface initialLedger
   trcrChan <- atomically newTChan :: m (StrictTChan m (Either String (TraceEventMempool blk)))
   let trcr =
-        CT.Tracer $ -- Dbg.traceShowM @(Either String (TraceEventMempool blk))
+        CT.mkTracer $ -- Dbg.traceShowM @(Either String (TraceEventMempool blk))
           atomically . writeTChan trcrChan
   mempool <-
     openMempoolWithoutSyncThread
       lif
       cfg
-      (MempoolCapacityBytesOverride $ unIgnoringOverflow txMaxBytes')
+      (MempoolCapacityBytesOverride $ unIgnoringOverflow $ tmPhase1 txMaxBytes')
       (Nothing :: Maybe MempoolTimeoutConfig)
-      (CT.Tracer $ CT.traceWith trcr . Right)
-  pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left)
+      (CT.mkTracer $ CT.traceWith trcr . Right)
+  pure (SUT mempool t, CT.mkTracer $ atomically . writeTChan trcrChan . Left)
 
 semantics ::
   ( LedgerSupportsMempool blk
@@ -822,8 +833,8 @@ tests =
 -- | The 'TestBlock' txMaxBytes is fixed to a very high number. We use this
 -- local declaration to have a mempool that sometimes fill but still don't make
 -- it configurable.
-txMaxBytes' :: IgnoringOverflow ByteSize32
-txMaxBytes' = IgnoringOverflow $ ByteSize32 maxBound
+txMaxBytes' :: TxMeasure TestBlock
+txMaxBytes' = TxMeasure (IgnoringOverflow $ ByteSize32 maxBound) TrivialTxMeasurePhase2
 
 instance
   (StandardHash blk, GetTip (LedgerState blk)) =>
