@@ -32,6 +32,7 @@ import Data.SOP.Match
 import Data.SOP.Strict
 import qualified Data.Text as Text
 import Data.Void
+import GHC.TypeNats (KnownNat)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HardFork.Combinator.Info
@@ -67,6 +68,9 @@ class
   , HasPartialConsensusConfig (BlockProtocol blk)
   , HasPartialLedgerConfig blk
   , ConvertRawHash blk
+  , -- All eras must agree on the size of header hashes; see 'CanHardFork' for
+    -- how this is exploited to give 'HardForkBlock' a 'ConvertRawHash' instance.
+    KnownNat (HashSize blk)
   , ReconstructNestedCtxt Header blk
   , CommonProtocolParams blk
   , LedgerSupportsPeerSelection blk

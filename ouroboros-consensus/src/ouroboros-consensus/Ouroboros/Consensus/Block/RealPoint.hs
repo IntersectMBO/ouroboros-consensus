@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -7,6 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Block.RealPoint
@@ -39,7 +41,6 @@ import Cardano.Binary (enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise (decode, encode)
-import Control.Exception (assert)
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as ByteString
 import Data.Coerce
@@ -49,6 +50,7 @@ import GHC.Generics
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Util.Condense
+import Ouroboros.Consensus.Util.RedundantConstraints
 
 {-------------------------------------------------------------------------------
   Non-genesis point
@@ -170,18 +172,23 @@ decodeBytes32RealPoint = do
 
 fromBytes32RealPoint ::
   forall blk.
-  ConvertRawHash blk =>
+  (ConvertRawHash blk, HashSize blk ~ 32) =>
   Bytes32RealPoint ->
   RealPoint blk
 fromBytes32RealPoint (Bytes32RealPoint s h) =
-  RealPoint s (fromShortRawHash (Proxy @blk) h)
+  RealPoint s (unsafeFromShortRawHash (Proxy @blk) h)
+ where
+  -- This constraint ensures we are allowed to call 'unsafeFromShortRawHash'.
+  _ = keepRedundantConstraint (Proxy @(HashSize blk ~ 32))
 
 toBytes32RealPoint ::
   forall blk.
-  ConvertRawHash blk =>
+  (ConvertRawHash blk, HashSize blk ~ 32) =>
   RealPoint blk ->
   Bytes32RealPoint
 toBytes32RealPoint (RealPoint s h) =
-  assert (hashSize (Proxy @blk) == 32) $
-    assert (ByteString.length (toShortRawHash (Proxy @blk) h) == 32) $
-      Bytes32RealPoint s (toShortRawHash (Proxy @blk) h)
+  Bytes32RealPoint s (toShortRawHash (Proxy @blk) h)
+ where
+  -- This constraint ensures the hash we are wrapping in 'Bytes32RealPoint' is
+  -- indeed 32 bytes long.
+  _ = keepRedundantConstraint (Proxy @(HashSize blk ~ 32))

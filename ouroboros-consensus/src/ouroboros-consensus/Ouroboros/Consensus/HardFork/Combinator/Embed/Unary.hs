@@ -199,7 +199,12 @@ instance Isomorphic WrapHeaderHash where
     WrapHeaderHash (HardForkBlock '[blk]) -> WrapHeaderHash blk
   project =
     WrapHeaderHash
-      . fromShortRawHash (Proxy @blk)
+      -- The input is the header hash of @HardForkBlock '[blk]@, i.e. an
+      -- @OneEraHash '[blk]@ wrapping the raw bytes of @blk@'s header hash. Since
+      -- @HashSize (HardForkBlock '[blk]) ~ HashSize blk@ (see the
+      -- 'ConvertRawHash' instance for 'HardForkBlock'), these bytes are always
+      -- exactly @hashSize blk@ long, so 'unsafeFromShortRawHash' cannot fail.
+      . unsafeFromShortRawHash (Proxy @blk)
       . getOneEraHash
       . unwrapHeaderHash
 

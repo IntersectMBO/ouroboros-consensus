@@ -35,7 +35,6 @@ import Data.SOP.Index
 import qualified Data.SOP.Match as Match
 import Data.SOP.Strict
 import Data.Typeable (Typeable)
-import Data.Word
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -173,15 +172,12 @@ instance CanHardFork xs => HasNestedContent Header (HardForkBlock xs) where
 -------------------------------------------------------------------------------}
 
 instance CanHardFork xs => ConvertRawHash (HardForkBlock xs) where
+  -- All eras share the same hash size; 'CanHardFork' enforces this statically
+  -- via @'All' ('EqualHashSizeOfHead' xs) xs@, so we can represent the common
+  -- size at the type level by that of the first era ('HashSizeOfHead').
+  type HashSize (HardForkBlock xs) = HashSizeOfHead xs
   toShortRawHash _ = getOneEraHash
-  fromShortRawHash _ = OneEraHash
-  hashSize _ = getSameValue hashSizes
-   where
-    hashSizes :: NP (K Word32) xs
-    hashSizes = hcpure proxySingle hashSizeOne
-
-    hashSizeOne :: forall blk. SingleEraBlock blk => K Word32 blk
-    hashSizeOne = K $ hashSize (Proxy @blk)
+  unsafeFromShortRawHash _ = OneEraHash
 
 {-------------------------------------------------------------------------------
   HasAnnTip

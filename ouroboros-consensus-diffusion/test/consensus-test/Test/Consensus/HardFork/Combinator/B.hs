@@ -366,9 +366,10 @@ instance SameDepIndex2 (BlockQuery BlockB) where
   sameDepIndex2 qry _qry' = case qry of {}
 
 instance ConvertRawHash BlockB where
+  -- We use the 'SlotNo' as the hash, which is 'Word64'
+  type HashSize BlockB = 8
   toRawHash _ = id
-  fromRawHash _ = id
-  hashSize _ = 8 -- We use the SlotNo as the hash, which is Word64
+  unsafeFromRawHash _ = id
 
 data instance NestedCtxt_ BlockB f a where
   CtxtB :: NestedCtxt_ BlockB f (f BlockB)

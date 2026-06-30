@@ -86,6 +86,7 @@ import Data.Proxy
 import Data.Typeable
 import Data.Word
 import GHC.Generics (Generic)
+import GHC.TypeLits (KnownNat)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -284,10 +285,13 @@ instance
   (SimpleCrypto c, Typeable ext, Typeable ext') =>
   StandardHash (SimpleBlock' c ext ext')
 
-instance SimpleCrypto c => ConvertRawHash (SimpleBlock' c ext ext') where
+instance
+  (KnownNat (Hash.HashSize (SimpleHash c)), SimpleCrypto c) =>
+  ConvertRawHash (SimpleBlock' c ext ext')
+  where
+  type HashSize (SimpleBlock' c ext ext') = Hash.HashSize (SimpleHash c)
   toShortRawHash _ = Hash.hashToBytesShort
-  fromShortRawHash _ = hashFromBytesShortE
-  hashSize _ = fromIntegral $ Hash.hashSize (Proxy @(SimpleHash c))
+  unsafeFromShortRawHash _ = hashFromBytesShortE
 
 {-------------------------------------------------------------------------------
   HasMockTxs instance

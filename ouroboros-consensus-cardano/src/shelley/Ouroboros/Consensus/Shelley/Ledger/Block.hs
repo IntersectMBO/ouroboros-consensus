@@ -130,9 +130,11 @@ class
   ShelleyCompatible proto era
 
 instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) where
+  -- 'HASH' is currently 'Blake2b_256', whose digest is 256 bits, i.e. 32 bytes,
+  -- so this resolves to 32.
+  type HashSize (ShelleyBlock proto era) = Crypto.HashSize HASH
   toShortRawHash _ = Crypto.hashToBytesShort . unShelleyHash
-  fromShortRawHash _ = ShelleyHash . hashFromBytesShortE
-  hashSize _ = fromIntegral $ Crypto.hashSize (Proxy @HASH)
+  unsafeFromShortRawHash _ = ShelleyHash . hashFromBytesShortE
 
 {-------------------------------------------------------------------------------
   Shelley blocks and headers

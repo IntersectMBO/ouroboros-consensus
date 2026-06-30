@@ -1374,7 +1374,6 @@ library cardano
     cborg,
     containers,
     contra-tracer,
-    crypton,
     deepseq,
     formatting >=6.3 && <7.3,
     measures,

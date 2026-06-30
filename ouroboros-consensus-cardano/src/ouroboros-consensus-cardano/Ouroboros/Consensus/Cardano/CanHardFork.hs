@@ -258,9 +258,18 @@ translateHeaderHashByronToShelley ::
   Proxy c ->
   HeaderHash ByronBlock ->
   HeaderHash (ShelleyBlock (TPraos c) ShelleyEra)
-translateHeaderHashByronToShelley _ =
-  fromShortRawHash (Proxy @(ShelleyBlock (TPraos c) ShelleyEra))
-    . toShortRawHash (Proxy @ByronBlock)
+translateHeaderHashByronToShelley _ h =
+  case sameSizeSafety of
+    Refl ->
+      unsafeFromShortRawHash (Proxy @(ShelleyBlock (TPraos c) ShelleyEra)) $
+        toShortRawHash (Proxy @ByronBlock) h
+ where
+  -- Calling 'unsafeFromShortRawHash' is only valid if the raw bytes of a Byron
+  -- header hash are also a valid Shelley header hash, i.e. both hashes have the
+  -- same size. This holds because both are 32-byte Blake2b_256 digests; we
+  -- assert it here so that any future divergence is caught at compile time.
+  sameSizeSafety :: HashSize ByronBlock :~: HashSize (ShelleyBlock (TPraos c) ShelleyEra)
+  sameSizeSafety = Refl
 
 translatePointByronToShelley ::
   forall c.
