@@ -63,10 +63,12 @@ import qualified Data.ByteString.Builder as BS
 import Data.ByteString.Char8 (readInt)
 import qualified Data.Foldable as Foldable
 import Data.Functor.Contravariant ((>$<))
+import qualified Data.List as L
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.MemPack
+import qualified Data.Primitive as P
 import qualified Data.Primitive.ByteArray as PBA
 import qualified Data.Set as Set
 import Data.String (fromString)
@@ -105,6 +107,7 @@ import System.FS.API
 import System.FS.API.Lazy (hGetAll, hPutAll)
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
+import qualified System.FS.IO as FS
 import System.FilePath
   ( makeRelative
   , splitDirectories
@@ -112,6 +115,7 @@ import System.FilePath
   , takeDirectory
   , takeFileName
   )
+import qualified System.FilePath as F
 import System.Random
 import Prelude hiding (read)
 
@@ -909,13 +913,15 @@ mkExportedLSMYieldArgs ::
   DiskSnapshot ->
   -- | Usually 'stdMkBlockIOFS'
   (FilePath -> WithTempRegistry () m (SomeHasFSAndBlockIO m)) ->
+  -- | Usually 'ioHasFS'
+  (FilePath -> SomeHasFS m) ->
   -- | Usually 'newStdGen'
   (m StdGen) ->
   m (YieldArgs m LSM l blk)
-mkExportedLSMYieldArgs exportDir ds mkFS mkGen = do
+mkExportedLSMYieldArgs exportDir ds mkFSBIO mkFS mkGen = do
   shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <-
-    runWithTempRegistry $ (\x -> (x, ())) <$> mkFS (takeDirectory exportDir)
-  nonce <- fst . genWord64 <$> mkGen
+    runWithTempRegistry $ (\x -> (x, ())) <$> mkFSBIO (takeDirectory exportDir)
+  nonce <- hACK_GET_SALT_FROM_BLOOMFILTER mkGen $ mkFS exportDir
   let scratch = scratchSessionPath nonce
   freshDirectory hasFS scratch
   let snapName = LSM.toSnapshotName (snapshotToDirName ds)
@@ -1018,7 +1024,8 @@ lsmDbImportSnapshot dbPath snapName srcDir =
     sessionDir <- toRootFsPath dbPath
     srcFs <- toRootFsPath srcDir
     createDirectoryIfMissing hasFS True sessionDir
-    salt <- fst . genWord64 <$> newStdGen
+    salt <- hACK_GET_SALT_FROM_BLOOMFILTER newStdGen $ SomeHasFS $ FS.ioHasFS $ MountPoint srcDir
+
     bracket
       ( LSM.newSession
           nullTracer
@@ -1029,6 +1036,41 @@ lsmDbImportSnapshot dbPath snapName srcDir =
       )
       LSM.closeSession
       (\s -> LSM.importSnapshot s (LSM.toSnapshotName snapName) srcFs)
+
+-- HACK: while we wait for https://github.com/IntersectMBO/lsm-tree/pull/855
+--
+-- Read the salt from one of the bloomfilter files in the snapshot.
+hACK_GET_SALT_FROM_BLOOMFILTER ::
+  forall m.
+  IOLike m =>
+  -- | To generate a salt if we don't get it from an existing bloom filter
+  m StdGen ->
+  -- | A FS anchored at the exported LSM snapshot.
+  SomeHasFS m ->
+  m Salt
+hACK_GET_SALT_FROM_BLOOMFILTER gen (SomeHasFS fs) = do
+  files <- listDirectory fs (mkFsPath [])
+  case L.find ((".filter" ==) . F.takeExtension) files of
+    Just f ->
+      withFile fs (mkFsPath [f]) ReadMode $ \h -> do
+        -- We read exactly 24 bytes
+        header <- hGetByteArrayExactly fs h 24
+        -- We then read the 3rd Word64 from those bytes, which happens to be the
+        -- Salt of the filter.
+        --
+        -- Can be inspected in Bash with:
+        --
+        -- @
+        -- echo "ibase=16; $(hexdump -s 16 -n 8 -e '1/8 "%X"' path/to/nnn.filter)" | bc
+        -- @
+        pure $ P.indexByteArray header 2 :: m LSM.Salt
+    Nothing ->
+      fst . genWord64 <$> gen
+ where
+  hGetByteArrayExactly hfs h len = do
+    buf <- P.newByteArray len
+    _ <- hGetBufExactly hfs h buf 0 (fromIntegral len)
+    P.unsafeFreezeByteArray buf
 
 -- | Mount the filesystem at the root, run an action with the resulting handles,
 -- and close the underlying block IO afterwards.
