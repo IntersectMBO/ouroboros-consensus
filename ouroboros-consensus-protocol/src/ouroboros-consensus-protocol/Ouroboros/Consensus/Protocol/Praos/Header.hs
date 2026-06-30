@@ -109,11 +109,14 @@ data HeaderBody crypto = HeaderBody
   -- ^ operational certificate
   , hbProtVer :: !ProtVer
   -- ^ protocol version
-  , hbLeiosEbAnnouncement :: !(StrictMaybe EbAnnouncement)
-  -- ^ Optional Leios endorser-block announcement (Dijkstra-only;
-  -- 'SNothing' on earlier eras). Placed on the Praos header for
-  -- early-diffusion of EB references before the body arrives.
-  , hbLeiosContainsCert :: !Bool
+  , hbLeiosExtension :: Maybe LeiosHeaderExtension
+  -- ^ Whether the protocol header is extended with Leios features
+  }
+  deriving Generic
+
+data LeiosHeaderExtension
+  = LeiosHeaderExtension
+  { hbLeiosContainsCert :: !Bool
   -- ^ Whether this block's body carries a Leios certificate (i.e. it is a
   -- "CertRB", certifying the endorser block its predecessor announced).
   -- Dijkstra-only ('False' on earlier eras). Placed on the header so that a
@@ -121,8 +124,11 @@ data HeaderBody crypto = HeaderBody
   -- arrives) and so the header/body envelope can be checked. Must agree with
   -- the body: 'True' iff the body has exactly one cert and zero txs (enforced
   -- by 'blockMatchesHeader').
+  , hbLeiosEbAnnouncement :: !(StrictMaybe EbAnnouncement)
+  -- ^ Optional Leios endorser-block announcement (Dijkstra-only;
+  -- 'SNothing' on earlier eras). Placed on the Praos header for
+  -- early-diffusion of EB references before the body arrives.
   }
-  deriving Generic
 
 deriving instance Crypto crypto => Show (HeaderBody crypto)
 
