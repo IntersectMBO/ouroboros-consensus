@@ -15,11 +15,13 @@ module Test.ThreadNet.Leios (tests) where
 import qualified Cardano.Chain.Update as Byron
 import Cardano.Ledger.Api
   ( Addr (..)
+  , AllegraEraTxBody (vldtTxBodyL)
   , DijkstraEra
   , EraTx
   , PParams
   , Tx
   , TxOut
+  , ValidityInterval (ValidityInterval)
   , addrTxOutL
   , bodyTxL
   , eraProtVerLow
@@ -77,14 +79,8 @@ import LeiosDemoTypes
   , hashLeiosEb
   , minCertificationGap
   )
-import Lens.Micro ((%~), (^.))
-import Ouroboros.Consensus.Block
-  ( SlotNo (..)
-  , blockHash
-  , blockSlot
-  , getHeader
-  , toRawHash
-  )
+import Lens.Micro ((%~), (.~), (^.))
+import Ouroboros.Consensus.Block (SlotNo (..), blockHash, blockSlot, getHeader, toRawHash)
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
   , Nonce (NeutralNonce)
@@ -218,7 +214,8 @@ prop_leios seed =
     , propConsistentChains
         & counterexample "[failed] propConsistentChains"
     , ( certificationGapIsCorrect
-          .||. length certificateBlocks <= 1
+          .||. length certificateBlocks
+          <= 1
       )
         & counterexample "[failed] certificationGap"
     , propVoting
@@ -288,7 +285,8 @@ prop_leios seed =
           & counterexample "not voted on all acquired EBs"
           & prettyCounterexampleList "acquired EB RB hashes" 120 acquiredRbHashes
           & prettyCounterexampleList "voted on RB hashes" 120 votedAnnouncingRbHashes
-      , ( Map.keysSet acquiredVotes === votedAnnouncingRbHashes
+      , ( Map.keysSet acquiredVotes
+            === votedAnnouncingRbHashes
             .&&. all (\voters -> length voters == numNodes) acquiredVotes
         )
           & counterexample "created votes not diffused"
@@ -611,7 +609,7 @@ foldWithResolution leiosDb cfg blks initState =
           closureTxs <- resolveLeiosClosure leiosDb point blk
           let ls = ledgerState state
               lcfg = configLedger (getExtLedgerCfg cfg)
-          case applyLeiosClosure lcfg (blockSlot blk) closureTxs ls of
+          case applyLeiosClosure lcfg closureTxs ls of
             Left err -> error $ "foldWithResolution: applyLeiosClosure failed: " <> show err
             Right ls' -> pure state{ledgerState = ls'}
     pure $
@@ -753,7 +751,7 @@ newtype TxPerSecond = TPS Word64
 
 -- | Generate a constant load of transactions per second over all nodes.
 constantLoadTxs ::
-  EraTx era =>
+  (EraTx era, AllegraEraTxBody era) =>
   NumCoreNodes ->
   TxPerSecond ->
   SlotNo ->
@@ -770,7 +768,11 @@ constantLoadTxs (NumCoreNodes n) (TPS txPerSecond) slot cn pparams utxo
   -- stochastic expected time between blocks.
   | shouldSubmit =
       take (fromIntegral $ txPerSecondPerNode * expectedBlockTime) $
-        infiniteRespendTxs cn pparams utxo
+        infiniteRespendTxs
+          cn
+          pparams
+          utxo
+          (ValidityInterval (SJust slot) (SJust (slot + 10)))
   | otherwise = []
  where
   shouldSubmit = unSlotNo slot `mod` expectedBlockTime == 0
@@ -782,18 +784,19 @@ constantLoadTxs (NumCoreNodes n) (TPS txPerSecond) slot cn pparams utxo
 -- | Generates an infinite list of transactions that respend the first output
 -- owned by given 'CoreNode' (delegate key interpreted as payment key).
 infiniteRespendTxs ::
-  EraTx era =>
+  (EraTx era, AllegraEraTxBody era) =>
   CoreNode StandardCrypto ->
   PParams era ->
   Map TxIn (TxOut era) ->
+  ValidityInterval ->
   [Tx TopTx era]
-infiniteRespendTxs coreNode pparams utxo =
+infiniteRespendTxs coreNode pparams utxo vi =
   case Map.toList myUtxo of
     [] -> []
     (txIn, txOut) : _ ->
       let tx = respendTx txIn txOut
           utxo' = Map.delete txIn utxo <> utxoOfTx tx
-       in tx : infiniteRespendTxs coreNode pparams utxo'
+       in tx : infiniteRespendTxs coreNode pparams utxo' vi
  where
   myUtxo = Map.filter (ownedBy paymentSK) utxo
 
@@ -807,6 +810,7 @@ infiniteRespendTxs coreNode pparams utxo =
       mkBasicTx mkBasicTxBody
         & bodyTxL . inputsTxBodyL %~ Set.insert txIn
         & bodyTxL . outputsTxBodyL %~ (|> mkBasicTxOut (txOut ^. addrTxOutL) (txOut ^. valueTxOutL))
+        & bodyTxL . vldtTxBodyL .~ vi
         -- NOTE: Fees are zero in thread net
         -- & bodyTxL . feeTxBodyL .~ feeCoin
         & signTx paymentSK
