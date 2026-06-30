@@ -1,4 +1,4 @@
-{ inputs, pkgs, hsPkgs, withHls ? true }:
+{ inputs, pkgs, hsPkgs }:
 
 let
   inherit (pkgs) lib;
@@ -12,27 +12,18 @@ hsPkgs.shellFor {
     pkgs.dos2unix
     pkgs.cabal-gild
     pkgs.hlint
-    pkgs.cabal-hoogle
     pkgs.ghcid
-    pkgs.xrefcheck
     pkgs.fourmolu
     pkgs.cuddle
     pkgs.cddlc
     pkgs.pretty-simple
-
-    # release management
-    # WARNING: scriv tests are disabled in this Nix build.
-    # Scriv's test suite is incompatible with Click 8.2+ due to removed `mix_stderr` parameter:
-    # https://github.com/psf/black/pull/4577
-    # https://github.com/pallets/click/pull/2844
-    # This is a temporary workaround. TODO: Re-enable tests when scriv is updated.
-    (pkgs.scriv.overridePythonAttrs (old: { doCheck = false; }))
+    pkgs.scriv
     (pkgs.python3.withPackages (p: [ p.beautifulsoup4 p.html5lib p.matplotlib p.pandas ]))
   ];
 
   # This is the place for tools that are required to be built with the same GHC
   # version as used in hsPkgs.
-  tools = lib.optionalAttrs withHls {
+  tools = {
     haskell-language-server = {
       src = inputs.hls;
       configureArgs = "--disable-benchmarks --disable-tests";

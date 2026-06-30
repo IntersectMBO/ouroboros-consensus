@@ -41,6 +41,7 @@ module Ouroboros.Consensus.Committee.WFALS
   ) where
 
 import Cardano.Ledger.BaseTypes (NonZero (..), Nonce, nonZero)
+import Control.Exception (assert)
 import Control.Monad (void)
 import Control.Monad.Zip (MonadZip (..))
 import qualified Data.Array as Array
@@ -438,19 +439,28 @@ implForgeCert ::
   Either
     (VotingCommitteeError crypto WFALS)
     (Cert crypto WFALS)
-implForgeCert votes = do
-  aggSig <-
-    bimap CryptoError id $
-      aggregateVoteSignatures
-        (Proxy @crypto)
-        voteSignatures
-  pure $
-    WFALSCert
-      (getElectionIdFromVotes votes)
-      (getVoteCandidateFromVotes votes)
-      (NEMap.fromAscList voters)
-      aggSig
+implForgeCert votes =
+  assert allUniqueVoterSeats $ do
+    aggSig <-
+      bimap CryptoError id $
+        aggregateVoteSignatures
+          (Proxy @crypto)
+          voteSignatures
+    pure $
+      WFALSCert
+        (getElectionIdFromVotes votes)
+        (getVoteCandidateFromVotes votes)
+        voterMap
+        aggSig
  where
+  -- We want to fail fast in case if the number of votes is not the same
+  -- as voters representation in WFALSCert. This assumption may be
+  -- violated in case if implementation uses incorrect ordering function
+  -- in the `ensureUniqueVotesWithSameTarget`
+  allUniqueVoterSeats =
+    NEMap.size voterMap == length voters
+      && NEMap.size voterMap == length voteSignatures
+  voterMap = NEMap.fromAscList voters
   (voters, voteSignatures) =
     munzip $ flip fmap votesInAscendingSeatIndexOrder $ \case
       WFALSPersistentVote seatIndex _ _ sig ->

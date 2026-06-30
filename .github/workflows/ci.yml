@@ -66,7 +66,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.6.7", "9.10.3", "9.12.2", "9.14.1"]
+        ghc: ["9.6.7", "9.10.3", "9.12.4", "9.14.1"]
         variant: [default, no-thunks]
         test-set: [all, no-thunks-safe]
         exclude:
@@ -81,7 +81,7 @@ jobs:
       CABAL: "3.16.1.0"
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Check CDDLs up-to-date with Blueprints
       continue-on-error: true
@@ -141,7 +141,7 @@ jobs:
     # Otherwise, we could restore a cache from a previous month, which makes
     # caches grow unboundedly.
     - name: "Restore cache for cabal-store"
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@v6
       id: restore-cabal-store
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
@@ -161,7 +161,7 @@ jobs:
     #
     # See https://github.com/actions/cache/tree/v3/save#always-save-cache.
     - name: "Save cache for cabal-store"
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@v6
       id: save-cabal-store
       if: steps.build-dependencies.outcome == 'success' && steps.restore-cabal-store.outputs.cache-hit != 'true'
       with:
@@ -178,16 +178,9 @@ jobs:
         bundler-cache: true
 
     - name: Install cddl tools
-      if: matrix.ghc != '9.14.1'
       run: |
         gem install cddlc
-        cabal install cuddle-1.2.0.0 --index-state="2026-02-23T15:03:19Z" --ignore-project
-
-    - name: Install cddl tools (9.14)
-      if: matrix.ghc == '9.14.1'
-      run: |
-        gem install cddlc
-        cabal install cuddle-1.2.0.0 --allow-newer --index-state="2026-02-23T15:03:19Z" --ignore-project
+        cabal install cuddle-1.8.0.0 --allow-newer="cborg:base" --ignore-project
 
     - name: Test
       if: matrix.test-set == 'all'
@@ -247,7 +240,7 @@ jobs:
         ghc: ["9.6.7", "9.10.3"]
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install base libraries
       uses: input-output-hk/actions/base@latest
@@ -279,7 +272,7 @@ jobs:
     # run on the `main` branch. If we run this workflow in the context of a PR,
     # then we will save the same results we just restored.
     - name: Cache benchmark baseline results
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: baseline-mempool-benchmarks.csv
         key:  baseline-mempool-benchmarks-${{ runner.os }}-${{ matrix.ghc }}-${{ github.run_id }}
@@ -327,7 +320,7 @@ jobs:
       run:
         working-directory: ./docs/website
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download haddocks
         uses: actions/download-artifact@v8

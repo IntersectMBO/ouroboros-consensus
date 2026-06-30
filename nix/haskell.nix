@@ -28,12 +28,16 @@ let
         );
       });
   };
+  forAllPackages = cfg: args@{ config, lib, ... }: {
+    options.packages = lib.genAttrs config.package-keys (_:
+      lib.mkOption {
+        type = lib.types.submodule ({ ... }: cfg args);
+      });
+  };
   hsPkgs = haskell-nix.cabalProject {
     src = ouroborosConsensusSrc;
     compiler-nix-name = "ghc967";
     flake.variants = {
-      ghc910 = { compiler-nix-name = lib.mkForce "ghc9103"; };
-      ghc912 = { compiler-nix-name = lib.mkForce "ghc9122"; };
       ghc914 = { compiler-nix-name = lib.mkForce "ghc9141"; };
     };
     inputMap = {
@@ -102,6 +106,16 @@ let
           profilingDetail = "late";
         }];
       };
+      ipe = {
+        compilerSelection = lib.mkForce (p:
+          lib.mapAttrs (_: ghc: ghc.override { enableIPE = true; })
+            p.haskell-nix.compiler);
+        modules = [
+          (forAllPackages ({ ... }: {
+            ghcOptions = [ "-finfo-table-map" "-fdistinct-constructor-tables" ];
+          }))
+        ];
+      };
     };
   };
 in
@@ -131,10 +145,18 @@ in
       final.texliveFull
     ];
 
+    # `cabal-docspec` doesn't use XDG, so we need to trick it with a fake
+    # `$CABAL_DIR`
+    #
+    # `--no-cabal-plan` now parses its arg as a package name (no dots/slashes),
+    # then uses it verbatim as the .cabal path, so we symlink the file under a
+    # dot-free name that doesn't clash with the existing `ouroboros-consensus/`
+    # dir
     buildPhase = ''
       export CABAL_DIR=$(mktemp -d)
       touch $CABAL_DIR/config $out
-      cabal-docspec --no-cabal-plan ouroboros-consensus.cabal
+      ln -s ouroboros-consensus.cabal consensus-docspec
+      cabal-docspec --no-cabal-plan consensus-docspec
     '';
   };
 }

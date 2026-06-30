@@ -148,13 +148,13 @@ pattern ShelleyBasedHardForkNodeToNodeVersionMax =
 
 pattern HardForkSpecificNodeToNodeVersionMax :: HardForkSpecificNodeToNodeVersion
 pattern HardForkSpecificNodeToNodeVersionMax <- ((== maxBound) -> True)
-  where
-    HardForkSpecificNodeToNodeVersionMax = maxBound
+ where
+  HardForkSpecificNodeToNodeVersionMax = maxBound
 
 pattern ShelleyNodeToNodeVersionMax :: ShelleyNodeToNodeVersion
 pattern ShelleyNodeToNodeVersionMax <- ((== maxBound) -> True)
-  where
-    ShelleyNodeToNodeVersionMax = maxBound
+ where
+  ShelleyNodeToNodeVersionMax = maxBound
 
 pattern ShelleyBasedHardForkNodeToClientVersionMax ::
   BlockNodeToClientVersion (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
@@ -168,13 +168,13 @@ pattern ShelleyBasedHardForkNodeToClientVersionMax =
 
 pattern HardForkSpecificNodeToClientVersionMax :: HardForkSpecificNodeToClientVersion
 pattern HardForkSpecificNodeToClientVersionMax <- ((== maxBound) -> True)
-  where
-    HardForkSpecificNodeToClientVersionMax = maxBound
+ where
+  HardForkSpecificNodeToClientVersionMax = maxBound
 
 pattern ShelleyNodeToClientVersionMax :: ShelleyNodeToClientVersion
 pattern ShelleyNodeToClientVersionMax <- ((== maxBound) -> True)
-  where
-    ShelleyNodeToClientVersionMax = maxBound
+ where
+  ShelleyNodeToClientVersionMax = maxBound
 
 {-------------------------------------------------------------------------------
   Consensus instances
