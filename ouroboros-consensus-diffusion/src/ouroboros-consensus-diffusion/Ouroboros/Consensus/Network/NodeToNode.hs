@@ -806,13 +806,13 @@ type ClientApp m addr bytes a =
   NodeToNodeVersion ->
   ExpandedInitiatorContext addr PeerTrustable m ->
   Channel m bytes ->
-  m (a, Maybe (Reception bytes))
+  m (a, Maybe bytes)
 
 type ServerApp m addr bytes a =
   NodeToNodeVersion ->
   ResponderContext addr ->
   Channel m bytes ->
-  m (a, Maybe (Reception bytes))
+  m (a, Maybe bytes)
 
 -- | Applications for the node-to-node protocols
 --
@@ -952,7 +952,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bCS ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bCS))
+    m (NodeToNodeInitiatorResult, Maybe bCS)
   aChainSyncClient
     version
     ExpandedInitiatorContext
@@ -1011,7 +1011,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bCS ->
-    m ((), Maybe (Reception bCS))
+    m ((), Maybe bCS)
   aChainSyncServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "ChainSyncServer"
     bracketWithPrivateRegistry
@@ -1038,7 +1038,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bBF ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bBF))
+    m (NodeToNodeInitiatorResult, Maybe bBF)
   aBlockFetchClient
     version
     ExpandedInitiatorContext
@@ -1071,7 +1071,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bBF ->
-    m ((), Maybe (Reception bBF))
+    m ((), Maybe bBF)
   aBlockFetchServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "BlockFetchServer"
     withRegistry $ \registry ->
@@ -1088,7 +1088,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bTX ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bTX))
+    m (NodeToNodeInitiatorResult, Maybe bTX)
   aTxSubmission2Client
     version
     ExpandedInitiatorContext
@@ -1111,7 +1111,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bTX ->
-    m ((), Maybe (Reception bTX))
+    m ((), Maybe bTX)
   aTxSubmission2Server version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "TxSubmissionServer"
 
@@ -1147,7 +1147,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bKA ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bKA))
+    m (NodeToNodeInitiatorResult, Maybe bKA)
   aKeepAliveClient
     version
     ExpandedInitiatorContext
@@ -1178,7 +1178,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bKA ->
-    m ((), Maybe (Reception bKA))
+    m ((), Maybe bKA)
   aKeepAliveServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "KeepAliveServer"
     runPeerWithLimits
@@ -1194,7 +1194,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bPS ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bPS))
+    m (NodeToNodeInitiatorResult, Maybe bPS)
   aPeerSharingClient
     version
     ExpandedInitiatorContext
@@ -1220,7 +1220,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bPS ->
-    m ((), Maybe (Reception bPS))
+    m ((), Maybe bPS)
   aPeerSharingServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "PeerSharingServer"
     runPeerWithLimits
@@ -1236,7 +1236,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bLN ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bLN))
+    m (NodeToNodeInitiatorResult, Maybe bLN)
   aLeiosNotifyClient
     version
     ExpandedInitiatorContext
@@ -1259,7 +1259,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bLN ->
-    m ((), Maybe (Reception bLN))
+    m ((), Maybe bLN)
   aLeiosNotifyServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "LeiosNotifyServer"
     runPeerWithLimits
@@ -1274,7 +1274,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bLF ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bLF))
+    m (NodeToNodeInitiatorResult, Maybe bLF)
   aLeiosFetchClient
     version
     ExpandedInitiatorContext
@@ -1297,7 +1297,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bLF ->
-    m ((), Maybe (Reception bLF))
+    m ((), Maybe bLF)
   aLeiosFetchServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "LeiosFetchServer"
     runPeerWithLimits

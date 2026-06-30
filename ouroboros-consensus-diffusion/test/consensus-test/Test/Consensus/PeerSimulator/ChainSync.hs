@@ -59,7 +59,6 @@ import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (ExceededSizeLimit, ExceededTimeLimit)
   , runPipelinedPeerWithLimits
   )
-import Ouroboros.Network.Mux (Reception (..))
 import Ouroboros.Network.Protocol.ChainSync.ClientPipelined
   ( ChainSyncClientPipelined
   , chainSyncClientPeerPipelined
@@ -215,7 +214,7 @@ runChainSyncClient
             traceWith svtPeerSimulatorResultsTracer $
               PeerSimulatorResult peerId $
                 SomeChainSyncClientResult $
-                  Right (csRes, fmap received trailing)
+                  Right (csRes, trailing)
           Left exn -> traceException exn
    where
     traceException exn = do
@@ -262,7 +261,7 @@ runChainSyncServer tracer peerId StateViewTracers{svtPeerSimulatorResultsTracer}
       traceWith svtPeerSimulatorResultsTracer $
         PeerSimulatorResult peerId $
           SomeChainSyncServerResult $
-            Right (fmap received msgRes)
+            Right msgRes
     Left exn -> do
       traceWith svtPeerSimulatorResultsTracer $
         PeerSimulatorResult peerId $

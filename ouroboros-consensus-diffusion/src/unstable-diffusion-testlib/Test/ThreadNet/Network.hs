@@ -76,7 +76,6 @@ import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor.Identity (Identity (Identity))
-import qualified Data.IntMap.Strict as IntMap
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
@@ -527,7 +526,8 @@ runThreadNetwork
             { tniCrucialTxs
             , tniProtocolInfo
             , tniBlockForging
-            } <- mkProtocolInfo coreNodeId
+            } <-
+            mkProtocolInfo coreNodeId
           loop tniCrucialTxs 0 tniProtocolInfo tniBlockForging NodeRestart restarts0
        where
         label = "vertex-" <> condense coreNodeId
@@ -1616,7 +1616,7 @@ createConnectedChannelsWithDelay registry (client, server, proto) middle = do
 
   chan q b =
     Channel
-      { recv = fmap (Just . MkReception IntMap.empty) $ atomically $ MonadSTM.takeTMVar b
+      { recv = fmap Just $ atomically $ MonadSTM.takeTMVar b
       , send = atomically . MonadSTM.writeTQueue q
       }
 

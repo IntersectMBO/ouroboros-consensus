@@ -103,7 +103,6 @@ import Ouroboros.Network.Mux
 import Ouroboros.Network.Protocol.ChainSync.Codec
 import Ouroboros.Network.Protocol.ChainSync.Server
 import Ouroboros.Network.Protocol.ChainSync.Type
-import Ouroboros.Network.Protocol.Limits (BearerBytes)
 import Ouroboros.Network.Protocol.LocalStateQuery.Server
 import Ouroboros.Network.Protocol.LocalStateQuery.Type as LocalStateQuery
 import Ouroboros.Network.Protocol.LocalTxMonitor.Server
@@ -415,7 +414,7 @@ showTracers tr =
 -------------------------------------------------------------------------------}
 
 -- | A node-to-client application
-type App m peer bytes a = peer -> Channel m bytes -> m (a, Maybe (Reception bytes))
+type App m peer bytes a = peer -> Channel m bytes -> m (a, Maybe bytes)
 
 -- | Applications for the node-to-client (i.e., local) protocols
 --
@@ -443,10 +442,6 @@ mkApps ::
   , ShowProxy (GenTxId blk)
   , ShowProxy (Query blk)
   , forall fp. ShowQuery (BlockQuery blk fp)
-  , BearerBytes bCS
-  , BearerBytes bTX
-  , BearerBytes bSQ
-  , BearerBytes bTM
   ) =>
   NodeKernel m addrNTN addrNTC blk ->
   Tracers m addrNTC blk e ->
@@ -459,7 +454,7 @@ mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} Hand
   aChainSyncServer ::
     addrNTC ->
     Channel m bCS ->
-    m ((), Maybe (Reception bCS))
+    m ((), Maybe bCS)
   aChainSyncServer them channel = do
     labelThisThread "LocalChainSyncServer"
     bracket (open kernelLeiosDB) LeiosDb.close $ \leiosConn ->
@@ -477,7 +472,7 @@ mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} Hand
   aTxSubmissionServer ::
     addrNTC ->
     Channel m bTX ->
-    m ((), Maybe (Reception bTX))
+    m ((), Maybe bTX)
   aTxSubmissionServer them channel = do
     labelThisThread "LocalTxSubmissionServer"
     runPeer
@@ -489,7 +484,7 @@ mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} Hand
   aStateQueryServer ::
     addrNTC ->
     Channel m bSQ ->
-    m ((), Maybe (Reception bSQ))
+    m ((), Maybe bSQ)
   aStateQueryServer them channel = do
     labelThisThread "LocalStateQueryServer"
     withRegistry $ \rr ->
@@ -503,7 +498,7 @@ mkApps kernel@NodeKernel{getLeiosDB = kernelLeiosDB} Tracers{..} Codecs{..} Hand
   aTxMonitorServer ::
     addrNTC ->
     Channel m bTM ->
-    m ((), Maybe (Reception bTM))
+    m ((), Maybe bTM)
   aTxMonitorServer them channel = do
     labelThisThread "LocalTxMonitorServer"
     runPeer

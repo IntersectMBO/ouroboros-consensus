@@ -248,21 +248,19 @@ maybeShowSendRecvLF ::
   N2N.TraceSendRecv (LeiosFetch Leios.LeiosPoint Leios.LeiosEb Leios.LeiosTx) ->
   Maybe Json.LogEvent
 maybeShowSendRecvLF ctx = \case
-  N2N.TraceRecvMsg Nothing (AnyMessage msg) ->
-    error $ "impossible! " ++ show msg
-  N2N.TraceRecvMsg (Just tm) (AnyMessage msg) ->
-    Just $ mkEvent tm Json.Recv (Aeson.Object $ messageLeiosFetchToObject msg)
-  N2N.TraceSendMsg tm (AnyMessage msg) ->
-    Just $ mkEvent tm Json.Send (Aeson.Object $ messageLeiosFetchToObject msg)
+  N2N.TraceRecvMsg (AnyMessage msg) ->
+    Just $ mkEvent Json.Recv (Aeson.Object $ messageLeiosFetchToObject msg)
+  N2N.TraceSendMsg (AnyMessage msg) ->
+    Just $ mkEvent Json.Send (Aeson.Object $ messageLeiosFetchToObject msg)
  where
-  mkEvent tm dir msg =
+  mkEvent dir msg =
     Json.SendRecvEvent $
       Json.MkSendRecvEvent
         { Json.at = Json.TBD
         , Json.prevCount = Json.TBD
         , Json.connectionId = responderContextToConnectionIdString ctx
         , Json.direction = dir
-        , Json.mux_at = Just tm
+        , Json.mux_at = Nothing
         , Json.msg = msg
         }
 
@@ -272,17 +270,17 @@ maybeShowSendRecvCS ::
   N2N.TraceSendRecv (CS.ChainSync h p tip) ->
   Maybe Json.LogEvent
 maybeShowSendRecvCS ctx = \case
-  N2N.TraceSendMsg tm (AnyMessage CS.MsgRollForward{}) -> Just $ send tm "MsgRollForward"
+  N2N.TraceSendMsg (AnyMessage CS.MsgRollForward{}) -> Just $ send "MsgRollForward"
   _ -> Nothing
  where
-  send tm y =
+  send y =
     Json.SendRecvEvent $
       Json.MkSendRecvEvent
         { Json.at = Json.TBD
         , Json.prevCount = Json.TBD
         , Json.connectionId = responderContextToConnectionIdString ctx
         , Json.direction = Json.Send
-        , Json.mux_at = Just tm
+        , Json.mux_at = Nothing
         , Json.msg = y
         }
 
@@ -292,22 +290,20 @@ maybeShowSendRecvBF ::
   N2N.TraceSendRecv (BF.BlockFetch blk p) ->
   Maybe Json.LogEvent
 maybeShowSendRecvBF ctx = \case
-  N2N.TraceRecvMsg mbTm (AnyMessage BF.MsgRequestRange{}) -> Just $ recv mbTm "MsgRequestRange"
-  N2N.TraceSendMsg _ (AnyMessage BF.MsgBlock{}) -> Nothing -- replaced by 'mapBFEvent' below
+  N2N.TraceRecvMsg (AnyMessage BF.MsgRequestRange{}) -> Just $ recv "MsgRequestRange"
+  N2N.TraceSendMsg (AnyMessage BF.MsgBlock{}) -> Nothing -- replaced by 'mapBFEvent' below
   _ -> Nothing
  where
-  recv mbTm y = case mbTm of
-    Nothing -> error $ "impossible! " ++ show y
-    Just tm ->
-      Json.SendRecvEvent $
-        Json.MkSendRecvEvent
-          { Json.at = Json.TBD
-          , Json.prevCount = Json.TBD
-          , Json.connectionId = responderContextToConnectionIdString ctx
-          , Json.direction = Json.Recv
-          , Json.mux_at = Just tm
-          , Json.msg = y
-          }
+  recv y =
+    Json.SendRecvEvent $
+      Json.MkSendRecvEvent
+        { Json.at = Json.TBD
+        , Json.prevCount = Json.TBD
+        , Json.connectionId = responderContextToConnectionIdString ctx
+        , Json.direction = Json.Recv
+        , Json.mux_at = Nothing
+        , Json.msg = y
+        }
 
 -- The BlockFetch send tracer only sees @Serialised blk@; hook
 -- 'TraceBlockFetchServerSendBlock' so the JSON event includes the block hash.
