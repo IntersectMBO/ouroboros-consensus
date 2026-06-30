@@ -49,8 +49,8 @@ if os (windows)
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
-  tag: 56299490039df7808101aeffa4c78c7d8f538fd2
-  --sha256: sha256-kHRvksW8Fe7ikQFoX+CE2P/0NaJG2ORAga8POx9kZiU=
+  tag: 4b3ab7664f609a1aee0f0c24dcfcfd0ab899fc42
+  --sha256: sha256-fIqpI2whstetodpiONmUDVgnhTpzXeq1/gmzuHItK5A=
   subdir:
     ouroboros-network
     cardano-diffusion

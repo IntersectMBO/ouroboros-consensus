@@ -116,6 +116,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.Ledger.Basics (ValuesMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
   ( HistoricityCheck
@@ -163,7 +164,6 @@ import Ouroboros.Network.BlockFetch.ConsensusInterface
   ( FetchMode (PraosFetchMode)
   , PraosFetchMode (FetchModeDeadline)
   )
-import Ouroboros.Network.PerasSupport (PerasSupport (PerasUnsupported))
 import qualified Ouroboros.Network.Diffusion as Diffusion
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
 import Ouroboros.Network.Magic
@@ -184,7 +184,9 @@ import Ouroboros.Network.PeerSelection.PeerSharing.Codec
   ( decodeRemoteAddress
   , encodeRemoteAddress
   )
+import Ouroboros.Network.PerasSupport (PerasSupport (PerasUnsupported))
 import Ouroboros.Network.RethrowPolicy
+import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V2 (TxSubmissionLogicVersion)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Types (TxSubmissionInitDelay)
 import qualified SafeWildCards
@@ -484,6 +486,7 @@ runWith ::
   , NetworkIO m
   , NetworkAddr addrNTN
   , Show addrNTN
+  , HasRawTxId (GenTxId blk)
   ) =>
   RunNodeArgs m addrNTN addrNTC blk ->
   (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
@@ -641,7 +644,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                             k
                                               ( pure
                                                   ( Right $
-                                                      BlockPoint actualSlot
+                                                      BlockPoint
+                                                        actualSlot
                                                         (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash)
                                                   )
                                               )
@@ -940,7 +944,7 @@ mkNodeKernelArgs
   leiosDB =
     do
       let (kaRng, rng') = splitGen rng
-          (psRng, txRng) = splitGen rng'
+          (psRng, _) = splitGen rng'
       return
         NodeKernelArgs
           { tracers
@@ -968,7 +972,6 @@ mkNodeKernelArgs
           , getUseBootstrapPeers
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
-          , txSubmissionRng = txRng
           , publicPeerSelectionStateVar
           , genesisArgs
           , getDiffusionPipeliningSupport

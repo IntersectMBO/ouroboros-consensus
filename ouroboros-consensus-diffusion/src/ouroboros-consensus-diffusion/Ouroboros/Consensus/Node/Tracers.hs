@@ -57,6 +57,7 @@ import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent
   )
 import Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
+import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Types
 import Ouroboros.Network.TxSubmission.Outbound
 
@@ -174,6 +175,7 @@ showTracers ::
   , Show (GenTx blk)
   , Show (Validated (GenTx blk))
   , Show (GenTxId blk)
+  , HasRawTxId (GenTxId blk)
   , Show (ApplyTxErr blk)
   , Show (Header blk)
   , Show (ForgeStateInfo blk)

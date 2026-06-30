@@ -41,6 +41,7 @@ module Ouroboros.Consensus.Network.NodeToClient
   , responder
   ) where
 
+import Cardano.Binary (DecoderError)
 import Cardano.Network.NodeToClient hiding
   ( NodeToClientVersion (..)
   )
@@ -58,6 +59,7 @@ import Control.DeepSeq (NFData)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Lazy as Lazy
 import Data.Typeable
 import Data.Void (Void)
 import LeiosDemoDb (LeiosDbConnection, LeiosDbHandle (open))
@@ -80,11 +82,9 @@ import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
-import Cardano.Binary (DecoderError)
-import qualified Data.ByteString.Lazy as Lazy
-import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk, EncodeDisk)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk, EncodeDisk)
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
