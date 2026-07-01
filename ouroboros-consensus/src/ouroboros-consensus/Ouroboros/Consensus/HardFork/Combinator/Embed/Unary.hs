@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -68,6 +69,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Peras.Context (PerasEpochContextResolver (..))
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
@@ -356,20 +358,32 @@ instance Isomorphic (Flip ExtLedgerState mk) where
       ExtLedgerState
         { ledgerState = unFlip $ project $ Flip ledgerState
         , headerState = project headerState
-        , -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
-          perasEpochContextResolver = undefined
-        , latestPerasCertOnChainRound = undefined
+        , perasEpochContextResolver = projectPerasEpochContextResolver perasEpochContextResolver
+        , latestPerasCertOnChainRound = latestPerasCertOnChainRound
         }
+   where
+    projectPerasEpochContextResolver = \case
+      PerasEpochContextResolverError err ->
+        PerasEpochContextResolverError err
+      PerasEpochContextResolver hfcCurrentBoundedContext hfcPrevBoundedContext ->
+        let currentBoundedContext = fromZ . projectHFCBoundedPerasEpochContext $ hfcCurrentBoundedContext
+            mbPrevBoundedContext = fromZ . projectHFCBoundedPerasEpochContext <$> hfcPrevBoundedContext
+         in PerasEpochContextResolver currentBoundedContext mbPrevBoundedContext
+
+    fromZ :: NS f '[a] -> f a
+    fromZ (Z x) = x
 
   inject (Flip ExtLedgerState{..}) =
     Flip $
       ExtLedgerState
         { ledgerState = unFlip $ inject $ Flip ledgerState
         , headerState = inject headerState
-        , -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
-          perasEpochContextResolver = undefined
-        , latestPerasCertOnChainRound = undefined
+        , perasEpochContextResolver = injectHFCPerasEpochContextResolver . toZ $ perasEpochContextResolver
+        , latestPerasCertOnChainRound = latestPerasCertOnChainRound
         }
+   where
+    toZ :: f a -> NS f '[a]
+    toZ x = Z x
 
 instance Isomorphic AnnTip where
   project :: forall blk. NoHardForks blk => AnnTip (HardForkBlock '[blk]) -> AnnTip blk
