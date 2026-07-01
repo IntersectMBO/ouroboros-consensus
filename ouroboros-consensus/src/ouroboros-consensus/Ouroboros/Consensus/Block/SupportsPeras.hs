@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
@@ -50,6 +51,8 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , perasVoteCollectionAddVote
   , perasVoteCollectionCheckQuorum
   , toUniqueVotesWithSameTarget
+  , unsafePerasVoteCollection
+  , unsafeAssumeQuorum
 
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Peras.Params
@@ -64,6 +67,7 @@ import Control.Exception.Base (Exception)
 import Data.Bifunctor (bimap)
 import Data.Containers.NonEmpty (NE)
 import Data.Kind (Type)
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map (Map)
 import qualified Data.Map.NonEmpty as NEMap
@@ -173,8 +177,14 @@ class
   , Eq (PerasEpochContext blk)
   , NoThunks (PerasEpochContext blk)
   , -- Compatiblity with committee/crypto
-    Typeable (PerasCrypto blk)
+    Show (PerasCrypto blk)
+  , Eq (PerasCrypto blk)
+  , Typeable (PerasCrypto blk)
+  , NoThunks (PerasCrypto blk)
+  , Show (PerasVotingCommitteeScheme blk)
+  , Eq (PerasVotingCommitteeScheme blk)
   , Typeable (PerasVotingCommitteeScheme blk)
+  , NoThunks (PerasVotingCommitteeScheme blk)
   , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
   , ElectionId (PerasCrypto blk) ~ PerasRoundNo
   , VoteCandidate (PerasCrypto blk) ~ BoostedBlock (PerasVote blk)
@@ -362,8 +372,7 @@ class
     PerasCrypto blk ~ VoidPerasCrypto blk =>
     proxy blk ->
     Either String (PrivateKey (PerasCrypto blk))
-  readPerasPrivateKeyFromEnv _ =
-    Left "VoidPerasCrypto has no way to instantiate a private key"
+  readPerasPrivateKeyFromEnv _ = Right ()
 
   -- | Read the PoolId from the environment variable 'PERAS_POOL_ID'
   --
@@ -478,22 +487,24 @@ instance IsPerasError (VoidPerasError blk) blk where
 
 -- | Void Peras committee for @blk@.
 data VoidPerasVotingCommitteeScheme
+  deriving (Show, Eq, Generic, NoThunks)
 
 data VoidPerasCrypto blk
+  deriving (Show, Eq, Generic, NoThunks)
 
 type instance ElectionId (VoidPerasCrypto blk) = PerasRoundNo
 type instance VoteCandidate (VoidPerasCrypto blk) = Point blk
 
-type instance PrivateKey (VoidPerasCrypto blk) = Void
+type instance PrivateKey (VoidPerasCrypto blk) = ()
 type instance PublicKey (VoidPerasCrypto blk) = Void
 
 instance CryptoSupportsVoteSigning (VoidPerasCrypto blk) where
-  type VoteSigningKey (VoidPerasCrypto blk) = Void
+  type VoteSigningKey (VoidPerasCrypto blk) = ()
   type VoteVerificationKey (VoidPerasCrypto blk) = Void
-  data VoteSignature (VoidPerasCrypto blk) = VoidVoteSignature {unVoidVoteSignature :: Void}
-  getVoteSigningKey _proxy privateKey = absurd privateKey
+  data VoteSignature (VoidPerasCrypto blk) = VoidVoteSignature {unVoidVoteSignature :: ()}
+  getVoteSigningKey _proxy _privateKey = ()
   getVoteVerificationKey _proxy publicKey = absurd publicKey
-  signVote signingKey _ _ = absurd signingKey
+  signVote _signingKey _ _ = VoidVoteSignature ()
   verifyVoteSignature verificationKey _ _ _ = absurd verificationKey
 
 instance CryptoSupportsVotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme where
@@ -580,7 +591,7 @@ class
   getPerasVotePoint = boostedBlockToPoint . getPerasVoteBlock
 
 -- | Extract the vote ID from a Peras vote container
-getPerasVoteId :: IsPerasVote vote blk => vote -> PerasVoteId blk
+getPerasVoteId :: IsPerasVote vote blk => vote -> PerasVoteId
 getPerasVoteId vote =
   PerasVoteId
     { pviRoundNo = getPerasVoteRound vote
@@ -665,7 +676,7 @@ data PerasVoteCollection blk
   = PerasVoteCollection
   { pvcTarget :: !(PerasVoteTarget blk)
   -- ^ The target of the votes in this collection
-  , pvcVotes :: !(NE (Map (PerasVoteId blk) (WithArrivalTime (ValidatedPerasVote blk))))
+  , pvcVotes :: !(NE (Map (PerasVoteId) (WithArrivalTime (ValidatedPerasVote blk))))
   -- ^ Votes received for this target, indexed by vote ID
   , pvcTotalWeight :: !VoteWeight
   -- ^ Total weight of the votes received for this target
@@ -739,9 +750,34 @@ perasVoteCollectionAddVote vote pvc =
         , pvcTotalWeight pvc
         )
 
+-- | Unsafe constructor for 'PerasVoteCollection' with asserts to check the invariants.
+-- The only recorded use at the moment is in the HFC implementation, to turn an existing 'PerasVoteCollection' for the HardForkBlock into a 'PerasVoteCollectionWithQuorum' of a concrete era.
+unsafePerasVoteCollection ::
+  (IsPerasVote (PerasVote blk) blk, StandardHash blk) =>
+  (NE (Map (PerasVoteId) (WithArrivalTime (ValidatedPerasVote blk)))) ->
+  PerasVoteCollection blk
+unsafePerasVoteCollection votes =
+  let ((_, firstVote) :| _) = NEMap.toList votes
+      firstVoteTarget = getPerasVoteTarget firstVote
+   in -- no need to check for ID uniqueness since the votes are stored in a map keyed by vote ID
+      assert (all (\vote -> getPerasVoteTarget vote == firstVoteTarget) (NEMap.elems votes)) $
+        PerasVoteCollection
+          { pvcTarget = firstVoteTarget
+          , pvcVotes = votes
+          , pvcTotalWeight = sum (vpvVoteWeight . forgetArrivalTime <$> NEMap.elems votes)
+          }
+
 -- | A collection of Peras votes for a given target that has reached quorum
 newtype PerasVoteCollectionWithQuorum blk
   = PerasVoteCollectionWithQuorum {forgetQuorum :: PerasVoteCollection blk}
+
+-- | Transforms a 'PerasVoteCollection' into a 'PerasVoteCollectionWithQuorum' without actually checking the quorum condition.
+-- The only recorded use at the moment is in the HFC implementation, to turn an existing 'PerasVoteCollectionWithQuorum' for the HardForkBlock into a 'PerasVoteCollectionWithQuorum' of a concrete era.
+unsafeAssumeQuorum ::
+  (IsPerasVote (PerasVote blk) blk, StandardHash blk) =>
+  PerasVoteCollection blk ->
+  PerasVoteCollectionWithQuorum blk
+unsafeAssumeQuorum = PerasVoteCollectionWithQuorum
 
 deriving newtype instance
   ( StandardHash blk

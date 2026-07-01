@@ -3,9 +3,9 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -15,17 +15,20 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext (..)
   , PerasEpochContextResolverHandle (..)
   , PerasEpochContextNotFoundForRound (..)
-  , EmptyPerasEpochContextResolver
-  , MockPerasEpochContextResolver (..)
-  , V1PerasEpochContextResolver (..)
+  , PerasEpochContextResolver (..)
+  , initPerasEpochContextResolverWithBoundedEpochContext
+  , advancePerasEpochContextResolverWithBoundedEpochContext
+  , errorIntoResolver
+  , absorbErrorIntoResolver
+  , resolveRoundNo
   , BoundedPerasEpochContext (..)
-  , IsPerasEpochContextResolver (..)
   , resolveRoundNoWithHandle
   , verifyPerasVoteInContext
   , verifyPerasCertInContext
@@ -44,6 +47,7 @@ import Data.Data (Proxy (..))
 import Data.Either.Extra (maybeToEither)
 import Data.Kind (Type)
 import Data.Maybe.Strict (StrictMaybe (..))
+import Data.SOP.Constraint (All, Top)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract (BlockProtocol, Point)
@@ -66,11 +70,11 @@ import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee)
 import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.Crypto (PrivateKey)
 import Ouroboros.Consensus.Committee.Types (PoolId)
-import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory)
+import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (HardForkIndices))
 import Ouroboros.Consensus.HeaderValidation (Ticked)
 import Ouroboros.Consensus.Ledger.Abstract (LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsPeras (ALedgerStateSupportsPeras (..))
-import Ouroboros.Consensus.Peras.Time (EpochToPerasRoundInfo (..))
+import Ouroboros.Consensus.Peras.Time (EpochToPerasRoundInfo (..), EraIndexed, forgetEraIndex)
 import Ouroboros.Consensus.Protocol.Abstract (AChainDepStateSupportsPeras, ConsensusProtocol (..))
 import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk, EncodeDisk)
 import Ouroboros.Consensus.Util.IOLike
@@ -87,44 +91,27 @@ import Ouroboros.Consensus.Util.IOLike
 -- Peras support
 -------------------------------------------------------------------------------
 
-data EmptyPerasEpochContextResolver blk = EmptyPerasEpochContextResolverError !String
-  deriving (Show, Eq, Generic, NoThunks, Serialise)
-deriving instance (EncodeDisk blk (EmptyPerasEpochContextResolver blk))
-deriving instance (DecodeDisk blk (EmptyPerasEpochContextResolver blk))
-
-data MockPerasEpochContextResolver blk
-  = MockPerasEpochContextResolverError !String
-  | MockPerasEpochContextResolver !(PerasEpochContext blk)
-deriving instance Show (PerasEpochContext blk) => Show (MockPerasEpochContextResolver blk)
-deriving instance Eq (PerasEpochContext blk) => Eq (MockPerasEpochContextResolver blk)
-deriving instance Generic (MockPerasEpochContextResolver blk)
-deriving instance NoThunks (PerasEpochContext blk) => NoThunks (MockPerasEpochContextResolver blk)
-deriving instance Serialise (PerasEpochContext blk) => Serialise (MockPerasEpochContextResolver blk)
-deriving instance
-  Serialise (PerasEpochContext blk) => EncodeDisk blk (MockPerasEpochContextResolver blk)
-deriving instance
-  Serialise (PerasEpochContext blk) => DecodeDisk blk (MockPerasEpochContextResolver blk)
-
-data V1PerasEpochContextResolver blk
-  = V1PerasEpochContextResolverError !String
-  | V1PerasEpochContextResolver
+data PerasEpochContextResolver blk
+  = PerasEpochContextResolverError !String
+  | PerasEpochContextResolver
       !(BoundedPerasEpochContext blk)
       !(StrictMaybe (BoundedPerasEpochContext blk))
-deriving instance Show (PerasEpochContext blk) => Show (V1PerasEpochContextResolver blk)
-deriving instance Eq (PerasEpochContext blk) => Eq (V1PerasEpochContextResolver blk)
-deriving instance Generic (V1PerasEpochContextResolver blk)
-deriving instance NoThunks (PerasEpochContext blk) => NoThunks (V1PerasEpochContextResolver blk)
-deriving instance Serialise (PerasEpochContext blk) => Serialise (V1PerasEpochContextResolver blk)
+deriving instance Show (PerasEpochContext blk) => Show (PerasEpochContextResolver blk)
+deriving instance Eq (PerasEpochContext blk) => Eq (PerasEpochContextResolver blk)
+deriving instance Generic (PerasEpochContextResolver blk)
+deriving instance NoThunks (PerasEpochContext blk) => NoThunks (PerasEpochContextResolver blk)
+deriving instance Serialise (PerasEpochContext blk) => Serialise (PerasEpochContextResolver blk)
 deriving instance
-  Serialise (PerasEpochContext blk) => EncodeDisk blk (V1PerasEpochContextResolver blk)
+  Serialise (PerasEpochContext blk) => EncodeDisk blk (PerasEpochContextResolver blk)
 deriving instance
-  Serialise (PerasEpochContext blk) => DecodeDisk blk (V1PerasEpochContextResolver blk)
+  Serialise (PerasEpochContext blk) => DecodeDisk blk (PerasEpochContextResolver blk)
 
 data PerasEpochContextNotFoundForRound = PerasEpochContextNotFoundForRound !PerasRoundNo !String
   deriving (Eq, Show, Generic, NoThunks, Exception)
 
 class
   ( HasHardForkHistory blk
+  , All Top (HardForkIndices blk)
   , forall mk. ALedgerStateSupportsPeras (LedgerState blk mk)
   , AChainDepStateSupportsPeras (ChainDepState (BlockProtocol blk))
   , forall mk'. ALedgerStateSupportsPeras (Ticked LedgerState blk mk')
@@ -137,7 +124,6 @@ class
   , NoThunks (PerasVotingCommittee blk)
   , Typeable (PerasVotingCommittee blk)
   , Serialise (PerasVotingCommittee blk)
-  , IsPerasEpochContextResolver (PerasEpochContextResolver blk) blk
   , Show (PerasEpochContextResolver blk)
   , Eq (PerasEpochContextResolver blk)
   , NoThunks (PerasEpochContextResolver blk)
@@ -148,9 +134,6 @@ class
   ) =>
   StateSupportsPerasEpochContext blk
   where
-  type PerasEpochContextResolver blk :: Type
-  type PerasEpochContextResolver blk = EmptyPerasEpochContextResolver blk
-
   mkPerasVotingCommitteeInput ::
     (ALedgerStateSupportsPeras ledger, AChainDepStateSupportsPeras chainDep) =>
     ledger ->
@@ -206,9 +189,42 @@ class
     pure $
       PerasEpochContext{pecParams = (getPerasParams (Proxy @blk) ledgerState), pecCommittee}
 
+  type MaybeEraIndexedEpochToPerasRoundInfo blk :: Type
+  type MaybeEraIndexedEpochToPerasRoundInfo blk = EpochToPerasRoundInfo
+
+  fromMaybeEraIndexedEpochToPerasRoundInfo ::
+    proxy blk -> MaybeEraIndexedEpochToPerasRoundInfo blk -> EpochToPerasRoundInfo
+  default fromMaybeEraIndexedEpochToPerasRoundInfo ::
+    proxy blk ->
+    MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo =>
+    MaybeEraIndexedEpochToPerasRoundInfo blk -> EpochToPerasRoundInfo
+  fromMaybeEraIndexedEpochToPerasRoundInfo _ = id
+
+  toMaybeEraIndexedEpochToPerasRoundInfo ::
+    All Top (HardForkIndices blk) =>
+    proxy blk -> EraIndexed blk EpochToPerasRoundInfo -> MaybeEraIndexedEpochToPerasRoundInfo blk
+  default toMaybeEraIndexedEpochToPerasRoundInfo ::
+    All Top (HardForkIndices blk) =>
+    proxy blk ->
+    MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo =>
+    EraIndexed blk EpochToPerasRoundInfo -> MaybeEraIndexedEpochToPerasRoundInfo blk
+  toMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
+
   mkBoundedPerasEpochContext ::
     (ALedgerStateSupportsPeras ledger, AChainDepStateSupportsPeras chainDep) =>
-    EpochToPerasRoundInfo ->
+    MaybeEraIndexedEpochToPerasRoundInfo blk ->
+    ledger ->
+    chainDep ->
+    Either
+      (PerasError blk)
+      (BoundedPerasEpochContext blk)
+  default mkBoundedPerasEpochContext ::
+    ( All Top (HardForkIndices blk)
+    , ALedgerStateSupportsPeras ledger
+    , AChainDepStateSupportsPeras chainDep
+    , MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo
+    ) =>
+    MaybeEraIndexedEpochToPerasRoundInfo blk ->
     ledger ->
     chainDep ->
     Either
@@ -224,94 +240,45 @@ class
         }
 
 --------------------------------------------------------------------------------
--- IsPerasEpochContextResolver
+-- Resolver
 --------------------------------------------------------------------------------
 
--- | Operations to build and query a 'PerasEpochContextResolver'.
-class IsPerasEpochContextResolver resolver blk | resolver -> blk where
-  -- | Initialise a resolver from a single bounded epoch context.
-  initPerasEpochContextResolverWithBoundedEpochContext ::
-    BoundedPerasEpochContext blk -> resolver
+initPerasEpochContextResolverWithBoundedEpochContext ::
+  BoundedPerasEpochContext blk -> PerasEpochContextResolver blk
+initPerasEpochContextResolverWithBoundedEpochContext currEpochContext =
+  PerasEpochContextResolver currEpochContext SNothing
 
-  -- | Advance a resolver with a new bounded epoch context.
-  advancePerasEpochContextResolverWithBoundedEpochContext ::
-    resolver -> BoundedPerasEpochContext blk -> resolver
+advancePerasEpochContextResolverWithBoundedEpochContext ::
+  PerasEpochContextResolver blk -> BoundedPerasEpochContext blk -> PerasEpochContextResolver blk
+advancePerasEpochContextResolverWithBoundedEpochContext prev newEpochContext = case prev of
+  PerasEpochContextResolver prevEpochContextResolver _ ->
+    PerasEpochContextResolver
+      prevEpochContextResolver
+      (SJust newEpochContext)
+  _ -> PerasEpochContextResolver newEpochContext SNothing
 
-  -- | Absorb a potential error encountered while building a resolver.
-  errorIntoResolver ::
-    Show err =>
-    err -> resolver
+errorIntoResolver ::
+  Show err => err -> PerasEpochContextResolver blk
+errorIntoResolver = PerasEpochContextResolverError . show
 
-  absorbErrorIntoResolver ::
-    Show err =>
-    Either err resolver -> resolver
-  absorbErrorIntoResolver = either errorIntoResolver id
+absorbErrorIntoResolver ::
+  Show err => Either err (PerasEpochContextResolver blk) -> PerasEpochContextResolver blk
+absorbErrorIntoResolver = either errorIntoResolver id
 
-  -- | Resolve the epoch context valid for a given round.
-  resolveRoundNo ::
-    resolver ->
-    PerasRoundNo ->
-    Either PerasEpochContextNotFoundForRound (PerasEpochContext blk)
-
---------------------------------------------------------------------------------
--- Empty resolver
---------------------------------------------------------------------------------
-
-instance
-  BlockSupportsPeras blk =>
-  IsPerasEpochContextResolver (EmptyPerasEpochContextResolver blk) blk
-  where
-  initPerasEpochContextResolverWithBoundedEpochContext _ = EmptyPerasEpochContextResolverError "EmptyPerasEpochContextResolver can never resolve"
-  advancePerasEpochContextResolverWithBoundedEpochContext emptyResolver _ = emptyResolver
-  errorIntoResolver err = EmptyPerasEpochContextResolverError (show err)
-  resolveRoundNo _ roundNo =
-    Left $
-      PerasEpochContextNotFoundForRound
-        roundNo
-        "EmptyPerasEpochContextResolver can never resolve any round"
-
---------------------------------------------------------------------------------
--- Mock Resolver
---------------------------------------------------------------------------------
-
-instance
-  BlockSupportsPeras blk =>
-  IsPerasEpochContextResolver (MockPerasEpochContextResolver blk) blk
-  where
-  initPerasEpochContextResolverWithBoundedEpochContext = MockPerasEpochContextResolver . epochContext
-  advancePerasEpochContextResolverWithBoundedEpochContext _oldResolver = MockPerasEpochContextResolver . epochContext
-  errorIntoResolver = MockPerasEpochContextResolverError . show
-  resolveRoundNo resolver roundNo = case resolver of
-    MockPerasEpochContextResolverError reason -> Left $ PerasEpochContextNotFoundForRound roundNo reason
-    MockPerasEpochContextResolver context -> Right context
-
---------------------------------------------------------------------------------
--- V1 Resolver
---------------------------------------------------------------------------------
-
-instance
-  BlockSupportsPeras blk =>
-  IsPerasEpochContextResolver (V1PerasEpochContextResolver blk) blk
-  where
-  initPerasEpochContextResolverWithBoundedEpochContext currEpochContext =
-    V1PerasEpochContextResolver currEpochContext SNothing
-  advancePerasEpochContextResolverWithBoundedEpochContext prev newEpochContext = case prev of
-    V1PerasEpochContextResolver prevEpochContextResolver _ ->
-      V1PerasEpochContextResolver
-        prevEpochContextResolver
-        (SJust newEpochContext)
-    _ -> V1PerasEpochContextResolver newEpochContext SNothing
-  errorIntoResolver = V1PerasEpochContextResolverError . show
-  resolveRoundNo resolver roundNo = case resolver of
-    V1PerasEpochContextResolverError reason -> Left $ PerasEpochContextNotFoundForRound roundNo reason
-    V1PerasEpochContextResolver current mbPrev ->
-      maybeToEither
-        ( PerasEpochContextNotFoundForRound
-            roundNo
-            "Neither current nor previous epoch context cover the given Peras roundNo"
-        )
-        $ withinEpochContext roundNo current
-          <|> (withinEpochContext roundNo =<< strictMaybeToMaybe mbPrev)
+resolveRoundNo ::
+  PerasEpochContextResolver blk ->
+  PerasRoundNo ->
+  Either PerasEpochContextNotFoundForRound (PerasEpochContext blk)
+resolveRoundNo resolver roundNo = case resolver of
+  PerasEpochContextResolverError reason -> Left $ PerasEpochContextNotFoundForRound roundNo reason
+  PerasEpochContextResolver current mbPrev ->
+    maybeToEither
+      ( PerasEpochContextNotFoundForRound
+          roundNo
+          "Neither current nor previous epoch context cover the given Peras roundNo"
+      )
+      $ withinEpochContext roundNo current
+        <|> (withinEpochContext roundNo =<< strictMaybeToMaybe mbPrev)
 
 --------------------------------------------------------------------------------
 -- Bounded context
@@ -348,11 +315,10 @@ newtype PerasEpochContextResolverHandle m blk
 mockPerasEpochContextResolverHandle ::
   ( IOLike m
   , NoThunks (PerasEpochContext blk)
-  , PerasEpochContextResolver blk ~ MockPerasEpochContextResolver blk
   ) =>
   PerasEpochContext blk -> m (PerasEpochContextResolverHandle m blk)
 mockPerasEpochContextResolverHandle context = do
-  let resolver = MockPerasEpochContextResolver context
+  let resolver = PerasEpochContextResolver (BoundedPerasEpochContext minBound maxBound context) SNothing
   resolverVar <- newTVarIO resolver
   pure $ PerasEpochContextResolverHandle (readTVar resolverVar)
 

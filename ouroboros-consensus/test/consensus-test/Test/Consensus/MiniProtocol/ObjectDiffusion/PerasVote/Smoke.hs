@@ -93,8 +93,8 @@ prop_smoke =
             mkPoolInterfaces ::
               IOLike m =>
               m
-                ( ObjectPoolReader (PerasVoteId TestBlock) (PerasVote TestBlock) PerasVoteTicketNo m
-                , ObjectPoolWriter (PerasVoteId TestBlock) (PerasVote TestBlock) m
+                ( ObjectPoolReader PerasVoteId (PerasVote TestBlock) PerasVoteTicketNo m
+                , ObjectPoolWriter PerasVoteId (PerasVote TestBlock) m
                 , m [PerasVote TestBlock]
                 )
             mkPoolInterfaces = do

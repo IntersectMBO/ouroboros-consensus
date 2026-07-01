@@ -64,7 +64,7 @@ makePerasVotePoolReader ::
   ( PerasVoteTicketNo ->
     STM m (Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
   ) ->
-  ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
+  ObjectPoolReader (PerasVoteId) (PerasVote blk) PerasVoteTicketNo m
 makePerasVotePoolReader getVotesAfterSTM =
   ObjectPoolReader
     { oprObjectId = getPerasVoteId
@@ -83,7 +83,7 @@ makePerasVotePoolReaderFromVoteDB ::
   , IsPerasVote (PerasVote blk) blk
   ) =>
   PerasVoteDB m blk ->
-  ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
+  ObjectPoolReader (PerasVoteId) (PerasVote blk) PerasVoteTicketNo m
 makePerasVotePoolReaderFromVoteDB perasVoteDB =
   makePerasVotePoolReader
     (PerasVoteDB.getVotesAfter perasVoteDB)
@@ -93,7 +93,7 @@ makePerasVotePoolReaderFromChainDB ::
   , IsPerasVote (PerasVote blk) blk
   ) =>
   ChainDB m blk ->
-  ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
+  ObjectPoolReader (PerasVoteId) (PerasVote blk) PerasVoteTicketNo m
 makePerasVotePoolReaderFromChainDB chainDB =
   makePerasVotePoolReader
     (ChainDB.getPerasVotesAfter chainDB)
@@ -116,7 +116,7 @@ makePerasVotePoolWriterFromVoteDB ::
   SystemTime m ->
   PerasVoteDB m blk ->
   PerasEpochContextResolverHandle m blk ->
-  ObjectPoolWriter (PerasVoteId blk) (PerasVote blk) m
+  ObjectPoolWriter (PerasVoteId) (PerasVote blk) m
 makePerasVotePoolWriterFromVoteDB systemTime perasVoteDB resolverHandle =
   ObjectPoolWriter
     { opwObjectId = getPerasVoteId
@@ -146,7 +146,7 @@ makePerasVotePoolWriterFromChainDB ::
   ) =>
   SystemTime m ->
   ChainDB m blk ->
-  ObjectPoolWriter (PerasVoteId blk) (PerasVote blk) m
+  ObjectPoolWriter (PerasVoteId) (PerasVote blk) m
 makePerasVotePoolWriterFromChainDB systemTime chainDB =
   let resolverHandle = getPerasEpochContextResolverHandle chainDB
    in ObjectPoolWriter

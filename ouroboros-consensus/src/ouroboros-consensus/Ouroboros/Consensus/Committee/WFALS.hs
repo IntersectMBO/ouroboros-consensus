@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
@@ -108,6 +109,7 @@ import Ouroboros.Consensus.Committee.WFA
 
 -- | Tag for weighted Fait-Accompli with Local Sortition (wFA^LS)
 data WFALS
+  deriving (Show, Eq, Generic, NoThunks)
 
 instance
   ( CryptoSupportsAggregateVoteSigning crypto

@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
@@ -69,6 +70,7 @@ import Ouroboros.Consensus.Peras.Types (PerasSeatIndex (..))
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote (..))
 
 data MockPerasCrypto blk
+  deriving (Show, Eq, Generic, NoThunks)
 
 type instance ElectionId (MockPerasCrypto blk) = PerasRoundNo
 type instance VoteCandidate (MockPerasCrypto blk) = Point blk
@@ -148,6 +150,7 @@ instance CryptoSupportsAggregateVoteSigning (MockPerasCrypto blk) where
 --------------------------------------------------------------------------------
 
 data MockPerasVotingCommitteeScheme blk
+  deriving (Show, Eq, Generic, NoThunks)
 
 instance
   ( Ord (ElectionId crypto)

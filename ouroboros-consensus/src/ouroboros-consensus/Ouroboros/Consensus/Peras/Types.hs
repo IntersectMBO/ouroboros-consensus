@@ -43,7 +43,6 @@ import Data.Containers.NonEmpty (HasNonEmpty (..))
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Proxy (Proxy (..))
 import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
@@ -169,7 +168,7 @@ data PerasVoteTarget blk
   deriving anyclass NoThunks
 
 -- | The identifier of a vote in a Peras election
-data PerasVoteId blk
+data PerasVoteId
   = PerasVoteId
   { pviRoundNo :: !PerasRoundNo
   , pviSeatIndex :: !PerasSeatIndex
@@ -177,10 +176,10 @@ data PerasVoteId blk
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
 
-instance ShowProxy blk => ShowProxy (PerasVoteId blk) where
-  showProxy _ = "PerasVoteId " <> showProxy (Proxy @blk)
+instance ShowProxy (PerasVoteId) where
+  showProxy _ = "PerasVoteId"
 
-instance Serialise (PerasVoteId blk) where
+instance Serialise (PerasVoteId) where
   encode PerasVoteId{pviRoundNo, pviSeatIndex} =
     encodeListLen 2
       <> encode pviRoundNo

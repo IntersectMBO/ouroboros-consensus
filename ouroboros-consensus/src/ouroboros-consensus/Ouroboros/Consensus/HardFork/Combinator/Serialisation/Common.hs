@@ -208,7 +208,7 @@ class
   , EncodeDiskDep (NestedCtxt Header) (HardForkBlock xs)
   , -- Required for Peras
     SerialiseNodeToNode (HardForkBlock xs) (PerasVote (HardForkBlock xs))
-  , SerialiseNodeToNode (HardForkBlock xs) (PerasVote (HardForkBlock xs))
+  , SerialiseNodeToNode (HardForkBlock xs) (PerasCert (HardForkBlock xs))
   ) =>
   SerialiseHFC xs
   where
@@ -413,28 +413,9 @@ decodeTelescope = \ds -> do
   Serialisation of sums
 -------------------------------------------------------------------------------}
 
-encodeNS :: SListI xs => NP (f -.-> K Encoding) xs -> NS f xs -> Encoding
-encodeNS es ns =
-  mconcat
-    [ Enc.encodeListLen 2
-    , Enc.encodeWord8 $ nsToIndex ns
-    , hcollapse $ hzipWith apFn es ns
-    ]
-
-decodeNS :: forall xs f s. SListI xs => NP (Decoder s :.: f) xs -> Decoder s (NS f xs)
-decodeNS ds = do
-  enforceSize "decodeNS" 2
-  i <- Dec.decodeWord8
-  case nsFromIndex i of
-    Nothing -> fail $ "decodeNS: invalid index " ++ show i
-    Just ns -> hcollapse $ hizipWith aux ds ns
- where
-  aux ::
-    Index xs blk ->
-    (Decoder s :.: f) blk ->
-    K () blk ->
-    K (Decoder s (NS f xs)) blk
-  aux index (Comp dec) (K ()) = K $ injectNS index <$> dec
+-- 'encodeNS' and 'decodeNS' have been moved to
+-- "Ouroboros.Consensus.HardFork.Combinator.Basics" so that instances upstream of
+-- this module can reuse them. They are re-exported from this module though.
 
 decodeAnnNS ::
   forall xs f.

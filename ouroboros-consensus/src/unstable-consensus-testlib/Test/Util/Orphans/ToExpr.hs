@@ -27,11 +27,8 @@ import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.TxSeq
 import Ouroboros.Consensus.Peras.Cert.Mock (MockPerasCert)
 import Ouroboros.Consensus.Peras.Context
-  ( EmptyPerasEpochContextResolver
-  , MockPerasEpochContextResolver
-  , PerasEpochContextNotFoundForRound
+  ( PerasEpochContextNotFoundForRound
   , PerasEpochContextResolver
-  , V1PerasEpochContextResolver
   )
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError)
 import Ouroboros.Consensus.Peras.Vote.Mock (MockPerasVote)
@@ -142,7 +139,7 @@ deriving anyclass instance ToExpr PerasWeight
 
 deriving anyclass instance ToExpr VoteWeight
 
-deriving anyclass instance ToExpr (PerasVoteId blk)
+deriving anyclass instance ToExpr (PerasVoteId)
 
 deriving anyclass instance ToExpr a => ToExpr (WithArrivalTime a)
 
@@ -153,11 +150,7 @@ instance ToExpr (HeaderHash blk) => ToExpr (MockPerasCert blk)
 
 instance ToExpr (PerasVotingCommitteeError blk) => ToExpr (MockPerasError blk)
 
-instance ToExpr (EmptyPerasEpochContextResolver blk) where
-  toExpr = defaultExprViaShow
-instance Show (PerasVotingCommittee blk) => ToExpr (MockPerasEpochContextResolver blk) where
-  toExpr = defaultExprViaShow
-instance Show (PerasVotingCommittee blk) => ToExpr (V1PerasEpochContextResolver blk) where
+instance Show (PerasVotingCommittee blk) => ToExpr (PerasEpochContextResolver blk) where
   toExpr = defaultExprViaShow
 
 deriving anyclass instance ToExpr PerasEpochContextNotFoundForRound
