@@ -250,6 +250,8 @@ data Expr (f :: Type -> Type) :: Type -> Type where
   Interpreter
 -------------------------------------------------------------------------------}
 
+-- | The `Maybe` type in the return type is `Just` if the EraSummary was sufficient
+-- to answer the query, and `Nothing` otherwise.
 evalExprInEra :: EraSummary -> ClosedExpr a -> Maybe a
 evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
  where
@@ -267,6 +269,15 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
   guardEndPeras p = case eraEnd of
     EraUnbounded -> pure ()
     EraEnd end -> lift . guard =<< p end
+
+  -- | This guard function fails to recover the `PerasRoundNo` contained in a `Bound`
+  -- if the provided era has Peras enabled. The information of whether Peras is enabled
+  -- is held by 'eraPerasRoundLength' in the era params.
+  -- We switch behaviour based on that value.
+  perasRoundFromBound :: Bound -> PerasEnabledT Maybe PerasRoundNo
+  perasRoundFromBound b = case eraPerasRoundLength of
+    PerasEnabled _ -> pure $ boundNextPerasRound b
+    NoPerasEnabled -> lift Nothing
 
   go :: Expr Identity a -> Maybe a
   go (EVar a) =
@@ -302,7 +313,7 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     return $ EpochInEra (countEpochs e (boundEpoch eraStart))
   go (EAbsToRelPerasRoundNo expr) =
     runPerasEnabledT $ do
-      eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+      eraStartPerasRound <- perasRoundFromBound eraStart
       absPerasRoundNo <- lift $ go expr
       lift . guard $ absPerasRoundNo >= eraStartPerasRound
       let roundInEra = countPerasRounds absPerasRoundNo eraStartPerasRound
@@ -333,12 +344,12 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
         || absEpoch == boundEpoch end && getSlotInEpoch s == 0
     return absEpoch
   go (ERelToAbsPerasRoundNo expr) = runPerasEnabledT $ do
-    eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+    eraStartPerasRound <- perasRoundFromBound eraStart
     relPerasRound <- PerasEnabledT $ go expr
     let absPerasRound = addPerasRounds (getPerasRoundNoInEra relPerasRound) eraStartPerasRound
 
     guardEndPeras $ \end -> do
-      eraEndPerasRound <- PerasEnabledT . Just $ boundPerasRound end
+      eraEndPerasRound <- perasRoundFromBound end
       pure $ absPerasRound <= eraEndPerasRound
     pure absPerasRound
 
@@ -388,11 +399,11 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     guardEnd $ \end -> s < boundSlot end
     return eraGenesisWin
   go (EPerasRoundLength expr) = runPerasEnabledT $ do
-    eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+    eraStartPerasRound <- perasRoundFromBound eraStart
     absPerasRound <- lift $ go expr
     lift . guard $ absPerasRound >= eraStartPerasRound
     guardEndPeras $ \end -> do
-      eraEndPerasRound <- PerasEnabledT . Just $ boundPerasRound end
+      eraEndPerasRound <- perasRoundFromBound end
       pure $ absPerasRound < eraEndPerasRound
     PerasEnabledT . Just $ eraPerasRoundLength
 
