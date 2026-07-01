@@ -1925,10 +1925,15 @@ executable snapshot-converter
     mtl,
     optparse-applicative,
     ouroboros-consensus:{cardano, lsm, ouroboros-consensus, unstable-cardano-tools, unstable-snapshot-conversion},
+    text,
     with-utf8,
 
   other-modules:
     DBAnalyser.Parsers
+    Paths_ouroboros_consensus
+
+  autogen-modules:
+    Paths_ouroboros_consensus
 
 test-suite tools-test
   import: common-test
