@@ -46,7 +46,6 @@ import LeiosDemoTypes
   , TxHash (..)
   , leiosEbBodyItems
   , leiosEbBytesSize
-  , trustNoVerifyLeiosCertificate
   )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
@@ -135,8 +134,7 @@ newLeiosDBInMemoryWith stateVar = do
               , leiosDbFilterMissingEbBodies = imFilterMissingEbBodies stateVar
               , leiosDbFilterMissingTxs = imFilterMissingTxs stateVar
               , leiosDbQueryFetchWork = imQueryFetchWork stateVar
-              , leiosDbQueryCompletedEbByPoint = imQueryCompletedEbByPoint stateVar
-              , leiosDbQueryCertificateByPoint = return . Just . trustNoVerifyLeiosCertificate
+              , leiosDbQueryCompletedEbByHash = imQueryCompletedEbByHash stateVar
               }
       }
 
@@ -259,7 +257,8 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
       }
   -- Emit a closure-completion notification for each newly-complete EB. The
   -- ChainDB subscribes to these to grow the acquired-EB-closures set it owns.
-  forM_ completed $ writeTChan notificationChan . AcquiredEbTxs
+  forM_ completed $ \point ->
+    writeTChan notificationChan (AcquiredEbTxs point)
   pure completed
 
 -- | Implements 'leiosDbScanCompleteEbClosuresNotOlderThanSlot': the already-completed EBs
@@ -328,11 +327,11 @@ imQueryFetchWork stateVar = atomically $ do
           ]
   pure LeiosFetchWork{missingEbBodies, missingEbTxs}
 
-imQueryCompletedEbByPoint ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> m (Maybe [(TxHash, ByteString)])
-imQueryCompletedEbByPoint stateVar ebPoint = atomically $ do
+imQueryCompletedEbByHash ::
+  IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe [(TxHash, ByteString)])
+imQueryCompletedEbByHash stateVar ebHash = atomically $ do
   state <- readTVar stateVar
-  case Map.lookup (pointEbHash ebPoint) (imEbBodies state) of
+  case Map.lookup ebHash (imEbBodies state) of
     Nothing -> pure Nothing
     Just entries ->
       let ebTxHashes = [eteTxHash e | e <- IntMap.elems entries]

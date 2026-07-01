@@ -21,16 +21,16 @@ import Control.Monad.IOSim (runSimOrThrow)
 import Data.Data (Proxy (..))
 import Data.Maybe (fromJust, isNothing)
 import LeiosDemoTypes
-  ( Committee (..)
+  ( LeiosCommittee (..)
   , LeiosDSIGN
   , LeiosSigningKey
   , LeiosVote (..)
   , VoteInvalid (..)
-  , VoterId (MkVoterId)
-  , getVoterId
+  , LeiosVoterId (..)
+  , leiosCommitteeSize
+  , getLeiosVoterId
   , mkCommitteeEveryoneVotes
   , signLeiosVote
-  , voters
   )
 import LeiosVoteState
   ( AddVoteResult (..)
@@ -40,7 +40,7 @@ import LeiosVoteState
   , subscribeVotes
   )
 import Test.Crypto.Util (arbitrarySeedOfSize)
-import Test.LeiosDemoDb (genPoint)
+import Test.LeiosDemoDb (genRbHash)
 import Test.QuickCheck
   ( Gen
   , Property
@@ -78,7 +78,7 @@ genLeiosSigningKey = do
   pure $ genKeyDSIGN seed
 
 data TestCommittee = TestCommittee
-  { committee :: Committee
+  { committee :: LeiosCommittee
   , allKeys :: [LeiosSigningKey]
   }
   deriving Show
@@ -106,8 +106,8 @@ genKeyNotIn c = do
 genVoteFor :: TestCommittee -> Gen LeiosVote
 genVoteFor c = do
   key <- elements c.allKeys
-  let vid = fromJust $ getVoterId (deriveVerKeyDSIGN key) c.committee
-  signLeiosVote key vid <$> genPoint
+  let vid = fromJust $ getLeiosVoterId (deriveVerKeyDSIGN key) c.committee
+  signLeiosVote key vid <$> genRbHash
 
 -- | A subscriber should receive a vote that was added after subscribing.
 prop_subscriberReceivesVote :: Property
@@ -187,7 +187,7 @@ prop_invalidVoteRejected =
     forAll (genVoteFor testCommittee) $ \vote ->
       forAll genLeiosSigningKey $ \someKey ->
         property $ runSimOrThrow $ do
-          let badVote = signLeiosVote someKey vote.voterId vote.point
+          let badVote = signLeiosVote someKey vote.voterId vote.announcingRbHash
           st <- newLeiosVoteState (pure (Just testCommittee.committee))
           sub <- subscribeVotes st
           r <- addVote st badVote
@@ -216,10 +216,10 @@ prop_signerNotInCommittee :: Property
 prop_signerNotInCommittee =
   forAll genCommittee $ \testCommittee ->
     forAll (genKeyNotIn testCommittee) $ \key ->
-      forAll genPoint $ \p -> property $ runSimOrThrow $ do
+      forAll genRbHash $ \announcingRbHash -> property $ runSimOrThrow $ do
         -- VoterId must be outside of committe, otherwise this is just a bad signature
-        let committeeSize = length $ testCommittee.committee.voters
-        let vote = signLeiosVote key (MkVoterId $ fromIntegral committeeSize) p
+        let n = leiosCommitteeSize testCommittee.committee
+        let vote = signLeiosVote key (LeiosVoterId $ fromIntegral n) announcingRbHash
         st <- newLeiosVoteState (pure (Just testCommittee.committee))
         sub <- subscribeVotes st
         r <- addVote st vote

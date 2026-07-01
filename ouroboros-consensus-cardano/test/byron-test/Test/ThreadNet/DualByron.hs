@@ -159,7 +159,7 @@ setupTestOutput setup@SetupDualByron{..} =
                   setupGenesis
                   (setupParams setup)
                   [coreNodeId]
-          plainTestNodeInitialization pInfo (fmap (fmap (MkBlockForging . pure)) bfs)
+          pure $ plainTestNodeInitialization pInfo (fmap (fmap (MkBlockForging . pure)) bfs)
       , mkRekeyM = Nothing -- TODO
       }
  where

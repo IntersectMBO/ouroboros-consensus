@@ -15,7 +15,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-partial-fields #-}
 
-module LeiosDemoTypes (module LeiosDemoTypes) where
+module LeiosDemoTypes (module LeiosDemoTypes, module Cardano.Crypto.Leios) where
 
 import Cardano.Binary
   ( Decoder
@@ -29,18 +29,36 @@ import Cardano.Binary
   )
 import qualified Cardano.Binary as CBOR
 import Cardano.Crypto.DSIGN
-  ( SigDSIGN
-  , SignKeyDSIGN
-  , VerKeyDSIGN
-  , decodeSigDSIGN
+  ( decodeSigDSIGN
   , encodeSigDSIGN
   , signDSIGN
   , verifyDSIGN
   )
-import Cardano.Crypto.DSIGN.BLS12381 (BLS12381MinSigDSIGN, BLS12381SignContext (..))
 import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Crypto.Leios
+  ( AggregationError (..)
+  , LeiosCert (..)
+  , LeiosCommittee (..)
+  , LeiosDSIGN
+  , LeiosSignature
+  , LeiosSigningKey
+  , LeiosVerificationKey
+  , LeiosVoter (..)
+  , LeiosVoterId (..)
+  , VerificationError
+  , Weight
+  , aggregateLeiosCert
+  , decodeLeiosVoterId
+  , encodeLeiosVoterId
+  , getLeiosVoterId
+  , leiosCommitteeSize
+  , leiosSignContext
+  , resolveLeiosVoter
+  , verifyLeiosCert
+  )
 import Cardano.Crypto.Util (SignableRepresentation (..))
-import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
+import Cardano.Ledger.Binary (DecCBOR (..), EncCBOR (..))
+import qualified Cardano.Ledger.Binary as Binary
 import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
 import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
@@ -60,15 +78,17 @@ import Data.Fixed (Pico)
 import Data.Function (on)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
-import Data.List (findIndex, nubBy, sortOn)
+import Data.List (nubBy, sortOn)
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Ratio ((%))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.String (fromString)
-import qualified Data.Vector as V
+import Data.Vector.Strict (Vector)
+import qualified Data.Vector.Strict as V
 import Data.Word (Word16, Word32, Word64)
 import Debug.Trace (trace)
 import GHC.Generics (Generic)
@@ -79,6 +99,7 @@ import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
 import qualified Numeric
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32 (..)
   , TxMeasureMetrics
@@ -97,6 +118,7 @@ newtype PeerId a = MkPeerId a
 -- Hash algorithm used in leios for EBs and txs
 type HASH = Hash.Blake2b_256
 
+-- | Hash of an Endorser Block
 newtype EbHash = MkEbHash {ebHashBytes :: ByteString}
   deriving newtype (Eq, Ord, NoThunks, Serialise, DecCBOR, EncCBOR, ToCBOR, FromCBOR)
   deriving stock Generic
@@ -112,6 +134,32 @@ decodeEbHash = MkEbHash <$> CBOR.decodeBytes
 
 prettyEbHash :: EbHash -> String
 prettyEbHash (MkEbHash bytes) = BS8.unpack (BS16.encode bytes)
+
+-- | Hash of a Ranking Block
+--
+-- A Ranking Block is the Praos Block. While the regular Praos headers are parameterised
+-- over 'blk', we choose to keep 'RbHash' monomorphic. Use the 'ConvertRawHash' type class
+-- to convert between this type and 'HeaderHash'.
+newtype RbHash = MkRbHash {rbHashBytes :: ByteString}
+  deriving newtype (Eq, Ord, NoThunks, Serialise, DecCBOR, EncCBOR, ToCBOR, FromCBOR)
+  deriving stock Generic
+
+instance Show RbHash where
+  show = prettyRbHash
+
+encodeRbHash :: RbHash -> Encoding
+encodeRbHash (MkRbHash bytes) = CBOR.encodeBytes bytes
+
+decodeRbHash :: Decoder s RbHash
+decodeRbHash = MkRbHash <$> CBOR.decodeBytes
+
+prettyRbHash :: RbHash -> String
+prettyRbHash (MkRbHash bytes) = BS8.unpack (BS16.encode bytes)
+
+instance SignableRepresentation RbHash where
+  getSignableRepresentation point =
+    toStrictByteString $
+      encodeRbHash point
 
 newtype TxHash = MkTxHash ByteString
   deriving stock (Eq, Ord, Generic)
@@ -163,7 +211,7 @@ data EbAnnouncement = EbAnnouncement
   , ebAnnouncementSize :: BytesSize
   }
   deriving stock (Generic, Show, Eq, Ord)
-  deriving anyclass (NoThunks, EncCBOR, DecCBOR)
+  deriving anyclass NoThunks
 
 instance ToCBOR EbAnnouncement where
   toCBOR ebAnn = CBOR.encodeListLen 2 <> encode (ebAnnouncementHash ebAnn) <> encode (ebAnnouncementSize ebAnn)
@@ -172,6 +220,17 @@ instance FromCBOR EbAnnouncement where
   fromCBOR = do
     enforceSize "EbAnnouncement" 2
     EbAnnouncement <$> decode <*> decode
+
+instance EncCBOR EbAnnouncement where
+  encCBOR ebAnn =
+    Binary.encodeListLen 2
+      <> encCBOR (ebAnnouncementHash ebAnn)
+      <> encCBOR (ebAnnouncementSize ebAnn)
+
+instance DecCBOR EbAnnouncement where
+  decCBOR =
+    Binary.decodeRecordNamed "EbAnnouncement" (const 2) $
+      EbAnnouncement <$> decCBOR <*> decCBOR
 
 -- * Fetch logic types
 
@@ -198,7 +257,7 @@ data LeiosBlockTxsRequest
     MkLeiosBlockTxsRequest
       !LeiosPoint
       [(Word16, Word64)]
-      !(V.Vector TxHash)
+      !(Vector TxHash)
 
 prettyLeiosBlockTxsRequest :: LeiosBlockTxsRequest -> String
 prettyLeiosBlockTxsRequest (MkLeiosBlockTxsRequest p bitmaps _txHashes) =
@@ -454,7 +513,7 @@ hashLeiosTx =
 -- | An Endorser Block as it is submitted through the network.
 -- TODO: Keep track of the slot of an EB?
 data LeiosEb = MkLeiosEb
-  { leiosEbTxs :: !(V.Vector (TxHash, BytesSize))
+  { leiosEbTxs :: !(Vector (TxHash, BytesSize))
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -470,15 +529,6 @@ data ForgedLeiosEb = ForgedLeiosEb
   deriving anyclass NoThunks
 
 instance ShowProxy LeiosEb where showProxy _ = "LeiosEb"
-
-newtype LeiosCertificate = LeiosCertificate
-  { leiosCertificateEbPoint :: LeiosPoint -- FIXME(bladyjoker): Mocked
-  }
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass NoThunks
-
-trustNoVerifyLeiosCertificate :: LeiosPoint -> LeiosCertificate
-trustNoVerifyLeiosCertificate = LeiosCertificate
 
 forgeLeiosEb :: EraTx era => SlotNo -> NonEmpty (Tx TopTx era) -> ForgedLeiosEb
 forgeLeiosEb slot txs =
@@ -515,7 +565,7 @@ leiosEbBodyItems eb =
 
 leiosEbBytesSize :: LeiosEb -> BytesSize
 leiosEbBytesSize (MkLeiosEb items) =
-  cborIntBytesSize (V.length items) + V.sum (V.map (each . snd) items)
+  cborIntBytesSize (length items) + sum (fmap (each . snd) items)
  where
   each sz = cborBytesSize 32 + cborIntBytesSize sz
 
@@ -536,11 +586,11 @@ hashLeiosEb =
 
 encodeLeiosEb :: LeiosEb -> Encoding
 encodeLeiosEb (MkLeiosEb v) =
-  V.foldl
+  foldl
     ( \acc (MkTxHash bytes, txBytesSize) ->
         acc <> CBOR.encodeBytes bytes <> CBOR.encodeWord32 txBytesSize
     )
-    (CBOR.encodeMapLen $ fromIntegral $ V.length v)
+    (CBOR.encodeMapLen $ fromIntegral $ length v)
     v
 
 decodeLeiosEb :: Decoder s LeiosEb
@@ -555,75 +605,30 @@ decodeLeiosEb = do
 
 -- * Voting
 
--- | Leios uses BLS as a signature scheme. NOTE: We cannot use the
--- cardano-ledger KeyRole infrastructure as this is fixed to use Ed25519DSIGN.
-type LeiosDSIGN = BLS12381MinSigDSIGN
-
-type LeiosSigningKey = SignKeyDSIGN LeiosDSIGN
-
-type LeiosVerificationKey = VerKeyDSIGN LeiosDSIGN
-
-type LeiosSignature = SigDSIGN LeiosDSIGN
-
--- TODO: Seems not to be exposed, but will move into the DSIGN instance anyways
-minSigPoPDST :: BLS12381SignContext
-minSigPoPDST = BLS12381SignContext (Just "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_") Nothing
-
--- ** Committee
-
--- | A selected committee in which each 'VoterId' has a 'Weight'.
-newtype Committee = UnsafeCommittee {voters :: [(Weight, LeiosVerificationKey)]}
-  deriving Show
-
--- | Create a 'Committee' from a mapping of verification keys and some
+-- | Create a 'LeiosCommittee' from a mapping of verification keys and some
 -- associated weight. Duplicate entries by verification key are ignored. The
 -- final 'Weight' in the committee is normalized by the total of the input map.
 -- TODO: The total can only be calculated here in "everyone votes" scheme.
-mkCommitteeEveryoneVotes :: Real w => [(LeiosVerificationKey, w)] -> Committee
+mkCommitteeEveryoneVotes :: Real w => [(LeiosVerificationKey, w)] -> LeiosCommittee
 mkCommitteeEveryoneVotes inputs =
-  UnsafeCommittee
-    . sortOn fst
-    $ [ (toRational weight / totalWeight, vk)
+  LeiosCommittee
+    . V.fromList
+    . sortOn voterWeight
+    $ [ LeiosVoter{voterWeight = toRational weight / totalWeight, voterVKey = vk}
       | (vk, weight) <- nubBy ((==) `on` fst) inputs
       ]
  where
   totalWeight = toRational . sum $ snd <$> inputs
 
--- | Resolve a 'VoterId' to its corresponding 'VotingKey' in the 'Committee'.
-resolveVoterId :: Committee -> VoterId -> Maybe (Weight, LeiosVerificationKey)
-resolveVoterId committee (MkVoterId idx)
-  | i >= 0 && i < length voters = Just $ voters !! i
-  | otherwise = Nothing
- where
-  i = fromIntegral idx
-
-  voters = committee.voters
-
--- ** VoterId
-
--- | Voter in a committee, identified by their seat index.
-newtype VoterId = MkVoterId {voterIndex :: Word16}
-  deriving (Ord, Eq, Show)
-
-encodeVoterId :: VoterId -> Encoding
-encodeVoterId (MkVoterId idx) = CBOR.encodeWord16 idx
-
-decodeVoterId :: Decoder s VoterId
-decodeVoterId = MkVoterId <$> CBOR.decodeWord16
-
--- | Determine the 'VoterId' on a 'Committee'.
-getVoterId :: LeiosVerificationKey -> Committee -> Maybe VoterId
-getVoterId vk committee =
-  MkVoterId . fromIntegral <$> findIndex ((== vk) . snd) committee.voters
-
 -- ** Vote
 
 -- | A vote in the Leios protocol.
 data LeiosVote = MkLeiosVote
-  { point :: LeiosPoint
-  -- ^ Point that gets signed. The slot also identifies the voting round.
-  , voterId :: VoterId
-  -- ^ Identity within a 'Committee' who signed this vote.
+  { announcingRbHash :: RbHash
+  -- ^ The message that gets signed, the hash of the ranking block
+  --   that announced an endorser block.
+  , voterId :: LeiosVoterId
+  -- ^ Identity within a 'LeiosCommittee' who signed this vote.
   , voteSignature :: LeiosSignature
   -- ^ The cryptographic signature of the vote.
   }
@@ -631,7 +636,7 @@ data LeiosVote = MkLeiosVote
 
 instance Ord LeiosVote where
   compare v1 v2 =
-    compare v1.point v2.point
+    compare v1.announcingRbHash v2.announcingRbHash
       <> compare v1.voterId v2.voterId
 
 instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
@@ -639,61 +644,70 @@ instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
 -- | Encode a 'LeiosVote' into CBOR.
 -- NOTE: Encodes points flat into the vote for smaller votes.
 encodeLeiosVote :: LeiosVote -> Encoding
-encodeLeiosVote MkLeiosVote{point, voterId, voteSignature} =
+encodeLeiosVote MkLeiosVote{announcingRbHash, voterId, voteSignature} =
   CBOR.encodeListLen 4
-    <> encode point.pointSlotNo
-    <> encodeEbHash point.pointEbHash
-    <> encodeVoterId voterId
+    <> encodeRbHash announcingRbHash
+    <> encodeLeiosVoterId voterId
     <> encodeSigDSIGN voteSignature
 
 -- | Dedoe a 'LeiosVote' from CBOR.
 decodeLeiosVote :: Decoder s LeiosVote
 decodeLeiosVote = do
   enforceSize (fromString "LeiosVote") 4
-  pointSlotNo <- decode
-  pointEbHash <- decodeEbHash
-  voterId <- decodeVoterId
+  pointRbHash <- decodeRbHash
+  voterId <- decodeLeiosVoterId
   voteSignature <- decodeSigDSIGN
   pure
     MkLeiosVote
-      { point = MkLeiosPoint{pointSlotNo, pointEbHash}
+      { announcingRbHash = pointRbHash
       , voterId
       , voteSignature
       }
 
 voteToObject :: LeiosVote -> Aeson.Object
-voteToObject MkLeiosVote{point, voterId} =
+voteToObject MkLeiosVote{announcingRbHash, voterId} =
   mconcat
-    [ "slot" .= point.pointSlotNo
-    , "ebHash" .= prettyEbHash point.pointEbHash
-    , "voterId" .= voterId.voterIndex
+    [ "rbHash" .= prettyRbHash announcingRbHash
+    , "voterId" .= voterId.leiosVoterIndex
     ]
 
 -- | Create a vote for given 'LeiosPoint' and signing key.
-signLeiosVote :: LeiosSigningKey -> VoterId -> LeiosPoint -> LeiosVote
-signLeiosVote sk voterId point =
+signLeiosVote :: LeiosSigningKey -> LeiosVoterId -> RbHash -> LeiosVote
+signLeiosVote sk voterId announcingRbHash =
   MkLeiosVote
-    { point
+    { announcingRbHash
     , voterId
-    , voteSignature = signDSIGN minSigPoPDST point sk
+    , voteSignature = signDSIGN leiosSignContext announcingRbHash sk
     }
 
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
-validateLeiosVote :: Committee -> LeiosVote -> Either VoteInvalid Weight
-validateLeiosVote committee MkLeiosVote{point, voterId, voteSignature} =
-  case resolveVoterId committee voterId of
+validateLeiosVote :: LeiosCommittee -> LeiosVote -> Either VoteInvalid Weight
+validateLeiosVote committee MkLeiosVote{announcingRbHash, voterId, voteSignature} =
+  case resolveLeiosVoter committee voterId of
     Nothing -> Left SignerNotInCommittee
-    Just (weight, vk) ->
-      case verifyDSIGN minSigPoPDST vk point voteSignature of
+    Just voter ->
+      case verifyDSIGN leiosSignContext voter.voterVKey announcingRbHash voteSignature of
         Left _ -> Left InvalidSignature
-        Right () -> Right weight
+        Right () -> Right voter.voterWeight
 
 data VoteInvalid
   = InvalidSignature
   | SignerNotInCommittee
   deriving (Eq, Show)
 
-type Weight = Rational
+-- * Era-level Leios dispatch
+
+-- | Per-era hooks for Leios voting and CertRB admission. Default
+-- methods make this a no-op for non-Leios eras.
+--
+-- Lives here rather than in 'LeiosVoting' so it can be referenced from
+-- the LedgerDB layer ('applyBlock') without pulling 'ChainDB' (which
+-- 'runLeiosVoting' depends on) into scope.
+class HasLeiosVoting blk where
+  -- | The voting committee for the given (pre-tick) ledger state, or
+  -- 'Nothing' if the era does not participate in Leios voting.
+  getLeiosCommittee :: LedgerState blk EmptyMK -> Maybe LeiosCommittee
+  getLeiosCommittee _ = Nothing
 
 -- * Tracing
 
@@ -759,7 +773,7 @@ messageLeiosFetchToObject = \case
   MsgLeiosBlockTxs (MkLeiosPoint ebSlot ebHash) bitmaps txs ->
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosBlockTxs"
-      , "numTxs" .= Aeson.Number (fromIntegral (V.length txs))
+      , "numTxs" .= Aeson.Number (fromIntegral (length txs))
       , "txsBytesSize" .= Aeson.Number (fromIntegral $ sum $ fmap (BS.length . cbor) txs)
       , "ebSlot" .= ebSlot
       , "ebHash" .= prettyEbHash ebHash
@@ -782,14 +796,39 @@ data TraceLeiosKernel
       , mempoolRestMeasure :: m
       }
   | TraceLeiosBlockStored {slot :: SlotNo, eb :: LeiosEb}
+  | -- | An RB header announces a freshly-forged EB on this chain.
+    -- Lets downstream consumers (e.g. the visualizer) attach the EB to
+    -- the announcing RB without having to correlate by timing.
+    TraceLeiosBlockAnnounced
+      { announcingRbHashBytes :: ByteString
+      , announcedEbPoint :: LeiosPoint
+      }
   | -- NOTE: We avoid 'Header blk' or 'Point blk' here and a slot should be
     -- sufficient because it the certying block must be directly succeeding the
     -- forging/announcing anyways.
     TraceLeiosBlockCertified {atSlot :: SlotNo, certifiedPoint :: LeiosPoint}
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
+  | TraceLeiosCertified {rbHash :: RbHash}
+  | -- | An 'AcquiredEbTxs' notification arrived but 'runLeiosVoting' chose
+    -- not to cast a vote; the reason identifies which precondition failed.
+    TraceLeiosNotVoted {ebPoint :: LeiosPoint, reason :: LeiosNotVotedReason}
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
+
+-- | Reasons 'runLeiosVoting' may decline to cast a vote after acquiring an
+-- EB closure. See 'TraceLeiosNotVoted'.
+data LeiosNotVotedReason
+  = -- | The tip of the currently selected chain does not announce this EB.
+    -- Either our chain hasn't caught up to the announcing RB yet, or the
+    -- chain has extended past it, or the tip announces a different EB.
+    ChainTipDoesNotAnnounce
+  | -- | The vote deadline ('announcedSlot + 3 * L_hdr + L_vote') has
+    -- already passed by the time we became eligible.
+    TooLate
+  | -- | We are not part of the current voting committee.
+    NotOnCommittee
+  deriving Show
 
 deriving instance Show TraceLeiosKernel
 
@@ -823,7 +862,7 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosBlockForged"
       , "slot" .= slot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
-      , "numTxs" .= V.length (leiosEbTxs eb)
+      , "numTxs" .= length (leiosEbTxs eb)
       , "ebSize" .= leiosEbBytesSize eb
       , "closureSize" .= unByteSize32 (txMeasureMetricTxSizeBytes ebMeasure)
       , "mempoolRestSize" .= unByteSize32 (txMeasureMetricTxSizeBytes mempoolRestMeasure)
@@ -833,6 +872,13 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosBlockStored"
       , "slot" .= slot
       , "hash" .= prettyEbHash (hashLeiosEb eb)
+      ]
+  TraceLeiosBlockAnnounced{announcingRbHashBytes, announcedEbPoint} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosBlockAnnounced"
+      , "rbHash" .= BS8.unpack (BS16.encode announcingRbHashBytes)
+      , "ebSlot" .= announcedEbPoint.pointSlotNo
+      , "ebHash" .= prettyEbHash announcedEbPoint.pointEbHash
       ]
   TraceLeiosBlockCertified{atSlot, certifiedPoint} ->
     mconcat
@@ -854,6 +900,18 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosVoteAcquired"
       , "vote" .= voteToObject vote
       ]
+  TraceLeiosCertified{rbHash = announcingRbHash} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosCertified"
+      , "rbHash" .= prettyRbHash announcingRbHash
+      ]
+  TraceLeiosNotVoted{ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash, reason} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosNotVoted"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      , "reason" .= notVotedReasonText reason
+      ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
   TraceLeiosDb (TraceLeiosDbInsertCollision table key) ->
@@ -862,6 +920,12 @@ traceLeiosKernelToObject = \case
       , "table" .= table
       , "key" .= key
       ]
+
+notVotedReasonText :: LeiosNotVotedReason -> Aeson.Value
+notVotedReasonText = \case
+  ChainTipDoesNotAnnounce -> Aeson.String "chainTipDoesNotAnnounce"
+  TooLate -> Aeson.String "tooLate"
+  NotOnCommittee -> Aeson.String "notOnCommittee"
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String
@@ -895,6 +959,10 @@ maxTxsPerEb =
 
 minCertificationGap :: Word64
 minCertificationGap = 10
+
+-- | Minimum fraction of stake to create a valid 'LeiosCertificate'.
+minCertificationThreshold :: Rational
+minCertificationThreshold = 3 % 4
 
 leiosMempoolSize :: ByteSize32
 leiosMempoolSize = ByteSize32 24_090_112 -- 2 * (leiosEBMaxClosureSize + RB block size (mainnet = 90112))

@@ -18,6 +18,9 @@
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
 #endif
 
+-- FIXME: resolve 'Validated' deprecations
+{-# OPTIONS_GHC -Wno-deprecations #-}
+
 module Ouroboros.Consensus.Cardano.CanHardFork
   ( CardanoHardForkConstraints
   , TriggerHardFork (..)
@@ -414,8 +417,9 @@ crossEraForecastByronToShelleyWrapper =
     | forecastFor < maxFor =
         return $
           WrapLedgerView $
-            SL.mkInitialShelleyLedgerView
-              (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
+            SL.forecastToTPraosLedgerView $
+              SL.mkInitialShelleyForecast
+                (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
     | otherwise =
         throwError $
           OutsideForecastRange

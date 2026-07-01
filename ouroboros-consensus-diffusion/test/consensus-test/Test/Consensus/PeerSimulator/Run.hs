@@ -15,7 +15,7 @@ import Control.Monad (foldM, forM, void, when)
 import Control.Monad.Class.MonadTime (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), nullTracer, traceWith)
+import Control.Tracer (Tracer, mkTracer, nullTracer, traceWith)
 import Data.Coerce (coerce)
 import Data.Foldable (for_)
 import Data.List (sort)
@@ -23,6 +23,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Typeable
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (TopLevelConfig (..))
 import Ouroboros.Consensus.Config.SupportsNode (ConfigSupportsNode)
@@ -62,8 +63,10 @@ import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.BlockFetch
   ( FetchClientRegistry
+  , KeepAliveRegistry
   , bracketSyncWithFetchClient
   , newFetchClientRegistry
+  , newKeepAliveRegistry
   )
 import Ouroboros.Network.Channel (createConnectedChannels)
 import Ouroboros.Network.ControlMessage
@@ -225,6 +228,7 @@ startBlockFetchConnectionThread ::
   Tracer m (TraceEvent blk) ->
   StateViewTracers blk m ->
   FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
+  KeepAliveRegistry PeerId m ->
   ControlMessageSTM m ->
   SharedResources m blk ->
   BlockFetchResources m blk ->
@@ -235,6 +239,7 @@ startBlockFetchConnectionThread
   tracer
   tracers
   fetchClientRegistry
+  keepAliveRegistry
   controlMsgSTM
   SharedResources{srPeerId}
   BlockFetchResources{bfrServer}
@@ -248,6 +253,7 @@ startBlockFetchConnectionThread
           blockFetchTimeouts
           tracers
           fetchClientRegistry
+          keepAliveRegistry
           controlMsgSTM
           clientChannel
     serverThread <-
@@ -425,6 +431,7 @@ startNode ::
 startNode protocolInfo schedulerConfig genesisTest interval = do
   let handles = psrHandles lrPeerSim
   fetchClientRegistry <- newFetchClientRegistry
+  keepAliveRegistry <- newKeepAliveRegistry
   let chainDbView = CSClient.defaultChainDbView lnChainDb
       activePeers = Map.toList $ Map.restrictKeys (psrPeers lrPeerSim) (lirActive liveResult)
       peersStartOrder = psStartOrder ++ sort [pid | (pid, _) <- activePeers, pid `notElem` psStartOrder]
@@ -455,13 +462,14 @@ startNode protocolInfo schedulerConfig genesisTest interval = do
             csjConfig
             lnStateViewTracers
             handles
-        BlockFetch.startKeepAliveThread peerRegistry fetchClientRegistry pid
+        BlockFetch.startKeepAliveThread peerRegistry keepAliveRegistry pid
         (bfClient, bfServer) <-
           startBlockFetchConnectionThread
             peerRegistry
             tracer
             lnStateViewTracers
             fetchClientRegistry
+            keepAliveRegistry
             (pure Continue)
             prShared
             prBlockFetch
@@ -477,6 +485,7 @@ startNode protocolInfo schedulerConfig genesisTest interval = do
     protocolInfo
     lnChainDb
     fetchClientRegistry
+    keepAliveRegistry
     handles
 
   for_ lrLoEVar $ \var -> do
@@ -518,7 +527,7 @@ startNode protocolInfo schedulerConfig genesisTest interval = do
   -- FIXME: This type of configuration should move to `Trace.mkTracer`.
   tracer =
     if scTrace schedulerConfig
-      then Tracer (\evt -> traceWith lrTracer evt >> traceWith svtTraceTracer evt)
+      then mkTracer (\evt -> traceWith lrTracer evt >> traceWith svtTraceTracer evt)
       else svtTraceTracer
 
   chainSyncTimeouts_ =
@@ -562,6 +571,7 @@ nodeLifecycle ::
   , HasPointScheduleTestParams blk
   , Eq (Header blk)
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   ProtocolInfoArgs blk ->
   SchedulerConfig ->
@@ -623,6 +633,7 @@ runPointSchedule ::
   , Eq (Header blk)
   , Eq blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   ProtocolInfoArgs blk ->
   SchedulerConfig ->
@@ -639,7 +650,7 @@ runPointSchedule protocolInfoArgs schedulerConfig genesisTest tracer0 =
     lifecycle <- nodeLifecycle protocolInfoArgs schedulerConfig genesisTest tracer registry peerSim
     (chainDb, stateViewTracers) <-
       runScheduler
-        (Tracer $ traceWith tracer . TraceSchedulerEvent)
+        (mkTracer $ traceWith tracer . TraceSchedulerEvent)
         (cschcMap (psrHandles peerSim))
         gtSchedule
         (psrPeers peerSim)

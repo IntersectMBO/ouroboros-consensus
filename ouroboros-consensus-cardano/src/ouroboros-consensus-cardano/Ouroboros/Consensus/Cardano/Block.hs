@@ -5,7 +5,9 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -212,10 +214,10 @@ module Ouroboros.Consensus.Cardano.Block
   , EraMismatch (..)
   ) where
 
-import Cardano.Protocol.TPraos.API (PraosCrypto)
 import Data.Kind
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
+import Data.SOP.Index (Index (..))
 import Data.SOP.Strict
 import Ouroboros.Consensus.Block (BlockProtocol)
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
@@ -232,12 +234,17 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ApplyTxErr
   , GenTxId
   )
+import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
-import Ouroboros.Consensus.Protocol.Praos (Praos)
+import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
-import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, praosLeiosAnnouncement)
+import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyCompatible)
+import Ouroboros.Consensus.Shelley.Ledger.Ledger
+  ( ShelleyPartialLedgerConfig (..)
+  )
+import Ouroboros.Consensus.Shelley.Ledger.Leios ()
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -1525,34 +1532,79 @@ pattern ChainDepStateDijkstra st <-
 -- Block and chain-dep state are scrutinised together so the dispatch is
 -- a single case; era mismatches fall through to the no-op default.
 instance
+  forall c.
   ( PraosCrypto c
   , ShelleyCompatible (Praos c) DijkstraEra
+  , HasCanonicalTxIn (CardanoEras c)
+  , HasHardForkTxOut (CardanoEras c)
   ) =>
   ResolveLeiosBlock (HardForkBlock (CardanoEras c))
   where
-  resolveLeiosBlock db cds blk =
-    case (cds, blk) of
-      (ChainDepStateDijkstra praosSt, BlockDijkstra dijkstraBlk) ->
-        BlockDijkstra <$> resolveLeiosBlock db praosSt dijkstraBlk
-      _ -> pure blk
-
-  resolveLeiosBlockHdr db prevAnn blk = case blk of
+  resolveLeiosClosure db point blk = case blk of
     BlockDijkstra dijkstraBlk ->
-      fmap BlockDijkstra <$> resolveLeiosBlockHdr db prevAnn dijkstraBlk
-    _ -> pure Nothing
+      fmap GenTxDijkstra <$> resolveLeiosClosure db point dijkstraBlk
+    _ -> pure []
 
-  blockHasLeiosCert blk = case blk of
-    BlockDijkstra dijkstraBlk -> blockHasLeiosCert dijkstraBlk
-    _ -> False
+  inlineLeiosClosure blk txs = case blk of
+    BlockDijkstra dijkstraBlk ->
+      BlockDijkstra $
+        inlineLeiosClosure dijkstraBlk [tx | GenTxDijkstra tx <- txs]
+    _ -> blk
+
+  applyLeiosClosure cfg txs lst =
+    case lst of
+      HardForkLedgerState
+        ( State.HardForkState
+            ( TeleDijkstra
+                byron
+                shelley
+                allegra
+                mary
+                alonzo
+                babbage
+                conway
+                (State.Current bound (Flip dijkstraLst))
+              )
+          ) ->
+          let dijkstraTxs = [tx | GenTxDijkstra tx <- txs]
+              CardanoLedgerConfig _ _ _ _ _ _ _ dijkstraPCfg = cfg
+              dijkstraCfg = shelleyLedgerConfig dijkstraPCfg
+           in case applyLeiosClosure dijkstraCfg dijkstraTxs dijkstraLst of
+                Left dijkstraErr -> Left (LedgerErrorDijkstra dijkstraErr)
+                Right dijkstraLst' ->
+                  let newTele =
+                        TeleDijkstra
+                          byron
+                          shelley
+                          allegra
+                          mary
+                          alonzo
+                          babbage
+                          conway
+                          (State.Current bound (Flip dijkstraLst'))
+                   in Right (HardForkLedgerState (State.HardForkState newTele))
+      _ -> Right lst
+
+  blockLeiosCert blk = case blk of
+    BlockDijkstra dijkstraBlk -> blockLeiosCert dijkstraBlk
+    _ -> Nothing
+
+  announcingRbHash blk = case blk of
+    BlockDijkstra dijkstraBlk -> announcingRbHash dijkstraBlk
+    _ -> Nothing
 
   headerLeiosAnnouncement hdr = case hdr of
     HeaderDijkstra dHdr -> headerLeiosAnnouncement dHdr
     _ -> Nothing
 
-  headerContainsLeiosCert hdr = case hdr of
-    HeaderDijkstra dHdr -> headerContainsLeiosCert dHdr
-    _ -> False
-
-  chainDepStateLeiosAnnouncement _ cds = case cds of
-    ChainDepStateDijkstra praosSt -> praosLeiosAnnouncement praosSt
+  protocolStateLeiosAnnouncement cds = case cds of
+    ChainDepStateDijkstra praosSt ->
+      protocolStateLeiosAnnouncement @(ShelleyBlock (Praos c) DijkstraEra) praosSt
     _ -> Nothing
+
+  leiosClosureTxKeySets tx = case tx of
+    GenTxDijkstra inner ->
+      injectLedgerTables
+        (IS (IS (IS (IS (IS (IS (IS IZ)))))))
+        (leiosClosureTxKeySets inner)
+    _ -> emptyLedgerTables

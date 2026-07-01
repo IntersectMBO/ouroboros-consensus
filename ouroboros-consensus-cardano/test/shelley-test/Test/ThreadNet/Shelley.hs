@@ -35,6 +35,7 @@ import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
+import Ouroboros.Consensus.Shelley.Ledger.Leios ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.ShelleyHFC ()
@@ -44,6 +45,9 @@ import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.ThreadNet.General
 import Test.ThreadNet.Infra.Shelley
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as MockFS
+import qualified System.FS.Sim.STM as Sim
 import Test.ThreadNet.Network
   ( TestNodeInitialization (..)
   , nodeOutputFinalLedger
@@ -279,26 +283,29 @@ prop_simple_real_tpraos_convergence
         setupTestConfig
         testConfigB
         TestConfigMB
-          { nodeInfo = \(CoreNodeId nid) ->
-              let (protocolInfo, blockForging) =
-                    mkProtocolShelley
-                      genesisConfig
-                      setupInitialNonce
-                      nextProtVer
-                      (coreNodes !! fromIntegral nid)
-               in TestNodeInitialization
-                    { tniProtocolInfo = protocolInfo
-                    , tniCrucialTxs =
-                        if not includingDUpdateTx
-                          then []
-                          else
-                            mkSetDecentralizationParamTxs
-                              coreNodes
-                              nextProtVer
-                              sentinel -- Does not expire during test
-                              setupD2
-                    , tniBlockForging = blockForging nullTracer
-                    }
+          { nodeInfo = \(CoreNodeId nid) -> do
+              fs <- SomeHasFS <$> Sim.simHasFS' MockFS.empty
+              (protocolInfo, blockForging) <-
+                mkProtocolShelley
+                  fs
+                  genesisConfig
+                  setupInitialNonce
+                  nextProtVer
+                  (coreNodes !! fromIntegral nid)
+              pure
+                TestNodeInitialization
+                  { tniProtocolInfo = protocolInfo
+                  , tniCrucialTxs =
+                      if not includingDUpdateTx
+                        then []
+                        else
+                          mkSetDecentralizationParamTxs
+                            coreNodes
+                            nextProtVer
+                            sentinel -- Does not expire during test
+                            setupD2
+                  , tniBlockForging = blockForging nullTracer
+                  }
           , mkRekeyM = Nothing
           }
 

@@ -26,6 +26,7 @@ import qualified Codec.CBOR.Write as CBOR.Write
 import Control.ResourceRegistry (ResourceRegistry)
 import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
+import Data.Functor ((<&>))
 import LeiosDemoDb (LeiosDbConnection)
 import LeiosDemoTypes (LeiosPoint)
 import Ouroboros.Consensus.Block
@@ -160,8 +161,9 @@ chainSyncBlocksServer tracer chainDB ccfg leiosDb flr = ChainSyncServer $ do
         Just prevAnn -> case decodeRaw sblk of
           Left _ -> pure sblk
           Right blk -> do
-            mRes <- resolveLeiosBlockHdr leiosDb prevAnn blk
-            pure $ maybe sblk encode mRes
+            resolveLeiosClosure leiosDb prevAnn blk
+              <&> inlineLeiosClosure blk
+              <&> encode
       pure (WithPoint sblk' pt)
 
     decodeRaw :: Serialised blk -> Either String blk

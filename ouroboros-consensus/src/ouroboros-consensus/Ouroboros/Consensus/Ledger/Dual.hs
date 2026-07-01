@@ -100,6 +100,7 @@ import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
+import Ouroboros.Network.Tx (HasRawTxId (..))
 
 {-------------------------------------------------------------------------------
   Block
@@ -774,6 +775,10 @@ instance
 
 instance Bridge m a => HasTxId (GenTx (DualBlock m a)) where
   txId = DualGenTxId . txId . dualGenTxMain
+
+instance HasRawTxId (GenTxId m) => HasRawTxId (TxId (GenTx (DualBlock m a))) where
+  type RawTxId (TxId (GenTx (DualBlock m a))) = RawTxId (GenTxId m)
+  getRawTxId = getRawTxId . dualGenTxIdMain
 
 deriving instance Bridge m a => Show (GenTx (DualBlock m a))
 deriving instance Bridge m a => Show (Validated (GenTx (DualBlock m a)))

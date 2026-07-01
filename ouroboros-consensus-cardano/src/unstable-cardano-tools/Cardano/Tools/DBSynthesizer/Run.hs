@@ -59,6 +59,8 @@ import Ouroboros.Consensus.Util.IOLike (atomically)
 import Ouroboros.Network.Block
 import Ouroboros.Network.Point (WithOrigin (..))
 import System.Directory
+import System.FS.API (MountPoint (..), SomeHasFS (..))
+import System.FS.IO (ioHasFS)
 import System.FilePath (takeDirectory, (</>))
 
 initialize ::
@@ -151,6 +153,8 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
   withRegistry $ \registry -> do
     leiosDbHandle <- newLeiosDBInMemory
     leiosDb <- open leiosDbHandle
+    (ProtocolInfo{pInfoConfig, pInfoInitLedger}, mkForgers) <-
+      protocolInfoCardano (SomeHasFS (ioHasFS (MountPoint confDbDir))) runP
     let
       epochSize = sgEpochLength confShelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
@@ -200,12 +204,6 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
     { synthOpenMode
     , synthLimit
     } = confOptions
-  ( ProtocolInfo
-      { pInfoConfig
-      , pInfoInitLedger
-      }
-    , mkForgers
-    ) = protocolInfoCardano runP
 
 preOpenChainDB :: DBSynthesizerOpenMode -> FilePath -> IO ()
 preOpenChainDB mode db =

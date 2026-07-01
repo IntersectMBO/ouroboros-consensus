@@ -14,7 +14,7 @@ import Control.Monad
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (MaybeT (..))
 import Control.ResourceRegistry (withRegistry)
-import Control.Tracer
+import Control.Tracer (Tracer (..), emit)
 import Data.Foldable (asum)
 import Data.Functor ((<&>))
 import Data.Functor.Identity
@@ -119,7 +119,7 @@ mkTracer :: Show a => StrictMVar IO () -> Bool -> IO (Tracer IO a)
 mkTracer _ False = pure mempty
 mkTracer lock True = do
   startTime <- getMonotonicTime
-  pure $ Tracer $ \ev -> do
+  pure $ Tracer . emit $ \ev -> do
     bracket_ (takeMVar lock) (putMVar lock ()) $ do
       traceTime <- getMonotonicTime
       let diff = diffTime traceTime startTime

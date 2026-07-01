@@ -52,6 +52,7 @@ import Cardano.Network.NodeToNode
   , IsBigLedgerPeer (..)
   , MiniProtocolParameters (..)
   , ResponderContext (..)
+  , defaultMiniProtocolParameters
   )
 import Cardano.Network.PeerSelection
   ( PeerTrustable (..)
@@ -74,9 +75,7 @@ import qualified Control.Monad.Except as Exc
 import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
-import Data.Functor.Contravariant ((>$<))
 import Data.Functor.Identity (Identity (Identity))
-import qualified Data.IntMap.Strict as IntMap
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
@@ -159,6 +158,7 @@ import Ouroboros.Network.Protocol.Limits (ProtocolTimeLimitsWithRnd (..), waitFo
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
 import Ouroboros.Network.Protocol.TxSubmission2.Type
+import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V2
   ( TxSubmissionInitDelay (..)
   , TxSubmissionLogicVersion (..)
@@ -264,7 +264,7 @@ data ThreadNetworkArgs m blk = ThreadNetworkArgs
   { tnaForgeEbbEnv :: Maybe (ForgeEbbEnv blk)
   , tnaFuture :: Future
   , tnaJoinPlan :: NodeJoinPlan
-  , tnaNodeInfo :: CoreNodeId -> TestNodeInitialization m blk
+  , tnaNodeInfo :: CoreNodeId -> m (TestNodeInitialization m blk)
   , tnaNumCoreNodes :: NumCoreNodes
   , tnaNumSlots :: NumSlots
   , tnaMessageDelay :: CalcMessageDelay blk
@@ -343,7 +343,6 @@ runThreadNetwork ::
   , MonadTimer m
   , RunNode blk
   , TxGen blk
-  , TracingConstraints blk
   , HasCallStack
   ) =>
   Tracer m (TraceThreadNet blk) ->
@@ -402,8 +401,8 @@ runThreadNetwork
       forM coreNodeIds $ \nid -> do
         -- assume they all start with the empty chain and the same initial
         -- ledger
-        let nodeInitData = mkProtocolInfo (CoreNodeId 0)
-            TestNodeInitialization{tniProtocolInfo} = nodeInitData
+        nodeInitData <- mkProtocolInfo (CoreNodeId 0)
+        let TestNodeInitialization{tniProtocolInfo} = nodeInitData
             ProtocolInfo{pInfoInitLedger} = tniProtocolInfo
             ExtLedgerState{ledgerState} = pInfoInitLedger
         v <-
@@ -416,8 +415,8 @@ runThreadNetwork
     let uedges = edgesNodeTopology nodeTopology
     edgeStatusVars <- fmap (Map.fromList . concat) $ do
       -- assume they all use the same CodecConfig
-      let nodeInitData = mkProtocolInfo (CoreNodeId 0)
-          TestNodeInitialization{tniProtocolInfo} = nodeInitData
+      nodeInitData <- mkProtocolInfo (CoreNodeId 0)
+      let TestNodeInitialization{tniProtocolInfo} = nodeInitData
           ProtocolInfo{pInfoConfig} = tniProtocolInfo
           codecConfig = configCodec pInfoConfig
       forM uedges $ \uedge -> do
@@ -425,7 +424,7 @@ runThreadNetwork
           sharedRegistry
           clock
           -- traces when/why the mini protocol instances start and stop
-          nullDebugTracer
+          nullTracer
           (version, blockVersion)
           (codecConfig, calcMessageDelay)
           vertexStatusVars
@@ -524,15 +523,15 @@ runThreadNetwork
       nodeInfo
       nextInstrSlotVar =
         void $ forkLinkedThread sharedRegistry label $ do
-          loop 0 tniProtocolInfo tniBlockForging NodeRestart restarts0
+          TestNodeInitialization
+            { tniCrucialTxs
+            , tniProtocolInfo
+            , tniBlockForging
+            } <-
+            mkProtocolInfo coreNodeId
+          loop tniCrucialTxs 0 tniProtocolInfo tniBlockForging NodeRestart restarts0
        where
         label = "vertex-" <> condense coreNodeId
-
-        TestNodeInitialization
-          { tniCrucialTxs
-          , tniProtocolInfo
-          , tniBlockForging
-          } = mkProtocolInfo coreNodeId
 
         restarts0 :: Map SlotNo NodeRestart
         restarts0 = Map.mapMaybe (Map.lookup coreNodeId) m
@@ -540,13 +539,14 @@ runThreadNetwork
           NodeRestarts m = nodeRestarts
 
         loop ::
+          [GenTx blk] ->
           SlotNo ->
           ProtocolInfo blk ->
           m [MkBlockForging m blk] ->
           NodeRestart ->
           Map SlotNo NodeRestart ->
           m ()
-        loop s pInfo mkBlockForging nr rs = do
+        loop tniCrucialTxs s pInfo mkBlockForging nr rs = do
           -- a registry solely for the resources of this specific node instance
           (again, finalChain, finalLdgr) <- withRegistry $ \nodeRegistry -> do
             -- change the node's key and prepare a delegation transaction if
@@ -623,7 +623,7 @@ runThreadNetwork
 
           case again of
             Nothing -> pure ()
-            Just (s', pInfo', blockForging', nr', rs') -> loop s' pInfo' blockForging' nr' rs'
+            Just (s', pInfo', blockForging', nr', rs') -> loop tniCrucialTxs s' pInfo' blockForging' nr' rs'
 
     -- \| Instrumentation: record the tip's block number at the onset of the
     -- slot.
@@ -792,7 +792,7 @@ runThreadNetwork
                   , mcdbNodeDBs = nodeDBs
                   , mcdbLeiosDb = leiosDbHandle
                   }
-        let tr = instrumentationTracer <> nullDebugTracer
+        let tr = instrumentationTracer <> nullTracer
         pure $
           (,) leiosDbHandle $
             args
@@ -814,7 +814,7 @@ runThreadNetwork
                   (cdbsArgs args)
                     { -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
                       cdbsGcDelay = 0
-                    , cdbsTracer = instrumentationTracer <> nullDebugTracer
+                    , cdbsTracer = instrumentationTracer <> nullTracer
                     }
               }
        where
@@ -823,7 +823,7 @@ runThreadNetwork
           Origin -> error "selTracer"
 
         -- prop_general relies on this tracer
-        instrumentationTracer = Tracer $ \case
+        instrumentationTracer = Tracer . emit $ \case
           ChainDB.TraceAddBlockEvent
             (ChainDB.AddBlockValidation (ChainDB.InvalidBlock e p)) ->
               traceWith invalidTracer (p, e)
@@ -885,7 +885,7 @@ runThreadNetwork
       -- prop_general relies on these tracers
       let invalidTracer = nodeEventsInvalids nodeInfoEvents
           updatesTracer = nodeEventsUpdates nodeInfoEvents
-          wrapTracer tr = Tracer $ \(p, bno) -> do
+          wrapTracer tr = Tracer . emit $ \(p, bno) -> do
             s <- OracularClock.getCurrentSlot clock
             traceWith tr (s, p, bno)
           addTracer = wrapTracer $ nodeEventsAdds nodeInfoEvents
@@ -1016,7 +1016,7 @@ runThreadNetwork
         -- prop_general relies on these tracers
         instrumentationTracers =
           nullTracers
-            { chainSyncClientTracer = Tracer $ \case
+            { chainSyncClientTracer = Tracer . emit $ \case
                 TraceLabelPeer _ (CSClient.TraceDownloadedHeader hdr) ->
                   case blockPoint hdr of
                     GenesisPoint -> pure ()
@@ -1027,7 +1027,7 @@ runThreadNetwork
                         headerAddTracer
                         (RealPoint s h, blockNo hdr)
                 _ -> pure ()
-            , forgeTracer = Tracer $ \(TraceLabelCreds _ ev) -> do
+            , forgeTracer = Tracer . emit $ \(TraceLabelCreds _ ev) -> do
                 traceWith (nodeEventsForges nodeInfoEvents) ev
                 traceWith nodeTracer (FromForge ev)
                 case ev of
@@ -1039,7 +1039,7 @@ runThreadNetwork
             }
 
         -- traces the node's local events other than those from the -- ChainDB
-        tracers = instrumentationTracers <> nullDebugTracers
+        tracers = instrumentationTracers <> nullTracers
 
       let
         -- use a backoff delay of exactly one slot length (which the
@@ -1082,8 +1082,7 @@ runThreadNetwork
             Seed s -> mkStdGen s
           (kaRng, rng') = splitGen rng
           (gsmRng, rng'') = splitGen rng'
-          (psRng, rng3) = splitGen rng''
-          (txRng, chainSyncRng) = splitGen rng3
+          (psRng, chainSyncRng) = splitGen rng''
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
 
       let nodeKernelArgs =
@@ -1106,9 +1105,8 @@ runThreadNetwork
               , mempoolTimeoutConfig = Nothing
               , keepAliveRng = kaRng
               , peerSharingRng = psRng
-              , txSubmissionRng = txRng
               , miniProtocolParameters =
-                  MiniProtocolParameters
+                  defaultMiniProtocolParameters
                     { chainSyncPipeliningHighMark = 4
                     , chainSyncPipeliningLowMark = 2
                     , blockFetchPipeliningMax = 10
@@ -1165,7 +1163,7 @@ runThreadNetwork
               -- these tracers report every message sent/received by this
               -- node
               chainSyncRng
-              nullDebugProtocolTracers
+              NTN.nullTracers
               (customNodeToNodeCodecs pInfoConfig)
               NTN.noByteLimits
               -- see #1882, tests that can't cope with timeouts.
@@ -1617,7 +1615,7 @@ createConnectedChannelsWithDelay registry (client, server, proto) middle = do
 
   chan q b =
     Channel
-      { recv = fmap (Just . MkReception IntMap.empty) $ atomically $ MonadSTM.takeTMVar b
+      { recv = fmap Just $ atomically $ MonadSTM.takeTMVar b
       , send = atomically . MonadSTM.writeTQueue q
       }
 
@@ -1843,31 +1841,6 @@ mkTestOutput vertexInfos = do
   Constraints needed for verbose tracing
 -------------------------------------------------------------------------------}
 
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugTracer :: (Applicative m, Show a) => Tracer m a
-nullDebugTracer = nullTracer `asTypeOf` showTracing debugTracer
-
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugTracers ::
-  ( Monad m
-  , Show peer
-  , LedgerSupportsProtocol blk
-  , TracingConstraints blk
-  ) =>
-  Tracers m peer Void blk
-nullDebugTracers = nullTracers `asTypeOf` showTracers debugTracer
-
--- | Occurs throughout in positions that might be useful for debugging.
-nullDebugProtocolTracers ::
-  ( Monad m
-  , HasHeader blk
-  , TracingConstraints blk
-  , Show peer
-  ) =>
-  NTN.Tracers m peer blk failure
-nullDebugProtocolTracers =
-  NTN.nullTracers `asTypeOf` NTN.showTracers debugTracer
-
 -- These constraints are when using @showTracer(s) debugTracer@ instead of
 -- @nullTracer(s)@.
 type TracingConstraints blk =
@@ -1883,6 +1856,7 @@ type TracingConstraints blk =
   , Show (TxMeasure blk)
   , Show (ReasonForSwitch (TiebreakerView (BlockProtocol blk)))
   , HasNestedContent Header blk
+  , HasRawTxId (GenTxId blk)
   )
 
 {-------------------------------------------------------------------------------

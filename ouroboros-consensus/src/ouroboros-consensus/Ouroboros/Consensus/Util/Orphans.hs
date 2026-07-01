@@ -26,15 +26,14 @@ import qualified Data.MultiSet as MultiSet
 import Data.SOP.BasicFunctors
 import Data.Typeable (Typeable)
 import NoThunks.Class
-  ( InspectHeap (..)
-  , InspectHeapNamed (..)
+  ( InspectHeapNamed (..)
   , NoThunks (..)
   , OnlyCheckWhnfNamed (..)
   , allNoThunks
   )
 import Ouroboros.Network.Util.ShowProxy
 import System.FS.API (SomeHasFS)
-import System.FS.API.Types (FsPath, Handle)
+import System.FS.API.Types (Handle)
 import System.FS.CRC (CRC (CRC))
 
 {-------------------------------------------------------------------------------
@@ -92,7 +91,6 @@ instance NoThunks a => NoThunks (MultiSet a) where
   fs-api
 -------------------------------------------------------------------------------}
 
-deriving via InspectHeap FsPath instance NoThunks FsPath
 deriving newtype instance NoThunks CRC
 deriving via
   InspectHeapNamed "Handle" (Handle h)

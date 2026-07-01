@@ -147,6 +147,7 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
 import Ouroboros.Consensus.Protocol.MockChainSel
 import Ouroboros.Consensus.Protocol.Signed
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.Serialisation
@@ -318,6 +319,8 @@ isStrictDescendentOf :: TestBlock -> TestBlock -> Bool
 isStrictDescendentOf b1 b2 = b1 `isDescendentOf` b2 && b1 /= b2
 
 instance ShowProxy TestBlock
+
+instance HasLeiosVoting (TestBlockWith ptype)
 
 -- | Default 'ResolveLeiosBlock' — test blocks never carry Leios certificates.
 instance Typeable ptype => ResolveLeiosBlock (TestBlockWith ptype)

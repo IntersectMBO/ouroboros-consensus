@@ -137,6 +137,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
   ( unsafeChunkNoToEpochNo
   )
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB, ResolveLeiosBlock)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
@@ -371,6 +372,7 @@ type TestConstraints blk =
   , LedgerSupportsLedgerDB blk
   , ImmutableEraParams blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   )
 
 deriving instance

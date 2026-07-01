@@ -44,7 +44,7 @@ import Data.Kind (Type)
 import Data.Primitive.MutVar (MutVar)
 import qualified Data.Primitive.MutVar as Prim
 import Data.Proxy (Proxy (..))
-import qualified Data.Vector as V
+import qualified Data.Vector.Strict as V
 import Data.Word (Word16, Word64)
 import qualified Network.Mux.Types as Mux
 import Network.TypedProtocol.Codec.CBOR

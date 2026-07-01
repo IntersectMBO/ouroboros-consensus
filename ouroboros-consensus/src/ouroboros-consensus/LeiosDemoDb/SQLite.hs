@@ -63,7 +63,6 @@ import LeiosDemoTypes
   , TxHash (..)
   , leiosEbBodyItems
   , leiosEbBytesSize
-  , trustNoVerifyLeiosCertificate
   )
 import Ouroboros.Consensus.Util.IOLike (atomically)
 import System.Directory (doesFileExist)
@@ -155,8 +154,7 @@ openSQLiteConnection tracer dbPath notificationChan = do
       , leiosDbFilterMissingEbBodies = sqlFilterMissingEbBodies tracer db
       , leiosDbFilterMissingTxs = sqlFilterMissingTxs tracer db
       , leiosDbQueryFetchWork = sqlQueryFetchWork db
-      , leiosDbQueryCompletedEbByPoint = sqlQueryCompletedEbByPoint db
-      , leiosDbQueryCertificateByPoint = return . Just . trustNoVerifyLeiosCertificate
+      , leiosDbQueryCompletedEbByHash = sqlQueryCompletedEbByHash db
       }
 
 -- * Top-level implementations
@@ -290,7 +288,7 @@ sqlInsertTxs db notify txs = do
       dbStep1 stmt
     pure completed
   -- Emit a closure-completion notification for each completed EB
-  forM_ completed $ notify . AcquiredEbTxs
+  forM_ completed $ \point -> notify (AcquiredEbTxs point)
   pure completed
 
 sqlBatchRetrieveTxs ::
@@ -410,10 +408,10 @@ sqlQueryFetchWork db =
       loop []
     pure LeiosFetchWork{missingEbBodies, missingEbTxs}
 
-sqlQueryCompletedEbByPoint :: DB.Database -> LeiosPoint -> IO (Maybe [(TxHash, ByteString)])
-sqlQueryCompletedEbByPoint db ebPoint =
+sqlQueryCompletedEbByHash :: DB.Database -> EbHash -> IO (Maybe [(TxHash, ByteString)])
+sqlQueryCompletedEbByHash db ebHash =
   dbWithBEGIN db $ dbWithPrepare db (fromString sqlQueryCompletedEbByPoint') $ \stmt -> do
-    dbBindBlob stmt 1 (ebHashBytes . pointEbHash $ ebPoint)
+    dbBindBlob stmt 1 (ebHashBytes ebHash)
     -- FIXME(bladyjoker): This should have a SlotNo as the second part of the key
     let loop acc =
           dbStep stmt >>= \case

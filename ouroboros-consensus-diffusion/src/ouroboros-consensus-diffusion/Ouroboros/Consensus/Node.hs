@@ -159,6 +159,10 @@ import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import Ouroboros.Network.BlockFetch
   ( BlockFetchConfiguration (..)
   )
+import Ouroboros.Network.BlockFetch.ConsensusInterface
+  ( FetchMode (PraosFetchMode)
+  , PraosFetchMode (FetchModeDeadline)
+  )
 import qualified Ouroboros.Network.Diffusion as Diffusion
 import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
 import Ouroboros.Network.Magic
@@ -179,6 +183,7 @@ import Ouroboros.Network.PeerSelection.PeerSharing.Codec
   ( decodeRemoteAddress
   , encodeRemoteAddress
   )
+import Ouroboros.Network.PerasSupport (PerasSupport (PerasUnsupported))
 import Ouroboros.Network.RethrowPolicy
 import Ouroboros.Network.TxSubmission.Inbound.V2 (TxSubmissionLogicVersion)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Types (TxSubmissionInitDelay)
@@ -604,7 +609,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   rnLeiosDb
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
-            churnModeVar <- StrictSTM.newTVarIO ChurnModeNormal
+            churnModeVar <- StrictSTM.newTVarIO (ChurnMode (PraosFetchMode FetchModeDeadline))
             churnMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
             let consensusDiffusionArgs =
                   Cardano.Diffusion.CardanoConsensusArguments
@@ -623,15 +628,24 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                      in \newOcs -> do
                                           oldOcs <- readTVar varOcs
                                           when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
-                                , Cardano.getBlockHash = \targetBlock k -> do
+                                , Cardano.getImmutableBlockPoint = \targetBlock k -> do
                                     case targetBlock of
-                                      GenesisPoint -> k (pure Nothing)
+                                      GenesisPoint ->
+                                        k (pure (Left Cardano.ImmutableBlockPointGenesisPoint))
                                       (BlockPoint targetSlot (RawBlockHash targetHash)) -> do
                                         let targetPoint = RealPoint targetSlot (fromShortRawHash (Proxy @blk) targetHash)
                                         ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
-                                          Left{} -> k (pure Nothing)
+                                          Left{} ->
+                                            k (pure (Left Cardano.ImmutableBlockPointNotYetImmutable))
                                           Right (RealPoint actualSlot actualHash) ->
-                                            k (pure . Just $ BlockPoint actualSlot (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash))
+                                            k
+                                              ( pure
+                                                  ( Right $
+                                                      BlockPoint
+                                                        actualSlot
+                                                        (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash)
+                                                  )
+                                              )
                                 }
                           }
                     , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
@@ -927,7 +941,7 @@ mkNodeKernelArgs
   leiosDB =
     do
       let (kaRng, rng') = splitGen rng
-          (psRng, txRng) = splitGen rng'
+          (psRng, _) = splitGen rng'
       return
         NodeKernelArgs
           { tracers
@@ -955,7 +969,6 @@ mkNodeKernelArgs
           , getUseBootstrapPeers
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
-          , txSubmissionRng = txRng
           , publicPeerSelectionStateVar
           , genesisArgs
           , getDiffusionPipeliningSupport
@@ -1019,6 +1032,7 @@ stdVersionDataNTN networkMagic diffusionMode peerSharing =
     , diffusionMode
     , peerSharing
     , query = False
+    , perasSupport = PerasUnsupported
     }
 
 stdVersionDataNTC :: NetworkMagic -> NodeToClientVersionData

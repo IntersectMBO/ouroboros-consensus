@@ -5,6 +5,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module LeiosDemoLogic (module LeiosDemoLogic) where
 
@@ -28,13 +29,12 @@ import qualified Data.IntSet as IntSet
 import Data.List (unfoldr)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
-import Data.Proxy (Proxy (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
-import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as MV
+import qualified Data.Vector.Strict as V
+import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
 import LeiosDemoDb
   ( LeiosDbConnection
@@ -74,9 +74,7 @@ import LeiosDemoTypes
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Block (BlockProtocol, Header)
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
-import Ouroboros.Consensus.Storage.LedgerDB.Forker
-  ( ResolveLeiosBlock (chainDepStateLeiosAnnouncement, headerContainsLeiosCert)
-  )
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 
 -- | Wrap an action with exception tracing. Catches the exception,
@@ -899,5 +897,5 @@ leiosCertRbCallback ::
   m ()
 leiosCertRbCallback kernelVars peerVars hdr cds =
   when (headerContainsLeiosCert hdr) $
-    forM_ (chainDepStateLeiosAnnouncement (Proxy :: Proxy blk) cds) $ \announcement ->
+    forM_ (protocolStateLeiosAnnouncement @blk cds) $ \announcement ->
       leiosCertRbOffer kernelVars peerVars announcement

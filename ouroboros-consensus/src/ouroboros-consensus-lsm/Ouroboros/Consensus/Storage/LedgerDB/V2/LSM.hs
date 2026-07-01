@@ -55,7 +55,6 @@ import Data.ByteString (toStrict)
 import qualified Data.ByteString.Builder as BS
 import Data.ByteString.Char8 (readInt)
 import qualified Data.Foldable as Foldable
-import Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Maybe

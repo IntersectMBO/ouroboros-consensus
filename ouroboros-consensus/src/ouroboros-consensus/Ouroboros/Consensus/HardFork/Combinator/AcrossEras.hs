@@ -64,6 +64,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras
     -- * Utility
   , getSameValue
   , oneEraBlockHeader
+  , oneEraGenTxIdRawHash
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))

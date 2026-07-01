@@ -23,8 +23,9 @@ module Test.Consensus.PeerSimulator.Trace
   ) where
 
 import Control.Tracer
-  ( Tracer (Tracer)
+  ( Tracer
   , contramap
+  , mkTracer
   , traceWith
   )
 import Data.Bifunctor (second)
@@ -219,7 +220,7 @@ tracerTestBlock tracer0 = do
   -- it behaves well in IO (where it prefixes all lines by the time).
   tickTimeVar <- uncheckedNewTVarM $ Time (-1)
   let setTickTime = atomically . writeTVar tickTimeVar
-      tracer = Tracer $ \msg -> do
+      tracer = mkTracer $ \msg -> do
         time <- getMonotonicTime
         tickTime <- readTVarIO tickTimeVar
         let timeHeader = prettyTime time ++ " "
@@ -228,9 +229,10 @@ tracerTestBlock tracer0 = do
                 then timeHeader
                 else replicate (length timeHeader) ' '
         traceWith tracer0 $ concat $ intersperse "\n" $ map (prefix ++) $ lines msg
-  pure $ Tracer $ traceEventTestBlockWith setTickTime tracer0 tracer
+  pure $ mkTracer $ traceEventTestBlockWith setTickTime tracer0 tracer
 
 mkGDDTracerTestBlock ::
+  Monad m =>
   Tracer m (TraceEvent blk) ->
   Tracer m (TraceGDDEvent PeerId blk)
 mkGDDTracerTestBlock = contramap TraceGenesisDDEvent
@@ -356,7 +358,9 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 tracer = \case
         ["(LookingForIntersection", terseJumpInfo goodJumpInfo, terseJumpInfo badJumpInfo, ")"]
 
 traceScheduledServerHandlerEventTestBlockWith ::
-  Condense (NodeState blk) =>
+  ( Condense (NodeState blk)
+  , Monad m
+  ) =>
   Tracer m String ->
   String ->
   TraceScheduledServerHandlerEvent (NodeState blk) blk ->
@@ -378,6 +382,7 @@ traceScheduledServerHandlerEventTestBlockWith tracer unit = \case
 traceScheduledChainSyncServerEventTestBlockWith ::
   ( Condense (NodeState blk)
   , Terse blk
+  , Monad m
   ) =>
   Tracer m String ->
   PeerId ->
@@ -422,6 +427,7 @@ traceScheduledChainSyncServerEventTestBlockWith tracer peerId = \case
 traceScheduledBlockFetchServerEventTestBlockWith ::
   ( Condense (NodeState blk)
   , Terse blk
+  , Monad m
   ) =>
   Tracer m String ->
   PeerId ->
@@ -485,6 +491,7 @@ traceChainSyncClientEventTestBlockWith ::
   ( AF.HasHeader (Header blk)
   , Terse blk
   , Typeable blk
+  , Monad m
   ) =>
   PeerId ->
   Tracer m String ->
@@ -545,6 +552,7 @@ terseJumpInfo ::
 terseJumpInfo ji = tersePoint @blk (castPoint $ headPoint $ jTheirFragment ji)
 
 traceChainSyncClientTerminationEventTestBlockWith ::
+  Monad m =>
   PeerId ->
   Tracer m String ->
   TraceChainSyncClientTerminationEvent ->
@@ -562,6 +570,7 @@ traceChainSyncClientTerminationEventTestBlockWith pid tracer = \case
   trace = traceUnitWith tracer ("ChainSyncClient " ++ condense pid)
 
 traceBlockFetchClientTerminationEventTestBlockWith ::
+  Monad m =>
   PeerId ->
   Tracer m String ->
   TraceBlockFetchClientTerminationEvent ->
@@ -576,16 +585,17 @@ traceBlockFetchClientTerminationEventTestBlockWith pid tracer = \case
 
 -- | Trace all the SendRecv events of the ChainSync mini-protocol.
 traceChainSyncSendRecvEventTestBlockWith ::
-  Applicative m =>
-  Terse blk =>
+  ( Terse blk
+  , Monad m
+  ) =>
   PeerId ->
   String ->
   Tracer m String ->
   TraceSendRecv (ChainSync (Header blk) (Point blk) (Tip blk)) ->
   m ()
 traceChainSyncSendRecvEventTestBlockWith pid ptp tracer = \case
-  TraceSendMsg _tm amsg -> traceMsg "send" amsg
-  TraceRecvMsg _tm amsg -> traceMsg "recv" amsg
+  TraceSendMsg amsg -> traceMsg "send" amsg
+  TraceRecvMsg amsg -> traceMsg "recv" amsg
  where
   -- This can be very verbose and is only useful in rare situations, so it
   -- does nothing by default.
@@ -605,6 +615,7 @@ traceChainSyncSendRecvEventTestBlockWith pid ptp tracer = \case
           MsgDone -> "MsgDone"
 
 traceDbjEventWith ::
+  Monad m =>
   Tracer m String ->
   TraceEventDbf PeerId ->
   m ()
@@ -613,6 +624,7 @@ traceDbjEventWith tracer =
     RotatedDynamo old new -> "Rotated dynamo from " ++ condense old ++ " to " ++ condense new
 
 traceCsjEventWith ::
+  Monad m =>
   Terse blk =>
   PeerId ->
   Tracer m String ->
@@ -738,6 +750,7 @@ prettyTime (Time time) =
    in printf "%02d:%02d.%03d" minutes (seconds `rem` 60) (milliseconds `rem` 1_000)
 
 traceLinesWith ::
+  Monad m =>
   Tracer m String ->
   [String] ->
   m ()
@@ -752,11 +765,11 @@ padUnit unit = unit ++ replicate (maxUnitLength - length unit) ' '
 
 -- | Trace using the given tracer, printing the current time (typically the time
 -- of the simulation) and the unit name.
-traceUnitLinesWith :: Tracer m String -> String -> [String] -> m ()
+traceUnitLinesWith :: Monad m => Tracer m String -> String -> [String] -> m ()
 traceUnitLinesWith tracer unit msgs =
   traceLinesWith tracer $ map (printf "%s | %s" $ padUnit unit) msgs
 
 -- | Trace using the given tracer, printing the current time (typically the time
 -- of the simulation) and the unit name.
-traceUnitWith :: Tracer m String -> String -> String -> m ()
+traceUnitWith :: Monad m => Tracer m String -> String -> String -> m ()
 traceUnitWith tracer unit msg = traceUnitLinesWith tracer unit [msg]

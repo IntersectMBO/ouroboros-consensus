@@ -16,12 +16,11 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.Parser
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import Data.Bifunctor (bimap)
 import qualified Data.ByteString.Lazy as Lazy
-import Data.Word (Word64)
+import Data.Maybe (isJust)
 import Data.Maybe.Strict (maybeToStrictMaybe)
+import Data.Word (Word64)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Storage.LedgerDB.Forker
-  ( ResolveLeiosBlock (blockHasLeiosCert, headerLeiosAnnouncement)
-  )
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB.API (BlockInfo (..))
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Types
@@ -128,7 +127,7 @@ extractBlockInfo blk =
     , biPrevHash = blockPrevHash blk
     , biHeaderOffset = headerOffset
     , biHeaderSize = headerSize
-    , biHasLeiosCert = blockHasLeiosCert blk
+    , biHasLeiosCert = isJust $ blockLeiosCert blk
     , biLeiosAnnouncedEb =
         maybeToStrictMaybe . fmap fst . headerLeiosAnnouncement $ getHeader blk
     }

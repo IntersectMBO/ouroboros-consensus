@@ -47,6 +47,7 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientException (..)
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables
@@ -177,6 +178,7 @@ runGenesisTest ::
   , Terse blk
   , Condense (NodeState blk)
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   ProtocolInfoArgs blk ->
   SchedulerConfig ->
@@ -240,6 +242,7 @@ runConformanceTest ::
   , Terse blk
   , Condense (NodeState blk)
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   ConformanceTest blk -> TestTree
 runConformanceTest conformanceTest =
