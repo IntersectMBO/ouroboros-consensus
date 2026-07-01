@@ -3,43 +3,51 @@
 ## When to use Genesis mode
 
 Genesis mode lets a syncing node defend against long-range attacks without trusting recent ledger state for peer evaluation.
-It adds defensive components (GSM, LoE, GDD, CSJ, LoP, DBF) on top of existing ChainSync/BlockFetch.
+It adds defensive components — LoE, GDD, CSJ, LoP, and Devoted BlockFetch (DBF) — on top of existing ChainSync/BlockFetch, coordinated by the Genesis State Machine (GSM).
+The GSM itself runs in both modes: it tracks whether the node is caught up and disables the Genesis-only components once it is.
 See the [Genesis design doc](../references/miscellaneous/genesis_design.md) for the full component description.
 
 Use Genesis mode on **relay nodes and syncing nodes** that connect to the public network.
 
-Use Praos mode on **block-producing nodes** that connect only to trusted local relays with `useLedgerAfterSlot: -1`.
-A forger with `GenesisMode` + trusted `localRoots` + `useLedgerAfterSlot: -1` will behave like Praos mode in practice (the peer selection targets only differ when `(GenesisMode, TooOld)`), but there is no benefit over Praos mode in that configuration.
+Use Praos mode on **block-producing nodes** that connect only to trusted local relays.
+Setting `useLedgerAfterSlot: -1` disables ledger peers, so the node uses only its configured roots (`-1` turns ledger peers off; `0` would mean "always use the ledger").
+A forger with `GenesisMode` + trusted `localRoots` + ledger peers disabled will behave like Praos mode in practice — the peer-selection target basis differs only in the `(GenesisMode, TooOld)` state — but there is no benefit over Praos mode in that configuration.
 
 ## Required configuration
 
-The following `config.json` fields are prerequisites for Genesis mode:
+Genesis mode is turned on by one `config.json` field:
 
 ```json
-"ConsensusMode": "GenesisMode",
-"UseTraceDispatcher": true,
-"TurnOnLogging": true
+"ConsensusMode": "GenesisMode"
 ```
 
 `ConsensusMode` activates the Genesis defenses.
-Praos-mode nodes do not emit GSM, CSJ, or GDD events at all — the tracers exist but are never written to.
+The GSM runs in both modes, so a Praos-mode node still emits GSM events.
+CSJ and GDD are Genesis-only defenses: a Praos-mode node never writes to those tracers.
 
-The node also requires a peer snapshot file (`peer-snapshot.json`) listed in the topology, which provides the initial set of peers for ledger peer selection.
+Two other `config.json` fields only take effect in Genesis mode: `MinBigLedgerPeersForTrustedState` (see [Small testnets](#small-testnets)) and `LowLevelGenesisOptions`.
+
+The topology may also list a big-ledger-peer snapshot via the optional `peerSnapshotFile` field (a file path).
+It seeds ledger peer selection with an initial set of big ledger peers.
+It is not required: in Genesis mode with ledger peers enabled, a node without one only logs a recommendation to supply it.
 
 ## Host networking
 
-The node binds listening sockets and creates outbound connections based on `HostIPv4Addr` and `HostIPv6Addr` in `config.json`:
+`--host-addr` and `--host-ipv6-addr` are CLI options, not `config.json` fields:
 
-```json
-"HostIPv4Addr": "0.0.0.0",
-"HostIPv6Addr": "::"
+```sh
+cardano-node run --host-addr 0.0.0.0 --host-ipv6-addr ::
 ```
 
-If the peer snapshot contains IPv6 addresses but `HostIPv6Addr` is not set, the node will fail to connect to those peers with `Network is unreachable`.
-On a host without IPv6 routing, omit `HostIPv6Addr` entirely — the node will skip IPv6 peers.
+They set the local addresses the node binds its listening sockets to.
+`--host-ipv6-addr` also selects the DNS lookup family: without it the node resolves only A records, so peers given as domain names never yield IPv6 addresses.
 
-**Diagnostic**: if logs show repeated `Net.ConnectionManager.Remote.ConnectError` against IPv6 addresses (e.g. `[2a05:...]:3001`) while all `HandshakeSuccess` entries are IPv4, the host has no IPv6 route.
-Either enable IPv6 on the host and set `HostIPv6Addr`, or remove it from the config.
+Neither option gates outbound connections to literal IPv6 addresses.
+If the peer snapshot lists a peer by its IPv6 address, the node dials it whether or not `--host-ipv6-addr` is set.
+On a host with no IPv6 route, that dial fails with `Network is unreachable`.
+
+**Diagnostic**: if logs show repeated `Net.ConnectionManager.Remote.ConnectError` against IPv6 addresses (e.g. `[2a05:...]:3001`) while all `HandshakeSuccess` entries are IPv4, the host has no IPv6 route to those peers.
+To stop the failures, give the host an IPv6 route or remove the IPv6 peers from the snapshot.
 
 ## Small testnets
 
@@ -87,6 +95,8 @@ A Genesis sync stall is always somewhere in the feedback loop:
 ChainSync (per peer) → LoP → CSJ → GDD → LoE → ChainSel → DBF → ChainDB → GSM
 ```
 
+This is a linearization: LoP and CSJ run inside ChainSync, and the GSM is not a terminal sink — its state feeds back into ChainSync's LoP bucket, closing the loop.
+
 The GSM has three states: `PreSyncing`, `Syncing`, `CaughtUp`.
 
 ### Stuck in PreSyncing
@@ -107,7 +117,7 @@ Look downstream:
 
 - **LoE pinned**: `Consensus.GDD.TraceGDDEvent` shows the LoE candidate not advancing.
   ChainDB tip stops growing despite headers flowing.
-- **GDD impotent**: `TraceGDDDebug` shows multiple peers at equal density.
+- **GDD impotent**: `Consensus.GDD.TraceGDDEvent` with `"kind": "TraceGDDDebugInfo"` shows multiple peers at equal density.
   GDD is correctly refusing to act.
   Cause is upstream: small peer set, era/window math, checkpoint config.
 - **CSJ dynamo wedged**: no `Consensus.CSJ.SentJumpInstruction` for a long time.
@@ -133,7 +143,13 @@ ChainDB tip extending.
 
 ## Tracer configuration
 
-At default severity (Notice), only GSM events, `PeerStarvedUs`, and ChainSync `Exception` are visible.
+The overrides below use cardano-node's new tracing system, which is always on — no separate flag enables it.
+(Older nodes gated it behind `UseTraceDispatcher`/`TurnOnLogging`, both generic and defaulting to on; current cardano-node has removed that switch.)
+
+The trace namespaces below match mainline cardano-node; leaf names can change between node versions, so confirm them against the version you run.
+
+At the default root severity (Notice), GSM events and ChainSync.Client `Exception` (severity Warning) are visible.
+`BlockFetch.Decision.PeerStarvedUs` is severity Info and is silenced by the default config, so it only appears once you raise `BlockFetch.Decision` to Info or Debug (below).
 To debug a stall, add the following to the `TraceOptions` object in `config.json`:
 
 ```json
@@ -147,7 +163,8 @@ To debug a stall, add the following to the `TraceOptions` object in `config.json
 "Net.ConnectionManager":       { "severity": "Debug" }
 ```
 
-`detail: DMaximum` on `BlockFetch.Decision` is required for per-peer decline reasons in `PeersFetch` events.
+`detail: DMaximum` on `BlockFetch.Decision` gives the most verbose per-peer output.
+Per-peer decline reasons in `PeersFetch` already appear at the default detail level (any level above `DMinimal`), so `DMaximum` is not strictly required.
 
 ### Volume control
 
@@ -175,4 +192,5 @@ After restart, confirm the overrides took effect:
 grep -E 'Consensus\.(GSM|CSJ|GDD|DevotedBlockFetch)|BlockFetch\.Decision\.(PeersFetch|PeerStarvedUs)' <logfile>
 ```
 
-Within seconds of startup, expect `Consensus.GSM.InitializedInPreSyncing` and `Consensus.CSJ.InitializedAsDynamo`.
+Within seconds of startup, expect `Consensus.GSM.InitializedInPreSyncing`.
+Once a peer registers, expect `Consensus.CSJ.InitializedAsDynamo` — CSJ runs only in Genesis mode, and this event is severity Debug, so it needs the `Consensus.CSJ` Debug override above.
