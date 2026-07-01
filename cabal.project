@@ -25,6 +25,15 @@ allow-newer:
 
 packages: .
 
+-- cardano-config, part of cardano-base
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-base
+  tag: 8761e5c7ad09935376ec440cf33919b7544b5975
+  --sha256: sha256-uMExJzjeRB3DZi27zBgfdXArxiNen4e9poavE58atuI=
+  subdir:
+    cardano-config
+
 -- kes-agent on branch f-f/allow-crypto-class-2.5
 source-repository-package
   type: git

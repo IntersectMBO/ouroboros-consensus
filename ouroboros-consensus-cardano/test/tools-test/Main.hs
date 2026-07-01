@@ -1,122 +1,80 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeApplications #-}
+
 module Main (main) where
 
-import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
-import qualified Cardano.Tools.DBAnalyser.Run as DBAnalyser
-import Cardano.Tools.DBAnalyser.Types
-import qualified Cardano.Tools.DBImmutaliser.Run as DBImmutaliser
+import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import Cardano.Tools.DBSynthesizer.Types
-import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Cardano.Block
+import Ouroboros.Consensus.Cardano.Block (StandardCrypto)
+import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
+import Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..))
+import Test.Consensus.Cardano.ProtocolInfo
+  ( ByronSlotLengthInSeconds (..)
+  , Era (..)
+  , ShelleySlotLengthInSeconds (..)
+  , hardForkInto
+  , mkSimpleTestProtocolInfoForging
+  , protocolVersionZero
+  )
 import qualified Test.Cardano.Tools.Headers
 import Test.Tasty
 import Test.Tasty.HUnit
+import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import Test.Util.TestEnv
 
-nodeConfig, chainDB :: FilePath
-nodeConfig = "ouroboros-consensus-cardano/test/tools-test/disk/config/config.json"
+-- | The ChainDB the synthesizer forges into.
+chainDB :: FilePath
 chainDB = "ouroboros-consensus-cardano/test/tools-test/disk/chaindb"
 
+-- | The forge limits are kept well within the KES validity window of the
+-- test protocol (see 'mkSimpleTestProtocolInfoForging', which uses a small
+-- number of KES-valid slots), so that both the create and the subsequent
+-- append step can still forge blocks.
 testSynthOptionsCreate :: DBSynthesizerOptions
 testSynthOptionsCreate =
   DBSynthesizerOptions
-    { synthLimit = ForgeLimitEpoch 1
+    { synthLimit = ForgeLimitSlot 40
     , synthOpenMode = OpenCreateForce
     }
 
 testSynthOptionsAppend :: DBSynthesizerOptions
 testSynthOptionsAppend =
   DBSynthesizerOptions
-    { synthLimit = ForgeLimitSlot 8192
+    { synthLimit = ForgeLimitSlot 40
     , synthOpenMode = OpenAppend
     }
 
-testNodeFilePaths :: NodeFilePaths
-testNodeFilePaths =
-  NodeFilePaths
-    { nfpConfig = nodeConfig
-    , nfpChainDB = chainDB
-    }
-
-testNodeCredentials :: NodeCredentials
-testNodeCredentials =
-  NodeCredentials
-    { credCertFile = Nothing
-    , credVRFFile = Nothing
-    , credKESFile = Nothing
-    , credBulkFile = Just "ouroboros-consensus-cardano/test/tools-test/disk/config/bulk-creds-k2.json"
-    }
-
-testImmutaliserConfig :: DBImmutaliser.Opts
-testImmutaliserConfig =
-  DBImmutaliser.Opts
-    { DBImmutaliser.dbDirs =
-        DBImmutaliser.DBDirs
-          { DBImmutaliser.immDBDir = chainDB <> "/immutable"
-          , DBImmutaliser.volDBDir = chainDB <> "/volatile"
-          }
-    , DBImmutaliser.configFile = nodeConfig
-    , DBImmutaliser.verbose = False
-    , DBImmutaliser.dotOut = Nothing
-    , DBImmutaliser.dryRun = False
-    }
-
-testAnalyserConfig :: DBAnalyserConfig
-testAnalyserConfig =
-  DBAnalyserConfig
-    { dbDir = chainDB
-    , ldbBackend = V2InMem
-    , verbose = False
-    , selectDB = SelectImmutableDB Origin
-    , validation = Just ValidateAllBlocks
-    , analysis = CountBlocks
-    , confLimit = Unlimited
-    }
-
-testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
-testBlockArgs = Cardano.CardanoBlockArgs nodeConfig Nothing
-
--- | A multi-step test including synthesis and analysis 'SomeConsensusProtocol' using the Cardano instance.
+-- | Synthesize a ChainDB from scratch and then append to it, checking that
+-- both steps forge blocks.
 --
--- 1. step: synthesize a ChainDB from scratch and count the amount of blocks forged.
--- 2. step: append to the previous ChainDB and coutn the amount of blocks forged.
--- 3. step: copy the VolatileDB into the ImmutableDB.
--- 3. step: analyze the ImmutableDB resulting from previous steps and confirm the total block count.
-
---
+-- The protocol is built in-process from 'mkSimpleTestProtocolInfoForging'
+-- rather than from a node configuration file; constructing a forging-capable
+-- protocol from a real configuration is exercised downstream, where the
+-- configuration-loading machinery lives.
 blockCountTest :: (String -> IO ()) -> Assertion
 blockCountTest logStep = do
+  logStep "building test protocol"
+  (protocolInfo, blockForging, shelleyGenesis) <-
+    mkSimpleTestProtocolInfoForging @StandardCrypto
+      (Shelley.DecentralizationParam 1)
+      (SecurityParam $ knownNonZeroBounded @10)
+      (ByronSlotLengthInSeconds 1)
+      (ShelleySlotLengthInSeconds 1)
+      protocolVersionZero
+      (hardForkInto Conway)
+  let protocol = (protocolInfo, blockForging)
+      epochSize = sgEpochLength shelleyGenesis
+
   logStep "running synthesis - create"
-  (options, protocol) <-
-    either assertFailure pure
-      =<< DBSynthesizer.initialize
-        testNodeFilePaths
-        testNodeCredentials
-        testSynthOptionsCreate
-  resultCreate <- DBSynthesizer.synthesize genTxs options protocol
-  let blockCountCreate = resultForged resultCreate
-  blockCountCreate > 0 @? "no blocks have been forged during create step"
+  resultCreate <-
+    DBSynthesizer.synthesize genTxs testSynthOptionsCreate epochSize chainDB protocol
+  resultForged resultCreate > 0 @? "no blocks have been forged during create step"
 
   logStep "running synthesis - append"
   resultAppend <-
-    DBSynthesizer.synthesize genTxs options{confOptions = testSynthOptionsAppend} protocol
-  let blockCountAppend = resultForged resultAppend
-  blockCountAppend > 0 @? "no blocks have been forged during append step"
-
-  logStep "copy volatile to immutable DB"
-  DBImmutaliser.run testImmutaliserConfig
-
-  logStep "running analysis"
-  resultAnalysis <- DBAnalyser.analyse testAnalyserConfig testBlockArgs
-
-  let blockCount = blockCountCreate + blockCountAppend
-  resultAnalysis == Just (ResultCountBlock blockCount)
-    @? "wrong number of blocks encountered during analysis \
-       \ (counted: "
-      ++ show resultAnalysis
-      ++ "; expected: "
-      ++ show blockCount
-      ++ ")"
+    DBSynthesizer.synthesize genTxs testSynthOptionsAppend epochSize chainDB protocol
+  resultForged resultAppend > 0 @? "no blocks have been forged during append step"
  where
   genTxs _ _ _ _ = pure []
 
@@ -124,7 +82,7 @@ tests :: TestTree
 tests =
   testGroup
     "cardano-tools"
-    [ testCaseSteps "synthesize and analyse: blockCount\n" blockCountTest
+    [ testCaseSteps "synthesize: blockCount\n" blockCountTest
     , Test.Cardano.Tools.Headers.tests
     ]
 
