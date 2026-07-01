@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -76,7 +77,7 @@ import LeiosDemoTypes
   , minCertificationGap
   )
 import Lens.Micro ((%~), (^.))
-import Ouroboros.Consensus.Block (SlotNo (..), blockSlot)
+import Ouroboros.Consensus.Block (SlotNo (..), blockSlot, getHeader)
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
   , Nonce (NeutralNonce)
@@ -528,28 +529,36 @@ prop_leios_late_join seed =
   numSlots = 200 :: Word64
 
 -- | Independently compute cumulative tx bytes by resolving each block in the
--- chain (filling in EB closures from the LeiosDB) and summing individual
--- 'sizeTxF' values per transaction.
+-- chain (filling in EB closures from the LeiosDB via 'inlineLeiosClosure')
+-- and summing individual 'sizeTxF' values per transaction.
 --
--- TODO: 'sumChainTxBytes' and 'replayNodeChain' share the same
--- resolve-and-fold structure. Factor out a generic chain fold that accepts a
--- per-block accumulator.
+-- Uses the block-serving code path ('resolveLeiosClosure' +
+-- 'inlineLeiosClosure') rather than the apply-time bookkeeping in
+-- 'applyLeiosClosure', so the two paths cross-check each other.
 sumChainTxBytes ::
   TopLevelConfig (CardanoBlock StandardCrypto) ->
   ExtLedgerState (CardanoBlock StandardCrypto) ValuesMK ->
   NodeOutput (CardanoBlock StandardCrypto) ->
   Word64
-sumChainTxBytes _topConfig _initLedger node =
-  sum (map blockTxSizeSum chain)
+sumChainTxBytes _topConfig _initLedger node = runSimOrThrow $ do
+  let db = runIdentity . lsLeiosDb . nodeLeiosState $ node
+  stateVar <- StrictTVar.newTVarIO db
+  leiosDb <- newLeiosDBInMemoryWith stateVar
+  withLeiosDb leiosDb $ \leiosConn ->
+    foldChain leiosConn Nothing 0 (Chain.toOldestFirst $ nodeOutputFinalChain node)
  where
-  chain = Chain.toOldestFirst . nodeOutputFinalChain $ node
+  -- Fold the chain, inlining each CertRB's EB closure into its
+  -- (empty-on-wire) body using the announcement carried by the previous
+  -- header — mirroring what the ChainSync server does when serving blocks.
+  foldChain _ _ !total [] = pure total
+  foldChain leiosDb prevAnn !total (blk : rest) = do
+    blk' <- case (blockLeiosCert blk, prevAnn) of
+      (Just _, Just point) ->
+        inlineLeiosClosure blk <$> resolveLeiosClosure leiosDb point blk
+      _ -> pure blk
+    let nextAnn = fst <$> headerLeiosAnnouncement (getHeader blk)
+    foldChain leiosDb nextAnn (total + blockTxSizeSum blk') rest
 
-  -- 'shelleyCumulativeTxBytes' is bumped by the LEDGERS rule, which only
-  -- sees the on-wire block body. Production's CertRB apply path folds
-  -- the EB closure through the LEDGER (singular) rule with
-  -- 'ValidateNone', which does /not/ bump the counter — so the
-  -- independent sum mirrors that by only summing the wire-body txs.
-  -- A CertRB carries an empty body on the wire, so it contributes 0.
   blockTxSizeSum (BlockDijkstra shelleyBlk) =
     let SL.Block _ body = shelleyBlockRaw shelleyBlk
      in sumTxSizes (body ^. txSeqBlockBodyL)
