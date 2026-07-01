@@ -622,13 +622,19 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                 , Cardano.getImmutableBlockPoint = \targetBlock k -> do
                                     case targetBlock of
                                       GenesisPoint -> k (pure (Left Cardano.ImmutableBlockPointGenesisPoint))
-                                      (BlockPoint targetSlot (RawBlockHash targetHash)) -> do
-                                        let targetPoint = RealPoint targetSlot (fromShortRawHash (Proxy @blk) targetHash)
-                                        ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
-                                          Left ChainDB.TipIsOrigin -> k (pure (Left Cardano.ImmutableBlockPointTipIsOrigin))
-                                          Left ChainDB.TargetNewerThanTip -> k (pure (Left Cardano.ImmutableBlockPointNotYetImmutable))
-                                          Right (RealPoint actualSlot actualHash) ->
-                                            k (pure . Right $ BlockPoint actualSlot (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash))
+                                      (BlockPoint targetSlot (RawBlockHash targetHash)) ->
+                                        case fromShortRawHash (Proxy @blk) targetHash of
+                                          -- TODO: eventually we want to return
+                                          -- a proper error value here, see
+                                          -- https://github.com/IntersectMBO/ouroboros-network/issues/5396
+                                          Nothing -> error "RawBlockHash size does not match the expected size for the HeaderHash of the block type"
+                                          Just targetHeaderHash -> do
+                                            let targetPoint = RealPoint targetSlot targetHeaderHash
+                                            ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
+                                              Left ChainDB.TipIsOrigin -> k (pure (Left Cardano.ImmutableBlockPointTipIsOrigin))
+                                              Left ChainDB.TargetNewerThanTip -> k (pure (Left Cardano.ImmutableBlockPointNotYetImmutable))
+                                              Right (RealPoint actualSlot actualHash) ->
+                                                k (pure . Right $ BlockPoint actualSlot (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash))
                                 }
                           }
                     , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers

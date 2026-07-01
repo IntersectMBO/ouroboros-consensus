@@ -1,8 +1,11 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.Block.Abstract
@@ -89,7 +92,9 @@ import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as Short
 import Data.Kind (Type)
 import Data.Maybe (isJust)
+import Data.Proxy (Proxy (..))
 import Data.Word (Word32, Word64)
+import GHC.TypeNats (KnownNat, Nat, natVal)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.EBB
 import Ouroboros.Network.Block
@@ -230,32 +235,68 @@ headerPoint = castPoint . blockPoint
 -- Variants of 'toRawHash' and 'fromRawHash' for 'ShortByteString' are
 -- included. Override the default implementations to avoid an extra step in
 -- case the 'HeaderHash' is a 'ShortByteString' under the hood.
-class ConvertRawHash blk where
+--
+-- The associated type 'HashSize' is the size of the hash in bytes, expressed at
+-- the type level. The 'hashSize' method returns the same value at the term
+-- level.
+--
+-- The hash size is enforced by default: 'fromRawHash' and 'fromShortRawHash'
+-- return 'Nothing' when the input does not have the announced 'hashSize'. One
+-- can opt out of this check through the 'unsafeFromRawHash' and
+-- 'unsafeFromShortRawHash' variants, which must only be used at call sites
+-- where there is no easy way to handle failure and the size is known to be
+-- correct.
+class KnownNat (HashSize blk) => ConvertRawHash blk where
+  -- | The size of the hash in number of bytes, at the type level.
+  --
+  -- See 'hashSize' for the term-level counterpart.
+  type HashSize blk :: Nat
+
   -- | Get the raw bytes from a hash
   toRawHash :: proxy blk -> HeaderHash blk -> Strict.ByteString
   toRawHash p = Short.fromShort . toShortRawHash p
-
-  -- | Construct the hash from a raw hash
-  --
-  -- PRECONDITION: the bytestring's size must match 'hashSize'
-  fromRawHash :: proxy blk -> Strict.ByteString -> HeaderHash blk
-  fromRawHash p = fromShortRawHash p . Short.toShort
 
   -- | Variant of 'toRawHash' for 'ShortByteString'
   toShortRawHash :: proxy blk -> HeaderHash blk -> ShortByteString
   toShortRawHash p = Short.toShort . toRawHash p
 
-  -- | Variant of 'fromRawHash' for 'ShortByteString'
-  fromShortRawHash :: proxy blk -> ShortByteString -> HeaderHash blk
-  fromShortRawHash p = fromRawHash p . Short.fromShort
+  -- | Construct the hash from a raw hash, enforcing that the input has the
+  -- announced 'hashSize'.
+  --
+  -- Returns 'Nothing' on a size mismatch.
+  fromRawHash :: proxy blk -> Strict.ByteString -> Maybe (HeaderHash blk)
+  fromRawHash p bs
+    | fromIntegral (Strict.length bs) == hashSize p = Just (unsafeFromRawHash p bs)
+    | otherwise = Nothing
+
+  -- | Construct the hash from a raw hash, enforcing that the input has the
+  -- announced 'hashSize'.
+  --
+  -- Returns 'Nothing' on a size mismatch.
+  fromShortRawHash :: proxy blk -> ShortByteString -> Maybe (HeaderHash blk)
+  fromShortRawHash p sbs
+    | fromIntegral (Short.length sbs) == hashSize p = Just (unsafeFromShortRawHash p sbs)
+    | otherwise = Nothing
+
+  -- | Construct the hash from a raw hash /without/ enforcing the size.
+  --
+  -- PRECONDITION: the input's size must match 'hashSize'.
+  unsafeFromRawHash :: proxy blk -> Strict.ByteString -> HeaderHash blk
+  unsafeFromRawHash p = unsafeFromShortRawHash p . Short.toShort
+
+  -- | Construct the hash from a raw hash /without/ enforcing the size.
+  --
+  -- PRECONDITION: the input's size must match 'hashSize'.
+  unsafeFromShortRawHash :: proxy blk -> ShortByteString -> HeaderHash blk
+  unsafeFromShortRawHash p = unsafeFromRawHash p . Short.fromShort
 
   -- | The size of the hash in number of bytes
   hashSize :: proxy blk -> Word32
+  hashSize _ = fromIntegral (natVal (Proxy @(HashSize blk)))
 
   {-# MINIMAL
-    hashSize
-    , (toRawHash | toShortRawHash)
-    , (fromRawHash | fromShortRawHash)
+    (toRawHash | toShortRawHash)
+    , (unsafeFromRawHash | unsafeFromShortRawHash)
     #-}
 
 encodeRawHash ::
@@ -266,7 +307,11 @@ encodeRawHash p = Serialise.encode . toShortRawHash p
 decodeRawHash ::
   ConvertRawHash blk =>
   proxy blk -> forall s. Decoder s (HeaderHash blk)
-decodeRawHash p = fromShortRawHash p <$> Serialise.decode
+decodeRawHash p = do
+  sbs <- Serialise.decode
+  case fromShortRawHash p sbs of
+    Just h -> pure h
+    Nothing -> fail "decodeRawHash: hash has unexpected size"
 
 {-------------------------------------------------------------------------------
   Utilities for working with WithOrigin

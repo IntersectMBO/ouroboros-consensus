@@ -1,10 +1,17 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
-module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork (CanHardFork (..)) where
+module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork
+  ( CanHardFork (..)
+  , EqualHashSizeOfHead
+  , HashSizeOfHead
+  ) where
 
 import Data.Measure (Measure)
 import Data.SOP.Constraint
@@ -16,7 +23,9 @@ import qualified Data.SOP.Strict as SOP
 import Data.SOP.Tails (Tails)
 import qualified Data.SOP.Tails as Tails
 import Data.Typeable
+import GHC.TypeNats (KnownNat)
 import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block (HashSize)
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
@@ -28,8 +37,29 @@ import Ouroboros.Consensus.TypeFamilyWrappers
   CanHardFork
 -------------------------------------------------------------------------------}
 
+-- | The hash size shared by all eras of a hard fork, represented by that of the
+-- first era.
+--
+-- See 'EqualHashSizeOfHead' superclass constraint in 'CanHardFork' and the
+-- @ConvertRawHash (HardForkBlock xs)@ instance.
+type family HashSizeOfHead xs where
+  HashSizeOfHead (x ': _) = HashSize x
+
+-- | Witnesses that the hash size of @blk@ coincides with 'HashSizeOfHead' of
+-- @xs@, i.e. with the hash size of the first era.
+--
+-- 'CanHardFork' requires @'All' ('EqualHashSizeOfHead' xs) xs@, which statically
+-- guarantees that all eras of a hard fork use the same hash size. This lets the
+-- @ConvertRawHash (HardForkBlock xs)@ instance enforce
+-- @HashSize (HardForkBlock xs) = HashSizeOfHead xs@ without any runtime check.
+class HashSize blk ~ HashSizeOfHead xs => EqualHashSizeOfHead xs blk
+
+instance HashSize blk ~ HashSizeOfHead xs => EqualHashSizeOfHead xs blk
+
 class
   ( All SingleEraBlock xs
+  , All (EqualHashSizeOfHead xs) xs
+  , KnownNat (HashSizeOfHead xs)
   , Typeable xs
   , IsNonEmpty xs
   , Measure (HardForkTxMeasure xs)

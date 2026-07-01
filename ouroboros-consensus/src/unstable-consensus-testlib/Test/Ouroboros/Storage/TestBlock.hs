@@ -229,9 +229,10 @@ type instance HeaderHash TestBlock = TestHeaderHash
 type instance HeaderHash TestHeader = TestHeaderHash
 
 instance ConvertRawHash TestBlock where
+  -- 'TestHeaderHash' is a newtype over 'Int' thus has size 8
+  type HashSize TestBlock = 8
   toRawHash _ = Lazy.toStrict . Binary.encode
-  fromRawHash _ = Binary.decode . Lazy.fromStrict
-  hashSize _ = 8
+  unsafeFromRawHash _ = Binary.decode . Lazy.fromStrict
 
 instance HasHeader TestBlock where
   getHeaderFields = getBlockHeaderFields

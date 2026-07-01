@@ -138,9 +138,9 @@ type instance HeaderHash (DualBlock m a) = HeaderHash m
 instance StandardHash m => StandardHash (DualBlock m a)
 
 instance ConvertRawHash m => ConvertRawHash (DualBlock m a) where
+  type HashSize (DualBlock m a) = HashSize m
   toShortRawHash _ = toShortRawHash (Proxy @m)
-  fromShortRawHash _ = fromShortRawHash (Proxy @m)
-  hashSize _ = hashSize (Proxy @m)
+  unsafeFromShortRawHash _ = unsafeFromShortRawHash (Proxy @m)
 
 {-------------------------------------------------------------------------------
   Header
