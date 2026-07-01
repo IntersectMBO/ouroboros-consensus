@@ -524,7 +524,7 @@ mkHandlers
                 readTChan chan >>= \case
                   AcquiredEb point ebSize ->
                     pure $ MsgLeiosBlockOffer point ebSize
-                  AcquiredEbTxs point _ ->
+                  AcquiredEbTxs point ->
                     pure $ MsgLeiosBlockTxsOffer point
 
           LeiosVoteSubscription{getNextVote} <- subscribeVotes leiosVoteState

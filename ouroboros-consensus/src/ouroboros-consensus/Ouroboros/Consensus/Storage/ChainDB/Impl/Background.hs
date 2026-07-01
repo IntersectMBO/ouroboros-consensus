@@ -166,7 +166,7 @@ leiosAcquiredEbsRunner CDB{..} = do
   forever $
     atomically (readTChan chan) >>= \case
       AcquiredEb{} -> pure ()
-      AcquiredEbTxs point _announcingRbHash -> do
+      AcquiredEbTxs point -> do
         let ebHash = pointEbHash point
         novel <- atomically $ do
           acquired <- readTVar cdbAcquiredLeiosEbs

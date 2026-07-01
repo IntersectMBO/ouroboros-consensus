@@ -18,7 +18,6 @@ import GHC.Stack (HasCallStack)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
-  , RbHash
   , LeiosEb
   , LeiosPoint
   , TxHash
@@ -82,11 +81,7 @@ data LeiosDbHandle m = LeiosDbHandle
 
 data LeiosEbNotification
   = AcquiredEb LeiosPoint BytesSize
-  | -- | An EB's tx closure is complete. Carries the announcing ranking block's
-    -- hash when it is known locally at insertion time (a node knows it for an
-    -- EB it forged itself); 'Nothing' for EBs fetched from peers, in which
-    -- case the voter derives it from its selected chain.
-    AcquiredEbTxs LeiosPoint (Maybe RbHash)
+  | AcquiredEbTxs LeiosPoint
 
 -- | Single connection to the LeiosDb.
 --
@@ -108,12 +103,10 @@ data LeiosDbConnection m = LeiosDbConnection
   , -- NOTE: yields a LeiosOfferBlock notification
     leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m ()
   , -- TODO: Take [LeiosTx] and hash on insert?
-    leiosDbInsertTxs :: HasCallStack => Maybe RbHash -> [(TxHash, ByteString)] -> m CompletedEbs
+    leiosDbInsertTxs :: HasCallStack => [(TxHash, ByteString)] -> m CompletedEbs
   -- ^ Insert transactions into the global txs table (INSERT OR IGNORE).
   -- After inserting, checks which EBs referencing these txs are now complete
-  -- and emits LeiosOfferBlockTxs notifications for each. The optional 'RbHash'
-  -- is the announcing ranking block's hash, known locally only when this node
-  -- forged the EB.
+  -- and emits 'AcquiredEbTxs' notifications for each.
   --
   -- NOTE: Duplicate notifications may be emitted if the same EB becomes
   -- complete via multiple insert batches (e.g., if txs are inserted twice).

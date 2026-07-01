@@ -43,7 +43,6 @@ import LeiosDemoTypes
   , EbHash (..)
   , LeiosEb
   , LeiosPoint (..)
-  , RbHash
   , TxHash (..)
   , leiosEbBodyItems
   , leiosEbBytesSize
@@ -214,10 +213,9 @@ imInsertTxs ::
   IOLike m =>
   StrictTVar m InMemoryLeiosDb ->
   StrictTChan m LeiosEbNotification ->
-  Maybe RbHash ->
   [(TxHash, ByteString)] ->
   m CompletedEbs
-imInsertTxs stateVar notificationChan mAnnouncingRbHash txs = atomically $ do
+imInsertTxs stateVar notificationChan txs = atomically $ do
   let insertedTxHashes = [txHash | (txHash, _) <- txs]
   forM_ txs $ \(txHash, txBytes) -> do
     let txBytesSize = fromIntegral $ BS.length txBytes
@@ -260,7 +258,7 @@ imInsertTxs stateVar notificationChan mAnnouncingRbHash txs = atomically $ do
   -- Emit a closure-completion notification for each newly-complete EB. The
   -- ChainDB subscribes to these to grow the acquired-EB-closures set it owns.
   forM_ completed $ \point ->
-    writeTChan notificationChan (AcquiredEbTxs point mAnnouncingRbHash)
+    writeTChan notificationChan (AcquiredEbTxs point)
   pure completed
 
 -- | Implements 'leiosDbScanCompleteEbClosuresNotOlderThanSlot': the already-completed EBs

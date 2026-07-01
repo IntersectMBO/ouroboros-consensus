@@ -106,22 +106,15 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
 
   let blk = mkShelleyBlock $ SL.Block hdr rbBody
   case fst <$> mayEbAnn of
-    Just forgedEb -> do
-      let rbHashBytes =
-            fromShort $
-              toShortRawHash (Proxy @(ShelleyBlock proto era)) $
-                blk.shelleyBlockHeaderHash
-          ebPoint =
-            MkLeiosPoint
-              { pointSlotNo = fbCurrentSlotNo
-              , pointEbHash = hashLeiosEb . body $ forgedEb
-              }
+    Just (forgedEb :: ForgedLeiosEb) -> do
       traceWith fbLeiosTracer $
         TraceLeiosBlockAnnounced
-          { announcingRbHashBytes = rbHashBytes
-          , announcedEbPoint = ebPoint
+          { announcingRbHashBytes =
+              fromShort
+                . toShortRawHash (Proxy @(ShelleyBlock proto era))
+                $ blk.shelleyBlockHeaderHash
+          , announcedEbPoint = forgedEb.point
           }
-      storeEb ebPoint (MkRbHash rbHashBytes) forgedEb
     Nothing -> pure ()
   return $
     assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
@@ -166,7 +159,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
     case cert of
       SJust _ -> pure (Nothing, cert)
       SNothing -> do
-        ann <- mkEb
+        ann <- mkAndStoreEb
         pure (ann, SNothing)
 
   decideCertify :: m (StrictMaybe LeiosCert)
@@ -217,18 +210,27 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   -- Produce an EB from fbEbTxs, store it into fbLeiosDb, and return the
   -- announcement to embed in the header. An honest forger only emits an
   -- EB when it has txs to put in it; empty mempool ⇒ no EB ⇒ no
-  -- announcement (matches the original prototype).
-  mkEb :: m (Maybe (ForgedLeiosEb, EbAnnouncement))
-  mkEb = case nonEmpty (fmap extractTx fbEbTxs) of
+  -- announcement (matches the original prototype). Persists the EB into
+  -- 'LeiosDb' before returning, so the closure is available locally
+  -- before the header carrying the announcement is finalised and
+  -- diffused — a peer that fetches our header will be able to pull the
+  -- closure from us in the same round-trip.
+  mkAndStoreEb :: m (Maybe (ForgedLeiosEb, EbAnnouncement))
+  mkAndStoreEb = case nonEmpty (fmap extractTx fbEbTxs) of
     Nothing -> pure Nothing
     Just ebTxs -> do
       let forgedEb = forgeLeiosEb fbCurrentSlotNo ebTxs
           ebHash = hashLeiosEb forgedEb.body
-          ebSize = leiosEbBytesSize (forgedEb.body)
+          ebSize = leiosEbBytesSize forgedEb.body
           ebAnn =
             EbAnnouncement
               { ebAnnouncementHash = ebHash
               , ebAnnouncementSize = ebSize
+              }
+          ebPoint =
+            MkLeiosPoint
+              { pointSlotNo = fbCurrentSlotNo
+              , pointEbHash = ebHash
               }
       traceWith fbLeiosTracer $
         TraceLeiosBlockForged
@@ -237,17 +239,12 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
           , ebMeasure = ByteSize32 ebSize
           , mempoolRestMeasure = ByteSize32 0
           }
-
+      leiosDbInsertEbPoint fbLeiosDb ebPoint ebSize
+      leiosDbInsertEbBody fbLeiosDb ebPoint forgedEb.body
+      void $ leiosDbInsertTxs fbLeiosDb forgedEb.txClosure
+      traceWith fbLeiosTracer $
+        TraceLeiosBlockStored
+          { slot = fbCurrentSlotNo
+          , eb = forgedEb.body
+          }
       pure (Just (forgedEb, ebAnn))
-
-  storeEb :: LeiosPoint -> RbHash -> ForgedLeiosEb -> m ()
-  storeEb point announcingRbHash forgedEb = do
-    let ebSize = leiosEbBytesSize (forgedEb.body)
-    leiosDbInsertEbPoint fbLeiosDb point ebSize
-    leiosDbInsertEbBody fbLeiosDb point (forgedEb.body)
-    void $ leiosDbInsertTxs fbLeiosDb (Just announcingRbHash) (forgedEb.txClosure)
-    traceWith fbLeiosTracer $
-      TraceLeiosBlockStored
-        { slot = point.pointSlotNo
-        , eb = forgedEb.body
-        }

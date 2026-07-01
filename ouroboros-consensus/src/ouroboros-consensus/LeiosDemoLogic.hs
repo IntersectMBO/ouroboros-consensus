@@ -780,7 +780,7 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = d
       offsets = unfoldr nextOffset bitmaps
   -- ingest
   traceException tracer TraceLeiosPeerDbException $ do
-    completed <- leiosDbInsertTxs db Nothing (V.toList $ V.zip txHashes txBytess)
+    completed <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
     forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do

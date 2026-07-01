@@ -138,7 +138,7 @@ runStagingAreaDrain area chan onReleased = forever $ do
       -- re-submit the staged block before its txs land and crash at
       -- apply time. Wait for 'AcquiredEbTxs'.
       pure ()
-    AcquiredEbTxs point _ -> do
+    AcquiredEbTxs point -> do
       mStaged <- atomically $ releaseCertRB area point
       case mStaged of
         Nothing -> pure ()

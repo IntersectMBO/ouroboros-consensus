@@ -17,9 +17,9 @@ import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan, retry)
 import Control.Monad (forever)
 import Control.Tracer (Tracer, traceWith)
-import Data.Proxy (Proxy (..))
 import Data.Word (Word64)
 import LeiosDemoDb (LeiosDbHandle (..), LeiosEbNotification (..))
+import Data.Proxy (Proxy (..))
 import LeiosDemoTypes
   ( HasLeiosVoting (..)
   , LeiosNotVotedReason (..)
@@ -56,6 +56,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util.IOLike (IOLike, STM, atomically)
 
 -- * Voting timing constants
+
 --
 -- These are stubs for the equivocation-safety and vote-deadline gates
 -- described in the Leios protocol specification. Real values should come
@@ -104,14 +105,10 @@ runLeiosVoting tracer chainDB btime leiosDB voteState = \case
         signVote = signLeiosVote sk
         LeiosVoteState{addVote} = voteState
     chan <- subscribeEbNotifications leiosDB
-    -- Wait for the next acquired-EB-closure notification. We ignore the
-    -- 'mNotifiedRbHash' hint carried on 'AcquiredEbTxs': it is whatever
-    -- the caller of 'leiosDbInsertTxs' happened to pass, not a reliable
-    -- identification of which RB announced this EB on our selected
-    -- chain. We derive the announcing RB from the chain itself instead.
-    let getNextClosure = atomically (readTChan chan) >>= \case
-          AcquiredEb{} -> getNextClosure
-          AcquiredEbTxs point _ -> pure point
+    let getNextClosure =
+          atomically (readTChan chan) >>= \case
+            AcquiredEb{} -> getNextClosure
+            AcquiredEbTxs point -> pure point
 
     -- Per notification: (1) wait for the equivocation window, (2) snapshot
     -- committee + tip's announcement, (3) check the vote deadline, (4)
@@ -137,20 +134,19 @@ runLeiosVoting tracer chainDB btime leiosDB voteState = \case
 
       -- (2) Snapshot everything voting needs in one STM read from the
       -- ledger state: the current slot for the deadline check, the
-      -- committee for our voter id, and — from the header state —
-      -- the currently-selected chain's pending EB announcement plus the
-      -- tip's hash. Vote iff the pending announcement matches the EB
-      -- whose closure we just acquired.
-      (currentSlot, mVoterId, mAnnouncer) <- atomically $ do
+      -- committee membership for our voter id, and — from the header
+      -- state — the currently-selected chain's pending EB announcement
+      -- plus the tip's hash (via 'tipAnnouncerFor'). We vote iff the
+      -- pending announcement matches the EB whose closure we just
+      -- acquired.
+      --
+      -- TODO: check only once per era whether we are part of the committee?
+      (currentSlot, extLedger) <- atomically $ do
         s <- knownSlot btime
         extLedger <- ChainDB.getCurrentLedger chainDB
-        let hs = headerState extLedger
-        pure
-          ( s
-          , getLeiosCommittee (ledgerState extLedger) >>= getLeiosVoterId vk
-          , tipAnnouncerFor @blk hs point
-          )
-
+        pure (s, extLedger)
+      let mVoterId = getLeiosCommittee (ledgerState extLedger) >>= getLeiosVoterId vk
+          mAnnouncer = tipAnnouncerFor @blk (headerState extLedger) point
       case (currentSlot > deadlineSlot, mAnnouncer, mVoterId) of
         (True, _, _) -> notVoted TooLate
         (_, Nothing, _) -> notVoted ChainTipDoesNotAnnounce
@@ -203,9 +199,9 @@ tipAnnouncerFor hs point = do
   (announcedPoint, _) <- protocolStateLeiosAnnouncement @blk (headerStateChainDep hs)
   NotOrigin tip <- Just (headerStateTip hs)
   -- 'protocolStateLeiosAnnouncement' returns the pending announcement
-  -- keyed by the tip's slot; so equality with the acquired point
-  -- (which carries the announcer's slot + EB hash) means the tip is
-  -- the announcer.
+  -- keyed by the tip's slot; equality with the acquired point (which
+  -- carries the announcer's slot + EB hash) means the tip is the
+  -- announcer.
   if announcedPoint == point
     then Just (MkRbHash (toRawHash (Proxy @blk) (annTipHash tip)))
     else Nothing
