@@ -298,26 +298,22 @@ distribExtLedgerState
   ( ExtLedgerState
       ledgerState
       headerState
-      _perasResolver
-      _latestPerasCertOnChainRound
+      perasResolver
+      latestPerasCertOnChainRound
     ) =
-    hmap
-      ( \(Pair hst lst) ->
+    himap
+      ( \idx (Pair hst lst) ->
           Flip $
             ExtLedgerState
               (unFlip lst)
               hst
-              perasResolver'
-              latestPerasCertOnChainRound'
+              (extractHFCPerasEpochContextResolver idx perasResolver)
+              latestPerasCertOnChainRound
       )
       $ mustMatchNS
         "HeaderState"
         (distribHeaderState headerState)
         (State.tip (hardForkLedgerStatePerEra ledgerState))
-   where
-    -- [TODO EPOCH CONTEXT PLUMBING/CONVERSION] we need to fix this
-    perasResolver' = undefined
-    latestPerasCertOnChainRound' = undefined
 
 -- | Precondition: the 'headerStateTip' and 'headerStateChainDep' should be from
 -- the same era. In practice, this is _always_ the case, unless the

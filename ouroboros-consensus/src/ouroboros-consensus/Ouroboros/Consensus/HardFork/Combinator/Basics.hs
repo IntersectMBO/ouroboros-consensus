@@ -18,6 +18,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Basics
   ( -- * Hard fork protocol, block, and ledger state
@@ -43,6 +44,8 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
   , injectHFCPerasEpochContext
   , projectHFCBoundedPerasEpochContext
   , injectHFCBoundedPerasEpochContext
+  , extractHFCPerasEpochContextResolver
+  , injectHFCPerasEpochContextResolver
   , EitherF (..)
   , mkEitherF
   , hcollect
@@ -70,10 +73,11 @@ import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.NonEmpty (NEMap)
 import qualified Data.Map.NonEmpty as NEMap
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.SOP (I (..), K (..), type (:.:) (..))
 import Data.SOP.Constraint
 import Data.SOP.Functors
-import Data.SOP.Index (Index, himap, hizipWith, injectNS, nsFromIndex, nsToIndex)
+import Data.SOP.Index (Index (..), himap, hizipWith, injectNS, nsFromIndex, nsToIndex)
 import Data.SOP.Match (matchNS)
 import Data.SOP.Strict
 import Data.Typeable
@@ -133,7 +137,10 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsPeras
   ( ALedgerStateSupportsPeras (..)
   )
-import Ouroboros.Consensus.Peras.Context (BoundedPerasEpochContext (..))
+import Ouroboros.Consensus.Peras.Context
+  ( BoundedPerasEpochContext (..)
+  , PerasEpochContextResolver (..)
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -519,7 +526,7 @@ projectHFCPerasContext PerasEpochContext{pecCommittee, pecParams} =
     $ pecCommittee
 
 injectHFCPerasEpochContext ::
-  CanHardFork xs =>
+  All Top xs =>
   NS PerasEpochContext xs ->
   PerasEpochContext (HardForkBlock xs)
 injectHFCPerasEpochContext nsContext =
@@ -549,15 +556,74 @@ projectHFCBoundedPerasEpochContext BoundedPerasEpochContext{startPerasRoundNo, e
     $ pecCommittee epochContext
 
 injectHFCBoundedPerasEpochContext ::
-  CanHardFork xs =>
+  All Top xs =>
   NS BoundedPerasEpochContext xs ->
   BoundedPerasEpochContext (HardForkBlock xs)
 injectHFCBoundedPerasEpochContext nsBoundedContext =
   BoundedPerasEpochContext
-    { startPerasRoundNo = hcollapse $ hcmap proxySingle (K . startPerasRoundNo) nsBoundedContext
-    , endPerasRoundNo = hcollapse $ hcmap proxySingle (K . endPerasRoundNo) nsBoundedContext
+    { startPerasRoundNo = hcollapse $ hmap (K . startPerasRoundNo) nsBoundedContext
+    , endPerasRoundNo = hcollapse $ hmap (K . endPerasRoundNo) nsBoundedContext
     , epochContext = injectHFCPerasEpochContext $ hmap epochContext nsBoundedContext
     }
+
+extractHFCPerasEpochContextResolver ::
+  All Top xs =>
+  Index xs blk ->
+  PerasEpochContextResolver (HardForkBlock xs) ->
+  PerasEpochContextResolver blk
+extractHFCPerasEpochContextResolver idx = \case
+  PerasEpochContextResolverError err ->
+    PerasEpochContextResolverError err
+  PerasEpochContextResolver currentBoundedContext mbPrevBoundedContext ->
+    case ensureSameEraPair
+      ( getIndex idx
+      , projectHFCBoundedPerasEpochContext currentBoundedContext
+      ) of
+      Nothing ->
+        PerasEpochContextResolverError $
+          "projectHFCPerasEpochContextResolver: currentBoundedContext is not in the same era as the supplied index"
+      Just nsIdxCurrPair ->
+        hcollapse $
+          hmap
+            ( \(Pair Refl currentBoundedContext') ->
+                K . PerasEpochContextResolver currentBoundedContext' $
+                  mbPrevBoundedContext >>= \prevBoundedContext ->
+                    case ensureSameEraPair
+                      ( getIndex idx
+                      , projectHFCBoundedPerasEpochContext prevBoundedContext
+                      ) of
+                      Nothing ->
+                        -- The current context is from the right era, but the previous one is from a different one.
+                        -- So, instead of erroring out, we just discard the previous context.
+                        SNothing
+                      Just nsIdxPrevPair ->
+                        hcollapse $
+                          hmap
+                            ( \(Pair Refl prevBoundedContext') ->
+                                K $ SJust prevBoundedContext'
+                            )
+                            nsIdxPrevPair
+            )
+            nsIdxCurrPair
+
+injectHFCPerasEpochContextResolver ::
+  All Top xs =>
+  NS PerasEpochContextResolver xs ->
+  PerasEpochContextResolver (HardForkBlock xs)
+injectHFCPerasEpochContextResolver =
+  hcollapse
+    . himap
+      ( \idx resolver ->
+          case resolver of
+            PerasEpochContextResolverError err ->
+              K $ PerasEpochContextResolverError err
+            PerasEpochContextResolver currentBoundedContext mbPrevBoundedContext ->
+              let hfcCurrentBoundedContext =
+                    injectHFCBoundedPerasEpochContext . injectNS idx $ currentBoundedContext
+                  hfcPrevBoundedContext =
+                    injectHFCBoundedPerasEpochContext . injectNS idx <$> mbPrevBoundedContext
+               in K $ PerasEpochContextResolver hfcCurrentBoundedContext hfcPrevBoundedContext
+      )
 
 type instance ElectionId (OneEraPerasCrypto xs) = PerasRoundNo
 type instance BoostedBlock (OneEraPerasVote xs) = Point (HardForkBlock xs)

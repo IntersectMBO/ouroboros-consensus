@@ -263,13 +263,9 @@ instance Inject WrapChainDepState where
   inject = coerce .: injectHardForkState
 
 instance Inject PerasEpochContextResolver where
-  inject iidx = \case
-    PerasEpochContextResolverError err -> PerasEpochContextResolverError err
-    PerasEpochContextResolver currentBoundedContext mbPrevBoundedContext ->
-      let hfcCurrentBoundedContext = injectHFCBoundedPerasEpochContext $ injectNS (forgetInjectionIndex iidx) currentBoundedContext
-          hfcPrevBoundedContext =
-            (injectHFCBoundedPerasEpochContext . injectNS (forgetInjectionIndex iidx)) <$> mbPrevBoundedContext
-       in PerasEpochContextResolver hfcCurrentBoundedContext hfcPrevBoundedContext
+  inject iidx =
+    injectHFCPerasEpochContextResolver
+      . injectNS (forgetInjectionIndex iidx)
 
 instance Inject HeaderState where
   inject iidx HeaderState{..} =
