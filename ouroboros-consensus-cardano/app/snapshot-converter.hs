@@ -7,23 +7,29 @@ module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
+import Cardano.Tools.GitRev (gitRev)
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, try)
 import Control.Monad (forever, void)
 import Control.Monad.Except (runExceptT)
 import DBAnalyser.Parsers (CardanoBlockArgs, parseCardanoArgs)
 import qualified Data.List as L
+import qualified Data.Text as T
+import Data.Version (showVersion)
 import Main.Utf8
 import Options.Applicative
+import Options.Applicative.Help.Pretty (Doc, pretty)
 import Ouroboros.Consensus.Cardano.SnapshotConversion
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   ( lsmDbExportSnapshot
   , lsmDbImportSnapshot
   )
+import Paths_ouroboros_consensus (version)
 import System.Exit
 import System.FSNotify
 import System.FilePath (splitDirectories, splitFileName, (</>))
+import System.Info (arch, compilerName, compilerVersion, os)
 
 {-------------------------------------------------------------------------------
   Commands
@@ -199,7 +205,7 @@ mkSnapshot snapPath mExportRoot = do
 opts :: ParserInfo Command
 opts =
   info
-    (commandParser <**> helper)
+    (commandParser <**> versionOption <**> helper)
     ( fullDesc
         <> header
           "Utility for managing and converting the ledger snapshots used by cardano-node."
@@ -209,7 +215,73 @@ opts =
               <> " export snapshots out of, or import snapshots into, an offline LSM"
               <> " database."
           )
+        <> footerDoc (Just examplesFooter)
     )
+
+-- | Report the tool version. The snapshot on-disk format is tied to the
+-- ouroboros-consensus code, so we report the ouroboros-consensus package
+-- version together with the exact git commit this tool was built from; that
+-- pair identifies which builds a given snapshot is compatible with. We also
+-- report the build platform and compiler, following the @cardano-cli
+-- --version@ format.
+versionOption :: Parser (a -> a)
+versionOption =
+  infoOption
+    versionString
+    ( long "version"
+        <> help "Show version, build platform and git commit, then exit."
+    )
+
+versionString :: String
+versionString =
+  "snapshot-converter, part of ouroboros-consensus "
+    <> showVersion version
+    <> " - "
+    <> os
+    <> "-"
+    <> arch
+    <> " - "
+    <> compilerName
+    <> "-"
+    <> showVersion compilerVersion
+    <> "\ngit rev "
+    <> T.unpack gitRev
+
+-- | Worked examples covering the expected flows, shown at the bottom of the
+-- top-level @--help@ output. The @convert@ examples require @--config@; the
+-- @lsm@ examples operate directly on an offline database and do not.
+examplesFooter :: Doc
+examplesFooter =
+  pretty $
+    L.intercalate
+      "\n"
+      [ "Typical flows (a snapshot is a directory named after its slot, e.g. `100`"
+      , "or `100_my-suffix`):"
+      , ""
+      , "  # Mem snapshot -> standalone (exported) LSM snapshot"
+      , "  snapshot-converter convert --config CONFIG \\"
+      , "    --snapshot-in  SNAPSHOTS/100 \\"
+      , "    --snapshot-out OUT/100 \\"
+      , "    --lsm-export-to EXPORTED"
+      , ""
+      , "  # standalone (exported) LSM snapshot -> Mem snapshot"
+      , "  snapshot-converter convert --config CONFIG \\"
+      , "    --snapshot-in    SNAPSHOTS/100 \\"
+      , "    --lsm-import-from EXPORTED \\"
+      , "    --snapshot-out   OUT/100"
+      , ""
+      , "  # import a standalone (exported) LSM snapshot into a new offline LSM database"
+      , "  snapshot-converter lsm import \\"
+      , "    --lsm-database    LSM_DB \\"
+      , "    --lsm-import-from EXPORTED \\"
+      , "    --snapshot        100"
+      , ""
+      , "  # export a snapshot out of an offline LSM database"
+      , "  snapshot-converter lsm export \\"
+      , "    --lsm-database  LSM_DB \\"
+      , "    --lsm-export-to EXPORTED \\"
+      , "    --snapshot      100"
+      ]
 
 commandParser :: Parser Command
 commandParser =
