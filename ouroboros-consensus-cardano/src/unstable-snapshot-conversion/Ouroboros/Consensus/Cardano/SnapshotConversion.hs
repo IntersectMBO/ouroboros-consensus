@@ -318,7 +318,9 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       pure $
         InEnv
           st
-          (SomeBackend <$> mkExportedLSMYieldArgs exportDir inSnap stdMkBlockIOFS newStdGen)
+          ( SomeBackend
+              <$> mkExportedLSMYieldArgs exportDir inSnap stdMkBlockIOFS (SomeHasFS . ioHasFS . MountPoint) newStdGen
+          )
           ("LSM (exported)@[" <> exportDir <> "]")
           c
           metadataCrc
