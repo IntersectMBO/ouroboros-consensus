@@ -109,7 +109,22 @@ instance
       first (SL.BlockTransitionError . fmap injectFailure) $
         foldM (applyOne env) ms0 innerTxs
     let nes' = nes{SL.nesEs = (SL.nesEs nes){SL.esLState = ms'}}
-        lst' = stowed{shelleyLedgerState = nes'}
+        -- Mirror the bookkeeping the Shelley ledger update does on
+        -- rb-body txs (see 'shelleyCumulativeTxBytes' update in
+        -- 'updateShelleyLedgerState'): the counter has to account for EB
+        -- closure txs too, otherwise a cert-RB fresh-apply — where the
+        -- on-wire body is empty and the txs come from
+        -- 'applyLeiosClosure' — silently drops them from
+        -- 'shelleyCumulativeTxBytes'. The immutable-DB replay path
+        -- already sums them via 'inlineLeiosClosure' → block body.
+        closureBytes =
+          sum (fromIntegral . (^. Core.sizeTxF) <$> innerTxs)
+        lst' =
+          stowed
+            { shelleyLedgerState = nes'
+            , shelleyCumulativeTxBytes =
+                shelleyCumulativeTxBytes stowed + closureBytes
+            }
     pure (unstowLedgerTables lst')
    where
     globals = shelleyLedgerGlobals cfg
