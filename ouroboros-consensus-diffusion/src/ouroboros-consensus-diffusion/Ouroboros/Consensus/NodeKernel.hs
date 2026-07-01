@@ -502,11 +502,14 @@ perasVoteForgingController systemTime IS{chainDB, tracers} slotNo = do
     -- to check whether we must vote for this round, instead of always trying to resolve the slot
     -- number at each iteration. We might store the next eligible slot as @perasRoundLength@ past
     -- the previous one, or precompute every voting slot at epoch boundaries.
-    roundInfo <-
-      dyel $
-        Time.resolveSlotToPerasRoundInfoWithHandle
-          (ChainDB.getTimeResolutionContextHandle chainDB)
-          slotNo
+    let (Time.TimeResolutionContextHandle getContext) = ChainDB.getTimeResolutionContextHandle chainDB
+    context <- dyel $ getContext
+    roundInfo <- case Time.resolveSlotToPerasRoundInfo context slotNo of
+      -- We don't know whether Peras is enabled at this point.
+      -- Silently absorb the error and abort if it isn't.
+      Left Time.TimeResolutionPerasNotEnabled -> hoistMaybe Nothing
+      Left err -> dyel $ throwSTM err
+      Right roundInfo -> pure roundInfo
     let roundNo = Time.stpriPerasRoundNo roundInfo
         slotInRound = Time.stpriSlotsSpentInPerasRound roundInfo
 
@@ -838,55 +841,57 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             )
 
     -- Decide if we need to include a Peras certificate in this block.
-    (currentRoundNo, perasCertDecision) <- lift $ atomically $ do
-      let timeResolverHandle = ChainDB.getTimeResolutionContextHandle chainDB
+    mResult <- lift $ atomically $ do
+      let (Time.TimeResolutionContextHandle getTimeResolutionContext) = ChainDB.getTimeResolutionContextHandle chainDB
       let certInclusionViewHandle = ChainDB.getPerasCertInclusionViewHandle chainDB
 
-      currentRoundNo <-
-        Time.stpriPerasRoundNo
-          <$> Time.resolveSlotToPerasRoundInfoWithHandle
-            timeResolverHandle
-            currentSlot
-
-      decision <-
-        needCertInContext certInclusionViewHandle currentRoundNo
-
-      pure (currentRoundNo, decision)
+      context <- getTimeResolutionContext
+      case Time.resolveSlotToPerasRoundInfo context currentSlot of
+        -- We don't know whether Peras is enabled at this point.
+        -- Silently absorb the error and abort if it isn't.
+        Left Time.TimeResolutionPerasNotEnabled -> pure Nothing
+        Left err -> throwSTM err
+        Right roundInfo -> do
+          let currentRoundNo = Time.stpriPerasRoundNo roundInfo
+          decision <- needCertInContext certInclusionViewHandle currentRoundNo
+          pure $ Just (currentRoundNo, decision)
 
     mbPerasCert <-
-      case perasCertDecision of
-        -- NOTE: if constructing a certificate inclusion decision fails, this
-        -- indicates that we have not seen any certificate we could include in
-        -- a block yet, so we can just ignore this case.
-        Nothing -> do
-          tracePerasCertInclusion $
-            TracePerasCertInclusionNoCertToInclude
-              currentSlot
-          pure Nothing
-        Just decision@(DoNotIncludeCert _) -> do
-          tracePerasCertInclusion $
-            TracePerasCertInclusionShouldNotIncludeCert
-              (explain Deep decision)
-              currentSlot
-          pure Nothing
-        Just decision@(IncludeCert _ cert) ->
-          case toOpaquePerasCert (vpcCert (forgetArrivalTime cert)) of
-            Left opaquePerasCertError -> do
-              tracePerasCertInclusion $
-                TracePerasCertInclusionFailedToConstructOpaqueCert
-                  (explain Deep decision)
-                  currentSlot
-                  currentRoundNo
-                  opaquePerasCertError
-              pure Nothing
-            Right opaquePerasCert -> do
-              tracePerasCertInclusion $
-                TracePerasCertInclusionShouldIncludeCert
-                  (explain Deep decision)
-                  currentSlot
-                  currentRoundNo
-                  opaquePerasCert
-              pure $ Just opaquePerasCert
+      case mResult of
+        Nothing -> pure Nothing
+        Just (currentRoundNo, perasCertDecision) -> case perasCertDecision of
+          -- NOTE: if constructing a certificate inclusion decision fails, this
+          -- indicates that we have not seen any certificate we could include in
+          -- a block yet, so we can just ignore this case.
+          Nothing -> do
+            tracePerasCertInclusion $
+              TracePerasCertInclusionNoCertToInclude
+                currentSlot
+            pure Nothing
+          Just decision@(DoNotIncludeCert _) -> do
+            tracePerasCertInclusion $
+              TracePerasCertInclusionShouldNotIncludeCert
+                (explain Deep decision)
+                currentSlot
+            pure Nothing
+          Just decision@(IncludeCert _ cert) ->
+            case toOpaquePerasCert (vpcCert (forgetArrivalTime cert)) of
+              Left opaquePerasCertError -> do
+                tracePerasCertInclusion $
+                  TracePerasCertInclusionFailedToConstructOpaqueCert
+                    (explain Deep decision)
+                    currentSlot
+                    currentRoundNo
+                    opaquePerasCertError
+                pure Nothing
+              Right opaquePerasCert -> do
+                tracePerasCertInclusion $
+                  TracePerasCertInclusionShouldIncludeCert
+                    (explain Deep decision)
+                    currentSlot
+                    currentRoundNo
+                    opaquePerasCert
+                pure $ Just opaquePerasCert
 
     -- Actually produce the block
     newBlock <-
