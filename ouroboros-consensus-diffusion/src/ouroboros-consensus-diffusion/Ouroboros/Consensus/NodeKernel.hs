@@ -543,6 +543,7 @@ initNodeKernel
         runLeiosVoting
           (leiosKernelTracer tracers)
           chainDB
+          btime
           leiosDB
           leiosVoteState
           (topLevelConfigVotingKey cfg)

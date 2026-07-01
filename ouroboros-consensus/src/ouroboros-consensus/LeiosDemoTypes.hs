@@ -810,8 +810,25 @@ data TraceLeiosKernel
   | TraceLeiosVoted {vote :: LeiosVote, weight :: Weight}
   | TraceLeiosVoteAcquired {vote :: LeiosVote}
   | TraceLeiosCertified {rbHash :: RbHash}
+  | -- | An 'AcquiredEbTxs' notification arrived but 'runLeiosVoting' chose
+    -- not to cast a vote; the reason identifies which precondition failed.
+    TraceLeiosNotVoted {ebPoint :: LeiosPoint, reason :: LeiosNotVotedReason}
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
+
+-- | Reasons 'runLeiosVoting' may decline to cast a vote after acquiring an
+-- EB closure. See 'TraceLeiosNotVoted'.
+data LeiosNotVotedReason
+  = -- | The tip of the currently selected chain does not announce this EB.
+    -- Either our chain hasn't caught up to the announcing RB yet, or the
+    -- chain has extended past it, or the tip announces a different EB.
+    ChainTipDoesNotAnnounce
+  | -- | The vote deadline ('announcedSlot + 3 * L_hdr + L_vote') has
+    -- already passed by the time we became eligible.
+    TooLate
+  | -- | We are not part of the current voting committee.
+    NotOnCommittee
+  deriving Show
 
 deriving instance Show TraceLeiosKernel
 
@@ -888,6 +905,13 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosCertified"
       , "rbHash" .= prettyRbHash announcingRbHash
       ]
+  TraceLeiosNotVoted{ebPoint = MkLeiosPoint (SlotNo ebSlot) ebHash, reason} ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosNotVoted"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      , "reason" .= notVotedReasonText reason
+      ]
   TraceLeiosDbException e ->
     jsonLeiosDbException e
   TraceLeiosDb (TraceLeiosDbInsertCollision table key) ->
@@ -896,6 +920,12 @@ traceLeiosKernelToObject = \case
       , "table" .= table
       , "key" .= key
       ]
+
+notVotedReasonText :: LeiosNotVotedReason -> Aeson.Value
+notVotedReasonText = \case
+  ChainTipDoesNotAnnounce -> Aeson.String "chainTipDoesNotAnnounce"
+  TooLate -> Aeson.String "tooLate"
+  NotOnCommittee -> Aeson.String "notOnCommittee"
 
 data TraceLeiosPeer
   = MkTraceLeiosPeer String

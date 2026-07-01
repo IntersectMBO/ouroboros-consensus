@@ -69,16 +69,14 @@ import LeiosDemoDb
   , withLeiosDb
   )
 import LeiosDemoTypes
-  ( EbHash
-  , LeiosPoint (..)
+  ( LeiosPoint (..)
   , LeiosVote (..)
-  , RbHash (..)
   , TraceLeiosKernel (..)
   , hashLeiosEb
   , minCertificationGap
   )
 import Lens.Micro ((%~), (^.))
-import Ouroboros.Consensus.Block (SlotNo (..), blockHash, blockSlot, getHeader, toRawHash)
+import Ouroboros.Consensus.Block (SlotNo (..), blockSlot)
 import Ouroboros.Consensus.Cardano
   ( CardanoBlock
   , Nonce (NeutralNonce)
@@ -249,41 +247,24 @@ prop_leios seed =
     TraceLeiosBlockTxsAcquired point -> Just point
     _ -> Nothing
 
-  -- For each EB announced on a node's selected chain, the hash of the ranking
-  -- block that announced it — the value voters sign (see 'runLeiosVoting' /
-  -- 'announcingRbHash' in "Ouroboros.Consensus.Storage.LedgerDB.Forker"). Built
-  -- from the nodes' final chains so an EB also announced by an orphaned block
-  -- maps to the canonical announcer the voters actually signed.
-  ebRbHashes :: Map.Map EbHash RbHash
-  ebRbHashes =
-    Map.fromList
-      [ ( pointEbHash annPoint
-        , MkRbHash (toRawHash (Proxy @(CardanoBlock StandardCrypto)) (blockHash blk))
-        )
-      | chain <- Map.elems nodeChains
-      , blk <- chain
-      , Just (annPoint, _) <- [headerLeiosAnnouncement (getHeader blk)]
-      ]
-
-  -- 'acquiredPoints' translated to the RB hashes voters sign, so it can be
-  -- compared directly against 'votedAnnouncingRbHashes'.
-  acquiredRbHashes :: Set.Set RbHash
-  acquiredRbHashes =
-    Set.fromList
-      [ rbHash
-      | point <- Set.toList acquiredPoints
-      , Just rbHash <- [Map.lookup point.pointEbHash ebRbHashes]
-      ]
 
   propVoting =
     conjoin
       [ length castVotes > 0
           & counterexample "never voted"
-      , acquiredRbHashes `Set.isSubsetOf` votedAnnouncingRbHashes
-          & counterexample "not voted on all acquired EBs"
-          & prettyCounterexampleList "acquired EB RB hashes" 120 acquiredRbHashes
-          & prettyCounterexampleList "voted on RB hashes" 120 votedAnnouncingRbHashes
-      , -- Every cast vote should reach every node. Compare the number of
+      , -- NOTE: We used to require @acquiredRbHashes ⊆ votedAnnouncingRbHashes@,
+        -- i.e. "every acquired EB gets a vote from someone". That held when
+        -- 'runLeiosVoting' scanned the whole selected chain fragment for any
+        -- announcer of the acquired EB. The current protocol-correct policy
+        -- only votes when the acquired EB is announced by the *tip* of the
+        -- currently selected chain, gated by a '3 * L_hdr' equivocation wait
+        -- and an 'L_vote' deadline. An acquired EB whose announcer never sits
+        -- on the tip during that window (chain not yet caught up, chain has
+        -- moved past, deadline exceeded) is legitimately not voted on. The
+        -- weaker "did we vote at all" check above plus 'propCertifying'
+        -- suffice.
+        --
+        -- Every cast vote should reach every node. Compare the number of
         -- distinct cast votes against the number of distinct (node, vote)
         -- acquisition pairs: each cast vote contributes 'numNodes' such
         -- pairs (the casting node's own 'TraceLeiosVoteAcquired' plus one
@@ -308,10 +289,6 @@ prop_leios seed =
             )
       ]
 
-  votedAnnouncingRbHashes = Set.fromList . flip mapMaybe leiosTraces $ \case
-    TraceLeiosVoted{vote} -> Just vote.announcingRbHash
-    _ -> Nothing
-
   -- Set of votes that were cast (one 'TraceLeiosVoted' per cast).
   castVotes :: Set.Set LeiosVote
   castVotes = Set.fromList . flip mapMaybe leiosTraces $ \case
@@ -330,6 +307,13 @@ prop_leios seed =
     conjoin
       [ length reachedQuorumPoints > 0
           & counterexample "never reached quorum"
+          & counterexample
+            ( "not-voted events: "
+                <> unlines
+                  [ show (nid, ev)
+                  | FromNode nid (FromLeios ev@TraceLeiosNotVoted{}) <- traces
+                  ]
+            )
       ]
 
   reachedQuorumPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
