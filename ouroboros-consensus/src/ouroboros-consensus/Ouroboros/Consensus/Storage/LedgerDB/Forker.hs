@@ -544,7 +544,6 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                     closureKeys = foldMap (castLedgerTables . leiosClosureTxKeySets) closureTxs
                 lsBeforeEB <- withLedgerTables extSt <$> forkerReadTables fo (closureKeys <> blkKeys)
                 let tip = castPoint $ getTip lsBeforeEB
-                -- FIXME: Use the announcing block slot for txs
                 case applyLeiosClosure
                   (configLedger (getExtLedgerCfg cfg))
                   closureTxs

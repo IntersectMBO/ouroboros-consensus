@@ -134,6 +134,7 @@ instance
     env = SL.mkMempoolEnv nes (fromWithOrigin (SlotNo 0) (getTipSlot lst))
     ms0 = SL.mkMempoolState nes
 
+    -- TODO: Ask ledger for an 'applyTxNoValidation' to replace this
     applyOne envv ms tx =
       fmap fst
         . SL.ruleApplyTxValidation @"LEDGER" STS.ValidateNone globals envv ms
