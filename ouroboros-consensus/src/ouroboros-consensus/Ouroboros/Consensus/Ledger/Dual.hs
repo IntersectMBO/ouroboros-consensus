@@ -96,6 +96,7 @@ import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
+import Ouroboros.Network.Tx (HasRawTxId (..))
 
 {-------------------------------------------------------------------------------
   Block
@@ -733,18 +734,26 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
     Just $ DualGenTxErr x y
 
 instance Bridge m a => TxLimits (DualBlock m a) where
-  type TxMeasure (DualBlock m a) = TxMeasure m
+  type TxMeasurePhase1 (DualBlock m a) = TxMeasurePhase1 m
+  type TxMeasurePhase2 (DualBlock m a) = TxMeasurePhase2 m
 
   txWireSize = txWireSize . dualGenTxMain
-  txMeasure DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} =
+  txMeasurePhase1 DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} =
     do
       mapExcept (inj +++ id)
-      $ txMeasure dualLedgerConfigMain tickedDualLedgerStateMain dualGenTxMain
+      $ txMeasurePhase1 dualLedgerConfigMain tickedDualLedgerStateMain dualGenTxMain
+   where
+    inj m = DualGenTxErr m (error "ByronSpec has no tx-too-big error")
+  txMeasurePhase2 DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} =
+    do
+      mapExcept (inj +++ id)
+      $ txMeasurePhase2 dualLedgerConfigMain tickedDualLedgerStateMain dualGenTxMain
    where
     inj m = DualGenTxErr m (error "ByronSpec has no tx-too-big error")
 
   blockCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
-    blockCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
+    let TxMeasure a b = blockCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
+     in TxMeasure a b
 
 -- We don't need a pair of IDs, as long as we can unique ID the transaction
 newtype instance TxId (GenTx (DualBlock m a)) = DualGenTxId
@@ -758,6 +767,10 @@ instance
 
 instance Bridge m a => HasTxId (GenTx (DualBlock m a)) where
   txId = DualGenTxId . txId . dualGenTxMain
+
+instance HasRawTxId (GenTxId m) => HasRawTxId (TxId (GenTx (DualBlock m a))) where
+  type RawTxId (TxId (GenTx (DualBlock m a))) = RawTxId (GenTxId m)
+  getRawTxId = getRawTxId . dualGenTxIdMain
 
 deriving instance Bridge m a => Show (GenTx (DualBlock m a))
 deriving instance Bridge m a => Show (Validated (GenTx (DualBlock m a)))

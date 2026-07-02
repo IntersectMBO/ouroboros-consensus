@@ -57,5 +57,6 @@ data DBSynthesizerConfig = DBSynthesizerConfig
   , confProtocolCredentials :: ProtocolFilepaths
   , confShelleyGenesis :: ShelleyGenesis
   , confDbDir :: FilePath
+  , confNodeConfigDir :: FilePath
   }
   deriving Show

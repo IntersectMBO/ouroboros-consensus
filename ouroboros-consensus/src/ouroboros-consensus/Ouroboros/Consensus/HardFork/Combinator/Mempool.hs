@@ -26,6 +26,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool
 
 import Control.Arrow ((+++))
 import Control.Monad.Except
+import Data.ByteString.Short (ShortByteString)
 import Data.Functor.Identity
 import Data.Functor.Product
 import Data.Kind (Type)
@@ -55,6 +56,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
+import Ouroboros.Network.Tx (HasRawTxId (..))
 
 data HardForkApplyTxErr xs
   = -- | Validation error from one of the eras
@@ -320,7 +322,8 @@ instance
       K $ injectApplyTxErr idx <$> mkMempoolApplyTxError tlst txt
 
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
-  type TxMeasure (HardForkBlock xs) = HardForkTxMeasure xs
+  type TxMeasurePhase1 (HardForkBlock xs) = HardForkTxMeasurePhase1 xs
+  type TxMeasurePhase2 (HardForkBlock xs) = HardForkTxMeasurePhase2 xs
 
   txWireSize =
     \tx ->
@@ -354,15 +357,63 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
         Index xs blk ->
         WrapPartialLedgerConfig blk ->
         FlipTickedLedgerState mk blk ->
-        K (HardForkTxMeasure xs) blk
+        K (TxMeasure (HardForkBlock xs)) blk
       aux idx pcfg st' =
         K $
-          hardForkInjTxMeasure . injectNS idx . WrapTxMeasure $
-            blockCapacityTxMeasure
-              (completeLedgerConfig' ei pcfg)
-              (getFlipTickedLedgerState st')
+          let TxMeasure p1 p2 =
+                blockCapacityTxMeasure
+                  (completeLedgerConfig' ei pcfg)
+                  (getFlipTickedLedgerState st')
+           in TxMeasure
+                (hardForkInjTxMeasurePhase1 . injectNS idx $ WrapTxMeasurePhase1 p1)
+                (hardForkInjTxMeasurePhase2 . injectNS idx $ WrapTxMeasurePhase2 p2)
 
-  txMeasure
+  txMeasurePhase1
+    HardForkLedgerConfig{..}
+    (TickedHardForkLedgerState transition hardForkState)
+    tx =
+      case matchTx injs (unwrapTx tx) hardForkState of
+        Left{} -> pure Measure.zero -- safe b/c the tx will be found invalid
+        Right pair -> hcollapse $ hcizipWith proxySingle aux cfgs pair
+     where
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      ei =
+        State.epochInfoPrecomputedTransitionInfo
+          hardForkLedgerConfigShape
+          transition
+          hardForkState
+      cfgs = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
+
+      unwrapTx = getOneEraGenTx . getHardForkGenTx
+
+      injs :: InPairs (InjectPolyTx GenTx) xs
+      injs =
+        InPairs.hmap (\(Pair2 injTx _injValidatedTx) -> injTx) $
+          InPairs.requiringBoth cfgs hardForkInjectTxs
+
+      aux ::
+        forall blk.
+        SingleEraBlock blk =>
+        Index xs blk ->
+        WrapLedgerConfig blk ->
+        (Product GenTx (FlipTickedLedgerState EmptyMK)) blk ->
+        K (Except (HardForkApplyTxErr xs) (HardForkTxMeasurePhase1 xs)) blk
+      aux idx cfg (Pair tx' st') =
+        K
+          $ mapExcept
+            ( ( HardForkApplyTxErrFromEra
+                  . OneEraApplyTxErr
+                  . injectNS idx
+                  . WrapApplyTxErr
+              )
+                +++ (hardForkInjTxMeasurePhase1 . injectNS idx . WrapTxMeasurePhase1)
+            )
+          $ txMeasurePhase1
+            (unwrapLedgerConfig cfg)
+            (getFlipTickedLedgerState st')
+            tx'
+
+  txMeasurePhase2
     HardForkLedgerConfig{..}
     (TickedHardForkLedgerState transition hardForkState)
     tx =
@@ -391,7 +442,7 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
         Index xs blk ->
         WrapLedgerConfig blk ->
         (Product GenTx (FlipTickedLedgerState ValuesMK)) blk ->
-        K (Except (HardForkApplyTxErr xs) (HardForkTxMeasure xs)) blk
+        K (Except (HardForkApplyTxErr xs) (HardForkTxMeasurePhase2 xs)) blk
       aux idx cfg (Pair tx' st') =
         K
           $ mapExcept
@@ -400,9 +451,9 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
                   . injectNS idx
                   . WrapApplyTxErr
               )
-                +++ (hardForkInjTxMeasure . injectNS idx . WrapTxMeasure)
+                +++ (hardForkInjTxMeasurePhase2 . injectNS idx . WrapTxMeasurePhase2)
             )
-          $ txMeasure
+          $ txMeasurePhase2
             (unwrapLedgerConfig cfg)
             (getFlipTickedLedgerState st')
             tx'
@@ -564,6 +615,10 @@ instance CanHardFork xs => HasTxId (GenTx (HardForkBlock xs)) where
       . hcmap proxySingle (WrapGenTxId . txId)
       . getOneEraGenTx
       . getHardForkGenTx
+
+instance CanHardFork xs => HasRawTxId (TxId (GenTx (HardForkBlock xs))) where
+  type RawTxId (TxId (GenTx (HardForkBlock xs))) = ShortByteString
+  getRawTxId = oneEraGenTxIdRawHash . getHardForkGenTxId
 
 {-------------------------------------------------------------------------------
   HasTxs

@@ -43,7 +43,7 @@ truncate ::
 truncate DBTruncaterConfig{dbDir, truncateAfter, verbose} args = do
   withRegistry $ \registry -> do
     lock <- mkLock
-    immutableDBTracer <- mkTracer lock verbose
+    immutableDBTracer <- mkVerboseTracer lock verbose
     ProtocolInfo
       { pInfoConfig = config
       } <-
@@ -113,11 +113,11 @@ findLast p iter =
 mkLock :: MonadMVar m => m (StrictMVar m ())
 mkLock = newMVar ()
 
-mkTracer :: Show a => StrictMVar IO () -> Bool -> IO (Tracer IO a)
-mkTracer _ False = pure mempty
-mkTracer lock True = do
+mkVerboseTracer :: Show a => StrictMVar IO () -> Bool -> IO (Tracer IO a)
+mkVerboseTracer _ False = pure mempty
+mkVerboseTracer lock True = do
   startTime <- getMonotonicTime
-  pure $ Tracer $ \ev -> do
+  pure $ mkTracer $ \ev -> do
     bracket_ (takeMVar lock) (putMVar lock ()) $ do
       traceTime <- getMonotonicTime
       let diff = diffTime traceTime startTime

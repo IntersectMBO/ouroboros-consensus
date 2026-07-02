@@ -1118,12 +1118,13 @@ prop_simple_real_pbft_convergence
         testConfigB
         TestConfigMB
           { nodeInfo = \nid ->
-              mkProtocolByronAndHardForkTxs
-                params
-                nid
-                genesisConfig
-                genesisSecrets
-                theProposedProtocolVersion
+              pure $
+                mkProtocolByronAndHardForkTxs
+                  params
+                  nid
+                  genesisConfig
+                  genesisSecrets
+                  theProposedProtocolVersion
           , mkRekeyM =
               Just $
                 fromRekeyingToRekeyM

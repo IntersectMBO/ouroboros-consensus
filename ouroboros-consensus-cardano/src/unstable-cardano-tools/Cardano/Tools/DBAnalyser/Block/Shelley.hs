@@ -51,6 +51,11 @@ import Ouroboros.Consensus.Shelley.Node
   , protocolInfoShelley
   )
 import Ouroboros.Network.SizeInBytes (SizeInBytes (SizeInBytes))
+import System.Directory (makeAbsolute)
+import System.FS.API (SomeHasFS (..))
+import System.FS.API.Types (MountPoint (MountPoint))
+import System.FS.IO (ioHasFS)
+import System.FilePath (takeDirectory)
 import TextBuilder (decimal)
 
 -- | Usable for each Shelley-based era
@@ -145,17 +150,21 @@ instance HasProtocolInfo (ShelleyBlock (TPraos StandardCrypto) ShelleyEra) where
     config <-
       either (error . show) return
         =<< Aeson.eitherDecodeFileStrict' configFileShelley
-    return $ mkShelleyProtocolInfo config initialNonce
+    configDir <- takeDirectory <$> makeAbsolute configFileShelley
+    let fs = SomeHasFS (ioHasFS (MountPoint configDir))
+    mkShelleyProtocolInfo fs config initialNonce
 
 type ShelleyBlockArgs = Args (ShelleyBlock (TPraos StandardCrypto) ShelleyEra)
 
 mkShelleyProtocolInfo ::
+  SomeHasFS IO ->
   ShelleyGenesis ->
   Nonce ->
-  ProtocolInfo (ShelleyBlock (TPraos StandardCrypto) ShelleyEra)
-mkShelleyProtocolInfo genesis initialNonce =
-  fst $
-    protocolInfoShelley @IO
+  IO (ProtocolInfo (ShelleyBlock (TPraos StandardCrypto) ShelleyEra))
+mkShelleyProtocolInfo fs genesis initialNonce =
+  fst
+    <$> protocolInfoShelley @IO
+      fs
       genesis
       ProtocolParamsShelleyBased
         { shelleyBasedInitialNonce = initialNonce
