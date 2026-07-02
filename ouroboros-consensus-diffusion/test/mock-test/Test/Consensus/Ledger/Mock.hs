@@ -77,7 +77,7 @@ prop_simpleBlock_roundtrip_ConvertRawHash ::
   SimpleCrypto c =>
   HeaderHash (SimpleBlock c ext) -> Property
 prop_simpleBlock_roundtrip_ConvertRawHash h =
-  h === fromShortRawHash p (toShortRawHash p h)
+  Just h === fromShortRawHash p (toShortRawHash p h)
  where
   p = Proxy @(SimpleBlock c ext)
 

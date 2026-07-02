@@ -369,7 +369,10 @@ writeAllEntries hasFS chunk entries =
 getHash :: ConvertRawHash blk => Proxy blk -> Get (HeaderHash blk)
 getHash pb = do
   bytes <- Get.getByteString (fromIntegral (hashSize pb))
-  return $! fromRawHash pb bytes
+  -- 'getByteString' reads exactly @hashSize pb@ bytes, which is precisely the
+  -- length 'unsafeFromRawHash' expects, so the calling the unsafe variant is
+  -- fine.
+  return $! unsafeFromRawHash pb bytes
 
 putHash :: ConvertRawHash blk => Proxy blk -> HeaderHash blk -> Put
 putHash pb = Put.putShortByteString . toShortRawHash pb

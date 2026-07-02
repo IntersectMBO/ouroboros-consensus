@@ -813,7 +813,7 @@ roundtrip_ConvertRawHash ::
   (StandardHash blk, ConvertRawHash blk) =>
   Proxy blk -> HeaderHash blk -> Property
 roundtrip_ConvertRawHash p h =
-  h === fromShortRawHash p (toShortRawHash p h)
+  Just h === fromShortRawHash p (toShortRawHash p h)
 
 prop_hashSize ::
   ConvertRawHash blk =>

@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -43,7 +44,6 @@ import qualified Cardano.Chain.Slotting as CC
 import qualified Cardano.Crypto.Hashing as CC
 import Cardano.Ledger.Binary
 import Control.DeepSeq (NFData (..))
-import qualified Crypto.Hash as Crypto
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as Strict
 import Data.Map.Strict (Map)
@@ -73,12 +73,17 @@ mkByronHash :: CC.ABlockOrBoundaryHdr ByteString -> ByronHash
 mkByronHash = ByronHash . CC.abobHdrHash
 
 instance ConvertRawHash ByronBlock where
+  -- Byron header hashes are @AbstractHash Blake2b_256 Header@ (see
+  -- 'Cardano.Crypto.Hashing.Hash'), so
+  -- @HashSize ByronBlock ~ HashDigestSize Blake2b_256 ~ 32@ (a @Blake2b_256@
+  -- digest is 256 bits = 32 bytes).
+  --
+  -- However we can't write @HashSize ByronBlock = HashDigestSize Blake2b_256@
+  -- because the 'HashDigestSize' type family is not exported by the crypton
+  -- library.
+  type HashSize ByronBlock = 32
   toShortRawHash _ = CC.abstractHashToShort . unByronHash
-  fromShortRawHash _ = ByronHash . CC.unsafeAbstractHashFromShort
-  hashSize _ =
-    fromIntegral $
-      Crypto.hashDigestSize
-        (error "proxy" :: Crypto.Blake2b_256)
+  unsafeFromShortRawHash _ = ByronHash . CC.unsafeAbstractHashFromShort
 
 {-------------------------------------------------------------------------------
   Block
