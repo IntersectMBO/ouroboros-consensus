@@ -120,6 +120,7 @@ import Ouroboros.Consensus.Peras.Cert.Mock
   )
 import Ouroboros.Consensus.Peras.Context
   ( StateSupportsPerasEpochContext (..)
+  , mkBoundedPerasEpochContextFromMkPerasVotingCommitteeInput
   )
 import Ouroboros.Consensus.Peras.Crypto.Mock
   ( MockPerasCrypto
@@ -740,7 +741,7 @@ instance ALedgerStateSupportsPeras (LedgerState TestBlock mk)
 instance ALedgerStateSupportsPeras (Ticked LedgerState TestBlock mk)
 
 instance StateSupportsPerasEpochContext TestBlock where
-  mkPerasVotingCommitteeInput = mkMockPerasVotingCommitteeInput
+  mkBoundedPerasEpochContext = mkBoundedPerasEpochContextFromMkPerasVotingCommitteeInput mkMockPerasVotingCommitteeInput
 
 {-------------------------------------------------------------------------------
   BlockSupportsPeras

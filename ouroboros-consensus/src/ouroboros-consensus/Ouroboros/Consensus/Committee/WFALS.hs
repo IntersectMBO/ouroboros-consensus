@@ -68,6 +68,7 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
   , UniqueVotesWithSameTarget
+  , VotingCommittee
   , getElectionIdFromVotes
   , getRawVotes
   , getVoteCandidateFromVotes
@@ -111,6 +112,35 @@ import Ouroboros.Consensus.Committee.WFA
 data WFALS
   deriving (Show, Eq, Generic, NoThunks)
 
+-- According to the weighted Fait-Accompli committee selection scheme, voting
+-- committees are composed of two parts:
+--  1. a deterministic set of "persistent" members that are assigned at the
+--   beginning of the epoch according to the weighted Fait-Accompli scheme, and
+--  2. a non-deterministic set of "non-persistent" members that are selected on
+--   each election within such epoch via local sortition among the candidates
+--   that were not granted a persistent seat.
+--
+-- Due to 1., this interface is temporarily anchored to a given epoch, allowing
+-- us partially apply much of the relevant information about the committee
+-- composition at the beginning of such epoch.
+data instance VotingCommittee crypto WFALS
+  = WFALSVotingCommittee
+  { -- Preaccumulated stake distribution used to compute committee composition
+    extWFAStakeDistr :: !(ExtWFAStakeDistr (PublicKey crypto))
+  , -- Index of a given candidate in the cumulative stake distribution
+    candidateSeats :: !(Map PoolId SeatIndex)
+  , -- Number of persistent seats granted by the weighted Fait-Accompli scheme
+    persistentCommitteeSize :: !PersistentCommitteeSize
+  , -- Expected number of non-persistent voters
+    nonPersistentCommitteeSize :: !NonPersistentCommitteeSize
+  , -- Total stake of persistent voters
+    totalPersistentStake :: !TotalPersistentStake
+  , -- Total stake of non-persistent voters
+    totalNonPersistentStake :: !TotalNonPersistentStake
+  , --  Epoch nonce of the epoch where this committee selection takes place
+    epochNonce :: !Nonce
+  }
+
 instance
   ( CryptoSupportsAggregateVoteSigning crypto
   , CryptoSupportsBatchVRFVerification crypto
@@ -118,35 +148,6 @@ instance
   ) =>
   CryptoSupportsVotingCommittee crypto WFALS
   where
-  -- According to the weighted Fait-Accompli committee selection scheme, voting
-  -- committees are composed of two parts:
-  --  1. a deterministic set of "persistent" members that are assigned at the
-  --   beginning of the epoch according to the weighted Fait-Accompli scheme, and
-  --  2. a non-deterministic set of "non-persistent" members that are selected on
-  --   each election within such epoch via local sortition among the candidates
-  --   that were not granted a persistent seat.
-  --
-  -- Due to 1., this interface is temporarily anchored to a given epoch, allowing
-  -- us partially apply much of the relevant information about the committee
-  -- composition at the beginning of such epoch.
-  data VotingCommittee crypto WFALS
-    = WFALSVotingCommittee
-    { -- Preaccumulated stake distribution used to compute committee composition
-      extWFAStakeDistr :: !(ExtWFAStakeDistr (PublicKey crypto))
-    , -- Index of a given candidate in the cumulative stake distribution
-      candidateSeats :: !(Map PoolId SeatIndex)
-    , -- Number of persistent seats granted by the weighted Fait-Accompli scheme
-      persistentCommitteeSize :: !PersistentCommitteeSize
-    , -- Expected number of non-persistent voters
-      nonPersistentCommitteeSize :: !NonPersistentCommitteeSize
-    , -- Total stake of persistent voters
-      totalPersistentStake :: !TotalPersistentStake
-    , -- Total stake of non-persistent voters
-      totalNonPersistentStake :: !TotalNonPersistentStake
-    , --  Epoch nonce of the epoch where this committee selection takes place
-      epochNonce :: !Nonce
-    }
-
   data VotingCommitteeInput crypto WFALS
     = WFALSVotingCommitteeInput
         -- Epoch nonce for the epoch where this voting committee takes place

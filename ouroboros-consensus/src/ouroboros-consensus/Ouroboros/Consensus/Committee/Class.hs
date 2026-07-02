@@ -7,7 +7,8 @@
 -- | Generic interface used by implementations of voting committees.
 module Ouroboros.Consensus.Committee.Class
   ( -- * Voting committee interface
-    CryptoSupportsVotingCommittee (..)
+    VotingCommittee
+  , CryptoSupportsVotingCommittee (..)
 
     -- * Votes with same target
   , UniqueVotesWithSameTarget
@@ -35,6 +36,15 @@ import Ouroboros.Consensus.Committee.Crypto
   )
 import Ouroboros.Consensus.Committee.Types (PoolId, VoteWeight)
 
+-- | Structure storing the voting committee context
+--
+-- NOTE: This data family is defined outside of the
+-- 'CryptoSupportsVotingCommittee' class so that it can be instanciated for the
+-- HFC block without having to provide an instance of the whole class (because
+-- for HFC, we dispatch to a concrete era first so none of the methods/types of
+-- the class would actually be used).
+data family VotingCommittee crypto committee :: Type
+
 -- * Voting committee interface
 
 -- | Interface for voting committee schemes.
@@ -46,9 +56,6 @@ class
   CryptoSupportsVoteSigning crypto =>
   CryptoSupportsVotingCommittee crypto committee
   where
-  -- | Structure storing the voting committee context
-  data VotingCommittee crypto committee :: Type
-
   -- | Input information needed to construct a voting committee
   data VotingCommitteeInput crypto committee :: Type
 
