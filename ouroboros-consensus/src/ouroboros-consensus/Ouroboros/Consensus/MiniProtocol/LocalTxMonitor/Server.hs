@@ -106,7 +106,7 @@ localTxMonitorServer mempool =
   tno (_a, b, _c) = b :: TicketNo
 
 mkMeasuresMap ::
-  TxMeasureMetrics (TxMeasure blk) =>
+  (TxMeasurePhase1Metrics (TxMeasurePhase1 blk), TxMeasurePhase2Metrics (TxMeasurePhase2 blk)) =>
   Proxy blk ->
   TxMeasure blk ->
   TxMeasure blk ->

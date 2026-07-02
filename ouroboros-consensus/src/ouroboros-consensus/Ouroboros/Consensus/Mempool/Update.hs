@@ -17,7 +17,6 @@ import Control.Monad.Class.MonadTimer.SI (MonadTimer, timeout)
 import Control.Monad.Except (runExcept)
 import Control.Tracer
 import qualified Data.Foldable as Foldable
-import Data.Functor.Contravariant ((>$<))
 import Data.Functor.Identity (Identity (Identity))
 import Data.Kind (Type)
 import qualified Data.List.NonEmpty as NE
@@ -28,7 +27,7 @@ import qualified Data.Text as T
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
+import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.Impl.Common
@@ -204,86 +203,116 @@ doAddTx mpEnv caller wti tx = do
             Just prevSize -> check $ isMempoolSize is /= prevSize
 
     eRes <- withTMVarAnd istate additionalCheck $
-      \is () -> do
-        frkr <- readMVar forker
-        tbs <- roforkerReadTables frkr (getTransactionKeySets tx)
-        before <- getMonotonicTime
-        mbX <- do
-          let f m = case mbToCfg of
-                Nothing -> Just <$> m
-                Just toCfg -> timeout (mempoolTimeoutHard toCfg) m
-          f $ do
-            x <- evaluate $ pureTryAddTx mpEnv cfg wti tx is tbs
-            case (caller, x) of
-              (TestingAddTx testDiffTime, Processed{}) -> do
-                after <- getMonotonicTime
-                let sofar = after `diffTime` before
-                threadDelay $ testDiffTime - min testDiffTime sofar
-              -- Note that @sofar == 0@ always and this 'threadDelay' would
-              -- be perfectly precise in the @IOSim@ monad. Unfortunately,
-              -- the state machines tests are still only in IO.
-              _ -> pure ()
-            pure x
-        dur <- do
-          -- Note that both the hard 'timeout' and the soft duration check use
-          -- the actual monotonic clock measurements instead of simply
-          -- deferring to 'TestingAddTx'. This means the test will fail if the
-          -- 'timeout' and the monotonic clock measurement primitives are not
-          -- as precise as the test expects (recall that the test suite chooses
-          -- intended validation times that are not "too close" to the
-          -- thresholds).
-          after <- getMonotonicTime
-          pure $ after `diffTime` before
-        let rejectBecauseOfTimeoutSoft txerr = do
-              let outcome =
-                    TransactionProcessingResult
+      \is () ->
+        case runExcept $ txMeasurePhase1 cfg (forgetLedgerTables $ isLedgerState is) tx of
+          Left err ->
+            -- The transaction does not have a valid measure (eg its ExUnits is
+            -- greater than what this ledger state allows for a single transaction).
+            pure
+              ( Right
+                  ( TransactionProcessingResult
                       Nothing
-                      (MempoolTxRejected tx txerr)
-                      $ TraceMempoolRejectedTx
-                        tx
-                        txerr
-                        (MempoolRejectedByTimeoutSoft dur)
-                        (isMempoolSize is)
-              pure (Right outcome, is)
-            mbTimeoutSoftTxErr =
-              -- This @txerr@ is not available in historical Cardano eras, but
-              -- it is starting from Conway. So this rejection will be disabled
-              -- prior to Conway. Which is irrelevant, since mainnet is already
-              -- in Conway.
-              let txt = T.pack $ "MempoolTxTooSlow (" <> show dur <> ") " <> show (txId tx)
-               in mkMempoolApplyTxError (isLedgerState is) txt
-        case mbX of
-          Nothing -> case (wti, mbTimeoutSoftTxErr) of
-            (Intervene, Just txerr) -> do
-              rejectBecauseOfTimeoutSoft txerr
-            _ -> do
-              -- Either they're not a local client or the era doesn't allow for
-              -- soft rejections.
-              throwIO $ MkExnMempoolTimeout dur tx
-          Just _
-            | Just toCfg <- mbToCfg
-            , dur > mempoolTimeoutSoft toCfg
-            , Just txerr <- mbTimeoutSoftTxErr -> do
-                rejectBecauseOfTimeoutSoft txerr
-          Just NotEnoughSpaceLeft -> do
-            pure (Left (isMempoolSize is), is)
-          Just (NotProcessed outcome) -> do
-            let TransactionProcessingResult is' _ _ = outcome
-            pure (Right outcome, fromMaybe is is')
-          Just (Processed mkResult) -> do
-            let outcome = mkResult $ FiniteDiffTimeMeasure $ case caller of
-                  ProductionAddTx -> dur
-                  TestingAddTx testDiffTime ->
-                    -- For the sake of an accurate cumulative measure, pretend
-                    -- the tx took exactly as long to validate as the test
-                    -- suite intended.
-                    --
-                    -- Note that @testDiffTime == dur@ always in @IOSim@.
-                    -- Unfortunately, the state machines tests are still only
-                    -- in IO.
-                    testDiffTime
-                TransactionProcessingResult is' _ _ = outcome
-            pure (Right outcome, fromMaybe is is')
+                      (MempoolTxRejected tx err)
+                      ( TraceMempoolRejectedTx
+                          tx
+                          err
+                          MempoolRejectedByLedger
+                          (isMempoolSize is)
+                      )
+                  )
+              , is
+              )
+          Right txsz1
+            | let currentSize = TxSeq.toSize (isTxs is)
+            , not $
+                currentSize
+                  Measure.<= currentSize
+                  `Measure.plus` MkTxMeasureWithDiffTime (TxMeasure txsz1 Measure.zero) Measure.zero ->
+                pure (Left (isMempoolSize is), is)
+            | let currentSize = TxSeq.toSize (isTxs is)
+            , let MkTxMeasureWithDiffTime txssz _txsdifftime = currentSize
+            , not $ txssz `Measure.plus` (TxMeasure txsz1 Measure.zero) Measure.<= isCapacity is ->
+                pure (Left (isMempoolSize is), is)
+            | otherwise -> do
+                frkr <- readMVar forker
+                tbs <- roforkerReadTables frkr (getTransactionKeySets tx)
+                before <- getMonotonicTime
+                mbX <- do
+                  let f m = case mbToCfg of
+                        Nothing -> Just <$> m
+                        Just toCfg -> timeout (mempoolTimeoutHard toCfg) m
+                  f $ do
+                    x <- evaluate $ pureTryAddTx mpEnv cfg wti tx is tbs txsz1
+                    case (caller, x) of
+                      (TestingAddTx testDiffTime, Processed{}) -> do
+                        after <- getMonotonicTime
+                        let sofar = after `diffTime` before
+                        threadDelay $ testDiffTime - min testDiffTime sofar
+                      -- Note that @sofar == 0@ always and this 'threadDelay' would
+                      -- be perfectly precise in the @IOSim@ monad. Unfortunately,
+                      -- the state machines tests are still only in IO.
+                      _ -> pure ()
+                    pure x
+                dur <- do
+                  -- Note that both the hard 'timeout' and the soft duration check use
+                  -- the actual monotonic clock measurements instead of simply
+                  -- deferring to 'TestingAddTx'. This means the test will fail if the
+                  -- 'timeout' and the monotonic clock measurement primitives are not
+                  -- as precise as the test expects (recall that the test suite chooses
+                  -- intended validation times that are not "too close" to the
+                  -- thresholds).
+                  after <- getMonotonicTime
+                  pure $ after `diffTime` before
+                let rejectBecauseOfTimeoutSoft txerr = do
+                      let outcome =
+                            TransactionProcessingResult
+                              Nothing
+                              (MempoolTxRejected tx txerr)
+                              $ TraceMempoolRejectedTx
+                                tx
+                                txerr
+                                (MempoolRejectedByTimeoutSoft dur)
+                                (isMempoolSize is)
+                      pure (Right outcome, is)
+                    mbTimeoutSoftTxErr =
+                      -- This @txerr@ is not available in historical Cardano eras, but
+                      -- it is starting from Conway. So this rejection will be disabled
+                      -- prior to Conway. Which is irrelevant, since mainnet is already
+                      -- in Conway.
+                      let txt = T.pack $ "MempoolTxTooSlow (" <> show dur <> ") " <> show (txId tx)
+                       in mkMempoolApplyTxError (isLedgerState is) txt
+                case mbX of
+                  Nothing -> case (wti, mbTimeoutSoftTxErr) of
+                    (Intervene, Just txerr) -> do
+                      rejectBecauseOfTimeoutSoft txerr
+                    _ -> do
+                      -- Either they're not a local client or the era doesn't allow for
+                      -- soft rejections.
+                      throwIO $ MkExnMempoolTimeout dur tx
+                  Just _
+                    | Just toCfg <- mbToCfg
+                    , dur > mempoolTimeoutSoft toCfg
+                    , Just txerr <- mbTimeoutSoftTxErr -> do
+                        rejectBecauseOfTimeoutSoft txerr
+                  Just NotEnoughSpaceLeft -> do
+                    pure (Left (isMempoolSize is), is)
+                  Just (NotProcessed outcome) -> do
+                    let TransactionProcessingResult is' _ _ = outcome
+                    pure (Right outcome, fromMaybe is is')
+                  Just (Processed mkResult) -> do
+                    let outcome = mkResult $ FiniteDiffTimeMeasure $ case caller of
+                          ProductionAddTx -> dur
+                          TestingAddTx testDiffTime ->
+                            -- For the sake of an accurate cumulative measure, pretend
+                            -- the tx took exactly as long to validate as the test
+                            -- suite intended.
+                            --
+                            -- Note that @testDiffTime == dur@ always in @IOSim@.
+                            -- Unfortunately, the state machines tests are still only
+                            -- in IO.
+                            testDiffTime
+                        TransactionProcessingResult is' _ _ = outcome
+                    pure (Right outcome, fromMaybe is is')
     case (caller, eRes) of
       (ProductionAddTx, _) -> either (doAddTx' . Just) (pure . Identity) eRes
       (TestingAddTx _, Left _) -> pure Nothing
@@ -302,8 +331,9 @@ pureTryAddTx ::
   -- | The current internal state of the mempool.
   InternalState blk ->
   LedgerTables blk ValuesMK ->
+  TxMeasurePhase1 blk ->
   TriedToAddTx blk
-pureTryAddTx mpEnv cfg wti tx is values =
+pureTryAddTx mpEnv cfg wti tx is values p1TxMeasure =
   let MempoolEnv
         { mpEnvTimeoutConfig = mbToCfg
         } = mpEnv
@@ -313,7 +343,7 @@ pureTryAddTx mpEnv cfg wti tx is values =
           values
           (getTransactionKeySets tx)
           (isLedgerState is)
-   in case runExcept $ txMeasure cfg st tx of
+   in case runExcept $ txMeasurePhase2 cfg st tx of
         Left err ->
           -- The transaction does not have a valid measure (eg its ExUnits is
           -- greater than what this ledger state allows for a single transaction).
@@ -348,7 +378,10 @@ pureTryAddTx mpEnv cfg wti tx is values =
           -- 'isCapacity' are much smaller than the modulus, and so this should
           -- never happen. Despite that, blocking until adding the transaction
           -- doesn't overflow seems like a reasonable way to handle this case.
-          | not $ currentSize Measure.<= currentSize `Measure.plus` MkTxMeasureWithDiffTime txsz Measure.zero ->
+          | not $
+              currentSize
+                Measure.<= currentSize
+                `Measure.plus` MkTxMeasureWithDiffTime (TxMeasure p1TxMeasure txsz) Measure.zero ->
               NotEnoughSpaceLeft
           -- We add the transaction if and only if it wouldn't overrun any component
           -- of the mempool capacity.
@@ -385,14 +418,14 @@ pureTryAddTx mpEnv cfg wti tx is values =
           -- tx that wouldn't even fit in an empty mempool would be rejected by
           -- 'txMeasure'.
           | let MkTxMeasureWithDiffTime txssz _txsdifftime = currentSize
-          , not $ txssz `Measure.plus` txsz Measure.<= isCapacity is ->
+          , not $ txssz `Measure.plus` (TxMeasure p1TxMeasure txsz) Measure.<= isCapacity is ->
               NotEnoughSpaceLeft
           | Just toCfg <- mbToCfg
           , let MkTxMeasureWithDiffTime _txssz txsdifftime = currentSize
           , not $ txsdifftime Measure.<= FiniteDiffTimeMeasure (mempoolTimeoutCapacity toCfg) ->
               NotEnoughSpaceLeft
           | otherwise ->
-              case validateNewTransaction cfg wti tx txsz values st is of
+              case validateNewTransaction cfg wti tx (TxMeasure p1TxMeasure txsz) values st is of
                 (Left err, _) ->
                   Processed $ \_dur ->
                     TransactionProcessingResult

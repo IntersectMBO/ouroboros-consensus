@@ -621,4 +621,4 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
           lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
       )
  where
-  starvationTracer = Tracer $ traceWith cdbTracer . TraceChainSelStarvationEvent
+  starvationTracer = mkTracer $ traceWith cdbTracer . TraceChainSelStarvationEvent

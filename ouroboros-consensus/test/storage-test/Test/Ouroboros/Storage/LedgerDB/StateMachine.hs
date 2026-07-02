@@ -35,8 +35,7 @@ import qualified Control.Monad as Monad
 import Control.Monad.Except
 import Control.Monad.State hiding (state)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..))
-import Data.Functor.Contravariant ((>$<))
+import Control.Tracer (Tracer, mkTracer, (>$<))
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
@@ -705,7 +704,7 @@ newtype NumOpenHandles = NumOpenHandles Word64
 mkTrackOpenHandles :: IO (Tracer IO (TraceEvent TestBlock), IO NumOpenHandles)
 mkTrackOpenHandles = do
   varOpen <- uncheckedNewTVarM (NumOpenHandles 0)
-  let tracer = Tracer $ \case
+  let tracer = mkTracer $ \case
         LedgerDBFlavorImplEvent (FlavorImplSpecificTraceV2 ev) ->
           atomically $ modifyTVar varOpen $ case ev of
             V2.TraceLedgerTablesHandleCreate FallingEdgeWith{} -> succ

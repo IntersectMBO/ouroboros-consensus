@@ -127,7 +127,7 @@ data PerasVoteDbArgs f m blk = PerasVoteDbArgs
   , pvdbaPerasCfg :: HKD f (PerasCfg blk)
   }
 
-defaultArgs :: Applicative m => Incomplete PerasVoteDbArgs m blk
+defaultArgs :: Monad m => Incomplete PerasVoteDbArgs m blk
 defaultArgs =
   PerasVoteDbArgs
     { pvdbaTracer = nullTracer

@@ -29,6 +29,7 @@ import qualified Cardano.Crypto.DSIGN.Class as Crypto
 import qualified Cardano.Crypto.Hash.Class as Crypto
 import qualified Cardano.Crypto.KES.Class as Crypto
 import qualified Cardano.Crypto.VRF.Class as Crypto
+import Cardano.Ledger.Binary (fromPlainDecoder)
 import Cardano.Ledger.Hashes (HASH)
 import Cardano.Protocol.Crypto (Crypto (..), StandardCrypto)
 import Data.String (IsString (..))
@@ -55,7 +56,7 @@ instance Key UnsoundPureKesKey where
     = KesSigningKey (Crypto.UnsoundPureSignKeyKES (KES StandardCrypto))
     deriving (Show, IsString) via UsingRawBytesHex (SigningKey UnsoundPureKesKey)
     deriving newtype (ToCBOR, FromCBOR)
-    deriving anyclass (EncCBOR, DecCBOR, SerialiseAsCBOR)
+    deriving anyclass (EncCBOR, SerialiseAsCBOR)
 
   -- This loses the mlock safety of the seed, since it starts from a normal in-memory seed.
   deterministicSigningKey :: AsType UnsoundPureKesKey -> Crypto.Seed -> SigningKey UnsoundPureKesKey
@@ -76,6 +77,9 @@ instance Key UnsoundPureKesKey where
   verificationKeyHash :: VerificationKey UnsoundPureKesKey -> Hash UnsoundPureKesKey
   verificationKeyHash (KesVerificationKey vkey) =
     UnsoundPureKesKeyHash (Crypto.hashVerKeyKES vkey)
+
+instance DecCBOR (SigningKey UnsoundPureKesKey) where
+  decCBOR = fromPlainDecoder fromCBOR
 
 instance SerialiseAsRawBytes (VerificationKey UnsoundPureKesKey) where
   serialiseToRawBytes (KesVerificationKey vk) =

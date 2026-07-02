@@ -13,6 +13,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+-- TODO: Ledger has a few deprecations that we are ignoring for now
+{-# OPTIONS_GHC -Wno-deprecations #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | This module is the Shelley Hard Fork Combinator

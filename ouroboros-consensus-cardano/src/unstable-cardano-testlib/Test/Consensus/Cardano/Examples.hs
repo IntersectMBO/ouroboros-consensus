@@ -52,10 +52,7 @@ import Ouroboros.Consensus.HeaderValidation (AnnTip)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)
-import Ouroboros.Consensus.Ledger.Tables
-  ( EmptyMK
-  , ValuesMK
-  )
+import Ouroboros.Consensus.Ledger.Tables (EmptyMK)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
@@ -112,7 +109,6 @@ combineEras perEraExamples =
         fmap (second unFlip) $ viaInject (fmap (second Flip) . exampleExtLedgerState)
     , exampleSlotNo = coerce $ viaInject @(K SlotNo) (coerce exampleSlotNo)
     , exampleLedgerConfig = exampleLedgerConfigCardano
-    , exampleLedgerTables = exampleLedgerTablesCardano
     }
  where
   viaInject ::
@@ -135,13 +131,6 @@ combineEras perEraExamples =
     prefixWithEraName es = prefixExamples (T.unpack eraName) es
      where
       eraName = singleEraName $ singleEraInfo es
-
-  exampleLedgerTablesCardano ::
-    Labelled (LedgerTables (HardForkBlock (CardanoEras Crypto)) ValuesMK)
-  exampleLedgerTablesCardano =
-    mconcat $
-      hcollapse $
-        himap (\ix -> K . map (second (injectLedgerTables ix)) . exampleLedgerTables) perEraExamplesPrefixed
 
   exampleLedgerConfigCardano ::
     Labelled (HardForkLedgerConfig (CardanoEras Crypto))
@@ -224,7 +213,6 @@ instance Inject Examples where
       , exampleChainDepState = inj (Proxy @WrapChainDepState) exampleChainDepState
       , exampleExtLedgerState = inj (Proxy @(Flip ExtLedgerState EmptyMK)) exampleExtLedgerState
       , exampleSlotNo = exampleSlotNo
-      , exampleLedgerTables = inj (Proxy @WrapLedgerTables) exampleLedgerTables
       , -- We cannot create a HF Ledger Config out of just one of the eras
         exampleLedgerConfig = mempty
       }
@@ -237,15 +225,6 @@ instance Inject Examples where
       ) =>
       Proxy f -> Labelled a -> Labelled b
     inj p = map (fmap (inject' p iidx))
-
--- | This wrapper is used only in the 'Example' instance of 'Inject' so that we
--- can use a type that matches the kind expected by 'inj'.
-newtype WrapLedgerTables blk = WrapLedgerTables (LedgerTables blk ValuesMK)
-
-instance Inject WrapLedgerTables where
-  inject idx (WrapLedgerTables lt) =
-    WrapLedgerTables $
-      injectLedgerTables (forgetInjectionIndex idx) lt
 
 {-------------------------------------------------------------------------------
   Setup

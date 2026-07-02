@@ -226,7 +226,6 @@ import Codec.Serialise
 import Control.Monad.Except
 import Control.Tracer
 import Data.ByteString (ByteString)
-import Data.Functor.Contravariant ((>$<))
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty)
 import Data.MemPack
@@ -708,6 +707,7 @@ data TraceReplayEvent blk
 
 -- | Add the tip of the Immutable DB to the trace event
 decorateReplayTracerWithGoal ::
+  Monad m =>
   -- | Tip of the ImmutableDB
   Point blk ->
   Tracer m (TraceReplayProgressEvent blk) ->
@@ -716,6 +716,7 @@ decorateReplayTracerWithGoal immTip = (($ ReplayGoal immTip) >$<)
 
 -- | Add the block at which a replay started.
 decorateReplayTracerWithStart ::
+  Monad m =>
   -- | Starting point of the replay
   Point blk ->
   Tracer m (ReplayGoal blk -> TraceReplayProgressEvent blk) ->

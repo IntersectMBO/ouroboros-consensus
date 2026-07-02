@@ -61,11 +61,17 @@ class
   , KnownNat (HashSizeOfHead xs)
   , Typeable xs
   , IsNonEmpty xs
-  , Measure (HardForkTxMeasure xs)
-  , HasByteSize (HardForkTxMeasure xs)
-  , NoThunks (HardForkTxMeasure xs)
-  , Show (HardForkTxMeasure xs)
-  , TxMeasureMetrics (HardForkTxMeasure xs)
+  , -- \* Phase1
+    Measure (HardForkTxMeasurePhase1 xs)
+  , HasByteSize (HardForkTxMeasurePhase1 xs)
+  , NoThunks (HardForkTxMeasurePhase1 xs)
+  , Show (HardForkTxMeasurePhase1 xs)
+  , TxMeasurePhase1Metrics (HardForkTxMeasurePhase1 xs)
+  , -- \* Phase2
+    Measure (HardForkTxMeasurePhase2 xs)
+  , NoThunks (HardForkTxMeasurePhase2 xs)
+  , Show (HardForkTxMeasurePhase2 xs)
+  , TxMeasurePhase2Metrics (HardForkTxMeasurePhase2 xs)
   ) =>
   CanHardFork xs
   where
@@ -74,7 +80,9 @@ class
   -- Usually, this can simply be the union of the sets of components of each
   -- individual era's 'TxMeasure'. (Which is too awkward of a type to express
   -- in Haskell.)
-  type HardForkTxMeasure xs
+  type HardForkTxMeasurePhase1 xs
+
+  type HardForkTxMeasurePhase2 xs
 
   hardForkEraTranslation :: EraTranslation xs
   hardForkChainSel :: Tails AcrossEraTiebreaker xs
@@ -91,13 +99,17 @@ class
   -- If that's not possible, the result must not be too small, since this is
   -- relied upon to determine which prefix of the mempool's txs will fit in a
   -- valid block.
-  hardForkInjTxMeasure :: SOP.NS WrapTxMeasure xs -> HardForkTxMeasure xs
+  hardForkInjTxMeasurePhase1 :: SOP.NS WrapTxMeasurePhase1 xs -> HardForkTxMeasurePhase1 xs
+
+  hardForkInjTxMeasurePhase2 :: SOP.NS WrapTxMeasurePhase2 xs -> HardForkTxMeasurePhase2 xs
 
 instance SingleEraBlock blk => CanHardFork '[blk] where
-  type HardForkTxMeasure '[blk] = TxMeasure blk
+  type HardForkTxMeasurePhase1 '[blk] = TxMeasurePhase1 blk
+  type HardForkTxMeasurePhase2 '[blk] = TxMeasurePhase2 blk
 
   hardForkEraTranslation = trivialEraTranslation
   hardForkChainSel = Tails.mk1
   hardForkInjectTxs = InPairs.mk1
 
-  hardForkInjTxMeasure (SOP.Z (WrapTxMeasure x)) = x
+  hardForkInjTxMeasurePhase1 (SOP.Z (WrapTxMeasurePhase1 x)) = x
+  hardForkInjTxMeasurePhase2 (SOP.Z (WrapTxMeasurePhase2 x)) = x

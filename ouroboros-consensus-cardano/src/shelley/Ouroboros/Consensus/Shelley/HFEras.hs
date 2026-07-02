@@ -16,7 +16,9 @@ module Ouroboros.Consensus.Shelley.HFEras
   , StandardShelleyBlock
   ) where
 
+import Cardano.Ledger.Dijkstra.Era (DijkstraEraBlockHeader (..))
 import Cardano.Protocol.Crypto
+import Cardano.Protocol.Praos.BlockHeader (Header)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -77,29 +79,11 @@ instance
   TPraos.PraosCrypto c =>
   ShelleyCompatible (TPraos c) AlonzoEra
 
--- This instance is required since the ledger view forecast function for
--- Praos/Babbage still goes through the forecast for TPraos. Once this is
--- addressed, we could remove this instance.
-instance
-  (Praos.PraosCrypto c, TPraos.PraosCrypto c) =>
-  ShelleyCompatible (TPraos c) BabbageEra
-
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) BabbageEra
-
--- This instance is required since the ledger view forecast function for
--- Praos/Conway still goes through the forecast for TPraos. Once this is
--- addressed, we could remove this instance.
-instance
-  (Praos.PraosCrypto c, TPraos.PraosCrypto c) =>
-  ShelleyCompatible (TPraos c) ConwayEra
 
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) ConwayEra
 
--- This instance is required since the ledger view forecast function for
--- Praos/Dijkstra still goes through the forecast for TPraos. Once this is
--- addressed, we could remove this instance.
-instance
-  (Praos.PraosCrypto c, TPraos.PraosCrypto c) =>
-  ShelleyCompatible (TPraos c) DijkstraEra
-
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) DijkstraEra
+
+instance Crypto c => DijkstraEraBlockHeader (Header c) DijkstraEra where
+  prevNonceBlockHeaderL = error "Not implemented. Peras placeholder"

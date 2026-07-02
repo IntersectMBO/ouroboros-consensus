@@ -17,7 +17,7 @@ import Ouroboros.Consensus.Node.NetworkProtocolVersion
   )
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Network.SizeInBytes
-import Ouroboros.Network.TxSubmission.Inbound.V2.State
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types
   ( const_MAX_TX_SIZE_DISCREPANCY
   )
 import Test.Tasty.QuickCheck

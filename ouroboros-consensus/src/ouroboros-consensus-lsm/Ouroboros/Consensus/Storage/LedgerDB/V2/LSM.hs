@@ -62,8 +62,6 @@ import Data.ByteString (toStrict)
 import qualified Data.ByteString.Builder as BS
 import Data.ByteString.Char8 (readInt)
 import qualified Data.Foldable as Foldable
-import Data.Functor.Contravariant ((>$<))
-import qualified Data.List as L
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
@@ -1050,7 +1048,7 @@ hACK_GET_SALT_FROM_BLOOMFILTER ::
   m Salt
 hACK_GET_SALT_FROM_BLOOMFILTER gen (SomeHasFS fs) = do
   files <- listDirectory fs (mkFsPath [])
-  case L.find ((".filter" ==) . F.takeExtension) files of
+  case List.find ((".filter" ==) . F.takeExtension) files of
     Just f ->
       withFile fs (mkFsPath [f]) ReadMode $ \h -> do
         -- We read exactly 24 bytes

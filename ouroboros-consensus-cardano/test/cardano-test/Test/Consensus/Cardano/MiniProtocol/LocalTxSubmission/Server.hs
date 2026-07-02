@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | Test that we can submit transactions to the mempool using the local
@@ -10,8 +11,7 @@ module Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server (tests) wher
 
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import Control.Monad (void)
-import Control.Tracer (Tracer, nullTracer, stdoutTracer)
-import Data.Functor.Contravariant ((>$<))
+import Control.Tracer (Tracer, nullTracer, stdoutTracer, (>$<))
 import Data.SOP.Strict (index_NS)
 import qualified Data.SOP.Telescope as Telescope
 import Network.TypedProtocol.Proofs (connect)
@@ -66,17 +66,16 @@ tests =
  where
   localServerPassesRegressionTests era =
     testCase ("Passes the regression tests (" ++ show era ++ ")") $ do
-      let
-        pInfo :: ProtocolInfo (CardanoBlock StandardCrypto)
-        pInfo =
-          mkSimpleTestProtocolInfo
-            (Shelley.DecentralizationParam 1)
-            (Consensus.SecurityParam $ knownNonZeroBounded @10)
-            (ByronSlotLengthInSeconds 1)
-            (ShelleySlotLengthInSeconds 1)
-            protocolVersionZero
-            (hardForkInto era)
+      pInfo <-
+        mkSimpleTestProtocolInfo
+          (Shelley.DecentralizationParam 1)
+          (Consensus.SecurityParam $ knownNonZeroBounded @10)
+          (ByronSlotLengthInSeconds 1)
+          (ShelleySlotLengthInSeconds 1)
+          protocolVersionZero
+          (hardForkInto era)
 
+      let
         eraIndex =
           index_NS
             . Telescope.tip

@@ -24,4 +24,5 @@ if impl (ghc >= 9.14)
     , serialise:base
     , serialise:containers
     , serialise:time
+    , tdigest:base
     , with-utf8:base

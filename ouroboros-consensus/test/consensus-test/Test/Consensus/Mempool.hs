@@ -35,7 +35,7 @@ import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.Except (runExcept)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.Monad.State (State, evalState, get, modify)
-import Control.Tracer (Tracer (..))
+import Control.Tracer (mkTracer)
 import Data.Bifunctor (first, second)
 import Data.Either (isRight)
 import Data.Functor ((<&>))
@@ -234,7 +234,8 @@ prop_Mempool_semigroup_removeTxs (TestSetupWithTxsInMempoolToRemove testSetup tx
 prop_Mempool_getCapacity :: MempoolCapTestSetup -> Property
 prop_Mempool_getCapacity mcts =
   withTestMempool testSetup $ \TestMempool{mempool} -> do
-    IgnoringOverflow actualCapacity <- atomically $ getCapacity mempool
+    TxMeasure (IgnoringOverflow actualCapacity) TrivialTxMeasurePhase2 <-
+      atomically $ getCapacity mempool
     pure $ actualCapacity === expectedCapacity
  where
   MempoolCapacityBytesOverride testCapacity = testMempoolCapOverride testSetup
@@ -544,10 +545,11 @@ instance Arbitrary TestSetupWithTxs where
             }
     let mempoolCap :: TheMeasure
         mempoolCap =
-          computeMempoolCapacity
-            testLedgerConfigNoSizeLimits
-            (TickedSimpleLedgerState ledger)
-            (testMempoolCapOverride testSetup')
+          tmPhase1 $
+            computeMempoolCapacity
+              testLedgerConfigNoSizeLimits
+              (TickedSimpleLedgerState ledger)
+              (testMempoolCapOverride testSetup')
 
     largeInvalidTx <- genLargeInvalidTx mempoolCap
     let txs' = (largeInvalidTx, False) : txs
@@ -754,7 +756,7 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
     -- Set up the Tracer
     varEvents <- uncheckedNewTVarM []
     -- TODO use IOSim's dynamicTracer
-    let tracer = Tracer $ \ev -> atomically $ modifyTVar varEvents (ev :)
+    let tracer = mkTracer $ \ev -> atomically $ modifyTVar varEvents (ev :)
 
     -- Open the mempool and add the initial transactions
     mempool <-

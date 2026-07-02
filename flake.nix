@@ -76,11 +76,18 @@
       {
         devShells = rec {
           default = ghc96;
-          ghc96 = hydraJobs.native.haskell96.devShell;
-          # Disabled because Plutus panics on it
-          # ghc96-ipe = hydraJobs.native.haskell96.devShellIPE;
-          ghc914 = hydraJobs.native.haskell914.devShell;
-          ghc914-ipe = hydraJobs.native.haskell914.devShellIPE;
+          ghc96 = import ./nix/shell.nix {
+            inherit inputs pkgs;
+            hsPkgs = pkgs.hsPkgs;
+          };
+          ghc914 = import ./nix/shell.nix {
+            inherit inputs pkgs;
+            hsPkgs = pkgs.hsPkgs.projectVariants.ghc914;
+          };
+          ghc914-ipe = import ./nix/shell.nix {
+            inherit inputs pkgs;
+            hsPkgs = pkgs.hsPkgs.projectVariants.ghc914.projectVariants.ipe;
+          };
 
           agda-spec = pkgs.agda-spec.shell;
 

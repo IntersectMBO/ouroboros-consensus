@@ -160,13 +160,12 @@ import Ouroboros.Network.Protocol.TxSubmission2.Client
 import Ouroboros.Network.Protocol.TxSubmission2.Codec
 import Ouroboros.Network.Protocol.TxSubmission2.Server
 import Ouroboros.Network.Protocol.TxSubmission2.Type
+import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V1
 import Ouroboros.Network.TxSubmission.Inbound.V2
   ( PeerTxAPI
-  , TraceTxLogic
   , TxDecisionPolicy (..)
   , TxSubmissionLogicVersion (..)
-  , defaultTxDecisionPolicy
   , txSubmissionInboundV2
   , withPeer
   )
@@ -356,7 +355,9 @@ mkHandlers
                       (Node.txInboundTracer tracers)
                   )
                   txSubmissionInitDelay
+                  (txDecisionPolicy miniProtocolParameters)
                   (getMempoolWriter getMempool)
+                  txWireSize
                   api
             TxSubmissionLogicV1 ->
               Left $
@@ -574,7 +575,6 @@ data Tracers' peer ntnAddr blk e f = Tracers
   , tPerasVoteDiffusionTracer :: f (TraceLabelPeer peer (TraceSendRecv (PerasVoteDiffusion blk)))
   , tKeepAliveTracer :: f (TraceLabelPeer peer (TraceSendRecv KeepAlive))
   , tPeerSharingTracer :: f (TraceLabelPeer peer (TraceSendRecv (PeerSharing ntnAddr)))
-  , tTxLogicTracer :: f (TraceLabelPeer peer (TraceTxLogic peer (GenTxId blk) (GenTx blk)))
   }
 
 instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f) where
@@ -589,7 +589,6 @@ instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f
       , tPerasVoteDiffusionTracer = f tPerasVoteDiffusionTracer
       , tKeepAliveTracer = f tKeepAliveTracer
       , tPeerSharingTracer = f tPeerSharingTracer
-      , tTxLogicTracer = f tTxLogicTracer
       }
    where
     f ::
@@ -612,11 +611,11 @@ nullTracers =
     , tPerasVoteDiffusionTracer = nullTracer
     , tKeepAliveTracer = nullTracer
     , tPeerSharingTracer = nullTracer
-    , tTxLogicTracer = nullTracer
     }
 
 showTracers ::
-  ( Show blk
+  ( Monad m
+  , Show blk
   , Show ntnAddr
   , Show (Header blk)
   , Show (GenTx blk)
@@ -627,16 +626,15 @@ showTracers ::
   Tracer m String -> Tracers m ntnAddr blk e
 showTracers tr =
   Tracers
-    { tChainSyncTracer = showTracing tr
-    , tChainSyncSerialisedTracer = showTracing tr
-    , tBlockFetchTracer = showTracing tr
-    , tBlockFetchSerialisedTracer = showTracing tr
-    , tTxSubmission2Tracer = showTracing tr
-    , tPerasCertDiffusionTracer = showTracing tr
-    , tPerasVoteDiffusionTracer = showTracing tr
-    , tKeepAliveTracer = showTracing tr
-    , tPeerSharingTracer = showTracing tr
-    , tTxLogicTracer = showTracing tr
+    { tChainSyncTracer = show >$< tr
+    , tChainSyncSerialisedTracer = show >$< tr
+    , tBlockFetchTracer = show >$< tr
+    , tBlockFetchSerialisedTracer = show >$< tr
+    , tTxSubmission2Tracer = show >$< tr
+    , tPerasCertDiffusionTracer = show >$< tr
+    , tPerasVoteDiffusionTracer = show >$< tr
+    , tKeepAliveTracer = show >$< tr
+    , tPeerSharingTracer = show >$< tr
     }
 
 {-------------------------------------------------------------------------------
@@ -781,6 +779,7 @@ mkApps ::
   , Show addrNTN
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
+  , HasRawTxId (GenTxId blk)
   ) =>
   -- | Needed for bracketing only
   NodeKernel m addrNTN addrNTC blk ->
@@ -983,16 +982,13 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
         runServer legacyTxSubmissionServer
       Right newTxSubmissionServer ->
         withPeer
-          (TraceLabelPeer them `contramap` tTxLogicTracer)
-          (getTxChannelsVar kernel)
-          (getTxMempoolSem kernel)
-          defaultTxDecisionPolicy
-          (getSharedTxStateVar kernel)
+          (getTxDecisionPolicy kernel)
           ( mapTxSubmissionMempoolReader txForgetValidated $
               getMempoolReader (getMempool kernel)
           )
-          (getMempoolWriter (getMempool kernel))
-          txWireSize
+          (getSharedTxStateVar kernel)
+          (getPeerTxRegistry kernel)
+          (getTxCountersVar kernel)
           them
           $ \api ->
             runServer (newTxSubmissionServer api)

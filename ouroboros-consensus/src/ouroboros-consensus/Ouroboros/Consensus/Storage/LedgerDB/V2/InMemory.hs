@@ -38,7 +38,6 @@ import Control.Tracer
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Builder.Extra (defaultChunkSize)
-import Data.Functor.Contravariant ((>$<))
 import Data.Functor.Identity
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
