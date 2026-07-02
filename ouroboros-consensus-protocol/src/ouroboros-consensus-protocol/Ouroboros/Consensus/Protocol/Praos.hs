@@ -41,7 +41,8 @@ import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.VRF as VRF
 import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, StrictMaybe (..), (⭒))
 import qualified Cardano.Ledger.BaseTypes as SL
-import Cardano.Ledger.Binary (decCBOR, encCBOR, toPlainDecoder, toPlainEncoding)
+import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
+import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Chain as SL
 import Cardano.Ledger.Hashes (HASH)
 import Cardano.Ledger.Keys
@@ -326,12 +327,12 @@ instance Serialise PraosState where
           [ CBOR.encodeListLen 9
           , toCBOR praosStateLastSlot
           , toCBOR praosStateOCertCounters
-          , toPlainEncoding undefined $ encCBOR praosStateEvolvingNonce
-          , toPlainEncoding undefined $ encCBOR praosStateCandidateNonce
-          , toPlainEncoding undefined $ encCBOR praosStateEpochNonce
-          , toPlainEncoding undefined $ encCBOR praosStatePreviousEpochNonce
-          , toPlainEncoding undefined $ encCBOR praosStateLabNonce
-          , toPlainEncoding undefined $ encCBOR praosStateLastEpochBlockNonce
+          , toEraCBOR @ShelleyEra praosStateEvolvingNonce
+          , toEraCBOR @ShelleyEra praosStateCandidateNonce
+          , toEraCBOR @ShelleyEra praosStateEpochNonce
+          , toEraCBOR @ShelleyEra praosStatePreviousEpochNonce
+          , toEraCBOR @ShelleyEra praosStateLabNonce
+          , toEraCBOR @ShelleyEra praosStateLastEpochBlockNonce
           , toCBOR praosStateLeiosAnnouncement
           ]
 
@@ -346,24 +347,24 @@ instance Serialise PraosState where
       PraosState
         <$> fromCBOR
         <*> fromCBOR
-        <*> toPlainDecoder Nothing undefined decCBOR
-        <*> toPlainDecoder Nothing undefined decCBOR
-        <*> toPlainDecoder Nothing undefined decCBOR
-        <*> toPlainDecoder Nothing undefined decCBOR
-        <*> toPlainDecoder Nothing undefined decCBOR
-        <*> toPlainDecoder Nothing undefined decCBOR
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
         <*> pure SNothing
     decodePraosStateV1 = do
       enforceSize "PraosState" 9
       PraosState
         <$> fromCBOR
         <*> fromCBOR
-        <*> toPlainDecoder Nothing undefined decCBOR
-        <*> toPlainDecoder Nothing undefined decCBOR
-        <*> toPlainDecoder Nothing undefined decCBOR
-        <*> toPlainDecoder Nothing undefined decCBOR
-        <*> toPlainDecoder Nothing undefined decCBOR
-        <*> toPlainDecoder Nothing undefined decCBOR
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
         <*> fromCBOR
 
 data instance Ticked PraosState = TickedPraosState
