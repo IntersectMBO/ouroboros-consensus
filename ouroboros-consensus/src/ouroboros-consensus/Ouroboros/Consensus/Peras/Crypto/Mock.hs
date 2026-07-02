@@ -52,6 +52,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   )
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
+  , VotingCommittee
   , getElectionIdFromVotes
   , getRawVotes
   , getVoteCandidateFromVotes
@@ -152,6 +153,12 @@ instance CryptoSupportsAggregateVoteSigning (MockPerasCrypto blk) where
 data MockPerasVotingCommitteeScheme blk
   deriving (Show, Eq, Generic, NoThunks)
 
+newtype instance VotingCommittee crypto (MockPerasVotingCommitteeScheme blk)
+  = MockPerasVotingCommittee
+  { -- Stake distribution
+    weightDistr :: NonEmpty (PoolId, VoteWeight)
+  }
+
 instance
   ( Ord (ElectionId crypto)
   , ElectionId crypto ~ PerasRoundNo
@@ -160,12 +167,6 @@ instance
   ) =>
   CryptoSupportsVotingCommittee crypto (MockPerasVotingCommitteeScheme blk)
   where
-  newtype VotingCommittee crypto (MockPerasVotingCommitteeScheme blk)
-    = MockPerasVotingCommittee
-    { -- Stake distribution
-      weightDistr :: NonEmpty (PoolId, VoteWeight)
-    }
-
   newtype VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk)
     = MockPerasVotingCommitteeInput (NonEmpty (PoolId, LedgerStake))
 

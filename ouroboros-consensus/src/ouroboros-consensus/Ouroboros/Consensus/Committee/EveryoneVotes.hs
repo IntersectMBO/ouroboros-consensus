@@ -46,6 +46,7 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
   , UniqueVotesWithSameTarget
+  , VotingCommittee
   , getElectionIdFromVotes
   , getRawVotes
   , getVoteCandidateFromVotes
@@ -77,22 +78,22 @@ import Ouroboros.Consensus.Committee.WFA
 -- | Tag for a simple voting committee where pools with positive stake can vote.
 data EveryoneVotes
 
+data instance VotingCommittee crypto EveryoneVotes
+  = EveryoneVotesVotingCommittee
+  { -- Preaccumulated stake distribution used to compute committee composition
+    extWFAStakeDistr :: !(ExtWFAStakeDistr (PublicKey crypto))
+  , -- Index of a given candidate in the cumulative stake distribution
+    candidateSeats :: !(Map PoolId SeatIndex)
+  , -- Number of active voters (i.e., those with non-zero stake)
+    numActiveVoters :: !NumPoolsWithPositiveStake
+  , -- Total stake of all voters (i.e., the sum of the stakes)
+    totalActiveStake :: !TotalStake
+  }
+
 instance
   (Ord (ElectionId crypto), CryptoSupportsAggregateVoteSigning crypto) =>
   CryptoSupportsVotingCommittee crypto EveryoneVotes
   where
-  data VotingCommittee crypto EveryoneVotes
-    = EveryoneVotesVotingCommittee
-    { -- Preaccumulated stake distribution used to compute committee composition
-      extWFAStakeDistr :: !(ExtWFAStakeDistr (PublicKey crypto))
-    , -- Index of a given candidate in the cumulative stake distribution
-      candidateSeats :: !(Map PoolId SeatIndex)
-    , -- Number of active voters (i.e., those with non-zero stake)
-      numActiveVoters :: !NumPoolsWithPositiveStake
-    , -- Total stake of all voters (i.e., the sum of the stakes)
-      totalActiveStake :: !TotalStake
-    }
-
   data VotingCommitteeInput crypto EveryoneVotes
     = EveryoneVotesVotingCommitteeInput
         -- Extended cumulative stake distribution of the potential voters

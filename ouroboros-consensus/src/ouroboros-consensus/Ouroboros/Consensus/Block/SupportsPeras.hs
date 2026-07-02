@@ -81,6 +81,7 @@ import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
   , UniqueVotesWithSameTarget
+  , VotingCommittee
   , getRawVotes
   , unsafeUniqueVotesWithSameTarget
   )
@@ -185,18 +186,9 @@ class
   , Eq (PerasVotingCommitteeScheme blk)
   , Typeable (PerasVotingCommitteeScheme blk)
   , NoThunks (PerasVotingCommitteeScheme blk)
-  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
   , ElectionId (PerasCrypto blk) ~ PerasRoundNo
   , VoteCandidate (PerasCrypto blk) ~ BoostedBlock (PerasVote blk)
   , VoteCandidate (PerasCrypto blk) ~ BoostedBlock (PerasCert blk)
-  , PerasVoteCompatibleWithVotingCommittee
-      (PerasVote blk)
-      (PerasCrypto blk)
-      (PerasVotingCommitteeScheme blk)
-  , PerasCertCompatibleWithVotingCommittee
-      (PerasCert blk)
-      (PerasCrypto blk)
-      (PerasVotingCommitteeScheme blk)
   ) =>
   BlockSupportsPeras blk
   where
@@ -231,7 +223,16 @@ class
     Point blk ->
     Either (PerasError blk) (Maybe (ValidatedPerasVote blk))
   default forgePerasVoteIfEligible ::
-    PerasEpochContext blk ~ PerasEpochContext blk =>
+    ( CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
+    , PerasVoteCompatibleWithVotingCommittee
+        (PerasVote blk)
+        (PerasCrypto blk)
+        (PerasVotingCommitteeScheme blk)
+    , PerasCertCompatibleWithVotingCommittee
+        (PerasCert blk)
+        (PerasCrypto blk)
+        (PerasVotingCommitteeScheme blk)
+    ) =>
     PerasEpochContext blk ->
     PoolId ->
     PrivateKey (PerasCrypto blk) ->
@@ -260,7 +261,16 @@ class
     PerasVote blk ->
     Either (PerasError blk) (ValidatedPerasVote blk)
   default verifyPerasVote ::
-    PerasEpochContext blk ~ PerasEpochContext blk =>
+    ( CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
+    , PerasVoteCompatibleWithVotingCommittee
+        (PerasVote blk)
+        (PerasCrypto blk)
+        (PerasVotingCommitteeScheme blk)
+    , PerasCertCompatibleWithVotingCommittee
+        (PerasCert blk)
+        (PerasCrypto blk)
+        (PerasVotingCommitteeScheme blk)
+    ) =>
     PerasEpochContext blk ->
     PerasVote blk ->
     Either (PerasError blk) (ValidatedPerasVote blk)
@@ -287,7 +297,16 @@ class
     PerasVoteCollectionWithQuorum blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
   default forgePerasCert ::
-    PerasEpochContext blk ~ PerasEpochContext blk =>
+    ( CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
+    , PerasVoteCompatibleWithVotingCommittee
+        (PerasVote blk)
+        (PerasCrypto blk)
+        (PerasVotingCommitteeScheme blk)
+    , PerasCertCompatibleWithVotingCommittee
+        (PerasCert blk)
+        (PerasCrypto blk)
+        (PerasVotingCommitteeScheme blk)
+    ) =>
     PerasEpochContext blk ->
     PerasVoteCollectionWithQuorum blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
@@ -313,7 +332,16 @@ class
     PerasCert blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
   default verifyPerasCert ::
-    PerasEpochContext blk ~ PerasEpochContext blk =>
+    ( CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
+    , PerasVoteCompatibleWithVotingCommittee
+        (PerasVote blk)
+        (PerasCrypto blk)
+        (PerasVotingCommitteeScheme blk)
+    , PerasCertCompatibleWithVotingCommittee
+        (PerasCert blk)
+        (PerasCrypto blk)
+        (PerasVotingCommitteeScheme blk)
+    ) =>
     PerasEpochContext blk ->
     PerasCert blk ->
     Either (PerasError blk) (ValidatedPerasCert blk)
@@ -507,10 +535,12 @@ instance CryptoSupportsVoteSigning (VoidPerasCrypto blk) where
   signVote _signingKey _ _ = VoidVoteSignature ()
   verifyVoteSignature verificationKey _ _ _ = absurd verificationKey
 
+data instance VotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme = VoidPerasVotingCommittee {unVoidPerasVotingCommittee :: Void}
+
 instance CryptoSupportsVotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme where
   data VotingCommitteeError (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme = VoidPerasVotingCommitteeError {unVoidPerasVotingCommitteeError :: Void}
   data VotingCommitteeInput (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme = VoidPerasVotingCommitteeInput {unVoidPerasVotingCommitteeInput :: Void}
-  data VotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme = VoidPerasVotingCommittee {unVoidPerasVotingCommittee :: Void}
+
   data EligibilityWitness (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme = VoidPerasEligibilityWitness {unVoidPerasEligibilityWitness :: Void}
   data Cert (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme = Cert {unCommitteeCert :: VoidPerasCert blk}
   data Vote (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme = Vote {unCommitteeVote :: VoidPerasVote blk}

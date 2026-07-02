@@ -36,6 +36,8 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapPerasError (..)
   , WrapPerasCrypto (..)
   , WrapPerasVotingCommitteeScheme (..)
+  , WrapPerasPrivateKey (..)
+  , WrapPerasVotingCommittee (..)
 
     -- * Protocol based
   , WrapCanBeLeader (..)
@@ -63,6 +65,8 @@ import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Committee.Class (VotingCommittee)
+import Ouroboros.Consensus.Committee.Crypto (PrivateKey)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
@@ -94,24 +98,37 @@ newtype WrapPerasCert blk = WrapPerasCert {unwrapPerasCert :: PerasCert blk}
 newtype WrapPerasError blk = WrapPerasError {unwrapPerasError :: PerasError blk}
 newtype WrapPerasCrypto blk = WrapPerasCrypto {unwrapPerasCrypto :: PerasCrypto blk}
 newtype WrapPerasVotingCommitteeScheme blk = WrapPerasVotingCommitteeScheme {unwrapPerasVotingCommitteeScheme :: PerasVotingCommitteeScheme blk}
+newtype WrapPerasPrivateKey blk = WrapPerasPrivateKey {unwrapPerasPrivateKey :: PrivateKey (PerasCrypto blk)}
+newtype WrapPerasVotingCommittee blk = WrapPerasVotingCommittee
+  {unwrapPerasVotingCommittee :: VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)}
 
 deriving instance Show (PerasVote blk) => Show (WrapPerasVote blk)
 deriving instance Show (PerasCert blk) => Show (WrapPerasCert blk)
 deriving instance Show (PerasError blk) => Show (WrapPerasError blk)
 deriving instance Show (PerasCrypto blk) => Show (WrapPerasCrypto blk)
 deriving instance Show (PerasVotingCommitteeScheme blk) => Show (WrapPerasVotingCommitteeScheme blk)
+deriving instance Show (PrivateKey (PerasCrypto blk)) => Show (WrapPerasPrivateKey blk)
+deriving instance
+  Show (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
+  Show (WrapPerasVotingCommittee blk)
 
 deriving instance Eq (PerasVote blk) => Eq (WrapPerasVote blk)
 deriving instance Eq (PerasCert blk) => Eq (WrapPerasCert blk)
 deriving instance Eq (PerasError blk) => Eq (WrapPerasError blk)
 deriving instance Eq (PerasCrypto blk) => Eq (WrapPerasCrypto blk)
 deriving instance Eq (PerasVotingCommitteeScheme blk) => Eq (WrapPerasVotingCommitteeScheme blk)
+deriving instance Eq (PrivateKey (PerasCrypto blk)) => Eq (WrapPerasPrivateKey blk)
+deriving instance
+  Eq (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
+  Eq (WrapPerasVotingCommittee blk)
 
 deriving instance Generic (WrapPerasVote blk)
 deriving instance Generic (WrapPerasCert blk)
 deriving instance Generic (WrapPerasError blk)
 deriving instance Generic (WrapPerasCrypto blk)
 deriving instance Generic (WrapPerasVotingCommitteeScheme blk)
+deriving instance Generic (WrapPerasPrivateKey blk)
+deriving instance Generic (WrapPerasVotingCommittee blk)
 
 deriving instance NoThunks (PerasVote blk) => NoThunks (WrapPerasVote blk)
 deriving instance NoThunks (PerasCert blk) => NoThunks (WrapPerasCert blk)
@@ -119,6 +136,14 @@ deriving instance NoThunks (PerasError blk) => NoThunks (WrapPerasError blk)
 deriving instance NoThunks (PerasCrypto blk) => NoThunks (WrapPerasCrypto blk)
 deriving instance
   NoThunks (PerasVotingCommitteeScheme blk) => NoThunks (WrapPerasVotingCommitteeScheme blk)
+deriving instance NoThunks (PrivateKey (PerasCrypto blk)) => NoThunks (WrapPerasPrivateKey blk)
+deriving instance
+  NoThunks (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
+  NoThunks (WrapPerasVotingCommittee blk)
+
+deriving instance
+  Serialise (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
+  Serialise (WrapPerasVotingCommittee blk)
 
 deriving instance (Typeable blk, Exception (PerasError blk)) => Exception (WrapPerasError blk)
 

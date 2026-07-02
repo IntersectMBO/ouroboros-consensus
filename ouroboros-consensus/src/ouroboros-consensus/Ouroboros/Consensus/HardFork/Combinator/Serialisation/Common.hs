@@ -414,7 +414,7 @@ decodeTelescope = \ds -> do
 -------------------------------------------------------------------------------}
 
 -- 'encodeNS' and 'decodeNS' have been moved to
--- "Ouroboros.Consensus.HardFork.Combinator.Basics" so that instances upstream of
+-- "Ouroboros.Consensus.HardFork.Combinator.AcrossEras" so that instances upstream of
 -- this module can reuse them. They are re-exported from this module though.
 
 decodeAnnNS ::

@@ -11,7 +11,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -34,6 +33,7 @@ module Ouroboros.Consensus.Peras.Context
   , verifyPerasCertInContext
   , mockPerasEpochContextResolverHandle
   , forgePerasVoteIfEligibleInContext
+  , mkBoundedPerasEpochContextFromMkPerasVotingCommitteeInput
   )
 where
 
@@ -118,7 +118,6 @@ class
   , AChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol blk)))
   , IsPerasError (PerasError blk) blk
   , Show (PerasError blk)
-  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
   , Show (PerasVotingCommittee blk)
   , Eq (PerasVotingCommittee blk)
   , NoThunks (PerasVotingCommittee blk)
@@ -134,61 +133,6 @@ class
   ) =>
   StateSupportsPerasEpochContext blk
   where
-  mkPerasVotingCommitteeInput ::
-    (ALedgerStateSupportsPeras ledger, AChainDepStateSupportsPeras chainDep) =>
-    ledger ->
-    chainDep ->
-    Either
-      (PerasError blk)
-      (PerasVotingCommitteeInput blk)
-  default mkPerasVotingCommitteeInput ::
-    ( ALedgerStateSupportsPeras ledger
-    , AChainDepStateSupportsPeras chainDep
-    , PerasVotingCommitteeScheme blk ~ VoidPerasVotingCommitteeScheme
-    ) =>
-    ledger ->
-    chainDep ->
-    Either
-      (PerasError blk)
-      (PerasVotingCommitteeInput blk)
-  mkPerasVotingCommitteeInput _ _ =
-    error "mkPerasVotingCommitteeInput: not supported for this block"
-
-  mkPerasVotingCommittee ::
-    (ALedgerStateSupportsPeras ledger, AChainDepStateSupportsPeras chainDep) =>
-    ledger ->
-    chainDep ->
-    Either
-      (PerasError blk)
-      (PerasVotingCommittee blk)
-  mkPerasVotingCommittee ledgerState headerState = do
-    committeeInput <-
-      mkPerasVotingCommitteeInput ledgerState headerState
-    first injectVotingCommitteeError $
-      Committee.mkVotingCommittee committeeInput
-
-  mkPerasEpochContext ::
-    (ALedgerStateSupportsPeras ledger, AChainDepStateSupportsPeras chainDep) =>
-    ledger ->
-    chainDep ->
-    Either
-      (PerasError blk)
-      (PerasEpochContext blk)
-  default mkPerasEpochContext ::
-    ( ALedgerStateSupportsPeras ledger
-    , AChainDepStateSupportsPeras chainDep
-    , PerasEpochContext blk ~ PerasEpochContext blk
-    ) =>
-    ledger ->
-    chainDep ->
-    Either
-      (PerasError blk)
-      (PerasEpochContext blk)
-  mkPerasEpochContext ledgerState headerState = do
-    pecCommittee <- mkPerasVotingCommittee ledgerState headerState
-    pure $
-      PerasEpochContext{pecParams = (getPerasParams (Proxy @blk) ledgerState), pecCommittee}
-
   type MaybeEraIndexedEpochToPerasRoundInfo blk :: Type
   type MaybeEraIndexedEpochToPerasRoundInfo blk = EpochToPerasRoundInfo
 
@@ -219,10 +163,9 @@ class
       (PerasError blk)
       (BoundedPerasEpochContext blk)
   default mkBoundedPerasEpochContext ::
-    ( All Top (HardForkIndices blk)
+    ( PerasVotingCommitteeScheme blk ~ VoidPerasVotingCommitteeScheme
     , ALedgerStateSupportsPeras ledger
     , AChainDepStateSupportsPeras chainDep
-    , MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo
     ) =>
     MaybeEraIndexedEpochToPerasRoundInfo blk ->
     ledger ->
@@ -230,14 +173,45 @@ class
     Either
       (PerasError blk)
       (BoundedPerasEpochContext blk)
-  mkBoundedPerasEpochContext EpochToPerasRoundInfo{etpriEpochStartPerasRound, etpriEpochEndPerasRound} ledgerState headerState = do
-    epochContext <- mkPerasEpochContext ledgerState headerState
-    pure
-      BoundedPerasEpochContext
-        { startPerasRoundNo = etpriEpochStartPerasRound
-        , endPerasRoundNo = etpriEpochEndPerasRound
-        , epochContext = epochContext
-        }
+  mkBoundedPerasEpochContext _ _ _ =
+    error
+      "mkBoundedPerasEpochContext: should never be called for this block type since it does not support Peras"
+
+-- | This intends to be the normal way of implementing 'mkBoundedPerasEpochContext' in terms of a function that produces a 'PerasVotingCommitteeInput', namely 'V1.mkPerasVotingCommitteeInput' or 'mkMockPerasVotingCommitteeInput'.
+mkBoundedPerasEpochContextFromMkPerasVotingCommitteeInput ::
+  ( All Top (HardForkIndices blk)
+  , ALedgerStateSupportsPeras ledger
+  , AChainDepStateSupportsPeras chainDep
+  , MaybeEraIndexedEpochToPerasRoundInfo blk ~ EpochToPerasRoundInfo
+  , CryptoSupportsVotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)
+  , IsPerasError (PerasError blk) blk
+  ) =>
+  ( (ALedgerStateSupportsPeras ledger, AChainDepStateSupportsPeras chainDep) =>
+    ledger ->
+    chainDep ->
+    Either
+      (PerasError blk)
+      (PerasVotingCommitteeInput blk)
+  ) ->
+  MaybeEraIndexedEpochToPerasRoundInfo blk ->
+  ledger ->
+  chainDep ->
+  Either
+    (PerasError blk)
+    (BoundedPerasEpochContext blk)
+mkBoundedPerasEpochContextFromMkPerasVotingCommitteeInput mkPerasVotingCommitteeInput EpochToPerasRoundInfo{etpriEpochStartPerasRound, etpriEpochEndPerasRound} ledgerState headerState = do
+  committeeInput <-
+    mkPerasVotingCommitteeInput ledgerState headerState
+  pecCommittee <-
+    first injectVotingCommitteeError $
+      Committee.mkVotingCommittee committeeInput
+  pure
+    BoundedPerasEpochContext
+      { startPerasRoundNo = etpriEpochStartPerasRound
+      , endPerasRoundNo = etpriEpochEndPerasRound
+      , epochContext =
+          PerasEpochContext{pecParams = getPerasParams Proxy ledgerState, pecCommittee}
+      }
 
 --------------------------------------------------------------------------------
 -- Resolver

@@ -367,8 +367,6 @@ instance
   fromMaybeEraIndexedEpochToPerasRoundInfo _ = forgetEraIndex
   toMaybeEraIndexedEpochToPerasRoundInfo _ = id
 
-  mkPerasVotingCommitteeInput = error "mkPerasVotingCommitteeInput: cannot be implemented, but will never be called"
-
   mkBoundedPerasEpochContext epochToPerasRoundInfo ledgerState headerState =
     bimap
       (HardForkPerasErrorOneEraPerasError . OneEraPerasError)
