@@ -41,7 +41,7 @@ import qualified Control.Monad.Class.MonadTime.SI as SI
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import qualified Control.Monad.IOSim as IOSim
 import Control.Monad.Reader
-import Control.Tracer (Tracer (Tracer))
+import Control.Tracer (mkTracer)
 import Data.Functor ((<&>))
 import Data.List ((\\))
 import qualified Data.Map.Strict as Map
@@ -132,7 +132,7 @@ setupGsm ::
   SystemStateVars (IOSim.IOSim s) ->
   GSM.GsmEntryPoints (IOSim.IOSim s)
 setupGsm isHaaSatisfied vars = do
-  let tracer = Tracer $ push varEvents . EvGsm
+  let tracer = mkTracer $ push varEvents . EvGsm
   GSM.realGsmEntryPoints
     (id, tracer)
     GSM.GsmView

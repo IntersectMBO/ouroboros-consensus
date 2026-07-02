@@ -1,12 +1,18 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+-- TODO: Ledger has a few deprecations that we are ignoring for now
+{-# OPTIONS_GHC -Wno-deprecations #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
 import qualified Cardano.Ledger.Core as Core (TopTx, Tx)
-import qualified Cardano.Ledger.Core as SL (hashBlockBody, mkBasicBlockBody, txSeqBlockBodyL)
+import qualified Cardano.Ledger.Core as SL
+  ( blockBodySize
+  , hashBlockBody
+  , mkBasicBlockBody
+  , txSeqBlockBodyL
+  )
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
-import qualified Cardano.Ledger.Shelley.BlockBody as SL (bBodySize)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
 import qualified Data.Sequence.Strict as Seq
@@ -80,7 +86,7 @@ forgeShelleyBlock
       SL.mkBasicBlockBody
         & SL.txSeqBlockBodyL .~ Seq.fromList (fmap extractTx txs)
 
-    actualBodySize = SL.bBodySize protocolVersion body
+    actualBodySize = SL.blockBodySize protocolVersion body
 
     extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx Core.TopTx era
     extractTx (ShelleyValidatedTx _txid vtx) = SL.extractTx vtx

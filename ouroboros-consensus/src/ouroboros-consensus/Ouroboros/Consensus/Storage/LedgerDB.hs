@@ -17,7 +17,7 @@ module Ouroboros.Consensus.Storage.LedgerDB
 
 import Control.Monad.Trans.Class
 import Control.ResourceRegistry
-import Data.Functor.Contravariant ((>$<))
+import Control.Tracer ((>$<))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract

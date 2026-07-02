@@ -85,7 +85,7 @@ pattern FallingEdge = FallingEdgeWith ()
 --     pure (input + 5)
 -- :}
 encloseWith ::
-  Applicative m =>
+  Monad m =>
   Tracer m Enclosing ->
   m a ->
   m a
