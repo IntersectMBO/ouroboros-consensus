@@ -9,6 +9,7 @@ module Cardano.Api.SerialiseUsing
   ) where
 
 import Cardano.Api.Any
+import Cardano.Ledger.Binary (fromPlainDecoder)
 import Data.Aeson.Types
   ( FromJSON
   , FromJSONKey
@@ -44,7 +45,8 @@ instance (SerialiseAsRawBytes a, Typeable a) => FromCBOR (UsingRawBytes a) where
 
 instance (SerialiseAsRawBytes a, Typeable a) => EncCBOR (UsingRawBytes a)
 
-instance (SerialiseAsRawBytes a, Typeable a) => DecCBOR (UsingRawBytes a)
+instance (SerialiseAsRawBytes a, Typeable a) => DecCBOR (UsingRawBytes a) where
+  decCBOR = fromPlainDecoder fromCBOR
 
 -- | For use with @deriving via@, to provide instances for any\/all of 'Show',
 -- 'IsString', 'ToJSON', 'FromJSON', 'ToJSONKey', FromJSONKey' using a hex

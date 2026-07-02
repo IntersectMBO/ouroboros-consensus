@@ -120,15 +120,17 @@ instance Ledger.LedgerSupportsMempool TestBlock where
   mkMempoolApplyTxError = Ledger.nothingMkMempoolApplyTxError
 
 instance Ledger.TxLimits TestBlock where
-  type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
+  type TxMeasurePhase1 TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
+  type TxMeasurePhase2 TestBlock = Ledger.TrivialTxMeasurePhase2
 
   txWireSize = fromIntegral . Ledger.unByteSize32 . txSize . unGenTx
   blockCapacityTxMeasure _cfg _st =
     -- The tests will override this value. By using 1, @computeMempoolCapacity@
     -- can be exactly what each test requests.
-    Ledger.IgnoringOverflow $ Ledger.ByteSize32 1
+    Ledger.TxMeasure (Ledger.IgnoringOverflow $ Ledger.ByteSize32 1) Ledger.TrivialTxMeasurePhase2
 
-  txMeasure _cfg _st = pure . Ledger.IgnoringOverflow . txSize . unGenTx
+  txMeasurePhase1 _cfg _st = pure . Ledger.IgnoringOverflow . txSize . unGenTx
+  txMeasurePhase2 _cfg _st _tx = pure Ledger.TrivialTxMeasurePhase2
 
 {-------------------------------------------------------------------------------
   Ledger support (empty tables)

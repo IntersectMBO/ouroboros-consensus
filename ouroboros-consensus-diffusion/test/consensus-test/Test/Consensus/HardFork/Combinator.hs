@@ -226,9 +226,10 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
   testConfigMB =
     TestConfigMB
       { nodeInfo = \a ->
-          plainTestNodeInitialization
-            (protocolInfo a)
-            (return blockForging)
+          pure $
+            plainTestNodeInitialization
+              (protocolInfo a)
+              (return blockForging)
       , mkRekeyM = Nothing
       }
 
@@ -431,7 +432,8 @@ instance HasHardForkTxOut '[BlockA, BlockB] where
 type TestBlock = HardForkBlock '[BlockA, BlockB]
 
 instance CanHardFork '[BlockA, BlockB] where
-  type HardForkTxMeasure '[BlockA, BlockB] = IgnoringOverflow ByteSize32
+  type HardForkTxMeasurePhase1 '[BlockA, BlockB] = IgnoringOverflow ByteSize32
+  type HardForkTxMeasurePhase2 '[BlockA, BlockB] = TrivialTxMeasurePhase2
 
   hardForkEraTranslation =
     EraTranslation
@@ -443,9 +445,13 @@ instance CanHardFork '[BlockA, BlockB] where
   hardForkChainSel = Tails.mk2 NoTiebreakerAcrossEras
   hardForkInjectTxs = InPairs.mk2 injectTx_AtoB
 
-  hardForkInjTxMeasure = \case
-    (Z (WrapTxMeasure x)) -> x
-    S (Z (WrapTxMeasure x)) -> x
+  hardForkInjTxMeasurePhase1 = \case
+    (Z (WrapTxMeasurePhase1 x)) -> x
+    S (Z (WrapTxMeasurePhase1 x)) -> x
+
+  hardForkInjTxMeasurePhase2 = \case
+    (Z (WrapTxMeasurePhase2 x)) -> x
+    S (Z (WrapTxMeasurePhase2 x)) -> x
 
 versionN2N :: BlockNodeToNodeVersion TestBlock
 versionN2N =

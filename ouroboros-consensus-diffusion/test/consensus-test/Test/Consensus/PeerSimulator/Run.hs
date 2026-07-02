@@ -14,7 +14,7 @@ import Control.Monad (foldM, forM, void, when)
 import Control.Monad.Class.MonadTime (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), nullTracer, traceWith)
+import Control.Tracer (Tracer, mkTracer, nullTracer, traceWith)
 import Data.Coerce (coerce)
 import Data.Foldable (for_)
 import Data.List (sort)
@@ -524,7 +524,7 @@ startNode protocolInfo schedulerConfig genesisTest interval = do
   -- FIXME: This type of configuration should move to `Trace.mkTracer`.
   tracer =
     if scTrace schedulerConfig
-      then Tracer (\evt -> traceWith lrTracer evt >> traceWith svtTraceTracer evt)
+      then mkTracer (\evt -> traceWith lrTracer evt >> traceWith svtTraceTracer evt)
       else svtTraceTracer
 
   chainSyncTimeouts_ =
@@ -643,7 +643,7 @@ runPointSchedule protocolInfoArgs schedulerConfig genesisTest tracer0 =
     lifecycle <- nodeLifecycle protocolInfoArgs schedulerConfig genesisTest tracer registry peerSim
     (chainDb, stateViewTracers) <-
       runScheduler
-        (Tracer $ traceWith tracer . TraceSchedulerEvent)
+        (mkTracer $ traceWith tracer . TraceSchedulerEvent)
         (cschcMap (psrHandles peerSim))
         gtSchedule
         (psrPeers peerSim)

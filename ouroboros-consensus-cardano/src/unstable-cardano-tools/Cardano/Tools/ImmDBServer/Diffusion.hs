@@ -10,7 +10,6 @@ import Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer)
 import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.ByteString.Lazy as BL
-import Data.Functor.Contravariant ((>$<))
 import Data.Void (Void)
 import qualified Network.Mux as Mux
 import Network.Socket (SockAddr (..))
@@ -67,7 +66,7 @@ serve sockAddr application = withIOManager \iocp ->
       { haHandshakeTracer = show >$< stdoutTracer
       , haBearerTracer = show >$< stdoutTracer
       , haHandshakeCodec = N2N.nodeToNodeHandshakeCodec
-      , haVersionDataCodec = Handshake.cborTermVersionDataCodec N2N.nodeToNodeCodecCBORTerm
+      , haVersionDataCodec = N2N.nodeToNodeVersionDataCodec
       , haAcceptVersion = Handshake.acceptableVersion
       , haQueryVersion = Handshake.queryVersion
       , haTimeLimits = Handshake.timeLimitsHandshake

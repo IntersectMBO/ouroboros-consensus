@@ -15,7 +15,7 @@ module Test.Consensus.PeerSimulator.NodeLifecycle
   ) where
 
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), traceWith)
+import Control.Tracer (Tracer, mkTracer, traceWith)
 import Data.Functor (void)
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -154,7 +154,7 @@ mkChainDb resources = do
   chainDbArgs <- do
     let args =
           updateTracer
-            (Tracer (traceWith lrTracer . TraceChainDBEvent))
+            (mkTracer (traceWith lrTracer . TraceChainDBEvent))
             ( fromMinimalChainDbArgs
                 MinimalChainDbArgs
                   { mcdbTopLevelConfig = lrConfig
