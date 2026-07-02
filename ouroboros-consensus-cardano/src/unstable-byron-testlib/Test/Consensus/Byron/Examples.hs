@@ -120,7 +120,6 @@ examples =
     , exampleChainDepState = unlabelled exampleChainDepState
     , exampleExtLedgerState = unlabelled $ forgetLedgerTables exampleExtLedgerState
     , exampleSlotNo = unlabelled exampleSlotNo
-    , exampleLedgerTables = unlabelled emptyLedgerTables
     }
  where
   regularAndEBB :: a -> a -> Labelled a

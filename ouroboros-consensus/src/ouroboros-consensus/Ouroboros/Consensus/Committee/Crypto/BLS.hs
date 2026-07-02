@@ -48,11 +48,13 @@ module Ouroboros.Consensus.Committee.Crypto.BLS
 import Cardano.Binary (FromCBOR, ToCBOR)
 import Cardano.Crypto.DSIGN
   ( BLS12381MinSigDSIGN
-  , BLS12381SignContext (..)
+  , BLS12381SignContext
   , DSIGNAggregatable (..)
   , DSIGNAlgorithm (..)
   , SigDSIGN (..)
   , VerKeyDSIGN (..)
+  , blsSignContextAug
+  , minSigPoPDST
   )
 import Cardano.Crypto.EllipticCurve.BLS12_381 (blsIsInf, blsMSM)
 import qualified Cardano.Crypto.Hash as Hash
@@ -171,42 +173,20 @@ newtype ProofOfPossession = ProofOfPossession
   deriving stock (Eq, Show)
   deriving newtype (FromCBOR, ToCBOR)
 
--- TODO: get these contexts directly from @cardano-base@ after
--- https://github.com/IntersectMBO/cardano-base/pull/635
--- is merged.
-
--- Basic over G1:
--- https://www.ietf.org/archive/id/draft-irtf-cfrg-bls-signature-06.html#section-4.2.1-1
-minSigSignatureDST :: BLS12381SignContext
-minSigSignatureDST =
-  BLS12381SignContext
-    { blsSignContextDst = Just "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_"
-    , blsSignContextAug = Nothing
-    }
-
--- PoP over G1:
--- https://www.ietf.org/archive/id/draft-irtf-cfrg-bls-signature-06.html#section-4.2.3-1
-minSigPoPDST :: BLS12381SignContext
-minSigPoPDST =
-  BLS12381SignContext
-    { blsSignContextDst = Just "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_"
-    , blsSignContextAug = Nothing
-    }
-
 -- | Role-separated BLS contexts for  signatures
 class HasBLSContext (r :: KeyRole) where
   blsCtx :: Proxy r -> KeyScope -> BLS12381SignContext
 
 instance HasBLSContext SIGN where
   blsCtx _ keyScope =
-    minSigSignatureDST
+    minSigPoPDST
       { blsSignContextAug =
           Just ("VOTE:" <> keyScope <> ":V0")
       }
 
 instance HasBLSContext VRF where
   blsCtx _ keyScope =
-    minSigSignatureDST
+    minSigPoPDST
       { blsSignContextAug =
           Just ("VRF:" <> keyScope <> ":V0")
       }

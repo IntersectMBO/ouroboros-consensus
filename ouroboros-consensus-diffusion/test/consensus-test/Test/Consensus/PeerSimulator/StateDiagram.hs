@@ -37,7 +37,7 @@ import Control.Monad.State.Strict
   , runState
   , state
   )
-import Control.Tracer (Tracer (Tracer), debugTracer, traceWith)
+import Control.Tracer (Tracer, debugTracer, mkTracer, traceWith)
 import Data.Bifunctor (first)
 import Data.Foldable as Foldable (foldl', foldr')
 import Data.List (intersperse, mapAccumL, sort, transpose)
@@ -963,11 +963,11 @@ peerSimStateDiagram =
 -- a block tree, highlighting the candidate fragments, selection, and forks in
 -- different colors, omitting uninteresting segments.
 peerSimStateDiagramTracer ::
-  (AF.HasHeader blk, Eq (Header blk), GetHeader blk) =>
+  (Monad m, AF.HasHeader blk, Eq (Header blk), GetHeader blk) =>
   Tracer m String ->
   Tracer m (PeerSimState blk)
 peerSimStateDiagramTracer tracer =
-  Tracer (traceWith tracer . peerSimStateDiagram)
+  mkTracer (traceWith tracer . peerSimStateDiagram)
 
 -- | Construct a stateful tracer that prints the current peer simulator state in
 -- a block tree, highlighting the candidate fragments, selection, and forks in
@@ -986,7 +986,7 @@ peerSimStateDiagramSTMTracer ::
   m (Tracer m ())
 peerSimStateDiagramSTMTracer stringTracer pssBlockTree selectionVar candidatesVar pointsVar = do
   peerCache <- uncheckedNewTVarM mempty
-  pure $ Tracer $ const $ do
+  pure $ mkTracer $ const $ do
     (s, cachedPeers) <- atomically $ do
       pssSelection <- selectionVar
       pssCandidates <- candidatesVar

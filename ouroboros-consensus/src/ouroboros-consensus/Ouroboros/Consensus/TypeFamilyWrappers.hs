@@ -23,7 +23,8 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapTentativeHeaderView (..)
   , WrapTipInfo (..)
   , WrapTxIn (..)
-  , WrapTxMeasure (..)
+  , WrapTxMeasurePhase1 (..)
+  , WrapTxMeasurePhase2 (..)
   , WrapTxOut (..)
   , WrapValidatedGenTx (..)
 
@@ -88,7 +89,8 @@ newtype WrapTipInfo blk = WrapTipInfo {unwrapTipInfo :: TipInfo blk}
 -- wrappers in this module.
 newtype WrapValidatedGenTx blk = WrapValidatedGenTx {unwrapValidatedGenTx :: Validated (GenTx blk)}
 
-newtype WrapTxMeasure blk = WrapTxMeasure {unwrapTxMeasure :: TxMeasure blk}
+newtype WrapTxMeasurePhase1 blk = WrapTxMeasurePhase1 {unwrapTxMeasurePhase1 :: TxMeasurePhase1 blk}
+newtype WrapTxMeasurePhase2 blk = WrapTxMeasurePhase2 {unwrapTxMeasurePhase2 :: TxMeasurePhase2 blk}
 
 newtype WrapTxIn blk = WrapTxIn {unwrapTxIn :: TxIn blk}
 newtype WrapTxOut blk = WrapTxOut {unwrapTxOut :: TxOut blk}

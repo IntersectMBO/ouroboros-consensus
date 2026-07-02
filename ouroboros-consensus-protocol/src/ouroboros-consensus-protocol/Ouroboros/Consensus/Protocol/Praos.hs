@@ -39,6 +39,7 @@ import qualified Cardano.Crypto.VRF as VRF
 import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, (⭒))
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Chain as SL
+import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
 import Cardano.Ledger.Hashes (HASH)
 import Cardano.Ledger.Keys
   ( DSIGN
@@ -48,11 +49,19 @@ import Cardano.Ledger.Keys
   , hashKey
   )
 import qualified Cardano.Ledger.Keys as SL
+import Cardano.Ledger.Shelley (ShelleyEra)
 import Cardano.Ledger.Slot (Duration (Duration), (+*))
 import qualified Cardano.Ledger.State as SL
 import Cardano.Protocol.Crypto (Crypto, KES, StandardCrypto, VRF)
+import Cardano.Protocol.Praos.BlockHeader (HeaderBody)
+import Cardano.Protocol.Praos.VRF
+  ( InputVRF
+  , mkInputVRF
+  , vrfLeaderValue
+  , vrfNonceValue
+  )
 import qualified Cardano.Protocol.TPraos.API as SL
-import Cardano.Protocol.TPraos.BHeader
+import Cardano.Protocol.TPraos.BlockHeader
   ( BoundedNatural (bvValue)
   , checkLeaderNatValue
   , prevHashToNonce
@@ -98,13 +107,6 @@ import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Protocol.Praos.Common
-import Ouroboros.Consensus.Protocol.Praos.Header (HeaderBody)
-import Ouroboros.Consensus.Protocol.Praos.VRF
-  ( InputVRF
-  , mkInputVRF
-  , vrfLeaderValue
-  , vrfNonceValue
-  )
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import Ouroboros.Consensus.Protocol.TPraos
   ( ConsensusConfig (TPraosConfig, tpraosEpochInfo, tpraosParams)
@@ -310,12 +312,12 @@ instance Serialise PraosState where
           [ CBOR.encodeListLen 8
           , toCBOR praosStateLastSlot
           , toCBOR praosStateOCertCounters
-          , toCBOR praosStateEvolvingNonce
-          , toCBOR praosStateCandidateNonce
-          , toCBOR praosStateEpochNonce
-          , toCBOR praosStatePreviousEpochNonce
-          , toCBOR praosStateLabNonce
-          , toCBOR praosStateLastEpochBlockNonce
+          , toEraCBOR @ShelleyEra praosStateEvolvingNonce
+          , toEraCBOR @ShelleyEra praosStateCandidateNonce
+          , toEraCBOR @ShelleyEra praosStateEpochNonce
+          , toEraCBOR @ShelleyEra praosStatePreviousEpochNonce
+          , toEraCBOR @ShelleyEra praosStateLabNonce
+          , toEraCBOR @ShelleyEra praosStateLastEpochBlockNonce
           ]
 
   decode =
@@ -327,16 +329,16 @@ instance Serialise PraosState where
       PraosState
         <$> fromCBOR
         <*> fromCBOR
-        <*> fromCBOR
-        <*> fromCBOR
-        <*> fromCBOR
-        <*> fromCBOR
-        <*> fromCBOR
-        <*> fromCBOR
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
+        <*> fromEraCBOR @ShelleyEra
 
 data instance Ticked PraosState = TickedPraosState
   { tickedPraosStateChainDepState :: PraosState
-  , tickedPraosStateLedgerView :: Views.LedgerView
+  , tickedPraosStateLedgerView :: Views.PraosLedgerView
   }
 
 -- | Errors which we might encounter
@@ -391,7 +393,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type IsLeader (Praos c) = PraosIsLeader c
   type CanBeLeader (Praos c) = PraosCanBeLeader c
   type TiebreakerView (Praos c) = PraosTiebreakerView c
-  type LedgerView (Praos c) = Views.LedgerView
+  type LedgerView (Praos c) = Views.PraosLedgerView
   type ValidationErr (Praos c) = PraosValidationErr c
   type ValidateView (Praos c) = PraosValidateView c
 
@@ -539,7 +541,7 @@ meetsLeaderThreshold ::
   Bool
 meetsLeaderThreshold
   PraosConfig{praosParams}
-  Views.LedgerView{Views.lvPoolDistr}
+  Views.PraosLedgerView{Views.plvPoolDistr}
   keyHash
   rho =
     checkLeaderNatValue
@@ -547,7 +549,7 @@ meetsLeaderThreshold
       r
       (praosLeaderF praosParams)
    where
-    SL.PoolDistr poolDistr _totalActiveStake = lvPoolDistr
+    SL.PoolDistr poolDistr _totalActiveStake = plvPoolDistr
     r =
       maybe 0 SL.individualPoolStake $
         Map.lookup keyHash poolDistr
@@ -556,11 +558,11 @@ validateVRFSignature ::
   forall c.
   PraosCrypto c =>
   Nonce ->
-  Views.LedgerView ->
+  Views.PraosLedgerView ->
   ActiveSlotCoeff ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
-validateVRFSignature eta0 (Views.lvPoolDistr -> SL.PoolDistr pd _) =
+validateVRFSignature eta0 (Views.plvPoolDistr -> SL.PoolDistr pd _) =
   doValidateVRFSignature eta0 pd
 
 -- NOTE: this function is much easier to test than 'validateVRFSignature' because we don't need
@@ -609,9 +611,9 @@ validateKESSignature
            PraosParams{praosMaxKESEvo, praosSlotsPerKESPeriod}
            _ei
          )
-  Views.LedgerView{Views.lvPoolDistr = SL.PoolDistr lvPoolDistr _totalActiveStake}
+  Views.PraosLedgerView{Views.plvPoolDistr = SL.PoolDistr plvPoolDistr _totalActiveStake}
   ocertCounters =
-    doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod lvPoolDistr ocertCounters
+    doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod plvPoolDistr ocertCounters
 
 -- NOTE: This function is much easier to test than 'validateKESSignature' because we don't need to
 -- construct a 'PraosConfig' nor 'LedgerView' to test it.
@@ -750,12 +752,12 @@ instance PraosCrypto c => PraosProtocolSupportsNode (Praos c) where
 -- - They share the same DSIGN verification keys
 -- - They share the same VRF verification keys
 instance TranslateProto (TPraos c) (Praos c) where
-  translateLedgerView _ SL.LedgerView{SL.lvPoolDistr, SL.lvChainChecks} =
-    Views.LedgerView
-      { Views.lvPoolDistr = lvPoolDistr
-      , Views.lvMaxHeaderSize = SL.ccMaxBHSize lvChainChecks
-      , Views.lvMaxBodySize = SL.ccMaxBBSize lvChainChecks
-      , Views.lvProtocolVersion = SL.ccProtocolVersion lvChainChecks
+  translateLedgerView _ SL.TPraosLedgerView{SL.tplvPoolDistr, SL.tplvChainChecks} =
+    Views.PraosLedgerView
+      { Views.plvPoolDistr = tplvPoolDistr
+      , Views.plvMaxHeaderSize = SL.ccMaxBHSize tplvChainChecks
+      , Views.plvMaxBodySize = SL.ccMaxBBSize tplvChainChecks
+      , Views.plvProtocolVersion = SL.ccProtocolVersion tplvChainChecks
       }
 
   translateChainDepState _ tpState =

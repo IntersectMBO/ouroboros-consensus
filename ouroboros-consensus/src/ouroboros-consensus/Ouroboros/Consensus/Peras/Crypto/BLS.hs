@@ -84,7 +84,7 @@ type instance PublicKey PerasBLSCrypto = PerasPublicKey
 -- | Hash the message of a Peras vote
 --
 -- NOTE: this is inspired by the implementation used by the Praos VRF check in
--- 'Ouroboros.Consensus.Protocol.Praos.VRF.mkInputVRF'.
+-- 'Cardano.Protocol.Praos.VRF.mkInputVRF'.
 hashVoteSignature ::
   ElectionId PerasBLSCrypto ->
   VoteCandidate PerasBLSCrypto ->
@@ -117,7 +117,7 @@ hashVoteSignature roundNo boostedBlock =
 -- | Hash the input for the VRF used in Peras elections
 --
 -- NOTE: this is inspired by the implementation used by the Praos VRF check in
--- 'Ouroboros.Consensus.Protocol.Praos.VRF.mkInputVRF'.
+-- 'Cardano.Protocol.Praos.VRF.mkInputVRF'.
 hashVRFInput ::
   ElectionId PerasBLSCrypto ->
   Nonce ->

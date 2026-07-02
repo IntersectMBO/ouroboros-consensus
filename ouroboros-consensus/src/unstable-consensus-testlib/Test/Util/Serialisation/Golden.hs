@@ -55,7 +55,6 @@ import Ouroboros.Consensus.Ledger.Query
   , blockQueryIsSupportedOnVersion
   , nodeToClientVersionToQueryVersion
   )
-import Ouroboros.Consensus.Ledger.Tables (valuesMKEncoder)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
   ( HasNetworkProtocolVersion (..)
   , SupportedNetworkProtocolVersion (..)
@@ -223,34 +222,6 @@ goldenTests testName examples enc goldenFolder mCDDL
   labels :: [Maybe String]
   labels = map fst examples
 
-goldenTests' ::
-  HasCallStack =>
-  TestName ->
-  Labelled (a, a -> Encoding) ->
-  -- | Folder containing the golden files
-  FilePath ->
-  Maybe (FilePath, T.Text) ->
-  TestTree
-goldenTests' testName examples goldenFolder mCDDL
-  | nub labels /= labels =
-      error $ "Examples with the same label for " <> testName
-  | [(Nothing, (example, exampleEncoder))] <- examples =
-      -- If there's just a single unlabelled example, no need for grouping,
-      -- which makes the output more verbose.
-      goldenTestCBOR testName example exampleEncoder (goldenFolder </> testName) mCDDL
-  | otherwise =
-      testGroup
-        testName
-        [ goldenTestCBOR testName' example exampleEncoder (goldenFolder </> testName') mCDDL
-        | (mbLabel, (example, exampleEncoder)) <- examples
-        , let testName' = case mbLabel of
-                Nothing -> testName
-                Just label -> testName <> "_" <> label
-        ]
- where
-  labels :: [Maybe String]
-  labels = map fst examples
-
 {-------------------------------------------------------------------------------
   Skeletons
 -------------------------------------------------------------------------------}
@@ -322,7 +293,6 @@ goldenTest_SerialiseDisk codecConfig goldenDir Examples{..} =
     , test "AnnTip" exampleAnnTip (encodeDisk codecConfig)
     , test "ChainDepState" exampleChainDepState (encodeDisk codecConfig)
     , test "ExtLedgerState" exampleExtLedgerState encodeExt
-    , testLedgerTables
     ]
  where
   test :: TestName -> Labelled a -> (a -> Encoding) -> TestTree
@@ -331,18 +301,6 @@ goldenTest_SerialiseDisk codecConfig goldenDir Examples{..} =
       testName
       exampleValues
       enc
-      (goldenDir </> "disk")
-      Nothing
-
-  testLedgerTables :: TestTree
-  testLedgerTables =
-    goldenTests'
-      "LedgerTables"
-      ( zipWith
-          (\(lbl, tbs) (_, st) -> (lbl, (tbs, valuesMKEncoder st)))
-          exampleLedgerTables
-          exampleLedgerState
-      )
       (goldenDir </> "disk")
       Nothing
 

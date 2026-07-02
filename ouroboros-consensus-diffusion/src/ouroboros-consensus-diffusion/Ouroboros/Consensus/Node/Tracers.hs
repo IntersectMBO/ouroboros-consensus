@@ -18,7 +18,7 @@ module Ouroboros.Consensus.Node.Tracers
   ) where
 
 import Control.Exception (SomeException)
-import Control.Tracer (Tracer, nullTracer, showTracing)
+import Control.Tracer (Tracer, nullTracer, (>$<))
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import Ouroboros.Consensus.Block
@@ -58,6 +58,7 @@ import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent
   )
 import Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
+import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Types
 import Ouroboros.Network.TxSubmission.Outbound
 
@@ -181,7 +182,8 @@ nullTracers =
     }
 
 showTracers ::
-  ( Show blk
+  ( Monad m
+  , Show blk
   , Show (GenTx blk)
   , Show (Validated (GenTx blk))
   , Show (GenTxId blk)
@@ -190,40 +192,42 @@ showTracers ::
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
-  , Show (TxMeasure blk)
+  , Show (TxMeasurePhase1 blk)
+  , Show (TxMeasurePhase2 blk)
   , Show remotePeer
+  , HasRawTxId (GenTxId blk)
   , LedgerSupportsProtocol blk
   ) =>
   Tracer m String -> Tracers m remotePeer localPeer blk
 showTracers tr =
   Tracers
-    { chainSyncClientTracer = showTracing tr
-    , chainSyncServerHeaderTracer = showTracing tr
-    , chainSyncServerBlockTracer = showTracing tr
-    , blockFetchDecisionTracer = showTracing tr
-    , blockFetchClientTracer = showTracing tr
-    , blockFetchServerTracer = showTracing tr
-    , txInboundTracer = showTracing tr
-    , txOutboundTracer = showTracing tr
-    , localTxSubmissionServerTracer = showTracing tr
-    , txLogicTracer = showTracing tr
-    , txCountersTracer = showTracing tr
-    , mempoolTracer = showTracing tr
-    , perasCertDiffusionInboundTracer = showTracing tr
-    , perasCertDiffusionOutboundTracer = showTracing tr
-    , perasVoteDiffusionInboundTracer = showTracing tr
-    , perasVoteDiffusionOutboundTracer = showTracing tr
-    , forgeTracer = showTracing tr
-    , blockchainTimeTracer = showTracing tr
-    , forgeStateInfoTracer = showTracing tr
-    , keepAliveClientTracer = showTracing tr
-    , consensusSanityCheckTracer = showTracing tr
-    , consensusErrorTracer = showTracing tr
-    , gsmTracer = showTracing tr
-    , gddTracer = showTracing tr
-    , csjTracer = showTracing tr
-    , dbfTracer = showTracing tr
-    , kesAgentTracer = showTracing tr
+    { chainSyncClientTracer = show >$< tr
+    , chainSyncServerHeaderTracer = show >$< tr
+    , chainSyncServerBlockTracer = show >$< tr
+    , blockFetchDecisionTracer = show >$< tr
+    , blockFetchClientTracer = show >$< tr
+    , blockFetchServerTracer = show >$< tr
+    , txInboundTracer = show >$< tr
+    , txOutboundTracer = show >$< tr
+    , localTxSubmissionServerTracer = show >$< tr
+    , txLogicTracer = show >$< tr
+    , txCountersTracer = show >$< tr
+    , mempoolTracer = show >$< tr
+    , perasCertDiffusionInboundTracer = show >$< tr
+    , perasCertDiffusionOutboundTracer = show >$< tr
+    , perasVoteDiffusionInboundTracer = show >$< tr
+    , perasVoteDiffusionOutboundTracer = show >$< tr
+    , forgeTracer = show >$< tr
+    , blockchainTimeTracer = show >$< tr
+    , forgeStateInfoTracer = show >$< tr
+    , keepAliveClientTracer = show >$< tr
+    , consensusSanityCheckTracer = show >$< tr
+    , consensusErrorTracer = show >$< tr
+    , gsmTracer = show >$< tr
+    , gddTracer = show >$< tr
+    , csjTracer = show >$< tr
+    , dbfTracer = show >$< tr
+    , kesAgentTracer = show >$< tr
     }
 
 {-------------------------------------------------------------------------------
@@ -405,7 +409,8 @@ deriving instance
   , Eq (Validated (GenTx blk))
   , Eq (ForgeStateUpdateError blk)
   , Eq (CannotForge blk)
-  , Eq (TxMeasure blk)
+  , Eq (TxMeasurePhase1 blk)
+  , Eq (TxMeasurePhase2 blk)
   ) =>
   Eq (TraceForgeEvent blk)
 deriving instance
@@ -414,7 +419,8 @@ deriving instance
   , Show (Validated (GenTx blk))
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
-  , Show (TxMeasure blk)
+  , Show (TxMeasurePhase1 blk)
+  , Show (TxMeasurePhase2 blk)
   ) =>
   Show (TraceForgeEvent blk)
 
