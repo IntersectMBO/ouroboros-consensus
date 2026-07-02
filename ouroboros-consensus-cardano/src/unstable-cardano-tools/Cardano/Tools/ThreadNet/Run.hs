@@ -541,22 +541,22 @@ transferAllTx (txOut, txOutRef, pparams, paymentKeyPair, vi) = \tx ->
     txBody' =
       (tx ^. SL.bodyTxL)
         & SL.inputsTxBodyL
-        .~ Set.singleton txOutRef
+          .~ Set.singleton txOutRef
         & SL.outputsTxBodyL
-        .~ StrictSeq.fromList
-          [ SL.mkBasicTxOut (txOut ^. SL.addrTxOutL) (inject outCoin)
-          ]
+          .~ StrictSeq.fromList
+            [ SL.mkBasicTxOut (txOut ^. SL.addrTxOutL) (inject outCoin)
+            ]
         & SL.feeTxBodyL
-        .~ feeCoin
+          .~ feeCoin
         & SL.vldtTxBodyL
-        .~ vi
+          .~ vi
    in
     if outCoin > inCoin
       then error "spent all" -- FIX(bladyjoker): Tx building must be able to graciously fail
       else
         tx
           & SL.bodyTxL
-          .~ txBody'
+            .~ txBody'
           & signTx (sKey paymentKeyPair)
 
 -- * Transaction building utils

@@ -26,6 +26,7 @@ import Control.Monad.Class.MonadAsync
 import Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import Control.Tracer (debugTracer, traceWith)
 import Data.Maybe (mapMaybe)
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block.Abstract
   ( ChainHash (..)
   , ConvertRawHash
@@ -47,7 +48,6 @@ import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientException (..)
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
-import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.API
   ( CanUpgradeLedgerTables

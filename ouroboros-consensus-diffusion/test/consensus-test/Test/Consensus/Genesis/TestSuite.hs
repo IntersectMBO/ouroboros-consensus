@@ -36,6 +36,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Monoid (Endo (..))
 import GHC.Generics (Generic, Generically (..))
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
   ( BlockSupportsDiffusionPipelining
   , ConvertRawHash
@@ -49,7 +50,6 @@ import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
   )
-import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.LedgerDB.API

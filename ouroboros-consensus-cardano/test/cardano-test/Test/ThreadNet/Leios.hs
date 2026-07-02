@@ -212,7 +212,7 @@ prop_leios seed =
         & counterexample "[failed] propConsistentChains"
     , ( certificationGapIsCorrect
           .||. length certificateBlocks
-          <= 1
+            <= 1
       )
         & counterexample "[failed] certificationGap"
     , propVoting
@@ -247,7 +247,6 @@ prop_leios seed =
   acquiredPoints = Set.fromList . flip mapMaybe leiosTraces $ \case
     TraceLeiosBlockTxsAcquired point -> Just point
     _ -> Nothing
-
 
   propVoting =
     conjoin

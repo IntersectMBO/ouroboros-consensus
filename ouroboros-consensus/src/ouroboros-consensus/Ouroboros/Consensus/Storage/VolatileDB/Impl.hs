@@ -134,11 +134,13 @@ import qualified Data.ByteString.Lazy as Lazy
 import Data.List as List (foldl')
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Word (Word64)
 import GHC.Stack (HasCallStack)
+import LeiosDemoTypes (EbHash, pointEbHash)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
@@ -148,8 +150,6 @@ import Ouroboros.Consensus.Storage.VolatileDB.Impl.FileInfo (FileInfo)
 import qualified Ouroboros.Consensus.Storage.VolatileDB.Impl.FileInfo as FileInfo
 import qualified Ouroboros.Consensus.Storage.VolatileDB.Impl.Index as Index
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Parser
-import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
-import LeiosDemoTypes (EbHash, pointEbHash)
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.State
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Types
 import Ouroboros.Consensus.Storage.VolatileDB.Impl.Util

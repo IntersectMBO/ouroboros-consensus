@@ -44,11 +44,11 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust, fromMaybe, isJust)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
-import LeiosDemoTypes (EbHash, pointEbHash)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
 import GHC.Stack (HasCallStack)
+import LeiosDemoTypes (EbHash, pointEbHash)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config

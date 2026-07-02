@@ -120,6 +120,7 @@ import Data.Typeable (Typeable)
 import Data.Void (Void)
 import Data.Word
 import GHC.Generics (Generic)
+import LeiosDemoTypes (HasLeiosVoting)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -147,7 +148,6 @@ import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
 import Ouroboros.Consensus.Protocol.MockChainSel
 import Ouroboros.Consensus.Protocol.Signed
-import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.Serialisation

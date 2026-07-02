@@ -11,12 +11,11 @@ module Test.Consensus.Cardano.Golden (tests) where
 import qualified Data.ByteString as BS
 import LeiosDemoTypes
   ( LeiosVote
-  , RbHash (..)
   , LeiosVoterId (..)
+  , RbHash (..)
   , encodeLeiosVote
   , signLeiosVote
   )
-import Test.Cardano.Crypto.Leios.Gen (genLeiosSigningKey, generateWith)
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.Node
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation
@@ -24,6 +23,7 @@ import Ouroboros.Consensus.Ledger.Query (QueryVersion)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import System.FilePath ((</>))
+import Test.Cardano.Crypto.Leios.Gen (genLeiosSigningKey, generateWith)
 import Test.Consensus.Cardano.Examples
 import Test.Tasty
 import Test.Util.Paths

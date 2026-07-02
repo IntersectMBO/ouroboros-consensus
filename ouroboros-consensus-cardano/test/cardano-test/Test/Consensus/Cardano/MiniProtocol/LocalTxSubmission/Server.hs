@@ -76,7 +76,6 @@ tests =
           protocolVersionZero
           (hardForkInto era)
       let
-
         eraIndex =
           index_NS
             . Telescope.tip

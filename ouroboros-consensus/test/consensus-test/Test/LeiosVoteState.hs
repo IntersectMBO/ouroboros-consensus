@@ -25,10 +25,10 @@ import LeiosDemoTypes
   , LeiosDSIGN
   , LeiosSigningKey
   , LeiosVote (..)
-  , VoteInvalid (..)
   , LeiosVoterId (..)
-  , leiosCommitteeSize
+  , VoteInvalid (..)
   , getLeiosVoterId
+  , leiosCommitteeSize
   , mkCommitteeEveryoneVotes
   , signLeiosVote
   )

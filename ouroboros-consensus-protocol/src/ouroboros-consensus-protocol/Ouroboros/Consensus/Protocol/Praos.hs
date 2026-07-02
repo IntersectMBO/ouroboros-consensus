@@ -41,9 +41,8 @@ import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.VRF as VRF
 import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, StrictMaybe (..), (⭒))
 import qualified Cardano.Ledger.BaseTypes as SL
-import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
-import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Chain as SL
+import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
 import Cardano.Ledger.Hashes (HASH)
 import Cardano.Ledger.Keys
   ( DSIGN
@@ -53,6 +52,7 @@ import Cardano.Ledger.Keys
   , hashKey
   )
 import qualified Cardano.Ledger.Keys as SL
+import Cardano.Ledger.Shelley (ShelleyEra)
 import Cardano.Ledger.Slot (Duration (Duration), (+*))
 import qualified Cardano.Ledger.State as SL
 import Cardano.Protocol.Crypto (Crypto, KES, StandardCrypto, VRF)
@@ -411,10 +411,10 @@ data PraosValidationErr c
       !String -- error message given by Consensus Layer
   | NoCounterForKeyHashOCERT
       !(KeyHash SL.BlockIssuer) -- stake pool key hash
-  -- TODO Leios validation-error constructors belongs here, for the header
-  -- checks described in 'updateChainDepState'. Deferred for now:
-  -- 'PraosValidationErr' is used downstream (e.g. cardano-node tracers), so
-  -- extending it would incur downstream integration work
+      -- TODO Leios validation-error constructors belongs here, for the header
+      -- checks described in 'updateChainDepState'. Deferred for now:
+      -- 'PraosValidationErr' is used downstream (e.g. cardano-node tracers), so
+      -- extending it would incur downstream integration work
   deriving Generic
 
 deriving instance PraosCrypto c => Eq (PraosValidationErr c)

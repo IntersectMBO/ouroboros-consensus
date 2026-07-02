@@ -39,15 +39,15 @@ import Ouroboros.Consensus.Shelley.Ledger.Leios ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.ShelleyHFC ()
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as MockFS
+import qualified System.FS.Sim.STM as Sim
 import Test.Consensus.Shelley.MockCrypto (MockCrypto)
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.ThreadNet.General
 import Test.ThreadNet.Infra.Shelley
-import System.FS.API (SomeHasFS (..))
-import qualified System.FS.Sim.MockFS as MockFS
-import qualified System.FS.Sim.STM as Sim
 import Test.ThreadNet.Network
   ( TestNodeInitialization (..)
   , nodeOutputFinalLedger

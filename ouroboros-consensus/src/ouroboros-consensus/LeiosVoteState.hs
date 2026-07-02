@@ -21,10 +21,10 @@ import qualified Data.Set as Set
 import LeiosDemoTypes
   ( LeiosCert
   , LeiosCommittee
-  , RbHash
   , LeiosSignature
   , LeiosVote (..)
   , LeiosVoterId
+  , RbHash
   , VoteInvalid (..)
   , Weight
   , aggregateLeiosCert

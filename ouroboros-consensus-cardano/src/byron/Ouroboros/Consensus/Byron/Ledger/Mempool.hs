@@ -68,8 +68,8 @@ import Control.Monad (void)
 import Control.Monad.Except (Except, throwError)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as Strict
-import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Lazy as Lazy
+import Data.ByteString.Short (ShortByteString)
 import Data.Maybe (maybeToList)
 import Data.Word
 import GHC.Generics (Generic)

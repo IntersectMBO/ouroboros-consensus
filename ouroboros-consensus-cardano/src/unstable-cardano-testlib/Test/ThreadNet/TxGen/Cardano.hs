@@ -236,21 +236,21 @@ migrateUTxO migrationInfo curSlot lcfg lst
           body =
             SL.mkBasicTxBody
               & SL.certsTxBodyL
-              .~ StrictSeq.fromList
-                [ SL.RegTxCert $ Shelley.mkCredential stakingSK
-                , SL.RegPoolTxCert $ poolParams unspentCoin
-                , SL.DelegStakeTxCert
-                    (Shelley.mkCredential stakingSK)
-                    (Shelley.mkKeyHash poolSK)
-                ]
+                .~ StrictSeq.fromList
+                  [ SL.RegTxCert $ Shelley.mkCredential stakingSK
+                  , SL.RegPoolTxCert $ poolParams unspentCoin
+                  , SL.DelegStakeTxCert
+                      (Shelley.mkCredential stakingSK)
+                      (Shelley.mkKeyHash poolSK)
+                  ]
               & SL.inputsTxBodyL
-              .~ Map.keysSet picked
+                .~ Map.keysSet picked
               & SL.outputsTxBodyL
-              .~ StrictSeq.singleton (SL.ShelleyTxOut shelleyAddr unspentCoin)
+                .~ StrictSeq.singleton (SL.ShelleyTxOut shelleyAddr unspentCoin)
               & SL.ttlTxBodyL
-              .~ SlotNo maxBound
+                .~ SlotNo maxBound
               & SL.feeTxBodyL
-              .~ fee
+                .~ fee
 
           bodyHash :: SL.SafeHash SL.EraIndependentTxBody
           bodyHash = SL.hashAnnotated body
@@ -280,11 +280,11 @@ migrateUTxO migrationInfo curSlot lcfg lst
               (Just . GenTxShelley . mkShelleyTx) $
                 SL.mkBasicTx body
                   & SL.witsTxL
-                  . SL.addrTxWitsL
-                  .~ Set.fromList [delegWit, poolWit]
+                    . SL.addrTxWitsL
+                    .~ Set.fromList [delegWit, poolWit]
                   & SL.witsTxL
-                  . SL.bootAddrTxWitsL
-                  .~ Set.singleton byronWit
+                    . SL.bootAddrTxWitsL
+                    .~ Set.singleton byronWit
   | otherwise = Nothing
  where
   mbUTxO :: Maybe (SL.UTxO ShelleyEra)

@@ -71,15 +71,15 @@ import Ouroboros.Consensus.Shelley.Node
   , ShelleyGenesis
   , ShelleyLeaderCredentials
   )
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as MockFS
+import qualified System.FS.Sim.STM as Sim
 import qualified Test.Cardano.Ledger.Alonzo.Examples as Alonzo
 import qualified Test.Cardano.Ledger.Conway.Examples as Conway
 import qualified Test.Cardano.Ledger.Dijkstra.Examples as Dijkstra
 import qualified Test.Cardano.Ledger.Shelley.Examples as Shelley
 import qualified Test.ThreadNet.Infra.Byron as Byron
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
-import System.FS.API (SomeHasFS (..))
-import qualified System.FS.Sim.MockFS as MockFS
-import qualified System.FS.Sim.STM as Sim
 import Test.ThreadNet.Util.Seed (Seed (Seed), runGen)
 import Test.Util.Slots (NumSlots (..))
 

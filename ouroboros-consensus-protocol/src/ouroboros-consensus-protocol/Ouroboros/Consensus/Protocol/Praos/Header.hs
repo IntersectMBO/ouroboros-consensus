@@ -47,8 +47,6 @@ import Cardano.Ledger.Binary
   , serialize'
   , unCBORGroup
   )
-import Cardano.Ledger.Block (Block (..), EraBlockHeader (..))
-import Cardano.Ledger.Core (Era)
 import Cardano.Ledger.Binary.Coders
 import Cardano.Ledger.Binary.Crypto
   ( decodeSignedKES
@@ -57,6 +55,8 @@ import Cardano.Ledger.Binary.Crypto
   , encodeVerKeyVRF
   )
 import qualified Cardano.Ledger.Binary.Plain as Plain
+import Cardano.Ledger.Block (Block (..), EraBlockHeader (..))
+import Cardano.Ledger.Core (Era)
 import Cardano.Ledger.Hashes
   ( EraIndependentBlockBody
   , EraIndependentBlockHeader

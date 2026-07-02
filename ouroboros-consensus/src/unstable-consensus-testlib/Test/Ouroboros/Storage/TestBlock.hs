@@ -89,6 +89,7 @@ import Data.Void (Void)
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
+import LeiosDemoTypes (HasLeiosVoting)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -118,7 +119,6 @@ import Ouroboros.Consensus.Protocol.ModChainSel
 import Ouroboros.Consensus.Protocol.Signed
 import Ouroboros.Consensus.Storage.ImmutableDB (Tip)
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks
-import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB

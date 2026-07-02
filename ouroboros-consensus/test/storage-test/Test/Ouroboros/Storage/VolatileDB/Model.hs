@@ -43,18 +43,18 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import Data.Set (Set)
 import qualified Data.Set as Set
-import LeiosDemoTypes (EbHash)
 import Data.TreeDiff
 import Data.Word (Word64)
 import GHC.Generics (Generic)
+import LeiosDemoTypes (EbHash)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.Common
   ( BlockComponent (..)
   , extractHeader
   )
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation
   ( BinaryBlockInfo (..)
   , EncodeDisk (..)
