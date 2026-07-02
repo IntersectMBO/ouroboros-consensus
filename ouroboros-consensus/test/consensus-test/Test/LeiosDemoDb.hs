@@ -345,7 +345,7 @@ prop_pointsAccumulate impl =
 -- | Property: inserting an EB body and looking it up returns the correct txs.
 prop_ebsInsertThenLookup :: DbImpl -> Property
 prop_ebsInsertThenLookup impl =
-  forAllShrinkShow (chooseInt (1, 50)) shrink show $ \numTxs ->
+  forAllShrinkShow (chooseInt (1, 50)) (filter (>= 1) . shrink) show $ \numTxs ->
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
         let expectedTxs = V.toList (leiosEbTxs eb)
@@ -375,7 +375,7 @@ prop_ebsLookupMissing impl =
 -- and retrieval JOINs with that table.
 prop_txsInsertThenRetrieve :: DbImpl -> Property
 prop_txsInsertThenRetrieve impl =
-  forAllShrinkShow (chooseInt (1, 50)) shrink show $ \numTxs ->
+  forAllShrinkShow (chooseInt (1, 50)) (filter (>= 1) . shrink) show $ \numTxs ->
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
       forAllBlind (sublistOf [0 .. numTxs - 1]) $ \offsetsToInsert ->
         ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
