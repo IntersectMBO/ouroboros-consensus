@@ -401,8 +401,8 @@ prop_simple_shelleyAllegra_convergence
 
 -- | The major protocol version of the first era in this test
 majorVersion1 :: SL.Version
-majorVersion1 = SL.natVersion @1
+majorVersion1 = SL.natVersion @2
 
 -- | The major protocol version of the second era in this test
 majorVersion2 :: SL.Version
-majorVersion2 = SL.natVersion @2
+majorVersion2 = SL.natVersion @3

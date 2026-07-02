@@ -67,7 +67,7 @@ import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
 import Data.Void (Void)
-import Lens.Micro ((^.))
+import Lens.Micro ((%~), (&), (.~), (^.))
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Forging (MkBlockForging)
 import Ouroboros.Consensus.Cardano.CanHardFork
@@ -422,7 +422,7 @@ protocolInfoShelleyBasedHardFork
       protocolInfoTPraosShelleyBased
         fs
         protocolParamsShelleyBased
-        (transCfg2 ^. L.tcPreviousEraConfigL)
+        transCfgEra1
         protVer1
     (protocolInfo2, blockForging2) <-
       protocolInfoTPraosShelleyBased
@@ -431,7 +431,7 @@ protocolInfoShelleyBasedHardFork
           { shelleyBasedInitialNonce
           , shelleyBasedLeaderCredentials
           }
-        transCfg2
+        transCfgEra2
         protVer2
     pure $
       protocolInfoBinary
@@ -452,6 +452,26 @@ protocolInfoShelleyBasedHardFork
       { shelleyBasedInitialNonce
       , shelleyBasedLeaderCredentials
       } = protocolParamsShelleyBased
+
+    -- Override the protocol version inside the Shelley genesis carried by a
+    -- transition config. Each era's 'createInitialState' enforces
+    -- 'eraProtVerLow <= curProtVer <= eraProtVerHigh', so a single shared
+    -- genesis PV cannot satisfy both era1 and era2; we derive a per-era copy.
+    overrideGenesisPV ::
+      forall era.
+      L.EraTransition era =>
+      SL.ProtVer ->
+      L.TransitionConfig era ->
+      L.TransitionConfig era
+    overrideGenesisPV pv =
+      L.tcShelleyGenesisL %~ \sg ->
+        sg{SL.sgProtocolParams = SL.sgProtocolParams sg & SL.ppProtocolVersionL .~ pv}
+
+    transCfgEra1 :: L.TransitionConfig era1
+    transCfgEra1 = (transCfg2 ^. L.tcPreviousEraConfigL) & overrideGenesisPV protVer1
+
+    transCfgEra2 :: L.TransitionConfig era2
+    transCfgEra2 = transCfg2 & overrideGenesisPV protVer2
 
     -- Era 1
 
