@@ -141,7 +141,7 @@ prettyEbHash (MkEbHash bytes) = BS8.unpack (BS16.encode bytes)
 -- over 'blk', we choose to keep 'RbHash' monomorphic. Use the 'ConvertRawHash' type class
 -- to convert between this type and 'HeaderHash'.
 newtype RbHash = MkRbHash {rbHashBytes :: ByteString}
-  deriving newtype (Eq, Ord, NoThunks, Serialise, DecCBOR, EncCBOR, ToCBOR, FromCBOR)
+  deriving newtype (Eq, Ord, NoThunks)
   deriving stock Generic
 
 instance Show RbHash where
@@ -645,7 +645,7 @@ instance ShowProxy LeiosVote where showProxy _ = "LeiosVote"
 -- NOTE: Encodes points flat into the vote for smaller votes.
 encodeLeiosVote :: LeiosVote -> Encoding
 encodeLeiosVote MkLeiosVote{announcingRbHash, voterId, voteSignature} =
-  CBOR.encodeListLen 4
+  CBOR.encodeListLen 3
     <> encodeRbHash announcingRbHash
     <> encodeLeiosVoterId voterId
     <> encodeSigDSIGN voteSignature
@@ -653,7 +653,7 @@ encodeLeiosVote MkLeiosVote{announcingRbHash, voterId, voteSignature} =
 -- | Dedoe a 'LeiosVote' from CBOR.
 decodeLeiosVote :: Decoder s LeiosVote
 decodeLeiosVote = do
-  enforceSize (fromString "LeiosVote") 4
+  enforceSize (fromString "LeiosVote") 3
   pointRbHash <- decodeRbHash
   voterId <- decodeLeiosVoterId
   voteSignature <- decodeSigDSIGN
