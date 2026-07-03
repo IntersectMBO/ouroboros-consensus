@@ -27,14 +27,22 @@ module Ouroboros.Consensus.Util.CBOR
   , decodeSeq
   , decodeWithOrigin
   , decodeStrictMaybe
+  , decodeNullStrictMaybe
   , encodeList
   , encodeMaybe
   , encodeSeq
   , encodeWithOrigin
   , encodeStrictMaybe
+  , encodeNullStrictMaybe
   ) where
 
-import Cardano.Binary (DecoderError (..), decodeMaybe, encodeMaybe)
+import Cardano.Binary
+  ( DecoderError (..)
+  , decodeMaybe
+  , decodeNullMaybe
+  , encodeMaybe
+  , encodeNullMaybe
+  )
 import Cardano.Slotting.Slot
   ( WithOrigin (..)
   , withOriginFromMaybe
@@ -352,3 +360,9 @@ encodeStrictMaybe f = encodeMaybe f . strictMaybeToMaybe
 
 decodeStrictMaybe :: CBOR.D.Decoder s a -> CBOR.D.Decoder s (StrictMaybe a)
 decodeStrictMaybe f = maybeToStrictMaybe <$> decodeMaybe f
+
+encodeNullStrictMaybe :: (a -> CBOR.E.Encoding) -> StrictMaybe a -> CBOR.E.Encoding
+encodeNullStrictMaybe f = encodeNullMaybe f . strictMaybeToMaybe
+
+decodeNullStrictMaybe :: CBOR.D.Decoder s a -> CBOR.D.Decoder s (StrictMaybe a)
+decodeNullStrictMaybe f = maybeToStrictMaybe <$> decodeNullMaybe f

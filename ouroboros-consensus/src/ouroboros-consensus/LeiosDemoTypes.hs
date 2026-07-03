@@ -20,8 +20,6 @@ module LeiosDemoTypes (module LeiosDemoTypes, module Cardano.Crypto.Leios) where
 import Cardano.Binary
   ( Decoder
   , Encoding
-  , FromCBOR (fromCBOR)
-  , ToCBOR
   , enforceSize
   , serialize'
   , toCBOR
@@ -57,8 +55,6 @@ import Cardano.Crypto.Leios
   , verifyLeiosCert
   )
 import Cardano.Crypto.Util (SignableRepresentation (..))
-import Cardano.Ledger.Binary (DecCBOR (..), EncCBOR (..))
-import qualified Cardano.Ledger.Binary as Binary
 import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
 import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
 import Cardano.Slotting.Slot (SlotNo (SlotNo))
@@ -120,7 +116,7 @@ type HASH = Hash.Blake2b_256
 
 -- | Hash of an Endorser Block
 newtype EbHash = MkEbHash {ebHashBytes :: ByteString}
-  deriving newtype (Eq, Ord, NoThunks, Serialise, DecCBOR, EncCBOR, ToCBOR, FromCBOR)
+  deriving newtype (Eq, Ord, NoThunks, Serialise)
   deriving stock Generic
 
 instance Show EbHash where
@@ -213,24 +209,16 @@ data EbAnnouncement = EbAnnouncement
   deriving stock (Generic, Show, Eq, Ord)
   deriving anyclass NoThunks
 
-instance ToCBOR EbAnnouncement where
-  toCBOR ebAnn = CBOR.encodeListLen 2 <> encode (ebAnnouncementHash ebAnn) <> encode (ebAnnouncementSize ebAnn)
+encodeEbAnnouncement :: EbAnnouncement -> Encoding
+encodeEbAnnouncement ebAnn =
+  CBOR.encodeListLen 2
+    <> encode (ebAnnouncementHash ebAnn)
+    <> encode (ebAnnouncementSize ebAnn)
 
-instance FromCBOR EbAnnouncement where
-  fromCBOR = do
-    enforceSize "EbAnnouncement" 2
-    EbAnnouncement <$> decode <*> decode
-
-instance EncCBOR EbAnnouncement where
-  encCBOR ebAnn =
-    Binary.encodeListLen 2
-      <> encCBOR (ebAnnouncementHash ebAnn)
-      <> encCBOR (ebAnnouncementSize ebAnn)
-
-instance DecCBOR EbAnnouncement where
-  decCBOR =
-    Binary.decodeRecordNamed "EbAnnouncement" (const 2) $
-      EbAnnouncement <$> decCBOR <*> decCBOR
+decodeEbAnnouncement :: Decoder s EbAnnouncement
+decodeEbAnnouncement = do
+  enforceSize "EbAnnouncement" 2
+  EbAnnouncement <$> decode <*> decode
 
 -- * Fetch logic types
 

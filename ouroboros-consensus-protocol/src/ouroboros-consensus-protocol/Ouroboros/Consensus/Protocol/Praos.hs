@@ -39,7 +39,12 @@ import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.VRF as VRF
-import Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, StrictMaybe (..), (⭒))
+import Cardano.Ledger.BaseTypes
+  ( ActiveSlotCoeff
+  , Nonce
+  , StrictMaybe (..)
+  , (⭒)
+  )
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Chain as SL
 import Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
@@ -94,7 +99,7 @@ import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (Proxy))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement)
+import LeiosDemoTypes (EbAnnouncement, decodeEbAnnouncement, encodeEbAnnouncement)
 import NoThunks.Class (NoThunks)
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
@@ -121,6 +126,10 @@ import Ouroboros.Consensus.Protocol.TPraos
   , TPraosState (tpraosStateChainDepState, tpraosStateLastSlot)
   )
 import Ouroboros.Consensus.Ticked (Ticked)
+import Ouroboros.Consensus.Util.CBOR
+  ( decodeNullStrictMaybe
+  , encodeNullStrictMaybe
+  )
 import Ouroboros.Consensus.Util.Versioned
   ( VersionDecoder (Decode)
   , decodeVersion
@@ -333,7 +342,7 @@ instance Serialise PraosState where
           , toEraCBOR @ShelleyEra praosStatePreviousEpochNonce
           , toEraCBOR @ShelleyEra praosStateLabNonce
           , toEraCBOR @ShelleyEra praosStateLastEpochBlockNonce
-          , toCBOR praosStateLeiosAnnouncement
+          , encodeNullStrictMaybe encodeEbAnnouncement praosStateLeiosAnnouncement
           ]
 
   decode =
@@ -365,7 +374,7 @@ instance Serialise PraosState where
         <*> fromEraCBOR @ShelleyEra
         <*> fromEraCBOR @ShelleyEra
         <*> fromEraCBOR @ShelleyEra
-        <*> fromCBOR
+        <*> decodeNullStrictMaybe decodeEbAnnouncement
 
 data instance Ticked PraosState = TickedPraosState
   { tickedPraosStateChainDepState :: PraosState
