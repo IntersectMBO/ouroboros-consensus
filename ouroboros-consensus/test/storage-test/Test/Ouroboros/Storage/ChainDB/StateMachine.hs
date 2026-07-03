@@ -1492,6 +1492,13 @@ generator loe genBlock genPerasBlock m@Model{..} =
 chooseSlot :: SlotNo -> SlotNo -> Gen SlotNo
 chooseSlot (SlotNo start) (SlotNo end) = SlotNo <$> choose (start, end)
 
+chooseSlotWithLimit :: SlotNo -> SlotNo -> SlotNo -> Gen (Maybe SlotNo)
+chooseSlotWithLimit (SlotNo limit) (SlotNo start) (SlotNo end) =
+  let end' = min end limit
+   in if start > end'
+        then return Nothing
+        else Just . SlotNo <$> choose (start, end')
+
 {-------------------------------------------------------------------------------
   Shrinking
 -------------------------------------------------------------------------------}
@@ -1944,53 +1951,55 @@ genBlkPair ::
   )
 genBlkPair chunkInfo loe Model{..} =
   ( -- For block generation
-    frequency
-      [ -- We want to prioritise growing the tree connected to genesis, as it is
-        -- the most likely growth pattern.
-        --
-        -- However, we want to produce more chainSel events than in real life,
-        -- so we prioritise growing /any/ branch, not just the current chain tip
-        genSuccOfCurrentChainTip_WithFreq 5
-      , genSuccOfAlreadyInChainDBConnected_IfAnyWithFreq 20
-      , -- We also highly prioritise the "gap blocks", i.e. blocks that are
-        -- needed to fill the gap between blocks that are already part of the
-        -- ChainDB. Gap blocks might or might not be connected to genesis at the
-        -- moment, but ultimately if all saved gap blocks get added, they will
-        -- all be connected to genesis.
-        genFromSavedGapBlocks_IfAnyWithFreq 20
-      , -- Now we also want a small probability to generate blocks that are not
-        -- connected to genesis at all. We can either generate completely new
-        -- gaps (to model out-of-order block reception), or expand on an
-        -- existing one by adding the successor of a dangling block already part
-        -- of the ChainDB.
-        --
-        -- Be careful, if the ChainDB ends up containing too many dangling
-        -- blocks, Peras targets will mostly be disconnected blocks and
-        -- consequently Peras action won't result in direct chain selection
-        -- events (instead the chain selection events will be delayed until the
-        -- gap gets filled). So we need to keep the following frequencies low.
-        genNewGap_WithFreq 2
-      , genSuccOfAlreadyInChainDBDangling_IfAnyWithFreq 2
-      , -- Finally we want a small probability to re-add an existing block of the
-        -- ChainDB
-        genAlreadyInChainDB_IfAnyWithFreq 1
-      ]
+    loopUntilJust $
+      frequency
+        [ -- We want to prioritise growing the tree connected to genesis, as it is
+          -- the most likely growth pattern.
+          --
+          -- However, we want to produce more chainSel events than in real life,
+          -- so we prioritise growing /any/ branch, not just the current chain tip
+          (5, genSuccOfCurrentChainTip_withGapBlocks)
+        , (20, genSuccOfAlreadyInChainDBConnected_withGapBlocks)
+        , -- We also highly prioritise the "gap blocks", i.e. blocks that are
+          -- needed to fill the gap between blocks that are already part of the
+          -- ChainDB. Gap blocks might or might not be connected to genesis at the
+          -- moment, but ultimately if all saved gap blocks get added, they will
+          -- all be connected to genesis.
+          (20, genFromSavedGapBlocks_withGapBlocks)
+        , -- Now we also want a small probability to generate blocks that are not
+          -- connected to genesis at all. We can either generate completely new
+          -- gaps (to model out-of-order block reception), or expand on an
+          -- existing one by adding the successor of a dangling block already part
+          -- of the ChainDB.
+          --
+          -- Be careful, if the ChainDB ends up containing too many dangling
+          -- blocks, Peras targets will mostly be disconnected blocks and
+          -- consequently Peras action won't result in direct chain selection
+          -- events (instead the chain selection events will be delayed until the
+          -- gap gets filled). So we need to keep the following frequencies low.
+          (2, genNewGap_withGapBlocks)
+        , (2, genSuccOfAlreadyInChainDBDangling_withGapBlocks)
+        , -- Finally we want a small probability to re-add an existing block of the
+          -- ChainDB
+          (1, genAlreadyInChainDB_withGapBlocks)
+        ]
   , -- For Peras vote and certs
-    frequency
-      [ -- Peras actions can theoretically only target rather old (and
-        -- connected) blocks, so there is a high chance that these blocks are
-        -- already part of the ChainDB. Consequently, we prioritise generating
-        -- Peras targets that are already part of the ChainDB and connected to
-        -- genesis
-        genAlreadyInChainDBConnected_IfAnyWithFreq 20
-      , -- We also want a small probability of generating Peras targets that are
-        -- not yet part of the ChainDB or not connected, to model the case where
-        -- we receive a cert/vote for a block before we receive the block itself
-        genSuccOfAlreadyInChainDB_IfAnyWithFreq 2
-      , genNewGap_WithFreq 1
-      , genAlreadyInChainDBDangling_IfAnyWithFreq 1
-      , genFromSavedGapBlocks_IfAnyWithFreq 1
-      ]
+    loopUntilJust $
+      frequency
+        [ -- Peras actions can theoretically only target rather old (and
+          -- connected) blocks, so there is a high chance that these blocks are
+          -- already part of the ChainDB. Consequently, we prioritise generating
+          -- Peras targets that are already part of the ChainDB and connected to
+          -- genesis
+          (20, genAlreadyInChainDBConnected_withGapBlocks)
+        , -- We also want a small probability of generating Peras targets that are
+          -- not yet part of the ChainDB or not connected, to model the case where
+          -- we receive a cert/vote for a block before we receive the block itself
+          (2, genSuccOfAlreadyInChainDB_withGapBlocks)
+        , (1, genNewGap_withGapBlocks)
+        , (1, genAlreadyInChainDBDangling_withGapBlocks)
+        , (1, genFromSavedGapBlocks_withGapBlocks)
+        ]
   )
  where
   k = unNonZero (maxRollbacks (configSecurityParam (unOpaque modelConfig)))
@@ -2020,19 +2029,27 @@ genBlkPair chunkInfo loe Model{..} =
   danglingBlocksMap :: Map.Map TestHeaderHash TestBlock
   danglingBlocksMap = Map.difference chainDBBlocksMap connectedBlocksMap
 
-  noBlocksAlreadyInChainDB = Map.null chainDBBlocksMap
-  noConnectedBlocksAlreadyInChainDB = Map.null connectedBlocksMap
-  noDanglingBlocksAlreadyInChainDB = Map.null danglingBlocksMap
-
   savedGapBlocks = seenBlocks genState
-  noSavedGapBlocks = Map.null savedGapBlocks
+
+  andThen :: Gen (Maybe a) -> (a -> Gen (Maybe b)) -> Gen (Maybe b)
+  andThen genA f =
+    genA >>= \case
+      Nothing -> pure Nothing
+      Just a -> f a
+
+  loopUntilJust :: Gen (Maybe a) -> Gen a
+  loopUntilJust gen = do
+    mbA <- gen
+    case mbA of
+      Nothing -> loopUntilJust gen
+      Just a -> pure a
 
   -- This helper function is used to wrap generators when we know that the
   -- returned block is not going to create a new gap (i.e. there exist a path
   -- from an existing block of the ChainDB to this returned block that is either
   -- empty or made of blocks that are already in the saved gap blocks).
-  noNewSavedGapBlocks :: Gen TestBlock -> Gen (TestBlock, Persistent [TestBlock])
-  noNewSavedGapBlocks = fmap (,Persistent [])
+  noNewSavedGapBlocks :: Gen (Maybe TestBlock) -> Gen (Maybe (TestBlock, Persistent [TestBlock]))
+  noNewSavedGapBlocks = fmap (fmap (,Persistent []))
 
   -- Generate a block or EBB fitting on genesis
   genFirstBlock :: Gen TestBlock
@@ -2048,19 +2065,43 @@ genBlkPair chunkInfo loe Model{..} =
         )
       ]
 
-  -- Helper that generates a block that fits onto the given block.
-  genSuccOf :: TestBlock -> Gen TestBlock
-  genSuccOf b =
+  -- We don't want to generate blocks that are more than one epoch in the
+  -- future, relative to the slot of the current selected chain tip (i.e. the
+  -- current header/ledger state).
+  --
+  -- The size of an epoch in slots is simply the 'numRegularBlocks' of the chunk config,
+  -- cf. eraParams definition in 'mkTestConfig' in Test.Ouroboros.Storage.TestBlock
+  maxSlotOfNextEpoch :: SlotNo
+  maxSlotOfNextEpoch = SlotNo ((nextEpoch + 1) * epochSize - 1)
+   where
+    -- When the tip is at Origin, we cap the max slot to the last slot of epoch
+    -- 0. Otherwise, we allow generating blocks up to the last slot of the epoch
+    -- following the one containing the current tip.
+    nextEpoch = case Model.tipBlock dbModel of
+      Nothing -> 0
+      Just b -> (unSlotNo (blockSlot b) `div` epochSize) + 1
+    -- The chunk size is uniform (see 'mkTestCfg'), so the epoch size is the
+    -- same for every slot; we can use slot 0 to compute it.
+    epochSize =
+      ImmutableDB.numRegularBlocks $
+        ImmutableDB.getChunkSize chunkInfo $
+          ImmutableDB.chunkIndexOfSlot chunkInfo 0
+
+  -- Helper that generates a block that fits onto the given block. The generated
+  -- block never occupies a slot larger than @maxSlot@ (see 'maxSlotOfNextEpoch')
+  -- except if it is an EBB block.
+  genSuccOf :: SlotNo -> TestBlock -> Gen (Maybe TestBlock)
+  genSuccOf maxSlot b =
     frequency
       [
         ( 4
         , do
-            slotNo <-
+            mbSlotNo <-
               if fromIsEBB (testBlockIsEBB b)
-                then chooseSlot (blockSlot b) (blockSlot b + 2)
-                else chooseSlot (blockSlot b + 1) (blockSlot b + 3)
+                then chooseSlotWithLimit maxSlot (blockSlot b) (blockSlot b + 2)
+                else chooseSlotWithLimit maxSlot (blockSlot b + 1) (blockSlot b + 3)
             body <- genBody
-            return $ mkNextBlock b slotNo body
+            return $ fmap (\slotNo -> mkNextBlock b slotNo body) mbSlotNo
         )
       , -- An EBB is never followed directly by another EBB, otherwise they
         -- would have the same 'BlockNo', as the EBB has the same 'BlockNo' of
@@ -2078,18 +2119,20 @@ genBlkPair chunkInfo loe Model{..} =
                   ImmutableDB.chunkSlotForBoundaryBlock
                     chunkInfo
                     (prevEpoch + 1)
-                nextNextEBB =
-                  ImmutableDB.chunkSlotForBoundaryBlock
-                    chunkInfo
-                    (prevEpoch + 2)
+            -- nextNextEBB =
+            --   ImmutableDB.chunkSlotForBoundaryBlock
+            --     chunkInfo
+            --     (prevEpoch + 2)
             (slotNo, epoch) <-
               first (ImmutableDB.chunkSlotToSlot chunkInfo)
                 <$> frequency
                   [ (7, return (nextEBB, prevEpoch + 1))
-                  , (1, return (nextNextEBB, prevEpoch + 2))
+                  -- We can no longer generate EBBs that are more than one epoch in the future, as
+                  -- this would break ticking of the ExtLedgerState (specifically for the PerasEpochContextResolver)
+                  -- , (1, return (nextNextEBB, prevEpoch + 2))
                   ]
             body <- genBody
-            return $ mkNextEBB canContainEBB b slotNo epoch body
+            return $ Just $ mkNextEBB canContainEBB b slotNo epoch body
         )
       ]
 
@@ -2099,97 +2142,100 @@ genBlkPair chunkInfo loe Model{..} =
   -- don't add just yet. These are in turn returned and stored as seen blocks
   -- in the generator state of the model. We can sample from these later on to
   -- (hopefully) fill the gaps.
-  genNewGap :: Gen (TestBlock, Persistent [TestBlock])
-  genNewGap = do
+  genNewGap_withGapBlocks :: Gen (Maybe (TestBlock, Persistent [TestBlock]))
+  genNewGap_withGapBlocks = do
     gapSize <- choose (1, 3)
     start <-
-      if noBlocksAlreadyInChainDB
-        then genFirstBlock
+      if Map.null chainDBBlocksMap
+        then Just <$> genFirstBlock
         else genSuccOfAlreadyInChainDB
-    go gapSize start []
+    case start of
+      Nothing -> return Nothing
+      Just tip -> Just <$> go maxSlotOfNextEpoch gapSize tip []
    where
-    go :: Int -> TestBlock -> [TestBlock] -> Gen (TestBlock, Persistent [TestBlock])
-    go 0 tip gapBlks = return (tip, Persistent gapBlks)
-    go n tip gapBlks = do
-      tip' <- genSuccOf tip
-      go (n - 1) tip' (tip : gapBlks)
-  genNewGap_WithFreq freq =
-    (freq, genNewGap)
+    go :: SlotNo -> Int -> TestBlock -> [TestBlock] -> Gen (TestBlock, Persistent [TestBlock])
+    go _maxSlotNo 0 tip gapBlks = return (tip, Persistent gapBlks)
+    go maxSlotNo n tip gapBlks = do
+      mbTip' <- genSuccOf maxSlotNo tip
+      case mbTip' of
+        Nothing ->
+          -- We couldn't generate a successor block, so we return the current tip and the gap blocks we have so far.
+          return (tip, Persistent gapBlks)
+        Just tip' ->
+          go maxSlotNo (n - 1) tip' (tip : gapBlks)
 
   -- An intermediate gap block that was generated by 'genNewGap' but
   -- saved for later in the model's generator state. See 'GenState' for details.
-  genFromSavedGapBlocks :: Gen TestBlock
-  genFromSavedGapBlocks = elements (Map.elems savedGapBlocks)
-  genFromSavedGapBlocks_IfAnyWithFreq freq =
+  genFromSavedGapBlocks =
+    if Map.null savedGapBlocks
+      then pure Nothing
+      else Just <$> elements (Map.elems savedGapBlocks)
+  genFromSavedGapBlocks_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since any gap block leading to the
     -- returned block should already be part of the saved gap blocks
-    (if noSavedGapBlocks then 0 else freq, noNewSavedGapBlocks genFromSavedGapBlocks)
+    noNewSavedGapBlocks genFromSavedGapBlocks
 
-  genAlreadyInChainDB :: Gen TestBlock
-  genAlreadyInChainDB = elements $ Map.elems chainDBBlocksMap
-  genAlreadyInChainDB_IfAnyWithFreq freq =
+  genAlreadyInChainDB =
+    if Map.null chainDBBlocksMap
+      then pure Nothing
+      else Just <$> elements (Map.elems chainDBBlocksMap)
+  genAlreadyInChainDB_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since gap blocks should have been saved
     -- when the block was first added to the ChainDB
-    (if noBlocksAlreadyInChainDB then 0 else freq, noNewSavedGapBlocks genAlreadyInChainDB)
+    noNewSavedGapBlocks genAlreadyInChainDB
 
   -- A block that already exists in the ChainDB and is connected to genesis.
-  genAlreadyInChainDBConnected :: Gen TestBlock
-  genAlreadyInChainDBConnected = elements $ Map.elems connectedBlocksMap
-  genAlreadyInChainDBConnected_IfAnyWithFreq freq =
+  genAlreadyInChainDBConnected =
+    if Map.null connectedBlocksMap
+      then pure Nothing
+      else Just <$> elements (Map.elems connectedBlocksMap)
+  genAlreadyInChainDBConnected_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since gap blocks should have been saved
     -- when the block was first added to the ChainDB
-    ( if noConnectedBlocksAlreadyInChainDB then 0 else freq
-    , noNewSavedGapBlocks genAlreadyInChainDBConnected
-    )
+    noNewSavedGapBlocks genAlreadyInChainDBConnected
 
   -- A block that already exists in the ChainDB but is NOT connected to genesis
   -- (i.e. it is dangling/disconnected).
-  genAlreadyInChainDBDangling :: Gen TestBlock
-  genAlreadyInChainDBDangling = elements $ Map.elems danglingBlocksMap
-  genAlreadyInChainDBDangling_IfAnyWithFreq freq =
+  genAlreadyInChainDBDangling =
+    if Map.null danglingBlocksMap
+      then pure Nothing
+      else Just <$> elements (Map.elems danglingBlocksMap)
+  genAlreadyInChainDBDangling_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since gap blocks should have been saved
     -- when the block was first added to the ChainDB
-    ( if noDanglingBlocksAlreadyInChainDB then 0 else freq
-    , noNewSavedGapBlocks genAlreadyInChainDBDangling
-    )
+    noNewSavedGapBlocks genAlreadyInChainDBDangling
 
   -- A block that fits onto the current chain
-  genSuccOfCurrentChainTip :: Gen TestBlock
   genSuccOfCurrentChainTip = case Model.tipBlock dbModel of
     Nothing -> genFirstBlock
-    Just b -> genSuccOf b
-  genSuccOfCurrentChainTip_WithFreq freq =
+    Just b ->
+      fromMaybe (error "Generating successor of current chain tip should never fail")
+        <$> genSuccOf maxSlotOfNextEpoch b
+  genSuccOfCurrentChainTip_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since there is no gap block leading to
     -- the immediate successor of a block on the current chain
-    (freq, noNewSavedGapBlocks genSuccOfCurrentChainTip)
+    noNewSavedGapBlocks (Just <$> genSuccOfCurrentChainTip)
 
   -- A block that fits onto any block in the ChainDB (connected or dangling)
-  genSuccOfAlreadyInChainDB :: Gen TestBlock
-  genSuccOfAlreadyInChainDB = genAlreadyInChainDB >>= genSuccOf
-  genSuccOfAlreadyInChainDB_IfAnyWithFreq freq =
+  genSuccOfAlreadyInChainDB = genAlreadyInChainDB `andThen` \b -> genSuccOf maxSlotOfNextEpoch b
+  genSuccOfAlreadyInChainDB_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since there is no gap block leading to
     -- the immediate successor of a block in the ChainDB
-    (if noBlocksAlreadyInChainDB then 0 else freq, noNewSavedGapBlocks genSuccOfAlreadyInChainDB)
+    noNewSavedGapBlocks genSuccOfAlreadyInChainDB
 
   -- A block that fits onto some connected block @b@ in the ChainDB.
-  genSuccOfAlreadyInChainDBConnected :: Gen TestBlock
-  genSuccOfAlreadyInChainDBConnected = genAlreadyInChainDBConnected >>= genSuccOf
-  genSuccOfAlreadyInChainDBConnected_IfAnyWithFreq freq =
+  genSuccOfAlreadyInChainDBConnected = genAlreadyInChainDBConnected `andThen` \b -> genSuccOf maxSlotOfNextEpoch b
+  genSuccOfAlreadyInChainDBConnected_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since there is no gap block leading to
     -- the immediate successor of a block in the ChainDB
-    ( if noConnectedBlocksAlreadyInChainDB then 0 else freq
-    , noNewSavedGapBlocks genSuccOfAlreadyInChainDBConnected
-    )
+    noNewSavedGapBlocks genSuccOfAlreadyInChainDBConnected
 
   -- A block that fits onto some dangling (disconnected) block @b@ in the ChainDB.
-  genSuccOfAlreadyInChainDBDangling :: Gen TestBlock
-  genSuccOfAlreadyInChainDBDangling = genAlreadyInChainDBDangling >>= genSuccOf
-  genSuccOfAlreadyInChainDBDangling_IfAnyWithFreq freq =
+  genSuccOfAlreadyInChainDBDangling = genAlreadyInChainDBDangling `andThen` \b -> genSuccOf maxSlotOfNextEpoch b
+  genSuccOfAlreadyInChainDBDangling_withGapBlocks =
     -- we can use 'noNewSavedGapBlocks' since there is no gap block leading to
     -- the immediate successor of a block in the ChainDB
-    ( if noDanglingBlocksAlreadyInChainDB then 0 else freq
-    , noNewSavedGapBlocks genSuccOfAlreadyInChainDBDangling
-    )
+    noNewSavedGapBlocks genSuccOfAlreadyInChainDBDangling
 
   canContainEBB = const modelSupportsEBBs -- TODO: we could be more precise
   genBody :: Gen TestBody

@@ -122,13 +122,17 @@ genEraParams = do
   eraSlotLength <- slotLengthFromSec <$> choose (1, 5)
   eraSafeZone <- genSafeZone
   eraGenesisWin <- GenesisWindow <$> choose (1, 10)
-  eraPerasRoundLength <- frequency
-    [ (1, return HF.NoPerasEnabled)
-    , (3, HF.PerasEnabled . PerasRoundLength <$>
-        -- we restrict Peras round length to divide the epoch size.
-        choose (1, 10) `suchThat` (\x -> (unEpochSize eraEpochSize) `mod` x == 0)
-      )
-    ]
+  eraPerasRoundLength <-
+    frequency
+      [ (1, return HF.NoPerasEnabled)
+      ,
+        ( 3
+        , HF.PerasEnabled . PerasRoundLength
+            <$>
+            -- we restrict Peras round length to divide the epoch size.
+            choose (1, 10) `suchThat` (\x -> (unEpochSize eraEpochSize) `mod` x == 0)
+        )
+      ]
   return HF.EraParams{..}
  where
   genSafeZone :: Gen HF.SafeZone
