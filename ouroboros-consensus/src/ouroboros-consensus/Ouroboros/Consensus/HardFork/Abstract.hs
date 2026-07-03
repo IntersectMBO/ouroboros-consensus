@@ -50,7 +50,7 @@ class HasHardForkHistory blk where
   -- (indeed, in this case the 'LedgerState' should be irrelevant).
   hardForkSummary ::
     LedgerConfig blk ->
-    LedgerState blk ->
+    LedgerState blk mk ->
     HardFork.Summary (HardForkIndices blk)
 
 -- | Helper function that can be used to define 'hardForkSummary'
@@ -64,7 +64,7 @@ class HasHardForkHistory blk where
 neverForksHardForkSummary ::
   (LedgerConfig blk -> HardFork.EraParams) ->
   LedgerConfig blk ->
-  LedgerState blk ->
+  LedgerState blk mk ->
   HardFork.Summary '[blk]
 neverForksHardForkSummary getParams cfg _st =
   HardFork.neverForksSummary eraEpochSize eraSlotLength eraGenesisWin eraPerasRoundLength

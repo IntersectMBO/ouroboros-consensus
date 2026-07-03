@@ -205,7 +205,7 @@ mkHeaderStateWithTimeFromSummary summary hst =
 mkHeaderStateWithTime ::
   (HasCallStack, HasHardForkHistory blk, HasAnnTip blk) =>
   LedgerConfig blk ->
-  ExtLedgerState blk ->
+  ExtLedgerState blk EmptyMK ->
   HeaderStateWithTime blk
 mkHeaderStateWithTime lcfg (ExtLedgerState lst hst) =
   mkHeaderStateWithTimeFromSummary summary hst
@@ -262,7 +262,7 @@ fromChain ::
   ) =>
   TopLevelConfig blk ->
   -- | Initial ledger state
-  ExtLedgerState blk ->
+  ExtLedgerState blk EmptyMK ->
   -- | Initial values (the full in-memory tables)
   Values blk ->
   Chain blk ->

@@ -370,13 +370,13 @@ instance Bridge m a => GetTip (Ticked LedgerState (DualBlock m a)) where
 --
 -- The auxiliary (spec) ledger keeps its whole UTxO in memory, so we carry its
 -- @'Values' a@ explicitly alongside the auxiliary state.
-data instance Ticked LedgerState (DualBlock m a) = TickedDualLedgerState
-  { tickedDualLedgerStateMain :: Ticked LedgerState m
-  , tickedDualLedgerStateAux :: Ticked LedgerState a
+data instance Ticked LedgerState (DualBlock m a) mk = TickedDualLedgerState
+  { tickedDualLedgerStateMain :: Ticked LedgerState m mk
+  , tickedDualLedgerStateAux :: Ticked LedgerState a EmptyMK
   , tickedDualLedgerStateAuxValues :: Values a
   -- ^ The ticked auxiliary ledger's full UTxO.
   , tickedDualLedgerStateBridge :: BridgeLedger m a
-  , tickedDualLedgerStateAuxOrig :: LedgerState a
+  , tickedDualLedgerStateAuxOrig :: LedgerState a EmptyMK
   -- ^ The original, unticked ledger for the auxiliary block
   --
   -- The reason we keep this in addition to the ticked ledger state is that
@@ -385,7 +385,7 @@ data instance Ticked LedgerState (DualBlock m a) = TickedDualLedgerState
   , tickedDualLedgerStateAuxOrigValues :: Values a
   -- ^ The original, unticked auxiliary ledger's full UTxO.
   }
-  deriving NoThunks via AllowThunk (Ticked LedgerState (DualBlock m a))
+  deriving NoThunks via AllowThunk (Ticked LedgerState (DualBlock m a) mk)
 
 type instance AuxLedgerEvent (DualBlock m a) = AuxLedgerEvent m
 
@@ -438,17 +438,17 @@ applyHelper ::
     LedgerCfg LedgerState m ->
     m ->
     Values m ->
-    Ticked LedgerState m ->
-    Except (LedgerErr LedgerState m) (LedgerResult m (LedgerState m, Diff m))
+    Ticked LedgerState m EmptyMK ->
+    Except (LedgerErr LedgerState m) (LedgerResult m (LedgerState m EmptyMK, Diff m))
   ) ->
   ComputeLedgerEvents ->
   DualLedgerConfig m a ->
   DualBlock m a ->
   Values (DualBlock m a) ->
-  Ticked LedgerState (DualBlock m a) ->
+  Ticked LedgerState (DualBlock m a) EmptyMK ->
   Except
     (DualLedgerError m a)
-    (LedgerResult (DualBlock m a) (LedgerState (DualBlock m a), Diff (DualBlock m a)))
+    (LedgerResult (DualBlock m a) (LedgerState (DualBlock m a) EmptyMK, Diff (DualBlock m a)))
 applyHelper f opts cfg block@DualBlock{..} vals TickedDualLedgerState{..} = do
   (ledgerResult, (aux', auxValues')) <-
     agreeOnError
@@ -557,28 +557,30 @@ instance
   emptyValues = emptyValues @m
   emptyDiffs = emptyDiffs @m
 
-data instance LedgerState (DualBlock m a) = DualLedgerState
-  { dualLedgerStateMain :: LedgerState m
-  , dualLedgerStateAux :: LedgerState a
+data instance LedgerState (DualBlock m a) mk = DualLedgerState
+  { dualLedgerStateMain :: LedgerState m mk
+  , dualLedgerStateAux :: LedgerState a EmptyMK
   , dualLedgerStateAuxValues :: Values a
   , dualLedgerStateBridge :: BridgeLedger m a
   }
-  deriving NoThunks via AllowThunk (LedgerState (DualBlock m a))
+  deriving NoThunks via AllowThunk (LedgerState (DualBlock m a) mk)
 
 instance Bridge m a => UpdateLedger (DualBlock m a)
 
 deriving instance
   ( Bridge m a
-  , Show (LedgerState a)
+  , Show (LedgerState m mk)
+  , Show (LedgerState a EmptyMK)
   , Show (Values a)
   ) =>
-  Show (LedgerState (DualBlock m a))
+  Show (LedgerState (DualBlock m a) mk)
 deriving instance
   ( Bridge m a
-  , Eq (LedgerState a)
+  , Eq (LedgerState m mk)
+  , Eq (LedgerState a EmptyMK)
   , Eq (Values a)
   ) =>
-  Eq (LedgerState (DualBlock m a))
+  Eq (LedgerState (DualBlock m a) mk)
 
 {-------------------------------------------------------------------------------
   Utilities for working with the extended ledger state
@@ -991,12 +993,12 @@ applyMaybeBlock ::
   -- | Ticked values
   Values blk ->
   -- | Ticked state
-  Ticked LedgerState blk ->
+  Ticked LedgerState blk EmptyMK ->
   -- | Original, unticked state
-  LedgerState blk ->
+  LedgerState blk EmptyMK ->
   -- | Original, unticked values
   Values blk ->
-  Except (LedgerError blk) (LedgerState blk, Values blk)
+  Except (LedgerError blk) (LedgerState blk EmptyMK, Values blk)
 applyMaybeBlock _ _ Nothing _ _ origSt origVals = return (origSt, origVals)
 applyMaybeBlock evs cfg (Just block) tvals tst _ _ = do
   (st', diff) <- applyLedgerBlock evs cfg block tvals tst
@@ -1012,10 +1014,10 @@ reapplyMaybeBlock ::
   LedgerConfig blk ->
   Maybe blk ->
   Values blk ->
-  Ticked LedgerState blk ->
-  LedgerState blk ->
+  Ticked LedgerState blk EmptyMK ->
+  LedgerState blk EmptyMK ->
   Values blk ->
-  (LedgerState blk, Values blk)
+  (LedgerState blk EmptyMK, Values blk)
 reapplyMaybeBlock _ _ Nothing _ _ origSt origVals = (origSt, origVals)
 reapplyMaybeBlock evs cfg (Just block) tvals tst _ _ =
   let (st', diff) = reapplyLedgerBlock evs cfg block tvals tst
@@ -1175,9 +1177,9 @@ decodeDualGenTxErr decodeMain = do
     <*> decode
 
 encodeDualLedgerState ::
-  (Bridge m a, Serialise (LedgerState a), Serialise (Values a)) =>
-  (LedgerState m -> Encoding) ->
-  LedgerState (DualBlock m a) ->
+  (Bridge m a, Serialise (LedgerState a EmptyMK), Serialise (Values a)) =>
+  (LedgerState m mk -> Encoding) ->
+  LedgerState (DualBlock m a) mk ->
   Encoding
 encodeDualLedgerState encodeMain DualLedgerState{..} =
   mconcat
@@ -1189,9 +1191,9 @@ encodeDualLedgerState encodeMain DualLedgerState{..} =
     ]
 
 decodeDualLedgerState ::
-  (Bridge m a, Serialise (LedgerState a), Serialise (Values a)) =>
-  Decoder s (LedgerState m) ->
-  Decoder s (LedgerState (DualBlock m a))
+  (Bridge m a, Serialise (LedgerState a EmptyMK), Serialise (Values a)) =>
+  Decoder s (LedgerState m mk) ->
+  Decoder s (LedgerState (DualBlock m a) mk)
 decodeDualLedgerState decodeMain = do
   enforceSize "DualLedgerState" 4
   DualLedgerState

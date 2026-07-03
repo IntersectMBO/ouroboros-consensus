@@ -59,6 +59,7 @@ import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
 import Ouroboros.Consensus.Peras.Weight
@@ -283,11 +284,11 @@ getMaxSlotNo CDB{..} = do
   return $ curChainMaxSlotNo `max` volatileDbMaxSlotNo `max` queuedMaxSlotNo
 
 -- | Get current ledger
-getCurrentLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk)
+getCurrentLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk EmptyMK)
 getCurrentLedger CDB{..} = LedgerDB.getVolatileTip cdbLedgerDB
 
 -- | Get the immutable ledger, i.e., typically @k@ blocks back.
-getImmutableLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk)
+getImmutableLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk EmptyMK)
 getImmutableLedger CDB{..} = LedgerDB.getImmutableTip cdbLedgerDB
 
 -- | Get the ledger for the given point.
@@ -298,7 +299,7 @@ getImmutableLedger CDB{..} = LedgerDB.getImmutableTip cdbLedgerDB
 getPastLedger ::
   ChainDbEnv m blk ->
   Point blk ->
-  STM m (Maybe (ExtLedgerState blk))
+  STM m (Maybe (ExtLedgerState blk EmptyMK))
 getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 
 allocInRegistryReadOnlyForkerAtPoint ::

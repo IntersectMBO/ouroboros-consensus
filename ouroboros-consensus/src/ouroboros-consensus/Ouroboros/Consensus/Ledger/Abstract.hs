@@ -117,8 +117,8 @@ class
     LedgerCfg l blk ->
     blk ->
     Values blk ->
-    Ticked l blk ->
-    Except (LedgerErr l blk) (LedgerResult blk (l blk, Diff blk))
+    Ticked l blk EmptyMK ->
+    Except (LedgerErr l blk) (LedgerResult blk (l blk EmptyMK, Diff blk))
 
   -- | Apply a block to the ledger state.
   --
@@ -130,8 +130,8 @@ class
     LedgerCfg l blk ->
     blk ->
     Values blk ->
-    Ticked l blk ->
-    Except (LedgerErr l blk) (LedgerResult blk (l blk, Diff blk))
+    Ticked l blk EmptyMK ->
+    Except (LedgerErr l blk) (LedgerResult blk (l blk EmptyMK, Diff blk))
 
   -- | Re-apply a block to the very same ledger state it was applied in before.
   --
@@ -149,8 +149,8 @@ class
     LedgerCfg l blk ->
     blk ->
     Values blk ->
-    Ticked l blk ->
-    LedgerResult blk (l blk, Diff blk)
+    Ticked l blk EmptyMK ->
+    LedgerResult blk (l blk EmptyMK, Diff blk)
 
 defaultApplyBlockLedgerResult ::
   (HasCallStack, ApplyBlock l blk) =>
@@ -158,20 +158,20 @@ defaultApplyBlockLedgerResult ::
   LedgerCfg l blk ->
   blk ->
   Values blk ->
-  Ticked l blk ->
-  Except (LedgerErr l blk) (LedgerResult blk (l blk, Diff blk))
+  Ticked l blk EmptyMK ->
+  Except (LedgerErr l blk) (LedgerResult blk (l blk EmptyMK, Diff blk))
 defaultApplyBlockLedgerResult =
   applyBlockLedgerResultWithValidation STS.ValidateAll
 
 defaultReapplyBlockLedgerResult ::
   (HasCallStack, ApplyBlock l blk) =>
-  (LedgerErr l blk -> LedgerResult blk (l blk, Diff blk)) ->
+  (LedgerErr l blk -> LedgerResult blk (l blk EmptyMK, Diff blk)) ->
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
   Values blk ->
-  Ticked l blk ->
-  LedgerResult blk (l blk, Diff blk)
+  Ticked l blk EmptyMK ->
+  LedgerResult blk (l blk EmptyMK, Diff blk)
 defaultReapplyBlockLedgerResult throwReapplyError evs cfg blk vals ticked =
   either throwReapplyError id . runExcept $
     applyBlockLedgerResultWithValidation STS.ValidateNone evs cfg blk vals ticked
@@ -190,8 +190,8 @@ applyLedgerBlock ::
   LedgerCfg l blk ->
   blk ->
   Values blk ->
-  Ticked l blk ->
-  Except (LedgerErr l blk) (l blk, Diff blk)
+  Ticked l blk EmptyMK ->
+  Except (LedgerErr l blk) (l blk EmptyMK, Diff blk)
 applyLedgerBlock = fmap lrResult ....: applyBlockLedgerResult
 
 -- | 'lrResult' after 'reapplyBlockLedgerResult'
@@ -201,8 +201,8 @@ reapplyLedgerBlock ::
   LedgerCfg l blk ->
   blk ->
   Values blk ->
-  Ticked l blk ->
-  (l blk, Diff blk)
+  Ticked l blk EmptyMK ->
+  (l blk EmptyMK, Diff blk)
 reapplyLedgerBlock = lrResult ....: reapplyBlockLedgerResult
 
 tickThenApplyLedgerResult ::
@@ -213,8 +213,8 @@ tickThenApplyLedgerResult ::
   blk ->
   -- | The values the block consumes, read against the (pre-tick) state.
   Values blk ->
-  l blk ->
-  Except (LedgerErr l blk) (LedgerResult blk (l blk, Diff blk))
+  l blk EmptyMK ->
+  Except (LedgerErr l blk) (LedgerResult blk (l blk EmptyMK, Diff blk))
 tickThenApplyLedgerResult evs cfg blk vals l = do
   let lrTick = applyChainTickLedgerResult evs cfg (blockSlot blk) l
       (tickedSt, tickDiff) = lrResult lrTick
@@ -237,8 +237,8 @@ tickThenReapplyLedgerResult ::
   LedgerCfg l blk ->
   blk ->
   Values blk ->
-  l blk ->
-  LedgerResult blk (l blk, Diff blk)
+  l blk EmptyMK ->
+  LedgerResult blk (l blk EmptyMK, Diff blk)
 tickThenReapplyLedgerResult evs cfg blk vals l =
   let lrTick = applyChainTickLedgerResult evs cfg (blockSlot blk) l
       (tickedSt, tickDiff) = lrResult lrTick
@@ -256,8 +256,8 @@ tickThenApply ::
   LedgerCfg l blk ->
   blk ->
   Values blk ->
-  l blk ->
-  Except (LedgerErr l blk) (l blk, Diff blk)
+  l blk EmptyMK ->
+  Except (LedgerErr l blk) (l blk EmptyMK, Diff blk)
 tickThenApply = fmap lrResult ....: tickThenApplyLedgerResult
 
 tickThenReapply ::
@@ -266,8 +266,8 @@ tickThenReapply ::
   LedgerCfg l blk ->
   blk ->
   Values blk ->
-  l blk ->
-  (l blk, Diff blk)
+  l blk EmptyMK ->
+  (l blk EmptyMK, Diff blk)
 tickThenReapply = lrResult ....: tickThenReapplyLedgerResult
 
 -- | Apply a sequence of blocks to a full, in-memory @(state, values)@ pair.
@@ -282,8 +282,8 @@ foldLedger ::
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   [blk] ->
-  (l blk, Values blk) ->
-  Except (LedgerErr l blk) (l blk, Values blk)
+  (l blk EmptyMK, Values blk) ->
+  Except (LedgerErr l blk) (l blk EmptyMK, Values blk)
 foldLedger evs cfg =
   repeatedlyM $ \blk (st, vals) -> do
     (st', diff) <- tickThenApply evs cfg blk vals st
@@ -295,8 +295,8 @@ refoldLedger ::
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   [blk] ->
-  (l blk, Values blk) ->
-  (l blk, Values blk)
+  (l blk EmptyMK, Values blk) ->
+  (l blk EmptyMK, Values blk)
 refoldLedger evs cfg =
   repeatedly $ \blk (st, vals) ->
     let (st', diff) = tickThenReapply evs cfg blk vals st
@@ -308,15 +308,15 @@ refoldLedger evs cfg =
 
 ledgerTipPoint ::
   UpdateLedger blk =>
-  LedgerState blk -> Point blk
+  LedgerState blk mk -> Point blk
 ledgerTipPoint = castPoint . getTip
 
 ledgerTipHash ::
   UpdateLedger blk =>
-  LedgerState blk -> ChainHash blk
+  LedgerState blk mk -> ChainHash blk
 ledgerTipHash = pointHash . ledgerTipPoint
 
 ledgerTipSlot ::
   UpdateLedger blk =>
-  LedgerState blk -> WithOrigin SlotNo
+  LedgerState blk mk -> WithOrigin SlotNo
 ledgerTipSlot = pointSlot . ledgerTipPoint

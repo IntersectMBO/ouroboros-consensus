@@ -5,6 +5,8 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage () where
 
+import Data.SOP.Functors (Flip (..))
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Index
@@ -49,7 +51,7 @@ instance CanHardFork xs => NodeInitStorage (HardForkBlock xs) where
         hcollapse $
           hcizipWith
             proxySingle
-            aux
+            (\idx c -> aux idx c . unFlip)
             cfgs
             (State.tip (hardForkLedgerStatePerEra currentLedger))
    where
@@ -59,7 +61,7 @@ instance CanHardFork xs => NodeInitStorage (HardForkBlock xs) where
       SingleEraBlock blk =>
       Index xs blk ->
       StorageConfig blk ->
-      LedgerState blk ->
+      LedgerState blk EmptyMK ->
       K (m ()) blk
     aux index cfg' currentLedger =
       K $

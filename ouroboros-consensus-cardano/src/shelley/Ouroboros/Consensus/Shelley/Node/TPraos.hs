@@ -216,6 +216,7 @@ protocolInfoTPraosShelleyBased
               { shelleyLedgerTip = Origin
               , shelleyLedgerStateNoUTxO = genesisStateNoUTxO
               , shelleyLedgerTransition = ShelleyTransitionInfo{shelleyAfterVoting = 0}
+              , shelleyLedgerTables = emptyLedgerTables
               , shelleyLedgerLatestPerasCertRound = SNothing
               }
           initExtLedgerState =

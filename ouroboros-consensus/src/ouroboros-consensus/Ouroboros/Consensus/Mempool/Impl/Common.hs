@@ -116,7 +116,7 @@ data InternalState blk = IS
   -- 'MempoolSnapshot' (see 'snapshotHasTx').
   --
   -- This should always be in-sync with the transactions in 'isTxs'.
-  , isLedgerState :: !(TickedLedgerState blk)
+  , isLedgerState :: !(TickedLedgerState blk EmptyMK)
   -- ^ The cached ledger state after applying the transactions in the
   -- Mempool against the chain's ledger state. New transactions will be
   -- validated against this ledger.
@@ -163,7 +163,7 @@ data InternalState blk = IS
 deriving instance
   ( NoThunks (Validated (GenTx blk))
   , NoThunks (GenTxId blk)
-  , NoThunks (TickedLedgerState blk)
+  , NoThunks (TickedLedgerState blk EmptyMK)
   , NoThunks (Diff blk)
   , NoThunks (TxMeasurePhase1 blk)
   , NoThunks (TxMeasurePhase2 blk)
@@ -188,7 +188,7 @@ initInternalState ::
   TicketNo ->
   LedgerConfig blk ->
   SlotNo ->
-  TickedLedgerState blk ->
+  TickedLedgerState blk EmptyMK ->
   -- | The tick diff (base → ticked state), the initial 'isLedgerDiff'.
   Diff blk ->
   InternalState blk
@@ -214,7 +214,7 @@ newtype LedgerInterface m blk = LedgerInterface
   }
 
 data MempoolLedgerDBView m blk = MempoolLedgerDBView
-  { mldViewState :: LedgerState blk
+  { mldViewState :: LedgerState blk EmptyMK
   -- ^ The ledger state currently at the tip of the LedgerDB
   , mldViewGetForker :: m (Either GetForkerError (ReadOnlyForker m LedgerState blk))
   -- ^ An action to get a forker at 'mldViewState' or an error in the unlikely
@@ -311,7 +311,7 @@ tickLedgerState ::
   (UpdateLedger blk, ValidateEnvelope blk) =>
   LedgerConfig blk ->
   ForgeLedgerState blk ->
-  (SlotNo, TickedLedgerState blk, Diff blk)
+  (SlotNo, TickedLedgerState blk EmptyMK, Diff blk)
 tickLedgerState _cfg (ForgeInKnownSlot slot st tickDiff) = (slot, st, tickDiff)
 tickLedgerState cfg (ForgeInUnknownSlot st) =
   (slot, tickedSt, tickDiff)
@@ -392,7 +392,7 @@ revalidateTxsFor ::
   LedgerConfig blk ->
   SlotNo ->
   -- | The ticked ledger state against which txs will be revalidated
-  TickedLedgerState blk ->
+  TickedLedgerState blk EmptyMK ->
   -- | The tick diff (base → ticked), to forward the read values to the tip
   Diff blk ->
   -- | All the inputs for the transactions, read against the base state
@@ -445,7 +445,7 @@ computeSnapshot ::
   LedgerConfig blk ->
   SlotNo ->
   -- | The ticked ledger state against which txs will be revalidated
-  TickedLedgerState blk ->
+  TickedLedgerState blk EmptyMK ->
   -- | The tick diff (base → ticked), to forward the read values to the tip
   Diff blk ->
   -- | All the inputs for the transactions, read against the base state
