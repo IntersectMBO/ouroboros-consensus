@@ -1095,6 +1095,13 @@ lockstep model@Model{..} cmd (At resp) =
   Generator
 -------------------------------------------------------------------------------}
 
+-- | Whether the selected chain of the model is still at Origin. While it is,
+-- the header state cannot resolve a valid Peras context, so Peras actions would
+-- fail in the SUT. Note this is stronger than the DB being empty: the DB can
+-- contain dangling fork blocks while the selected chain is still at Origin.
+atOrigin :: HasHeader blk => DBModel blk -> Bool
+atOrigin dbModel = Model.tipPoint dbModel == GenesisPoint
+
 -- | Generate a 'Cmd'
 --
 -- NOTE: the frequencies for generating blocks and Peras certificates are
@@ -1126,17 +1133,21 @@ generator loe genBlock genPerasBlock m@Model{..} =
         -- The following frequencies achieve this in practice:
         let freq = case loe of
               LoEDisabled ->
-                -- We must reduce the probability of Peras events to trigger on
-                -- an empty DB since there are no interesting blocks to vote for
-                if empty then 1 else 25
+                -- While the selected chain is still at Origin, we cannot
+                -- resolve a valid Peras context, so the SUT would reject Peras
+                -- actions. Only generate them once the header state has
+                -- advanced past Origin.
+                if atOrigin dbModel then 0 else 25
               -- The LoE does not yet support Peras.
               LoEEnabled () -> 0
          in (freq, genAddPerasCert)
       , let freq = case loe of
               LoEDisabled ->
-                -- We must reduce the probability of Peras events to trigger on
-                -- an empty DB since there are no interesting blocks to vote for
-                if empty then 20 else 500
+                -- While the selected chain is still at Origin, we cannot
+                -- resolve a valid Peras context, so the SUT would reject Peras
+                -- actions. Only generate them once the header state has
+                -- advanced past Origin.
+                if atOrigin dbModel then 0 else 500
               -- The LoE does not yet support Peras.
               LoEEnabled () -> 0
          in (freq, genAddPerasVote)
@@ -1521,6 +1532,12 @@ precondition Model{..} (At cmd) =
     .&& case cmd of
       -- Even though we ensure this in the generator, shrinking might change
       -- it.
+      -- While the selected chain is still at Origin, we cannot resolve a valid
+      -- Peras context, so the SUT would reject Peras actions. Shrinking can
+      -- remove the 'AddBlock's preceding a Peras command, so we must forbid
+      -- them here as well.
+      AddPerasCert{} -> Not (Boolean (atOrigin dbModel))
+      AddPerasVote{} -> Not (Boolean (atOrigin dbModel))
       GetBlockComponent pt -> Not $ garbageCollectable pt
       GetGCedBlockComponent pt -> garbageCollectable pt
       IteratorNext it -> Not $ garbageCollectableIteratorNext it
