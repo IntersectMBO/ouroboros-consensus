@@ -35,8 +35,11 @@ import Data.Coerce (coerce)
 import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map as Map
+import Data.Maybe (isJust)
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Set as Set
+import Data.Typeable (eqT)
+import LeiosDemoTypes (EbAnnouncement (..), EbHash (..))
 import Lens.Micro
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
@@ -50,12 +53,14 @@ import Ouroboros.Consensus.Protocol.Praos (Praos)
 import Ouroboros.Consensus.Protocol.Praos.Common
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( HeaderBody (HeaderBody)
+  , HeaderLeiosExtension (..)
   )
 import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import Ouroboros.Consensus.Protocol.TPraos
   ( TPraos
   , TPraosState (TPraosState)
   )
+import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.HFEras
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Query.Types
@@ -286,10 +291,23 @@ fromShelleyLedgerExamplesPraos
           , hbBodyHash = SL.bhash bhBody
           , hbOCert = SL.bheaderOCert bhBody
           , hbProtVer = SL.bprotver bhBody
-          , hbLeiosContainsCert = False
-          , hbLeiosEbAnnouncement = SNothing
+          , hbLeiosExt = if isLeiosEra then SJust leiosExt else SNothing
           }
       hSig = coerce bhSig
+
+    isLeiosEra = isJust $ eqT @era @DijkstraEra
+
+    leiosExt =
+      HeaderLeiosExtension
+        { containsCert = True
+        , ebAnnouncement =
+            SJust
+              EbAnnouncement
+                { ebAnnouncementHash = MkEbHash "<some eb hash>"
+                , ebAnnouncementSize = 123
+                }
+        }
+
     hash = ShelleyHash $ SL.unHashHeader pleHashHeader
     serialisedBlock = Serialised "<BLOCK>"
     tx = mkShelleyTx leTx

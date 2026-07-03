@@ -447,8 +447,7 @@ genHeaderBody context = do
   hbBodyHash <- genHash
   (hbOCert, kesPeriod) <- genCert hbSlotNo context
   let hbProtVer = protocolVersionZero
-      hbLeiosEbAnnouncement = SNothing
-      hbLeiosContainsCert = False
+      hbLeiosExt = SNothing -- XXX: Never contains leios fields
       headerBody = HeaderBody{..}
   pure $ (headerBody, kesPeriod)
  where

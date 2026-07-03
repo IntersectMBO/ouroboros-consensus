@@ -30,7 +30,7 @@ module Ouroboros.Consensus.Shelley.Protocol.Abstract
 import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.VRF (OutputVRF)
-import Cardano.Ledger.BaseTypes (ProtVer)
+import Cardano.Ledger.BaseTypes (ProtVer, StrictMaybe)
 import Cardano.Ledger.Hashes
   ( EraIndependentBlockBody
   , EraIndependentBlockHeader
@@ -63,6 +63,7 @@ import Ouroboros.Consensus.Protocol.Abstract
   )
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import Ouroboros.Consensus.Protocol.Praos.Common (HasMaxMajorProtVer)
+import Ouroboros.Consensus.Protocol.Praos.Header (HeaderLeiosExtension)
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 
@@ -180,13 +181,8 @@ class ProtocolHeaderSupportsKES proto where
     Int ->
     -- | Protocol version
     ProtVer ->
-    -- | Optional Leios EB announcement. Only used by Praos.
-    Maybe EbAnnouncement ->
-    -- | Whether this block's body carries a Leios certificate (i.e. it is a
-    -- "CertRB"). Only used by Praos, where it is recorded in the header
-    -- ('hbLeiosContainsCert') so a CertRB is recognisable from its header
-    -- alone and the header/body envelope can be checked.
-    Bool ->
+    -- | Optional fields for Leios
+    StrictMaybe HeaderLeiosExtension ->
     m (ShelleyProtocolHeader proto)
 
   -- | Extract the most recently announced (and not yet certified) Leios EB

@@ -99,7 +99,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (TPraos c) where
       | otherwise =
           0
 
-  mkHeader hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer _mayEbAnn _containsCert = do
+  mkHeader hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer _mLeios = do
     TPraosFields{tpraosSignature, tpraosToSign} <-
       forgeTPraosFields hotKey canBeLeader isLeader mkBhBody
     pure $ SL.BHeader tpraosToSign tpraosSignature

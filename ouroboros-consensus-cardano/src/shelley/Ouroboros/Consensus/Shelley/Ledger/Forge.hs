@@ -11,7 +11,7 @@
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
 import Cardano.Crypto.Leios (LeiosCert)
-import Cardano.Ledger.BaseTypes (StrictMaybe (..))
+import Cardano.Ledger.BaseTypes (StrictMaybe (SJust), maybeToStrictMaybe)
 import qualified Cardano.Ledger.Core as Core (TopTx, Tx)
 import qualified Cardano.Ledger.Core as SL
   ( BlockBody
@@ -28,7 +28,7 @@ import Control.Exception
 import Control.Monad (void)
 import Control.Tracer (traceWith)
 import Data.ByteString.Short (fromShort)
-import Data.Maybe.Strict (isSJust)
+import Data.Maybe (isJust)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Typeable as Typeable
 import LeiosDemoDb
@@ -54,6 +54,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Protocol.Abstract (CanBeLeader)
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
+import Ouroboros.Consensus.Protocol.Praos.Header (HeaderLeiosExtension (..))
 import Ouroboros.Consensus.Shelley.Eras (DijkstraEra)
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -87,7 +88,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   (mayEbAnn, mayLeiosCert) <-
     case Typeable.eqT @era @DijkstraEra of
       Just Refl -> decideLeios
-      Nothing -> pure (Nothing, SNothing)
+      Nothing -> pure (Nothing, Nothing)
   let rbBody = mkBody mayLeiosCert
       actualRbBodySize = SL.blockBodySize protocolVersion rbBody
   hdr <-
@@ -101,8 +102,11 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       (SL.hashBlockBody @era rbBody)
       actualRbBodySize
       protocolVersion
-      (snd <$> mayEbAnn)
-      (isSJust mayLeiosCert)
+      $ SJust
+        HeaderLeiosExtension
+          { containsCert = isJust mayLeiosCert
+          , ebAnnouncement = maybeToStrictMaybe $ snd <$> mayEbAnn
+          }
 
   let blk = mkShelleyBlock $ SL.Block hdr rbBody
   case fst <$> mayEbAnn of
@@ -128,14 +132,14 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   -- 'BodyCertificate cert Nothing' shape — without it, the wire body
   -- contains rb-txs that the receiver hashes but the apply-time body
   -- doesn't, so any subsequent re-hashing would diverge.
-  mkBody :: StrictMaybe LeiosCert -> SL.BlockBody era
+  mkBody :: Maybe LeiosCert -> SL.BlockBody era
   mkBody mayLeiosCert =
     let txs = case mayLeiosCert of
-          SJust _ -> Seq.empty
-          SNothing -> Seq.fromList (fmap extractTx fbRbTxs)
+          Just _ -> Seq.empty
+          Nothing -> Seq.fromList (fmap extractTx fbRbTxs)
         base = SL.mkBasicBlockBody & SL.txSeqBlockBodyL .~ txs
      in case Typeable.eqT @era @DijkstraEra of
-          Just Refl -> base & leiosCertBlockBodyL .~ mayLeiosCert
+          Just Refl -> base & leiosCertBlockBodyL .~ maybeToStrictMaybe mayLeiosCert
           Nothing -> base
 
   extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx Core.TopTx era
@@ -153,23 +157,23 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   -- certificate available in LeiosDb), suppressing this block's own EB
   -- announcement. Otherwise fall back to forging a new EB (when the
   -- mempool has txs for one). Mirrors the prototype's 'decideForgeType'.
-  decideLeios :: m (Maybe (ForgedLeiosEb, EbAnnouncement), StrictMaybe LeiosCert)
+  decideLeios :: m (Maybe (ForgedLeiosEb, EbAnnouncement), Maybe LeiosCert)
   decideLeios = do
     cert <- decideCertify
     case cert of
-      SJust _ -> pure (Nothing, cert)
-      SNothing -> do
+      Just _ -> pure (Nothing, cert)
+      Nothing -> do
         ann <- mkAndStoreEb
-        pure (ann, SNothing)
+        pure (ann, Nothing)
 
-  decideCertify :: m (StrictMaybe LeiosCert)
+  decideCertify :: m (Maybe LeiosCert)
   decideCertify =
     case fbChainDepState >>= protocolStateLeiosInfo (Proxy @proto) of
-      Nothing -> pure SNothing
-      Just (_, Origin) -> pure SNothing
+      Nothing -> pure Nothing
+      Just (_, Origin) -> pure Nothing
       Just (ann, NotOrigin prevSlotNo)
         | unSlotNo fbCurrentSlotNo - unSlotNo prevSlotNo <= minCertificationGap ->
-            pure SNothing
+            pure Nothing
         | otherwise -> do
             let ebPoint =
                   MkLeiosPoint
@@ -185,7 +189,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                 traceWith fbLeiosTracer $
                   MkTraceLeiosKernel $
                     "EB not yet downloaded: " <> show ebPoint
-                pure SNothing
+                pure Nothing
               Just _ -> do
                 -- we get the hash of the previous block header because eb certification must
                 -- happen withing one block (this is the linear aspect of linear leios).
@@ -198,14 +202,14 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
                     traceWith fbLeiosTracer $
                       MkTraceLeiosKernel $
                         "EB downloaded but no certificate: " <> show ebPoint
-                    pure SNothing
+                    pure Nothing
                   Just cert -> do
                     traceWith fbLeiosTracer $
                       TraceLeiosBlockCertified
                         { atSlot = fbCurrentSlotNo
                         , certifiedPoint = ebPoint
                         }
-                    pure (SJust cert)
+                    pure (Just cert)
 
   -- Produce an EB from fbEbTxs, store it into fbLeiosDb, and return the
   -- announcement to embed in the header. An honest forger only emits an

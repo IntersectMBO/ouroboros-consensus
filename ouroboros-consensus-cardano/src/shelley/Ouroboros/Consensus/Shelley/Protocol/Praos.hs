@@ -22,6 +22,7 @@ import Ouroboros.Consensus.Protocol.Praos.Common
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (..)
   , HeaderBody (..)
+  , hbLeiosContainsCert
   , headerHash
   , headerSize
   )
@@ -96,7 +97,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (Praos c) where
           currentKesPeriod - startOfKesPeriod
       | otherwise =
           0
-  mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer mayEbAnn containsCert = do
+  mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer mLeiosExt = do
     PraosFields{praosSignature, praosToSign} <- forgePraosFields hk cbl il mkBhBodyBytes
     pure $ Header praosToSign praosSignature
    where
@@ -118,8 +119,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (Praos c) where
           , hbBodyHash = bbHash
           , hbOCert = praosToSignOCert
           , hbProtVer = protVer
-          , hbLeiosEbAnnouncement = maybe SNothing SJust mayEbAnn
-          , hbLeiosContainsCert = containsCert
+          , hbLeiosExt = mLeiosExt
           }
 
   protocolStateLeiosInfo _ cs =

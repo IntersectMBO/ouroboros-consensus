@@ -26,8 +26,8 @@ import LeiosDemoTypes
 import Ouroboros.Consensus.Protocol.Praos (PraosState (PraosState))
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import Ouroboros.Consensus.Protocol.Praos.Header
-  ( Header (Header)
-  , HeaderBody (HeaderBody)
+  ( Header (..)
+  , HeaderBody (..)
   )
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
@@ -73,8 +73,10 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> arbitrary
           <*> ocert
           <*> arbitrary
-          <*> arbitrary
-          <*> arbitrary
+          -- FIXME: Cannot generate HeaderLeiosExtension because we don't know
+          -- for which era/protocol version this header is. However, Dijkstra is
+          -- currently disabled anyways in Test.Consensus.Cardano.Generators
+          <*> pure SNothing
 
 instance Praos.PraosCrypto c => Arbitrary (Header c) where
   arbitrary = do
