@@ -85,6 +85,7 @@ const sidebars = {
                         'references/miscellaneous/handling_blocks_from_the_future',
                         'references/miscellaneous/era_transition_governance',
                         'references/miscellaneous/genesis_design',
+                        'references/miscellaneous/genesis_observability',
                         { type: 'category',
                           label: 'UTxO-HD',
                           items: ['references/miscellaneous/utxo-hd/index',
