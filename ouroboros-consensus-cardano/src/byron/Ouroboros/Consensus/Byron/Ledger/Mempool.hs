@@ -69,6 +69,7 @@ import Control.Monad.Except (Except, throwError)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
+import Data.ByteString.Short (ShortByteString)
 import Data.Maybe (maybeToList)
 import Data.Word
 import GHC.Generics (Generic)
@@ -86,6 +87,7 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
+import Ouroboros.Network.Tx (HasRawTxId (..))
 
 {-------------------------------------------------------------------------------
   Transactions
@@ -205,6 +207,10 @@ instance ConvertRawTxId (GenTx ByronBlock) where
   toRawTxIdHash (ByronDlgId i) = CC.abstractHashToShort i
   toRawTxIdHash (ByronUpdateProposalId i) = CC.abstractHashToShort i
   toRawTxIdHash (ByronUpdateVoteId i) = CC.abstractHashToShort i
+
+instance HasRawTxId (TxId (GenTx ByronBlock)) where
+  type RawTxId (TxId (GenTx ByronBlock)) = ShortByteString
+  getRawTxId = toRawTxIdHash
 
 instance HasTxs ByronBlock where
   extractTxs blk = case byronBlockRaw blk of

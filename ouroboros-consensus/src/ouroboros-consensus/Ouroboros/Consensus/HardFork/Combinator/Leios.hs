@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -21,9 +22,10 @@ import Data.SOP.Strict (hcmap, hcollapse)
 import qualified Data.SOP.Telescope as Telescope
 import LeiosVoting (HasLeiosVoting (..))
 import Ouroboros.Consensus.HardFork.Combinator.Basics
-  ( HardForkBlock
+  ( HardForkBlock (..)
   , LedgerState (HardForkLedgerState)
   )
+import Ouroboros.Consensus.HardFork.Combinator.Protocol ()
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
   ( Current (..)
   , HardForkState (..)

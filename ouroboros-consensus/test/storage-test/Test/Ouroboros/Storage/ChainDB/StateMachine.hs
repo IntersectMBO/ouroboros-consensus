@@ -107,6 +107,7 @@ import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import qualified Generics.SOP as SOP
 import qualified LeiosDemoDb as LeiosDb
+import LeiosDemoTypes (HasLeiosVoting)
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -371,6 +372,7 @@ type TestConstraints blk =
   , LedgerSupportsLedgerDB blk
   , ImmutableEraParams blk
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   )
 
 deriving instance

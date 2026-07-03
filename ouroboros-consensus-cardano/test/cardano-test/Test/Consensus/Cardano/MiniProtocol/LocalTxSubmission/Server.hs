@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | Test that we can submit transactions to the mempool using the local
@@ -66,17 +67,15 @@ tests =
  where
   localServerPassesRegressionTests era =
     testCase ("Passes the regression tests (" ++ show era ++ ")") $ do
+      (pInfo :: ProtocolInfo (CardanoBlock StandardCrypto)) <-
+        mkSimpleTestProtocolInfo
+          (Shelley.DecentralizationParam 1)
+          (Consensus.SecurityParam $ knownNonZeroBounded @10)
+          (ByronSlotLengthInSeconds 1)
+          (ShelleySlotLengthInSeconds 1)
+          protocolVersionZero
+          (hardForkInto era)
       let
-        pInfo :: ProtocolInfo (CardanoBlock StandardCrypto)
-        pInfo =
-          mkSimpleTestProtocolInfo
-            (Shelley.DecentralizationParam 1)
-            (Consensus.SecurityParam $ knownNonZeroBounded @10)
-            (ByronSlotLengthInSeconds 1)
-            (ShelleySlotLengthInSeconds 1)
-            protocolVersionZero
-            (hardForkInto era)
-
         eraIndex =
           index_NS
             . Telescope.tip

@@ -11,7 +11,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -34,6 +33,7 @@ import Cardano.Ledger.BaseTypes (TxIx (..))
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Keys as Ledger
 import qualified Cardano.Ledger.Shelley.API as SL
+import Cardano.Ledger.Shelley.Transition (tcShelleyGenesisL)
 import Cardano.Ledger.Val (Val (coin, (<->)), inject)
 import Cardano.Node.Protocol.Shelley (readLeaderCredentials)
 import Cardano.Node.Types (ProtocolFilepaths (..))
@@ -65,29 +65,32 @@ import Ouroboros.Consensus.BlockchainTime (mkSlotLength)
 import Ouroboros.Consensus.Cardano.Block
   ( CardanoBlock
   , GenTx (GenTxConway, GenTxDijkstra)
-  , HardForkLedgerConfig (..)
   , LedgerState (LedgerStateConway, LedgerStateDijkstra)
   , ShelleyBasedEra
   , StandardCrypto
   )
 import Ouroboros.Consensus.Cardano.Condense ()
-import Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams, protocolInfoCardano)
-import Ouroboros.Consensus.Config (TopLevelConfig (topLevelConfigLedger))
+import Ouroboros.Consensus.Cardano.Node
+  ( CardanoProtocolParams (..)
+  , protocolInfoCardano
+  )
+import Ouroboros.Consensus.Config (TopLevelConfig)
 import Ouroboros.Consensus.Ledger.Abstract (ValuesMK, getValuesMK)
-import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..), ProtocolInfo (pInfoConfig))
+import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import Ouroboros.Consensus.NodeId (CoreNodeId (..), unCoreNodeId)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
   ( LedgerTables (getLedgerTables)
   , ShelleyBlock
-  , ShelleyPartialLedgerConfig (shelleyLedgerConfig)
   , mkShelleyTx
-  , shelleyLedgerGenesis
   )
 import qualified Ouroboros.Consensus.Shelley.Ledger.Ledger as SL
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (sgEpochLength))
 import System.Exit (die)
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as MockFS
+import qualified System.FS.Sim.STM as Sim
 import System.IO (hClose, hFlush, hPutStrLn, openFile)
 import Test.Cardano.Ledger.Core.KeyPair (KeyPair (..))
 import Test.Cardano.Ledger.Shelley.Generator.ShelleyEraGen ()
@@ -194,25 +197,10 @@ runThreadNet args@RunThreadNetArgs{..} =
 
     -- TODO(bladyjoker): Only to extract slot/epoch info
     firstCoreNode = maybe (error $ show ("No nodes specified", callStack)) fst $ uncons (tnCoreNodes rtnaThreadNet)
-    (pinfo, _) = protocolInfoCardano @_ @IO (cnCardanoProtocolParams firstCoreNode)
 
     shelleyGenesis :: ShelleyGenesis =
-      shelleyLedgerGenesis
-        . shelleyLedgerConfig
-        . ( \( CardanoLedgerConfig
-                 _cfgByron
-                 cfgShelley
-                 _cfgAllegra
-                 _cfgMary
-                 _cfgAlonzo
-                 _cfgBabbage
-                 _cfgConway
-                 _cfgDijkstra
-               ) -> cfgShelley
-          )
-        . topLevelConfigLedger
-        . pInfoConfig
-        $ pinfo
+      cardanoLedgerTransitionConfig (cnCardanoProtocolParams firstCoreNode)
+        ^. tcShelleyGenesisL
     slotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength shelleyGenesis
     epochLength = sgEpochLength shelleyGenesis
 
@@ -232,14 +220,17 @@ runThreadNet args@RunThreadNetArgs{..} =
       testConfig
       testConfigB
       TestConfigMB
-        { nodeInfo = \(CoreNodeId ix) ->
-            let (protocolInfo, mkBlockForging) =
-                  protocolInfoCardano . cnCardanoProtocolParams . (!! fromIntegral ix) . tnCoreNodes $ rtnaThreadNet
-             in TestNodeInitialization
-                  { tniProtocolInfo = protocolInfo
-                  , tniCrucialTxs = []
-                  , tniBlockForging = mkBlockForging nullTracer
-                  }
+        { nodeInfo = \(CoreNodeId ix) -> do
+            fs <- SomeHasFS <$> Sim.simHasFS' MockFS.empty
+            (protocolInfo, mkBlockForging) <-
+              protocolInfoCardano fs . cnCardanoProtocolParams . (!! fromIntegral ix) . tnCoreNodes $
+                rtnaThreadNet
+            pure
+              TestNodeInitialization
+                { tniProtocolInfo = protocolInfo
+                , tniCrucialTxs = []
+                , tniBlockForging = mkBlockForging nullTracer
+                }
         , mkRekeyM = Nothing
         }
 
@@ -465,17 +456,16 @@ instance TxGen (CardanoBlock StandardCrypto) where
     LedgerState (CardanoBlock StandardCrypto) ValuesMK ->
     Gen [GenTx (CardanoBlock StandardCrypto)]
   testGenTxs coreNodeId _numCores slotNo _topCfg RunThreadNetArgs{..} ls = case ls of
-    LedgerStateConway st -> genFor GenTxConway st
-    LedgerStateDijkstra st -> genFor GenTxDijkstra st
+    LedgerStateConway st -> fmap GenTxConway <$> genTxs st
+    LedgerStateDijkstra st -> fmap GenTxDijkstra <$> genTxs st
     _ -> error "not in conway/dijkstra"
    where
-    genFor ::
+    genTxs ::
       forall era proto.
-      SL.ShelleyBasedEra era =>
-      (GenTx (ShelleyBlock proto era) -> GenTx (CardanoBlock StandardCrypto)) ->
+      (SL.ShelleyBasedEra era, SL.AllegraEraTxBody era) =>
       LedgerState (ShelleyBlock proto era) ValuesMK ->
-      Gen [GenTx (CardanoBlock StandardCrypto)]
-    genFor wrap st =
+      Gen [GenTx (ShelleyBlock proto era)]
+    genTxs st =
       let
         pparams = getPParams st
         utxos = getUTxOs st
@@ -486,49 +476,63 @@ instance TxGen (CardanoBlock StandardCrypto) where
             take (fromIntegral rtnaTxsPerSlot) . interleave $
               do
                 txg <- tnTxGenerators rtnaThreadNet
-                let txs = wrap . mkShelleyTx <$> handleTxGenerator coreNodeId pparams utxos txg
+                let txs = mkShelleyTx <$> handleTxGenerator coreNodeId pparams utxos slotNo txg
                 return txs
 
 handleTxGenerator ::
-  SL.ShelleyBasedEra era =>
-  CoreNodeId -> SL.PParams era -> Map SL.TxIn (SL.TxOut era) -> TxGenerator -> [SL.Tx Core.TopTx era]
-handleTxGenerator coreNodeId pparams utxos TxGenerator{..} = do
+  (SL.ShelleyBasedEra era, SL.AllegraEraTxBody era) =>
+  CoreNodeId ->
+  SL.PParams era ->
+  Map SL.TxIn (SL.TxOut era) ->
+  SlotNo ->
+  TxGenerator ->
+  [SL.Tx Core.TopTx era]
+handleTxGenerator coreNodeId pparams utxos slotNo TxGenerator{..} = do
   guard (coreNodeId `Set.member` tgSubmitToNodes)
   case tgTxGeneratorKind of
-    TransferAllKind ta -> handleTransferAllTx pparams utxos ta
+    TransferAllKind ta -> handleTransferAllTx pparams utxos slotNo ta
 
 handleTransferAllTx ::
-  SL.ShelleyBasedEra era =>
-  SL.PParams era -> Map SL.TxIn (SL.TxOut era) -> TransferAll -> [SL.Tx Core.TopTx era]
-handleTransferAllTx pparams utxos TransferAll{..} = do
+  (SL.ShelleyBasedEra era, SL.AllegraEraTxBody era) =>
+  SL.PParams era -> Map SL.TxIn (SL.TxOut era) -> SlotNo -> TransferAll -> [SL.Tx Core.TopTx era]
+handleTransferAllTx pparams utxos slotNo TransferAll{..} = do
   let
     paymentKeyPair = mkKeyPair taPaymentSigningKey
     paymentCred = getPaymentCredFromKeyPair paymentKeyPair
   (txOutRef, txOut) <- Map.toList $ getUTxOsByPaymentCred utxos paymentCred
-  transferAllTxSequence (txOut, txOutRef, pparams, paymentKeyPair)
+  transferAllTxSequence
+    ( txOut
+    , txOutRef
+    , pparams
+    , paymentKeyPair
+    , SL.ValidityInterval{invalidBefore = SL.SNothing, invalidHereafter = SL.SJust (slotNo + 10)}
+    )
+
+type TransferAllTxArgs era kr =
+  (SL.TxOut era, SL.TxIn, SL.PParams era, KeyPair kr, SL.ValidityInterval)
 
 -- `transferAllTxSequence arg` makes a sequence of chained `transferAllTx` transactions.
 transferAllTxSequence ::
-  SL.ShelleyBasedEra era =>
-  (SL.TxOut era, SL.TxIn, SL.PParams era, KeyPair kr) -> [SL.Tx Core.TopTx era]
-transferAllTxSequence (txOut, txOutRef, pparams, paymentKeyPair) =
+  (SL.ShelleyBasedEra era, SL.AllegraEraTxBody era) =>
+  TransferAllTxArgs era kr -> [SL.Tx Core.TopTx era]
+transferAllTxSequence (txOut, txOutRef, pparams, paymentKeyPair, vi) =
   let
-    tx = buildTx $ transferAllTx (txOut, txOutRef, pparams, paymentKeyPair)
+    tx = buildTx $ transferAllTx (txOut, txOutRef, pparams, paymentKeyPair, vi)
     txOut' =
       maybe (error "sequence lookup failed") id $
         StrictSeq.lookup 0 $
           tx ^. (SL.bodyTxL . SL.outputsTxBodyL)
     txOutRef' = SL.TxIn (SL.txIdTx tx) (TxIx 0)
    in
-    tx : transferAllTxSequence (txOut', txOutRef', pparams, paymentKeyPair)
+    tx : transferAllTxSequence (txOut', txOutRef', pparams, paymentKeyPair, vi)
 
 -- `transferAllTx (txOut, txOutRef, pparams, paymentKeyPair)` makes a transaction that
 -- consumes the UTxO denoted by `txOutRef` and `txOut` that belogns to `paymentKeyPair`
 -- and produces a single output with the value consumed.
 transferAllTx ::
-  SL.ShelleyBasedEra era =>
-  (SL.TxOut era, SL.TxIn, SL.PParams era, KeyPair kr) -> SL.Tx Core.TopTx era -> SL.Tx Core.TopTx era
-transferAllTx (txOut, txOutRef, pparams, paymentKeyPair) = \tx ->
+  (SL.ShelleyBasedEra era, SL.AllegraEraTxBody era) =>
+  TransferAllTxArgs era kr -> SL.Tx Core.TopTx era -> SL.Tx Core.TopTx era
+transferAllTx (txOut, txOutRef, pparams, paymentKeyPair, vi) = \tx ->
   let
     inCoin = coin $ txOut ^. SL.valueTxOutL
     feeCoin = SL.getMinFeeTx pparams tx 0
@@ -544,6 +548,8 @@ transferAllTx (txOut, txOutRef, pparams, paymentKeyPair) = \tx ->
             ]
         & SL.feeTxBodyL
           .~ feeCoin
+        & SL.vldtTxBodyL
+          .~ vi
    in
     if outCoin > inCoin
       then error "spent all" -- FIX(bladyjoker): Tx building must be able to graciously fail

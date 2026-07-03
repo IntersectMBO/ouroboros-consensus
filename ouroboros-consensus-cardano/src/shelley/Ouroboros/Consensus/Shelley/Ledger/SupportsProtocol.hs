@@ -1,18 +1,10 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | This module contains 'SupportsProtocol' instances tying the ledger and
@@ -25,7 +17,6 @@ import qualified Cardano.Ledger.Core as LedgerCore
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.API as SL
 import Control.Monad.Except (MonadError (throwError))
-import Data.Coerce (coerce)
 import qualified Lens.Micro
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Forecast
@@ -34,9 +25,8 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol (..)
   )
-import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Protocol.Abstract (translateLedgerView)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
+import qualified Ouroboros.Consensus.Protocol.Praos as Praos (PraosCrypto)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Ledger.Block
@@ -47,17 +37,21 @@ import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 
 instance
-  ShelleyCompatible (TPraos crypto) era =>
+  ( ShelleyCompatible (TPraos crypto) era
+  , SL.ShelleyEraForecast era
+  , SL.PraosCrypto crypto
+  ) =>
   LedgerSupportsProtocol (ShelleyBlock (TPraos crypto) era)
   where
-  protocolLedgerView _cfg = SL.currentLedgerView . tickedShelleyLedgerState
+  protocolLedgerView _cfg =
+    SL.forecastToTPraosLedgerView . SL.currentForecast . tickedShelleyLedgerState
 
   -- Extra context available in
   -- https://github.com/IntersectMBO/ouroboros-consensus/blob/main/docs/website/contents/for-developers/HardWonWisdom.md#why-doesnt-ledger-code-ever-return-pasthorizonexception
   ledgerViewForecastAt cfg ledgerState = Forecast at $ \for ->
     if
       | NotOrigin for == at ->
-          return $ SL.currentLedgerView shelleyLedgerState
+          return $ SL.forecastToTPraosLedgerView (SL.currentForecast shelleyLedgerState)
       | for < maxFor ->
           return $ futureLedgerView for
       | otherwise ->
@@ -73,12 +67,10 @@ instance
     swindow = SL.stabilityWindow globals
     at = ledgerTipSlot ledgerState
 
-    futureLedgerView :: SlotNo -> SL.LedgerView
-    futureLedgerView =
-      either
-        (\e -> error ("futureLedgerView failed: " <> show e))
-        id
-        . SL.futureLedgerView globals shelleyLedgerState
+    futureLedgerView :: SlotNo -> SL.TPraosLedgerView
+    futureLedgerView for =
+      SL.forecastToTPraosLedgerView $
+        SL.futureForecast globals for shelleyLedgerState
 
     -- Exclusive upper bound
     maxFor :: SlotNo
@@ -86,7 +78,8 @@ instance
 
 instance
   ( ShelleyCompatible (Praos crypto) era
-  , ShelleyCompatible (TPraos crypto) era
+  , SL.EraForecast era
+  , Praos.PraosCrypto crypto
   ) =>
   LedgerSupportsProtocol (ShelleyBlock (Praos crypto) era)
   where
@@ -97,29 +90,38 @@ instance
 
         pparam :: forall a. Lens.Micro.Lens' (LedgerCore.PParams era) a -> a
         pparam lens = getPParams nes Lens.Micro.^. lens
-     in Praos.LedgerView
-          { Praos.lvPoolDistr = nesPd
-          , Praos.lvMaxBodySize = pparam LedgerCore.ppMaxBBSizeL
-          , Praos.lvMaxHeaderSize = pparam LedgerCore.ppMaxBHSizeL
-          , Praos.lvProtocolVersion = pparam LedgerCore.ppProtocolVersionL
+     in Praos.PraosLedgerView
+          { Praos.plvPoolDistr = nesPd
+          , Praos.plvMaxBodySize = pparam LedgerCore.ppMaxBBSizeL
+          , Praos.plvMaxHeaderSize = pparam LedgerCore.ppMaxBHSizeL
+          , Praos.plvProtocolVersion = pparam LedgerCore.ppProtocolVersionL
           }
 
-  -- \| Currently the Shelley+ ledger is hard-coded to produce a TPraos ledger
-  -- view. Since we can convert them, we piggy-back on this to get a Praos
-  -- ledger view. Ultimately, we will want to liberalise the ledger code
-  -- slightly.
-  ledgerViewForecastAt cfg st =
-    mapForecast (translateLedgerView (Proxy @(TPraos crypto, Praos crypto))) $
-      ledgerViewForecastAt @(ShelleyBlock (TPraos crypto) era) cfg st'
+  ledgerViewForecastAt cfg ledgerState = Forecast at $ \for ->
+    if
+      | NotOrigin for == at ->
+          return $
+            Praos.forecastToPraosLedgerView (SL.currentForecast shelleyLedgerState)
+      | for < maxFor ->
+          return $ futureLedgerView for
+      | otherwise ->
+          throwError $
+            OutsideForecastRange
+              { outsideForecastAt = at
+              , outsideForecastMaxFor = maxFor
+              , outsideForecastFor = for
+              }
    where
-    st' :: LedgerState (ShelleyBlock (TPraos crypto) era) EmptyMK
-    st' =
-      ShelleyLedgerState
-        { shelleyLedgerTip = coerceTip <$> shelleyLedgerTip st
-        , shelleyLedgerState = shelleyLedgerState st
-        , shelleyLedgerTransition = shelleyLedgerTransition st
-        , shelleyLedgerTables = emptyLedgerTables
-        , shelleyLedgerLatestPerasCertRound = shelleyLedgerLatestPerasCertRound st
-        , shelleyCumulativeTxBytes = shelleyCumulativeTxBytes st
-        }
-    coerceTip (ShelleyTip slot block hash) = ShelleyTip slot block (coerce hash)
+    ShelleyLedgerState{shelleyLedgerState} = ledgerState
+    globals = shelleyLedgerGlobals cfg
+    swindow = SL.stabilityWindow globals
+    at = ledgerTipSlot ledgerState
+
+    futureLedgerView :: SlotNo -> Praos.PraosLedgerView
+    futureLedgerView for =
+      Praos.forecastToPraosLedgerView $
+        SL.futureForecast globals for shelleyLedgerState
+
+    -- Exclusive upper bound
+    maxFor :: SlotNo
+    maxFor = addSlots swindow $ succWithOrigin at

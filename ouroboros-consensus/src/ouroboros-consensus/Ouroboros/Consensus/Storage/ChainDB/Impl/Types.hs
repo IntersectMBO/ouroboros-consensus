@@ -96,9 +96,9 @@ import Data.Set (Set)
 import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word64)
+import GHC.Generics (Generic)
 import LeiosDemoDb.Common (LeiosDbHandle)
 import LeiosDemoTypes (EbHash)
-import GHC.Generics (Generic)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
@@ -423,7 +423,6 @@ data ChainDbEnv m blk = CDB
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
 -- (but avoid including @m@ because we cannot impose @Typeable m@ as a
 -- constraint and still have it work with the simulator)
-
 instance
   (IOLike m, LedgerSupportsProtocol blk, BlockSupportsDiffusionPipelining blk) =>
   NoThunks (ChainDbEnv m blk)
@@ -720,7 +719,6 @@ addReprocessLeiosEb ::
   m ()
 addReprocessLeiosEb ebHash ChainSelQueue{varChainSelQueue} =
   atomically $ writeTBQueue varChainSelQueue (ChainSelReprocessLeiosEb ebHash)
-
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
 -- queue is empty; in that case, reports the starvation (and its end) via the

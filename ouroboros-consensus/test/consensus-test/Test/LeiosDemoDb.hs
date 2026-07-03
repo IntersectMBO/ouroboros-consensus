@@ -21,7 +21,7 @@ import qualified Data.ByteString as BS
 import Data.Function ((&))
 import qualified Data.Map.Strict as Map
 import Data.Time.Clock (DiffTime)
-import qualified Data.Vector as V
+import qualified Data.Vector.Strict as V
 import LeiosDemoDb
   ( LeiosDbHandle (..)
   , LeiosEbNotification (..)
@@ -34,7 +34,7 @@ import LeiosDemoDb
   , leiosDbInsertTxs
   , leiosDbLookupEbBody
   , leiosDbLookupEbPoint
-  , leiosDbQueryCompletedEbByPoint
+  , leiosDbQueryCompletedEbByHash
   , leiosDbQueryFetchWork
   , leiosDbScanEbPoints
   , newLeiosDBInMemory
@@ -45,6 +45,7 @@ import LeiosDemoTypes
   ( EbHash (..)
   , LeiosEb (..)
   , LeiosPoint (..)
+  , RbHash (..)
   , TxHash (..)
   , leiosEbBytesSize
   , leiosEbTxs
@@ -172,6 +173,11 @@ mkTestGroups impl =
 genEbHash :: Gen EbHash
 genEbHash = MkEbHash . BS.pack <$> vector 32
 
+-- | Generate a random RbHash (32 random bytes).
+-- With 256 bits of randomness, collisions are practically impossible.
+genRbHash :: Gen RbHash
+genRbHash = MkRbHash . BS.pack <$> vector 32
+
 -- | Generate a random TxHash (32 random bytes).
 genTxHash :: Gen TxHash
 genTxHash = MkTxHash . BS.pack <$> vector 32
@@ -218,6 +224,10 @@ mkTestTxHash seed = MkTxHash $ BS.pack $ replicate 32 (fromIntegral seed)
 -- | Create a test LeiosPoint.
 mkTestPoint :: SlotNo -> Word -> LeiosPoint
 mkTestPoint slot seed = MkLeiosPoint slot (mkTestEbHash seed)
+
+-- | A dummy announcing RB hash for DB tests that don't care about its value.
+testRbHash :: RbHash
+testRbHash = MkRbHash (BS.replicate 32 7)
 
 -- | Create a test LeiosEb with the given number of transactions.
 mkTestEb :: Int -> LeiosEb
@@ -335,7 +345,7 @@ prop_pointsAccumulate impl =
 -- | Property: inserting an EB body and looking it up returns the correct txs.
 prop_ebsInsertThenLookup :: DbImpl -> Property
 prop_ebsInsertThenLookup impl =
-  forAllShrinkShow (chooseInt (1, 50)) shrink show $ \numTxs ->
+  forAllShrinkShow (chooseInt (1, 50)) (filter (>= 1) . shrink) show $ \numTxs ->
     forAll (genPointAndEb numTxs) $ \(point, eb) ->
       ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
         let expectedTxs = V.toList (leiosEbTxs eb)
@@ -365,7 +375,7 @@ prop_ebsLookupMissing impl =
 -- and retrieval JOINs with that table.
 prop_txsInsertThenRetrieve :: DbImpl -> Property
 prop_txsInsertThenRetrieve impl =
-  forAllShrinkShow (chooseInt (1, 50)) shrink show $ \numTxs ->
+  forAllShrinkShow (chooseInt (1, 50)) (filter (>= 1) . shrink) show $ \numTxs ->
     forAllBlind (genPointAndEb numTxs) $ \(point, eb) ->
       forAllBlind (sublistOf [0 .. numTxs - 1]) $ \offsetsToInsert ->
         ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
@@ -890,7 +900,7 @@ prop_completedEbComplete impl =
           let ebTxList = V.toList (leiosEbTxs eb)
               txsToInsert = [(txHash, txBytes) | (txHash, _size) <- ebTxList]
           _ <- leiosDbInsertTxs con txsToInsert
-          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint con point
+          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByHash con (pointEbHash point)
           let expectedHashes = map fst txsToInsert
               check = case result of
                 Nothing ->
@@ -917,7 +927,7 @@ prop_completedEbMissingTxs impl =
       ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
         leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
         leiosDbInsertEbBody con point eb
-        (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint con point
+        (result, queryTime) <- timed $ leiosDbQueryCompletedEbByHash con (pointEbHash point)
         pure $
           result === Nothing
             & counterexample "Expected Nothing when no txs are present"
@@ -938,7 +948,7 @@ prop_completedEbPartialTxs impl =
               partialTxs = take (numTxs `div` 2) ebTxList
               txsToInsert = [(txHash, txBytes) | (txHash, _size) <- partialTxs]
           _ <- leiosDbInsertTxs con txsToInsert
-          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint con point
+          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByHash con (pointEbHash point)
           pure $
             result === Nothing
               & counterexample
@@ -957,7 +967,7 @@ prop_completedEbNoBody impl =
   forAll genPoint $ \point ->
     ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
       leiosDbInsertEbPoint con point 1000
-      (result, queryTime) <- timed $ leiosDbQueryCompletedEbByPoint con point
+      (result, queryTime) <- timed $ leiosDbQueryCompletedEbByHash con (pointEbHash point)
       pure $
         result === Nothing
           & counterexample "Expected Nothing for EB with no body inserted"

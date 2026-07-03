@@ -167,14 +167,18 @@ import Ouroboros.Network.TxSubmission.Inbound.V1
   , TxSubmissionMempoolWriter
   )
 import qualified Ouroboros.Network.TxSubmission.Inbound.V1 as Inbound
+import Ouroboros.Network.TxSubmission.Inbound.V2 (TxDecisionPolicy)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Registry
-  ( SharedTxStateVar
-  , TxChannelsVar
-  , TxMempoolSem
-  , decisionLogicThreads
+  ( PeerTxRegistry
+  , SharedTxStateVar
+  , TxSubmissionCountersVar
+  , newPeerTxRegistry
   , newSharedTxStateVar
-  , newTxChannelsVar
-  , newTxMempoolSem
+  , newTxSubmissionCountersVar
+  , txCountersThreadV2
+  )
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types
+  ( emptySharedTxState
   )
 import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( TxSubmissionMempoolReader
@@ -196,6 +200,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ The node's top-level static configuration
   , getFetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
   -- ^ The fetch client registry, used for the block fetch clients.
+  , getKeepAliveRegistry :: KeepAliveRegistry (ConnectionId addrNTN) m
+  -- ^ The keep-alive registry, used by block-fetch decision logic to read
+  -- per-peer GSV measurements collected by the keep-alive mini-protocol.
   , getFetchMode :: STM m FetchMode
   -- ^ The fetch mode, used by diffusion.
   , getGsmState :: STM m GSM.GsmState
@@ -218,13 +225,14 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getDiffusionPipeliningSupport ::
       DiffusionPipeliningSupport
   , getBlockchainTime :: BlockchainTime m
-  , getTxChannelsVar :: TxChannelsVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
-  -- ^ Communication channels between `TxSubmission` client mini-protocol and
-  -- decision logic.
-  , getSharedTxStateVar :: SharedTxStateVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
+  , getPeerTxRegistry :: PeerTxRegistry m (ConnectionId addrNTN)
+  -- ^ Per-peer tx-submission state: in-flight tracking and counters.
+  , getSharedTxStateVar :: SharedTxStateVar m (ConnectionId addrNTN) (GenTxId blk)
   -- ^ Shared state of all `TxSubmission` clients.
-  , getTxMempoolSem :: TxMempoolSem m
-  -- ^ A semaphore used by tx-submission for submitting `tx`s to the mempool.
+  , getTxCountersVar :: TxSubmissionCountersVar m
+  -- ^ Accumulator for tx-submission counters of disconnected peers.
+  , getTxDecisionPolicy :: TxDecisionPolicy
+  -- ^ Tx-submission decision policy.
   , -- The following fields contain the information in the Leios model exe's
     -- @LeiosFetchDynamicEnv@ and @LeiosFetchState@ data structures.
     --
@@ -235,7 +243,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getLeiosVoteState :: LeiosVoteState m
   -- ^ Aggregated vote state across all peers. Empty in S4; populated
   -- by the voting thread in S5.
-  , getLeiosPeersVars :: LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
+  , getLeiosPeersVars ::
+      LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   -- ^ Per-peer offerings + outgoing request queues, keyed by
   -- peer. Maintained by @bracketLeiosPeer@ (in the diffusion layer):
   -- get-or-created by the first of this peer's peer-vars
@@ -276,7 +285,6 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , gsmArgs :: GsmNodeKernelArgs m blk
   , getUseBootstrapPeers :: STM m UseBootstrapPeers
   , peerSharingRng :: StdGen
-  , txSubmissionRng :: StdGen
   , txSubmissionInitDelay :: TxSubmissionInitDelay
   , publicPeerSelectionStateVar ::
       StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
@@ -312,7 +320,6 @@ initNodeKernel
     , btime
     , gsmArgs
     , peerSharingRng
-    , txSubmissionRng
     , publicPeerSelectionStateVar
     , genesisArgs
     , getDiffusionPipeliningSupport
@@ -334,9 +341,11 @@ initNodeKernel
           , leiosOutstanding = getLeiosOutstanding
           , leiosReady = getLeiosReady
           , leiosPeersVars = getLeiosPeersVars
+          , leiosVoteState
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
+    keepAliveRegistry <- newKeepAliveRegistry
 
     do
       let GsmNodeKernelArgs{..} = gsmArgs
@@ -403,10 +412,6 @@ initNodeKernel
         ps_POLICY_PEER_SHARE_STICKY_TIME
         ps_POLICY_PEER_SHARE_MAX_PEERS
 
-    txChannelsVar <- newTxChannelsVar
-    sharedTxStateVar <- newSharedTxStateVar txSubmissionRng
-    txMempoolSem <- newTxMempoolSem
-
     case gnkaLoEAndGDDArgs genesisArgs of
       LoEAndGDDDisabled -> pure ()
       LoEAndGDDEnabled lgArgs -> do
@@ -440,16 +445,22 @@ initNodeKernel
           (contramap (fmap castTraceFetchClientState) $ blockFetchClientTracer tracers)
           blockFetchInterface
           fetchClientRegistry
+          keepAliveRegistry
           blockFetchConfiguration
 
+    sharedTxStateVar <- newSharedTxStateVar emptySharedTxState
+    peerTxRegistry <- newPeerTxRegistry
+    txCountersVar <- newTxSubmissionCountersVar mempty
+
     void $
-      forkLinkedThread registry "NodeKernel.decisionLogicThreads" $
-        decisionLogicThreads
-          (txLogicTracer tracers)
-          (txCountersTracer tracers)
+      forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
+        txCountersThreadV2
           (txDecisionPolicy miniProtocolParameters)
-          txChannelsVar
+          (txCountersTracer tracers)
+          (txLogicTracer tracers)
+          txCountersVar
           sharedTxStateVar
+          peerTxRegistry
 
     -- Leios fetch-logic state ('leiosOutstanding', 'leiosReady',
     -- 'leiosPeersVars') is created in 'initInternalState' and
@@ -527,13 +538,12 @@ initNodeKernel
     -- to local "EB closure acquired" notifications and emit a vote for
     -- each acquired EB (which the LeiosNotify server then publishes to
     -- peers). 'Nothing' disables voting on this node.
-    let getCommittee = getLeiosCommittee . ledgerState <$> ChainDB.getCurrentLedger chainDB
-    leiosVoteState <- newLeiosVoteState getCommittee
     void $
       forkLinkedThread registry "NodeKernel.leiosVoting" $
         runLeiosVoting
           (leiosKernelTracer tracers)
           chainDB
+          btime
           leiosDB
           leiosVoteState
           (topLevelConfigVotingKey cfg)
@@ -544,6 +554,7 @@ initNodeKernel
         , getMempool = mempool
         , getTopLevelConfig = cfg
         , getFetchClientRegistry = fetchClientRegistry
+        , getKeepAliveRegistry = keepAliveRegistry
         , getFetchMode = readFetchMode blockFetchInterface
         , getGsmState = readTVar varGsmState
         , getChainSyncHandles = varChainSyncHandles
@@ -555,9 +566,10 @@ initNodeKernel
             varOutboundConnectionsState
         , getDiffusionPipeliningSupport
         , getBlockchainTime = btime
-        , getTxChannelsVar = txChannelsVar
+        , getPeerTxRegistry = peerTxRegistry
         , getSharedTxStateVar = sharedTxStateVar
-        , getTxMempoolSem = txMempoolSem
+        , getTxCountersVar = txCountersVar
+        , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
         , getLeiosDB = leiosDB
         , getLeiosVoteState = leiosVoteState
         , getLeiosPeersVars = getLeiosPeersVars
@@ -614,6 +626,10 @@ data InternalState m addrNTN addrNTC blk = IS
   , leiosReady :: MVar.MVar m ()
   , leiosPeersVars ::
       LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
+  , leiosVoteState :: LeiosVoteState m
+  -- ^ Accumulator for Leios votes; assembles certificates once a
+  -- point's tally crosses 'minCertificationThreshold'. Source of
+  -- 'fbLeiosVoteState' threaded into 'ForgeBlockArgs'.
   }
 
 initInternalState ::
@@ -689,6 +705,10 @@ initInternalState
             getDiffusionPipeliningSupport
 
     peerSharingRegistry <- newPeerSharingRegistry
+
+    leiosVoteState <-
+      newLeiosVoteState
+        (getLeiosCommittee . ledgerState <$> ChainDB.getCurrentLedger chainDB)
 
     return IS{..}
 
@@ -907,6 +927,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             , Block.fbChainDepState = Just untickedChainDepState
             , Block.fbLeiosDb = leiosConn
             , Block.fbLeiosTracer = leiosKernelTracer tracers
+            , Block.fbLeiosVoteState = leiosVoteState
             }
 
     trace blockForging $

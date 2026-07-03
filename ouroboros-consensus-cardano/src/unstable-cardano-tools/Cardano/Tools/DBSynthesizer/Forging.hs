@@ -25,6 +25,7 @@ import Data.Maybe (fromJust, isJust)
 import Data.Proxy
 import Data.Word (Word64)
 import LeiosDemoDb (LeiosDbConnection)
+import LeiosVoteState (LeiosVoteState, newLeiosVoteState)
 import Ouroboros.Consensus.Block.Abstract as Block
 import Ouroboros.Consensus.Block.Forging as Block
   ( BlockForging (..)
@@ -113,7 +114,10 @@ runForge ::
 runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
-  endState <- go initialForgeState{currentSlot = nextSlot}
+  -- Synthetic forging doesn't gather votes; supply a vote state with
+  -- no committee so 'queryCert' always returns 'Nothing'.
+  leiosVoteState <- newLeiosVoteState (pure Nothing)
+  endState <- go leiosVoteState initialForgeState{currentSlot = nextSlot}
   putStrLn $
     "--> forged and adopted "
       ++ show (forged endState)
@@ -129,12 +133,12 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
     ForgeLimitBlock b -> (b ==) . forged
     ForgeLimitEpoch e -> (e ==) . currentEpoch
 
-  go :: ForgeState -> IO ForgeState
-  go forgeState
+  go :: LeiosVoteState IO -> ForgeState -> IO ForgeState
+  go leiosVoteState forgeState
     | forgingDone forgeState = pure forgeState
     | otherwise =
-        go . nextForgeState forgeState . isRight
-          =<< runExceptT (goSlot $ currentSlot forgeState)
+        go leiosVoteState . nextForgeState forgeState . isRight
+          =<< runExceptT (goSlot leiosVoteState $ currentSlot forgeState)
 
   nextForgeState :: ForgeState -> Bool -> ForgeState
   nextForgeState ForgeState{currentSlot, forged, currentEpoch, processed} didForge =
@@ -152,8 +156,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
   exitEarly' = throwE
   lift = liftIO
 
-  goSlot :: SlotNo -> ExceptT String IO ()
-  goSlot currentSlot = do
+  goSlot :: LeiosVoteState IO -> SlotNo -> ExceptT String IO ()
+  goSlot leiosVoteState currentSlot = do
     -- Figure out which block to connect to
     BlockContext{bcBlockNo, bcPrevPoint} <- do
       eBlkCtx <-
@@ -244,6 +248,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
             , fbChainDepState = Nothing
             , fbLeiosDb = leiosDb
             , fbLeiosTracer = Trace.nullTracer
+            , fbLeiosVoteState = leiosVoteState
             }
 
     -- Add the block to the chain DB (synchronously) and verify adoption

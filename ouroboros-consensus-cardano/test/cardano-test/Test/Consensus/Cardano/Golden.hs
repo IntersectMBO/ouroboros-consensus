@@ -8,19 +8,11 @@
 
 module Test.Consensus.Cardano.Golden (tests) where
 
-import Cardano.Crypto.DSIGN (genKeyDSIGN, seedSizeDSIGN)
-import Cardano.Crypto.Seed (mkSeedFromBytes)
-import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Data.ByteString as BS
-import Data.Data (Proxy (..))
-import Data.Word (Word8)
 import LeiosDemoTypes
-  ( EbHash (..)
-  , LeiosDSIGN
-  , LeiosPoint (..)
-  , LeiosSigningKey
-  , LeiosVote
-  , VoterId (MkVoterId)
+  ( LeiosVote
+  , LeiosVoterId (..)
+  , RbHash (..)
   , encodeLeiosVote
   , signLeiosVote
   )
@@ -31,6 +23,7 @@ import Ouroboros.Consensus.Ledger.Query (QueryVersion)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import System.FilePath ((</>))
+import Test.Cardano.Crypto.Leios.Gen (genLeiosSigningKey, generateWith)
 import Test.Consensus.Cardano.Examples
 import Test.Tasty
 import Test.Util.Paths
@@ -64,16 +57,9 @@ tests =
 -- key. Pinned by the corresponding golden file.
 typicalVote :: LeiosVote
 typicalVote =
-  signLeiosVote (mkLeiosSigningKey 0x42) (MkVoterId 1000) point
+  signLeiosVote (generateWith genLeiosSigningKey 42) (LeiosVoterId 1000) rbHash
  where
-  point = MkLeiosPoint (SlotNo 42) (MkEbHash (BS.pack [0 .. 31]))
-
--- | Deterministic signing key, seeded by repeating a single byte.
-mkLeiosSigningKey :: Word8 -> LeiosSigningKey
-mkLeiosSigningKey b =
-  genKeyDSIGN $ mkSeedFromBytes $ BS.replicate sz b
- where
-  sz = fromIntegral (seedSizeDSIGN (Proxy @LeiosDSIGN))
+  rbHash = MkRbHash (BS.pack [0 .. 31])
 
 instance
   CardanoHardForkConstraints c =>

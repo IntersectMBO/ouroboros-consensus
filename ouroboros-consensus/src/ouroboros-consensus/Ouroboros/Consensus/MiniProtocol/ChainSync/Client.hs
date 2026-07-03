@@ -783,7 +783,9 @@ data ConfigEnv m blk = ConfigEnv
   , getDiffusionPipeliningSupport ::
       DiffusionPipeliningSupport
   , leiosCertRbCallback ::
-      Header blk -> ChainDepState (BlockProtocol blk) -> m ()
+      Header blk ->
+      ChainDepState (BlockProtocol blk) ->
+      m ()
   -- ^ Invoked on each accepted 'MsgRollForward' with the just-arrived header
   -- and the chain-dep state as of its predecessor. For Leios: when the new
   -- header is a CertRB (its @headerContainsLeiosCert@ bit is set), the predecessor's

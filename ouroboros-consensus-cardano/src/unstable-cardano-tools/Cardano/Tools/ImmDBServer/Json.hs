@@ -12,7 +12,7 @@ import Control.Concurrent.Class.MonadMVar
   )
 import Control.Monad.Class.MonadTime.SI (Time)
 import qualified Control.Monad.Class.MonadTime.SI as Time
-import Control.Tracer (Tracer (Tracer))
+import Control.Tracer (Tracer, mkTracer)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy.Char8 as BL8
 import qualified Data.Map.Strict as Map
@@ -44,7 +44,7 @@ mkUltimateTracer = do
   lock <- newMVar Map.empty
   -- We read the time /after/ acquiring the lock to ensure the invariant that
   -- the timestamps in the log file are non-descending.
-  pure $ Tracer $ \case
+  pure $ mkTracer $ \case
     SayEvent ev -> withMVar lock $ \_cntrs -> do
       tm <- getCurrentTime
       BL8.putStrLn $ Aeson.encode ev{Say.at = renderTime tm}

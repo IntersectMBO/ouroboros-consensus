@@ -85,6 +85,8 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import System.Directory (makeAbsolute)
+import System.FS.API (MountPoint (..), SomeHasFS (..))
+import System.FS.IO (ioHasFS)
 import System.FilePath (takeDirectory, (</>))
 import TextBuilder (TextBuilder)
 import qualified TextBuilder as Builder
@@ -179,13 +181,12 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
               CryptoClass.hashWith id $
                 content
 
-    return $
-      mkCardanoProtocolInfo
-        genesisByron
-        threshold
-        transCfg
-        initialNonce
-        (cfgHardForkTriggers cc)
+    mkCardanoProtocolInfo
+      genesisByron
+      threshold
+      transCfg
+      initialNonce
+      (cfgHardForkTriggers cc)
 
 -- | An empty Dijkstra genesis to be provided when none is specified in the config.
 emptyDijkstraGenesis :: SL.DijkstraGenesis
@@ -417,10 +418,11 @@ mkCardanoProtocolInfo ::
   SL.TransitionConfig L.LatestKnownEra ->
   Nonce ->
   CardanoHardForkTriggers ->
-  ProtocolInfo (CardanoBlock StandardCrypto)
+  IO (ProtocolInfo (CardanoBlock StandardCrypto))
 mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNonce triggers =
-  fst $
-    protocolInfoCardano @_ @IO $
+  -- The analyser doesn't forge, so the KES-agent FS is never consulted.
+  fmap fst $
+    protocolInfoCardano (SomeHasFS (ioHasFS (MountPoint ""))) $
       mkCardanoProtocolParamsFromBits
         []
         genesisByron

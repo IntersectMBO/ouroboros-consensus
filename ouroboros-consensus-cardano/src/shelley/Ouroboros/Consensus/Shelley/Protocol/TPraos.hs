@@ -1,5 +1,4 @@
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -8,9 +7,8 @@ module Ouroboros.Consensus.Shelley.Protocol.TPraos () where
 
 import qualified Cardano.Crypto.KES as SL
 import Cardano.Crypto.VRF (certifiedOutput)
-import Cardano.Ledger.Chain (ChainPredicateFailure)
+import Cardano.Ledger.BaseTypes (ProtVer (ProtVer))
 import Cardano.Ledger.Hashes (originalBytesSize)
-import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.TPraos.API (PraosCrypto)
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
@@ -38,14 +36,17 @@ import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , ProtocolHeaderSupportsEnvelope (..)
-  , default_pHeaderLeiosContainsCert
   , ProtocolHeaderSupportsKES (..)
-  , ProtocolHeaderSupportsLedger (..)
   , ProtocolHeaderSupportsProtocol (..)
   , ShelleyHash (..)
   , ShelleyProtocol
   , ShelleyProtocolHeader
-  , protocolHeaderView
+  , default_pHeaderLeiosContainsCert
+  )
+import Ouroboros.Consensus.Shelley.Protocol.EnvelopeChecks
+  ( EnvelopeError
+  , EnvelopeHeaderView (..)
+  , envelopeCheck
   )
 
 type instance ProtoCrypto (TPraos c) = c
@@ -62,15 +63,20 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
   pHeaderBlockSize = fromIntegral @Word32 @Natural . SL.bsize . SL.bhbody
   pHeaderLeiosContainsCert = default_pHeaderLeiosContainsCert
 
-  type EnvelopeCheckError _ = ChainPredicateFailure
+  type EnvelopeCheckError _ = EnvelopeError
 
   envelopeChecks cfg lv hdr =
-    SL.chainChecks
-      maxPV
-      (SL.lvChainChecks lv)
-      (SL.makeHeaderView (protocolHeaderView @(TPraos c) hdr) Nothing)
+    envelopeCheck maxPV ccd $
+      EnvelopeHeaderView
+        { ehvProtVer = m
+        , ehvHeaderSize = originalBytesSize hdr
+        , ehvBodySize = SL.bsize bhb
+        }
    where
-    MaxMajorProtVer maxPV = tpraosMaxMajorPV $ tpraosParams cfg
+    bhb = SL.bhbody hdr
+    ccd = SL.tplvChainChecks lv
+    ProtVer m _ = SL.bprotver bhb
+    MaxMajorProtVer maxPV = tpraosMaxMajorPV (tpraosParams cfg)
 
 instance PraosCrypto c => ProtocolHeaderSupportsKES (TPraos c) where
   configSlotsPerKESPeriod cfg = tpraosSlotsPerKESPeriod $ tpraosParams cfg
@@ -92,6 +98,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (TPraos c) where
           currentKesPeriod - startOfKesPeriod
       | otherwise =
           0
+
   mkHeader hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer _mayEbAnn _containsCert = do
     TPraosFields{tpraosSignature, tpraosToSign} <-
       forgeTPraosFields hotKey canBeLeader isLeader mkBhBody
@@ -133,9 +140,6 @@ instance PraosCrypto c => ProtocolHeaderSupportsProtocol (TPraos c) where
   -- https://github.com/IntersectMBO/ouroboros-network/issues/4051 for a more
   -- detailed discussion.
   pTieBreakVRFValue = certifiedOutput . SL.bheaderL . SL.bhbody
-
-instance PraosCrypto c => ProtocolHeaderSupportsLedger (TPraos c) where
-  mkHeaderView = (flip SL.makeHeaderView) Nothing
 
 type instance Signed (SL.BHeader c) = SL.BHBody c
 

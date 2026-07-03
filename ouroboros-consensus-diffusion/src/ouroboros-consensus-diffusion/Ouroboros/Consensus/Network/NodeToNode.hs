@@ -121,7 +121,8 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import LeiosVoteState
-  ( LeiosVoteState (..)
+  ( AddVoteResult (..)
+  , LeiosVoteState (..)
   , LeiosVoteSubscription (..)
   , subscribeVotes
   )
@@ -214,13 +215,13 @@ import Ouroboros.Network.Protocol.TxSubmission2.Client
 import Ouroboros.Network.Protocol.TxSubmission2.Codec
 import Ouroboros.Network.Protocol.TxSubmission2.Server
 import Ouroboros.Network.Protocol.TxSubmission2.Type
+import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V1
 import Ouroboros.Network.TxSubmission.Inbound.V2
   ( PeerTxAPI
   , TraceTxLogic
   , TxDecisionPolicy (..)
   , TxSubmissionLogicVersion (..)
-  , defaultTxDecisionPolicy
   , txSubmissionInboundV2
   , withPeer
   )
@@ -419,7 +420,9 @@ mkHandlers
                       (Node.txInboundTracer tracers)
                   )
                   txSubmissionInitDelay
+                  (txDecisionPolicy miniProtocolParameters)
                   (getMempoolWriter getMempool)
+                  txWireSize
                   api
             TxSubmissionLogicV1 ->
               Left $
@@ -495,9 +498,17 @@ mkHandlers
                     void $ MVar.tryPutMVar getLeiosReady ()
                   MsgLeiosVotes vs -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs
-                    mapM_ addVote vs
-                    forM_ vs $ \vote ->
+                    forM_ vs $ \vote -> do
+                      result <- addVote vote
                       traceWith kernelTracer TraceLeiosVoteAcquired{vote}
+                      -- A remote vote can be the one that tips this
+                      -- node's tally past 'minCertificationThreshold';
+                      -- trace certification whenever 'addVote' surfaces
+                      -- a cert for the point.
+                      case result of
+                        Added _ (Just _) ->
+                          traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote}
+                        _ -> pure ()
               )
       , hLeiosNotifyServer = \_version _peer -> Effect $ do
           chan <- subscribeEbNotifications leiosDB
@@ -773,22 +784,24 @@ showTracers ::
   , Show (Header blk)
   , Show (GenTx blk)
   , Show (GenTxId blk)
+  , HasRawTxId (GenTxId blk)
   , HasHeader blk
   , HasNestedContent Header blk
+  , Monad m
   ) =>
   Tracer m String -> Tracers m ntnAddr blk e
 showTracers tr =
   Tracers
-    { tChainSyncTracer = showTracing tr
-    , tChainSyncSerialisedTracer = showTracing tr
-    , tBlockFetchTracer = showTracing tr
-    , tBlockFetchSerialisedTracer = showTracing tr
-    , tTxSubmission2Tracer = showTracing tr
-    , tKeepAliveTracer = showTracing tr
-    , tPeerSharingTracer = showTracing tr
-    , tTxLogicTracer = showTracing tr
-    , tLeiosNotifyTracer = showTracing tr
-    , tLeiosFetchTracer = showTracing tr
+    { tChainSyncTracer = show >$< tr
+    , tChainSyncSerialisedTracer = show >$< tr
+    , tBlockFetchTracer = show >$< tr
+    , tBlockFetchSerialisedTracer = show >$< tr
+    , tTxSubmission2Tracer = show >$< tr
+    , tKeepAliveTracer = show >$< tr
+    , tPeerSharingTracer = show >$< tr
+    , tTxLogicTracer = show >$< tr
+    , tLeiosNotifyTracer = show >$< tr
+    , tLeiosFetchTracer = show >$< tr
     }
 
 {-------------------------------------------------------------------------------
@@ -800,13 +813,13 @@ type ClientApp m addr bytes a =
   NodeToNodeVersion ->
   ExpandedInitiatorContext addr PeerTrustable m ->
   Channel m bytes ->
-  m (a, Maybe (Reception bytes))
+  m (a, Maybe bytes)
 
 type ServerApp m addr bytes a =
   NodeToNodeVersion ->
   ResponderContext addr ->
   Channel m bytes ->
-  m (a, Maybe (Reception bytes))
+  m (a, Maybe bytes)
 
 -- | Applications for the node-to-node protocols
 --
@@ -921,6 +934,7 @@ mkApps ::
   , BearerBytes bPS
   , BearerBytes bLN
   , BearerBytes bLF
+  , HasRawTxId (GenTxId blk)
   ) =>
   -- | Needed for bracketing only
   NodeKernel m addrNTN addrNTC blk ->
@@ -936,7 +950,7 @@ mkApps ::
   ReportPeerMetrics m (ConnectionId addrNTN) ->
   Handlers m addrNTN blk ->
   Apps m addrNTN bCS bBF bTX bKA bPS bLN bLF NodeToNodeInitiatorResult ()
-mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucketConfig csjConfig ReportPeerMetrics{..} Handlers{..} =
+mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucketConfig csjConfig ReportPeerMetrics{..} Handlers{..} =
   Apps{..}
  where
   (chainSyncRng, chainSyncRng') = splitGen rng
@@ -946,7 +960,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bCS ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bCS))
+    m (NodeToNodeInitiatorResult, Maybe bCS)
   aChainSyncClient
     version
     ExpandedInitiatorContext
@@ -1007,7 +1021,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bCS ->
-    m ((), Maybe (Reception bCS))
+    m ((), Maybe bCS)
   aChainSyncServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "ChainSyncServer"
     bracketWithPrivateRegistry
@@ -1034,7 +1048,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bBF ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bBF))
+    m (NodeToNodeInitiatorResult, Maybe bBF)
   aBlockFetchClient
     version
     ExpandedInitiatorContext
@@ -1045,6 +1059,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
       labelThisThread "BlockFetchClient"
       bracketFetchClient
         (getFetchClientRegistry kernel)
+        (getKeepAliveRegistry kernel)
         version
         them
         $ \clientCtx -> do
@@ -1066,7 +1081,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bBF ->
-    m ((), Maybe (Reception bBF))
+    m ((), Maybe bBF)
   aBlockFetchServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "BlockFetchServer"
     withRegistry $ \registry ->
@@ -1083,7 +1098,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bTX ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bTX))
+    m (NodeToNodeInitiatorResult, Maybe bTX)
   aTxSubmission2Client
     version
     ExpandedInitiatorContext
@@ -1106,7 +1121,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bTX ->
-    m ((), Maybe (Reception bTX))
+    m ((), Maybe bTX)
   aTxSubmission2Server version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "TxSubmissionServer"
 
@@ -1124,16 +1139,13 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
         runServer legacyTxSubmissionServer
       Right newTxSubmissionServer ->
         withPeer
-          (TraceLabelPeer them `contramap` tTxLogicTracer)
-          (getTxChannelsVar kernel)
-          (getTxMempoolSem kernel)
-          defaultTxDecisionPolicy
-          (getSharedTxStateVar kernel)
+          (getTxDecisionPolicy kernel)
           ( mapTxSubmissionMempoolReader txForgetValidated $
               getMempoolReader (getMempool kernel)
           )
-          (getMempoolWriter (getMempool kernel))
-          txWireSize
+          (getSharedTxStateVar kernel)
+          (getPeerTxRegistry kernel)
+          (getTxCountersVar kernel)
           them
           $ \api ->
             runServer (newTxSubmissionServer api)
@@ -1142,7 +1154,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bKA ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bKA))
+    m (NodeToNodeInitiatorResult, Maybe bKA)
   aKeepAliveClient
     version
     ExpandedInitiatorContext
@@ -1166,14 +1178,14 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
                 dqCtx
                 (KeepAliveInterval 10)
 
-      ((), trailing) <- bracketKeepAliveClient (getFetchClientRegistry kernel) them kacApp
+      ((), trailing) <- bracketKeepAliveClient (getKeepAliveRegistry kernel) them kacApp
       return (NoInitiatorResult, trailing)
 
   aKeepAliveServer ::
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bKA ->
-    m ((), Maybe (Reception bKA))
+    m ((), Maybe bKA)
   aKeepAliveServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "KeepAliveServer"
     runPeerWithLimits
@@ -1189,7 +1201,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bPS ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bPS))
+    m (NodeToNodeInitiatorResult, Maybe bPS)
   aPeerSharingClient
     version
     ExpandedInitiatorContext
@@ -1215,7 +1227,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bPS ->
-    m ((), Maybe (Reception bPS))
+    m ((), Maybe bPS)
   aPeerSharingServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "PeerSharingServer"
     runPeerWithLimits
@@ -1279,7 +1291,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bLN ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bLN))
+    m (NodeToNodeInitiatorResult, Maybe bLN)
   aLeiosNotifyClient
     version
     ExpandedInitiatorContext
@@ -1303,7 +1315,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bLN ->
-    m ((), Maybe (Reception bLN))
+    m ((), Maybe bLN)
   aLeiosNotifyServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "LeiosNotifyServer"
     runPeerWithLimits
@@ -1318,7 +1330,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ExpandedInitiatorContext addrNTN PeerTrustable m ->
     Channel m bLF ->
-    m (NodeToNodeInitiatorResult, Maybe (Reception bLF))
+    m (NodeToNodeInitiatorResult, Maybe bLF)
   aLeiosFetchClient
     version
     ExpandedInitiatorContext
@@ -1342,7 +1354,7 @@ mkApps kernel rng Tracers{..} mkCodecs ByteLimits{..} chainSyncTimeouts lopBucke
     NodeToNodeVersion ->
     ResponderContext addrNTN ->
     Channel m bLF ->
-    m ((), Maybe (Reception bLF))
+    m ((), Maybe bLF)
   aLeiosFetchServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "LeiosFetchServer"
     runPeerWithLimits
@@ -1371,6 +1383,7 @@ initiator ::
   OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr PeerTrustable b m a Void
 initiator miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
+    Set.empty -- TODO: use feature flags for Leios
     miniProtocolParameters
     -- TODO: currently consensus is using 'ConnectionId' for its 'peer' type.
     -- This is currently ok, as we might accept multiple connections from the
@@ -1385,6 +1398,8 @@ initiator miniProtocolParameters version versionData Apps{..} =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aBlockFetchClient version ctx)))
         , txSubmissionProtocol =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aTxSubmission2Client version ctx)))
+        , perasCertDiffusionProtocol = perasUnsupportedInitiator
+        , perasVoteDiffusionProtocol = perasUnsupportedInitiator
         , keepAliveProtocol =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aKeepAliveClient version ctx)))
         , peerSharingProtocol =
@@ -1396,6 +1411,7 @@ initiator miniProtocolParameters version versionData Apps{..} =
     <> mempty
       { withHot =
           WithHot
+            -- TODO: Also move the leios protocols into NodeToNodeProtocols?
             [ MiniProtocol
                 { miniProtocolNum = leiosNotifyMiniProtocolNum
                 , miniProtocolStart = StartOnDemand
@@ -1428,6 +1444,7 @@ initiatorAndResponder ::
   OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr PeerTrustable b m a c
 initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
   nodeToNodeProtocols
+    Set.empty
     miniProtocolParameters
     ( NodeToNodeProtocols
         { chainSyncProtocol =
@@ -1445,6 +1462,8 @@ initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
                 (MiniProtocolCb (\initiatorCtx -> aTxSubmission2Client version initiatorCtx))
                 (MiniProtocolCb (\responderCtx -> aTxSubmission2Server version responderCtx))
             )
+        , perasCertDiffusionProtocol = perasUnsupportedInitiatorResponder
+        , perasVoteDiffusionProtocol = perasUnsupportedInitiatorResponder
         , keepAliveProtocol =
             ( InitiatorAndResponderProtocol
                 (MiniProtocolCb (\initiatorCtx -> aKeepAliveClient version initiatorCtx))
@@ -1482,6 +1501,24 @@ initiatorAndResponder miniProtocolParameters version versionData Apps{..} =
                 }
             ]
       }
+
+-- | Placeholder for the Peras certificate/vote diffusion mini-protocols. The
+-- network layer only invokes these when the negotiated 'NodeToNodeVersionData'
+-- advertises 'PerasSupported'; consensus currently negotiates
+-- 'PerasUnsupported', so these slots are never run. If/when Peras lands at the
+-- consensus layer, replace these with real applications.
+perasUnsupportedInitiator ::
+  RunMiniProtocol 'Mux.InitiatorMode initiatorCtx responderCtx bytes m a Void
+perasUnsupportedInitiator =
+  InitiatorProtocolOnly
+    (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
+
+perasUnsupportedInitiatorResponder ::
+  RunMiniProtocol 'Mux.InitiatorResponderMode initiatorCtx responderCtx bytes m a c
+perasUnsupportedInitiatorResponder =
+  InitiatorAndResponderProtocol
+    (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
+    (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
 
 leiosNotifyProtocolLimits :: MiniProtocolLimits
 leiosNotifyProtocolLimits =

@@ -47,11 +47,11 @@ import qualified Data.ByteString.Lazy as Lazy
 import Data.List as List (foldl')
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Set as Set
 import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import Data.Maybe.Strict (StrictMaybe (..))
 import GHC.Stack
 import LeiosDemoTypes (pointEbHash)
 import Ouroboros.Consensus.Block

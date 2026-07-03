@@ -62,7 +62,8 @@ import Ouroboros.Consensus.Protocol.PBFT
   , PBftSignatureThreshold (..)
   )
 import Ouroboros.Consensus.Protocol.Praos.AgentClient
-  ( KESAgentClientTrace
+  ( AgentCrypto
+  , KESAgentClientTrace
   , KESAgentContext
   )
 import Ouroboros.Consensus.Shelley.Node
@@ -70,6 +71,9 @@ import Ouroboros.Consensus.Shelley.Node
   , ShelleyGenesis
   , ShelleyLeaderCredentials
   )
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as MockFS
+import qualified System.FS.Sim.STM as Sim
 import qualified Test.Cardano.Ledger.Alonzo.Examples as Alonzo
 import qualified Test.Cardano.Ledger.Conway.Examples as Conway
 import qualified Test.Cardano.Ledger.Dijkstra.Examples as Dijkstra
@@ -176,7 +180,7 @@ hardForkInto Dijkstra =
 -- more details on how to specify a value of this type.
 mkSimpleTestProtocolInfo ::
   forall c.
-  (CardanoHardForkConstraints c, KESAgentContext c IO) =>
+  (CardanoHardForkConstraints c, AgentCrypto c) =>
   -- | Network decentralization parameter.
   Shelley.DecentralizationParam ->
   SecurityParam ->
@@ -184,16 +188,18 @@ mkSimpleTestProtocolInfo ::
   ShelleySlotLengthInSeconds ->
   SL.ProtVer ->
   CardanoHardForkTriggers ->
-  ProtocolInfo (CardanoBlock c)
+  IO (ProtocolInfo (CardanoBlock c))
 mkSimpleTestProtocolInfo
   decentralizationParam
   securityParam
   byronSlotLenghtInSeconds
   shelleySlotLengthInSeconds
   protocolVersion
-  hardForkTriggers =
-    fst $
-      mkTestProtocolInfo @IO
+  hardForkTriggers = do
+    fs <- SomeHasFS <$> Sim.simHasFS' MockFS.empty
+    fst
+      <$> mkTestProtocolInfo @IO
+        fs
         (CoreNodeId 0, coreNodeShelley)
         shelleyGenesis
         aByronProtocolVersion
@@ -248,6 +254,7 @@ mkTestProtocolInfo ::
   ( CardanoHardForkConstraints c
   , KESAgentContext c m
   ) =>
+  SomeHasFS m ->
   -- | Id of the node for which the protocol info will be elaborated.
   (CoreNodeId, Shelley.CoreNode c) ->
   -- | These nodes will be part of the initial delegation mapping, and funds
@@ -265,10 +272,12 @@ mkTestProtocolInfo ::
   SL.ProtVer ->
   -- | Specification of the era to which the initial state should hard-fork to.
   CardanoHardForkTriggers ->
-  ( ProtocolInfo (CardanoBlock c)
-  , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
-  )
+  m
+    ( ProtocolInfo (CardanoBlock c)
+    , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (CardanoBlock c)]
+    )
 mkTestProtocolInfo
+  fs
   (coreNodeId, coreNode)
   shelleyGenesis
   aByronProtocolVersion
@@ -279,6 +288,7 @@ mkTestProtocolInfo
   protocolVersion
   hardForkTriggers =
     protocolInfoCardano
+      fs
       ( CardanoProtocolParams
           ProtocolParamsByron
             { byronGenesis = genesisByron

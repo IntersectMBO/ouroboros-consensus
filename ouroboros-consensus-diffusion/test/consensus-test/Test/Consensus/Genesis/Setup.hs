@@ -26,6 +26,7 @@ import Control.Monad.Class.MonadAsync
 import Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import Control.Tracer (debugTracer, traceWith)
 import Data.Maybe (mapMaybe)
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block.Abstract
   ( ChainHash (..)
   , ConvertRawHash
@@ -177,6 +178,7 @@ runGenesisTest ::
   , Terse blk
   , Condense (NodeState blk)
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   ProtocolInfoArgs blk ->
   SchedulerConfig ->
@@ -240,6 +242,7 @@ runConformanceTest ::
   , Terse blk
   , Condense (NodeState blk)
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   ConformanceTest blk -> TestTree
 runConformanceTest conformanceTest =

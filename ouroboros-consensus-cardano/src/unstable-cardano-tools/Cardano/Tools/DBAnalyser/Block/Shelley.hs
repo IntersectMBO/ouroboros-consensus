@@ -53,6 +53,8 @@ import Ouroboros.Consensus.Shelley.Node
   , protocolInfoShelley
   )
 import Ouroboros.Network.SizeInBytes (SizeInBytes (SizeInBytes))
+import System.FS.API (MountPoint (..), SomeHasFS (..))
+import System.FS.IO (ioHasFS)
 import TextBuilder (decimal)
 
 -- | Usable for each Shelley-based era
@@ -147,17 +149,21 @@ instance HasProtocolInfo (ShelleyBlock (TPraos StandardCrypto) ShelleyEra) where
     config <-
       either (error . show) return
         =<< Aeson.eitherDecodeFileStrict' configFileShelley
-    return $ mkShelleyProtocolInfo config initialNonce
+    mkShelleyProtocolInfo config initialNonce
 
 type ShelleyBlockArgs = Args (ShelleyBlock (TPraos StandardCrypto) ShelleyEra)
 
 mkShelleyProtocolInfo ::
   ShelleyGenesis ->
   Nonce ->
-  ProtocolInfo (ShelleyBlock (TPraos StandardCrypto) ShelleyEra)
+  IO (ProtocolInfo (ShelleyBlock (TPraos StandardCrypto) ShelleyEra))
 mkShelleyProtocolInfo genesis initialNonce =
-  fst $
-    protocolInfoShelley @IO
+  -- The analyser doesn't forge, so 'shelleyBasedLeaderCredentials = []'
+  -- means the KES-agent FS handle is never consulted. We still need to
+  -- supply a 'SomeHasFS' to satisfy the type — a no-op MountPoint is fine.
+  fmap fst $
+    protocolInfoShelley
+      (SomeHasFS (ioHasFS (MountPoint "")))
       genesis
       ProtocolParamsShelleyBased
         { shelleyBasedInitialNonce = initialNonce

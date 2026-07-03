@@ -325,6 +325,7 @@ hardForkForgeBlock
     , fbChainDepState
     , fbLeiosDb
     , fbLeiosTracer
+    , fbLeiosVoteState
     } =
     fmap (HardForkBlock . OneEraBlock)
       $ hsequence
@@ -439,4 +440,5 @@ hardForkForgeBlock
             , fbChainDepState = unwrapChainDepState <$> mChainDepState'
             , fbLeiosDb
             , fbLeiosTracer
+            , fbLeiosVoteState
             }

@@ -18,7 +18,6 @@ import GHC.Stack (HasCallStack)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
-  , LeiosCertificate
   , LeiosEb
   , LeiosPoint
   , TxHash
@@ -107,7 +106,7 @@ data LeiosDbConnection m = LeiosDbConnection
     leiosDbInsertTxs :: HasCallStack => [(TxHash, ByteString)] -> m CompletedEbs
   -- ^ Insert transactions into the global txs table (INSERT OR IGNORE).
   -- After inserting, checks which EBs referencing these txs are now complete
-  -- and emits LeiosOfferBlockTxs notifications for each.
+  -- and emits 'AcquiredEbTxs' notifications for each.
   --
   -- NOTE: Duplicate notifications may be emitted if the same EB becomes
   -- complete via multiple insert batches (e.g., if txs are inserted twice).
@@ -120,8 +119,7 @@ data LeiosDbConnection m = LeiosDbConnection
   -- ^ Batch filter: returns the subset of input LeiosPoints whose EB bodies are missing.
   , leiosDbFilterMissingTxs :: HasCallStack => [TxHash] -> m [TxHash]
   -- ^ Batch filter: returns the subset of input TxHashes that we do NOT have.
-  , leiosDbQueryCompletedEbByPoint :: HasCallStack => LeiosPoint -> m (Maybe [(TxHash, ByteString)])
-  , leiosDbQueryCertificateByPoint :: HasCallStack => LeiosPoint -> m (Maybe LeiosCertificate)
+  , leiosDbQueryCompletedEbByHash :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
   }
 
 instance NoThunks (LeiosDbHandle m) where

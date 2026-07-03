@@ -47,6 +47,9 @@ import Ouroboros.Consensus.Shelley.Node
   ( ProtocolParamsShelleyBased (..)
   , ShelleyGenesis (..)
   )
+import System.FS.API (SomeHasFS (..))
+import qualified System.FS.Sim.MockFS as MockFS
+import qualified System.FS.Sim.STM as Sim
 import Test.Consensus.Shelley.MockCrypto (MockCrypto)
 import Test.QuickCheck
 import Test.Tasty
@@ -251,7 +254,8 @@ prop_simple_shelleyAllegra_convergence
         setupTestConfig
         testConfigB
         TestConfigMB
-          { nodeInfo = \(CoreNodeId nid) ->
+          { nodeInfo = \(CoreNodeId nid) -> do
+              fs <- SomeHasFS <$> Sim.simHasFS' MockFS.empty
               let protocolParamsShelleyBased =
                     ProtocolParamsShelleyBased
                       { shelleyBasedInitialNonce = setupInitialNonce
@@ -262,29 +266,31 @@ prop_simple_shelleyAllegra_convergence
                       }
                   hardForkTrigger =
                     TriggerHardForkAtVersion $ SL.getVersion majorVersion2
-                  (protocolInfo, blockForging) =
-                    protocolInfoShelleyBasedHardFork
-                      protocolParamsShelleyBased
-                      (SL.ProtVer majorVersion1 0)
-                      (SL.ProtVer majorVersion2 0)
-                      ( L.mkTransitionConfig L.NoGenesis $
-                          L.mkShelleyTransitionConfig genesisShelley
-                      )
-                      hardForkTrigger
-               in TestNodeInitialization
-                    { tniCrucialTxs =
-                        if not setupHardFork
-                          then []
-                          else
-                            fmap GenTxShelley1 $
-                              Shelley.mkSetDecentralizationParamTxs
-                                coreNodes
-                                (SL.ProtVer majorVersion2 0)
-                                (SlotNo $ unNumSlots numSlots) -- never expire
-                                setupD -- unchanged
-                    , tniProtocolInfo = protocolInfo
-                    , tniBlockForging = blockForging nullTracer
-                    }
+              (protocolInfo, blockForging) <-
+                protocolInfoShelleyBasedHardFork
+                  fs
+                  protocolParamsShelleyBased
+                  (SL.ProtVer majorVersion1 0)
+                  (SL.ProtVer majorVersion2 0)
+                  ( L.mkTransitionConfig L.NoGenesis $
+                      L.mkShelleyTransitionConfig genesisShelley
+                  )
+                  hardForkTrigger
+              pure
+                TestNodeInitialization
+                  { tniCrucialTxs =
+                      if not setupHardFork
+                        then []
+                        else
+                          fmap GenTxShelley1 $
+                            Shelley.mkSetDecentralizationParamTxs
+                              coreNodes
+                              (SL.ProtVer majorVersion2 0)
+                              (SlotNo $ unNumSlots numSlots) -- never expire
+                              setupD -- unchanged
+                  , tniProtocolInfo = protocolInfo
+                  , tniBlockForging = blockForging nullTracer
+                  }
           , mkRekeyM = Nothing
           }
 
@@ -395,8 +401,8 @@ prop_simple_shelleyAllegra_convergence
 
 -- | The major protocol version of the first era in this test
 majorVersion1 :: SL.Version
-majorVersion1 = SL.natVersion @1
+majorVersion1 = SL.natVersion @2
 
 -- | The major protocol version of the second era in this test
 majorVersion2 :: SL.Version
-majorVersion2 = SL.natVersion @2
+majorVersion2 = SL.natVersion @3

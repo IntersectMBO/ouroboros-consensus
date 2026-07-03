@@ -18,7 +18,7 @@ module Ouroboros.Consensus.Node.Tracers
   ) where
 
 import Control.Exception (SomeException)
-import Control.Tracer (Tracer, nullTracer, showTracing)
+import Control.Tracer (Tracer, nullTracer, (>$<))
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import LeiosDemoTypes (TraceLeiosKernel, TraceLeiosPeer)
@@ -57,6 +57,7 @@ import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent
   )
 import Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
+import Ouroboros.Network.Tx (HasRawTxId)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Types
 import Ouroboros.Network.TxSubmission.Outbound
 
@@ -174,6 +175,7 @@ showTracers ::
   , Show (GenTx blk)
   , Show (Validated (GenTx blk))
   , Show (GenTxId blk)
+  , HasRawTxId (GenTxId blk)
   , Show (ApplyTxErr blk)
   , Show (Header blk)
   , Show (ForgeStateInfo blk)
@@ -182,35 +184,36 @@ showTracers ::
   , Show (TxMeasure blk)
   , Show remotePeer
   , LedgerSupportsProtocol blk
+  , Monad m
   ) =>
   Tracer m String -> Tracers m remotePeer localPeer blk
 showTracers tr =
   Tracers
-    { chainSyncClientTracer = showTracing tr
-    , chainSyncServerHeaderTracer = showTracing tr
-    , chainSyncServerBlockTracer = showTracing tr
-    , blockFetchDecisionTracer = showTracing tr
-    , blockFetchClientTracer = showTracing tr
-    , blockFetchServerTracer = showTracing tr
-    , txInboundTracer = showTracing tr
-    , txOutboundTracer = showTracing tr
-    , localTxSubmissionServerTracer = showTracing tr
-    , txLogicTracer = showTracing tr
-    , txCountersTracer = showTracing tr
-    , mempoolTracer = showTracing tr
-    , forgeTracer = showTracing tr
-    , blockchainTimeTracer = showTracing tr
-    , forgeStateInfoTracer = showTracing tr
-    , keepAliveClientTracer = showTracing tr
-    , consensusSanityCheckTracer = showTracing tr
-    , consensusErrorTracer = showTracing tr
-    , gsmTracer = showTracing tr
-    , gddTracer = showTracing tr
-    , csjTracer = showTracing tr
-    , dbfTracer = showTracing tr
-    , kesAgentTracer = showTracing tr
-    , leiosKernelTracer = showTracing tr
-    , leiosPeerTracer = showTracing tr
+    { chainSyncClientTracer = show >$< tr
+    , chainSyncServerHeaderTracer = show >$< tr
+    , chainSyncServerBlockTracer = show >$< tr
+    , blockFetchDecisionTracer = show >$< tr
+    , blockFetchClientTracer = show >$< tr
+    , blockFetchServerTracer = show >$< tr
+    , txInboundTracer = show >$< tr
+    , txOutboundTracer = show >$< tr
+    , localTxSubmissionServerTracer = show >$< tr
+    , txLogicTracer = show >$< tr
+    , txCountersTracer = show >$< tr
+    , mempoolTracer = show >$< tr
+    , forgeTracer = show >$< tr
+    , blockchainTimeTracer = show >$< tr
+    , forgeStateInfoTracer = show >$< tr
+    , keepAliveClientTracer = show >$< tr
+    , consensusSanityCheckTracer = show >$< tr
+    , consensusErrorTracer = show >$< tr
+    , gsmTracer = show >$< tr
+    , gddTracer = show >$< tr
+    , csjTracer = show >$< tr
+    , dbfTracer = show >$< tr
+    , kesAgentTracer = show >$< tr
+    , leiosKernelTracer = show >$< tr
+    , leiosPeerTracer = show >$< tr
     }
 
 {-------------------------------------------------------------------------------

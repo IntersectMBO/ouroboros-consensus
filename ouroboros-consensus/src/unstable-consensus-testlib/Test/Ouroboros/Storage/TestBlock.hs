@@ -89,6 +89,7 @@ import Data.Void (Void)
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
+import LeiosDemoTypes (HasLeiosVoting)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -144,7 +145,10 @@ data TestBlock = TestBlock
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NFData, NoThunks, Serialise)
 
--- | Default 'ResolveLeiosBlock' — storage TestBlock never carries Leios certs.
+-- | Default 'HasLeiosVoting' / 'ResolveLeiosBlock' — storage TestBlock
+-- never carries Leios certs.
+instance HasLeiosVoting TestBlock
+
 instance ResolveLeiosBlock TestBlock
 
 -- | Hash of a 'TestHeader'

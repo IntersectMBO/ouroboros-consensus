@@ -567,6 +567,7 @@ data SnapshotPolicyArgs = SnapshotPolicyArgs
   { spaInterval :: !SnapshotInterval
   , spaNum :: !NumOfDiskSnapshots
   }
+  deriving (Eq, Show)
 
 defaultSnapshotPolicyArgs :: SnapshotPolicyArgs
 defaultSnapshotPolicyArgs =

@@ -36,6 +36,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Monoid (Endo (..))
 import GHC.Generics (Generic, Generically (..))
+import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
   ( BlockSupportsDiffusionPipelining
   , ConvertRawHash
@@ -200,6 +201,7 @@ toTestTree ::
   , Terse blk
   , Condense (NodeState blk)
   , ResolveLeiosBlock blk
+  , HasLeiosVoting blk
   ) =>
   TestSuite blk key -> [TestTree]
 toTestTree (TestSuite m) =

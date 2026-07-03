@@ -21,7 +21,6 @@ module Ouroboros.Consensus.Shelley.Protocol.Abstract
   , ProtocolHeaderSupportsEnvelope (..)
   , default_pHeaderLeiosContainsCert
   , ProtocolHeaderSupportsKES (..)
-  , ProtocolHeaderSupportsLedger (..)
   , ProtocolHeaderSupportsProtocol (..)
   , ShelleyHash (..)
   , ShelleyProtocol
@@ -31,7 +30,6 @@ module Ouroboros.Consensus.Shelley.Protocol.Abstract
 import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.VRF (OutputVRF)
-import Cardano.Ledger.BHeaderView (BHeaderView)
 import Cardano.Ledger.BaseTypes (ProtVer)
 import Cardano.Ledger.Hashes
   ( EraIndependentBlockBody
@@ -221,12 +219,6 @@ class ProtocolHeaderSupportsProtocol proto where
   pTieBreakVRFValue ::
     ShelleyProtocolHeader proto -> OutputVRF (VRF (ProtoCrypto proto))
 
--- | Indicates that the protocol header supports the Shelley ledger. We may need
--- to generalise this if, in the future, the ledger requires different things
--- from the protocol.
-class ProtocolHeaderSupportsLedger proto where
-  mkHeaderView :: ShelleyProtocolHeader proto -> BHeaderView
-
 {-------------------------------------------------------------------------------
   Key constraints
 -------------------------------------------------------------------------------}
@@ -237,7 +229,6 @@ class
   , ProtocolHeaderSupportsEnvelope proto
   , ProtocolHeaderSupportsKES proto
   , ProtocolHeaderSupportsProtocol proto
-  , ProtocolHeaderSupportsLedger proto
   , Serialise (ChainDepState proto)
   , SignedHeader (ShelleyProtocolHeader proto)
   , HasMaxMajorProtVer proto

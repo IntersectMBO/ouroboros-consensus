@@ -30,7 +30,7 @@ import Control.Arrow (second)
 import Control.Concurrent.Class.MonadSTM.Strict.TChan
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.Except (runExcept)
-import qualified Control.Tracer as CT (Tracer (..), traceWith)
+import Control.Tracer (Tracer, mkTracer, traceWith)
 import qualified Data.Foldable as Foldable
 import Data.Function (on)
 import qualified Data.Map.Strict as Map
@@ -564,12 +564,12 @@ mkSUT ::
   ) =>
   LedgerConfig blk ->
   LedgerState blk ValuesMK ->
-  m (SUT m blk, CT.Tracer m String)
+  m (SUT m blk, Tracer m String)
 mkSUT cfg initialLedger = do
   (lif, t) <- newLedgerInterface initialLedger
   trcrChan <- atomically newTChan :: m (StrictTChan m (Either String (TraceEventMempool blk)))
   let trcr =
-        CT.Tracer $ -- Dbg.traceShowM @(Either String (TraceEventMempool blk))
+        mkTracer $ -- Dbg.traceShowM @(Either String (TraceEventMempool blk))
           atomically . writeTChan trcrChan
   mempool <-
     openMempoolWithoutSyncThread
@@ -577,15 +577,15 @@ mkSUT cfg initialLedger = do
       cfg
       (MempoolCapacityBytesOverride $ unIgnoringOverflow txMaxBytes')
       (Nothing :: Maybe MempoolTimeoutConfig)
-      (CT.Tracer $ CT.traceWith trcr . Right)
-  pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left)
+      (mkTracer $ traceWith trcr . Right)
+  pure (SUT mempool t, mkTracer $ atomically . writeTChan trcrChan . Left)
 
 semantics ::
   ( LedgerSupportsMempool blk
   , ValidateEnvelope blk
   , IOLike m
   ) =>
-  CT.Tracer m String ->
+  Tracer m String ->
   Command blk Concrete ->
   StrictTVar m (SUT m blk) ->
   m (Response blk Concrete)
@@ -601,7 +601,7 @@ semantics trcr cmd r = do
       txs <- snapshotTxs <$> atomically (getSnapshot m)
       pure $ GotSnapshot [(txForgetValidated vtx, tk) | (vtx, tk, _) <- txs]
     Event (ChangeLedger l') -> do
-      CT.traceWith trcr $ "ChangingLedger to " <> show (getTip l')
+      traceWith trcr $ "ChangingLedger to " <> show (getTip l')
       atomically $ do
         MockedLedgerDB ledgerTip oldReachableTips <- readTVar t
         if getTip l' == getTip ledgerTip
@@ -680,7 +680,7 @@ sm ::
   , ValidateEnvelope blk
   ) =>
   StateMachine (Model blk) (Command blk) m (Response blk) ->
-  CT.Tracer m String ->
+  Tracer m String ->
   StrictTVar m (SUT m blk) ->
   StateMachine (Model blk) (Command blk) m (Response blk)
 sm sm0 trcr ior = sm0{QC.semantics = \c -> semantics trcr c ior}

@@ -14,8 +14,9 @@ import Cardano.Network.NodeToNode.Version (NodeToNodeVersion)
 import Control.Exception (SomeException)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Tracer
-  ( Tracer (Tracer)
+  ( Tracer
   , contramap
+  , mkTracer
   , nullTracer
   , traceWith
   )
@@ -58,7 +59,6 @@ import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (ExceededSizeLimit, ExceededTimeLimit)
   , runPipelinedPeerWithLimits
   )
-import Ouroboros.Network.Mux (Reception (..))
 import Ouroboros.Network.Protocol.ChainSync.ClientPipelined
   ( ChainSyncClientPipelined
   , chainSyncClientPeerPipelined
@@ -110,7 +110,7 @@ basicChainSyncClient
     chainSyncClient
       CSClient.ConfigEnv
         { CSClient.mkPipelineDecision0 = pipelineDecisionLowHighMark 10 20
-        , CSClient.tracer = Tracer (traceWith tracer . TraceChainSyncClientEvent peerId)
+        , CSClient.tracer = mkTracer (traceWith tracer . TraceChainSyncClientEvent peerId)
         , CSClient.cfg
         , CSClient.chainDbView
         , CSClient.someHeaderInFutureCheck = dummyHeaderInFutureCheck
@@ -196,7 +196,7 @@ runChainSyncClient
         res <-
           try $
             runPipelinedPeerWithLimits
-              (Tracer $ traceWith tracer . TraceChainSyncSendRecvEvent peerId "Client")
+              (mkTracer $ traceWith tracer . TraceChainSyncSendRecvEvent peerId "Client")
               codecChainSyncId
               chainSyncNoSizeLimits
               (timeLimitsChainSync chainSyncTimeouts)
@@ -215,7 +215,7 @@ runChainSyncClient
             traceWith svtPeerSimulatorResultsTracer $
               PeerSimulatorResult peerId $
                 SomeChainSyncClientResult $
-                  Right (csRes, fmap received trailing)
+                  Right (csRes, trailing)
           Left exn -> traceException exn
    where
     traceException exn = do
@@ -262,7 +262,7 @@ runChainSyncServer tracer peerId StateViewTracers{svtPeerSimulatorResultsTracer}
       traceWith svtPeerSimulatorResultsTracer $
         PeerSimulatorResult peerId $
           SomeChainSyncServerResult $
-            Right (fmap received msgRes)
+            Right msgRes
     Left exn -> do
       traceWith svtPeerSimulatorResultsTracer $
         PeerSimulatorResult peerId $
@@ -272,4 +272,4 @@ runChainSyncServer tracer peerId StateViewTracers{svtPeerSimulatorResultsTracer}
       case fromException exn of
         (_ :: Maybe SomeException) -> pure ()
  where
-  sendRecvTracer = Tracer $ traceWith tracer . TraceChainSyncSendRecvEvent peerId "Server"
+  sendRecvTracer = mkTracer $ traceWith tracer . TraceChainSyncSendRecvEvent peerId "Server"

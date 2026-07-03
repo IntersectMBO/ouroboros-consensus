@@ -34,10 +34,9 @@ import Control.Monad (forM_, join, void, when)
 import Control.Monad.Except ()
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict
-import Control.Tracer (Tracer, nullTracer, traceWith)
+import Control.Tracer (Tracer, nullTracer, traceWith, (>$<))
 import Data.Bifunctor (first)
 import Data.Function (on)
-import Data.Functor.Contravariant ((>$<))
 import Data.List (sortBy)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
@@ -45,11 +44,11 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust, fromMaybe, isJust)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
-import LeiosDemoTypes (EbHash, pointEbHash)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
 import GHC.Stack (HasCallStack)
+import LeiosDemoTypes (EbHash, pointEbHash)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
