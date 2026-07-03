@@ -7,9 +7,13 @@ module Test.Util.Serialisation.CDDL
   , CDDLsForNodeToNode (..)
   ) where
 
+import qualified Codec.CBOR.Read as CBOR
+import qualified Codec.CBOR.Term as CBOR
 import Control.Monad (join)
 import qualified Data.ByteString as BS
-import Data.Maybe (isJust)
+import qualified Data.ByteString.Lazy as BSL
+import Data.List (isPrefixOf)
+import Data.Maybe (catMaybes, isJust, listToMaybe)
 import qualified Data.Text as T
 import qualified System.Directory as D
 import qualified System.Environment as E
@@ -48,16 +52,22 @@ cddlTest cborM cddl rule =
     bs <- cborM
     BS.hPutStr h bs
     hClose h
-    (code, _out, err) <-
+    (code, out, err) <-
       readProcessWithExitCode "cuddle" (cuddleArgs fp (T.unpack rule) cddl) mempty
     case code of
       ExitFailure _ -> do
+        -- 'cuddle' does not recurse into '.cbor' controls when reporting
+        -- errors. If the outer failure mentions such a control and the CBOR
+        -- contains a tag-24 embedded item, re-run validation against the
+        -- inner rule to surface a more specific error.
+        innerReport <- innerCborReport bs (out <> err) cddl
         -- Copy the CBOR term and the CDDL file into a directory and
         -- generate a script with a cuddle call that would lead to an error
         errorReproducerDir <-
           join $
             dumpErrorReproducer <$> D.canonicalizePath fp <*> pure (T.unpack rule) <*> D.canonicalizePath cddl
-        pure (Left $ err <> " cuddle reproducer written to " <> errorReproducerDir)
+        pure . Left $
+          out <> err <> innerReport <> "\ncuddle reproducer written to " <> errorReproducerDir
       ExitSuccess -> pure (Right ())
  where
   cuddleArgs :: FilePath -> String -> FilePath -> [String]
@@ -76,6 +86,64 @@ cddlTest cborM cddl rule =
       D.copyFile cddlFile failingCddlFile
       writeFile failingCuddleCallFile failingCuddleCall
     pure errorReproducerDir
+
+  innerCborReport :: BS.ByteString -> String -> FilePath -> IO String
+  innerCborReport bs outerOut cddlFile =
+    case (extractInnerRule outerOut, findTag24 bs) of
+      (Just innerRule, Just innerBytes) ->
+        withTempFile "." "inner.cbor" $ \ifp ih -> do
+          BS.hPutStr ih innerBytes
+          hClose ih
+          (_, iout, ierr) <-
+            readProcessWithExitCode "cuddle" (cuddleArgs ifp innerRule cddlFile) mempty
+          pure $
+            "\n--- inner CBOR validation against " <> innerRule <> " ---\n" <> iout <> ierr
+      _ -> pure ""
+
+-- | Find the rule name mentioned in the first @.cbor <rule>@ control in
+-- cuddle's output. Cuddle typically prints
+--
+-- @
+--     unsatisfied control:
+--         .cbor dijkstra.header
+-- @
+extractInnerRule :: String -> Maybe String
+extractInnerRule s =
+  listToMaybe
+    [ takeWhile (`notElem` " \t\r\n") (drop (length prefix) ln')
+    | ln <- lines (stripAnsi s)
+    , let ln' = dropWhile (== ' ') ln
+    , prefix `isPrefixOf` ln'
+    ]
+ where
+  prefix = ".cbor "
+
+-- | Walk a CBOR term and return the payload of the first @#6.24(bytes)@ item.
+findTag24 :: BS.ByteString -> Maybe BS.ByteString
+findTag24 bs = do
+  (_, t) <-
+    either (const Nothing) Just $
+      CBOR.deserialiseFromBytes CBOR.decodeTerm (BSL.fromStrict bs)
+  go t
+ where
+  go = \case
+    CBOR.TTagged 24 (CBOR.TBytes inner) -> Just inner
+    CBOR.TTagged 24 (CBOR.TBytesI inner) -> Just (BSL.toStrict inner)
+    CBOR.TTagged _ t' -> go t'
+    CBOR.TList ts -> firstJust (map go ts)
+    CBOR.TListI ts -> firstJust (map go ts)
+    CBOR.TMap kvs -> firstJust (concatMap (\(k, v) -> [go k, go v]) kvs)
+    CBOR.TMapI kvs -> firstJust (concatMap (\(k, v) -> [go k, go v]) kvs)
+    _ -> Nothing
+  firstJust = listToMaybe . catMaybes
+
+-- | Strip ANSI CSI escape sequences (@ESC [ ... m@) so we can pattern-match
+-- against cuddle's colorised output.
+stripAnsi :: String -> String
+stripAnsi = \case
+  '\ESC' : '[' : rest -> stripAnsi (drop 1 (dropWhile (/= 'm') rest))
+  c : cs -> c : stripAnsi cs
+  [] -> []
 
 -- | A collection of CDDL spec and the relevant rule to use
 data CDDLsForNodeToNode = CDDLsForNodeToNode
