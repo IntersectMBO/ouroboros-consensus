@@ -220,7 +220,7 @@ tickPerasEpochContextResolver ledgerConfig ExtLedgerState{..} (targetSlot, ticke
   let timeResolutionContext = TimeResolutionContext ledgerConfig ledgerState
       woPrevSlot = annTipSlotNo <$> headerStateTip headerState
    in case isNextEpochWithPerasInfo timeResolutionContext woPrevSlot targetSlot of
-        Left err -> errorIntoResolver err
+        Left err -> error (show err)
         Right Nothing -> perasEpochContextResolver
         Right (Just newEpochPerasInfo) ->
           absorbErrorIntoResolver $

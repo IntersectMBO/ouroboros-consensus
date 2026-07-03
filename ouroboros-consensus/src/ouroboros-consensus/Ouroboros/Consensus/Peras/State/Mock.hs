@@ -23,7 +23,6 @@ import Ouroboros.Consensus.Peras.Crypto.Mock
   )
 import Ouroboros.Consensus.Peras.Error.Mock (MockPerasError (..))
 
--- | NOTE: this function will return an error on an empty stake distr, which is what the default instance of 'LedgerSupportsPeras' returns.
 mkMockPerasVotingCommitteeInput ::
   forall blk ledger chainDep.
   ( PerasCrypto blk ~ MockPerasCrypto blk
