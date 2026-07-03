@@ -2,6 +2,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Operations that update the mempool. They are internally divided in the pure
 -- and impure sides of the operation.
@@ -16,7 +17,6 @@ import Cardano.Slotting.Slot
 import Control.Monad.Class.MonadTimer.SI (MonadTimer, timeout)
 import Control.Monad.Except (runExcept)
 import Control.Tracer
-import qualified Data.Foldable as Foldable
 import Data.Functor.Identity (Identity (Identity))
 import Data.Kind (Type)
 import qualified Data.List.NonEmpty as NE
@@ -27,7 +27,6 @@ import qualified Data.Text as T
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.Impl.Common
@@ -204,7 +203,7 @@ doAddTx mpEnv caller wti tx = do
 
     eRes <- withTMVarAnd istate additionalCheck $
       \is () ->
-        case runExcept $ txMeasurePhase1 cfg (forgetLedgerTables $ isLedgerState is) tx of
+        case runExcept $ txMeasurePhase1 cfg (isLedgerState is) tx of
           Left err ->
             -- The transaction does not have a valid measure (eg its ExUnits is
             -- greater than what this ledger state allows for a single transaction).
@@ -319,6 +318,7 @@ doAddTx mpEnv caller wti tx = do
       (TestingAddTx _, Right x) -> pure $ Just x
 
 pureTryAddTx ::
+  forall m blk.
   ( LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   ) =>
@@ -330,7 +330,10 @@ pureTryAddTx ::
   GenTx blk ->
   -- | The current internal state of the mempool.
   InternalState blk ->
-  LedgerTables blk ValuesMK ->
+  -- | The transaction's input values, read against the base (un-ticked) state
+  -- at 'isTip'. They are forwarded to the virtual tip through 'isLedgerDiff'
+  -- before being used.
+  Values blk ->
   TxMeasurePhase1 blk ->
   TriedToAddTx blk
 pureTryAddTx mpEnv cfg wti tx is values p1TxMeasure =
@@ -338,12 +341,10 @@ pureTryAddTx mpEnv cfg wti tx is values p1TxMeasure =
         { mpEnvTimeoutConfig = mbToCfg
         } = mpEnv
 
-      st =
-        applyMempoolDiffs
-          values
-          (getTransactionKeySets tx)
-          (isLedgerState is)
-   in case runExcept $ txMeasurePhase2 cfg st tx of
+      -- Forward the inputs read against the base state up to the virtual tip
+      -- ('isLedgerState') through the cumulative mempool diff.
+      fwdValues = forward @blk [isLedgerDiff is] values
+   in case runExcept $ txMeasurePhase2 cfg fwdValues (isLedgerState is) tx of
         Left err ->
           -- The transaction does not have a valid measure (eg its ExUnits is
           -- greater than what this ledger state allows for a single transaction).
@@ -425,7 +426,7 @@ pureTryAddTx mpEnv cfg wti tx is values p1TxMeasure =
           , not $ txsdifftime Measure.<= FiniteDiffTimeMeasure (mempoolTimeoutCapacity toCfg) ->
               NotEnoughSpaceLeft
           | otherwise ->
-              case validateNewTransaction cfg wti tx (TxMeasure p1TxMeasure txsz) values st is of
+              case validateNewTransaction cfg wti tx (TxMeasure p1TxMeasure txsz) fwdValues is of
                 (Left err, _) ->
                   Processed $ \_dur ->
                     TransactionProcessingResult
@@ -458,6 +459,7 @@ pureTryAddTx mpEnv cfg wti tx is values p1TxMeasure =
 implRemoveTxsEvenIfValid ::
   ( IOLike m
   , LedgerSupportsMempool blk
+  , ValidateEnvelope blk
   , HasTxId (GenTx blk)
   ) =>
   MempoolEnv m blk ->
@@ -475,24 +477,49 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
                   . txTicketTx
               )
               (TxSeq.toList $ isTxs is)
-          toKeep' =
-            Foldable.foldMap'
-              (getTransactionKeySets . txForgetValidated . validatedTx . TxSeq.txTicketTx)
-              toKeep
       frkr <- readMVar forker
-      tbs <- roforkerReadTables frkr toKeep'
-      let (is', t) =
-            pureRemoveTxs
-              capacityOverride
-              cfg
-              (isSlotNo is)
-              (isLedgerState is `withLedgerTables` emptyLedgerTables)
-              tbs
-              (isLastTicketNo is)
-              toKeep
-              toRemove
-      traceWith trcr t
-      pure ((), is')
+      -- Removing txs does not change the tip, so we revalidate the kept txs
+      -- against the same base ticked state: re-tick the forker's (un-ticked)
+      -- anchor state at 'isTip'. We must not reuse 'isLedgerState' here, as that
+      -- is the virtual tip /after/ applying the mempool txs.
+      baseState <- atomically $ roforkerGetLedgerState frkr
+      let (slot, tickedState, tickDiff) =
+            tickLedgerState cfg (ForgeInUnknownSlot baseState)
+      case toKeep of
+        [] -> do
+          -- Everything was removed: the mempool becomes empty at the same tip.
+          -- There are no keys to read (and no 'Monoid (Keys blk)' to fold).
+          let is' =
+                initInternalState
+                  capacityOverride
+                  (isLastTicketNo is)
+                  cfg
+                  slot
+                  tickedState
+                  tickDiff
+              t = TraceMempoolManuallyRemovedTxs toRemove [] (isMempoolSize is')
+          traceWith trcr t
+          pure ((), is')
+        _ -> do
+          let keys =
+                foldr1 (<>) $
+                  map
+                    (getTransactionKeySets . txForgetValidated . validatedTx . TxSeq.txTicketTx)
+                    toKeep
+          tbs <- roforkerReadTables frkr keys
+          let (is', t) =
+                pureRemoveTxs
+                  capacityOverride
+                  cfg
+                  slot
+                  tickedState
+                  tickDiff
+                  tbs
+                  (isLastTicketNo is)
+                  toKeep
+                  toRemove
+          traceWith trcr t
+          pure ((), is')
  where
   MempoolEnv
     { mpEnvStateVar = istate
@@ -511,21 +538,26 @@ pureRemoveTxs ::
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
-  TickedLedgerState blk DiffMK ->
-  LedgerTables blk ValuesMK ->
+  -- | The base ticked ledger state to revalidate against
+  TickedLedgerState blk ->
+  -- | The tick diff (base → ticked), to forward the read values to the tip
+  Diff blk ->
+  -- | All the inputs for the kept txs, read against the base state
+  Values blk ->
   TicketNo ->
   -- | Txs to keep
   [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
   -- | IDs to remove
   NE.NonEmpty (GenTxId blk) ->
   (InternalState blk, TraceEventMempool blk)
-pureRemoveTxs capacityOverride lcfg slot lstate values tkt txs txIds =
+pureRemoveTxs capacityOverride lcfg slot lstate tickDiff values tkt txs txIds =
   let RevalidateTxsResult is' removed =
         revalidateTxsFor
           capacityOverride
           lcfg
           slot
           lstate
+          tickDiff
           values
           tkt
           txs
@@ -586,7 +618,7 @@ implSyncWithLedger projectResult mpEnv =
       -- if the state didn't change.
       withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
         \is (MempoolLedgerDBView ls meFrk) -> do
-          let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
+          let (slot, ls', tickDiff) = tickLedgerState cfg $ ForgeInUnknownSlot ls
           if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
             then do
               -- The tip didn't change, put the same state.
@@ -609,17 +641,38 @@ implSyncWithLedger projectResult mpEnv =
                         roforkerClose frkOld
                         pure frk
                     )
-                  tbs <- roforkerReadTables frk (isTxKeys is)
-                  let (is', mTrace) =
-                        pureSyncWithLedger
-                          capacityOverride
-                          cfg
-                          slot
-                          ls'
-                          tbs
-                          is
-                  whenJust mTrace (traceWith trcr)
-                  pure (Just (projectResult is'), is')
+                  case TxSeq.toList (isTxs is) of
+                    [] -> do
+                      -- Empty mempool: nothing to revalidate, just adopt the
+                      -- new tip. No keys to read (and no 'Monoid (Keys blk)' to
+                      -- fold).
+                      let is' =
+                            initInternalState
+                              capacityOverride
+                              (isLastTicketNo is)
+                              cfg
+                              slot
+                              ls'
+                              tickDiff
+                      pure (Just (projectResult is'), is')
+                    txs -> do
+                      let keys =
+                            foldr1 (<>) $
+                              map
+                                (getTransactionKeySets . txForgetValidated . validatedTx . TxSeq.txTicketTx)
+                                txs
+                      tbs <- roforkerReadTables frk keys
+                      let (is', mTrace) =
+                            pureSyncWithLedger
+                              capacityOverride
+                              cfg
+                              slot
+                              ls'
+                              tickDiff
+                              tbs
+                              is
+                      whenJust mTrace (traceWith trcr)
+                      pure (Just (projectResult is'), is')
     case res of
       Nothing -> implSyncWithLedger projectResult mpEnv
       Just res' -> pure res'
@@ -642,19 +695,24 @@ pureSyncWithLedger ::
   MempoolCapacityBytesOverride ->
   LedgerConfig blk ->
   SlotNo ->
-  TickedLedgerState blk DiffMK ->
-  LedgerTables blk ValuesMK ->
+  -- | The base ticked ledger state to revalidate against
+  TickedLedgerState blk ->
+  -- | The tick diff (base → ticked), to forward the read values to the tip
+  Diff blk ->
+  -- | All the inputs for the txs, read against the base state
+  Values blk ->
   InternalState blk ->
   ( InternalState blk
   , Maybe (TraceEventMempool blk)
   )
-pureSyncWithLedger capacityOverride lcfg slot lstate values istate =
+pureSyncWithLedger capacityOverride lcfg slot lstate tickDiff values istate =
   let RevalidateTxsResult is' removed =
         revalidateTxsFor
           capacityOverride
           lcfg
           slot
           lstate
+          tickDiff
           values
           (isLastTicketNo istate)
           (TxSeq.toList $ isTxs istate)

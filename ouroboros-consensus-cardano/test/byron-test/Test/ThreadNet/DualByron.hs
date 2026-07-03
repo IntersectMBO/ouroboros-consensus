@@ -33,7 +33,6 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Dual
 import Ouroboros.Consensus.Ledger.SupportsMempool
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
 import Ouroboros.Consensus.Protocol.PBFT
@@ -271,32 +270,37 @@ byronPBftParams ByronSpecGenesis{..} =
 -------------------------------------------------------------------------------}
 
 instance TxGen DualByronBlock where
-  testGenTxs _coreNodeId _numCoreNodes curSlotNo cfg () = \st -> do
+  testGenTxs _coreNodeId _numCoreNodes curSlotNo cfg () st values = do
     n <- choose (0, 20)
-    go [] n $
-      applyDiffs st $
-        applyChainTick OmitLedgerEvents (configLedger cfg) curSlotNo $
-          forgetLedgerTables st
+    let (ticked, _tickDiff) =
+          applyChainTick OmitLedgerEvents (configLedger cfg) curSlotNo st
+    go [] n ticked values
    where
     -- Attempt to produce @n@ transactions
     -- Stops when the transaction generator cannot produce more txs
+    --
+    -- The DualByron UTxO lives in the embedded ByronSpec ledger state, so the
+    -- @mk@-free 'Values' are trivial (@()@) and need no threading; the applied
+    -- ticked state carries the updated spec UTxO.
     go ::
       [GenTx DualByronBlock] -> -- Accumulator
       Integer -> -- Number of txs to still produce
-      TickedLedgerState DualByronBlock ValuesMK ->
+      TickedLedgerState DualByronBlock ->
+      Values DualByronBlock ->
       Gen [GenTx DualByronBlock]
-    go acc 0 _ = return (reverse acc)
-    go acc n st = do
-      tx <- genTx cfg st
+    go acc 0 _ _ = return (reverse acc)
+    go acc n st' vals = do
+      tx <- genTx cfg st'
       case runExcept $
         applyTx
           (configLedger cfg)
           DoNotIntervene
           curSlotNo
           tx
-          st of
-        Right (st', _vtx) ->
-          go (tx : acc) (n - 1) (applyDiffs st st')
+          vals
+          st' of
+        Right (st'', _diff, _vtx) ->
+          go (tx : acc) (n - 1) st'' vals
         Left _ -> error "testGenTxs: unexpected invalid tx"
 
 -- | Generate transaction
@@ -307,7 +311,7 @@ instance TxGen DualByronBlock where
 -- infrastructure of the Byron tests.
 genTx ::
   TopLevelConfig DualByronBlock ->
-  TickedLedgerState DualByronBlock ValuesMK ->
+  TickedLedgerState DualByronBlock ->
   Gen (GenTx DualByronBlock)
 genTx cfg st = do
   aux <- sigGen (Rules.ctxtUTXOW cfg') st'

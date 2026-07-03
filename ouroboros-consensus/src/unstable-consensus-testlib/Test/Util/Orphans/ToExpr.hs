@@ -60,11 +60,11 @@ instance (ToExpr blk, ToExpr (HeaderHash blk)) => ToExpr (AnchoredFragment blk) 
 -------------------------------------------------------------------------------}
 
 instance
-  ( ToExpr (LedgerState blk EmptyMK)
+  ( ToExpr (LedgerState blk)
   , ToExpr (ChainDepState (BlockProtocol blk))
   , ToExpr (TipInfo blk)
   ) =>
-  ToExpr (ExtLedgerState blk EmptyMK)
+  ToExpr (ExtLedgerState blk)
 
 instance
   ( ToExpr (ChainDepState (BlockProtocol blk))

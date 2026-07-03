@@ -92,14 +92,14 @@ import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Storage.ImmutableDB.API (SeekBlockError (..))
 import Ouroboros.Consensus.Storage.LedgerDB
-  ( GetForkerError
+  ( EraRangeReaderProvider
+  , GetForkerError
   , ReadOnlyForker'
   , Statistics
   )
@@ -112,6 +112,7 @@ import Ouroboros.Consensus.Storage.PerasVoteDB.API
   , PerasVoteTicketNo
   )
 import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Util ((..:))
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike
@@ -221,11 +222,11 @@ data ChainDB m blk = ChainDB
   -- to the chain it is on)
   --
   -- INVARIANT @'hwtHeader' <$> 'getCurrentChainWithTime' = 'getCurrentChain'@
-  , getCurrentLedger :: STM m (ExtLedgerState blk EmptyMK)
+  , getCurrentLedger :: STM m (ExtLedgerState blk)
   -- ^ Get current ledger
-  , getImmutableLedger :: STM m (ExtLedgerState blk EmptyMK)
+  , getImmutableLedger :: STM m (ExtLedgerState blk)
   -- ^ Get the immutable ledger, i.e., typically @k@ blocks back.
-  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk EmptyMK))
+  , getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk))
   -- ^ Get the ledger for the given point.
   --
   -- When the given point is not among the last @k@ blocks of the current
@@ -237,9 +238,10 @@ data ChainDB m blk = ChainDB
   , allocInRegistryReadOnlyForkerAtPoint ::
       Target (Point blk) ->
       ResourceRegistry m ->
-      m (Either GetForkerError (ResourceKey m, ReadOnlyForker' m blk))
+      m (Either GetForkerError (ResourceKey m, ReadOnlyForker' m blk, EraRangeReaderProvider m blk))
   -- ^ Allocate a read only forker at the given point in the given resource
-  -- registry.
+  -- registry, together with the 'EraRangeReaderProvider' for that forker (used
+  -- to answer @QFTraverseTables@ queries; see 'EraRangeReaderProvider').
   --
   -- This function is to be used by LocalStateQuery server. Note ChainSel uses
   -- the LedgerDB directly, none of these methods are used there.

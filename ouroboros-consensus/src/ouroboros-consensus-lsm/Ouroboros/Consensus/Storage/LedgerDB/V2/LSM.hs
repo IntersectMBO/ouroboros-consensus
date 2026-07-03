@@ -1,11 +1,11 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -23,8 +23,11 @@
 
 -- | Implementation of the 'LedgerTablesHandle' interface with LSM trees.
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
-  ( -- * Backend API
-    LSM
+  ( -- * Era dispatch
+    BlockSupportsLSM (..)
+
+    -- * Backend API
+  , LSM
   , Backend (..)
   , Args (LSMArgs)
   , Trace (..)
@@ -61,20 +64,19 @@ import Control.Tracer
 import Data.ByteString (toStrict)
 import qualified Data.ByteString.Builder as BS
 import Data.ByteString.Char8 (readInt)
-import qualified Data.Foldable as Foldable
 import qualified Data.List as List
-import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.MemPack
 import qualified Data.Primitive as P
 import qualified Data.Primitive.ByteArray as PBA
-import qualified Data.Set as Set
+import Data.SOP.BasicFunctors
+import Data.SOP.Index (Index, hcimap, injectNS)
+import Data.SOP.Strict (hcmap, hcollapse)
 import Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Typeable
 import qualified Data.Vector as V
-import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Primitive as VP
 import Data.Void
 import Data.Word
@@ -83,21 +85,38 @@ import qualified Database.LSMTree as LSM
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.HardFork.Combinator.Abstract
+  ( CanHardFork
+  , SingleEraBlock
+  , proxySingle
+  )
+import Ouroboros.Consensus.HardFork.Combinator.Basics (HardForkBlock)
+-- For the @BlockSupportsUTxOHD (HardForkBlock xs)@ instance (and hence the
+-- @Keys\/Values\/Diff (HardForkBlock xs) = NS Wrap… xs@ equations).
+import Ouroboros.Consensus.HardFork.Combinator.Ledger ()
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( RangeQueryPrevious (..)
+  , RangeReadTables
+  )
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+import Ouroboros.Consensus.TypeFamilyWrappers
+  ( WrapDiff (..)
+  , WrapKeys (..)
+  , WrapValues (..)
+  )
 import Ouroboros.Consensus.Util (chunks, whenJust)
+import Ouroboros.Consensus.Util.CBOR (unpackEither)
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.IndexedMemPack
 import qualified Streaming as S
 import qualified Streaming.Prelude as S
 import qualified System.Directory as D
@@ -105,6 +124,7 @@ import System.FS.API
 import System.FS.API.Lazy (hGetAll, hPutAll)
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
+import System.FS.CRC (CRC)
 import qualified System.FS.IO as FS
 import System.FilePath
   ( makeRelative
@@ -116,6 +136,87 @@ import System.FilePath
 import qualified System.FilePath as F
 import System.Random
 import Prelude hiding (read)
+
+{-------------------------------------------------------------------------------
+  Era dispatch for the on-disk backend
+-------------------------------------------------------------------------------}
+
+-- | Dispatch the opaque, possibly @NS@-structured @'Keys'@\/@'Values'@\/@'Diff'@
+-- of a @blk@ to the /current era/ @x@, where they are concrete and the LSM
+-- backend can (de)serialise individual @('TxIn' x, 'TxOut' x)@ entries (the
+-- byte codecs come from the @'MemPack'@ superclasses of
+-- 'SingleEraBlockSupportsUTxOHD').
+--
+-- This is the on-disk analogue of the LSQ 'EraRangeReaderProvider': @read@,
+-- @duplicateWithDiffs@ and genesis population are called by era-agnostic code,
+-- so the era is read off the @NS@ tag of their input (the block is always in one
+-- era, so every payload carries the current era's tag). The continuation
+-- receives the era-@x@ payload plus, for @read@, the injection rebuilding the
+-- @blk@-level values from the era's values.
+--
+-- The 'HardForkBlock' instance dispatches over its eras with @proxySingle@; a
+-- single-era block is the trivial @x = blk@ with identity projections.
+--
+-- Each continuation takes a @'Proxy' x@ for the dispatched era: since
+-- @'Keys'@\/@'Values'@\/@'Diff'@ are non-injective, the era @x@ cannot be
+-- recovered from the payload, so the (injective) proxy is what lets the caller
+-- bind @x@ (a @forall x.@-signed helper) and the hard-fork instance discharge
+-- the rank-2 subsumption check.
+class BlockSupportsUTxOHD blk => BlockSupportsLSM blk where
+  withKeysEra ::
+    Keys blk ->
+    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Keys x -> (Values x -> Values blk) -> r) ->
+    r
+  withDiffEra ::
+    Diff blk ->
+    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Diff x -> r) ->
+    r
+  withValuesEra ::
+    Values blk ->
+    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Values x -> r) ->
+    r
+
+-- | The hard-fork instance: the payload's @NS@ tag /is/ the current era, so
+-- dispatch to that arm (via @proxySingle@, whose @SingleEraBlock@ supplies
+-- 'SingleEraBlockSupportsUTxOHD') and hand the era-@x@ payload (and, for keys,
+-- the @NS@ injection for the resulting values) to the continuation. The
+-- per-arm type @\@a@ is bound explicitly (see the class doc on non-injectivity).
+--
+-- Orphan because the class is an LSM-backend concern and the 'HardForkBlock'
+-- lives in the core library; there is exactly one such instance.
+instance CanHardFork xs => BlockSupportsLSM (HardForkBlock xs) where
+  withKeysEra ::
+    forall r.
+    Keys (HardForkBlock xs) ->
+    ( forall x.
+      SingleEraBlockSupportsUTxOHD x =>
+      Proxy x -> Keys x -> (Values x -> Values (HardForkBlock xs)) -> r
+    ) ->
+    r
+  withKeysEra ks k = hcollapse $ hcimap proxySingle go ks
+   where
+    go :: forall a. SingleEraBlock a => Index xs a -> WrapKeys a -> K r a
+    go idx (WrapKeys kx) = K (k (Proxy @a) kx (injectNS idx . WrapValues))
+
+  withDiffEra ::
+    forall r.
+    Diff (HardForkBlock xs) ->
+    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Diff x -> r) ->
+    r
+  withDiffEra d k = hcollapse $ hcmap proxySingle go d
+   where
+    go :: forall a. SingleEraBlock a => WrapDiff a -> K r a
+    go (WrapDiff dx) = K (k (Proxy @a) dx)
+
+  withValuesEra ::
+    forall r.
+    Values (HardForkBlock xs) ->
+    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Values x -> r) ->
+    r
+  withValuesEra vs k = hcollapse $ hcmap proxySingle go vs
+   where
+    go :: forall a. SingleEraBlock a => WrapValues a -> K r a
+    go (WrapValues vx) = K (k (Proxy @a) vx)
 
 -- | Type alias for convenience
 type UTxOTable m = Table m TxInBytes TxOutBytes Void
@@ -135,14 +236,20 @@ type ExportSnapshot m = LSM.SnapshotName -> m ()
 
 newtype TxOutBytes = TxOutBytes {unTxOutBytes :: LSM.RawBytes}
 
-toTxOutBytes :: IndexedMemPack l blk (TxOut blk) => l blk EmptyMK -> TxOut blk -> TxOutBytes
-toTxOutBytes st txout =
-  let barr = indexedPackByteArray True st txout
+-- | Serialise an era's @TxOut@ to on-disk bytes.
+--
+-- Plain 'MemPack' at the (concrete) era: the era's @TxOut@ encoding is
+-- forwards-deserialisable, so bytes written at an earlier era decode under a
+-- later era's unpacker ('fromTxOutBytes' at the current era). This is why the
+-- backend pays nothing at a hard-fork boundary and needs no era-indexed codec.
+toTxOutBytes :: MemPack (TxOut blk) => Proxy blk -> TxOut blk -> TxOutBytes
+toTxOutBytes _ txout =
+  let barr = packByteArray True txout
    in TxOutBytes $ LSM.RawBytes (VP.Vector 0 (PBA.sizeofByteArray barr) barr)
 
-fromTxOutBytes :: IndexedMemPack l blk (TxOut blk) => l blk EmptyMK -> TxOutBytes -> TxOut blk
-fromTxOutBytes st (TxOutBytes (LSM.RawBytes vec)) =
-  case indexedUnpackEither st vec of
+fromTxOutBytes :: MemPack (TxOut blk) => Proxy blk -> TxOutBytes -> TxOut blk
+fromTxOutBytes _ (TxOutBytes (LSM.RawBytes vec)) =
+  case unpackEither vec of
     Left err ->
       error $
         unlines
@@ -164,14 +271,23 @@ deriving via LSM.ResolveAsFirst TxOutBytes instance LSM.ResolveValue TxOutBytes
 
 newtype TxInBytes = TxInBytes {unTxInBytes :: LSM.RawBytes}
 
-toTxInBytes :: MemPack (TxIn blk) => Proxy blk -> TxIn blk -> TxInBytes
+-- | Serialise an era's @TxIn@ to on-disk key bytes.
+--
+-- Goes through 'packTxInBytes' (not the raw 'MemPack' 'TxIn' codec) so the
+-- on-disk keys sort the same as the Haskell @'Ord' ('TxIn' blk)@. The LSM
+-- table is byte-ordered and every range read / snapshot stream pages it in that
+-- order, so a non-order-preserving codec (e.g. ledger's little-endian Shelley
+-- @TxIn@) would skip or repeat keys.
+toTxInBytes ::
+  forall blk. SingleEraBlockSupportsUTxOHD blk => Proxy blk -> TxIn blk -> TxInBytes
 toTxInBytes _ txin =
-  let barr = packByteArray True txin
+  let barr = packTxInBytes @blk txin
    in TxInBytes $ LSM.RawBytes (VP.Vector 0 (PBA.sizeofByteArray barr) barr)
 
-fromTxInBytes :: MemPack (TxIn blk) => Proxy blk -> TxInBytes -> TxIn blk
+fromTxInBytes ::
+  forall blk. SingleEraBlockSupportsUTxOHD blk => Proxy blk -> TxInBytes -> TxIn blk
 fromTxInBytes _ (TxInBytes (LSM.RawBytes vec)) =
-  case unpackEither vec of
+  case unpackTxInBytes @blk vec of
     Left err ->
       error $
         unlines
@@ -205,13 +321,10 @@ duplicateLSMTable tracer t = do
   LedgerTablesHandle
 -------------------------------------------------------------------------------}
 
-type LSMConstraints l blk =
-  (HasLedgerTables l blk, MemPack (TxIn blk), IndexedMemPack l blk (TxOut blk))
-
 newLSMLedgerTablesHandle ::
   forall m l blk.
   ( IOLike m
-  , LSMConstraints l blk
+  , BlockSupportsLSM blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   ExportSnapshot m ->
@@ -227,8 +340,7 @@ newLSMLedgerTablesHandle tracer exportSnapshot utxosSize t =
         , duplicateWithDiffs = implDuplicateWithDiffs tracer exportSnapshot t utxosSize
         , duplicate = implDuplicate utxosSize t tracer exportSnapshot
         , read = implRead tracer t
-        , readRange = implReadRange t
-        , readAll = implReadAll t
+        , readRange = implReadRange @m @blk t
         , takeHandleSnapshot = implTakeHandleSnapshot tracer exportSnapshot t
         , tablesSize = fromIntegral utxosSize
         }
@@ -236,13 +348,12 @@ newLSMLedgerTablesHandle tracer exportSnapshot utxosSize t =
 {-# INLINE implDuplicate #-}
 {-# INLINE implRead #-}
 {-# INLINE implReadRange #-}
-{-# INLINE implReadAll #-}
 {-# INLINE implDuplicateWithDiffs #-}
 {-# INLINE implTakeHandleSnapshot #-}
 
 implDuplicate ::
   ( IOLike m
-  , LSMConstraints l blk
+  , BlockSupportsLSM blk
   ) =>
   Word64 ->
   UTxOTable m ->
@@ -257,127 +368,113 @@ implDuplicate size t tracer exportSnapshot =
       size
 
 implDuplicateWithDiffs ::
-  forall m l blk mk.
+  forall m l blk.
   ( IOLike m
-  , LSMConstraints l blk
+  , BlockSupportsLSM blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   ExportSnapshot m ->
   UTxOTable m ->
   Word64 ->
-  l blk mk ->
-  l blk DiffMK ->
+  Diff blk ->
   m (LedgerTablesHandle m l blk)
-implDuplicateWithDiffs tracer exportSnapshot t0 size _ !st1 = do
+implDuplicateWithDiffs tracer exportSnapshot t0 size diff = do
   t <- duplicateLSMTable tracer t0
-  encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $ do
-    let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
-    let vec = V.create $ do
-          vec' <- VM.new (Map.size diffs)
-          Monad.foldM_
-            (\idx (k, item) -> VM.write vec' idx (toTxInBytes (Proxy @blk) k, (f item)) >> pure (idx + 1))
-            0
-            $ Map.toList diffs
-          pure vec'
-    let (ins, dels) =
-          Map.foldl'
-            ( \(i, d) delta -> case delta of
-                Diff.Insert{} -> (i + 1, d)
-                Diff.Delete -> (i, d + 1)
-            )
-            (0, 0)
-            diffs
-    let size' =
-          assert (size + ins >= size) $
-            assert (size + ins - dels <= size + ins) $
-              size + ins - dels
-
-    encloseTimedWith (BackendTrace . SomeBackendTrace . LSMUpdate >$< tracer) $ LSM.updates t vec
-    newLSMLedgerTablesHandle tracer exportSnapshot size' t
- where
-  f (Diff.Insert v) = LSM.Insert (toTxOutBytes (forgetLedgerTables st1) v) Nothing
-  f Diff.Delete = LSM.Delete
+  let cont ::
+        forall x.
+        SingleEraBlockSupportsUTxOHD x =>
+        Proxy x -> Diff x -> m (LedgerTablesHandle m l blk)
+      cont _ dx = do
+        let entries = diffToList @x dx
+            toUpdate (Diff.Insert v) = LSM.Insert (toTxOutBytes (Proxy @x) v) Nothing
+            toUpdate Diff.Delete = LSM.Delete
+            vec =
+              V.fromListN (length entries) $
+                [(toTxInBytes (Proxy @x) k, toUpdate dd) | (k, dd) <- entries]
+            (ins, dels) =
+              List.foldl'
+                ( \(i, d) (_, delta) -> case delta of
+                    Diff.Insert{} -> (i + 1, d)
+                    Diff.Delete -> (i, d + 1)
+                )
+                (0, 0)
+                entries
+            size' =
+              assert (size + ins >= size) $
+                assert (size + ins - dels <= size + ins) $
+                  size + ins - dels
+        encloseTimedWith (BackendTrace . SomeBackendTrace . LSMUpdate >$< tracer) $ LSM.updates t vec
+        newLSMLedgerTablesHandle tracer exportSnapshot size' t
+  encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $
+    withDiffEra @blk diff cont
 
 implRead ::
   forall m l blk.
   ( IOLike m
-  , LSMConstraints l blk
+  , BlockSupportsLSM blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   UTxOTable m ->
-  l blk EmptyMK ->
-  LedgerTables blk KeysMK ->
-  m (LedgerTables blk ValuesMK)
-implRead tracer t st (LedgerTables (KeysMK keys)) =
-  encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $ do
-    let vec' = V.create $ do
-          vec <- VM.new (Set.size keys)
-          Monad.foldM_
-            (\i x -> VM.write vec i (toTxInBytes (Proxy @blk) x) >> pure (i + 1))
-            0
-            keys
-          pure vec
+  l blk ->
+  Keys blk ->
+  m (Values blk)
+implRead tracer t _st keys =
+  encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $
+    withKeysEra @blk keys cont
+ where
+  cont ::
+    forall x.
+    SingleEraBlockSupportsUTxOHD x =>
+    Proxy x -> Keys x -> (Values x -> Values blk) -> m (Values blk)
+  cont _ kx inj = do
+    let txins = keysToList @x kx
+        vec' = V.fromListN (length txins) (map (toTxInBytes (Proxy @x)) txins)
     res <-
       encloseTimedWith (BackendTrace . SomeBackendTrace . LSMLookup >$< tracer) $ LSM.lookups t vec'
     pure
-      . LedgerTables
-      . ValuesMK
-      . Foldable.foldl'
-        ( \m (k, item) ->
-            case item of
-              LSM.Found v -> Map.insert (fromTxInBytes (Proxy @blk) k) (fromTxOutBytes st v) m
-              LSM.NotFound -> m
-              LSM.FoundWithBlob{} -> m
-        )
-        Map.empty
-      $ V.zip vec' res
+      . inj
+      . valuesFromList @x
+      $ [ (fromTxInBytes (Proxy @x) k, fromTxOutBytes (Proxy @x) v)
+        | (k, LSM.Found v) <- V.toList (V.zip vec' res)
+        ]
 
 implReadRange ::
-  forall m l blk.
-  (IOLike m, LSMConstraints l blk) =>
+  forall m blk.
+  IOLike m =>
   UTxOTable m ->
-  l blk EmptyMK ->
-  (Maybe (TxIn blk), Int) ->
-  m (LedgerTables blk ValuesMK, Maybe (TxIn blk))
-implReadRange table st (mPrev, num) = do
-  entries <- maybe cursorFromStart cursorFromKey mPrev
-  pure
-    ( LedgerTables
-        . ValuesMK
-        . V.foldl'
-          ( \m -> \case
-              LSM.Entry k v -> Map.insert (fromTxInBytes (Proxy @blk) k) (fromTxOutBytes st v) m
-              LSM.EntryWithBlob{} -> m
-          )
-          Map.empty
-        $ entries
-    , case snd <$> V.unsnoc entries of
-        Nothing -> Nothing
-        Just (LSM.Entry k _) -> Just (fromTxInBytes (Proxy @blk) k)
-        Just (LSM.EntryWithBlob k _ _) -> Just (fromTxInBytes (Proxy @blk) k)
-    )
+  RangeReadTables m blk
+implReadRange table = go
  where
-  cursorFromStart = LSM.withCursor table (LSM.take num)
-  -- Here we ask for one value more and we drop one value because the
-  -- cursor returns also the key at which it was opened.
-  cursorFromKey k = fmap (V.drop 1) $ LSM.withCursorAtOffset table (toTxInBytes (Proxy @blk) k) (LSM.take $ num + 1)
-
-implReadAll ::
-  ( IOLike m
-  , LSMConstraints l blk
-  ) =>
-  UTxOTable m ->
-  l blk EmptyMK ->
-  m (LedgerTables blk ValuesMK)
-implReadAll t st =
-  let readAll' m = do
-        (v, n) <- implReadRange t st (m, 100000)
-        maybe (pure v) (fmap (ltliftA2 unionValues v) . readAll' . Just) n
-   in readAll' Nothing
+  go ::
+    forall x.
+    SingleEraBlockSupportsUTxOHD x =>
+    (Values blk -> Values x) ->
+    RangeQueryPrevious x ->
+    Int ->
+    m (Values x)
+  go _proj prev count = do
+    entries <- case prev of
+      NoPreviousQuery -> LSM.withCursor table (LSM.take count)
+      -- Ask for one extra entry and drop it: the cursor also returns the key it
+      -- was opened at.
+      PreviousQueryWasUpTo k ->
+        fmap (V.drop 1) $
+          LSM.withCursorAtOffset table (toTxInBytes (Proxy @x) k) (LSM.take (count + 1))
+      PreviousQueryWasFinal -> pure V.empty
+    pure
+      . valuesFromList @x
+      $ [ (fromTxInBytes (Proxy @x) k, fromTxOutBytes (Proxy @x) v)
+        | LSM.Entry k v <- V.toList entries
+        ]
 
 implTakeHandleSnapshot ::
   IOLike m =>
-  Tracer m LedgerDBV2Trace -> (LSM.SnapshotName -> m ()) -> UTxOTable m -> t -> String -> m (Maybe a)
+  Tracer m LedgerDBV2Trace ->
+  (LSM.SnapshotName -> m ()) ->
+  UTxOTable m ->
+  l blk ->
+  String ->
+  m (Maybe CRC)
 implTakeHandleSnapshot tracer exportSnapshot t _ snapshotName = do
   encloseTimedWith (BackendTrace . SomeBackendTrace . LSMSnap >$< tracer) $
     LSM.saveSnapshot
@@ -540,7 +637,7 @@ loadSnapshot ::
   forall blk m.
   ( LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
-  , LSMConstraints LedgerState blk
+  , BlockSupportsLSM blk
   , IOLike m
   ) =>
   Tracer m LedgerDBV2Trace ->
@@ -585,26 +682,31 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session exportSnapshot ds = do
 
 -- | Create the initial LSM table from values, which should happen only at
 -- Genesis.
-tableFromValuesMK ::
-  forall m l blk.
+tableFromValues ::
+  forall m blk.
   ( IOLike m
-  , LSMConstraints l blk
+  , BlockSupportsLSM blk
   ) =>
   Tracer m LedgerDBV2Trace ->
   Session m ->
-  l blk EmptyMK ->
-  LedgerTables blk ValuesMK ->
+  Values blk ->
   m (UTxOTable m, Word64)
-tableFromValuesMK tracer session st (LedgerTables (ValuesMK values)) = do
+tableFromValues tracer session values = do
   table <-
     encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $ LSM.newTable session
-  mapM_ (go table) $ chunks 1000 $ Map.toList values
-  pure (table, fromIntegral $ Map.size values)
- where
-  go table items =
-    LSM.inserts table $
-      V.fromListN (length items) $
-        map (\(k, v) -> (toTxInBytes (Proxy @blk) k, toTxOutBytes st v, Nothing)) items
+  let cont :: forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Values x -> m Word64
+      cont _ vsx = do
+        let entries = valuesToList @x vsx
+        mapM_
+          ( \items ->
+              LSM.inserts table $
+                V.fromListN (length items) $
+                  map (\(k, v) -> (toTxInBytes (Proxy @x) k, toTxOutBytes (Proxy @x) v, Nothing)) items
+          )
+          (chunks 1000 entries)
+        pure (fromIntegral (length entries))
+  sz <- withValuesEra @blk values cont
+  pure (table, sz)
 
 {-------------------------------------------------------------------------------
   Helpers
@@ -629,6 +731,7 @@ type data LSM
 mkLSMArgsIO ::
   ( LedgerSupportsProtocol blk
   , LedgerDbSerialiseConstraints blk
+  , BlockSupportsLSM blk
   ) =>
   Proxy blk ->
   -- | LSM database path, relative to the FS root.
@@ -655,7 +758,7 @@ instance
   ( LedgerSupportsProtocol blk
   , IOLike m
   , LedgerDbSerialiseConstraints blk
-  , HasLedgerTables LedgerState blk
+  , BlockSupportsLSM blk
   ) =>
   Backend m LSM blk
   where
@@ -713,34 +816,40 @@ instance
   openStateRefFromSnapshot trcr ccfg shfs res ds = do
     loadSnapshot trcr ccfg shfs (sessionResource res) (exportSnapshotResource res) ds
 
-  createAndPopulateStateRefFromGenesis trcr res st = do
-    let st' = forgetLedgerTables st
-    (table, sz) <-
-      tableFromValuesMK trcr (sessionResource res) st' (ltprj st)
-    StateRef st' <$> newLSMLedgerTablesHandle trcr (exportSnapshotResource res) sz table
+  createAndPopulateStateRefFromGenesis trcr res state values = do
+    (table, sz) <- tableFromValues @m @blk trcr (sessionResource res) values
+    StateRef state <$> newLSMLedgerTablesHandle trcr (exportSnapshotResource res) sz table
 
   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
 
 instance
-  ( LSMConstraints l blk
-  , IOLike m
+  ( IOLike m
+  , SingleEraBlockSupportsUTxOHD blk
   ) =>
   StreamingBackend m LSM l blk
   where
-  data YieldArgs m LSM l blk
-    = -- \| Yield an LSM snapshot
-      YieldLSM
-        Int
-        (LedgerTablesHandle m l blk)
-        -- \| Only to be closed by 'releaseYieldArgs'
-        (Session m)
-        -- \| Only to be closed by 'releaseYieldArgs'
-        (SomeHasFSAndBlockIO m)
-        -- \| Cleanup hook run by 'releaseYieldArgs' /after/ the session has been
-        -- closed. Used to remove the temporary scratch session created when
-        -- yielding from a standalone (exported) snapshot. 'pure ()' for a plain
-        -- database yield.
-        (m ())
+  data YieldArgs m LSM l blk where
+    -- \| Yield an LSM snapshot. The tables handle is opened at an arbitrary block
+    -- @hfblk@ (the hard-fork block, for a Cardano snapshot) and 'readRange'
+    -- projects it onto the single era @blk@ that is actually streamed: the
+    -- on-disk table is era-agnostic bytes, and the projection's /type/ fixes the
+    -- era whose @'MemPack'@ codec decodes the entries (see 'yieldLsmS'). A live
+    -- database yield ('mkLSMYieldArgs') uses @hfblk ~ blk@ with @'id'@.
+    YieldLSM ::
+      Int ->
+      LedgerTablesHandle m l hfblk ->
+      -- \| Project the handle's tables onto the streamed era @blk@.
+      (Values hfblk -> Values blk) ->
+      -- \| Only to be closed by 'releaseYieldArgs'
+      Session m ->
+      -- \| Only to be closed by 'releaseYieldArgs'
+      SomeHasFSAndBlockIO m ->
+      -- \| Cleanup hook run by 'releaseYieldArgs' /after/ the session has been
+      -- closed. Used to remove the temporary scratch session created when
+      -- yielding from a standalone (exported) snapshot. 'pure ()' for a plain
+      -- database yield.
+      m () ->
+      YieldArgs m LSM l blk
 
   data SinkArgs m LSM l blk
     = SinkLSM
@@ -764,7 +873,7 @@ instance
         -- database sink.
         (m ())
 
-  releaseYieldArgs (YieldLSM _ hdl session (SomeHasFSAndBlockIO _ bio) cleanup) = do
+  releaseYieldArgs (YieldLSM _ hdl _proj session (SomeHasFSAndBlockIO _ bio) cleanup) = do
     close hdl
     LSM.closeSession session
     cleanup
@@ -775,7 +884,7 @@ instance
     cleanup
     BIO.close bio
 
-  yield _ (YieldLSM chunkSize hdl _ _ _) = yieldLsmS chunkSize hdl
+  yield _ (YieldLSM chunkSize hdl proj _ _ _) = yieldLsmS chunkSize hdl proj
 
   sink _ (SinkLSM chunkSize shfs _ ds session afterSave _cleanup) =
     sinkLsmS chunkSize shfs ds session afterSave
@@ -791,22 +900,32 @@ instance IOLike m => NoThunks (Resources m LSM) where
   Streaming
 -------------------------------------------------------------------------------}
 
+-- | Stream the table by paging the value-threaded 'readRange', projecting the
+-- handle's block @hfblk@ onto the single era @blk@ that is streamed (so
+-- @'Yield'@ yields concrete @('TxIn' blk, 'TxOut' blk)@ pairs), recomputing the
+-- next cursor as the page's maximum key and stopping on the first empty page.
+-- The projection's /type/ selects the era whose @'MemPack'@ codec the cursor
+-- uses to (de)serialise on-disk entries; the LSM backend ignores its /value/.
 yieldLsmS ::
-  Monad m =>
+  forall m l hfblk blk.
+  ( Monad m
+  , SingleEraBlockSupportsUTxOHD blk
+  ) =>
   Int ->
-  LedgerTablesHandle m l blk ->
+  LedgerTablesHandle m l hfblk ->
+  (Values hfblk -> Values blk) ->
   Yield m l blk
-yieldLsmS readChunkSize tb hint k = do
-  r <- k (go (Nothing, readChunkSize))
+yieldLsmS readChunkSize tb proj _hint k = do
+  r <- k (go (NoPreviousQuery :: RangeQueryPrevious blk))
   lift $ S.effects r
  where
-  go p = do
-    (LedgerTables (ValuesMK values), mx) <- lift $ S.lift $ readRange tb hint p
-    if Map.null values
-      then pure $ pure Nothing
-      else do
-        S.each $ Map.toList values
-        go (mx, readChunkSize)
+  go prev = do
+    valsX <- lift $ S.lift $ readRange tb proj prev readChunkSize
+    case valuesToList @blk valsX of
+      [] -> pure $ pure Nothing
+      entries -> do
+        S.each entries
+        go (PreviousQueryWasUpTo (fst (List.last entries)))
 
 sinkLsmS ::
   forall m l blk.
@@ -816,7 +935,7 @@ sinkLsmS ::
   , MonadMask m
   , MonadST m
   , MonadEvaluate m
-  , LSMConstraints l blk
+  , SingleEraBlockSupportsUTxOHD blk
   ) =>
   Int ->
   SomeHasFS m ->
@@ -826,7 +945,7 @@ sinkLsmS ::
   -- snapshot has been saved into it.
   m () ->
   Sink m l blk
-sinkLsmS writeChunkSize (SomeHasFS hfs) ds session afterSave st stream = do
+sinkLsmS writeChunkSize (SomeHasFS hfs) ds session afterSave _st stream = do
   r <-
     bracket
       (lift $ LSM.newTable session)
@@ -848,7 +967,9 @@ sinkLsmS writeChunkSize (SomeHasFS hfs) ds session afterSave st stream = do
   writeToTable lsmTable accUTxOs =
     LSM.inserts lsmTable $
       V.fromList
-        [(toTxInBytes (Proxy @blk) txin, toTxOutBytes st txout, Nothing) | (txin, txout) <- accUTxOs]
+        [ (toTxInBytes (Proxy @blk) txin, toTxOutBytes (Proxy @blk) txout, Nothing)
+        | (txin, txout) <- accUTxOs
+        ]
 
   go utxosSize lsmTable 0 accUTxOs stream' = do
     lift $ writeToTable lsmTable accUTxOs
@@ -863,8 +984,9 @@ sinkLsmS writeChunkSize (SomeHasFS hfs) ds session afterSave st stream = do
 
 -- | Create Yield arguments for LSM
 mkLSMYieldArgs ::
+  forall m l blk.
   ( IOLike m
-  , LSMConstraints l blk
+  , BlockSupportsLSM blk
   ) =>
   -- | The filepath in which the LSM database lives. Must not have a trailing slash!
   FilePath ->
@@ -888,8 +1010,8 @@ mkLSMYieldArgs lsmDbPath ds mkFS mkGen = do
       session
       (LSM.toSnapshotName (snapshotToDirName ds))
       (LSM.SnapshotLabel $ T.pack "UTxO table")
-  h <- newLSMLedgerTablesHandle nullTracer (const (pure ())) 0 tb
-  pure $ YieldLSM 1000 h session shfsbio (pure ())
+  h <- newLSMLedgerTablesHandle nullTracer (const (pure ())) 0 tb :: m (LedgerTablesHandle m l blk)
+  pure $ YieldLSM 1000 h id session shfsbio (pure ())
 
 -- | Create Yield arguments for a standalone (exported) LSM snapshot.
 --
@@ -901,9 +1023,14 @@ mkLSMYieldArgs lsmDbPath ds mkFS mkGen = do
 -- The scratch session is created in the parent directory of the exported
 -- snapshot, so that it lives on the same volume (a requirement of importing).
 mkExportedLSMYieldArgs ::
+  forall hfblk m l blk.
   ( IOLike m
-  , LSMConstraints l blk
+  , BlockSupportsLSM hfblk
   ) =>
+  -- | Project the handle's tables (opened at @hfblk@, e.g. the hard-fork block)
+  -- onto the single era @blk@ that is streamed. Its type selects the era's
+  -- on-disk @'MemPack'@ codec; see 'yieldLsmS'.
+  (Values hfblk -> Values blk) ->
   -- | The directory containing the exported snapshot. Must not have a trailing
   -- slash!
   FilePath ->
@@ -916,7 +1043,7 @@ mkExportedLSMYieldArgs ::
   -- | Usually 'newStdGen'
   (m StdGen) ->
   m (YieldArgs m LSM l blk)
-mkExportedLSMYieldArgs exportDir ds mkFSBIO mkFS mkGen = do
+mkExportedLSMYieldArgs proj exportDir ds mkFSBIO mkFS mkGen = do
   shfsbio@(SomeHasFSAndBlockIO hasFS blockIO) <-
     runWithTempRegistry $ (\x -> (x, ())) <$> mkFSBIO (takeDirectory exportDir)
   nonce <- hACK_GET_SALT_FROM_BLOOMFILTER mkGen $ mkFS exportDir
@@ -940,8 +1067,8 @@ mkExportedLSMYieldArgs exportDir ds mkFSBIO mkFS mkGen = do
       snapName
       (LSM.SnapshotLabel $ T.pack "UTxO table")
   -- A scratch session used only for reading; it never exports snapshots.
-  h <- newLSMLedgerTablesHandle nullTracer (const (pure ())) 0 tb
-  pure $ YieldLSM 1000 h session shfsbio (removeDirectoryRecursive hasFS scratch)
+  h <- newLSMLedgerTablesHandle nullTracer (const (pure ())) 0 tb :: m (LedgerTablesHandle m l hfblk)
+  pure $ YieldLSM 1000 h proj session shfsbio (removeDirectoryRecursive hasFS scratch)
 
 -- | Create Sink arguments for a standalone (exported) LSM snapshot.
 --

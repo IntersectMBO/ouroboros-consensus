@@ -19,6 +19,7 @@ module Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
   , extLedgerDbConfig
   , genBlocks
   , genesis
+  , genesisValues
   ) where
 
 import Cardano.Binary
@@ -29,14 +30,11 @@ import Cardano.Binary
   )
 import Cardano.Ledger.BaseTypes (NonZero (..))
 import qualified Cardano.Slotting.Slot as WithOrigin
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
 import Codec.Serialise (Serialise)
 import qualified Codec.Serialise as S
 import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Diff.Strict.Internal as DS
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict
 import Data.MemPack
@@ -50,10 +48,10 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.Tables.Utils
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM (BlockSupportsLSM (..))
 import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block (Point (Point))
 import Ouroboros.Network.Point (Block (Block))
 import qualified Test.QuickCheck as QC
@@ -115,129 +113,55 @@ data TxErr
   deriving anyclass (NoThunks, Serialise, ToExpr)
 
 instance PayloadSemantics Tx where
-  data PayloadDependentState Tx mk
+  -- In the @mk@-free design the on-disk UTxO table is no longer part of the
+  -- ledger state; it flows as the block's 'Values'\/'Diff'. The table-free
+  -- payload-dependent state only keeps the history of tokens that ever existed.
+  data PayloadDependentState Tx
     = UTxTok
-    { utxtoktables :: LedgerTables TestBlock mk
-    , -- \| All the tokens that ever existed. We use this to
+    { -- \| All the tokens that ever existed. We use this to
       -- make sure a token is not created more than once. See
-      -- the definition of 'applyPayload' in the
-      -- 'PayloadSemantics' of 'Tx'.
+      -- the definition of 'applyPayload'.
       utxhist :: Set Token
     }
-    deriving stock Generic
+    deriving stock (Eq, Show, Generic)
+    deriving anyclass (Serialise, NoThunks)
 
   type PayloadDependentError Tx = TxErr
 
-  -- We need to exercise the HD backend. This requires that we store key-values
-  -- ledger tables and the block application semantics satisfy:
+  type PayloadTxIn Tx = Token
+  type PayloadTxOut Tx = TValue
+
+  -- We need to exercise the HD backend. This requires that the block
+  -- application semantics satisfy:
   --
   -- \* a key is deleted at most once
   -- \* a key is inserted at most once
   --
-  applyPayload st Tx{consumed, produced} =
-    fmap track $ delete consumed st >>= uncurry insert produced
-   where
-    insert ::
-      Token ->
-      TValue ->
-      PayloadDependentState Tx ValuesMK ->
-      Either TxErr (PayloadDependentState Tx ValuesMK)
-    insert tok val st'@UTxTok{utxtoktables, utxhist} =
-      if tok `Set.member` utxhist
-        then Left $ TokenWasAlreadyCreated tok
-        else
-          Right $
-            st'
-              { utxtoktables = Map.insert tok val `onValues` utxtoktables
-              , utxhist = Set.insert tok utxhist
-              }
-    delete ::
-      Token ->
-      PayloadDependentState Tx ValuesMK ->
-      Either TxErr (PayloadDependentState Tx ValuesMK)
-    delete tok st'@UTxTok{utxtoktables} =
-      if Map.member tok `queryKeys` utxtoktables
-        then
-          Right $
-            st'
-              { utxtoktables = Map.delete tok `onValues` utxtoktables
-              }
-        else Left $ TokenDoesNotExist tok
+  applyPayload vals st Tx{consumed, produced} = do
+    -- the consumed token must currently exist in the tables
+    if Map.member consumed vals
+      then Right ()
+      else Left $ TokenDoesNotExist consumed
+    let (producedTok, producedVal) = produced
+    -- the produced token must never have existed
+    if producedTok `Set.member` utxhist st
+      then Left $ TokenWasAlreadyCreated producedTok
+      else Right ()
+    let st' = st{utxhist = Set.insert producedTok (utxhist st)}
+        diff =
+          Diff.fromSetDeletes (Set.singleton consumed)
+            <> Diff.fromListInserts [(producedTok, producedVal)]
+    pure (st', diff)
 
-    track :: PayloadDependentState Tx ValuesMK -> PayloadDependentState Tx TrackingMK
-    track stAfter =
-      stAfter
-        { utxtoktables =
-            LedgerTables $ rawCalculateDifference utxtokBefore utxtokAfter
-        }
-     where
-      utxtokBefore = getLedgerTables $ utxtoktables st
-      utxtokAfter = getLedgerTables $ utxtoktables stAfter
-
-  getPayloadKeySets Tx{consumed} =
-    LedgerTables $ KeysMK $ Set.singleton consumed
-
-deriving instance Eq (LedgerTables TestBlock mk) => Eq (PayloadDependentState Tx mk)
-deriving instance
-  NoThunks (LedgerTables TestBlock mk) => NoThunks (PayloadDependentState Tx mk)
-deriving instance
-  Show (LedgerTables TestBlock mk) => Show (PayloadDependentState Tx mk)
-deriving instance
-  Serialise (LedgerTables TestBlock mk) => Serialise (PayloadDependentState Tx mk)
-
-onValues ::
-  (Map Token TValue -> Map Token TValue) ->
-  LedgerTables TestBlock ValuesMK ->
-  LedgerTables TestBlock ValuesMK
-onValues f (LedgerTables testUtxtokTable) = LedgerTables $ updateMap testUtxtokTable
- where
-  updateMap :: ValuesMK Token TValue -> ValuesMK Token TValue
-  updateMap (ValuesMK utxovals) =
-    ValuesMK $ f utxovals
-
-queryKeys ::
-  (Map Token TValue -> a) ->
-  LedgerTables TestBlock ValuesMK ->
-  a
-queryKeys f (LedgerTables (ValuesMK utxovals)) = f utxovals
+  getPayloadKeySets Tx{consumed} = Set.singleton consumed
 
 {-------------------------------------------------------------------------------
   Instances required for on-disk storage of ledger state tables
+
+  The block's 'BlockSupportsUTxOHD' (and the rest of the UTxO-HD axis) is
+  provided generically by 'TestBlockWith' through the 'PayloadTxIn'\/
+  'PayloadTxOut' instance above. We only need the per-entry codecs.
 -------------------------------------------------------------------------------}
-
-type instance TxIn TestBlock = Token
-type instance TxOut TestBlock = TValue
-
-instance CanUpgradeLedgerTables LedgerState TestBlock where
-  upgradeTables _ _ = id
-
-instance IndexedMemPack LedgerState TestBlock TValue where
-  indexedTypeName _ _ = typeName @TValue
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
-
-instance SerializeTablesWithHint LedgerState TestBlock where
-  encodeTablesWithHint = defaultEncodeTablesWithHint
-  decodeTablesWithHint = defaultDecodeTablesWithHint
-
-instance HasLedgerTables LedgerState TestBlock where
-  projectLedgerTables st = utxtoktables $ payloadDependentState st
-  withLedgerTables st table =
-    st
-      { payloadDependentState =
-          (payloadDependentState st){utxtoktables = table}
-      }
-
-instance HasLedgerTables (Ticked LedgerState) TestBlock where
-  projectLedgerTables (TickedTestLedger st) = projectLedgerTables st
-  withLedgerTables (TickedTestLedger st) tables =
-    TickedTestLedger $ withLedgerTables st tables
-
-instance Serialise (LedgerTables TestBlock EmptyMK) where
-  encode (LedgerTables (_ :: EmptyMK Token TValue)) =
-    CBOR.encodeNull
-  decode = LedgerTables EmptyMK <$ CBOR.decodeNull
 
 instance ToCBOR Token where
   toCBOR (Token pt) = S.encode pt
@@ -250,30 +174,22 @@ instance MemPack Token where
   packedByteCount = packedByteCount . serialize'
   unpackM = unsafeDeserialize' <$> unpackM
 
-instance CanStowLedgerTables (LedgerState TestBlock) where
-  stowLedgerTables = stowErr "stowLedgerTables"
-  unstowLedgerTables = stowErr "unstowLedgerTables"
-
-stowErr :: String -> a
-stowErr fname = error $ "Function " <> fname <> " should not be used in these tests."
+-- | This single-era block dispatches the LSM backend's era-tagged operations
+-- straight to itself.
+instance BlockSupportsLSM (TestBlockWith Tx) where
+  withKeysEra keys k = k (Proxy @TestBlock) keys id
+  withDiffEra d k = k (Proxy @TestBlock) d
+  withValuesEra v k = k (Proxy @TestBlock) v
 
 deriving anyclass instance ToExpr v => ToExpr (DS.Delta v)
 deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Diff k v)
 deriving anyclass instance ToExpr v => ToExpr (StrictMaybe v)
-deriving anyclass instance
-  ToExpr (mk Token TValue) => ToExpr (LedgerTables TestBlock mk)
-deriving instance
-  ToExpr (LedgerTables TestBlock mk) => ToExpr (PayloadDependentState Tx mk)
-
-deriving newtype instance ToExpr (ValuesMK Token TValue)
+deriving instance ToExpr (PayloadDependentState Tx)
 
 instance ToExpr v => ToExpr (DS.DeltaHistory v) where
   toExpr h = App "DeltaHistory" [genericToExpr . toList . DS.getDeltaHistory $ h]
 
-instance ToExpr (ExtLedgerState TestBlock ValuesMK) where
-  toExpr = genericToExpr
-
-instance ToExpr (LedgerState (TestBlockWith Tx) ValuesMK) where
+instance ToExpr (LedgerState (TestBlockWith Tx)) where
   toExpr = genericToExpr
 
 instance HasHardForkHistory TestBlock where
@@ -308,21 +224,19 @@ instance HasHardForkHistory TestBlock where
   coupled to the generator's semantics.
  -------------------------------------------------------------------------------}
 
-genesis :: ExtLedgerState TestBlock ValuesMK
+genesis :: ExtLedgerState TestBlock
 genesis = testInitExtLedgerWithState initialTestLedgerState
 
-initialTestLedgerState :: PayloadDependentState Tx ValuesMK
+-- | The genesis UTxO values, threaded alongside 'genesis' now that the state
+-- is @mk@-free.
+genesisValues :: Values TestBlock
+genesisValues = Map.singleton (Token GenesisPoint) (TValue ())
+
+initialTestLedgerState :: PayloadDependentState Tx
 initialTestLedgerState =
   UTxTok
-    { utxtoktables =
-        LedgerTables $
-          ValuesMK $
-            Map.singleton initialToken $
-              TValue ()
-    , utxhist = Set.singleton initialToken
+    { utxhist = Set.singleton (Token GenesisPoint)
     }
- where
-  initialToken = Token GenesisPoint
 
 genBlocks ::
   Word64 ->

@@ -55,7 +55,6 @@ import Ouroboros.Consensus.HardFork.History
   )
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HardFork.History.Util
-import Ouroboros.Consensus.Ledger.Tables.Combinators (K2 (..))
 import Ouroboros.Consensus.Util (Some (..), repeatedly, splits)
 import Test.Consensus.HardFork.Infra
 import Test.QuickCheck
@@ -263,14 +262,14 @@ withinEraForecast maxLookAhead st =
 translations ::
   forall xs.
   TestSetup xs ->
-  InPairs (CrossEraForecaster (K2 LedgerState) (K LedgerView)) xs
+  InPairs (CrossEraForecaster (K LedgerState) (K LedgerView)) xs
 translations TestSetup{..} =
   case isNonEmpty (Proxy @xs) of
     ProofNonEmpty{} -> go testLookahead
  where
   go ::
     Exactly (x ': xs') MaxLookahead ->
-    InPairs (CrossEraForecaster (K2 LedgerState) (K LedgerView)) (x ': xs')
+    InPairs (CrossEraForecaster (K LedgerState) (K LedgerView)) (x ': xs')
   go (ExactlyCons _ ExactlyNil) =
     InPairs.PNil
   go (ExactlyCons this rest@(ExactlyCons next _)) =
@@ -281,9 +280,9 @@ translations TestSetup{..} =
     -- \^ Look-ahead in the current era
     MaxLookahead ->
     -- \^ Look-ahead in the next era
-    CrossEraForecaster (K2 LedgerState) (K LedgerView) era era'
+    CrossEraForecaster (K LedgerState) (K LedgerView) era era'
   tr thisLookahead nextLookahead =
-    CrossEraForecaster $ \transition sno (K2 st) ->
+    CrossEraForecaster $ \transition sno (K st) ->
       assert (sno >= boundSlot transition) $ do
         let tip :: WithOrigin SlotNo
             tip = ledgerTip st
@@ -334,7 +333,7 @@ acrossErasForecast setup@TestSetup{..} ledgerStates =
 
   go ::
     NonEmpty xs' TestEra ->
-    Telescope (K Past) (Current (AnnForecast (K2 LedgerState) (K LedgerView))) xs'
+    Telescope (K Past) (Current (AnnForecast (K LedgerState) (K LedgerView))) xs'
   go (NonEmptyOne era) =
     assert (testEraContains testForecastAt era) $
       TZ $
@@ -347,7 +346,7 @@ acrossErasForecast setup@TestSetup{..} ledgerStates =
                       withinEraForecast
                         (testEraMaxLookahead era)
                         st
-                , annForecastState = K2 st
+                , annForecastState = K st
                 , annForecastTip = testForecastAt
                 , annForecastEnd = Nothing
                 }
@@ -368,7 +367,7 @@ acrossErasForecast setup@TestSetup{..} ledgerStates =
                         withinEraForecast
                           (testEraMaxLookahead era)
                           st
-                  , annForecastState = K2 st
+                  , annForecastState = K st
                   , annForecastTip = testForecastAt
                   , annForecastEnd = Just end
                   }

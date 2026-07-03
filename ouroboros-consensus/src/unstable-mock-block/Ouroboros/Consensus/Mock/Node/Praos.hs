@@ -60,6 +60,7 @@ protocolInfoPraos numCoreNodes nid params eraParams eta0 evolvingStakeDist =
           { ledgerState = genesisSimpleLedgerState addrDist
           , headerState = genesisHeaderState (PraosChainDepState [])
           }
+    , pInfoInitLedgerTables = genesisSimpleLedgerTables addrDist
     }
  where
   signKeyVRF :: CoreNodeId -> SignKeyVRF MockVRF
