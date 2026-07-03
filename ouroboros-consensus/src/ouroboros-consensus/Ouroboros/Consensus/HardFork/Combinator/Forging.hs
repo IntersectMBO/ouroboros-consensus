@@ -326,6 +326,7 @@ hardForkForgeBlock
     , fbLeiosDb
     , fbLeiosTracer
     , fbLeiosVoteState
+    , fbMayLeiosCert
     } =
     fmap (HardForkBlock . OneEraBlock)
       $ hsequence
@@ -441,4 +442,5 @@ hardForkForgeBlock
             , fbLeiosDb
             , fbLeiosTracer
             , fbLeiosVoteState
+            , fbMayLeiosCert
             }

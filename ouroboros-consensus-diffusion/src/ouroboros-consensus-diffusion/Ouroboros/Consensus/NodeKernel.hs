@@ -71,7 +71,8 @@ import LeiosDemoDb
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
-  ( LeiosOutstanding
+  ( LeiosCert
+  , LeiosOutstanding
   , LeiosPeerVars
   , TraceLeiosKernel (..)
   )
@@ -717,6 +718,75 @@ toConsensusMode = \case
   LoEAndGDDDisabled -> PraosMode
   LoEAndGDDEnabled _ -> GenesisMode
 
+-- | Decide whether the block we're about to forge should certify a
+-- previously-announced EB on this chain, returning the assembled
+-- certificate and the 'LeiosPoint' at which the EB was announced.
+--
+-- An EB is certifiable when:
+--
+--   * it was announced on this chain ('protocolStateLeiosAnnouncement' is a 'Just');
+--   * enough slots ('minCertificationGap') have elapsed since the announcement;
+--   * we have downloaded its closure into the 'LeiosDb', and
+--   * we have assembled a certificate for the announcing RB.
+--
+-- Returns 'Nothing' for non-Leios eras and whenever any of the above is not yet satisfied.
+decideLeiosCertify ::
+  forall blk m.
+  ( Monad m
+  , ResolveLeiosBlock blk
+  , ConvertRawHash blk
+  ) =>
+  LeiosDbConnection m ->
+  LeiosVoteState m ->
+  Tracer m TraceLeiosKernel ->
+  -- | The slot we are forging for.
+  SlotNo ->
+  -- | The (unticked) chain dep state we are extending.
+  ChainDepState (BlockProtocol blk) ->
+  -- | The hash of the block we are forging on top of (the announcing RB).
+  ChainHash blk ->
+  m (Maybe (LeiosCert, Leios.LeiosPoint))
+decideLeiosCertify leiosDb voteState tracer currentSlot cds tipHash =
+  case protocolStateLeiosAnnouncement @blk cds of
+    Nothing -> pure Nothing
+    Just (ebPoint, _ebSize)
+      | unSlotNo currentSlot - unSlotNo (Leios.pointSlotNo ebPoint) <= Leios.minCertificationGap ->
+          pure Nothing
+      | otherwise -> do
+          -- TODO: Why exactly do we guard against this? Also, shouldn't we
+          -- detect it the other way around: if we have a cert, but not
+          -- downloaded it ourselves -> warning!
+          mClosure <- leiosDbLookupEbClosure leiosDb (Leios.pointEbHash ebPoint)
+          case mClosure of
+            Nothing -> do
+              traceWith tracer $
+                MkTraceLeiosKernel $
+                  "EB not yet downloaded: " <> show ebPoint
+              pure Nothing
+            Just _ ->
+              -- The announcing RB is the block we're forging on top of;
+              -- EB certification must happen within one block (this is the
+              -- linear aspect of linear Leios).
+              case tipHash of
+                GenesisHash ->
+                  error "decideLeiosCertify: cannot certify on top of genesis"
+                BlockHash h -> do
+                  let announcingRb = Leios.MkRbHash (toRawHash (Proxy @blk) h)
+                  mCert <- queryCert voteState announcingRb
+                  case mCert of
+                    Nothing -> do
+                      traceWith tracer $
+                        MkTraceLeiosKernel $
+                          "EB downloaded but no certificate: " <> show ebPoint
+                      pure Nothing
+                    Just cert -> do
+                      traceWith tracer $
+                        TraceLeiosBlockCertified
+                          { atSlot = currentSlot
+                          , certifiedPoint = ebPoint
+                          }
+                      pure (Just (cert, ebPoint))
+
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
   (IOLike m, RunNode blk) =>
@@ -776,7 +846,16 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
     -- is no longer on our chain. When that happens, we simply give up on the
     -- chance to produce a block.
-    (rbTxs, ebTxs, txssz, proof, snapSize, tickedLedgerState, forgingOnTopOf, untickedChainDepState) <-
+    ( rbTxs
+      , ebTxs
+      , txssz
+      , proof
+      , snapSize
+      , tickedLedgerState
+      , forgingOnTopOf
+      , untickedChainDepState
+      , mayLeiosCert
+      ) <-
       ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
         Left _ -> do
           trace blockForging $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -874,6 +953,17 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
           let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
 
+          -- Decide whether this block certifies a previously-announced EB
+          mayLeiosCertAndAnnouncement <-
+            lift $
+              decideLeiosCertify @blk
+                leiosConn
+                leiosVoteState
+                (leiosKernelTracer tracers)
+                currentSlot
+                (headerStateChainDep (headerState unticked))
+                (pointHash bcPrevPoint)
+
           mempoolSnapshot <-
             lift $
               getSnapshotFor
@@ -909,6 +999,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             , forgetLedgerTables tickedLedgerState
             , ledgerTipPoint (ledgerState unticked)
             , headerStateChainDep (headerState unticked)
+            , fst <$> mayLeiosCertAndAnnouncement
             )
 
     -- Actually produce the block
@@ -925,6 +1016,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             , Block.fbEbTxs = ebTxs
             , Block.fbIsLeader = proof
             , Block.fbChainDepState = Just untickedChainDepState
+            , Block.fbMayLeiosCert = mayLeiosCert
             , Block.fbLeiosDb = leiosConn
             , Block.fbLeiosTracer = leiosKernelTracer tracers
             , Block.fbLeiosVoteState = leiosVoteState
