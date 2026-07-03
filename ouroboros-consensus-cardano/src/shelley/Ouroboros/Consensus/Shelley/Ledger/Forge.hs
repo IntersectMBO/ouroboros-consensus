@@ -11,7 +11,6 @@
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
 import Cardano.Crypto.Leios (LeiosCert)
-import Cardano.Ledger.BaseTypes (StrictMaybe (SJust), maybeToStrictMaybe)
 import qualified Cardano.Ledger.Core as Core (TopTx, Tx)
 import qualified Cardano.Ledger.Core as SL
   ( BlockBody
@@ -31,22 +30,16 @@ import Data.ByteString.Short (fromShort)
 import Data.Maybe (isJust)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Typeable as Typeable
-import LeiosDemoDb
-  ( LeiosDbConnection (..)
-  , leiosDbLookupEbClosure
-  )
+import LeiosDemoDb (LeiosDbConnection (..))
 import LeiosDemoTypes
   ( EbAnnouncement (..)
   , ForgedLeiosEb (..)
   , LeiosPoint (..)
-  , RbHash (..)
   , TraceLeiosKernel (..)
   , forgeLeiosEb
   , hashLeiosEb
   , leiosEbBytesSize
-  , minCertificationGap
   )
-import LeiosVoteState (LeiosVoteState (queryCert))
 import Lens.Micro ((&), (.~))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -64,7 +57,7 @@ import Ouroboros.Consensus.Shelley.Ledger.Integrity
 import Ouroboros.Consensus.Shelley.Ledger.Mempool
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
-  , ProtocolHeaderSupportsKES (configSlotsPerKESPeriod, protocolStateLeiosInfo)
+  , ProtocolHeaderSupportsKES (configSlotsPerKESPeriod)
   , mkHeader
   )
 
@@ -152,64 +145,23 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       . getTipHash
       $ fbCurrentTickedLedgerState
 
-  -- Dijkstra-only: certify a previously-announced EB on this chain if
-  -- one is ready (announced + downloaded + gap > minCertificationGap +
-  -- certificate available in LeiosDb), suppressing this block's own EB
-  -- announcement. Otherwise fall back to forging a new EB (when the
-  -- mempool has txs for one). Mirrors the prototype's 'decideForgeType'.
+  -- Dijkstra-only: if the forge loop decided to certify a
+  -- previously-announced EB ('fbMayLeiosCert'), embed the certificate and
+  -- suppress this block's own EB announcement. Otherwise fall back to
+  -- forging a new EB (when the mempool has txs for one). Mirrors the
+  -- prototype's 'decideForgeType'.
+  --
+  -- The certification /decision/ (announced + downloaded + gap elapsed +
+  -- certificate available) is made upstream in
+  -- 'Ouroboros.Consensus.NodeKernel.decideLeiosCertify' so it can run before
+  -- the mempool snapshot; here we only act on its result.
   decideLeios :: m (Maybe (ForgedLeiosEb, EbAnnouncement), Maybe LeiosCert)
-  decideLeios = do
-    cert <- decideCertify
-    case cert of
-      Just _ -> pure (Nothing, cert)
+  decideLeios =
+    case fbMayLeiosCert of
+      cert@(Just _) -> pure (Nothing, cert)
       Nothing -> do
         ann <- mkAndStoreEb
         pure (ann, Nothing)
-
-  decideCertify :: m (Maybe LeiosCert)
-  decideCertify =
-    case fbChainDepState >>= protocolStateLeiosInfo (Proxy @proto) of
-      Nothing -> pure Nothing
-      Just (_, Origin) -> pure Nothing
-      Just (ann, NotOrigin prevSlotNo)
-        | unSlotNo fbCurrentSlotNo - unSlotNo prevSlotNo <= minCertificationGap ->
-            pure Nothing
-        | otherwise -> do
-            let ebPoint =
-                  MkLeiosPoint
-                    { pointSlotNo = prevSlotNo
-                    , pointEbHash = ebAnnouncementHash ann
-                    }
-            -- TODO: Why exactly do we guard against this? Also, shouldn't we
-            -- detect it the other way around: if we have a cert, but not
-            -- downloaded it ourselves -> warning!
-            mClosure <- leiosDbLookupEbClosure fbLeiosDb (pointEbHash ebPoint)
-            case mClosure of
-              Nothing -> do
-                traceWith fbLeiosTracer $
-                  MkTraceLeiosKernel $
-                    "EB not yet downloaded: " <> show ebPoint
-                pure Nothing
-              Just _ -> do
-                -- we get the hash of the previous block header because eb certification must
-                -- happen withing one block (this is the linear aspect of linear leios).
-                let announcingRbHash = case getTipHash fbCurrentTickedLedgerState of
-                      BlockHash h -> MkRbHash (toRawHash (Proxy @(ShelleyBlock proto era)) h)
-                      GenesisHash -> error "decideCertify: cannot certify on top of genesis"
-                mCert <- queryCert fbLeiosVoteState announcingRbHash
-                case mCert of
-                  Nothing -> do
-                    traceWith fbLeiosTracer $
-                      MkTraceLeiosKernel $
-                        "EB downloaded but no certificate: " <> show ebPoint
-                    pure Nothing
-                  Just cert -> do
-                    traceWith fbLeiosTracer $
-                      TraceLeiosBlockCertified
-                        { atSlot = fbCurrentSlotNo
-                        , certifiedPoint = ebPoint
-                        }
-                    pure (Just cert)
 
   -- Produce an EB from fbEbTxs, store it into fbLeiosDb, and return the
   -- announcement to embed in the header. An honest forger only emits an

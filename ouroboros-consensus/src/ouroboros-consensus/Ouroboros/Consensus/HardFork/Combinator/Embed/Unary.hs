@@ -472,6 +472,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                 , fbLeiosDb = fbLeiosDb fbArgs
                 , fbLeiosTracer = fbLeiosTracer fbArgs
                 , fbLeiosVoteState = fbLeiosVoteState fbArgs
+                , fbMayLeiosCert = fbMayLeiosCert fbArgs
                 }
       }
    where
@@ -527,6 +528,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                 , fbLeiosDb = fbLeiosDb fbArgs
                 , fbLeiosTracer = fbLeiosTracer fbArgs
                 , fbLeiosVoteState = fbLeiosVoteState fbArgs
+                , fbMayLeiosCert = fbMayLeiosCert fbArgs
                 }
       }
    where

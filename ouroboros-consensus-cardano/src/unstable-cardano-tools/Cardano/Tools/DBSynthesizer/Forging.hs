@@ -249,6 +249,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
             , fbLeiosDb = leiosDb
             , fbLeiosTracer = Trace.nullTracer
             , fbLeiosVoteState = leiosVoteState
+            , fbMayLeiosCert = Nothing
             }
 
     -- Add the block to the chain DB (synchronously) and verify adoption

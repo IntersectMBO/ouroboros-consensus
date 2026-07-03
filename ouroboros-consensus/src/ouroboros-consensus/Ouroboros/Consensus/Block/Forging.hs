@@ -30,7 +30,7 @@ import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.Stack
 import LeiosDemoDb (LeiosDbConnection)
-import LeiosDemoTypes (TraceLeiosKernel)
+import LeiosDemoTypes (LeiosCert, TraceLeiosKernel)
 import LeiosVoteState (LeiosVoteState)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config
@@ -262,6 +262,10 @@ data ForgeBlockArgs m blk = ForgeBlockArgs
   , fbEbTxs :: [Validated (GenTx blk)]
   , fbIsLeader :: IsLeader (BlockProtocol blk)
   , fbChainDepState :: Maybe (ChainDepState (BlockProtocol blk))
+  , fbMayLeiosCert :: Maybe LeiosCert
+  -- ^ The Leios certificate this block should embed, if it certifies a
+  -- previously-announced EB. 'Nothing' for non-Leios eras and for
+  -- blocks that don't certify anything.
   , fbLeiosDb :: LeiosDbConnection m
   , fbLeiosTracer :: Tracer m TraceLeiosKernel
   , fbLeiosVoteState :: LeiosVoteState m
