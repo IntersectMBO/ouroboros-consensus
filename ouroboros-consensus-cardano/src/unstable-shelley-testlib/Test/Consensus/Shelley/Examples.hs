@@ -39,7 +39,7 @@ import Data.Maybe (isJust)
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Set as Set
 import Data.Typeable (eqT)
-import LeiosDemoTypes (EbAnnouncement (..), EbHash (..))
+import LeiosDemoTypes (EbAnnouncement (..), LeiosEb (..), hashLeiosEb)
 import Lens.Micro
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HeaderValidation
@@ -303,7 +303,7 @@ fromShelleyLedgerExamplesPraos
         , ebAnnouncement =
             SJust
               EbAnnouncement
-                { ebAnnouncementHash = MkEbHash "<some eb hash>"
+                { ebAnnouncementHash = hashLeiosEb $ MkLeiosEb mempty
                 , ebAnnouncementSize = 123
                 }
         }

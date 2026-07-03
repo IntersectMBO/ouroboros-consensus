@@ -110,8 +110,7 @@ import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Protocol.Praos.Common
 import Ouroboros.Consensus.Protocol.Praos.Header
-  ( HeaderBody (hbLeiosExt)
-  , ebAnnouncement
+  ( HeaderBody
   , hbLeiosEbAnnouncement
   )
 import Ouroboros.Consensus.Protocol.Praos.VRF

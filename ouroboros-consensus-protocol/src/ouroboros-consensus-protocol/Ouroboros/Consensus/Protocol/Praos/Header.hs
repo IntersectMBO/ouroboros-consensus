@@ -242,7 +242,7 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
      where
       (len, encodeLeiosExt) = case hbLeiosExt of
         SNothing -> (10, mempty)
-        SJust ext -> (11, encodeLeios ext)
+        SJust ext -> (12, encodeLeios ext)
 
       encodeLeios HeaderLeiosExtension{containsCert, ebAnnouncement} =
         encodeBool containsCert
@@ -262,9 +262,9 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
     hbBodyHash <- decCBOR
     hbOCert <- unCBORGroup <$> decCBOR
     hbProtVer <- decCBOR
-    (hbLeiosExt) <- case len of
-      10 -> pure SNothing -- Praos only
-      11 -> SJust <$> decodeLeiosExtension
+    hbLeiosExt <- case len of
+      10 -> pure SNothing
+      12 -> SJust <$> decodeLeiosExtension
       _ -> fail $ "Praos HeaderBody CBOR has wrong length: " <> show len
     pure
       HeaderBody
