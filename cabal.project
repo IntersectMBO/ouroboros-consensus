@@ -16,12 +16,7 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2026-06-29T22:49:53Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2026-06-29T12:05:19Z
-
--- TODO: cardano packages require aeson-2.3 but dependencies did not catch up yet
-allow-newer:
-  , aeson
-  , http-api-data:text-iso8601
+  , cardano-haskell-packages 2026-07-02T10:10:00Z
 
 packages: .
 
@@ -91,8 +86,8 @@ constraints:
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network.git
-  tag: b47dbc2c29108e593cc47524cffb75008b88fe90
-  --sha256: sha256-7TwcI1/m6aEBmiGYPXKHbIWlxzRja4qFyqr+apcR9p4=
+  tag: 0a614a36c8969e53fd6a1c3890b36da5aff3b0a2
+  --sha256: sha256-p32/Y6jXwiSwa0yVspdx246KHaCBmqe2zB+UpxudeJc=
   subdir:
     ouroboros-network
     cardano-diffusion
