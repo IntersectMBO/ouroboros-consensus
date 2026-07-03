@@ -64,7 +64,8 @@ Repeated `Net.PeerSelection.Selection.PromoteColdBigLedgerPeerFailed` and `Net.C
 ### Stuck in Syncing (no EnterCaughtUp)
 
 The HAA is satisfied (`PreSyncingToSyncing` seen) but sync does not complete.
-Look downstream.
+The stall is downstream of peer selection: in header delivery, the density rule, or block fetch.
+Work through the cases below in order; each names the trace event that confirms or rules it out.
 
 - **LoE not advancing.** Chain selection is pinned at the LoE anchor. Watch `Consensus.GDD.TraceGDDEvent` (its payload `kind` field is `TraceGDDDebugInfo` for the density comparison and the disconnect decision otherwise). GDD advances the anchor only after it disconnects the peers offering lower-density chains. If the ChainDB tip stalls while headers keep arriving, GDD has not been able to move the anchor — usually because the competing chains have not yet diverged enough in density (small peer set, or too few headers past the intersection), not because GDD is malfunctioning.
 - **CSJ dynamo wedged.** No `Consensus.CSJ.SentJumpInstruction` for a long time, and jumpers stuck at `Consensus.CSJ.BlockedOnJump`.
@@ -76,7 +77,10 @@ Look downstream.
 The HAA is flapping.
 The count of active big ledger peers keeps crossing `MinBigLedgerPeersForTrustedState`, so the trusted-state signal toggles.
 You see `Consensus.GSM.PreSyncingToSyncing` and `Consensus.GSM.SyncingToPreSyncing` alternating.
-The cause is upstream in peer selection: the node keeps gaining and losing big ledger peers.
+The toggling is a symptom, not the cause: something keeps disconnecting the big ledger peers.
+For each `SyncingToPreSyncing`, find why a peer dropped just before it.
+The node may have disconnected it — GDD found its chain not dense enough, or the Limit on Patience timed it out for being too slow, both surfacing as `ChainSync.Client.Exception` (severity Warning, visible by default).
+The connection may instead have failed at the network layer, shown by `Net.ConnectionManager.Remote.ConnectError` with the reason.
 
 ### Healthy signature
 
