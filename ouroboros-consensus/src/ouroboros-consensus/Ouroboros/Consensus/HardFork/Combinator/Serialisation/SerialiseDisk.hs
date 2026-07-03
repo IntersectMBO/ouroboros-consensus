@@ -11,18 +11,19 @@ import qualified Data.ByteString.Lazy as Lazy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Dict (Dict (..), all_NP)
-import Data.SOP.Functors
+import Data.SOP.Functors (Flip (..))
 import Data.SOP.Strict
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.HardFork.Combinator.Protocol
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Storage.ChainDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util ((.:))
 
 instance SerialiseHFC xs => SerialiseDiskConstraints (HardForkBlock xs)
 

@@ -4,7 +4,6 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -17,21 +16,15 @@ module Test.Consensus.HardFork.Combinator (tests) where
 
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import qualified Data.Map.Strict as Map
-import Data.MemPack
-import Data.SOP.BasicFunctors
 import Data.SOP.Counting
-import Data.SOP.Functors (Flip (..))
 import Data.SOP.InPairs (RequiringBoth (..))
 import qualified Data.SOP.InPairs as InPairs
-import Data.SOP.Index (Index (..), hcimap)
+import Data.SOP.Index (Index (..))
 import Data.SOP.OptNP (OptNP (..))
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
-import qualified Data.SOP.Telescope as Telescope
-import Data.Void (Void, absurd)
 import Data.Word
 import GHC.Generics (Generic)
-import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
@@ -54,7 +47,6 @@ import Ouroboros.Consensus.Protocol.LeaderSchedule
   , leaderScheduleFor
   )
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Mock
 import Quiet (Quiet (..))
@@ -249,12 +241,15 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
             { ledgerState =
                 HardForkLedgerState $
                   initHardForkState
-                    (Flip initLedgerState)
+                    initLedgerState
             , headerState =
                 genesisHeaderState $
                   initHardForkState
                     (WrapChainDepState initChainDepState)
             }
+      , -- The chain starts in the first era (BlockA), whose tables are trivial,
+        -- injected as the @Z@ arm of @Values (HardForkBlock '[..]) = NS WrapValues@.
+        pInfoInitLedgerTables = Z (WrapValues ())
       }
 
   blockForging :: Monad m => [MkBlockForging m TestBlock]
@@ -265,7 +260,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
             OptNil
     ]
 
-  initLedgerState :: LedgerState BlockA ValuesMK
+  initLedgerState :: LedgerState BlockA
   initLedgerState =
     LgrA
       { lgrA_tip = GenesisPoint
@@ -401,29 +396,11 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
 
 -- We ignore the mempool for these tests
 instance TxGen TestBlock where
-  testGenTxs _ _ _ _ _ _ = return []
+  testGenTxs _ _ _ _ _ _ _ = return []
 
-{-------------------------------------------------------------------------------
-  Canonical TxIn
--------------------------------------------------------------------------------}
-
-instance HasCanonicalTxIn '[BlockA, BlockB] where
-  newtype CanonicalTxIn '[BlockA, BlockB] = BlockABTxIn
-    { getBlockABTxIn :: Void
-    }
-    deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
-
-  injectCanonicalTxIn IZ key = absurd key
-  injectCanonicalTxIn (IS IZ) key = absurd key
-  injectCanonicalTxIn (IS (IS idx')) _ = case idx' of {}
-
-  ejectCanonicalTxIn _ key = absurd $ getBlockABTxIn key
-
-instance HasHardForkTxOut '[BlockA, BlockB] where
-  type HardForkTxOut '[BlockA, BlockB] = DefaultHardForkTxOut '[BlockA, BlockB]
-  injectHardForkTxOut = injectHardForkTxOutDefault
-  ejectHardForkTxOut = ejectHardForkTxOutDefault
+  -- 'TestBlock' is a 'HardForkBlock', so it pages the current era and injects
+  -- the values back into the @NS@ (the single-era default does not apply).
+  testReadAllValues = testReadAllValuesHfc
 
 {-------------------------------------------------------------------------------
   Hard fork
@@ -438,7 +415,9 @@ instance CanHardFork '[BlockA, BlockB] where
   hardForkEraTranslation =
     EraTranslation
       { translateLedgerState = PCons ledgerState_AtoB PNil
-      , translateLedgerTables = PCons ledgerTables_AtoB PNil
+      , translateDiff = PCons (TranslateDiff id) PNil
+      , translateValues = PCons (TranslateValues id) PNil
+      , translateKeys = PCons (TranslateKeys id) PNil
       , translateChainDepState = PCons chainDepState_AtoB PNil
       , crossEraForecast = PCons forecast_AtoB PNil
       }
@@ -481,64 +460,6 @@ instance SerialiseHFC '[BlockA, BlockB]
 
 -- Use defaults
 
-instance SerializeTablesWithHint LedgerState (HardForkBlock '[BlockA, BlockB]) where
-  encodeTablesWithHint = defaultEncodeTablesWithHint
-  decodeTablesWithHint = defaultDecodeTablesWithHint
-
-instance
-  IndexedMemPack
-    LedgerState
-    (HardForkBlock '[BlockA, BlockB])
-    (DefaultHardForkTxOut '[BlockA, BlockB])
-  where
-  indexedTypeName _ _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
-  indexedPackedByteCount _ txout =
-    hcollapse $
-      hcmap
-        (Proxy @MemPackTxOut)
-        (K . packedByteCount . unwrapTxOut)
-        txout
-  indexedPackM _ =
-    hcollapse
-      . hcimap
-        (Proxy @MemPackTxOut)
-        ( \_ (WrapTxOut txout) -> K $ do
-            packM txout
-        )
-  indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
-    hsequence'
-      $ hcmap
-        (Proxy @MemPackTxOut)
-        (const $ Comp $ WrapTxOut <$> unpackM)
-      $ Telescope.tip idx
-
-instance
-  IndexedMemPack
-    (Ticked LedgerState)
-    (HardForkBlock '[BlockA, BlockB])
-    (DefaultHardForkTxOut '[BlockA, BlockB])
-  where
-  indexedTypeName _ _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
-  indexedPackedByteCount _ txout =
-    hcollapse $
-      hcmap
-        (Proxy @MemPackTxOut)
-        (K . packedByteCount . unwrapTxOut)
-        txout
-  indexedPackM _ =
-    hcollapse
-      . hcimap
-        (Proxy @MemPackTxOut)
-        ( \_ (WrapTxOut txout) -> K $ do
-            packM txout
-        )
-  indexedUnpackM (TickedHardForkLedgerState _ (HardForkState idx)) = do
-    hsequence'
-      $ hcmap
-        (Proxy @MemPackTxOut)
-        (const $ Comp $ WrapTxOut <$> unpackM)
-      $ Telescope.tip idx
-
 {-------------------------------------------------------------------------------
   Translation
 -------------------------------------------------------------------------------}
@@ -553,17 +474,12 @@ ledgerState_AtoB =
   InPairs.ignoringBoth $
     TranslateLedgerState
       { translateLedgerStateWith = \_ LgrA{..} ->
-          LgrB
-            { lgrB_tip = castPoint lgrA_tip
-            }
+          ( LgrB
+              { lgrB_tip = castPoint lgrA_tip
+              }
+          , () -- BlockB has no on-disk tables, so the translation diff is trivial
+          )
       }
-
-ledgerTables_AtoB :: TranslateLedgerTables BlockA BlockB
-ledgerTables_AtoB =
-  TranslateLedgerTables
-    { translateTxInWith = id
-    , translateTxOutWith = id
-    }
 
 chainDepState_AtoB ::
   RequiringBoth
@@ -605,7 +521,3 @@ instance BlockSupportsHFLedgerQuery '[BlockA, BlockB] where
   answerBlockQueryHFTraverse IZ _cfg q = case q of {}
   answerBlockQueryHFTraverse (IS IZ) _cfg q = case q of {}
   answerBlockQueryHFTraverse (IS (IS idx)) _cfg _q = case idx of {}
-
-  queryLedgerGetTraversingFilter IZ q = case q of {}
-  queryLedgerGetTraversingFilter (IS IZ) q = case q of {}
-  queryLedgerGetTraversingFilter (IS (IS idx)) _q = case idx of {}

@@ -19,6 +19,9 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types
   , TranslateLedgerTables (..)
   , TranslateTxOut (..)
   , translateLedgerTablesWith
+  , TranslateDiff (..)
+  , TranslateValues (..)
+  , TranslateKeys (..)
   ) where
 
 import Control.Monad.Except
@@ -144,19 +147,19 @@ newtype TranslateLedgerState x y = TranslateLedgerState
   { translateLedgerStateWith ::
       EpochNo ->
       LedgerState x EmptyMK ->
-      LedgerState y DiffMK
+      (LedgerState y EmptyMK, Diff y)
   -- ^ How to translate a 'LedgerState' during the era transition.
   --
   -- When translating between eras, it can be the case that values are modified,
-  -- thus requiring this to be a @DiffMK@ on the return type. If no tables are
-  -- populated, normally this will be filled with @emptyLedgerTables@.
+  -- which is why this also returns a @'Diff' y@ alongside the new state. If no
+  -- tables are populated, that diff is normally empty (@mempty@).
   --
   -- To make a clear example, in the context of Cardano, there are currently two
   -- cases in which this is of vital importance: Byron->Shelley and
   -- Shelley->Allegra.
   --
   -- On Byron->Shelley we basically dump the whole UTxO set as insertions
-  -- because the LedgerTables only exist for Shelley blocks.
+  -- because the ledger tables only exist for Shelley blocks.
   --
   -- On Shelley->Allegra, there were a bunch of UTxOs that were moved around,
   -- related to the AVVMs. In particular they were deleted and included in the
@@ -164,7 +167,30 @@ newtype TranslateLedgerState x y = TranslateLedgerState
   -- more information.
   }
 
--- | Transate a 'LedgerTables' across an era transition.
+newtype TranslateDiff x y = TranslateDiff
+  { translateDiffWith :: Diff x -> Diff y
+  }
+
+-- | Translate the on-disk 'Values' across an era transition. Used by the
+-- hard-fork combinator's 'Ouroboros.Consensus.Ledger.Basics.forward' to upgrade
+-- the values read for a block that is the first of a new era (the read returned
+-- the previous era's values, which must be promoted before applying that block's
+-- diff).
+newtype TranslateValues x y = TranslateValues
+  { translateValuesWith :: Values x -> Values y
+  }
+
+-- | Translate a set of on-disk 'Keys' across an era transition. Used by the
+-- hard-fork combinator's 'Ouroboros.Consensus.Ledger.Basics.restrictValues' to
+-- upgrade keys read against an older era (e.g. a mempool transaction's inputs)
+-- up to the era of the values read from the backing store, before restricting.
+-- The counterpart to 'TranslateValues' for the key side.
+newtype TranslateKeys x y = TranslateKeys
+  { translateKeysWith :: Keys x -> Keys y
+  }
+
+-- | How to translate the on-disk table entries (@TxIn@\/@TxOut@) across an era
+-- transition.
 data TranslateLedgerTables x y = TranslateLedgerTables
   { translateTxInWith :: !(TxIn x -> TxIn y)
   -- ^ Translate a 'TxIn' across an era transition.
@@ -178,20 +204,20 @@ data TranslateLedgerTables x y = TranslateLedgerTables
 
 newtype TranslateTxOut x y = TranslateTxOut (TxOut x -> TxOut y)
 
--- | Translate a 'LedgerTables' across an era transition.
+-- | Translate the on-disk table entries across an era transition.
 --
--- To translate 'LedgerTable's, it's sufficient to know how to translate
--- 'TxIn's and 'TxOut's. Use 'translateLedgerTablesWith' to translate
--- 'LedgerTable's using 'translateTxInWith' and 'translateTxOutWith'.
+-- To translate the entries, it's sufficient to know how to translate
+-- 'TxIn's and 'TxOut's. Use 'translateLedgerTablesWith' to translate a diff
+-- using 'translateTxInWith' and 'translateTxOutWith'.
 --
 -- This is a rather technical subtlety. When performing a ledger state
--- translation, the provided input ledger state will be initially populated with
--- a @emptyLedgerTables@. This step is required so that the operation provided
+-- translation, the accumulated diff threaded alongside the state starts out
+-- empty. This step is required so that the operation provided
 -- to 'Telescope.extend' is an automorphism.
 --
--- If we only extend by one era, this function is a no-op, as the input will be
--- empty ledger states. However, if we extend across multiple eras, previous
--- eras might populate tables thus creating values that now need to be
+-- If we only extend by one era, this function is a no-op, as the input diff
+-- will be empty. However, if we extend across multiple eras, previous
+-- eras might populate the diff thus creating values that now need to be
 -- translated to newer eras. This function fills that hole and allows us to
 -- promote tables from one era into tables from the next era.
 --
@@ -205,17 +231,13 @@ newtype TranslateTxOut x y = TranslateTxOut (TxOut x -> TxOut y)
 translateLedgerTablesWith ::
   Ord (TxIn y) =>
   TranslateLedgerTables x y ->
-  LedgerTables x DiffMK ->
-  LedgerTables y DiffMK
+  Diff.Diff (TxIn x) (TxOut x) ->
+  Diff.Diff (TxIn y) (TxOut y)
 translateLedgerTablesWith f =
-  LedgerTables
-    . DiffMK
-    . Diff.Diff
+  Diff.Diff
     . Map.mapKeys (translateTxInWith f)
     . getDiff
-    . getDiffMK
-    . mapMK (translateTxOutWith f)
-    . getLedgerTables
+    . fmap (translateTxOutWith f)
  where
   getDiff (Diff.Diff m) = m
 

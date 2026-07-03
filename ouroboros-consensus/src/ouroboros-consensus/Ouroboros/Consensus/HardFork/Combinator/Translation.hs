@@ -5,13 +5,10 @@
 module Ouroboros.Consensus.HardFork.Combinator.Translation
   ( -- * Translate from one era to the next
     EraTranslation (..)
-  , ipTranslateTxOut
   , trivialEraTranslation
   ) where
 
-import Data.SOP.Constraint
 import Data.SOP.InPairs (InPairs (..), RequiringBoth (..))
-import qualified Data.SOP.InPairs as InPairs
 import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import Ouroboros.Consensus.Ledger.Abstract
@@ -24,8 +21,12 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 data EraTranslation xs = EraTranslation
   { translateLedgerState ::
       !(InPairs (RequiringBoth WrapLedgerConfig TranslateLedgerState) xs)
-  , translateLedgerTables ::
-      !(InPairs TranslateLedgerTables xs)
+  , translateDiff ::
+      !(InPairs TranslateDiff xs)
+  , translateValues ::
+      !(InPairs TranslateValues xs)
+  , translateKeys ::
+      !(InPairs TranslateKeys xs)
   , translateChainDepState ::
       !(InPairs (RequiringBoth WrapConsensusConfig (Translate WrapChainDepState)) xs)
   , crossEraForecast ::
@@ -35,17 +36,13 @@ data EraTranslation xs = EraTranslation
     NoThunks
     via OnlyCheckWhnfNamed "EraTranslation" (EraTranslation xs)
 
-ipTranslateTxOut ::
-  All Top xs =>
-  EraTranslation xs ->
-  InPairs TranslateTxOut xs
-ipTranslateTxOut = InPairs.hmap (TranslateTxOut . translateTxOutWith) . translateLedgerTables
-
 trivialEraTranslation :: EraTranslation '[blk]
 trivialEraTranslation =
   EraTranslation
     { translateLedgerState = PNil
-    , translateLedgerTables = PNil
+    , translateDiff = PNil
+    , translateValues = PNil
+    , translateKeys = PNil
     , crossEraForecast = PNil
     , translateChainDepState = PNil
     }

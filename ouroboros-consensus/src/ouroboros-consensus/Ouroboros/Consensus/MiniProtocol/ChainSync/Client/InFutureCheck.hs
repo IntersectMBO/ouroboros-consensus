@@ -53,8 +53,8 @@ import Ouroboros.Consensus.HardFork.History.Qry
   , slotToWallclock
   )
 import Ouroboros.Consensus.Ledger.Abstract
-  ( EmptyMK
-  , LedgerConfig
+  ( LedgerConfig
+  , EmptyMK
   , LedgerState
   )
 import Ouroboros.Consensus.Util.Time

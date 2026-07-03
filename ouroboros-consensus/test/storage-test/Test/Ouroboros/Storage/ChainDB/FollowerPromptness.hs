@@ -179,6 +179,7 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
       let mcdbTopLevelConfig = singleNodeTestConfigWithK securityParam
           mcdbChunkInfo = mkTestChunkInfo mcdbTopLevelConfig
           mcdbInitLedger = testInitExtLedger
+          mcdbInitLedgerTables = mempty
           mcdbRegistry = registry
       mcdbNodeDBs <- emptyNodeDBs
       let cdbArgs = fromMinimalChainDbArgs MinimalChainDbArgs{..}

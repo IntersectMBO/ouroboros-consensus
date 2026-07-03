@@ -92,14 +92,15 @@ import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
-import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Storage.ImmutableDB.API (SeekBlockError (..))
 import Ouroboros.Consensus.Storage.LedgerDB
-  ( GetForkerError
+  ( EraRangeReaderProvider
+  , GetForkerError
   , ReadOnlyForker'
   , Statistics
   )
@@ -112,6 +113,7 @@ import Ouroboros.Consensus.Storage.PerasVoteDB.API
   , PerasVoteTicketNo
   )
 import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Util ((..:))
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.EarlyExit
 import Ouroboros.Consensus.Util.IOLike
@@ -237,9 +239,10 @@ data ChainDB m blk = ChainDB
   , allocInRegistryReadOnlyForkerAtPoint ::
       Target (Point blk) ->
       ResourceRegistry m ->
-      m (Either GetForkerError (ResourceKey m, ReadOnlyForker' m blk))
+      m (Either GetForkerError (ResourceKey m, ReadOnlyForker' m blk, EraRangeReaderProvider m blk))
   -- ^ Allocate a read only forker at the given point in the given resource
-  -- registry.
+  -- registry, together with the 'EraRangeReaderProvider' for that forker (used
+  -- to answer @QFTraverseTables@ queries; see 'EraRangeReaderProvider').
   --
   -- This function is to be used by LocalStateQuery server. Note ChainSel uses
   -- the LedgerDB directly, none of these methods are used there.

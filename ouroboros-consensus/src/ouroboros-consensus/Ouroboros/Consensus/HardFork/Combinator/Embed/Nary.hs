@@ -49,12 +49,12 @@ import Ouroboros.Consensus.HeaderValidation
   , HeaderState (..)
   , genesisHeaderState
   )
-import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK, Values, emptyValues, forward)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Ledger.Query
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util ((.:))
 
 {-------------------------------------------------------------------------------
   Injection for a single block into a HardForkBlock
@@ -63,7 +63,7 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 class Inject f where
   inject ::
     forall x xs.
-    (CanHardFork xs, HasCanonicalTxIn xs, HasHardForkTxOut xs) =>
+    CanHardFork xs =>
     InjectionIndex xs x ->
     f x ->
     f (HardForkBlock xs)
@@ -72,8 +72,6 @@ inject' ::
   forall f a b x xs.
   ( Inject f
   , CanHardFork xs
-  , HasCanonicalTxIn xs
-  , HasHardForkTxOut xs
   , Coercible a (f x)
   , Coercible b (f (HardForkBlock xs))
   ) =>
@@ -227,7 +225,7 @@ instance Inject AnnTip where
   inject =
     (undistribAnnTip .: injectNS' (Proxy @AnnTip)) . forgetInjectionIndex
 
-instance Inject (Flip LedgerState mk) where
+instance Inject (Flip LedgerState EmptyMK) where
   inject iidx =
     Flip . HardForkLedgerState . injectHardForkState iidx
 
@@ -244,7 +242,7 @@ instance Inject HeaderState where
               WrapChainDepState headerStateChainDep
       }
 
-instance Inject (Flip ExtLedgerState mk) where
+instance Inject (Flip ExtLedgerState EmptyMK) where
   inject iidx (Flip ExtLedgerState{..}) =
     Flip $
       ExtLedgerState
@@ -271,15 +269,17 @@ instance Inject (Flip ExtLedgerState mk) where
 -- not rely on that class.
 injectInitialExtLedgerState ::
   forall x xs.
-  (CanHardFork (x ': xs), HasLedgerTables LedgerState (HardForkBlock (x : xs))) =>
+  CanHardFork (x ': xs) =>
   TopLevelConfig (HardForkBlock (x ': xs)) ->
-  ExtLedgerState x ValuesMK ->
-  ExtLedgerState (HardForkBlock (x ': xs)) ValuesMK
+  ExtLedgerState x EmptyMK ->
+  (ExtLedgerState (HardForkBlock (x ': xs)) EmptyMK, Values (HardForkBlock (x ': xs)))
 injectInitialExtLedgerState cfg extLedgerState0 =
-  ExtLedgerState
-    { ledgerState = targetEraLedgerState
-    , headerState = targetEraHeaderState
-    }
+  ( ExtLedgerState
+      { ledgerState = targetEraLedgerState
+      , headerState = targetEraHeaderState
+      }
+  , genesisValues
+  )
  where
   cfgs :: NP TopLevelConfig (x ': xs)
   cfgs =
@@ -290,20 +290,30 @@ injectInitialExtLedgerState cfg extLedgerState0 =
       )
       cfg
 
-  targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs)) ValuesMK
-  targetEraLedgerState = applyDiffs st st'
+  -- Extend the genesis state to the first slot, executing any scheduled slot-0
+  -- hard fork. That extension can produce a 'Diff' out of nothing (most
+  -- importantly the Byron->Shelley genesis-UTxO dump), so we keep it (rather
+  -- than discarding it) and turn it into the genesis 'Values' the LedgerDB
+  -- needs alongside the ledger state.
+  targetEraLedgerStateInner :: HardForkState (Flip LedgerState EmptyMK) (x ': xs)
+  genesisDiff :: NS WrapDiff (x ': xs)
+  (targetEraLedgerStateInner, genesisDiff) =
+    State.extendToSlot
+      (configLedger cfg)
+      (SlotNo 0)
+      (initHardForkState (Flip (ledgerState extLedgerState0)))
+
+  targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs)) EmptyMK
+  targetEraLedgerState = HardForkLedgerState targetEraLedgerStateInner
+
+  -- The genesis diff is all-inserts (deletes against an empty UTxO are no-ops),
+  -- so applying it to the empty values per era yields the genesis UTxO set.
+  genesisValues :: Values (HardForkBlock (x ': xs))
+  genesisValues = hcmap proxySingle diffToValues genesisDiff
    where
-    st :: LedgerState (HardForkBlock (x ': xs)) ValuesMK
-    st = HardForkLedgerState . initHardForkState . Flip . ledgerState $ extLedgerState0
-    st' =
-      HardForkLedgerState
-        -- We can immediately extend it to the right slot, executing any
-        -- scheduled hard forks in the first slot
-        ( State.extendToSlot
-            (configLedger cfg)
-            (SlotNo 0)
-            (initHardForkState $ Flip $ forgetLedgerTables $ ledgerState extLedgerState0)
-        )
+    diffToValues ::
+      forall blk. SingleEraBlock blk => WrapDiff blk -> WrapValues blk
+    diffToValues (WrapDiff d) = WrapValues (forward @blk [d] (emptyValues @blk))
 
   firstEraChainDepState :: HardForkChainDepState (x ': xs)
   firstEraChainDepState =

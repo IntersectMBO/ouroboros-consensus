@@ -158,6 +158,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
     ( ProtocolInfo
         { pInfoConfig
         , pInfoInitLedger
+        , pInfoInitLedgerTables
         }
       , mkForgers
       ) <-
@@ -171,7 +172,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
         ChainDB.completeChainDbArgs
           registry
           pInfoConfig
-          pInfoInitLedger
+          (pInfoInitLedger, pInfoInitLedgerTables)
           chunkInfo
           (const True)
           (Node.stdMkChainDbHasFS confDbDir)
