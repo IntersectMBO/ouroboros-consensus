@@ -324,7 +324,13 @@ convertSnapshot interactive (configCodec . pInfoConfig -> ccfg) from to = do
       pure $ SomeBackend $ mkInMemYieldArgs inVersion inSomeHasFS inSnap stEra
     Snapshot (ExportedLSMSnapshot _ (getExportedSnapshotPath -> exportDir)) _ ->
       SomeBackend
-        <$> mkExportedLSMYieldArgs @(CardanoBlock StandardCrypto) proj exportDir inSnap stdMkBlockIOFS (SomeHasFS . ioHasFS . MountPoint) newStdGen
+        <$> mkExportedLSMYieldArgs @(CardanoBlock StandardCrypto)
+          proj
+          exportDir
+          inSnap
+          stdMkBlockIOFS
+          (SomeHasFS . ioHasFS . MountPoint)
+          newStdGen
 
   -- Build the output (sink) backend at the snapshot's tip era.
   mkOutStream ::

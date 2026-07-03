@@ -17,9 +17,9 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 -- TODO: Ledger has a few deprecations that we are ignoring for now
 {-# OPTIONS_GHC -Wno-deprecations #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | This module is the Shelley Hard Fork Combinator
 module Ouroboros.Consensus.Shelley.ShelleyHFC

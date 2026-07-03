@@ -124,8 +124,8 @@ import System.FS.API
 import System.FS.API.Lazy (hGetAll, hPutAll)
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
-import qualified System.FS.IO as FS
 import System.FS.CRC (CRC)
+import qualified System.FS.IO as FS
 import System.FilePath
   ( makeRelative
   , splitDirectories
