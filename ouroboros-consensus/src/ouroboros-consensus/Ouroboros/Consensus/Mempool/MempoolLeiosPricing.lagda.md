@@ -129,9 +129,25 @@ lottery, not one per block kind. Its winner produces:
   certificate for a previously-announced EB. These are mutually
   exclusive (CIP-164: "when a certificate is included, no further
   transactions are allowed in the RB").
-- **An EB, optionally.** Body is drawn from `regularTxs`. Announced
-  in the RB header. Must be non-empty (CIP-164: "empty EBs should
-  not be announced").
+- **An EB, optionally.** Body is drawn from `regularTxs`, plus any
+  priority-lane overflow that did not fit within `prioCap` in the
+  RB body. Announced in the RB header. Must be non-empty (CIP-164:
+  "empty EBs should not be announced").
+
+**Priority-fee refund when a priority tx lands in an EB.** A
+priority-tier transaction that ends up in an EB body — rather than
+in the RB body — has paid the higher priority-lane fee but has
+*not* received priority service (which the pricing model defines as
+direct RB inclusion at its announcing slot; EB inclusion is subject
+to the vote/certificate flow and the minimum inclusion delay). In
+that case the tx receives a refund equal to the priority-vs-regular
+fee differential, credited by the ledger rule that applies the EB
+body. The mempool itself does not compute the refund; the ledger
+does, using the tx's lane tag carried in the tx body (see the
+pricing spec in the Cardano ledger repo for the exact refund rule).
+`forgeBlock` need only preserve the lane tag on each emitted tx so
+the ledger rule can identify EB-landed priority txs at application
+time.
 
 An announced EB does not affect the ledger by itself. It goes through
 the CIP-164 vote/certificate flow: the elected voting committee
@@ -161,6 +177,67 @@ discarded, after which they either survive the cascade or drop out).
 The regular lane is handled symmetrically: its contents are
 reapplied against the post-RB state `ledgerAt(newRB) = ledger +
 rbTxs`. Cost: 2 × O(|priorityTxs|) + O(|regularTxs|) at forge time.
+
+### Considered variant: EB suppression under light load
+
+A variant under consideration would gate EB emission on mempool
+fullness. `forgeBlock` would emit **no EB** (`maybeEB = nothing`,
+`rbAnnEB = nothing`) whenever the combined mempool contents
+(priority + regular) sit at or below **half the RB capacity in
+every dimension** — i.e., for every dimension `d ∈ {byte size,
+ExUnits mem, ExUnits CPU, ref-script bytes}`:
+
+```
+seqSize (priorityTxs ++ regularTxs) [d]  ≤  prioCap [d] / 2
+```
+
+Rationale: EBs carry real costs (a voting round, a certification
+delay, and additional propagation load), so they only earn their
+keep when there is genuinely more than one RB's worth of pressure
+in at least one dimension. Under this threshold, all txs comfortably
+fit the RB body and announcing an EB would either be near-empty
+(colliding with CIP-164's "empty EBs should not be announced" rule)
+or duplicate what the RB already carries.
+
+Effect on the current spec if adopted: one additional guard in the
+`anyEB` computation of `forgeBlock`, no state or invariant changes.
+The threshold value (`/ 2`) is provisional — a further tuning
+question is whether to make it protocol-parameterised.
+
+### Peer transaction exchange (network side)
+
+The bulk of these docs describes the mempool's local state machine.
+The tx-submission mini-protocol — how transactions cross the wire
+between peers — lives in a separate layer and is only sketched here.
+The pricing mempool imposes two lane-aware requirements on that
+layer:
+
+- **Inbound routing by lane tag.** Each transaction on the wire
+  carries a lane tag (either explicitly in the tx-submission frame
+  or implicitly via a tx-body annotation such as the tier-selecting
+  fee bid). The receiving node reads the tag and dispatches to
+  `addTx Priority` or `addTx Regular` accordingly. Without lane
+  awareness on the wire, a priority-tier tx received from a peer
+  could end up in the wrong lane and lose priority service; the
+  pricing model is unenforceable end-to-end.
+
+- **Outbound: priority-first, with fallback.** The local node's
+  tx-fetch policy toward each peer is: keep asking for
+  priority-lane txs, and only fall back to requesting regular-lane
+  txs when the priority request comes back empty (or when the
+  peer has no more priority txs to offer). This biases scarce
+  network capacity toward the tier that pays for it and matches
+  the local mempool's own priority-over-regular preference in
+  admission and block production. The wire format for the
+  bifurcated pull is out of scope for this doc; the mempool
+  merely commits to the *policy* that its outbound requests are
+  priority-first with regular-only fallback on empty.
+
+Streaming to peers via `snapshotTxsAfter` (Praos §4 in
+`Mempool.lagda.md`) becomes lane-aware in the same way: a peer's
+cursor is a pair `(lastPrioTicket, lastRegTicket)`, and the peer
+chooses which lane's cursor to advance based on the pull policy
+above.
 
 ### Revalidation cascade
 
@@ -192,6 +269,35 @@ commutativity argument over the full ledger state (governance, stake,
 parameter updates, script reference reads, etc.). An implementation
 is free to fast-path provably independent additions, but the
 canonical invariant is unconditional revalidation.
+
+#### Alternative: commutative admission ("option 1")
+
+A leaner rule for `addTx Priority t` would validate `t` against
+**both** `priorityUpdatedLedger` and `regularUpdatedLedger`, admitting
+only if both succeed. On success, the regular lane provably remains
+valid after the state shift `priorityUpdatedLedger → applyTx
+priorityUpdatedLedger t`, so the O(|regs|) regular revalidation drops
+away. Admission is O(|regs|) at check time (running the tx against
+both bases) but the state transition itself becomes O(1).
+
+The soundness of this rule depends on **transaction commutativity**:
+`t` composed after the regular sequence must produce the same ledger
+state as the regular sequence composed after `t`. Cardano txs in
+general do *not* commute (they can share stake credentials, reference
+inputs, governance targets, protocol-parameter updates, script
+context reads, etc.), so option 1 requires structural constraints on
+priority txs to guarantee commutativity across every ledger dimension.
+
+The constraints and the commutativity proof itself are being worked
+out in
+<https://github.com/IntersectMBO/formal-ledger-specifications/compare/polina/commutativity?expand=1>.
+Until those constraints are pinned down, **this spec stays with
+option 2** (the unconditional-revalidate rule in the cascade table
+above). Once the proof lands, we may switch — the switch is local to
+`addTx Priority`: the `priority tx added` row becomes `— / extend /
+—`, the `Cost` column drops to O(|regs|) at admission and O(1) for
+the state update, and the `RegularLayerValid` invariant relies on
+the commutativity theorem rather than a direct reapply.
 
 The **Scenario B row** (`seeRBCert (match)`) is a bit-identical
 rename: because the mempool has been pre-validating both lanes
@@ -680,30 +786,37 @@ module MempoolLeiosPricing where
 
   -- Safe to call regardless of `heldEB`.  Each lane is reapplied
   -- against the state it will actually meet on-chain: priorities
-  -- against `ledger` (RB body applies there), regulars against
-  -- `rbLedger = ledger + rbTxs` (announced EB body validates there).
+  -- against `ledger` (RB body applies there), then the EB body
+  -- (priority overflow followed by regulars) against `rbLedger =
+  -- ledger + rbTxs`.  Priority overflow that did not fit in the RB
+  -- body flows into the EB body; the ledger will refund the
+  -- priority-vs-regular fee differential to any priority tx that
+  -- lands in the EB (see §1 "Priority-fee refund").
   -- The mempool state is unchanged; the reapplyAllTk calls produce
   -- the emitted block only.
   forgeBlock : MempoolLP → RB × Maybe EB
   forgeBlock m =
     let -- 1. Revalidate priorities against `ledger` (not baseLedger).
-        _ , validPrio    = reapplyAllTk (ledger m) (priorityTxs m)
-        rbTxs , _        = splitAtCap (prioCap m) validPrio
+        _ , validPrio           = reapplyAllTk (ledger m) (priorityTxs m)
+        rbTxs , prioOverflow    = splitAtCap (prioCap m) validPrio
         -- 2. Post-RB state = ledgerAt(newRB).
-        rbLedger , _     = reapplyAllTk (ledger m) rbTxs
-        -- 3. Revalidate regulars against post-RB state.
-        _ , validReg     = reapplyAllTk rbLedger (regularTxs m)
-        ebTxs′ , _       = splitAtCap (regCap m) validReg
-        anyEB            = ebNonEmpty (map tx ebTxs′)
-        newEBId          = freshEBId (freshTicket (lastPrioTicket m))
-        maybeEB          = if anyEB
-                            then just (mkEB newEBId (tip m)
-                                             (map tx ebTxs′))
-                            else nothing
-        rbAnn            = case maybeEB of λ where
-                             nothing  → nothing
-                             (just e) → just (ebId e)
-        rb               = mkRB (tip m) (RBTxs (map tx rbTxs)) rbAnn
+        rbLedger , _            = reapplyAllTk (ledger m) rbTxs
+        -- 3. EB body candidates: priority overflow first (they paid
+        --    the higher tier), then regulars.  Revalidate the whole
+        --    combined sequence against rbLedger; some may drop.
+        ebCandidates            = prioOverflow ++ regularTxs m
+        _ , validEB             = reapplyAllTk rbLedger ebCandidates
+        ebTxs′ , _              = splitAtCap (regCap m) validEB
+        anyEB                   = ebNonEmpty (map tx ebTxs′)
+        newEBId                 = freshEBId (freshTicket (lastPrioTicket m))
+        maybeEB                 = if anyEB
+                                    then just (mkEB newEBId (tip m)
+                                                     (map tx ebTxs′))
+                                    else nothing
+        rbAnn                   = case maybeEB of λ where
+                                    nothing  → nothing
+                                    (just e) → just (ebId e)
+        rb                      = mkRB (tip m) (RBTxs (map tx rbTxs)) rbAnn
     in rb , maybeEB
 ```
 
@@ -767,3 +880,32 @@ open questions specific to this document:
   in their lane (still valid under `baseLedger` /
   `priorityUpdatedLedger`) and become forgeable once `heldEB` is
   resolved.
+- **2026-06-09 (last)** — Added two design notes: (a) `forgeBlock`
+  now emits priority-lane *overflow* into the EB body ahead of
+  regular txs, so a priority tx that does not fit `prioCap`
+  reaches the chain via the announced EB rather than being
+  discarded from the forged block; the ledger applies a priority-
+  vs-regular fee-differential refund to any priority tx landing in
+  an EB body (mempool preserves lane tag; ledger computes the
+  refund). (b) Documented that this spec commits to option 2
+  (unconditional regular-lane revalidation on priority admission);
+  the commutativity-based option 1 alternative is described inline
+  with a pointer to the in-progress proof at
+  `IntersectMBO/formal-ledger-specifications:polina/commutativity`.
+- **2026-06-09 (also)** — Added §1 "Peer transaction exchange
+  (network side)" documenting two lane-aware requirements on the
+  tx-submission mini-protocol layer: (i) inbound txs must carry a
+  lane tag so the receiver can dispatch to `addTx Priority` or
+  `addTx Regular`, and (ii) outbound pull is priority-first with
+  regular-only fallback on empty. Also notes that peer streaming
+  cursors become per-lane pairs.
+- **2026-06-09 (final)** — Added §1 "Considered variant: EB
+  suppression under light load", a design variant under
+  consideration in which `forgeBlock` announces no EB when the
+  combined mempool sits at or below half the RB capacity in every
+  dimension. Motivation: EBs carry real costs (voting round,
+  certification delay, propagation), so they should only be
+  produced when the mempool has more than one RB's worth of
+  pressure in at least one dimension. Threshold value provisional;
+  a further tuning question is whether to make it protocol-
+  parameterised.
