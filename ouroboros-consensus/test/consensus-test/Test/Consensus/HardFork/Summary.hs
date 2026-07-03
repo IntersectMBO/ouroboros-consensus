@@ -138,19 +138,19 @@ roundtripEpochSlot s@ArbitrarySummary{beforeHorizonEpoch = epoch} =
 --   slots in round are withing the round length.
 roundtripPerasRoundSlot :: ArbitrarySummary -> Property
 roundtripPerasRoundSlot s@ArbitrarySummary{beforeHorizonNextPerasRoundNo = perasRoundNo} =
-    noPastHorizonException s $
-      HF.perasRoundNoToSlot perasRoundNo >>= \case
-        HF.NoPerasEnabled -> pure $ property True
-        HF.PerasEnabled (slot, PerasRoundLength perasRoundLength) -> do
-          HF.slotToPerasRoundNo slot >>= \case
-            HF.NoPerasEnabled -> pure $ property True
-            HF.PerasEnabled (perasRoundNo', slotInRound, remainingSlotsInRound) ->
-              pure $
-                conjoin
-                  [ perasRoundNo' === perasRoundNo
-                  , slotInRound `lt` perasRoundLength
-                  , remainingSlotsInRound `le` perasRoundLength
-                  ]
+  noPastHorizonException s $
+    HF.perasRoundNoToSlot perasRoundNo >>= \case
+      HF.NoPerasEnabled -> pure $ property True
+      HF.PerasEnabled (slot, PerasRoundLength perasRoundLength) -> do
+        HF.slotToPerasRoundNo slot >>= \case
+          HF.NoPerasEnabled -> pure $ property True
+          HF.PerasEnabled (perasRoundNo', slotInRound, remainingSlotsInRound) ->
+            pure $
+              conjoin
+                [ perasRoundNo' === perasRoundNo
+                , slotInRound `lt` perasRoundLength
+                , remainingSlotsInRound `le` perasRoundLength
+                ]
 
 reportsPastHorizon :: ArbitrarySummary -> Property
 reportsPastHorizon s@ArbitrarySummary{..} =

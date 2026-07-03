@@ -128,9 +128,9 @@ mkUpperBound EraParams{..} lo hiEpoch =
     { boundTime = addRelTime inEraTime $ boundTime lo
     , boundSlot = addSlots inEraSlots $ boundSlot lo
     , boundEpoch = hiEpoch
-    -- If Peras is disabled, as specified by 'inEraPerasRounds',
-    -- we keep the same value for 'boundNextPerasRound' as in the lower bound.
-    , boundNextPerasRound = case inEraPerasRounds of
+    , -- If Peras is disabled, as specified by 'inEraPerasRounds',
+      -- we keep the same value for 'boundNextPerasRound' as in the lower bound.
+      boundNextPerasRound = case inEraPerasRounds of
         NoPerasEnabled -> boundNextPerasRound lo
         PerasEnabled rounds -> addPerasRounds rounds $ boundNextPerasRound lo
     }

@@ -270,7 +270,7 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
     EraUnbounded -> pure ()
     EraEnd end -> lift . guard =<< p end
 
-  -- | This guard function fails to recover the `PerasRoundNo` contained in a `Bound`
+  -- \| This guard function fails to recover the `PerasRoundNo` contained in a `Bound`
   -- if the provided era has Peras enabled. The information of whether Peras is enabled
   -- is held by 'eraPerasRoundLength' in the era params.
   -- We switch behaviour based on that value.
