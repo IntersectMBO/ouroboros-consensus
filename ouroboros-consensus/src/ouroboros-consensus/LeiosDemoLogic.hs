@@ -38,7 +38,6 @@ import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
 import LeiosDemoDb
   ( LeiosDbConnection
-  , LeiosDbHandle (..)
   , leiosDbBatchRetrieveTxs
   , leiosDbFilterMissingEbBodies
   , leiosDbFilterMissingTxs
@@ -48,7 +47,6 @@ import LeiosDemoDb
   , leiosDbLookupEbBody
   , leiosDbLookupEbPoint
   )
-import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes
   ( BytesSize
@@ -94,15 +92,19 @@ data LeiosFetchContext m = MkLeiosFetchContext
   , leiosEbTxsBuffer :: !(MV.MVector (PrimState m) LeiosTx)
   }
 
+-- | Build a per-instance fetch context around an already-opened DB connection.
+--
+-- The connection is owned by the caller: SQLite connections must not be
+-- shared across threads, and each LeiosFetch client/server instance runs on
+-- its own thread, so the caller is expected to bracket a fresh 'open' /
+-- 'close' pair for the lifetime of that instance (see 'withLeiosDb').
 newLeiosFetchContext ::
   PrimMonad m =>
-  LeiosDbHandle m ->
+  LeiosDbConnection m ->
   m (LeiosFetchContext m)
-newLeiosFetchContext leiosDb = do
-  -- each LeiosFetch server calls this when it initializes
+newLeiosFetchContext leiosDbConn = do
   leiosEbBuffer <- MV.new maxTxsPerEb
   leiosEbTxsBuffer <- MV.new maxTxsPerEb
-  leiosDbConn <- LeiosDb.open leiosDb -- TODO: cleanup resources
   pure
     MkLeiosFetchContext{leiosDbConn, leiosEbBuffer, leiosEbTxsBuffer}
 
