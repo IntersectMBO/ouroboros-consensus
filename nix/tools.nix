@@ -2,12 +2,16 @@ inputs: final: prev:
 
 let
   inherit (final) lib;
-  tool-index-state = "2026-02-23T15:03:19Z";
-  tool = name: version: other:
-    final.haskell-nix.tool "ghc98" name ({
-      version = version;
-      index-state = tool-index-state;
-    } // other);
+  tool-index-state = "2026-05-26T19:31:06Z";
+  tool =
+    name: version: other:
+    final.haskell-nix.tool "ghc98" name (
+      {
+        version = version;
+        index-state = tool-index-state;
+      }
+      // other
+    );
 in
 {
   inherit tool-index-state;
@@ -38,7 +42,7 @@ in
 
   fourmolu = tool "fourmolu" "0.18.0.0" { };
 
-  cuddle = tool "cuddle" "1.2.0.0" { };
+  cuddle = tool "cuddle" "1.8.0.0" { };
 
   # remove once our nixpkgs contains https://github.com/NixOS/nixpkgs/pull/394873
   cddlc = final.callPackage ./cddlc/package.nix { };
@@ -47,7 +51,8 @@ in
     inherit (final.hsPkgs.args) compiler-nix-name;
     index-state = tool-index-state;
   };
-  set-git-rev = drv:
+  set-git-rev =
+    drv:
     let
       patched-drv = final.applyPatches {
         name = "${drv.name}-with-git-rev";

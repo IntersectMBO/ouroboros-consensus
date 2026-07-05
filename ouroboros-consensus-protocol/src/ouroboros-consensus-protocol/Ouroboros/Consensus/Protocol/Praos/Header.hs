@@ -27,6 +27,9 @@
 module Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (Header, headerBody, headerSig)
   , HeaderBody (..)
+  , HeaderLeiosExtension (..)
+  , hbLeiosContainsCert
+  , hbLeiosEbAnnouncement
   , headerHash
   , headerSize
   ) where
@@ -37,13 +40,19 @@ import Cardano.Crypto.Util
   ( SignableRepresentation (getSignableRepresentation)
   )
 import qualified Cardano.Crypto.VRF as VRF
-import Cardano.Ledger.BaseTypes (ProtVer (pvMajor))
+import Cardano.Ledger.BaseTypes (ProtVer (pvMajor), StrictMaybe (..), strictMaybe)
 import Cardano.Ledger.Binary
   ( Annotator (..)
   , DecCBOR (decCBOR)
   , EncCBOR (..)
+  , decodeBool
   , decodeListLen
+  , decodeNullStrictMaybe
+  , encodeBool
   , encodeListLen
+  , encodeNullStrictMaybe
+  , fromPlainDecoder
+  , fromPlainEncoding
   , serialize'
   , unCBORGroup
   )
@@ -81,10 +90,10 @@ import Cardano.Protocol.TPraos.BHeader (PrevHash)
 import Cardano.Protocol.TPraos.OCert (OCert)
 import Cardano.Slotting.Block (BlockNo)
 import Cardano.Slotting.Slot (SlotNo)
-import Data.Maybe.Strict (StrictMaybe (..))
+import Control.Monad ((>=>))
 import Data.Word (Word32)
 import GHC.Generics (Generic)
-import LeiosDemoTypes (EbAnnouncement)
+import LeiosDemoTypes (EbAnnouncement, decodeEbAnnouncement, encodeEbAnnouncement)
 import Lens.Micro (lens, to)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
@@ -112,18 +121,8 @@ data HeaderBody crypto = HeaderBody
   -- ^ operational certificate
   , hbProtVer :: !ProtVer
   -- ^ protocol version
-  , hbLeiosEbAnnouncement :: !(StrictMaybe EbAnnouncement)
-  -- ^ Optional Leios endorser-block announcement (Dijkstra-only;
-  -- 'SNothing' on earlier eras). Placed on the Praos header for
-  -- early-diffusion of EB references before the body arrives.
-  , hbLeiosContainsCert :: !Bool
-  -- ^ Whether this block's body carries a Leios certificate (i.e. it is a
-  -- "CertRB", certifying the endorser block its predecessor announced).
-  -- Dijkstra-only ('False' on earlier eras). Placed on the header so that a
-  -- peer can recognise a CertRB from its header alone (before the body
-  -- arrives) and so the header/body envelope can be checked. Must agree with
-  -- the body: 'True' iff the body has exactly one cert and zero txs (enforced
-  -- by 'blockMatchesHeader').
+  , hbLeiosExt :: !(StrictMaybe HeaderLeiosExtension)
+  -- ^ Whether the header / protocol is extended with Leios features.
   }
   deriving Generic
 
@@ -140,6 +139,26 @@ instance
 instance
   Crypto crypto =>
   NoThunks (HeaderBody crypto)
+
+-- | New header fields for Leios.
+data HeaderLeiosExtension = HeaderLeiosExtension
+  { containsCert :: !Bool
+  -- ^ Whether this block's body carries a Leios certificate (i.e. it is a
+  -- "CertRB", certifying the endorser block its predecessor announced).
+  -- Dijkstra-only ('False' on earlier eras).
+  , ebAnnouncement :: !(StrictMaybe EbAnnouncement)
+  -- ^ Leios endorser-block announcement Dijkstra-only ('SNothing' on earlier
+  -- eras).
+  }
+  deriving (Eq, Show, Generic)
+
+instance NoThunks HeaderLeiosExtension
+
+hbLeiosContainsCert :: HeaderBody crypto -> Bool
+hbLeiosContainsCert = strictMaybe False containsCert . hbLeiosExt
+
+hbLeiosEbAnnouncement :: HeaderBody crypto -> StrictMaybe EbAnnouncement
+hbLeiosEbAnnouncement = hbLeiosExt >=> ebAnnouncement
 
 data HeaderRaw crypto = HeaderRaw
   { headerRawBody :: !(HeaderBody crypto)
@@ -193,14 +212,6 @@ headerHash = extractHash . hashAnnotated
 -- Serialisation
 --------------------------------------------------------------------------------
 
--- | The two Leios header fields ('hbLeiosEbAnnouncement', 'hbLeiosContainsCert')
--- are Dijkstra-only, so to keep pre-Leios (and Leios-inactive) encodings
--- byte-identical we omit them entirely when there is no Leios data:
---
--- * 10-field encoding when @('SNothing', 'False')@ (pre-Leios-compatible);
--- * 12-field encoding otherwise — appending the announcement (as an explicit
---   'StrictMaybe', since it may be 'SNothing' while the cert bit is 'True') and
---   the cert bit.
 instance Crypto crypto => EncCBOR (HeaderBody crypto) where
   encCBOR
     HeaderBody
@@ -214,32 +225,32 @@ instance Crypto crypto => EncCBOR (HeaderBody crypto) where
       , hbBodyHash
       , hbOCert
       , hbProtVer
-      , hbLeiosEbAnnouncement
-      , hbLeiosContainsCert
+      , hbLeiosExt
       } =
-      let (len, encLeios) = case (hbLeiosEbAnnouncement, hbLeiosContainsCert) of
-            (SNothing, False) -> (10 :: Word, mempty)
-            _ ->
-              ( 12
-              , encCBOR hbLeiosEbAnnouncement <> encCBOR hbLeiosContainsCert
-              )
-       in mconcat
-            [ encodeListLen len
-            , encCBOR hbBlockNo
-            , encCBOR hbSlotNo
-            , encCBOR hbPrev
-            , encCBOR hbVk
-            , encodeVerKeyVRF hbVrfVk
-            , encCBOR hbVrfRes
-            , encCBOR hbBodySize
-            , encCBOR hbBodyHash
-            , encCBOR hbOCert
-            , encCBOR hbProtVer
-            , encLeios
-            ]
+      encodeListLen len
+        <> encCBOR hbBlockNo
+        <> encCBOR hbSlotNo
+        <> encCBOR hbPrev
+        <> encCBOR hbVk
+        <> encodeVerKeyVRF hbVrfVk
+        <> encCBOR hbVrfRes
+        <> encCBOR hbBodySize
+        <> encCBOR hbBodyHash
+        <> encCBOR hbOCert
+        <> encCBOR hbProtVer
+        <> encodeLeiosExt
+     where
+      (len, encodeLeiosExt) = case hbLeiosExt of
+        SNothing -> (10, mempty)
+        SJust ext -> (12, encodeLeios ext)
+
+      encodeLeios HeaderLeiosExtension{containsCert, ebAnnouncement} =
+        encodeBool containsCert
+          <> encodeNullStrictMaybe (fromPlainEncoding . encodeEbAnnouncement) ebAnnouncement
 
 instance Crypto crypto => DecCBOR (HeaderBody crypto) where
   decCBOR = do
+    -- TODO: support indef length lists
     len <- decodeListLen
     hbBlockNo <- decCBOR
     hbSlotNo <- decCBOR
@@ -251,9 +262,9 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
     hbBodyHash <- decCBOR
     hbOCert <- unCBORGroup <$> decCBOR
     hbProtVer <- decCBOR
-    (hbLeiosEbAnnouncement, hbLeiosContainsCert) <- case len of
-      10 -> pure (SNothing, False)
-      12 -> (,) <$> decCBOR <*> decCBOR
+    hbLeiosExt <- case len of
+      10 -> pure SNothing
+      12 -> SJust <$> decodeLeiosExtension
       _ -> fail $ "Praos HeaderBody CBOR has wrong length: " <> show len
     pure
       HeaderBody
@@ -267,9 +278,13 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
         , hbBodyHash
         , hbOCert
         , hbProtVer
-        , hbLeiosEbAnnouncement
-        , hbLeiosContainsCert
+        , hbLeiosExt
         }
+   where
+    decodeLeiosExtension =
+      HeaderLeiosExtension
+        <$> decodeBool
+        <*> decodeNullStrictMaybe (fromPlainDecoder $ decodeEbAnnouncement)
 
 encodeHeaderRaw ::
   Crypto crypto =>

@@ -1031,7 +1031,6 @@ library protocol
     cardano-ledger-shelley ^>=1.19,
     cardano-protocol-tpraos ^>=1.6,
     cardano-slotting,
-    cardano-strict-containers,
     cborg,
     containers,
     contra-tracer,

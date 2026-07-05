@@ -38,7 +38,12 @@ import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables, unstowLedgerTables)
 import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto, PraosState (..))
-import Ouroboros.Consensus.Protocol.Praos.Header (Header (..), HeaderBody (..))
+import Ouroboros.Consensus.Protocol.Praos.Header
+  ( Header (..)
+  , HeaderBody (..)
+  , hbLeiosContainsCert
+  , hbLeiosEbAnnouncement
+  )
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
   ( AllegraEra
@@ -157,12 +162,12 @@ instance
   blockLeiosCert blk =
     strictMaybeToMaybe $ blk.shelleyBlockRaw.blockBody ^. leiosCertBlockBodyL
 
-  headerContainsLeiosCert hdr = headerBody.hbLeiosContainsCert
+  headerContainsLeiosCert hdr = hbLeiosContainsCert headerBody
    where
     Header{headerBody} = shelleyHeaderRaw hdr
 
   headerLeiosAnnouncement hdr = do
-    ann <- strictMaybeToMaybe headerBody.hbLeiosEbAnnouncement
+    ann <- strictMaybeToMaybe $ hbLeiosEbAnnouncement headerBody
     pure
       ( MkLeiosPoint
           { pointSlotNo = headerBody.hbSlotNo

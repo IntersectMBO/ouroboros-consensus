@@ -138,8 +138,7 @@ instance
           , Praos.hbBodyHash = SL.bhash bhBody
           , Praos.hbOCert = SL.bheaderOCert bhBody
           , Praos.hbProtVer = SL.bprotver bhBody
-          , Praos.hbLeiosEbAnnouncement = SNothing
-          , Praos.hbLeiosContainsCert = False
+          , Praos.hbLeiosExt = SNothing
           }
       hSig = coerce bhSig
 
