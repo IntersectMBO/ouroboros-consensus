@@ -20,6 +20,7 @@ import Control.Monad.Class.MonadTime.SI
   )
 import Data.Containers.ListUtils (nubOrd)
 import Data.Foldable (toList)
+import Data.Function ((&))
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, mapMaybe)
@@ -125,9 +126,21 @@ duration PointSchedule{psSchedule, psMinEndTime} =
   maximum $ psMinEndTime : [t | sch <- toList psSchedule, (t, _) <- take 1 (reverse sch)]
 
 -- | Shrink a 'PeerSchedule' by removing ticks from it. The other ticks are kept
--- unchanged.
-shrinkAdversarialPeer :: PeerSchedule blk -> [PeerSchedule blk]
-shrinkAdversarialPeer = shrinkList (const [])
+-- unchanged. Preserve TP/HP/BP consistency, that is, at any time, TP >= HP and HP >= BP.
+shrinkAdversarialPeer :: Ord blk => PeerSchedule blk -> [PeerSchedule blk]
+shrinkAdversarialPeer = (filter preservesConsistency) . shrinkList (const [])
+ where
+  preservesConsistency sch =
+    foldr
+      ( \(_t, p) (tp, hp, acc) ->
+          case p of
+            ScheduleTipPoint newTp -> (newTp, hp, acc)
+            ScheduleHeaderPoint newHp -> (tp, newHp, acc && tp >= newHp)
+            ScheduleBlockPoint newBp -> (tp, hp, acc && hp >= newBp)
+      )
+      (Slot.Origin, Slot.Origin, True)
+      sch
+      & (\(_, _, x) -> x)
 
 -- | Shrink the 'others' field of a 'Peers' structure by attempting to remove
 -- peers or by shrinking their values using the given shrinking function.
