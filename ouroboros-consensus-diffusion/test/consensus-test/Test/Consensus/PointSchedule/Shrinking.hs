@@ -90,7 +90,8 @@ shrinkPeerSchedules genesisTest@GenesisTest{gtBlockTree, gtSchedule} _stateView 
                     , psMinEndTime = simulationDuration
                     }
               }
-   in shrunkAdversarialPeers ++ shrunkHonestPeers
+      hasPeers GenesisTest{gtSchedule = PointSchedule{psSchedule = peers}} = not $ null peers
+   in filter hasPeers $ shrunkAdversarialPeers ++ shrunkHonestPeers
 
 -- | Shrink a 'PointSchedule' by removing adversaries. This does not affect
 -- the honest peers; and it does not remove ticks from the schedules of the
