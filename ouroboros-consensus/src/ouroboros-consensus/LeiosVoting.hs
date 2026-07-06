@@ -14,10 +14,19 @@ module LeiosVoting
 
 import Cardano.Crypto.DSIGN (DSIGNAlgorithm (deriveVerKeyDSIGN))
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Concurrent.Class.MonadSTM.Strict (readTChan, retry)
+import Control.Concurrent.Class.MonadSTM.Strict
+  ( modifyTVar
+  , newTVar
+  , readTChan
+  , readTVar
+  , retry
+  , writeTVar
+  )
 import Control.Monad (forever)
 import Control.Tracer (Tracer, traceWith)
 import Data.Proxy (Proxy (..))
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Word (Word64)
 import LeiosDemoDb (LeiosDbHandle (..), LeiosEbNotification (..))
 import LeiosDemoTypes
@@ -53,7 +62,12 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
   , protocolStateLeiosAnnouncement
   )
-import Ouroboros.Consensus.Util.IOLike (IOLike, STM, atomically)
+import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , STM
+  , atomically
+  , orElse
+  )
 
 -- * Voting timing constants
 
@@ -105,75 +119,77 @@ runLeiosVoting tracer chainDB btime leiosDB voteState = \case
         signVote = signLeiosVote sk
         LeiosVoteState{addVote} = voteState
     chan <- subscribeEbNotifications leiosDB
-    let getNextClosure =
-          atomically (readTChan chan) >>= \case
-            AcquiredEb{} -> getNextClosure
-            AcquiredEbTxs point -> pure point
 
-    -- Per notification: (1) wait for the equivocation window, (2) snapshot
-    -- committee + tip's announcement, (3) check the vote deadline, (4)
-    -- sign + add the vote.
-    --
-    -- TODO: This loop is synchronous — the L_hdr wait in (1) blocks the
-    -- loop from processing further acquisitions until the current point's
-    -- window has passed. Fine when acquisitions arrive at most one per
-    -- slot, but a real implementation should be reactive: enqueue each
-    -- acquisition with its deadlines, react on chain-extension and
-    -- slot-advance events, drain eligible acquisitions concurrently.
-    -- That refactor also gives a natural home for equivocation-driven
-    -- cancellation.
+    -- 'pendingVar' holds EB closures whose voting windows we still owe
+    -- a decision on. The 'Ord LeiosPoint' instance orders by slot then
+    -- hash, so 'Set.minView' yields the earliest upcoming deadline.
+    -- A burst of closures arriving in the same slot no longer
+    -- serialises voting through the L_hdr wait for the first one:
+    -- each is enqueued as it arrives and drained the moment its
+    -- window opens.
+    pendingVar <- atomically $ newTVar (Set.empty :: Set LeiosPoint)
+
+    let
+      -- Enqueue a fresh acquisition. Retries until the channel has
+      -- one available; ignores 'AcquiredEb' (no txs closure yet).
+      takeAcquisition :: STM m ()
+      takeAcquisition =
+        readTChan chan >>= \case
+          AcquiredEb{} -> pure ()
+          AcquiredEbTxs point -> modifyTVar pendingVar (Set.insert point)
+
+      -- Take the earliest pending point whose L_hdr wait has
+      -- elapsed. Retries if the set is empty or the earliest deadline
+      -- hasn't opened yet.
+      takeReady = do
+        pending <- readTVar pendingVar
+        case Set.minView pending of
+          Nothing -> retry
+          Just (point, rest) -> do
+            let SlotNo aw = pointSlotNo point
+                earliestVoteSlot = SlotNo (aw + lHdrWaitSlots)
+            s <- knownSlot btime
+            if s < earliestVoteSlot
+              then retry
+              else do
+                writeTVar pendingVar rest
+                extLedger <- ChainDB.getCurrentLedger chainDB
+                pure (point, s, extLedger)
+
+    -- Wake on whichever fires first: a ready pending, or a new
+    -- acquisition. 'orElse' gives priority to voting over ingesting,
+    -- so we can't stall a due vote behind a chan drain.
     forever $ do
-      point <- getNextClosure
-      let SlotNo aw = pointSlotNo point
-          earliestVoteSlot = SlotNo (aw + lHdrWaitSlots)
-          deadlineSlot = SlotNo (aw + lHdrWaitSlots + lVoteWindowSlots)
-          notVoted r = traceWith tracer TraceLeiosNotVoted{ebPoint = point, reason = r}
-
-      -- (1) Wait for the equivocation-detection window to elapse.
-      atomically $ awaitSlot btime earliestVoteSlot
-
-      -- (2) Snapshot everything voting needs in one STM read from the
-      -- ledger state: the current slot for the deadline check, the
-      -- committee membership for our voter id, and — from the header
-      -- state — the currently-selected chain's pending EB announcement
-      -- plus the tip's hash (via 'tipAnnouncerFor'). We vote iff the
-      -- pending announcement matches the EB whose closure we just
-      -- acquired.
-      --
-      -- TODO: check only once per era whether we are part of the committee?
-      (currentSlot, extLedger) <- atomically $ do
-        s <- knownSlot btime
-        extLedger <- ChainDB.getCurrentLedger chainDB
-        pure (s, extLedger)
-      let mVoterId = getLeiosCommittee (ledgerState extLedger) >>= getLeiosVoterId vk
-          mAnnouncer = tipAnnouncerFor @blk (headerState extLedger) point
-      case (currentSlot > deadlineSlot, mAnnouncer, mVoterId) of
-        (True, _, _) -> notVoted TooLate
-        (_, Nothing, _) -> notVoted ChainTipDoesNotAnnounce
-        (_, _, Nothing) -> notVoted NotOnCommittee
-        (_, Just rbHash, Just voterId) -> do
-          let vote = signVote voterId rbHash
-          addVote vote >>= \case
-            Added weight mCert -> do
-              traceWith tracer TraceLeiosVoted{vote, weight}
-              traceWith tracer TraceLeiosVoteAcquired{vote}
-              -- Trace certification whenever the tally crosses
-              -- 'minCertificationThreshold'. May fire more than once
-              -- per point if subsequent votes also come in; consumers
-              -- (e.g. ThreadNet's 'propCertifying') dedupe.
-              case mCert of
-                Just _ -> traceWith tracer TraceLeiosCertified{rbHash}
-                Nothing -> pure ()
-            err ->
-              error $ "runLeiosVoting: unexpected error on addVote: " <> show err
-
--- | Block until the wall-clock slot reaches the given target. Uses STM
--- 'retry' so it wakes exactly when 'BlockchainTime's slot TVar advances.
-awaitSlot :: IOLike m => BlockchainTime m -> SlotNo -> STM m ()
-awaitSlot btime target =
-  getCurrentSlot btime >>= \case
-    CurrentSlot s | s >= target -> pure ()
-    _ -> retry
+      mWork <-
+        atomically $
+          (Just <$> takeReady) `orElse` (Nothing <$ takeAcquisition)
+      case mWork of
+        Nothing -> pure ()
+        Just (point, currentSlot, extLedger) -> do
+          let SlotNo aw = pointSlotNo point
+              deadlineSlot = SlotNo (aw + lHdrWaitSlots + lVoteWindowSlots)
+              notVoted r = traceWith tracer TraceLeiosNotVoted{ebPoint = point, reason = r}
+              mVoterId = getLeiosCommittee (ledgerState extLedger) >>= getLeiosVoterId vk
+              mAnnouncer = tipAnnouncerFor @blk (headerState extLedger) point
+          case (currentSlot > deadlineSlot, mAnnouncer, mVoterId) of
+            (True, _, _) -> notVoted TooLate
+            (_, Nothing, _) -> notVoted ChainTipDoesNotAnnounce
+            (_, _, Nothing) -> notVoted NotOnCommittee
+            (_, Just rbHash, Just voterId) -> do
+              let vote = signVote voterId rbHash
+              addVote vote >>= \case
+                Added weight mCert -> do
+                  traceWith tracer TraceLeiosVoted{vote, weight}
+                  traceWith tracer TraceLeiosVoteAcquired{vote}
+                  -- Trace certification whenever the tally crosses
+                  -- 'minCertificationThreshold'. May fire more than once
+                  -- per point if subsequent votes also come in; consumers
+                  -- (e.g. ThreadNet's 'propCertifying') dedupe.
+                  case mCert of
+                    Just _ -> traceWith tracer TraceLeiosCertified{rbHash}
+                    Nothing -> pure ()
+                err ->
+                  error $ "runLeiosVoting: unexpected error on addVote: " <> show err
 
 -- | Read the current wall-clock slot, retrying until it is known.
 knownSlot :: IOLike m => BlockchainTime m -> STM m SlotNo
