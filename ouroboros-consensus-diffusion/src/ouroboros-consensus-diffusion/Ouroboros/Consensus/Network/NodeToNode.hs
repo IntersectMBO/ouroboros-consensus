@@ -546,17 +546,26 @@ mkHandlers
           pure . leiosNotifyServerPeer $
             atomically $
               processEbNotification <|> processVote
-      , hLeiosFetchClient = \leiosConn _version controlMessageSTM peer peerVars ->
-          toLeiosFetchClientPeerPipelined $
-            leiosFetchClientPeerPipelined $
-              Leios.nextLeiosFetchClientCommand
-                (Node.leiosKernelTracer tracers)
-                (leiosPeerTracer peer)
-                ((== Terminate) <$> controlMessageSTM)
-                (getLeiosOutstanding, getLeiosReady)
-                leiosConn
-                (Leios.MkPeerId peer)
-                (Leios.requestsToSend peerVars)
+      , hLeiosFetchClient = \leiosConn _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
+          let reqVar = Leios.requestsToSend peerVars
+          -- Queue for responses received by the pipelined-peer collector
+          -- thread. The collector enqueues here rather than touching the
+          -- 'LeiosDbConnection' directly; 'nextLeiosFetchClientCommand'
+          -- drains and processes on the main peer thread, keeping all DB
+          -- access single-threaded.
+          responseQ <- LazySTM.atomically LazySTM.newTQueue
+          pure $
+            ( leiosFetchClientPeerPipelined $
+                Leios.nextLeiosFetchClientCommand
+                  (Node.leiosKernelTracer tracers)
+                  (leiosPeerTracer peer)
+                  ((== Terminate) <$> controlMessageSTM)
+                  (getLeiosOutstanding, getLeiosReady)
+                  leiosConn
+                  (Leios.MkPeerId peer)
+                  reqVar
+                  responseQ
+            )
       , hLeiosFetchServer = \leiosConn _version peer -> Effect $ do
           leiosFetchContext <- Leios.newLeiosFetchContext leiosConn
           pure $
