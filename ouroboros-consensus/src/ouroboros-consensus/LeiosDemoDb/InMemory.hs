@@ -36,7 +36,6 @@ import LeiosDemoDb.Common
   , LeiosDbConnection (..)
   , LeiosDbHandle (..)
   , LeiosEbNotification (..)
-  , LeiosFetchWork (..)
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -125,7 +124,6 @@ newLeiosDBInMemoryWith stateVar = do
             LeiosDbConnection
               { close = pure ()
               , leiosDbScanEbPoints = imScanEbPoints stateVar
-              , leiosDbLookupEbPoint = imLookupEbPoint stateVar
               , leiosDbInsertEbPoint = imInsertEbPoint stateVar
               , leiosDbLookupEbBody = imLookupEbBody stateVar
               , leiosDbInsertEbBody = imInsertEbBody stateVar notificationChan
@@ -133,8 +131,7 @@ newLeiosDBInMemoryWith stateVar = do
               , leiosDbBatchRetrieveTxs = imBatchRetrieveTxs stateVar
               , leiosDbFilterMissingEbBodies = imFilterMissingEbBodies stateVar
               , leiosDbFilterMissingTxs = imFilterMissingTxs stateVar
-              , leiosDbQueryFetchWork = imQueryFetchWork stateVar
-              , leiosDbQueryCompletedEbByHash = imQueryCompletedEbByHash stateVar
+              , leiosDbLookupEbClosure = imLookupEbClosure stateVar
               }
       }
 
@@ -148,15 +145,8 @@ imScanEbPoints stateVar = atomically $ do
     | p <- Map.keys (imEbPoints state)
     ]
 
-imLookupEbPoint :: IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe SlotNo)
-imLookupEbPoint stateVar ebHash = atomically $ do
-  state <- readTVar stateVar
-  pure $
-    listToMaybe
-      [p.pointSlotNo | p <- Map.keys (imEbPoints state), p.pointEbHash == ebHash]
-
--- | Insert a point. Subsequent calls at the same point are no-ops
--- (the first-seen size sticks; the body-downloaded set is untouched).
+-- | Insert an announced EB point. Idempotent: a second insert at the
+-- same point keeps the first-seen size.
 imInsertEbPoint :: IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> BytesSize -> m ()
 imInsertEbPoint stateVar point ebBytesSize = atomically $
   modifyTVar stateVar $ \s ->
@@ -182,6 +172,7 @@ imInsertEbBody ::
   m ()
 imInsertEbBody stateVar notificationChan point eb = do
   let items = leiosEbBodyItems eb
+      ebBytesSize = leiosEbBytesSize eb
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
   atomically $ do
@@ -207,7 +198,7 @@ imInsertEbBody stateVar notificationChan point eb = do
           imEbBodiesDownloaded =
             Set.insert point (imEbBodiesDownloaded s)
         }
-    writeTChan notificationChan $ AcquiredEb point (leiosEbBytesSize eb)
+    writeTChan notificationChan $ AcquiredEb point ebBytesSize
 
 imInsertTxs ::
   IOLike m =>
@@ -304,32 +295,9 @@ imFilterMissingTxs stateVar txHashes = atomically $ do
   state <- readTVar stateVar
   pure [txHash | txHash <- txHashes, not $ Map.member txHash (imTxs state)]
 
-imQueryFetchWork :: IOLike m => StrictTVar m InMemoryLeiosDb -> m LeiosFetchWork
-imQueryFetchWork stateVar = atomically $ do
-  state <- readTVar stateVar
-  let missingEbBodies =
-        Map.fromList
-          [ (point, ebBytesSize)
-          | (point, ebBytesSize) <- Map.toList (imEbPoints state)
-          , not (Set.member point (imEbBodiesDownloaded state))
-          ]
-      missingEbTxs =
-        Map.fromList
-          [ (point, missing)
-          | point <- Set.toList (imEbBodiesDownloaded state)
-          , Just entries <- [Map.lookup (pointEbHash point) (imEbBodies state)]
-          , let missing =
-                  [ (offset, eteTxHash e, eteTxBytesSize e)
-                  | (offset, e) <- IntMap.toList entries
-                  , not (Map.member (eteTxHash e) (imTxs state))
-                  ]
-          , not (null missing)
-          ]
-  pure LeiosFetchWork{missingEbBodies, missingEbTxs}
-
-imQueryCompletedEbByHash ::
+imLookupEbClosure ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe [(TxHash, ByteString)])
-imQueryCompletedEbByHash stateVar ebHash = atomically $ do
+imLookupEbClosure stateVar ebHash = atomically $ do
   state <- readTVar stateVar
   case Map.lookup ebHash (imEbBodies state) of
     Nothing -> pure Nothing

@@ -30,7 +30,7 @@ import Data.Function ((&))
 import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Sequence.Strict as StrictSeq
-import LeiosDemoDb (leiosDbQueryCompletedEbByHash)
+import LeiosDemoDb (leiosDbLookupEbClosure)
 import LeiosDemoTypes (EbAnnouncement (..), LeiosPoint (..), RbHash (..))
 import Lens.Micro ((.~), (^.))
 import Ouroboros.Consensus.Block (ChainHash (..), blockPrevHash, toRawHash)
@@ -88,7 +88,7 @@ instance
   where
   resolveLeiosClosure leiosDb point _blk = do
     mAnnouncedEb <-
-      leiosDbQueryCompletedEbByHash
+      leiosDbLookupEbClosure
         leiosDb
         (pointEbHash point)
     case mAnnouncedEb of

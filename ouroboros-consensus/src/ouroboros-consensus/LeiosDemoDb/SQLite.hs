@@ -52,7 +52,6 @@ import LeiosDemoDb.Common
   , LeiosDbConnection (..)
   , LeiosDbHandle (..)
   , LeiosEbNotification (..)
-  , LeiosFetchWork (..)
   )
 import LeiosDemoDb.Trace (TraceLeiosDb (..))
 import LeiosDemoException (LeiosDbException (..))
@@ -160,7 +159,6 @@ openSQLiteConnection tracer dbPath notificationChan = do
     LeiosDbConnection
       { close = check >> void (DB.close db)
       , leiosDbScanEbPoints = check >> sqlScanEbPoints db
-      , leiosDbLookupEbPoint = \h -> check >> sqlLookupEbPoint db h
       , leiosDbInsertEbPoint = \p sz -> check >> sqlInsertEbPoint db p sz
       , leiosDbLookupEbBody = \h -> check >> sqlLookupEbBody db h
       , leiosDbInsertEbBody = \p eb -> check >> sqlInsertEbBody tracer db notify p eb
@@ -168,8 +166,7 @@ openSQLiteConnection tracer dbPath notificationChan = do
       , leiosDbBatchRetrieveTxs = \h offs -> check >> sqlBatchRetrieveTxs tracer db h offs
       , leiosDbFilterMissingEbBodies = \ebs -> check >> sqlFilterMissingEbBodies tracer db ebs
       , leiosDbFilterMissingTxs = \hs -> check >> sqlFilterMissingTxs tracer db hs
-      , leiosDbQueryFetchWork = check >> sqlQueryFetchWork db
-      , leiosDbQueryCompletedEbByHash = \h -> check >> sqlQueryCompletedEbByHash db h
+      , leiosDbLookupEbClosure = \h -> check >> sqlLookupEbClosure db h
       }
 
 -- * Top-level implementations
@@ -198,24 +195,6 @@ sqlScanCompleteEbHashesSince db sinceSlot =
               loop (hash : acc)
     loop []
 
-sqlLookupEbPoint :: DB.Database -> EbHash -> IO (Maybe SlotNo)
-sqlLookupEbPoint db ebHash =
-  dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_eb) $ \stmt -> do
-    dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
-    dbStep stmt >>= \case
-      DB.Done -> pure Nothing
-      DB.Row -> do
-        slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-        pure (Just slot)
-
-sqlInsertEbPoint :: DB.Database -> LeiosPoint -> BytesSize -> IO ()
-sqlInsertEbPoint db point ebBytesSize =
-  dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_eb) $ \stmt -> do
-    dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
-    dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
-    dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
-    dbStep1 stmt
-
 sqlLookupEbBody :: DB.Database -> EbHash -> IO [(TxHash, BytesSize)]
 sqlLookupEbBody db ebHash =
   dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_ebBodies) $ \stmt -> do
@@ -229,6 +208,16 @@ sqlLookupEbBody db ebHash =
               loop ((txHash, size) : acc)
     loop []
 
+sqlInsertEbPoint :: DB.Database -> LeiosPoint -> BytesSize -> IO ()
+sqlInsertEbPoint db point ebBytesSize =
+  dbWithBEGIN db $ dbWithPrepare db (fromString sql_insert_eb) $ \stmt -> do
+    dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
+    dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
+    dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
+    dbStep1 stmt
+
+-- | Persist an EB body. The point MUST already be present (inserted
+-- via 'sqlInsertEbPoint' on the announcement path).
 sqlInsertEbBody ::
   Tracer IO TraceLeiosDb ->
   DB.Database ->
@@ -238,6 +227,7 @@ sqlInsertEbBody ::
   IO ()
 sqlInsertEbBody tracer db notify point eb = do
   let items = leiosEbBodyItems eb
+      ebBytesSize = leiosEbBytesSize eb
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
   dbWithBEGIN db $ do
@@ -261,7 +251,7 @@ sqlInsertEbBody tracer db notify point eb = do
       dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
       dbBindInt64 stmt 3 (fromIntegral $ unSlotNo point.pointSlotNo)
       dbStep1 stmt
-  notify $ AcquiredEb point (leiosEbBytesSize eb)
+  notify $ AcquiredEb point ebBytesSize
 
 sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->
@@ -405,38 +395,9 @@ sqlFilterMissingTxs tracer db txHashes =
       dbStep1 stmtFlush
     pure result
 
-sqlQueryFetchWork :: DB.Database -> IO LeiosFetchWork
-sqlQueryFetchWork db =
-  dbWithBEGIN db $ do
-    -- Query missing EB bodies
-    missingEbBodies <- dbWithPrepare db (fromString sql_query_missing_eb_bodies) $ \stmt -> do
-      let loop acc =
-            dbStep stmt >>= \case
-              DB.Done -> pure (Map.fromList (reverse acc))
-              DB.Row -> do
-                slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-                ebHash <- MkEbHash <$> DB.columnBlob stmt 1
-                ebBytesSize <- fromIntegral <$> DB.columnInt64 stmt 2
-                loop ((MkLeiosPoint slot ebHash, ebBytesSize) : acc)
-      loop []
-    -- Query missing TXs, grouped by EB
-    missingEbTxs <- dbWithPrepare db (fromString sql_query_missing_eb_txs) $ \stmt -> do
-      let loop acc =
-            dbStep stmt >>= \case
-              DB.Done -> pure (Map.fromListWith (++) (reverse acc))
-              DB.Row -> do
-                slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-                ebHash <- MkEbHash <$> DB.columnBlob stmt 1
-                txOffset <- fromIntegral <$> DB.columnInt64 stmt 2
-                txHash <- MkTxHash <$> DB.columnBlob stmt 3
-                txBytesSize <- fromIntegral <$> DB.columnInt64 stmt 4
-                loop ((MkLeiosPoint slot ebHash, [(txOffset, txHash, txBytesSize)]) : acc)
-      loop []
-    pure LeiosFetchWork{missingEbBodies, missingEbTxs}
-
-sqlQueryCompletedEbByHash :: DB.Database -> EbHash -> IO (Maybe [(TxHash, ByteString)])
-sqlQueryCompletedEbByHash db ebHash =
-  dbWithBEGIN db $ dbWithPrepare db (fromString sqlQueryCompletedEbByPoint') $ \stmt -> do
+sqlLookupEbClosure :: DB.Database -> EbHash -> IO (Maybe [(TxHash, ByteString)])
+sqlLookupEbClosure db ebHash =
+  dbWithBEGIN db $ dbWithPrepare db (fromString sql_lookup_eb_closure) $ \stmt -> do
     dbBindBlob stmt 1 (ebHashBytes ebHash)
     -- FIXME(bladyjoker): This should have a SlotNo as the second part of the key
     let loop acc =
@@ -507,10 +468,6 @@ sql_scan_complete_ebs_since =
   \      (SELECT ebHashBytes FROM ebs WHERE missingTxCount IS NOT NULL AND missingTxCount <= 0)\n\
   \"
 
-sql_lookup_eb :: String
-sql_lookup_eb =
-  "SELECT ebSlot FROM ebs WHERE ebHashBytes = ?"
-
 sql_insert_eb :: String
 sql_insert_eb =
   "INSERT OR IGNORE INTO ebs (ebSlot, ebHashBytes, ebBytesSize) VALUES (?, ?, ?)"
@@ -530,28 +487,6 @@ sql_insert_ebBody =
 sql_insert_tx :: String
 sql_insert_tx =
   "INSERT INTO txs (txHashBytes, txBytes, txBytesSize) VALUES (?, ?, ?)\n\
-  \"
-
--- | Query for missing EB bodies: EBs announced but not yet downloaded.
--- Returns (ebSlot, ebHashBytes, ebBytesSize) for each missing body.
-sql_query_missing_eb_bodies :: String
-sql_query_missing_eb_bodies =
-  "SELECT ep.ebSlot, ep.ebHashBytes, ep.ebBytesSize\n\
-  \FROM ebs ep\n\
-  \WHERE missingTxCount IS NULL\n\
-  \ORDER BY ep.ebSlot DESC\n\
-  \"
-
--- | Query for missing TXs: TXs in ebTxs that don't have corresponding entries in txs.
--- Returns (ebSlot, ebHashBytes, txOffset, txHashBytes, txBytesSize) for each missing TX.
-sql_query_missing_eb_txs :: String
-sql_query_missing_eb_txs =
-  "SELECT ep.ebSlot, e.ebHashBytes, e.txOffset, e.txHashBytes, e.txBytesSize\n\
-  \FROM ebTxs e\n\
-  \JOIN ebs ep ON e.ebHashBytes = ep.ebHashBytes\n\
-  \LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
-  \WHERE t.txHashBytes IS NULL\n\
-  \ORDER BY ep.ebSlot DESC, e.txOffset ASC\n\
   \"
 
 -- | Insert ebHashes into temp table for batch filtering
@@ -659,8 +594,8 @@ sql_attach_memTxPoints =
   \  ) WITHOUT ROWID;\n\
   \"
 
-sqlQueryCompletedEbByPoint' :: String
-sqlQueryCompletedEbByPoint' =
+sql_lookup_eb_closure :: String
+sql_lookup_eb_closure =
   unlines
     [ "SELECT ebTx.txHashBytes, tx.txBytes"
     , "FROM ebTxs as ebTx"

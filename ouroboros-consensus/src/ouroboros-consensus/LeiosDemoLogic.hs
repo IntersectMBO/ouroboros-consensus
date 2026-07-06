@@ -46,7 +46,6 @@ import LeiosDemoDb
   , leiosDbInsertEbPoint
   , leiosDbInsertTxs
   , leiosDbLookupEbBody
-  , leiosDbLookupEbPoint
   )
 import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes
@@ -555,33 +554,37 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar 
   checkOrPeek =
     stopSTM >>= \case
       True -> pure $ Right $ Left ()
-      False -> StrictSTM.readTVar reqsVar >>= \case
-        req Seq.:<| reqs -> do
-          StrictSTM.writeTVar reqsVar reqs
-          pure $ Right $ Right $ g req
-        Seq.Empty -> pure $ Left ()
+      False ->
+        StrictSTM.readTVar reqsVar >>= \case
+          req Seq.:<| reqs -> do
+            StrictSTM.writeTVar reqsVar reqs
+            pure $ Right $ Right $ g req
+          Seq.Empty -> pure $ Left ()
 
   -- Blocking path. Wake on stop, new request, or a response arriving
   -- (peek doesn't consume; caller re-drains). Ensures responses get
   -- processed even when there are no requests to send.
   blockingLoop :: m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
   blockingLoop = do
-    step <- StrictSTM.atomically $
-      (Right <$> awaitStopOrRequest) `LazySTM.orElse`
-      (Left () <$ LazySTM.peekTQueue responseQ)
+    step <-
+      StrictSTM.atomically $
+        (Right <$> awaitStopOrRequest)
+          `LazySTM.orElse` (Left () <$ LazySTM.peekTQueue responseQ)
     case step of
       Right result -> pure result
       Left () -> drainResponses *> blockingLoop
 
   awaitStopOrRequest ::
     StrictSTM.STM m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
-  awaitStopOrRequest = stopSTM >>= \case
-    True -> pure $ Left ()
-    False -> StrictSTM.readTVar reqsVar >>= \case
-      req Seq.:<| reqs -> do
-        StrictSTM.writeTVar reqsVar reqs
-        pure $ Right $ g req
-      Seq.Empty -> StrictSTM.retry
+  awaitStopOrRequest =
+    stopSTM >>= \case
+      True -> pure $ Left ()
+      False ->
+        StrictSTM.readTVar reqsVar >>= \case
+          req Seq.:<| reqs -> do
+            StrictSTM.writeTVar reqsVar reqs
+            pure $ Right $ g req
+          Seq.Empty -> StrictSTM.retry
 
   g = \case
     LeiosBlockRequest req@(MkLeiosBlockRequest p _ebBytesSize) ->
@@ -640,26 +643,13 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
     when novel $ do
       -- TODO don't hold the outstanding mvar during this IO
       traceException tracer TraceLeiosPeerDbException $ do
-        -- NOTE: The point should already be in the table because of the
-        -- announcement handling. The fetching logic should have only decided to
-        -- download announced (or otherwise known) EBs. However, this is an
-        -- interesting situation where a node offers an EB we have not seen via an
-        -- announcement before. We check if the point exists and trace a warning
-        -- if not, then insert as safety net. We should remove this once we are
-        -- confident the fetching logic handles this correctly.
-        leiosDbLookupEbPoint db ebHash >>= \case
-          Just _ -> pure () -- Point already exists (expected from announcement)
-          Nothing -> do
-            -- Unexpected: we're receiving an EB body without having seen the announcement first
-            traceWith ktracer $ TraceLeiosBlockPointMissing point
-            leiosDbInsertEbPoint db point ebBytesSize
-        -- FIXME: getting a LeiosDb: ErrorConstraint exception here When forging
-        -- a leios EB, another peer offers us the block we already produced and
-        -- the fetching logic does download it. This results in a duplicate
-        -- insert here. We can of course make the database ignore the
-        -- duplicates, but we should have not even fetched it.
-        -- REVIEW: ^^^^ this should be resolved
-        -- TODO: This was encountered again, but likely because of a race on two fetches.
+        -- FIXME: Once proper EB announcements are wired in, the point
+        -- MUST already be present here (announcement handling inserts
+        -- it) and this should become an assertion. Today we still tolerate
+        -- receiving an EB body without a prior announcement, so we insert
+        -- the point idempotently as a stop-gap and trace a warning.
+        traceWith ktracer $ TraceLeiosBlockPointMissing point
+        leiosDbInsertEbPoint db point ebBytesSize
         leiosDbInsertEbBody db point eb
         traceWith ktracer $ TraceLeiosBlockAcquired point
     -- update NodeKernel state
