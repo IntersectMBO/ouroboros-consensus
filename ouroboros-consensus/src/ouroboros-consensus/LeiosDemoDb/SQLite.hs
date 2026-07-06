@@ -17,7 +17,7 @@ module LeiosDemoDb.SQLite
 
 import Cardano.Prelude (forM_, traverse_, when)
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (myThreadId, threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
   , dupTChan
@@ -142,20 +142,34 @@ openSQLiteConnection tracer dbPath notificationChan = do
     dbExec db (fromString sql_schema)
   dbExec db (fromString sql_attach_memTxPoints)
   let notify = atomically . writeTChan notificationChan
+  -- TEMP: safety net. 'LeiosDbConnection' is a direct-sqlite handle that is
+  -- not thread-safe (SQLite protects concurrent ops but not close-during-op).
+  -- Fail loudly with a call stack if any op runs on a different thread than
+  -- the opener. Remove once we have proven all callsites are single-threaded.
+  owner <- myThreadId
+  let check :: HasCallStack => IO ()
+      check = do
+        me <- myThreadId
+        when (me /= owner) $
+          error $
+            "LeiosDbConnection used from thread "
+              <> show me
+              <> " but opened on "
+              <> show owner
   pure $
     LeiosDbConnection
-      { close = void $ DB.close db
-      , leiosDbScanEbPoints = sqlScanEbPoints db
-      , leiosDbLookupEbPoint = sqlLookupEbPoint db
-      , leiosDbInsertEbPoint = sqlInsertEbPoint db
-      , leiosDbLookupEbBody = sqlLookupEbBody db
-      , leiosDbInsertEbBody = sqlInsertEbBody tracer db notify
-      , leiosDbInsertTxs = sqlInsertTxs tracer db notify
-      , leiosDbBatchRetrieveTxs = sqlBatchRetrieveTxs tracer db
-      , leiosDbFilterMissingEbBodies = sqlFilterMissingEbBodies tracer db
-      , leiosDbFilterMissingTxs = sqlFilterMissingTxs tracer db
-      , leiosDbQueryFetchWork = sqlQueryFetchWork db
-      , leiosDbQueryCompletedEbByHash = sqlQueryCompletedEbByHash db
+      { close = check >> void (DB.close db)
+      , leiosDbScanEbPoints = check >> sqlScanEbPoints db
+      , leiosDbLookupEbPoint = \h -> check >> sqlLookupEbPoint db h
+      , leiosDbInsertEbPoint = \p sz -> check >> sqlInsertEbPoint db p sz
+      , leiosDbLookupEbBody = \h -> check >> sqlLookupEbBody db h
+      , leiosDbInsertEbBody = \p eb -> check >> sqlInsertEbBody tracer db notify p eb
+      , leiosDbInsertTxs = \txs -> check >> sqlInsertTxs tracer db notify txs
+      , leiosDbBatchRetrieveTxs = \h offs -> check >> sqlBatchRetrieveTxs tracer db h offs
+      , leiosDbFilterMissingEbBodies = \ebs -> check >> sqlFilterMissingEbBodies tracer db ebs
+      , leiosDbFilterMissingTxs = \hs -> check >> sqlFilterMissingTxs tracer db hs
+      , leiosDbQueryFetchWork = check >> sqlQueryFetchWork db
+      , leiosDbQueryCompletedEbByHash = \h -> check >> sqlQueryCompletedEbByHash db h
       }
 
 -- * Top-level implementations

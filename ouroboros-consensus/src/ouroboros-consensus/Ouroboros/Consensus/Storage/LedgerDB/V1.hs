@@ -28,7 +28,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoDb (LeiosDbConnection, LeiosDbHandle (open))
+import LeiosDemoDb (LeiosDbHandle, withLeiosDb)
 import LeiosDemoTypes (HasLeiosVoting)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -88,10 +88,14 @@ mkInitDb ::
   GetVolatileSuffix m blk ->
   m (InitDB (DbChangelog' blk, BackingStore' m blk) m blk)
 mkInitDb args bss getBlock snapManager getVolatileSuffix = do
-  -- Open the LeiosDb connection once, up front, and share it between the
-  -- immutable-DB replay path ('initReapplyBlock') and the post-replay
-  -- 'LedgerDBEnv'. See V2.mkInitDb for the longer rationale.
-  ldbLeiosDb <- open lgrLeiosDb
+  -- 'lgrLeiosDb' is a 'LeiosDbHandle' — a factory for per-thread
+  -- 'LeiosDbConnection's. We do NOT open a connection here to share
+  -- across threads: 'direct-sqlite' handles are single-thread and
+  -- were segfaulting when the shared connection was used from a
+  -- different worker (see the thread-check safety net in
+  -- LeiosDemoDb.SQLite). Every consumer opens its own via
+  -- 'withLeiosDb' on its own thread instead.
+  let ldbLeiosDb = lgrLeiosDb
   pure $
     InitDB
       { initFromGenesis = do
@@ -110,7 +114,8 @@ mkInitDb args bss getBlock snapManager getVolatileSuffix = do
                 ds
             )
       , initReapplyBlock = \cfg blk (chlog, bstore) -> do
-          !chlog' <- reapplyThenPushLeios ldbLeiosDb cfg blk (readKeySets bstore) chlog
+          !chlog' <- withLeiosDb ldbLeiosDb $ \leiosConn ->
+            reapplyThenPushLeios leiosConn cfg blk (readKeySets bstore) chlog
           -- It's OK to flush without a lock here, since the `LedgerDB` has not
           -- finished initializing, only this thread has access to the backing
           -- store.
@@ -287,22 +292,28 @@ implValidate ::
   SuccessForkerAction m l ->
   m (ValidateResult l blk)
 implValidate h ldbEnv tr cache rollbacks hdrs onSuccess =
-  validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
-    ValidateArgs
-      (ldbResolveBlock ldbEnv)
-      (ledgerDbCfg $ ldbCfg ldbEnv)
-      ( \l -> do
-          prev <- readTVar (ldbPrevApplied ldbEnv)
-          writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
-      )
-      (readTVar (ldbPrevApplied ldbEnv))
-      (withForkerByRollback h)
-      onSuccess
-      tr
-      cache
-      rollbacks
-      hdrs
-      (ldbLeiosDb ldbEnv)
+  -- Open a connection scoped to this call: the 'LeiosDbConnection'
+  -- must be owned by the thread calling 'validate', which for
+  -- 'validateFork' is the ChainSel/block-adder thread. Storing a
+  -- shared connection in 'ldbEnv' was crashing SQLite when a
+  -- non-owner thread invoked this path.
+  withLeiosDb (ldbLeiosDb ldbEnv) $ \leiosConn ->
+    validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
+      ValidateArgs
+        (ldbResolveBlock ldbEnv)
+        (ledgerDbCfg $ ldbCfg ldbEnv)
+        ( \l -> do
+            prev <- readTVar (ldbPrevApplied ldbEnv)
+            writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
+        )
+        (readTVar (ldbPrevApplied ldbEnv))
+        (withForkerByRollback h)
+        onSuccess
+        tr
+        cache
+        rollbacks
+        hdrs
+        leiosConn
 
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
@@ -465,7 +476,8 @@ implIntReapplyThenPush ::
 implIntReapplyThenPush env blk = do
   chlog <- readTVarIO $ ldbChangelog env
   chlog' <-
-    reapplyThenPushLeios (ldbLeiosDb env) (ldbCfg env) blk (readKeySets (ldbBackingStore env)) chlog
+    withLeiosDb (ldbLeiosDb env) $ \leiosConn ->
+      reapplyThenPushLeios leiosConn (ldbCfg env) blk (readKeySets (ldbBackingStore env)) chlog
   atomically $ writeTVar (ldbChangelog env) chlog'
 
 {-------------------------------------------------------------------------------
@@ -570,7 +582,10 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock :: !(ResolveBlock m blk)
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
-  , ldbLeiosDb :: !(LeiosDbConnection m)
+  , ldbLeiosDb :: !(LeiosDbHandle m)
+  -- ^ 'LeiosDbHandle', not a live connection: every consumer opens its
+  -- own per-thread connection via 'withLeiosDb' at use time (a
+  -- 'direct-sqlite' handle is single-thread).
   }
   deriving Generic
 

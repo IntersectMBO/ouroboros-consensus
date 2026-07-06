@@ -12,6 +12,7 @@ module LeiosDemoLogic (module LeiosDemoLogic) where
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
+import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.Monad (forM_, when)
@@ -498,6 +499,13 @@ packRequests env =
 
 -----
 
+-- | A response received by the pipelined-peer collector thread, deferred
+-- for processing on the main peer thread. The collector must not touch
+-- the 'LeiosDbConnection' — it belongs to the main peer thread.
+data PendingResponse
+  = PendingBlockResponse !LeiosBlockRequest !LeiosEb
+  | PendingBlockTxsResponse !LeiosBlockTxsRequest !(V.Vector LeiosTx)
+
 nextLeiosFetchClientCommand ::
   forall pid m.
   ( Ord pid
@@ -512,42 +520,81 @@ nextLeiosFetchClientCommand ::
   LeiosDbConnection m ->
   PeerId pid ->
   StrictTVar m (Seq LeiosFetchRequest) ->
+  -- | Queue of responses received by the pipelined collector thread.
+  -- The collector enqueues; this function (on the main peer thread)
+  -- drains and processes, keeping all 'LeiosDbConnection' access on
+  -- the main thread.
+  LazySTM.TQueue m PendingResponse ->
   m
     ( Either
         (m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
         (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
     )
-nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar = do
-  f (pure Nothing) (pure . Just) >>= \case
-    Just x -> pure $ Right x
-    Nothing -> pure $ Left $ f StrictSTM.retry pure
+nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar responseQ = do
+  drainResponses
+  StrictSTM.atomically checkOrPeek >>= \case
+    Right result -> pure $ Right result
+    Left () -> pure $ Left blockingLoop
  where
-  f ::
-    StrictSTM.STM m r ->
-    (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m) -> StrictSTM.STM m r) ->
-    m r
-  f retry_ pure_ = StrictSTM.atomically $ do
+  -- Drain everything currently in the response queue and process on this thread.
+  drainResponses :: m ()
+  drainResponses = do
+    pending <- StrictSTM.atomically $ LazySTM.flushTQueue responseQ
+    forM_ pending $ \case
+      PendingBlockResponse req eb ->
+        msgLeiosBlock ktracer tracer kernelVars db peerId req eb
+      PendingBlockTxsResponse req txs ->
+        msgLeiosBlockTxs ktracer tracer kernelVars db peerId req txs
+
+  -- Non-blocking: return 'Right result' if stop or a request is available,
+  -- or 'Left ()' if we'd have to block (caller returns Left blockingLoop).
+  checkOrPeek ::
+    StrictSTM.STM m (Either () (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
+  checkOrPeek =
     stopSTM >>= \case
-      True -> pure_ $ Left ()
-      False ->
-        StrictSTM.readTVar reqsVar >>= \case
-          Seq.Empty -> retry_
-          req Seq.:<| reqs -> do
-            StrictSTM.writeTVar reqsVar reqs
-            pure_ $ Right $ g req
+      True -> pure $ Right $ Left ()
+      False -> StrictSTM.readTVar reqsVar >>= \case
+        req Seq.:<| reqs -> do
+          StrictSTM.writeTVar reqsVar reqs
+          pure $ Right $ Right $ g req
+        Seq.Empty -> pure $ Left ()
+
+  -- Blocking path. Wake on stop, new request, or a response arriving
+  -- (peek doesn't consume; caller re-drains). Ensures responses get
+  -- processed even when there are no requests to send.
+  blockingLoop :: m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
+  blockingLoop = do
+    step <- StrictSTM.atomically $
+      (Right <$> awaitStopOrRequest) `LazySTM.orElse`
+      (Left () <$ LazySTM.peekTQueue responseQ)
+    case step of
+      Right result -> pure result
+      Left () -> drainResponses *> blockingLoop
+
+  awaitStopOrRequest ::
+    StrictSTM.STM m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
+  awaitStopOrRequest = stopSTM >>= \case
+    True -> pure $ Left ()
+    False -> StrictSTM.readTVar reqsVar >>= \case
+      req Seq.:<| reqs -> do
+        StrictSTM.writeTVar reqsVar reqs
+        pure $ Right $ g req
+      Seq.Empty -> StrictSTM.retry
 
   g = \case
     LeiosBlockRequest req@(MkLeiosBlockRequest p _ebBytesSize) ->
       LF.MkSomeLeiosFetchJob
         (LF.MsgLeiosBlockRequest p)
         ( pure $ \(LF.MsgLeiosBlock eb) ->
-            msgLeiosBlock ktracer tracer kernelVars db peerId req eb
+            StrictSTM.atomically $
+              LazySTM.writeTQueue responseQ (PendingBlockResponse req eb)
         )
     LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p bitmaps _txHashes) ->
       LF.MkSomeLeiosFetchJob
         (LF.MsgLeiosBlockTxsRequest p bitmaps)
-        ( pure $ \(LF.MsgLeiosBlockTxs _ _ txs) -> do
-            msgLeiosBlockTxs ktracer tracer kernelVars db peerId req txs
+        ( pure $ \(LF.MsgLeiosBlockTxs _ _ txs) ->
+            StrictSTM.atomically $
+              LazySTM.writeTQueue responseQ (PendingBlockTxsResponse req txs)
         )
 
 -----

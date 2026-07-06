@@ -30,7 +30,7 @@ import Data.Traversable (for)
 import Data.Tuple (Solo (..))
 import Data.Word
 import GHC.Generics
-import LeiosDemoDb (LeiosDbConnection, LeiosDbHandle (open))
+import LeiosDemoDb (LeiosDbHandle, withLeiosDb)
 import LeiosDemoTypes (HasLeiosVoting)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -83,15 +83,13 @@ mkInitDb ::
   Resources m backend ->
   m (InitDB (LedgerSeq' m blk) m blk)
 mkInitDb args getBlock snapManager getVolatileSuffix res = do
-  -- Open the LeiosDb connection once, up front, and share it between
-  -- the immutable-DB replay path ('initReapplyBlock') and the
-  -- post-replay 'LedgerDB' env ('ldbLeiosDb'). The replay path needs
-  -- the connection so 'reapplyThenPush' can splice EB bodies into
-  -- CertRBs via 'resolveLeiosBlock' — without it, replayed CertRBs
-  -- would be applied with empty wire bodies and the resulting ledger
-  -- state would diverge from the one produced by the original fresh
-  -- sync (missing every EB-tx output).
-  ldbLeiosDb <- open lgrLeiosDb
+  -- 'lgrLeiosDb' is a 'LeiosDbHandle' — a factory for per-thread
+  -- 'LeiosDbConnection's. We do NOT open a shared connection here:
+  -- a direct-sqlite handle must be used from the thread that opened
+  -- it, and every consumer (initial replay, ChainSel validate,
+  -- reapplyThenPushNOW, ...) runs on a different thread. Each opens
+  -- its own via 'withLeiosDb' at use time instead.
+  let ldbLeiosDb = lgrLeiosDb
   pure $
     InitDB
       { initFromGenesis = do
@@ -108,7 +106,9 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                   res
                   ds
             )
-      , initReapplyBlock = reapplyThenPush ldbLeiosDb
+      , initReapplyBlock = \cfg ap db ->
+          withLeiosDb ldbLeiosDb $ \leiosConn ->
+            reapplyThenPush leiosConn cfg ap db
       , currentTip = ledgerState . current
       , mkLedgerDb = \lseq -> do
           varDB <- newTVarIO lseq
@@ -219,7 +219,8 @@ mkInternals ldb h snapManager =
           ( \frk -> do
               st <- atomically $ forkerGetLedgerState frk
               let cds = headerStateChainDep (headerState st)
-              blk' <- resolveLeiosBlock (ldbLeiosDb env) cds blk
+              blk' <- withLeiosDb (ldbLeiosDb env) $ \leiosConn ->
+                resolveLeiosBlock leiosConn cds blk
               tables <- forkerReadTables frk (getBlockKeySets blk')
               let st' =
                     tickThenReapply
@@ -318,22 +319,24 @@ implValidate ::
   SuccessForkerAction m l ->
   m (ValidateResult l blk)
 implValidate h ldbEnv tr cache rollbacks hdrs onSuccess =
-  validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
-    ValidateArgs
-      (ldbResolveBlock ldbEnv)
-      (ledgerDbCfg $ ldbCfg ldbEnv)
-      ( \l -> do
-          prev <- readTVar (ldbPrevApplied ldbEnv)
-          writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
-      )
-      (readTVar (ldbPrevApplied ldbEnv))
-      (withForkerByRollback h)
-      onSuccess
-      tr
-      cache
-      rollbacks
-      hdrs
-      (ldbLeiosDb ldbEnv)
+  -- See V1.implValidate for the rationale on opening per-call.
+  withLeiosDb (ldbLeiosDb ldbEnv) $ \leiosConn ->
+    validate (ledgerDbCfgComputeLedgerEvents $ ldbCfg ldbEnv) $
+      ValidateArgs
+        (ldbResolveBlock ldbEnv)
+        (ledgerDbCfg $ ldbCfg ldbEnv)
+        ( \l -> do
+            prev <- readTVar (ldbPrevApplied ldbEnv)
+            writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l)
+        )
+        (readTVar (ldbPrevApplied ldbEnv))
+        (withForkerByRollback h)
+        onSuccess
+        tr
+        cache
+        rollbacks
+        hdrs
+        leiosConn
 
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
@@ -447,8 +450,10 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- in tests can release such resources. These are the resource keys for the
   -- LSM session and the resource key for the BlockIO interface.
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
-  , ldbLeiosDb :: !(LeiosDbConnection m)
-  -- ^ Connection to the Leios demo DB.
+  , ldbLeiosDb :: !(LeiosDbHandle m)
+  -- ^ 'LeiosDbHandle', not a live connection: every consumer opens
+  -- its own per-thread connection via 'withLeiosDb' at use time (a
+  -- 'direct-sqlite' handle is single-thread).
   }
   deriving Generic
 
