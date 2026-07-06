@@ -4,7 +4,6 @@ module LeiosDemoDb
   , LeiosDbHandle (..)
   , LeiosEbNotification (..)
   , LeiosDbConnection (..)
-  , LeiosFetchWork (..)
   , CompletedEbs
   , TraceLeiosDb (..)
 
@@ -30,7 +29,6 @@ import LeiosDemoDb.Common
   , LeiosDbConnection (..)
   , LeiosDbHandle (..)
   , LeiosEbNotification (..)
-  , LeiosFetchWork (..)
   , withLeiosDb
   )
 import LeiosDemoDb.InMemory

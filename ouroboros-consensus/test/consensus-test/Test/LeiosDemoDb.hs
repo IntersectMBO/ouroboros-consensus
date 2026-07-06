@@ -25,7 +25,6 @@ import qualified Data.Vector.Strict as V
 import LeiosDemoDb
   ( LeiosDbHandle (..)
   , LeiosEbNotification (..)
-  , LeiosFetchWork (..)
   , leiosDbBatchRetrieveTxs
   , leiosDbFilterMissingEbBodies
   , leiosDbFilterMissingTxs
@@ -33,9 +32,7 @@ import LeiosDemoDb
   , leiosDbInsertEbPoint
   , leiosDbInsertTxs
   , leiosDbLookupEbBody
-  , leiosDbLookupEbPoint
-  , leiosDbQueryCompletedEbByHash
-  , leiosDbQueryFetchWork
+  , leiosDbLookupEbClosure
   , leiosDbScanEbPoints
   , newLeiosDBInMemory
   , newLeiosDBSQLite
@@ -111,8 +108,6 @@ mkTestGroups impl =
   [ testGroup
       "points"
       [ testProperty "insert then scan" $ prop_pointsInsertThenScan impl
-      , testProperty "insert then lookup" $ prop_pointsInsertThenLookup impl
-      , testProperty "lookup missing returns Nothing" $ prop_pointsLookupMissing impl
       , testProperty "multiple inserts accumulate" $ prop_pointsAccumulate impl
       ]
   , testGroup
@@ -141,13 +136,6 @@ mkTestGroups impl =
           withFreshDb impl test_multipleSlotsSameHash
       ]
   , testGroup
-      "queryFetchWork"
-      [ testProperty "empty db returns empty work" $ prop_fetchWorkEmpty impl
-      , testProperty "missing bodies reported" $ prop_fetchWorkMissingBodies impl
-      , testProperty "missing txs reported" $ prop_fetchWorkMissingTxs impl
-      , testProperty "complete eb has no missing txs" $ prop_fetchWorkCompleteTxs impl
-      ]
-  , testGroup
       "filterMissingEbBodies"
       [ testProperty "empty input returns empty" $ prop_filterEbBodiesEmpty impl
       , testProperty "returns only missing EBs" $ prop_filterEbBodiesCorrect impl
@@ -158,7 +146,7 @@ mkTestGroups impl =
       , testProperty "returns only missing TXs" $ prop_filterTxsCorrect impl
       ]
   , testGroup
-      "queryCompletedEbByPoint"
+      "lookupEbClosure"
       [ testProperty "complete EB returns Just with tx data" $ prop_completedEbComplete impl
       , testProperty "no txs returns Nothing" $ prop_completedEbMissingTxs impl
       , testProperty "partial txs returns Nothing" $ prop_completedEbPartialTxs impl
@@ -302,28 +290,6 @@ prop_pointsInsertThenScan impl =
         (point.pointSlotNo, point.pointEbHash) `elem` points
           & tabulate "insertEbPoint" [timeBucket insertTime]
           & tabulate "scanEbPoints" [timeBucket scanTime]
-
--- | Property: inserting a point and then looking it up returns the slot.
-prop_pointsInsertThenLookup :: DbImpl -> Property
-prop_pointsInsertThenLookup impl =
-  forAll genPoint $ \point ->
-    ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
-      (_, insertTime) <- timed $ leiosDbInsertEbPoint con point 1000
-      (result, lookupTime) <- timed $ leiosDbLookupEbPoint con point.pointEbHash
-      pure $
-        result === Just point.pointSlotNo
-          & tabulate "insertEbPoint" [timeBucket insertTime]
-          & tabulate "lookupEbPoint" [timeBucket lookupTime]
-
--- | Property: looking up a non-existent point returns Nothing.
-prop_pointsLookupMissing :: DbImpl -> Property
-prop_pointsLookupMissing impl =
-  forAll genEbHash $ \missingHash ->
-    ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
-      (result, lookupTime) <- timed $ leiosDbLookupEbPoint con missingHash
-      pure $
-        result === Nothing
-          & tabulate "lookupEbPoint (missing)" [timeBucket lookupTime]
 
 -- | Property: multiple inserted points all appear in scan results.
 prop_pointsAccumulate :: DbImpl -> Property
@@ -701,103 +667,6 @@ test_multipleSlotsSameHash db = do
  where
   setEquals xs ys = Map.fromList [(p, ()) | p <- xs] @?= Map.fromList [(p, ()) | p <- ys]
 
--- * Property tests for queryFetchWork
-
--- | Property: empty database returns empty fetch work.
-prop_fetchWorkEmpty :: DbImpl -> Property
-prop_fetchWorkEmpty impl =
-  ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
-    (work, queryTime) <- timed $ leiosDbQueryFetchWork con
-    pure $
-      conjoin
-        [ missingEbBodies work === Map.empty
-            & counterexample "Expected no missing EB bodies"
-        , missingEbTxs work === Map.empty
-            & counterexample "Expected no missing TXs"
-        ]
-        & tabulate "queryFetchWork (empty)" [timeBucket queryTime]
-
--- | Property: EBs with points but no bodies are reported as missing.
-prop_fetchWorkMissingBodies :: DbImpl -> Property
-prop_fetchWorkMissingBodies impl =
-  forAllShrinkShow (chooseInt (1, 10)) shrink show $ \count ->
-    forAll (replicateM count genPoint) $ \points ->
-      ioProperty $
-        withFreshDb impl $ \db ->
-          withLeiosDb db $ \con -> do
-            -- Insert points without bodies
-            forM_ points $ \p -> leiosDbInsertEbPoint con p 1000
-            (work, queryTime) <- timed $ leiosDbQueryFetchWork con
-            let expectedMap = Map.fromList [(p, 1000) | p <- points]
-            pure $
-              missingEbBodies work === expectedMap
-                & counterexample ("Expected: " ++ show expectedMap)
-                & counterexample ("Got: " ++ show (missingEbBodies work))
-                & tabulate "queryFetchWork (missing bodies)" [timeBucket queryTime]
-                & tabulate "numPoints" [magnitudeBucket count]
-
--- | Property: EBs with bodies but missing TXs are reported.
-prop_fetchWorkMissingTxs :: DbImpl -> Property
-prop_fetchWorkMissingTxs impl =
-  forAllShrinkShow (chooseInt (1, 20)) shrink show $ \numTxs ->
-    forAll (genPointAndEb numTxs) $ \(point, eb) ->
-      ioProperty $
-        withFreshDb impl $ \db ->
-          withLeiosDb db $ \con -> do
-            -- Insert point and body, but no txs
-            leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-            leiosDbInsertEbBody con point eb
-            (work, queryTime) <- timed $ leiosDbQueryFetchWork con
-            let expectedTxCount = numTxs
-            pure $
-              conjoin
-                [ -- Should have no missing bodies (we inserted the body)
-                  missingEbBodies work === Map.empty
-                    & counterexample "Should have no missing bodies"
-                , -- Should have the EB with missing TXs
-                  Map.size (missingEbTxs work) === 1
-                    & counterexample ("Expected 1 EB with missing TXs, got: " ++ show (Map.size $ missingEbTxs work))
-                , -- The missing TX count should match
-                  case Map.toList (missingEbTxs work) of
-                    [(_, txs)] ->
-                      length txs === expectedTxCount
-                        & counterexample ("Expected " ++ show expectedTxCount ++ " missing TXs, got: " ++ show (length txs))
-                    _ -> False & counterexample "Unexpected missing TXs structure"
-                ]
-                & tabulate "queryFetchWork (missing txs)" [timeBucket queryTime]
-                & tabulate "numTxs" [magnitudeBucket numTxs]
-
--- | Property: EBs with all TXs present have no missing TXs.
-prop_fetchWorkCompleteTxs :: DbImpl -> Property
-prop_fetchWorkCompleteTxs impl =
-  forAllShrinkShow (chooseInt (1, 20)) shrink show $ \numTxs ->
-    forAll (genPointAndEb numTxs) $ \(point, eb) ->
-      forAllBlind genTxBytes $ \baseTxBytes ->
-        ioProperty $
-          withFreshDb impl $ \db ->
-            withLeiosDb db $ \con -> do
-              -- Insert point, body, and all txs
-              leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
-              leiosDbInsertEbBody con point eb
-              let ebTxList = V.toList (leiosEbTxs eb)
-                  txsToInsert =
-                    [ (txHash, baseTxBytes)
-                    | (txHash, _size) <- ebTxList
-                    ]
-              _ <- leiosDbInsertTxs con txsToInsert
-              (work, queryTime) <- timed $ leiosDbQueryFetchWork con
-              pure $
-                conjoin
-                  [ -- Should have no missing bodies
-                    missingEbBodies work === Map.empty
-                      & counterexample "Should have no missing bodies"
-                  , -- Should have no missing TXs
-                    missingEbTxs work === Map.empty
-                      & counterexample ("Should have no missing TXs, got: " ++ show (missingEbTxs work))
-                  ]
-                  & tabulate "queryFetchWork (complete)" [timeBucket queryTime]
-                  & tabulate "numTxs" [magnitudeBucket numTxs]
-
 -- * Test utilities
 
 -- | Assert that a notification is AcquiredEb with the expected point.
@@ -886,7 +755,7 @@ prop_filterTxsCorrect impl =
               & tabulate "filterMissingTxs" [timeBucket filterTime]
               & tabulate "numTxs" [magnitudeBucket numTxs]
 
--- * Property tests for queryCompletedEbByPoint
+-- * Property tests for lookupEbClosure
 
 -- | Property: complete EB (all txs inserted) returns Just with correct tx data.
 prop_completedEbComplete :: DbImpl -> Property
@@ -900,7 +769,7 @@ prop_completedEbComplete impl =
           let ebTxList = V.toList (leiosEbTxs eb)
               txsToInsert = [(txHash, txBytes) | (txHash, _size) <- ebTxList]
           _ <- leiosDbInsertTxs con txsToInsert
-          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByHash con (pointEbHash point)
+          (result, queryTime) <- timed $ leiosDbLookupEbClosure con (pointEbHash point)
           let expectedHashes = map fst txsToInsert
               check = case result of
                 Nothing ->
@@ -916,7 +785,7 @@ prop_completedEbComplete impl =
                     ]
           pure $
             check
-              & tabulate "queryCompletedEbByPoint (complete)" [timeBucket queryTime]
+              & tabulate "lookupEbClosure (complete)" [timeBucket queryTime]
               & tabulate "numTxs" [magnitudeBucket numTxs]
 
 -- | Property: EB with body but no txs returns Nothing.
@@ -927,11 +796,11 @@ prop_completedEbMissingTxs impl =
       ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
         leiosDbInsertEbPoint con point (leiosEbBytesSize eb)
         leiosDbInsertEbBody con point eb
-        (result, queryTime) <- timed $ leiosDbQueryCompletedEbByHash con (pointEbHash point)
+        (result, queryTime) <- timed $ leiosDbLookupEbClosure con (pointEbHash point)
         pure $
           result === Nothing
             & counterexample "Expected Nothing when no txs are present"
-            & tabulate "queryCompletedEbByPoint (no txs)" [timeBucket queryTime]
+            & tabulate "lookupEbClosure (no txs)" [timeBucket queryTime]
             & tabulate "numTxs" [magnitudeBucket numTxs]
 
 -- | Property: EB with partial txs (at least one missing) returns Nothing.
@@ -948,7 +817,7 @@ prop_completedEbPartialTxs impl =
               partialTxs = take (numTxs `div` 2) ebTxList
               txsToInsert = [(txHash, txBytes) | (txHash, _size) <- partialTxs]
           _ <- leiosDbInsertTxs con txsToInsert
-          (result, queryTime) <- timed $ leiosDbQueryCompletedEbByHash con (pointEbHash point)
+          (result, queryTime) <- timed $ leiosDbLookupEbClosure con (pointEbHash point)
           pure $
             result === Nothing
               & counterexample
@@ -958,7 +827,7 @@ prop_completedEbPartialTxs impl =
                     ++ show numTxs
                     ++ " txs present"
                 )
-              & tabulate "queryCompletedEbByPoint (partial txs)" [timeBucket queryTime]
+              & tabulate "lookupEbClosure (partial txs)" [timeBucket queryTime]
               & tabulate "numTxs" [magnitudeBucket numTxs]
 
 -- | Property: EB with only a point announced (no body) returns Nothing.
@@ -967,8 +836,8 @@ prop_completedEbNoBody impl =
   forAll genPoint $ \point ->
     ioProperty $ withFreshDb impl $ \db -> withLeiosDb db $ \con -> do
       leiosDbInsertEbPoint con point 1000
-      (result, queryTime) <- timed $ leiosDbQueryCompletedEbByHash con (pointEbHash point)
+      (result, queryTime) <- timed $ leiosDbLookupEbClosure con (pointEbHash point)
       pure $
         result === Nothing
           & counterexample "Expected Nothing for EB with no body inserted"
-          & tabulate "queryCompletedEbByPoint (no body)" [timeBucket queryTime]
+          & tabulate "lookupEbClosure (no body)" [timeBucket queryTime]

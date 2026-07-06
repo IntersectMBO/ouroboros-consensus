@@ -33,7 +33,7 @@ import qualified Data.Sequence.Strict as Seq
 import qualified Data.Typeable as Typeable
 import LeiosDemoDb
   ( LeiosDbConnection (..)
-  , leiosDbQueryCompletedEbByHash
+  , leiosDbLookupEbClosure
   )
 import LeiosDemoTypes
   ( EbAnnouncement (..)
@@ -183,7 +183,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
             -- TODO: Why exactly do we guard against this? Also, shouldn't we
             -- detect it the other way around: if we have a cert, but not
             -- downloaded it ourselves -> warning!
-            mClosure <- leiosDbQueryCompletedEbByHash fbLeiosDb (pointEbHash ebPoint)
+            mClosure <- leiosDbLookupEbClosure fbLeiosDb (pointEbHash ebPoint)
             case mClosure of
               Nothing -> do
                 traceWith fbLeiosTracer $
