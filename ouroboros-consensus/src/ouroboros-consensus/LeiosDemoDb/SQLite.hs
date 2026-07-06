@@ -37,6 +37,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.String (fromString)
 import Database.SQLite3
   ( SQLOpenFlag (..)
@@ -149,7 +150,7 @@ openSQLiteConnection tracer dbPath notificationChan = do
       , leiosDbInsertEbPoint = sqlInsertEbPoint db
       , leiosDbLookupEbBody = sqlLookupEbBody db
       , leiosDbInsertEbBody = sqlInsertEbBody tracer db notify
-      , leiosDbInsertTxs = sqlInsertTxs db notify
+      , leiosDbInsertTxs = sqlInsertTxs tracer db notify
       , leiosDbBatchRetrieveTxs = sqlBatchRetrieveTxs tracer db
       , leiosDbFilterMissingEbBodies = sqlFilterMissingEbBodies tracer db
       , leiosDbFilterMissingTxs = sqlFilterMissingTxs tracer db
@@ -249,25 +250,36 @@ sqlInsertEbBody tracer db notify point eb = do
   notify $ AcquiredEb point (leiosEbBytesSize eb)
 
 sqlInsertTxs ::
+  Tracer IO TraceLeiosDb ->
   DB.Database ->
   (LeiosEbNotification -> IO ()) ->
   [(TxHash, ByteString)] ->
   IO CompletedEbs
-sqlInsertTxs db notify txs = do
+sqlInsertTxs tracer db notify txs = do
+  -- Skip txs already persisted in 'txs'. Under mempool backlog,
+  -- successive forges (or overlapping peer EBs) re-present the same tx
+  -- hashes; attempting the INSERT and catching a constraint violation
+  -- still pays the bind + PK-lookup + reset cost per row. Reuses the
+  -- existing 'mem.txHashes'-based filter (own read transaction, safe to
+  -- call before the write BEGIN below).
+  missing <- Set.fromList <$> sqlFilterMissingTxs tracer db (map fst txs)
+  let novel = filter (\(h, _) -> h `Set.member` missing) txs
   completed <- dbWithBEGIN db $ do
     stmtInsert <- dbPrepare db (fromString sql_insert_tx)
     stmtDecr <- dbPrepare db (fromString sql_decrement_missing_tx_count)
-    -- Insert each tx; on success (novel), decrement missingTxCount for referencing EBs
-    forM_ txs $ \(txHash, txBytes) -> do
+    -- 'dbStepInsert' still handles the rare race where a concurrent
+    -- writer inserted the same hash between the filter above and the
+    -- INSERT below.
+    forM_ novel $ \(txHash, txBytes) -> do
       let txBytesSize = fromIntegral $ BS.length txBytes
           txHashBytes = let MkTxHash bytes = txHash in bytes
       dbBindBlob stmtInsert 1 txHashBytes
       dbBindBlob stmtInsert 2 txBytes
       dbBindInt64 stmtInsert 3 txBytesSize
-      novel <- dbStepInsert stmtInsert
+      inserted <- dbStepInsert stmtInsert
       -- Use raw reset: after ErrorConstraint, dbReset would re-throw the error
       void $ DB.reset stmtInsert
-      when novel $ do
+      when inserted $ do
         dbBindBlob stmtDecr 1 txHashBytes
         dbStep1 stmtDecr
         dbReset stmtDecr
