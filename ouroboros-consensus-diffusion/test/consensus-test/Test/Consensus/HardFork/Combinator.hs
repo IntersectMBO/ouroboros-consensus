@@ -107,7 +107,10 @@ data TestSetup = TestSetup
 
 instance Arbitrary TestSetup where
   arbitrary = do
-    testSetupEpochSize <- abM $ EpochSize <$> choose (1, 10)
+    -- We only generate even epoch sizes (>= 2) so that a Peras round length of
+    -- half an epoch (see 'perasRoundLengthAB') is a positive integer that evenly
+    -- divides the epoch (and hence the era).
+    testSetupEpochSize <- abM $ EpochSize . (* 2) <$> choose (1, 5)
     testSetupK <- SecurityParam <$> choose (2, 10) `suchThatMap` nonZero
     -- TODO why does k=1 cause the nodes to only forge in the first epoch?
     testSetupTxSlot <- SlotNo <$> choose (0, 9)
@@ -163,7 +166,15 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         (History.StandardSafeZone (safeFromTipA k))
         (safeZoneB k)
       <*> pure (GenesisWindow ((unNonZero $ maxRollbacks k) * 2))
-      <*> pure (History.PerasEnabled (perasRoundLength defaultPerasParams))
+      <*> pure (History.PerasEnabled perasRoundLengthAB)
+
+  -- The Peras round length, shared by both eras.
+  --
+  -- NOTE: We pick half an epoch so that two Peras rounds fit within a single
+  -- epoch and we don't trigger a 'PastHorizonException'.
+  perasRoundLengthAB :: PerasRoundLength
+  perasRoundLengthAB =
+    PerasRoundLength (unEpochSize (getA testSetupEpochSize) `div` 2)
 
   shape :: History.Shape '[BlockA, BlockB]
   shape = History.Shape $ exactlyTwo eraParamsA eraParamsB
