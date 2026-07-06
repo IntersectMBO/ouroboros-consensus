@@ -3,7 +3,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -55,7 +54,6 @@ import qualified Ouroboros.Network.Protocol.Handshake as Handshake
 import qualified Ouroboros.Network.Server.Simple as Server
 import qualified Ouroboros.Network.Snocket as Snocket
 import Ouroboros.Network.Socket (SomeResponderApplication (..), configureSocket)
-import qualified System.Directory as Dir
 import System.Exit (die)
 import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (MountPoint))
@@ -116,6 +114,7 @@ run ::
   LeiosSchedule ->
   IO Void
 run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry \registry -> do
+  leiosDb <- LeiosDemoDb.newLeiosDBSQLite nullTracer leiosDbFile
   let mkLeiosNotifyContext registry' = do
         -- each LeiosNotify server calls this when it initializes
         leiosMailbox <- MVar.newEmptyMVar
@@ -127,14 +126,9 @@ run immDBDir sockAddr cfg getSlotDelay leiosDbFile leiosSchedule = withRegistry 
             (leiosScheduler getSlotDelay leiosNotifyContext leiosSchedule)
         pure leiosNotifyContext
   let mkLeiosFetchContext = do
-        -- each LeiosFetch server calls this when it initializes
-        Dir.doesFileExist leiosDbFile >>= \case
-          False -> die $ "The Leios database must already exist: " <> show leiosDbFile
-          True -> pure ()
-        leiosDb <- LeiosDemoDb.newLeiosDBSQLite nullTracer leiosDbFile
-        fmap LeiosLogic.MkSomeLeiosFetchContext $
-          LeiosLogic.newLeiosFetchContext
-            leiosDb
+        leiosConn <- LeiosDemoDb.open leiosDb -- XXX: leaks resources
+        LeiosLogic.MkSomeLeiosFetchContext
+          <$> LeiosLogic.newLeiosFetchContext leiosConn
   ImmutableDB.withDB
     (ImmutableDB.openDB (immDBArgs registry))
     \immDB ->
