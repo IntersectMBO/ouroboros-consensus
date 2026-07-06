@@ -4,8 +4,10 @@
 -- | Test properties of the shrinking functions
 module Test.Consensus.PointSchedule.Shrinking.Tests (tests) where
 
+import Cardano.Slotting.Slot (WithOrigin (..))
+import Control.Monad.Class.MonadTime.SI (Time (..))
 import Data.Foldable (toList)
-import Data.Map (keys)
+import Data.Map (elems, empty, keys, singleton)
 import Data.Maybe (mapMaybe)
 import Ouroboros.Consensus.Util (lastMaybe)
 import Test.Consensus.Genesis.Setup (genChains)
@@ -15,8 +17,8 @@ import Test.Consensus.PointSchedule
   , PointSchedule (..)
   , prettyPointSchedule
   )
-import Test.Consensus.PointSchedule.Peers (Peers (..))
-import Test.Consensus.PointSchedule.Shrinking (shrinkHonestPeers)
+import Test.Consensus.PointSchedule.Peers (Peers (..), PeerId (..))
+import Test.Consensus.PointSchedule.Shrinking (shrinkAdversarialPeer, shrinkHonestPeers)
 import Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
 import Test.QuickCheck (Property, conjoin, counterexample)
 import Test.Tasty
@@ -29,16 +31,23 @@ tests =
     "shrinking functions"
     [ testGroup
         "honest peer shrinking"
-        [ testProperty "actually shortens the schedule" prop_shortens
-        , testProperty "preserves the final state all peers" prop_preservesFinalStates
+        [ testProperty "actually shortens the schedule" prop_honShortens
+        , testProperty "preserves the final state all peers" prop_honPreservesFinalStates
+        ]
+    , testGroup
+        "adversarial peer shrinking"
+        [ testProperty "preserves consistency of TP/HP/BP" prop_advPreservesConsistency
         ]
     ]
 
-prop_shortens :: Property
-prop_shortens = checkShrinkProperty isShorterThan
+prop_honShortens :: Property
+prop_honShortens = checkHonShrinkProperty isShorterThan
 
-prop_preservesFinalStates :: Property
-prop_preservesFinalStates = checkShrinkProperty doesNotChangeFinalState
+prop_honPreservesFinalStates :: Property
+prop_honPreservesFinalStates = checkHonShrinkProperty doesNotChangeFinalState
+
+prop_advPreservesConsistency :: Property
+prop_advPreservesConsistency = checkAdvShrinkProperty preservesConsistency
 
 samePeers :: Peers (PeerSchedule blk) -> Peers (PeerSchedule blk) -> Bool
 samePeers sch1 sch2 =
@@ -79,9 +88,21 @@ doesNotChangeFinalState original shrunk =
   lastBP :: PeerSchedule blk -> Maybe (SchedulePoint blk)
   lastBP sch = lastMaybe $ mapMaybe (\case (_, p@(ScheduleBlockPoint _)) -> Just p; _ -> Nothing) sch
 
-checkShrinkProperty ::
+-- | Checks that the shrunk schedule still has the properties TP >= HP and HP >= BP at any time
+preservesConsistency :: Ord blk => PeerSchedule blk -> PeerSchedule blk -> Bool
+preservesConsistency _original shrunk = (\(_, _, x) -> x) $ foldr
+  ( \(_t, p) (tp, hp, acc) ->
+      case p of
+        ScheduleTipPoint newTp -> (newTp, hp, acc)
+        ScheduleHeaderPoint newHp -> (tp, newHp, acc && tp >= newHp)
+        ScheduleBlockPoint newBp -> (tp, hp, acc && hp >= newBp)
+  )
+  (Origin, Origin, True)
+  shrunk
+
+checkHonShrinkProperty ::
   (Peers (PeerSchedule TestBlock) -> Peers (PeerSchedule TestBlock) -> Bool) -> Property
-checkShrinkProperty prop =
+checkHonShrinkProperty prop =
   forAllBlind
     (genChains (choose (1, 4)) >>= genUniformSchedulePoints)
     ( \sch@PointSchedule{psSchedule, psStartOrder, psMinEndTime} ->
@@ -102,3 +123,38 @@ checkShrinkProperty prop =
             )
             (shrinkHonestPeers psSchedule)
     )
+
+checkAdvShrinkProperty :: (PeerSchedule TestBlock -> PeerSchedule TestBlock -> Bool) -> Property
+checkAdvShrinkProperty prop =
+  forAllBlind
+    ( do 
+      chains <- genChains (choose (1, 4))
+      PointSchedule{psSchedule} <- genUniformSchedulePoints chains
+      -- | We generated at least one honest peer schedule, and it can serve as adversarial
+      -- for the intent of this test.
+      pure $ head $ elems $ honestPeers psSchedule
+    )
+    ( \sch ->
+        conjoin $
+          map
+            ( \shrunk ->
+                counterexample
+                  ( "Original schedule:\n"
+                      ++ unlines (map ("    " ++) $ prettyPointSchedule $ mkPointSchedule sch)
+                      ++ "\nShrunk schedule:\n"
+                      ++ unlines (map ("    " ++) $ prettyPointSchedule $ mkPointSchedule shrunk)
+                  )
+                  (prop sch shrunk)
+            )
+            (shrinkAdversarialPeer sch)
+    )
+
+mkPointSchedule :: PeerSchedule TestBlock -> PointSchedule TestBlock
+mkPointSchedule sch =
+  PointSchedule
+    { psSchedule = Peers{honestPeers = empty, adversarialPeers = singleton 1 sch}
+    , psStartOrder = [AdversarialPeer 1]
+    , psMinEndTime = case lastMaybe sch of
+        Nothing -> Time 0
+        Just (t, _) -> t
+    }
