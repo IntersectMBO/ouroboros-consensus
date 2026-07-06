@@ -4,7 +4,8 @@
 
 module Test.Consensus.PointSchedule.Shrinking
   ( -- | Exported only for testing (that is, checking the properties of the function)
-    shrinkByRemovingAdversaries
+    shrinkAdversarialPeer
+  , shrinkByRemovingAdversaries
   , shrinkHonestPeer
   , shrinkHonestPeers
   , shrinkPeerSchedules
