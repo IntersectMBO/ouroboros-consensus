@@ -366,9 +366,9 @@ instance Isomorphic (Flip ExtLedgerState mk) where
       PerasEpochContextResolverError err ->
         PerasEpochContextResolverError err
       PerasEpochContextResolver hfcCurrentBoundedContext hfcPrevBoundedContext ->
-        let currentBoundedContext = fromZ . projectHFCBoundedPerasEpochContext $ hfcCurrentBoundedContext
-            mbPrevBoundedContext = fromZ . projectHFCBoundedPerasEpochContext <$> hfcPrevBoundedContext
-         in PerasEpochContextResolver currentBoundedContext mbPrevBoundedContext
+        let currentBoundedContext = fromZ . projectHFCBoundedPerasEpochContext <$> hfcCurrentBoundedContext
+            prevBoundedContext = fromZ . projectHFCBoundedPerasEpochContext <$> hfcPrevBoundedContext
+         in PerasEpochContextResolver currentBoundedContext prevBoundedContext
 
     fromZ :: NS f '[a] -> f a
     fromZ (Z x) = x

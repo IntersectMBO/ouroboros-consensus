@@ -19,6 +19,7 @@ module Ouroboros.Consensus.HardFork.History.EraParams
   , pattern NoPerasEnabled
   , PerasEnabledT (..)
   , fromPerasEnabled
+  , perasEnabledToMaybe
 
     -- * Defaults
   , defaultEraParams
@@ -155,7 +156,7 @@ data EraParams = EraParams
 newtype PerasEnabled a = MkPerasEnabled (Maybe a)
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
-  deriving newtype (Functor, Applicative, Monad, FromCBOR, ToCBOR)
+  deriving newtype (Functor, Applicative, Monad, FromCBOR, ToCBOR, Serialise)
 
 pattern PerasEnabled :: a -> PerasEnabled a
 pattern PerasEnabled x <- MkPerasEnabled (Just !x)
@@ -173,6 +174,12 @@ fromPerasEnabled defaultValue =
   \case
     NoPerasEnabled -> defaultValue
     PerasEnabled value -> value
+
+perasEnabledToMaybe :: PerasEnabled a -> Maybe a
+perasEnabledToMaybe =
+  \case
+    NoPerasEnabled -> Nothing
+    PerasEnabled value -> Just value
 
 -- | A 'MaybeT'-like monad transformer.
 --

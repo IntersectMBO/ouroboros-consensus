@@ -74,6 +74,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   )
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (HardForkIndices))
+import qualified Ouroboros.Consensus.HardFork.History.EraParams as HF
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -93,6 +94,7 @@ import Ouroboros.Consensus.Peras.Time
   , EraIndexed
   , TimeResolutionContext (..)
   , TimeResolutionError
+  , collectPerasEnabled
   , forgetEraIndex
   , resolveEpochToPerasRoundInfo
   , resolveSlotToEpochInfo
@@ -199,7 +201,7 @@ initPerasEpochContextResolver ::
 initPerasEpochContextResolver ledgerConfig ledgerState headerState =
   let timeResolutionContext = TimeResolutionContext ledgerConfig ledgerState
    in case annTipSlotNo <$> headerStateTip headerState of
-        Origin -> errorIntoResolver $ "initPerasEpochContextResolver: headerStateTip is Origin, not a valid slot"
+        Origin -> initPerasEpochContextResolverWithBoundedEpochContext HF.NoPerasEnabled
         NotOrigin slotNo ->
           case resolveSlotToEpochInfo timeResolutionContext slotNo of
             Left err -> errorIntoResolver err
@@ -207,13 +209,16 @@ initPerasEpochContextResolver ledgerConfig ledgerState headerState =
               let epochNo = steiEpochNo . forgetEraIndex $ stei
                in case resolveEpochToPerasRoundInfo timeResolutionContext epochNo of
                     Left err -> errorIntoResolver err
-                    Right epochToPerasRoundInfo ->
-                      absorbErrorIntoResolver $
-                        initPerasEpochContextResolverWithBoundedEpochContext
-                          <$> mkBoundedPerasEpochContext
-                            (toMaybeEraIndexedEpochToPerasRoundInfo (Proxy @blk) epochToPerasRoundInfo)
-                            ledgerState
-                            headerState
+                    Right eiPeEpochToPerasRoundInfo ->
+                      case collectPerasEnabled eiPeEpochToPerasRoundInfo of
+                        HF.PerasEnabled eiEpochToPerasRoundInfo ->
+                          absorbErrorIntoResolver $
+                            initPerasEpochContextResolverWithBoundedEpochContext . HF.PerasEnabled
+                              <$> mkBoundedPerasEpochContext
+                                (toMaybeEraIndexedEpochToPerasRoundInfo (Proxy @blk) eiEpochToPerasRoundInfo)
+                                ledgerState
+                                headerState
+                        HF.NoPerasEnabled -> initPerasEpochContextResolverWithBoundedEpochContext HF.NoPerasEnabled
 
 -- | NOTE: it doesn't seem to bring much to differentiate a 'PerasEpochContextResolver' from a ticked one at type level, since they need to carry exactly the same information. We tried, and it didn't improve readability.
 tickPerasEpochContextResolver ::
@@ -234,14 +239,17 @@ tickPerasEpochContextResolver ledgerConfig ExtLedgerState{..} (targetSlot, ticke
    in case isNextEpochWithPerasInfo timeResolutionContext woPrevSlot targetSlot of
         Left err -> error (show err)
         Right Nothing -> perasEpochContextResolver
-        Right (Just newEpochPerasInfo) ->
-          absorbErrorIntoResolver $
-            advancePerasEpochContextResolverWithBoundedEpochContext perasEpochContextResolver
-              <$> ( mkBoundedPerasEpochContext
-                      (toMaybeEraIndexedEpochToPerasRoundInfo (Proxy @blk) newEpochPerasInfo)
-                      tickedLedger
-                      tickedHeader
-                  )
+        Right (Just eiPeEpochToPerasRoundInfo) ->
+          case collectPerasEnabled eiPeEpochToPerasRoundInfo of
+            HF.PerasEnabled eiEpochToRoundInfo ->
+              absorbErrorIntoResolver $
+                advancePerasEpochContextResolverWithBoundedEpochContext perasEpochContextResolver . HF.PerasEnabled
+                  <$> mkBoundedPerasEpochContext
+                    (toMaybeEraIndexedEpochToPerasRoundInfo (Proxy @blk) eiEpochToRoundInfo)
+                    tickedLedger
+                    tickedHeader
+            HF.NoPerasEnabled ->
+              advancePerasEpochContextResolverWithBoundedEpochContext perasEpochContextResolver HF.NoPerasEnabled
 
 {-------------------------------------------------------------------------------
   The extended ledger configuration
@@ -319,7 +327,7 @@ isNextEpochWithPerasInfo ::
   TimeResolutionContext blk ->
   WithOrigin SlotNo ->
   SlotNo ->
-  Either DetectNextEpochError (Maybe (EraIndexed blk EpochToPerasRoundInfo))
+  Either DetectNextEpochError (Maybe (EraIndexed blk (HF.PerasEnabled EpochToPerasRoundInfo)))
 isNextEpochWithPerasInfo context mPrevSlot nextSlot =
   isNextEpoch context mPrevSlot nextSlot >>= \case
     Nothing -> Right Nothing

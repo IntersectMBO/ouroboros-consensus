@@ -307,7 +307,7 @@ distribExtLedgerState
             ExtLedgerState
               (unFlip lst)
               hst
-              (extractHFCPerasEpochContextResolver idx perasResolver)
+              (castHFCPerasEpochContextResolverAtIndex idx perasResolver)
               latestPerasCertOnChainRound
       )
       $ mustMatchNS

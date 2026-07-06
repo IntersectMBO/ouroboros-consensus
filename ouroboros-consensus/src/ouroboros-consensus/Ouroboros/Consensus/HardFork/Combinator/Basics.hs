@@ -44,7 +44,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics
   , injectHFCPerasEpochContext
   , projectHFCBoundedPerasEpochContext
   , injectHFCBoundedPerasEpochContext
-  , extractHFCPerasEpochContextResolver
+  , castHFCPerasEpochContextResolverAtIndex
   , injectHFCPerasEpochContextResolver
   , EitherF (..)
   , mkEitherF
@@ -62,7 +62,6 @@ import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.NonEmpty (NEMap)
 import qualified Data.Map.NonEmpty as NEMap
-import Data.Maybe.Strict (StrictMaybe (..))
 import Data.SOP (I (..), K (..), type (:.:) (..))
 import Data.SOP.Constraint
 import Data.SOP.Functors
@@ -109,6 +108,7 @@ import qualified Ouroboros.Consensus.HardFork.Combinator.State.Infra as State
 import Ouroboros.Consensus.HardFork.Combinator.State.Instances ()
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as History
+import qualified Ouroboros.Consensus.HardFork.History.EraParams as HF
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsPeras
   ( ALedgerStateSupportsPeras (..)
@@ -504,45 +504,87 @@ injectHFCBoundedPerasEpochContext nsBoundedContext =
     , epochContext = injectHFCPerasEpochContext $ hmap epochContext nsBoundedContext
     }
 
-extractHFCPerasEpochContextResolver ::
+-- | Try to cast a 'PerasEpochContextResolver' of a 'HardForkBlock' to a 'PerasEpochContextResolver' of the single era block represented the given index.
+--
+-- A 'PerasEpochContextResolver' is made of two maybe-like values, one for the context of the current epoch, and one for the context of the past epoch.
+-- The current epoch has to be in the current era, i.e. the era represented by the given index; so the current context cast into the requested single era must succeed for the whole operation to be succesful.
+-- However, the past epoch may be in the past era under normal conditions. So the cast of the previous epoch context into the era block represented by the given index should be allowed to fail gracefully. So when it doesn't match the requested index, the previous context is simply discarded and replaced with a 'HF.NoPerasEnabled'.
+-- Note that when the current context is 'HF.NoPerasEnabled', and the previous one is `HF.PerasEnabled cPrev` with cPrev incompatible with the requested era; the output of the cast is a 'PerasEpochContextResolver HF.NoPerasEnabled HF.NoPerasEnabled' which is no functionally different from a 'PerasEpochContextResolverError' (since it won't be able to resolve any roundNo).
+castHFCPerasEpochContextResolverAtIndex ::
   All Top xs =>
   Index xs blk ->
   PerasEpochContextResolver (HardForkBlock xs) ->
   PerasEpochContextResolver blk
-extractHFCPerasEpochContextResolver idx = \case
+castHFCPerasEpochContextResolverAtIndex idx = \case
   PerasEpochContextResolverError err ->
     PerasEpochContextResolverError err
-  PerasEpochContextResolver currentBoundedContext mbPrevBoundedContext ->
-    case ensureSameEraPair
-      ( getIndex idx
-      , projectHFCBoundedPerasEpochContext currentBoundedContext
-      ) of
-      Nothing ->
-        PerasEpochContextResolverError $
-          "projectHFCPerasEpochContextResolver: currentBoundedContext is not in the same era as the supplied index"
-      Just nsIdxCurrPair ->
-        hcollapse $
-          hmap
-            ( \(Pair Refl currentBoundedContext') ->
-                K . PerasEpochContextResolver currentBoundedContext' $
-                  mbPrevBoundedContext >>= \prevBoundedContext ->
-                    case ensureSameEraPair
-                      ( getIndex idx
-                      , projectHFCBoundedPerasEpochContext prevBoundedContext
-                      ) of
-                      Nothing ->
-                        -- The current context is from the right era, but the previous one is from a different one.
-                        -- So, instead of erroring out, we just discard the previous context.
-                        SNothing
-                      Just nsIdxPrevPair ->
-                        hcollapse $
-                          hmap
-                            ( \(Pair Refl prevBoundedContext') ->
-                                K $ SJust prevBoundedContext'
-                            )
-                            nsIdxPrevPair
-            )
-            nsIdxCurrPair
+  PerasEpochContextResolver peCurrentBoundedContext pePrevBoundedContext ->
+    case (peCurrentBoundedContext, pePrevBoundedContext) of
+      (HF.PerasEnabled currentBoundedContext, HF.PerasEnabled prevBoundedContext) ->
+        case ensureSameEraPair
+          ( getIndex idx
+          , projectHFCBoundedPerasEpochContext currentBoundedContext
+          ) of
+          Nothing ->
+            PerasEpochContextResolverError $
+              "projectHFCPerasEpochContextResolver: currentBoundedContext is not in the same era as the supplied index"
+          Just nsIdxCurrPair ->
+            hcollapse $
+              hmap
+                ( \(Pair Refl currentBoundedContext') ->
+                    K $
+                      PerasEpochContextResolver (HF.PerasEnabled currentBoundedContext') $
+                        case ensureSameEraPair
+                          ( getIndex idx
+                          , projectHFCBoundedPerasEpochContext prevBoundedContext
+                          ) of
+                          Nothing ->
+                            -- The current context is from the right era, but the previous one is from a different one.
+                            -- So, instead of erroring out, we just discard the previous context.
+                            HF.NoPerasEnabled
+                          Just nsIdxPrevPair ->
+                            hcollapse $
+                              hmap
+                                ( \(Pair Refl prevBoundedContext') ->
+                                    K $ HF.PerasEnabled prevBoundedContext'
+                                )
+                                nsIdxPrevPair
+                )
+                nsIdxCurrPair
+      (HF.PerasEnabled currentBoundedContext, HF.NoPerasEnabled) ->
+        case ensureSameEraPair
+          ( getIndex idx
+          , projectHFCBoundedPerasEpochContext currentBoundedContext
+          ) of
+          Nothing ->
+            PerasEpochContextResolverError $
+              "projectHFCPerasEpochContextResolver: currentBoundedContext is not in the same era as the supplied index"
+          Just nsIdxCurrPair ->
+            hcollapse $
+              hmap
+                ( \(Pair Refl currentBoundedContext') ->
+                    K $ PerasEpochContextResolver (HF.PerasEnabled currentBoundedContext') HF.NoPerasEnabled
+                )
+                nsIdxCurrPair
+      (HF.NoPerasEnabled, HF.PerasEnabled prevBoundedContext) ->
+        case ensureSameEraPair
+          ( getIndex idx
+          , projectHFCBoundedPerasEpochContext prevBoundedContext
+          ) of
+          Nothing ->
+            -- The current context is for an epoch/era where Peras is disabled, and the previous context is from a different era than the requested one.
+            -- So we just return an empty resolver.
+            -- TODO: Should we error out instead? It would probably give the same end result
+            PerasEpochContextResolver HF.NoPerasEnabled HF.NoPerasEnabled
+          Just nsIdxPrevPair ->
+            hcollapse $
+              hmap
+                ( \(Pair Refl prevBoundedContext') ->
+                    K $ PerasEpochContextResolver HF.NoPerasEnabled (HF.PerasEnabled prevBoundedContext')
+                )
+                nsIdxPrevPair
+      (HF.NoPerasEnabled, HF.NoPerasEnabled) ->
+        PerasEpochContextResolver HF.NoPerasEnabled HF.NoPerasEnabled
 
 injectHFCPerasEpochContextResolver ::
   All Top xs =>
@@ -555,11 +597,11 @@ injectHFCPerasEpochContextResolver =
           case resolver of
             PerasEpochContextResolverError err ->
               K $ PerasEpochContextResolverError err
-            PerasEpochContextResolver currentBoundedContext mbPrevBoundedContext ->
+            PerasEpochContextResolver currentBoundedContext prevBoundedContext ->
               let hfcCurrentBoundedContext =
-                    injectHFCBoundedPerasEpochContext . injectNS idx $ currentBoundedContext
+                    injectHFCBoundedPerasEpochContext . injectNS idx <$> currentBoundedContext
                   hfcPrevBoundedContext =
-                    injectHFCBoundedPerasEpochContext . injectNS idx <$> mbPrevBoundedContext
+                    injectHFCBoundedPerasEpochContext . injectNS idx <$> prevBoundedContext
                in K $ PerasEpochContextResolver hfcCurrentBoundedContext hfcPrevBoundedContext
       )
 

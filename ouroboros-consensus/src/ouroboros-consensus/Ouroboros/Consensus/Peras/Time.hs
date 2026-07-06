@@ -26,6 +26,7 @@ module Ouroboros.Consensus.Peras.Time
   , PerasRoundToEpochInfo (..)
   , EraIndexed (eraIndexedToNS)
   , forgetEraIndex
+  , collectPerasEnabled
 
     -- * Smart accessors for time resolution info types
   , ttsiSlotNo
@@ -58,17 +59,6 @@ module Ouroboros.Consensus.Peras.Time
   , resolvePerasRoundToSlotInfo
   , resolveEpochToPerasRoundInfo
   , resolvePerasRoundToEpochInfo
-
-    -- * Time resolution through a context handle
-  , withHandle
-  , resolveTimeToSlotInfoWithHandle
-  , resolveSlotToTimeInfoWithHandle
-  , resolveSlotToEpochInfoWithHandle
-  , resolveEpochToSlotInfoWithHandle
-  , resolveSlotToPerasRoundInfoWithHandle
-  , resolvePerasRoundToSlotInfoWithHandle
-  , resolveEpochToPerasRoundInfoWithHandle
-  , resolvePerasRoundToEpochInfoWithHandle
   ) where
 
 import Cardano.Prelude (Bifunctor (bimap))
@@ -78,6 +68,7 @@ import Data.Functor.Product (Product (..))
 import Data.SOP (HSequence (..), K (..), Top, (:.:) (Comp))
 import Data.SOP.Classes (HCollapse (..), hmap)
 import Data.SOP.Constraint (All)
+import Data.SOP.Index (himap, injectNS)
 import Data.SOP.Match (matchNS)
 import Data.SOP.Strict.NS (NS)
 import Data.Time (NominalDiffTime)
@@ -111,11 +102,7 @@ import Ouroboros.Consensus.HardFork.History.Qry
 import Ouroboros.Consensus.HardFork.History.Util (addSlots)
 import Ouroboros.Consensus.Ledger.Abstract (LedgerConfig, LedgerState)
 import Ouroboros.Consensus.Peras.Params (PerasRoundLength (..))
-import Ouroboros.Consensus.Util.IOLike
-  ( MonadSTM (..)
-  , MonadThrow
-  , throwSTM
-  )
+import Ouroboros.Consensus.Util.IOLike (MonadSTM (..))
 
 data TimeResolutionContext blk where
   TimeResolutionContext :: forall blk mk. LedgerConfig blk -> LedgerState blk mk -> TimeResolutionContext blk
@@ -128,26 +115,9 @@ mkTimeResolutionContextHandle cfg mkState = TimeResolutionContextHandle $ TimeRe
 
 data TimeResolutionError
   = TimeResolutionErrorPastHorizon !PastHorizonException
-  | TimeResolutionPerasNotEnabled
+  | TimeResolutionPerasEnabledMismatch
   | TimeResolutionEraMismatch
   deriving (Show, Exception)
-
--- | Absorb a 'NoPerasEnabled' result into a 'TimeResolutionPerasNotEnabled'
--- error.
-absorbNoPerasEnabled ::
-  All Top (HardForkIndices blk) =>
-  Either TimeResolutionError (EraIndexed blk (HF.PerasEnabled a)) ->
-  Either TimeResolutionError (EraIndexed blk a)
-absorbNoPerasEnabled res = do
-  EraIndexed ns <- res
-  fmap EraIndexed $
-    hsequence' $
-      hmap
-        ( \(K pea) -> Comp $ case pea of
-            HF.PerasEnabled a -> Right (K a)
-            HF.NoPerasEnabled -> Left TimeResolutionPerasNotEnabled
-        )
-        ns
 
 data SlotToTimeInfo = SlotToTimeInfo
   { sttiSlotNo :: !SlotNo
@@ -290,8 +260,63 @@ m `bindAndEnsureSameEra` f = do
         )
         ns
 
+bindAndEnsureSameEraPerasEnabled ::
+  All Top (HardForkIndices blk) =>
+  Either TimeResolutionError (EraIndexed blk (HF.PerasEnabled a)) ->
+  (a -> Either TimeResolutionError (EraIndexed blk (HF.PerasEnabled b))) ->
+  Either TimeResolutionError (EraIndexed blk (HF.PerasEnabled b))
+m `bindAndEnsureSameEraPerasEnabled` f = do
+  EraIndexed ns <- m
+  fmap EraIndexed $
+    hsequence' $
+      hmap
+        ( \(K pea) ->
+            case pea of
+              HF.PerasEnabled a ->
+                Comp $
+                  do
+                    let n = f a
+                    EraIndexed ns' <- n
+                    case matchNS ns ns' of
+                      Left _ -> Left TimeResolutionEraMismatch
+                      Right nsPair ->
+                        case hcollapse $ hmap (\(Pair _ (K b)) -> (K b)) nsPair of
+                          HF.PerasEnabled b' -> pure . K $ HF.PerasEnabled b'
+                          HF.NoPerasEnabled -> Left TimeResolutionPerasEnabledMismatch
+              HF.NoPerasEnabled -> Comp $ pure (K HF.NoPerasEnabled)
+        )
+        ns
+
+withEraIndexedResult ::
+  All Top (HardForkIndices blk) =>
+  Either e (EraIndexed blk a) -> (a -> b) -> Either e (EraIndexed blk b)
+withEraIndexedResult res f = fmap (\(EraIndexed ns) -> EraIndexed $ hmap (\(K a) -> K (f a)) ns) res
+
+withEraIndexedResultPerasEnabled ::
+  All Top (HardForkIndices blk) =>
+  Either e (EraIndexed blk (HF.PerasEnabled a)) ->
+  (a -> b) ->
+  Either e (EraIndexed blk (HF.PerasEnabled b))
+withEraIndexedResultPerasEnabled res f =
+  withEraIndexedResult res (fmap f)
+
 forgetEraIndex :: All Top (HardForkIndices blk) => EraIndexed blk a -> a
 forgetEraIndex (EraIndexed ns) = hcollapse ns
+
+-- | Swap the positions of the 'EraIndexed' and 'HF.PerasEnabled' wrappers, so
+-- we can directly pattern-match on the 'PerasEnabled' information.
+collectPerasEnabled ::
+  All Top (HardForkIndices blk) =>
+  EraIndexed blk (HF.PerasEnabled a) -> HF.PerasEnabled (EraIndexed blk a)
+collectPerasEnabled (EraIndexed ns) =
+  hcollapse $
+    himap
+      ( \idx (K pea) ->
+          case pea of
+            HF.PerasEnabled a -> K (HF.PerasEnabled (EraIndexed $ injectNS idx (K a)))
+            HF.NoPerasEnabled -> K HF.NoPerasEnabled
+      )
+      ns
 
 runQueryInContext ::
   HasHardForkHistory blk =>
@@ -300,11 +325,6 @@ runQueryInContext ::
   Either TimeResolutionError (EraIndexed blk a)
 runQueryInContext (TimeResolutionContext cfg state) qry =
   bimap TimeResolutionErrorPastHorizon EraIndexed $ runQueryNS qry (hardForkSummary cfg state)
-
-withEraIndexedResult ::
-  All Top (HardForkIndices blk) =>
-  Either e (EraIndexed blk a) -> (a -> b) -> Either e (EraIndexed blk b)
-withEraIndexedResult res f = fmap (\(EraIndexed ns) -> EraIndexed $ hmap (\(K a) -> K (f a)) ns) res
 
 -- | Get the 'TimeToSlotInfo' for a given 'RelativeTime'.
 resolveTimeToSlotInfo ::
@@ -385,12 +405,12 @@ resolveSlotToPerasRoundInfo ::
   (HasHardForkHistory blk, All Top (HardForkIndices blk)) =>
   TimeResolutionContext blk ->
   SlotNo ->
-  Either TimeResolutionError (EraIndexed blk SlotToPerasRoundInfo)
+  Either TimeResolutionError (EraIndexed blk (HF.PerasEnabled SlotToPerasRoundInfo))
 resolveSlotToPerasRoundInfo ctx absSlot =
-  absorbNoPerasEnabled (runQueryInContext ctx (slotToPerasRoundNo absSlot))
-    `bindAndEnsureSameEra` \(absPerasRoundNo, slotsSpentInPerasRound, slotsLeftInPerasRound) ->
-      absorbNoPerasEnabled (runQueryInContext ctx (perasRoundNoToSlot absPerasRoundNo))
-        `withEraIndexedResult` \(startSlot, roundLength) ->
+  runQueryInContext ctx (slotToPerasRoundNo absSlot)
+    `bindAndEnsureSameEraPerasEnabled` \(absPerasRoundNo, slotsSpentInPerasRound, slotsLeftInPerasRound) ->
+      runQueryInContext ctx (perasRoundNoToSlot absPerasRoundNo)
+        `withEraIndexedResultPerasEnabled` \(startSlot, roundLength) ->
           SlotToPerasRoundInfo
             { stpriPerasRoundToSlotInfo =
                 PerasRoundToSlotInfo
@@ -409,10 +429,10 @@ resolvePerasRoundToSlotInfo ::
   (HasHardForkHistory blk, All Top (HardForkIndices blk)) =>
   TimeResolutionContext blk ->
   PerasRoundNo ->
-  Either TimeResolutionError (EraIndexed blk PerasRoundToSlotInfo)
+  Either TimeResolutionError (EraIndexed blk (HF.PerasEnabled PerasRoundToSlotInfo))
 resolvePerasRoundToSlotInfo ctx perasRoundNo =
-  absorbNoPerasEnabled (runQueryInContext ctx (perasRoundNoToSlot perasRoundNo))
-    `withEraIndexedResult` \(startSlot, roundLength) ->
+  (runQueryInContext ctx (perasRoundNoToSlot perasRoundNo))
+    `withEraIndexedResultPerasEnabled` \(startSlot, roundLength) ->
       PerasRoundToSlotInfo
         { prtsiPerasRoundNo = perasRoundNo
         , prtsiPerasRoundStartSlot = startSlot
@@ -425,12 +445,12 @@ resolveEpochToPerasRoundInfo ::
   (HasHardForkHistory blk, All Top (HardForkIndices blk)) =>
   TimeResolutionContext blk ->
   EpochNo ->
-  Either TimeResolutionError (EraIndexed blk EpochToPerasRoundInfo)
+  Either TimeResolutionError (EraIndexed blk (HF.PerasEnabled EpochToPerasRoundInfo))
 resolveEpochToPerasRoundInfo ctx absEpoch =
   runQueryInContext ctx (epochToSlot absEpoch) `bindAndEnsureSameEra` \(epochStartSlot, epochSize) ->
     let epochEndSlot = addSlots (unEpochSize epochSize) epochStartSlot
-     in absorbNoPerasEnabled (runQueryInContext ctx (slotToPerasRoundNo epochStartSlot)) `bindAndEnsureSameEra` \(epochStartPerasRound, _, _) ->
-          absorbNoPerasEnabled (runQueryInContext ctx (slotToPerasRoundNo epochEndSlot)) `withEraIndexedResult` \(epochEndPerasRound, _, _) ->
+     in (runQueryInContext ctx (slotToPerasRoundNo epochStartSlot)) `bindAndEnsureSameEraPerasEnabled` \(epochStartPerasRound, _, _) ->
+          (runQueryInContext ctx (slotToPerasRoundNo epochEndSlot)) `withEraIndexedResultPerasEnabled` \(epochEndPerasRound, _, _) ->
             EpochToPerasRoundInfo
               { etpriEpochNo = absEpoch
               , etpriEpochStartPerasRound = epochStartPerasRound
@@ -446,14 +466,14 @@ resolvePerasRoundToEpochInfo ::
   (HasHardForkHistory blk, All Top (HardForkIndices blk)) =>
   TimeResolutionContext blk ->
   PerasRoundNo ->
-  Either TimeResolutionError (EraIndexed blk PerasRoundToEpochInfo)
+  Either TimeResolutionError (EraIndexed blk (HF.PerasEnabled PerasRoundToEpochInfo))
 resolvePerasRoundToEpochInfo ctx perasRoundNo =
-  absorbNoPerasEnabled (runQueryInContext ctx (perasRoundNoToSlot perasRoundNo)) `bindAndEnsureSameEra` \(roundStartSlot, _) ->
+  (runQueryInContext ctx (perasRoundNoToSlot perasRoundNo)) `bindAndEnsureSameEraPerasEnabled` \(roundStartSlot, _) ->
     runQueryInContext ctx (slotToEpoch' roundStartSlot) `bindAndEnsureSameEra` \(absEpoch, _) ->
       runQueryInContext ctx (epochToSlot absEpoch) `bindAndEnsureSameEra` \(epochStartSlot, epochSize) ->
         let epochEndSlot = addSlots (unEpochSize epochSize) epochStartSlot
-         in absorbNoPerasEnabled (runQueryInContext ctx (slotToPerasRoundNo epochStartSlot)) `bindAndEnsureSameEra` \(epochStartPerasRound, _, _) ->
-              absorbNoPerasEnabled (runQueryInContext ctx (slotToPerasRoundNo epochEndSlot)) `withEraIndexedResult` \(epochEndPerasRound, _, _) ->
+         in (runQueryInContext ctx (slotToPerasRoundNo epochStartSlot)) `bindAndEnsureSameEraPerasEnabled` \(epochStartPerasRound, _, _) ->
+              (runQueryInContext ctx (slotToPerasRoundNo epochEndSlot)) `withEraIndexedResultPerasEnabled` \(epochEndPerasRound, _, _) ->
                 PerasRoundToEpochInfo
                   { prteiEpochToPerasRoundInfo =
                       EpochToPerasRoundInfo
@@ -471,84 +491,3 @@ resolvePerasRoundToEpochInfo ctx perasRoundNo =
                   , prteiPerasRoundsLeftInEpoch =
                       unPerasRoundNo epochEndPerasRound - unPerasRoundNo perasRoundNo
                   }
-
--- -------------------------------------------------------------------------------
--- Time resolution through a context handle
--- -------------------------------------------------------------------------------
-
--- | Run a pure context resolver against a 'TimeResolutionContextHandle', reading
--- the current context from the handle and throwing any 'TimeResolutionError' in
--- 'STM'.
-withHandle ::
-  (MonadSTM m, MonadThrow (STM m)) =>
-  (TimeResolutionContext blk -> a -> Either TimeResolutionError b) ->
-  TimeResolutionContextHandle m blk ->
-  a ->
-  STM m b
-withHandle f (TimeResolutionContextHandle getContext) x = do
-  ctx <- getContext
-  either throwSTM pure (f ctx x)
-
--- | Get the 'TimeToSlotInfo' for a given 'RelativeTime'.
-resolveTimeToSlotInfoWithHandle ::
-  (MonadSTM m, MonadThrow (STM m), HasHardForkHistory blk, All Top (HardForkIndices blk)) =>
-  TimeResolutionContextHandle m blk ->
-  RelativeTime ->
-  STM m (EraIndexed blk TimeToSlotInfo)
-resolveTimeToSlotInfoWithHandle = withHandle resolveTimeToSlotInfo
-
--- | Get the 'SlotToTimeInfo' for the initial 'SlotNo'.
-resolveSlotToTimeInfoWithHandle ::
-  (MonadSTM m, MonadThrow (STM m), HasHardForkHistory blk, All Top (HardForkIndices blk)) =>
-  TimeResolutionContextHandle m blk ->
-  SlotNo ->
-  STM m (EraIndexed blk SlotToTimeInfo)
-resolveSlotToTimeInfoWithHandle = withHandle resolveSlotToTimeInfo
-
--- | Get the 'SlotToEpochInfo' for a given 'SlotNo'.
-resolveSlotToEpochInfoWithHandle ::
-  (MonadSTM m, MonadThrow (STM m), HasHardForkHistory blk, All Top (HardForkIndices blk)) =>
-  TimeResolutionContextHandle m blk ->
-  SlotNo ->
-  STM m (EraIndexed blk SlotToEpochInfo)
-resolveSlotToEpochInfoWithHandle = withHandle resolveSlotToEpochInfo
-
--- | Get the 'EpochToSlotInfo' for a given 'EpochNo'.
-resolveEpochToSlotInfoWithHandle ::
-  (MonadSTM m, MonadThrow (STM m), HasHardForkHistory blk, All Top (HardForkIndices blk)) =>
-  TimeResolutionContextHandle m blk ->
-  EpochNo ->
-  STM m (EraIndexed blk EpochToSlotInfo)
-resolveEpochToSlotInfoWithHandle = withHandle resolveEpochToSlotInfo
-
--- | Get the 'SlotToPerasRoundInfo' for a given 'SlotNo'.
-resolveSlotToPerasRoundInfoWithHandle ::
-  (MonadSTM m, MonadThrow (STM m), HasHardForkHistory blk, All Top (HardForkIndices blk)) =>
-  TimeResolutionContextHandle m blk ->
-  SlotNo ->
-  STM m (EraIndexed blk SlotToPerasRoundInfo)
-resolveSlotToPerasRoundInfoWithHandle = withHandle resolveSlotToPerasRoundInfo
-
--- | Get the 'PerasRoundToSlotInfo' for a given 'PerasRoundNo'.
-resolvePerasRoundToSlotInfoWithHandle ::
-  (MonadSTM m, MonadThrow (STM m), HasHardForkHistory blk, All Top (HardForkIndices blk)) =>
-  TimeResolutionContextHandle m blk ->
-  PerasRoundNo ->
-  STM m (EraIndexed blk PerasRoundToSlotInfo)
-resolvePerasRoundToSlotInfoWithHandle = withHandle resolvePerasRoundToSlotInfo
-
--- | Get the 'EpochToPerasRoundInfo' for a given 'EpochNo'.
-resolveEpochToPerasRoundInfoWithHandle ::
-  (MonadSTM m, MonadThrow (STM m), HasHardForkHistory blk, All Top (HardForkIndices blk)) =>
-  TimeResolutionContextHandle m blk ->
-  EpochNo ->
-  STM m (EraIndexed blk EpochToPerasRoundInfo)
-resolveEpochToPerasRoundInfoWithHandle = withHandle resolveEpochToPerasRoundInfo
-
--- | Get the 'PerasRoundToEpochInfo' for a given 'PerasRoundNo'.
-resolvePerasRoundToEpochInfoWithHandle ::
-  (MonadSTM m, MonadThrow (STM m), HasHardForkHistory blk, All Top (HardForkIndices blk)) =>
-  TimeResolutionContextHandle m blk ->
-  PerasRoundNo ->
-  STM m (EraIndexed blk PerasRoundToEpochInfo)
-resolvePerasRoundToEpochInfoWithHandle = withHandle resolvePerasRoundToEpochInfo

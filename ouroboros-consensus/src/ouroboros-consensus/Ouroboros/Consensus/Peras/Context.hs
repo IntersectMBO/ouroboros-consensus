@@ -37,16 +37,13 @@ module Ouroboros.Consensus.Peras.Context
   )
 where
 
-import Cardano.Ledger.BaseTypes (strictMaybeToMaybe)
 import Codec.Serialise.Class (Serialise)
-import Control.Applicative (Alternative (..))
 import Control.Exception (Exception)
 import Control.Monad.Class.MonadSTM (STM)
 import Data.Bifunctor (Bifunctor (..))
 import Data.Data (Proxy (..))
 import Data.Either.Extra (maybeToEither)
 import Data.Kind (Type)
-import Data.Maybe.Strict (StrictMaybe (..))
 import Data.SOP.Constraint (All, Top)
 import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
@@ -71,6 +68,7 @@ import qualified Ouroboros.Consensus.Committee.Class as Committee
 import Ouroboros.Consensus.Committee.Crypto (PrivateKey)
 import Ouroboros.Consensus.Committee.Types (PoolId)
 import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (HardForkIndices))
+import qualified Ouroboros.Consensus.HardFork.History as HF
 import Ouroboros.Consensus.HeaderValidation (Ticked)
 import Ouroboros.Consensus.Ledger.Abstract (LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsPeras (ALedgerStateSupportsPeras (..))
@@ -94,8 +92,8 @@ import Ouroboros.Consensus.Util.IOLike
 data PerasEpochContextResolver blk
   = PerasEpochContextResolverError !String
   | PerasEpochContextResolver
-      !(BoundedPerasEpochContext blk)
-      !(StrictMaybe (BoundedPerasEpochContext blk))
+      !(HF.PerasEnabled (BoundedPerasEpochContext blk))
+      !(HF.PerasEnabled (BoundedPerasEpochContext blk))
 deriving instance Show (PerasEpochContext blk) => Show (PerasEpochContextResolver blk)
 deriving instance Eq (PerasEpochContext blk) => Eq (PerasEpochContextResolver blk)
 deriving instance Generic (PerasEpochContextResolver blk)
@@ -218,18 +216,20 @@ mkBoundedPerasEpochContextFromMkPerasVotingCommitteeInput mkPerasVotingCommittee
 --------------------------------------------------------------------------------
 
 initPerasEpochContextResolverWithBoundedEpochContext ::
-  BoundedPerasEpochContext blk -> PerasEpochContextResolver blk
+  HF.PerasEnabled (BoundedPerasEpochContext blk) -> PerasEpochContextResolver blk
 initPerasEpochContextResolverWithBoundedEpochContext currEpochContext =
-  PerasEpochContextResolver currEpochContext SNothing
+  PerasEpochContextResolver currEpochContext HF.NoPerasEnabled
 
 advancePerasEpochContextResolverWithBoundedEpochContext ::
-  PerasEpochContextResolver blk -> BoundedPerasEpochContext blk -> PerasEpochContextResolver blk
+  PerasEpochContextResolver blk ->
+  (HF.PerasEnabled (BoundedPerasEpochContext blk)) ->
+  PerasEpochContextResolver blk
 advancePerasEpochContextResolverWithBoundedEpochContext prev newEpochContext = case prev of
   PerasEpochContextResolver prevEpochContextResolver _ ->
     PerasEpochContextResolver
       prevEpochContextResolver
-      (SJust newEpochContext)
-  _ -> PerasEpochContextResolver newEpochContext SNothing
+      newEpochContext
+  _ -> PerasEpochContextResolver newEpochContext HF.NoPerasEnabled
 
 errorIntoResolver ::
   Show err => err -> PerasEpochContextResolver blk
@@ -245,14 +245,39 @@ resolveRoundNo ::
   Either PerasEpochContextNotFoundForRound (PerasEpochContext blk)
 resolveRoundNo resolver roundNo = case resolver of
   PerasEpochContextResolverError reason -> Left $ PerasEpochContextNotFoundForRound roundNo reason
-  PerasEpochContextResolver current mbPrev ->
-    maybeToEither
-      ( PerasEpochContextNotFoundForRound
-          roundNo
-          "Neither current nor previous epoch context cover the given Peras roundNo"
-      )
-      $ withinEpochContext roundNo current
-        <|> (withinEpochContext roundNo =<< strictMaybeToMaybe mbPrev)
+  PerasEpochContextResolver current prev ->
+    case ( maybeToEither
+             "no current epoch context available because Peras isn't enabled"
+             (HF.perasEnabledToMaybe current)
+             >>= \current' ->
+               maybeToEither
+                 ( "current epoch context available, but roundNo "
+                     ++ show roundNo
+                     ++ " not within current epoch context bounds ["
+                     ++ show (startPerasRoundNo current')
+                     ++ ", "
+                     ++ show (endPerasRoundNo current')
+                     ++ "["
+                 )
+                 (withinEpochContext roundNo current')
+         , maybeToEither
+             "no previous epoch context available because Peras isn't enabled"
+             (HF.perasEnabledToMaybe prev)
+             >>= \prev' ->
+               maybeToEither
+                 ( "roundNo "
+                     ++ show roundNo
+                     ++ " not within previous epoch context bounds ["
+                     ++ show (startPerasRoundNo prev')
+                     ++ ", "
+                     ++ show (endPerasRoundNo prev')
+                     ++ "["
+                 )
+                 (withinEpochContext roundNo prev')
+         ) of
+      (Right context, _) -> Right context
+      (_, Right context) -> Right context
+      (Left reason1, Left reason2) -> Left $ PerasEpochContextNotFoundForRound roundNo (reason1 ++ "; " ++ reason2)
 
 --------------------------------------------------------------------------------
 -- Bounded context
@@ -292,7 +317,10 @@ mockPerasEpochContextResolverHandle ::
   ) =>
   PerasEpochContext blk -> m (PerasEpochContextResolverHandle m blk)
 mockPerasEpochContextResolverHandle context = do
-  let resolver = PerasEpochContextResolver (BoundedPerasEpochContext minBound maxBound context) SNothing
+  let resolver =
+        PerasEpochContextResolver
+          (HF.PerasEnabled $ BoundedPerasEpochContext minBound maxBound context)
+          HF.NoPerasEnabled
   resolverVar <- newTVarIO resolver
   pure $ PerasEpochContextResolverHandle (readTVar resolverVar)
 

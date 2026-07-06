@@ -63,6 +63,7 @@ import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
+import qualified Ouroboros.Consensus.HardFork.History.EraParams as HF
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
@@ -506,11 +507,11 @@ perasVoteForgingController systemTime IS{chainDB, tracers} slotNo = do
     let (Time.TimeResolutionContextHandle getContext) = ChainDB.getTimeResolutionContextHandle chainDB
     context <- dyel $ getContext
     roundInfo <- case forgetEraIndex <$> Time.resolveSlotToPerasRoundInfo context slotNo of
-      -- We don't know whether Peras is enabled at this point.
-      -- Silently absorb the error and abort if it isn't.
-      Left Time.TimeResolutionPerasNotEnabled -> hoistMaybe Nothing
       Left err -> dyel $ throwSTM err
-      Right roundInfo -> pure roundInfo
+      -- We don't know whether Peras is enabled at this point.
+      -- Abort if it isn't.
+      Right HF.NoPerasEnabled -> hoistMaybe Nothing
+      Right (HF.PerasEnabled roundInfo) -> pure roundInfo
     let roundNo = Time.stpriPerasRoundNo roundInfo
         slotInRound = Time.stpriSlotsSpentInPerasRound roundInfo
 
@@ -848,11 +849,11 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
       context <- getTimeResolutionContext
       case forgetEraIndex <$> Time.resolveSlotToPerasRoundInfo context currentSlot of
-        -- We don't know whether Peras is enabled at this point.
-        -- Silently absorb the error and abort if it isn't.
-        Left Time.TimeResolutionPerasNotEnabled -> pure Nothing
         Left err -> throwSTM err
-        Right roundInfo -> do
+        -- We don't know whether Peras is enabled at this point.
+        -- Abort if it isn't.
+        Right HF.NoPerasEnabled -> pure Nothing
+        Right (HF.PerasEnabled roundInfo) -> do
           let currentRoundNo = Time.stpriPerasRoundNo roundInfo
           decision <- needCertInContext certInclusionViewHandle currentRoundNo
           pure $ Just (currentRoundNo, decision)
