@@ -574,7 +574,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                 error $ "applyBlock: invalid Leios cert: " <> show invalid
               Right _weight -> do
                 -- Load EB txs from disk
-                closureTxs <- resolveLeiosClosure leiosDb announcedPoint b
+                closureTxs <- resolveLeiosClosure leiosDb announcedPoint (Proxy @blk)
                 -- UTXO-HD of the whole closure
                 let blkKeys = getBlockKeySets b
                     closureKeys = foldMap (castLedgerTables . leiosClosureTxKeySets) closureTxs
@@ -720,9 +720,8 @@ class ResolveLeiosBlock blk where
     Monad m =>
     LeiosDbConnection m ->
     LeiosPoint ->
-    blk ->
     m [GenTx blk]
-  resolveLeiosClosure _ _ _ = pure []
+  resolveLeiosClosure _ _ = pure []
 
   -- | The ledger keys read by a closure tx — what 'forkerReadTables' needs
   -- to load before 'applyLeiosClosure' can run. Leios-enabled instances
@@ -808,7 +807,7 @@ resolveLeiosBlock leiosDb cds b =
     Nothing -> pure b
     Just (announcedPoint, _) ->
       -- NOTE: This produces a block that would fail full validation.
-      resolveLeiosClosure leiosDb announcedPoint b
+      resolveLeiosClosure leiosDb announcedPoint
         <&> inlineLeiosClosure b
 
 {-------------------------------------------------------------------------------

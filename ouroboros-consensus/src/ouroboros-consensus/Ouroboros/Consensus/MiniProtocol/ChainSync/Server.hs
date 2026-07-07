@@ -168,7 +168,7 @@ chainSyncBlocksServer tracer chainDB ccfg leiosDb flr = ChainSyncServer $ do
         Just prevAnn | headerContainsLeiosCert hdr -> case decodeRaw sblk of
           Left _ -> pure sblk
           Right blk -> do
-            resolveLeiosClosure leiosDb prevAnn blk
+            resolveLeiosClosure leiosDb prevAnn
               <&> inlineLeiosClosure blk
               <&> encode
         _ -> pure sblk
