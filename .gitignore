@@ -33,6 +33,7 @@ result-[0-9]*
 .stack-to-nix.cache
 .nix-shell-cabal.project
 .envrc
+.direnv
 
 # stack
 .stack-work/

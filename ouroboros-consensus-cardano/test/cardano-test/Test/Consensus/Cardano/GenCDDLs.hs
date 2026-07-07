@@ -97,7 +97,78 @@ fixupLedgerCDDL spec =
     -- for convenience, we use this test suite to generate the complete CDDL spec for manual testing.
     -- while this sed replacement is not used in these tests, it is needed to validate some of the real blocks.
     sed fp ["-i", "s/\\(chain_code: bytes\\)/\\1, ;/g"]
+
+    -- cuddle 1.8.0.0 does not support optional group entries in the middle of an
+    -- array group (e.g. "? leios_key" between vrf_keyhash and pledge). We work
+    -- around this by:
+    --   1. Removing the optional "? leios_key" from dijkstra.pool_params,
+    --      making it the 9-element (no leios_key) variant.
+    --   2. Adding a new dijkstra.pool_params_with_leios_key rule with 10 elements.
+    --   3. Adding dijkstra.pool_registration_cert_with_leios_key as an alternative
+    --      in the certificate array so cuddle can validate both encodings.
+    -- See cardano-ledger#5054.
+    content <- BS.readFile fp
+    let content' =
+          bsReplace
+            dijkstraPoolParamsOld
+            dijkstraPoolParamsNew
+            ( bsReplace
+                dijkstraCertOld
+                dijkstraCertNew
+                content
+            )
+    BS.writeFile fp (content' <> dijkstraLeiosKeyPoolRules)
     CDDLSpec <$> BS.readFile fp
+ where
+  dijkstraPoolParamsOld =
+    BS8.pack $
+      "dijkstra.pool_params = (\n"
+        <> "  operator: dijkstra.pool_keyhash,\n"
+        <> "  vrf_keyhash: dijkstra.vrf_keyhash,\n"
+        <> "  ? leios_key: dijkstra.leios_key / nil,\n"
+        <> "  pledge: dijkstra.coin,\n"
+        <> "  cost: dijkstra.coin,\n"
+        <> "  margin: dijkstra.unit_interval,\n"
+        <> "  reward_account: dijkstra.reward_account,\n"
+        <> "  pool_owners: dijkstra.set<dijkstra.addr_keyhash>,\n"
+        <> "  relays: [* dijkstra.relay],\n"
+        <> "  pool_metadata: dijkstra.pool_metadata / nil,\n"
+        <> "  )"
+  dijkstraPoolParamsNew =
+    BS8.pack $
+      "dijkstra.pool_params = (\n"
+        <> "  operator: dijkstra.pool_keyhash,\n"
+        <> "  vrf_keyhash: dijkstra.vrf_keyhash,\n"
+        <> "  pledge: dijkstra.coin,\n"
+        <> "  cost: dijkstra.coin,\n"
+        <> "  margin: dijkstra.unit_interval,\n"
+        <> "  reward_account: dijkstra.reward_account,\n"
+        <> "  pool_owners: dijkstra.set<dijkstra.addr_keyhash>,\n"
+        <> "  relays: [* dijkstra.relay],\n"
+        <> "  pool_metadata: dijkstra.pool_metadata / nil,\n"
+        <> "  )"
+  dijkstraCertOld =
+    BS8.pack "dijkstra.pool_registration_cert // dijkstra.pool_retirement_cert"
+  dijkstraCertNew =
+    BS8.pack $
+      "dijkstra.pool_registration_cert"
+        <> " // dijkstra.pool_registration_cert_with_leios_key"
+        <> " // dijkstra.pool_retirement_cert"
+  dijkstraLeiosKeyPoolRules =
+    BS8.pack $
+      "\ndijkstra.pool_registration_cert_with_leios_key = (3, dijkstra.pool_params_with_leios_key)\n"
+        <> "dijkstra.pool_params_with_leios_key = (\n"
+        <> "  operator: dijkstra.pool_keyhash,\n"
+        <> "  vrf_keyhash: dijkstra.vrf_keyhash,\n"
+        <> "  leios_key: dijkstra.leios_key / nil,\n"
+        <> "  pledge: dijkstra.coin,\n"
+        <> "  cost: dijkstra.coin,\n"
+        <> "  margin: dijkstra.unit_interval,\n"
+        <> "  reward_account: dijkstra.reward_account,\n"
+        <> "  pool_owners: dijkstra.set<dijkstra.addr_keyhash>,\n"
+        <> "  relays: [* dijkstra.relay],\n"
+        <> "  pool_metadata: dijkstra.pool_metadata / nil,\n"
+        <> "  )\n"
 
 -- | This sets the environment variables needed for `cddlc` to run properly.
 setupCDDLCEnv :: IO ()
@@ -128,6 +199,14 @@ setupCDDLCEnv = do
 sed :: FilePath -> [String] -> IO ()
 sed fp args =
   Monad.void $ P.readProcessWithExitCode "sed" (args ++ [fp]) mempty
+
+-- | Replace the first occurrence of @old@ with @new@ in a 'BS.ByteString'.
+bsReplace :: BS.ByteString -> BS.ByteString -> BS.ByteString -> BS.ByteString
+bsReplace old new bs =
+  let (before, rest) = BS.breakSubstring old bs
+   in if BS.null rest
+        then bs
+        else before <> new <> BS.drop (BS.length old) rest
 
 {- FOURMOLU_DISABLE -}
 
