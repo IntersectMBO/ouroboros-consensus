@@ -86,7 +86,7 @@ instance
   (PraosCrypto c, ShelleyCompatible (Praos c) DijkstraEra) =>
   ResolveLeiosBlock (ShelleyBlock (Praos c) DijkstraEra)
   where
-  resolveLeiosClosure leiosDb point _blk = do
+  resolveLeiosClosure leiosDb point = do
     mAnnouncedEb <-
       leiosDbLookupEbClosure
         leiosDb

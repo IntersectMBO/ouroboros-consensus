@@ -1540,10 +1540,9 @@ instance
   ) =>
   ResolveLeiosBlock (HardForkBlock (CardanoEras c))
   where
-  resolveLeiosClosure db point blk = case blk of
-    BlockDijkstra dijkstraBlk ->
-      fmap GenTxDijkstra <$> resolveLeiosClosure db point dijkstraBlk
-    _ -> pure []
+  resolveLeiosClosure db point =
+    fmap GenTxDijkstra
+      <$> resolveLeiosClosure db point
 
   inlineLeiosClosure blk txs = case blk of
     BlockDijkstra dijkstraBlk ->
