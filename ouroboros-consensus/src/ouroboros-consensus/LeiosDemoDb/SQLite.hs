@@ -47,6 +47,8 @@ import Database.SQLite3
   , open2
   )
 import qualified Database.SQLite3.Direct as DB
+import Foreign.Ptr (Ptr, WordPtr, castPtr)
+import Foreign.Storable (peekByteOff)
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import LeiosDemoDb.Common
@@ -156,6 +158,7 @@ openSQLiteConnection tracer dbPath notificationChan = do
               <> show me
               <> " but opened on "
               <> show owner
+        checkSqliteIntegrity db
   pure $
     LeiosDbConnection
       { close = check >> void (DB.close db)
@@ -169,6 +172,43 @@ openSQLiteConnection tracer dbPath notificationChan = do
       , leiosDbFilterMissingTxs = \hs -> check >> sqlFilterMissingTxs tracer db hs
       , leiosDbLookupEbClosure = \h -> check >> sqlLookupEbClosure db h
       }
+
+-- | TEMP: sanity-check that the @sqlite3@ conn struct's @.mutex@ field
+-- still looks like a valid pointer.
+--
+-- Motivation: the proto-devnet crashes with a SIGSEGV inside
+-- @sqlite3_finalize@ where the sqlite3 struct's memory has been
+-- overwritten with small integer values (in one dump, @pVdbe = 0x11@
+-- and @mutex = 0x4b@). The safety net on 'LeiosDbConnection' only
+-- catches cross-thread facade entry, not corruption from further
+-- inside. This peek runs on every facade entry BEFORE we hand
+-- anything to SQLite, so we throw a Haskell exception with a stack
+-- trace instead of segfaulting.
+--
+-- Layout assumption (SQLite 3.45.0, our compile flags):
+--
+--   +0   sqlite3_vfs *pVfs
+--   +8   struct Vdbe *pVdbe
+--   +16  CollSeq *pDfltColl
+--   +24  sqlite3_mutex *mutex     ← we peek this
+--
+-- This offset is architecture- and compile-flag-dependent; we know
+-- it's correct on x86_64 Linux with our build flags because we
+-- pinned it from the coredump.
+--
+-- Under SERIALIZED threading mode (which our SQLite is compiled
+-- with, @THREADSAFE=1@) the @.mutex@ field is always a non-NULL
+-- pointer while the conn is alive. So @0@ or any small integer
+-- means the struct has been freed and reused.
+checkSqliteIntegrity :: HasCallStack => DB.Database -> IO ()
+checkSqliteIntegrity (DB.Database dbp) = do
+  mutex :: WordPtr <- peekByteOff (castPtr dbp :: Ptr ()) 24
+  when (fromIntegral mutex < (0x1000 :: Integer)) $
+    error $
+      "LeiosDbConnection: sqlite3 conn struct appears corrupted; "
+        <> "db->mutex = "
+        <> show mutex
+        <> " (expected a valid pointer). Refusing to proceed to avoid SIGSEGV."
 
 -- * Top-level implementations
 
