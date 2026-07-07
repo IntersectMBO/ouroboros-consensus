@@ -202,6 +202,20 @@ data Mempool m blk = Mempool
   -- - The ledger state ticked to the given slot number (with the diffs from ticking)
   --
   -- - A function that reads values for keys at the unticked ledger state.
+  , getSnapshotForNoCache ::
+      SlotNo ->
+      TickedLedgerState blk DiffMK ->
+      (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+      m (MempoolSnapshot blk)
+  -- ^ Like 'getSnapshotFor', but always revalidates against the supplied
+  -- ledger state instead of possibly returning the cached snapshot.
+  --
+  -- Needed by the Leios forge path, which rebases the mempool onto the
+  -- ledger state /after/ a to-be-certified EB is applied (whose tip and
+  -- slot match the cached mempool state, so 'getSnapshotFor' would return
+  -- the stale pre-rebase snapshot). Values are read at the unticked parent,
+  -- so the caller's @ticked@ diffs (closure ⊕ tick) must be relative to that
+  -- same state. See input-output-hk/ouroboros-leios#838.
   , getCapacity :: STM m (TxMeasure blk)
   -- ^ Get the mempool's capacity
   --

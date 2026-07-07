@@ -115,6 +115,7 @@ mkMempool mpEnv =
     , removeTxsEvenIfValid = implRemoveTxsEvenIfValid mpEnv
     , getSnapshot = snapshotFromIS <$> readTMVar istate
     , getSnapshotFor = implGetSnapshotFor mpEnv
+    , getSnapshotForNoCache = implGetSnapshotForNoCache mpEnv
     , getCapacity = isCapacity <$> readTMVar istate
     , testSyncWithLedger = implSyncWithLedger snapshotFromIS mpEnv
     , testTryAddTx = implAddTx mpEnv . TestingAddTx
