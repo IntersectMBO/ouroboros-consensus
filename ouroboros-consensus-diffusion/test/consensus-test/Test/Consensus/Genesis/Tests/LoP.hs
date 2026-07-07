@@ -12,9 +12,11 @@ module Test.Consensus.Genesis.Tests.LoP
   , testSuite
   ) where
 
+import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Data.Functor (($>))
 import Data.Ratio ((%))
-import Ouroboros.Consensus.Block.Abstract (Header)
+import Ouroboros.Consensus.Block.Abstract (Header, HeaderFields (..), unSlotNo)
+import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import Ouroboros.Consensus.Util.IOLike
   ( DiffTime
@@ -26,7 +28,7 @@ import Ouroboros.Consensus.Util.LeakyBucket
   )
 import Ouroboros.Network.AnchoredFragment
   ( AnchoredFragment
-  , HasHeader
+  , HasHeader (..)
   )
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
@@ -49,6 +51,7 @@ import Test.Consensus.PointSchedule.SinglePeer
   , scheduleHeaderPoint
   , scheduleTipPoint
   )
+import Test.QuickCheck.Gen (suchThat)
 import Test.Util.Orphans.IOLike ()
 import Test.Util.PartialAccessors
 
@@ -216,7 +219,7 @@ testServe description mustTimeout =
     adjustTestCount
     adjustMaxSize
     ( do
-        gt@GenesisTest{gtBlockTree} <- genChains (pure 0)
+        gt@GenesisTest{gtBlockTree} <- genChains (pure 0) `suchThat` hasAtLeastOneBlockPerEpoch
         let lbpRate = borderlineRate (AF.length (btTrunk gtBlockTree))
             ps = makeSchedule (btTrunk gtBlockTree)
             gt' = gt{gtLoPBucketParams = LoPBucketParams{lbpCapacity, lbpRate}}
@@ -279,7 +282,7 @@ testDelayAttack description lopEnabled =
     adjustTestCount
     adjustMaxSize
     ( do
-        gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
+        gt@GenesisTest{gtBlockTree} <- genChains (pure 1) `suchThat` hasAtLeastOneBlockPerEpoch
         let gt' = gt{gtLoPBucketParams = LoPBucketParams{lbpCapacity = 10, lbpRate = 1}}
             ps = delaySchedule gtBlockTree
         pure $ gt' $> ps
@@ -354,3 +357,22 @@ testDelayAttack description lopEnabled =
         -- Wait for LoP bucket to empty
         psMinEndTime = Time 11
      in PointSchedule{psSchedule, psStartOrder = [], psMinEndTime}
+
+-- \| Ensure that the block tree has at least one block per epoch on all branches.
+-- Otherwise, issues would arise when trying to update the ledger from era n to era n+2.
+hasAtLeastOneBlockPerEpoch :: HasHeader blk => GenesisTest blk schedule -> Bool
+hasAtLeastOneBlockPerEpoch GenesisTest{gtBlockTree, gtSecurityParam} =
+  all fragmentHasEnoughBlocks (btTrunk gtBlockTree : (btbFull <$> btBranches gtBlockTree))
+ where
+  k = unNonZero $ maxRollbacks gtSecurityParam
+  -- \| This value comes from `defaultErasParams`, which is way out of scope from here.
+  -- We should find a way to avoid repetition of this value, or at least centralize it.
+  epochSize = 10 * k
+  slotList frag = slotNo <$> AF.toOldestFirst frag
+  slotNo = unSlotNo . headerFieldSlot . getHeaderFields
+
+  fragmentHasEnoughBlocks frag =
+    all
+      (\(prev, next) -> next - prev <= epochSize)
+      -- \| Add 0 at the beginning to simulate Origin
+      (zip (0 : slotList frag) (slotList frag))
