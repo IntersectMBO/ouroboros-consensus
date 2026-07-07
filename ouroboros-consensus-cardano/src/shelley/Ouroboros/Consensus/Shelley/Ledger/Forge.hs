@@ -28,6 +28,7 @@ import Control.Monad (void)
 import Control.Tracer (traceWith)
 import Data.ByteString.Short (fromShort)
 import Data.Maybe (isJust)
+import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Typeable as Typeable
 import LeiosDemoDb (LeiosDbConnection (..))
@@ -73,14 +74,19 @@ forgeShelleyBlock ::
   ForgeBlockArgs m (ShelleyBlock proto era) ->
   m (ShelleyBlock proto era)
 forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
-  -- For the Dijkstra era only: either certify a previously-announced EB
-  -- (and embed a Leios certificate in the block body), or — if no
-  -- previous announcement is ready to be certified — possibly forge a
-  -- new EB and announce it on this block's header. Other eras do
-  -- neither.
+  -- Forge an RB and attempt to announce an EB and/or certify a previously announced one:
+  --
+  --  * Certify: if the forge loop decided to certify a previously-announced
+  --    EB ('fbMayLeiosCert' is a 'Just'), embed the certificate in the block body.
+  --
+  --  * Announce: forge and store a new EB from 'fbEbTxs' and announce it on this RB's header.
+  --    When we are also certifying, 'fbEbTxs' contains transactions from the mempool that has already
+  --    been rebased onto the post-certificate ledger state.
   (mayEbAnn, mayLeiosCert) <-
     case Typeable.eqT @era @DijkstraEra of
-      Just Refl -> decideLeios
+      Just Refl -> do
+        mayEbAnn <- mkAndStoreEb
+        pure (mayEbAnn, fbMayLeiosCert)
       Nothing -> pure (Nothing, Nothing)
   let rbBody = mkBody mayLeiosCert
       actualRbBodySize = SL.blockBodySize protocolVersion rbBody
@@ -144,24 +150,6 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       . castHash
       . getTipHash
       $ fbCurrentTickedLedgerState
-
-  -- Dijkstra-only: if the forge loop decided to certify a
-  -- previously-announced EB ('fbMayLeiosCert'), embed the certificate and
-  -- suppress this block's own EB announcement. Otherwise fall back to
-  -- forging a new EB (when the mempool has txs for one). Mirrors the
-  -- prototype's 'decideForgeType'.
-  --
-  -- The certification /decision/ (announced + downloaded + gap elapsed +
-  -- certificate available) is made upstream in
-  -- 'Ouroboros.Consensus.NodeKernel.decideLeiosCertify' so it can run before
-  -- the mempool snapshot; here we only act on its result.
-  decideLeios :: m (Maybe (ForgedLeiosEb, EbAnnouncement), Maybe LeiosCert)
-  decideLeios =
-    case fbMayLeiosCert of
-      cert@(Just _) -> pure (Nothing, cert)
-      Nothing -> do
-        ann <- mkAndStoreEb
-        pure (ann, Nothing)
 
   -- Produce an EB from fbEbTxs, store it into fbLeiosDb, and return the
   -- announcement to embed in the header. An honest forger only emits an
