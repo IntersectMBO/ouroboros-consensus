@@ -35,6 +35,8 @@ import Control.Tracer (Tracer, traceWith)
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as BB
+import qualified Data.ByteString.Lazy as BSL
 import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -139,7 +141,6 @@ openSQLiteConnection tracer dbPath notificationChan = do
     ]
   when shouldInitSchema $
     dbExec db (fromString sql_schema)
-  dbExec db (fromString sql_attach_memTxPoints)
   let notify = atomically . writeTChan notificationChan
   -- TEMP: safety net. 'LeiosDbConnection' is a direct-sqlite handle that is
   -- not thread-safe (SQLite protects concurrent ops but not close-during-op).
@@ -307,58 +308,45 @@ sqlInsertTxs tracer db notify txs = do
   forM_ completed $ \point -> notify (AcquiredEbTxs point)
   pure completed
 
+-- | Retrieve tx bytes for a batch of @(ebHash, txOffset)@ points. Passes
+-- the offsets list as a JSON int array bound to a single parameter;
+-- SQLite's 'json_each' virtual table joins it against 'ebTxs' + 'txs'.
+--
+-- No temp tables, no attached databases, no per-item INSERT round-trips.
+-- Works on strictly read-only connections.
 sqlBatchRetrieveTxs ::
   Tracer IO TraceLeiosDb ->
   DB.Database ->
   EbHash ->
   [Int] ->
   IO [(Int, TxHash, Maybe ByteString)]
-sqlBatchRetrieveTxs tracer db ebHash offsets =
-  dbWithBEGIN db $ do
-    -- First, insert offsets into temp table
-    dbWithPrepare db (fromString sql_insert_memTxPoints) $ \stmtInsert ->
-      mapM_
-        ( \offset -> do
-            dbBindBlob stmtInsert 1 (let MkEbHash bytes = ebHash in bytes)
-            dbBindInt64 stmtInsert 2 (fromIntegral offset)
-            dbStepInsertOrTrace
-              tracer
-              "mem.txPoints"
-              (show ebHash <> "@" <> show offset)
-              stmtInsert
-        )
-        offsets
-
-    -- Then retrieve from ebTxs LEFT JOIN txs
-    results <- dbWithPrepare db (fromString sql_retrieve_from_ebTxs) $ \stmtRetrieve -> do
+sqlBatchRetrieveTxs _tracer db ebHash offsets =
+  dbWithBEGIN db $
+    dbWithPrepare db (fromString sql_retrieve_from_ebTxs_json) $ \stmt -> do
+      dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
+      dbBindUtf8 stmt 2 (jsonIntArray offsets)
       let loop acc =
-            dbStep stmtRetrieve >>= \case
+            dbStep stmt >>= \case
               DB.Done -> pure (reverse acc)
               DB.Row -> do
-                offset <- fromIntegral <$> DB.columnInt64 stmtRetrieve 0
-                txHash <- MkTxHash <$> DB.columnBlob stmtRetrieve 1
+                offset <- fromIntegral <$> DB.columnInt64 stmt 0
+                txHash <- MkTxHash <$> DB.columnBlob stmt 1
                 -- Column 2 is from LEFT JOIN, NULL if tx not in txs table
-                txBytes <- DB.columnBlob stmtRetrieve 2
+                txBytes <- DB.columnBlob stmt 2
                 let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
                 loop ((offset, txHash, mbTxBytes) : acc)
       loop []
 
-    -- Flush temp table
-    dbWithPrepare db (fromString sql_flush_memTxPoints) $ \stmtFlush ->
-      dbStep1 stmtFlush
-    pure results
-
+-- | Batch-filter EB points against @ebTxs@. Passes ebHashes as a JSON
+-- array of hex strings; SQL decodes with @unhex()@ so index lookups on
+-- @ebTxs.ebHashBytes@ still fire.
 sqlFilterMissingEbBodies ::
   Tracer IO TraceLeiosDb -> DB.Database -> [LeiosPoint] -> IO [LeiosPoint]
-sqlFilterMissingEbBodies tracer db points =
-  -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries.
-  dbWithBEGIN db $ do
-    let pointsByHash = Map.fromList [(p.pointEbHash, p) | p <- points]
-    dbWithPrepare db (fromString sql_insert_memEbHashes) $ \stmtInsert ->
-      forM_ (Map.keys pointsByHash) $ \ebHash -> do
-        dbBindBlob stmtInsert 1 ebHash.ebHashBytes
-        dbStepInsertOrTrace tracer "mem.ebHashes" (show ebHash) stmtInsert
-    result <- dbWithPrepare db (fromString sql_filter_missing_eb_bodies) $ \stmt -> do
+sqlFilterMissingEbBodies _tracer db points =
+  dbWithBEGIN db $
+    dbWithPrepare db (fromString sql_filter_missing_eb_bodies_json) $ \stmt -> do
+      let pointsByHash = Map.fromList [(p.pointEbHash, p) | p <- points]
+      dbBindUtf8 stmt 1 (jsonHexArray (map ebHashBytes (Map.keys pointsByHash)))
       let loop acc =
             dbStep stmt >>= \case
               DB.Done -> pure (reverse acc)
@@ -368,22 +356,15 @@ sqlFilterMissingEbBodies tracer db points =
                   Just p -> loop (p : acc)
                   Nothing -> loop acc
       loop []
-    dbWithPrepare db (fromString sql_flush_memEbHashes) $ \stmtFlush ->
-      dbStep1 stmtFlush
-    pure result
 
+-- | Batch-filter tx hashes against @txs@. Same idiom as
+-- 'sqlFilterMissingEbBodies'.
 sqlFilterMissingTxs ::
   Tracer IO TraceLeiosDb -> DB.Database -> [TxHash] -> IO [TxHash]
-sqlFilterMissingTxs tracer db txHashes =
-  -- TODO: Replace temp table approach with JSON1 extension for cleaner batch queries:
-  --   WHERE t.txHashBytes IN (SELECT unhex(value) FROM json_each(?))
-  -- This would eliminate the need for mem.txHashes table and insert/flush overhead.
-  dbWithBEGIN db $ do
-    dbWithPrepare db (fromString sql_insert_memTxHashes) $ \stmtInsert ->
-      forM_ txHashes $ \txHash@(MkTxHash bytes) -> do
-        dbBindBlob stmtInsert 1 bytes
-        dbStepInsertOrTrace tracer "mem.txHashes" (show txHash) stmtInsert
-    result <- dbWithPrepare db (fromString sql_filter_missing_txs) $ \stmt -> do
+sqlFilterMissingTxs _tracer db txHashes =
+  dbWithBEGIN db $
+    dbWithPrepare db (fromString sql_filter_missing_txs_json) $ \stmt -> do
+      dbBindUtf8 stmt 1 (jsonHexArray [b | MkTxHash b <- txHashes])
       let loop acc =
             dbStep stmt >>= \case
               DB.Done -> pure (reverse acc)
@@ -391,9 +372,31 @@ sqlFilterMissingTxs tracer db txHashes =
                 txHash <- MkTxHash <$> DB.columnBlob stmt 0
                 loop (txHash : acc)
       loop []
-    dbWithPrepare db (fromString sql_flush_memTxHashes) $ \stmtFlush ->
-      dbStep1 stmtFlush
-    pure result
+
+-- | Build a JSON array of hex-encoded blobs: @["aabb...","1234...",...]@.
+-- Consumed on the SQL side via @json_each(?)@ + @unhex(je.value)@.
+jsonHexArray :: [ByteString] -> ByteString
+jsonHexArray xs =
+  BSL.toStrict . BB.toLazyByteString $
+    BB.char7 '[' <> commaSep (map hexElem xs) <> BB.char7 ']'
+ where
+  hexElem b = BB.char7 '"' <> BB.byteStringHex b <> BB.char7 '"'
+  commaSep = mconcat . intersperseB (BB.char7 ',')
+  intersperseB _ [] = []
+  intersperseB _ [x] = [x]
+  intersperseB s (x : rest) = x : s : intersperseB s rest
+
+-- | Build a JSON array of integers: @[1,2,3,...]@. Same consumer pattern
+-- as 'jsonHexArray' (values are already ints, so no decoding step).
+jsonIntArray :: [Int] -> ByteString
+jsonIntArray xs =
+  BSL.toStrict . BB.toLazyByteString $
+    BB.char7 '[' <> commaSep (map BB.intDec xs) <> BB.char7 ']'
+ where
+  commaSep = mconcat . intersperseB (BB.char7 ',')
+  intersperseB _ [] = []
+  intersperseB _ [x] = [x]
+  intersperseB s (x : rest) = x : s : intersperseB s rest
 
 sqlLookupEbClosure :: DB.Database -> EbHash -> IO (Maybe [(TxHash, ByteString)])
 sqlLookupEbClosure db ebHash =
@@ -489,39 +492,22 @@ sql_insert_tx =
   "INSERT INTO txs (txHashBytes, txBytes, txBytesSize) VALUES (?, ?, ?)\n\
   \"
 
--- | Insert ebHashes into temp table for batch filtering
-sql_insert_memEbHashes :: String
-sql_insert_memEbHashes =
-  "INSERT INTO mem.ebHashes (ebHashBytes) VALUES (?)"
-
--- | Filter: return ebHashes from temp table that do NOT have bodies in ebTxs
-sql_filter_missing_eb_bodies :: String
-sql_filter_missing_eb_bodies =
-  "SELECT m.ebHashBytes FROM mem.ebHashes m\n\
-  \WHERE NOT EXISTS (SELECT 1 FROM ebTxs e WHERE e.ebHashBytes = m.ebHashBytes)\n\
+-- | Batch-filter ebHashes via JSON1. Parameter is a JSON array of hex
+-- strings; 'unhex(je.value)' decodes back into a BLOB comparable against
+-- the indexed @ebTxs.ebHashBytes@ column.
+sql_filter_missing_eb_bodies_json :: String
+sql_filter_missing_eb_bodies_json =
+  "SELECT unhex(je.value) FROM json_each(?) je\n\
+  \WHERE NOT EXISTS (SELECT 1 FROM ebTxs e WHERE e.ebHashBytes = unhex(je.value))\n\
   \"
 
--- | Flush the temp ebHashes table
-sql_flush_memEbHashes :: String
-sql_flush_memEbHashes =
-  "DELETE FROM mem.ebHashes"
-
--- | Insert txHashes into temp table for batch filtering
-sql_insert_memTxHashes :: String
-sql_insert_memTxHashes =
-  "INSERT INTO mem.txHashes (txHashBytes) VALUES (?)"
-
--- | Filter: return txHashes from temp table that do NOT exist in txs
-sql_filter_missing_txs :: String
-sql_filter_missing_txs =
-  "SELECT m.txHashBytes FROM mem.txHashes m\n\
-  \WHERE NOT EXISTS (SELECT 1 FROM txs t WHERE t.txHashBytes = m.txHashBytes)\n\
+-- | Batch-filter txHashes via JSON1. Same shape as
+-- 'sql_filter_missing_eb_bodies_json'.
+sql_filter_missing_txs_json :: String
+sql_filter_missing_txs_json =
+  "SELECT unhex(je.value) FROM json_each(?) je\n\
+  \WHERE NOT EXISTS (SELECT 1 FROM txs t WHERE t.txHashBytes = unhex(je.value))\n\
   \"
-
--- | Flush the temp txHashes table
-sql_flush_memTxHashes :: String
-sql_flush_memTxHashes =
-  "DELETE FROM mem.txHashes"
 
 -- | Find EBs that are now complete (missingTxCount reached 0).
 sql_find_complete_ebs :: String
@@ -554,44 +540,17 @@ sql_init_missing_tx_count =
   \) WHERE ebHashBytes = ? AND ebSlot = ?\n\
   \"
 
-sql_insert_memTxPoints :: String
-sql_insert_memTxPoints =
-  "INSERT INTO mem.txPoints (ebHashBytes, txOffset) VALUES (?, ?)\n\
-  \"
-
-sql_retrieve_from_ebTxs :: String
-sql_retrieve_from_ebTxs =
-  "SELECT e.txOffset, e.txHashBytes, t.txBytes\n\
-  \FROM ebTxs e\n\
+-- | Batch retrieve of tx bytes for a batch of @(ebHash, offset)@ points.
+-- @?1@ is the ebHash blob (all offsets belong to the same EB); @?2@ is a
+-- JSON int array of offsets. The join uses ebTxs' PK
+-- @(ebHashBytes, txOffset)@, so index lookups still fire.
+sql_retrieve_from_ebTxs_json :: String
+sql_retrieve_from_ebTxs_json =
+  "SELECT je.value, e.txHashBytes, t.txBytes\n\
+  \FROM json_each(?2) je\n\
+  \JOIN ebTxs e ON e.ebHashBytes = ?1 AND e.txOffset = je.value\n\
   \LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
-  \WHERE (e.ebHashBytes, e.txOffset) IN (SELECT ebHashBytes, txOffset FROM mem.txPoints)\n\
-  \ORDER BY e.txOffset ASC\n\
-  \"
-
-sql_flush_memTxPoints :: String
-sql_flush_memTxPoints =
-  "DELETE FROM mem.txPoints\n\
-  \"
-
-sql_attach_memTxPoints :: String
-sql_attach_memTxPoints =
-  "ATTACH DATABASE ':memory:' AS mem;\n\
-  \\n\
-  \CREATE TABLE mem.txPoints (\n\
-  \    ebHashBytes INTEGER NOT NULL\n\
-  \  ,\n\
-  \    txOffset INTEGER NOT NULL\n\
-  \  ,\n\
-  \    PRIMARY KEY (ebHashBytes ASC, txOffset ASC)\n\
-  \  ) WITHOUT ROWID;\n\
-  \\n\
-  \CREATE TABLE mem.txHashes (\n\
-  \    txHashBytes BLOB NOT NULL PRIMARY KEY\n\
-  \  ) WITHOUT ROWID;\n\
-  \\n\
-  \CREATE TABLE mem.ebHashes (\n\
-  \    ebHashBytes BLOB NOT NULL PRIMARY KEY\n\
-  \  ) WITHOUT ROWID;\n\
+  \ORDER BY je.value ASC\n\
   \"
 
 sql_lookup_eb_closure :: String
@@ -608,6 +567,11 @@ sql_lookup_eb_closure =
 
 dbBindBlob :: HasCallStack => DB.Statement -> DB.ParamIndex -> ByteString -> IO ()
 dbBindBlob q p v = withDieStmt q $ DB.bindBlob q p v
+
+-- | Bind as TEXT. Needed for JSON1 payloads: 'json_each' interprets BLOB
+-- arguments as JSONB (SQLite ≥ 3.45), our payload is ASCII JSON.
+dbBindUtf8 :: HasCallStack => DB.Statement -> DB.ParamIndex -> ByteString -> IO ()
+dbBindUtf8 q p v = withDieStmt q $ DB.bindText q p (DB.Utf8 v)
 
 dbBindInt64 :: HasCallStack => DB.Statement -> DB.ParamIndex -> Int64 -> IO ()
 dbBindInt64 q p v = withDieStmt q $ DB.bindInt64 q p v
