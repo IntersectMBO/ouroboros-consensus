@@ -269,41 +269,39 @@ sqlInsertTxs tracer db notify txs = do
   -- call before the write BEGIN below).
   missing <- Set.fromList <$> sqlFilterMissingTxs tracer db (map fst txs)
   let novel = filter (\(h, _) -> h `Set.member` missing) txs
-  completed <- dbWithBEGIN db $ do
-    stmtInsert <- dbPrepare db (fromString sql_insert_tx)
-    stmtDecr <- dbPrepare db (fromString sql_decrement_missing_tx_count)
+  completed <- dbWithBEGIN db $
     -- 'dbStepInsert' still handles the rare race where a concurrent
     -- writer inserted the same hash between the filter above and the
     -- INSERT below.
-    forM_ novel $ \(txHash, txBytes) -> do
-      let txBytesSize = fromIntegral $ BS.length txBytes
-          txHashBytes = let MkTxHash bytes = txHash in bytes
-      dbBindBlob stmtInsert 1 txHashBytes
-      dbBindBlob stmtInsert 2 txBytes
-      dbBindInt64 stmtInsert 3 txBytesSize
-      inserted <- dbStepInsert stmtInsert
-      -- Use raw reset: after ErrorConstraint, dbReset would re-throw the error
-      void $ DB.reset stmtInsert
-      when inserted $ do
-        dbBindBlob stmtDecr 1 txHashBytes
-        dbStep1 stmtDecr
-        dbReset stmtDecr
-    dbFinalize stmtInsert
-    dbFinalize stmtDecr
-    -- Find newly-complete EBs (missingTxCount reached 0)
-    completed <- dbWithPrepare db (fromString sql_find_complete_ebs) $ \stmt -> do
-      let loop acc =
-            dbStep stmt >>= \case
-              DB.Done -> pure (reverse acc)
-              DB.Row -> do
-                ebHash <- MkEbHash <$> DB.columnBlob stmt 0
-                slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 1
-                loop (MkLeiosPoint slot ebHash : acc)
-      loop []
-    -- Mark them as notified so they are not found again
-    dbWithPrepare db (fromString sql_mark_notified_ebs) $ \stmt ->
-      dbStep1 stmt
-    pure completed
+    dbWithPrepare db (fromString sql_insert_tx) $ \stmtInsert ->
+      dbWithPrepare db (fromString sql_decrement_missing_tx_count) $ \stmtDecr -> do
+        forM_ novel $ \(txHash, txBytes) -> do
+          let txBytesSize = fromIntegral $ BS.length txBytes
+              txHashBytes = let MkTxHash bytes = txHash in bytes
+          dbBindBlob stmtInsert 1 txHashBytes
+          dbBindBlob stmtInsert 2 txBytes
+          dbBindInt64 stmtInsert 3 txBytesSize
+          inserted <- dbStepInsert stmtInsert
+          -- Use raw reset: after ErrorConstraint, dbReset would re-throw the error
+          void $ DB.reset stmtInsert
+          when inserted $ do
+            dbBindBlob stmtDecr 1 txHashBytes
+            dbStep1 stmtDecr
+            dbReset stmtDecr
+        -- Find newly-complete EBs (missingTxCount reached 0)
+        completed <- dbWithPrepare db (fromString sql_find_complete_ebs) $ \stmt -> do
+          let loop acc =
+                dbStep stmt >>= \case
+                  DB.Done -> pure (reverse acc)
+                  DB.Row -> do
+                    ebHash <- MkEbHash <$> DB.columnBlob stmt 0
+                    slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 1
+                    loop (MkLeiosPoint slot ebHash : acc)
+          loop []
+        -- Mark them as notified so they are not found again
+        dbWithPrepare db (fromString sql_mark_notified_ebs) $ \stmt ->
+          dbStep1 stmt
+        pure completed
   -- Emit a closure-completion notification for each completed EB
   forM_ completed $ \point -> notify (AcquiredEbTxs point)
   pure completed
