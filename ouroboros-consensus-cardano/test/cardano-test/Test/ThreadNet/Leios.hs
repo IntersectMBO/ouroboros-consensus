@@ -59,7 +59,7 @@ import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isNothing, mapMaybe)
+import Data.Maybe (isJust, isNothing, mapMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
@@ -219,6 +219,8 @@ prop_leios seed =
         & counterexample "[failed] propVoting"
     , propCertifying
         & counterexample "[failed] propCertifying"
+    , propCertifyAndAnnounce
+        & counterexample "[failed] propCertifyAndAnnounce"
     ]
  where
   numNodes = 3 :: Int
@@ -303,6 +305,18 @@ prop_leios seed =
     FromNode nid (FromLeios TraceLeiosVoteAcquired{vote}) -> Just (nid, vote)
     _ -> Nothing
 
+  -- Certifying an EB and announcing a new one are no longer mutually exclusive, so
+  -- an RB can finalise the previous EB (via a cert) while announcing the
+  -- next one. With continuous tx flow, a certifying block rebases the
+  -- mempool onto the post-certified-EB ledger state and announces a fresh EB
+  -- from the survivors. Unless the run produced no certifying blocks at all,
+  -- at least one should exercise the combined path.
+  propCertifyAndAnnounce =
+    (not (null announcedAndCertifiedSlots))
+      & counterexample "no block both certified and announced"
+      & counterexample ("certifying block slots: " <> show certificateBlocks)
+      & counterexample ("certify-and-announce block slots: " <> show certifyAndAnnounceBlocks)
+
   propCertifying =
     conjoin
       [ length reachedQuorumPoints > 0
@@ -341,6 +355,19 @@ prop_leios seed =
       , SJust _ <- [body ^. leiosCertBlockBodyL]
       ]
 
+  -- Slots of blocks that /both/ certify a previous EB (cert in the body)
+  -- and announce a fresh one (announcement in the header);
+  -- this set being non-empty is the direct evidence that we can certify an EB
+  -- and announce a new one in the same RB.
+  certifyAndAnnounceBlocks =
+    toList . Set.fromList $
+      [ blockSlot blk
+      | blk@(BlockDijkstra dijkstraBlk) <- concat nodeChains
+      , let SL.Block _ body = shelleyBlockRaw dijkstraBlk
+      , SJust _ <- [body ^. leiosCertBlockBodyL]
+      , isJust (headerLeiosAnnouncement (getHeader blk))
+      ]
+
   throughput = fromIntegral (sum includedTxCounts) / fromIntegral numSlots :: Double
 
   -- Pick any node — all nodes should converge to the same chain.
@@ -370,6 +397,7 @@ prop_leios seed =
       & tabulate "Praos blocks forged" [show $ length forgedBlocks]
       & tabulate "Leios blocks forged" [show $ length forgedEBs]
       & tabulate "Certifying blocks" [show $ length certificateBlocks]
+      & tabulate "Certify-and-announce blocks" [show $ length certifyAndAnnounceBlocks]
       & tabulate "Effective throughput" [show throughput]
 
   -- FIXME: This only exercises the in-memory replay via
