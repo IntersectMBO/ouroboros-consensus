@@ -446,26 +446,30 @@ getPerasCertInclusionView ::
   ChainDbEnv m blk ->
   STM m (Maybe (PerasCertInclusionView (WithArrivalTime (ValidatedPerasCert blk)) blk))
 getPerasCertInclusionView roundNo env = do
-  resolver <- getPerasEpochContextResolver env
-  perasParams <- case resolveRoundNo resolver roundNo of
-    Left err -> throwSTM err
-    Right perasContext -> pure $ pecParams perasContext
-  latestCertSeen <-
-    withOriginFromMaybe
-      . fmap forgetBoostedBlockStatus
+  mbLatestCertSeen <-
+    fmap forgetBoostedBlockStatus
       <$> getLatestPerasCertSeen env
-  latestCertOnChainRoundNo <-
-    withOriginFromMaybe
-      <$> getLatestPerasCertOnChainRound env
-  certsInChainDB <-
-    getPerasCertIds env
-  pure $
-    mkPerasCertInclusionView
-      perasParams
-      roundNo
-      latestCertSeen
-      latestCertOnChainRoundNo
-      certsInChainDB
+  case mbLatestCertSeen of
+    Nothing ->
+      pure Nothing
+    Just latestCertSeen -> do
+      resolver <- getPerasEpochContextResolver env
+      perasParams <- case resolveRoundNo resolver roundNo of
+        Left err -> throwSTM err
+        Right perasContext -> pure $ pecParams perasContext
+      latestCertOnChainRoundNo <-
+        withOriginFromMaybe
+          <$> getLatestPerasCertOnChainRound env
+      certsInChainDB <-
+        getPerasCertIds env
+      pure $
+        Just $
+        mkPerasCertInclusionView
+          perasParams
+          roundNo
+          latestCertSeen
+          latestCertOnChainRoundNo
+          certsInChainDB
 
 getTimeResolutionContext ::
   MonadSTM m =>

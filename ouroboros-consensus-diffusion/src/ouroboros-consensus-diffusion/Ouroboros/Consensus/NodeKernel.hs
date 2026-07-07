@@ -850,15 +850,17 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     -- Decide if we need to include a Peras certificate in this block.
     mResult <- lift $ atomically $ do
       let (Time.TimeResolutionContextHandle getTimeResolutionContext) = ChainDB.getTimeResolutionContextHandle chainDB
-      let certInclusionViewHandle = ChainDB.getPerasCertInclusionViewHandle chainDB
-
       context <- getTimeResolutionContext
+
       case forgetEraIndex <$> Time.resolveSlotToPerasRoundInfo context currentSlot of
-        Left err -> throwSTM err
+        Left err ->
+          throwSTM err
         -- We don't know whether Peras is enabled at this point.
         -- Abort if it isn't.
-        Right HF.NoPerasEnabled -> pure Nothing
+        Right HF.NoPerasEnabled ->
+          pure Nothing
         Right (HF.PerasEnabled roundInfo) -> do
+          let certInclusionViewHandle = ChainDB.getPerasCertInclusionViewHandle chainDB
           let currentRoundNo = Time.stpriPerasRoundNo roundInfo
           decision <- needCertInContext certInclusionViewHandle currentRoundNo
           pure $ Just (currentRoundNo, decision)

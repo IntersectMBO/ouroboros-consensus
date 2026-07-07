@@ -35,7 +35,6 @@ import Ouroboros.Consensus.Block
   , PerasRoundNo (..)
   , ValidatedPerasCert
   , WithOrigin (..)
-  , withOriginToMaybe
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
@@ -87,10 +86,6 @@ data PerasCertInclusionView cert blk = PerasCertInclusionView
 
 -- | Construct a 'PerasCertInclusionView' from the given inputs.
 --
--- Returns 'Nothing' if we are trying to construct the view without having a
--- latest certificate seen, which is a precondition to being able to include it
--- in the block we are building.
---
 -- NOTE: this assumes that the client code computes all the needed inputs
 -- within the same STM transaction, or the results may be inconsistent.
 mkPerasCertInclusionView ::
@@ -101,41 +96,37 @@ mkPerasCertInclusionView ::
   -- | Current Peras round number
   PerasRoundNo ->
   -- | Most recent certificate seen by the voter
-  WithOrigin cert ->
+  cert ->
   -- | Round number of the latest certificate present in our preferred chain
   WithOrigin PerasRoundNo ->
   -- | Set of certificates (by their round number) present in our database
   Set PerasRoundNo ->
   -- | Constructed certificate inclusion view
-  Maybe (PerasCertInclusionView cert blk)
+  PerasCertInclusionView cert blk
 mkPerasCertInclusionView
   perasParams
   currRoundNo
   latestCertSeen
   latestCertOnChain
   certIds = do
-    latestCertSeenView <- withOriginToMaybe (mkLatestCertSeenView latestCertSeen)
-    latestCertOnChainView <- traverse mkLatestCertOnChainView latestCertOnChain
-    pure $
-      PerasCertInclusionView
+    PerasCertInclusionView
         { perasParams = perasParams
         , currRoundNo = currRoundNo
-        , latestCertSeen = latestCertSeenView
-        , latestCertOnChain = latestCertOnChainView
+        , latestCertSeen =  mkLatestCertSeenView latestCertSeen
+        , latestCertOnChain = mkLatestCertOnChainView <$> latestCertOnChain
         , certIds = certIds
         }
    where
-    mkLatestCertSeenView = fmap $ \cert ->
+    mkLatestCertSeenView cert =
       LatestCertSeenView
         { lcsCert = cert
         , lcsCertRound = getPerasCertRound cert
         }
 
     mkLatestCertOnChainView roundNo =
-      Just $
-        LatestCertOnChainView
-          { lcocRoundNo = roundNo
-          }
+      LatestCertOnChainView
+        { lcocRoundNo = roundNo
+        }
 
 newtype PerasCertInclusionViewHandle m blk
   = PerasCertInclusionViewHandle

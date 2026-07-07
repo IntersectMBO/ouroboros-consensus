@@ -166,15 +166,9 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         (History.StandardSafeZone (safeFromTipA k))
         (safeZoneB k)
       <*> pure (GenesisWindow ((unNonZero $ maxRollbacks k) * 2))
-      <*> pure (History.PerasEnabled perasRoundLengthAB)
-
-  -- The Peras round length, shared by both eras.
-  --
-  -- NOTE: We pick half an epoch so that two Peras rounds fit within a single
-  -- epoch and we don't trigger a 'PastHorizonException'.
-  perasRoundLengthAB :: PerasRoundLength
-  perasRoundLengthAB =
-    PerasRoundLength (unEpochSize (getA testSetupEpochSize) `div` 2)
+      <*> AB
+        (History.PerasEnabled $ PerasRoundLength $ unEpochSize (getA testSetupEpochSize) `div` 2)
+        (History.PerasEnabled $ PerasRoundLength $ unEpochSize (getB testSetupEpochSize) `div` 2)
 
   shape :: History.Shape '[BlockA, BlockB]
   shape = History.Shape $ exactlyTwo eraParamsA eraParamsB
