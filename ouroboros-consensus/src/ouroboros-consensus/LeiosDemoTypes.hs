@@ -1,6 +1,9 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
@@ -57,7 +60,7 @@ import Cardano.Crypto.Leios
 import Cardano.Crypto.Util (SignableRepresentation (..))
 import Cardano.Ledger.Core (EraTx, Tx, TxLevel (TopTx))
 import Cardano.Prelude (NFData, NonEmpty, toList, toString, (&))
-import Cardano.Slotting.Slot (SlotNo (SlotNo))
+import Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin, withOrigin)
 import Codec.Serialise (Serialise, decode, encode)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
@@ -71,17 +74,20 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
 import Data.Fixed (Pico)
+import Data.Foldable (foldl')
 import Data.Function (on)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import Data.List (nubBy, sortOn)
 import Data.Map (Map)
-import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map
 import Data.Ratio ((%))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Set.NonEmpty (NESet)
+import qualified Data.Set.NonEmpty as NESet
 import Data.String (fromString)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
@@ -94,6 +100,7 @@ import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
 import qualified LeiosDemoOnlyTestNotify as LeiosNotify
+import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import qualified Numeric
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -200,6 +207,80 @@ decodeLeiosPoint :: Decoder s LeiosPoint
 decodeLeiosPoint = do
   enforceSize (fromString "LeiosPoint") 2
   MkLeiosPoint <$> decode <*> decodeEbHash
+
+-- | Acquired EB tx closures, aged by the youngest announcement slot ever seen
+-- for each EB (tracked here, not derived from the VolatileDB).
+data AcquiredLeiosEbs = AcquiredLeiosEbs
+  { alebYoungestSlot :: !(Map EbHash SlotNo)
+  , alebBySlot :: !(Map SlotNo (NESet EbHash))
+    -- ^ INVARIANT: is merely reverse index of 'alebYoungestSlot'
+  }
+  deriving stock (Show, Generic)
+
+deriving via
+  OnlyCheckWhnfNamed "AcquiredLeiosEbs" AcquiredLeiosEbs
+  instance
+    NoThunks AcquiredLeiosEbs
+
+emptyAcquiredLeiosEbs :: AcquiredLeiosEbs
+emptyAcquiredLeiosEbs = AcquiredLeiosEbs Map.empty Map.empty
+
+-- | Use the 'Map' as a 'Set' without allocating the 'Set'.
+data AcquiredLeiosEbsSet =
+  forall x. MkAcquiredLeiosEbsSet !(Map EbHash x)
+
+acquiredLeiosEbHashes :: AcquiredLeiosEbs -> AcquiredLeiosEbsSet
+acquiredLeiosEbHashes = MkAcquiredLeiosEbsSet . alebYoungestSlot
+
+acquiredLeiosEbsSetMember :: EbHash -> AcquiredLeiosEbsSet -> Bool
+acquiredLeiosEbsSetMember eb (MkAcquiredLeiosEbsSet m) = Map.member eb m
+
+-- | NOT EXPORTED
+--
+-- An auxiliary for 'insertAcquiredLeiosEb'.
+newtype Alteration a b = MkAlteration (Maybe (a, b)) deriving (Functor)
+
+-- | 'Nothing' if unchanged; @'Just' (novel, st')@ otherwise, where @novel@ is
+-- 'True' iff the EB was not present before. Only bumps the slot when strictly
+-- greater than the one recorded.
+insertAcquiredLeiosEb ::
+  LeiosPoint -> AcquiredLeiosEbs -> Maybe (Bool, AcquiredLeiosEbs)
+insertAcquiredLeiosEb (MkLeiosPoint slot eb) (AcquiredLeiosEbs youngest bySlot) =
+  case mbAltered of
+      Nothing -> Nothing
+      Just ((novel, bySlot'), youngest') ->
+        Just (novel, AcquiredLeiosEbs youngest' bySlot')
+ where
+  MkAlteration mbAltered =
+    Map.alterF (fmap Just . MkAlteration . alteration) eb youngest
+  alteration = \case
+      Nothing -> Just ((True, insertBucket slot eb bySlot), slot)
+      Just prevSlot
+        | slot <= prevSlot -> Nothing
+        | otherwise ->
+          Just ((False, insertBucket slot eb $ deleteBucket prevSlot eb bySlot), slot)
+
+  insertBucket s e = Map.insertWith NESet.union s (NESet.singleton e)
+  deleteBucket s e = Map.update (NESet.nonEmptySet . NESet.delete e) s
+
+acquiredLeiosEbsFromList :: [LeiosPoint] -> AcquiredLeiosEbs
+acquiredLeiosEbsFromList =
+  foldl' (\st p -> maybe st snd (insertAcquiredLeiosEb p st)) emptyAcquiredLeiosEbs
+
+-- | Drop every EB whose youngest announcement slot is strictly older than the
+-- given (immutable tip) slot.
+pruneAcquiredLeiosEbs ::
+  WithOrigin SlotNo -> AcquiredLeiosEbs -> Maybe AcquiredLeiosEbs
+pruneAcquiredLeiosEbs immTip (AcquiredLeiosEbs youngest bySlot) =
+  withOrigin Nothing prune immTip
+ where
+  prune immTipSlot
+    | Map.null prunedSlots = Nothing
+    | otherwise = Just (AcquiredLeiosEbs youngest' bySlot')
+   where
+    (prunedSlots, bySlot') = Map.spanAntitone (< immTipSlot) bySlot
+    prunedEbHashes = foldMap NESet.toSet prunedSlots
+    youngest' = youngest `Map.withoutKeys` prunedEbHashes
 
 -- | Types used in Praos headers
 data EbAnnouncement = EbAnnouncement
