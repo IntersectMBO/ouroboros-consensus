@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
 module LeiosDemoDb.InMemory
@@ -11,7 +10,7 @@ module LeiosDemoDb.InMemory
   , newLeiosDBInMemoryWith
   ) where
 
-import Cardano.Prelude (Generic, forM_, listToMaybe, maybeToList, when)
+import Cardano.Prelude (Generic, forM_, maybeToList, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan

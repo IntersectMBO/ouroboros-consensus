@@ -653,9 +653,6 @@ dbWithBEGIN db k =
       )
       (\() -> k)
 
-dbReset :: HasCallStack => DB.Statement -> IO ()
-dbReset stmt = withDieStmt stmt $ DB.reset stmt
-
 dbStep :: HasCallStack => DB.Statement -> IO DB.StepResult
 dbStep stmt = withDieStmt stmt $ DB.stepNoCB stmt
 
