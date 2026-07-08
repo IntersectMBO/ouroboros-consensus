@@ -18,7 +18,7 @@ module LeiosDemoDb.SQLite
 
 import Cardano.Prelude (forM_, traverse_, when)
 import Cardano.Slotting.Slot (SlotNo (..))
-import Control.Concurrent (myThreadId, threadDelay)
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
   , dupTChan
@@ -48,8 +48,6 @@ import Database.SQLite3
   , open2
   )
 import qualified Database.SQLite3.Direct as DB
-import Foreign.Ptr (Ptr, WordPtr, castPtr)
-import Foreign.Storable (peekByteOff)
 import GHC.Stack (HasCallStack)
 import qualified GHC.Stack
 import LeiosDemoDb.Common
@@ -205,43 +203,6 @@ useStmt :: DB.Statement -> IO a -> IO a
 useStmt stmt action =
   action `MonadThrow.finally` (void $ DB.reset stmt)
 
--- | TEMP: sanity-check that the @sqlite3@ conn struct's @.mutex@ field
--- still looks like a valid pointer.
---
--- Motivation: the proto-devnet crashes with a SIGSEGV inside
--- @sqlite3_finalize@ where the sqlite3 struct's memory has been
--- overwritten with small integer values (in one dump, @pVdbe = 0x11@
--- and @mutex = 0x4b@). The safety net on 'LeiosDbConnection' only
--- catches cross-thread facade entry, not corruption from further
--- inside. This peek runs on every facade entry BEFORE we hand
--- anything to SQLite, so we throw a Haskell exception with a stack
--- trace instead of segfaulting.
---
--- Layout assumption (SQLite 3.45.0, our compile flags):
---
---   +0   sqlite3_vfs *pVfs
---   +8   struct Vdbe *pVdbe
---   +16  CollSeq *pDfltColl
---   +24  sqlite3_mutex *mutex     ← we peek this
---
--- This offset is architecture- and compile-flag-dependent; we know
--- it's correct on x86_64 Linux with our build flags because we
--- pinned it from the coredump.
---
--- Under SERIALIZED threading mode (which our SQLite is compiled
--- with, @THREADSAFE=1@) the @.mutex@ field is always a non-NULL
--- pointer while the conn is alive. So @0@ or any small integer
--- means the struct has been freed and reused.
-checkSqliteIntegrity :: HasCallStack => DB.Database -> IO ()
-checkSqliteIntegrity (DB.Database dbp) = do
-  mutex :: WordPtr <- peekByteOff (castPtr dbp :: Ptr ()) 24
-  when (fromIntegral mutex < (0x1000 :: Integer)) $
-    error $
-      "LeiosDbConnection: sqlite3 conn struct appears corrupted; "
-        <> "db->mutex = "
-        <> show mutex
-        <> " (expected a valid pointer). Refusing to proceed to avoid SIGSEGV."
-
 openSQLiteConnection ::
   Tracer IO TraceLeiosDb ->
   FilePath ->
@@ -261,33 +222,18 @@ openSQLiteConnection tracer dbPath notificationChan = do
   stmts <- prepareStmts db
   let conn = Conn{connDb = db, connStmts = stmts}
       notify = atomically . writeTChan notificationChan
-  -- TEMP: safety net. 'LeiosDbConnection' is a direct-sqlite handle that is
-  -- not thread-safe (SQLite protects concurrent ops but not close-during-op).
-  -- Fail loudly with a call stack if any op runs on a different thread than
-  -- the opener. Remove once we have proven all callsites are single-threaded.
-  owner <- myThreadId
-  let check :: HasCallStack => IO ()
-      check = do
-        me <- myThreadId
-        when (me /= owner) $
-          error $
-            "LeiosDbConnection used from thread "
-              <> show me
-              <> " but opened on "
-              <> show owner
-        checkSqliteIntegrity db
   pure $
     LeiosDbConnection
-      { close = check >> finalizeStmts stmts >> void (DB.close db)
-      , leiosDbScanEbPoints = check >> sqlScanEbPoints conn
-      , leiosDbInsertEbPoint = \p sz -> check >> sqlInsertEbPoint conn p sz
-      , leiosDbLookupEbBody = \h -> check >> sqlLookupEbBody conn h
-      , leiosDbInsertEbBody = \p eb -> check >> sqlInsertEbBody tracer conn notify p eb
-      , leiosDbInsertTxs = \txs -> check >> sqlInsertTxs tracer conn notify txs
-      , leiosDbBatchRetrieveTxs = \h offs -> check >> sqlBatchRetrieveTxs conn h offs
-      , leiosDbFilterMissingEbBodies = \ebs -> check >> sqlFilterMissingEbBodies conn ebs
-      , leiosDbFilterMissingTxs = \hs -> check >> sqlFilterMissingTxs conn hs
-      , leiosDbLookupEbClosure = \h -> check >> sqlLookupEbClosure conn h
+      { close = finalizeStmts stmts >> void (DB.close db)
+      , leiosDbScanEbPoints = sqlScanEbPoints conn
+      , leiosDbInsertEbPoint = sqlInsertEbPoint conn
+      , leiosDbLookupEbBody = sqlLookupEbBody conn
+      , leiosDbInsertEbBody = sqlInsertEbBody tracer conn notify
+      , leiosDbInsertTxs = sqlInsertTxs tracer conn notify
+      , leiosDbBatchRetrieveTxs = sqlBatchRetrieveTxs conn
+      , leiosDbFilterMissingEbBodies = sqlFilterMissingEbBodies conn
+      , leiosDbFilterMissingTxs = sqlFilterMissingTxs conn
+      , leiosDbLookupEbClosure = sqlLookupEbClosure conn
       }
 
 -- * Top-level implementations
