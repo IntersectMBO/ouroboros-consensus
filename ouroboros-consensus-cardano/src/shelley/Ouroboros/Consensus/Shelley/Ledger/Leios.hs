@@ -93,7 +93,24 @@ instance
         (pointEbHash point)
     case mAnnouncedEb of
       Nothing ->
-        pure []
+        -- FIXME(TEMP diagnostic): a missing closure here means we're
+        -- about to apply a cert-RB whose EB payload is not in this
+        -- node's LeiosDb. Under the intended parking design, chain-sel
+        -- would not have selected this block yet — it's supposed to
+        -- park pending closure acquisition. The previous behaviour
+        -- ('pure []') silently produced an empty tx list, letting the
+        -- cert-RB apply as if the EB carried no txs, which then
+        -- diverged the UTxO and caused downstream blocks to fail
+        -- validation ('ValueNotConservedUTxO' / 'BadInputsUTxO' on
+        -- txs consuming outputs the missing EB should have produced).
+        -- Erroring loudly here surfaces the exact block/EB pair that
+        -- exposed the parking gap, instead of silently corrupting the
+        -- ledger state.
+        error $
+          "resolveLeiosClosure: EB closure missing from LeiosDb for point "
+            <> show point
+            <> "; chain-sel selected a cert-RB without its EB closure. "
+            <> "Refusing to apply as empty (would diverge UTxO)."
       Just closureEntries ->
         pure $ mkShelleyTx . deserialiseLeiosTx . snd <$> closureEntries
 
