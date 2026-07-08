@@ -1597,6 +1597,10 @@ instance
     HeaderDijkstra dHdr -> headerLeiosAnnouncement dHdr
     _ -> Nothing
 
+  headerContainsLeiosCert hdr = case hdr of
+    HeaderDijkstra dHdr -> headerContainsLeiosCert dHdr
+    _ -> False
+
   protocolStateLeiosAnnouncement cds = case cds of
     ChainDepStateDijkstra praosSt ->
       protocolStateLeiosAnnouncement @(ShelleyBlock (Praos c) DijkstraEra) praosSt
