@@ -104,10 +104,10 @@ chainSyncHeadersServer tracer chainDB flr =
 -- through unchanged.
 --
 -- The server keeps only the announcer's announcement point ('LeiosPoint')
--- between blocks rather than the full announcer header. Since a valid cert
--- block must follow a header carrying an announcement, an absent
--- announcement is sufficient signal that no splice is needed — letting us
--- skip the deserialise/re-encode roundtrip entirely in that case.
+-- between blocks rather than the full announcer header. A splice is needed
+-- only for a CertRB ('headerContainsLeiosCert'); a block carrying no cert is
+-- served unchanged (its predecessor's announced EB may never have been
+-- certified), which also skips the deserialise/re-encode roundtrip.
 chainSyncBlocksServer ::
   forall m blk.
   ( IOLike m
@@ -157,13 +157,21 @@ chainSyncBlocksServer tracer chainDB ccfg leiosDb flr = ChainSyncServer $ do
       mPrevAnn <- readTVarIO prevAnnVar
       atomically $ writeTVar prevAnnVar (fst <$> headerLeiosAnnouncement hdr)
       sblk' <- case mPrevAnn of
-        Nothing -> pure sblk
-        Just prevAnn -> case decodeRaw sblk of
+        -- Only a CertRB — a block whose header records that it carries a Leios
+        -- certificate ('headerContainsLeiosCert') — splices in an EB closure,
+        -- and it splices the EB announced by its predecessor (the one the cert
+        -- attests to). A block that merely follows an announcement but carries
+        -- no certificate of its own — e.g. one whose predecessor announced an
+        -- EB that was never certified — is served unchanged. Splicing there
+        -- would inline an EB that is not chain content, and whose closure may
+        -- be absent from the LeiosDb (throwing in 'resolveLeiosClosure').
+        Just prevAnn | headerContainsLeiosCert hdr -> case decodeRaw sblk of
           Left _ -> pure sblk
           Right blk -> do
             resolveLeiosClosure leiosDb prevAnn blk
               <&> inlineLeiosClosure blk
               <&> encode
+        _ -> pure sblk
       pure (WithPoint sblk' pt)
 
     decodeRaw :: Serialised blk -> Either String blk
