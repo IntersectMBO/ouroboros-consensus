@@ -48,7 +48,12 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
 import GHC.Stack (HasCallStack)
-import LeiosDemoTypes (EbHash, pointEbHash)
+import LeiosDemoTypes
+  ( AcquiredLeiosEbsSet
+  , acquiredLeiosEbHashes
+  , acquiredLeiosEbsSetMember
+  , pointEbHash
+  )
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
 import Ouroboros.Consensus.Config
@@ -128,7 +133,7 @@ initialChainSelection ::
   -- are skipped, exactly as in 'constructPreferableCandidates'; only the
   -- successor filter is needed here, since 'constructChains' only ever reaches a
   -- block as a successor of the immutable anchor (never as a standalone tip).
-  STM m (Set EbHash) ->
+  STM m AcquiredLeiosEbsSet ->
   LoE () ->
   PerasWeightSnapshot blk ->
   m (AnchoredFragment (Header blk))
@@ -749,7 +754,7 @@ constructPreferableCandidates CDB{..} weights curChain hdrCache p = do
     -- 'ignoreUnacquiredCertRBSuc'). This is a /transient/ exclusion (the EB may
     -- arrive later and make the block selectable) — unlike the permanent
     -- 'ignoreInvalid'/'ignoreInvalidSuc' exclusion of invalid blocks.
-    acquiredEbs <- readTVar cdbAcquiredLeiosEbs
+    acquiredEbs <- acquiredLeiosEbHashes <$> readTVar cdbAcquiredLeiosEbs
     rawSuccsOf <- VolatileDB.filterByPredecessor cdbVolatileDB
     rawLookupBlockInfo <- VolatileDB.getBlockInfo cdbVolatileDB
     let succsOf =
@@ -1471,7 +1476,7 @@ ignoreInvalidSuc _ invalid succsOf =
 -- that the predecessor's announcement is read regardless of any other
 -- filtering.
 isUnacquiredCertRB ::
-  Set EbHash ->
+  AcquiredLeiosEbsSet ->
   (HeaderHash blk -> Maybe (VolatileDB.BlockInfo blk)) ->
   HeaderHash blk ->
   Bool
@@ -1495,14 +1500,14 @@ isUnacquiredCertRB acquiredEbs lookupBlockInfo h = case lookupBlockInfo h of
             -- malformed and rejected by header validation (as above). Either
             -- way, report it unacquired.
             Nothing -> True
-            Just ebPt -> pointEbHash ebPt `Set.notMember` acquiredEbs
+            Just ebPt -> not (acquiredLeiosEbsSetMember (pointEbHash ebPt) acquiredEbs)
 
 -- | Wrap @getBlockInfo@ so that a cert-RB whose required EB closure has not been
 -- acquired ('isUnacquiredCertRB') is reported as absent — hiding it from chain
 -- selection both as a candidate tip and (with 'ignoreUnacquiredCertRBSuc') as a
 -- successor, so it is parked in the VolatileDB until its EB arrives.
 ignoreUnacquiredCertRB ::
-  Set EbHash ->
+  AcquiredLeiosEbsSet ->
   (HeaderHash blk -> Maybe (VolatileDB.BlockInfo blk)) ->
   (HeaderHash blk -> Maybe (VolatileDB.BlockInfo blk))
 ignoreUnacquiredCertRB acquiredEbs lookupBlockInfo h
@@ -1512,7 +1517,7 @@ ignoreUnacquiredCertRB acquiredEbs lookupBlockInfo h
 -- | Wrap a @successors@ function so that cert-RBs whose required EB closure has
 -- not been acquired are not returned as successors. See 'ignoreUnacquiredCertRB'.
 ignoreUnacquiredCertRBSuc ::
-  Set EbHash ->
+  AcquiredLeiosEbsSet ->
   (HeaderHash blk -> Maybe (VolatileDB.BlockInfo blk)) ->
   (ChainHash blk -> Set (HeaderHash blk)) ->
   (ChainHash blk -> Set (HeaderHash blk))

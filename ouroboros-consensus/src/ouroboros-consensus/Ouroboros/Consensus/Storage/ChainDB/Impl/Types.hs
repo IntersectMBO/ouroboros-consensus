@@ -92,13 +92,12 @@ import Data.Map.Strict (Map)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
-import Data.Set (Set)
 import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import LeiosDemoDb.Common (LeiosDbHandle)
-import LeiosDemoTypes (EbHash)
+import LeiosDemoTypes (AcquiredLeiosEbs, EbHash)
 import NoThunks.Class (OnlyCheckWhnfNamed (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime)
@@ -386,23 +385,13 @@ data ChainDbEnv m blk = CDB
   -- ^ Information on the last starvation of ChainSel, whether ongoing or
   -- ended recently.
   , cdbPerasCertDB :: !(PerasCertDB m blk)
-  , cdbAcquiredLeiosEbs :: !(StrictTVar m (Set EbHash))
-  -- ^ The set of Leios endorser blocks (EBs) whose tx closure has been
-  -- acquired and whose announcer is no older than the immutable tip. ChainSel
-  -- consults it (membership) to avoid selecting an RB that certifies an EB
-  -- whose closure is not yet available. Owned by the ChainDB: seeded at open
-  -- from the LeiosDb (via 'leiosDbScanCompleteEbClosuresNotOlderThanSlot', filtered by the
-  -- immutable tip), grown by 'leiosAcquiredEbsRunner' from LeiosDb
-  -- closure-completion notifications, and pruned by 'pruneAcquiredLeiosEbs' as
-  -- a GC is scheduled (dropping EBs no longer announced by a VolatileDB block
-  -- at or after the immutable tip). On growth, 'leiosAcquiredEbsRunner' also
-  -- enqueues a 'ChainSelReprocessLeiosEb' so the @addBlockRunner@ reprocesses
-  -- the parked cert-RBs in FIFO order. Empty (and never written) when Leios is
-  -- not in play.
-  --
-  -- TODO: the prune is an O(set) sweep of the VolatileDB announcer index each
-  -- time a GC is scheduled; it could be made incremental given a feed of EB
-  -- announcements to maintain a slot index from.
+  , cdbAcquiredLeiosEbs :: !(StrictTVar m AcquiredLeiosEbs)
+  -- ^ The Leios EBs whose tx closure has been acquired, aged by youngest
+  -- announcement slot. ChainSel consults it (membership) to avoid selecting an
+  -- RB that certifies an EB whose closure is not yet available. Seeded at open
+  -- from the LeiosDb, grown by 'leiosAcquiredEbsRunner' from closure-completion
+  -- notifications (which also enqueue a 'ChainSelReprocessLeiosEb'), and pruned
+  -- by age as a GC is scheduled.
   , cdbLeiosDb :: !(LeiosDbHandle m)
   -- ^ The LeiosDb handle. The LeiosDb is one of the stores the ChainDB owns and
   -- orchestrates -- alongside the ImmutableDB, VolatileDB, LedgerDB and
