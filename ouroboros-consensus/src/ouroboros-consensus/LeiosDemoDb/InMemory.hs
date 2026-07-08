@@ -259,16 +259,14 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
 -- @>= sinceSlot@, so we collect (and dedupe) the hashes of those points. This
 -- is precise across all of an EB's announcer slots, as in the SQLite backend.
 imScanCompleteEbClosuresSince ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m [EbHash]
+  IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m [LeiosPoint]
 imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
   s <- readTVar stateVar
-  pure $
-    Set.toList $
-      Set.fromList
-        [ pointEbHash p
-        | p <- Set.toList (imCompletedEbs s)
-        , pointSlotNo p >= sinceSlot
-        ]
+  pure
+    [ p
+    | p <- Set.toList (imCompletedEbs s)
+    , pointSlotNo p >= sinceSlot
+    ]
 
 imBatchRetrieveTxs ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
