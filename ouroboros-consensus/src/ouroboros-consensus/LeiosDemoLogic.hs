@@ -872,8 +872,10 @@ leiosCertRbOffer (outstandingVar, readyVar) peerVars (point, ebBytesSize) = do
             }
   -- As if 'MsgLeiosBlockOffer' (body) and 'MsgLeiosBlockTxsOffer' (txs): record
   -- this peer as offering both.
-  MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) ->
-    pure (Set.insert ebHash offers1, Set.insert ebHash offers2)
+  MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
+    let !offers1' = Set.insert ebHash offers1
+        !offers2' = Set.insert ebHash offers2
+    pure (offers1', offers2')
   void $ MVar.tryPutMVar readyVar ()
 
 -----

@@ -552,7 +552,7 @@ leiosFetchClientPeerPipelined tryNext =
         Succ m ->
           Collect
             (Just $ send stop n job)
-            (\MkC -> go1 stop m)
+            (\MkC -> send stop m job)
 
   send ::
     MutVar (PrimState m) WhetherDraining ->

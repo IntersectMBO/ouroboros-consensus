@@ -37,7 +37,7 @@ data LeiosDbHandle m = LeiosDbHandle
   -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosEbNotification })
   , open :: m (LeiosDbConnection m)
   -- ^ Open a new connection to the LeiosDb.
-  , leiosDbScanCompleteEbClosuresNotOlderThanSlot :: HasCallStack => SlotNo -> m [EbHash]
+  , leiosDbScanCompleteEbClosuresNotOlderThanSlot :: HasCallStack => SlotNo -> m [LeiosPoint]
   -- ^ Scan the EBs whose tx closure is already complete and that were announced
   -- by an RB no older than the given slot. The ChainDB calls this once at
   -- startup -- passing the immutable tip slot -- to seed the acquired-EB

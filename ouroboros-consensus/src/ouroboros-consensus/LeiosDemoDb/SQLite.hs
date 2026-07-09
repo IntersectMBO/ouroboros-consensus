@@ -111,16 +111,16 @@ newLeiosDBSQLite tracer dbPath = do
 -- connection. Only an existing DB can hold complete closures: a
 -- fresh DB file is created lazily by the first 'open', so when the file does
 -- not exist there is nothing to scan.
-sqlScanCompleteEbClosuresSince :: FilePath -> SlotNo -> IO [EbHash]
+sqlScanCompleteEbClosuresSince :: FilePath -> SlotNo -> IO [LeiosPoint]
 sqlScanCompleteEbClosuresSince dbPath sinceSlot = do
   dbExists <- doesFileExist dbPath
   if not dbExists
     then pure []
     else do
       db <- open2 (fromString dbPath) [SQLOpenReadWrite] SQLVFSDefault
-      hashes <- sqlScanCompleteEbHashesSince db sinceSlot
+      points <- sqlScanCompleteEbPointsSince db sinceSlot
       void $ DB.close db
-      pure hashes
+      pure points
 
 -- * Connection management
 
@@ -172,16 +172,17 @@ sqlScanEbPoints db =
               loop ((slot, hash) : acc)
     loop []
 
-sqlScanCompleteEbHashesSince :: DB.Database -> SlotNo -> IO [EbHash]
-sqlScanCompleteEbHashesSince db sinceSlot =
+sqlScanCompleteEbPointsSince :: DB.Database -> SlotNo -> IO [LeiosPoint]
+sqlScanCompleteEbPointsSince db sinceSlot =
   dbWithBEGIN db $ dbWithPrepare db (fromString sql_scan_complete_ebs_since) $ \stmt -> do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo sinceSlot)
     let loop acc =
           dbStep stmt >>= \case
             DB.Done -> pure (reverse acc)
             DB.Row -> do
-              hash <- MkEbHash <$> DB.columnBlob stmt 0
-              loop (hash : acc)
+              slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
+              hash <- MkEbHash <$> DB.columnBlob stmt 1
+              loop (MkLeiosPoint slot hash : acc)
     loop []
 
 sqlLookupEbPoint :: DB.Database -> EbHash -> IO (Maybe SlotNo)
@@ -487,10 +488,11 @@ sql_scan_ebs =
 -- /any/ complete row and /any/ row at @ebSlot >= ?@.
 sql_scan_complete_ebs_since :: String
 sql_scan_complete_ebs_since =
-  "SELECT DISTINCT ebHashBytes FROM ebs\n\
+  "SELECT MAX(ebSlot), ebHashBytes FROM ebs\n\
   \WHERE ebSlot >= ?\n\
   \  AND ebHashBytes IN\n\
   \      (SELECT ebHashBytes FROM ebs WHERE missingTxCount IS NOT NULL AND missingTxCount <= 0)\n\
+  \GROUP BY ebHashBytes\n\
   \"
 
 sql_lookup_eb :: String
