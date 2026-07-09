@@ -24,7 +24,7 @@ import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
 import Cardano.Prelude (nonEmpty)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import Control.Exception
-import Control.Monad (void)
+import Control.Monad (void, when)
 import Control.Tracer (traceWith)
 import Data.ByteString.Short (fromShort)
 import Data.Maybe (isJust)
@@ -36,6 +36,7 @@ import LeiosDemoTypes
   ( EbAnnouncement (..)
   , ForgedLeiosEb (..)
   , LeiosPoint (..)
+  , RbHash (..)
   , TraceLeiosKernel (..)
   , forgeLeiosEb
   , hashLeiosEb
@@ -110,14 +111,18 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   let blk = mkShelleyBlock $ SL.Block hdr rbBody
   case fst <$> mayEbAnn of
     Just (forgedEb :: ForgedLeiosEb) -> do
+      let announcingRbHashBytes =
+            fromShort
+              . toShortRawHash (Proxy @(ShelleyBlock proto era))
+              $ blk.shelleyBlockHeaderHash
       traceWith fbLeiosTracer $
         TraceLeiosBlockAnnounced
-          { announcingRbHashBytes =
-              fromShort
-                . toShortRawHash (Proxy @(ShelleyBlock proto era))
-                $ blk.shelleyBlockHeaderHash
+          { announcingRbHashBytes = announcingRbHashBytes
           , announcedEbPoint = forgedEb.point
           }
+      when (isJust mayLeiosCert) $
+        traceWith fbLeiosTracer $
+          TraceLeiosCertifiedAndAnnounced{atSlot = fbCurrentSlotNo, rbHash = MkRbHash announcingRbHashBytes}
     Nothing -> pure ()
   return $
     assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus fbConfig) blk) $
