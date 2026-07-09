@@ -12,6 +12,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -60,13 +61,14 @@ import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config (configLedger)
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.HeaderValidation (headerStateChainDep)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
-import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..), resolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq hiding
   ( anchor
@@ -254,12 +256,7 @@ reapplyThenPush leiosDb cfg ap db = do
 
 -- | Reapply a block to the tip of the 'LedgerSeq'.
 --
--- For Leios CertRBs, the wire-encoded body carries only a 'LeiosCert' (no
--- txs); the actual transactions live in the EB closure. Mirroring
--- 'Forker.applyBlock', we splice the EB body back in via 'resolveLeiosBlock'
--- before ticking the ledger — otherwise the immutable-DB replay path would
--- apply CertRBs as empty bodies, leaving the ledger state missing every
--- EB-tx output that was created during the original fresh sync.
+-- Mirrors the CertRB handling in 'Forker.applyBlock', minus validation.
 reapplyBlock ::
   forall m l blk.
   ( ApplyBlock l blk
@@ -276,12 +273,28 @@ reapplyBlock ::
 reapplyBlock leiosDb evs cfg b db = do
   let StateRef st tbs = currentHandle db
       cds = headerStateChainDep (headerState st)
-  b' <- resolveLeiosBlock leiosDb cds b
-  let ks = getBlockKeySets b'
-  vals <- read tbs st ks
-  let st' = tickThenReapply evs cfg b' (st `withLedgerTables` vals)
-      newst = forgetLedgerTables st'
-
+  st' <- case blockLeiosCert b of
+    Nothing -> do
+      -- Not a CertRB: ordinary Praos block
+      vals <- read tbs st (getBlockKeySets b)
+      pure $ tickThenReapply evs cfg b (st `withLedgerTables` vals)
+    Just{} ->
+      case protocolStateLeiosAnnouncement @blk cds of
+        Nothing -> error "V2.LedgerSeq.reapplyBlock: nothing announced!?"
+        Just (announcedPoint, _) -> do
+          closureTxs <- resolveLeiosClosure leiosDb announcedPoint b
+          let blkKeys = getBlockKeySets b
+              closureKeys = foldMap (castLedgerTables . leiosClosureTxKeySets) closureTxs
+          vals <- read tbs st (closureKeys <> blkKeys)
+          let lsBeforeEB = st `withLedgerTables` vals
+          case applyLeiosClosure (configLedger (getExtLedgerCfg cfg)) closureTxs (ledgerState lsBeforeEB) of
+            Left{} -> error "V2.LedgerSeq.reapplyBlock: applyLeiosClosure failed!"
+            Right newLst ->
+              let lsAfterEB = lsBeforeEB{ledgerState = newLst}
+                  blockDiff = tickThenReapply evs cfg b lsAfterEB
+                  closureDiff = trackingToDiffs (calculateDifference lsBeforeEB lsAfterEB)
+               in pure (prependDiffs closureDiff blockDiff)
+  let newst = forgetLedgerTables st'
   newtbs <- duplicateWithDiffs tbs st st'
   pure (StateRef newst newtbs)
 

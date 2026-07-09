@@ -394,7 +394,7 @@ reapplyThenPushLeios ::
   m (DbChangelog l)
 reapplyThenPushLeios leiosDb cfg b ksReader db = do
   let cds = headerStateChainDep (headerState (current db))
-  b' <- resolveLeiosBlock leiosDb cds b
+  b' <- resolveLeiosBlock leiosDb cds b   -- TODO resolveLeiosBlock is the wrong function to call here
   reapplyThenPush cfg b' ksReader db
 
 -- | Prune oldest ledger states according to the given 'LedgerDbPrune' strategy.
