@@ -493,6 +493,12 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
     extSt <- atomically (forkerGetLedgerState fo)
     let cds = headerStateChainDep (headerState extSt)
     case blockLeiosCert b of
+      Nothing ->
+        -- Not a CertRB: ordinary Praos block
+        withValues b $ \v ->
+          case runExcept $ tickThenApply evs cfg b v of
+            Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b) lerr))
+            Right st -> pure (Right st)
       Just cert -> do
         -- CertRB apply path. The block's body on the wire is empty (it
         -- carries only the Leios certificate, not the EB's txs). The
@@ -517,7 +523,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
         case protocolStateLeiosAnnouncement @blk cds of
           Nothing ->
             -- TODO: make this less fatal or impossible to reach
-            error $ "applyBlock: nothing announced!?"
+            error $ "applyBlock applyVal: nothing announced!?"
           Just (announcedPoint, _) -> do
             cm <- case getLeiosCommittee (ledgerState extSt) of
               Just c -> pure c
@@ -550,6 +556,9 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                   (ledgerState lsBeforeEB) of
                   Left lerr ->
                     -- REVIEW: Better annotation than CertRB point possible?
+                    --
+                    -- TODO this should be unreachable, at least from
+                    -- ChainSel (maybe LeiosVoting calls it?)
                     pure
                       ( Left
                           ( AnnLedgerError
@@ -577,12 +586,6 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                                   trackingToDiffs
                                     (calculateDifference lsBeforeEB lsAfterEB)
                              in pure (Right (prependDiffs closureDiff blockDiff))
-      Nothing ->
-        -- Not a CertRB: ordinary Praos block
-        withValues b $ \v ->
-          case runExcept $ tickThenApply evs cfg b v of
-            Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip v) (blockRealPoint b) lerr))
-            Right st -> pure (Right st)
   ReapplyRef r -> do
     b <- doResolveBlock r
     applyBlock leiosDb evs cfg (ReapplyVal b) fo doResolveBlock
