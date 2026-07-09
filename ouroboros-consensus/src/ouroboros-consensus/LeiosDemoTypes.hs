@@ -883,6 +883,8 @@ data TraceLeiosKernel
     TraceLeiosNotVoted {ebPoint :: LeiosPoint, reason :: LeiosNotVotedReason}
   | TraceLeiosDbException LeiosDbException
   | TraceLeiosDb TraceLeiosDb
+  | -- | A forged RB both certifies an EB and announce a new one
+    TraceLeiosCertifiedAndAnnounced {atSlot :: SlotNo, rbHash :: RbHash}
 
 -- | Reasons 'runLeiosVoting' may decline to cast a vote after acquiring an
 -- EB closure. See 'TraceLeiosNotVoted'.
@@ -987,6 +989,12 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosDbInsertCollision"
       , "table" .= table
       , "key" .= key
+      ]
+  TraceLeiosCertifiedAndAnnounced slotNo rbHash ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosCertifiedAndAnnounced"
+      , "slotNo" .= slotNo
+      , "rbHash" .= prettyRbHash rbHash
       ]
 
 notVotedReasonText :: LeiosNotVotedReason -> Aeson.Value

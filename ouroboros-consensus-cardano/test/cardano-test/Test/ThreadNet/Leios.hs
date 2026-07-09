@@ -59,7 +59,7 @@ import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust, isNothing, mapMaybe)
+import Data.Maybe (isNothing, mapMaybe)
 import Data.Proxy (Proxy (..))
 import Data.Sequence.Strict ((|>))
 import qualified Data.Set as Set
@@ -315,7 +315,7 @@ prop_leios seed =
     (not (null announcedAndCertifiedSlots))
       & counterexample "no block both certified and announced"
       & counterexample ("certifying block slots: " <> show certificateBlocks)
-      & counterexample ("certify-and-announce block slots: " <> show certifyAndAnnounceBlocks)
+      & counterexample ("announced-and-certified slots: " <> show announcedAndCertifiedSlots)
 
   propCertifying =
     conjoin
@@ -355,18 +355,13 @@ prop_leios seed =
       , SJust _ <- [body ^. leiosCertBlockBodyL]
       ]
 
-  -- Slots of blocks that /both/ certify a previous EB (cert in the body)
-  -- and announce a fresh one (announcement in the header);
-  -- this set being non-empty is the direct evidence that we can certify an EB
-  -- and announce a new one in the same RB.
-  certifyAndAnnounceBlocks =
-    toList . Set.fromList $
-      [ blockSlot blk
-      | blk@(BlockDijkstra dijkstraBlk) <- concat nodeChains
-      , let SL.Block _ body = shelleyBlockRaw dijkstraBlk
-      , SJust _ <- [body ^. leiosCertBlockBodyL]
-      , isJust (headerLeiosAnnouncement (getHeader blk))
-      ]
+  -- Slots at which a single forging opportunity both certified the
+  -- previously-announced EB and announced a fresh one.
+  announcedAndCertifiedSlots :: [SlotNo]
+  announcedAndCertifiedSlots =
+    toList . Set.fromList $ flip mapMaybe leiosTraces $ \case
+      TraceLeiosCertifiedAndAnnounced{atSlot} -> Just atSlot
+      _ -> Nothing
 
   throughput = fromIntegral (sum includedTxCounts) / fromIntegral numSlots :: Double
 
@@ -397,7 +392,7 @@ prop_leios seed =
       & tabulate "Praos blocks forged" [show $ length forgedBlocks]
       & tabulate "Leios blocks forged" [show $ length forgedEBs]
       & tabulate "Certifying blocks" [show $ length certificateBlocks]
-      & tabulate "Certify-and-announce blocks" [show $ length certifyAndAnnounceBlocks]
+      & tabulate "Certify-and-announce blocks" [show $ length announcedAndCertifiedSlots]
       & tabulate "Effective throughput" [show throughput]
 
   -- FIXME: This only exercises the in-memory replay via
