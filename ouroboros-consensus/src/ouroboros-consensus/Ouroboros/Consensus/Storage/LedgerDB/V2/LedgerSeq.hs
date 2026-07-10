@@ -68,7 +68,11 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
-import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( LeiosClosureApplied (..)
+  , ResolveLeiosBlock (..)
+  , resolveAndApplyLeiosClosure
+  )
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredSeq hiding
   ( anchor
@@ -242,7 +246,12 @@ closeLedgerSeq (LedgerSeq l) =
 --
 -- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
-  (IOLike m, ApplyBlock l blk, ResolveLeiosBlock blk, l ~ ExtLedgerState blk) =>
+  ( IOLike m
+  , ApplyBlock l blk
+  , ResolveLeiosBlock blk
+  , HasLedgerTables (LedgerState blk)
+  , l ~ ExtLedgerState blk
+  ) =>
   LeiosDbConnection m ->
   LedgerDbCfg l ->
   blk ->
@@ -262,6 +271,7 @@ reapplyBlock ::
   ( ApplyBlock l blk
   , IOLike m
   , ResolveLeiosBlock blk
+  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -282,18 +292,22 @@ reapplyBlock leiosDb evs cfg b db = do
       case protocolStateLeiosAnnouncement @blk cds of
         Nothing -> error "V2.LedgerSeq.reapplyBlock: nothing announced!?"
         Just (announcedPoint, _) -> do
-          closureTxs <- resolveLeiosClosure leiosDb announcedPoint b
-          let blkKeys = getBlockKeySets b
-              closureKeys = foldMap (castLedgerTables . leiosClosureTxKeySets) closureTxs
-          vals <- read tbs st (closureKeys <> blkKeys)
-          let lsBeforeEB = st `withLedgerTables` vals
-          case applyLeiosClosure (configLedger (getExtLedgerCfg cfg)) closureTxs (ledgerState lsBeforeEB) of
+          let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
+              readTables = fmap castLedgerTables . read tbs st . castLedgerTables
+          res <-
+            resolveAndApplyLeiosClosure
+              leiosDb
+              (configLedger (getExtLedgerCfg cfg))
+              announcedPoint
+              readTables
+              bKeys
+              (ledgerState st)
+          case res of
             Left{} -> error "V2.LedgerSeq.reapplyBlock: applyLeiosClosure failed!"
-            Right newLst ->
-              let lsAfterEB = lsBeforeEB{ledgerState = newLst}
+            Right lca ->
+              let lsAfterEB = st{ledgerState = lcaStateAfterEB lca}
                   blockDiff = tickThenReapply evs cfg b lsAfterEB
-                  closureDiff = trackingToDiffs (calculateDifference lsBeforeEB lsAfterEB)
-               in pure (prependDiffs closureDiff blockDiff)
+               in pure (prependDiffs (lcaClosureDiff lca) blockDiff)
   let newst = forgetLedgerTables st'
   newtbs <- duplicateWithDiffs tbs st st'
   pure (StateRef newst newtbs)
