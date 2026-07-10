@@ -453,7 +453,7 @@ mkHandlers
             leiosNotifyClientPeerPipelined
               ( atomically controlMessageSTM <&> \case
                   Terminate -> Left ()
-                  _ -> Right 10 {- TODO magic number -}
+                  _ -> Right 100 {- TODO magic number -}
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
