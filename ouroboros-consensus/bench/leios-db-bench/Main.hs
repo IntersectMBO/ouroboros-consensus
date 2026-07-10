@@ -4,17 +4,25 @@
 
 -- | Concurrent benchmark for 'LeiosDemoDb' mirroring production access patterns.
 --
--- The following three roles run concurrently against the same SQLite handle:
+-- The following roles run concurrently against the same SQLite handle:
 --
 -- * __Fetch logic__ (1 thread): configurable rounds of
 --   'leiosDbFilterMissingEbBodies' + 'leiosDbFilterMissingTxs'.
 --
--- * __Fetch clients__ (configurable, default 2 threads): each inserts 20 fresh
+-- * __Fetch clients__ (configurable, default 3 threads): each inserts 20 fresh
 --   EBs via 'leiosDbInsertEbPoint' → 'leiosDbInsertEbBody' → 'leiosDbInsertTxs'.
 --
--- * __Fetch servers__ (configurable, default 8 threads): each does 30
+-- * __Fetch servers__ (configurable, default 3 threads): each does 30
 --   'leiosDbLookupEbBody' + 10 'leiosDbBatchRetrieveTxs' calls cycling through
 --   the pre-populated EBs.
+--
+-- * __Chain-sel reader__ (1 thread): mimics the block-apply path via
+--   'leiosDbLookupEbClosure' — the same read that 'resolveLeiosClosure'
+--   issues per Dijkstra-era CertRB.
+--
+-- * __GC ticker__ (1 thread): periodic 'leiosDbGarbageCollect' calls (a
+--   handle-level operation that touches every table). Exercises
+--   contention with the concurrent readers/writers.
 --
 -- All data is deterministic (no QuickCheck generators), so runs are stable and
 -- comparable across refactors.
@@ -42,10 +50,12 @@ import LeiosDemoDb
   , leiosDbBatchRetrieveTxs
   , leiosDbFilterMissingEbBodies
   , leiosDbFilterMissingTxs
+  , leiosDbGarbageCollect
   , leiosDbInsertEbBody
   , leiosDbInsertEbPoint
   , leiosDbInsertTxs
   , leiosDbLookupEbBody
+  , leiosDbLookupEbClosure
   , newLeiosDBSQLite
   , withLeiosDb
   )
@@ -72,11 +82,13 @@ main = do
       , "  Total TXs         : " <> show (numPrePopulatedEbs * txsPerEb)
       , ""
       , "Concurrent workload per iteration:"
-      , "  Fetch logic   (×1): "
+      , "  Fetch logic     (×1): "
           <> show numFetchLogicRounds
           <> " rounds of filterMissingEbBodies (200+200) + filterMissingTxs (500+500)"
-      , "  Fetch clients (×" <> show numFetchClients <> "): 20 insertEbPoint/insertEbBody/insertTxs each"
-      , "  Fetch servers (×" <> show numFetchServers <> "): 30 lookupEbBody + 10 batchRetrieveTxs each"
+      , "  Fetch clients   (×" <> show numFetchClients <> "): 20 insertEbPoint/insertEbBody/insertTxs each"
+      , "  Fetch servers   (×" <> show numFetchServers <> "): 30 lookupEbBody + 10 batchRetrieveTxs each"
+      , "  Chain-sel reader(×1): " <> show numChainSelReads <> " lookupEbClosure calls"
+      , "  GC ticker       (×1): " <> show numGcTicks <> " garbageCollect calls"
       , ""
       , "Runs: 1 warmup + " <> show numRuns <> " timed"
       , ""
@@ -107,20 +119,33 @@ numFetchServers = 3
 numFetchLogicRounds :: Int
 numFetchLogicRounds = 100
 
+-- | Number of chain-sel-shaped reader calls per iteration.
+numChainSelReads :: Int
+numChainSelReads = 50
+
+-- | Number of GC ticks per iteration.
+numGcTicks :: Int
+numGcTicks = 3
+
 -- | Timed repetitions (plus one warmup).
 numRuns :: Int
 numRuns = 5
 
 -- * The benchmark
 
--- | All three production roles running concurrently against one DB handle.
+-- | All production roles running concurrently against one DB handle.
 benchConcurrentAll :: BenchEnv -> IO ()
 benchConcurrentAll BenchEnv{beDb = db, bePoints = points, beWriterIdx = writerIdxRef} = do
-  startIdx <- atomicModifyIORef' writerIdxRef (\n -> (n + numFetchClients * ebsPerClient, n))
+  startIdx <-
+    atomicModifyIORef'
+      writerIdxRef
+      (\n -> (n + numFetchClients * ebsPerClient, n))
   fl <- async (fetchLogic db points)
+  cs <- async (chainSelReader db points)
+  gc <- async (gcTicker db)
   clients <- forM (clientRanges startIdx) $ \range -> async (fetchClient db range)
   mapConcurrently_ (fetchServer db points) [0 .. numFetchServers - 1]
-  wait fl
+  wait fl >> wait cs >> wait gc
   forM_ clients wait
  where
   ebsPerClient = 20
@@ -148,6 +173,22 @@ fetchClient :: LeiosDbHandle IO -> [Int] -> IO ()
 fetchClient db range =
   withLeiosDb db $ \c ->
     forM_ range (insertOneEb c)
+
+-- | Mirrors chain-selection's block-apply path: repeated
+-- 'leiosDbLookupEbClosure' for the tx closure of each certified EB.
+chainSelReader :: LeiosDbHandle IO -> [LeiosPoint] -> IO ()
+chainSelReader db points =
+  withLeiosDb db $ \c ->
+    forM_ (take numChainSelReads (cycle points)) $ \p ->
+      leiosDbLookupEbClosure c p.pointEbHash
+
+-- | Fires periodic garbage-collect calls. Handle-level operation; touches
+-- every table when implemented (currently a no-op backend-side, but the
+-- call path is realistic).
+gcTicker :: LeiosDbHandle IO -> IO ()
+gcTicker db =
+  forM_ [1 .. numGcTicks] $ \i ->
+    leiosDbGarbageCollect db (SlotNo (fromIntegral (i * 10)))
 
 -- | Mirrors a fetch server: looks up EB bodies and retrieves TX batches.
 fetchServer :: LeiosDbHandle IO -> [LeiosPoint] -> Int -> IO ()

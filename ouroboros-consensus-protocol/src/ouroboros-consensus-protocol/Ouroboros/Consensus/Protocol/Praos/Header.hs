@@ -123,6 +123,8 @@ data HeaderBody crypto = HeaderBody
   -- ^ protocol version
   , hbLeiosExt :: !(StrictMaybe HeaderLeiosExtension)
   -- ^ Whether the header / protocol is extended with Leios features.
+  -- TODO: This Maybe can be avoided by doing version-aware encoding/decoding
+  -- and this would then become an always extended Leios header
   }
   deriving Generic
 

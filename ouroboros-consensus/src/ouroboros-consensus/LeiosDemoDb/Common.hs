@@ -6,14 +6,12 @@ module LeiosDemoDb.Common
   , LeiosDbHandle (..)
   , LeiosEbNotification (..)
   , LeiosDbConnection (..)
-  , LeiosFetchWork (..)
   , CompletedEbs
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTChan)
 import Data.ByteString (ByteString)
-import Data.Map.Strict (Map)
 import GHC.Stack (HasCallStack)
 import LeiosDemoTypes
   ( BytesSize
@@ -37,19 +35,17 @@ data LeiosDbHandle m = LeiosDbHandle
   -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosEbNotification })
   , open :: m (LeiosDbConnection m)
   -- ^ Open a new connection to the LeiosDb.
-  , leiosDbScanCompleteEbClosuresNotOlderThanSlot :: HasCallStack => SlotNo -> m [EbHash]
-  -- ^ Scan the EBs whose tx closure is already complete and that were announced
-  -- by an RB no older than the given slot. The ChainDB calls this once at
-  -- startup -- passing the immutable tip slot -- to seed the acquired-EB
-  -- closures set it owns (see @cdbAcquiredLeiosEbs@); thereafter it learns of
-  -- newly-completed closures from 'subscribeEbNotifications' ('AcquiredEbTxs').
-  --
-  -- The slot is a plain query bound, not retained state: the LeiosDb does not
-  -- know about (nor track) the immutable tip; it just answers the query. The
-  -- acquired set itself -- the @complete ∩ announced-no-older-than-tip@
-  -- projection that ChainSel consults -- is owned by the ChainDB, since its
-  -- definition depends on the immutable tip, which is a ChainDB concept.
-  , leiosDbGarbageCollect :: HasCallStack => SlotNo -> m ()
+  , -- NOTE: 'subscribeEbNotifications' and 'open' should be the _only_
+    -- methods of this handle. If you're thinking about adding another,
+    -- strongly consider adding it to 'LeiosDbConnection' instead. (See
+    -- https://github.com/input-output-hk/ouroboros-leios/issues/983 for
+    -- example motivation.)
+
+    -- TODO The two methods below are intentionally merely stubs for
+    -- now, but as part of implementing them, we should relocate them to
+    -- 'LeiosDbConnection'.
+
+    leiosDbGarbageCollect :: HasCallStack => SlotNo -> m ()
   -- ^ Evict LeiosDb data that is no longer needed now that everything up to the
   -- given slot is immutable. The ChainDB drives this from its GC scheduler,
   -- passing the same slot it uses to GC the VolatileDB\/PerasCertDB (see
@@ -90,21 +86,28 @@ data LeiosDbConnection m = LeiosDbConnection
   { close :: m ()
   -- ^ Close the connection and free up resources. After calling this, the connection may not be used anymore.
   , leiosDbScanEbPoints :: HasCallStack => m [(SlotNo, EbHash)]
-  , leiosDbLookupEbPoint :: HasCallStack => EbHash -> m (Maybe SlotNo)
-  -- ^ Check if an EB point exists in the database. Returns the slot if found.
+  , leiosDbScanCompleteEbClosuresNotOlderThanSlot :: HasCallStack => SlotNo -> m [LeiosPoint]
+  -- ^ Scan the EBs whose tx closure is complete and whose announcer is no older
+  -- than the given slot. The ChainDB opens a transient connection at startup --
+  -- passing the immutable tip slot -- to seed the acquired-EB-closures set it
+  -- owns (see @cdbAcquiredLeiosEbs@); thereafter it learns of newly-completed
+  -- closures from 'subscribeEbNotifications' ('AcquiredEbTxs'). The slot is a
+  -- plain query bound, not retained state.
   , leiosDbInsertEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m ()
-  -- ^ Insert an announced EB point with its expected size.
+  -- ^ Insert an announced EB point with its expected size. Called on
+  -- the announcement path (forge issuing an EB, peer receiving an
+  -- announcement). Idempotent — a second insert at the same point is
+  -- a no-op.
   , leiosDbLookupEbBody :: HasCallStack => EbHash -> m [(TxHash, BytesSize)]
-  , leiosDbQueryFetchWork :: HasCallStack => m LeiosFetchWork
-  -- ^ Query all work needed for the fetch logic (used at startup):
-  -- - Missing EB bodies: EBs in ebs with NULL missingTxCount
-  -- - Missing TXs: TXs in ebTxs without entries in txs
-  -- NOTE: This is O(n) and should only be used at startup for initialization.
-  , -- NOTE: yields a LeiosOfferBlock notification
-    leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m ()
-  , -- TODO: Take [LeiosTx] and hash on insert?
-    leiosDbInsertTxs :: HasCallStack => [(TxHash, ByteString)] -> m CompletedEbs
-  -- ^ Insert transactions into the global txs table (INSERT OR IGNORE).
+  -- ^ Read the EB "body": the ordered list of tx-hash + tx-byte-size
+  -- pairs that constitute this EB. No tx bytes are fetched; contrast
+  -- with 'leiosDbLookupEbClosure' which joins with the 'txs' table.
+  , leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m ()
+  -- ^ Persist an EB body. The point MUST already have been inserted
+  -- via 'leiosDbInsertEbPoint' (announcement path). Yields an
+  -- 'AcquiredEb' notification.
+  , leiosDbInsertTxs :: HasCallStack => [(TxHash, ByteString)] -> m CompletedEbs
+  -- ^ Insert transactions into the global 'txs' table (INSERT OR IGNORE).
   -- After inserting, checks which EBs referencing these txs are now complete
   -- and emits 'AcquiredEbTxs' notifications for each.
   --
@@ -113,13 +116,16 @@ data LeiosDbConnection m = LeiosDbConnection
   -- Consumers should handle notifications idempotently.
   --
   -- REVIEW: return type only used for tracing, necessary?
-  , -- TODO: Return LeiosTx?
-    leiosDbBatchRetrieveTxs :: HasCallStack => EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
+  , leiosDbBatchRetrieveTxs :: HasCallStack => EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   , leiosDbFilterMissingEbBodies :: HasCallStack => [LeiosPoint] -> m [LeiosPoint]
   -- ^ Batch filter: returns the subset of input LeiosPoints whose EB bodies are missing.
   , leiosDbFilterMissingTxs :: HasCallStack => [TxHash] -> m [TxHash]
   -- ^ Batch filter: returns the subset of input TxHashes that we do NOT have.
-  , leiosDbQueryCompletedEbByHash :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
+  , leiosDbLookupEbClosure :: HasCallStack => EbHash -> m (Maybe [(TxHash, ByteString)])
+  -- ^ Read the EB "closure": the tx hashes AND their tx bytes. Contrast
+  -- with 'leiosDbLookupEbBody' which returns only hashes + sizes.
+  -- Used by chain-sel's 'resolveLeiosClosure' to splice the EB's txs
+  -- back into the CertRB before applying to the ledger.
   }
 
 instance NoThunks (LeiosDbHandle m) where
@@ -133,13 +139,3 @@ instance NoThunks (LeiosDbConnection m) where
   wNoThunks _ctx _a = return Nothing
 
 type CompletedEbs = [LeiosPoint]
-
--- | Result of querying the database for fetch work.
--- Contains all the information needed by the fetch logic to make decisions.
-data LeiosFetchWork = LeiosFetchWork
-  { missingEbBodies :: !(Map LeiosPoint BytesSize)
-  -- ^ EBs that have been announced but whose bodies haven't been downloaded yet
-  , missingEbTxs :: !(Map LeiosPoint [(Int, TxHash, BytesSize)])
-  -- ^ EBs whose bodies we have, but with missing TXs (offset, hash, size)
-  }
-  deriving (Eq, Show)

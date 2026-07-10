@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 
 module LeiosDemoDb.InMemory
@@ -11,7 +10,7 @@ module LeiosDemoDb.InMemory
   , newLeiosDBInMemoryWith
   ) where
 
-import Cardano.Prelude (Generic, forM_, listToMaybe, maybeToList, when)
+import Cardano.Prelude (Generic, forM_, maybeToList, when)
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadSTM.Strict
   ( StrictTChan
@@ -36,7 +35,6 @@ import LeiosDemoDb.Common
   , LeiosDbConnection (..)
   , LeiosDbHandle (..)
   , LeiosEbNotification (..)
-  , LeiosFetchWork (..)
   )
 import LeiosDemoTypes
   ( BytesSize
@@ -106,16 +104,6 @@ newLeiosDBInMemoryWith stateVar = do
     LeiosDbHandle
       { subscribeEbNotifications =
           atomically (dupTChan notificationChan)
-      , -- This is consulted only once, at ChainDB open, before any mini-protocol
-        -- runs (see 'Ouroboros.Consensus.Storage.ChainDB.Impl.openDBInternal').
-        -- An in-memory DB has no on-disk persistence, so for a fresh process it
-        -- is empty at that point and this could simply be @pure []@. We keep the
-        -- real scan because the ThreadNet harness persists the 'stateVar' across
-        -- simulated node restarts (it lives in the per-node 'NodeInfo' alongside
-        -- the MockFS DBs; see @Test.ThreadNet.Network@), so on a restart the
-        -- ChainDB reopens against a non-empty DB and this seeds the restored
-        -- acquired-EB-closures set — the restart-recovery path.
-        leiosDbScanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
       , -- No-op for now; see 'leiosDbGarbageCollect'.
         leiosDbGarbageCollect = \_slotNo -> pure ()
       , -- No-op for now; see 'leiosDbPromoteToImmutable'.
@@ -125,7 +113,9 @@ newLeiosDBInMemoryWith stateVar = do
             LeiosDbConnection
               { close = pure ()
               , leiosDbScanEbPoints = imScanEbPoints stateVar
-              , leiosDbLookupEbPoint = imLookupEbPoint stateVar
+              , -- ThreadNet persists 'stateVar' across simulated restarts, so on
+                -- restart this seeds the restored acquired-EB-closures set.
+                leiosDbScanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
               , leiosDbInsertEbPoint = imInsertEbPoint stateVar
               , leiosDbLookupEbBody = imLookupEbBody stateVar
               , leiosDbInsertEbBody = imInsertEbBody stateVar notificationChan
@@ -133,8 +123,7 @@ newLeiosDBInMemoryWith stateVar = do
               , leiosDbBatchRetrieveTxs = imBatchRetrieveTxs stateVar
               , leiosDbFilterMissingEbBodies = imFilterMissingEbBodies stateVar
               , leiosDbFilterMissingTxs = imFilterMissingTxs stateVar
-              , leiosDbQueryFetchWork = imQueryFetchWork stateVar
-              , leiosDbQueryCompletedEbByHash = imQueryCompletedEbByHash stateVar
+              , leiosDbLookupEbClosure = imLookupEbClosure stateVar
               }
       }
 
@@ -148,15 +137,8 @@ imScanEbPoints stateVar = atomically $ do
     | p <- Map.keys (imEbPoints state)
     ]
 
-imLookupEbPoint :: IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe SlotNo)
-imLookupEbPoint stateVar ebHash = atomically $ do
-  state <- readTVar stateVar
-  pure $
-    listToMaybe
-      [p.pointSlotNo | p <- Map.keys (imEbPoints state), p.pointEbHash == ebHash]
-
--- | Insert a point. Subsequent calls at the same point are no-ops
--- (the first-seen size sticks; the body-downloaded set is untouched).
+-- | Insert an announced EB point. Idempotent: a second insert at the
+-- same point keeps the first-seen size.
 imInsertEbPoint :: IOLike m => StrictTVar m InMemoryLeiosDb -> LeiosPoint -> BytesSize -> m ()
 imInsertEbPoint stateVar point ebBytesSize = atomically $
   modifyTVar stateVar $ \s ->
@@ -182,6 +164,7 @@ imInsertEbBody ::
   m ()
 imInsertEbBody stateVar notificationChan point eb = do
   let items = leiosEbBodyItems eb
+      ebBytesSize = leiosEbBytesSize eb
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
   atomically $ do
@@ -207,7 +190,7 @@ imInsertEbBody stateVar notificationChan point eb = do
           imEbBodiesDownloaded =
             Set.insert point (imEbBodiesDownloaded s)
         }
-    writeTChan notificationChan $ AcquiredEb point (leiosEbBytesSize eb)
+    writeTChan notificationChan $ AcquiredEb point ebBytesSize
 
 imInsertTxs ::
   IOLike m =>
@@ -269,16 +252,14 @@ imInsertTxs stateVar notificationChan txs = atomically $ do
 -- @>= sinceSlot@, so we collect (and dedupe) the hashes of those points. This
 -- is precise across all of an EB's announcer slots, as in the SQLite backend.
 imScanCompleteEbClosuresSince ::
-  IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m [EbHash]
+  IOLike m => StrictTVar m InMemoryLeiosDb -> SlotNo -> m [LeiosPoint]
 imScanCompleteEbClosuresSince stateVar sinceSlot = atomically $ do
   s <- readTVar stateVar
-  pure $
-    Set.toList $
-      Set.fromList
-        [ pointEbHash p
-        | p <- Set.toList (imCompletedEbs s)
-        , pointSlotNo p >= sinceSlot
-        ]
+  pure
+    [ p
+    | p <- Set.toList (imCompletedEbs s)
+    , pointSlotNo p >= sinceSlot
+    ]
 
 imBatchRetrieveTxs ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
@@ -304,32 +285,9 @@ imFilterMissingTxs stateVar txHashes = atomically $ do
   state <- readTVar stateVar
   pure [txHash | txHash <- txHashes, not $ Map.member txHash (imTxs state)]
 
-imQueryFetchWork :: IOLike m => StrictTVar m InMemoryLeiosDb -> m LeiosFetchWork
-imQueryFetchWork stateVar = atomically $ do
-  state <- readTVar stateVar
-  let missingEbBodies =
-        Map.fromList
-          [ (point, ebBytesSize)
-          | (point, ebBytesSize) <- Map.toList (imEbPoints state)
-          , not (Set.member point (imEbBodiesDownloaded state))
-          ]
-      missingEbTxs =
-        Map.fromList
-          [ (point, missing)
-          | point <- Set.toList (imEbBodiesDownloaded state)
-          , Just entries <- [Map.lookup (pointEbHash point) (imEbBodies state)]
-          , let missing =
-                  [ (offset, eteTxHash e, eteTxBytesSize e)
-                  | (offset, e) <- IntMap.toList entries
-                  , not (Map.member (eteTxHash e) (imTxs state))
-                  ]
-          , not (null missing)
-          ]
-  pure LeiosFetchWork{missingEbBodies, missingEbTxs}
-
-imQueryCompletedEbByHash ::
+imLookupEbClosure ::
   IOLike m => StrictTVar m InMemoryLeiosDb -> EbHash -> m (Maybe [(TxHash, ByteString)])
-imQueryCompletedEbByHash stateVar ebHash = atomically $ do
+imLookupEbClosure stateVar ebHash = atomically $ do
   state <- readTVar stateVar
   case Map.lookup ebHash (imEbBodies state) of
     Nothing -> pure Nothing

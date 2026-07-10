@@ -53,7 +53,6 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Sequence.Strict (StrictSeq (..))
 import qualified Data.Sequence.Strict as Seq
-import qualified Data.Set as Set
 import Data.Time.Clock
 import Data.Void (Void)
 import Data.Word
@@ -66,6 +65,7 @@ import LeiosDemoDb.Common
   , subscribeEbNotifications
   )
 import LeiosDemoTypes (LeiosPoint, pointEbHash)
+import qualified LeiosDemoTypes
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
@@ -167,15 +167,15 @@ leiosAcquiredEbsRunner CDB{..} = do
     atomically (readTChan chan) >>= \case
       AcquiredEb{} -> pure ()
       AcquiredEbTxs point -> do
-        let ebHash = pointEbHash point
-        novel <- atomically $ do
+        mNovel <- atomically $ do
           acquired <- readTVar cdbAcquiredLeiosEbs
-          if Set.member ebHash acquired
-            then pure False
-            else do
-              writeTVar cdbAcquiredLeiosEbs (Set.insert ebHash acquired)
-              pure True
-        when novel $ addReprocessLeiosEb ebHash cdbChainSelQueue
+          case LeiosDemoTypes.insertAcquiredLeiosEb point acquired of
+            Nothing -> pure Nothing
+            Just (novel, acquired') -> do
+              writeTVar cdbAcquiredLeiosEbs acquired'
+              pure (Just novel)
+        when (mNovel == Just True) $
+          addReprocessLeiosEb (pointEbHash point) cdbChainSelQueue
 
 {-------------------------------------------------------------------------------
   Copying blocks from the VolatileDB to the ImmutableDB
@@ -488,31 +488,16 @@ garbageCollectBlocks CDB{..} slotNo = do
   leiosDbGarbageCollect cdbLeiosDb slotNo
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
 
--- | Prune the acquired-EB set ('cdbAcquiredLeiosEbs') down to the EBs that
--- still have an announcer at or after the given (immutable tip) slot. An EB is
--- dropped only when /every/ announcer of it is /strictly/ older than the
--- immutable tip.
---
--- The strictness is essential: the announcement made by the immutable tip
--- itself is certified by the tip's /successor/, which is still in the volatile
--- suffix -- so a live RB may yet certify that EB, and it must be kept. Only when
--- an announcer is strictly older than the tip is its certifying successor (the
--- next block) necessarily at or before the tip, hence immutable; then the EB
--- can no longer be newly certified and ChainSel will never reconsider it.
---
--- Called as a VolatileDB GC is /scheduled/ (see 'copyToImmutableDBRunner'),
--- which is at least @cdbGcDelay@ before that GC -- and the LeiosDb closure
--- eviction it drives -- actually runs. So the acquired set stops advertising a
--- closure well before the closure itself can be evicted.
+-- | Prune the acquired-EB set by age as a VolatileDB GC is scheduled, dropping
+-- every EB whose youngest announcement slot is strictly older than the immutable
+-- tip (its certifying successor is then necessarily immutable).
 pruneAcquiredLeiosEbs ::
   IOLike m => ChainDbEnv m blk -> WithOrigin SlotNo -> m ()
 pruneAcquiredLeiosEbs CDB{..} immTip = atomically $ do
-  getAnnouncers <- VolatileDB.getLeiosAnnouncers cdbVolatileDB
-  let keep eb = any ((>= immTip) . pointSlot) (getAnnouncers eb)
   acquired <- readTVar cdbAcquiredLeiosEbs
-  let acquired' = Set.filter keep acquired
-  when (Set.size acquired' /= Set.size acquired) $
-    writeTVar cdbAcquiredLeiosEbs acquired'
+  mapM_
+    (writeTVar cdbAcquiredLeiosEbs)
+    (LeiosDemoTypes.pruneAcquiredLeiosEbs immTip acquired)
 
 {-------------------------------------------------------------------------------
   Scheduling garbage collections

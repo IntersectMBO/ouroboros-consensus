@@ -12,6 +12,7 @@ module LeiosDemoLogic (module LeiosDemoLogic) where
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
+import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.Monad (forM_, when)
@@ -45,7 +46,6 @@ import LeiosDemoDb
   , leiosDbInsertEbPoint
   , leiosDbInsertTxs
   , leiosDbLookupEbBody
-  , leiosDbLookupEbPoint
   )
 import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes
@@ -500,6 +500,13 @@ packRequests env =
 
 -----
 
+-- | A response received by the pipelined-peer collector thread, deferred
+-- for processing on the main peer thread. The collector must not touch
+-- the 'LeiosDbConnection' — it belongs to the main peer thread.
+data PendingResponse
+  = PendingBlockResponse !LeiosBlockRequest !LeiosEb
+  | PendingBlockTxsResponse !LeiosBlockTxsRequest !(V.Vector LeiosTx)
+
 nextLeiosFetchClientCommand ::
   forall pid m.
   ( Ord pid
@@ -514,42 +521,85 @@ nextLeiosFetchClientCommand ::
   LeiosDbConnection m ->
   PeerId pid ->
   StrictTVar m (Seq LeiosFetchRequest) ->
+  -- | Queue of responses received by the pipelined collector thread.
+  -- The collector enqueues; this function (on the main peer thread)
+  -- drains and processes, keeping all 'LeiosDbConnection' access on
+  -- the main thread.
+  LazySTM.TQueue m PendingResponse ->
   m
     ( Either
         (m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
         (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
     )
-nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar = do
-  f (pure Nothing) (pure . Just) >>= \case
-    Just x -> pure $ Right x
-    Nothing -> pure $ Left $ f StrictSTM.retry pure
+nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar responseQ = do
+  drainResponses
+  StrictSTM.atomically checkOrPeek >>= \case
+    Right result -> pure $ Right result
+    Left () -> pure $ Left blockingLoop
  where
-  f ::
-    StrictSTM.STM m r ->
-    (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m) -> StrictSTM.STM m r) ->
-    m r
-  f retry_ pure_ = StrictSTM.atomically $ do
+  -- Drain everything currently in the response queue and process on this thread.
+  drainResponses :: m ()
+  drainResponses = do
+    pending <- StrictSTM.atomically $ LazySTM.flushTQueue responseQ
+    forM_ pending $ \case
+      PendingBlockResponse req eb ->
+        msgLeiosBlock ktracer tracer kernelVars db peerId req eb
+      PendingBlockTxsResponse req txs ->
+        msgLeiosBlockTxs ktracer tracer kernelVars db peerId req txs
+
+  -- Non-blocking: return 'Right result' if stop or a request is available,
+  -- or 'Left ()' if we'd have to block (caller returns Left blockingLoop).
+  checkOrPeek ::
+    StrictSTM.STM m (Either () (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
+  checkOrPeek =
     stopSTM >>= \case
-      True -> pure_ $ Left ()
+      True -> pure $ Right $ Left ()
       False ->
         StrictSTM.readTVar reqsVar >>= \case
-          Seq.Empty -> retry_
           req Seq.:<| reqs -> do
             StrictSTM.writeTVar reqsVar reqs
-            pure_ $ Right $ g req
+            pure $ Right $ Right $ g req
+          Seq.Empty -> pure $ Left ()
+
+  -- Blocking path. Wake on stop, new request, or a response arriving
+  -- (peek doesn't consume; caller re-drains). Ensures responses get
+  -- processed even when there are no requests to send.
+  blockingLoop :: m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
+  blockingLoop = do
+    step <-
+      StrictSTM.atomically $
+        (Right <$> awaitStopOrRequest)
+          `LazySTM.orElse` (Left () <$ LazySTM.peekTQueue responseQ)
+    case step of
+      Right result -> pure result
+      Left () -> drainResponses *> blockingLoop
+
+  awaitStopOrRequest ::
+    StrictSTM.STM m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
+  awaitStopOrRequest =
+    stopSTM >>= \case
+      True -> pure $ Left ()
+      False ->
+        StrictSTM.readTVar reqsVar >>= \case
+          req Seq.:<| reqs -> do
+            StrictSTM.writeTVar reqsVar reqs
+            pure $ Right $ g req
+          Seq.Empty -> StrictSTM.retry
 
   g = \case
     LeiosBlockRequest req@(MkLeiosBlockRequest p _ebBytesSize) ->
       LF.MkSomeLeiosFetchJob
         (LF.MsgLeiosBlockRequest p)
         ( pure $ \(LF.MsgLeiosBlock eb) ->
-            msgLeiosBlock ktracer tracer kernelVars db peerId req eb
+            StrictSTM.atomically $
+              LazySTM.writeTQueue responseQ (PendingBlockResponse req eb)
         )
     LeiosBlockTxsRequest req@(MkLeiosBlockTxsRequest p bitmaps _txHashes) ->
       LF.MkSomeLeiosFetchJob
         (LF.MsgLeiosBlockTxsRequest p bitmaps)
-        ( pure $ \(LF.MsgLeiosBlockTxs _ _ txs) -> do
-            msgLeiosBlockTxs ktracer tracer kernelVars db peerId req txs
+        ( pure $ \(LF.MsgLeiosBlockTxs _ _ txs) ->
+            StrictSTM.atomically $
+              LazySTM.writeTQueue responseQ (PendingBlockTxsResponse req txs)
         )
 
 -----
@@ -593,26 +643,13 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
     when novel $ do
       -- TODO don't hold the outstanding mvar during this IO
       traceException tracer TraceLeiosPeerDbException $ do
-        -- NOTE: The point should already be in the table because of the
-        -- announcement handling. The fetching logic should have only decided to
-        -- download announced (or otherwise known) EBs. However, this is an
-        -- interesting situation where a node offers an EB we have not seen via an
-        -- announcement before. We check if the point exists and trace a warning
-        -- if not, then insert as safety net. We should remove this once we are
-        -- confident the fetching logic handles this correctly.
-        leiosDbLookupEbPoint db ebHash >>= \case
-          Just _ -> pure () -- Point already exists (expected from announcement)
-          Nothing -> do
-            -- Unexpected: we're receiving an EB body without having seen the announcement first
-            traceWith ktracer $ TraceLeiosBlockPointMissing point
-            leiosDbInsertEbPoint db point ebBytesSize
-        -- FIXME: getting a LeiosDb: ErrorConstraint exception here When forging
-        -- a leios EB, another peer offers us the block we already produced and
-        -- the fetching logic does download it. This results in a duplicate
-        -- insert here. We can of course make the database ignore the
-        -- duplicates, but we should have not even fetched it.
-        -- REVIEW: ^^^^ this should be resolved
-        -- TODO: This was encountered again, but likely because of a race on two fetches.
+        -- FIXME: Once proper EB announcements are wired in, the point
+        -- MUST already be present here (announcement handling inserts
+        -- it) and this should become an assertion. Today we still tolerate
+        -- receiving an EB body without a prior announcement, so we insert
+        -- the point idempotently as a stop-gap and trace a warning.
+        traceWith ktracer $ TraceLeiosBlockPointMissing point
+        leiosDbInsertEbPoint db point ebBytesSize
         leiosDbInsertEbBody db point eb
         traceWith ktracer $ TraceLeiosBlockAcquired point
     -- update NodeKernel state
@@ -872,8 +909,10 @@ leiosCertRbOffer (outstandingVar, readyVar) peerVars (point, ebBytesSize) = do
             }
   -- As if 'MsgLeiosBlockOffer' (body) and 'MsgLeiosBlockTxsOffer' (txs): record
   -- this peer as offering both.
-  MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) ->
-    pure (Set.insert ebHash offers1, Set.insert ebHash offers2)
+  MVar.modifyMVar_ (Leios.offerings peerVars) $ \(offers1, offers2) -> do
+    let !offers1' = Set.insert ebHash offers1
+        !offers2' = Set.insert ebHash offers2
+    pure (offers1', offers2')
   void $ MVar.tryPutMVar readyVar ()
 
 -----

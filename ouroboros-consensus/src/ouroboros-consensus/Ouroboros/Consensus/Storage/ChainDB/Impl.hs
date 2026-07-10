@@ -50,10 +50,13 @@ import Control.Tracer
 import Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
-import qualified Data.Set as Set
 import GHC.Stack (HasCallStack)
-import LeiosDemoDb.Common (leiosDbScanCompleteEbClosuresNotOlderThanSlot)
-import LeiosDemoTypes (HasLeiosVoting)
+import LeiosDemoDb.Common (leiosDbScanCompleteEbClosuresNotOlderThanSlot, withLeiosDb)
+import LeiosDemoTypes
+  ( HasLeiosVoting
+  , acquiredLeiosEbHashes
+  , acquiredLeiosEbsFromList
+  )
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -220,11 +223,12 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     -- tip. 'Background.leiosAcquiredEbsRunner' grows it thereafter from LeiosDb
     -- closure-completion notifications.
     initialAcquiredLeiosEbs <-
-      leiosDbScanCompleteEbClosuresNotOlderThanSlot
-        (Args.cdbsLeiosDb cdbSpecificArgs)
-        (fromWithOrigin (SlotNo 0) (pointSlot immutableDbTipPoint))
+      withLeiosDb (Args.cdbsLeiosDb cdbSpecificArgs) $ \leiosConn ->
+        leiosDbScanCompleteEbClosuresNotOlderThanSlot
+          leiosConn
+          (fromWithOrigin (SlotNo 0) (pointSlot immutableDbTipPoint))
     varAcquiredLeiosEbs <-
-      newTVarIO (Set.fromList initialAcquiredLeiosEbs)
+      newTVarIO (acquiredLeiosEbsFromList initialAcquiredLeiosEbs)
     chain <-
       ChainSel.initialChainSelection
         immutableDB
@@ -233,7 +237,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         initChainSelTracer
         (Args.cdbsTopLevelConfig cdbSpecificArgs)
         varInvalid
-        (readTVar varAcquiredLeiosEbs)
+        (acquiredLeiosEbHashes <$> readTVar varAcquiredLeiosEbs)
         (void initialLoE)
         (forgetFingerprint initialWeights)
     traceWith initChainSelTracer InitialChainSelected
