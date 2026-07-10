@@ -518,7 +518,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                 let lsAfterEB = lsBeforeEB{ledgerState = newLst}
                     blockDiff = tickThenReapply evs cfg b lsAfterEB
                     closureDiff = trackingToDiffs (calculateDifference lsBeforeEB lsAfterEB)
-                in pure (Right (prependDiffs closureDiff blockDiff))
+                 in pure (Right (prependDiffs closureDiff blockDiff))
   ApplyVal b -> do
     extSt <- atomically (forkerGetLedgerState fo)
     let cds = headerStateChainDep (headerState extSt)

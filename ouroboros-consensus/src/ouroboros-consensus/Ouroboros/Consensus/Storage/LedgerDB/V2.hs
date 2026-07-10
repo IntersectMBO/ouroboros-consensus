@@ -220,7 +220,7 @@ mkInternals ldb h snapManager =
               st <- atomically $ forkerGetLedgerState frk
               let cds = headerStateChainDep (headerState st)
               blk' <- withLeiosDb (ldbLeiosDb env) $ \leiosConn ->
-                resolveLeiosBlock leiosConn cds blk   -- TODO resolveLeiosBlock is the wrong function to call here
+                resolveLeiosBlock leiosConn cds blk -- TODO resolveLeiosBlock is the wrong function to call here
               tables <- forkerReadTables frk (getBlockKeySets blk')
               let st' =
                     tickThenReapply

@@ -35,18 +35,17 @@ data LeiosDbHandle m = LeiosDbHandle
   -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosEbNotification })
   , open :: m (LeiosDbConnection m)
   -- ^ Open a new connection to the LeiosDb.
+  , -- NOTE: 'subscribeEbNotifications' and 'open' should be the _only_
+    -- methods of this handle. If you're thinking about adding another,
+    -- strongly consider adding it to 'LeiosDbConnection' instead. (See
+    -- https://github.com/input-output-hk/ouroboros-leios/issues/983 for
+    -- example motivation.)
 
-  -- NOTE: 'subscribeEbNotifications' and 'open' should be the _only_
-  -- methods of this handle. If you're thinking about adding another,
-  -- strongly consider adding it to 'LeiosDbConnection' instead. (See
-  -- https://github.com/input-output-hk/ouroboros-leios/issues/983 for
-  -- example motivation.)
+    -- TODO The two methods below are intentionally merely stubs for
+    -- now, but as part of implementing them, we should relocate them to
+    -- 'LeiosDbConnection'.
 
-  -- TODO The two methods below are intentionally merely stubs for
-  -- now, but as part of implementing them, we should relocate them to
-  -- 'LeiosDbConnection'.
-
-  , leiosDbGarbageCollect :: HasCallStack => SlotNo -> m ()
+    leiosDbGarbageCollect :: HasCallStack => SlotNo -> m ()
   -- ^ Evict LeiosDb data that is no longer needed now that everything up to the
   -- given slot is immutable. The ChainDB drives this from its GC scheduler,
   -- passing the same slot it uses to GC the VolatileDB\/PerasCertDB (see

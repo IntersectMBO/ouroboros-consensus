@@ -2,7 +2,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE ExistentialQuantification #-}
@@ -213,7 +212,7 @@ decodeLeiosPoint = do
 data AcquiredLeiosEbs = AcquiredLeiosEbs
   { alebYoungestSlot :: !(Map EbHash SlotNo)
   , alebBySlot :: !(Map SlotNo (NESet EbHash))
-    -- ^ INVARIANT: is merely reverse index of 'alebYoungestSlot'
+  -- ^ INVARIANT: is merely reverse index of 'alebYoungestSlot'
   }
   deriving stock (Show, Generic)
 
@@ -226,8 +225,8 @@ emptyAcquiredLeiosEbs :: AcquiredLeiosEbs
 emptyAcquiredLeiosEbs = AcquiredLeiosEbs Map.empty Map.empty
 
 -- | Use the 'Map' as a 'Set' without allocating the 'Set'.
-data AcquiredLeiosEbsSet =
-  forall x. MkAcquiredLeiosEbsSet !(Map EbHash x)
+data AcquiredLeiosEbsSet
+  = forall x. MkAcquiredLeiosEbsSet !(Map EbHash x)
 
 acquiredLeiosEbHashes :: AcquiredLeiosEbs -> AcquiredLeiosEbsSet
 acquiredLeiosEbHashes = MkAcquiredLeiosEbsSet . alebYoungestSlot
@@ -238,7 +237,7 @@ acquiredLeiosEbsSetMember eb (MkAcquiredLeiosEbsSet m) = Map.member eb m
 -- | NOT EXPORTED
 --
 -- An auxiliary for 'insertAcquiredLeiosEb'.
-newtype Alteration a b = MkAlteration (Maybe (a, b)) deriving (Functor)
+newtype Alteration a b = MkAlteration (Maybe (a, b)) deriving Functor
 
 -- | 'Nothing' if unchanged; @'Just' (novel, st')@ otherwise, where @novel@ is
 -- 'True' iff the EB was not present before. Only bumps the slot when strictly
@@ -247,17 +246,17 @@ insertAcquiredLeiosEb ::
   LeiosPoint -> AcquiredLeiosEbs -> Maybe (Bool, AcquiredLeiosEbs)
 insertAcquiredLeiosEb (MkLeiosPoint slot eb) (AcquiredLeiosEbs youngest bySlot) =
   case mbAltered of
-      Nothing -> Nothing
-      Just ((novel, bySlot'), youngest') ->
-        Just (novel, AcquiredLeiosEbs youngest' bySlot')
+    Nothing -> Nothing
+    Just ((novel, bySlot'), youngest') ->
+      Just (novel, AcquiredLeiosEbs youngest' bySlot')
  where
   MkAlteration mbAltered =
     Map.alterF (fmap Just . MkAlteration . alteration) eb youngest
   alteration = \case
-      Nothing -> Just ((True, insertBucket slot eb bySlot), slot)
-      Just prevSlot
-        | slot <= prevSlot -> Nothing
-        | otherwise ->
+    Nothing -> Just ((True, insertBucket slot eb bySlot), slot)
+    Just prevSlot
+      | slot <= prevSlot -> Nothing
+      | otherwise ->
           Just ((False, insertBucket slot eb $ deleteBucket prevSlot eb bySlot), slot)
 
   insertBucket s e = Map.insertWith NESet.union s (NESet.singleton e)
