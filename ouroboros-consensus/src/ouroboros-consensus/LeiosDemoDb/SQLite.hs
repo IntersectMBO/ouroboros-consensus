@@ -97,32 +97,14 @@ newLeiosDBSQLite tracer dbPath = do
     LeiosDbHandle
       { subscribeEbNotifications =
           atomically (dupTChan notificationChan)
-      , leiosDbScanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbClosuresSince dbPath
       , -- No-op for now; see 'leiosDbGarbageCollect'. A real implementation
-        -- would open a transient connection (like 'sqlScanCompleteEbClosuresSince')
-        -- and evict the no-longer-needed rows.
+        -- would open a transient connection and evict the no-longer-needed rows.
         leiosDbGarbageCollect = \_slotNo -> pure ()
       , -- No-op for now; see 'leiosDbPromoteToImmutable'. A real implementation
         -- would copy the EB's body and closure rows into immutable storage.
         leiosDbPromoteToImmutable = \_point -> pure ()
       , open = openSQLiteConnection tracer dbPath notificationChan
       }
-
--- | Implements 'leiosDbScanCompleteEbClosuresNotOlderThanSlot': the complete-closure EBs
--- announced no older than the given slot. Opens its own transient read-only
--- connection. Only an existing DB can hold complete closures: a
--- fresh DB file is created lazily by the first 'open', so when the file does
--- not exist there is nothing to scan.
-sqlScanCompleteEbClosuresSince :: FilePath -> SlotNo -> IO [LeiosPoint]
-sqlScanCompleteEbClosuresSince dbPath sinceSlot = do
-  dbExists <- doesFileExist dbPath
-  if not dbExists
-    then pure []
-    else do
-      db <- open2 (fromString dbPath) [SQLOpenReadWrite] SQLVFSDefault
-      points <- sqlScanCompleteEbPointsSince db sinceSlot
-      void $ DB.close db
-      pure points
 
 -- * Connection management
 
@@ -226,6 +208,7 @@ openSQLiteConnection tracer dbPath notificationChan = do
     LeiosDbConnection
       { close = finalizeStmts stmts >> void (DB.close db)
       , leiosDbScanEbPoints = sqlScanEbPoints conn
+      , leiosDbScanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince db
       , leiosDbInsertEbPoint = sqlInsertEbPoint conn
       , leiosDbLookupEbBody = sqlLookupEbBody conn
       , leiosDbInsertEbBody = sqlInsertEbBody tracer conn notify
@@ -505,7 +488,7 @@ sql_scan_ebs =
   \ORDER BY ebSlot ASC\n\
   \"
 
--- | For 'sqlScanCompleteEbClosuresSince'
+-- | For 'sqlScanCompleteEbPointsSince'
 --
 -- The two conditions are decoupled across rows: the same EB hash can have
 -- several @(ebSlot, ebHashBytes)@ rows (one per announcer slot), and
