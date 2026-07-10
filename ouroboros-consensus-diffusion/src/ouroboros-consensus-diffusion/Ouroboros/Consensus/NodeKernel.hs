@@ -92,10 +92,9 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
-  ( calculateDifference
+  ( emptyLedgerTables
   , forgetLedgerTables
   , prependDiffs
-  , trackingToDiffs
   )
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
@@ -986,51 +985,37 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
               Just (_cert, announcedPoint) -> do
                 -- We have a Leios certificate: only take transactions for a new EB, as the RB will
                 -- carry the certificate and must not carry additional txs.
-                case protocolStateLeiosAnnouncement @blk (headerStateChainDep (headerState unticked)) of
-                  Nothing ->
-                    -- This case is impossible, as 'decideLeiosCertify' already checks exactly this and
-                    -- only builds a certificate if there is a matching announcement.
-                    error "forkBlockForging: impossible! no matching announcement for the certificate."
-                  Just (announcedPoint, _) -> do
-                    ebClosureTxs <- resolveLeiosClosure leiosConn announcedPoint (Proxy @blk)
-                    vals <- readTables (foldMap leiosClosureTxKeySets ebClosureTxs)
-                    let lsBeforeEB = ledgerState unticked `withLedgerTables` vals
-                    case applyLeiosClosure (configLedger cfg) ebClosureTxs lsBeforeEB of
-                      Left err -> do
-                        -- Should not happen: each closure tx was validated
-                        -- when inserted into the LeiosDb. Degrade safely by
-                        -- certifying but announcing no new EB, rather than
-                        -- announcing txs we could not revalidate.
-                        traceWith (leiosKernelTracer tracers) $
-                          MkTraceLeiosKernel $
-                            "forge rebase: applyLeiosClosure failed, announcing no EB: "
-                              <> show err
-                        -- as EB application failed, return the mempool based on top of
-                        -- the unmodified ledger state
-                        snap <- getSnapshotFor mempool currentSlot tickedLedgerState readTables
-                        pure ([], [], Data.Measure.zero, snap)
-                      Right lsAfterEB -> do
-                        -- Compose the EB closure diff (relative to the unticked
-                        -- parent) with the tick diff (relative to the
-                        -- state with the EB closure applied), so the snapshot is revalidated
-                        -- against parent + closure + tick. 'readTables' reads
-                        -- values at the unticked parent, matching that base.
-                        -- TODO(geo2a): I'm still not sure if this is correct
-                        let ebClosureDiff =
-                              trackingToDiffs (calculateDifference lsBeforeEB lsAfterEB)
-                            tickedLsAfterEB =
-                              applyChainTick
-                                OmitLedgerEvents
-                                (configLedger cfg)
-                                currentSlot
-                                (forgetLedgerTables lsAfterEB)
-                            rebasedTicked = prependDiffs ebClosureDiff tickedLsAfterEB
-                        snap <-
-                          getSnapshotForNoCache mempool currentSlot rebasedTicked readTables
-                        let ebTxs' = case mayEbCap of
-                              Nothing -> []
-                              Just ebCap -> fst (snapshotTake snap ebCap)
-                        pure ([], ebTxs', Data.Measure.zero, snap)
+
+                -- Apply the EB's transactions onto the ledger state
+                res <-
+                  resolveAndApplyLeiosClosure
+                    leiosConn
+                    (configLedger cfg)
+                    announcedPoint
+                    readTables
+                    emptyLedgerTables
+                    (ledgerState unticked)
+                case res of
+                  Left err ->
+                    -- Should not happen: each closure tx was validated
+                    -- when inserted into the LeiosDb. Fail loudly.
+                    error $ "forkBlockForging: applyLeiosClosure failed, announcing no EB. " <> show err
+                  Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} -> do
+                    -- Compose the EB closure diff (relative to the unticked
+                    -- parent) with the tick diff (relative to the
+                    -- state with the EB closure applied), so the mempool snapshot is revalidated
+                    -- against parent + closure + tick.
+                    let tickedLsAfterEB =
+                          lcaClosureDiff
+                            `prependDiffs` applyChainTick
+                              OmitLedgerEvents
+                              (configLedger cfg)
+                              currentSlot
+                              (forgetLedgerTables lcaStateAfterEB)
+                    snap <-
+                      getSnapshotForNoCache mempool currentSlot tickedLsAfterEB readTables
+                    let ebTxs' = fst (snapshotTake snap ebCap)
+                    pure ([], ebTxs', Data.Measure.zero, snap)
 
           -- force the mempool's computation before the tracer event
           _ <- evaluate (length rbTxs)

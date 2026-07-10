@@ -47,7 +47,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , AnnLedgerError (..)
   , AnnLedgerError'
   , ResolveBlock
+  , LeiosClosureApplied (..)
   , ResolveLeiosBlock (..)
+  , resolveAndApplyLeiosClosure
   , resolveLeiosBlock
   , SuccessForkerAction (..)
   , ValidateArgs (..)
@@ -339,6 +341,7 @@ validate ::
   , ApplyBlock l blk
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
+  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   ComputeLedgerEvents ->
@@ -413,6 +416,7 @@ switch ::
   , MonadSTM m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
+  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -475,6 +479,7 @@ applyBlock ::
   , MonadSTM m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
+  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -499,26 +504,31 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
           Nothing ->
             error $ "applyBlock ReapplyVal: nothing announced!?"
           Just (announcedPoint, _) -> do
-            closureTxs <- resolveLeiosClosure leiosDb announcedPoint b
-            let blkKeys = getBlockKeySets b
-                closureKeys = foldMap (castLedgerTables . leiosClosureTxKeySets) closureTxs
-            lsBeforeEB <- withLedgerTables extSt <$> forkerReadTables fo (closureKeys <> blkKeys)
-            let lcfg = configLedger (getExtLedgerCfg cfg)
-            case applyLeiosClosure lcfg closureTxs (ledgerState lsBeforeEB) of
+            let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
+                readTables = fmap castLedgerTables . forkerReadTables fo . castLedgerTables
+            res <-
+              resolveAndApplyLeiosClosure
+                leiosDb
+                (configLedger (getExtLedgerCfg cfg))
+                announcedPoint
+                readTables
+                bKeys
+                (ledgerState extSt)
+            let tip = castPoint $ getTip extSt
+            case res of
               Left lerr ->
                 pure
                   ( Left
                       ( AnnLedgerError
-                          (let tip = castPoint $ getTip lsBeforeEB in tip)
+                          tip
                           (blockRealPoint b)
                           (ExtValidationErrorLedger lerr)
                       )
                   )
-              Right newLst ->
-                let lsAfterEB = lsBeforeEB{ledgerState = newLst}
+              Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} ->
+                let lsAfterEB = extSt{ledgerState = lcaStateAfterEB}
                     blockDiff = tickThenReapply evs cfg b lsAfterEB
-                    closureDiff = trackingToDiffs (calculateDifference lsBeforeEB lsAfterEB)
-                 in pure (Right (prependDiffs closureDiff blockDiff))
+                 in pure (Right (prependDiffs lcaClosureDiff blockDiff))
   ApplyVal b -> do
     extSt <- atomically (forkerGetLedgerState fo)
     let cds = headerStateChainDep (headerState extSt)
@@ -534,12 +544,13 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
         -- carries only the Leios certificate, not the EB's txs). The
         -- sequence:
         --
+        -- TODO(geo2a): rewrite this comment to account for using 'reasolveAndApplyLeiosClosure'
         --   1. 'verifyLeiosCert' against the current committee and the
         --      announced (expected signed) EB.
         --   2. 'resolveLeiosClosure' to fetch the EB's txs from the
         --      LeiosDB.
         --   3. Load utxos (ledger tables) for the closure txs.
-        --   4. 'applyLeiosClosure' folds those txs onto the /unticked/
+        --   4. 'reasolveAndApplyLeiosClosure' folds those txs onto the /unticked/
         --      parent ledger via the per-era ledger 'ApplyTx' class
         --      with 'ValidateNone' (txs were validated upstream when
         --      inserted into the LeiosDb).
@@ -573,17 +584,20 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                 -- TODO: make this less fatal. This is like a ledger error.
                 error $ "applyBlock: invalid Leios cert: " <> show invalid
               Right _weight -> do
-                -- Load EB txs from disk
-                closureTxs <- resolveLeiosClosure leiosDb announcedPoint (Proxy @blk)
-                -- UTXO-HD of the whole closure
-                let blkKeys = getBlockKeySets b
-                    closureKeys = foldMap (castLedgerTables . leiosClosureTxKeySets) closureTxs
-                lsBeforeEB <- withLedgerTables extSt <$> forkerReadTables fo (closureKeys <> blkKeys)
-                let tip = castPoint $ getTip lsBeforeEB
-                case applyLeiosClosure
-                  (configLedger (getExtLedgerCfg cfg))
-                  closureTxs
-                  (ledgerState lsBeforeEB) of
+                -- get the UTXO-HD keys of the RB we are applying the cert onto
+                let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
+                let readTables = fmap castLedgerTables . forkerReadTables fo . castLedgerTables
+                -- Resolve the EB closure from disk and apply it onto the ledger state.
+                res <-
+                  resolveAndApplyLeiosClosure
+                    leiosDb
+                    (configLedger (getExtLedgerCfg cfg))
+                    announcedPoint
+                    readTables
+                    bKeys
+                    (ledgerState extSt)
+                let tip = castPoint $ getTip extSt
+                case res of
                   Left lerr ->
                     -- REVIEW: Better annotation than CertRB point possible?
                     --
@@ -597,25 +611,13 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                               (ExtValidationErrorLedger lerr)
                           )
                       )
-                  Right newLst ->
-                    let lsAfterEB = lsBeforeEB{ledgerState = newLst}
+                  Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} ->
+                    let lsAfterEB = extSt{ledgerState = lcaStateAfterEB}
                      in case runExcept $ tickThenApply evs cfg b lsAfterEB of
                           Left lerr ->
                             pure (Left (AnnLedgerError tip (blockRealPoint b) lerr))
                           Right blockDiff ->
-                            -- The closure's table modifications happened
-                            -- between 'lsBeforeEB' and 'lsAfterEB' and are
-                            -- /not/ in 'blockDiff' (which is a diff relative
-                            -- to 'lsAfterEB'). 'forkerPush' interprets the
-                            -- pushed diff as being on top of 'extSt' (the
-                            -- LedgerDB anchor), so without composition the
-                            -- closure inputs/outputs would be silently
-                            -- dropped from the changelog and unavailable to
-                            -- the next block's 'forkerReadTables'.
-                            let closureDiff =
-                                  trackingToDiffs
-                                    (calculateDifference lsBeforeEB lsAfterEB)
-                             in pure (Right (prependDiffs closureDiff blockDiff))
+                            pure (Right (prependDiffs lcaClosureDiff blockDiff))
   ReapplyRef r -> do
     b <- doResolveBlock r
     applyBlock leiosDb evs cfg (ReapplyVal b) fo doResolveBlock
@@ -639,6 +641,7 @@ applyThenPush ::
   , MonadSTM m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
+  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -660,6 +663,7 @@ applyThenPushMany ::
   , MonadSTM m
   , ResolveLeiosBlock blk
   , HasLeiosVoting blk
+  , HasLedgerTables (LedgerState blk)
   , l ~ ExtLedgerState blk
   ) =>
   LeiosDbConnection m ->
@@ -809,6 +813,48 @@ resolveLeiosBlock leiosDb cds b =
       -- NOTE: This produces a block that would fail full validation.
       resolveLeiosClosure leiosDb announcedPoint
         <&> inlineLeiosClosure b
+
+-- | The result of resolving an announced EB's closure and applying it a ledger state.
+data LeiosClosureApplied blk = LeiosClosureApplied
+  { lcaStateAfterEB :: LedgerState blk ValuesMK
+  -- ^ The ledger state with the EB's transactions applied.
+  , lcaClosureDiff :: LedgerState blk DiffMK
+  -- ^ The closure diff relative to the parent. Callers must 'prependDiffs'
+  -- this onto whatever diff they produce on top of 'lcaStateAfterEB'.
+  }
+
+-- | Resolve the closure of the EB announced at the given 'LeiosPoint' and
+-- apply it onto the given ledger state.
+resolveAndApplyLeiosClosure ::
+  forall m blk.
+  ( Monad m
+  , ResolveLeiosBlock blk
+  , HasLedgerTables (LedgerState blk)
+  ) =>
+  LeiosDbConnection m ->
+  LedgerCfg (LedgerState blk) ->
+  LeiosPoint ->
+  -- | The function to read the ledger tables given the keys of the EB closure's transactions.
+  (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
+  -- | Additional keys to be read, for example the UTxOs from an RB.
+  LedgerTables (LedgerState blk) KeysMK ->
+  -- | The base ledger state to apply the EB on top of.
+  LedgerState blk EmptyMK ->
+  m (Either (LedgerErr (LedgerState blk)) (LeiosClosureApplied blk))
+reasolveAndApplyLeiosClosure leiosDb lcfg announcedPoint readValues extraKeys lsBase = do
+  -- Load EB txs from disk
+  closureTxs <- resolveLeiosClosure leiosDb announcedPoint
+  -- UTXO-HD of the whole closure
+  let closureKeys = foldMap leiosClosureTxKeySets closureTxs <> extraKeys
+  closureVals <- readValues closureKeys
+  let lsBeforeEB = lsBase `withLedgerTables` closureVals
+  -- apply the closure and return the result in case there was not errors
+  pure $
+    applyLeiosClosure lcfg closureTxs lsBeforeEB <&> \lsAfterEB ->
+      LeiosClosureApplied
+        { lcaStateAfterEB = lsAfterEB
+        , lcaClosureDiff = trackingToDiffs (calculateDifference lsBeforeEB lsAfterEB)
+        }
 
 {-------------------------------------------------------------------------------
   Validation
