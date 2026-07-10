@@ -73,7 +73,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
 import Data.Fixed (Pico)
-import Data.Foldable (foldl')
+import qualified Data.Foldable as F
 import Data.Function (on)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
@@ -264,7 +264,7 @@ insertAcquiredLeiosEb (MkLeiosPoint slot eb) (AcquiredLeiosEbs youngest bySlot) 
 
 acquiredLeiosEbsFromList :: [LeiosPoint] -> AcquiredLeiosEbs
 acquiredLeiosEbsFromList =
-  foldl' (\st p -> maybe st snd (insertAcquiredLeiosEb p st)) emptyAcquiredLeiosEbs
+  F.foldl' (\st p -> maybe st snd (insertAcquiredLeiosEb p st)) emptyAcquiredLeiosEbs
 
 -- | Drop every EB whose youngest announcement slot is strictly older than the
 -- given (immutable tip) slot.
