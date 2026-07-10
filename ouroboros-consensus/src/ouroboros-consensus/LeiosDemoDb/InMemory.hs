@@ -104,16 +104,6 @@ newLeiosDBInMemoryWith stateVar = do
     LeiosDbHandle
       { subscribeEbNotifications =
           atomically (dupTChan notificationChan)
-      , -- This is consulted only once, at ChainDB open, before any mini-protocol
-        -- runs (see 'Ouroboros.Consensus.Storage.ChainDB.Impl.openDBInternal').
-        -- An in-memory DB has no on-disk persistence, so for a fresh process it
-        -- is empty at that point and this could simply be @pure []@. We keep the
-        -- real scan because the ThreadNet harness persists the 'stateVar' across
-        -- simulated node restarts (it lives in the per-node 'NodeInfo' alongside
-        -- the MockFS DBs; see @Test.ThreadNet.Network@), so on a restart the
-        -- ChainDB reopens against a non-empty DB and this seeds the restored
-        -- acquired-EB-closures set — the restart-recovery path.
-        leiosDbScanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
       , -- No-op for now; see 'leiosDbGarbageCollect'.
         leiosDbGarbageCollect = \_slotNo -> pure ()
       , -- No-op for now; see 'leiosDbPromoteToImmutable'.
@@ -123,6 +113,9 @@ newLeiosDBInMemoryWith stateVar = do
             LeiosDbConnection
               { close = pure ()
               , leiosDbScanEbPoints = imScanEbPoints stateVar
+              , -- ThreadNet persists 'stateVar' across simulated restarts, so on
+                -- restart this seeds the restored acquired-EB-closures set.
+                leiosDbScanCompleteEbClosuresNotOlderThanSlot = imScanCompleteEbClosuresSince stateVar
               , leiosDbInsertEbPoint = imInsertEbPoint stateVar
               , leiosDbLookupEbBody = imLookupEbBody stateVar
               , leiosDbInsertEbBody = imInsertEbBody stateVar notificationChan

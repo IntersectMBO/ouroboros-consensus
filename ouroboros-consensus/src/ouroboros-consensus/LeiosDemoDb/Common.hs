@@ -35,18 +35,17 @@ data LeiosDbHandle m = LeiosDbHandle
   -- TODO: make return type more descriptive (e.g. Subscription { getNext :: STM m LeiosEbNotification })
   , open :: m (LeiosDbConnection m)
   -- ^ Open a new connection to the LeiosDb.
-  , leiosDbScanCompleteEbClosuresNotOlderThanSlot :: HasCallStack => SlotNo -> m [LeiosPoint]
-  -- ^ Scan the EBs whose tx closure is already complete and that were announced
-  -- by an RB no older than the given slot. The ChainDB calls this once at
-  -- startup -- passing the immutable tip slot -- to seed the acquired-EB
-  -- closures set it owns (see @cdbAcquiredLeiosEbs@); thereafter it learns of
-  -- newly-completed closures from 'subscribeEbNotifications' ('AcquiredEbTxs').
-  --
-  -- The slot is a plain query bound, not retained state: the LeiosDb does not
-  -- know about (nor track) the immutable tip; it just answers the query. The
-  -- acquired set itself -- the @complete ∩ announced-no-older-than-tip@
-  -- projection that ChainSel consults -- is owned by the ChainDB, since its
-  -- definition depends on the immutable tip, which is a ChainDB concept.
+
+  -- NOTE: 'subscribeEbNotifications' and 'open' should be the _only_
+  -- methods of this handle. If you're thinking about adding another,
+  -- strongly consider adding it to 'LeiosDbConnection' instead. (See
+  -- https://github.com/input-output-hk/ouroboros-leios/issues/983 for
+  -- example motivation.)
+
+  -- TODO The two methods below are intentionally merely stubs for
+  -- now, but as part of implementing them, we should relocate them to
+  -- 'LeiosDbConnection'.
+
   , leiosDbGarbageCollect :: HasCallStack => SlotNo -> m ()
   -- ^ Evict LeiosDb data that is no longer needed now that everything up to the
   -- given slot is immutable. The ChainDB drives this from its GC scheduler,
@@ -88,6 +87,13 @@ data LeiosDbConnection m = LeiosDbConnection
   { close :: m ()
   -- ^ Close the connection and free up resources. After calling this, the connection may not be used anymore.
   , leiosDbScanEbPoints :: HasCallStack => m [(SlotNo, EbHash)]
+  , leiosDbScanCompleteEbClosuresNotOlderThanSlot :: HasCallStack => SlotNo -> m [LeiosPoint]
+  -- ^ Scan the EBs whose tx closure is complete and whose announcer is no older
+  -- than the given slot. The ChainDB opens a transient connection at startup --
+  -- passing the immutable tip slot -- to seed the acquired-EB-closures set it
+  -- owns (see @cdbAcquiredLeiosEbs@); thereafter it learns of newly-completed
+  -- closures from 'subscribeEbNotifications' ('AcquiredEbTxs'). The slot is a
+  -- plain query bound, not retained state.
   , leiosDbInsertEbPoint :: HasCallStack => LeiosPoint -> BytesSize -> m ()
   -- ^ Insert an announced EB point with its expected size. Called on
   -- the announcement path (forge issuing an EB, peer receiving an
