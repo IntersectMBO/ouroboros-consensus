@@ -67,10 +67,19 @@ be adding is the Alonzo era, which comes after the Mary era.
   instance.
 
 * In `Ouroboros.Consensus.Cardano.Node`, update the `SerialiseHFC` instance by
-  following the existing patterns. Add a new `CardanoNodeToNodeVersion` and
-  `CardanoNodeToClientVersion` that enable the `AlonzoEra`, update the existing
-  ones so that they disable the new era. Be sure to include the new versions in
-  the two methods of the `SupportedNetworkProtocolVersion` instance. Extend
+  following the existing patterns. Append the new era to `CardanoNodeToNodeVersion2`, reusing
+  `ShelleyNodeToNodeVersion1`, and do not add a new `CardanoNodeToNodeVersion`.
+  The node-to-node side has no per-era disable: `WrapNodeToNodeVersion` is a
+  single-constructor wrapper (the enable/disable type was removed in
+  `ed49cd11b`), so every era there is always on (see [Hard forks and
+  node-to-node versioning](../explanations/hard_forks_and_node_to_node_versioning.md)).
+  On the node-to-client side, add the new era as `EraNodeToClientEnabled` to
+  every existing `CardanoNodeToClientVersion`; that side still has
+  `EraNodeToClientDisabled`, but current practice leaves every era enabled.
+  Adding an era does not itself require a new `CardanoNodeToClientVersion`: new
+  client versions are added separately, when node-to-client capabilities change
+  (a new query or a codec change) and bump `ShelleyNodeToClientVersion`, and any
+  such version is listed in the `supportedNodeToClientVersions` method. Extend
   `protocolInfoCardano` with the new era by following the type errors and adding
   the missing parameters (including `ProtocolParamsTransition`). Don't forget to
   derive `maxMajorProtVer` from the new final era. Update
