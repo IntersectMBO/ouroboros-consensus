@@ -142,10 +142,10 @@ implDuplicateWithDiffs ::
   Tracer m LedgerDBV2Trace ->
   Values blk ->
   SomeHasFS m ->
-  Diff blk ->
+  TickAndBlockDiff blk ->
   m (LedgerTablesHandle m l blk)
 implDuplicateWithDiffs !tracer values !someFS !diff =
-  newInMemoryLedgerTablesHandle tracer someFS (forward @blk [diff] values)
+  newInMemoryLedgerTablesHandle tracer someFS (forwardTickAndBlockDiff @blk diff values)
 
 implTakeHandleSnapshot ::
   forall m l blk h.

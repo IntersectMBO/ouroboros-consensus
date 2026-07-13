@@ -98,7 +98,7 @@ import Prelude hiding (read)
 data LedgerTablesHandle m l blk = LedgerTablesHandle
   { close :: !(m ())
   -- ^ Close the handle
-  , duplicateWithDiffs :: !(Diff blk -> m (LedgerTablesHandle m l blk))
+  , duplicateWithDiffs :: !(TickAndBlockDiff blk -> m (LedgerTablesHandle m l blk))
   -- ^ Create a new handle by duplicating this one and pushing a block's diff to
   -- it (the diff is applied to the held values via 'forward').
   --

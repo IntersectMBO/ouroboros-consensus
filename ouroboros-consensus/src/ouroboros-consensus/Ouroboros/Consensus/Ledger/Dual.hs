@@ -410,7 +410,7 @@ instance Bridge m a => IsLedger LedgerState (DualBlock m a) where
             { tickedDualLedgerStateMain = main
             , tickedDualLedgerStateAux = tickedAux
             , tickedDualLedgerStateAuxValues =
-                forward @a [auxDiff] dualLedgerStateAuxValues
+                forwardTickDiff @a auxDiff dualLedgerStateAuxValues
             , tickedDualLedgerStateAuxOrig = dualLedgerStateAux
             , tickedDualLedgerStateAuxOrigValues = dualLedgerStateAuxValues
             , tickedDualLedgerStateBridge = dualLedgerStateBridge
@@ -439,7 +439,7 @@ applyHelper ::
     m ->
     Values m ->
     Ticked LedgerState m EmptyMK ->
-    Except (LedgerErr LedgerState m) (LedgerResult m (LedgerState m EmptyMK, Diff m))
+    Except (LedgerErr LedgerState m) (LedgerResult m (LedgerState m EmptyMK, BlockDiff m))
   ) ->
   ComputeLedgerEvents ->
   DualLedgerConfig m a ->
@@ -448,7 +448,7 @@ applyHelper ::
   Ticked LedgerState (DualBlock m a) EmptyMK ->
   Except
     (DualLedgerError m a)
-    (LedgerResult (DualBlock m a) (LedgerState (DualBlock m a) EmptyMK, Diff (DualBlock m a)))
+    (LedgerResult (DualBlock m a) (LedgerState (DualBlock m a) EmptyMK, BlockDiff (DualBlock m a)))
 applyHelper f opts cfg block@DualBlock{..} vals TickedDualLedgerState{..} = do
   (ledgerResult, (aux', auxValues')) <-
     agreeOnError
@@ -528,10 +528,18 @@ instance Bridge m a => ApplyBlock LedgerState (DualBlock m a) where
 instance Bridge m a => BlockSupportsUTxOHD (DualBlock m a) where
   type Keys (DualBlock m a) = Keys m
   type Values (DualBlock m a) = Values m
-  type Diff (DualBlock m a) = Diff m
+  type TickDiff (DualBlock m a) = TickDiff m
+  type BlockDiff (DualBlock m a) = BlockDiff m
+  type TickAndBlockDiff (DualBlock m a) = TickAndBlockDiff m
+  type TxsDiff (DualBlock m a) = TxsDiff m
 
   blockKeys = blockKeys @m . dualBlockMain
-  forward = forward @m
+
+  combineTickAndBlockDiff = combineTickAndBlockDiff @m
+  forwardTickDiff = forwardTickDiff @m
+  forwardBlockDiff = forwardBlockDiff @m
+  forwardTickAndBlockDiff = forwardTickAndBlockDiff @m
+  forwardTxsDiff = forwardTxsDiff @m
 
   restrictValues = restrictValues @m
   valuesSize = valuesSize @m
@@ -555,7 +563,8 @@ instance
   SingleEraUTxOHDBlock (DualBlock m a)
   where
   emptyValues = emptyValues @m
-  emptyDiffs = emptyDiffs @m
+  emptyTickDiff = emptyTickDiff @m
+  combineTransAndTickDiff = combineTransAndTickDiff @m
 
 data instance LedgerState (DualBlock m a) mk = DualLedgerState
   { dualLedgerStateMain :: LedgerState m mk
@@ -738,7 +747,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
             { tickedDualLedgerStateMain = main'
             , tickedDualLedgerStateAux = aux'
             , tickedDualLedgerStateAuxValues =
-                forward @a [auxDiff] tickedDualLedgerStateAuxValues
+                forwardTxsDiff @a auxDiff tickedDualLedgerStateAuxValues
             , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
             , tickedDualLedgerStateAuxOrigValues = tickedDualLedgerStateAuxOrigValues
             , tickedDualLedgerStateBridge =
@@ -777,7 +786,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
             { tickedDualLedgerStateMain = main'
             , tickedDualLedgerStateAux = aux'
             , tickedDualLedgerStateAuxValues =
-                forward @a [auxDiff] tickedDualLedgerStateAuxValues
+                forwardTxsDiff @a auxDiff tickedDualLedgerStateAuxValues
             , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
             , tickedDualLedgerStateAuxOrigValues = tickedDualLedgerStateAuxOrigValues
             , tickedDualLedgerStateBridge =
@@ -1002,7 +1011,7 @@ applyMaybeBlock ::
 applyMaybeBlock _ _ Nothing _ _ origSt origVals = return (origSt, origVals)
 applyMaybeBlock evs cfg (Just block) tvals tst _ _ = do
   (st', diff) <- applyLedgerBlock evs cfg block tvals tst
-  return (st', forward @blk [diff] tvals)
+  return (st', forwardBlockDiff @blk diff tvals)
 
 -- | Lift 'reapplyLedgerBlock' to @Maybe blk@
 --
@@ -1021,7 +1030,7 @@ reapplyMaybeBlock ::
 reapplyMaybeBlock _ _ Nothing _ _ origSt origVals = (origSt, origVals)
 reapplyMaybeBlock evs cfg (Just block) tvals tst _ _ =
   let (st', diff) = reapplyLedgerBlock evs cfg block tvals tst
-   in (st', forward @blk [diff] tvals)
+   in (st', forwardBlockDiff @blk diff tvals)
 
 -- | Used when the concrete and abstract implementation should agree on errors
 --

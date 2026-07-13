@@ -703,7 +703,6 @@ implForkerClose env = do
 
 newForker ::
   ( IOLike m
-  , BlockSupportsUTxOHD blk
   , NoThunks (l blk EmptyMK)
   , GetTip (l blk)
   , StandardHash (l blk)

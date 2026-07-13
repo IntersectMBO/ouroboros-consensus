@@ -367,7 +367,7 @@ data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
-  , push :: l blk EmptyMK -> Diff blk -> m ()
+  , push :: l blk EmptyMK -> TickAndBlockDiff blk -> m ()
   -- ^ Push a ledger state (together with the diff it produced), and prune the
   -- 'LedgerDB' to its immutable tip.
   --

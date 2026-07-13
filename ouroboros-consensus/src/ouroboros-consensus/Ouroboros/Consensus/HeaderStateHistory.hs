@@ -275,7 +275,7 @@ fromChain cfg initState initValues chain =
       . NE.scanl
         ( \(st, vals) blk ->
             let (st', diff) = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk vals st
-             in (st', forward @blk [diff] vals)
+             in (st', forwardTickAndBlockDiff @blk diff vals)
         )
         (initState, initValues)
       . Chain.toOldestFirst

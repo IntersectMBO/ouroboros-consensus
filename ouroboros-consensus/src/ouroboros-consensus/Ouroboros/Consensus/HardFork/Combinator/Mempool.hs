@@ -304,7 +304,7 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs blk = ApplyResult
   { arState :: FlipTickedLedgerState EmptyMK blk
-  , arDiff :: WrapDiff blk
+  , arDiff :: WrapTxsDiff blk
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
 
@@ -325,7 +325,7 @@ applyHelper ::
   Except
     (HardForkApplyTxErr xs)
     ( TickedLedgerState (HardForkBlock xs) EmptyMK
-    , Diff (HardForkBlock xs)
+    , TxsDiff (HardForkBlock xs)
     , Validated (GenTx (HardForkBlock xs))
     )
 applyHelper
@@ -371,7 +371,7 @@ applyHelper
             let st' :: State.HardForkState (FlipTickedLedgerState EmptyMK) xs
                 st' = arState `hmap` result
 
-                diffs :: Diff (HardForkBlock xs)
+                diffs :: TxsDiff (HardForkBlock xs)
                 diffs = State.tip $ arDiff `hmap` result
 
                 vtx :: Validated (GenTx (HardForkBlock xs))
@@ -432,7 +432,7 @@ applyHelper
                 pure
                   ApplyResult
                     { arValidatedTx = injectValidatedGenTx index vtx
-                    , arDiff = WrapDiff diff
+                    , arDiff = WrapTxsDiff diff
                     , arState = FlipTickedLedgerState st'
                     }
               ModeReapply -> do
@@ -442,7 +442,7 @@ applyHelper
                 pure
                   ApplyResult
                     { arValidatedTx = injectValidatedGenTx index vtx'
-                    , arDiff = WrapDiff diff
+                    , arDiff = WrapTxsDiff diff
                     , arState = FlipTickedLedgerState st'
                     }
 

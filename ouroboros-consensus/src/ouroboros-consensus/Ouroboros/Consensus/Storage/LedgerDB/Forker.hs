@@ -119,7 +119,7 @@ data Forker m l blk = Forker
   -- Returns 'Nothing' if the implementation is backed by @lsm-tree@.
   , -- Updates
 
-    forkerPush :: !(l blk EmptyMK -> Diff blk -> m ())
+    forkerPush :: !(l blk EmptyMK -> TickAndBlockDiff blk -> m ())
   -- ^ Advance the fork handle by pushing a new ledger state (and the diff it
   -- produced) to the tip of the current fork.
   , forkerCommit :: !(STM m (m ()))
@@ -479,7 +479,7 @@ applyBlock ::
   Ap m l blk ->
   Forker m l blk ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) (l blk EmptyMK, Diff blk))
+  m (Either (AnnLedgerError l blk) (l blk EmptyMK, TickAndBlockDiff blk))
 applyBlock evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b ->
     withValues b (\vs l -> return $ Right $ tickThenReapply evs cfg b vs l)
@@ -500,8 +500,8 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
  where
   withValues ::
     blk ->
-    (Values blk -> l blk EmptyMK -> m (Either (AnnLedgerError l blk) (l blk EmptyMK, Diff blk))) ->
-    m (Either (AnnLedgerError l blk) (l blk EmptyMK, Diff blk))
+    (Values blk -> l blk EmptyMK -> m (Either (AnnLedgerError l blk) (l blk EmptyMK, TickAndBlockDiff blk))) ->
+    m (Either (AnnLedgerError l blk) (l blk EmptyMK, TickAndBlockDiff blk))
   withValues blk f = do
     l <- atomically $ forkerGetLedgerState fo
     vs <- forkerReadTables fo (blockKeys blk)

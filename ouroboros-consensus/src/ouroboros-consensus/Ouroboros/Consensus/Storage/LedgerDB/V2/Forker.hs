@@ -89,7 +89,7 @@ implForkerPush ::
   (IOLike m, GetTip (l blk), HasCallStack) =>
   ForkerEnv m l blk ->
   l blk EmptyMK ->
-  Diff blk ->
+  TickAndBlockDiff blk ->
   m ()
 implForkerPush env newState diff = do
   encloseTimedWith (ForkerPush >$< foeTracer env) $ do
