@@ -926,6 +926,32 @@ benchmark PerasCertDB-bench
     tasty-bench,
     unstable-consensus-testlib,
 
+benchmark txid-eq-ord-instances-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: ouroboros-consensus-cardano/bench/txid-eq-ord-instances-bench
+  main-is: Main.hs
+  -- -fno-cse keeps the two role-0 operand lists distinct, so the 'equal' cells
+  -- compare two separate heap objects and pay two hashes (as a real membership
+  -- hit does); without it CSE merges them. See Main.hs.
+  ghc-options:
+    -fno-cse
+    -with-rtsopts=-T
+
+  build-depends:
+    base,
+    bytestring,
+    cardano,
+    cardano-crypto-wrapper,
+    cardano-ledger-core,
+    cardano-ledger-shelley,
+    cardano-protocol-tpraos,
+    deepseq,
+    ouroboros-consensus,
+    sop-core,
+    strict-sop-core,
+    tasty-bench,
+
 test-suite doctest
   import: common-test
   main-is: doctest.hs
