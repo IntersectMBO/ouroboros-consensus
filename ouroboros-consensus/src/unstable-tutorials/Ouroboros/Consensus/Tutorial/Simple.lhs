@@ -744,14 +744,21 @@ values are trivially empty (`()`) and every operation is a no-op:
 > type instance TxOut BlockC = Void
 
 > instance BlockSupportsUTxOHD BlockC where
->   type Keys   BlockC = ()
->   type Values BlockC = ()
->   type Diff   BlockC = ()
+>   type Keys             BlockC = ()
+>   type Values           BlockC = ()
+>   type TickDiff         BlockC = ()
+>   type BlockDiff        BlockC = ()
+>   type TickAndBlockDiff BlockC = ()
+>   type TxsDiff          BlockC = ()
 >   blockKeys _ = ()
->   forward _ = id
->   restrictValues _ = id
->   valuesSize _ = 0
->   encodeValues _ = mempty
+>   combineTickAndBlockDiff () () = ()
+>   forwardTickDiff () () = ()
+>   forwardBlockDiff () () = ()
+>   forwardTickAndBlockDiff () () = ()
+>   forwardTxsDiff () () = ()
+>   restrictValues () () = ()
+>   valuesSize () = 0
+>   encodeValues () = mempty
 >   decodeValues _ = pure ()
 
 The single-era classes provide the empty collections and the (trivial) backend
@@ -760,7 +767,8 @@ separately from `BlockSupportsUTxOHD`:
 
 > instance SingleEraUTxOHDBlock BlockC where
 >   emptyValues = ()
->   emptyDiffs = ()
+>   emptyTickDiff = ()
+>   combineTransAndTickDiff () () = ()
 
 > instance SingleEraBlockSupportsUTxOHD BlockC where
 >   rangeReadValues _ _ = ((), Nothing)

@@ -300,7 +300,7 @@ applyShelleyTx ::
   Except
     (ApplyTxErr (ShelleyBlock proto era))
     ( TickedLedgerState (ShelleyBlock proto era) EmptyMK
-    , Diff (ShelleyBlock proto era)
+    , TxsDiff (ShelleyBlock proto era)
     , Validated (GenTx (ShelleyBlock proto era))
     )
 applyShelleyTx cfg wti slot (ShelleyTx _ tx) values st0 = do
@@ -329,7 +329,7 @@ reapplyShelleyTx ::
   Except
     (ApplyTxErr (ShelleyBlock proto era))
     ( TickedLedgerState (ShelleyBlock proto era) EmptyMK
-    , Diff (ShelleyBlock proto era)
+    , TxsDiff (ShelleyBlock proto era)
     )
 reapplyShelleyTx cfg slot vgtx values st0 = do
   (nesCleared, diff) <-

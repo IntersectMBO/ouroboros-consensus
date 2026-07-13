@@ -108,8 +108,8 @@ import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.TypeFamilyWrappers
-  ( WrapDiff (..)
-  , WrapKeys (..)
+  ( WrapKeys (..)
+  , WrapTickAndBlockDiff (..)
   , WrapValues (..)
   )
 import Ouroboros.Consensus.Util (chunks, whenJust)
@@ -168,8 +168,8 @@ class BlockSupportsUTxOHD blk => BlockSupportsLSM blk where
     (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Keys x -> (Values x -> Values blk) -> r) ->
     r
   withDiffEra ::
-    Diff blk ->
-    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Diff x -> r) ->
+    TickAndBlockDiff blk ->
+    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> TickAndBlockDiff x -> r) ->
     r
   withValuesEra ::
     Values blk ->
@@ -200,13 +200,13 @@ instance CanHardFork xs => BlockSupportsLSM (HardForkBlock xs) where
 
   withDiffEra ::
     forall r.
-    Diff (HardForkBlock xs) ->
-    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Diff x -> r) ->
+    TickAndBlockDiff (HardForkBlock xs) ->
+    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> TickAndBlockDiff x -> r) ->
     r
   withDiffEra d k = hcollapse $ hcmap proxySingle go d
    where
-    go :: forall a. SingleEraBlock a => WrapDiff a -> K r a
-    go (WrapDiff dx) = K (k (Proxy @a) dx)
+    go :: forall a. SingleEraBlock a => WrapTickAndBlockDiff a -> K r a
+    go (WrapTickAndBlockDiff dx) = K (k (Proxy @a) dx)
 
   withValuesEra ::
     forall r.
@@ -376,14 +376,14 @@ implDuplicateWithDiffs ::
   ExportSnapshot m ->
   UTxOTable m ->
   Word64 ->
-  Diff blk ->
+  TickAndBlockDiff blk ->
   m (LedgerTablesHandle m l blk)
 implDuplicateWithDiffs tracer exportSnapshot t0 size diff = do
   t <- duplicateLSMTable tracer t0
   let cont ::
         forall x.
         SingleEraBlockSupportsUTxOHD x =>
-        Proxy x -> Diff x -> m (LedgerTablesHandle m l blk)
+        Proxy x -> TickAndBlockDiff x -> m (LedgerTablesHandle m l blk)
       cont _ dx = do
         let entries = diffToList @x dx
             toUpdate (Diff.Insert v) = LSM.Insert (toTxOutBytes (Proxy @x) v) Nothing

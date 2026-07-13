@@ -583,17 +583,25 @@ type instance TxOut TestBlock = Void
 instance BlockSupportsUTxOHD TestBlock where
   type Keys TestBlock = ()
   type Values TestBlock = ()
-  type Diff TestBlock = ()
+  type TickDiff TestBlock = ()
+  type BlockDiff TestBlock = ()
+  type TickAndBlockDiff TestBlock = ()
+  type TxsDiff TestBlock = ()
   blockKeys _ = ()
-  forward _ = id
-  restrictValues _ = id
-  valuesSize _ = 0
-  encodeValues _ = mempty
+  combineTickAndBlockDiff () () = ()
+  forwardTickDiff () () = ()
+  forwardBlockDiff () () = ()
+  forwardTickAndBlockDiff () () = ()
+  forwardTxsDiff () () = ()
+  restrictValues () () = ()
+  valuesSize () = 0
+  encodeValues () = mempty
   decodeValues _ = pure ()
 
 instance SingleEraUTxOHDBlock TestBlock where
   emptyValues = ()
-  emptyDiffs = ()
+  emptyTickDiff = ()
+  combineTransAndTickDiff () () = ()
 
 instance SingleEraBlockSupportsUTxOHD TestBlock where
   rangeReadValues _ _ = ((), Nothing)

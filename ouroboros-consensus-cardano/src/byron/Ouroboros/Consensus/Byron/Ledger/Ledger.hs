@@ -199,22 +199,30 @@ instance IsLedger LedgerState ByronBlock where
 type instance TxIn ByronBlock = Void
 type instance TxOut ByronBlock = Void
 
--- | Byron has no on-disk tables: its 'Keys'\/'Values'\/'Diff' are all trivial
+-- | Byron has no on-disk tables: its keys\/values\/diffs are all trivial
 -- (@()@), so every operation is a no-op.
 instance BlockSupportsUTxOHD ByronBlock where
   type Keys ByronBlock = ()
   type Values ByronBlock = ()
-  type Diff ByronBlock = ()
+  type TickDiff ByronBlock = ()
+  type BlockDiff ByronBlock = ()
+  type TickAndBlockDiff ByronBlock = ()
+  type TxsDiff ByronBlock = ()
   blockKeys _ = ()
-  forward _ = id
-  restrictValues _ = id
-  valuesSize _ = 0
-  encodeValues _ = mempty
+  combineTickAndBlockDiff () () = ()
+  forwardTickDiff () () = ()
+  forwardBlockDiff () () = ()
+  forwardTickAndBlockDiff () () = ()
+  forwardTxsDiff () () = ()
+  restrictValues () () = ()
+  valuesSize () = 0
+  encodeValues () = mempty
   decodeValues _ = pure ()
 
 instance SingleEraUTxOHDBlock ByronBlock where
   emptyValues = ()
-  emptyDiffs = ()
+  emptyTickDiff = ()
+  combineTransAndTickDiff () () = ()
 
 instance SingleEraBlockSupportsUTxOHD ByronBlock where
   rangeReadValues _ _ = ((), Nothing)

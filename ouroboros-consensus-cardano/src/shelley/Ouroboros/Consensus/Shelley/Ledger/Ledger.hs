@@ -433,14 +433,27 @@ instance
     Values (ShelleyBlock proto era) =
       Map (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
   type
-    Diff (ShelleyBlock proto era) =
+    TickDiff (ShelleyBlock proto era) =
+      Diff.Diff (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
+  type
+    BlockDiff (ShelleyBlock proto era) =
+      Diff.Diff (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
+  type
+    TickAndBlockDiff (ShelleyBlock proto era) =
+      Diff.Diff (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
+  type
+    TxsDiff (ShelleyBlock proto era) =
       Diff.Diff (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
 
   blockKeys = Core.neededTxInsForBlock . shelleyBlockRaw
 
-  -- One era ⇒ no translation. Replay the in-flight diffs in chain order; the
-  -- 'Diff' 'Monoid' composes them so later ones win.
-  forward diffs vals = Diff.applyDiff vals (mconcat diffs)
+  -- One era ⇒ no translation; compose\/apply the diffs directly (the 'Diff'
+  -- 'Semigroup' composes in chain order, so later entries win).
+  combineTickAndBlockDiff tickDiff blockDiff = tickDiff <> blockDiff
+  forwardTickDiff diff vals = Diff.applyDiff vals diff
+  forwardBlockDiff diff vals = Diff.applyDiff vals diff
+  forwardTickAndBlockDiff diff vals = Diff.applyDiff vals diff
+  forwardTxsDiff diff vals = Diff.applyDiff vals diff
 
   restrictValues keys vals = vals `Map.restrictKeys` keys
 
@@ -471,7 +484,8 @@ instance
   SingleEraUTxOHDBlock (ShelleyBlock proto era)
   where
   emptyValues = Map.empty
-  emptyDiffs = mempty
+  emptyTickDiff = mempty
+  combineTransAndTickDiff transDiff tickDiff = transDiff <> tickDiff
 
 instance
   ShelleyCompatible proto era =>
@@ -640,7 +654,7 @@ applyHelper ::
     (SL.BlockTransitionError era)
     ( LedgerResult
         (ShelleyBlock proto era)
-        (LedgerState (ShelleyBlock proto era) EmptyMK, Diff (ShelleyBlock proto era))
+        (LedgerState (ShelleyBlock proto era) EmptyMK, BlockDiff (ShelleyBlock proto era))
     )
 applyHelper evs doValidate cfg blk values stBefore = do
   let TickedShelleyLedgerState

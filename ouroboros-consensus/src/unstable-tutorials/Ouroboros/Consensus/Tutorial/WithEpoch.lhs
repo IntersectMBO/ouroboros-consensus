@@ -679,19 +679,27 @@ For reference on these instances and their meaning, please see the appendix in
 > type instance TxOut BlockD = Void
 
 > instance BlockSupportsUTxOHD BlockD where
->   type Keys   BlockD = ()
->   type Values BlockD = ()
->   type Diff   BlockD = ()
+>   type Keys             BlockD = ()
+>   type Values           BlockD = ()
+>   type TickDiff         BlockD = ()
+>   type BlockDiff        BlockD = ()
+>   type TickAndBlockDiff BlockD = ()
+>   type TxsDiff          BlockD = ()
 >   blockKeys _ = ()
->   forward _ = id
->   restrictValues _ = id
->   valuesSize _ = 0
->   encodeValues _ = mempty
+>   combineTickAndBlockDiff () () = ()
+>   forwardTickDiff () () = ()
+>   forwardBlockDiff () () = ()
+>   forwardTickAndBlockDiff () () = ()
+>   forwardTxsDiff () () = ()
+>   restrictValues () () = ()
+>   valuesSize () = 0
+>   encodeValues () = mempty
 >   decodeValues _ = pure ()
 
 > instance SingleEraUTxOHDBlock BlockD where
 >   emptyValues = ()
->   emptyDiffs = ()
+>   emptyTickDiff = ()
+>   combineTransAndTickDiff () () = ()
 
 > instance SingleEraBlockSupportsUTxOHD BlockD where
 >   rangeReadValues _ _ = ((), Nothing)

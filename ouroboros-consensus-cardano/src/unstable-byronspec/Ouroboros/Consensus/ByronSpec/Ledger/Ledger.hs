@@ -130,17 +130,25 @@ type instance TxOut ByronSpecBlock = Void
 instance BlockSupportsUTxOHD ByronSpecBlock where
   type Keys ByronSpecBlock = ()
   type Values ByronSpecBlock = ()
-  type Diff ByronSpecBlock = ()
+  type TickDiff ByronSpecBlock = ()
+  type BlockDiff ByronSpecBlock = ()
+  type TickAndBlockDiff ByronSpecBlock = ()
+  type TxsDiff ByronSpecBlock = ()
   blockKeys _ = ()
-  forward _ = id
-  restrictValues _ = id
-  valuesSize _ = 0
-  encodeValues _ = mempty
+  combineTickAndBlockDiff () () = ()
+  forwardTickDiff () () = ()
+  forwardBlockDiff () () = ()
+  forwardTickAndBlockDiff () () = ()
+  forwardTxsDiff () () = ()
+  restrictValues () () = ()
+  valuesSize () = 0
+  encodeValues () = mempty
   decodeValues _ = pure ()
 
 instance SingleEraUTxOHDBlock ByronSpecBlock where
   emptyValues = ()
-  emptyDiffs = ()
+  emptyTickDiff = ()
+  combineTransAndTickDiff () () = ()
 
 instance SingleEraBlockSupportsUTxOHD ByronSpecBlock where
   rangeReadValues _ _ = ((), Nothing)

@@ -574,11 +574,24 @@ instance PayloadSemantics ptype => BlockSupportsUTxOHD (TestBlockWith ptype) whe
     Values (TestBlockWith ptype) =
       Map (PayloadTxIn ptype) (PayloadTxOut ptype)
   type
-    Diff (TestBlockWith ptype) =
+    TickDiff (TestBlockWith ptype) =
+      Diff.Diff (PayloadTxIn ptype) (PayloadTxOut ptype)
+  type
+    BlockDiff (TestBlockWith ptype) =
+      Diff.Diff (PayloadTxIn ptype) (PayloadTxOut ptype)
+  type
+    TickAndBlockDiff (TestBlockWith ptype) =
+      Diff.Diff (PayloadTxIn ptype) (PayloadTxOut ptype)
+  type
+    TxsDiff (TestBlockWith ptype) =
       Diff.Diff (PayloadTxIn ptype) (PayloadTxOut ptype)
 
   blockKeys = getPayloadKeySets . tbPayload
-  forward diffs vals = Diff.applyDiff vals (mconcat diffs)
+  combineTickAndBlockDiff tickDiff blockDiff = tickDiff <> blockDiff
+  forwardTickDiff diff vals = Diff.applyDiff vals diff
+  forwardBlockDiff diff vals = Diff.applyDiff vals diff
+  forwardTickAndBlockDiff diff vals = Diff.applyDiff vals diff
+  forwardTxsDiff diff vals = Diff.applyDiff vals diff
   restrictValues keys vals = vals `Map.restrictKeys` keys
   valuesSize = Map.size
   encodeValues = encode
@@ -586,7 +599,8 @@ instance PayloadSemantics ptype => BlockSupportsUTxOHD (TestBlockWith ptype) whe
 
 instance PayloadSemantics ptype => SingleEraUTxOHDBlock (TestBlockWith ptype) where
   emptyValues = Map.empty
-  emptyDiffs = mempty
+  emptyTickDiff = mempty
+  combineTransAndTickDiff transDiff tickDiff = transDiff <> tickDiff
 
 instance
   PayloadSemantics ptype =>
