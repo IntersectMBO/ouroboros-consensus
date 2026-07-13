@@ -263,7 +263,7 @@ data Mempool m blk = Mempool
   --
   -- n.b. in our current implementation, when one opens a mempool, we
   -- spawn a thread which performs this action whenever the 'ChainDB' tip
-  -- point changes.
+  -- point changes. See 'forkSyncStateOnTipPointChange'.
   }
 
 -- | This configuration data controls a lightweight "defensive programming"

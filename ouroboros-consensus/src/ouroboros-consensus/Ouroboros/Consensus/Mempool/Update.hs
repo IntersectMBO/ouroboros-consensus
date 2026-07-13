@@ -514,7 +514,8 @@ pureRemoveTxs capacityOverride lcfg slot lstate values tkt txs txIds =
   Sync with ledger
 -------------------------------------------------------------------------------}
 
--- | See 'Ouroboros.Consensus.Mempool.API.syncWithLedger'.
+-- | See 'Ouroboros.Consensus.Mempool.API.testSyncWithLedger' and
+-- and 'Ouroboros.Consensus.Mempool.Init.forkSyncStateOnTipPointChange'.
 implSyncWithLedger ::
   ( IOLike m
   , LedgerSupportsMempool blk
