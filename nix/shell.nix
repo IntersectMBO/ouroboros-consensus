@@ -13,6 +13,7 @@ hsPkgs.shellFor {
     pkgs.cabal-gild
     pkgs.hlint
     pkgs.ghcid
+    pkgs.entr
     pkgs.fourmolu
     pkgs.cuddle
     pkgs.cddlc
