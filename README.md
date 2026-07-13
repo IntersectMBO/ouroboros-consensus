@@ -16,7 +16,6 @@ flowchart TD
     B --> C
     D["ouroboros-consensus:diffusion"] --> C
     E["ouroboros-consensus:lsm"] --> C
-    F["ouroboros-consensus:lmdb"] --> C
 ```
 
 The package contains many test-suites that complicate the dependency graph as
@@ -175,11 +174,7 @@ We have several sources of documentation:
 - [`fs-api`](https://github.com/input-output-hk/fs-sim)
 - [`fs-sim`](https://github.com/input-output-hk/fs-sim)
 - [`io-classes`](https://github.com/input-output-hk/io-sim)
-- [`io-sim`](https://github.com/input-output-hk/io-sim)
-- [`cardano-lmdb`](https://github.com/input-output-hk/haskell-lmdb)
-- [`cardano-lmdb-simple`](https://github.com/input-output-hk/lmdb-simple)
-- [`diff-containers`](https://github.com/input-output-hk/anti-diffs)
-- [`fingertree-rm`](https://github.com/input-output-hk/anti-diffs)
+- [`io-sim`](https://github.com/IntersectMBO/io-sim)
 - [`blockio`](https://github.com/IntersectMBO/lsm-tree)
 - [`lsm-tree`](https://github.com/IntersectMBO/lsm-tree)
 
