@@ -286,14 +286,9 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
               History.mkUpperBound
                 eraParams
                 (currentStart cur)
-                curState
-            let endBound =
-                  History.mkUpperBound
-                    eraParams
-                    (currentStart cur)
-                    transition
-            guard (slot >= History.boundSlot endBound)
-            return endBound
+                transition
+        guard (slot >= History.boundSlot endBound)
+        return endBound
 
   howExtend ::
     BlockSupportsUTxOHD blk' =>
