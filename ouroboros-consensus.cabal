@@ -827,7 +827,6 @@ test-suite storage-test
     cborg,
     containers,
     contra-tracer,
-    diff-containers,
     directory,
     filepath,
     fs-api,
