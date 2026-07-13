@@ -1,16 +1,16 @@
 # Cardano Mempool — Linear Leios Adaptation
 
 *A design sketch for adapting the Praos mempool to Linear Leios
-(CIP-164). Single lane, no priority/regular distinction; that split is
+(CIP-164). Single tier, no fast/slow distinction; that split is
 a further extension described in `MempoolLeiosPricing.lagda.md`.*
 
 **This is one of three sibling documents:**
 
 1. **`Mempool.lagda.md`** — the current Praos-era mempool.
 2. **`MempoolLeios.lagda.md`** *(this file)* — proposed Linear Leios
-   adaptation, still a single lane, aligned with CIP-164.
+   adaptation, still a single tier, aligned with CIP-164.
 3. **`MempoolLeiosPricing.lagda.md`** — tiered-pricing extension layered
-   on top of this document. Adds priority/regular lanes.
+   on top of this document. Adds fast/slow tiers.
 
 **Last updated:** 2026-06-09
 **Primary reference:** CIP-164 Ouroboros Linear Leios,
@@ -66,7 +66,7 @@ Consequences for the mempool:
 - **New optional cache:** a reuse-optimization set `S = seenEBs` of
   transactions already seen in some EB. Purely a work-avoidance
   cache; not required for correctness.
-- **No two-lane / no priority classification.** All mempool
+- **No two-tier / no fast classification.** All mempool
   transactions are treated identically. The CIP's implicit preference
   is "RBs first, EBs only for overflow" — modeled here as a forge-time
   partition, not as a mempool-time split. That's what
@@ -86,7 +86,7 @@ final post-tx working state:
 | mempool working state | `ledger` | `updatedLedger` |
 
 The convention was chosen so the pricing extension can add
-`priorityUpdatedLedger` and `regularUpdatedLedger` in the natural
+`fastUpdatedLedger` and `slowUpdatedLedger` in the natural
 place, and so `ebLedger` shifts from `Maybe` (held or not) to a
 clearly-parallel field name.
 
@@ -510,6 +510,11 @@ module MempoolLeios where
     measure      : Tx → Capacity
     capacityAt   : TipPoint → Capacity
     fitsWith     : Capacity → Capacity → Capacity → Bool
+    -- ebCap is the EB *capacity* (upper bound; CIP-164 per-EB caps). Base Leios has no
+    -- EB-fullness *floor*: forgeBlock emits an EB for any non-empty overflow. NOTE we
+    -- COULD add a fullness floor here as the pricing extension does — an `ebFloor`
+    -- (≈ ½ a full RB) with the EB suppressed unless it reaches the floor in some
+    -- dimension — to match the ledger's `sdChecks EB`. Left out for now.
     ebCap        : TipPoint → Capacity
     ebFits       : Capacity → Bool
     freshTicket  : TicketNo → TicketNo
@@ -837,16 +842,16 @@ module MempoolLeios where
    the announcing RB is adopted? The disjointness argument in §5
    assumes the latter.
 4. **Interaction with the pricing extension.** The Leios mempool here
-   has one tx sequence; the pricing extension adds a second lane.
+   has one tx sequence; the pricing extension adds a second tier.
    `MempoolLeiosPricing.lagda.md` retains `ledger` + `ebLedger` in
-   the same shape and adds `priorityUpdatedLedger` and
-   `regularUpdatedLedger` where this file has `updatedLedger`.
+   the same shape and adds `fastUpdatedLedger` and
+   `slowUpdatedLedger` where this file has `updatedLedger`.
 
 ## Changelog
 
 - **2026-06-09** — Initial version. Extracted the Linear Leios
   adaptation from the earlier `Mempool.lagda.md` §12 and rewrote it
-  as a self-contained single-lane spec aligned with CIP-164.
+  as a self-contained single-tier spec aligned with CIP-164.
 - **2026-06-09 (later)** — Added `ebLedger : Maybe LedgerState` and
   the disjointness lemma so that `seeRBCert` in the matching-cert
   case is a zero-cost rename (Scenario B). Reworked the state record
