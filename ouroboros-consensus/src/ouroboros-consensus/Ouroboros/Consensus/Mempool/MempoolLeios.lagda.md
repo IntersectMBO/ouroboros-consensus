@@ -360,8 +360,8 @@ Procedure:
 3. Compute `rbLedger = ledger + rbTxs` (this is `ledgerAt(newRB)`).
    Emit RB `R` with body `rbTxs`.
 4. Revalidate `overflow0` against `rbLedger` and drop failures.
-   Filter what remains by EB per-tx capacity (`S_EB-tx`, per-EB
-   Plutus). Call the survivors `overflow'`.
+   Cap the total EB body at `ebCap` (CIP-164 `S_EB` / `S_EB-tx` /
+   per-EB Plutus) via `splitAtCap`. Call the survivors `overflow'`.
 5. If `overflow'` is non-empty, emit EB `E` with body `overflow'`,
    announced by `R`. Otherwise emit `R` with no announced EB.
 
@@ -439,6 +439,8 @@ Self-contained; only `Agda.Builtin.*` / `Agda.Primitive`. Comments
 mark the moving parts.
 
 ```agda
+module MempoolLeios where
+
 open import Agda.Primitive        using (Level; lzero; lsuc)
 open import Agda.Builtin.Bool     using (Bool; true; false)
 open import Agda.Builtin.List     using (List; []; _∷_)
@@ -484,341 +486,343 @@ fromMaybe : {A : Set} → A → Maybe A → A
 fromMaybe d nothing  = d
 fromMaybe _ (just x) = x
 
-module MempoolLeios where
+----------------------------------------------------------------------
+-- 1. Postulated primitives.
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 1. Postulated primitives.
-  ----------------------------------------------------------------------
+postulate
+  Tx           : Set
+  TxId         : Set
+  LedgerState  : Set
+  TipPoint     : Set
+  TicketNo     : Set
+  Capacity     : Set
+  EBId         : Set
 
-  postulate
-    Tx           : Set
-    TxId         : Set
-    LedgerState  : Set
-    TipPoint     : Set
-    TicketNo     : Set
-    Capacity     : Set
-    EBId         : Set
+  txId         : Tx → TxId
+  _≟TxId_      : TxId → TxId → Bool
+  inTxIds      : List TxId → TxId → Bool
 
-    txId         : Tx → TxId
-    _≟TxId_      : TxId → TxId → Bool
-    inTxIds      : List TxId → TxId → Bool
+  applyTx      : LedgerState → Tx → Maybe LedgerState
+  reapplyAll   : LedgerState → List Tx → LedgerState × List Tx
+  ledgerAt     : TipPoint → LedgerState
 
-    applyTx      : LedgerState → Tx → Maybe LedgerState
-    reapplyAll   : LedgerState → List Tx → LedgerState × List Tx
-    ledgerAt     : TipPoint → LedgerState
+  measure      : Tx → Capacity
+  capacityAt   : TipPoint → Capacity
+  fitsWith     : Capacity → Capacity → Capacity → Bool
+  -- ebCap is the EB *capacity* (upper bound; CIP-164 per-EB caps). Base Leios has no
+  -- EB-fullness *floor*: forgeBlock emits an EB for any non-empty overflow. NOTE we
+  -- COULD add a fullness floor here as the pricing extension does — an `ebFloor`
+  -- (≈ ½ a full RB) with the EB suppressed unless it reaches the floor in some
+  -- dimension — to match the ledger's `sdChecks EB`. Left out for now.
+  -- Same role as `slowCapAt` in the pricing spec: the CIP-164 per-EB
+  -- capacity (S_EB, S_EB-tx, per-EB Plutus).  Used by `forgeBlock` to
+  -- bound the EB body via `splitAtCap`.
+  ebCap        : TipPoint → Capacity
+  freshTicket  : TicketNo → TicketNo
+  freshEBId    : TicketNo → EBId
 
-    measure      : Tx → Capacity
-    capacityAt   : TipPoint → Capacity
-    fitsWith     : Capacity → Capacity → Capacity → Bool
-    -- ebCap is the EB *capacity* (upper bound; CIP-164 per-EB caps). Base Leios has no
-    -- EB-fullness *floor*: forgeBlock emits an EB for any non-empty overflow. NOTE we
-    -- COULD add a fullness floor here as the pricing extension does — an `ebFloor`
-    -- (≈ ½ a full RB) with the EB suppressed unless it reaches the floor in some
-    -- dimension — to match the ledger's `sdChecks EB`. Left out for now.
-    ebCap        : TipPoint → Capacity
-    ebFits       : Capacity → Bool
-    freshTicket  : TicketNo → TicketNo
-    freshEBId    : EBId → EBId
+----------------------------------------------------------------------
+-- 2. Endorser Blocks and Ranking Blocks
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 2. Endorser Blocks and Ranking Blocks
-  ----------------------------------------------------------------------
+record EB : Set where
+  constructor mkEB
+  field
+    ebId   : EBId
+    ebTip  : TipPoint
+    ebTxs  : List Tx
+open EB
 
-  record EB : Set where
-    constructor mkEB
-    field
-      ebId   : EBId
-      ebTip  : TipPoint
-      ebTxs  : List Tx
-  open EB
+-- Cert/tx exclusivity from CIP-164 is captured by the choice being a
+-- sum: only one variant may be present.
+data RBBody : Set where
+  RBTxs  : List Tx → RBBody
+  RBCert : EBId    → RBBody
 
-  -- Cert/tx exclusivity from CIP-164 is captured by the choice being a
-  -- sum: only one variant may be present.
-  data RBBody : Set where
-    RBTxs  : List Tx → RBBody
-    RBCert : EBId    → RBBody
+record RB : Set where
+  constructor mkRB
+  field
+    rbTip   : TipPoint
+    rbBody  : RBBody
+    rbAnnEB : Maybe EBId
+open RB
 
-  record RB : Set where
-    constructor mkRB
-    field
-      rbTip   : TipPoint
-      rbBody  : RBBody
-      rbAnnEB : Maybe EBId
-  open RB
+postulate
+  _≟EBId_ : EBId → EBId → Bool
 
-  postulate
-    _≟EBId_ : EBId → EBId → Bool
+----------------------------------------------------------------------
+-- 3. Ticket record and TxSeq
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 3. Ticket record and TxSeq
-  ----------------------------------------------------------------------
+record TxTicket : Set where
+  constructor mkTicket
+  field
+    tx       : Tx
+    ticket   : TicketNo
+    sizeTx   : Capacity
+open TxTicket
 
-  record TxTicket : Set where
-    constructor mkTicket
-    field
-      tx       : Tx
-      ticket   : TicketNo
-      sizeTx   : Capacity
-  open TxTicket
+TxSeq : Set
+TxSeq = List TxTicket
 
-  TxSeq : Set
-  TxSeq = List TxTicket
+reapplyAllTk : LedgerState → TxSeq → LedgerState × TxSeq
+reapplyAllTk ℓ tks =
+  let ls , plain = reapplyAll ℓ (map tx tks)
+  in ls , rebuild plain tks
+  where
+    rebuild : List Tx → TxSeq → TxSeq
+    rebuild [] _ = []
+    rebuild (t ∷ ts) [] = []
+    rebuild (t ∷ ts) (tk ∷ tks) =
+      if _≟TxId_ (txId t) (txId (tx tk))
+      then tk ∷ rebuild ts tks
+      else rebuild (t ∷ ts) tks
 
-  reapplyAllTk : LedgerState → TxSeq → LedgerState × TxSeq
-  reapplyAllTk ℓ tks =
-    let ls , plain = reapplyAll ℓ (map tx tks)
-        rebuild : List Tx → TxSeq → TxSeq
-        rebuild [] _ = []
-        rebuild (t ∷ ts) [] = []
-        rebuild (t ∷ ts) (tk ∷ tks) =
-          if _≟TxId_ (txId t) (txId (tx tk))
-          then tk ∷ rebuild ts tks
-          else rebuild (t ∷ ts) tks
-    in ls , rebuild plain tks
+postulate
+  seqSize : TxSeq → Capacity
 
-  postulate
-    seqSize : TxSeq → Capacity
+----------------------------------------------------------------------
+-- 4. Reuse cache
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 4. Reuse cache
-  ----------------------------------------------------------------------
+postulate
+  SeenSet    : Set
+  emptySeen  : SeenSet
+  seenAddEB  : SeenSet → List Tx → SeenSet
+  seenClear  : SeenSet → SeenSet
 
-  postulate
-    SeenSet    : Set
-    emptySeen  : SeenSet
-    seenAddEB  : SeenSet → List Tx → SeenSet
-    seenClear  : SeenSet → SeenSet
+----------------------------------------------------------------------
+-- 5. The mempool state
+--
+--   ledger        : chain tip's ledger, = ledgerAt tip
+--   heldEB        : the EB we are speculatively pre-applying, or none
+--   ebLedger      : ledger + heldEB.ebTxs if heldEB is just, else none
+--   txs           : validated mempool sequence
+--   updatedLedger : (fromMaybe ledger ebLedger) + txs
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 5. The mempool state
-  --
-  --   ledger        : chain tip's ledger, = ledgerAt tip
-  --   heldEB        : the EB we are speculatively pre-applying, or none
-  --   ebLedger      : ledger + heldEB.ebTxs if heldEB is just, else none
-  --   txs           : validated mempool sequence
-  --   updatedLedger : (fromMaybe ledger ebLedger) + txs
-  ----------------------------------------------------------------------
+record MempoolL : Set where
+  constructor mkMempoolL
+  field
+    tip           : TipPoint
+    ledger        : LedgerState
+    heldEB        : Maybe EB
+    ebLedger      : Maybe LedgerState
+    txs           : TxSeq
+    updatedLedger : LedgerState
+    lastTicket    : TicketNo
+    capacity      : Capacity
+    seenEBs       : SeenSet
+open MempoolL
 
-  record MempoolL : Set where
-    constructor mkMempoolL
-    field
-      tip           : TipPoint
-      ledger        : LedgerState
-      heldEB        : Maybe EB
-      ebLedger      : Maybe LedgerState
-      txs           : TxSeq
-      updatedLedger : LedgerState
-      lastTicket    : TicketNo
-      capacity      : Capacity
-      seenEBs       : SeenSet
-  open MempoolL
+-- Convenience: the "base" ledger against which txs is validated.
+baseLedger : MempoolL → LedgerState
+baseLedger m = fromMaybe (ledger m) (ebLedger m)
 
-  -- Convenience: the "base" ledger against which txs is validated.
-  baseLedger : MempoolL → LedgerState
-  baseLedger m = fromMaybe (ledger m) (ebLedger m)
+----------------------------------------------------------------------
+-- 6. Invariants
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 6. Invariants
-  ----------------------------------------------------------------------
+postulate
+  LedgerAtTip :
+    (m : MempoolL) →
+    ledger m ≡ ledgerAt (tip m)
 
-  postulate
-    LedgerAtTip :
-      (m : MempoolL) →
-      ledger m ≡ ledgerAt (tip m)
+  EBLedgerConsistent :
+    (m : MempoolL) →
+    case heldEB m of λ where
+      nothing  → ebLedger m ≡ nothing
+      (just e) → ebLedger m ≡
+                 just (fst (reapplyAll (ledger m) (ebTxs e)))
 
-    EBLedgerConsistent :
-      (m : MempoolL) →
-      case heldEB m of λ where
-        nothing  → ebLedger m ≡ nothing
-        (just e) → ebLedger m ≡
-                   just (fst (reapplyAll (ledger m) (ebTxs e)))
+  TxsValid :
+    (m : MempoolL) →
+    fst (reapplyAllTk (baseLedger m) (txs m)) ≡ updatedLedger m
 
-    TxsValid :
-      (m : MempoolL) →
-      fst (reapplyAllTk (baseLedger m) (txs m)) ≡ updatedLedger m
+----------------------------------------------------------------------
+-- 7. addTx (validates against updatedLedger)
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 7. addTx (validates against updatedLedger)
-  ----------------------------------------------------------------------
+data AddResult : Set where
+  Added    : MempoolL → AddResult
+  Rejected : MempoolL → AddResult
+  Blocked  : MempoolL → AddResult
 
-  data AddResult : Set where
-    Added    : MempoolL → AddResult
-    Rejected : MempoolL → AddResult
-    Blocked  : MempoolL → AddResult
+addTx : Tx → MempoolL → AddResult
+addTx t m
+  with fitsWith (capacity m) (seqSize (txs m)) (measure t)
+... | false = Blocked m
+... | true  with applyTx (updatedLedger m) t
+...   | nothing  = Rejected m
+...   | just ℓ′ =
+        let n′ = freshTicket (lastTicket m)
+            tk = mkTicket t n′ (measure t)
+        in Added (mkMempoolL
+             (tip m) (ledger m) (heldEB m) (ebLedger m)
+             (txs m ++ tk ∷ []) ℓ′ n′ (capacity m) (seenEBs m))
 
-  addTx : Tx → MempoolL → AddResult
-  addTx t m
-    with fitsWith (capacity m) (seqSize (txs m)) (measure t)
-  ... | false = Blocked m
-  ... | true  with applyTx (updatedLedger m) t
-  ...   | nothing  = Rejected m
-  ...   | just ℓ′ =
-          let n′ = freshTicket (lastTicket m)
-              tk = mkTicket t n′ (measure t)
-          in Added (mkMempoolL
-               (tip m) (ledger m) (heldEB m) (ebLedger m)
-               (txs m ++ tk ∷ []) ℓ′ n′ (capacity m) (seenEBs m))
+----------------------------------------------------------------------
+-- 8. addEB — peer announces an EB
+--
+-- If shouldHold, adopt: recompute ebLedger and revalidate txs on
+-- the new base.  If not, only update seenEBs.
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 8. addEB — peer announces an EB
-  --
-  -- If shouldHold, adopt: recompute ebLedger and revalidate txs on
-  -- the new base.  If not, only update seenEBs.
-  ----------------------------------------------------------------------
+postulate
+  shouldHold : MempoolL → EB → Bool
 
-  postulate
-    shouldHold : MempoolL → EB → Bool
+addEB : EB → MempoolL → MempoolL
+addEB e m =
+  if shouldHold m e
+  then (let ebL′      = fst (reapplyAll (ledger m) (ebTxs e))
+            ℓ′ , txs′ = reapplyAllTk ebL′ (txs m)
+        in mkMempoolL
+             (tip m) (ledger m) (just e) (just ebL′)
+             txs′ ℓ′ (lastTicket m) (capacity m)
+             (seenAddEB (seenEBs m) (ebTxs e)))
+  else
+    mkMempoolL
+      (tip m) (ledger m) (heldEB m) (ebLedger m)
+      (txs m) (updatedLedger m) (lastTicket m) (capacity m)
+      (seenAddEB (seenEBs m) (ebTxs e))
 
-  addEB : EB → MempoolL → MempoolL
-  addEB e m =
-    if shouldHold m e
-    then
-      let ebL′        = fst (reapplyAll (ledger m) (ebTxs e))
-          ℓ′ , txs′   = reapplyAllTk ebL′ (txs m)
-      in mkMempoolL
-           (tip m) (ledger m) (just e) (just ebL′)
-           txs′ ℓ′ (lastTicket m) (capacity m)
-           (seenAddEB (seenEBs m) (ebTxs e))
-    else
-      mkMempoolL
-        (tip m) (ledger m) (heldEB m) (ebLedger m)
-        (txs m) (updatedLedger m) (lastTicket m) (capacity m)
-        (seenAddEB (seenEBs m) (ebTxs e))
+----------------------------------------------------------------------
+-- 9. discardEB — explicit drop of the held EB
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 9. discardEB — explicit drop of the held EB
-  ----------------------------------------------------------------------
+discardEB : MempoolL → MempoolL
+discardEB m =
+  let ℓ′ , txs′ = reapplyAllTk (ledger m) (txs m)
+  in mkMempoolL
+       (tip m) (ledger m) nothing nothing
+       txs′ ℓ′ (lastTicket m) (capacity m) (seenEBs m)
 
-  discardEB : MempoolL → MempoolL
-  discardEB m =
-    let ℓ′ , txs′ = reapplyAllTk (ledger m) (txs m)
-    in mkMempoolL
-         (tip m) (ledger m) nothing nothing
-         txs′ ℓ′ (lastTicket m) (capacity m) (seenEBs m)
+----------------------------------------------------------------------
+-- 10. seeRBBody — RB with a tx body lands
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 10. seeRBBody — RB with a tx body lands
-  ----------------------------------------------------------------------
+postulate
+  stillLive : TipPoint → EB → Bool
 
-  postulate
-    stillLive : TipPoint → EB → Bool
+seeRBBody : List Tx → TipPoint → MempoolL → MempoolL
+seeRBBody rbTxs p m =
+  let ids   = map txId rbTxs
+      kept  = filter (λ tk → if inTxIds ids (txId (tx tk))
+                              then false else true) (txs m)
+      ledger′ = ledgerAt p
+      held′ = case heldEB m of λ where
+                nothing  → nothing
+                (just e) → if stillLive p e then just e else nothing
+      ebL′ = case held′ of λ where
+                nothing  → nothing
+                (just e) → just (fst (reapplyAll ledger′ (ebTxs e)))
+      base′        = fromMaybe ledger′ ebL′
+      ℓ′ , txs′    = reapplyAllTk base′ kept
+  in mkMempoolL
+       p ledger′ held′ ebL′
+       txs′ ℓ′ (lastTicket m) (capacityAt p)
+       (seenClear (seenEBs m))
 
-  seeRBBody : List Tx → TipPoint → MempoolL → MempoolL
-  seeRBBody rbTxs p m =
-    let ids   = map txId rbTxs
-        kept  = filter (λ tk → if inTxIds ids (txId (tx tk))
-                                then false else true) (txs m)
-        ledger′ = ledgerAt p
-        held′ = case heldEB m of λ where
-                  nothing  → nothing
-                  (just e) → if stillLive p e then just e else nothing
-        ebL′ = case held′ of λ where
-                  nothing  → nothing
-                  (just e) → just (fst (reapplyAll ledger′ (ebTxs e)))
-        base′        = fromMaybe ledger′ ebL′
-        ℓ′ , txs′    = reapplyAllTk base′ kept
-    in mkMempoolL
-         p ledger′ held′ ebL′
-         txs′ ℓ′ (lastTicket m) (capacityAt p)
+----------------------------------------------------------------------
+-- 11. seeRBCert — RB with an EB certificate lands
+--
+--   Scenario B (cert matches heldEB): bit-identical rename.
+--   Scenario A (cert names a different EB): full revalidation.
+----------------------------------------------------------------------
+
+seeRBCert : EB → TipPoint → MempoolL → MempoolL
+seeRBCert e p m =
+  let matches =
+        case heldEB m of λ where
+          nothing  → false
+          (just h) → _≟EBId_ (ebId h) (ebId e)
+  in if matches
+     then
+       -- Scenario B: no ledger op needed.  By the state invariant,
+       -- old ebLedger.value ≡ ledgerAt p.  ledger, ebLedger, heldEB
+       -- reshuffle; txs / updatedLedger are unchanged.
+       mkMempoolL
+         p (fromMaybe (ledger m) (ebLedger m)) nothing nothing
+         (txs m) (updatedLedger m) (lastTicket m) (capacityAt p)
          (seenClear (seenEBs m))
+     else
+       -- Scenario A: e's txs are now on-chain; drop them; discard
+       -- our heldEB (some other EB was certified in this RB, ours
+       -- won't be).
+       let ids   = map txId (ebTxs e)
+           kept  = filter (λ tk → if inTxIds ids (txId (tx tk))
+                                   then false else true) (txs m)
+           ledger′     = ledgerAt p
+           ℓ′ , txs′   = reapplyAllTk ledger′ kept
+       in mkMempoolL
+            p ledger′ nothing nothing
+            txs′ ℓ′ (lastTicket m) (capacityAt p)
+            (seenClear (seenEBs m))
 
-  ----------------------------------------------------------------------
-  -- 11. seeRBCert — RB with an EB certificate lands
-  --
-  --   Scenario B (cert matches heldEB): bit-identical rename.
-  --   Scenario A (cert names a different EB): full revalidation.
-  ----------------------------------------------------------------------
+----------------------------------------------------------------------
+-- 12. syncWithLedger — generic tip advance
+----------------------------------------------------------------------
 
-  seeRBCert : EB → TipPoint → MempoolL → MempoolL
-  seeRBCert e p m =
-    let matches =
-          case heldEB m of λ where
-            nothing  → false
-            (just h) → _≟EBId_ (ebId h) (ebId e)
-    in if matches
-       then
-         -- Scenario B: no ledger op needed.  By the state invariant,
-         -- old ebLedger.value ≡ ledgerAt p.  ledger, ebLedger, heldEB
-         -- reshuffle; txs / updatedLedger are unchanged.
-         mkMempoolL
-           p (fromMaybe (ledger m) (ebLedger m)) nothing nothing
-           (txs m) (updatedLedger m) (lastTicket m) (capacityAt p)
-           (seenClear (seenEBs m))
-       else
-         -- Scenario A: e's txs are now on-chain; drop them; discard
-         -- our heldEB (some other EB was certified in this RB, ours
-         -- won't be).
-         let ids   = map txId (ebTxs e)
-             kept  = filter (λ tk → if inTxIds ids (txId (tx tk))
-                                     then false else true) (txs m)
-             ledger′     = ledgerAt p
-             ℓ′ , txs′   = reapplyAllTk ledger′ kept
-         in mkMempoolL
-              p ledger′ nothing nothing
-              txs′ ℓ′ (lastTicket m) (capacityAt p)
-              (seenClear (seenEBs m))
+syncWithLedger : TipPoint → MempoolL → MempoolL
+syncWithLedger p m =
+  let ledger′ = ledgerAt p
+      held′ = case heldEB m of λ where
+                nothing  → nothing
+                (just e) → if stillLive p e then just e else nothing
+      ebL′ = case held′ of λ where
+                nothing  → nothing
+                (just e) → just (fst (reapplyAll ledger′ (ebTxs e)))
+      base′        = fromMaybe ledger′ ebL′
+      ℓ′ , txs′    = reapplyAllTk base′ (txs m)
+  in mkMempoolL
+       p ledger′ held′ ebL′
+       txs′ ℓ′ (lastTicket m) (capacityAt p)
+       (seenClear (seenEBs m))
 
-  ----------------------------------------------------------------------
-  -- 12. syncWithLedger — generic tip advance
-  ----------------------------------------------------------------------
+----------------------------------------------------------------------
+-- 13. Block forging
+----------------------------------------------------------------------
 
-  syncWithLedger : TipPoint → MempoolL → MempoolL
-  syncWithLedger p m =
-    let ledger′ = ledgerAt p
-        held′ = case heldEB m of λ where
-                  nothing  → nothing
-                  (just e) → if stillLive p e then just e else nothing
-        ebL′ = case held′ of λ where
-                  nothing  → nothing
-                  (just e) → just (fst (reapplyAll ledger′ (ebTxs e)))
-        base′        = fromMaybe ledger′ ebL′
-        ℓ′ , txs′    = reapplyAllTk base′ (txs m)
-    in mkMempoolL
-         p ledger′ held′ ebL′
-         txs′ ℓ′ (lastTicket m) (capacityAt p)
-         (seenClear (seenEBs m))
+postulate
+  splitAtCap  : Capacity → TxSeq → TxSeq × TxSeq
+  nonEmpty    : TxSeq → Bool
+  ebNonEmpty  : List Tx → Bool
 
-  ----------------------------------------------------------------------
-  -- 13. Block forging
-  ----------------------------------------------------------------------
-
-  postulate
-    splitAtCap  : Capacity → TxSeq → TxSeq × TxSeq
-    nonEmpty    : TxSeq → Bool
-    ebNonEmpty  : List Tx → Bool
-
-  -- Safe to call regardless of `heldEB`.  See §4g for the argument.
-  -- The mempool state is unchanged; the two reapplyAllTk calls
-  -- produce the emitted block only.
-  forgeBlock : MempoolL → RB × Maybe EB
-  forgeBlock m =
-    let -- 1. Revalidate mempool contents against `ledger` (not
-        --    `baseLedger`).  Drops any tx that depended on heldEB.ebTxs.
-        _ , validTxs         = reapplyAllTk (ledger m) (txs m)
-        -- 2. Split by RB capacity.
-        rbTxs , overflow0    = splitAtCap (capacity m) validTxs
-        -- 3. rbLedger = ledgerAt(newRB) = ledger + rbTxs.
-        rbLedger , _         = reapplyAllTk (ledger m) rbTxs
-        -- 4. Revalidate overflow against post-RB state.
-        _ , ebOverflow       = reapplyAllTk rbLedger overflow0
-        overflow′            = filter (λ tk → ebFits (measure (tx tk))) ebOverflow
-        anyOverflow          = nonEmpty overflow′
-        newEBId              = freshEBId (freshTicket (lastTicket m))
-        maybeEB              = if anyOverflow
-                                then just (mkEB newEBId (tip m)
-                                                 (map tx overflow′))
-                                else nothing
-        rbAnn                = case maybeEB of λ where
-                                 nothing  → nothing
-                                 (just e) → just (ebId e)
-        rb                   = mkRB (tip m) (RBTxs (map tx rbTxs)) rbAnn
-    in rb , maybeEB
+-- Safe to call regardless of `heldEB`.  See §4g for the argument.
+-- The mempool state is unchanged; the two reapplyAllTk calls
+-- produce the emitted block only.
+forgeBlock : MempoolL → RB × Maybe EB
+forgeBlock m =
+  let -- 1. Revalidate mempool contents against `ledger` (not
+      --    `baseLedger`).  Drops any tx that depended on heldEB.ebTxs.
+      _ , validTxs         = reapplyAllTk (ledger m) (txs m)
+      -- 2. Split by RB capacity.
+      rbTxs , overflow0    = splitAtCap (capacity m) validTxs
+      -- 3. rbLedger = ledgerAt(newRB) = ledger + rbTxs.
+      rbLedger , _         = reapplyAllTk (ledger m) rbTxs
+      -- 4. Revalidate overflow against post-RB state; cap the whole
+      --    EB body at `ebCap` (S_EB / S_EB-tx / per-EB Plutus).
+      --    Matches the pricing spec's `splitAtCap (slowCap m) validEB`.
+      _ , ebOverflow       = reapplyAllTk rbLedger overflow0
+      overflow′ , _        = splitAtCap (ebCap (tip m)) ebOverflow
+      anyOverflow          = nonEmpty overflow′
+      newEBId              = freshEBId (freshTicket (lastTicket m))
+      maybeEB              = if anyOverflow
+                              then just (mkEB newEBId (tip m)
+                                               (map tx overflow′))
+                              else nothing
+      rbAnn                = case maybeEB of λ where
+                               nothing  → nothing
+                               (just e) → just (ebId e)
+      rb                   = mkRB (tip m) (RBTxs (map tx rbTxs)) rbAnn
+  in rb , maybeEB
 ```
 
 ### Notes on this sketch
 
 - **Postulates.** All ledger primitives, all policy predicates
-  (`shouldHold`, `stillLive`, `ebFits`, `ebCap`), and the reuse cache
+  (`shouldHold`, `stillLive`, `ebCap`), and the reuse cache
   abstract type. The model verifies structural wiring, not ledger
   correctness.
 - **Scenario B in code.** `seeRBCert` when `matches = true` does not

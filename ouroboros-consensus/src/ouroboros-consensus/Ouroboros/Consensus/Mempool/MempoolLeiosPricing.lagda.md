@@ -189,7 +189,7 @@ nothing`) whenever the **EB body** it just built (`ebTxs′`) sits
 everywhere — for `d ∈ {byte size, ExUnits mem, ExUnits CPU, ref-script
 bytes}`:
 
-```
+```text
 seqSize ebTxs′ [d]  <  ebFloor [d]       (for every d)
 ```
 
@@ -367,6 +367,8 @@ prefixed **`-- CHG:`** (changed from Leios) or **`-- NEW:`** (does
 not exist in Leios) mark the delta.
 
 ```agda
+module MempoolLeiosPricing where
+
 open import Agda.Primitive        using (Level; lzero; lsuc)
 open import Agda.Builtin.Bool     using (Bool; true; false)
 open import Agda.Builtin.List     using (List; []; _∷_)
@@ -414,475 +416,473 @@ fromMaybe : {A : Set} → A → Maybe A → A
 fromMaybe d nothing  = d
 fromMaybe _ (just x) = x
 
-module MempoolLeiosPricing where
+----------------------------------------------------------------------
+-- 1. Postulated primitives.
+--    CHG: split of the single `capacityAt` into two tier-specific
+--    caps (`fastCapAt` for RB body limit, `slowCapAt` for EB body
+--    limit).  All other primitives are as in MempoolLeios.
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 1. Postulated primitives.
-  --    CHG: split of the single `capacityAt` into two tier-specific
-  --    caps (`fastCapAt` for RB body limit, `slowCapAt` for EB body
-  --    limit).  All other primitives are as in MempoolLeios.
-  ----------------------------------------------------------------------
+postulate
+  Tx           : Set
+  TxId         : Set
+  LedgerState  : Set
+  TipPoint     : Set
+  TicketNo     : Set
+  Capacity     : Set
+  EBId         : Set
 
-  postulate
-    Tx           : Set
-    TxId         : Set
-    LedgerState  : Set
-    TipPoint     : Set
-    TicketNo     : Set
-    Capacity     : Set
-    EBId         : Set
+  txId         : Tx → TxId
+  _≟TxId_      : TxId → TxId → Bool
+  inTxIds      : List TxId → TxId → Bool
 
-    txId         : Tx → TxId
-    _≟TxId_      : TxId → TxId → Bool
-    inTxIds      : List TxId → TxId → Bool
+  applyTx      : LedgerState → Tx → Maybe LedgerState
+  reapplyAll   : LedgerState → List Tx → LedgerState × List Tx
+  ledgerAt     : TipPoint → LedgerState
 
-    applyTx      : LedgerState → Tx → Maybe LedgerState
-    reapplyAll   : LedgerState → List Tx → LedgerState × List Tx
-    ledgerAt     : TipPoint → LedgerState
+  measure      : Tx → Capacity
+  fitsWith     : Capacity → Capacity → Capacity → Bool
+  -- CHG: replaces MempoolLeios's single `capacityAt` and `ebCap`.
+  fastCapAt    : TipPoint → Capacity
+  -- slowCapAt is the EB *capacity* (upper bound): the CIP-164 per-EB caps
+  -- (S_EB, S_EB-tx, per-EB Plutus). Used to cap the EB body via splitAtCap.
+  slowCapAt     : TipPoint → Capacity
+  -- NEW: ebFloorAt is the EB-fullness *floor* (lower bound) — a SEPARATE
+  -- quantity from slowCap. An EB must reach it in some dimension or it is
+  -- suppressed (here) / rejected (ledger). Intended value: ½ a full RB
+  -- (½ · fastCapAt) per dimension. This floor is a design choice — NOT a
+  -- CIP-164 requirement (the CIP only forbids empty EBs) — so it is probably
+  -- up for discussion, and is a candidate protocol parameter. For the floor
+  -- to be reachable we need ebFloor ≤ slowCap in every dimension.
+  ebFloorAt    : TipPoint → Capacity
+  -- NEW: light-load predicate for EB suppression (see §1).
+  -- underHalfRB size cap ≡ true iff size[d] < cap[d] for every dimension d
+  -- (byte size, ExUnits mem, ExUnits CPU, ref-script bytes). Applied to the EB body
+  -- with cap = ebFloor (= ½ a full RB), so it reads "the EB body is below the
+  -- fullness floor in every dimension" — the complement of the ledger's sdChecks EB
+  -- (valid iff total ≥ ebFloor in some dimension). The ½ lives in ebFloor, so there
+  -- is no doubling/rounding. Conjunction (suppress only when small in *every*
+  -- dimension) — matching the ledger's dual disjunction. NOTE "small in every
+  -- dimension" is probably up for discussion (vs. requiring ≥ ebFloor in every
+  -- dimension). The ref-script-bytes dimension matches the ledger's totalRefScriptSize.
+  underHalfRB  : Capacity → Capacity → Bool
+  freshTicket  : TicketNo → TicketNo
+  freshEBId    : TicketNo → EBId
 
-    measure      : Tx → Capacity
-    fitsWith     : Capacity → Capacity → Capacity → Bool
-    -- CHG: replaces MempoolLeios's single `capacityAt` and `ebCap`.
-    fastCapAt    : TipPoint → Capacity
-    -- slowCapAt is the EB *capacity* (upper bound): the CIP-164 per-EB caps
-    -- (S_EB, S_EB-tx, per-EB Plutus). Used to cap the EB body via splitAtCap.
-    slowCapAt     : TipPoint → Capacity
-    -- NEW: ebFloorAt is the EB-fullness *floor* (lower bound) — a SEPARATE
-    -- quantity from slowCap. An EB must reach it in some dimension or it is
-    -- suppressed (here) / rejected (ledger). Intended value: ½ a full RB
-    -- (½ · fastCapAt) per dimension. This floor is a design choice — NOT a
-    -- CIP-164 requirement (the CIP only forbids empty EBs) — so it is probably
-    -- up for discussion, and is a candidate protocol parameter. For the floor
-    -- to be reachable we need ebFloor ≤ slowCap in every dimension.
-    ebFloorAt    : TipPoint → Capacity
-    -- NEW: light-load predicate for EB suppression (see §1).
-    -- underHalfRB size cap ≡ true iff size[d] < cap[d] for every dimension d
-    -- (byte size, ExUnits mem, ExUnits CPU, ref-script bytes). Applied to the EB body
-    -- with cap = ebFloor (= ½ a full RB), so it reads "the EB body is below the
-    -- fullness floor in every dimension" — the complement of the ledger's sdChecks EB
-    -- (valid iff total ≥ ebFloor in some dimension). The ½ lives in ebFloor, so there
-    -- is no doubling/rounding. Conjunction (suppress only when small in *every*
-    -- dimension) — matching the ledger's dual disjunction. NOTE "small in every
-    -- dimension" is probably up for discussion (vs. requiring ≥ ebFloor in every
-    -- dimension). The ref-script-bytes dimension matches the ledger's totalRefScriptSize.
-    underHalfRB  : Capacity → Capacity → Bool
-    freshTicket  : TicketNo → TicketNo
-    freshEBId    : EBId → EBId
+----------------------------------------------------------------------
+-- 2. Endorser Blocks and Ranking Blocks (unchanged from MempoolLeios).
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 2. Endorser Blocks and Ranking Blocks (unchanged from MempoolLeios).
-  ----------------------------------------------------------------------
+record EB : Set where
+  constructor mkEB
+  field
+    ebId   : EBId
+    ebTip  : TipPoint
+    ebTxs  : List Tx
+open EB
 
-  record EB : Set where
-    constructor mkEB
-    field
-      ebId   : EBId
-      ebTip  : TipPoint
-      ebTxs  : List Tx
-  open EB
+data RBBody : Set where
+  RBTxs  : List Tx → RBBody
+  RBCert : EBId    → RBBody
 
-  data RBBody : Set where
-    RBTxs  : List Tx → RBBody
-    RBCert : EBId    → RBBody
+record RB : Set where
+  constructor mkRB
+  field
+    rbTip   : TipPoint
+    rbBody  : RBBody
+    rbAnnEB : Maybe EBId
+open RB
 
-  record RB : Set where
-    constructor mkRB
-    field
-      rbTip   : TipPoint
-      rbBody  : RBBody
-      rbAnnEB : Maybe EBId
-  open RB
+postulate
+  _≟EBId_ : EBId → EBId → Bool
 
-  postulate
-    _≟EBId_ : EBId → EBId → Bool
+----------------------------------------------------------------------
+-- 3. Ticket record and TxSeq (unchanged from MempoolLeios).
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 3. Ticket record and TxSeq (unchanged from MempoolLeios).
-  ----------------------------------------------------------------------
+record TxTicket : Set where
+  constructor mkTicket
+  field
+    tx       : Tx
+    ticket   : TicketNo
+    sizeTx   : Capacity
+open TxTicket
 
-  record TxTicket : Set where
-    constructor mkTicket
-    field
-      tx       : Tx
-      ticket   : TicketNo
-      sizeTx   : Capacity
-  open TxTicket
+TxSeq : Set
+TxSeq = List TxTicket
 
-  TxSeq : Set
-  TxSeq = List TxTicket
+reapplyAllTk : LedgerState → TxSeq → LedgerState × TxSeq
+reapplyAllTk ℓ tks =
+  let ls , plain = reapplyAll ℓ (map tx tks)
+  in ls , rebuild plain tks
+  where
+    rebuild : List Tx → TxSeq → TxSeq
+    rebuild [] _ = []
+    rebuild (t ∷ ts) [] = []
+    rebuild (t ∷ ts) (tk ∷ tks) =
+      if _≟TxId_ (txId t) (txId (tx tk))
+      then tk ∷ rebuild ts tks
+      else rebuild (t ∷ ts) tks
 
-  reapplyAllTk : LedgerState → TxSeq → LedgerState × TxSeq
-  reapplyAllTk ℓ tks =
-    let ls , plain = reapplyAll ℓ (map tx tks)
-        rebuild : List Tx → TxSeq → TxSeq
-        rebuild [] _ = []
-        rebuild (t ∷ ts) [] = []
-        rebuild (t ∷ ts) (tk ∷ tks) =
-          if _≟TxId_ (txId t) (txId (tx tk))
-          then tk ∷ rebuild ts tks
-          else rebuild (t ∷ ts) tks
-    in ls , rebuild plain tks
+postulate
+  seqSize : TxSeq → Capacity
 
-  postulate
-    seqSize : TxSeq → Capacity
+----------------------------------------------------------------------
+-- 4. Reuse cache (unchanged from MempoolLeios).
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 4. Reuse cache (unchanged from MempoolLeios).
-  ----------------------------------------------------------------------
+postulate
+  SeenSet    : Set
+  emptySeen  : SeenSet
+  seenAddEB  : SeenSet → List Tx → SeenSet
+  seenClear  : SeenSet → SeenSet
 
-  postulate
-    SeenSet    : Set
-    emptySeen  : SeenSet
-    seenAddEB  : SeenSet → List Tx → SeenSet
-    seenClear  : SeenSet → SeenSet
+----------------------------------------------------------------------
+-- 5. Tier tag — NEW: does not exist in MempoolLeios.
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 5. Tier tag — NEW: does not exist in MempoolLeios.
-  ----------------------------------------------------------------------
+data Tier : Set where
+  Fast : Tier
+  Slow  : Tier
 
-  data Tier : Set where
-    Fast : Tier
-    Slow  : Tier
+----------------------------------------------------------------------
+-- 6. The mempool state
+--
+--    The ledger-stack top three fields (`ledger`, `heldEB`,
+--    `ebLedger`) match MempoolLeios exactly.  Everything else
+--    doubles.
+--
+--      Leios field              Pricing analogue
+--      -----------------------  -----------------------------------
+--      ledger                   ledger                     (same)
+--      heldEB                   heldEB                     (same)
+--      ebLedger                 ebLedger                   (same)
+--      txs                      fastTxs, slowTxs    (split)
+--      updatedLedger            fastUpdatedLedger,
+--                               slowUpdatedLedger        (split)
+--      lastTicket               lastFastTicket, lastSlowTicket
+--      capacity                 fastCap, slowCap
+--      seenEBs                  seenEBs                    (same)
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 6. The mempool state
-  --
-  --    The ledger-stack top three fields (`ledger`, `heldEB`,
-  --    `ebLedger`) match MempoolLeios exactly.  Everything else
-  --    doubles.
-  --
-  --      Leios field              Pricing analogue
-  --      -----------------------  -----------------------------------
-  --      ledger                   ledger                     (same)
-  --      heldEB                   heldEB                     (same)
-  --      ebLedger                 ebLedger                   (same)
-  --      txs                      fastTxs, slowTxs    (split)
-  --      updatedLedger            fastUpdatedLedger,
-  --                               slowUpdatedLedger        (split)
-  --      lastTicket               lastFastTicket, lastSlowTicket
-  --      capacity                 fastCap, slowCap
-  --      seenEBs                  seenEBs                    (same)
-  ----------------------------------------------------------------------
+record MempoolLP : Set where
+  constructor mkMempoolLP
+  field
+    tip                   : TipPoint
+    ledger                : LedgerState        -- ledgerAt tip
+    heldEB                : Maybe EB
+    ebLedger              : Maybe LedgerState  -- ledger + heldEB.ebTxs
 
-  record MempoolLP : Set where
-    constructor mkMempoolLP
-    field
-      tip                   : TipPoint
-      ledger                : LedgerState        -- ledgerAt tip
-      heldEB                : Maybe EB
-      ebLedger              : Maybe LedgerState  -- ledger + heldEB.ebTxs
+    -- NEW: fast tier, replaces Leios's `txs`.
+    fastTxs           : TxSeq
+    -- NEW: fast working state, = (fromMaybe ledger ebLedger) + fast.
+    -- Same role as Leios's `updatedLedger` — this is what a new
+    -- fast tx validates against.
+    fastUpdatedLedger : LedgerState
+    lastFastTicket        : TicketNo           -- CHG: was lastTicket
+    fastCap               : Capacity           -- CHG: was capacity (RB TxMeasure)
 
-      -- NEW: fast tier, replaces Leios's `txs`.
-      fastTxs           : TxSeq
-      -- NEW: fast working state, = (fromMaybe ledger ebLedger) + fast.
-      -- Same role as Leios's `updatedLedger` — this is what a new
-      -- fast tx validates against.
-      fastUpdatedLedger : LedgerState
-      lastFastTicket        : TicketNo           -- CHG: was lastTicket
-      fastCap               : Capacity           -- CHG: was capacity (RB TxMeasure)
+    -- NEW: slow tier.
+    slowTxs            : TxSeq
+    -- NEW: slow working state, = fastUpdatedLedger + slows.
+    -- What a new slow tx validates against.
+    slowUpdatedLedger  : LedgerState
+    lastSlowTicket         : TicketNo
+    slowCap                : Capacity           -- EB-specific cap
 
-      -- NEW: slow tier.
-      slowTxs            : TxSeq
-      -- NEW: slow working state, = fastUpdatedLedger + slows.
-      -- What a new slow tx validates against.
-      slowUpdatedLedger  : LedgerState
-      lastSlowTicket         : TicketNo
-      slowCap                : Capacity           -- EB-specific cap
+    seenEBs               : SeenSet
+open MempoolLP
 
-      seenEBs               : SeenSet
-  open MempoolLP
+-- Convenience: the base ledger for fast-tier validation.
+baseLedger : MempoolLP → LedgerState
+baseLedger m = fromMaybe (ledger m) (ebLedger m)
 
-  -- Convenience: the base ledger for fast-tier validation.
-  baseLedger : MempoolLP → LedgerState
-  baseLedger m = fromMaybe (ledger m) (ebLedger m)
+----------------------------------------------------------------------
+-- 7. Invariants
+--
+--   Two of the three ledger-stack invariants are inherited from
+--   MempoolLeios verbatim.  The tx-sequence invariant becomes a
+--   layered chain because we now have two tiers.
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 7. Invariants
-  --
-  --   Two of the three ledger-stack invariants are inherited from
-  --   MempoolLeios verbatim.  The tx-sequence invariant becomes a
-  --   layered chain because we now have two tiers.
-  ----------------------------------------------------------------------
+postulate
+  LedgerAtTip :
+    (m : MempoolLP) →
+    ledger m ≡ ledgerAt (tip m)
 
-  postulate
-    LedgerAtTip :
-      (m : MempoolLP) →
-      ledger m ≡ ledgerAt (tip m)
+  EBLedgerConsistent :
+    (m : MempoolLP) →
+    case heldEB m of λ where
+      nothing  → ebLedger m ≡ nothing
+      (just e) → ebLedger m ≡
+                 just (fst (reapplyAll (ledger m) (ebTxs e)))
 
-    EBLedgerConsistent :
-      (m : MempoolLP) →
-      case heldEB m of λ where
-        nothing  → ebLedger m ≡ nothing
-        (just e) → ebLedger m ≡
-                   just (fst (reapplyAll (ledger m) (ebTxs e)))
+  -- NEW: replaces MempoolLeios's single TxsValid.
+  FastLayerValid :
+    (m : MempoolLP) →
+    fst (reapplyAllTk (baseLedger m) (fastTxs m))
+    ≡ fastUpdatedLedger m
 
-    -- NEW: replaces MempoolLeios's single TxsValid.
-    FastLayerValid :
-      (m : MempoolLP) →
-      fst (reapplyAllTk (baseLedger m) (fastTxs m))
-      ≡ fastUpdatedLedger m
+  -- NEW: second half of the layered invariant.
+  SlowLayerValid :
+    (m : MempoolLP) →
+    fst (reapplyAllTk (fastUpdatedLedger m) (slowTxs m))
+    ≡ slowUpdatedLedger m
 
-    -- NEW: second half of the layered invariant.
-    SlowLayerValid :
-      (m : MempoolLP) →
-      fst (reapplyAllTk (fastUpdatedLedger m) (slowTxs m))
-      ≡ slowUpdatedLedger m
+----------------------------------------------------------------------
+-- 8. addTx — CHG: now takes a Tier.
+--
+--    Fast tier: validated against `fastUpdatedLedger`
+--      (cumulative).  Any successful admission updates
+--      `fastUpdatedLedger` and REVALIDATES the slow tier.
+--      This is the Leios-compat invariant: the slow tier must
+--      always be valid against `ebLedger + fasts`, and
+--      fasts have just changed.
+--
+--    Slow tier: validated against `slowUpdatedLedger`
+--      (cumulative slow post-state); admission does not touch
+--      the fast tier.
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 8. addTx — CHG: now takes a Tier.
-  --
-  --    Fast tier: validated against `fastUpdatedLedger`
-  --      (cumulative).  Any successful admission updates
-  --      `fastUpdatedLedger` and REVALIDATES the slow tier.
-  --      This is the Leios-compat invariant: the slow tier must
-  --      always be valid against `ebLedger + fasts`, and
-  --      fasts have just changed.
-  --
-  --    Slow tier: validated against `slowUpdatedLedger`
-  --      (cumulative slow post-state); admission does not touch
-  --      the fast tier.
-  ----------------------------------------------------------------------
+data AddResult : Set where
+  Added    : MempoolLP → AddResult
+  Rejected : MempoolLP → AddResult
+  Blocked  : MempoolLP → AddResult
 
-  data AddResult : Set where
-    Added    : MempoolLP → AddResult
-    Rejected : MempoolLP → AddResult
-    Blocked  : MempoolLP → AddResult
+addTx : Tier → Tx → MempoolLP → AddResult
 
-  addTx : Tier → Tx → MempoolLP → AddResult
+addTx Fast t m
+  with fitsWith (fastCap m) (seqSize (fastTxs m)) (measure t)
+... | false = Blocked m
+... | true  with applyTx (fastUpdatedLedger m) t
+...   | nothing = Rejected m
+...   | just ℓ_fast′ =
+        let n′            = freshTicket (lastFastTicket m)
+            tk            = mkTicket t n′ (measure t)
+            -- CRUCIAL: slow tier revalidates against new
+            -- fastUpdatedLedger.  See §1 "fast tx added →
+            -- slow revalidate".
+            ℓ_slow′ , slow′ = reapplyAllTk ℓ_fast′ (slowTxs m)
+        in Added (mkMempoolLP
+             (tip m) (ledger m) (heldEB m) (ebLedger m)
+             (fastTxs m ++ tk ∷ []) ℓ_fast′ n′ (fastCap m)
+             slow′ ℓ_slow′ (lastSlowTicket m) (slowCap m)
+             (seenEBs m))
 
-  addTx Fast t m
-    with fitsWith (fastCap m) (seqSize (fastTxs m)) (measure t)
-  ... | false = Blocked m
-  ... | true  with applyTx (fastUpdatedLedger m) t
-  ...   | nothing = Rejected m
-  ...   | just ℓ_fast′ =
-          let n′            = freshTicket (lastFastTicket m)
-              tk            = mkTicket t n′ (measure t)
-              -- CRUCIAL: slow tier revalidates against new
-              -- fastUpdatedLedger.  See §1 "fast tx added →
-              -- slow revalidate".
-              ℓ_slow′ , slow′ = reapplyAllTk ℓ_fast′ (slowTxs m)
-          in Added (mkMempoolLP
-               (tip m) (ledger m) (heldEB m) (ebLedger m)
-               (fastTxs m ++ tk ∷ []) ℓ_fast′ n′ (fastCap m)
-               slow′ ℓ_slow′ (lastSlowTicket m) (slowCap m)
-               (seenEBs m))
+addTx Slow t m
+  with fitsWith (slowCap m) (seqSize (slowTxs m)) (measure t)
+... | false = Blocked m
+... | true  with applyTx (slowUpdatedLedger m) t
+...   | nothing = Rejected m
+...   | just ℓ_slow′ =
+        let n′ = freshTicket (lastSlowTicket m)
+            tk = mkTicket t n′ (measure t)
+        in Added (mkMempoolLP
+             (tip m) (ledger m) (heldEB m) (ebLedger m)
+             (fastTxs m) (fastUpdatedLedger m)
+             (lastFastTicket m) (fastCap m)
+             (slowTxs m ++ tk ∷ []) ℓ_slow′ n′ (slowCap m)
+             (seenEBs m))
 
-  addTx Slow t m
-    with fitsWith (slowCap m) (seqSize (slowTxs m)) (measure t)
-  ... | false = Blocked m
-  ... | true  with applyTx (slowUpdatedLedger m) t
-  ...   | nothing = Rejected m
-  ...   | just ℓ_slow′ =
-          let n′ = freshTicket (lastSlowTicket m)
-              tk = mkTicket t n′ (measure t)
-          in Added (mkMempoolLP
-               (tip m) (ledger m) (heldEB m) (ebLedger m)
-               (fastTxs m) (fastUpdatedLedger m)
-               (lastFastTicket m) (fastCap m)
-               (slowTxs m ++ tk ∷ []) ℓ_slow′ n′ (slowCap m)
-               (seenEBs m))
+----------------------------------------------------------------------
+-- 9. addEB — CHG: cascades through both tiers.
+--
+--    Same shape as Leios's `addEB` (rebuild ebLedger, revalidate),
+--    but revalidation now flows fast-tier → slow-tier in
+--    sequence.
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 9. addEB — CHG: cascades through both tiers.
-  --
-  --    Same shape as Leios's `addEB` (rebuild ebLedger, revalidate),
-  --    but revalidation now flows fast-tier → slow-tier in
-  --    sequence.
-  ----------------------------------------------------------------------
+postulate
+  shouldHold : MempoolLP → EB → Bool
 
-  postulate
-    shouldHold : MempoolLP → EB → Bool
+addEB : EB → MempoolLP → MempoolLP
+addEB e m =
+  if shouldHold m e
+  then (let ebL′            = fst (reapplyAll (ledger m) (ebTxs e))
+            ℓ_fast′ , fast′ = reapplyAllTk ebL′  (fastTxs m)
+            ℓ_slow′ , slow′ = reapplyAllTk ℓ_fast′ (slowTxs m)
+        in mkMempoolLP
+             (tip m) (ledger m) (just e) (just ebL′)
+             fast′ ℓ_fast′ (lastFastTicket m) (fastCap m)
+             slow′ ℓ_slow′ (lastSlowTicket m) (slowCap m)
+             (seenAddEB (seenEBs m) (ebTxs e)))
+  else
+    mkMempoolLP
+      (tip m) (ledger m) (heldEB m) (ebLedger m)
+      (fastTxs m) (fastUpdatedLedger m)
+      (lastFastTicket m) (fastCap m)
+      (slowTxs m) (slowUpdatedLedger m)
+      (lastSlowTicket m) (slowCap m)
+      (seenAddEB (seenEBs m) (ebTxs e))
 
-  addEB : EB → MempoolLP → MempoolLP
-  addEB e m =
-    if shouldHold m e
-    then
-      let ebL′            = fst (reapplyAll (ledger m) (ebTxs e))
-          ℓ_fast′ , fast′ = reapplyAllTk ebL′  (fastTxs m)
-          ℓ_slow′  , slow′  = reapplyAllTk ℓ_fast′ (slowTxs m)
-      in mkMempoolLP
-           (tip m) (ledger m) (just e) (just ebL′)
-           fast′ ℓ_fast′ (lastFastTicket m) (fastCap m)
-           slow′  ℓ_slow′  (lastSlowTicket m)  (slowCap m)
-           (seenAddEB (seenEBs m) (ebTxs e))
-    else
-      mkMempoolLP
-        (tip m) (ledger m) (heldEB m) (ebLedger m)
-        (fastTxs m) (fastUpdatedLedger m)
-        (lastFastTicket m) (fastCap m)
-        (slowTxs m) (slowUpdatedLedger m)
-        (lastSlowTicket m) (slowCap m)
-        (seenAddEB (seenEBs m) (ebTxs e))
+----------------------------------------------------------------------
+-- 10. discardEB — NEW as an explicit event (implicit in Leios's
+--     syncWithLedger via `stillLive`, but exposed as its own
+--     handler here because it is the one "expensive undo" of a
+--     prior addEB in the pricing model).
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 10. discardEB — NEW as an explicit event (implicit in Leios's
-  --     syncWithLedger via `stillLive`, but exposed as its own
-  --     handler here because it is the one "expensive undo" of a
-  --     prior addEB in the pricing model).
-  ----------------------------------------------------------------------
+discardEB : MempoolLP → MempoolLP
+discardEB m =
+  let ℓ_fast′ , fast′ = reapplyAllTk (ledger m)  (fastTxs m)
+      ℓ_slow′  , slow′  = reapplyAllTk ℓ_fast′     (slowTxs m)
+  in mkMempoolLP
+       (tip m) (ledger m) nothing nothing
+       fast′ ℓ_fast′ (lastFastTicket m) (fastCap m)
+       slow′  ℓ_slow′  (lastSlowTicket m)  (slowCap m)
+       (seenEBs m)
 
-  discardEB : MempoolLP → MempoolLP
-  discardEB m =
-    let ℓ_fast′ , fast′ = reapplyAllTk (ledger m)  (fastTxs m)
-        ℓ_slow′  , slow′  = reapplyAllTk ℓ_fast′     (slowTxs m)
-    in mkMempoolLP
-         (tip m) (ledger m) nothing nothing
-         fast′ ℓ_fast′ (lastFastTicket m) (fastCap m)
-         slow′  ℓ_slow′  (lastSlowTicket m)  (slowCap m)
-         (seenEBs m)
+----------------------------------------------------------------------
+-- 11. seeRBBody — CHG: drops referenced txs from BOTH tiers.
+----------------------------------------------------------------------
 
-  ----------------------------------------------------------------------
-  -- 11. seeRBBody — CHG: drops referenced txs from BOTH tiers.
-  ----------------------------------------------------------------------
+postulate
+  stillLive : TipPoint → EB → Bool
 
-  postulate
-    stillLive : TipPoint → EB → Bool
+seeRBBody : List Tx → TipPoint → MempoolLP → MempoolLP
+seeRBBody rbTxs p m =
+  let ids   = map txId rbTxs
+      keep  = λ tk → if inTxIds ids (txId (tx tk)) then false else true
+      fast0 = filter keep (fastTxs m)
+      slow0  = filter keep (slowTxs m)
+      ledger′ = ledgerAt p
+      held′ = case heldEB m of λ where
+                nothing  → nothing
+                (just e) → if stillLive p e then just e else nothing
+      ebL′ = case held′ of λ where
+                nothing  → nothing
+                (just e) → just (fst (reapplyAll ledger′ (ebTxs e)))
+      base′            = fromMaybe ledger′ ebL′
+      ℓ_fast′ , fast′  = reapplyAllTk base′   fast0
+      ℓ_slow′  , slow′   = reapplyAllTk ℓ_fast′ slow0
+  in mkMempoolLP
+       p ledger′ held′ ebL′
+       fast′ ℓ_fast′ (lastFastTicket m) (fastCapAt p)
+       slow′  ℓ_slow′  (lastSlowTicket m)  (slowCapAt  p)
+       (seenClear (seenEBs m))
 
-  seeRBBody : List Tx → TipPoint → MempoolLP → MempoolLP
-  seeRBBody rbTxs p m =
-    let ids   = map txId rbTxs
-        keep  = λ tk → if inTxIds ids (txId (tx tk)) then false else true
-        fast0 = filter keep (fastTxs m)
-        slow0  = filter keep (slowTxs m)
-        ledger′ = ledgerAt p
-        held′ = case heldEB m of λ where
-                  nothing  → nothing
-                  (just e) → if stillLive p e then just e else nothing
-        ebL′ = case held′ of λ where
-                  nothing  → nothing
-                  (just e) → just (fst (reapplyAll ledger′ (ebTxs e)))
-        base′            = fromMaybe ledger′ ebL′
-        ℓ_fast′ , fast′  = reapplyAllTk base′   fast0
-        ℓ_slow′  , slow′   = reapplyAllTk ℓ_fast′ slow0
-    in mkMempoolLP
-         p ledger′ held′ ebL′
-         fast′ ℓ_fast′ (lastFastTicket m) (fastCapAt p)
-         slow′  ℓ_slow′  (lastSlowTicket m)  (slowCapAt  p)
+----------------------------------------------------------------------
+-- 12. seeRBCert — CHG: as in MempoolLeios, but the Scenario B
+--     rename preserves BOTH tiers at zero cost, and the Scenario A
+--     path cascades revalidation through both tiers.
+----------------------------------------------------------------------
+
+seeRBCert : EB → TipPoint → MempoolLP → MempoolLP
+seeRBCert e p m =
+  let matches =
+        case heldEB m of λ where
+          nothing  → false
+          (just h) → _≟EBId_ (ebId h) (ebId e)
+  in if matches
+     then
+       -- Scenario B: no reapplyAll calls.  By the state invariant,
+       -- old ebLedger.value ≡ ledgerAt p.  Both
+       -- fastUpdatedLedger and slowUpdatedLedger are still
+       -- valid working states; only the ledger-stack fields
+       -- shift.  Fast and slow txs / caps / tickets pass
+       -- through unchanged.
+       mkMempoolLP
+         p (fromMaybe (ledger m) (ebLedger m)) nothing nothing
+         (fastTxs m) (fastUpdatedLedger m)
+         (lastFastTicket m) (fastCapAt p)
+         (slowTxs m) (slowUpdatedLedger m)
+         (lastSlowTicket m) (slowCapAt p)
          (seenClear (seenEBs m))
+     else
+       -- Scenario A: e's txs are now on-chain; drop them from
+       -- both tiers; discard our heldEB.
+       let ids   = map txId (ebTxs e)
+           keep  = λ tk → if inTxIds ids (txId (tx tk)) then false else true
+           fast0 = filter keep (fastTxs m)
+           slow0  = filter keep (slowTxs m)
+           ledger′            = ledgerAt p
+           ℓ_fast′ , fast′    = reapplyAllTk ledger′ fast0
+           ℓ_slow′  , slow′     = reapplyAllTk ℓ_fast′ slow0
+       in mkMempoolLP
+            p ledger′ nothing nothing
+            fast′ ℓ_fast′ (lastFastTicket m) (fastCapAt p)
+            slow′  ℓ_slow′  (lastSlowTicket m)  (slowCapAt  p)
+            (seenClear (seenEBs m))
 
-  ----------------------------------------------------------------------
-  -- 12. seeRBCert — CHG: as in MempoolLeios, but the Scenario B
-  --     rename preserves BOTH tiers at zero cost, and the Scenario A
-  --     path cascades revalidation through both tiers.
-  ----------------------------------------------------------------------
+----------------------------------------------------------------------
+-- 13. syncWithLedger — CHG: rebuilds all four ledger states.
+----------------------------------------------------------------------
 
-  seeRBCert : EB → TipPoint → MempoolLP → MempoolLP
-  seeRBCert e p m =
-    let matches =
-          case heldEB m of λ where
-            nothing  → false
-            (just h) → _≟EBId_ (ebId h) (ebId e)
-    in if matches
-       then
-         -- Scenario B: no reapplyAll calls.  By the state invariant,
-         -- old ebLedger.value ≡ ledgerAt p.  Both
-         -- fastUpdatedLedger and slowUpdatedLedger are still
-         -- valid working states; only the ledger-stack fields
-         -- shift.  Fast and slow txs / caps / tickets pass
-         -- through unchanged.
-         mkMempoolLP
-           p (fromMaybe (ledger m) (ebLedger m)) nothing nothing
-           (fastTxs m) (fastUpdatedLedger m)
-           (lastFastTicket m) (fastCapAt p)
-           (slowTxs m) (slowUpdatedLedger m)
-           (lastSlowTicket m) (slowCapAt p)
-           (seenClear (seenEBs m))
-       else
-         -- Scenario A: e's txs are now on-chain; drop them from
-         -- both tiers; discard our heldEB.
-         let ids   = map txId (ebTxs e)
-             keep  = λ tk → if inTxIds ids (txId (tx tk)) then false else true
-             fast0 = filter keep (fastTxs m)
-             slow0  = filter keep (slowTxs m)
-             ledger′            = ledgerAt p
-             ℓ_fast′ , fast′    = reapplyAllTk ledger′ fast0
-             ℓ_slow′  , slow′     = reapplyAllTk ℓ_fast′ slow0
-         in mkMempoolLP
-              p ledger′ nothing nothing
-              fast′ ℓ_fast′ (lastFastTicket m) (fastCapAt p)
-              slow′  ℓ_slow′  (lastSlowTicket m)  (slowCapAt  p)
-              (seenClear (seenEBs m))
+syncWithLedger : TipPoint → MempoolLP → MempoolLP
+syncWithLedger p m =
+  let ledger′ = ledgerAt p
+      held′ = case heldEB m of λ where
+                nothing  → nothing
+                (just e) → if stillLive p e then just e else nothing
+      ebL′ = case held′ of λ where
+                nothing  → nothing
+                (just e) → just (fst (reapplyAll ledger′ (ebTxs e)))
+      base′            = fromMaybe ledger′ ebL′
+      ℓ_fast′ , fast′  = reapplyAllTk base′   (fastTxs m)
+      ℓ_slow′  , slow′   = reapplyAllTk ℓ_fast′ (slowTxs m)
+  in mkMempoolLP
+       p ledger′ held′ ebL′
+       fast′ ℓ_fast′ (lastFastTicket m) (fastCapAt p)
+       slow′  ℓ_slow′  (lastSlowTicket m)  (slowCapAt  p)
+       (seenClear (seenEBs m))
 
-  ----------------------------------------------------------------------
-  -- 13. syncWithLedger — CHG: rebuilds all four ledger states.
-  ----------------------------------------------------------------------
+----------------------------------------------------------------------
+-- 14. Block forging — CHG: RB body is drawn from the fast
+--     tier, EB body from the slow tier.
+----------------------------------------------------------------------
 
-  syncWithLedger : TipPoint → MempoolLP → MempoolLP
-  syncWithLedger p m =
-    let ledger′ = ledgerAt p
-        held′ = case heldEB m of λ where
-                  nothing  → nothing
-                  (just e) → if stillLive p e then just e else nothing
-        ebL′ = case held′ of λ where
-                  nothing  → nothing
-                  (just e) → just (fst (reapplyAll ledger′ (ebTxs e)))
-        base′            = fromMaybe ledger′ ebL′
-        ℓ_fast′ , fast′  = reapplyAllTk base′   (fastTxs m)
-        ℓ_slow′  , slow′   = reapplyAllTk ℓ_fast′ (slowTxs m)
-    in mkMempoolLP
-         p ledger′ held′ ebL′
-         fast′ ℓ_fast′ (lastFastTicket m) (fastCapAt p)
-         slow′  ℓ_slow′  (lastSlowTicket m)  (slowCapAt  p)
-         (seenClear (seenEBs m))
+postulate
+  splitAtCap  : Capacity → TxSeq → TxSeq × TxSeq
+  nonEmpty    : TxSeq → Bool
+  ebNonEmpty  : List Tx → Bool
 
-  ----------------------------------------------------------------------
-  -- 14. Block forging — CHG: RB body is drawn from the fast
-  --     tier, EB body from the slow tier.
-  ----------------------------------------------------------------------
-
-  postulate
-    splitAtCap  : Capacity → TxSeq → TxSeq × TxSeq
-    nonEmpty    : TxSeq → Bool
-    ebNonEmpty  : List Tx → Bool
-
-  -- Safe to call regardless of `heldEB`.  Each tier is reapplied
-  -- against the state it will actually meet on-chain: fasts
-  -- against `ledger` (RB body applies there), then the EB body
-  -- (fast overflow followed by slows) against `rbLedger =
-  -- ledger + rbTxs`.  Fast overflow that did not fit in the RB
-  -- body flows into the EB body; the ledger then charges an EB-landed
-  -- fast tx on its ACTUAL (slow) tier — refunding the difference to a
-  -- feeChangeAddr if it named one, else donating the excess to the
-  -- treasury (see §1 "Fee on a fast tx that lands in an EB").
-  -- The mempool state is unchanged; the reapplyAllTk calls produce
-  -- the emitted block only.
-  forgeBlock : MempoolLP → RB × Maybe EB
-  forgeBlock m =
-    let -- 1. Revalidate fasts against `ledger` (not baseLedger).
-        _ , validPrio           = reapplyAllTk (ledger m) (fastTxs m)
-        rbTxs , fastOverflow    = splitAtCap (fastCap m) validPrio
-        -- 2. Post-RB state = ledgerAt(newRB).
-        rbLedger , _            = reapplyAllTk (ledger m) rbTxs
-        -- 3. EB body candidates: fast overflow first (they paid
-        --    the higher tier), then slows.  Revalidate the whole
-        --    combined sequence against rbLedger; some may drop.
-        ebCandidates            = fastOverflow ++ slowTxs m
-        _ , validEB             = reapplyAllTk rbLedger ebCandidates
-        ebTxs′ , _              = splitAtCap (slowCap m) validEB
-        -- 4. Light-load EB suppression (see §1): measure the EB body
-        --    itself (ebTxs′) against the fullness floor ebFloor = ½ a
-        --    full RB. If the body is below ebFloor in every dimension,
-        --    do not announce an EB. (ebFloor is the fullness *floor* — a
-        --    lower bound, distinct from slowCap, the CIP-164 per-EB
-        --    *capacity* upper bound used above in splitAtCap. Measuring
-        --    ebTxs′ — the actual EB body, which is what the ledger's
-        --    sdChecks sees — keeps this the exact complement of the
-        --    ledger check.)
-        lightLoad               = underHalfRB (seqSize ebTxs′) (ebFloorAt (tip m))
-        anyEB                   = if lightLoad
-                                    then false
-                                    else ebNonEmpty (map tx ebTxs′)
-        newEBId                 = freshEBId (freshTicket (lastFastTicket m))
-        maybeEB                 = if anyEB
-                                    then just (mkEB newEBId (tip m)
-                                                     (map tx ebTxs′))
-                                    else nothing
-        rbAnn                   = case maybeEB of λ where
-                                    nothing  → nothing
-                                    (just e) → just (ebId e)
-        rb                      = mkRB (tip m) (RBTxs (map tx rbTxs)) rbAnn
-    in rb , maybeEB
+-- Safe to call regardless of `heldEB`.  Each tier is reapplied
+-- against the state it will actually meet on-chain: fasts
+-- against `ledger` (RB body applies there), then the EB body
+-- (fast overflow followed by slows) against `rbLedger =
+-- ledger + rbTxs`.  Fast overflow that did not fit in the RB
+-- body flows into the EB body; the ledger then charges an EB-landed
+-- fast tx on its ACTUAL (slow) tier — refunding the difference to a
+-- feeChangeAddr if it named one, else donating the excess to the
+-- treasury (see §1 "Fee on a fast tx that lands in an EB").
+-- The mempool state is unchanged; the reapplyAllTk calls produce
+-- the emitted block only.
+forgeBlock : MempoolLP → RB × Maybe EB
+forgeBlock m =
+  let -- 1. Revalidate fasts against `ledger` (not baseLedger).
+      _ , validPrio           = reapplyAllTk (ledger m) (fastTxs m)
+      rbTxs , fastOverflow    = splitAtCap (fastCap m) validPrio
+      -- 2. Post-RB state = ledgerAt(newRB).
+      rbLedger , _            = reapplyAllTk (ledger m) rbTxs
+      -- 3. EB body candidates: fast overflow first (they paid
+      --    the higher tier), then slows.  Revalidate the whole
+      --    combined sequence against rbLedger; some may drop.
+      ebCandidates            = fastOverflow ++ slowTxs m
+      _ , validEB             = reapplyAllTk rbLedger ebCandidates
+      ebTxs′ , _              = splitAtCap (slowCap m) validEB
+      -- 4. Light-load EB suppression (see §1): measure the EB body
+      --    itself (ebTxs′) against the fullness floor ebFloor = ½ a
+      --    full RB. If the body is below ebFloor in every dimension,
+      --    do not announce an EB. (ebFloor is the fullness *floor* — a
+      --    lower bound, distinct from slowCap, the CIP-164 per-EB
+      --    *capacity* upper bound used above in splitAtCap. Measuring
+      --    ebTxs′ — the actual EB body, which is what the ledger's
+      --    sdChecks sees — keeps this the exact complement of the
+      --    ledger check.)
+      lightLoad               = underHalfRB (seqSize ebTxs′) (ebFloorAt (tip m))
+      anyEB                   = if lightLoad
+                                  then false
+                                  else ebNonEmpty (map tx ebTxs′)
+      newEBId                 = freshEBId (freshTicket (lastFastTicket m))
+      maybeEB                 = if anyEB
+                                  then just (mkEB newEBId (tip m)
+                                                   (map tx ebTxs′))
+                                  else nothing
+      rbAnn                   = case maybeEB of λ where
+                                  nothing  → nothing
+                                  (just e) → just (ebId e)
+      rb                      = mkRB (tip m) (RBTxs (map tx rbTxs)) rbAnn
+  in rb , maybeEB
 ```
 
 ### Notes on this sketch
