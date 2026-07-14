@@ -23,7 +23,6 @@ import qualified Cardano.Chain.Update as CC.Update
 import Control.Monad
 import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe, mapMaybe)
-import Data.SOP.Index (Index (..))
 import Data.Word
 import GHC.Generics
 import NoThunks.Class
@@ -37,7 +36,6 @@ import Ouroboros.Consensus.HardFork.Combinator.Degenerate
 import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
@@ -277,10 +275,3 @@ instance SerialiseNodeToClient ByronBlock ByronPartialLedgerConfig where
     ByronPartialLedgerConfig
       <$> fromCBOR @(LedgerConfig ByronBlock)
       <*> decodeNodeToClient ccfg version
-
-instance BlockSupportsHFLedgerQuery '[ByronBlock] where
-  answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}
-  answerBlockQueryHFLookup (IS is) _cfg _q _dlv = case is of {}
-
-  answerBlockQueryHFTraverse IZ _cfg (q :: BlockQuery ByronBlock QFTraverseTables result) _provider _dlv = case q of {}
-  answerBlockQueryHFTraverse (IS is) _cfg _q _provider _dlv = case is of {}

@@ -18,7 +18,6 @@ import Ouroboros.Consensus.HardFork.Combinator.Basics
 import Ouroboros.Consensus.HardFork.Combinator.Forging ()
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams ()
 import Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection ()
-import Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage ()
 import Ouroboros.Consensus.HardFork.Combinator.Node.Metrics ()
@@ -60,7 +59,6 @@ getSameConfigValue getValue blockConfig = getSameValue values
 
 instance
   ( CanHardFork xs
-  , BlockSupportsHFLedgerQuery xs
   , SupportedNetworkProtocolVersion (HardForkBlock xs)
   , SerialiseHFC xs
   ) =>

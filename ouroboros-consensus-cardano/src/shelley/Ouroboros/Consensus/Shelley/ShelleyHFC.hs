@@ -44,8 +44,6 @@ import Data.Coerce
 import qualified Data.Map.Strict as Map
 import Data.SOP.BasicFunctors
 import Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
-import Data.SOP.Index (Index (..))
-import Data.SOP.Strict
 import qualified Data.Text as T (pack)
 import Data.Typeable
 import Data.Void (Void)
@@ -409,33 +407,3 @@ instance
       . mkShelleyValidatedTx
       . SL.coerceValidated
       <$> SL.translateValidated @era @(SL.Tx SL.TopTx) ctxt (SL.coerceValidated vtx)
-
-{-------------------------------------------------------------------------------
-  Queries
--------------------------------------------------------------------------------}
-
--- | Project the (single-era) hard-fork values onto the era's values.
-projectShelleyValues ::
-  Values (HardForkBlock '[ShelleyBlock proto era]) ->
-  Values (ShelleyBlock proto era)
-projectShelleyValues = unwrapValues . unZ
-
-instance
-  ( ShelleyCompatible proto era
-  , ShelleyBasedEra era
-  ) =>
-  BlockSupportsHFLedgerQuery '[ShelleyBlock proto era]
-  where
-  answerBlockQueryHFLookup = \case
-    IZ -> answerShelleyLookupQueries (Z . WrapKeys) projectShelleyValues
-    IS idx -> case idx of {}
-
-  answerBlockQueryHFTraverse idx cfg q provider _forker = case idx of
-    IZ ->
-      answerShelleyTraversingQueries
-        projectShelleyValues
-        shelleyQFTraverseTablesPredicate
-        cfg
-        q
-        provider
-    IS idx' -> case idx' of {}
