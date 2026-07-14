@@ -49,8 +49,8 @@ import Ouroboros.Consensus.HeaderValidation
   , HeaderState (..)
   , genesisHeaderState
   )
-import Ouroboros.Consensus.Ledger.Basics (Values, emptyValues, forwardTickDiff)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import Ouroboros.Consensus.Ledger.HD (Values, emptyValues, forwardTickDiff)
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers

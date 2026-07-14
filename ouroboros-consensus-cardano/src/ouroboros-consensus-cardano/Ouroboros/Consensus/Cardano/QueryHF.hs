@@ -23,7 +23,7 @@ import Ouroboros.Consensus.Byron.Node ()
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.CanHardFork
 import Ouroboros.Consensus.HardFork.Combinator
-import Ouroboros.Consensus.Ledger.Basics (Values)
+import Ouroboros.Consensus.Ledger.HD (Values)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Shelley.HFEras ()

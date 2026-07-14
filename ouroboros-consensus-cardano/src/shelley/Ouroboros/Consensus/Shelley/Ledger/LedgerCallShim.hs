@@ -64,7 +64,7 @@ import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
 import Lens.Micro ((&), (.~), (^.))
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Ledger.Basics (ComputeLedgerEvents (..))
+import Ouroboros.Consensus.Ledger.Abstract (ComputeLedgerEvents (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool (WhetherToIntervene)
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Shelley.Eras
