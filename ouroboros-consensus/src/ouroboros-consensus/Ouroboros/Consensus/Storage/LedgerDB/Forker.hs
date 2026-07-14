@@ -312,12 +312,13 @@ type ReadOnlyForker' m blk = ReadOnlyForker m ExtLedgerState blk
 readOnlyForker :: MonadSTM m => Forker m l blk -> m (ReadOnlyForker m l blk)
 readOnlyForker forker = do
   st <- atomically $ forkerGetLedgerState forker
-  pure $ ReadOnlyForker
-    { roforkerClose = forkerClose forker
-    , roforkerReadTables = forkerReadTables forker
-    , roforkerGetLedgerState = st
-    , roforkerReadStatistics = forkerReadStatistics forker
-    }
+  pure $
+    ReadOnlyForker
+      { roforkerClose = forkerClose forker
+      , roforkerReadTables = forkerReadTables forker
+      , roforkerGetLedgerState = st
+      , roforkerReadStatistics = forkerReadStatistics forker
+      }
 
 {-------------------------------------------------------------------------------
   Validation

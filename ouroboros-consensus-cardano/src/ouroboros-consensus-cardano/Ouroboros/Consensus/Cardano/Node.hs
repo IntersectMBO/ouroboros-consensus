@@ -85,8 +85,8 @@ import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.HD (Values)
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.HD (Values)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run

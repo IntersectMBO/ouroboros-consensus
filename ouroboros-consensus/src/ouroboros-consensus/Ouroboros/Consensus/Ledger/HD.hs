@@ -8,7 +8,6 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE  MonoLocalBinds #-}
 
 module Ouroboros.Consensus.Ledger.HD
   ( -- * API
@@ -43,13 +42,13 @@ instance Semigroup UnitTables where
   UnitTables <> UnitTables = UnitTables
 
 -- | The changes a tick produces to the tables.
-newtype TickDiff blk = TickDiff { unTickDiff ::Diff blk }
+newtype TickDiff blk = TickDiff {unTickDiff :: Diff blk}
 
 -- | The changes a block (re)application produces to the tables.
-newtype BlockDiff blk = BlockDiff { unBlockDiff :: Diff blk}
+newtype BlockDiff blk = BlockDiff {unBlockDiff :: Diff blk}
 
 -- | The combined changes from ticking and (re)applying a block
-newtype TickAndBlockDiff blk = TickAndBlockDiff { unTickAndBlockDiff :: Diff blk}
+newtype TickAndBlockDiff blk = TickAndBlockDiff {unTickAndBlockDiff :: Diff blk}
 
 -- | The changes a transaction produces to the tables: a 'Semigroup'
 -- so that a sequence of diffs composes.

@@ -68,6 +68,7 @@ import Control.Arrow ((+++))
 import Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
+import Data.Coerce
 import Data.Functor ((<&>))
 import Data.Kind (Type)
 import Data.Typeable
@@ -92,7 +93,6 @@ import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Tx (HasRawTxId (..))
-import Data.Coerce
 
 {-------------------------------------------------------------------------------
   Block
