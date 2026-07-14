@@ -415,8 +415,7 @@ instance
 
   blockKeys = Core.neededTxInsForBlock . shelleyBlockRaw
 
-  -- One era ⇒ no translation; compose\/apply the diffs directly (the 'Diff'
-  -- 'Semigroup' composes in chain order, so later entries win).
+  -- compose\/apply the diffs directly (the 'Diff' 'Semigroup' is right-biased).
   combineTickAndBlockDiff (TickDiff tickDiff) (BlockDiff blockDiff) = TickAndBlockDiff $ tickDiff <> blockDiff
   forwardTickDiff (TickDiff diff) vals = Diff.applyDiff vals diff
   forwardBlockDiff (BlockDiff diff) vals = Diff.applyDiff vals diff
@@ -560,11 +559,7 @@ instance ShelleyCompatible proto era => IsLedger LedgerState (ShelleyBlock proto
                 , tickedShelleyLedgerLatestPerasCertRound =
                     shelleyLedgerLatestPerasCertRound
                 }
-            , -- Within a single era, ticking does not mutate the UTxO (the UTxO
-              -- is only changed by block/transaction execution and by era
-              -- translations, which happen at the hard-fork level), so it
-              -- produces no diff.
-              mempty
+            , mempty
             )
      where
       globals = shelleyLedgerGlobals cfg

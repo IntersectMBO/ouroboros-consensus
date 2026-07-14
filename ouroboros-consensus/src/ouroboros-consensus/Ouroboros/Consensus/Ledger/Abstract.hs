@@ -214,10 +214,10 @@ class
   --
   -- This is passed the ledger state ticked to the slot of the given block, so
   -- 'applyChainTickLedgerResult' has already been called, together with the
-  -- @Values blk@ the block consumes. Those values must already be read from the
+  -- @Values blk@ the block needs. Those values must already be read from the
   -- backend and forwarded through the tick's diff (see
-  -- 'tickThenApplyLedgerResult'). The application is pure; it returns the new
-  -- state and the @'Diff' blk@ the block produces.
+  -- 'tickThenApplyLedgerResult'). It returns the new state and the @'Diff' blk@
+  -- the block produces.
   --
   -- Users of this function can set any validation level allowed by the
   -- @small-steps@ package. See "Control.State.Transition.Extended".
@@ -322,7 +322,7 @@ tickThenApplyLedgerResult ::
   ComputeLedgerEvents ->
   LedgerCfg l blk ->
   blk ->
-  -- | The values the block consumes, read against the (pre-tick) state.
+  -- | The values the block needs, read against the (pre-tick) state.
   Values blk ->
   l blk ->
   Except (LedgerErr l blk) (LedgerResult blk (l blk, TickAndBlockDiff blk))
@@ -384,9 +384,9 @@ tickThenReapply = lrResult ....: tickThenReapplyLedgerResult
 -- | Apply a sequence of blocks to a full, in-memory @(state, values)@ pair.
 --
 -- This is the InMemory model of block application: the @Values blk@ holds the
--- entire table(s), and each block's total diff is folded back into them via
--- 'forward'. With on-disk backends the values come from the storage handle
--- instead, and this fold is not used.
+-- values all these blocks need, and each block's total diff is folded back into
+-- them via 'forward'. With on-disk backends the values come from the storage
+-- handle instead, and this fold is not used.
 foldLedger ::
   forall l blk.
   ApplyBlock l blk =>
@@ -400,6 +400,7 @@ foldLedger evs cfg =
     (st', diff) <- tickThenApply evs cfg blk vals st
     pure (st', forwardTickAndBlockDiff @blk diff vals)
 
+-- | Has the same caveats as 'foldLedger'.
 refoldLedger ::
   forall l blk.
   ApplyBlock l blk =>
