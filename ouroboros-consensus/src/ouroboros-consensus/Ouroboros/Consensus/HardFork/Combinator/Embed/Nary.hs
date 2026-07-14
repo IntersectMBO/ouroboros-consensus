@@ -50,7 +50,7 @@ import Ouroboros.Consensus.HeaderValidation
   , genesisHeaderState
   )
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
-import Ouroboros.Consensus.Ledger.HD (Values, emptyValues, forwardTickDiff)
+import Ouroboros.Consensus.Ledger.HD
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.TypeFamilyWrappers
@@ -295,7 +295,7 @@ injectInitialExtLedgerState cfg extLedgerState0 =
   -- than discarding it) and turn it into the genesis 'Values' the LedgerDB
   -- needs alongside the ledger state.
   targetEraLedgerStateInner :: HardForkState LedgerState (x ': xs)
-  genesisDiff :: NS WrapTickDiff (x ': xs)
+  genesisDiff :: NS TickDiff (x ': xs)
   (targetEraLedgerStateInner, genesisDiff) =
     let extended =
           State.extendToSlot
@@ -315,8 +315,8 @@ injectInitialExtLedgerState cfg extLedgerState0 =
   genesisValues = hcmap proxySingle diffToValues genesisDiff
    where
     diffToValues ::
-      forall blk. SingleEraBlock blk => WrapTickDiff blk -> WrapValues blk
-    diffToValues (WrapTickDiff d) = WrapValues (forwardTickDiff @blk d (emptyValues @blk))
+      forall blk. SingleEraBlock blk => TickDiff blk -> WrapValues blk
+    diffToValues d = WrapValues (forwardTickDiff @blk d (emptyValues @blk))
 
   firstEraChainDepState :: HardForkChainDepState (x ': xs)
   firstEraChainDepState =

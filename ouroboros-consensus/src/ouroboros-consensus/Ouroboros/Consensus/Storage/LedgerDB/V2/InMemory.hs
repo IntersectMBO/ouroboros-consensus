@@ -161,7 +161,7 @@ implTakeHandleSnapshot values hasFS _ snapshotName = do
     fmap (Just . snd) $
       hPutAllCRC hasFS hf $
         CBOR.toLazyByteString $
-          encodeValues @blk values
+          encodeValuesForInMemory @blk values
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -260,9 +260,9 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) ds = do
       -- header for V1 before decoding the map. Writers always emit V2.
       let tablesDecoder = case snapshotTablesCodecVersion snapshotMeta of
             TablesCodecVersion1 ->
-              CBOR.decodeListLenOf 1 *> decodeValues @blk (ledgerState extLedgerSt)
+              CBOR.decodeListLenOf 1 *> decodeValuesForInMemory @blk (ledgerState extLedgerSt)
             TablesCodecVersion2 ->
-              decodeValues @blk (ledgerState extLedgerSt)
+              decodeValuesForInMemory @blk (ledgerState extLedgerSt)
       (values, Identity crcTables) <-
         withExceptT (InitFailureRead . ReadSnapshotFailed) $
           ExceptT $

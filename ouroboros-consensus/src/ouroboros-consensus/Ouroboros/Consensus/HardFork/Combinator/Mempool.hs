@@ -304,7 +304,7 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs blk = ApplyResult
   { arState :: Ticked LedgerState blk
-  , arDiff :: WrapTxsDiff blk
+  , arDiff :: TxsDiff blk
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
 
@@ -372,7 +372,7 @@ applyHelper
                 st' = arState `hmap` result
 
                 diffs :: TxsDiff (HardForkBlock xs)
-                diffs = State.tip $ arDiff `hmap` result
+                diffs = TxsDiff $ State.tip $ (WrapDiff . unTxsDiff . arDiff) `hmap` result
 
                 vtx :: Validated (GenTx (HardForkBlock xs))
                 vtx = hcollapse $ (K . arValidatedTx) `hmap` result
@@ -432,7 +432,7 @@ applyHelper
                 pure
                   ApplyResult
                     { arValidatedTx = injectValidatedGenTx index vtx
-                    , arDiff = WrapTxsDiff diff
+                    , arDiff = diff
                     , arState = st'
                     }
               ModeReapply -> do
@@ -442,7 +442,7 @@ applyHelper
                 pure
                   ApplyResult
                     { arValidatedTx = injectValidatedGenTx index vtx'
-                    , arDiff = WrapTxsDiff diff
+                    , arDiff = diff
                     , arState = st'
                     }
 

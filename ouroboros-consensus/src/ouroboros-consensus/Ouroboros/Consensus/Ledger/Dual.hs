@@ -92,6 +92,7 @@ import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Tx (HasRawTxId (..))
+import Data.Coerce
 
 {-------------------------------------------------------------------------------
   Block
@@ -415,7 +416,7 @@ instance Bridge m a => IsLedger LedgerState (DualBlock m a) where
             , tickedDualLedgerStateAuxOrigValues = dualLedgerStateAuxValues
             , tickedDualLedgerStateBridge = dualLedgerStateBridge
             }
-        , mainDiff
+        , coerce mainDiff
         )
      where
       (tickedAux, auxDiff) =
@@ -479,7 +480,7 @@ applyHelper f opts cfg block@DualBlock{..} vals TickedDualLedgerState{..} = do
                 block
                 tickedDualLedgerStateBridge
           }
-      , mainDiff
+      , coerce mainDiff
       )
 
 instance Bridge m a => ApplyBlock LedgerState (DualBlock m a) where
@@ -505,7 +506,7 @@ instance Bridge m a => ApplyBlock LedgerState (DualBlock m a) where
                   block
                   tickedDualLedgerStateBridge
             }
-        , mainDiff
+        , coerce mainDiff
         )
      where
       (aux', auxValues') =
@@ -525,26 +526,26 @@ instance Bridge m a => ApplyBlock LedgerState (DualBlock m a) where
           vals
           tickedDualLedgerStateMain
 
+instance Semigroup (TxsDiff m) => Semigroup (TxsDiff (DualBlock m a)) where
+  TxsDiff a <> TxsDiff b = TxsDiff $ unTxsDiff $ TxsDiff @m a <> TxsDiff @m b
+
 instance Bridge m a => BlockSupportsLedgerHD (DualBlock m a) where
   type Keys (DualBlock m a) = Keys m
   type Values (DualBlock m a) = Values m
-  type TickDiff (DualBlock m a) = TickDiff m
-  type BlockDiff (DualBlock m a) = BlockDiff m
-  type TickAndBlockDiff (DualBlock m a) = TickAndBlockDiff m
-  type TxsDiff (DualBlock m a) = TxsDiff m
+  type Diff (DualBlock m a) = Diff m
 
   blockKeys = blockKeys @m . dualBlockMain
 
-  combineTickAndBlockDiff = combineTickAndBlockDiff @m
-  forwardTickDiff = forwardTickDiff @m
-  forwardBlockDiff = forwardBlockDiff @m
-  forwardTickAndBlockDiff = forwardTickAndBlockDiff @m
-  forwardTxsDiff = forwardTxsDiff @m
+  combineTickAndBlockDiff = coerce $ combineTickAndBlockDiff @m
+  forwardTickDiff = coerce $ forwardTickDiff @m
+  forwardBlockDiff = coerce $ forwardBlockDiff @m
+  forwardTickAndBlockDiff = coerce $ forwardTickAndBlockDiff @m
+  forwardTxsDiff = coerce $ forwardTxsDiff @m
 
   restrictValues = restrictValues @m
   valuesSize = valuesSize @m
-  encodeValues = encodeValues @m
-  decodeValues = decodeValues @m . dualLedgerStateMain
+  encodeValuesForInMemory = encodeValuesForInMemory @m
+  decodeValuesForInMemory = decodeValuesForInMemory @m . dualLedgerStateMain
 
 instance
   (Bridge m a, SingleEraBlockSupportsLedgerHD m) =>
@@ -557,12 +558,12 @@ instance
   keysToList = keysToList @m
   valuesToList = valuesToList @m
   valuesFromList = valuesFromList @m
-  diffToList = diffToList @m
+  diffToList = coerce $ diffToList @m
   packTxInBytes = packTxInBytes @m
   unpackTxInBytes = unpackTxInBytes @m
   emptyValues = emptyValues @m
-  emptyTickDiff = emptyTickDiff @m
-  combineTransAndTickDiff = combineTransAndTickDiff @m
+  emptyTickDiff = coerce $ emptyTickDiff @m
+  combineTransAndTickDiff = coerce $ combineTransAndTickDiff @m
 
 data instance LedgerState (DualBlock m a) = DualLedgerState
   { dualLedgerStateMain :: LedgerState m
@@ -751,7 +752,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
                   vtx
                   tickedDualLedgerStateBridge
             }
-        , mainDiff
+        , coerce mainDiff
         , vtx
         )
 
@@ -790,7 +791,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
                   tx
                   tickedDualLedgerStateBridge
             }
-        , mainDiff
+        , coerce mainDiff
         )
 
   txForgetValidated vtx =

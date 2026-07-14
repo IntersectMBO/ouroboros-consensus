@@ -315,7 +315,7 @@ applyShelleyTx cfg wti slot (ShelleyTx _ tx) values st0 = do
 
   pure
     ( st0{tickedShelleyLedgerStateNoUTxO = nesCleared}
-    , diff
+    , TxsDiff diff
     , mkShelleyValidatedTx vtx
     )
 
@@ -340,7 +340,7 @@ reapplyShelleyTx cfg slot vgtx values st0 = do
       values
       (tickedShelleyLedgerStateNoUTxO st0)
 
-  pure (st0{tickedShelleyLedgerStateNoUTxO = nesCleared}, diff)
+  pure (st0{tickedShelleyLedgerStateNoUTxO = nesCleared}, TxsDiff diff)
  where
   ShelleyValidatedTx _txid vtx = vgtx
 

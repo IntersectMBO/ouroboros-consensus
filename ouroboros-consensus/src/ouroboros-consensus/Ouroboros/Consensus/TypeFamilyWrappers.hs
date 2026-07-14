@@ -28,10 +28,7 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , WrapTxOut (..)
   , WrapKeys (..)
   , WrapValues (..)
-  , WrapTickDiff (..)
-  , WrapBlockDiff (..)
-  , WrapTickAndBlockDiff (..)
-  , WrapTxsDiff (..)
+  , WrapDiff (..)
   , WrapValidatedGenTx (..)
 
     -- * Protocol based
@@ -105,10 +102,7 @@ newtype WrapTxOut blk = WrapTxOut {unwrapTxOut :: TxOut blk}
 -- in an 'NS' at the hard-fork level.
 newtype WrapKeys blk = WrapKeys {unwrapKeys :: Keys blk}
 newtype WrapValues blk = WrapValues {unwrapValues :: Values blk}
-newtype WrapTickDiff blk = WrapTickDiff {unwrapTickDiff :: TickDiff blk}
-newtype WrapBlockDiff blk = WrapBlockDiff {unwrapBlockDiff :: BlockDiff blk}
-newtype WrapTickAndBlockDiff blk = WrapTickAndBlockDiff {unwrapTickAndBlockDiff :: TickAndBlockDiff blk}
-newtype WrapTxsDiff blk = WrapTxsDiff {unwrapTxsDiff :: TxsDiff blk}
+newtype WrapDiff blk = WrapDiff {unwrapDiff :: Diff blk}
 
 {-------------------------------------------------------------------------------
   Consensus based

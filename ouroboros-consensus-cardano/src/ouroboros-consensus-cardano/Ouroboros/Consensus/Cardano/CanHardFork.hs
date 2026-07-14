@@ -51,7 +51,7 @@ import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import Control.Monad.Except (runExcept, throwError)
-import Data.Coerce (coerce)
+import Data.Coerce
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy
@@ -351,7 +351,7 @@ translateLedgerStateByronToShelleyWrapper =
   RequireBoth $
     \_ (WrapLedgerConfig cfgShelley) ->
       TranslateLedgerState
-        { translateLedgerStateWith = \epochNo (ledgerByron, UnitTables) ->
+        { translateLedgerStateWith = \epochNo (ledgerByron, TickDiff UnitTables) ->
             -- Byron has no ledger tables, so the entire genesis UTxO set is
             -- dumped into the backend as insertions: build the Shelley NES
             -- (which carries the UTxO in its field), 'splitUTxO' it into the
@@ -373,7 +373,7 @@ translateLedgerStateByronToShelleyWrapper =
                         ShelleyTransitionInfo{shelleyAfterVoting = 0}
                     , shelleyLedgerLatestPerasCertRound = SNothing
                     }
-                , Diff.fromMapInserts utxo
+                , TickDiff $ Diff.fromMapInserts utxo
                 )
         }
 
@@ -488,8 +488,9 @@ crossEraForecastByronToShelleyWrapper =
 -- same, possibly multi-era, tick) is forwarded across the boundary with
 -- 'translateLedgerTablesWith' and composed with that new diff.
 combineTranslations ::
-  ( TickDiff x ~ Diff.Diff (TxIn x) (TxOut x)
-  , TickDiff y ~ Diff.Diff (TxIn y) (TxOut y)
+  ( Diff x ~ Diff.Diff (TxIn x) (TxOut x)
+  , Diff y ~ Diff.Diff (TxIn y) (TxOut y)
+  , Semigroup (TickDiff y)
   , Ord (TxIn y)
   ) =>
   TranslateLedgerTables x y ->
@@ -498,7 +499,7 @@ combineTranslations ::
 combineTranslations tables translateState =
   TranslateLedgerState $ \_epochNo (st, incomingTickDiff) ->
     let (st', newTickDiff) = translateState st
-     in (st', translateLedgerTablesWith tables incomingTickDiff <> newTickDiff)
+     in (st', TickDiff (translateLedgerTablesWith tables $ unTickDiff incomingTickDiff) <> newTickDiff)
 
 {-------------------------------------------------------------------------------
   Translation from Shelley to Allegra
@@ -550,7 +551,7 @@ translateLedgerStateShelleyToAllegraWrapper =
               . Comp
               $ ls
        in ( lsAllegra{shelleyLedgerStateNoUTxO = stateNoUTxO}
-          , avvmsAsDeletions
+          , TickDiff avvmsAsDeletions
           )
 
 translateLedgerTablesShelleyToAllegraWrapper ::

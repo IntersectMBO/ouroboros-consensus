@@ -7,8 +7,7 @@
 
 -- | Definition is 'IsLedger'
 --
--- Normally this is imported from "Ouroboros.Consensus.Ledger.Abstract". We
--- pull this out to avoid circular module dependencies.
+-- Normally this is imported from "Ouroboros.Consensus.Ledger.Abstract".
 module Ouroboros.Consensus.Ledger.Basics
   ( -- * The 'LedgerState' definition
     LedgerCfg
@@ -147,7 +146,3 @@ type instance HeaderHash (LedgerState blk) = HeaderHash blk
 instance StandardHash blk => StandardHash (LedgerState blk)
 
 type LedgerConfig blk = LedgerCfg LedgerState blk
-
-{-------------------------------------------------------------------------------
-  UTxO-HD block axis
--------------------------------------------------------------------------------}

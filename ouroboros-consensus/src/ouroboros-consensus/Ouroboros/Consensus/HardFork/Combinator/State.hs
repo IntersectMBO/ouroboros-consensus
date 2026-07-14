@@ -52,7 +52,6 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types as X
 import Ouroboros.Consensus.HardFork.Combinator.Translation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract hiding (getTip)
-import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
 import Prelude hiding (sequence)
 
@@ -224,7 +223,7 @@ extendToSlot ::
   HardForkLedgerConfig xs ->
   SlotNo ->
   HardForkState LedgerState xs ->
-  HardForkState (Product LedgerState WrapTickDiff) xs
+  HardForkState (Product LedgerState TickDiff) xs
 extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st) =
   HardForkState
     $ unI
@@ -259,8 +258,8 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     forall blk.
     SingleEraBlock blk =>
     Current LedgerState blk ->
-    Current (Product LedgerState WrapTickDiff) blk
-  initState c = c{currentState = Pair (currentState c) (WrapTickDiff (emptyTickDiff @blk))}
+    Current (Product LedgerState TickDiff) blk
+  initState c = c{currentState = Pair (currentState c) (TickDiff (unTickDiff $ emptyTickDiff @blk))}
 
   -- Return the end of this era if we should transition to the next
   whenExtend ::
@@ -291,8 +290,8 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     BlockSupportsLedgerHD blk' =>
     TranslateLedgerState blk blk' ->
     History.Bound ->
-    Current (Product LedgerState WrapTickDiff) blk ->
-    (K Past blk, Current (Product LedgerState WrapTickDiff) blk')
+    Current (Product LedgerState TickDiff) blk ->
+    (K Past blk, Current (Product LedgerState TickDiff) blk')
   howExtend f currentEnd cur =
     ( K
         Past
@@ -302,9 +301,9 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     , Current
         { currentStart = currentEnd
         , currentState =
-            let Pair curState (WrapTickDiff diff) = currentState cur
-                (st', diff') = translateLedgerStateWith f (History.boundEpoch currentEnd) (curState, diff)
-             in Pair st' (WrapTickDiff diff')
+            let Pair curState (TickDiff diff) = currentState cur
+                (st', diff') = translateLedgerStateWith f (History.boundEpoch currentEnd) (curState, TickDiff diff)
+             in Pair st' (TickDiff $ unTickDiff diff')
         }
     )
 

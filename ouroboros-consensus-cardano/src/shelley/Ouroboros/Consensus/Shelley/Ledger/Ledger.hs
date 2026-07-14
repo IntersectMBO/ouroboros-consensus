@@ -392,6 +392,15 @@ instance MemPack BigEndianTxIn where
   unpackM = do
     BigEndianTxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
 
+instance Semigroup (TxsDiff (ShelleyBlock proto era)) where
+  TxsDiff a <> TxsDiff b = TxsDiff $ a <> b
+
+instance Monoid (TickDiff (ShelleyBlock proto era)) where
+  mempty = TickDiff mempty
+
+instance Semigroup (TickDiff (ShelleyBlock proto era)) where
+  TickDiff a <> TickDiff b = TickDiff $ a <> b
+
 instance
   ShelleyCompatible proto era =>
   BlockSupportsLedgerHD (ShelleyBlock proto era)
@@ -401,27 +410,18 @@ instance
     Values (ShelleyBlock proto era) =
       Map (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
   type
-    TickDiff (ShelleyBlock proto era) =
-      Diff.Diff (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
-  type
-    BlockDiff (ShelleyBlock proto era) =
-      Diff.Diff (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
-  type
-    TickAndBlockDiff (ShelleyBlock proto era) =
-      Diff.Diff (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
-  type
-    TxsDiff (ShelleyBlock proto era) =
+    Diff (ShelleyBlock proto era) =
       Diff.Diff (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
 
   blockKeys = Core.neededTxInsForBlock . shelleyBlockRaw
 
   -- One era ⇒ no translation; compose\/apply the diffs directly (the 'Diff'
   -- 'Semigroup' composes in chain order, so later entries win).
-  combineTickAndBlockDiff tickDiff blockDiff = tickDiff <> blockDiff
-  forwardTickDiff diff vals = Diff.applyDiff vals diff
-  forwardBlockDiff diff vals = Diff.applyDiff vals diff
-  forwardTickAndBlockDiff diff vals = Diff.applyDiff vals diff
-  forwardTxsDiff diff vals = Diff.applyDiff vals diff
+  combineTickAndBlockDiff (TickDiff tickDiff) (BlockDiff blockDiff) = TickAndBlockDiff $ tickDiff <> blockDiff
+  forwardTickDiff (TickDiff diff) vals = Diff.applyDiff vals diff
+  forwardBlockDiff (BlockDiff diff) vals = Diff.applyDiff vals diff
+  forwardTickAndBlockDiff (TickAndBlockDiff diff) vals = Diff.applyDiff vals diff
+  forwardTxsDiff (TxsDiff diff) vals = Diff.applyDiff vals diff
 
   restrictValues keys vals = vals `Map.restrictKeys` keys
 
@@ -429,12 +429,12 @@ instance
 
   -- The keys are cast through 'BigEndianTxIn' so the serialised entries sort the
   -- same as the Haskell 'Ord' on 'SL.TxIn' (the streaming-order invariant).
-  encodeValues tbs =
+  encodeValuesForInMemory tbs =
     toPlainEncoding (Core.eraProtVerLow @era) $
       encodeMap (encodeMemPack . BigEndianTxIn) encodeMemPack tbs
 
   -- The state is the era hint: it supplies the credential interns for sharing.
-  decodeValues st =
+  decodeValuesForInMemory st =
     let certInterns =
           internsFromMap $
             shelleyLedgerState st
@@ -468,7 +468,7 @@ instance
   keysToList = Set.toList
   valuesToList = Map.toList
   valuesFromList = Map.fromList
-  diffToList (Diff.Diff m) = Map.toList m
+  diffToList (TickAndBlockDiff (Diff.Diff m)) = Map.toList m
 
   -- The on-disk key bytes are cast through 'BigEndianTxIn' so they sort the same
   -- as the Haskell 'Ord' on 'SL.TxIn' (the range-read\/streaming-order
@@ -662,7 +662,7 @@ applyHelper evs doValidate cfg blk values stBefore = do
           , shelleyLedgerLatestPerasCertRound =
               shelleyLedgerLatestPerasCertRound'
           }
-  pure $ LedgerResult (map ShelleyLedgerEventBBODY events) (st', diff)
+  pure $ LedgerResult (map ShelleyLedgerEventBBODY events) (st', BlockDiff diff)
  where
   globals = shelleyLedgerGlobals cfg
   swindow = SL.stabilityWindow globals

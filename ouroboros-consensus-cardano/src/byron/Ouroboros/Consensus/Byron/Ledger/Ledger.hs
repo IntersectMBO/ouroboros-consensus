@@ -14,6 +14,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Instances requires for consensus/ledger integration
@@ -193,28 +194,27 @@ instance IsLedger LedgerState ByronBlock where
           , untickedByronLedgerTransition =
               byronLedgerTransition
           }
-      , UnitTables
+      , TickDiff UnitTables
       )
+
+deriving newtype instance Semigroup (TxsDiff ByronBlock)
 
 -- | Byron has no on-disk tables: its keys\/values\/diffs are all trivial
 -- (@()@), so every operation is a no-op.
 instance BlockSupportsLedgerHD ByronBlock where
   type Keys ByronBlock = UnitTables
   type Values ByronBlock = UnitTables
-  type TickDiff ByronBlock = UnitTables
-  type BlockDiff ByronBlock = UnitTables
-  type TickAndBlockDiff ByronBlock = UnitTables
-  type TxsDiff ByronBlock = UnitTables
+  type Diff ByronBlock = UnitTables
   blockKeys _ = UnitTables
-  combineTickAndBlockDiff UnitTables UnitTables = UnitTables
-  forwardTickDiff UnitTables UnitTables = UnitTables
-  forwardBlockDiff UnitTables UnitTables = UnitTables
-  forwardTickAndBlockDiff UnitTables UnitTables = UnitTables
-  forwardTxsDiff UnitTables UnitTables = UnitTables
+  combineTickAndBlockDiff (TickDiff UnitTables) (BlockDiff UnitTables) = TickAndBlockDiff UnitTables
+  forwardTickDiff (TickDiff UnitTables) UnitTables = UnitTables
+  forwardBlockDiff (BlockDiff UnitTables) UnitTables = UnitTables
+  forwardTickAndBlockDiff (TickAndBlockDiff UnitTables) UnitTables = UnitTables
+  forwardTxsDiff (TxsDiff UnitTables) UnitTables = UnitTables
   restrictValues UnitTables UnitTables = UnitTables
   valuesSize UnitTables = 0
-  encodeValues UnitTables = mempty
-  decodeValues _ = pure UnitTables
+  encodeValuesForInMemory UnitTables = mempty
+  decodeValuesForInMemory _ = pure UnitTables
 
 instance SingleEraBlockSupportsLedgerHD ByronBlock where
   type TxIn ByronBlock = Void
@@ -225,8 +225,8 @@ instance SingleEraBlockSupportsLedgerHD ByronBlock where
   valuesFromList _ = UnitTables
   diffToList _ = []
   emptyValues = UnitTables
-  emptyTickDiff = UnitTables
-  combineTransAndTickDiff UnitTables UnitTables = UnitTables
+  emptyTickDiff = TickDiff UnitTables
+  combineTransAndTickDiff (TickDiff UnitTables) (TickDiff UnitTables) = TickDiff UnitTables
   packTxInBytes = absurd
   unpackTxInBytes _ = Left "Absurd"
 
@@ -236,7 +236,7 @@ instance SingleEraBlockSupportsLedgerHD ByronBlock where
 
 instance ApplyBlock LedgerState ByronBlock where
   applyBlockLedgerResultWithValidation doValidation opts cfg blk _values ticked =
-    fmap (pureLedgerResult . (,UnitTables)) (applyByronBlock doValidation opts cfg blk ticked)
+    fmap (pureLedgerResult . (,BlockDiff UnitTables)) (applyByronBlock doValidation opts cfg blk ticked)
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult validationErrorImpossible
 

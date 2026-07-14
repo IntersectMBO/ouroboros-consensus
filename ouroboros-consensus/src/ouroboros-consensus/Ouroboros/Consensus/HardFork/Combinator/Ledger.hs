@@ -144,13 +144,13 @@ instance CanHardFork xs => IsLedger LedgerState (HardForkBlock xs) where
             , tickedHardForkLedgerStatePerEra =
                 hmap (\(Pair ticked _) -> ticked) tickedAndDiffs
             }
-        , State.tip (hmap (\(Pair _ tickDiff) -> tickDiff) tickedAndDiffs)
+        , TickDiff $ State.tip (hmap (\(Pair _ (TickDiff tickDiff)) -> WrapDiff tickDiff) tickedAndDiffs)
         )
    where
     cfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
     ei = State.epochInfoLedger cfg st0
 
-    extended :: HardForkState (Product LedgerState WrapTickDiff) xs
+    extended :: HardForkState (Product LedgerState TickDiff) xs
     extended = State.extendToSlot cfg slot st0
 
 -- | Tick the ledger state of a single era, pairing the ticked state with the
@@ -164,15 +164,15 @@ tickOne ::
   ComputeLedgerEvents ->
   Index xs blk ->
   WrapPartialLedgerConfig blk ->
-  Product LedgerState WrapTickDiff blk ->
-  (LedgerResult (HardForkBlock xs) :.: Product (Ticked LedgerState) WrapTickDiff) blk
-tickOne ei slot evs sopIdx partialCfg (Pair st (WrapTickDiff transDiff)) =
+  Product LedgerState TickDiff blk ->
+  (LedgerResult (HardForkBlock xs) :.: Product (Ticked LedgerState) TickDiff) blk
+tickOne ei slot evs sopIdx partialCfg (Pair st (TickDiff transDiff)) =
   Comp
     $ fmap
       ( \(ticked, tickDiff) ->
           Pair
             ticked
-            (WrapTickDiff $ combineTransAndTickDiff @blk transDiff tickDiff)
+            (combineTransAndTickDiff @blk (TickDiff transDiff) tickDiff)
       )
     $ embedLedgerResult (injectLedgerEvent sopIdx)
     $ applyChainTickLedgerResult evs (completeLedgerConfig' ei partialCfg) slot st
@@ -220,11 +220,11 @@ instance
           st
 
       reassemble ::
-        HardForkState (Product LedgerState WrapBlockDiff) xs ->
-        (LedgerState (HardForkBlock xs), NS WrapBlockDiff xs)
+        HardForkState (Product LedgerState BlockDiff) xs ->
+        (LedgerState (HardForkBlock xs), BlockDiff (HardForkBlock xs))
       reassemble hs =
         ( HardForkLedgerState (hmap (\(Pair s _) -> s) hs)
-        , State.tip (hmap (\(Pair _ d) -> d) hs)
+        , BlockDiff $ State.tip (hmap (\(Pair _ d) -> WrapDiff $ unBlockDiff d) hs)
         )
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
@@ -249,7 +249,7 @@ apply ::
   Product (Product I WrapValues) (Ticked LedgerState) blk ->
   ( Except (HardForkLedgerError xs)
       :.: LedgerResult (HardForkBlock xs)
-      :.: Product LedgerState WrapBlockDiff
+      :.: Product LedgerState BlockDiff
   )
     blk
 apply doValidate opts index (WrapLedgerConfig cfg) (Pair (Pair (I block) (WrapValues values)) tickedSt) =
@@ -257,7 +257,7 @@ apply doValidate opts index (WrapLedgerConfig cfg) (Pair (Pair (I block) (WrapVa
     $ withExcept (injectLedgerError index)
     $ fmap
       ( Comp
-          . fmap (\(st', diff) -> Pair st' (WrapBlockDiff diff))
+          . fmap (\(st', BlockDiff diff) -> Pair st' (BlockDiff diff))
           . embedLedgerResult (injectLedgerEvent index)
       )
     $ applyBlockLedgerResultWithValidation doValidate opts cfg block values tickedSt
@@ -836,8 +836,8 @@ injectLedgerEvent index =
 -- genuine cross-era composition cannot arise. (There is deliberately no
 -- 'Monoid' instance: there is no canonical empty era for 'mempty', and
 -- 'BlockSupportsLedgerHD' only requires 'Semigroup'.)
-instance CanHardFork xs => Semigroup (NS WrapTxsDiff xs) where
-  a <> b = case Match.matchNS a b of
+instance CanHardFork xs => Semigroup (TxsDiff (HardForkBlock xs)) where
+  TxsDiff a <> TxsDiff b = TxsDiff $ case Match.matchNS a b of
     Right matched -> hcmap proxySingle combine matched
     Left _ ->
       error "Diff (HardForkBlock) <>: cross-era composition (impossible)"
@@ -845,9 +845,9 @@ instance CanHardFork xs => Semigroup (NS WrapTxsDiff xs) where
     combine ::
       forall blk.
       SingleEraBlock blk =>
-      Product WrapTxsDiff WrapTxsDiff blk ->
-      WrapTxsDiff blk
-    combine (Pair (WrapTxsDiff x) (WrapTxsDiff y)) = WrapTxsDiff (x <> y)
+      Product WrapDiff WrapDiff blk ->
+      WrapDiff blk
+    combine (Pair (WrapDiff x) (WrapDiff y)) = WrapDiff $ unTxsDiff @blk (TxsDiff x <> TxsDiff y)
 
 -- | Same-era union of hard-fork key sets. Only ever combines the keys of
 -- transactions in the mempool, which all share the current era, so a cross-era
@@ -868,10 +868,7 @@ instance CanHardFork xs => Semigroup (NS WrapKeys xs) where
 instance CanHardFork xs => BlockSupportsLedgerHD (HardForkBlock xs) where
   type Keys (HardForkBlock xs) = NS WrapKeys xs
   type Values (HardForkBlock xs) = NS WrapValues xs
-  type TickDiff (HardForkBlock xs) = NS WrapTickDiff xs
-  type BlockDiff (HardForkBlock xs) = NS WrapBlockDiff xs
-  type TickAndBlockDiff (HardForkBlock xs) = NS WrapTickAndBlockDiff xs
-  type TxsDiff (HardForkBlock xs) = NS WrapTxsDiff xs
+  type Diff (HardForkBlock xs) = NS WrapDiff xs
 
   -- The block is in exactly one era; tag its era's keys.
   blockKeys =
@@ -880,26 +877,39 @@ instance CanHardFork xs => BlockSupportsLedgerHD (HardForkBlock xs) where
       . getHardForkBlock
 
   combineTickAndBlockDiff tickDiff blockDiff =
-    case Match.matchNS tickDiff blockDiff of
+    case Match.matchNS (unTickDiff tickDiff) (unBlockDiff blockDiff) of
       Left _ -> error "combineTickAndBlockDiff: cross-era call!"
       Right nspair ->
-        hcmap
-          proxySingle
-          f
-          nspair
+        TickAndBlockDiff $
+          hcmap
+            proxySingle
+            f
+            nspair
    where
     f ::
       forall blk.
       BlockSupportsLedgerHD blk =>
-      Product WrapTickDiff WrapBlockDiff blk ->
-      WrapTickAndBlockDiff blk
-    f (Pair (WrapTickDiff tdiff) (WrapBlockDiff bdiff)) =
-      WrapTickAndBlockDiff $ combineTickAndBlockDiff @blk tdiff bdiff
+      Product WrapDiff WrapDiff blk ->
+      WrapDiff blk
+    f (Pair (WrapDiff tdiff) (WrapDiff bdiff)) =
+      WrapDiff $ unTickAndBlockDiff $ combineTickAndBlockDiff @blk (TickDiff tdiff) (BlockDiff bdiff)
 
-  forwardTickDiff = forwardDiff @WrapTickDiff
-  forwardBlockDiff = forwardDiff @WrapBlockDiff
-  forwardTickAndBlockDiff = forwardDiff @WrapTickAndBlockDiff
-  forwardTxsDiff = forwardDiff @WrapTxsDiff
+  forwardTickDiff = forwardDiff f . unTickDiff
+   where
+    f :: forall blk. BlockSupportsLedgerHD blk => Proxy blk -> Diff blk -> Values blk -> Values blk
+    f _ d v = forwardTickDiff @blk (TickDiff d) v
+  forwardBlockDiff = forwardDiff f . unBlockDiff
+   where
+    f :: forall blk. BlockSupportsLedgerHD blk => Proxy blk -> Diff blk -> Values blk -> Values blk
+    f _ d v = forwardBlockDiff @blk (BlockDiff d) v
+  forwardTickAndBlockDiff = forwardDiff f . unTickAndBlockDiff
+   where
+    f :: forall blk. BlockSupportsLedgerHD blk => Proxy blk -> Diff blk -> Values blk -> Values blk
+    f _ d v = forwardTickAndBlockDiff @blk (TickAndBlockDiff d) v
+  forwardTxsDiff = forwardDiff f . unTxsDiff
+   where
+    f :: forall blk. BlockSupportsLedgerHD blk => Proxy blk -> Diff blk -> Values blk -> Values blk
+    f _ d v = forwardTxsDiff @blk (TxsDiff d) v
 
   -- Restrict the values to the keys. The common case is same-era (keys and
   -- values carry the same era tag), so we match them and restrict per-era.
@@ -946,18 +956,18 @@ instance CanHardFork xs => BlockSupportsLedgerHD (HardForkBlock xs) where
 
   -- No on-disk era tag: encode the current era's arm directly (the 'NS' itself
   -- carries the era).
-  encodeValues = hcollapse . hcmap proxySingle enc
+  encodeValuesForInMemory = hcollapse . hcmap proxySingle enc
    where
     enc :: forall blk. SingleEraBlock blk => WrapValues blk -> K Encoding blk
-    enc (WrapValues v) = K (encodeValues @blk v)
+    enc (WrapValues v) = K (encodeValuesForInMemory @blk v)
 
   -- There is no on-disk era tag (see 'encodeValues'), so use the era of the
   -- already-loaded ledger state to pick which arm to decode into.
-  decodeValues (HardForkLedgerState st) =
+  decodeValuesForInMemory (HardForkLedgerState st) =
     hcollapse $
       hcimap
         proxySingle
-        (\idx eraSt -> K (injectNS idx . WrapValues <$> decodeValues eraSt))
+        (\idx eraSt -> K (injectNS idx . WrapValues <$> decodeValuesForInMemory eraSt))
         (State.tip st)
 
 -- | Upgrade an era-tagged 'Values' one era forward, using the adjacent
@@ -987,28 +997,6 @@ liftKeysOneEra PNil v = v
 
 -----
 
-class ForwardDiffHelper diff where
-  forwardDiffHelper :: SingleEraBlock blk => diff blk -> Values blk -> Values blk
-  forwardDiffHelperString :: proxy diff -> String
-
-instance ForwardDiffHelper WrapTickDiff where
-  forwardDiffHelper :: forall blk. SingleEraBlock blk => WrapTickDiff blk -> Values blk -> Values blk
-  forwardDiffHelper (WrapTickDiff diff) = forwardTickDiff @blk diff
-  forwardDiffHelperString _ = "TickDiff"
-instance ForwardDiffHelper WrapBlockDiff where
-  forwardDiffHelper :: forall blk. SingleEraBlock blk => WrapBlockDiff blk -> Values blk -> Values blk
-  forwardDiffHelper (WrapBlockDiff diff) = forwardBlockDiff @blk diff
-  forwardDiffHelperString _ = "BlockDiff"
-instance ForwardDiffHelper WrapTickAndBlockDiff where
-  forwardDiffHelper ::
-    forall blk. SingleEraBlock blk => WrapTickAndBlockDiff blk -> Values blk -> Values blk
-  forwardDiffHelper (WrapTickAndBlockDiff diff) = forwardTickAndBlockDiff @blk diff
-  forwardDiffHelperString _ = "TickAndBlockDiff"
-instance ForwardDiffHelper WrapTxsDiff where
-  forwardDiffHelper :: forall blk. SingleEraBlock blk => WrapTxsDiff blk -> Values blk -> Values blk
-  forwardDiffHelper (WrapTxsDiff diff) = forwardTxsDiff @blk diff
-  forwardDiffHelperString _ = "TxsDiff"
-
 -- | Apply the diffs to the values.
 --
 -- The common case is same-era (the diff and the values carry the same
@@ -1019,24 +1007,25 @@ instance ForwardDiffHelper WrapTxsDiff where
 -- carried on the 'CanHardFork' class, then applies. No 'LedgerConfig'
 -- is needed.
 forwardDiff ::
-  forall diff xs.
-  (CanHardFork xs, ForwardDiffHelper diff) =>
-  NS diff xs ->
+  forall xs.
+  CanHardFork xs =>
+  (forall blk. BlockSupportsLedgerHD blk => Proxy blk -> Diff blk -> Values blk -> Values blk) ->
+  NS WrapDiff xs ->
   NS WrapValues xs ->
   NS WrapValues xs
-forwardDiff diff vals0 = step vals0 diff
+forwardDiff f diff vals0 = step vals0 diff
  where
   ts = translateValues (hardForkEraTranslation @xs)
 
-  step :: NS WrapValues xs -> NS diff xs -> NS WrapValues xs
+  step :: NS WrapValues xs -> NS WrapDiff xs -> NS WrapValues xs
   step vals d
     | iV == iD =
         case Match.matchNS d vals of
           Right matched -> hcmap proxySingle applyOne matched
-          Left _ -> err "matchNS failed at equal era index"
+          Left _ -> error "forward: matchNS failed at equal era index"
     | iV < iD = step (liftValuesOneEra ts vals) d
     | otherwise =
-        err "in-flight diff older than the values (impossible)"
+        error "forward: in-flight diff older than the values (impossible)"
    where
     iV = index_NS vals
     iD = index_NS d
@@ -1044,10 +1033,7 @@ forwardDiff diff vals0 = step vals0 diff
   applyOne ::
     forall blk.
     SingleEraBlock blk =>
-    Product diff WrapValues blk ->
+    Product WrapDiff WrapValues blk ->
     WrapValues blk
-  applyOne (Pair dd (WrapValues vv)) =
-    WrapValues (forwardDiffHelper dd vv)
-
-  err :: forall a. String -> a
-  err s = error $ "forward" ++ forwardDiffHelperString (Proxy :: Proxy diff) ++ ": " ++ s
+  applyOne (Pair (WrapDiff dd) (WrapValues vv)) =
+    WrapValues (f (Proxy @blk) dd vv)

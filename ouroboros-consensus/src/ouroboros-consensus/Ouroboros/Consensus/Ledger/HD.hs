@@ -1,14 +1,28 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE  MonoLocalBinds #-}
 
 module Ouroboros.Consensus.Ledger.HD
-  ( BlockSupportsLedgerHD (..)
+  ( -- * API
+    BlockSupportsLedgerHD (..)
   , SingleEraBlockSupportsLedgerHD (..)
+
+    -- * Trivial blocks
   , UnitTables (..)
+
+    -- * Diffs
+  , TickDiff (..)
+  , BlockDiff (..)
+  , TickAndBlockDiff (..)
+  , TxsDiff (..)
   ) where
 
 import Codec.CBOR.Decoding (Decoder)
@@ -27,7 +41,24 @@ data UnitTables = UnitTables
 
 instance Semigroup UnitTables where
   UnitTables <> UnitTables = UnitTables
-  
+
+-- | The changes a tick produces to the tables.
+newtype TickDiff blk = TickDiff { unTickDiff ::Diff blk }
+
+-- | The changes a block (re)application produces to the tables.
+newtype BlockDiff blk = BlockDiff { unBlockDiff :: Diff blk}
+
+-- | The combined changes from ticking and (re)applying a block
+newtype TickAndBlockDiff blk = TickAndBlockDiff { unTickAndBlockDiff :: Diff blk}
+
+-- | The changes a transaction produces to the tables: a 'Semigroup'
+-- so that a sequence of diffs composes.
+--
+-- This semigroup is not commutative! The 'TxsDiff's must be
+-- composed in the same order the originating transactions were
+-- applied.
+newtype TxsDiff blk = TxsDiff {unTxsDiff :: Diff blk}
+
 -- | The per-block era\/table logic of UTxO-HD: the opaque table payloads
 -- (@Keys@\/@Values@\/@*Diff blk@) plus the pure operations on them.
 --
@@ -40,33 +71,21 @@ instance Semigroup UnitTables where
 --     @*Diff@ are trivial ('UnitTables').
 --
 --   * The hard-fork combinator uses era-tagged @NS@ payloads; 'forwardTickDiff'
---     translates values across a rare era boundary using the per-era
---     translations carried on the 'CanHardFork' class (no config needed).
+--     translates values across a era boundary using the per-era translations
+--     carried on the 'CanHardFork' class.
 type BlockSupportsLedgerHD :: Type -> Constraint
 class (Semigroup (TxsDiff blk), Semigroup (Keys blk)) => BlockSupportsLedgerHD blk where
-  -- | The keys a block requests.
+  -- | The keys a block needs used to query the backend for the corresponding
+  -- | 'Values'.
   type Keys blk :: Type
 
   -- | The values read for a set of 'Keys', e.g. the @TxOut@s those @TxIn@s.
   -- resolve to.
   type Values blk :: Type
 
-  -- | The changes a tick produces to the tables.
-  type TickDiff blk :: Type
-
-  -- | The changes a block (re)application produces to the tables.
-  type BlockDiff blk :: Type
-
-  -- | The combined changes from ticking and (re)applying a block
-  type TickAndBlockDiff blk :: Type
-
-  -- | The changes a transaction produces to the tables: a 'Semigroup'
-  -- so that a sequence of diffs composes.
-  --
-  -- This semigroup is not commutative! The 'TxsDiff's must be
-  -- composed in the same order the originating transactions were
-  -- applied.
-  type TxsDiff blk :: Type
+  -- | Changes produced by various operations. See 'TickDiff', 'BlockDiff',
+  -- | 'TickAndBlockDiff' and 'TxsDiff'.
+  type Diff blk :: Type
 
   -- | Extract the keys a block requests.
   blockKeys :: blk -> Keys blk
