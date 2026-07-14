@@ -63,7 +63,7 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
   , TranslateValues (..)
   )
 import Ouroboros.Consensus.Ledger.Basics
-  ( BlockSupportsUTxOHD (Diff, decodeValues, encodeValues)
+  ( BlockSupportsLedgerHD (Diff, decodeValues, encodeValues)
   , LedgerCfg
   , LedgerConfig
   , LedgerState

@@ -12,7 +12,7 @@
 -- are the two main operations we can do with a 'LedgerState'.
 --
 -- The on-disk values flow as explicit, opaque @Values blk@ arguments (see
--- 'Ouroboros.Consensus.Ledger.Basics.BlockSupportsUTxOHD'):
+-- 'Ouroboros.Consensus.Ledger.Basics.BlockSupportsLedgerHD'):
 --
 --   * /reading/ the values a block consumes ('blockKeys') is the only monadic
 --     step, and it lives on the backend axis (the storage handle), not here;

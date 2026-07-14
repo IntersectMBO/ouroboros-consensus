@@ -22,8 +22,8 @@ module Ouroboros.Consensus.Ledger.Basics
   , TickedLedgerState
 
     -- * UTxO-HD block axis
-  , BlockSupportsUTxOHD (..)
-  , SingleEraBlockSupportsUTxOHD (..)
+  , BlockSupportsLedgerHD (..)
+  , SingleEraBlockSupportsLedgerHD (..)
 
     -- * Definition of a ledger independent of a choice of block
   , ComputeLedgerEvents (..)
@@ -179,7 +179,7 @@ class
   , GetTip (Ticked l blk)
   , -- The block axis of UTxO-HD: provides the opaque @'TickAndBlockDiff' blk@
     -- that ticking and block application produces.
-    BlockSupportsUTxOHD blk
+    BlockSupportsLedgerHD blk
   ) =>
   IsLedger l blk
   where
@@ -255,7 +255,7 @@ applyChainTick = lrResult ...: applyChainTickLedgerResult
 --
 -- The on-disk table data (the UTxO) is not a parameter of this state; it is
 -- carried separately as the opaque @Values blk@\/@*Diff blk@ payloads of
--- 'BlockSupportsUTxOHD', threaded through the read\/apply functions.
+-- 'BlockSupportsLedgerHD', threaded through the read\/apply functions.
 --
 -- The main operations we can do with a 'LedgerState' are /ticking/ (defined in
 -- 'IsLedger'), and /applying a block/ (defined in
@@ -295,8 +295,8 @@ type LedgerError blk = LedgerErr LedgerState blk
 --   * The hard-fork combinator uses era-tagged @NS@ payloads; 'forwardTickDiff'
 --     translates values across a rare era boundary using the per-era
 --     translations carried on the 'CanHardFork' class (no config needed).
-type BlockSupportsUTxOHD :: Type -> Constraint
-class (Semigroup (TxsDiff blk), Semigroup (Keys blk)) => BlockSupportsUTxOHD blk where
+type BlockSupportsLedgerHD :: Type -> Constraint
+class (Semigroup (TxsDiff blk), Semigroup (Keys blk)) => BlockSupportsLedgerHD blk where
   -- | The keys a block consumes, e.g. the @TxIn@s spent by its transactions.
   type Keys blk :: Type
 
@@ -363,7 +363,7 @@ class (Semigroup (TxsDiff blk), Semigroup (Keys blk)) => BlockSupportsUTxOHD blk
   decodeValues :: forall s. LedgerState blk -> Decoder s (Values blk)
 
 -- | The on-disk table operations that only /single-era/ blocks support, split
--- out of 'BlockSupportsUTxOHD'.
+-- out of 'BlockSupportsLedgerHD'.
 --
 -- These are the operations that need to see the entries of a table at the
 -- /concrete era level/: paging for @QFTraverseTables@ queries, and the
@@ -377,13 +377,13 @@ class (Semigroup (TxsDiff blk), Semigroup (Keys blk)) => BlockSupportsUTxOHD blk
 -- on-disk (LSM) backend serialises individual entries with them, and bundling
 -- them here means the hard-fork dispatch reaches them through @proxySingle@
 -- (via @SingleEraBlock@) with no extra per-era constraint.
-type SingleEraBlockSupportsUTxOHD :: Type -> Constraint
+type SingleEraBlockSupportsLedgerHD :: Type -> Constraint
 class
-  ( BlockSupportsUTxOHD blk
+  ( BlockSupportsLedgerHD blk
   , MemPack (TxIn blk)
   , MemPack (TxOut blk)
   ) =>
-  SingleEraBlockSupportsUTxOHD blk
+  SingleEraBlockSupportsLedgerHD blk
   where
   type TxIn blk
 

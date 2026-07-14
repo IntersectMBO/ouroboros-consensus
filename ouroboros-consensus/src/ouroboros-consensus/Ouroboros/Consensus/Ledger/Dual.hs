@@ -525,7 +525,7 @@ instance Bridge m a => ApplyBlock LedgerState (DualBlock m a) where
           vals
           tickedDualLedgerStateMain
 
-instance Bridge m a => BlockSupportsUTxOHD (DualBlock m a) where
+instance Bridge m a => BlockSupportsLedgerHD (DualBlock m a) where
   type Keys (DualBlock m a) = Keys m
   type Values (DualBlock m a) = Values m
   type TickDiff (DualBlock m a) = TickDiff m
@@ -547,8 +547,8 @@ instance Bridge m a => BlockSupportsUTxOHD (DualBlock m a) where
   decodeValues = decodeValues @m . dualLedgerStateMain
 
 instance
-  (Bridge m a, SingleEraBlockSupportsUTxOHD m) =>
-  SingleEraBlockSupportsUTxOHD (DualBlock m a)
+  (Bridge m a, SingleEraBlockSupportsLedgerHD m) =>
+  SingleEraBlockSupportsLedgerHD (DualBlock m a)
   where
   type TxIn (DualBlock m a) = TxIn m
   type TxOut (DualBlock m a) = TxOut m

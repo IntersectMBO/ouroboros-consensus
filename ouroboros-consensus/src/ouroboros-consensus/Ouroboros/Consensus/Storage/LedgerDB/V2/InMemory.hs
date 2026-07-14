@@ -77,7 +77,7 @@ import Prelude hiding (read)
 newInMemoryLedgerTablesHandle ::
   forall m l blk.
   ( IOLike m
-  , BlockSupportsUTxOHD blk
+  , BlockSupportsLedgerHD blk
   , StandardHash (l blk)
   , GetTip (l blk)
   ) =>
@@ -106,7 +106,7 @@ newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) values =
   -- 'rangeReadValues'. See 'RangeReadTables' for the cursor contract.
   rangeRead ::
     forall x.
-    SingleEraBlockSupportsUTxOHD x =>
+    SingleEraBlockSupportsLedgerHD x =>
     (Values blk -> Values x) ->
     RangeQueryPrevious x ->
     Int ->
@@ -125,7 +125,7 @@ newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) values =
 
 implRead ::
   forall m l blk.
-  (IOLike m, BlockSupportsUTxOHD blk) =>
+  (IOLike m, BlockSupportsLedgerHD blk) =>
   Values blk ->
   l blk ->
   Keys blk ->
@@ -135,7 +135,7 @@ implRead values _ keys = pure (restrictValues @blk keys values)
 implDuplicateWithDiffs ::
   forall m l blk.
   ( IOLike m
-  , BlockSupportsUTxOHD blk
+  , BlockSupportsLedgerHD blk
   , StandardHash (l blk)
   , GetTip (l blk)
   ) =>
@@ -149,7 +149,7 @@ implDuplicateWithDiffs !tracer values !someFS !diff =
 
 implTakeHandleSnapshot ::
   forall m l blk h.
-  (IOLike m, BlockSupportsUTxOHD blk) =>
+  (IOLike m, BlockSupportsLedgerHD blk) =>
   Values blk ->
   HasFS m h ->
   l blk ->

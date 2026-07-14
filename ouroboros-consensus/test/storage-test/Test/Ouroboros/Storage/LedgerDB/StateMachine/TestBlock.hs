@@ -158,7 +158,7 @@ instance PayloadSemantics Tx where
 {-------------------------------------------------------------------------------
   Instances required for on-disk storage of ledger state tables
 
-  The block's 'BlockSupportsUTxOHD' (and the rest of the UTxO-HD axis) is
+  The block's 'BlockSupportsLedgerHD' (and the rest of the UTxO-HD axis) is
   provided generically by 'TestBlockWith' through the 'PayloadTxIn'\/
   'PayloadTxOut' instance above. We only need the per-entry codecs.
 -------------------------------------------------------------------------------}

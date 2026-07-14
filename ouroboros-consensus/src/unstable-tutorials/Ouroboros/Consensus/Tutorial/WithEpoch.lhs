@@ -79,8 +79,8 @@ And imports, of course:
 > import Ouroboros.Consensus.Ticked (Ticked, Ticked)
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (LedgerState, LedgerCfg, GetTip, LedgerResult (..), ApplyBlock (..),
->    BlockSupportsUTxOHD (..), SingleEraUTxOHDBlock (..),
->    SingleEraBlockSupportsUTxOHD (..), TxIn, TxOut,
+>    BlockSupportsLedgerHD (..), SingleEraUTxOHDBlock (..),
+>    SingleEraBlockSupportsLedgerHD (..), TxIn, TxOut,
 >    UpdateLedger, IsLedger (..), AuxLedgerEvent, defaultApplyBlockLedgerResult,
 >    defaultReapplyBlockLedgerResult)
 
@@ -678,7 +678,7 @@ For reference on these instances and their meaning, please see the appendix in
 > type instance TxIn  BlockD = Void
 > type instance TxOut BlockD = Void
 
-> instance BlockSupportsUTxOHD BlockD where
+> instance BlockSupportsLedgerHD BlockD where
 >   type Keys   BlockD = ()
 >   type Values BlockD = ()
 >   type Diff   BlockD = ()
@@ -693,7 +693,7 @@ For reference on these instances and their meaning, please see the appendix in
 >   emptyValues = ()
 >   emptyDiffs = ()
 
-> instance SingleEraBlockSupportsUTxOHD BlockD where
+> instance SingleEraBlockSupportsLedgerHD BlockD where
 >   rangeReadValues _ _ = ((), Nothing)
 >   keysToList _ = []
 >   valuesToList _ = []

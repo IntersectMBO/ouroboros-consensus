@@ -127,7 +127,7 @@ instance IsLedger LedgerState ByronSpecBlock where
 type instance TxIn ByronSpecBlock = Void
 type instance TxOut ByronSpecBlock = Void
 
-instance BlockSupportsUTxOHD ByronSpecBlock where
+instance BlockSupportsLedgerHD ByronSpecBlock where
   type Keys ByronSpecBlock = ()
   type Values ByronSpecBlock = ()
   type Diff ByronSpecBlock = ()
@@ -142,7 +142,7 @@ instance SingleEraUTxOHDBlock ByronSpecBlock where
   emptyValues = ()
   emptyDiffs = ()
 
-instance SingleEraBlockSupportsUTxOHD ByronSpecBlock where
+instance SingleEraBlockSupportsLedgerHD ByronSpecBlock where
   rangeReadValues _ _ = ((), Nothing)
   keysToList _ = []
   valuesToList _ = []

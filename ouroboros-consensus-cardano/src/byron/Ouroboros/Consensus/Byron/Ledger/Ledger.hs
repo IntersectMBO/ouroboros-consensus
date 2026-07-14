@@ -198,7 +198,7 @@ instance IsLedger LedgerState ByronBlock where
 
 -- | Byron has no on-disk tables: its keys\/values\/diffs are all trivial
 -- (@()@), so every operation is a no-op.
-instance BlockSupportsUTxOHD ByronBlock where
+instance BlockSupportsLedgerHD ByronBlock where
   type Keys ByronBlock = ()
   type Values ByronBlock = ()
   type TickDiff ByronBlock = ()
@@ -216,7 +216,7 @@ instance BlockSupportsUTxOHD ByronBlock where
   encodeValues () = mempty
   decodeValues _ = pure ()
 
-instance SingleEraBlockSupportsUTxOHD ByronBlock where
+instance SingleEraBlockSupportsLedgerHD ByronBlock where
   type TxIn ByronBlock = Void
   type TxOut ByronBlock = Void
   rangeReadValues _ _ = ((), Nothing)

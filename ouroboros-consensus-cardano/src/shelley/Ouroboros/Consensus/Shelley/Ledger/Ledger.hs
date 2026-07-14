@@ -291,7 +291,7 @@ castShelleyTip (ShelleyTip sn bn hh) =
     }
 
 -- | The UTxO is not stored in the Shelley ledger state: it lives outside,
--- threaded as the @'Values'@\/@'Diff'@ of 'BlockSupportsUTxOHD'. The wrapped
+-- threaded as the @'Values'@\/@'Diff'@ of 'BlockSupportsLedgerHD'. The wrapped
 -- 'SL.NewEpochState' has a UTxO field which we hold empty here (the entries live
 -- in the backend); 'applyBlockLedgerResultWithValidation' injects the read
 -- values, runs the ledger rules, and extracts the resulting diff.
@@ -394,7 +394,7 @@ instance MemPack BigEndianTxIn where
 
 instance
   ShelleyCompatible proto era =>
-  BlockSupportsUTxOHD (ShelleyBlock proto era)
+  BlockSupportsLedgerHD (ShelleyBlock proto era)
   where
   type Keys (ShelleyBlock proto era) = Set (TxIn (ShelleyBlock proto era))
   type
@@ -449,7 +449,7 @@ instance
 
 instance
   ShelleyCompatible proto era =>
-  SingleEraBlockSupportsUTxOHD (ShelleyBlock proto era)
+  SingleEraBlockSupportsLedgerHD (ShelleyBlock proto era)
   where
   -- \| The Shelley @TxIn@ is the plain ledger 'SL.TxIn'. Big-endian serialisation
   -- (needed so the on-disk\/streamed entries sort the same as the Haskell 'Ord')

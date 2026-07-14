@@ -91,7 +91,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Abstract
   , proxySingle
   )
 import Ouroboros.Consensus.HardFork.Combinator.Basics (HardForkBlock)
--- For the @BlockSupportsUTxOHD (HardForkBlock xs)@ instance (and hence the
+-- For the @BlockSupportsLedgerHD (HardForkBlock xs)@ instance (and hence the
 -- @Keys\/Values\/Diff (HardForkBlock xs) = NS Wrap… xs@ equations).
 import Ouroboros.Consensus.HardFork.Combinator.Ledger ()
 import Ouroboros.Consensus.Ledger.Abstract
@@ -145,7 +145,7 @@ import Prelude hiding (read)
 -- of a @blk@ to the /current era/ @x@, where they are concrete and the LSM
 -- backend can (de)serialise individual @('TxIn' x, 'TxOut' x)@ entries (the
 -- byte codecs come from the @'MemPack'@ superclasses of
--- 'SingleEraBlockSupportsUTxOHD').
+-- 'SingleEraBlockSupportsLedgerHD').
 --
 -- This is the on-disk analogue of the LSQ 'EraRangeReaderProvider': @read@,
 -- @duplicateWithDiffs@ and genesis population are called by era-agnostic code,
@@ -162,23 +162,23 @@ import Prelude hiding (read)
 -- recovered from the payload, so the (injective) proxy is what lets the caller
 -- bind @x@ (a @forall x.@-signed helper) and the hard-fork instance discharge
 -- the rank-2 subsumption check.
-class BlockSupportsUTxOHD blk => BlockSupportsLSM blk where
+class BlockSupportsLedgerHD blk => BlockSupportsLSM blk where
   withKeysEra ::
     Keys blk ->
-    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Keys x -> (Values x -> Values blk) -> r) ->
+    (forall x. SingleEraBlockSupportsLedgerHD x => Proxy x -> Keys x -> (Values x -> Values blk) -> r) ->
     r
   withDiffEra ::
     Diff blk ->
-    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Diff x -> r) ->
+    (forall x. SingleEraBlockSupportsLedgerHD x => Proxy x -> Diff x -> r) ->
     r
   withValuesEra ::
     Values blk ->
-    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Values x -> r) ->
+    (forall x. SingleEraBlockSupportsLedgerHD x => Proxy x -> Values x -> r) ->
     r
 
 -- | The hard-fork instance: the payload's @NS@ tag /is/ the current era, so
 -- dispatch to that arm (via @proxySingle@, whose @SingleEraBlock@ supplies
--- 'SingleEraBlockSupportsUTxOHD') and hand the era-@x@ payload (and, for keys,
+-- 'SingleEraBlockSupportsLedgerHD') and hand the era-@x@ payload (and, for keys,
 -- the @NS@ injection for the resulting values) to the continuation. The
 -- per-arm type @\@a@ is bound explicitly (see the class doc on non-injectivity).
 --
@@ -189,7 +189,7 @@ instance CanHardFork xs => BlockSupportsLSM (HardForkBlock xs) where
     forall r.
     Keys (HardForkBlock xs) ->
     ( forall x.
-      SingleEraBlockSupportsUTxOHD x =>
+      SingleEraBlockSupportsLedgerHD x =>
       Proxy x -> Keys x -> (Values x -> Values (HardForkBlock xs)) -> r
     ) ->
     r
@@ -201,7 +201,7 @@ instance CanHardFork xs => BlockSupportsLSM (HardForkBlock xs) where
   withDiffEra ::
     forall r.
     Diff (HardForkBlock xs) ->
-    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Diff x -> r) ->
+    (forall x. SingleEraBlockSupportsLedgerHD x => Proxy x -> Diff x -> r) ->
     r
   withDiffEra d k = hcollapse $ hcmap proxySingle go d
    where
@@ -211,7 +211,7 @@ instance CanHardFork xs => BlockSupportsLSM (HardForkBlock xs) where
   withValuesEra ::
     forall r.
     Values (HardForkBlock xs) ->
-    (forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Values x -> r) ->
+    (forall x. SingleEraBlockSupportsLedgerHD x => Proxy x -> Values x -> r) ->
     r
   withValuesEra vs k = hcollapse $ hcmap proxySingle go vs
    where
@@ -279,13 +279,13 @@ newtype TxInBytes = TxInBytes {unTxInBytes :: LSM.RawBytes}
 -- order, so a non-order-preserving codec (e.g. ledger's little-endian Shelley
 -- @TxIn@) would skip or repeat keys.
 toTxInBytes ::
-  forall blk. SingleEraBlockSupportsUTxOHD blk => Proxy blk -> TxIn blk -> TxInBytes
+  forall blk. SingleEraBlockSupportsLedgerHD blk => Proxy blk -> TxIn blk -> TxInBytes
 toTxInBytes _ txin =
   let barr = packTxInBytes @blk txin
    in TxInBytes $ LSM.RawBytes (VP.Vector 0 (PBA.sizeofByteArray barr) barr)
 
 fromTxInBytes ::
-  forall blk. SingleEraBlockSupportsUTxOHD blk => Proxy blk -> TxInBytes -> TxIn blk
+  forall blk. SingleEraBlockSupportsLedgerHD blk => Proxy blk -> TxInBytes -> TxIn blk
 fromTxInBytes _ (TxInBytes (LSM.RawBytes vec)) =
   case unpackTxInBytes @blk vec of
     Left err ->
@@ -382,7 +382,7 @@ implDuplicateWithDiffs tracer exportSnapshot t0 size diff = do
   t <- duplicateLSMTable tracer t0
   let cont ::
         forall x.
-        SingleEraBlockSupportsUTxOHD x =>
+        SingleEraBlockSupportsLedgerHD x =>
         Proxy x -> Diff x -> m (LedgerTablesHandle m l blk)
       cont _ dx = do
         let entries = diffToList @x dx
@@ -424,7 +424,7 @@ implRead tracer t _st keys =
  where
   cont ::
     forall x.
-    SingleEraBlockSupportsUTxOHD x =>
+    SingleEraBlockSupportsLedgerHD x =>
     Proxy x -> Keys x -> (Values x -> Values blk) -> m (Values blk)
   cont _ kx inj = do
     let txins = keysToList @x kx
@@ -447,7 +447,7 @@ implReadRange table = go
  where
   go ::
     forall x.
-    SingleEraBlockSupportsUTxOHD x =>
+    SingleEraBlockSupportsLedgerHD x =>
     (Values blk -> Values x) ->
     RangeQueryPrevious x ->
     Int ->
@@ -694,7 +694,7 @@ tableFromValues ::
 tableFromValues tracer session values = do
   table <-
     encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $ LSM.newTable session
-  let cont :: forall x. SingleEraBlockSupportsUTxOHD x => Proxy x -> Values x -> m Word64
+  let cont :: forall x. SingleEraBlockSupportsLedgerHD x => Proxy x -> Values x -> m Word64
       cont _ vsx = do
         let entries = valuesToList @x vsx
         mapM_
@@ -824,7 +824,7 @@ instance
 
 instance
   ( IOLike m
-  , SingleEraBlockSupportsUTxOHD blk
+  , SingleEraBlockSupportsLedgerHD blk
   ) =>
   StreamingBackend m LSM l blk
   where
@@ -909,7 +909,7 @@ instance IOLike m => NoThunks (Resources m LSM) where
 yieldLsmS ::
   forall m l hfblk blk.
   ( Monad m
-  , SingleEraBlockSupportsUTxOHD blk
+  , SingleEraBlockSupportsLedgerHD blk
   ) =>
   Int ->
   LedgerTablesHandle m l hfblk ->
@@ -935,7 +935,7 @@ sinkLsmS ::
   , MonadMask m
   , MonadST m
   , MonadEvaluate m
-  , SingleEraBlockSupportsUTxOHD blk
+  , SingleEraBlockSupportsLedgerHD blk
   ) =>
   Int ->
   SomeHasFS m ->

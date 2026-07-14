@@ -181,7 +181,7 @@ type instance TxOut BlockB = Void
 
 -- | BlockB has no on-disk tables: its 'Keys'\/'Values'\/'Diff' are all trivial
 -- (@()@), so every operation is a no-op.
-instance BlockSupportsUTxOHD BlockB where
+instance BlockSupportsLedgerHD BlockB where
   type Keys BlockB = ()
   type Values BlockB = ()
   type Diff BlockB = ()
@@ -196,7 +196,7 @@ instance SingleEraUTxOHDBlock BlockB where
   emptyValues = ()
   emptyDiffs = ()
 
-instance SingleEraBlockSupportsUTxOHD BlockB where
+instance SingleEraBlockSupportsLedgerHD BlockB where
   rangeReadValues _ _ = ((), Nothing)
   keysToList _ = []
   valuesToList _ = []

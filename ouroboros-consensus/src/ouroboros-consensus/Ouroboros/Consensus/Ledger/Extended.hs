@@ -141,7 +141,7 @@ instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState blk) where
   getTip = castPoint . getTip . tickedLedgerState
 
 instance
-  (LedgerSupportsProtocol blk, BlockSupportsUTxOHD blk) =>
+  (LedgerSupportsProtocol blk, BlockSupportsLedgerHD blk) =>
   IsLedger ExtLedgerState blk
   where
   type LedgerErr ExtLedgerState blk = ExtValidationError blk
@@ -204,7 +204,7 @@ applyHelper f opts cfg blk vals TickedExtLedgerState{..} = do
         tickedHeaderState
   pure $ (\(l, d) -> (ExtLedgerState l hdr, d)) <$> castLedgerResult ledgerResult
 
-instance (LedgerSupportsProtocol blk, BlockSupportsUTxOHD blk) => ApplyBlock ExtLedgerState blk where
+instance (LedgerSupportsProtocol blk, BlockSupportsLedgerHD blk) => ApplyBlock ExtLedgerState blk where
   applyBlockLedgerResultWithValidation doValidate =
     applyHelper (applyBlockLedgerResultWithValidation doValidate)
 

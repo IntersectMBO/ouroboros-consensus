@@ -22,7 +22,7 @@
 --
 -- The UTxO lives /outside/ the ledger state, threaded as the
 -- @'Values'@\/@'Diff'@ payloads of
--- 'Ouroboros.Consensus.Ledger.Basics.BlockSupportsUTxOHD'. The
+-- 'Ouroboros.Consensus.Ledger.Basics.BlockSupportsLedgerHD'. The
 -- cardano-ledger NES we wrap physically has a UTxO field (at
 -- @nesEsL . esLStateL . lsUTxOStateL . utxoL@) that we neither own nor can
 -- remove. If a stored ledger state retained a populated field, the LedgerDB's
@@ -103,7 +103,7 @@ mkNewEpochStateNoUTxOs nes =
 
 -- | Project the wrapped 'SL.NewEpochState'.
 --
--- ⚠️  The returned state's UTxO field is EMPTY /by design/. Under UTxO-HD the
+-- WARNING: The returned state's UTxO field is EMPTY /by design/. Under UTxO-HD the
 -- live UTxO is kept in the ledger tables (the LedgerDB backend), not in the
 -- ledger state. Reading @utxo@ from this value will silently give you an empty
 -- map — to read the chain's UTxO, go through the LedgerDB forker \/ ledger

@@ -580,7 +580,7 @@ instance IsLedger LedgerState TestBlock where
 type instance TxIn TestBlock = Void
 type instance TxOut TestBlock = Void
 
-instance BlockSupportsUTxOHD TestBlock where
+instance BlockSupportsLedgerHD TestBlock where
   type Keys TestBlock = ()
   type Values TestBlock = ()
   type Diff TestBlock = ()
@@ -595,7 +595,7 @@ instance SingleEraUTxOHDBlock TestBlock where
   emptyValues = ()
   emptyDiffs = ()
 
-instance SingleEraBlockSupportsUTxOHD TestBlock where
+instance SingleEraBlockSupportsLedgerHD TestBlock where
   rangeReadValues _ _ = ((), Nothing)
   keysToList _ = []
   valuesToList _ = []

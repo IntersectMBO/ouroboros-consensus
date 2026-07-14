@@ -400,7 +400,7 @@ instance ConfigSupportsNode (TestBlockWith ptype) where
 --
 -- In the @mk@-free design the on-disk table data is no longer carried inside
 -- the ledger state; it flows as the opaque @'Keys'@\/@'Values'@\/@'Diff'@ of
--- 'BlockSupportsUTxOHD'. A payload exposes the key\/value types of its tables
+-- 'BlockSupportsLedgerHD'. A payload exposes the key\/value types of its tables
 -- through 'PayloadTxIn'\/'PayloadTxOut'; the @'TestBlockWith' ptype@ then has
 -- the same Shelley-style @Set@\/@Map@\/'Diff.Diff' tables, and 'applyPayload'
 -- reads the values it needs and returns the diff it produces.
@@ -568,7 +568,7 @@ instance
 type instance TxIn (TestBlockWith ptype) = PayloadTxIn ptype
 type instance TxOut (TestBlockWith ptype) = PayloadTxOut ptype
 
-instance PayloadSemantics ptype => BlockSupportsUTxOHD (TestBlockWith ptype) where
+instance PayloadSemantics ptype => BlockSupportsLedgerHD (TestBlockWith ptype) where
   type Keys (TestBlockWith ptype) = Set (PayloadTxIn ptype)
   type
     Values (TestBlockWith ptype) =
@@ -590,7 +590,7 @@ instance PayloadSemantics ptype => SingleEraUTxOHDBlock (TestBlockWith ptype) wh
 
 instance
   PayloadSemantics ptype =>
-  SingleEraBlockSupportsUTxOHD (TestBlockWith ptype)
+  SingleEraBlockSupportsLedgerHD (TestBlockWith ptype)
   where
   rangeReadValues (mbPrev, n) vals =
     let toRead = case mbPrev of

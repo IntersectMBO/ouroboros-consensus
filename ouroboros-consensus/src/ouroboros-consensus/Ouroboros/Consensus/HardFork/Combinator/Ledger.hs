@@ -835,7 +835,7 @@ injectLedgerEvent index =
 -- ('tickThenApplyLedgerResult'), which always share that block's era, so a
 -- genuine cross-era composition cannot arise. (There is deliberately no
 -- 'Monoid' instance: there is no canonical empty era for 'mempty', and
--- 'BlockSupportsUTxOHD' only requires 'Semigroup'.)
+-- 'BlockSupportsLedgerHD' only requires 'Semigroup'.)
 instance CanHardFork xs => Semigroup (NS WrapTxsDiff xs) where
   a <> b = case Match.matchNS a b of
     Right matched -> hcmap proxySingle combine matched
@@ -865,7 +865,7 @@ instance CanHardFork xs => Semigroup (NS WrapKeys xs) where
       WrapKeys blk
     combine (Pair (WrapKeys x) (WrapKeys y)) = WrapKeys (x <> y)
 
-instance CanHardFork xs => BlockSupportsUTxOHD (HardForkBlock xs) where
+instance CanHardFork xs => BlockSupportsLedgerHD (HardForkBlock xs) where
   type Keys (HardForkBlock xs) = NS WrapKeys xs
   type Values (HardForkBlock xs) = NS WrapValues xs
   type TickDiff (HardForkBlock xs) = NS WrapTickDiff xs
@@ -890,7 +890,7 @@ instance CanHardFork xs => BlockSupportsUTxOHD (HardForkBlock xs) where
    where
     f ::
       forall blk.
-      BlockSupportsUTxOHD blk =>
+      BlockSupportsLedgerHD blk =>
       Product WrapTickDiff WrapBlockDiff blk ->
       WrapTickAndBlockDiff blk
     f (Pair (WrapTickDiff tdiff) (WrapBlockDiff bdiff)) =

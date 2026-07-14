@@ -533,7 +533,7 @@ instance LedgerSupportsPeras (SimpleBlock c ext)
 type instance TxIn (SimpleBlock c ext) = Mock.TxIn
 type instance TxOut (SimpleBlock c ext) = Mock.TxOut
 
-instance BlockSupportsUTxOHD (SimpleBlock c ext) where
+instance BlockSupportsLedgerHD (SimpleBlock c ext) where
   type Keys (SimpleBlock c ext) = Set Mock.TxIn
   type Values (SimpleBlock c ext) = Map Mock.TxIn Mock.TxOut
   type Diff (SimpleBlock c ext) = Diff.Diff Mock.TxIn Mock.TxOut
@@ -549,7 +549,7 @@ instance SingleEraUTxOHDBlock (SimpleBlock c ext) where
   emptyValues = Map.empty
   emptyDiffs = mempty
 
-instance SingleEraBlockSupportsUTxOHD (SimpleBlock c ext) where
+instance SingleEraBlockSupportsLedgerHD (SimpleBlock c ext) where
   rangeReadValues (mbPrev, n) vals =
     let toRead = case mbPrev of
           Nothing -> vals

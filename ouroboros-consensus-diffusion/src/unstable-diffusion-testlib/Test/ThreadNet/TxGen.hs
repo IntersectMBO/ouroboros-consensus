@@ -84,7 +84,7 @@ class TxGen blk where
     LedgerState blk ->
     m (Values blk)
   default testReadAllValues ::
-    (Monad m, SingleEraBlockSupportsUTxOHD blk) =>
+    (Monad m, SingleEraBlockSupportsLedgerHD blk) =>
     EraRangeReaderProvider m blk ->
     LedgerState blk ->
     m (Values blk)
@@ -96,7 +96,7 @@ class TxGen blk where
 -- key of each page until a page comes back empty.
 pageAllEra ::
   forall m blk.
-  (Monad m, SingleEraBlockSupportsUTxOHD blk) =>
+  (Monad m, SingleEraBlockSupportsLedgerHD blk) =>
   EraRangeReader m blk ->
   m (Values blk)
 pageAllEra (EraRangeReader rd) = go NoPreviousQuery []
@@ -177,20 +177,20 @@ testGenTxsHfc coreNodeId numCoreNodes curSlotNo cfg extras state values =
 -- hard-fork @NS@ at the current era's index.
 testReadAllValuesHfc ::
   forall m xs.
-  (Monad m, All SingleEraBlockSupportsUTxOHD xs) =>
+  (Monad m, All SingleEraBlockSupportsLedgerHD xs) =>
   EraRangeReaderProvider m (HardForkBlock xs) ->
   LedgerState (HardForkBlock xs) ->
   m (Values (HardForkBlock xs))
 testReadAllValuesHfc provider state =
   hcollapse $
     hcimap
-      (Proxy @SingleEraBlockSupportsUTxOHD)
+      (Proxy @SingleEraBlockSupportsLedgerHD)
       aux
       (State.tip (hardForkLedgerStatePerEra state))
  where
   aux ::
     forall x.
-    SingleEraBlockSupportsUTxOHD x =>
+    SingleEraBlockSupportsLedgerHD x =>
     Index xs x ->
     LedgerState x ->
     K (m (Values (HardForkBlock xs))) x

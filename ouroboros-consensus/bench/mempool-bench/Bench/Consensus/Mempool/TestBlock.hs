@@ -42,7 +42,7 @@ import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
-import Ouroboros.Consensus.Ledger.Basics (BlockSupportsUTxOHD (Values))
+import Ouroboros.Consensus.Ledger.Basics (BlockSupportsLedgerHD (Values))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Test.Util.TestBlock hiding (TestBlock)

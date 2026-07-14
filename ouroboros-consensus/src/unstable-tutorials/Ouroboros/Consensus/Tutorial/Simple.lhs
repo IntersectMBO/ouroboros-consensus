@@ -59,8 +59,8 @@ First, some imports we'll need:
 >   (AuxLedgerEvent, GetTip(..), IsLedger(..), LedgerCfg,
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
 >    LedgerState, ApplyBlock(..), UpdateLedger,
->    BlockSupportsUTxOHD(..), SingleEraUTxOHDBlock(..),
->    SingleEraBlockSupportsUTxOHD(..), TxIn, TxOut,
+>    BlockSupportsLedgerHD(..), SingleEraUTxOHDBlock(..),
+>    SingleEraBlockSupportsLedgerHD(..), TxIn, TxOut,
 >    defaultApplyBlockLedgerResult, defaultReapplyBlockLedgerResult)
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol(..))
@@ -728,7 +728,7 @@ the disk and now consensus:
 - stores a sequence of deltas (diffs) produced by the execution of the ledger
   rules
 
-This UTxO set is described by the `BlockSupportsUTxOHD` class. A block declares
+This UTxO set is described by the `BlockSupportsLedgerHD` class. A block declares
 the types of its on-disk entries — the `TxIn` keys and `TxOut` values — and the
 associated `Keys`, `Values` and `Diff` collections that consensus uses to read
 subsets from the backend and to store the deltas produced by the ledger rules.
@@ -743,7 +743,7 @@ values are trivially empty (`()`) and every operation is a no-op:
 > type instance TxIn  BlockC = Void
 > type instance TxOut BlockC = Void
 
-> instance BlockSupportsUTxOHD BlockC where
+> instance BlockSupportsLedgerHD BlockC where
 >   type Keys   BlockC = ()
 >   type Values BlockC = ()
 >   type Diff   BlockC = ()
@@ -756,13 +756,13 @@ values are trivially empty (`()`) and every operation is a no-op:
 
 The single-era classes provide the empty collections and the (trivial) backend
 accessors. The hard-fork combinator has no single era to point at, so these live
-separately from `BlockSupportsUTxOHD`:
+separately from `BlockSupportsLedgerHD`:
 
 > instance SingleEraUTxOHDBlock BlockC where
 >   emptyValues = ()
 >   emptyDiffs = ()
 
-> instance SingleEraBlockSupportsUTxOHD BlockC where
+> instance SingleEraBlockSupportsLedgerHD BlockC where
 >   rangeReadValues _ _ = ((), Nothing)
 >   keysToList _ = []
 >   valuesToList _ = []

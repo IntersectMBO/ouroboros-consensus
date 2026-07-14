@@ -288,7 +288,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
             return endBound
 
   howExtend ::
-    BlockSupportsUTxOHD blk' =>
+    BlockSupportsLedgerHD blk' =>
     TranslateLedgerState blk blk' ->
     History.Bound ->
     Current (Product LedgerState WrapTickDiff) blk ->

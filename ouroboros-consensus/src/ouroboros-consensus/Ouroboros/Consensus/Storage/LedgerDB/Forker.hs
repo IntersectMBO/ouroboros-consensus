@@ -189,7 +189,7 @@ newtype EraRangeReader m blk = EraRangeReader
 -- 'MemPack' suffices.
 type RangeReadTables m blk =
   forall x.
-  SingleEraBlockSupportsUTxOHD x =>
+  SingleEraBlockSupportsLedgerHD x =>
   (Values blk -> Values x) ->
   RangeQueryPrevious x ->
   Int ->
@@ -209,7 +209,7 @@ type RangeReadTables m blk =
 newtype EraRangeReaderProvider m blk = EraRangeReaderProvider
   { getEraRangeReader ::
       forall x.
-      SingleEraBlockSupportsUTxOHD x =>
+      SingleEraBlockSupportsLedgerHD x =>
       (Values blk -> Values x) ->
       EraRangeReader m x
   }

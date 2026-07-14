@@ -120,7 +120,7 @@ instance Ledger.TxLimits TestBlock where
   Ledger support (trivial tables)
 -------------------------------------------------------------------------------}
 
--- The block's @'Test.Util.TestBlock.BlockSupportsUTxOHD'@ (and the rest of the
+-- The block's @'Test.Util.TestBlock.BlockSupportsLedgerHD'@ (and the rest of the
 -- UTxO-HD axis) is provided generically by 'TestBlockWith' through the trivial
 -- @'PayloadTxIn' = 'PayloadTxOut' = 'Void'@ instance above.
 

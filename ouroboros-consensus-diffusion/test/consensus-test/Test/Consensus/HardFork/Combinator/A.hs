@@ -210,7 +210,7 @@ type instance TxOut BlockA = Void
 
 -- | BlockA has no on-disk tables: its 'Keys'\/'Values'\/'Diff' are all trivial
 -- (@()@), so every operation is a no-op.
-instance BlockSupportsUTxOHD BlockA where
+instance BlockSupportsLedgerHD BlockA where
   type Keys BlockA = ()
   type Values BlockA = ()
   type Diff BlockA = ()
@@ -225,7 +225,7 @@ instance SingleEraUTxOHDBlock BlockA where
   emptyValues = ()
   emptyDiffs = ()
 
-instance SingleEraBlockSupportsUTxOHD BlockA where
+instance SingleEraBlockSupportsLedgerHD BlockA where
   rangeReadValues _ _ = ((), Nothing)
   keysToList _ = []
   valuesToList _ = []
