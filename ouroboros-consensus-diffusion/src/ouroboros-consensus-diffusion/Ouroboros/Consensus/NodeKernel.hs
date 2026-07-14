@@ -603,7 +603,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           trace blockForging $ TraceNoLedgerState currentSlot bcPrevPoint
           exitEarly
         Right forker -> do
-          unticked <- lift $ atomically $ LedgerDB.roforkerGetLedgerState forker
+          let unticked = LedgerDB.roforkerGetLedgerState forker
 
           trace blockForging $ TraceLedgerState currentSlot bcPrevPoint
 

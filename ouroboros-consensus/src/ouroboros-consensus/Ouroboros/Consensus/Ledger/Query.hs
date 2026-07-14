@@ -264,8 +264,9 @@ answerQuery config provider forker query = case query of
   BlockQuery (blockQuery :: BlockQuery blk footprint result) ->
     case sing :: Sing footprint of
       SQFNoTables ->
-        answerPureBlockQuery config blockQuery
-          <$> atomically (roforkerGetLedgerState forker)
+        pure $
+          answerPureBlockQuery config blockQuery $
+            roforkerGetLedgerState forker
       SQFLookupTables ->
         answerBlockQueryLookup config blockQuery forker
       SQFTraverseTables ->
@@ -273,11 +274,13 @@ answerQuery config provider forker query = case query of
   GetSystemStart ->
     pure $ getSystemStart (topLevelConfigBlock (getExtLedgerCfg config))
   GetChainBlockNo ->
-    headerStateBlockNo . headerState
-      <$> atomically (roforkerGetLedgerState forker)
+    pure $
+      headerStateBlockNo . headerState $
+        roforkerGetLedgerState forker
   GetChainPoint ->
-    headerStatePoint . headerState
-      <$> atomically (roforkerGetLedgerState forker)
+    pure $
+      headerStatePoint . headerState $
+        roforkerGetLedgerState forker
   DebugLedgerConfig ->
     pure $ topLevelConfigLedger (getExtLedgerCfg config)
 

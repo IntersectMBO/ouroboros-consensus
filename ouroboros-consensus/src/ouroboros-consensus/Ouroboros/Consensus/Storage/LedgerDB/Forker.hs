@@ -263,7 +263,7 @@ ledgerStateReadOnlyForker frk =
   ReadOnlyForker
     { roforkerClose = roforkerClose
     , roforkerReadTables = roforkerReadTables
-    , roforkerGetLedgerState = ledgerState <$> roforkerGetLedgerState
+    , roforkerGetLedgerState = ledgerState roforkerGetLedgerState
     , roforkerReadStatistics = roforkerReadStatistics
     }
  where
@@ -294,7 +294,7 @@ data ReadOnlyForker m l blk = ReadOnlyForker
   -- ^ See 'forkerClose'
   , roforkerReadTables :: !(Keys blk -> m (Values blk))
   -- ^ See 'forkerReadTables'
-  , roforkerGetLedgerState :: !(STM m (l blk))
+  , roforkerGetLedgerState :: !(l blk)
   -- ^ See 'forkerGetLedgerState'
   , roforkerReadStatistics :: !(m Statistics)
   -- ^ See 'forkerReadStatistics'
@@ -309,12 +309,13 @@ type instance HeaderHash (ReadOnlyForker m l) = HeaderHash l
 
 type ReadOnlyForker' m blk = ReadOnlyForker m ExtLedgerState blk
 
-readOnlyForker :: Forker m l blk -> ReadOnlyForker m l blk
-readOnlyForker forker =
-  ReadOnlyForker
+readOnlyForker :: MonadSTM m => Forker m l blk -> m (ReadOnlyForker m l blk)
+readOnlyForker forker = do
+  st <- atomically $ forkerGetLedgerState forker
+  pure $ ReadOnlyForker
     { roforkerClose = forkerClose forker
     , roforkerReadTables = forkerReadTables forker
-    , roforkerGetLedgerState = forkerGetLedgerState forker
+    , roforkerGetLedgerState = st
     , roforkerReadStatistics = forkerReadStatistics forker
     }
 

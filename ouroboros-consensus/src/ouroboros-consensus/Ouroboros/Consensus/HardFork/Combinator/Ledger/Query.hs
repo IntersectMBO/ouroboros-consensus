@@ -86,7 +86,7 @@ import Ouroboros.Consensus.TypeFamilyWrappers
   , WrapTxOut
   )
 import Ouroboros.Consensus.Util (ShowProxy)
-import Ouroboros.Consensus.Util.IOLike (MonadSTM (atomically))
+import Ouroboros.Consensus.Util.IOLike (MonadSTM)
 
 type HardForkQueryResult xs = Either (MismatchEraInfo xs)
 
@@ -271,8 +271,7 @@ answerBlockQueryHelper
   (ExtLedgerCfg cfg)
   qry
   forker = do
-    hardForkState <-
-      hardForkLedgerStatePerEra . ledgerState <$> atomically (roforkerGetLedgerState forker)
+    let hardForkState = hardForkLedgerStatePerEra . ledgerState $ roforkerGetLedgerState forker
     let ei = State.epochInfoLedger lcfg hardForkState
         cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
     f cfgs qry forker
@@ -385,7 +384,7 @@ interpretQueryIfCurrentLookup ::
   ReadOnlyForker' m (HardForkBlock xs) ->
   m (HardForkQueryResult xs result)
 interpretQueryIfCurrentLookup cfg q forker = do
-  st <- distribExtLedgerState <$> atomically (roforkerGetLedgerState forker)
+  let st = distribExtLedgerState $ roforkerGetLedgerState forker
   go indices cfg q st
  where
   go ::
@@ -411,7 +410,7 @@ interpretQueryIfCurrentTraverse ::
   ReadOnlyForker' m (HardForkBlock xs) ->
   m (HardForkQueryResult xs result)
 interpretQueryIfCurrentTraverse provider cfg q forker = do
-  st <- distribExtLedgerState <$> atomically (roforkerGetLedgerState forker)
+  let st = distribExtLedgerState $ roforkerGetLedgerState forker
   go indices cfg q st
  where
   go ::

@@ -461,7 +461,7 @@ openReadOnlyForker ::
   LedgerDB m l blk ->
   Target (Point blk) ->
   m (Either GetForkerError (ReadOnlyForker m l blk))
-openReadOnlyForker ldb pt = fmap readOnlyForker <$> openForkerAtTarget ldb pt
+openReadOnlyForker ldb pt = traverse readOnlyForker =<< openForkerAtTarget ldb pt
 
 {-------------------------------------------------------------------------------
   Initialization

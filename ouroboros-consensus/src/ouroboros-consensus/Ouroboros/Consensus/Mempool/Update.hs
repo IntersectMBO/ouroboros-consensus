@@ -488,9 +488,8 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
       -- against the same base ticked state: re-tick the forker's (un-ticked)
       -- anchor state at 'isTip'. We must not reuse 'isLedgerState' here, as that
       -- is the virtual tip /after/ applying the mempool txs.
-      baseState <- atomically $ roforkerGetLedgerState frkr
       let (slot, tickedState, tickDiff) =
-            tickLedgerState cfg (ForgeInUnknownSlot baseState)
+            tickLedgerState cfg (ForgeInUnknownSlot $ roforkerGetLedgerState frkr)
       case toKeep of
         [] -> do
           -- Everything was removed: the mempool becomes empty at the same tip.
