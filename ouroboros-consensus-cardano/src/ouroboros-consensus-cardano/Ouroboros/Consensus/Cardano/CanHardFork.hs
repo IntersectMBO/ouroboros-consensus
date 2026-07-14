@@ -351,7 +351,7 @@ translateLedgerStateByronToShelleyWrapper =
   RequireBoth $
     \_ (WrapLedgerConfig cfgShelley) ->
       TranslateLedgerState
-        { translateLedgerStateWith = \epochNo (ledgerByron, ()) ->
+        { translateLedgerStateWith = \epochNo (ledgerByron, UnitTables) ->
             -- Byron has no ledger tables, so the entire genesis UTxO set is
             -- dumped into the backend as insertions: build the Shelley NES
             -- (which carries the UTxO in its field), 'splitUTxO' it into the

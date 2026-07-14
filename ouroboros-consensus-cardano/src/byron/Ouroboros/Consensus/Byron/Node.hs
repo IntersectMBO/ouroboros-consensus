@@ -217,7 +217,7 @@ protocolInfoByron
             , headerState = genesisHeaderState S.empty
             }
       , -- Byron has no on-disk tables.
-        pInfoInitLedgerTables = ()
+        pInfoInitLedgerTables = UnitTables
       }
    where
     compactedGenesisConfig = compactGenesisConfig genesisConfig

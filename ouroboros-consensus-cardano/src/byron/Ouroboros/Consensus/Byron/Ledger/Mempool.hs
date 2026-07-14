@@ -126,20 +126,20 @@ instance LedgerSupportsMempool ByronBlock where
     tx' = toMempoolPayload tx
 
   applyTx cfg _wti slot tx _values st =
-    (\st' -> (st', (), ValidatedByronTx tx))
+    (\st' -> (st', UnitTables, ValidatedByronTx tx))
       <$> applyByronGenTx validationMode cfg slot tx st
    where
     validationMode = CC.ValidationMode CC.BlockValidation Utxo.TxValidation
 
   reapplyTx cfg slot vtx _values st =
-    (,())
+    (,UnitTables)
       <$> applyByronGenTx validationMode cfg slot (forgetValidatedByronTx vtx) st
    where
     validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 
   txForgetValidated = forgetValidatedByronTx
 
-  getTransactionKeySets _ = ()
+  getTransactionKeySets _ = UnitTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 

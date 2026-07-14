@@ -8,19 +8,26 @@
 module Ouroboros.Consensus.Ledger.HD
   ( BlockSupportsLedgerHD (..)
   , SingleEraBlockSupportsLedgerHD (..)
+  , UnitTables (..)
   ) where
 
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding)
 import Data.Array.Byte (ByteArray)
 import Data.Kind (Constraint, Type)
-import Data.MemPack (MemPack, packByteArray)
+import Data.MemPack (MemPack)
 import Data.MemPack.Buffer (Buffer)
 import Data.MemPack.Error (SomeError)
 import Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Ouroboros.Consensus.Util.CBOR (unpackEither)
 
+-- | A type isomorphic to unit to more precisely convey that the block has no
+-- | LedgerHD tables.
+data UnitTables = UnitTables
+
+instance Semigroup UnitTables where
+  UnitTables <> UnitTables = UnitTables
+  
 -- | The per-block era\/table logic of UTxO-HD: the opaque table payloads
 -- (@Keys@\/@Values@\/@*Diff blk@) plus the pure operations on them.
 --
@@ -30,7 +37,7 @@ import Ouroboros.Consensus.Util.CBOR (unpackEither)
 --     @Values = Map TxIn TxOut@, @*Diff = Diff TxIn TxOut@.
 --
 --   * Byron\/mock blocks have no on-disk tables, so their @Keys@\/@Values@\/
---     @Diff@ are trivial (@Void@\/@()@).
+--     @*Diff@ are trivial ('UnitTables').
 --
 --   * The hard-fork combinator uses era-tagged @NS@ payloads; 'forwardTickDiff'
 --     translates values across a rare era boundary using the per-era
@@ -164,13 +171,9 @@ class
   -- default is the plain 'MemPack' codec, valid for eras whose key
   -- serialisation is already order-preserving (e.g. the trivial Byron key).
   packTxInBytes :: TxIn blk -> ByteArray
-  default packTxInBytes :: TxIn blk -> ByteArray
-  packTxInBytes = packByteArray True
 
   -- | Inverse of 'packTxInBytes': decode a @'TxIn'@ from its on-disk key bytes.
   unpackTxInBytes :: Buffer b => b -> Either SomeError (TxIn blk)
-  default unpackTxInBytes :: Buffer b => b -> Either SomeError (TxIn blk)
-  unpackTxInBytes = unpackEither
 
   emptyValues :: Values blk
 
