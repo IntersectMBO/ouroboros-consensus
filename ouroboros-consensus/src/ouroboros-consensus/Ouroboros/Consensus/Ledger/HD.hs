@@ -44,10 +44,10 @@ instance Semigroup UnitTables where
 --     translations carried on the 'CanHardFork' class (no config needed).
 type BlockSupportsLedgerHD :: Type -> Constraint
 class (Semigroup (TxsDiff blk), Semigroup (Keys blk)) => BlockSupportsLedgerHD blk where
-  -- | The keys a block consumes, e.g. the @TxIn@s spent by its transactions.
+  -- | The keys a block requests.
   type Keys blk :: Type
 
-  -- | The values read for a set of 'Keys', e.g. the @TxOut@s those @TxIn@s
+  -- | The values read for a set of 'Keys', e.g. the @TxOut@s those @TxIn@s.
   -- resolve to.
   type Values blk :: Type
 
@@ -57,7 +57,7 @@ class (Semigroup (TxsDiff blk), Semigroup (Keys blk)) => BlockSupportsLedgerHD b
   -- | The changes a block (re)application produces to the tables.
   type BlockDiff blk :: Type
 
-  -- | The combined changes from ticking a (re)applying a block
+  -- | The combined changes from ticking and (re)applying a block
   type TickAndBlockDiff blk :: Type
 
   -- | The changes a transaction produces to the tables: a 'Semigroup'
@@ -68,7 +68,7 @@ class (Semigroup (TxsDiff blk), Semigroup (Keys blk)) => BlockSupportsLedgerHD b
   -- applied.
   type TxsDiff blk :: Type
 
-  -- | Extract the keys a block consumes (phase 1). Pure and essentially free.
+  -- | Extract the keys a block requests.
   blockKeys :: blk -> Keys blk
 
   -- | Combine the diffs from ticking and block application, as for
@@ -87,8 +87,7 @@ class (Semigroup (TxsDiff blk), Semigroup (Keys blk)) => BlockSupportsLedgerHD b
   forwardTickAndBlockDiff :: TickAndBlockDiff blk -> Values blk -> Values blk
   forwardTxsDiff :: TxsDiff blk -> Values blk -> Values blk
 
-  -- | Restrict the values to the given keys. This is the point read of the
-  -- InMemory backend.
+  -- | Restrict the values to the given keys.
   restrictValues :: Keys blk -> Values blk -> Values blk
 
   -- | The number of entries, for the @tablesSize@ statistic.
@@ -98,7 +97,7 @@ class (Semigroup (TxsDiff blk), Semigroup (Keys blk)) => BlockSupportsLedgerHD b
   -- instances just use the era's @toCBOR@\/@toEraCBOR@. The hard-fork combinator
   -- encodes the current era's @NS@ arm directly (the @NS@ already carries the
   -- era).
-  encodeValues :: Values blk -> Encoding
+  encodeValuesForInMemory :: Values blk -> Encoding
 
   -- | Deserialise the values for an InMemory snapshot.
   --
@@ -107,7 +106,7 @@ class (Semigroup (TxsDiff blk), Semigroup (Keys blk)) => BlockSupportsLedgerHD b
   -- current era to pick which @NS@ arm to decode into. Single-era instances
   -- ignore it. The snapshot loads the state before the tables, so it is always
   -- available at the call site.
-  decodeValues :: forall s. LedgerState blk -> Decoder s (Values blk)
+  decodeValuesForInMemory :: forall s. LedgerState blk -> Decoder s (Values blk)
 
 -- | The on-disk table operations that only /single-era/ blocks support, split
 -- out of 'BlockSupportsLedgerHD'.
@@ -116,10 +115,13 @@ class (Semigroup (TxsDiff blk), Semigroup (Keys blk)) => BlockSupportsLedgerHD b
 -- /concrete era level/: paging for @QFTraverseTables@ queries, and the
 -- entry-level (de)construction the on-disk (LSM) backend needs to turn the
 -- opaque @'Keys'@\/@'Values'@\/@*Diff@ into individual @('TxIn', 'TxOut')@
--- rows. The 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkBlock' has
+-- rows.
+--
+-- The 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkBlock' has
 -- /no/ instance: it answers such requests by dispatching to the current era
 -- (via @matchNS@, see the LSM backend's @BlockSupportsLSM@) and working there,
 -- so there is no single @TxIn@\/@TxOut@ at the @HardForkBlock@ level.
+--
 -- The 'MemPack' codecs for the era's @TxIn@\/@TxOut@ are superclasses: the
 -- on-disk (LSM) backend serialises individual entries with them, and bundling
 -- them here means the hard-fork dispatch reaches them through @proxySingle@
@@ -142,8 +144,8 @@ class
   rangeReadValues ::
     (Maybe (TxIn blk), Int) -> Values blk -> (Values blk, Maybe (TxIn blk))
 
-  -- | The keys as a plain list of @'TxIn'@s (e.g. for point lookups on the
-  -- on-disk backend).
+  -- | The keys as a plain list of @'TxIn'@s (e.g. for lookups on the on-disk
+  -- backend).
   keysToList :: Keys blk -> [TxIn blk]
 
   -- | The values as a plain list of entries (e.g. to populate / stream the
@@ -151,7 +153,7 @@ class
   valuesToList :: Values blk -> [(TxIn blk, TxOut blk)]
 
   -- | Rebuild the values from a list of entries (e.g. from a backend page /
-  -- point-lookup result).
+  -- lookup result).
   valuesFromList :: [(TxIn blk, TxOut blk)] -> Values blk
 
   -- | The diff as a plain list of per-key insert\/delete deltas (e.g. to batch
@@ -167,9 +169,7 @@ class
   -- The era's plain 'MemPack' codec need not preserve order (Shelley's
   -- 'Ouroboros.Consensus.Shelley.Ledger.SL.TxIn' is little-endian on the
   -- index), so this is a distinct method the era implements correctly (Shelley casts
-  -- through @BigEndianTxIn@, mirroring 'encodeValues'\/'decodeValues'). The
-  -- default is the plain 'MemPack' codec, valid for eras whose key
-  -- serialisation is already order-preserving (e.g. the trivial Byron key).
+  -- through @BigEndianTxIn@, mirroring 'encodeValues'\/'decodeValues').
   packTxInBytes :: TxIn blk -> ByteArray
 
   -- | Inverse of 'packTxInBytes': decode a @'TxIn'@ from its on-disk key bytes.
@@ -179,33 +179,28 @@ class
 
   emptyTickDiff :: TickDiff blk
 
-  -- | Combine 'TickDiff' that arose from translation with
-  -- 'TickDiff' from aroes from the _actual_ tick
+  -- | Combine 'TickDiff' that arose from translation with 'TickDiff' that arose
+  -- from the _actual_ tick
   --
-  -- For the
-  -- 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkBlock'
-  -- tick logic: when the tick's destination slot is in the next
-  -- era, the HFC first translates the given ledger state into the
-  -- next era, and /then/ calls this function for the /new era/ to
-  -- reach the given destination slot. Thus the result of the
-  -- translation function should anticipate that subsequent tick
-  -- call in the new era and the tick logic should anticipate that
-  -- its starting state might be the translation of a ledger state
-  -- from /before/ the era boundary.
+  -- For the 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkBlock' tick
+  -- logic: when the tick's destination slot is in the next era, the HFC first
+  -- translates the given ledger state into the next era, and /then/ calls this
+  -- function for the /new era/ to reach the given destination slot. Thus the
+  -- result of the translation function should anticipate that subsequent tick
+  -- call in the new era and the tick logic should anticipate that its starting
+  -- state might be the translation of a ledger state from /before/ the era
+  -- boundary.
   --
-  -- In particular, the combination of the translation and the
-  -- subsequent tick will need to correctly implement any necessary
-  -- "end of epoch" and "end of era" logic specific to the old
-  -- era.
+  -- In particular, the combination of the translation and the subsequent tick
+  -- will need to correctly implement any necessary "end of epoch" and "end of
+  -- era" logic specific to the old era.
   --
-  -- This method must specifically combine the translation's
-  -- 'TickDiff' with the subsequent tick's 'TickDiff'.
+  -- This method must specifically combine the translation's 'TickDiff' with the
+  -- subsequent tick's 'TickDiff'.
   --
-  -- At time of writing, all era-specific
-  -- 'applyChainTickLedgerResult' methods always return
-  -- 'emptyTickDiff'. It's only ever 'translateLedgerStateWith' that
-  -- /sometimes/ generates a non-empty 'TickDiff'. Thus, this
-  -- method's second argument is /currently/ always
-  -- 'emptyTickDiff'. And in fact its first argument /usually/ is
-  -- also 'emptyTickDiff'.
+  -- At time of writing, all era-specific 'applyChainTickLedgerResult' methods
+  -- always return 'emptyTickDiff'. It's only ever 'translateLedgerStateWith'
+  -- that /sometimes/ generates a non-empty 'TickDiff'. Thus, this method's
+  -- second argument is /currently/ always 'emptyTickDiff'. And in fact its
+  -- first argument /usually/ is also 'emptyTickDiff'.
   combineTransAndTickDiff :: TickDiff blk -> TickDiff blk -> TickDiff blk
