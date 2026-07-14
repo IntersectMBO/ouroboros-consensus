@@ -176,7 +176,7 @@ applyHelper ::
     Ticked LedgerState blk ->
     Except
       (LedgerErr LedgerState blk)
-      (LedgerResult blk (LedgerState blk, Diff blk))
+      (LedgerResult blk (LedgerState blk, BlockDiff blk))
   ) ->
   ComputeLedgerEvents ->
   LedgerCfg ExtLedgerState blk ->
@@ -185,7 +185,7 @@ applyHelper ::
   Ticked ExtLedgerState blk ->
   Except
     (LedgerErr ExtLedgerState blk)
-    (LedgerResult blk (ExtLedgerState blk, Diff blk))
+    (LedgerResult blk (ExtLedgerState blk, BlockDiff blk))
 applyHelper f opts cfg blk vals TickedExtLedgerState{..} = do
   ledgerResult <-
     withExcept ExtValidationErrorLedger $

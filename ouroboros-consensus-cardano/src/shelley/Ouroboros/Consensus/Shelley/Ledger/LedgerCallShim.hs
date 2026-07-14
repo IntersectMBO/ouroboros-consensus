@@ -15,7 +15,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-simplifiable-class-constraints #-}
+{-# OPTIONS_GHC -Wno-simplifiable-class-constraints -Wno-deprecations #-}
 
 -- | The single module that reads or writes the @UTxO@ field of a Shelley
 -- 'SL.NewEpochState' (NES).

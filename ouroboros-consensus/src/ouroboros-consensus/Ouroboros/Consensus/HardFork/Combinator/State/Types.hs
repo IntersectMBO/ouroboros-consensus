@@ -19,7 +19,6 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types
   , TranslateLedgerTables (..)
   , TranslateTxOut (..)
   , translateLedgerTablesWith
-  , TranslateDiff (..)
   , TranslateValues (..)
   , TranslateKeys (..)
   ) where
@@ -146,8 +145,8 @@ newtype CrossEraForecaster state view x y = CrossEraForecaster
 newtype TranslateLedgerState x y = TranslateLedgerState
   { translateLedgerStateWith ::
       EpochNo ->
-      LedgerState x ->
-      (LedgerState y, Diff y)
+      (LedgerState x, TickDiff x) ->
+      (LedgerState y, TickDiff y)
   -- ^ How to translate a 'LedgerState' during the era transition.
   --
   -- When translating between eras, it can be the case that values are modified,
@@ -165,10 +164,6 @@ newtype TranslateLedgerState x y = TranslateLedgerState
   -- related to the AVVMs. In particular they were deleted and included in the
   -- reserves. See the code that performs the translation Shelley->Allegra for
   -- more information.
-  }
-
-newtype TranslateDiff x y = TranslateDiff
-  { translateDiffWith :: Diff x -> Diff y
   }
 
 -- | Translate the on-disk 'Values' across an era transition. Used by the

@@ -21,14 +21,9 @@ module Ouroboros.Consensus.Ledger.Basics
   , LedgerState
   , TickedLedgerState
 
-    -- * On-disk table vocabulary
-  , TxIn
-  , TxOut
-
     -- * UTxO-HD block axis
   , BlockSupportsUTxOHD (..)
   , SingleEraBlockSupportsUTxOHD (..)
-  , SingleEraUTxOHDBlock (..)
 
     -- * Definition of a ledger independent of a choice of block
   , ComputeLedgerEvents (..)
@@ -69,22 +64,6 @@ import Ouroboros.Consensus.Ticked
 import Ouroboros.Consensus.Util ((...:))
 import Ouroboros.Consensus.Util.CBOR (unpackEither)
 import Ouroboros.Consensus.Util.IOLike
-
-{-------------------------------------------------------------------------------
-  On-disk table vocabulary
--------------------------------------------------------------------------------}
-
--- | Each block has a notion of a @TxIn@: the key of the on-disk UTxO table.
---
--- This is era-stable across all Shelley-based eras. It is convenient per-block
--- vocabulary for the Shelley\/dual instances that build their opaque 'Keys' out
--- of it.
-type TxIn :: Type -> Type
-type family TxIn blk
-
--- | Each block has a notion of a @TxOut@: the value of the on-disk UTxO table.
-type TxOut :: Type -> Type
-type family TxOut blk
 
 {-------------------------------------------------------------------------------
   Tip
@@ -198,8 +177,8 @@ class
     -- ticked ledger.
     GetTip (l blk)
   , GetTip (Ticked l blk)
-  , -- The block axis of UTxO-HD: provides the opaque @'Diff' blk@ that ticking
-    -- (and block application) produces, together with its 'Semigroup' instance.
+  , -- The block axis of UTxO-HD: provides the opaque @'TickAndBlockDiff' blk@
+    -- that ticking and block application produces.
     BlockSupportsUTxOHD blk
   ) =>
   IsLedger l blk
@@ -230,7 +209,7 @@ class
   --
   -- Ticking a ledger state needs no values from the on-disk tables (in
   -- particular it does not read the UTxO), but it may nonetheless /produce/ a
-  -- @'Diff' blk@ out of nothing: era transitions happen when ticking, and some
+  -- @'TickDiff' blk@ out of nothing: era transitions happen when ticking, and some
   -- of them delete entries from the UTxO (e.g. the AVVM addresses removed at
   -- the Shelley-to-Allegra boundary). That diff is returned alongside the
   -- ticked state and must be composed with the block-application diff (and
@@ -249,7 +228,7 @@ class
     LedgerCfg l blk ->
     SlotNo ->
     l blk ->
-    LedgerResult blk (Ticked l blk, Diff blk)
+    LedgerResult blk (Ticked l blk, TickDiff blk)
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick ::
@@ -258,7 +237,7 @@ applyChainTick ::
   LedgerCfg l blk ->
   SlotNo ->
   l blk ->
-  (Ticked l blk, Diff blk)
+  (Ticked l blk, TickDiff blk)
 applyChainTick = lrResult ...: applyChainTickLedgerResult
 
 {-------------------------------------------------------------------------------
@@ -275,7 +254,7 @@ applyChainTick = lrResult ...: applyChainTickLedgerResult
 -- (like the 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState').
 --
 -- The on-disk table data (the UTxO) is not a parameter of this state; it is
--- carried separately as the opaque @Values blk@\/@Diff blk@ payloads of
+-- carried separately as the opaque @Values blk@\/@*Diff blk@ payloads of
 -- 'BlockSupportsUTxOHD', threaded through the read\/apply functions.
 --
 -- The main operations we can do with a 'LedgerState' are /ticking/ (defined in
@@ -298,7 +277,7 @@ type LedgerError blk = LedgerErr LedgerState blk
 -------------------------------------------------------------------------------}
 
 -- | The per-block era\/table logic of UTxO-HD: the opaque table payloads
--- (@Keys@\/@Values@\/@Diff blk@) plus the pure operations on them.
+-- (@Keys@\/@Values@\/@*Diff blk@) plus the pure operations on them.
 --
 -- This lives in "Ouroboros.Consensus.Ledger.Basics" (rather than its own
 -- module) because 'IsLedger' has it as a superclass (it provides the @Diff blk@
@@ -308,16 +287,16 @@ type LedgerError blk = LedgerErr LedgerState blk
 -- Instances:
 --
 --   * Shelley carries the real instance: @Keys = Set TxIn@,
---     @Values = Map TxIn TxOut@, @Diff = Diff TxIn TxOut@.
+--     @Values = Map TxIn TxOut@, @*Diff = Diff TxIn TxOut@.
 --
 --   * Byron\/mock blocks have no on-disk tables, so their @Keys@\/@Values@\/
 --     @Diff@ are trivial (@Void@\/@()@).
 --
---   * The hard-fork combinator uses era-tagged @NS@ payloads; 'forward'
+--   * The hard-fork combinator uses era-tagged @NS@ payloads; 'forwardTickDiff'
 --     translates values across a rare era boundary using the per-era
 --     translations carried on the 'CanHardFork' class (no config needed).
 type BlockSupportsUTxOHD :: Type -> Constraint
-class (Semigroup (Diff blk), Semigroup (Keys blk)) => BlockSupportsUTxOHD blk where
+class (Semigroup (TxsDiff blk), Semigroup (Keys blk)) => BlockSupportsUTxOHD blk where
   -- | The keys a block consumes, e.g. the @TxIn@s spent by its transactions.
   type Keys blk :: Type
 
@@ -325,29 +304,41 @@ class (Semigroup (Diff blk), Semigroup (Keys blk)) => BlockSupportsUTxOHD blk wh
   -- resolve to.
   type Values blk :: Type
 
-  -- | The change a block produces to the tables: a 'Semigroup' so that a
-  -- sequence of diffs composes (later diffs winning).
-  type Diff blk :: Type
+  -- | The changes a tick produces to the tables.
+  type TickDiff blk :: Type
+
+  -- | The changes a block (re)application produces to the tables.
+  type BlockDiff blk :: Type
+
+  -- | The combined changes from ticking a (re)applying a block
+  type TickAndBlockDiff blk :: Type
+
+  -- | The changes a transaction produces to the tables: a 'Semigroup'
+  -- so that a sequence of diffs composes.
+  --
+  -- This semigroup is not commutative! The 'TxsDiff's must be
+  -- composed in the same order the originating transactions were
+  -- applied.
+  type TxsDiff blk :: Type
 
   -- | Extract the keys a block consumes (phase 1). Pure and essentially free.
   blockKeys :: blk -> Keys blk
 
-  -- | Apply diffs to read values, ordered oldest-to-newest. Pure and
-  -- config-free.
+  -- | Combine the diffs from ticking and block application, as for
+  -- @tickThenApply@, for example.
   --
-  -- For single-era blocks this is just @'applyDiff' ('mconcat' diffs)@. For the
-  -- hard-fork combinator the common case is same-era (the diff and values share
-  -- the era tag); the rare boundary case (a ticked diff at era @E+1@ over values
-  -- still at era @E@) first upgrades the values @E → E+1@ using the per-era
-  -- translations carried on the 'CanHardFork' class (@hardForkEraTranslation@),
-  -- so no config is needed here.
-  --
-  -- @'forward' [] = 'id'@ must hold genuinely so that, per block, applying an
-  -- empty diff never rebuilds the values.
-  --
-  -- Note: @blk@ occurs only under the non-injective families 'Diff'\/'Values',
-  -- so call sites disambiguate with @'forward' \@blk diffs vals@.
-  forward :: [Diff blk] -> Values blk -> Values blk
+  -- INVARIANT For the
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkBlock',
+  -- the two argument diffs will _already_ be in the same era.
+  combineTickAndBlockDiff :: TickDiff blk -> BlockDiff blk -> TickAndBlockDiff blk
+
+  forwardTickDiff :: TickDiff blk -> Values blk -> Values blk
+
+  -- TODO this seems to only be needed by the @Dual@ block; I suspect
+  -- we could refactor there to eliminate the need for this
+  forwardBlockDiff :: BlockDiff blk -> Values blk -> Values blk
+  forwardTickAndBlockDiff :: TickAndBlockDiff blk -> Values blk -> Values blk
+  forwardTxsDiff :: TxsDiff blk -> Values blk -> Values blk
 
   -- | Restrict the values to the given keys. This is the point read of the
   -- InMemory backend.
@@ -377,7 +368,7 @@ class (Semigroup (Diff blk), Semigroup (Keys blk)) => BlockSupportsUTxOHD blk wh
 -- These are the operations that need to see the entries of a table at the
 -- /concrete era level/: paging for @QFTraverseTables@ queries, and the
 -- entry-level (de)construction the on-disk (LSM) backend needs to turn the
--- opaque @'Keys'@\/@'Values'@\/@'Diff'@ into individual @('TxIn', 'TxOut')@
+-- opaque @'Keys'@\/@'Values'@\/@*Diff@ into individual @('TxIn', 'TxOut')@
 -- rows. The 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkBlock' has
 -- /no/ instance: it answers such requests by dispatching to the current era
 -- (via @matchNS@, see the LSM backend's @BlockSupportsLSM@) and working there,
@@ -394,6 +385,10 @@ class
   ) =>
   SingleEraBlockSupportsUTxOHD blk
   where
+  type TxIn blk
+
+  type TxOut blk
+
   -- | Read a bounded range of values, optionally starting just after a given
   -- key. Returns the read values and the last key read (if any), to be fed back
   -- for the next page.
@@ -414,7 +409,7 @@ class
 
   -- | The diff as a plain list of per-key insert\/delete deltas (e.g. to batch
   -- onto the on-disk backend).
-  diffToList :: Diff blk -> [(TxIn blk, Diff.Delta (TxOut blk))]
+  diffToList :: TickAndBlockDiff blk -> [(TxIn blk, Diff.Delta (TxOut blk))]
 
   -- | Serialise a @'TxIn'@ to on-disk key bytes whose unsigned lexicographic
   -- order matches the Haskell @'Ord' ('TxIn' blk)@.
@@ -437,13 +432,37 @@ class
   default unpackTxInBytes :: Buffer b => b -> Either SomeError (TxIn blk)
   unpackTxInBytes = unpackEither
 
--- | Operations only the single-era blocks support. The hard-fork combinator
--- has no single era to point at, so it cannot provide 'emptyValues' \/ 'emptyDiffs'
--- (and never needs them).
-type SingleEraUTxOHDBlock :: Type -> Constraint
-class BlockSupportsUTxOHD blk => SingleEraUTxOHDBlock blk where
-  -- | The empty set of values.
   emptyValues :: Values blk
 
-  -- | The empty diff.
-  emptyDiffs :: Diff blk
+  emptyTickDiff :: TickDiff blk
+
+  -- | Combine 'TickDiff' that arose from translation with
+  -- 'TickDiff' from aroes from the _actual_ tick
+  --
+  -- For the
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkBlock'
+  -- tick logic: when the tick's destination slot is in the next
+  -- era, the HFC first translates the given ledger state into the
+  -- next era, and /then/ calls this function for the /new era/ to
+  -- reach the given destination slot. Thus the result of the
+  -- translation function should anticipate that subsequent tick
+  -- call in the new era and the tick logic should anticipate that
+  -- its starting state might be the translation of a ledger state
+  -- from /before/ the era boundary.
+  --
+  -- In particular, the combination of the translation and the
+  -- subsequent tick will need to correctly implement any necessary
+  -- "end of epoch" and "end of era" logic specific to the old
+  -- era.
+  --
+  -- This method must specifically combine the translation's
+  -- 'TickDiff' with the subsequent tick's 'TickDiff'.
+  --
+  -- At time of writing, all era-specific
+  -- 'applyChainTickLedgerResult' methods always return
+  -- 'emptyTickDiff'. It's only ever 'translateLedgerStateWith' that
+  -- /sometimes/ generates a non-empty 'TickDiff'. Thus, this
+  -- method's second argument is /currently/ always
+  -- 'emptyTickDiff'. And in fact its first argument /usually/ is
+  -- also 'emptyTickDiff'.
+  combineTransAndTickDiff :: TickDiff blk -> TickDiff blk -> TickDiff blk

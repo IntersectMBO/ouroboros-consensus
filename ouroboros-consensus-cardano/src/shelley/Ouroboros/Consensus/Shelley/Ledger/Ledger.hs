@@ -392,14 +392,6 @@ instance MemPack BigEndianTxIn where
   unpackM = do
     BigEndianTxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
 
--- | The Shelley @TxIn@ is the plain ledger 'SL.TxIn'. Big-endian serialisation
--- (needed so the on-disk\/streamed entries sort the same as the Haskell 'Ord')
--- is applied only at the (de)serialisation boundary, by casting the map keys
--- through 'BigEndianTxIn'. See 'encodeValues'\/'decodeValues'.
-type instance TxIn (ShelleyBlock proto era) = SL.TxIn
-
-type instance TxOut (ShelleyBlock proto era) = Core.TxOut era
-
 instance
   ShelleyCompatible proto era =>
   BlockSupportsUTxOHD (ShelleyBlock proto era)
@@ -409,14 +401,27 @@ instance
     Values (ShelleyBlock proto era) =
       Map (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
   type
-    Diff (ShelleyBlock proto era) =
+    TickDiff (ShelleyBlock proto era) =
+      Diff.Diff (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
+  type
+    BlockDiff (ShelleyBlock proto era) =
+      Diff.Diff (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
+  type
+    TickAndBlockDiff (ShelleyBlock proto era) =
+      Diff.Diff (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
+  type
+    TxsDiff (ShelleyBlock proto era) =
       Diff.Diff (TxIn (ShelleyBlock proto era)) (TxOut (ShelleyBlock proto era))
 
   blockKeys = Core.neededTxInsForBlock . shelleyBlockRaw
 
-  -- One era ⇒ no translation. Replay the in-flight diffs in chain order; the
-  -- 'Diff' 'Monoid' composes them so later ones win.
-  forward diffs vals = Diff.applyDiff vals (mconcat diffs)
+  -- One era ⇒ no translation; compose\/apply the diffs directly (the 'Diff'
+  -- 'Semigroup' composes in chain order, so later entries win).
+  combineTickAndBlockDiff tickDiff blockDiff = tickDiff <> blockDiff
+  forwardTickDiff diff vals = Diff.applyDiff vals diff
+  forwardBlockDiff diff vals = Diff.applyDiff vals diff
+  forwardTickAndBlockDiff diff vals = Diff.applyDiff vals diff
+  forwardTxsDiff diff vals = Diff.applyDiff vals diff
 
   restrictValues keys vals = vals `Map.restrictKeys` keys
 
@@ -444,15 +449,16 @@ instance
 
 instance
   ShelleyCompatible proto era =>
-  SingleEraUTxOHDBlock (ShelleyBlock proto era)
-  where
-  emptyValues = Map.empty
-  emptyDiffs = mempty
-
-instance
-  ShelleyCompatible proto era =>
   SingleEraBlockSupportsUTxOHD (ShelleyBlock proto era)
   where
+  -- \| The Shelley @TxIn@ is the plain ledger 'SL.TxIn'. Big-endian serialisation
+  -- (needed so the on-disk\/streamed entries sort the same as the Haskell 'Ord')
+  -- is applied only at the (de)serialisation boundary, by casting the map keys
+  -- through 'BigEndianTxIn'. See 'encodeValues'\/'decodeValues'.
+  type TxIn (ShelleyBlock proto era) = SL.TxIn
+
+  type TxOut (ShelleyBlock proto era) = Core.TxOut era
+
   rangeReadValues (mbPrev, n) vals =
     let toRead = case mbPrev of
           Nothing -> vals
@@ -470,6 +476,10 @@ instance
   -- 'TxIx' and would sort differently. Mirrors 'encodeValues'\/'decodeValues'.
   packTxInBytes = packByteArray True . BigEndianTxIn
   unpackTxInBytes = fmap getOriginalTxIn . unpackEither
+
+  emptyValues = Map.empty
+  emptyTickDiff = mempty
+  combineTransAndTickDiff = (<>)
 
 {-------------------------------------------------------------------------------
   GetTip
@@ -503,7 +513,7 @@ data instance Ticked LedgerState (ShelleyBlock proto era) = TickedShelleyLedgerS
 
 -- | The ticked Shelley 'SL.NewEpochState'.
 --
--- ⚠️  Its UTxO field is EMPTY by design (see 'shelleyLedgerState'): the live
+-- WARNING: Its UTxO field is EMPTY by design (see 'shelleyLedgerState'): the live
 -- UTxO lives in the ledger tables, not the state.
 tickedShelleyLedgerState ::
   Ticked LedgerState (ShelleyBlock proto era) -> SL.NewEpochState era
@@ -614,7 +624,7 @@ applyHelper ::
     (SL.BlockTransitionError era)
     ( LedgerResult
         (ShelleyBlock proto era)
-        (LedgerState (ShelleyBlock proto era), Diff (ShelleyBlock proto era))
+        (LedgerState (ShelleyBlock proto era), BlockDiff (ShelleyBlock proto era))
     )
 applyHelper evs doValidate cfg blk values stBefore = do
   let TickedShelleyLedgerState

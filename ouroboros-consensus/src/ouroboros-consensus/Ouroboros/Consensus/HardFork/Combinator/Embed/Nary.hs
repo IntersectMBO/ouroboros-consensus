@@ -30,6 +30,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 
 import Data.Bifunctor (first)
 import Data.Coerce (Coercible, coerce)
+import Data.Functor.Product (Product (Pair))
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
 import Data.SOP.Counting (Exactly (..))
@@ -48,7 +49,7 @@ import Ouroboros.Consensus.HeaderValidation
   , HeaderState (..)
   , genesisHeaderState
   )
-import Ouroboros.Consensus.Ledger.Basics (Values, emptyValues, forward)
+import Ouroboros.Consensus.Ledger.Basics (Values, emptyValues, forwardTickDiff)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Storage.Serialisation
@@ -294,12 +295,16 @@ injectInitialExtLedgerState cfg extLedgerState0 =
   -- than discarding it) and turn it into the genesis 'Values' the LedgerDB
   -- needs alongside the ledger state.
   targetEraLedgerStateInner :: HardForkState LedgerState (x ': xs)
-  genesisDiff :: NS WrapDiff (x ': xs)
+  genesisDiff :: NS WrapTickDiff (x ': xs)
   (targetEraLedgerStateInner, genesisDiff) =
-    State.extendToSlot
-      (configLedger cfg)
-      (SlotNo 0)
-      (initHardForkState (ledgerState extLedgerState0))
+    let extended =
+          State.extendToSlot
+            (configLedger cfg)
+            (SlotNo 0)
+            (initHardForkState (ledgerState extLedgerState0))
+     in ( hmap (\(Pair ticked _) -> ticked) extended
+        , State.tip $ hmap (\(Pair _ tickDiff) -> tickDiff) extended
+        )
 
   targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs))
   targetEraLedgerState = HardForkLedgerState targetEraLedgerStateInner
@@ -310,8 +315,8 @@ injectInitialExtLedgerState cfg extLedgerState0 =
   genesisValues = hcmap proxySingle diffToValues genesisDiff
    where
     diffToValues ::
-      forall blk. SingleEraBlock blk => WrapDiff blk -> WrapValues blk
-    diffToValues (WrapDiff d) = WrapValues (forward @blk [d] (emptyValues @blk))
+      forall blk. SingleEraBlock blk => WrapTickDiff blk -> WrapValues blk
+    diffToValues (WrapTickDiff d) = WrapValues (forwardTickDiff @blk d (emptyValues @blk))
 
   firstEraChainDepState :: HardForkChainDepState (x ': xs)
   firstEraChainDepState =

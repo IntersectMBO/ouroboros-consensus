@@ -104,7 +104,7 @@ type data WhatToDoWithTxDiffs = Collect | Discard
 -- differences, we don't even have differences around that we might misuse.
 type family InputTxDiffs blk wtd where
   InputTxDiffs blk Discard = ()
-  InputTxDiffs blk Collect = Diff blk
+  InputTxDiffs blk Collect = TxsDiff blk
 
 class
   ( UpdateLedger blk
@@ -139,7 +139,7 @@ class
     -- through the diffs of the txs already in the mempool).
     Values blk ->
     TickedLedgerState blk ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk, Diff blk, Validated (GenTx blk))
+    Except (ApplyTxErr blk) (TickedLedgerState blk, TxsDiff blk, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -160,7 +160,7 @@ class
     -- | At least the values the tx consumes.
     Values blk ->
     TickedLedgerState blk ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk, Diff blk)
+    Except (ApplyTxErr blk) (TickedLedgerState blk, TxsDiff blk)
 
   -- | Apply a list of previously validated transactions to a new ledger state.
   --
@@ -194,7 +194,7 @@ class
     step (accE, accV, st, vals) a@(vtx, _, _) =
       case runExcept (reapplyTx cfg slot vtx vals st) of
         Left err -> (Invalidated vtx err : accE, accV, st, vals)
-        Right (st', diff) -> (accE, a : accV, st', forward @blk [diff] vals)
+        Right (st', diff) -> (accE, a : accV, st', forwardTxsDiff @blk diff vals)
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk

@@ -81,7 +81,6 @@ class
   , SerialiseNodeToClient blk (PartialLedgerConfig blk)
   , -- UTxO-HD: each era supports the opaque table surface
     BlockSupportsUTxOHD blk
-  , SingleEraUTxOHDBlock blk
   , SingleEraBlockSupportsUTxOHD blk
   , -- Instances required to support testing
     Eq (GenTx blk)

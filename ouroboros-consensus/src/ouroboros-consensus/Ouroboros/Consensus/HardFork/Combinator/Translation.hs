@@ -21,8 +21,6 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 data EraTranslation xs = EraTranslation
   { translateLedgerState ::
       !(InPairs (RequiringBoth WrapLedgerConfig TranslateLedgerState) xs)
-  , translateDiff ::
-      !(InPairs TranslateDiff xs)
   , translateValues ::
       !(InPairs TranslateValues xs)
   , translateKeys ::
@@ -40,7 +38,6 @@ trivialEraTranslation :: EraTranslation '[blk]
 trivialEraTranslation =
   EraTranslation
     { translateLedgerState = PNil
-    , translateDiff = PNil
     , translateValues = PNil
     , translateKeys = PNil
     , crossEraForecast = PNil
