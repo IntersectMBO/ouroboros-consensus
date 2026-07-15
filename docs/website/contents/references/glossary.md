@@ -466,6 +466,12 @@ Nodes communicate with other nodes via a set of two-party protocols in which one
 
 The prefix of the node's selection that excludes the youngest `k` blocks.
 
+## ;Node-to-node protocol
+
+The set of [mini protocols](#mini-protocol) (ChainSync, BlockFetch, TxSubmission) that Cardano nodes use to exchange blocks, headers, and transactions with each other.
+Its wire format is negotiated at connection time via a `NodeToNodeVersion`.
+See [Hard forks and node-to-node versioning](../explanations/hard_forks_and_node_to_node_versioning.md).
+
 ## ;Nonce
 
 The [ledger state](#ledger-state) maintains a nonce, updated by each block's header, independent of the block body. The ledger takes a snapshot of this nonce once per epoch. The snapshot taken during one epoch is used by VRFs in the next epoch.
