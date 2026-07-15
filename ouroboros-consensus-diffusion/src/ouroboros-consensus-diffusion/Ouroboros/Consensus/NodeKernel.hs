@@ -740,19 +740,18 @@ decideLeiosCertify ::
   ( Monad m
   , ResolveLeiosBlock blk
   , ConvertRawHash blk
+  , HasAnnTip blk
   ) =>
   LeiosDbConnection m ->
   LeiosVoteState m ->
   Tracer m TraceLeiosKernel ->
   -- | The slot we are forging for.
   SlotNo ->
-  -- | The (unticked) chain dep state we are extending.
-  ChainDepState (BlockProtocol blk) ->
-  -- | The hash of the block we are forging on top of (the announcing RB).
-  ChainHash blk ->
+  -- | The state of the header we are extending.
+  HeaderState blk ->
   m (Maybe (LeiosCert, Leios.LeiosPoint))
-decideLeiosCertify leiosDb voteState tracer currentSlot cds tipHash =
-  case protocolStateLeiosAnnouncement @blk cds of
+decideLeiosCertify leiosDb voteState tracer currentSlot headerState =
+  case protocolStateLeiosAnnouncement @blk (headerStateChainDep headerState) of
     Nothing -> pure Nothing
     Just (ebPoint, _ebSize)
       | unSlotNo currentSlot - unSlotNo (Leios.pointSlotNo ebPoint) <= Leios.minCertificationGap ->
@@ -772,11 +771,12 @@ decideLeiosCertify leiosDb voteState tracer currentSlot cds tipHash =
               -- The announcing RB is the block we're forging on top of;
               -- EB certification must happen within one block (this is the
               -- linear aspect of linear Leios).
-              case tipHash of
-                GenesisHash ->
-                  error "decideLeiosCertify: cannot certify on top of genesis"
-                BlockHash h -> do
-                  let announcingRb = Leios.MkRbHash (toRawHash (Proxy @blk) h)
+              case headerStateTip headerState of
+                Origin -> error "decideLeiosCertify: cannot certify on top of genesis"
+                At tip -> do
+                  -- the hash of the block we will be forging on top of (the announcing RB).
+                  let tipHash = annTipHash tip
+                      announcingRb = Leios.MkRbHash (toRawHash (Proxy @blk) tipHash)
                   mCert <- queryCert voteState announcingRb
                   case mCert of
                     Nothing -> do
@@ -966,8 +966,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                 leiosVoteState
                 (leiosKernelTracer tracers)
                 currentSlot
-                (headerStateChainDep (headerState unticked))
-                (pointHash bcPrevPoint)
+                (headerState unticked)
 
           let rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
               ebCap = fromMaybe Data.Measure.zero $ ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
