@@ -8,6 +8,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Intended for qualified import
@@ -63,6 +64,7 @@ import Control.DeepSeq (NFData)
 import Control.Monad (forM_, forever, void, when)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
+import Control.Monad.Except (runExceptT)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.ByteString.Lazy (ByteString)
@@ -70,6 +72,7 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Primitive.MutVar as Prim
 import qualified Data.Set as Set
 import Data.Void (Void)
 import LeiosDemoDb
@@ -79,6 +82,7 @@ import LeiosDemoDb
   , withLeiosDb
   )
 import qualified LeiosDemoLogic as Leios
+import qualified LeiosDemoLogic.Announcements as Announcements
 import LeiosDemoOnlyTestFetch
   ( LeiosFetch
   , LeiosFetchClientPeerPipelined
@@ -149,7 +153,11 @@ import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( ResolveLeiosBlock
+  , headerElId
+  , headerLeiosAnnouncement
+  )
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
@@ -453,6 +461,10 @@ mkHandlers
           let tracer = leiosPeerTracer peer
               kernelTracer = Node.leiosKernelTracer tracers
               LeiosVoteState{addVote} = leiosVoteState
+          -- Per-upstream-peer announcement accountability (dedup and
+          -- equivocation counting). The pipelined-client handler is a stateless
+          -- callback, so this state lives in a (single-threaded) ref.
+          peerStateVar <- Prim.newMutVar Announcements.emptyPeerState
           pure $
             leiosNotifyClientPeerPipelined
               ( atomically controlMessageSTM <&> \case
@@ -461,13 +473,31 @@ mkHandlers
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement hdr -> do
-                    immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
-                    Leios.onAnnouncement
-                      tracer
-                      getTopLevelConfig
-                      (getLeiosOutstanding, getLeiosReady)
-                      immLedger
-                      hdr
+                    st0 <- Prim.readMutVar peerStateVar
+                    res <-
+                      runExceptT $
+                        Announcements.onAnnouncement
+                          nullTracer
+                          (\(Leios.AncHeader h) -> headerElId h)
+                          ( \(Leios.AncHeader h) -> do
+                              immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
+                              pure $ Leios.announcementValidity getTopLevelConfig immLedger h
+                          )
+                          ( \(Leios.AncHeader h) -> forM_ (headerLeiosAnnouncement h) $ \pt@(point, _sz) -> do
+                              MVar.modifyMVar_ getLeiosOutstanding (pure . Leios.recordAnnouncedEb pt)
+                              traceWith tracer $
+                                MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement " <> Leios.prettyLeiosPoint point
+                              void $ MVar.tryPutMVar getLeiosReady ()
+                          )
+                          st0
+                          (Leios.AncHeader hdr)
+                    case res of
+                      Right st' -> Prim.writeMutVar peerStateVar st'
+                      Left err -> case Leios.reactToAnnouncementError @blk err of
+                        Leios.ReactSkip reason ->
+                          traceWith tracer $
+                            MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement skipped: " <> reason
+                        Leios.ReactDisconnect exn -> throwIO exn
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
                     let MkLeiosPoint{pointEbHash = ebHash} = point

@@ -202,7 +202,7 @@ data instance Header (ShelleyBlock proto era) = ShelleyHeader
   deriving Generic
 
 deriving instance ShelleyCompatible proto era => Show (Header (ShelleyBlock proto era))
-deriving instance ShelleyCompatible proto era => Eq (Header (ShelleyBlock proto era))
+deriving instance ShelleyCompatible proto era => Eq (Header (ShelleyBlock proto era))   -- TODO sound to use only 'shelleyHeaderHash'?
 deriving instance ShelleyCompatible proto era => NoThunks (Header (ShelleyBlock proto era))
 
 instance

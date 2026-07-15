@@ -1,11 +1,14 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module LeiosDemoLogic (module LeiosDemoLogic) where
 
@@ -47,6 +50,7 @@ import LeiosDemoDb
   , leiosDbInsertTxs
   , leiosDbLookupEbBody
   )
+import qualified LeiosDemoLogic.Announcements as Announcements
 import LeiosDemoLogic.Announcements.Validate
   ( AnnouncementInvalidity (..)
   , validateAnnouncementHeader
@@ -75,7 +79,7 @@ import LeiosDemoTypes
   , maxTxsPerEb
   )
 import qualified LeiosDemoTypes as Leios
-import Ouroboros.Consensus.Block (BlockProtocol, Header)
+import Ouroboros.Consensus.Block (BlockProtocol, HasHeader, Header, headerHash)
 import Ouroboros.Consensus.Config (TopLevelConfig)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
@@ -952,61 +956,102 @@ leiosCertRbCallback kernelVars peerVars hdr cds =
 
 -----
 
--- | Thrown when a peer relays a genuinely-invalid EB announcement; the ensuing
+-- The pure logic for handling an inbound 'MsgLeiosBlockAnnouncement'. The
+-- effectful glue (reading the immutable tip, the 'Announcements.PeerState' ref,
+-- 'MVar' updates, tracing, and 'throwIO') lives in the NodeToNode client, which
+-- invokes 'Announcements.onAnnouncement' with these pieces.
+
+-- | 'Header blk' as a relayed LeiosNotify announcement. The 'Eq' instance
+-- compares by header hash: that is the one identity used for announcement dedup
+-- and equivocation counting (see 'Announcements.onAnnouncement').
+newtype AncHeader blk = AncHeader (Header blk)
+
+instance HasHeader (Header blk) => Eq (AncHeader blk) where
+  AncHeader a == AncHeader b = headerHash a == headerHash b
+
+-- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
 -- thread death disconnects the peer.
 data ExnInvalidLeiosAnnouncement =
+    -- | Re-sent an announcement it had already sent
+    ExnRepeatedAnnouncement
+  |
+    -- | Sent a third announcement for a single election
+    ExnThirdAnnouncement
+  |
+    -- | Sent a 'MsgLeiosBlockAnnouncement' whose header carries no announcement
     ExnNoAnnouncement
   |
+    -- | Sent an announcement whose header is invalid
     ExnInvalidHeader
+  |
+    -- | Sent an announcement for a slot beyond our immutable tip's forecast
+    -- horizon. A fresh announcement is always within horizon for a caught-up
+    -- node, so this is either a bogus far-future slot or we're falling behind.
+    -- If we're falling behind, then either we're unhealthy or our honest peers
+    -- aren't serving us well (eg we have very bad connections), so disconnecting
+    -- from non-adversarial peers seems OK.
+    --
+    -- We cannot simply ignore in this case, because there's an unbounded amount
+    -- of bogus announcements in far-future slots.
+    ExnBeyondForecastHorizon
   deriving Show
 
 instance Exception ExnInvalidLeiosAnnouncement
 
--- | Handle an inbound 'MsgLeiosBlockAnnouncement': validate the relayed RB
--- header (see 'validateAnnouncementHeader'), then record the EB body as missing
--- and wake the fetch logic, skip it, or disconnect the peer (see
--- 'AnnouncementDisposition').
-onAnnouncement ::
-  forall blk pid m.
-  (IOLike m, LedgerSupportsProtocol blk, ResolveLeiosBlock blk) =>
-  Tracer m TraceLeiosPeer ->
+-- | The @validate@ callback for 'Announcements.onAnnouncement': the
+-- announcement's invalidity, if any.
+announcementValidity ::
+  (LedgerSupportsProtocol blk, ResolveLeiosBlock blk) =>
   TopLevelConfig blk ->
-  ( MVar m (LeiosOutstanding pid)
-  , MVar m ()
-  ) ->
-  -- | The immutable tip's ledger state.
   ExtLedgerState blk EmptyMK ->
   Header blk ->
-  m ()
-onAnnouncement tracer cfg (outstandingVar, readyVar) immLedger hdr =
-  case validateAnnouncementHeader cfg immLedger hdr of
-    Right (point, ebBytesSize) -> do
-      traceWith tracer $
-        MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement " <> Leios.prettyLeiosPoint point
-      let MkLeiosPoint _ebSlot ebHash = point
-      MVar.modifyMVar_ outstandingVar $ \outstanding ->
-        pure $
-          if Set.member ebHash (Leios.acquiredEbBodies outstanding)
-            || any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding))
-            then outstanding
-            else
-              outstanding
-                { Leios.missingEbBodies =
-                    Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
-                }
-      void $ MVar.tryPutMVar readyVar ()
-    Left NoAnnouncement ->
-      throwIO ExnNoAnnouncement
-    Left (OutsideHorizon _) ->
-      traceWith tracer $
-        MkTraceLeiosPeer "MsgLeiosBlockAnnouncement skipped: announced slot beyond forecast horizon"
-    Left (HeaderInvalid err) ->
+  Maybe (AnnouncementInvalidity blk)
+announcementValidity cfg immLedger hdr =
+  either Just (const Nothing) (validateAnnouncementHeader cfg immLedger hdr)
+
+-- | Record a validated, newly-announced EB body as missing, with its
+-- authoritative (forger-signed) size. First-seen wins: a no-op if the body is
+-- already acquired or already recorded.
+recordAnnouncedEb ::
+  (LeiosPoint, BytesSize) ->
+  LeiosOutstanding pid ->
+  LeiosOutstanding pid
+recordAnnouncedEb (point, ebBytesSize) outstanding =
+    if Set.member ebHash (Leios.acquiredEbBodies outstanding)
+       || any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding))
+      then outstanding
+      else
+        outstanding
+          { Leios.missingEbBodies =
+              Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
+          }
+  where
+    MkLeiosPoint _ebSlot ebHash = point
+
+-- | What the NodeToNode client should do with an 'Announcements.ErrAnnouncement'.
+data AnnouncementReaction =
+    -- | Do not relay, but do not disconnect; trace the given reason.
+    ReactSkip !String
+  |
+    -- | Disconnect the peer by throwing the given exception.
+    ReactDisconnect !ExnInvalidLeiosAnnouncement
+
+reactToAnnouncementError ::
+  forall blk.
+  ResolveLeiosBlock blk =>
+  Announcements.ErrAnnouncement (AnnouncementInvalidity blk) ->
+  AnnouncementReaction
+reactToAnnouncementError = \case
+    Announcements.ErrRepeat -> ReactDisconnect ExnRepeatedAnnouncement
+    Announcements.ErrThird -> ReactDisconnect ExnThirdAnnouncement
+    Announcements.ErrInvalid NoAnnouncement -> ReactDisconnect ExnNoAnnouncement
+    Announcements.ErrInvalid (OutsideHorizon _) ->
+      ReactDisconnect ExnBeyondForecastHorizon
+    Announcements.ErrInvalid (HeaderInvalid err) ->
       case classifyAnnouncementValidationErr @blk err of
         SkipAnnouncement ->
-          traceWith tracer $
-            MkTraceLeiosPeer "MsgLeiosBlockAnnouncement skipped: opcert counter not verifiable against immutable tip"
-        DisconnectPeer ->
-          throwIO ExnInvalidHeader
+          ReactSkip "opcert counter not verifiable against immutable tip"
+        DisconnectPeer -> ReactDisconnect ExnInvalidHeader
 
 lEIOSNOTIFYPIPELINEDEPTH :: Int
 lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number
