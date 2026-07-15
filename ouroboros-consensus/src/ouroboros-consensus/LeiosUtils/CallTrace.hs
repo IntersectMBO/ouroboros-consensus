@@ -19,6 +19,7 @@ module LeiosUtils.CallTrace
   , CallInfo (..)
   , CallMeasure (..)
   , rootCallCtx
+  , MonadAllocationCounter (getAllocationCounter)
   ) where
 
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -32,8 +33,10 @@ import Control.Monad.Class.MonadTime.SI (MonadMonotonicTime (getMonotonicTime), 
 import Control.Monad.Class.MonadTimer.SI (DiffTime)
 import Data.Aeson (KeyValue ((.=)))
 import qualified Data.Aeson as Aeson
+import Data.Int (Int64)
 import Data.List (intercalate)
 import Data.Word (Word64)
+import qualified GHC.Conc.Sync as IO
 
 type CallId = Word64
 type CallName = String
@@ -76,6 +79,7 @@ data CallEvent r
 
 data CallMeasure = CallMeasure
   { cmDuration :: DiffTime
+  , cmAllocations :: Int64
   }
   deriving stock (Show, Eq)
 
@@ -91,6 +95,7 @@ callTraceToObject ct =
         [ "event" .= Aeson.String "End"
         , "result" .= Aeson.toJSON result
         , "duration" .= Aeson.toJSON (cmDuration measure)
+        , "allocations" .= Aeson.toJSON (cmAllocations measure)
         ]
     ci = ctCallInfo ct
    in
@@ -108,7 +113,7 @@ callTraceToObject ct =
 
 callTrace ::
   forall m a r.
-  (MonadSTM m, MonadMonotonicTime m) =>
+  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
   -- | Tracing action
   (CallTrace a r -> m ()) ->
   -- | Parent context
@@ -129,12 +134,20 @@ callTrace trace pctx thread cn arg action = do
   trace (CallTrace (ccCallInfo ctx) arg (CallEnd res callMeasure))
   pure res
 
-withMeasure :: MonadMonotonicTime m => m r -> m (r, CallMeasure)
+withMeasure :: (MonadMonotonicTime m, MonadAllocationCounter m) => m r -> m (r, CallMeasure)
 withMeasure action = do
-  before <- getMonotonicTime
+  beforeTime <- getMonotonicTime
+  beforeAlloc <- getAllocationCounter
   res <- action
-  after <- getMonotonicTime
-  return (res, CallMeasure{cmDuration = after `diffTime` before})
+  afterTime <- getMonotonicTime
+  afterAlloc <- getAllocationCounter
+  return
+    ( res
+    , CallMeasure
+        { cmDuration = afterTime `diffTime` beforeTime
+        , cmAllocations = beforeAlloc - afterAlloc
+        }
+    )
 
 childCallCtx :: MonadSTM m => CallCtx m -> ThreadName -> CallName -> m (CallCtx m)
 childCallCtx pctx thread cn = do
@@ -185,3 +198,10 @@ callNameStack = intercalate " -> " . reverse . fmap snd . callStack
 
 callIdStack :: CallInfo -> String
 callIdStack = intercalate " -> " . reverse . fmap (show . fst) . callStack
+
+-- | Allocation measurements machinery
+class Monad m => MonadAllocationCounter m where
+  getAllocationCounter :: m (Int64)
+
+instance MonadAllocationCounter IO where
+  getAllocationCounter = IO.getAllocationCounter
