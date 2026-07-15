@@ -105,6 +105,8 @@ library
     LeiosDemoDb.Trace
     LeiosDemoException
     LeiosDemoLogic
+    LeiosDemoLogic.Announcements
+    LeiosDemoLogic.Announcements.ElBimap
     LeiosDemoOnlyTestFetch
     LeiosDemoOnlyTestNotify
     LeiosDemoTypes
