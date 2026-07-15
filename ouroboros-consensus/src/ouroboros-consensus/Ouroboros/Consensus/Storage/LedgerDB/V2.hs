@@ -211,8 +211,8 @@ mkInternals ldb h snapManager =
                       (ledgerDbCfgComputeLedgerEvents (ldbCfg env))
                       (ledgerDbCfg $ ldbCfg env)
                       blk
-                      tables
                       st
+                      tables
               forkerPush frk st' diff
                 >> Monad.join (atomically (forkerCommit frk))
               pruneLedgerSeq env

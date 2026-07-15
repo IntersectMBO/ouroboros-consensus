@@ -235,7 +235,7 @@ instance SingleEraBlockSupportsLedgerHD ByronBlock where
 -------------------------------------------------------------------------------}
 
 instance ApplyBlock LedgerState ByronBlock where
-  applyBlockLedgerResultWithValidation doValidation opts cfg blk _values ticked =
+  applyBlockLedgerResultWithValidation doValidation opts cfg blk ticked _values =
     fmap (pureLedgerResult . (,BlockDiff UnitTables)) (applyByronBlock doValidation opts cfg blk ticked)
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult validationErrorImpossible

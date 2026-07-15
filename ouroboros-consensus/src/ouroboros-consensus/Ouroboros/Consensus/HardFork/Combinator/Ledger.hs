@@ -190,8 +190,8 @@ instance
     opts
     cfg
     (HardForkBlock (OneEraBlock block))
-    values
-    (TickedHardForkLedgerState transition st) =
+    (TickedHardForkLedgerState transition st)
+    values =
       -- The values are read for the block's era, so they always align with the
       -- block; align block+values first, then align with the ticked telescope.
       case Match.matchNS block values of
@@ -260,7 +260,7 @@ apply doValidate opts index (WrapLedgerConfig cfg) (Pair (Pair (I block) (WrapVa
           . fmap (\(st', BlockDiff diff) -> Pair st' (BlockDiff diff))
           . embedLedgerResult (injectLedgerEvent index)
       )
-    $ applyBlockLedgerResultWithValidation doValidate opts cfg block values tickedSt
+    $ applyBlockLedgerResultWithValidation doValidate opts cfg block tickedSt values
 
 {-------------------------------------------------------------------------------
   UpdateLedger

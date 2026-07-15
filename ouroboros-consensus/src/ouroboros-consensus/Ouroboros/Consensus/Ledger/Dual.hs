@@ -438,19 +438,19 @@ applyHelper ::
   ( ComputeLedgerEvents ->
     LedgerCfg LedgerState m ->
     m ->
-    Values m ->
     Ticked LedgerState m ->
+    Values m ->
     Except (LedgerErr LedgerState m) (LedgerResult m (LedgerState m, BlockDiff m))
   ) ->
   ComputeLedgerEvents ->
   DualLedgerConfig m a ->
   DualBlock m a ->
-  Values (DualBlock m a) ->
   Ticked LedgerState (DualBlock m a) ->
+  Values (DualBlock m a) ->
   Except
     (DualLedgerError m a)
     (LedgerResult (DualBlock m a) (LedgerState (DualBlock m a), BlockDiff (DualBlock m a)))
-applyHelper f opts cfg block@DualBlock{..} vals TickedDualLedgerState{..} = do
+applyHelper f opts cfg block@DualBlock{..} TickedDualLedgerState{..} vals = do
   (ledgerResult, (aux', auxValues')) <-
     agreeOnError
       DualLedgerError
@@ -458,14 +458,14 @@ applyHelper f opts cfg block@DualBlock{..} vals TickedDualLedgerState{..} = do
           opts
           (dualLedgerConfigMain cfg)
           dualBlockMain
-          vals
           tickedDualLedgerStateMain
+          vals
       , applyMaybeBlock
           opts
           (dualLedgerConfigAux cfg)
           dualBlockAux
-          tickedDualLedgerStateAuxValues
           tickedDualLedgerStateAux
+          tickedDualLedgerStateAuxValues
           tickedDualLedgerStateAuxOrig
           tickedDualLedgerStateAuxOrigValues
       )
@@ -494,8 +494,8 @@ instance Bridge m a => ApplyBlock LedgerState (DualBlock m a) where
     evs
     cfg
     block@DualBlock{..}
-    vals
-    TickedDualLedgerState{..} =
+    TickedDualLedgerState{..}
+    vals =
       castLedgerResult ledgerResult <&> \(main', mainDiff) ->
         ( DualLedgerState
             { dualLedgerStateMain = main'
@@ -514,8 +514,8 @@ instance Bridge m a => ApplyBlock LedgerState (DualBlock m a) where
           evs
           (dualLedgerConfigAux cfg)
           dualBlockAux
-          tickedDualLedgerStateAuxValues
           tickedDualLedgerStateAux
+          tickedDualLedgerStateAuxValues
           tickedDualLedgerStateAuxOrig
           tickedDualLedgerStateAuxOrigValues
       ledgerResult =
@@ -523,8 +523,8 @@ instance Bridge m a => ApplyBlock LedgerState (DualBlock m a) where
           evs
           (dualLedgerConfigMain cfg)
           dualBlockMain
-          vals
           tickedDualLedgerStateMain
+          vals
 
 instance Semigroup (TxsDiff m) => Semigroup (TxsDiff (DualBlock m a)) where
   TxsDiff a <> TxsDiff b = TxsDiff $ unTxsDiff $ TxsDiff @m a <> TxsDiff @m b
@@ -713,8 +713,8 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
     wti
     slot
     DualGenTx{..}
-    vals
-    TickedDualLedgerState{..} = do
+    TickedDualLedgerState{..}
+    vals = do
       ((main', mainDiff, mainVtx), (aux', auxDiff, auxVtx)) <-
         agreeOnError
           DualGenTxErr
@@ -723,15 +723,15 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
               wti
               slot
               dualGenTxMain
-              vals
               tickedDualLedgerStateMain
+              vals
           , applyTx
               dualLedgerConfigAux
               wti
               slot
               dualGenTxAux
-              tickedDualLedgerStateAuxValues
               tickedDualLedgerStateAux
+              tickedDualLedgerStateAuxValues
           )
       let vtx =
             ValidatedDualGenTx
@@ -760,8 +760,8 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
     DualLedgerConfig{..}
     slot
     tx@ValidatedDualGenTx{..}
-    vals
-    TickedDualLedgerState{..} = do
+    TickedDualLedgerState{..}
+    vals = do
       ((main', mainDiff), (aux', auxDiff)) <-
         agreeOnError
           DualGenTxErr
@@ -769,14 +769,14 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
               dualLedgerConfigMain
               slot
               vDualGenTxMain
-              vals
               tickedDualLedgerStateMain
+              vals
           , reapplyTx
               dualLedgerConfigAux
               slot
               vDualGenTxAux
-              tickedDualLedgerStateAuxValues
               tickedDualLedgerStateAux
+              tickedDualLedgerStateAuxValues
           )
       return
         ( TickedDualLedgerState
@@ -997,17 +997,17 @@ applyMaybeBlock ::
   LedgerConfig blk ->
   Maybe blk ->
   -- | Ticked values
-  Values blk ->
-  -- | Ticked state
   Ticked LedgerState blk ->
   -- | Original, unticked state
+  Values blk ->
+  -- | Ticked state
   LedgerState blk ->
   -- | Original, unticked values
   Values blk ->
   Except (LedgerError blk) (LedgerState blk, Values blk)
 applyMaybeBlock _ _ Nothing _ _ origSt origVals = return (origSt, origVals)
-applyMaybeBlock evs cfg (Just block) tvals tst _ _ = do
-  (st', diff) <- applyLedgerBlock evs cfg block tvals tst
+applyMaybeBlock evs cfg (Just block) tst tvals _ _ = do
+  (st', diff) <- applyLedgerBlock evs cfg block tst tvals
   return (st', forwardBlockDiff @blk diff tvals)
 
 -- | Lift 'reapplyLedgerBlock' to @Maybe blk@
@@ -1019,14 +1019,14 @@ reapplyMaybeBlock ::
   ComputeLedgerEvents ->
   LedgerConfig blk ->
   Maybe blk ->
-  Values blk ->
   Ticked LedgerState blk ->
+  Values blk ->
   LedgerState blk ->
   Values blk ->
   (LedgerState blk, Values blk)
 reapplyMaybeBlock _ _ Nothing _ _ origSt origVals = (origSt, origVals)
-reapplyMaybeBlock evs cfg (Just block) tvals tst _ _ =
-  let (st', diff) = reapplyLedgerBlock evs cfg block tvals tst
+reapplyMaybeBlock evs cfg (Just block) tst tvals _ _ =
+  let (st', diff) = reapplyLedgerBlock evs cfg block tst tvals
    in (st', forwardBlockDiff @blk diff tvals)
 
 -- | Used when the concrete and abstract implementation should agree on errors

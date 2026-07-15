@@ -352,7 +352,7 @@ validateNewTransaction ::
   , DiffTimeMeasure -> InternalState blk
   )
 validateNewTransaction cfg wti tx txsz fwdValues is =
-  case runExcept (applyTx cfg wti isSlotNo tx fwdValues isLedgerState) of
+  case runExcept (applyTx cfg wti isSlotNo tx isLedgerState fwdValues) of
     Left err -> (Left err, \_dur -> is)
     Right (st', diff, vtx) ->
       ( Right (vtx, diff)
@@ -414,7 +414,7 @@ revalidateTxsFor capacityOverride cfg slot st tickDiff values lastTicketNo txTic
   let inputTxs = map wrap txTickets
 
       ReapplyTxsResult err validTxs st' =
-        reapplyTxs @blk @Collect cfg slot inputTxs (forwardTickDiff @blk tickDiff values) st
+        reapplyTxs @blk @Collect cfg slot inputTxs st (forwardTickDiff @blk tickDiff values)
    in RevalidateTxsResult
         ( IS
             { isTxs = TxSeq.fromList $ map unwrap validTxs
@@ -465,7 +465,7 @@ computeSnapshot cfg slot st tickDiff values txTickets =
    in snapshotFromValidTxs
         ( map unwrap $
             validatedTxs $
-              reapplyTxs @blk @Discard cfg slot inputTxs (forwardTickDiff @blk tickDiff values) st
+              reapplyTxs @blk @Discard cfg slot inputTxs st (forwardTickDiff @blk tickDiff values)
         )
         (castPoint $ getTip st)
         slot

@@ -613,15 +613,15 @@ applyHelper ::
   STS.ValidationPolicy ->
   LedgerConfig (ShelleyBlock proto era) ->
   ShelleyBlock proto era ->
-  Values (ShelleyBlock proto era) ->
   Ticked LedgerState (ShelleyBlock proto era) ->
+  Values (ShelleyBlock proto era) ->
   Either
     (SL.BlockTransitionError era)
     ( LedgerResult
         (ShelleyBlock proto era)
         (LedgerState (ShelleyBlock proto era), BlockDiff (ShelleyBlock proto era))
     )
-applyHelper evs doValidate cfg blk values stBefore = do
+applyHelper evs doValidate cfg blk stBefore values = do
   let TickedShelleyLedgerState
         { tickedShelleyLedgerTransition
         , tickedShelleyLedgerStateNoUTxO
@@ -633,7 +633,7 @@ applyHelper evs doValidate cfg blk values stBefore = do
   -- protocol-header block is handed straight to the ledger (as prepare-11.1
   -- does); the ledger's BBODY rule extracts the header view it needs.
   (nesOut, diff, events) <-
-    applyBlockShim evs doValidate globals (shelleyBlockRaw blk) values tickedShelleyLedgerStateNoUTxO
+    applyBlockShim evs doValidate globals (shelleyBlockRaw blk) tickedShelleyLedgerStateNoUTxO values
 
   let st' =
         ShelleyLedgerState

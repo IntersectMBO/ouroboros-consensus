@@ -484,12 +484,12 @@ applyBlock ::
   m (Either (AnnLedgerError l blk) (l blk, TickAndBlockDiff blk))
 applyBlock evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b ->
-    withValues b (\vs l -> return $ Right $ tickThenReapply evs cfg b vs l)
+    withValues b (\l vs -> return $ Right $ tickThenReapply evs cfg b l vs )
   ApplyVal b ->
     withValues
       b
-      ( \vs l ->
-          case runExcept $ tickThenApply evs cfg b vs l of
+      ( \l vs ->
+          case runExcept $ tickThenApply evs cfg b l vs of
             Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip l) (blockRealPoint b) lerr))
             Right st -> pure (Right st)
       )
@@ -502,12 +502,12 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
  where
   withValues ::
     blk ->
-    (Values blk -> l blk -> m (Either (AnnLedgerError l blk) (l blk, TickAndBlockDiff blk))) ->
+    (l blk -> Values blk -> m (Either (AnnLedgerError l blk) (l blk, TickAndBlockDiff blk))) ->
     m (Either (AnnLedgerError l blk) (l blk, TickAndBlockDiff blk))
   withValues blk f = do
     l <- atomically $ forkerGetLedgerState fo
     vs <- forkerReadTables fo (blockKeys blk)
-    f vs l
+    f l vs
 
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker.

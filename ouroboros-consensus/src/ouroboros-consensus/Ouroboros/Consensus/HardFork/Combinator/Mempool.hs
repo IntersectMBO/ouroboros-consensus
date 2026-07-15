@@ -320,8 +320,8 @@ applyHelper ::
   WhetherToIntervene ->
   SlotNo ->
   txIn (HardForkBlock xs) ->
-  Values (HardForkBlock xs) ->
   TickedLedgerState (HardForkBlock xs) ->
+  Values (HardForkBlock xs) ->
   Except
     (HardForkApplyTxErr xs)
     ( TickedLedgerState (HardForkBlock xs)
@@ -334,8 +334,8 @@ applyHelper
   wti
   slot
   tx
-  values
-  (TickedHardForkLedgerState transition hardForkState) =
+  (TickedHardForkLedgerState transition hardForkState)
+  values =
     case matchPolyTx injs (modeGetTx tx) hardForkState of
       Left mismatch ->
         throwError $
@@ -428,7 +428,7 @@ applyHelper
             let lcfg = unwrapLedgerConfig cfg
             case mode of
               ModeApply -> do
-                (st', diff, vtx) <- applyTx lcfg wti slot tx' vals st
+                (st', diff, vtx) <- applyTx lcfg wti slot tx' st vals
                 pure
                   ApplyResult
                     { arValidatedTx = injectValidatedGenTx index vtx
@@ -437,7 +437,7 @@ applyHelper
                     }
               ModeReapply -> do
                 let vtx' = unwrapValidatedGenTx tx'
-                (st', diff) <- reapplyTx lcfg slot vtx' vals st
+                (st', diff) <- reapplyTx lcfg slot vtx' st vals
                 -- provide the given transaction, which was already validated
                 pure
                   ApplyResult

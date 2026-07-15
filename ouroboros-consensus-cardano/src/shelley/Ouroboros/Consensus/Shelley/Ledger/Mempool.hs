@@ -295,23 +295,23 @@ applyShelleyTx ::
   WhetherToIntervene ->
   SlotNo ->
   GenTx (ShelleyBlock proto era) ->
-  Values (ShelleyBlock proto era) ->
   TickedLedgerState (ShelleyBlock proto era) ->
+  Values (ShelleyBlock proto era) ->
   Except
     (ApplyTxErr (ShelleyBlock proto era))
     ( TickedLedgerState (ShelleyBlock proto era)
     , TxsDiff (ShelleyBlock proto era)
     , Validated (GenTx (ShelleyBlock proto era))
     )
-applyShelleyTx cfg wti slot (ShelleyTx _ tx) values st0 = do
+applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 values = do
   (nesCleared, diff, vtx) <-
     applyTxShim
       (shelleyLedgerGlobals cfg)
       wti
       slot
       tx
-      values
       (tickedShelleyLedgerStateNoUTxO st0)
+      values
 
   pure
     ( st0{tickedShelleyLedgerStateNoUTxO = nesCleared}
@@ -324,21 +324,21 @@ reapplyShelleyTx ::
   LedgerConfig (ShelleyBlock proto era) ->
   SlotNo ->
   Validated (GenTx (ShelleyBlock proto era)) ->
-  Values (ShelleyBlock proto era) ->
   TickedLedgerState (ShelleyBlock proto era) ->
+  Values (ShelleyBlock proto era) ->
   Except
     (ApplyTxErr (ShelleyBlock proto era))
     ( TickedLedgerState (ShelleyBlock proto era)
     , TxsDiff (ShelleyBlock proto era)
     )
-reapplyShelleyTx cfg slot vgtx values st0 = do
+reapplyShelleyTx cfg slot vgtx st0 values = do
   (nesCleared, diff) <-
     reapplyTxShim
       (shelleyLedgerGlobals cfg)
       slot
       vtx
-      values
       (tickedShelleyLedgerStateNoUTxO st0)
+      values
 
   pure (st0{tickedShelleyLedgerStateNoUTxO = nesCleared}, TxsDiff diff)
  where

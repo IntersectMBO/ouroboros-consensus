@@ -267,7 +267,7 @@ reapplyBlock evs cfg b db = do
   let ks = blockKeys b
       StateRef st tbs = currentHandle db
   vals <- read tbs st ks
-  let (st', diff) = tickThenReapply evs cfg b vals st
+  let (st', diff) = tickThenReapply evs cfg b st vals
   newtbs <- duplicateWithDiffs tbs diff
   pure (StateRef st' newtbs)
 
