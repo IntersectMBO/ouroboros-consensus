@@ -460,7 +460,14 @@ mkHandlers
                   _ -> Right Leios.lEIOSNOTIFYPIPELINEDEPTH
               )
               ( pure $ \case
-                  MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
+                  MsgLeiosBlockAnnouncement hdr -> do
+                    immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
+                    Leios.onAnnouncement
+                      tracer
+                      getTopLevelConfig
+                      (getLeiosOutstanding, getLeiosReady)
+                      immLedger
+                      hdr
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
                     let MkLeiosPoint{pointEbHash = ebHash} = point

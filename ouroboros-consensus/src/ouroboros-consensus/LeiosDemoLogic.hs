@@ -47,9 +47,14 @@ import LeiosDemoDb
   , leiosDbInsertTxs
   , leiosDbLookupEbBody
   )
+import LeiosDemoLogic.Announcements.Validate
+  ( AnnouncementInvalidity (..)
+  , validateAnnouncementHeader
+  )
 import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes
-  ( BytesSize
+  ( AnnouncementDisposition (..)
+  , BytesSize
   , EbHash (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
@@ -71,6 +76,10 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Block (BlockProtocol, Header)
+import Ouroboros.Consensus.Config (TopLevelConfig)
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -941,6 +950,63 @@ leiosCertRbCallback kernelVars peerVars hdr cds =
     forM_ (protocolStateLeiosAnnouncement @blk cds) $ \announcement ->
       leiosCertRbOffer kernelVars peerVars announcement
 
+-----
+
+-- | Thrown when a peer relays a genuinely-invalid EB announcement; the ensuing
+-- thread death disconnects the peer.
+data ExnInvalidLeiosAnnouncement =
+    ExnNoAnnouncement
+  |
+    ExnInvalidHeader
+  deriving Show
+
+instance Exception ExnInvalidLeiosAnnouncement
+
+-- | Handle an inbound 'MsgLeiosBlockAnnouncement': validate the relayed RB
+-- header (see 'validateAnnouncementHeader'), then record the EB body as missing
+-- and wake the fetch logic, skip it, or disconnect the peer (see
+-- 'AnnouncementDisposition').
+onAnnouncement ::
+  forall blk pid m.
+  (IOLike m, LedgerSupportsProtocol blk, ResolveLeiosBlock blk) =>
+  Tracer m TraceLeiosPeer ->
+  TopLevelConfig blk ->
+  ( MVar m (LeiosOutstanding pid)
+  , MVar m ()
+  ) ->
+  -- | The immutable tip's ledger state.
+  ExtLedgerState blk EmptyMK ->
+  Header blk ->
+  m ()
+onAnnouncement tracer cfg (outstandingVar, readyVar) immLedger hdr =
+  case validateAnnouncementHeader cfg immLedger hdr of
+    Right (point, ebBytesSize) -> do
+      traceWith tracer $
+        MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement " <> Leios.prettyLeiosPoint point
+      let MkLeiosPoint _ebSlot ebHash = point
+      MVar.modifyMVar_ outstandingVar $ \outstanding ->
+        pure $
+          if Set.member ebHash (Leios.acquiredEbBodies outstanding)
+            || any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding))
+            then outstanding
+            else
+              outstanding
+                { Leios.missingEbBodies =
+                    Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
+                }
+      void $ MVar.tryPutMVar readyVar ()
+    Left NoAnnouncement ->
+      throwIO ExnNoAnnouncement
+    Left (OutsideHorizon _) ->
+      traceWith tracer $
+        MkTraceLeiosPeer "MsgLeiosBlockAnnouncement skipped: announced slot beyond forecast horizon"
+    Left (HeaderInvalid err) ->
+      case classifyAnnouncementValidationErr @blk err of
+        SkipAnnouncement ->
+          traceWith tracer $
+            MkTraceLeiosPeer "MsgLeiosBlockAnnouncement skipped: opcert counter not verifiable against immutable tip"
+        DisconnectPeer ->
+          throwIO ExnInvalidHeader
 
 lEIOSNOTIFYPIPELINEDEPTH :: Int
 lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number
