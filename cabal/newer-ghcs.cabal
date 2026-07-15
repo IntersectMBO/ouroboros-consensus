@@ -11,6 +11,8 @@ if impl (ghc >= 9.14)
     , aeson:containers
     , aeson:template-haskell
     , aeson:time
+    , aeson-pretty:aeson
+    , base64-bytestring-type:aeson
     , bin:QuickCheck
     , bin:base
     , binary-orphans:base
@@ -21,6 +23,7 @@ if impl (ghc >= 9.14)
     , canonical-json:containers
     , cborg:base
     , cborg:containers
+    , cborg-json:aeson
     , cborg-json:base
     , compact:base
     , config-ini:containers
@@ -32,6 +35,7 @@ if impl (ghc >= 9.14)
     , dec:base
     , dependent-map:constraints-extras
     , dependent-map:containers
+    , deriving-aeson:aeson
     , dictionary-sharing:containers
     , diff-containers:base
     , fin:QuickCheck
@@ -39,13 +43,16 @@ if impl (ghc >= 9.14)
     , fin:universe-base
     , fingertree-rm:base
     , fs-api:unix-bytestring
+    , fs-sim:QuickCheck
     , hedgehog-quickcheck:QuickCheck
     , http-api-data:base
     , http-api-data:containers
+    , http-api-data:text-iso8601
     , hspec-core:QuickCheck
     , indexed-traversable:base
     , indexed-traversable:containers
     , indexed-traversable-instances:base
+    , json-stream:aeson
     , kes-agent:base
     , kes-agent-crypto:base
     , latex-svg-image:base
@@ -54,6 +61,7 @@ if impl (ghc >= 9.14)
     , microstache:aeson
     , microstache:base
     , microstache:containers
+    , monoidal-containers:aeson
     , nonempty-vector:base
     , ordered-containers:containers
     , plutus-core:dependent-map
@@ -81,6 +89,7 @@ if impl (ghc >= 9.14)
     , serialise:base
     , serialise:containers
     , serialise:time
+    , tdigest:base
     , these:base
     , time-compat:time
     , transformers:base
