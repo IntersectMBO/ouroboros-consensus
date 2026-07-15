@@ -8,6 +8,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -176,32 +177,38 @@ data instance LedgerState BlockB = LgrB
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn BlockB = Void
-type instance TxOut BlockB = Void
+deriving newtype instance Semigroup (TxsDiff BlockB)
 
 -- | BlockB has no on-disk tables: its 'Keys'\/'Values'\/'Diff' are all trivial
--- (@()@), so every operation is a no-op.
+-- ('UnitTables'), so every operation is a no-op.
 instance BlockSupportsLedgerHD BlockB where
-  type Keys BlockB = ()
-  type Values BlockB = ()
-  type Diff BlockB = ()
-  blockKeys _ = ()
-  forward _ = id
-  restrictValues _ = id
-  valuesSize _ = 0
-  encodeValues _ = mempty
-  decodeValues _ = pure ()
-
-instance SingleEraUTxOHDBlock BlockB where
-  emptyValues = ()
-  emptyDiffs = ()
+  type Keys BlockB = UnitTables
+  type Values BlockB = UnitTables
+  type Diff BlockB = UnitTables
+  blockKeys _ = UnitTables
+  combineTickAndBlockDiff (TickDiff UnitTables) (BlockDiff UnitTables) = TickAndBlockDiff UnitTables
+  forwardTickDiff (TickDiff UnitTables) UnitTables = UnitTables
+  forwardBlockDiff (BlockDiff UnitTables) UnitTables = UnitTables
+  forwardTickAndBlockDiff (TickAndBlockDiff UnitTables) UnitTables = UnitTables
+  forwardTxsDiff (TxsDiff UnitTables) UnitTables = UnitTables
+  restrictValues UnitTables UnitTables = UnitTables
+  valuesSize UnitTables = 0
+  encodeValuesForInMemory UnitTables = mempty
+  decodeValuesForInMemory _ = pure UnitTables
 
 instance SingleEraBlockSupportsLedgerHD BlockB where
-  rangeReadValues _ _ = ((), Nothing)
+  type TxIn BlockB = Void
+  type TxOut BlockB = Void
+  rangeReadValues _ _ = (UnitTables, Nothing)
   keysToList _ = []
   valuesToList _ = []
-  valuesFromList _ = ()
+  valuesFromList _ = UnitTables
   diffToList _ = []
+  emptyValues = UnitTables
+  emptyTickDiff = TickDiff UnitTables
+  combineTransAndTickDiff (TickDiff UnitTables) (TickDiff UnitTables) = TickDiff UnitTables
+  packTxInBytes = absurd
+  unpackTxInBytes _ = Left "Absurd"
 
 type PartialLedgerCfgB = ()
 
@@ -225,11 +232,11 @@ instance IsLedger LedgerState BlockB where
   type LedgerErr LedgerState BlockB = Void
 
   applyChainTickLedgerResult _ _ _ st =
-    pureLedgerResult (TickedLedgerStateB st, ())
+    pureLedgerResult (TickedLedgerStateB st, TickDiff UnitTables)
 
 instance ApplyBlock LedgerState BlockB where
-  applyBlockLedgerResultWithValidation = \_ _ _ b _values _ticked ->
-    return $ pureLedgerResult (LgrB (blockPoint b), ())
+  applyBlockLedgerResultWithValidation = \_ _ _ b _ticked _values ->
+    return $ pureLedgerResult (LgrB (blockPoint b), BlockDiff UnitTables)
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
 
@@ -313,7 +320,7 @@ instance LedgerSupportsMempool BlockB where
 
   txForgetValidated = \case {}
 
-  getTransactionKeySets _tx = ()
+  getTransactionKeySets _tx = UnitTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 

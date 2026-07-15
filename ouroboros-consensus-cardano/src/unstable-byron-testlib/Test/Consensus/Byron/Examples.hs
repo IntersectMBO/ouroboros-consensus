@@ -120,7 +120,7 @@ examples =
     , exampleExtLedgerState = unlabelled exampleExtLedgerState
     , exampleSlotNo = unlabelled exampleSlotNo
     , -- Byron has no on-disk tables.
-      exampleLedgerTables = unlabelled ()
+      exampleLedgerTables = unlabelled UnitTables
     }
  where
   regularAndEBB :: a -> a -> Labelled a
@@ -201,19 +201,23 @@ emptyLedgerState =
 -- applying produce no diffs to thread.
 ledgerStateAfterEBB :: LedgerState ByronBlock
 ledgerStateAfterEBB =
-  fst
-    . reapplyLedgerBlock OmitLedgerEvents ledgerConfig exampleEBB ()
-    . fst
-    . applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 0)
-    $ emptyLedgerState
+  fst $
+    reapplyLedgerBlock
+      OmitLedgerEvents
+      ledgerConfig
+      exampleEBB
+      (fst $ applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 0) emptyLedgerState)
+      UnitTables
 
 exampleLedgerState :: LedgerState ByronBlock
 exampleLedgerState =
-  fst
-    . reapplyLedgerBlock OmitLedgerEvents ledgerConfig exampleBlock ()
-    . fst
-    . applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 1)
-    $ ledgerStateAfterEBB
+  fst $
+    reapplyLedgerBlock
+      OmitLedgerEvents
+      ledgerConfig
+      exampleBlock
+      (fst $ applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 1) ledgerStateAfterEBB)
+      UnitTables
 
 exampleHeaderState :: HeaderState ByronBlock
 exampleHeaderState = HeaderState (NotOrigin exampleAnnTip) exampleChainDepState

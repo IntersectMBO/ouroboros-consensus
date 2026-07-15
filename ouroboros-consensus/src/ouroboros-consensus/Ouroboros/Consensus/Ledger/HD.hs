@@ -1,5 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -26,17 +28,22 @@ module Ouroboros.Consensus.Ledger.HD
 
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding)
+import Codec.Serialise (Serialise)
 import Data.Array.Byte (ByteArray)
 import Data.Kind (Constraint, Type)
 import Data.MemPack (MemPack)
 import Data.MemPack.Buffer (Buffer)
 import Data.MemPack.Error (SomeError)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 
 -- | A type isomorphic to unit to more precisely convey that the block has no
 -- | LedgerHD tables.
 data UnitTables = UnitTables
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (NoThunks, Serialise)
 
 instance Semigroup UnitTables where
   UnitTables <> UnitTables = UnitTables

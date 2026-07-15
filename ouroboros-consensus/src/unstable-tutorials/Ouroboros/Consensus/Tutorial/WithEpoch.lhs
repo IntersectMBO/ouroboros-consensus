@@ -48,6 +48,7 @@ As before, we require a few language extensions:
 > {-# LANGUAGE FlexibleInstances          #-}
 > {-# LANGUAGE MultiParamTypeClasses      #-}
 > {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+> {-# LANGUAGE OverloadedStrings          #-}
 > {-# LANGUAGE StandaloneDeriving         #-}
 
 > module Ouroboros.Consensus.Tutorial.WithEpoch () where
@@ -79,7 +80,8 @@ And imports, of course:
 > import Ouroboros.Consensus.Ticked (Ticked, Ticked)
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (LedgerState, LedgerCfg, GetTip, LedgerResult (..), ApplyBlock (..),
->    BlockSupportsLedgerHD (..), SingleEraUTxOHDBlock (..),
+>    BlockSupportsLedgerHD (..), UnitTables (..),
+>    TickDiff (..), BlockDiff (..), TickAndBlockDiff (..), TxsDiff (..),
 >    SingleEraBlockSupportsLedgerHD (..), TxIn, TxOut,
 >    UpdateLedger, IsLedger (..), AuxLedgerEvent, defaultApplyBlockLedgerResult,
 >    defaultReapplyBlockLedgerResult)
@@ -381,7 +383,7 @@ We can now use `tickLedgerStateD` to instantiate `IsLedger`:
 
 >   applyChainTickLedgerResult _events _cfg slot ldgrSt =
 >     LedgerResult { lrEvents = []
->                  , lrResult = (tickLedgerStateD slot ldgrSt, ())
+>                  , lrResult = (tickLedgerStateD slot ldgrSt, TickDiff UnitTables)
 >                  }
 
 `UpdateLedger` is necessary but its implementation is always empty:
@@ -408,8 +410,8 @@ applying each individual transaction - exactly as it was in for `BlockC`:
 >         Dec -> i - 1
 
 > instance ApplyBlock LedgerState BlockD where
->   applyBlockLedgerResultWithValidation _validation _events _ldgrCfg b _values tickedLdgrSt =
->     pure LedgerResult { lrResult = (b `applyBlockTo` tickedLdgrSt, ())
+>   applyBlockLedgerResultWithValidation _validation _events _ldgrCfg b tickedLdgrSt _values =
+>     pure LedgerResult { lrResult = (b `applyBlockTo` tickedLdgrSt, BlockDiff UnitTables)
 >                       , lrEvents = []
 >                       }
 
@@ -675,27 +677,34 @@ Appendix: UTxO-HD features
 For reference on these instances and their meaning, please see the appendix in
 [the Simple tutorial](./Simple.lhs).
 
-> type instance TxIn  BlockD = Void
-> type instance TxOut BlockD = Void
+> instance Semigroup (TxsDiff BlockD) where
+>   TxsDiff UnitTables <> TxsDiff UnitTables = TxsDiff UnitTables
 
 > instance BlockSupportsLedgerHD BlockD where
->   type Keys   BlockD = ()
->   type Values BlockD = ()
->   type Diff   BlockD = ()
->   blockKeys _ = ()
->   forward _ = id
->   restrictValues _ = id
->   valuesSize _ = 0
->   encodeValues _ = mempty
->   decodeValues _ = pure ()
-
-> instance SingleEraUTxOHDBlock BlockD where
->   emptyValues = ()
->   emptyDiffs = ()
+>   type Keys   BlockD = UnitTables
+>   type Values BlockD = UnitTables
+>   type Diff   BlockD = UnitTables
+>   blockKeys _ = UnitTables
+>   combineTickAndBlockDiff (TickDiff UnitTables) (BlockDiff UnitTables) = TickAndBlockDiff UnitTables
+>   forwardTickDiff (TickDiff UnitTables) UnitTables = UnitTables
+>   forwardBlockDiff (BlockDiff UnitTables) UnitTables = UnitTables
+>   forwardTickAndBlockDiff (TickAndBlockDiff UnitTables) UnitTables = UnitTables
+>   forwardTxsDiff (TxsDiff UnitTables) UnitTables = UnitTables
+>   restrictValues UnitTables UnitTables = UnitTables
+>   valuesSize UnitTables = 0
+>   encodeValuesForInMemory UnitTables = mempty
+>   decodeValuesForInMemory _ = pure UnitTables
 
 > instance SingleEraBlockSupportsLedgerHD BlockD where
->   rangeReadValues _ _ = ((), Nothing)
+>   type TxIn  BlockD = Void
+>   type TxOut BlockD = Void
+>   rangeReadValues _ _ = (UnitTables, Nothing)
 >   keysToList _ = []
 >   valuesToList _ = []
->   valuesFromList _ = ()
+>   valuesFromList _ = UnitTables
 >   diffToList _ = []
+>   emptyValues = UnitTables
+>   emptyTickDiff = TickDiff UnitTables
+>   combineTransAndTickDiff (TickDiff UnitTables) (TickDiff UnitTables) = TickDiff UnitTables
+>   packTxInBytes = absurd
+>   unpackTxInBytes _ = Left "Absurd"
