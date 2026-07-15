@@ -398,9 +398,8 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
 
 -- | Dispatch a per-era UTxO computation to the current era. The Byron UTxO
 -- still lives in the ledger /state/ (Byron has no on-disk HD tables), so the
--- Byron arm reads the state; the Shelley-based UTxO lives in the @'Values'@
--- (the @mk@-free design moved it out of the state), so those arms read the
--- supplied values for that era.
+-- Byron arm reads the state; the Shelley-based UTxO lives in the @'Values'@, so
+-- those arms read the supplied values for that era.
 dispatch ::
   LedgerState (CardanoBlock StandardCrypto) ->
   Values (CardanoBlock StandardCrypto) ->

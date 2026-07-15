@@ -223,8 +223,8 @@ instance
   arbitrary =
     ShelleyLedgerState
       <$> arbitrary
-      -- The state is @mk@-free; its UTxO field is held empty (the values live
-      -- in the backend), so split a random NES and keep the UTxO-free part.
+      -- The UTxO field is held empty (the values live in the backend), so split
+      -- a random NES and keep the UTxO-free part.
       <*> (fst . splitUTxO <$> arbitrary)
       <*> arbitrary
       <*> frequency [(1, pure SNothing), (3, SJust . PerasRoundNo <$> arbitrary)]

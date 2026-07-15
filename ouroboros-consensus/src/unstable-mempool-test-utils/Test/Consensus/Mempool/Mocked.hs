@@ -62,8 +62,7 @@ data InitialMempoolAndModelParams blk = MempoolAndModelParams
   { immpInitialState :: !(LedgerState blk)
   -- ^ Initial ledger state for the mocked Ledger DB interface.
   , immpInitialValues :: !(Values blk)
-  -- ^ Initial ledger tables (UTxO values), now carried alongside the
-  -- @mk@-free state.
+  -- ^ Initial ledger tables (UTxO values).
   , immpLedgerConfig :: !(Ledger.LedgerConfig blk)
   -- ^ Ledger configuration, which is needed to open the mempool.
   }
@@ -92,7 +91,7 @@ openMockedMempool capacityOverride tracer initialParams = do
                       Right $
                         ReadOnlyForker
                           { roforkerClose = pure ()
-                          , roforkerGetLedgerState = pure st
+                          , roforkerGetLedgerState = st
                           , roforkerReadTables = \keys ->
                               pure $ restrictValues @blk keys values
                           , roforkerReadStatistics =

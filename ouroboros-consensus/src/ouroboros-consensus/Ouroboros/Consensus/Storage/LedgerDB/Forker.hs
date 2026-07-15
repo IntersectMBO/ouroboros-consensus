@@ -119,7 +119,7 @@ data Forker m l blk = Forker
   -- Returns 'Nothing' if the implementation is backed by @lsm-tree@.
   , -- Updates
 
-    forkerPush :: !(l blk -> Diff blk -> m ())
+    forkerPush :: !(l blk -> TickAndBlockDiff blk -> m ())
   -- ^ Advance the fork handle by pushing a new ledger state (and the diff it
   -- produced) to the tip of the current fork.
   , forkerCommit :: !(STM m (m ()))
@@ -189,7 +189,7 @@ newtype EraRangeReader m blk = EraRangeReader
 -- 'MemPack' suffices.
 type RangeReadTables m blk =
   forall x.
-  SingleEraBlockSupportsUTxOHD x =>
+  SingleEraBlockSupportsLedgerHD x =>
   (Values blk -> Values x) ->
   RangeQueryPrevious x ->
   Int ->
@@ -209,7 +209,7 @@ type RangeReadTables m blk =
 newtype EraRangeReaderProvider m blk = EraRangeReaderProvider
   { getEraRangeReader ::
       forall x.
-      SingleEraBlockSupportsUTxOHD x =>
+      SingleEraBlockSupportsLedgerHD x =>
       (Values blk -> Values x) ->
       EraRangeReader m x
   }
@@ -263,7 +263,7 @@ ledgerStateReadOnlyForker frk =
   ReadOnlyForker
     { roforkerClose = roforkerClose
     , roforkerReadTables = roforkerReadTables
-    , roforkerGetLedgerState = ledgerState <$> roforkerGetLedgerState
+    , roforkerGetLedgerState = ledgerState roforkerGetLedgerState
     , roforkerReadStatistics = roforkerReadStatistics
     }
  where
@@ -294,7 +294,7 @@ data ReadOnlyForker m l blk = ReadOnlyForker
   -- ^ See 'forkerClose'
   , roforkerReadTables :: !(Keys blk -> m (Values blk))
   -- ^ See 'forkerReadTables'
-  , roforkerGetLedgerState :: !(STM m (l blk))
+  , roforkerGetLedgerState :: !(l blk)
   -- ^ See 'forkerGetLedgerState'
   , roforkerReadStatistics :: !(m Statistics)
   -- ^ See 'forkerReadStatistics'
@@ -309,14 +309,16 @@ type instance HeaderHash (ReadOnlyForker m l) = HeaderHash l
 
 type ReadOnlyForker' m blk = ReadOnlyForker m ExtLedgerState blk
 
-readOnlyForker :: Forker m l blk -> ReadOnlyForker m l blk
-readOnlyForker forker =
-  ReadOnlyForker
-    { roforkerClose = forkerClose forker
-    , roforkerReadTables = forkerReadTables forker
-    , roforkerGetLedgerState = forkerGetLedgerState forker
-    , roforkerReadStatistics = forkerReadStatistics forker
-    }
+readOnlyForker :: MonadSTM m => Forker m l blk -> m (ReadOnlyForker m l blk)
+readOnlyForker forker = do
+  st <- atomically $ forkerGetLedgerState forker
+  pure $
+    ReadOnlyForker
+      { roforkerClose = forkerClose forker
+      , roforkerReadTables = forkerReadTables forker
+      , roforkerGetLedgerState = st
+      , roforkerReadStatistics = forkerReadStatistics forker
+      }
 
 {-------------------------------------------------------------------------------
   Validation
@@ -479,15 +481,15 @@ applyBlock ::
   Ap m l blk ->
   Forker m l blk ->
   ResolveBlock m blk ->
-  m (Either (AnnLedgerError l blk) (l blk, Diff blk))
+  m (Either (AnnLedgerError l blk) (l blk, TickAndBlockDiff blk))
 applyBlock evs cfg ap fo doResolveBlock = case ap of
   ReapplyVal b ->
-    withValues b (\vs l -> return $ Right $ tickThenReapply evs cfg b vs l)
+    withValues b (\l vs -> return $ Right $ tickThenReapply evs cfg b l vs )
   ApplyVal b ->
     withValues
       b
-      ( \vs l ->
-          case runExcept $ tickThenApply evs cfg b vs l of
+      ( \l vs ->
+          case runExcept $ tickThenApply evs cfg b l vs of
             Left lerr -> pure (Left (AnnLedgerError (castPoint $ getTip l) (blockRealPoint b) lerr))
             Right st -> pure (Right st)
       )
@@ -500,12 +502,12 @@ applyBlock evs cfg ap fo doResolveBlock = case ap of
  where
   withValues ::
     blk ->
-    (Values blk -> l blk -> m (Either (AnnLedgerError l blk) (l blk, Diff blk))) ->
-    m (Either (AnnLedgerError l blk) (l blk, Diff blk))
+    (l blk -> Values blk -> m (Either (AnnLedgerError l blk) (l blk, TickAndBlockDiff blk))) ->
+    m (Either (AnnLedgerError l blk) (l blk, TickAndBlockDiff blk))
   withValues blk f = do
     l <- atomically $ forkerGetLedgerState fo
     vs <- forkerReadTables fo (blockKeys blk)
-    f vs l
+    f l vs
 
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- push the resulting ledger state to the forker.

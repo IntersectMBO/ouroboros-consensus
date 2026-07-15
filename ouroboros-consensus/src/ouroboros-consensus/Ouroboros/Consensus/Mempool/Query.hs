@@ -23,7 +23,7 @@ implGetSnapshotFor ::
   TickedLedgerState blk ->
   -- | The tick diff (from the unticked state to @ticked@), used to forward the
   -- read values up to the ticked state.
-  Diff blk ->
+  TickDiff blk ->
   -- | A function that returns values corresponding to the given keys for
   -- the unticked ledger state.
   (Keys blk -> m (Values blk)) ->

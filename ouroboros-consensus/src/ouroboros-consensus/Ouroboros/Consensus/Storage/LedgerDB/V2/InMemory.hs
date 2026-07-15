@@ -77,7 +77,7 @@ import Prelude hiding (read)
 newInMemoryLedgerTablesHandle ::
   forall m l blk.
   ( IOLike m
-  , BlockSupportsUTxOHD blk
+  , BlockSupportsLedgerHD blk
   , StandardHash (l blk)
   , GetTip (l blk)
   ) =>
@@ -106,7 +106,7 @@ newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) values =
   -- 'rangeReadValues'. See 'RangeReadTables' for the cursor contract.
   rangeRead ::
     forall x.
-    SingleEraBlockSupportsUTxOHD x =>
+    SingleEraBlockSupportsLedgerHD x =>
     (Values blk -> Values x) ->
     RangeQueryPrevious x ->
     Int ->
@@ -125,7 +125,7 @@ newInMemoryLedgerTablesHandle !tracer !someFS@(SomeHasFS !hasFS) values =
 
 implRead ::
   forall m l blk.
-  (IOLike m, BlockSupportsUTxOHD blk) =>
+  (IOLike m, BlockSupportsLedgerHD blk) =>
   Values blk ->
   l blk ->
   Keys blk ->
@@ -135,21 +135,21 @@ implRead values _ keys = pure (restrictValues @blk keys values)
 implDuplicateWithDiffs ::
   forall m l blk.
   ( IOLike m
-  , BlockSupportsUTxOHD blk
+  , BlockSupportsLedgerHD blk
   , StandardHash (l blk)
   , GetTip (l blk)
   ) =>
   Tracer m LedgerDBV2Trace ->
   Values blk ->
   SomeHasFS m ->
-  Diff blk ->
+  TickAndBlockDiff blk ->
   m (LedgerTablesHandle m l blk)
 implDuplicateWithDiffs !tracer values !someFS !diff =
-  newInMemoryLedgerTablesHandle tracer someFS (forward @blk [diff] values)
+  newInMemoryLedgerTablesHandle tracer someFS (forwardTickAndBlockDiff @blk diff values)
 
 implTakeHandleSnapshot ::
   forall m l blk h.
-  (IOLike m, BlockSupportsUTxOHD blk) =>
+  (IOLike m, BlockSupportsLedgerHD blk) =>
   Values blk ->
   HasFS m h ->
   l blk ->
@@ -161,7 +161,7 @@ implTakeHandleSnapshot values hasFS _ snapshotName = do
     fmap (Just . snd) $
       hPutAllCRC hasFS hf $
         CBOR.toLazyByteString $
-          encodeValues @blk values
+          encodeValuesForInMemory @blk values
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -260,9 +260,9 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) ds = do
       -- header for V1 before decoding the map. Writers always emit V2.
       let tablesDecoder = case snapshotTablesCodecVersion snapshotMeta of
             TablesCodecVersion1 ->
-              CBOR.decodeListLenOf 1 *> decodeValues @blk (ledgerState extLedgerSt)
+              CBOR.decodeListLenOf 1 *> decodeValuesForInMemory @blk (ledgerState extLedgerSt)
             TablesCodecVersion2 ->
-              decodeValues @blk (ledgerState extLedgerSt)
+              decodeValuesForInMemory @blk (ledgerState extLedgerSt)
       (values, Identity crcTables) <-
         withExceptT (InitFailureRead . ReadSnapshotFailed) $
           ExceptT $

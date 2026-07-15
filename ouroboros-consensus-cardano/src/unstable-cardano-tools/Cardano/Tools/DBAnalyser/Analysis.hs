@@ -432,7 +432,7 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
       ldb
       ( \frk -> do
           tbs <- LedgerDB.forkerReadTables frk (blockKeys blk)
-          case runExcept $ tickThenXApply OmitLedgerEvents ledgerCfg blk tbs oldLedger of
+          case runExcept $ tickThenXApply OmitLedgerEvents ledgerCfg blk oldLedger tbs of
             Right (newLedger, diff) -> do
               LedgerDB.forkerPush frk newLedger diff
               join $ IOLike.atomically $ LedgerDB.forkerCommit frk
@@ -451,9 +451,9 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
               pure (Stop, ())
       )
 
-  tickThenXApply evs ccfg b vals st = case ledgerAppMode of
-    LedgerReapply -> pure (tickThenReapply evs ccfg b vals st)
-    LedgerApply -> tickThenApply evs ccfg b vals st
+  tickThenXApply evs ccfg b st vals = case ledgerAppMode of
+    LedgerReapply -> pure (tickThenReapply evs ccfg b st vals)
+    LedgerApply -> tickThenApply evs ccfg b st vals
 
   continue :: blk -> NextStep
   continue blk
@@ -516,12 +516,10 @@ checkNoThunksEvery
           ldb
           (\frk -> LedgerDB.forkerReadTables frk (blockKeys blk))
       let ledgerCfg = ExtLedgerCfg cfg
-          appliedResult = tickThenApplyLedgerResult OmitLedgerEvents ledgerCfg blk tbs oldLedger
+          appliedResult = tickThenApplyLedgerResult OmitLedgerEvents ledgerCfg blk oldLedger tbs
           (newLedger, diff) = either (error . show) lrResult $ runExcept appliedResult
           bn = blockNo blk
       when (unBlockNo bn `mod` nBlocks == 0) $
-        -- The ledger state is mk-free, so a single thunk check covers it (the
-        -- old stow/diffs/values distinctions no longer apply).
         IOLike.evaluate (ledgerState newLedger) >>= checkNoThunks bn
 
       LedgerDB.push internal newLedger diff
@@ -567,7 +565,7 @@ traceLedgerProcessing
           )
 
       let ledgerCfg = ExtLedgerCfg cfg
-          appliedResult = tickThenApplyLedgerResult OmitLedgerEvents ledgerCfg blk oldLedgerTbs oldLedgerSt
+          appliedResult = tickThenApplyLedgerResult OmitLedgerEvents ledgerCfg blk oldLedgerSt oldLedgerTbs
           (newLedger, diff) = either (error . show) lrResult $ runExcept appliedResult
           traces =
             ( HasAnalysis.emitTraces $
@@ -576,7 +574,7 @@ traceLedgerProcessing
                   (ledgerState oldLedgerSt)
                   oldLedgerTbs
                   (ledgerState newLedger)
-                  (forward @blk [diff] oldLedgerTbs)
+                  (forwardTickAndBlockDiff @blk diff oldLedgerTbs)
             )
       mapM_ Debug.traceMarkerIO traces
 
@@ -665,7 +663,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     (!newHeader, tHdrApp) <- time $ applyTheHeader ldgrView tkHdrSt
     ((tkLdgrSt, tickDiff), tBlkTick) <- time $ tickTheLedgerState slot prevLedgerState
     -- Forward the read values through the tick diff to the ticked tip.
-    let !valuesAtTip = forward @blk [tickDiff] tables
+    let !valuesAtTip = forwardTickDiff @blk tickDiff tables
     ((newLedgerSt, blkDiff), tBlkApp) <- time $ applyTheBlock valuesAtTip tkLdgrSt
 
     currentRtsStats <- GC.getRTSStats
@@ -698,7 +696,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
 
     F.writeDataPoint outFileHandle outFormat slotDataPoint
 
-    LedgerDB.push intLedgerDB (ExtLedgerState newLedgerSt newHeader) blkDiff
+    LedgerDB.push intLedgerDB (ExtLedgerState newLedgerSt newHeader) (combineTickAndBlockDiff @blk tickDiff blkDiff)
    where
     rp = blockRealPoint blk
 
@@ -741,21 +739,21 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     tickTheLedgerState ::
       SlotNo ->
       ExtLedgerState blk ->
-      IO (Ticked LedgerState blk, Diff blk)
+      IO (Ticked LedgerState blk, TickDiff blk)
     tickTheLedgerState slot st =
       pure $ applyChainTick OmitLedgerEvents lcfg slot (ledgerState st)
 
     applyTheBlock ::
       Values blk ->
       TickedLedgerState blk ->
-      IO (LedgerState blk, Diff blk)
+      IO (LedgerState blk, BlockDiff blk)
     applyTheBlock values tickedLedgerSt = case ledgerAppMode of
       LedgerApply ->
-        case runExcept (lrResult <$> applyBlockLedgerResult OmitLedgerEvents lcfg blk values tickedLedgerSt) of
+        case runExcept (lrResult <$> applyBlockLedgerResult OmitLedgerEvents lcfg blk tickedLedgerSt values) of
           Left err -> fail $ "benchmark doesn't support invalid blocks: " <> show rp <> " " <> show err
           Right x -> pure x
       LedgerReapply ->
-        pure $! lrResult $ reapplyBlockLedgerResult OmitLedgerEvents lcfg blk values tickedLedgerSt
+        pure $! lrResult $ reapplyBlockLedgerResult OmitLedgerEvents lcfg blk tickedLedgerSt values
 
 withFile :: Maybe FilePath -> (IO.Handle -> IO r) -> IO r
 withFile (Just outfile) = IO.withFile outfile IO.WriteMode
@@ -800,7 +798,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
 
     let (oldLedgerSt, oldLedgerTbs) = oldLedger
         (nextLedgerSt, diff) =
-          tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk oldLedgerTbs oldLedgerSt
+          tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk oldLedgerSt oldLedgerTbs
     when (unBlockNo (blockNo blk) `mod` nrBlocks == 0) $ do
       let blockApplication =
             HasAnalysis.WithLedgerState
@@ -808,7 +806,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
               (ledgerState oldLedgerSt)
               oldLedgerTbs
               (ledgerState nextLedgerSt)
-              (forward @blk [diff] oldLedgerTbs)
+              (forwardTickAndBlockDiff @blk diff oldLedgerTbs)
 
       computeAndWriteLine
         outFileHandle

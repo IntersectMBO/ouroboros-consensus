@@ -113,9 +113,9 @@ data TxErr
   deriving anyclass (NoThunks, Serialise, ToExpr)
 
 instance PayloadSemantics Tx where
-  -- In the @mk@-free design the on-disk UTxO table is no longer part of the
-  -- ledger state; it flows as the block's 'Values'\/'Diff'. The table-free
-  -- payload-dependent state only keeps the history of tokens that ever existed.
+  -- The on-disk UTxO table flows as the block's 'Values'\/'Diff'. The
+  -- table-free payload-dependent state only keeps the history of tokens that
+  -- ever existed.
   data PayloadDependentState Tx
     = UTxTok
     { -- \| All the tokens that ever existed. We use this to
@@ -158,7 +158,7 @@ instance PayloadSemantics Tx where
 {-------------------------------------------------------------------------------
   Instances required for on-disk storage of ledger state tables
 
-  The block's 'BlockSupportsUTxOHD' (and the rest of the UTxO-HD axis) is
+  The block's 'BlockSupportsLedgerHD' (and the rest of the UTxO-HD axis) is
   provided generically by 'TestBlockWith' through the 'PayloadTxIn'\/
   'PayloadTxOut' instance above. We only need the per-entry codecs.
 -------------------------------------------------------------------------------}
@@ -227,8 +227,7 @@ instance HasHardForkHistory TestBlock where
 genesis :: ExtLedgerState TestBlock
 genesis = testInitExtLedgerWithState initialTestLedgerState
 
--- | The genesis UTxO values, threaded alongside 'genesis' now that the state
--- is @mk@-free.
+-- | The genesis UTxO values, threaded alongside 'genesis'.
 genesisValues :: Values TestBlock
 genesisValues = Map.singleton (Token GenesisPoint) (TValue ())
 

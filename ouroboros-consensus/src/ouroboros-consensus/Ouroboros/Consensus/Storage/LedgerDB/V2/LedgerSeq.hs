@@ -98,7 +98,7 @@ import Prelude hiding (read)
 data LedgerTablesHandle m l blk = LedgerTablesHandle
   { close :: !(m ())
   -- ^ Close the handle
-  , duplicateWithDiffs :: !(Diff blk -> m (LedgerTablesHandle m l blk))
+  , duplicateWithDiffs :: !(TickAndBlockDiff blk -> m (LedgerTablesHandle m l blk))
   -- ^ Create a new handle by duplicating this one and pushing a block's diff to
   -- it (the diff is applied to the held values via 'forward').
   --
@@ -138,7 +138,7 @@ data LedgerTablesHandle m l blk = LedgerTablesHandle
 -- cannot reach here; this is relied upon rather than re-checked. TODO @js:
 -- revisit whether to encode this invariant explicitly.
 withEraRangeReader ::
-  SingleEraBlockSupportsUTxOHD x =>
+  SingleEraBlockSupportsLedgerHD x =>
   LedgerTablesHandle m l blk ->
   -- | Project the handle's stored values onto the current era @x@.
   (Values blk -> Values x) ->
@@ -267,7 +267,7 @@ reapplyBlock evs cfg b db = do
   let ks = blockKeys b
       StateRef st tbs = currentHandle db
   vals <- read tbs st ks
-  let (st', diff) = tickThenReapply evs cfg b vals st
+  let (st', diff) = tickThenReapply evs cfg b st vals
   newtbs <- duplicateWithDiffs tbs diff
   pure (StateRef st' newtbs)
 
@@ -581,12 +581,12 @@ volatileStatesBimap f g =
 --
 -- >>> [l0s, l1s, l2s, l3s, l4s] = s
 --
--- The on-disk tables of @B@ are trivial (@()@), so 'BlockSupportsUTxOHD' is
+-- The on-disk tables of @B@ are trivial (@()@), so 'BlockSupportsLedgerHD' is
 -- discharged with no-op operations; the examples below only manipulate the
 -- sequence structure and never touch the handle's table payloads.
 --
 -- >>> :{
---  instance BlockSupportsUTxOHD B where
+--  instance BlockSupportsLedgerHD B where
 --    type Keys B = ()
 --    type Values B = ()
 --    type Diff B = ()

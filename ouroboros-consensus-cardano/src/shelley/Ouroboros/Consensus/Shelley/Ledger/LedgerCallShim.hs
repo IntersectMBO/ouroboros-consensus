@@ -15,14 +15,14 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-simplifiable-class-constraints #-}
+{-# OPTIONS_GHC -Wno-simplifiable-class-constraints -Wno-deprecations #-}
 
 -- | The single module that reads or writes the @UTxO@ field of a Shelley
 -- 'SL.NewEpochState' (NES).
 --
 -- The UTxO lives /outside/ the ledger state, threaded as the
 -- @'Values'@\/@'Diff'@ payloads of
--- 'Ouroboros.Consensus.Ledger.Basics.BlockSupportsUTxOHD'. The
+-- 'Ouroboros.Consensus.Ledger.Basics.BlockSupportsLedgerHD'. The
 -- cardano-ledger NES we wrap physically has a UTxO field (at
 -- @nesEsL . esLStateL . lsUTxOStateL . utxoL@) that we neither own nor can
 -- remove. If a stored ledger state retained a populated field, the LedgerDB's
@@ -64,7 +64,7 @@ import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
 import Lens.Micro ((&), (.~), (^.))
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Ledger.Basics (ComputeLedgerEvents (..))
+import Ouroboros.Consensus.Ledger.Abstract (ComputeLedgerEvents (..))
 import Ouroboros.Consensus.Ledger.SupportsMempool (WhetherToIntervene)
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Shelley.Eras
@@ -103,7 +103,7 @@ mkNewEpochStateNoUTxOs nes =
 
 -- | Project the wrapped 'SL.NewEpochState'.
 --
--- ⚠️  The returned state's UTxO field is EMPTY /by design/. Under UTxO-HD the
+-- WARNING: The returned state's UTxO field is EMPTY /by design/. Under UTxO-HD the
 -- live UTxO is kept in the ledger tables (the LedgerDB backend), not in the
 -- ledger state. Reading @utxo@ from this value will silently give you an empty
 -- map — to read the chain's UTxO, go through the LedgerDB forker \/ ledger
@@ -138,7 +138,8 @@ stowUTxO ::
   Map SL.TxIn (Core.TxOut era) ->
   NewEpochStateNoUTxOs era ->
   SL.NewEpochState era
-stowUTxO values (NewEpochStateNoUTxOs nes) = nes & utxoL .~ SL.UTxO values
+stowUTxO values (NewEpochStateNoUTxOs nes) =
+   assert (Map.null $ SL.unUTxO $ nes ^. utxoL) $ nes & utxoL .~ SL.UTxO values
 
 -- | Extract the resulting UTxO from a NES produced by a ledger computation,
 -- clear the field (re-establishing the invariant), and compute the diff of the
@@ -196,15 +197,15 @@ applyBlockShim ::
   STS.ValidationPolicy ->
   SL.Globals ->
   SL.Block h era ->
-  Map SL.TxIn (Core.TxOut era) ->
   NewEpochStateNoUTxOs era ->
+  Map SL.TxIn (Core.TxOut era) ->
   Either
     (SL.BlockTransitionError era)
     ( NewEpochStateNoUTxOs era
     , Diff.Diff SL.TxIn (Core.TxOut era)
     , [STS.Event (Core.EraRule "BBODY" era)]
     )
-applyBlockShim evs doValidate globals blk values nesNoUTxO = do
+applyBlockShim evs doValidate globals blk nesNoUTxO values = do
   let nesIn = stowUTxO values nesNoUTxO
   (nesOut, events) <- case evs of
     ComputeLedgerEvents -> SL.applyBlockEither STS.EPReturn doValidate globals nesIn blk
@@ -220,15 +221,15 @@ applyTxShim ::
   WhetherToIntervene ->
   SlotNo ->
   Core.Tx Core.TopTx era ->
-  Map SL.TxIn (Core.TxOut era) ->
   NewEpochStateNoUTxOs era ->
+  Map SL.TxIn (Core.TxOut era) ->
   Except
     (SL.ApplyTxError era)
     ( NewEpochStateNoUTxOs era
     , Diff.Diff SL.TxIn (Core.TxOut era)
     , SL.Validated (Core.Tx Core.TopTx era)
     )
-applyTxShim globals wti slot tx values nesNoUTxO = do
+applyTxShim globals wti slot tx nesNoUTxO values = do
   let nesIn = stowUTxO values nesNoUTxO
   (mempoolState', vtx) <-
     applyShelleyBasedTx
@@ -247,12 +248,12 @@ reapplyTxShim ::
   SL.Globals ->
   SlotNo ->
   SL.Validated (Core.Tx Core.TopTx era) ->
-  Map SL.TxIn (Core.TxOut era) ->
   NewEpochStateNoUTxOs era ->
+  Map SL.TxIn (Core.TxOut era) ->
   Except
     (SL.ApplyTxError era)
     (NewEpochStateNoUTxOs era, Diff.Diff SL.TxIn (Core.TxOut era))
-reapplyTxShim globals slot vtx values nesNoUTxO = do
+reapplyTxShim globals slot vtx nesNoUTxO values = do
   let nesIn = stowUTxO values nesNoUTxO
   mempoolState' <-
     liftEither $

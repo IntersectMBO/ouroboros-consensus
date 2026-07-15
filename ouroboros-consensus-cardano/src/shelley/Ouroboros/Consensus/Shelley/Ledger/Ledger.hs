@@ -291,7 +291,7 @@ castShelleyTip (ShelleyTip sn bn hh) =
     }
 
 -- | The UTxO is not stored in the Shelley ledger state: it lives outside,
--- threaded as the @'Values'@\/@'Diff'@ of 'BlockSupportsUTxOHD'. The wrapped
+-- threaded as the @'Values'@\/@'Diff'@ of 'BlockSupportsLedgerHD'. The wrapped
 -- 'SL.NewEpochState' has a UTxO field which we hold empty here (the entries live
 -- in the backend); 'applyBlockLedgerResultWithValidation' injects the read
 -- values, runs the ledger rules, and extracts the resulting diff.
@@ -392,17 +392,18 @@ instance MemPack BigEndianTxIn where
   unpackM = do
     BigEndianTxIn <$> (SL.TxIn <$> unpackM <*> (getOriginalTxIx <$> unpackM))
 
--- | The Shelley @TxIn@ is the plain ledger 'SL.TxIn'. Big-endian serialisation
--- (needed so the on-disk\/streamed entries sort the same as the Haskell 'Ord')
--- is applied only at the (de)serialisation boundary, by casting the map keys
--- through 'BigEndianTxIn'. See 'encodeValues'\/'decodeValues'.
-type instance TxIn (ShelleyBlock proto era) = SL.TxIn
+instance Semigroup (TxsDiff (ShelleyBlock proto era)) where
+  TxsDiff a <> TxsDiff b = TxsDiff $ a <> b
 
-type instance TxOut (ShelleyBlock proto era) = Core.TxOut era
+instance Monoid (TickDiff (ShelleyBlock proto era)) where
+  mempty = TickDiff mempty
+
+instance Semigroup (TickDiff (ShelleyBlock proto era)) where
+  TickDiff a <> TickDiff b = TickDiff $ a <> b
 
 instance
   ShelleyCompatible proto era =>
-  BlockSupportsUTxOHD (ShelleyBlock proto era)
+  BlockSupportsLedgerHD (ShelleyBlock proto era)
   where
   type Keys (ShelleyBlock proto era) = Set (TxIn (ShelleyBlock proto era))
   type
@@ -414,9 +415,12 @@ instance
 
   blockKeys = Core.neededTxInsForBlock . shelleyBlockRaw
 
-  -- One era ⇒ no translation. Replay the in-flight diffs in chain order; the
-  -- 'Diff' 'Monoid' composes them so later ones win.
-  forward diffs vals = Diff.applyDiff vals (mconcat diffs)
+  -- compose\/apply the diffs directly (the 'Diff' 'Semigroup' is right-biased).
+  combineTickAndBlockDiff (TickDiff tickDiff) (BlockDiff blockDiff) = TickAndBlockDiff $ tickDiff <> blockDiff
+  forwardTickDiff (TickDiff diff) vals = Diff.applyDiff vals diff
+  forwardBlockDiff (BlockDiff diff) vals = Diff.applyDiff vals diff
+  forwardTickAndBlockDiff (TickAndBlockDiff diff) vals = Diff.applyDiff vals diff
+  forwardTxsDiff (TxsDiff diff) vals = Diff.applyDiff vals diff
 
   restrictValues keys vals = vals `Map.restrictKeys` keys
 
@@ -424,12 +428,12 @@ instance
 
   -- The keys are cast through 'BigEndianTxIn' so the serialised entries sort the
   -- same as the Haskell 'Ord' on 'SL.TxIn' (the streaming-order invariant).
-  encodeValues tbs =
+  encodeValuesForInMemory tbs =
     toPlainEncoding (Core.eraProtVerLow @era) $
       encodeMap (encodeMemPack . BigEndianTxIn) encodeMemPack tbs
 
   -- The state is the era hint: it supplies the credential interns for sharing.
-  decodeValues st =
+  decodeValuesForInMemory st =
     let certInterns =
           internsFromMap $
             shelleyLedgerState st
@@ -444,15 +448,16 @@ instance
 
 instance
   ShelleyCompatible proto era =>
-  SingleEraUTxOHDBlock (ShelleyBlock proto era)
+  SingleEraBlockSupportsLedgerHD (ShelleyBlock proto era)
   where
-  emptyValues = Map.empty
-  emptyDiffs = mempty
+  -- \| The Shelley @TxIn@ is the plain ledger 'SL.TxIn'. Big-endian serialisation
+  -- (needed so the on-disk\/streamed entries sort the same as the Haskell 'Ord')
+  -- is applied only at the (de)serialisation boundary, by casting the map keys
+  -- through 'BigEndianTxIn'. See 'encodeValues'\/'decodeValues'.
+  type TxIn (ShelleyBlock proto era) = SL.TxIn
 
-instance
-  ShelleyCompatible proto era =>
-  SingleEraBlockSupportsUTxOHD (ShelleyBlock proto era)
-  where
+  type TxOut (ShelleyBlock proto era) = Core.TxOut era
+
   rangeReadValues (mbPrev, n) vals =
     let toRead = case mbPrev of
           Nothing -> vals
@@ -462,7 +467,7 @@ instance
   keysToList = Set.toList
   valuesToList = Map.toList
   valuesFromList = Map.fromList
-  diffToList (Diff.Diff m) = Map.toList m
+  diffToList (TickAndBlockDiff (Diff.Diff m)) = Map.toList m
 
   -- The on-disk key bytes are cast through 'BigEndianTxIn' so they sort the same
   -- as the Haskell 'Ord' on 'SL.TxIn' (the range-read\/streaming-order
@@ -470,6 +475,10 @@ instance
   -- 'TxIx' and would sort differently. Mirrors 'encodeValues'\/'decodeValues'.
   packTxInBytes = packByteArray True . BigEndianTxIn
   unpackTxInBytes = fmap getOriginalTxIn . unpackEither
+
+  emptyValues = Map.empty
+  emptyTickDiff = mempty
+  combineTransAndTickDiff = (<>)
 
 {-------------------------------------------------------------------------------
   GetTip
@@ -503,7 +512,7 @@ data instance Ticked LedgerState (ShelleyBlock proto era) = TickedShelleyLedgerS
 
 -- | The ticked Shelley 'SL.NewEpochState'.
 --
--- ⚠️  Its UTxO field is EMPTY by design (see 'shelleyLedgerState'): the live
+-- WARNING: Its UTxO field is EMPTY by design (see 'shelleyLedgerState'): the live
 -- UTxO lives in the ledger tables, not the state.
 tickedShelleyLedgerState ::
   Ticked LedgerState (ShelleyBlock proto era) -> SL.NewEpochState era
@@ -550,11 +559,7 @@ instance ShelleyCompatible proto era => IsLedger LedgerState (ShelleyBlock proto
                 , tickedShelleyLedgerLatestPerasCertRound =
                     shelleyLedgerLatestPerasCertRound
                 }
-            , -- Within a single era, ticking does not mutate the UTxO (the UTxO
-              -- is only changed by block/transaction execution and by era
-              -- translations, which happen at the hard-fork level), so it
-              -- produces no diff.
-              mempty
+            , mempty
             )
      where
       globals = shelleyLedgerGlobals cfg
@@ -608,15 +613,15 @@ applyHelper ::
   STS.ValidationPolicy ->
   LedgerConfig (ShelleyBlock proto era) ->
   ShelleyBlock proto era ->
-  Values (ShelleyBlock proto era) ->
   Ticked LedgerState (ShelleyBlock proto era) ->
+  Values (ShelleyBlock proto era) ->
   Either
     (SL.BlockTransitionError era)
     ( LedgerResult
         (ShelleyBlock proto era)
-        (LedgerState (ShelleyBlock proto era), Diff (ShelleyBlock proto era))
+        (LedgerState (ShelleyBlock proto era), BlockDiff (ShelleyBlock proto era))
     )
-applyHelper evs doValidate cfg blk values stBefore = do
+applyHelper evs doValidate cfg blk stBefore values = do
   let TickedShelleyLedgerState
         { tickedShelleyLedgerTransition
         , tickedShelleyLedgerStateNoUTxO
@@ -628,7 +633,7 @@ applyHelper evs doValidate cfg blk values stBefore = do
   -- protocol-header block is handed straight to the ledger (as prepare-11.1
   -- does); the ledger's BBODY rule extracts the header view it needs.
   (nesOut, diff, events) <-
-    applyBlockShim evs doValidate globals (shelleyBlockRaw blk) values tickedShelleyLedgerStateNoUTxO
+    applyBlockShim evs doValidate globals (shelleyBlockRaw blk) tickedShelleyLedgerStateNoUTxO values
 
   let st' =
         ShelleyLedgerState
@@ -652,7 +657,7 @@ applyHelper evs doValidate cfg blk values stBefore = do
           , shelleyLedgerLatestPerasCertRound =
               shelleyLedgerLatestPerasCertRound'
           }
-  pure $ LedgerResult (map ShelleyLedgerEventBBODY events) (st', diff)
+  pure $ LedgerResult (map ShelleyLedgerEventBBODY events) (st', BlockDiff diff)
  where
   globals = shelleyLedgerGlobals cfg
   swindow = SL.stabilityWindow globals

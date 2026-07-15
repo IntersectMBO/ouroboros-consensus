@@ -52,6 +52,7 @@ import qualified Data.Aeson.Key as AesonKey
 import Data.Bifunctor (second)
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -87,13 +88,13 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 -- will have to reconsider what we can cache and what we can't.
 data ValidatedTxWithDiffs blk = ValidatedTxWithDiffs
   { validatedTx :: !(Validated (GenTx blk))
-  , validatedTxDiffs :: !(Diff blk)
+  , validatedTxDiffs :: !(TxsDiff blk)
   }
   deriving Generic
 
 deriving instance
   ( NoThunks (Validated (GenTx blk))
-  , NoThunks (Diff blk)
+  , NoThunks (TxsDiff blk)
   ) =>
   NoThunks (ValidatedTxWithDiffs blk)
 
@@ -123,12 +124,13 @@ data InternalState blk = IS
   --
   -- INVARIANT: 'isLedgerState' is the ledger resulting from applying the
   -- transactions in 'isTxs' against the ledger identified 'isTip' as tip.
-  , isLedgerDiff :: !(Diff blk)
-  -- ^ The cumulative diff from the base (un-ticked) ledger state at 'isTip' to
-  -- the virtual tip 'isLedgerState': the tick diff composed with the diffs of
-  -- all the transactions in 'isTxs'. Reading a transaction's inputs against the
-  -- base state and forwarding through this diff yields their values at the
-  -- virtual tip.
+  , isLedgerTickDiff :: !(TickDiff blk)
+  -- ^ The tick diff from the un-ticked base ledger state
+  , isLedgerTxsDiff :: !(StrictMaybe (TxsDiff blk))
+  -- ^ The cumulative diffs from the txs in 'isTxs'. Reading a
+  -- transaction's inputs against the base state and forwarding
+  -- through 'isLedgerTickDiff' and then this diff yields their values
+  -- at the virtual tip.
   , isTip :: !(Point blk)
   -- ^ The tip of the chain that 'isTxs' was validated against
   , isSlotNo :: !SlotNo
@@ -164,7 +166,8 @@ deriving instance
   ( NoThunks (Validated (GenTx blk))
   , NoThunks (GenTxId blk)
   , NoThunks (TickedLedgerState blk)
-  , NoThunks (Diff blk)
+  , NoThunks (TickDiff blk)
+  , NoThunks (TxsDiff blk)
   , NoThunks (TxMeasurePhase1 blk)
   , NoThunks (TxMeasurePhase2 blk)
   , StandardHash blk
@@ -190,14 +193,15 @@ initInternalState ::
   SlotNo ->
   TickedLedgerState blk ->
   -- | The tick diff (base → ticked state), the initial 'isLedgerDiff'.
-  Diff blk ->
+  TickDiff blk ->
   InternalState blk
 initInternalState capacityOverride lastTicketNo cfg slot st tickDiff =
   IS
     { isTxs = TxSeq.Empty
     , isTxIds = Set.empty
     , isLedgerState = st
-    , isLedgerDiff = tickDiff
+    , isLedgerTickDiff = tickDiff
+    , isLedgerTxsDiff = mempty
     , isTip = castPoint $ getTip st
     , isSlotNo = slot
     , isLastTicketNo = lastTicketNo
@@ -311,7 +315,7 @@ tickLedgerState ::
   (UpdateLedger blk, ValidateEnvelope blk) =>
   LedgerConfig blk ->
   ForgeLedgerState blk ->
-  (SlotNo, TickedLedgerState blk, Diff blk)
+  (SlotNo, TickedLedgerState blk, TickDiff blk)
 tickLedgerState _cfg (ForgeInKnownSlot slot st tickDiff) = (slot, st, tickDiff)
 tickLedgerState cfg (ForgeInUnknownSlot st) =
   (slot, tickedSt, tickDiff)
@@ -344,11 +348,11 @@ validateNewTransaction ::
   -- to the virtual tip ('isLedgerState') through 'isLedgerDiff'.
   Values blk ->
   InternalState blk ->
-  ( Either (ApplyTxErr blk) (Validated (GenTx blk), Diff blk)
+  ( Either (ApplyTxErr blk) (Validated (GenTx blk), TxsDiff blk)
   , DiffTimeMeasure -> InternalState blk
   )
 validateNewTransaction cfg wti tx txsz fwdValues is =
-  case runExcept (applyTx cfg wti isSlotNo tx fwdValues isLedgerState) of
+  case runExcept (applyTx cfg wti isSlotNo tx isLedgerState fwdValues) of
     Left err -> (Left err, \_dur -> is)
     Right (st', diff, vtx) ->
       ( Right (vtx, diff)
@@ -362,7 +366,11 @@ validateNewTransaction cfg wti tx txsz fwdValues is =
                     (MkTxMeasureWithDiffTime txsz dur)
             , isTxIds = Set.insert (txId tx) isTxIds
             , isLedgerState = st'
-            , isLedgerDiff = isLedgerDiff <> diff
+            , isLedgerTickDiff = isLedgerTickDiff
+            , isLedgerTxsDiff =
+                SJust $ case isLedgerTxsDiff of
+                  SNothing -> diff
+                  SJust x -> x <> diff
             , isLastTicketNo = nextTicketNo
             }
       )
@@ -371,7 +379,8 @@ validateNewTransaction cfg wti tx txsz fwdValues is =
     { isTxs
     , isTxIds
     , isLedgerState
-    , isLedgerDiff
+    , isLedgerTickDiff
+    , isLedgerTxsDiff
     , isLastTicketNo
     , isSlotNo
     } = is
@@ -394,7 +403,7 @@ revalidateTxsFor ::
   -- | The ticked ledger state against which txs will be revalidated
   TickedLedgerState blk ->
   -- | The tick diff (base → ticked), to forward the read values to the tip
-  Diff blk ->
+  TickDiff blk ->
   -- | All the inputs for the transactions, read against the base state
   Values blk ->
   -- | 'isLastTicketNo' and 'vrLastTicketNo'
@@ -405,17 +414,16 @@ revalidateTxsFor capacityOverride cfg slot st tickDiff values lastTicketNo txTic
   let inputTxs = map wrap txTickets
 
       ReapplyTxsResult err validTxs st' =
-        reapplyTxs @blk @Collect cfg slot inputTxs (forward @blk [tickDiff] values) st
-
-      -- The cumulative diff from the base state to the new virtual tip: the tick
-      -- diff composed with the (cached, non-stale) diffs of the kept txs.
-      ledgerDiff = Foldable.foldl' (<>) tickDiff $ map snd3 validTxs
+        reapplyTxs @blk @Collect cfg slot inputTxs st (forwardTickDiff @blk tickDiff values)
    in RevalidateTxsResult
         ( IS
             { isTxs = TxSeq.fromList $ map unwrap validTxs
             , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst3) validTxs
             , isLedgerState = st'
-            , isLedgerDiff = ledgerDiff
+            , isLedgerTickDiff = tickDiff
+            , isLedgerTxsDiff = case map snd3 validTxs of
+                [] -> SNothing
+                x : xs -> SJust $ Foldable.foldl' (<>) x xs
             , isTip = castPoint $ getTip st
             , isSlotNo = slot
             , isLastTicketNo = lastTicketNo
@@ -447,7 +455,7 @@ computeSnapshot ::
   -- | The ticked ledger state against which txs will be revalidated
   TickedLedgerState blk ->
   -- | The tick diff (base → ticked), to forward the read values to the tip
-  Diff blk ->
+  TickDiff blk ->
   -- | All the inputs for the transactions, read against the base state
   Values blk ->
   [TxTicket (TxMeasureWithDiffTime blk) (Validated (GenTx blk))] ->
@@ -457,7 +465,7 @@ computeSnapshot cfg slot st tickDiff values txTickets =
    in snapshotFromValidTxs
         ( map unwrap $
             validatedTxs $
-              reapplyTxs @blk @Discard cfg slot inputTxs (forward @blk [tickDiff] values) st
+              reapplyTxs @blk @Discard cfg slot inputTxs st (forwardTickDiff @blk tickDiff values)
         )
         (castPoint $ getTip st)
         slot

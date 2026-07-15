@@ -653,7 +653,7 @@ runThreadNetwork
     forkCrucialTxs clock s0 unblockForge getTipPoint mforker mempool sharedRegistry txs0 = do
       forkLinkedThread sharedRegistry "crucialTxs" $ do
         let loop (slot, mempFp) = do
-              extLedger <- mforker $ lift . atomically . roforkerGetLedgerState
+              extLedger <- mforker $ pure . roforkerGetLedgerState
               let ledger = ledgerState extLedger
 
               _ <- addTxs mempool txs0
@@ -717,9 +717,8 @@ runThreadNetwork
     forkTxProducer coreNodeId registry clock cfg nodeSeed getForkerWithRange mempool =
       void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> do
         (ledgerSt, fullUTxO) <- getForkerWithRange $ \(forker, provider) -> do
-          st <- atomically $ roforkerGetLedgerState forker
-          -- Read the whole UTxO via the era range reader (the @mk@-free forker
-          -- can no longer read a whole table through 'roforkerReadTables').
+          let st = roforkerGetLedgerState forker
+          -- Read the whole UTxO via the era range reader.
           fullUTxO <- testReadAllValues provider (ledgerState st)
           pure (ledgerState st, fullUTxO)
         -- Combine the node's seed with the current slot number, to make sure
@@ -942,8 +941,7 @@ runThreadNetwork
 
                 -- The EBB consumes no inputs, so the values it needs are empty;
                 -- read its (empty) key set against the tip to obtain a
-                -- correctly-typed empty @Values blk@ (the @mk@-free apply takes
-                -- the values as a separate argument).
+                -- correctly-typed empty @Values blk@.
                 tables <-
                   fmap fromJust $
                     withEarlyExit $
@@ -954,7 +952,7 @@ runThreadNetwork
                 -- fail if the EBB is invalid
                 -- if it is valid, we retick to the /same/ slot
                 let apply = applyLedgerBlock OmitLedgerEvents (configLedger pInfoConfig)
-                tickedLdgSt' <- case Exc.runExcept $ apply ebb tables tickedLdgSt of
+                tickedLdgSt' <- case Exc.runExcept $ apply ebb tickedLdgSt tables of
                   Left e -> Exn.throw $ JitEbbError @blk e
                   Right (st, _diff) ->
                     pure $
@@ -1162,8 +1160,7 @@ runThreadNetwork
               Right l -> f l
 
       -- Like 'getForker' but also yields the 'EraRangeReaderProvider' so the tx
-      -- producer can read the whole UTxO (the @mk@-free forker can no longer do
-      -- a whole-table read; see 'testReadAllValues').
+      -- producer can read the whole UTxO.
       let getForkerWithRange ::
             forall r.
             ((ReadOnlyForker' m blk, EraRangeReaderProvider m blk) -> m r) ->

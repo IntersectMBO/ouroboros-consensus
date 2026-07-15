@@ -123,15 +123,15 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
                 DualLedgerState
                   { dualLedgerStateMain = initConcreteState
                   , dualLedgerStateAux = initAbstractState
-                  , -- ByronSpec has no on-disk tables (trivial @()@ values).
-                    dualLedgerStateAuxValues = ()
+                  , -- ByronSpec has no on-disk tables (trivial 'UnitTables' values).
+                    dualLedgerStateAuxValues = UnitTables
                   , dualLedgerStateBridge = initBridge
                   }
             , headerState = genesisHeaderState S.empty
             }
       , -- Byron has no on-disk tables; its UTxO lives inside the (concrete)
         -- ledger state, so the genesis HD tables are empty.
-        pInfoInitLedgerTables = ()
+        pInfoInitLedgerTables = UnitTables
       }
   , return $ dualByronBlockForging . byronLeaderCredentials <$> credss
   )

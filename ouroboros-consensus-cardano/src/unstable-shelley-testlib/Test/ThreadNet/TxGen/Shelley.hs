@@ -36,6 +36,9 @@ import Test.QuickCheck
 import Test.ThreadNet.Infra.Shelley
 import Test.ThreadNet.TxGen (TxGen (..))
 
+type Blk = ShelleyBlock (TPraos MockCrypto) ShelleyEra
+
+
 data ShelleyTxGenExtra = ShelleyTxGenExtra
   { stgeGenEnv :: Gen.GenEnv MockCrypto ShelleyEra
   -- ^ Generator environment.
@@ -62,33 +65,33 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
             -- The values were read against the un-ticked state; forward them
             -- through the tick diff to the ticked tip.
             let (ticked, tickDiff) = applyChainTick OmitLedgerEvents lcfg curSlotNo lst
-            go [] n ticked (forward @(ShelleyBlock (TPraos MockCrypto) ShelleyEra) [tickDiff] values)
+            go [] n ticked (forwardTickDiff @Blk tickDiff values)
    where
     ShelleyTxGenExtra
       { stgeGenEnv
       , stgeStartAt
       } = extra
 
-    lcfg :: LedgerConfig (ShelleyBlock (TPraos MockCrypto) ShelleyEra)
+    lcfg :: LedgerConfig Blk
     lcfg = configLedger cfg
 
     go ::
-      [GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)] ->
+      [GenTx Blk] ->
       -- \^ Accumulator
       Integer ->
       -- \^ Number of txs to still produce
-      TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
-      -- \^ The (mk-free) ticked state
-      Values (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
+      TickedLedgerState Blk ->
+      -- \^ The ticked state
+      Values Blk ->
       -- \^ The UTxO values at the virtual tip
-      Gen [GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)]
+      Gen [GenTx Blk]
     go acc 0 _ _ = return (reverse acc)
     go acc n st vals = do
       mbTx <- genTx cfg curSlotNo st vals stgeGenEnv
       case mbTx of
         Nothing -> return (reverse acc) -- cannot afford more transactions
         Just tx ->
-          case runExcept $ applyTx lcfg DoNotIntervene curSlotNo tx vals st of
+          case runExcept $ applyTx lcfg DoNotIntervene curSlotNo tx st vals of
             -- We don't mind generating invalid transactions
             Left _ -> go (tx : acc) (n - 1) st vals
             Right (st', diff, _vtx) ->
@@ -96,16 +99,15 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
                 (tx : acc)
                 (n - 1)
                 st'
-                (forward @(ShelleyBlock (TPraos MockCrypto) ShelleyEra) [diff] vals)
+                (forwardTxsDiff @Blk diff vals)
 
 genTx ::
-  TopLevelConfig (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
+  TopLevelConfig Blk ->
   SlotNo ->
-  TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
-  -- | The UTxO values, threaded alongside the @mk@-free ticked state.
-  Values (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
+  TickedLedgerState Blk ->
+  Values Blk ->
   Gen.GenEnv MockCrypto ShelleyEra ->
-  Gen (Maybe (GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)))
+  Gen (Maybe (GenTx Blk))
 genTx _cfg slotNo tickedSt values genEnv =
   Just . mkShelleyTx
     <$> Gen.genTx
@@ -113,8 +115,7 @@ genTx _cfg slotNo tickedSt values genEnv =
       ledgerEnv
       (SL.LedgerState utxoSt dpState)
  where
-  -- The ticked state's NES holds an empty UTxO (mk-free); stow the read values
-  -- back in so the generator sees the real UTxO set.
+  -- Stow the read values back in so the generator sees the real UTxO set.
   nes :: SL.NewEpochState ShelleyEra
   nes = stowUTxO values (tickedShelleyLedgerStateNoUTxO tickedSt)
 

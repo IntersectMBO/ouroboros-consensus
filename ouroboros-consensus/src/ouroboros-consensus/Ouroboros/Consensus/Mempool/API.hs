@@ -184,7 +184,7 @@ data Mempool m blk = Mempool
   , getSnapshotFor ::
       SlotNo ->
       TickedLedgerState blk ->
-      Diff blk ->
+      TickDiff blk ->
       (Keys blk -> m (Values blk)) ->
       m (MempoolSnapshot blk)
   -- ^ Get a snapshot of the mempool state that is valid with respect to
@@ -311,7 +311,7 @@ data MempoolTimeoutConfig = MempoolTimeoutConfig
 -- | The result of attempting to add a transaction to the mempool.
 data MempoolAddTxResult blk
   = -- | The transaction was added to the mempool.
-    MempoolTxAdded !(Validated (GenTx blk)) !(Diff blk)
+    MempoolTxAdded !(Validated (GenTx blk)) !(TxsDiff blk)
   | -- | The transaction was rejected and could not be added to the mempool
     -- for the specified reason.
     MempoolTxRejected !(GenTx blk) !(ApplyTxErr blk)
@@ -320,14 +320,14 @@ deriving instance
   ( Eq (GenTx blk)
   , Eq (Validated (GenTx blk))
   , Eq (ApplyTxErr blk)
-  , Eq (Diff blk)
+  , Eq (TxsDiff blk)
   ) =>
   Eq (MempoolAddTxResult blk)
 deriving instance
   ( Show (GenTx blk)
   , Show (Validated (GenTx blk))
   , Show (ApplyTxErr blk)
-  , Show (Diff blk)
+  , Show (TxsDiff blk)
   ) =>
   Show (MempoolAddTxResult blk)
 
@@ -402,7 +402,7 @@ data ForgeLedgerState blk
     -- This will only be the case when we realized that we are the slot leader
     -- and we are actually producing a block. It is the caller's responsibility
     -- to call 'applyChainTick' and produce the ticked ledger state.
-    ForgeInKnownSlot SlotNo (TickedLedgerState blk) (Diff blk)
+    ForgeInKnownSlot SlotNo (TickedLedgerState blk) (TickDiff blk)
   | -- | The slot number of the block is not yet known
     --
     -- When we are validating transactions before we know in which block they

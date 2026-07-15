@@ -274,8 +274,8 @@ fromChain cfg initState initValues chain =
     fmap (mkHeaderStateWithTime (configLedger cfg) . fst)
       . NE.scanl
         ( \(st, vals) blk ->
-            let (st', diff) = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk vals st
-             in (st', forward @blk [diff] vals)
+            let (st', diff) = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk st vals
+             in (st', forwardTickAndBlockDiff @blk diff vals)
         )
         (initState, initValues)
       . Chain.toOldestFirst

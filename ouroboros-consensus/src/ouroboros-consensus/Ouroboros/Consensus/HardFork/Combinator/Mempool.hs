@@ -253,8 +253,8 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
       case matchTx injs (unwrapTx tx) hardForkState of
         Left{} -> pure Measure.zero -- safe b/c the tx will be found invalid
         Right pair -> case State.match values pair of
-          -- The values are read for the tx's era, so this never mismatches; if
-          -- it somehow did, the tx will be found invalid anyway.
+          -- Should this mismatch, it will fail the same way when applying the
+          -- transaction, so it will be rejected.
           Left{} -> pure Measure.zero
           Right pair' -> hcollapse $ hcizipWith proxySingle aux cfgs pair'
      where
@@ -304,7 +304,7 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs blk = ApplyResult
   { arState :: Ticked LedgerState blk
-  , arDiff :: WrapDiff blk
+  , arDiff :: TxsDiff blk
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
 
@@ -320,12 +320,12 @@ applyHelper ::
   WhetherToIntervene ->
   SlotNo ->
   txIn (HardForkBlock xs) ->
-  Values (HardForkBlock xs) ->
   TickedLedgerState (HardForkBlock xs) ->
+  Values (HardForkBlock xs) ->
   Except
     (HardForkApplyTxErr xs)
     ( TickedLedgerState (HardForkBlock xs)
-    , Diff (HardForkBlock xs)
+    , TxsDiff (HardForkBlock xs)
     , Validated (GenTx (HardForkBlock xs))
     )
 applyHelper
@@ -334,8 +334,8 @@ applyHelper
   wti
   slot
   tx
-  values
-  (TickedHardForkLedgerState transition hardForkState) =
+  (TickedHardForkLedgerState transition hardForkState)
+  values =
     case matchPolyTx injs (modeGetTx tx) hardForkState of
       Left mismatch ->
         throwError $
@@ -371,8 +371,8 @@ applyHelper
             let st' :: State.HardForkState (Ticked LedgerState) xs
                 st' = arState `hmap` result
 
-                diffs :: Diff (HardForkBlock xs)
-                diffs = State.tip $ arDiff `hmap` result
+                diffs :: TxsDiff (HardForkBlock xs)
+                diffs = TxsDiff $ State.tip $ (WrapDiff . unTxsDiff . arDiff) `hmap` result
 
                 vtx :: Validated (GenTx (HardForkBlock xs))
                 vtx = hcollapse $ (K . arValidatedTx) `hmap` result
@@ -428,21 +428,21 @@ applyHelper
             let lcfg = unwrapLedgerConfig cfg
             case mode of
               ModeApply -> do
-                (st', diff, vtx) <- applyTx lcfg wti slot tx' vals st
+                (st', diff, vtx) <- applyTx lcfg wti slot tx' st vals
                 pure
                   ApplyResult
                     { arValidatedTx = injectValidatedGenTx index vtx
-                    , arDiff = WrapDiff diff
+                    , arDiff = diff
                     , arState = st'
                     }
               ModeReapply -> do
                 let vtx' = unwrapValidatedGenTx tx'
-                (st', diff) <- reapplyTx lcfg slot vtx' vals st
+                (st', diff) <- reapplyTx lcfg slot vtx' st vals
                 -- provide the given transaction, which was already validated
                 pure
                   ApplyResult
                     { arValidatedTx = injectValidatedGenTx index vtx'
-                    , arDiff = WrapDiff diff
+                    , arDiff = diff
                     , arState = st'
                     }
 

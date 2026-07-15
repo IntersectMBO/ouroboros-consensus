@@ -141,7 +141,7 @@ instance IsLedger LedgerState blk => GetTip (Ticked ExtLedgerState blk) where
   getTip = castPoint . getTip . tickedLedgerState
 
 instance
-  (LedgerSupportsProtocol blk, BlockSupportsUTxOHD blk) =>
+  (LedgerSupportsProtocol blk, BlockSupportsLedgerHD blk) =>
   IsLedger ExtLedgerState blk
   where
   type LedgerErr ExtLedgerState blk = ExtValidationError blk
@@ -172,29 +172,29 @@ applyHelper ::
     ComputeLedgerEvents ->
     LedgerCfg LedgerState blk ->
     blk ->
-    Values blk ->
     Ticked LedgerState blk ->
+    Values blk ->
     Except
       (LedgerErr LedgerState blk)
-      (LedgerResult blk (LedgerState blk, Diff blk))
+      (LedgerResult blk (LedgerState blk, BlockDiff blk))
   ) ->
   ComputeLedgerEvents ->
   LedgerCfg ExtLedgerState blk ->
   blk ->
-  Values blk ->
   Ticked ExtLedgerState blk ->
+  Values blk ->
   Except
     (LedgerErr ExtLedgerState blk)
-    (LedgerResult blk (ExtLedgerState blk, Diff blk))
-applyHelper f opts cfg blk vals TickedExtLedgerState{..} = do
+    (LedgerResult blk (ExtLedgerState blk, BlockDiff blk))
+applyHelper f opts cfg blk TickedExtLedgerState{..} vals = do
   ledgerResult <-
     withExcept ExtValidationErrorLedger $
       f
         opts
         (configLedger $ getExtLedgerCfg cfg)
         blk
-        vals
         tickedLedgerState
+        vals
   hdr <-
     withExcept ExtValidationErrorHeader $
       validateHeader @blk
@@ -204,14 +204,14 @@ applyHelper f opts cfg blk vals TickedExtLedgerState{..} = do
         tickedHeaderState
   pure $ (\(l, d) -> (ExtLedgerState l hdr, d)) <$> castLedgerResult ledgerResult
 
-instance (LedgerSupportsProtocol blk, BlockSupportsUTxOHD blk) => ApplyBlock ExtLedgerState blk where
+instance (LedgerSupportsProtocol blk, BlockSupportsLedgerHD blk) => ApplyBlock ExtLedgerState blk where
   applyBlockLedgerResultWithValidation doValidate =
     applyHelper (applyBlockLedgerResultWithValidation doValidate)
 
   applyBlockLedgerResult =
     applyHelper applyBlockLedgerResult
 
-  reapplyBlockLedgerResult evs cfg blk vals TickedExtLedgerState{..} =
+  reapplyBlockLedgerResult evs cfg blk TickedExtLedgerState{..} vals =
     (\(l, d) -> (ExtLedgerState l hdr, d)) <$> castLedgerResult ledgerResult
    where
     ledgerResult =
@@ -219,8 +219,8 @@ instance (LedgerSupportsProtocol blk, BlockSupportsUTxOHD blk) => ApplyBlock Ext
         evs
         (configLedger $ getExtLedgerCfg cfg)
         blk
-        vals
         tickedLedgerState
+        vals
     hdr =
       revalidateHeader
         (getExtLedgerCfg cfg)

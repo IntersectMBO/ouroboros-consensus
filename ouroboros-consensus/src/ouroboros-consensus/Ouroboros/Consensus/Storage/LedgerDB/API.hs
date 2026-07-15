@@ -51,7 +51,7 @@
 --     - __Chain sync client__: To validate headers of a chain that intersects
 --        with any of the past \(k\) blocks.
 --
--- - __Providing the on-disk ledger tables (the @Values@ of 'Ouroboros.Consensus.Ledger.Basics.BlockSupportsUTxOHD') at any of the last \(k\) ledger states__: To apply blocks or transactions on top
+-- - __Providing the on-disk ledger tables (the @Values@ of 'Ouroboros.Consensus.Ledger.Basics.BlockSupportsLedgerHD') at any of the last \(k\) ledger states__: To apply blocks or transactions on top
 --     of ledger states, the LedgerDB must be able to provide the appropriate
 --     ledger tables at any of those ledger states.
 --
@@ -269,7 +269,7 @@ type LedgerDbSerialiseConstraints blk =
   , DecodeDisk blk (AnnTip blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
-  , BlockSupportsUTxOHD blk
+  , BlockSupportsLedgerHD blk
   )
 
 -- | The core API of the LedgerDB component
@@ -367,7 +367,7 @@ data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
-  , push :: l blk -> Diff blk -> m ()
+  , push :: l blk -> TickAndBlockDiff blk -> m ()
   -- ^ Push a ledger state (together with the diff it produced), and prune the
   -- 'LedgerDB' to its immutable tip.
   --
@@ -461,7 +461,7 @@ openReadOnlyForker ::
   LedgerDB m l blk ->
   Target (Point blk) ->
   m (Either GetForkerError (ReadOnlyForker m l blk))
-openReadOnlyForker ldb pt = fmap readOnlyForker <$> openForkerAtTarget ldb pt
+openReadOnlyForker ldb pt = traverse readOnlyForker =<< openForkerAtTarget ldb pt
 
 {-------------------------------------------------------------------------------
   Initialization

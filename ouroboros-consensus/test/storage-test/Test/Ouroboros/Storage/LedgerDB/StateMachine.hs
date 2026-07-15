@@ -222,9 +222,9 @@ lsmTestArguments secParam salt fp =
  Model
 -------------------------------------------------------------------------------}
 
--- | An (@mk@-free) extended ledger state together with its full UTxO
--- 'Values'. The model threads the values explicitly now that the state no
--- longer carries the on-disk tables.
+-- | An extended ledger state together with its full UTxO 'Values'. The model
+-- threads the values explicitly now that the state no longer carries the
+-- on-disk tables.
 data StateAndTables = StateAndTables
   { satState :: !(ExtLedgerState TestBlock)
   , satValues :: !(Values TestBlock)
@@ -388,9 +388,9 @@ instance StateModel Model where
             OmitLedgerEvents
             (ledgerDbCfg $ extLedgerDbConfig secParam)
             b
-            (satValues tip)
             (satState tip)
-      put (ls AS.:> (b, StateAndTables l' (forward @TestBlock [diff] (satValues tip))))
+            (satValues tip)
+      put (ls AS.:> (b, StateAndTables l' (forwardTickAndBlockDiff @TestBlock diff (satValues tip))))
 
     switch ::
       StateT

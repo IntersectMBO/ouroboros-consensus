@@ -5,6 +5,7 @@
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -69,7 +70,7 @@ import qualified Control.State.Transition.Extended as STS
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Void (Void)
+import Data.Void (Void, absurd)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
@@ -193,43 +194,49 @@ instance IsLedger LedgerState ByronBlock where
           , untickedByronLedgerTransition =
               byronLedgerTransition
           }
-      , () -- Byron has no on-disk tables, so ticking produces no diff
+      , TickDiff UnitTables
       )
 
-type instance TxIn ByronBlock = Void
-type instance TxOut ByronBlock = Void
+deriving newtype instance Semigroup (TxsDiff ByronBlock)
 
--- | Byron has no on-disk tables: its 'Keys'\/'Values'\/'Diff' are all trivial
+-- | Byron has no on-disk tables: its keys\/values\/diffs are all trivial
 -- (@()@), so every operation is a no-op.
-instance BlockSupportsUTxOHD ByronBlock where
-  type Keys ByronBlock = ()
-  type Values ByronBlock = ()
-  type Diff ByronBlock = ()
-  blockKeys _ = ()
-  forward _ = id
-  restrictValues _ = id
-  valuesSize _ = 0
-  encodeValues _ = mempty
-  decodeValues _ = pure ()
+instance BlockSupportsLedgerHD ByronBlock where
+  type Keys ByronBlock = UnitTables
+  type Values ByronBlock = UnitTables
+  type Diff ByronBlock = UnitTables
+  blockKeys _ = UnitTables
+  combineTickAndBlockDiff (TickDiff UnitTables) (BlockDiff UnitTables) = TickAndBlockDiff UnitTables
+  forwardTickDiff (TickDiff UnitTables) UnitTables = UnitTables
+  forwardBlockDiff (BlockDiff UnitTables) UnitTables = UnitTables
+  forwardTickAndBlockDiff (TickAndBlockDiff UnitTables) UnitTables = UnitTables
+  forwardTxsDiff (TxsDiff UnitTables) UnitTables = UnitTables
+  restrictValues UnitTables UnitTables = UnitTables
+  valuesSize UnitTables = 0
+  encodeValuesForInMemory UnitTables = mempty
+  decodeValuesForInMemory _ = pure UnitTables
 
-instance SingleEraUTxOHDBlock ByronBlock where
-  emptyValues = ()
-  emptyDiffs = ()
-
-instance SingleEraBlockSupportsUTxOHD ByronBlock where
-  rangeReadValues _ _ = ((), Nothing)
+instance SingleEraBlockSupportsLedgerHD ByronBlock where
+  type TxIn ByronBlock = Void
+  type TxOut ByronBlock = Void
+  rangeReadValues _ _ = (UnitTables, Nothing)
   keysToList _ = []
   valuesToList _ = []
-  valuesFromList _ = ()
+  valuesFromList _ = UnitTables
   diffToList _ = []
+  emptyValues = UnitTables
+  emptyTickDiff = TickDiff UnitTables
+  combineTransAndTickDiff (TickDiff UnitTables) (TickDiff UnitTables) = TickDiff UnitTables
+  packTxInBytes = absurd
+  unpackTxInBytes _ = Left "Absurd"
 
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces
 -------------------------------------------------------------------------------}
 
 instance ApplyBlock LedgerState ByronBlock where
-  applyBlockLedgerResultWithValidation doValidation opts cfg blk _values ticked =
-    fmap (pureLedgerResult . (,())) (applyByronBlock doValidation opts cfg blk ticked)
+  applyBlockLedgerResultWithValidation doValidation opts cfg blk ticked _values =
+    fmap (pureLedgerResult . (,BlockDiff UnitTables)) (applyByronBlock doValidation opts cfg blk ticked)
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult validationErrorImpossible
 

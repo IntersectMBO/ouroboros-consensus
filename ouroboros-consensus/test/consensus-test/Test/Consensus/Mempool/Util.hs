@@ -62,10 +62,10 @@ type TheMeasure = IgnoringOverflow ByteSize32
 
 -- There are 5 (core)nodes and each gets 1000.
 --
--- For these mempool model tests we keep the genesis UTxO inside the
--- ('mk'-free) ledger state's 'MockState' rather than threading it as separate
--- 'Values'; the mempool's read-only forker projects the values out of
--- 'mockUtxo' (see "Test.Consensus.Mempool").
+-- For these mempool model tests we keep the genesis UTxO inside the ledger
+-- state's 'MockState' rather than threading it as separate 'Values'; the
+-- mempool's read-only forker projects the values out of 'mockUtxo' (see
+-- "Test.Consensus.Mempool").
 testInitLedger :: LedgerState TestBlock
 testInitLedger = SimpleLedgerState $ genesisMockState $ mkAddrDist (NumCoreNodes 5)
 

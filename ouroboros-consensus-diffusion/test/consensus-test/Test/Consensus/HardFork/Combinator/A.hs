@@ -205,32 +205,38 @@ newtype instance Ticked LedgerState BlockA = TickedLedgerStateA
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn BlockA = Void
-type instance TxOut BlockA = Void
+deriving newtype instance Semigroup (TxsDiff BlockA)
 
 -- | BlockA has no on-disk tables: its 'Keys'\/'Values'\/'Diff' are all trivial
--- (@()@), so every operation is a no-op.
-instance BlockSupportsUTxOHD BlockA where
-  type Keys BlockA = ()
-  type Values BlockA = ()
-  type Diff BlockA = ()
-  blockKeys _ = ()
-  forward _ = id
-  restrictValues _ = id
-  valuesSize _ = 0
-  encodeValues _ = mempty
-  decodeValues _ = pure ()
+-- ('UnitTables'), so every operation is a no-op.
+instance BlockSupportsLedgerHD BlockA where
+  type Keys BlockA = UnitTables
+  type Values BlockA = UnitTables
+  type Diff BlockA = UnitTables
+  blockKeys _ = UnitTables
+  combineTickAndBlockDiff (TickDiff UnitTables) (BlockDiff UnitTables) = TickAndBlockDiff UnitTables
+  forwardTickDiff (TickDiff UnitTables) UnitTables = UnitTables
+  forwardBlockDiff (BlockDiff UnitTables) UnitTables = UnitTables
+  forwardTickAndBlockDiff (TickAndBlockDiff UnitTables) UnitTables = UnitTables
+  forwardTxsDiff (TxsDiff UnitTables) UnitTables = UnitTables
+  restrictValues UnitTables UnitTables = UnitTables
+  valuesSize UnitTables = 0
+  encodeValuesForInMemory UnitTables = mempty
+  decodeValuesForInMemory _ = pure UnitTables
 
-instance SingleEraUTxOHDBlock BlockA where
-  emptyValues = ()
-  emptyDiffs = ()
-
-instance SingleEraBlockSupportsUTxOHD BlockA where
-  rangeReadValues _ _ = ((), Nothing)
+instance SingleEraBlockSupportsLedgerHD BlockA where
+  type TxIn BlockA = Void
+  type TxOut BlockA = Void
+  rangeReadValues _ _ = (UnitTables, Nothing)
   keysToList _ = []
   valuesToList _ = []
-  valuesFromList _ = ()
+  valuesFromList _ = UnitTables
   diffToList _ = []
+  emptyValues = UnitTables
+  emptyTickDiff = TickDiff UnitTables
+  combineTransAndTickDiff (TickDiff UnitTables) (TickDiff UnitTables) = TickDiff UnitTables
+  packTxInBytes = absurd
+  unpackTxInBytes _ = Left "Absurd"
 
 data PartialLedgerConfigA = LCfgA
   { lcfgA_k :: SecurityParam
@@ -265,14 +271,15 @@ instance IsLedger LedgerState BlockA where
   type LedgerErr LedgerState BlockA = Void
 
   applyChainTickLedgerResult _ _ _ st =
-    pureLedgerResult (TickedLedgerStateA st, ())
+    pureLedgerResult (TickedLedgerStateA st, TickDiff UnitTables)
 
 instance ApplyBlock LedgerState BlockA where
-  applyBlockLedgerResultWithValidation _ _ cfg blk _values =
-    fmap (pureLedgerResult . (,()) . setTip)
-      . repeatedlyM
-        (\tx st -> (\(st', _, _) -> st') <$> applyTx cfg DoNotIntervene (blockSlot blk) tx () st)
+  applyBlockLedgerResultWithValidation _ _ cfg blk tickedSt _values =
+    fmap (pureLedgerResult . (,BlockDiff UnitTables) . setTip) $
+      repeatedlyM
+        (\tx st -> (\(st', _, _) -> st') <$> applyTx cfg DoNotIntervene (blockSlot blk) tx st UnitTables)
         (blkA_body blk)
+        tickedSt
    where
     setTip :: TickedLedgerState BlockA -> LedgerState BlockA
     setTip (TickedLedgerStateA st) = st{lgrA_tip = blockPoint blk}
@@ -374,17 +381,17 @@ newtype instance Validated (GenTx BlockA) = ValidatedGenTxA {forgetValidatedGenT
 type instance ApplyTxErr BlockA = Void
 
 instance LedgerSupportsMempool BlockA where
-  applyTx _ _wti sno tx@(TxA _ payload) _values (TickedLedgerStateA st) =
+  applyTx _ _wti sno tx@(TxA _ payload) (TickedLedgerStateA st) _values =
     case payload of
       InitiateAtoB -> do
-        return (TickedLedgerStateA $ st{lgrA_transition = Just sno}, (), ValidatedGenTxA tx)
+        return (TickedLedgerStateA $ st{lgrA_transition = Just sno}, TxsDiff UnitTables, ValidatedGenTxA tx)
 
-  reapplyTx cfg slot tx _values st =
-    (\(st', d, _) -> (st', d)) <$> applyTx cfg DoNotIntervene slot (forgetValidatedGenTxA tx) () st
+  reapplyTx cfg slot tx st _values =
+    (\(st', d, _) -> (st', d)) <$> applyTx cfg DoNotIntervene slot (forgetValidatedGenTxA tx) st UnitTables
 
   txForgetValidated = forgetValidatedGenTxA
 
-  getTransactionKeySets _tx = ()
+  getTransactionKeySets _tx = UnitTables
 
   mkMempoolApplyTxError = nothingMkMempoolApplyTxError
 

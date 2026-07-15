@@ -63,28 +63,26 @@ class TxGen blk where
     TopLevelConfig blk ->
     TxGenExtra blk ->
     LedgerState blk ->
-    -- | The UTxO values, carried alongside the @mk@-free state.
     Values blk ->
     Gen [GenTx blk]
 
   -- | Read the /whole/ UTxO at the given state, reconstructing the block-level
   -- @'Values' blk@.
   --
-  -- In the @mk@-free design the plain forker can no longer read a whole table
-  -- (range reads are era-typed and live behind the 'EraRangeReaderProvider';
-  -- see decision 10 in @utxo-hd-4.md@). The transaction generators, however,
-  -- need the full UTxO. So the harness pages the current era's values through
-  -- the provider and rebuilds @'Values' blk@: for a single-era block the
-  -- projection is the identity (default below); the hard-fork combinator pages
-  -- the current era and injects the result back into the @NS@
-  -- (see 'testReadAllValuesHfc').
+  -- The plain forker can't read a whole table (range reads are era-typed and
+  -- live behind the 'EraRangeReaderProvider'). The transaction generators,
+  -- however, need the full UTxO. So the harness pages the current era's values
+  -- through the provider and rebuilds @'Values' blk@: for a single-era block
+  -- the projection is the identity (default below); the hard-fork combinator
+  -- pages the current era and injects the result back into the @NS@ (see
+  -- 'testReadAllValuesHfc').
   testReadAllValues ::
     Monad m =>
     EraRangeReaderProvider m blk ->
     LedgerState blk ->
     m (Values blk)
   default testReadAllValues ::
-    (Monad m, SingleEraBlockSupportsUTxOHD blk) =>
+    (Monad m, SingleEraBlockSupportsLedgerHD blk) =>
     EraRangeReaderProvider m blk ->
     LedgerState blk ->
     m (Values blk)
@@ -96,7 +94,7 @@ class TxGen blk where
 -- key of each page until a page comes back empty.
 pageAllEra ::
   forall m blk.
-  (Monad m, SingleEraBlockSupportsUTxOHD blk) =>
+  (Monad m, SingleEraBlockSupportsLedgerHD blk) =>
   EraRangeReader m blk ->
   m (Values blk)
 pageAllEra (EraRangeReader rd) = go NoPreviousQuery []
@@ -177,20 +175,20 @@ testGenTxsHfc coreNodeId numCoreNodes curSlotNo cfg extras state values =
 -- hard-fork @NS@ at the current era's index.
 testReadAllValuesHfc ::
   forall m xs.
-  (Monad m, All SingleEraBlockSupportsUTxOHD xs) =>
+  (Monad m, All SingleEraBlockSupportsLedgerHD xs) =>
   EraRangeReaderProvider m (HardForkBlock xs) ->
   LedgerState (HardForkBlock xs) ->
   m (Values (HardForkBlock xs))
 testReadAllValuesHfc provider state =
   hcollapse $
     hcimap
-      (Proxy @SingleEraBlockSupportsUTxOHD)
+      (Proxy @SingleEraBlockSupportsLedgerHD)
       aux
       (State.tip (hardForkLedgerStatePerEra state))
  where
   aux ::
     forall x.
-    SingleEraBlockSupportsUTxOHD x =>
+    SingleEraBlockSupportsLedgerHD x =>
     Index xs x ->
     LedgerState x ->
     K (m (Values (HardForkBlock xs))) x

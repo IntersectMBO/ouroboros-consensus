@@ -8,6 +8,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
@@ -85,7 +86,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
 import Data.TreeDiff
-import Data.Void (Void)
+import Data.Void (Void, absurd)
 import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
@@ -575,35 +576,41 @@ instance IsLedger LedgerState TestBlock where
   type LedgerErr LedgerState TestBlock = TestBlockError
 
   applyChainTickLedgerResult _ _ _ st =
-    pureLedgerResult (TickedTestLedger st, ())
+    pureLedgerResult (TickedTestLedger st, TickDiff UnitTables)
 
-type instance TxIn TestBlock = Void
-type instance TxOut TestBlock = Void
+deriving newtype instance Semigroup (TxsDiff TestBlock)
 
-instance BlockSupportsUTxOHD TestBlock where
-  type Keys TestBlock = ()
-  type Values TestBlock = ()
-  type Diff TestBlock = ()
-  blockKeys _ = ()
-  forward _ = id
-  restrictValues _ = id
-  valuesSize _ = 0
-  encodeValues _ = mempty
-  decodeValues _ = pure ()
+instance BlockSupportsLedgerHD TestBlock where
+  type Keys TestBlock = UnitTables
+  type Values TestBlock = UnitTables
+  type Diff TestBlock = UnitTables
+  blockKeys _ = UnitTables
+  combineTickAndBlockDiff (TickDiff UnitTables) (BlockDiff UnitTables) = TickAndBlockDiff UnitTables
+  forwardTickDiff (TickDiff UnitTables) UnitTables = UnitTables
+  forwardBlockDiff (BlockDiff UnitTables) UnitTables = UnitTables
+  forwardTickAndBlockDiff (TickAndBlockDiff UnitTables) UnitTables = UnitTables
+  forwardTxsDiff (TxsDiff UnitTables) UnitTables = UnitTables
+  restrictValues UnitTables UnitTables = UnitTables
+  valuesSize UnitTables = 0
+  encodeValuesForInMemory UnitTables = mempty
+  decodeValuesForInMemory _ = pure UnitTables
 
-instance SingleEraUTxOHDBlock TestBlock where
-  emptyValues = ()
-  emptyDiffs = ()
-
-instance SingleEraBlockSupportsUTxOHD TestBlock where
-  rangeReadValues _ _ = ((), Nothing)
+instance SingleEraBlockSupportsLedgerHD TestBlock where
+  type TxIn TestBlock = Void
+  type TxOut TestBlock = Void
+  rangeReadValues _ _ = (UnitTables, Nothing)
   keysToList _ = []
   valuesToList _ = []
-  valuesFromList _ = ()
+  valuesFromList _ = UnitTables
   diffToList _ = []
+  emptyValues = UnitTables
+  emptyTickDiff = TickDiff UnitTables
+  combineTransAndTickDiff (TickDiff UnitTables) (TickDiff UnitTables) = TickDiff UnitTables
+  packTxInBytes = absurd
+  unpackTxInBytes _ = Left "Absurd"
 
 instance ApplyBlock LedgerState TestBlock where
-  applyBlockLedgerResultWithValidation _ _ _ tb@TestBlock{..} _values (TickedTestLedger TestLedger{..})
+  applyBlockLedgerResultWithValidation _ _ _ tb@TestBlock{..} (TickedTestLedger TestLedger{..}) _values
     | blockPrevHash tb /= lastAppliedHash =
         throwError $ InvalidHash lastAppliedHash (blockPrevHash tb)
     | not $ tbIsValid testBody =
@@ -611,7 +618,7 @@ instance ApplyBlock LedgerState TestBlock where
     | otherwise =
         return $
           pureLedgerResult $
-            (,()) $
+            (,BlockDiff UnitTables) $
               TestLedger
                 (Chain.blockPoint tb)
                 (BlockHash (blockHash tb))

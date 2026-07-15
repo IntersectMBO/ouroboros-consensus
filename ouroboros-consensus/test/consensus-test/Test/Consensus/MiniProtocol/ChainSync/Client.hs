@@ -873,7 +873,7 @@ computePastLedger cfg pt chain
         st
     | blk : blks' <- blks =
         go
-          (fst $ tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk mempty st)
+          (fst $ tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk st mempty)
           blks'
     | otherwise =
         error "point not in the list of blocks"

@@ -104,7 +104,7 @@ type data WhatToDoWithTxDiffs = Collect | Discard
 -- differences, we don't even have differences around that we might misuse.
 type family InputTxDiffs blk wtd where
   InputTxDiffs blk Discard = ()
-  InputTxDiffs blk Collect = Diff blk
+  InputTxDiffs blk Collect = TxsDiff blk
 
 class
   ( UpdateLedger blk
@@ -135,11 +135,11 @@ class
     -- | Slot number of the block containing the tx
     SlotNo ->
     GenTx blk ->
+    TickedLedgerState blk ->
     -- | The values the tx consumes (read against the virtual tip and forwarded
     -- through the diffs of the txs already in the mempool).
     Values blk ->
-    TickedLedgerState blk ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk, Diff blk, Validated (GenTx blk))
+    Except (ApplyTxErr blk) (TickedLedgerState blk, TxsDiff blk, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -157,10 +157,10 @@ class
     -- | Slot number of the block containing the tx
     SlotNo ->
     Validated (GenTx blk) ->
+    TickedLedgerState blk ->
     -- | At least the values the tx consumes.
     Values blk ->
-    TickedLedgerState blk ->
-    Except (ApplyTxErr blk) (TickedLedgerState blk, Diff blk)
+    Except (ApplyTxErr blk) (TickedLedgerState blk, TxsDiff blk)
 
   -- | Apply a list of previously validated transactions to a new ledger state.
   --
@@ -182,19 +182,19 @@ class
     -- | Slot number of the block containing the tx
     SlotNo ->
     [(Validated (GenTx blk), InputTxDiffs blk wtd, extra)] ->
+    TickedLedgerState blk ->
     -- | At least the values all the txs consume.
     Values blk ->
-    TickedLedgerState blk ->
     ReapplyTxsResult extra blk wtd
-  reapplyTxs cfg slot txs vals0 st0 =
+  reapplyTxs cfg slot txs st0 vals0 =
     let (accE, accV, st', _vals) =
           Foldable.foldl' step ([], [], st0, vals0) txs
      in ReapplyTxsResult accE (reverse accV) st'
    where
     step (accE, accV, st, vals) a@(vtx, _, _) =
-      case runExcept (reapplyTx cfg slot vtx vals st) of
+      case runExcept (reapplyTx cfg slot vtx st vals) of
         Left err -> (Invalidated vtx err : accE, accV, st, vals)
-        Right (st', diff) -> (accE, a : accV, st', forward @blk [diff] vals)
+        Right (st', diff) -> (accE, a : accV, st', forwardTxsDiff @blk diff vals)
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk

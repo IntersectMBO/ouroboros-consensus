@@ -189,6 +189,7 @@ library
     Ouroboros.Consensus.Ledger.CommonProtocolParams
     Ouroboros.Consensus.Ledger.Dual
     Ouroboros.Consensus.Ledger.Extended
+    Ouroboros.Consensus.Ledger.HD
     Ouroboros.Consensus.Ledger.Inspect
     Ouroboros.Consensus.Ledger.Query
     Ouroboros.Consensus.Ledger.Query.Version
@@ -1312,7 +1313,6 @@ library cardano
     Ouroboros.Consensus.Cardano.CanHardFork
     Ouroboros.Consensus.Cardano.Condense
     Ouroboros.Consensus.Cardano.Node
-    Ouroboros.Consensus.Cardano.QueryHF
     Ouroboros.Consensus.Shelley.Crypto
     Ouroboros.Consensus.Shelley.Eras
     Ouroboros.Consensus.Shelley.HFEras

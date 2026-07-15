@@ -280,8 +280,8 @@ instance TxGen DualByronBlock where
     -- Stops when the transaction generator cannot produce more txs
     --
     -- The DualByron UTxO lives in the embedded ByronSpec ledger state, so the
-    -- @mk@-free 'Values' are trivial (@()@) and need no threading; the applied
-    -- ticked state carries the updated spec UTxO.
+    -- 'Values' are trivial (@()@) and need no threading; the applied ticked
+    -- state carries the updated spec UTxO.
     go ::
       [GenTx DualByronBlock] -> -- Accumulator
       Integer -> -- Number of txs to still produce
@@ -297,8 +297,8 @@ instance TxGen DualByronBlock where
           DoNotIntervene
           curSlotNo
           tx
-          vals
-          st' of
+          st'
+          vals of
         Right (st'', _diff, _vtx) ->
           go (tx : acc) (n - 1) st'' vals
         Left _ -> error "testGenTxs: unexpected invalid tx"

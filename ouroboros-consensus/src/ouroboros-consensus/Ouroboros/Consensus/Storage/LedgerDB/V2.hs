@@ -159,8 +159,8 @@ implMkLedgerDb h snapManager =
           , getHeaderStateHistory = getEnvSTM h implGetHeaderStateHistory
           , openForkerAtTarget = openNewForkerAtTarget h
           , getReadOnlyForkerWithRangeAtPoint = \tgt ->
-              fmap (\(frk, prov) -> (readOnlyForker frk, prov))
-                <$> openNewForkerWithRangeAtTarget h tgt
+              traverse (\(frk, prov) -> (\x -> (x, prov)) <$> readOnlyForker frk)
+                =<< openNewForkerWithRangeAtTarget h tgt
           , validateFork = getEnv5 h (implValidate h)
           , getPrevApplied = getEnvSTM h implGetPrevApplied
           , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
@@ -211,8 +211,8 @@ mkInternals ldb h snapManager =
                       (ledgerDbCfgComputeLedgerEvents (ldbCfg env))
                       (ledgerDbCfg $ ldbCfg env)
                       blk
-                      tables
                       st
+                      tables
               forkerPush frk st' diff
                 >> Monad.join (atomically (forkerCommit frk))
               pruneLedgerSeq env

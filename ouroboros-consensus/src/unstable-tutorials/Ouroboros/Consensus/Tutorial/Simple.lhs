@@ -31,6 +31,7 @@ This example uses several extensions:
 > {-# LANGUAGE FlexibleInstances          #-}
 > {-# LANGUAGE DeriveAnyClass             #-}
 > {-# LANGUAGE MultiParamTypeClasses      #-}
+> {-# LANGUAGE OverloadedStrings          #-}
 > {-# LANGUAGE StandaloneDeriving         #-}
 
 > module Ouroboros.Consensus.Tutorial.Simple () where
@@ -59,8 +60,9 @@ First, some imports we'll need:
 >   (AuxLedgerEvent, GetTip(..), IsLedger(..), LedgerCfg,
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
 >    LedgerState, ApplyBlock(..), UpdateLedger,
->    BlockSupportsUTxOHD(..), SingleEraUTxOHDBlock(..),
->    SingleEraBlockSupportsUTxOHD(..), TxIn, TxOut,
+>    BlockSupportsLedgerHD(..), UnitTables(..),
+>    TickDiff(..), BlockDiff(..), TickAndBlockDiff(..), TxsDiff(..),
+>    SingleEraBlockSupportsLedgerHD(..), TxIn, TxOut,
 >    defaultApplyBlockLedgerResult, defaultReapplyBlockLedgerResult)
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol(..))
@@ -573,7 +575,7 @@ types for a ledger.  Though we are here using
 
 >   applyChainTickLedgerResult _events _cfg _slot ldgrSt =
 >     LedgerResult { lrEvents = []
->                  , lrResult = (TickedLedgerStateC ldgrSt, ())
+>                  , lrResult = (TickedLedgerStateC ldgrSt, TickDiff UnitTables)
 >                  }
 
 The `LedgerErr` type is the type of errors associated with this ledger that can
@@ -621,9 +623,9 @@ The interface used by the rest of the ledger infrastructure to access this is
 the `ApplyBlock` typeclass:
 
 > instance ApplyBlock LedgerState BlockC where
->   applyBlockLedgerResultWithValidation _validation _events _ldgrCfg block _values tickedLdgrSt =
+>   applyBlockLedgerResultWithValidation _validation _events _ldgrCfg block tickedLdgrSt _values =
 >     pure $ LedgerResult { lrEvents = []
->                         , lrResult = (block `applyBlockTo` tickedLdgrSt, ())
+>                         , lrResult = (block `applyBlockTo` tickedLdgrSt, BlockDiff UnitTables)
 >                         }
 
 >   applyBlockLedgerResult = defaultApplyBlockLedgerResult
@@ -728,7 +730,7 @@ the disk and now consensus:
 - stores a sequence of deltas (diffs) produced by the execution of the ledger
   rules
 
-This UTxO set is described by the `BlockSupportsUTxOHD` class. A block declares
+This UTxO set is described by the `BlockSupportsLedgerHD` class. A block declares
 the types of its on-disk entries — the `TxIn` keys and `TxOut` values — and the
 associated `Keys`, `Values` and `Diff` collections that consensus uses to read
 subsets from the backend and to store the deltas produced by the ledger rules.
@@ -737,34 +739,41 @@ variable): values flow alongside it as the explicit `Values`\/`Diff` arguments
 and results we saw in `applyBlockLedgerResultWithValidation` (which reads the
 block's `Values` and returns the produced `Diff`).
 
-For a ledger state as simple as ours there is no UTxO set, so the keys and
-values are trivially empty (`()`) and every operation is a no-op:
+For a ledger state as simple as ours there is no UTxO set, so the keys, values
+and diffs are all `UnitTables` and every operation is a no-op:
 
-> type instance TxIn  BlockC = Void
-> type instance TxOut BlockC = Void
+> instance Semigroup (TxsDiff BlockC) where
+>   TxsDiff UnitTables <> TxsDiff UnitTables = TxsDiff UnitTables
 
-> instance BlockSupportsUTxOHD BlockC where
->   type Keys   BlockC = ()
->   type Values BlockC = ()
->   type Diff   BlockC = ()
->   blockKeys _ = ()
->   forward _ = id
->   restrictValues _ = id
->   valuesSize _ = 0
->   encodeValues _ = mempty
->   decodeValues _ = pure ()
+> instance BlockSupportsLedgerHD BlockC where
+>   type Keys   BlockC = UnitTables
+>   type Values BlockC = UnitTables
+>   type Diff   BlockC = UnitTables
+>   blockKeys _ = UnitTables
+>   combineTickAndBlockDiff (TickDiff UnitTables) (BlockDiff UnitTables) = TickAndBlockDiff UnitTables
+>   forwardTickDiff (TickDiff UnitTables) UnitTables = UnitTables
+>   forwardBlockDiff (BlockDiff UnitTables) UnitTables = UnitTables
+>   forwardTickAndBlockDiff (TickAndBlockDiff UnitTables) UnitTables = UnitTables
+>   forwardTxsDiff (TxsDiff UnitTables) UnitTables = UnitTables
+>   restrictValues UnitTables UnitTables = UnitTables
+>   valuesSize UnitTables = 0
+>   encodeValuesForInMemory UnitTables = mempty
+>   decodeValuesForInMemory _ = pure UnitTables
 
-The single-era classes provide the empty collections and the (trivial) backend
-accessors. The hard-fork combinator has no single era to point at, so these live
-separately from `BlockSupportsUTxOHD`:
+`SingleEraBlockSupportsLedgerHD` provides the empty collections and the (trivial)
+backend accessors. The hard-fork combinator has no single era to point at, so it
+has no instance of this class:
 
-> instance SingleEraUTxOHDBlock BlockC where
->   emptyValues = ()
->   emptyDiffs = ()
-
-> instance SingleEraBlockSupportsUTxOHD BlockC where
->   rangeReadValues _ _ = ((), Nothing)
+> instance SingleEraBlockSupportsLedgerHD BlockC where
+>   type TxIn  BlockC = Void
+>   type TxOut BlockC = Void
+>   rangeReadValues _ _ = (UnitTables, Nothing)
 >   keysToList _ = []
 >   valuesToList _ = []
->   valuesFromList _ = ()
+>   valuesFromList _ = UnitTables
 >   diffToList _ = []
+>   emptyValues = UnitTables
+>   emptyTickDiff = TickDiff UnitTables
+>   combineTransAndTickDiff (TickDiff UnitTables) (TickDiff UnitTables) = TickDiff UnitTables
+>   packTxInBytes = absurd
+>   unpackTxInBytes _ = Left "Absurd"

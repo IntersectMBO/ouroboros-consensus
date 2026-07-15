@@ -78,7 +78,6 @@ import Ouroboros.Consensus.Byron.Ledger.NetworkProtocolVersion
 import Ouroboros.Consensus.Byron.Node
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.CanHardFork
-import Ouroboros.Consensus.Cardano.QueryHF ()
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
@@ -86,8 +85,8 @@ import Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
-import Ouroboros.Consensus.Ledger.Basics (Values)
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.HD (Values)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run

@@ -21,6 +21,7 @@ import Data.Functor.Identity (Identity (Identity))
 import Data.Kind (Type)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
+import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Measure as Measure
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -343,7 +344,12 @@ pureTryAddTx mpEnv cfg wti tx is values p1TxMeasure =
 
       -- Forward the inputs read against the base state up to the virtual tip
       -- ('isLedgerState') through the cumulative mempool diff.
-      fwdValues = forward @blk [isLedgerDiff is] values
+      fwdValues =
+        ( case isLedgerTxsDiff is of
+            SNothing -> id
+            SJust x -> forwardTxsDiff @blk x
+        )
+          $ forwardTickDiff @blk (isLedgerTickDiff is) values
    in case runExcept $ txMeasurePhase2 cfg fwdValues (isLedgerState is) tx of
         Left err ->
           -- The transaction does not have a valid measure (eg its ExUnits is
@@ -482,13 +488,20 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
       -- against the same base ticked state: re-tick the forker's (un-ticked)
       -- anchor state at 'isTip'. We must not reuse 'isLedgerState' here, as that
       -- is the virtual tip /after/ applying the mempool txs.
-      baseState <- atomically $ roforkerGetLedgerState frkr
       let (slot, tickedState, tickDiff) =
-            tickLedgerState cfg (ForgeInUnknownSlot baseState)
+            tickLedgerState cfg (ForgeInUnknownSlot $ roforkerGetLedgerState frkr)
       case toKeep of
         [] -> do
-          -- Everything was removed: the mempool becomes empty at the same tip.
-          -- There are no keys to read (and no 'Monoid (Keys blk)' to fold).
+          -- We can't call 'pureRemoveTxs', because we can't create keys from an
+          -- empty list, because 'BlockSupportsUTxOHD' does not provide a
+          -- 'Monoid (Keys blk)', because the HFC's instance requires picking an
+          -- era for its NS.
+          --
+          -- (For similar reasons, we also can't create an empty set of @Values
+          -- blk@.)
+          --
+          -- Thankfully, when there's no keys, there's no need to do IO because
+          -- there's a simpler implementation for this degenerate case.
           let is' =
                 initInternalState
                   capacityOverride
@@ -541,7 +554,7 @@ pureRemoveTxs ::
   -- | The base ticked ledger state to revalidate against
   TickedLedgerState blk ->
   -- | The tick diff (base → ticked), to forward the read values to the tip
-  Diff blk ->
+  TickDiff blk ->
   -- | All the inputs for the kept txs, read against the base state
   Values blk ->
   TicketNo ->
@@ -643,9 +656,18 @@ implSyncWithLedger projectResult mpEnv =
                     )
                   case TxSeq.toList (isTxs is) of
                     [] -> do
-                      -- Empty mempool: nothing to revalidate, just adopt the
-                      -- new tip. No keys to read (and no 'Monoid (Keys blk)' to
-                      -- fold).
+                      -- We can't call 'pureSyncWithLedger', because we can't
+                      -- create keys from an empty list, because
+                      -- 'BlockSupportsUTxOHD' does not provide a 'Monoid (Keys
+                      -- blk)', because the HFC's instance requires picking an
+                      -- era for its NS.
+                      --
+                      -- (For similar reasons, we also can't create an empty set
+                      -- of @Values blk@.)
+                      --
+                      -- Thankfully, when there's no keys, there's no need to do
+                      -- IO because there's a simpler implementation for this
+                      -- degenerate case.
                       let is' =
                             initInternalState
                               capacityOverride
@@ -698,7 +720,7 @@ pureSyncWithLedger ::
   -- | The base ticked ledger state to revalidate against
   TickedLedgerState blk ->
   -- | The tick diff (base → ticked), to forward the read values to the tip
-  Diff blk ->
+  TickDiff blk ->
   -- | All the inputs for the txs, read against the base state
   Values blk ->
   InternalState blk ->

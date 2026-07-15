@@ -52,7 +52,6 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types as X
 import Ouroboros.Consensus.HardFork.Combinator.Translation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract hiding (getTip)
-import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util
 import Prelude hiding (sequence)
 
@@ -220,40 +219,36 @@ epochInfoPrecomputedTransitionInfo shape transition st =
 --    step 2, and return it.
 extendToSlot ::
   forall xs.
-  (CanHardFork xs, Diff (HardForkBlock xs) ~ NS WrapDiff xs) =>
+  CanHardFork xs =>
   HardForkLedgerConfig xs ->
   SlotNo ->
   HardForkState LedgerState xs ->
-  (HardForkState LedgerState xs, Diff (HardForkBlock xs))
+  HardForkState (Product LedgerState TickDiff) xs
 extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st) =
-  let tele =
-        unI
-          . Telescope.extend
-            ( InPairs.hczipWith
-                proxySingle
-                ( \f f' -> Require $ \(K t) ->
-                    Extend $ \cur ->
-                      I $ howExtend f f' t cur
-                )
-                translateLS
-                translateD
-            )
-            ( hczipWith
-                proxySingle
-                (fn .: whenExtend)
-                pcfgs
-                (getExactly (History.getShape hardForkLedgerConfigShape))
-            )
-          -- In order to make this an automorphism, as required by 'Telescope.extend',
-          -- we have to promote each input state to a @Product LedgerState WrapDiff@,
-          -- pairing it with an (empty) diff alongside.
-          $ hcmap
-            proxySingle
-            initState
-            st
-   in ( hmap (\(Pair a _) -> a) $ HardForkState tele
-      , Telescope.tip $ hmap (\(Current _ (Pair _ b)) -> b) tele
+  HardForkState
+    $ unI
+    $ Telescope.extend
+      ( InPairs.hcmap
+          proxySingle
+          ( \f -> Require $ \(K t) ->
+              Extend $ \cur ->
+                I $ howExtend f t cur
+          )
+          translateLS
       )
+      ( hczipWith
+          proxySingle
+          (fn .: whenExtend)
+          pcfgs
+          (getExactly (History.getShape hardForkLedgerConfigShape))
+      )
+    -- In order to make this an automorphism, as required by
+    -- 'Telescope.extend', we have to promote each input state to a
+    -- pair with an (empty) diff alongside.
+    $ hcmap
+      proxySingle
+      initState
+      st
  where
   pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
   cfgs = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
@@ -263,8 +258,8 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     forall blk.
     SingleEraBlock blk =>
     Current LedgerState blk ->
-    Current (Product LedgerState WrapDiff) blk
-  initState c = c{currentState = Pair (currentState c) (WrapDiff (emptyDiffs @blk))}
+    Current (Product LedgerState TickDiff) blk
+  initState c = c{currentState = Pair (currentState c) (TickDiff (unTickDiff $ emptyTickDiff @blk))}
 
   -- Return the end of this era if we should transition to the next
   whenExtend ::
@@ -292,13 +287,12 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
             return endBound
 
   howExtend ::
-    BlockSupportsUTxOHD blk' =>
+    BlockSupportsLedgerHD blk' =>
     TranslateLedgerState blk blk' ->
-    TranslateDiff blk blk' ->
     History.Bound ->
-    Current (Product LedgerState WrapDiff) blk ->
-    (K Past blk, Current (Product LedgerState WrapDiff) blk')
-  howExtend f f' currentEnd cur =
+    Current (Product LedgerState TickDiff) blk ->
+    (K Past blk, Current (Product LedgerState TickDiff) blk')
+  howExtend f currentEnd cur =
     ( K
         Past
           { pastStart = currentStart cur
@@ -307,9 +301,9 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     , Current
         { currentStart = currentEnd
         , currentState =
-            let Pair curState (WrapDiff diff) = currentState cur
-                (st', diff') = translateLedgerStateWith f (History.boundEpoch currentEnd) curState
-             in Pair st' (WrapDiff $ translateDiffWith f' diff <> diff')
+            let Pair curState (TickDiff diff) = currentState cur
+                (st', diff') = translateLedgerStateWith f (History.boundEpoch currentEnd) (curState, TickDiff diff)
+             in Pair st' (TickDiff $ unTickDiff diff')
         }
     )
 
@@ -317,6 +311,3 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
   translateLS =
     InPairs.requiringBoth cfgs $
       translateLedgerState hardForkEraTranslation
-
-  translateD :: InPairs TranslateDiff xs
-  translateD = translateDiff hardForkEraTranslation

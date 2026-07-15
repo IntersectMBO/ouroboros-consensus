@@ -64,7 +64,7 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 import System.FS.API
 
 -- | The dictionaries a single Cardano (Shelley-based) era needs to stream its
--- UTxO tables. @'SingleEraBlockSupportsUTxOHD'@ (with its @'MemPack'@
+-- UTxO tables. @'SingleEraBlockSupportsLedgerHD'@ (with its @'MemPack'@
 -- superclasses) and the rest follow from @'ShelleyCompatible'@ via the era
 -- instances.
 type StreamableEra proto era = ShelleyCompatible proto era

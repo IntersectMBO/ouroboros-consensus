@@ -43,7 +43,6 @@ import qualified Data.Map.Strict as Map
 import Data.MemPack (MemPack)
 import Data.SOP.BasicFunctors
 import qualified Data.SOP.InPairs as InPairs
-import Data.SOP.Index (Index (..), injectNS)
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import Data.Void (Void)
@@ -230,8 +229,6 @@ instance
   hardForkEraTranslation =
     EraTranslation
       { translateLedgerState = PCons translateLedgerState PNil
-      , translateDiff =
-          PCons (TranslateDiff (translateLedgerTablesWith translateLedgerTables)) PNil
       , -- A pure-upgrade boundary: the on-disk values upgrade their @TxOut@s when
         -- the first block's values are read (the @TxIn@ is era-stable).
         translateValues = PCons (TranslateValues (Map.map SL.upgradeTxOut)) PNil
@@ -251,14 +248,19 @@ instance
       InPairs.RequireBoth $
         \_cfg1 cfg2 ->
           HFC.TranslateLedgerState
-            { translateLedgerStateWith = \_epochNo ls ->
-                -- Pure-upgrade boundary: the state translates with no new diffs.
+            { translateLedgerStateWith = \_epochNo (ls, incomingTickDiff) ->
+                -- Pure-upgrade boundary: the state translates with no new diffs,
+                -- so the outgoing diff is just the incoming tick diff forwarded
+                -- across the boundary.
                 ( unComp
                     . SL.translateEra'
                       (shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2))
                     . Comp
                     $ ls
-                , mempty
+                , TickDiff
+                    ( translateLedgerTablesWith translateLedgerTables $
+                        unTickDiff incomingTickDiff
+                    )
                 )
             }
 
@@ -327,82 +329,6 @@ instance
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
-
-{-------------------------------------------------------------------------------
-  Query HF
--------------------------------------------------------------------------------}
-
-answerShelleyBasedQueryHF ::
-  ( xs ~ '[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2]
-  , ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
-  ) =>
-  ( forall blk.
-    IsShelleyBlock blk =>
-    Index xs blk ->
-    ExtLedgerCfg blk ->
-    BlockQuery blk footprint result ->
-    ReadOnlyForker' m (HardForkBlock xs) ->
-    m result
-  ) ->
-  Index xs x ->
-  ExtLedgerCfg x ->
-  BlockQuery x footprint result ->
-  ReadOnlyForker' m (HardForkBlock xs) ->
-  m result
-answerShelleyBasedQueryHF f idx cfgs q forker = case idx of
-  IZ -> f idx cfgs q forker
-  IS IZ -> f idx cfgs q forker
-  IS (IS idx') -> case idx' of {}
-
--- | Project the current era's values out of the hard-fork @NS@ (the forker read
--- returns values tagged with the era we injected the keys at, so the requested
--- arm is present).
-projectShelleyBasedValues ::
-  Index '[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2] x ->
-  Values (HardForkBlock '[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2]) ->
-  Values x
-projectShelleyBasedValues idx0 =
-  maybe (error "projectShelleyBasedValues: values in unexpected era") unwrapValues
-    . go idx0
- where
-  go :: Index xs x -> NS WrapValues xs -> Maybe (WrapValues x)
-  go IZ (Z x) = Just x
-  go (IS idx) (S ns) = go idx ns
-  go _ _ = Nothing
-
-instance
-  ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
-  BlockSupportsHFLedgerQuery '[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2]
-  where
-  answerBlockQueryHFLookup idx cfg q forker =
-    answerShelleyBasedQueryHF
-      ( \idx' cfg' q' forker' ->
-          answerShelleyLookupQueries
-            (injectNS idx' . WrapKeys)
-            (projectShelleyBasedValues idx')
-            cfg'
-            q'
-            forker'
-      )
-      idx
-      cfg
-      q
-      forker
-
-  answerBlockQueryHFTraverse idx cfg q provider forker =
-    answerShelleyBasedQueryHF
-      ( \idx' cfg' q' _forker' ->
-          answerShelleyTraversingQueries
-            (projectShelleyBasedValues idx')
-            shelleyQFTraverseTablesPredicate
-            cfg'
-            q'
-            provider
-      )
-      idx
-      cfg
-      q
-      forker
 
 {-------------------------------------------------------------------------------
   Protocol info

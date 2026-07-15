@@ -356,7 +356,7 @@ type AllComponents blk =
 type TestConstraints blk =
   ( ConsensusProtocol (BlockProtocol blk)
   , LedgerSupportsProtocol blk
-  , SingleEraUTxOHDBlock blk
+  , SingleEraBlockSupportsLedgerHD blk
   , LedgerSupportsPeras blk
   , BlockSupportsDiffusionPipelining blk
   , InspectLedger blk

@@ -105,7 +105,7 @@ testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOf
                       ReadOnlyForker
                         { roforkerClose = pure ()
                         , roforkerReadTables = const $ pure mempty
-                        , roforkerGetLedgerState = pure $ testInitLedgerWithState NoPayLoadDependentState
+                        , roforkerGetLedgerState = testInitLedgerWithState NoPayLoadDependentState
                         , roforkerReadStatistics = pure $ Statistics 0
                         }
                 )

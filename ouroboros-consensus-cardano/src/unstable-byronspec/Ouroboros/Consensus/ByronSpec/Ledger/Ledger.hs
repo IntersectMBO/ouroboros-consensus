@@ -2,7 +2,10 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -23,7 +26,7 @@ import Codec.Serialise
 import Control.Monad.Except
 import qualified Control.State.Transition as Spec
 import Data.List.NonEmpty (NonEmpty)
-import Data.Void (Void)
+import Data.Void (Void, absurd)
 import GHC.Generics (Generic)
 import NoThunks.Class (AllowThunk (..), NoThunks)
 import Ouroboros.Consensus.Block
@@ -117,46 +120,52 @@ instance IsLedger LedgerState ByronSpecBlock where
                 (toByronSpecSlotNo slot)
                 state
           }
-      , () -- ByronSpec has no on-disk tables, so ticking produces no diff
+      , TickDiff UnitTables -- ByronSpec has no on-disk tables, so ticking produces no diff
       )
+
+deriving newtype instance Semigroup (TxsDiff ByronSpecBlock)
 
 {-------------------------------------------------------------------------------
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance TxIn ByronSpecBlock = Void
-type instance TxOut ByronSpecBlock = Void
+instance BlockSupportsLedgerHD ByronSpecBlock where
+  type Keys ByronSpecBlock = UnitTables
+  type Values ByronSpecBlock = UnitTables
+  type Diff ByronSpecBlock = UnitTables
+  blockKeys _ = UnitTables
+  combineTickAndBlockDiff (TickDiff UnitTables) (BlockDiff UnitTables) = TickAndBlockDiff UnitTables
+  forwardTickDiff (TickDiff UnitTables) UnitTables = UnitTables
+  forwardBlockDiff (BlockDiff UnitTables) UnitTables = UnitTables
+  forwardTickAndBlockDiff (TickAndBlockDiff UnitTables) UnitTables = UnitTables
+  forwardTxsDiff (TxsDiff UnitTables) UnitTables = UnitTables
+  restrictValues UnitTables UnitTables = UnitTables
+  valuesSize UnitTables = 0
+  encodeValuesForInMemory UnitTables = mempty
+  decodeValuesForInMemory _ = pure UnitTables
 
-instance BlockSupportsUTxOHD ByronSpecBlock where
-  type Keys ByronSpecBlock = ()
-  type Values ByronSpecBlock = ()
-  type Diff ByronSpecBlock = ()
-  blockKeys _ = ()
-  forward _ = id
-  restrictValues _ = id
-  valuesSize _ = 0
-  encodeValues _ = mempty
-  decodeValues _ = pure ()
-
-instance SingleEraUTxOHDBlock ByronSpecBlock where
-  emptyValues = ()
-  emptyDiffs = ()
-
-instance SingleEraBlockSupportsUTxOHD ByronSpecBlock where
-  rangeReadValues _ _ = ((), Nothing)
+instance SingleEraBlockSupportsLedgerHD ByronSpecBlock where
+  type TxIn ByronSpecBlock = Void
+  type TxOut ByronSpecBlock = Void
+  rangeReadValues _ _ = (UnitTables, Nothing)
   keysToList _ = []
   valuesToList _ = []
-  valuesFromList _ = ()
+  valuesFromList _ = UnitTables
   diffToList _ = []
+  emptyValues = UnitTables
+  emptyTickDiff = TickDiff UnitTables
+  combineTransAndTickDiff (TickDiff UnitTables) (TickDiff UnitTables) = TickDiff UnitTables
+  packTxInBytes = absurd
+  unpackTxInBytes _ = Left "Absurd"
 
 {-------------------------------------------------------------------------------
   Applying blocks
 -------------------------------------------------------------------------------}
 
 instance ApplyBlock LedgerState ByronSpecBlock where
-  applyBlockLedgerResultWithValidation _ _ cfg block _values (TickedByronSpecLedgerState _tip state) =
+  applyBlockLedgerResultWithValidation _ _ cfg block (TickedByronSpecLedgerState _tip state) _values =
     withExcept ByronSpecLedgerError $
-      fmap (pureLedgerResult . (,()) . ByronSpecLedgerState (Just (blockSlot block))) $ -- Note that the CHAIN rule also applies the chain tick. So even
+      fmap (pureLedgerResult . (,BlockDiff UnitTables) . ByronSpecLedgerState (Just (blockSlot block))) $ -- Note that the CHAIN rule also applies the chain tick. So even
       -- though the ledger we received has already been ticked with
       -- 'applyChainTick', we do it again as part of CHAIN. This is safe, as
       -- it is idempotent. If we wanted to avoid the repeated tick, we would
