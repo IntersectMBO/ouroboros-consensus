@@ -331,7 +331,7 @@ jobs:
         working-directory: .
         run: tar vzxf haddocks.tgz
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: yarn
