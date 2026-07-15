@@ -39,7 +39,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import Control.DeepSeq (NFData (..))
-import Control.Monad (replicateM)
+import Control.Monad (replicateM, when)
 import Control.Monad.Class.MonadST (MonadST)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.ByteString.Lazy (ByteString)
@@ -530,8 +530,8 @@ leiosNotifyClientPeerPipelined checkDone k0 =
 
 leiosNotifyServerPeerAntiPipelined ::
   forall m point announcement vote.
-  Monad m =>
-  m () ->
+  MonadThrow m =>
+  m Bool ->
   -- ^ increments the number of outstanding requests
   m (Message (LeiosNotify point announcement vote) StBusy StIdle) ->
   -- ^ blocks until the next reply (announcement\/offer\/vote) is ready
@@ -550,7 +550,7 @@ leiosNotifyServerPeerAntiPipelined incr next =
         MsgDone                         -> drain n
         MsgLeiosNotificationRequestNext ->
           Effect $ do
-            incr
+            incr >>= \b -> when b $ throwIO MkExnLeiosNotifyExcessiveRequests
             pure $ YieldAntiPipelined ReflServerAgency (go (Succ n))
 
     -- on termination, flush the sends we've handed off, then Done.
@@ -560,6 +560,11 @@ leiosNotifyServerPeerAntiPipelined incr next =
     drain = \case
       Zero   -> Done ReflNobodyAgency ()
       Succ j -> AntiCollect (drain j) Nothing
+
+data ExnLeiosNotifyExcessiveRequests = MkExnLeiosNotifyExcessiveRequests
+  deriving Show
+
+instance Exception ExnLeiosNotifyExcessiveRequests
 
 -----
 
