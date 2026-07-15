@@ -537,26 +537,26 @@ leiosNotifyServerPeerAntiPipelined ::
   -- ^ blocks until the next reply (announcement\/offer\/vote) is ready
   PeerAntiPipelined (LeiosNotify point announcement vote) AsServer StIdle m ()
 leiosNotifyServerPeerAntiPipelined incr next =
-    PeerAntiPipelined (go Zero)
+    PeerAntiPipelined responder (go Zero)
   where
     responder :: Sender (LeiosNotify point announcement vote) AsServer StBusy StIdle m
     responder = SenderEffect $ next <&> \msg -> SenderYield ReflServerAgency msg SenderDone
 
     go :: forall n.
       Nat n ->
-      Peer (LeiosNotify point announcement vote) AsServer (AntiPipelined n) StIdle m ()
+      Peer (LeiosNotify point announcement vote) AsServer (AntiPipelined StBusy StIdle n) StIdle m ()
     go n =
       Await ReflClientAgency $ \case
         MsgDone                         -> drain n
         MsgLeiosNotificationRequestNext ->
           Effect $ do
             incr
-            pure $ YieldAntiPipelined ReflServerAgency responder (go (Succ n))
+            pure $ YieldAntiPipelined ReflServerAgency (go (Succ n))
 
     -- on termination, flush the sends we've handed off, then Done.
-    drain :: forall k.
-      Nat k ->
-      Peer (LeiosNotify point announcement vote) AsServer (AntiPipelined k) StDone m ()
+    drain :: forall n.
+      Nat n ->
+      Peer (LeiosNotify point announcement vote) AsServer (AntiPipelined StBusy StIdle n) StDone m ()
     drain = \case
       Zero   -> Done ReflNobodyAgency ()
       Succ j -> AntiCollect (drain j) Nothing
