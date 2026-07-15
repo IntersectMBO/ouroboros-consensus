@@ -47,7 +47,7 @@ import Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation (AnnTip)
-import Ouroboros.Consensus.Ledger.Basics (Values)
+import Ouroboros.Consensus.Ledger.HD (Values)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)

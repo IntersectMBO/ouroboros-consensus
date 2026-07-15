@@ -63,10 +63,14 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Types
   , TranslateValues (..)
   )
 import Ouroboros.Consensus.Ledger.Basics
-  ( BlockSupportsLedgerHD (Diff, decodeValues, encodeValues)
-  , LedgerCfg
+  ( LedgerCfg
   , LedgerConfig
   , LedgerState
+  )
+import Ouroboros.Consensus.Ledger.HD
+  ( BlockSupportsLedgerHD (Diff, decodeValuesForInMemory, encodeValuesForInMemory)
+  , SingleEraBlockSupportsLedgerHD (emptyTickDiff)
+  , TickDiff (unTickDiff)
   )
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Protocol.Praos
@@ -312,6 +316,7 @@ testTablesTranslation ::
   , Show (LedgerCfg LedgerState srcBlk)
   , Show (LedgerCfg LedgerState dstBlk)
   , Show (LedgerState srcBlk)
+  , SingleEraBlockSupportsLedgerHD srcBlk
   ) =>
   -- | Property label
   String ->
@@ -338,7 +343,7 @@ testTablesTranslation propLabel translateWithConfig translationShouldSatisfy led
     -- The translation now returns the new state paired with the @'Diff'@ that
     -- records the table changes induced by the era transition; we only test the
     -- diff here.
-    destDiff = snd $ translateLedgerStateWith translation tsEpochNo tsSrcLedgerState
+    destDiff = unTickDiff $ snd $ translateLedgerStateWith translation tsEpochNo (tsSrcLedgerState, emptyTickDiff)
      where
       translation :: TranslateLedgerState srcBlk dstBlk
       translation =
@@ -370,6 +375,7 @@ testUtxoUpgradeTranslation ::
   , Show (LedgerConfig (ShelleyBlock srcProto srcEra))
   , Show (LedgerConfig (ShelleyBlock dstProto dstEra))
   , Show (NewEpochState srcEra)
+  , ShelleyCompatible srcProto srcEra
   , Core.EraTxOut srcEra
   , Core.EraTxOut dstEra
   , Core.TranslateEra dstEra NewEpochState
@@ -398,7 +404,7 @@ testUtxoUpgradeTranslation propLabel translateWithConfig valuesTranslation =
                 (WrapLedgerConfig tsDestLedgerConfig)
             -- The consensus state translation must emit no UTxO table diff.
             destDiff :: Diff (ShelleyBlock dstProto dstEra)
-            destDiff = snd $ translateLedgerStateWith translation tsEpochNo tsSrcLedgerState
+            destDiff = unTickDiff $ snd $ translateLedgerStateWith translation tsEpochNo (tsSrcLedgerState, emptyTickDiff)
             -- Inject a populated UTxO, translate, eject.
             (_, srcValues) = splitUTxO srcNes
             dstNes :: NewEpochState dstEra
@@ -441,11 +447,12 @@ testValuesUpgrade propLabel valuesTranslation =
             translateValuesWith valuesTranslation srcValues
               === Map.map Core.upgradeTxOut srcValues
 
--- | Round-trip the on-disk values codec ('encodeValues'\/'decodeValues') for a
+-- | Round-trip the on-disk values codec
+-- ('encodeValuesForInMemory'\/'decodeValuesForInMemory') for a
 -- single era on a /populated/ UTxO. The canonical example tables are empty, so
 -- without this the @BigEndianTxIn@-keyed, credential-shared 'TxOut' codec was
 -- never exercised on real entries. We obtain values by splitting an arbitrary
--- 'NewEpochState'; 'decodeValues' takes a ledger state as the era hint (it
+-- 'NewEpochState'; 'decodeValuesForInMemory' takes a ledger state as the era hint (it
 -- supplies credential interns for sharing), but decoding is value-preserving
 -- for any state, so an arbitrary one suffices.
 testValuesRoundtrip ::
@@ -466,14 +473,14 @@ testValuesRoundtrip propLabel =
             -- V2: the bare map that writers now emit.
             v2 =
               CBOR.deserialiseFromBytes
-                (decodeValues @(ShelleyBlock proto era) st)
-                (CBOR.toLazyByteString (encodeValues @(ShelleyBlock proto era) values))
+                (decodeValuesForInMemory @(ShelleyBlock proto era) st)
+                (CBOR.toLazyByteString (encodeValuesForInMemory @(ShelleyBlock proto era) values))
             -- V1: the legacy one-element-list wrapper, read by consuming the list
             -- header first (mirrors 'loadSnapshot's TablesCodecVersion1 path).
             v1 =
               CBOR.deserialiseFromBytes
-                (decodeListLenOf 1 *> decodeValues @(ShelleyBlock proto era) st)
-                (CBOR.toLazyByteString (encodeListLen 1 <> encodeValues @(ShelleyBlock proto era) values))
+                (decodeListLenOf 1 *> decodeValuesForInMemory @(ShelleyBlock proto era) st)
+                (CBOR.toLazyByteString (encodeListLen 1 <> encodeValuesForInMemory @(ShelleyBlock proto era) values))
             ok lbl res = case res of
               Right (leftover, decoded) ->
                 counterexample (lbl <> ": leftover bytes after decoding") (Lazy.null leftover)

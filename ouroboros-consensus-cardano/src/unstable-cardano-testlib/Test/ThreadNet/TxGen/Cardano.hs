@@ -40,7 +40,9 @@ import Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints)
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Basics
   ( LedgerConfig
-  , Values
+  )
+import Ouroboros.Consensus.Ledger.HD
+  ( Values
   )
 import Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import Ouroboros.Consensus.Shelley.Ledger (mkShelleyTx)

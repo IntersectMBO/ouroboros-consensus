@@ -83,6 +83,7 @@ import qualified Data.ByteString.Lazy as Lazy
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.MemPack (packByteArray)
 import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -115,6 +116,7 @@ import Ouroboros.Consensus.Storage.Common
   , SizeInBytes
   )
 import Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
+import Ouroboros.Consensus.Util.CBOR (unpackEither)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Tx (HasRawTxId (..))
 import Test.Util.Orphans.Serialise ()
@@ -414,18 +416,18 @@ instance
   type LedgerErr LedgerState (SimpleBlock c ext) = MockError (SimpleBlock c ext)
 
   applyChainTickLedgerResult _ _ _ st =
-    pureLedgerResult (TickedSimpleLedgerState st, mempty)
+    pureLedgerResult (TickedSimpleLedgerState st, TickDiff mempty)
 
 instance
   MockProtocolSpecific c ext =>
   ApplyBlock LedgerState (SimpleBlock c ext)
   where
-  applyBlockLedgerResultWithValidation _validation _events cfg blk values tickedSt = do
+  applyBlockLedgerResultWithValidation _validation _events cfg blk tickedSt values = do
     -- Stow the read values into the mock state's UTxO, apply the block, then
     -- diff the resulting UTxO against the input and clear it back out.
     st' <- updateSimpleLedgerState cfg blk (stowValues values tickedSt)
     let diff = Diff.diff values (mockUtxo (simpleLedgerState st'))
-    pure $ pureLedgerResult (clearValues st', diff)
+    pure $ pureLedgerResult (clearValues st', BlockDiff diff)
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =
@@ -528,8 +530,10 @@ instance LedgerSupportsPeras (SimpleBlock c ext)
   LedgerTables
 -------------------------------------------------------------------------------}
 
-type instance TxIn (SimpleBlock c ext) = Mock.TxIn
-type instance TxOut (SimpleBlock c ext) = Mock.TxOut
+instance Semigroup (TxsDiff (SimpleBlock c ext)) where
+  TxsDiff a <> TxsDiff b = TxsDiff $ a <> b
+
+deriving newtype instance Show (TxsDiff (SimpleBlock c ext))
 
 instance BlockSupportsLedgerHD (SimpleBlock c ext) where
   type Keys (SimpleBlock c ext) = Set Mock.TxIn
@@ -537,17 +541,19 @@ instance BlockSupportsLedgerHD (SimpleBlock c ext) where
   type Diff (SimpleBlock c ext) = Diff.Diff Mock.TxIn Mock.TxOut
 
   blockKeys SimpleBlock{simpleBody = SimpleBody txs} = Mock.txIns txs
-  forward diffs vals = Diff.applyDiff vals (mconcat diffs)
+  combineTickAndBlockDiff (TickDiff tickDiff) (BlockDiff blockDiff) = TickAndBlockDiff $ tickDiff <> blockDiff
+  forwardTickDiff (TickDiff diff) vals = Diff.applyDiff vals diff
+  forwardBlockDiff (BlockDiff diff) vals = Diff.applyDiff vals diff
+  forwardTickAndBlockDiff (TickAndBlockDiff diff) vals = Diff.applyDiff vals diff
+  forwardTxsDiff (TxsDiff diff) vals = Diff.applyDiff vals diff
   restrictValues keys vals = vals `Map.restrictKeys` keys
   valuesSize = Map.size
-  encodeValues = encode
-  decodeValues _ = decode
-
-instance SingleEraUTxOHDBlock (SimpleBlock c ext) where
-  emptyValues = Map.empty
-  emptyDiffs = mempty
+  encodeValuesForInMemory = encode
+  decodeValuesForInMemory _ = decode
 
 instance SingleEraBlockSupportsLedgerHD (SimpleBlock c ext) where
+  type TxIn (SimpleBlock c ext) = Mock.TxIn
+  type TxOut (SimpleBlock c ext) = Mock.TxOut
   rangeReadValues (mbPrev, n) vals =
     let toRead = case mbPrev of
           Nothing -> vals
@@ -557,7 +563,12 @@ instance SingleEraBlockSupportsLedgerHD (SimpleBlock c ext) where
   keysToList = Set.toList
   valuesToList = Map.toList
   valuesFromList = Map.fromList
-  diffToList (Diff.Diff m) = Map.toList m
+  diffToList (TickAndBlockDiff (Diff.Diff m)) = Map.toList m
+  emptyValues = Map.empty
+  emptyTickDiff = TickDiff mempty
+  combineTransAndTickDiff (TickDiff a) (TickDiff b) = TickDiff $ a <> b
+  packTxInBytes = packByteArray True
+  unpackTxInBytes = unpackEither
 
 {-------------------------------------------------------------------------------
   Support for the mempool
@@ -585,19 +596,19 @@ instance
   MockProtocolSpecific c ext =>
   LedgerSupportsMempool (SimpleBlock c ext)
   where
-  applyTx cfg _wti slot tx values tickedSt = do
+  applyTx cfg _wti slot tx tickedSt values = do
     TickedSimpleLedgerState st' <-
       updateSimpleUTxO cfg slot tx (stowValues values tickedSt)
     let diff = Diff.diff values (mockUtxo (simpleLedgerState st'))
     return
       ( TickedSimpleLedgerState (clearValues st')
-      , diff
+      , TxsDiff diff
       , ValidatedSimpleGenTx tx
       )
 
-  reapplyTx cfg slot vtx values tickedSt = do
+  reapplyTx cfg slot vtx tickedSt values = do
     (st', diff, _vtx) <-
-      applyTx cfg DoNotIntervene slot (forgetValidatedSimpleGenTx vtx) values tickedSt
+      applyTx cfg DoNotIntervene slot (forgetValidatedSimpleGenTx vtx) tickedSt values
     pure (st', diff)
 
   txForgetValidated = forgetValidatedSimpleGenTx

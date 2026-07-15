@@ -65,7 +65,7 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
             -- The values were read against the un-ticked state; forward them
             -- through the tick diff to the ticked tip.
             let (ticked, tickDiff) = applyChainTick OmitLedgerEvents lcfg curSlotNo lst
-            go [] n ticked (forward @Blk [tickDiff] values)
+            go [] n ticked (forwardTickDiff @Blk tickDiff values)
    where
     ShelleyTxGenExtra
       { stgeGenEnv
@@ -91,7 +91,7 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
       case mbTx of
         Nothing -> return (reverse acc) -- cannot afford more transactions
         Just tx ->
-          case runExcept $ applyTx lcfg DoNotIntervene curSlotNo tx vals st of
+          case runExcept $ applyTx lcfg DoNotIntervene curSlotNo tx st vals of
             -- We don't mind generating invalid transactions
             Left _ -> go (tx : acc) (n - 1) st vals
             Right (st', diff, _vtx) ->
@@ -99,7 +99,7 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
                 (tx : acc)
                 (n - 1)
                 st'
-                (forward @Blk [diff] vals)
+                (forwardTxsDiff @Blk diff vals)
 
 genTx ::
   TopLevelConfig Blk ->

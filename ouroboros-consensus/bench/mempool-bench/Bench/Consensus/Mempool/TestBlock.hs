@@ -42,7 +42,7 @@ import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
-import Ouroboros.Consensus.Ledger.Basics (BlockSupportsLedgerHD (Values))
+import Ouroboros.Consensus.Ledger.HD (BlockSupportsLedgerHD (Values), TxsDiff (..))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Test.Util.TestBlock hiding (TestBlock)
@@ -167,14 +167,14 @@ txSize (TestBlockGenTx tx) =
       1 + length (consumed tx) + length (produced tx)
 
 instance Ledger.LedgerSupportsMempool TestBlock where
-  applyTx _cfg _shouldIntervene _slot (TestBlockGenTx tx) values tickedSt =
+  applyTx _cfg _shouldIntervene _slot (TestBlockGenTx tx) tickedSt values =
     except $
-      fmap (\(st', d) -> (st', d, ValidatedGenTx (TestBlockGenTx tx))) $
+      fmap (\(st', d) -> (st', TxsDiff d, ValidatedGenTx (TestBlockGenTx tx))) $
         applyDirectlyToPayloadDependentState values tickedSt tx
 
-  reapplyTx cfg slot (ValidatedGenTx genTx) values tickedSt =
+  reapplyTx cfg slot (ValidatedGenTx genTx) tickedSt values =
     (\(st', d, _) -> (st', d))
-      <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx values tickedSt
+      <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx tickedSt values
 
   -- FIXME: it is ok to use 'DoNotIntervene' here?
 

@@ -474,7 +474,7 @@ foldTxs cfg nextTk capacity initialFilled initialState =
      in case runExcept $
           (,)
             <$> txMeasureFull cfg st tx
-            <*> applyTx cfg DoNotIntervene slot tx (tsValues st) (tsState st) of
+            <*> applyTx cfg DoNotIntervene slot tx (tsState st) (tsValues st) of
           Left{} ->
             go
               ( acc
@@ -494,7 +494,7 @@ foldTxs cfg nextTk capacity initialFilled initialState =
                   ( (txForgetValidated vtx, fromMaybe tk txtk) : acc
                   , succ tk
                   , curSize `Measure.plus` txsz
-                  , TickedState st' (forward @blk [diff] (tsValues st))
+                  , TickedState st' (forwardTxsDiff @blk diff (tsValues st))
                   )
                   next
             | otherwise ->
@@ -526,7 +526,7 @@ tick ::
   DBState blk ->
   TickedState blk
 tick cfg (DBState st values) =
-  TickedState tickedSt (forward @blk [tickDiff] values)
+  TickedState tickedSt (forwardTickDiff @blk tickDiff values)
  where
   (_slot, tickedSt, tickDiff) =
     tickLedgerState cfg (ForgeInUnknownSlot st)
@@ -587,7 +587,7 @@ newLedgerInterface initialLedger = do
                         { roforkerClose = pure ()
                         , roforkerReadStatistics = pure $ Statistics 0
                         , roforkerReadTables = \keys -> pure (restrictValues @blk keys values)
-                        , roforkerGetLedgerState = pure st
+                        , roforkerGetLedgerState = st
                         }
                 )
         }
@@ -669,7 +669,7 @@ postcondition ::
   , ValidateEnvelope blk
   , ToExpr (Command blk Concrete)
   , ToExpr (GenTx blk)
-  , Show (Diff blk)
+  , Show (TxsDiff blk)
   ) =>
   Model blk Concrete ->
   Command blk Concrete ->

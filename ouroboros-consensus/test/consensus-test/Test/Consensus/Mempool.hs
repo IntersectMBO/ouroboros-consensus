@@ -748,7 +748,7 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
                                 \keys ->
                                   pure $
                                     Map.restrictKeys (mockUtxo (simpleLedgerState st)) keys
-                            , roforkerGetLedgerState = pure st
+                            , roforkerGetLedgerState = st
                             , roforkerReadStatistics = pure $ Statistics 0
                             }
                     )
@@ -849,9 +849,9 @@ withTestMempoolWithTimeoutConfig timeoutConfig setup@TestSetup{..} prop =
             DoNotIntervene
             snapshotSlotNo
             tx
-            values
             st
-        pure (st', forward @TestBlock [diff] values)
+            values
+        pure (st', forwardTxsDiff @TestBlock diff values)
 
       mkErrMsg e =
         "At the end of the test, the Mempool contents were invalid: "

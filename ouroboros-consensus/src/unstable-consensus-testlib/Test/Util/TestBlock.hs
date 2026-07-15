@@ -109,7 +109,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
-import Data.MemPack (MemPack)
+import Data.MemPack (MemPack, packByteArray)
 import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -152,6 +152,7 @@ import Ouroboros.Consensus.Protocol.Signed
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
+import Ouroboros.Consensus.Util.CBOR (unpackEither)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Magic (NetworkMagic (..))
@@ -564,8 +565,8 @@ instance
     signKey :: SlotNo -> SignKeyDSIGN MockDSIGN
     signKey (SlotNo n) = SignKeyMockDSIGN $ n `mod` numCore
 
-type instance TxIn (TestBlockWith ptype) = PayloadTxIn ptype
-type instance TxOut (TestBlockWith ptype) = PayloadTxOut ptype
+instance Ord (PayloadTxIn ptype) => Semigroup (TxsDiff (TestBlockWith ptype)) where
+  TxsDiff a <> TxsDiff b = TxsDiff $ a <> b
 
 instance PayloadSemantics ptype => BlockSupportsLedgerHD (TestBlockWith ptype) where
   type Keys (TestBlockWith ptype) = Set (PayloadTxIn ptype)
@@ -577,20 +578,22 @@ instance PayloadSemantics ptype => BlockSupportsLedgerHD (TestBlockWith ptype) w
       Diff.Diff (PayloadTxIn ptype) (PayloadTxOut ptype)
 
   blockKeys = getPayloadKeySets . tbPayload
-  forward diffs vals = Diff.applyDiff vals (mconcat diffs)
+  combineTickAndBlockDiff (TickDiff tickDiff) (BlockDiff blockDiff) = TickAndBlockDiff $ tickDiff <> blockDiff
+  forwardTickDiff (TickDiff diff) vals = Diff.applyDiff vals diff
+  forwardBlockDiff (BlockDiff diff) vals = Diff.applyDiff vals diff
+  forwardTickAndBlockDiff (TickAndBlockDiff diff) vals = Diff.applyDiff vals diff
+  forwardTxsDiff (TxsDiff diff) vals = Diff.applyDiff vals diff
   restrictValues keys vals = vals `Map.restrictKeys` keys
   valuesSize = Map.size
-  encodeValues = encode
-  decodeValues _ = decode
-
-instance PayloadSemantics ptype => SingleEraUTxOHDBlock (TestBlockWith ptype) where
-  emptyValues = Map.empty
-  emptyDiffs = mempty
+  encodeValuesForInMemory = encode
+  decodeValuesForInMemory _ = decode
 
 instance
   PayloadSemantics ptype =>
   SingleEraBlockSupportsLedgerHD (TestBlockWith ptype)
   where
+  type TxIn (TestBlockWith ptype) = PayloadTxIn ptype
+  type TxOut (TestBlockWith ptype) = PayloadTxOut ptype
   rangeReadValues (mbPrev, n) vals =
     let toRead = case mbPrev of
           Nothing -> vals
@@ -600,13 +603,18 @@ instance
   keysToList = Set.toList
   valuesToList = Map.toList
   valuesFromList = Map.fromList
-  diffToList (Diff.Diff m) = Map.toList m
+  diffToList (TickAndBlockDiff (Diff.Diff m)) = Map.toList m
+  emptyValues = Map.empty
+  emptyTickDiff = TickDiff mempty
+  combineTransAndTickDiff (TickDiff a) (TickDiff b) = TickDiff $ a <> b
+  packTxInBytes = packByteArray True
+  unpackTxInBytes = unpackEither
 
 instance
   PayloadSemantics ptype =>
   ApplyBlock LedgerState (TestBlockWith ptype)
   where
-  applyBlockLedgerResultWithValidation _validation _events _ tb@TestBlockWith{..} vals (TickedTestLedger TestLedger{..})
+  applyBlockLedgerResultWithValidation _validation _events _ tb@TestBlockWith{..} (TickedTestLedger TestLedger{..}) vals
     | blockPrevHash tb /= pointHash lastAppliedPoint =
         throwError $ InvalidHash (pointHash lastAppliedPoint) (blockPrevHash tb)
     | tbValid == Invalid =
@@ -621,7 +629,7 @@ instance
                     { lastAppliedPoint = Chain.blockPoint tb
                     , payloadDependentState = payloadDependentState'
                     }
-                , d
+                , BlockDiff d
                 )
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
@@ -702,7 +710,7 @@ instance PayloadSemantics ptype => IsLedger LedgerState (TestBlockWith ptype) wh
   type LedgerErr LedgerState (TestBlockWith ptype) = TestBlockError ptype
 
   applyChainTickLedgerResult _ _ _ st =
-    pureLedgerResult (TickedTestLedger st, mempty)
+    pureLedgerResult (TickedTestLedger st, TickDiff mempty)
 
 instance PayloadSemantics ptype => UpdateLedger (TestBlockWith ptype)
 

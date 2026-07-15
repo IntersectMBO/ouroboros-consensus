@@ -19,7 +19,6 @@ import qualified Data.Map.Strict as Map
 import Data.SOP.Counting
 import Data.SOP.InPairs (RequiringBoth (..))
 import qualified Data.SOP.InPairs as InPairs
-import Data.SOP.Index (Index (..))
 import Data.SOP.OptNP (OptNP (..))
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
@@ -249,7 +248,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
             }
       , -- The chain starts in the first era (BlockA), whose tables are trivial,
         -- injected as the @Z@ arm of @Values (HardForkBlock '[..]) = NS WrapValues@.
-        pInfoInitLedgerTables = Z (WrapValues ())
+        pInfoInitLedgerTables = Z (WrapValues UnitTables)
       }
 
   blockForging :: Monad m => [MkBlockForging m TestBlock]
@@ -415,7 +414,6 @@ instance CanHardFork '[BlockA, BlockB] where
   hardForkEraTranslation =
     EraTranslation
       { translateLedgerState = PCons ledgerState_AtoB PNil
-      , translateDiff = PCons (TranslateDiff id) PNil
       , translateValues = PCons (TranslateValues id) PNil
       , translateKeys = PCons (TranslateKeys id) PNil
       , translateChainDepState = PCons chainDepState_AtoB PNil
@@ -473,11 +471,11 @@ ledgerState_AtoB ::
 ledgerState_AtoB =
   InPairs.ignoringBoth $
     TranslateLedgerState
-      { translateLedgerStateWith = \_ LgrA{..} ->
+      { translateLedgerStateWith = \_ (LgrA{..}, _) ->
           ( LgrB
               { lgrB_tip = castPoint lgrA_tip
               }
-          , () -- BlockB has no on-disk tables, so the translation diff is trivial
+          , TickDiff UnitTables -- BlockB has no on-disk tables, so the translation diff is trivial
           )
       }
 
@@ -509,15 +507,3 @@ injectTx_AtoB ::
 injectTx_AtoB =
   InPairs.ignoringBoth $ Pair2 cannotInjectTx cannotInjectValidatedTx
 
-{-------------------------------------------------------------------------------
-  Query HF
--------------------------------------------------------------------------------}
-
-instance BlockSupportsHFLedgerQuery '[BlockA, BlockB] where
-  answerBlockQueryHFLookup IZ _ q = case q of {}
-  answerBlockQueryHFLookup (IS IZ) _cfg q = case q of {}
-  answerBlockQueryHFLookup (IS (IS idx)) _cfg _q = case idx of {}
-
-  answerBlockQueryHFTraverse IZ _cfg q = case q of {}
-  answerBlockQueryHFTraverse (IS IZ) _cfg q = case q of {}
-  answerBlockQueryHFTraverse (IS (IS idx)) _cfg _q = case idx of {}

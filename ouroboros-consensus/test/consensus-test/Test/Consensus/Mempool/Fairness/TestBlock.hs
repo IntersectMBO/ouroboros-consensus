@@ -22,6 +22,7 @@ import Data.Void (Void)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
+import Ouroboros.Consensus.Ledger.HD (TxsDiff (..))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import Test.Util.TestBlock (TestBlockWith)
 import qualified Test.Util.TestBlock as TestBlock
@@ -91,11 +92,11 @@ mkGenTx :: Int -> Ledger.ByteSize32 -> Ledger.GenTx TestBlock
 mkGenTx anId aSize = TestBlockGenTx $ Tx{txNumber = anId, txSize = aSize}
 
 instance Ledger.LedgerSupportsMempool TestBlock where
-  applyTx _cfg _shouldIntervene _slot gtx _values st =
-    pure (st, mempty, ValidatedGenTx gtx)
+  applyTx _cfg _shouldIntervene _slot gtx st _values =
+    pure (st, TxsDiff mempty, ValidatedGenTx gtx)
 
-  reapplyTx _cfg _slot _gtx _values gst =
-    pure (gst, mempty)
+  reapplyTx _cfg _slot _gtx gst _values =
+    pure (gst, TxsDiff mempty)
 
   txForgetValidated (ValidatedGenTx tx) = tx
 

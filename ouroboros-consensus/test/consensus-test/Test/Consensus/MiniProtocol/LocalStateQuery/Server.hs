@@ -32,7 +32,7 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Ledger.Abstract (ComputeLedgerEvents (..))
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query (Query (..))
 import Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server

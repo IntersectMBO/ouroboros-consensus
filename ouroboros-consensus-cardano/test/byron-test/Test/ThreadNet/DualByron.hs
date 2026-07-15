@@ -297,8 +297,8 @@ instance TxGen DualByronBlock where
           DoNotIntervene
           curSlotNo
           tx
-          vals
-          st' of
+          st'
+          vals of
         Right (st'', _diff, _vtx) ->
           go (tx : acc) (n - 1) st'' vals
         Left _ -> error "testGenTxs: unexpected invalid tx"

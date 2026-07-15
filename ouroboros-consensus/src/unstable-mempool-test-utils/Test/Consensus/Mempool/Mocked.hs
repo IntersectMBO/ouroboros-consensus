@@ -91,7 +91,7 @@ openMockedMempool capacityOverride tracer initialParams = do
                       Right $
                         ReadOnlyForker
                           { roforkerClose = pure ()
-                          , roforkerGetLedgerState = pure st
+                          , roforkerGetLedgerState = st
                           , roforkerReadTables = \keys ->
                               pure $ restrictValues @blk keys values
                           , roforkerReadStatistics =

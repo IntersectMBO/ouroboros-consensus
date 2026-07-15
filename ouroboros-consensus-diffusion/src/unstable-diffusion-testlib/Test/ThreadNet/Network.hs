@@ -653,7 +653,7 @@ runThreadNetwork
     forkCrucialTxs clock s0 unblockForge getTipPoint mforker mempool sharedRegistry txs0 = do
       forkLinkedThread sharedRegistry "crucialTxs" $ do
         let loop (slot, mempFp) = do
-              extLedger <- mforker $ lift . atomically . roforkerGetLedgerState
+              extLedger <- mforker $ pure . roforkerGetLedgerState
               let ledger = ledgerState extLedger
 
               _ <- addTxs mempool txs0
@@ -717,7 +717,7 @@ runThreadNetwork
     forkTxProducer coreNodeId registry clock cfg nodeSeed getForkerWithRange mempool =
       void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> do
         (ledgerSt, fullUTxO) <- getForkerWithRange $ \(forker, provider) -> do
-          st <- atomically $ roforkerGetLedgerState forker
+          let st = roforkerGetLedgerState forker
           -- Read the whole UTxO via the era range reader.
           fullUTxO <- testReadAllValues provider (ledgerState st)
           pure (ledgerState st, fullUTxO)
@@ -952,7 +952,7 @@ runThreadNetwork
                 -- fail if the EBB is invalid
                 -- if it is valid, we retick to the /same/ slot
                 let apply = applyLedgerBlock OmitLedgerEvents (configLedger pInfoConfig)
-                tickedLdgSt' <- case Exc.runExcept $ apply ebb tables tickedLdgSt of
+                tickedLdgSt' <- case Exc.runExcept $ apply ebb tickedLdgSt tables of
                   Left e -> Exn.throw $ JitEbbError @blk e
                   Right (st, _diff) ->
                     pure $
