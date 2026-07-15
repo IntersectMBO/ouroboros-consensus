@@ -98,6 +98,7 @@ library
   import: common-lib
   hs-source-dirs: ouroboros-consensus/src/ouroboros-consensus
   exposed-modules:
+    LeiosUtils.CallTrace
     LeiosDemoDb
     LeiosDemoDb.Common
     LeiosDemoDb.InMemory
