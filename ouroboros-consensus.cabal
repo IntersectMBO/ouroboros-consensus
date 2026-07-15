@@ -107,6 +107,7 @@ library
     LeiosDemoLogic
     LeiosDemoLogic.Announcements
     LeiosDemoLogic.Announcements.ElBimap
+    LeiosDemoLogic.Announcements.Validate
     LeiosDemoOnlyTestFetch
     LeiosDemoOnlyTestNotify
     LeiosDemoTypes
