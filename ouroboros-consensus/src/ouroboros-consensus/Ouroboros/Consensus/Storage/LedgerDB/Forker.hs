@@ -76,6 +76,7 @@ import qualified Data.Set as Set
 import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoLogic.Announcements.ElBimap (ElId)
 import LeiosDemoTypes
   ( BytesSize
   , EbHash
@@ -785,6 +786,13 @@ class ResolveLeiosBlock blk where
   -- Leios announcements.
   headerLeiosAnnouncement :: Header blk -> Maybe (LeiosPoint, BytesSize)
   headerLeiosAnnouncement _ = Nothing
+
+  -- | The election id (slot + block issuer) of this header.
+  --
+  -- TODO no default; every block type should be able to implement
+  -- this, even though only Dijkstra+ would ever currently call it
+  headerElId :: Header blk -> ElId
+  headerElId _ = error "TODO headerElId stub"
 
   -- | The EB most recent announcement in the 'HeaderState', if any. 'Nothing'
   -- for headers in eras that don't carry Leios announcements.

@@ -11,12 +11,14 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.Leios () where
 
+import qualified Cardano.Crypto.Hash as Crypto (hashToBytesShort)
 import Cardano.Ledger.Api (Tx)
 import Cardano.Ledger.Binary (decCBOR, decodeFullAnnotator)
 import qualified Cardano.Ledger.Block as Core
 import Cardano.Ledger.Core (TopTx, injectFailure)
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
+import Cardano.Ledger.Hashes (KeyHash (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.Rules (ledgerPpL)
 import qualified Cardano.Ledger.Shelley.UTxO as SL
@@ -31,6 +33,7 @@ import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Sequence.Strict as StrictSeq
 import LeiosDemoDb (leiosDbLookupEbClosure)
+import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes (EbAnnouncement (..), LeiosPoint (..), RbHash (..))
 import Lens.Micro ((.~), (^.))
 import Ouroboros.Consensus.Block (ChainHash (..), blockPrevHash, toRawHash)
@@ -192,6 +195,13 @@ instance
           }
       , ann.ebAnnouncementSize
       )
+   where
+    Header{headerBody} = shelleyHeaderRaw hdr
+
+  headerElId hdr =
+    MkElId
+      headerBody.hbSlotNo
+      (Crypto.hashToBytesShort . unKeyHash . SL.hashKey $ headerBody.hbVk)
    where
     Header{headerBody} = shelleyHeaderRaw hdr
 

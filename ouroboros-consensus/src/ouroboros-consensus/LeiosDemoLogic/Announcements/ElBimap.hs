@@ -16,6 +16,8 @@ import qualified Data.Set.NonEmpty as NESet
 -- | The slot number and pool id of an election
 data ElId =
     -- | The bytes are the hash of the pool's cold verification key
+    --
+    -- TODO should it be the hash, or just the key itself?
     MkElId !SlotNo !ShortByteString
   deriving (Eq)
 
