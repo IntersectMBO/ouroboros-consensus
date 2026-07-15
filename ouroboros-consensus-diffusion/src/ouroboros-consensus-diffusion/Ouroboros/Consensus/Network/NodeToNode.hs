@@ -60,7 +60,7 @@ import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import Control.DeepSeq (NFData)
-import Control.Monad (forM_, void)
+import Control.Monad (forM_, forever, void, when)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.ResourceRegistry
@@ -130,7 +130,7 @@ import LeiosVoteState
   )
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
-import Network.TypedProtocol.Peer (Peer (Effect), PeerAntiPipelined (..))
+import Network.TypedProtocol.Peer (Peer (Effect))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
@@ -322,7 +322,10 @@ data Handlers m addr blk = Handlers
   , hLeiosNotifyServer ::
       NodeToNodeVersion ->
       ConnectionId addr ->
-      LeiosNotifyServerPeerAntiPipelined LeiosPoint (Header blk) LeiosVote m ()
+      m
+        ( LeiosNotifyServerPeerAntiPipelined LeiosPoint (Header blk) LeiosVote m ()
+        , m Void
+        )
   , hLeiosFetchClient ::
       LeiosDbConnection m ->
       NodeToNodeVersion ->
@@ -514,25 +517,21 @@ mkHandlers
                           traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote}
                         _ -> pure ()
               )
-      , hLeiosNotifyServer = \_version _peer -> PeerAntiPipelined $ Effect $ do
+      , hLeiosNotifyServer = \_version _peer -> do
           chan <- subscribeEbNotifications leiosDB
-          let processEbNotification ::
-                STM
-                  m
-                  ( LeiosDemoOnlyTestNotify.Message
-                      (LeiosNotify LeiosPoint (Header blk) LeiosVote)
-                      LeiosDemoOnlyTestNotify.StBusy
-                      LeiosDemoOnlyTestNotify.StIdle
-                  )
-              processEbNotification =
-                readTChan chan >>= \case
-                  AcquiredEb point ebSize ->
-                    pure $ MsgLeiosBlockOffer point ebSize
-                  AcquiredEbTxs point ->
-                    pure $ MsgLeiosBlockTxsOffer point
-
           LeiosVoteSubscription{getNextVote} <- subscribeVotes leiosVoteState
-          let processVote ::
+
+          -- This peer's outgoing LeiosNotify queue and its credit counter.
+          --
+          -- TODO the EB-offer and vote sources should eventually /register/
+          -- this peer with those components rather than the pump draining
+          -- fresh per-peer subscriptions; and the (not-yet-wired) EB
+          -- announcement source will be the highest-priority (leftmost)
+          -- branch of 'readNext'.
+          queue <- atomically LazySTM.newTQueue
+          credits <- LazySTM.newTVarIO (0 :: Int)
+
+          let readNext ::
                 STM
                   m
                   ( LeiosDemoOnlyTestNotify.Message
@@ -540,21 +539,29 @@ mkHandlers
                       LeiosDemoOnlyTestNotify.StBusy
                       LeiosDemoOnlyTestNotify.StIdle
                   )
-              processVote = do
-                vote <- getNextVote
-                pure $ MsgLeiosVotes [vote]
+              readNext =
+                    ( readTChan chan >>= \case
+                        AcquiredEb point ebSize ->
+                          pure $ MsgLeiosBlockOffer point ebSize
+                        AcquiredEbTxs point ->
+                          pure $ MsgLeiosBlockTxsOffer point
+                    )
+                  <|> (getNextVote <&> \vote -> MsgLeiosVotes [vote])
 
-          -- STUB: no announcement source or credit accounting yet.
-          -- TODO slot the announcement queue in as the highest-priority
-          -- (leftmost) branch of 'next' below, and make 'incr' bump this
-          -- peer's outstanding-request credit so the announcement logic can
-          -- bound what it enqueues.
-          let incr = pure ()
-              next =
-                atomically $
-                  processEbNotification <|> processVote
-          pure . runPeerAntiPipelined $
-            leiosNotifyServerPeerAntiPipelined incr next
+              -- 'incr' adds a credit per received request; 'next' hands the
+              -- sender thread the next queued message; 'pump' drains the
+              -- sources into the queue, dropping a message when there are no
+              -- free credits.
+              incr = atomically $ LazySTM.modifyTVar' credits (+ 1)
+              next = atomically $ LazySTM.readTQueue queue
+              pump = forever $ atomically $ do
+                msg <- readNext
+                c <- LazySTM.readTVar credits
+                when (c > 0) $ do
+                  LazySTM.writeTVar credits (c - 1)
+                  LazySTM.writeTQueue queue msg
+
+          pure (leiosNotifyServerPeerAntiPipelined incr next, pump)
       , hLeiosFetchClient = \leiosConn _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
           let reqVar = Leios.requestsToSend peerVars
           -- Queue for responses received by the pipelined-peer collector
@@ -1335,13 +1342,18 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     m ((), Maybe bLN)
   aLeiosNotifyServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "LeiosNotifyServer"
-    runAntiPipelinedPeerWithLimits
-      (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
-      (cLeiosNotifyCodec (mkCodecs version))
-      blLeiosNotify
-      timeLimitsLeiosNotify
-      channel
-      $ hLeiosNotifyServer version them
+    (peer, pump) <- hLeiosNotifyServer version them
+    -- The pump lives exactly as long as the peer; 'link' surfaces a pump
+    -- crash instead of silently leaving the peer unable to send.
+    withAsync pump $ \pumpThread -> do
+      link pumpThread
+      runAntiPipelinedPeerWithLimits
+        (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
+        (cLeiosNotifyCodec (mkCodecs version))
+        blLeiosNotify
+        timeLimitsLeiosNotify
+        channel
+        peer
 
   aLeiosFetchClient ::
     NodeToNodeVersion ->
