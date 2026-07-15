@@ -422,8 +422,7 @@ instance
   where
   applyBlockLedgerResultWithValidation _validation _events cfg blk values tickedSt = do
     -- Stow the read values into the mock state's UTxO, apply the block, then
-    -- diff the resulting UTxO against the input and clear it back out (the
-    -- @mk@-free analogue of stow → BBODY → diff → unstow).
+    -- diff the resulting UTxO against the input and clear it back out.
     st' <- updateSimpleLedgerState cfg blk (stowValues values tickedSt)
     let diff = Diff.diff values (mockUtxo (simpleLedgerState st'))
     pure $ pureLedgerResult (clearValues st', diff)
@@ -511,8 +510,7 @@ genesisSimpleLedgerState :: AddrDist -> LedgerState (SimpleBlock c ext)
 genesisSimpleLedgerState =
   clearValues . SimpleLedgerState . genesisMockState
 
--- | The genesis UTxO values, threaded alongside 'genesisSimpleLedgerState' now
--- that the state is @mk@-free.
+-- | The genesis UTxO values, threaded alongside 'genesisSimpleLedgerState'.
 genesisSimpleLedgerTables :: AddrDist -> Values (SimpleBlock c ext)
 genesisSimpleLedgerTables = mockUtxo . genesisMockState
 

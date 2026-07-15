@@ -350,13 +350,14 @@ testTablesTranslation propLabel translateWithConfig translationShouldSatisfy led
 -- | Check a pure-upgrade era boundary by /injecting/ a populated UTxO and
 -- /ejecting/ it again around the translation.
 --
--- The mk-free canonical ledger state is UTxO-free (the values live in the
--- backend), so we cannot read a meaningful UTxO out of @'tsSrcLedgerState'@.
--- Instead we generate a source-era 'NewEpochState' that /does/ carry a UTxO,
--- run the ledger's cross-era translation on it (the same 'SL.translateEra'' the
+-- The canonical ledger state is UTxO-free (the values live in the backend), so
+-- we cannot read a meaningful UTxO out of @'tsSrcLedgerState'@.  Instead we
+-- generate a source-era 'NewEpochState' that /does/ carry a UTxO, run the
+-- ledger's cross-era translation on it (the same 'SL.translateEra'' the
 -- consensus layer uses), and split the resulting UTxO back out. We assert that
--- every entry survives with its 'TxOut' upgraded (the 'TxIn' key is era-stable),
--- which is precisely what the on-disk values translation must reproduce.
+-- every entry survives with its 'TxOut' upgraded (the 'TxIn' key is
+-- era-stable), which is precisely what the on-disk values translation must
+-- reproduce.
 --
 -- We additionally assert that the consensus state translation itself emits no
 -- table diff for these boundaries (the values are upgraded lazily when read,

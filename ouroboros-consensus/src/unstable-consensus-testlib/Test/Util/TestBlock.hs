@@ -398,8 +398,7 @@ instance ConfigSupportsNode (TestBlockWith ptype) where
 
 -- | The payload's UTxO-HD tables for a @'TestBlockWith' ptype@.
 --
--- In the @mk@-free design the on-disk table data is no longer carried inside
--- the ledger state; it flows as the opaque @'Keys'@\/@'Values'@\/@'Diff'@ of
+-- The on-disk table data flows as the opaque @'Keys'@\/@'Values'@\/@'Diff'@ of
 -- 'BlockSupportsLedgerHD'. A payload exposes the key\/value types of its tables
 -- through 'PayloadTxIn'\/'PayloadTxOut'; the @'TestBlockWith' ptype@ then has
 -- the same Shelley-style @Set@\/@Map@\/'Diff.Diff' tables, and 'applyPayload'

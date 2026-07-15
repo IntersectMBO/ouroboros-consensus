@@ -222,9 +222,9 @@ lsmTestArguments secParam salt fp =
  Model
 -------------------------------------------------------------------------------}
 
--- | An (@mk@-free) extended ledger state together with its full UTxO
--- 'Values'. The model threads the values explicitly now that the state no
--- longer carries the on-disk tables.
+-- | An extended ledger state together with its full UTxO 'Values'. The model
+-- threads the values explicitly now that the state no longer carries the
+-- on-disk tables.
 data StateAndTables = StateAndTables
   { satState :: !(ExtLedgerState TestBlock)
   , satValues :: !(Values TestBlock)

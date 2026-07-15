@@ -89,10 +89,9 @@ import Test.Util.ToExpr ()
 
 -- | A ledger state together with its full UTxO 'Values'.
 --
--- In the @mk@-free design the on-disk table data no longer lives inside the
--- ledger state, so the model threads it explicitly alongside. Equality and
--- ordering are by the state's tip only (the values are a function of the
--- reached tip), which is what the model relies on.
+-- The on-disk table data is threaded explicitly. Equality and ordering are by
+-- the state's tip only (the values are a function of the reached tip), which is
+-- what the model relies on.
 data DBState blk = DBState
   { dbsState :: !(LedgerState blk)
   , dbsValues :: !(Values blk)

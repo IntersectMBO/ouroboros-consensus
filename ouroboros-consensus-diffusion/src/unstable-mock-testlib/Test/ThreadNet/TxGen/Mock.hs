@@ -27,8 +27,7 @@ instance TxGen (SimpleBlock SimpleMockCrypto ext) where
     addrs :: [Addr]
     addrs = Map.keys $ mkAddrDist numCoreNodes
 
-    -- The full UTxO is the values read for the block (the @mk@-free state no
-    -- longer carries the tables).
+    -- The full UTxO is the values read for the block.
     utxo :: Utxo
     utxo = values
 

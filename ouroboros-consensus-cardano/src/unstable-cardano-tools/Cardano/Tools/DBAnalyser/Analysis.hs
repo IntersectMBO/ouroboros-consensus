@@ -520,8 +520,6 @@ checkNoThunksEvery
           (newLedger, diff) = either (error . show) lrResult $ runExcept appliedResult
           bn = blockNo blk
       when (unBlockNo bn `mod` nBlocks == 0) $
-        -- The ledger state is mk-free, so a single thunk check covers it (the
-        -- old stow/diffs/values distinctions no longer apply).
         IOLike.evaluate (ledgerState newLedger) >>= checkNoThunks bn
 
       LedgerDB.push internal newLedger diff

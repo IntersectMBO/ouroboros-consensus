@@ -75,8 +75,7 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs
   , mcdbInitLedger :: ExtLedgerState blk
   -- ^ The initial ledger state.
   , mcdbInitLedgerTables :: Values blk
-  -- ^ The initial ledger tables (the genesis @'Values'@, threaded alongside the
-  -- state now that it is @mk@-free).
+  -- ^ The initial ledger tables.
   , mcdbRegistry :: ResourceRegistry m
   -- ^ Keeps track of non-lexically scoped resources.
   , mcdbNodeDBs :: NodeDBs (StrictTMVar m MockFS)

@@ -128,7 +128,6 @@ migrateUTxO ::
   MigrationInfo c ->
   SlotNo ->
   LedgerConfig (CardanoBlock c) ->
-  -- | The UTxO values, carried alongside the @mk@-free state.
   Values (CardanoBlock c) ->
   Maybe (GenTx (CardanoBlock c))
 migrateUTxO migrationInfo _curSlot _lcfg values
@@ -204,10 +203,9 @@ migrateUTxO migrationInfo _curSlot _lcfg values
                   & SL.witsTxL . SL.bootAddrTxWitsL .~ Set.singleton byronWit
   | otherwise = Nothing
  where
-  -- The migration is Shelley-era-specific. In the @mk@-free design the UTxO
-  -- lives in the @'Values'@ (the @NS WrapValues@), so we read the Shelley arm
-  -- (the second Cardano era) directly; an empty\/other-era arm means no
-  -- migration this slot.
+  -- The migration is Shelley-era-specific. The UTxO lives in the @'Values'@
+  -- (the @NS WrapValues@), so we read the Shelley arm (the second Cardano era)
+  -- directly; an empty\/other-era arm means no migration this slot.
   mbUTxO :: Maybe (SL.UTxO ShelleyEra)
   mbUTxO = case values of
     S (Z (WrapValues v)) -> Just (SL.UTxO v)

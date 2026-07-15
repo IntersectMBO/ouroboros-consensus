@@ -63,21 +63,19 @@ class TxGen blk where
     TopLevelConfig blk ->
     TxGenExtra blk ->
     LedgerState blk ->
-    -- | The UTxO values, carried alongside the @mk@-free state.
     Values blk ->
     Gen [GenTx blk]
 
   -- | Read the /whole/ UTxO at the given state, reconstructing the block-level
   -- @'Values' blk@.
   --
-  -- In the @mk@-free design the plain forker can no longer read a whole table
-  -- (range reads are era-typed and live behind the 'EraRangeReaderProvider';
-  -- see decision 10 in @utxo-hd-4.md@). The transaction generators, however,
-  -- need the full UTxO. So the harness pages the current era's values through
-  -- the provider and rebuilds @'Values' blk@: for a single-era block the
-  -- projection is the identity (default below); the hard-fork combinator pages
-  -- the current era and injects the result back into the @NS@
-  -- (see 'testReadAllValuesHfc').
+  -- The plain forker can't read a whole table (range reads are era-typed and
+  -- live behind the 'EraRangeReaderProvider'). The transaction generators,
+  -- however, need the full UTxO. So the harness pages the current era's values
+  -- through the provider and rebuilds @'Values' blk@: for a single-era block
+  -- the projection is the identity (default below); the hard-fork combinator
+  -- pages the current era and injects the result back into the @NS@ (see
+  -- 'testReadAllValuesHfc').
   testReadAllValues ::
     Monad m =>
     EraRangeReaderProvider m blk ->

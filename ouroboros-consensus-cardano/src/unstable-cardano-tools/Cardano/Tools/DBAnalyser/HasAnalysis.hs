@@ -25,11 +25,11 @@ import TextBuilder (TextBuilder)
 data WithLedgerState blk = WithLedgerState
   { wlsBlk :: blk
   , wlsStateBefore :: LedgerState blk
-  -- ^ The (mk-free) ledger state before the block was applied.
+  -- ^ The ledger state before the block was applied.
   , wlsValuesBefore :: Values blk
   -- ^ The values to be consumed by the block (read against 'wlsStateBefore').
   , wlsStateAfter :: LedgerState blk
-  -- ^ The (mk-free) ledger state after the block was applied.
+  -- ^ The ledger state after the block was applied.
   , wlsValuesAfter :: Values blk
   -- ^ The values produced by the block.
   }

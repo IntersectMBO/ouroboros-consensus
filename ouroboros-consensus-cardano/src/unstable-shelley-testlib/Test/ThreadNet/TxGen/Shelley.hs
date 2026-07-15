@@ -78,7 +78,7 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
       Integer ->
       -- \^ Number of txs to still produce
       TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
-      -- \^ The (mk-free) ticked state
+      -- \^ The ticked state
       Values (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
       -- \^ The UTxO values at the virtual tip
       Gen [GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)]
@@ -102,7 +102,6 @@ genTx ::
   TopLevelConfig (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
   SlotNo ->
   TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
-  -- | The UTxO values, threaded alongside the @mk@-free ticked state.
   Values (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
   Gen.GenEnv MockCrypto ShelleyEra ->
   Gen (Maybe (GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)))
@@ -113,8 +112,7 @@ genTx _cfg slotNo tickedSt values genEnv =
       ledgerEnv
       (SL.LedgerState utxoSt dpState)
  where
-  -- The ticked state's NES holds an empty UTxO (mk-free); stow the read values
-  -- back in so the generator sees the real UTxO set.
+  -- Stow the read values back in so the generator sees the real UTxO set.
   nes :: SL.NewEpochState ShelleyEra
   nes = stowUTxO values (tickedShelleyLedgerStateNoUTxO tickedSt)
 
