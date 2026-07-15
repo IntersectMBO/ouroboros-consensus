@@ -457,7 +457,7 @@ mkHandlers
             leiosNotifyClientPeerPipelined
               ( atomically controlMessageSTM <&> \case
                   Terminate -> Left ()
-                  _ -> Right 100 {- TODO magic number -}
+                  _ -> Right Leios.lEIOSNOTIFYPIPELINEDEPTH
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement{} -> error "Demo does not send EB announcements!"
@@ -552,7 +552,11 @@ mkHandlers
               -- sender thread the next queued message; 'pump' drains the
               -- sources into the queue, dropping a message when there are no
               -- free credits.
-              incr = atomically $ LazySTM.modifyTVar' credits (+ 1)
+              incr = atomically $ do
+                  n <- LazySTM.readTVar credits
+                  if n == Leios.lEIOSNOTIFYPIPELINEDEPTH then pure True else do
+                    LazySTM.writeTVar credits $! n + 1
+                    pure False
               next = atomically $ LazySTM.readTQueue queue
               pump = forever $ atomically $ do
                 msg <- readNext

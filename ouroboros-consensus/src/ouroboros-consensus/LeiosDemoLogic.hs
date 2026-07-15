@@ -940,3 +940,7 @@ leiosCertRbCallback kernelVars peerVars hdr cds =
   when (headerContainsLeiosCert hdr) $
     forM_ (protocolStateLeiosAnnouncement @blk cds) $ \announcement ->
       leiosCertRbOffer kernelVars peerVars announcement
+
+
+lEIOSNOTIFYPIPELINEDEPTH :: Int
+lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number
