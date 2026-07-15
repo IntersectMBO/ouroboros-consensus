@@ -6,11 +6,13 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 module LeiosDemoOnlyTestNotify
   ( LeiosNotify (..)
@@ -23,10 +25,14 @@ module LeiosDemoOnlyTestNotify
   , timeLimitsLeiosNotify
   , LeiosNotifyClientPeerPipelined
   , LeiosNotifyServerPeer
+  , LeiosNotifyServerPeerAntiPipelined
   , leiosNotifyClientPeer
   , leiosNotifyClientPeerPipelined
   , leiosNotifyServerPeer
+  , leiosNotifyServerPeerAntiPipelined
   , toLeiosNotifyClientPeerPipelined
+
+  , runAntiPipelinedPeerWithLimits
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
@@ -70,17 +76,32 @@ import Network.TypedProtocol.Core
   )
 import Network.TypedProtocol.Peer
   ( Peer (..)
+  , PeerAntiPipelined (..)
   , PeerPipelined (..)
   , Receiver (..)
+  , Sender (..)
   )
 import Ouroboros.Network.Protocol.Limits
-  ( ProtocolSizeLimits (..)
+  ( BearerBytes
+  , ProtocolSizeLimits (..)
   , ProtocolTimeLimits (..)
   , smallByteLimit
   , waitForever
   )
 import Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 import Text.Printf (printf)
+
+-- for runAntiPipelinedPeerWithLimits
+import Control.Monad.Class.MonadAsync
+import Control.Monad.Class.MonadFork
+import Control.Monad.Class.MonadSTM
+import Control.Monad.Class.MonadThrow
+import Control.Monad.Class.MonadTimer.SI
+import Control.Tracer (Tracer (..))
+import Network.Mux.Timeout (withTimeoutSerial)
+import Network.TypedProtocol.Driver (runAntiPipelinedPeerWithDriver)
+import Ouroboros.Network.Channel
+import Ouroboros.Network.Driver.Limits (TraceSendRecv, driverWithLimits)
 
 -----
 
@@ -403,6 +424,9 @@ leiosNotifyClientPeer checkDone =
 type LeiosNotifyServerPeer point announcement vote m a =
   Peer (LeiosNotify point announcement vote) AsServer NonPipelined StIdle m ()
 
+type LeiosNotifyServerPeerAntiPipelined point announcement vote m a =
+  PeerAntiPipelined (LeiosNotify point announcement vote) AsServer StIdle m ()
+
 leiosNotifyServerPeer ::
   forall m point announcement vote.
   Monad m =>
@@ -503,3 +527,72 @@ leiosNotifyClientPeerPipelined checkDone k0 =
       Collect
         Nothing
         (\MkC -> drainThePipe x m)
+
+leiosNotifyServerPeerAntiPipelined ::
+  forall m point announcement vote.
+  Monad m =>
+  m () ->
+  -- ^ increments the number of outstanding requests
+  m (Message (LeiosNotify point announcement vote) StBusy StIdle) ->
+  -- ^ blocks until the next reply (announcement\/offer\/vote) is ready
+  PeerAntiPipelined (LeiosNotify point announcement vote) AsServer StIdle m ()
+leiosNotifyServerPeerAntiPipelined incr next =
+    PeerAntiPipelined (go Zero)
+  where
+    responder :: Sender (LeiosNotify point announcement vote) AsServer StBusy StIdle m
+    responder = SenderEffect $ next <&> \msg -> SenderYield ReflServerAgency msg SenderDone
+
+    go :: forall n.
+      Nat n ->
+      Peer (LeiosNotify point announcement vote) AsServer (AntiPipelined n) StIdle m ()
+    go n =
+      Await ReflClientAgency $ \case
+        MsgDone                         -> drain n
+        MsgLeiosNotificationRequestNext ->
+          Effect $ do
+            incr
+            pure $ YieldAntiPipelined ReflServerAgency responder (go (Succ n))
+
+    -- on termination, flush the sends we've handed off, then Done.
+    drain :: forall k.
+      Nat k ->
+      Peer (LeiosNotify point announcement vote) AsServer (AntiPipelined k) StDone m ()
+    drain = \case
+      Zero   -> Done ReflNobodyAgency ()
+      Succ j -> AntiCollect (drain j) Nothing
+
+-----
+
+-- | Run an anti-pipelined peer with the given channel via the given codec.
+--
+-- The anti-pipelined dual of 'runPipelinedPeerWithLimits': the peer receives
+-- ahead and its sends are performed by a parallel thread, hence the
+-- 'MonadAsync' constraint.
+--
+-- TODO: upstream this to ouroboros-network
+runAntiPipelinedPeerWithLimits
+  :: forall ps (st :: ps) pr failure bytes m a.
+     ( MonadAsync m
+     , MonadEvaluate m
+     , MonadFork m
+     , MonadMask m
+     , MonadTimer m
+     , MonadThrow (STM m)
+     , ShowProxy ps
+     , forall (st' :: ps) stok. stok ~ StateToken st' => Show stok
+     , BearerBytes bytes
+     , NFData a
+     , NFData failure
+     , Show failure
+     )
+  => Tracer m (TraceSendRecv ps)
+  -> Codec ps failure m bytes
+  -> ProtocolSizeLimits ps bytes
+  -> ProtocolTimeLimits ps
+  -> Channel m bytes
+  -> PeerAntiPipelined ps pr st m a
+  -> m (a, Maybe bytes)
+runAntiPipelinedPeerWithLimits tracer codec slimits tlimits channel peer =
+    withTimeoutSerial $ \timeoutFn ->
+      let driver = driverWithLimits tracer timeoutFn codec slimits tlimits channel
+      in runAntiPipelinedPeerWithDriver driver peer
