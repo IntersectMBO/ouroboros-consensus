@@ -253,8 +253,8 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
       case matchTx injs (unwrapTx tx) hardForkState of
         Left{} -> pure Measure.zero -- safe b/c the tx will be found invalid
         Right pair -> case State.match values pair of
-          -- The values are read for the tx's era, so this never mismatches; if
-          -- it somehow did, the tx will be found invalid anyway.
+          -- Should this mismatch, it will fail the same way when applying the
+          -- transaction, so it will be rejected.
           Left{} -> pure Measure.zero
           Right pair' -> hcollapse $ hcizipWith proxySingle aux cfgs pair'
      where
