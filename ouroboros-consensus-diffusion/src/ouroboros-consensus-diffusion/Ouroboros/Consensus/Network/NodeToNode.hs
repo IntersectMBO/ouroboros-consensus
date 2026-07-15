@@ -317,11 +317,11 @@ data Handlers m addr blk = Handlers
       ControlMessageSTM m ->
       ConnectionId addr ->
       Leios.LeiosPeerVars m ->
-      LeiosNotifyClientPeerPipelined LeiosPoint () LeiosVote m ()
+      LeiosNotifyClientPeerPipelined LeiosPoint (Header blk) LeiosVote m ()
   , hLeiosNotifyServer ::
       NodeToNodeVersion ->
       ConnectionId addr ->
-      LeiosNotifyServerPeer LeiosPoint () LeiosVote m ()
+      LeiosNotifyServerPeer LeiosPoint (Header blk) LeiosVote m ()
   , hLeiosFetchClient ::
       LeiosDbConnection m ->
       NodeToNodeVersion ->
@@ -519,7 +519,7 @@ mkHandlers
                 STM
                   m
                   ( LeiosDemoOnlyTestNotify.Message
-                      (LeiosNotify LeiosPoint () LeiosVote)
+                      (LeiosNotify LeiosPoint (Header blk) LeiosVote)
                       LeiosDemoOnlyTestNotify.StBusy
                       LeiosDemoOnlyTestNotify.StIdle
                   )
@@ -535,7 +535,7 @@ mkHandlers
                 STM
                   m
                   ( LeiosDemoOnlyTestNotify.Message
-                      (LeiosNotify LeiosPoint () LeiosVote)
+                      (LeiosNotify LeiosPoint (Header blk) LeiosVote)
                       LeiosDemoOnlyTestNotify.StBusy
                       LeiosDemoOnlyTestNotify.StIdle
                   )
@@ -597,7 +597,7 @@ data Codecs blk addr e m bCS bSCS bBF bSBF bTX bKA bPS bLN bLF = Codecs
   , cTxSubmission2Codec :: Codec (TxSubmission2 (GenTxId blk) (GenTx blk)) e m bTX
   , cKeepAliveCodec :: Codec KeepAlive e m bKA
   , cPeerSharingCodec :: Codec (PeerSharing addr) e m bPS
-  , cLeiosNotifyCodec :: Codec (LeiosNotify LeiosPoint () LeiosVote) e m bLN
+  , cLeiosNotifyCodec :: Codec (LeiosNotify LeiosPoint (Header blk) LeiosVote) e m bLN
   , cLeiosFetchCodec :: Codec (LeiosFetch LeiosPoint LeiosEb LeiosTx) e m bLF
   }
 
@@ -668,8 +668,8 @@ defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion =
         codecLeiosNotify
           Leios.encodeLeiosPoint
           Leios.decodeLeiosPoint
-          (\() -> CBOR.encodeNull)
-          CBOR.decodeNull
+          enc
+          dec
           Leios.encodeLeiosVote
           Leios.decodeLeiosVote
     , cLeiosFetchCodec =
@@ -706,7 +706,7 @@ identityCodecs ::
     (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
-    (AnyMessage (LeiosNotify LeiosPoint () LeiosVote))
+    (AnyMessage (LeiosNotify LeiosPoint (Header blk) LeiosVote))
     (AnyMessage (LeiosFetch LeiosPoint LeiosEb LeiosTx))
 identityCodecs =
   Codecs
@@ -743,7 +743,7 @@ data Tracers' peer ntnAddr blk e f = Tracers
   , tPeerSharingTracer :: f (TraceLabelPeer peer (TraceSendRecv (PeerSharing ntnAddr)))
   , tTxLogicTracer :: f (TraceLabelPeer peer (TraceTxLogic peer (GenTxId blk) (GenTx blk)))
   , tLeiosNotifyTracer ::
-      f (TraceLabelPeer peer (TraceSendRecv (LeiosNotify LeiosPoint () LeiosVote)))
+      f (TraceLabelPeer peer (TraceSendRecv (LeiosNotify LeiosPoint (Header blk) LeiosVote)))
   , tLeiosFetchTracer ::
       f (TraceLabelPeer peer (TraceSendRecv (LeiosFetch LeiosPoint LeiosEb LeiosTx)))
   }

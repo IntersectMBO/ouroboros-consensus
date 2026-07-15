@@ -780,7 +780,7 @@ class HasLeiosVoting blk where
 -- * Tracing
 
 messageLeiosNotifyToObject ::
-  Message (LeiosNotify LeiosPoint () LeiosVote) st st' ->
+  Message (LeiosNotify LeiosPoint announcement LeiosVote) st st' ->
   Aeson.Object
 messageLeiosNotifyToObject = \case
   MsgLeiosNotificationRequestNext ->
