@@ -942,15 +942,12 @@ benchmark txid-eq-ord-instances-bench
     base,
     bytestring,
     cardano,
-    cardano-crypto-wrapper,
-    cardano-ledger-core,
-    cardano-ledger-shelley,
     cardano-protocol-tpraos,
     deepseq,
     ouroboros-consensus,
     sop-core,
-    strict-sop-core,
     tasty-bench,
+    unstable-cardano-testlib,
 
 test-suite doctest
   import: common-test
@@ -1629,6 +1626,7 @@ library unstable-cardano-testlib
   exposed-modules:
     Test.Consensus.Cardano.Examples
     Test.Consensus.Cardano.Generators
+    Test.Consensus.Cardano.GenTxIdBuilders
     Test.Consensus.Cardano.MockCrypto
     Test.Consensus.Cardano.ProtocolInfo
     Test.ThreadNet.Infra.ShelleyBasedHardFork
@@ -1641,6 +1639,7 @@ library unstable-cardano-testlib
 
   build-depends:
     base,
+    bytestring,
     cardano-crypto-class,
     cardano-crypto-wrapper,
     cardano-ledger-alonzo:testlib,
@@ -1688,6 +1687,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.SupportedNetworkProtocolVersion
     Test.Consensus.Cardano.SupportsSanityCheck
     Test.Consensus.Cardano.Translation
+    Test.Consensus.Cardano.TxId
     Test.ThreadNet.AllegraMary
     Test.ThreadNet.Cardano
     Test.ThreadNet.MaryAlonzo

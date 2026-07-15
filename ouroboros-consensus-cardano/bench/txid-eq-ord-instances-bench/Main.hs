@@ -5,36 +5,25 @@
 
 module Main (main) where
 
-import Cardano.Crypto.Hashing (unsafeAbstractHashFromShort)
-import Cardano.Ledger.Hashes (unsafeMakeSafeHash)
-import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (StandardCrypto)
 import Control.DeepSeq (NFData (..))
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as SBS
-import Data.SOP (All, Proxy (..), SListI, lengthSList)
-import Data.SOP.Strict (NP, NS, hap, hcollapse, hcpure, injections)
+import Data.SOP (All, Proxy (..), lengthSList)
 import Data.Word (Word8)
-import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
-import Ouroboros.Consensus.Byron.Ledger.Mempool (TxId (ByronTxId))
 import Ouroboros.Consensus.Cardano.Block (CardanoEras)
 import Ouroboros.Consensus.Cardano.Node ()
-import Ouroboros.Consensus.HardFork.Combinator.AcrossEras (OneEraGenTxId (..))
-import Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
+import Ouroboros.Consensus.HardFork.Combinator.AcrossEras (OneEraGenTxId)
 import Ouroboros.Consensus.Shelley.HFEras ()
-import Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock)
-import Ouroboros.Consensus.Shelley.Ledger.Mempool (TxId (ShelleyTxId))
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
-import Ouroboros.Consensus.TypeFamilyWrappers (WrapGenTxId (..))
-import Ouroboros.Consensus.Util (hashFromBytesShortE)
+import Test.Consensus.Cardano.GenTxIdBuilders (BuildGenTxId, oneEraGenTxIds)
 import Test.Tasty.Bench (Benchmark, bench, bgroup, defaultMain, env, whnf)
 
--- | 'OneEraGenTxId' has no 'NFData' instance, and a real one would need either
--- the unexported 'oneEraGenTxIdRawHash' or a copy of its walk here — we want
--- neither. A deep force is not needed regardless: operands are built once and
--- shared, and 'compare'/'==' re-walk each operand on every call, so their
--- construction never enters the per-iteration figure (confirmed in the generated
--- Core). WHNF suffices.
+-- | 'OneEraGenTxId' has no 'NFData' instance, and a real one would need the
+-- raw-hash walk (or a copy of it) here, which we want to avoid. A deep force is
+-- not needed regardless: operands are built once and shared, and 'compare' and
+-- '==' re-walk each operand on every call, so their construction never enters
+-- the per-iteration figure (confirmed in the generated Core). WHNF suffices.
 instance NFData (OneEraGenTxId xs) where
   rnf x = x `seq` ()
 
@@ -87,31 +76,11 @@ numEras = lengthSList (Proxy @(CardanoEras StandardCrypto))
 eras :: [Int]
 eras = [0 .. numEras - 1]
 
--- | Build a transaction id for one era from raw hash bytes. Each era wraps its
--- hash differently, hence one instance per era shape.
-class BuildGenTxId blk where
-  buildGenTxId :: ShortByteString -> GenTxId blk
-
-instance BuildGenTxId (ShelleyBlock proto era) where
-  buildGenTxId bs = ShelleyTxId (SL.TxId (unsafeMakeSafeHash (hashFromBytesShortE bs)))
-
-instance BuildGenTxId ByronBlock where
-  buildGenTxId bs = ByronTxId (unsafeAbstractHashFromShort bs)
-
 -- | The 32 bytes of a txid's raw hash: the role in the first byte, the rest
 -- zero. That first byte alone guarantees a role-0 id never shares a hash with a
 -- role-1 id.
 roleBytes :: Word8 -> ShortByteString
 roleBytes role = SBS.pack (role : replicate 31 0)
-
--- | One leaf per era, every era sharing the role's bytes.
-buildNP :: All BuildGenTxId xs => Word8 -> NP WrapGenTxId xs
-buildNP role = hcpure (Proxy @BuildGenTxId) (WrapGenTxId (buildGenTxId (roleBytes role)))
-
--- | Inject each leaf into the sum at its own era position. The strict 'NS' has
--- no @apInjs_NP@, so we go through 'injections'.
-apInjs :: SListI xs => NP f xs -> [NS f xs]
-apInjs np = hcollapse (hap injections np)
 
 -- | Two role-0 operand lists and one role-1 list (see 'roleBytes'). All role-0
 -- txids share one hash, all role-1 another, and the roles differ in byte 0. So a
@@ -129,4 +98,4 @@ mkOperands = pure (operandsFor 0, operandsFor 0, operandsFor 1)
 
 -- | One operand per era (list index = era position) for the given role.
 operandsFor :: All BuildGenTxId xs => Word8 -> [OneEraGenTxId xs]
-operandsFor role = OneEraGenTxId <$> apInjs (buildNP role)
+operandsFor role = oneEraGenTxIds (roleBytes role)

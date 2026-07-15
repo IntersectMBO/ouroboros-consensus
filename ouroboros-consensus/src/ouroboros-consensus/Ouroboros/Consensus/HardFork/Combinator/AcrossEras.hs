@@ -69,7 +69,6 @@ import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BSC
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as Short
-import Data.Function (on)
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
@@ -165,18 +164,45 @@ instance Condense (OneEraHash xs) where
   OneEraGenTxId
 -------------------------------------------------------------------------------}
 
--- | This instance compares the underlying raw hash ('toRawTxIdHash') of the
--- 'TxId'.
+-- | Compare 'OneEraGenTxId's by their raw hash, ignoring the era.
 --
--- Note that this means that transactions in different eras can have equal
--- 'TxId's. This should only be the case when the transaction format is
--- backwards compatible from one era to the next.
+-- Two transactions in different eras can therefore have equal 'TxId's. This
+-- should only happen when the transaction format is backwards compatible from
+-- one era to the next.
+--
+-- The instances walk the two era sums in lockstep rather than serialising each
+-- id to its raw hash. Within the same era they defer to that era's own
+-- 'Eq'\/'Ord' (for Shelley, a four-word 'Cardano.Crypto.PackedBytes' compare),
+-- which allocate nothing. Only a cross-era comparison falls back to 'rawHashNS'
+-- and allocates. That can happen around a hard fork, or when a peer advertises
+-- txids tagged with an older era.
 instance CanHardFork xs => Eq (OneEraGenTxId xs) where
-  (==) = (==) `on` oneEraGenTxIdRawHash
+  (==) = eqOneEraGenTxId
 
 -- | See the corresponding 'Eq' instance.
 instance CanHardFork xs => Ord (OneEraGenTxId xs) where
-  compare = compare `on` oneEraGenTxIdRawHash
+  compare = compareOneEraGenTxId
+
+eqOneEraGenTxId :: CanHardFork xs => OneEraGenTxId xs -> OneEraGenTxId xs -> Bool
+eqOneEraGenTxId (OneEraGenTxId l0) (OneEraGenTxId r0) = go l0 r0
+ where
+  go :: All SingleEraBlock ys => NS WrapGenTxId ys -> NS WrapGenTxId ys -> Bool
+  go (Z x) (Z y) = x == y
+  go (S x) (S y) = go x y
+  go l r = rawHashNS l == rawHashNS r
+
+compareOneEraGenTxId :: CanHardFork xs => OneEraGenTxId xs -> OneEraGenTxId xs -> Ordering
+compareOneEraGenTxId (OneEraGenTxId l0) (OneEraGenTxId r0) = go l0 r0
+ where
+  go :: All SingleEraBlock ys => NS WrapGenTxId ys -> NS WrapGenTxId ys -> Ordering
+  go (Z x) (Z y) = compare x y
+  go (S x) (S y) = go x y
+  go l r = compare (rawHashNS l) (rawHashNS r)
+
+-- | The raw hash of an era sum, era ignored. The cross-era fallback for the
+-- 'Eq'\/'Ord' instances above.
+rawHashNS :: All SingleEraBlock ys => NS WrapGenTxId ys -> ShortByteString
+rawHashNS = hcollapse . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId)
 
 {-------------------------------------------------------------------------------
   Value for two /different/ eras
@@ -270,12 +296,6 @@ getSameValue values =
         return ()
     | otherwise =
         throwError "differing values across hard fork"
-
-oneEraGenTxIdRawHash :: CanHardFork xs => OneEraGenTxId xs -> ShortByteString
-oneEraGenTxIdRawHash =
-  hcollapse
-    . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId)
-    . getOneEraGenTxId
 
 {-------------------------------------------------------------------------------
   NoThunks instances
