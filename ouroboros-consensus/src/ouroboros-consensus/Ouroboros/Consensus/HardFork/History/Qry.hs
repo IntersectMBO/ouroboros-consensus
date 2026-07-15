@@ -17,7 +17,10 @@ module Ouroboros.Consensus.HardFork.History.Qry
     Expr (..)
   , PastHorizonException (..)
   , qryFromExpr
+  , EraIndexed (..)
+  , forgetEraIndex
   , runQuery
+  , runQueryEraIndexed
   , runQueryPure
   , runQueryThrow
 
@@ -56,8 +59,10 @@ import Data.Fixed (divMod')
 import Data.Foldable (toList)
 import Data.Functor.Identity
 import Data.Kind (Type)
+import Data.SOP (K (..))
 import Data.SOP.NonEmpty (NonEmpty (..))
 import Data.SOP.Sing (SListI)
+import Data.SOP.Strict.NS (NS (..))
 import Data.Time hiding (UTCTime)
 import Data.Word
 import GHC.Generics (Generic)
@@ -421,6 +426,54 @@ instance Exception PastHorizonException
   Running queries
 -------------------------------------------------------------------------------}
 
+-- | Result of a query, indexed by the era in which it was evaluated.
+newtype EraIndexed xs a
+  = EraIndexed
+  { eraIndexedToNS :: NS (K a) xs
+  }
+
+-- | Collapse the result of an era-indexed query
+forgetEraIndex :: EraIndexed xs a -> a
+forgetEraIndex (EraIndexed ns) = collapseNS ns
+ where
+  collapseNS :: NS (K a) xs' -> a
+  collapseNS (Z (K x)) = x
+  collapseNS (S rest) = collapseNS rest
+
+-- | Like 'runQuery', but returns the result tagged with the era index in
+-- which the query was successfully evaluated.
+--
+-- While 'runQuery' collapses the era information and returns a plain value,
+-- 'runQueryEraIndexed' preserves it by wrapping the result in an
+-- @NS (K a) xs@, where the position in the sum indicates the era. This is
+-- useful when the caller needs to know /which/ era the query resolved in.
+--
+-- NOTE: Be careful, several queries have lax bound checks for era, so they
+-- may succeed in an era that is not the one you expect.
+runQueryEraIndexed ::
+  forall a xs.
+  HasCallStack =>
+  Qry a ->
+  Summary xs ->
+  Either PastHorizonException (EraIndexed xs a)
+runQueryEraIndexed qry (Summary summary) = EraIndexed <$> go summary
+ where
+  go :: NonEmpty xs' EraSummary -> Either PastHorizonException (NS (K a) xs')
+  go (NonEmptyOne era) = Z . K <$> tryEra era qry
+  go (NonEmptyCons era eras) = case tryEra era qry of
+    Left _ -> S <$> go eras
+    Right x -> Right (Z (K x))
+
+  tryEra :: forall b. HasCallStack => EraSummary -> Qry b -> Either PastHorizonException b
+  tryEra era = \case
+    QPure x -> Right x
+    QExpr e k ->
+      case evalExprInEra era e of
+        Just x ->
+          tryEra era (k x)
+        Nothing ->
+          Left $ PastHorizon callStack (Some e) (toList summary)
+
 -- | Run a query
 --
 -- Unlike an 'Expr', which is evaluated in a single era, a 'Qry' is evaluated
@@ -432,27 +485,15 @@ instance Exception PastHorizonException
 -- NOTE: this means that queries about separate eras have to be run separately,
 -- they should not be composed into a single query. How could we know to which
 -- era which relative slot/time refers?
+--
+-- NOTE: 'runQuery' is implemented in terms of 'runQueryEraIndexed', collapsing
+-- the resulting 'NS' wrapper.
 runQuery ::
   forall a xs.
   HasCallStack =>
   Qry a -> Summary xs -> Either PastHorizonException a
-runQuery qry (Summary summary) = go summary
- where
-  go :: NonEmpty xs' EraSummary -> Either PastHorizonException a
-  go (NonEmptyOne era) = tryEra era qry
-  go (NonEmptyCons era eras) = case tryEra era qry of
-    Left _ -> go eras
-    Right x -> Right x
-
-  tryEra :: forall b. EraSummary -> Qry b -> Either PastHorizonException b
-  tryEra era = \case
-    QPure x -> Right x
-    QExpr e k ->
-      case evalExprInEra era e of
-        Just x ->
-          tryEra era (k x)
-        Nothing ->
-          Left $ PastHorizon callStack (Some e) (toList summary)
+runQuery qry summary =
+  forgetEraIndex <$> runQueryEraIndexed qry summary
 
 runQueryThrow :: (HasCallStack, MonadThrow m) => Qry a -> Summary xs -> m a
 runQueryThrow q = either throwIO return . runQuery q
