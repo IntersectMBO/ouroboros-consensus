@@ -34,13 +34,23 @@ import Data.Proxy (Proxy (..))
 import qualified Data.Sequence.Strict as StrictSeq
 import LeiosDemoDb (leiosDbLookupEbClosure)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
-import LeiosDemoTypes (EbAnnouncement (..), LeiosPoint (..), RbHash (..))
+import LeiosDemoTypes
+  ( AnnouncementDisposition (..)
+  , EbAnnouncement (..)
+  , LeiosPoint (..)
+  , RbHash (..)
+  )
 import Lens.Micro ((.~), (^.))
 import Ouroboros.Consensus.Block (ChainHash (..), blockPrevHash, toRawHash)
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables, unstowLedgerTables)
-import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto, PraosState (..))
+import Ouroboros.Consensus.Protocol.Praos
+  ( Praos
+  , PraosCrypto
+  , PraosState (..)
+  , PraosValidationErr (..)
+  )
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (..)
   , HeaderBody (..)
@@ -204,6 +214,15 @@ instance
       (Crypto.hashToBytesShort . unKeyHash . SL.hashKey $ headerBody.hbVk)
    where
     Header{headerBody} = shelleyHeaderRaw hdr
+
+  classifyAnnouncementValidationErr err = case err of
+    -- A counter ahead of, or a pool absent from, our immutable tip's view can
+    -- be honest (our tip lags the announcement's chain), so skip these.
+    --
+    -- See the TODO on 'AnnouncementDisposition'
+    CounterOverIncrementedOCERT{} -> SkipAnnouncement
+    NoCounterForKeyHashOCERT{} -> SkipAnnouncement
+    _ -> DisconnectPeer
 
   protocolStateLeiosAnnouncement st = do
     ann <- strictMaybeToMaybe $ praosStateLeiosAnnouncement st

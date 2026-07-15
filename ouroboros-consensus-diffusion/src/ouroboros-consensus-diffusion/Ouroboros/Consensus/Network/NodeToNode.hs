@@ -149,11 +149,7 @@ import Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import Ouroboros.Consensus.Storage.LedgerDB.Forker
-  ( ResolveLeiosBlock
-  , headerContainsLeiosCert
-  , headerLeiosAnnouncement
-  )
+import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock)
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Consensus.Util.IOLike
@@ -465,18 +461,13 @@ mkHandlers
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement hdr -> do
-                    traceWith tracer $
-                      MkTraceLeiosPeer $
-                        unwords
-                          [ "MsgLeiosBlockAnnouncement"
-                          , "(ignored)"
-                          , show (headerPoint hdr)
-                          , "containsCert=" <> show (headerContainsLeiosCert hdr)
-                          , "announcedEb=" <> case headerLeiosAnnouncement hdr of
-                              Nothing -> "none"
-                              Just (ebPoint, ebSize) ->
-                                Leios.prettyEbHash (Leios.pointEbHash ebPoint) <> " size=" <> show ebSize
-                          ]
+                    immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
+                    Leios.onAnnouncement
+                      tracer
+                      getTopLevelConfig
+                      (getLeiosOutstanding, getLeiosReady)
+                      immLedger
+                      hdr
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
                     let MkLeiosPoint{pointEbHash = ebHash} = point

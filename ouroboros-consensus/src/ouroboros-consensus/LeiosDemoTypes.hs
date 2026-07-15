@@ -374,6 +374,20 @@ newLeiosPeerVars = do
   requestsToSend <- StrictSTM.newTVarIO Seq.empty
   pure MkLeiosPeerVars{offerings, requestsToSend}
 
+-- | Whether a failed announcement-header validation should skip the
+-- announcement or disconnect the peer. An opcert-counter failure can be a false
+-- positive, because we validate against our immutable tip, which lags the
+-- announcement's own chain; such failures skip. A bad signature or other
+-- context-independent failure is unambiguous misbehaviour, so it disconnects.
+--
+-- TODO once we restrict opcert issue number increments to be at least one
+-- stability window apart, the 'SkipAnnouncement' constructor will be dead code,
+-- which will cascade to this type and a few other places.
+data AnnouncementDisposition
+  = SkipAnnouncement
+  | DisconnectPeer
+  deriving (Eq, Show)
+
 -- | Main data structure used in the Leios fetching logic.
 --
 -- Tracks both EB-level state (what EBs we have/need) and TX-level state

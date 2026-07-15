@@ -78,7 +78,8 @@ import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
 import LeiosDemoLogic.Announcements.ElBimap (ElId)
 import LeiosDemoTypes
-  ( BytesSize
+  ( AnnouncementDisposition (..)
+  , BytesSize
   , EbHash
   , HasLeiosVoting (..)
   , LeiosCert
@@ -99,7 +100,7 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
   , prependDiffs
   , trackingToDiffs
   )
-import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
+import Ouroboros.Consensus.Protocol.Abstract (ChainDepState, ValidationErr)
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Util.CallStack
@@ -793,6 +794,12 @@ class ResolveLeiosBlock blk where
   -- this, even though only Dijkstra+ would ever currently call it
   headerElId :: Header blk -> ElId
   headerElId _ = error "TODO headerElId stub"
+
+  -- | Classify a header 'ValidationErr' from a relayed announcement (see
+  -- 'AnnouncementDisposition').
+  classifyAnnouncementValidationErr ::
+    ValidationErr (BlockProtocol blk) -> AnnouncementDisposition
+  classifyAnnouncementValidationErr _ = DisconnectPeer
 
   -- | The EB most recent announcement in the 'HeaderState', if any. 'Nothing'
   -- for headers in eras that don't carry Leios announcements.
