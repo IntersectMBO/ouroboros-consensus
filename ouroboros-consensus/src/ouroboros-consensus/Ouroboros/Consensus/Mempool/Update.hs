@@ -492,8 +492,16 @@ implRemoveTxsEvenIfValid mpEnv toRemove =
             tickLedgerState cfg (ForgeInUnknownSlot $ roforkerGetLedgerState frkr)
       case toKeep of
         [] -> do
-          -- Everything was removed: the mempool becomes empty at the same tip.
-          -- There are no keys to read (and no 'Monoid (Keys blk)' to fold).
+          -- We can't call 'pureRemoveTxs', because we can't create keys from an
+          -- empty list, because 'BlockSupportsUTxOHD' does not provide a
+          -- 'Monoid (Keys blk)', because the HFC's instance requires picking an
+          -- era for its NS.
+          --
+          -- (For similar reasons, we also can't create an empty set of @Values
+          -- blk@.)
+          --
+          -- Thankfully, when there's no keys, there's no need to do IO because
+          -- there's a simpler implementation for this degenerate case.
           let is' =
                 initInternalState
                   capacityOverride
@@ -648,9 +656,18 @@ implSyncWithLedger projectResult mpEnv =
                     )
                   case TxSeq.toList (isTxs is) of
                     [] -> do
-                      -- Empty mempool: nothing to revalidate, just adopt the
-                      -- new tip. No keys to read (and no 'Monoid (Keys blk)' to
-                      -- fold).
+                      -- We can't call 'pureSyncWithLedger', because we can't
+                      -- create keys from an empty list, because
+                      -- 'BlockSupportsUTxOHD' does not provide a 'Monoid (Keys
+                      -- blk)', because the HFC's instance requires picking an
+                      -- era for its NS.
+                      --
+                      -- (For similar reasons, we also can't create an empty set
+                      -- of @Values blk@.)
+                      --
+                      -- Thankfully, when there's no keys, there's no need to do
+                      -- IO because there's a simpler implementation for this
+                      -- degenerate case.
                       let is' =
                             initInternalState
                               capacityOverride
