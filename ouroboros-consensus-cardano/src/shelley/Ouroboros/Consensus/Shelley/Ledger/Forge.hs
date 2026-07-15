@@ -83,13 +83,11 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
   --  * Announce: forge and store a new EB from 'fbEbTxs' and announce it on this RB's header.
   --    When we are also certifying, 'fbEbTxs' contains transactions from the mempool that has already
   --    been rebased onto the post-certificate ledger state.
-  (mayEbAnn, mayLeiosCert) <-
+  mayEbAnn <-
     case Typeable.eqT @era @DijkstraEra of
-      Just Refl -> do
-        mayEbAnn <- mkAndStoreEb
-        pure (mayEbAnn, fbMayLeiosCert)
-      Nothing -> pure (Nothing, Nothing)
-  let rbBody = mkBody mayLeiosCert
+      Just Refl -> mkAndStoreEb
+      Nothing -> pure Nothing
+  let rbBody = mkBody fbMayLeiosCert
       actualRbBodySize = SL.blockBodySize protocolVersion rbBody
   hdr <-
     mkHeader @_ @(ProtoCrypto proto)
@@ -104,7 +102,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
       protocolVersion
       $ SJust
         HeaderLeiosExtension
-          { containsCert = isJust mayLeiosCert
+          { containsCert = isJust fbMayLeiosCert
           , ebAnnouncement = maybeToStrictMaybe $ snd <$> mayEbAnn
           }
 
@@ -120,7 +118,7 @@ forgeShelleyBlock hotKey cbl ForgeBlockArgs{..} = do
           { announcingRbHashBytes = announcingRbHashBytes
           , announcedEbPoint = forgedEb.point
           }
-      when (isJust mayLeiosCert) $
+      when (isJust fbMayLeiosCert) $
         traceWith fbLeiosTracer $
           TraceLeiosCertifiedAndAnnounced{atSlot = fbCurrentSlotNo, rbHash = MkRbHash announcingRbHashBytes}
     Nothing -> pure ()
