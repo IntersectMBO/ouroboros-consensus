@@ -10,6 +10,7 @@
 module LeiosUtils.CallTrace
   ( callTraceToObject
   , callTrace
+  , CallLocalId
   , CallId
   , CallName
   , ThreadName
@@ -35,18 +36,20 @@ import Data.Aeson (KeyValue ((.=)))
 import qualified Data.Aeson as Aeson
 import Data.Int (Int64)
 import Data.List (intercalate)
+import Data.Maybe (isJust)
 import Data.Word (Word64)
 import qualified GHC.Conc.Sync as IO
 
-type CallId = Word64
+type CallLocalId = Word64
+type CallId = [CallLocalId]
 type CallName = String
 type ThreadName = String
-type CallAncestors = [(CallId, CallName)]
 
--- | `CallInfo` holds a thread/name/id of a call and its parents' CallInfo.
+-- | `CallInfo` holds a thread/name/local id of a call and its parents' CallInfo.
 data CallInfo = CallInfo
-  { ciCallId :: CallId
-  -- ^ Call identifier, unique amongst all `sibling` calls
+  { ciCallLocalId :: CallLocalId
+  -- ^ Call local identifier, unique amongst all `sibling` calls
+  -- `callId` forms a globally unique identifier
   , ciCallParent :: Maybe CallInfo
   -- ^ Parent call info
   , ciCallName :: CallName
@@ -58,7 +61,7 @@ data CallInfo = CallInfo
 
 data CallCtx m = CallCtx
   { ccCallInfo :: CallInfo
-  , ccNextChildId :: StrictTVar m CallId
+  , ccNextChildId :: StrictTVar m CallLocalId
   }
 
 -- | `CallTrace` denotes events that describe a Call's life, with its Argument of type `a` and a result of type `r`.
@@ -71,7 +74,7 @@ data CallTrace a r = CallTrace
   }
   deriving stock (Show, Eq)
 
--- TODO(bladyjoker): Add CallEmit for events that happen during the Call.
+-- TODO(bladyjoker): Add CallEmit e for events that happen during the Call.
 data CallEvent r
   = CallStart
   | CallEnd r CallMeasure
@@ -101,14 +104,13 @@ callTraceToObject ct =
    in
     mconcat $
       [ "kind" .= Aeson.String "Call"
-      , "id" .= ciCallId ci
+      , "id" .= intercalate "." (fmap show (callId ci))
+      , "local_id" .= ciCallLocalId ci
+      , "name_stack" .= intercalate " -> " (ancestorNames ci)
       , "name" .= ciCallName ci
       , "thread" .= ciThread ci
       , "argument" .= (Aeson.toJSON . ctArgument $ ct)
       ]
-        <> [ "call_name_stack" .= callNameStack ci
-           , "call_id_stack" .= callIdStack ci
-           ]
         <> eventObject
 
 callTrace ::
@@ -158,7 +160,7 @@ childCallCtx pctx thread cn = do
   nextChildIdVar <- atomically $ newTVar 0
   let ci =
         CallInfo
-          { ciCallId = cid
+          { ciCallLocalId = cid
           , ciCallParent = Just $ ccCallInfo pctx
           , ciCallName = cn
           , ciThread = thread
@@ -178,7 +180,7 @@ rootCallCtx thread = do
     CallCtx
       { ccCallInfo =
           CallInfo
-            { ciCallId = 0
+            { ciCallLocalId = 0
             , ciCallParent = Nothing
             , ciCallName = ""
             , ciThread = thread
@@ -186,18 +188,18 @@ rootCallCtx thread = do
       , ccNextChildId = nextChildIdVar
       }
 
--- | This call and its ancestors, nearest first.
-callStack :: CallInfo -> CallAncestors
-callStack ci = (ciCallId ci, ciCallName ci) : ancestors (ciCallParent ci)
- where
-  ancestors Nothing = []
-  ancestors (Just p) = (ciCallId p, ciCallName p) : ancestors (ciCallParent p)
+-- `callAncestors` without `root`
+callAncestors :: CallInfo -> [CallInfo]
+callAncestors ci = case ciCallParent ci of
+  Nothing -> []
+  Just parCi -> if isJust (ciCallParent parCi) then parCi : callAncestors parCi else []
 
-callNameStack :: CallInfo -> String
-callNameStack = intercalate " -> " . reverse . fmap snd . callStack
+ancestorNames :: CallInfo -> [CallName]
+ancestorNames = reverse . fmap ciCallName . callAncestors
 
-callIdStack :: CallInfo -> String
-callIdStack = intercalate " -> " . reverse . fmap (show . fst) . callStack
+-- `callId` is a globally unique Call identifier
+callId :: CallInfo -> CallId
+callId ci = reverse . fmap (ciCallLocalId) $ (ci : callAncestors ci)
 
 -- | Allocation measurements machinery
 class Monad m => MonadAllocationCounter m where
