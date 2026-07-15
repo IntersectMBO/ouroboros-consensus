@@ -376,7 +376,7 @@ implDuplicateWithDiffs ::
   ExportSnapshot m ->
   UTxOTable m ->
   Word64 ->
-  Diff blk ->
+  TickAndBlockDiff blk ->
   m (LedgerTablesHandle m l blk)
 implDuplicateWithDiffs tracer exportSnapshot t0 size diff = do
   t <- duplicateLSMTable tracer t0
@@ -385,7 +385,7 @@ implDuplicateWithDiffs tracer exportSnapshot t0 size diff = do
         SingleEraBlockSupportsLedgerHD x =>
         Proxy x -> Diff x -> m (LedgerTablesHandle m l blk)
       cont _ dx = do
-        let entries = diffToList @x dx
+        let entries = diffToList @x (TickAndBlockDiff dx)
             toUpdate (Diff.Insert v) = LSM.Insert (toTxOutBytes (Proxy @x) v) Nothing
             toUpdate Diff.Delete = LSM.Delete
             vec =
@@ -406,7 +406,7 @@ implDuplicateWithDiffs tracer exportSnapshot t0 size diff = do
         encloseTimedWith (BackendTrace . SomeBackendTrace . LSMUpdate >$< tracer) $ LSM.updates t vec
         newLSMLedgerTablesHandle tracer exportSnapshot size' t
   encloseTimedWith (TraceLedgerTablesHandleRead >$< tracer) $
-    withDiffEra @blk diff cont
+    withDiffEra @blk (unTickAndBlockDiff diff) cont
 
 implRead ::
   forall m l blk.
