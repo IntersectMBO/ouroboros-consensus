@@ -36,6 +36,9 @@ import Test.QuickCheck
 import Test.ThreadNet.Infra.Shelley
 import Test.ThreadNet.TxGen (TxGen (..))
 
+type Blk = ShelleyBlock (TPraos MockCrypto) ShelleyEra
+
+
 data ShelleyTxGenExtra = ShelleyTxGenExtra
   { stgeGenEnv :: Gen.GenEnv MockCrypto ShelleyEra
   -- ^ Generator environment.
@@ -62,26 +65,26 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
             -- The values were read against the un-ticked state; forward them
             -- through the tick diff to the ticked tip.
             let (ticked, tickDiff) = applyChainTick OmitLedgerEvents lcfg curSlotNo lst
-            go [] n ticked (forward @(ShelleyBlock (TPraos MockCrypto) ShelleyEra) [tickDiff] values)
+            go [] n ticked (forward @Blk [tickDiff] values)
    where
     ShelleyTxGenExtra
       { stgeGenEnv
       , stgeStartAt
       } = extra
 
-    lcfg :: LedgerConfig (ShelleyBlock (TPraos MockCrypto) ShelleyEra)
+    lcfg :: LedgerConfig Blk
     lcfg = configLedger cfg
 
     go ::
-      [GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)] ->
+      [GenTx Blk] ->
       -- \^ Accumulator
       Integer ->
       -- \^ Number of txs to still produce
-      TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
+      TickedLedgerState Blk ->
       -- \^ The ticked state
-      Values (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
+      Values Blk ->
       -- \^ The UTxO values at the virtual tip
-      Gen [GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)]
+      Gen [GenTx Blk]
     go acc 0 _ _ = return (reverse acc)
     go acc n st vals = do
       mbTx <- genTx cfg curSlotNo st vals stgeGenEnv
@@ -96,15 +99,15 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
                 (tx : acc)
                 (n - 1)
                 st'
-                (forward @(ShelleyBlock (TPraos MockCrypto) ShelleyEra) [diff] vals)
+                (forward @Blk [diff] vals)
 
 genTx ::
-  TopLevelConfig (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
+  TopLevelConfig Blk ->
   SlotNo ->
-  TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
-  Values (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ->
+  TickedLedgerState Blk ->
+  Values Blk ->
   Gen.GenEnv MockCrypto ShelleyEra ->
-  Gen (Maybe (GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)))
+  Gen (Maybe (GenTx Blk))
 genTx _cfg slotNo tickedSt values genEnv =
   Just . mkShelleyTx
     <$> Gen.genTx
