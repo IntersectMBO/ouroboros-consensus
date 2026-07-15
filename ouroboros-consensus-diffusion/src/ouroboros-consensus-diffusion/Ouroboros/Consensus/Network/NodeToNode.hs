@@ -95,7 +95,7 @@ import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
   ( LeiosNotify
   , LeiosNotifyClientPeerPipelined
-  , LeiosNotifyServerPeer
+  , LeiosNotifyServerPeerAntiPipelined
   , Message
     ( MsgLeiosBlockAnnouncement
     , MsgLeiosBlockOffer
@@ -107,7 +107,8 @@ import LeiosDemoOnlyTestNotify
   , codecLeiosNotifyId
   , leiosNotifyClientPeerPipelined
   , leiosNotifyMiniProtocolNum
-  , leiosNotifyServerPeer
+  , leiosNotifyServerPeerAntiPipelined
+  , runAntiPipelinedPeerWithLimits
   , timeLimitsLeiosNotify
   , toLeiosNotifyClientPeerPipelined
   )
@@ -129,7 +130,7 @@ import LeiosVoteState
   )
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
-import Network.TypedProtocol.Peer (Peer (Effect))
+import Network.TypedProtocol.Peer (Peer (Effect), PeerAntiPipelined (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
@@ -321,7 +322,7 @@ data Handlers m addr blk = Handlers
   , hLeiosNotifyServer ::
       NodeToNodeVersion ->
       ConnectionId addr ->
-      LeiosNotifyServerPeer LeiosPoint (Header blk) LeiosVote m ()
+      LeiosNotifyServerPeerAntiPipelined LeiosPoint (Header blk) LeiosVote m ()
   , hLeiosFetchClient ::
       LeiosDbConnection m ->
       NodeToNodeVersion ->
@@ -513,7 +514,7 @@ mkHandlers
                           traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote}
                         _ -> pure ()
               )
-      , hLeiosNotifyServer = \_version _peer -> Effect $ do
+      , hLeiosNotifyServer = \_version _peer -> PeerAntiPipelined $ Effect $ do
           chan <- subscribeEbNotifications leiosDB
           let processEbNotification ::
                 STM
@@ -543,9 +544,17 @@ mkHandlers
                 vote <- getNextVote
                 pure $ MsgLeiosVotes [vote]
 
-          pure . leiosNotifyServerPeer $
-            atomically $
-              processEbNotification <|> processVote
+          -- STUB: no announcement source or credit accounting yet.
+          -- TODO slot the announcement queue in as the highest-priority
+          -- (leftmost) branch of 'next' below, and make 'incr' bump this
+          -- peer's outstanding-request credit so the announcement logic can
+          -- bound what it enqueues.
+          let incr = pure ()
+              next =
+                atomically $
+                  processEbNotification <|> processVote
+          pure . runPeerAntiPipelined $
+            leiosNotifyServerPeerAntiPipelined incr next
       , hLeiosFetchClient = \leiosConn _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
           let reqVar = Leios.requestsToSend peerVars
           -- Queue for responses received by the pipelined-peer collector
@@ -1326,7 +1335,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     m ((), Maybe bLN)
   aLeiosNotifyServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "LeiosNotifyServer"
-    runPeerWithLimits
+    runAntiPipelinedPeerWithLimits
       (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
       (cLeiosNotifyCodec (mkCodecs version))
       blLeiosNotify

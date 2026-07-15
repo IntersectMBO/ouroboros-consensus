@@ -395,7 +395,7 @@ library
     network-mux,
     nonempty-containers,
     nothunks ^>=0.2 || ^>=0.3,
-    ouroboros-network:{api, api-tests-lib, protocols} ^>=1.1,
+    ouroboros-network:{api, api-tests-lib, framework, protocols} ^>=1.1,
     pretty-simple,
     primitive,
     psqueues ^>=0.2.3,
