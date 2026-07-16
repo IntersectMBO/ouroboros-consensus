@@ -81,13 +81,20 @@ import LeiosDemoTypes
   , maxTxsPerEb
   )
 import qualified LeiosDemoTypes as Leios
-import Ouroboros.Consensus.Block (BlockProtocol, HasHeader, Header, headerHash)
+import Ouroboros.Consensus.Block
+  ( BlockProtocol
+  , HasHeader
+  , Header
+  , WithOrigin (NotOrigin)
+  , headerHash
+  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( SystemTime
   , diffRelTime
   , systemTimeCurrent
   )
 import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
+import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
@@ -1064,6 +1071,18 @@ recordAnnouncedEb (outstandingVar, readyVar) (point, ebBytesSize) = do
               Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
           }
 
+prunePeerStateToImmTip ::
+  LedgerSupportsProtocol blk =>
+  ExtLedgerState blk EmptyMK ->
+  SlotNo ->
+  Announcements.PeerState anc ->
+  (SlotNo, Announcements.PeerState anc)
+prunePeerStateToImmTip immLedger latestPruneSlot peerSt =
+  case getTipSlot (ledgerState immLedger) of
+    NotOrigin immTipSlot
+      | latestPruneSlot < immTipSlot -> (immTipSlot, Announcements.prunePeerState immTipSlot peerSt)
+    _ -> (latestPruneSlot, peerSt)
+
 lEIOSNOTIFYPIPELINEDEPTH :: Int
 lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number
 
@@ -1071,8 +1090,8 @@ lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number
 -- onset is older than this. See 'Announcements.ShouldRelay'.
 --
 -- Must be comfortably less than the minimum possible wall-clock age of the
--- immutable tip (the _average_ imm-tip age is @k \/ f@ slots behind the wall
--- clock, but we need the _never in a million years_ bound instead), so that a
+-- immutable tip (the /average/ imm-tip age is @k \/ f@ slots behind the wall
+-- clock, but we need the /never in a million years/ bound instead), so that a
 -- downstream peer whose immutable tip is slightly ahead of ours by the time our
 -- message arrives still accepts what we relay rather than disconnecting us for
 -- a below-its-immutable-tip announcement.

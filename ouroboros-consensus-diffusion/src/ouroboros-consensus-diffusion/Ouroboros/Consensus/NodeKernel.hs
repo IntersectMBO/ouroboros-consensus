@@ -559,6 +559,19 @@ initNodeKernel
           leiosVoteState
           (topLevelConfigVotingKey cfg)
 
+    void $
+      forkLinkedWatcher registry "NodeKernel.leiosPruneAnnouncements" $
+        Watcher
+          { wFingerprint = id
+          , wInitial = Nothing
+          , wReader = getTipSlot . ledgerState <$> ChainDB.getImmutableLedger chainDB
+          , wNotify = \case
+              Origin -> pure ()
+              NotOrigin immTipSlot ->
+                MVar.modifyMVar_ getLeiosCentralState $
+                  pure . Announcements.pruneCentralState immTipSlot
+          }
+
     return
       NodeKernel
         { getChainDB = chainDB
@@ -590,6 +603,7 @@ initNodeKernel
         }
    where
     blockForgingController ::
+      Ord remotePeer =>
       InternalState m remotePeer localPeer blk ->
       STM m [MkBlockForging m blk] ->
       m Void
@@ -803,7 +817,7 @@ decideLeiosCertify leiosDb voteState tracer currentSlot headerState =
 
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
-  (IOLike m, RunNode blk) =>
+  (IOLike m, RunNode blk, Ord addrNTN) =>
   InternalState m addrNTN addrNTC blk ->
   MkBlockForging m blk ->
   m (Thread m Void)
@@ -1122,6 +1136,20 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
       -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
       -- e.g., @DualBlock@.
       trace blockForging $ TraceAdoptedBlock currentSlot newBlock rbTxs
+
+    -- Relay this node's own freshly-forged EB announcement (if any) to
+    -- downstream peers via LeiosNotify
+    let forgedHeader = getHeader newBlock
+    whenJust (headerLeiosAnnouncement forgedHeader) $ \_ ->
+      lift $ MVar.modifyMVar_ leiosCentralState $ \cst ->
+        Announcements.onAnnouncementCentral
+          nullTracer
+          (\(Leios.AncHeader h) -> headerElId h)
+          (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
+          cst
+          Nothing -- the source is this node, not an upstream peer
+          Announcements.DoRelay -- our newly forged block can't be too old
+          (Leios.AncHeader forgedHeader)
 
   trace :: BlockForging m blk -> TraceForgeEvent blk -> WithEarlyExit m ()
   trace blockForging =
