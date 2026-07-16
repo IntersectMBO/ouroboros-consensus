@@ -617,7 +617,7 @@ partitionMempool leiosConn leiosVoteState leiosTracer cfg mempool currentSlot ti
 
         -- Apply the EB's transactions onto the ledger state
         res <-
-          reasolveAndApplyLeiosClosure
+          resolveAndApplyLeiosClosure
             leiosConn
             (configLedger cfg)
             announcedPoint
