@@ -843,16 +843,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
     -- is no longer on our chain. When that happens, we simply give up on the
     -- chance to produce a block.
-    ( rbTxs
-      , ebTxs
-      , rbTxsSize
-      , proof
-      , snapSize
-      , tickedLedgerState
-      , forgingOnTopOf
-      , untickedChainDepState
-      , mayLeiosCert
-      ) <-
+    (forgeBlockArgs, forgingOnTopOf, snapSize, rbTxsSize) <-
       ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
         Left _ -> do
           trace $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -893,36 +884,27 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                 forker
 
           pure
-            ( rbTxs
-            , ebTxs
-            , rbTxsSize
-            , proof
-            , snapshotMempoolSize mempoolSnapshot
-            , forgetLedgerTables tickedLedgerState
+            ( Block.ForgeBlockArgs
+                { Block.fbConfig = cfg
+                , Block.fbCurrentBlockNo = bcBlockNo
+                , Block.fbCurrentSlotNo = currentSlot
+                , Block.fbCurrentTickedLedgerState = forgetLedgerTables tickedLedgerState
+                , Block.fbRbTxs = rbTxs
+                , Block.fbEbTxs = ebTxs
+                , Block.fbIsLeader = proof
+                , Block.fbChainDepState = Just (headerStateChainDep (headerState unticked))
+                , Block.fbMayLeiosCert = fst <$> mayLeiosCertAndAnnouncement
+                , Block.fbLeiosDb = leiosConn
+                , Block.fbLeiosTracer = leiosKernelTracer tracers
+                , Block.fbLeiosVoteState = leiosVoteState
+                }
             , ledgerTipPoint (ledgerState unticked)
-            , headerStateChainDep (headerState unticked)
-            , fst <$> mayLeiosCertAndAnnouncement
+            , snapshotMempoolSize mempoolSnapshot
+            , rbTxsSize
             )
 
     -- Actually produce the block
-    newBlock <-
-      lift $
-        Block.forgeBlock
-          blockForging
-          Block.ForgeBlockArgs
-            { Block.fbConfig = cfg
-            , Block.fbCurrentBlockNo = bcBlockNo
-            , Block.fbCurrentSlotNo = currentSlot
-            , Block.fbCurrentTickedLedgerState = tickedLedgerState
-            , Block.fbRbTxs = rbTxs
-            , Block.fbEbTxs = ebTxs
-            , Block.fbIsLeader = proof
-            , Block.fbChainDepState = Just untickedChainDepState
-            , Block.fbMayLeiosCert = mayLeiosCert
-            , Block.fbLeiosDb = leiosConn
-            , Block.fbLeiosTracer = leiosKernelTracer tracers
-            , Block.fbLeiosVoteState = leiosVoteState
-            }
+    newBlock <- lift $ Block.forgeBlock blockForging forgeBlockArgs
 
     trace $
       TraceForgedBlock
@@ -932,7 +914,14 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
         snapSize
         rbTxsSize
 
-    addBlockToChainDB trace chainDB mempool currentSlot rbTxs ebTxs newBlock
+    addBlockToChainDB
+      trace
+      chainDB
+      mempool
+      currentSlot
+      (Block.fbRbTxs forgeBlockArgs)
+      (Block.fbEbTxs forgeBlockArgs)
+      newBlock
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
