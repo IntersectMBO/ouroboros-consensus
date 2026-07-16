@@ -876,20 +876,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
           tickedLedgerState <- getTickedLedgerState trace cfg currentSlot bcPrevPoint unticked
 
-          -- Get a snapshot of the mempool that is consistent with the ledger
-          --
-          -- NOTE: It is possible that due to adoption of new blocks the
-          -- /current/ ledger will have changed. This doesn't matter: we will
-          -- produce a block that fits onto the ledger we got above; if the
-          -- ledger in the meantime changes, the block we produce here may or
-          -- may not be adopted, but it won't be invalid.
-          (mempoolHash, mempoolSlotNo) <- lift $ atomically $ do
-            snap <- getSnapshot mempool -- only used for its tip-like information
-            pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
-
-          _ <- evaluate mempoolHash
-
-          trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
+          traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
 
           let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
 
@@ -1282,6 +1269,30 @@ getTickedLedgerState trace cfg currentSlot bcPrevPoint unticked = do
   _ <- evaluate tickedLedgerState
   trace $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
   pure tickedLedgerState
+
+-- | Get a snapshot of the mempool that is consistent with the ledger, and
+-- trace it.
+--
+-- NOTE: It is possible that due to adoption of new blocks the /current/
+-- ledger will have changed. This doesn't matter: we will produce a block
+-- that fits onto the ledger we got above; if the ledger in the meantime
+-- changes, the block we produce here may or may not be adopted, but it
+-- won't be invalid.
+traceForgingMempoolSnapshot ::
+  IOLike m =>
+  (TraceForgeEvent blk -> WithEarlyExit m ()) ->
+  Mempool m blk ->
+  SlotNo ->
+  Point blk ->
+  WithEarlyExit m ()
+traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint = do
+  (mempoolHash, mempoolSlotNo) <- lift $ atomically $ do
+    snap <- getSnapshot mempool -- only used for its tip-like information
+    pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
+
+  _ <- evaluate mempoolHash
+
+  trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
