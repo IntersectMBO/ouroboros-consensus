@@ -73,6 +73,7 @@ import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Primitive.MutVar as Prim
+import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Data.Void (Void)
 import LeiosDemoDb
@@ -371,6 +372,7 @@ mkHandlers
     , miniProtocolParameters
     , getDiffusionPipeliningSupport
     , txSubmissionInitDelay
+    , systemTime
     }
   nodeKernel@NodeKernel
     { getChainDB
@@ -482,13 +484,14 @@ mkHandlers
                           ( \(Leios.AncHeader h) -> do
                               immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
                               Leios.announcementValidity
+                                systemTime
                                 chainSyncFutureCheck
                                 getTopLevelConfig
                                 immLedger
                                 h
                           )
                           -- central part of the processing
-                          ( \ancHdr anc'@(p, _sz) -> do
+                          ( \ancHdr (shouldRelay, anc'@(p, _sz)) -> do
                               traceWith tracer $
                                 MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement new: " <> Leios.prettyLeiosPoint p
                               MVar.modifyMVar_ getLeiosCentralState $ \cst ->   -- TODO OK to hold this the whole time we're writing to the LeiosNotify queues (NB those enqeues never block)?
@@ -500,7 +503,7 @@ mkHandlers
                                   )
                                   cst
                                   peer
-                                  Announcements.DoRelay   -- TODO skip relay if "too old"
+                                  shouldRelay
                                   ancHdr
                           )
                           st0
@@ -564,21 +567,48 @@ mkHandlers
                           traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote}
                         _ -> pure ()
               )
-      , hLeiosNotifyServer = \_version _peer -> do
+      , hLeiosNotifyServer = \_version peer -> do
           chan <- subscribeEbNotifications leiosDB
           LeiosVoteSubscription{getNextVote} <- subscribeVotes leiosVoteState
 
-          -- This peer's outgoing LeiosNotify queue and its credit counter.
+          -- This peer's single outgoing LeiosNotify queue and its credit
+          -- counter, shared by all three sources (announcements, offers, votes)
+          -- and served strictly FIFO. The node-wide relay logic
+          -- ('onAnnouncementCentral') appends announcements through the
+          -- 'QueueAnnouncementView' we register below; offers and votes are
+          -- moved in by the 'pump'.
           --
           -- TODO the EB-offer and vote sources should eventually /register/
-          -- this peer with those components rather than the pump draining
-          -- fresh per-peer subscriptions; and the (not-yet-wired) EB
-          -- announcement source will be the highest-priority (leftmost)
-          -- branch of 'readNext'.
-          queue <- atomically LazySTM.newTQueue
-          credits <- LazySTM.newTVarIO (0 :: Int)
+          -- this peer with those components too, rather than the pump draining
+          -- fresh per-peer subscriptions.
+          credits <- TVar.Unchecked.newTVarIO (0 :: Int)
+          queue <- TVar.Unchecked.newTVarIO Seq.empty
 
-          let readNext ::
+          -- The view the central relay logic uses to enqueue announcements
+          let qav =
+                Announcements.MkQueueAnnouncementView
+                  credits
+                  (\q (Leios.AncHeader h) -> q Seq.|> MsgLeiosBlockAnnouncement h)
+                  queue
+
+          let -- 'incr' adds a credit per received request; 'next' hands the
+              -- sender thread the next queued message (FIFO across all three
+              -- sources); 'pump' moves offers/votes into the queue, dropping a
+              -- message when there are no free credits.
+              incr = atomically $ do
+                  n <- TVar.Unchecked.readTVar credits
+                  if n == Leios.lEIOSNOTIFYPIPELINEDEPTH then pure True else do
+                    TVar.Unchecked.writeTVar credits $! n + 1
+                    pure False
+              next = atomically $ do
+                  q <- TVar.Unchecked.readTVar queue
+                  case Seq.viewl q of
+                    Seq.EmptyL -> LazySTM.retry
+                    msg Seq.:< q' -> do
+                      TVar.Unchecked.writeTVar queue q'
+                      pure msg
+
+              pumpNext ::
                 STM
                   m
                   ( LeiosDemoOnlyTestNotify.Message
@@ -586,7 +616,7 @@ mkHandlers
                       LeiosDemoOnlyTestNotify.StBusy
                       LeiosDemoOnlyTestNotify.StIdle
                   )
-              readNext =
+              pumpNext =
                     ( readTChan chan >>= \case
                         AcquiredEb point ebSize ->
                           pure $ MsgLeiosBlockOffer point ebSize
@@ -595,22 +625,21 @@ mkHandlers
                     )
                   <|> (getNextVote <&> \vote -> MsgLeiosVotes [vote])
 
-              -- 'incr' adds a credit per received request; 'next' hands the
-              -- sender thread the next queued message; 'pump' drains the
-              -- sources into the queue, dropping a message when there are no
-              -- free credits.
-              incr = atomically $ do
-                  n <- LazySTM.readTVar credits
-                  if n == Leios.lEIOSNOTIFYPIPELINEDEPTH then pure True else do
-                    LazySTM.writeTVar credits $! n + 1
-                    pure False
-              next = atomically $ LazySTM.readTQueue queue
-              pump = forever $ atomically $ do
-                msg <- readNext
-                c <- LazySTM.readTVar credits
-                when (c > 0) $ do
-                  LazySTM.writeTVar credits (c - 1)
-                  LazySTM.writeTQueue queue msg
+              pump =
+                    ( do
+                        MVar.modifyMVar_ getLeiosCentralState $
+                          pure . Announcements.insertPeerCentral peer qav
+                        forever $ atomically $ do
+                          msg <- pumpNext
+                          c <- TVar.Unchecked.readTVar credits
+                          when (c > 0) $ do
+                            TVar.Unchecked.writeTVar credits $! c - 1
+                            q <- TVar.Unchecked.readTVar queue
+                            TVar.Unchecked.writeTVar queue (q Seq.|> msg)
+                    )
+                      `finally` ( MVar.modifyMVar_ getLeiosCentralState $
+                                    pure . Announcements.deletePeerCentral peer
+                                )
 
           pure (leiosNotifyServerPeerAntiPipelined incr next, pump)
       , hLeiosFetchClient = \leiosConn _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
