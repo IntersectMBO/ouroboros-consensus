@@ -861,29 +861,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
           trace $ TraceLedgerState currentSlot bcPrevPoint
 
-          -- We require the ticked ledger view in order to construct the ticked
-          -- 'ChainDepState'.
-          ledgerView <-
-            case runExcept $
-              forecastFor
-                ( ledgerViewForecastAt
-                    (configLedger cfg)
-                    (ledgerState unticked)
-                )
-                currentSlot of
-              Left err -> do
-                -- There are so many empty slots between the tip of our chain and the
-                -- current slot that we cannot get an ledger view anymore In
-                -- principle, this is no problem; we can still produce a block (we use
-                -- the ticked ledger state). However, we probably don't /want/ to
-                -- produce a block in this case; we are most likely missing a blocks
-                -- on our chain.
-                trace $ TraceNoLedgerView currentSlot err
-                exitEarly
-              Right lv ->
-                return lv
-
-          trace $ TraceLedgerView currentSlot
+          ledgerView <- getLedgerView trace cfg currentSlot unticked
 
           -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
           -- only need the ticked 'ChainDepState' to check the whether we're a leader.
@@ -1230,6 +1208,39 @@ addBlockToChainDB trace chainDB mempool currentSlot rbTxs ebTxs newBlock = do
     -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
     -- e.g., @DualBlock@.
     trace $ TraceAdoptedBlock currentSlot newBlock rbTxs
+
+-- | Obtain the ticked ledger view for 'currentSlot', required in order to
+-- construct the ticked 'ChainDepState'.
+getLedgerView ::
+  (IOLike m, RunNode blk) =>
+  (TraceForgeEvent blk -> WithEarlyExit m ()) ->
+  TopLevelConfig blk ->
+  SlotNo ->
+  ExtLedgerState blk EmptyMK ->
+  WithEarlyExit m (LedgerView (BlockProtocol blk))
+getLedgerView trace cfg currentSlot unticked = do
+  ledgerView <-
+    case runExcept $
+      forecastFor
+        ( ledgerViewForecastAt
+            (configLedger cfg)
+            (ledgerState unticked)
+        )
+        currentSlot of
+      Left err -> do
+        -- There are so many empty slots between the tip of our chain and the
+        -- current slot that we cannot get an ledger view anymore In
+        -- principle, this is no problem; we can still produce a block (we use
+        -- the ticked ledger state). However, we probably don't /want/ to
+        -- produce a block in this case; we are most likely missing a blocks
+        -- on our chain.
+        trace $ TraceNoLedgerView currentSlot err
+        exitEarly
+      Right lv ->
+        return lv
+
+  trace $ TraceLedgerView currentSlot
+  pure ledgerView
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
