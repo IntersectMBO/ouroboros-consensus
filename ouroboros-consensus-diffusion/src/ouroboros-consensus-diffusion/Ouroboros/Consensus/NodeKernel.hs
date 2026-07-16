@@ -887,6 +887,10 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             snap <- getSnapshot mempool -- only used for its tip-like information
             pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
 
+          _ <- evaluate mempoolHash
+
+          trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
+
           let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
 
           -- Decide whether this block certifies a previously-announced EB
@@ -950,9 +954,6 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           -- force the mempool's computation before the tracer event
           _ <- evaluate (length rbTxs)
           _ <- evaluate (length ebTxs)
-          _ <- evaluate mempoolHash
-
-          trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
 
           pure
             ( rbTxs
