@@ -97,6 +97,7 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
   , prependDiffs
   )
 import Ouroboros.Consensus.Mempool
+import Ouroboros.Consensus.Mempool.API (TxMeasureWithDiffTime)
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientHandle (..)
@@ -878,69 +879,18 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
           traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
 
-          let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
-
-          -- Decide whether this block certifies a previously-announced EB
-          mayLeiosCertAndAnnouncement <-
+          (rbTxs, ebTxs, txssz, mempoolSnapshot, mayLeiosCertAndAnnouncement) <-
             lift $
-              decideLeiosCertify @blk
+              partitionMempool
                 leiosConn
                 leiosVoteState
                 (leiosKernelTracer tracers)
+                cfg
+                mempool
                 currentSlot
-                (headerState unticked)
-
-          let rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
-              ebCap = fromMaybe Data.Measure.zero $ ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
-          (rbTxs, ebTxs, txssz, mempoolSnapshot) <-
-            lift $ case mayLeiosCertAndAnnouncement of
-              Nothing -> do
-                -- We don't have a Leios certificate: take transactions for an RB and
-                -- an EB to be announced.
-                snap <- getSnapshotFor mempool currentSlot tickedLedgerState readTables
-                let (rbTxs', txssz') = snapshotTake snap rbCap
-                    ebTxs' =
-                      let (allTxs, _) = snapshotTake snap (Data.Measure.plus rbCap ebCap)
-                       in drop (length rbTxs') allTxs
-                pure (rbTxs', ebTxs', txssz', snap)
-              Just (_cert, announcedPoint) -> do
-                -- We have a Leios certificate: only take transactions for a new EB, as the RB will
-                -- carry the certificate and must not carry additional txs.
-
-                -- Apply the EB's transactions onto the ledger state
-                res <-
-                  resolveAndApplyLeiosClosure
-                    leiosConn
-                    (configLedger cfg)
-                    announcedPoint
-                    readTables
-                    emptyLedgerTables
-                    (ledgerState unticked)
-                case res of
-                  Left err ->
-                    -- Should not happen: each closure tx was validated
-                    -- when inserted into the LeiosDb. Fail loudly.
-                    error $ "forkBlockForging: applyLeiosClosure failed, announcing no EB. " <> show err
-                  Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} -> do
-                    -- Compose the EB closure diff (relative to the unticked
-                    -- parent) with the tick diff (relative to the
-                    -- state with the EB closure applied), so the mempool snapshot is revalidated
-                    -- against parent + closure + tick.
-                    let tickedLsAfterEB =
-                          lcaClosureDiff
-                            `prependDiffs` applyChainTick
-                              OmitLedgerEvents
-                              (configLedger cfg)
-                              currentSlot
-                              (forgetLedgerTables lcaStateAfterEB)
-                    snap <-
-                      getSnapshotForNoCache mempool currentSlot tickedLsAfterEB readTables
-                    let ebTxs' = fst (snapshotTake snap ebCap)
-                    pure ([], ebTxs', Data.Measure.zero, snap)
-
-          -- force the mempool's computation before the tracer event
-          _ <- evaluate (length rbTxs)
-          _ <- evaluate (length ebTxs)
+                tickedLedgerState
+                unticked
+                forker
 
           pure
             ( rbTxs
@@ -1293,6 +1243,94 @@ traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint = do
   _ <- evaluate mempoolHash
 
   trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
+
+-- | Partition the mempool's transactions into those to go in the forged RB
+-- and those for the EB to be announced, taking into account whether this
+-- block certifies a previously-announced EB.
+partitionMempool ::
+  forall m blk.
+  (IOLike m, RunNode blk) =>
+  LeiosDbConnection m ->
+  LeiosVoteState m ->
+  Tracer m TraceLeiosKernel ->
+  TopLevelConfig blk ->
+  Mempool m blk ->
+  SlotNo ->
+  Ticked (LedgerState blk) DiffMK ->
+  ExtLedgerState blk EmptyMK ->
+  ReadOnlyForker' m blk ->
+  m
+    ( [Validated (GenTx blk)]
+    , [Validated (GenTx blk)]
+    , TxMeasureWithDiffTime blk
+    , MempoolSnapshot blk
+    , Maybe (LeiosCert, Leios.EbHash)
+    )
+partitionMempool leiosConn leiosVoteState leiosTracer cfg mempool currentSlot tickedLedgerState unticked forker = do
+  let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
+
+  -- Decide whether this block certifies a previously-announced EB
+  mayLeiosCertAndAnnouncement <-
+    decideLeiosCertify @blk
+      leiosConn
+      leiosVoteState
+      leiosTracer
+      currentSlot
+      (headerState unticked)
+
+  let rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+      ebCap = fromMaybe Data.Measure.zero $ ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
+  (rbTxs, ebTxs, txssz, mempoolSnapshot) <-
+    case mayLeiosCertAndAnnouncement of
+      Nothing -> do
+        -- We don't have a Leios certificate: take transactions for an RB and
+        -- an EB to be announced.
+        snap <- getSnapshotFor mempool currentSlot tickedLedgerState readTables
+        let (rbTxs', txssz') = snapshotTake snap rbCap
+            ebTxs' =
+              let (allTxs, _) = snapshotTake snap (Data.Measure.plus rbCap ebCap)
+               in drop (length rbTxs') allTxs
+        pure (rbTxs', ebTxs', txssz', snap)
+      Just (_cert, announcedPoint) -> do
+        -- We have a Leios certificate: only take transactions for a new EB, as the RB will
+        -- carry the certificate and must not carry additional txs.
+
+        -- Apply the EB's transactions onto the ledger state
+        res <-
+          reasolveAndApplyLeiosClosure
+            leiosConn
+            (configLedger cfg)
+            announcedPoint
+            readTables
+            emptyLedgerTables
+            (ledgerState unticked)
+        case res of
+          Left err ->
+            -- Should not happen: each closure tx was validated
+            -- when inserted into the LeiosDb. Fail loudly.
+            error $ "forkBlockForging: applyLeiosClosure failed, announcing no EB. " <> show err
+          Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} -> do
+            -- Compose the EB closure diff (relative to the unticked
+            -- parent) with the tick diff (relative to the
+            -- state with the EB closure applied), so the mempool snapshot is revalidated
+            -- against parent + closure + tick.
+            let tickedLsAfterEB =
+                  lcaClosureDiff
+                    `prependDiffs` applyChainTick
+                      OmitLedgerEvents
+                      (configLedger cfg)
+                      currentSlot
+                      (forgetLedgerTables lcaStateAfterEB)
+            snap <-
+              getSnapshotForNoCache mempool currentSlot tickedLsAfterEB readTables
+            let ebTxs' = fst (snapshotTake snap ebCap)
+            pure ([], ebTxs', Data.Measure.zero, snap)
+
+  -- force the mempool's computation before the tracer event
+  _ <- evaluate (length rbTxs)
+  _ <- evaluate (length ebTxs)
+
+  pure (rbTxs, ebTxs, txssz, mempoolSnapshot, mayLeiosCertAndAnnouncement)
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
