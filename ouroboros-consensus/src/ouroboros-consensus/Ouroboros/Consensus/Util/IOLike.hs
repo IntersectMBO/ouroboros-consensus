@@ -73,6 +73,7 @@ import Control.Monad.Class.MonadTimer.SI
 import Control.Monad.Primitive
 import Data.Functor (void)
 import Data.Proxy (Proxy (..))
+import LeiosUtils.CallTrace (MonadAllocationCounter)
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Util.MonadSTM.NormalForm
 import Ouroboros.Consensus.Util.NormalForm.StrictMVar
@@ -103,6 +104,7 @@ class
   , MonadCatch (STM m)
   , PrimMonad m
   , MonadLabelledSTM m
+  , MonadAllocationCounter m
   , forall a. NoThunks (m a)
   , forall a. NoThunks a => NoThunks (StrictSTM.StrictTVar m a)
   , forall a. NoThunks a => NoThunks (StrictSVar m a)

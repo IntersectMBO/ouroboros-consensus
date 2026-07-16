@@ -693,6 +693,7 @@ test-suite consensus-test
   hs-source-dirs: ouroboros-consensus/test/consensus-test
   main-is: Main.hs
   other-modules:
+    Test.LeiosUtils.CallTrace
     Test.Consensus.BlockchainTime.Simple
     Test.Consensus.Committee.WFALS
     Test.Consensus.Committee.WFALS.Conformance

@@ -43,6 +43,7 @@ import Control.Monad.Trans.Class
 import Control.Monad.Trans.Maybe
 import Data.Function (on)
 import Data.Proxy
+import LeiosUtils.CallTrace (MonadAllocationCounter (getAllocationCounter))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Util ((.:))
 import Ouroboros.Consensus.Util.IOLike
@@ -380,6 +381,9 @@ instance MonadTraceSTM m => MonadTraceSTM (WithEarlyExit m) where
   traceTQueue _ = lift .: traceTQueue (Proxy @m)
   traceTBQueue _ = lift .: traceTBQueue (Proxy @m)
   traceTSem _ = lift .: traceTSem (Proxy @m)
+
+instance MonadAllocationCounter m => MonadAllocationCounter (WithEarlyExit m) where
+  getAllocationCounter = lift getAllocationCounter
 
 {-------------------------------------------------------------------------------
   Finally, the consensus IOLike wrapper
