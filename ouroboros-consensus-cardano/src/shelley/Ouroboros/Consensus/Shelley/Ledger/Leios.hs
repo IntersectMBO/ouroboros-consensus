@@ -217,12 +217,10 @@ instance
 
   classifyAnnouncementValidationErr err = case err of
     -- A counter ahead of, or a pool absent from, our immutable tip's view can
-    -- be honest (our tip lags the announcement's chain), so skip these.
-    --
-    -- See the TODO on 'AnnouncementDisposition'
-    CounterOverIncrementedOCERT{} -> SkipAnnouncement
-    NoCounterForKeyHashOCERT{} -> SkipAnnouncement
-    _ -> DisconnectPeer
+    -- be honest (our tip lags the announcement's chain), so tolerate these.
+    CounterOverIncrementedOCERT{} -> Tolerate
+    NoCounterForKeyHashOCERT{} -> Tolerate
+    _ -> Reject
 
   protocolStateLeiosAnnouncement st = do
     ann <- strictMaybeToMaybe $ praosStateLeiosAnnouncement st

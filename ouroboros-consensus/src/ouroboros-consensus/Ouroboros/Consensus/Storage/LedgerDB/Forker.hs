@@ -799,7 +799,7 @@ class ResolveLeiosBlock blk where
   -- 'AnnouncementDisposition').
   classifyAnnouncementValidationErr ::
     ValidationErr (BlockProtocol blk) -> AnnouncementDisposition
-  classifyAnnouncementValidationErr _ = DisconnectPeer
+  classifyAnnouncementValidationErr _ = Reject
 
   -- | The EB most recent announcement in the 'HeaderState', if any. 'Nothing'
   -- for headers in eras that don't carry Leios announcements.
