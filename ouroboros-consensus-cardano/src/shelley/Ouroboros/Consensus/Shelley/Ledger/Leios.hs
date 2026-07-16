@@ -86,11 +86,11 @@ instance
   (PraosCrypto c, ShelleyCompatible (Praos c) DijkstraEra) =>
   ResolveLeiosBlock (ShelleyBlock (Praos c) DijkstraEra)
   where
-  resolveLeiosClosure leiosDb point = do
+  resolveLeiosClosure leiosDb ebHash = do
     mAnnouncedEb <-
       leiosDbLookupEbClosure
         leiosDb
-        (pointEbHash point)
+        ebHash
     case mAnnouncedEb of
       Nothing ->
         -- FIXME(TEMP diagnostic): a missing closure here means we're
@@ -108,7 +108,7 @@ instance
         -- ledger state.
         error $
           "resolveLeiosClosure: EB closure missing from LeiosDb for point "
-            <> show point
+            <> show ebHash
             <> "; chain-sel selected a cert-RB without its EB closure. "
             <> "Refusing to apply as empty (would diverge UTxO)."
       Just closureEntries ->

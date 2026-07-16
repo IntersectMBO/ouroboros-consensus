@@ -78,9 +78,10 @@ import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
 import LeiosDemoTypes
   ( BytesSize
+  , EbHash
   , HasLeiosVoting (..)
   , LeiosCert
-  , LeiosPoint
+  , LeiosPoint (..)
   , RbHash
   , minCertificationThreshold
   , verifyLeiosCert
@@ -510,7 +511,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
               resolveAndApplyLeiosClosure
                 leiosDb
                 (configLedger (getExtLedgerCfg cfg))
-                announcedPoint
+                (pointEbHash announcedPoint)
                 readTables
                 bKeys
                 (ledgerState extSt)
@@ -592,7 +593,7 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                   resolveAndApplyLeiosClosure
                     leiosDb
                     (configLedger (getExtLedgerCfg cfg))
-                    announcedPoint
+                    (pointEbHash announcedPoint)
                     readTables
                     bKeys
                     (ledgerState extSt)
@@ -723,7 +724,7 @@ class ResolveLeiosBlock blk where
   resolveLeiosClosure ::
     Monad m =>
     LeiosDbConnection m ->
-    LeiosPoint ->
+    EbHash ->
     m [GenTx blk]
   resolveLeiosClosure _ _ = pure []
 
@@ -811,7 +812,7 @@ resolveLeiosBlock leiosDb cds b =
     Nothing -> pure b
     Just (announcedPoint, _) ->
       -- NOTE: This produces a block that would fail full validation.
-      resolveLeiosClosure leiosDb announcedPoint
+      resolveLeiosClosure leiosDb (pointEbHash announcedPoint)
         <&> inlineLeiosClosure b
 
 -- | The result of resolving an announced EB's closure and applying it a ledger state.
@@ -823,7 +824,7 @@ data LeiosClosureApplied blk = LeiosClosureApplied
   -- this onto whatever diff they produce on top of 'lcaStateAfterEB'.
   }
 
--- | Resolve the closure of the EB announced at the given 'LeiosPoint' and
+-- | Resolve the closure of an EB identified by its 'EbHash' and
 -- apply it onto the given ledger state.
 resolveAndApplyLeiosClosure ::
   forall m blk.
@@ -833,7 +834,8 @@ resolveAndApplyLeiosClosure ::
   ) =>
   LeiosDbConnection m ->
   LedgerCfg (LedgerState blk) ->
-  LeiosPoint ->
+  -- | The EB to resolve
+  EbHash ->
   -- | The function to read the ledger tables given the keys of the EB closure's transactions.
   (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK)) ->
   -- | Additional keys to be read, for example the UTxOs from an RB.
@@ -841,9 +843,9 @@ resolveAndApplyLeiosClosure ::
   -- | The base ledger state to apply the EB on top of.
   LedgerState blk EmptyMK ->
   m (Either (LedgerErr (LedgerState blk)) (LeiosClosureApplied blk))
-reasolveAndApplyLeiosClosure leiosDb lcfg announcedPoint readValues extraKeys lsBase = do
+resolveAndApplyLeiosClosure leiosDb lcfg ebHash readValues extraKeys lsBase = do
   -- Load EB txs from disk
-  closureTxs <- resolveLeiosClosure leiosDb announcedPoint
+  closureTxs <- resolveLeiosClosure leiosDb ebHash
   -- UTXO-HD of the whole closure
   let closureKeys = foldMap leiosClosureTxKeySets closureTxs <> extraKeys
   closureVals <- readValues closureKeys
