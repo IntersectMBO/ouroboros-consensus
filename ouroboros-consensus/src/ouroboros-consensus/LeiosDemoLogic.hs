@@ -28,7 +28,7 @@ import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
 import Data.DList (DList)
 import qualified Data.DList as DList
-import Data.Functor (void)
+import Data.Functor ((<&>), void)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import qualified Data.IntSet as IntSet
@@ -54,13 +54,17 @@ import LeiosDemoDb
   , leiosDbLookupEbBody
   )
 import qualified LeiosDemoLogic.Announcements as Announcements
+import LeiosDemoLogic.Announcements.ElBimap (ElId)
 import LeiosDemoLogic.Announcements.Validate
   ( AnnouncementInvalidity
   , validateAnnouncementHeader
   )
 import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes
-  ( BytesSize
+  ( AnnouncementEquivocation (..)
+  , AnnouncementFields (..)
+  , AnnouncementSource (..)
+  , BytesSize
   , EbHash (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
@@ -976,13 +980,33 @@ leiosCertRbCallback kernelVars peerVars hdr cds =
 -- 'MVar' updates, tracing, and 'throwIO') lives in the NodeToNode client, which
 -- invokes 'Announcements.onAnnouncement' with these pieces.
 
--- | 'Header blk' as a relayed LeiosNotify announcement. The 'Eq' instance
+-- | 'Header blk' as a relayed LeiosNotify announcement, paired with the
+-- announcement data parsed from it (see 'mkAnnouncingHeader'). The 'Eq' instance
 -- compares by header hash: that is the one identity used for announcement dedup
 -- and equivocation counting (see 'Announcements.onAnnouncement').
-newtype AncHeader blk = AncHeader (Header blk)
+data AnnouncingHeader blk =
+    -- | INVARIANT: 'ancHeader' includes an announcement whose fields are
+    -- 'ancAnnouncementFields'
+    UnsafeMkAnnouncingHeader {
+       ancHeader :: !(Header blk)
+     ,
+       ancAnnouncementFields :: !AnnouncementFields
+     }
 
-instance HasHeader (Header blk) => Eq (AncHeader blk) where
-  AncHeader a == AncHeader b = headerHash a == headerHash b
+instance HasHeader (Header blk) => Eq (AnnouncingHeader blk) where
+  a == b = headerHash (ancHeader a) == headerHash (ancHeader b)
+
+-- | Interpret a header as a relayed EB announcement, or 'Nothing' if it carries
+-- no announcement (so it should not have been relayed as one). Parsing the
+-- announcement once here keeps it total for all later consumers (e.g. tracing).
+mkAnnouncingHeader :: ResolveLeiosBlock blk => Header blk -> Maybe (AnnouncingHeader blk)
+mkAnnouncingHeader h =
+  headerLeiosAnnouncement h <&> \(MkLeiosPoint _ebSlot ebHash, ebBodySize) ->
+    UnsafeMkAnnouncingHeader h (MkAnnouncementFields (headerElId h) ebHash ebBodySize)
+
+-- | The election of an 'AnnouncingHeader'.
+ancElId :: AnnouncingHeader blk -> ElId
+ancElId = announcementElection . ancAnnouncementFields
 
 -- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
 -- thread death disconnects the peer. It carries the
@@ -997,6 +1021,14 @@ data ExnInvalidLeiosAnnouncement =
 deriving instance Show ExnInvalidLeiosAnnouncement
 
 instance Exception ExnInvalidLeiosAnnouncement
+
+-- | Thrown when a peer relays a 'MsgLeiosBlockAnnouncement' whose header carries
+-- no EB announcement (so 'mkAnnouncingHeader' returns 'Nothing'); the ensuing thread
+-- death disconnects the peer.
+data ExnLeiosBlockAnnouncementMissing = ExnLeiosBlockAnnouncementMissing
+  deriving Show
+
+instance Exception ExnLeiosBlockAnnouncementMissing
 
 -- | The @validate@ callback for 'Announcements.onAnnouncement'.
 --
@@ -1082,6 +1114,37 @@ prunePeerStateToImmTip immLedger latestPruneSlot peerSt =
     NotOrigin immTipSlot
       | latestPruneSlot < immTipSlot -> (immTipSlot, Announcements.prunePeerState immTipSlot peerSt)
     _ -> (latestPruneSlot, peerSt)
+
+-- | The just-counted announcement's fields, and whether it equivocates a prior
+-- header announcing the same election.
+announcementTraceFields ::
+  Announcements.ElState (AnnouncingHeader blk) ->
+  (AnnouncementEquivocation, AnnouncementFields)
+announcementTraceFields = \case
+  Announcements.OneAnnouncement a ->
+    (NoEquivocation, ancAnnouncementFields a)
+  Announcements.TwoAnnouncements _a1 a2 ->
+    (Equivocation, ancAnnouncementFields a2)
+
+-- | Render an 'Announcements' per-peer announcement event as a 'TraceLeiosPeer'.
+tracePeerAnnouncement ::
+  Announcements.TraceLeiosNotifyPeerEvent (AnnouncingHeader blk) ->
+  TraceLeiosPeer
+tracePeerAnnouncement (Announcements.TracePeerAnnouncement elSt) =
+  let (equivocation, fields) = announcementTraceFields elSt
+   in TraceLeiosPeerAnnouncement equivocation fields
+
+-- | Render an 'Announcements' node-wide announcement event as a
+-- 'TraceLeiosKernel'.
+traceNewAnnouncement ::
+  Announcements.TraceLeiosNotifyEvent peer (AnnouncingHeader blk) ->
+  TraceLeiosKernel
+traceNewAnnouncement (Announcements.TraceNewAnnouncement mbPeer _elId elSt) =
+  let (equivocation, fields) = announcementTraceFields elSt
+   in TraceLeiosAnnouncementAccepted
+        (maybe ForgedLocally (const ReceivedFromPeer) mbPeer)
+        equivocation
+        fields
 
 lEIOSNOTIFYPIPELINEDEPTH :: Int
 lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number

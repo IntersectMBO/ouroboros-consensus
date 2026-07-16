@@ -4,7 +4,9 @@
 module LeiosDemoLogic.Announcements.ElBimap (module LeiosDemoLogic.Announcements.ElBimap) where
 
 import           Cardano.Slotting.Slot (SlotNo)
-import           Data.ByteString.Short (ShortByteString)
+import qualified Data.ByteString.Base16 as BS16
+import qualified Data.ByteString.Char8 as BS8
+import           Data.ByteString.Short (ShortByteString, fromShort)
 import           Data.Foldable (foldl')
 import qualified Data.Map.Strict as Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -20,6 +22,15 @@ data ElId =
     -- TODO should it be the hash, or just the key itself?
     MkElId !SlotNo !ShortByteString
   deriving (Eq)
+
+-- | Renders the pool id as hex rather than as a raw byte string.
+instance Show ElId where
+  showsPrec p (MkElId slot poolId) =
+    showParen (p > 10) $
+        showString "MkElId "
+      . showsPrec 11 slot
+      . showChar ' '
+      . showString (BS8.unpack (BS16.encode (fromShort poolId)))
 
 -- | INVARIANT: lexicographically starts with 'SlotNo'
 instance Ord ElId

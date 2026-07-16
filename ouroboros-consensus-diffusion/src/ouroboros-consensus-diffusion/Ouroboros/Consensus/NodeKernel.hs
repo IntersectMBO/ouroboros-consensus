@@ -267,7 +267,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ Filled by anyone who makes a change that might unblock a new
   -- fetch decision; the fetch logic 'MVar.takeMVar's before it runs.
   , getLeiosCentralState ::
-      MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AncHeader blk))
+      MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
   -- ^ Node-wide EB-announcement state
   }
 
@@ -651,7 +651,7 @@ data InternalState m addrNTN addrNTC blk = IS
     leiosOutstanding :: MVar.MVar m (LeiosOutstanding (ConnectionId addrNTN))
   , leiosReady :: MVar.MVar m ()
   , leiosCentralState ::
-      MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AncHeader blk))
+      MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
   , leiosPeersVars ::
       LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , leiosVoteState :: LeiosVoteState m
@@ -1139,17 +1139,16 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
     -- Relay this node's own freshly-forged EB announcement (if any) to
     -- downstream peers via LeiosNotify
-    let forgedHeader = getHeader newBlock
-    whenJust (headerLeiosAnnouncement forgedHeader) $ \_ ->
+    whenJust (Leios.mkAnnouncingHeader (getHeader newBlock)) $ \anc ->
       lift $ MVar.modifyMVar_ leiosCentralState $ \cst ->
         Announcements.onAnnouncementCentral
-          nullTracer
-          (\(Leios.AncHeader h) -> headerElId h)
+          (contramap Leios.traceNewAnnouncement (leiosKernelTracer tracers))
+          Leios.ancElId
           (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
           cst
           Nothing -- the source is this node, not an upstream peer
           Announcements.DoRelay -- our newly forged block can't be too old
-          (Leios.AncHeader forgedHeader)
+          anc
 
   trace :: BlockForging m blk -> TraceForgeEvent blk -> WithEarlyExit m ()
   trace blockForging =

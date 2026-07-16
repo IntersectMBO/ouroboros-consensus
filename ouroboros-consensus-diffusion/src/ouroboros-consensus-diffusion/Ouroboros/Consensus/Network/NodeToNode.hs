@@ -156,7 +156,6 @@ import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
-  , headerElId
   )
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -474,21 +473,25 @@ mkHandlers
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement hdr -> do
-                    let getEl (Leios.AncHeader h) = headerElId h
+                    -- A header relayed as an announcement must carry one;
+                    -- disconnect the peer otherwise.
+                    anc <- case Leios.mkAnnouncingHeader hdr of
+                      Nothing -> throwIO Leios.ExnLeiosBlockAnnouncementMissing
+                      Just x -> pure x
                     immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
                     (latestPruneSlot, peerSt0) <- Prim.readMutVar peerStateVar
                     res <-
                       runExceptT $
                         Announcements.onAnnouncement
-                          nullTracer
-                          getEl
-                          ( \(Leios.AncHeader h) ->
+                          (contramap Leios.tracePeerAnnouncement tracer)
+                          Leios.ancElId
+                          ( \ancH ->
                               Leios.announcementValidity
                                 systemTime
                                 chainSyncFutureCheck
                                 getTopLevelConfig
                                 immLedger
-                                h
+                                (Leios.ancHeader ancH)
                           )
                           -- central part of the processing
                           ( \ancHdr (shouldRelay, anc'@(p, _sz)) -> do
@@ -496,8 +499,8 @@ mkHandlers
                                 MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement new: " <> Leios.prettyLeiosPoint p
                               MVar.modifyMVar_ getLeiosCentralState $ \cst ->   -- TODO OK to hold this the whole time we're writing to the LeiosNotify queues (NB those enqeues never block)?
                                 Announcements.onAnnouncementCentral
-                                  nullTracer
-                                  getEl
+                                  (contramap Leios.traceNewAnnouncement kernelTracer)
+                                  Leios.ancElId
                                   ( \_elSt ->
                                       Leios.recordAnnouncedEb (getLeiosOutstanding, getLeiosReady) anc'
                                   )
@@ -507,7 +510,7 @@ mkHandlers
                                   ancHdr
                           )
                           peerSt0
-                          (Leios.AncHeader hdr)
+                          anc
                     peerSt1 <- case res of
                       Left err -> throwIO $ Leios.ReactToAnnouncementError err
                       Right x -> pure x
@@ -589,7 +592,7 @@ mkHandlers
           let qav =
                 Announcements.MkQueueAnnouncementView
                   credits
-                  (\q (Leios.AncHeader h) -> q Seq.|> MsgLeiosBlockAnnouncement h)
+                  (\q anc -> q Seq.|> MsgLeiosBlockAnnouncement (Leios.ancHeader anc))
                   queue
 
           let -- 'incr' adds a credit per received request; 'next' hands the
