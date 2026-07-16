@@ -992,15 +992,16 @@ instance Exception ExnInvalidLeiosAnnouncement
 -- a far-future slot raises 'InFutureCheck.HeaderArrivalException' (disconnecting
 -- the peer), a near-future slot blocks until the slot's onset (Ouroboros
 -- Chronos) — blocking the per-peer handler is acceptable, as a (near-)future
--- announcement is the peer's fault. Then return the announcement's invalidity,
--- if any.
+-- announcement is the peer's fault.
+--
+-- Returns the announcement's data, if the announcement is valid.
 announcementValidity ::
   (IOLike m, LedgerSupportsProtocol blk, ResolveLeiosBlock blk) =>
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
   ExtLedgerState blk EmptyMK ->
   Header blk ->
-  m (Maybe (AnnouncementInvalidity blk))
+  m (Either (AnnouncementInvalidity blk) (LeiosPoint, BytesSize))
 announcementValidity futureCheck cfg immLedger hdr = do
   case futureCheck of
     InFutureCheck.SomeHeaderInFutureCheck hifc -> do
@@ -1015,27 +1016,32 @@ announcementValidity futureCheck cfg immLedger hdr = do
               arrival
       arrivalResult <- InFutureCheck.handleHeaderArrival hifc judgment
       either throwIO (\_onset -> pure ()) (runExcept arrivalResult)
-  pure $ either Just (const Nothing) (validateAnnouncementHeader cfg immLedger hdr)
+  pure $ validateAnnouncementHeader cfg immLedger hdr
 
 -- | Record a validated, newly-announced EB body as missing, with its
 -- authoritative (forger-signed) size. First-seen wins: a no-op if the body is
 -- already acquired or already recorded.
 recordAnnouncedEb ::
+  IOLike m =>
+  ( MVar m (LeiosOutstanding pid)
+  , MVar m ()
+  ) ->
   (LeiosPoint, BytesSize) ->
-  LeiosOutstanding pid ->
-  LeiosOutstanding pid
-recordAnnouncedEb (point, ebBytesSize) outstanding =
-    if Set.member ebHash (Leios.acquiredEbBodies outstanding)
+  m ()
+recordAnnouncedEb (outstandingVar, readyVar) (point, ebBytesSize) = do
+    changed <- MVar.modifyMVar outstandingVar (pure . upd)
+    when changed $ void $ MVar.tryPutMVar readyVar ()
+  where
+    MkLeiosPoint _ebSlot ebHash = point
+
+    upd outstanding = if Set.member ebHash (Leios.acquiredEbBodies outstanding)
        || any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding))
-      then outstanding
-      else
+      then (outstanding, False)
+      else flip (,) True $
         outstanding
           { Leios.missingEbBodies =
               Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
           }
-  where
-    MkLeiosPoint _ebSlot ebHash = point
-
 
 lEIOSNOTIFYPIPELINEDEPTH :: Int
 lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number

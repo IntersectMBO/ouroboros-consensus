@@ -185,12 +185,12 @@ onAnnouncement ::
   (Eq anc, Monad m) =>
   Tracer m (TraceLeiosNotifyPeerEvent anc) ->
   (anc -> ElId) ->
-  (anc -> m (Maybe invalidity)) ->
+  (anc -> m (Either invalidity validated)) ->
   -- ^ How to validate the announcement
   --
   -- ASSUMPTION: this function will reject an announcement that is
   -- more than 60 seconds older than the local immutable tip.
-  (anc -> m ()) ->
+  (anc -> validated -> m ()) ->
   -- ^ How this central logic should react to a new announcement from
   -- this peer
   --
@@ -206,9 +206,11 @@ onAnnouncement tracer getEl validate process st anc = do
     lift $ traceWith tracer $ TracePeerAnnouncement elSt
     -- do the more expensive validation only after the trivial
     -- counting checks
-    lift (validate anc) >>= mapM_ (throwError . ErrInvalid)
-    lift $ process anc
-    pure st'
+    lift (validate anc) >>= \case
+        Left err -> throwError $ ErrInvalid err
+        Right x -> do
+            lift $ process anc x
+            pure st'
 
 -----
 -- The central logic for receiving a MsgLeiosAnnouncement
