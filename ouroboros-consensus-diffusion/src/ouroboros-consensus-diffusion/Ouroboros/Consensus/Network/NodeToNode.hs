@@ -472,12 +472,13 @@ mkHandlers
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement hdr -> do
+                    let getEl (Leios.AncHeader h) = headerElId h
                     st0 <- Prim.readMutVar peerStateVar
                     res <-
                       runExceptT $
                         Announcements.onAnnouncement
                           nullTracer
-                          (\(Leios.AncHeader h) -> headerElId h)
+                          getEl
                           ( \(Leios.AncHeader h) -> do
                               immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
                               Leios.announcementValidity
@@ -486,10 +487,21 @@ mkHandlers
                                 immLedger
                                 h
                           )
-                          ( \(Leios.AncHeader _h) anc'@(p, _sz) -> do
+                          -- central part of the processing
+                          ( \ancHdr anc'@(p, _sz) -> do
                               traceWith tracer $
                                 MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement new: " <> Leios.prettyLeiosPoint p
-                              Leios.recordAnnouncedEb (getLeiosOutstanding, getLeiosReady) anc'
+                              MVar.modifyMVar_ getLeiosCentralState $ \cst ->   -- TODO OK to hold this the whole time we're writing to the LeiosNotify queues (NB those enqeues never block)?
+                                Announcements.onAnnouncementCentral
+                                  nullTracer
+                                  getEl
+                                  ( \_elSt ->
+                                      Leios.recordAnnouncedEb (getLeiosOutstanding, getLeiosReady) anc'
+                                  )
+                                  cst
+                                  peer
+                                  Announcements.DoRelay   -- TODO skip relay if "too old"
+                                  ancHdr
                           )
                           st0
                           (Leios.AncHeader hdr)
@@ -633,6 +645,7 @@ mkHandlers
       , getLeiosVoteState = leiosVoteState
       , getLeiosOutstanding
       , getLeiosReady
+      , getLeiosCentralState
       } = nodeKernel
 
     leiosPeerTracer peer = TraceLabelPeer peer `contramap` Node.leiosPeerTracer tracers

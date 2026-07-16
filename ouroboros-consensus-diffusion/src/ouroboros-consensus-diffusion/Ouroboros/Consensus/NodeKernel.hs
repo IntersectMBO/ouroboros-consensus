@@ -63,6 +63,7 @@ import LeiosDemoDb
   )
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
+import qualified LeiosDemoLogic.Announcements as Announcements
 import LeiosDemoTypes
   ( LeiosOutstanding
   , LeiosPeerVars
@@ -244,6 +245,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getLeiosReady :: MVar.MVar m ()
   -- ^ Filled by anyone who makes a change that might unblock a new
   -- fetch decision; the fetch logic 'MVar.takeMVar's before it runs.
+  , getLeiosCentralState ::
+      MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AncHeader blk))
+  -- ^ Node-wide EB-announcement state
   }
 
 -- | Arguments required when initializing a node
@@ -325,6 +329,7 @@ initNodeKernel
           , varGsmState
           , leiosOutstanding = getLeiosOutstanding
           , leiosReady = getLeiosReady
+          , leiosCentralState = getLeiosCentralState
           , leiosPeersVars = getLeiosPeersVars
           , leiosVoteState
           } = st
@@ -566,6 +571,7 @@ initNodeKernel
         , getLeiosPeersVars = getLeiosPeersVars
         , getLeiosOutstanding = getLeiosOutstanding
         , getLeiosReady = getLeiosReady
+        , getLeiosCentralState = getLeiosCentralState
         }
    where
     blockForgingController ::
@@ -615,6 +621,8 @@ data InternalState m addrNTN addrNTC blk = IS
   , -- Leios fetch-logic state; consumed in 'initNodeKernel'.
     leiosOutstanding :: MVar.MVar m (LeiosOutstanding (ConnectionId addrNTN))
   , leiosReady :: MVar.MVar m ()
+  , leiosCentralState ::
+      MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AncHeader blk))
   , leiosPeersVars ::
       LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , leiosVoteState :: LeiosVoteState m
@@ -673,6 +681,7 @@ initInternalState
     leiosPeersVars <- LazySTM.newTVarIO Map.empty
     leiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
     leiosReady <- MVar.newEmptyMVar
+    leiosCentralState <- MVar.newMVar Announcements.emptyCentralState
 
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault
