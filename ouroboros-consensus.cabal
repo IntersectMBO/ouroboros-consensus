@@ -1116,6 +1116,7 @@ library diffusion
     Ouroboros.Consensus.Node.RethrowPolicy
     Ouroboros.Consensus.Node.Tracers
     Ouroboros.Consensus.NodeKernel
+    Ouroboros.Consensus.NodeKernel.Forge
 
   reexported-modules:
     Ouroboros.Consensus.Block,
