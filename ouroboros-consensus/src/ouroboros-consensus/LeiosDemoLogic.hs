@@ -7,6 +7,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -53,13 +54,12 @@ import LeiosDemoDb
   )
 import qualified LeiosDemoLogic.Announcements as Announcements
 import LeiosDemoLogic.Announcements.Validate
-  ( AnnouncementInvalidity (..)
+  ( AnnouncementInvalidity
   , validateAnnouncementHeader
   )
 import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes
-  ( AnnouncementDisposition (..)
-  , BytesSize
+  ( BytesSize
   , EbHash (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
@@ -972,41 +972,16 @@ instance HasHeader (Header blk) => Eq (AncHeader blk) where
   AncHeader a == AncHeader b = headerHash a == headerHash b
 
 -- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
--- thread death disconnects the peer.
+-- thread death disconnects the peer. It carries the
+-- 'Announcements.ErrAnnouncement' verbatim (the @blk@ is existential); every
+-- such error is a disconnect, since the only invalidities that used to be
+-- tolerated — opcert issue numbers ahead of the immutable tip — are now
+-- accepted outright by 'validateAnnouncementHeader'.
 data ExnInvalidLeiosAnnouncement =
-    -- | Re-sent an announcement it had already sent
-    ExnRepeatedAnnouncement
-  |
-    -- | Sent a third announcement for a single election
-    ExnThirdAnnouncement
-  |
-    -- | Sent a 'MsgLeiosBlockAnnouncement' whose header carries no announcement
-    ExnNoAnnouncement
-  |
-    -- | Sent an announcement whose header is invalid
-    ExnInvalidHeader
-  |
-    -- | Sent an announcement for a slot before our immutable tip (the forecast
-    -- anchor): stale for a caught-up node, and unvalidatable (a below-anchor
-    -- slot cannot be forecast).
-    --
-    -- TODO should we avoid /sending/ announcements that are near our tip?
-    -- Otherwise, an adversary could release their announcements right as the
-    -- network's imm tip is advancing across it, causing some frontier of honest
-    -- nodes to send announcements that their recipients punish
-    ExnBeforeImmutableTip
-  |
-    -- | Sent an announcement for a slot beyond our immutable tip's forecast
-    -- horizon. A fresh announcement is always within horizon for a caught-up
-    -- node, so this is either a bogus far-future slot or we're falling behind.
-    -- If we're falling behind, then either we're unhealthy or our honest peers
-    -- aren't serving us well (eg we have very bad connections), so disconnecting
-    -- from non-adversarial peers seems OK.
-    --
-    -- We cannot simply ignore in this case, because there's an unbounded amount
-    -- of bogus announcements in far-future slots.
-    ExnBeyondForecastHorizon
-  deriving Show
+  forall blk.
+    ReactToAnnouncementError (Announcements.ErrAnnouncement (AnnouncementInvalidity blk))
+
+deriving instance Show ExnInvalidLeiosAnnouncement
 
 instance Exception ExnInvalidLeiosAnnouncement
 
@@ -1061,36 +1036,6 @@ recordAnnouncedEb (point, ebBytesSize) outstanding =
   where
     MkLeiosPoint _ebSlot ebHash = point
 
--- | What the NodeToNode client should do with an 'Announcements.ErrAnnouncement'.
-data AnnouncementReaction =
-    -- | Do not relay, but do not disconnect
-    --
-    -- See TODO on 'AnnouncementDisposition', which applies here too.
-    ReactSkipOpcertIssueNumberForgiven
-  |
-    -- | Disconnect the peer by throwing the given exception.
-    ReactDisconnect !ExnInvalidLeiosAnnouncement
-
-reactToAnnouncementError ::
-  forall blk.
-  ResolveLeiosBlock blk =>
-  Announcements.ErrAnnouncement (AnnouncementInvalidity blk) ->
-  AnnouncementReaction
-reactToAnnouncementError = \case
-    Announcements.ErrRepeat -> ReactDisconnect ExnRepeatedAnnouncement
-    Announcements.ErrThird -> ReactDisconnect ExnThirdAnnouncement
-    Announcements.ErrInvalid invalidity -> case invalidity of
-        NoAnnouncement ->
-          ReactDisconnect ExnNoAnnouncement
-        SlotBeforeImmutableTip ->
-          ReactDisconnect ExnBeforeImmutableTip
-        OutsideHorizon _ ->
-          ReactDisconnect ExnBeyondForecastHorizon
-        HeaderInvalid err ->
-          case classifyAnnouncementValidationErr @blk err of
-            SkipAnnouncement ->
-              ReactSkipOpcertIssueNumberForgiven
-            DisconnectPeer -> ReactDisconnect ExnInvalidHeader
 
 lEIOSNOTIFYPIPELINEDEPTH :: Int
 lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number

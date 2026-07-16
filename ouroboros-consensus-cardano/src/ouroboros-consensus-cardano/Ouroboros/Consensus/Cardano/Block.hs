@@ -1606,7 +1606,7 @@ instance
   classifyAnnouncementValidationErr err = case err of
     HardForkValidationErrFromEra (OneEraValidationErr ns) ->
       hcollapse $ hcmap (Proxy @ResolveLeiosBlock) classifyOne ns
-    HardForkValidationErrWrongEra{} -> DisconnectPeer
+    HardForkValidationErrWrongEra{} -> Reject
    where
     classifyOne ::
       forall x.

@@ -498,11 +498,7 @@ mkHandlers
                           (Leios.AncHeader hdr)
                     case res of
                       Right st' -> Prim.writeMutVar peerStateVar st'
-                      Left err -> case Leios.reactToAnnouncementError @blk err of
-                        Leios.ReactSkipOpcertIssueNumberForgiven ->
-                          traceWith tracer $
-                            MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement skipped forgiven OpCert issue number"
-                        Leios.ReactDisconnect exn -> throwIO exn
+                      Left err -> throwIO (Leios.ReactToAnnouncementError err)
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
                     let MkLeiosPoint{pointEbHash = ebHash} = point

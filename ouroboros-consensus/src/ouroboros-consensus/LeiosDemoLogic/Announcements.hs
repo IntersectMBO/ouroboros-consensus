@@ -104,6 +104,36 @@ prunePeerState immTipSlot st =
     -- NB strict comparison, so that the immtip's announcement remains
     tooOld (MkElId elSlot _poolId) = elSlot < immTipSlot
 
+-- | Behaviors of a LeiosNotify upstream peer's announcement stream
+-- that an honest node rejects
+--
+-- There is one surprising and notable absence: the
+-- MsgLeiosBlockAnnouncement handler /completely/ /ignores/
+-- operational certificate (aka opcert) issue numbers. In effect, this
+-- logic is assuming that all OCINs are controlled by the pool
+-- owner. That's patentedly contrary the intended purpose of OCINs, so
+-- it needs justification; hence this comment.
+--
+-- The crux is a Catch 22 if we consider different OCINs as different
+-- identities. We must either treat all of those identities
+-- _independently_ (ie as distinct elections) or _prioritize_ the
+-- greater OCINs (which seems intuitive). The problem is that the
+-- adversary can create arbitrarily many OCINs for its own pools. And
+-- then it can abuse either choice we make: either it gets to multiply
+-- the Leios load on the network per election, or it can cause
+-- arbitrary "partitions" of the network, with one clique certifying a
+-- lower OCIN's announcement but the other clique completely ignoring
+-- that announcement.
+--
+-- The current behavior is to accept (and relay!) any OCIN at least as
+-- great as the counter in our immutable tip's ledger state. The only
+-- downside to this is that an increment OCIN doesn't revoke the old
+-- opcert _for Leios_ until the increment is on the immutable tip
+-- (Praos is still immediate). So a leaked hot key means the attacker
+-- can equivocate all of the victim's announcements until the victim
+-- notices, lands a new opcert on chain, and then waits for that
+-- opcert to become immutable (~12 hr, <= ~36 hr). Not ideal, but
+-- tolerable.
 data ErrAnnouncement invalidity =
     -- | The peer had already sent this same announcement before
     ErrRepeat
@@ -113,6 +143,7 @@ data ErrAnnouncement invalidity =
   |
     -- | This announcement is invalid
     ErrInvalid !invalidity
+  deriving Show
 
 -- | Returns 'Nothing' if this election was already 'TwoAnnouncements' or if this
 -- announcement was already received
@@ -175,14 +206,6 @@ onAnnouncement tracer getEl validate process st anc = do
     lift $ traceWith tracer $ TracePeerAnnouncement elSt
     -- do the more expensive validation only after the trivial
     -- counting checks
-    --
-    -- TODO: BUG: FIXME: on a 'Just', this 'throwError' discards the
-    -- just-updated PeerState 'st''. That is correct for an invalidity
-    -- we disconnect on, but wrong for one the caller merely /skips/
-    -- (eg an opcert issue number greater than the immutable tip's
-    -- counter): the peer is still accountable, so the skipped
-    -- announcement must still be recorded in 'live' (keeping its
-    -- equivocation count). The skip path fails to do this.
     lift (validate anc) >>= mapM_ (throwError . ErrInvalid)
     lift $ process anc
     pure st'
