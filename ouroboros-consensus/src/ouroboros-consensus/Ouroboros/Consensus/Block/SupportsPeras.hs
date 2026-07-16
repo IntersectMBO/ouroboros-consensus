@@ -21,8 +21,6 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , PerasVoterId (..)
   , PerasVoteStake (..)
   , stakeAboveThreshold
-  , PerasVoteStakeDistr (..)
-  , lookupPerasVoteStake
   , BlockSupportsPeras (..)
   , PerasCert (..)
   , PerasVote (..)
@@ -57,8 +55,6 @@ import Codec.Serialise.Encoding (encodeListLen)
 import Control.DeepSeq (NFData)
 import Data.Coerce (coerce)
 import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.Map as Map
-import Data.Map.Strict (Map)
 import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
 import Data.Word (Word16, Word64)
@@ -172,12 +168,6 @@ stakeAboveThreshold params voteStake =
     unPerasQuorumStakeThresholdSafetyMargin
       (perasQuorumStakeThresholdSafetyMargin params)
 
-newtype PerasVoteStakeDistr = PerasVoteStakeDistr
-  { unPerasVoteStakeDistr :: Map PerasVoterId PerasVoteStake
-  }
-  deriving newtype NoThunks
-  deriving stock (Show, Eq, Generic)
-
 data PerasVoteTarget blk = PerasVoteTarget
   { pvtRoundNo :: !PerasRoundNo
   , pvtBlock :: !(Point blk)
@@ -191,16 +181,6 @@ data PerasVoteId blk = PerasVoteId
   }
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
-
--- | Lookup the stake of a vote cast by a member of a given stake distribution.
-lookupPerasVoteStake ::
-  PerasVote blk ->
-  PerasVoteStakeDistr ->
-  Maybe PerasVoteStake
-lookupPerasVoteStake vote distr =
-  Map.lookup
-    (pvVoteVoterId vote)
-    (unPerasVoteStakeDistr distr)
 
 -- ** Validated types
 
@@ -298,7 +278,6 @@ class
 
   validatePerasVote ::
     PerasCfg blk ->
-    PerasVoteStakeDistr ->
     PerasVote blk ->
     Either (PerasValidationErr blk) (ValidatedPerasVote blk)
 
@@ -331,6 +310,7 @@ instance StandardHash blk => BlockSupportsPeras blk where
     { pvVoteRound :: PerasRoundNo
     , pvVoteBlock :: Point blk
     , pvVoteVoterId :: PerasVoterId
+    , pvVoteStake :: PerasVoteStake
     }
     deriving stock (Generic, Eq, Ord, Show)
     deriving anyclass NoThunks
@@ -360,15 +340,15 @@ instance StandardHash blk => BlockSupportsPeras blk where
   -- TODO: perform actual validation against all
   -- possible 'PerasValidationErr' variants
   -- see https://github.com/tweag/cardano-peras/issues/120
-  validatePerasVote _params stakeDistr vote
-    | Just stake <- lookupPerasVoteStake vote stakeDistr =
-        Right
-          ValidatedPerasVote
-            { vpvVote = vote
-            , vpvVoteStake = stake
-            }
-    | otherwise =
-        Left PerasValidationErr
+  --
+  -- This is currently a no-op that trusts the vote stake contained in the
+  -- 'PerasVote' itself.
+  validatePerasVote _params vote =
+    Right
+      ValidatedPerasVote
+        { vpvVote = vote
+        , vpvVoteStake = pvVoteStake vote
+        }
 
   -- TODO: perform actual validation against all
   -- possible 'PerasForgeErr' variants
@@ -409,17 +389,19 @@ instance Serialise (HeaderHash blk) => Serialise (PerasCert blk) where
     pure $ PerasCert{pcCertRound, pcCertBoostedBlock}
 
 instance Serialise (HeaderHash blk) => Serialise (PerasVote blk) where
-  encode PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId} =
-    encodeListLen 3
+  encode PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId, pvVoteStake} =
+    encodeListLen 4
       <> encode pvVoteRound
       <> encode pvVoteBlock
       <> KeyHash.toCBOR (unPerasVoterId pvVoteVoterId)
+      <> encode pvVoteStake
   decode = do
-    decodeListLenOf 3
+    decodeListLenOf 4
     pvVoteRound <- decode
     pvVoteBlock <- decode
     pvVoteVoterId <- PerasVoterId <$> KeyHash.fromCBOR
-    pure $ PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId}
+    pvVoteStake <- decode
+    pure $ PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId, pvVoteStake}
 
 instance Serialise (PerasVoteId blk) where
   encode PerasVoteId{pviRoundNo, pviVoterId} =
