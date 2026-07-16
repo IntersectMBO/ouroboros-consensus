@@ -98,7 +98,6 @@ library
   import: common-lib
   hs-source-dirs: ouroboros-consensus/src/ouroboros-consensus
   exposed-modules:
-    LeiosUtils.CallTrace
     LeiosDemoDb
     LeiosDemoDb.Common
     LeiosDemoDb.InMemory
@@ -109,6 +108,7 @@ library
     LeiosDemoOnlyTestFetch
     LeiosDemoOnlyTestNotify
     LeiosDemoTypes
+    LeiosUtils.CallTrace
     LeiosVoteState
     LeiosVoting
     Ouroboros.Consensus.Block
@@ -693,7 +693,6 @@ test-suite consensus-test
   hs-source-dirs: ouroboros-consensus/test/consensus-test
   main-is: Main.hs
   other-modules:
-    Test.LeiosUtils.CallTrace
     Test.Consensus.BlockchainTime.Simple
     Test.Consensus.Committee.WFALS
     Test.Consensus.Committee.WFALS.Conformance
@@ -724,6 +723,7 @@ test-suite consensus-test
     Test.LeiosDemoDb
     Test.LeiosDemoLogic
     Test.LeiosDemoTypes
+    Test.LeiosUtils.CallTrace
     Test.LeiosVoteState
 
   build-depends:
