@@ -1054,56 +1054,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
         snapSize
         txssz
 
-    -- Add the block to the chain DB
-    let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
-    -- Make sure that if an async exception is thrown while a block is
-    -- added to the chain db, we will remove txs from the mempool.
-
-    -- 'addBlockAsync' is a non-blocking action, so `mask_` would suffice,
-    -- but the finalizer is a blocking operation, hence we need to use
-    -- 'uninterruptibleMask_' to make sure that async exceptions do not
-    -- interrupt it.
-    uninterruptibleMask_ $ do
-      result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
-      -- Block until we have processed the block
-      mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
-
-      -- Check whether we adopted our block
-      when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $ do
-        isInvalid <-
-          lift $
-            atomically $
-              ($ blockHash newBlock) . forgetFingerprint
-                <$> ChainDB.getIsInvalidBlock chainDB
-        case isInvalid of
-          Nothing ->
-            trace $ TraceDidntAdoptBlock currentSlot newBlock
-          Just reason -> do
-            trace $ TraceForgedInvalidBlock currentSlot newBlock reason
-            -- We just produced a block that is invalid according to the
-            -- ledger in the ChainDB, while the mempool said it is valid.
-            -- There is an inconsistency between the two!
-            --
-            -- Remove all the transactions in that block, otherwise we'll
-            -- run the risk of forging the same invalid block again. This
-            -- means that we'll throw away some good transactions in the
-            -- process.
-            whenJust
-              (NE.nonEmpty (map (txId . txForgetValidated) (rbTxs ++ ebTxs)))
-              (lift . removeTxsEvenIfValid mempool)
-        exitEarly
-
-      -- We successfully produced /and/ adopted a block
-      --
-      -- NOTE: we are tracing the transactions we retrieved from the Mempool,
-      -- not the transactions actually /in the block/.
-      -- The transactions in the block should be a prefix of the transactions
-      -- in the mempool. If this is not the case, this is a bug.
-      -- Unfortunately, we can't
-      -- assert this here because the ability to extract transactions from a
-      -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
-      -- e.g., @DualBlock@.
-      trace $ TraceAdoptedBlock currentSlot newBlock rbTxs
+    addBlockToChainDB trace chainDB mempool currentSlot rbTxs ebTxs newBlock
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
@@ -1216,6 +1167,69 @@ mkCurrentBlockContext currentSlot c = case c of
           -- If @hdr@ is not an EBB, then forge an alternative to @hdr@: same
           -- block no and same predecessor.
           else BlockContext (blockNo hdr) $ castPoint $ AF.headPoint c'
+
+-- | Add a forged block to the ChainDB, tracing whether it was adopted, and
+-- removing its transactions from the mempool if it turned out to be invalid.
+addBlockToChainDB ::
+  (IOLike m, RunNode blk) =>
+  (TraceForgeEvent blk -> WithEarlyExit m ()) ->
+  ChainDB m blk ->
+  Mempool m blk ->
+  SlotNo ->
+  [Validated (GenTx blk)] ->
+  [Validated (GenTx blk)] ->
+  blk ->
+  WithEarlyExit m ()
+addBlockToChainDB trace chainDB mempool currentSlot rbTxs ebTxs newBlock = do
+  let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
+  -- Make sure that if an async exception is thrown while a block is
+  -- added to the chain db, we will remove txs from the mempool.
+
+  -- 'addBlockAsync' is a non-blocking action, so `mask_` would suffice,
+  -- but the finalizer is a blocking operation, hence we need to use
+  -- 'uninterruptibleMask_' to make sure that async exceptions do not
+  -- interrupt it.
+  uninterruptibleMask_ $ do
+    result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
+    -- Block until we have processed the block
+    mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
+
+    -- Check whether we adopted our block
+    when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $ do
+      isInvalid <-
+        lift $
+          atomically $
+            ($ blockHash newBlock) . forgetFingerprint
+              <$> ChainDB.getIsInvalidBlock chainDB
+      case isInvalid of
+        Nothing ->
+          trace $ TraceDidntAdoptBlock currentSlot newBlock
+        Just reason -> do
+          trace $ TraceForgedInvalidBlock currentSlot newBlock reason
+          -- We just produced a block that is invalid according to the
+          -- ledger in the ChainDB, while the mempool said it is valid.
+          -- There is an inconsistency between the two!
+          --
+          -- Remove all the transactions in that block, otherwise we'll
+          -- run the risk of forging the same invalid block again. This
+          -- means that we'll throw away some good transactions in the
+          -- process.
+          whenJust
+            (NE.nonEmpty (map (txId . txForgetValidated) (rbTxs ++ ebTxs)))
+            (lift . removeTxsEvenIfValid mempool)
+      exitEarly
+
+    -- We successfully produced /and/ adopted a block
+    --
+    -- NOTE: we are tracing the transactions we retrieved from the Mempool,
+    -- not the transactions actually /in the block/.
+    -- The transactions in the block should be a prefix of the transactions
+    -- in the mempool. If this is not the case, this is a bug.
+    -- Unfortunately, we can't
+    -- assert this here because the ability to extract transactions from a
+    -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
+    -- e.g., @DualBlock@.
+    trace $ TraceAdoptedBlock currentSlot newBlock rbTxs
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
