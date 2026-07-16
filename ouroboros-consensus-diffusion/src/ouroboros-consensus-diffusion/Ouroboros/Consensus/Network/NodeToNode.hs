@@ -156,7 +156,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
   , headerElId
-  , headerLeiosAnnouncement
   )
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -487,12 +486,10 @@ mkHandlers
                                 immLedger
                                 h
                           )
-                          ( \(Leios.AncHeader h) ->
-                              forM_ (headerLeiosAnnouncement h) $ \pt@(point, _sz) -> do
-                                MVar.modifyMVar_ getLeiosOutstanding (pure . Leios.recordAnnouncedEb pt)
-                                traceWith tracer $
-                                  MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement " <> Leios.prettyLeiosPoint point
-                                void $ MVar.tryPutMVar getLeiosReady ()
+                          ( \(Leios.AncHeader _h) anc'@(p, _sz) -> do
+                              traceWith tracer $
+                                MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement new: " <> Leios.prettyLeiosPoint p
+                              Leios.recordAnnouncedEb (getLeiosOutstanding, getLeiosReady) anc'
                           )
                           st0
                           (Leios.AncHeader hdr)
