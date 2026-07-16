@@ -845,7 +845,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     -- chance to produce a block.
     ( rbTxs
       , ebTxs
-      , txssz
+      , rbTxsSize
       , proof
       , snapSize
       , tickedLedgerState
@@ -879,7 +879,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
           traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
 
-          (rbTxs, ebTxs, txssz, mempoolSnapshot, mayLeiosCertAndAnnouncement) <-
+          (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot, mayLeiosCertAndAnnouncement) <-
             lift $
               partitionMempool
                 leiosConn
@@ -895,7 +895,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           pure
             ( rbTxs
             , ebTxs
-            , txssz
+            , rbTxsSize
             , proof
             , snapshotMempoolSize mempoolSnapshot
             , forgetLedgerTables tickedLedgerState
@@ -930,7 +930,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
         forgingOnTopOf
         newBlock
         snapSize
-        txssz
+        rbTxsSize
 
     addBlockToChainDB trace chainDB mempool currentSlot rbTxs ebTxs newBlock
 
@@ -1280,17 +1280,17 @@ partitionMempool leiosConn leiosVoteState leiosTracer cfg mempool currentSlot ti
 
   let rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
       ebCap = fromMaybe Data.Measure.zero $ ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
-  (rbTxs, ebTxs, txssz, mempoolSnapshot) <-
+  (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot) <-
     case mayLeiosCertAndAnnouncement of
       Nothing -> do
         -- We don't have a Leios certificate: take transactions for an RB and
         -- an EB to be announced.
         snap <- getSnapshotFor mempool currentSlot tickedLedgerState readTables
-        let (rbTxs', txssz') = snapshotTake snap rbCap
+        let (rbTxs', rbTxsSize') = snapshotTake snap rbCap
             ebTxs' =
               let (allTxs, _) = snapshotTake snap (Data.Measure.plus rbCap ebCap)
                in drop (length rbTxs') allTxs
-        pure (rbTxs', ebTxs', txssz', snap)
+        pure (rbTxs', ebTxs', rbTxsSize', snap)
       Just (_cert, announcedPoint) -> do
         -- We have a Leios certificate: only take transactions for a new EB, as the RB will
         -- carry the certificate and must not carry additional txs.
@@ -1330,7 +1330,7 @@ partitionMempool leiosConn leiosVoteState leiosTracer cfg mempool currentSlot ti
   _ <- evaluate (length rbTxs)
   _ <- evaluate (length ebTxs)
 
-  pure (rbTxs, ebTxs, txssz, mempoolSnapshot, mayLeiosCertAndAnnouncement)
+  pure (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot, mayLeiosCertAndAnnouncement)
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
