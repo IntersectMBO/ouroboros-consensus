@@ -39,6 +39,7 @@ import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Time.Clock (NominalDiffTime)
 import qualified Data.Vector.Strict as V
 import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
@@ -81,6 +82,11 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Block (BlockProtocol, HasHeader, Header, headerHash)
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( SystemTime
+  , diffRelTime
+  , systemTimeCurrent
+  )
 import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
@@ -994,16 +1000,23 @@ instance Exception ExnInvalidLeiosAnnouncement
 -- Chronos) — blocking the per-peer handler is acceptable, as a (near-)future
 -- announcement is the peer's fault.
 --
--- Returns the announcement's data, if the announcement is valid.
+-- Returns the announcement's data and whether to relay it downstream (see
+-- 'Announcements.ShouldRelay' and 'maxAnnouncementAgeSend'), if the announcement
+-- is valid.
 announcementValidity ::
   (IOLike m, LedgerSupportsProtocol blk, ResolveLeiosBlock blk) =>
+  SystemTime m ->
   InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
   ExtLedgerState blk EmptyMK ->
   Header blk ->
-  m (Either (AnnouncementInvalidity blk) (LeiosPoint, BytesSize))
-announcementValidity futureCheck cfg immLedger hdr = do
-  case futureCheck of
+  m
+    ( Either
+        (AnnouncementInvalidity blk)
+        (Announcements.ShouldRelay, (LeiosPoint, BytesSize))
+    )
+announcementValidity systemTime futureCheck cfg immLedger hdr = do
+  onset <- case futureCheck of
     InFutureCheck.SomeHeaderInFutureCheck hifc -> do
       arrival <- InFutureCheck.recordHeaderArrival hifc hdr
       judgment <-
@@ -1015,8 +1028,16 @@ announcementValidity futureCheck cfg immLedger hdr = do
               (ledgerState immLedger)
               arrival
       arrivalResult <- InFutureCheck.handleHeaderArrival hifc judgment
-      either throwIO (\_onset -> pure ()) (runExcept arrivalResult)
-  pure $ validateAnnouncementHeader cfg immLedger hdr
+      either throwIO pure (runExcept arrivalResult)
+  -- The in-future check has delayed this thread until 'onset' if the
+  -- slot was near-future, so 'now' is at or after 'onset' and the age
+  -- is non-negative.
+  now <- systemTimeCurrent systemTime
+  let shouldRelay =
+        if diffRelTime now onset <= maxAnnouncementAgeSend
+        then Announcements.DoRelay
+        else Announcements.DoNotRelay
+  pure $ (,) shouldRelay <$> validateAnnouncementHeader cfg immLedger hdr
 
 -- | Record a validated, newly-announced EB body as missing, with its
 -- authoritative (forger-signed) size. First-seen wins: a no-op if the body is
@@ -1045,3 +1066,17 @@ recordAnnouncedEb (outstandingVar, readyVar) (point, ebBytesSize) = do
 
 lEIOSNOTIFYPIPELINEDEPTH :: Int
 lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number
+
+-- | Do not relay (to downstream peers) an announcement whose slot's wall-clock
+-- onset is older than this. See 'Announcements.ShouldRelay'.
+--
+-- Must be comfortably less than the minimum possible wall-clock age of the
+-- immutable tip (the _average_ imm-tip age is @k \/ f@ slots behind the wall
+-- clock, but we need the _never in a million years_ bound instead), so that a
+-- downstream peer whose immutable tip is slightly ahead of ours by the time our
+-- message arrives still accepts what we relay rather than disconnecting us for
+-- a below-its-immutable-tip announcement.
+--
+-- TODO magic number; should be a config/RunNode option
+maxAnnouncementAgeSend :: NominalDiffTime
+maxAnnouncementAgeSend = 3600   -- 1 hour
