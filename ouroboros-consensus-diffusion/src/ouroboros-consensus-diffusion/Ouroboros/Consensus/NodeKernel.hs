@@ -865,33 +865,14 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
           let tickedChainDepState = getTickedChainDepState cfg currentSlot unticked ledgerView
 
-          -- Check if we are the leader
-          proof <- do
-            shouldForge <-
-              lift $
-                checkShouldForge
-                  blockForging
-                  ( contramap
-                      (TraceLabelCreds (forgeLabel blockForging))
-                      (forgeStateInfoTracer tracers)
-                  )
-                  cfg
-                  currentSlot
-                  tickedChainDepState
-            case shouldForge of
-              ForgeStateUpdateError err -> do
-                trace $ TraceForgeStateUpdateError currentSlot err
-                exitEarly
-              CannotForge cannotForge -> do
-                trace $ TraceNodeCannotForge currentSlot cannotForge
-                exitEarly
-              NotLeader -> do
-                trace $ TraceNodeNotLeader currentSlot
-                exitEarly
-              ShouldForge p -> return p
-
-          -- At this point we have established that we are indeed slot leader
-          trace $ TraceNodeIsLeader currentSlot
+          proof <-
+            getIsLeaderProof
+              trace
+              (forgeStateInfoTracer tracers)
+              blockForging
+              cfg
+              currentSlot
+              tickedChainDepState
 
           -- Tick the ledger state for the 'SlotNo' we're producing a block for
           let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
@@ -1249,6 +1230,46 @@ getTickedChainDepState cfg currentSlot unticked ledgerView =
     ledgerView
     currentSlot
     (headerStateChainDep (headerState unticked))
+
+-- | Check whether we are leader for 'currentSlot', given the ticked
+-- 'ChainDepState', and obtain the leadership proof if so.
+getIsLeaderProof ::
+  (IOLike m, RunNode blk) =>
+  (TraceForgeEvent blk -> WithEarlyExit m ()) ->
+  Tracer m (TraceLabelCreds (ForgeStateInfo blk)) ->
+  BlockForging m blk ->
+  TopLevelConfig blk ->
+  SlotNo ->
+  Ticked (ChainDepState (BlockProtocol blk)) ->
+  WithEarlyExit m (IsLeader (BlockProtocol blk))
+getIsLeaderProof trace forgeStateInfoTracer blockForging cfg currentSlot tickedChainDepState = do
+  proof <- do
+    shouldForge <-
+      lift $
+        checkShouldForge
+          blockForging
+          ( contramap
+              (TraceLabelCreds (forgeLabel blockForging))
+              forgeStateInfoTracer
+          )
+          cfg
+          currentSlot
+          tickedChainDepState
+    case shouldForge of
+      ForgeStateUpdateError err -> do
+        trace $ TraceForgeStateUpdateError currentSlot err
+        exitEarly
+      CannotForge cannotForge -> do
+        trace $ TraceNodeCannotForge currentSlot cannotForge
+        exitEarly
+      NotLeader -> do
+        trace $ TraceNodeNotLeader currentSlot
+        exitEarly
+      ShouldForge p -> return p
+
+  -- At this point we have established that we are indeed slot leader
+  trace $ TraceNodeIsLeader currentSlot
+  pure proof
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
