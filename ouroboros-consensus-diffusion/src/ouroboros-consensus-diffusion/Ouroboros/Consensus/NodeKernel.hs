@@ -833,22 +833,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
     trace $ TraceStartLeadershipCheck currentSlot
 
-    -- Figure out which block to connect to
-    --
-    -- Normally this will be the current block at the tip, but it may be the
-    -- /previous/ block, if there were multiple slot leaders
-    BlockContext{bcBlockNo, bcPrevPoint} <- do
-      eBlkCtx <-
-        lift $
-          atomically $
-            mkCurrentBlockContext currentSlot
-              <$> ChainDB.getCurrentChain chainDB
-      case eBlkCtx of
-        Right blkCtx -> return blkCtx
-        Left failure -> do
-          trace failure
-          exitEarly
-
+    BlockContext{bcBlockNo, bcPrevPoint} <- getBlockContext trace chainDB currentSlot
     trace $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
 
     -- Get forker corresponding to bcPrevPoint
@@ -1130,6 +1115,28 @@ data BlockContext blk = BlockContext
   -- Note that a block/header stores the hash of its predecessor but not the
   -- slot.
   }
+
+-- | Figure out which block to connect to
+--
+-- Normally this will be the current block at the tip, but it may be the
+-- /previous/ block, if there were multiple slot leaders
+getBlockContext ::
+  (IOLike m, RunNode blk) =>
+  (TraceForgeEvent blk -> WithEarlyExit m ()) ->
+  ChainDB m blk ->
+  SlotNo ->
+  WithEarlyExit m (BlockContext blk)
+getBlockContext trace chainDB currentSlot = do
+  eBlkCtx <-
+    lift $
+      atomically $
+        mkCurrentBlockContext currentSlot
+          <$> ChainDB.getCurrentChain chainDB
+  case eBlkCtx of
+    Right blkCtx -> return blkCtx
+    Left failure -> do
+      trace failure
+      exitEarly
 
 -- | Create the 'BlockContext' from the header of the previous block
 blockContextFromPrevHeader ::
