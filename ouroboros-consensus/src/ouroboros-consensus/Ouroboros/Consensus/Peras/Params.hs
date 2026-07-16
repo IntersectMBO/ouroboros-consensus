@@ -1,7 +1,11 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
 -- | Peras protocol parameters
@@ -20,9 +24,21 @@ module Ouroboros.Consensus.Peras.Params
     -- * Protocol parameters bundle
   , PerasParams (..)
   , mkPerasParams
+
+    -- * 'PerasEnabled' wrapper
+  , PerasEnabled
+  , pattern PerasEnabled
+  , pattern NoPerasEnabled
+  , PerasEnabledT (..)
+  , fromPerasEnabled
+  , perasEnabledToMaybe
   )
 where
 
+import Cardano.Binary (FromCBOR, ToCBOR)
+import Codec.Serialise (Serialise (..))
+import Control.Monad (ap, liftM)
+import Control.Monad.Trans.Class
 import Data.Semigroup (Sum (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -30,9 +46,7 @@ import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.IOLike (NoThunks)
 import Quiet (Quiet (..))
 
-{-------------------------------------------------------------------------------
-  Protocol parameters
--------------------------------------------------------------------------------}
+-- * Protocol parameters
 
 -- | Number of rounds for which to ignore certificates after entering a
 -- cooldown period.
@@ -40,7 +54,7 @@ newtype PerasIgnoranceRounds
   = PerasIgnoranceRounds {unPerasIgnoranceRounds :: Word64}
   deriving Show via Quiet PerasIgnoranceRounds
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
 
 -- | Minimum number of rounds to wait before voting again after a cooldown
 -- period starts.
@@ -97,7 +111,7 @@ newtype PerasQuorumStakeThreshold
   deriving stock Generic
   deriving newtype (Eq, Ord, NoThunks, Condense)
 
--- | Safety margin needed on top of the quorum stake threshold.
+-- | Safety margin needed on top of the quorum vote weight threshold.
 --
 -- NOTE: this is needed to account for an extremely unlikely local sortition
 -- where not enough honest non-persistent parties decide to vote in a round.
@@ -108,9 +122,7 @@ newtype PerasQuorumStakeThresholdSafetyMargin
   deriving stock Generic
   deriving newtype (Eq, Ord, NoThunks, Condense)
 
-{-------------------------------------------------------------------------------
-  Protocol parameters bundle
--------------------------------------------------------------------------------}
+-- * Protocol parameters bundle
 
 -- | Peras protocol parameters.
 --
@@ -175,3 +187,56 @@ mkPerasParams =
     , perasQuorumStakeThresholdSafetyMargin =
         PerasQuorumStakeThresholdSafetyMargin (2 / 100)
     }
+
+-- * 'PerasEnabled' wrapper
+
+-- | A marker for Peras-specific values that are not present in all eras
+newtype PerasEnabled a = MkPerasEnabled (Maybe a)
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving anyclass NoThunks
+  deriving newtype (Functor, Applicative, Monad, FromCBOR, ToCBOR, Serialise)
+
+pattern PerasEnabled :: a -> PerasEnabled a
+pattern PerasEnabled x <- MkPerasEnabled (Just !x)
+ where
+  PerasEnabled !x = MkPerasEnabled (Just x)
+
+pattern NoPerasEnabled :: PerasEnabled a
+pattern NoPerasEnabled = MkPerasEnabled Nothing
+
+{-# COMPLETE PerasEnabled, NoPerasEnabled #-}
+
+-- | A 'fromMaybe'-like eliminator for 'PerasEnabled'
+fromPerasEnabled :: a -> PerasEnabled a -> a
+fromPerasEnabled defaultValue = \case
+  NoPerasEnabled -> defaultValue
+  PerasEnabled value -> value
+
+-- | Return the underlying 'Maybe' of a 'PerasEnabled' value.
+perasEnabledToMaybe :: PerasEnabled a -> Maybe a
+perasEnabledToMaybe = \case
+  NoPerasEnabled -> Nothing
+  PerasEnabled value -> Just value
+
+-- | A 'MaybeT'-like monad transformer.
+--
+--   Used solely for the Peras-related hard fork combinator queries,
+--   see 'Ouroboros.Consensus.HardFork.History.Qry'.
+newtype PerasEnabledT m a = PerasEnabledT
+  { runPerasEnabledT :: m (PerasEnabled a)
+  }
+  deriving stock Functor
+
+instance (Functor m, Monad m) => Applicative (PerasEnabledT m) where
+  pure = PerasEnabledT . pure . PerasEnabled
+  (<*>) = ap
+
+instance Monad m => Monad (PerasEnabledT m) where
+  x >>= f = PerasEnabledT $ do
+    v <- runPerasEnabledT x
+    case v of
+      NoPerasEnabled -> pure NoPerasEnabled
+      PerasEnabled y -> runPerasEnabledT (f y)
+
+instance MonadTrans PerasEnabledT where
+  lift = PerasEnabledT . liftM PerasEnabled
