@@ -465,7 +465,7 @@ mkHandlers
           -- Per-upstream-peer announcement accountability (dedup and
           -- equivocation counting). The pipelined-client handler is a stateless
           -- callback, so this state lives in a (single-threaded) ref.
-          peerStateVar <- Prim.newMutVar Announcements.emptyPeerState
+          peerStateVar <- Prim.newMutVar (SlotNo 0, Announcements.emptyPeerState)
           pure $
             leiosNotifyClientPeerPipelined
               ( atomically controlMessageSTM <&> \case
@@ -475,14 +475,14 @@ mkHandlers
               ( pure $ \case
                   MsgLeiosBlockAnnouncement hdr -> do
                     let getEl (Leios.AncHeader h) = headerElId h
-                    st0 <- Prim.readMutVar peerStateVar
+                    immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
+                    (latestPruneSlot, peerSt0) <- Prim.readMutVar peerStateVar
                     res <-
                       runExceptT $
                         Announcements.onAnnouncement
                           nullTracer
                           getEl
-                          ( \(Leios.AncHeader h) -> do
-                              immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
+                          ( \(Leios.AncHeader h) ->
                               Leios.announcementValidity
                                 systemTime
                                 chainSyncFutureCheck
@@ -502,33 +502,34 @@ mkHandlers
                                       Leios.recordAnnouncedEb (getLeiosOutstanding, getLeiosReady) anc'
                                   )
                                   cst
-                                  peer
+                                  (Just peer)
                                   shouldRelay
                                   ancHdr
                           )
-                          st0
+                          peerSt0
                           (Leios.AncHeader hdr)
-                    case res of
-                      Right st' -> Prim.writeMutVar peerStateVar st'
-                      Left err -> throwIO (Leios.ReactToAnnouncementError err)
+                    peerSt1 <- case res of
+                      Left err -> throwIO $ Leios.ReactToAnnouncementError err
+                      Right x -> pure x
+                    let (!latestPruneSlot', !peerSt2) =
+                          Leios.prunePeerStateToImmTip immLedger latestPruneSlot peerSt1
+                    Prim.writeMutVar peerStateVar (latestPruneSlot', peerSt2)
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
                     let MkLeiosPoint{pointEbHash = ebHash} = point
-                    -- FIXME: EB announcements are not implemented. The
-                    -- fetch state is built entirely from peer offers,
-                    -- which is the wrong source of truth — the
-                    -- authoritative size lives in
-                    -- 'headerLeiosAnnouncement' on the parent RB
-                    -- header (signed by the forger). Until announcement
-                    -- handling lands, the sanitisation below is the
-                    -- best we can do against malformed offers:
-                    -- drop a zero-sized offer outright (no honest
-                    -- forger ever announces a 0-byte EB) and refuse to
-                    -- overwrite an existing entry that shares the same
-                    -- content hash, so the first-seen (slot, size)
-                    -- wins. The per-peer 'offerings' below is still
-                    -- updated so the peer remains a valid serving
-                    -- candidate.
+                    -- TODO: EB announcements now record the authoritative
+                    -- (forger-signed) size via 'recordAnnouncedEb', but this
+                    -- offer handler is not integrated with them yet: it still
+                    -- builds fetch state directly from peer offers, whose sizes
+                    -- are not authoritative (the authoritative one lives in
+                    -- 'headerLeiosAnnouncement' on the parent RB header). Until
+                    -- the two are reconciled, the sanitisation below is the best
+                    -- we can do against malformed offers: drop a zero-sized
+                    -- offer outright (no honest forger ever announces a 0-byte
+                    -- EB) and refuse to overwrite an existing entry that shares
+                    -- the same content hash, so the first-seen (slot, size)
+                    -- wins. The per-peer 'offerings' below is still updated so
+                    -- the peer remains a valid serving candidate.
                     MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
                       pure $
                         if ebBytesSize == 0

@@ -98,7 +98,7 @@ forge ::
   BlockForging m blk ->
   LeiosDbConnection m ->
   SlotNo ->
-  WithEarlyExit m ()
+  WithEarlyExit m (Header blk)
 forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosConn currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
@@ -473,7 +473,8 @@ addBlockToChainDB ::
   [Validated (GenTx blk)] ->
   [Validated (GenTx blk)] ->
   blk ->
-  WithEarlyExit m ()
+  -- | The adopted block's header (only produced on the adopted path).
+  WithEarlyExit m (Header blk)
 addBlockToChainDB trace chainDB mempool currentSlot rbTxs ebTxs newBlock = do
   let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
   -- Make sure that if an async exception is thrown while a block is
@@ -524,6 +525,8 @@ addBlockToChainDB trace chainDB mempool currentSlot rbTxs ebTxs newBlock = do
     -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
     -- e.g., @DualBlock@.
     trace $ TraceAdoptedBlock currentSlot newBlock rbTxs
+
+    pure (getHeader newBlock)
 
 -- | Obtain the ticked ledger view for 'currentSlot', required in order to
 -- construct the ticked 'ChainDepState'.

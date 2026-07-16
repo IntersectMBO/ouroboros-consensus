@@ -118,9 +118,14 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( headerElId
+  , headerLeiosAnnouncement
+  )
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
+import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.EarlyExit hiding (callTraceSameThread)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.LeakyBucket
@@ -544,6 +549,19 @@ initNodeKernel
           leiosVoteState
           (topLevelConfigVotingKey cfg)
 
+    void $
+      forkLinkedWatcher registry "NodeKernel.leiosPruneAnnouncements" $
+        Watcher
+          { wFingerprint = id
+          , wInitial = Nothing
+          , wReader = getTipSlot . ledgerState <$> ChainDB.getImmutableLedger chainDB
+          , wNotify = \case
+              Origin -> pure ()
+              NotOrigin immTipSlot ->
+                MVar.modifyMVar_ getLeiosCentralState $
+                  pure . Announcements.pruneCentralState immTipSlot
+          }
+
     return
       NodeKernel
         { getChainDB = chainDB
@@ -575,6 +593,7 @@ initNodeKernel
         }
    where
     blockForgingController ::
+      Ord remotePeer =>
       InternalState m remotePeer localPeer blk ->
       STM m [MkBlockForging m blk] ->
       m Void
@@ -719,7 +738,7 @@ toConsensusMode = \case
 
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
-  (IOLike m, RunNode blk) =>
+  (IOLike m, RunNode blk, Ord addrNTN) =>
   InternalState m addrNTN addrNTC blk ->
   MkBlockForging m blk ->
   m (Thread m Void)
@@ -741,20 +760,35 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
               rootCCtx
               "forge"
               currentSlot
-              $ \forgeCCtx ->
-                withEarlyExit_ $
-                  forge
-                    (forgeTracer tracers)
-                    (forgeStateInfoTracer tracers)
-                    (leiosKernelTracer tracers)
-                    forgeCCtx
-                    cfg
-                    chainDB
-                    mempool
-                    leiosVoteState
-                    bf
-                    leiosConn
-                    currentSlot
+              $ \forgeCCtx -> do
+                  mbForgedHeader <-
+                    withEarlyExit $
+                      forge
+                        (forgeTracer tracers)
+                        (forgeStateInfoTracer tracers)
+                        (leiosKernelTracer tracers)
+                        forgeCCtx
+                        cfg
+                        chainDB
+                        mempool
+                        leiosVoteState
+                        bf
+                        leiosConn
+                        currentSlot
+                  -- Relay this node's own freshly-forged EB announcement (if
+                  -- any) to downstream peers via LeiosNotify; 'forge' yields the
+                  -- header only when it forged and adopted a block.
+                  whenJust mbForgedHeader $ \forgedHeader ->
+                    whenJust (headerLeiosAnnouncement forgedHeader) $ \_ ->
+                      MVar.modifyMVar_ leiosCentralState $ \cst ->
+                        Announcements.onAnnouncementCentral
+                          nullTracer
+                          (\(Leios.AncHeader h) -> headerElId h)
+                          (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
+                          cst
+                          Nothing -- the source is this node, not an upstream peer
+                          Announcements.DoRelay -- our newly forged block can't be too old
+                          (Leios.AncHeader forgedHeader)
     )
  where
   label :: String

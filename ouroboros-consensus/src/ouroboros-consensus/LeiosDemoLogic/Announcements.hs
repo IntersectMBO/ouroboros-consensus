@@ -249,7 +249,7 @@ data QueueAnnouncementView m anc =
         !(StrictTVar m q)
 
 data TraceLeiosNotifyEvent peer anc =
-    TraceNewAnnouncement !peer !ElId !(ElState anc)
+    TraceNewAnnouncement !(Maybe peer) !ElId !(ElState anc)
 
 -- | Called whenever the ChainDB's immutable tip advances to a new slot
 --
@@ -306,8 +306,12 @@ data ShouldRelay = DoRelay | DoNotRelay
 
 -- | The nub of the callback argument to 'onAnnouncement'
 --
--- NOTE: Should also be called by the block forging thread when
--- issuing an announcement.
+-- NOTE: This is also called by the block forging thread when this node issues
+-- its own announcement (with 'Nothing' as the source peer).
+--
+-- TODO: headers arriving via the ChainSync 'MsgRollForward' carry announcements
+-- too, and so should also feed the 'CentralState' (for relay and dedup); they
+-- do not yet.
 onAnnouncementCentral ::
   forall m peer anc.
   (MonadSTM m, Ord peer, Eq anc) =>
@@ -322,7 +326,9 @@ onAnnouncementCentral ::
   -- Maybe also update a cache used to dedup header validation
   -- computations. Etc.
   CentralState m peer anc ->
-  peer ->
+  Maybe peer ->
+  -- ^ The upstream peer the announcement came from, or 'Nothing' if this node
+  -- is itself the source (e.g. its own block forging).
   ShouldRelay ->
   anc ->
   m (CentralState m peer anc)
