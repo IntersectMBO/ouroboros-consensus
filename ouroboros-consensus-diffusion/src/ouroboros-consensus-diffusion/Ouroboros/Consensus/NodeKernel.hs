@@ -118,10 +118,6 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import Ouroboros.Consensus.Storage.LedgerDB.Forker
-  ( headerElId
-  , headerLeiosAnnouncement
-  )
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
@@ -251,7 +247,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   -- ^ Filled by anyone who makes a change that might unblock a new
   -- fetch decision; the fetch logic 'MVar.takeMVar's before it runs.
   , getLeiosCentralState ::
-      MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AncHeader blk))
+      MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
   -- ^ Node-wide EB-announcement state
   }
 
@@ -641,7 +637,7 @@ data InternalState m addrNTN addrNTC blk = IS
     leiosOutstanding :: MVar.MVar m (LeiosOutstanding (ConnectionId addrNTN))
   , leiosReady :: MVar.MVar m ()
   , leiosCentralState ::
-      MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AncHeader blk))
+      MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
   , leiosPeersVars ::
       LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , leiosVoteState :: LeiosVoteState m
@@ -779,16 +775,16 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                   -- any) to downstream peers via LeiosNotify; 'forge' yields the
                   -- header only when it forged and adopted a block.
                   whenJust mbForgedHeader $ \forgedHeader ->
-                    whenJust (headerLeiosAnnouncement forgedHeader) $ \_ ->
+                    whenJust (Leios.mkAnnouncingHeader forgedHeader) $ \anc ->
                       MVar.modifyMVar_ leiosCentralState $ \cst ->
                         Announcements.onAnnouncementCentral
-                          nullTracer
-                          (\(Leios.AncHeader h) -> headerElId h)
+                          (contramap Leios.traceNewAnnouncement (leiosKernelTracer tracers))
+                          Leios.ancElId
                           (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
                           cst
                           Nothing -- the source is this node, not an upstream peer
                           Announcements.DoRelay -- our newly forged block can't be too old
-                          (Leios.AncHeader forgedHeader)
+                          anc
     )
  where
   label :: String
