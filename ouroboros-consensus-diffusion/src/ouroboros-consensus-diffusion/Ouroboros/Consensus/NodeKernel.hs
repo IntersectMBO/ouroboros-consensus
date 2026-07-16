@@ -874,17 +874,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
               currentSlot
               tickedChainDepState
 
-          -- Tick the ledger state for the 'SlotNo' we're producing a block for
-          let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
-              tickedLedgerState =
-                applyChainTick
-                  OmitLedgerEvents
-                  (configLedger cfg)
-                  currentSlot
-                  (ledgerState unticked)
-
-          _ <- evaluate tickedLedgerState
-          trace $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
+          tickedLedgerState <- getTickedLedgerState trace cfg currentSlot bcPrevPoint unticked
 
           -- Get a snapshot of the mempool that is consistent with the ledger
           --
@@ -1270,6 +1260,27 @@ getIsLeaderProof trace forgeStateInfoTracer blockForging cfg currentSlot tickedC
   -- At this point we have established that we are indeed slot leader
   trace $ TraceNodeIsLeader currentSlot
   pure proof
+
+-- | Tick the ledger state for the 'SlotNo' we're producing a block for
+getTickedLedgerState ::
+  (IOLike m, RunNode blk) =>
+  (TraceForgeEvent blk -> WithEarlyExit m ()) ->
+  TopLevelConfig blk ->
+  SlotNo ->
+  Point blk ->
+  ExtLedgerState blk EmptyMK ->
+  WithEarlyExit m (Ticked (LedgerState blk) DiffMK)
+getTickedLedgerState trace cfg currentSlot bcPrevPoint unticked = do
+  let tickedLedgerState =
+        applyChainTick
+          OmitLedgerEvents
+          (configLedger cfg)
+          currentSlot
+          (ledgerState unticked)
+
+  _ <- evaluate tickedLedgerState
+  trace $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
+  pure tickedLedgerState
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
