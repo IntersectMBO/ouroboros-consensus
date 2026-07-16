@@ -20,6 +20,7 @@ import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.Monad (forM_, when)
 import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
+import Control.Monad.Except (runExcept)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.Bits as Bits
@@ -80,10 +81,11 @@ import LeiosDemoTypes
   )
 import qualified LeiosDemoTypes as Leios
 import Ouroboros.Consensus.Block (BlockProtocol, HasHeader, Header, headerHash)
-import Ouroboros.Consensus.Config (TopLevelConfig)
+import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -984,6 +986,16 @@ data ExnInvalidLeiosAnnouncement =
     -- | Sent an announcement whose header is invalid
     ExnInvalidHeader
   |
+    -- | Sent an announcement for a slot before our immutable tip (the forecast
+    -- anchor): stale for a caught-up node, and unvalidatable (a below-anchor
+    -- slot cannot be forecast).
+    --
+    -- TODO should we avoid /sending/ announcements that are near our tip?
+    -- Otherwise, an adversary could release their announcements right as the
+    -- network's imm tip is advancing across it, causing some frontier of honest
+    -- nodes to send announcements that their recipients punish
+    ExnBeforeImmutableTip
+  |
     -- | Sent an announcement for a slot beyond our immutable tip's forecast
     -- horizon. A fresh announcement is always within horizon for a caught-up
     -- node, so this is either a bogus far-future slot or we're falling behind.
@@ -998,16 +1010,37 @@ data ExnInvalidLeiosAnnouncement =
 
 instance Exception ExnInvalidLeiosAnnouncement
 
--- | The @validate@ callback for 'Announcements.onAnnouncement': the
--- announcement's invalidity, if any.
+-- | The @validate@ callback for 'Announcements.onAnnouncement'.
+--
+-- First apply ChainSync's in-future check to the announced slot's wall-clock
+-- onset (reusing the node's own 'InFutureCheck.SomeHeaderInFutureCheck'):
+-- a far-future slot raises 'InFutureCheck.HeaderArrivalException' (disconnecting
+-- the peer), a near-future slot blocks until the slot's onset (Ouroboros
+-- Chronos) — blocking the per-peer handler is acceptable, as a (near-)future
+-- announcement is the peer's fault. Then return the announcement's invalidity,
+-- if any.
 announcementValidity ::
-  (LedgerSupportsProtocol blk, ResolveLeiosBlock blk) =>
+  (IOLike m, LedgerSupportsProtocol blk, ResolveLeiosBlock blk) =>
+  InFutureCheck.SomeHeaderInFutureCheck m blk ->
   TopLevelConfig blk ->
   ExtLedgerState blk EmptyMK ->
   Header blk ->
-  Maybe (AnnouncementInvalidity blk)
-announcementValidity cfg immLedger hdr =
-  either Just (const Nothing) (validateAnnouncementHeader cfg immLedger hdr)
+  m (Maybe (AnnouncementInvalidity blk))
+announcementValidity futureCheck cfg immLedger hdr = do
+  case futureCheck of
+    InFutureCheck.SomeHeaderInFutureCheck hifc -> do
+      arrival <- InFutureCheck.recordHeaderArrival hifc hdr
+      judgment <-
+        either throwIO pure $
+          runExcept $
+            InFutureCheck.judgeHeaderArrival
+              hifc
+              (configLedger cfg)
+              (ledgerState immLedger)
+              arrival
+      arrivalResult <- InFutureCheck.handleHeaderArrival hifc judgment
+      either throwIO (\_onset -> pure ()) (runExcept arrivalResult)
+  pure $ either Just (const Nothing) (validateAnnouncementHeader cfg immLedger hdr)
 
 -- | Record a validated, newly-announced EB body as missing, with its
 -- authoritative (forger-signed) size. First-seen wins: a no-op if the body is
@@ -1030,8 +1063,10 @@ recordAnnouncedEb (point, ebBytesSize) outstanding =
 
 -- | What the NodeToNode client should do with an 'Announcements.ErrAnnouncement'.
 data AnnouncementReaction =
-    -- | Do not relay, but do not disconnect; trace the given reason.
-    ReactSkip !String
+    -- | Do not relay, but do not disconnect
+    --
+    -- See TODO on 'AnnouncementDisposition', which applies here too.
+    ReactSkipOpcertIssueNumberForgiven
   |
     -- | Disconnect the peer by throwing the given exception.
     ReactDisconnect !ExnInvalidLeiosAnnouncement
@@ -1044,14 +1079,18 @@ reactToAnnouncementError ::
 reactToAnnouncementError = \case
     Announcements.ErrRepeat -> ReactDisconnect ExnRepeatedAnnouncement
     Announcements.ErrThird -> ReactDisconnect ExnThirdAnnouncement
-    Announcements.ErrInvalid NoAnnouncement -> ReactDisconnect ExnNoAnnouncement
-    Announcements.ErrInvalid (OutsideHorizon _) ->
-      ReactDisconnect ExnBeyondForecastHorizon
-    Announcements.ErrInvalid (HeaderInvalid err) ->
-      case classifyAnnouncementValidationErr @blk err of
-        SkipAnnouncement ->
-          ReactSkip "opcert counter not verifiable against immutable tip"
-        DisconnectPeer -> ReactDisconnect ExnInvalidHeader
+    Announcements.ErrInvalid invalidity -> case invalidity of
+        NoAnnouncement ->
+          ReactDisconnect ExnNoAnnouncement
+        SlotBeforeImmutableTip ->
+          ReactDisconnect ExnBeforeImmutableTip
+        OutsideHorizon _ ->
+          ReactDisconnect ExnBeyondForecastHorizon
+        HeaderInvalid err ->
+          case classifyAnnouncementValidationErr @blk err of
+            SkipAnnouncement ->
+              ReactSkipOpcertIssueNumberForgiven
+            DisconnectPeer -> ReactDisconnect ExnInvalidHeader
 
 lEIOSNOTIFYPIPELINEDEPTH :: Int
 lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number

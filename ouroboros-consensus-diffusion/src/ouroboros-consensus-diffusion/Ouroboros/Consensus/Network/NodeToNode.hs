@@ -481,22 +481,27 @@ mkHandlers
                           (\(Leios.AncHeader h) -> headerElId h)
                           ( \(Leios.AncHeader h) -> do
                               immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
-                              pure $ Leios.announcementValidity getTopLevelConfig immLedger h
+                              Leios.announcementValidity
+                                chainSyncFutureCheck
+                                getTopLevelConfig
+                                immLedger
+                                h
                           )
-                          ( \(Leios.AncHeader h) -> forM_ (headerLeiosAnnouncement h) $ \pt@(point, _sz) -> do
-                              MVar.modifyMVar_ getLeiosOutstanding (pure . Leios.recordAnnouncedEb pt)
-                              traceWith tracer $
-                                MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement " <> Leios.prettyLeiosPoint point
-                              void $ MVar.tryPutMVar getLeiosReady ()
+                          ( \(Leios.AncHeader h) ->
+                              forM_ (headerLeiosAnnouncement h) $ \pt@(point, _sz) -> do
+                                MVar.modifyMVar_ getLeiosOutstanding (pure . Leios.recordAnnouncedEb pt)
+                                traceWith tracer $
+                                  MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement " <> Leios.prettyLeiosPoint point
+                                void $ MVar.tryPutMVar getLeiosReady ()
                           )
                           st0
                           (Leios.AncHeader hdr)
                     case res of
                       Right st' -> Prim.writeMutVar peerStateVar st'
                       Left err -> case Leios.reactToAnnouncementError @blk err of
-                        Leios.ReactSkip reason ->
+                        Leios.ReactSkipOpcertIssueNumberForgiven ->
                           traceWith tracer $
-                            MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement skipped: " <> reason
+                            MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement skipped forgiven OpCert issue number"
                         Leios.ReactDisconnect exn -> throwIO exn
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point

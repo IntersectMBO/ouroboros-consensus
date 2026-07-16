@@ -261,6 +261,16 @@ deletePeerCentral peer st =
        gate = deleteElBimapR peer (gate st)
      }
 
+-- | Whether 'onAnnouncementCentral' should relay an announcement downstream.
+--
+-- An honest node uses 'DoNotRelay' once an announcement's slot is old enough
+-- that a peer whose immutable tip has advanced slightly further would
+-- disconnect the relayer for relaying a below-its-immutable-tip announcement;
+-- the caller decides this from the announcement's wall-clock age. Local
+-- processing is unaffected either way.
+data ShouldRelay = DoRelay | DoNotRelay
+  deriving (Eq, Show)
+
 -- | The nub of the callback argument to 'onAnnouncement'
 --
 -- NOTE: Should also be called by the block forging thread when
@@ -280,18 +290,18 @@ onAnnouncementCentral ::
   -- computations. Etc.
   CentralState m peer anc ->
   peer ->
+  ShouldRelay ->
   anc ->
   m (CentralState m peer anc)
-onAnnouncementCentral tracer getEl publishLocally st peer anc =
+onAnnouncementCentral tracer getEl publishLocally st peer shouldRelay anc =
     case extendLive el anc (selfPeer st) of
         Left{} -> pure st   -- complete noop for duplicates
         Right (elSt, selfPeer') -> do
             traceWith tracer $ TraceNewAnnouncement peer el elSt
             -- urgently relay
-            let isOne = case elSt of
-                    OneAnnouncement{} -> True
-                    TwoAnnouncements{} -> False
-            peers' <- send isOne $ queues st
+            newPeers <- case shouldRelay of
+                DoNotRelay -> pure Set.empty
+                DoRelay -> send elSt (queues st)
             -- signal other components
             publishLocally elSt
             pure MkCentralState {
@@ -299,17 +309,16 @@ onAnnouncementCentral tracer getEl publishLocally st peer anc =
               ,
                 queues = queues st
               ,
-                gate =
-                    if not isOne then gate st else
-                    insertElBimapLs el peers' (gate st)
+                gate = insertElBimapLs el newPeers (gate st)
               }
   where
     el = getEl anc
 
-    send :: Bool -> Strict.Map peer (QueueAnnouncementView m anc) -> m (Set peer)
-    send isOne qs = do
-        let peers = lookupElBimapL el $ gate st
-        if isOne then foldM enqueue peers (Map.assocs qs) else do
+    -- returns new peers to add to 'gate' for this election
+    send :: ElState anc -> Strict.Map peer (QueueAnnouncementView m anc) -> m (Set peer)
+    send elSt qs = case elSt of
+        OneAnnouncement{} -> foldM enqueue Set.empty (Map.assocs qs)
+        TwoAnnouncements{} -> do
             -- Only send equivocation proofs to peers we've already
             -- sent the first announcement to. Otherwise they'd be
             -- interpreting it as /our/ /first/ announcement for that
@@ -318,8 +327,10 @@ onAnnouncementCentral tracer getEl publishLocally st peer anc =
             -- least two credits.
             --
             -- And 'gate' doesn't change.
-            mapM_ (void . tryEnqueue) (Map.restrictKeys qs peers)
-            pure peers
+            mapM_
+                (void . tryEnqueue)
+                (Map.restrictKeys qs $ lookupElBimapL el $ gate st)
+            pure Set.empty
 
     enqueue :: Set peer -> (peer, QueueAnnouncementView m anc) -> m (Set peer)
     enqueue !acc (peer', ancQueue) =

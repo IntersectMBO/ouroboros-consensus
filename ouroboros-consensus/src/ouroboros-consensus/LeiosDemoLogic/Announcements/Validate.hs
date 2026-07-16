@@ -18,16 +18,17 @@ module LeiosDemoLogic.Announcements.Validate
   , validateAnnouncementHeader
   ) where
 
-import Control.Monad (void)
+import Control.Monad (void, when)
 import Control.Monad.Except (runExcept, throwError, withExcept)
 import LeiosDemoTypes (LeiosPoint, BytesSize)
-import Ouroboros.Consensus.Block (BlockProtocol, Header, blockSlot)
+import Ouroboros.Consensus.Block (BlockProtocol, Header, WithOrigin (NotOrigin), blockSlot)
 import Ouroboros.Consensus.Config (TopLevelConfig, configConsensus, configLedger)
 import Ouroboros.Consensus.Forecast (OutsideForecastRange, forecastFor)
 import Ouroboros.Consensus.HeaderValidation
   ( tickHeaderState
   , validateHeaderProtocol
   )
+import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -45,6 +46,13 @@ data AnnouncementInvalidity blk
     -- tip (should not occur for a caught-up node, by appeal to Praos Chain
     -- Growth).
     OutsideHorizon !OutsideForecastRange
+  | -- | The announced slot is before the immutable tip (the forecast anchor),
+    -- so it cannot be forecast/validated at all. This is a /separate/ case
+    -- because 'forecastFor' does not report a below-anchor slot as
+    -- 'OutsideForecastRange' (that only bounds the future end); a below-anchor
+    -- slot violates 'forecastFor''s precondition. For a caught-up node such a
+    -- stale slot is as bogus as a far-future one.
+    SlotBeforeImmutableTip
   | -- | The header failed protocol-level validation.
     HeaderInvalid !(ValidationErr (BlockProtocol blk))
   | -- | The header carries no EB announcement, so it should not have been
@@ -75,6 +83,11 @@ validateAnnouncementHeader cfg extLedger hdr =
     x <- case headerLeiosAnnouncement hdr of
       Nothing -> throwError NoAnnouncement
       Just x -> pure x
+    -- 'forecastFor' does not reject a slot below its anchor (the immutable
+    -- tip's slot) — that is a precondition violation, not 'OutsideForecastRange'
+    -- — so guard it explicitly before forecasting.
+    when (NotOrigin slot < getTipSlot (ledgerState extLedger)) $
+      throwError SlotBeforeImmutableTip
     ledgerView <-
       withExcept OutsideHorizon $
         forecastFor
