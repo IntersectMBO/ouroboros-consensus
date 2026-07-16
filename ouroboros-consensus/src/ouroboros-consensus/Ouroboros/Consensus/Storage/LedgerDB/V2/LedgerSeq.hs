@@ -59,6 +59,7 @@ import Data.Function (on)
 import Data.Word
 import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
+import LeiosDemoTypes (LeiosPoint (..))
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config (configLedger)
@@ -298,7 +299,7 @@ reapplyBlock leiosDb evs cfg b db = do
             resolveAndApplyLeiosClosure
               leiosDb
               (configLedger (getExtLedgerCfg cfg))
-              announcedPoint
+              (pointEbHash announcedPoint)
               readTables
               bKeys
               (ledgerState st)

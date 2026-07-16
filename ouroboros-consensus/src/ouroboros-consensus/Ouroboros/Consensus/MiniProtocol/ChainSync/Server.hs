@@ -28,7 +28,7 @@ import Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Functor ((<&>))
 import LeiosDemoDb (LeiosDbConnection)
-import LeiosDemoTypes (LeiosPoint)
+import LeiosDemoTypes (LeiosPoint (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( BlockComponent (GetHeader, GetRawBlock)
@@ -168,7 +168,7 @@ chainSyncBlocksServer tracer chainDB ccfg leiosDb flr = ChainSyncServer $ do
         Just prevAnn | headerContainsLeiosCert hdr -> case decodeRaw sblk of
           Left _ -> pure sblk
           Right blk -> do
-            resolveLeiosClosure leiosDb prevAnn
+            resolveLeiosClosure leiosDb (pointEbHash prevAnn)
               <&> inlineLeiosClosure blk
               <&> encode
         _ -> pure sblk

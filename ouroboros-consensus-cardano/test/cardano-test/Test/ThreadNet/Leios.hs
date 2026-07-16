@@ -577,7 +577,7 @@ sumChainTxBytes _topConfig _initLedger node = runSimOrThrow $ do
     blk' <- case (blockLeiosCert blk, prevAnn) of
       (Just _, Just point) ->
         inlineLeiosClosure blk
-          <$> resolveLeiosClosure leiosDb point
+          <$> resolveLeiosClosure leiosDb (pointEbHash point)
       _ -> pure blk
     let nextAnn = fst <$> headerLeiosAnnouncement (getHeader blk)
     foldChain leiosDb nextAnn (total + blockTxSizeSum blk') rest
@@ -642,7 +642,7 @@ foldWithResolution leiosDb cfg blks initState =
         Nothing ->
           error "foldWithResolution: CertRB but no announcement on parent chain-dep state"
         Just (point, _) -> do
-          closureTxs <- resolveLeiosClosure leiosDb point
+          closureTxs <- resolveLeiosClosure leiosDb (pointEbHash point)
           let ls = ledgerState state
               lcfg = configLedger (getExtLedgerCfg cfg)
           case applyLeiosClosure lcfg closureTxs ls of

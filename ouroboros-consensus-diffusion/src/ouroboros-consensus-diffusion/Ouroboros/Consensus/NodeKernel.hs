@@ -749,7 +749,7 @@ decideLeiosCertify ::
   SlotNo ->
   -- | The state of the header we are extending.
   HeaderState blk ->
-  m (Maybe (LeiosCert, Leios.LeiosPoint))
+  m (Maybe (LeiosCert, Leios.EbHash))
 decideLeiosCertify leiosDb voteState tracer currentSlot headerState =
   case protocolStateLeiosAnnouncement @blk (headerStateChainDep headerState) of
     Nothing -> pure Nothing
@@ -790,7 +790,7 @@ decideLeiosCertify leiosDb voteState tracer currentSlot headerState =
                           { atSlot = currentSlot
                           , certifiedPoint = ebPoint
                           }
-                      pure (Just (cert, ebPoint))
+                      pure (Just (cert, Leios.pointEbHash ebPoint))
 
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
