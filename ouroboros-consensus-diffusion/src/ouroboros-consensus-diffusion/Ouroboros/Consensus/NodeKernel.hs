@@ -825,7 +825,13 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
 
   go :: BlockForging m blk -> LeiosDbConnection m -> SlotNo -> WithEarlyExit m ()
   go blockForging leiosConn currentSlot = do
-    trace blockForging $ TraceStartLeadershipCheck currentSlot
+    let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
+        trace =
+          lift
+            . traceWith (forgeTracer tracers)
+            . TraceLabelCreds (forgeLabel blockForging)
+
+    trace $ TraceStartLeadershipCheck currentSlot
 
     -- Figure out which block to connect to
     --
@@ -840,10 +846,10 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
       case eBlkCtx of
         Right blkCtx -> return blkCtx
         Left failure -> do
-          trace blockForging failure
+          trace failure
           exitEarly
 
-    trace blockForging $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
+    trace $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
 
     -- Get forker corresponding to bcPrevPoint
     --
@@ -863,12 +869,12 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
       ) <-
       ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
         Left _ -> do
-          trace blockForging $ TraceNoLedgerState currentSlot bcPrevPoint
+          trace $ TraceNoLedgerState currentSlot bcPrevPoint
           exitEarly
         Right forker -> do
           unticked <- lift $ atomically $ LedgerDB.roforkerGetLedgerState forker
 
-          trace blockForging $ TraceLedgerState currentSlot bcPrevPoint
+          trace $ TraceLedgerState currentSlot bcPrevPoint
 
           -- We require the ticked ledger view in order to construct the ticked
           -- 'ChainDepState'.
@@ -887,12 +893,12 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                 -- the ticked ledger state). However, we probably don't /want/ to
                 -- produce a block in this case; we are most likely missing a blocks
                 -- on our chain.
-                trace blockForging $ TraceNoLedgerView currentSlot err
+                trace $ TraceNoLedgerView currentSlot err
                 exitEarly
               Right lv ->
                 return lv
 
-          trace blockForging $ TraceLedgerView currentSlot
+          trace $ TraceLedgerView currentSlot
 
           -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
           -- only need the ticked 'ChainDepState' to check the whether we're a leader.
@@ -920,18 +926,18 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                   tickedChainDepState
             case shouldForge of
               ForgeStateUpdateError err -> do
-                trace blockForging $ TraceForgeStateUpdateError currentSlot err
+                trace $ TraceForgeStateUpdateError currentSlot err
                 exitEarly
               CannotForge cannotForge -> do
-                trace blockForging $ TraceNodeCannotForge currentSlot cannotForge
+                trace $ TraceNodeCannotForge currentSlot cannotForge
                 exitEarly
               NotLeader -> do
-                trace blockForging $ TraceNodeNotLeader currentSlot
+                trace $ TraceNodeNotLeader currentSlot
                 exitEarly
               ShouldForge p -> return p
 
           -- At this point we have established that we are indeed slot leader
-          trace blockForging $ TraceNodeIsLeader currentSlot
+          trace $ TraceNodeIsLeader currentSlot
 
           -- Tick the ledger state for the 'SlotNo' we're producing a block for
           let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
@@ -943,7 +949,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                   (ledgerState unticked)
 
           _ <- evaluate tickedLedgerState
-          trace blockForging $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
+          trace $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
 
           -- Get a snapshot of the mempool that is consistent with the ledger
           --
@@ -1021,7 +1027,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           _ <- evaluate (length ebTxs)
           _ <- evaluate mempoolHash
 
-          trace blockForging $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
+          trace $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
 
           pure
             ( rbTxs
@@ -1055,7 +1061,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
             , Block.fbLeiosVoteState = leiosVoteState
             }
 
-    trace blockForging $
+    trace $
       TraceForgedBlock
         currentSlot
         forgingOnTopOf
@@ -1086,9 +1092,9 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                 <$> ChainDB.getIsInvalidBlock chainDB
         case isInvalid of
           Nothing ->
-            trace blockForging $ TraceDidntAdoptBlock currentSlot newBlock
+            trace $ TraceDidntAdoptBlock currentSlot newBlock
           Just reason -> do
-            trace blockForging $ TraceForgedInvalidBlock currentSlot newBlock reason
+            trace $ TraceForgedInvalidBlock currentSlot newBlock reason
             -- We just produced a block that is invalid according to the
             -- ledger in the ChainDB, while the mempool said it is valid.
             -- There is an inconsistency between the two!
@@ -1112,13 +1118,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
       -- assert this here because the ability to extract transactions from a
       -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
       -- e.g., @DualBlock@.
-      trace blockForging $ TraceAdoptedBlock currentSlot newBlock rbTxs
-
-  trace :: BlockForging m blk -> TraceForgeEvent blk -> WithEarlyExit m ()
-  trace blockForging =
-    lift
-      . traceWith (forgeTracer tracers)
-      . TraceLabelCreds (forgeLabel blockForging)
+      trace $ TraceAdoptedBlock currentSlot newBlock rbTxs
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
