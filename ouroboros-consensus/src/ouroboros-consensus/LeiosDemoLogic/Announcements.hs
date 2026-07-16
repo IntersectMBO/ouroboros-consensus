@@ -175,6 +175,14 @@ onAnnouncement tracer getEl validate process st anc = do
     lift $ traceWith tracer $ TracePeerAnnouncement elSt
     -- do the more expensive validation only after the trivial
     -- counting checks
+    --
+    -- TODO: BUG: FIXME: on a 'Just', this 'throwError' discards the
+    -- just-updated PeerState 'st''. That is correct for an invalidity
+    -- we disconnect on, but wrong for one the caller merely /skips/
+    -- (eg an opcert issue number greater than the immutable tip's
+    -- counter): the peer is still accountable, so the skipped
+    -- announcement must still be recorded in 'live' (keeping its
+    -- equivocation count). The skip path fails to do this.
     lift (validate anc) >>= mapM_ (throwError . ErrInvalid)
     lift $ process anc
     pure st'
