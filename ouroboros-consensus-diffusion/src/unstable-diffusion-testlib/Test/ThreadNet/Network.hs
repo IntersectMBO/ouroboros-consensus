@@ -1242,7 +1242,7 @@ runThreadNetwork
         (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
         (AnyMessage KeepAlive)
         (AnyMessage (PeerSharing NodeId))
-        (AnyMessage (LeiosNotify LeiosDemoTypes.LeiosPoint () LeiosDemoTypes.LeiosVote))
+        (AnyMessage (LeiosNotify LeiosDemoTypes.LeiosPoint (Header blk) LeiosDemoTypes.LeiosVote))
         (AnyMessage (LeiosFetch LeiosDemoTypes.LeiosPoint LeiosDemoTypes.LeiosEb LeiosDemoTypes.LeiosTx))
     customNodeToNodeCodecs cfg ntnVersion =
       NTN.Codecs
@@ -1903,7 +1903,7 @@ type LimitedApp' m addr blk =
     (AnyMessage (TxSubmission2 (GenTxId blk) (GenTx blk)))
     (AnyMessage KeepAlive)
     (AnyMessage (PeerSharing addr))
-    (AnyMessage (LeiosNotify LeiosDemoTypes.LeiosPoint () LeiosDemoTypes.LeiosVote))
+    (AnyMessage (LeiosNotify LeiosDemoTypes.LeiosPoint (Header blk) LeiosDemoTypes.LeiosVote))
     (AnyMessage (LeiosFetch LeiosDemoTypes.LeiosPoint LeiosDemoTypes.LeiosEb LeiosDemoTypes.LeiosTx))
     NodeToNodeInitiatorResult
     ()

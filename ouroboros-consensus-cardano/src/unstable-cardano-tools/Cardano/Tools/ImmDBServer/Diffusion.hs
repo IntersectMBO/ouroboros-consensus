@@ -100,6 +100,7 @@ run ::
   forall blk.
   ( GetPrevHash blk
   , ShowProxy blk
+  , ShowProxy (Header blk)
   , SupportedNetworkProtocolVersion blk
   , SerialiseNodeToNodeConstraints blk
   , ImmutableDB.ImmutableDbSerialiseConstraints blk
