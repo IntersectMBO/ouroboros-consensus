@@ -771,6 +771,7 @@ test-suite consensus-test
     sop-extras,
     strict-sop-core,
     tasty,
+    tasty-expected-failure,
     tasty-hunit,
     tasty-quickcheck,
     temporary,

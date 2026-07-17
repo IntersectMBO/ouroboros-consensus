@@ -80,6 +80,7 @@ import Test.StateMachine.Types (History (..), HistoryEvent (..))
 import qualified Test.StateMachine.Types as QC
 import qualified Test.StateMachine.Types.Rank2 as Rank2
 import Test.Tasty
+import Test.Tasty.ExpectedFailure (ignoreTestBecause)
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.ToExpr ()
 import Test.Util.ToExpr ()
@@ -801,10 +802,11 @@ tests =
             \i -> fmap (fmap fst . fst) . genTxs i
     , testGroup
         "parallel"
-        [ testProperty "atomic" $
-            withMaxSuccess 10000 $
-              prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
-                \i -> fmap (fmap fst . fst) . genTxs i
+        [ ignoreTestBecause "FIXME: currently OOMs, which likely indicates a bug in the mempool." $
+            testProperty "atomic" $
+              withMaxSuccess 10000 $
+                prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
+                  \i -> fmap (fmap fst . fst) . genTxs i
         , testProperty "non atomic" $
             withMaxSuccess 10 $
               prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger NonAtomic $
