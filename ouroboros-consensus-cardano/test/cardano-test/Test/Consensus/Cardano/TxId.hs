@@ -11,8 +11,11 @@
 --   * different eras, equal hashes
 --   * different eras, unequal hashes
 --
--- Only the same-era classes can disagree with the reference. The cross-era
--- branch falls back to the reference, so it agrees by construction.
+-- For Cardano, same-era comparisons use the era's own Eq/Ord and cross-era
+-- comparisons go through PackedBytes; neither is the raw-hash reference, so
+-- every class is a real check. The cross-era cells in particular check that
+-- packed-word order agrees with raw-byte order across the Byron and Shelley
+-- representations.
 --
 -- The test builds a txid in every era for each of a few hashes, then compares
 -- every id with every other and checks the result against the reference. The
@@ -24,17 +27,13 @@ import Cardano.Protocol.Crypto (StandardCrypto)
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as SBS
 import Data.SOP (Proxy (..), lengthSList)
-import Data.SOP.BasicFunctors (K (..))
-import Data.SOP.Strict (hcmap, hcollapse)
 import Data.Word (Word8)
 import Ouroboros.Consensus.Cardano.Block (CardanoEras)
 import Ouroboros.Consensus.Cardano.Node ()
-import Ouroboros.Consensus.HardFork.Combinator.Abstract (CanHardFork, proxySingle)
+import Ouroboros.Consensus.HardFork.Combinator.Abstract (CanHardFork, rawHashNS)
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras (OneEraGenTxId (..))
-import Ouroboros.Consensus.Ledger.SupportsMempool (toRawTxIdHash)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
-import Ouroboros.Consensus.TypeFamilyWrappers (unwrapGenTxId)
 import Test.Consensus.Cardano.GenTxIdBuilders (oneEraGenTxIds)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (Assertion, assertEqual, testCase)
@@ -47,13 +46,11 @@ tests =
         mapM_ check [(i, j, h1, h2) | i <- eras, j <- eras, h1 <- hashes, h2 <- hashes]
     ]
 
--- | Copy of the (deliberately unexported) raw-hash walk from
--- "Ouroboros.Consensus.HardFork.Combinator.AcrossEras". It is the reference
--- semantics for the txid @Eq@\/@Ord@ instances: the raw hash bytes, era
--- ignored. Kept in sync with that module by review.
+-- | The reference semantics for the txid @Eq@\/@Ord@ instances: the raw hash
+-- bytes, era ignored. Imported from the combinator, not copied, so the test and
+-- the non-optimizing instances share one reference.
 refRawHash :: CanHardFork xs => OneEraGenTxId xs -> ShortByteString
-refRawHash =
-  hcollapse . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId) . getOneEraGenTxId
+refRawHash = rawHashNS . getOneEraGenTxId
 
 -- | Check one era/hash combination against the reference, for @compare@ and
 -- @==@. The tuple is shown verbatim in the failure message.
