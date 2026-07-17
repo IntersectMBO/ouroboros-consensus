@@ -1,7 +1,7 @@
 
 module Foreign.HaskellTypes.Deriving where
 
-open import Meta hiding (TC; Monad-TC; MonadError-TC)
+open import Meta.Init hiding (TC; Monad-TC; MonadError-TC)
 
 open import Level using (Level; 0ℓ)
 open import Agda.Builtin.Reflection using (declareData; defineData; pragmaForeign; pragmaCompile;
@@ -49,9 +49,6 @@ Need to generate:
 private variable
   l : Level
   A B : Set l
-
--- TODO: somewhere else
-`Set = agda-sort (Sort.set (quote 0ℓ ∙))
 
 -- * Controlling the names of the generated types
 
