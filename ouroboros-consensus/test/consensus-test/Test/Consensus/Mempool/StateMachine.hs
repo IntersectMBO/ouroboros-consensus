@@ -80,7 +80,6 @@ import Test.StateMachine.Types (History (..), HistoryEvent (..))
 import qualified Test.StateMachine.Types as QC
 import qualified Test.StateMachine.Types.Rank2 as Rank2
 import Test.Tasty
-import Test.Tasty.ExpectedFailure (ignoreTestBecause)
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.ToExpr ()
 import Test.Util.ToExpr ()
@@ -802,7 +801,9 @@ tests =
             \i -> fmap (fmap fst . fst) . genTxs i
     , testGroup
         "parallel"
-        [ ignoreTestBecause "FIXME: currently OOMs, which likely indicates a bug in the mempool." $
+        [ -- Restring the length of the command list for QSM parallel testing.
+          -- More commands require exponentially more memory to explore.
+          localOption (QuickCheckMaxSize 40) $
             testProperty "atomic" $
               withMaxSuccess 10000 $
                 prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
