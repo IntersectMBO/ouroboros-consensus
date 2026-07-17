@@ -32,7 +32,13 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
-import LeiosUtils.CallTrace (CallCtx, CallName, CallTrace, SomeJsonCallTrace (SomeJsonCallTrace))
+import LeiosUtils.CallTrace
+  ( CallCtx
+  , CallName
+  , CallTrace
+  , SomeJsonCallTrace (SomeJsonCallTrace)
+  )
+import qualified LeiosUtils.CallTrace as CallTrace
 import LeiosVoteState (LeiosVoteState (..))
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
@@ -195,21 +201,24 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
         traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
 
         (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot, mayLeiosCertAndAnnouncement) <-
-          forgeTrace'Via
+          forgeTraceVia
             (const ())
             "partition-mempool"
             currentSlot
-            $ lift
-            $ partitionMempool
-              leiosConn
-              leiosVoteState
-              leiosTracer
-              cfg
-              mempool
-              currentSlot
-              tickedLedgerState
-              unticked
-              forker
+            $ \pmCCtx ->
+              lift $
+                partitionMempool
+                  leiosConn
+                  leiosVoteState
+                  leiosTracer
+                  ctrace
+                  pmCCtx
+                  cfg
+                  mempool
+                  currentSlot
+                  tickedLedgerState
+                  unticked
+                  forker
 
         pure
           ( Block.ForgeBlockArgs
@@ -560,6 +569,7 @@ getTickedChainDepState cfg currentSlot unticked ledgerView =
   -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
   -- only need the ticked 'ChainDepState' to check the whether we're a leader.
   -- This is much cheaper than ticking the entire 'ExtLedgerState'.
+  -- TODO(bladyjoker): Force this to evaluate here to get a better understanding of its cost
   return $
     tickChainDepState
       (configConsensus cfg)
@@ -661,6 +671,10 @@ partitionMempool ::
   LeiosDbConnection m ->
   LeiosVoteState m ->
   Tracer m TraceLeiosKernel ->
+  -- | Same call-tracing machinery as 'forge's own @ctrace@: traces onto the
+  -- 'TraceForgeEvent' tracer, already labelled with the forger's creds.
+  (forall a r. (Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace a (Maybe r) -> m ()) ->
+  CallCtx m ->
   TopLevelConfig blk ->
   Mempool m blk ->
   SlotNo ->
@@ -674,17 +688,28 @@ partitionMempool ::
     , MempoolSnapshot blk
     , Maybe (LeiosCert, Leios.EbHash)
     )
-partitionMempool leiosConn leiosVoteState leiosTracer cfg mempool currentSlot tickedLedgerState unticked forker = do
+partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mempool currentSlot tickedLedgerState unticked forker = do
   let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
+
+      pmTraceVia ::
+        (Aeson.ToJSON a, Aeson.ToJSON r') =>
+        (r -> r') -> CallName -> a -> (CallCtx m -> m r) -> m r
+      pmTraceVia f = CallTrace.callTraceSameThreadVia (Just . f) pmCtrace pmCallCtx
+
+      pmTrace'Via ::
+        (Aeson.ToJSON a, Aeson.ToJSON r') =>
+        (r -> r') -> CallName -> a -> m r -> m r
+      pmTrace'Via f cn arg act = pmTraceVia f cn arg (\_ -> act)
 
   -- Decide whether this block certifies a previously-announced EB
   mayLeiosCertAndAnnouncement <-
-    decideLeiosCertify @blk
-      leiosConn
-      leiosVoteState
-      leiosTracer
-      currentSlot
-      (headerState unticked)
+    pmTrace'Via (fmap (Leios.prettyEbHash . snd)) "decide-leios-certifiy" currentSlot $
+      decideLeiosCertify @blk
+        leiosConn
+        leiosVoteState
+        leiosTracer
+        currentSlot
+        (headerState unticked)
 
   let rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
       ebCap = fromMaybe Data.Measure.zero $ ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
@@ -693,7 +718,10 @@ partitionMempool leiosConn leiosVoteState leiosTracer cfg mempool currentSlot ti
       Nothing -> do
         -- We don't have a Leios certificate: take transactions for an RB and
         -- an EB to be announced.
-        snap <- getSnapshotFor mempool currentSlot tickedLedgerState readTables
+        snap <-
+          pmTrace'Via (const ()) "mempool-get-snapshot-for" currentSlot $
+            getSnapshotFor mempool currentSlot tickedLedgerState readTables
+        -- TODO(bladyjoker): Force this to evaluate and instrument as "mempool-snapshot-take"
         let (rbTxs', rbTxsSize') = snapshotTake snap rbCap
             ebTxs' =
               let (allTxs, _) = snapshotTake snap (Data.Measure.plus rbCap ebCap)
@@ -705,13 +733,14 @@ partitionMempool leiosConn leiosVoteState leiosTracer cfg mempool currentSlot ti
 
         -- Apply the EB's transactions onto the ledger state
         res <-
-          resolveAndApplyLeiosClosure
-            leiosConn
-            (configLedger cfg)
-            announcedPoint
-            readTables
-            emptyLedgerTables
-            (ledgerState unticked)
+          pmTrace'Via (const ()) "resolve-and-apply-leios-closure" (Leios.prettyEbHash announcedPoint) $
+            resolveAndApplyLeiosClosure
+              leiosConn
+              (configLedger cfg)
+              announcedPoint
+              readTables
+              emptyLedgerTables
+              (ledgerState unticked)
         case res of
           Left err ->
             -- Should not happen: each closure tx was validated
@@ -722,6 +751,7 @@ partitionMempool leiosConn leiosVoteState leiosTracer cfg mempool currentSlot ti
             -- parent) with the tick diff (relative to the
             -- state with the EB closure applied), so the mempool snapshot is revalidated
             -- against parent + closure + tick.
+            -- TODO(bladyjoker): Force this to evaluate and instrument as "tick-ledger-state-after-eb"
             let tickedLsAfterEB =
                   lcaClosureDiff
                     `prependDiffs` applyChainTick
@@ -730,7 +760,8 @@ partitionMempool leiosConn leiosVoteState leiosTracer cfg mempool currentSlot ti
                       currentSlot
                       (forgetLedgerTables lcaStateAfterEB)
             snap <-
-              getSnapshotForNoCache mempool currentSlot tickedLsAfterEB readTables
+              pmTrace'Via (const ()) "mempool-get-snapshot-for-no-cache" currentSlot $
+                getSnapshotForNoCache mempool currentSlot tickedLsAfterEB readTables
             let ebTxs' = fst (snapshotTake snap ebCap)
             pure ([], ebTxs', Data.Measure.zero, snap)
 
