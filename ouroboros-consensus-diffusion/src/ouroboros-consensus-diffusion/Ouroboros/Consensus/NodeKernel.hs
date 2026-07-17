@@ -479,14 +479,15 @@ initNodeKernel
             stillLivePeers <- LazySTM.readTVarIO getLeiosPeersVars
             filteredOutstanding <-
               Leios.filterMissingWork leiosConn outstanding
+            -- FIXME(bladyjoker): Capping these 2 traces because they grow in tens of MBs. Let's make a separate event for them and use Cardano config to silence/voice them.
             traceWith leiosTr $
               MkTraceLeiosKernel $
                 "leiosFetchLogic: outstanding "
-                  <> Leios.prettyLeiosOutstanding filteredOutstanding
+                  <> take 1000 (Leios.prettyLeiosOutstanding filteredOutstanding)
             traceWith leiosTr $
               MkTraceLeiosKernel $
                 "leiosFetchLogic: offerings "
-                  <> Leios.prettyOfferings offerings
+                  <> take 1000 (Leios.prettyOfferings offerings)
             let (!outstanding', decisions) =
                   Leios.leiosFetchLogicIteration
                     Leios.demoLeiosFetchStaticEnv
