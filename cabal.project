@@ -56,6 +56,15 @@ source-repository-package
     cardano-diffusion
     network-mux
 
+-- Points to nfrisby-antipipelining1 tag
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/typed-protocols
+  tag: 0ae7f499c54944a33aed9c55a38a092461be43ca
+  --sha256: sha256-ydJALGzd6FzJYE4zKCY6X5OKIcOZjcZDmuVgMsAswWA=
+  subdir:
+    typed-protocols
+
 -- Points to ouroboros-ledger/leios-prototype
 source-repository-package
   type: git
