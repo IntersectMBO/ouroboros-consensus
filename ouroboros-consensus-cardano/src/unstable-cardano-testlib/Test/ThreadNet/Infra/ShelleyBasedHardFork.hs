@@ -56,6 +56,7 @@ import Codec.CBOR.Encoding
 import Control.Monad.Except (runExcept)
 import qualified Control.Tracer as Tracer
 import Data.Coerce
+import Data.Function (on)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.Proxy
@@ -311,6 +312,11 @@ instance
   hardForkInjTxMeasure = \case
     (Z (WrapTxMeasure x)) -> translateTxMeasure x
     S (Z (WrapTxMeasure x)) -> x
+
+  -- Test-only hard fork: compare txids by their raw hash. No allocation-free
+  -- path here (that lives in the Cardano instance); the oracle is enough.
+  hardForkEqGenTxId = (==) `on` rawHashNS
+  hardForkCompareGenTxId = compare `on` rawHashNS
 
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
