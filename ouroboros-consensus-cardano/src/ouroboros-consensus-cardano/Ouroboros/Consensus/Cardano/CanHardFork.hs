@@ -30,6 +30,9 @@ module Ouroboros.Consensus.Cardano.CanHardFork
   , getDijkstraTranslationContext
   ) where
 
+import Cardano.Crypto (abstractHashToShort)
+import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Crypto.PackedBytes (PackedBytes, packShortByteString)
 import Cardano.Ledger.Allegra.Translation
   ( shelleyToAllegraAVVMsToDelete
   )
@@ -44,11 +47,13 @@ import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import Control.Monad.Except (runExcept, throwError)
+import Data.ByteString.Short (ShortByteString)
 import Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy
 import Data.SOP.BasicFunctors
+import Data.SOP.Constraint (All)
 import Data.SOP.Functors (Flip (..))
 import Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import qualified Data.SOP.Strict as SOP
@@ -71,6 +76,7 @@ import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32
+  , GenTxId
   , IgnoringOverflow
   , TxMeasure
   )
@@ -244,6 +250,77 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     fromAlonzo x = fromConway $ ConwayMeasure x mempty
     fromConway x = fromDijkstra $ DijkstraMeasure x
     fromDijkstra x = x
+
+  hardForkEqGenTxId = go
+   where
+    go ::
+      (All SingleEraBlock ys, All ToPackedTxIdHash ys) =>
+      SOP.NS WrapGenTxId ys -> SOP.NS WrapGenTxId ys -> Bool
+    go (SOP.Z x) (SOP.Z y) = x == y -- same era: the era's own Eq, no alloc
+    go (SOP.S x) (SOP.S y) = go x y -- same era, deeper: descend the sum
+    go l r = eqPackedNS l r -- different eras: via PackedBytes
+  hardForkCompareGenTxId = go
+   where
+    go ::
+      (All SingleEraBlock ys, All ToPackedTxIdHash ys) =>
+      SOP.NS WrapGenTxId ys -> SOP.NS WrapGenTxId ys -> Ordering
+    go (SOP.Z x) (SOP.Z y) = compare x y
+    go (SOP.S x) (SOP.S y) = go x y
+    go l r = comparePackedNS l r
+
+{-------------------------------------------------------------------------------
+  Allocation-free cross-era txid comparison
+
+  The cross-era leaf of 'hardForkEqGenTxId'\/'hardForkCompareGenTxId' compares
+  two ids that sit in different eras. It goes through 'PackedBytes', the txid
+  hash as four machine words: comparing two 'PackedBytes' is a register compare,
+  no allocation. Shelley-based eras hand back a stored 'PackedBytes'; only Byron
+  builds one.
+-------------------------------------------------------------------------------}
+
+-- | Every Cardano era's txid hash is Blake2b-256.
+type TxIdHashSize = 32
+
+-- | An era's txid hash as fixed-size 'PackedBytes', the shared representation
+-- the cross-era txid comparison runs on. A future era with a different txid
+-- hash size fails to compile here rather than miscomparing.
+class ToPackedTxIdHash blk where
+  toPackedTxIdHash :: GenTxId blk -> PackedBytes TxIdHashSize
+
+instance ToPackedTxIdHash ByronBlock where
+  toPackedTxIdHash (ByronTxId i) = packByron (abstractHashToShort i)
+  toPackedTxIdHash (ByronDlgId i) = packByron (abstractHashToShort i)
+  toPackedTxIdHash (ByronUpdateProposalId i) = packByron (abstractHashToShort i)
+  toPackedTxIdHash (ByronUpdateVoteId i) = packByron (abstractHashToShort i)
+
+instance ShelleyBasedEra era => ToPackedTxIdHash (ShelleyBlock proto era) where
+  toPackedTxIdHash (ShelleyTxId i) =
+    Hash.hashToPackedBytes . SL.extractHash . SL.unTxId $ i
+
+-- | Pack a Byron txid hash. Byron ids are Blake2b-256 (32 bytes), so this never
+-- fails; the 'error' branch is unreachable.
+packByron :: ShortByteString -> PackedBytes TxIdHashSize
+packByron sbs = case packShortByteString sbs of
+  Just pb -> pb
+  -- TODO: review: are we ok with this case?
+  Nothing -> error "toPackedTxIdHash: Byron txid hash was not 32 bytes"
+
+comparePackedNS ::
+  All ToPackedTxIdHash ys =>
+  SOP.NS WrapGenTxId ys -> SOP.NS WrapGenTxId ys -> Ordering
+comparePackedNS l r = compare (packedLeaf l) (packedLeaf r)
+
+eqPackedNS ::
+  All ToPackedTxIdHash ys =>
+  SOP.NS WrapGenTxId ys -> SOP.NS WrapGenTxId ys -> Bool
+eqPackedNS l r = packedLeaf l == packedLeaf r
+
+-- | The txid hash of whichever era the id sits in, as 'PackedBytes'. Direct
+-- recursion down the sum, building no intermediate 'NS'.
+packedLeaf ::
+  All ToPackedTxIdHash ys => SOP.NS WrapGenTxId ys -> PackedBytes TxIdHashSize
+packedLeaf (SOP.Z x) = toPackedTxIdHash (unwrapGenTxId x)
+packedLeaf (SOP.S y) = packedLeaf y
 
 class TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
 instance TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
