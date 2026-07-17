@@ -724,6 +724,7 @@ test-suite consensus-test
     Test.Consensus.Util.Versioned
     Test.LeiosDemoDb
     Test.LeiosDemoLogic
+    Test.LeiosDemoLogic.Announcements
     Test.LeiosDemoTypes
     Test.LeiosVoteState
 
