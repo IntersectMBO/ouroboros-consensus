@@ -50,6 +50,7 @@ data ElBimap a =
       ,
         inverseHalf :: !(Strict.Map a (NESet ElId))
       }
+  deriving (Show)
 
 emptyElBimap :: ElBimap a
 emptyElBimap = MkElBimap Map.empty Map.empty
