@@ -236,6 +236,11 @@ byronTransition partialConfig shelleyMajorVersion state =
   SingleEraBlock Byron
 -------------------------------------------------------------------------------}
 
+instance FromCBOR (GenTx ByronBlock) where
+  fromCBOR = decodeByronGenTx
+instance ToCBOR (GenTx ByronBlock) where
+  toCBOR = encodeByronGenTx
+
 instance SingleEraBlock ByronBlock where
   singleEraTransition pcfg _eraParams _eraStart ledgerState =
     case byronTriggerHardFork pcfg of
