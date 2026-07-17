@@ -318,7 +318,7 @@ prop_Mempool_TraceRemovedTxs setup =
   cfg = testLedgerCfg setup
 
   isRemoveTxsEvent :: TraceEventMempool TestBlock -> Maybe [(TestTx, TestTxError)]
-  isRemoveTxsEvent (TraceMempoolRemoveTxs txs _) = Just (map (first txForgetValidated) txs)
+  isRemoveTxsEvent (TraceMempoolRemoveTxs txs _) = Just txs
   isRemoveTxsEvent _ = Nothing
 
   expectedToBeRemoved :: LedgerState TestBlock ValuesMK -> [TestTx] -> [(TestTx, TestTxError)]

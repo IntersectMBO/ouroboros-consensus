@@ -195,7 +195,7 @@ class
       Foldable.foldl'
         ( \(accE, accV, st') a ->
             case runExcept (reapplyTx cfg slot (projectTx a) st') of
-              Left err -> (Invalidated (projectTx a) err : accE, accV, st')
+              Left err -> (Invalidated (txForgetValidated $ projectTx a) err : accE, accV, st')
               Right st'' -> (accE, a : accV, st'')
         )
         ([], [], st)
@@ -529,6 +529,6 @@ instance TxMeasurePhase1Metrics ByteSize32 where
 -- | A transaction that was previously valid. Used to clarify the types on the
 -- 'reapplyTxs' function.
 data Invalidated blk = Invalidated
-  { getInvalidated :: !(Validated (GenTx blk))
+  { getInvalidated :: !(GenTx blk)
   , getReason :: !(ApplyTxErr blk)
   }

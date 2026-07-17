@@ -53,7 +53,6 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import Codec.CBOR.Decoding
 import Codec.CBOR.Encoding
-import Control.Monad.Except (runExcept)
 import qualified Control.Tracer as Tracer
 import Data.Coerce
 import qualified Data.Map.Strict as Map
@@ -100,7 +99,6 @@ import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util (eitherToMaybe)
 import Ouroboros.Consensus.Util.IndexedMemPack
 import System.FS.API (SomeHasFS)
 import Test.ThreadNet.TxGen
