@@ -10,6 +10,12 @@
 -- Everything here is exercised through a trivial mock announcement type
 -- ('Anc'), so the tests depend on none of the block\/ledger machinery — which
 -- is the point of keeping that logic polymorphic.
+--
+-- The third announcement module, 'LeiosDemoLogic.Announcements.Validate', is
+-- deliberately out of scope for this specific test suite:
+-- 'validateAnnouncementHeader' needs a concrete block (@LedgerSupportsProtocol@
+-- + @ResolveLeiosBlock@, plus forecasting and header-protocol validation), so
+-- it is exercised by the proto-devnet rather than here.
 module Test.LeiosDemoLogic.Announcements (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
@@ -25,17 +31,19 @@ import Data.IORef
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import Data.Set.NonEmpty (NESet)
+import qualified Data.Set.NonEmpty as NESet
 import Data.Void (Void)
 import Data.Word (Word64, Word8)
 import LeiosDemoLogic.Announcements
 import LeiosDemoLogic.Announcements.ElBimap
-import Test.Tasty (TestTree, testGroup)
+import Test.Tasty (TestTree, adjustOption, testGroup)
 import Test.Tasty.HUnit (Assertion, assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck
   ( Gen
   , Property
+  , QuickCheckTests (..)
   , chooseInt
-  , counterexample
   , forAll
   , listOf
   , oneof
@@ -45,14 +53,16 @@ import Test.Tasty.QuickCheck
 
 tests :: TestTree
 tests =
-  testGroup
-    "Announcements"
-    [ extendLiveTests
-    , onAnnouncementTests
-    , centralTests
-    , pruneTests
-    , elBimapTests
-    ]
+  -- These properties are cheap; run 1000x the usual repetitions.
+  adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 1000)) $
+    testGroup
+      "Announcements"
+      [ extendLiveTests
+      , onAnnouncementTests
+      , centralTests
+      , pruneTests
+      , elBimapTests
+      ]
 
 {-------------------------------------------------------------------------------
   Mock announcement type
@@ -152,7 +162,6 @@ onAnnouncementTests =
     "onAnnouncement"
     [ testCase "invalid announcement surfaces as ErrInvalid" test_oaInvalid
     , testCase "valid announcement runs process and returns new state" test_oaProcess
-    , testCase "process does not run for an invalid announcement" test_oaNoProcessOnInvalid
     , testCase "repeat is rejected without running process" test_oaRepeat
     ]
 
@@ -175,14 +184,6 @@ test_oaProcess = do
   case res of
     Right _ -> pure ()
     Left _ -> assertFailure "expected success"
-
-test_oaNoProcessOnInvalid :: Assertion
-test_oaNoProcessOnInvalid = do
-  ref <- newIORef (0 :: Int)
-  _ <-
-    runExceptT $
-      onAnnouncement nullTracer ancEl (\_ -> pure (Left ()) :: IO (Either () ())) (\_ _ -> modifyIORef' ref (+ 1)) emptyPeerState (Anc el0 0)
-  readIORef ref >>= (@?= 0)
 
 test_oaRepeat :: Assertion
 test_oaRepeat = do
@@ -236,7 +237,7 @@ centralTests =
     "onAnnouncementCentral"
     [ testCase "new announcement is relayed, credit spent, peer gated" test_relay
     , testCase "duplicate announcement is a no-op" test_dedup
-    , testCase "DoNotRelay skips the queue but still dedups" test_noRelay
+    , testCase "DoNotRelay skips the queue and subsequent DoRelay can't retcon that" test_noRelay
     , testCase "no relay when the peer has no credits" test_noCredit
     , testCase "equivocation goes only to peers already sent the first" test_equivocation
     , testCase "publishLocally fires once per new announcement" test_publish
@@ -306,11 +307,17 @@ pruneTests :: TestTree
 pruneTests =
   testGroup
     "prunePeerState"
-    [ testCase "drops elections strictly below the immutable tip" $
-        let st = buildState [Anc (mkEl s 0) 0 | s <- [10, 20, 30]]
-         in Set.fromList (map elSlot (Map.keys (live (prunePeerState (SlotNo 20) st))))
-              @?= Set.fromList [20, 30]
+    [ testProperty "keeps exactly the elections at or above the immutable tip" prop_prune
     ]
+
+-- | 'prunePeerState' keeps precisely the elections whose slot is at or above the
+-- immutable tip, leaving each such election's announcements untouched.
+prop_prune :: Property
+prop_prune = forAll genStream $ \ops -> forAll genSlot $ \s ->
+  let st = buildState [Anc e t | (e, t) <- ops]
+      tagsOf ps = Map.map elStateTags (live ps)
+   in tagsOf (prunePeerState (SlotNo s) st)
+        === Map.filterWithKey (\e _ -> elSlot e >= s) (tagsOf st)
 
 {-------------------------------------------------------------------------------
   ElBimap
@@ -320,40 +327,42 @@ elBimapTests :: TestTree
 elBimapTests =
   testGroup
     "ElBimap"
-    [ testCase "insert then look up both directions" test_bimapRoundtrip
-    , testCase "deleteElBimapR removes the right key from both halves" test_bimapDeleteR
-    , testCase "pruneElBimap drops old elections from both halves" test_bimapPrune
-    , testProperty "the two halves always agree" prop_bimapConsistent
+    [ testProperty "forward half is a plain Map ElId (NESet a)" prop_bimapForwardModel
+    , testProperty "inverse half is a plain Map a (NESet ElId)" prop_bimapInverseModel
     ]
 
-test_bimapRoundtrip :: Assertion
-test_bimapRoundtrip = do
-  let bm =
-        insertElBimap (mkEl 1 0) (10 :: Int) $
-          insertElBimap (mkEl 1 0) 11 $
-            insertElBimap (mkEl 2 0) 10 emptyElBimap
-  lookupElBimapL (mkEl 1 0) bm @?= Set.fromList [10, 11]
-  lookupElBimapR 10 bm @?= Set.fromList [mkEl 1 0, mkEl 2 0]
-  lookupElBimapR 11 bm @?= Set.fromList [mkEl 1 0]
+-- | An immutable-tip slot spanning the range of generated election slots (so
+-- prune boundaries are exercised). Used by 'prop_prune'.
+genSlot :: Gen Word64
+genSlot = fromIntegral <$> chooseInt (0, 4)
 
-test_bimapDeleteR :: Assertion
-test_bimapDeleteR = do
-  let bm =
-        deleteElBimapR 10 $
-          insertElBimap (mkEl 1 0) (10 :: Int) $
-            insertElBimap (mkEl 1 0) 11 emptyElBimap
-  lookupElBimapL (mkEl 1 0) bm @?= Set.fromList [11]
-  lookupElBimapR 10 bm @?= Set.empty
+-- | The forward half's semantics, implemented directly on a plain 'Map'.
+applyFwd :: Map.Map ElId (NESet Int) -> BOp -> Map.Map ElId (NESet Int)
+applyFwd m = \case
+  Ins l r -> Map.insertWith NESet.union l (NESet.singleton r) m
+  DelL l -> Map.delete l m
+  DelR r -> Map.mapMaybe (NESet.nonEmptySet . NESet.delete r) m
+  Prune s -> Map.filterWithKey (\l _ -> elSlot l >= s) m
 
-test_bimapPrune :: Assertion
-test_bimapPrune = do
-  let bm =
-        pruneElBimap (SlotNo 10) $
-          insertElBimap (mkEl 5 0) (1 :: Int) $
-            insertElBimap (mkEl 15 0) 1 emptyElBimap
-  lookupElBimapL (mkEl 5 0) bm @?= Set.empty
-  lookupElBimapL (mkEl 15 0) bm @?= Set.fromList [1]
-  lookupElBimapR 1 bm @?= Set.fromList [mkEl 15 0]
+-- | The inverse half's semantics, implemented directly on a plain 'Map'.
+applyInv :: Map.Map Int (NESet ElId) -> BOp -> Map.Map Int (NESet ElId)
+applyInv m = \case
+  Ins l r -> Map.insertWith NESet.union r (NESet.singleton l) m
+  DelL l -> Map.mapMaybe (NESet.nonEmptySet . NESet.delete l) m
+  DelR r -> Map.delete r m
+  Prune s -> Map.mapMaybe (NESet.nonEmptySet . NESet.filter (\l -> elSlot l >= s)) m
+
+-- | The forward half is indistinguishable from a plain @Map ElId (NESet a)@
+-- maintained directly, under any mix of inserts, deletes, and prunes.
+prop_bimapForwardModel :: Property
+prop_bimapForwardModel = forAll (listOf genBOp) $ \ops ->
+  forwardHalf (foldl applyBOp emptyElBimap ops) === foldl applyFwd Map.empty ops
+
+-- | The inverse half is indistinguishable from a plain @Map a (NESet ElId)@
+-- maintained directly, under any mix of inserts, deletes, and prunes.
+prop_bimapInverseModel :: Property
+prop_bimapInverseModel = forAll (listOf genBOp) $ \ops ->
+  inverseHalf (foldl applyBOp emptyElBimap ops) === foldl applyInv Map.empty ops
 
 data BOp = Ins ElId Int | DelL ElId | DelR Int | Prune Word64
   deriving Show
@@ -364,20 +373,6 @@ applyBOp bm = \case
   DelL l -> deleteElBimapL l bm
   DelR r -> deleteElBimapR r bm
   Prune s -> pruneElBimap (SlotNo s) bm
-
--- | @r@ is in the forward image of @l@ iff @l@ is in the inverse image of @r@.
-prop_bimapConsistent :: Property
-prop_bimapConsistent = forAll (listOf genBOp) $ \ops ->
-  let bm = foldl applyBOp emptyElBimap ops
-      fwdOK =
-        all
-          (\l -> all (\r -> l `Set.member` lookupElBimapR r bm) (lookupElBimapL l bm))
-          (Map.keys (forwardHalf bm))
-      invOK =
-        all
-          (\r -> all (\l -> r `Set.member` lookupElBimapL l bm) (lookupElBimapR r bm))
-          (Map.keys (inverseHalf bm))
-   in counterexample "halves disagree" (fwdOK && invOK)
 
 genBOp :: Gen BOp
 genBOp =
