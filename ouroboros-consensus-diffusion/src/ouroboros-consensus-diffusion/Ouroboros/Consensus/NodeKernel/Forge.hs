@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -17,6 +18,8 @@ module Ouroboros.Consensus.NodeKernel.Forge
 import Control.Monad
 import Control.Monad.Except
 import Control.Tracer
+import Data.Aeson (KeyValue ((.=)))
+import qualified Data.Aeson as Aeson
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Measure
@@ -29,6 +32,7 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosUtils.CallTrace (CallCtx, CallName, CallTrace, SomeJsonCallTrace (SomeJsonCallTrace))
 import LeiosVoteState (LeiosVoteState (..))
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
@@ -59,6 +63,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.EarlyExit
+import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.STM
@@ -79,6 +84,7 @@ forge ::
   Tracer m (TraceLabelCreds (TraceForgeEvent blk)) ->
   Tracer m (TraceLabelCreds (ForgeStateInfo blk)) ->
   Tracer m TraceLeiosKernel ->
+  CallCtx m ->
   TopLevelConfig blk ->
   ChainDB m blk ->
   Mempool m blk ->
@@ -87,16 +93,53 @@ forge ::
   LeiosDbConnection m ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer leiosTracer cfg chainDB mempool leiosVoteState blockForging leiosConn currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosConn currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
           . traceWith forgeEventTracer
           . TraceLabelCreds (forgeLabel blockForging)
 
+      -- NB: this runs directly in @m@, /not/ 'WithEarlyExit' -- it must trace
+      -- the matching 'CallEnd' unconditionally, even when the traced action
+      -- calls 'exitEarly'. See 'callTraceSameThreadEarlyExit'.
+      ctrace :: (Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace a (Maybe r) -> m ()
+      ctrace =
+        traceWith forgeEventTracer
+          . TraceLabelCreds (forgeLabel blockForging)
+          . TraceCall
+          . SomeJsonCallTrace
+
+      _forgeTrace ::
+        (Aeson.ToJSON a, Aeson.ToJSON r) =>
+        CallName -> a -> (CallCtx m -> WithEarlyExit m r) -> WithEarlyExit m r
+      _forgeTrace = forgeTraceVia id
+
+      -- \| Like 'forgeTrace', but the value recorded in the trace is @f r@
+      -- rather than @r@ itself -- for results (e.g. 'LedgerView') that don't
+      -- have (or shouldn't be given) a real 'Aeson.ToJSON' instance, but a
+      -- small projection of them does. The returned value is still the real,
+      -- un-projected @r@.
+      forgeTraceVia ::
+        (Aeson.ToJSON a, Aeson.ToJSON r') =>
+        (r -> r') -> CallName -> a -> (CallCtx m -> WithEarlyExit m r) -> WithEarlyExit m r
+      forgeTraceVia f = EarlyExit.callTraceSameThreadVia f ctrace forgeCCtx
+
+      forgeTrace' ::
+        (Aeson.ToJSON a, Aeson.ToJSON r) =>
+        CallName -> a -> WithEarlyExit m r -> WithEarlyExit m r
+      forgeTrace' = forgeTrace'Via id
+
+      forgeTrace'Via ::
+        (Aeson.ToJSON a, Aeson.ToJSON r') =>
+        (r -> r') -> CallName -> a -> WithEarlyExit m r -> WithEarlyExit m r
+      forgeTrace'Via f cn arg act = forgeTraceVia f cn arg (\_ -> act)
+
   trace $ TraceStartLeadershipCheck currentSlot
 
-  BlockContext{bcBlockNo, bcPrevPoint} <- getBlockContext trace chainDB currentSlot
+  BlockContext{bcBlockNo, bcPrevPoint} <-
+    forgeTrace' "get-block-context" currentSlot $ getBlockContext trace chainDB currentSlot
+
   trace $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
 
   -- Get forker corresponding to bcPrevPoint
@@ -115,26 +158,49 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer cfg chainDB mempool leio
 
         trace $ TraceLedgerState currentSlot bcPrevPoint
 
-        ledgerView <- getLedgerView trace cfg currentSlot unticked
+        ledgerView <-
+          forgeTrace'Via
+            (const ())
+            "get-ledger-view"
+            currentSlot
+            (getLedgerView trace cfg currentSlot unticked)
 
-        let tickedChainDepState = getTickedChainDepState cfg currentSlot unticked ledgerView
+        tickedChainDepState <-
+          forgeTrace'Via
+            (const ())
+            "get-ticked-chain-dep-state"
+            currentSlot
+            $ getTickedChainDepState cfg currentSlot unticked ledgerView
 
         proof <-
-          getIsLeaderProof
-            trace
-            forgeStateInfoTracer
-            blockForging
-            cfg
+          forgeTrace'Via
+            (const ())
+            "get-is-leader-proof"
             currentSlot
-            tickedChainDepState
+            $ getIsLeaderProof
+              trace
+              forgeStateInfoTracer
+              blockForging
+              cfg
+              currentSlot
+              tickedChainDepState
 
-        tickedLedgerState <- getTickedLedgerState trace cfg currentSlot bcPrevPoint unticked
+        tickedLedgerState <-
+          forgeTrace'Via
+            (const ())
+            "get-ticked-ledger-state"
+            currentSlot
+            $ getTickedLedgerState trace cfg currentSlot bcPrevPoint unticked
 
         traceForgingMempoolSnapshot trace mempool currentSlot bcPrevPoint
 
         (rbTxs, ebTxs, rbTxsSize, mempoolSnapshot, mayLeiosCertAndAnnouncement) <-
-          lift $
-            partitionMempool
+          forgeTrace'Via
+            (const ())
+            "partition-mempool"
+            currentSlot
+            $ lift
+            $ partitionMempool
               leiosConn
               leiosVoteState
               leiosTracer
@@ -166,7 +232,13 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer cfg chainDB mempool leio
           )
 
   -- Actually produce the block
-  newBlock <- lift $ Block.forgeBlock blockForging forgeBlockArgs
+  newBlock <-
+    forgeTrace'Via
+      (const ())
+      "forge-block"
+      currentSlot
+      $ lift
+      $ Block.forgeBlock blockForging forgeBlockArgs
 
   trace $
     TraceForgedBlock
@@ -176,14 +248,18 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer cfg chainDB mempool leio
       snapSize
       rbTxsSize
 
-  addBlockToChainDB
-    trace
-    chainDB
-    mempool
+  forgeTrace'Via
+    (const ())
+    "add-block-to-chaindb"
     currentSlot
-    (Block.fbRbTxs forgeBlockArgs)
-    (Block.fbEbTxs forgeBlockArgs)
-    newBlock
+    $ addBlockToChainDB
+      trace
+      chainDB
+      mempool
+      currentSlot
+      (Block.fbRbTxs forgeBlockArgs)
+      (Block.fbEbTxs forgeBlockArgs)
+      newBlock
 
 -- | Decide whether the block we're about to forge should certify a
 -- previously-announced EB on this chain, returning the assembled
@@ -264,6 +340,17 @@ data BlockContext blk = BlockContext
   -- Note that a block/header stores the hash of its predecessor but not the
   -- slot.
   }
+
+-- | There's no generic 'Aeson.ToJSON' for 'BlockNo'/'Point' 'blk', and adding
+-- one would ripple through 'RunNode'. Piggyback on the 'Show' instances that
+-- 'LedgerSupportsProtocol blk' already gives us for free (see the 'Show
+-- (TraceForgeEvent blk)' deriving below, which relies on the same thing).
+instance LedgerSupportsProtocol blk => Aeson.ToJSON (BlockContext blk) where
+  toJSON BlockContext{bcBlockNo, bcPrevPoint} =
+    Aeson.object
+      [ "blockNo" .= show bcBlockNo
+      , "prevPoint" .= show bcPrevPoint
+      ]
 
 -- | Figure out which block to connect to
 --
@@ -463,21 +550,22 @@ getLedgerView trace cfg currentSlot unticked = do
   pure ledgerView
 
 getTickedChainDepState ::
-  RunNode blk =>
+  (IOLike m, RunNode blk) =>
   TopLevelConfig blk ->
   SlotNo ->
   ExtLedgerState blk EmptyMK ->
   LedgerView (BlockProtocol blk) ->
-  Ticked (ChainDepState (BlockProtocol blk))
+  WithEarlyExit m (Ticked (ChainDepState (BlockProtocol blk)))
 getTickedChainDepState cfg currentSlot unticked ledgerView =
   -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
   -- only need the ticked 'ChainDepState' to check the whether we're a leader.
   -- This is much cheaper than ticking the entire 'ExtLedgerState'.
-  tickChainDepState
-    (configConsensus cfg)
-    ledgerView
-    currentSlot
-    (headerStateChainDep (headerState unticked))
+  return $
+    tickChainDepState
+      (configConsensus cfg)
+      ledgerView
+      currentSlot
+      (headerStateChainDep (headerState unticked))
 
 -- | Check whether we are leader for 'currentSlot', given the ticked
 -- 'ChainDepState', and obtain the leadership proof if so.

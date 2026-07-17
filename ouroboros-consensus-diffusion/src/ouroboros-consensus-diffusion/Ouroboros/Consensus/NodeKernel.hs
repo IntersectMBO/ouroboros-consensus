@@ -69,6 +69,11 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosUtils.CallTrace
+  ( SomeJsonCallTrace (SomeJsonCallTrace)
+  , callTraceSameThread
+  , rootCallCtx
+  )
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
 import LeiosVoting (getLeiosCommittee, runLeiosVoting)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -115,7 +120,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
-import Ouroboros.Consensus.Util.EarlyExit
+import Ouroboros.Consensus.Util.EarlyExit hiding (callTraceSameThread)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.LeakyBucket
   ( atomicallyWithMonotonicTime
@@ -709,20 +714,32 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     label
     allocateForging
     finalizeForging
-    ( \(bf, leiosConn) -> knownSlotWatcher btime $
-        \currentSlot ->
-          withEarlyExit_ $
-            forge
-              (forgeTracer tracers)
-              (forgeStateInfoTracer tracers)
-              (leiosKernelTracer tracers)
-              cfg
-              chainDB
-              mempool
-              leiosVoteState
-              bf
-              leiosConn
+    ( \(bf, leiosConn, rootCCtx) -> do
+        knownSlotWatcher btime $
+          \currentSlot ->
+            callTraceSameThread
+              ( traceWith (forgeTracer tracers)
+                  . TraceLabelCreds (forgeLabel bf)
+                  . TraceCall
+                  . SomeJsonCallTrace
+              )
+              rootCCtx
+              "forge"
               currentSlot
+              $ \forgeCCtx ->
+                withEarlyExit_ $
+                  forge
+                    (forgeTracer tracers)
+                    (forgeStateInfoTracer tracers)
+                    (leiosKernelTracer tracers)
+                    forgeCCtx
+                    cfg
+                    chainDB
+                    mempool
+                    leiosVoteState
+                    bf
+                    leiosConn
+                    currentSlot
     )
  where
   label :: String
@@ -734,9 +751,10 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
     leiosConn <- LeiosDb.open leiosDB
-    pure (bf, leiosConn)
+    rootCCtx <- rootCallCtx "Forge"
+    pure (bf, leiosConn, rootCCtx)
 
-  finalizeForging (bf, leiosConn) = do
+  finalizeForging (bf, leiosConn, _) = do
     LeiosDb.close leiosConn
     finalize bf
 

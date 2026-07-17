@@ -1124,6 +1124,7 @@ library diffusion
     Ouroboros.Consensus.Node.Run,
 
   build-depends:
+    aeson,
     base,
     bytestring,
     cardano-base,
