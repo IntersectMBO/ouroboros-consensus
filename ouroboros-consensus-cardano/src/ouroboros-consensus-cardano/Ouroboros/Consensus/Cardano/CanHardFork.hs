@@ -32,7 +32,8 @@ module Ouroboros.Consensus.Cardano.CanHardFork
 
 import Cardano.Crypto (abstractHashToShort)
 import qualified Cardano.Crypto.Hash as Hash
-import Cardano.Crypto.PackedBytes (PackedBytes, packShortByteString)
+import Cardano.Crypto.Hash.Class (PackedBytes (PackedBytes32))
+import Cardano.Crypto.PackedBytes (packShortByteString)
 import Cardano.Ledger.Allegra.Translation
   ( shelleyToAllegraAVVMsToDelete
   )
@@ -251,22 +252,13 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     fromConway x = fromDijkstra $ DijkstraMeasure x
     fromDijkstra x = x
 
-  hardForkEqGenTxId = go
-   where
-    go ::
-      (All SingleEraBlock ys, All ToPackedTxIdHash ys) =>
-      SOP.NS WrapGenTxId ys -> SOP.NS WrapGenTxId ys -> Bool
-    go (SOP.Z x) (SOP.Z y) = x == y -- same era: the era's own Eq, no alloc
-    go (SOP.S x) (SOP.S y) = go x y -- same era, deeper: descend the sum
-    go l r = eqPackedNS l r -- different eras: via PackedBytes
-  hardForkCompareGenTxId = go
-   where
-    go ::
-      (All SingleEraBlock ys, All ToPackedTxIdHash ys) =>
-      SOP.NS WrapGenTxId ys -> SOP.NS WrapGenTxId ys -> Ordering
-    go (SOP.Z x) (SOP.Z y) = compare x y
-    go (SOP.S x) (SOP.S y) = go x y
-    go l r = comparePackedNS l r
+  -- Both ids are compared by their txid hash, ignoring the era (the documented
+  -- 'OneEraGenTxId' ordering). 'packedLeaf' extracts each hash with an
+  -- allocation-free descent; 'comparePacked'\/'eqPacked' compares in registers.
+  -- There is no lockstep era-walk, so no per-level dictionaries are built: a
+  -- single-dictionary descent is strict in its dictionary and thunks nothing.
+  hardForkEqGenTxId l r = eqPacked (packedLeaf l) (packedLeaf r)
+  hardForkCompareGenTxId l r = comparePacked (packedLeaf l) (packedLeaf r)
 
 {-------------------------------------------------------------------------------
   Allocation-free cross-era txid comparison
@@ -305,22 +297,31 @@ packByron sbs = case packShortByteString sbs of
   -- TODO: review: are we ok with this case?
   Nothing -> error "toPackedTxIdHash: Byron txid hash was not 32 bytes"
 
-comparePackedNS ::
-  All ToPackedTxIdHash ys =>
-  SOP.NS WrapGenTxId ys -> SOP.NS WrapGenTxId ys -> Ordering
-comparePackedNS l r = compare (packedLeaf l) (packedLeaf r)
-
-eqPackedNS ::
-  All ToPackedTxIdHash ys =>
-  SOP.NS WrapGenTxId ys -> SOP.NS WrapGenTxId ys -> Bool
-eqPackedNS l r = packedLeaf l == packedLeaf r
-
 -- | The txid hash of whichever era the id sits in, as 'PackedBytes'. Direct
--- recursion down the sum, building no intermediate 'NS'.
+-- recursion down the sum, building no intermediate 'NS'. Uses its single
+-- dictionary on every branch, so it is strict in it and allocates no per-level
+-- thunk.
 packedLeaf ::
   All ToPackedTxIdHash ys => SOP.NS WrapGenTxId ys -> PackedBytes TxIdHashSize
 packedLeaf (SOP.Z x) = toPackedTxIdHash (unwrapGenTxId x)
 packedLeaf (SOP.S y) = packedLeaf y
+
+-- | Order two txid hashes by their bytes, big-endian, comparing the four words
+-- in registers. The 'Ord' 'PackedBytes' instance instead unpacks each operand
+-- into a fresh 'ByteArray#'; this does not.
+--
+-- 'PackedBytes32' holds each word as the big-endian value of its eight bytes, so
+-- comparing the words directly matches raw-hash byte order. The property test
+-- checks this against the oracle across word boundaries.
+comparePacked :: PackedBytes TxIdHashSize -> PackedBytes TxIdHashSize -> Ordering
+comparePacked (PackedBytes32 a0 a1 a2 a3) (PackedBytes32 b0 b1 b2 b3) =
+  compare a0 b0 <> compare a1 b1 <> compare a2 b2 <> compare a3 b3
+comparePacked l r = compare l r -- ByteArray-backed form; unreachable for 32-byte hashes
+
+eqPacked :: PackedBytes TxIdHashSize -> PackedBytes TxIdHashSize -> Bool
+eqPacked (PackedBytes32 a0 a1 a2 a3) (PackedBytes32 b0 b1 b2 b3) =
+  a0 == b0 && a1 == b1 && a2 == b2 && a3 == b3
+eqPacked l r = l == r
 
 class TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
 instance TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
