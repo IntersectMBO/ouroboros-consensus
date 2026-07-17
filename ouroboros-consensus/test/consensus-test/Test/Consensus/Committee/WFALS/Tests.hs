@@ -16,6 +16,7 @@ import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
+  , VotingCommittee
   , ensureUniqueVotesWithSameTarget
   )
 import Ouroboros.Consensus.Committee.Crypto
