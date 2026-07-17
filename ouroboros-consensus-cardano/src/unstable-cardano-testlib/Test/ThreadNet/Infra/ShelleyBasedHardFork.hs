@@ -288,36 +288,6 @@ instance
 
   hardForkChainSel = Tails.mk2 SameTiebreakerAcrossEras
 
-  hardForkInjectTxs =
-    InPairs.mk2 $
-      InPairs.RequireBoth $ \_cfg1 cfg2 ->
-        let ctxt = shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2)
-         in Pair2
-              (InjectTx (translateTx ctxt))
-              (InjectValidatedTx (translateValidatedTx ctxt))
-   where
-    translateTx ::
-      SL.TranslationContext era2 ->
-      GenTx (ShelleyBlock proto era1) ->
-      Maybe (GenTx (ShelleyBlock proto era2))
-    translateTx transCtxt =
-      fmap unComp
-        . eitherToMaybe
-        . runExcept
-        . SL.translateEra transCtxt
-        . Comp
-
-    translateValidatedTx ::
-      SL.TranslationContext era2 ->
-      WrapValidatedGenTx (ShelleyBlock proto era1) ->
-      Maybe (WrapValidatedGenTx (ShelleyBlock proto era2))
-    translateValidatedTx transCtxt =
-      fmap unComp
-        . eitherToMaybe
-        . runExcept
-        . SL.translateEra transCtxt
-        . Comp
-
   hardForkInjTxMeasurePhase1 = \case
     (Z (WrapTxMeasurePhase1 x)) -> translateTxMeasure x
     S (Z (WrapTxMeasurePhase1 x)) -> x
