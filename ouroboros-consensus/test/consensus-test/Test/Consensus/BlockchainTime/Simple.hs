@@ -53,6 +53,7 @@ import Control.ResourceRegistry
 import Control.Tracer
 import Data.Fixed
 import qualified Data.Time.Clock as Time
+import LeiosUtils.CallTrace (MonadAllocationCounter (getAllocationCounter))
 import NoThunks.Class (AllowThunk (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
@@ -386,6 +387,9 @@ newtype OverrideDelay m a = OverrideDelay
     , MonadFork
     , MonadST
     )
+
+instance MonadAllocationCounter m => MonadAllocationCounter (OverrideDelay m) where
+  getAllocationCounter = OverrideDelay $ lift getAllocationCounter
 
 instance PrimMonad m => PrimMonad (OverrideDelay m) where
   type PrimState (OverrideDelay m) = PrimState m

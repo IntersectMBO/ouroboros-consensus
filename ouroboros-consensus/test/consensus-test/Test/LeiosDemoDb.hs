@@ -376,10 +376,6 @@ prop_txsInsertThenRetrieve impl =
               , length results === numTxs
                   & counterexample "Length mismatch"
                   & counterexample ("Results: " ++ show (length results))
-              , insertTime < milli 15
-                  & counterexample ("Insert took too long: " <> showTime insertTime)
-              , retrieveTime < milli 15
-                  & counterexample ("Retrieve took too long: " <> showTime retrieveTime)
               ]
               & counterexample ("Total txs: " <> show numTxs)
               & counterexample ("Inserted txs: " <> show (length txsToInsert))

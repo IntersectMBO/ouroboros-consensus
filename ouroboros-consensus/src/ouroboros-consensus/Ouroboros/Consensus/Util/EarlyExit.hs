@@ -15,6 +15,10 @@ module Ouroboros.Consensus.Util.EarlyExit
   ( exitEarly
   , withEarlyExit
   , withEarlyExit_
+  , callTrace
+  , callTraceVia
+  , callTraceSameThread
+  , callTraceSameThreadVia
 
     -- * Re-exports
   , lift
@@ -43,6 +47,14 @@ import Control.Monad.Trans.Class
 import Control.Monad.Trans.Maybe
 import Data.Function (on)
 import Data.Proxy
+import LeiosUtils.CallTrace
+  ( CallCtx
+  , CallName
+  , CallTrace
+  , MonadAllocationCounter (getAllocationCounter)
+  , ThreadName
+  )
+import qualified LeiosUtils.CallTrace as CallTrace
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Util ((.:))
 import Ouroboros.Consensus.Util.IOLike
@@ -118,6 +130,105 @@ collapse (Just ()) = ()
 
 exitEarly :: Applicative m => WithEarlyExit m a
 exitEarly = earlyExit $ pure Nothing
+
+-- | Re-propagate a 'Nothing' produced by a traced, early-exit-aware action
+-- as an actual 'exitEarly' in 'WithEarlyExit'.
+--
+-- Used to close the loop opened by running such an action via
+-- 'withEarlyExit' (see 'callTrace' and
+-- 'callTraceSameThread'): the traced result is 'Nothing' rather
+-- than a monadic short-circuit /while it is being traced/, and only once
+-- tracing has completed do we turn it back into an early exit.
+earlyExitFromMaybe :: Monad m => m (Maybe r) -> WithEarlyExit m r
+earlyExitFromMaybe = (>>= maybe exitEarly pure) . lift
+
+-- | Like 'CallTrace.callTrace', but for a traced action that itself lives in
+-- 'WithEarlyExit'.
+--
+-- The wrapped action is run to completion in the /base/ monad @m@ (via
+-- 'withEarlyExit'), so it is always timed and a matching 'CallEnd' is always
+-- traced, even when the action calls 'exitEarly' -- in that case the traced
+-- result is simply 'Nothing'. Only /after/ the 'CallEnd' has been traced do
+-- we re-propagate the early exit into 'WithEarlyExit'.
+--
+-- Running the traced span directly in 'WithEarlyExit' instead (i.e.
+-- instantiating 'callTrace's @m@ to @WithEarlyExit m@) would be wrong: an
+-- 'exitEarly' inside the action would short-circuit 'callTrace' itself
+-- before it gets to trace the 'CallEnd', leaving a 'CallStart' with no
+-- matching end.
+callTrace ::
+  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
+  -- | Tracing action
+  (CallTrace a (Maybe r) -> m ()) ->
+  -- | Parent context
+  CallCtx m ->
+  -- | Call thread
+  ThreadName ->
+  -- | CallName
+  CallName ->
+  -- | Call argument
+  a ->
+  -- | Continuation with the new call context (to be passed to children calls)
+  (CallCtx m -> WithEarlyExit m r) ->
+  WithEarlyExit m r
+callTrace = callTraceVia id
+
+-- | Like 'callTrace', but the value recorded in the 'CallEnd' is
+-- @f r@ rather than @r@ itself -- useful when @r@ doesn't have a suitable
+-- 'Aeson.ToJSON'\/'Show' instance (or you don't want to log all of it), but
+-- a projection of it does. On early exit there's no @r@ to project, so the
+-- traced value is 'Nothing' regardless of @f@; the returned value (if any)
+-- is still the real, un-projected @r@.
+callTraceVia ::
+  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
+  (r -> r') ->
+  -- | Tracing action
+  (CallTrace a (Maybe r') -> m ()) ->
+  -- | Parent context
+  CallCtx m ->
+  -- | Call thread
+  ThreadName ->
+  -- | CallName
+  CallName ->
+  -- | Call argument
+  a ->
+  -- | Continuation with the new call context (to be passed to children calls)
+  (CallCtx m -> WithEarlyExit m r) ->
+  WithEarlyExit m r
+callTraceVia f trace pctx thread cn arg action =
+  earlyExitFromMaybe $
+    CallTrace.callTraceVia (fmap f) trace pctx thread cn arg (withEarlyExit . action)
+
+-- | Like 'callTraceSameThread', but for a traced action that lives in
+-- 'WithEarlyExit'. See 'callTrace'.
+--
+-- NB: this delegates to 'callTraceSameThread' directly (rather than to
+-- 'callTrace') because 'CallCtx' is exported opaquely -- the parent
+-- context's thread name isn't available out here to pass along.
+callTraceSameThread ::
+  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
+  (CallTrace a (Maybe r) -> m ()) ->
+  CallCtx m ->
+  CallName ->
+  a ->
+  (CallCtx m -> WithEarlyExit m r) ->
+  WithEarlyExit m r
+callTraceSameThread = callTraceSameThreadVia id
+
+-- | Like 'callTraceSameThread', but the value recorded in the
+-- 'CallEnd' is @f r@ rather than @r@ itself. See 'callTraceVia'.
+callTraceSameThreadVia ::
+  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
+  (r -> r') ->
+  (CallTrace a (Maybe r') -> m ()) ->
+  CallCtx m ->
+  CallName ->
+  a ->
+  (CallCtx m -> WithEarlyExit m r) ->
+  WithEarlyExit m r
+callTraceSameThreadVia f trace pctx cn arg action =
+  earlyExitFromMaybe $
+    CallTrace.callTraceSameThreadVia (fmap f) trace pctx cn arg (withEarlyExit . action)
 
 instance
   (forall a'. NoThunks (m a')) =>
@@ -380,6 +491,9 @@ instance MonadTraceSTM m => MonadTraceSTM (WithEarlyExit m) where
   traceTQueue _ = lift .: traceTQueue (Proxy @m)
   traceTBQueue _ = lift .: traceTBQueue (Proxy @m)
   traceTSem _ = lift .: traceTSem (Proxy @m)
+
+instance MonadAllocationCounter m => MonadAllocationCounter (WithEarlyExit m) where
+  getAllocationCounter = lift getAllocationCounter
 
 {-------------------------------------------------------------------------------
   Finally, the consensus IOLike wrapper

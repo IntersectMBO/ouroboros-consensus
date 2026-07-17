@@ -9,7 +9,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.NodeKernel
@@ -44,7 +43,6 @@ import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.DeepSeq (force)
 import Control.Monad
 import qualified Control.Monad.Class.MonadTimer.SI as SI
-import Control.Monad.Except
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (second)
@@ -55,47 +53,38 @@ import Data.Function (on)
 import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe, isJust)
-import qualified Data.Measure
-import Data.Proxy
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Data.Void (Void)
 import LeiosDemoDb
-  ( LeiosDbConnection (..)
-  , LeiosDbHandle (..)
+  ( LeiosDbHandle (..)
   )
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
 import LeiosDemoTypes
-  ( LeiosCert
-  , LeiosOutstanding
+  ( LeiosOutstanding
   , LeiosPeerVars
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosUtils.CallTrace
+  ( SomeJsonCallTrace (SomeJsonCallTrace)
+  , callTraceSameThread
+  , rootCallCtx
+  )
 import LeiosVoteState (LeiosVoteState (..), newLeiosVoteState)
 import LeiosVoting (getLeiosCommittee, runLeiosVoting)
 import Ouroboros.Consensus.Block hiding (blockMatchesHeader)
-import qualified Ouroboros.Consensus.Block as Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.Genesis.Governor (gddWatcher)
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsProtocol
-import Ouroboros.Consensus.Ledger.Tables.Utils
-  ( emptyLedgerTables
-  , forgetLedgerTables
-  , prependDiffs
-  )
 import Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -120,32 +109,24 @@ import Ouroboros.Consensus.Node.Genesis
   )
 import Ouroboros.Consensus.Node.Run
 import Ouroboros.Consensus.Node.Tracers
+import Ouroboros.Consensus.NodeKernel.Forge (forge)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
-  ( AddBlockResult (..)
-  , ChainDB
+  ( ChainDB
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import Ouroboros.Consensus.Storage.LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
-import Ouroboros.Consensus.Util.EarlyExit
+import Ouroboros.Consensus.Util.EarlyExit hiding (callTraceSameThread)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.LeakyBucket
   ( atomicallyWithMonotonicTime
   )
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.STM
-import Ouroboros.Network.AnchoredFragment
-  ( AnchoredFragment
-  , AnchoredSeq (..)
-  )
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block (castTip, tipFromHeader)
 import Ouroboros.Network.BlockFetch
@@ -166,8 +147,6 @@ import Ouroboros.Network.PeerSharing
   , ps_POLICY_PEER_SHARE_MAX_PEERS
   , ps_POLICY_PEER_SHARE_STICKY_TIME
   )
-import Ouroboros.Network.Point (WithOrigin (..))
-import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
 import Ouroboros.Network.TxSubmission.Inbound.V1
   ( TxSubmissionInitDelay
   , TxSubmissionMempoolWriter
@@ -500,14 +479,15 @@ initNodeKernel
             stillLivePeers <- LazySTM.readTVarIO getLeiosPeersVars
             filteredOutstanding <-
               Leios.filterMissingWork leiosConn outstanding
+            -- FIXME(bladyjoker): Capping these 2 traces because they grow in tens of MBs. Let's make a separate event for them and use Cardano config to silence/voice them.
             traceWith leiosTr $
               MkTraceLeiosKernel $
                 "leiosFetchLogic: outstanding "
-                  <> Leios.prettyLeiosOutstanding filteredOutstanding
+                  <> take 1000 (Leios.prettyLeiosOutstanding filteredOutstanding)
             traceWith leiosTr $
               MkTraceLeiosKernel $
                 "leiosFetchLogic: offerings "
-                  <> Leios.prettyOfferings offerings
+                  <> take 1000 (Leios.prettyOfferings offerings)
             let (!outstanding', decisions) =
                   Leios.leiosFetchLogicIteration
                     Leios.demoLeiosFetchStaticEnv
@@ -723,75 +703,6 @@ toConsensusMode = \case
   LoEAndGDDDisabled -> PraosMode
   LoEAndGDDEnabled _ -> GenesisMode
 
--- | Decide whether the block we're about to forge should certify a
--- previously-announced EB on this chain, returning the assembled
--- certificate and the 'LeiosPoint' at which the EB was announced.
---
--- An EB is certifiable when:
---
---   * it was announced on this chain ('protocolStateLeiosAnnouncement' is a 'Just');
---   * enough slots ('minCertificationGap') have elapsed since the announcement;
---   * we have downloaded its closure into the 'LeiosDb', and
---   * we have assembled a certificate for the announcing RB.
---
--- Returns 'Nothing' for non-Leios eras and whenever any of the above is not yet satisfied.
-decideLeiosCertify ::
-  forall blk m.
-  ( Monad m
-  , ResolveLeiosBlock blk
-  , ConvertRawHash blk
-  , HasAnnTip blk
-  ) =>
-  LeiosDbConnection m ->
-  LeiosVoteState m ->
-  Tracer m TraceLeiosKernel ->
-  -- | The slot we are forging for.
-  SlotNo ->
-  -- | The state of the header we are extending.
-  HeaderState blk ->
-  m (Maybe (LeiosCert, Leios.EbHash))
-decideLeiosCertify leiosDb voteState tracer currentSlot headerState =
-  case protocolStateLeiosAnnouncement @blk (headerStateChainDep headerState) of
-    Nothing -> pure Nothing
-    Just (ebPoint, _ebSize)
-      | unSlotNo currentSlot - unSlotNo (Leios.pointSlotNo ebPoint) <= Leios.minCertificationGap ->
-          pure Nothing
-      | otherwise -> do
-          -- TODO: Why exactly do we guard against this? Also, shouldn't we
-          -- detect it the other way around: if we have a cert, but not
-          -- downloaded it ourselves -> warning!
-          mClosure <- leiosDbLookupEbClosure leiosDb (Leios.pointEbHash ebPoint)
-          case mClosure of
-            Nothing -> do
-              traceWith tracer $
-                MkTraceLeiosKernel $
-                  "EB not yet downloaded: " <> show ebPoint
-              pure Nothing
-            Just _ ->
-              -- The announcing RB is the block we're forging on top of;
-              -- EB certification must happen within one block (this is the
-              -- linear aspect of linear Leios).
-              case headerStateTip headerState of
-                Origin -> error "decideLeiosCertify: cannot certify on top of genesis"
-                At tip -> do
-                  -- the hash of the block we will be forging on top of (the announcing RB).
-                  let tipHash = annTipHash tip
-                      announcingRb = Leios.MkRbHash (toRawHash (Proxy @blk) tipHash)
-                  mCert <- queryCert voteState announcingRb
-                  case mCert of
-                    Nothing -> do
-                      traceWith tracer $
-                        MkTraceLeiosKernel $
-                          "EB downloaded but no certificate: " <> show ebPoint
-                      pure Nothing
-                    Just cert -> do
-                      traceWith tracer $
-                        TraceLeiosBlockCertified
-                          { atSlot = currentSlot
-                          , certifiedPoint = ebPoint
-                          }
-                      pure (Just (cert, Leios.pointEbHash ebPoint))
-
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
   (IOLike m, RunNode blk) =>
@@ -804,8 +715,32 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     label
     allocateForging
     finalizeForging
-    ( \(bf, leiosConn) -> knownSlotWatcher btime $
-        \currentSlot -> withEarlyExit_ $ go bf leiosConn currentSlot
+    ( \(bf, leiosConn, rootCCtx) -> do
+        knownSlotWatcher btime $
+          \currentSlot ->
+            callTraceSameThread
+              ( traceWith (forgeTracer tracers)
+                  . TraceLabelCreds (forgeLabel bf)
+                  . TraceCall
+                  . SomeJsonCallTrace
+              )
+              rootCCtx
+              "forge"
+              currentSlot
+              $ \forgeCCtx ->
+                withEarlyExit_ $
+                  forge
+                    (forgeTracer tracers)
+                    (forgeStateInfoTracer tracers)
+                    (leiosKernelTracer tracers)
+                    forgeCCtx
+                    cfg
+                    chainDB
+                    mempool
+                    leiosVoteState
+                    bf
+                    leiosConn
+                    currentSlot
     )
  where
   label :: String
@@ -817,398 +752,12 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     bf <- blockForgingM
     labelThisThread $ Text.unpack $ forgeLabel bf
     leiosConn <- LeiosDb.open leiosDB
-    pure (bf, leiosConn)
+    rootCCtx <- rootCallCtx "Forge"
+    pure (bf, leiosConn, rootCCtx)
 
-  finalizeForging (bf, leiosConn) = do
+  finalizeForging (bf, leiosConn, _) = do
     LeiosDb.close leiosConn
     finalize bf
-
-  go :: BlockForging m blk -> LeiosDbConnection m -> SlotNo -> WithEarlyExit m ()
-  go blockForging leiosConn currentSlot = do
-    trace blockForging $ TraceStartLeadershipCheck currentSlot
-
-    -- Figure out which block to connect to
-    --
-    -- Normally this will be the current block at the tip, but it may be the
-    -- /previous/ block, if there were multiple slot leaders
-    BlockContext{bcBlockNo, bcPrevPoint} <- do
-      eBlkCtx <-
-        lift $
-          atomically $
-            mkCurrentBlockContext currentSlot
-              <$> ChainDB.getCurrentChain chainDB
-      case eBlkCtx of
-        Right blkCtx -> return blkCtx
-        Left failure -> do
-          trace blockForging failure
-          exitEarly
-
-    trace blockForging $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
-
-    -- Get forker corresponding to bcPrevPoint
-    --
-    -- This might fail if, in between choosing 'bcPrevPoint' and this call to
-    -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
-    -- is no longer on our chain. When that happens, we simply give up on the
-    -- chance to produce a block.
-    ( rbTxs
-      , ebTxs
-      , txssz
-      , proof
-      , snapSize
-      , tickedLedgerState
-      , forgingOnTopOf
-      , untickedChainDepState
-      , mayLeiosCert
-      ) <-
-      ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
-        Left _ -> do
-          trace blockForging $ TraceNoLedgerState currentSlot bcPrevPoint
-          exitEarly
-        Right forker -> do
-          unticked <- lift $ atomically $ LedgerDB.roforkerGetLedgerState forker
-
-          trace blockForging $ TraceLedgerState currentSlot bcPrevPoint
-
-          -- We require the ticked ledger view in order to construct the ticked
-          -- 'ChainDepState'.
-          ledgerView <-
-            case runExcept $
-              forecastFor
-                ( ledgerViewForecastAt
-                    (configLedger cfg)
-                    (ledgerState unticked)
-                )
-                currentSlot of
-              Left err -> do
-                -- There are so many empty slots between the tip of our chain and the
-                -- current slot that we cannot get an ledger view anymore In
-                -- principle, this is no problem; we can still produce a block (we use
-                -- the ticked ledger state). However, we probably don't /want/ to
-                -- produce a block in this case; we are most likely missing a blocks
-                -- on our chain.
-                trace blockForging $ TraceNoLedgerView currentSlot err
-                exitEarly
-              Right lv ->
-                return lv
-
-          trace blockForging $ TraceLedgerView currentSlot
-
-          -- Tick the 'ChainDepState' for the 'SlotNo' we're producing a block for. We
-          -- only need the ticked 'ChainDepState' to check the whether we're a leader.
-          -- This is much cheaper than ticking the entire 'ExtLedgerState'.
-          let tickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
-              tickedChainDepState =
-                tickChainDepState
-                  (configConsensus cfg)
-                  ledgerView
-                  currentSlot
-                  (headerStateChainDep (headerState unticked))
-
-          -- Check if we are the leader
-          proof <- do
-            shouldForge <-
-              lift $
-                checkShouldForge
-                  blockForging
-                  ( contramap
-                      (TraceLabelCreds (forgeLabel blockForging))
-                      (forgeStateInfoTracer tracers)
-                  )
-                  cfg
-                  currentSlot
-                  tickedChainDepState
-            case shouldForge of
-              ForgeStateUpdateError err -> do
-                trace blockForging $ TraceForgeStateUpdateError currentSlot err
-                exitEarly
-              CannotForge cannotForge -> do
-                trace blockForging $ TraceNodeCannotForge currentSlot cannotForge
-                exitEarly
-              NotLeader -> do
-                trace blockForging $ TraceNodeNotLeader currentSlot
-                exitEarly
-              ShouldForge p -> return p
-
-          -- At this point we have established that we are indeed slot leader
-          trace blockForging $ TraceNodeIsLeader currentSlot
-
-          -- Tick the ledger state for the 'SlotNo' we're producing a block for
-          let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
-              tickedLedgerState =
-                applyChainTick
-                  OmitLedgerEvents
-                  (configLedger cfg)
-                  currentSlot
-                  (ledgerState unticked)
-
-          _ <- evaluate tickedLedgerState
-          trace blockForging $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
-
-          -- Get a snapshot of the mempool that is consistent with the ledger
-          --
-          -- NOTE: It is possible that due to adoption of new blocks the
-          -- /current/ ledger will have changed. This doesn't matter: we will
-          -- produce a block that fits onto the ledger we got above; if the
-          -- ledger in the meantime changes, the block we produce here may or
-          -- may not be adopted, but it won't be invalid.
-          (mempoolHash, mempoolSlotNo) <- lift $ atomically $ do
-            snap <- getSnapshot mempool -- only used for its tip-like information
-            pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
-
-          let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
-
-          -- Decide whether this block certifies a previously-announced EB
-          mayLeiosCertAndAnnouncement <-
-            lift $
-              decideLeiosCertify @blk
-                leiosConn
-                leiosVoteState
-                (leiosKernelTracer tracers)
-                currentSlot
-                (headerState unticked)
-
-          let rbCap = blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
-              ebCap = fromMaybe Data.Measure.zero $ ebCapacityTxMeasure (configLedger cfg) tickedLedgerState
-          (rbTxs, ebTxs, txssz, mempoolSnapshot) <-
-            lift $ case mayLeiosCertAndAnnouncement of
-              Nothing -> do
-                -- We don't have a Leios certificate: take transactions for an RB and
-                -- an EB to be announced.
-                snap <- getSnapshotFor mempool currentSlot tickedLedgerState readTables
-                let (rbTxs', txssz') = snapshotTake snap rbCap
-                    ebTxs' =
-                      let (allTxs, _) = snapshotTake snap (Data.Measure.plus rbCap ebCap)
-                       in drop (length rbTxs') allTxs
-                pure (rbTxs', ebTxs', txssz', snap)
-              Just (_cert, announcedPoint) -> do
-                -- We have a Leios certificate: only take transactions for a new EB, as the RB will
-                -- carry the certificate and must not carry additional txs.
-
-                -- Apply the EB's transactions onto the ledger state
-                res <-
-                  resolveAndApplyLeiosClosure
-                    leiosConn
-                    (configLedger cfg)
-                    announcedPoint
-                    readTables
-                    emptyLedgerTables
-                    (ledgerState unticked)
-                case res of
-                  Left err ->
-                    -- Should not happen: each closure tx was validated
-                    -- when inserted into the LeiosDb. Fail loudly.
-                    error $ "forkBlockForging: applyLeiosClosure failed, announcing no EB. " <> show err
-                  Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} -> do
-                    -- Compose the EB closure diff (relative to the unticked
-                    -- parent) with the tick diff (relative to the
-                    -- state with the EB closure applied), so the mempool snapshot is revalidated
-                    -- against parent + closure + tick.
-                    let tickedLsAfterEB =
-                          lcaClosureDiff
-                            `prependDiffs` applyChainTick
-                              OmitLedgerEvents
-                              (configLedger cfg)
-                              currentSlot
-                              (forgetLedgerTables lcaStateAfterEB)
-                    snap <-
-                      getSnapshotForNoCache mempool currentSlot tickedLsAfterEB readTables
-                    let ebTxs' = fst (snapshotTake snap ebCap)
-                    pure ([], ebTxs', Data.Measure.zero, snap)
-
-          -- force the mempool's computation before the tracer event
-          _ <- evaluate (length rbTxs)
-          _ <- evaluate (length ebTxs)
-          _ <- evaluate mempoolHash
-
-          trace blockForging $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
-
-          pure
-            ( rbTxs
-            , ebTxs
-            , txssz
-            , proof
-            , snapshotMempoolSize mempoolSnapshot
-            , forgetLedgerTables tickedLedgerState
-            , ledgerTipPoint (ledgerState unticked)
-            , headerStateChainDep (headerState unticked)
-            , fst <$> mayLeiosCertAndAnnouncement
-            )
-
-    -- Actually produce the block
-    newBlock <-
-      lift $
-        Block.forgeBlock
-          blockForging
-          Block.ForgeBlockArgs
-            { Block.fbConfig = cfg
-            , Block.fbCurrentBlockNo = bcBlockNo
-            , Block.fbCurrentSlotNo = currentSlot
-            , Block.fbCurrentTickedLedgerState = tickedLedgerState
-            , Block.fbRbTxs = rbTxs
-            , Block.fbEbTxs = ebTxs
-            , Block.fbIsLeader = proof
-            , Block.fbChainDepState = Just untickedChainDepState
-            , Block.fbMayLeiosCert = mayLeiosCert
-            , Block.fbLeiosDb = leiosConn
-            , Block.fbLeiosTracer = leiosKernelTracer tracers
-            , Block.fbLeiosVoteState = leiosVoteState
-            }
-
-    trace blockForging $
-      TraceForgedBlock
-        currentSlot
-        forgingOnTopOf
-        newBlock
-        snapSize
-        txssz
-
-    -- Add the block to the chain DB
-    let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
-    -- Make sure that if an async exception is thrown while a block is
-    -- added to the chain db, we will remove txs from the mempool.
-
-    -- 'addBlockAsync' is a non-blocking action, so `mask_` would suffice,
-    -- but the finalizer is a blocking operation, hence we need to use
-    -- 'uninterruptibleMask_' to make sure that async exceptions do not
-    -- interrupt it.
-    uninterruptibleMask_ $ do
-      result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
-      -- Block until we have processed the block
-      mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
-
-      -- Check whether we adopted our block
-      when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $ do
-        isInvalid <-
-          lift $
-            atomically $
-              ($ blockHash newBlock) . forgetFingerprint
-                <$> ChainDB.getIsInvalidBlock chainDB
-        case isInvalid of
-          Nothing ->
-            trace blockForging $ TraceDidntAdoptBlock currentSlot newBlock
-          Just reason -> do
-            trace blockForging $ TraceForgedInvalidBlock currentSlot newBlock reason
-            -- We just produced a block that is invalid according to the
-            -- ledger in the ChainDB, while the mempool said it is valid.
-            -- There is an inconsistency between the two!
-            --
-            -- Remove all the transactions in that block, otherwise we'll
-            -- run the risk of forging the same invalid block again. This
-            -- means that we'll throw away some good transactions in the
-            -- process.
-            whenJust
-              (NE.nonEmpty (map (txId . txForgetValidated) (rbTxs ++ ebTxs)))
-              (lift . removeTxsEvenIfValid mempool)
-        exitEarly
-
-      -- We successfully produced /and/ adopted a block
-      --
-      -- NOTE: we are tracing the transactions we retrieved from the Mempool,
-      -- not the transactions actually /in the block/.
-      -- The transactions in the block should be a prefix of the transactions
-      -- in the mempool. If this is not the case, this is a bug.
-      -- Unfortunately, we can't
-      -- assert this here because the ability to extract transactions from a
-      -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
-      -- e.g., @DualBlock@.
-      trace blockForging $ TraceAdoptedBlock currentSlot newBlock rbTxs
-
-  trace :: BlockForging m blk -> TraceForgeEvent blk -> WithEarlyExit m ()
-  trace blockForging =
-    lift
-      . traceWith (forgeTracer tracers)
-      . TraceLabelCreds (forgeLabel blockForging)
-
--- | Context required to forge a block
-data BlockContext blk = BlockContext
-  { bcBlockNo :: !BlockNo
-  -- ^ the block number of the block to be forged
-  , bcPrevPoint :: !(Point blk)
-  -- ^ the point of /the predecessor of/ the block
-  --
-  -- Note that a block/header stores the hash of its predecessor but not the
-  -- slot.
-  }
-
--- | Create the 'BlockContext' from the header of the previous block
-blockContextFromPrevHeader ::
-  HasHeader (Header blk) =>
-  Header blk -> BlockContext blk
-blockContextFromPrevHeader hdr =
-  -- Recall that an EBB has the same block number as its predecessor, so this
-  -- @succ@ is even correct when @hdr@ is an EBB.
-  BlockContext (succ (blockNo hdr)) (headerPoint hdr)
-
--- | Determine the 'BlockContext' for a block about to be forged from the
--- current slot, ChainDB chain fragment, and ChainDB tip block number
---
--- The 'bcPrevPoint' will either refer to the header at the tip of the current
--- chain or, in case there is already a block in this slot (e.g. another node
--- was also elected leader and managed to produce a block before us), the tip's
--- predecessor. If the chain is empty, then it will refer to the chain's anchor
--- point, which may be genesis.
-mkCurrentBlockContext ::
-  forall blk.
-  RunNode blk =>
-  -- | the current slot, i.e. the slot of the block about to be forged
-  SlotNo ->
-  -- | the current chain fragment
-  --
-  -- Recall that the anchor point is the tip of the ImmutableDB.
-  AnchoredFragment (Header blk) ->
-  -- | the event records the cause of the failure
-  Either (TraceForgeEvent blk) (BlockContext blk)
-mkCurrentBlockContext currentSlot c = case c of
-  Empty AF.AnchorGenesis ->
-    -- The chain is entirely empty.
-    Right $ BlockContext (expectedFirstBlockNo (Proxy @blk)) GenesisPoint
-  Empty (AF.Anchor anchorSlot anchorHash anchorBlockNo) ->
-    let p :: Point blk = BlockPoint anchorSlot anchorHash
-     in if anchorSlot < currentSlot
-          then Right $ BlockContext (succ anchorBlockNo) p
-          else Left $ TraceSlotIsImmutable currentSlot p anchorBlockNo
-  c' :> hdr -> case blockSlot hdr `compare` currentSlot of
-    -- The block at the tip of our chain has a slot number /before/ the
-    -- current slot number. This is the common case, and we just want to
-    -- connect our new block to the block at the tip.
-    LT -> Right $ blockContextFromPrevHeader hdr
-    -- The block at the tip of our chain has a slot that lies in the
-    -- future. Although the chain DB should not contain blocks from the
-    -- future, if the volatile DB contained such blocks on startup
-    -- (due to a node clock misconfiguration) this invariant may be
-    -- violated. See: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/docs/website/contents/for-developers/HandlingBlocksFromTheFuture.md#handling-blocks-from-the-future
-    -- Also note that if the
-    -- system is under heavy load, it is possible (though unlikely) that
-    -- one or more slots have passed after @currentSlot@ that we got from
-    -- @onSlotChange@ and before we queried the chain DB for the block
-    -- at its tip. At the moment, we simply don't produce a block if this
-    -- happens.
-
-    -- TODO: We may wish to produce a block here anyway, treating this
-    -- as similar to the @EQ@ case below, but we should be careful:
-    --
-    -- 1. We should think about what slot number to use.
-    -- 2. We should be careful to distinguish between the case where we
-    --    need to drop a block from the chain and where we don't.
-    -- 3. We should be careful about slot numbers and EBBs.
-    -- 4. We should probably not produce a block if the system is under
-    --    very heavy load (e.g., if a lot of blocks have been produced
-    --    after @currentTime@).
-    --
-    -- See <https://github.com/IntersectMBO/ouroboros-network/issues/1462>
-    GT -> Left $ TraceBlockFromFuture currentSlot (blockSlot hdr)
-    -- The block at the tip has the same slot as the block we're going to
-    -- produce (@currentSlot@).
-    EQ ->
-      Right $
-        if isJust (headerIsEBB hdr)
-          -- We allow forging a block that is the successor of an EBB in the
-          -- same slot.
-          then blockContextFromPrevHeader hdr
-          -- If @hdr@ is not an EBB, then forge an alternative to @hdr@: same
-          -- block no and same predecessor.
-          else BlockContext (blockNo hdr) $ castPoint $ AF.headPoint c'
 
 {-------------------------------------------------------------------------------
   TxSubmission integration
