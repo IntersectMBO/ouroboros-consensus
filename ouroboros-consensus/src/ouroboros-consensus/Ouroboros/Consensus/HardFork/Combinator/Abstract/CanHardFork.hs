@@ -14,9 +14,6 @@ module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork
 
 import Data.Measure (Measure)
 import Data.SOP.Constraint
-import Data.SOP.Functors (Product2)
-import Data.SOP.InPairs (InPairs, RequiringBoth)
-import qualified Data.SOP.InPairs as InPairs
 import Data.SOP.NonEmpty
 import qualified Data.SOP.Strict as SOP
 import Data.SOP.Tails (Tails)
@@ -26,7 +23,6 @@ import GHC.TypeNats (KnownNat)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block (HashSize)
 import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
-import Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import Ouroboros.Consensus.HardFork.Combinator.Translation
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -86,13 +82,6 @@ class
 
   hardForkEraTranslation :: EraTranslation xs
   hardForkChainSel :: Tails AcrossEraTiebreaker xs
-  hardForkInjectTxs ::
-    InPairs
-      ( RequiringBoth
-          WrapLedgerConfig
-          (Product2 InjectTx InjectValidatedTx)
-      )
-      xs
 
   -- | This is ideally exact.
   --
@@ -109,7 +98,6 @@ instance SingleEraBlock blk => CanHardFork '[blk] where
 
   hardForkEraTranslation = trivialEraTranslation
   hardForkChainSel = Tails.mk1
-  hardForkInjectTxs = InPairs.mk1
 
   hardForkInjTxMeasurePhase1 (SOP.Z (WrapTxMeasurePhase1 x)) = x
   hardForkInjTxMeasurePhase2 (SOP.Z (WrapTxMeasurePhase2 x)) = x

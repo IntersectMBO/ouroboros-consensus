@@ -576,7 +576,7 @@ data TraceEventMempool blk
       -- | Previously valid transactions that are no longer valid because of
       -- changes in the ledger state (details are in the provided 'ApplyTxErr').
       -- These transactions have been removed from the Mempool.
-      [(Validated (GenTx blk), ApplyTxErr blk)]
+      [(GenTx blk, ApplyTxErr blk)]
       -- | The current size of the Mempool.
       MempoolSize
   | TraceMempoolManuallyRemovedTxs
@@ -588,7 +588,7 @@ data TraceEventMempool blk
       --
       -- This list shares not transactions with the list of manually removed
       -- transactions.
-      [Validated (GenTx blk)]
+      [GenTx blk]
       -- | The current size of the Mempool.
       MempoolSize
   | -- | Emitted when the mempool is adjusted after the tip has changed.
