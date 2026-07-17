@@ -1,4 +1,10 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Deterministic portion of the Weighted Fait-Accompli committee selection scheme
 module Ouroboros.Consensus.Committee.WFA
@@ -13,6 +19,7 @@ module Ouroboros.Consensus.Committee.WFA
     -- * Cumulative stake distributions
   , SeatIndex (..)
   , NumPoolsWithPositiveStake (..)
+  , TotalStake (..)
   , WFAError (..)
   , WFATiebreaker (..)
   , wFATiebreakerWithEpochNonce
@@ -25,12 +32,20 @@ module Ouroboros.Consensus.Committee.WFA
 -- NOTE: DSIGN/BLS imports are needed to implement the fair 'WFATiebreaker'
 -- using epoch nonces. If we move away from BLS in the future of Peras/Leios, we
 -- might want to revisit its implementation to use a different hash function.
+
+import Cardano.Binary
+  ( FromCBOR (..)
+  , ToCBOR (..)
+  , decodeListLen
+  , decodeListLenOf
+  , encodeListLen
+  )
 import Cardano.Crypto.DSIGN (BLS12381MinSigDSIGN, DSIGNAlgorithm (SigDSIGN))
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce, Nonce))
 import Cardano.Ledger.Binary (runByteBuilder)
 import Cardano.Ledger.Core (HASH, Hash, KeyHash (unKeyHash))
-import Control.Exception (assert)
+import Control.Exception (Exception, assert)
 import Data.Array (Array, Ix, listArray)
 import qualified Data.Array as Array
 import qualified Data.ByteString.Builder.Extra as BS
@@ -38,7 +53,9 @@ import Data.Function (on)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Word (Word64)
+import Data.Word (Word64, Word8)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Committee.Types
   ( Cumulative (..)
   , LedgerStake (..)
@@ -46,6 +63,7 @@ import Ouroboros.Consensus.Committee.Types
   , TargetCommitteeSize (..)
   , unPoolId
   )
+import Ouroboros.Consensus.Util.Orphans ()
 
 -- * Weighted Fait-Accompli committee selection scheme
 
@@ -54,28 +72,36 @@ newtype PersistentCommitteeSize
   = PersistentCommitteeSize
   { unPersistentCommitteeSize :: Word64
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving newtype (FromCBOR, ToCBOR)
+  deriving anyclass NoThunks
 
 -- | Non-persistent committee size
 newtype NonPersistentCommitteeSize
   = NonPersistentCommitteeSize
   { unNonPersistentCommitteeSize :: Word64
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving newtype (FromCBOR, ToCBOR)
+  deriving anyclass NoThunks
 
 -- | Total persistent stake
 newtype TotalPersistentStake
   = TotalPersistentStake
   { unTotalPersistentStake :: Cumulative LedgerStake
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving newtype (FromCBOR, ToCBOR)
+  deriving anyclass NoThunks
 
 -- | Total non-persistent stake
 newtype TotalNonPersistentStake
   = TotalNonPersistentStake
   { unTotalNonPersistentStake :: Cumulative LedgerStake
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving newtype (FromCBOR, ToCBOR)
+  deriving anyclass NoThunks
 
 -- | Errors that can occur when trying to split the stake distribution into
 -- persistent and seats via weighted Fait-Accompli.
@@ -88,7 +114,27 @@ data WFAError
     NotEnoughPoolsWithPositiveStake
       TargetCommitteeSize
       NumPoolsWithPositiveStake
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NoThunks, Exception)
+
+instance FromCBOR WFAError where
+  fromCBOR = do
+    len <- decodeListLen
+    tag <- fromCBOR @Word8
+    case (len, tag) of
+      (1, 0) -> pure EmptyStakeDistribution
+      (3, 1) -> NotEnoughPoolsWithPositiveStake <$> fromCBOR <*> fromCBOR
+      _ -> fail $ "Invalid WFAError length/tag: " <> show (len, tag)
+
+instance ToCBOR WFAError where
+  toCBOR EmptyStakeDistribution =
+    encodeListLen 1
+      <> toCBOR (0 :: Word8)
+  toCBOR (NotEnoughPoolsWithPositiveStake totalSeats numPools) =
+    encodeListLen 3
+      <> toCBOR (1 :: Word8)
+      <> toCBOR totalSeats
+      <> toCBOR numPools
 
 -- | Split a stake distrubution into persistent and non-persistent committee
 -- seats according to the weighted Fait-Accompli scheme.
@@ -231,14 +277,27 @@ newtype SeatIndex
   = SeatIndex
   { unSeatIndex :: Word64
   }
-  deriving (Show, Eq, Ord, Enum, Ix)
+  deriving stock (Show, Eq, Ord, Ix, Generic)
+  deriving newtype (Enum, FromCBOR, ToCBOR)
+  deriving anyclass NoThunks
 
 -- | Number of pools with positive stake in the underlying stake distribution
 newtype NumPoolsWithPositiveStake
   = NumPoolsWithPositiveStake
   { unNumPoolsWithPositiveStake :: Word64
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving newtype (FromCBOR, ToCBOR)
+  deriving anyclass NoThunks
+
+-- | Total stake in the underlying stake distribution
+newtype TotalStake
+  = TotalStake
+  { unTotalStake :: Cumulative LedgerStake
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving newtype (FromCBOR, ToCBOR)
+  deriving anyclass NoThunks
 
 -- | Tiebreaker for voters with the same stake in the cumulative stake.
 --
@@ -356,8 +415,47 @@ data ExtWFAStakeDistr a
   -- weighted Fait-Accompli instantiations with a target committee size larger
   -- than the number of pools with positive stake, which would lead to incorrect
   -- results (e.g. granting persistent seats to voters with zero stake).
+  , totalStake :: TotalStake
+  -- ^ Total stake in the underlying stake distribution. This is also
+  -- precomputed at the beginning of each epoch to allow for quick
+  -- transformations between absolute and relative stakes.
   }
-  deriving Show
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+instance FromCBOR a => FromCBOR (ExtWFAStakeDistr a) where
+  fromCBOR = do
+    decodeListLenOf 3
+    unExtWFAStakeDistr <- decodeArray
+    numPoolsWithPositiveStake <- fromCBOR
+    totalStake <- fromCBOR
+    pure
+      ExtWFAStakeDistr
+        { unExtWFAStakeDistr
+        , numPoolsWithPositiveStake
+        , totalStake
+        }
+   where
+    decodeArray = do
+      xs <- fromCBOR
+      let bounds = (SeatIndex 0, SeatIndex (fromIntegral (length xs - 1)))
+      pure (Array.listArray bounds xs)
+
+instance ToCBOR a => ToCBOR (ExtWFAStakeDistr a) where
+  toCBOR
+    ExtWFAStakeDistr
+      { unExtWFAStakeDistr
+      , numPoolsWithPositiveStake
+      , totalStake
+      } =
+      encodeListLen 3
+        <> encodeArray unExtWFAStakeDistr
+        <> toCBOR numPoolsWithPositiveStake
+        <> toCBOR totalStake
+     where
+      encodeArray arr = do
+        let xs = Array.elems arr
+        toCBOR xs
 
 -- | Construct an extended cumulative stake distribution.
 --
@@ -375,6 +473,7 @@ mkExtWFAStakeDistr tiebreaker pools
         ExtWFAStakeDistr
           { unExtWFAStakeDistr = stakeDistrArray
           , numPoolsWithPositiveStake = numPoolsWithPositiveStakeAcc
+          , totalStake = TotalStake totalStakeAcc
           }
  where
   stakeDistrArray =
@@ -388,7 +487,7 @@ mkExtWFAStakeDistr tiebreaker pools
   --   * seat 0's cumulative stake == total stake, and
   --   * last seat's cumulative stake = its own stake.
   -- In addition, count the number of pools with positive stake in the same pass.
-  ((_totalStake, numPoolsWithPositiveStakeAcc), cumulativeStakeAndPools) =
+  ((totalStakeAcc, numPoolsWithPositiveStakeAcc), cumulativeStakeAndPools) =
     List.mapAccumR
       accumStakeAndCountPoolsWithPositiveStake
       ( Cumulative (LedgerStake 0)
