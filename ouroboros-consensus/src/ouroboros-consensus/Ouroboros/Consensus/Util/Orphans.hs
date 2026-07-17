@@ -13,12 +13,22 @@ import Cardano.Binary (fromCBOR, toCBOR)
 import Cardano.Crypto.DSIGN.Class
 import Cardano.Crypto.DSIGN.Mock (MockDSIGN)
 import Cardano.Crypto.Hash (Hash, HashAlgorithm)
+import Cardano.Ledger.BaseTypes (Nonce, shelleyProtVer)
+import Cardano.Ledger.Binary
+  ( DecCBOR (..)
+  , EncCBOR (..)
+  , toPlainDecoder
+  , toPlainEncoding
+  )
 import Cardano.Ledger.Genesis (NoGenesis (..))
 import Codec.CBOR.Decoding (Decoder)
 import Codec.Serialise (Serialise (..))
 import Control.Tracer (Tracer)
+import Data.Array (Array)
+import qualified Data.Array as Array
 import Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
+import Data.Maybe.Strict (StrictMaybe, maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
 import Data.SOP.BasicFunctors
@@ -48,6 +58,14 @@ instance (HashAlgorithm h, Typeable a) => Serialise (Hash h a) where
 instance Serialise (VerKeyDSIGN MockDSIGN) where
   encode = encodeVerKeyDSIGN
   decode = decodeVerKeyDSIGN
+
+instance Serialise Nonce where
+  encode = toPlainEncoding shelleyProtVer . encCBOR
+  decode = toPlainDecoder Nothing shelleyProtVer decCBOR
+
+instance Serialise a => Serialise (StrictMaybe a) where
+  encode = encode . strictMaybeToMaybe
+  decode = maybeToStrictMaybe <$> decode
 
 {-------------------------------------------------------------------------------
   NoThunks
@@ -87,6 +105,10 @@ instance NoThunks a => NoThunks (K a b) where
 instance NoThunks a => NoThunks (MultiSet a) where
   showTypeOf _ = "MultiSet"
   wNoThunks ctxt = wNoThunks ctxt . MultiSet.toMap
+
+instance NoThunks a => NoThunks (Array i a) where
+  showTypeOf _ = "Array"
+  wNoThunks ctxt = wNoThunks ctxt . Array.elems
 
 instance NoThunks StdGen where
   showTypeOf _ = "StdGen"

@@ -15,6 +15,7 @@ import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
+  , VotingCommittee
   , ensureUniqueVotesWithSameTarget
   )
 import Ouroboros.Consensus.Committee.Crypto
