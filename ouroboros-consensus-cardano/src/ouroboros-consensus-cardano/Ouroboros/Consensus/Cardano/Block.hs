@@ -215,10 +215,12 @@ module Ouroboros.Consensus.Cardano.Block
   ) where
 
 import Data.Kind
+import Data.Proxy (Proxy (..))
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
 import Data.SOP.Index (Index (..))
 import Data.SOP.Strict
+import LeiosDemoTypes (AnnouncementDisposition (..))
 import Ouroboros.Consensus.Block (BlockProtocol)
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
 import Ouroboros.Consensus.HardFork.Combinator
@@ -1595,6 +1597,22 @@ instance
   headerLeiosAnnouncement hdr = case hdr of
     HeaderDijkstra dHdr -> headerLeiosAnnouncement dHdr
     _ -> Nothing
+
+  -- Compositional dispatch over the era stack (even though in practice only
+  -- Dijkstra carries an announcement, so only its instance is ever exercised).
+  headerElId (HardForkHeader (OneEraHeader ns)) =
+    hcollapse $ hcmap (Proxy @ResolveLeiosBlock) (K . headerElId) ns
+
+  classifyAnnouncementValidationErr err = case err of
+    HardForkValidationErrFromEra (OneEraValidationErr ns) ->
+      hcollapse $ hcmap (Proxy @ResolveLeiosBlock) classifyOne ns
+    HardForkValidationErrWrongEra{} -> Reject
+   where
+    classifyOne ::
+      forall x.
+      ResolveLeiosBlock x =>
+      WrapValidationErr x -> K AnnouncementDisposition x
+    classifyOne (WrapValidationErr e) = K (classifyAnnouncementValidationErr @x e)
 
   headerContainsLeiosCert hdr = case hdr of
     HeaderDijkstra dHdr -> headerContainsLeiosCert dHdr

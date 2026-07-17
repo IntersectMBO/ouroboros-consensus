@@ -105,6 +105,9 @@ library
     LeiosDemoDb.Trace
     LeiosDemoException
     LeiosDemoLogic
+    LeiosDemoLogic.Announcements
+    LeiosDemoLogic.Announcements.ElBimap
+    LeiosDemoLogic.Announcements.Validate
     LeiosDemoOnlyTestFetch
     LeiosDemoOnlyTestNotify
     LeiosDemoTypes
@@ -393,7 +396,7 @@ library
     network-mux,
     nonempty-containers,
     nothunks ^>=0.2 || ^>=0.3,
-    ouroboros-network:{api, api-tests-lib, protocols} ^>=1.1,
+    ouroboros-network:{api, api-tests-lib, framework, protocols} ^>=1.1,
     pretty-simple,
     primitive,
     psqueues ^>=0.2.3,
@@ -721,6 +724,7 @@ test-suite consensus-test
     Test.Consensus.Util.Versioned
     Test.LeiosDemoDb
     Test.LeiosDemoLogic
+    Test.LeiosDemoLogic.Announcements
     Test.LeiosDemoTypes
     Test.LeiosVoteState
 
@@ -1140,6 +1144,7 @@ library diffusion
     network-mux ^>=0.10,
     ouroboros-consensus:{ouroboros-consensus, protocol},
     ouroboros-network:{api, framework, ouroboros-network, protocols},
+    primitive,
     random ^>=1.3,
     resource-registry,
     safe-wild-cards ^>=1.0,

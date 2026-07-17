@@ -1,11 +1,15 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module LeiosDemoLogic (module LeiosDemoLogic) where
 
@@ -17,13 +21,14 @@ import Control.Concurrent.Class.MonadSTM.Strict (StrictTVar)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import Control.Monad (forM_, when)
 import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
+import Control.Monad.Except (runExcept)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
 import Data.DList (DList)
 import qualified Data.DList as DList
-import Data.Functor (void)
+import Data.Functor ((<&>), void)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import qualified Data.IntSet as IntSet
@@ -34,6 +39,7 @@ import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Time.Clock (NominalDiffTime)
 import qualified Data.Vector.Strict as V
 import qualified Data.Vector.Strict.Mutable as MV
 import Data.Word (Word16, Word64)
@@ -47,9 +53,18 @@ import LeiosDemoDb
   , leiosDbInsertTxs
   , leiosDbLookupEbBody
   )
+import qualified LeiosDemoLogic.Announcements as Announcements
+import LeiosDemoLogic.Announcements.ElBimap (ElId)
+import LeiosDemoLogic.Announcements.Validate
+  ( AnnouncementInvalidity
+  , validateAnnouncementHeader
+  )
 import qualified LeiosDemoOnlyTestFetch as LF
 import LeiosDemoTypes
-  ( BytesSize
+  ( AnnouncementEquivocation (..)
+  , AnnouncementFields (..)
+  , AnnouncementSource (..)
+  , BytesSize
   , EbHash (..)
   , LeiosBlockRequest (..)
   , LeiosBlockTxsRequest (..)
@@ -70,7 +85,24 @@ import LeiosDemoTypes
   , maxTxsPerEb
   )
 import qualified LeiosDemoTypes as Leios
-import Ouroboros.Consensus.Block (BlockProtocol, Header)
+import Ouroboros.Consensus.Block
+  ( BlockProtocol
+  , HasHeader
+  , Header
+  , WithOrigin (NotOrigin)
+  , headerHash
+  )
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+  ( SystemTime
+  , diffRelTime
+  , systemTimeCurrent
+  )
+import Ouroboros.Consensus.Config (TopLevelConfig, configLedger)
+import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
+import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
+import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -940,3 +972,193 @@ leiosCertRbCallback kernelVars peerVars hdr cds =
   when (headerContainsLeiosCert hdr) $
     forM_ (protocolStateLeiosAnnouncement @blk cds) $ \announcement ->
       leiosCertRbOffer kernelVars peerVars announcement
+
+-----
+
+-- The pure logic for handling an inbound 'MsgLeiosBlockAnnouncement'. The
+-- effectful glue (reading the immutable tip, the 'Announcements.PeerState' ref,
+-- 'MVar' updates, tracing, and 'throwIO') lives in the NodeToNode client, which
+-- invokes 'Announcements.onAnnouncement' with these pieces.
+
+-- | 'Header blk' as a relayed LeiosNotify announcement, paired with the
+-- announcement data parsed from it (see 'mkAnnouncingHeader'). The 'Eq' instance
+-- compares by header hash: that is the one identity used for announcement dedup
+-- and equivocation counting (see 'Announcements.onAnnouncement').
+data AnnouncingHeader blk =
+    -- | INVARIANT: 'ancHeader' includes an announcement whose fields are
+    -- 'ancAnnouncementFields'
+    UnsafeMkAnnouncingHeader {
+       ancHeader :: !(Header blk)
+     ,
+       ancAnnouncementFields :: !AnnouncementFields
+     }
+
+instance HasHeader (Header blk) => Eq (AnnouncingHeader blk) where
+  a == b = headerHash (ancHeader a) == headerHash (ancHeader b)
+
+-- | Interpret a header as a relayed EB announcement, or 'Nothing' if it carries
+-- no announcement (so it should not have been relayed as one). Parsing the
+-- announcement once here keeps it total for all later consumers (e.g. tracing).
+mkAnnouncingHeader :: ResolveLeiosBlock blk => Header blk -> Maybe (AnnouncingHeader blk)
+mkAnnouncingHeader h =
+  headerLeiosAnnouncement h <&> \(MkLeiosPoint _ebSlot ebHash, ebBodySize) ->
+    UnsafeMkAnnouncingHeader h (MkAnnouncementFields (headerElId h) ebHash ebBodySize)
+
+-- | The election of an 'AnnouncingHeader'.
+ancElId :: AnnouncingHeader blk -> ElId
+ancElId = announcementElection . ancAnnouncementFields
+
+-- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
+-- thread death disconnects the peer. It carries the
+-- 'Announcements.ErrAnnouncement' verbatim (the @blk@ is existential); every
+-- such error is a disconnect, since the only invalidities that used to be
+-- tolerated — opcert issue numbers ahead of the immutable tip — are now
+-- accepted outright by 'validateAnnouncementHeader'.
+data ExnInvalidLeiosAnnouncement =
+  forall blk.
+    ReactToAnnouncementError (Announcements.ErrAnnouncement (AnnouncementInvalidity blk))
+
+deriving instance Show ExnInvalidLeiosAnnouncement
+
+instance Exception ExnInvalidLeiosAnnouncement
+
+-- | Thrown when a peer relays a 'MsgLeiosBlockAnnouncement' whose header carries
+-- no EB announcement (so 'mkAnnouncingHeader' returns 'Nothing'); the ensuing thread
+-- death disconnects the peer.
+data ExnLeiosBlockAnnouncementMissing = ExnLeiosBlockAnnouncementMissing
+  deriving Show
+
+instance Exception ExnLeiosBlockAnnouncementMissing
+
+-- | The @validate@ callback for 'Announcements.onAnnouncement'.
+--
+-- First apply ChainSync's in-future check to the announced slot's wall-clock
+-- onset (reusing the node's own 'InFutureCheck.SomeHeaderInFutureCheck'):
+-- a far-future slot raises 'InFutureCheck.HeaderArrivalException' (disconnecting
+-- the peer), a near-future slot blocks until the slot's onset (Ouroboros
+-- Chronos) — blocking the per-peer handler is acceptable, as a (near-)future
+-- announcement is the peer's fault.
+--
+-- Returns the announcement's data and whether to relay it downstream (see
+-- 'Announcements.ShouldRelay' and 'maxAnnouncementAgeSend'), if the announcement
+-- is valid.
+announcementValidity ::
+  (IOLike m, LedgerSupportsProtocol blk, ResolveLeiosBlock blk) =>
+  SystemTime m ->
+  InFutureCheck.SomeHeaderInFutureCheck m blk ->
+  TopLevelConfig blk ->
+  ExtLedgerState blk EmptyMK ->
+  Header blk ->
+  m
+    ( Either
+        (AnnouncementInvalidity blk)
+        (Announcements.ShouldRelay, (LeiosPoint, BytesSize))
+    )
+announcementValidity systemTime futureCheck cfg immLedger hdr = do
+  onset <- case futureCheck of
+    InFutureCheck.SomeHeaderInFutureCheck hifc -> do
+      arrival <- InFutureCheck.recordHeaderArrival hifc hdr
+      judgment <-
+        either throwIO pure $
+          runExcept $
+            InFutureCheck.judgeHeaderArrival
+              hifc
+              (configLedger cfg)
+              (ledgerState immLedger)
+              arrival
+      arrivalResult <- InFutureCheck.handleHeaderArrival hifc judgment
+      either throwIO pure (runExcept arrivalResult)
+  -- The in-future check has delayed this thread until 'onset' if the
+  -- slot was near-future, so 'now' is at or after 'onset' and the age
+  -- is non-negative.
+  now <- systemTimeCurrent systemTime
+  let shouldRelay =
+        if diffRelTime now onset <= maxAnnouncementAgeSend
+        then Announcements.DoRelay
+        else Announcements.DoNotRelay
+  pure $ (,) shouldRelay <$> validateAnnouncementHeader cfg immLedger hdr
+
+-- | Record a validated, newly-announced EB body as missing, with its
+-- authoritative (forger-signed) size. First-seen wins: a no-op if the body is
+-- already acquired or already recorded.
+recordAnnouncedEb ::
+  IOLike m =>
+  ( MVar m (LeiosOutstanding pid)
+  , MVar m ()
+  ) ->
+  (LeiosPoint, BytesSize) ->
+  m ()
+recordAnnouncedEb (outstandingVar, readyVar) (point, ebBytesSize) = do
+    changed <- MVar.modifyMVar outstandingVar (pure . upd)
+    when changed $ void $ MVar.tryPutMVar readyVar ()
+  where
+    MkLeiosPoint _ebSlot ebHash = point
+
+    upd outstanding = if Set.member ebHash (Leios.acquiredEbBodies outstanding)
+       || any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding))
+      then (outstanding, False)
+      else flip (,) True $
+        outstanding
+          { Leios.missingEbBodies =
+              Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
+          }
+
+prunePeerStateToImmTip ::
+  LedgerSupportsProtocol blk =>
+  ExtLedgerState blk EmptyMK ->
+  SlotNo ->
+  Announcements.PeerState anc ->
+  (SlotNo, Announcements.PeerState anc)
+prunePeerStateToImmTip immLedger latestPruneSlot peerSt =
+  case getTipSlot (ledgerState immLedger) of
+    NotOrigin immTipSlot
+      | latestPruneSlot < immTipSlot -> (immTipSlot, Announcements.prunePeerState immTipSlot peerSt)
+    _ -> (latestPruneSlot, peerSt)
+
+-- | The just-counted announcement's fields, and whether it equivocates a prior
+-- header announcing the same election.
+announcementTraceFields ::
+  Announcements.ElState (AnnouncingHeader blk) ->
+  (AnnouncementEquivocation, AnnouncementFields)
+announcementTraceFields = \case
+  Announcements.OneAnnouncement a ->
+    (NoEquivocation, ancAnnouncementFields a)
+  Announcements.TwoAnnouncements _a1 a2 ->
+    (Equivocation, ancAnnouncementFields a2)
+
+-- | Render an 'Announcements' per-peer announcement event as a 'TraceLeiosPeer'.
+tracePeerAnnouncement ::
+  Announcements.TraceLeiosNotifyPeerEvent (AnnouncingHeader blk) ->
+  TraceLeiosPeer
+tracePeerAnnouncement (Announcements.TracePeerAnnouncement elSt) =
+  let (equivocation, fields) = announcementTraceFields elSt
+   in TraceLeiosPeerAnnouncement equivocation fields
+
+-- | Render an 'Announcements' node-wide announcement event as a
+-- 'TraceLeiosKernel'.
+traceNewAnnouncement ::
+  Announcements.TraceLeiosNotifyEvent peer (AnnouncingHeader blk) ->
+  TraceLeiosKernel
+traceNewAnnouncement (Announcements.TraceNewAnnouncement mbPeer _elId elSt) =
+  let (equivocation, fields) = announcementTraceFields elSt
+   in TraceLeiosAnnouncementAccepted
+        (maybe ForgedLocally (const ReceivedFromPeer) mbPeer)
+        equivocation
+        fields
+
+lEIOSNOTIFYPIPELINEDEPTH :: Int
+lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number
+
+-- | Do not relay (to downstream peers) an announcement whose slot's wall-clock
+-- onset is older than this. See 'Announcements.ShouldRelay'.
+--
+-- Must be comfortably less than the minimum possible wall-clock age of the
+-- immutable tip (the /average/ imm-tip age is @k \/ f@ slots behind the wall
+-- clock, but we need the /never in a million years/ bound instead), so that a
+-- downstream peer whose immutable tip is slightly ahead of ours by the time our
+-- message arrives still accepts what we relay rather than disconnecting us for
+-- a below-its-immutable-tip announcement.
+--
+-- TODO magic number; should be a config/RunNode option
+maxAnnouncementAgeSend :: NominalDiffTime
+maxAnnouncementAgeSend = 3600   -- 1 hour

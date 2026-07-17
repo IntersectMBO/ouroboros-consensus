@@ -21,6 +21,7 @@
 module Ouroboros.Consensus.HeaderValidation
   ( revalidateHeader
   , validateHeader
+  , validateHeaderProtocol
 
     -- * Annotated tips
   , AnnTip (..)
@@ -514,8 +515,25 @@ validateHeader cfg ledgerView hdr st = do
       ledgerView
       (untickedHeaderStateTip st)
       hdr
+  withExcept HeaderProtocolError $
+    validateHeaderProtocol cfg hdr st
+
+-- | The protocol-level portion of 'validateHeader' (KES\/VRF\/operational
+-- certificate, and any header rules the ledger layers on top), i.e.
+-- 'validateHeader' /without/ the envelope check.
+--
+-- Leios EB-announcement relay uses this directly: an announced RB header is
+-- out-of-order with respect to the local chain, so the envelope check
+-- (previous hash and block number) does not apply — but the rest of header
+-- validation still must.
+validateHeaderProtocol ::
+  (BlockSupportsProtocol blk, HasAnnTip blk) =>
+  TopLevelConfig blk ->
+  Header blk ->
+  Ticked (HeaderState blk) ->
+  Except (ValidationErr (BlockProtocol blk)) (HeaderState blk)
+validateHeaderProtocol cfg hdr st = do
   chainDepState' <-
-    withExcept HeaderProtocolError $
       updateChainDepState
         (configConsensus cfg)
         (validateView (configBlock cfg) hdr)

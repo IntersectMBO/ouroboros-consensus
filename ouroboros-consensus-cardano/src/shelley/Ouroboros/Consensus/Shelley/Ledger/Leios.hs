@@ -11,12 +11,14 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.Leios () where
 
+import qualified Cardano.Crypto.Hash as Crypto (hashToBytesShort)
 import Cardano.Ledger.Api (Tx)
 import Cardano.Ledger.Binary (decCBOR, decodeFullAnnotator)
 import qualified Cardano.Ledger.Block as Core
 import Cardano.Ledger.Core (TopTx, injectFailure)
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
+import Cardano.Ledger.Hashes (KeyHash (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.Rules (ledgerPpL)
 import qualified Cardano.Ledger.Shelley.UTxO as SL
@@ -31,13 +33,24 @@ import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Sequence.Strict as StrictSeq
 import LeiosDemoDb (leiosDbLookupEbClosure)
-import LeiosDemoTypes (EbAnnouncement (..), LeiosPoint (..), RbHash (..))
+import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
+import LeiosDemoTypes
+  ( AnnouncementDisposition (..)
+  , EbAnnouncement (..)
+  , LeiosPoint (..)
+  , RbHash (..)
+  )
 import Lens.Micro ((.~), (^.))
 import Ouroboros.Consensus.Block (ChainHash (..), blockPrevHash, toRawHash)
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables, unstowLedgerTables)
-import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto, PraosState (..))
+import Ouroboros.Consensus.Protocol.Praos
+  ( Praos
+  , PraosCrypto
+  , PraosState (..)
+  , PraosValidationErr (..)
+  )
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (..)
   , HeaderBody (..)
@@ -194,6 +207,20 @@ instance
       )
    where
     Header{headerBody} = shelleyHeaderRaw hdr
+
+  headerElId hdr =
+    MkElId
+      headerBody.hbSlotNo
+      (Crypto.hashToBytesShort . unKeyHash . SL.hashKey $ headerBody.hbVk)
+   where
+    Header{headerBody} = shelleyHeaderRaw hdr
+
+  classifyAnnouncementValidationErr err = case err of
+    -- A counter ahead of, or a pool absent from, our immutable tip's view can
+    -- be honest (our tip lags the announcement's chain), so tolerate these.
+    CounterOverIncrementedOCERT{} -> Tolerate
+    NoCounterForKeyHashOCERT{} -> Tolerate
+    _ -> Reject
 
   protocolStateLeiosAnnouncement st = do
     ann <- strictMaybeToMaybe $ praosStateLeiosAnnouncement st
