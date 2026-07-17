@@ -1,4 +1,5 @@
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -10,8 +11,12 @@
 -- measurements and call stacks for amazing observability.
 module LeiosUtils.CallTrace
   ( callTraceToObject
+  , SomeJsonCallTrace (..)
   , callTrace
-  , CallLocalId
+  , callTraceVia
+  , callTraceSameThread
+  , callTraceSameThreadVia
+  , CallChildId
   , CallId
   , callId
   , CallName
@@ -48,15 +53,15 @@ import Data.Maybe (isJust)
 import Data.Word (Word64)
 import qualified GHC.Conc.Sync as IO
 
-type CallLocalId = Word64
-type CallId = [CallLocalId]
+type CallChildId = Word64
+type CallId = [CallChildId]
 type CallName = String
 type ThreadName = String
 
 -- | `CallInfo` holds a thread/name/local id of a call and its parents' CallInfo.
 data CallInfo = CallInfo
-  { ciCallLocalId :: CallLocalId
-  -- ^ Call local identifier, unique amongst all `sibling` calls
+  { ciCallChildId :: CallChildId
+  -- ^ Call child/local identifier, unique amongst all `sibling` calls
   -- `callId` forms a globally unique identifier
   , ciCallParent :: Maybe CallInfo
   -- ^ Parent call info
@@ -69,7 +74,7 @@ data CallInfo = CallInfo
 
 data CallCtx m = CallCtx
   { ccCallInfo :: CallInfo
-  , ccNextChildId :: StrictTVar m CallLocalId
+  , ccNextChildId :: StrictTVar m CallChildId
   }
 
 -- | `CallTrace` denotes events that describe a Call's life, with its Argument of type `a` and a result of type `r`.
@@ -85,12 +90,12 @@ data CallTrace a r = CallTrace
 -- TODO(bladyjoker): Add CallEmit e for events that happen during the Call.
 data CallEvent r
   = CallStart
-  | CallEnd r CallMeasure
+  | CallEnd r !CallMeasure
   deriving stock (Show, Eq)
 
 data CallMeasure = CallMeasure
-  { cmDuration :: DiffTime
-  , cmAllocations :: Int64
+  { cmDuration :: !DiffTime
+  , cmAllocations :: !Int64
   }
   deriving stock (Show, Eq, Ord)
 
@@ -100,6 +105,7 @@ instance Monoid CallMeasure where
 instance Semigroup CallMeasure where
   (CallMeasure d a) <> (CallMeasure d' a') = CallMeasure (d + d') (a + a')
 
+-- TODO(bladyjoker): This needs to be tested too, probably need callTraceFromObject and use the same testsuite
 callTraceToObject ::
   forall a r. (Aeson.ToJSON a, Aeson.ToJSON r) => CallTrace a r -> Aeson.Object
 callTraceToObject ct =
@@ -118,14 +124,66 @@ callTraceToObject ct =
    in
     mconcat $
       [ "kind" .= Aeson.String "Call"
-      , "id" .= intercalate "." (fmap show (callId ci))
-      , "local_id" .= ciCallLocalId ci
-      , "name_stack" .= intercalate " -> " (ancestorNames ci)
-      , "name" .= ciCallName ci
       , "thread" .= ciThread ci
+      , "name" .= ciCallName ci
+      , "stack" .= formatCallStack ci
+      , "id" .= formatCallId ci
+      , "child_id" .= ciCallChildId ci
+      , "parent_id" .= maybe "" formatCallId (ciCallParent ci)
       , "argument" .= (Aeson.toJSON . ctArgument $ ct)
       ]
         <> eventObject
+ where
+  formatCallId = intercalate "." . fmap show . callId
+  formatCallStack = intercalate " -> " . reverse . fmap ciCallName . callStack
+
+-- | A 'CallTrace' with its argument and result types packed away, retaining
+-- only the ability to render it as JSON via 'callTraceToObject'.
+--
+-- 'Eq' and 'Show' can't be derived for this type -- the packed-away @a@/@r@
+-- are existential, so there's no way to derive structural equality or
+-- showsPrec across two values that may hide different types. Instead both
+-- instances go via 'callTraceToObject': 'Aeson.Object' has real 'Eq'/'Show'
+-- instances, so two calls compare equal iff their rendered JSON does.
+data SomeJsonCallTrace
+  = forall a r. (Aeson.ToJSON a, Aeson.ToJSON r) => SomeJsonCallTrace (CallTrace a r)
+
+instance Eq SomeJsonCallTrace where
+  SomeJsonCallTrace ct1 == SomeJsonCallTrace ct2 =
+    callTraceToObject ct1 == callTraceToObject ct2
+
+instance Show SomeJsonCallTrace where
+  show (SomeJsonCallTrace ct) = show (callTraceToObject ct)
+
+-- | Like 'callTrace', but the value recorded in the 'CallEnd' is @f res@
+-- rather than @res@ itself -- useful when @res@ doesn't have a suitable
+-- 'Aeson.ToJSON'\/'Show' instance (or you don't want to log all of it), but
+-- a projection of it does. The returned value is still the real @res@,
+-- untouched.
+callTraceVia ::
+  forall m a r r'.
+  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
+  -- | Project the result to whatever is actually recorded in the trace
+  (r -> r') ->
+  -- | Tracing action
+  (CallTrace a r' -> m ()) ->
+  -- | Parent context
+  CallCtx m ->
+  -- | Call thread
+  ThreadName ->
+  -- | CallName
+  CallName ->
+  -- | Call argument
+  a ->
+  -- | Continuation with the new call context (to be passed to children calls)
+  (CallCtx m -> m r) ->
+  m r
+callTraceVia f trace pctx thread cn arg action = do
+  ctx <- childCallCtx pctx thread cn
+  trace (CallTrace (ccCallInfo ctx) arg CallStart)
+  (res, callMeasure) <- withMeasure (action ctx)
+  trace (CallTrace (ccCallInfo ctx) arg (CallEnd (f res) callMeasure))
+  pure res
 
 callTrace ::
   forall m a r.
@@ -143,12 +201,46 @@ callTrace ::
   -- | Continuation with the new call context (to be passed to children calls)
   (CallCtx m -> m r) ->
   m r
-callTrace trace pctx thread cn arg action = do
-  ctx <- childCallCtx pctx thread cn
-  trace (CallTrace (ccCallInfo ctx) arg CallStart)
-  (res, callMeasure) <- withMeasure (action ctx)
-  trace (CallTrace (ccCallInfo ctx) arg (CallEnd res callMeasure))
-  pure res
+callTrace = callTraceVia id
+
+-- | Like 'callTraceVia', but the call runs on the same thread as its parent,
+-- so the 'ThreadName' is inherited from the parent context instead of being
+-- passed explicitly.
+callTraceSameThreadVia ::
+  forall m a r r'.
+  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
+  (r -> r') ->
+  -- | Tracing action
+  (CallTrace a r' -> m ()) ->
+  -- | Parent context
+  CallCtx m ->
+  -- | CallName
+  CallName ->
+  -- | Call argument
+  a ->
+  -- | Continuation with the new call context (to be passed to children calls)
+  (CallCtx m -> m r) ->
+  m r
+callTraceSameThreadVia f trace pctx = callTraceVia f trace pctx (ciThread (ccCallInfo pctx))
+
+-- | Like 'callTrace', but the call runs on the same thread as its parent, so
+-- the 'ThreadName' is inherited from the parent context instead of being
+-- passed explicitly.
+callTraceSameThread ::
+  forall m a r.
+  (MonadSTM m, MonadMonotonicTime m, MonadAllocationCounter m) =>
+  -- | Tracing action
+  (CallTrace a r -> m ()) ->
+  -- | Parent context
+  CallCtx m ->
+  -- | CallName
+  CallName ->
+  -- | Call argument
+  a ->
+  -- | Continuation with the new call context (to be passed to children calls)
+  (CallCtx m -> m r) ->
+  m r
+callTraceSameThread = callTraceSameThreadVia id
 
 withMeasure :: (MonadMonotonicTime m, MonadAllocationCounter m) => m r -> m (r, CallMeasure)
 withMeasure action = do
@@ -167,14 +259,14 @@ withMeasure action = do
 
 childCallCtx :: MonadSTM m => CallCtx m -> ThreadName -> CallName -> m (CallCtx m)
 childCallCtx pctx thread cn = do
-  cid <- atomically $ do
+  (cid, nextChildIdVar) <- atomically $ do
     n <- readTVar (ccNextChildId pctx)
     writeTVar (ccNextChildId pctx) (n + 1)
-    pure n
-  nextChildIdVar <- atomically $ newTVar 0
+    nextChildIdVar <- newTVar 0
+    pure (n, nextChildIdVar)
   let ci =
         CallInfo
-          { ciCallLocalId = cid
+          { ciCallChildId = cid
           , ciCallParent = Just $ ccCallInfo pctx
           , ciCallName = cn
           , ciThread = thread
@@ -188,7 +280,7 @@ childCallCtx pctx thread cn = do
 rootCallInfo :: ThreadName -> CallInfo
 rootCallInfo thread =
   CallInfo
-    { ciCallLocalId = 0
+    { ciCallChildId = 0
     , ciCallParent = Nothing
     , ciCallName = ""
     , ciThread = thread
@@ -205,18 +297,15 @@ rootCallCtx thread = do
       , ccNextChildId = nextChildIdVar
       }
 
--- `callAncestors` without `root`
-callAncestors :: CallInfo -> [CallInfo]
-callAncestors ci = case ciCallParent ci of
+-- | `callStack` without `root`
+callStack :: CallInfo -> [CallInfo]
+callStack ci = case ciCallParent ci of
   Nothing -> []
-  Just parCi -> if isJust (ciCallParent parCi) then parCi : callAncestors parCi else []
-
-ancestorNames :: CallInfo -> [CallName]
-ancestorNames = reverse . fmap ciCallName . callAncestors
+  Just parCi -> ci : callStack parCi
 
 -- `callId` is a globally unique Call identifier
 callId :: CallInfo -> CallId
-callId ci = reverse . fmap (ciCallLocalId) $ (ci : callAncestors ci)
+callId = reverse . fmap (ciCallChildId) . callStack
 
 -- | Allocation measurements machinery
 class Monad m => MonadAllocationCounter m where
