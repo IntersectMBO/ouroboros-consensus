@@ -48,7 +48,9 @@ import Cardano.Ledger.Binary
   , EncCBOR (..)
   , EncCBORGroup
   , FullByteString (..)
+  , encodePreEncoded
   , serialize
+  , withSlice
   )
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import qualified Cardano.Ledger.Block as SL (EraBlockHeader)
@@ -64,6 +66,8 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import qualified Data.ByteString.Lazy as Lazy
+import Data.ByteString.Short (ShortByteString)
+import qualified Data.ByteString.Short as SBS
 import Data.Coerce (coerce)
 import Data.Maybe.Strict (isSJust)
 import Data.Typeable (Typeable, eqT)
@@ -159,6 +163,21 @@ instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) 
 data ShelleyBlock proto era = ShelleyBlock
   { shelleyBlockRaw :: !(SL.Block (ShelleyProtocolHeader proto) era)
   , shelleyBlockHeaderHash :: !ShelleyHash
+  , shelleyBlockBytes :: !ShortByteString
+  -- ^ Preserved CBOR encoding of the block.
+  --
+  -- HOTFIX: ledger's 'EncCBOR' instance for 'SL.Block' re-serializes the
+  -- body structure and can produce bytes that differ from what the block
+  -- was originally decoded from (e.g. definite-vs-indefinite list framing
+  -- picked by a non-Haskell block producer). If a haskell node re-encodes
+  -- on write-to-disk, the on-disk body no longer matches the header's
+  -- committed @hbBodySize@ / @hbBodyHash@, and validation of the reloaded
+  -- block fails.
+  --
+  -- We preserve the exact incoming CBOR on decode and re-emit it verbatim
+  -- via 'encodePreEncoded' on every subsequent encode, so wire → disk →
+  -- wire is byte-identical. Forged blocks store the freshly-serialized
+  -- bytes here so all downstream encodes agree.
   }
 
 deriving instance ShelleyCompatible proto era => Show (ShelleyBlock proto era)
@@ -171,13 +190,29 @@ instance
 type instance HeaderHash (ShelleyBlock proto era) = ShelleyHash
 
 mkShelleyBlock ::
+  forall proto era.
   ShelleyCompatible proto era =>
   SL.Block (ShelleyProtocolHeader proto) era ->
   ShelleyBlock proto era
 mkShelleyBlock raw =
+  mkShelleyBlockPreserved raw (serialize (SL.eraProtVerLow @era) raw)
+
+-- | Construct a 'ShelleyBlock' preserving the exact CBOR bytes it was decoded
+-- from (or that were freshly serialized when forging).
+--
+-- HOTFIX: see the comment on 'shelleyBlockBytes'. Decoders MUST route through
+-- this constructor via 'withSlice' so the wire bytes are carried alongside the
+-- decoded structure and can be re-emitted unchanged.
+mkShelleyBlockPreserved ::
+  ShelleyCompatible proto era =>
+  SL.Block (ShelleyProtocolHeader proto) era ->
+  Lazy.ByteString ->
+  ShelleyBlock proto era
+mkShelleyBlockPreserved raw bytes =
   ShelleyBlock
     { shelleyBlockRaw = raw
     , shelleyBlockHeaderHash = pHeaderHash $ SL.blockHeader raw
+    , shelleyBlockBytes = SBS.toShort (Lazy.toStrict bytes)
     }
 
 class
@@ -210,7 +245,7 @@ instance
   ShowProxy (Header (ShelleyBlock proto era))
 
 instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
-  getHeader (ShelleyBlock rawBlk hdrHash) =
+  getHeader ShelleyBlock{shelleyBlockRaw = rawBlk, shelleyBlockHeaderHash = hdrHash} =
     ShelleyHeader
       { shelleyHeaderRaw = SL.blockHeader rawBlk
       , shelleyHeaderHash = hdrHash
@@ -310,11 +345,15 @@ instance HasNestedContent f (ShelleyBlock proto era)
 -------------------------------------------------------------------------------}
 
 instance ShelleyCompatible proto era => EncCBOR (ShelleyBlock proto era) where
-  -- Don't encode the header hash, we recompute it during deserialisation
-  encCBOR = encCBOR . shelleyBlockRaw
+  -- HOTFIX: emit the preserved CBOR bytes verbatim. Going through the ledger
+  -- 'EncCBOR' instance for 'SL.Block' can change bytes vs the block's
+  -- original encoding, breaking the header's committed body-size/hash.
+  encCBOR = encodePreEncoded . SBS.fromShort . shelleyBlockBytes
 
 instance ShelleyCompatible proto era => DecCBOR (Annotator (ShelleyBlock proto era)) where
-  decCBOR = fmap mkShelleyBlock <$> decCBOR
+  decCBOR = do
+    (blkAnn, bytesAnn) <- withSlice decCBOR
+    pure $ mkShelleyBlockPreserved <$> blkAnn <*> bytesAnn
 
 instance ShelleyCompatible proto era => EncCBOR (Header (ShelleyBlock proto era)) where
   -- Don't encode the header hash, we recompute it during deserialisation
