@@ -19,6 +19,7 @@ data-files:
   cardano-blueprint/src/codecs/base.cddl
   cardano-blueprint/src/network/node-to-node/leios-notify/messages.cddl
   ouroboros-consensus-cardano/cddl/**/*.cddl
+  ouroboros-consensus-cardano/test/cardano-test/leios-fork/block-67555-70c34f39-original.cbor
 
 extra-doc-files:
   docs/haddocks/*.svg
@@ -1768,7 +1769,7 @@ test-suite cardano-test
     cardano-ledger-alonzo:{cardano-ledger-alonzo, testlib},
     cardano-ledger-api,
     cardano-ledger-babbage:testlib,
-    cardano-ledger-binary:testlib,
+    cardano-ledger-binary:{cardano-ledger-binary, testlib},
     cardano-ledger-byron:{cardano-ledger-byron, testlib},
     cardano-ledger-conway:testlib,
     cardano-ledger-core:{cardano-ledger-core, testlib},
