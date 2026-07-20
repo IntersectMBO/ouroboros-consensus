@@ -245,6 +245,7 @@ library
     Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Vote.Class
     Ouroboros.Consensus.Peras.Vote.V1
+    Ouroboros.Consensus.Peras.Voting.Adapter
     Ouroboros.Consensus.Peras.Voting.Committee
     Ouroboros.Consensus.Peras.Voting.Rules
     Ouroboros.Consensus.Peras.Voting.View
