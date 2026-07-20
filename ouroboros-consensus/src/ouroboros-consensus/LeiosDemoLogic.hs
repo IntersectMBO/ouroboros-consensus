@@ -268,16 +268,26 @@ leiosFetchLogicIteration ::
   forall pid.
   Ord pid =>
   LeiosFetchStaticEnv ->
+  -- | The current slot, or 'Nothing' when it is not yet known (i.e. we are
+  -- syncing), in which case we fetch freshest-last instead of freshest-first.
+  Maybe SlotNo ->
   Map (PeerId pid) (Set EbHash, Set EbHash) ->
   LeiosOutstanding pid ->
   (LeiosOutstanding pid, LeiosFetchDecisions pid)
-leiosFetchLogicIteration env offerings =
+leiosFetchLogicIteration env mbCurrentSlot offerings =
   \acc ->
     go1 acc emptyLeiosFetchDecisions $
       expand $
-        Map.toDescList $
+        prioritize $
           Map.map Left (Leios.missingEbBodies acc) `Map.union` Map.map Right (Leios.missingEbTxs acc)
  where
+  -- Once we know the current slot we fetch freshest-first; until then we are
+  -- syncing, so we fetch freshest-last (i.e. oldest-first) to make progress
+  -- from the tip of our chain forward.
+  prioritize m = case mbCurrentSlot of
+    Nothing -> Map.toAscList m
+    Just _currentSlot -> Map.toDescList m
+
   expand = \case
     [] -> []
     (point, Left ebBytesSize) : vs -> Left (point, ebBytesSize) : expand vs
