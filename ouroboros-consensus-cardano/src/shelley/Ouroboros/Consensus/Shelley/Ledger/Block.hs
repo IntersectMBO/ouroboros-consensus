@@ -26,8 +26,10 @@ module Ouroboros.Consensus.Shelley.Ledger.Block
 
     -- * Shelley Compatibility
   , ShelleyCompatible
+  , encodeShelleyBlockWorkaroundLedgerIssue5937
   , mkShelleyBlock
   , mkShelleyHeader
+  , workaroundLedgerIssue5937
 
     -- * Serialisation
   , decodeShelleyBlock
@@ -47,7 +49,9 @@ import Cardano.Ledger.Binary
   , DecCBOR (..)
   , EncCBOR (..)
   , EncCBORGroup
+  , Encoding
   , FullByteString (..)
+  , encodeListLen
   , serialize
   )
 import qualified Cardano.Ledger.Binary.Plain as Plain
@@ -143,6 +147,10 @@ class
   , Plain.ToCBOR (LegacyPParams era)
   ) =>
   ShelleyCompatible proto era
+  where
+  -- | <https://github.com/IntersectMBO/cardano-ledger/issues/5937>
+  workaroundLedgerIssue5937 :: SL.Block (ShelleyProtocolHeader proto) era -> Encoding
+  workaroundLedgerIssue5937 = encCBOR
 
 instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) where
   toShortRawHash _ = Crypto.hashToBytesShort . unShelleyHash
@@ -311,7 +319,15 @@ instance HasNestedContent f (ShelleyBlock proto era)
 
 instance ShelleyCompatible proto era => EncCBOR (ShelleyBlock proto era) where
   -- Don't encode the header hash, we recompute it during deserialisation
-  encCBOR = encCBOR . shelleyBlockRaw
+  encCBOR = workaroundLedgerIssue5937 . shelleyBlockRaw
+
+-- | <https://github.com/IntersectMBO/cardano-ledger/issues/5937>
+encodeShelleyBlockWorkaroundLedgerIssue5937 ::
+  (EncCBOR h, EncCBOR (SL.BlockBody era)) =>
+  SL.Block h era ->
+  Encoding
+encodeShelleyBlockWorkaroundLedgerIssue5937 (SL.Block h body) =
+  encodeListLen 2 <> encCBOR h <> encCBOR body
 
 instance ShelleyCompatible proto era => DecCBOR (Annotator (ShelleyBlock proto era)) where
   decCBOR = fmap mkShelleyBlock <$> decCBOR
