@@ -121,6 +121,7 @@ import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Util.Assert
 import Quiet (Quiet (..))
+import System.FS.API (SomeHasFS)
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL
   ( KeyPair (..)
   , mkWitnessesVKey
@@ -346,8 +347,18 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
       , sgMaxLovelaceSupply = maxLovelaceSupply
       , sgProtocolParams = pparams
       , sgGenDelegs = coreNodesToGenesisMapping
-      , sgInitialFunds = ListMap.fromMap initialFunds
-      , sgStaking = initialStake
+      , sgInitialFunds = mempty
+      , sgStaking = SL.emptyGenesisStaking
+      , sgExtraConfig =
+          SL.SJust
+            SL.ShelleyExtraConfig
+              { SL.secInitialFunds =
+                  SL.EmbeddedInjection (ListMap.fromMap initialFunds)
+              , SL.secStakePools =
+                  SL.EmbeddedInjection (SL.sgsPools initialStake)
+              , SL.secStakeCredentials =
+                  SL.EmbeddedInjection (SL.sgsStake initialStake)
+              }
       }
  where
   checkMaxLovelaceSupply :: Either String ()
@@ -463,15 +474,18 @@ mkProtocolShelley ::
   ( KESAgentContext c m
   , ShelleyCompatible (TPraos c) ShelleyEra
   ) =>
+  SomeHasFS m ->
   ShelleyGenesis ->
   SL.Nonce ->
   ProtVer ->
   CoreNode c ->
-  ( ProtocolInfo (ShelleyBlock (TPraos c) ShelleyEra)
-  , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
-  )
-mkProtocolShelley genesis initialNonce protVer coreNode =
+  m
+    ( ProtocolInfo (ShelleyBlock (TPraos c) ShelleyEra)
+    , Tracer.Tracer m KESAgentClientTrace -> m [MkBlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
+    )
+mkProtocolShelley fs genesis initialNonce protVer coreNode =
   protocolInfoShelley
+    fs
     genesis
     ProtocolParamsShelleyBased
       { shelleyBasedInitialNonce = initialNonce
