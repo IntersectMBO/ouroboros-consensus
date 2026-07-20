@@ -36,6 +36,7 @@ module Ouroboros.Consensus.Node.Serialisation
   , Some (..)
   ) where
 
+import Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import qualified Cardano.Binary as KeyHash
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
@@ -196,6 +197,10 @@ instance ConvertRawHash blk => SerialiseNodeToNode blk (Tip blk) where
 instance SerialiseNodeToNode blk PerasRoundNo where
   encodeNodeToNode _ccfg _version = encode
   decodeNodeToNode _ccfg _version = decode
+
+instance SerialiseNodeToNode blk PerasSeatIndex where
+  encodeNodeToNode _ccfg _version = toCBOR . unPerasSeatIndex
+  decodeNodeToNode _ccfg _version = PerasSeatIndex <$> fromCBOR
 
 instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
   -- Consistent with the 'Serialise' instance for 'PerasCert' defined in Ouroboros.Consensus.Block.SupportsPeras
