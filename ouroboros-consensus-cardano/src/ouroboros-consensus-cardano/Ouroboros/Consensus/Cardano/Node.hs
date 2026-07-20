@@ -58,6 +58,7 @@ import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import qualified Codec.CBOR.Decoding as CBOR
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
+import Codec.CBOR.Read (deserialiseFromBytes)
 import Control.Exception (assert)
 import qualified Control.Tracer as Tracer
 import qualified Data.ByteString as BS
@@ -82,6 +83,9 @@ import Ouroboros.Consensus.Byron.Ledger.NetworkProtocolVersion
 import Ouroboros.Consensus.Byron.Node
 import Ouroboros.Consensus.Cardano.Block
 import Ouroboros.Consensus.Cardano.CanHardFork
+import Ouroboros.Consensus.Cardano.LeiosWibble
+  ( wibbleMishapenDijkstraBlock
+  )
 import Ouroboros.Consensus.Cardano.QueryHF ()
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator
@@ -175,16 +179,16 @@ instance CardanoHardForkConstraints c => SerialiseHFC (CardanoEras c) where
       BlockConway  blockConway    -> prependTag 7 $ encodeDisk ccfgConway   blockConway
       BlockDijkstra blockDijkstra -> prependTag 8 $ encodeDisk ccfgDijkstra blockDijkstra
   decodeDiskHfcBlock
-    ( CardanoCodecConfig
-        ccfgByron
-        ccfgShelley
-        ccfgAllegra
-        ccfgMary
-        ccfgAlonzo
-        ccfgBabbage
-        ccfgConway
-        ccfgDijkstra
-      ) = do
+    ccfg@( CardanoCodecConfig
+             ccfgByron
+             ccfgShelley
+             ccfgAllegra
+             ccfgMary
+             ccfgAlonzo
+             ccfgBabbage
+             ccfgConway
+             ccfgDijkstra
+           ) = do
       enforceSize "CardanoBlock" 2
       CBOR.decodeWord >>= \case
         0 -> fmap (Right . BlockByron) <$> Byron.decodeByronBoundaryBlock epochSlots
@@ -197,7 +201,19 @@ instance CardanoHardForkConstraints c => SerialiseHFC (CardanoEras c) where
         5 -> fmap (fmap BlockAlonzo) <$> decodeDisk ccfgAlonzo
         6 -> fmap (fmap BlockBabbage) <$> decodeDisk ccfgBabbage
         7 -> fmap (fmap BlockConway) <$> decodeDisk ccfgConway
-        8 -> fmap (fmap BlockDijkstra) <$> decodeDisk ccfgDijkstra
+        -- TEMPORARY (see 'LeiosWibble'): if these bytes are a listed mishapen
+        -- Dijkstra block, repair its transaction sequence and decode the
+        -- repaired bytes; otherwise decode as usual. The repair is a no-op on
+        -- unlisted blocks and already-well-formed ones, so the re-decode
+        -- terminates.
+        8 -> do
+          mk <- fmap (fmap BlockDijkstra) <$> decodeDisk ccfgDijkstra
+          pure $ \bytes ->
+            case wibbleMishapenDijkstraBlock bytes of
+              Nothing -> mk bytes
+              Just bytes' -> case deserialiseFromBytes (decodeDiskHfcBlock ccfg) bytes' of
+                Right (_leftover, mk') -> mk' bytes'
+                Left failure -> Left (DecoderErrorDeserialiseFailure "CardanoBlock" failure)
         t -> cborError $ DecoderErrorUnknownTag "CardanoBlock" t
      where
       epochSlots = Byron.getByronEpochSlots ccfgByron
