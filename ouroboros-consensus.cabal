@@ -237,13 +237,16 @@ library
     Ouroboros.Consensus.NodeId
     Ouroboros.Consensus.Peras.Cert.Class
     Ouroboros.Consensus.Peras.Cert.Inclusion
+    Ouroboros.Consensus.Peras.Cert.Mock
     Ouroboros.Consensus.Peras.Cert.V1
     Ouroboros.Consensus.Peras.Crypto.BLS
+    Ouroboros.Consensus.Peras.Crypto.Mock
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Types
     Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Vote.Class
+    Ouroboros.Consensus.Peras.Vote.Mock
     Ouroboros.Consensus.Peras.Vote.V1
     Ouroboros.Consensus.Peras.Voting.Adapter
     Ouroboros.Consensus.Peras.Voting.Committee
@@ -371,6 +374,7 @@ library
     containers >=0.5 && <0.9,
     contra-tracer ^>=0.2.1,
     deepseq,
+    extra,
     FailT ^>=0.1.2,
     filelock,
     fs-api ^>=0.4,
