@@ -60,8 +60,8 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: 9edd1c664054803348e5f9edfa13529e4e844284
-  --sha256: sha256-TkgeO5d1p18VwTMtuNY8SsPZXXyn1HIrZBZ4IHVTWuE=
+  tag: fb8d6f8a83b0efb86281e0b80e7ffba160dad8b1
+  --sha256: sha256-U/vpyZNerL1YXiQg1TIAOL5L438NNE3XkuIYD0HPTJw=
   subdir:
     libs/cardano-data
     libs/cardano-ledger-api

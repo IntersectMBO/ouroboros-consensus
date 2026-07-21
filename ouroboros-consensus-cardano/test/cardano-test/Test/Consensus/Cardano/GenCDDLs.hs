@@ -97,6 +97,7 @@ fixupLedgerCDDL spec =
     -- for convenience, we use this test suite to generate the complete CDDL spec for manual testing.
     -- while this sed replacement is not used in these tests, it is needed to validate some of the real blocks.
     sed fp ["-i", "s/\\(chain_code: bytes\\)/\\1, ;/g"]
+
     CDDLSpec <$> BS.readFile fp
 
 -- | This sets the environment variables needed for `cddlc` to run properly.

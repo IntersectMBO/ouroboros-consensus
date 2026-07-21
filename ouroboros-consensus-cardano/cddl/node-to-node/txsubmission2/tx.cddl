@@ -6,7 +6,7 @@ tx =
            serialisedShelleyTx<alonzo.transaction>,
            serialisedShelleyTx<babbage.transaction>,
            serialisedShelleyTx<conway.transaction>,
-           serialisedShelleyTx<dijkstra.transaction>>
+           serialisedShelleyTx<dijkstra.transaction_mempool>>
 
 serialisedShelleyTx<era> = #6.24(bytes .cbor era)
 
