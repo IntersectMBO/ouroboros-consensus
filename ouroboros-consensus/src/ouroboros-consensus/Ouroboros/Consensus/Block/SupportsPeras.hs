@@ -10,6 +10,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -72,9 +73,9 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , module Ouroboros.Consensus.Peras.Types
   ) where
 
+import Cardano.Binary (FromCBOR (..), ToCBOR (..), decodeListLenOf, encodeListLen)
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.Hashes (KeyHash (..))
-import Codec.Serialise (Serialise (..))
 import Control.Exception (assert)
 import Control.Exception.Base (Exception)
 import Data.Bifunctor (bimap)
@@ -154,6 +155,37 @@ data PerasEpochContext blk
   , pecParams :: PerasParams blk
   }
 
+instance
+  ( Typeable blk
+  , FromCBOR (PerasVotingCommittee blk)
+  ) =>
+  FromCBOR (PerasEpochContext blk)
+  where
+  fromCBOR = do
+    decodeListLenOf 2
+    pecCommittee <- fromCBOR
+    pecParams <- fromCBOR
+    pure
+      PerasEpochContext
+        { pecCommittee
+        , pecParams
+        }
+
+instance
+  ( Typeable blk
+  , ToCBOR (PerasVotingCommittee blk)
+  ) =>
+  ToCBOR (PerasEpochContext blk)
+  where
+  toCBOR
+    PerasEpochContext
+      { pecCommittee
+      , pecParams
+      } =
+      encodeListLen 2
+        <> toCBOR pecCommittee
+        <> toCBOR pecParams
+
 deriving instance
   Show (PerasVotingCommittee blk) =>
   Show (PerasEpochContext blk)
@@ -163,9 +195,6 @@ deriving instance
 deriving instance
   NoThunks (PerasVotingCommittee blk) =>
   NoThunks (PerasEpochContext blk)
-deriving instance
-  Serialise (PerasVotingCommittee blk) =>
-  Serialise (PerasEpochContext blk)
 deriving instance
   Generic (PerasEpochContext blk)
 
@@ -578,9 +607,14 @@ deriving newtype instance
 deriving newtype instance
   NoThunks (VotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme)
 deriving newtype instance
-  Serialise (VotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme)
-deriving newtype instance
   Generic (VotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme)
+
+deriving newtype instance
+  Typeable blk =>
+  FromCBOR (VotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme)
+deriving newtype instance
+  Typeable blk =>
+  ToCBOR (VotingCommittee (VoidPerasCrypto blk) VoidPerasVotingCommitteeScheme)
 
 instance
   PerasVoteCompatibleWithVotingCommittee

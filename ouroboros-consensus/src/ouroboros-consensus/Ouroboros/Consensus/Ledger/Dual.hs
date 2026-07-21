@@ -63,7 +63,7 @@ module Ouroboros.Consensus.Ledger.Dual
   , encodeDualLedgerState
   ) where
 
-import Cardano.Binary (enforceSize)
+import Cardano.Binary (FromCBOR, ToCBOR, enforceSize)
 import Codec.CBOR.Decoding (Decoder)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise
@@ -275,7 +275,8 @@ class
     Show (PerasEpochContext (DualBlock m a))
   , Eq (PerasEpochContext (DualBlock m a))
   , NoThunks (PerasEpochContext (DualBlock m a))
-  , Serialise (PerasEpochContext (DualBlock m a))
+  , FromCBOR (PerasEpochContext (DualBlock m a))
+  , ToCBOR (PerasEpochContext (DualBlock m a))
   , Show (BridgeTx m a)
   ) =>
   Bridge m a

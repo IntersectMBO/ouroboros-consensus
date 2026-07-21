@@ -9,7 +9,7 @@
 
 module Ouroboros.Consensus.Util.Orphans () where
 
-import Cardano.Binary (fromCBOR, toCBOR)
+import Cardano.Binary (FromCBOR, ToCBOR, fromCBOR, toCBOR)
 import Cardano.Crypto.DSIGN.Class
 import Cardano.Crypto.DSIGN.Mock (MockDSIGN)
 import Cardano.Crypto.Hash (Hash, HashAlgorithm)
@@ -30,7 +30,6 @@ import Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
 import Data.Map.NonEmpty (NEMap)
 import qualified Data.Map.NonEmpty as NEMap
-import Data.Maybe.Strict (StrictMaybe, maybeToStrictMaybe, strictMaybeToMaybe)
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
 import Data.SOP.BasicFunctors
@@ -64,13 +63,15 @@ instance Serialise (VerKeyDSIGN MockDSIGN) where
   encode = encodeVerKeyDSIGN
   decode = decodeVerKeyDSIGN
 
-instance Serialise Nonce where
-  encode = toPlainEncoding shelleyProtVer . encCBOR
-  decode = toPlainDecoder Nothing shelleyProtVer decCBOR
+{-------------------------------------------------------------------------------
+  FromCBOR / ToCBOR
+-------------------------------------------------------------------------------}
 
-instance Serialise a => Serialise (StrictMaybe a) where
-  encode = encode . strictMaybeToMaybe
-  decode = maybeToStrictMaybe <$> decode
+instance FromCBOR Nonce where
+  fromCBOR = toPlainDecoder Nothing shelleyProtVer decCBOR
+
+instance ToCBOR Nonce where
+  toCBOR = toPlainEncoding shelleyProtVer . encCBOR
 
 {-------------------------------------------------------------------------------
   NoThunks

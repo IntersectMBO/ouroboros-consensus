@@ -28,14 +28,18 @@ module Ouroboros.Consensus.Peras.Crypto.BLS
   , PerasBLSCryptoAggregateVoteSignature (..)
   ) where
 
-import Cardano.Binary (FromCBOR, ToCBOR (..), decodeListLenOf, encodeListLen)
+import Cardano.Binary
+  ( FromCBOR (..)
+  , ToCBOR (..)
+  , decodeListLenOf
+  , encodeListLen
+  )
 import Cardano.Crypto.DSIGN (BLS12381MinSigDSIGN, DSIGNAlgorithm (..))
 import Cardano.Crypto.Hash (Hash)
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.BaseTypes (Nonce (..), SlotNo (..))
 import Cardano.Ledger.Binary (runByteBuilder)
 import Cardano.Ledger.Hashes (HASH)
-import Codec.Serialise (Serialise (..))
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Builder.Extra as BS
 import qualified Data.ByteString.Short as BS
@@ -89,15 +93,11 @@ data PerasPublicKey
 type instance PublicKey PerasBLSCrypto = PerasPublicKey
 
 -- NOTE: we include the key scope in the serialised format of the public key
-instance Serialise PerasPublicKey where
-  encode (PerasPublicKey pk) = do
-    encodeListLen 2
-      <> encode (BLS.publicKeyScope pk)
-      <> encode (BLS.rawSerialisePublicKey pk)
-  decode = do
+instance FromCBOR PerasPublicKey where
+  fromCBOR = do
     decodeListLenOf 2
-    keyScope <- decode
-    keyBytes <- decode
+    keyScope <- fromCBOR
+    keyBytes <- fromCBOR
     case BLS.rawDeserialisePublicKey keyScope keyBytes of
       Just pk ->
         pure (PerasPublicKey pk)
@@ -108,6 +108,12 @@ instance Serialise PerasPublicKey where
               <> " with scope: "
               <> show keyScope
           )
+
+instance ToCBOR PerasPublicKey where
+  toCBOR (PerasPublicKey pk) = do
+    encodeListLen 2
+      <> toCBOR (BLS.publicKeyScope pk)
+      <> toCBOR (BLS.rawSerialisePublicKey pk)
 
 -- | Hash the message of a Peras vote
 --

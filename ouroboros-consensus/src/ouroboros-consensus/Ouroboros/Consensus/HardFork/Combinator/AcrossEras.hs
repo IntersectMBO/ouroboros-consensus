@@ -84,7 +84,6 @@ import qualified Codec.CBOR.Decoding as Dec
 import Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as Enc
 import Codec.Serialise (Serialise (..))
-import qualified Codec.Serialise as Serialise
 import Control.DeepSeq (NFData)
 import Control.Exception (Exception)
 import Control.Monad.Except (throwError)
@@ -297,15 +296,21 @@ instance Typeable xs => ShowProxy (OneEraPerasCert xs)
 -- @Serialise (WrapPerasVotingCommittee blk)@ is reachable from @SingleEraBlock blk@
 -- via its @StateSupportsPerasEpochContext@ superclass -- and feed them to 'encodeNS'
 -- and 'decodeNS', producing the same wire format a @SerialiseNS@ derivation would.
+
 instance
   CanHardFork xs =>
-  Serialise (VotingCommittee (OneEraPerasCrypto xs) (OneEraPerasVotingCommitteeScheme xs))
+  FromCBOR (VotingCommittee (OneEraPerasCrypto xs) (OneEraPerasVotingCommitteeScheme xs))
   where
-  encode (OneEraPerasVotingCommittee ns) =
-    encodeNS (hcpure proxySingle (fn (K . Serialise.encode))) ns
-  decode =
+  fromCBOR =
     OneEraPerasVotingCommittee
-      <$> decodeNS (hcpure proxySingle (Comp Serialise.decode))
+      <$> decodeNS (hcpure proxySingle (Comp fromCBOR))
+
+instance
+  CanHardFork xs =>
+  ToCBOR (VotingCommittee (OneEraPerasCrypto xs) (OneEraPerasVotingCommitteeScheme xs))
+  where
+  toCBOR (OneEraPerasVotingCommittee ns) =
+    encodeNS (hcpure proxySingle (fn (K . toCBOR))) ns
 
 {-------------------------------------------------------------------------------
   Hash

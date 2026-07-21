@@ -33,7 +33,6 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
-import Codec.Serialise (Serialise (..))
 import Control.Monad (when)
 import Control.Monad.Error.Class (MonadError (..))
 import Data.Coerce (coerce)
@@ -114,7 +113,10 @@ instance
 
 type instance BoostedBlock (PerasCert tag) = PerasBoostedBlock
 
-instance Typeable tag => FromCBOR (PerasCert tag) where
+instance
+  Typeable tag =>
+  FromCBOR (PerasCert tag)
+  where
   fromCBOR = do
     decodeListLenOf 4
     pcRoundNo <- fromCBOR
@@ -129,17 +131,22 @@ instance Typeable tag => FromCBOR (PerasCert tag) where
         , pcSignature
         }
 
-instance Typeable tag => ToCBOR (PerasCert tag) where
-  toCBOR cert =
-    encodeListLen 4
-      <> toCBOR (pcRoundNo cert)
-      <> toCBOR (pcBoostedBlock cert)
-      <> toCBOR (pcVoters cert)
-      <> toCBOR (pcSignature cert)
-
-instance Typeable tag => Serialise (PerasCert tag) where
-  encode = toCBOR
-  decode = fromCBOR
+instance
+  Typeable tag =>
+  ToCBOR (PerasCert tag)
+  where
+  toCBOR
+    PerasCert
+      { pcRoundNo
+      , pcBoostedBlock
+      , pcVoters
+      , pcSignature
+      } =
+      encodeListLen 4
+        <> toCBOR pcRoundNo
+        <> toCBOR pcBoostedBlock
+        <> toCBOR pcVoters
+        <> toCBOR pcSignature
 
 instance ShowProxy tag => ShowProxy (PerasCert tag) where
   showProxy _ = "PerasCert " <> showProxy (Proxy @tag)

@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -157,10 +158,6 @@ newtype PerasSeatIndex
   deriving newtype (FromCBOR, ToCBOR, Enum, Bounded, NFData)
   deriving anyclass NoThunks
 
-instance Serialise PerasSeatIndex where
-  encode = toCBOR . unPerasSeatIndex
-  decode = PerasSeatIndex <$> fromCBOR
-
 -- * Peras vote parameters
 
 -- | The target of a vote in a Peras election
@@ -184,17 +181,23 @@ data PerasVoteId
 instance ShowProxy (PerasVoteId) where
   showProxy _ = "PerasVoteId"
 
-instance Serialise (PerasVoteId) where
-  encode voteId =
-    encodeListLen 2
-      <> encode (pviRoundNo voteId)
-      <> toCBOR (unPerasSeatIndex (pviSeatIndex voteId))
-  decode = do
+instance FromCBOR (PerasVoteId) where
+  fromCBOR = do
     decodeListLenOf 2
-    roundNo <- decode
-    seatIndex <- PerasSeatIndex <$> fromCBOR
+    pviRoundNo <- fromCBOR
+    pviSeatIndex <- fromCBOR
     pure
       PerasVoteId
-        { pviRoundNo = roundNo
-        , pviSeatIndex = seatIndex
+        { pviRoundNo
+        , pviSeatIndex
         }
+
+instance ToCBOR (PerasVoteId) where
+  toCBOR
+    PerasVoteId
+      { pviRoundNo
+      , pviSeatIndex
+      } =
+      encodeListLen 2
+        <> toCBOR pviRoundNo
+        <> toCBOR pviSeatIndex

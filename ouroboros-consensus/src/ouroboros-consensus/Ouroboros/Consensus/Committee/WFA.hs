@@ -3,6 +3,8 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Deterministic portion of the Weighted Fait-Accompli committee selection scheme
 module Ouroboros.Consensus.Committee.WFA
@@ -30,12 +32,19 @@ module Ouroboros.Consensus.Committee.WFA
 -- NOTE: DSIGN/BLS imports are needed to implement the fair 'WFATiebreaker'
 -- using epoch nonces. If we move away from BLS in the future of Peras/Leios, we
 -- might want to revisit its implementation to use a different hash function.
+
+import Cardano.Binary
+  ( FromCBOR (..)
+  , ToCBOR (..)
+  , decodeListLen
+  , decodeListLenOf
+  , encodeListLen
+  )
 import Cardano.Crypto.DSIGN (BLS12381MinSigDSIGN, DSIGNAlgorithm (SigDSIGN))
 import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce, Nonce))
 import Cardano.Ledger.Binary (runByteBuilder)
 import Cardano.Ledger.Core (HASH, Hash, KeyHash (unKeyHash))
-import Codec.Serialise (Serialise (..))
 import Control.Exception (Exception, assert)
 import Data.Array (Array, Ix, listArray)
 import qualified Data.Array as Array
@@ -44,7 +53,7 @@ import Data.Function (on)
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Word (Word64)
+import Data.Word (Word64, Word8)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Committee.Types
@@ -64,7 +73,7 @@ newtype PersistentCommitteeSize
   { unPersistentCommitteeSize :: Word64
   }
   deriving stock (Show, Eq, Generic)
-  deriving newtype Serialise
+  deriving newtype (FromCBOR, ToCBOR)
   deriving anyclass NoThunks
 
 -- | Non-persistent committee size
@@ -73,7 +82,7 @@ newtype NonPersistentCommitteeSize
   { unNonPersistentCommitteeSize :: Word64
   }
   deriving stock (Show, Eq, Generic)
-  deriving newtype Serialise
+  deriving newtype (FromCBOR, ToCBOR)
   deriving anyclass NoThunks
 
 -- | Total persistent stake
@@ -82,7 +91,7 @@ newtype TotalPersistentStake
   { unTotalPersistentStake :: Cumulative LedgerStake
   }
   deriving stock (Show, Eq, Generic)
-  deriving newtype Serialise
+  deriving newtype (FromCBOR, ToCBOR)
   deriving anyclass NoThunks
 
 -- | Total non-persistent stake
@@ -91,7 +100,7 @@ newtype TotalNonPersistentStake
   { unTotalNonPersistentStake :: Cumulative LedgerStake
   }
   deriving stock (Show, Eq, Generic)
-  deriving newtype Serialise
+  deriving newtype (FromCBOR, ToCBOR)
   deriving anyclass NoThunks
 
 -- | Errors that can occur when trying to split the stake distribution into
@@ -106,7 +115,26 @@ data WFAError
       TargetCommitteeSize
       NumPoolsWithPositiveStake
   deriving stock (Show, Eq, Generic)
-  deriving anyclass (NoThunks, Exception, Serialise)
+  deriving anyclass (NoThunks, Exception)
+
+instance FromCBOR WFAError where
+  fromCBOR = do
+    len <- decodeListLen
+    tag <- fromCBOR @Word8
+    case (len, tag) of
+      (1, 0) -> pure EmptyStakeDistribution
+      (3, 1) -> NotEnoughPoolsWithPositiveStake <$> fromCBOR <*> fromCBOR
+      _ -> fail $ "Invalid WFAError length/tag: " <> show (len, tag)
+
+instance ToCBOR WFAError where
+  toCBOR EmptyStakeDistribution =
+    encodeListLen 1
+      <> toCBOR (0 :: Word8)
+  toCBOR (NotEnoughPoolsWithPositiveStake totalSeats numPools) =
+    encodeListLen 3
+      <> toCBOR (1 :: Word8)
+      <> toCBOR totalSeats
+      <> toCBOR numPools
 
 -- | Split a stake distrubution into persistent and non-persistent committee
 -- seats according to the weighted Fait-Accompli scheme.
@@ -250,7 +278,7 @@ newtype SeatIndex
   { unSeatIndex :: Word64
   }
   deriving stock (Show, Eq, Ord, Ix, Generic)
-  deriving newtype (Enum, Serialise)
+  deriving newtype (Enum, FromCBOR, ToCBOR)
   deriving anyclass NoThunks
 
 -- | Number of pools with positive stake in the underlying stake distribution
@@ -259,7 +287,7 @@ newtype NumPoolsWithPositiveStake
   { unNumPoolsWithPositiveStake :: Word64
   }
   deriving stock (Show, Eq, Generic)
-  deriving newtype Serialise
+  deriving newtype (FromCBOR, ToCBOR)
   deriving anyclass NoThunks
 
 -- | Total stake in the underlying stake distribution
@@ -268,7 +296,7 @@ newtype TotalStake
   { unTotalStake :: Cumulative LedgerStake
   }
   deriving stock (Show, Eq, Generic)
-  deriving newtype Serialise
+  deriving newtype (FromCBOR, ToCBOR)
   deriving anyclass NoThunks
 
 -- | Tiebreaker for voters with the same stake in the cumulative stake.
@@ -393,16 +421,41 @@ data ExtWFAStakeDistr a
   -- transformations between absolute and relative stakes.
   }
   deriving stock (Show, Eq, Generic)
-  deriving anyclass (NoThunks, Serialise)
+  deriving anyclass NoThunks
 
-instance Serialise a => Serialise (Array SeatIndex a) where
-  encode arr = do
-    let xs = Array.elems arr
-    encode xs
-  decode = do
-    xs <- decode
-    let bounds = (SeatIndex 0, SeatIndex (fromIntegral (length xs - 1)))
-    pure (Array.listArray bounds xs)
+instance FromCBOR a => FromCBOR (ExtWFAStakeDistr a) where
+  fromCBOR = do
+    decodeListLenOf 3
+    unExtWFAStakeDistr <- decodeArray
+    numPoolsWithPositiveStake <- fromCBOR
+    totalStake <- fromCBOR
+    pure
+      ExtWFAStakeDistr
+        { unExtWFAStakeDistr
+        , numPoolsWithPositiveStake
+        , totalStake
+        }
+   where
+    decodeArray = do
+      xs <- fromCBOR
+      let bounds = (SeatIndex 0, SeatIndex (fromIntegral (length xs - 1)))
+      pure (Array.listArray bounds xs)
+
+instance ToCBOR a => ToCBOR (ExtWFAStakeDistr a) where
+  toCBOR
+    ExtWFAStakeDistr
+      { unExtWFAStakeDistr
+      , numPoolsWithPositiveStake
+      , totalStake
+      } =
+      encodeListLen 3
+        <> encodeArray unExtWFAStakeDistr
+        <> toCBOR numPoolsWithPositiveStake
+        <> toCBOR totalStake
+     where
+      encodeArray arr = do
+        let xs = Array.elems arr
+        toCBOR xs
 
 -- | Construct an extended cumulative stake distribution.
 --
