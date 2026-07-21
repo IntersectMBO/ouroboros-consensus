@@ -5,6 +5,7 @@ module Spec.Foreign.HSConsensus.ExternalStructures (externalFunctions : External
 open import Ledger.Crypto
 open import Ledger.Types.Epoch
 open import Spec.Foreign.HSConsensus.Core
+open import Foreign.Haskell.Coerce
 
 HSGlobalConstants = GlobalConstants ∋ record {Implementation}
 instance
@@ -33,7 +34,7 @@ instance
     { pks              = HSPKScheme
     ; Sig              = ℕ
     ; isSigned         = λ vk d σ → extIsSignedˢ vk d σ ≡ true
-    ; sign             = λ _ _ → 0 -- NOTE: Dummy for now
+    ; sign             = extSignˢ
     ; isSigned-correct = error "isSigned-correct evaluated"
     ; Dec-isSigned     = ⁇ (_ ≟ _)
     }
@@ -45,25 +46,26 @@ instance
     { pks              = HSPKScheme
     ; Sig              = ℕ
     ; isSigned         = λ vk n d σ → extIsSignedᵏ vk n d σ ≡ true
-    ; sign             = λ _ _ _ → 0 -- NOTE: Dummy for now
+    ; sign             = extSignᵏ
     ; isSigned-correct = error "isSigned-correct evaluated"
     ; Dec-isSigned     = ⁇ (_ ≟ _)
     }
     where
       open ExternalFunctions externalFunctions
 
-  -- NOTE: Dummy for now.
-  HSVRFScheme : VRFScheme
+  HSVRFScheme : VRFScheme HSSerializer
   HSVRFScheme = record
     { Implementation
     ; pks            = HSPKScheme
     ; Proof          = ℕ
-    ; verify         = λ _ _ _ → ⊤
-    ; evaluate       = error "evaluate evaluated"
+    ; verify         = λ vk seed out → extVerify vk seed (coerce out) ≡ true
+    ; evaluate       = coerce ∘ extEvaluate
     ; _XOR_          = _+_
     ; verify-correct = error "verify-correct evaluated"
-    ; Dec-verify     = λ {T = _} {_} {_} {_} → ⁇ (true because ofʸ tt)
+    ; Dec-verify     = ⁇ (_ ≟ _)
     }
+    where
+      open ExternalFunctions externalFunctions
 
   HSCrypto : Crypto
   HSCrypto = record
@@ -92,7 +94,6 @@ instance
   HSBlockStructure = record
     { HashHeader       = ℕ
     ; HashBBody        = ℕ
-    ; VRFRes           = ℕ
     ; DecEq-HashHeader = DecEq-ℕ
     }
 

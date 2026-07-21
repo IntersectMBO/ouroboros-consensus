@@ -27,18 +27,16 @@ record BlockStructure : Type₁ where
 \begin{code}
     HashHeader : Type -- hash of a block header
     HashBBody  : Type -- hash of a block body
-    VRFRes     : Type -- VRF result value
 \end{code}
 \begin{code}[hide]
     ⦃ DecEq-HashHeader ⦄ : DecEq HashHeader
     ⦃ DecEq-HashBBody  ⦄ : DecEq HashBBody
-    ⦃ DecEq-VRFRes     ⦄ : DecEq VRFRes
     ⦃ Show-HashHeader  ⦄ : Show HashHeader
     ⦃ Show-HashBBody   ⦄ : Show HashBBody
-    ⦃ Show-VRFRes      ⦄ : Show VRFRes
 \end{code}
 \emph{Concrete types}
 \begin{code}
+  VRFRes = Ser -- VRF result value
   BlockNo = ℕ -- block number
   Certifiedℕ = ∃[ n ] n < 2 ^ 512 -- [0, 2^512) (64-byte VRF output)
 \end{code}
