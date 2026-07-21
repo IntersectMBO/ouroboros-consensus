@@ -2,7 +2,7 @@ inputs: final: prev:
 
 let
   inherit (final) lib;
-  tool-index-state = "2026-05-26T19:31:06Z";
+  tool-index-state = "2026-07-15T21:58:35Z";
   tool =
     name: version: other:
     final.haskell-nix.tool "ghc98" name (
@@ -42,7 +42,7 @@ in
 
   fourmolu = tool "fourmolu" "0.18.0.0" { };
 
-  cuddle = tool "cuddle" "1.8.0.0" { };
+  cuddle = tool "cuddle" "1.8.1.0" { };
 
   # remove once our nixpkgs contains https://github.com/NixOS/nixpkgs/pull/394873
   cddlc = final.callPackage ./cddlc/package.nix { };
