@@ -34,11 +34,11 @@ main =
       -- operands are not available yet at that point. The irrefutable pattern
       -- (@~@) avoids forcing the tuple while the tree is built; the operands are
       -- touched only inside the 'bench' bodies, which run after 'mkOperands'.
-      env (mkOperands @(CardanoEras StandardCrypto)) $ \ ~(primaryA, primaryB, secondary) ->
+      env (mkOperands @(CardanoEras StandardCrypto)) $ \ ~(lhs, equalRhs, unequalRhs) ->
         bgroup
           "txid-eq-ord"
-          [ operationGroup "compare" compare primaryA primaryB secondary
-          , operationGroup "==" (==) primaryA primaryB secondary
+          [ operationGroup "compare" compare lhs equalRhs unequalRhs
+          , operationGroup "==" (==) lhs equalRhs unequalRhs
           ]
     ]
 
@@ -51,17 +51,17 @@ operationGroup ::
   [a] ->
   [a] ->
   Benchmark
-operationGroup name op primaryA primaryB secondary =
+operationGroup name op lhs equalRhs unequalRhs =
   bgroup
     name
     [ bgroup
         "equal"
-        [ bench (show i) $ whnf (uncurry op) (primaryA !! i, primaryB !! i)
+        [ bench (show i) $ whnf (uncurry op) (lhs !! i, equalRhs !! i)
         | i <- eras
         ]
     , bgroup
         "unequal"
-        [ bench (show i ++ "-vs-" ++ show j) $ whnf (uncurry op) (primaryA !! i, secondary !! j)
+        [ bench (show i ++ "-vs-" ++ show j) $ whnf (uncurry op) (lhs !! i, unequalRhs !! j)
         | i <- eras
         , j <- eras
         ]
@@ -82,12 +82,12 @@ eras = [0 .. numEras - 1]
 roleBytes :: Word8 -> ShortByteString
 roleBytes role = SBS.pack (role : replicate 31 0)
 
--- | Two role-0 operand lists and one role-1 list (see 'roleBytes'). All role-0
--- txids share one hash, all role-1 another, and the roles differ in byte 0. So a
--- role-0/role-1 pair is always unequal (the 'unequal' cells), and two same-era
--- role-0 txids are equal (the 'equal' cells).
+-- | The three operand lists (see 'roleBytes' for the role byte). @lhs@ and
+-- @equalRhs@ are role 0, so equal to each other; @unequalRhs@ is role 1, so it
+-- differs in byte 0. Hence the 'equal' cells (@lhs@ vs @equalRhs@) always
+-- compare equal, and the 'unequal' cells (@lhs@ vs @unequalRhs@) never do.
 --
--- The role-0 operands are two separate lists, not one reused twice, so the
+-- @lhs@ and @equalRhs@ are two separate lists, not one reused twice, so the
 -- 'equal' cells compare two distinct txids — as a real membership hit does —
 -- making 'compare' walk and hash both. '-fno-cse' (cabal stanza) stops GHC from
 -- merging the two identical lists back into one.
@@ -95,6 +95,8 @@ mkOperands ::
   All BuildGenTxId xs =>
   IO ([OneEraGenTxId xs], [OneEraGenTxId xs], [OneEraGenTxId xs])
 mkOperands = pure (operandsFor 0, operandsFor 0, operandsFor 1)
+
+--                  lhs            equalRhs        unequalRhs
 
 -- | One operand per era (list index = era position) for the given role.
 operandsFor :: All BuildGenTxId xs => Word8 -> [OneEraGenTxId xs]

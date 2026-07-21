@@ -931,9 +931,10 @@ benchmark txid-eq-ord-instances-bench
   type: exitcode-stdio-1.0
   hs-source-dirs: ouroboros-consensus-cardano/bench/txid-eq-ord-instances-bench
   main-is: Main.hs
-  -- -fno-cse keeps the two role-0 operand lists distinct, so the 'equal' cells
-  -- compare two separate heap objects and pay two hashes (as a real membership
-  -- hit does); without it CSE merges them. See Main.hs.
+  -- -fno-cse stops GHC merging the benchmark's two equal operand lists (built
+  -- identically) into one. The 'equal' cells must compare two distinct heap
+  -- objects that happen to be equal, walking and hashing both as a real mempool
+  -- Set hit does, rather than comparing an object with itself. See Main.hs.
   ghc-options:
     -fno-cse
     -with-rtsopts=-T

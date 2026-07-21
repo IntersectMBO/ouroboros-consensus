@@ -258,12 +258,19 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     fromConway x = fromDijkstra $ DijkstraMeasure x
     fromDijkstra x = x
 
-  -- Both ids are compared by their txid hash, ignoring the era (the documented
-  -- 'OneEraGenTxId' ordering). 'txIdWords' reads each hash as four unboxed words
-  -- and we compare them in registers. Two properties keep this allocation-free:
-  -- the descent uses a single dictionary on every branch, so it is strict and
-  -- thunks nothing; and the words are unboxed, so no hash is boxed on the heap,
-  -- not even Byron's.
+  -- Both ids are compared by their txid hash, ignoring the era.
+  -- 'txIdWords' reads each hash as four unboxed words and we compare
+  -- them in registers. Two requirements keep this allocation-free:
+  --
+  -- \* Every branch of 'txIdWords' ('Z' and 'S') must use its
+  --   @All ToTxIdWords ys@ dictionary. Then GHC infers the function is
+  --   strict in the dictionary and projects the tail dictionary with a
+  --   strict 'case'. If some branch omitted it, the dictionary would be
+  --   passed lazily, and each recursive step would allocate a thunk for
+  --   the tail-dictionary projection (one per era descended).
+  --
+  -- \* The compared words are unboxed ('Word64#'), so no hash is boxed on
+  --   the heap.
   hardForkEqGenTxId l r =
     case txIdWords l of
       (# a0, a1, a2, a3 #) -> case txIdWords r of
@@ -288,9 +295,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     * Byron stores it as a 'ShortByteString'; we read four big-endian words out.
 
   The extraction walks the era sum with a single dictionary used on every
-  branch, so it is strict in the dictionary and allocates no per-level thunk. An
-  earlier version returned a boxed 'PackedBytes' leaf, which made Byron build a
-  fresh box per comparison; returning unboxed words removes that box too.
+  branch, so it is strict in the dictionary and allocates no per-level thunk.
 -------------------------------------------------------------------------------}
 
 -- | The four big-endian 64-bit words of an era's 32-byte txid hash
@@ -320,19 +325,28 @@ instance ShelleyBasedEra era => ToTxIdWords (ShelleyBlock proto era) where
 -- compares by, so it agrees with the oracle (checked by the property test across
 -- word boundaries).
 sbsWords :: ShortByteString -> (# Word64#, Word64#, Word64#, Word64# #)
-sbsWords sbs = (# unbox (be 0), unbox (be 8), unbox (be 16), unbox (be 24) #)
+sbsWords sbs =
+  (#
+    unbox (word64BigEndianAt 0)
+    , unbox (word64BigEndianAt 8)
+    , unbox (word64BigEndianAt 16)
+    , unbox (word64BigEndianAt 24)
+  #)
  where
   -- Inline so the four calls don't share one heap-allocated closure.
-  {-# INLINE be #-}
-  be off =
-    (byte (off + 0) `unsafeShiftL` 56)
-      .|. (byte (off + 1) `unsafeShiftL` 48)
-      .|. (byte (off + 2) `unsafeShiftL` 40)
-      .|. (byte (off + 3) `unsafeShiftL` 32)
-      .|. (byte (off + 4) `unsafeShiftL` 24)
-      .|. (byte (off + 5) `unsafeShiftL` 16)
-      .|. (byte (off + 6) `unsafeShiftL` 8)
-      .|. byte (off + 7)
+  {-# INLINE word64BigEndianAt #-}
+  word64BigEndianAt byteOffset =
+    -- with bytes b0 b1 … b7 starting at 'byteOffset' the result looks like:
+    --    (b0 << 56) | (b1 << 48) | (b2 << 40) | (b3 << 32)
+    --  | (b4 << 24) | (b5 << 16) | (b6 << 8)  | b7
+    (byte (byteOffset + 0) `unsafeShiftL` 56)
+      .|. (byte (byteOffset + 1) `unsafeShiftL` 48)
+      .|. (byte (byteOffset + 2) `unsafeShiftL` 40)
+      .|. (byte (byteOffset + 3) `unsafeShiftL` 32)
+      .|. (byte (byteOffset + 4) `unsafeShiftL` 24)
+      .|. (byte (byteOffset + 5) `unsafeShiftL` 16)
+      .|. (byte (byteOffset + 6) `unsafeShiftL` 8)
+      .|. byte (byteOffset + 7)
   byte k = fromIntegral (SBS.index sbs k) :: Word64
   unbox (W64# w) = w
 
