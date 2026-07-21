@@ -5,12 +5,14 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UnboxedTuples #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
 #if __GLASGOW_HASKELL__ < 908
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
@@ -30,6 +32,10 @@ module Ouroboros.Consensus.Cardano.CanHardFork
   , getDijkstraTranslationContext
   ) where
 
+import Cardano.Crypto (abstractHashToShort)
+import qualified Cardano.Crypto.Hash as Hash
+import Cardano.Crypto.Hash.Class (PackedBytes (PackedBytes32))
+import Cardano.Crypto.PackedBytes (unpackBytes)
 import Cardano.Ledger.Allegra.Translation
   ( shelleyToAllegraAVVMsToDelete
   )
@@ -44,17 +50,23 @@ import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import Control.Monad.Except (runExcept, throwError)
+import Data.Bits (unsafeShiftL, (.|.))
+import Data.ByteString.Short (ShortByteString)
+import qualified Data.ByteString.Short as SBS
 import Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Proxy
 import Data.SOP.BasicFunctors
+import Data.SOP.Constraint (All)
 import Data.SOP.Functors (Flip (..))
 import Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import qualified Data.SOP.Strict as SOP
 import Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
 import Data.Void
+import GHC.Exts (Word64#, eqWord64#, gtWord64#, ltWord64#)
+import GHC.Word (Word64 (W64#))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Byron.ByronHFC ()
 import Ouroboros.Consensus.Byron.Ledger
@@ -71,6 +83,7 @@ import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( ByteSize32
+  , GenTxId
   , IgnoringOverflow
   , TxMeasure
   )
@@ -244,6 +257,122 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     fromAlonzo x = fromConway $ ConwayMeasure x mempty
     fromConway x = fromDijkstra $ DijkstraMeasure x
     fromDijkstra x = x
+
+  -- Both ids are compared by their txid hash, ignoring the era.
+  -- 'txIdWords' reads each hash as four unboxed words and we compare
+  -- them in registers. Two requirements keep this allocation-free:
+  --
+  -- \* Every branch of 'txIdWords' ('Z' and 'S') must use its
+  --   @All ToTxIdWords ys@ dictionary. Then GHC infers the function is
+  --   strict in the dictionary and projects the tail dictionary with a
+  --   strict 'case'. If some branch omitted it, the dictionary would be
+  --   passed lazily, and each recursive step would allocate a thunk for
+  --   the tail-dictionary projection (one per era descended).
+  --
+  -- \* The compared words are unboxed ('Word64#'), so no hash is boxed on
+  --   the heap.
+  hardForkEqGenTxId l r =
+    case txIdWords l of
+      (# a0, a1, a2, a3 #) -> case txIdWords r of
+        (# b0, b1, b2, b3 #) ->
+          eqW64 a0 b0 && eqW64 a1 b1 && eqW64 a2 b2 && eqW64 a3 b3
+  hardForkCompareGenTxId l r =
+    case txIdWords l of
+      (# a0, a1, a2, a3 #) -> case txIdWords r of
+        (# b0, b1, b2, b3 #) ->
+          compareW64 a0 b0 <> compareW64 a1 b1 <> compareW64 a2 b2 <> compareW64 a3 b3
+
+{-------------------------------------------------------------------------------
+  Allocation-free cross-era txid comparison
+
+  Both 'OneEraGenTxId' instances order by the txid hash, ignoring the era. We
+  read each id's 32-byte hash (Blake2b-256) as four big-endian 'Word64#' and
+  compare those in registers. The words are unboxed, so no hash is boxed on the
+  heap on any era's path:
+
+    * Shelley-based eras store the hash as 'PackedBytes32' (four words already);
+      we unbox its fields.
+    * Byron stores it as a 'ShortByteString'; we read four big-endian words out.
+
+  The extraction walks the era sum with a single dictionary used on every
+  branch, so it is strict in the dictionary and allocates no per-level thunk.
+-------------------------------------------------------------------------------}
+
+-- | The four big-endian 64-bit words of an era's 32-byte txid hash
+-- (Blake2b-256), unboxed so no hash is materialised on the heap. An era whose
+-- txid hash is not four words is rejected by the 'Shelley' instance's
+-- 'PackedBytes32' match rather than miscompared.
+class ToTxIdWords blk where
+  toTxIdWords :: GenTxId blk -> (# Word64#, Word64#, Word64#, Word64# #)
+
+instance ToTxIdWords ByronBlock where
+  toTxIdWords (ByronTxId i) = sbsWords (abstractHashToShort i)
+  toTxIdWords (ByronDlgId i) = sbsWords (abstractHashToShort i)
+  toTxIdWords (ByronUpdateProposalId i) = sbsWords (abstractHashToShort i)
+  toTxIdWords (ByronUpdateVoteId i) = sbsWords (abstractHashToShort i)
+
+instance ShelleyBasedEra era => ToTxIdWords (ShelleyBlock proto era) where
+  toTxIdWords (ShelleyTxId i) =
+    case Hash.hashToPackedBytes (SL.extractHash (SL.unTxId i)) of
+      PackedBytes32 (W64# w0) (W64# w1) (W64# w2) (W64# w3) -> (# w0, w1, w2, w3 #)
+      -- The ledger hash is Blake2b-256, always 'PackedBytes32'; this arm is
+      -- unreachable and pays a copy only if it ever runs.
+      pb -> sbsWords (unpackBytes pb)
+
+-- | The four big-endian 'Word64#' of a 32-byte 'ShortByteString', assembled by
+-- shifting its bytes. Portable (no byte swap) and allocation-free: the words go
+-- straight into an unboxed tuple. This is the byte order the raw-hash reference
+-- compares by, so it agrees with the oracle (checked by the property test across
+-- word boundaries).
+sbsWords :: ShortByteString -> (# Word64#, Word64#, Word64#, Word64# #)
+sbsWords sbs =
+  (#
+    unbox (word64BigEndianAt 0)
+    , unbox (word64BigEndianAt 8)
+    , unbox (word64BigEndianAt 16)
+    , unbox (word64BigEndianAt 24)
+  #)
+ where
+  -- Inline so the four calls don't share one heap-allocated closure.
+  {-# INLINE word64BigEndianAt #-}
+  word64BigEndianAt byteOffset =
+    -- with bytes b0 b1 … b7 starting at 'byteOffset' the result looks like:
+    --    (b0 << 56) | (b1 << 48) | (b2 << 40) | (b3 << 32)
+    --  | (b4 << 24) | (b5 << 16) | (b6 << 8)  | b7
+    (byte (byteOffset + 0) `unsafeShiftL` 56)
+      .|. (byte (byteOffset + 1) `unsafeShiftL` 48)
+      .|. (byte (byteOffset + 2) `unsafeShiftL` 40)
+      .|. (byte (byteOffset + 3) `unsafeShiftL` 32)
+      .|. (byte (byteOffset + 4) `unsafeShiftL` 24)
+      .|. (byte (byteOffset + 5) `unsafeShiftL` 16)
+      .|. (byte (byteOffset + 6) `unsafeShiftL` 8)
+      .|. byte (byteOffset + 7)
+  byte k = fromIntegral (SBS.index sbs k) :: Word64
+  unbox (W64# w) = w
+
+-- | The txid hash of whichever era the id sits in, as four big-endian 'Word64#'.
+-- Direct recursion down the sum, building no intermediate 'NS'. Uses its single
+-- dictionary on every branch, so it is strict in it and allocates no per-level
+-- thunk.
+txIdWords ::
+  All ToTxIdWords ys =>
+  SOP.NS WrapGenTxId ys -> (# Word64#, Word64#, Word64#, Word64# #)
+txIdWords (SOP.Z x) = toTxIdWords (unwrapGenTxId x)
+txIdWords (SOP.S y) = txIdWords y
+
+-- | Order two 64-bit words as unsigned, in registers.
+compareW64 :: Word64# -> Word64# -> Ordering
+compareW64 a b = case a `ltWord64#` b of
+  1# -> LT
+  _ -> case a `gtWord64#` b of
+    1# -> GT
+    _ -> EQ
+
+-- | Whether two 64-bit words are equal, in registers.
+eqW64 :: Word64# -> Word64# -> Bool
+eqW64 a b = case a `eqWord64#` b of
+  1# -> True
+  _ -> False
 
 class TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
 instance TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk

@@ -69,7 +69,6 @@ import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BSC
 import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as Short
-import Data.Function (on)
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
@@ -165,18 +164,22 @@ instance Condense (OneEraHash xs) where
   OneEraGenTxId
 -------------------------------------------------------------------------------}
 
--- | This instance compares the underlying raw hash ('toRawTxIdHash') of the
--- 'TxId'.
+-- | Compare 'OneEraGenTxId's by their transaction id, ignoring the era.
 --
--- Note that this means that transactions in different eras can have equal
--- 'TxId's. This should only be the case when the transaction format is
--- backwards compatible from one era to the next.
+-- Two transactions in different eras can therefore have equal 'TxId's. This
+-- should only happen when the transaction format is backwards compatible from
+-- one era to the next.
+--
+-- The comparison itself lives in the 'CanHardFork' instance for @xs@, as
+-- 'hardForkEqGenTxId'\/'hardForkCompareGenTxId'. The Cardano instance implements
+-- them without allocating; other instances use 'rawHashNS'. We unwrap the
+-- newtype here and hand the bare 'NS' to the method.
 instance CanHardFork xs => Eq (OneEraGenTxId xs) where
-  (==) = (==) `on` oneEraGenTxIdRawHash
+  OneEraGenTxId l == OneEraGenTxId r = hardForkEqGenTxId l r
 
 -- | See the corresponding 'Eq' instance.
 instance CanHardFork xs => Ord (OneEraGenTxId xs) where
-  compare = compare `on` oneEraGenTxIdRawHash
+  compare (OneEraGenTxId l) (OneEraGenTxId r) = hardForkCompareGenTxId l r
 
 {-------------------------------------------------------------------------------
   Value for two /different/ eras
@@ -270,12 +273,6 @@ getSameValue values =
         return ()
     | otherwise =
         throwError "differing values across hard fork"
-
-oneEraGenTxIdRawHash :: CanHardFork xs => OneEraGenTxId xs -> ShortByteString
-oneEraGenTxIdRawHash =
-  hcollapse
-    . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId)
-    . getOneEraGenTxId
 
 {-------------------------------------------------------------------------------
   NoThunks instances
