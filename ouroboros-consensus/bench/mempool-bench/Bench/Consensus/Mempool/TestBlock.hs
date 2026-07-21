@@ -18,6 +18,8 @@ module Bench.Consensus.Mempool.TestBlock
 
     -- * Initial parameters
   , initialLedgerState
+  , mkInitialLedgerState
+  , advanceTip
   , sampleLedgerConfig
 
     -- * Transactions
@@ -37,6 +39,7 @@ import Data.MemPack
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.TreeDiff (ToExpr)
+import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
@@ -86,14 +89,28 @@ mkTx cons prod =
 -------------------------------------------------------------------------------}
 
 initialLedgerState :: LedgerState (TestBlockWith Tx) ValuesMK
-initialLedgerState =
+initialLedgerState = mkInitialLedgerState []
+
+-- | Like 'initialLedgerState' but seeded with a set of available tokens (the
+-- UTxO). Chains of transactions can then be built by consuming a seed token and
+-- producing the next one.
+mkInitialLedgerState :: [Token] -> LedgerState (TestBlockWith Tx) ValuesMK
+mkInitialLedgerState toks =
   TestLedger
     { lastAppliedPoint = Block.GenesisPoint
     , payloadDependentState =
         TestPLDS
-          { getTestPLDS = ValuesMK Map.empty
+          { getTestPLDS = ValuesMK (Map.fromList [(t, ()) | t <- toks])
           }
     }
+
+-- | Move the tip to a fresh point (distinct per @n@) while keeping the ledger
+-- tables unchanged. Used to force the mempool to resync/revalidate against a
+-- "new" tip without invalidating any of its transactions.
+advanceTip ::
+  Word64 -> LedgerState (TestBlockWith Tx) ValuesMK -> LedgerState (TestBlockWith Tx) ValuesMK
+advanceTip n st =
+  st{lastAppliedPoint = Block.blockPoint (firstBlockWithPayload n (Tx Set.empty Set.empty))}
 
 sampleLedgerConfig :: Ledger.LedgerConfig TestBlock
 sampleLedgerConfig =

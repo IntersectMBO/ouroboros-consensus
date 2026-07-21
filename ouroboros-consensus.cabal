@@ -945,6 +945,36 @@ benchmark mempool-bench
     unstable-mempool-test-utils,
     with-utf8,
 
+benchmark mempool-state-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs:
+    ouroboros-consensus/bench/mempool-state-bench
+    ouroboros-consensus/bench/mempool-bench
+
+  main-is: Main.hs
+  other-modules:
+    Bench.Consensus.Mempool.TestBlock
+
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N4
+  build-depends:
+    async,
+    base,
+    cardano-ledger-core,
+    cardano-slotting,
+    containers,
+    contra-tracer,
+    deepseq,
+    io-classes:si-timers,
+    mempack,
+    nothunks,
+    ouroboros-consensus,
+    serialise,
+    time,
+    transformers,
+    tree-diff,
+    unstable-consensus-testlib,
+
 benchmark ChainSync-client-bench
   import: common-bench
   type: exitcode-stdio-1.0
