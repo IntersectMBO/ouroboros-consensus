@@ -264,6 +264,15 @@ data MempoolEnv m blk = MempoolEnv
   , mpEnvForker :: StrictMVar m (ReadOnlyForker m (LedgerState blk))
   , mpEnvLedgerCfg :: LedgerConfig blk
   , mpEnvStateVar :: StrictTMVar m (InternalState blk)
+  -- ^ The single, authoritative internal state of the mempool, which doubles as
+  -- the /writer/ lock. Writers (adds, removes and the sync merge) 'takeTMVar'
+  -- it, do their work, and 'putTMVar' the new state; readers ('getSnapshot',
+  -- 'getCapacity', 'getSnapshotFor') 'readTMVar' it. Because it is a single
+  -- cell, the whole capacity accounting has one source of truth and cannot
+  -- diverge. A reader only ever blocks for the duration a writer holds the
+  -- lock; the sync keeps that short by doing its large LedgerDB read /before/
+  -- taking the lock (see 'implSyncWithLedger'), so only the (sub-second) merge
+  -- is under it.
   , mpEnvAddTxsRemoteFifo :: StrictMVar m ()
   , mpEnvAddTxsAllFifo :: StrictMVar m ()
   , mpEnvTracer :: Tracer m (TraceEventMempool blk)
@@ -293,9 +302,8 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
     Right frk -> do
       frkMVar <- newMVar frk
       let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
-      isVar <-
-        newTMVarIO $
-          initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
+          is0 = initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
+      isVar <- newTMVarIO is0
       addTxRemoteFifo <- newMVar ()
       addTxAllFifo <- newMVar ()
       return
