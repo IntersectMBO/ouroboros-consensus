@@ -44,12 +44,17 @@ module Ouroboros.Consensus.Peras.Params
   )
 where
 
-import Cardano.Binary (FromCBOR, ToCBOR)
-import Codec.Serialise (Serialise (..))
+import Cardano.Binary
+  ( FromCBOR (..)
+  , ToCBOR (..)
+  , decodeListLenOf
+  , encodeListLen
+  )
 import Control.Monad (ap, liftM)
 import Control.Monad.Trans.Class
 import Data.Coerce (coerce)
 import Data.Semigroup (Sum (..))
+import Data.Typeable (Typeable)
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import qualified Ouroboros.Consensus.Committee.Types as Committee
@@ -65,7 +70,7 @@ newtype PerasIgnoranceRounds
   = PerasIgnoranceRounds {unPerasIgnoranceRounds :: Word64}
   deriving Show via Quiet PerasIgnoranceRounds
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
 
 -- | Minimum number of rounds to wait before voting again after a cooldown
 -- period starts.
@@ -73,7 +78,7 @@ newtype PerasCooldownRounds
   = PerasCooldownRounds {unPerasCooldownRounds :: Word64}
   deriving Show via Quiet PerasCooldownRounds
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
 
 -- | Minimum age in slots of a block before it can be voted for in order to get
 -- a boost.
@@ -81,14 +86,14 @@ newtype PerasBlockMinSlots
   = PerasBlockMinSlots {unPerasBlockMinSlots :: Word64}
   deriving Show via Quiet PerasBlockMinSlots
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
 
 -- | Maximum age for a certificate to be included in a block, in rounds.
 newtype PerasCertMaxRounds
   = PerasCertMaxRounds {unPerasCertMaxRounds :: Word64}
   deriving Show via Quiet PerasCertMaxRounds
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
 
 -- | Maximum number of slots to wait for after the start of a round to consider
 -- a certificate valid for voting.
@@ -96,21 +101,21 @@ newtype PerasCertArrivalThreshold
   = PerasCertArrivalThreshold {unPerasCertArrivalThreshold :: Word64}
   deriving Show via Quiet PerasCertArrivalThreshold
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
 
 -- | Length of a Peras round in slots.
 newtype PerasRoundLength
   = PerasRoundLength {unPerasRoundLength :: Word64}
   deriving Show via Quiet PerasRoundLength
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
 
 -- | Weight assigned to a block when boosted by a Peras certificate.
 newtype PerasWeight
   = PerasWeight {unPerasWeight :: Word64}
   deriving Show via Quiet PerasWeight
   deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, Serialise)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
 
 deriving via Sum Word64 instance Semigroup PerasWeight
 deriving via Sum Word64 instance Monoid PerasWeight
@@ -120,7 +125,7 @@ newtype PerasQuorumWeightThreshold
   = PerasQuorumWeightThreshold {unPerasQuorumWeightThreshold :: Rational}
   deriving Show via Quiet PerasQuorumWeightThreshold
   deriving stock Generic
-  deriving newtype (Eq, Ord, NoThunks, Condense, Serialise)
+  deriving newtype (Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
 
 -- | Safety margin needed on top of the quorum vote weight threshold.
 --
@@ -131,7 +136,7 @@ newtype PerasQuorumWeightThresholdSafetyMargin
   = PerasQuorumWeightThresholdSafetyMargin {unPerasQuorumWeightThresholdSafetyMargin :: Rational}
   deriving Show via Quiet PerasQuorumWeightThresholdSafetyMargin
   deriving stock Generic
-  deriving newtype (Eq, Ord, NoThunks, Condense, Serialise)
+  deriving newtype (Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
 
 -- * Protocol parameters bundle
 
@@ -152,7 +157,34 @@ data PerasParams blk = PerasParams
   , perasQuorumWeightThresholdSafetyMargin :: !PerasQuorumWeightThresholdSafetyMargin
   , perasTargetCommitteeSize :: !Committee.TargetCommitteeSize
   }
-  deriving (Show, Eq, Generic, NoThunks, Serialise)
+  deriving (Show, Eq, Generic, NoThunks)
+
+instance Typeable blk => FromCBOR (PerasParams blk) where
+  fromCBOR = do
+    decodeListLenOf 9
+    PerasParams
+      <$> fromCBOR
+      <*> fromCBOR
+      <*> fromCBOR
+      <*> fromCBOR
+      <*> fromCBOR
+      <*> fromCBOR
+      <*> fromCBOR
+      <*> fromCBOR
+      <*> fromCBOR
+
+instance Typeable blk => ToCBOR (PerasParams blk) where
+  toCBOR params =
+    encodeListLen 9
+      <> toCBOR (perasIgnoranceRounds params)
+      <> toCBOR (perasCooldownRounds params)
+      <> toCBOR (perasBlockMinSlots params)
+      <> toCBOR (perasCertMaxRounds params)
+      <> toCBOR (perasCertArrivalThreshold params)
+      <> toCBOR (perasWeight params)
+      <> toCBOR (perasQuorumWeightThreshold params)
+      <> toCBOR (perasQuorumWeightThresholdSafetyMargin params)
+      <> toCBOR (perasTargetCommitteeSize params)
 
 -- | Retag a 'PerasParams' to change its phantom type tag.
 retagPerasParams :: forall blk' blk. PerasParams blk -> PerasParams blk'
@@ -215,7 +247,7 @@ dijkstraPerasRoundLength = PerasEnabled (PerasRoundLength 90)
 newtype PerasEnabled a = MkPerasEnabled (Maybe a)
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
-  deriving newtype (Functor, Applicative, Monad, FromCBOR, ToCBOR, Serialise)
+  deriving newtype (Functor, Applicative, Monad, FromCBOR, ToCBOR)
 
 pattern PerasEnabled :: a -> PerasEnabled a
 pattern PerasEnabled x <- MkPerasEnabled (Just !x)

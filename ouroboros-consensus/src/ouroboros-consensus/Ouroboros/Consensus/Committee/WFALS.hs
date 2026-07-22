@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -47,8 +48,13 @@ module Ouroboros.Consensus.Committee.WFALS
   , totalNonPersistentStake
   ) where
 
+import Cardano.Binary
+  ( FromCBOR (..)
+  , ToCBOR (..)
+  , decodeListLenOf
+  , encodeListLen
+  )
 import Cardano.Ledger.BaseTypes (NonZero (..), Nonce, nonZero)
-import Codec.Serialise (Serialise)
 import Control.Exception (Exception, assert)
 import Control.Monad (void)
 import Control.Monad.Zip (MonadZip (..))
@@ -140,6 +146,57 @@ data instance VotingCommittee crypto WFALS
   , --  Epoch nonce of the epoch where this committee selection takes place
     epochNonce :: !Nonce
   }
+
+instance
+  ( Typeable crypto
+  , FromCBOR (PublicKey crypto)
+  ) =>
+  FromCBOR (VotingCommittee crypto WFALS)
+  where
+  fromCBOR = do
+    decodeListLenOf 7
+    extWFAStakeDistr <- fromCBOR
+    candidateSeats <- fromCBOR
+    persistentCommitteeSize <- fromCBOR
+    nonPersistentCommitteeSize <- fromCBOR
+    totalPersistentStake <- fromCBOR
+    totalNonPersistentStake <- fromCBOR
+    epochNonce <- fromCBOR
+    pure
+      WFALSVotingCommittee
+        { extWFAStakeDistr
+        , candidateSeats
+        , persistentCommitteeSize
+        , nonPersistentCommitteeSize
+        , totalPersistentStake
+        , totalNonPersistentStake
+        , epochNonce
+        }
+
+instance
+  ( Typeable crypto
+  , ToCBOR (PublicKey crypto)
+  ) =>
+  ToCBOR (VotingCommittee crypto WFALS)
+  where
+  toCBOR
+    WFALSVotingCommittee
+      { extWFAStakeDistr
+      , candidateSeats
+      , persistentCommitteeSize
+      , nonPersistentCommitteeSize
+      , totalPersistentStake
+      , totalNonPersistentStake
+      , epochNonce
+      } =
+      encodeListLen 7
+        <> toCBOR extWFAStakeDistr
+        <> toCBOR candidateSeats
+        <> toCBOR persistentCommitteeSize
+        <> toCBOR nonPersistentCommitteeSize
+        <> toCBOR totalPersistentStake
+        <> toCBOR totalNonPersistentStake
+        <> toCBOR epochNonce
 
 instance
   ( CryptoSupportsAggregateVoteSigning crypto
@@ -240,9 +297,7 @@ deriving instance
   NoThunks (PublicKey crypto) =>
   NoThunks (VotingCommittee crypto WFALS)
 deriving instance
-  Serialise (PublicKey crypto) =>
-  Serialise (VotingCommittee crypto WFALS)
-deriving instance Generic (VotingCommittee crypto WFALS)
+  Generic (VotingCommittee crypto WFALS)
 
 deriving instance
   Show (PublicKey crypto) =>
@@ -253,7 +308,8 @@ deriving instance
 deriving instance
   NoThunks (PublicKey crypto) =>
   NoThunks (VotingCommitteeInput crypto WFALS)
-deriving instance Generic (VotingCommitteeInput crypto WFALS)
+deriving instance
+  Generic (VotingCommitteeInput crypto WFALS)
 
 deriving instance
   Show (VotingCommitteeError crypto WFALS)

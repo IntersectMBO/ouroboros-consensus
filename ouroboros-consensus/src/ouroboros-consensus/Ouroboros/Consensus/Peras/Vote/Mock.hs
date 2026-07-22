@@ -16,15 +16,14 @@ module Ouroboros.Consensus.Peras.Vote.Mock
   ( MockPerasVote (..)
   ) where
 
-import Cardano.Binary (decodeListLenOf, encodeListLen)
-import Codec.Serialise (Serialise (..))
+import Cardano.Binary (FromCBOR (..), ToCBOR (..), decodeListLenOf, encodeListLen)
 import Control.DeepSeq (NFData)
 import Data.Data (Proxy (..))
+import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
   ( ConvertRawHash
-  , HeaderHash
   , Point
   , StandardHash
   )
@@ -66,30 +65,39 @@ instance ShowProxy blk => ShowProxy (MockPerasVote blk) where
   showProxy _ = "MockPerasVote(" <> showProxy (Proxy @blk) <> ")"
 
 instance
-  Serialise (HeaderHash blk) =>
-  Serialise (MockPerasVote blk)
+  ( Typeable blk
+  , FromCBOR (Point blk)
+  ) =>
+  FromCBOR (MockPerasVote blk)
   where
-  encode
-    MockPerasVote
-      { mockVoteRound
-      , mockVoteBlock
-      , mockVoteSeatIndex
-      } =
-      encodeListLen 3
-        <> encode mockVoteRound
-        <> encode mockVoteBlock
-        <> encode mockVoteSeatIndex
-  decode = do
+  fromCBOR = do
     decodeListLenOf 3
-    mockVoteRound <- decode
-    mockVoteBlock <- decode
-    mockVoteSeatIndex <- decode
+    mockVoteRound <- fromCBOR
+    mockVoteBlock <- fromCBOR
+    mockVoteSeatIndex <- fromCBOR
     pure
       MockPerasVote
         { mockVoteRound
         , mockVoteBlock
         , mockVoteSeatIndex
         }
+
+instance
+  ( Typeable blk
+  , ToCBOR (Point blk)
+  ) =>
+  ToCBOR (MockPerasVote blk)
+  where
+  toCBOR
+    MockPerasVote
+      { mockVoteRound
+      , mockVoteBlock
+      , mockVoteSeatIndex
+      } =
+      encodeListLen 3
+        <> toCBOR mockVoteRound
+        <> toCBOR mockVoteBlock
+        <> toCBOR mockVoteSeatIndex
 
 instance
   ConvertRawHash blk =>

@@ -17,8 +17,12 @@ module Ouroboros.Consensus.Peras.Cert.Mock
   ( MockPerasCert (..)
   ) where
 
-import Cardano.Binary (decodeListLenOf, encodeListLen)
-import Codec.Serialise (Serialise (..))
+import Cardano.Binary
+  ( FromCBOR (..)
+  , ToCBOR (..)
+  , decodeListLenOf
+  , encodeListLen
+  )
 import Control.DeepSeq (NFData)
 import Data.Containers.NonEmpty (NE)
 import Data.Data (Proxy (..))
@@ -26,11 +30,11 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Set (Set)
 import qualified Data.Set.NonEmpty as NESet
 import Data.Set.NonEmpty.Internal (NESet (..))
+import Data.Typeable (Typeable)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
   ( ConvertRawHash
-  , HeaderHash
   , Point
   , StandardHash
   )
@@ -71,23 +75,15 @@ instance ShowProxy blk => ShowProxy (MockPerasCert blk) where
   showProxy _ = "MockPerasCert(" <> showProxy (Proxy @blk) <> ")"
 
 instance
-  Serialise (HeaderHash blk) =>
-  Serialise (MockPerasCert blk)
+  ( Typeable blk
+  , FromCBOR (Point blk)
+  ) =>
+  FromCBOR (MockPerasCert blk)
   where
-  encode
-    MockPerasCert
-      { mockCertRound
-      , mockCertBlock
-      , mockCertVoters
-      } =
-      encodeListLen 3
-        <> encode mockCertRound
-        <> encode mockCertBlock
-        <> encode (NonEmpty.toList . NESet.toList $ mockCertVoters)
-  decode = do
+  fromCBOR = do
     decodeListLenOf 3
-    mockCertRound <- decode
-    mockCertBlock <- decode
+    mockCertRound <- fromCBOR
+    mockCertBlock <- fromCBOR
     mockCertVoters <- decodeNonEmptySet
     pure
       MockPerasCert
@@ -97,10 +93,27 @@ instance
         }
    where
     decodeNonEmptySet = do
-      xs <- decode
+      xs <- fromCBOR
       case NonEmpty.nonEmpty xs of
         Nothing -> fail "Expected a non-empty set of PerasSeatIndex"
-        Just neSet -> pure $ NESet.fromList neSet
+        Just neSet -> pure (NESet.fromList neSet)
+
+instance
+  ( Typeable blk
+  , ToCBOR (Point blk)
+  ) =>
+  ToCBOR (MockPerasCert blk)
+  where
+  toCBOR
+    MockPerasCert
+      { mockCertRound
+      , mockCertBlock
+      , mockCertVoters
+      } =
+      encodeListLen 3
+        <> toCBOR mockCertRound
+        <> toCBOR mockCertBlock
+        <> toCBOR (NonEmpty.toList (NESet.toList mockCertVoters))
 
 instance
   ConvertRawHash blk =>
@@ -117,7 +130,7 @@ instance
       encodeListLen 3
         <> encodeNodeToNode ccfg version mockCertRound
         <> encodeNodeToNode ccfg version mockCertBlock
-        <> encode (NonEmpty.toList . NESet.toList $ mockCertVoters)
+        <> toCBOR (NonEmpty.toList (NESet.toList mockCertVoters))
   decodeNodeToNode ccfg version = do
     decodeListLenOf 3
     mockCertRound <- decodeNodeToNode ccfg version
@@ -131,10 +144,10 @@ instance
         }
    where
     decodeNodeToNodeNonEmptySet _ccfg _version = do
-      xs <- decode
+      xs <- fromCBOR
       case NonEmpty.nonEmpty xs of
         Nothing -> fail "Expected a non-empty set of PerasSeatIndex"
-        Just neSet -> pure $ NESet.fromList neSet
+        Just neSet -> pure (NESet.fromList neSet)
 
 -- * Orphan instances
 

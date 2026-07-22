@@ -29,7 +29,6 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
-import Codec.Serialise (Serialise (..))
 import Data.Coerce (coerce)
 import Data.Typeable (Typeable)
 import Data.Word (Word8)
@@ -116,13 +115,20 @@ instance Typeable tag => FromCBOR (PerasVote tag) where
         }
 
 instance Typeable tag => ToCBOR (PerasVote tag) where
-  toCBOR vote =
-    encodeListLen 5
-      <> toCBOR (pvRoundNo vote)
-      <> toCBOR (pvBoostedBlock vote)
-      <> toCBOR (pvSeatIndex vote)
-      <> toCBOR (pvEligibilityProof vote)
-      <> toCBOR (pvSignature vote)
+  toCBOR
+    PerasVote
+      { pvRoundNo
+      , pvBoostedBlock
+      , pvSeatIndex
+      , pvEligibilityProof
+      , pvSignature
+      } =
+      encodeListLen 5
+        <> toCBOR pvRoundNo
+        <> toCBOR pvBoostedBlock
+        <> toCBOR pvSeatIndex
+        <> toCBOR pvEligibilityProof
+        <> toCBOR pvSignature
 
 -- | Proof of eligibility for voting for committee members
 data PerasVoteEligibilityProof
@@ -154,10 +160,6 @@ instance ToCBOR PerasVoteEligibilityProof where
       encodeListLen 2
         <> toCBOR (1 :: Word8)
         <> toCBOR vrfOutput
-
-instance Typeable tag => Serialise (PerasVote tag) where
-  encode = toCBOR
-  decode = fromCBOR
 
 instance ShowProxy tag => ShowProxy (PerasVote tag) where
   showProxy _ = "PerasVote " <> showProxy (Proxy @tag)

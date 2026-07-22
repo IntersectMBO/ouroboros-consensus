@@ -59,6 +59,7 @@ module Ouroboros.Consensus.TypeFamilyWrappers
   , Ticked (..)
   ) where
 
+import Cardano.Binary (FromCBOR, ToCBOR)
 import Codec.Serialise (Serialise)
 import Control.Exception (Exception)
 import Data.Typeable (Typeable)
@@ -141,9 +142,17 @@ deriving instance
   NoThunks (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
   NoThunks (WrapPerasVotingCommittee blk)
 
-deriving instance
-  Serialise (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk)) =>
-  Serialise (WrapPerasVotingCommittee blk)
+deriving newtype instance
+  ( Typeable blk
+  , FromCBOR (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk))
+  ) =>
+  FromCBOR (WrapPerasVotingCommittee blk)
+
+deriving newtype instance
+  ( Typeable blk
+  , ToCBOR (VotingCommittee (PerasCrypto blk) (PerasVotingCommitteeScheme blk))
+  ) =>
+  ToCBOR (WrapPerasVotingCommittee blk)
 
 deriving instance (Typeable blk, Exception (PerasError blk)) => Exception (WrapPerasError blk)
 

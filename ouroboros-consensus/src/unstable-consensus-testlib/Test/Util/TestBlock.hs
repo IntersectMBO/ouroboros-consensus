@@ -91,7 +91,7 @@ module Test.Util.TestBlock
   , updateToNextNumeral
   ) where
 
-import Cardano.Binary (DecoderError)
+import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
 import Cardano.Crypto.DSIGN
 import Cardano.Ledger.BaseTypes (knownNonZeroBounded, unNonZero)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -1028,8 +1028,8 @@ instance Serialise (AnnTip (TestBlockWith ptype)) where
   decode = defaultDecodeAnnTip decode
 
 instance PayloadSemantics ptype => Serialise (ExtLedgerState (TestBlockWith ptype) EmptyMK) where
-  encode = encodeExtLedgerState encode encode encode encode
-  decode = decodeExtLedgerState decode decode decode decode
+  encode = encodeExtLedgerState encode encode encode toCBOR
+  decode = decodeExtLedgerState decode decode decode fromCBOR
 
 instance Serialise (RealPoint (TestBlockWith ptype)) where
   encode = encodeRealPoint encode

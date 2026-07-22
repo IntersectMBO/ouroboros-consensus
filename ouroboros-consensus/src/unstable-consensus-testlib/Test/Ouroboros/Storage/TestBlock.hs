@@ -63,7 +63,7 @@ module Test.Ouroboros.Storage.TestBlock
   , shrinkCorruptions
   ) where
 
-import Cardano.Binary (DecoderError)
+import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
 import Cardano.Crypto.DSIGN
 import Cardano.Ledger.BaseTypes (StrictMaybe (..), unNonZero)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -1031,3 +1031,14 @@ deriving anyclass instance
 deriving anyclass instance ToExpr FsPath
 deriving anyclass instance ToExpr BlocksPerFile
 deriving instance ToExpr BinaryBlockInfo
+
+-- ** Serialise for MockPerasCert via FromCBOR/ToCBOR
+instance Serialise (MockPerasCert TestBlock) where
+  encode = toCBOR
+  decode = fromCBOR
+
+-- ** FromCBOR/ToCBOR for Point TestBlock via Serialise
+instance FromCBOR (Point TestBlock) where
+  fromCBOR = decode
+instance ToCBOR (Point TestBlock) where
+  toCBOR = encode

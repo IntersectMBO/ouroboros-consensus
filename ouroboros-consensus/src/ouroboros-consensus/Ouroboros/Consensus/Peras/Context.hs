@@ -8,6 +8,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -50,10 +51,17 @@ module Ouroboros.Consensus.Peras.Context
   )
 where
 
-import Codec.Serialise.Class (Serialise)
+import Cardano.Binary
+  ( FromCBOR (..)
+  , ToCBOR (..)
+  , decodeListLen
+  , decodeListLenOf
+  , encodeListLen
+  )
 import Control.Exception (Exception)
 import Control.Monad.Class.MonadSTM (STM)
 import Data.Bifunctor (Bifunctor (..))
+import qualified Data.ByteString.Char8 as ByteString
 import Data.Data (Proxy (..))
 import Data.Either.Extra (maybeToEither)
 import Data.Kind (Type)
@@ -61,6 +69,7 @@ import Data.SOP (HCollapse (..), K (K))
 import Data.SOP.Constraint (All, Top)
 import Data.SOP.Index (himap, injectNS)
 import Data.Typeable (Typeable)
+import Data.Word (Word8)
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block.Abstract
   ( BlockProtocol
@@ -117,7 +126,7 @@ import Ouroboros.Consensus.Protocol.Abstract
   ( ChainDepStateSupportsPeras
   , ConsensusProtocol (..)
   )
-import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk, EncodeDisk)
+import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..), EncodeDisk (..))
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , MonadSTM
@@ -148,16 +157,54 @@ deriving instance
   NoThunks (PerasEpochContext blk) =>
   NoThunks (BoundedPerasEpochContext blk)
 deriving instance
-  Serialise (PerasEpochContext blk) =>
-  Serialise (BoundedPerasEpochContext blk)
-deriving instance
-  Serialise (PerasEpochContext blk) =>
-  EncodeDisk blk (BoundedPerasEpochContext blk)
-deriving instance
-  Serialise (PerasEpochContext blk) =>
-  DecodeDisk blk (BoundedPerasEpochContext blk)
-deriving instance
   Generic (BoundedPerasEpochContext blk)
+
+instance
+  ( Typeable blk
+  , FromCBOR (PerasVotingCommittee blk)
+  ) =>
+  FromCBOR (BoundedPerasEpochContext blk)
+  where
+  fromCBOR = do
+    decodeListLenOf 3
+    startPerasRoundNo <- fromCBOR
+    endPerasRoundNo <- fromCBOR
+    epochContext <- fromCBOR
+    pure
+      BoundedPerasEpochContext
+        { startPerasRoundNo
+        , endPerasRoundNo
+        , epochContext
+        }
+
+instance
+  ( Typeable blk
+  , ToCBOR (PerasVotingCommittee blk)
+  ) =>
+  ToCBOR (BoundedPerasEpochContext blk)
+  where
+  toCBOR
+    BoundedPerasEpochContext
+      { startPerasRoundNo
+      , endPerasRoundNo
+      , epochContext
+      } =
+      encodeListLen 3
+        <> toCBOR startPerasRoundNo
+        <> toCBOR endPerasRoundNo
+        <> toCBOR epochContext
+
+instance
+  FromCBOR (BoundedPerasEpochContext blk) =>
+  DecodeDisk blk (BoundedPerasEpochContext blk)
+  where
+  decodeDisk _ccfg = fromCBOR
+
+instance
+  ToCBOR (BoundedPerasEpochContext blk) =>
+  EncodeDisk blk (BoundedPerasEpochContext blk)
+  where
+  encodeDisk _ccfg = toCBOR
 
 -- | Check whether a given 'PerasRoundNo' is within the bounds of a
 -- 'BoundedPerasEpochContext'.
@@ -204,16 +251,58 @@ deriving instance
   NoThunks (PerasEpochContext blk) =>
   NoThunks (PerasEpochContextResolver blk)
 deriving instance
-  Serialise (PerasEpochContext blk) =>
-  Serialise (PerasEpochContextResolver blk)
-deriving instance
-  Serialise (PerasEpochContext blk) =>
-  EncodeDisk blk (PerasEpochContextResolver blk)
-deriving instance
-  Serialise (PerasEpochContext blk) =>
-  DecodeDisk blk (PerasEpochContextResolver blk)
-deriving instance
   Generic (PerasEpochContextResolver blk)
+
+instance
+  ( Typeable blk
+  , FromCBOR (PerasVotingCommittee blk)
+  ) =>
+  FromCBOR (PerasEpochContextResolver blk)
+  where
+  fromCBOR = do
+    len <- decodeListLen
+    tag <- fromCBOR @Word8
+    case (len, tag) of
+      (2, 0) -> do
+        reason <- ByteString.unpack <$> fromCBOR
+        pure $ PerasEpochContextResolverError reason
+      (3, 1) -> do
+        curr <- fromCBOR
+        prev <- fromCBOR
+        pure $ PerasEpochContextResolver curr prev
+      _ ->
+        fail $
+          "PerasEpochContextResolver: unexpected list length and tag: "
+            <> show (len, tag)
+
+instance
+  ( Typeable blk
+  , ToCBOR (PerasVotingCommittee blk)
+  ) =>
+  ToCBOR (PerasEpochContextResolver blk)
+  where
+  toCBOR = \case
+    PerasEpochContextResolverError reason ->
+      encodeListLen 2
+        <> toCBOR (0 :: Word8)
+        <> toCBOR (ByteString.pack reason)
+    PerasEpochContextResolver curr prev ->
+      encodeListLen 3
+        <> toCBOR (1 :: Word8)
+        <> toCBOR curr
+        <> toCBOR prev
+
+instance
+  FromCBOR (PerasEpochContextResolver blk) =>
+  DecodeDisk blk (PerasEpochContextResolver blk)
+  where
+  decodeDisk _ccfg = fromCBOR
+
+instance
+  ToCBOR (PerasEpochContextResolver blk) =>
+  EncodeDisk blk (PerasEpochContextResolver blk)
+  where
+  encodeDisk _ccfg = toCBOR
 
 -- | An error indicating that a 'PerasEpochContext' could not be found for a
 -- given 'PerasRoundNo' in a 'PerasEpochContextResolver'.
@@ -282,17 +371,17 @@ resolveRoundNo resolver roundNo = case resolver of
         Left $
           PerasEpochContextNotFoundForRound roundNo (reason1 <> "; " <> reason2)
  where
-  lookupBounded label enabled = do
+  lookupBounded name mbContext = do
     boundedContext <-
       maybeToEither
-        ("no " <> label <> " epoch context available because Peras isn't enabled")
-        (perasEnabledToMaybe enabled)
+        ("no " <> name <> " epoch context available because Peras isn't enabled")
+        (perasEnabledToMaybe mbContext)
     maybeToEither
-      ( label
+      ( name
           <> " epoch context available, but roundNo "
           <> show roundNo
           <> " not within "
-          <> label
+          <> name
           <> " epoch context bounds ["
           <> show (startPerasRoundNo boundedContext)
           <> ", "
@@ -450,12 +539,14 @@ class
   , Eq (PerasVotingCommittee blk)
   , NoThunks (PerasVotingCommittee blk)
   , Typeable (PerasVotingCommittee blk)
-  , Serialise (PerasVotingCommittee blk)
+  , FromCBOR (PerasVotingCommittee blk)
+  , ToCBOR (PerasVotingCommittee blk)
   , Show (PerasEpochContextResolver blk)
   , Eq (PerasEpochContextResolver blk)
   , NoThunks (PerasEpochContextResolver blk)
   , Typeable (PerasEpochContextResolver blk)
-  , Serialise (PerasEpochContextResolver blk)
+  , FromCBOR (PerasEpochContextResolver blk)
+  , ToCBOR (PerasEpochContextResolver blk)
   , EncodeDisk blk (PerasEpochContextResolver blk)
   , DecodeDisk blk (PerasEpochContextResolver blk)
   ) =>

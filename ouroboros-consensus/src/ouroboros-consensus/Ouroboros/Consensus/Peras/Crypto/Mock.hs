@@ -4,6 +4,7 @@
 {-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -36,8 +37,13 @@ module Ouroboros.Consensus.Peras.Crypto.Mock
   , getEligibilityWitness
   ) where
 
+import Cardano.Binary
+  ( FromCBOR (..)
+  , ToCBOR (..)
+  , decodeListLenOf
+  , encodeListLen
+  )
 import Cardano.Prelude (Bifunctor (second))
-import Codec.Serialise (Serialise)
 import Control.Exception.Base (Exception)
 import Data.Either.Extra (maybeToEither)
 import qualified Data.List as List
@@ -49,7 +55,7 @@ import Data.Typeable (Typeable)
 import Data.Word (Word16)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Abstract (HeaderHash, Point, StandardHash)
+import Ouroboros.Consensus.Block.Abstract (Point, StandardHash)
 import Ouroboros.Consensus.Committee.Class
   ( CryptoSupportsVotingCommittee (..)
   , VotingCommittee
@@ -237,73 +243,60 @@ instance
         (mockVoteRound1, mockVoteSeatIndex1)
         (mockVoteRound2, mockVoteSeatIndex2)
 
-deriving instance
+deriving newtype instance
   Show (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   Eq (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   NoThunks (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
-  Serialise (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   Generic (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
 
 deriving instance
   Show (VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk))
 deriving instance
   Eq (VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   NoThunks (VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
-  Serialise (VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   Generic (VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk))
 
-deriving instance
+deriving newtype instance
   Show (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   Eq (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   NoThunks (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
-  Serialise (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   Generic (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving anyclass instance
   ( Typeable crypto
   , Typeable blk
   ) =>
   Exception (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
 
-deriving instance
+deriving newtype instance
   StandardHash blk =>
   Show (Vote crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   StandardHash blk =>
   Eq (Vote crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   StandardHash blk =>
   NoThunks (Vote crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
-  Serialise
-    (HeaderHash blk) =>
-  Serialise (Vote crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   Generic (Vote crypto (MockPerasVotingCommitteeScheme blk))
 
-deriving instance
+deriving newtype instance
   StandardHash blk =>
   Show (Cert crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   StandardHash blk =>
   Eq (Cert crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   StandardHash blk =>
   NoThunks (Cert crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
-  Serialise (HeaderHash blk) =>
-  Serialise (Cert crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
+deriving newtype instance
   Generic (Cert crypto (MockPerasVotingCommitteeScheme blk))
 
 deriving instance
@@ -312,8 +305,6 @@ deriving instance
   Eq (EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk))
 deriving instance
   NoThunks (EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk))
-deriving instance
-  Serialise (EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk))
 deriving instance
   Generic (EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk))
 
@@ -338,6 +329,95 @@ instance
     Right mockCert
   fromPerasCert mockCert =
     Right (MockPerasVotingCommitteeSchemeCert mockCert)
+
+-- * FromCBOR / ToCBOR instances
+
+deriving newtype instance
+  ( Typeable crypto
+  , Typeable blk
+  ) =>
+  FromCBOR (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
+
+deriving newtype instance
+  ( Typeable crypto
+  , Typeable blk
+  ) =>
+  ToCBOR (VotingCommittee crypto (MockPerasVotingCommitteeScheme blk))
+
+deriving newtype instance
+  ( Typeable crypto
+  , Typeable blk
+  ) =>
+  FromCBOR (VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk))
+
+deriving newtype instance
+  ( Typeable crypto
+  , Typeable blk
+  ) =>
+  ToCBOR (VotingCommitteeInput crypto (MockPerasVotingCommitteeScheme blk))
+
+deriving newtype instance
+  ( Typeable crypto
+  , Typeable blk
+  ) =>
+  FromCBOR (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
+
+deriving newtype instance
+  ( Typeable crypto
+  , Typeable blk
+  ) =>
+  ToCBOR (VotingCommitteeError crypto (MockPerasVotingCommitteeScheme blk))
+
+instance
+  ( Typeable crypto
+  , Typeable blk
+  ) =>
+  FromCBOR (EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk))
+  where
+  fromCBOR = do
+    decodeListLenOf 2
+    seatIndex <- fromCBOR
+    voteWeight <- fromCBOR
+    pure (MockPerasVotingCommitteeSchemeMember seatIndex voteWeight)
+
+instance
+  ( Typeable crypto
+  , Typeable blk
+  ) =>
+  ToCBOR (EligibilityWitness crypto (MockPerasVotingCommitteeScheme blk))
+  where
+  toCBOR (MockPerasVotingCommitteeSchemeMember seatIndex voteWeight) =
+    encodeListLen 2
+      <> toCBOR seatIndex
+      <> toCBOR voteWeight
+
+deriving newtype instance
+  ( Typeable crypto
+  , Typeable blk
+  , FromCBOR (Point blk)
+  ) =>
+  FromCBOR (Vote crypto (MockPerasVotingCommitteeScheme blk))
+
+deriving newtype instance
+  ( Typeable crypto
+  , Typeable blk
+  , ToCBOR (Point blk)
+  ) =>
+  ToCBOR (Vote crypto (MockPerasVotingCommitteeScheme blk))
+
+deriving newtype instance
+  ( Typeable crypto
+  , Typeable blk
+  , FromCBOR (Point blk)
+  ) =>
+  FromCBOR (Cert crypto (MockPerasVotingCommitteeScheme blk))
+
+deriving newtype instance
+  ( Typeable crypto
+  , Typeable blk
+  , ToCBOR (Point blk)
+  ) =>
+  ToCBOR (Cert crypto (MockPerasVotingCommitteeScheme blk))
 
 -- * Helpers
 
