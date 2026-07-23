@@ -27,10 +27,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   )
 import Control.Exception (throwIO)
 import Control.Monad (unless, void)
-import Control.Monad.Class.MonadThrow
-  ( bracket
-  , generalBracket
-  )
+import Control.Monad.Class.MonadThrow (generalBracket)
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
 import Control.Tracer (Tracer, traceWith)
 import Data.Bifunctor (first)
@@ -134,6 +131,7 @@ data Stmts = Stmts
   , stFilterMissingEbBodies :: !DB.Statement
   , stFilterMissingTxs :: !DB.Statement
   , stLookupEbClosure :: !DB.Statement
+  , stScanCompleteEbsSince :: !DB.Statement
   }
 
 data Conn = Conn
@@ -158,6 +156,7 @@ prepareStmts db =
     <*> dbPrepare db (fromString sql_filter_missing_eb_bodies_json)
     <*> dbPrepare db (fromString sql_filter_missing_txs_json)
     <*> dbPrepare db (fromString sql_lookup_eb_closure)
+    <*> dbPrepare db (fromString sql_scan_complete_ebs_since)
 
 -- | Finalise every statement in 'Stmts'. Called from 'close' immediately
 -- before 'sqlite3_close_v2', on the connection's owner thread.
@@ -176,6 +175,7 @@ finalizeStmts Stmts{..} = do
   dbFinalize stFilterMissingEbBodies
   dbFinalize stFilterMissingTxs
   dbFinalize stLookupEbClosure
+  dbFinalize stScanCompleteEbsSince
 
 -- | Run an action on a pre-prepared statement and always @sqlite3_reset@
 -- it afterwards, regardless of outcome. Reset uses raw 'DB.reset' (no
@@ -208,7 +208,7 @@ openSQLiteConnection tracer dbPath notificationChan = do
     LeiosDbConnection
       { close = finalizeStmts stmts >> void (DB.close db)
       , leiosDbScanEbPoints = sqlScanEbPoints conn
-      , leiosDbScanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince db
+      , leiosDbScanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
       , leiosDbInsertEbPoint = sqlInsertEbPoint conn
       , leiosDbLookupEbBody = sqlLookupEbBody conn
       , leiosDbInsertEbBody = sqlInsertEbBody tracer conn notify
@@ -234,18 +234,20 @@ sqlScanEbPoints conn =
         hash <- MkEbHash <$> DB.columnBlob stmt 1
         loop ((slot, hash) : acc)
 
-sqlScanCompleteEbPointsSince :: DB.Database -> SlotNo -> IO [LeiosPoint]
-sqlScanCompleteEbPointsSince db sinceSlot =
-  dbWithBEGIN db $ dbWithPrepare db (fromString sql_scan_complete_ebs_since) $ \stmt -> do
+sqlScanCompleteEbPointsSince :: Conn -> SlotNo -> IO [LeiosPoint]
+sqlScanCompleteEbPointsSince conn sinceSlot =
+  dbWithBEGIN db $ useStmt stmt $ do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo sinceSlot)
-    let loop acc =
-          dbStep stmt >>= \case
-            DB.Done -> pure (reverse acc)
-            DB.Row -> do
-              slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-              hash <- MkEbHash <$> DB.columnBlob stmt 1
-              loop (MkLeiosPoint slot hash : acc)
     loop []
+ where
+  Conn{connDb = db, connStmts = Stmts{stScanCompleteEbsSince = stmt}} = conn
+  loop acc =
+    dbStep stmt >>= \case
+      DB.Done -> pure (reverse acc)
+      DB.Row -> do
+        slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
+        hash <- MkEbHash <$> DB.columnBlob stmt 1
+        loop (MkLeiosPoint slot hash : acc)
 
 sqlLookupEbBody :: Conn -> EbHash -> IO [(TxHash, BytesSize)]
 sqlLookupEbBody conn ebHash =
@@ -656,9 +658,6 @@ dbFinalize q = withDieStmt q $ DB.finalize q
 
 dbPrepare :: HasCallStack => DB.Database -> DB.Utf8 -> IO DB.Statement
 dbPrepare db q = withDieJust db $ DB.prepare db q
-
-dbWithPrepare :: HasCallStack => DB.Database -> DB.Utf8 -> (DB.Statement -> IO a) -> IO a
-dbWithPrepare db q k = bracket (dbPrepare db q) dbFinalize k
 
 -- TODO: alternative: bind and use https://www.sqlite.org/c3ref/busy_handler.html
 dbWithBEGIN :: HasCallStack => DB.Database -> IO a -> IO a
