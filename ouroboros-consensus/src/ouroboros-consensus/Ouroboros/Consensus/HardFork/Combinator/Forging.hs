@@ -365,11 +365,15 @@ hardForkForgeBlock
         ([], hfs) ->
           hmap
             ( \case
-                Pair _ ApplyTxs{} -> error "Impossible!!"
+                Pair _ ApplyTxs{} ->
+                  error
+                    "Impossible! we have translated the txs to the current era, but they should already be in this era!"
                 Pair a (ReapplyTxs b) -> Pair a $ Comp $ map (\(x, (), ()) -> x) b
             )
             $ State.tip hfs
-        (_ : _, _) -> error "Impossible!!"
+        (_ : _, _) ->
+          error
+            "Impossible! some transactions were rejected as untranslatable by rematchValidatedTxs but all of them have been translated and applied just now."
 
     -- \| Unwraps all the layers needed for SOP and call 'forgeBlock'.
     forgeBlockOne ::
