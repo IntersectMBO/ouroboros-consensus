@@ -3,6 +3,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | Injecting a transaction from one block type to another
 module Ouroboros.Consensus.HardFork.Combinator.InjectTxs
@@ -208,10 +209,28 @@ matchTx ::
   State.HardForkState f xs ->
   Either (MismatchEraInfo xs) (State.HardForkState (Product f GenTx) xs)
 matchTx tx (State.HardForkState tele) =
-  bimap
-    (MismatchEraInfo . Match.bihcmap proxySingle singleEraInfo (LedgerEraInfo . singleEraInfo))
-    (State.HardForkState . hmap flipCurrAndProd)
-    $ Match.matchTelescope tx tele
+  case Match.matchTelescope tx tele of
+    -- Transaction and state are in the same era
+    Right m -> Right . State.HardForkState . hmap flipCurrAndProd $ m
+    -- Transaction and state are in different eras
+    Left mm ->
+      case State.sequenceHardForkState $ State.HardForkState $ hcmap proxySingle de tele of
+        -- Tx failed to deserialise in the target era
+        Left _ ->
+          Left
+            . MismatchEraInfo
+            . Match.bihcmap proxySingle singleEraInfo (LedgerEraInfo . singleEraInfo)
+            $ mm
+        -- Tx deserialised in the target era
+        Right n -> Right n
  where
   flipCurrAndProd :: Product GenTx (State.Current f) a -> State.Current (Product f GenTx) a
   flipCurrAndProd (Pair a (State.Current b c)) = State.Current b (Pair c a)
+
+  ser = hcollapse $ hcmap proxySingle (K . toLazyByteString . toCBOR) tx
+  de ::
+    SingleEraBlock blk =>
+    State.Current f blk -> State.Current (Either DeserialiseFailure :.: Product f GenTx) blk
+  de (State.Current s st) = case deserialiseFromBytes fromCBOR ser of
+    Left err -> State.Current s (Comp $ Left $ err)
+    Right (_, v) -> State.Current s (Comp $ Right $ Pair st v)
