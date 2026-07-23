@@ -28,7 +28,7 @@ module Ouroboros.Consensus.Block.RealPoint
   , withOriginRealPointToPoint
 
     -- * Bytes32RealPoint
-  , Bytes32RealPoint
+  , Bytes32RealPoint (..)
   , bytes32RealPointHash
   , bytes32RealPointSlot
   , decodeBytes32RealPoint
