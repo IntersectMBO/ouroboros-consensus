@@ -3,119 +3,141 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Embed.Binary (protocolInfoBinary) where
 
-import           Control.Exception (assert)
-import           Data.Align (alignWith)
-import           Data.SOP.Counting (exactlyTwo)
-import           Data.SOP.Functors (Flip (..))
-import           Data.SOP.OptNP (OptNP (..))
-import           Data.SOP.Strict (NP (..))
-import           Data.These (These (..))
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.HardFork.Combinator
+import Control.Exception (assert)
+import qualified Control.Tracer as Tracer
+import Data.Align (alignWith)
+import Data.SOP.Counting (exactlyTwo)
+import Data.SOP.Functors (Flip (..))
+import Data.SOP.OptNP (NonEmptyOptNP, OptNP (..))
+import Data.SOP.Strict (NP (..))
+import Data.Text (Text)
+import Data.These (These (..))
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Combinator
 import qualified Ouroboros.Consensus.HardFork.History as History
-import           Ouroboros.Consensus.HeaderValidation
-import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
-import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Protocol.Abstract (protocolSecurityParam)
-import           Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
+import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Protocol.Abstract (protocolSecurityParam)
+import Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
 -------------------------------------------------------------------------------}
 
 protocolInfoBinary ::
-     forall m blk1 blk2.
-     (CanHardFork '[blk1, blk2], Monad m)
-     -- First era
-  => ProtocolInfo blk1
-  -> m [BlockForging m blk1]
-  -> History.EraParams
-  -> (ConsensusConfig (BlockProtocol blk1) -> PartialConsensusConfig (BlockProtocol blk1))
-  -> (LedgerConfig blk1 -> PartialLedgerConfig blk1)
-     -- Second era
-  -> ProtocolInfo blk2
-  -> m [BlockForging m blk2]
-  -> History.EraParams
-  -> (ConsensusConfig (BlockProtocol blk2) -> PartialConsensusConfig (BlockProtocol blk2))
-  -> (LedgerConfig blk2 -> PartialLedgerConfig blk2)
-  -> ( ProtocolInfo (HardForkBlock '[blk1, blk2])
-     , m [BlockForging m (HardForkBlock '[blk1, blk2])]
-     )
-protocolInfoBinary protocolInfo1 blockForging1 eraParams1 toPartialConsensusConfig1 toPartialLedgerConfig1
-                   protocolInfo2 blockForging2 eraParams2 toPartialConsensusConfig2 toPartialLedgerConfig2 =
-    ( ProtocolInfo {
-        pInfoConfig = TopLevelConfig {
-            topLevelConfigProtocol = HardForkConsensusConfig {
-                hardForkConsensusConfigK      = k
-              , hardForkConsensusConfigShape  = shape
-              , hardForkConsensusConfigPerEra = PerEraConsensusConfig
-                  (  WrapPartialConsensusConfig (toPartialConsensusConfig1 consensusConfig1)
-                  :* WrapPartialConsensusConfig (toPartialConsensusConfig2 consensusConfig2)
-                  :* Nil
-                  )
+  forall m kesAgentTrace blk1 blk2.
+  (CanHardFork '[blk1, blk2], Monad m) =>
+  -- First era
+  ProtocolInfo blk1 ->
+  (Tracer.Tracer m kesAgentTrace -> m [MkBlockForging m blk1]) ->
+  History.EraParams ->
+  (ConsensusConfig (BlockProtocol blk1) -> PartialConsensusConfig (BlockProtocol blk1)) ->
+  (LedgerConfig blk1 -> PartialLedgerConfig blk1) ->
+  -- Second era
+  ProtocolInfo blk2 ->
+  (Tracer.Tracer m kesAgentTrace -> m [MkBlockForging m blk2]) ->
+  History.EraParams ->
+  (ConsensusConfig (BlockProtocol blk2) -> PartialConsensusConfig (BlockProtocol blk2)) ->
+  (LedgerConfig blk2 -> PartialLedgerConfig blk2) ->
+  ( ProtocolInfo (HardForkBlock '[blk1, blk2])
+  , Tracer.Tracer m kesAgentTrace -> m [MkBlockForging m (HardForkBlock '[blk1, blk2])]
+  )
+protocolInfoBinary
+  protocolInfo1
+  blockForging1
+  eraParams1
+  toPartialConsensusConfig1
+  toPartialLedgerConfig1
+  protocolInfo2
+  blockForging2
+  eraParams2
+  toPartialConsensusConfig2
+  toPartialLedgerConfig2 =
+    ( ProtocolInfo
+        { pInfoConfig =
+            TopLevelConfig
+              { topLevelConfigProtocol =
+                  HardForkConsensusConfig
+                    { hardForkConsensusConfigK = k
+                    , hardForkConsensusConfigShape = shape
+                    , hardForkConsensusConfigPerEra =
+                        PerEraConsensusConfig
+                          ( WrapPartialConsensusConfig (toPartialConsensusConfig1 consensusConfig1)
+                              :* WrapPartialConsensusConfig (toPartialConsensusConfig2 consensusConfig2)
+                              :* Nil
+                          )
+                    }
+              , topLevelConfigLedger =
+                  HardForkLedgerConfig
+                    { hardForkLedgerConfigShape = shape
+                    , hardForkLedgerConfigPerEra =
+                        PerEraLedgerConfig
+                          ( WrapPartialLedgerConfig (toPartialLedgerConfig1 ledgerConfig1)
+                              :* WrapPartialLedgerConfig (toPartialLedgerConfig2 ledgerConfig2)
+                              :* Nil
+                          )
+                    }
+              , topLevelConfigBlock =
+                  HardForkBlockConfig $
+                    PerEraBlockConfig $
+                      (blockConfig1 :* blockConfig2 :* Nil)
+              , topLevelConfigCodec =
+                  HardForkCodecConfig $
+                    PerEraCodecConfig $
+                      (codecConfig1 :* codecConfig2 :* Nil)
+              , topLevelConfigStorage =
+                  HardForkStorageConfig $
+                    PerEraStorageConfig $
+                      (storageConfig1 :* storageConfig2 :* Nil)
+              , topLevelConfigCheckpoints = emptyCheckpointsMap
+              , topLevelConfigVotingKey = Nothing
               }
-          , topLevelConfigLedger = HardForkLedgerConfig {
-                hardForkLedgerConfigShape  = shape
-              , hardForkLedgerConfigPerEra = PerEraLedgerConfig
-                  (  WrapPartialLedgerConfig (toPartialLedgerConfig1 ledgerConfig1)
-                  :* WrapPartialLedgerConfig (toPartialLedgerConfig2 ledgerConfig2)
-                  :* Nil
-                  )
+        , pInfoInitLedger =
+            ExtLedgerState
+              { ledgerState =
+                  HardForkLedgerState $
+                    initHardForkState (Flip initLedgerState1)
+              , headerState =
+                  genesisHeaderState $
+                    initHardForkState $
+                      WrapChainDepState $
+                        headerStateChainDep initHeaderState1
               }
-          , topLevelConfigBlock =
-              HardForkBlockConfig $
-                PerEraBlockConfig $
-                  (blockConfig1 :* blockConfig2 :* Nil)
-          , topLevelConfigCodec =
-              HardForkCodecConfig $
-                PerEraCodecConfig $
-                  (codecConfig1 :* codecConfig2 :* Nil)
-          , topLevelConfigStorage =
-              HardForkStorageConfig $
-                PerEraStorageConfig $
-                  (storageConfig1 :* storageConfig2 :* Nil)
-          , topLevelConfigCheckpoints = emptyCheckpointsMap
-          }
-      , pInfoInitLedger = ExtLedgerState {
-            ledgerState =
-              HardForkLedgerState $
-                initHardForkState (Flip initLedgerState1)
-          , headerState =
-              genesisHeaderState $
-                initHardForkState $
-                  WrapChainDepState $
-                    headerStateChainDep initHeaderState1
-          }
-      }
-    , alignWith alignBlockForging <$> blockForging1 <*> blockForging2
+        }
+    , \tr -> alignWith alignBlockForging <$> blockForging1 tr <*> blockForging2 tr
     )
-  where
-    ProtocolInfo {
-        pInfoConfig = TopLevelConfig {
-            topLevelConfigProtocol = consensusConfig1
-          , topLevelConfigLedger   = ledgerConfig1
-          , topLevelConfigBlock    = blockConfig1
-          , topLevelConfigCodec    = codecConfig1
-          , topLevelConfigStorage  = storageConfig1
+   where
+    ProtocolInfo
+      { pInfoConfig =
+        TopLevelConfig
+          { topLevelConfigProtocol = consensusConfig1
+          , topLevelConfigLedger = ledgerConfig1
+          , topLevelConfigBlock = blockConfig1
+          , topLevelConfigCodec = codecConfig1
+          , topLevelConfigStorage = storageConfig1
           }
-      , pInfoInitLedger = ExtLedgerState {
-            ledgerState = initLedgerState1
+      , pInfoInitLedger =
+        ExtLedgerState
+          { ledgerState = initLedgerState1
           , headerState = initHeaderState1
           }
       } = protocolInfo1
 
-    ProtocolInfo {
-        pInfoConfig = TopLevelConfig {
-            topLevelConfigProtocol = consensusConfig2
-          , topLevelConfigLedger   = ledgerConfig2
-          , topLevelConfigBlock    = blockConfig2
-          , topLevelConfigCodec    = codecConfig2
-          , topLevelConfigStorage  = storageConfig2
+    ProtocolInfo
+      { pInfoConfig =
+        TopLevelConfig
+          { topLevelConfigProtocol = consensusConfig2
+          , topLevelConfigLedger = ledgerConfig2
+          , topLevelConfigBlock = blockConfig2
+          , topLevelConfigCodec = codecConfig2
+          , topLevelConfigStorage = storageConfig2
           }
       } = protocolInfo2
 
@@ -128,18 +150,24 @@ protocolInfoBinary protocolInfo1 blockForging1 eraParams1 toPartialConsensusConf
     shape = History.Shape $ exactlyTwo eraParams1 eraParams2
 
     alignBlockForging ::
-         These (BlockForging m blk1) (BlockForging m blk2)
-      -> BlockForging m (HardForkBlock '[blk1, blk2])
+      These (MkBlockForging m blk1) (MkBlockForging m blk2) ->
+      MkBlockForging m (HardForkBlock '[blk1, blk2])
     alignBlockForging = \case
       This bf1 ->
         hardForkBlockForging
-          (forgeLabel bf1)
+          mkForgeLabel
           (OptCons bf1 $ OptSkip OptNil)
       That bf2 ->
         hardForkBlockForging
-          (forgeLabel bf2)
+          mkForgeLabel
           (OptSkip $ OptCons bf2 OptNil)
       These bf1 bf2 ->
         hardForkBlockForging
-          (forgeLabel bf1 <> "-" <> forgeLabel bf2)
+          mkForgeLabel
           (OptCons bf1 $ OptCons bf2 OptNil)
+
+    mkForgeLabel :: NonEmptyOptNP (BlockForging m) '[blk1, blk2] -> Text
+    mkForgeLabel = \case
+      OptCons bf1 (OptCons bf2 OptNil) -> forgeLabel bf1 <> "-" <> forgeLabel bf2
+      OptCons bf1 (OptSkip OptNil) -> forgeLabel bf1
+      OptSkip (OptCons bf2 OptNil) -> forgeLabel bf2

@@ -1,17 +1,16 @@
 module DBSynthesizer.Parsers (parseCommandLine) where
 
-import           Cardano.Tools.DBSynthesizer.Types
-import           Data.Word (Word64)
-import           Options.Applicative as Opt
-import           Ouroboros.Consensus.Block.Abstract (SlotNo (..))
-
+import Cardano.Tools.DBSynthesizer.Types
+import Data.Word (Word64)
+import Options.Applicative as Opt
+import Ouroboros.Consensus.Block.Abstract (SlotNo (..))
 
 parseCommandLine :: IO (NodeFilePaths, NodeCredentials, DBSynthesizerOptions)
 parseCommandLine =
-    Opt.customExecParser p opts
-  where
-    p     = Opt.prefs Opt.showHelpOnEmpty
-    opts  = Opt.info parserCommandLine mempty
+  Opt.customExecParser p opts
+ where
+  p = Opt.prefs Opt.showHelpOnEmpty
+  opts = Opt.info parserCommandLine mempty
 
 parserCommandLine :: Parser (NodeFilePaths, NodeCredentials, DBSynthesizerOptions)
 parserCommandLine =
@@ -42,9 +41,12 @@ parseDBSynthesizerOptions =
 
 parseForgeOptions :: Parser ForgeLimit
 parseForgeOptions =
-      ForgeLimitSlot <$> parseSlotLimit
-  <|> ForgeLimitBlock <$> parseBlockLimit
-  <|> ForgeLimitEpoch <$> parseEpochLimit
+  ForgeLimitSlot
+    <$> parseSlotLimit
+      <|> ForgeLimitBlock
+    <$> parseBlockLimit
+      <|> ForgeLimitEpoch
+    <$> parseEpochLimit
 
 parseChainDBFilePath :: Parser FilePath
 parseChainDBFilePath =
@@ -69,7 +71,7 @@ parseOperationalCertFilePath =
   strOption
     ( long "shelley-operational-certificate"
         <> metavar "FILE"
-        <> help "Path to the delegation certificate"
+        <> help "Path to the delegation certificate (in JSON TextEnvelope format)"
         <> completer (bashCompleter "file")
     )
 
@@ -78,7 +80,7 @@ parseKesKeyFilePath =
   strOption
     ( long "shelley-kes-key"
         <> metavar "FILE"
-        <> help "Path to the KES signing key"
+        <> help "Path to the KES signing key (in JSON TextEnvelope format)"
         <> completer (bashCompleter "file")
     )
 
@@ -87,7 +89,7 @@ parseVrfKeyFilePath =
   strOption
     ( long "shelley-vrf-key"
         <> metavar "FILE"
-        <> help "Path to the VRF signing key"
+        <> help "Path to the VRF signing key (in JSON TextEnvelope format)"
         <> completer (bashCompleter "file")
     )
 
@@ -96,53 +98,58 @@ parseBulkFilePath =
   strOption
     ( long "bulk-credentials-file"
         <> metavar "FILE"
-        <> help "Path to the bulk credentials file"
+        <> help
+          "Path to the bulk credentials file (a JSON file containing an array of arrays containing 3 TextEnvelope objects for the opcert, VRF Signing key, KES signing key)"
         <> completer (bashCompleter "file")
     )
 
 parseSlotLimit :: Parser SlotNo
 parseSlotLimit =
-  SlotNo <$> option auto
-    (     short 's'
-       <> long "slots"
-       <> metavar "NUMBER"
-       <> help "Amount of slots to process"
-    )
+  SlotNo
+    <$> option
+      auto
+      ( short 's'
+          <> long "slots"
+          <> metavar "NUMBER"
+          <> help "Amount of slots to process"
+      )
 
 parseBlockLimit :: Parser Word64
 parseBlockLimit =
-  option auto
-    (     short 'b'
-       <> long "blocks"
-       <> metavar "NUMBER"
-       <> help "Amount of blocks to forge"
+  option
+    auto
+    ( short 'b'
+        <> long "blocks"
+        <> metavar "NUMBER"
+        <> help "Amount of blocks to forge"
     )
 
 parseEpochLimit :: Parser Word64
 parseEpochLimit =
-  option auto
-    (     short 'e'
-       <> long "epochs"
-       <> metavar "NUMBER"
-       <> help "Amount of epochs to process"
+  option
+    auto
+    ( short 'e'
+        <> long "epochs"
+        <> metavar "NUMBER"
+        <> help "Amount of epochs to process"
     )
 
 parseForce :: Parser Bool
 parseForce =
   switch
-    (     short 'f'
-      <>  help "Force overwrite an existing Chain DB"
+    ( short 'f'
+        <> help "Force overwrite an existing Chain DB"
     )
 
 parseAppend :: Parser Bool
 parseAppend =
   switch
-    (     short 'a'
-      <>  help "Append to an existing Chain DB"
+    ( short 'a'
+        <> help "Append to an existing Chain DB"
     )
 
 parseOpenMode :: Parser DBSynthesizerOpenMode
 parseOpenMode =
-      (parseForce *> pure OpenCreateForce)
-  <|> (parseAppend *> pure OpenAppend)
-  <|> pure OpenCreate
+  (parseForce *> pure OpenCreateForce)
+    <|> (parseAppend *> pure OpenAppend)
+    <|> pure OpenCreate

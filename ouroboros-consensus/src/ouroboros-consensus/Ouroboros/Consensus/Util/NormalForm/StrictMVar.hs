@@ -1,7 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | 'StrictMVar's with 'NoThunks' invariants.
@@ -10,34 +9,45 @@
 -- 'NoThunks' invariant. See 'newMVarWithInvariant' and
 -- 'newEmptyMVarWithInvariant'.
 --
--- Use the @checkmvarinvariants@ cabal flag from the @strict-checked-vars@
--- package to enable or disable invariant checks at compile time.
+-- Due to their expensive nature, checks for the 'NoThunks' invariant are
+-- disabled by default and can be enabled at compile-time via the
+-- @expensive-invariants@ flag from the @ouroboros-consensus@ package. To
+-- disable invariant checks entirely (i.e., both 'NoThunks' and custom ones),
+-- use the @checkmvarinvariants@ cabal flag from the @strict-checked-vars@
+-- package.
 --
 -- The exports of this module (should) mirror the exports of the
 -- "Control.Concurrent.Class.MonadMVar.Strict.Checked" module from the
 -- @strict-checked-vars@ package.
-module Ouroboros.Consensus.Util.NormalForm.StrictMVar (
-    -- * StrictMVar
+module Ouroboros.Consensus.Util.NormalForm.StrictMVar
+  ( -- * StrictMVar
     newEmptyMVar
   , newEmptyMVarWithInvariant
   , newMVar
   , newMVarWithInvariant
+
     -- * Invariant
   , noThunksInvariant
+
     -- * Unchecked
   , uncheckedNewEmptyMVar
   , uncheckedNewMVar
+
     -- * Re-exports
   , module Control.Concurrent.Class.MonadMVar.Strict.Checked
   ) where
 
 import qualified Control.Concurrent.Class.MonadMVar.Strict as Strict
-import           Control.Concurrent.Class.MonadMVar.Strict.Checked hiding
-                     (newEmptyMVar, newEmptyMVarWithInvariant, newMVar,
-                     newMVarWithInvariant)
+import Control.Concurrent.Class.MonadMVar.Strict.Checked hiding
+  ( newEmptyMVar
+  , newEmptyMVarWithInvariant
+  , newMVar
+  , newMVarWithInvariant
+  )
 import qualified Control.Concurrent.Class.MonadMVar.Strict.Checked as Checked
-import           GHC.Stack (HasCallStack)
-import           NoThunks.Class (NoThunks (..), unsafeNoThunks)
+import GHC.Stack (HasCallStack)
+import NoThunks.Class (NoThunks (..))
+import Ouroboros.Consensus.Util.NormalForm.Invariant (noThunksInvariant)
 
 {-------------------------------------------------------------------------------
   StrictMVar
@@ -56,12 +66,12 @@ newEmptyMVar = Checked.newEmptyMVarWithInvariant noThunksInvariant
 -- When both the custom and 'NoThunks' invariants are broken, only the error
 -- related to the custom invariant is reported.
 newMVarWithInvariant ::
-     (HasCallStack, MonadMVar m, NoThunks a)
-  => (a -> Maybe String)
-  -> a
-  -> m (StrictMVar m a)
+  (HasCallStack, MonadMVar m, NoThunks a) =>
+  (a -> Maybe String) ->
+  a ->
+  m (StrictMVar m a)
 newMVarWithInvariant inv =
-    Checked.newMVarWithInvariant (\x -> inv x <> noThunksInvariant x)
+  Checked.newMVarWithInvariant (\x -> inv x <> noThunksInvariant x)
 
 -- | Create an empty 'StrictMVar' with a custom invariant /and/ a 'NoThunks'
 -- invariant.
@@ -69,18 +79,11 @@ newMVarWithInvariant inv =
 -- When both the custom and 'NoThunks' invariants are broken, only the error
 -- related to the custom invariant is reported.
 newEmptyMVarWithInvariant ::
-     (MonadMVar m, NoThunks a)
-  => (a -> Maybe String)
-  -> m (StrictMVar m a)
+  (MonadMVar m, NoThunks a) =>
+  (a -> Maybe String) ->
+  m (StrictMVar m a)
 newEmptyMVarWithInvariant inv =
-    Checked.newEmptyMVarWithInvariant (\x -> inv x <> noThunksInvariant x)
-
-{-------------------------------------------------------------------------------
-  Invariant
--------------------------------------------------------------------------------}
-
-noThunksInvariant :: NoThunks a => a -> Maybe String
-noThunksInvariant = fmap show . unsafeNoThunks
+  Checked.newEmptyMVarWithInvariant (\x -> inv x <> noThunksInvariant x)
 
 {-------------------------------------------------------------------------------
   NoThunks instance

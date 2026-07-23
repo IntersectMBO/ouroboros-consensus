@@ -8,6 +8,7 @@ module Spec.BaseTypes
   where
 
 open import Ledger.Prelude
+open import Data.Rational using (ℚ)
 
 record Nonces : Type₁ where
   infix 6 _⋆_
@@ -26,5 +27,9 @@ OCertCounters = KeyHashˢ ⇀ ℕ
 
 Slot   = ℕ
 Epoch  = ℕ
+
+-- TODO: Use `UnitInterval` from the Ledger spec instead of `ℚ`
+PoolDistr : Type
+PoolDistr = KeyHashˢ ⇀ (ℚ × KeyHashᵛ)
 
 \end{code}

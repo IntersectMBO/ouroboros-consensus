@@ -2,16 +2,17 @@
 {-# LANGUAGE DeriveGeneric #-}
 
 -- | Generic infrastructure for working with EBBs
-module Ouroboros.Consensus.Block.EBB (
-    IsEBB (..)
+module Ouroboros.Consensus.Block.EBB
+  ( IsEBB (..)
   , fromIsEBB
   , toIsEBB
   ) where
 
-import           Codec.Serialise (Serialise (..))
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Util.Condense
+import Codec.Serialise (Serialise (..))
+import Control.DeepSeq (NFData)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
   EBBs
@@ -31,7 +32,7 @@ import           Ouroboros.Consensus.Util.Condense
 data IsEBB
   = IsEBB
   | IsNotEBB
-  deriving (Eq, Show, Generic, NoThunks)
+  deriving (Eq, Show, Generic, NoThunks, NFData)
 
 instance Serialise IsEBB where
   encode = encode . fromIsEBB
@@ -44,5 +45,5 @@ toIsEBB :: Bool -> IsEBB
 toIsEBB b = if b then IsEBB else IsNotEBB
 
 fromIsEBB :: IsEBB -> Bool
-fromIsEBB IsEBB    = True
+fromIsEBB IsEBB = True
 fromIsEBB IsNotEBB = False

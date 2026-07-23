@@ -9,8 +9,10 @@ import qualified Test.Tasty as TT
 -----
 
 tests :: TT.TestTree
-tests = TT.testGroup "ChainGenerator" $ []
-    <> A.tests
-    <> BV.tests
-    <> C.tests
-    <> H.tests
+tests =
+  TT.testGroup "ChainGenerator" $
+    []
+      <> A.tests
+      <> BV.tests
+      <> C.tests
+      <> H.tests

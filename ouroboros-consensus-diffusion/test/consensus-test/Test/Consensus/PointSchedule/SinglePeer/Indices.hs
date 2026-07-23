@@ -13,9 +13,8 @@
 -- generated with 'headerPointSchedule'. Finally, the block points can be
 -- generated with 'headerPointSchedule' as well. See the implementation of
 -- 'Test.Consensus.PointSchedule.Random.singleJumpPeerSchedule' for an example.
---
-module Test.Consensus.PointSchedule.SinglePeer.Indices (
-    HeaderPointSchedule (..)
+module Test.Consensus.PointSchedule.SinglePeer.Indices
+  ( HeaderPointSchedule (..)
   , headerPointSchedule
   , rollbacksTipPoints
   , singleJumpTipPoints
@@ -23,15 +22,17 @@ module Test.Consensus.PointSchedule.SinglePeer.Indices (
   , uniformRMDiffTime
   ) where
 
-import           Control.Monad (forM, replicateM)
-import           Control.Monad.Class.MonadTime.SI (Time (Time), addTime)
-import           Data.List (sort)
-import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds,
-                     picosecondsToDiffTime)
-import           GHC.Stack (HasCallStack)
-import           Ouroboros.Network.Block (SlotNo (SlotNo))
+import Control.Monad (forM, replicateM)
+import Control.Monad.Class.MonadTime.SI (Time (Time), addTime)
+import Data.List (sort)
+import Data.Time.Clock
+  ( DiffTime
+  , diffTimeToPicoseconds
+  , picosecondsToDiffTime
+  )
+import GHC.Stack (HasCallStack)
+import Ouroboros.Network.Block (SlotNo (SlotNo))
 import qualified System.Random.Stateful as R
-
 
 -- | @singleJumpTipPoints g m n@ generates a list of tip points for a single peer
 -- serving a single branch between block indices @m@ and @n@. The schedule is a
@@ -50,13 +51,12 @@ import qualified System.Random.Stateful as R
 -- >          all (<=n) v &&
 -- >          not (hasDuplicates v)
 -- >        }
---
 singleJumpTipPoints :: R.StatefulGen g m => g -> Int -> Int -> m [Int]
 singleJumpTipPoints _g m n
-    | n < m = pure []
+  | n < m = pure []
 singleJumpTipPoints g m n = do
-    jump <- R.uniformRM (m, n) g
-    pure [jump..n]
+  jump <- R.uniformRM (m, n) g
+  pure [jump .. n]
 
 -- | @rollbacksTipPoints k bs g@ generates a schedule for a single peer
 -- serving from multiple alternative branches. The schedule is a list of block
@@ -83,13 +83,11 @@ singleJumpTipPoints g m n = do
 -- >          and [all (<bn) bbs | (bn, bbs) <- zip bs v] &&
 -- >          length v == length bs bracketChainSyncClient
 -- >        }
---
-rollbacksTipPoints
-  :: R.StatefulGen g m => g -> Int -> [Int] -> m [[Int]]
+rollbacksTipPoints ::
+  R.StatefulGen g m => g -> Int -> [Int] -> m [[Int]]
 rollbacksTipPoints g k = mapM walkBranch
-  where
-    walkBranch bn = singleJumpTipPoints g 0 (min (k-1) (bn - 1))
-
+ where
+  walkBranch bn = singleJumpTipPoints g 0 (min (k - 1) (bn - 1))
 
 -- | @tipPointSchedule g slotLengh msgDelayInterval slots@ attaches times to a
 -- sequence of tip points. These times are the times at which the tip points
@@ -127,83 +125,85 @@ rollbacksTipPoints g k = mapM walkBranch
 -- >      }
 -- >   -> {slots:[SlotNo] | all (0<=) slots}
 -- >   -> m {v:[DiffTime] | isSorted v && length v == length slots}
---
-tipPointSchedule
-  :: forall g m. R.StatefulGen g m => g -> DiffTime -> (DiffTime, DiffTime) -> [SlotNo] -> m [Time]
+tipPointSchedule ::
+  forall g m. R.StatefulGen g m => g -> DiffTime -> (DiffTime, DiffTime) -> [SlotNo] -> m [Time]
 tipPointSchedule _g slotLength (a, b) _slots
-    | slotLength <= b = error "tipPointSchedule: slotLength <= maximum delay"
-    | b < a = error "tipPointSchedule: empty delay interval"
+  | slotLength <= b = error "tipPointSchedule: slotLength <= maximum delay"
+  | b < a = error "tipPointSchedule: empty delay interval"
 tipPointSchedule g slotLength msgDelayInterval slots = do
-    let -- pairs of times corresponding to the start and end of each interval
-        -- between tip points
-        slotTimes = map slotTime slots
-        timePairs = zip slotTimes $ (drop 1 slotTimes) ++ [addTime 1 (last slotTimes)]
-    go timePairs
-  where
-    go :: [(Time, Time)] -> m [Time]
-    go [] = pure []
-    go xs = do
-      -- While the slots are increasing, assign a time to each point
-      -- by choosing a random time in the delay interval after the
-      -- slot start
-      let (pointSeq, newBranch) = span (\(a, b) -> a < b) xs
-      times <- forM pointSeq $ \(s, _) -> do
-                 delay <- uniformRMDiffTime msgDelayInterval g
-                 pure $ addTime delay s
-      (times', xss) <- case newBranch of
-        [] -> pure ([], [])
-        ((seqLast, _) : branches) -> do
-          delay <- uniformRMDiffTime msgDelayInterval g
-          let lastTime = addTime delay seqLast
-          (times', xss) <- handleDelayedTipPoints lastTime branches
-          pure (lastTime : times', xss)
-      -- When the slots are not increasing, we must be doing a rollback.
-      -- We might have tip points in past slots.
-      times'' <- go xss
-      pure $ times ++ times' ++ times''
+  let
+    -- pairs of times corresponding to the start and end of each interval
+    -- between tip points
+    slotTimes = map slotTime slots
+    timePairs = zip slotTimes $ (drop 1 slotTimes) ++ [addTime 1 (last slotTimes)]
+  go timePairs
+ where
+  go :: [(Time, Time)] -> m [Time]
+  go [] = pure []
+  go xs = do
+    -- While the slots are increasing, assign a time to each point
+    -- by choosing a random time in the delay interval after the
+    -- slot start
+    let (pointSeq, newBranch) = span (\(a, b) -> a < b) xs
+    times <- forM pointSeq $ \(s, _) -> do
+      delay <- uniformRMDiffTime msgDelayInterval g
+      pure $ addTime delay s
+    (times', xss) <- case newBranch of
+      [] -> pure ([], [])
+      ((seqLast, _) : branches) -> do
+        delay <- uniformRMDiffTime msgDelayInterval g
+        let lastTime = addTime delay seqLast
+        (times', xss) <- handleDelayedTipPoints lastTime branches
+        pure (lastTime : times', xss)
+    -- When the slots are not increasing, we must be doing a rollback.
+    -- We might have tip points in past slots.
+    times'' <- go xss
+    pure $ times ++ times' ++ times''
 
-    -- | The amount of time taken by the given number of slots.
-    slotsDiffTime :: Int -> DiffTime
-    slotsDiffTime s = fromIntegral s * slotLength
+  -- \| The amount of time taken by the given number of slots.
+  slotsDiffTime :: Int -> DiffTime
+  slotsDiffTime s = fromIntegral s * slotLength
 
-    -- | The time at the start of the slot.
-    slotTime :: SlotNo -> Time
-    slotTime (SlotNo s) = Time (slotsDiffTime (fromIntegral s))
+  -- \| The time at the start of the slot.
+  slotTime :: SlotNo -> Time
+  slotTime (SlotNo s) = Time (slotsDiffTime (fromIntegral s))
 
-    -- | Assign times to tip points in past slots. A past slot is
-    -- any earlier slot than the first parameter.
-    --
-    -- Yields the assigned times and the remaining tip points which
-    -- aren't in the past.
-    handleDelayedTipPoints :: Time -> [(Time, Time)] -> m ([Time], [(Time, Time)])
-    handleDelayedTipPoints lastTime xss = do
-      let (pointSeq, newBranch) = span (\(a, _) -> addTime (fst msgDelayInterval) a <= lastTime) xss
-          nseq = length pointSeq
-          -- The first point in xss that is not in the past
-          firstLater = case newBranch of
-            -- If there is no later point, pick an arbitrary later time interval
-            -- to sample from
-            []           -> addTime (slotsDiffTime (toEnum nseq)) lastTime
-            ((a, _) : _) -> addTime (fst msgDelayInterval) a
-      times <- replicateM nseq (uniformRMTime (lastTime, firstLater) g)
-      pure (sort times, newBranch)
+  -- \| Assign times to tip points in past slots. A past slot is
+  -- any earlier slot than the first parameter.
+  --
+  -- Yields the assigned times and the remaining tip points which
+  -- aren't in the past.
+  handleDelayedTipPoints :: Time -> [(Time, Time)] -> m ([Time], [(Time, Time)])
+  handleDelayedTipPoints lastTime xss = do
+    let (pointSeq, newBranch) = span (\(a, _) -> addTime (fst msgDelayInterval) a <= lastTime) xss
+        nseq = length pointSeq
+        -- The first point in xss that is not in the past
+        firstLater = case newBranch of
+          -- If there is no later point, pick an arbitrary later time interval
+          -- to sample from
+          [] -> addTime (slotsDiffTime (toEnum nseq)) lastTime
+          ((a, _) : _) -> addTime (fst msgDelayInterval) a
+    times <- replicateM nseq (uniformRMTime (lastTime, firstLater) g)
+    pure (sort times, newBranch)
 
 -- | Uniformely choose a relative 'DiffTime' in the given range.
 uniformRMDiffTime :: R.StatefulGen g m => (DiffTime, DiffTime) -> g -> m DiffTime
 uniformRMDiffTime (a, b) g =
-    picosecondsToDiffTime <$>
-      R.uniformRM (diffTimeToPicoseconds a, diffTimeToPicoseconds b) g
+  picosecondsToDiffTime
+    <$> R.uniformRM (diffTimeToPicoseconds a, diffTimeToPicoseconds b) g
 
 -- | Uniformely choose an absolute 'Time' in the given range.
 uniformRMTime :: R.StatefulGen g m => (Time, Time) -> g -> m Time
 uniformRMTime (Time a, Time b) g = Time <$> uniformRMDiffTime (a, b) g
 
-data HeaderPointSchedule = HeaderPointSchedule {
-    hpsTrunk  :: [(Time, Int)] -- ^ header points up to the intersection
-  , hpsBranch :: [(Time, Int)] -- ^ header points after the intersection
-                               -- indices are relative to the branch
+data HeaderPointSchedule = HeaderPointSchedule
+  { hpsTrunk :: [(Time, Int)]
+  -- ^ header points up to the intersection
+  , hpsBranch :: [(Time, Int)]
+  -- ^ header points after the intersection
+  -- indices are relative to the branch
   }
-  deriving (Show)
+  deriving Show
 
 -- | @headerPointSchedule g msgDelayInterval tpSchedule@ generates a
 -- schedule of header points for a single peer.
@@ -248,84 +248,87 @@ data HeaderPointSchedule = HeaderPointSchedule {
 -- >          all (\hps -> not (hasDuplicates (map snd (hpsTrunk hps)))) v &&
 -- >          all (\hps -> not (hasDuplicates (map snd (hpsBranch hps)))) v
 -- >        }
-headerPointSchedule
-  :: forall g m. (HasCallStack, R.StatefulGen g m)
-  => g
-  -> (DiffTime, DiffTime)
-  -> [(Maybe Int, [(Time, Int)])]
-  -> m [HeaderPointSchedule]
+headerPointSchedule ::
+  forall g m.
+  (HasCallStack, R.StatefulGen g m) =>
+  g ->
+  (DiffTime, DiffTime) ->
+  [(Maybe Int, [(Time, Int)])] ->
+  m [HeaderPointSchedule]
 headerPointSchedule g msgDelayInterval xs =
-   let -- Pair each  branch with the maximum time at which its header points
-       -- should be offered
-       xs' = zip xs $ map (Just . fst . headCallStack . snd) (drop 1 xs) ++ [Nothing]
-    in snd <$> mapAccumM genHPBranchSchedule (Time 0, 0) xs'
+  let
+    -- Pair each  branch with the maximum time at which its header points
+    -- should be offered
+    xs' = zip xs $ map (Just . fst . headCallStack . snd) (drop 1 xs) ++ [Nothing]
+   in
+    snd <$> mapAccumM genHPBranchSchedule (Time 0, 0) xs'
+ where
+  -- \| @genHPBranchSchedule (tNext, trunkNextHp) ((mi, tps), mtMax)@ generates
+  -- a schedule for a single branch.
+  --
+  -- @tNext@ is the time at which the next header point should be offered.
+  --
+  -- @trunkNextHp@ is the index of the next header point that was offered
+  -- from the trunk.
+  --
+  -- @mi@ is the index of the intersection block with the trunk. Nothing
+  -- means this group has tip points from the trunk.
+  --
+  -- @tps@ is the list of tip point indices relative to the branch.
+  --
+  -- @mtMax@ is the maximum time at which the last header point can be
+  -- offered. 'Nothing' stands for infinity.
+  --
+  -- Returns the time at which the last header point was offered, the next
+  -- header point to offer and the schedule for the branch.
+  genHPBranchSchedule ::
+    (Time, Int) ->
+    ((Maybe Int, [(Time, Int)]), Maybe Time) ->
+    m ((Time, Int), HeaderPointSchedule)
+  genHPBranchSchedule (tNext, trunkNextHp) ((_mi, []), _mtMax) =
+    pure ((tNext, trunkNextHp), HeaderPointSchedule [] [])
+  genHPBranchSchedule (tNext, trunkNextHp) ((Nothing, tps), mtMax) = do
+    (p, tsTrunk) <- mapAccumM (generatePerTipPointTimes mtMax) (tNext, trunkNextHp) tps
+    pure (p, HeaderPointSchedule (concat tsTrunk) [])
+  genHPBranchSchedule (tNext, trunkNextHp) ((Just iLast, tps@((firstTipTime, _) : _)), mtMax) = do
+    ((tNext', trunkNextHp'), tsTrunk) <-
+      generatePerTipPointTimes mtMax (tNext, trunkNextHp) (firstTipTime, iLast)
+    ((tNext'', _), tsBranch) <- mapAccumM (generatePerTipPointTimes mtMax) (tNext', 0) tps
+    pure ((tNext'', trunkNextHp'), HeaderPointSchedule tsTrunk (concat tsBranch))
 
-  where
-    -- | @genHPBranchSchedule (tNext, trunkNextHp) ((mi, tps), mtMax)@ generates
-    -- a schedule for a single branch.
-    --
-    -- @tNext@ is the time at which the next header point should be offered.
-    --
-    -- @trunkNextHp@ is the index of the next header point that was offered
-    -- from the trunk.
-    --
-    -- @mi@ is the index of the intersection block with the trunk. Nothing
-    -- means this group has tip points from the trunk.
-    --
-    -- @tps@ is the list of tip point indices relative to the branch.
-    --
-    -- @mtMax@ is the maximum time at which the last header point can be
-    -- offered. 'Nothing' stands for infinity.
-    --
-    -- Returns the time at which the last header point was offered, the next
-    -- header point to offer and the schedule for the branch.
-    genHPBranchSchedule
-      :: (Time, Int)
-      -> ((Maybe Int, [(Time, Int)]), Maybe Time)
-      -> m ((Time, Int), HeaderPointSchedule)
-    genHPBranchSchedule (tNext, trunkNextHp) ((_mi, []), _mtMax) =
-      pure ((tNext, trunkNextHp), HeaderPointSchedule [] [])
-    genHPBranchSchedule (tNext, trunkNextHp) ((Nothing, tps), mtMax) = do
-      (p, tsTrunk) <- mapAccumM (generatePerTipPointTimes mtMax) (tNext, trunkNextHp) tps
-      pure (p, HeaderPointSchedule (concat tsTrunk) [])
-    genHPBranchSchedule (tNext, trunkNextHp) ((Just iLast, tps@((firstTipTime, _):_)), mtMax) = do
-      ((tNext', trunkNextHp'), tsTrunk) <- generatePerTipPointTimes mtMax (tNext, trunkNextHp) (firstTipTime, iLast)
-      ((tNext'', _), tsBranch) <- mapAccumM (generatePerTipPointTimes mtMax) (tNext', 0) tps
-      pure ((tNext'', trunkNextHp'), HeaderPointSchedule tsTrunk (concat tsBranch))
-
-    -- | @generatePerTipPointTimes mtMax (tNext, nextHp) (tTip, tp)@ schedules the header
-    -- points from @nextHp@ to @tp@ in ascending order starting from the maximum
-    -- of @tNext@ and @tTip + t@ where t is sampled from @msgDelayInterval@.
-    --
-    -- Less header points are scheduled if they would be scheduled after @mtMax@.
-    --
-    -- The delay of each tipPoint is sampled from @msgDelayInterval@.
-    --
-    generatePerTipPointTimes
-      :: Maybe Time
-      -> (Time, Int)
-      -> (Time, Int)
-      -> m ((Time, Int), [(Time, Int)])
-    generatePerTipPointTimes mtMax (tNext0, nextHp0) (tTip, tp) = do
-       t <- uniformRMDiffTime msgDelayInterval g
-       go (max tNext0 (addTime t tTip)) nextHp0 []
-      where
-        go :: Time -> Int -> [(Time, Int)] -> m ((Time, Int), [(Time, Int)])
-        go tNext nextHp acc = do
-          if maybe False (tNext >) mtMax || nextHp > tp then
-            pure ((tNext, nextHp), reverse acc)
-          else do
-            t <- (`addTime` tNext) <$> uniformRMDiffTime msgDelayInterval g
-            go t (nextHp+1) ((tNext, nextHp) : acc)
+  -- \| @generatePerTipPointTimes mtMax (tNext, nextHp) (tTip, tp)@ schedules the header
+  -- points from @nextHp@ to @tp@ in ascending order starting from the maximum
+  -- of @tNext@ and @tTip + t@ where t is sampled from @msgDelayInterval@.
+  --
+  -- Less header points are scheduled if they would be scheduled after @mtMax@.
+  --
+  -- The delay of each tipPoint is sampled from @msgDelayInterval@.
+  generatePerTipPointTimes ::
+    Maybe Time ->
+    (Time, Int) ->
+    (Time, Int) ->
+    m ((Time, Int), [(Time, Int)])
+  generatePerTipPointTimes mtMax (tNext0, nextHp0) (tTip, tp) = do
+    t <- uniformRMDiffTime msgDelayInterval g
+    go (max tNext0 (addTime t tTip)) nextHp0 []
+   where
+    go :: Time -> Int -> [(Time, Int)] -> m ((Time, Int), [(Time, Int)])
+    go tNext nextHp acc = do
+      if maybe False (tNext >) mtMax || nextHp > tp
+        then
+          pure ((tNext, nextHp), reverse acc)
+        else do
+          t <- (`addTime` tNext) <$> uniformRMDiffTime msgDelayInterval g
+          go t (nextHp + 1) ((tNext, nextHp) : acc)
 
 mapAccumM :: Monad m => (s -> x -> m (s, y)) -> s -> [x] -> m (s, [y])
 mapAccumM _ acc [] = pure (acc, [])
-mapAccumM f acc (x:xs) = do
-    (acc', y) <- f acc x
-    (acc'', ys) <- mapAccumM f acc' xs
-    pure (acc'', y:ys)
+mapAccumM f acc (x : xs) = do
+  (acc', y) <- f acc x
+  (acc'', ys) <- mapAccumM f acc' xs
+  pure (acc'', y : ys)
 
 headCallStack :: HasCallStack => [a] -> a
 headCallStack = \case
-  x:_ -> x
-  _   -> error "headCallStack: empty list"
+  x : _ -> x
+  _ -> error "headCallStack: empty list"

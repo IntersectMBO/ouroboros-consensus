@@ -9,27 +9,30 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Ouroboros.Consensus.Util.DepPair (
-    -- * Dependent pairs
+module Ouroboros.Consensus.Util.DepPair
+  ( -- * Dependent pairs
     DepPair
   , GenDepPair (GenDepPair, DepPair)
   , depPairFirst
+
     -- * Compare indices
   , SameDepIndex (..)
   , SameDepIndex2 (..)
+
     -- * Trivial dependency
   , TrivialDependency (..)
   , fromTrivialDependency
   , toTrivialDependency
+
     -- * Convenience re-exports
   , Proxy (..)
   , (:~:) (..)
   ) where
 
-import           Data.Kind (Constraint, Type)
-import           Data.Proxy
-import           Data.SOP.BasicFunctors (I (..))
-import           Data.Type.Equality ((:~:) (..))
+import Data.Kind (Constraint, Type)
+import Data.Proxy
+import Data.SOP.BasicFunctors (I (..))
+import Data.Type.Equality ((:~:) (..))
 
 {-------------------------------------------------------------------------------
   Dependent pairs
@@ -61,7 +64,6 @@ depPairFirst f (GenDepPair ix a) = GenDepPair (f ix) a
 type SameDepIndex :: (k -> Type) -> Constraint
 class SameDepIndex f where
   sameDepIndex :: f a -> f b -> Maybe (a :~: b)
-
   default sameDepIndex :: TrivialDependency f => f a -> f b -> Maybe (a :~: b)
   sameDepIndex ix ix' = Just $ hasSingleIndex ix ix'
 
@@ -82,10 +84,10 @@ class TrivialDependency f where
 
 fromTrivialDependency :: TrivialDependency f => f a -> a -> TrivialIndex f
 fromTrivialDependency ix =
-    case hasSingleIndex indexIsTrivial ix of
-      Refl -> id
+  case hasSingleIndex indexIsTrivial ix of
+    Refl -> id
 
 toTrivialDependency :: TrivialDependency f => f a -> TrivialIndex f -> a
 toTrivialDependency ix =
-    case hasSingleIndex indexIsTrivial ix of
-      Refl -> id
+  case hasSingleIndex indexIsTrivial ix of
+    Refl -> id

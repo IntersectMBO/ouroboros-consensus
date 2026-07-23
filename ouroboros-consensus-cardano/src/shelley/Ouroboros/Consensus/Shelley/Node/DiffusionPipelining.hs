@@ -7,44 +7,43 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Ouroboros.Consensus.Shelley.Node.DiffusionPipelining (
-    HotIdentity (..)
+module Ouroboros.Consensus.Shelley.Node.DiffusionPipelining
+  ( HotIdentity (..)
   , ShelleyTentativeHeaderState (..)
   , ShelleyTentativeHeaderView (..)
   ) where
 
 import qualified Cardano.Ledger.Shelley.API as SL
-import           Control.Monad (guard)
-import           Data.Set (Set)
+import Control.Monad (guard)
+import Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Word
-import           GHC.Generics (Generic)
-import           NoThunks.Class
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Shelley.Ledger.Block
-import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract
+import Data.Word
+import GHC.Generics (Generic)
+import NoThunks.Class
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Shelley.Ledger.Block
+import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
+import Ouroboros.Consensus.Shelley.Protocol.Abstract
 
 -- | Hot block issuer identity for the purpose of Shelley block diffusion
 -- pipelining.
-data HotIdentity c = HotIdentity {
-    -- | Hash of the cold key.
-    hiIssuer  :: !(SL.KeyHash SL.BlockIssuer)
-  , -- | The issue number/opcert counter. Even if the opcert was compromised and
-    -- hence an attacker forges blocks with a specific cold identity, the owner
-    -- of the cold key can issue a new opcert with an incremented counter, and
-    -- their minted blocks will be pipelined.
-    hiIssueNo :: !Word64
+data HotIdentity c = HotIdentity
+  { hiIssuer :: !(SL.KeyHash SL.BlockIssuer)
+  -- ^ Hash of the cold key.
+  , hiIssueNo :: !Word64
+  -- ^ The issue number/opcert counter. Even if the opcert was compromised and
+  -- hence an attacker forges blocks with a specific cold identity, the owner
+  -- of the cold key can issue a new opcert with an incremented counter, and
+  -- their minted blocks will be pipelined.
   }
   deriving stock (Show, Eq, Ord, Generic)
-  deriving anyclass (NoThunks)
+  deriving anyclass NoThunks
 
-data ShelleyTentativeHeaderState proto =
-    ShelleyTentativeHeaderState
+data ShelleyTentativeHeaderState proto
+  = ShelleyTentativeHeaderState
       -- | The block number of the last trap tentative header.
       !(WithOrigin BlockNo)
       -- | The set of all hot identies of those who issued trap tentative
@@ -60,13 +59,13 @@ data ShelleyTentativeHeaderState proto =
       --    record the identities of trap headers they sent.
       !(Set (HotIdentity (ProtoCrypto proto)))
   deriving stock (Show, Eq, Generic)
-  deriving anyclass (NoThunks)
+  deriving anyclass NoThunks
 
-data ShelleyTentativeHeaderView proto =
-    ShelleyTentativeHeaderView BlockNo (HotIdentity (ProtoCrypto proto))
+data ShelleyTentativeHeaderView proto
+  = ShelleyTentativeHeaderView BlockNo (HotIdentity (ProtoCrypto proto))
 
 deriving stock instance ConsensusProtocol proto => Show (ShelleyTentativeHeaderView proto)
-deriving stock instance ConsensusProtocol proto => Eq   (ShelleyTentativeHeaderView proto)
+deriving stock instance ConsensusProtocol proto => Eq (ShelleyTentativeHeaderView proto)
 
 -- | A header can be pipelined iff no trap header with the same block number and
 -- by the same issuer was pipelined before. See 'HotIdentity' for what exactly
@@ -74,33 +73,42 @@ deriving stock instance ConsensusProtocol proto => Eq   (ShelleyTentativeHeaderV
 instance
   ( ShelleyCompatible proto era
   , BlockSupportsProtocol (ShelleyBlock proto era)
-  ) => BlockSupportsDiffusionPipelining (ShelleyBlock proto era) where
-  type TentativeHeaderState (ShelleyBlock proto era) =
-    ShelleyTentativeHeaderState proto
+  ) =>
+  BlockSupportsDiffusionPipelining (ShelleyBlock proto era)
+  where
+  type
+    TentativeHeaderState (ShelleyBlock proto era) =
+      ShelleyTentativeHeaderState proto
 
-  type TentativeHeaderView (ShelleyBlock proto era) =
-    ShelleyTentativeHeaderView proto
+  type
+    TentativeHeaderView (ShelleyBlock proto era) =
+      ShelleyTentativeHeaderView proto
 
   initialTentativeHeaderState _ =
-      ShelleyTentativeHeaderState Origin Set.empty
+    ShelleyTentativeHeaderState Origin Set.empty
 
   tentativeHeaderView _bcfg hdr@(ShelleyHeader sph _) =
-      ShelleyTentativeHeaderView (blockNo hdr) HotIdentity {
-          hiIssuer  = SL.hashKey $ pHeaderIssuer sph
+    ShelleyTentativeHeaderView
+      (blockNo hdr)
+      HotIdentity
+        { hiIssuer = SL.hashKey $ pHeaderIssuer sph
         , hiIssueNo = pHeaderIssueNo sph
         }
 
-  applyTentativeHeaderView _
+  applyTentativeHeaderView
+    _
     (ShelleyTentativeHeaderView bno hdrIdentity)
-    (ShelleyTentativeHeaderState lastBlockNo badIdentities)
-    = case compare (NotOrigin bno) lastBlockNo of
+    (ShelleyTentativeHeaderState lastBlockNo badIdentities) =
+      case compare (NotOrigin bno) lastBlockNo of
         LT -> Nothing
         EQ -> do
           guard $ hdrIdentity `Set.notMember` badIdentities
-          Just $ ShelleyTentativeHeaderState
-            lastBlockNo
-            (Set.insert hdrIdentity badIdentities)
+          Just $
+            ShelleyTentativeHeaderState
+              lastBlockNo
+              (Set.insert hdrIdentity badIdentities)
         GT ->
-          Just $ ShelleyTentativeHeaderState
-            (NotOrigin bno)
-            (Set.singleton hdrIdentity)
+          Just $
+            ShelleyTentativeHeaderState
+              (NotOrigin bno)
+              (Set.singleton hdrIdentity)

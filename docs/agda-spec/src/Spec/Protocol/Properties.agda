@@ -19,12 +19,11 @@ open import Data.Rational as ℚ using (1ℚ)
 open import Ledger.Prelude
 open import Tactic.GenError
 open import Spec.Protocol crypto nonces es bs af rs
-open import Spec.BaseTypes crypto using (OCertCounters)
+open import Spec.BaseTypes crypto using (OCertCounters; PoolDistr)
 open import Spec.UpdateNonce crypto nonces es
 open import Spec.UpdateNonce.Properties crypto nonces es
 open import Spec.OperationalCertificate crypto nonces es bs af
 open import Spec.OperationalCertificate.Properties crypto nonces es bs af
-open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDistr; lookupPoolDistr)
 
 checkLeaderVal? : ∀ cert int σ → Dec (checkLeaderVal cert int σ)
 checkLeaderVal? (certℕ , certℕprf) (f , posf , f≤1) σ

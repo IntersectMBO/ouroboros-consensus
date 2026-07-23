@@ -1,33 +1,44 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.HardFork.History.EraParams (
-    -- * API
+module Ouroboros.Consensus.HardFork.History.EraParams
+  ( -- * API
     EraParams (..)
   , SafeZone (..)
+  , PerasEnabled
+  , pattern PerasEnabled
+  , pattern NoPerasEnabled
+  , PerasEnabledT (..)
+  , fromPerasEnabled
+
     -- * Defaults
   , defaultEraParams
   ) where
 
-import           Cardano.Binary (enforceSize)
-import           Cardano.Ledger.BaseTypes (unNonZero)
-import           Codec.CBOR.Decoding (Decoder, decodeListLen, decodeWord8)
-import           Codec.CBOR.Encoding (Encoding, encodeListLen, encodeWord8)
-import           Codec.Serialise (Serialise (..))
-import           Control.Monad (void)
-import           Data.Word
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
-import           Ouroboros.Consensus.Config.SecurityParam
+import Cardano.Binary (DecoderError (DecoderErrorCustom), cborError)
+import Cardano.Ledger.BaseTypes (unNonZero)
+import Codec.CBOR.Decoding (Decoder, decodeListLen, decodeWord8)
+import Codec.CBOR.Encoding (Encoding, encodeListLen, encodeWord8)
+import Codec.Serialise (Serialise (..))
+import Control.Monad (ap, liftM, void)
+import Control.Monad.Trans.Class
+import Data.Word
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+import Ouroboros.Consensus.Config.SecurityParam
 
 {-------------------------------------------------------------------------------
   OVERVIEW
@@ -130,14 +141,61 @@ import           Ouroboros.Consensus.Config.SecurityParam
 -------------------------------------------------------------------------------}
 
 -- | Parameters that can vary across hard forks
-data EraParams = EraParams {
-      eraEpochSize  :: !EpochSize
-    , eraSlotLength :: !SlotLength
-    , eraSafeZone   :: !SafeZone
-    , eraGenesisWin :: !GenesisWindow
-    }
-  deriving stock    (Show, Eq, Generic)
-  deriving anyclass (NoThunks)
+data EraParams = EraParams
+  { eraEpochSize :: !EpochSize
+  , eraSlotLength :: !SlotLength
+  , eraSafeZone :: !SafeZone
+  , eraGenesisWin :: !GenesisWindow
+  , eraPerasRoundLength :: !(PerasEnabled PerasRoundLength)
+  -- ^ Optional, as not every era will be Peras-enabled
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+-- | A marker for era parameters that are Peras-specific
+--   and are not present in pre-Peras eras
+newtype PerasEnabled a = MkPerasEnabled (Maybe a)
+  deriving stock (Show, Eq, Ord, Generic)
+  deriving anyclass NoThunks
+  deriving newtype (Functor, Applicative, Monad)
+
+pattern PerasEnabled :: a -> PerasEnabled a
+pattern PerasEnabled x <- MkPerasEnabled (Just !x)
+  where
+    PerasEnabled !x = MkPerasEnabled (Just x)
+
+pattern NoPerasEnabled :: PerasEnabled a
+pattern NoPerasEnabled = MkPerasEnabled Nothing
+
+{-# COMPLETE PerasEnabled, NoPerasEnabled #-}
+
+-- | A 'fromMaybe'-like eliminator for 'PerasEnabled'
+fromPerasEnabled :: a -> PerasEnabled a -> a
+fromPerasEnabled defaultValue =
+  \case
+    NoPerasEnabled -> defaultValue
+    PerasEnabled value -> value
+
+-- | A 'MaybeT'-like monad transformer.
+--
+--   Used solely for the Peras-related hard fork combinator queries,
+--   see 'Ouroboros.Consensus.HardFork.History.Qry'.
+newtype PerasEnabledT m a = PerasEnabledT {runPerasEnabledT :: m (PerasEnabled a)}
+  deriving stock Functor
+
+instance (Functor m, Monad m) => Applicative (PerasEnabledT m) where
+  pure = PerasEnabledT . pure . PerasEnabled
+  (<*>) = ap
+
+instance Monad m => Monad (PerasEnabledT m) where
+  x >>= f = PerasEnabledT $ do
+    v <- runPerasEnabledT x
+    case v of
+      NoPerasEnabled -> pure NoPerasEnabled
+      PerasEnabled y -> runPerasEnabledT (f y)
+
+instance MonadTrans PerasEnabledT where
+  lift = PerasEnabledT . liftM PerasEnabled
 
 -- | Default 'EraParams'
 --
@@ -146,29 +204,31 @@ data EraParams = EraParams {
 -- * epoch size to @10k@ slots
 -- * the safe zone to @2k@ slots
 -- * the upper bound to 'NoLowerBound'
+-- * the Peras Round Length is unset
 --
 -- This is primarily useful for tests.
 defaultEraParams :: SecurityParam -> SlotLength -> EraParams
-defaultEraParams (SecurityParam k) slotLength = EraParams {
-      eraEpochSize  = EpochSize (unNonZero k * 10)
+defaultEraParams (SecurityParam k) slotLength =
+  EraParams
+    { eraEpochSize = EpochSize (unNonZero k * 10)
     , eraSlotLength = slotLength
-    , eraSafeZone   = StandardSafeZone (unNonZero k * 2)
+    , eraSafeZone = StandardSafeZone (unNonZero k * 2)
     , eraGenesisWin = GenesisWindow (unNonZero k * 2)
+    , -- Peras is disabled by default
+      eraPerasRoundLength = NoPerasEnabled
     }
 
 -- | Zone in which it is guaranteed that no hard fork can take place
-data SafeZone =
-    -- | Standard safe zone
+data SafeZone
+  = -- | Standard safe zone
     --
     -- We record
     --
     -- * Number of slots from the tip of the ledger.
     --   This should be (at least) the number of slots in which we are
     --   guaranteed to have @k@ blocks.
-    -- * Optionally, an 'EpochNo' before which no hard fork can take place.
     StandardSafeZone !Word64
-
-    -- | Pretend the transition to the next era will not take place.
+  | -- | Pretend the transition to the next era will not take place.
     --
     -- This constructor is marked as unsafe because it effectively extends
     -- the safe zone of this era indefinitely into the future. This means that
@@ -187,9 +247,9 @@ data SafeZone =
     --
     -- This constructor can be regarded as an " extreme " version of
     -- 'LowerBound', and can be used for similar reasons.
-  | UnsafeIndefiniteSafeZone
-  deriving stock    (Show, Eq, Generic)
-  deriving anyclass (NoThunks)
+    UnsafeIndefiniteSafeZone
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
 
 {-------------------------------------------------------------------------------
   Serialisation
@@ -197,52 +257,65 @@ data SafeZone =
 
 instance Serialise SafeZone where
   encode = \case
-      StandardSafeZone safeFromTip -> mconcat [
-          encodeListLen 3
+    StandardSafeZone safeFromTip ->
+      mconcat
+        [ encodeListLen 3
         , encodeWord8 0
         , encode safeFromTip
-          -- For backward compatibility we still encode safeBeforeEpoch
-        , encodeSafeBeforeEpoch
+        , -- For backward compatibility we still encode safeBeforeEpoch
+          encodeSafeBeforeEpoch
         ]
-      UnsafeIndefiniteSafeZone -> mconcat [
-          encodeListLen 1
+    UnsafeIndefiniteSafeZone ->
+      mconcat
+        [ encodeListLen 1
         , encodeWord8 1
         ]
   decode = do
     size <- decodeListLen
-    tag  <- decodeWord8
+    tag <- decodeWord8
     case (size, tag) of
       (3, 0) -> StandardSafeZone <$> decode <* decodeSafeBeforeEpoch
       (1, 1) -> return UnsafeIndefiniteSafeZone
-      _      -> fail $ "SafeZone: invalid size and tag " <> show (size, tag)
+      _ -> fail $ "SafeZone: invalid size and tag " <> show (size, tag)
 
--- | Artificial encoder for backward compatibility, see #2646.
+-- | Artificial encoder for backward compatibility, see ouroboros-network#2646.
 encodeSafeBeforeEpoch :: Encoding
 encodeSafeBeforeEpoch = encodeListLen 1 <> encodeWord8 0
 
--- | Artificial decoder for backward compatibility, see #2646.
+-- | Artificial decoder for backward compatibility, see ouroboros-network#2646.
 decodeSafeBeforeEpoch :: Decoder s ()
 decodeSafeBeforeEpoch = do
-    size <- decodeListLen
-    tag  <- decodeWord8
-    case (size, tag) of
-      (1, 0) -> return ()
-      (2, 1) -> void $ decode @EpochNo
-      _      -> fail $ "SafeBeforeEpoch: invalid size and tag " <> show (size, tag)
+  size <- decodeListLen
+  tag <- decodeWord8
+  case (size, tag) of
+    (1, 0) -> return ()
+    (2, 1) -> void $ decode @EpochNo
+    _ -> fail $ "SafeBeforeEpoch: invalid size and tag " <> show (size, tag)
 
 instance Serialise EraParams where
-  encode EraParams{..} = mconcat $ [
-        encodeListLen 4
+  encode EraParams{..} =
+    mconcat $
+      [ encodeListLen $ case eraPerasRoundLength of
+          NoPerasEnabled -> 4
+          PerasEnabled{} -> 5
       , encode (unEpochSize eraEpochSize)
       , encode eraSlotLength
       , encode eraSafeZone
       , encode (unGenesisWindow eraGenesisWin)
       ]
+        <> case eraPerasRoundLength of
+          NoPerasEnabled -> []
+          PerasEnabled rl -> [encode (unPerasRoundLength rl)]
 
   decode = do
-      enforceSize "EraParams" 4
-      eraEpochSize  <- EpochSize <$> decode
-      eraSlotLength <- decode
-      eraSafeZone   <- decode
-      eraGenesisWin <- GenesisWindow <$> decode
-      return EraParams{..}
+    len <- decodeListLen
+    eraEpochSize <- EpochSize <$> decode
+    eraSlotLength <- decode
+    eraSafeZone <- decode
+    eraGenesisWin <- GenesisWindow <$> decode
+    eraPerasRoundLength <-
+      case len of
+        4 -> pure NoPerasEnabled
+        5 -> PerasEnabled . PerasRoundLength <$> decode
+        _ -> cborError (DecoderErrorCustom "EraParams" "unexpected list length")
+    return EraParams{..}

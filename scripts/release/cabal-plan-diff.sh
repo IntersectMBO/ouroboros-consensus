@@ -63,13 +63,7 @@ with-compiler: $GHC_BIN
 tests: False
 benchmarks: False
 
-packages:
-  ouroboros-consensus
-  ouroboros-consensus-cardano
-  ouroboros-consensus-protocol
-  ouroboros-consensus-diffusion
-  sop-extras
-  strict-sop-core
+packages: .
 " > ./tmp/cabal.project
 
 cabal build all --dry-run --minimize-conflict-set --project-file='./tmp/cabal.project'

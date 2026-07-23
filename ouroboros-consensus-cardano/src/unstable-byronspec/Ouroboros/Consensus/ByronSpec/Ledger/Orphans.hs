@@ -4,7 +4,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Missing instances for standard type classes in the Byron spec
@@ -22,17 +21,20 @@ import qualified Byron.Spec.Ledger.Delegation as Spec
 import qualified Byron.Spec.Ledger.STS.UTXO as Spec
 import qualified Byron.Spec.Ledger.STS.UTXOW as Spec
 import qualified Byron.Spec.Ledger.STS.UTXOWS as Spec
-import qualified Byron.Spec.Ledger.Update as Spec
 import qualified Byron.Spec.Ledger.UTxO as Spec
-import           Cardano.Ledger.Binary.Plain (FromCBOR (..), ToCBOR (..),
-                     enforceSize)
-import           Codec.CBOR.Encoding (encodeListLen)
-import           Codec.Serialise
+import qualified Byron.Spec.Ledger.Update as Spec
+import Cardano.Ledger.Binary.Plain
+  ( FromCBOR (..)
+  , ToCBOR (..)
+  , enforceSize
+  )
+import Codec.CBOR.Encoding (encodeListLen)
+import Codec.Serialise
 import qualified Control.State.Transition as Spec
-import           Data.Bimap (Bimap)
+import Data.Bimap (Bimap)
 import qualified Data.Bimap as Bimap
-import           GHC.Generics (Generic)
-import           Test.Cardano.Chain.Elaboration.Block as Spec.Test
+import GHC.Generics (Generic)
+import Test.Cardano.Chain.Elaboration.Block as Spec.Test
 
 {-------------------------------------------------------------------------------
   Serialise
@@ -107,7 +109,7 @@ instance Serialise Spec.UtxoPredicateFailure
 instance Serialise Spec.UtxowPredicateFailure
 instance Serialise Spec.UtxowsPredicateFailure
 
-instance Serialise a => Serialise (Spec.Sig       a)
+instance Serialise a => Serialise (Spec.Sig a)
 instance Serialise a => Serialise (Spec.Threshold a)
 
 {-------------------------------------------------------------------------------
@@ -115,8 +117,9 @@ instance Serialise a => Serialise (Spec.Threshold a)
 -------------------------------------------------------------------------------}
 
 instance Serialise Spec.Test.AbstractToConcreteIdMaps where
-  encode AbstractToConcreteIdMaps{..} = mconcat [
-        encodeListLen 2
+  encode AbstractToConcreteIdMaps{..} =
+    mconcat
+      [ encodeListLen 2
       , encode (ToFromCBOR <$> transactionIds)
       , encode (ToFromCBOR <$> proposalIds)
       ]
@@ -124,7 +127,7 @@ instance Serialise Spec.Test.AbstractToConcreteIdMaps where
   decode = do
     enforceSize "AbstractToConcreteIdMaps" 2
     transactionIds <- fmap unToFromCBOR <$> decode
-    proposalIds    <- fmap unToFromCBOR <$> decode
+    proposalIds <- fmap unToFromCBOR <$> decode
     return $ AbstractToConcreteIdMaps{..}
 
 {-------------------------------------------------------------------------------
@@ -158,9 +161,14 @@ deriving instance Generic Spec.SigcntPredicateFailure
   TODO: This should move someplace else.
 -------------------------------------------------------------------------------}
 
-instance ( Ord k, Ord v
-         , Serialise k, Serialise v
-         ) => Serialise (Bimap k v) where
+instance
+  ( Ord k
+  , Ord v
+  , Serialise k
+  , Serialise v
+  ) =>
+  Serialise (Bimap k v)
+  where
   encode = encode . Bimap.toList
   decode = Bimap.fromList <$> decode
 
@@ -168,7 +176,7 @@ instance ( Ord k, Ord v
   Auxiliary: Cardano.Binary.ToCBOR/FromCBOR to Serialise bridge
 -------------------------------------------------------------------------------}
 
-newtype ToFromCBOR a = ToFromCBOR { unToFromCBOR :: a }
+newtype ToFromCBOR a = ToFromCBOR {unToFromCBOR :: a}
 
 instance (ToCBOR a, FromCBOR a) => Serialise (ToFromCBOR a) where
   encode = toCBOR . unToFromCBOR

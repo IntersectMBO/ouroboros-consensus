@@ -6,19 +6,20 @@
 --
 -- > import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache (BlockCache)
 -- > import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
-module Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache (
-    cacheBlock
+module Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
+  ( cacheBlock
   , empty
   , lookup
   , singleton
+
     -- * opaque
   , BlockCache
   ) where
 
-import           Data.Map.Strict (Map)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Ouroboros.Consensus.Block
-import           Prelude hiding (lookup)
+import Ouroboros.Consensus.Block
+import Prelude hiding (lookup)
 
 newtype BlockCache blk = BlockCache (Map (HeaderHash blk) blk)
 

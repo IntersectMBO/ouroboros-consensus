@@ -1,6 +1,8 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
@@ -19,23 +21,20 @@
 -- | Run the whole Node
 --
 -- Intended for qualified import.
---
-module Ouroboros.Consensus.Node (
-    run
+module Ouroboros.Consensus.Node
+  ( run
   , runWith
+
     -- * Standard arguments
   , StdRunNodeArgs (..)
   , stdBfcSaltIO
-  , stdGsmAntiThunderingHerdIO
-  , stdKeepAliveRngIO
   , stdLowLevelRunNodeArgsIO
   , stdMkChainDbHasFS
   , stdRunDataDiffusion
   , stdVersionDataNTC
   , stdVersionDataNTN
   , stdWithCheckedDB
-    -- ** P2P Switch
-  , NetworkP2PMode (..)
+
     -- * Exposed by 'run' et al
   , ChainDB.RelativeMountPoint (..)
   , ChainDB.TraceEvent (..)
@@ -45,6 +44,8 @@ module Ouroboros.Consensus.Node (
   , LowLevelRunNodeArgs (..)
   , MempoolCapacityBytesOverride (..)
   , NodeDatabasePaths (..)
+  , immutableDbPath
+  , nonImmutableDbPath
   , NodeKernel (..)
   , NodeKernelArgs (..)
   , ProtocolInfo (..)
@@ -55,112 +56,144 @@ module Ouroboros.Consensus.Node (
   , Tracers' (..)
   , pattern DoDiskSnapshotChecksum
   , pattern NoDoDiskSnapshotChecksum
+  , ChainSyncIdleTimeout (..)
+
     -- * Internal helpers
   , mkNodeKernelArgs
   , nodeKernelArgsEnforceInvariants
   , openChainDB
   ) where
 
-import           Cardano.Network.PeerSelection.Bootstrap
-                     (UseBootstrapPeers (..))
-import           Cardano.Network.Types (LedgerStateJudgement (..))
+import Cardano.Base.FeatureFlags (CardanoFeatureFlag)
+import qualified Cardano.Network.Diffusion as Cardano.Diffusion
+import Cardano.Network.Diffusion.Configuration (ChainSyncIdleTimeout (..))
+import qualified Cardano.Network.Diffusion.Configuration as Diffusion
+import qualified Cardano.Network.Diffusion.Policies as Cardano.Diffusion
+import qualified Cardano.Network.LedgerPeerConsensusInterface as Cardano
+import Cardano.Network.NodeToClient
+  ( ConnectionId
+  , LocalAddress
+  , NodeToClientVersionData (..)
+  , combineVersions
+  , simpleSingletonVersions
+  )
+import Cardano.Network.NodeToNode
+  ( DiffusionMode (..)
+  , ExceptionInHandler (..)
+  , MiniProtocolParameters
+  , NodeToNodeVersionData (..)
+  , RemoteAddress
+  , blockFetchPipeliningMax
+  , defaultMiniProtocolParameters
+  )
+import Cardano.Network.PeerSelection (ChurnMode (..), PeerTrustable, UseBootstrapPeers (..))
+import Cardano.Network.Protocol.ChainSync.Codec.TimeLimits (timeLimitsChainSync)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
-import           Codec.Serialise (DeserialiseFailure)
+import Codec.Serialise (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
-import           Control.DeepSeq (NFData)
-import           Control.Exception (IOException)
-import           Control.Monad (forM_, when)
-import           Control.Monad.Class.MonadTime.SI (MonadTime)
-import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.ResourceRegistry
-import           Control.Tracer (Tracer, contramap, traceWith)
-import           Data.ByteString.Lazy (ByteString)
-import           Data.Functor.Contravariant (Predicate (..))
-import           Data.Hashable (Hashable)
-import           Data.Kind (Type)
-import           Data.Map.Strict (Map)
+import Control.DeepSeq (NFData)
+import Control.Monad (forM_, when)
+import Control.Monad.Class.MonadTime.SI (MonadTime)
+import Control.Monad.Class.MonadTimer.SI (MonadTimer)
+import Control.ResourceRegistry
+import Control.Tracer (Tracer, contramap, traceWith)
+import Data.ByteString.Lazy (ByteString)
+import Data.Functor (void)
+import Data.Functor.Contravariant (Predicate (..))
+import Data.Hashable (Hashable)
+import Data.Kind (Type)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe, isNothing)
-import           Data.Time (NominalDiffTime)
-import           Data.Typeable (Typeable)
-import           Network.DNS.Resolver (Resolver)
-import           Network.Mux.Types
-import qualified Ouroboros.Cardano.Network.ArgumentsExtra as Cardano
-import qualified Ouroboros.Cardano.Network.LedgerPeerConsensusInterface as Cardano
-import qualified Ouroboros.Cardano.Network.PeerSelection.Governor.PeerSelectionState as Cardano
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
-import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Config.SupportsNode
-import           Ouroboros.Consensus.Ledger.Basics (ValuesMK)
-import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
-                     (HistoricityCheck)
+import Data.Maybe (fromMaybe, isNothing)
+import Data.Set (Set)
+import Data.Time (NominalDiffTime)
+import Data.Typeable (Typeable)
+import LeiosDemoDb (LeiosDbHandle)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
+import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Config.SupportsNode
+import Ouroboros.Consensus.Ledger.Basics (ValuesMK)
+import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import qualified Ouroboros.Consensus.Mempool as Mempool
+import Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
+  ( HistoricityCheck
+  )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
-import           Ouroboros.Consensus.Node.DbLock
-import           Ouroboros.Consensus.Node.DbMarker
-import           Ouroboros.Consensus.Node.ErrorPolicy
-import           Ouroboros.Consensus.Node.ExitPolicy
-import           Ouroboros.Consensus.Node.Genesis (GenesisConfig (..),
-                     GenesisNodeKernelArgs, mkGenesisNodeKernelArgs)
-import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
+import Ouroboros.Consensus.Node.DbLock
+import Ouroboros.Consensus.Node.DbMarker
+import Ouroboros.Consensus.Node.ExitPolicy
+import Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
-import           Ouroboros.Consensus.Node.InitStorage
-import           Ouroboros.Consensus.Node.NetworkProtocolVersion
-import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Node.Recovery
-import           Ouroboros.Consensus.Node.RethrowPolicy
-import           Ouroboros.Consensus.Node.Run
-import           Ouroboros.Consensus.Node.Tracers
-import           Ouroboros.Consensus.NodeKernel
-import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs,
-                     TraceEvent)
+import Ouroboros.Consensus.Node.Genesis
+  ( GenesisConfig (..)
+  , GenesisNodeKernelArgs (..)
+  , mkGenesisNodeKernelArgs
+  )
+import Ouroboros.Consensus.Node.InitStorage
+import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Node.Recovery
+import Ouroboros.Consensus.Node.RethrowPolicy
+import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.Node.Tracers
+import Ouroboros.Consensus.NodeKernel
+import qualified Ouroboros.Consensus.NodeKernel as NodeKernel
+import Ouroboros.Consensus.Storage.ChainDB
+  ( ChainDB
+  , ChainDbArgs
+  , TraceEvent
+  )
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
-import           Ouroboros.Consensus.Storage.LedgerDB.Args
-import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import           Ouroboros.Consensus.Util.Args
-import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.Orphans ()
-import           Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
-import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
-                     FetchMode)
+import Ouroboros.Consensus.Storage.LedgerDB.Args
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Util.Args
+import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.Orphans ()
+import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
+import Ouroboros.Network.BlockFetch
+  ( BlockFetchConfiguration (..)
+  )
+import Ouroboros.Network.BlockFetch.ConsensusInterface
+  ( FetchMode (PraosFetchMode)
+  , PraosFetchMode (FetchModeDeadline)
+  )
 import qualified Ouroboros.Network.Diffusion as Diffusion
-import qualified Ouroboros.Network.Diffusion.Common as Diffusion
-import qualified Ouroboros.Network.Diffusion.Configuration as Diffusion
-import qualified Ouroboros.Network.Diffusion.NonP2P as NonP2P
-import qualified Ouroboros.Network.Diffusion.P2P as Diffusion.P2P
-import           Ouroboros.Network.Magic
-import           Ouroboros.Network.NodeToClient (ConnectionId, LocalAddress,
-                     LocalSocket, NodeToClientVersionData (..), combineVersions,
-                     simpleSingletonVersions)
-import           Ouroboros.Network.NodeToNode (DiffusionMode (..),
-                     ExceptionInHandler (..), MiniProtocolParameters,
-                     NodeToNodeVersionData (..), RemoteAddress, Socket,
-                     blockFetchPipeliningMax, defaultMiniProtocolParameters)
-import           Ouroboros.Network.PeerSelection.Governor.Types
-                     (PeerSelectionState, PublicPeerSelectionState)
-import           Ouroboros.Network.PeerSelection.LedgerPeers
-                     (LedgerPeersConsensusInterface (..), UseLedgerPeers (..))
-import           Ouroboros.Network.PeerSelection.PeerMetric (PeerMetrics,
-                     newPeerMetric, reportMetric)
-import           Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing)
-import           Ouroboros.Network.PeerSelection.PeerSharing.Codec
-                     (decodeRemoteAddress, encodeRemoteAddress)
-import           Ouroboros.Network.PeerSelection.RootPeersDNS.PublicRootPeers
-                     (TracePublicRootPeers)
-import           Ouroboros.Network.RethrowPolicy
+import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
+import Ouroboros.Network.Magic
+import Ouroboros.Network.PeerSelection.Governor.Types
+  ( PublicPeerSelectionState
+  )
+import Ouroboros.Network.PeerSelection.LedgerPeers
+  ( LedgerPeersConsensusInterface (..)
+  , RawBlockHash (..)
+  )
+import Ouroboros.Network.PeerSelection.PeerMetric
+  ( PeerMetrics
+  , newPeerMetric
+  , reportMetric
+  )
+import Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing)
+import Ouroboros.Network.PeerSelection.PeerSharing.Codec
+  ( decodeRemoteAddress
+  , encodeRemoteAddress
+  )
+import Ouroboros.Network.PerasSupport (PerasSupport (PerasUnsupported))
+import Ouroboros.Network.RethrowPolicy
+import Ouroboros.Network.TxSubmission.Inbound.V2 (TxSubmissionLogicVersion)
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types (TxSubmissionInitDelay)
 import qualified SafeWildCards
-import           System.Exit (ExitCode (..))
-import           System.FilePath ((</>))
-import           System.FS.API (SomeHasFS (..))
-import           System.FS.API.Types (MountPoint (..))
-import           System.FS.IO (ioHasFS)
-import           System.Random (StdGen, newStdGen, randomIO, split)
+import System.Exit (ExitCode (..))
+import System.FS.API (SomeHasFS (..))
+import System.FS.API.Types (MountPoint (..))
+import System.FS.IO (ioHasFS)
+import System.FilePath ((</>))
+import System.Random (StdGen, newStdGen, randomIO, splitGen)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -189,44 +222,43 @@ import           System.Random (StdGen, newStdGen, randomIO, split)
 -- | Arguments expected from any invocation of 'runWith', whether by deployed
 -- code, tests, etc.
 type RunNodeArgs ::
-     (Type -> Type)
-  -> Type
-  -> Type
-  -> Type
-  -> Diffusion.P2P
-  -> Type
-data RunNodeArgs m addrNTN addrNTC blk p2p = RunNodeArgs {
-      -- | Consensus tracers
-      rnTraceConsensus :: Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
-
-      -- | Protocol tracers for node-to-node communication
-    , rnTraceNTN :: NTN.Tracers m addrNTN blk DeserialiseFailure
-
-      -- | Protocol tracers for node-to-client communication
-    , rnTraceNTC :: NTC.Tracers m (ConnectionId addrNTC) blk DeserialiseFailure
-
-      -- | Protocol info
-    , rnProtocolInfo :: ProtocolInfo blk
-
-      -- | Hook called after the initialisation of the 'NodeKernel'
-      --
-      -- Called on the 'NodeKernel' after creating it, but before the network
-      -- layer is initialised.
-    , rnNodeKernelHook :: ResourceRegistry m
-                       -> NodeKernel m addrNTN (ConnectionId addrNTC) blk
-                       -> m ()
-
-      -- | Network P2P Mode switch
-    , rnEnableP2P :: NetworkP2PMode p2p
-
-      -- | Network PeerSharing miniprotocol willingness flag
-    , rnPeerSharing :: PeerSharing
-
-    , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
-
-    , rnGenesisConfig :: GenesisConfig
-    }
-
+  (Type -> Type) ->
+  Type ->
+  Type ->
+  Type ->
+  Type
+data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs
+  { rnTraceConsensus :: Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
+  -- ^ Consensus tracers
+  , rnTraceNTN :: NTN.Tracers m addrNTN blk DeserialiseFailure
+  -- ^ Protocol tracers for node-to-node communication
+  , rnTraceNTC :: NTC.Tracers m (ConnectionId addrNTC) blk DeserialiseFailure
+  -- ^ Protocol tracers for node-to-client communication
+  , rnProtocolInfo :: ProtocolInfo blk
+  -- ^ Protocol info
+  , rnNodeKernelHook ::
+      ResourceRegistry m ->
+      NodeKernel m addrNTN (ConnectionId addrNTC) blk ->
+      m ()
+  -- ^ Hook called after the initialisation of the 'NodeKernel'
+  --
+  -- Called on the 'NodeKernel' after creating it, but before the network
+  -- layer is initialised.
+  , rnPeerSharing :: PeerSharing
+  -- ^ Network PeerSharing miniprotocol willingness flag
+  , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
+  , rnGenesisConfig :: GenesisConfig
+  , rnFeatureFlags :: Set CardanoFeatureFlag
+  -- ^ Enabled experimental features
+  , rnMempoolTimeoutConfig :: Maybe Mempool.MempoolTimeoutConfig
+  , rnTxSubmissionLogicVersion :: TxSubmissionLogicVersion
+  -- ^ Version of the tx-submission logic to run.
+  -- See the networking specs' section on tx-submission
+  -- https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf.
+  , rnTxSubmissionInitDelay :: TxSubmissionInitDelay
+  , rnLeiosDb :: LeiosDbHandle m
+  -- ^ Caller-supplied Leios demo DB factory.
+  }
 
 -- | Arguments that usually only tests /directly/ specify.
 --
@@ -235,235 +267,177 @@ data RunNodeArgs m addrNTN addrNTC blk p2p = RunNodeArgs {
 -- abbreviation, which uses 'stdLowLevelRunNodeArgsIO' to indirectly specify
 -- these low-level values from the higher-level 'StdRunNodeArgs'.
 type LowLevelRunNodeArgs ::
-     (Type -> Type)
-  -> Type
-  -> Type
-  -> Type
-  -> Diffusion.P2P
-  -> Type
-  -> Type
-data LowLevelRunNodeArgs m addrNTN addrNTC blk p2p extraAPI =
-   LowLevelRunNodeArgs {
+  (Type -> Type) ->
+  Type ->
+  Type ->
+  Type ->
+  Type
+data LowLevelRunNodeArgs m addrNTN addrNTC blk
+  = LowLevelRunNodeArgs
+  { llrnWithCheckedDB ::
+      forall a.
+      ( LastShutDownWasClean ->
+        (ChainDB m blk -> m a -> m a) ->
+        m a
+      ) ->
+      m a
+  -- ^ An action that will receive a marker indicating whether the previous
+  -- shutdown was considered clean and a wrapper for installing a handler to
+  -- create a clean file on exit if needed. See
+  -- 'Ouroboros.Consensus.Node.Recovery.runWithCheckedDB'.
+  , llrnChainDbArgsDefaults :: Incomplete ChainDbArgs m blk
+  -- ^ The " static " ChainDB arguments
+  , llrnMkImmutableHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS m
+  -- ^ File-system on which the directory for the ImmutableDB will
+  -- be created.
+  , llrnMkVolatileHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS m
+  -- ^ File-system on which the directories for databases other than the ImmutableDB will
+  -- be created.
+  , llrnCustomiseChainDbArgs ::
+      Complete ChainDbArgs m blk ->
+      Complete ChainDbArgs m blk
+  -- ^ Customise the 'ChainDbArgs'. 'StdRunNodeArgs' will use this field to
+  -- set various options that are exposed in @cardano-node@ configuration
+  -- files.
+  , llrnCustomiseNodeKernelArgs ::
+      NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
+      NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
+  -- ^ Customise the 'NodeArgs'
+  , llrnBfcSalt :: Int
+  -- ^ Ie 'bfcSalt'
+  , llrnRng :: StdGen
+  -- ^ StdGen for various applications, e.g. keep-alive, chain-sync, gsm anti
+  -- thundering herd
+  , llrnCustomiseHardForkBlockchainTimeArgs ::
+      HardForkBlockchainTimeArgs m blk ->
+      HardForkBlockchainTimeArgs m blk
+  -- ^ Customise the 'HardForkBlockchainTimeArgs'
+  , llrnChainSyncIdleTimeout :: ChainSyncIdleTimeout
+  -- ^ custom Chain-Sync idle timeout
+  , llrnGenesisConfig :: GenesisConfig
+  , llrnRunDataDiffusion ::
+      NodeKernel m addrNTN (ConnectionId addrNTC) blk ->
+      Cardano.Diffusion.CardanoConsensusArguments addrNTN m ->
+      Cardano.Diffusion.Applications
+        addrNTN
+        NodeToNodeVersion
+        NodeToNodeVersionData
+        addrNTC
+        NodeToClientVersion
+        NodeToClientVersionData
+        PeerTrustable
+        m
+        NodeToNodeInitiatorResult ->
+      m ()
+  -- ^ How to run the data diffusion applications
+  --
+  -- 'run' will not return before this does.
+  , llrnVersionDataNTC :: NodeToClientVersionData
+  , llrnVersionDataNTN :: NodeToNodeVersionData
+  , llrnNodeToNodeVersions :: Map NodeToNodeVersion (BlockNodeToNodeVersion blk)
+  -- ^ node-to-node protocol versions to run.
+  , llrnNodeToClientVersions :: Map NodeToClientVersion (BlockNodeToClientVersion blk)
+  -- ^ node-to-client protocol versions to run.
+  , llrnMaxCaughtUpAge :: NominalDiffTime
+  -- ^ If the volatile tip is older than this, then the node will exit the
+  -- @CaughtUp@ state.
+  , llrnMaxClockSkew :: InFutureCheck.ClockSkew
+  -- ^ Maximum clock skew
+  , llrnPublicPeerSelectionStateVar :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
+  , llrnLdbFlavorArgs :: LedgerDbBackendArgs m blk
+  -- ^ The flavor arguments
+  , llrnFeatureFlags :: Set CardanoFeatureFlag
+  -- ^ Enabled experimental features
+  }
 
-      -- | An action that will receive a marker indicating whether the previous
-      -- shutdown was considered clean and a wrapper for installing a handler to
-      -- create a clean file on exit if needed. See
-      -- 'Ouroboros.Consensus.Node.Recovery.runWithCheckedDB'.
-      llrnWithCheckedDB :: forall a. (  LastShutDownWasClean
-                                     -> (ChainDB m blk -> m a -> m a)
-                                     -> m a)
-                        -> m a
-
-      -- | The " static " ChainDB arguments
-    , llrnChainDbArgsDefaults :: Incomplete ChainDbArgs m blk
-
-      -- | File-system on which the directory for the ImmutableDB will
-      -- be created.
-    , llrnMkImmutableHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS m
-
-      -- | File-system on which the directories for databases other than the ImmutableDB will
-      -- be created.
-    , llrnMkVolatileHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS m
-
-      -- | Customise the 'ChainDbArgs'. 'StdRunNodeArgs' will use this field to
-      -- set various options that are exposed in @cardano-node@ configuration
-      -- files.
-    , llrnCustomiseChainDbArgs ::
-           Complete ChainDbArgs m blk
-        -> Complete ChainDbArgs m blk
-
-      -- | Customise the 'NodeArgs'
-    , llrnCustomiseNodeKernelArgs ::
-           NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
-        -> NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
-
-      -- | Ie 'bfcSalt'
-    , llrnBfcSalt :: Int
-
-      -- | Ie 'gsmAntiThunderingHerd'
-    , llrnGsmAntiThunderingHerd :: StdGen
-
-      -- | Ie 'keepAliveRng'
-    , llrnKeepAliveRng :: StdGen
-
-      -- | Customise the 'HardForkBlockchainTimeArgs'
-    , llrnCustomiseHardForkBlockchainTimeArgs ::
-           HardForkBlockchainTimeArgs m blk
-        -> HardForkBlockchainTimeArgs m blk
-
-      -- | See 'NTN.ChainSyncTimeout'
-    , llrnChainSyncTimeout :: m NTN.ChainSyncTimeout
-
-    , llrnGenesisConfig :: GenesisConfig
-
-      -- | How to run the data diffusion applications
-      --
-      -- 'run' will not return before this does.
-    , llrnRunDataDiffusion ::
-           NodeKernel m addrNTN (ConnectionId addrNTC) blk
-        -> Diffusion.Applications
-             addrNTN NodeToNodeVersion   NodeToNodeVersionData
-             addrNTC NodeToClientVersion NodeToClientVersionData
-             extraAPI m NodeToNodeInitiatorResult
-        -> Diffusion.ApplicationsExtra p2p addrNTN m NodeToNodeInitiatorResult
-        -> m ()
-
-    , llrnVersionDataNTC :: NodeToClientVersionData
-
-    , llrnVersionDataNTN :: NodeToNodeVersionData
-
-      -- | node-to-node protocol versions to run.
-    , llrnNodeToNodeVersions :: Map NodeToNodeVersion (BlockNodeToNodeVersion blk)
-
-      -- | node-to-client protocol versions to run.
-    , llrnNodeToClientVersions :: Map NodeToClientVersion (BlockNodeToClientVersion blk)
-
-      -- | If the volatile tip is older than this, then the node will exit the
-      -- @CaughtUp@ state.
-    , llrnMaxCaughtUpAge :: NominalDiffTime
-
-      -- | Maximum clock skew
-    , llrnMaxClockSkew :: InFutureCheck.ClockSkew
-
-    , llrnPublicPeerSelectionStateVar :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
-
-      -- | The flavor arguments
-    , llrnLdbFlavorArgs :: Complete LedgerDbFlavorArgs m
-    }
-
-data NodeDatabasePaths =
+data NodeDatabasePaths
+  = -- | Databases will be stored under this path, such that given a
+    -- path @/foo@, databases will be in @/foo/{immutable,volatile,...}@.
     OnePathForAllDbs
-      FilePath -- ^ Databases will be stored under this path, such that given a
-               -- path @/foo@, databases will be in @/foo/{immutable,volatile,...}@.
+      FilePath
   | MultipleDbPaths
-      FilePath -- ^ Immutable path, usually pointing to a non-necessarily
-               -- performant volume. ImmutableDB will be stored under this path,
-               -- so given @/foo@, the ImmutableDB will be in @/foo/immutable@.
-      FilePath -- ^ Non-immutable (volatile data) path, usually pointing to a
-               -- performant volume. Databases other than the ImmutableDB will
-               -- be stored under this path, so given @/bar@, it will contain
-               -- @/bar/{volatile,ledger,...}@.
+      -- | Immutable path, usually pointing to a non-necessarily
+      -- performant volume. ImmutableDB will be stored under this path,
+      -- so given @/foo@, the ImmutableDB will be in @/foo/immutable@.
+      FilePath
+      -- | Non-immutable (volatile data) path, usually pointing to a
+      -- performant volume. Databases other than the ImmutableDB will
+      -- be stored under this path, so given @/bar@, it will contain
+      -- @/bar/{volatile,ledger,...}@.
+      FilePath
 
 immutableDbPath :: NodeDatabasePaths -> FilePath
-immutableDbPath (OnePathForAllDbs f)    = f
+immutableDbPath (OnePathForAllDbs f) = f
 immutableDbPath (MultipleDbPaths imm _) = imm
 
 nonImmutableDbPath :: NodeDatabasePaths -> FilePath
-nonImmutableDbPath (OnePathForAllDbs f)    = f
+nonImmutableDbPath (OnePathForAllDbs f) = f
 nonImmutableDbPath (MultipleDbPaths _ vol) = vol
 
 -- | Higher-level arguments that can determine the 'LowLevelRunNodeArgs' under
 -- some usual assumptions for realistic use cases such as in @cardano-node@.
 --
 -- See 'stdLowLevelRunNodeArgsIO'.
-data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) extraArgs extraState extraDebugState extraActions extraAPI extraPeers extraFlags extraChurnArgs extraCounters exception = StdRunNodeArgs
-  { srnBfcMaxConcurrencyBulkSync    :: Maybe Word
-  , srnBfcMaxConcurrencyDeadline    :: Maybe Word
-  , srnChainDbValidateOverride      :: Bool
-    -- ^ If @True@, validate the ChainDB on init no matter what
-  , srnDatabasePath                 :: NodeDatabasePaths
-    -- ^ Location of the DBs
-  , srnDiffusionArguments           :: Diffusion.Arguments
-                                         IO
-                                         Socket      RemoteAddress
-                                         LocalSocket LocalAddress
-  , srnDiffusionArgumentsExtra      :: Diffusion.P2PDecision p2p (Tracer IO TracePublicRootPeers) ()
-                                    -> Diffusion.P2PDecision p2p (STM IO FetchMode) ()
-                                    -> Diffusion.P2PDecision p2p extraAPI ()
-                                    -> Diffusion.ArgumentsExtra p2p
-                                         extraArgs extraState extraDebugState
-                                         extraFlags extraPeers extraAPI
-                                         extraChurnArgs extraCounters
-                                         exception RemoteAddress LocalAddress
-                                         Resolver IOException IO
-  , srnDiffusionTracers             :: Diffusion.Tracers
-                                         RemoteAddress  NodeToNodeVersion
-                                         LocalAddress   NodeToClientVersion
-                                         IO
-  , srnDiffusionTracersExtra        :: Diffusion.ExtraTracers p2p extraState extraDebugState extraFlags extraPeers extraCounters IO
-  , srnSigUSR1SignalHandler         :: ( forall (mode :: Mode) x y.
-                                          Diffusion.ExtraTracers p2p
-                                                                 extraState
-                                                                 Cardano.DebugPeerSelectionState
-                                                                 extraFlags extraPeers extraCounters
-                                                                 IO
-                                       -> STM IO UseLedgerPeers
-                                       -> PeerSharing
-                                       -> STM IO UseBootstrapPeers
-                                       -> STM IO LedgerStateJudgement
-                                       -> Diffusion.P2P.NodeToNodeConnectionManager mode Socket
-                                            RemoteAddress NodeToNodeVersionData
-                                            NodeToNodeVersion IO x y
-                                       -> StrictSTM.StrictTVar IO
-                                            (PeerSelectionState extraState extraFlags extraPeers
-                                                                RemoteAddress
-                                                                (Diffusion.P2P.NodeToNodePeerConnectionHandle
-                                                                    mode RemoteAddress
-                                                                    NodeToNodeVersionData IO x y))
-                                       -> PeerMetrics IO RemoteAddress
-                                       -> IO ())
-  , srnEnableInDevelopmentVersions  :: Bool
-    -- ^ If @False@, then the node will limit the negotiated NTN and NTC
-    -- versions to the latest " official " release (as chosen by Network and
-    -- Consensus Team, with input from Node Team)
-  , srnTraceChainDB                 :: Tracer m (ChainDB.TraceEvent blk)
+data StdRunNodeArgs m blk
+  = StdRunNodeArgs
+  { srnBfcMaxConcurrencyBulkSync :: Maybe Word
+  , srnBfcMaxConcurrencyDeadline :: Maybe Word
+  , srnChainDbValidateOverride :: Bool
+  -- ^ If @True@, validate the ChainDB on init no matter what
+  , srnDatabasePath :: NodeDatabasePaths
+  -- ^ Location of the DBs
+  , srnDiffusionArguments :: Cardano.Diffusion.CardanoNodeArguments m
+  , srnDiffusionConfiguration :: Cardano.Diffusion.CardanoConfiguration m
+  , srnDiffusionTracers :: Cardano.Diffusion.CardanoTracers m
+  , srnEnableInDevelopmentVersions :: Bool
+  -- ^ If @False@, then the node will limit the negotiated NTN and NTC
+  -- versions to the latest " official " release (as chosen by Network and
+  -- Consensus Team, with input from Node Team)
+  , srnTraceChainDB :: Tracer m (ChainDB.TraceEvent blk)
   , srnMaybeMempoolCapacityOverride :: Maybe MempoolCapacityBytesOverride
-    -- ^ Determine whether to use the system default mempool capacity or explicitly set
-    -- capacity of the mempool.
-  , srnChainSyncTimeout             :: Maybe (m NTN.ChainSyncTimeout)
-    -- ^ A custom timeout for ChainSync.
-
-    -- Ad hoc values to replace default ChainDB configurations
-  , srnSnapshotPolicyArgs           :: SnapshotPolicyArgs
-  , srnQueryBatchSize               :: QueryBatchSize
-  , srnLdbFlavorArgs                :: Complete LedgerDbFlavorArgs m
+  -- ^ Determine whether to use the system default mempool capacity or explicitly set
+  -- capacity of the mempool.
+  , srnChainSyncIdleTimeout :: ChainSyncIdleTimeout
+  , -- Ad hoc values to replace default ChainDB configurations
+    srnSnapshotPolicyArgs :: SnapshotPolicyArgs
+  , srnQueryBatchSize :: QueryBatchSize
+  , srnLedgerDbBackendArgs :: (StdGen -> (LedgerDbBackendArgs m blk, StdGen))
+  -- ^ The 'StdGen' will be used to initialize the salt for the LSM backend. It
+  -- is expected that it is the same 'StdGen' that is passed elsewhere in
+  -- Consensus, i.e. 'llrnRng'.
   }
 
 {-------------------------------------------------------------------------------
   Entrypoints to the Consensus Layer node functionality
 -------------------------------------------------------------------------------}
 
--- | P2P Switch
---
-data NetworkP2PMode (p2p :: Diffusion.P2P) where
-    EnabledP2PMode  :: NetworkP2PMode 'Diffusion.P2P
-    DisabledP2PMode :: NetworkP2PMode 'Diffusion.NonP2P
-
-deriving instance Eq   (NetworkP2PMode p2p)
-deriving instance Show (NetworkP2PMode p2p)
-
 pure []
 
 -- | Combination of 'runWith' and 'stdLowLevelRunArgsIO'
-run :: forall blk p2p extraState extraActions extraPeers extraFlags extraChurnArgs extraCounters exception.
-    ( RunNode blk
-     , Monoid extraPeers
-     , Eq extraCounters
-     , Eq extraFlags
-     , Exception exception
-     )
-  => RunNodeArgs IO RemoteAddress LocalAddress blk p2p
-  -> StdRunNodeArgs IO blk p2p (Cardano.ExtraArguments IO) extraState Cardano.DebugPeerSelectionState extraActions (Cardano.LedgerPeersConsensusInterface IO) extraPeers extraFlags extraChurnArgs extraCounters exception
-  -> IO ()
+run ::
+  forall blk.
+  RunNode blk =>
+  RunNodeArgs IO RemoteAddress LocalAddress blk ->
+  StdRunNodeArgs IO blk ->
+  IO ()
 run args stdArgs =
-      stdLowLevelRunNodeArgsIO args stdArgs
-  >>= runWith args encodeRemoteAddress decodeRemoteAddress
+  stdLowLevelRunNodeArgsIO args stdArgs
+    >>= runWith args encodeRemoteAddress decodeRemoteAddress
 
 -- | Extra constraints used by `ouroboros-network`.
---
-type NetworkIO m = (
-        MonadTime m,
-        MonadTimer m,
-        MonadLabelledSTM m
-      )
+type NetworkIO m =
+  ( MonadTime m
+  , MonadTimer m
+  , MonadLabelledSTM m
+  )
 
 -- | Extra constraints used by `ouroboros-network`.
-type NetworkAddr addr = (
-      Ord addr,
-      Typeable addr,
-      NoThunks addr,
-      NFData addr
-    )
+type NetworkAddr addr =
+  ( Ord addr
+  , Typeable addr
+  , NoThunks addr
+  , NFData addr
+  )
 
 -- | Start a node.
 --
@@ -471,381 +445,487 @@ type NetworkAddr addr = (
 -- network layer.
 --
 -- This function runs forever unless an exception is thrown.
-runWith :: forall m addrNTN addrNTC blk p2p.
-     ( RunNode blk
-     , IOLike m
-     , Hashable addrNTN -- the constraint comes from `initNodeKernel`
-     , NetworkIO m
-     , NetworkAddr addrNTN
-     )
-  => RunNodeArgs m addrNTN addrNTC blk p2p
-  -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)
-  -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addrNTN)
-  -> LowLevelRunNodeArgs m addrNTN addrNTC blk p2p (Cardano.LedgerPeersConsensusInterface m)
-  -> m ()
+--
+-- This function spawns a resource registry (which we will refer to as
+-- __the consensus registry__) that will include the ChainDB as one of
+-- its resources. When the Consensus layer is shut down, the consensus
+-- resource registry will exit the scope of the 'withRegistry'
+-- function. This causes all resources allocated in the registry
+-- —including the ChainDB— to be closed.
+--
+-- During it's operation, different consensus threads will create
+-- resources associated with the ChainDB, eg Forkers in the LedgerDB,
+-- or Followers in the ChainDB. These resources are not created by the
+-- database themselves (LedgerDB, VolatileDB, and ImmutableDB). For
+-- example, chain selection opens a forker using the LedgerDB.
+-- Crucially, this means that clients creating these resources are
+-- instantiated after the ChainDB.
+--
+-- We rely on a specific sequence of events for this design to be correct:
+--
+-- - The ChainDB is only closed by exiting the scope of the consensus
+--   resource registry.
+--
+-- - If a client creates resources tied to any of the
+--   aforementioned databases and is forked into a separate thread,
+--   that thread is linked to the consensus registry. Because resources
+--   in a registry are deallocated in reverse order of allocation, any
+--   resources created by such threads will be deallocated before the
+--   ChainDB is closed, ensuring proper cleanup.
+--
+-- See also "Resource management in the LedgerDB" in
+-- "Ouroboros.Consensus.Storage.LedgerDB.API" for a note on how resources are
+-- tracked in the LedgerDB.
+runWith ::
+  forall m addrNTN addrNTC blk.
+  ( RunNode blk
+  , IOLike m
+  , Hashable addrNTN -- the constraint comes from `initNodeKernel`
+  , NetworkIO m
+  , NetworkAddr addrNTN
+  , Show addrNTN
+  ) =>
+  RunNodeArgs m addrNTN addrNTC blk ->
+  (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
+  (NodeToNodeVersion -> forall s. CBOR.Decoder s addrNTN) ->
+  LowLevelRunNodeArgs m addrNTN addrNTC blk ->
+  m ()
 runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
-
-    llrnWithCheckedDB $ \(LastShutDownWasClean lastShutDownWasClean) continueWithCleanChainDB ->
+  llrnWithCheckedDB $ \(LastShutDownWasClean lastShutDownWasClean) continueWithCleanChainDB ->
     withRegistry $ \registry ->
       handleJust
-             -- Ignore exception thrown in connection handlers and diffusion.
-             -- Also ignore 'ExitSuccess'.
-             (runPredicate $
-                   Predicate ( \err ->
-                     case fromException @ExceptionInLinkedThread err of
-                       Just (ExceptionInLinkedThread _ err')
-                         -> (/= Just ExitSuccess) $ fromException err'
-                       Nothing -> False)
-                <> Predicate (isNothing . fromException @ExceptionInHandler)
-                <> Predicate (isNothing . fromException @Diffusion.Failure)
+        -- Ignore exception thrown in connection handlers and diffusion.
+        -- Also ignore 'ExitSuccess'.
+        ( runPredicate $
+            Predicate
+              ( \err ->
+                  case fromException @ExceptionInLinkedThread err of
+                    Just (ExceptionInLinkedThread _ err') ->
+                      (/= Just ExitSuccess) $ fromException err'
+                    Nothing -> False
               )
-              (\err -> traceWith (consensusErrorTracer rnTraceConsensus) err
-                    >> throwIO err
-              ) $ do
-        let systemStart :: SystemStart
-            systemStart = getSystemStart (configBlock cfg)
+              <> Predicate (isNothing . fromException @ExceptionInHandler)
+              <> Predicate (isNothing . fromException @Diffusion.Failure)
+        )
+        ( \err ->
+            traceWith (consensusErrorTracer rnTraceConsensus) err
+              >> throwIO err
+        )
+        $ do
+          let systemStart :: SystemStart
+              systemStart = getSystemStart (configBlock cfg)
 
-            systemTime :: SystemTime m
-            systemTime = defaultSystemTime
-                           systemStart
-                           (blockchainTimeTracer rnTraceConsensus)
+              systemTime :: SystemTime m
+              systemTime =
+                defaultSystemTime
+                  systemStart
+                  (blockchainTimeTracer rnTraceConsensus)
 
-        (genesisArgs, setLoEinChainDbArgs) <-
-          mkGenesisNodeKernelArgs llrnGenesisConfig
+          (genesisArgs, setLoEinChainDbArgs) <-
+            mkGenesisNodeKernelArgs llrnGenesisConfig
 
-        let maybeValidateAll
-              | lastShutDownWasClean
-              = id
-              | otherwise
-                -- When the last shutdown was not clean, validate the complete
-                -- ChainDB to detect and recover from any disk corruption.
-              = ChainDB.ensureValidateAll
+          let maybeValidateAll
+                | lastShutDownWasClean =
+                    id
+                | otherwise =
+                    -- When the last shutdown was not clean, validate the complete
+                    -- ChainDB to detect and recover from any disk corruption.
+                    ChainDB.ensureValidateAll
 
-        forM_ (sanityCheckConfig cfg) $ \issue ->
-          traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
+          forM_ (sanityCheckConfig cfg) $ \issue ->
+            traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
 
-        (chainDB, finalArgs) <- openChainDB
-                     registry
-                     cfg
-                     initLedger
-                     llrnMkImmutableHasFS
-                     llrnMkVolatileHasFS
-                     llrnLdbFlavorArgs
-                     llrnChainDbArgsDefaults
-                     (  setLoEinChainDbArgs
-                      . maybeValidateAll
-                      . llrnCustomiseChainDbArgs
-                     )
+          (chainDB, finalArgs) <-
+            openChainDB
+              registry
+              cfg
+              initLedger
+              llrnMkImmutableHasFS
+              llrnMkVolatileHasFS
+              llrnLdbFlavorArgs
+              rnLeiosDb
+              llrnChainDbArgsDefaults
+              ( setLoEinChainDbArgs
+                  . maybeValidateAll
+                  . llrnCustomiseChainDbArgs
+              )
 
-        continueWithCleanChainDB chainDB $ do
-          btime <-
-            hardForkBlockchainTime $
-            llrnCustomiseHardForkBlockchainTimeArgs $
-            HardForkBlockchainTimeArgs
-              { hfbtBackoffDelay   = pure $ BackoffDelay 60
-              , hfbtGetLedgerState =
-                  ledgerState <$> ChainDB.getCurrentLedger chainDB
-              , hfbtLedgerConfig   = configLedger cfg
-              , hfbtRegistry       = registry
-              , hfbtSystemTime     = systemTime
-              , hfbtTracer         =
-                  contramap (fmap (fromRelativeTime systemStart))
-                    (blockchainTimeTracer rnTraceConsensus)
-              , hfbtMaxClockRewind = secondsToNominalDiffTime 20
-              }
+          continueWithCleanChainDB chainDB $ do
+            btime <-
+              hardForkBlockchainTime $
+                llrnCustomiseHardForkBlockchainTimeArgs $
+                  HardForkBlockchainTimeArgs
+                    { hfbtBackoffDelay = pure $ BackoffDelay 60
+                    , hfbtGetLedgerState =
+                        ledgerState <$> ChainDB.getCurrentLedger chainDB
+                    , hfbtLedgerConfig = configLedger cfg
+                    , hfbtRegistry = registry
+                    , hfbtSystemTime = systemTime
+                    , hfbtTracer =
+                        contramap
+                          (fmap (fromRelativeTime systemStart))
+                          (blockchainTimeTracer rnTraceConsensus)
+                    , hfbtMaxClockRewind = secondsToNominalDiffTime 20
+                    }
 
-          nodeKernelArgs <- do
-              durationUntilTooOld <- GSM.realDurationUntilTooOld
-                (configLedger cfg)
-                (ledgerState <$> ChainDB.getCurrentLedger chainDB)
-                llrnMaxCaughtUpAge
-                systemTime
+            nodeKernelArgs <- do
+              durationUntilTooOld <-
+                GSM.realDurationUntilTooOld
+                  (configLedger cfg)
+                  (ledgerState <$> ChainDB.getCurrentLedger chainDB)
+                  llrnMaxCaughtUpAge
+                  systemTime
               let gsmMarkerFileView =
                     case ChainDB.cdbsHasFSGsmDB $ ChainDB.cdbsArgs finalArgs of
-                        SomeHasFS x -> GSM.realMarkerFileView chainDB x
+                      SomeHasFS x -> GSM.realMarkerFileView chainDB x
                   historicityCheck getGsmState =
                     case gcHistoricityCutoff llrnGenesisConfig of
-                      Nothing                -> HistoricityCheck.noCheck
+                      Nothing -> HistoricityCheck.noCheck
                       Just historicityCutoff ->
                         HistoricityCheck.mkCheck systemTime getGsmState historicityCutoff
-              fmap (nodeKernelArgsEnforceInvariants . llrnCustomiseNodeKernelArgs)
-                $ mkNodeKernelArgs
-                    registry
-                    llrnBfcSalt
-                    llrnGsmAntiThunderingHerd
-                    llrnKeepAliveRng
-                    cfg
-                    rnTraceConsensus
-                    btime
-                    (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
-                    historicityCheck
-                    chainDB
-                    llrnMaxCaughtUpAge
-                    (Just durationUntilTooOld)
-                    gsmMarkerFileView
-                    rnGetUseBootstrapPeers
-                    llrnPublicPeerSelectionStateVar
-                    genesisArgs
-                    DiffusionPipeliningOn
-          nodeKernel <- initNodeKernel nodeKernelArgs
-          rnNodeKernelHook registry nodeKernel
+              fmap (nodeKernelArgsEnforceInvariants . llrnCustomiseNodeKernelArgs) $
+                mkNodeKernelArgs
+                  registry
+                  llrnBfcSalt
+                  gsmAntiThunderingHerd
+                  keepAliveRng
+                  cfg
+                  llrnFeatureFlags
+                  rnTraceConsensus
+                  btime
+                  systemTime
+                  (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
+                  historicityCheck
+                  chainDB
+                  llrnMaxCaughtUpAge
+                  (Just durationUntilTooOld)
+                  gsmMarkerFileView
+                  rnGetUseBootstrapPeers
+                  llrnPublicPeerSelectionStateVar
+                  genesisArgs
+                  DiffusionPipeliningOn
+                  rnMempoolTimeoutConfig
+                  rnTxSubmissionInitDelay
+                  rnLeiosDb
+            nodeKernel <- initNodeKernel nodeKernelArgs
+            rnNodeKernelHook registry nodeKernel
+            churnModeVar <- StrictSTM.newTVarIO (ChurnMode (PraosFetchMode FetchModeDeadline))
+            churnMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
+            let consensusDiffusionArgs =
+                  Cardano.Diffusion.CardanoConsensusArguments
+                    { Cardano.Diffusion.churnModeVar
+                    , Cardano.Diffusion.churnMetrics
+                    , Cardano.Diffusion.ledgerPeersAPI =
+                        LedgerPeersConsensusInterface
+                          { lpGetLatestSlot = getImmTipSlot nodeKernel
+                          , lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger nodeKernel (const True)
+                          , lpExtraAPI =
+                              Cardano.LedgerPeersConsensusInterface
+                                { Cardano.readFetchMode = NodeKernel.getFetchMode nodeKernel
+                                , Cardano.getLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState nodeKernel
+                                , Cardano.updateOutboundConnectionsState =
+                                    let varOcs = getOutboundConnectionsState nodeKernel
+                                     in \newOcs -> do
+                                          oldOcs <- readTVar varOcs
+                                          when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
+                                , Cardano.getImmutableBlockPoint = \targetBlock k -> do
+                                    case targetBlock of
+                                      GenesisPoint ->
+                                        k (pure (Left Cardano.ImmutableBlockPointGenesisPoint))
+                                      (BlockPoint targetSlot (RawBlockHash targetHash)) -> do
+                                        let targetPoint = RealPoint targetSlot (fromShortRawHash (Proxy @blk) targetHash)
+                                        ChainDB.waitForImmutableBlock (getChainDB nodeKernel) targetPoint >>= \case
+                                          Left{} ->
+                                            k (pure (Left Cardano.ImmutableBlockPointNotYetImmutable))
+                                          Right (RealPoint actualSlot actualHash) ->
+                                            k
+                                              ( pure
+                                                  ( Right $
+                                                      BlockPoint
+                                                        actualSlot
+                                                        (RawBlockHash $ toShortRawHash (Proxy @blk) actualHash)
+                                                  )
+                                              )
+                                }
+                          }
+                    , Cardano.Diffusion.readUseBootstrapPeers = rnGetUseBootstrapPeers
+                    }
 
-          peerMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
-          let ntnApps = mkNodeToNodeApps   nodeKernelArgs nodeKernel peerMetrics encAddrNtN decAddrNtN
-              ntcApps = mkNodeToClientApps nodeKernelArgs nodeKernel
-              (apps, appsExtra) =
-                mkDiffusionApplications rnEnableP2P
-                                        (miniProtocolParameters nodeKernelArgs)
-                                        ntnApps
-                                        ntcApps
-                                        nodeKernel
-                                        peerMetrics
+            stdGen <- StrictSTM.newTVarIO peerSelectionRng
+            let ntnApps = mkNodeToNodeApps nodeKernelArgs nodeKernel churnMetrics encAddrNtN decAddrNtN
+                ntcApps = mkNodeToClientApps nodeKernelArgs nodeKernel
+                apps =
+                  mkDiffusionApplications
+                    stdGen
+                    consensusDiffusionArgs
+                    (miniProtocolParameters nodeKernelArgs)
+                    ntnApps
+                    ntcApps
+                    nodeKernel
 
-          llrnRunDataDiffusion nodeKernel apps appsExtra
-  where
-    ProtocolInfo
-      { pInfoConfig       = cfg
-      , pInfoInitLedger   = initLedger
-      } = rnProtocolInfo
+            llrnRunDataDiffusion nodeKernel consensusDiffusionArgs apps
+ where
+  (gsmAntiThunderingHerd, rng') = splitGen llrnRng
+  (peerSelectionRng, rng'') = splitGen rng'
+  (keepAliveRng, ntnAppsRng) = splitGen rng''
 
-    codecConfig :: CodecConfig blk
-    codecConfig = configCodec cfg
+  ProtocolInfo
+    { pInfoConfig = cfg
+    , pInfoInitLedger = initLedger
+    } = rnProtocolInfo
 
-    mkNodeToNodeApps
-      :: NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
-      -> NodeKernel     m addrNTN (ConnectionId addrNTC) blk
-      -> PeerMetrics m addrNTN
-      -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)
-      -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addrNTN)
-      -> BlockNodeToNodeVersion blk
-      -> NTN.Apps m
-          addrNTN
-          ByteString
-          ByteString
-          ByteString
-          ByteString
-          ByteString
-          NodeToNodeInitiatorResult
-          ()
-    mkNodeToNodeApps nodeKernelArgs nodeKernel peerMetrics encAddrNTN decAddrNTN version =
-        NTN.mkApps
-          nodeKernel
-          rnTraceNTN
-          (NTN.defaultCodecs codecConfig version encAddrNTN decAddrNTN)
-          NTN.byteLimits
-          llrnChainSyncTimeout
-          (gcChainSyncLoPBucketConfig llrnGenesisConfig)
-          (gcCSJConfig llrnGenesisConfig)
-          (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
-          (NTN.mkHandlers nodeKernelArgs nodeKernel)
+  codecConfig :: CodecConfig blk
+  !codecConfig = configCodec cfg
 
-    mkNodeToClientApps
-      :: NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
-      -> NodeKernel     m addrNTN (ConnectionId addrNTC) blk
-      -> BlockNodeToClientVersion blk
-      -> NodeToClientVersion
-      -> NTC.Apps m (ConnectionId addrNTC) ByteString ByteString ByteString ByteString ()
-    mkNodeToClientApps nodeKernelArgs nodeKernel blockVersion networkVersion =
-        NTC.mkApps
-          nodeKernel
-          rnTraceNTC
-          (NTC.defaultCodecs codecConfig blockVersion networkVersion)
-          (NTC.mkHandlers nodeKernelArgs nodeKernel)
+  mkNodeToNodeApps ::
+    NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
+    NodeKernel m addrNTN (ConnectionId addrNTC) blk ->
+    PeerMetrics m addrNTN ->
+    (NodeToNodeVersion -> addrNTN -> CBOR.Encoding) ->
+    (NodeToNodeVersion -> forall s. CBOR.Decoder s addrNTN) ->
+    BlockNodeToNodeVersion blk ->
+    NTN.Apps
+      m
+      addrNTN
+      ByteString
+      ByteString
+      ByteString
+      ByteString
+      ByteString
+      ByteString
+      ByteString
+      NodeToNodeInitiatorResult
+      ()
+  mkNodeToNodeApps nodeKernelArgs nodeKernel peerMetrics encAddrNTN decAddrNTN version =
+    NTN.mkApps
+      nodeKernel
+      ntnAppsRng
+      rnTraceNTN
+      (NTN.defaultCodecs codecConfig version encAddrNTN decAddrNTN)
+      NTN.byteLimits
+      (timeLimitsChainSync llrnChainSyncIdleTimeout)
+      (gcChainSyncLoPBucketConfig llrnGenesisConfig)
+      (gcCSJConfig llrnGenesisConfig)
+      (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
+      (NTN.mkHandlers nodeKernelArgs nodeKernel rnTxSubmissionLogicVersion)
 
-    mkDiffusionApplications
-      :: NetworkP2PMode p2p
-      -> MiniProtocolParameters
-      -> (   BlockNodeToNodeVersion blk
-          -> NTN.Apps
-               m
-               addrNTN
-               ByteString
-               ByteString
-               ByteString
-               ByteString
-               ByteString
-               NodeToNodeInitiatorResult
-               ()
-        )
-      -> (   BlockNodeToClientVersion blk
-          -> NodeToClientVersion
-          -> NTC.Apps
-               m (ConnectionId addrNTC) ByteString ByteString ByteString ByteString ()
-        )
-      -> NodeKernel m addrNTN (ConnectionId addrNTC) blk
-      -> PeerMetrics m addrNTN
-      -> ( Diffusion.Applications
-             addrNTN NodeToNodeVersion   NodeToNodeVersionData
-             addrNTC NodeToClientVersion NodeToClientVersionData
-             (Cardano.LedgerPeersConsensusInterface m)
-             m NodeToNodeInitiatorResult
-         , Diffusion.ApplicationsExtra p2p addrNTN m NodeToNodeInitiatorResult
-         )
-    mkDiffusionApplications
-      enP2P
-      miniProtocolParams
-      ntnApps
-      ntcApps
-      kernel
-      peerMetrics =
-      case enP2P of
-        EnabledP2PMode ->
-          ( apps
-          , Diffusion.P2PApplicationsExtra
-              Diffusion.P2P.ApplicationsExtra {
-                Diffusion.P2P.daRethrowPolicy       = consensusRethrowPolicy (Proxy @blk),
-                Diffusion.P2P.daReturnPolicy        = returnPolicy,
-                Diffusion.P2P.daLocalRethrowPolicy  = localRethrowPolicy,
-                Diffusion.P2P.daPeerMetrics         = peerMetrics,
-                Diffusion.P2P.daPeerSharingRegistry = getPeerSharingRegistry kernel
-              }
-          )
-        DisabledP2PMode ->
-          ( apps
-          , Diffusion.NonP2PApplicationsExtra
-              NonP2P.ApplicationsExtra {
-                NonP2P.daErrorPolicies = consensusErrorPolicy (Proxy @blk)
-              }
-          )
-      where
-        apps = Diffusion.Applications {
-            Diffusion.daApplicationInitiatorMode =
+  mkNodeToClientApps ::
+    NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
+    NodeKernel m addrNTN (ConnectionId addrNTC) blk ->
+    BlockNodeToClientVersion blk ->
+    NodeToClientVersion ->
+    NTC.Apps m (ConnectionId addrNTC) ByteString ByteString ByteString ByteString ()
+  mkNodeToClientApps nodeKernelArgs nodeKernel blockVersion networkVersion =
+    NTC.mkApps
+      nodeKernel
+      rnTraceNTC
+      (NTC.defaultCodecs codecConfig blockVersion networkVersion)
+      (NTC.mkHandlers nodeKernelArgs nodeKernel)
+
+  mkDiffusionApplications ::
+    StrictSTM.StrictTVar m StdGen ->
+    Cardano.Diffusion.CardanoConsensusArguments addrNTN m ->
+    MiniProtocolParameters ->
+    ( BlockNodeToNodeVersion blk ->
+      NTN.Apps
+        m
+        addrNTN
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        NodeToNodeInitiatorResult
+        ()
+    ) ->
+    ( BlockNodeToClientVersion blk ->
+      NodeToClientVersion ->
+      NTC.Apps
+        m
+        (ConnectionId addrNTC)
+        ByteString
+        ByteString
+        ByteString
+        ByteString
+        ()
+    ) ->
+    NodeKernel m addrNTN (ConnectionId addrNTC) blk ->
+    Cardano.Diffusion.Applications
+      addrNTN
+      NodeToNodeVersion
+      NodeToNodeVersionData
+      addrNTC
+      NodeToClientVersion
+      NodeToClientVersionData
+      PeerTrustable
+      m
+      NodeToNodeInitiatorResult
+  mkDiffusionApplications
+    stdGenVar
+    consensusDiffusionArgs
+    miniProtocolParams
+    ntnApps
+    ntcApps
+    kernel =
+      apps
+     where
+      apps =
+        Diffusion.Applications
+          { Diffusion.daApplicationInitiatorMode =
               combineVersions
                 [ simpleSingletonVersions
                     version
                     llrnVersionDataNTN
-                    (\versionData ->
-                      NTN.initiator miniProtocolParams version versionData
-                      -- Initiator side won't start responder side of Peer
-                      -- Sharing protocol so we give a dummy implementation
-                      -- here.
-                      $ ntnApps blockVersion)
+                    ( \versionData ->
+                        NTN.initiator miniProtocolParams version versionData
+                        -- Initiator side won't start responder side of Peer
+                        -- Sharing protocol so we give a dummy implementation
+                        -- here.
+                        $
+                          ntnApps blockVersion
+                    )
                 | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
-                ],
-            Diffusion.daApplicationInitiatorResponderMode =
+                ]
+          , Diffusion.daApplicationInitiatorResponderMode =
               combineVersions
                 [ simpleSingletonVersions
                     version
                     llrnVersionDataNTN
-                    (\versionData ->
-                        NTN.initiatorAndResponder miniProtocolParams version versionData
-                      $ ntnApps blockVersion)
+                    ( \versionData ->
+                        NTN.initiatorAndResponder miniProtocolParams version versionData $
+                          ntnApps blockVersion
+                    )
                 | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
-                ],
-            Diffusion.daLocalResponderApplication =
+                ]
+          , Diffusion.daLocalResponderApplication =
               combineVersions
                 [ simpleSingletonVersions
                     version
                     llrnVersionDataNTC
                     (\versionData -> NTC.responder version versionData $ ntcApps blockVersion version)
                 | (version, blockVersion) <- Map.toList llrnNodeToClientVersions
-                ],
-            Diffusion.daLedgerPeersCtx =
-              LedgerPeersConsensusInterface {
-                  lpGetLatestSlot = getImmTipSlot kernel,
-                  lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger kernel (const True),
-                  lpExtraAPI =
-                    Cardano.LedgerPeersConsensusInterface {
-                      Cardano.getLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState kernel
-                    , Cardano.updateOutboundConnectionsState =
-                        let varOcs = getOutboundConnectionsState kernel in \newOcs -> do
-                          oldOcs <- readTVar varOcs
-                          when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
-                    }
-                }
+                ]
+          , Diffusion.daRethrowPolicy = consensusRethrowPolicy (Proxy @blk)
+          , Diffusion.daReturnPolicy = returnPolicy
+          , Diffusion.daRepromoteErrorDelay = Diffusion.repromoteErrorDelay
+          , Diffusion.daLocalRethrowPolicy = localRethrowPolicy
+          , daPeerSelectionPolicy =
+              Cardano.Diffusion.simpleChurnModePeerSelectionPolicy
+                stdGenVar
+                (StrictSTM.readTVar $ Cardano.Diffusion.churnModeVar consensusDiffusionArgs)
+                (Cardano.Diffusion.churnMetrics consensusDiffusionArgs)
+          , Diffusion.daPeerSharingRegistry = getPeerSharingRegistry kernel
           }
 
-        localRethrowPolicy :: RethrowPolicy
-        localRethrowPolicy = mempty
+      localRethrowPolicy :: RethrowPolicy
+      localRethrowPolicy = mempty
 
-    runPredicate :: Predicate a -> a -> Maybe a
-    runPredicate (Predicate p) err = if p err then Just err else Nothing
-
+  runPredicate :: Predicate a -> a -> Maybe a
+  runPredicate (Predicate p) err = if p err then Just err else Nothing
 
 -- | Check the DB marker, lock the DB and look for the clean shutdown marker.
 --
 -- Run the body action with the DB locked.
---
 stdWithCheckedDB ::
-     forall blk a. (StandardHash blk, Typeable blk)
-  => Proxy blk
-  -> Tracer IO (TraceEvent blk)
-  -> FilePath
-  -> NetworkMagic
-  -> (LastShutDownWasClean -> (ChainDB IO blk -> IO a -> IO a) -> IO a)  -- ^ Body action with last shutdown was clean.
-  -> IO a
+  forall blk a.
+  (StandardHash blk, Typeable blk) =>
+  Proxy blk ->
+  Tracer IO (TraceEvent blk) ->
+  FilePath ->
+  NetworkMagic ->
+  -- | Body action with last shutdown was clean.
+  (LastShutDownWasClean -> (ChainDB IO blk -> IO a -> IO a) -> IO a) ->
+  IO a
 stdWithCheckedDB pb tracer databasePath networkMagic body = do
-
-    -- Check the DB marker first, before doing the lock file, since if the
-    -- marker is not present, it expects an empty DB dir.
-    either throwIO return =<< checkDbMarker
+  -- Check the DB marker first, before doing the lock file, since if the
+  -- marker is not present, it expects an empty DB dir.
+  either throwIO return
+    =<< checkDbMarker
       hasFS
       mountPoint
       networkMagic
 
-    -- Then create the lock file.
-    withLockDB mountPoint $ runWithCheckedDB pb tracer hasFS body
-  where
-    mountPoint = MountPoint databasePath
-    hasFS      = ioHasFS mountPoint
+  -- Then create the lock file.
+  withLockDB mountPoint $ runWithCheckedDB pb tracer hasFS body
+ where
+  mountPoint = MountPoint databasePath
+  hasFS = ioHasFS mountPoint
 
 openChainDB ::
-     forall m blk. (RunNode blk, IOLike m)
-  => ResourceRegistry m
-  -> TopLevelConfig blk
-  -> ExtLedgerState blk ValuesMK
-     -- ^ Initial ledger
-  -> (ChainDB.RelativeMountPoint -> SomeHasFS m)
-     -- ^ Immutable FS, see 'NodeDatabasePaths'
-  -> (ChainDB.RelativeMountPoint -> SomeHasFS m)
-     -- ^ Volatile FS, see 'NodeDatabasePaths'
-  -> Complete LedgerDbFlavorArgs m
-  -> Incomplete ChainDbArgs m blk
-     -- ^ A set of default arguments (possibly modified from 'defaultArgs')
-  -> (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk)
-      -- ^ Customise the 'ChainDbArgs'
-  -> m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry cfg initLedger fsImm fsVol flavorArgs defArgs customiseArgs =
-   let args = customiseArgs $ ChainDB.completeChainDbArgs
-               registry
-               cfg
-               initLedger
-               (nodeImmutableDbChunkInfo (configStorage cfg))
-               (nodeCheckIntegrity (configStorage cfg))
-               fsImm
-               fsVol
-               flavorArgs
-               defArgs
-      in (,args) <$> ChainDB.openDB args
+  forall m blk.
+  ( RunNode blk
+  , IOLike m
+  ) =>
+  ResourceRegistry m ->
+  TopLevelConfig blk ->
+  -- | Initial ledger
+  ExtLedgerState blk ValuesMK ->
+  -- | Immutable FS, see 'NodeDatabasePaths'
+  (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
+  -- | Volatile FS, see 'NodeDatabasePaths'
+  (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
+  LedgerDbBackendArgs m blk ->
+  -- | Leios demo DB handle
+  LeiosDbHandle m ->
+  -- | A set of default arguments (possibly modified from 'defaultArgs')
+  Incomplete ChainDbArgs m blk ->
+  -- | Customise the 'ChainDbArgs'
+  (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk) ->
+  m (ChainDB m blk, Complete ChainDbArgs m blk)
+openChainDB registry cfg initLedger fsImm fsVol flavorArgs leiosDb defArgs customiseArgs =
+  let args =
+        customiseArgs $
+          ChainDB.completeChainDbArgs
+            registry
+            cfg
+            initLedger
+            (nodeImmutableDbChunkInfo (configStorage cfg))
+            (nodeCheckIntegrity (configStorage cfg))
+            fsImm
+            fsVol
+            flavorArgs
+            leiosDb
+            defArgs
+   in (,args) <$> ChainDB.openDB args
 
 mkNodeKernelArgs ::
-     forall m addrNTN addrNTC blk. (RunNode blk, IOLike m)
-  => ResourceRegistry m
-  -> Int
-  -> StdGen
-  -> StdGen
-  -> TopLevelConfig blk
-  -> Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
-  -> BlockchainTime m
-  -> InFutureCheck.SomeHeaderInFutureCheck m blk
-  -> (m GSM.GsmState -> HistoricityCheck m blk)
-  -> ChainDB m blk
-  -> NominalDiffTime
-  -> Maybe (GSM.WrapDurationUntilTooOld m blk)
-  -> GSM.MarkerFileView m
-  -> STM m UseBootstrapPeers
-  -> StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
-  -> GenesisNodeKernelArgs m blk
-  -> DiffusionPipeliningSupport
-  -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
+  forall m addrNTN addrNTC blk.
+  (RunNode blk, IOLike m) =>
+  ResourceRegistry m ->
+  Int ->
+  StdGen ->
+  StdGen ->
+  TopLevelConfig blk ->
+  Set CardanoFeatureFlag ->
+  Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk ->
+  BlockchainTime m ->
+  SystemTime m ->
+  InFutureCheck.SomeHeaderInFutureCheck m blk ->
+  (m GSM.GsmState -> HistoricityCheck m blk) ->
+  ChainDB m blk ->
+  NominalDiffTime ->
+  Maybe (GSM.WrapDurationUntilTooOld m blk) ->
+  GSM.MarkerFileView m ->
+  STM m UseBootstrapPeers ->
+  StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN) ->
+  GenesisNodeKernelArgs m blk ->
+  DiffusionPipeliningSupport ->
+  Maybe Mempool.MempoolTimeoutConfig ->
+  TxSubmissionInitDelay ->
+  LeiosDbHandle m ->
+  m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
   bfcSalt
   gsmAntiThunderingHerd
   rng
   cfg
+  featureFlags
   tracers
   btime
+  systemTime
   chainSyncFutureCheck
   chainSyncHistoricityCheck
   chainDB
@@ -856,59 +936,75 @@ mkNodeKernelArgs
   publicPeerSelectionStateVar
   genesisArgs
   getDiffusionPipeliningSupport
-  = do
-    let (kaRng, psRng) = split rng
-    return NodeKernelArgs
-      { tracers
-      , registry
-      , cfg
-      , btime
-      , chainDB
-      , initChainDB             = nodeInitChainDB
-      , chainSyncFutureCheck
-      , chainSyncHistoricityCheck
-      , blockFetchSize          = estimateBlockSize
-      , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
-      , miniProtocolParameters  = defaultMiniProtocolParameters
-      , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
-      , gsmArgs = GsmNodeKernelArgs {
-          gsmAntiThunderingHerd
-        , gsmDurationUntilTooOld
-        , gsmMarkerFileView
-        , gsmMinCaughtUpDuration = maxCaughtUpAge
-        }
-      , getUseBootstrapPeers
-      , keepAliveRng = kaRng
-      , peerSharingRng = psRng
-      , publicPeerSelectionStateVar
-      , genesisArgs
-      , getDiffusionPipeliningSupport
-      }
+  mempoolTimeoutConfig
+  txSubmissionInitDelay
+  leiosDB =
+    do
+      let (kaRng, rng') = splitGen rng
+          (psRng, _) = splitGen rng'
+      return
+        NodeKernelArgs
+          { tracers
+          , registry
+          , cfg
+          , featureFlags
+          , btime
+          , systemTime
+          , chainDB
+          , initChainDB = nodeInitChainDB
+          , chainSyncFutureCheck
+          , chainSyncHistoricityCheck
+          , blockFetchSize = estimateBlockSize
+          , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
+          , mempoolTimeoutConfig = mempoolTimeoutConfig
+          , miniProtocolParameters = defaultMiniProtocolParameters
+          , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
+          , gsmArgs =
+              GsmNodeKernelArgs
+                { gsmAntiThunderingHerd
+                , gsmDurationUntilTooOld
+                , gsmMarkerFileView
+                , gsmMinCaughtUpDuration = maxCaughtUpAge
+                }
+          , getUseBootstrapPeers
+          , keepAliveRng = kaRng
+          , peerSharingRng = psRng
+          , publicPeerSelectionStateVar
+          , genesisArgs
+          , getDiffusionPipeliningSupport
+          , txSubmissionInitDelay
+          , leiosDB
+          }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
 -- through 'llrnCustomiseNodeKernelArgs', but there are some limits to some
 -- values. This function makes sure we don't exceed those limits and that the
 -- values are consistent.
 nodeKernelArgsEnforceInvariants ::
-     NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
-  -> NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
-nodeKernelArgsEnforceInvariants nodeKernelArgs = nodeKernelArgs
-    { miniProtocolParameters = miniProtocolParameters
-        -- If 'blockFetchPipeliningMax' exceeds the configured default, it
-        -- would be a protocol violation.
-        { blockFetchPipeliningMax =
-            min (blockFetchPipeliningMax miniProtocolParameters)
+  NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
+  NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
+nodeKernelArgsEnforceInvariants nodeKernelArgs =
+  nodeKernelArgs
+    { miniProtocolParameters =
+        miniProtocolParameters
+          { -- If 'blockFetchPipeliningMax' exceeds the configured default, it
+            -- would be a protocol violation.
+            blockFetchPipeliningMax =
+              min
+                (blockFetchPipeliningMax miniProtocolParameters)
                 (blockFetchPipeliningMax defaultMiniProtocolParameters)
-        }
-    , blockFetchConfiguration = blockFetchConfiguration
-        -- 'bfcMaxRequestsInflight' must be <= 'blockFetchPipeliningMax'
-        { bfcMaxRequestsInflight =
-            min (bfcMaxRequestsInflight blockFetchConfiguration)
+          }
+    , blockFetchConfiguration =
+        blockFetchConfiguration
+          { -- 'bfcMaxRequestsInflight' must be <= 'blockFetchPipeliningMax'
+            bfcMaxRequestsInflight =
+              min
+                (bfcMaxRequestsInflight blockFetchConfiguration)
                 (fromIntegral $ blockFetchPipeliningMax miniProtocolParameters)
-        }
+          }
     }
-  where
-    NodeKernelArgs{..} = nodeKernelArgs
+ where
+  NodeKernelArgs{..} = nodeKernelArgs
 
 {-------------------------------------------------------------------------------
   Arguments for use in the real node
@@ -916,276 +1012,168 @@ nodeKernelArgsEnforceInvariants nodeKernelArgs = nodeKernelArgs
 
 -- | How to locate the ChainDB on disk
 stdMkChainDbHasFS ::
-     FilePath
-  -> ChainDB.RelativeMountPoint
-  -> SomeHasFS IO
+  FilePath ->
+  ChainDB.RelativeMountPoint ->
+  SomeHasFS IO
 stdMkChainDbHasFS rootPath (ChainDB.RelativeMountPoint relPath) =
-    SomeHasFS $ ioHasFS $ MountPoint $ rootPath </> relPath
+  SomeHasFS $ ioHasFS $ MountPoint $ rootPath </> relPath
 
 stdBfcSaltIO :: IO Int
 stdBfcSaltIO = randomIO
 
-stdGsmAntiThunderingHerdIO :: IO StdGen
-stdGsmAntiThunderingHerdIO = newStdGen
-
-stdKeepAliveRngIO :: IO StdGen
-stdKeepAliveRngIO = newStdGen
-
-stdVersionDataNTN :: NetworkMagic
-                  -> DiffusionMode
-                  -> PeerSharing
-                  -> NodeToNodeVersionData
-stdVersionDataNTN networkMagic diffusionMode peerSharing = NodeToNodeVersionData
+stdVersionDataNTN ::
+  NetworkMagic ->
+  DiffusionMode ->
+  PeerSharing ->
+  NodeToNodeVersionData
+stdVersionDataNTN networkMagic diffusionMode peerSharing =
+  NodeToNodeVersionData
     { networkMagic
     , diffusionMode
     , peerSharing
-    , query         = False
+    , query = False
+    , perasSupport = PerasUnsupported
     }
 
 stdVersionDataNTC :: NetworkMagic -> NodeToClientVersionData
-stdVersionDataNTC networkMagic = NodeToClientVersionData
+stdVersionDataNTC networkMagic =
+  NodeToClientVersionData
     { networkMagic
-    , query        = False
+    , query = False
     }
 
-stdRunDataDiffusion
-  :: ( Monoid extraPeers
-     , Eq extraCounters
-     , Eq extraFlags
-     , Exception exception
-     )
-  => ( forall (mode :: Mode) x y.
-       Diffusion.P2P.NodeToNodeConnectionManager
-         mode
-         Socket
-         RemoteAddress
-         NodeToNodeVersionData
-         NodeToNodeVersion
-         IO
-         x
-         y
-     -> StrictSTM.StrictTVar
-         IO
-         (PeerSelectionState
-           extraState
-           extraFlags
-           extraPeers
-           RemoteAddress
-           (Diffusion.P2P.NodeToNodePeerConnectionHandle
-             mode
-             RemoteAddress
-             NodeToNodeVersionData
-             IO
-             x
-             y)
-         )
-     -> PeerMetrics IO RemoteAddress
-     -> IO ()
-  ) -> Diffusion.Tracers
-      RemoteAddress
-      NodeToNodeVersion
-      LocalAddress
-      NodeToClientVersion
-      IO
-  -> Diffusion.ExtraTracers
-      p2p
-      extraState
-      extraDebugState
-      extraFlags
-      extraPeers
-      extraCounters
-      IO
-  -> Diffusion.Arguments
-      IO
-      Socket
-      RemoteAddress
-      LocalSocket
-      LocalAddress
-  -> Diffusion.ArgumentsExtra
-      p2p
-      extraArgs
-      extraState
-      extraDebugState
-      extraFlags
-      extraPeers
-      extraAPI
-      extraChurnArgs
-      extraCounters
-      exception
-      RemoteAddress
-      LocalAddress
-      Resolver
-      IOException
-      IO
-  -> Diffusion.Applications
-      RemoteAddress NodeToNodeVersion   NodeToNodeVersionData
-      LocalAddress  NodeToClientVersion NodeToClientVersionData
-      extraAPI IO a
-  -> Diffusion.ApplicationsExtra p2p RemoteAddress IO a
-  -> IO ()
-stdRunDataDiffusion = Diffusion.run
+stdRunDataDiffusion ::
+  NFData a =>
+  Cardano.Diffusion.CardanoNodeArguments IO ->
+  Cardano.Diffusion.CardanoConsensusArguments RemoteAddress IO ->
+  Cardano.Diffusion.CardanoTracers IO ->
+  Cardano.Diffusion.CardanoConfiguration IO ->
+  Cardano.Diffusion.CardanoApplications IO a ->
+  IO ()
+stdRunDataDiffusion = \nodeArgs consensusArgs tracers config apps ->
+  void $ Cardano.Diffusion.run nodeArgs consensusArgs tracers config apps
 
 -- | Conveniently packaged 'LowLevelRunNodeArgs' arguments from a standard
 -- non-testing invocation.
+stdLowLevelRunNodeArgsIO ::
+  forall blk.
+  RunNode blk =>
+  RunNodeArgs IO RemoteAddress LocalAddress blk ->
+  StdRunNodeArgs IO blk ->
+  IO
+    ( LowLevelRunNodeArgs
+        IO
+        RemoteAddress
+        LocalAddress
+        blk
+    )
 stdLowLevelRunNodeArgsIO
-  :: forall blk p2p extraState extraActions extraPeers extraFlags extraChurnArgs extraCounters exception .
-  ( RunNode blk
-  , Monoid extraPeers
-  , Eq extraCounters
-  , Eq extraFlags
-  , Exception exception
-  )
-  => RunNodeArgs IO RemoteAddress LocalAddress blk p2p
-  -> StdRunNodeArgs IO blk p2p (Cardano.ExtraArguments IO) extraState Cardano.DebugPeerSelectionState extraActions (Cardano.LedgerPeersConsensusInterface IO) extraPeers extraFlags extraChurnArgs extraCounters exception
-  -> IO (LowLevelRunNodeArgs
-          IO
-          RemoteAddress
-          LocalAddress
-          blk
-          p2p
-          (Cardano.LedgerPeersConsensusInterface IO))
-stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
-                                    , rnEnableP2P
-                                    , rnPeerSharing
-                                    , rnGenesisConfig
-                                    , rnGetUseBootstrapPeers
-                                    }
-                         $(SafeWildCards.fields 'StdRunNodeArgs) = do
-    llrnBfcSalt               <- stdBfcSaltIO
-    llrnGsmAntiThunderingHerd <- stdGsmAntiThunderingHerdIO
-    llrnKeepAliveRng          <- stdKeepAliveRngIO
-    pure LowLevelRunNodeArgs
-      { llrnBfcSalt
-      , llrnChainSyncTimeout = fromMaybe Diffusion.defaultChainSyncTimeout srnChainSyncTimeout
-      , llrnGenesisConfig = rnGenesisConfig
-      , llrnCustomiseHardForkBlockchainTimeArgs = id
-      , llrnGsmAntiThunderingHerd
-      , llrnKeepAliveRng
-      , llrnMkImmutableHasFS = stdMkChainDbHasFS $ immutableDbPath srnDatabasePath
-      , llrnMkVolatileHasFS = stdMkChainDbHasFS $ nonImmutableDbPath srnDatabasePath
-      , llrnChainDbArgsDefaults = updateChainDbDefaults ChainDB.defaultArgs
-      , llrnCustomiseChainDbArgs = id
-      , llrnCustomiseNodeKernelArgs
-      , llrnRunDataDiffusion =
-          \kernel apps extraApps -> do
-            case rnEnableP2P of
-              EnabledP2PMode ->
-                case srnDiffusionTracersExtra of
-                   Diffusion.P2PTracers extraTracers -> do
-                     let srnDiffusionArgumentsExtra' =
-                           srnDiffusionArgumentsExtra (Diffusion.P2PDecision (Diffusion.P2P.dtTracePublicRootPeersTracer extraTracers))
-                                                      (Diffusion.P2PDecision (getFetchMode kernel))
-                                                      (Diffusion.P2PDecision (lpExtraAPI (Diffusion.daLedgerPeersCtx apps)))
-                     case srnDiffusionArgumentsExtra' of
-                       Diffusion.P2PArguments extraArgs ->
-                         stdRunDataDiffusion
-                             (srnSigUSR1SignalHandler
-                                srnDiffusionTracersExtra
-                                (Diffusion.P2P.daReadUseLedgerPeers extraArgs)
-                                rnPeerSharing
-                                rnGetUseBootstrapPeers
-                                (GSM.gsmStateToLedgerJudgement <$> getGsmState kernel))
-                             srnDiffusionTracers
-                             srnDiffusionTracersExtra
-                             srnDiffusionArguments
-                             srnDiffusionArgumentsExtra'
-                             apps extraApps
-
-              DisabledP2PMode ->
-                stdRunDataDiffusion
-                 (srnSigUSR1SignalHandler
-                    (Diffusion.NonP2PTracers NonP2P.nullTracers)
-                    (pure DontUseLedgerPeers)
-                    rnPeerSharing
-                    (pure DontUseBootstrapPeers)
-                    (pure TooOld))
-                 srnDiffusionTracers
-                 srnDiffusionTracersExtra
-                 srnDiffusionArguments
-                 (srnDiffusionArgumentsExtra
-                    (Diffusion.NonP2PDecision ())
-                    (Diffusion.NonP2PDecision ())
-                    (Diffusion.NonP2PDecision ()))
-                 apps extraApps
-      , llrnVersionDataNTC =
-          stdVersionDataNTC networkMagic
-      , llrnVersionDataNTN =
-          stdVersionDataNTN
-            networkMagic
-            (case rnEnableP2P of
-               EnabledP2PMode  -> Diffusion.daMode srnDiffusionArguments
-               -- Every connection in non-p2p mode is unidirectional; We connect
-               -- from an ephemeral port.  We still pass `srnDiffusionArguments`
-               -- to the diffusion layer, so the server side will be run also in
-               -- `InitiatorAndResponderDiffusionMode`.
-               DisabledP2PMode -> InitiatorOnlyDiffusionMode
-            )
-            rnPeerSharing
-      , llrnNodeToNodeVersions =
-          limitToLatestReleasedVersion
-            fst
-            (supportedNodeToNodeVersions (Proxy @blk))
-      , llrnNodeToClientVersions =
-          limitToLatestReleasedVersion
-            snd
-            (supportedNodeToClientVersions (Proxy @blk))
-      , llrnWithCheckedDB =
-          -- 'stdWithCheckedDB' uses the FS just to check for the clean file.
-          -- We put that one in the immutable path.
-          stdWithCheckedDB (Proxy @blk) srnTraceChainDB (immutableDbPath srnDatabasePath) networkMagic
-      , llrnMaxCaughtUpAge = secondsToNominalDiffTime $ 20 * 60   -- 20 min
-      , llrnMaxClockSkew =
-          InFutureCheck.defaultClockSkew
-      , llrnPublicPeerSelectionStateVar =
-          Diffusion.daPublicPeerSelectionVar srnDiffusionArguments
-      , llrnLdbFlavorArgs =
-          srnLdbFlavorArgs
-      }
-  where
+  RunNodeArgs
+    { rnProtocolInfo
+    , rnPeerSharing
+    , rnGenesisConfig
+    , rnFeatureFlags
+    }
+  $(SafeWildCards.fields 'StdRunNodeArgs) = do
+    llrnBfcSalt <- stdBfcSaltIO
+    (ldbBackendArgs, llrnRng) <- srnLedgerDbBackendArgs <$> newStdGen
+    pure
+      LowLevelRunNodeArgs
+        { llrnBfcSalt
+        , llrnChainSyncIdleTimeout = srnChainSyncIdleTimeout
+        , llrnGenesisConfig = rnGenesisConfig
+        , llrnCustomiseHardForkBlockchainTimeArgs = id
+        , llrnRng
+        , llrnMkImmutableHasFS = stdMkChainDbHasFS $ immutableDbPath srnDatabasePath
+        , llrnMkVolatileHasFS = stdMkChainDbHasFS $ nonImmutableDbPath srnDatabasePath
+        , llrnChainDbArgsDefaults = updateChainDbDefaults ChainDB.defaultArgs
+        , llrnCustomiseChainDbArgs = id
+        , llrnCustomiseNodeKernelArgs
+        , llrnRunDataDiffusion =
+            \_kernel cardanoConsensusDiffusionArgs apps ->
+              stdRunDataDiffusion
+                srnDiffusionArguments
+                cardanoConsensusDiffusionArgs
+                srnDiffusionTracers
+                srnDiffusionConfiguration
+                apps
+        , llrnVersionDataNTC =
+            stdVersionDataNTC networkMagic
+        , llrnVersionDataNTN =
+            stdVersionDataNTN
+              networkMagic
+              (Diffusion.dcMode srnDiffusionConfiguration)
+              rnPeerSharing
+        , llrnNodeToNodeVersions =
+            limitToLatestReleasedVersion
+              fst
+              (supportedNodeToNodeVersions (Proxy @blk))
+        , llrnNodeToClientVersions =
+            limitToLatestReleasedVersion
+              snd
+              (supportedNodeToClientVersions (Proxy @blk))
+        , llrnWithCheckedDB =
+            -- 'stdWithCheckedDB' uses the FS just to check for the clean file.
+            -- We put that one in the immutable path.
+            stdWithCheckedDB (Proxy @blk) srnTraceChainDB (immutableDbPath srnDatabasePath) networkMagic
+        , llrnMaxCaughtUpAge = secondsToNominalDiffTime $ 20 * 60 -- 20 min
+        , llrnMaxClockSkew =
+            InFutureCheck.defaultClockSkew
+        , llrnPublicPeerSelectionStateVar =
+            Diffusion.dcPublicPeerSelectionVar srnDiffusionConfiguration
+        , llrnLdbFlavorArgs = ldbBackendArgs
+        , llrnFeatureFlags = rnFeatureFlags
+        }
+   where
     networkMagic :: NetworkMagic
     networkMagic = getNetworkMagic $ configBlock $ pInfoConfig rnProtocolInfo
 
     updateChainDbDefaults ::
-         Incomplete ChainDbArgs IO blk
-      -> Incomplete ChainDbArgs IO blk
+      Incomplete ChainDbArgs IO blk ->
+      Incomplete ChainDbArgs IO blk
     updateChainDbDefaults =
-          ChainDB.updateSnapshotPolicyArgs srnSnapshotPolicyArgs
+      ChainDB.updateSnapshotPolicyArgs srnSnapshotPolicyArgs
         . ChainDB.updateQueryBatchSize srnQueryBatchSize
         . ChainDB.updateTracer srnTraceChainDB
-        . (if   not srnChainDbValidateOverride
-           then id
-           else ChainDB.ensureValidateAll)
+        . ( if not srnChainDbValidateOverride
+              then id
+              else ChainDB.ensureValidateAll
+          )
 
     llrnCustomiseNodeKernelArgs ::
-         NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
-      -> NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
+      NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
+      NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
     llrnCustomiseNodeKernelArgs =
-        overBlockFetchConfiguration modifyBlockFetchConfiguration
-      . modifyMempoolCapacityOverride
-      where
-        modifyBlockFetchConfiguration =
-            maybe id
-              (\mc bfc -> bfc { bfcMaxConcurrencyDeadline = mc })
-              srnBfcMaxConcurrencyDeadline
-          . maybe id
-              (\mc bfc -> bfc { bfcMaxConcurrencyBulkSync = mc })
-              srnBfcMaxConcurrencyBulkSync
-        modifyMempoolCapacityOverride =
-            maybe id
-              (\mc nka -> nka { mempoolCapacityOverride = mc })
-              srnMaybeMempoolCapacityOverride
+      overBlockFetchConfiguration modifyBlockFetchConfiguration
+        . modifyMempoolCapacityOverride
+     where
+      modifyBlockFetchConfiguration =
+        maybe
+          id
+          (\mc bfc -> bfc{bfcMaxConcurrencyDeadline = mc})
+          srnBfcMaxConcurrencyDeadline
+          . maybe
+            id
+            (\mc bfc -> bfc{bfcMaxConcurrencyBulkSync = mc})
+            srnBfcMaxConcurrencyBulkSync
+      modifyMempoolCapacityOverride =
+        maybe
+          id
+          (\mc nka -> nka{mempoolCapacityOverride = mc})
+          srnMaybeMempoolCapacityOverride
 
     -- Limit the node version unless srnEnableInDevelopmentVersions is set
-    limitToLatestReleasedVersion :: forall k v.
-         Ord k
-      => ((Maybe NodeToNodeVersion, Maybe NodeToClientVersion) -> Maybe k)
-      -> Map k v
-      -> Map k v
+    limitToLatestReleasedVersion ::
+      forall k v.
+      Ord k =>
+      ((Maybe NodeToNodeVersion, Maybe NodeToClientVersion) -> Maybe k) ->
+      Map k v ->
+      Map k v
     limitToLatestReleasedVersion prj =
-        if srnEnableInDevelopmentVersions then id
-        else
-        case prj $ latestReleasedNodeVersion (Proxy @blk) of
-          Nothing      -> id
+      if srnEnableInDevelopmentVersions
+        then id
+        else case prj $ latestReleasedNodeVersion (Proxy @blk) of
+          Nothing -> id
           Just version -> Map.takeWhileAntitone (<= version)
 
 {-------------------------------------------------------------------------------
@@ -1193,11 +1181,12 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
 -------------------------------------------------------------------------------}
 
 overBlockFetchConfiguration ::
-     (BlockFetchConfiguration -> BlockFetchConfiguration)
-  -> NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
-  -> NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
-overBlockFetchConfiguration f args = args {
-      blockFetchConfiguration = f blockFetchConfiguration
+  (BlockFetchConfiguration -> BlockFetchConfiguration) ->
+  NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk ->
+  NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
+overBlockFetchConfiguration f args =
+  args
+    { blockFetchConfiguration = f blockFetchConfiguration
     }
-  where
-    NodeKernelArgs { blockFetchConfiguration } = args
+ where
+  NodeKernelArgs{blockFetchConfiguration} = args

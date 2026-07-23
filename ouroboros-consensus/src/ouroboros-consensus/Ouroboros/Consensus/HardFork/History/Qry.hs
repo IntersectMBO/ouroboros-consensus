@@ -12,22 +12,26 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.HardFork.History.Qry (
-    -- * Qry
+module Ouroboros.Consensus.HardFork.History.Qry
+  ( -- * Qry
     Expr (..)
   , PastHorizonException (..)
   , qryFromExpr
   , runQuery
   , runQueryPure
   , runQueryThrow
+
     -- ** opaque
   , Qry
+
     -- * Interpreter
   , interpretQuery
   , mkInterpreter
   , unsafeExtendSafeZone
+
     -- ** opaque
   , Interpreter
+
     -- * Specific queries
   , epochToSize
   , epochToSlot
@@ -38,32 +42,35 @@ module Ouroboros.Consensus.HardFork.History.Qry (
   , slotToSlotLength
   , slotToWallclock
   , wallclockToSlot
+  , perasRoundNoToSlot
+  , slotToPerasRoundNo
   ) where
 
-import           Codec.Serialise (Serialise (..))
-import           Control.Exception (throw)
-import           Control.Monad (ap, guard, liftM, (>=>))
-import           Control.Monad.Except ()
-import           Data.Bifunctor
-import           Data.Fixed (divMod')
-import           Data.Foldable (toList)
-import           Data.Functor.Identity
-import           Data.Kind (Type)
-import           Data.SOP.NonEmpty (NonEmpty (..))
-import           Data.SOP.Sing (SListI)
-import           Data.Time hiding (UTCTime)
-import           Data.Word
-import           GHC.Generics (Generic)
-import           GHC.Show (showSpace)
-import           GHC.Stack
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
-import           Ouroboros.Consensus.HardFork.History.EraParams
-import           Ouroboros.Consensus.HardFork.History.Summary
-import           Ouroboros.Consensus.HardFork.History.Util
-import           Ouroboros.Consensus.Util (Some (..))
-import           Ouroboros.Consensus.Util.IOLike
-import           Quiet
+import Codec.Serialise (Serialise (..))
+import Control.Exception (throw)
+import Control.Monad (ap, guard, liftM, (>=>))
+import Control.Monad.Except ()
+import Control.Monad.Trans.Class
+import Data.Bifunctor
+import Data.Fixed (divMod')
+import Data.Foldable (toList)
+import Data.Functor.Identity
+import Data.Kind (Type)
+import Data.SOP.NonEmpty (NonEmpty (..))
+import Data.SOP.Sing (SListI)
+import Data.Time hiding (UTCTime)
+import Data.Word
+import GHC.Generics (Generic)
+import GHC.Show (showSpace)
+import GHC.Stack
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+import Ouroboros.Consensus.HardFork.History.EraParams
+import Ouroboros.Consensus.HardFork.History.Summary
+import Ouroboros.Consensus.HardFork.History.Util
+import Ouroboros.Consensus.Util (Some (..))
+import Ouroboros.Consensus.Util.IOLike
+import Quiet
 
 {-------------------------------------------------------------------------------
   Internal: reified queries
@@ -122,6 +129,8 @@ import           Quiet
 
       These are equal by (INV-2a).
 
+   5. Slot to Peras round translation.
+
   This means that for values at that boundary, it does not matter if we use
   this era or the next era for the translation. However, this is only true for
   these 4 translations. If we are returning the era parameters directly, then
@@ -157,12 +166,12 @@ instance Functor Qry where
   fmap = liftM
 
 instance Applicative Qry where
-  pure  = QPure
+  pure = QPure
   (<*>) = ap
 
 instance Monad Qry where
   return = pure
-  QPure a   >>= k = k a
+  QPure a >>= k = k a
   QExpr e f >>= k = QExpr e (f >=> k)
 
 -- | Construct a 'Qry' from a closed 'Expr'
@@ -173,17 +182,21 @@ qryFromExpr e = QExpr (ClosedExpr e) QPure
   Clarifying newtypes
 -------------------------------------------------------------------------------}
 
-newtype TimeInEra   = TimeInEra   { getTimeInEra   :: NominalDiffTime } deriving (Generic)
-newtype TimeInSlot  = TimeInSlot  { getTimeInSlot  :: NominalDiffTime } deriving (Generic)
-newtype SlotInEra   = SlotInEra   { getSlotInEra   :: Word64 }          deriving (Generic)
-newtype SlotInEpoch = SlotInEpoch { getSlotInEpoch :: Word64 }          deriving (Generic)
-newtype EpochInEra  = EpochInEra  { getEpochInEra  :: Word64 }          deriving (Generic)
+newtype TimeInEra = TimeInEra {getTimeInEra :: NominalDiffTime} deriving Generic
+newtype TimeInSlot = TimeInSlot {getTimeInSlot :: NominalDiffTime} deriving Generic
+newtype SlotInEra = SlotInEra {getSlotInEra :: Word64} deriving Generic
+newtype SlotInEpoch = SlotInEpoch {getSlotInEpoch :: Word64} deriving Generic
+newtype EpochInEra = EpochInEra {getEpochInEra :: Word64} deriving Generic
+newtype PerasRoundNoInEra = PerasRoundNoInEra {getPerasRoundNoInEra :: Word64} deriving Generic
+newtype SlotInPerasRound = SlotInPerasRound {getSlotInPerasRound :: Word64} deriving Generic
 
-deriving via Quiet TimeInEra   instance Show TimeInEra
-deriving via Quiet TimeInSlot  instance Show TimeInSlot
-deriving via Quiet SlotInEra   instance Show SlotInEra
+deriving via Quiet TimeInEra instance Show TimeInEra
+deriving via Quiet TimeInSlot instance Show TimeInSlot
+deriving via Quiet SlotInEra instance Show SlotInEra
 deriving via Quiet SlotInEpoch instance Show SlotInEpoch
-deriving via Quiet EpochInEra  instance Show EpochInEra
+deriving via Quiet EpochInEra instance Show EpochInEra
+deriving via Quiet PerasRoundNoInEra instance Show PerasRoundNoInEra
+deriving via Quiet SlotInPerasRound instance Show SlotInPerasRound
 
 {-------------------------------------------------------------------------------
   Expressions
@@ -195,42 +208,43 @@ data ClosedExpr a = ClosedExpr (forall f. Expr f a)
 data Expr (f :: Type -> Type) :: Type -> Type where
   -- PHOAS infrastructure
 
-  EVar  :: f a -> Expr f a
-  ELit  :: Show a => a -> Expr f a
-  ELet  :: Expr f a -> (f a -> Expr f b) -> Expr f b
-
+  EVar :: f a -> Expr f a
+  ELit :: Show a => a -> Expr f a
+  ELet :: Expr f a -> (f a -> Expr f b) -> Expr f b
   -- Support for pairs makes expressions more easily composable
 
   EPair :: Expr f a -> Expr f b -> Expr f (a, b)
-  EFst  :: Expr f (a, b) -> Expr f a
-  ESnd  :: Expr f (a, b) -> Expr f b
-
+  EFst :: Expr f (a, b) -> Expr f a
+  ESnd :: Expr f (a, b) -> Expr f b
   -- Convert from absolute to era-relative
 
-  EAbsToRelTime  :: Expr f RelativeTime -> Expr f TimeInEra
-  EAbsToRelSlot  :: Expr f SlotNo       -> Expr f SlotInEra
-  EAbsToRelEpoch :: Expr f EpochNo      -> Expr f EpochInEra
-
+  EAbsToRelTime :: Expr f RelativeTime -> Expr f TimeInEra
+  EAbsToRelSlot :: Expr f SlotNo -> Expr f SlotInEra
+  EAbsToRelEpoch :: Expr f EpochNo -> Expr f EpochInEra
+  EAbsToRelPerasRoundNo :: Expr f PerasRoundNo -> Expr f (PerasEnabled PerasRoundNoInEra)
   -- Convert from era-relative to absolute
 
-  ERelToAbsTime  :: Expr f TimeInEra                 -> Expr f RelativeTime
-  ERelToAbsSlot  :: Expr f (SlotInEra, TimeInSlot)   -> Expr f SlotNo
+  ERelToAbsTime :: Expr f TimeInEra -> Expr f RelativeTime
+  ERelToAbsSlot :: Expr f (SlotInEra, TimeInSlot) -> Expr f SlotNo
   ERelToAbsEpoch :: Expr f (EpochInEra, SlotInEpoch) -> Expr f EpochNo
-
+  ERelToAbsPerasRoundNo ::
+    Expr f (PerasEnabled PerasRoundNoInEra) -> Expr f (PerasEnabled PerasRoundNo)
   -- Convert between relative values
 
-  ERelTimeToSlot  :: Expr f TimeInEra  -> Expr f (SlotInEra, TimeInSlot)
-  ERelSlotToTime  :: Expr f SlotInEra  -> Expr f TimeInEra
-  ERelSlotToEpoch :: Expr f SlotInEra  -> Expr f (EpochInEra, SlotInEpoch)
+  ERelTimeToSlot :: Expr f TimeInEra -> Expr f (SlotInEra, TimeInSlot)
+  ERelSlotToTime :: Expr f SlotInEra -> Expr f TimeInEra
+  ERelSlotToEpoch :: Expr f SlotInEra -> Expr f (EpochInEra, SlotInEpoch)
   ERelEpochToSlot :: Expr f EpochInEra -> Expr f SlotInEra
-
+  ERelPerasRoundNoToSlot :: Expr f (PerasEnabled PerasRoundNoInEra) -> Expr f (PerasEnabled SlotInEra)
+  ERelSlotToPerasRoundNo ::
+    Expr f SlotInEra -> Expr f (PerasEnabled (PerasRoundNoInEra, SlotInPerasRound))
   -- Get era parameters
 
   -- The arguments are used for bound checks
-  ESlotLength :: Expr f SlotNo  -> Expr f SlotLength
-  EEpochSize  :: Expr f EpochNo -> Expr f EpochSize
-
+  ESlotLength :: Expr f SlotNo -> Expr f SlotLength
+  EEpochSize :: Expr f EpochNo -> Expr f EpochSize
   EGenesisWindow :: Expr f SlotNo -> Expr f GenesisWindow
+  EPerasRoundLength :: Expr f PerasRoundNo -> Expr f (PerasEnabled PerasRoundLength)
 
 {-------------------------------------------------------------------------------
   Interpreter
@@ -238,113 +252,149 @@ data Expr (f :: Type -> Type) :: Type -> Type where
 
 evalExprInEra :: EraSummary -> ClosedExpr a -> Maybe a
 evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
-  where
-    EraParams{..} = eraParams
-    slotLen   = getSlotLength eraSlotLength
-    epochSize = unEpochSize   eraEpochSize
+ where
+  EraParams{..} = eraParams
+  slotLen = getSlotLength eraSlotLength
+  epochSize = unEpochSize eraEpochSize
 
-    guardEnd :: (Bound -> Bool) -> Maybe ()
-    guardEnd p =
-        case eraEnd of
-          EraUnbounded -> return ()
-          EraEnd b     -> guard $ p b
+  guardEnd :: (Bound -> Bool) -> Maybe ()
+  guardEnd p =
+    case eraEnd of
+      EraUnbounded -> return ()
+      EraEnd b -> guard $ p b
 
-    go :: Expr Identity a -> Maybe a
-    go (EVar a) =
-        return $ runIdentity a
-    go (ELet e f) =
-        go e >>= go . f . Identity
+  guardEndPeras :: (Bound -> PerasEnabledT Maybe Bool) -> PerasEnabledT Maybe ()
+  guardEndPeras p = case eraEnd of
+    EraUnbounded -> pure ()
+    EraEnd end -> lift . guard =<< p end
 
-    -- Literals and pairs
-    go (ELit i) =
-        return i
-    go (EPair e e') = do
-        x <- go e
-        y <- go e'
-        return (x, y)
-    go (EFst e) =
-       fst <$> go e
-    go (ESnd e) =
-       snd <$> go e
+  go :: Expr Identity a -> Maybe a
+  go (EVar a) =
+    return $ runIdentity a
+  go (ELet e f) =
+    go e >>= go . f . Identity
+  -- Literals and pairs
+  go (ELit i) =
+    return i
+  go (EPair e e') = do
+    x <- go e
+    y <- go e'
+    return (x, y)
+  go (EFst e) =
+    fst <$> go e
+  go (ESnd e) =
+    snd <$> go e
+  -- Convert absolute to relative
+  --
+  -- The guards here justify the subtractions.
 
-    -- Convert absolute to relative
-    --
-    -- The guards here justify the subtractions.
+  go (EAbsToRelTime expr) = do
+    t <- go expr
+    guard (t >= boundTime eraStart)
+    return $ TimeInEra (t `diffRelTime` boundTime eraStart)
+  go (EAbsToRelSlot expr) = do
+    s <- go expr
+    guard (s >= boundSlot eraStart)
+    return $ SlotInEra (countSlots s (boundSlot eraStart))
+  go (EAbsToRelEpoch expr) = do
+    e <- go expr
+    guard (e >= boundEpoch eraStart)
+    return $ EpochInEra (countEpochs e (boundEpoch eraStart))
+  go (EAbsToRelPerasRoundNo expr) =
+    runPerasEnabledT $ do
+      eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+      absPerasRoundNo <- lift $ go expr
+      lift . guard $ absPerasRoundNo >= eraStartPerasRound
+      let roundInEra = countPerasRounds absPerasRoundNo eraStartPerasRound
+      pure . PerasRoundNoInEra $ roundInEra
 
-    go (EAbsToRelTime expr) = do
-        t <- go expr
-        guard (t >= boundTime eraStart)
-        return $ TimeInEra (t `diffRelTime` boundTime eraStart)
-    go (EAbsToRelSlot expr) = do
-        s <- go expr
-        guard (s >= boundSlot eraStart)
-        return $ SlotInEra (countSlots s (boundSlot eraStart))
-    go (EAbsToRelEpoch expr) = do
-        e <- go expr
-        guard (e >= boundEpoch eraStart)
-        return $ EpochInEra (countEpochs e (boundEpoch eraStart))
+  -- Convert relative to absolute
+  --
+  -- As justified by the proof above, the guards treat the upper bound
+  -- as inclusive.
 
-    -- Convert relative to absolute
-    --
-    -- As justified by the proof above, the guards treat the upper bound
-    -- as inclusive.
+  go (ERelToAbsTime expr) = do
+    t <- go expr
+    let absTime = getTimeInEra t `addRelTime` boundTime eraStart
+    guardEnd $ \end -> absTime <= boundTime end
+    return absTime
+  go (ERelToAbsSlot expr) = do
+    (s, t) <- go expr
+    let absSlot = addSlots (getSlotInEra s) (boundSlot eraStart)
+    guardEnd $ \end ->
+      absSlot < boundSlot end
+        || absSlot == boundSlot end && getTimeInSlot t == 0
+    return absSlot
+  go (ERelToAbsEpoch expr) = do
+    (e, s) <- go expr
+    let absEpoch = addEpochs (getEpochInEra e) (boundEpoch eraStart)
+    guardEnd $ \end ->
+      absEpoch < boundEpoch end
+        || absEpoch == boundEpoch end && getSlotInEpoch s == 0
+    return absEpoch
+  go (ERelToAbsPerasRoundNo expr) = runPerasEnabledT $ do
+    eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+    relPerasRound <- PerasEnabledT $ go expr
+    let absPerasRound = addPerasRounds (getPerasRoundNoInEra relPerasRound) eraStartPerasRound
 
-    go (ERelToAbsTime expr) = do
-        t <- go expr
-        let absTime = getTimeInEra t `addRelTime` boundTime eraStart
-        guardEnd $ \end -> absTime <= boundTime end
-        return absTime
-    go (ERelToAbsSlot expr) = do
-        (s, t) <- go expr
-        let absSlot = addSlots (getSlotInEra s) (boundSlot eraStart)
-        guardEnd $ \end -> absSlot <  boundSlot end
-                        || absSlot == boundSlot end && getTimeInSlot t == 0
-        return absSlot
-    go (ERelToAbsEpoch expr) = do
-        (e, s) <- go expr
-        let absEpoch = addEpochs (getEpochInEra e) (boundEpoch eraStart)
-        guardEnd $ \end -> absEpoch <  boundEpoch end
-                        || absEpoch == boundEpoch end && getSlotInEpoch s == 0
-        return absEpoch
+    guardEndPeras $ \end -> do
+      eraEndPerasRound <- PerasEnabledT . Just $ boundPerasRound end
+      pure $ absPerasRound <= eraEndPerasRound
+    pure absPerasRound
 
-    -- Convert between relative values
-    --
-    -- No guards necessary
+  -- Convert between relative values
+  --
+  -- No guards necessary
 
-    go (ERelTimeToSlot expr) = do
-        t <- go expr
-        return $ bimap SlotInEra TimeInSlot (getTimeInEra t `divMod'` slotLen)
-    go (ERelSlotToTime expr) = do
-        s <- go expr
-        return $ TimeInEra (fromIntegral (getSlotInEra s) * slotLen)
-    go (ERelSlotToEpoch expr) = do
-        s <- go expr
-        return $ bimap EpochInEra SlotInEpoch $ getSlotInEra s `divMod` epochSize
-    go (ERelEpochToSlot expr) = do
-        e <- go expr
-        return $ SlotInEra (getEpochInEra e * epochSize)
+  go (ERelTimeToSlot expr) = do
+    t <- go expr
+    return $ bimap SlotInEra TimeInSlot (getTimeInEra t `divMod'` slotLen)
+  go (ERelSlotToTime expr) = do
+    s <- go expr
+    return $ TimeInEra (fromIntegral (getSlotInEra s) * slotLen)
+  go (ERelSlotToEpoch expr) = do
+    s <- go expr
+    return $ bimap EpochInEra SlotInEpoch $ getSlotInEra s `divMod` epochSize
+  go (ERelEpochToSlot expr) = do
+    e <- go expr
+    return $ SlotInEra (getEpochInEra e * epochSize)
+  go (ERelPerasRoundNoToSlot expr) = runPerasEnabledT $ do
+    PerasRoundNoInEra relPerasRoundNo <- PerasEnabledT $ go expr
+    PerasRoundLength perasRoundLength <- PerasEnabledT . Just $ eraPerasRoundLength
+    pure $ SlotInEra (relPerasRoundNo * perasRoundLength)
+  go (ERelSlotToPerasRoundNo expr) = runPerasEnabledT $ do
+    SlotInEra relSlot <- lift $ go expr
+    PerasRoundLength perasRoundLength <- PerasEnabledT . Just $ eraPerasRoundLength
+    pure . bimap PerasRoundNoInEra SlotInPerasRound $ relSlot `divMod` perasRoundLength
 
-    -- Get era parameters
-    --
-    -- Here the upper bound must definitely be exclusive, or we'd return the
-    -- era parameters from the wrong era.
+  -- Get era parameters
+  --
+  -- Here the upper bound must definitely be exclusive, or we'd return the
+  -- era parameters from the wrong era.
 
-    go (ESlotLength expr) = do
-        s <- go expr
-        guard    $ s >= boundSlot eraStart
-        guardEnd $ \end -> s < boundSlot end
-        return eraSlotLength
-    go (EEpochSize expr) = do
-        e <- go expr
-        guard    $ e >= boundEpoch eraStart
-        guardEnd $ \end -> e < boundEpoch end
-        return eraEpochSize
-
-    go (EGenesisWindow expr) = do
-        s <- go expr
-        guard    $ s >= boundSlot eraStart
-        guardEnd $ \end -> s < boundSlot end
-        return eraGenesisWin
+  go (ESlotLength expr) = do
+    s <- go expr
+    guard $ s >= boundSlot eraStart
+    guardEnd $ \end -> s < boundSlot end
+    return eraSlotLength
+  go (EEpochSize expr) = do
+    e <- go expr
+    guard $ e >= boundEpoch eraStart
+    guardEnd $ \end -> e < boundEpoch end
+    return eraEpochSize
+  go (EGenesisWindow expr) = do
+    s <- go expr
+    guard $ s >= boundSlot eraStart
+    guardEnd $ \end -> s < boundSlot end
+    return eraGenesisWin
+  go (EPerasRoundLength expr) = runPerasEnabledT $ do
+    eraStartPerasRound <- PerasEnabledT . Just $ boundPerasRound eraStart
+    absPerasRound <- lift $ go expr
+    lift . guard $ absPerasRound >= eraStartPerasRound
+    guardEndPeras $ \end -> do
+      eraEndPerasRound <- PerasEnabledT . Just $ boundPerasRound end
+      pure $ absPerasRound < eraEndPerasRound
+    PerasEnabledT . Just $ eraPerasRoundLength
 
 {-------------------------------------------------------------------------------
   PastHorizonException
@@ -355,16 +405,14 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
 -- That is, we tried to convert something that is past the point in time
 -- beyond which we lack information due to uncertainty about the next
 -- hard fork.
-data PastHorizonException = PastHorizon {
-      -- | Callstack to the call to 'runQuery'
-      pastHorizonCallStack  :: CallStack
-
-      -- | The 'Expr' we tried to evaluate
-    , pastHorizonExpression :: Some ClosedExpr
-
-      -- | The 'EraSummary's that we tried to evaluate the 'Expr' against
-    , pastHorizonSummary    :: [EraSummary]
-    }
+data PastHorizonException = PastHorizon
+  { pastHorizonCallStack :: CallStack
+  -- ^ Callstack to the call to 'runQuery'
+  , pastHorizonExpression :: Some ClosedExpr
+  -- ^ The 'Expr' we tried to evaluate
+  , pastHorizonSummary :: [EraSummary]
+  -- ^ The 'EraSummary's that we tried to evaluate the 'Expr' against
+  }
 
 deriving instance Show PastHorizonException
 instance Exception PastHorizonException
@@ -385,25 +433,26 @@ instance Exception PastHorizonException
 -- they should not be composed into a single query. How could we know to which
 -- era which relative slot/time refers?
 runQuery ::
-     forall a xs. HasCallStack
-  => Qry a -> Summary xs -> Either PastHorizonException a
+  forall a xs.
+  HasCallStack =>
+  Qry a -> Summary xs -> Either PastHorizonException a
 runQuery qry (Summary summary) = go summary
-  where
-    go :: NonEmpty xs' EraSummary -> Either PastHorizonException a
-    go (NonEmptyOne era)       = tryEra era qry
-    go (NonEmptyCons era eras) = case tryEra era qry of
-        Left  _ -> go eras
-        Right x -> Right x
+ where
+  go :: NonEmpty xs' EraSummary -> Either PastHorizonException a
+  go (NonEmptyOne era) = tryEra era qry
+  go (NonEmptyCons era eras) = case tryEra era qry of
+    Left _ -> go eras
+    Right x -> Right x
 
-    tryEra :: forall b. EraSummary -> Qry b -> Either PastHorizonException b
-    tryEra era = \case
-        QPure x   -> Right x
-        QExpr e k ->
-          case evalExprInEra era e of
-            Just x  ->
-              tryEra era (k x)
-            Nothing ->
-              Left $ PastHorizon callStack (Some e) (toList summary)
+  tryEra :: forall b. EraSummary -> Qry b -> Either PastHorizonException b
+  tryEra era = \case
+    QPure x -> Right x
+    QExpr e k ->
+      case evalExprInEra era e of
+        Just x ->
+          tryEra era (k x)
+        Nothing ->
+          Left $ PastHorizon callStack (Some e) (toList summary)
 
 runQueryThrow :: (HasCallStack, MonadThrow m) => Qry a -> Summary xs -> m a
 runQueryThrow q = either throwIO return . runQuery q
@@ -420,7 +469,7 @@ runQueryPure q = either throw id . runQuery q
 --
 -- The 'Summary' should be considered internal.
 newtype Interpreter xs = Interpreter (Summary xs)
-  deriving (Eq)
+  deriving Eq
 
 deriving instance SListI xs => Serialise (Interpreter xs)
 
@@ -431,10 +480,10 @@ mkInterpreter :: Summary xs -> Interpreter xs
 mkInterpreter = Interpreter
 
 interpretQuery ::
-     HasCallStack
-  => Interpreter xs
-  -> Qry a
-  -> Either PastHorizonException a
+  HasCallStack =>
+  Interpreter xs ->
+  Qry a ->
+  Either PastHorizonException a
 interpretQuery (Interpreter summary) qry = runQuery qry summary
 
 -- | UNSAFE: extend the safe zone of the current era of the given 'Interpreter'
@@ -450,11 +499,11 @@ interpretQuery (Interpreter summary) qry = runQuery qry summary
 -- incorrect.
 unsafeExtendSafeZone :: Interpreter xs -> Interpreter xs
 unsafeExtendSafeZone (Interpreter (Summary eraSummaries)) =
-    Interpreter (Summary (go eraSummaries))
-  where
-    go :: NonEmpty xs' EraSummary -> NonEmpty xs' EraSummary
-    go (NonEmptyCons e es) = NonEmptyCons e (go es)
-    go (NonEmptyOne  e)    = NonEmptyOne  e { eraEnd = EraUnbounded }
+  Interpreter (Summary (go eraSummaries))
+ where
+  go :: NonEmpty xs' EraSummary -> NonEmpty xs' EraSummary
+  go (NonEmptyCons e es) = NonEmptyCons e (go es)
+  go (NonEmptyOne e) = NonEmptyOne e{eraEnd = EraUnbounded}
 
 {-------------------------------------------------------------------------------
   Specific queries
@@ -472,63 +521,97 @@ unsafeExtendSafeZone (Interpreter (Summary eraSummaries)) =
 -- Additionally returns the time spent and time left in this slot.
 wallclockToSlot :: RelativeTime -> Qry (SlotNo, NominalDiffTime, NominalDiffTime)
 wallclockToSlot absTime =
-    aux <$> qryFromExpr (wallclockToSlotExpr absTime)
-  where
-    aux :: (TimeInSlot, (SlotNo, SlotLength))
-        -> (SlotNo, NominalDiffTime, NominalDiffTime)
-    aux (TimeInSlot timeInSlot, (absSlot, slotLen)) = (
-          absSlot
-        , timeInSlot
-        , getSlotLength slotLen - timeInSlot
-        )
+  aux <$> qryFromExpr (wallclockToSlotExpr absTime)
+ where
+  aux ::
+    (TimeInSlot, (SlotNo, SlotLength)) ->
+    (SlotNo, NominalDiffTime, NominalDiffTime)
+  aux (TimeInSlot timeInSlot, (absSlot, slotLen)) =
+    ( absSlot
+    , timeInSlot
+    , getSlotLength slotLen - timeInSlot
+    )
 
 -- | Translate 'SlotNo' to the 'UTCTime' at the start of that slot
 --
 -- Additionally returns the length of the slot.
 slotToWallclock :: SlotNo -> Qry (RelativeTime, SlotLength)
 slotToWallclock absSlot =
-    qryFromExpr (slotToWallclockExpr absSlot)
+  qryFromExpr (slotToWallclockExpr absSlot)
 
 -- | Acquire a slot's length
 slotToSlotLength :: SlotNo -> Qry SlotLength
 slotToSlotLength absSlot =
-    qryFromExpr (slotToSlotLengthExpr absSlot)
+  qryFromExpr (slotToSlotLengthExpr absSlot)
 
 -- | Convert 'SlotNo' to 'EpochNo' and the relative slot within the epoch
 slotToEpoch' :: SlotNo -> Qry (EpochNo, Word64)
 slotToEpoch' absSlot =
-    second getSlotInEpoch <$> qryFromExpr (slotToEpochExpr' absSlot)
+  second getSlotInEpoch <$> qryFromExpr (slotToEpochExpr' absSlot)
 
 -- | Translate 'SlotNo' to its corresponding 'EpochNo'
 --
 -- Additionally returns the relative slot within this epoch and how many
--- slots are left in this slot.
+-- slots are left in this epoch.
 slotToEpoch :: SlotNo -> Qry (EpochNo, Word64, Word64)
 slotToEpoch absSlot =
-    aux <$> qryFromExpr (slotToEpochExpr absSlot)
-  where
-    aux :: ((EpochNo, SlotInEpoch), EpochSize)
-        -> (EpochNo, Word64, Word64)
-    aux ((absEpoch, SlotInEpoch slotInEpoch), epochSize) = (
-          absEpoch
-        , slotInEpoch
-        , unEpochSize epochSize - slotInEpoch
-        )
+  aux <$> qryFromExpr (slotToEpochExpr absSlot)
+ where
+  aux ::
+    ((EpochNo, SlotInEpoch), EpochSize) ->
+    (EpochNo, Word64, Word64)
+  aux ((absEpoch, SlotInEpoch slotInEpoch), epochSize) =
+    ( absEpoch
+    , slotInEpoch
+    , unEpochSize epochSize - slotInEpoch
+    )
 
 epochToSlot' :: EpochNo -> Qry SlotNo
 epochToSlot' absEpoch =
-    qryFromExpr (epochToSlotExpr' absEpoch)
+  qryFromExpr (epochToSlotExpr' absEpoch)
 
 -- | Translate 'EpochNo' to the 'SlotNo' of the first slot in that epoch
 --
 -- Additionally returns the size of the epoch.
 epochToSlot :: EpochNo -> Qry (SlotNo, EpochSize)
 epochToSlot absEpoch =
-    qryFromExpr (epochToSlotExpr absEpoch)
+  qryFromExpr (epochToSlotExpr absEpoch)
 
 epochToSize :: EpochNo -> Qry EpochSize
 epochToSize absEpoch =
-    qryFromExpr (epochToSizeExpr absEpoch)
+  qryFromExpr (epochToSizeExpr absEpoch)
+
+-- | Translate 'PerasRoundNo' to the 'SlotNo' of the first slot in that Peras round
+--
+-- Additionally returns the length of the round.
+perasRoundNoToSlot :: PerasRoundNo -> Qry (PerasEnabled (SlotNo, PerasRoundLength))
+perasRoundNoToSlot perasRoundNo = runPerasEnabledT $ do
+  relSlot <-
+    PerasEnabledT $ qryFromExpr (ERelPerasRoundNoToSlot (EAbsToRelPerasRoundNo (ELit perasRoundNo)))
+  absSlot <- lift $ qryFromExpr (ERelToAbsSlot (EPair (ELit relSlot) (ELit (TimeInSlot 0))))
+  roundLength <- PerasEnabledT $ qryFromExpr (perasRoundNoPerasRoundLengthExpr perasRoundNo)
+  pure (absSlot, roundLength)
+
+-- | Translate 'SlotNo' to its corresponding 'PerasRoundNo'
+--
+-- Additionally returns the relative slot within this round and how many
+-- slots are left in this round.
+slotToPerasRoundNo :: SlotNo -> Qry (PerasEnabled (PerasRoundNo, Word64, Word64))
+slotToPerasRoundNo absSlot = runPerasEnabledT $ do
+  (relPerasRoundNo, slotInPerasRound) <-
+    PerasEnabledT $
+      qryFromExpr (ERelSlotToPerasRoundNo (EAbsToRelSlot (ELit absSlot)))
+  absPerasRoundNo <-
+    PerasEnabledT $
+      qryFromExpr (ERelToAbsPerasRoundNo (ELit (PerasEnabled relPerasRoundNo)))
+  roundLength <-
+    PerasEnabledT $
+      qryFromExpr (perasRoundNoPerasRoundLengthExpr absPerasRoundNo)
+  pure $
+    ( absPerasRoundNo
+    , getSlotInPerasRound slotInPerasRound
+    , unPerasRoundLength roundLength - getSlotInPerasRound slotInPerasRound
+    )
 
 {-------------------------------------------------------------------------------
   Supporting expressions for the queries above
@@ -536,104 +619,117 @@ epochToSize absEpoch =
 
 wallclockToSlotExpr :: RelativeTime -> Expr f (TimeInSlot, (SlotNo, SlotLength))
 wallclockToSlotExpr absTime =
-    ELet (ERelTimeToSlot (EAbsToRelTime (ELit absTime))) $ \relSlot ->
+  ELet (ERelTimeToSlot (EAbsToRelTime (ELit absTime))) $ \relSlot ->
     ELet (ERelToAbsSlot (EVar relSlot)) $ \absSlot ->
-    EPair (ESnd (EVar relSlot))
-          (EPair (EVar absSlot) (ESlotLength (EVar absSlot)))
+      EPair
+        (ESnd (EVar relSlot))
+        (EPair (EVar absSlot) (ESlotLength (EVar absSlot)))
 
 slotToWallclockExpr :: SlotNo -> Expr f (RelativeTime, SlotLength)
 slotToWallclockExpr absSlot =
-    EPair
-      (ERelToAbsTime (ERelSlotToTime (EAbsToRelSlot (ELit absSlot))))
-      (ESlotLength (ELit absSlot))
+  EPair
+    (ERelToAbsTime (ERelSlotToTime (EAbsToRelSlot (ELit absSlot))))
+    (ESlotLength (ELit absSlot))
 
 slotToSlotLengthExpr :: SlotNo -> Expr f SlotLength
 slotToSlotLengthExpr absSlot = ESlotLength (ELit absSlot)
 
 slotToEpochExpr' :: SlotNo -> Expr f (EpochNo, SlotInEpoch)
 slotToEpochExpr' absSlot =
-    ELet (ERelSlotToEpoch (EAbsToRelSlot (ELit absSlot))) $ \epochSlot ->
+  ELet (ERelSlotToEpoch (EAbsToRelSlot (ELit absSlot))) $ \epochSlot ->
     EPair (ERelToAbsEpoch (EVar epochSlot)) (ESnd (EVar epochSlot))
 
 slotToEpochExpr ::
-     SlotNo
-  -> Expr f ((EpochNo, SlotInEpoch), EpochSize)
+  SlotNo ->
+  Expr f ((EpochNo, SlotInEpoch), EpochSize)
 slotToEpochExpr absSlot =
-    ELet (slotToEpochExpr' absSlot) $ \x ->
+  ELet (slotToEpochExpr' absSlot) $ \x ->
     EPair (EVar x) (EEpochSize (EFst (EVar x)))
 
 epochToSlotExpr' :: EpochNo -> Expr f SlotNo
 epochToSlotExpr' absEpoch =
-    ERelToAbsSlot (EPair (ERelEpochToSlot (EAbsToRelEpoch (ELit absEpoch)))
-                         (ELit (TimeInSlot 0)))
+  ERelToAbsSlot
+    ( EPair
+        (ERelEpochToSlot (EAbsToRelEpoch (ELit absEpoch)))
+        (ELit (TimeInSlot 0))
+    )
 
 epochToSlotExpr :: EpochNo -> Expr f (SlotNo, EpochSize)
 epochToSlotExpr absEpoch =
-    EPair (epochToSlotExpr' absEpoch) (epochToSizeExpr absEpoch)
+  EPair (epochToSlotExpr' absEpoch) (epochToSizeExpr absEpoch)
 
 epochToSizeExpr :: EpochNo -> Expr f EpochSize
 epochToSizeExpr absEpoch =
-    EEpochSize (ELit absEpoch)
+  EEpochSize (ELit absEpoch)
 
 slotToGenesisWindow :: SlotNo -> Expr f GenesisWindow
 slotToGenesisWindow absSlot =
-    EGenesisWindow (ELit absSlot)
+  EGenesisWindow (ELit absSlot)
+
+perasRoundNoPerasRoundLengthExpr :: PerasRoundNo -> Expr f (PerasEnabled PerasRoundLength)
+perasRoundNoPerasRoundLengthExpr absPerasRoundNo =
+  EPerasRoundLength (ELit absPerasRoundNo)
 
 {-------------------------------------------------------------------------------
   'Show' instances
 -------------------------------------------------------------------------------}
 
 newtype Var a = Var String
-  deriving (Show)
+  deriving Show
 
 deriving instance Show (Some ClosedExpr)
 
 instance Show (ClosedExpr a) where
   showsPrec = \d (ClosedExpr e) -> go 0 d e
-    where
-      go :: Int  -- How many variables are already in scope?
-         -> Int  -- Precedence
-         -> Expr Var b -> ShowS
-      go n d = showParen (d >= 11) . \case
+   where
+    go ::
+      Int -> -- How many variables are already in scope?
+      Int -> -- Precedence
+      Expr Var b ->
+      ShowS
+    go n d =
+      showParen (d >= 11) . \case
+        -- Variables and let-binding
+        --
+        -- We recover Haskell syntax here, e.g.
+        --
+        -- > ELet .. (\x -> .... x ....)
 
-          -- Variables and let-binding
-          --
-          -- We recover Haskell syntax here, e.g.
-          --
-          -- > ELet .. (\x -> .... x ....)
+        EVar (Var x) -> showString "EVar " . showString x
+        ELet e f ->
+          let x = "x" ++ show n
+           in showString "ELet "
+                . go n 11 e
+                . showString " (\\"
+                . showString x
+                . showString " -> "
+                . go (n + 1) 0 (f (Var x))
+                . showString ")"
+        -- Literals
 
-          EVar (Var x) -> showString "EVar " . showString x
-          ELet e f     -> let x = "x" ++ show n in
-                          showString "ELet "
-                        . go n 11 e
-                        . showString " (\\"
-                        . showString x
-                        . showString " -> "
-                        . go (n + 1) 0 (f (Var x))
-                        . showString ")"
+        ELit i -> showString "ELit " . showsPrec 11 i
+        -- Pairs
 
-          -- Literals
+        EPair e e' -> showString "EPair " . go n 11 e . showSpace . go n 11 e'
+        EFst e -> showString "EFst " . go n 11 e
+        ESnd e -> showString "ESnd " . go n 11 e
+        -- Domain specific
 
-          ELit i -> showString "ELit " . showsPrec 11 i
-
-          -- Pairs
-
-          EPair e e' -> showString "EPair " . go n 11 e . showSpace . go n 11 e'
-          EFst  e    -> showString "EFst "  . go n 11 e
-          ESnd  e    -> showString "ESnd "  . go n 11 e
-
-          -- Domain specific
-
-          EAbsToRelTime   e -> showString "EAbsToRelTime "   . go n 11 e
-          EAbsToRelSlot   e -> showString "EAbsToRelSlot "   . go n 11 e
-          EAbsToRelEpoch  e -> showString "EAbsToRelEpoch "  . go n 11 e
-          ERelToAbsTime   e -> showString "ERelToAbsTime "   . go n 11 e
-          ERelToAbsSlot   e -> showString "ERelToAbsSlot "   . go n 11 e
-          ERelToAbsEpoch  e -> showString "ERelToAbsEpoch "  . go n 11 e
-          ERelTimeToSlot  e -> showString "ERelTimeToSlot "  . go n 11 e
-          ERelSlotToTime  e -> showString "ERelSlotToTime "  . go n 11 e
-          ERelSlotToEpoch e -> showString "ERelSlotToEpoch " . go n 11 e
-          ERelEpochToSlot e -> showString "ERelEpochToSlot " . go n 11 e
-          ESlotLength     e -> showString "ESlotLength "     . go n 11 e
-          EEpochSize      e -> showString "EEpochSize "      . go n 11 e
-          EGenesisWindow  e -> showString "EGenesisWindow "  . go n 11 e
+        EAbsToRelTime e -> showString "EAbsToRelTime " . go n 11 e
+        EAbsToRelSlot e -> showString "EAbsToRelSlot " . go n 11 e
+        EAbsToRelEpoch e -> showString "EAbsToRelEpoch " . go n 11 e
+        EAbsToRelPerasRoundNo e -> showString "EAbsToRelPerasRoundNo " . go n 11 e
+        ERelToAbsTime e -> showString "ERelToAbsTime " . go n 11 e
+        ERelToAbsSlot e -> showString "ERelToAbsSlot " . go n 11 e
+        ERelToAbsEpoch e -> showString "ERelToAbsEpoch " . go n 11 e
+        ERelToAbsPerasRoundNo e -> showString "ERelToAbsPerasRoundNo " . go n 11 e
+        ERelTimeToSlot e -> showString "ERelTimeToSlot " . go n 11 e
+        ERelSlotToTime e -> showString "ERelSlotToTime " . go n 11 e
+        ERelSlotToEpoch e -> showString "ERelSlotToEpoch " . go n 11 e
+        ERelEpochToSlot e -> showString "ERelEpochToSlot " . go n 11 e
+        ERelPerasRoundNoToSlot e -> showString "ERelPerasRoundNoToSlot " . go n 11 e
+        ERelSlotToPerasRoundNo e -> showString "ERelSlotToPerasRoundNo " . go n 11 e
+        ESlotLength e -> showString "ESlotLength " . go n 11 e
+        EEpochSize e -> showString "EEpochSize " . go n 11 e
+        EGenesisWindow e -> showString "EGenesisWindow " . go n 11 e
+        EPerasRoundLength e -> showString "EPerasRoundLength " . go n 11 e

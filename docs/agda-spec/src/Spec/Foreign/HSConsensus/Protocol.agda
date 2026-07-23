@@ -7,10 +7,9 @@ open import Foreign.Haskell.Coerce
 open import Data.Rational as ℚ using (ℚ; 0ℚ; 1ℚ; positive)
 open import Data.Rational.Ext using (InPosUnitInterval)
 open import Spec.Foreign.HSConsensus.BaseTypes
-open import Spec.Protocol DummyCrypto DummyNonces DummyEpochStructure DummyBlockStructure DummyAbstractFunctions DummyRationalExtStructure
+open import Spec.Protocol DummyCrypto DummyNonces DummyEpochStructure DummyBlockStructure DummyAbstractFunctions DummyRationalExtStructure hiding (lookupPoolDistr)
 
--- TODO: Move to its own file Spec.Foreign.HSConsensus.InterfaceLibrary.Common.BaseTypes
-open import InterfaceLibrary.Common.BaseTypes DummyCrypto using (PoolDistr)
+open import Spec.BaseTypes DummyCrypto using (PoolDistr)
 
 unquoteDecl = do
   hsTypeAlias PoolDistr
@@ -43,7 +42,7 @@ module _ (ext : ExternalFunctions) where
   open import Data.String.Base renaming (_++_ to _+ˢ_) hiding (show; length; _≤_)
   open import Spec.Foreign.HSTypes using (Show-HSMap)
   open import Spec.BlockDefinitions DummyCrypto DummyNonces DummyEpochStructure
-  open import InterfaceLibrary.Common.BaseTypes HSCrypto using (lookupPoolDistr)
+  open import Spec.Protocol HSCrypto HSNonces HSEpochStructure HSBlockStructure HSAbstractFunctions HSRationalExtStructure using (lookupPoolDistr)
 
   instance
     _ = Show-Maybe

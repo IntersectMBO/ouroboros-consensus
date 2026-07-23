@@ -14,8 +14,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
-module Ouroboros.Consensus.Shelley.Ledger.Block (
-    GetHeader (..)
+module Ouroboros.Consensus.Shelley.Ledger.Block
+  ( GetHeader (..)
   , Header (..)
   , IsShelleyBlock
   , NestedCtxt_ (..)
@@ -23,91 +23,139 @@ module Ouroboros.Consensus.Shelley.Ledger.Block (
   , ShelleyBlock (..)
   , ShelleyBlockLedgerEra
   , ShelleyHash (..)
+
     -- * Shelley Compatibility
   , ShelleyCompatible
+  , encodeShelleyBlockWorkaroundLedgerIssue5937
   , mkShelleyBlock
   , mkShelleyHeader
+  , workaroundLedgerIssue5937
+
     -- * Serialisation
   , decodeShelleyBlock
   , decodeShelleyHeader
   , encodeShelleyBlock
   , encodeShelleyHeader
   , shelleyBinaryBlockInfo
+
     -- * Conversion
   , fromShelleyPrevHash
   , toShelleyPrevHash
   ) where
 
 import qualified Cardano.Crypto.Hash as Crypto
-import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (..),
-                     EncCBOR (..), FullByteString (..), serialize)
+import Cardano.Ledger.Binary
+  ( Annotator (..)
+  , DecCBOR (..)
+  , EncCBOR (..)
+  , EncCBORGroup
+  , Encoding
+  , FullByteString (..)
+  , encodeListLen
+  , serialize
+  )
 import qualified Cardano.Ledger.Binary.Plain as Plain
-import           Cardano.Ledger.Core as SL (eraDecoder, eraProtVerLow,
-                     toEraCBOR)
-import qualified Cardano.Ledger.Core as SL (TranslationContext, hashTxSeq)
-import           Cardano.Ledger.Hashes (HASH)
+import qualified Cardano.Ledger.Block as SL (EraBlockHeader)
+import Cardano.Ledger.Core as SL
+  ( eraDecoder
+  , eraProtVerLow
+  , toEraCBOR
+  )
+import qualified Cardano.Ledger.Core as SL (BlockBody, TranslationContext, hashBlockBody)
+import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
+import Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
-import           Cardano.Protocol.Crypto (Crypto)
+import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Coerce (coerce)
-import           Data.Typeable (Typeable)
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks (..))
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.HardFork.Combinator
-                     (HasPartialConsensusConfig)
-import           Ouroboros.Consensus.HeaderValidation
-import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState,
-                     SelectView)
-import           Ouroboros.Consensus.Protocol.Praos.Common
-                     (PraosChainSelectView)
-import           Ouroboros.Consensus.Protocol.Signed (SignedHeader)
-import           Ouroboros.Consensus.Shelley.Eras
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
-                     ProtocolHeaderSupportsEnvelope (pHeaderPrevHash),
-                     ProtocolHeaderSupportsProtocol (CannotForgeError),
-                     ShelleyHash (ShelleyHash, unShelleyHash), ShelleyProtocol,
-                     ShelleyProtocolHeader, pHeaderBlock, pHeaderBodyHash,
-                     pHeaderHash, pHeaderSlot)
-import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
-import           Ouroboros.Consensus.Storage.Serialisation (DecodeDisk,
-                     EncodeDisk)
-import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
-import           Ouroboros.Consensus.Util.Condense
+import Data.Coerce (coerce)
+import Data.Maybe.Strict (isSJust)
+import Data.Typeable (Typeable, eqT)
+import GHC.Generics (Generic)
+import Lens.Micro ((^.))
+import NoThunks.Class (NoThunks (..))
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.HardFork.Combinator
+  ( HasPartialConsensusConfig
+  )
+import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Protocol.Abstract
+  ( ChainDepState
+  , TiebreakerView
+  )
+import Ouroboros.Consensus.Protocol.Praos.Common
+  ( PraosTiebreakerView
+  )
+import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
+import Ouroboros.Consensus.Shelley.Eras
+import Ouroboros.Consensus.Shelley.Ledger.Query.LegacyPParams
+import Ouroboros.Consensus.Shelley.Protocol.Abstract
+  ( ProtoCrypto
+  , ProtocolHeaderSupportsEnvelope (pHeaderPrevHash)
+  , ProtocolHeaderSupportsProtocol (CannotForgeError)
+  , ShelleyHash (ShelleyHash, unShelleyHash)
+  , ShelleyProtocol
+  , ShelleyProtocolHeader
+  , pHeaderBlock
+  , pHeaderBodyHash
+  , pHeaderHash
+  , pHeaderLeiosContainsCert
+  , pHeaderSlot
+  )
+import Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
+import Ouroboros.Consensus.Storage.Serialisation
+  ( DecodeDisk
+  , EncodeDisk
+  )
+import Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
+import Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
   ShelleyCompatible
 -------------------------------------------------------------------------------}
+
+type instance BlockProtocol (ShelleyBlock proto era) = proto
+
 class
   ( ShelleyBasedEra era
   , ShelleyProtocol proto
-    -- Header constraints
-  , Eq (ShelleyProtocolHeader proto)
+  , -- Header constraints
+    Eq (ShelleyProtocolHeader proto)
   , Show (ShelleyProtocolHeader proto)
   , NoThunks (ShelleyProtocolHeader proto)
   , EncCBOR (ShelleyProtocolHeader proto)
   , DecCBOR (Annotator (ShelleyProtocolHeader proto))
+  , EncCBORGroup (SL.BlockBody era)
+  , SL.EraBlockHeader (ShelleyProtocolHeader proto) era
+  , SL.ApplyBlock (ShelleyProtocolHeader proto) era
   , Show (CannotForgeError proto)
   , Show (SL.TranslationContext era)
-    -- Currently the chain select view is identical
+  , -- Currently the chain select view is identical
     -- Era and proto crypto must coincide
-  , SelectView proto ~ PraosChainSelectView (ProtoCrypto proto)
-    -- Need to be able to sign the protocol header
-  , SignedHeader (ShelleyProtocolHeader proto)
-    -- ChainDepState needs to be serialisable
-  , DecodeDisk (ShelleyBlock proto era) (ChainDepState proto)
+    TiebreakerView proto ~ PraosTiebreakerView (ProtoCrypto proto)
+  , -- Need to be able to sign the protocol header
+    SignedHeader (ShelleyProtocolHeader proto)
+  , -- ChainDepState needs to be serialisable
+    DecodeDisk (ShelleyBlock proto era) (ChainDepState proto)
   , EncodeDisk (ShelleyBlock proto era) (ChainDepState proto)
-    -- Hard-fork related constraints
-  , HasPartialConsensusConfig proto
+  , -- Hard-fork related constraints
+    HasPartialConsensusConfig proto
   , DecCBOR (SL.PState era)
   , Crypto (ProtoCrypto proto)
-  ) => ShelleyCompatible proto era
+  , -- Backwards compatibility
+    Plain.FromCBOR (LegacyPParams era)
+  , Plain.ToCBOR (LegacyPParams era)
+  ) =>
+  ShelleyCompatible proto era
+  where
+  -- | <https://github.com/IntersectMBO/cardano-ledger/issues/5937>
+  workaroundLedgerIssue5937 :: SL.Block (ShelleyProtocolHeader proto) era -> Encoding
+  workaroundLedgerIssue5937 = encCBOR
 
 instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) where
-  toShortRawHash   _ = Crypto.hashToBytesShort . unShelleyHash
+  toShortRawHash _ = Crypto.hashToBytesShort . unShelleyHash
   fromShortRawHash _ = ShelleyHash . hashFromBytesShortE
-  hashSize         _ = fromIntegral $ Crypto.sizeHash (Proxy @HASH)
+  hashSize _ = fromIntegral $ Crypto.hashSize (Proxy @HASH)
 
 {-------------------------------------------------------------------------------
   Shelley blocks and headers
@@ -116,93 +164,113 @@ instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) 
 -- | Shelley-based block type.
 --
 -- This block is parametrised over both the (ledger) era and the protocol.
-data ShelleyBlock proto era = ShelleyBlock {
-      shelleyBlockRaw        :: !(SL.Block (ShelleyProtocolHeader proto) era)
-    , shelleyBlockHeaderHash :: !ShelleyHash
-    }
+data ShelleyBlock proto era = ShelleyBlock
+  { shelleyBlockRaw :: !(SL.Block (ShelleyProtocolHeader proto) era)
+  , shelleyBlockHeaderHash :: !ShelleyHash
+  }
 
 deriving instance ShelleyCompatible proto era => Show (ShelleyBlock proto era)
-deriving instance ShelleyCompatible proto era => Eq   (ShelleyBlock proto era)
+deriving instance ShelleyCompatible proto era => Eq (ShelleyBlock proto era)
 
-instance (Typeable era, Typeable proto)
-  => ShowProxy (ShelleyBlock proto era) where
+instance
+  (Typeable era, Typeable proto) =>
+  ShowProxy (ShelleyBlock proto era)
 
 type instance HeaderHash (ShelleyBlock proto era) = ShelleyHash
 
 mkShelleyBlock ::
-     ShelleyCompatible proto era
-  => SL.Block (ShelleyProtocolHeader proto) era
-  -> ShelleyBlock proto era
-mkShelleyBlock raw = ShelleyBlock {
-      shelleyBlockRaw        = raw
-    , shelleyBlockHeaderHash = pHeaderHash $ SL.bheader raw
+  ShelleyCompatible proto era =>
+  SL.Block (ShelleyProtocolHeader proto) era ->
+  ShelleyBlock proto era
+mkShelleyBlock raw =
+  ShelleyBlock
+    { shelleyBlockRaw = raw
+    , shelleyBlockHeaderHash = pHeaderHash $ SL.blockHeader raw
     }
 
 class
   ( ShelleyCompatible (BlockProtocol blk) (ShelleyBlockLedgerEra blk)
   , blk ~ ShelleyBlock (BlockProtocol blk) (ShelleyBlockLedgerEra blk)
-  ) => IsShelleyBlock blk
+  ) =>
+  IsShelleyBlock blk
 
-instance ( proto ~ BlockProtocol (ShelleyBlock proto era)
-         , ShelleyCompatible proto era
-         ) => IsShelleyBlock (ShelleyBlock proto era)
+instance
+  ( proto ~ BlockProtocol (ShelleyBlock proto era)
+  , ShelleyCompatible proto era
+  ) =>
+  IsShelleyBlock (ShelleyBlock proto era)
 
 type family ShelleyBlockLedgerEra blk where
   ShelleyBlockLedgerEra (ShelleyBlock proto era) = era
 
-data instance Header (ShelleyBlock proto era) = ShelleyHeader {
-      shelleyHeaderRaw  :: !(ShelleyProtocolHeader proto)
-    , shelleyHeaderHash :: !ShelleyHash
-    }
-  deriving (Generic)
+data instance Header (ShelleyBlock proto era) = ShelleyHeader
+  { shelleyHeaderRaw :: !(ShelleyProtocolHeader proto)
+  , shelleyHeaderHash :: !ShelleyHash
+  }
+  deriving Generic
 
-deriving instance ShelleyCompatible proto era => Show     (Header (ShelleyBlock proto era))
-deriving instance ShelleyCompatible proto era => Eq       (Header (ShelleyBlock proto era))
+deriving instance ShelleyCompatible proto era => Show (Header (ShelleyBlock proto era))
+deriving instance ShelleyCompatible proto era => Eq (Header (ShelleyBlock proto era))
 deriving instance ShelleyCompatible proto era => NoThunks (Header (ShelleyBlock proto era))
 
-instance (Typeable era, Typeable proto)
-  => ShowProxy (Header (ShelleyBlock proto era)) where
+instance
+  (Typeable era, Typeable proto) =>
+  ShowProxy (Header (ShelleyBlock proto era))
 
 instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
-  getHeader (ShelleyBlock rawBlk hdrHash) = ShelleyHeader {
-      shelleyHeaderRaw  = SL.bheader rawBlk
-    , shelleyHeaderHash = hdrHash
-    }
+  getHeader (ShelleyBlock rawBlk hdrHash) =
+    ShelleyHeader
+      { shelleyHeaderRaw = SL.blockHeader rawBlk
+      , shelleyHeaderHash = hdrHash
+      }
 
   blockMatchesHeader hdr blk =
-      -- Compute the hash the body of the block (the transactions) and compare
-      -- that against the hash of the body stored in the header.
-      SL.hashTxSeq @era txs == pHeaderBodyHash shelleyHdr
-    where
-      ShelleyHeader { shelleyHeaderRaw = shelleyHdr }     = hdr
-      ShelleyBlock  { shelleyBlockRaw  = SL.Block _ txs } = blk
+    -- Compute the hash the body of the block (the transactions) and compare
+    -- that against the hash of the body stored in the header.
+    SL.hashBlockBody blockBody == pHeaderBodyHash shelleyHdr
+      -- Leios envelope: the header's cheap cert bit is set iff the body carries
+      -- a Leios certificate (i.e. it is a "CertRB"), binding the header-only
+      -- CertRB signal to the actual body contents.
+      && pHeaderLeiosContainsCert shelleyHdr == bodyHasLeiosCert
+   where
+    ShelleyHeader{shelleyHeaderRaw = shelleyHdr} = hdr
+    ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} = blk
+
+    -- The Leios certificate lives in the block body only in the Dijkstra era;
+    -- earlier eras have no such field, so no body ever carries a cert.
+    -- TODO: use blockLeiosCert from ResolveLeiosBlock type class?
+    bodyHasLeiosCert = case eqT @era @DijkstraEra of
+      Just Refl -> isSJust (blockBody ^. leiosCertBlockBodyL)
+      Nothing -> False
 
   headerIsEBB = const Nothing
 
 mkShelleyHeader ::
-     ShelleyCompatible proto era
-  => ShelleyProtocolHeader proto
-  -> Header (ShelleyBlock proto era)
-mkShelleyHeader raw = ShelleyHeader {
-      shelleyHeaderRaw  = raw
+  ShelleyCompatible proto era =>
+  ShelleyProtocolHeader proto ->
+  Header (ShelleyBlock proto era)
+mkShelleyHeader raw =
+  ShelleyHeader
+    { shelleyHeaderRaw = raw
     , shelleyHeaderHash = pHeaderHash raw
     }
 
-instance ShelleyCompatible proto era => HasHeader (ShelleyBlock proto era)  where
+instance ShelleyCompatible proto era => HasHeader (ShelleyBlock proto era) where
   getHeaderFields = getBlockHeaderFields
 
 instance ShelleyCompatible proto era => HasHeader (Header (ShelleyBlock proto era)) where
-  getHeaderFields hdr = HeaderFields {
-      headerFieldHash    = pHeaderHash . shelleyHeaderRaw $ hdr
-    , headerFieldSlot    = pHeaderSlot . shelleyHeaderRaw $ hdr
-    , headerFieldBlockNo = coerce . pHeaderBlock . shelleyHeaderRaw $ hdr
-    }
+  getHeaderFields hdr =
+    HeaderFields
+      { headerFieldHash = pHeaderHash . shelleyHeaderRaw $ hdr
+      , headerFieldSlot = pHeaderSlot . shelleyHeaderRaw $ hdr
+      , headerFieldBlockNo = coerce . pHeaderBlock . shelleyHeaderRaw $ hdr
+      }
 
 instance ShelleyCompatible proto era => GetPrevHash (ShelleyBlock proto era) where
   headerPrevHash =
-      fromShelleyPrevHash
-    . pHeaderPrevHash
-    . shelleyHeaderRaw
+    fromShelleyPrevHash
+      . pHeaderPrevHash
+      . shelleyHeaderRaw
 
 instance ShelleyCompatible proto era => StandardHash (ShelleyBlock proto era)
 
@@ -219,13 +287,13 @@ instance ShelleyCompatible proto era => HasAnnTip (ShelleyBlock proto era)
 -- | From @cardano-ledger-specs@ to @ouroboros-consensus@
 fromShelleyPrevHash ::
   SL.PrevHash -> ChainHash (ShelleyBlock proto era)
-fromShelleyPrevHash SL.GenesisHash   = GenesisHash
+fromShelleyPrevHash SL.GenesisHash = GenesisHash
 fromShelleyPrevHash (SL.BlockHash h) = BlockHash (ShelleyHash $ SL.unHashHeader h)
 
 -- | From @ouroboros-consensus@ to @cardano-ledger-specs@
 toShelleyPrevHash ::
   ChainHash (Header (ShelleyBlock proto era)) -> SL.PrevHash
-toShelleyPrevHash GenesisHash                 = SL.GenesisHash
+toShelleyPrevHash GenesisHash = SL.GenesisHash
 toShelleyPrevHash (BlockHash (ShelleyHash h)) = SL.BlockHash $ SL.HashHeader h
 
 {-------------------------------------------------------------------------------
@@ -251,7 +319,15 @@ instance HasNestedContent f (ShelleyBlock proto era)
 
 instance ShelleyCompatible proto era => EncCBOR (ShelleyBlock proto era) where
   -- Don't encode the header hash, we recompute it during deserialisation
-  encCBOR = encCBOR . shelleyBlockRaw
+  encCBOR = workaroundLedgerIssue5937 . shelleyBlockRaw
+
+-- | <https://github.com/IntersectMBO/cardano-ledger/issues/5937>
+encodeShelleyBlockWorkaroundLedgerIssue5937 ::
+  (EncCBOR h, EncCBOR (SL.BlockBody era)) =>
+  SL.Block h era ->
+  Encoding
+encodeShelleyBlockWorkaroundLedgerIssue5937 (SL.Block h body) =
+  encodeListLen 2 <> encCBOR h <> encCBOR body
 
 instance ShelleyCompatible proto era => DecCBOR (Annotator (ShelleyBlock proto era)) where
   decCBOR = fmap mkShelleyBlock <$> decCBOR
@@ -264,33 +340,49 @@ instance ShelleyCompatible proto era => DecCBOR (Annotator (Header (ShelleyBlock
   decCBOR = fmap mkShelleyHeader <$> decCBOR
 
 encodeShelleyBlock ::
-  forall proto era. ShelleyCompatible proto era
-  => ShelleyBlock proto era -> Plain.Encoding
+  forall proto era.
+  ShelleyCompatible proto era =>
+  ShelleyBlock proto era -> Plain.Encoding
 encodeShelleyBlock = toEraCBOR @era
 
 decodeShelleyBlock ::
-  forall proto era. ShelleyCompatible proto era
-  => forall s. Plain.Decoder s (Lazy.ByteString -> ShelleyBlock proto era)
-decodeShelleyBlock = eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
+  forall proto era.
+  ShelleyCompatible proto era =>
+  forall s.
+  Plain.Decoder s (Lazy.ByteString -> Either Plain.DecoderError (ShelleyBlock proto era))
+decodeShelleyBlock =
+  eraDecoder @era $
+    (. Full) . runAnnotator <$> decCBOR
 
-shelleyBinaryBlockInfo :: forall proto era. ShelleyCompatible proto era => ShelleyBlock proto era -> BinaryBlockInfo
-shelleyBinaryBlockInfo blk = BinaryBlockInfo {
-      -- Drop the 'encodeListLen' that precedes the header and the body (= tx
+shelleyBinaryBlockInfo ::
+  forall proto era. ShelleyCompatible proto era => ShelleyBlock proto era -> BinaryBlockInfo
+shelleyBinaryBlockInfo blk =
+  BinaryBlockInfo
+    { -- Drop the 'encodeListLen' that precedes the header and the body (= tx
       -- seq)
       headerOffset = 1
-      -- The Shelley decoders use annotations, so this is cheap
-    , headerSize   = fromIntegral $ Lazy.length (serialize (SL.eraProtVerLow @era) (getHeader blk))
+    , -- The Shelley decoders use annotations, so this is cheap
+      headerSize = fromIntegral $ Lazy.length (serialize (SL.eraProtVerLow @era) (getHeader blk))
     }
 
 encodeShelleyHeader ::
-  forall proto era. ShelleyCompatible proto era
-  => Header (ShelleyBlock proto era) -> Plain.Encoding
+  forall proto era.
+  ShelleyCompatible proto era =>
+  Header (ShelleyBlock proto era) -> Plain.Encoding
 encodeShelleyHeader = toEraCBOR @era
 
+-- The `error` call is introduced to work around the change of the type of `runAnnotator`. The annotated decoder has type `Lazy.ByteString -> Either DecoderError (Header (ShelleyBlock proto era))`, but we need `(Lazy.ByteString -> Header (ShelleyBlock proto era))`. We have no way to handle the inner decoder error without actually running the decoder. We also know that the current code does not allow `Header` decoding to fail in a way different than normal CBOR failures. Hence, we chose to introduce an error call here. We intend to refactor `Header` decoding in Consesnus to not have to have this error call.
 decodeShelleyHeader ::
-  forall proto era. ShelleyCompatible proto era
-  => forall s. Plain.Decoder s (Lazy.ByteString -> Header (ShelleyBlock proto era))
-decodeShelleyHeader = eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
+  forall proto era.
+  ShelleyCompatible proto era =>
+  forall s.
+  Plain.Decoder s (Lazy.ByteString -> Header (ShelleyBlock proto era))
+decodeShelleyHeader =
+  eraDecoder @era $
+    (. Full)
+      . (either (\e -> error ("Impossible, header decoder failed: " <> show e)) id .)
+      . runAnnotator
+      <$> decCBOR
 
 {-------------------------------------------------------------------------------
   Condense

@@ -40,12 +40,15 @@ module Spec.ChainHead
   (rs     : _) (open RationalExtStructure rs)  
   where
 
-open import Spec.BaseTypes crypto using (OCertCounters)
+open import Spec.BaseTypes crypto using (OCertCounters; PoolDistr)
 open import Spec.TickForecast crypto es li
 open import Spec.TickNonce crypto es nonces
 open import Spec.Protocol crypto nonces es bs af rs
+open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDelegatedStake)
 open import Ledger.PParams using (PParams; ProtVer)
 open import Ledger.Prelude
+open import Data.Rational using (ℚ; normalize)
+open import Data.Product renaming (map₁ to ×-map₁)
 
 \end{code}
 
@@ -93,6 +96,17 @@ data
 \end{code}
 \emph{Chain Head helper functions}
 \begin{code}
+extractPoolDistr : PoolDelegatedStake → PoolDistr
+extractPoolDistr pds = mapValues (×-map₁ stakeToProportion) pds
+  where
+    totalStake : Coin
+    totalStake = ∑[ c ← mapValues proj₁ pds ] c
+
+    stakeToProportion : Coin → ℚ
+    stakeToProportion c = case totalStake of λ where
+      0         → normalize 0 1
+      t@(suc n) → normalize c t
+
 chainChecks : ℕ → ℕ × ℕ × ProtVer → BHeader → Type
 chainChecks maxpv (maxBHSize , maxBBSize , protocolVersion) bh =
   m ≤ maxpv × headerSize bh ≤ maxBHSize × bodySize ≤ maxBBSize
@@ -150,7 +164,7 @@ data _⊢_⇀⦇_,CHAINHEAD⦈_ where
         ne   = (e₁ ≠ e₂)
         pp   = getPParams forecast; open PParams
         nₚₕ  = prevHashToNonce (lastAppliedHash lab)
-        pd   = getPoolDistr forecast
+        pd   = extractPoolDistr (getPoolDelegatedStake forecast)
         lab′ = just ⟦ blockNo , slot , headerHash bh ⟧ℓ
     in
     ∙ prtlSeqChecks lab bh

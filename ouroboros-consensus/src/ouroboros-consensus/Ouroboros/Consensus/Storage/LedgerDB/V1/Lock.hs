@@ -6,10 +6,10 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.Storage.LedgerDB.V1.Lock (
-    -- * LedgerDB lock
+module Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
+  ( -- * LedgerDB lock
     LedgerDBLock
-  , ReadLocked
+  , ReadLocked (..)
   , WriteLocked
   , mkLedgerDBLock
   , readLocked
@@ -17,11 +17,13 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Lock (
   , withReadLock
   , withWriteLock
   , writeLocked
+  , unsafeAcquireReadAccess
+  , unsafeReleaseReadAccess
   ) where
 
 import qualified Control.RAWLock as Lock
-import           NoThunks.Class
-import           Ouroboros.Consensus.Util.IOLike
+import NoThunks.Class
+import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   LedgerDB lock
@@ -57,7 +59,7 @@ mkLedgerDBLock :: IOLike m => m (LedgerDBLock m)
 mkLedgerDBLock = LedgerDBLock <$> Lock.new ()
 
 -- | An action in @m@ that has to hold the read lock. See @withReadLock@.
-newtype ReadLocked m a = ReadLocked { runReadLocked :: m a }
+newtype ReadLocked m a = ReadLocked {unsafeRunReadLocked :: m a}
   deriving newtype (Functor, Applicative, Monad)
 
 -- | Enforce that the action has to be run while holding the read lock.
@@ -67,10 +69,10 @@ readLocked = ReadLocked
 -- | Acquire the ledger DB read lock and hold it while performing an action
 withReadLock :: IOLike m => LedgerDBLock m -> ReadLocked m a -> m a
 withReadLock (LedgerDBLock lock) m =
-    Lock.withReadAccess lock (\() -> runReadLocked m)
+  Lock.withReadAccess lock (\() -> unsafeRunReadLocked m)
 
 -- | An action in @m@ that has to hold the write lock. See @withWriteLock@.
-newtype WriteLocked m a = WriteLocked { runWriteLocked :: m a }
+newtype WriteLocked m a = WriteLocked {runWriteLocked :: m a}
   deriving newtype (Functor, Applicative, Monad)
 
 -- | Used safely, for example, during initialization.
@@ -84,4 +86,10 @@ writeLocked = WriteLocked
 -- | Acquire the ledger DB write lock and hold it while performing an action
 withWriteLock :: IOLike m => LedgerDBLock m -> WriteLocked m a -> m a
 withWriteLock (LedgerDBLock lock) m =
-    Lock.withWriteAccess lock (\() -> (,()) <$> runWriteLocked m)
+  Lock.withWriteAccess lock (\() -> (,()) <$> runWriteLocked m)
+
+unsafeAcquireReadAccess :: IOLike m => LedgerDBLock m -> STM m ()
+unsafeAcquireReadAccess (LedgerDBLock lock) = Lock.unsafeAcquireReadAccess lock
+
+unsafeReleaseReadAccess :: IOLike m => LedgerDBLock m -> STM m ()
+unsafeReleaseReadAccess (LedgerDBLock lock) = Lock.unsafeReleaseReadAccess lock

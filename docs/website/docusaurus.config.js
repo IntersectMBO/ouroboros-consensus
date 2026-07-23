@@ -12,8 +12,8 @@ const editUrl = 'https://github.com/IntersectMBO/ouroboros-consensus/tree/main/d
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'Ouroboros Consensus',
-  tagline: 'The family of protocols powering Cardano',
+  title: 'ouroboros-consensus documentation',
+  tagline: '',
   favicon: 'img/cardano_icon.ico',
 
   // Set the production url of your site here
@@ -27,7 +27,6 @@ const config = {
   projectName: 'ouroboros-consensus',
 
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'warn',
 
   // Even if you don't use internalization, you can use this field to set useful
   // metadata like html lang. For example, if your site is Chinese, you may want
@@ -42,6 +41,9 @@ const config = {
       // We don't want to use MDX, as this requires escaping `<` and `{` symbols, which is quite inconvenient.
       // See: https://docusaurus.io/docs/markdown-features#mdx-vs-commonmark
     format: 'detect',
+    hooks: {
+        onBrokenMarkdownLinks: 'warn',
+    },
   },
 
   themes: ['@docusaurus/theme-mermaid'],
@@ -95,14 +97,24 @@ const config = {
         // `docs` regardless of what `presets.docs.path` is set to.
         items: [
           {
-            to: '/docs/about-ouroboros/',
+            to: '/docs/explanations/',
             position: 'left',
-            label: 'About Ouroboros',
+            label: 'Explanations',
           },
           {
-            to: '/docs/for-developers',
+            to: '/docs/tutorials/',
             position: 'left',
-            label: 'For Developers',
+            label: 'Tutorials',
+          },
+          {
+            to: '/docs/howtos/',
+            position: 'left',
+            label: 'HOWTOs',
+          },
+          {
+            to: '/docs/references',
+            position: 'left',
+            label: 'References',
           },
           {
             href: 'https://github.com/IntersectMBO/ouroboros-consensus',
@@ -118,12 +130,20 @@ const config = {
             title: 'Docs',
             items: [
               {
-                label: 'About Ouroboros',
-                to: '/docs/about-ouroboros/',
+                label: 'Explanations',
+                to: '/docs/explanations/',
               },
               {
-                label: 'For Developers',
-                to: '/docs/for-developers/',
+                label: 'Tutorials',
+                to: '/docs/tutorials/',
+              },
+	      {
+                label: 'HOWTOs',
+                to: '/docs/howtos/',
+	      },
+	      {
+                label: 'References',
+                to: '/docs/references/',
               }
             ],
           },
@@ -137,10 +157,6 @@ const config = {
               {
                 label: 'Stack Overflow',
                 href: 'https://cardano.stackexchange.com/questions/tagged/consensus',
-              },
-              {
-                label: 'Discord',
-                href: 'https://discord.gg/inputoutput',
               },
             ],
           },
@@ -166,6 +182,44 @@ const config = {
         additionalLanguages: ['haskell'],
       },
     }),
+
+  plugins: [
+    [
+      '@docusaurus/plugin-client-redirects',
+      {
+        redirects: [
+          {
+            from: '/docs/for-developers/utxo-hd/overview',
+            to: '/docs/references/miscellaneous/utxo-hd/',
+          },
+          {
+            from: '/docs/for-developers/utxo-hd/Overview/',
+            to: '/docs/references/miscellaneous/utxo-hd/',
+          },
+          {
+            from: '/docs/for-developers/PreflightGuide/',
+            to: '/docs/tutorials/preflight_guide/',
+          },
+          {
+            from: '/docs/for-developers/Glossary/',
+            to: '/docs/references/glossary/',
+          },
+          {
+            from: '/docs/for-developers/BootstrapPeersIER/',
+            to: '/docs/references/miscellaneous/bootstrap_peers_IER/',
+          },
+        ],
+        createRedirects(existingPath) {
+          if (existingPath.includes('/docs/references/miscellaneous/utxo-hd')) {
+            return [
+              existingPath.replace('/docs/references/miscellaneous/utxo-hd', '/docs/for-developers/utxo-hd'),
+            ];
+          }
+          return undefined;
+        },
+      },
+    ],
+  ],
 };
 
 module.exports = config;

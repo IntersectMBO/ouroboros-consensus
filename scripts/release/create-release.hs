@@ -97,10 +97,11 @@ main = withStdTerminalHandles $ sh do
 --   dependencies are located BEFORE that package in the list!
 packages :: [(FilePath, [FilePath])]
 packages =
-  [ ("ouroboros-consensus", [])
-  , ("ouroboros-consensus-diffusion", ["ouroboros-consensus"])
+  [ ("sop-extras", [])
+  , ("ouroboros-consensus", ["sop-extras"])
+  , ("ouroboros-consensus-diffusion", ["sop-extras", "ouroboros-consensus"])
   , ("ouroboros-consensus-protocol", ["ouroboros-consensus"])
-  , ("ouroboros-consensus-cardano", ["ouroboros-consensus", "ouroboros-consensus-protocol"])
+  , ("ouroboros-consensus-cardano", ["sop-extras", "ouroboros-consensus", "ouroboros-consensus-protocol"])
   ]
 
 helpDescription :: Description
@@ -187,8 +188,7 @@ findChangeSeverity frag = do
     Left markdownError -> do
       liftIO $ putStrLn $ "Failed to parse markdown file " <> frag <> ":"
       error $ show markdownError
-    Right (Headings Nothing) ->
-      error $ "Couldn't find any change severity headers in " <> frag <> ", exiting!"
+    Right (Headings Nothing) -> pure Patch
     Right (Headings (Just (Max sev))) -> pure sev
 
 collectSeverities :: Fold (FilePath, Maybe ChangeSeverity, [FilePath]) (Map FilePath (Maybe ChangeSeverity))

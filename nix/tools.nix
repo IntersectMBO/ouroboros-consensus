@@ -2,20 +2,23 @@ inputs: final: prev:
 
 let
   inherit (final) lib;
-  tool-index-state = "2025-03-18T17:41:11Z";
-  tool = name: version: other:
-    final.haskell-nix.tool final.hsPkgs.args.compiler-nix-name name ({
-      version = version;
-      index-state = tool-index-state;
-    } // other);
+  tool-index-state = "2026-07-15T21:58:35Z";
+  tool =
+    name: version: other:
+    final.haskell-nix.tool "ghc98" name (
+      {
+        version = version;
+        index-state = tool-index-state;
+      }
+      // other
+    );
 in
 {
   inherit tool-index-state;
 
-  cabal = tool "cabal" "3.12.1.0" { };
+  cabal = tool "cabal" "3.14.2.0" { };
 
   cabal-docspec = tool "cabal-docspec" "git" {
-    compiler-nix-name = "ghc98";
     src = inputs.cabal-extras;
     cabalProject = ''
       packages: peura cabal-docspec ${inputs.gentle-introduction} paths-0.2.0.0
@@ -31,19 +34,25 @@ in
     };
   };
 
-  stylish-haskell = tool "stylish-haskell" "0.14.6.0" { };
+  cabal-gild = tool "cabal-gild" "1.6.0.2" { };
 
-  cabal-gild = tool "cabal-gild" "1.5.0.1" { };
+  hlint = tool "hlint" "3.10" { };
 
-  hlint = tool "hlint" "3.8" { };
+  xrefcheck = tool "xrefcheck" "0.3.1" { compiler-nix-name = "ghc96"; };
 
-  xrefcheck = tool "xrefcheck" "0.3.1" { };
+  fourmolu = tool "fourmolu" "0.18.0.0" { };
+
+  cuddle = tool "cuddle" "1.8.1.0" { };
+
+  # remove once our nixpkgs contains https://github.com/NixOS/nixpkgs/pull/394873
+  cddlc = final.callPackage ./cddlc/package.nix { };
 
   haskellBuildUtils = prev.haskellBuildUtils.override {
     inherit (final.hsPkgs.args) compiler-nix-name;
     index-state = tool-index-state;
   };
-  set-git-rev = drv:
+  set-git-rev =
+    drv:
     let
       patched-drv = final.applyPatches {
         name = "${drv.name}-with-git-rev";
