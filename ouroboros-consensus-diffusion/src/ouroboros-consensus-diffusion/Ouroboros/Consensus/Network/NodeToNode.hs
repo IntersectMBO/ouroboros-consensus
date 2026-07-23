@@ -127,6 +127,7 @@ import LeiosVoteState
   , LeiosVoteSubscription (..)
   , subscribeVotes
   )
+import LeiosVoting (waitUntilCaughtUp)
 import qualified Network.Mux as Mux
 import Network.TypedProtocol.Codec
 import Network.TypedProtocol.Peer (Peer (Effect))
@@ -517,6 +518,12 @@ mkHandlers
                     void $ MVar.tryPutMVar getLeiosReady ()
                   MsgLeiosVotes vs -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosVotes " <> show vs
+                    -- Don't tally votes until the node has caught up
+                    -- (see 'waitUntilCaughtUp'); otherwise a remote vote
+                    -- could tip a certification while our own
+                    -- selection/ledger is still far behind the round it
+                    -- refers to.
+                    atomically $ waitUntilCaughtUp getGsmState
                     forM_ vs $ \vote -> do
                       result <- addVote vote
                       traceWith kernelTracer TraceLeiosVoteAcquired{vote}
