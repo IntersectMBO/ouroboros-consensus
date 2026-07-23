@@ -22,6 +22,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
   , eraIndexZero
   ) where
 
+import Cardano.Binary (FromCBOR, ToCBOR)
 import Codec.Serialise
 import Data.Either (isRight)
 import Data.Proxy
@@ -83,6 +84,8 @@ class
     CanStowLedgerTables (LedgerState blk)
   , HasLedgerTables LedgerState blk
   , HasLedgerTables (Ticked LedgerState) blk
+  , ToCBOR (GenTx blk)
+  , FromCBOR (GenTx blk)
   , -- Instances required to support testing
     Eq (GenTx blk)
   , Eq (Validated (GenTx blk))

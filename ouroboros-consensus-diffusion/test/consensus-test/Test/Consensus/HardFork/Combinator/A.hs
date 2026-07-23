@@ -40,7 +40,7 @@ module Test.Consensus.HardFork.Combinator.A
   , TxId (..)
   ) where
 
-import Cardano.Binary (DecoderError)
+import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
 import Cardano.Ledger.BaseTypes.NonZero
 import Cardano.Slotting.EpochInfo
 import qualified Codec.CBOR.Decoding as CBOR
@@ -378,6 +378,11 @@ data instance GenTx BlockA = TxA
   }
   deriving (Show, Eq, Generic, Serialise)
   deriving NoThunks via OnlyCheckWhnfNamed "TxA" (GenTx BlockA)
+
+instance FromCBOR (GenTx BlockA) where
+  fromCBOR = decode
+instance ToCBOR (GenTx BlockA) where
+  toCBOR = encode
 
 newtype instance Validated (GenTx BlockA) = ValidatedGenTxA {forgetValidatedGenTxA :: GenTx BlockA}
   deriving stock Show
