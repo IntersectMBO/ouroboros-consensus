@@ -2,10 +2,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | Test properties relating Peras and voting committee types.
-module Test.Consensus.Peras.Voting.Committee
-  ( tests
-  ) where
+-- | Test properties of the adapters between Peras and voting committee types.
+module Test.Consensus.Peras.Voting.Adapter (tests) where
 
 import Data.Proxy (Proxy (..))
 import qualified Ouroboros.Consensus.Committee.Class as Committee
@@ -13,7 +11,7 @@ import Ouroboros.Consensus.Committee.EveryoneVotes (EveryoneVotes)
 import Ouroboros.Consensus.Committee.WFALS (WFALS)
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
-import Ouroboros.Consensus.Peras.Voting.Committee
+import Ouroboros.Consensus.Peras.Voting.Adapter
   ( PerasCertCompatibleWithVotingCommittee (..)
   , PerasVoteCompatibleWithVotingCommittee (..)
   )
@@ -46,7 +44,7 @@ tests =
     [ adjustQuickCheckTests (* 10) $
         testProperty "Roundtrip for PerasVote via WFALS" $
           prop_roundtrip_vote
-            (Proxy @V1.PerasVote)
+            (Proxy @(V1.PerasVote ()))
             (Proxy @WFALS)
             -- WFALS supports both persistent and non-persistent of votes
             (const True)
@@ -56,7 +54,7 @@ tests =
     , adjustQuickCheckTests (* 10) $
         testProperty "Roundtrip for PerasVote via EveryoneVotes" $
           prop_roundtrip_vote
-            (Proxy @V1.PerasVote)
+            (Proxy @(V1.PerasVote ()))
             (Proxy @EveryoneVotes)
             -- EveryoneVotes only supports non-persistent votes
             perasVoteIsPersistent
@@ -67,7 +65,7 @@ tests =
     , adjustQuickCheckTests (* 10) $
         testProperty "Roundtrip for PerasCert via WFALS" $
           prop_roundtrip_cert
-            (Proxy @V1.PerasCert)
+            (Proxy @(V1.PerasCert ()))
             (Proxy @WFALS)
             -- WFALS supports certs with both persistent and non-persistent votes
             (const True)
@@ -77,7 +75,7 @@ tests =
     , adjustQuickCheckTests (* 10) $
         testProperty "Roundtrip for PerasCert via EveryoneVotes" $
           prop_roundtrip_cert
-            (Proxy @V1.PerasCert)
+            (Proxy @(V1.PerasCert ()))
             (Proxy @EveryoneVotes)
             -- EveryoneVotes only supports certs with persistent votes
             perasCertContainsOnlyPersistentVotes
