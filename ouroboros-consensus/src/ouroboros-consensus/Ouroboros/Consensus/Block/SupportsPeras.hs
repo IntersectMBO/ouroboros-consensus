@@ -13,7 +13,6 @@
 
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasRoundNo (..)
-  , onPerasRoundNo
   , PerasBoostedBlock (..)
   , PerasSeatIndex (..)
   , PerasVoteId (..)
@@ -44,8 +43,13 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , HasPerasVoteTarget (..)
   , HasPerasVoteId (..)
 
+    -- * Peras error types
+  , IsPerasError (..)
+  , PerasVotingCommitteeError
+
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Peras.Params
+  , module Ouroboros.Consensus.Peras.Types
   ) where
 
 import qualified Cardano.Binary as KeyHash
@@ -63,13 +67,8 @@ import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Peras.Params
-import Ouroboros.Consensus.Peras.Types
-  ( PerasBoostedBlock (..)
-  , PerasRoundNo (..)
-  , PerasSeatIndex (..)
-  , PerasVoteTarget (..)
-  , onPerasRoundNo
-  )
+import Ouroboros.Consensus.Peras.Types hiding (PerasVoteId (..))
+import Ouroboros.Consensus.Peras.Voting.Adapter (PerasConversionError)
 import Ouroboros.Consensus.Util
 import Quiet (Quiet (..))
 
@@ -525,3 +524,14 @@ instance
   HasPerasVoteId (WithArrivalTime vote) blk
   where
   getPerasVoteId = getPerasVoteId . forgetArrivalTime
+
+--- * Peras error types
+
+-- NOTE: this will be replaced by an associated type in 'BlockSupportsPeras'.
+data PerasVotingCommitteeError blk
+
+-- | Error types that support injecting certain types of Peras errors
+class IsPerasError err blk | err -> blk where
+  injectVotingCommitteeError :: PerasVotingCommitteeError blk -> err
+  injectConversionError :: PerasConversionError -> err
+  injectQuorumNotReachedError :: VoteWeight -> err
