@@ -488,9 +488,14 @@ initNodeKernel
               MkTraceLeiosKernel $
                 "leiosFetchLogic: offerings "
                   <> take 1000 (Leios.prettyOfferings offerings)
+            currentSlot <- atomically (getCurrentSlot btime)
+            let mbCurrentSlot = case currentSlot of
+                  CurrentSlot s -> Just s
+                  CurrentSlotUnknown -> Nothing
             let (!outstanding', decisions) =
                   Leios.leiosFetchLogicIteration
                     Leios.demoLeiosFetchStaticEnv
+                    mbCurrentSlot
                     (Map.restrictKeys offerings (Map.keysSet stillLivePeers))
                     filteredOutstanding
             pure (outstanding', decisions)

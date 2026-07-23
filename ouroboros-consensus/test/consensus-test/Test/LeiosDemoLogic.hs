@@ -341,7 +341,9 @@ onOutstanding f sc = sc{scOutstanding = f (scOutstanding sc)}
 -- | Run the iteration and project the decisions.
 runIteration :: Ord pid => Scenario pid -> LeiosFetchDecisions pid
 runIteration sc =
-  snd $ leiosFetchLogicIteration sc.scEnv sc.scOfferings sc.scOutstanding
+  -- A known current slot selects freshest-first (i.e. youngest-first), which is
+  -- the ordering these scenarios were written against.
+  snd $ leiosFetchLogicIteration sc.scEnv (Just minBound) sc.scOfferings sc.scOutstanding
 
 ------------------------------------------------------------
 -- Assertions

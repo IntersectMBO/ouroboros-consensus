@@ -6,6 +6,8 @@
 
 module Test.Consensus.Cardano.Serialisation (tests) where
 
+import qualified Cardano.Ledger.Binary.Plain as Plain
+import Codec.CBOR.Read (deserialiseFromBytes)
 import qualified Codec.CBOR.Write as CBOR
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Constraint
@@ -19,10 +21,12 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Network.Block (Serialised (..))
+import Paths_ouroboros_consensus (getDataFileName)
 import Test.Consensus.Byron.Generators (epochSlots)
 import qualified Test.Consensus.Cardano.Examples as Cardano.Examples
 import Test.Consensus.Cardano.Generators ()
 import Test.Tasty
+import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 import Test.Tasty.QuickCheck (Property, testProperty, (===))
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Serialisation.Roundtrip
@@ -55,6 +59,7 @@ tests =
         -- )
         Nothing
     , testProperty "BinaryBlockInfo sanity check" prop_CardanoBinaryBlockInfo
+    , leiosForkRoundtrip
     ]
  where
   -- See https://github.com/IntersectMBO/cardano-ledger/issues/3800
@@ -108,3 +113,30 @@ prop_CardanoBinaryBlockInfo blk =
   encodedNestedHeader :: Lazy.ByteString
   encodedNestedHeader = case encodeDepPair testCodecCfg (unnest (getHeader blk)) of
     GenDepPair _ (Serialised bytes) -> bytes
+
+{-------------------------------------------------------------------------------
+  Leios testnet-fork regression: decode then encode must be byte-exact
+-------------------------------------------------------------------------------}
+
+-- | A real Dijkstra block from the Leios testnet fork, whose header commits to
+-- a transaction sequence encoded as a definite-length CBOR array. Decoding it
+-- and re-encoding it via 'encodeDisk' must reproduce the exact bytes: the
+-- generic block-body encoder re-frames the sequence to indefinite length,
+-- dropping one byte and so breaking the header's body hash.
+leiosForkRoundtrip :: TestTree
+leiosForkRoundtrip =
+  testCase "Leios testnet-fork Dijkstra block round-trips byte-exactly" $ do
+    path <-
+      getDataFileName
+        "ouroboros-consensus-cardano/test/cardano-test/leios-fork/block-67555-70c34f39-original.cbor"
+    bytes <- Lazy.readFile path
+    case deserialiseFromBytes (decodeDisk testCodecCfg) bytes of
+      Left failure ->
+        assertFailure ("CBOR decode failed: " <> show failure)
+      Right (leftover, mkBlk)
+        | not (Lazy.null leftover) ->
+            assertFailure ("left-over bytes: " <> show (Lazy.length leftover))
+        | otherwise ->
+            case mkBlk bytes :: Either Plain.DecoderError (CardanoBlock StandardCrypto) of
+              Left err -> assertFailure ("block annotator failed: " <> show err)
+              Right blk -> CBOR.toLazyByteString (encodeDisk testCodecCfg blk) @?= bytes

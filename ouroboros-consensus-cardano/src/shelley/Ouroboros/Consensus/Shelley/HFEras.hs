@@ -35,6 +35,8 @@ import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger.Block
   ( ShelleyBlock
   , ShelleyCompatible
+  , encodeShelleyBlockWorkaroundLedgerIssue5937
+  , workaroundLedgerIssue5937
   )
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
@@ -84,6 +86,8 @@ instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) BabbageEra
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) ConwayEra
 
 instance Praos.PraosCrypto c => ShelleyCompatible (Praos c) DijkstraEra
+  where
+    workaroundLedgerIssue5937 = encodeShelleyBlockWorkaroundLedgerIssue5937
 
 instance Crypto c => DijkstraEraBlockHeader (Header c) DijkstraEra where
   prevNonceBlockHeaderL = error "Not implemented. Peras placeholder"
