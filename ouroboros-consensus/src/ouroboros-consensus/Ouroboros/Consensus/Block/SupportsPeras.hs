@@ -54,14 +54,11 @@ import Cardano.Ledger.Hashes (KeyHash, KeyRole (..))
 import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
-import Control.DeepSeq (NFData)
-import Data.Coerce (coerce)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map as Map
 import Data.Map.Strict (Map)
 import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
-import Data.Word (Word16, Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
@@ -72,36 +69,24 @@ import Ouroboros.Consensus.Block.RealPoint
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Peras.Params
+import Ouroboros.Consensus.Peras.Types
+  ( PerasRoundNo (..)
+  , PerasSeatIndex (..)
+  , PerasVoteTarget (..)
+  , onPerasRoundNo
+  )
 import Ouroboros.Consensus.Util
-import Ouroboros.Consensus.Util.Condense
 import Quiet (Quiet (..))
 
 {-------------------------------------------------------------------------------
 -- * Peras types
 -------------------------------------------------------------------------------}
 
--- ** Round numbers
-
-newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
-  deriving Show via Quiet PerasRoundNo
-  deriving stock Generic
-  deriving newtype (Enum, Eq, Ord, Num, Bounded, NoThunks, Serialise, NFData, ToCBOR, FromCBOR)
-
-instance Condense PerasRoundNo where
-  condense = show . unPerasRoundNo
-
-instance ShowProxy PerasRoundNo where
-  showProxy _ = "PerasRoundNo"
-
--- | Lift a binary operation on 'Word64' to 'PerasRoundNo'
-onPerasRoundNo ::
-  (Word64 -> Word64 -> Word64) ->
-  (PerasRoundNo -> PerasRoundNo -> PerasRoundNo)
-onPerasRoundNo = coerce
-
 -- ** Boosted blocks
 
 -- | The slot number and 32-byte hash of the block being voted for
+--
+-- NOTE: to be removed in favor of the one in 'Ouroboros.Consensus.Peras.Types'
 newtype PerasBoostedBlock
   = PerasBoostedBlock
   { unPerasBoostedBlock :: Bytes32RealPoint
@@ -114,18 +99,9 @@ instance FromCBOR PerasBoostedBlock where
 instance ToCBOR PerasBoostedBlock where
   toCBOR = encodeBytes32RealPoint . unPerasBoostedBlock
 
--- ** Seat indices
-
--- | Seat index in the voting committee used for Peras
-newtype PerasSeatIndex
-  = PerasSeatIndex
-  { unPerasSeatIndex :: Word16
-  }
-  deriving stock (Eq, Ord, Show)
-  deriving newtype (FromCBOR, ToCBOR, Enum, Bounded)
-
 -- ** Stake pool distributions
 
+-- NOTE: to be removed in favor of the one in 'Ouroboros.Consensus.Peras.Types'
 newtype PerasVoterId = PerasVoterId
   { unPerasVoterId :: KeyHash StakePool
   }
@@ -178,13 +154,7 @@ newtype PerasVoteStakeDistr = PerasVoteStakeDistr
   deriving newtype NoThunks
   deriving stock (Show, Eq, Generic)
 
-data PerasVoteTarget blk = PerasVoteTarget
-  { pvtRoundNo :: !PerasRoundNo
-  , pvtBlock :: !(Point blk)
-  }
-  deriving stock (Show, Eq, Ord, Generic)
-  deriving anyclass NoThunks
-
+-- NOTE: to be removed in favor of the one in 'Ouroboros.Consensus.Peras.Types'
 data PerasVoteId blk = PerasVoteId
   { pviRoundNo :: !PerasRoundNo
   , pviVoterId :: !PerasVoterId
