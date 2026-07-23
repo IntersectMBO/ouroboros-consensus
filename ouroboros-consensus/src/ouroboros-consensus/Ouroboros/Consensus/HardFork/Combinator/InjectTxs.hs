@@ -15,7 +15,7 @@ module Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import Cardano.Binary (fromCBOR, toCBOR)
 import Codec.CBOR.Read
 import Codec.CBOR.Write
-import Data.Bifunctor (bimap, second)
+import Data.Bifunctor (second)
 import Data.ByteString.Lazy
 import Data.Functor.Product
 import qualified Data.List as L
@@ -35,7 +35,10 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.TypeFamilyWrappers
 
--- | How a re-matched transaction must be applied at the ledger tip era.
+-- | How the re-matched transactions must be applied at the ledger tip era.
+--
+-- Either we translate all and need to use 'ApplyTxs' or we don't translate and
+-- we can use 'ReapplyTxs'.
 data TxsToApply a b blk
   = -- | The transaction is already in the tip era; its validation evidence
     -- still holds, so it can be reapplied cheaply.
@@ -64,7 +67,7 @@ data TxsToApply a b blk
 --     is reported back as a 'MismatchEraInfo';
 --
 --   * a transaction from a /later/ era than the tip (the ledger tip retracted)
---     is reported back as a 'MismatchEraInfo'.
+--     is downgraded to the era of the tip.
 --
 -- Reports are built with 'Match.matchNS' from the transaction's original era and
 -- the ledger tip era, which is why each transaction carries its original era

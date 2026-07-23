@@ -214,14 +214,13 @@ instance
           , [(Validated (GenTx blk), InputTxDiffs (HardForkBlock xs) wtd, extra)]
           , TickedLedgerState blk ValuesMK
           )
-        foldApplyTxs =
-          Foldable.foldl'
-            ( \(accE, accV, st') (a, d, e) ->
-                case runExcept (applyTx (unwrapLedgerConfig cfg) DoNotIntervene slot a st') of
-                  Left err -> (Invalidated a err : accE, accV, st')
-                  Right (st'', validated) -> (accE, (validated, d, e) : accV, applyDiffs st' st'')
-            )
-            ([], [], st)
+        foldApplyTxs xs =
+          let step (accE, accV, accSt) (a, d, e) =
+                case runExcept (applyTx (unwrapLedgerConfig cfg) DoNotIntervene slot a accSt) of
+                  Left err -> (Invalidated a err : accE, accV, accSt)
+                  Right (accSt', validated) -> (accE, (validated, d, e) : accV, applyDiffs accSt accSt')
+              (invalids, valids, finalSt) = Foldable.foldl' step ([], [], st) xs
+           in (reverse invalids, reverse valids, finalSt)
 
   txForgetValidated =
     HardForkGenTx
