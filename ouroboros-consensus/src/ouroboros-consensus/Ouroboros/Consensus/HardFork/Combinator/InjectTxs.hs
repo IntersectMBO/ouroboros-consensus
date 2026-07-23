@@ -81,6 +81,8 @@ rematchValidatedTxs ::
   ( [(Validated (GenTx (HardForkBlock xs)), MismatchEraInfo xs)]
   , State.HardForkState (Product f (TxsToApply a b)) xs
   )
+rematchValidatedTxs _ hfs [] =
+  ([], hmap (\x -> Pair x (ReapplyTxs [])) hfs)
 rematchValidatedTxs projectValidatedTx (State.HardForkState tele) vtxs =
   second State.HardForkState $ go Dict.hdicts tele vtxs'
  where
