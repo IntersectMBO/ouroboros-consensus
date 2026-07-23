@@ -16,7 +16,7 @@ import Cardano.Binary (fromCBOR, toCBOR)
 import Codec.CBOR.Read
 import Codec.CBOR.Write
 import Data.Bifunctor (second)
-import Data.ByteString.Lazy
+import Data.ByteString.Lazy as BS
 import Data.Functor.Product
 import qualified Data.List as L
 import qualified Data.SOP as LazySOP
@@ -163,7 +163,9 @@ rematchValidatedTxs projectValidatedTx (State.HardForkState tele) vtxs =
     go' (rej, surv) ((Left bs, txEraNS, orig, a, b) : txs) =
       case deserialiseFromBytes fromCBOR bs of
         Left _ -> go' ((orig, reject txEraNS) : rej, surv) txs
-        Right (_, t) -> go' (rej, (Right t, a, b) : surv) txs
+        Right (rest, t)
+          | BS.null rest -> go' (rej, (Right t, a, b) : surv) txs
+          | otherwise -> go' ((orig, reject txEraNS) : rej, surv) txs
     -- A transaction already in the tip era: kept as-is.
     go' (rej, surv) ((Right (Z v), _, _, a, b) : txs) =
       go' (rej, (Left v, a, b) : surv) txs
@@ -174,7 +176,9 @@ rematchValidatedTxs projectValidatedTx (State.HardForkState tele) vtxs =
               hcmap proxySingle (K . toLazyByteString . toCBOR . txForgetValidated . unwrapValidatedGenTx) tx
        in case deserialiseFromBytes fromCBOR bs of
             Left _ -> go' ((orig, reject txEraNS) : rej, surv) txs
-            Right (_, t) -> go' (rej, (Right t, a, b) : surv) txs
+            Right (rest, t)
+              | BS.null rest -> go' (rej, (Right t, a, b) : surv) txs
+              | otherwise -> go' ((orig, reject txEraNS) : rej, surv) txs
 
     -- Collapse the ordered, tagged survivors into a single 'TxsToApply'. The
     -- fold preserves order; a mix of tags would violate the single-era invariant.
@@ -221,13 +225,13 @@ matchTx tx (State.HardForkState tele) =
     Left mm ->
       case State.sequenceHardForkState $ State.HardForkState $ hcmap proxySingle de tele of
         -- Tx failed to deserialise in the target era
-        Left _ ->
+        Nothing ->
           Left
             . MismatchEraInfo
             . Match.bihcmap proxySingle singleEraInfo (LedgerEraInfo . singleEraInfo)
             $ mm
         -- Tx deserialised in the target era
-        Right n -> Right n
+        Just n -> Right n
  where
   flipCurrAndProd :: Product GenTx (State.Current f) a -> State.Current (Product f GenTx) a
   flipCurrAndProd (Pair a (State.Current b c)) = State.Current b (Pair c a)
@@ -235,7 +239,9 @@ matchTx tx (State.HardForkState tele) =
   ser = hcollapse $ hcmap proxySingle (K . toLazyByteString . toCBOR) tx
   de ::
     SingleEraBlock blk =>
-    State.Current f blk -> State.Current (Either DeserialiseFailure :.: Product f GenTx) blk
+    State.Current f blk -> State.Current (Maybe :.: Product f GenTx) blk
   de (State.Current s st) = case deserialiseFromBytes fromCBOR ser of
-    Left err -> State.Current s (Comp $ Left $ err)
-    Right (_, v) -> State.Current s (Comp $ Right $ Pair st v)
+    Left _ -> State.Current s (Comp Nothing)
+    Right (rest, v)
+      | BS.null rest -> State.Current s (Comp . Just . Pair st $ v)
+      | otherwise -> State.Current s (Comp Nothing)
