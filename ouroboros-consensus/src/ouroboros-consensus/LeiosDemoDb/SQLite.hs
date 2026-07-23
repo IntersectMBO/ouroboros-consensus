@@ -275,13 +275,13 @@ sqlInsertEbBody ::
   (LeiosEbNotification -> IO ()) ->
   LeiosPoint ->
   LeiosEb ->
-  IO ()
-sqlInsertEbBody tracer Conn{connDb = db, connStmts = Stmts{stInsertEbTxsRow, stInitMissingCount}} notify point eb = do
+  IO CompletedEbs
+sqlInsertEbBody tracer Conn{connDb = db, connStmts = Stmts{stInsertEbTxsRow, stInitMissingCount, stFindCompleteEbs, stMarkNotifiedEbs}} notify point eb = do
   let items = leiosEbBodyItems eb
       ebBytesSize = leiosEbBytesSize eb
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
-  dbWithBEGIN db $ do
+  completed <- dbWithBEGIN db $ do
     forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
       dbBindBlob stInsertEbTxsRow 1 point.pointEbHash.ebHashBytes
       dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
@@ -298,7 +298,24 @@ sqlInsertEbBody tracer Conn{connDb = db, connStmts = Stmts{stInsertEbTxsRow, stI
       dbBindBlob stInitMissingCount 2 point.pointEbHash.ebHashBytes
       dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo point.pointSlotNo)
       dbStep1 stInitMissingCount
+    -- If every referenced tx is already present, 'stInitMissingCount' just
+    -- set missingTxCount to 0 for this EB. No subsequent 'sqlInsertTxs'
+    -- will fire for this point, so drain the pending-completion set here
+    -- (mirrors what 'sqlInsertTxs' does after 'stDecrMissingCount').
+    completedNow <- useStmt stFindCompleteEbs $ do
+      let loop acc =
+            dbStep stFindCompleteEbs >>= \case
+              DB.Done -> pure (reverse acc)
+              DB.Row -> do
+                ebHash <- MkEbHash <$> DB.columnBlob stFindCompleteEbs 0
+                slot <- SlotNo . fromIntegral <$> DB.columnInt64 stFindCompleteEbs 1
+                loop (MkLeiosPoint slot ebHash : acc)
+      loop []
+    useStmt stMarkNotifiedEbs $ dbStep1 stMarkNotifiedEbs
+    pure completedNow
   notify $ AcquiredEb point ebBytesSize
+  forM_ completed $ \p -> notify (AcquiredEbTxs p)
+  pure completed
 
 sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->

@@ -102,10 +102,18 @@ data LeiosDbConnection m = LeiosDbConnection
   -- ^ Read the EB "body": the ordered list of tx-hash + tx-byte-size
   -- pairs that constitute this EB. No tx bytes are fetched; contrast
   -- with 'leiosDbLookupEbClosure' which joins with the 'txs' table.
-  , leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m ()
+  , leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m CompletedEbs
   -- ^ Persist an EB body. The point MUST already have been inserted
   -- via 'leiosDbInsertEbPoint' (announcement path). Yields an
   -- 'AcquiredEb' notification.
+  --
+  -- Returns any EBs whose closure just became complete because their body
+  -- landed after all their txs were already present in the DB (typical
+  -- when mempool-relayed txs beat the EB body). Those EBs also get an
+  -- 'AcquiredEbTxs' notification. Callers that need the trace-level
+  -- signal ('TraceLeiosBlockTxsAcquired') should emit it from this
+  -- result — for the common case where the body arrives first, the
+  -- returned list is empty.
   , leiosDbInsertTxs :: HasCallStack => [(TxHash, ByteString)] -> m CompletedEbs
   -- ^ Insert transactions into the global 'txs' table (INSERT OR IGNORE).
   -- After inserting, checks which EBs referencing these txs are now complete
