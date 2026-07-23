@@ -56,8 +56,8 @@ import Control.Monad.IOSim (Time, runSimOrThrow)
 import qualified Control.Tracer as Tracer
 import Data.Foldable (toList)
 import Data.Function ((&))
-import Data.List (isInfixOf, sortOn)
 import Data.Functor.Identity (runIdentity)
+import Data.List (isInfixOf, sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing, mapMaybe)
@@ -403,7 +403,8 @@ prop_leios seed =
         -- the protocol's own diffusion assumption.
         length forgedPointsToDiffuse === length acquiredPointsToDiffuse
           & counterexample "endorser blocks not fully diffused"
-          & counterexample (missingEbTimelines testOutput.allTracesWithTime forgedPointsToDiffuse acquiredPointsToDiffuse)
+          & counterexample
+            (missingEbTimelines testOutput.allTracesWithTime forgedPointsToDiffuse acquiredPointsToDiffuse)
           & prettyCounterexampleList "acquired leios EBs (diffusion required)" 120 acquiredPointsToDiffuse
           & prettyCounterexampleList "forged leios EBs (diffusion required)" 120 forgedPointsToDiffuse
           & prettyCounterexampleList "acquired leios EBs (all)" 120 acquiredPoints
