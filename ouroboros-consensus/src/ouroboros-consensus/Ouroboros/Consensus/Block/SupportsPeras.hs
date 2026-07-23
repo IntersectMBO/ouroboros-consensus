@@ -48,7 +48,6 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , module Ouroboros.Consensus.Peras.Params
   ) where
 
-import Cardano.Binary (FromCBOR, ToCBOR)
 import qualified Cardano.Binary as KeyHash
 import Cardano.Ledger.Hashes (KeyHash, KeyRole (..))
 import Codec.Serialise (Serialise (..))
@@ -62,15 +61,11 @@ import Data.Proxy (Proxy (..))
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
-import Ouroboros.Consensus.Block.RealPoint
-  ( Bytes32RealPoint
-  , decodeBytes32RealPoint
-  , encodeBytes32RealPoint
-  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Types
-  ( PerasRoundNo (..)
+  ( PerasBoostedBlock (..)
+  , PerasRoundNo (..)
   , PerasSeatIndex (..)
   , PerasVoteTarget (..)
   , onPerasRoundNo
@@ -81,23 +76,6 @@ import Quiet (Quiet (..))
 {-------------------------------------------------------------------------------
 -- * Peras types
 -------------------------------------------------------------------------------}
-
--- ** Boosted blocks
-
--- | The slot number and 32-byte hash of the block being voted for
---
--- NOTE: to be removed in favor of the one in 'Ouroboros.Consensus.Peras.Types'
-newtype PerasBoostedBlock
-  = PerasBoostedBlock
-  { unPerasBoostedBlock :: Bytes32RealPoint
-  }
-  deriving stock (Eq, Show)
-
-instance FromCBOR PerasBoostedBlock where
-  fromCBOR = PerasBoostedBlock <$> decodeBytes32RealPoint
-
-instance ToCBOR PerasBoostedBlock where
-  toCBOR = encodeBytes32RealPoint . unPerasBoostedBlock
 
 -- ** Stake pool distributions
 
