@@ -1,7 +1,7 @@
 # Cardano Mempool — Linear Leios Adaptation
 
 *A design sketch for adapting the Praos mempool to Linear Leios
-(CIP-164). Single tier, no fast/slow distinction; that split is
+(CIP-164). Single tier, no priority/regular distinction; that split is
 a further extension described in `MempoolLeiosPricing.lagda.md`.*
 
 **This is one of three sibling documents:**
@@ -10,9 +10,9 @@ a further extension described in `MempoolLeiosPricing.lagda.md`.*
 2. **`MempoolLeios.lagda.md`** *(this file)* — proposed Linear Leios
    adaptation, still a single tier, aligned with CIP-164.
 3. **`MempoolLeiosPricing.lagda.md`** — tiered-pricing extension layered
-   on top of this document. Adds fast/slow tiers.
+   on top of this document. Adds priority/regular tiers.
 
-**Last updated:** 2026-06-09
+**Last updated:** 2026-07-24
 **Primary reference:** CIP-164 Ouroboros Linear Leios,
 <https://github.com/cardano-foundation/CIPs/tree/master/CIP-0164>
 **Secondary reference:** Linear Leios simulation README,
@@ -51,9 +51,10 @@ Consequences for the mempool:
   (either self-produced and awaiting certification, or a peer's EB it
   is optimistic about), it maintains a prospective ledger `ebLedger`
   that equals `ledger + heldEB.txs`. Mempool transactions are
-  validated on top of `ebLedger` when it exists — so the mempool is
-  ready to move the tip forward at zero cost if the held EB ends up
-  being certified into a later RB (Scenario B in §4).
+  validated on top of `ebLedger` when it exists — so if the held EB
+  ends up being certified into a later RB, the mempool moves the tip
+  forward at O(1) cost mid-epoch (a tick of the working state) and
+  with a cheap reapply otherwise (Scenario B in §4).
 - **New events:** `addEB` (peer announces an EB), `seeRBBody` (RB
   body with plain transactions lands on-chain), `seeRBCert` (RB body
   with an EB certificate lands on-chain), `discardEB` (explicit drop
@@ -66,7 +67,7 @@ Consequences for the mempool:
 - **New optional cache:** a reuse-optimization set `S = seenEBs` of
   transactions already seen in some EB. Purely a work-avoidance
   cache; not required for correctness.
-- **No two-tier / no fast classification.** All mempool
+- **No two-tier / no priority classification.** All mempool
   transactions are treated identically. The CIP's implicit preference
   is "RBs first, EBs only for overflow" — modeled here as a forge-time
   partition, not as a mempool-time split. That's what
@@ -86,7 +87,7 @@ final post-tx working state:
 | mempool working state | `ledger` | `updatedLedger` |
 
 The convention was chosen so the pricing extension can add
-`fastUpdatedLedger` and `slowUpdatedLedger` in the natural
+`priorityUpdatedLedger` and `regularUpdatedLedger` in the natural
 place, and so `ebLedger` shifts from `Maybe` (held or not) to a
 clearly-parallel field name.
 
@@ -281,24 +282,56 @@ Cost: O(|txs| + |ts|).
 
 The chain extends with RB `R'` at new tip `p` whose body is a
 certificate for a previously-announced EB `E`. When `R'` is adopted,
-`E`'s transactions are applied to the ledger, so `ledgerAt p = old
-ledger + E.ebTxs`. Two sub-cases:
+the ledger is first **ticked** to `R'`'s slot (block-level updates:
+slot counter, nonce evolution, reward-pulser progress, and — across
+an epoch boundary — protocol-parameter updates, rewards, pool
+retirements) and then `E`'s transactions are applied **as attested
+by the certificate** (assumption §5: no re-validation of certified
+EB txs). So
 
-**Scenario B: `E` matches our `heldEB`.** By the state invariant, old
-`ebLedger.value = old ledger + heldEB.ebTxs = ledgerAt p`. The
-mempool has been pre-validating against exactly this state, so:
+```text
+ledgerAt p = tickTo p (old ledger) + E.ebTxs
+```
 
-1. `tip := p`.
-2. `ledger := old ebLedger.value` (bit-identical to `ledgerAt p`).
-3. `heldEB := nothing`, `ebLedger := nothing`.
-4. `updatedLedger := old updatedLedger` (unchanged).
-5. `txs := old txs` (unchanged; by the disjointness argument in §5,
-   no tx in `txs` overlaps with `heldEB.ebTxs`).
+Note this is *not* `old ledger + E.ebTxs`: the tick is never absent,
+because `R'` sits at least `3·L_hdr + L_vote + L_diff` slots after
+the announcing RB. Two sub-cases:
 
-Cost: O(1). No `applyTx` / `reapplyAll` calls. The spec describes
-this as "revalidation against old `ebLedger`", but every step of that
-revalidation succeeds bit-identically to the input; an implementation
-may skip it entirely.
+**Scenario B: `E` matches our `heldEB`.** Old `ebLedger.value = old
+ledger + heldEB.ebTxs`, i.e. exactly `ledgerAt p` *minus the tick*.
+The mempool has been pre-validating against the un-ticked state, so
+the question is only how cheaply the tick can be reconciled. Two
+paths:
+
+**B-tick-rename (O(1)), guarded.** If `p` is in the same epoch as the
+old tip *and* no mempool tx's validity window can have expired by
+`slot p` (`noneExpired`, implemented as a cached watermark: the
+minimum validity-upper-bound across `txs`, maintained O(1) per
+`addTx`), then by the tick-commutation lemma (§5) ticking and tx
+application commute:
+
+1. `tip := p`, `ledger := ledgerAt p` (free — the node materialized
+   it when adopting `R'`).
+2. `heldEB := nothing`, `ebLedger := nothing`.
+3. `txs := old txs` (unchanged; by the disjointness argument in §5,
+   no tx in `txs` overlaps with `heldEB.ebTxs`, and by the guard
+   none has expired).
+4. `updatedLedger := tickTo p (old updatedLedger)` — O(1) amortized
+   mid-epoch, independent of |txs|.
+
+Cost: O(1). No `applyTx` / `reapplyAll` calls.
+
+**B-reapply (fallback).** If the guard fails (epoch boundary crossed,
+or some tx may have expired), reapply:
+
+1. `tip := p`, `ledger := ledgerAt p`.
+2. `heldEB := nothing`, `ebLedger := nothing`.
+3. `txs' = reapply txs against ledgerAt p`; rebuild `updatedLedger`.
+   Drops are possible (expiry, epoch-boundary rule changes) but no
+   drop-filter over `E.ebTxs` is needed — disjointness still holds.
+
+Cost: O(|txs|) reapplication (no script re-execution). Still cheaper
+than Scenario A, which additionally filters `E.ebTxs` out of `txs`.
 
 **Scenario A: `E` does not match our `heldEB`.** Some other EB was
 certified. Our held EB is discarded (either it was never going to be
@@ -380,7 +413,8 @@ not modeled in this sketch.
 | `addEB e` (adopt) | set `heldEB`, rebuild `ebLedger` | revalidate against new base | O(\|txs\| + \|e.ebTxs\|) |
 | `discardEB` | clear | revalidate against `ledger` | O(\|txs\|) |
 | `seeRBBody ts p` | maybe discard via `stillLive` | drop referenced + revalidate | O(\|txs\| + \|ts\|) |
-| `seeRBCert e p` **(match)** | clear | **bit-identical rename** | **O(1)** |
+| `seeRBCert e p` **(match, mid-epoch, no expiry)** | clear | **tick-and-rename** | **O(1)** |
+| `seeRBCert e p` **(match, epoch boundary / expiry)** | clear | revalidate against `ledgerAt p` | O(\|txs\|) |
 | `seeRBCert e p` **(no match)** | discard | drop `e.ebTxs` + revalidate | O(\|txs\| + \|e.ebTxs\|) |
 | `syncWithLedger p` | maybe discard via `stillLive` | revalidate | O(\|txs\| + \|heldEB.ebTxs\|) |
 
@@ -430,8 +464,43 @@ in `txs` and the txs in `E.ebTxs` are disjoint by `TxId`.
   a duplicate of an EB tx because validation is against
   `updatedLedger`, which has the EB applied.
 
-The lemma is what makes Scenario B a no-cost rename: no tx in `txs`
+The lemma is what spares Scenario B the drop-filter: no tx in `txs`
 needs to be dropped when `E`'s txs land on-chain via cert.
+
+### Cert-application assumption (used by Scenario B)
+
+**Assumption.** An EB with a valid certificate is valid: when an RB
+carrying `C(E)` is adopted, the ledger applies `E.ebTxs` *as attested*
+— it does not re-run validity checks (in particular, not
+validity-interval checks against the certifying RB's slot). So
+
+```text
+ledgerAt p = tickTo p (ledgerAt oldTip) + E.ebTxs
+```
+
+with `E.ebTxs` applied reapply-style. This matches how `ebLedger`
+models the held EB (`reapplyAll`, no `applyTx`). Only the tick
+separates old `ebLedger.value` from `ledgerAt p`.
+
+### Tick-commutation lemma (used by Scenario B's O(1) path)
+
+**Claim.** If `p` lies in the same epoch as the old tip and no tx in
+`txs` has a validity-interval upper bound below `slot p`, then
+
+```text
+tickTo p (base + txs) ≡ (tickTo p base) + txs
+```
+
+**Argument.** Mid-epoch ticking writes only the slot counter, nonce
+evolution, and reward-pulser progress; the pulser reads fixed
+epoch-boundary snapshots, not live UTxO. Transaction application
+writes UTxO / deposits / cert state and reads the slot only through
+validity-interval checks, which the no-expiry hypothesis holds
+constant. The footprints are disjoint, so the two orders agree.
+**Both hypotheses are load-bearing:** across an epoch boundary
+(pparam updates, rewards, pool retirements) or past a tx's validity
+bound, commutation fails and Scenario B must reapply `txs` — the
+cert-validity assumption does not rescue the mempool's own txs.
 
 ## 6. Sketch Agda formalisation
 
@@ -515,7 +584,7 @@ postulate
   -- COULD add a fullness floor here as the pricing extension does — an `ebFloor`
   -- (≈ ½ a full RB) with the EB suppressed unless it reaches the floor in some
   -- dimension — to match the ledger's `sdChecks EB`. Left out for now.
-  -- Same role as `slowCapAt` in the pricing spec: the CIP-164 per-EB
+  -- Same role as `regularCapAt` in the pricing spec: the CIP-164 per-EB
   -- capacity (S_EB, S_EB-tx, per-EB Plutus).  Used by `forgeBlock` to
   -- bound the EB body via `splitAtCap`.
   ebCap        : TipPoint → Capacity
@@ -727,9 +796,26 @@ seeRBBody rbTxs p m =
 ----------------------------------------------------------------------
 -- 11. seeRBCert — RB with an EB certificate lands
 --
---   Scenario B (cert matches heldEB): bit-identical rename.
+--   Scenario B (cert matches heldEB): the certifying RB still
+--   ticks the ledger to its slot, so ledgerAt p = tickTo p (old
+--   ledger) + e.ebTxs (certified txs applied as attested — §5).
+--   Mid-epoch with no possible tx expiry this is an O(1)
+--   tick-and-rename; on an epoch boundary (or possible expiry)
+--   txs must be reapplied — even assuming the EB is valid.
 --   Scenario A (cert names a different EB): full revalidation.
 ----------------------------------------------------------------------
+
+postulate
+  -- Block-level update only: advance a ledger state to p's slot
+  -- (slot counter, nonce evolution, reward-pulser progress; epoch
+  -- work when crossing a boundary).  No tx application.
+  tickTo      : TipPoint → LedgerState → LedgerState
+  -- O(1) guard: does p stay inside the old tip's epoch?
+  sameEpoch   : TipPoint → TipPoint → Bool
+  -- O(1) guard: no tx in the sequence has a validity-interval
+  -- upper bound below slot p.  Implementable as a cached watermark
+  -- (minimum upper bound across the sequence, maintained per addTx).
+  noneExpired : TipPoint → TxSeq → Bool
 
 seeRBCert : EB → TipPoint → MempoolL → MempoolL
 seeRBCert e p m =
@@ -737,15 +823,32 @@ seeRBCert e p m =
         case heldEB m of λ where
           nothing  → false
           (just h) → _≟EBId_ (ebId h) (ebId e)
+      ledger′ = ledgerAt p   -- block-level updates included; free,
+                             -- materialized when the node adopted R'
   in if matches
      then
-       -- Scenario B: no ledger op needed.  By the state invariant,
-       -- old ebLedger.value ≡ ledgerAt p.  ledger, ebLedger, heldEB
-       -- reshuffle; txs / updatedLedger are unchanged.
-       mkMempoolL
-         p (fromMaybe (ledger m) (ebLedger m)) nothing nothing
-         (txs m) (updatedLedger m) (lastTicket m) (capacityAt p)
-         (seenClear (seenEBs m))
+       (if sameEpoch (tip m) p ∧ noneExpired p (txs m)
+        then
+          -- Scenario B, tick-rename path (O(1)): by tick-commutation
+          -- (§5), ledgerAt p + txs ≡ tickTo p (old updatedLedger).
+          -- txs unchanged (disjointness lemma + noneExpired guard).
+          mkMempoolL
+            p ledger′ nothing nothing
+            (txs m) (tickTo p (updatedLedger m))
+            (lastTicket m) (capacityAt p)
+            (seenClear (seenEBs m))
+        else
+          -- Scenario B, reapply path (O(|txs|)): epoch boundary
+          -- crossed or a tx may have expired — even assuming the
+          -- certified EB itself is valid, mempool txs MUST be
+          -- reapplied against the new ledger.  No drop-filter over
+          -- e.ebTxs is needed (disjointness lemma); drops from
+          -- expiry / epoch-boundary rule changes are possible.
+          let ℓ′ , txs′ = reapplyAllTk ledger′ (txs m)
+          in mkMempoolL
+               p ledger′ nothing nothing
+               txs′ ℓ′ (lastTicket m) (capacityAt p)
+               (seenClear (seenEBs m)))
      else
        -- Scenario A: e's txs are now on-chain; drop them; discard
        -- our heldEB (some other EB was certified in this RB, ours
@@ -753,7 +856,6 @@ seeRBCert e p m =
        let ids   = map txId (ebTxs e)
            kept  = filter (λ tk → if inTxIds ids (txId (tx tk))
                                    then false else true) (txs m)
-           ledger′     = ledgerAt p
            ℓ′ , txs′   = reapplyAllTk ledger′ kept
        in mkMempoolL
             p ledger′ nothing nothing
@@ -803,7 +905,7 @@ forgeBlock m =
       rbLedger , _         = reapplyAllTk (ledger m) rbTxs
       -- 4. Revalidate overflow against post-RB state; cap the whole
       --    EB body at `ebCap` (S_EB / S_EB-tx / per-EB Plutus).
-      --    Matches the pricing spec's `splitAtCap (slowCap m) validEB`.
+      --    Matches the pricing spec's `splitAtCap (regularCap m) validEB`.
       _ , ebOverflow       = reapplyAllTk rbLedger overflow0
       overflow′ , _        = splitAtCap (ebCap (tip m)) ebOverflow
       anyOverflow          = nonEmpty overflow′
@@ -825,9 +927,14 @@ forgeBlock m =
   (`shouldHold`, `stillLive`, `ebCap`), and the reuse cache
   abstract type. The model verifies structural wiring, not ledger
   correctness.
-- **Scenario B in code.** `seeRBCert` when `matches = true` does not
-  call `reapplyAll` at all — it only rebinds fields. The disjointness
-  lemma (§5) is what justifies the unchanged `txs`.
+- **Scenario B in code.** `seeRBCert` when `matches = true` takes
+  `ledger` from `ledgerAt p` in both paths — block-level updates are
+  never skipped. The O(1) path additionally requires `sameEpoch` and
+  `noneExpired`, ticks `updatedLedger` via `tickTo`, and keeps `txs`;
+  the disjointness lemma plus the tick-commutation lemma (§5) justify
+  this. The fallback path reapplies `txs` against `ledgerAt p`; the
+  cert-application assumption (§5) means no drop-filter over
+  `e.ebTxs` is needed in either path.
 - **What is not modeled.** The vote/certificate construction; the RB
   producer's decision to include an available certificate; the exact
   `stillLive` clock; reorgs / rollbacks.
@@ -848,8 +955,8 @@ forgeBlock m =
 4. **Interaction with the pricing extension.** The Leios mempool here
    has one tx sequence; the pricing extension adds a second tier.
    `MempoolLeiosPricing.lagda.md` retains `ledger` + `ebLedger` in
-   the same shape and adds `fastUpdatedLedger` and
-   `slowUpdatedLedger` where this file has `updatedLedger`.
+   the same shape and adds `priorityUpdatedLedger` and
+   `regularUpdatedLedger` where this file has `updatedLedger`.
 
 ## Changelog
 
@@ -871,3 +978,14 @@ forgeBlock m =
   unchanged by the call; txs that fail the ledger revalidation
   remain in `txs` (still valid under `baseLedger`) and become
   forgeable once `heldEB` is resolved.
+- **2026-07-24** — Fixed `seeRBCert` Scenario B to apply the
+  certifying RB's block-level updates: `ledger` now always comes from
+  `ledgerAt p` (which ticks to `R'`'s slot) rather than being renamed
+  from `ebLedger`. The O(1) path survives as a guarded
+  *tick-and-rename* (`sameEpoch` ∧ `noneExpired`, `updatedLedger`
+  ticked via `tickTo`), justified by the new cert-application
+  assumption and tick-commutation lemma in §5; on an epoch boundary
+  or possible tx expiry, `txs` are reapplied against `ledgerAt p` —
+  required even assuming the certified EB is valid. Also renamed
+  terminology throughout the sibling documents: lane → tier,
+  fast → priority, slow → regular.

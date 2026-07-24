@@ -1,7 +1,7 @@
 # Cardano Mempool — Praos-Era Overview
 
 *A working document describing the Cardano node's mempool as implemented in
-`IntersectMBO/ouroboros-consensus` today (Praos era, single-lane). Intended
+`IntersectMBO/ouroboros-consensus` today (Praos era, single-tier). Intended
 as a starting point for discussions about formalisation and proposed rule
 changes. Kept up to date as we verify points against the source.*
 
@@ -9,10 +9,10 @@ changes. Kept up to date as we verify points against the source.*
 
 1. **`Mempool.lagda.md`** *(this file)* — the current, Praos-era mempool.
 2. **`MempoolLeios.lagda.md`** — proposed adaptation for Linear Leios
-   (CIP-164). Still a single lane; adds EB/RB awareness and the
+   (CIP-164). Still a single tier; adds EB/RB awareness and the
    vote/certificate flow. Depends on nothing new from this document.
 3. **`MempoolLeiosPricing.lagda.md`** — proposed tiered-pricing extension
-   layered on top of the Leios mempool. Adds priority/regular lanes.
+   layered on top of the Leios mempool. Adds priority/regular tiers.
    Self-contained; comments call out what changed relative to
    `MempoolLeios.lagda.md`.
 
@@ -709,9 +709,9 @@ postulate
   removeTxsEvenIfValid as pure transitions, plus snapshots. States the
   sequential-validity invariant explicitly; lists target theorems as
   postulates. Not type-checked.
-- **2026-06-09** — Split the two-lane Leios + pricing extension into
+- **2026-06-09** — Split the two-tier Leios + pricing extension into
   two new sibling documents: `MempoolLeios.lagda.md` (Linear Leios
-  adaptation, single lane, aligned with CIP-164) and
+  adaptation, single tier, aligned with CIP-164) and
   `MempoolLeiosPricing.lagda.md` (tiered-pricing extension, two
-  lanes). This document is now Praos-only. See the sibling docs for
+  tiers). This document is now Praos-only. See the sibling docs for
   §12+.

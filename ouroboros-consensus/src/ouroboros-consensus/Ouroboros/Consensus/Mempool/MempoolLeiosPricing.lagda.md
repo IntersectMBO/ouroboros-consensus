@@ -1,8 +1,8 @@
 # Cardano Mempool — Linear Leios with Tiered Pricing
 
-*A design sketch for adding tiered (fast / slow) pricing to the
-Linear Leios mempool. Two tiers: fast-tier transactions are
-destined for a Ranking Block body, slow-tier transactions for the
+*A design sketch for adding tiered (priority / regular) pricing to the
+Linear Leios mempool. Two tiers: priority-tier transactions are
+destined for a Ranking Block body, regular-tier transactions for the
 overflow Endorser Block. Self-contained; every place where behaviour
 differs from `MempoolLeios.lagda.md` is called out in a comment
 prefixed **`-- CHG:`** (change relative to Leios) or **`-- NEW:`**
@@ -16,7 +16,7 @@ prefixed **`-- CHG:`** (change relative to Leios) or **`-- NEW:`**
 3. **`MempoolLeiosPricing.lagda.md`** *(this file)* — tiered-pricing
    extension layered on top of the Leios mempool.
 
-**Last updated:** 2026-06-09
+**Last updated:** 2026-07-24
 **Primary reference:** CIP-164 Ouroboros Linear Leios,
 <https://github.com/cardano-foundation/CIPs/tree/master/CIP-0164>
 **Sibling ref:** `MempoolLeios.lagda.md` in this directory (shared
@@ -28,20 +28,20 @@ The Leios mempool holds a single sequence of transactions validated
 against `updatedLedger = (ledger + heldEB.txs) + txs`. The tiered-
 pricing mempool splits that sequence into two tiers:
 
-- **Fast tier** (`fastTxs`) — transactions that pay the higher
-  tier and are guaranteed a place in an RB body if room exists at the
+- **Priority tier** (`priorityTxs`) — transactions that pay the priority-tier fee
+  and are guaranteed a place in an RB body if room exists at the
   next forging opportunity.
-- **Slow tier** (`slowTxs`) — transactions that pay the lower
-  tier and are eligible only for the overflow EB.
+- **Regular tier** (`regularTxs`) — transactions that pay the regular-tier fee
+  and are eligible only for the overflow EB.
 
 This split is a *mempool-side* extension. **CIP-164 does not define
-any fast / slow distinction**; it only expresses an implicit
+any priority / regular distinction**; it only expresses an implicit
 preference ("EBs should only be announced if a transaction cannot be
 included in the base RB… the protocol will naturally incentivize
 usage of RBs over EBs"). This document commits to a stronger,
 explicit contract: the tier a transaction lives in determines *which
 kind of block* it can end up in, and validation is arranged so that
-the fast tier sees a ledger state that already accounts for the
+the priority tier sees a ledger state that already accounts for the
 EB the mempool currently holds.
 
 ### Structural differences vs. `MempoolLeios`
@@ -51,10 +51,10 @@ EB the mempool currently holds.
 | chain tip cache | `ledger` | `ledger` (unchanged) |
 | held EB | `heldEB : Maybe EB` | `heldEB : Maybe EB` (unchanged) |
 | tip + held EB applied | `ebLedger : Maybe LedgerState` | `ebLedger : Maybe LedgerState` (unchanged) |
-| mempool working state | `updatedLedger` | *split into two:* `fastUpdatedLedger`, `slowUpdatedLedger` |
-| tx sequence | `txs` | *split into two:* `fastTxs`, `slowTxs` |
-| capacity | `capacity` | *split into two:* `fastCap`, `slowCap` |
-| ticket counter | `lastTicket` | *split into two:* `lastFastTicket`, `lastSlowTicket` |
+| mempool working state | `updatedLedger` | *split into two:* `priorityUpdatedLedger`, `regularUpdatedLedger` |
+| tx sequence | `txs` | *split into two:* `priorityTxs`, `regularTxs` |
+| capacity | `capacity` | *split into two:* `priorityCap`, `regularCap` |
+| ticket counter | `lastTicket` | *split into two:* `lastPriorityTicket`, `lastRegularTicket` |
 | reuse cache | `seenEBs` | `seenEBs` (unchanged) |
 
 So the *ledger stack* (`ledger`, `heldEB`, `ebLedger`) is imported
@@ -65,36 +65,40 @@ architectural break.
 
 ### Behavioural differences vs. `MempoolLeios`
 
-- **Admission (`addTx`).** Now takes a `Tier` argument. Fast
-  admissions cascade: any change to `fastUpdatedLedger` triggers
-  slow-tier revalidation (see §1 for the CIP-mirror argument).
+- **Admission (`addTx`).** Now takes a `Tier` argument. Priority
+  admissions cascade: any change to `priorityUpdatedLedger` triggers
+  regular-tier revalidation (see §1 for the CIP-mirror argument).
 - **EB acceptance (`addEB`).** Same as Leios in spirit — recompute
   `ebLedger`, revalidate — but now the revalidation runs through both
   tiers in sequence.
 - **Chain events (`seeRBBody`, `seeRBCert`, `syncWithLedger`).**
   Same shape as Leios. `seeRBCert`'s **Scenario B** (cert matches
-  our held EB) is still a bit-identical rename; the two tiers'
-  working states are preserved as-is, cost O(1).
+  our held EB) is a *tick-and-rename*: `ledger` always comes from
+  `ledgerAt p` (the certifying RB's block-level updates are never
+  skipped), and mid-epoch — provided no tx in either tier can have
+  expired — both tiers' working states are preserved by an O(1)
+  `tickTo`. On an epoch boundary or possible expiry, both tiers are
+  reapplied in order (see MempoolLeios §4e/§5).
 - **Discard (`discardEB`).** Same event as Leios; cascades through
   both tiers.
-- **Block forging (`forgeBlock`).** Fast tier → RB body;
-  slow tier → overflow EB body. The split is not a forge-time
+- **Block forging (`forgeBlock`).** Priority tier → RB body;
+  regular tier → overflow EB body. The split is not a forge-time
   partition as it is in Leios; the tiers are stored separately by
   design.
 
 ## 1. Design summary
 
-**Fast tier.** Transactions submitted with the higher tier. Each
-fast tx is validated against `fastUpdatedLedger = (ledger +
-heldEB.txs) + all prior fast txs`, so it sees the cumulative
-effect of the fasts already admitted plus the EB currently held.
-`fastCap` is the total `TxMeasure` of a single Ranking Block, taken
+**Priority tier.** Transactions submitted to the priority tier (the more expensive fee class). Each
+priority tx is validated against `priorityUpdatedLedger = (ledger +
+heldEB.txs) + all prior priority txs`, so it sees the cumulative
+effect of the priority txs already admitted plus the EB currently held.
+`priorityCap` is the total `TxMeasure` of a single Ranking Block, taken
 from protocol parameters.
 
-**Slow tier.** Transactions submitted with the lower tier. Each
-slow tx is validated against `slowUpdatedLedger =
-fastUpdatedLedger + all prior slow txs` — the cumulative
-slow-tier post-state. `slowCap` is a separate EB capacity derived
+**Regular tier.** Transactions submitted to the regular tier (the less expensive fee class). Each
+regular tx is validated against `regularUpdatedLedger =
+priorityUpdatedLedger + all prior regular txs` — the cumulative
+regular-tier post-state. `regularCap` is a separate EB capacity derived
 from the CIP's per-EB caps (`S_EB`, `S_EB-tx`, per-EB Plutus limits).
 
 **Held EB.** The node keeps at most one EB (`heldEB`) — either its
@@ -106,17 +110,17 @@ otherwise `ebLedger = nothing`.
 **Application order.** Chain semantics fix a single canonical
 application order — `ledgerAt(oldTip) + certified EB (if any) + RB
 body`, and if a later RB's certificate applies our held EB, its
-transactions land before any RB body fasts from that later RB.
+transactions land before any RB body priority txs from that later RB.
 This mempool mirrors that order in its layered ledger states so that
 every stored transaction is valid against the exact state it will
 meet on-chain.
 
 ### Capacity rules
 
-- **Ranking Block / fast-tier limit.** One block's `TxMeasure`
+- **Ranking Block / priority-tier limit.** One block's `TxMeasure`
   from protocol parameters: byte size, script ExUnits mem, script
   ExUnits CPU, reference-script bytes.
-- **EB / slow-tier limit.** CIP-164's per-EB caps: `S_EB`
+- **EB / regular-tier limit.** CIP-164's per-EB caps: `S_EB`
   (structure), `S_EB-tx` (referenced txs), per-EB Plutus step and
   memory. These are distinct dimensions from the RB caps.
 
@@ -125,28 +129,28 @@ meet on-chain.
 The lottery is the standard Praos VRF slot-leader election — a single
 lottery, not one per block kind. Its winner produces:
 
-- **An RB.** Body is either `fastTxs` (a plain-tx body) or a
+- **An RB.** Body is either `priorityTxs` (a plain-tx body) or a
   certificate for a previously-announced EB. These are mutually
   exclusive (CIP-164: "when a certificate is included, no further
   transactions are allowed in the RB").
-- **An EB, optionally.** Body is drawn from `slowTxs`, plus any
-  fast-tier overflow that did not fit within `fastCap` in the
+- **An EB, optionally.** Body is drawn from `regularTxs`, plus any
+  priority-tier overflow that did not fit within `priorityCap` in the
   RB body. Announced in the RB header. Must be non-empty (CIP-164:
   "empty EBs should not be announced"). Additionally, `forgeBlock`
   suppresses EB emission under **light load** — see the subsection
   below.
 
-**Fee on a fast tx that lands in an EB.** A fast-tier transaction that
-ends up in an EB body — rather than in the RB body — has paid for fast
+**Fee on a priority tx that lands in an EB.** A priority-tier transaction that
+ends up in an EB body — rather than in the RB body — has paid for priority
 service (direct RB inclusion at its announcing slot) but did not
 receive it (EB inclusion is subject to the vote/certificate flow and
 the minimum inclusion delay). The ledger charges and refunds it on the
-tier it *actually* lands in (slow, for an EB), **not** its claimed
-(fast) tier: with `actualCoeff = slowCoeff`, if the tx named a
-`feeChangeAddr` it is charged the slow-tier fee and refunded
-`txFee − slowCoeff·minfee` to that address; if it named none, the
+tier it *actually* lands in (regular, for an EB), **not** its claimed
+(priority) tier: with `actualCoeff = regularCoeff`, if the tx named a
+`feeChangeAddr` it is charged the regular-tier fee and refunded
+`txFee − regularCoeff·minfee` to that address; if it named none, the
 excess above `minfee` is donated to the treasury instead (no refund).
-The *admission check*, by contrast, used the tx's **claimed** (fast)
+The *admission check*, by contrast, used the tx's **claimed** (priority)
 tier (`tier.tierCoeff·minfee ≤ txFee`). The mempool itself does not
 compute this; it only preserves the tier tag on each emitted tx, and
 the ledger's fee split does the actual-tier charge/refund (see
@@ -157,7 +161,7 @@ the CIP-164 vote/certificate flow: the elected voting committee
 validates it against `ledgerAt(announcingRB)`, votes are aggregated,
 and a *later* RB `R'` — at least `3·L_hdr + L_vote + L_diff` slots
 after the announcing RB — may include the certificate in its body.
-Only when `R'` is adopted do the EB's (slow-tier) transactions
+Only when `R'` is adopted do the EB's (regular-tier) transactions
 become on-chain.
 
 If the immediate next RB after the announcing RB is produced before
@@ -171,15 +175,15 @@ certification window has closed.
 tier against `ledger` (not `baseLedger`) before splitting into RB
 and EB bodies, so it is safe to call regardless of `heldEB`. The
 emitted RB body applies on-chain against `ledger`, and the reapply
-step drops any fast tx that speculatively depended on
+step drops any priority tx that speculatively depended on
 `heldEB.ebTxs`. The mempool *state* is unchanged; such txs stay in
-`fastTxs`, still valid under `baseLedger`, and become forgeable
+`priorityTxs`, still valid under `baseLedger`, and become forgeable
 once `heldEB` is resolved (either certified via Scenario B —
 after which they are valid under the new `ledger` too — or
 discarded, after which they either survive the cascade or drop out).
-The slow tier is handled symmetrically: its contents are
+The regular tier is handled symmetrically: its contents are
 reapplied against the post-RB state `ledgerAt(newRB) = ledger +
-rbTxs`. Cost: 2 × O(|fastTxs|) + O(|slowTxs|) at forge time.
+rbTxs`. Cost: 2 × O(|priorityTxs|) + O(|regularTxs|) at forge time.
 
 ### EB suppression under light load
 
@@ -194,11 +198,11 @@ seqSize ebTxs′ [d]  <  ebFloor [d]       (for every d)
 ```
 
 where `ebFloor = ½ · full RB` is the EB-fullness **floor** (see §2).
-This is a *lower* bound, distinct from `slowCap`, the CIP-164 per-EB
+This is a *lower* bound, distinct from `regularCap`, the CIP-164 per-EB
 **capacity** (`S_EB`, …) that bounds the EB body from *above* via
 `splitAtCap`. The floor is a design choice (not a CIP-164 requirement
 beyond "no empty EBs") and a candidate protocol parameter; for it to
-be reachable we need `ebFloor ≤ slowCap` in every dimension.
+be reachable we need `ebFloor ≤ regularCap` in every dimension.
 
 Rationale: EBs carry real costs (a voting round, a certification
 delay, and additional propagation load), so they only earn their keep
@@ -231,7 +235,7 @@ iff it would be rejected there. Three things are matched on both sides:
    is to require ≥ `ebFloor` in every dimension (reject/suppress if
    small in any one).
 
-(Separately, the CIP-164 per-EB *capacity* `slowCap` is not yet enforced
+(Separately, the CIP-164 per-EB *capacity* `regularCap` is not yet enforced
 by the ledger — the ledger bounds the EB only by this floor / `maxBlock`.
 Enforcing the per-EB upper bound ledger-side is a TODO.)
 
@@ -247,26 +251,26 @@ layer:
   carries a tier tag (either explicitly in the tx-submission frame
   or implicitly via a tx-body annotation such as the tier-selecting
   fee bid). The receiving node reads the tag and dispatches to
-  `addTx Fast` or `addTx Slow` accordingly. Without tier
-  awareness on the wire, a fast-tier tx received from a peer
-  could end up in the wrong tier and lose fast service; the
+  `addTx Priority` or `addTx Regular` accordingly. Without tier
+  awareness on the wire, a priority-tier tx received from a peer
+  could end up in the wrong tier and lose priority service; the
   pricing model is unenforceable end-to-end.
 
-- **Outbound: fast-first, with fallback.** The local node's
+- **Outbound: priority-first, with fallback.** The local node's
   tx-fetch policy toward each peer is: keep asking for
-  fast-tier txs, and only fall back to requesting slow-tier
-  txs when the fast request comes back empty (or when the
-  peer has no more fast txs to offer). This biases scarce
+  priority-tier txs, and only fall back to requesting regular-tier
+  txs when the priority request comes back empty (or when the
+  peer has no more priority txs to offer). This biases scarce
   network capacity toward the tier that pays for it and matches
-  the local mempool's own fast-over-slow preference in
+  the local mempool's own priority-over-regular preference in
   admission and block production. The wire format for the
   bifurcated pull is out of scope for this doc; the mempool
   merely commits to the *policy* that its outbound requests are
-  fast-first with slow-only fallback on empty.
+  priority-first with regular-only fallback on empty.
 
 Streaming to peers via `snapshotTxsAfter` (Praos §4 in
 `Mempool.lagda.md`) becomes tier-aware in the same way: a peer's
-cursor is a pair `(lastFastTicket, lastSlowTicket)`, and the peer
+cursor is a pair `(lastPriorityTicket, lastRegularTicket)`, and the peer
 chooses which tier's cursor to advance based on the pull policy
 above.
 
@@ -274,50 +278,51 @@ above.
 
 Which event revalidates which layer:
 
-| Event | `heldEB` / `ebLedger` | Fast tier | Slow tier | Cost |
+| Event | `heldEB` / `ebLedger` | Priority tier | Regular tier | Cost |
 |---|---|---|---|---|
-| `addEB` (adopt peer EB) | set, rebuild | revalidate | revalidate | O(\|fast\| + \|slow\| + \|EB\|) |
-| fast tx added | — | extend | revalidate | O(\|slow\|) |
-| fast tx removed | — | revalidate | revalidate | O(\|fast\| + \|slow\|) |
-| slow tx added | — | — | extend | O(1) |
-| slow tx removed | — | — | revalidate | O(\|slow\|) |
-| `discardEB` | clear | revalidate | revalidate | O(\|fast\| + \|slow\|) |
-| `seeRBBody ts p` | maybe discard via `stillLive` | drop referenced + revalidate | drop referenced + revalidate | O(\|fast\| + \|slow\| + \|ts\|) |
-| `seeRBCert e p` **(match)** | clear | **bit-identical rename** | **bit-identical rename** | **O(1)** |
-| `seeRBCert e p` **(no match)** | discard | drop `e.ebTxs` + revalidate | drop `e.ebTxs` + revalidate | O(\|fast\| + \|slow\| + \|e.ebTxs\|) |
-| `syncWithLedger p` | maybe discard via `stillLive` | revalidate | revalidate | O(\|fast\| + \|slow\| + \|heldEB.ebTxs\|) |
+| `addEB` (adopt peer EB) | set, rebuild | revalidate | revalidate | O(\|priority\| + \|regular\| + \|EB\|) |
+| priority tx added | — | extend | revalidate | O(\|regular\|) |
+| priority tx removed | — | revalidate | revalidate | O(\|priority\| + \|regular\|) |
+| regular tx added | — | — | extend | O(1) |
+| regular tx removed | — | — | revalidate | O(\|regular\|) |
+| `discardEB` | clear | revalidate | revalidate | O(\|priority\| + \|regular\|) |
+| `seeRBBody ts p` | maybe discard via `stillLive` | drop referenced + revalidate | drop referenced + revalidate | O(\|priority\| + \|regular\| + \|ts\|) |
+| `seeRBCert e p` **(match, mid-epoch, no expiry)** | clear | **tick-and-rename** | **tick-and-rename** | **O(1)** |
+| `seeRBCert e p` **(match, epoch boundary / expiry)** | clear | revalidate against `ledgerAt p` | revalidate | O(\|priority\| + \|regular\|) |
+| `seeRBCert e p` **(no match)** | discard | drop `e.ebTxs` + revalidate | drop `e.ebTxs` + revalidate | O(\|priority\| + \|regular\| + \|e.ebTxs\|) |
+| `syncWithLedger p` | maybe discard via `stillLive` | revalidate | revalidate | O(\|priority\| + \|regular\| + \|heldEB.ebTxs\|) |
 
-The **"fast tx added → slow revalidate"** entry is required,
+The **"priority tx added → regular revalidate"** entry is required,
 not an optimization choice. The chain semantics fix a canonical
-application order (`ebLedger + fasts + slows`) and the slow
-tier's validity invariant is "valid against `fastUpdatedLedger =
-ebLedger + fasts`". Any change to `fastUpdatedLedger` —
-including a single new fast tx — re-opens that invariant. Even
-when a new fast tx is input-disjoint from every slow tx, the
-slow tier is re-applied on top of the updated
-`fastUpdatedLedger` so the spec never depends on a case-by-case
+application order (`ebLedger + priority txs + regular txs`) and the regular
+tier's validity invariant is "valid against `priorityUpdatedLedger =
+ebLedger + priority txs`". Any change to `priorityUpdatedLedger` —
+including a single new priority tx — re-opens that invariant. Even
+when a new priority tx is input-disjoint from every regular tx, the
+regular tier is re-applied on top of the updated
+`priorityUpdatedLedger` so the spec never depends on a case-by-case
 commutativity argument over the full ledger state (governance, stake,
 parameter updates, script reference reads, etc.). An implementation
-is free to fast-path provably independent additions, but the
+is free to priority-path provably independent additions, but the
 canonical invariant is unconditional revalidation.
 
 #### Alternative: commutative admission ("option 1")
 
-A leaner rule for `addTx Fast t` would validate `t` against
-**both** `fastUpdatedLedger` and `slowUpdatedLedger`, admitting
-only if both succeed. On success, the slow tier provably remains
-valid after the state shift `fastUpdatedLedger → applyTx
-fastUpdatedLedger t`, so the O(|slows|) slow revalidation drops
-away. Admission is O(|slows|) at check time (running the tx against
+A leaner rule for `addTx Priority t` would validate `t` against
+**both** `priorityUpdatedLedger` and `regularUpdatedLedger`, admitting
+only if both succeed. On success, the regular tier provably remains
+valid after the state shift `priorityUpdatedLedger → applyTx
+priorityUpdatedLedger t`, so the O(|regularTxs|) regular revalidation drops
+away. Admission is O(|regularTxs|) at check time (running the tx against
 both bases) but the state transition itself becomes O(1).
 
 The soundness of this rule depends on **transaction commutativity**:
-`t` composed after the slow sequence must produce the same ledger
-state as the slow sequence composed after `t`. Cardano txs in
+`t` composed after the regular sequence must produce the same ledger
+state as the regular sequence composed after `t`. Cardano txs in
 general do *not* commute (they can share stake credentials, reference
 inputs, governance targets, protocol-parameter updates, script
 context reads, etc.), so option 1 requires structural constraints on
-fast txs to guarantee commutativity across every ledger dimension.
+priority txs to guarantee commutativity across every ledger dimension.
 
 The constraints and the commutativity proof itself are being worked
 out in
@@ -325,24 +330,33 @@ out in
 Until those constraints are pinned down, **this spec stays with
 option 2** (the unconditional-revalidate rule in the cascade table
 above). Once the proof lands, we may switch — the switch is local to
-`addTx Fast`: the `fast tx added` row becomes `— / extend /
-—`, the `Cost` column drops to O(|slows|) at admission and O(1) for
-the state update, and the `SlowLayerValid` invariant relies on
+`addTx Priority`: the `priority tx added` row becomes `— / extend /
+—`, the `Cost` column drops to O(|regularTxs|) at admission and O(1) for
+the state update, and the `RegularLayerValid` invariant relies on
 the commutativity theorem rather than a direct reapply.
 
-The **Scenario B row** (`seeRBCert (match)`) is a bit-identical
-rename: because the mempool has been pre-validating both tiers
-against a state that includes `heldEB.ebTxs`, and `ledgerAt(newTip)`
-equals exactly that state when the cert is for our held EB, no
-`applyTx` / `reapplyAll` calls are required. Only the field bindings
-shift (`ledger := old ebLedger.value`, `heldEB := nothing`,
-`ebLedger := nothing`, everything else unchanged).
+The **Scenario B rows** (`seeRBCert (match)`) follow MempoolLeios
+§4e. The certifying RB still applies block-level updates — it ticks
+the ledger to its slot before the certified txs are applied as
+attested (cert-application assumption, MempoolLeios §5) — so
+`ledgerAt p = tickTo p (old ledger) + E.ebTxs`, and `ledger` is
+always taken from `ledgerAt p`, never renamed from `ebLedger`.
+Mid-epoch, if no tx in *either* tier can have expired (cached
+watermark per tier), the tick-commutation lemma lets both working
+states survive as O(1) ticks: `priorityUpdatedLedger := tickTo p
+(old priorityUpdatedLedger)`, `regularUpdatedLedger := tickTo p (old
+regularUpdatedLedger)`, both tx sequences unchanged. On an epoch
+boundary or possible expiry, both tiers are reapplied in order
+(priority against `ledgerAt p`, regular against the result) — even
+assuming the certified EB is valid, the mempool's own txs must be
+re-applied there. No drop-filter over `E.ebTxs` is needed in either
+path (disjointness lemma).
 
 The **Scenario A row** (`seeRBCert (no match)`) is the **phase-1**
 behaviour: unconditional pruning of `E.ebTxs` from both tiers,
 followed by full revalidation. A future phase may explore partial
 revalidation (skip when we can prove `E.ebTxs` is input-disjoint
-from `heldEB.ebTxs`, `fastTxs`, and `slowTxs`), but the
+from `heldEB.ebTxs`, `priorityTxs`, and `regularTxs`), but the
 canonical invariant for phase 1 is full revalidation.
 
 ### CIP-164 constraints (re-checked here)
@@ -419,7 +433,7 @@ fromMaybe _ (just x) = x
 ----------------------------------------------------------------------
 -- 1. Postulated primitives.
 --    CHG: split of the single `capacityAt` into two tier-specific
---    caps (`fastCapAt` for RB body limit, `slowCapAt` for EB body
+--    caps (`priorityCapAt` for RB body limit, `regularCapAt` for EB body
 --    limit).  All other primitives are as in MempoolLeios.
 ----------------------------------------------------------------------
 
@@ -443,17 +457,17 @@ postulate
   measure      : Tx → Capacity
   fitsWith     : Capacity → Capacity → Capacity → Bool
   -- CHG: replaces MempoolLeios's single `capacityAt` and `ebCap`.
-  fastCapAt    : TipPoint → Capacity
-  -- slowCapAt is the EB *capacity* (upper bound): the CIP-164 per-EB caps
+  priorityCapAt    : TipPoint → Capacity
+  -- regularCapAt is the EB *capacity* (upper bound): the CIP-164 per-EB caps
   -- (S_EB, S_EB-tx, per-EB Plutus). Used to cap the EB body via splitAtCap.
-  slowCapAt     : TipPoint → Capacity
+  regularCapAt     : TipPoint → Capacity
   -- NEW: ebFloorAt is the EB-fullness *floor* (lower bound) — a SEPARATE
-  -- quantity from slowCap. An EB must reach it in some dimension or it is
+  -- quantity from regularCap. An EB must reach it in some dimension or it is
   -- suppressed (here) / rejected (ledger). Intended value: ½ a full RB
-  -- (½ · fastCapAt) per dimension. This floor is a design choice — NOT a
+  -- (½ · priorityCapAt) per dimension. This floor is a design choice — NOT a
   -- CIP-164 requirement (the CIP only forbids empty EBs) — so it is probably
   -- up for discussion, and is a candidate protocol parameter. For the floor
-  -- to be reachable we need ebFloor ≤ slowCap in every dimension.
+  -- to be reachable we need ebFloor ≤ regularCap in every dimension.
   ebFloorAt    : TipPoint → Capacity
   -- NEW: light-load predicate for EB suppression (see §1).
   -- underHalfRB size cap ≡ true iff size[d] < cap[d] for every dimension d
@@ -542,8 +556,8 @@ postulate
 ----------------------------------------------------------------------
 
 data Tier : Set where
-  Fast : Tier
-  Slow  : Tier
+  Priority : Tier
+  Regular  : Tier
 
 ----------------------------------------------------------------------
 -- 6. The mempool state
@@ -557,11 +571,11 @@ data Tier : Set where
 --      ledger                   ledger                     (same)
 --      heldEB                   heldEB                     (same)
 --      ebLedger                 ebLedger                   (same)
---      txs                      fastTxs, slowTxs    (split)
---      updatedLedger            fastUpdatedLedger,
---                               slowUpdatedLedger        (split)
---      lastTicket               lastFastTicket, lastSlowTicket
---      capacity                 fastCap, slowCap
+--      txs                      priorityTxs, regularTxs    (split)
+--      updatedLedger            priorityUpdatedLedger,
+--                               regularUpdatedLedger        (split)
+--      lastTicket               lastPriorityTicket, lastRegularTicket
+--      capacity                 priorityCap, regularCap
 --      seenEBs                  seenEBs                    (same)
 ----------------------------------------------------------------------
 
@@ -573,27 +587,27 @@ record MempoolLP : Set where
     heldEB                : Maybe EB
     ebLedger              : Maybe LedgerState  -- ledger + heldEB.ebTxs
 
-    -- NEW: fast tier, replaces Leios's `txs`.
-    fastTxs           : TxSeq
-    -- NEW: fast working state, = (fromMaybe ledger ebLedger) + fast.
+    -- NEW: priority tier, replaces Leios's `txs`.
+    priorityTxs           : TxSeq
+    -- NEW: priority working state, = (fromMaybe ledger ebLedger) + priority.
     -- Same role as Leios's `updatedLedger` — this is what a new
-    -- fast tx validates against.
-    fastUpdatedLedger : LedgerState
-    lastFastTicket        : TicketNo           -- CHG: was lastTicket
-    fastCap               : Capacity           -- CHG: was capacity (RB TxMeasure)
+    -- priority tx validates against.
+    priorityUpdatedLedger : LedgerState
+    lastPriorityTicket        : TicketNo           -- CHG: was lastTicket
+    priorityCap               : Capacity           -- CHG: was capacity (RB TxMeasure)
 
-    -- NEW: slow tier.
-    slowTxs            : TxSeq
-    -- NEW: slow working state, = fastUpdatedLedger + slows.
-    -- What a new slow tx validates against.
-    slowUpdatedLedger  : LedgerState
-    lastSlowTicket         : TicketNo
-    slowCap                : Capacity           -- EB-specific cap
+    -- NEW: regular tier.
+    regularTxs            : TxSeq
+    -- NEW: regular working state, = priorityUpdatedLedger + regular txs.
+    -- What a new regular tx validates against.
+    regularUpdatedLedger  : LedgerState
+    lastRegularTicket         : TicketNo
+    regularCap                : Capacity           -- EB-specific cap
 
     seenEBs               : SeenSet
 open MempoolLP
 
--- Convenience: the base ledger for fast-tier validation.
+-- Convenience: the base ledger for priority-tier validation.
 baseLedger : MempoolLP → LedgerState
 baseLedger m = fromMaybe (ledger m) (ebLedger m)
 
@@ -618,30 +632,30 @@ postulate
                  just (fst (reapplyAll (ledger m) (ebTxs e)))
 
   -- NEW: replaces MempoolLeios's single TxsValid.
-  FastLayerValid :
+  PriorityLayerValid :
     (m : MempoolLP) →
-    fst (reapplyAllTk (baseLedger m) (fastTxs m))
-    ≡ fastUpdatedLedger m
+    fst (reapplyAllTk (baseLedger m) (priorityTxs m))
+    ≡ priorityUpdatedLedger m
 
   -- NEW: second half of the layered invariant.
-  SlowLayerValid :
+  RegularLayerValid :
     (m : MempoolLP) →
-    fst (reapplyAllTk (fastUpdatedLedger m) (slowTxs m))
-    ≡ slowUpdatedLedger m
+    fst (reapplyAllTk (priorityUpdatedLedger m) (regularTxs m))
+    ≡ regularUpdatedLedger m
 
 ----------------------------------------------------------------------
 -- 8. addTx — CHG: now takes a Tier.
 --
---    Fast tier: validated against `fastUpdatedLedger`
+--    Priority tier: validated against `priorityUpdatedLedger`
 --      (cumulative).  Any successful admission updates
---      `fastUpdatedLedger` and REVALIDATES the slow tier.
---      This is the Leios-compat invariant: the slow tier must
---      always be valid against `ebLedger + fasts`, and
---      fasts have just changed.
+--      `priorityUpdatedLedger` and REVALIDATES the regular tier.
+--      This is the Leios-compat invariant: the regular tier must
+--      always be valid against `ebLedger + priority txs`, and
+--      priority txs have just changed.
 --
---    Slow tier: validated against `slowUpdatedLedger`
---      (cumulative slow post-state); admission does not touch
---      the fast tier.
+--    Regular tier: validated against `regularUpdatedLedger`
+--      (cumulative regular post-state); admission does not touch
+--      the priority tier.
 ----------------------------------------------------------------------
 
 data AddResult : Set where
@@ -651,44 +665,44 @@ data AddResult : Set where
 
 addTx : Tier → Tx → MempoolLP → AddResult
 
-addTx Fast t m
-  with fitsWith (fastCap m) (seqSize (fastTxs m)) (measure t)
+addTx Priority t m
+  with fitsWith (priorityCap m) (seqSize (priorityTxs m)) (measure t)
 ... | false = Blocked m
-... | true  with applyTx (fastUpdatedLedger m) t
+... | true  with applyTx (priorityUpdatedLedger m) t
 ...   | nothing = Rejected m
-...   | just ℓ_fast′ =
-        let n′            = freshTicket (lastFastTicket m)
+...   | just ℓ_priority′ =
+        let n′            = freshTicket (lastPriorityTicket m)
             tk            = mkTicket t n′ (measure t)
-            -- CRUCIAL: slow tier revalidates against new
-            -- fastUpdatedLedger.  See §1 "fast tx added →
-            -- slow revalidate".
-            ℓ_slow′ , slow′ = reapplyAllTk ℓ_fast′ (slowTxs m)
+            -- CRUCIAL: regular tier revalidates against new
+            -- priorityUpdatedLedger.  See §1 "priority tx added →
+            -- regular revalidate".
+            ℓ_regular′ , regular′ = reapplyAllTk ℓ_priority′ (regularTxs m)
         in Added (mkMempoolLP
              (tip m) (ledger m) (heldEB m) (ebLedger m)
-             (fastTxs m ++ tk ∷ []) ℓ_fast′ n′ (fastCap m)
-             slow′ ℓ_slow′ (lastSlowTicket m) (slowCap m)
+             (priorityTxs m ++ tk ∷ []) ℓ_priority′ n′ (priorityCap m)
+             regular′ ℓ_regular′ (lastRegularTicket m) (regularCap m)
              (seenEBs m))
 
-addTx Slow t m
-  with fitsWith (slowCap m) (seqSize (slowTxs m)) (measure t)
+addTx Regular t m
+  with fitsWith (regularCap m) (seqSize (regularTxs m)) (measure t)
 ... | false = Blocked m
-... | true  with applyTx (slowUpdatedLedger m) t
+... | true  with applyTx (regularUpdatedLedger m) t
 ...   | nothing = Rejected m
-...   | just ℓ_slow′ =
-        let n′ = freshTicket (lastSlowTicket m)
+...   | just ℓ_regular′ =
+        let n′ = freshTicket (lastRegularTicket m)
             tk = mkTicket t n′ (measure t)
         in Added (mkMempoolLP
              (tip m) (ledger m) (heldEB m) (ebLedger m)
-             (fastTxs m) (fastUpdatedLedger m)
-             (lastFastTicket m) (fastCap m)
-             (slowTxs m ++ tk ∷ []) ℓ_slow′ n′ (slowCap m)
+             (priorityTxs m) (priorityUpdatedLedger m)
+             (lastPriorityTicket m) (priorityCap m)
+             (regularTxs m ++ tk ∷ []) ℓ_regular′ n′ (regularCap m)
              (seenEBs m))
 
 ----------------------------------------------------------------------
 -- 9. addEB — CHG: cascades through both tiers.
 --
 --    Same shape as Leios's `addEB` (rebuild ebLedger, revalidate),
---    but revalidation now flows fast-tier → slow-tier in
+--    but revalidation now flows priority-tier → regular-tier in
 --    sequence.
 ----------------------------------------------------------------------
 
@@ -699,20 +713,20 @@ addEB : EB → MempoolLP → MempoolLP
 addEB e m =
   if shouldHold m e
   then (let ebL′            = fst (reapplyAll (ledger m) (ebTxs e))
-            ℓ_fast′ , fast′ = reapplyAllTk ebL′  (fastTxs m)
-            ℓ_slow′ , slow′ = reapplyAllTk ℓ_fast′ (slowTxs m)
+            ℓ_priority′ , priority′ = reapplyAllTk ebL′  (priorityTxs m)
+            ℓ_regular′ , regular′ = reapplyAllTk ℓ_priority′ (regularTxs m)
         in mkMempoolLP
              (tip m) (ledger m) (just e) (just ebL′)
-             fast′ ℓ_fast′ (lastFastTicket m) (fastCap m)
-             slow′ ℓ_slow′ (lastSlowTicket m) (slowCap m)
+             priority′ ℓ_priority′ (lastPriorityTicket m) (priorityCap m)
+             regular′ ℓ_regular′ (lastRegularTicket m) (regularCap m)
              (seenAddEB (seenEBs m) (ebTxs e)))
   else
     mkMempoolLP
       (tip m) (ledger m) (heldEB m) (ebLedger m)
-      (fastTxs m) (fastUpdatedLedger m)
-      (lastFastTicket m) (fastCap m)
-      (slowTxs m) (slowUpdatedLedger m)
-      (lastSlowTicket m) (slowCap m)
+      (priorityTxs m) (priorityUpdatedLedger m)
+      (lastPriorityTicket m) (priorityCap m)
+      (regularTxs m) (regularUpdatedLedger m)
+      (lastRegularTicket m) (regularCap m)
       (seenAddEB (seenEBs m) (ebTxs e))
 
 ----------------------------------------------------------------------
@@ -724,12 +738,12 @@ addEB e m =
 
 discardEB : MempoolLP → MempoolLP
 discardEB m =
-  let ℓ_fast′ , fast′ = reapplyAllTk (ledger m)  (fastTxs m)
-      ℓ_slow′  , slow′  = reapplyAllTk ℓ_fast′     (slowTxs m)
+  let ℓ_priority′ , priority′ = reapplyAllTk (ledger m)  (priorityTxs m)
+      ℓ_regular′  , regular′  = reapplyAllTk ℓ_priority′     (regularTxs m)
   in mkMempoolLP
        (tip m) (ledger m) nothing nothing
-       fast′ ℓ_fast′ (lastFastTicket m) (fastCap m)
-       slow′  ℓ_slow′  (lastSlowTicket m)  (slowCap m)
+       priority′ ℓ_priority′ (lastPriorityTicket m) (priorityCap m)
+       regular′  ℓ_regular′  (lastRegularTicket m)  (regularCap m)
        (seenEBs m)
 
 ----------------------------------------------------------------------
@@ -743,8 +757,8 @@ seeRBBody : List Tx → TipPoint → MempoolLP → MempoolLP
 seeRBBody rbTxs p m =
   let ids   = map txId rbTxs
       keep  = λ tk → if inTxIds ids (txId (tx tk)) then false else true
-      fast0 = filter keep (fastTxs m)
-      slow0  = filter keep (slowTxs m)
+      priority0 = filter keep (priorityTxs m)
+      regular0  = filter keep (regularTxs m)
       ledger′ = ledgerAt p
       held′ = case heldEB m of λ where
                 nothing  → nothing
@@ -753,19 +767,37 @@ seeRBBody rbTxs p m =
                 nothing  → nothing
                 (just e) → just (fst (reapplyAll ledger′ (ebTxs e)))
       base′            = fromMaybe ledger′ ebL′
-      ℓ_fast′ , fast′  = reapplyAllTk base′   fast0
-      ℓ_slow′  , slow′   = reapplyAllTk ℓ_fast′ slow0
+      ℓ_priority′ , priority′  = reapplyAllTk base′   priority0
+      ℓ_regular′  , regular′   = reapplyAllTk ℓ_priority′ regular0
   in mkMempoolLP
        p ledger′ held′ ebL′
-       fast′ ℓ_fast′ (lastFastTicket m) (fastCapAt p)
-       slow′  ℓ_slow′  (lastSlowTicket m)  (slowCapAt  p)
+       priority′ ℓ_priority′ (lastPriorityTicket m) (priorityCapAt p)
+       regular′  ℓ_regular′  (lastRegularTicket m)  (regularCapAt  p)
        (seenClear (seenEBs m))
 
 ----------------------------------------------------------------------
--- 12. seeRBCert — CHG: as in MempoolLeios, but the Scenario B
---     rename preserves BOTH tiers at zero cost, and the Scenario A
---     path cascades revalidation through both tiers.
+-- 12. seeRBCert — CHG: as in MempoolLeios.  The certifying RB still
+--     ticks the ledger to its slot, so ledgerAt p = tickTo p (old
+--     ledger) + e.ebTxs (certified txs applied as attested,
+--     MempoolLeios §5).  Scenario B: ledger always comes from
+--     ledgerAt p; mid-epoch with no possible expiry in EITHER tier,
+--     both working states survive as O(1) ticks; on an epoch
+--     boundary (or possible expiry) both tiers must be reapplied
+--     in order — even assuming the EB is valid.  Scenario A:
+--     full revalidation through both tiers.
 ----------------------------------------------------------------------
+
+postulate
+  -- Block-level update only (slot counter, nonce, reward pulser;
+  -- epoch work when crossing a boundary).  No tx application.
+  tickTo      : TipPoint → LedgerState → LedgerState
+  -- O(1) guard: does p stay inside the old tip's epoch?
+  sameEpoch   : TipPoint → TipPoint → Bool
+  -- O(1) guard: no tx in the sequence has a validity-interval
+  -- upper bound below slot p.  Implementable as a cached watermark
+  -- (minimum upper bound across the sequence, maintained per addTx;
+  -- one watermark per tier).
+  noneExpired : TipPoint → TxSeq → Bool
 
 seeRBCert : EB → TipPoint → MempoolLP → MempoolLP
 seeRBCert e p m =
@@ -773,35 +805,53 @@ seeRBCert e p m =
         case heldEB m of λ where
           nothing  → false
           (just h) → _≟EBId_ (ebId h) (ebId e)
+      ledger′ = ledgerAt p   -- block-level updates included; free,
+                             -- materialized when the node adopted R'
   in if matches
      then
-       -- Scenario B: no reapplyAll calls.  By the state invariant,
-       -- old ebLedger.value ≡ ledgerAt p.  Both
-       -- fastUpdatedLedger and slowUpdatedLedger are still
-       -- valid working states; only the ledger-stack fields
-       -- shift.  Fast and slow txs / caps / tickets pass
-       -- through unchanged.
-       mkMempoolLP
-         p (fromMaybe (ledger m) (ebLedger m)) nothing nothing
-         (fastTxs m) (fastUpdatedLedger m)
-         (lastFastTicket m) (fastCapAt p)
-         (slowTxs m) (slowUpdatedLedger m)
-         (lastSlowTicket m) (slowCapAt p)
-         (seenClear (seenEBs m))
+       (if sameEpoch (tip m) p
+             ∧ (noneExpired p (priorityTxs m)
+             ∧  noneExpired p (regularTxs m))
+        then
+          -- Scenario B, tick-rename path (O(1)): by the
+          -- tick-commutation lemma (MempoolLeios §5) both working
+          -- states are ticked in place; both tx sequences, tickets
+          -- pass through unchanged (disjointness + noneExpired).
+          mkMempoolLP
+            p ledger′ nothing nothing
+            (priorityTxs m) (tickTo p (priorityUpdatedLedger m))
+            (lastPriorityTicket m) (priorityCapAt p)
+            (regularTxs m) (tickTo p (regularUpdatedLedger m))
+            (lastRegularTicket m) (regularCapAt p)
+            (seenClear (seenEBs m))
+        else
+          -- Scenario B, reapply path (O(|priority| + |regular|)):
+          -- epoch boundary crossed or a tx may have expired — the
+          -- mempool's own txs must be reapplied against the new
+          -- ledger, in tier order.  No drop-filter over e.ebTxs
+          -- (disjointness lemma); drops from expiry / epoch-boundary
+          -- rule changes are possible.
+          let ℓ_priority′ , priority′ = reapplyAllTk ledger′ (priorityTxs m)
+              ℓ_regular′  , regular′  = reapplyAllTk ℓ_priority′ (regularTxs m)
+          in mkMempoolLP
+               p ledger′ nothing nothing
+               priority′ ℓ_priority′ (lastPriorityTicket m) (priorityCapAt p)
+               regular′  ℓ_regular′  (lastRegularTicket m)  (regularCapAt  p)
+               (seenClear (seenEBs m)))
      else
        -- Scenario A: e's txs are now on-chain; drop them from
        -- both tiers; discard our heldEB.
        let ids   = map txId (ebTxs e)
            keep  = λ tk → if inTxIds ids (txId (tx tk)) then false else true
-           fast0 = filter keep (fastTxs m)
-           slow0  = filter keep (slowTxs m)
+           priority0 = filter keep (priorityTxs m)
+           regular0  = filter keep (regularTxs m)
            ledger′            = ledgerAt p
-           ℓ_fast′ , fast′    = reapplyAllTk ledger′ fast0
-           ℓ_slow′  , slow′     = reapplyAllTk ℓ_fast′ slow0
+           ℓ_priority′ , priority′    = reapplyAllTk ledger′ priority0
+           ℓ_regular′  , regular′     = reapplyAllTk ℓ_priority′ regular0
        in mkMempoolLP
             p ledger′ nothing nothing
-            fast′ ℓ_fast′ (lastFastTicket m) (fastCapAt p)
-            slow′  ℓ_slow′  (lastSlowTicket m)  (slowCapAt  p)
+            priority′ ℓ_priority′ (lastPriorityTicket m) (priorityCapAt p)
+            regular′  ℓ_regular′  (lastRegularTicket m)  (regularCapAt  p)
             (seenClear (seenEBs m))
 
 ----------------------------------------------------------------------
@@ -818,17 +868,17 @@ syncWithLedger p m =
                 nothing  → nothing
                 (just e) → just (fst (reapplyAll ledger′ (ebTxs e)))
       base′            = fromMaybe ledger′ ebL′
-      ℓ_fast′ , fast′  = reapplyAllTk base′   (fastTxs m)
-      ℓ_slow′  , slow′   = reapplyAllTk ℓ_fast′ (slowTxs m)
+      ℓ_priority′ , priority′  = reapplyAllTk base′   (priorityTxs m)
+      ℓ_regular′  , regular′   = reapplyAllTk ℓ_priority′ (regularTxs m)
   in mkMempoolLP
        p ledger′ held′ ebL′
-       fast′ ℓ_fast′ (lastFastTicket m) (fastCapAt p)
-       slow′  ℓ_slow′  (lastSlowTicket m)  (slowCapAt  p)
+       priority′ ℓ_priority′ (lastPriorityTicket m) (priorityCapAt p)
+       regular′  ℓ_regular′  (lastRegularTicket m)  (regularCapAt  p)
        (seenClear (seenEBs m))
 
 ----------------------------------------------------------------------
--- 14. Block forging — CHG: RB body is drawn from the fast
---     tier, EB body from the slow tier.
+-- 14. Block forging — CHG: RB body is drawn from the priority
+--     tier, EB body from the regular tier.
 ----------------------------------------------------------------------
 
 postulate
@@ -837,34 +887,34 @@ postulate
   ebNonEmpty  : List Tx → Bool
 
 -- Safe to call regardless of `heldEB`.  Each tier is reapplied
--- against the state it will actually meet on-chain: fasts
+-- against the state it will actually meet on-chain: priority txs
 -- against `ledger` (RB body applies there), then the EB body
--- (fast overflow followed by slows) against `rbLedger =
--- ledger + rbTxs`.  Fast overflow that did not fit in the RB
+-- (priority overflow followed by regular txs) against `rbLedger =
+-- ledger + rbTxs`.  Priority overflow that did not fit in the RB
 -- body flows into the EB body; the ledger then charges an EB-landed
--- fast tx on its ACTUAL (slow) tier — refunding the difference to a
+-- priority tx on its ACTUAL (regular) tier — refunding the difference to a
 -- feeChangeAddr if it named one, else donating the excess to the
--- treasury (see §1 "Fee on a fast tx that lands in an EB").
+-- treasury (see §1 "Fee on a priority tx that lands in an EB").
 -- The mempool state is unchanged; the reapplyAllTk calls produce
 -- the emitted block only.
 forgeBlock : MempoolLP → RB × Maybe EB
 forgeBlock m =
-  let -- 1. Revalidate fasts against `ledger` (not baseLedger).
-      _ , validPrio           = reapplyAllTk (ledger m) (fastTxs m)
-      rbTxs , fastOverflow    = splitAtCap (fastCap m) validPrio
+  let -- 1. Revalidate priority txs against `ledger` (not baseLedger).
+      _ , validPrio           = reapplyAllTk (ledger m) (priorityTxs m)
+      rbTxs , priorityOverflow    = splitAtCap (priorityCap m) validPrio
       -- 2. Post-RB state = ledgerAt(newRB).
       rbLedger , _            = reapplyAllTk (ledger m) rbTxs
-      -- 3. EB body candidates: fast overflow first (they paid
-      --    the higher tier), then slows.  Revalidate the whole
+      -- 3. EB body candidates: priority overflow first (they paid
+      --    the priority-tier fee), then regular txs.  Revalidate the whole
       --    combined sequence against rbLedger; some may drop.
-      ebCandidates            = fastOverflow ++ slowTxs m
+      ebCandidates            = priorityOverflow ++ regularTxs m
       _ , validEB             = reapplyAllTk rbLedger ebCandidates
-      ebTxs′ , _              = splitAtCap (slowCap m) validEB
+      ebTxs′ , _              = splitAtCap (regularCap m) validEB
       -- 4. Light-load EB suppression (see §1): measure the EB body
       --    itself (ebTxs′) against the fullness floor ebFloor = ½ a
       --    full RB. If the body is below ebFloor in every dimension,
       --    do not announce an EB. (ebFloor is the fullness *floor* — a
-      --    lower bound, distinct from slowCap, the CIP-164 per-EB
+      --    lower bound, distinct from regularCap, the CIP-164 per-EB
       --    *capacity* upper bound used above in splitAtCap. Measuring
       --    ebTxs′ — the actual EB body, which is what the ledger's
       --    sdChecks sees — keeps this the exact complement of the
@@ -873,7 +923,7 @@ forgeBlock m =
       anyEB                   = if lightLoad
                                   then false
                                   else ebNonEmpty (map tx ebTxs′)
-      newEBId                 = freshEBId (freshTicket (lastFastTicket m))
+      newEBId                 = freshEBId (freshTicket (lastPriorityTicket m))
       maybeEB                 = if anyEB
                                   then just (mkEB newEBId (tip m)
                                                    (map tx ebTxs′))
@@ -888,13 +938,18 @@ forgeBlock m =
 ### Notes on this sketch
 
 - **Postulates.** Same set as `MempoolLeios.lagda.md`, with
-  `capacityAt` and `ebCap` replaced by tier-specific `fastCapAt` /
-  `slowCapAt`.
-- **Scenario B in code.** `seeRBCert` when `matches = true` does not
-  call `reapplyAll` at all — it only rebinds the ledger-stack fields
-  and preserves both tiers' working states. The disjointness lemma
-  (in `MempoolLeios.lagda.md` §5) generalises unchanged: neither
-  tier may contain a duplicate of a `heldEB.ebTxs` entry.
+  `capacityAt` and `ebCap` replaced by tier-specific `priorityCapAt` /
+  `regularCapAt`.
+- **Scenario B in code.** `seeRBCert` when `matches = true` takes
+  `ledger` from `ledgerAt p` in both paths — the certifying RB's
+  block-level updates (tick) are never skipped. The O(1) path
+  requires `sameEpoch` and `noneExpired` for *both* tiers, ticks the
+  two working states via `tickTo`, and keeps both tx sequences; the
+  fallback path reapplies both tiers in order. The disjointness
+  lemma, cert-application assumption, and tick-commutation lemma
+  (all in `MempoolLeios.lagda.md` §5) generalise unchanged: neither
+  tier may contain a duplicate of a `heldEB.ebTxs` entry, so no
+  drop-filter over `e.ebTxs` is needed in either path.
 - **What is not modeled** (same list as `MempoolLeios.lagda.md`):
   the vote/certificate construction; the certificate-inclusion path
   in `forgeBlock`; the exact `stillLive` clock; reorgs.
@@ -908,19 +963,19 @@ open questions specific to this document:
    tier to route a transaction into? Options: an explicit tier tag
    on the tx submission RPC, a threshold on the fee bid, or a
    per-tx `TxMeasure` classifier. Not fixed here.
-2. **Independent-tx fast path for `addTx Fast`.** The
-   revalidation of the slow tier on every fast admission is a
+2. **Independent-tx priority path for `addTx Priority`.** The
+   revalidation of the regular tier on every priority admission is a
    canonical-invariant requirement, but an implementation may skip it
    when it can prove independence (disjoint inputs, reference inputs,
    collateral, stake certs, governance targets, and parameter
    effects). The cost/benefit depends on the shape of real workloads.
 3. **Held-EB selection with two tiers.** Which peer EB should the
    node hold if several arrive from the same announcing RB? The
-   choice affects `ebLedger` and therefore the fate of every fast
+   choice affects `ebLedger` and therefore the fate of every priority
    tx currently in the tier. Modeled abstractly as `shouldHold`.
 4. **EB-fullness floor: alignment with the ledger.** The fullness
    **floor** `ebFloor` (= ½ a full RB) is a lower bound, distinct from
-   the CIP-164 per-EB **capacity** `slowCap` (upper bound). The floor
+   the CIP-164 per-EB **capacity** `regularCap` (upper bound). The floor
    check here is the exact complement of the ledger's EB validity check
    (`sdChecks` for `EB`, via `BBODY`/`DIVUP` in
    `formal-ledger-specifications`): both measure the **EB body** against
@@ -932,9 +987,9 @@ open questions specific to this document:
    the right quantifier — the alternative requires ≥ `ebFloor` in
    *every* dimension (reject if small in any), and is **up for
    discussion**; (ii) whether `ebFloor` should be a protocol parameter;
-   (iii) enforcing the CIP-164 per-EB *capacity* (`slowCap` / `S_EB`,
+   (iii) enforcing the CIP-164 per-EB *capacity* (`regularCap` / `S_EB`,
    the upper bound) **ledger-side** — currently only the mempool caps
-   the EB body by `slowCap`; the ledger bounds it only by the floor.
+   the EB body by `regularCap`; the ledger bounds it only by the floor.
 
 ## Changelog
 
@@ -943,43 +998,43 @@ open questions specific to this document:
   alignment (RB body carries a certificate, not an EB reference;
   short EB lifetime; discard rule).
 - **2026-06-09 (later)** — Aligned the ledger-stack naming with
-  `MempoolLeios.lagda.md`: renamed `fastLedger` →
-  `fastUpdatedLedger`, `ledger` (post-slow) →
-  `slowUpdatedLedger`, `currentEB` → `heldEB`, added new
+  `MempoolLeios.lagda.md`: renamed `priorityLedger` →
+  `priorityUpdatedLedger`, `ledger` (post-regular) →
+  `regularUpdatedLedger`, `currentEB` → `heldEB`, added new
   `ledger : LedgerState` for the chain tip cache, changed
   `ebLedger : LedgerState` → `ebLedger : Maybe LedgerState`. Added
   Scenario B (matching-cert) bit-identical rename in `seeRBCert`.
   Added `discardEB` handler. Updated the revalidation-cascade table
   with explicit rows for Scenario A / B and `discardEB`.
 - **2026-06-09 (later still)** — Fixed `forgeBlock` for the
-  heldEB-at-forge case: fasts are reapplied against `ledger`
+  heldEB-at-forge case: priority txs are reapplied against `ledger`
   (not `baseLedger`) before splitting into the RB body, and
-  slows are reapplied against `ledger + rbTxs` (the actual
+  regular txs are reapplied against `ledger + rbTxs` (the actual
   post-RB ledger state) before splitting into the announced EB
   body. Dropped the earlier phase-1 "heldEB = nothing" precondition.
-  Cost at forge: 2 × O(|fastTxs|) + O(|slowTxs|). Mempool
+  Cost at forge: 2 × O(|priorityTxs|) + O(|regularTxs|). Mempool
   state is unchanged; txs that fail the ledger revalidation remain
   in their tier (still valid under `baseLedger` /
-  `fastUpdatedLedger`) and become forgeable once `heldEB` is
+  `priorityUpdatedLedger`) and become forgeable once `heldEB` is
   resolved.
 - **2026-06-09 (last)** — Added two design notes: (a) `forgeBlock`
-  now emits fast-tier *overflow* into the EB body ahead of
-  slow txs, so a fast tx that does not fit `fastCap`
+  now emits priority-tier *overflow* into the EB body ahead of
+  regular txs, so a priority tx that does not fit `priorityCap`
   reaches the chain via the announced EB rather than being
-  discarded from the forged block; the ledger applies a fast-
-  vs-slow fee-differential refund to any fast tx landing in
+  discarded from the forged block; the ledger applies a priority-
+  vs-regular fee-differential refund to any priority tx landing in
   an EB body (mempool preserves tier tag; ledger computes the
   refund). (b) Documented that this spec commits to option 2
-  (unconditional slow-tier revalidation on fast admission);
+  (unconditional regular-tier revalidation on priority admission);
   the commutativity-based option 1 alternative is described inline
   with a pointer to the in-progress proof at
   `IntersectMBO/formal-ledger-specifications:polina/commutativity`.
 - **2026-06-09 (also)** — Added §1 "Peer transaction exchange
   (network side)" documenting two tier-aware requirements on the
   tx-submission mini-protocol layer: (i) inbound txs must carry a
-  tier tag so the receiver can dispatch to `addTx Fast` or
-  `addTx Slow`, and (ii) outbound pull is fast-first with
-  slow-only fallback on empty. Also notes that peer streaming
+  tier tag so the receiver can dispatch to `addTx Priority` or
+  `addTx Regular`, and (ii) outbound pull is priority-first with
+  regular-only fallback on empty. Also notes that peer streaming
   cursors become per-tier pairs.
 - **2026-06-09 (final)** — Added §1 "Considered variant: EB
   suppression under light load", a design variant under
@@ -996,8 +1051,8 @@ open questions specific to this document:
   "Considered variant: …" to "EB suppression under light load";
   block-production bullet updated to reference it. Agda
   `forgeBlock` gains a `lightLoad = underHalfRB combinedSize
-  (fastCap m)` guard on `anyEB`, so `maybeEB = nothing` whenever
-  `seqSize (fastTxs ++ slowTxs)` is at or below `fastCap /
+  (priorityCap m)` guard on `anyEB`, so `maybeEB = nothing` whenever
+  `seqSize (priorityTxs ++ regularTxs)` is at or below `priorityCap /
   2` in every dimension. New postulate `underHalfRB : Capacity →
   Capacity → Bool` for the pointwise-half predicate. Threshold
   still `/ 2` (provisional; protocol-parameterisation left as a
@@ -1036,25 +1091,44 @@ open questions specific to this document:
   change here.
 - **2026-07-13 (final)** — Closed the measurement gap and simplified the
   threshold. `forgeBlock`'s suppression now measures the **EB body**
-  (`ebTxs′`), not `combinedSize`, against **`slowCap`** (the EB capacity,
+  (`ebTxs′`), not `combinedSize`, against **`regularCap`** (the EB capacity,
   set to ½ a full RB and — noted — a candidate protocol parameter),
-  dropping the `fastCap / 2` form: `lightLoad = underHalfRB (seqSize
-  ebTxs′) (slowCap m)`. Since the ½ lives in `slowCap`, there is no
+  dropping the `priorityCap / 2` form: `lightLoad = underHalfRB (seqSize
+  ebTxs′) (regularCap m)`. Since the ½ lives in `regularCap`, there is no
   doubling/rounding; `underHalfRB` reverts to `size[d] < cap[d]`. This
   makes suppression the exact complement of the ledger's `sdChecks EB`
-  (both measure the EB body against `slowCap`), so an EB is suppressed
+  (both measure the EB body against `regularCap`), so an EB is suppressed
   here iff the ledger would reject it. `combinedSize` removed; §1,
-  `slowCapAt`, `underHalfRB`, and Open question 4 updated. This *is* a
+  `regularCapAt`, `underHalfRB`, and Open question 4 updated. This *is* a
   behavioural change to the sketch (suppression predicate now over
   `ebTxs′`).
-- **2026-07-13 (last)** — Un-conflated capacity vs floor. `slowCap`
-  (`slowCapAt`) is restored to its CIP-164 meaning — the per-EB
+- **2026-07-13 (last)** — Un-conflated capacity vs floor. `regularCap`
+  (`regularCapAt`) is restored to its CIP-164 meaning — the per-EB
   *capacity* (upper bound, `S_EB` etc.) that caps the EB body via
   `splitAtCap`. A NEW postulate `ebFloorAt : TipPoint → Capacity` is the
   EB-fullness *floor* (lower bound, = ½ a full RB), used by the
   suppression guard: `underHalfRB (seqSize ebTxs′) (ebFloorAt (tip m))`.
   The floor is a design choice (not a CIP-164 requirement beyond "no
   empty EBs"), still up for discussion, and a candidate protocol
-  parameter; reachability needs `ebFloor ≤ slowCap`. §1, the postulate
+  parameter; reachability needs `ebFloor ≤ regularCap`. §1, the postulate
   comments, and Open question 4 updated; noted that enforcing the
   CIP-164 per-EB capacity ledger-side is a TODO.
+- **2026-07-24** — Terminology alignment: fast → priority, slow →
+  regular, lane → tier, applied throughout this document and the
+  siblings (identifiers, prose, and historical changelog entries
+  alike, so the old terms no longer appear anywhere). Also removed
+  the last "higher tier" / "lower tier" phrasings in favour of
+  priority / regular.
+- **2026-07-24 (later)** — Fixed `seeRBCert` Scenario B to apply the
+  certifying RB's block-level updates, mirroring
+  `MempoolLeios.lagda.md`: `ledger` now always comes from
+  `ledgerAt p` (ticked to `R'`'s slot) instead of being renamed from
+  `ebLedger`. The O(1) path is now a guarded *tick-and-rename*
+  (`sameEpoch` ∧ `noneExpired` per tier; both working states ticked
+  via `tickTo`); on an epoch boundary or possible tx expiry both
+  tiers are reapplied in order — required even under the assumption
+  that a certified EB is valid (that assumption only removes
+  re-validation of the EB's own txs, per the cert-application
+  assumption in `MempoolLeios.lagda.md` §5). New postulates:
+  `tickTo`, `sameEpoch`, `noneExpired`. Cascade table gained
+  separate match rows for the two paths.
