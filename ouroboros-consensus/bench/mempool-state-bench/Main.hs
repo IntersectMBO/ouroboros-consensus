@@ -145,6 +145,18 @@ readBaseMicros = envInt "READ_BASE_US" 500
 readPerKeyMicros :: Int
 readPerKeyMicros = envInt "READ_PERKEY_US" 200
 
+-- | Pause between successive 'getSnapshot's per reader, microseconds. A reader
+-- models the tx-submission /server/ for one downstream peer, which reads the
+-- mempool on request rather than in a spin. In the proto-devnet each downstream
+-- peer pulled ~3–4 tx-body requests/s from node1 (node2 2.7/s, node3 4.0/s over
+-- multi-hour runs), and with the txid requests on top a server reads roughly
+-- 5–8×/s per peer — a read every ~125–200ms. The default models ~7 reads/s/peer;
+-- set @0@ for the old tight loop (only sensible for a handful of readers, else
+-- hundreds of spinning O(occupancy) readers just measure CPU saturation).
+{-# NOINLINE readPeriodMicros #-}
+readPeriodMicros :: Int
+readPeriodMicros = envInt "READ_PERIOD_US" 150000
+
 -- | Disjoint token namespace per adder so their chains never collide.
 chainStride :: Int
 chainStride = 1_000_000_000
@@ -269,6 +281,7 @@ runReader expired mempool readRef maxLatRef = go
         let lat = diffTime t1 t0
         atomicModifyIORef' readRef (\c -> (c + 1, ()))
         atomicModifyIORef' maxLatRef (\m -> (max m lat, ()))
+        when (readPeriodMicros > 0) $ Conc.threadDelay readPeriodMicros
         go
 
 -- | Syncer: every 'syncPeriodSec', advance the tip and run the real sync.
