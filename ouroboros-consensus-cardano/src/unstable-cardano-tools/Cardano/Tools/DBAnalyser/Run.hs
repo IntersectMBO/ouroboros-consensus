@@ -178,6 +178,7 @@ analyse dbaConfig args =
                   (mkFsPath ["lsm"])
                   (mkFsPath . splitDirectories <$> lsmConfigExportPath)
                   lsmSalt
+                  lsmCachePolicy
                   (LSM.stdMkBlockIOFS dbDir)
 
         args' =
@@ -260,7 +261,12 @@ analyse dbaConfig args =
     , validation
     , verbose
     , ldbBackend
+    , lsmNoDiskCache
     } = dbaConfig
+
+  lsmCachePolicy
+    | lsmNoDiskCache = LSM.DiskCacheNone
+    | otherwise = LSM.DiskCacheAll
 
   SelectImmutableDB startSlot = selectDB
 

@@ -54,6 +54,15 @@ parseDBAnalyserConfig =
             , help "use v2 LSM backend"
             ]
       ]
+    <*> switch
+      ( mconcat
+          [ long "lsm-no-cache"
+          , help $
+              "When using --lsm, bypass the OS page cache for UTxO table"
+                <> " reads/writes (O_DIRECT). No effect on other backends;"
+                <> " primarily useful for benchmarking."
+          ]
+      )
 
 parseSelectDB :: Parser SelectDB
 parseSelectDB =

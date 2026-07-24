@@ -16,6 +16,10 @@ data DBAnalyserConfig = DBAnalyserConfig
   , analysis :: AnalysisName
   , confLimit :: Limit
   , ldbBackend :: LedgerDBBackend
+  , lsmNoDiskCache :: Bool
+  -- ^ When using the 'V2LSM' backend, bypass the OS page cache for UTxO
+  -- table reads/writes (instead caching all). Intended for benchmarking;
+  -- has no effect with any other backend.
   }
 
 data AnalysisName

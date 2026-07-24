@@ -47,6 +47,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     -- * Exported for tests
   , LSM.Salt
   , SomeHasFSAndBlockIO (..)
+
+    -- * Disk cache policy
+  , LSM.DiskCachePolicy (..)
   ) where
 
 import Codec.Serialise (decode)
@@ -548,9 +551,10 @@ loadSnapshot ::
   SomeHasFS m ->
   Session m ->
   ExportSnapshot m ->
+  LSM.DiskCachePolicy ->
   DiskSnapshot ->
   ExceptT (SnapshotFailure blk) m (StateRef m ExtLedgerState blk, RealPoint blk)
-loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session exportSnapshot ds = do
+loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session exportSnapshot cachePolicy ds = do
   fileEx <- lift $ doesFileExist hfs (snapshotToDirPath ds)
   Monad.when fileEx $ throwE $ InitFailureRead ReadSnapshotIsLegacy
   snapshotMeta <-
@@ -570,7 +574,8 @@ loadSnapshot tracer ccfg fs@(SomeHasFS hfs) session exportSnapshot ds = do
       values <-
         lift $
           encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $
-            LSM.openTableFromSnapshot
+            LSM.openTableFromSnapshotWith
+              LSM.noTableConfigOverride{LSM.overrideDiskCachePolicy = Just cachePolicy}
               session
               (fromString $ snapshotToDirName ds)
               (LSM.SnapshotLabel $ Text.pack $ "UTxO table")
@@ -592,12 +597,14 @@ tableFromValuesMK ::
   ) =>
   Tracer m LedgerDBV2Trace ->
   Session m ->
+  LSM.DiskCachePolicy ->
   l blk EmptyMK ->
   LedgerTables blk ValuesMK ->
   m (UTxOTable m, Word64)
-tableFromValuesMK tracer session st (LedgerTables (ValuesMK values)) = do
+tableFromValuesMK tracer session cachePolicy st (LedgerTables (ValuesMK values)) = do
   table <-
-    encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $ LSM.newTable session
+    encloseTimedWith (TraceLedgerTablesHandleCreateFirst >$< tracer) $
+      LSM.newTableWith (LSM.defaultTableConfig{LSM.confDiskCachePolicy = cachePolicy}) session
   mapM_ (go table) $ chunks 1000 $ Map.toList values
   pure (table, fromIntegral $ Map.size values)
  where
@@ -637,9 +644,11 @@ mkLSMArgsIO ::
   Maybe FilePath ->
   -- | Root for the LSM filesystem.
   FilePath ->
+  -- | Disk cache policy for the UTxO table, see 'LSM.DiskCachePolicy'.
+  LSM.DiskCachePolicy ->
   StdGen ->
   (LedgerDbBackendArgs IO blk, StdGen)
-mkLSMArgsIO _ fpDb fpExport fastStorage gen =
+mkLSMArgsIO _ fpDb fpExport fastStorage cachePolicy gen =
   let (lsmSalt, gen') = genWord64 gen
    in ( LedgerDbBackendArgsV2 $
           SomeBackendArgs $
@@ -647,6 +656,7 @@ mkLSMArgsIO _ fpDb fpExport fastStorage gen =
               (mkFsPath $ splitDirectories fpDb)
               (fmap (mkFsPath . splitDirectories) fpExport)
               lsmSalt
+              cachePolicy
               (stdMkBlockIOFS fastStorage)
       , gen'
       )
@@ -668,12 +678,15 @@ instance
         -- \^ The file path relative to the fast storage directory in which the LSM
         -- trees database will dump its exports.
         Salt
+        LSM.DiskCachePolicy
+        -- \^ The disk cache policy to use for UTxO table reads/writes.
         (forall st. WithTempRegistry st m (SomeHasFSAndBlockIO m))
 
   data Resources m LSM = LSMResources
     { sessionResource :: !(Session m)
     , exportSnapshotResource :: !(ExportSnapshot m)
     , someHasFSAndBlockIO :: !(SomeHasFSAndBlockIO m)
+    , cachePolicyResource :: !LSM.DiskCachePolicy
     }
     deriving Generic
 
@@ -685,7 +698,7 @@ instance
     | LSMOpenSession EnclosingTimed
     deriving Show
 
-  mkResources _ trcr (LSMArgs pathDb pathExp salt mkFS) _ = do
+  mkResources _ trcr (LSMArgs pathDb pathExp salt cachePolicy mkFS) _ = do
     sblockio@(SomeHasFSAndBlockIO fs blockio) <- mkFS
     lift $ createDirectoryIfMissing fs True pathDb
     whenJust pathExp (lift . createDirectoryIfMissing fs True)
@@ -704,19 +717,26 @@ instance
     let exportSnap = case pathExp of
           Nothing -> const (pure ())
           Just p -> \snap -> LSM.exportSnapshot session snap p
-    pure (LSMResources session exportSnap sblockio)
+    pure (LSMResources session exportSnap sblockio cachePolicy)
 
-  releaseResources _ (LSMResources session _ (SomeHasFSAndBlockIO _ blockio)) = do
+  releaseResources _ (LSMResources session _ (SomeHasFSAndBlockIO _ blockio) _) = do
     LSM.closeSession session
     BIO.close blockio
 
   openStateRefFromSnapshot trcr ccfg shfs res ds = do
-    loadSnapshot trcr ccfg shfs (sessionResource res) (exportSnapshotResource res) ds
+    loadSnapshot
+      trcr
+      ccfg
+      shfs
+      (sessionResource res)
+      (exportSnapshotResource res)
+      (cachePolicyResource res)
+      ds
 
   createAndPopulateStateRefFromGenesis trcr res st = do
     let st' = forgetLedgerTables st
     (table, sz) <-
-      tableFromValuesMK trcr (sessionResource res) st' (ltprj st)
+      tableFromValuesMK trcr (sessionResource res) (cachePolicyResource res) st' (ltprj st)
     StateRef st' <$> newLSMLedgerTablesHandle trcr (exportSnapshotResource res) sz table
 
   snapshotManager _ res = Ouroboros.Consensus.Storage.LedgerDB.V2.LSM.snapshotManager (sessionResource res)
@@ -785,7 +805,7 @@ data SomeHasFSAndBlockIO m where
     (Eq h, Typeable h) => HasFS m h -> BIO.HasBlockIO m h -> SomeHasFSAndBlockIO m
 
 instance IOLike m => NoThunks (Resources m LSM) where
-  wNoThunks _ (LSMResources _ _ (SomeHasFSAndBlockIO _ _)) = pure Nothing
+  wNoThunks _ (LSMResources _ _ (SomeHasFSAndBlockIO _ _) _) = pure Nothing
 
 {-------------------------------------------------------------------------------
   Streaming
