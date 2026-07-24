@@ -127,6 +127,7 @@ data Stmts = Stmts
   , stDecrMissingCount :: !DB.Statement
   , stFindCompleteEbs :: !DB.Statement
   , stMarkNotifiedEbs :: !DB.Statement
+  , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
   , stFilterMissingEbBodies :: !DB.Statement
   , stFilterMissingTxs :: !DB.Statement
@@ -151,6 +152,7 @@ prepareStmts db = do
   stDecrMissingCount <- dbPrepare db (fromString sql_decrement_missing_tx_count)
   stFindCompleteEbs <- dbPrepare db (fromString sql_find_complete_ebs)
   stMarkNotifiedEbs <- dbPrepare db (fromString sql_mark_notified_ebs)
+  stMarkPointNotified <- dbPrepare db (fromString sql_mark_point_notified)
   stBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
   stFilterMissingEbBodies <- dbPrepare db (fromString sql_filter_missing_eb_bodies_json)
   stFilterMissingTxs <- dbPrepare db (fromString sql_filter_missing_txs_json)
@@ -171,6 +173,7 @@ finalizeStmts Stmts{..} = do
   dbFinalize stDecrMissingCount
   dbFinalize stFindCompleteEbs
   dbFinalize stMarkNotifiedEbs
+  dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
   dbFinalize stFilterMissingEbBodies
   dbFinalize stFilterMissingTxs
@@ -286,7 +289,7 @@ sqlInsertEbBody ::
 sqlInsertEbBody tracer conn notify point eb = do
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
-  completedAndNovel <- dbWithTransaction db $ do
+  completedNow <- dbWithTransaction db $ do
     forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
       dbBindBlob stInsertEbTxsRow 1 point.pointEbHash.ebHashBytes
       dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
@@ -297,22 +300,25 @@ sqlInsertEbBody tracer conn notify point eb = do
         "ebTxs"
         (show point.pointEbHash <> "@" <> show txOffset)
         stInsertEbTxsRow
-    -- Initialize missingTxCount (accounts for txs already in the DB)
-    useStmt stInitMissingCount $ do
+    -- Initialize missingTxCount and read the resulting value via
+    -- @RETURNING missingTxCount@. Only /this/ point's row can have
+    -- transitioned to 0 as a consequence of the insert above.
+    missingCount <- useStmt stInitMissingCount $ do
       dbBindBlob stInitMissingCount 1 point.pointEbHash.ebHashBytes
       dbBindBlob stInitMissingCount 2 point.pointEbHash.ebHashBytes
       dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo point.pointSlotNo)
-      dbStep1 stInitMissingCount
-    -- If every referenced tx is already present, 'stInitMissingCount' just set
-    -- missingTxCount to 0 for this EB. For all such EBs we need to notify that
-    -- we acquired the whole closure.
-    -- XXX: This scans the ebs table while we would know which row to check
-    completedNow <- useStmt stFindCompleteEbs $ findCompleteEbs stFindCompleteEbs
-    useStmt stMarkNotifiedEbs $ dbStep1 stMarkNotifiedEbs
-    pure completedNow
+      readReturningInt64 stInitMissingCount
+    if missingCount == 0
+      then do
+        useStmt stMarkPointNotified $ do
+          dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo point.pointSlotNo)
+          dbBindBlob stMarkPointNotified 2 point.pointEbHash.ebHashBytes
+          dbStep1 stMarkPointNotified
+        pure [point]
+      else pure []
   notify $ AcquiredEb point ebBytesSize
-  forM_ completedAndNovel $ \p -> notify (AcquiredEbTxs p)
-  pure completedAndNovel
+  forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
+  pure completedNow
  where
   items = leiosEbBodyItems eb
   ebBytesSize = leiosEbBytesSize eb
@@ -320,9 +326,22 @@ sqlInsertEbBody tracer conn notify point eb = do
   Stmts
     { stInsertEbTxsRow
     , stInitMissingCount
-    , stFindCompleteEbs
-    , stMarkNotifiedEbs
+    , stMarkPointNotified
     } = connStmts
+
+-- | Read a single-column @Int64@ from a statement that uses a
+-- @RETURNING@ clause on a PK-scoped @UPDATE@ (i.e. produces exactly one
+-- row followed by 'DB.Done'). Any other shape is a programmer error.
+readReturningInt64 :: DB.Statement -> IO Int64
+readReturningInt64 stmt =
+  dbStep stmt >>= \case
+    DB.Done ->
+      error "readReturningInt64: expected one row from RETURNING, got Done"
+    DB.Row -> do
+      n <- DB.columnInt64 stmt 0
+      dbStep stmt >>= \case
+        DB.Done -> pure n
+        DB.Row -> error "readReturningInt64: expected exactly one row from RETURNING"
 
 sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->
@@ -352,7 +371,15 @@ sqlInsertTxs _tracer conn notify txs = do
         dbBindBlob stDecrMissingCount 1 txHashBytes
         dbStep1 stDecrMissingCount
     -- Find newly-complete EBs (missingTxCount reached 0)
-    completed <- useStmt stFindCompleteEbs $ findCompleteEbs stFindCompleteEbs
+    completed <- useStmt stFindCompleteEbs $ do
+      let loop acc =
+            dbStep stFindCompleteEbs >>= \case
+              DB.Done -> pure (reverse acc)
+              DB.Row -> do
+                ebHash <- MkEbHash <$> DB.columnBlob stFindCompleteEbs 0
+                slot <- SlotNo . fromIntegral <$> DB.columnInt64 stFindCompleteEbs 1
+                loop (MkLeiosPoint slot ebHash : acc)
+      loop []
     -- Mark them as notified so they are not found again
     useStmt stMarkNotifiedEbs $ dbStep1 stMarkNotifiedEbs
     pure completed
@@ -363,21 +390,6 @@ sqlInsertTxs _tracer conn notify txs = do
   Conn{connDb = db, connStmts} = conn
   Stmts{stInsertTx, stDecrMissingCount, stFindCompleteEbs, stMarkNotifiedEbs} = connStmts
   novel missing = filter (\(h, _) -> h `Set.member` missing) txs
-
--- | Loop over 'stFindCompleteEbs' results, accumulating the points whose
--- @missingTxCount@ just reached 0. Caller is responsible for holding the
--- prepared statement inside 'useStmt' and for running
--- 'stMarkNotifiedEbs' afterwards.
-findCompleteEbs :: DB.Statement -> IO [LeiosPoint]
-findCompleteEbs stmt = go []
- where
-  go acc =
-    dbStep stmt >>= \case
-      DB.Done -> pure (reverse acc)
-      DB.Row -> do
-        ebHash <- MkEbHash <$> DB.columnBlob stmt 0
-        slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 1
-        go (MkLeiosPoint slot ebHash : acc)
 
 -- | Retrieve tx bytes for a batch of @(ebHash, txOffset)@ points. Passes
 -- the offsets list as a JSON int array bound to a single parameter;
@@ -602,8 +614,13 @@ sql_decrement_missing_tx_count =
   \WHERE ebHashBytes IN (SELECT ebHashBytes FROM ebTxs WHERE txHashBytes = ?)\n\
   \"
 
--- | Initialize missingTxCount after EB body is inserted.
--- Counts ebTxs entries that don't yet have a corresponding tx in the txs table.
+-- | Initialize missingTxCount after EB body is inserted, returning the
+-- resulting count. Counts ebTxs entries that don't yet have a corresponding
+-- tx in the txs table. The RETURNING clause lets the caller detect the
+-- special case @missingTxCount = 0@ (all referenced txs already present) with
+-- a PK lookup on the row that was just touched, instead of a full-table
+-- scan via 'sql_find_complete_ebs'.
+--
 -- Parameters: 1 = ebHashBytes, 2 = ebHashBytes, 3 = ebSlot
 sql_init_missing_tx_count :: String
 sql_init_missing_tx_count =
@@ -612,7 +629,17 @@ sql_init_missing_tx_count =
   \    LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
   \    WHERE e.ebHashBytes = ? AND t.txHashBytes IS NULL\n\
   \) WHERE ebHashBytes = ? AND ebSlot = ?\n\
+  \RETURNING missingTxCount\n\
   \"
+
+-- | Mark a specific EB as notified (@missingTxCount = -1@). PK-scoped
+-- variant of 'sql_mark_notified_ebs'; used by 'sqlInsertEbBody' when the
+-- body's arrival is what completed the closure.
+--
+-- Parameters: 1 = ebSlot, 2 = ebHashBytes
+sql_mark_point_notified :: String
+sql_mark_point_notified =
+  "UPDATE ebs SET missingTxCount = -1 WHERE ebSlot = ? AND ebHashBytes = ?"
 
 -- | Batch retrieve of tx bytes for a batch of @(ebHash, offset)@ points.
 -- @?1@ is the ebHash blob (all offsets belong to the same EB); @?2@ is a
