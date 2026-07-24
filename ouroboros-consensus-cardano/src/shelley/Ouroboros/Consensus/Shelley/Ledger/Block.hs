@@ -131,6 +131,11 @@ class
   , -- Backwards compatibility
     Plain.FromCBOR (LegacyPParams era)
   , Plain.ToCBOR (LegacyPParams era)
+  , -- TODO: replace the two constraints below with:
+    -- 'StateSupportsPerasEpochContext (ShelleyBlock proto er)' once that type
+    -- class is in place.
+    ChainDepStateSupportsPeras (ChainDepState (BlockProtocol (ShelleyBlock proto era)))
+  , ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol (ShelleyBlock proto era))))
   ) =>
   ShelleyCompatible proto era
 
