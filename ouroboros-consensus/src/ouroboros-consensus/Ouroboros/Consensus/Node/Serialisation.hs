@@ -197,6 +197,10 @@ instance SerialiseNodeToNode blk PerasRoundNo where
   encodeNodeToNode _ccfg _version = encode
   decodeNodeToNode _ccfg _version = decode
 
+instance SerialiseNodeToNode blk PerasVoteStake where
+  encodeNodeToNode _ccfg _version = encode
+  decodeNodeToNode _ccfg _version = decode
+
 instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
   -- Consistent with the 'Serialise' instance for 'PerasCert' defined in Ouroboros.Consensus.Block.SupportsPeras
   encodeNodeToNode ccfg version PerasCert{..} =
@@ -212,16 +216,18 @@ instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
 instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasVote blk) where
   -- Consistent with the 'Serialise' instance for 'PerasVote' defined in Ouroboros.Consensus.Block.SupportsPeras
   encodeNodeToNode ccfg version PerasVote{..} =
-    encodeListLen 3
+    encodeListLen 4
       <> encodeNodeToNode ccfg version pvVoteRound
       <> encodeNodeToNode ccfg version pvVoteBlock
       <> encodeNodeToNode ccfg version pvVoteVoterId
+      <> encodeNodeToNode ccfg version pvVoteStake
   decodeNodeToNode ccfg version = do
-    decodeListLenOf 3
+    decodeListLenOf 4
     pvVoteRound <- decodeNodeToNode ccfg version
     pvVoteBlock <- decodeNodeToNode ccfg version
     pvVoteVoterId <- decodeNodeToNode ccfg version
-    pure $ PerasVote pvVoteRound pvVoteBlock pvVoteVoterId
+    pvVoteStake <- decodeNodeToNode ccfg version
+    pure $ PerasVote pvVoteRound pvVoteBlock pvVoteVoterId pvVoteStake
 
 instance SerialiseNodeToNode blk PerasVoterId where
   encodeNodeToNode _ccfg _version = KeyHash.toCBOR . unPerasVoterId

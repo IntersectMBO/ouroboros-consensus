@@ -190,6 +190,7 @@ instance StateModel Model where
                       { pvVoteRound = roundNo
                       , pvVoteBlock = point
                       , pvVoteVoterId = voterId
+                      , pvVoteStake = stake
                       }
                 , vpvVoteStake = stake
                 }
