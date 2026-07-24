@@ -2,52 +2,29 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Cardano.Tools.DBSynthesizer.Run
-  ( initialize
-  , synthesize
+  ( synthesize
   ) where
 
-import Cardano.Api.Any (displayError)
-import Cardano.Node.Protocol.Cardano (mkConsensusProtocolCardano)
-import Cardano.Node.Types
+import qualified Cardano.Slotting.Slot as Slot
 import Cardano.Tools.DBSynthesizer.Forging
-import Cardano.Tools.DBSynthesizer.Orphans ()
 import Cardano.Tools.DBSynthesizer.Types
 import Control.Monad (filterM)
-import Control.Monad.Trans.Except (ExceptT)
-import Control.Monad.Trans.Except.Extra
-  ( firstExceptT
-  , handleIOExceptT
-  , hoistEither
-  , runExceptT
-  )
 import Control.ResourceRegistry
 import Control.Tracer
-import Data.Aeson as Aeson
-  ( FromJSON
-  , Result (..)
-  , Value
-  , eitherDecodeFileStrict'
-  , eitherDecodeStrict'
-  , fromJSON
-  )
 import Data.Bool (bool)
-import Data.ByteString as BS (ByteString, readFile)
 import Data.Functor (($>))
 import qualified Data.Set as Set
 import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import Ouroboros.Consensus.Cardano.Block
-import Ouroboros.Consensus.Cardano.Node
+import Ouroboros.Consensus.Cardano.Node ()
 import Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
 import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
   ( nodeImmutableDbChunkInfo
   )
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentClientTrace)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
-import Ouroboros.Consensus.Shelley.Node
-  ( ShelleyGenesis (..)
-  , validateGenesis
-  )
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
@@ -55,116 +32,33 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Backend
 import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import Ouroboros.Consensus.Util.IOLike (atomically)
-import Ouroboros.Network.Block
+import Ouroboros.Network.Block hiding (GenesisHash)
 import Ouroboros.Network.Point (WithOrigin (..))
 import System.Directory
-import System.FS.API (SomeHasFS (..))
-import System.FS.API.Types (MountPoint (MountPoint))
-import System.FS.IO (ioHasFS)
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath ((</>))
 import System.Random (newStdGen)
 
-initialize ::
-  NodeFilePaths ->
-  NodeCredentials ->
-  DBSynthesizerOptions ->
-  IO (Either String (DBSynthesizerConfig, CardanoProtocolParams StandardCrypto))
-initialize NodeFilePaths{nfpConfig, nfpChainDB} creds synthOptions = do
-  configDir <- takeDirectory <$> makeAbsolute nfpConfig
-  let relativeToConfig :: FilePath -> FilePath
-      relativeToConfig = (configDir </>)
-  runExceptT $ do
-    conf <- initConf configDir relativeToConfig
-    proto <- initProtocol relativeToConfig conf
-    pure (conf, proto)
- where
-  initConf :: FilePath -> (FilePath -> FilePath) -> ExceptT String IO DBSynthesizerConfig
-  initConf configDir relativeToConfig = do
-    inp <- handleIOExceptT show (BS.readFile nfpConfig)
-    configStub <- adjustFilePaths relativeToConfig <$> readJson inp
-    shelleyGenesis <- readFileJson $ ncsShelleyGenesisFile configStub
-    _ <- hoistEither $ validateGenesis shelleyGenesis
-    let
-      protocolCredentials =
-        ProtocolFilepaths
-          { byronCertFile = Nothing
-          , byronKeyFile = Nothing
-          , shelleyKESFile = credKESFile creds
-          , shelleyVRFFile = credVRFFile creds
-          , shelleyCertFile = credCertFile creds
-          , shelleyBulkCredsFile = credBulkFile creds
-          }
-    pure
-      DBSynthesizerConfig
-        { confConfigStub = configStub
-        , confOptions = synthOptions
-        , confProtocolCredentials = protocolCredentials
-        , confShelleyGenesis = shelleyGenesis
-        , confDbDir = nfpChainDB
-        , confNodeConfigDir = configDir
-        }
-
-  initProtocol ::
-    (FilePath -> FilePath) ->
-    DBSynthesizerConfig ->
-    ExceptT String IO (CardanoProtocolParams StandardCrypto)
-  initProtocol relativeToConfig DBSynthesizerConfig{confConfigStub, confProtocolCredentials} = do
-    hfConfig :: NodeHardForkProtocolConfiguration <-
-      hoistEither hfConfig_
-    byronConfig :: NodeByronProtocolConfiguration <-
-      adjustFilePaths relativeToConfig <$> hoistEither byConfig_
-
-    firstExceptT displayError $
-      mkConsensusProtocolCardano
-        byronConfig
-        shelleyConfig
-        alonzoConfig
-        conwayConfig
-        dijkstraConfig
-        hfConfig
-        (Just confProtocolCredentials)
-   where
-    shelleyConfig = NodeShelleyProtocolConfiguration (GenesisFile $ ncsShelleyGenesisFile confConfigStub) Nothing
-    alonzoConfig = NodeAlonzoProtocolConfiguration (GenesisFile $ ncsAlonzoGenesisFile confConfigStub) Nothing
-    conwayConfig = NodeConwayProtocolConfiguration (GenesisFile $ ncsConwayGenesisFile confConfigStub) Nothing
-    dijkstraConfig =
-      fmap
-        (\x -> NodeDijkstraProtocolConfiguration (GenesisFile x) Nothing)
-        (ncsDijkstraGenesisFile confConfigStub)
-    hfConfig_ = eitherParseJson $ ncsNodeConfig confConfigStub
-    byConfig_ = eitherParseJson $ ncsNodeConfig confConfigStub
-
-readJson :: (Monad m, FromJSON a) => ByteString -> ExceptT String m a
-readJson = hoistEither . eitherDecodeStrict'
-
-readFileJson :: FromJSON a => FilePath -> ExceptT String IO a
-readFileJson f = handleIOExceptT show (eitherDecodeFileStrict' f) >>= hoistEither
-
-eitherParseJson :: FromJSON a => Aeson.Value -> Either String a
-eitherParseJson v = case fromJSON v of
-  Error err -> Left err
-  Success a -> Right a
-
+-- | Forge a ChainDB from a ready-made Cardano 'ProtocolInfo' and its block
+-- forgers (as produced by 'protocolInfoCardano'). Constructing the protocol
+-- from a node configuration is the caller's responsibility, keeping this
+-- function free of any node/api configuration machinery.
 synthesize ::
   ( TopLevelConfig (CardanoBlock StandardCrypto) ->
     GenTxs (CardanoBlock StandardCrypto)
   ) ->
-  DBSynthesizerConfig ->
-  (CardanoProtocolParams StandardCrypto) ->
+  DBSynthesizerOptions ->
+  Slot.EpochSize ->
+  -- | The directory of the ChainDB to forge into.
+  FilePath ->
+  ( ProtocolInfo (CardanoBlock StandardCrypto)
+  , Tracer IO KESAgentClientTrace ->
+    IO [BlockForging.MkBlockForging IO (CardanoBlock StandardCrypto)]
+  ) ->
   IO ForgeResult
-synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir, confNodeConfigDir} runP =
+synthesize genTxs confOptions epochSize confDbDir (ProtocolInfo{pInfoConfig, pInfoInitLedger}, mkForgers) =
   withRegistry $ \registry -> do
-    let fs = SomeHasFS (ioHasFS (MountPoint confNodeConfigDir))
-    ( ProtocolInfo
-        { pInfoConfig
-        , pInfoInitLedger
-        }
-      , mkForgers
-      ) <-
-      protocolInfoCardano fs runP
     snapshotDelayRng <- newStdGen
     let
-      epochSize = sgEpochLength confShelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
       flavargs = LedgerDB.LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
       dbArgs =
