@@ -5,7 +5,6 @@ import Data.Time.Clock (DiffTime, secondsToDiffTime)
 import Data.Word (Word64)
 import Ouroboros.Consensus.Block.SupportsSanityCheck
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import Ouroboros.Consensus.Util.Args (OverrideOrDefault (..))
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck (testProperty)
@@ -43,7 +42,7 @@ prop_num_zero_iff =
   forAll (arbitrary :: Gen Word) $ \n ->
     let issues =
           sanityCheckSnapshotPolicyArgs
-            SnapshotPolicyArgs{spaFrequency = DisableSnapshots, spaNum = Override (NumOfDiskSnapshots n)}
+            SnapshotPolicyArgs{spaFrequency = DisableSnapshots, spaNum = NumOfDiskSnapshots n}
      in (SnapshotNumZero `elem` issues) === (n == 0)
 
 -- | 'SnapshotDelayRangeInverted' fires if and only if @minimumDelay > maximumDelay@,
@@ -110,7 +109,7 @@ prop_disable_snapshots_no_frequency_issues =
   forAll (arbitrary :: Gen Word) $ \n ->
     let issues =
           sanityCheckSnapshotPolicyArgs
-            SnapshotPolicyArgs{spaFrequency = DisableSnapshots, spaNum = Override (NumOfDiskSnapshots n)}
+            SnapshotPolicyArgs{spaFrequency = DisableSnapshots, spaNum = NumOfDiskSnapshots n}
      in filter isFrequencyIssue issues === []
  where
   -- SnapshotNumZero is the only non-frequency issue that can appear here;
@@ -146,44 +145,26 @@ genNonZeroWord64 = getPositive <$> arbitrary
 -- | Build a 'SnapshotPolicyArgs' with a specific 'SnapshotDelayRange' override.
 withDelayRange :: SnapshotDelayRange -> SnapshotPolicyArgs
 withDelayRange sdr =
-  SnapshotPolicyArgs
-    { spaFrequency =
-        SnapshotFrequency
-          SnapshotFrequencyArgs
-            { sfaInterval = UseDefault
-            , sfaOffset = UseDefault
-            , sfaRateLimit = UseDefault
-            , sfaDelaySnapshotRange = Override sdr
-            }
-    , spaNum = UseDefault
+  defaultSnapshotPolicyArgs
+    { spaFrequency = case spaFrequency defaultSnapshotPolicyArgs of
+        DisableSnapshots -> DisableSnapshots
+        SnapshotFrequency sfa -> SnapshotFrequency (sfa{sfaDelaySnapshotRange = sdr})
     }
 
 -- | Build a 'SnapshotPolicyArgs' with a specific 'sfaRateLimit' override.
 withRateLimit :: DiffTime -> SnapshotPolicyArgs
 withRateLimit rl =
-  SnapshotPolicyArgs
-    { spaFrequency =
-        SnapshotFrequency
-          SnapshotFrequencyArgs
-            { sfaInterval = UseDefault
-            , sfaOffset = UseDefault
-            , sfaRateLimit = Override rl
-            , sfaDelaySnapshotRange = UseDefault
-            }
-    , spaNum = UseDefault
+  defaultSnapshotPolicyArgs
+    { spaFrequency = case spaFrequency defaultSnapshotPolicyArgs of
+        DisableSnapshots -> DisableSnapshots
+        SnapshotFrequency sfa -> SnapshotFrequency (sfa{sfaRateLimit = rl})
     }
 
 -- | Build a 'SnapshotPolicyArgs' with a specific 'sfaInterval' override.
 withInterval :: Word64 -> SnapshotPolicyArgs
 withInterval n =
-  SnapshotPolicyArgs
-    { spaFrequency =
-        SnapshotFrequency
-          SnapshotFrequencyArgs
-            { sfaInterval = Override (unsafeNonZero n)
-            , sfaOffset = UseDefault
-            , sfaRateLimit = UseDefault
-            , sfaDelaySnapshotRange = UseDefault
-            }
-    , spaNum = UseDefault
+  defaultSnapshotPolicyArgs
+    { spaFrequency = case spaFrequency defaultSnapshotPolicyArgs of
+        DisableSnapshots -> DisableSnapshots
+        SnapshotFrequency sfa -> SnapshotFrequency (sfa{sfaInterval = unsafeNonZero n})
     }

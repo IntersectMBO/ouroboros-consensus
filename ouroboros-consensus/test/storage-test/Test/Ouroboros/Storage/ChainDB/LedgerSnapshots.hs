@@ -42,7 +42,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Backend as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as LedgerDB.V2.InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util (dropLast)
-import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Enclose (Enclosing' (FallingEdgeWith))
 import Ouroboros.Consensus.Util.IOLike
@@ -264,16 +263,16 @@ tsSnapshotPolicyArgs :: TestSetup -> SnapshotPolicyArgs
 tsSnapshotPolicyArgs TestSetup{tsTestSnapshotPolicyArgs} =
   SnapshotPolicyArgs
     { spaFrequency
-    , spaNum = Override $ tspaNum tsTestSnapshotPolicyArgs
+    , spaNum = tspaNum tsTestSnapshotPolicyArgs
     }
  where
   spaFrequency =
     SnapshotFrequency
       SnapshotFrequencyArgs
-        { sfaInterval = Override $ tspaInterval tsTestSnapshotPolicyArgs
-        , sfaOffset = Override $ tspaOffset tsTestSnapshotPolicyArgs
-        , sfaRateLimit = Override $ tspaRateLimit tsTestSnapshotPolicyArgs
-        , sfaDelaySnapshotRange = Override $ tspaDelaySnapshotRange tsTestSnapshotPolicyArgs
+        { sfaInterval = tspaInterval tsTestSnapshotPolicyArgs
+        , sfaOffset = tspaOffset tsTestSnapshotPolicyArgs
+        , sfaRateLimit = tspaRateLimit tsTestSnapshotPolicyArgs
+        , sfaDelaySnapshotRange = tspaDelaySnapshotRange tsTestSnapshotPolicyArgs
         }
 
 instance Arbitrary TestSetup where
