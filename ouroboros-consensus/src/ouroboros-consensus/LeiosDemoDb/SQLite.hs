@@ -141,22 +141,22 @@ data Conn = Conn
 
 -- | Prepare every statement 'Stmts' names. Order is not observable.
 prepareStmts :: DB.Database -> IO Stmts
-prepareStmts db =
-  Stmts
-    <$> dbPrepare db (fromString sql_scan_ebs)
-    <*> dbPrepare db (fromString sql_insert_eb)
-    <*> dbPrepare db (fromString sql_lookup_ebBodies)
-    <*> dbPrepare db (fromString sql_insert_ebBody)
-    <*> dbPrepare db (fromString sql_init_missing_tx_count)
-    <*> dbPrepare db (fromString sql_insert_tx)
-    <*> dbPrepare db (fromString sql_decrement_missing_tx_count)
-    <*> dbPrepare db (fromString sql_find_complete_ebs)
-    <*> dbPrepare db (fromString sql_mark_notified_ebs)
-    <*> dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
-    <*> dbPrepare db (fromString sql_filter_missing_eb_bodies_json)
-    <*> dbPrepare db (fromString sql_filter_missing_txs_json)
-    <*> dbPrepare db (fromString sql_lookup_eb_closure)
-    <*> dbPrepare db (fromString sql_scan_complete_ebs_since)
+prepareStmts db = do
+  stScanEbPoints <- dbPrepare db (fromString sql_scan_ebs)
+  stInsertEbPoint <- dbPrepare db (fromString sql_insert_eb)
+  stLookupEbBody <- dbPrepare db (fromString sql_lookup_ebBodies)
+  stInsertEbTxsRow <- dbPrepare db (fromString sql_insert_ebBody)
+  stInitMissingCount <- dbPrepare db (fromString sql_init_missing_tx_count)
+  stInsertTx <- dbPrepare db (fromString sql_insert_tx)
+  stDecrMissingCount <- dbPrepare db (fromString sql_decrement_missing_tx_count)
+  stFindCompleteEbs <- dbPrepare db (fromString sql_find_complete_ebs)
+  stMarkNotifiedEbs <- dbPrepare db (fromString sql_mark_notified_ebs)
+  stBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
+  stFilterMissingEbBodies <- dbPrepare db (fromString sql_filter_missing_eb_bodies_json)
+  stFilterMissingTxs <- dbPrepare db (fromString sql_filter_missing_txs_json)
+  stLookupEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
+  stScanCompleteEbsSince <- dbPrepare db (fromString sql_scan_complete_ebs_since)
+  pure Stmts{..}
 
 -- | Finalise every statement in 'Stmts'. Called from 'close' immediately
 -- before 'sqlite3_close_v2', on the connection's owner thread.
@@ -223,7 +223,7 @@ openSQLiteConnection tracer dbPath notificationChan = do
 
 sqlScanEbPoints :: Conn -> IO [(SlotNo, EbHash)]
 sqlScanEbPoints conn =
-  dbWithBEGIN db $ useStmt stmt $ loop []
+  dbWithTransaction db $ useStmt stmt $ loop []
  where
   Conn{connDb = db, connStmts = Stmts{stScanEbPoints = stmt}} = conn
   loop acc =
@@ -236,7 +236,7 @@ sqlScanEbPoints conn =
 
 sqlScanCompleteEbPointsSince :: Conn -> SlotNo -> IO [LeiosPoint]
 sqlScanCompleteEbPointsSince conn sinceSlot =
-  dbWithBEGIN db $ useStmt stmt $ do
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo sinceSlot)
     loop []
  where
@@ -251,7 +251,7 @@ sqlScanCompleteEbPointsSince conn sinceSlot =
 
 sqlLookupEbBody :: Conn -> EbHash -> IO [(TxHash, BytesSize)]
 sqlLookupEbBody conn ebHash =
-  dbWithBEGIN db $ useStmt stmt $ do
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
     loop []
  where
@@ -266,7 +266,7 @@ sqlLookupEbBody conn ebHash =
 
 sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
 sqlInsertEbPoint conn point ebBytesSize =
-  dbWithBEGIN db $ useStmt stmt $ do
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
     dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
     dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
@@ -286,7 +286,7 @@ sqlInsertEbBody ::
 sqlInsertEbBody tracer conn notify point eb = do
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
-  completed <- dbWithBEGIN db $ do
+  completedAndNovel <- dbWithTransaction db $ do
     forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
       dbBindBlob stInsertEbTxsRow 1 point.pointEbHash.ebHashBytes
       dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
@@ -303,16 +303,16 @@ sqlInsertEbBody tracer conn notify point eb = do
       dbBindBlob stInitMissingCount 2 point.pointEbHash.ebHashBytes
       dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo point.pointSlotNo)
       dbStep1 stInitMissingCount
-    -- If every referenced tx is already present, 'stInitMissingCount' just
-    -- set missingTxCount to 0 for this EB. No subsequent 'sqlInsertTxs'
-    -- will fire for this point, so drain the pending-completion set here
-    -- (mirrors what 'sqlInsertTxs' does after 'stDecrMissingCount').
+    -- If every referenced tx is already present, 'stInitMissingCount' just set
+    -- missingTxCount to 0 for this EB. For all such EBs we need to notify that
+    -- we acquired the whole closure.
+    -- XXX: This scans the ebs table while we would know which row to check
     completedNow <- useStmt stFindCompleteEbs $ findCompleteEbs stFindCompleteEbs
     useStmt stMarkNotifiedEbs $ dbStep1 stMarkNotifiedEbs
     pure completedNow
   notify $ AcquiredEb point ebBytesSize
-  forM_ completed $ \p -> notify (AcquiredEbTxs p)
-  pure completed
+  forM_ completedAndNovel $ \p -> notify (AcquiredEbTxs p)
+  pure completedAndNovel
  where
   items = leiosEbBodyItems eb
   ebBytesSize = leiosEbBytesSize eb
@@ -336,7 +336,7 @@ sqlInsertTxs _tracer conn notify txs = do
   -- hashes; attempting the INSERT and catching a constraint violation
   -- still pays the bind + PK-lookup + reset cost per row.
   missing <- Set.fromList <$> sqlFilterMissingTxs conn (map fst txs)
-  completed <- dbWithBEGIN db $ do
+  completed <- dbWithTransaction db $ do
     -- 'dbStepInsert' still handles the rare race where a concurrent
     -- writer inserted the same hash between the filter above and the
     -- INSERT below.
@@ -391,7 +391,7 @@ sqlBatchRetrieveTxs ::
   [Int] ->
   IO [(Int, TxHash, Maybe ByteString)]
 sqlBatchRetrieveTxs conn ebHash offsets =
-  dbWithBEGIN db $ useStmt stmt $ do
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
     dbBindUtf8 stmt 2 (jsonIntArray offsets)
     loop []
@@ -413,7 +413,7 @@ sqlBatchRetrieveTxs conn ebHash offsets =
 -- @ebTxs.ebHashBytes@ still fire.
 sqlFilterMissingEbBodies :: Conn -> [LeiosPoint] -> IO [LeiosPoint]
 sqlFilterMissingEbBodies conn points =
-  dbWithBEGIN db $ useStmt stmt $ do
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindUtf8 stmt 1 (jsonHexArray (map ebHashBytes (Map.keys pointsByHash)))
     loop []
  where
@@ -432,7 +432,7 @@ sqlFilterMissingEbBodies conn points =
 -- 'sqlFilterMissingEbBodies'.
 sqlFilterMissingTxs :: Conn -> [TxHash] -> IO [TxHash]
 sqlFilterMissingTxs conn txHashes =
-  dbWithBEGIN db $ useStmt stmt $ do
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindUtf8 stmt 1 (jsonHexArray [b | MkTxHash b <- txHashes])
     loop []
  where
@@ -471,7 +471,7 @@ jsonIntArray xs =
 
 sqlLookupEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
 sqlLookupEbClosure conn ebHash =
-  dbWithBEGIN db $ useStmt stmt $ do
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindBlob stmt 1 (ebHashBytes ebHash)
     -- FIXME(bladyjoker): This should have a SlotNo as the second part of the key
     loop []
@@ -660,8 +660,8 @@ dbPrepare :: HasCallStack => DB.Database -> DB.Utf8 -> IO DB.Statement
 dbPrepare db q = withDieJust db $ DB.prepare db q
 
 -- TODO: alternative: bind and use https://www.sqlite.org/c3ref/busy_handler.html
-dbWithBEGIN :: HasCallStack => DB.Database -> IO a -> IO a
-dbWithBEGIN db k =
+dbWithTransaction :: HasCallStack => DB.Database -> IO a -> IO a
+dbWithTransaction db k =
   do
     fmap fst
     $ generalBracket

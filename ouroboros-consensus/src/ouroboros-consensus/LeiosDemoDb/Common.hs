@@ -114,6 +114,8 @@ data LeiosDbConnection m = LeiosDbConnection
   -- signal ('TraceLeiosBlockTxsAcquired') should emit it from this
   -- result — for the common case where the body arrives first, the
   -- returned list is empty.
+  --
+  -- XXX: return type only used for tracing
   , leiosDbInsertTxs :: HasCallStack => [(TxHash, ByteString)] -> m CompletedEbs
   -- ^ Insert transactions into the global 'txs' table (INSERT OR IGNORE).
   -- After inserting, checks which EBs referencing these txs are now complete
@@ -123,7 +125,7 @@ data LeiosDbConnection m = LeiosDbConnection
   -- complete via multiple insert batches (e.g., if txs are inserted twice).
   -- Consumers should handle notifications idempotently.
   --
-  -- REVIEW: return type only used for tracing, necessary?
+  -- XXX: return type only used for tracing
   , leiosDbBatchRetrieveTxs :: HasCallStack => EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   , leiosDbFilterMissingEbBodies :: HasCallStack => [LeiosPoint] -> m [LeiosPoint]
   -- ^ Batch filter: returns the subset of input LeiosPoints whose EB bodies are missing.
