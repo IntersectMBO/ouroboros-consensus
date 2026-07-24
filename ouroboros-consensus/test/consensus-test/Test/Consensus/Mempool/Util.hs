@@ -76,6 +76,7 @@ mkTestLedgerConfig mockCfg =
         HardFork.defaultEraParams
           (SecurityParam (knownNonZeroBounded @4))
           (slotLengthFromSec 20)
+          NoPerasEnabled
     , simpleLedgerMockConfig = mockCfg
     }
 

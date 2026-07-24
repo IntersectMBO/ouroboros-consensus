@@ -1,3 +1,5 @@
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
@@ -30,10 +32,14 @@ module Ouroboros.Consensus.Protocol.Abstract
   , shouldSwitchToMaybe
   , Comparing (..)
 
+    -- * Peras support
+  , ChainDepStateSupportsPeras (..)
+
     -- * Convenience re-exports
   , SecurityParam (..)
   ) where
 
+import Cardano.Ledger.BaseTypes (Nonce (NeutralNonce))
 import Cardano.Slotting.Slot (WithOrigin (At))
 import Control.Monad.Except
 import Data.Function (on)
@@ -306,6 +312,26 @@ data NoTiebreaker = NoTiebreaker
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
   deriving ChainOrder via SimpleChainOrder NoTiebreaker
+
+-- * Peras support
+
+-- | Projections of the chain-dependent state required to support Peras.
+class ChainDepStateSupportsPeras chainDepState where
+  -- | Extract the epoch nonce from the given 'ChainDepState'.
+  --
+  -- PRECONDITION: this function will only return a meaningful result if the
+  -- 'ChainDepState' is from a protocol of a block that supports Peras.
+  getEpochNonce :: chainDepState -> Nonce
+  default getEpochNonce :: chainDepState -> Nonce
+  getEpochNonce _ = NeutralNonce
+
+-- | Protocols with a trivial (unit) 'ChainDepState' do not contribute an epoch
+-- nonce, so they use the default 'NeutralNonce'. These canonical instances
+-- cover all such protocols (e.g. BFT, leader schedules), which would otherwise
+-- each need an (overlapping) instance for @()@.
+instance ChainDepStateSupportsPeras ()
+
+instance ChainDepStateSupportsPeras (Ticked ())
 
 {-------------------------------------------------------------------------------
   Helpers

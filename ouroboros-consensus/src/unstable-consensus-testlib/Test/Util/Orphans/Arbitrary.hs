@@ -345,15 +345,7 @@ instance Arbitrary Bound where
       <$> (RelativeTime <$> arbitrary)
       <*> (SlotNo <$> arbitrary)
       <*> (EpochNo <$> arbitrary)
-      <*> mPerasRoundNo
-   where
-    mPerasRoundNo :: Gen (PerasEnabled PerasRoundNo)
-    mPerasRoundNo = do
-      n <- arbitrary
-      pure $
-        if n == 0
-          then NoPerasEnabled
-          else PerasEnabled (PerasRoundNo n)
+      <*> (PerasRoundNo <$> arbitrary)
 
 instance Arbitrary (K Past blk) where
   arbitrary = K <$> (Past <$> arbitrary <*> arbitrary)

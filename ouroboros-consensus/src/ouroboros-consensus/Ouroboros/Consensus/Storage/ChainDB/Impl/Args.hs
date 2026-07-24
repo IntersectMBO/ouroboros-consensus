@@ -56,7 +56,7 @@ data ChainDbArgs f m blk = ChainDbArgs
   , cdbVolDbArgs :: VolatileDB.VolatileDbArgs f m blk
   , cdbLgrDbArgs :: LedgerDB.LedgerDbArgs f m blk
   , cdbPerasCertDbArgs :: PerasCertDB.PerasCertDbArgs f m blk
-  , cdbPerasVoteDbArgs :: PerasVoteDB.PerasVoteDbArgs f m blk
+  , cdbPerasVoteDbArgs :: Incomplete PerasVoteDB.PerasVoteDbArgs m blk
   , cdbsArgs :: ChainDbSpecificArgs f m blk
   }
 
@@ -228,7 +228,7 @@ completeChainDbArgs
       , cdbPerasVoteDbArgs =
           PerasVoteDB.PerasVoteDbArgs
             { PerasVoteDB.pvdbaTracer = PerasVoteDB.pvdbaTracer (cdbPerasVoteDbArgs defArgs)
-            , PerasVoteDB.pvdbaPerasCfg = mkPerasParams
+            , PerasVoteDB.pvdbaPerasEpochContextResolverHandle = NoDefault
             }
       , cdbsArgs =
           (cdbsArgs defArgs)

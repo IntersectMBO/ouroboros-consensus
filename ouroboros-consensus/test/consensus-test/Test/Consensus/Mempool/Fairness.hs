@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | Tests fairness aspects of the mempool.
@@ -24,6 +25,7 @@ import Data.Foldable (asum)
 import qualified Data.List as List
 import Data.List.NonEmpty hiding (length)
 import Data.Void (Void, vacuous)
+import Ouroboros.Consensus.Block.SupportsPeras (pattern PerasEnabled)
 import Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
@@ -117,6 +119,7 @@ testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOf
       HardFork.defaultEraParams
         (Consensus.SecurityParam $ knownNonZeroBounded @10)
         (Time.slotLengthFromSec 2)
+        (PerasEnabled ())
 
   mempool <-
     Mempool.openMempoolWithoutSyncThread

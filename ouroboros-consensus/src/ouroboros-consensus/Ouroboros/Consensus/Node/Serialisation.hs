@@ -37,12 +37,13 @@ module Ouroboros.Consensus.Node.Serialisation
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
-import qualified Cardano.Binary as KeyHash
 import Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import Codec.CBOR.Encoding (Encoding, encodeListLen)
 import Codec.Serialise (Serialise (decode, encode))
 import Data.Kind
 import Data.SOP.BasicFunctors
+import Data.Typeable (Typeable)
+import Data.Void (absurd)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
@@ -50,6 +51,8 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   , GenTxId
   )
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
+import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (Some (..))
 import Ouroboros.Network.Block
@@ -186,6 +189,14 @@ deriving newtype instance
   SerialiseNodeToNode blk (GenTxId blk) =>
   SerialiseNodeToNode blk (WrapGenTxId blk)
 
+deriving newtype instance
+  SerialiseNodeToNode blk (PerasVote blk) =>
+  SerialiseNodeToNode blk (WrapPerasVote blk)
+
+deriving newtype instance
+  SerialiseNodeToNode blk (PerasCert blk) =>
+  SerialiseNodeToNode blk (WrapPerasCert blk)
+
 instance ConvertRawHash blk => SerialiseNodeToNode blk (Point blk) where
   encodeNodeToNode _ccfg _version = encodePoint $ encodeRawHash (Proxy @blk)
   decodeNodeToNode _ccfg _version = decodePoint $ decodeRawHash (Proxy @blk)
@@ -202,47 +213,33 @@ instance SerialiseNodeToNode blk PerasSeatIndex where
   encodeNodeToNode _ccfg _version = toCBOR . unPerasSeatIndex
   decodeNodeToNode _ccfg _version = PerasSeatIndex <$> fromCBOR
 
-instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
-  -- Consistent with the 'Serialise' instance for 'PerasCert' defined in Ouroboros.Consensus.Block.SupportsPeras
-  encodeNodeToNode ccfg version PerasCert{..} =
-    encodeListLen 2
-      <> encodeNodeToNode ccfg version pcCertRound
-      <> encodeNodeToNode ccfg version pcCertBoostedBlock
-  decodeNodeToNode ccfg version = do
-    decodeListLenOf 2
-    pcCertRound <- decodeNodeToNode ccfg version
-    pcCertBoostedBlock <- decodeNodeToNode ccfg version
-    pure $ PerasCert pcCertRound pcCertBoostedBlock
-
-instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasVote blk) where
-  -- Consistent with the 'Serialise' instance for 'PerasVote' defined in Ouroboros.Consensus.Block.SupportsPeras
-  encodeNodeToNode ccfg version PerasVote{..} =
-    encodeListLen 3
-      <> encodeNodeToNode ccfg version pvVoteRound
-      <> encodeNodeToNode ccfg version pvVoteBlock
-      <> encodeNodeToNode ccfg version pvVoteVoterId
-  decodeNodeToNode ccfg version = do
-    decodeListLenOf 3
-    pvVoteRound <- decodeNodeToNode ccfg version
-    pvVoteBlock <- decodeNodeToNode ccfg version
-    pvVoteVoterId <- decodeNodeToNode ccfg version
-    pure $ PerasVote pvVoteRound pvVoteBlock pvVoteVoterId
-
-instance SerialiseNodeToNode blk PerasVoterId where
-  encodeNodeToNode _ccfg _version = KeyHash.toCBOR . unPerasVoterId
-  decodeNodeToNode _ccfg _version = PerasVoterId <$> KeyHash.fromCBOR
-
-instance SerialiseNodeToNode blk (PerasVoteId blk) where
+instance SerialiseNodeToNode blk PerasVoteId where
   -- Consistent with the 'Serialise' instance for 'PerasVoteId' defined in Ouroboros.Consensus.Block.SupportsPeras
   encodeNodeToNode ccfg version PerasVoteId{..} =
     encodeListLen 2
       <> encodeNodeToNode ccfg version pviRoundNo
-      <> encodeNodeToNode ccfg version pviVoterId
+      <> encodeNodeToNode ccfg version pviSeatIndex
   decodeNodeToNode ccfg version = do
     decodeListLenOf 2
     pviRoundNo <- decodeNodeToNode ccfg version
-    pviVoterId <- decodeNodeToNode ccfg version
-    pure $ PerasVoteId pviRoundNo pviVoterId
+    pviSeatIndex <- decodeNodeToNode ccfg version
+    pure $ PerasVoteId pviRoundNo pviSeatIndex
+
+instance SerialiseNodeToNode blk (VoidPerasVote blk) where
+  encodeNodeToNode _ _ = absurd . unVoidPerasVote
+  decodeNodeToNode _ _ = fail "VoidPerasVote cannot be decoded"
+
+instance SerialiseNodeToNode blk (VoidPerasCert blk) where
+  encodeNodeToNode _ _ = absurd . unVoidPerasCert
+  decodeNodeToNode _ _ = fail "VoidPerasCert cannot be decoded"
+
+instance Typeable tag => SerialiseNodeToNode blk (V1.PerasVote tag) where
+  encodeNodeToNode _ccfg _version = toCBOR
+  decodeNodeToNode _ccfg _version = fromCBOR
+
+instance Typeable tag => SerialiseNodeToNode blk (V1.PerasCert tag) where
+  encodeNodeToNode _ccfg _version = toCBOR
+  decodeNodeToNode _ccfg _version = fromCBOR
 
 deriving newtype instance
   SerialiseNodeToClient blk (GenTxId blk) =>

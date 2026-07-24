@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -47,6 +48,12 @@ module Ouroboros.Consensus.Committee.WFALS
   , totalNonPersistentStake
   ) where
 
+import Cardano.Binary
+  ( FromCBOR (..)
+  , ToCBOR (..)
+  , decodeListLenOf
+  , encodeListLen
+  )
 import Cardano.Ledger.BaseTypes (NonZero (..), Nonce, nonZero)
 import Control.Exception (Exception, assert)
 import Control.Monad (void)
@@ -139,6 +146,57 @@ data instance VotingCommittee crypto WFALS
   , --  Epoch nonce of the epoch where this committee selection takes place
     epochNonce :: !Nonce
   }
+
+instance
+  ( Typeable crypto
+  , FromCBOR (PublicKey crypto)
+  ) =>
+  FromCBOR (VotingCommittee crypto WFALS)
+  where
+  fromCBOR = do
+    decodeListLenOf 7
+    extWFAStakeDistr <- fromCBOR
+    candidateSeats <- fromCBOR
+    persistentCommitteeSize <- fromCBOR
+    nonPersistentCommitteeSize <- fromCBOR
+    totalPersistentStake <- fromCBOR
+    totalNonPersistentStake <- fromCBOR
+    epochNonce <- fromCBOR
+    pure
+      WFALSVotingCommittee
+        { extWFAStakeDistr
+        , candidateSeats
+        , persistentCommitteeSize
+        , nonPersistentCommitteeSize
+        , totalPersistentStake
+        , totalNonPersistentStake
+        , epochNonce
+        }
+
+instance
+  ( Typeable crypto
+  , ToCBOR (PublicKey crypto)
+  ) =>
+  ToCBOR (VotingCommittee crypto WFALS)
+  where
+  toCBOR
+    WFALSVotingCommittee
+      { extWFAStakeDistr
+      , candidateSeats
+      , persistentCommitteeSize
+      , nonPersistentCommitteeSize
+      , totalPersistentStake
+      , totalNonPersistentStake
+      , epochNonce
+      } =
+      encodeListLen 7
+        <> toCBOR extWFAStakeDistr
+        <> toCBOR candidateSeats
+        <> toCBOR persistentCommitteeSize
+        <> toCBOR nonPersistentCommitteeSize
+        <> toCBOR totalPersistentStake
+        <> toCBOR totalNonPersistentStake
+        <> toCBOR epochNonce
 
 instance
   ( CryptoSupportsAggregateVoteSigning crypto

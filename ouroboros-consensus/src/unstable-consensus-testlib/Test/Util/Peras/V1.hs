@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeFamilies #-}
 
 -- | Common utilities for writing tests for Peras types.
-module Test.Consensus.Peras.Util
+module Test.Util.Peras.V1
   ( -- * Predicates
     perasVoteIsPersistent
   , perasCertContainsOnlyPersistentVotes
@@ -17,7 +17,6 @@ module Test.Consensus.Peras.Util
   , genPerasCert
 
     -- * Tabulators
-  , mkBucket
   , tabulatePerasCert
   , tabulatePerasVote
   ) where
@@ -26,9 +25,7 @@ import Cardano.Crypto.Hash (ByteString)
 import Cardano.Ledger.BaseTypes (SlotNo (..))
 import Control.Monad (forM)
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as ShortByteString
-import qualified Data.ByteString.Short as ShortBytesString
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.NonEmpty as NEMap
 import Data.Maybe (catMaybes, fromMaybe)
@@ -37,20 +34,18 @@ import Data.String (IsString (..))
 import Data.Traversable (mapAccumM)
 import Data.Word (Word8)
 import GHC.Word (Word16)
-import Ouroboros.Consensus.Block (ConvertRawHash, HeaderHash)
-import Ouroboros.Consensus.Block.Abstract (ConvertRawHash (..), WithOrigin (..))
+import Ouroboros.Consensus.Block.Abstract (WithOrigin (..))
 import Ouroboros.Consensus.Block.RealPoint (Bytes32RealPoint (..))
-import Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasBoostedBlock (..)
-  , PerasRoundNo (..)
-  , PerasSeatIndex (..)
-  )
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import Ouroboros.Consensus.Peras.Crypto.BLS
   ( PerasBLSCryptoAggregateVoteSignature (..)
   , VRFOutput (..)
   , VoteSignature (..)
+  )
+import Ouroboros.Consensus.Peras.Types
+  ( PerasBoostedBlock (..)
+  , PerasSeatIndex (..)
   )
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
 import Test.QuickCheck
@@ -63,6 +58,7 @@ import Test.QuickCheck
   , tabulate
   , vectorOf
   )
+import Test.Util.Peras.Internal (genRoundNo, genSeatIndex, mkBucket)
 
 -- * Predicates
 
@@ -88,17 +84,6 @@ perasCertContainsOnlyPersistentVotes cert =
 
 -- * Generators
 
-genRoundNo :: Gen PerasRoundNo
-genRoundNo = PerasRoundNo <$> arbitrary
-
-data BlockWith32BytesHeaderHash
-type instance HeaderHash BlockWith32BytesHeaderHash = ShortByteString
-
-instance ConvertRawHash BlockWith32BytesHeaderHash where
-  type HashSize BlockWith32BytesHeaderHash = 32
-  toRawHash _ = ShortBytesString.fromShort
-  unsafeFromRawHash _ = ShortBytesString.toShort
-
 genBoostedBlock :: Gen PerasBoostedBlock
 genBoostedBlock = PerasBoostedBlock <$> genWithOrigin genBytes32RealPoint
  where
@@ -111,9 +96,6 @@ genBoostedBlock = PerasBoostedBlock <$> genWithOrigin genBytes32RealPoint
     slotNo <- SlotNo <$> arbitrary
     hash <- ShortByteString.pack <$> vectorOf 32 arbitrary
     pure $ Bytes32RealPoint slotNo hash
-
-genSeatIndex :: Gen PerasSeatIndex
-genSeatIndex = PerasSeatIndex <$> arbitrary
 
 genPrivateKey :: Proxy r -> Gen (BLS.PrivateKey r)
 genPrivateKey _ =
@@ -226,14 +208,6 @@ genPerasCert shouldGenNonPersistent = do
       }
 
 -- * Tabulators
-
-mkBucket :: Int -> Int -> String -> String
-mkBucket bucketSize x suffix
-  | lower == upper = show lower <> suffix
-  | otherwise = show lower <> "-" <> show upper <> suffix
- where
-  lower = (x `div` bucketSize) * bucketSize
-  upper = lower + bucketSize
 
 tabulatePerasCert :: V1.PerasCert tag -> Property -> Property
 tabulatePerasCert cert =

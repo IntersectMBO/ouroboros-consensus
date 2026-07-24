@@ -1,5 +1,4 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 -- | Instantiate 'ObjectPoolReader' and 'ObjectPoolWriter' using Peras
 -- certificates from the 'PerasCertDB' (or the 'ChainDB' which is wrapping the
@@ -11,21 +10,29 @@ module Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.PerasCert
   , makePerasCertPoolWriterFromChainDB
   ) where
 
-import Control.Monad (join)
-import Data.Either (partitionEithers)
-import Data.Functor (void)
+import Data.Foldable (traverse_)
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
-import GHC.Exception (throw)
-import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Block.SupportsPeras
+  ( BlockSupportsPeras (PerasCert)
+  , IsPerasCert (getPerasCertRound)
+  , PerasRoundNo
+  , ValidatedPerasCert (vpcCert)
+  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( SystemTime (..)
   , WithArrivalTime (..)
   )
 import Ouroboros.Consensus.MiniProtocol.ObjectDiffusion.ObjectPool.API
-import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
+  ( ObjectPoolReader (..)
+  , ObjectPoolWriter (..)
+  )
+import Ouroboros.Consensus.Peras.Context
+  ( PerasEpochContextResolverHandle
+  , verifyPerasCertWithHandle
+  )
+import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB, getPerasEpochContextResolverHandle)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertDB
@@ -33,6 +40,9 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API
   )
 import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , MonadSTM (STM, atomically)
+  )
 
 -- | TODO: replace by `Data.Map.take` as soon as we move to GHC 9.8
 takeAscMap :: Int -> Map k v -> Map k v
@@ -44,7 +54,9 @@ takeAscMap n = Map.fromDistinctAscList . take n . Map.toAscList
 
 -- | Internal helper: create a pool reader from a @getCertsAfter@ function.
 makePerasCertPoolReader ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   ( PerasCertTicketNo ->
     STM m (Map PerasCertTicketNo (m (WithArrivalTime (ValidatedPerasCert blk))))
   ) ->
@@ -65,7 +77,9 @@ makePerasCertPoolReader getCertsAfterSTM =
     }
 
 makePerasCertPoolReaderFromCertDB ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   PerasCertDB m blk ->
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromCertDB perasCertDB =
@@ -73,7 +87,9 @@ makePerasCertPoolReaderFromCertDB perasCertDB =
     (PerasCertDB.getCertsAfter perasCertDB)
 
 makePerasCertPoolReaderFromChainDB ::
-  IOLike m =>
+  ( IOLike m
+  , IsPerasCert (PerasCert blk) blk
+  ) =>
   ChainDB m blk ->
   ObjectPoolReader PerasRoundNo (PerasCert blk) PerasCertTicketNo m
 makePerasCertPoolReaderFromChainDB chainDB =
@@ -89,20 +105,27 @@ makePerasCertPoolReaderFromChainDB chainDB =
 -- see 'makePerasCertPoolWriterFromChainDB' which creates a pool writer from the
 -- 'ChainDB' with proper handling of chain selection side-effects.
 makePerasCertPoolWriterFromCertDB ::
-  (StandardHash blk, IOLike m) =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   SystemTime m ->
   PerasCertDB m blk ->
+  PerasEpochContextResolverHandle m blk ->
   ObjectPoolWriter PerasRoundNo (PerasCert blk) m
-makePerasCertPoolWriterFromCertDB systemTime perasCertDB =
+makePerasCertPoolWriterFromCertDB systemTime perasCertDB resolverHandle =
   ObjectPoolWriter
     { opwObjectId = getPerasCertRound
-    , opwAddObjects = \certs ->
-        processCerts
-          systemTime
-          (PerasCertDB.getCertIds perasCertDB)
-          (validatePerasCert mkPerasParams) -- TODO replace when actual plumbing is in place
-          (void . join . atomically . PerasCertDB.addCert perasCertDB)
-          certs
+    , opwAddObjects = \certs -> do
+        now <- systemTimeCurrent systemTime
+        atomically $ do
+          alreadyInDb <- PerasCertDB.getCertIds perasCertDB
+          let certsNotAlreadyInDb = filter ((`Set.notMember` alreadyInDb) . getPerasCertRound) certs
+          validatedCerts <- traverse (verifyPerasCertWithHandle resolverHandle) certsNotAlreadyInDb
+          -- Some certs are invalid => reject the whole batch
+          -- We could combine the two 'traverse' operations into one in which case
+          -- any validated cert would be immediately added no matter what is the
+          -- validity of the other certs in the batch.
+          traverse_ (PerasCertDB.addCert perasCertDB . WithArrivalTime now) validatedCerts
     , opwHasObject = do
         certIds <- PerasCertDB.getCertIds perasCertDB
         pure $ \roundNo -> Set.member roundNo certIds
@@ -111,75 +134,28 @@ makePerasCertPoolWriterFromCertDB systemTime perasCertDB =
 -- | Create a pool writer from the 'ChainDB'. This properly handles any needed
 -- chain selection side-effects.
 makePerasCertPoolWriterFromChainDB ::
-  (StandardHash blk, IOLike m) =>
+  ( IOLike m
+  , BlockSupportsPeras blk
+  ) =>
   SystemTime m ->
   ChainDB m blk ->
   ObjectPoolWriter PerasRoundNo (PerasCert blk) m
 makePerasCertPoolWriterFromChainDB systemTime chainDB =
-  ObjectPoolWriter
-    { opwObjectId = getPerasCertRound
-    , opwAddObjects = \certs ->
-        processCerts
-          systemTime
-          (ChainDB.getPerasCertIds chainDB)
-          -- TODO replace when actual plumbing is in place
-          (validatePerasCert mkPerasParams)
-          -- We do not want to block the writer thread on waiting for ChainSel
-          -- side-effects to complete, so we use the async version of adding
-          -- certs to the ChainDB and ignore the returned promise.
-          -- The async action is still launched and executed behind the scenes
-          -- even though we drop the promise.
-          (void . ChainDB.addPerasCertAsync chainDB)
-          certs
-    , opwHasObject = do
-        certIds <- ChainDB.getPerasCertIds chainDB
-        pure $ \roundNo -> Set.member roundNo certIds
-    }
-
-data PerasCertInboundException
-  = forall blk. PerasCertValidationError [PerasValidationErr blk]
-
-deriving instance Show PerasCertInboundException
-
-instance Exception PerasCertInboundException
-
--- | Process a batch of inbound Peras certificates received from a peer.
---
--- Certificates whose round number is already present in the database (as
--- determined by @alreadyInDbSTM@) are silently skipped. The remaining
--- certificates are validated; if /any/ certificate in the batch fails
--- validation, the entire batch is rejected by throwing a
--- 'PerasCertInboundException' (which should make us disconnect from the distant
--- peer, see 'withPeer' bracket function from `ouroboros-network`). Otherwise,
--- each valid certificate is timestamped with the current wall-clock time and
--- added to the database via @addCert@.
-processCerts ::
-  MonadSTM m =>
-  SystemTime m ->
-  STM m (Set PerasRoundNo) ->
-  (PerasCert blk -> Either (PerasValidationErr blk) (ValidatedPerasCert blk)) ->
-  (WithArrivalTime (ValidatedPerasCert blk) -> m ()) ->
-  [PerasCert blk] ->
-  m ()
-processCerts systemTime alreadyInDbSTM validateCert addCert certs = do
-  alreadyInDb <- atomically alreadyInDbSTM
-  let certsNotAlreadyInDb = filter (not . (`Set.member` alreadyInDb) . getPerasCertRound) certs
-  now <- systemTimeCurrent systemTime
-  case partitionEithers (validateCert <$> certsNotAlreadyInDb) of
-    -- All certs are valid => add them to the pool
-    ([], validatedCerts) ->
-      mapM_
-        (addCert . WithArrivalTime now)
-        validatedCerts
-    -- Some certs are invalid => reject the whole batch
-    --
-    -- N.B. it has been requested in PR review
-    -- https://github.com/IntersectMBO/ouroboros-consensus/pull/1768#discussion_r2747873186
-    -- to gather all validation errors and report them together in the exception
-    -- rather than just report the first error encountered.
-    -- This assumes that cert validation is cheap, which may not be true in
-    -- practice depending on the actual crypto/committee selection scheme.
-    -- Hence we may revisit this to lazily abort validation upon the first error
-    -- encountered.
-    (errs, _) ->
-      throw (PerasCertValidationError errs)
+  let resolverHandle = getPerasEpochContextResolverHandle chainDB
+   in ObjectPoolWriter
+        { opwObjectId = getPerasCertRound
+        , opwAddObjects = \certs -> do
+            now <- systemTimeCurrent systemTime
+            validatedCerts <- atomically $ do
+              alreadyInDb <- ChainDB.getPerasCertIds chainDB
+              let certsNotAlreadyInDb = filter ((`Set.notMember` alreadyInDb) . getPerasCertRound) certs
+              traverse (verifyPerasCertWithHandle resolverHandle) certsNotAlreadyInDb
+            -- Some certs are invalid => reject the whole batch
+            -- We could combine the two 'traverse' operations into one in which case
+            -- any validated cert would be immediately added no matter what is the
+            -- validity of the other certs in the batch.
+            traverse_ (ChainDB.addPerasCertAsync chainDB . WithArrivalTime now) validatedCerts
+        , opwHasObject = do
+            certIds <- ChainDB.getPerasCertIds chainDB
+            pure $ \roundNo -> Set.member roundNo certIds
+        }

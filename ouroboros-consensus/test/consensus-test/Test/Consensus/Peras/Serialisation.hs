@@ -11,13 +11,6 @@ import Cardano.Binary (FromCBOR (..), ToCBOR (..), decodeFull, serialize)
 import qualified Data.ByteString.Lazy as LazyByteString
 import qualified Ouroboros.Consensus.Peras.Cert.V1 as V1
 import qualified Ouroboros.Consensus.Peras.Vote.V1 as V1
-import Test.Consensus.Peras.Util
-  ( genPerasCert
-  , genPerasVote
-  , mkBucket
-  , tabulatePerasCert
-  , tabulatePerasVote
-  )
 import Test.QuickCheck
   ( Gen
   , Property
@@ -28,6 +21,13 @@ import Test.QuickCheck
   )
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck (testProperty)
+import Test.Util.Peras
+  ( genPerasCert
+  , genPerasVote
+  , mkBucket
+  , tabulatePerasCert
+  , tabulatePerasVote
+  )
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
