@@ -10,7 +10,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE ViewPatterns #-}
 
 -- | Snapshots
 --
@@ -129,7 +128,6 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Util (Flag (..), lastMaybe)
-import Ouroboros.Consensus.Util.Args (OverrideOrDefault (..), provideDefault)
 import Ouroboros.Consensus.Util.CBOR
   ( ReadIncrementalErr
   , decodeWithOrigin
@@ -598,15 +596,15 @@ data SnapshotSelectorContext = SnapshotSelectorContext
 -- 'sfaRateLimit' to something significantly smaller than the wall-clock duration
 -- of 'sfaInterval'.
 data SnapshotFrequencyArgs = SnapshotFrequencyArgs
-  { sfaInterval :: OverrideOrDefault (NonZero Word64)
+  { sfaInterval :: NonZero Word64
   -- ^ Try to write snapshots every 'sfaInterval' many slots.
-  , sfaOffset :: OverrideOrDefault SlotNo
+  , sfaOffset :: SlotNo
   -- ^ An offset for when to write snapshots, see 'SnapshotFrequency'.
-  , sfaRateLimit :: OverrideOrDefault DiffTime
+  , sfaRateLimit :: DiffTime
   -- ^ Ensure (if present) that at least this amount of time passes between
   -- writing snapshots. Setting this to a non-positive value disable the rate
   -- limit.
-  , sfaDelaySnapshotRange :: OverrideOrDefault SnapshotDelayRange
+  , sfaDelaySnapshotRange :: SnapshotDelayRange
   }
   deriving stock (Show, Eq)
 
@@ -617,16 +615,14 @@ data SnapshotFrequency
 
 data SnapshotPolicyArgs = SnapshotPolicyArgs
   { spaFrequency :: SnapshotFrequency
-  , spaNum :: OverrideOrDefault NumOfDiskSnapshots
+  , spaNum :: NumOfDiskSnapshots
   -- ^ See 'onDiskNumSnapshots'.
   }
   deriving stock (Show, Eq)
 
+-- | Default snapshot policy args are Mithril snapshot policy args
 defaultSnapshotPolicyArgs :: SnapshotPolicyArgs
-defaultSnapshotPolicyArgs =
-  SnapshotPolicyArgs
-    (SnapshotFrequency $ SnapshotFrequencyArgs UseDefault UseDefault UseDefault UseDefault)
-    UseDefault
+defaultSnapshotPolicyArgs = mithrilSnapshotPolicyArgs
 
 -- | Snapshot Policy arguments to be used by Mithril
 --
@@ -647,29 +643,34 @@ mithrilSnapshotPolicyArgs =
     { spaFrequency =
         SnapshotFrequency $
           SnapshotFrequencyArgs
-            { sfaInterval = Override (unsafeNonZero 432_000)
-            , sfaOffset = Override 388_800
-            , sfaRateLimit = UseDefault
-            , sfaDelaySnapshotRange = UseDefault
+            { sfaInterval = unsafeNonZero 432_000
+            , sfaOffset = 388_800
+            , sfaRateLimit = secondsToDiffTime $ 10 * 60
+            , sfaDelaySnapshotRange = SnapshotDelayRange fiveMinutes tenMinutes
             }
-    , spaNum = UseDefault
+    , spaNum = NumOfDiskSnapshots 2
     }
+ where
+  fiveMinutes :: DiffTime
+  fiveMinutes = 5 * 60
+
+  tenMinutes :: DiffTime
+  tenMinutes = 10 * 60
 
 -- | Default on-disk policy suitable to use with cardano-node
 defaultSnapshotPolicy ::
-  SecurityParam ->
   SnapshotPolicyArgs ->
   SnapshotPolicy
-defaultSnapshotPolicy (SecurityParam k) args =
+defaultSnapshotPolicy args =
   SnapshotPolicy
-    { onDiskNumSnapshots
+    { onDiskNumSnapshots = spaNum
     , onDiskSnapshotSelector
     , onDiskSnapshotDelayRange
     }
  where
   SnapshotPolicyArgs
     { spaFrequency
-    , spaNum = provideDefault (NumOfDiskSnapshots 2) -> onDiskNumSnapshots
+    , spaNum
     } = args
 
   onDiskSnapshotSelector :: SnapshotSelectorContext -> [SlotNo]
@@ -681,9 +682,9 @@ defaultSnapshotPolicy (SecurityParam k) args =
         DisableSnapshots -> []
         SnapshotFrequency
           SnapshotFrequencyArgs
-            { sfaInterval = unNonZero . provideDefault defInterval -> interval
-            , sfaOffset = provideDefault 0 -> offset
-            , sfaRateLimit = provideDefault defRateLimit -> rateLimit
+            { sfaInterval
+            , sfaOffset
+            , sfaRateLimit
             } ->
             applyRateLimit $
               catMaybes $
@@ -702,39 +703,27 @@ defaultSnapshotPolicy (SecurityParam k) args =
               SlotNo -> -- The next slot in 'sscSnapshotSlots'.
               Maybe SlotNo
             shouldTakeSnapshot candidateSlot nextSlot
-              | nextSlot < offset = Nothing
-              | candidateSlot < offset + n * SlotNo interval = Just candidateSlot
+              | nextSlot < sfaOffset = Nothing
+              | candidateSlot < sfaOffset + n * SlotNo (unNonZero sfaInterval) = Just candidateSlot
               | otherwise = Nothing
              where
-              n = SlotNo $ unSlotNo (nextSlot - offset) `div` interval
+              n = SlotNo $ unSlotNo (nextSlot - sfaOffset) `div` (unNonZero sfaInterval)
 
             -- When rate limiting is enabled, only return at most one (the last)
             -- of the slots satisfying 'shouldTakeSnapshot'.
             applyRateLimit :: [SlotNo] -> [SlotNo]
             applyRateLimit
-              | rateLimit > 0 = maybeToList . lastMaybe
+              | sfaRateLimit > 0 = maybeToList . lastMaybe
               | otherwise = id
 
   onDiskSnapshotDelayRange = case spaFrequency of
     DisableSnapshots -> SnapshotDelayRange 0 0 -- snapshots are disabled, but we need to provide some value here
-    SnapshotFrequency sfa -> provideDefault (SnapshotDelayRange fiveMinutes tenMinutes) $ sfaDelaySnapshotRange sfa
-
-  fiveMinutes :: DiffTime
-  fiveMinutes = 5 * 60
-
-  tenMinutes :: DiffTime
-  tenMinutes = 10 * 60
+    SnapshotFrequency sfa -> sfaDelaySnapshotRange sfa
 
   passesRateLimitCheck t = case spaFrequency of
     SnapshotFrequency SnapshotFrequencyArgs{sfaRateLimit} ->
-      t >= provideDefault defRateLimit sfaRateLimit
+      t >= sfaRateLimit
     DisableSnapshots -> False
-
-  -- On mainnet, this is 72 min for @k=2160@ and a slot length of 1s.
-  defInterval = unsafeNonZero $ unNonZero k * 2
-
-  -- Most relevant during syncing.
-  defRateLimit = secondsToDiffTime $ 10 * 60
 
 -- | The Cardano mainnet epoch length in slots, used as the reference for the
 -- Mithril snapshot compatibility check in 'sanityCheckSnapshotPolicyArgs'.
@@ -757,7 +746,7 @@ sanityCheckSnapshotPolicyArgs SnapshotPolicyArgs{spaFrequency, spaNum} =
         DisableSnapshots -> []
         SnapshotFrequency sfa -> checkFrequencyArgs sfa
  where
-  checkNumZero (Override (NumOfDiskSnapshots 0)) = Just SnapshotNumZero
+  checkNumZero (NumOfDiskSnapshots 0) = Just SnapshotNumZero
   checkNumZero _ = Nothing
 
   checkFrequencyArgs SnapshotFrequencyArgs{sfaDelaySnapshotRange, sfaRateLimit, sfaInterval} =
@@ -767,24 +756,20 @@ sanityCheckSnapshotPolicyArgs SnapshotPolicyArgs{spaFrequency, spaNum} =
     , checkMithrilDivisibility sfaInterval
     ]
 
-  checkDelayRange UseDefault = Nothing
-  checkDelayRange (Override (SnapshotDelayRange mn mx))
+  checkDelayRange (SnapshotDelayRange mn mx)
     | mn < 0 = Just (SnapshotDelayRangeNegativeMinimum mn)
     | mn > mx = Just (SnapshotDelayRangeInverted mn mx)
     | otherwise = Nothing
 
-  checkRateLimitDisabled UseDefault = Nothing
-  checkRateLimitDisabled (Override rl)
+  checkRateLimitDisabled rl
     | rl <= 0 = Just SnapshotRateLimitDisabled
     | otherwise = Nothing
 
-  checkRateLimitLarge UseDefault = Nothing
-  checkRateLimitLarge (Override rl)
+  checkRateLimitLarge rl
     | rl > 86400 = Just (SnapshotRateLimitSuspiciouslyLarge rl)
     | otherwise = Nothing
 
-  checkMithrilDivisibility UseDefault = Nothing
-  checkMithrilDivisibility (Override interval)
+  checkMithrilDivisibility interval
     | mithrilEpochSize `mod` unNonZero interval /= 0 =
         Just (SnapshotIntervalNotDivisorOfEpoch (unNonZero interval))
     | otherwise = Nothing
