@@ -446,6 +446,9 @@ library unstable-consensus-testlib
   visibility: public
   hs-source-dirs: ouroboros-consensus/src/unstable-consensus-testlib
   exposed-modules:
+    Ouroboros.Consensus.Peras.Cert.Mock
+    Ouroboros.Consensus.Peras.Crypto.Mock
+    Ouroboros.Consensus.Peras.Vote.Mock
     Test.LedgerTables
     Test.Ouroboros.Consensus.ChainGenerator.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.BitVector
@@ -523,6 +526,7 @@ library unstable-consensus-testlib
     contra-tracer,
     deepseq,
     directory,
+    extra,
     file-embed,
     filepath,
     fs-api,
@@ -533,6 +537,7 @@ library unstable-consensus-testlib
     io-sim,
     mempack,
     mtl,
+    nonempty-containers,
     nothunks,
     optparse-applicative,
     ouroboros-consensus,

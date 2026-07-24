@@ -31,6 +31,8 @@ import qualified Data.IntPSQ as PSQ
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
 import Data.SOP.BasicFunctors
+import Data.Set.NonEmpty (NESet)
+import qualified Data.Set.NonEmpty as NESet
 import Data.Typeable (Typeable)
 import NoThunks.Class
   ( InspectHeapNamed (..)
@@ -106,6 +108,10 @@ instance NoThunks a => NoThunks (K a b) where
 instance NoThunks a => NoThunks (MultiSet a) where
   showTypeOf _ = "MultiSet"
   wNoThunks ctxt = wNoThunks ctxt . MultiSet.toMap
+
+instance NoThunks v => NoThunks (NESet v) where
+  showTypeOf _ = "NESet"
+  wNoThunks ctxt = wNoThunks ctxt . NESet.toSet
 
 instance NoThunks a => NoThunks (Array i a) where
   showTypeOf _ = "Array"
