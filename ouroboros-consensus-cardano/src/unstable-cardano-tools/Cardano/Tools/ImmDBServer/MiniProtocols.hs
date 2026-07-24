@@ -105,6 +105,7 @@ immDBServer ::
   ( IOLike m
   , HasHeader blk
   , ShowProxy blk
+  , ShowProxy (Header blk)
   , SerialiseNodeToNodeConstraints blk
   , Show addr
   , SupportedNetworkProtocolVersion blk
