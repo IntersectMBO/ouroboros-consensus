@@ -79,6 +79,10 @@ class
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsMetrics blk
   , SerialiseNodeToClient blk (PartialLedgerConfig blk)
+  , -- TODO: replace the two constraints below with:
+    -- 'StateSupportsPerasEpochContext blk' once that type class is in place.
+    ChainDepStateSupportsPeras (ChainDepState (BlockProtocol blk))
+  , ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol blk)))
   , -- LedgerTables
     CanStowLedgerTables (LedgerState blk)
   , HasLedgerTables LedgerState blk

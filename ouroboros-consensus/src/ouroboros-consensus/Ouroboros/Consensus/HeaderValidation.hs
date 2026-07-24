@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -186,6 +187,18 @@ data HeaderState blk = HeaderState
   , headerStateChainDep :: !(ChainDepState (BlockProtocol blk))
   }
   deriving Generic
+
+instance
+  ChainDepStateSupportsPeras (ChainDepState (BlockProtocol blk)) =>
+  ChainDepStateSupportsPeras (HeaderState blk)
+  where
+  getEpochNonce = getEpochNonce . headerStateChainDep
+
+instance
+  ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol blk))) =>
+  ChainDepStateSupportsPeras (Ticked (HeaderState blk))
+  where
+  getEpochNonce = getEpochNonce . tickedHeaderStateChainDep
 
 castHeaderState ::
   ( Coercible
