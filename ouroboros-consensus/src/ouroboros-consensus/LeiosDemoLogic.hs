@@ -662,13 +662,6 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
         leiosDbInsertEbPoint db point ebBytesSize
         completedByBody <- leiosDbInsertEbBody db point eb
         traceWith ktracer $ TraceLeiosBlockAcquired point
-        -- 'leiosDbInsertEbBody' returns a non-empty list only when this
-        -- body's arrival is what completed the closure — every referenced
-        -- tx was already in the DB (typical for the forger's own txs
-        -- reaching peers via mempool before the EB body catches up). In
-        -- that path 'msgLeiosBlockTxs' will never run for these EBs, so
-        -- surface the trace here to keep 'TraceLeiosBlockTxsAcquired' the
-        -- authoritative "closure available" signal for observers.
         forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
     -- update NodeKernel state
     --

@@ -552,14 +552,13 @@ test_offerBlockTxs db = do
     notification <- atomically $ readTChan chan
     assertOfferBlockTxs point notification
 
--- | An EB whose txs were already inserted (e.g. previously seen via mempool
--- diffusion or another EB carrying overlapping content) becomes complete the
--- moment its body arrives — no tx-insert batch will ever touch it again.
--- 'leiosDbInsertEbBody' must therefore detect this and emit
--- 'AcquiredEbTxs' itself, otherwise downstream consumers (voting, ChainDB
--- closure tracking, LeiosBlockTxsOffer relay) never learn the EB is
--- complete. Regression test for a bug seen in the Leios ThreadNet where an
--- EB forged near the end of the run stayed silent on receiving nodes.
+-- | An EB whose txs were already inserted becomes complete the moment its body
+-- arrives — no tx-insert batch will ever touch it again. 'leiosDbInsertEbBody'
+-- must therefore detect this and emit 'AcquiredEbTxs' itself, otherwise
+-- downstream consumers (voting, ChainDB closure tracking, LeiosBlockTxsOffer
+-- relay) never learn the EB is complete. Regression test for a bug seen in the
+-- Leios ThreadNet where an EB forged near the end of the run stayed silent on
+-- receiving nodes.
 test_offerBlockTxsWhenBodyArrivesAfterTxs :: LeiosDbHandle IO -> IO ()
 test_offerBlockTxsWhenBodyArrivesAfterTxs db = do
   chan <- subscribeEbNotifications db
