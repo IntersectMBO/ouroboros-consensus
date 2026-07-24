@@ -18,6 +18,8 @@ module Bench.Consensus.Mempool.TestBlock
 
     -- * Initial parameters
   , initialLedgerState
+  , mkInitialLedgerState
+  , advanceTip
   , sampleLedgerConfig
 
     -- * Transactions
@@ -37,6 +39,8 @@ import Data.MemPack
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.TreeDiff (ToExpr)
+import Data.Word (Word64)
+import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
@@ -48,7 +52,10 @@ import Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
 import Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack (..))
+import System.Environment (lookupEnv)
+import System.IO.Unsafe (unsafePerformIO)
 import Test.Util.TestBlock hiding (TestBlock)
+import Text.Read (readMaybe)
 
 {-------------------------------------------------------------------------------
   MempoolTestBlock
@@ -86,14 +93,28 @@ mkTx cons prod =
 -------------------------------------------------------------------------------}
 
 initialLedgerState :: LedgerState (TestBlockWith Tx) ValuesMK
-initialLedgerState =
+initialLedgerState = mkInitialLedgerState []
+
+-- | Like 'initialLedgerState' but seeded with a set of available tokens (the
+-- UTxO). Chains of transactions can then be built by consuming a seed token and
+-- producing the next one.
+mkInitialLedgerState :: [Token] -> LedgerState (TestBlockWith Tx) ValuesMK
+mkInitialLedgerState toks =
   TestLedger
     { lastAppliedPoint = Block.GenesisPoint
     , payloadDependentState =
         TestPLDS
-          { getTestPLDS = ValuesMK Map.empty
+          { getTestPLDS = ValuesMK (Map.fromList [(t, ()) | t <- toks])
           }
     }
+
+-- | Move the tip to a fresh point (distinct per @n@) while keeping the ledger
+-- tables unchanged. Used to force the mempool to resync/revalidate against a
+-- "new" tip without invalidating any of its transactions.
+advanceTip ::
+  Word64 -> LedgerState (TestBlockWith Tx) ValuesMK -> LedgerState (TestBlockWith Tx) ValuesMK
+advanceTip n st =
+  st{lastAppliedPoint = Block.blockPoint (firstBlockWithPayload n (Tx Set.empty Set.empty))}
 
 sampleLedgerConfig :: Ledger.LedgerConfig TestBlock
 sampleLedgerConfig =
@@ -223,17 +244,62 @@ txSize (TestBlockGenTx tx) =
     fromIntegral $
       1 + length (consumed tx) + length (produced tx)
 
+-- | Simulated CPU cost, in microseconds, of /fully/ validating a transaction
+-- (the script and signature checks a real ledger performs in 'applyTx'). Read
+-- once from @MEMPOOL_APPLY_CPU_US@; defaults to @0@ so ordinary tests and the
+-- criterion @mempool-bench@ are unaffected.
+--
+-- Together with 'reapplyCpuMicros' this lets a benchmark reproduce the
+-- real-node relationship @reapply ≪ apply@: reapplication skips the expensive
+-- checks, so a mempool sync (which only reapplies) is strictly cheaper per tx
+-- than ingestion (which fully validates). The mempool-state-bench relies on
+-- this for its sync-vs-ingest convergence to be faithful.
+{-# NOINLINE applyCpuMicros #-}
+applyCpuMicros :: Int
+applyCpuMicros = envInt "MEMPOOL_APPLY_CPU_US" 0
+
+-- | Simulated CPU cost, in microseconds, of /reapplying/ an already-validated
+-- transaction. Read once from @MEMPOOL_REAPPLY_CPU_US@; defaults to @0@. Keep
+-- this well below 'applyCpuMicros' to model @reapply ≪ apply@.
+{-# NOINLINE reapplyCpuMicros #-}
+reapplyCpuMicros :: Int
+reapplyCpuMicros = envInt "MEMPOOL_REAPPLY_CPU_US" 0
+
+{-# NOINLINE envInt #-}
+envInt :: String -> Int -> Int
+envInt k d = unsafePerformIO $ maybe d id . (>>= readMaybe) <$> lookupEnv k
+
+-- | Busy-wait (burning CPU, /not/ sleeping — validation contends for cores)
+-- for @us@ microseconds, then return @tx@. The result is @tx@ itself and the
+-- caller feeds it into the ledger transition, so the spin depends on the tx
+-- and cannot be shared across calls or optimised away.
+{-# NOINLINE burnCpuMicros #-}
+burnCpuMicros :: Int -> Tx -> Tx
+burnCpuMicros us tx
+  | us <= 0 = tx
+  | otherwise = unsafePerformIO $ do
+      let targetNs = fromIntegral us * 1000 :: Word64
+      start <- getMonotonicTimeNSec
+      let go = do
+            now <- getMonotonicTimeNSec
+            if now - start >= targetNs then pure tx else go
+      go
+
 instance Ledger.LedgerSupportsMempool TestBlock where
   applyTx _cfg _shouldIntervene _slot (TestBlockGenTx tx) tickedSt =
     except $
       fmap ((,ValidatedGenTx (TestBlockGenTx tx)) . Ledger.trackingToDiffs) $
-        applyDirectlyToPayloadDependentState tickedSt tx
+        -- Pay the (simulated) full-validation cost. 'burnCpuMicros' returns the
+        -- tx we then apply, so it is forced as part of producing the result.
+        applyDirectlyToPayloadDependentState tickedSt (burnCpuMicros applyCpuMicros tx)
 
-  reapplyTx cfg slot (ValidatedGenTx genTx) tickedSt =
-    Ledger.applyDiffs tickedSt . fst
-      <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx tickedSt
-
-  -- FIXME: it is ok to use 'DoNotIntervene' here?
+  -- Reapplication does /not/ route through 'applyTx' (which would pay the full
+  -- validation cost); it runs the ledger transition directly, paying only the
+  -- much cheaper 'reapplyCpuMicros'.
+  reapplyTx _cfg _slot (ValidatedGenTx (TestBlockGenTx tx)) tickedSt =
+    except $
+      Ledger.applyDiffs tickedSt . Ledger.trackingToDiffs
+        <$> applyDirectlyToPayloadDependentState tickedSt (burnCpuMicros reapplyCpuMicros tx)
 
   txForgetValidated (ValidatedGenTx tx) = tx
 

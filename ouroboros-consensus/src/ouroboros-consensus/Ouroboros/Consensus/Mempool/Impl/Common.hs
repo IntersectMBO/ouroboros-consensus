@@ -31,6 +31,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common
   , RevalidateTxsResult (..)
   , computeSnapshot
   , revalidateTxsFor
+  , extendReapply
   , validateNewTransaction
 
     -- * Tracing
@@ -264,6 +265,15 @@ data MempoolEnv m blk = MempoolEnv
   , mpEnvForker :: StrictMVar m (ReadOnlyForker m (LedgerState blk))
   , mpEnvLedgerCfg :: LedgerConfig blk
   , mpEnvStateVar :: StrictTMVar m (InternalState blk)
+  -- ^ The single, authoritative internal state of the mempool, which doubles as
+  -- the /writer/ lock. Writers (adds, removes and the sync merge) 'takeTMVar'
+  -- it, do their work, and 'putTMVar' the new state; readers ('getSnapshot',
+  -- 'getCapacity', 'getSnapshotFor') 'readTMVar' it. Because it is a single
+  -- cell, the whole capacity accounting has one source of truth and cannot
+  -- diverge. A reader only ever blocks for the duration a writer holds the
+  -- lock; the sync keeps that short by doing its large LedgerDB read /before/
+  -- taking the lock (see 'implSyncWithLedger'), so only the (sub-second) merge
+  -- is under it.
   , mpEnvAddTxsRemoteFifo :: StrictMVar m ()
   , mpEnvAddTxsAllFifo :: StrictMVar m ()
   , mpEnvTracer :: Tracer m (TraceEventMempool blk)
@@ -293,9 +303,8 @@ initMempoolEnv ledgerInterface cfg capacityOverride mbTimeoutConfig tracer = do
     Right frk -> do
       frkMVar <- newMVar frk
       let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
-      isVar <-
-        newTMVarIO $
-          initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
+          is0 = initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
+      isVar <- newTMVarIO is0
       addTxRemoteFifo <- newMVar ()
       addTxAllFifo <- newMVar ()
       return
@@ -415,19 +424,100 @@ revalidateTxsFor ::
   [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
   RevalidateTxsResult blk
 revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
-  let inputTxs = map wrap txTickets
-      inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) inputTxs
+  let inputTxs = map wrapTxTicket txTickets
+      inputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . wtdTx) inputTxs
 
       ReapplyTxsResult err validTxs st' =
         reapplyTxs @blk @Collect cfg slot inputTxs $
           applyMempoolDiffs values inputKeys st
+   in buildRevalidatedIS capacityOverride cfg slot st values lastTicketNo err validTxs st'
 
-      outputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst3) validTxs
-      outputDiffs = Foldable.foldl' rawPrependDiffs (DiffMK mempty) $ map (getLedgerTables . snd3) validTxs
+-- | Reapply an additional /delta/ of already-validated transactions on top of a
+-- previously revalidated 'InternalState' @cand@, without reprocessing @cand@'s
+-- transactions.
+--
+-- @cand@ must be the result of revalidating some prefix (by 'TicketNo') of the
+-- mempool against @st@ (the same ticked ledger state passed here), and
+-- @deltaTxTickets@ the transactions added since, in ascending ticket order,
+-- with @deltaValues@ their input values read at @st@'s tip. The result is
+-- /byte-identical/ to @'revalidateTxsFor' \@ (cand's txs ++ delta)@: the delta
+-- is reapplied against @cand@'s post-reapply ledger state (via
+-- 'applyMempoolDiffs' on 'isLedgerState'), and the final 'InternalState' is
+-- assembled by the /same/ 'buildRevalidatedIS' over the concatenated survivors.
+-- This lets a mempool sync shrink its outstanding work off the lock and take
+-- the lock only for a small, bounded final delta ('implSyncWithLedger').
+extendReapply ::
+  forall blk.
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  MempoolCapacityBytesOverride ->
+  LedgerConfig blk ->
+  SlotNo ->
+  -- | The ticked ledger state @cand@ was revalidated against.
+  TickedLedgerState blk DiffMK ->
+  -- | The already-revalidated state to extend.
+  InternalState blk ->
+  -- | Input values for the delta txs, read at @st@'s tip.
+  LedgerTables (LedgerState blk) ValuesMK ->
+  -- | The new 'isLastTicketNo' (the mempool's current ticket counter).
+  TicketNo ->
+  -- | The delta txs, in ascending 'TicketNo' order.
+  [TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)] ->
+  RevalidateTxsResult blk
+extendReapply capacityOverride cfg slot st cand deltaValues lastTicketNo deltaTxTickets =
+  let candTxs = map wrapTxTicket (TxSeq.toList (isTxs cand))
+      deltaTxs = map wrapTxTicket deltaTxTickets
+      deltaKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . wtdTx) deltaTxs
+
+      -- Seed the delta reapplication from @cand@'s post-reapply ledger state, so
+      -- a delta tx spending one of @cand@'s outputs sees it. This is exactly the
+      -- state a full reapplication would be in after processing @cand@'s txs.
+      ReapplyTxsResult errDelta validDelta st' =
+        reapplyTxs @blk @Collect cfg slot deltaTxs $
+          applyMempoolDiffs deltaValues deltaKeys (isLedgerState cand)
+
+      -- @cand@'s txs remain valid (reapplying more txs after them cannot
+      -- invalidate earlier ones), so the combined survivors are just @cand@'s
+      -- followed by the delta's, and the values cover both.
+      allValues = ltliftA2 unionValues (isTxValues cand) deltaValues
+   in buildRevalidatedIS
+        capacityOverride
+        cfg
+        slot
+        st
+        allValues
+        lastTicketNo
+        errDelta
+        (candTxs ++ validDelta)
+        st'
+
+-- | Assemble an 'InternalState' from the result of a (re)application: the base
+-- ticked ledger @st@, the input @values@, and the reapply's survivors and
+-- resulting ledger state. Shared by 'revalidateTxsFor' and 'extendReapply' so
+-- both produce identical states.
+buildRevalidatedIS ::
+  forall blk.
+  (LedgerSupportsMempool blk, HasTxId (GenTx blk)) =>
+  MempoolCapacityBytesOverride ->
+  LedgerConfig blk ->
+  SlotNo ->
+  TickedLedgerState blk DiffMK ->
+  LedgerTables (LedgerState blk) ValuesMK ->
+  TicketNo ->
+  [Invalidated blk] ->
+  [ ( Validated (GenTx blk)
+    , LedgerTables (TickedLedgerState blk) DiffMK
+    , (TicketNo, TxMeasureWithDiffTime blk)
+    )
+  ] ->
+  TickedLedgerState blk EmptyMK ->
+  RevalidateTxsResult blk
+buildRevalidatedIS capacityOverride cfg slot st values lastTicketNo err validTxs st' =
+  let outputKeys = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . wtdTx) validTxs
+      outputDiffs = Foldable.foldl' rawPrependDiffs (DiffMK mempty) $ map (getLedgerTables . wtdDiffs) validTxs
    in RevalidateTxsResult
         ( IS
-            { isTxs = TxSeq.fromList $ map unwrap validTxs
-            , isTxIds = Set.fromList $ map (txId . txForgetValidated . fst3) validTxs
+            { isTxs = TxSeq.fromList $ map unwrapTxTicket validTxs
+            , isTxIds = Set.fromList $ map (txId . txForgetValidated . wtdTx) validTxs
             , isTxKeys = outputKeys
             , isTxValues = ltliftA2 restrictValuesMK values outputKeys
             , isLedgerState =
@@ -440,11 +530,28 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
             }
         )
         err
- where
-  wrap = \(TxTicket (ValidatedTxWithDiffs tx df) tk tz) -> (tx, df, (tk, tz))
-  unwrap = \(tx, df, (tk, tz)) -> TxTicket (ValidatedTxWithDiffs tx df) tk tz
-  fst3 (x, _, _) = x
-  snd3 (_, x, _) = x
+
+wrapTxTicket ::
+  TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk) ->
+  ( Validated (GenTx blk)
+  , LedgerTables (TickedLedgerState blk) DiffMK
+  , (TicketNo, TxMeasureWithDiffTime blk)
+  )
+wrapTxTicket (TxTicket (ValidatedTxWithDiffs tx df) tk tz) = (tx, df, (tk, tz))
+
+unwrapTxTicket ::
+  ( Validated (GenTx blk)
+  , LedgerTables (TickedLedgerState blk) DiffMK
+  , (TicketNo, TxMeasureWithDiffTime blk)
+  ) ->
+  TxTicket (TxMeasureWithDiffTime blk) (ValidatedTxWithDiffs blk)
+unwrapTxTicket (tx, df, (tk, tz)) = TxTicket (ValidatedTxWithDiffs tx df) tk tz
+
+wtdTx :: (a, b, c) -> a
+wtdTx (x, _, _) = x
+
+wtdDiffs :: (a, b, c) -> b
+wtdDiffs (_, x, _) = x
 
 data RevalidateTxsResult blk
   = RevalidateTxsResult

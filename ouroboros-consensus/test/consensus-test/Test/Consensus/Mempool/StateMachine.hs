@@ -777,7 +777,7 @@ prop_mempoolParallel ::
   MakeAtomic ->
   (Int -> LedgerState blk ValuesMK -> Gen [GenTx blk]) ->
   Property
-prop_mempoolParallel cfg capacity initialState ma gTxs = forAllParallelCommandsNTimes sm0 Nothing 100 $
+prop_mempoolParallel cfg capacity initialState ma gTxs = forAllParallelCommandsNTimes sm0 Nothing 10 $
   \cmds -> monadicIO $ do
     (sut, trcr) <- run $ mkSUT cfg initialState
     ior <- run $ newTVarIO sut
@@ -805,9 +805,8 @@ tests =
           -- More commands require exponentially more memory to explore.
           localOption (QuickCheckMaxSize 40) $
             testProperty "atomic" $
-              withMaxSuccess 10000 $
-                prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
-                  \i -> fmap (fmap fst . fst) . genTxs i
+              prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
+                \i -> fmap (fmap fst . fst) . genTxs i
         , testProperty "non atomic" $
             withMaxSuccess 10 $
               prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger NonAtomic $

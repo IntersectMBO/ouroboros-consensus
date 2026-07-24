@@ -113,7 +113,9 @@ mkMempool mpEnv =
   Mempool
     { addTx = fmap runIdentity .: implAddTx mpEnv ProductionAddTx
     , removeTxsEvenIfValid = implRemoveTxsEvenIfValid mpEnv
-    , getSnapshot = snapshotFromIS <$> readTMVar istate
+    , -- Readers 'readTMVar' the single state cell; they only block while a
+      -- writer holds it (see 'MempoolEnv').
+      getSnapshot = snapshotFromIS <$> readTMVar istate
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getSnapshotForNoCache = implGetSnapshotForNoCache mpEnv
     , getCapacity = isCapacity <$> readTMVar istate
