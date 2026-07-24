@@ -660,8 +660,9 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
         -- the point idempotently as a stop-gap and trace a warning.
         traceWith ktracer $ TraceLeiosBlockPointMissing point
         leiosDbInsertEbPoint db point ebBytesSize
-        leiosDbInsertEbBody db point eb
+        completedByBody <- leiosDbInsertEbBody db point eb
         traceWith ktracer $ TraceLeiosBlockAcquired point
+        forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
     -- update NodeKernel state
     --
     -- 'refundEbRequest' reverses this peer's per-request accounting (but skips

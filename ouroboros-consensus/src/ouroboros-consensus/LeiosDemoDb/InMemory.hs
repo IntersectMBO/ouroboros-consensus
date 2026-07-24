@@ -161,7 +161,7 @@ imInsertEbBody ::
   StrictTChan m LeiosEbNotification ->
   LeiosPoint ->
   LeiosEb ->
-  m ()
+  m CompletedEbs
 imInsertEbBody stateVar notificationChan point eb = do
   let items = leiosEbBodyItems eb
       ebBytesSize = leiosEbBytesSize eb
@@ -191,6 +191,23 @@ imInsertEbBody stateVar notificationChan point eb = do
             Set.insert point (imEbBodiesDownloaded s)
         }
     writeTChan notificationChan $ AcquiredEb point ebBytesSize
+    -- If every tx referenced by this body is already present, the closure
+    -- is complete the moment the body lands — no subsequent
+    -- 'leiosDbInsertTxs' will fire for this point, so we must notify here.
+    -- Only trigger for a novel point ('imCompletedEbs' is our idempotency
+    -- guard). This mirrors what 'imInsertTxs' does when the last missing
+    -- tx of an already-downloaded body arrives.
+    state <- readTVar stateVar
+    let allTxsPresent =
+          all (\e -> Map.member (eteTxHash e) (imTxs state)) (IntMap.elems entries)
+        alreadyNotified = Set.member point (imCompletedEbs state)
+    if allTxsPresent && not alreadyNotified
+      then do
+        modifyTVar stateVar $ \s ->
+          s{imCompletedEbs = Set.insert point (imCompletedEbs s)}
+        writeTChan notificationChan (AcquiredEbTxs point)
+        pure [point]
+      else pure []
 
 imInsertTxs ::
   IOLike m =>

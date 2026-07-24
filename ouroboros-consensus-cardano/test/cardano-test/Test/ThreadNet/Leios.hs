@@ -52,11 +52,12 @@ import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as StrictTVar
 import Control.DeepSeq (force)
 import Control.Exception (SomeException, evaluate, try)
 import Control.Monad (foldM, replicateM)
-import Control.Monad.IOSim (runSimOrThrow)
+import Control.Monad.IOSim (Time, runSimOrThrow)
 import qualified Control.Tracer as Tracer
 import Data.Foldable (toList)
 import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
+import Data.List (isInfixOf, sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isNothing, mapMaybe)
@@ -75,6 +76,8 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   , hashLeiosEb
   , minCertificationGap
+  , prettyEbHash
+  , prettyLeiosPoint
   )
 import Lens.Micro ((%~), (^.))
 import Ouroboros.Consensus.Block (SlotNo (..), blockSlot, getHeader)
@@ -250,6 +253,17 @@ prop_leios seed =
     TraceLeiosBlockTxsAcquired point -> Just point
     _ -> Nothing
 
+  -- An EB forged at slot @s@ is required to diffuse iff it has at least
+  -- 'minCertificationGap' slots to propagate before the sim ends, i.e.
+  -- @s + minCertificationGap <= numSlots@. 'minCertificationGap' will
+  -- eventually be a protocol parameter capturing the worst case diffusion
+  -- time; the property therefore assumes it is sufficient by definition.
+  diffusionRequired point =
+    unSlotNo point.pointSlotNo + minCertificationGap <= numSlots
+
+  forgedPointsToDiffuse = Set.filter diffusionRequired forgedPoints
+  acquiredPointsToDiffuse = Set.filter diffusionRequired acquiredPoints
+
   propVoting =
     conjoin
       [ length castVotes > 0
@@ -382,10 +396,19 @@ prop_leios seed =
           & counterexample "no endorser blocks were forged"
           & prettyCounterexampleMap "forged leios EBs" 120 forgedEBs
           & prettyCounterexampleList "leios kernel traces" 120 leiosTraces
-      , length forgedPoints === length acquiredPoints
+      , -- Only require diffusion for EBs forged early enough that they have
+        -- 'minCertificationGap' slots to propagate before the sim ends. In
+        -- Leios this gap will become a protocol parameter capturing the worst
+        -- case diffusion time; using it here keeps the property aligned with
+        -- the protocol's own diffusion assumption.
+        length forgedPointsToDiffuse === length acquiredPointsToDiffuse
           & counterexample "endorser blocks not fully diffused"
-          & prettyCounterexampleList "acquired leios EBs" 120 acquiredPoints
-          & prettyCounterexampleList "forged leios EBs" 120 forgedPoints
+          & counterexample
+            (missingEbTimelines testOutput.allTracesWithTime forgedPointsToDiffuse acquiredPointsToDiffuse)
+          & prettyCounterexampleList "acquired leios EBs (diffusion required)" 120 acquiredPointsToDiffuse
+          & prettyCounterexampleList "forged leios EBs (diffusion required)" 120 forgedPointsToDiffuse
+          & prettyCounterexampleList "acquired leios EBs (all)" 120 acquiredPoints
+          & prettyCounterexampleList "forged leios EBs (all)" 120 forgedPoints
       ]
       & counterexample ("mempool total added: " <> show (length mempoolAddedTxs))
       & counterexample ("mempool total rejected: " <> show (length mempoolRejectedTxs))
@@ -903,6 +926,34 @@ indented n =
   unlines' [] = []
   unlines' [x] = x
   unlines' (x : xs) = x <> "\n" <> unlines' xs
+
+-- | For every EB that was required to diffuse but wasn't acquired, dump a
+-- time-ordered timeline of every trace event that mentions its hash, tagged by
+-- the emitting node. Intended purely as a diagnostic aid on failure — makes it
+-- possible to eyeball the diffusion pipeline (forge → announce → offer →
+-- fetch → txs-acquired) and see where the latency lives.
+missingEbTimelines ::
+  [(Time, TraceThreadNet (CardanoBlock StandardCrypto))] ->
+  Set.Set LeiosPoint ->
+  Set.Set LeiosPoint ->
+  String
+missingEbTimelines timedTraces required acquired
+  | Set.null missing = ""
+  | otherwise =
+      "missing EB diffusion timelines:\n" <> concatMap oneEb (Set.toAscList missing)
+ where
+  missing = required `Set.difference` acquired
+
+  oneEb point =
+    let hashHex = prettyEbHash point.pointEbHash
+        events = filter (\(_, ev) -> hashHex `isInfixOf` show ev) timedTraces
+     in "  "
+          <> prettyLeiosPoint point
+          <> "\n"
+          <> unlines
+            [ indented 4 (show t <> " " <> show ev)
+            | (t, ev) <- sortOn fst events
+            ]
 
 -- | Elide a string to a target length by keeping the prefix and suffix and
 -- replacing the middle with an ellipsis. If target length is 0 or negative, no

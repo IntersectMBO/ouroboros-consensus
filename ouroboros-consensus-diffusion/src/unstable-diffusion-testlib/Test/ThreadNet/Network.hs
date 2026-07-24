@@ -1739,6 +1739,10 @@ data TestOutput blk = TestOutput
   , testOutputTipBlockNos :: Map SlotNo (Map NodeId (WithOrigin BlockNo))
   , allTraces :: [TraceThreadNet blk]
   -- ^ All ThreadNet-level traces emitted during the run.
+  , allTracesWithTime :: [(Time, TraceThreadNet blk)]
+  -- ^ Same as 'allTraces' but paired with the simulated wall-clock time at
+  -- which each event fired. Useful for diagnosing timing-sensitive test
+  -- failures (e.g. diffusion latencies).
   , exceptionThrown :: Maybe SomeException
   -- ^ Captured exception if any thread threw and the test aborted.
   }
@@ -1834,6 +1838,7 @@ mkTestOutput vertexInfos = do
       { testOutputNodes = Map.unions nodeOutputs'
       , testOutputTipBlockNos = Map.unionsWith Map.union tipBlockNos'
       , allTraces = []
+      , allTracesWithTime = []
       , exceptionThrown = Nothing
       }
 

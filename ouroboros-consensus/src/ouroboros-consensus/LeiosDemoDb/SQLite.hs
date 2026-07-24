@@ -27,10 +27,7 @@ import Control.Concurrent.Class.MonadSTM.Strict
   )
 import Control.Exception (throwIO)
 import Control.Monad (unless, void)
-import Control.Monad.Class.MonadThrow
-  ( bracket
-  , generalBracket
-  )
+import Control.Monad.Class.MonadThrow (generalBracket)
 import qualified Control.Monad.Class.MonadThrow as MonadThrow
 import Control.Tracer (Tracer, traceWith)
 import Data.Bifunctor (first)
@@ -130,10 +127,12 @@ data Stmts = Stmts
   , stDecrMissingCount :: !DB.Statement
   , stFindCompleteEbs :: !DB.Statement
   , stMarkNotifiedEbs :: !DB.Statement
+  , stMarkPointNotified :: !DB.Statement
   , stBatchRetrieveTxs :: !DB.Statement
   , stFilterMissingEbBodies :: !DB.Statement
   , stFilterMissingTxs :: !DB.Statement
   , stLookupEbClosure :: !DB.Statement
+  , stScanCompleteEbsSince :: !DB.Statement
   }
 
 data Conn = Conn
@@ -143,21 +142,23 @@ data Conn = Conn
 
 -- | Prepare every statement 'Stmts' names. Order is not observable.
 prepareStmts :: DB.Database -> IO Stmts
-prepareStmts db =
-  Stmts
-    <$> dbPrepare db (fromString sql_scan_ebs)
-    <*> dbPrepare db (fromString sql_insert_eb)
-    <*> dbPrepare db (fromString sql_lookup_ebBodies)
-    <*> dbPrepare db (fromString sql_insert_ebBody)
-    <*> dbPrepare db (fromString sql_init_missing_tx_count)
-    <*> dbPrepare db (fromString sql_insert_tx)
-    <*> dbPrepare db (fromString sql_decrement_missing_tx_count)
-    <*> dbPrepare db (fromString sql_find_complete_ebs)
-    <*> dbPrepare db (fromString sql_mark_notified_ebs)
-    <*> dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
-    <*> dbPrepare db (fromString sql_filter_missing_eb_bodies_json)
-    <*> dbPrepare db (fromString sql_filter_missing_txs_json)
-    <*> dbPrepare db (fromString sql_lookup_eb_closure)
+prepareStmts db = do
+  stScanEbPoints <- dbPrepare db (fromString sql_scan_ebs)
+  stInsertEbPoint <- dbPrepare db (fromString sql_insert_eb)
+  stLookupEbBody <- dbPrepare db (fromString sql_lookup_ebBodies)
+  stInsertEbTxsRow <- dbPrepare db (fromString sql_insert_ebBody)
+  stInitMissingCount <- dbPrepare db (fromString sql_init_missing_tx_count)
+  stInsertTx <- dbPrepare db (fromString sql_insert_tx)
+  stDecrMissingCount <- dbPrepare db (fromString sql_decrement_missing_tx_count)
+  stFindCompleteEbs <- dbPrepare db (fromString sql_find_complete_ebs)
+  stMarkNotifiedEbs <- dbPrepare db (fromString sql_mark_notified_ebs)
+  stMarkPointNotified <- dbPrepare db (fromString sql_mark_point_notified)
+  stBatchRetrieveTxs <- dbPrepare db (fromString sql_retrieve_from_ebTxs_json)
+  stFilterMissingEbBodies <- dbPrepare db (fromString sql_filter_missing_eb_bodies_json)
+  stFilterMissingTxs <- dbPrepare db (fromString sql_filter_missing_txs_json)
+  stLookupEbClosure <- dbPrepare db (fromString sql_lookup_eb_closure)
+  stScanCompleteEbsSince <- dbPrepare db (fromString sql_scan_complete_ebs_since)
+  pure Stmts{..}
 
 -- | Finalise every statement in 'Stmts'. Called from 'close' immediately
 -- before 'sqlite3_close_v2', on the connection's owner thread.
@@ -172,10 +173,12 @@ finalizeStmts Stmts{..} = do
   dbFinalize stDecrMissingCount
   dbFinalize stFindCompleteEbs
   dbFinalize stMarkNotifiedEbs
+  dbFinalize stMarkPointNotified
   dbFinalize stBatchRetrieveTxs
   dbFinalize stFilterMissingEbBodies
   dbFinalize stFilterMissingTxs
   dbFinalize stLookupEbClosure
+  dbFinalize stScanCompleteEbsSince
 
 -- | Run an action on a pre-prepared statement and always @sqlite3_reset@
 -- it afterwards, regardless of outcome. Reset uses raw 'DB.reset' (no
@@ -208,7 +211,7 @@ openSQLiteConnection tracer dbPath notificationChan = do
     LeiosDbConnection
       { close = finalizeStmts stmts >> void (DB.close db)
       , leiosDbScanEbPoints = sqlScanEbPoints conn
-      , leiosDbScanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince db
+      , leiosDbScanCompleteEbClosuresNotOlderThanSlot = sqlScanCompleteEbPointsSince conn
       , leiosDbInsertEbPoint = sqlInsertEbPoint conn
       , leiosDbLookupEbBody = sqlLookupEbBody conn
       , leiosDbInsertEbBody = sqlInsertEbBody tracer conn notify
@@ -222,50 +225,57 @@ openSQLiteConnection tracer dbPath notificationChan = do
 -- * Top-level implementations
 
 sqlScanEbPoints :: Conn -> IO [(SlotNo, EbHash)]
-sqlScanEbPoints Conn{connDb = db, connStmts = Stmts{stScanEbPoints = stmt}} =
-  dbWithBEGIN db $ useStmt stmt $ do
-    let loop acc =
-          dbStep stmt >>= \case
-            DB.Done -> pure (reverse acc)
-            DB.Row -> do
-              slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-              hash <- MkEbHash <$> DB.columnBlob stmt 1
-              loop ((slot, hash) : acc)
-    loop []
+sqlScanEbPoints conn =
+  dbWithTransaction db $ useStmt stmt $ loop []
+ where
+  Conn{connDb = db, connStmts = Stmts{stScanEbPoints = stmt}} = conn
+  loop acc =
+    dbStep stmt >>= \case
+      DB.Done -> pure (reverse acc)
+      DB.Row -> do
+        slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
+        hash <- MkEbHash <$> DB.columnBlob stmt 1
+        loop ((slot, hash) : acc)
 
-sqlScanCompleteEbPointsSince :: DB.Database -> SlotNo -> IO [LeiosPoint]
-sqlScanCompleteEbPointsSince db sinceSlot =
-  dbWithBEGIN db $ dbWithPrepare db (fromString sql_scan_complete_ebs_since) $ \stmt -> do
+sqlScanCompleteEbPointsSince :: Conn -> SlotNo -> IO [LeiosPoint]
+sqlScanCompleteEbPointsSince conn sinceSlot =
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo sinceSlot)
-    let loop acc =
-          dbStep stmt >>= \case
-            DB.Done -> pure (reverse acc)
-            DB.Row -> do
-              slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
-              hash <- MkEbHash <$> DB.columnBlob stmt 1
-              loop (MkLeiosPoint slot hash : acc)
     loop []
+ where
+  Conn{connDb = db, connStmts = Stmts{stScanCompleteEbsSince = stmt}} = conn
+  loop acc =
+    dbStep stmt >>= \case
+      DB.Done -> pure (reverse acc)
+      DB.Row -> do
+        slot <- SlotNo . fromIntegral <$> DB.columnInt64 stmt 0
+        hash <- MkEbHash <$> DB.columnBlob stmt 1
+        loop (MkLeiosPoint slot hash : acc)
 
 sqlLookupEbBody :: Conn -> EbHash -> IO [(TxHash, BytesSize)]
-sqlLookupEbBody Conn{connDb = db, connStmts = Stmts{stLookupEbBody = stmt}} ebHash =
-  dbWithBEGIN db $ useStmt stmt $ do
+sqlLookupEbBody conn ebHash =
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
-    let loop acc =
-          dbStep stmt >>= \case
-            DB.Done -> pure (reverse acc)
-            DB.Row -> do
-              txHash <- MkTxHash <$> DB.columnBlob stmt 0
-              size <- fromIntegral <$> DB.columnInt64 stmt 1
-              loop ((txHash, size) : acc)
     loop []
+ where
+  Conn{connDb = db, connStmts = Stmts{stLookupEbBody = stmt}} = conn
+  loop acc =
+    dbStep stmt >>= \case
+      DB.Done -> pure (reverse acc)
+      DB.Row -> do
+        txHash <- MkTxHash <$> DB.columnBlob stmt 0
+        size <- fromIntegral <$> DB.columnInt64 stmt 1
+        loop ((txHash, size) : acc)
 
 sqlInsertEbPoint :: Conn -> LeiosPoint -> BytesSize -> IO ()
-sqlInsertEbPoint Conn{connDb = db, connStmts = Stmts{stInsertEbPoint = stmt}} point ebBytesSize =
-  dbWithBEGIN db $ useStmt stmt $ do
+sqlInsertEbPoint conn point ebBytesSize =
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindInt64 stmt 1 (fromIntegral $ unSlotNo point.pointSlotNo)
     dbBindBlob stmt 2 point.pointEbHash.ebHashBytes
     dbBindInt64 stmt 3 (fromIntegral ebBytesSize)
     dbStep1 stmt
+ where
+  Conn{connDb = db, connStmts = Stmts{stInsertEbPoint = stmt}} = conn
 
 -- | Persist an EB body. The point MUST already be present (inserted
 -- via 'sqlInsertEbPoint' on the announcement path).
@@ -275,13 +285,11 @@ sqlInsertEbBody ::
   (LeiosEbNotification -> IO ()) ->
   LeiosPoint ->
   LeiosEb ->
-  IO ()
-sqlInsertEbBody tracer Conn{connDb = db, connStmts = Stmts{stInsertEbTxsRow, stInitMissingCount}} notify point eb = do
-  let items = leiosEbBodyItems eb
-      ebBytesSize = leiosEbBytesSize eb
+  IO CompletedEbs
+sqlInsertEbBody tracer conn notify point eb = do
   when (null items) $
     error "leiosDbInsertEbBody: empty EB body (programmer error)"
-  dbWithBEGIN db $ do
+  completedNow <- dbWithTransaction db $ do
     forM_ items $ \(txOffset, txHash, txBytesSize) -> useStmt stInsertEbTxsRow $ do
       dbBindBlob stInsertEbTxsRow 1 point.pointEbHash.ebHashBytes
       dbBindInt64 stInsertEbTxsRow 2 (fromIntegral txOffset)
@@ -292,13 +300,48 @@ sqlInsertEbBody tracer Conn{connDb = db, connStmts = Stmts{stInsertEbTxsRow, stI
         "ebTxs"
         (show point.pointEbHash <> "@" <> show txOffset)
         stInsertEbTxsRow
-    -- Initialize missingTxCount (accounts for txs already in the DB)
-    useStmt stInitMissingCount $ do
+    -- Initialize missingTxCount and read the resulting value via
+    -- @RETURNING missingTxCount@. Only /this/ point's row can have
+    -- transitioned to 0 as a consequence of the insert above.
+    missingCount <- useStmt stInitMissingCount $ do
       dbBindBlob stInitMissingCount 1 point.pointEbHash.ebHashBytes
       dbBindBlob stInitMissingCount 2 point.pointEbHash.ebHashBytes
       dbBindInt64 stInitMissingCount 3 (fromIntegral $ unSlotNo point.pointSlotNo)
-      dbStep1 stInitMissingCount
+      readReturningInt64 stInitMissingCount
+    if missingCount == 0
+      then do
+        useStmt stMarkPointNotified $ do
+          dbBindInt64 stMarkPointNotified 1 (fromIntegral $ unSlotNo point.pointSlotNo)
+          dbBindBlob stMarkPointNotified 2 point.pointEbHash.ebHashBytes
+          dbStep1 stMarkPointNotified
+        pure [point]
+      else pure []
   notify $ AcquiredEb point ebBytesSize
+  forM_ completedNow $ \p -> notify (AcquiredEbTxs p)
+  pure completedNow
+ where
+  items = leiosEbBodyItems eb
+  ebBytesSize = leiosEbBytesSize eb
+  Conn{connDb = db, connStmts} = conn
+  Stmts
+    { stInsertEbTxsRow
+    , stInitMissingCount
+    , stMarkPointNotified
+    } = connStmts
+
+-- | Read a single-column @Int64@ from a statement that uses a
+-- @RETURNING@ clause on a PK-scoped @UPDATE@ (i.e. produces exactly one
+-- row followed by 'DB.Done'). Any other shape is a programmer error.
+readReturningInt64 :: DB.Statement -> IO Int64
+readReturningInt64 stmt =
+  dbStep stmt >>= \case
+    DB.Done ->
+      error "readReturningInt64: expected one row from RETURNING, got Done"
+    DB.Row -> do
+      n <- DB.columnInt64 stmt 0
+      dbStep stmt >>= \case
+        DB.Done -> pure n
+        DB.Row -> error "readReturningInt64: expected exactly one row from RETURNING"
 
 sqlInsertTxs ::
   Tracer IO TraceLeiosDb ->
@@ -312,16 +355,11 @@ sqlInsertTxs _tracer conn notify txs = do
   -- hashes; attempting the INSERT and catching a constraint violation
   -- still pays the bind + PK-lookup + reset cost per row.
   missing <- Set.fromList <$> sqlFilterMissingTxs conn (map fst txs)
-  let novel = filter (\(h, _) -> h `Set.member` missing) txs
-      Conn
-        { connDb = db
-        , connStmts = Stmts{stInsertTx, stDecrMissingCount, stFindCompleteEbs, stMarkNotifiedEbs}
-        } = conn
-  completed <- dbWithBEGIN db $ do
+  completed <- dbWithTransaction db $ do
     -- 'dbStepInsert' still handles the rare race where a concurrent
     -- writer inserted the same hash between the filter above and the
     -- INSERT below.
-    forM_ novel $ \(txHash, txBytes) -> do
+    forM_ (novel missing) $ \(txHash, txBytes) -> do
       let txBytesSize = fromIntegral $ BS.length txBytes
           txHashBytes = let MkTxHash bytes = txHash in bytes
       inserted <- useStmt stInsertTx $ do
@@ -348,6 +386,10 @@ sqlInsertTxs _tracer conn notify txs = do
   -- Emit a closure-completion notification for each completed EB
   forM_ completed $ \point -> notify (AcquiredEbTxs point)
   pure completed
+ where
+  Conn{connDb = db, connStmts} = conn
+  Stmts{stInsertTx, stDecrMissingCount, stFindCompleteEbs, stMarkNotifiedEbs} = connStmts
+  novel missing = filter (\(h, _) -> h `Set.member` missing) txs
 
 -- | Retrieve tx bytes for a batch of @(ebHash, txOffset)@ points. Passes
 -- the offsets list as a JSON int array bound to a single parameter;
@@ -360,53 +402,59 @@ sqlBatchRetrieveTxs ::
   EbHash ->
   [Int] ->
   IO [(Int, TxHash, Maybe ByteString)]
-sqlBatchRetrieveTxs Conn{connDb = db, connStmts = Stmts{stBatchRetrieveTxs = stmt}} ebHash offsets =
-  dbWithBEGIN db $ useStmt stmt $ do
+sqlBatchRetrieveTxs conn ebHash offsets =
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindBlob stmt 1 (let MkEbHash bytes = ebHash in bytes)
     dbBindUtf8 stmt 2 (jsonIntArray offsets)
-    let loop acc =
-          dbStep stmt >>= \case
-            DB.Done -> pure (reverse acc)
-            DB.Row -> do
-              offset <- fromIntegral <$> DB.columnInt64 stmt 0
-              txHash <- MkTxHash <$> DB.columnBlob stmt 1
-              -- Column 2 is from LEFT JOIN, NULL if tx not in txs table
-              txBytes <- DB.columnBlob stmt 2
-              let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
-              loop ((offset, txHash, mbTxBytes) : acc)
     loop []
+ where
+  Conn{connDb = db, connStmts = Stmts{stBatchRetrieveTxs = stmt}} = conn
+  loop acc =
+    dbStep stmt >>= \case
+      DB.Done -> pure (reverse acc)
+      DB.Row -> do
+        offset <- fromIntegral <$> DB.columnInt64 stmt 0
+        txHash <- MkTxHash <$> DB.columnBlob stmt 1
+        -- Column 2 is from LEFT JOIN, NULL if tx not in txs table
+        txBytes <- DB.columnBlob stmt 2
+        let mbTxBytes = if txBytes == mempty then Nothing else Just txBytes
+        loop ((offset, txHash, mbTxBytes) : acc)
 
 -- | Batch-filter EB points against @ebTxs@. Passes ebHashes as a JSON
 -- array of hex strings; SQL decodes with @unhex()@ so index lookups on
 -- @ebTxs.ebHashBytes@ still fire.
 sqlFilterMissingEbBodies :: Conn -> [LeiosPoint] -> IO [LeiosPoint]
-sqlFilterMissingEbBodies Conn{connDb = db, connStmts = Stmts{stFilterMissingEbBodies = stmt}} points =
-  dbWithBEGIN db $ useStmt stmt $ do
-    let pointsByHash = Map.fromList [(p.pointEbHash, p) | p <- points]
+sqlFilterMissingEbBodies conn points =
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindUtf8 stmt 1 (jsonHexArray (map ebHashBytes (Map.keys pointsByHash)))
-    let loop acc =
-          dbStep stmt >>= \case
-            DB.Done -> pure (reverse acc)
-            DB.Row -> do
-              ebHash <- MkEbHash <$> DB.columnBlob stmt 0
-              case Map.lookup ebHash pointsByHash of
-                Just p -> loop (p : acc)
-                Nothing -> loop acc
     loop []
+ where
+  Conn{connDb = db, connStmts = Stmts{stFilterMissingEbBodies = stmt}} = conn
+  pointsByHash = Map.fromList [(p.pointEbHash, p) | p <- points]
+  loop acc =
+    dbStep stmt >>= \case
+      DB.Done -> pure (reverse acc)
+      DB.Row -> do
+        ebHash <- MkEbHash <$> DB.columnBlob stmt 0
+        case Map.lookup ebHash pointsByHash of
+          Just p -> loop (p : acc)
+          Nothing -> loop acc
 
 -- | Batch-filter tx hashes against @txs@. Same idiom as
 -- 'sqlFilterMissingEbBodies'.
 sqlFilterMissingTxs :: Conn -> [TxHash] -> IO [TxHash]
-sqlFilterMissingTxs Conn{connDb = db, connStmts = Stmts{stFilterMissingTxs = stmt}} txHashes =
-  dbWithBEGIN db $ useStmt stmt $ do
+sqlFilterMissingTxs conn txHashes =
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindUtf8 stmt 1 (jsonHexArray [b | MkTxHash b <- txHashes])
-    let loop acc =
-          dbStep stmt >>= \case
-            DB.Done -> pure (reverse acc)
-            DB.Row -> do
-              txHash <- MkTxHash <$> DB.columnBlob stmt 0
-              loop (txHash : acc)
     loop []
+ where
+  Conn{connDb = db, connStmts = Stmts{stFilterMissingTxs = stmt}} = conn
+  loop acc =
+    dbStep stmt >>= \case
+      DB.Done -> pure (reverse acc)
+      DB.Row -> do
+        txHash <- MkTxHash <$> DB.columnBlob stmt 0
+        loop (txHash : acc)
 
 -- | Build a JSON array of hex-encoded blobs: @["aabb...","1234...",...]@.
 -- Consumed on the SQL side via @json_each(?)@ + @unhex(je.value)@.
@@ -434,22 +482,24 @@ jsonIntArray xs =
   intersperseB s (x : rest) = x : s : intersperseB s rest
 
 sqlLookupEbClosure :: Conn -> EbHash -> IO (Maybe [(TxHash, ByteString)])
-sqlLookupEbClosure Conn{connDb = db, connStmts = Stmts{stLookupEbClosure = stmt}} ebHash =
-  dbWithBEGIN db $ useStmt stmt $ do
+sqlLookupEbClosure conn ebHash =
+  dbWithTransaction db $ useStmt stmt $ do
     dbBindBlob stmt 1 (ebHashBytes ebHash)
     -- FIXME(bladyjoker): This should have a SlotNo as the second part of the key
-    let loop acc =
-          dbStep stmt >>= \case
-            DB.Done ->
-              -- No rows means the EB body hasn't been downloaded yet
-              if null acc then pure Nothing else pure $ Just (reverse acc)
-            DB.Row -> do
-              txHash <- MkTxHash <$> DB.columnBlob stmt 0
-              txBytes :: ByteString <- DB.columnBlob stmt 1
-              if txBytes == mempty
-                then return Nothing
-                else loop ((txHash, txBytes) : acc)
     loop []
+ where
+  Conn{connDb = db, connStmts = Stmts{stLookupEbClosure = stmt}} = conn
+  loop acc =
+    dbStep stmt >>= \case
+      DB.Done ->
+        -- No rows means the EB body hasn't been downloaded yet
+        if null acc then pure Nothing else pure $ Just (reverse acc)
+      DB.Row -> do
+        txHash <- MkTxHash <$> DB.columnBlob stmt 0
+        txBytes :: ByteString <- DB.columnBlob stmt 1
+        if txBytes == mempty
+          then return Nothing
+          else loop ((txHash, txBytes) : acc)
 
 -- * SQL strings
 
@@ -564,8 +614,13 @@ sql_decrement_missing_tx_count =
   \WHERE ebHashBytes IN (SELECT ebHashBytes FROM ebTxs WHERE txHashBytes = ?)\n\
   \"
 
--- | Initialize missingTxCount after EB body is inserted.
--- Counts ebTxs entries that don't yet have a corresponding tx in the txs table.
+-- | Initialize missingTxCount after EB body is inserted, returning the
+-- resulting count. Counts ebTxs entries that don't yet have a corresponding
+-- tx in the txs table. The RETURNING clause lets the caller detect the
+-- special case @missingTxCount = 0@ (all referenced txs already present) with
+-- a PK lookup on the row that was just touched, instead of a full-table
+-- scan via 'sql_find_complete_ebs'.
+--
 -- Parameters: 1 = ebHashBytes, 2 = ebHashBytes, 3 = ebSlot
 sql_init_missing_tx_count :: String
 sql_init_missing_tx_count =
@@ -574,7 +629,17 @@ sql_init_missing_tx_count =
   \    LEFT JOIN txs t ON e.txHashBytes = t.txHashBytes\n\
   \    WHERE e.ebHashBytes = ? AND t.txHashBytes IS NULL\n\
   \) WHERE ebHashBytes = ? AND ebSlot = ?\n\
+  \RETURNING missingTxCount\n\
   \"
+
+-- | Mark a specific EB as notified (@missingTxCount = -1@). PK-scoped
+-- variant of 'sql_mark_notified_ebs'; used by 'sqlInsertEbBody' when the
+-- body's arrival is what completed the closure.
+--
+-- Parameters: 1 = ebSlot, 2 = ebHashBytes
+sql_mark_point_notified :: String
+sql_mark_point_notified =
+  "UPDATE ebs SET missingTxCount = -1 WHERE ebSlot = ? AND ebHashBytes = ?"
 
 -- | Batch retrieve of tx bytes for a batch of @(ebHash, offset)@ points.
 -- @?1@ is the ebHash blob (all offsets belong to the same EB); @?2@ is a
@@ -621,12 +686,9 @@ dbFinalize q = withDieStmt q $ DB.finalize q
 dbPrepare :: HasCallStack => DB.Database -> DB.Utf8 -> IO DB.Statement
 dbPrepare db q = withDieJust db $ DB.prepare db q
 
-dbWithPrepare :: HasCallStack => DB.Database -> DB.Utf8 -> (DB.Statement -> IO a) -> IO a
-dbWithPrepare db q k = bracket (dbPrepare db q) dbFinalize k
-
 -- TODO: alternative: bind and use https://www.sqlite.org/c3ref/busy_handler.html
-dbWithBEGIN :: HasCallStack => DB.Database -> IO a -> IO a
-dbWithBEGIN db k =
+dbWithTransaction :: HasCallStack => DB.Database -> IO a -> IO a
+dbWithTransaction db k =
   do
     fmap fst
     $ generalBracket

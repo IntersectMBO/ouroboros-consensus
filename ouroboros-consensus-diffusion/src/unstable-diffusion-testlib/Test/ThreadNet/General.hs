@@ -40,6 +40,7 @@ import Control.Monad (guard)
 import Control.Monad.IOSim
   ( runSimTrace
   , selectTraceEventsDynamic
+  , selectTraceEventsDynamicWithTime
   , setCurrentTime
   , traceM
   , traceResult
@@ -254,6 +255,7 @@ runTestNetwork
       Right x ->
         x
           { allTraces = selectTraceEventsDynamic trace
+          , allTracesWithTime = selectTraceEventsDynamicWithTime trace
           , exceptionThrown = Nothing
           }
    where

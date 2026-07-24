@@ -102,10 +102,16 @@ data LeiosDbConnection m = LeiosDbConnection
   -- ^ Read the EB "body": the ordered list of tx-hash + tx-byte-size
   -- pairs that constitute this EB. No tx bytes are fetched; contrast
   -- with 'leiosDbLookupEbClosure' which joins with the 'txs' table.
-  , leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m ()
-  -- ^ Persist an EB body. The point MUST already have been inserted
-  -- via 'leiosDbInsertEbPoint' (announcement path). Yields an
-  -- 'AcquiredEb' notification.
+  , leiosDbInsertEbBody :: HasCallStack => LeiosPoint -> LeiosEb -> m CompletedEbs
+  -- ^ Persist an EB body. The point MUST already have been inserted via
+  -- 'leiosDbInsertEbPoint' (announcement path). Yields an 'AcquiredEb'
+  -- notification.
+  --
+  -- Returns any EBs whose closure just became complete because their body
+  -- landed after all their txs were already present in the DB. Those EBs also
+  -- get an 'AcquiredEbTxs' notification.
+  --
+  -- XXX: return type only used for tracing
   , leiosDbInsertTxs :: HasCallStack => [(TxHash, ByteString)] -> m CompletedEbs
   -- ^ Insert transactions into the global 'txs' table (INSERT OR IGNORE).
   -- After inserting, checks which EBs referencing these txs are now complete
@@ -115,7 +121,7 @@ data LeiosDbConnection m = LeiosDbConnection
   -- complete via multiple insert batches (e.g., if txs are inserted twice).
   -- Consumers should handle notifications idempotently.
   --
-  -- REVIEW: return type only used for tracing, necessary?
+  -- XXX: return type only used for tracing
   , leiosDbBatchRetrieveTxs :: HasCallStack => EbHash -> [Int] -> m [(Int, TxHash, Maybe ByteString)]
   , leiosDbFilterMissingEbBodies :: HasCallStack => [LeiosPoint] -> m [LeiosPoint]
   -- ^ Batch filter: returns the subset of input LeiosPoints whose EB bodies are missing.
