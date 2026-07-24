@@ -1,4 +1,7 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
@@ -25,7 +28,12 @@ module Ouroboros.Consensus.Peras.Crypto.BLS
   , PerasBLSCryptoAggregateVoteSignature (..)
   ) where
 
-import Cardano.Binary (FromCBOR, ToCBOR (..))
+import Cardano.Binary
+  ( FromCBOR (..)
+  , ToCBOR (..)
+  , decodeListLenOf
+  , encodeListLen
+  )
 import Cardano.Crypto.DSIGN (BLS12381MinSigDSIGN, DSIGNAlgorithm (..))
 import Cardano.Crypto.Hash (Hash)
 import qualified Cardano.Crypto.Hash as Hash
@@ -35,6 +43,10 @@ import Cardano.Ledger.Hashes (HASH)
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Builder.Extra as BS
 import qualified Data.ByteString.Short as BS
+import GHC.Base (Any)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block.Abstract (WithOrigin (..))
 import Ouroboros.Consensus.Block.RealPoint
   ( bytes32RealPointHash
   , bytes32RealPointSlot
@@ -58,28 +70,53 @@ import Ouroboros.Consensus.Committee.Crypto.BLS (KeyRole (..))
 import qualified Ouroboros.Consensus.Committee.Crypto.BLS as BLS
 
 -- | BLS-based crypto scheme used in Peras voting committees
+--
+-- TODO: we should investigate why this type needs these instances at all.
+-- See https://github.com/tweag/cardano-peras/issues/272
 data PerasBLSCrypto
+  deriving (Show, Eq, Generic, NoThunks)
 
 type instance ElectionId PerasBLSCrypto = PerasRoundNo
 type instance VoteCandidate PerasBLSCrypto = PerasBoostedBlock
 
 -- | Private key of a Peras committee member
-data PerasPrivateKey
-  = PerasPrivateKey
-  { perasVoteSignKey :: BLS.PrivateKey SIGN
-  , perasVRFSignKey :: BLS.PrivateKey VRF
-  }
+newtype PerasPrivateKey
+  = PerasPrivateKey (BLS.PrivateKey Any)
+  deriving stock Generic
+  deriving anyclass NoThunks
 
 type instance PrivateKey PerasBLSCrypto = PerasPrivateKey
 
 -- | Public key of a Peras committee member
 data PerasPublicKey
-  = PerasPublicKey
-  { perasVoteVerKey :: BLS.PublicKey SIGN
-  , perasVRFVerKey :: BLS.PublicKey VRF
-  }
+  = PerasPublicKey (BLS.PublicKey Any)
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NoThunks
 
 type instance PublicKey PerasBLSCrypto = PerasPublicKey
+
+-- NOTE: we include the key scope in the serialised format of the public key
+instance FromCBOR PerasPublicKey where
+  fromCBOR = do
+    decodeListLenOf 2
+    keyScope <- fromCBOR
+    keyBytes <- fromCBOR
+    case BLS.rawDeserialisePublicKey keyScope keyBytes of
+      Just pk ->
+        pure (PerasPublicKey pk)
+      Nothing ->
+        fail
+          ( "Failed to decode PerasPublicKey, invalid public key bytes: "
+              <> show keyBytes
+              <> " with scope: "
+              <> show keyScope
+          )
+
+instance ToCBOR PerasPublicKey where
+  toCBOR (PerasPublicKey pk) = do
+    encodeListLen 2
+      <> toCBOR (BLS.publicKeyScope pk)
+      <> toCBOR (BLS.rawSerialisePublicKey pk)
 
 -- | Hash the message of a Peras vote
 --
@@ -93,26 +130,28 @@ hashVoteSignature roundNo boostedBlock =
   Hash.castHash
     . Hash.hashWith id
     . runByteBuilder (8 + 8 + 32)
-    $ roundNoBytes
-      <> boostedBlockSlotBytes
-      <> boostedBlockHashBytes
+    $ roundNoBytes <> boostedBlockBytes
  where
   roundNoBytes =
     BS.word64BE
       . unPerasRoundNo
       $ roundNo
-  boostedBlockSlotBytes =
+  boostedBlockBytes =
+    case unPerasBoostedBlock boostedBlock of
+      Origin ->
+        mempty
+      NotOrigin point ->
+        bytes32RealPointSlotBytes point
+          <> bytes32RealPointHashBytes point
+
+  bytes32RealPointSlotBytes =
     BS.word64BE
       . unSlotNo
       . bytes32RealPointSlot
-      . unPerasBoostedBlock
-      $ boostedBlock
-  boostedBlockHashBytes =
+  bytes32RealPointHashBytes =
     BS.byteStringCopy
       . BS.fromShort
       . bytes32RealPointHash
-      . unPerasBoostedBlock
-      $ boostedBlock
 
 -- | Hash the input for the VRF used in Peras elections
 --
@@ -146,13 +185,14 @@ instance CryptoSupportsVoteSigning PerasBLSCrypto where
     { unPerasBLSCryptoVoteSignature ::
         BLS.Signature BLS.SIGN
     }
-    deriving stock (Eq, Show)
+    deriving stock (Show, Eq, Generic)
     deriving newtype (FromCBOR, ToCBOR)
+    deriving anyclass NoThunks
 
-  getVoteSigningKey _ =
-    perasVoteSignKey
-  getVoteVerificationKey _ =
-    perasVoteVerKey
+  getVoteSigningKey _ (PerasPrivateKey sk) =
+    BLS.coercePrivateKey @SIGN sk
+  getVoteVerificationKey _ (PerasPublicKey pk) =
+    BLS.coercePublicKey @SIGN pk
 
   signVote sk roundNo boostedBlock =
     PerasBLSCryptoVoteSignature
@@ -185,14 +225,15 @@ instance CryptoSupportsVRF PerasBLSCrypto where
     { unPerasBLSCryptoVRFOutput ::
         BLS.Signature VRF
     }
-    deriving stock (Eq, Show)
+    deriving stock (Show, Eq, Generic)
     deriving newtype (FromCBOR, ToCBOR)
+    deriving anyclass NoThunks
 
-  getVRFSigningKey _ =
-    perasVRFSignKey
+  getVRFSigningKey _ (PerasPrivateKey sk) =
+    BLS.coercePrivateKey @VRF sk
 
-  getVRFVerificationKey _ =
-    perasVRFVerKey
+  getVRFVerificationKey _ (PerasPublicKey pk) =
+    BLS.coercePublicKey @VRF pk
 
   mkVRFElectionInput epochNonce roundNo =
     PerasBLSCryptoVRFElectionInput $
@@ -226,8 +267,9 @@ newtype PerasBLSCryptoAggregateVoteSignature
   { unPerasBLSCryptoAggregateVoteSignature ::
       BLS.Signature SIGN
   }
-  deriving stock (Eq, Show)
+  deriving stock (Show, Eq, Generic)
   deriving newtype (FromCBOR, ToCBOR)
+  deriving anyclass NoThunks
 
 instance CryptoSupportsAggregateVoteSigning PerasBLSCrypto where
   type
