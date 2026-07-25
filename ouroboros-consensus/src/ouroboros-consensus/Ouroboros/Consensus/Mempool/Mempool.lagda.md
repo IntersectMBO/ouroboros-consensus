@@ -12,7 +12,7 @@ changes. Kept up to date as we verify points against the source.*
    (CIP-164). Still a single tier; adds EB/RB awareness and the
    vote/certificate flow. Depends on nothing new from this document.
 3. **`MempoolLeiosPricing.lagda.md`** — proposed tiered-pricing extension
-   layered on top of the Leios mempool. Adds priority/regular tiers.
+   layered on top of the Leios mempool. Adds priority/standard tiers.
    Self-contained; comments call out what changed relative to
    `MempoolLeios.lagda.md`.
 

@@ -1,7 +1,7 @@
 # Cardano Mempool — Linear Leios Adaptation
 
 *A design sketch for adapting the Praos mempool to Linear Leios
-(CIP-164). Single tier, no priority/regular distinction; that split is
+(CIP-164). Single tier, no priority/standard distinction; that split is
 a further extension described in `MempoolLeiosPricing.lagda.md`.*
 
 **This is one of three sibling documents:**
@@ -10,7 +10,7 @@ a further extension described in `MempoolLeiosPricing.lagda.md`.*
 2. **`MempoolLeios.lagda.md`** *(this file)* — proposed Linear Leios
    adaptation, still a single tier, aligned with CIP-164.
 3. **`MempoolLeiosPricing.lagda.md`** — tiered-pricing extension layered
-   on top of this document. Adds priority/regular tiers.
+   on top of this document. Adds priority/standard tiers.
 
 **Last updated:** 2026-07-24
 **Primary reference:** CIP-164 Ouroboros Linear Leios,
@@ -87,7 +87,7 @@ final post-tx working state:
 | mempool working state | `ledger` | `updatedLedger` |
 
 The convention was chosen so the pricing extension can add
-`priorityUpdatedLedger` and `regularUpdatedLedger` in the natural
+`priorityUpdatedLedger` and `standardUpdatedLedger` in the natural
 place, and so `ebLedger` shifts from `Maybe` (held or not) to a
 clearly-parallel field name.
 
@@ -584,7 +584,7 @@ postulate
   -- COULD add a fullness floor here as the pricing extension does — an `ebFloor`
   -- (≈ ½ a full RB) with the EB suppressed unless it reaches the floor in some
   -- dimension — to match the ledger's `sdChecks EB`. Left out for now.
-  -- Same role as `regularCapAt` in the pricing spec: the CIP-164 per-EB
+  -- Same role as `standardCapAt` in the pricing spec: the CIP-164 per-EB
   -- capacity (S_EB, S_EB-tx, per-EB Plutus).  Used by `forgeBlock` to
   -- bound the EB body via `splitAtCap`.
   ebCap        : TipPoint → Capacity
@@ -905,7 +905,7 @@ forgeBlock m =
       rbLedger , _         = reapplyAllTk (ledger m) rbTxs
       -- 4. Revalidate overflow against post-RB state; cap the whole
       --    EB body at `ebCap` (S_EB / S_EB-tx / per-EB Plutus).
-      --    Matches the pricing spec's `splitAtCap (regularCap m) validEB`.
+      --    Matches the pricing spec's `splitAtCap (standardCap m) validEB`.
       _ , ebOverflow       = reapplyAllTk rbLedger overflow0
       overflow′ , _        = splitAtCap (ebCap (tip m)) ebOverflow
       anyOverflow          = nonEmpty overflow′
@@ -956,7 +956,7 @@ forgeBlock m =
    has one tx sequence; the pricing extension adds a second tier.
    `MempoolLeiosPricing.lagda.md` retains `ledger` + `ebLedger` in
    the same shape and adds `priorityUpdatedLedger` and
-   `regularUpdatedLedger` where this file has `updatedLedger`.
+   `standardUpdatedLedger` where this file has `updatedLedger`.
 
 ## Changelog
 
@@ -988,4 +988,8 @@ forgeBlock m =
   or possible tx expiry, `txs` are reapplied against `ledgerAt p` —
   required even assuming the certified EB is valid. Also renamed
   terminology throughout the sibling documents: lane → tier,
-  fast → priority, slow → regular.
+  fast → priority, slow → standard.
+- **2026-07-25** — Terminology: the second tier is **standard**, not
+  "regular" (previous day's rename applied "regular"; all occurrences
+  — prose, identifiers, and changelog entries — now read standard).
+  The tier vocabulary is fixed as **priority / standard**.
