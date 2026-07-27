@@ -32,7 +32,7 @@ import Ouroboros.Consensus.Peras.Params
   , PerasCooldownRounds (..)
   , PerasIgnoranceRounds (..)
   , PerasParams (..)
-  , mkPerasParams
+  , defaultPerasParams
   )
 import Ouroboros.Consensus.Peras.Voting.Rules
   ( PerasVotingRulesDecision (..)
@@ -59,6 +59,7 @@ import Test.Tasty.QuickCheck
   )
 import Test.Util.Orphans.Arbitrary (genNominalDiffTime50Years)
 import Test.Util.QuickCheck (geometric)
+import Test.Util.TestBlock (TestBlock)
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
 {-------------------------------------------------------------------------------
@@ -93,7 +94,7 @@ data PerasVotingRulesDecisionModel
 --
 -- NOTE: this predicate could be lifted directly from the agda specification.
 isPerasVotingAllowedModel ::
-  PerasVotingView TestCert ->
+  PerasVotingView TestCert TestBlock ->
   PerasVotingRulesDecisionModel
 isPerasVotingAllowedModel
   PerasVotingView
@@ -216,14 +217,14 @@ prop_isPerasVotingAllowed = forAll genPerasVotingView $ \pvv -> do
 --  - 25% chance of being 2
 --  - 12.5% chance of being 3
 --  ... and so on
-genPerasParams :: Gen PerasParams
+genPerasParams :: Gen (PerasParams blk)
 genPerasParams = do
   _L <- fromIntegral . (+ 1) <$> geometric 0.5
   _X <- fromIntegral . (+ 1) <$> geometric 0.5
   _R <- fromIntegral . (+ 1) <$> geometric 0.5
   _K <- fromIntegral . (+ 1) <$> geometric 0.5
   pure
-    mkPerasParams
+    defaultPerasParams
       { perasBlockMinSlots = PerasBlockMinSlots _L
       , perasCertArrivalThreshold = PerasCertArrivalThreshold _X
       , perasIgnoranceRounds = PerasIgnoranceRounds _R
@@ -302,7 +303,7 @@ genLatestCertOnChain roundNo = do
       { lcocCert = cert
       }
 
-genPerasVotingView :: Gen (PerasVotingView TestCert)
+genPerasVotingView :: Gen (PerasVotingView TestCert TestBlock)
 genPerasVotingView = do
   perasParams <- genPerasParams
   currRoundNo <- genPerasRoundNo

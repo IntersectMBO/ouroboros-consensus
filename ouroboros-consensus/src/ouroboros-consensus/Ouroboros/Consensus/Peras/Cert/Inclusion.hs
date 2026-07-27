@@ -65,7 +65,7 @@ data LatestCertOnChainView cert
 
 -- | Interface needed to evaluate the Peras cert inclusion rules
 data PerasCertInclusionView cert blk = PerasCertInclusionView
-  { perasParams :: !PerasParams
+  { perasParams :: !(PerasParams blk)
   -- ^ Peras protocol parameters
   , currRoundNo :: !PerasRoundNo
   -- ^ The current Peras round number
@@ -90,7 +90,7 @@ mkPerasCertInclusionView ::
   forall cert blk.
   HasPerasCertRound cert =>
   -- | Peras protocol parameters
-  PerasParams ->
+  PerasParams blk ->
   -- | Current Peras round number
   PerasRoundNo ->
   -- | Most recent certificate seen by the voter

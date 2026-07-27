@@ -112,18 +112,18 @@ newtype PerasVoteStake = PerasVoteStake
 -- both values are relative (normalized) values, so we should either normalize
 -- the 'PerasVoteStake' before calling this function, or change this function to
 -- accept a stake distribution and perform the normalization internally.
-stakeAboveThreshold :: PerasParams -> PerasVoteStake -> Bool
+stakeAboveThreshold :: PerasParams blk -> PerasVoteStake -> Bool
 stakeAboveThreshold params voteStake =
   stake >= quorumThreshold + safetyMargin
  where
   stake =
     unPerasVoteStake voteStake
   quorumThreshold =
-    unPerasQuorumStakeThreshold
-      (perasQuorumStakeThreshold params)
+    unPerasQuorumWeightThreshold
+      (perasQuorumWeightThreshold params)
   safetyMargin =
-    unPerasQuorumStakeThresholdSafetyMargin
-      (perasQuorumStakeThresholdSafetyMargin params)
+    unPerasQuorumWeightThresholdSafetyMargin
+      (perasQuorumWeightThresholdSafetyMargin params)
 
 newtype PerasVoteStakeDistr = PerasVoteStakeDistr
   { unPerasVoteStakeDistr :: Map PerasVoterId PerasVoteStake
@@ -228,6 +228,8 @@ class
   ) =>
   BlockSupportsPeras blk
   where
+  -- NOTE: this associated type will dissapear in favor of using
+  -- 'PerasParams blk' directly.
   type PerasCfg blk
 
   data PerasCert blk
@@ -265,7 +267,7 @@ class
 -- TODO: degenerate instance for all blks to get things to compile
 -- see https://github.com/tweag/cardano-peras/issues/73
 instance StandardHash blk => BlockSupportsPeras blk where
-  type PerasCfg blk = PerasParams
+  type PerasCfg blk = PerasParams blk
 
   data PerasCert blk = PerasCert
     { pcCertRound :: PerasRoundNo

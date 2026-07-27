@@ -33,7 +33,7 @@ import Ouroboros.Consensus.Peras.Cert.Inclusion
 import Ouroboros.Consensus.Peras.Params
   ( PerasCertMaxRounds (..)
   , PerasParams (..)
-  , mkPerasParams
+  , defaultPerasParams
   )
 import Ouroboros.Consensus.Util.Pred (Evidence (..))
 import Test.Tasty (TestTree, testGroup)
@@ -203,11 +203,11 @@ certInclusionDecisionTag = \case
 --  - 25% chance of being 2
 --  - 12.5% chance of being 3
 --  ... and so on
-genPerasParams :: Gen PerasParams
+genPerasParams :: Gen (PerasParams blk)
 genPerasParams = do
   _A <- fromIntegral . (+ 1) <$> geometric 0.5
   pure
-    mkPerasParams
+    defaultPerasParams
       { perasCertMaxRounds = PerasCertMaxRounds _A
       }
 

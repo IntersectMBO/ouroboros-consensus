@@ -76,7 +76,7 @@ genValidatedPerasCert :: Gen (ValidatedPerasCert TestBlock)
 genValidatedPerasCert =
   ValidatedPerasCert
     <$> genPerasCert
-    <*> pure (perasWeight mkPerasParams)
+    <*> pure (perasWeight defaultPerasParams)
 
 newCertDB ::
   (IOLike m, StandardHash blk) => [WithArrivalTime (ValidatedPerasCert blk)] -> m (PerasCertDB m blk)
