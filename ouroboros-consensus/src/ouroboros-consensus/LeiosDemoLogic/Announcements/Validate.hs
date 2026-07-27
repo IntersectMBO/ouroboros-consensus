@@ -38,7 +38,8 @@ import Ouroboros.Consensus.Config
   )
 import Ouroboros.Consensus.Forecast (OutsideForecastRange, forecastFor)
 import Ouroboros.Consensus.HeaderValidation
-  ( tickHeaderState
+  ( ValidateEnvelope (..)
+  , tickHeaderState
   , tickedHeaderStateChainDep
   )
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
@@ -77,26 +78,29 @@ data AnnouncementInvalidity blk
     -- servers avoid triggering this case despite clock
     -- skew\/transmission delays\/buffering, etc.
     SlotBeforeImmutableTip
-  | -- | The header failed protocol-level validation.
-    --
-    -- See 'validateAnnouncementHeader' for a discussion of which RbHeader
-    -- checks are enabled/disabled within this function. In particular, note
-    -- that the upper bound on OCINs is not enforced, nor are the "envelope
-    -- checks".
+  | -- | The header failed the relaxed, out-of-context protocol-level validation
+    -- (election proof and signature). See 'validateAnnouncementChainDepState'
+    -- for which check is relaxed (the OCIN upper bound) and
+    -- 'validateAnnouncementHeader' for which are skipped (the chain-extension
+    -- envelope checks).
     HeaderInvalid !(ValidationErr (BlockProtocol blk))
+  | -- | The RbHeader failed an envelope check — chiefly, it exceeds the
+    -- protocol's max header size (see 'validateAnnouncementHeader').
+    RbHeaderEnvelopeInvalid !(OtherHeaderEnvelopeError blk)
   | -- | The header carries no EB announcement, so it should not have been
     -- relayed as a 'MsgLeiosBlockAnnouncement' at all.
     NoAnnouncement
 
--- | NB 'HeaderInvalid' does not render its 'ValidationErr', so that this
--- instance is unconstrained in @blk@ (avoiding a
--- @Show (ValidationErr (BlockProtocol blk))@ constraint that would have to be
--- threaded through the node). The wrapped value still carries it.
+-- | NB 'HeaderInvalid' and 'RbHeaderEnvelopeInvalid' do not render their
+-- wrapped errors, so that this instance is unconstrained in @blk@ (avoiding
+-- @Show@ constraints on those errors that would have to be threaded through the
+-- node). The wrapped values still carry them.
 instance Show (AnnouncementInvalidity blk) where
   show ai = case ai of
     OutsideHorizon r -> "OutsideHorizon (" <> show r <> ")"
     SlotBeforeImmutableTip -> "SlotBeforeImmutableTip"
     HeaderInvalid{} -> "HeaderInvalid <header-validation-error>"
+    RbHeaderEnvelopeInvalid{} -> "RbHeaderEnvelopeInvalid <envelope-error>"
     NoAnnouncement -> "NoAnnouncement"
 
 -- | Protocol-level validation of an announced RB 'Header' against the immutable
@@ -159,6 +163,14 @@ validateAnnouncementHeader cfg extLedger hdr =
         forecastFor
           (ledgerViewForecastAt (configLedger cfg) (ledgerState extLedger))
           slot
+    -- Reject an RbHeader bigger than the protocol allows: it is the
+    -- announcement's transmission unit. This is the full Shelley envelope check,
+    -- so it also bounds the declared RB body size and rejects an obsolete node.
+    -- Those two are harmless extras — a legitimate announcement's RbHeader always
+    -- passes them — and, being LedgerView-derived, they are meaningful
+    -- out-of-context (unlike the chain-extension checks, which we skip).
+    withExcept RbHeaderEnvelopeInvalid $
+      additionalEnvelopeChecks cfg ledgerView hdr
     -- The out-of-context, relaxed protocol-level validation: the election proof
     -- and the signature, but not the RB-header-specific checks nor the checks
     -- that our lagging tip would spuriously trip (see
