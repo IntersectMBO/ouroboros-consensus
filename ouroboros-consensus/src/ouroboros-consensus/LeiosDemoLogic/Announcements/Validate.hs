@@ -5,7 +5,7 @@
 -- | Validation of a relayed Leios EB announcement, which is carried as an RB
 -- 'Header'.
 --
--- The announcement arrives out-of-order with respect to the local chain, so we
+-- The announcement can arrive out-of-order with respect to the local chain, so we
 -- run only the /protocol-level/ header validation (see 'validateHeaderProtocol')
 -- against the immutable tip's ledger state, forecast to the announced slot; the
 -- envelope (chain-extension) check is deliberately skipped. As of Dijkstra the
@@ -44,6 +44,8 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
   , headerLeiosAnnouncement
   )
 
+-- | Reasons a LeiosNotify client would reject its upstream peer's announcement,
+-- regardless of other messages they had sent
 data AnnouncementInvalidity blk
   = -- | The announced slot is beyond the forecast horizon from the immutable
     -- tip. This should not occur for a caught-up node (by appeal to Praos Chain
@@ -53,17 +55,23 @@ data AnnouncementInvalidity blk
     -- it, because there is an unbounded supply of far-future slots.
     OutsideHorizon !OutsideForecastRange
   | -- | The announced slot is before the immutable tip (the forecast anchor),
-    -- so it cannot be forecast/validated at all. This is a /separate/ case
-    -- because 'forecastFor' does not report a below-anchor slot as
-    -- 'OutsideForecastRange' (that only bounds the future end); a below-anchor
-    -- slot violates 'forecastFor''s precondition. For a caught-up node such a
-    -- stale slot is as bogus as a far-future one.
+    -- so it cannot be forecast\/validated at all. This is a separate case from
+    -- 'OutsideHorizon' because 'forecastFor' does not report a below-anchor
+    -- slot as 'OutsideForecastRange' (that only bounds the future
+    -- end)---instead, a below-anchor slot violates 'forecastFor''s
+    -- precondition. For a caught-up node a slot so stale is as bogus as one in
+    -- the far-future.
     --
     -- See 'LeiosDemoLogic.Announcements.ShouldRelay' for how honest
     -- servers avoid triggering this case despite clock
     -- skew\/transmission delays\/buffering, etc.
     SlotBeforeImmutableTip
   | -- | The header failed protocol-level validation.
+    --
+    -- See 'validateAnnouncementHeader' for a discussion of which RbHeader
+    -- checks are enabled/disabled within this function. In particular, note
+    -- that the upper bound on OCINs is not enforced, nor are the "envelope
+    -- checks".
     HeaderInvalid !(ValidationErr (BlockProtocol blk))
   | -- | The header carries no EB announcement, so it should not have been
     -- relayed as a 'MsgLeiosBlockAnnouncement' at all.
@@ -84,12 +92,36 @@ instance Show (AnnouncementInvalidity blk) where
 -- tip's ledger state (forecast to the header's slot). Envelope check skipped;
 -- see the module header.
 --
--- The opcert issue number is checked only as a lower bound: any number at
--- least the immutable tip's counter is accepted (an over-increment, which the
--- strict protocol check would reject, is 'Tolerate'd — see
--- 'AnnouncementDisposition'), and a lower one is rejected as a revoked key. See
--- the note on 'LeiosDemoLogic.Announcements.ErrAnnouncement' for why OCINs are
--- otherwise ignored.
+-- The operational certficiate (opcert) issue number (OCIN) is checked only as a
+-- lower bound: any number at least the immutable tip's counter is accepted (an
+-- over-increment, which the strict protocol check would reject, is 'Tolerate'd
+-- — see 'AnnouncementDisposition'), and a lower one is rejected as a revoked
+-- key.
+--
+-- OCINs are otherwise ignored. In effect, this logic is assuming that all OCINs
+-- are controlled by the pool owner. That's patentedly contrary the intended
+-- purpose of OCINs, so it needs justification; hence this comment.
+--
+-- The crux is a Catch 22 if we consider different OCINs as different
+-- identities. We must either treat all of those identities
+-- _independently_ (ie as distinct elections) or _prioritize_ the
+-- greater OCINs (which seems intuitive). The problem is that the
+-- adversary can create arbitrarily many OCINs for its own pools. And
+-- then it can abuse either choice we make: either it gets to multiply
+-- the Leios load on the network per election, or it can cause
+-- arbitrary "partitions" of the network, with one clique certifying a
+-- lower OCIN's announcement but the other clique completely ignoring
+-- that announcement.
+--
+-- The current behavior is to accept (and relay!) any OCIN at least as
+-- great as the counter in our immutable tip's ledger state. The only
+-- downside to this is that an increment OCIN doesn't revoke the old
+-- opcert _for Leios_ until the increment is on the immutable tip
+-- (Praos is still immediate). So a leaked hot key means the attacker
+-- can equivocate all of the victim's announcements until the victim
+-- notices, lands a new opcert on chain, and then waits for that
+-- opcert to become immutable (~12 hr, <= ~36 hr). Not ideal, but
+-- tolerable.
 --
 -- Returns the output of 'headerLeiosAnnouncement'.
 validateAnnouncementHeader ::

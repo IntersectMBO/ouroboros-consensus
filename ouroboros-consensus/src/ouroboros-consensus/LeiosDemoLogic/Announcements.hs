@@ -18,17 +18,17 @@ One of those fields is an optional tuple: EbBody hash and EbBody size.
 That's the announcement.
 As part of the RbHeader, it is adjacent to the election proof that justifies the EbAnnouncement and it is signed by the electee.
 Because that election proof necessarily includes the slot of the election, every EbAnnouncement has an age.
-In particular, the existing stochastic bound on the number of elections also bounds the number of in-memory EbAnnouncements: zero (no announcement), one (unequivocal announcement), or two (equivocal announcements) per election.
+In particular, that age is used to evict too-old announcements so that the existing stochastic bound on the number of elections younger than some age also bounds the number of in-memory EbAnnouncements: zero (no announcement), one (unequivocal announcement), or two (equivocal announcements) per sufficiently-young election.
 
 The LeiosNotify mini protocol in CIP-0164 already includes a notification MsgLeiosAnnouncement, whose payload is the RbHeader.
 It is sent as one of the possible responses to the generic MsgLeiosNotificationRequestNext message.
 The healthy honest node tries to maintain ~hundreds of those requests outstanding at all times, so that the upstream peer can always enqueue a notification immediately.
 The intended timeline one a single connection from an honest node X to an honest node Y is as follows.
 
-- X either receives or itself issues a new valid announcement.
-- If that's the first or second announcement X has seen for that election, then X tries to relay that announcement toits downstream peers, including Y.
-- X will be able to send to Y, because X should have received at least one more MsgLeiosNotificationRequestNext message from Y than X has replied to.
-- When Y receives the announcement from X, it confirms that X hasn't already sent this announcement or any two announcements for that election, disconnecting if it has.
+- X either receives or itself issues a new valid EbAnnouncement.
+- If that's the first or second announcement X has seen for that election, then X tries to relay that announcement to its downstream peers, including Y.
+- X will be able to send to Y, because X should have received at least one more MsgLeiosNotificationRequestNext message from Y than X has already replied to.
+- When Y receives the announcement from X, it confirms that X hasn't already sent this announcement or any two distinct (equivocating) announcements for that same election, disconnecting if it has.
 - Y also needs to validate that the announcement is well-signed and that its election proof is valid, disconnecting if either is invalid.
 
 TO BE IMPORTED QUALIFIED
@@ -101,39 +101,12 @@ prunePeerState immTipSlot st =
   where
     (_pruned, live') = Map.spanAntitone tooOld (live st)
 
-    -- NB strict comparison, so that the immtip's announcement remains
+    -- NB strict comparison, so that the immtip's own announcement is
+    -- not pruned
     tooOld (MkElId elSlot _poolId) = elSlot < immTipSlot
 
 -- | Behaviors of a LeiosNotify upstream peer's announcement stream
 -- that an honest node rejects
---
--- There is one surprising and notable absence: the
--- MsgLeiosBlockAnnouncement handler /completely/ /ignores/
--- operational certificate (aka opcert) issue numbers. In effect, this
--- logic is assuming that all OCINs are controlled by the pool
--- owner. That's patentedly contrary the intended purpose of OCINs, so
--- it needs justification; hence this comment.
---
--- The crux is a Catch 22 if we consider different OCINs as different
--- identities. We must either treat all of those identities
--- _independently_ (ie as distinct elections) or _prioritize_ the
--- greater OCINs (which seems intuitive). The problem is that the
--- adversary can create arbitrarily many OCINs for its own pools. And
--- then it can abuse either choice we make: either it gets to multiply
--- the Leios load on the network per election, or it can cause
--- arbitrary "partitions" of the network, with one clique certifying a
--- lower OCIN's announcement but the other clique completely ignoring
--- that announcement.
---
--- The current behavior is to accept (and relay!) any OCIN at least as
--- great as the counter in our immutable tip's ledger state. The only
--- downside to this is that an increment OCIN doesn't revoke the old
--- opcert _for Leios_ until the increment is on the immutable tip
--- (Praos is still immediate). So a leaked hot key means the attacker
--- can equivocate all of the victim's announcements until the victim
--- notices, lands a new opcert on chain, and then waits for that
--- opcert to become immutable (~12 hr, <= ~36 hr). Not ideal, but
--- tolerable.
 data ErrAnnouncement invalidity =
     -- | The peer had already sent this same announcement before
     ErrRepeat
