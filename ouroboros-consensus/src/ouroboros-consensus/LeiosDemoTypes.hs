@@ -782,17 +782,26 @@ class HasLeiosVoting blk where
 -- * Tracing
 
 messageLeiosNotifyToObject ::
+  -- | Extracts the announced EB point and body size from the relayed RB
+  -- header, so an announcement's diffusion can be correlated with its EB.
+  (announcement -> Maybe (LeiosPoint, BytesSize)) ->
   Message (LeiosNotify LeiosPoint announcement LeiosVote) st st' ->
   Aeson.Object
-messageLeiosNotifyToObject = \case
+messageLeiosNotifyToObject announcedEb = \case
   MsgLeiosNotificationRequestNext ->
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosNotificationRequestNext"
       ]
-  MsgLeiosBlockAnnouncement{} ->
-    mconcat
-      [ "kind" .= Aeson.String "MsgLeiosBlockAnnouncement"
-      ]
+  MsgLeiosBlockAnnouncement announcement ->
+    mconcat $
+      "kind" .= Aeson.String "MsgLeiosBlockAnnouncement"
+        : case announcedEb announcement of
+          Nothing -> []
+          Just (MkLeiosPoint ebSlot ebHash, ebBodySize) ->
+            [ "ebSlot" .= ebSlot
+            , "ebHash" .= prettyEbHash ebHash
+            , "ebBodySize" .= ebBodySize
+            ]
   MsgLeiosBlockOffer (MkLeiosPoint ebSlot ebHash) ebBytesSize ->
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosBlockOffer"
