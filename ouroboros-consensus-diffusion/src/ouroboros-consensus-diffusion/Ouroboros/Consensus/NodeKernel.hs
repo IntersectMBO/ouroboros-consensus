@@ -784,6 +784,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                           cst
                           Nothing -- the source is this node, not an upstream peer
                           Announcements.DoRelay -- our newly forged block can't be too old
+                          Nothing -- no wall-clock lateness for a locally-forged announcement
                           anc
     )
  where

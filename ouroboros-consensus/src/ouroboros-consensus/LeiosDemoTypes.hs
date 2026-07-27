@@ -92,6 +92,7 @@ import qualified Data.Set.NonEmpty as NESet
 import Data.String (fromString)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
+import Data.Time.Clock (NominalDiffTime)
 import Data.Word (Word16, Word32, Word64)
 import Debug.Trace (trace)
 import GHC.Generics (Generic)
@@ -902,6 +903,10 @@ data TraceLeiosKernel
       !AnnouncementSource
       !AnnouncementEquivocation
       !AnnouncementFields
+      !(Maybe NominalDiffTime)
+      -- ^ How late the announcement was — seconds from the election slot's
+      -- wall-clock onset to when this node counted it — when known (relayed
+      -- announcements carry it; a locally-forged one does not).
 
 -- | The data of a relayed EB announcement, shared by 'TraceLeiosPeerAnnouncement'
 -- and 'TraceLeiosAnnouncementAccepted'. A separate record so its selectors are
@@ -1038,13 +1043,14 @@ traceLeiosKernelToObject = \case
       , "slotNo" .= slotNo
       , "rbHash" .= prettyRbHash rbHash
       ]
-  TraceLeiosAnnouncementAccepted announcementSource equivocation acc ->
-    mconcat
+  TraceLeiosAnnouncementAccepted announcementSource equivocation acc mbAge ->
+    mconcat $
       [ "kind" .= Aeson.String "LeiosAnnouncementAccepted"
       , "source" .= announcementSourceText announcementSource
       , announcementFieldsToObject acc
       , announcementEquivocationToObject equivocation
       ]
+        ++ foldMap (\age -> ["announcementAgeSeconds" .= (realToFrac age :: Double)]) mbAge
 
 announcementFieldsToObject :: AnnouncementFields -> Aeson.Object
 announcementFieldsToObject

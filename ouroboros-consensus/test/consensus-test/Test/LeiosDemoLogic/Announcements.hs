@@ -229,7 +229,7 @@ central ::
   CentralState IO Int Anc ->
   IO (CentralState IO Int Anc)
 central src rel anc st =
-  onAnnouncementCentral nullTracer ancEl (\_ -> pure ()) st src rel anc
+  onAnnouncementCentral nullTracer ancEl (\_ -> pure ()) st src rel Nothing anc
 
 centralTests :: TestTree
 centralTests =
@@ -295,8 +295,8 @@ test_publish = do
   tq <- newQueue 5
   let st0 = insertPeerCentral 'A' (tqView tq) emptyCentralState
       pub = \_ -> modifyIORef' ref (+ 1)
-  st1 <- onAnnouncementCentral nullTracer ancEl pub st0 (Just 'B') DoRelay (Anc el0 0)
-  _ <- onAnnouncementCentral nullTracer ancEl pub st1 (Just 'B') DoRelay (Anc el0 0) -- duplicate
+  st1 <- onAnnouncementCentral nullTracer ancEl pub st0 (Just 'B') DoRelay Nothing (Anc el0 0)
+  _ <- onAnnouncementCentral nullTracer ancEl pub st1 (Just 'B') DoRelay Nothing (Anc el0 0) -- duplicate
   readIORef ref >>= (@?= 1)
 
 {-------------------------------------------------------------------------------

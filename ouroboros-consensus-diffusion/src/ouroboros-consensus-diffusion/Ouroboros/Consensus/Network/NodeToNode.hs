@@ -494,7 +494,7 @@ mkHandlers
                                 (Leios.ancHeader ancH)
                           )
                           -- central part of the processing
-                          ( \ancHdr (shouldRelay, anc'@(p, _sz)) -> do
+                          ( \ancHdr (shouldRelay, age, anc'@(p, _sz)) -> do
                               traceWith tracer $
                                 MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement new: " <> Leios.prettyLeiosPoint p
                               MVar.modifyMVar_ getLeiosCentralState $ \cst ->   -- TODO OK to hold this the whole time we're writing to the LeiosNotify queues (NB those enqeues never block)?
@@ -507,6 +507,7 @@ mkHandlers
                                   cst
                                   (Just peer)
                                   shouldRelay
+                                  (Just age)
                                   ancHdr
                           )
                           peerSt0

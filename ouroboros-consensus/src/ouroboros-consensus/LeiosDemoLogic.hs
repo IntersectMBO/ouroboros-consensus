@@ -1063,7 +1063,7 @@ announcementValidity ::
   m
     ( Either
         (AnnouncementInvalidity blk)
-        (Announcements.ShouldRelay, (LeiosPoint, BytesSize))
+        (Announcements.ShouldRelay, NominalDiffTime, (LeiosPoint, BytesSize))
     )
 announcementValidity systemTime futureCheck cfg immLedger hdr = do
   onset <- case futureCheck of
@@ -1083,11 +1083,12 @@ announcementValidity systemTime futureCheck cfg immLedger hdr = do
   -- slot was near-future, so 'now' is at or after 'onset' and the age
   -- is non-negative.
   now <- systemTimeCurrent systemTime
-  let shouldRelay =
-        if diffRelTime now onset <= maxAnnouncementAgeSend
+  let age = diffRelTime now onset
+      shouldRelay =
+        if age <= maxAnnouncementAgeSend
         then Announcements.DoRelay
         else Announcements.DoNotRelay
-  pure $ (,) shouldRelay <$> validateAnnouncementHeader cfg immLedger hdr
+  pure $ (\v -> (shouldRelay, age, v)) <$> validateAnnouncementHeader cfg immLedger hdr
 
 -- | Record a validated, newly-announced EB body as missing, with its
 -- authoritative (forger-signed) size. First-seen wins: a no-op if the body is
@@ -1150,12 +1151,13 @@ tracePeerAnnouncement (Announcements.TracePeerAnnouncement elSt) =
 traceNewAnnouncement ::
   Announcements.TraceLeiosNotifyEvent peer (AnnouncingHeader blk) ->
   TraceLeiosKernel
-traceNewAnnouncement (Announcements.TraceNewAnnouncement mbPeer _elId elSt) =
+traceNewAnnouncement (Announcements.TraceNewAnnouncement mbPeer _elId elSt age) =
   let (equivocation, fields) = announcementTraceFields elSt
    in TraceLeiosAnnouncementAccepted
         (maybe ForgedLocally (const ReceivedFromPeer) mbPeer)
         equivocation
         fields
+        age
 
 lEIOSNOTIFYPIPELINEDEPTH :: Int
 lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number

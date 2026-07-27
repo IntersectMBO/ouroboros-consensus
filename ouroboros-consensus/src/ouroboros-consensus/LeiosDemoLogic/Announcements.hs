@@ -37,6 +37,7 @@ TO BE IMPORTED QUALIFIED
 module LeiosDemoLogic.Announcements (module LeiosDemoLogic.Announcements) where
 
 import           Cardano.Slotting.Slot (SlotNo)
+import           Data.Time.Clock (NominalDiffTime)
 import           Control.Concurrent.Class.MonadSTM (MonadSTM, atomically)
 import           Control.Concurrent.Class.MonadSTM.Strict.TVar (StrictTVar, readTVar, writeTVar)
 import           Control.Monad (foldM, void)
@@ -222,7 +223,10 @@ data QueueAnnouncementView m anc =
         !(StrictTVar m q)
 
 data TraceLeiosNotifyEvent peer anc =
-    TraceNewAnnouncement !(Maybe peer) !ElId !(ElState anc)
+    -- | The final field is how late the announcement was — seconds from the
+    -- election slot's wall-clock onset to when this node counted it — when
+    -- known (a relayed announcement has it; a locally-forged one does not).
+    TraceNewAnnouncement !(Maybe peer) !ElId !(ElState anc) !(Maybe NominalDiffTime)
 
 -- | Called whenever the ChainDB's immutable tip advances to a new slot
 --
@@ -303,13 +307,15 @@ onAnnouncementCentral ::
   -- ^ The upstream peer the announcement came from, or 'Nothing' if this node
   -- is itself the source (e.g. its own block forging).
   ShouldRelay ->
+  Maybe NominalDiffTime ->
+  -- ^ How late the announcement was (see 'TraceNewAnnouncement').
   anc ->
   m (CentralState m peer anc)
-onAnnouncementCentral tracer getEl publishLocally st peer shouldRelay anc =
+onAnnouncementCentral tracer getEl publishLocally st peer shouldRelay age anc =
     case extendLive el anc (selfPeer st) of
         Left{} -> pure st   -- complete noop for duplicates
         Right (elSt, selfPeer') -> do
-            traceWith tracer $ TraceNewAnnouncement peer el elSt
+            traceWith tracer $ TraceNewAnnouncement peer el elSt age
             -- urgently relay
             newPeers <- case shouldRelay of
                 DoNotRelay -> pure Set.empty
