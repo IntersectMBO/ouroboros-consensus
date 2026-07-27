@@ -97,6 +97,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.TypeFamilyWrappers
@@ -321,6 +322,23 @@ instance All SingleEraBlock xs => HasHardForkHistory (HardForkBlock xs) where
   hardForkSummary cfg =
     State.reconstructSummaryLedger cfg
       . hardForkLedgerStatePerEra
+
+{-------------------------------------------------------------------------------
+  Peras
+-------------------------------------------------------------------------------}
+
+-- | 'LedgerStateSupportsPeras' for the /ticked/ hard fork ledger state,
+-- mirroring the instance for the unticked ledger state in
+-- @Ouroboros.Consensus.HardFork.Combinator.Basics@.
+instance
+  CanHardFork xs =>
+  LedgerStateSupportsPeras (Ticked LedgerState (HardForkBlock xs))
+  where
+  getPoolDistr =
+    hcollapse
+      . hcmap proxySingle (K . getPoolDistr . getFlipTickedLedgerState)
+      . State.tip
+      . tickedHardForkLedgerStatePerEra
 
 {-------------------------------------------------------------------------------
   HeaderValidation

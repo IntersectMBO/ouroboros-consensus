@@ -45,7 +45,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras, LedgerSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.Serialisation
@@ -80,10 +80,12 @@ class
   , BlockSupportsDiffusionPipelining blk
   , BlockSupportsMetrics blk
   , SerialiseNodeToClient blk (PartialLedgerConfig blk)
-  , -- TODO: replace the two constraints below with:
+  , -- TODO: replace the four constraints below with:
     -- 'StateSupportsPerasEpochContext blk' once that type class is in place.
     ChainDepStateSupportsPeras (ChainDepState (BlockProtocol blk))
   , ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol blk)))
+  , LedgerStateSupportsPeras (LedgerState blk)
+  , LedgerStateSupportsPeras (Ticked LedgerState blk)
   , -- LedgerTables
     CanStowLedgerTables (LedgerState blk)
   , HasLedgerTables LedgerState blk
