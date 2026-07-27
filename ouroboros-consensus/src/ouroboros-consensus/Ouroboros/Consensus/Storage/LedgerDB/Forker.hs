@@ -64,7 +64,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   ) where
 
 import Control.Monad.Except
-  ( runExcept
+  ( Except
+  , runExcept
   )
 import Data.Bifunctor (first)
 import Data.Functor ((<&>))
@@ -78,8 +79,7 @@ import GHC.Generics
 import LeiosDemoDb (LeiosDbConnection)
 import LeiosDemoLogic.Announcements.ElBimap (ElId)
 import LeiosDemoTypes
-  ( AnnouncementDisposition (..)
-  , BytesSize
+  ( BytesSize
   , EbHash
   , HasLeiosVoting (..)
   , LeiosCert
@@ -100,7 +100,14 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
   , prependDiffs
   , trackingToDiffs
   )
-import Ouroboros.Consensus.Protocol.Abstract (ChainDepState, ValidationErr)
+import Ouroboros.Consensus.Protocol.Abstract
+  ( ChainDepState
+  , ConsensusConfig
+  , ConsensusProtocol
+  , ValidateView
+  , ValidationErr
+  , updateChainDepState
+  )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import Ouroboros.Consensus.Util.CallStack
@@ -795,11 +802,25 @@ class ResolveLeiosBlock blk where
   headerElId :: Header blk -> ElId
   headerElId _ = error "TODO headerElId stub"
 
-  -- | Classify a header 'ValidationErr' from a relayed announcement (see
-  -- 'AnnouncementDisposition').
-  classifyAnnouncementValidationErr ::
-    ValidationErr (BlockProtocol blk) -> AnnouncementDisposition
-  classifyAnnouncementValidationErr _ = Reject
+  -- | Protocol-level validation of a relayed announcement's header, against the
+  -- ticked chain-dep state at the announced slot.
+  --
+  -- Mirrors 'updateChainDepState' (its strict behaviour is the default), but is
+  -- run out-of-context against a possibly-lagging immutable tip, so eras that
+  -- relay announcements override it to skip the checks that such lag spuriously
+  -- trips — currently just the OCERT counter's upper bound (see
+  -- 'WhetherToUpperBoundOCERT'). Unlike a full header validation it also omits
+  -- the RB-header-specific checks (body size etc.) that a bare EB announcement
+  -- would not carry. Any error it returns is therefore a genuine rejection.
+  validateAnnouncementChainDepState ::
+    ConsensusProtocol (BlockProtocol blk) =>
+    ConsensusConfig (BlockProtocol blk) ->
+    ValidateView (BlockProtocol blk) ->
+    SlotNo ->
+    Ticked (ChainDepState (BlockProtocol blk)) ->
+    Except (ValidationErr (BlockProtocol blk)) ()
+  validateAnnouncementChainDepState cfg vv slot tcs =
+    () <$ updateChainDepState cfg vv slot tcs
 
   -- | The EB most recent announcement in the 'HeaderState', if any. 'Nothing'
   -- for headers in eras that don't carry Leios announcements.

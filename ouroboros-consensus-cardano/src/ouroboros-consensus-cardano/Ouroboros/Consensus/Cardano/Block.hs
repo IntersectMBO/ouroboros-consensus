@@ -5,12 +5,15 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Cardano.Block
@@ -214,14 +217,17 @@ module Ouroboros.Consensus.Cardano.Block
   , EraMismatch (..)
   ) where
 
+import Control.Monad.Except (throwError, withExcept)
 import Data.Kind
 import Data.Proxy (Proxy (..))
+import Data.Functor.Product (Product (..))
 import Data.SOP.BasicFunctors
+import Data.SOP.Constraint (All, SListI)
 import Data.SOP.Functors
-import Data.SOP.Index (Index (..))
+import Data.SOP.Index (Index (..), hcizipWith)
+import qualified Data.SOP.Match as Match
 import Data.SOP.Strict
-import LeiosDemoTypes (AnnouncementDisposition (..))
-import Ouroboros.Consensus.Block (BlockProtocol)
+import Ouroboros.Consensus.Block (BlockProtocol, SlotNo)
 import Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
@@ -247,6 +253,8 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( ShelleyPartialLedgerConfig (..)
   )
 import Ouroboros.Consensus.Shelley.Ledger.Leios ()
+import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
+import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -1539,6 +1547,7 @@ instance
   , ShelleyCompatible (Praos c) DijkstraEra
   , HasCanonicalTxIn (CardanoEras c)
   , HasHardForkTxOut (CardanoEras c)
+  , CanHardFork (CardanoEras c)
   ) =>
   ResolveLeiosBlock (HardForkBlock (CardanoEras c))
   where
@@ -1603,16 +1612,7 @@ instance
   headerElId (HardForkHeader (OneEraHeader ns)) =
     hcollapse $ hcmap (Proxy @ResolveLeiosBlock) (K . headerElId) ns
 
-  classifyAnnouncementValidationErr err = case err of
-    HardForkValidationErrFromEra (OneEraValidationErr ns) ->
-      hcollapse $ hcmap (Proxy @ResolveLeiosBlock) classifyOne ns
-    HardForkValidationErrWrongEra{} -> Reject
-   where
-    classifyOne ::
-      forall x.
-      ResolveLeiosBlock x =>
-      WrapValidationErr x -> K AnnouncementDisposition x
-    classifyOne (WrapValidationErr e) = K (classifyAnnouncementValidationErr @x e)
+  validateAnnouncementChainDepState = update @(CardanoEras c)
 
   headerContainsLeiosCert hdr = case hdr of
     HeaderDijkstra dHdr -> headerContainsLeiosCert dHdr
@@ -1629,3 +1629,64 @@ instance
         (IS (IS (IS (IS (IS (IS (IS IZ)))))))
         (leiosClosureTxKeySets inner)
     _ -> emptyLedgerTables
+
+-----
+
+-- | We don't want to add the ResolveLeiosBlock sin-bin to SingleEraBlock, so we
+-- use this ad-hoc class instead.
+class    (SingleEraBlock blk, ResolveLeiosBlock blk) => AnnouncementEraBlock blk
+instance (SingleEraBlock blk, ResolveLeiosBlock blk) => AnnouncementEraBlock blk
+
+-- | Adapted from "Ouroboros.Consensus.HardFork.Combinator.Protocol.update"
+update ::
+  forall xs.
+  (CanHardFork xs, All AnnouncementEraBlock xs) =>
+  ConsensusConfig (HardForkProtocol xs) ->
+  OneEraValidateView xs ->
+  SlotNo ->
+  Ticked (HardForkChainDepState xs) ->
+  Except (HardForkValidationErr xs) ()
+update
+  HardForkConsensusConfig{..}
+  (OneEraValidateView view)
+  slot
+  (TickedHardForkChainDepState chainDepState ei) =
+    case State.match view chainDepState of
+      Left mismatch ->
+        throwError $
+          HardForkValidationErrWrongEra . MismatchEraInfo $
+            Match.bihcmap
+              proxySingle
+              singleEraInfo
+              (LedgerEraInfo . chainDepStateInfo . State.currentState)
+              mismatch
+      Right matched ->
+        hcollapse
+          . hcizipWith (Proxy :: Proxy AnnouncementEraBlock) (updateEra ei slot) cfgs
+          $ matched
+   where
+    cfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
+
+-- | Adapted from "Ouroboros.Consensus.HardFork.Combinator.Protocol.updateEra"
+updateEra ::
+  forall xs blk.
+  (SListI xs, SingleEraBlock blk, ResolveLeiosBlock blk) =>
+  EpochInfo (Except PastHorizonException) ->
+  SlotNo ->
+  Index xs blk ->
+  WrapPartialConsensusConfig blk ->
+  Product WrapValidateView (Ticked :.: WrapChainDepState) blk ->
+  K (Except (HardForkValidationErr xs) ()) blk
+updateEra
+  ei
+  slot
+  index
+  cfg
+  (Pair view (Comp chainDepState)) =
+    K $
+      withExcept (injectValidationErr index) $
+          validateAnnouncementChainDepState @blk
+            (completeConsensusConfig' ei cfg)
+            (unwrapValidateView view)
+            slot
+            (unwrapTickedChainDepState chainDepState)

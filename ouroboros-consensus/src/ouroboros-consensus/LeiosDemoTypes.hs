@@ -376,21 +376,6 @@ newLeiosPeerVars = do
   requestsToSend <- StrictSTM.newTVarIO Seq.empty
   pure MkLeiosPeerVars{offerings, requestsToSend}
 
--- | How to treat a protocol-level header 'ValidationErr' encountered while
--- validating a relayed announcement out-of-context against the immutable tip.
---
--- Some failures are 'Tolerate'd (the announcement is accepted anyway) because
--- they are artifacts of validating against our immutable tip, which lags the
--- announcement's own chain: an opcert issue number greater than the tip's
--- counter (or a pool absent from the tip's counter map) may simply be a rotation
--- we have not caught up to. A signature, KES-window, or other
--- context-independent failure — and an opcert issue number /below/ the tip's
--- counter (a revoked key) — is unambiguous misbehaviour, so 'Reject'.
-data AnnouncementDisposition
-  = Tolerate
-  | Reject
-  deriving (Eq, Show)
-
 -- | Main data structure used in the Leios fetching logic.
 --
 -- Tracks both EB-level state (what EBs we have/need) and TX-level state

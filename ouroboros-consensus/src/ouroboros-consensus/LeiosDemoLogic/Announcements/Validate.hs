@@ -22,13 +22,24 @@ module LeiosDemoLogic.Announcements.Validate
 
 import Control.Monad (when)
 import Control.Monad.Except (runExcept, throwError, withExcept)
-import LeiosDemoTypes (AnnouncementDisposition (..), LeiosPoint, BytesSize)
-import Ouroboros.Consensus.Block (BlockProtocol, Header, WithOrigin (NotOrigin), blockSlot)
-import Ouroboros.Consensus.Config (TopLevelConfig, configConsensus, configLedger)
+import LeiosDemoTypes (LeiosPoint, BytesSize)
+import Ouroboros.Consensus.Block
+  ( BlockProtocol
+  , Header
+  , WithOrigin (NotOrigin)
+  , blockSlot
+  , validateView
+  )
+import Ouroboros.Consensus.Config
+  ( TopLevelConfig
+  , configBlock
+  , configConsensus
+  , configLedger
+  )
 import Ouroboros.Consensus.Forecast (OutsideForecastRange, forecastFor)
 import Ouroboros.Consensus.HeaderValidation
   ( tickHeaderState
-  , validateHeaderProtocol
+  , tickedHeaderStateChainDep
   )
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.Basics (EmptyMK)
@@ -40,8 +51,8 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
-  , classifyAnnouncementValidationErr
   , headerLeiosAnnouncement
+  , validateAnnouncementChainDepState
   )
 
 -- | Reasons a LeiosNotify client would reject its upstream peer's announcement,
@@ -93,10 +104,10 @@ instance Show (AnnouncementInvalidity blk) where
 -- see the module header.
 --
 -- The operational certficiate (opcert) issue number (OCIN) is checked only as a
--- lower bound: any number at least the immutable tip's counter is accepted (an
--- over-increment, which the strict protocol check would reject, is 'Tolerate'd
--- — see 'AnnouncementDisposition'), and a lower one is rejected as a revoked
--- key.
+-- lower bound: any number at least the immutable tip's counter is accepted (the
+-- over-increment upper bound, which the strict protocol check would enforce, is
+-- skipped — see 'validateAnnouncementChainDepState' and
+-- 'WhetherToUpperBoundOCERT'), and a lower one is rejected as a revoked key.
 --
 -- OCINs are otherwise ignored. In effect, this logic is assuming that all OCINs
 -- are controlled by the pool owner. That's patentedly contrary the intended
@@ -148,19 +159,19 @@ validateAnnouncementHeader cfg extLedger hdr =
         forecastFor
           (ledgerViewForecastAt (configLedger cfg) (ledgerState extLedger))
           slot
-    -- Reject a failed protocol-level check, /except/ for the out-of-context
-    -- artifacts we 'Tolerate' (an opcert issue number ahead of, or a pool
-    -- absent from, the immutable tip's counter state).
-    case runExcept
-      ( validateHeaderProtocol
-          cfg
-          hdr
-          (tickHeaderState (configConsensus cfg) ledgerView slot (headerState extLedger))
-      ) of
-      Right _ -> pure ()
-      Left err -> case classifyAnnouncementValidationErr @blk err of
-        Tolerate -> pure ()
-        Reject -> throwError (HeaderInvalid err)
+    -- The out-of-context, relaxed protocol-level validation: the election proof
+    -- and the signature, but not the RB-header-specific checks nor the checks
+    -- that our lagging tip would spuriously trip (see
+    -- 'validateAnnouncementChainDepState'). Any error it returns is a genuine
+    -- rejection.
+    let tickedHeaderState =
+          tickHeaderState (configConsensus cfg) ledgerView slot (headerState extLedger)
+    withExcept HeaderInvalid $
+      validateAnnouncementChainDepState @blk
+        (configConsensus cfg)
+        (validateView (configBlock cfg) hdr)
+        slot
+        (tickedHeaderStateChainDep tickedHeaderState)
     pure x
  where
   slot = blockSlot hdr

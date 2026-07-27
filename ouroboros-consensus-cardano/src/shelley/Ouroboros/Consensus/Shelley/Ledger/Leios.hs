@@ -35,8 +35,7 @@ import qualified Data.Sequence.Strict as StrictSeq
 import LeiosDemoDb (leiosDbLookupEbClosure)
 import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
 import LeiosDemoTypes
-  ( AnnouncementDisposition (..)
-  , EbAnnouncement (..)
+  ( EbAnnouncement (..)
   , LeiosPoint (..)
   , RbHash (..)
   )
@@ -46,11 +45,17 @@ import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables, unstowLedgerTables)
 import Ouroboros.Consensus.Protocol.Praos
-  ( Praos
+  ( ConsensusConfig (..)
+  , Praos
   , PraosCrypto
+  , PraosParams (..)
   , PraosState (..)
-  , PraosValidationErr (..)
+  , Ticked (..)
+  , WhetherToUpperBoundOCERT (..)
+  , doValidateKESSignatureWorker
+  , doValidateVRFSignature
   )
+import Ouroboros.Consensus.Protocol.Praos.Views (plvPoolDistr)
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (..)
   , HeaderBody (..)
@@ -215,12 +220,28 @@ instance
    where
     Header{headerBody} = shelleyHeaderRaw hdr
 
-  classifyAnnouncementValidationErr err = case err of
-    -- A counter ahead of, or a pool absent from, our immutable tip's view can
-    -- be honest (our tip lags the announcement's chain), so tolerate these.
-    CounterOverIncrementedOCERT{} -> Tolerate
-    NoCounterForKeyHashOCERT{} -> Tolerate
-    _ -> Reject
+  -- The announcement is validated out-of-context against a (possibly lagging)
+  -- immutable tip, so we skip the OCERT counter's upper bound
+  -- ('DoNotUpperBoundOCERT'): a counter ahead of our recorded view is honestly
+  -- explained by that lag. The election proof (VRF) and the signature (KES +
+  -- opcert, including the counter's revocation lower bound) are checked in full.
+  validateAnnouncementChainDepState cfg hv _slot tcs = do
+    doValidateVRFSignature
+      (praosStateEpochNonce cs)
+      pd
+      (praosLeaderF prms)
+      hv
+    doValidateKESSignatureWorker
+      DoNotUpperBoundOCERT
+      (praosMaxKESEvo prms)
+      (praosSlotsPerKESPeriod prms)
+      pd
+      (praosStateOCertCounters cs)
+      hv
+   where
+    prms = praosParams cfg
+    cs = tickedPraosStateChainDepState tcs
+    SL.PoolDistr pd _ = plvPoolDistr (tickedPraosStateLedgerView tcs)
 
   protocolStateLeiosAnnouncement st = do
     ann <- strictMaybeToMaybe $ praosStateLeiosAnnouncement st

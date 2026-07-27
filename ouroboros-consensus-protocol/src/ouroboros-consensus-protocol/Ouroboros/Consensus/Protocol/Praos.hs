@@ -31,6 +31,8 @@ module Ouroboros.Consensus.Protocol.Praos
 
     -- * For testing purposes
   , doValidateKESSignature
+  , doValidateKESSignatureWorker
+  , WhetherToUpperBoundOCERT (..)
   , doValidateVRFSignature
   ) where
 
@@ -672,6 +674,20 @@ validateKESSignature
   ocertCounters =
     doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod lvPoolDistr ocertCounters
 
+-- | Whether 'doValidateKESSignatureWorker' enforces the OCERT counter's /upper/
+-- bound, i.e. rejects (with 'CounterOverIncrementedOCERT') a counter more than
+-- one greater than the one we have recorded for this issuer.
+--
+-- Normal header validation enforces it ('UpperBoundOCERT'). Validating a
+-- relayed Leios announcement out-of-context against a (possibly lagging)
+-- immutable tip legitimately sees counters that have run ahead of our recorded
+-- view, so that path skips it ('DoNotUpperBoundOCERT'). The counter's /lower/
+-- bound ('CounterTooSmallOCERT', a revoked key) is enforced either way.
+data WhetherToUpperBoundOCERT
+  = UpperBoundOCERT
+  | DoNotUpperBoundOCERT
+  deriving (Eq, Show)
+
 -- NOTE: This function is much easier to test than 'validateKESSignature' because we don't need to
 -- construct a 'PraosConfig' nor 'LedgerView' to test it.
 doValidateKESSignature ::
@@ -682,7 +698,20 @@ doValidateKESSignature ::
   Map (KeyHash SL.BlockIssuer) Word64 ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
-doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
+doValidateKESSignature = doValidateKESSignatureWorker UpperBoundOCERT
+
+-- | The worker underlying 'doValidateKESSignature', parameterized by whether to
+-- enforce the OCERT counter's upper bound (see 'WhetherToUpperBoundOCERT').
+doValidateKESSignatureWorker ::
+  PraosCrypto c =>
+  WhetherToUpperBoundOCERT ->
+  Word64 ->
+  Word64 ->
+  Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
+  Map (KeyHash SL.BlockIssuer) Word64 ->
+  Views.HeaderView c ->
+  Except (PraosValidationErr c) ()
+doValidateKESSignatureWorker whetherToUpperBound praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
   do
     c0 <= kp ?! KESBeforeStartOCERT c0 kp
     kp_ < c0_ + fromIntegral praosMaxKESEvo ?! KESAfterEndOCERT kp c0 praosMaxKESEvo
@@ -701,7 +730,9 @@ doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution o
         throwError $ NoCounterForKeyHashOCERT hk
       Just m -> do
         m <= n ?! CounterTooSmallOCERT m n
-        n <= m + 1 ?! CounterOverIncrementedOCERT m n
+        case whetherToUpperBound of
+          UpperBoundOCERT -> n <= m + 1 ?! CounterOverIncrementedOCERT m n
+          DoNotUpperBoundOCERT -> pure ()
  where
   oc@(OCert vk_hot n c0@(KESPeriod c0_) tau) = Views.hvOCert b
   (VKey vkcold) = Views.hvVK b
