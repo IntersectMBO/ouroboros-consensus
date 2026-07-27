@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -67,8 +68,10 @@ import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Combinator
   ( HasPartialConsensusConfig
+  , LedgerState
   )
 import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosTiebreakerView
@@ -131,11 +134,13 @@ class
   , -- Backwards compatibility
     Plain.FromCBOR (LegacyPParams era)
   , Plain.ToCBOR (LegacyPParams era)
-  , -- TODO: replace the two constraints below with:
+  , -- TODO: replace the four constraints below with:
     -- 'StateSupportsPerasEpochContext (ShelleyBlock proto er)' once that type
     -- class is in place.
     ChainDepStateSupportsPeras (ChainDepState (BlockProtocol (ShelleyBlock proto era)))
   , ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol (ShelleyBlock proto era))))
+  , forall mk. LedgerStateSupportsPeras (LedgerState (ShelleyBlock proto era) mk)
+  , forall mk'. LedgerStateSupportsPeras (Ticked LedgerState (ShelleyBlock proto era) mk')
   ) =>
   ShelleyCompatible proto era
 

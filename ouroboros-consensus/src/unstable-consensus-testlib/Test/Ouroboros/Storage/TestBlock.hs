@@ -108,7 +108,10 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.SupportsPeras
+  ( LedgerStateSupportsPeras (..)
+  , LedgerSupportsPeras (..)
+  )
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -724,6 +727,10 @@ instance LedgerSupportsProtocol TestBlock where
 
 instance LedgerSupportsPeras TestBlock where
   getLatestPerasCertRound = latestPerasCertRound
+
+instance LedgerStateSupportsPeras (LedgerState TestBlock mk)
+
+instance LedgerStateSupportsPeras (Ticked LedgerState TestBlock mk)
 
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]

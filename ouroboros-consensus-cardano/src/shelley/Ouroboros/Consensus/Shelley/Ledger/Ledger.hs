@@ -86,6 +86,7 @@ import Cardano.Ledger.Core
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
+import Cardano.Ledger.Shelley.LedgerState (NewEpochState (..))
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.State as SL
 import Cardano.Slotting.EpochInfo
@@ -122,7 +123,10 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.CommonProtocolParams
 import Ouroboros.Consensus.Ledger.Extended
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.SupportsPeras
+  ( LedgerStateSupportsPeras (..)
+  , LedgerSupportsPeras (..)
+  )
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import Ouroboros.Consensus.Shelley.Ledger.Block
@@ -919,3 +923,11 @@ instance LedgerSupportsPeras (ShelleyBlock proto era) where
   getLatestPerasCertRound =
     strictMaybeToMaybe
       . shelleyLedgerLatestPerasCertRound
+
+instance LedgerStateSupportsPeras (LedgerState (ShelleyBlock proto era) mk) where
+  getPoolDistr =
+    nesPd . shelleyLedgerState
+
+instance LedgerStateSupportsPeras (Ticked LedgerState (ShelleyBlock proto era) mk) where
+  getPoolDistr =
+    nesPd . tickedShelleyLedgerState

@@ -56,7 +56,10 @@ import Ouroboros.Consensus.HardFork.Combinator.State.Instances ()
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.SupportsPeras
+  ( LedgerStateSupportsPeras (..)
+  , LedgerSupportsPeras (..)
+  )
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -256,5 +259,12 @@ instance CanHardFork xs => LedgerSupportsPeras (HardForkBlock xs) where
   getLatestPerasCertRound =
     hcollapse
       . hcmap proxySingle (K . getLatestPerasCertRound . unFlip)
+      . State.tip
+      . hardForkLedgerStatePerEra
+
+instance CanHardFork xs => LedgerStateSupportsPeras (LedgerState (HardForkBlock xs) mk) where
+  getPoolDistr =
+    hcollapse
+      . hcmap proxySingle (K . getPoolDistr . unFlip)
       . State.tip
       . hardForkLedgerStatePerEra
