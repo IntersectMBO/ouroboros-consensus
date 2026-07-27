@@ -601,9 +601,11 @@ mkHandlers
               -- message when there are no free credits.
               incr = atomically $ do
                   n <- TVar.Unchecked.readTVar credits
-                  if n == Leios.lEIOSNOTIFYPIPELINEDEPTH then pure True else do
-                    TVar.Unchecked.writeTVar credits $! n + 1
-                    pure False
+                  if n == Leios.lEIOSNOTIFYPIPELINEDEPTH
+                    then pure LeiosDemoOnlyTestNotify.ExcessiveRequests
+                    else do
+                      TVar.Unchecked.writeTVar credits $! n + 1
+                      pure LeiosDemoOnlyTestNotify.NotExcessiveRequests
               next = atomically $ do
                   q <- TVar.Unchecked.readTVar queue
                   case Seq.viewl q of

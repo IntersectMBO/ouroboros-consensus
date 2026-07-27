@@ -30,6 +30,7 @@ module LeiosDemoOnlyTestNotify
   , leiosNotifyClientPeerPipelined
   , leiosNotifyServerPeer
   , leiosNotifyServerPeerAntiPipelined
+  , WhetherExcessiveRequests (..)
   , toLeiosNotifyClientPeerPipelined
 
   , runAntiPipelinedPeerWithLimits
@@ -39,7 +40,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import Control.DeepSeq (NFData (..))
-import Control.Monad (replicateM, when)
+import Control.Monad (replicateM)
 import Control.Monad.Class.MonadST (MonadST)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Data.ByteString.Lazy (ByteString)
@@ -462,6 +463,10 @@ data C = MkC
 
 data WhetherDraining = AlreadyDraining | NotYetDraining
 
+-- | Whether incrementing the count of outstanding LeiosNotify requests found the
+-- peer already at its pipelining bound, i.e. requesting more than it is allowed.
+data WhetherExcessiveRequests = ExcessiveRequests | NotExcessiveRequests
+
 leiosNotifyClientPeerPipelined ::
   forall m point announcement vote a.
   PrimMonad m =>
@@ -531,8 +536,7 @@ leiosNotifyClientPeerPipelined checkDone k0 =
 leiosNotifyServerPeerAntiPipelined ::
   forall m point announcement vote.
   MonadThrow m =>
-  m Bool ->
-  -- ^ increments the number of outstanding requests
+  m WhetherExcessiveRequests ->
   m (Message (LeiosNotify point announcement vote) StBusy StIdle) ->
   -- ^ blocks until the next reply (announcement\/offer\/vote) is ready
   PeerAntiPipelined (LeiosNotify point announcement vote) AsServer StIdle m ()
@@ -550,7 +554,9 @@ leiosNotifyServerPeerAntiPipelined incr next =
         MsgDone                         -> drain n
         MsgLeiosNotificationRequestNext ->
           Effect $ do
-            incr >>= \b -> when b $ throwIO MkExnLeiosNotifyExcessiveRequests
+            incr >>= \case
+              ExcessiveRequests -> throwIO MkExnLeiosNotifyExcessiveRequests
+              NotExcessiveRequests -> pure ()
             pure $ YieldAntiPipelined ReflServerAgency (go (Succ n))
 
     -- on termination, flush the sends we've handed off, then Done.
