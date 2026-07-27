@@ -226,11 +226,13 @@ instance
   -- explained by that lag. The election proof (VRF) and the signature (KES +
   -- opcert, including the counter's revocation lower bound) are checked in full.
   validateAnnouncementChainDepState cfg hv _slot tcs = do
+    -- validate the claimed election
     doValidateVRFSignature
       (praosStateEpochNonce cs)
       pd
       (praosLeaderF prms)
       hv
+    -- authenticate the message
     doValidateKESSignatureWorker
       DoNotUpperBoundOCERT
       (praosMaxKESEvo prms)
