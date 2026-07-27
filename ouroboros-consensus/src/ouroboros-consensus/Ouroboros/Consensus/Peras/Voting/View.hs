@@ -189,8 +189,8 @@ newtype LatestCertOnChainView cert
 -- block or its point, but only whether the candidate block extends the block
 -- boosted by the most recent certificate seen by the voter, which is provided
 -- to the rules via 'lcsCandidateBlockExtendsCert' inside 'latestCertSeen'.
-data PerasVotingView cert = PerasVotingView
-  { perasParams :: !PerasParams
+data PerasVotingView cert blk = PerasVotingView
+  { perasParams :: !(PerasParams blk)
   -- ^ Peras protocol parameters
   , currRoundNo :: !PerasRoundNo
   -- ^ The current Peras round number
@@ -225,7 +225,7 @@ mkPerasVotingView ::
   , GetHeader blk
   ) =>
   -- | Peras protocol parameters
-  PerasParams ->
+  PerasParams blk ->
   -- | Current Peras round number
   PerasRoundNo ->
   -- | Most recent certificate seen by the voter
@@ -236,7 +236,7 @@ mkPerasVotingView ::
   -- preferred chain
   AnchoredFragment (Header blk) ->
   -- | Constructed voting view
-  PerasQry xs (PerasVotingView cert)
+  PerasQry xs (PerasVotingView cert blk)
 mkPerasVotingView
   perasParams
   currRoundNo
