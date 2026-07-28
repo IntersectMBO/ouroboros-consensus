@@ -2,9 +2,11 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.PerasCertDB.Impl
   ( -- * Opening
@@ -57,7 +59,7 @@ data PerasCertDbState blk = PerasCertDbState
   , pcdsLastTicketNo :: !PerasCertTicketNo
   -- ^ The most recent 'PerasCertTicketNo' (or 'zeroPerasCertTicketNo'
   -- otherwise).
-  , pcdsLatestCertSeen :: !(Maybe (WithArrivalTime (ValidatedPerasCert blk)))
+  , pcdsLatestCertSeen :: !(Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
   -- ^ The certificate with the highest round number that has been added to the
   -- db since it has been opened.
   }
@@ -181,11 +183,16 @@ implAddCert PerasCertDbEnv{pcdbTracer, pcdbState} cert = do
         let pcdsLastTicketNo' = succ (pcdsLastTicketNo pcds)
             pcdsCertIds' = Set.insert roundNo (pcdsCertIds pcds)
             pcdsCertsByTicket' = Map.insert pcdsLastTicketNo' cert (pcdsCertsByTicket pcds)
-            pcdsLatestCertSeen' = case pcdsLatestCertSeen pcds of
-              Nothing -> Just cert
-              Just prev
-                | getPerasCertRound cert > getPerasCertRound prev -> Just cert
-                | otherwise -> Just prev
+            pcdsLatestCertSeen' =
+              case pcdsLatestCertSeen pcds of
+                Nothing ->
+                  Just (CertBoostingBlockInVolatileDB cert)
+                Just prev
+                  | getPerasCertRound cert
+                      > getPerasCertRound (forgetBoostedBlockStatus prev) ->
+                      Just (CertBoostingBlockInVolatileDB cert)
+                  | otherwise ->
+                      Just prev
         writeTVar pcdbState $
           WithFingerprint
             PerasCertDbState
@@ -236,7 +243,7 @@ implGetCertsAfter PerasCertDbEnv{pcdbState} ticketNo = do
 implGetLatestCertSeen ::
   IOLike m =>
   PerasCertDbEnv m blk ->
-  STM m (Maybe (WithArrivalTime (ValidatedPerasCert blk)))
+  STM m (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
 implGetLatestCertSeen PerasCertDbEnv{pcdbState} = do
   PerasCertDbState{pcdsLatestCertSeen} <-
     forgetFingerprint <$> readTVar pcdbState
@@ -267,9 +274,20 @@ implGarbageCollect PerasCertDbEnv{pcdbTracer, pcdbState} slotNo = do
               pcdsCertsByTicket
           pcdsCertIds' =
             Set.fromList (getPerasCertRound <$> Map.elems pcdsCertsByTicket')
+          pcdsLatestCertSeen' =
+            updateIfBoostingGarbageCollectedBlock <$> pcdsLatestCertSeen
+
+          -- Update the latest certificate seen status when its corresponding
+          -- boosted block gets garbage collected.
+          updateIfBoostingGarbageCollectedBlock cert
+            | pointSlot (getPerasCertBoostedBlock (forgetBoostedBlockStatus cert))
+                < NotOrigin slotNo =
+                CertBoostingBlockNoLongerInVolatileDB (forgetBoostedBlockStatus cert)
+            | otherwise =
+                cert
        in PerasCertDbState
             { pcdsCertIds = pcdsCertIds'
             , pcdsCertsByTicket = pcdsCertsByTicket'
             , pcdsLastTicketNo = pcdsLastTicketNo
-            , pcdsLatestCertSeen = pcdsLatestCertSeen
+            , pcdsLatestCertSeen = pcdsLatestCertSeen'
             }
