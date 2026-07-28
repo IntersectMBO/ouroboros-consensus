@@ -100,7 +100,7 @@ import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
   ( LeiosNotify
   , LeiosNotifyClientPeerPipelined
-  , LeiosNotifyServerPeerAntiPipelined
+  , LeiosNotifyServerPeerLookahead
   , Message
     ( MsgLeiosBlockAnnouncement
     , MsgLeiosBlockOffer
@@ -112,8 +112,8 @@ import LeiosDemoOnlyTestNotify
   , codecLeiosNotifyId
   , leiosNotifyClientPeerPipelined
   , leiosNotifyMiniProtocolNum
-  , leiosNotifyServerPeerAntiPipelined
-  , runAntiPipelinedPeerWithLimits
+  , leiosNotifyServerPeerLookahead
+  , runLookaheadFixedSenderPeerWithLimits
   , timeLimitsLeiosNotify
   , toLeiosNotifyClientPeerPipelined
   )
@@ -330,7 +330,7 @@ data Handlers m addr blk = Handlers
       NodeToNodeVersion ->
       ConnectionId addr ->
       m
-        ( LeiosNotifyServerPeerAntiPipelined LeiosPoint (Header blk) LeiosVote m ()
+        ( LeiosNotifyServerPeerLookahead LeiosPoint (Header blk) LeiosVote m ()
         , m Void
         )
   , hLeiosFetchClient ::
@@ -648,7 +648,7 @@ mkHandlers
                                     pure . Announcements.deletePeerCentral peer
                                 )
 
-          pure (leiosNotifyServerPeerAntiPipelined incr next, pump)
+          pure (leiosNotifyServerPeerLookahead incr next, pump)
       , hLeiosFetchClient = \leiosConn _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
           let reqVar = Leios.requestsToSend peerVars
           -- Queue for responses received by the pipelined-peer collector
@@ -1435,7 +1435,7 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     -- crash instead of silently leaving the peer unable to send.
     withAsync pump $ \pumpThread -> do
       link pumpThread
-      runAntiPipelinedPeerWithLimits
+      runLookaheadFixedSenderPeerWithLimits
         (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
         (cLeiosNotifyCodec (mkCodecs version))
         blLeiosNotify
