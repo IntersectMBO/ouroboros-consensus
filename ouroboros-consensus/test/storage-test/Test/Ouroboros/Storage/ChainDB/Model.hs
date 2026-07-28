@@ -133,6 +133,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanImmTip)
 import Ouroboros.Consensus.Storage.Common ()
+import Ouroboros.Consensus.Storage.PerasCertDB.API (forgetBoostedBlockStatus)
 import Ouroboros.Consensus.Storage.PerasVoteDB.API (AddPerasVoteResult (..))
 import Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
@@ -401,7 +402,9 @@ perasWeights :: StandardHash blk => Model blk -> PerasWeightSnapshot blk
 perasWeights = PerasCertDBModel.getWeightSnapshot . perasCertModel
 
 roundNoOfLatestCertSeen :: Model blk -> Maybe PerasRoundNo
-roundNoOfLatestCertSeen m = getPerasCertRound <$> PerasCertDBModel.getLatestCertSeen (perasCertModel m)
+roundNoOfLatestCertSeen m =
+  getPerasCertRound . forgetBoostedBlockStatus
+    <$> PerasCertDBModel.getLatestCertSeen (perasCertModel m)
 
 {-------------------------------------------------------------------------------
   Construction
