@@ -97,9 +97,13 @@ forge ::
   LeiosVoteState m ->
   BlockForging m blk ->
   LeiosDbConnection m ->
+  -- | Invoked with the freshly-forged block's header, after forging and
+  -- /before/ adoption, so the caller can act on the new block (e.g. concurrently
+  -- announce its EB) without adoption gating it.
+  (Header blk -> m ()) ->
   SlotNo ->
-  WithEarlyExit m (Header blk)
-forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosConn currentSlot = do
+  WithEarlyExit m ()
+forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosConn afterForge currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -256,6 +260,10 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
       newBlock
       snapSize
       rbTxsSize
+
+  -- Hand the freshly-forged block's header to the caller before adoption, so it
+  -- can act on it (e.g. concurrently announce its EB) without adoption gating it.
+  lift $ afterForge (getHeader newBlock)
 
   forgeTrace'Via
     (const ())
@@ -473,8 +481,7 @@ addBlockToChainDB ::
   [Validated (GenTx blk)] ->
   [Validated (GenTx blk)] ->
   blk ->
-  -- | The adopted block's header (only produced on the adopted path).
-  WithEarlyExit m (Header blk)
+  WithEarlyExit m ()
 addBlockToChainDB trace chainDB mempool currentSlot rbTxs ebTxs newBlock = do
   let noPunish = InvalidBlockPunishment.noPunishment -- no way to punish yourself
   -- Make sure that if an async exception is thrown while a block is
@@ -525,8 +532,6 @@ addBlockToChainDB trace chainDB mempool currentSlot rbTxs ebTxs newBlock = do
     -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
     -- e.g., @DualBlock@.
     trace $ TraceAdoptedBlock currentSlot newBlock rbTxs
-
-    pure (getHeader newBlock)
 
 -- | Obtain the ticked ledger view for 'currentSlot', required in order to
 -- construct the ticked 'ChainDepState'.

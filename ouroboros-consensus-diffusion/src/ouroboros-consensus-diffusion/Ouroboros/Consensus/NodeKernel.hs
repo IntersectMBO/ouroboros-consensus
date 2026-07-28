@@ -756,40 +756,44 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
               rootCCtx
               "forge"
               currentSlot
-              $ \forgeCCtx -> do
-                  mbForgedHeader <-
-                    withEarlyExit $
-                      forge
-                        (forgeTracer tracers)
-                        (forgeStateInfoTracer tracers)
-                        (leiosKernelTracer tracers)
-                        forgeCCtx
-                        cfg
-                        chainDB
-                        mempool
-                        leiosVoteState
-                        bf
-                        leiosConn
-                        currentSlot
-                  -- Relay this node's own freshly-forged EB announcement (if
-                  -- any) to downstream peers via LeiosNotify; 'forge' yields the
-                  -- header only when it forged and adopted a block.
-                  whenJust mbForgedHeader $ \forgedHeader ->
-                    whenJust (Leios.mkAnnouncingHeader forgedHeader) $ \anc ->
-                      MVar.modifyMVar_ leiosCentralState $ \cst ->
-                        Announcements.onAnnouncementCentral
-                          (contramap Leios.traceNewAnnouncement (leiosKernelTracer tracers))
-                          Leios.ancElId
-                          (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
-                          cst
-                          Nothing -- the source is this node, not an upstream peer
-                          Announcements.DoRelay -- our newly forged block can't be too old
-                          Nothing -- no wall-clock lateness for a locally-forged announcement
-                          anc
+              $ \forgeCCtx ->
+                withEarlyExit_ $
+                  forge
+                    (forgeTracer tracers)
+                    (forgeStateInfoTracer tracers)
+                    (leiosKernelTracer tracers)
+                    forgeCCtx
+                    cfg
+                    chainDB
+                    mempool
+                    leiosVoteState
+                    bf
+                    leiosConn
+                    announceForgedBlock
+                    currentSlot
     )
  where
   label :: String
   label = "NodeKernel.blockForging"
+
+  -- Concurrently (fire-and-forget) relay this node's own freshly-forged EB
+  -- announcement, if any, to downstream peers via LeiosNotify. 'forge' invokes
+  -- this right after forging and before adoption, so adoption never gates
+  -- getting the announcement onto the wire.
+  announceForgedBlock :: Header blk -> m ()
+  announceForgedBlock forgedHeader =
+    whenJust (Leios.mkAnnouncingHeader forgedHeader) $ \anc ->
+      void $ async $
+        MVar.modifyMVar_ leiosCentralState $ \cst ->
+          Announcements.onAnnouncementCentral
+            (contramap Leios.traceNewAnnouncement (leiosKernelTracer tracers))
+            Leios.ancElId
+            (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
+            cst
+            Nothing -- the source is this node, not an upstream peer
+            Announcements.DoRelay -- our newly forged block can't be too old
+            Nothing -- no wall-clock lateness for a locally-forged announcement
+            anc
 
   -- 'LeiosDbConnection' is not thread-safe, so we open one per
   -- forge-credentials thread (and close it when the thread exits).
