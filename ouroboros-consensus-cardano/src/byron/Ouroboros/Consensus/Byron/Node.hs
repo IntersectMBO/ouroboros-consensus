@@ -51,6 +51,7 @@ import Ouroboros.Consensus.Config.SupportsNode
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -216,7 +217,11 @@ protocolInfoByron
             -- balances.
             ledgerState = initByronLedgerState genesisConfig Nothing
             headerState = genesisHeaderState S.empty
-            perasEpochContextResolver = initPerasEpochContextResolver compactedGenesisConfig ledgerState headerState
+            perasEpochContextResolver =
+              initPerasEpochContextResolver
+                compactedGenesisConfig
+                (forgetLedgerTables ledgerState)
+                headerState
             latestPerasCertOnChainRound = SNothing
            in
             ExtLedgerState

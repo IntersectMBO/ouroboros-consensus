@@ -646,7 +646,9 @@ deriving anyclass instance
   NoThunks (Ticked LedgerState (TestBlockWith ptype) mk)
 
 testInitExtLedgerWithState ::
-  Typeable ptype =>
+  ( Typeable ptype
+  , HasLedgerTables LedgerState (TestBlockWith ptype)
+  ) =>
   PayloadDependentState ptype mk -> ExtLedgerState (TestBlockWith ptype) mk
 testInitExtLedgerWithState st =
   let ledgerState = testInitLedgerWithState st
@@ -654,7 +656,7 @@ testInitExtLedgerWithState st =
       perasEpochContextResolver =
         initPerasEpochContextResolver
           (configLedger singleNodeTestConfig)
-          ledgerState
+          (forgetLedgerTables ledgerState)
           headerState
       latestPerasCertOnChainRound = SNothing
    in ExtLedgerState
@@ -717,9 +719,9 @@ instance PayloadSemantics ptype => LedgerSupportsProtocol (TestBlockWith ptype) 
   ledgerViewForecastAt cfg state =
     constantForecastInRange (strictMaybeToMaybe (tblcForecastRange cfg)) () (getTipSlot state)
 
-instance LedgerStateSupportsPeras (LedgerState (TestBlockWith ptype) mk)
+instance LedgerStateSupportsPeras (LedgerState (TestBlockWith ptype))
 
-instance LedgerStateSupportsPeras (Ticked LedgerState (TestBlockWith ptype) mk)
+instance LedgerStateSupportsPeras (Ticked LedgerState (TestBlockWith ptype))
 
 instance Typeable ptype => StateSupportsPerasEpochContext (TestBlockWith ptype) where
   mkBoundedPerasEpochContext = mkBoundedPerasEpochContextWith mkMockPerasVotingCommitteeInput

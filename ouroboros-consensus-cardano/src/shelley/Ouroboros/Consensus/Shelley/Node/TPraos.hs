@@ -211,7 +211,11 @@ protocolInfoTPraosShelleyBased
     assertWithMsg (validateGenesis genesis) $ do
       ledgerState <- mkInitLedgerState
       let headerState = genesisHeaderState initChainDepState
-      let perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+      let perasEpochContextResolver =
+            initPerasEpochContextResolver
+              ledgerConfig
+              (forgetLedgerTables ledgerState)
+              headerState
       let latestPerasCertOnChainRound = SNothing
       let initExtLedgerState =
             ExtLedgerState

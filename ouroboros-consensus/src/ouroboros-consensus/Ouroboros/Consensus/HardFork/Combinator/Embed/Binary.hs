@@ -25,6 +25,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.Abstract (protocolSecurityParam)
 import Ouroboros.Consensus.TypeFamilyWrappers
@@ -35,7 +36,11 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 
 protocolInfoBinary ::
   forall m kesAgentTrace blk1 blk2.
-  (CanHardFork '[blk1, blk2], Monad m) =>
+  ( Monad m
+  , CanHardFork '[blk1, blk2]
+  , HasCanonicalTxIn '[blk1, blk2]
+  , HasHardForkTxOut '[blk1, blk2]
+  ) =>
   -- First era
   ProtocolInfo blk1 ->
   (Tracer.Tracer m kesAgentTrace -> m [MkBlockForging m blk1]) ->
@@ -114,7 +119,7 @@ protocolInfoBinary
                     perasEpochContextResolver =
                       initPerasEpochContextResolver
                         ledgerConfig
-                        ledgerState
+                        (forgetLedgerTables ledgerState)
                         headerState
                     latestPerasCertOnChainRound =
                       SNothing

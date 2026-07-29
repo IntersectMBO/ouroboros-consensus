@@ -16,6 +16,7 @@ import Ouroboros.Consensus.Committee.WFA
   , wFATiebreakerWithEpochNonce
   )
 import Ouroboros.Consensus.Committee.WFALS (VotingCommitteeInput (..), WFALS)
+import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.SupportsPeras
   ( LedgerStateSupportsPeras (..)
   )
@@ -34,7 +35,7 @@ mkPerasVotingCommitteeInput ::
   , LedgerStateSupportsPeras ledgerState
   , ChainDepStateSupportsPeras chainDepState
   ) =>
-  ledgerState ->
+  ledgerState EmptyMK ->
   chainDepState ->
   Either (V1.PerasError blk) (VotingCommitteeInput (PerasCrypto blk) WFALS)
 mkPerasVotingCommitteeInput ledgerState headerState = do

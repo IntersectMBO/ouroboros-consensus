@@ -735,7 +735,11 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     LedgerDB.push intLedgerDB $
       let ledgerState = (prependDiffs tkLdgrSt newLedger)
           headerState = newHeader
-          perasEpochContextResolver = initPerasEpochContextResolver lcfg ledgerState headerState
+          perasEpochContextResolver =
+            initPerasEpochContextResolver
+              lcfg
+              (forgetLedgerTables ledgerState)
+              headerState
           latestPerasCertOnChainRound = SNothing
        in ExtLedgerState
             { ledgerState

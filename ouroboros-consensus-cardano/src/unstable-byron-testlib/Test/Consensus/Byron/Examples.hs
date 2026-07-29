@@ -222,7 +222,11 @@ exampleExtLedgerState :: ExtLedgerState ByronBlock ValuesMK
 exampleExtLedgerState =
   let ledgerState = exampleLedgerState
       headerState = exampleHeaderState
-      perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+      perasEpochContextResolver =
+        initPerasEpochContextResolver
+          ledgerConfig
+          (forgetLedgerTables ledgerState)
+          headerState
       latestPerasCertOnChainRound = SNothing
    in ExtLedgerState
         { ledgerState

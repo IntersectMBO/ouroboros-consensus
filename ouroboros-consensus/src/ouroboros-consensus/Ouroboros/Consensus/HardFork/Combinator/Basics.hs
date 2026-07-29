@@ -833,7 +833,7 @@ instance
   LedgerSupportsPeras
 -------------------------------------------------------------------------------}
 
-instance CanHardFork xs => LedgerStateSupportsPeras (LedgerState (HardForkBlock xs) mk) where
+instance CanHardFork xs => LedgerStateSupportsPeras (LedgerState (HardForkBlock xs)) where
   getPoolDistr =
     hcollapse
       . hcmap proxySingle (K . getPoolDistr . unFlip)

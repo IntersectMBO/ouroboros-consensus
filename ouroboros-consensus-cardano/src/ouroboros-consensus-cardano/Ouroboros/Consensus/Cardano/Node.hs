@@ -109,6 +109,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Tables
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -964,9 +965,13 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
     let HardForkLedgerState st = initLedgerState
     st' <- hsequence' (hap perEraInjections st)
     let ledgerState = HardForkLedgerState st'
-        headerState = initHeaderState
-        perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
-        latestPerasCertOnChainRound = SNothing
+    let headerState = initHeaderState
+    let perasEpochContextResolver =
+          initPerasEpochContextResolver
+            ledgerConfig
+            (forgetLedgerTables ledgerState)
+            headerState
+    let latestPerasCertOnChainRound = SNothing
     pure
       ExtLedgerState
         { ledgerState

@@ -745,9 +745,9 @@ instance StateSupportsPerasEpochContext TestBlock where
   BlockSupportsPeras
 -------------------------------------------------------------------------------}
 
-instance LedgerStateSupportsPeras (LedgerState TestBlock mk)
+instance LedgerStateSupportsPeras (LedgerState TestBlock)
 
-instance LedgerStateSupportsPeras (Ticked LedgerState TestBlock mk)
+instance LedgerStateSupportsPeras (Ticked LedgerState TestBlock)
 
 -- NOTE: this is a mocked up implementation without crypto!
 instance BlockSupportsPeras TestBlock where

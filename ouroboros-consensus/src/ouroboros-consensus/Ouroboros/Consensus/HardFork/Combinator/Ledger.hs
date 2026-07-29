@@ -340,7 +340,7 @@ instance All SingleEraBlock xs => HasHardForkHistory (HardForkBlock xs) where
 -- @Ouroboros.Consensus.HardFork.Combinator.Basics@.
 instance
   CanHardFork xs =>
-  LedgerStateSupportsPeras (Ticked LedgerState (HardForkBlock xs) mk)
+  LedgerStateSupportsPeras (Ticked LedgerState (HardForkBlock xs))
   where
   getPoolDistr =
     hcollapse

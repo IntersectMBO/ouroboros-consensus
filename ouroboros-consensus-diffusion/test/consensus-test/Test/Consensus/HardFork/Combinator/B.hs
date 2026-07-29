@@ -274,9 +274,9 @@ instance LedgerSupportsProtocol BlockB where
   protocolLedgerView _ _ = ()
   ledgerViewForecastAt _ = trivialForecast
 
-instance LedgerStateSupportsPeras (LedgerState BlockB mk)
+instance LedgerStateSupportsPeras (LedgerState BlockB)
 
-instance LedgerStateSupportsPeras (Ticked LedgerState BlockB mk)
+instance LedgerStateSupportsPeras (Ticked LedgerState BlockB)
 
 -- NOTE: this block does not support Peras, so we can use the empty instance here.
 instance BlockSupportsPeras BlockB where

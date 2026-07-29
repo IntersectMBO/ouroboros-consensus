@@ -10,7 +10,6 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -18,7 +17,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.Peras.Context
   ( -- * Bounded Peras epoch context
@@ -114,7 +112,7 @@ import Ouroboros.Consensus.HeaderValidation
   , annTipSlotNo
   , headerStateTip
   )
-import Ouroboros.Consensus.Ledger.Abstract (LedgerConfig, LedgerState)
+import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, LedgerConfig, LedgerState)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Peras.Params
   ( PerasEnabled
@@ -126,7 +124,10 @@ import Ouroboros.Consensus.Protocol.Abstract
   ( ChainDepStateSupportsPeras
   , ConsensusProtocol (..)
   )
-import Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..), EncodeDisk (..))
+import Ouroboros.Consensus.Storage.Serialisation
+  ( DecodeDisk (..)
+  , EncodeDisk (..)
+  )
 import Ouroboros.Consensus.Util.IOLike
   ( IOLike
   , MonadSTM
@@ -529,8 +530,8 @@ forgePerasVoteIfEligibleWithHandle handle poolId privateKey roundNo point =
 -- 'PerasEpochContext'.
 class
   ( HasHardForkHistory blk
-  , forall mk. LedgerStateSupportsPeras (LedgerState blk mk)
-  , forall mk'. LedgerStateSupportsPeras (Ticked LedgerState blk mk')
+  , LedgerStateSupportsPeras (LedgerState blk)
+  , LedgerStateSupportsPeras (Ticked LedgerState blk)
   , ChainDepStateSupportsPeras (ChainDepState (BlockProtocol blk))
   , ChainDepStateSupportsPeras (Ticked (ChainDepState (BlockProtocol blk)))
   , IsPerasError (PerasError blk) blk
@@ -596,14 +597,14 @@ class
     , ChainDepStateSupportsPeras chainDepState
     ) =>
     MaybeEraIndexedEpochToPerasRoundInfo blk ->
-    ledgerState ->
+    ledgerState EmptyMK ->
     chainDepState ->
     Either
       (PerasError blk)
       (BoundedPerasEpochContext blk)
   default mkBoundedPerasEpochContext ::
     MaybeEraIndexedEpochToPerasRoundInfo blk ->
-    ledgerState ->
+    ledgerState EmptyMK ->
     chainDepState ->
     Either
       (PerasError blk)
@@ -631,14 +632,14 @@ mkBoundedPerasEpochContextWith ::
   ( ( LedgerStateSupportsPeras ledgerState
     , ChainDepStateSupportsPeras chainDepState
     ) =>
-    ledgerState ->
+    ledgerState EmptyMK ->
     chainDepState ->
     Either
       (PerasError blk)
       (PerasVotingCommitteeInput blk)
   ) ->
   MaybeEraIndexedEpochToPerasRoundInfo blk ->
-  ledgerState ->
+  ledgerState EmptyMK ->
   chainDepState ->
   Either
     (PerasError blk)
@@ -690,12 +691,11 @@ mkBoundedPerasEpochContextWith
 --      and only create a 'BoundedPerasEpochContext' from 'Ticked LedgerState'
 --      and 'Ticked HeaderState'.
 initPerasEpochContextResolver ::
-  forall blk mk.
   ( All Top (HardForkIndices blk)
   , StateSupportsPerasEpochContext blk
   ) =>
   LedgerConfig blk ->
-  LedgerState blk mk ->
+  LedgerState blk EmptyMK ->
   HeaderState blk ->
   PerasEpochContextResolver blk
 initPerasEpochContextResolver ledgerConfig ledgerState headerState =
@@ -731,15 +731,14 @@ initPerasEpochContextResolver ledgerConfig ledgerState headerState =
 --      need to carry exactly the same information. We tried, and it didn't
 --      improve readability.
 tickPerasEpochContextResolver ::
-  forall blk mk mk'.
   ( All Top (HardForkIndices blk)
   , StateSupportsPerasEpochContext blk
   ) =>
   LedgerConfig blk ->
   -- | The fields needed from the previous 'ExtLedgerState' (before ticking)
-  (PerasEpochContextResolver blk, LedgerState blk mk, HeaderState blk) ->
+  (PerasEpochContextResolver blk, LedgerState blk EmptyMK, HeaderState blk) ->
   -- | Target 'SlotNo' and fields of the 'Ticked ExtLedgerState' ticked to it
-  (SlotNo, Ticked LedgerState blk mk', Ticked (HeaderState blk)) ->
+  (SlotNo, Ticked LedgerState blk EmptyMK, Ticked (HeaderState blk)) ->
   PerasEpochContextResolver blk
 tickPerasEpochContextResolver
   ledgerConfig
@@ -804,7 +803,7 @@ embedBoundedEpochContext ::
   ( PerasEnabled (BoundedPerasEpochContext blk) ->
     PerasEpochContextResolver blk
   ) ->
-  ledgerState ->
+  ledgerState EmptyMK ->
   chainDepState ->
   EraIndexed (HardForkIndices blk) (PerasEnabled EpochToPerasRoundInfo) ->
   PerasEpochContextResolver blk

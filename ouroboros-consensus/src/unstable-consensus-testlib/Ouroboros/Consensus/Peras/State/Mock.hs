@@ -16,6 +16,7 @@ import qualified Data.Map as Map
 import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras (..))
 import Ouroboros.Consensus.Committee.Class (CryptoSupportsVotingCommittee (..))
 import Ouroboros.Consensus.Committee.Types (LedgerStake (..), PoolId (..))
+import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras (..))
 import Ouroboros.Consensus.Peras.Crypto.Mock
   ( MockPerasCrypto
@@ -29,7 +30,7 @@ mkMockPerasVotingCommitteeInput ::
   ( PerasCrypto blk ~ MockPerasCrypto blk
   , LedgerStateSupportsPeras ledgerState
   ) =>
-  ledgerState ->
+  ledgerState EmptyMK ->
   chainDepState ->
   Either
     (MockPerasError blk)

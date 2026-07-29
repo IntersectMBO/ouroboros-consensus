@@ -524,9 +524,9 @@ instance MockProtocolSpecific c ext => CommonProtocolParams (SimpleBlock c ext) 
 instance LedgerSupportsPeerSelection (SimpleBlock c ext) where
   getPeers = const []
 
-instance LedgerStateSupportsPeras (LedgerState (SimpleBlock c ext) mk)
+instance LedgerStateSupportsPeras (LedgerState (SimpleBlock c ext))
 
-instance LedgerStateSupportsPeras (Ticked LedgerState (SimpleBlock c ext) mk)
+instance LedgerStateSupportsPeras (Ticked LedgerState (SimpleBlock c ext))
 
 {-------------------------------------------------------------------------------
   LedgerTables

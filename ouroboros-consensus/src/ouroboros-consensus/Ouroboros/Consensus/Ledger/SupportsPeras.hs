@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -14,6 +15,7 @@ import Cardano.Ledger.Keys (KeyHash (..), toVRFVerKeyHash)
 import Cardano.Ledger.State (IndividualPoolStake (..), PoolDistr (..))
 import qualified Data.Map as Map
 import Ouroboros.Consensus.Block.SupportsPeras (PerasParams, defaultPerasParams)
+import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 
 -- | Extract Peras information stored in the ledger state.
 class LedgerStateSupportsPeras ledgerState where
@@ -21,15 +23,15 @@ class LedgerStateSupportsPeras ledgerState where
   --
   -- PRECONDITION: this function will only return a meaningful result if the
   -- ledger state is from a block that supports Peras.
-  getPoolDistr :: ledgerState -> PoolDistr
-  default getPoolDistr :: ledgerState -> PoolDistr
+  getPoolDistr :: ledgerState EmptyMK -> PoolDistr
+  default getPoolDistr :: ledgerState EmptyMK -> PoolDistr
   getPoolDistr _ = dummyPoolDistr
 
   -- | Extract the Peras parameters from the given ledger state.
   --
   -- TODO: when Peras params go on chain, update this.
-  getPerasParams :: proxy blk -> ledgerState -> PerasParams blk
-  default getPerasParams :: proxy blk -> ledgerState -> PerasParams blk
+  getPerasParams :: proxy blk -> ledgerState EmptyMK -> PerasParams blk
+  default getPerasParams :: proxy blk -> ledgerState EmptyMK -> PerasParams blk
   getPerasParams _ _ = defaultPerasParams
 
 -- NOTE: this is a bit of a hack for blocks that do not really support Peras.

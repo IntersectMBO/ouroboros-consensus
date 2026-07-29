@@ -36,6 +36,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Dual
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Node.InitStorage
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Node.Run
@@ -127,7 +128,11 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
                       , dualLedgerStateBridge = initBridge
                       }
                   headerState = genesisHeaderState S.empty
-                  perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+                  perasEpochContextResolver =
+                    initPerasEpochContextResolver
+                      ledgerConfig
+                      (forgetLedgerTables ledgerState)
+                      headerState
                   latestPerasCertOnChainRound = SNothing
                in ExtLedgerState
                     { ledgerState

@@ -14,6 +14,7 @@ import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..), initPerasEpochContextResolver)
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Mock.Ledger
 import Ouroboros.Consensus.Mock.Node
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -56,7 +57,11 @@ protocolInfoBft numCoreNodes nid securityParam eraParams =
         , pInfoInitLedger =
             let ledgerState = genesisSimpleLedgerState addrDist
                 headerState = genesisHeaderState ()
-                perasEpochContextResolver = initPerasEpochContextResolver ledgerConfig ledgerState headerState
+                perasEpochContextResolver =
+                  initPerasEpochContextResolver
+                    ledgerConfig
+                    (forgetLedgerTables ledgerState)
+                    headerState
                 latestPerasCertOnChainRound = SNothing
              in ExtLedgerState
                   { ledgerState

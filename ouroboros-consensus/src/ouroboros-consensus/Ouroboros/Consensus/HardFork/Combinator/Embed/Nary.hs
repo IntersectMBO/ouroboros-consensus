@@ -364,7 +364,11 @@ injectInitialExtLedgerState cfg extLedgerState0 =
   targetEraHeaderState = genesisHeaderState targetEraChainDepState
 
   targetEraPerasEpochContextResolver :: PerasEpochContextResolver (HardForkBlock (x ': xs))
-  targetEraPerasEpochContextResolver = initPerasEpochContextResolver (configLedger cfg) targetEraLedgerState targetEraHeaderState
+  targetEraPerasEpochContextResolver =
+    initPerasEpochContextResolver
+      (configLedger cfg)
+      (forgetLedgerTables targetEraLedgerState)
+      targetEraHeaderState
 
   targetEraLatestPerasCertOnChainRound :: StrictMaybe PerasRoundNo
   targetEraLatestPerasCertOnChainRound = latestPerasCertOnChainRound extLedgerState0

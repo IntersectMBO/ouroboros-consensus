@@ -582,9 +582,9 @@ instance CanUpgradeLedgerTables LedgerState ByronBlock where
 -------------------------------------------------------------------------------}
 
 -- | Default instances with no Peras support
-instance LedgerStateSupportsPeras (LedgerState ByronBlock mk)
+instance LedgerStateSupportsPeras (LedgerState ByronBlock)
 
-instance LedgerStateSupportsPeras (Ticked LedgerState ByronBlock mk)
+instance LedgerStateSupportsPeras (Ticked LedgerState ByronBlock)
 
 -- | Byron does not support Peras, so we use the default (empty) epoch context.
 --

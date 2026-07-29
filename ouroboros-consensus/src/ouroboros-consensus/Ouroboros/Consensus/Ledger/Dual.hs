@@ -1217,9 +1217,9 @@ instance
   Peras
 -------------------------------------------------------------------------------}
 
-instance LedgerStateSupportsPeras (LedgerState (DualBlock m a) mk)
+instance LedgerStateSupportsPeras (LedgerState (DualBlock m a))
 
-instance LedgerStateSupportsPeras (Ticked LedgerState (DualBlock m a) mk)
+instance LedgerStateSupportsPeras (Ticked LedgerState (DualBlock m a))
 
 instance
   ( Bridge m a

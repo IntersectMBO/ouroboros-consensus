@@ -47,6 +47,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
@@ -276,7 +277,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
                   perasEpochContextResolver =
                     initPerasEpochContextResolver
                       ledgerConfig
-                      ledgerState
+                      (forgetLedgerTables ledgerState)
                       headerState
                   latestPerasCertOnChainRound =
                     SNothing

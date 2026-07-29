@@ -73,6 +73,7 @@ import Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (HardForkIndice
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import Ouroboros.Consensus.Peras.Context
   ( PerasEpochContextNotFoundForRound
   , PerasEpochContextResolver
@@ -221,34 +222,43 @@ instance
   where
   type LedgerErr ExtLedgerState blk = ExtValidationError blk
 
-  applyChainTickLedgerResult evs cfg slot ExtLedgerState{ledgerState, headerState, latestPerasCertOnChainRound, perasEpochContextResolver} =
-    castLedgerResult ledgerResult <&> \tickedLedgerState ->
-      let ledgerView :: LedgerView (BlockProtocol blk)
-          ledgerView = protocolLedgerView lcfg tickedLedgerState
+  applyChainTickLedgerResult
+    evs
+    cfg
+    slot
+    ExtLedgerState
+      { ledgerState
+      , headerState
+      , latestPerasCertOnChainRound
+      , perasEpochContextResolver
+      } =
+      castLedgerResult ledgerResult <&> \tickedLedgerState ->
+        let ledgerView :: LedgerView (BlockProtocol blk)
+            ledgerView = protocolLedgerView lcfg tickedLedgerState
 
-          tickedHeaderState :: Ticked (HeaderState blk)
-          tickedHeaderState =
-            tickHeaderState
-              (configConsensus $ getExtLedgerCfg cfg)
-              ledgerView
-              slot
-              headerState
+            tickedHeaderState :: Ticked (HeaderState blk)
+            tickedHeaderState =
+              tickHeaderState
+                (configConsensus $ getExtLedgerCfg cfg)
+                ledgerView
+                slot
+                headerState
 
-          tickedPerasEpochContextResolver :: PerasEpochContextResolver blk
-          tickedPerasEpochContextResolver =
-            tickPerasEpochContextResolver
-              lcfg
-              (perasEpochContextResolver, ledgerState, headerState)
-              (slot, tickedLedgerState, tickedHeaderState)
+            tickedPerasEpochContextResolver :: PerasEpochContextResolver blk
+            tickedPerasEpochContextResolver =
+              tickPerasEpochContextResolver
+                lcfg
+                (perasEpochContextResolver, ledgerState, headerState)
+                (slot, forgetLedgerTables tickedLedgerState, tickedHeaderState)
 
-          tickedLatestPerasCertOnChainRound :: StrictMaybe PerasRoundNo
-          tickedLatestPerasCertOnChainRound = latestPerasCertOnChainRound
-       in TickedExtLedgerState{..}
-   where
-    lcfg :: LedgerConfig blk
-    lcfg = configLedger $ getExtLedgerCfg cfg
+            tickedLatestPerasCertOnChainRound :: StrictMaybe PerasRoundNo
+            tickedLatestPerasCertOnChainRound = latestPerasCertOnChainRound
+         in TickedExtLedgerState{..}
+     where
+      lcfg :: LedgerConfig blk
+      lcfg = configLedger $ getExtLedgerCfg cfg
 
-    ledgerResult = applyChainTickLedgerResult evs lcfg slot ledgerState
+      ledgerResult = applyChainTickLedgerResult evs lcfg slot ledgerState
 
 applyHelper ::
   forall blk.
