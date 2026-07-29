@@ -1052,7 +1052,9 @@ instance Exception ExnLeiosBlockAnnouncementMissing
 --
 -- Returns the announcement's data and whether to relay it downstream (see
 -- 'Announcements.ShouldRelay' and 'maxAnnouncementAgeSend'), if the announcement
--- is valid.
+-- is valid. Per the 'Announcements.onAnnouncement' contract, 'Left Nothing'
+-- signals the too-old rejection (see 'maxAnnouncementAgeRecv') and 'Left Just'
+-- any other invalidity.
 announcementValidity ::
   (IOLike m, LedgerSupportsProtocol blk, ResolveLeiosBlock blk) =>
   SystemTime m ->
@@ -1062,7 +1064,7 @@ announcementValidity ::
   Header blk ->
   m
     ( Either
-        (AnnouncementInvalidity blk)
+        (Maybe (AnnouncementInvalidity blk))
         (Announcements.ShouldRelay, NominalDiffTime, (LeiosPoint, BytesSize))
     )
 announcementValidity systemTime futureCheck cfg immLedger hdr = do
@@ -1084,11 +1086,20 @@ announcementValidity systemTime futureCheck cfg immLedger hdr = do
   -- is non-negative.
   now <- systemTimeCurrent systemTime
   let age = diffRelTime now onset
-      shouldRelay =
-        if age <= maxAnnouncementAgeSend
-        then Announcements.DoRelay
-        else Announcements.DoNotRelay
-  pure $ (\v -> (shouldRelay, age, v)) <$> validateAnnouncementHeader cfg immLedger hdr
+  pure $
+    -- 'Left Nothing' signals the too-old rejection to 'Announcements.onAnnouncement'
+    -- (which raises 'Announcements.ErrTooOld'); only this function holds the wall
+    -- clock, so it owns that check.
+    if age > maxAnnouncementAgeRecv
+    then Left Nothing
+    else
+      let shouldRelay =
+            if age <= maxAnnouncementAgeSend
+            then Announcements.DoRelay
+            else Announcements.DoNotRelay
+       in case validateAnnouncementHeader cfg immLedger hdr of
+            Left inv -> Left (Just inv)
+            Right v -> Right (shouldRelay, age, v)
 
 -- | Record a validated, newly-announced EB body as missing, with its
 -- authoritative (forger-signed) size. First-seen wins: a no-op if the body is
@@ -1165,13 +1176,23 @@ lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number
 -- | Do not relay (to downstream peers) an announcement whose slot's wall-clock
 -- onset is older than this. See 'Announcements.ShouldRelay'.
 --
--- Must be comfortably less than the minimum possible wall-clock age of the
--- immutable tip (the /average/ imm-tip age is @k \/ f@ slots behind the wall
--- clock, but we need the /never in a million years/ bound instead), so that a
--- downstream peer whose immutable tip is slightly ahead of ours by the time our
--- message arrives still accepts what we relay rather than disconnecting us for
--- a below-its-immutable-tip announcement.
+-- Must be comfortably less than 'maxAnnouncementAgeRecv', so that an
+-- announcement an honest node relays just before this bound still arrives at
+-- the downstream peer within that peer's larger receive bound, even after
+-- transmission time and clock skew.
 --
 -- TODO magic number; should be a config/RunNode option
 maxAnnouncementAgeSend :: NominalDiffTime
-maxAnnouncementAgeSend = 3600   -- 1 hour
+maxAnnouncementAgeSend = 300   -- 5 minutes
+
+-- | Disconnect an upstream peer that relays an announcement whose slot's
+-- wall-clock onset is older than this. See 'Announcements.ErrTooOld'.
+--
+-- Comfortably greater than 'maxAnnouncementAgeSend', so that an honest peer
+-- (which stops relaying at that smaller bound) is never disconnected on account
+-- of transmission time or clock skew.
+--
+-- TODO magic number; should be a config/RunNode option... or even a protocol
+-- parameter?
+maxAnnouncementAgeRecv :: NominalDiffTime
+maxAnnouncementAgeRecv = 600   -- 10 minutes

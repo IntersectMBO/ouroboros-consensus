@@ -77,6 +77,12 @@ data AnnouncementInvalidity blk
     -- See 'LeiosDemoLogic.Announcements.ShouldRelay' for how honest
     -- servers avoid triggering this case despite clock
     -- skew\/transmission delays\/buffering, etc.
+    --
+    -- The 'LeiosDemoLogic.Announcements.ErrTooOld' bound rejects any
+    -- announcement older than 'maxAnnouncementAgeRecv' (minutes), which is
+    -- always far younger than the immutable tip (hours), so this case should
+    -- never actually fire. It is kept as a distinct error to throw in case that
+    -- branch is somehow reached, eg on an oddly-configured testnet.
     SlotBeforeImmutableTip
   | -- | The header failed the relaxed, out-of-context protocol-level validation
     -- (election proof and signature). See 'validateAnnouncementChainDepState'

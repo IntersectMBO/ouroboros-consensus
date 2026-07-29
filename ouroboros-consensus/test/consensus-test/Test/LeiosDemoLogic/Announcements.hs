@@ -103,6 +103,7 @@ classifyExt :: Either (ErrAnnouncement Void) (ElState Anc, PeerState Anc) -> Ext
 classifyExt = \case
   Left ErrRepeat -> ErrR
   Left ErrThird -> ErrT
+  Left ErrTooOld -> error "unreachable: extendLive never yields ErrTooOld"
   Right (elSt, _) -> St (elStateTags elSt)
 
 elStateTags :: ElState Anc -> [Int]
@@ -161,6 +162,7 @@ onAnnouncementTests =
   testGroup
     "onAnnouncement"
     [ testCase "invalid announcement surfaces as ErrInvalid" test_oaInvalid
+    , testCase "too-old announcement (Left Nothing) surfaces as ErrTooOld" test_oaTooOld
     , testCase "valid announcement runs process and returns new state" test_oaProcess
     , testCase "repeat is rejected without running process" test_oaRepeat
     ]
@@ -169,10 +171,19 @@ test_oaInvalid :: Assertion
 test_oaInvalid = do
   res <-
     runExceptT $
-      onAnnouncement nullTracer ancEl (\_ -> pure (Left "bad") :: IO (Either String ())) (\_ _ -> pure ()) emptyPeerState (Anc el0 0)
+      onAnnouncement nullTracer ancEl (\_ -> pure (Left (Just "bad")) :: IO (Either (Maybe String) ())) (\_ _ -> pure ()) emptyPeerState (Anc el0 0)
   case res of
     Left (ErrInvalid inv) -> inv @?= "bad"
     _ -> assertFailure "expected ErrInvalid"
+
+test_oaTooOld :: Assertion
+test_oaTooOld = do
+  res <-
+    runExceptT $
+      onAnnouncement nullTracer ancEl (\_ -> pure (Left Nothing) :: IO (Either (Maybe String) ())) (\_ _ -> pure ()) emptyPeerState (Anc el0 0)
+  case res of
+    Left ErrTooOld -> pure ()
+    _ -> assertFailure "expected ErrTooOld"
 
 test_oaProcess :: Assertion
 test_oaProcess = do

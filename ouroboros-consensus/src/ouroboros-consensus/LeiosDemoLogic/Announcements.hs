@@ -117,6 +117,13 @@ data ErrAnnouncement invalidity =
   |
     -- | This announcement is invalid
     ErrInvalid !invalidity
+  |
+    -- | This announcement's election is too old (its wall-clock age exceeds
+    -- what a client tolerates from an upstream peer). Unlike 'ErrInvalid', this
+    -- verdict depends on the wall clock rather than on the announcement itself,
+    -- so 'onAnnouncement' cannot decide it directly; it is signalled by the
+    -- validation callback returning @Left Nothing@ (see 'onAnnouncement').
+    ErrTooOld
   deriving Show
 
 -- | Returns 'Nothing' if this election was already 'TwoAnnouncements' or if this
@@ -159,11 +166,14 @@ onAnnouncement ::
   (Eq anc, Monad m) =>
   Tracer m (TraceLeiosNotifyPeerEvent anc) ->
   (anc -> ElId) ->
-  (anc -> m (Either invalidity validated)) ->
+  (anc -> m (Either (Maybe invalidity) validated)) ->
   -- ^ How to validate the announcement
   --
-  -- ASSUMPTION: this function will reject an announcement that is
-  -- more than 60 seconds older than the local immutable tip.
+  -- Return @Left Nothing@ when the announcement violates the too-old
+  -- restriction (its election's wall-clock age exceeds what a client
+  -- tolerates); 'onAnnouncement' then raises 'ErrTooOld'. This callback owns
+  -- that check because only it holds the wall clock. Return @Left (Just inv)@
+  -- for any other rejection (raised as 'ErrInvalid'), and @Right@ when valid.
   (anc -> validated -> m ()) ->
   -- ^ How this central logic should react to a new announcement from
   -- this peer
@@ -181,7 +191,8 @@ onAnnouncement tracer getEl validate process st anc = do
     -- do the more expensive validation only after the trivial
     -- counting checks
     lift (validate anc) >>= \case
-        Left err -> throwError $ ErrInvalid err
+        Left Nothing -> throwError ErrTooOld
+        Left (Just err) -> throwError $ ErrInvalid err
         Right x -> do
             lift $ process anc x
             pure st'
