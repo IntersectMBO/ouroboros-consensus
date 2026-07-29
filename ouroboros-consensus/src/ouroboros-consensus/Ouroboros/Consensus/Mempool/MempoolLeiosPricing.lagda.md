@@ -16,7 +16,7 @@ prefixed **`-- CHG:`** (change relative to Leios) or **`-- NEW:`**
 3. **`MempoolLeiosPricing.lagda.md`** *(this file)* — tiered-pricing
    extension layered on top of the Leios mempool.
 
-**Last updated:** 2026-07-24
+**Last updated:** 2026-07-29
 **Primary reference:** CIP-164 Ouroboros Linear Leios,
 <https://github.com/cardano-foundation/CIPs/tree/master/CIP-0164>
 **Sibling ref:** `MempoolLeios.lagda.md` in this directory (shared
@@ -137,8 +137,9 @@ lottery, not one per block kind. Its winner produces:
   priority-tier overflow that did not fit within `priorityCap` in the
   RB body. Announced in the RB header. Must be non-empty (CIP-164:
   "empty EBs should not be announced"). Additionally, `forgeBlock`
-  suppresses EB emission under **light load** — see the subsection
-  below.
+  suppresses EB emission under **light load** — unless no EB has been
+  announced for `ageScape` slots, in which case the EB is forced out
+  even below the floor (**age escape**) — see the subsection below.
 
 **Fee on a priority tx that lands in an EB.** A priority-tier transaction that
 ends up in an EB body — rather than in the RB body — has paid for priority
@@ -210,9 +211,28 @@ when the overflow that lands in the EB reaches the floor in some
 dimension. A near-empty EB (colliding with CIP-164's "empty EBs should
 not be announced" rule) is never announced.
 
-Implementation: one additional guard in the `anyEB` computation of
+**Age escape (`ageScape`).** Suppression is bounded in time: for a
+constant `ageScape` (a number of slots; a candidate protocol
+parameter), if **no EB has been announced on the chain for
+`ageScape` slots** as of the forging tip, the light-load suppression
+is overridden and `forgeBlock` announces the EB even though it is
+below `ebFloor`. (The EB must still be non-empty — the escape relaxes
+the floor, never the CIP-164 no-empty-EBs rule.) Rationale: without
+it, under sustained light load a standard-tier tx could sit in the
+mempool indefinitely, since standard txs reach the chain *only*
+through EBs; `ageScape` bounds that worst-case latency. **Ledger
+alignment:** the ledger's floor check carries the same escape —
+`sdChecks EB` (`Tiers.lagda.md` in `formal-ledger-specifications`)
+accepts an under-floor EB when `ebOverdue slot` holds (`ageScape` /
+`ebOverdue` live in `AbstractFunctions`; `DIVUP`'s environment gains
+the block's slot) — so a forced EB validates and can certify (see
+Open question 4).
+
+Implementation: two guards in the `anyEB` computation of
 `forgeBlock` (see §2), postulated in the Agda sketch as
-`underHalfRB : Capacity → Capacity → Bool`.
+`underHalfRB : Capacity → Capacity → Bool` (light load) and
+`ebOverdue : TipPoint → Bool` (age escape, true iff no EB announced
+within the last `ageScape` slots).
 
 This suppression rule is the exact complement of the ledger's EB
 validity check (`sdChecks` for `EB` blocks, enforced in `BBODY` via
@@ -480,6 +500,16 @@ postulate
   -- dimension" is probably up for discussion (vs. requiring ≥ ebFloor in every
   -- dimension). The ref-script-bytes dimension matches the ledger's totalRefScriptSize.
   underHalfRB  : Capacity → Capacity → Bool
+  -- NEW: EB-age escape (see §1).  ageScape is a constant number of
+  -- slots (a candidate protocol parameter).  ebOverdue p ≡ true iff
+  -- no EB has been announced on the chain within the last ageScape
+  -- slots as of tip p.  When overdue, forgeBlock announces the EB
+  -- even below the fullness floor (light-load suppression is
+  -- overridden; the EB must still be non-empty).  The ledger-side
+  -- floor check must carry the same escape or the forced EB would
+  -- fail validation.
+  ageScape     : ℕ
+  ebOverdue    : TipPoint → Bool
   freshTicket  : TicketNo → TicketNo
   freshEBId    : TicketNo → EBId
 
@@ -919,8 +949,15 @@ forgeBlock m =
       --    ebTxs′ — the actual EB body, which is what the ledger's
       --    sdChecks sees — keeps this the exact complement of the
       --    ledger check.)
+      --    NEW: age escape — if no EB has been announced on the
+      --    chain for ageScape slots (ebOverdue), suppression is
+      --    overridden and the EB is announced even below the floor.
+      --    The EB must still be non-empty.
       lightLoad               = underHalfRB (seqSize ebTxs′) (ebFloorAt (tip m))
-      anyEB                   = if lightLoad
+      suppress                = if ebOverdue (tip m)
+                                  then false
+                                  else lightLoad
+      anyEB                   = if suppress
                                   then false
                                   else ebNonEmpty (map tx ebTxs′)
       newEBId                 = freshEBId (freshTicket (lastPriorityTicket m))
@@ -989,7 +1026,15 @@ open questions specific to this document:
    discussion**; (ii) whether `ebFloor` should be a protocol parameter;
    (iii) enforcing the CIP-164 per-EB *capacity* (`standardCap` / `S_EB`,
    the upper bound) **ledger-side** — currently only the mempool caps
-   the EB body by `standardCap`; the ledger bounds it only by the floor.
+   the EB body by `standardCap`; the ledger bounds it only by the floor;
+   (iv) the **age escape** is mirrored ledger-side
+   (`formal-ledger-specifications`: `sdChecks EB` accepts an
+   under-floor EB when `ebOverdue slot` holds; `ageScape` / `ebOverdue`
+   are abstract in `AbstractFunctions`; `DIVUP`'s environment gains the
+   block's slot, threaded from `BBODY`). Still open there: the voting
+   committee must evaluate `ebOverdue` identically (same chain, same
+   tip, same `ageScape`), and `ageScape` itself is a candidate
+   protocol parameter.
 
 ## Changelog
 
@@ -1138,3 +1183,24 @@ open questions specific to this document:
   / `standardCap` / `lastStandardTicket` / `addTx Standard`, and
   changelog entries — now read standard). The tier vocabulary is fixed
   as **priority / standard**.
+- **2026-07-29** — Added the **EB age escape**: a constant `ageScape`
+  (slots, candidate protocol parameter) bounds light-load EB
+  suppression in time. If no EB has been announced on the chain for
+  `ageScape` slots (`ebOverdue`, new postulate alongside `ageScape`),
+  `forgeBlock` announces the EB even below the fullness floor
+  `ebFloor` (still never empty). Guards against unbounded
+  standard-tier latency under sustained light load. §1 subsection,
+  `forgeBlock` step 4 (`suppress` guard), and Open question 4 updated
+  — the ledger-side floor check needs the same escape. Confirmed the
+  base Leios spec has no underfull-EB constraint to begin with
+  (`forgeBlock` there emits an EB for any non-empty overflow), so
+  nothing to remove on that side.
+- **2026-07-29 (later)** — Ledger-side age escape implemented in
+  `formal-ledger-specifications` (branch `polina/dynamic`):
+  `AbstractFunctions` gains `ageScape : ℕ` and the chain-history
+  oracle `ebOverdue : Slot → Bool`; `sdChecks` takes the block's slot
+  and its `EB` case gains the disjunct `ebOverdue slot ≡ true`;
+  `DIVUP`'s environment becomes `PParams × BlockType × Slot`, with
+  the slot threaded from `bhb .slot` in `BBODY`. The
+  suppressed-iff-rejected complement between `underHalfRB` (mempool)
+  and `sdChecks EB` (ledger) is preserved, escape included.

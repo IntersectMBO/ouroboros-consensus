@@ -579,11 +579,12 @@ postulate
   measure      : Tx → Capacity
   capacityAt   : TipPoint → Capacity
   fitsWith     : Capacity → Capacity → Capacity → Bool
-  -- ebCap is the EB *capacity* (upper bound; CIP-164 per-EB caps). Base Leios has no
-  -- EB-fullness *floor*: forgeBlock emits an EB for any non-empty overflow. NOTE we
-  -- COULD add a fullness floor here as the pricing extension does — an `ebFloor`
-  -- (≈ ½ a full RB) with the EB suppressed unless it reaches the floor in some
-  -- dimension — to match the ledger's `sdChecks EB`. Left out for now.
+  -- ebCap is the EB *capacity* (upper bound; CIP-164 per-EB caps). Base Leios
+  -- deliberately has NO EB-fullness *floor* / underfull-EB constraint:
+  -- forgeBlock emits an EB for any non-empty overflow. The fullness floor
+  -- lives only in the pricing extension — an `ebFloor` (≈ ½ a full RB) with
+  -- the EB suppressed unless it reaches the floor in some dimension, bounded
+  -- in time by an `ageScape` age escape — matching the ledger's `sdChecks EB`.
   -- Same role as `standardCapAt` in the pricing spec: the CIP-164 per-EB
   -- capacity (S_EB, S_EB-tx, per-EB Plutus).  Used by `forgeBlock` to
   -- bound the EB body via `splitAtCap`.
