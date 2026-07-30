@@ -5,7 +5,7 @@ module LeiosDemoLogic.Announcements.ElBimap (module LeiosDemoLogic.Announcements
 
 import           Cardano.Slotting.Slot (SlotNo)
 import           Data.ByteString.Short (ShortByteString)
-import           Data.Foldable (foldl')
+import qualified Data.Foldable
 import qualified Data.Map.Strict as Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
@@ -59,7 +59,7 @@ insertElBimapLs l rs bm =
         Just rs' -> MkElBimap {
             forwardHalf = Map.insertWith (<>) l rs' (forwardHalf bm)
           ,
-            inverseHalf = foldl' addToInverse (inverseHalf bm) rs
+            inverseHalf = Data.Foldable.foldl' addToInverse (inverseHalf bm) rs
           }
   where
     addToInverse inv r = Map.insertWith (<>) r (NESet.singleton l) inv
@@ -84,7 +84,7 @@ deleteElBimapL l bm =
         Just rs -> MkElBimap {
             forwardHalf = Map.delete l (forwardHalf bm)
           ,
-            inverseHalf = foldl' dropFromInverse (inverseHalf bm) rs
+            inverseHalf = Data.Foldable.foldl' dropFromInverse (inverseHalf bm) rs
           }
   where
     dropFromInverse inv r = Map.update (NESet.nonEmptySet . NESet.delete l) r inv
@@ -95,7 +95,7 @@ deleteElBimapR r bm =
     case Map.lookup r (inverseHalf bm) of
         Nothing -> bm
         Just ls -> MkElBimap {
-            forwardHalf = foldl' dropFromForward (forwardHalf bm) ls
+            forwardHalf = Data.Foldable.foldl' dropFromForward (forwardHalf bm) ls
           ,
             inverseHalf = Map.delete r (inverseHalf bm)
           }
@@ -116,7 +116,7 @@ pruneElBimap immTipSlot bm =
   where
     (pruned, forwardHalf') = Map.spanAntitone tooOld (forwardHalf bm)
 
-    dropElection inv el rs = foldl' (dropPair el) inv rs
+    dropElection inv el rs = Data.Foldable.foldl' (dropPair el) inv rs
 
     dropPair el inv r = Map.update (NESet.nonEmptySet . NESet.delete el) r inv
 
