@@ -25,6 +25,7 @@ import Cardano.Api.Any
 import Cardano.Api.Key
 import Cardano.Api.SerialiseTextEnvelope
 import Cardano.Api.SerialiseUsing
+import qualified Cardano.Binary.FixedSizeCodec as Crypto
 import qualified Cardano.Crypto.DSIGN.Class as Crypto
 import qualified Cardano.Crypto.Hash.Class as Crypto
 import qualified Cardano.Crypto.KES.Class as Crypto
@@ -83,18 +84,18 @@ instance DecCBOR (SigningKey UnsoundPureKesKey) where
 
 instance SerialiseAsRawBytes (VerificationKey UnsoundPureKesKey) where
   serialiseToRawBytes (KesVerificationKey vk) =
-    Crypto.rawSerialiseVerKeyKES vk
+    Crypto.rawEncodeFixedSized vk
 
   deserialiseFromRawBytes (AsVerificationKey AsUnsoundPureKesKey) bs =
     KesVerificationKey
-      <$> Crypto.rawDeserialiseVerKeyKES bs
+      <$> Crypto.rawDecodeFixedSized bs
 
 instance SerialiseAsRawBytes (SigningKey UnsoundPureKesKey) where
   serialiseToRawBytes (KesSigningKey sk) =
-    Crypto.rawSerialiseUnsoundPureSignKeyKES sk
+    Crypto.rawEncodeFixedSized sk
 
   deserialiseFromRawBytes (AsSigningKey AsUnsoundPureKesKey) bs =
-    KesSigningKey <$> Crypto.rawDeserialiseUnsoundPureSignKeyKES bs
+    KesSigningKey <$> Crypto.rawDecodeFixedSized bs
 
 instance SerialiseAsBech32 (VerificationKey UnsoundPureKesKey) where
   bech32PrefixFor _ = "kes_vk"
@@ -183,17 +184,17 @@ instance Key VrfKey where
 
 instance SerialiseAsRawBytes (VerificationKey VrfKey) where
   serialiseToRawBytes (VrfVerificationKey vk) =
-    Crypto.rawSerialiseVerKeyVRF vk
+    Crypto.rawEncodeFixedSized vk
 
   deserialiseFromRawBytes (AsVerificationKey AsVrfKey) bs =
-    VrfVerificationKey <$> Crypto.rawDeserialiseVerKeyVRF bs
+    VrfVerificationKey <$> Crypto.rawDecodeFixedSized bs
 
 instance SerialiseAsRawBytes (SigningKey VrfKey) where
   serialiseToRawBytes (VrfSigningKey sk) =
-    Crypto.rawSerialiseSignKeyVRF sk
+    Crypto.rawEncodeFixedSized sk
 
   deserialiseFromRawBytes (AsSigningKey AsVrfKey) bs =
-    VrfSigningKey <$> Crypto.rawDeserialiseSignKeyVRF bs
+    VrfSigningKey <$> Crypto.rawDecodeFixedSized bs
 
 instance SerialiseAsBech32 (VerificationKey VrfKey) where
   bech32PrefixFor _ = "vrf_vk"

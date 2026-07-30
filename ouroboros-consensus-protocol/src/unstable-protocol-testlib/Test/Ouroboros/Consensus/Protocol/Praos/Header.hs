@@ -19,11 +19,15 @@ module Test.Ouroboros.Consensus.Protocol.Praos.Header
   , generateSamples
   ) where
 
+import Cardano.Binary.FixedSizeCodec
+  ( encodeFixedSized
+  , rawDecodeFixedSized
+  , rawEncodeFixedSized
+  )
 import Cardano.Crypto.DSIGN
-  ( DSIGNAlgorithm (SignKeyDSIGN, genKeyDSIGN, rawSerialiseSignKeyDSIGN)
+  ( DSIGNAlgorithm (SignKeyDSIGN, genKeyDSIGN)
   , Ed25519DSIGN
   , deriveVerKeyDSIGN
-  , rawDeserialiseSignKeyDSIGN
   )
 import Cardano.Crypto.Hash
   ( Blake2b_256
@@ -37,8 +41,6 @@ import Cardano.Crypto.Seed (mkSeedFromBytes)
 import Cardano.Crypto.VRF
   ( deriveVerKeyVRF
   , hashVerKeyVRF
-  , rawDeserialiseSignKeyVRF
-  , rawSerialiseSignKeyVRF
   )
 import qualified Cardano.Crypto.VRF as VRF
 import Cardano.Crypto.VRF.Praos (skToBatchCompat)
@@ -329,8 +331,8 @@ instance Eq GeneratorContext where
   a == b =
     praosSlotsPerKESPeriod a == praosSlotsPerKESPeriod b
       && praosMaxKESEvo a == praosMaxKESEvo b
-      && serialize' testVersion (KES.encodeUnsoundPureSignKeyKES (kesSignKey a))
-        == serialize' testVersion (KES.encodeUnsoundPureSignKeyKES (kesSignKey b))
+      && serialize' testVersion (encodeFixedSized (kesSignKey a))
+        == serialize' testVersion (encodeFixedSized (kesSignKey b))
       && coldSignKey a == coldSignKey b
       && vrfSignKey a == vrfSignKey b
       && nonce a == nonce b
@@ -349,9 +351,9 @@ instance Json.ToJSON GeneratorContext where
       , "activeSlotCoeff" .= activeSlotVal activeSlotCoeff
       ]
    where
-    rawKesSignKey = decodeUtf8 . Base16.encode $ KES.rawSerialiseUnsoundPureSignKeyKES kesSignKey
-    rawColdSignKey = decodeUtf8 . Base16.encode $ rawSerialiseSignKeyDSIGN coldSignKey
-    rawVrfSignKey = decodeUtf8 . Base16.encode $ rawSerialiseSignKeyVRF $ skToBatchCompat vrfSignKey
+    rawKesSignKey = decodeUtf8 . Base16.encode $ rawEncodeFixedSized kesSignKey
+    rawColdSignKey = decodeUtf8 . Base16.encode $ rawEncodeFixedSized coldSignKey
+    rawVrfSignKey = decodeUtf8 . Base16.encode $ rawEncodeFixedSized $ skToBatchCompat vrfSignKey
     rawVrVKeyHash =
       decodeUtf8 . Base16.encode $
         hashToBytes $
@@ -385,21 +387,21 @@ instance Json.FromJSON GeneratorContext where
       case Base16.decode (encodeUtf8 rawKey) of
         Left err -> fail err
         Right keyBytes ->
-          case rawDeserialiseSignKeyDSIGN keyBytes of
+          case rawDecodeFixedSized keyBytes of
             Nothing -> fail $ "Invalid cold key bytes: " <> show rawKey
             Just key -> pure key
     parseKesSignKey rawKey = do
       case Base16.decode (encodeUtf8 rawKey) of
         Left err -> fail err
         Right keyBytes ->
-          case KES.rawDeserialiseUnsoundPureSignKeyKES keyBytes of
+          case rawDecodeFixedSized keyBytes of
             Nothing -> fail $ "Invalid KES key bytes: " <> show rawKey
             Just key -> pure key
     parseVrfSignKey rawKey = do
       case Base16.decode (encodeUtf8 rawKey) of
         Left err -> fail err
         Right keyBytes ->
-          case rawDeserialiseSignKeyVRF keyBytes of
+          case rawDecodeFixedSized keyBytes of
             Nothing -> fail $ "Invalid VRF key bytes: " <> show rawKey
             Just key -> pure key
 

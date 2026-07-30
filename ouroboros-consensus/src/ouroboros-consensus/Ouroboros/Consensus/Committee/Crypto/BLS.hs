@@ -46,6 +46,7 @@ module Ouroboros.Consensus.Committee.Crypto.BLS
   ) where
 
 import Cardano.Binary (FromCBOR, ToCBOR)
+import Cardano.Binary.FixedSizeCodec (rawDecodeFixedSized, rawEncodeFixedSized)
 import Cardano.Crypto.DSIGN
   ( BLS12381MinSigDSIGN
   , BLS12381SignContext
@@ -98,7 +99,7 @@ rawDeserialisePrivateKey ::
   ByteString ->
   Maybe (PrivateKey r)
 rawDeserialisePrivateKey scope bs = do
-  key <- rawDeserialiseSignKeyDSIGN bs
+  key <- rawDecodeFixedSized bs
   pure $
     PrivateKey
       { unPrivateKey = key
@@ -109,7 +110,7 @@ rawSerialisePrivateKey ::
   PrivateKey r ->
   ByteString
 rawSerialisePrivateKey =
-  rawSerialiseSignKeyDSIGN . unPrivateKey
+  rawEncodeFixedSized . unPrivateKey
 
 coercePrivateKey ::
   forall r2 r1.
@@ -139,7 +140,7 @@ rawDeserialisePublicKey ::
   ByteString ->
   Maybe (PublicKey r)
 rawDeserialisePublicKey scope bs = do
-  key <- rawDeserialiseVerKeyDSIGN bs
+  key <- rawDecodeFixedSized bs
   pure $
     PublicKey
       { unPublicKey = key
@@ -150,7 +151,7 @@ rawSerialisePublicKey ::
   PublicKey r ->
   ByteString
 rawSerialisePublicKey =
-  rawSerialiseVerKeyDSIGN . unPublicKey
+  rawEncodeFixedSized . unPublicKey
 
 coercePublicKey ::
   forall r2 r1.
@@ -312,7 +313,7 @@ signatureNatural ::
 signatureNatural sig =
   bytesToNatural
     . Hash.hashToBytes
-    . Hash.hashWith @HASH rawSerialiseSigDSIGN
+    . Hash.hashWith @HASH rawEncodeFixedSized
     . unSignature
     $ sig
 

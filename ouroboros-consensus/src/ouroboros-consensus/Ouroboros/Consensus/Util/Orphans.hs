@@ -10,6 +10,7 @@
 module Ouroboros.Consensus.Util.Orphans () where
 
 import Cardano.Binary (fromCBOR, toCBOR)
+import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
 import Cardano.Crypto.DSIGN.Class
 import Cardano.Crypto.DSIGN.Mock (MockDSIGN)
 import Cardano.Crypto.Hash (Hash, HashAlgorithm)
@@ -46,8 +47,8 @@ instance (HashAlgorithm h, Typeable a) => Serialise (Hash h a) where
   decode = fromCBOR
 
 instance Serialise (VerKeyDSIGN MockDSIGN) where
-  encode = encodeVerKeyDSIGN
-  decode = decodeVerKeyDSIGN
+  encode = encodeFixedSized
+  decode = decodeFixedSized
 
 {-------------------------------------------------------------------------------
   NoThunks
