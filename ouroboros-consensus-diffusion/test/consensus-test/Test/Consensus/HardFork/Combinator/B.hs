@@ -34,7 +34,7 @@ module Test.Consensus.HardFork.Combinator.B
   , TxId (..)
   ) where
 
-import Cardano.Binary (DecoderError)
+import Cardano.Binary (DecoderError, FromCBOR (..), ToCBOR (..))
 import Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
@@ -318,6 +318,11 @@ safeZoneB (SecurityParam k) = History.StandardSafeZone $ unNonZero k
 
 data instance GenTx BlockB
   deriving (Show, Eq, Generic, NoThunks, Serialise)
+
+instance FromCBOR (GenTx BlockB) where
+  fromCBOR = fail "no GenTx BlockB to be decoded"
+instance ToCBOR (GenTx BlockB) where
+  toCBOR = \case {}
 
 data instance Validated (GenTx BlockB)
   deriving (Show, Eq, Generic, NoThunks)

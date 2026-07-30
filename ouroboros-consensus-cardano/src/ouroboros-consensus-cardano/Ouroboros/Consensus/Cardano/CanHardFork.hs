@@ -45,7 +45,7 @@ import Cardano.Ledger.Shelley.Translation
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
-import Control.Monad.Except (runExcept, throwError)
+import Control.Monad.Except (throwError)
 import Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -99,7 +99,7 @@ import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.ShelleyHFC
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util (coerceMapKeys, eitherToMaybe)
+import Ouroboros.Consensus.Util (coerceMapKeys)
 
 {-------------------------------------------------------------------------------
   CanHardFork
@@ -176,49 +176,6 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     -- Inter-Shelley-based
     $
       Tails.hcpure (Proxy @(HasPraosTiebreakerView c)) SameTiebreakerAcrossEras
-  hardForkInjectTxs =
-    PCons (ignoringBoth $ Pair2 cannotInjectTx cannotInjectValidatedTx)
-      $ PCons
-        ( ignoringBoth $
-            Pair2
-              translateTxShelleyToAllegraWrapper
-              translateValidatedTxShelleyToAllegraWrapper
-        )
-      $ PCons
-        ( ignoringBoth $
-            Pair2
-              translateTxAllegraToMaryWrapper
-              translateValidatedTxAllegraToMaryWrapper
-        )
-      $ PCons
-        ( RequireBoth $ \_cfgMary cfgAlonzo ->
-            let ctxt = getAlonzoTranslationContext cfgAlonzo
-             in Pair2
-                  (translateTxMaryToAlonzoWrapper ctxt)
-                  (translateValidatedTxMaryToAlonzoWrapper ctxt)
-        )
-      $ PCons
-        ( RequireBoth $ \_cfgAlonzo _cfgBabbage ->
-            let ctxt = SL.NoGenesis
-             in Pair2
-                  (translateTxAlonzoToBabbageWrapper ctxt)
-                  (translateValidatedTxAlonzoToBabbageWrapper ctxt)
-        )
-      $ PCons
-        ( RequireBoth $ \_cfgBabbage cfgConway ->
-            let ctxt = getConwayTranslationContext cfgConway
-             in Pair2
-                  (translateTxBabbageToConwayWrapper ctxt)
-                  (translateValidatedTxBabbageToConwayWrapper ctxt)
-        )
-      $ PCons
-        ( RequireBoth $ \_cfgConway cfgDijkstra ->
-            let ctxt = getDijkstraTranslationContext cfgDijkstra
-             in Pair2
-                  (translateTxConwayToDijkstraWrapper ctxt)
-                  (translateValidatedTxConwayToDijkstraWrapper ctxt)
-        )
-      $ PNil
 
   hardForkInjTxMeasurePhase1 =
     fromByteSize
@@ -537,22 +494,6 @@ translateLedgerTablesShelleyToAllegraWrapper =
     , translateTxOutWith = SL.upgradeTxOut
     }
 
-translateTxShelleyToAllegraWrapper ::
-  InjectTx
-    (ShelleyBlock (TPraos c) ShelleyEra)
-    (ShelleyBlock (TPraos c) AllegraEra)
-translateTxShelleyToAllegraWrapper =
-  InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
-
-translateValidatedTxShelleyToAllegraWrapper ::
-  InjectValidatedTx
-    (ShelleyBlock (TPraos c) ShelleyEra)
-    (ShelleyBlock (TPraos c) AllegraEra)
-translateValidatedTxShelleyToAllegraWrapper =
-  InjectValidatedTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
-
 {-------------------------------------------------------------------------------
   Translation from Allegra to Mary
 -------------------------------------------------------------------------------}
@@ -584,22 +525,6 @@ translateLedgerTablesAllegraToMaryWrapper =
     { translateTxInWith = coerce
     , translateTxOutWith = SL.upgradeTxOut
     }
-
-translateTxAllegraToMaryWrapper ::
-  InjectTx
-    (ShelleyBlock (TPraos c) AllegraEra)
-    (ShelleyBlock (TPraos c) MaryEra)
-translateTxAllegraToMaryWrapper =
-  InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
-
-translateValidatedTxAllegraToMaryWrapper ::
-  InjectValidatedTx
-    (ShelleyBlock (TPraos c) AllegraEra)
-    (ShelleyBlock (TPraos c) MaryEra)
-translateValidatedTxAllegraToMaryWrapper =
-  InjectValidatedTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
 
 {-------------------------------------------------------------------------------
   Translation from Mary to Alonzo
@@ -638,25 +563,6 @@ getAlonzoTranslationContext ::
   SL.TranslationContext AlonzoEra
 getAlonzoTranslationContext =
   shelleyLedgerTranslationContext . unwrapLedgerConfig
-
-translateTxMaryToAlonzoWrapper ::
-  SL.TranslationContext AlonzoEra ->
-  InjectTx
-    (ShelleyBlock (TPraos c) MaryEra)
-    (ShelleyBlock (TPraos c) AlonzoEra)
-translateTxMaryToAlonzoWrapper ctxt =
-  InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
-
-translateValidatedTxMaryToAlonzoWrapper ::
-  forall c.
-  SL.TranslationContext AlonzoEra ->
-  InjectValidatedTx
-    (ShelleyBlock (TPraos c) MaryEra)
-    (ShelleyBlock (TPraos c) AlonzoEra)
-translateValidatedTxMaryToAlonzoWrapper ctxt =
-  InjectValidatedTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
 
 {-------------------------------------------------------------------------------
   Translation from Alonzo to Babbage
@@ -703,43 +609,6 @@ translateLedgerTablesAlonzoToBabbageWrapper =
     , translateTxOutWith = SL.upgradeTxOut
     }
 
-translateTxAlonzoToBabbageWrapper ::
-  SL.TranslationContext BabbageEra ->
-  InjectTx
-    (ShelleyBlock (TPraos c) AlonzoEra)
-    (ShelleyBlock (Praos c) BabbageEra)
-translateTxAlonzoToBabbageWrapper ctxt =
-  InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp . transPraosTx
- where
-  transPraosTx ::
-    GenTx (ShelleyBlock (TPraos c) AlonzoEra) ->
-    GenTx (ShelleyBlock (Praos c) AlonzoEra)
-  transPraosTx (ShelleyTx ti tx) = ShelleyTx ti (coerce tx)
-
-translateValidatedTxAlonzoToBabbageWrapper ::
-  forall c.
-  SL.TranslationContext BabbageEra ->
-  InjectValidatedTx
-    (ShelleyBlock (TPraos c) AlonzoEra)
-    (ShelleyBlock (Praos c) BabbageEra)
-translateValidatedTxAlonzoToBabbageWrapper ctxt =
-  InjectValidatedTx $
-    fmap unComp
-      . eitherToMaybe
-      . runExcept
-      . SL.translateEra ctxt
-      . Comp
-      . transPraosValidatedTx
- where
-  transPraosValidatedTx ::
-    WrapValidatedGenTx (ShelleyBlock (TPraos c) AlonzoEra) ->
-    WrapValidatedGenTx (ShelleyBlock (Praos c) AlonzoEra)
-  transPraosValidatedTx (WrapValidatedGenTx x) = case x of
-    ShelleyValidatedTx txid vtx ->
-      WrapValidatedGenTx $
-        ShelleyValidatedTx txid (SL.coerceValidated vtx)
-
 {-------------------------------------------------------------------------------
   Translation from Babbage to Conway
 -------------------------------------------------------------------------------}
@@ -778,25 +647,6 @@ getConwayTranslationContext ::
 getConwayTranslationContext =
   shelleyLedgerTranslationContext . unwrapLedgerConfig
 
-translateTxBabbageToConwayWrapper ::
-  SL.TranslationContext ConwayEra ->
-  InjectTx
-    (ShelleyBlock (Praos c) BabbageEra)
-    (ShelleyBlock (Praos c) ConwayEra)
-translateTxBabbageToConwayWrapper ctxt =
-  InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
-
-translateValidatedTxBabbageToConwayWrapper ::
-  forall c.
-  SL.TranslationContext ConwayEra ->
-  InjectValidatedTx
-    (ShelleyBlock (Praos c) BabbageEra)
-    (ShelleyBlock (Praos c) ConwayEra)
-translateValidatedTxBabbageToConwayWrapper ctxt =
-  InjectValidatedTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
-
 {-------------------------------------------------------------------------------
   Translation from Conway to Dijkstra
 -------------------------------------------------------------------------------}
@@ -834,22 +684,3 @@ getDijkstraTranslationContext ::
   SL.TranslationContext DijkstraEra
 getDijkstraTranslationContext =
   shelleyLedgerTranslationContext . unwrapLedgerConfig
-
-translateTxConwayToDijkstraWrapper ::
-  SL.TranslationContext DijkstraEra ->
-  InjectTx
-    (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
-translateTxConwayToDijkstraWrapper ctxt =
-  InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
-
-translateValidatedTxConwayToDijkstraWrapper ::
-  forall c.
-  SL.TranslationContext DijkstraEra ->
-  InjectValidatedTx
-    (ShelleyBlock (Praos c) ConwayEra)
-    (ShelleyBlock (Praos c) DijkstraEra)
-translateValidatedTxConwayToDijkstraWrapper ctxt =
-  InjectValidatedTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp

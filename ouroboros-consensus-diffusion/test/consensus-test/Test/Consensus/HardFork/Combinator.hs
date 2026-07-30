@@ -443,7 +443,6 @@ instance CanHardFork '[BlockA, BlockB] where
       , crossEraForecast = PCons forecast_AtoB PNil
       }
   hardForkChainSel = Tails.mk2 NoTiebreakerAcrossEras
-  hardForkInjectTxs = InPairs.mk2 injectTx_AtoB
 
   hardForkInjTxMeasurePhase1 = \case
     (Z (WrapTxMeasurePhase1 x)) -> x
@@ -583,15 +582,6 @@ forecast_AtoB ::
 forecast_AtoB = InPairs.ignoringBoth $ CrossEraForecaster $ \_ _ _ ->
   return $
     WrapLedgerView ()
-
-injectTx_AtoB ::
-  RequiringBoth
-    WrapLedgerConfig
-    (Product2 InjectTx InjectValidatedTx)
-    BlockA
-    BlockB
-injectTx_AtoB =
-  InPairs.ignoringBoth $ Pair2 cannotInjectTx cannotInjectValidatedTx
 
 {-------------------------------------------------------------------------------
   Query HF

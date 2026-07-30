@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -20,9 +21,6 @@ import Data.Maybe (fromMaybe)
 import Data.SOP (Top)
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint (All)
-import Data.SOP.Functors (Product2 (..))
-import Data.SOP.InPairs (InPairs)
-import qualified Data.SOP.InPairs as InPairs
 import Data.SOP.Index
 import qualified Data.SOP.Match as Match
 import Data.SOP.OptNP (NonEmptyOptNP, OptNP, ViewOptNP (..))
@@ -330,14 +328,13 @@ hardForkForgeBlock
         forgeBlockOne
         cfgs
         (OptNP.toNP blockForging)
-      $ injectValidatedTxs (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) txs)
       -- We know both NSs must be from the same era, because they were all
       -- produced from the same 'BlockForging'. Unfortunately, we can't enforce
       -- it statically.
       $ Match.mustMatchNS
         "IsLeader"
         (getOneEraIsLeader isLeader)
-        (State.tip ledgerState)
+      $ injectValidatedTxs ledgerState
    where
     cfgs = distribTopLevelConfig ei cfg
     ei =
@@ -351,27 +348,32 @@ hardForkForgeBlock
       "impossible: current era lacks block forging but we have an IsLeader proof "
         <> show eraIndex
 
+    -- If we crossed an era boundary in this forge, the transactions were
+    -- revalidated against the tip in the new era so:
+    --
+    --  * Re-matching them MUST leave them in the right era via returning
+    --    'ReapplyTxs'.
+    --
+    --  * There should be no rejected-by-untranslatable transactions.
+    --
+    -- Otherwise there is a bug.
     injectValidatedTxs ::
-      [NS WrapValidatedGenTx xs] ->
-      NS f xs ->
+      State.HardForkState f xs ->
       NS (Product f ([] :.: WrapValidatedGenTx)) xs
-    injectValidatedTxs = noMismatches .: flip (matchValidatedTxsNS injTxs)
-     where
-      injTxs :: InPairs InjectValidatedTx xs
-      injTxs =
-        InPairs.hmap (\(Pair2 _ x) -> x) $
-          InPairs.requiringBoth
-            (hmap (WrapLedgerConfig . configLedger) cfgs)
-            hardForkInjectTxs
-
-      -- \| We know the transactions must be valid w.r.t. the given ledger
-      -- state, the Mempool maintains that invariant. That means they are
-      -- either from the same era, or can be injected into that era.
-      noMismatches ::
-        ([Match.Mismatch WrapValidatedGenTx f xs], NS (Product f ([] :.: WrapValidatedGenTx)) xs) ->
-        NS (Product f ([] :.: WrapValidatedGenTx)) xs
-      noMismatches ([], xs) = xs
-      noMismatches (_errs, _) = error "unexpected unmatchable transactions"
+    injectValidatedTxs st =
+      case rematchValidatedTxs getHardForkValidatedGenTx st $ map (\x -> (x, (), ())) txs of
+        ([], hfs) ->
+          hmap
+            ( \case
+                Pair _ ApplyTxs{} ->
+                  error
+                    "Impossible! we have translated the txs to the current era, but they should already be in this era!"
+                Pair a (ReapplyTxs b) -> Pair a $ Comp $ map (\(x, (), ()) -> x) b
+            )
+            $ State.tip hfs
+        (_ : _, _) ->
+          error
+            "Impossible! some transactions were rejected as untranslatable by rematchValidatedTxs but all of them have been translated and applied just now."
 
     -- \| Unwraps all the layers needed for SOP and call 'forgeBlock'.
     forgeBlockOne ::
@@ -379,11 +381,11 @@ hardForkForgeBlock
       TopLevelConfig blk ->
       (Maybe :.: BlockForging m) blk ->
       Product
+        WrapIsLeader
         ( Product
-            WrapIsLeader
             (FlipTickedLedgerState EmptyMK)
+            ([] :.: WrapValidatedGenTx)
         )
-        ([] :.: WrapValidatedGenTx)
         blk ->
       m blk
     forgeBlockOne
@@ -391,8 +393,8 @@ hardForkForgeBlock
       cfg'
       (Comp mBlockForging')
       ( Pair
-          (Pair (WrapIsLeader isLeader') (FlipTickedLedgerState ledgerState'))
-          (Comp txs')
+          (WrapIsLeader isLeader')
+          (Pair (FlipTickedLedgerState ledgerState') (Comp txs'))
         ) =
         forgeBlock
           ( fromMaybe

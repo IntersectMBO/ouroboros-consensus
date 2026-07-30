@@ -53,7 +53,6 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import Codec.CBOR.Decoding
 import Codec.CBOR.Encoding
-import Control.Monad.Except (runExcept)
 import qualified Control.Tracer as Tracer
 import Data.Coerce
 import qualified Data.Map.Strict as Map
@@ -100,7 +99,6 @@ import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.TypeFamilyWrappers
-import Ouroboros.Consensus.Util (eitherToMaybe)
 import Ouroboros.Consensus.Util.IndexedMemPack
 import System.FS.API (SomeHasFS)
 import Test.ThreadNet.TxGen
@@ -289,36 +287,6 @@ instance
         }
 
   hardForkChainSel = Tails.mk2 SameTiebreakerAcrossEras
-
-  hardForkInjectTxs =
-    InPairs.mk2 $
-      InPairs.RequireBoth $ \_cfg1 cfg2 ->
-        let ctxt = shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2)
-         in Pair2
-              (InjectTx (translateTx ctxt))
-              (InjectValidatedTx (translateValidatedTx ctxt))
-   where
-    translateTx ::
-      SL.TranslationContext era2 ->
-      GenTx (ShelleyBlock proto era1) ->
-      Maybe (GenTx (ShelleyBlock proto era2))
-    translateTx transCtxt =
-      fmap unComp
-        . eitherToMaybe
-        . runExcept
-        . SL.translateEra transCtxt
-        . Comp
-
-    translateValidatedTx ::
-      SL.TranslationContext era2 ->
-      WrapValidatedGenTx (ShelleyBlock proto era1) ->
-      Maybe (WrapValidatedGenTx (ShelleyBlock proto era2))
-    translateValidatedTx transCtxt =
-      fmap unComp
-        . eitherToMaybe
-        . runExcept
-        . SL.translateEra transCtxt
-        . Comp
 
   hardForkInjTxMeasurePhase1 = \case
     (Z (WrapTxMeasurePhase1 x)) -> translateTxMeasure x

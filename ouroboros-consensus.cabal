@@ -1641,7 +1641,6 @@ library unstable-cardano-testlib
     fs-sim,
     mempack,
     microlens,
-    mtl,
     nothunks,
     ouroboros-consensus:{cardano, diffusion, ouroboros-consensus, protocol, unstable-consensus-testlib, unstable-diffusion-testlib, unstable-protocol-testlib},
     ouroboros-network:api,
