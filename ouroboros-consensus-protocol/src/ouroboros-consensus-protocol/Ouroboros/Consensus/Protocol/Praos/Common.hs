@@ -27,6 +27,8 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , instantiatePraosCredentials
   ) where
 
+import Cardano.Crypto.DSIGN.BLS12381 (BLS12381MinSigDSIGN)
+import Cardano.Crypto.DSIGN.Class (SignKeyDSIGN)
 import qualified Cardano.Crypto.KES.Class as KES
 import Cardano.Crypto.VRF
 import qualified Cardano.Crypto.VRF as VRF
@@ -274,6 +276,9 @@ data PraosCanBeLeader c = PraosCanBeLeader
   { praosCanBeLeaderColdVerKey :: !(SL.VKey BlockIssuer)
   -- ^ Stake pool cold key or genesis stakeholder delegate cold key.
   , praosCanBeLeaderSignKeyVRF :: !(SignKeyVRF (VRF c))
+  , praosCanBeLeaderSignKeyBLS :: !(Maybe (SignKeyDSIGN BLS12381MinSigDSIGN))
+  -- ^ Optional BLS12-381 signing key for the Leios voting scheme. Set only for
+  -- block producers participating in Leios (Dijkstra era); 'Nothing' otherwise.
   , praosCanBeLeaderCredentialsSource :: !(PraosCredentialsSource c)
   -- ^ How to obtain KES credentials (ocert + sign key)
   }

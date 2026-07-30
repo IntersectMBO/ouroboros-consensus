@@ -257,6 +257,7 @@ mkLeaderCredentials CoreNode{cnDelegateKey, cnVRF, cnKES, cnOCert} =
           { praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound cnOCert cnKES
           , praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
           , praosCanBeLeaderSignKeyVRF = cnVRF
+          , praosCanBeLeaderSignKeyBLS = Nothing
           }
     , shelleyLeaderCredentialsLabel = "ThreadNet"
     }
