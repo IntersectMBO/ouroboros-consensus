@@ -56,12 +56,12 @@ source-repository-package
     cardano-diffusion
     network-mux
 
--- Points to nfrisby-antipipelining1 tag
+-- Points to nfrisby-pr93-lookahead-merge-commit tag
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/typed-protocols
-  tag: 0ae7f499c54944a33aed9c55a38a092461be43ca
-  --sha256: sha256-ydJALGzd6FzJYE4zKCY6X5OKIcOZjcZDmuVgMsAswWA=
+  tag: 9b4627221ae5d649f2303c6926a8dba3f9934658
+  --sha256: sha256-55skVYIR0WjXMwJEirLgF0HFHUpFLBppuV9gvTWqoOI=
   subdir:
     typed-protocols
 
