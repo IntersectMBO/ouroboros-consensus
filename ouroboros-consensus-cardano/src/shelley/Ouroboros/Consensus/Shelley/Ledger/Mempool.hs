@@ -13,6 +13,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+-- TODO: Ledger has a few deprecations that we are ignoring for now
+{-# OPTIONS_GHC -Wno-deprecations #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-x-ord-preserving-coercions #-}
 #if __GLASGOW_HASKELL__ < 908
 {-# OPTIONS_GHC -Wno-unrecognised-warning-flags #-}
@@ -34,8 +36,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
 
     -- * Exported for tests
   , AlonzoMeasure (..)
-  , ConwayMeasure (..)
-  , DijkstraMeasure (..)
+  , RefScriptSize (..)
   , fromExUnits
   ) where
 
@@ -92,6 +93,7 @@ import Control.Arrow ((+++))
 import Control.Monad (guard)
 import Control.Monad.Except (Except, liftEither)
 import Control.Monad.Identity (Identity (..))
+import Data.ByteString.Short (ShortByteString)
 import Data.DerivingVia (InstantiatedAt (..))
 import Data.Foldable (toList)
 import Data.Measure (Measure)
@@ -116,10 +118,11 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
   , getPParams
   )
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
-import Ouroboros.Consensus.Util (ShowProxy (..), coerceSet)
+import Ouroboros.Consensus.Util (ShowProxy (..), coerceMapKeys, coerceSet)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
 import Ouroboros.Network.SizeInBytes
+import Ouroboros.Network.Tx (HasRawTxId (..))
 
 data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx TopTx era)
   deriving stock Generic
@@ -231,6 +234,10 @@ instance ShelleyBasedEra era => HasTxId (GenTx (ShelleyBlock proto era)) where
 instance ShelleyBasedEra era => ConvertRawTxId (GenTx (ShelleyBlock proto era)) where
   toRawTxIdHash (ShelleyTxId i) =
     Hash.hashToBytesShort . SL.extractHash . SL.unTxId $ i
+
+instance ShelleyBasedEra era => HasRawTxId (TxId (GenTx (ShelleyBlock proto era))) where
+  type RawTxId (TxId (GenTx (ShelleyBlock proto era))) = ShortByteString
+  getRawTxId = toRawTxIdHash
 
 instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
   extractTxs =
@@ -513,22 +520,28 @@ wrapCBORinCBOROverhead size =
     + fromIntegral size
 
 instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) where
-  type TxMeasure (ShelleyBlock p ShelleyEra) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase1 (ShelleyBlock p ShelleyEra) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 (ShelleyBlock p ShelleyEra) = TrivialTxMeasurePhase2
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
-  blockCapacityTxMeasure _cfg = txsMaxBytes
+  txMeasurePhase1 _cfg st tx = runValidation $ txInBlockSize st tx
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _cfg = flip TxMeasure TrivialTxMeasurePhase2 . txsMaxBytes
 
 instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) where
-  type TxMeasure (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase1 (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 (ShelleyBlock p AllegraEra) = TrivialTxMeasurePhase2
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
-  blockCapacityTxMeasure _cfg = txsMaxBytes
+  txMeasurePhase1 _cfg st tx = runValidation $ txInBlockSize st tx
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _cfg = flip TxMeasure TrivialTxMeasurePhase2 . txsMaxBytes
 
 instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
-  type TxMeasure (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase1 (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
+  type TxMeasurePhase2 (ShelleyBlock p MaryEra) = TrivialTxMeasurePhase2
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
-  blockCapacityTxMeasure _cfg = txsMaxBytes
+  txMeasurePhase1 _cfg st tx = runValidation $ txInBlockSize st tx
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _cfg = flip TxMeasure TrivialTxMeasurePhase2 . txsMaxBytes
 
 -----
 
@@ -553,11 +566,10 @@ instance Monoid AlonzoMeasure where
   mappend = (<>)
   mempty = AlonzoMeasure mempty mempty
 
-instance TxMeasureMetrics AlonzoMeasure where
+instance TxMeasurePhase1Metrics AlonzoMeasure where
   txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . byteSize
   txMeasureMetricExUnitsMemory = exUnitsMem' . exUnits
   txMeasureMetricExUnitsSteps = exUnitsSteps' . exUnits
-  txMeasureMetricRefScriptsSizeBytes _ = mempty
 
 fromExUnits :: ExUnits -> ExUnits' Natural
 fromExUnits = unWrapExUnits
@@ -583,7 +595,7 @@ txMeasureAlonzo ::
   , ExUnitsTooBigUTxO era
   , MaxTxSizeUTxO era
   ) =>
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
+  TickedLedgerState (ShelleyBlock proto era) EmptyMK ->
   GenTx (ShelleyBlock proto era) ->
   V.Validation (TxErrorSG era) AlonzoMeasure
 txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
@@ -657,76 +669,21 @@ instance
   ShelleyCompatible p AlonzoEra =>
   TxLimits (ShelleyBlock p AlonzoEra)
   where
-  type TxMeasure (ShelleyBlock p AlonzoEra) = AlonzoMeasure
+  type TxMeasurePhase1 (ShelleyBlock p AlonzoEra) = AlonzoMeasure
+  type TxMeasurePhase2 (ShelleyBlock p AlonzoEra) = TrivialTxMeasurePhase2
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
-  blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
+  txMeasurePhase1 _cfg st tx = runValidation $ txMeasureAlonzo st tx
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _cfg = flip TxMeasure TrivialTxMeasurePhase2 . blockCapacityAlonzoMeasure
 
 -----
 
-newtype DijkstraMeasure = DijkstraMeasure
-  { conwayMeasure :: ConwayMeasure
-  }
-  deriving stock (Eq, Generic, Show)
-  deriving anyclass NoThunks
-  deriving newtype (Semigroup, Monoid, HasByteSize, TxMeasureMetrics)
-  deriving
-    Measure
-    via (InstantiatedAt Generic DijkstraMeasure)
+newtype RefScriptSize = RefScriptSize {refScriptsSize :: IgnoringOverflow ByteSize32}
+  deriving (Eq, Generic, Show)
+  deriving newtype (NoThunks, Measure, Semigroup, Monoid)
 
-blockCapacityDijkstraMeasure ::
-  forall proto era mk.
-  ( ShelleyCompatible proto era
-  , SL.ConwayEraPParams era
-  ) =>
-  TickedLedgerState (ShelleyBlock proto era) mk ->
-  DijkstraMeasure
-blockCapacityDijkstraMeasure = DijkstraMeasure . blockCapacityConwayMeasure
-
-txMeasureDijkstra ::
-  forall proto era.
-  ( ShelleyCompatible proto era
-  , L.AlonzoEraTxWits era
-  , L.BabbageEraTxBody era
-  , SL.ConwayEraPParams era
-  , ExUnitsTooBigUTxO era
-  , MaxTxSizeUTxO era
-  , TxRefScriptsSizeTooBig era
-  ) =>
-  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
-  GenTx (ShelleyBlock proto era) ->
-  V.Validation (TxErrorSG era) DijkstraMeasure
-txMeasureDijkstra st = fmap DijkstraMeasure . txMeasureConway st
-
------
-
-data ConwayMeasure = ConwayMeasure
-  { alonzoMeasure :: !AlonzoMeasure
-  , refScriptsSize :: !(IgnoringOverflow ByteSize32)
-  }
-  deriving stock (Eq, Generic, Show)
-  deriving anyclass NoThunks
-  deriving
-    Measure
-    via (InstantiatedAt Generic ConwayMeasure)
-
-instance Semigroup ConwayMeasure where
-  ConwayMeasure a1 r1 <> ConwayMeasure a2 r2 =
-    ConwayMeasure (a1 <> a2) (r1 <> r2)
-
-instance Monoid ConwayMeasure where
-  mappend = (<>)
-  mempty = ConwayMeasure mempty mempty
-
-instance HasByteSize ConwayMeasure where
-  txMeasureByteSize = txMeasureByteSize . alonzoMeasure
-
-instance TxMeasureMetrics ConwayMeasure where
-  txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . alonzoMeasure
-  txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . alonzoMeasure
-  txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . alonzoMeasure
-  txMeasureMetricRefScriptsSizeBytes =
-    unIgnoringOverflow . refScriptsSize
+instance TxMeasurePhase2Metrics RefScriptSize where
+  txMeasureMetricRefScriptsSizeBytes = unIgnoringOverflow . refScriptsSize
 
 blockCapacityConwayMeasure ::
   forall proto era mk.
@@ -734,35 +691,31 @@ blockCapacityConwayMeasure ::
   , SL.ConwayEraPParams era
   ) =>
   TickedLedgerState (ShelleyBlock proto era) mk ->
-  ConwayMeasure
+  (AlonzoMeasure, RefScriptSize)
 blockCapacityConwayMeasure st =
-  ConwayMeasure
-    { alonzoMeasure = blockCapacityAlonzoMeasure st
-    , refScriptsSize =
-        IgnoringOverflow $
-          ByteSize32 (pparams ^. SL.ppMaxRefScriptSizePerBlockG)
-    }
+  ( blockCapacityAlonzoMeasure st
+  , RefScriptSize $
+      IgnoringOverflow $
+        ByteSize32 (pparams ^. SL.ppMaxRefScriptSizePerBlockG)
+  )
  where
   pparams = getPParams $ tickedShelleyLedgerState st
 
-txMeasureConway ::
+txMeasureRefScripts ::
   forall proto era.
   ( ShelleyCompatible proto era
-  , L.AlonzoEraTxWits era
   , L.BabbageEraTxBody era
-  , ExUnitsTooBigUTxO era
-  , MaxTxSizeUTxO era
   , TxRefScriptsSizeTooBig era
   , SL.ConwayEraPParams era
   ) =>
   TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
   GenTx (ShelleyBlock proto era) ->
-  V.Validation (TxErrorSG era) ConwayMeasure
-txMeasureConway st tx@(ShelleyTx _txid tx') =
-  ConwayMeasure <$> txMeasureAlonzo st tx <*> refScriptBytes
+  V.Validation (TxErrorSG era) RefScriptSize
+txMeasureRefScripts st (ShelleyTx _txid tx') =
+  RefScriptSize <$> refScriptBytes
  where
-  utxo = SL.getUTxO . tickedShelleyLedgerState $ st
-  txsz = SL.txNonDistinctRefScriptsSize utxo tx' :: Int
+  ValuesMK utxo = getLedgerTables $ projectLedgerTables st
+  txsz = SL.txNonDistinctRefScriptsSize (SL.UTxO $ coerceMapKeys utxo) tx' :: Int
 
   pparams = getPParams $ tickedShelleyLedgerState st
 
@@ -800,25 +753,31 @@ instance
   ShelleyCompatible p BabbageEra =>
   TxLimits (ShelleyBlock p BabbageEra)
   where
-  type TxMeasure (ShelleyBlock p BabbageEra) = AlonzoMeasure
+  type TxMeasurePhase1 (ShelleyBlock p BabbageEra) = AlonzoMeasure
+  type TxMeasurePhase2 (ShelleyBlock p BabbageEra) = TrivialTxMeasurePhase2
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
-  blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
+  txMeasurePhase1 _cfg st tx = runValidation $ txMeasureAlonzo st tx
+  txMeasurePhase2 _cfg _st _tx = pure TrivialTxMeasurePhase2
+  blockCapacityTxMeasure _cfg = flip TxMeasure TrivialTxMeasurePhase2 . blockCapacityAlonzoMeasure
 
 instance
   ShelleyCompatible p ConwayEra =>
   TxLimits (ShelleyBlock p ConwayEra)
   where
-  type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
+  type TxMeasurePhase1 (ShelleyBlock p ConwayEra) = AlonzoMeasure
+  type TxMeasurePhase2 (ShelleyBlock p ConwayEra) = RefScriptSize
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)
-  txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
-  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+  txMeasurePhase1 _cfg st tx = runValidation $ txMeasureAlonzo st tx
+  txMeasurePhase2 _cfg st tx = runValidation $ txMeasureRefScripts st tx
+  blockCapacityTxMeasure _cfg = uncurry TxMeasure . blockCapacityConwayMeasure
 
 instance
   ShelleyCompatible p DijkstraEra =>
   TxLimits (ShelleyBlock p DijkstraEra)
   where
-  type TxMeasure (ShelleyBlock p DijkstraEra) = DijkstraMeasure
-  txMeasure _cfg st tx = runValidation $ txMeasureDijkstra st tx
-  blockCapacityTxMeasure _cfg = blockCapacityDijkstraMeasure
+  type TxMeasurePhase1 (ShelleyBlock p DijkstraEra) = AlonzoMeasure
+  type TxMeasurePhase2 (ShelleyBlock p DijkstraEra) = RefScriptSize
+  blockCapacityTxMeasure _cfg = uncurry TxMeasure . blockCapacityConwayMeasure
+  txMeasurePhase1 _cfg st tx = runValidation $ txMeasureAlonzo st tx
+  txMeasurePhase2 _cfg st tx = runValidation $ txMeasureRefScripts st tx
   txWireSize (ShelleyTx _ tx) = wrapCBORinCBOROverhead (tx ^. wireSizeTxF)

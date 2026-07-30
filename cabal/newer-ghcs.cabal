@@ -1,10 +1,5 @@
-if impl (ghc >= 9.10)
-  allow-newer:
-    -- https://github.com/phadej/regression-simple/pull/14
-    , regression-simple:base
-
 -- cabal-allow-newer
-if impl (ghc >= 9.14)
+if impl(ghc >=9.14)
   allow-newer:
     , canonical-json:containers
     , cborg-json:base
@@ -13,15 +8,12 @@ if impl (ghc >= 9.14)
     , compact:base
     , dependent-map:containers
     , dictionary-sharing:containers
-    , diff-containers:base
-    , hedgehog-quickcheck:QuickCheck
     , latex-svg-image:base
-    , lsm-tree:data-elevator
     , ordered-containers:containers
     , safe-wild-cards:template-haskell
-    , serdoc-core:containers
     , serdoc-core:template-haskell
     , serialise:base
     , serialise:containers
     , serialise:time
+    , tdigest:base
     , with-utf8:base

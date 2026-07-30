@@ -30,7 +30,7 @@ import Control.Monad.Class.MonadTime
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), nullTracer, traceWith)
+import Control.Tracer (Tracer, mkTracer, nullTracer, traceWith)
 import Data.Bifunctor (first)
 import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
@@ -197,7 +197,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
 
               blockFetchTracer ::
                 Tracer m (PeerRole, Driver.TraceSendRecv (BlockFetch TestBlock (Point TestBlock)))
-              blockFetchTracer = Tracer \case
+              blockFetchTracer = mkTracer \case
                 (AsClient, ev) -> do
                   atomically case ev of
                     Driver.TraceRecvMsg (AnyMessage (MsgBlock _)) ->
@@ -311,7 +311,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
       getPerasWeightSnapshot = ChainDB.getPerasWeightSnapshot chainDB
     pure BlockFetchClientInterface.ChainDbView{..}
    where
-    cdbTracer = Tracer \case
+    cdbTracer = mkTracer \case
       ChainDBImpl.TraceAddBlockEvent ev ->
         traceWith tracer $ "ChainDB: " <> show ev
       _ -> pure ()

@@ -139,4 +139,5 @@ compactGenesis genesis =
     genesis
       { SL.sgInitialFunds = mempty
       , SL.sgStaking = SL.emptyGenesisStaking
+      , SL.sgExtraConfig = SL.SNothing
       }

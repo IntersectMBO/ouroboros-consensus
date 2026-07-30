@@ -35,10 +35,9 @@ import Control.Monad.Except ()
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Control.Monad.Trans.State.Strict
-import Control.Tracer (Tracer, nullTracer, traceWith)
+import Control.Tracer (Tracer, nullTracer, traceWith, (>$<))
 import Data.Bifunctor (first)
 import Data.Function (on)
-import Data.Functor.Contravariant ((>$<))
 import Data.List (sortBy)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE

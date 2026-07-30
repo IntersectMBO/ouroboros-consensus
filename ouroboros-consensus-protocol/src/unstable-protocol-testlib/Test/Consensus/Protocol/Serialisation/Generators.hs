@@ -6,7 +6,12 @@ module Test.Consensus.Protocol.Serialisation.Generators () where
 
 import Cardano.Crypto.KES (unsoundPureSignedKES)
 import Cardano.Crypto.VRF (evalCertified)
-import Cardano.Protocol.TPraos.BHeader (HashHeader, PrevHash (..))
+import Cardano.Protocol.Praos.BlockHeader
+  ( Header (Header)
+  , HeaderBody (HeaderBody)
+  )
+import Cardano.Protocol.Praos.VRF (InputVRF, mkInputVRF)
+import Cardano.Protocol.TPraos.BlockHeader (HashHeader, PrevHash (..))
 import Cardano.Protocol.TPraos.OCert
   ( KESPeriod (KESPeriod)
   , OCert (OCert)
@@ -18,11 +23,6 @@ import Cardano.Slotting.Slot
   )
 import Ouroboros.Consensus.Protocol.Praos (PraosState (PraosState))
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import Ouroboros.Consensus.Protocol.Praos.Header
-  ( Header (Header)
-  , HeaderBody (HeaderBody)
-  )
-import Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF)
 import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators ()
 import Test.Crypto.KES ()
 import Test.QuickCheck (Arbitrary (..), Gen, choose, oneof)

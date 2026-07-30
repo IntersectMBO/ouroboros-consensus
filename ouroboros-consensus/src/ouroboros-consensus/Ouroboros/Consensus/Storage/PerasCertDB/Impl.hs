@@ -123,7 +123,7 @@ data PerasCertDbArgs f m blk = PerasCertDbArgs
   { pcdbaTracer :: Tracer m (TraceEvent blk)
   }
 
-defaultArgs :: Applicative m => Incomplete PerasCertDbArgs m blk
+defaultArgs :: Monad m => Incomplete PerasCertDbArgs m blk
 defaultArgs =
   PerasCertDbArgs
     { pcdbaTracer = nullTracer

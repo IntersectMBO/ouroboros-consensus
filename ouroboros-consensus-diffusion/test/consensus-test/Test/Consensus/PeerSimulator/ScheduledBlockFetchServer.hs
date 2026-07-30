@@ -109,8 +109,8 @@ runScheduledBlockFetchServer ssPeerId ssTickStarted ssCurrentState tracer sbfsHa
             , ssTickStarted
             , ssCurrentState
             , ssCommonTracer =
-                Tracer (traceWith tracer . TraceScheduledBlockFetchServerEvent ssPeerId . TraceHandlerEventBF)
+                mkTracer (traceWith tracer . TraceScheduledBlockFetchServerEvent ssPeerId . TraceHandlerEventBF)
             }
-      , sbfsTracer = Tracer (traceWith tracer . TraceScheduledBlockFetchServerEvent ssPeerId)
+      , sbfsTracer = mkTracer (traceWith tracer . TraceScheduledBlockFetchServerEvent ssPeerId)
       , sbfsHandlers
       }

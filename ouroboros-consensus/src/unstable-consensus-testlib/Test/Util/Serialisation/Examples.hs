@@ -28,8 +28,6 @@ import Ouroboros.Consensus.Ledger.Abstract
   ( EmptyMK
   , LedgerConfig
   , LedgerState
-  , LedgerTables
-  , ValuesMK
   )
 import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import Ouroboros.Consensus.Ledger.Query (BlockQuery, SomeBlockQuery)
@@ -64,7 +62,6 @@ data Examples blk = Examples
   , exampleExtLedgerState :: Labelled (ExtLedgerState blk EmptyMK)
   , exampleSlotNo :: Labelled SlotNo
   , exampleLedgerConfig :: Labelled (LedgerConfig blk)
-  , exampleLedgerTables :: Labelled (LedgerTables blk ValuesMK)
   }
 
 emptyExamples :: Examples blk
@@ -86,7 +83,6 @@ emptyExamples =
     , exampleExtLedgerState = mempty
     , exampleSlotNo = mempty
     , exampleLedgerConfig = mempty
-    , exampleLedgerTables = mempty
     }
 
 combineExamples ::
@@ -113,7 +109,6 @@ combineExamples f e1 e2 =
     , exampleExtLedgerState = combine exampleExtLedgerState
     , exampleSlotNo = combine exampleSlotNo
     , exampleLedgerConfig = combine exampleLedgerConfig
-    , exampleLedgerTables = combine exampleLedgerTables
     }
  where
   combine :: (Examples blk -> Labelled a) -> Labelled a

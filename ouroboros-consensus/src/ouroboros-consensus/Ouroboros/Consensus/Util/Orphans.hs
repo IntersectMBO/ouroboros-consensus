@@ -10,6 +10,7 @@
 module Ouroboros.Consensus.Util.Orphans () where
 
 import Cardano.Binary (fromCBOR, toCBOR)
+import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
 import Cardano.Crypto.DSIGN.Class
 import Cardano.Crypto.DSIGN.Mock (MockDSIGN)
 import Cardano.Crypto.Hash (Hash, HashAlgorithm)
@@ -24,8 +25,7 @@ import qualified Data.MultiSet as MultiSet
 import Data.SOP.BasicFunctors
 import Data.Typeable (Typeable)
 import NoThunks.Class
-  ( InspectHeap (..)
-  , InspectHeapNamed (..)
+  ( InspectHeapNamed (..)
   , NoThunks (..)
   , OnlyCheckWhnf (..)
   , OnlyCheckWhnfNamed (..)
@@ -33,7 +33,7 @@ import NoThunks.Class
   )
 import Ouroboros.Network.Util.ShowProxy
 import System.FS.API (SomeHasFS)
-import System.FS.API.Types (FsPath, Handle)
+import System.FS.API.Types (Handle)
 import System.FS.CRC (CRC (CRC))
 import System.Random (StdGen)
 import qualified System.Random.Internal as Random
@@ -47,8 +47,8 @@ instance (HashAlgorithm h, Typeable a) => Serialise (Hash h a) where
   decode = fromCBOR
 
 instance Serialise (VerKeyDSIGN MockDSIGN) where
-  encode = encodeVerKeyDSIGN
-  decode = decodeVerKeyDSIGN
+  encode = encodeFixedSized
+  decode = decodeFixedSized
 
 {-------------------------------------------------------------------------------
   NoThunks
@@ -97,7 +97,6 @@ instance NoThunks StdGen where
   fs-api
 -------------------------------------------------------------------------------}
 
-deriving via InspectHeap FsPath instance NoThunks FsPath
 deriving newtype instance NoThunks CRC
 deriving via
   InspectHeapNamed "Handle" (Handle h)

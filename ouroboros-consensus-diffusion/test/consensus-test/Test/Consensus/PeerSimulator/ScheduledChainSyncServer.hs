@@ -12,7 +12,7 @@ module Test.Consensus.PeerSimulator.ScheduledChainSyncServer
   , runScheduledChainSyncServer
   ) where
 
-import Control.Tracer (Tracer (Tracer), traceWith)
+import Control.Tracer (Tracer, mkTracer, traceWith)
 import Ouroboros.Consensus.Block (Header)
 import Ouroboros.Consensus.Block.Abstract (Point (..))
 import Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM))
@@ -159,8 +159,8 @@ runScheduledChainSyncServer ssPeerId ssTickStarted ssCurrentState tracer scssHan
             , ssTickStarted
             , ssCurrentState
             , ssCommonTracer =
-                Tracer (traceWith tracer . TraceScheduledChainSyncServerEvent ssPeerId . TraceHandlerEventCS)
+                mkTracer (traceWith tracer . TraceScheduledChainSyncServerEvent ssPeerId . TraceHandlerEventCS)
             }
-      , scssTracer = Tracer (traceWith tracer . TraceScheduledChainSyncServerEvent ssPeerId)
+      , scssTracer = mkTracer (traceWith tracer . TraceScheduledChainSyncServerEvent ssPeerId)
       , scssHandlers
       }

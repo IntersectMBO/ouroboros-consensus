@@ -23,7 +23,6 @@ import Data.Bifunctor (first)
 import Data.Containers.ListUtils (nubOrd)
 import Data.Foldable (for_)
 import qualified Data.Foldable as Foldable
-import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty

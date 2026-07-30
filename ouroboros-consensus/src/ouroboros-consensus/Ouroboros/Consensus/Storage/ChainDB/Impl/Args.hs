@@ -16,9 +16,8 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args
   ) where
 
 import Control.ResourceRegistry (ResourceRegistry)
-import Control.Tracer (Tracer, nullTracer)
+import Control.Tracer (Tracer, nullTracer, (>$<))
 import Data.Function ((&))
-import Data.Functor.Contravariant ((>$<))
 import Data.Kind
 import Data.Time.Clock (secondsToDiffTime)
 import Ouroboros.Consensus.Block
@@ -241,6 +240,7 @@ completeChainDbArgs
       }
 
 updateTracer ::
+  Monad m =>
   Tracer m (TraceEvent blk) ->
   ChainDbArgs f m blk ->
   ChainDbArgs f m blk

@@ -144,14 +144,18 @@ import Ouroboros.Network.TxSubmission.Inbound.V1
   , TxSubmissionMempoolWriter
   )
 import qualified Ouroboros.Network.TxSubmission.Inbound.V1 as Inbound
+import Ouroboros.Network.TxSubmission.Inbound.V2 (TxDecisionPolicy)
 import Ouroboros.Network.TxSubmission.Inbound.V2.Registry
-  ( SharedTxStateVar
-  , TxChannelsVar
-  , TxMempoolSem
-  , decisionLogicThreads
+  ( PeerTxRegistry
+  , SharedTxStateVar
+  , TxSubmissionCountersVar
+  , newPeerTxRegistry
   , newSharedTxStateVar
-  , newTxChannelsVar
-  , newTxMempoolSem
+  , newTxSubmissionCountersVar
+  , txCountersThreadV2
+  )
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types
+  ( emptySharedTxState
   )
 import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( TxSubmissionMempoolReader
@@ -197,13 +201,14 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getDiffusionPipeliningSupport ::
       DiffusionPipeliningSupport
   , getBlockchainTime :: BlockchainTime m
-  , getTxChannelsVar :: TxChannelsVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
-  -- ^ Communication channels between `TxSubmission` client mini-protocol and
-  -- decision logic.
-  , getSharedTxStateVar :: SharedTxStateVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
+  , getPeerTxRegistry :: PeerTxRegistry m (ConnectionId addrNTN)
+  -- ^ Per-peer tx-submission state: in-flight tracking and counters.
+  , getSharedTxStateVar :: SharedTxStateVar m (ConnectionId addrNTN) (GenTxId blk)
   -- ^ Shared state of all `TxSubmission` clients.
-  , getTxMempoolSem :: TxMempoolSem m
-  -- ^ A semaphore used by tx-submission for submitting `tx`s to the mempool.
+  , getTxCountersVar :: TxSubmissionCountersVar m
+  -- ^ Accumulator for tx-submission counters of disconnected peers.
+  , getTxDecisionPolicy :: TxDecisionPolicy
+  -- ^ Tx-submission decision policy.
   }
 
 -- | Arguments required when initializing a node
@@ -230,7 +235,6 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , gsmArgs :: GsmNodeKernelArgs m blk
   , getUseBootstrapPeers :: STM m UseBootstrapPeers
   , peerSharingRng :: StdGen
-  , txSubmissionRng :: StdGen
   , txSubmissionInitDelay :: TxSubmissionInitDelay
   , publicPeerSelectionStateVar ::
       StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
@@ -260,7 +264,6 @@ initNodeKernel
     , btime
     , gsmArgs
     , peerSharingRng
-    , txSubmissionRng
     , publicPeerSelectionStateVar
     , genesisArgs
     , getDiffusionPipeliningSupport
@@ -348,9 +351,9 @@ initNodeKernel
         ps_POLICY_PEER_SHARE_STICKY_TIME
         ps_POLICY_PEER_SHARE_MAX_PEERS
 
-    txChannelsVar <- newTxChannelsVar
-    sharedTxStateVar <- newSharedTxStateVar txSubmissionRng
-    txMempoolSem <- newTxMempoolSem
+    sharedTxStateVar <- newSharedTxStateVar emptySharedTxState
+    peerTxRegistry <- newPeerTxRegistry
+    txCountersVar <- newTxSubmissionCountersVar mempty
 
     case gnkaLoEAndGDDArgs genesisArgs of
       LoEAndGDDDisabled -> pure ()
@@ -389,13 +392,14 @@ initNodeKernel
           blockFetchConfiguration
 
     void $
-      forkLinkedThread registry "NodeKernel.decisionLogicThreads" $
-        decisionLogicThreads
-          (txLogicTracer tracers)
-          (txCountersTracer tracers)
+      forkLinkedThread registry "NodeKernel.txCountersThreadV2" $
+        txCountersThreadV2
           (txDecisionPolicy miniProtocolParameters)
-          txChannelsVar
+          (txCountersTracer tracers)
+          (txLogicTracer tracers)
+          txCountersVar
           sharedTxStateVar
+          peerTxRegistry
 
     return
       NodeKernel
@@ -415,9 +419,10 @@ initNodeKernel
             varOutboundConnectionsState
         , getDiffusionPipeliningSupport
         , getBlockchainTime = btime
-        , getTxChannelsVar = txChannelsVar
+        , getPeerTxRegistry = peerTxRegistry
         , getSharedTxStateVar = sharedTxStateVar
-        , getTxMempoolSem = txMempoolSem
+        , getTxCountersVar = txCountersVar
+        , getTxDecisionPolicy = txDecisionPolicy miniProtocolParameters
         }
    where
     blockForgingController ::

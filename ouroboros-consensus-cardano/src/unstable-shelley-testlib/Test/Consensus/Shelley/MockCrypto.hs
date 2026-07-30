@@ -24,9 +24,10 @@ import Cardano.Ledger.BaseTypes (Seed)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as Core
 import Cardano.Ledger.Shelley.LedgerState (StashedAVVMAddresses)
+import Cardano.Ledger.Shelley.Rules (UTXOW)
 import Cardano.Protocol.Crypto (Crypto (..))
 import qualified Cardano.Protocol.TPraos.API as SL
-import qualified Cardano.Protocol.TPraos.BHeader as SL
+import qualified Cardano.Protocol.TPraos.BlockHeader as SL
 import Control.State.Transition.Extended (PredicateFailure)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( LedgerSupportsProtocol
@@ -81,7 +82,7 @@ type CanMock proto era =
   , Arbitrary (Core.Tx Core.TopTx era)
   , Arbitrary (Core.TxOut era)
   , Arbitrary (Core.Value era)
-  , Arbitrary (PredicateFailure (SL.ShelleyUTXOW era))
+  , Arbitrary (PredicateFailure (UTXOW era))
   , Arbitrary (Core.TxWits era)
   , Arbitrary (StashedAVVMAddresses era)
   , Arbitrary (Core.GovState era)

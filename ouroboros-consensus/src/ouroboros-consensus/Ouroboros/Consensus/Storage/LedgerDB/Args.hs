@@ -62,7 +62,7 @@ data LedgerDbArgs f m blk = LedgerDbArgs
 
 -- | Default arguments
 defaultArgs ::
-  Applicative m =>
+  Monad m =>
   V2.SomeBackendArgs m blk ->
   Incomplete LedgerDbArgs m blk
 defaultArgs backendArgs =

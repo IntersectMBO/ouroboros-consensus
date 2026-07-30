@@ -8,6 +8,7 @@
 
 module Test.Util.Orphans.NoThunks () where
 
+import Cardano.Ledger.Orphans ()
 import Control.Concurrent.Class.MonadMVar
 import Control.Concurrent.Class.MonadMVar.Strict
 import Control.Concurrent.Class.MonadSTM.Strict
@@ -19,7 +20,6 @@ import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Util.MonadSTM.StrictSVar
 import qualified Ouroboros.Consensus.Util.NormalForm.StrictMVar as NormalForm
 import qualified Ouroboros.Consensus.Util.NormalForm.StrictTVar as NormalForm
-import System.FS.API.Types
 import System.FS.Sim.FsTree
 import System.FS.Sim.MockFS
 
@@ -53,7 +53,6 @@ instance NoThunks a => NoThunks (NormalForm.StrictTVar (IOSim s) a) where
   fs-sim
 -------------------------------------------------------------------------------}
 
-deriving instance NoThunks FsPath
 deriving instance NoThunks MockFS
 deriving instance NoThunks a => NoThunks (FsTree a)
 deriving instance NoThunks HandleMock

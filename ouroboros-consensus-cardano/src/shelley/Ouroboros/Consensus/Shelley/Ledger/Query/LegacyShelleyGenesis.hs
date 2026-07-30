@@ -88,6 +88,7 @@ instance FromCBOR LegacyShelleyGenesis where
             sgGenDelegs
             sgInitialFunds
             sgStaking
+            SNothing
 
 activeSlotsCoeffEncCBOR :: PositiveUnitInterval -> Encoding
 activeSlotsCoeffEncCBOR = enforceEncodingVersion shelleyProtVer . encCBOR . unboundRational

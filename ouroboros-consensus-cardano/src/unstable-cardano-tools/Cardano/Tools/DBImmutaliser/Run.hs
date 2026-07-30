@@ -24,9 +24,8 @@ import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
 import Control.Monad (unless)
 import Control.ResourceRegistry
-import Control.Tracer (Tracer (..), stdoutTracer, traceWith)
+import Control.Tracer (Tracer, mkTracer, stdoutTracer, traceWith, (>$<))
 import Data.Foldable (for_)
-import Data.Functor.Contravariant ((>$<))
 import Data.List (intercalate, sortOn)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
@@ -84,7 +83,7 @@ run Opts{dbDirs, configFile, verbose, dotOut, dryRun} = do
       immutalise (configBlock cfg) (tracer <> dotTracer) dryRun
  where
   tracer = prettyTrace verbose >$< stdoutTracer
-  dotTracer = Tracer $ \case
+  dotTracer = mkTracer $ \case
     TraceAllCandidates candidates -> do
       let dot = dotCandidates $ fst <$> candidates
       whenJust dotOut $ flip Dot.encodeToFile dot

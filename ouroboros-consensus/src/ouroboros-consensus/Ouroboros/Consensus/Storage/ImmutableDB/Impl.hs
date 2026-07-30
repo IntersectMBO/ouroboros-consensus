@@ -165,7 +165,7 @@ data ImmutableDbArgs f m blk = ImmutableDbArgs
 -- only the most recent chunk?
 
 -- | Default arguments
-defaultArgs :: Applicative m => Incomplete ImmutableDbArgs m blk
+defaultArgs :: Monad m => Incomplete ImmutableDbArgs m blk
 defaultArgs =
   ImmutableDbArgs
     { immCacheConfig = cacheConfig

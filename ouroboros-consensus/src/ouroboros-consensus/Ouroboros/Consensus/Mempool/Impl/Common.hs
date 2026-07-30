@@ -175,7 +175,8 @@ deriving instance
   , NoThunks (TickedLedgerState blk DiffMK)
   , NoThunks (TxIn blk)
   , NoThunks (TxOut blk)
-  , NoThunks (TxMeasure blk)
+  , NoThunks (TxMeasurePhase1 blk)
+  , NoThunks (TxMeasurePhase2 blk)
   , StandardHash blk
   , Typeable blk
   ) =>

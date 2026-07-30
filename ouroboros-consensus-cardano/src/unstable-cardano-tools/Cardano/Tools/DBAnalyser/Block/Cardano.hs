@@ -77,6 +77,9 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
   )
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import System.Directory (makeAbsolute)
+import System.FS.API (SomeHasFS (..))
+import System.FS.API.Types (MountPoint (MountPoint))
+import System.FS.IO (ioHasFS)
 import System.FilePath (takeDirectory, (</>))
 import TextBuilder (TextBuilder)
 import qualified TextBuilder as Builder
@@ -134,8 +137,10 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
     }
 
   mkProtocolInfo CardanoBlockArgs{configFile, threshold} = do
-    relativeToConfig :: (FilePath -> FilePath) <-
-      (</>) . takeDirectory <$> makeAbsolute configFile
+    absoluteConfig <- makeAbsolute configFile
+    let configDir = takeDirectory absoluteConfig
+        relativeToConfig :: FilePath -> FilePath
+        relativeToConfig = (configDir </>)
 
     cc :: CardanoConfig <-
       either (error . show) (return . adjustFilePaths relativeToConfig)
@@ -171,13 +176,15 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
               CryptoClass.hashWith id $
                 content
 
-    return $
-      mkCardanoProtocolInfo
-        genesisByron
-        threshold
-        transCfg
-        initialNonce
-        (cfgHardForkTriggers cc)
+    let fs = SomeHasFS (ioHasFS (MountPoint configDir))
+
+    mkCardanoProtocolInfo
+      fs
+      genesisByron
+      threshold
+      transCfg
+      initialNonce
+      (cfgHardForkTriggers cc)
 
   mkLSMConfig CardanoBlockArgs{configFile} = do
     -- The export path is interpreted relative to the LedgerDB filesystem root,
@@ -427,15 +434,17 @@ getShelleyBasedUtxo =
 type CardanoBlockArgs = Args (CardanoBlock StandardCrypto)
 
 mkCardanoProtocolInfo ::
+  SomeHasFS IO ->
   Byron.Genesis.Config ->
   Maybe PBftSignatureThreshold ->
   SL.TransitionConfig L.LatestKnownEra ->
   Nonce ->
   CardanoHardForkTriggers ->
-  ProtocolInfo (CardanoBlock StandardCrypto)
-mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNonce triggers =
-  fst $
-    protocolInfoCardano @_ @IO
+  IO (ProtocolInfo (CardanoBlock StandardCrypto))
+mkCardanoProtocolInfo fs genesisByron signatureThreshold transitionConfig initialNonce triggers =
+  fst
+    <$> protocolInfoCardano @_ @IO
+      fs
       ( CardanoProtocolParams
           ProtocolParamsByron
             { byronGenesis = genesisByron
@@ -454,7 +463,6 @@ mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNo
           emptyCheckpointsMap
           (ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0)
       )
- where
 
 castHeaderHash ::
   HeaderHash ByronBlock ->

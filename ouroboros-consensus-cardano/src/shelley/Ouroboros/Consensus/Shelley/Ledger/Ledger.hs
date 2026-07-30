@@ -58,7 +58,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , BigEndianTxIn (..)
   ) where
 
-import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import Cardano.Ledger.Binary.Decoding
@@ -131,8 +130,8 @@ import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( EnvelopeCheckError
+  , ShelleyProtocolHeader
   , envelopeChecks
-  , mkHeaderView
   )
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.CBOR
@@ -660,7 +659,7 @@ applyHelper ::
   ShelleyCompatible proto era =>
   ( SL.Globals ->
     SL.NewEpochState era ->
-    SL.Block SL.BHeaderView era ->
+    SL.Block (ShelleyProtocolHeader proto) era ->
     Either
       (SL.BlockTransitionError era)
       ( LedgerResult
@@ -687,10 +686,7 @@ applyHelper f cfg blk stBefore = do
     f
       globals
       tickedShelleyLedgerState
-      ( let b = shelleyBlockRaw blk
-            h' = mkHeaderView (SL.blockHeader b)
-         in SL.Block h' (SL.blockBody b)
-      )
+      (shelleyBlockRaw blk)
 
   let track ::
         LedgerState (ShelleyBlock proto era) ValuesMK ->

@@ -95,7 +95,7 @@ type instance PublicKey TestCrypto = (BLS.PublicKey SIGN, BLS.PublicKey VRF)
 -- | Hash the message of a Peras vote
 --
 -- NOTE: this is inspired by the implementation used by the Praos VRF check in
--- 'Ouroboros.Consensus.Protocol.Praos.VRF.mkInputVRF'.
+-- 'Cardano.Protocol.Praos.VRF.mkInputVRF'.
 hashVoteSignature ::
   ElectionId TestCrypto ->
   VoteCandidate TestCrypto ->
@@ -114,7 +114,7 @@ hashVoteSignature electionId candidate =
 -- | Hash the input for the VRF used in Peras elections
 --
 -- NOTE: this is inspired by the implementation used by the Praos VRF check in
--- 'Ouroboros.Consensus.Protocol.Praos.VRF.mkInputVRF'.
+-- 'Cardano.Protocol.Praos.VRF.mkInputVRF'.
 hashVRFInput ::
   ElectionId TestCrypto ->
   Nonce ->
