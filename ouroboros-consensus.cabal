@@ -1975,6 +1975,8 @@ executable check-tx-upgrade
   build-depends:
     base,
     cardano-ledger-core,
+    containers,
+    microlens,
     mtl,
     ouroboros-consensus:{cardano, ouroboros-consensus},
     sop-core,
