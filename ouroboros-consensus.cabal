@@ -1968,6 +1968,19 @@ test-suite tools-test
   other-modules:
     Test.Cardano.Tools.Headers
 
+executable check-tx-upgrade
+  import: common-exe
+  hs-source-dirs: ouroboros-consensus-cardano/app
+  main-is: check-tx-upgrade.hs
+  build-depends:
+    base,
+    cardano-ledger-core,
+    containers,
+    microlens,
+    mtl,
+    ouroboros-consensus:{cardano, ouroboros-consensus},
+    sop-core,
+
 executable gen-header
   import: common-exe
   hs-source-dirs: ouroboros-consensus-cardano/app
