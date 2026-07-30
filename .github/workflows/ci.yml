@@ -331,6 +331,13 @@ jobs:
         working-directory: .
         run: tar vzxf haddocks.tgz
 
+      # Installs the Yarn shim, which provisions the exact version named by the
+      # "packageManager" field of docs/website/package.json. Must run before
+      # setup-node, whose "cache: yarn" probes the active Yarn to locate its
+      # cache folder; the runner's default Yarn is Classic 1.x, which differs.
+      - name: Enable Corepack
+        run: corepack enable
+
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -348,7 +355,9 @@ jobs:
           cp -r --no-preserve=mode,ownership result/ static/pdfs
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: |
+          yarn --version
+          yarn install --immutable
 
       - name: Build website
         run: yarn build

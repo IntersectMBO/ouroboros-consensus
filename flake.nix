@@ -92,7 +92,7 @@
           agda-spec = pkgs.agda-spec.shell;
 
           website = pkgs.mkShell {
-            packages = [ pkgs.nodejs pkgs.yarn ];
+            packages = [ pkgs.nodejs pkgs.yarn-berry ];
           };
         };
         inherit hydraJobs;
