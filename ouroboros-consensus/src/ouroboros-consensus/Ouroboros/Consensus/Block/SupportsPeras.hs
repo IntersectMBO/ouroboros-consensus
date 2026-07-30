@@ -7,32 +7,26 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Block.SupportsPeras
-  ( PerasRoundNo (..)
-  , PerasBoostedBlock (..)
-  , PerasSeatIndex (..)
-  , PerasVoteId (..)
-  , PerasVoteTarget (..)
-  , PerasVoterId (..)
-  , PerasVoteStake (..)
-  , stakeAboveThreshold
-  , PerasVoteStakeDistr (..)
-  , lookupPerasVoteStake
+  ( -- * Voting committee types for Peras
+    PerasVotingCommittee
+  , PerasVotingCommitteeError
+  , PerasVotingCommitteeInput
+
+    -- * Epoch-dependent context for Peras
+  , PerasEpochContext (..)
+
+    -- * BlockSupportsPeras class
   , BlockSupportsPeras (..)
+
+    -- * To be removed in favor of using 'IsPerasCert'/'IsPerasVote'
   , PerasCert (..)
   , PerasVote (..)
-  , ValidatedPerasCert (..)
-  , ValidatedPerasVote (..)
-  , ValidatedPerasVotesWithQuorum
-    ( vpvqTarget
-    , vpvqVotes
-    , vpvqPerasCfg
-    )
-  , votesReachQuorum
   , HasPerasCertRound (..)
   , HasPerasCertBoostedBlock (..)
   , HasPerasCertBoost (..)
@@ -43,15 +37,35 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , HasPerasVoteTarget (..)
   , HasPerasVoteId (..)
 
+    -- * Types and functions related to Peras vote collection and quorum checking
+  , PerasVoteId (..)
+  , PerasVoterId (..)
+  , PerasVoteStake (..)
+  , PerasVoteStakeDistr (..)
+  , ValidatedPerasVotesWithQuorum
+    ( vpvqTarget
+    , vpvqVotes
+    , vpvqPerasCfg
+    )
+  , lookupPerasVoteStake
+  , votesReachQuorum
+
+    -- * Validated types
+  , ValidatedPerasCert (..)
+  , ValidatedPerasVote (..)
+
     -- * Peras error types
   , IsPerasError (..)
-  , PerasVotingCommitteeError
+
+    -- * Helpers
+  , stakeAboveThreshold
 
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Peras.Params
   , module Ouroboros.Consensus.Peras.Types
   ) where
 
+import Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import qualified Cardano.Binary as KeyHash
 import Cardano.Ledger.Hashes (KeyHash, KeyRole (..))
 import Codec.Serialise (Serialise (..))
@@ -62,15 +76,93 @@ import qualified Data.Map as Map
 import Data.Map.Strict (Map)
 import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
+import Data.Typeable (Typeable)
+import Data.Void (Void)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
+import Ouroboros.Consensus.Committee.Class
+  ( CryptoSupportsVotingCommittee (..)
+  , VotingCommittee
+  )
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Types hiding (PerasVoteId (..))
 import Ouroboros.Consensus.Peras.Voting.Adapter (PerasConversionError)
 import Ouroboros.Consensus.Util
 import Quiet (Quiet (..))
+
+-- * Voting committee types for Peras
+
+-- | Voting committee for Peras indexed by block type
+type PerasVotingCommittee blk =
+  VotingCommittee
+    (PerasCrypto blk)
+    (PerasVotingCommitteeScheme blk)
+
+-- | Error type for Peras voting committee errors
+type PerasVotingCommitteeError blk =
+  VotingCommitteeError
+    (PerasCrypto blk)
+    (PerasVotingCommitteeScheme blk)
+
+-- | Input needed to build a Peras voting committee
+type PerasVotingCommitteeInput blk =
+  VotingCommitteeInput
+    (PerasCrypto blk)
+    (PerasVotingCommitteeScheme blk)
+
+-- * Epoch-dependent context for Peras
+
+-- | Epoch-dependent context used for forging and validation of objects.
+data PerasEpochContext blk
+  = PerasEpochContext
+  { pecCommittee :: PerasVotingCommittee blk
+  , pecParams :: PerasParams blk
+  }
+
+instance
+  ( Typeable blk
+  , FromCBOR (PerasVotingCommittee blk)
+  ) =>
+  FromCBOR (PerasEpochContext blk)
+  where
+  fromCBOR = do
+    decodeListLenOf 2
+    pecCommittee <- fromCBOR
+    pecParams <- fromCBOR
+    pure
+      PerasEpochContext
+        { pecCommittee
+        , pecParams
+        }
+
+instance
+  ( Typeable blk
+  , ToCBOR (PerasVotingCommittee blk)
+  ) =>
+  ToCBOR (PerasEpochContext blk)
+  where
+  toCBOR
+    PerasEpochContext
+      { pecCommittee
+      , pecParams
+      } =
+      encodeListLen 2
+        <> toCBOR pecCommittee
+        <> toCBOR pecParams
+
+deriving instance
+  Show (PerasVotingCommittee blk) =>
+  Show (PerasEpochContext blk)
+deriving instance
+  Eq (PerasVotingCommittee blk) =>
+  Eq (PerasEpochContext blk)
+deriving instance
+  NoThunks (PerasVotingCommittee blk) =>
+  NoThunks (PerasEpochContext blk)
+deriving instance
+  Generic (PerasEpochContext blk)
 
 {-------------------------------------------------------------------------------
 -- * Peras types
@@ -228,6 +320,11 @@ class
   ) =>
   BlockSupportsPeras blk
   where
+  -- NOTE: these will be updated during the upcoming 'BlockSupportsPeras' refactor
+  type PerasCrypto blk
+  type PerasVotingCommitteeScheme blk
+  type PerasError blk
+
   -- NOTE: this associated type will dissapear in favor of using
   -- 'PerasParams blk' directly.
   type PerasCfg blk
@@ -267,6 +364,10 @@ class
 -- TODO: degenerate instance for all blks to get things to compile
 -- see https://github.com/tweag/cardano-peras/issues/73
 instance StandardHash blk => BlockSupportsPeras blk where
+  type PerasCrypto blk = Void
+  type PerasVotingCommitteeScheme blk = Void
+  type PerasError blk = Void
+
   type PerasCfg blk = PerasParams blk
 
   data PerasCert blk = PerasCert
@@ -528,9 +629,6 @@ instance
   getPerasVoteId = getPerasVoteId . forgetArrivalTime
 
 --- * Peras error types
-
--- NOTE: this will be replaced by an associated type in 'BlockSupportsPeras'.
-data PerasVotingCommitteeError blk
 
 -- | Error types that support injecting certain types of Peras errors
 class IsPerasError err blk | err -> blk where
