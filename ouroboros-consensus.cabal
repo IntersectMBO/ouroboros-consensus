@@ -925,6 +925,25 @@ benchmark PerasCertDB-bench
     tasty-bench,
     unstable-consensus-testlib,
 
+benchmark txid-eq-ord-instances-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: ouroboros-consensus-cardano/bench/txid-eq-ord-instances-bench
+  main-is: Main.hs
+  ghc-options:
+    -with-rtsopts=-T
+
+  build-depends:
+    base,
+    bytestring,
+    cardano,
+    cardano-protocol-tpraos,
+    deepseq,
+    ouroboros-consensus,
+    sop-core,
+    tasty-bench,
+    unstable-cardano-testlib,
+
 test-suite doctest
   import: common-test
   main-is: doctest.hs
