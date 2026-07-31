@@ -63,6 +63,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Peras.Params
   , module Ouroboros.Consensus.Peras.Types
+  , module Ouroboros.Consensus.Peras.Void
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
@@ -77,7 +78,6 @@ import Data.Map.Strict (Map)
 import Data.Monoid (Sum (..))
 import Data.Proxy (Proxy (..))
 import Data.Typeable (Typeable)
-import Data.Void (Void)
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
@@ -88,6 +88,7 @@ import Ouroboros.Consensus.Committee.Class
   )
 import Ouroboros.Consensus.Peras.Params
 import Ouroboros.Consensus.Peras.Types hiding (PerasVoteId (..))
+import Ouroboros.Consensus.Peras.Void
 import Ouroboros.Consensus.Peras.Voting.Adapter (PerasConversionError)
 import Ouroboros.Consensus.Util
 import Quiet (Quiet (..))
@@ -364,9 +365,9 @@ class
 -- TODO: degenerate instance for all blks to get things to compile
 -- see https://github.com/tweag/cardano-peras/issues/73
 instance StandardHash blk => BlockSupportsPeras blk where
-  type PerasCrypto blk = Void
-  type PerasVotingCommitteeScheme blk = Void
-  type PerasError blk = Void
+  type PerasCrypto blk = VoidPerasCrypto blk
+  type PerasVotingCommitteeScheme blk = VoidPerasVotingCommitteeScheme
+  type PerasError blk = VoidPerasError blk
 
   type PerasCfg blk = PerasParams blk
 

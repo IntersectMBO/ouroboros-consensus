@@ -35,6 +35,7 @@ import Data.SOP.BasicFunctors
 import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
 import Data.Typeable (Typeable)
+import Data.Void (Void)
 import NoThunks.Class
   ( InspectHeapNamed (..)
   , NoThunks (..)
@@ -135,3 +136,10 @@ deriving via
   OnlyCheckWhnfNamed "SomeHasFS" (SomeHasFS m)
   instance
     NoThunks (SomeHasFS m)
+
+{-------------------------------------------------------------------------------
+  ShowProxy
+-------------------------------------------------------------------------------}
+
+instance ShowProxy Void
+instance ShowProxy ()
