@@ -115,7 +115,6 @@ library
     Ouroboros.Consensus.BlockchainTime.WallClock.Simple
     Ouroboros.Consensus.BlockchainTime.WallClock.Types
     Ouroboros.Consensus.BlockchainTime.WallClock.Util
-    Ouroboros.Consensus.Committee.AcrossEpochs
     Ouroboros.Consensus.Committee.Class
     Ouroboros.Consensus.Committee.Crypto
     Ouroboros.Consensus.Committee.Crypto.BLS
@@ -241,6 +240,7 @@ library
     Ouroboros.Consensus.Peras.Crypto.BLS
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
+    Ouroboros.Consensus.Peras.Types
     Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Vote.V1
     Ouroboros.Consensus.Peras.Voting.Committee
