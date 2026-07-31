@@ -1327,6 +1327,7 @@ library cardano
     Ouroboros.Consensus.Cardano
     Ouroboros.Consensus.Cardano.Block
     Ouroboros.Consensus.Cardano.CanHardFork
+    Ouroboros.Consensus.Cardano.CanHardFork.OptimizedTxIdComparison
     Ouroboros.Consensus.Cardano.Condense
     Ouroboros.Consensus.Cardano.Ledger
     Ouroboros.Consensus.Cardano.Node
