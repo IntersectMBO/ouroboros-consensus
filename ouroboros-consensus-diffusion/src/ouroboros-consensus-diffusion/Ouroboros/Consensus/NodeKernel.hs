@@ -63,6 +63,7 @@ import LeiosDemoDb
   )
 import qualified LeiosDemoDb as LeiosDb
 import qualified LeiosDemoLogic as Leios
+import qualified LeiosDemoLogic.Announcements as Announcements
 import LeiosDemoTypes
   ( LeiosOutstanding
   , LeiosPeerVars
@@ -120,6 +121,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
+import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.EarlyExit hiding (callTraceSameThread)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.LeakyBucket
@@ -244,6 +246,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getLeiosReady :: MVar.MVar m ()
   -- ^ Filled by anyone who makes a change that might unblock a new
   -- fetch decision; the fetch logic 'MVar.takeMVar's before it runs.
+  , getLeiosCentralState ::
+      MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
+  -- ^ Node-wide EB-announcement state
   }
 
 -- | Arguments required when initializing a node
@@ -325,6 +330,7 @@ initNodeKernel
           , varGsmState
           , leiosOutstanding = getLeiosOutstanding
           , leiosReady = getLeiosReady
+          , leiosCentralState = getLeiosCentralState
           , leiosPeersVars = getLeiosPeersVars
           , leiosVoteState
           } = st
@@ -539,6 +545,19 @@ initNodeKernel
           leiosVoteState
           (topLevelConfigVotingKey cfg)
 
+    void $
+      forkLinkedWatcher registry "NodeKernel.leiosPruneAnnouncements" $
+        Watcher
+          { wFingerprint = id
+          , wInitial = Nothing
+          , wReader = getTipSlot . ledgerState <$> ChainDB.getImmutableLedger chainDB
+          , wNotify = \case
+              Origin -> pure ()
+              NotOrigin immTipSlot ->
+                MVar.modifyMVar_ getLeiosCentralState $
+                  pure . Announcements.pruneCentralState immTipSlot
+          }
+
     return
       NodeKernel
         { getChainDB = chainDB
@@ -566,9 +585,11 @@ initNodeKernel
         , getLeiosPeersVars = getLeiosPeersVars
         , getLeiosOutstanding = getLeiosOutstanding
         , getLeiosReady = getLeiosReady
+        , getLeiosCentralState = getLeiosCentralState
         }
    where
     blockForgingController ::
+      Ord remotePeer =>
       InternalState m remotePeer localPeer blk ->
       STM m [MkBlockForging m blk] ->
       m Void
@@ -615,6 +636,8 @@ data InternalState m addrNTN addrNTC blk = IS
   , -- Leios fetch-logic state; consumed in 'initNodeKernel'.
     leiosOutstanding :: MVar.MVar m (LeiosOutstanding (ConnectionId addrNTN))
   , leiosReady :: MVar.MVar m ()
+  , leiosCentralState ::
+      MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
   , leiosPeersVars ::
       LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , leiosVoteState :: LeiosVoteState m
@@ -673,6 +696,7 @@ initInternalState
     leiosPeersVars <- LazySTM.newTVarIO Map.empty
     leiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
     leiosReady <- MVar.newEmptyMVar
+    leiosCentralState <- MVar.newMVar Announcements.emptyCentralState
 
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault
@@ -710,7 +734,7 @@ toConsensusMode = \case
 
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
-  (IOLike m, RunNode blk) =>
+  (IOLike m, RunNode blk, Ord addrNTN) =>
   InternalState m addrNTN addrNTC blk ->
   MkBlockForging m blk ->
   m (Thread m Void)
@@ -745,11 +769,31 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                     leiosVoteState
                     bf
                     leiosConn
+                    announceForgedBlock
                     currentSlot
     )
  where
   label :: String
   label = "NodeKernel.blockForging"
+
+  -- Concurrently (fire-and-forget) relay this node's own freshly-forged EB
+  -- announcement, if any, to downstream peers via LeiosNotify. 'forge' invokes
+  -- this right after forging and before adoption, so adoption never gates
+  -- getting the announcement onto the wire.
+  announceForgedBlock :: Header blk -> m ()
+  announceForgedBlock forgedHeader =
+    whenJust (Leios.mkAnnouncingHeader forgedHeader) $ \anc ->
+      void $ async $
+        MVar.modifyMVar_ leiosCentralState $ \cst ->
+          Announcements.onAnnouncementCentral
+            (contramap Leios.traceNewAnnouncement (leiosKernelTracer tracers))
+            Leios.ancElId
+            (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
+            cst
+            Nothing -- the source is this node, not an upstream peer
+            Announcements.DoRelay -- our newly forged block can't be too old
+            Nothing -- no wall-clock lateness for a locally-forged announcement
+            anc
 
   -- 'LeiosDbConnection' is not thread-safe, so we open one per
   -- forge-credentials thread (and close it when the thread exits).

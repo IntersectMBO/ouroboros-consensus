@@ -28,6 +28,10 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol
 
     -- * Type family instances
   , Ticked (..)
+
+    -- * For Leios code, maybe only temporary
+  , chainDepStateInfo
+  , injectValidationErr
   ) where
 
 import Control.Monad.Except

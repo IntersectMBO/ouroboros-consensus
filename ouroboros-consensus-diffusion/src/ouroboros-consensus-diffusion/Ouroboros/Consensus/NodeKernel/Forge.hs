@@ -97,9 +97,13 @@ forge ::
   LeiosVoteState m ->
   BlockForging m blk ->
   LeiosDbConnection m ->
+  -- | Invoked with the freshly-forged block's header, after forging and
+  -- /before/ adoption, so the caller can act on the new block (e.g. concurrently
+  -- announce its EB) without adoption gating it.
+  (Header blk -> m ()) ->
   SlotNo ->
   WithEarlyExit m ()
-forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosConn currentSlot = do
+forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB mempool leiosVoteState blockForging leiosConn afterForge currentSlot = do
   let trace :: TraceForgeEvent blk -> WithEarlyExit m ()
       trace =
         lift
@@ -256,6 +260,10 @@ forge forgeEventTracer forgeStateInfoTracer leiosTracer forgeCCtx cfg chainDB me
       newBlock
       snapSize
       rbTxsSize
+
+  -- Hand the freshly-forged block's header to the caller before adoption, so it
+  -- can act on it (e.g. concurrently announce its EB) without adoption gating it.
+  lift $ afterForge (getHeader newBlock)
 
   forgeTrace'Via
     (const ())

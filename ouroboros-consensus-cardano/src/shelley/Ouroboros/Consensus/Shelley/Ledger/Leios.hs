@@ -11,12 +11,14 @@
 
 module Ouroboros.Consensus.Shelley.Ledger.Leios () where
 
+import qualified Cardano.Crypto.Hash as Crypto (hashToBytesShort)
 import Cardano.Ledger.Api (Tx)
 import Cardano.Ledger.Binary (decCBOR, decodeFullAnnotator)
 import qualified Cardano.Ledger.Block as Core
 import Cardano.Ledger.Core (TopTx, injectFailure)
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
+import Cardano.Ledger.Hashes (KeyHash (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Shelley.Rules (ledgerPpL)
 import qualified Cardano.Ledger.Shelley.UTxO as SL
@@ -31,13 +33,29 @@ import Data.Maybe.Strict (strictMaybeToMaybe)
 import Data.Proxy (Proxy (..))
 import qualified Data.Sequence.Strict as StrictSeq
 import LeiosDemoDb (leiosDbLookupEbClosure)
-import LeiosDemoTypes (EbAnnouncement (..), LeiosPoint (..), RbHash (..))
+import LeiosDemoLogic.Announcements.ElBimap (ElId (MkElId))
+import LeiosDemoTypes
+  ( EbAnnouncement (..)
+  , LeiosPoint (..)
+  , RbHash (..)
+  )
 import Lens.Micro ((.~), (^.))
 import Ouroboros.Consensus.Block (ChainHash (..), blockPrevHash, toRawHash)
 import Ouroboros.Consensus.Ledger.Abstract (getTipSlot)
 import Ouroboros.Consensus.Ledger.SupportsMempool (getTransactionKeySets)
 import Ouroboros.Consensus.Ledger.Tables (stowLedgerTables, unstowLedgerTables)
-import Ouroboros.Consensus.Protocol.Praos (Praos, PraosCrypto, PraosState (..))
+import Ouroboros.Consensus.Protocol.Praos
+  ( ConsensusConfig (..)
+  , Praos
+  , PraosCrypto
+  , PraosParams (..)
+  , PraosState (..)
+  , Ticked (..)
+  , WhetherToUpperBoundOCERT (..)
+  , doValidateKESSignatureWorker
+  , doValidateVRFSignature
+  )
+import Ouroboros.Consensus.Protocol.Praos.Views (plvPoolDistr)
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (..)
   , HeaderBody (..)
@@ -194,6 +212,38 @@ instance
       )
    where
     Header{headerBody} = shelleyHeaderRaw hdr
+
+  headerElId hdr =
+    MkElId
+      headerBody.hbSlotNo
+      (Crypto.hashToBytesShort . unKeyHash . SL.hashKey $ headerBody.hbVk)
+   where
+    Header{headerBody} = shelleyHeaderRaw hdr
+
+  -- The announcement is validated out-of-context against a (possibly lagging)
+  -- immutable tip, so we skip the OCERT counter's upper bound
+  -- ('DoNotUpperBoundOCERT'): a counter ahead of our recorded view is honestly
+  -- explained by that lag. The election proof (VRF) and the signature (KES +
+  -- opcert, including the counter's revocation lower bound) are checked in full.
+  validateAnnouncementChainDepState cfg hv _slot tcs = do
+    -- validate the claimed election
+    doValidateVRFSignature
+      (praosStateEpochNonce cs)
+      pd
+      (praosLeaderF prms)
+      hv
+    -- authenticate the message
+    doValidateKESSignatureWorker
+      DoNotUpperBoundOCERT
+      (praosMaxKESEvo prms)
+      (praosSlotsPerKESPeriod prms)
+      pd
+      (praosStateOCertCounters cs)
+      hv
+   where
+    prms = praosParams cfg
+    cs = tickedPraosStateChainDepState tcs
+    SL.PoolDistr pd _ = plvPoolDistr (tickedPraosStateLedgerView tcs)
 
   protocolStateLeiosAnnouncement st = do
     ann <- strictMaybeToMaybe $ praosStateLeiosAnnouncement st

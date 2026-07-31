@@ -72,6 +72,8 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Short as SBS
+import LeiosDemoLogic.Announcements.ElBimap (ElId (..))
 import Data.Fixed (Pico)
 import qualified Data.Foldable as F
 import Data.Function (on)
@@ -90,6 +92,7 @@ import qualified Data.Set.NonEmpty as NESet
 import Data.String (fromString)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
+import Data.Time.Clock (NominalDiffTime)
 import Data.Word (Word16, Word32, Word64)
 import Debug.Trace (trace)
 import GHC.Generics (Generic)
@@ -780,17 +783,26 @@ class HasLeiosVoting blk where
 -- * Tracing
 
 messageLeiosNotifyToObject ::
+  -- | Extracts the announced EB point and body size from the relayed RB
+  -- header, so an announcement's diffusion can be correlated with its EB.
+  (announcement -> Maybe (LeiosPoint, BytesSize)) ->
   Message (LeiosNotify LeiosPoint announcement LeiosVote) st st' ->
   Aeson.Object
-messageLeiosNotifyToObject = \case
+messageLeiosNotifyToObject announcedEb = \case
   MsgLeiosNotificationRequestNext ->
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosNotificationRequestNext"
       ]
-  MsgLeiosBlockAnnouncement{} ->
-    mconcat
-      [ "kind" .= Aeson.String "MsgLeiosBlockAnnouncement"
-      ]
+  MsgLeiosBlockAnnouncement announcement ->
+    mconcat $
+      "kind" .= Aeson.String "MsgLeiosBlockAnnouncement"
+        : case announcedEb announcement of
+          Nothing -> []
+          Just (MkLeiosPoint ebSlot ebHash, ebBodySize) ->
+            [ "ebSlot" .= ebSlot
+            , "ebHash" .= prettyEbHash ebHash
+            , "ebBodySize" .= ebBodySize
+            ]
   MsgLeiosBlockOffer (MkLeiosPoint ebSlot ebHash) ebBytesSize ->
     mconcat
       [ "kind" .= Aeson.String "MsgLeiosBlockOffer"
@@ -885,6 +897,41 @@ data TraceLeiosKernel
   | TraceLeiosDb TraceLeiosDb
   | -- | A forged RB both certifies an EB and announce a new one
     TraceLeiosCertifiedAndAnnounced {atSlot :: SlotNo, rbHash :: RbHash}
+  | -- | The node accepted a new EB announcement, deduplicated across all peers
+    -- and its own block forging (see 'AnnouncementSource').
+    TraceLeiosAnnouncementAccepted
+      !AnnouncementSource
+      !AnnouncementEquivocation
+      !AnnouncementFields
+      !(Maybe NominalDiffTime)
+      -- ^ How late the announcement was — seconds from the election slot's
+      -- wall-clock onset to when this node counted it — when known (relayed
+      -- announcements carry it; a locally-forged one does not).
+
+-- | The data of a relayed EB announcement, shared by 'TraceLeiosPeerAnnouncement'
+-- and 'TraceLeiosAnnouncementAccepted'. A separate record so its selectors are
+-- total rather than partial over the trace sum types.
+data AnnouncementFields = MkAnnouncementFields
+  { announcementElection :: !ElId
+  , announcementEbHash :: !EbHash
+  , announcementEbBodySize :: !BytesSize
+  }
+  deriving (Eq, Show)
+
+-- | Whether the accepted announcement equivocates: a second, distinct header
+-- announcing an election that a prior header already announced. (The two
+-- headers can even announce the same EB hash and size and still equivocate,
+-- since it is the header, not the EB, that carries the election.) The flag
+-- spares a log consumer from statefully correlating the two announcements.
+data AnnouncementEquivocation
+  = NoEquivocation
+  | Equivocation
+  deriving (Eq, Show)
+
+-- | Whether the node accepted an EB announcement it forged itself or one
+-- relayed by an upstream peer.
+data AnnouncementSource = ForgedLocally | ReceivedFromPeer
+  deriving (Eq, Show)
 
 -- | Reasons 'runLeiosVoting' may decline to cast a vote after acquiring an
 -- EB closure. See 'TraceLeiosNotVoted'.
@@ -996,6 +1043,34 @@ traceLeiosKernelToObject = \case
       , "slotNo" .= slotNo
       , "rbHash" .= prettyRbHash rbHash
       ]
+  TraceLeiosAnnouncementAccepted announcementSource equivocation acc mbAge ->
+    mconcat $
+      [ "kind" .= Aeson.String "LeiosAnnouncementAccepted"
+      , "source" .= announcementSourceText announcementSource
+      , announcementFieldsToObject acc
+      , announcementEquivocationToObject equivocation
+      ]
+        ++ foldMap (\age -> ["announcementAgeSeconds" .= (realToFrac age :: Double)]) mbAge
+
+announcementFieldsToObject :: AnnouncementFields -> Aeson.Object
+announcementFieldsToObject
+  (MkAnnouncementFields (MkElId (SlotNo electionSlot) poolId) ebHash ebBodySize) =
+    mconcat
+      [ "electionSlot" .= electionSlot
+      , "electionPool" .= BS8.unpack (BS16.encode (SBS.fromShort poolId))
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebBodySize" .= ebBodySize
+      ]
+
+announcementEquivocationToObject :: AnnouncementEquivocation -> Aeson.Object
+announcementEquivocationToObject = \case
+  NoEquivocation -> "equivocation" .= False
+  Equivocation -> "equivocation" .= True
+
+announcementSourceText :: AnnouncementSource -> Aeson.Value
+announcementSourceText = \case
+  ForgedLocally -> Aeson.String "forgedLocally"
+  ReceivedFromPeer -> Aeson.String "receivedFromPeer"
 
 notVotedReasonText :: LeiosNotVotedReason -> Aeson.Value
 notVotedReasonText = \case
@@ -1006,12 +1081,20 @@ notVotedReasonText = \case
 data TraceLeiosPeer
   = MkTraceLeiosPeer String
   | TraceLeiosPeerDbException LeiosDbException
+  | -- | This upstream peer relayed a valid, newly-counted EB announcement.
+    TraceLeiosPeerAnnouncement !AnnouncementEquivocation !AnnouncementFields
   deriving Show
 
 traceLeiosPeerToObject :: TraceLeiosPeer -> Aeson.Object
 traceLeiosPeerToObject = \case
   MkTraceLeiosPeer s -> fromString "msg" .= Aeson.String (fromString s)
   TraceLeiosPeerDbException e -> jsonLeiosDbException e
+  TraceLeiosPeerAnnouncement equivocation acc ->
+    mconcat
+      [ fromString "kind" .= Aeson.String "LeiosPeerAnnouncement"
+      , announcementFieldsToObject acc
+      , announcementEquivocationToObject equivocation
+      ]
 
 -- * Protocol parameters
 

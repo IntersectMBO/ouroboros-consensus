@@ -6,11 +6,13 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 module LeiosDemoOnlyTestNotify
   ( LeiosNotify (..)
@@ -23,10 +25,15 @@ module LeiosDemoOnlyTestNotify
   , timeLimitsLeiosNotify
   , LeiosNotifyClientPeerPipelined
   , LeiosNotifyServerPeer
+  , LeiosNotifyServerPeerLookahead
   , leiosNotifyClientPeer
   , leiosNotifyClientPeerPipelined
   , leiosNotifyServerPeer
+  , leiosNotifyServerPeerLookahead
+  , WhetherExcessiveRequests (..)
   , toLeiosNotifyClientPeerPipelined
+
+  , runLookaheadFixedSenderPeerWithLimits
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
@@ -65,22 +72,38 @@ import Network.TypedProtocol.Core
   , Nat (..)
   , Protocol (..)
   , ReflRelativeAgency (..)
+  , SenderVariability (..)
   , StateAgency
   , natToInt
   )
 import Network.TypedProtocol.Peer
   ( Peer (..)
+  , PeerLookaheadFixedSender (..)
   , PeerPipelined (..)
   , Receiver (..)
+  , Sender (..)
   )
 import Ouroboros.Network.Protocol.Limits
-  ( ProtocolSizeLimits (..)
+  ( BearerBytes
+  , ProtocolSizeLimits (..)
   , ProtocolTimeLimits (..)
   , smallByteLimit
   , waitForever
   )
 import Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 import Text.Printf (printf)
+
+-- for runLookaheadFixedSenderPeerWithLimits
+import Control.Monad.Class.MonadAsync
+import Control.Monad.Class.MonadFork
+import Control.Monad.Class.MonadSTM
+import Control.Monad.Class.MonadThrow
+import Control.Monad.Class.MonadTimer.SI
+import Control.Tracer (Tracer (..))
+import Network.Mux.Timeout (withTimeoutSerial)
+import Network.TypedProtocol.Driver (runLookaheadFixedSenderPeerWithDriver)
+import Ouroboros.Network.Channel
+import Ouroboros.Network.Driver.Limits (TraceSendRecv, driverWithLimits)
 
 -----
 
@@ -403,6 +426,9 @@ leiosNotifyClientPeer checkDone =
 type LeiosNotifyServerPeer point announcement vote m a =
   Peer (LeiosNotify point announcement vote) AsServer NonPipelined StIdle m ()
 
+type LeiosNotifyServerPeerLookahead point announcement vote m a =
+  PeerLookaheadFixedSender (LeiosNotify point announcement vote) AsServer StIdle m ()
+
 leiosNotifyServerPeer ::
   forall m point announcement vote.
   Monad m =>
@@ -437,6 +463,10 @@ toLeiosNotifyClientPeerPipelined = PeerPipelined
 data C = MkC
 
 data WhetherDraining = AlreadyDraining | NotYetDraining
+
+-- | Whether incrementing the count of outstanding LeiosNotify requests found the
+-- peer already at its pipelining bound, i.e. requesting more than it is allowed.
+data WhetherExcessiveRequests = ExcessiveRequests | NotExcessiveRequests
 
 leiosNotifyClientPeerPipelined ::
   forall m point announcement vote a.
@@ -503,3 +533,95 @@ leiosNotifyClientPeerPipelined checkDone k0 =
       Collect
         Nothing
         (\MkC -> drainThePipe x m)
+
+leiosNotifyServerPeerLookahead ::
+  forall m point announcement vote.
+  MonadThrow m =>
+  m WhetherExcessiveRequests ->
+  m (Message (LeiosNotify point announcement vote) StBusy StIdle) ->
+  -- ^ blocks until the next reply (announcement\/offer\/vote) is ready
+  PeerLookaheadFixedSender (LeiosNotify point announcement vote) AsServer StIdle m ()
+leiosNotifyServerPeerLookahead incr next =
+    PeerLookaheadFixedSender responder start
+  where
+    responder :: Sender (LeiosNotify point announcement vote) AsServer VariableSender StBusy StIdle m
+    responder = SenderEffect $ next <&> \msg -> SenderYield ReflServerAgency msg SenderDone
+
+    -- StIdle with nothing outstanding: receive the first request (or done). A
+    -- plain 'Await' is required here; 'AwaitLookahead' defers the StBusy->StIdle
+    -- send, so it is only usable once we hold a request (i.e. are at StBusy).
+    start ::
+      Peer (LeiosNotify point announcement vote) AsServer (Lookahead Z (FixedSender StBusy StIdle)) StIdle m ()
+    start =
+      Await ReflClientAgency $ \case
+        MsgDone                         -> Done ReflNobodyAgency ()
+        MsgLeiosNotificationRequestNext ->
+          Effect $ do
+            incr >>= \case
+              ExcessiveRequests -> throwIO MkExnLeiosNotifyExcessiveRequests
+              NotExcessiveRequests -> pure ()
+            pure $ busy Zero
+
+    -- StBusy with @n@ deferred sends outstanding: hand this reply off to the
+    -- responder and look ahead to the next request (or done) in one step.
+    busy :: forall n.
+      Nat n ->
+      Peer (LeiosNotify point announcement vote) AsServer (Lookahead n (FixedSender StBusy StIdle)) StBusy m ()
+    busy n =
+      AwaitLookahead ReflClientAgency TheSender $ \case
+        MsgDone                         -> drain (Succ n)
+        MsgLeiosNotificationRequestNext ->
+          Effect $ do
+            incr >>= \case
+              ExcessiveRequests -> throwIO MkExnLeiosNotifyExcessiveRequests
+              NotExcessiveRequests -> pure ()
+            pure $ busy (Succ n)
+
+    -- on termination, flush the sends we've handed off, then Done.
+    drain :: forall n.
+      Nat n ->
+      Peer (LeiosNotify point announcement vote) AsServer (Lookahead n (FixedSender StBusy StIdle)) StDone m ()
+    drain = \case
+      Zero   -> Done ReflNobodyAgency ()
+      Succ j -> FlushSender Nothing (drain j)
+
+data ExnLeiosNotifyExcessiveRequests = MkExnLeiosNotifyExcessiveRequests
+  deriving Show
+
+instance Exception ExnLeiosNotifyExcessiveRequests
+
+-----
+
+-- | Run a lookahead (fixed-sender) peer with the given channel via the given codec.
+--
+-- The lookahead dual of 'runPipelinedPeerWithLimits': the peer receives ahead
+-- and its sends are performed by a parallel thread, hence the 'MonadAsync'
+-- constraint.
+--
+-- TODO: upstream this to ouroboros-network
+runLookaheadFixedSenderPeerWithLimits
+  :: forall ps (st :: ps) pr failure bytes m a.
+     ( MonadAsync m
+     , MonadEvaluate m
+     , MonadFork m
+     , MonadMask m
+     , MonadTimer m
+     , MonadThrow (STM m)
+     , ShowProxy ps
+     , forall (st' :: ps) stok. stok ~ StateToken st' => Show stok
+     , BearerBytes bytes
+     , NFData a
+     , NFData failure
+     , Show failure
+     )
+  => Tracer m (TraceSendRecv ps)
+  -> Codec ps failure m bytes
+  -> ProtocolSizeLimits ps bytes
+  -> ProtocolTimeLimits ps
+  -> Channel m bytes
+  -> PeerLookaheadFixedSender ps pr st m a
+  -> m (a, Maybe bytes)
+runLookaheadFixedSenderPeerWithLimits tracer codec slimits tlimits channel peer =
+    withTimeoutSerial $ \timeoutFn ->
+      let driver = driverWithLimits tracer timeoutFn codec slimits tlimits channel
+      in runLookaheadFixedSenderPeerWithDriver driver peer

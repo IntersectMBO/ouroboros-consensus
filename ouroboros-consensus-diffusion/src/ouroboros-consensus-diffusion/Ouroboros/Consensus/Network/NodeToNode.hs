@@ -8,6 +8,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Intended for qualified import
@@ -60,9 +61,10 @@ import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import Control.Concurrent.Class.MonadSTM.Strict (readTChan)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import Control.DeepSeq (NFData)
-import Control.Monad (forM_, void)
+import Control.Monad (forM_, forever, void, when)
 import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
+import Control.Monad.Except (runExceptT)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.ByteString.Lazy (ByteString)
@@ -70,6 +72,8 @@ import Data.Functor ((<&>))
 import Data.Hashable (Hashable)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Primitive.MutVar as Prim
+import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Data.Void (Void)
 import LeiosDemoDb
@@ -79,6 +83,7 @@ import LeiosDemoDb
   , withLeiosDb
   )
 import qualified LeiosDemoLogic as Leios
+import qualified LeiosDemoLogic.Announcements as Announcements
 import LeiosDemoOnlyTestFetch
   ( LeiosFetch
   , LeiosFetchClientPeerPipelined
@@ -95,7 +100,7 @@ import LeiosDemoOnlyTestFetch
 import LeiosDemoOnlyTestNotify
   ( LeiosNotify
   , LeiosNotifyClientPeerPipelined
-  , LeiosNotifyServerPeer
+  , LeiosNotifyServerPeerLookahead
   , Message
     ( MsgLeiosBlockAnnouncement
     , MsgLeiosBlockOffer
@@ -107,7 +112,8 @@ import LeiosDemoOnlyTestNotify
   , codecLeiosNotifyId
   , leiosNotifyClientPeerPipelined
   , leiosNotifyMiniProtocolNum
-  , leiosNotifyServerPeer
+  , leiosNotifyServerPeerLookahead
+  , runLookaheadFixedSenderPeerWithLimits
   , timeLimitsLeiosNotify
   , toLeiosNotifyClientPeerPipelined
   )
@@ -150,8 +156,6 @@ import Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
   ( ResolveLeiosBlock
-  , headerContainsLeiosCert
-  , headerLeiosAnnouncement
   )
 import Ouroboros.Consensus.Storage.Serialisation (SerialisedHeader)
 import Ouroboros.Consensus.Util (ShowProxy)
@@ -325,7 +329,10 @@ data Handlers m addr blk = Handlers
   , hLeiosNotifyServer ::
       NodeToNodeVersion ->
       ConnectionId addr ->
-      LeiosNotifyServerPeer LeiosPoint (Header blk) LeiosVote m ()
+      m
+        ( LeiosNotifyServerPeerLookahead LeiosPoint (Header blk) LeiosVote m ()
+        , m Void
+        )
   , hLeiosFetchClient ::
       LeiosDbConnection m ->
       NodeToNodeVersion ->
@@ -364,6 +371,7 @@ mkHandlers
     , miniProtocolParameters
     , getDiffusionPipeliningSupport
     , txSubmissionInitDelay
+    , systemTime
     }
   nodeKernel@NodeKernel
     { getChainDB
@@ -453,44 +461,79 @@ mkHandlers
           let tracer = leiosPeerTracer peer
               kernelTracer = Node.leiosKernelTracer tracers
               LeiosVoteState{addVote} = leiosVoteState
+          -- Per-upstream-peer announcement accountability (dedup and
+          -- equivocation counting). The pipelined-client handler is a stateless
+          -- callback, so this state lives in a (single-threaded) ref.
+          peerStateVar <- Prim.newMutVar (SlotNo 0, Announcements.emptyPeerState)
           pure $
             leiosNotifyClientPeerPipelined
               ( atomically controlMessageSTM <&> \case
                   Terminate -> Left ()
-                  _ -> Right 100 {- TODO magic number -}
+                  _ -> Right Leios.lEIOSNOTIFYPIPELINEDEPTH
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement hdr -> do
-                    traceWith tracer $
-                      MkTraceLeiosPeer $
-                        unwords
-                          [ "MsgLeiosBlockAnnouncement"
-                          , "(ignored)"
-                          , show (headerPoint hdr)
-                          , "containsCert=" <> show (headerContainsLeiosCert hdr)
-                          , "announcedEb=" <> case headerLeiosAnnouncement hdr of
-                              Nothing -> "none"
-                              Just (ebPoint, ebSize) ->
-                                Leios.prettyEbHash (Leios.pointEbHash ebPoint) <> " size=" <> show ebSize
-                          ]
+                    -- A header relayed as an announcement must carry one;
+                    -- disconnect the peer otherwise.
+                    anc <- case Leios.mkAnnouncingHeader hdr of
+                      Nothing -> throwIO Leios.ExnLeiosBlockAnnouncementMissing
+                      Just x -> pure x
+                    immLedger <- atomically $ ChainDB.getImmutableLedger getChainDB
+                    (latestPruneSlot, peerSt0) <- Prim.readMutVar peerStateVar
+                    res <-
+                      runExceptT $
+                        Announcements.onAnnouncement
+                          (contramap Leios.tracePeerAnnouncement tracer)
+                          Leios.ancElId
+                          ( \ancH ->
+                              Leios.announcementValidity
+                                systemTime
+                                chainSyncFutureCheck
+                                getTopLevelConfig
+                                immLedger
+                                (Leios.ancHeader ancH)
+                          )
+                          -- central part of the processing
+                          ( \ancHdr (shouldRelay, age, anc'@(p, _sz)) -> do
+                              traceWith tracer $
+                                MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement new: " <> Leios.prettyLeiosPoint p
+                              MVar.modifyMVar_ getLeiosCentralState $ \cst ->   -- TODO OK to hold this the whole time we're writing to the LeiosNotify queues (NB those enqeues never block)?
+                                Announcements.onAnnouncementCentral
+                                  (contramap Leios.traceNewAnnouncement kernelTracer)
+                                  Leios.ancElId
+                                  ( \_elSt ->
+                                      Leios.recordAnnouncedEb (getLeiosOutstanding, getLeiosReady) anc'
+                                  )
+                                  cst
+                                  (Just peer)
+                                  shouldRelay
+                                  (Just age)
+                                  ancHdr
+                          )
+                          peerSt0
+                          anc
+                    peerSt1 <- case res of
+                      Left err -> throwIO $ Leios.ReactToAnnouncementError err
+                      Right x -> pure x
+                    let (!latestPruneSlot', !peerSt2) =
+                          Leios.prunePeerStateToImmTip immLedger latestPruneSlot peerSt1
+                    Prim.writeMutVar peerStateVar (latestPruneSlot', peerSt2)
                   MsgLeiosBlockOffer point ebBytesSize -> do
                     traceWith tracer $ MkTraceLeiosPeer $ "MsgLeiosBlockOffer " <> Leios.prettyLeiosPoint point
                     let MkLeiosPoint{pointEbHash = ebHash} = point
-                    -- FIXME: EB announcements are not implemented. The
-                    -- fetch state is built entirely from peer offers,
-                    -- which is the wrong source of truth — the
-                    -- authoritative size lives in
-                    -- 'headerLeiosAnnouncement' on the parent RB
-                    -- header (signed by the forger). Until announcement
-                    -- handling lands, the sanitisation below is the
-                    -- best we can do against malformed offers:
-                    -- drop a zero-sized offer outright (no honest
-                    -- forger ever announces a 0-byte EB) and refuse to
-                    -- overwrite an existing entry that shares the same
-                    -- content hash, so the first-seen (slot, size)
-                    -- wins. The per-peer 'offerings' below is still
-                    -- updated so the peer remains a valid serving
-                    -- candidate.
+                    -- TODO: EB announcements now record the authoritative
+                    -- (forger-signed) size via 'recordAnnouncedEb', but this
+                    -- offer handler is not integrated with them yet: it still
+                    -- builds fetch state directly from peer offers, whose sizes
+                    -- are not authoritative (the authoritative one lives in
+                    -- 'headerLeiosAnnouncement' on the parent RB header). Until
+                    -- the two are reconciled, the sanitisation below is the best
+                    -- we can do against malformed offers: drop a zero-sized
+                    -- offer outright (no honest forger ever announces a 0-byte
+                    -- EB) and refuse to overwrite an existing entry that shares
+                    -- the same content hash, so the first-seen (slot, size)
+                    -- wins. The per-peer 'offerings' below is still updated so
+                    -- the peer remains a valid serving candidate.
                     MVar.modifyMVar_ getLeiosOutstanding $ \outstanding ->
                       pure $
                         if ebBytesSize == 0
@@ -529,25 +572,50 @@ mkHandlers
                           traceWith kernelTracer TraceLeiosCertified{rbHash = Leios.announcingRbHash vote}
                         _ -> pure ()
               )
-      , hLeiosNotifyServer = \_version _peer -> Effect $ do
+      , hLeiosNotifyServer = \_version peer -> do
           chan <- subscribeEbNotifications leiosDB
-          let processEbNotification ::
-                STM
-                  m
-                  ( LeiosDemoOnlyTestNotify.Message
-                      (LeiosNotify LeiosPoint (Header blk) LeiosVote)
-                      LeiosDemoOnlyTestNotify.StBusy
-                      LeiosDemoOnlyTestNotify.StIdle
-                  )
-              processEbNotification =
-                readTChan chan >>= \case
-                  AcquiredEb point ebSize ->
-                    pure $ MsgLeiosBlockOffer point ebSize
-                  AcquiredEbTxs point ->
-                    pure $ MsgLeiosBlockTxsOffer point
-
           LeiosVoteSubscription{getNextVote} <- subscribeVotes leiosVoteState
-          let processVote ::
+
+          -- This peer's single outgoing LeiosNotify queue and its credit
+          -- counter, shared by all three sources (announcements, offers, votes)
+          -- and served strictly FIFO. The node-wide relay logic
+          -- ('onAnnouncementCentral') appends announcements through the
+          -- 'QueueAnnouncementView' we register below; offers and votes are
+          -- moved in by the 'pump'.
+          --
+          -- TODO the EB-offer and vote sources should eventually /register/
+          -- this peer with those components too, rather than the pump draining
+          -- fresh per-peer subscriptions.
+          credits <- TVar.Unchecked.newTVarIO (0 :: Int)
+          queue <- TVar.Unchecked.newTVarIO Seq.empty
+
+          -- The view the central relay logic uses to enqueue announcements
+          let qav =
+                Announcements.MkQueueAnnouncementView
+                  credits
+                  (\q anc -> q Seq.|> MsgLeiosBlockAnnouncement (Leios.ancHeader anc))
+                  queue
+
+          let -- 'incr' adds a credit per received request; 'next' hands the
+              -- sender thread the next queued message (FIFO across all three
+              -- sources); 'pump' moves offers/votes into the queue, dropping a
+              -- message when there are no free credits.
+              incr = atomically $ do
+                  n <- TVar.Unchecked.readTVar credits
+                  if n == Leios.lEIOSNOTIFYPIPELINEDEPTH
+                    then pure LeiosDemoOnlyTestNotify.ExcessiveRequests
+                    else do
+                      TVar.Unchecked.writeTVar credits $! n + 1
+                      pure LeiosDemoOnlyTestNotify.NotExcessiveRequests
+              next = atomically $ do
+                  q <- TVar.Unchecked.readTVar queue
+                  case Seq.viewl q of
+                    Seq.EmptyL -> LazySTM.retry
+                    msg Seq.:< q' -> do
+                      TVar.Unchecked.writeTVar queue q'
+                      pure msg
+
+              pumpNext ::
                 STM
                   m
                   ( LeiosDemoOnlyTestNotify.Message
@@ -555,13 +623,32 @@ mkHandlers
                       LeiosDemoOnlyTestNotify.StBusy
                       LeiosDemoOnlyTestNotify.StIdle
                   )
-              processVote = do
-                vote <- getNextVote
-                pure $ MsgLeiosVotes [vote]
+              pumpNext =
+                    ( readTChan chan >>= \case
+                        AcquiredEb point ebSize ->
+                          pure $ MsgLeiosBlockOffer point ebSize
+                        AcquiredEbTxs point ->
+                          pure $ MsgLeiosBlockTxsOffer point
+                    )
+                  <|> (getNextVote <&> \vote -> MsgLeiosVotes [vote])
 
-          pure . leiosNotifyServerPeer $
-            atomically $
-              processEbNotification <|> processVote
+              pump =
+                    ( do
+                        MVar.modifyMVar_ getLeiosCentralState $
+                          pure . Announcements.insertPeerCentral peer qav
+                        forever $ atomically $ do
+                          msg <- pumpNext
+                          c <- TVar.Unchecked.readTVar credits
+                          when (c > 0) $ do
+                            TVar.Unchecked.writeTVar credits $! c - 1
+                            q <- TVar.Unchecked.readTVar queue
+                            TVar.Unchecked.writeTVar queue (q Seq.|> msg)
+                    )
+                      `finally` ( MVar.modifyMVar_ getLeiosCentralState $
+                                    pure . Announcements.deletePeerCentral peer
+                                )
+
+          pure (leiosNotifyServerPeerLookahead incr next, pump)
       , hLeiosFetchClient = \leiosConn _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
           let reqVar = Leios.requestsToSend peerVars
           -- Queue for responses received by the pipelined-peer collector
@@ -594,6 +681,7 @@ mkHandlers
       , getLeiosVoteState = leiosVoteState
       , getLeiosOutstanding
       , getLeiosReady
+      , getLeiosCentralState
       } = nodeKernel
 
     leiosPeerTracer peer = TraceLabelPeer peer `contramap` Node.leiosPeerTracer tracers
@@ -1342,13 +1430,18 @@ mkApps kernel rng Tracers{tTxLogicTracer = _, ..} mkCodecs ByteLimits{..} chainS
     m ((), Maybe bLN)
   aLeiosNotifyServer version ResponderContext{rcConnectionId = them} channel = do
     labelThisThread "LeiosNotifyServer"
-    runPeerWithLimits
-      (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
-      (cLeiosNotifyCodec (mkCodecs version))
-      blLeiosNotify
-      timeLimitsLeiosNotify
-      channel
-      $ hLeiosNotifyServer version them
+    (peer, pump) <- hLeiosNotifyServer version them
+    -- The pump lives exactly as long as the peer; 'link' surfaces a pump
+    -- crash instead of silently leaving the peer unable to send.
+    withAsync pump $ \pumpThread -> do
+      link pumpThread
+      runLookaheadFixedSenderPeerWithLimits
+        (TraceLabelPeer them `contramap` tLeiosNotifyTracer)
+        (cLeiosNotifyCodec (mkCodecs version))
+        blLeiosNotify
+        timeLimitsLeiosNotify
+        channel
+        peer
 
   aLeiosFetchClient ::
     NodeToNodeVersion ->
