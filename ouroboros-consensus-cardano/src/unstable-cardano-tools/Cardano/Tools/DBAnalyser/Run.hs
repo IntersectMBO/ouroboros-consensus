@@ -171,14 +171,14 @@ analyse dbaConfig args =
           V2InMem ->
             LedgerDB.LedgerDbBackendArgsV2 $
               LedgerDB.V2.SomeBackendArgs InMemory.InMemArgs
-          V2LSM ->
+          V2LSM lsmNoDiskCache ->
             LedgerDB.LedgerDbBackendArgsV2 $
               LedgerDB.V2.SomeBackendArgs $
                 LSM.LSMArgs
                   (mkFsPath ["lsm"])
                   (mkFsPath . splitDirectories <$> lsmConfigExportPath)
                   lsmSalt
-                  lsmCachePolicy
+                  (if lsmNoDiskCache then LSM.DiskCacheNone else LSM.DiskCacheAll)
                   (LSM.stdMkBlockIOFS dbDir)
 
         args' =
@@ -261,12 +261,7 @@ analyse dbaConfig args =
     , validation
     , verbose
     , ldbBackend
-    , lsmNoDiskCache
     } = dbaConfig
-
-  lsmCachePolicy
-    | lsmNoDiskCache = LSM.DiskCacheNone
-    | otherwise = LSM.DiskCacheAll
 
   SelectImmutableDB startSlot = selectDB
 

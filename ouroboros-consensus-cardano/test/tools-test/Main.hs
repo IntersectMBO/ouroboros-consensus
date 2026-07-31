@@ -71,7 +71,6 @@ testAnalyserConfig =
     , validation = Just ValidateAllBlocks
     , analysis = CountBlocks
     , confLimit = Unlimited
-    , lsmNoDiskCache = False
     }
 
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
