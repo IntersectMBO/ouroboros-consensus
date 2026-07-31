@@ -1609,6 +1609,7 @@ library unstable-cardano-testlib
   exposed-modules:
     Test.Consensus.Cardano.Examples
     Test.Consensus.Cardano.Generators
+    Test.Consensus.Cardano.GenTxIdBuilders
     Test.Consensus.Cardano.MockCrypto
     Test.Consensus.Cardano.ProtocolInfo
     Test.ThreadNet.Infra.ShelleyBasedHardFork
@@ -1621,6 +1622,7 @@ library unstable-cardano-testlib
 
   build-depends:
     base,
+    bytestring,
     cardano-crypto-class,
     cardano-crypto-wrapper,
     cardano-ledger-alonzo:testlib,
@@ -1670,6 +1672,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.SupportedNetworkProtocolVersion
     Test.Consensus.Cardano.SupportsSanityCheck
     Test.Consensus.Cardano.Translation
+    Test.Consensus.Cardano.TxId
     Test.ThreadNet.AllegraMary
     Test.ThreadNet.Cardano
     Test.ThreadNet.MaryAlonzo
