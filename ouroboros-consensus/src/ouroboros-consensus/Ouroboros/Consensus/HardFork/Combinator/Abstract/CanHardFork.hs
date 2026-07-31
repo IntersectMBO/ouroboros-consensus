@@ -10,9 +10,13 @@
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork
   ( CanHardFork (..)
   , HashSizeOfHead
+  , rawHashNS
   ) where
 
+import Data.ByteString.Short (ShortByteString)
+import Data.Function (on)
 import Data.Measure (Measure)
+import Data.SOP.BasicFunctors (K (..))
 import Data.SOP.Constraint
 import Data.SOP.Functors (Product2)
 import Data.SOP.InPairs (InPairs, RequiringBoth)
@@ -103,6 +107,29 @@ class
 
   hardForkInjTxMeasurePhase2 :: SOP.NS WrapTxMeasurePhase2 xs -> HardForkTxMeasurePhase2 xs
 
+  -- | Whether two transaction ids of @xs@ are equal, ignoring which era each
+  -- sits in. Two txids in different eras can be equal; see the
+  -- 'Ouroboros.Consensus.HardFork.Combinator.AcrossEras.OneEraGenTxId' 'Eq'
+  -- instance.
+  --
+  -- Runs on every mempool lookup, so instances should avoid allocation.
+  -- 'rawHashNS' is the reference implementation and allocates; the Cardano
+  -- instance overrides it with an allocation-free walk. There is no class
+  -- default: every instance names its body explicitly.
+  hardForkEqGenTxId :: SOP.NS WrapGenTxId xs -> SOP.NS WrapGenTxId xs -> Bool
+
+  -- | Order two transaction ids of @xs@. See 'hardForkEqGenTxId'.
+  hardForkCompareGenTxId ::
+    SOP.NS WrapGenTxId xs -> SOP.NS WrapGenTxId xs -> Ordering
+
+-- | The raw hash of an era sum, era ignored.
+--
+-- The reference comparison for transaction ids. Non-optimizing 'CanHardFork'
+-- instances implement 'hardForkEqGenTxId'\/'hardForkCompareGenTxId' by comparing
+-- this hash. It serialises each id via 'toRawTxIdHash', which allocates.
+rawHashNS :: All SingleEraBlock xs => SOP.NS WrapGenTxId xs -> ShortByteString
+rawHashNS = SOP.hcollapse . SOP.hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId)
+
 instance SingleEraBlock blk => CanHardFork '[blk] where
   type HardForkTxMeasurePhase1 '[blk] = TxMeasurePhase1 blk
   type HardForkTxMeasurePhase2 '[blk] = TxMeasurePhase2 blk
@@ -113,3 +140,11 @@ instance SingleEraBlock blk => CanHardFork '[blk] where
 
   hardForkInjTxMeasurePhase1 (SOP.Z (WrapTxMeasurePhase1 x)) = x
   hardForkInjTxMeasurePhase2 (SOP.Z (WrapTxMeasurePhase2 x)) = x
+
+  -- No production code uses a single-era hard fork, so an allocating raw-hash
+  -- comparison is fine here.
+  --
+  -- NOTE: if some production code ever uses a single-era hard fork, it may
+  -- want an allocation-free comparator here, as the Cardano instance has.
+  hardForkEqGenTxId = (==) `on` rawHashNS
+  hardForkCompareGenTxId = compare `on` rawHashNS
