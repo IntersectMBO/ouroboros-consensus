@@ -100,7 +100,7 @@ makePerasCertPoolWriterFromCertDB systemTime perasCertDB =
         processCerts
           systemTime
           (PerasCertDB.getCertIds perasCertDB)
-          (validatePerasCert mkPerasParams) -- TODO replace when actual plumbing is in place
+          (validatePerasCert defaultPerasParams) -- TODO replace when actual plumbing is in place
           (void . join . atomically . PerasCertDB.addCert perasCertDB)
           certs
     , opwHasObject = do
@@ -123,7 +123,7 @@ makePerasCertPoolWriterFromChainDB systemTime chainDB =
           systemTime
           (ChainDB.getPerasCertIds chainDB)
           -- TODO replace when actual plumbing is in place
-          (validatePerasCert mkPerasParams)
+          (validatePerasCert defaultPerasParams)
           -- We do not want to block the writer thread on waiting for ChainSel
           -- side-effects to complete, so we use the async version of adding
           -- certs to the ChainDB and ignore the returned promise.

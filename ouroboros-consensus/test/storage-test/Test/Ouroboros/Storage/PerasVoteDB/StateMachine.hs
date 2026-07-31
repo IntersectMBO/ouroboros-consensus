@@ -52,7 +52,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , PerasVoterId (..)
   , ValidatedPerasCert
   , ValidatedPerasVote (..)
-  , mkPerasParams
+  , defaultPerasParams
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( RelativeTime (..)
@@ -105,7 +105,7 @@ tests =
     ]
 
 perasTestCfg :: PerasCfg TestBlock
-perasTestCfg = mkPerasParams
+perasTestCfg = defaultPerasParams
 
 prop_qd :: Actions Model -> Property
 prop_qd actions = monadic runActualImplemMonad resultAsPropertyM

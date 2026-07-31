@@ -13,7 +13,6 @@
 
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasRoundNo (..)
-  , onPerasRoundNo
   , PerasBoostedBlock (..)
   , PerasSeatIndex (..)
   , PerasVoteId (..)
@@ -44,11 +43,15 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , HasPerasVoteTarget (..)
   , HasPerasVoteId (..)
 
+    -- * Peras error types
+  , IsPerasError (..)
+  , PerasVotingCommitteeError
+
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Peras.Params
+  , module Ouroboros.Consensus.Peras.Types
   ) where
 
-import Cardano.Binary (FromCBOR, ToCBOR)
 import qualified Cardano.Binary as KeyHash
 import Cardano.Ledger.Hashes (KeyHash, KeyRole (..))
 import Codec.Serialise (Serialise (..))
@@ -62,42 +65,16 @@ import Data.Proxy (Proxy (..))
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
-import Ouroboros.Consensus.Block.RealPoint
-  ( Bytes32RealPoint
-  , decodeBytes32RealPoint
-  , encodeBytes32RealPoint
-  )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Peras.Params
-import Ouroboros.Consensus.Peras.Types
-  ( PerasRoundNo (..)
-  , PerasSeatIndex (..)
-  , PerasVoteTarget (..)
-  , onPerasRoundNo
-  )
+import Ouroboros.Consensus.Peras.Types hiding (PerasVoteId (..))
+import Ouroboros.Consensus.Peras.Voting.Adapter (PerasConversionError)
 import Ouroboros.Consensus.Util
 import Quiet (Quiet (..))
 
 {-------------------------------------------------------------------------------
 -- * Peras types
 -------------------------------------------------------------------------------}
-
--- ** Boosted blocks
-
--- | The slot number and 32-byte hash of the block being voted for
---
--- NOTE: to be removed in favor of the one in 'Ouroboros.Consensus.Peras.Types'
-newtype PerasBoostedBlock
-  = PerasBoostedBlock
-  { unPerasBoostedBlock :: Bytes32RealPoint
-  }
-  deriving stock (Eq, Show)
-
-instance FromCBOR PerasBoostedBlock where
-  fromCBOR = PerasBoostedBlock <$> decodeBytes32RealPoint
-
-instance ToCBOR PerasBoostedBlock where
-  toCBOR = encodeBytes32RealPoint . unPerasBoostedBlock
 
 -- ** Stake pool distributions
 
@@ -135,18 +112,18 @@ newtype PerasVoteStake = PerasVoteStake
 -- both values are relative (normalized) values, so we should either normalize
 -- the 'PerasVoteStake' before calling this function, or change this function to
 -- accept a stake distribution and perform the normalization internally.
-stakeAboveThreshold :: PerasParams -> PerasVoteStake -> Bool
+stakeAboveThreshold :: PerasParams blk -> PerasVoteStake -> Bool
 stakeAboveThreshold params voteStake =
   stake >= quorumThreshold + safetyMargin
  where
   stake =
     unPerasVoteStake voteStake
   quorumThreshold =
-    unPerasQuorumStakeThreshold
-      (perasQuorumStakeThreshold params)
+    unPerasQuorumWeightThreshold
+      (perasQuorumWeightThreshold params)
   safetyMargin =
-    unPerasQuorumStakeThresholdSafetyMargin
-      (perasQuorumStakeThresholdSafetyMargin params)
+    unPerasQuorumWeightThresholdSafetyMargin
+      (perasQuorumWeightThresholdSafetyMargin params)
 
 newtype PerasVoteStakeDistr = PerasVoteStakeDistr
   { unPerasVoteStakeDistr :: Map PerasVoterId PerasVoteStake
@@ -251,6 +228,8 @@ class
   ) =>
   BlockSupportsPeras blk
   where
+  -- NOTE: this associated type will dissapear in favor of using
+  -- 'PerasParams blk' directly.
   type PerasCfg blk
 
   data PerasCert blk
@@ -288,7 +267,7 @@ class
 -- TODO: degenerate instance for all blks to get things to compile
 -- see https://github.com/tweag/cardano-peras/issues/73
 instance StandardHash blk => BlockSupportsPeras blk where
-  type PerasCfg blk = PerasParams
+  type PerasCfg blk = PerasParams blk
 
   data PerasCert blk = PerasCert
     { pcCertRound :: PerasRoundNo
@@ -547,3 +526,14 @@ instance
   HasPerasVoteId (WithArrivalTime vote) blk
   where
   getPerasVoteId = getPerasVoteId . forgetArrivalTime
+
+--- * Peras error types
+
+-- NOTE: this will be replaced by an associated type in 'BlockSupportsPeras'.
+data PerasVotingCommitteeError blk
+
+-- | Error types that support injecting certain types of Peras errors
+class IsPerasError err blk | err -> blk where
+  injectVotingCommitteeError :: PerasVotingCommitteeError blk -> err
+  injectConversionError :: PerasConversionError -> err
+  injectQuorumNotReachedError :: VoteWeight -> err

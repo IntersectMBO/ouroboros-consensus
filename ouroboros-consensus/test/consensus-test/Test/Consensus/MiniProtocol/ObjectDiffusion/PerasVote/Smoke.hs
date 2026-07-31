@@ -101,7 +101,7 @@ newVoteDB ::
   (IOLike m, StandardHash blk, Typeable blk) =>
   [WithArrivalTime (ValidatedPerasVote blk)] -> m (PerasVoteDB m blk)
 newVoteDB votes = do
-  db <- PerasVoteDB.createDB (PerasVoteDB.PerasVoteDbArgs nullTracer mkPerasParams)
+  db <- PerasVoteDB.createDB (PerasVoteDB.PerasVoteDbArgs nullTracer defaultPerasParams)
   mapM_
     ( \vote -> do
         result <- join $ atomically $ PerasVoteDB.addVote db vote

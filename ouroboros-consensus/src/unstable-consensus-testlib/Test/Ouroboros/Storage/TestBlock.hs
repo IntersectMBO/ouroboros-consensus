@@ -108,7 +108,10 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras (..))
+import Ouroboros.Consensus.Ledger.SupportsPeras
+  ( LedgerStateSupportsPeras (..)
+  , LedgerSupportsPeras (..)
+  )
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.ProtocolInfo
@@ -725,6 +728,10 @@ instance LedgerSupportsProtocol TestBlock where
 instance LedgerSupportsPeras TestBlock where
   getLatestPerasCertRound = latestPerasCertRound
 
+instance LedgerStateSupportsPeras (LedgerState TestBlock)
+
+instance LedgerStateSupportsPeras (Ticked LedgerState TestBlock)
+
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
   hardForkSummary = neverForksHardForkSummary id
@@ -782,7 +789,7 @@ mkTestConfig k ChunkSize{chunkCanContainEBB, numRegularBlocks} =
       , eraSlotLength = slotLength
       , eraSafeZone = HardFork.StandardSafeZone (unNonZero (maxRollbacks k) * 2)
       , eraGenesisWin = GenesisWindow (unNonZero (maxRollbacks k) * 2)
-      , eraPerasRoundLength = HardFork.PerasEnabled (perasRoundLength mkPerasParams)
+      , eraPerasRoundLength = dijkstraPerasRoundLength
       }
 
 instance ImmutableEraParams TestBlock where

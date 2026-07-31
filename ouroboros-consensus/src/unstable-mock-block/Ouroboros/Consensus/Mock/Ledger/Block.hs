@@ -101,7 +101,10 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerSupportsPeras)
+import Ouroboros.Consensus.Ledger.SupportsPeras
+  ( LedgerStateSupportsPeras
+  , LedgerSupportsPeras
+  )
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mock.Ledger.Address
 import Ouroboros.Consensus.Mock.Ledger.State
@@ -525,6 +528,10 @@ instance LedgerSupportsPeerSelection (SimpleBlock c ext) where
   getPeers = const []
 
 instance LedgerSupportsPeras (SimpleBlock c ext)
+
+instance LedgerStateSupportsPeras (LedgerState (SimpleBlock c ext))
+
+instance LedgerStateSupportsPeras (Ticked LedgerState (SimpleBlock c ext))
 
 {-------------------------------------------------------------------------------
   LedgerTables

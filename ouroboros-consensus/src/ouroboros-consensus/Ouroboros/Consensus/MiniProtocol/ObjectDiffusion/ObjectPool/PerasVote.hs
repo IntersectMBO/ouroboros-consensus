@@ -108,7 +108,7 @@ makePerasVotePoolWriterFromVoteDB systemTime getStakeDistrSTM perasVoteDB =
           -- TODO: in the future we won't need just the stake distribution for
           -- validating votes, but also the whole committee selection context
           -- (containing vote weights of committee members = voters)
-          (\vote -> getStakeDistrSTM >>= \sd -> pure $ validatePerasVote mkPerasParams sd vote)
+          (\vote -> getStakeDistrSTM >>= \sd -> pure $ validatePerasVote defaultPerasParams sd vote)
           (void . join . atomically . PerasVoteDB.addVote perasVoteDB)
           votes
     , opwHasObject = do
@@ -138,7 +138,7 @@ makePerasVotePoolWriterFromChainDB systemTime getStakeDistrSTM chainDB =
           -- TODO: in the future we won't need just the stake distribution for
           -- validating votes, but also the whole committee selection context
           -- (containing vote weights of committee members = voters)
-          (\vote -> getStakeDistrSTM >>= \sd -> pure $ validatePerasVote mkPerasParams sd vote)
+          (\vote -> getStakeDistrSTM >>= \sd -> pure $ validatePerasVote defaultPerasParams sd vote)
           -- We do not want to block the writer thread on waiting for ChainSel
           -- side-effects to complete, so we use the async version of adding
           -- votes to the ChainDB and ignore the returned promise.

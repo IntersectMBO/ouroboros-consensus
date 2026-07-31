@@ -133,6 +133,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API
   )
 import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanImmTip)
 import Ouroboros.Consensus.Storage.Common ()
+import Ouroboros.Consensus.Storage.PerasCertDB.API (forgetBoostedBlockStatus)
 import Ouroboros.Consensus.Storage.PerasVoteDB.API (AddPerasVoteResult (..))
 import Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
@@ -401,7 +402,9 @@ perasWeights :: StandardHash blk => Model blk -> PerasWeightSnapshot blk
 perasWeights = PerasCertDBModel.getWeightSnapshot . perasCertModel
 
 roundNoOfLatestCertSeen :: Model blk -> Maybe PerasRoundNo
-roundNoOfLatestCertSeen m = getPerasCertRound <$> PerasCertDBModel.getLatestCertSeen (perasCertModel m)
+roundNoOfLatestCertSeen m =
+  getPerasCertRound . forgetBoostedBlockStatus
+    <$> PerasCertDBModel.getLatestCertSeen (perasCertModel m)
 
 {-------------------------------------------------------------------------------
   Construction
@@ -417,7 +420,7 @@ empty loe initLedger =
     { volatileDbBlocks = Map.empty
     , immutableDbChain = Chain.Genesis
     , perasCertModel = PerasCertDBModel.openDB PerasCertDBModel.initModel
-    , perasVoteModel = PerasVoteDBModel.openDB (PerasVoteDBModel.initModel mkPerasParams)
+    , perasVoteModel = PerasVoteDBModel.openDB (PerasVoteDBModel.initModel defaultPerasParams)
     , cps = CPS.initChainProducerState Chain.Genesis
     , currentLedger = initLedger
     , initLedger = initLedger
@@ -1186,7 +1189,7 @@ wipeVolatileDB cfg m =
     (closeDB m)
       { volatileDbBlocks = Map.empty
       , perasCertModel = PerasCertDBModel.openDB PerasCertDBModel.initModel
-      , perasVoteModel = PerasVoteDBModel.openDB (PerasVoteDBModel.initModel mkPerasParams)
+      , perasVoteModel = PerasVoteDBModel.openDB (PerasVoteDBModel.initModel defaultPerasParams)
       , cps = CPS.switchFork newChain (cps m)
       , currentLedger = newLedger
       , invalid = Map.empty

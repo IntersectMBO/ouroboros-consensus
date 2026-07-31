@@ -78,6 +78,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertTicketNo
+  , WithBoostedBlockStatus
   )
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( PerasVoteTicketNo
@@ -346,7 +347,8 @@ getPerasWeightSnapshot ::
 getPerasWeightSnapshot CDB{..} = PerasCertDB.getWeightSnapshot cdbPerasCertDB
 
 getLatestPerasCertSeen ::
-  ChainDbEnv m blk -> STM m (Maybe (WithArrivalTime (ValidatedPerasCert blk)))
+  ChainDbEnv m blk ->
+  STM m (Maybe (WithBoostedBlockStatus (WithArrivalTime (ValidatedPerasCert blk))))
 getLatestPerasCertSeen CDB{..} = PerasCertDB.getLatestCertSeen cdbPerasCertDB
 
 getPerasCertsAfter ::

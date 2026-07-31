@@ -1316,8 +1316,8 @@ generator loe genBlock genPerasBlock m@Model{..} =
 
         voteParams = PerasVoteDBModel.params voteModel
         quorum =
-          unPerasQuorumStakeThreshold (perasQuorumStakeThreshold voteParams)
-            + unPerasQuorumStakeThresholdSafetyMargin (perasQuorumStakeThresholdSafetyMargin voteParams)
+          unPerasQuorumWeightThreshold (perasQuorumWeightThreshold voteParams)
+            + unPerasQuorumWeightThresholdSafetyMargin (perasQuorumWeightThresholdSafetyMargin voteParams)
         -- Maximum total vote stake per round: 2 * quorum - epsilon.
         -- Below this threshold it is impossible for two different blocks to
         -- both reach quorum in the same round.

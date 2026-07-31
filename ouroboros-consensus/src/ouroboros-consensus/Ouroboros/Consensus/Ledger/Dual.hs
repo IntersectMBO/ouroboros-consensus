@@ -90,6 +90,7 @@ import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsPeras (LedgerStateSupportsPeras)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.Serialisation
@@ -1197,3 +1198,11 @@ instance
       , dualLedgerStateAux
       , dualLedgerStateBridge
       } = dls
+
+{-------------------------------------------------------------------------------
+  Peras
+-------------------------------------------------------------------------------}
+
+instance LedgerStateSupportsPeras (LedgerState (DualBlock m a))
+
+instance LedgerStateSupportsPeras (Ticked LedgerState (DualBlock m a))
