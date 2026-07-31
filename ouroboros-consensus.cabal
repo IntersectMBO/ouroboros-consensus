@@ -387,7 +387,7 @@ library
     quiet ^>=0.2,
     random,
     rawlock ^>=0.1.1,
-    resource-registry ^>=0.3,
+    resource-registry ^>=0.4,
     semialign >=1.1,
     serialise ^>=0.2,
     singletons ^>=3,
