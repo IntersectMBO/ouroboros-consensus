@@ -469,7 +469,7 @@ mkHandlers
             leiosNotifyClientPeerPipelined
               ( atomically controlMessageSTM <&> \case
                   Terminate -> Left ()
-                  _ -> Right Leios.lEIOSNOTIFYPIPELINEDEPTH
+                  _ -> Right leiosNotifyPipelineDepth
               )
               ( pure $ \case
                   MsgLeiosBlockAnnouncement hdr -> do
@@ -496,8 +496,10 @@ mkHandlers
                           -- central part of the processing
                           ( \ancHdr (shouldRelay, age, anc'@(p, _sz)) -> do
                               traceWith tracer $
-                                MkTraceLeiosPeer $ "MsgLeiosBlockAnnouncement new: " <> Leios.prettyLeiosPoint p
-                              MVar.modifyMVar_ getLeiosCentralState $ \cst ->   -- TODO OK to hold this the whole time we're writing to the LeiosNotify queues (NB those enqeues never block)?
+                                MkTraceLeiosPeer $
+                                  "MsgLeiosBlockAnnouncement new: " <> Leios.prettyLeiosPoint p
+                              MVar.modifyMVar_ getLeiosCentralState $ \cst ->
+                                -- TODO OK to hold this the whole time we're writing to the LeiosNotify queues (NB those enqeues never block)?
                                 Announcements.onAnnouncementCentral
                                   (contramap Leios.traceNewAnnouncement kernelTracer)
                                   Leios.ancElId
@@ -596,57 +598,58 @@ mkHandlers
                   (\q anc -> q Seq.|> MsgLeiosBlockAnnouncement (Leios.ancHeader anc))
                   queue
 
-          let -- 'incr' adds a credit per received request; 'next' hands the
-              -- sender thread the next queued message (FIFO across all three
-              -- sources); 'pump' moves offers/votes into the queue, dropping a
-              -- message when there are no free credits.
-              incr = atomically $ do
-                  n <- TVar.Unchecked.readTVar credits
-                  if n == Leios.lEIOSNOTIFYPIPELINEDEPTH
-                    then pure LeiosDemoOnlyTestNotify.ExcessiveRequests
-                    else do
-                      TVar.Unchecked.writeTVar credits $! n + 1
-                      pure LeiosDemoOnlyTestNotify.NotExcessiveRequests
-              next = atomically $ do
-                  q <- TVar.Unchecked.readTVar queue
-                  case Seq.viewl q of
-                    Seq.EmptyL -> LazySTM.retry
-                    msg Seq.:< q' -> do
-                      TVar.Unchecked.writeTVar queue q'
-                      pure msg
+          let
+            -- 'incr' adds a credit per received request; 'next' hands the
+            -- sender thread the next queued message (FIFO across all three
+            -- sources); 'pump' moves offers/votes into the queue, dropping a
+            -- message when there are no free credits.
+            incr = atomically $ do
+              n <- TVar.Unchecked.readTVar credits
+              if n == leiosNotifyPipelineDepth
+                then pure LeiosDemoOnlyTestNotify.ExcessiveRequests
+                else do
+                  TVar.Unchecked.writeTVar credits $! n + 1
+                  pure LeiosDemoOnlyTestNotify.NotExcessiveRequests
+            next = atomically $ do
+              q <- TVar.Unchecked.readTVar queue
+              case Seq.viewl q of
+                Seq.EmptyL -> LazySTM.retry
+                msg Seq.:< q' -> do
+                  TVar.Unchecked.writeTVar queue q'
+                  pure msg
 
-              pumpNext ::
-                STM
-                  m
-                  ( LeiosDemoOnlyTestNotify.Message
-                      (LeiosNotify LeiosPoint (Header blk) LeiosVote)
-                      LeiosDemoOnlyTestNotify.StBusy
-                      LeiosDemoOnlyTestNotify.StIdle
-                  )
-              pumpNext =
-                    ( readTChan chan >>= \case
-                        AcquiredEb point ebSize ->
-                          pure $ MsgLeiosBlockOffer point ebSize
-                        AcquiredEbTxs point ->
-                          pure $ MsgLeiosBlockTxsOffer point
-                    )
-                  <|> (getNextVote <&> \vote -> MsgLeiosVotes [vote])
+            pumpNext ::
+              STM
+                m
+                ( LeiosDemoOnlyTestNotify.Message
+                    (LeiosNotify LeiosPoint (Header blk) LeiosVote)
+                    LeiosDemoOnlyTestNotify.StBusy
+                    LeiosDemoOnlyTestNotify.StIdle
+                )
+            pumpNext =
+              ( readTChan chan >>= \case
+                  AcquiredEb point ebSize ->
+                    pure $ MsgLeiosBlockOffer point ebSize
+                  AcquiredEbTxs point ->
+                    pure $ MsgLeiosBlockTxsOffer point
+              )
+                <|> (getNextVote <&> \vote -> MsgLeiosVotes [vote])
 
-              pump =
-                    ( do
-                        MVar.modifyMVar_ getLeiosCentralState $
-                          pure . Announcements.insertPeerCentral peer qav
-                        forever $ atomically $ do
-                          msg <- pumpNext
-                          c <- TVar.Unchecked.readTVar credits
-                          when (c > 0) $ do
-                            TVar.Unchecked.writeTVar credits $! c - 1
-                            q <- TVar.Unchecked.readTVar queue
-                            TVar.Unchecked.writeTVar queue (q Seq.|> msg)
-                    )
-                      `finally` ( MVar.modifyMVar_ getLeiosCentralState $
-                                    pure . Announcements.deletePeerCentral peer
-                                )
+            pump =
+              ( do
+                  MVar.modifyMVar_ getLeiosCentralState $
+                    pure . Announcements.insertPeerCentral peer qav
+                  forever $ atomically $ do
+                    msg <- pumpNext
+                    c <- TVar.Unchecked.readTVar credits
+                    when (c > 0) $ do
+                      TVar.Unchecked.writeTVar credits $! c - 1
+                      q <- TVar.Unchecked.readTVar queue
+                      TVar.Unchecked.writeTVar queue (q Seq.|> msg)
+              )
+                `finally` ( MVar.modifyMVar_ getLeiosCentralState $
+                              pure . Announcements.deletePeerCentral peer
+                          )
 
           pure (leiosNotifyServerPeerLookahead incr next, pump)
       , hLeiosFetchClient = \leiosConn _version controlMessageSTM peer peerVars -> toLeiosFetchClientPeerPipelined $ Effect $ do
@@ -1638,6 +1641,9 @@ perasUnsupportedInitiatorResponder =
   InitiatorAndResponderProtocol
     (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
     (MiniProtocolCb (\_ _ -> error "Peras diffusion protocol invoked without PerasSupported"))
+
+leiosNotifyPipelineDepth :: Int
+leiosNotifyPipelineDepth = 100 -- TODO magic number
 
 leiosNotifyProtocolLimits :: MiniProtocolLimits
 leiosNotifyProtocolLimits =

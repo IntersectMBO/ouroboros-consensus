@@ -534,11 +534,11 @@ validateHeaderProtocol ::
   Except (ValidationErr (BlockProtocol blk)) (HeaderState blk)
 validateHeaderProtocol cfg hdr st = do
   chainDepState' <-
-      updateChainDepState
-        (configConsensus cfg)
-        (validateView (configBlock cfg) hdr)
-        (blockSlot hdr)
-        (tickedHeaderStateChainDep st)
+    updateChainDepState
+      (configConsensus cfg)
+      (validateView (configBlock cfg) hdr)
+      (blockSlot hdr)
+      (tickedHeaderStateChainDep st)
   return $ HeaderState (NotOrigin (getAnnTip hdr)) chainDepState'
 
 -- | Header revalidation

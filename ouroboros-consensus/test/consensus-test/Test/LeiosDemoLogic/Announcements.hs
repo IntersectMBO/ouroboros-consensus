@@ -171,7 +171,13 @@ test_oaInvalid :: Assertion
 test_oaInvalid = do
   res <-
     runExceptT $
-      onAnnouncement nullTracer ancEl (\_ -> pure (Left (Just "bad")) :: IO (Either (Maybe String) ())) (\_ _ -> pure ()) emptyPeerState (Anc el0 0)
+      onAnnouncement
+        nullTracer
+        ancEl
+        (\_ -> pure (Left (Just "bad")) :: IO (Either (Maybe String) ()))
+        (\_ _ -> pure ())
+        emptyPeerState
+        (Anc el0 0)
   case res of
     Left (ErrInvalid inv) -> inv @?= "bad"
     _ -> assertFailure "expected ErrInvalid"
@@ -180,7 +186,13 @@ test_oaTooOld :: Assertion
 test_oaTooOld = do
   res <-
     runExceptT $
-      onAnnouncement nullTracer ancEl (\_ -> pure (Left Nothing) :: IO (Either (Maybe String) ())) (\_ _ -> pure ()) emptyPeerState (Anc el0 0)
+      onAnnouncement
+        nullTracer
+        ancEl
+        (\_ -> pure (Left Nothing) :: IO (Either (Maybe String) ()))
+        (\_ _ -> pure ())
+        emptyPeerState
+        (Anc el0 0)
   case res of
     Left ErrTooOld -> pure ()
     _ -> assertFailure "expected ErrTooOld"
@@ -190,7 +202,13 @@ test_oaProcess = do
   ref <- newIORef []
   res <-
     runExceptT $
-      onAnnouncement nullTracer ancEl (\_ -> pure (Right ())) (\a () -> modifyIORef' ref (a :)) emptyPeerState (Anc el0 0)
+      onAnnouncement
+        nullTracer
+        ancEl
+        (\_ -> pure (Right ()))
+        (\a () -> modifyIORef' ref (a :))
+        emptyPeerState
+        (Anc el0 0)
   readIORef ref >>= (@?= [Anc el0 0])
   case res of
     Right _ -> pure ()

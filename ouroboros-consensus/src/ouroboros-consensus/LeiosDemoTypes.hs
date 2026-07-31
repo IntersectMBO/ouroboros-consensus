@@ -73,7 +73,6 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as BS16
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Short as SBS
-import LeiosDemoLogic.Announcements.ElBimap (ElId (..))
 import Data.Fixed (Pico)
 import qualified Data.Foldable as F
 import Data.Function (on)
@@ -90,14 +89,15 @@ import qualified Data.Set as Set
 import Data.Set.NonEmpty (NESet)
 import qualified Data.Set.NonEmpty as NESet
 import Data.String (fromString)
+import Data.Time.Clock (NominalDiffTime)
 import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
-import Data.Time.Clock (NominalDiffTime)
 import Data.Word (Word16, Word32, Word64)
 import Debug.Trace (trace)
 import GHC.Generics (Generic)
 import LeiosDemoDb.Trace (TraceLeiosDb (..))
 import LeiosDemoException (LeiosDbException (..), jsonLeiosDbException)
+import LeiosDemoLogic.Announcements.ElBimap (ElId (..))
 import LeiosDemoOnlyTestFetch (LeiosFetch, Message (..))
 import qualified LeiosDemoOnlyTestFetch as LeiosFetch
 import LeiosDemoOnlyTestNotify (LeiosNotify, Message (..))
@@ -903,10 +903,10 @@ data TraceLeiosKernel
       !AnnouncementSource
       !AnnouncementEquivocation
       !AnnouncementFields
-      !(Maybe NominalDiffTime)
-      -- ^ How late the announcement was — seconds from the election slot's
+      -- | How late the announcement was — seconds from the election slot's
       -- wall-clock onset to when this node counted it — when known (relayed
       -- announcements carry it; a locally-forged one does not).
+      !(Maybe NominalDiffTime)
 
 -- | The data of a relayed EB announcement, shared by 'TraceLeiosPeerAnnouncement'
 -- and 'TraceLeiosAnnouncementAccepted'. A separate record so its selectors are

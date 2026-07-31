@@ -28,7 +28,7 @@ import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
 import Data.DList (DList)
 import qualified Data.DList as DList
-import Data.Functor ((<&>), void)
+import Data.Functor (void, (<&>))
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import qualified Data.IntSet as IntSet
@@ -995,14 +995,13 @@ leiosCertRbCallback kernelVars peerVars hdr cds =
 -- announcement data parsed from it (see 'mkAnnouncingHeader'). The 'Eq' instance
 -- compares by header hash: that is the one identity used for announcement dedup
 -- and equivocation counting (see 'Announcements.onAnnouncement').
-data AnnouncingHeader blk =
-    -- | INVARIANT: 'ancHeader' includes an announcement whose fields are
+data AnnouncingHeader blk
+  = -- | INVARIANT: 'ancHeader' includes an announcement whose fields are
     -- 'ancAnnouncementFields'
-    UnsafeMkAnnouncingHeader {
-       ancHeader :: !(Header blk)
-     ,
-       ancAnnouncementFields :: !AnnouncementFields
-     }
+    UnsafeMkAnnouncingHeader
+    { ancHeader :: !(Header blk)
+    , ancAnnouncementFields :: !AnnouncementFields
+    }
 
 instance HasHeader (Header blk) => Eq (AnnouncingHeader blk) where
   a == b = headerHash (ancHeader a) == headerHash (ancHeader b)
@@ -1025,8 +1024,8 @@ ancElId = announcementElection . ancAnnouncementFields
 -- such error is a disconnect, since the only invalidities that used to be
 -- tolerated — opcert issue numbers ahead of the immutable tip — are now
 -- accepted outright by 'validateAnnouncementHeader'.
-data ExnInvalidLeiosAnnouncement =
-  forall blk.
+data ExnInvalidLeiosAnnouncement
+  = forall blk.
     ReactToAnnouncementError (Announcements.ErrAnnouncement (AnnouncementInvalidity blk))
 
 deriving instance Show ExnInvalidLeiosAnnouncement
@@ -1091,15 +1090,15 @@ announcementValidity systemTime futureCheck cfg immLedger hdr = do
     -- (which raises 'Announcements.ErrTooOld'); only this function holds the wall
     -- clock, so it owns that check.
     if age > maxAnnouncementAgeRecv
-    then Left Nothing
-    else
-      let shouldRelay =
-            if age <= maxAnnouncementAgeSend
-            then Announcements.DoRelay
-            else Announcements.DoNotRelay
-       in case validateAnnouncementHeader cfg immLedger hdr of
-            Left inv -> Left (Just inv)
-            Right v -> Right (shouldRelay, age, v)
+      then Left Nothing
+      else
+        let shouldRelay =
+              if age <= maxAnnouncementAgeSend
+                then Announcements.DoRelay
+                else Announcements.DoNotRelay
+         in case validateAnnouncementHeader cfg immLedger hdr of
+              Left inv -> Left (Just inv)
+              Right v -> Right (shouldRelay, age, v)
 
 -- | Record a validated, newly-announced EB body as missing, with its
 -- authoritative (forger-signed) size. First-seen wins: a no-op if the body is
@@ -1112,19 +1111,21 @@ recordAnnouncedEb ::
   (LeiosPoint, BytesSize) ->
   m ()
 recordAnnouncedEb (outstandingVar, readyVar) (point, ebBytesSize) = do
-    changed <- MVar.modifyMVar outstandingVar (pure . upd)
-    when changed $ void $ MVar.tryPutMVar readyVar ()
-  where
-    MkLeiosPoint _ebSlot ebHash = point
+  changed <- MVar.modifyMVar outstandingVar (pure . upd)
+  when changed $ void $ MVar.tryPutMVar readyVar ()
+ where
+  MkLeiosPoint _ebSlot ebHash = point
 
-    upd outstanding = if Set.member ebHash (Leios.acquiredEbBodies outstanding)
-       || any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding))
+  upd outstanding =
+    if Set.member ebHash (Leios.acquiredEbBodies outstanding)
+      || any ((== ebHash) . pointEbHash) (Map.keys (Leios.missingEbBodies outstanding))
       then (outstanding, False)
-      else flip (,) True $
-        outstanding
-          { Leios.missingEbBodies =
-              Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
-          }
+      else
+        flip (,) True $
+          outstanding
+            { Leios.missingEbBodies =
+                Map.insert point ebBytesSize (Leios.missingEbBodies outstanding)
+            }
 
 prunePeerStateToImmTip ::
   LedgerSupportsProtocol blk =>
@@ -1170,9 +1171,6 @@ traceNewAnnouncement (Announcements.TraceNewAnnouncement mbPeer _elId elSt age) 
         fields
         age
 
-lEIOSNOTIFYPIPELINEDEPTH :: Int
-lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number
-
 -- | Do not relay (to downstream peers) an announcement whose slot's wall-clock
 -- onset is older than this. See 'Announcements.ShouldRelay'.
 --
@@ -1183,7 +1181,7 @@ lEIOSNOTIFYPIPELINEDEPTH = 100   -- TODO magic number
 --
 -- TODO magic number; should be a config/RunNode option
 maxAnnouncementAgeSend :: NominalDiffTime
-maxAnnouncementAgeSend = 300   -- 5 minutes
+maxAnnouncementAgeSend = 300 -- 5 minutes
 
 -- | Disconnect an upstream peer that relays an announcement whose slot's
 -- wall-clock onset is older than this. See 'Announcements.ErrTooOld'.
@@ -1195,4 +1193,4 @@ maxAnnouncementAgeSend = 300   -- 5 minutes
 -- TODO magic number; should be a config/RunNode option... or even a protocol
 -- parameter?
 maxAnnouncementAgeRecv :: NominalDiffTime
-maxAnnouncementAgeRecv = 600   -- 10 minutes
+maxAnnouncementAgeRecv = 600 -- 10 minutes

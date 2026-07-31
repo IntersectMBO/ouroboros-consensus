@@ -55,13 +55,13 @@ import Ouroboros.Consensus.Protocol.Praos
   , doValidateKESSignatureWorker
   , doValidateVRFSignature
   )
-import Ouroboros.Consensus.Protocol.Praos.Views (plvPoolDistr)
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (..)
   , HeaderBody (..)
   , hbLeiosContainsCert
   , hbLeiosEbAnnouncement
   )
+import Ouroboros.Consensus.Protocol.Praos.Views (plvPoolDistr)
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
   ( AllegraEra

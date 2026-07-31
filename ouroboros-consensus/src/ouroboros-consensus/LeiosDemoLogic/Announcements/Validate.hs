@@ -22,7 +22,7 @@ module LeiosDemoLogic.Announcements.Validate
 
 import Control.Monad (when)
 import Control.Monad.Except (runExcept, throwError, withExcept)
-import LeiosDemoTypes (LeiosPoint, BytesSize)
+import LeiosDemoTypes (BytesSize, LeiosPoint)
 import Ouroboros.Consensus.Block
   ( BlockProtocol
   , Header

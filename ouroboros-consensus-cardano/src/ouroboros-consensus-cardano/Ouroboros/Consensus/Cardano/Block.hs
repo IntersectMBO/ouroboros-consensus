@@ -13,7 +13,6 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Cardano.Block
@@ -218,9 +217,9 @@ module Ouroboros.Consensus.Cardano.Block
   ) where
 
 import Control.Monad.Except (throwError, withExcept)
+import Data.Functor.Product (Product (..))
 import Data.Kind
 import Data.Proxy (Proxy (..))
-import Data.Functor.Product (Product (..))
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint (All, SListI)
 import Data.SOP.Functors
@@ -253,8 +252,8 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( ShelleyPartialLedgerConfig (..)
   )
 import Ouroboros.Consensus.Shelley.Ledger.Leios ()
-import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
+import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Consensus.Storage.LedgerDB (ResolveLeiosBlock (..))
 import Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -1634,7 +1633,8 @@ instance
 
 -- | We don't want to add the ResolveLeiosBlock sin-bin to SingleEraBlock, so we
 -- use this ad-hoc class instead.
-class    (SingleEraBlock blk, ResolveLeiosBlock blk) => AnnouncementEraBlock blk
+class (SingleEraBlock blk, ResolveLeiosBlock blk) => AnnouncementEraBlock blk
+
 instance (SingleEraBlock blk, ResolveLeiosBlock blk) => AnnouncementEraBlock blk
 
 -- | Adapted from "Ouroboros.Consensus.HardFork.Combinator.Protocol.update"
@@ -1685,8 +1685,8 @@ updateEra
   (Pair view (Comp chainDepState)) =
     K $
       withExcept (injectValidationErr index) $
-          validateAnnouncementChainDepState @blk
-            (completeConsensusConfig' ei cfg)
-            (unwrapValidateView view)
-            slot
-            (unwrapTickedChainDepState chainDepState)
+        validateAnnouncementChainDepState @blk
+          (completeConsensusConfig' ei cfg)
+          (unwrapValidateView view)
+          slot
+          (unwrapTickedChainDepState chainDepState)

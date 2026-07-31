@@ -118,10 +118,10 @@ import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
+import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.AnchoredFragment
   ( preferAnchoredCandidate
   )
-import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.EarlyExit hiding (callTraceSameThread)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.LeakyBucket
@@ -783,17 +783,18 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
   announceForgedBlock :: Header blk -> m ()
   announceForgedBlock forgedHeader =
     whenJust (Leios.mkAnnouncingHeader forgedHeader) $ \anc ->
-      void $ async $
-        MVar.modifyMVar_ leiosCentralState $ \cst ->
-          Announcements.onAnnouncementCentral
-            (contramap Leios.traceNewAnnouncement (leiosKernelTracer tracers))
-            Leios.ancElId
-            (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
-            cst
-            Nothing -- the source is this node, not an upstream peer
-            Announcements.DoRelay -- our newly forged block can't be too old
-            Nothing -- no wall-clock lateness for a locally-forged announcement
-            anc
+      void $
+        async $
+          MVar.modifyMVar_ leiosCentralState $ \cst ->
+            Announcements.onAnnouncementCentral
+              (contramap Leios.traceNewAnnouncement (leiosKernelTracer tracers))
+              Leios.ancElId
+              (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
+              cst
+              Nothing -- the source is this node, not an upstream peer
+              Announcements.DoRelay -- our newly forged block can't be too old
+              Nothing -- no wall-clock lateness for a locally-forged announcement
+              anc
 
   -- 'LeiosDbConnection' is not thread-safe, so we open one per
   -- forge-credentials thread (and close it when the thread exits).
