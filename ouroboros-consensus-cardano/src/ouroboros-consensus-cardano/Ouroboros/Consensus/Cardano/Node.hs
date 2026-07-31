@@ -46,12 +46,9 @@ module Ouroboros.Consensus.Cardano.Node
 
 import Cardano.Binary (DecoderError (..), enforceSize)
 import Cardano.Chain.Slotting (EpochSlots)
-import Cardano.Crypto.DSIGN (DSIGNAlgorithm (rawDeserialiseSignKeyDSIGN))
-import Cardano.Crypto.Hash.Class (hashToBytes)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
-import Cardano.Ledger.Hashes (KeyHash (..), hashKey)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
@@ -61,7 +58,6 @@ import qualified Codec.CBOR.Encoding as CBOR
 import Codec.CBOR.Read (deserialiseFromBytes)
 import Control.Exception (assert)
 import qualified Control.Tracer as Tracer
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as Short
 import Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
@@ -115,7 +111,10 @@ import Ouroboros.Consensus.Shelley.Ledger.Block
   )
 import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
 import Ouroboros.Consensus.Shelley.Node
-import Ouroboros.Consensus.Shelley.Node.Common (shelleyBlockIssuerVKey)
+import Ouroboros.Consensus.Shelley.Node.Common
+  ( shelleyBlockIssuerVKey
+  , shelleyLeaderVotingKey
+  )
 import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
 import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
 import Ouroboros.Consensus.Storage.Serialisation
@@ -949,18 +948,13 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
             (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
       , topLevelConfigCheckpoints = cardanoCheckpoints
-      , -- FIXME: REMOVE THIS. Accesses and re-uses KES signing key material.
-        topLevelConfigVotingKey = do
+      , -- The Leios/Peras voting key comes from the block-producer credentials
+        -- (loaded from @--shelley-bls-key@). We vote with the first set of
+        -- credentials that carries a BLS key; 'Nothing' disables voting.
+        topLevelConfigVotingKey =
           case credssShelleyBased of
             [] -> Nothing
-            (c : _) ->
-              rawDeserialiseSignKeyDSIGN
-                -- Pad the 28 bytes of blake2b_224 to get 32 bytes for BLS
-                . (<> BS.pack (replicate 4 0))
-                . hashToBytes
-                . unKeyHash
-                . hashKey
-                $ shelleyBlockIssuerVKey c
+            (c : _) -> shelleyLeaderVotingKey c
       }
 
   -- When the initial ledger state is not in the Byron era, register various
