@@ -618,7 +618,7 @@ instance CanHardFork xs => HasTxId (GenTx (HardForkBlock xs)) where
 
 instance CanHardFork xs => HasRawTxId (TxId (GenTx (HardForkBlock xs))) where
   type RawTxId (TxId (GenTx (HardForkBlock xs))) = ShortByteString
-  getRawTxId = oneEraGenTxIdRawHash . getHardForkGenTxId
+  getRawTxId = rawHashNS . getOneEraGenTxId . getHardForkGenTxId
 
 {-------------------------------------------------------------------------------
   HasTxs

@@ -56,6 +56,7 @@ import Codec.CBOR.Encoding
 import Control.Monad.Except (runExcept)
 import qualified Control.Tracer as Tracer
 import Data.Coerce
+import Data.Function (on)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.Proxy
@@ -327,6 +328,11 @@ instance
   hardForkInjTxMeasurePhase2 = \case
     (Z (WrapTxMeasurePhase2 x)) -> translateTxMeasure x
     S (Z (WrapTxMeasurePhase2 x)) -> x
+
+  -- Test-only hard fork. For a test block the unoptimized raw-hash
+  -- comparison is fine.
+  hardForkEqGenTxId = (==) `on` rawHashNS
+  hardForkCompareGenTxId = compare `on` rawHashNS
 
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
