@@ -62,6 +62,9 @@ import Ouroboros.Consensus.Byron.ByronHFC ()
 import Ouroboros.Consensus.Byron.Ledger
 import Ouroboros.Consensus.Byron.Node ()
 import Ouroboros.Consensus.Cardano.Block
+import Ouroboros.Consensus.Cardano.CanHardFork.OptimizedTxIdComparison
+  ( compareCardanoGenTxId
+  )
 import Ouroboros.Consensus.Forecast
 import Ouroboros.Consensus.HardFork.Combinator
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
@@ -230,6 +233,16 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
 
     fromTrivial :: TrivialTxMeasurePhase2 -> RefScriptSize
     fromTrivial TrivialTxMeasurePhase2 = mempty
+
+  -- Both ids are ordered by their txid hash, ignoring the era. Equality reuses
+  -- 'compare' rather than a separate path: 'hardForkEqGenTxId' is
+  -- 'compareCardanoGenTxId' returning 'EQ'. This allocates no heap: all three
+  -- 'Ordering' constructors take zero arguments, so they are never allocated on
+  -- the dynamic heap; every 'Ordering' pointer is to one of three statically
+  -- allocated addresses. 'compareCardanoGenTxId' keeps the comparison itself
+  -- allocation-free.
+  hardForkCompareGenTxId = compareCardanoGenTxId
+  hardForkEqGenTxId l r = compareCardanoGenTxId l r == EQ
 
 class TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
 instance TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk

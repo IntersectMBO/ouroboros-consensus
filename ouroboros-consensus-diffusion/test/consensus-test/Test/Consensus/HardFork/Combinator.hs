@@ -16,6 +16,7 @@
 module Test.Consensus.HardFork.Combinator (tests) where
 
 import Cardano.Ledger.BaseTypes (nonZero, unNonZero)
+import Data.Function (on)
 import qualified Data.Map.Strict as Map
 import Data.MemPack
 import Data.SOP.BasicFunctors
@@ -451,6 +452,9 @@ instance CanHardFork '[BlockA, BlockB] where
   hardForkInjTxMeasurePhase2 = \case
     (Z (WrapTxMeasurePhase2 x)) -> x
     S (Z (WrapTxMeasurePhase2 x)) -> x
+
+  hardForkEqGenTxId = (==) `on` rawHashNS
+  hardForkCompareGenTxId = compare `on` rawHashNS
 
 versionN2N :: BlockNodeToNodeVersion TestBlock
 versionN2N =
