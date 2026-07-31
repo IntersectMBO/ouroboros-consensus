@@ -88,6 +88,20 @@ let
           ];
         };
       })
+      {
+        # The CDDL data-files declared in ouroboros-consensus.cabal
+        # (cardano-blueprint/src/codecs/base.cddl and
+        # cardano-blueprint/src/network/.../messages.cddl) live inside the
+        # cardano-blueprint git submodule. haskell.nix's source cleaning drops
+        # submodule contents, so every component that copies the package
+        # data-files on install fails with [Cabal-6661]. Package-level
+        # extraSrcFiles is folded into every component's cleaned source (see
+        # haskell.nix lib/clean-cabal-component.nix), so this one entry covers
+        # the library, all sublibraries and all executables at once.
+        packages.ouroboros-consensus.package.extraSrcFiles = [
+          "cardano-blueprint/src/**/*"
+        ];
+      }
     ];
     flake.variants = {
       noAsserts = {
