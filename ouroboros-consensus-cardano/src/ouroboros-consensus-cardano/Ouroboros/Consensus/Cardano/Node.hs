@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -8,6 +9,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -613,6 +615,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
         , triggerHardForkAlonzo
         , triggerHardForkBabbage
         , triggerHardForkConway
+        , triggerHardForkDijkstra
         }
     , cardanoLedgerTransitionConfig
     , cardanoCheckpoints
@@ -821,7 +824,7 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
   partialLedgerConfigConway =
     mkPartialLedgerConfigShelley
       transitionConfigConway
-      TriggerHardForkNotDuringThisExecution
+      (toTriggerHardFork triggerHardForkDijkstra)
 
   -- Dijkstra
 
@@ -838,9 +841,8 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
 
   partialLedgerConfigDijkstra :: PartialLedgerConfig (ShelleyBlock (Praos c) DijkstraEra)
   partialLedgerConfigDijkstra =
-    mkPartialLedgerConfigShelley
+    partialLedgerConfigForLastKnownEra
       transitionConfigDijkstra
-      TriggerHardForkNotDuringThisExecution
 
   -- Cardano
 
@@ -1122,3 +1124,16 @@ mkPartialLedgerConfigShelley transitionConfig shelleyTriggerHardFork =
 -- | We need this wrapper to partially apply a 'TransitionConfig' in an NP.
 newtype WrapTransitionConfig blk
   = WrapTransitionConfig (L.TransitionConfig (ShelleyBlockLedgerEra blk))
+
+-- | Only the last known era must have no HardForkTrigger out of it.
+partialLedgerConfigForLastKnownEra ::
+  ShelleyBlock proto era ~ Last (CardanoEras c) =>
+  L.TransitionConfig era -> PartialLedgerConfig (ShelleyBlock proto era)
+partialLedgerConfigForLastKnownEra transitionConfig =
+  mkPartialLedgerConfigShelley
+    transitionConfig
+    TriggerHardForkNotDuringThisExecution
+
+type family Last xs where
+  Last '[x] = x
+  Last (x ': xs) = Last xs
