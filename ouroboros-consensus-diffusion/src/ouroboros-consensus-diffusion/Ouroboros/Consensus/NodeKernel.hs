@@ -535,6 +535,8 @@ initNodeKernel
     -- to local "EB closure acquired" notifications and emit a vote for
     -- each acquired EB (which the LeiosNotify server then publishes to
     -- peers). 'Nothing' disables voting on this node.
+    -- TODO: Also re-spawn voting thread upon SIGHUP similar to how the
+    -- blockForgingController does it for block forging
     void $
       forkLinkedThread registry "NodeKernel.leiosVoting" $
         runLeiosVoting
