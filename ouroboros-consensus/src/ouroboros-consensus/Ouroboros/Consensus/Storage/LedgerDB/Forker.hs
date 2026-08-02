@@ -591,8 +591,16 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                     error "applyBlock: cannot determine announcing RB hash for CertRB"
             case verifyLeiosCert cm minCertificationThreshold announcingRbHashValue cert of
               Left invalid ->
-                -- TODO: make this less fatal. This is like a ledger error.
-                error $ "applyBlock: invalid Leios cert: " <> show invalid
+                -- Reject the CertRB as an invalid block instead of crashing the
+                -- node: ChainSel marks it InvalidBlock and carries on.
+                pure
+                  ( Left
+                      ( AnnLedgerError
+                          (castPoint $ getTip extSt)
+                          (blockRealPoint b)
+                          (ExtValidationErrorLeios ("invalid Leios cert: " <> show invalid))
+                      )
+                  )
               Right _weight -> do
                 -- get the UTXO-HD keys of the RB we are applying the cert onto
                 let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)

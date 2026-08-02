@@ -545,6 +545,7 @@ dualExtValidationErrorMain ::
 dualExtValidationErrorMain = \case
   ExtValidationErrorLedger e -> ExtValidationErrorLedger (dualLedgerErrorMain e)
   ExtValidationErrorHeader e -> ExtValidationErrorHeader (castHeaderError e)
+  ExtValidationErrorLeios e -> ExtValidationErrorLeios e
 
 {-------------------------------------------------------------------------------
   LedgerSupportsProtocol

@@ -60,6 +60,10 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 data ExtValidationError blk
   = ExtValidationErrorLedger !(LedgerError blk)
   | ExtValidationErrorHeader !(HeaderError blk)
+  | -- | An invalid Leios certificate on a CertRB (e.g. 'InvalidSignature').
+    -- Kept as a 'String' (the rendered 'VoteInvalid') so it stays independent
+    -- of @blk@ and needs no extra instances on the cert-failure type.
+    ExtValidationErrorLeios !String
   deriving Generic
 
 deriving instance LedgerSupportsProtocol blk => Eq (ExtValidationError blk)
