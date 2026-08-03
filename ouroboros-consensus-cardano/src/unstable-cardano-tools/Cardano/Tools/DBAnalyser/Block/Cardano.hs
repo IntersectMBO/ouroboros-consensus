@@ -84,6 +84,7 @@ import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (MountPoint))
 import System.FS.IO (ioHasFS)
 import System.FilePath (takeDirectory)
+import System.IO (hPutStrLn, stderr)
 import TextBuilder (TextBuilder)
 import qualified TextBuilder as Builder
 
@@ -149,7 +150,8 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
     -- 'cardano-config' package, which also loads every era's genesis file
     -- (resolving genesis paths relative to the configuration file's directory)
     -- and hands them back already decoded.
-    (nc, _warns) <- resolveNodeConfiguration configFile
+    (nc, warns) <- resolveNodeConfiguration configFile
+    mapM_ (hPutStrLn stderr . ("WARNING: " ++) . show) warns
     let protoCfg = Cfg.protocolConfiguration nc
 
         genesisByron = Cfg.byronGenesisConfig nc
@@ -182,6 +184,9 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
 -- package. db-analyser drives the configuration from the config file alone, with
 -- no command-line overrides, so 'Cfg.resolveConfigurationFromFile' resolves it
 -- against cardano-config's all-defaults CLI arguments and the file layer wins.
+--
+-- The warnings emitted while resolving are returned rather than reported here,
+-- so that the caller decides where they are printed.
 resolveNodeConfiguration :: FilePath -> IO (Cfg.NodeConfiguration, [Cfg.ConfigWarning])
 resolveNodeConfiguration configFile =
   Cfg.resolveConfigurationFromFile configFile >>= \case
