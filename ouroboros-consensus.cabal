@@ -1998,15 +1998,25 @@ test-suite tools-test
   build-depends:
     aeson,
     base,
+    bytestring,
+    cardano-config ^>=1,
+    cardano-crypto-class,
+    cardano-ledger-core,
+    directory,
+    filepath,
     ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools, unstable-consensus-testlib, unstable-protocol-testlib},
     QuickCheck,
+    sop-core,
+    strict-sop-core,
     tasty,
     tasty-hunit,
     tasty-quickcheck,
+    temporary,
     text,
     unstable-cardano-tools,
 
   other-modules:
+    Test.Cardano.Tools.DBAnalyser.NodeConfig
     Test.Cardano.Tools.Headers
 
 executable gen-header

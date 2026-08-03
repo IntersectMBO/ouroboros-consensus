@@ -8,6 +8,7 @@ import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import Cardano.Tools.DBSynthesizer.Types
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
+import qualified Test.Cardano.Tools.DBAnalyser.NodeConfig
 import qualified Test.Cardano.Tools.Headers
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -125,6 +126,7 @@ tests =
   testGroup
     "cardano-tools"
     [ testCaseSteps "synthesize and analyse: blockCount\n" blockCountTest
+    , Test.Cardano.Tools.DBAnalyser.NodeConfig.tests
     , Test.Cardano.Tools.Headers.tests
     ]
 

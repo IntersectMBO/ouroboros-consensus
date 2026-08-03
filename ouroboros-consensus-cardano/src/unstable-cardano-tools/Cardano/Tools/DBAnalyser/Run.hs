@@ -168,8 +168,8 @@ analyse dbaConfig args =
     backend <- case ldbBackend <|> configBackend of
       Just backend -> pure backend
       Nothing ->
-        fail $
-          "No LedgerDB backend was selected on the command line and none could"
+        throwConfigError $
+          "no LedgerDB backend was selected on the command line and none could"
             <> " be determined from the configuration; pass --in-mem or --lsm."
     snapshotDelayRng <- newStdGen
     let shfs = Node.stdMkChainDbHasFS dbDir
