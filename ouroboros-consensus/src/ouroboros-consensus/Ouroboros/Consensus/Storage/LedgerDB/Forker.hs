@@ -510,9 +510,22 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
         -- where possible, since this is /reapplication/.
         extSt <- atomically (forkerGetLedgerState fo)
         let cds = headerStateChainDep (headerState extSt)
+            tip = castPoint $ getTip extSt
         case protocolStateLeiosAnnouncement @blk cds of
           Nothing ->
-            error $ "applyBlock ReapplyVal: nothing announced!?"
+            -- A reapplied CertRB was validated before, so its predecessor must
+            -- have announced an EB; reaching this means the chain-dep state is
+            -- inconsistent. Reject as an InvalidBlock rather than crash the node
+            -- (mirrors the ApplyVal path); the alternative hard 'error' would
+            -- take the whole node down on chain selection with no restart path.
+            pure
+              ( Left
+                  ( AnnLedgerError
+                      tip
+                      (blockRealPoint b)
+                      (ExtValidationErrorLeios "applyBlock: reapplied CertRB but its predecessor announced no EB")
+                  )
+              )
           Just (announcedPoint, _) -> do
             let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
                 readTables = fmap castLedgerTables . forkerReadTables fo . castLedgerTables
@@ -524,7 +537,6 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
                 readTables
                 bKeys
                 (ledgerState extSt)
-            let tip = castPoint $ getTip extSt
             case res of
               Left lerr ->
                 pure
@@ -571,71 +583,77 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
         -- Steps 1 and 2 happen here rather than as Dijkstra ledger
         -- rules because step 2 involves an IO read of the LeiosDB
         -- which can't be interleaved with the pure STS evaluation.
+        --
+        -- Every failure below is reachable from an adversarial block on chain
+        -- selection, so each rejects the CertRB as an InvalidBlock (via
+        -- 'rejectLeios') instead of crashing the node with a hard 'error':
+        -- ChainSel marks the block InvalidBlock and carries on.
+        let tip = castPoint $ getTip extSt
+            rejectLeios msg =
+              pure
+                ( Left
+                    ( AnnLedgerError
+                        tip
+                        (blockRealPoint b)
+                        (ExtValidationErrorLeios msg)
+                    )
+                )
         case protocolStateLeiosAnnouncement @blk cds of
           Nothing ->
-            -- TODO: make this less fatal or impossible to reach
-            error $ "applyBlock applyVal: nothing announced!?"
-          Just (announcedPoint, _) -> do
-            cm <- case getLeiosCommittee (ledgerState extSt) of
-              Just c -> pure c
+            -- A CertRB certifies an EB announced by its predecessor; if the
+            -- parent's chain-dep state announced none, there is nothing to
+            -- certify, so the block is invalid.
+            rejectLeios "applyBlock: CertRB but its predecessor announced no EB"
+          Just (announcedPoint, _) ->
+            case getLeiosCommittee (ledgerState extSt) of
               Nothing ->
                 -- CertRB on an era without a Leios committee is itself a protocol
                 -- violation: the era machinery shouldn't have let one through.
-                -- TODO: make this less fatal
-                error "applyBlock: CertRB seen but no Leios committee for this era"
-            let announcingRbHashValue = case announcingRbHash b of
-                  Just h -> h
+                rejectLeios "applyBlock: CertRB but no Leios committee for this era"
+              Just cm ->
+                case announcingRbHash b of
                   Nothing ->
-                    -- A CertRB always has a (non-genesis) announcing parent;
-                    -- the apply path shouldn't have produced one otherwise.
-                    error "applyBlock: cannot determine announcing RB hash for CertRB"
-            case verifyLeiosCert cm minCertificationThreshold announcingRbHashValue cert of
-              Left invalid ->
-                -- Reject the CertRB as an invalid block instead of crashing the
-                -- node: ChainSel marks it InvalidBlock and carries on.
-                pure
-                  ( Left
-                      ( AnnLedgerError
-                          (castPoint $ getTip extSt)
-                          (blockRealPoint b)
-                          (ExtValidationErrorLeios ("invalid Leios cert: " <> show invalid))
-                      )
-                  )
-              Right _weight -> do
-                -- get the UTXO-HD keys of the RB we are applying the cert onto
-                let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
-                let readTables = fmap castLedgerTables . forkerReadTables fo . castLedgerTables
-                -- Resolve the EB closure from disk and apply it onto the ledger state.
-                res <-
-                  resolveAndApplyLeiosClosure
-                    leiosDb
-                    (configLedger (getExtLedgerCfg cfg))
-                    (pointEbHash announcedPoint)
-                    readTables
-                    bKeys
-                    (ledgerState extSt)
-                let tip = castPoint $ getTip extSt
-                case res of
-                  Left lerr ->
-                    -- REVIEW: Better annotation than CertRB point possible?
-                    --
-                    -- TODO this should be unreachable, at least from
-                    -- ChainSel (maybe LeiosVoting calls it?)
-                    pure
-                      ( Left
-                          ( AnnLedgerError
-                              tip
-                              (blockRealPoint b)
-                              (ExtValidationErrorLedger lerr)
-                          )
-                      )
-                  Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} ->
-                    let lsAfterEB = extSt{ledgerState = lcaStateAfterEB}
-                     in case runExcept $ tickThenApply evs cfg b lsAfterEB of
+                    -- A CertRB always has a (non-genesis) announcing parent; if
+                    -- we cannot determine one, the block is malformed.
+                    rejectLeios "applyBlock: CertRB with no determinable announcing RB hash"
+                  Just announcingRbHashValue ->
+                    case verifyLeiosCert cm minCertificationThreshold announcingRbHashValue cert of
+                      Left invalid ->
+                        rejectLeios ("applyBlock: invalid Leios cert: " <> show invalid)
+                      Right _weight -> do
+                        -- get the UTXO-HD keys of the RB we are applying the cert onto
+                        let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
+                        let readTables = fmap castLedgerTables . forkerReadTables fo . castLedgerTables
+                        -- Resolve the EB closure from disk and apply it onto the ledger state.
+                        res <-
+                          resolveAndApplyLeiosClosure
+                            leiosDb
+                            (configLedger (getExtLedgerCfg cfg))
+                            (pointEbHash announcedPoint)
+                            readTables
+                            bKeys
+                            (ledgerState extSt)
+                        case res of
                           Left lerr ->
-                            pure (Left (AnnLedgerError tip (blockRealPoint b) lerr))
-                          Right blockDiff ->
-                            pure (Right (prependDiffs lcaClosureDiff blockDiff))
+                            -- REVIEW: Better annotation than CertRB point possible?
+                            --
+                            -- TODO this should be unreachable, at least from
+                            -- ChainSel (maybe LeiosVoting calls it?)
+                            pure
+                              ( Left
+                                  ( AnnLedgerError
+                                      tip
+                                      (blockRealPoint b)
+                                      (ExtValidationErrorLedger lerr)
+                                  )
+                              )
+                          Right LeiosClosureApplied{lcaStateAfterEB, lcaClosureDiff} ->
+                            let lsAfterEB = extSt{ledgerState = lcaStateAfterEB}
+                             in case runExcept $ tickThenApply evs cfg b lsAfterEB of
+                                  Left lerr ->
+                                    pure (Left (AnnLedgerError tip (blockRealPoint b) lerr))
+                                  Right blockDiff ->
+                                    pure (Right (prependDiffs lcaClosureDiff blockDiff))
   ReapplyRef r -> do
     b <- doResolveBlock r
     applyBlock leiosDb evs cfg (ReapplyVal b) fo doResolveBlock
