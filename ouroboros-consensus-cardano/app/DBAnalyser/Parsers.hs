@@ -77,11 +77,21 @@ parseLedgerDBBackend =
                   <> " everything; primarily useful for benchmarking."
             ]
         )
+      <*> switch
+        ( mconcat
+            [ long "lsm-export"
+            , help $
+                "Additionally export every snapshot that is taken as a"
+                  <> " standalone LSM snapshot, into the "
+                  <> defaultLSMExportPath
+                  <> " directory of the ChainDB."
+            ]
+        )
 
-  mkLSMOptions noDiskCache =
+  mkLSMOptions noDiskCache export =
     LSMOptions
       { lsmDatabasePath = defaultLSMDatabasePath
-      , lsmExportPath = Nothing
+      , lsmExportPath = if export then Just defaultLSMExportPath else Nothing
       , lsmNoDiskCache = noDiskCache
       }
 
