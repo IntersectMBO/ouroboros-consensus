@@ -650,12 +650,21 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     (blk, SizeInBytes) ->
     IO ()
   process ledgerDB intLedgerDB outFileHandle outFormat _ (blk, sz) = do
+    tableReadStats <- GC.getRTSStats
     (prevLedgerState, tables) <- LedgerDB.withTipForker ledgerDB $ \frk -> do
       st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
       tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
       pure (st, tbs)
     prevRtsStats <- GC.getRTSStats
     let
+      -- How long fetching this block's ledger tables took (e.g. the
+      -- on-disk backend's UTxO-table reads), timed separately from the 5
+      -- ledger operations below: unlike those, this is outside their
+      -- shared timing window, since it happens before it even opens.
+      -- 'Elapsed' additionally picks up any GC/blocking not attributed to
+      -- the mutator; comparing it against 'Mut' surfaces that.
+      tTableReadElapsed = GC.elapsed_ns prevRtsStats - GC.elapsed_ns tableReadStats
+      tTableReadMut = GC.mutator_elapsed_ns prevRtsStats - GC.mutator_elapsed_ns tableReadStats
       -- Compute how many nanoseconds the mutator used from the last
       -- recorded 'elapsedTime' till the end of the execution of the given
       -- action. This function forces the evaluation of its argument's
@@ -688,6 +697,8 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
           , DP.totalTime = currentMinusPrevious GC.elapsed_ns `div` 1000
           , DP.mut = currentMinusPrevious GC.mutator_elapsed_ns `div` 1000
           , DP.gc = currentMinusPrevious GC.gc_elapsed_ns `div` 1000
+          , DP.tableReadTime = tTableReadElapsed `div` 1000
+          , DP.mut_tableRead = tTableReadMut `div` 1000
           , DP.majGcCount = major_gcs
           , DP.minGcCount = currentMinusPrevious GC.gcs - major_gcs
           , DP.allocatedBytes = currentMinusPrevious GC.allocated_bytes

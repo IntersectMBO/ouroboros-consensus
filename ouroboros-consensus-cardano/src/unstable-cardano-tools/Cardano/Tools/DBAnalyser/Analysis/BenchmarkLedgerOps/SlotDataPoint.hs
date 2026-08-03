@@ -39,6 +39,14 @@ data SlotDataPoint
   , gc :: !Int64
   -- ^ Time spent in garbage collection while performing the 5 ledger
   -- operations at 'slot'.
+  , tableReadTime :: !Int64
+  -- ^ Elapsed time spent fetching this block's ledger tables (e.g. the
+  -- on-disk backend's UTxO-table reads) before any of the 5 ledger
+  -- operations below even start; not included in 'totalTime'/'mut'/'gc'.
+  , mut_tableRead :: !Int64
+  -- ^ Difference of the GC.mutator_elapsed_ns field while fetching this
+  -- block's ledger tables (see 'tableReadTime'); comparing the two
+  -- surfaces GC/blocking time not attributed to the mutator.
   , majGcCount :: !Word32
   -- ^ Total number of __major__ garbage collections that took place while
   -- performing the 5 ledger operations at 'slot'.
