@@ -110,7 +110,6 @@ import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (MountPoint))
 import System.FS.IO (ioHasFS)
 import System.FilePath (isAbsolute, takeDirectory)
-import System.IO (hPutStrLn, stderr)
 import TextBuilder (TextBuilder)
 import qualified TextBuilder as Builder
 
@@ -173,7 +172,7 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
     -- cardano-config resolves the configuration and loads every era's genesis,
     -- resolving genesis paths relative to the configuration file's directory.
     (nc, warns) <- resolveNodeConfiguration configFile
-    mapM_ (hPutStrLn stderr . ("WARNING: " ++) . show) warns
+    reportConfigWarnings warns
     triggers <- either throwConfigError pure $ mkHardForkTriggers (Cfg.testingConfiguration nc)
     backend <- either throwConfigError pure $ mkLedgerDBBackend (Cfg.storageConfiguration nc)
 
@@ -236,9 +235,9 @@ mkLedgerDBBackend storeCfg =
     SJust Cfg.V2InMemory -> Right (Just V2InMem)
     SJust (Cfg.V2LSM dbPath exportPath) -> do
       lsmDatabasePath <-
-        checkRelative "LSMDatabasePath" (fromSMaybe defaultLSMDatabasePath dbPath)
+        checkRelative "DatabasePath" (fromSMaybe defaultLSMDatabasePath dbPath)
       lsmExportPath <-
-        traverse (checkRelative "LSMExportPath") (strictMaybeToMaybe exportPath)
+        traverse (checkRelative "ExportPath") (strictMaybeToMaybe exportPath)
       Right $
         Just $
           V2LSM
@@ -259,7 +258,7 @@ mkLedgerDBBackend storeCfg =
   checkRelative field path
     | isAbsolute path =
         Left $
-          "the node configuration sets LedgerDB."
+          "the node configuration sets LedgerDB.Backend.LSM."
             <> field
             <> " to the absolute path "
             <> show path
