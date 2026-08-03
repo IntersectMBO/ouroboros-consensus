@@ -171,13 +171,14 @@ analyse dbaConfig args =
           V2InMem ->
             LedgerDB.LedgerDbBackendArgsV2 $
               LedgerDB.V2.SomeBackendArgs InMemory.InMemArgs
-          V2LSM ->
+          V2LSM lsmNoDiskCache ->
             LedgerDB.LedgerDbBackendArgsV2 $
               LedgerDB.V2.SomeBackendArgs $
                 LSM.LSMArgs
                   (mkFsPath ["lsm"])
                   (mkFsPath . splitDirectories <$> lsmConfigExportPath)
                   lsmSalt
+                  (if lsmNoDiskCache then LSM.DiskCacheNone else LSM.DiskCacheAll)
                   (LSM.stdMkBlockIOFS dbDir)
 
         args' =

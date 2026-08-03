@@ -48,7 +48,11 @@ newtype NumberOfBlocks = NumberOfBlocks {unNumberOfBlocks :: Word64}
 
 data Limit = Limit Int | Unlimited
 
-data LedgerDBBackend = V2InMem | V2LSM
+data LedgerDBBackend
+  = V2InMem
+  | -- | The 'Bool' bypasses the OS page cache for UTxO table reads/writes
+    -- (instead of caching all). Intended for benchmarking.
+    V2LSM Bool
 
 -- | The extent of the ChainDB on-disk files validation. This is completely
 -- unrelated to validation of the ledger rules.

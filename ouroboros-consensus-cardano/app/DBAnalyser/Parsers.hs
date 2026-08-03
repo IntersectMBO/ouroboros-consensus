@@ -48,11 +48,24 @@ parseDBAnalyserConfig =
             [ long "in-mem"
             , help "use v2 in-memory backend"
             ]
-      , flag' V2LSM $
-          mconcat
-            [ long "lsm"
-            , help "use v2 LSM backend"
-            ]
+      , V2LSM
+          <$> ( flag'
+                  ()
+                  ( mconcat
+                      [ long "lsm"
+                      , help "use v2 LSM backend"
+                      ]
+                  )
+                  *> switch
+                    ( mconcat
+                        [ long "lsm-no-cache"
+                        , help $
+                            "Bypass the OS page cache for UTxO table reads/writes"
+                              <> " (O_DIRECT) instead of the default of caching"
+                              <> " everything; primarily useful for benchmarking."
+                        ]
+                    )
+              )
       ]
 
 parseSelectDB :: Parser SelectDB
