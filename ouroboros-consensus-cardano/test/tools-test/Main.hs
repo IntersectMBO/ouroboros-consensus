@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeApplications #-}
+
 module Main (main) where
 
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
@@ -6,6 +8,7 @@ import Cardano.Tools.DBAnalyser.Types
 import qualified Cardano.Tools.DBImmutaliser.Run as DBImmutaliser
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import Cardano.Tools.DBSynthesizer.Types
+import Control.Exception (SomeException, displayException, try)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Cardano.Block
 import qualified Test.Cardano.Tools.Headers
@@ -73,6 +76,12 @@ testAnalyserConfig =
     , confLimit = Unlimited
     }
 
+testTraceLedgerAnalyserConfig :: DBAnalyserConfig
+testTraceLedgerAnalyserConfig =
+  testAnalyserConfig
+    { analysis = TraceLedgerProcessing
+    }
+
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
 testBlockArgs = Cardano.CardanoBlockArgs nodeConfig Nothing
 
@@ -120,12 +129,48 @@ blockCountTest logStep = do
  where
   genTxs _ _ _ _ = pure []
 
+testTraceLedgerAcrossEraTransition :: (String -> IO ()) -> Assertion
+testTraceLedgerAcrossEraTransition logStep = do
+  logStep "running synthesis - create"
+  (options, protocol) <-
+    either assertFailure pure
+      =<< DBSynthesizer.initialize
+        testNodeFilePaths
+        testNodeCredentials
+        testSynthOptionsCreate
+  _resultCreate <- DBSynthesizer.synthesize genTxs options protocol
+
+  logStep "running synthesis - append"
+  _resultAppend <-
+    DBSynthesizer.synthesize genTxs options{confOptions = testSynthOptionsAppend} protocol
+
+  logStep "copy volatile to immutable DB"
+  DBImmutaliser.run testImmutaliserConfig
+
+  logStep "running trace-ledger analysis"
+  result <-
+    try @SomeException $
+      DBAnalyser.analyse testTraceLedgerAnalyserConfig testBlockArgs
+
+  case result of
+    Left err ->
+      assertFailure $
+        "trace-ledger crashed across era transition: "
+          ++ displayException err
+    Right _ ->
+      pure ()
+ where
+  genTxs _ _ _ _ = pure []
+
 tests :: TestTree
 tests =
   testGroup
     "cardano-tools"
     [ testCaseSteps "synthesize and analyse: blockCount\n" blockCountTest
     , Test.Cardano.Tools.Headers.tests
+    , testCaseSteps
+        "db-analyser trace-ledger does not crash across era transitions\n"
+        testTraceLedgerAcrossEraTransition
     ]
 
 main :: IO ()
