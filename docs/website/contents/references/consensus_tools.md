@@ -135,8 +135,16 @@ it (see
 
 When neither flag is given, the backend is the one the node configuration file
 selects with `LedgerDB.Backend`, using its `LedgerDB.LSMDatabasePath` and
-`LedgerDB.LSMExportPath` (the OS page cache is used in that case, as it is not
-configurable there).
+`LedgerDB.LSMExportPath`. Both of those paths are interpreted relative to the
+ChainDB directory — unlike the genesis paths, which are relative to the
+configuration file — so an absolute path is rejected rather than silently
+mounted somewhere else. The OS page cache is used in this case, as it is not
+configurable in the configuration file.
+
+Note that a configuration file that does not set `LedgerDB.Backend` at all still
+selects a backend: it defaults to the in-memory one. So omitting `--in-mem` and
+`--lsm` on an unconfigured file gives you `--in-mem`, with its RAM requirements,
+rather than an error.
 
 #### Starting from a slot: `--analyse-from`
 

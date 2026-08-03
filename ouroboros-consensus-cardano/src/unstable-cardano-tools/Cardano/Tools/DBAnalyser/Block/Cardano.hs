@@ -13,6 +13,16 @@
 module Cardano.Tools.DBAnalyser.Block.Cardano
   ( Args (configFile, threshold, CardanoBlockArgs)
   , CardanoBlockArgs
+
+    -- * Interpreting the node configuration
+
+    -- | The pieces db-analyser derives itself, rather than taking them from
+    -- @cardano-config@. Exposed for testing against a configuration file
+    -- directly.
+  , mkHardForkTriggers
+  , mkInitialNonce
+  , mkLedgerDBBackend
+  , resolveNodeConfiguration
   ) where
 
 import qualified Cardano.Chain.Block as Byron.Block
@@ -48,7 +58,9 @@ import Cardano.Tools.DBAnalyser.Types
   ( LSMOptions (..)
   , LedgerDBBackend (..)
   , defaultLSMDatabasePath
+  , throwConfigError
   )
+import Control.Exception (displayException, try)
 import qualified Data.Compact as Compact
 import Data.Either (fromRight)
 import Data.Functor.Identity (Identity, runIdentity)
@@ -97,7 +109,7 @@ import System.Directory (makeAbsolute)
 import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (MountPoint))
 import System.FS.IO (ioHasFS)
-import System.FilePath (takeDirectory)
+import System.FilePath (isAbsolute, takeDirectory)
 import System.IO (hPutStrLn, stderr)
 import TextBuilder (TextBuilder)
 import qualified TextBuilder as Builder
@@ -154,8 +166,6 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
     , threshold :: Maybe PBftSignatureThreshold
     }
 
-  mkProtocolInfo = fmap fst . mkProtocolInfoAndBackend
-
   mkProtocolInfoAndBackend CardanoBlockArgs{configFile, threshold} = do
     absoluteConfig <- makeAbsolute configFile
     let configDir = takeDirectory absoluteConfig
@@ -164,9 +174,10 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
     -- resolving genesis paths relative to the configuration file's directory.
     (nc, warns) <- resolveNodeConfiguration configFile
     mapM_ (hPutStrLn stderr . ("WARNING: " ++) . show) warns
-    let protoCfg = Cfg.protocolConfiguration nc
+    triggers <- either throwConfigError pure $ mkHardForkTriggers (Cfg.testingConfiguration nc)
+    backend <- either throwConfigError pure $ mkLedgerDBBackend (Cfg.storageConfiguration nc)
 
-        genesisByron = Cfg.byronGenesisConfig nc
+    let genesisByron = Cfg.byronGenesisConfig nc
         genesisShelley = Cfg.shelleyGenesisConfig nc
         genesisAlonzo = Cfg.alonzoGenesisConfig nc
         genesisConway = Cfg.conwayGenesisConfig nc
@@ -176,10 +187,6 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
         transCfg =
           SL.mkLatestTransitionConfig genesisShelley genesisAlonzo genesisConway genesisDijkstra
 
-        -- The initial nonce is the Blake2b-256 hash of the Shelley genesis
-        -- file, which 'cardano-config' records alongside the file path.
-        initialNonce = Nonce $ CryptoClass.castHash $ Cfg.hash (Cfg.shelleyGenesis protoCfg)
-
         fs = SomeHasFS (ioHasFS (MountPoint configDir))
 
     pInfo <-
@@ -188,9 +195,9 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
         genesisByron
         threshold
         transCfg
-        initialNonce
-        (mkHardForkTriggers (Cfg.testingConfiguration nc))
-    pure (pInfo, mkLedgerDBBackend (Cfg.storageConfiguration nc))
+        (mkInitialNonce nc)
+        triggers
+    pure (pInfo, backend)
 
 -- | Parse and resolve the node configuration with the shared 'cardano-config'
 -- package. db-analyser drives the configuration from the config file alone, with
@@ -201,28 +208,63 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
 -- so that the caller decides where they are printed.
 resolveNodeConfiguration :: FilePath -> IO (Cfg.NodeConfiguration, [Cfg.ConfigWarning])
 resolveNodeConfiguration configFile =
-  Cfg.resolveConfigurationFromFile configFile >>= \case
-    Left err -> error ("db-analyser: invalid node configuration: " <> show err)
-    Right res -> pure res
+  -- cardano-config reports some problems -- a missing mandatory key, notably --
+  -- by throwing rather than in its result, so catch those too; letting them
+  -- escape would present the user with a call-stack backtrace for what is just a
+  -- mistake in their configuration file.
+  try (Cfg.resolveConfigurationFromFile configFile) >>= \case
+    Left (err :: Cfg.ConfigurationParsingError) -> invalid (displayException err)
+    Right (Left err) -> invalid (show err)
+    Right (Right res) -> pure res
+ where
+  invalid msg = throwConfigError ("invalid node configuration: " <> msg)
 
--- | The LedgerDB backend the node configuration selects, if it selects one. The
--- LSM paths are interpreted relative to the LedgerDB filesystem root, not to the
--- configuration file, so they are not adjusted here.
-mkLedgerDBBackend :: Cfg.StorageConfiguration Identity -> Maybe LedgerDBBackend
+-- | The initial nonce, ie the Blake2b-256 hash of the Shelley genesis file,
+-- which 'cardano-config' records alongside the file path.
+mkInitialNonce :: Cfg.NodeConfiguration -> Nonce
+mkInitialNonce nc =
+  Nonce $
+    CryptoClass.castHash $
+      Cfg.hash (Cfg.shelleyGenesis (Cfg.protocolConfiguration nc))
+
+-- | The LedgerDB backend the node configuration selects, if it selects one.
+mkLedgerDBBackend ::
+  Cfg.StorageConfiguration Identity -> Either String (Maybe LedgerDBBackend)
 mkLedgerDBBackend storeCfg =
   case Cfg.backendSelector (runIdentity (Cfg.ledgerDbConfiguration storeCfg)) of
-    SNothing -> Nothing
-    SJust Cfg.V2InMemory -> Just V2InMem
-    SJust (Cfg.V2LSM dbPath exportPath) ->
-      Just $
-        V2LSM
-          LSMOptions
-            { lsmDatabasePath = fromSMaybe defaultLSMDatabasePath dbPath
-            , lsmExportPath = strictMaybeToMaybe exportPath
-            , -- Not configurable via the node configuration file; the OS page
-              -- cache is only bypassed on explicit request (@--lsm-no-cache@).
-              lsmNoDiskCache = False
-            }
+    SNothing -> Right Nothing
+    SJust Cfg.V2InMemory -> Right (Just V2InMem)
+    SJust (Cfg.V2LSM dbPath exportPath) -> do
+      lsmDatabasePath <-
+        checkRelative "LSMDatabasePath" (fromSMaybe defaultLSMDatabasePath dbPath)
+      lsmExportPath <-
+        traverse (checkRelative "LSMExportPath") (strictMaybeToMaybe exportPath)
+      Right $
+        Just $
+          V2LSM
+            LSMOptions
+              { lsmDatabasePath
+              , lsmExportPath
+              , -- Not configurable via the node configuration file; the OS page
+                -- cache is only bypassed on explicit request (@--lsm-no-cache@).
+                lsmNoDiskCache = False
+              }
+ where
+  -- The LSM paths name directories inside the LedgerDB filesystem, rooted at the
+  -- ChainDB directory rather than the configuration file's, so unlike the
+  -- genesis paths they are not adjusted. An absolute path would therefore be
+  -- reinterpreted as relative to the ChainDB, so reject it instead of mounting
+  -- it somewhere the user did not ask for.
+  checkRelative :: String -> FilePath -> Either String FilePath
+  checkRelative field path
+    | isAbsolute path =
+        Left $
+          "the node configuration sets LedgerDB."
+            <> field
+            <> " to the absolute path "
+            <> show path
+            <> ", but it must be relative to the ChainDB directory."
+    | otherwise = Right path
 
 -- | An empty Dijkstra genesis to be provided when none is specified in the config.
 emptyDijkstraGenesis :: SL.DijkstraGenesis
@@ -256,21 +298,23 @@ emptyDijkstraGenesis =
 --
 -- If an era is configured to hard-fork at a specific epoch, then so must all
 -- earlier eras; otherwise the configuration is rejected.
-mkHardForkTriggers :: Cfg.TestingConfiguration Identity -> CardanoHardForkTriggers
+mkHardForkTriggers ::
+  Cfg.TestingConfiguration Identity -> Either String CardanoHardForkTriggers
 mkHardForkTriggers testCfg
   | any (\(earlier, later) -> isNothing earlier && isJust later) (zip epochs (drop 1 epochs)) =
-      error
+      Left
         "if the Cardano config file sets a Test*HardForkAtEpoch, it must also set it for all previous eras."
   | otherwise =
-      CardanoHardForkTriggers'
-        { triggerHardForkShelley = toTrigger (epochOf Cfg.testShelleyHardForkAtEpoch)
-        , triggerHardForkAllegra = toTrigger (epochOf Cfg.testAllegraHardForkAtEpoch)
-        , triggerHardForkMary = toTrigger (epochOf Cfg.testMaryHardForkAtEpoch)
-        , triggerHardForkAlonzo = toTrigger (epochOf Cfg.testAlonzoHardForkAtEpoch)
-        , triggerHardForkBabbage = toTrigger (epochOf Cfg.testBabbageHardForkAtEpoch)
-        , triggerHardForkConway = toTrigger (epochOf Cfg.testConwayHardForkAtEpoch)
-        , triggerHardForkDijkstra = toTrigger (epochOf Cfg.testDijkstraHardForkAtEpoch)
-        }
+      Right
+        CardanoHardForkTriggers'
+          { triggerHardForkShelley = toTrigger (epochOf Cfg.testShelleyHardForkAtEpoch)
+          , triggerHardForkAllegra = toTrigger (epochOf Cfg.testAllegraHardForkAtEpoch)
+          , triggerHardForkMary = toTrigger (epochOf Cfg.testMaryHardForkAtEpoch)
+          , triggerHardForkAlonzo = toTrigger (epochOf Cfg.testAlonzoHardForkAtEpoch)
+          , triggerHardForkBabbage = toTrigger (epochOf Cfg.testBabbageHardForkAtEpoch)
+          , triggerHardForkConway = toTrigger (epochOf Cfg.testConwayHardForkAtEpoch)
+          , triggerHardForkDijkstra = toTrigger (epochOf Cfg.testDijkstraHardForkAtEpoch)
+          }
  where
   -- cardano-config records the configured epochs as 'StrictMaybe'; db-analyser
   -- works with plain 'Maybe' here.
