@@ -32,12 +32,22 @@ import Cardano.Protocol.Crypto
 import Cardano.Tools.DBAnalyser.Block.Byron ()
 import Cardano.Tools.DBAnalyser.Block.Shelley ()
 import Cardano.Tools.DBAnalyser.HasAnalysis
+import Cardano.Tools.DBAnalyser.Types
+  ( LSMOptions (..)
+  , LedgerDBBackend (..)
+  , defaultLSMDatabasePath
+  )
 import qualified Data.Compact as Compact
 import Data.Functor.Identity (Identity, runIdentity)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust, fromMaybe, isJust, isNothing)
-import Data.Maybe.Strict (StrictMaybe (..), strictMaybe, strictMaybeToMaybe)
+import Data.Maybe.Strict
+  ( StrictMaybe (..)
+  , fromSMaybe
+  , strictMaybe
+  , strictMaybeToMaybe
+  )
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
 import Data.SOP.Strict
@@ -129,7 +139,9 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
     , threshold :: Maybe PBftSignatureThreshold
     }
 
-  mkProtocolInfo CardanoBlockArgs{configFile, threshold} = do
+  mkProtocolInfo = fmap fst . mkProtocolInfoAndBackend
+
+  mkProtocolInfoAndBackend CardanoBlockArgs{configFile, threshold} = do
     absoluteConfig <- makeAbsolute configFile
     let configDir = takeDirectory absoluteConfig
 
@@ -137,7 +149,7 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
     -- 'cardano-config' package, which also loads every era's genesis file
     -- (resolving genesis paths relative to the configuration file's directory)
     -- and hands them back already decoded.
-    nc <- resolveNodeConfiguration configFile
+    (nc, _warns) <- resolveNodeConfiguration configFile
     let protoCfg = Cfg.protocolConfiguration nc
 
         genesisByron = Cfg.byronGenesisConfig nc
@@ -156,37 +168,44 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
 
         fs = SomeHasFS (ioHasFS (MountPoint configDir))
 
-    mkCardanoProtocolInfo
-      fs
-      genesisByron
-      threshold
-      transCfg
-      initialNonce
-      (mkHardForkTriggers (Cfg.testingConfiguration nc))
-
-  mkLSMConfig CardanoBlockArgs{configFile} = do
-    -- The export path is interpreted relative to the LedgerDB filesystem root,
-    -- not the config file, so we do not adjust file paths here.
-    nc <- resolveNodeConfiguration configFile
-    let storeCfg = Cfg.storageConfiguration nc
-        ldbCfg = runIdentity (Cfg.ledgerDbConfiguration storeCfg)
-        exportPath = case Cfg.backendSelector ldbCfg of
-          SJust (Cfg.V2LSM _ e) -> strictMaybeToMaybe e
-          _ -> Nothing
-    pure
-      LSMConfig
-        { lsmConfigExportPath = exportPath
-        }
+    pInfo <-
+      mkCardanoProtocolInfo
+        fs
+        genesisByron
+        threshold
+        transCfg
+        initialNonce
+        (mkHardForkTriggers (Cfg.testingConfiguration nc))
+    pure (pInfo, mkLedgerDBBackend (Cfg.storageConfiguration nc))
 
 -- | Parse and resolve the node configuration with the shared 'cardano-config'
 -- package. db-analyser drives the configuration from the config file alone, with
 -- no command-line overrides, so 'Cfg.resolveConfigurationFromFile' resolves it
 -- against cardano-config's all-defaults CLI arguments and the file layer wins.
-resolveNodeConfiguration :: FilePath -> IO Cfg.NodeConfiguration
+resolveNodeConfiguration :: FilePath -> IO (Cfg.NodeConfiguration, [Cfg.ConfigWarning])
 resolveNodeConfiguration configFile =
   Cfg.resolveConfigurationFromFile configFile >>= \case
     Left err -> error ("db-analyser: invalid node configuration: " <> show err)
-    Right (nc, _warns) -> pure nc
+    Right res -> pure res
+
+-- | The LedgerDB backend the node configuration selects, if it selects one. The
+-- LSM paths are interpreted relative to the LedgerDB filesystem root, not to the
+-- configuration file, so they are not adjusted here.
+mkLedgerDBBackend :: Cfg.StorageConfiguration Identity -> Maybe LedgerDBBackend
+mkLedgerDBBackend storeCfg =
+  case Cfg.backendSelector (runIdentity (Cfg.ledgerDbConfiguration storeCfg)) of
+    SNothing -> Nothing
+    SJust Cfg.V2InMemory -> Just V2InMem
+    SJust (Cfg.V2LSM dbPath exportPath) ->
+      Just $
+        V2LSM
+          LSMOptions
+            { lsmDatabasePath = fromSMaybe defaultLSMDatabasePath dbPath
+            , lsmExportPath = strictMaybeToMaybe exportPath
+            , -- Not configurable via the node configuration file; the OS page
+              -- cache is only bypassed on explicit request (@--lsm-no-cache@).
+              lsmNoDiskCache = False
+            }
 
 -- | An empty Dijkstra genesis to be provided when none is specified in the config.
 emptyDijkstraGenesis :: SL.DijkstraGenesis
