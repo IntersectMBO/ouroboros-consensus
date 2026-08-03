@@ -18,11 +18,15 @@ For the configuration knobs and on-disk formats these tools operate on, see
 |---|---|
 | Inspect, validate, or benchmark an existing chain database; create ledger snapshots | [`db-analyser`](#db-analyser) |
 | Move blocks from a VolatileDB into an ImmutableDB so other tools can see them | [`db-immutaliser`](#db-immutaliser) |
-| Create a synthetic chain (e.g. for benchmarks) without running a network | [`db-synthesizer`](#db-synthesizer) |
 | Cut an ImmutableDB back to an earlier slot or block number | [`db-truncater`](#db-truncater) |
 | Serve an ImmutableDB over the network so a node can sync from it | [`immdb-server`](#immdb-server) |
 | Convert ledger snapshots between the in-memory and LSM formats | [`snapshot-converter`](#snapshot-converter) |
 | Generate or check Praos headers for conformance testing | [`gen-header`](#gen-header) |
+
+`db-synthesizer`, which forged synthetic chains for benchmarking, is no longer
+shipped as an executable from this repository: it needs block-forging
+credentials, whose parsing belongs downstream with `cardano-api`. Only the
+`Cardano.Tools.DBSynthesizer` library it was built on remains here.
 
 ## Building the tools
 
@@ -341,66 +345,6 @@ Additional flags:
   tip to a file in graphviz DOT format; render it with the `dot` CLI tool.
 - `--dry-run` — select a candidate and report it, but do not append anything
   to the ImmutableDB.
-
----
-
-## db-synthesizer
-
-`db-synthesizer` *forges* a valid ChainDB without running a node or a network,
-using the same code path that a real block producer uses. The forged blocks
-contain no transactions. Its primary use is creating chains of arbitrary
-length cheaply, e.g. as input for benchmarks.
-
-### When to use it
-
-- You need a syntactically and cryptographically valid chain of a given length
-  for benchmarking or testing other tools.
-- You do not care about transaction content.
-
-### Requirements
-
-- `--config FILE` — a node configuration file. Only a few values regarding
-  geneses and protocol are actually required, so a configuration stub is
-  possible; for the expected key-value pairs see the `NodeConfigStub` type and
-  its deserialization in `Cardano.Tools.DBSynthesizer.Orphans`.
-- `--db PATH` — where to write the ChainDB.
-- Block forging credentials, either as separate files
-  (`--shelley-operational-certificate`, `--shelley-vrf-key`,
-  `--shelley-kes-key`, all in JSON TextEnvelope format) or in bulk
-  (`--bulk-credentials-file`, a JSON array of `[opcert, VRF key, KES key]`
-  triples). The genesis must give the corresponding pools enough stake to be
-  elected.
-
-A minimal working setup — a staked genesis with bulk credentials for two
-forgers — is provided in
-[`ouroboros-consensus-cardano/test/tools-test/disk/config`](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/test/tools-test/disk/config):
-
-```sh
-cabal run db-synthesizer -- \
-  --config ouroboros-consensus-cardano/test/tools-test/disk/config/config.json \
-  --db /tmp/synthesized-db \
-  --bulk-credentials-file ouroboros-consensus-cardano/test/tools-test/disk/config/bulk-creds-k2.json \
-  -s 10000
-```
-
-### Limiting synthesis
-
-Exactly one limit must be given, up to which the tool forges:
-
-- `-s NUMBER` / `--slots NUMBER` — number of slots to process;
-- `-b NUMBER` / `--blocks NUMBER` — number of blocks to forge;
-- `-e NUMBER` / `--epochs NUMBER` — number of epochs to process.
-
-### Opening modes
-
-By default the tool expects the `--db` directory to *not* exist yet, and fails
-otherwise. Two flags change this:
-
-- `-f` — force overwrite: wipe and recreate the directory. As a safety
-  measure, it only does so if the directory looks like a ChainDB (its
-  subdirectories are a subset of `immutable`/`ledger`/`volatile`/`gsm`).
-- `-a` — append: open the existing ChainDB and continue forging from its tip
-  (again only if the directory looks like a ChainDB).
 
 ---
 

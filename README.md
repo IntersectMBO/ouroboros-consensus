@@ -26,7 +26,6 @@ This repository also provides some executables:
 | Name                 | Purpose                                                                                               |
 |----------------------|-------------------------------------------------------------------------------------------------------|
 | `db-analyser`        | Analyzing ChainDBs for testing and validation, or producing ledger snapshots                          |
-| `db-synthesizer`     | Quickly generate new synthetic chains for benchmarking                                                |
 | `db-truncater`       | Truncating an Immutable DB                                                                            |
 | `db-immutaliser`     | Converting the volatile suffix of the chain into immutable, so that `db-analyser` can also analyse it |
 | `immdb-server`       | Serves immutable blocks from a ChainDB in a Node-to-node connection                                   |
