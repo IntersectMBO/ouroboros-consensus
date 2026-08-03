@@ -43,6 +43,7 @@ import Data.Proxy
 import Data.Typeable
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
+import LeiosDemoTypes (LeiosExtValidationError (..))
 import NoThunks.Class (NoThunks (..))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -60,6 +61,14 @@ import Ouroboros.Consensus.Util.IndexedMemPack
 data ExtValidationError blk
   = ExtValidationErrorLedger !(LedgerError blk)
   | ExtValidationErrorHeader !(HeaderError blk)
+  | -- | A CertRB rejected during ledger validation of its Leios certificate.
+    -- The payload is 'blk'-independent (it references only the monomorphic
+    -- Leios types), so it needs no extra instances here.
+    --
+    -- TODO: temporary prototype stand-in. Once the ledger interface is Leios
+    -- aware, an invalid cert will be expressible as an ordinary 'LedgerError'
+    -- 'blk' and this constructor can be removed.
+    ExtValidationErrorLeios !LeiosExtValidationError
   deriving Generic
 
 deriving instance LedgerSupportsProtocol blk => Eq (ExtValidationError blk)

@@ -16,6 +16,7 @@ module Test.Util.Orphans.ToExpr () where
 import qualified Control.Monad.Class.MonadTime.SI as SI
 import Data.TreeDiff
 import GHC.Generics (Generic)
+import LeiosDemoTypes (LeiosExtValidationError)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (RelativeTime, WithArrivalTime)
 import Ouroboros.Consensus.HeaderValidation
@@ -75,6 +76,9 @@ instance
   ToExpr (HeaderState blk)
 
 instance ToExpr SecurityParam where
+  toExpr = defaultExprViaShow
+
+instance ToExpr LeiosExtValidationError where
   toExpr = defaultExprViaShow
 
 instance ToExpr CRC
