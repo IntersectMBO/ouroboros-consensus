@@ -32,7 +32,8 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
-import Data.List (intersect, isInfixOf)
+import Data.List (isInfixOf)
+import Data.Maybe (fromMaybe)
 import Data.SOP.BasicFunctors (K (..))
 import Data.SOP.Strict (hcollapse, hmap)
 import Ouroboros.Consensus.Block (EpochNo (..))
@@ -48,8 +49,9 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 -- | The directory holding the node configuration these tests run against: a
--- legacy-format Cardano configuration that sets @Test\<era\>HardForkAtEpoch@ for
--- Shelley through Babbage and has no @LedgerDB@ section.
+-- Cardano configuration in the current @{ $schema, Version, Configuration }@
+-- format, which sets @Test\<era\>HardForkAtEpoch@ for Shelley through Babbage and
+-- has no @LedgerDB@ section.
 configDir :: FilePath
 configDir = "ouroboros-consensus-cardano/test/tools-test/disk/config"
 
@@ -60,7 +62,7 @@ tests :: TestTree
 tests =
   testGroup
     "NodeConfig"
-    [ testCase "recognises the keys we depend on" test_recognisesOurKeys
+    [ testCase "resolves without warnings" test_resolvesWithoutWarnings
     , testCase "hard-fork triggers" test_hardForkTriggers
     , testCase "hard-fork triggers reject a gap" test_hardForkTriggersGap
     , testCase "initial nonce hashes the Shelley genesis" test_initialNonce
@@ -80,10 +82,28 @@ tests =
   resolving, and the configuration file itself is patched there.
 -------------------------------------------------------------------------------}
 
--- | Run an action on a copy of 'configFile' whose top-level object has been
--- extended with (or, with a 'Nothing' value, stripped of) the given keys.
-withPatchedConfig :: [(Aeson.Key, Maybe Aeson.Value)] -> (FilePath -> IO a) -> IO a
-withPatchedConfig patches k =
+-- | The sections of the @Configuration@ envelope that these tests patch.
+protocolSection, storageSection, testingSection :: [Aeson.Key]
+protocolSection = ["Configuration", "ProtocolConfig"]
+storageSection = ["Configuration", "StorageConfig"]
+testingSection = ["Configuration", "TestingConfig"]
+
+-- | Run an action on a copy of 'configFile' in which the section at the given
+-- path has been extended with (or, for a 'Nothing' value, stripped of) the given
+-- keys. Missing sections are created.
+--
+-- The path must lead into the @Configuration@ envelope. A key added at the top
+-- level instead would not merely be ignored: it makes @cardano-config@ take the
+-- whole file to be in the legacy format and migrate it on the fly, so the test
+-- would silently exercise the legacy path rather than the current format.
+withPatchedConfig ::
+  [Aeson.Key] -> [(Aeson.Key, Maybe Aeson.Value)] -> (FilePath -> IO a) -> IO a
+withPatchedConfig section patches k = do
+  case section of
+    "Configuration" : _ : _ -> pure ()
+    _ ->
+      assertFailure $
+        "patches must target a section under Configuration, not " <> show section
   withSystemTempDirectory "db-analyser-config" $ \tmpDir -> do
     entries <- listDirectory configDir
     mapM_ (\e -> copyFile (configDir </> e) (tmpDir </> e)) entries
@@ -91,59 +111,60 @@ withPatchedConfig patches k =
     original <-
       Aeson.eitherDecodeFileStrict' patchedFile >>= \case
         Left err -> assertFailure $ "could not re-read the configuration: " <> err
-        Right (Aeson.Object o) -> pure o
-        Right _ -> assertFailure "the configuration is not a JSON object"
-    let patched = foldr applyPatch original patches
-    BL.writeFile patchedFile (Aeson.encode (Aeson.Object patched))
+        Right value -> pure value
+    patched <- patchAt section original
+    BL.writeFile patchedFile (Aeson.encode patched)
     k patchedFile
  where
+  patchAt [] (Aeson.Object o) = pure $ Aeson.Object $ foldr applyPatch o patches
+  patchAt (key : keys) (Aeson.Object o) = do
+    inner <- patchAt keys (fromMaybe (Aeson.Object mempty) (KeyMap.lookup key o))
+    pure $ Aeson.Object $ KeyMap.insert key inner o
+  patchAt _ _ =
+    assertFailure $ "not an object at " <> show section <> " in the configuration"
+
   applyPatch (key, mbValue) =
     maybe (KeyMap.delete key) (KeyMap.insert key) mbValue
 
--- | Select the LSM backend, with the given @LedgerDB@ settings.
+-- | Resolve a configuration that is expected to be in the current format,
+-- failing if @cardano-config@ had to migrate it from the legacy format. Every
+-- test that resolves successfully goes through this, so none of them can drift
+-- onto the legacy path unnoticed.
+resolveNewFormat :: FilePath -> IO Cfg.NodeConfiguration
+resolveNewFormat file = do
+  (nc, warns) <- resolveNodeConfiguration file
+  Cfg.MigratedToCurrentFormat `notElem` warns
+    @? "the configuration is not in the current format: " <> show warns
+  pure nc
+
+-- | Select the LSM backend, with the given @LedgerDB.Backend.LSM@ options.
 lsmBackend :: [(Aeson.Key, Aeson.Value)] -> (Aeson.Key, Maybe Aeson.Value)
-lsmBackend settings =
+lsmBackend options =
   ( "LedgerDB"
-  , Just $ Aeson.Object $ KeyMap.fromList $ ("Backend", "V2LSM") : settings
+  , Just $
+      Aeson.object
+        [ "Backend"
+            Aeson..= Aeson.object ["LSM" Aeson..= Aeson.Object (KeyMap.fromList options)]
+        ]
   )
 
 {-------------------------------------------------------------------------------
   Tests
 -------------------------------------------------------------------------------}
 
--- | Resolving this configuration does warn, because it is in the legacy node
--- format and carries keys that are none of db-analyser's business. What must
--- never happen is @cardano-config@ not recognising a key db-analyser /does/
--- read: that would silently fall back to a default instead of failing.
-test_recognisesOurKeys :: Assertion
-test_recognisesOurKeys = do
+-- | The configuration must resolve completely silently.
+--
+-- An @UnrecognisedKeys@ warning is the failure mode that matters here: a key
+-- @cardano-config@ does not know is a key it silently defaults instead of
+-- honouring, which for something like @Test\<era\>HardForkAtEpoch@ would mean
+-- db-analyser replaying a different era than the file asks for. Since the
+-- configuration carries nothing db-analyser does not read, no key should be
+-- ignored -- and since it is already in the current format, it should not need
+-- migrating on the fly either.
+test_resolvesWithoutWarnings :: Assertion
+test_resolvesWithoutWarnings = do
   (_nc, warns) <- resolveNodeConfiguration configFile
-  let ignored = concatMap unrecognisedKeys warns
-  ignored `intersect` keysWeDependOn @?= []
- where
-  unrecognisedKeys :: Cfg.ConfigWarning -> [String]
-  unrecognisedKeys = \case
-    Cfg.UnrecognisedKeys keys -> keys
-    _ -> []
-
-  keysWeDependOn :: [String]
-  keysWeDependOn =
-    [ "ByronGenesisFile"
-    , "ByronGenesisHash"
-    , "ShelleyGenesisFile"
-    , "ShelleyGenesisHash"
-    , "AlonzoGenesisFile"
-    , "ConwayGenesisFile"
-    , "DijkstraGenesisFile"
-    , "RequiresNetworkMagic"
-    , "TestShelleyHardForkAtEpoch"
-    , "TestAllegraHardForkAtEpoch"
-    , "TestMaryHardForkAtEpoch"
-    , "TestAlonzoHardForkAtEpoch"
-    , "TestBabbageHardForkAtEpoch"
-    , "TestConwayHardForkAtEpoch"
-    , "TestDijkstraHardForkAtEpoch"
-    ]
+  warns @?= []
 
 -- | The epochs the configuration sets must survive into the triggers. A silent
 -- fallback to 'CardanoTriggerHardForkAtDefaultVersion' would make db-analyser
@@ -151,7 +172,7 @@ test_recognisesOurKeys = do
 -- down rather than just spot-checking one era.
 test_hardForkTriggers :: Assertion
 test_hardForkTriggers = do
-  (nc, _warns) <- resolveNodeConfiguration configFile
+  nc <- resolveNewFormat configFile
   case mkHardForkTriggers (Cfg.testingConfiguration nc) of
     Left err -> assertFailure $ "expected triggers, but got: " <> err
     Right triggers ->
@@ -173,8 +194,8 @@ test_hardForkTriggersGap :: Assertion
 test_hardForkTriggersGap =
   -- Leaves Shelley and Allegra set, and Alonzo and Babbage set, with the gap at
   -- Mary.
-  withPatchedConfig [("TestMaryHardForkAtEpoch", Nothing)] $ \file -> do
-    (nc, _warns) <- resolveNodeConfiguration file
+  withPatchedConfig testingSection [("TestMaryHardForkAtEpoch", Nothing)] $ \file -> do
+    nc <- resolveNewFormat file
     case mkHardForkTriggers (Cfg.testingConfiguration nc) of
       Right triggers ->
         assertFailure $ "expected a rejection, but got: " <> show (triggerEpochs triggers)
@@ -191,7 +212,7 @@ test_hardForkTriggersGap =
 -- hash and the file on disk have not drifted apart.
 test_initialNonce :: Assertion
 test_initialNonce = do
-  (nc, _warns) <- resolveNodeConfiguration configFile
+  nc <- resolveNewFormat configFile
   expected <-
     Nonce . CryptoClass.castHash . CryptoClass.hashWith id
       <$> BS.readFile (configDir </> "shelley-genesis.json")
@@ -202,7 +223,7 @@ test_initialNonce = do
 -- command line selects no backend.
 test_ledgerDBBackendDefault :: Assertion
 test_ledgerDBBackendDefault = do
-  (nc, _warns) <- resolveNodeConfiguration configFile
+  nc <- resolveNewFormat configFile
   backendOf nc >>= \case
     Just V2InMem -> pure ()
     other -> assertFailure $ "expected the in-memory backend, but got " <> describe other
@@ -213,13 +234,14 @@ test_ledgerDBBackendDefault = do
 test_ledgerDBBackendLSM :: Assertion
 test_ledgerDBBackendLSM =
   withPatchedConfig
+    storageSection
     [ lsmBackend
-        [ ("LSMDatabasePath", "some-lsm-dir")
-        , ("LSMExportPath", "some-export-dir")
+        [ ("DatabasePath", "some-lsm-dir")
+        , ("ExportPath", "some-export-dir")
         ]
     ]
     $ \file -> do
-      (nc, _warns) <- resolveNodeConfiguration file
+      nc <- resolveNewFormat file
       backendOf nc >>= \case
         Just (V2LSM opts) -> do
           lsmDatabasePath opts @?= "some-lsm-dir"
@@ -228,19 +250,19 @@ test_ledgerDBBackendLSM =
           lsmNoDiskCache opts @?= False
         other -> assertFailure $ "expected the LSM backend, but got " <> describe other
 
--- | @cardano-config@ happily accepts an absolute @LSMDatabasePath@, but
+-- | @cardano-config@ happily accepts an absolute @DatabasePath@, but
 -- db-analyser cannot honour one, because it mounts the path inside the ChainDB.
 -- Rejecting it beats silently using a different directory than the one asked
 -- for.
 test_ledgerDBBackendLSMAbsolute :: Assertion
 test_ledgerDBBackendLSMAbsolute =
-  withPatchedConfig [lsmBackend [("LSMDatabasePath", "/absolute/lsm")]] $ \file -> do
-    (nc, _warns) <- resolveNodeConfiguration file
+  withPatchedConfig storageSection [lsmBackend [("DatabasePath", "/absolute/lsm")]] $ \file -> do
+    nc <- resolveNewFormat file
     case mkLedgerDBBackend (Cfg.storageConfiguration nc) of
       Right backend ->
         assertFailure $ "expected a rejection, but got " <> describe backend
       Left err -> do
-        "LSMDatabasePath" `isInfixOf` err @? "unexpected message: " <> err
+        "DatabasePath" `isInfixOf` err @? "unexpected message: " <> err
         "must be relative" `isInfixOf` err @? "unexpected message: " <> err
 
 -- | @cardano-config@ reports a missing mandatory key by throwing, not in its
@@ -248,7 +270,7 @@ test_ledgerDBBackendLSMAbsolute =
 -- 'ConfigError' -- ie as a plain message -- rather than as a backtrace.
 test_malformedIsConfigError :: Assertion
 test_malformedIsConfigError =
-  withPatchedConfig [("ByronGenesisHash", Nothing)] $ \file ->
+  withPatchedConfig protocolSection [("ByronGenesisHash", Nothing)] $ \file ->
     try (resolveNodeConfiguration file) >>= \case
       Right _ -> assertFailure "expected the configuration to be rejected"
       Left (ConfigError msg) ->
