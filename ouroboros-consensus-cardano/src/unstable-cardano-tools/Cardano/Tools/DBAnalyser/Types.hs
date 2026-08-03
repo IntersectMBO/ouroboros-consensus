@@ -75,6 +75,10 @@ data LSMOptions = LSMOptions
 defaultLSMDatabasePath :: FilePath
 defaultLSMDatabasePath = "lsm"
 
+-- | The directory that @--lsm-export@ exports snapshots into.
+defaultLSMExportPath :: FilePath
+defaultLSMExportPath = "lsm-exported"
+
 -- | The extent of the ChainDB on-disk files validation. This is completely
 -- unrelated to validation of the ledger rules.
 data ValidateBlocks = ValidateAllBlocks | MinimumBlockValidation

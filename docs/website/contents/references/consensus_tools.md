@@ -124,14 +124,19 @@ it (see
 - `--lsm`: the UTxO set lives in an LSM tree on disk. The tool creates its
   working LSM database under `<db>/lsm`, with a fresh random bloom-filter salt
   on every run.
+  - `--lsm-export`: additionally *export* every snapshot taken with
+    `--store-ledger` into `<db>/lsm-exported`, as a standalone LSM snapshot
+    that [`snapshot-converter`](#snapshot-converter) can convert or import (the
+    random salt is irrelevant here, as exported snapshots record their own
+    salt).
+  - `--lsm-no-cache`: bypass the OS page cache for UTxO table reads and writes
+    (`O_DIRECT`) instead of caching everything; primarily useful for
+    benchmarking.
 
-When neither flag is given, the backend and its settings are the ones the node
-configuration file selects with `LedgerDB.Backend`, `LedgerDB.LSMDatabasePath`
-and `LedgerDB.LSMExportPath`. With an export path configured, snapshots taken
-with `--store-ledger` are additionally *exported* into that directory as
-standalone LSM snapshots, which
-[`snapshot-converter`](#snapshot-converter) can then convert or import (the
-random salt is irrelevant here, as exported snapshots record their own salt).
+When neither flag is given, the backend is the one the node configuration file
+selects with `LedgerDB.Backend`, using its `LedgerDB.LSMDatabasePath` and
+`LedgerDB.LSMExportPath` (the OS page cache is used in that case, as it is not
+configurable there).
 
 #### Starting from a slot: `--analyse-from`
 
