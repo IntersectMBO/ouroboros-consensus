@@ -7,6 +7,7 @@ module Main (main) where
 
 import Cardano.Crypto.Init (cryptoInit)
 import Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
+import Cardano.Tools.DBAnalyser.Types (withConfigErrorHandling)
 import Cardano.Tools.GitRev (gitRev)
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, try)
@@ -90,7 +91,7 @@ data LsmDbOpts = LsmDbOpts
   }
 
 main :: IO ()
-main = withStdTerminalHandles $ do
+main = withStdTerminalHandles $ withConfigErrorHandling $ do
   cryptoInit
   cmd <- execParser opts
   case cmd of

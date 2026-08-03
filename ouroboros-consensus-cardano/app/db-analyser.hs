@@ -21,7 +21,7 @@ import Options.Applicative
   )
 
 main :: IO ()
-main = withStdTerminalHandles $ do
+main = withStdTerminalHandles $ withConfigErrorHandling $ do
   cryptoInit
   void $ uncurry analyse =<< getCmdLine
 
