@@ -103,7 +103,7 @@ cabal run db-analyser -- \
 |---|---|
 | `--db PATH` | Path to the ChainDB (required). |
 | `--config PATH` | Node configuration file (required). |
-| `--in-mem` / `--lsm` | LedgerDB backend to use for analyses that maintain a ledger state (one of the two is required; there is no default). See below. |
+| `--in-mem` / `--lsm` | LedgerDB backend to use for analyses that maintain a ledger state. Optional: when neither is given, the backend and its settings are taken from the node configuration file. See below. |
 | `--analyse-from SLOT_NUMBER` | Start the analysis at the block in slot `SLOT_NUMBER` (a block must exist exactly at that slot). See below. |
 | `--num-blocks-to-process INT` | Cap on the number of blocks to process. |
 | `--db-validation POLICY` | Extent of the on-disk file validation when opening the database: `validate-all-blocks` or `minimum-block-validation` (only the most recent chunk). This is unrelated to validation of the ledger rules. |
@@ -115,20 +115,23 @@ chunks of the ImmutableDB, and exits — useful as a standalone integrity check.
 
 #### Choosing a ledger backend: `--in-mem` vs `--lsm`
 
-Analyses that maintain a ledger state need a LedgerDB, and you must pick its
-backend (see
+Analyses that maintain a ledger state need a LedgerDB, and hence a backend for
+it (see
 [Consensus configuration values §1](./consensus_configuration#1-ledgerdb-and-storage-backends)):
 
 - `--in-mem`: the whole UTxO set lives in memory. Fastest, but needs as much
   RAM as a pre-UTxO-HD node.
 - `--lsm`: the UTxO set lives in an LSM tree on disk. The tool creates its
   working LSM database under `<db>/lsm`, with a fresh random bloom-filter salt
-  on every run. If the node configuration sets `LedgerDB.LSMExportPath`,
-  snapshots taken with `--store-ledger` are additionally *exported* into that
-  directory as standalone LSM snapshots, which
-  [`snapshot-converter`](#snapshot-converter) can then convert or import (the
-  random salt is irrelevant here, as exported snapshots record their own
-  salt).
+  on every run.
+
+When neither flag is given, the backend and its settings are the ones the node
+configuration file selects with `LedgerDB.Backend`, `LedgerDB.LSMDatabasePath`
+and `LedgerDB.LSMExportPath`. With an export path configured, snapshots taken
+with `--store-ledger` are additionally *exported* into that directory as
+standalone LSM snapshots, which
+[`snapshot-converter`](#snapshot-converter) can then convert or import (the
+random salt is irrelevant here, as exported snapshots record their own salt).
 
 #### Starting from a slot: `--analyse-from`
 
