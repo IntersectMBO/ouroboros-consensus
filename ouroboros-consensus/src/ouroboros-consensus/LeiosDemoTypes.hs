@@ -766,6 +766,34 @@ data VoteInvalid
   | SignerNotInCommittee
   deriving (Eq, Show)
 
+-- | Why a CertRB was rejected during ledger validation of its Leios
+-- certificate.
+--
+-- Enumerated rather than rendered to a 'String' so each case is a distinct,
+-- monitorable outcome (e.g. for Grafana) and carries enough context to diagnose
+-- without extra forensics. Temporary prototype stand-in: once the ledger
+-- interface is Leios-aware an invalid cert becomes expressible as an ordinary
+-- 'LedgerError', at which point this type (and the 'ExtValidationErrorLeios'
+-- constructor that wraps it) can be removed.
+data LeiosExtValidationError
+  = -- | The block carries a Leios cert but its predecessor announced no EB, so
+    -- there is nothing for the cert to certify.
+    LeiosCertificateWithoutAnnouncement !LeiosCert
+  | -- | A CertRB reached ledger validation in an era/state with no Leios
+    -- committee to verify the cert against.
+    LeiosMissingCommittee !LeiosPoint !LeiosCert
+  | -- | A CertRB whose announcing ranking block could not be determined; it
+    -- would be certifying against genesis.
+    LeiosCertificateAfterGenesis !LeiosCert !LeiosPoint
+  | -- | The certificate failed committee / threshold / signature verification.
+    LeiosInvalidCertificate !LeiosCert !LeiosPoint !RbHash !VerificationError
+  deriving stock (Eq, Show, Generic)
+
+deriving via
+  OnlyCheckWhnfNamed "LeiosExtValidationError" LeiosExtValidationError
+  instance
+    NoThunks LeiosExtValidationError
+
 -- * Era-level Leios dispatch
 
 -- | Per-era hooks for Leios voting and CertRB admission. Default

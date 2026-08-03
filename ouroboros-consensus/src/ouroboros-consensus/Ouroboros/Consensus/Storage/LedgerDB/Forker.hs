@@ -83,6 +83,7 @@ import LeiosDemoTypes
   , EbHash
   , HasLeiosVoting (..)
   , LeiosCert
+  , LeiosExtValidationError (..)
   , LeiosPoint (..)
   , RbHash
   , minCertificationThreshold
@@ -513,19 +514,10 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
             tip = castPoint $ getTip extSt
         case protocolStateLeiosAnnouncement @blk cds of
           Nothing ->
-            -- A reapplied CertRB was validated before, so its predecessor must
-            -- have announced an EB; reaching this means the chain-dep state is
-            -- inconsistent. Reject as an InvalidBlock rather than crash the node
-            -- (mirrors the ApplyVal path); the alternative hard 'error' would
-            -- take the whole node down on chain selection with no restart path.
-            pure
-              ( Left
-                  ( AnnLedgerError
-                      tip
-                      (blockRealPoint b)
-                      (ExtValidationErrorLeios "applyBlock: reapplied CertRB but its predecessor announced no EB")
-                  )
-              )
+            -- TODO: Ideally make this impossible to reach.
+            -- NOTE: We deliberately keep the 'error' call here because this
+            -- would point us to a bug in our currently running implementation.
+            error $ "applyBlock ReapplyVal: nothing announced!?"
           Just (announcedPoint, _) -> do
             let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
                 readTables = fmap castLedgerTables . forkerReadTables fo . castLedgerTables
@@ -584,18 +576,22 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
         -- rules because step 2 involves an IO read of the LeiosDB
         -- which can't be interleaved with the pure STS evaluation.
         --
-        -- Every failure below is reachable from an adversarial block on chain
-        -- selection, so each rejects the CertRB as an InvalidBlock (via
-        -- 'rejectLeios') instead of crashing the node with a hard 'error':
-        -- ChainSel marks the block InvalidBlock and carries on.
+        -- 'rejectLeios' rejects the CertRB as an InvalidBlock (ChainSel marks it
+        -- InvalidBlock and carries on) rather than crashing the node with a hard
+        -- 'error'. Most of these failures should already have caused our node to
+        -- reject the 'MsgRollForward' header that first informed us of this
+        -- CertRB, so catching them here is belt-and-suspenders — but worthwhile,
+        -- because not all headers arrive via 'MsgRollForward' (e.g. a bug in our
+        -- own forging logic). The invalid-cert case below is the only one that
+        -- header validation could not have caught.
         let tip = castPoint $ getTip extSt
-            rejectLeios msg =
+            rejectLeios err =
               pure
                 ( Left
                     ( AnnLedgerError
                         tip
                         (blockRealPoint b)
-                        (ExtValidationErrorLeios msg)
+                        (ExtValidationErrorLeios err)
                     )
                 )
         case protocolStateLeiosAnnouncement @blk cds of
@@ -603,23 +599,24 @@ applyBlock leiosDb evs cfg ap fo doResolveBlock = case ap of
             -- A CertRB certifies an EB announced by its predecessor; if the
             -- parent's chain-dep state announced none, there is nothing to
             -- certify, so the block is invalid.
-            rejectLeios "applyBlock: CertRB but its predecessor announced no EB"
+            rejectLeios (LeiosCertificateWithoutAnnouncement cert)
           Just (announcedPoint, _) ->
             case getLeiosCommittee (ledgerState extSt) of
               Nothing ->
                 -- CertRB on an era without a Leios committee is itself a protocol
                 -- violation: the era machinery shouldn't have let one through.
-                rejectLeios "applyBlock: CertRB but no Leios committee for this era"
+                rejectLeios (LeiosMissingCommittee announcedPoint cert)
               Just cm ->
                 case announcingRbHash b of
                   Nothing ->
                     -- A CertRB always has a (non-genesis) announcing parent; if
-                    -- we cannot determine one, the block is malformed.
-                    rejectLeios "applyBlock: CertRB with no determinable announcing RB hash"
+                    -- we cannot determine one, it would be certifying at genesis.
+                    rejectLeios (LeiosCertificateAfterGenesis cert announcedPoint)
                   Just announcingRbHashValue ->
                     case verifyLeiosCert cm minCertificationThreshold announcingRbHashValue cert of
                       Left invalid ->
-                        rejectLeios ("applyBlock: invalid Leios cert: " <> show invalid)
+                        rejectLeios
+                          (LeiosInvalidCertificate cert announcedPoint announcingRbHashValue invalid)
                       Right _weight -> do
                         -- get the UTXO-HD keys of the RB we are applying the cert onto
                         let bKeys = castLedgerTables (getBlockKeySets b :: LedgerTables l KeysMK)
