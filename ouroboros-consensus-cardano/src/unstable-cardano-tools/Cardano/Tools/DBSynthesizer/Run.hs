@@ -5,7 +5,6 @@ module Cardano.Tools.DBSynthesizer.Run
   ( synthesize
   ) where
 
-import qualified Cardano.Slotting.Slot as Slot
 import Cardano.Tools.DBSynthesizer.Forging
 import Cardano.Tools.DBSynthesizer.Types
 import Control.Monad (filterM)
@@ -25,6 +24,7 @@ import qualified Ouroboros.Consensus.Node.InitStorage as Node
 import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentClientTrace)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
+import Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
@@ -41,13 +41,17 @@ import System.Random (newStdGen)
 -- | Forge a ChainDB from a ready-made Cardano 'ProtocolInfo' and its block
 -- forgers (as produced by 'protocolInfoCardano'). Constructing the protocol
 -- from a node configuration is the caller's responsibility, keeping this
--- function free of any node/api configuration machinery.
+-- function free of any node/api configuration machinery. In particular, the
+-- caller is also responsible for having validated the genesis (see
+-- 'Ouroboros.Consensus.Shelley.Node.validateGenesis').
 synthesize ::
   ( TopLevelConfig (CardanoBlock StandardCrypto) ->
     GenTxs (CardanoBlock StandardCrypto)
   ) ->
   DBSynthesizerOptions ->
-  Slot.EpochSize ->
+  -- | The same Shelley genesis the 'ProtocolInfo' was built from; only its
+  -- epoch length is used, to interpret a 'ForgeLimitEpoch'.
+  ShelleyGenesis ->
   -- | The directory of the ChainDB to forge into.
   FilePath ->
   ( ProtocolInfo (CardanoBlock StandardCrypto)
@@ -55,10 +59,11 @@ synthesize ::
     IO [BlockForging.MkBlockForging IO (CardanoBlock StandardCrypto)]
   ) ->
   IO ForgeResult
-synthesize genTxs confOptions epochSize confDbDir (ProtocolInfo{pInfoConfig, pInfoInitLedger}, mkForgers) =
+synthesize genTxs confOptions shelleyGenesis confDbDir (ProtocolInfo{pInfoConfig, pInfoInitLedger}, mkForgers) =
   withRegistry $ \registry -> do
     snapshotDelayRng <- newStdGen
     let
+      epochSize = sgEpochLength shelleyGenesis
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
       flavargs = LedgerDB.LedgerDbBackendArgsV2 $ SomeBackendArgs InMemArgs
       dbArgs =

@@ -8,7 +8,7 @@ import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import Cardano.Tools.DBSynthesizer.Types
 import Ouroboros.Consensus.Cardano.Block (StandardCrypto)
 import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-import Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..))
+import qualified Test.Cardano.Tools.DBAnalyser.NodeConfig
 import qualified Test.Cardano.Tools.Headers
 import Test.Consensus.Cardano.ProtocolInfo
   ( ByronSlotLengthInSeconds (..)
@@ -64,16 +64,15 @@ blockCountTest logStep = do
       protocolVersionZero
       (hardForkInto Conway)
   let protocol = (protocolInfo, blockForging)
-      epochSize = sgEpochLength shelleyGenesis
 
   logStep "running synthesis - create"
   resultCreate <-
-    DBSynthesizer.synthesize genTxs testSynthOptionsCreate epochSize chainDB protocol
+    DBSynthesizer.synthesize genTxs testSynthOptionsCreate shelleyGenesis chainDB protocol
   resultForged resultCreate > 0 @? "no blocks have been forged during create step"
 
   logStep "running synthesis - append"
   resultAppend <-
-    DBSynthesizer.synthesize genTxs testSynthOptionsAppend epochSize chainDB protocol
+    DBSynthesizer.synthesize genTxs testSynthOptionsAppend shelleyGenesis chainDB protocol
   resultForged resultAppend > 0 @? "no blocks have been forged during append step"
  where
   genTxs _ _ _ _ = pure []
@@ -83,6 +82,7 @@ tests =
   testGroup
     "cardano-tools"
     [ testCaseSteps "synthesize: blockCount\n" blockCountTest
+    , Test.Cardano.Tools.DBAnalyser.NodeConfig.tests
     , Test.Cardano.Tools.Headers.tests
     ]
 
