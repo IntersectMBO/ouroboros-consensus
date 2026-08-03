@@ -29,6 +29,7 @@ const sidebars = {
               'explanations/ticking',
               'explanations/queries',
               'explanations/node_tasks',
+              'explanations/hard_forks_and_node_to_node_versioning',
              ]
     }
   ],
