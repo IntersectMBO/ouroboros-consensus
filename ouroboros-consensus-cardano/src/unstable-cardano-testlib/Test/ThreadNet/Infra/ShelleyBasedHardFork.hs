@@ -462,7 +462,10 @@ protocolInfoShelleyBasedHardFork
     genesis = transCfg2 ^. L.tcShelleyGenesisL
 
     eraParams1 :: History.EraParams
-    eraParams1 = shelleyEraParams genesis
+    eraParams1 =
+      shelleyEraParams
+        genesis
+        (Proxy @era1)
 
     toPartialLedgerConfig1 ::
       LedgerConfig (ShelleyBlock proto1 era1) ->
@@ -476,7 +479,10 @@ protocolInfoShelleyBasedHardFork
     -- Era 2
 
     eraParams2 :: History.EraParams
-    eraParams2 = shelleyEraParams genesis
+    eraParams2 =
+      shelleyEraParams
+        genesis
+        (Proxy @era2)
 
     toPartialLedgerConfig2 ::
       LedgerConfig (ShelleyBlock proto2 era2) ->

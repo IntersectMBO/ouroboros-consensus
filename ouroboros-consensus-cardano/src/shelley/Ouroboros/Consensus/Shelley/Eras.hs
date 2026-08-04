@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
@@ -70,6 +71,12 @@ import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( WhetherToIntervene (..)
   )
+import Ouroboros.Consensus.Peras.Params
+  ( PerasEnabled
+  , PerasRoundLength
+  , dijkstraPerasRoundLength
+  , pattern NoPerasEnabled
+  )
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 
 {-------------------------------------------------------------------------------
@@ -133,6 +140,12 @@ class
 
   mkEraMkMempoolApplyTxError ::
     proxy era -> Maybe (Text -> SL.ApplyTxError era)
+
+  -- | Retrieve the optionally enabled Peras round length of this epoch.
+  --
+  -- Defaults to 'NoPerasEnabled' for eras that don't explictily support Peras.
+  getShelleyEraPerasRoundLength :: proxy era -> PerasEnabled PerasRoundLength
+  getShelleyEraPerasRoundLength _ = NoPerasEnabled
 
 data ConwayEraGovDict era where
   ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
@@ -218,6 +231,8 @@ instance ShelleyBasedEra DijkstraEra where
   -- use MempoolFailure type family instead of just PredicateFailure type
   -- family
   mkEraMkMempoolApplyTxError _prx = Nothing
+
+  getShelleyEraPerasRoundLength _ = dijkstraPerasRoundLength
 
 applyAlonzoBasedTx ::
   forall era.

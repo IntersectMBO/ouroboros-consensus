@@ -25,7 +25,7 @@
 module Ouroboros.Consensus.Shelley.Ledger.Ledger
   ( LedgerState (..)
   , LedgerTables (..)
-  , ShelleyBasedEra
+  , ShelleyBasedEra (..)
   , ShelleyTip (..)
   , ShelleyTransition (..)
   , Ticked (..)
@@ -129,6 +129,7 @@ import Ouroboros.Consensus.Ledger.SupportsPeras
   )
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
+import Ouroboros.Consensus.Shelley.Eras (ShelleyBasedEra (..))
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
 import Ouroboros.Consensus.Shelley.Ledger.Protocol ()
@@ -170,17 +171,17 @@ shelleyLedgerGenesis :: ShelleyLedgerConfig era -> SL.ShelleyGenesis
 shelleyLedgerGenesis = getCompactGenesis . shelleyLedgerCompactGenesis
 
 shelleyEraParams ::
+  ShelleyBasedEra era =>
   SL.ShelleyGenesis ->
+  Proxy era ->
   HardFork.EraParams
-shelleyEraParams genesis =
+shelleyEraParams genesis proxyEra =
   HardFork.EraParams
     { eraEpochSize = SL.sgEpochLength genesis
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.StandardSafeZone stabilityWindow
     , eraGenesisWin = GenesisWindow stabilityWindow
-    , -- TODO(geo2a): enabled Peras conditionally in the Dijkstra era
-      -- see https://github.com/tweag/cardano-peras/issues/112
-      eraPerasRoundLength = HardFork.NoPerasEnabled
+    , eraPerasRoundLength = getShelleyEraPerasRoundLength proxyEra
     }
  where
   stabilityWindow =
@@ -189,14 +190,17 @@ shelleyEraParams genesis =
       (SL.sgActiveSlotCoeff genesis)
 
 -- | Separate variant of 'shelleyEraParams' to be used for a Shelley-only chain.
-shelleyEraParamsNeverHardForks :: SL.ShelleyGenesis -> HardFork.EraParams
-shelleyEraParamsNeverHardForks genesis =
+shelleyEraParamsNeverHardForks ::
+  SL.ShelleyGenesis ->
+  HardFork.PerasEnabled PerasRoundLength ->
+  HardFork.EraParams
+shelleyEraParamsNeverHardForks genesis perasRoundLength =
   HardFork.EraParams
     { eraEpochSize = SL.sgEpochLength genesis
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.UnsafeIndefiniteSafeZone
     , eraGenesisWin = GenesisWindow stabilityWindow
-    , eraPerasRoundLength = HardFork.NoPerasEnabled
+    , eraPerasRoundLength = perasRoundLength
     }
  where
   stabilityWindow =
@@ -763,11 +767,13 @@ applyHelper f cfg blk stBefore = do
   getPerasCertRoundInBlock =
     fmap getPerasCertRound . maybeToStrictMaybe . getPerasCertInBlock
 
-instance HasHardForkHistory (ShelleyBlock proto era) where
+instance ShelleyBasedEra era => HasHardForkHistory (ShelleyBlock proto era) where
   type HardForkIndices (ShelleyBlock proto era) = '[ShelleyBlock proto era]
   hardForkSummary =
-    neverForksHardForkSummary $
-      shelleyEraParamsNeverHardForks . shelleyLedgerGenesis
+    neverForksHardForkSummary $ \cfg ->
+      shelleyEraParamsNeverHardForks
+        (shelleyLedgerGenesis cfg)
+        (getShelleyEraPerasRoundLength (Proxy @era))
 
 instance
   ShelleyCompatible proto era =>
