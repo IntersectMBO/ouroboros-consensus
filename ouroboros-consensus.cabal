@@ -1042,6 +1042,20 @@ benchmark leios-db-bench
     time,
     vector,
 
+benchmark leios-txcache-bench
+  import: common-bench
+  type: exitcode-stdio-1.0
+  hs-source-dirs: ouroboros-consensus/bench/leios-txcache-bench
+  main-is: Main.hs
+  ghc-options: -with-rtsopts=-T
+  build-depends:
+    base,
+    bytestring,
+    cardano-slotting,
+    deepseq,
+    ouroboros-consensus,
+    vector,
+
 test-suite doctest
   import: common-test
   main-is: doctest.hs
