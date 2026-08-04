@@ -731,6 +731,7 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
         snap <-
           pmTrace'Via (const ()) "mempool-get-snapshot-for" currentSlot $
             getSnapshotFor mempool currentSlot tickedLedgerState readTables
+
         pmTrace'Via (const ()) "take-rb-eb-txs" currentSlot $ do
           let (rbTxs', rbTxsSize') = snapshotTake snap rbCap
               ebTxs' =
@@ -753,6 +754,7 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
               readTables
               emptyLedgerTables
               (ledgerState unticked)
+
         case res of
           Left err ->
             -- Should not happen: we are certifying this EB, so a quorum of
@@ -764,17 +766,20 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
             -- state with the EB closure applied), so the mempool snapshot is revalidated
             -- against parent + closure + tick.
             tickedLsAfterEB <-
-              pmTrace'Via (const ()) "tick-ledger-state-after-eb" currentSlot $
-                evaluate $
-                  lcaClosureDiff
-                    `prependDiffs` applyChainTick
+              pmTrace'Via (const ()) "tick-ledger-state-after-eb" currentSlot $ do
+                lcaStateAfterEBTicked <-
+                  evaluate $
+                    applyChainTick
                       OmitLedgerEvents
                       (configLedger cfg)
                       currentSlot
                       (forgetLedgerTables lcaStateAfterEB)
+                evaluate $ lcaClosureDiff `prependDiffs` lcaStateAfterEBTicked
+
             snap <-
               pmTrace'Via (const ()) "mempool-get-snapshot-for-no-cache" currentSlot $
                 getSnapshotForNoCache mempool currentSlot tickedLsAfterEB readTables
+
             pmTrace'Via (const ()) "take-eb-txs" currentSlot $ do
               let ebTxs' = fst (snapshotTake snap ebCap)
               _ <- evaluate (length ebTxs')
