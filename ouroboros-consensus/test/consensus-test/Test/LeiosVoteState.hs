@@ -183,10 +183,10 @@ prop_signerNotInCommittee :: Property
 prop_signerNotInCommittee =
   forAll genCommittee $ \testCommittee ->
     forAll (genKeyNotIn testCommittee) $ \key ->
-      forAll genRbHash $ \announcingRbHash -> property $ runSimOrThrow $ do
+      forAll genRbHash $ \announcement -> property $ runSimOrThrow $ do
         -- VoterId must be outside of committe, otherwise this is just a bad signature
         let n = leiosCommitteeSize testCommittee.committee
-        let vote = signLeiosVote key (LeiosSeatId $ fromIntegral n) announcingRbHash
+        let vote = signLeiosVote key (LeiosSeatId $ fromIntegral n) announcement
         st <- newLeiosVoteState (pure (Just testCommittee.committee))
         sub <- subscribeVotes st
         r <- addVote st vote

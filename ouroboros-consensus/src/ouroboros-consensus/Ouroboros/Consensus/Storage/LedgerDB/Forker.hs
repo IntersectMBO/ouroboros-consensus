@@ -50,6 +50,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , ResolveBlock
   , LeiosClosureApplied (..)
   , ResolveLeiosBlock (..)
+  , OCINStaleness (..)
   , applyBlockToForker
   , resolveAndApplyLeiosClosure
   , resolveLeiosBlock
@@ -774,6 +775,19 @@ applyThenPushMany leiosDb trace evs cfg aps fo doResolveBlock = pushAndTrace aps
 -- validation mode.
 type ResolveBlock m blk = RealPoint blk -> m blk
 
+-- | Whether a relayed Leios announcement's operational-certificate issue number
+-- (OCIN) is /stale/ relative to the (possibly-lagging) immutable-tip ledger view
+-- it was validated against: at or ahead of our recorded counter ('FreshOCIN'),
+-- versus below it or from an as-yet-unknown key ('StaleOCIN').
+--
+-- Only 'validateAnnouncementChainDepState' produces this, and only because an
+-- announcement is validated out-of-context (\"dangling\") against the immutable
+-- tip. A 'StaleOCIN' announcement is accepted from the peer (never a disconnect)
+-- and counted in its per-peer state, but is not processed, published, or
+-- relayed. See 'validateAnnouncementHeader' for why that is safe.
+data OCINStaleness = FreshOCIN | StaleOCIN
+  deriving (Eq, Show)
+
 -- | Resolve a block before it is applied to the ledger.
 --
 -- In Leios, a Dijkstra-era block may carry only a 'LeiosCert' on its body
@@ -871,20 +885,21 @@ class ResolveLeiosBlock blk where
   --
   -- Mirrors 'updateChainDepState' (its strict behaviour is the default), but is
   -- run out-of-context against a possibly-lagging immutable tip, so eras that
-  -- relay announcements override it to skip the checks that such lag spuriously
-  -- trips — currently just the OCERT counter's upper bound (see
-  -- 'WhetherToUpperBoundOCERT'). Unlike a full header validation it also omits
-  -- the RB-header-specific checks (body size etc.) that a bare EB announcement
-  -- would not carry. Any error it returns is therefore a genuine rejection.
+  -- relay announcements override it to relax the checks that such lag spuriously
+  -- trips.
+  --
+  -- Called by
+  -- 'LeiosDemoLogic.Announcements.Validate.validateAnnouncementHeader', which
+  -- has a large Haddock comment motivating the 'OCINStaleness' return type.
   validateAnnouncementChainDepState ::
     ConsensusProtocol (BlockProtocol blk) =>
     ConsensusConfig (BlockProtocol blk) ->
     ValidateView (BlockProtocol blk) ->
     SlotNo ->
     Ticked (ChainDepState (BlockProtocol blk)) ->
-    Except (ValidationErr (BlockProtocol blk)) ()
+    Except (ValidationErr (BlockProtocol blk)) OCINStaleness
   validateAnnouncementChainDepState cfg vv slot tcs =
-    () <$ updateChainDepState cfg vv slot tcs
+    FreshOCIN <$ updateChainDepState cfg vv slot tcs
 
   -- | The EB most recent announcement in the 'HeaderState', if any. 'Nothing'
   -- for headers in eras that don't carry Leios announcements.
