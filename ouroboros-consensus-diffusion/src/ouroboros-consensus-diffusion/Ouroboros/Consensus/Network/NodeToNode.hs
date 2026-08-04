@@ -351,6 +351,7 @@ mkHandlers ::
   ( IOLike m
   , MonadTime m
   , MonadTimer m
+  , ConvertRawHash blk
   , LedgerSupportsMempool blk
   , HasTxId (GenTx blk)
   , LedgerSupportsProtocol blk
@@ -502,8 +503,9 @@ mkHandlers
                                 Announcements.onAnnouncementCentral
                                   (contramap Leios.traceNewAnnouncement kernelTracer)
                                   Leios.ancElId
-                                  ( \_elSt ->
+                                  ( \_elSt -> do
                                       Leios.recordAnnouncedEb (getLeiosOutstanding, getLeiosReady) anc'
+                                      Leios.recordAnnouncementInTxCache getLeiosTxCache ancHdr p
                                   )
                                   cst
                                   (Just peer)
@@ -666,6 +668,7 @@ mkHandlers
                   (leiosPeerTracer peer)
                   ((== Terminate) <$> controlMessageSTM)
                   (getLeiosOutstanding, getLeiosReady)
+                  getLeiosTxCache
                   leiosConn
                   (Leios.MkPeerId peer)
                   reqVar
@@ -684,6 +687,7 @@ mkHandlers
       , getLeiosOutstanding
       , getLeiosReady
       , getLeiosCentralState
+      , getLeiosTxCache
       } = nodeKernel
 
     leiosPeerTracer peer = TraceLabelPeer peer `contramap` Node.leiosPeerTracer tracers

@@ -70,6 +70,7 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosTxCacheIndex (LeiosTxCacheIndex, emptyLeiosTxCacheIndex)
 import LeiosUtils.CallTrace
   ( SomeJsonCallTrace (SomeJsonCallTrace)
   , callTraceSameThread
@@ -249,6 +250,10 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getLeiosCentralState ::
       MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
   -- ^ Node-wide EB-announcement state
+  , getLeiosTxCache ::
+      MVar.MVar m (LeiosTxCacheIndex () () Leios.SerializedEbBody)
+  -- ^ Shadow in-memory tx-cache index (see 'LeiosTxCacheIndex'); maintained but
+  -- not yet consulted, so it changes no observable behavior.
   }
 
 -- | Arguments required when initializing a node
@@ -331,6 +336,7 @@ initNodeKernel
           , leiosOutstanding = getLeiosOutstanding
           , leiosReady = getLeiosReady
           , leiosCentralState = getLeiosCentralState
+          , leiosTxCache = getLeiosTxCache
           , leiosPeersVars = getLeiosPeersVars
           , leiosVoteState
           } = st
@@ -586,6 +592,7 @@ initNodeKernel
         , getLeiosOutstanding = getLeiosOutstanding
         , getLeiosReady = getLeiosReady
         , getLeiosCentralState = getLeiosCentralState
+        , getLeiosTxCache = getLeiosTxCache
         }
    where
     blockForgingController ::
@@ -638,6 +645,8 @@ data InternalState m addrNTN addrNTC blk = IS
   , leiosReady :: MVar.MVar m ()
   , leiosCentralState ::
       MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
+  , leiosTxCache ::
+      MVar.MVar m (LeiosTxCacheIndex () () Leios.SerializedEbBody)
   , leiosPeersVars ::
       LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , leiosVoteState :: LeiosVoteState m
@@ -697,6 +706,7 @@ initInternalState
     leiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
     leiosReady <- MVar.newEmptyMVar
     leiosCentralState <- MVar.newMVar Announcements.emptyCentralState
+    leiosTxCache <- MVar.newMVar emptyLeiosTxCacheIndex
 
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault
