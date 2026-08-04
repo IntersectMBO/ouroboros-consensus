@@ -761,8 +761,9 @@ partitionMempool leiosConn leiosVoteState leiosTracer pmCtrace pmCallCtx cfg mem
             -- parent) with the tick diff (relative to the
             -- state with the EB closure applied), so the mempool snapshot is revalidated
             -- against parent + closure + tick.
-            -- TODO(bladyjoker): Force this to evaluate and instrument as "tick-ledger-state-after-eb"
-            let tickedLsAfterEB =
+            tickedLsAfterEB <-
+              pmTrace'Via (const ()) "tick-ledger-state-after-eb" currentSlot $
+                evaluate $
                   lcaClosureDiff
                     `prependDiffs` applyChainTick
                       OmitLedgerEvents
