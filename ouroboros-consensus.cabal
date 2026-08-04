@@ -730,6 +730,7 @@ test-suite consensus-test
     Test.LeiosDemoLogic
     Test.LeiosDemoLogic.Announcements
     Test.LeiosDemoTypes
+    Test.LeiosTxCacheIndex
     Test.LeiosUtils.CallTrace
     Test.LeiosVoteState
 
