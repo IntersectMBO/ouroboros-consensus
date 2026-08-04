@@ -1651,6 +1651,7 @@ test-suite shelley-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Shelley.Coherence
+    Test.Consensus.Shelley.Dijkstra
     Test.Consensus.Shelley.Golden
     Test.Consensus.Shelley.LedgerTables
     Test.Consensus.Shelley.Serialisation
@@ -1665,8 +1666,9 @@ test-suite shelley-test
     cardano-ledger-api,
     cardano-ledger-babbage:testlib,
     cardano-ledger-conway:testlib,
+    cardano-crypto-leios,
     cardano-ledger-core,
-    cardano-ledger-dijkstra:testlib,
+    cardano-ledger-dijkstra:{cardano-ledger-dijkstra, testlib},
     cardano-ledger-shelley,
     cardano-protocol-tpraos,
     cardano-slotting,
