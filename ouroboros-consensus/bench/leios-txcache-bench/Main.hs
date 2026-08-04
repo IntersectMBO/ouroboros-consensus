@@ -25,6 +25,7 @@ import Control.Exception (evaluate)
 import Control.Monad (foldM, forM, forM_, when)
 import qualified Data.Bits as Bits
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BSL
 import Data.List (sort, transpose)
@@ -34,8 +35,10 @@ import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Stats
 import LeiosDemoTypes (EbHash (..), RbHash (..), TxHash (..))
 import LeiosTxCache
+import LeiosTxCache.Mutable (newHashTableLeiosTxCache)
 import LeiosTxCacheIndex (ReferencesTxsByHash (..), maxAnnouncementCount)
 import Numeric (showFFloat)
+import System.Environment (getArgs)
 import System.IO (hFlush, stdout)
 import System.Mem (performMajorGC)
 
@@ -54,14 +57,30 @@ txsPerEb = 15_058
 numLookupRuns :: Int
 numLookupRuns = 20
 
--- | A body carrying just its tx hashes: the minimal 'ReferencesTxsByHash'. (The
--- production @b@ is a serialized body, which adds body-bytes residency and a
--- decode-per-eviction cost, but does not affect lookup — the metric we care
--- about most.)
-newtype BenchBody = BenchBody (V.Vector TxHash)
+-- | A body carrying its tx hashes as packed bytes (mirroring the production
+-- serialized body). Crucially it does NOT retain a boxed 'TxHash' per tx: were
+-- the body a @Vector TxHash@ instead, both handles would hold the ~1.9M boxed
+-- hashes and the residency comparison would be meaningless — the pure map's
+-- boxed keys are exactly what the flat table replaces with inline bytes. The
+-- fold copies each 32-byte chunk out, so the pure map's keys are separate
+-- buffers (the realistic wire-derived case).
+--
+-- If the pure map were preferred for other reasons, then we could reconsider
+-- whether the production should ust Vector TxHash instead of a flat
+-- ByteString. One non-option: do not stor the body as a bytestring and have the
+-- keys be bytestring slices of that big one, because then a key that is
+-- preserved by younger bodies would retain the older body's foreign pointer
+-- even after it was evicted. That could cause catastrophic space leaks, in
+-- pathological cases.
+newtype BenchBody = BenchBody ByteString -- concatenated 32-byte tx hashes
 
 instance ReferencesTxsByHash BenchBody where
-  foldTxReferences f z (BenchBody v) = V.foldl' f z v
+  foldTxReferences f z0 (BenchBody bs) = go z0 0
+   where
+    n = BS.length bs `div` 32
+    go !acc i
+      | i >= n = acc
+      | otherwise = go (f acc (MkTxHash (BS.copy (BS.take 32 (BS.drop (i * 32) bs))))) (i + 1)
 
 type BenchCache = LeiosTxCache IO () () BenchBody
 
@@ -79,7 +98,19 @@ main = do
       , "  txs per EB   : " <> show txsPerEb
       , "  total txs    : " <> show (numEbs * txsPerEb)
       ]
-  runBench "pure-wrapped index" newPureLeiosTxCache
+  args <- getArgs
+  let salt0, salt1 :: Word64
+      salt0 = 0xD1CED00DFEEDFACE
+      salt1 = 0x0123456789ABCDEF
+      runs :: [(String, IO BenchCache)]
+      runs = case args of
+        ["pure"] -> [("pure-wrapped index", newPureLeiosTxCache)]
+        ["ht"] -> [("hash-table (shift 22)", newHashTableLeiosTxCache 22 salt0 salt1)]
+        _ ->
+          [ ("pure-wrapped index", newPureLeiosTxCache)
+          , ("hash-table (shift 22)", newHashTableLeiosTxCache 22 salt0 salt1)
+          ]
+  mapM_ (uncurry runBench) runs
 
 runBench :: String -> IO BenchCache -> IO ()
 runBench name mkCache = do
@@ -91,7 +122,8 @@ runBench name mkCache = do
   ebData <-
     forM [0 .. numEbs - 1] $ \e -> do
       let !txhs = force $ V.generate txsPerEb (\i -> mkTxHash (e * txsPerEb + i))
-      pure (mkEbHash e, mkRbHash e, SlotNo (fromIntegral e), txhs)
+          !bs = BS.concat [b | MkTxHash b <- V.toList txhs]
+      pure (mkEbHash e, mkRbHash e, SlotNo (fromIntegral e), txhs, bs)
   _ <- evaluate (length ebData)
   putStrLn "done"
 
@@ -100,9 +132,9 @@ runBench name mkCache = do
   allocBefore <- bytesAllocated
   (_, popNs) <-
     timedNs $
-      forM_ ebData $ \(ebh, rbh, slot, txhs) -> do
+      forM_ ebData $ \(ebh, rbh, slot, txhs, bs) -> do
         _ <- insertAnnouncement cache slot rbh ebh
-        insertBody cache ebh (BenchBody txhs)
+        insertBody cache ebh (BenchBody bs)
         withLockedInsertUnappliedTx cache $ \z step ->
           foldM (\ !acc txh -> step acc txh ()) z txhs
   allocAfter <- bytesAllocated
