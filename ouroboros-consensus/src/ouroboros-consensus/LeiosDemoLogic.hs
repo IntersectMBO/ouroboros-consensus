@@ -14,6 +14,8 @@
 module LeiosDemoLogic (module LeiosDemoLogic) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
+import Codec.CBOR.Read (deserialiseFromBytes)
+import Codec.CBOR.Write (toStrictByteString)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
@@ -26,6 +28,8 @@ import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
+import Data.ByteString.Short (ShortByteString, fromShort, toShort)
 import Data.DList (DList)
 import qualified Data.DList as DList
 import Data.Functor (void, (<&>))
@@ -35,6 +39,7 @@ import qualified Data.IntSet as IntSet
 import Data.List (unfoldr)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Proxy (Proxy (..))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import Data.Set (Set)
@@ -83,14 +88,27 @@ import LeiosDemoTypes
   , hashLeiosTx
   , leiosEbBytesSize
   , maxTxsPerEb
+  , decodeLeiosEb
+  , encodeLeiosEb
+  , leiosEbTxs
+  , RbHash (..)
   )
 import qualified LeiosDemoTypes as Leios
+import LeiosTxCacheIndex
+  ( LeiosTxCacheIndex
+  , ReferencesTxsByHash (..)
+  , insertAnnouncement
+  , insertBody
+  , insertUnappliedTx
+  )
 import Ouroboros.Consensus.Block
   ( BlockProtocol
+  , ConvertRawHash
   , HasHeader
   , Header
   , WithOrigin (NotOrigin)
   , headerHash
+  , toRawHash
   )
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( SystemTime
@@ -112,6 +130,48 @@ import Ouroboros.Consensus.Util.IOLike (IOLike)
 traceException :: (IOLike m, Exception e) => Tracer m a -> (e -> a) -> m b -> m b
 traceException tracer toTrace action =
   action `catch` \e -> traceWith tracer (toTrace e) >> throwIO e
+
+{-------------------------------------------------------------------------------
+  Shadow LeiosTxCache wiring
+
+  The 'LeiosTxCacheIndex' is maintained (announcements, bodies, and txs inserted
+  at the same sites as the LeiosDb) but not yet consulted, so it changes no
+  observable behavior. The node's index is
+  @'LeiosTxCacheIndex' () () 'SerializedEbBody'@: only presence (@()@) is recorded
+  per tx, and the serialized body is the @b@.
+-------------------------------------------------------------------------------}
+
+-- | An EB body as its canonical CBOR bytes: the @b@ stored in the index. Its
+-- 'ReferencesTxsByHash' instance decodes it to enumerate the referenced txs.
+newtype SerializedEbBody = MkSerializedEbBody ShortByteString
+
+serializeEbBody :: LeiosEb -> SerializedEbBody
+serializeEbBody = MkSerializedEbBody . toShort . toStrictByteString . encodeLeiosEb
+
+instance ReferencesTxsByHash SerializedEbBody where
+  foldTxReferences f z (MkSerializedEbBody sbs) =
+    V.foldl' (\acc (txh, _sz) -> f acc txh) z (leiosEbTxs eb)
+   where
+    eb = case deserialiseFromBytes decodeLeiosEb (LBS.fromStrict (fromShort sbs)) of
+      Right (_leftover, decoded) -> decoded
+      Left err -> error $ "SerializedEbBody: undecodable: " <> show err
+
+-- | Insert an EB announcement into the shadow tx-cache index, keyed by the
+-- announced slot, the announcing RB header's hash, and the announced EB hash.
+-- Evicted bodies\/txs are discarded (the shadow has no consumer for them yet).
+recordAnnouncementInTxCache ::
+  forall blk m.
+  (ConvertRawHash blk, HasHeader (Header blk), IOLike m) =>
+  MVar m (LeiosTxCacheIndex () () SerializedEbBody) ->
+  AnnouncingHeader blk ->
+  LeiosPoint ->
+  m ()
+recordAnnouncementInTxCache txCacheVar ancHdr point =
+  MVar.modifyMVar_ txCacheVar $ \idx ->
+    let rbh = MkRbHash (toRawHash (Proxy @blk) (headerHash (ancHeader ancHdr)))
+        (idx', _evEbs, _evTxs) =
+          insertAnnouncement point.pointSlotNo rbh point.pointEbHash idx
+     in pure idx'
 
 -----
 
@@ -560,6 +620,7 @@ nextLeiosFetchClientCommand ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
+  MVar m (LeiosTxCacheIndex () () SerializedEbBody) ->
   LeiosDbConnection m ->
   PeerId pid ->
   StrictTVar m (Seq LeiosFetchRequest) ->
@@ -573,7 +634,7 @@ nextLeiosFetchClientCommand ::
         (m (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m)))
         (Either () (LF.SomeLeiosFetchJob LeiosPoint LeiosEb LeiosTx m))
     )
-nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar responseQ = do
+nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars txCacheVar db peerId reqsVar responseQ = do
   drainResponses
   StrictSTM.atomically checkOrPeek >>= \case
     Right result -> pure $ Right result
@@ -585,9 +646,9 @@ nextLeiosFetchClientCommand ktracer tracer stopSTM kernelVars db peerId reqsVar 
     pending <- StrictSTM.atomically $ LazySTM.flushTQueue responseQ
     forM_ pending $ \case
       PendingBlockResponse req eb ->
-        msgLeiosBlock ktracer tracer kernelVars db peerId req eb
+        msgLeiosBlock ktracer tracer kernelVars txCacheVar db peerId req eb
       PendingBlockTxsResponse req txs ->
-        msgLeiosBlockTxs ktracer tracer kernelVars db peerId req txs
+        msgLeiosBlockTxs ktracer tracer kernelVars txCacheVar db peerId req txs
 
   -- Non-blocking: return 'Right result' if stop or a request is available,
   -- or 'Left ()' if we'd have to block (caller returns Left blockingLoop).
@@ -655,12 +716,13 @@ msgLeiosBlock ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
+  MVar m (LeiosTxCacheIndex () () SerializedEbBody) ->
   LeiosDbConnection m ->
   PeerId pid ->
   LeiosBlockRequest ->
   LeiosEb ->
   m ()
-msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
+msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCacheVar db peerId req eb = do
   -- validate it
   let MkLeiosBlockRequest point ebBytesSize = req
   traceWith tracer $ MkTraceLeiosPeer $ "[start] MsgLeiosBlock " <> Leios.prettyLeiosPoint point
@@ -693,6 +755,7 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) db peerId req eb = do
         traceWith ktracer $ TraceLeiosBlockPointMissing point
         leiosDbInsertEbPoint db point ebBytesSize
         completedByBody <- leiosDbInsertEbBody db point eb
+        MVar.modifyMVar_ txCacheVar $ pure . insertBody ebHash (serializeEbBody eb)
         traceWith ktracer $ TraceLeiosBlockAcquired point
         forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
     -- update NodeKernel state
@@ -831,12 +894,13 @@ msgLeiosBlockTxs ::
   ( MVar m (LeiosOutstanding pid)
   , MVar m ()
   ) ->
+  MVar m (LeiosTxCacheIndex () () SerializedEbBody) ->
   LeiosDbConnection m ->
   PeerId pid ->
   LeiosBlockTxsRequest ->
   V.Vector LeiosTx ->
   m ()
-msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = do
+msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCacheVar db peerId req txs = do
   traceWith tracer $ MkTraceLeiosPeer $ "[start] " ++ Leios.prettyLeiosBlockTxsRequest req
   -- validate it
   -- TODO: could validate the returned point + bitmaps too (added to response recently)
@@ -864,6 +928,10 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) db peerId req txs = d
   traceException tracer TraceLeiosPeerDbException $ do
     completed <- leiosDbInsertTxs db (V.toList $ V.zip txHashes txBytess)
     forM_ completed $ traceWith ktracer . TraceLeiosBlockTxsAcquired
+    -- crucially: add the txs to the TxCacheIndex _after_ they've been written
+    -- to the LeiosDb, since it's currently what the TxCacheIndex is indexing
+    MVar.modifyMVar_ txCacheVar $ \idx ->
+      pure $ V.foldl' (\i txh -> insertUnappliedTx txh () i) idx txHashes
   -- update NodeKernel state
   MVar.modifyMVar_ outstandingVar $ \outstanding -> do
     let (requestedTxPeers', reverseEbIndexByTx', txsBytesSize) =
