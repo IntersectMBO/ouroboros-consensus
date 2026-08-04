@@ -112,6 +112,7 @@ library
     LeiosDemoOnlyTestFetch
     LeiosDemoOnlyTestNotify
     LeiosDemoTypes
+    LeiosTxCache
     LeiosTxCacheIndex
     LeiosUtils.CallTrace
     LeiosVoteState

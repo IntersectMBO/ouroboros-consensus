@@ -70,7 +70,7 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
-import LeiosTxCacheIndex (LeiosTxCacheIndex, emptyLeiosTxCacheIndex)
+import LeiosTxCache (LeiosTxCache, newPureLeiosTxCache)
 import LeiosUtils.CallTrace
   ( SomeJsonCallTrace (SomeJsonCallTrace)
   , callTraceSameThread
@@ -251,8 +251,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
       MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
   -- ^ Node-wide EB-announcement state
   , getLeiosTxCache ::
-      MVar.MVar m (LeiosTxCacheIndex () () Leios.SerializedEbBody)
-  -- ^ Shadow in-memory tx-cache index (see 'LeiosTxCacheIndex'); maintained but
+      LeiosTxCache m () () Leios.SerializedEbBody
+  -- ^ Shadow in-memory tx-cache (see 'LeiosTxCache'); maintained but
   -- not yet consulted, so it changes no observable behavior.
   }
 
@@ -648,7 +648,7 @@ data InternalState m addrNTN addrNTC blk = IS
   , leiosCentralState ::
       MVar.MVar m (Announcements.CentralState m (ConnectionId addrNTN) (Leios.AnnouncingHeader blk))
   , leiosTxCache ::
-      MVar.MVar m (LeiosTxCacheIndex () () Leios.SerializedEbBody)
+      LeiosTxCache m () () Leios.SerializedEbBody
   , leiosPeersVars ::
       LazySTM.TVar m (Map.Map (Leios.PeerId (ConnectionId addrNTN)) (LeiosPeerVars m))
   , leiosVoteState :: LeiosVoteState m
@@ -708,7 +708,7 @@ initInternalState
     leiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
     leiosReady <- MVar.newEmptyMVar
     leiosCentralState <- MVar.newMVar Announcements.emptyCentralState
-    leiosTxCache <- MVar.newMVar emptyLeiosTxCacheIndex
+    leiosTxCache <- newPureLeiosTxCache
 
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault
