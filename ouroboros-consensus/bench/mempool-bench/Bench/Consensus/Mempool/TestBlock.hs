@@ -6,6 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
@@ -40,6 +41,7 @@ import Data.TreeDiff (ToExpr)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
+import Ouroboros.Consensus.Block.SupportsPeras (pattern PerasEnabled)
 import Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
@@ -101,6 +103,7 @@ sampleLedgerConfig =
     HardFork.defaultEraParams
       (Consensus.SecurityParam $ knownNonZeroBounded @10)
       (Time.slotLengthFromSec 2)
+      (PerasEnabled ())
 
 {-------------------------------------------------------------------------------
   Payload semantics

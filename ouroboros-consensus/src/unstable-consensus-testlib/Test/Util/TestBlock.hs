@@ -729,7 +729,7 @@ singleNodeTestConfigWith codecConfig storageConfig k genesisWindow =
   ledgerCfgParams =
     TestBlockLedgerConfig
       { tblcHardForkParams =
-          (HardFork.defaultEraParams k slotLength)
+          (HardFork.defaultEraParams k slotLength (PerasEnabled ()))
             { HardFork.eraGenesisWin = genesisWindow
             }
       , tblcForecastRange = SNothing
