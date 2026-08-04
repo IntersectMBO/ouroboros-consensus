@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# OPTIONS_GHC -O2 #-}
 
 -- | A mutable, salted open-addressing hash table for the Leios tx cache: linear
 -- probing with backward-shift (tombstone-free) deletion, a salted SipHash-2-4,
@@ -38,7 +39,12 @@ import Data.Word (Word64)
 import Prelude hiding (lookup)
 
 -- | A 32-byte key as four 'Word64's.
-data Key = Key !Word64 !Word64 !Word64 !Word64
+data Key
+  = Key
+      {-# UNPACK #-} !Word64
+      {-# UNPACK #-} !Word64
+      {-# UNPACK #-} !Word64
+      {-# UNPACK #-} !Word64
   deriving (Eq, Ord, Show)
 
 data MutableHashTable s = MutableHashTable
@@ -58,6 +64,7 @@ data MutableHashTable s = MutableHashTable
 -- | Allocate a table of @2 ^ nshift@ slots (@nshift >= 6@) with the given 128-bit
 -- salt. Feed a securely-random salt: keys are adversarial.
 new :: PrimMonad m => Int -> Word64 -> Word64 -> m (MutableHashTable (PrimState m))
+{-# SPECIALISE new :: Int -> Word64 -> Word64 -> IO (MutableHashTable (PrimState IO)) #-}
 new nshift k0 k1
   | nshift < 6 = error "MutableHashTable.new: nshift must be >= 6"
   | otherwise = do
@@ -82,6 +89,7 @@ capacity :: MutableHashTable s -> Int
 capacity = mhtCap
 
 size :: PrimMonad m => MutableHashTable (PrimState m) -> m Int
+{-# SPECIALISE size :: MutableHashTable (PrimState IO) -> IO Int #-}
 size = readMutVar . mhtSize
 
 {-------------------------------------------------------------------------------
@@ -89,17 +97,20 @@ size = readMutVar . mhtSize
 -------------------------------------------------------------------------------}
 
 isOccupied :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> m Bool
+{-# SPECIALISE isOccupied :: MutableHashTable (PrimState IO) -> Int -> IO Bool #-}
 isOccupied ht i = do
   w <- readByteArray (mhtOccupied ht) (i `unsafeShiftR` 6)
   pure $ testBit (w :: Word64) (i .&. 63)
 
 setOccupied :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> m ()
+{-# SPECIALISE setOccupied :: MutableHashTable (PrimState IO) -> Int -> IO () #-}
 setOccupied ht i = do
   let j = i `unsafeShiftR` 6
   w <- readByteArray (mhtOccupied ht) j
   writeByteArray (mhtOccupied ht) j (setBit (w :: Word64) (i .&. 63))
 
 clearOccupied :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> m ()
+{-# SPECIALISE clearOccupied :: MutableHashTable (PrimState IO) -> Int -> IO () #-}
 clearOccupied ht i = do
   let j = i `unsafeShiftR` 6
   w <- readByteArray (mhtOccupied ht) j
@@ -110,6 +121,7 @@ clearOccupied ht i = do
 -------------------------------------------------------------------------------}
 
 readKey :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> m Key
+{-# SPECIALISE readKey :: MutableHashTable (PrimState IO) -> Int -> IO Key #-}
 readKey ht i = do
   let b = i * 5
   Key
@@ -119,6 +131,7 @@ readKey ht i = do
     <*> readByteArray (mhtEntries ht) (b + 3)
 
 writeKey :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> Key -> m ()
+{-# SPECIALISE writeKey :: MutableHashTable (PrimState IO) -> Int -> Key -> IO () #-}
 writeKey ht i (Key a b c d) = do
   let o = i * 5
   writeByteArray (mhtEntries ht) o a
@@ -127,20 +140,32 @@ writeKey ht i (Key a b c d) = do
   writeByteArray (mhtEntries ht) (o + 3) d
 
 readVal :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> m Word64
+{-# SPECIALISE readVal :: MutableHashTable (PrimState IO) -> Int -> IO Word64 #-}
 readVal ht i = readByteArray (mhtEntries ht) (i * 5 + 4)
 
 writeVal :: PrimMonad m => MutableHashTable (PrimState m) -> Int -> Word64 -> m ()
+{-# SPECIALISE writeVal :: MutableHashTable (PrimState IO) -> Int -> Word64 -> IO () #-}
 writeVal ht i = writeByteArray (mhtEntries ht) (i * 5 + 4)
 
 {-------------------------------------------------------------------------------
   SipHash-2-4, unrolled for a 32-byte (4-word) key
 -------------------------------------------------------------------------------}
 
+-- | The four-word SipHash state: an isomorph of 'Key', kept distinct and used as
+-- the input and output of 'sipround'\/'compress' so the rounds thread unboxed
+-- words rather than a boxed 4-tuple.
+data SIP
+  = SIP
+      {-# UNPACK #-} !Word64
+      {-# UNPACK #-} !Word64
+      {-# UNPACK #-} !Word64
+      {-# UNPACK #-} !Word64
+
 rotl :: Word64 -> Int -> Word64
 rotl x b = (x `unsafeShiftL` b) .|. (x `unsafeShiftR` (64 - b))
 
-sipround :: Word64 -> Word64 -> Word64 -> Word64 -> (Word64, Word64, Word64, Word64)
-sipround v0 v1 v2 v3 =
+sipround :: SIP -> SIP
+sipround (SIP v0 v1 v2 v3) =
   let v0a = v0 + v1
       v1a = rotl v1 13 `xor` v0a
       v0b = rotl v0a 32
@@ -151,14 +176,14 @@ sipround v0 v1 v2 v3 =
       v2b = v2a + v1a
       v1b = rotl v1a 17 `xor` v2b
       v2c = rotl v2b 32
-   in (v0c, v1b, v2c, v3b)
+   in SIP v0c v1b v2c v3b
 
 -- | Absorb one message word: @v3 ^= m; SIPROUND; SIPROUND; v0 ^= m@.
-compress :: Word64 -> (Word64, Word64, Word64, Word64) -> (Word64, Word64, Word64, Word64)
-compress m (v0, v1, v2, v3) =
-  let (a0, a1, a2, a3) = sipround v0 v1 v2 (v3 `xor` m)
-      (b0, b1, b2, b3) = sipround a0 a1 a2 a3
-   in (b0 `xor` m, b1, b2, b3)
+compress :: Word64 -> SIP -> SIP
+compress m (SIP v0 v1 v2 v3) =
+  let !(SIP a0 a1 a2 a3) = sipround (SIP v0 v1 v2 (v3 `xor` m))
+      !(SIP b0 b1 b2 b3) = sipround (SIP a0 a1 a2 a3)
+   in SIP (b0 `xor` m) b1 b2 b3
 
 hashKey :: MutableHashTable s -> Key -> Int
 hashKey ht (Key m0 m1 m2 m3) =
@@ -167,21 +192,16 @@ hashKey ht (Key m0 m1 m2 m3) =
   k0 = mhtK0 ht
   k1 = mhtK1 ht
   s0 =
-    ( 0x736f6d6570736575 `xor` k0
-    , 0x646f72616e646f6d `xor` k1
-    , 0x6c7967656e657261 `xor` k0
-    , 0x7465646279746573 `xor` k1
-    )
+    SIP
+      (0x736f6d6570736575 `xor` k0)
+      (0x646f72616e646f6d `xor` k1)
+      (0x6c7967656e657261 `xor` k0)
+      (0x7465646279746573 `xor` k1)
   absorbed = compress m3 (compress m2 (compress m1 (compress m0 s0)))
-  (p0, p1, p2, p3) = compress (32 `unsafeShiftL` 56) absorbed
+  !(SIP p0 p1 p2 p3) = compress (32 `unsafeShiftL` 56) absorbed
   -- finalization: v2 ^= 0xff; SIPROUND x4
-  r1 = sipround p0 p1 (p2 `xor` 0xff) p3
-  (a0, a1, a2, a3) = r1
-  r2 = sipround a0 a1 a2 a3
-  (b0, b1, b2, b3) = r2
-  r3 = sipround b0 b1 b2 b3
-  (c0, c1, c2, c3) = r3
-  (g0, g1, g2, g3) = sipround c0 c1 c2 c3
+  !(SIP g0 g1 g2 g3) =
+    sipround (sipround (sipround (sipround (SIP p0 p1 (p2 `xor` 0xff) p3))))
   h64 = g0 `xor` g1 `xor` g2 `xor` g3
   folded = h64 `xor` (h64 `unsafeShiftR` 32)
 
@@ -191,6 +211,7 @@ hashKey ht (Key m0 m1 m2 m3) =
 
 -- | Insert or overwrite. Guarded against the full-table infinite loop: raises.
 insert :: PrimMonad m => MutableHashTable (PrimState m) -> Key -> Word64 -> m ()
+{-# SPECIALISE insert :: MutableHashTable (PrimState IO) -> Key -> Word64 -> IO () #-}
 insert ht key val = go 0 (hashKey ht key)
  where
   cap = mhtCap ht
@@ -212,6 +233,7 @@ insert ht key val = go 0 (hashKey ht key)
             modifyMutVar' (mhtSize ht) (+ 1)
 
 lookup :: PrimMonad m => MutableHashTable (PrimState m) -> Key -> m (Maybe Word64)
+{-# SPECIALISE lookup :: MutableHashTable (PrimState IO) -> Key -> IO (Maybe Word64) #-}
 lookup ht key = go 0 (hashKey ht key)
  where
   cap = mhtCap ht
@@ -232,6 +254,7 @@ lookup ht key = go 0 (hashKey ht key)
 -- back toward their ideal index so no tombstone is left behind. Returns whether
 -- the key was present.
 delete :: PrimMonad m => MutableHashTable (PrimState m) -> Key -> m Bool
+{-# SPECIALISE delete :: MutableHashTable (PrimState IO) -> Key -> IO Bool #-}
 delete ht key = do
   mIdx <- findSlot 0 (hashKey ht key)
   case mIdx of
