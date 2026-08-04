@@ -104,7 +104,10 @@ import Ouroboros.Consensus.Ledger.Extended (ExtLedgerState, ledgerState)
 import Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
-import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( OCINStaleness (..)
+  , ResolveLeiosBlock (..)
+  )
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 
 -- | Wrap an action with exception tracing. Catches the exception,
@@ -1049,11 +1052,14 @@ instance Exception ExnLeiosBlockAnnouncementMissing
 -- Chronos) — blocking the per-peer handler is acceptable, as a (near-)future
 -- announcement is the peer's fault.
 --
--- Returns the announcement's data and whether to relay it downstream (see
--- 'Announcements.ShouldRelay' and 'maxAnnouncementAgeSend'), if the announcement
--- is valid. Per the 'Announcements.onAnnouncement' contract, 'Left Nothing'
--- signals the too-old rejection (see 'maxAnnouncementAgeRecv') and 'Left Just'
--- any other invalidity.
+-- If the announcement is valid and 'FreshOCIN', returns its data and whether to
+-- relay it downstream (see 'Announcements.ShouldRelay' and
+-- 'maxAnnouncementAgeSend'). If it is valid but 'StaleOCIN' (its opcert counter
+-- was revoked by /our/ immutable tip; see 'validateAnnouncementHeader'),
+-- returns @Right Nothing@, so that 'Announcements.onAnnouncement' accepts it
+-- from the peer without processing or relaying it. Per that contract, 'Left
+-- Nothing' signals the too-old rejection (see 'maxAnnouncementAgeRecv') and
+-- 'Left Just' any other invalidity.
 announcementValidity ::
   (IOLike m, LedgerSupportsProtocol blk, ResolveLeiosBlock blk) =>
   SystemTime m ->
@@ -1064,7 +1070,7 @@ announcementValidity ::
   m
     ( Either
         (Maybe (AnnouncementInvalidity blk))
-        (Announcements.ShouldRelay, NominalDiffTime, (LeiosPoint, BytesSize))
+        (Maybe (Announcements.ShouldRelay, NominalDiffTime, (LeiosPoint, BytesSize)))
     )
 announcementValidity systemTime futureCheck cfg immLedger hdr = do
   onset <- case futureCheck of
@@ -1098,7 +1104,8 @@ announcementValidity systemTime futureCheck cfg immLedger hdr = do
                 else Announcements.DoNotRelay
          in case validateAnnouncementHeader cfg immLedger hdr of
               Left inv -> Left (Just inv)
-              Right v -> Right (shouldRelay, age, v)
+              Right (StaleOCIN, _v) -> Right Nothing
+              Right (FreshOCIN, v) -> Right (Just (shouldRelay, age, v))
 
 -- | Record a validated, newly-announced EB body as missing, with its
 -- authoritative (forger-signed) size. First-seen wins: a no-op if the body is

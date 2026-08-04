@@ -24,6 +24,7 @@ import Cardano.Ledger.Shelley.Rules (ledgerPpL)
 import qualified Cardano.Ledger.Shelley.UTxO as SL
 import Cardano.Slotting.Slot (SlotNo (..), fromWithOrigin)
 import Control.Monad (foldM)
+import Control.Monad.Except (catchError, throwError)
 import qualified Control.State.Transition as STS
 import Data.Bifunctor (first)
 import qualified Data.ByteString as BS
@@ -52,9 +53,8 @@ import Ouroboros.Consensus.Protocol.Praos
   , PraosState (..)
   , Ticked (..)
   , WhetherToUpperBoundOCERT (..)
-  , doValidateKESSignatureWorker
-  , doValidateVRFSignature
   )
+import qualified Ouroboros.Consensus.Protocol.Praos as PP
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (..)
   , HeaderBody (..)
@@ -83,7 +83,10 @@ import Ouroboros.Consensus.Shelley.Ledger.Ledger
   , shelleyLedgerGlobals
   )
 import Ouroboros.Consensus.Shelley.Ledger.Mempool (GenTx (ShelleyTx), mkShelleyTx)
-import Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (..))
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
+  ( OCINStaleness (..)
+  , ResolveLeiosBlock (..)
+  )
 
 {-------------------------------------------------------------------------------
   ResolveLeiosBlock
@@ -221,29 +224,40 @@ instance
     Header{headerBody} = shelleyHeaderRaw hdr
 
   -- The announcement is validated out-of-context against a (possibly lagging)
-  -- immutable tip, so we skip the OCERT counter's upper bound
-  -- ('DoNotUpperBoundOCERT'): a counter ahead of our recorded view is honestly
-  -- explained by that lag. The election proof (VRF) and the signature (KES +
-  -- opcert, including the counter's revocation lower bound) are checked in full.
+  -- immutable tip. We skip the OCERT counter's upper bound
+  -- ('DoNotUpperBoundOCERT') — a counter ahead of our recorded view is honest
+  -- lag — and we /reinterpret/ its lower-bound failure ('CounterTooSmallOCERT'),
+  -- and the absence of any recorded counter ('NoCounterForKeyHashOCERT'), as
+  -- 'StaleOCIN' rather than a rejection: under this lagging view either is
+  -- honestly explained by the lag. The election proof (VRF) and the signature
+  -- (KES + opcert) are still checked in full; any other failure is a genuine
+  -- rejection. See 'LeiosDemoLogic.Announcements.Validate.validateAnnouncementHeader'
+  -- for why accepting-but-not-propagating a 'StaleOCIN' announcement is safe.
   validateAnnouncementChainDepState cfg hv _slot tcs = do
     -- validate the claimed election
-    doValidateVRFSignature
+    PP.doValidateVRFSignature
       (praosStateEpochNonce cs)
       pd
       (praosLeaderF prms)
       hv
-    -- authenticate the message
-    doValidateKESSignatureWorker
-      DoNotUpperBoundOCERT
-      (praosMaxKESEvo prms)
-      (praosSlotsPerKESPeriod prms)
-      pd
-      (praosStateOCertCounters cs)
-      hv
+    -- authenticate the message; the OCIN counter checks report staleness rather
+    -- than reject
+    (FreshOCIN <$ authenticate) `catchError` \err -> case err of
+      PP.CounterTooSmallOCERT{} -> pure StaleOCIN
+      PP.NoCounterForKeyHashOCERT{} -> pure StaleOCIN
+      _ -> throwError err
    where
     prms = praosParams cfg
     cs = tickedPraosStateChainDepState tcs
     SL.PoolDistr pd _ = plvPoolDistr (tickedPraosStateLedgerView tcs)
+    authenticate =
+      PP.doValidateKESSignatureWorker
+        DoNotUpperBoundOCERT
+        (praosMaxKESEvo prms)
+        (praosSlotsPerKESPeriod prms)
+        pd
+        (praosStateOCertCounters cs)
+        hv
 
   protocolStateLeiosAnnouncement st = do
     ann <- strictMaybeToMaybe $ praosStateLeiosAnnouncement st
