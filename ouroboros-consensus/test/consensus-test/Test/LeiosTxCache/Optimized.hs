@@ -6,6 +6,12 @@
 -- return the same eviction sets from every announcement and agree on a final
 -- full-domain lookup sweep. Op ranges make the ~128-announcement eviction
 -- cascade fire in the longer sequences.
+--
+-- Each run also picks a table size and a tx-key domain sized to a target load
+-- factor — spanning sparse to /exactly full/ — so the hash table's probing and
+-- backward-shift deletion are exercised at high occupancy, not only when nearly
+-- empty. The tx domain never exceeds the table capacity (and stays within
+-- 'Word8'), so the underlying 'HT.insert' cannot hit its full-table guard.
 module Test.LeiosTxCache.Optimized (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
@@ -17,12 +23,14 @@ import Data.Word (Word64, Word8)
 import LeiosDemoTypes (EbHash (..), RbHash (..), TxHash (..))
 import LeiosTxCache (LeiosTxCache (..), ReferencesTxsByHash (..), newPureLeiosTxCache)
 import LeiosTxCache.Optimized (newHashTableLeiosTxCache)
+import Test.LeiosTxCache.Optimized.MutableHashTable (Config (..), genConfig, salt0, salt1)
 import Test.Tasty (TestTree, adjustOption, testGroup)
 import Test.Tasty.QuickCheck
   ( Gen
   , Property
   , QuickCheckTests (..)
   , chooseInt
+  , forAll
   , forAllShrink
   , frequency
   , ioProperty
@@ -83,29 +91,33 @@ applyOp h op = case op of
 sweepLookup :: H -> [Word8] -> IO [Maybe (Either () ())]
 sweepLookup h txs = withLookupTx h (\look -> mapM (look . txhOf) txs)
 
-genOps :: Gen [Op]
-genOps = do
+genOps :: Int -> Gen [Op]
+genOps txDomain = do
   n <- chooseInt (0, 400)
   vectorOf n genOp
  where
   genOp =
     frequency
       [ (3, OpAnnounce <$> gen 1 300 <*> gen 1 3 <*> gen 1 20)
-      , (2, OpBody <$> gen 1 20 <*> listOf (gen 1 100))
-      , (2, OpUnapplied <$> listOf (gen 1 100))
-      , (2, OpApplied <$> listOf (gen 1 100))
+      , (2, OpBody <$> gen 1 20 <*> listOf genTx)
+      , (2, OpUnapplied <$> listOf genTx)
+      , (2, OpApplied <$> listOf genTx)
       ]
+  genTx :: Gen Word8
+  genTx = fromIntegral <$> chooseInt (0, txDomain - 1)
   gen :: Num a => Int -> Int -> Gen a
   gen lo hi = fromIntegral <$> chooseInt (lo, hi)
 
 prop_equiv :: Property
-prop_equiv = forAllShrink genOps (shrinkList (const [])) $ \ops -> ioProperty $ do
-  hp <- newPureLeiosTxCache
-  hm <- newHashTableLeiosTxCache 10 0xD1CED00DFEEDFACE 0x0123456789ABCDEF
-  resP <- mapM (applyOp hp) ops
-  resM <- mapM (applyOp hm) ops
-  sweepP <- sweepLookup hp allTxs
-  sweepM <- sweepLookup hm allTxs
-  pure (resP === resM .&&. sweepP === sweepM)
+prop_equiv =
+  forAll (genConfig (6, 8)) $ \cfg ->
+    forAllShrink (genOps (cfgDomain cfg)) (shrinkList (const [])) $ \ops -> ioProperty $ do
+      hp <- newPureLeiosTxCache
+      hm <- newHashTableLeiosTxCache (cfgShift cfg) salt0 salt1
+      resP <- mapM (applyOp hp) ops
+      resM <- mapM (applyOp hm) ops
+      sweepP <- sweepLookup hp (allTxs (cfgDomain cfg))
+      sweepM <- sweepLookup hm (allTxs (cfgDomain cfg))
+      pure (resP === resM .&&. sweepP === sweepM)
  where
-  allTxs = [1 .. 100]
+  allTxs txDomain = [0 .. fromIntegral (txDomain - 1)]
