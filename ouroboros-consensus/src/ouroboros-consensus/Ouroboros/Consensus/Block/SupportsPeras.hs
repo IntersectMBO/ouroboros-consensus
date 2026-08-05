@@ -9,7 +9,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Block.SupportsPeras
@@ -25,8 +25,8 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , BlockSupportsPeras (..)
 
     -- * To be removed in favor of using 'IsPerasCert'/'IsPerasVote'
-  , PerasCert (..)
-  , PerasVote (..)
+  , PerasCert' (..)
+  , PerasVote' (..)
   , HasPerasCertRound (..)
   , HasPerasCertBoostedBlock (..)
   , HasPerasCertBoost (..)
@@ -72,6 +72,7 @@ import Cardano.Ledger.Hashes (KeyHash, KeyRole (..))
 import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
 import Codec.Serialise.Encoding (encodeListLen)
+import Data.Kind (Type)
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map as Map
 import Data.Map.Strict (Map)
@@ -321,21 +322,42 @@ class
   ) =>
   BlockSupportsPeras blk
   where
-  -- NOTE: these will be updated during the upcoming 'BlockSupportsPeras' refactor
-  type PerasCrypto blk
-  type PerasVotingCommitteeScheme blk
-  type PerasError blk
+  -- | The concrete Peras vote type for this block type.
+  type PerasVote blk = (vote :: Type) | vote -> blk
 
-  -- NOTE: this associated type will dissapear in favor of using
-  -- 'PerasParams blk' directly.
+  type PerasVote blk = VoidPerasVote blk
+
+  -- | The concrete Peras certificate type for this block type.
+  type PerasCert blk = (cert :: Type) | cert -> blk
+
+  type PerasCert blk = VoidPerasCert blk
+
+  -- | The concrete Peras error type for this block type.
+  type PerasError blk = (err :: Type) | err -> blk
+
+  type PerasError blk = VoidPerasError blk
+
+  -- | The crypto scheme used for Peras votes and certificates.
+  --
+  -- Used to dispatch a block type to a its corresponding voting crypto scheme.
+  type PerasCrypto blk :: Type
+
+  type PerasCrypto blk = VoidPerasCrypto blk
+
+  -- | The voting committee scheme used for Peras.
+  --
+  -- Used to dispatch a block type to a its corresponding voting committee scheme.
+  type PerasVotingCommitteeScheme blk :: Type
+
+  type PerasVotingCommitteeScheme blk = VoidPerasVotingCommitteeScheme
+
+  -- NOTE: to be removed in favor of 'PerasParams'.
   type PerasCfg blk
 
-  data PerasCert blk
-
-  data PerasVote blk
-
+  -- NOTE: to be removed in favor of 'PerasError'.
   data PerasValidationErr blk
 
+  -- NOTE: to be removed in favor of 'PerasError'.
   data PerasForgeErr blk
 
   validatePerasCert ::
@@ -370,21 +392,8 @@ instance StandardHash blk => BlockSupportsPeras blk where
   type PerasError blk = VoidPerasError blk
 
   type PerasCfg blk = PerasParams blk
-
-  data PerasCert blk = PerasCert
-    { pcCertRound :: PerasRoundNo
-    , pcCertBoostedBlock :: Point blk
-    }
-    deriving stock (Generic, Eq, Ord, Show)
-    deriving anyclass NoThunks
-
-  data PerasVote blk = PerasVote
-    { pvVoteRound :: PerasRoundNo
-    , pvVoteBlock :: Point blk
-    , pvVoteVoterId :: PerasVoterId
-    }
-    deriving stock (Generic, Eq, Ord, Show)
-    deriving anyclass NoThunks
+  type PerasCert blk = PerasCert' blk
+  type PerasVote blk = PerasVote' blk
 
   -- TODO: enrich with actual error types
   -- see https://github.com/tweag/cardano-peras/issues/120
@@ -439,16 +448,35 @@ instance StandardHash blk => BlockSupportsPeras blk where
   -- is in place.
   getPerasCertInBlock _ = Nothing
 
-instance ShowProxy blk => ShowProxy (PerasCert blk) where
+-- | NOTE: to be removed in favor of using per-blk definitions.
+data PerasCert' blk
+  = PerasCert
+  { pcCertRound :: PerasRoundNo
+  , pcCertBoostedBlock :: Point blk
+  }
+  deriving stock (Generic, Eq, Ord, Show)
+  deriving anyclass NoThunks
+
+-- | NOTE: to be removed in favor of using per-blk definitions.
+data PerasVote' blk
+  = PerasVote
+  { pvVoteRound :: PerasRoundNo
+  , pvVoteBlock :: Point blk
+  , pvVoteVoterId :: PerasVoterId
+  }
+  deriving stock (Generic, Eq, Ord, Show)
+  deriving anyclass NoThunks
+
+instance ShowProxy blk => ShowProxy (PerasCert' blk) where
   showProxy _ = "PerasCert " <> showProxy (Proxy @blk)
 
-instance ShowProxy blk => ShowProxy (PerasVote blk) where
+instance ShowProxy blk => ShowProxy (PerasVote' blk) where
   showProxy _ = "PerasVote " <> showProxy (Proxy @blk)
 
 instance ShowProxy blk => ShowProxy (PerasVoteId blk) where
   showProxy _ = "PerasVoteId " <> showProxy (Proxy @blk)
 
-instance Serialise (HeaderHash blk) => Serialise (PerasCert blk) where
+instance Serialise (HeaderHash blk) => Serialise (PerasCert' blk) where
   encode PerasCert{pcCertRound, pcCertBoostedBlock} =
     encodeListLen 2
       <> encode pcCertRound
@@ -459,7 +487,7 @@ instance Serialise (HeaderHash blk) => Serialise (PerasCert blk) where
     pcCertBoostedBlock <- decode
     pure $ PerasCert{pcCertRound, pcCertBoostedBlock}
 
-instance Serialise (HeaderHash blk) => Serialise (PerasVote blk) where
+instance Serialise (HeaderHash blk) => Serialise (PerasVote' blk) where
   encode PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId} =
     encodeListLen 3
       <> encode pvVoteRound
@@ -487,7 +515,7 @@ instance Serialise (PerasVoteId blk) where
 class HasPerasCertRound cert where
   getPerasCertRound :: cert -> PerasRoundNo
 
-instance HasPerasCertRound (PerasCert blk) where
+instance HasPerasCertRound (PerasCert' blk) where
   getPerasCertRound = pcCertRound
 
 instance HasPerasCertRound (ValidatedPerasCert blk) where
@@ -503,7 +531,7 @@ instance
 class HasPerasCertBoostedBlock cert blk | cert -> blk where
   getPerasCertBoostedBlock :: cert -> Point blk
 
-instance HasPerasCertBoostedBlock (PerasCert blk) blk where
+instance HasPerasCertBoostedBlock (PerasCert' blk) blk where
   getPerasCertBoostedBlock = pcCertBoostedBlock
 
 instance HasPerasCertBoostedBlock (ValidatedPerasCert blk) blk where
@@ -532,7 +560,7 @@ instance
 class HasPerasVoteRound vote where
   getPerasVoteRound :: vote -> PerasRoundNo
 
-instance HasPerasVoteRound (PerasVote blk) where
+instance HasPerasVoteRound (PerasVote' blk) where
   getPerasVoteRound = pvVoteRound
 
 instance HasPerasVoteRound (ValidatedPerasVote blk) where
@@ -548,7 +576,7 @@ instance
 class HasPerasVoteBlock vote blk | vote -> blk where
   getPerasVoteBlock :: vote -> Point blk
 
-instance HasPerasVoteBlock (PerasVote blk) blk where
+instance HasPerasVoteBlock (PerasVote' blk) blk where
   getPerasVoteBlock = pvVoteBlock
 
 instance HasPerasVoteBlock (ValidatedPerasVote blk) blk where
@@ -564,7 +592,7 @@ instance
 class HasPerasVoteVoterId vote where
   getPerasVoteVoterId :: vote -> PerasVoterId
 
-instance HasPerasVoteVoterId (PerasVote blk) where
+instance HasPerasVoteVoterId (PerasVote' blk) where
   getPerasVoteVoterId = pvVoteVoterId
 
 instance HasPerasVoteVoterId (ValidatedPerasVote blk) where
@@ -593,7 +621,7 @@ instance
 class HasPerasVoteTarget vote blk | vote -> blk where
   getPerasVoteTarget :: vote -> PerasVoteTarget blk
 
-instance HasPerasVoteTarget (PerasVote blk) blk where
+instance HasPerasVoteTarget (PerasVote' blk) blk where
   getPerasVoteTarget vote =
     PerasVoteTarget
       { pvtRoundNo = pvVoteRound vote
@@ -613,7 +641,7 @@ instance
 class HasPerasVoteId vote blk | vote -> blk where
   getPerasVoteId :: vote -> PerasVoteId blk
 
-instance HasPerasVoteId (PerasVote blk) blk where
+instance HasPerasVoteId (PerasVote' blk) blk where
   getPerasVoteId vote =
     PerasVoteId
       { pviRoundNo = pvVoteRound vote

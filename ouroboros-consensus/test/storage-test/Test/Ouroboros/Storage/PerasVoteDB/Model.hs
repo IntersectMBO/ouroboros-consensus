@@ -26,7 +26,7 @@ import Ouroboros.Consensus.Block.Abstract (StandardHash)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( HasPerasVoteBlock (..)
   , HasPerasVoteRound (..)
-  , PerasCert (..)
+  , PerasCert' (..)
   , PerasCfg
   , PerasParams (..)
   , PerasRoundNo

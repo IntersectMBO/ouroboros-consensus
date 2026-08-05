@@ -202,7 +202,7 @@ instance SerialiseNodeToNode blk PerasSeatIndex where
   encodeNodeToNode _ccfg _version = toCBOR . unPerasSeatIndex
   decodeNodeToNode _ccfg _version = PerasSeatIndex <$> fromCBOR
 
-instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
+instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert' blk) where
   -- Consistent with the 'Serialise' instance for 'PerasCert' defined in Ouroboros.Consensus.Block.SupportsPeras
   encodeNodeToNode ccfg version PerasCert{..} =
     encodeListLen 2
@@ -214,7 +214,7 @@ instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
     pcCertBoostedBlock <- decodeNodeToNode ccfg version
     pure $ PerasCert pcCertRound pcCertBoostedBlock
 
-instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasVote blk) where
+instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasVote' blk) where
   -- Consistent with the 'Serialise' instance for 'PerasVote' defined in Ouroboros.Consensus.Block.SupportsPeras
   encodeNodeToNode ccfg version PerasVote{..} =
     encodeListLen 3

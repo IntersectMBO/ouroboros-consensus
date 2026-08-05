@@ -85,7 +85,7 @@ genPerasVote = do
   pvVoteVoterId <- genPerasVoterId
   pure $ PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId}
 
-instance WithId (PerasVote blk) (PerasVoteId blk) where
+instance WithId (PerasVote' blk) (PerasVoteId blk) where
   getId = getPerasVoteId
 
 instance WithId (WithArrivalTime (ValidatedPerasVote blk)) (PerasVoteId blk) where

@@ -45,7 +45,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
   , HasPerasVoteBlock (..)
   , HasPerasVoteRound (..)
   , PerasRoundNo (..)
-  , PerasVote (..)
+  , PerasVote' (..)
   , PerasVoteId
   , PerasVoteStake (..)
   , PerasVoteTarget (..)
