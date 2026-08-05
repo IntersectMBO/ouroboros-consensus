@@ -5,21 +5,16 @@
 
 module Test.Consensus.MiniProtocol.ObjectDiffusion.PerasVote.Smoke
   ( tests
-  , genPerasVoterId
   , genPerasVoteStake
   , genPerasVote
   , genValidatedPerasVote
   ) where
 
-import qualified Cardano.Crypto.DSIGN.Class as SL
-import qualified Cardano.Crypto.Seed as SL
-import qualified Cardano.Ledger.Keys as SL
 import Control.Monad (join)
 import Control.Tracer (contramap, nullTracer)
 import Data.Data (Typeable)
 import qualified Data.Map as Map
 import Data.Ratio ((%))
-import Data.String (IsString (..))
 import Network.TypedProtocol.Driver.Simple (runPeer, runPipelinedPeer)
 import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
@@ -65,13 +60,8 @@ tests =
     [ testProperty "PerasVoteDiffusion smoke test" prop_smoke
     ]
 
-genPerasVoterId :: Gen PerasVoterId
-genPerasVoterId = do
-  bytes <- fromString <$> vectorOf 32 arbitrary
-  let signKey = SL.genKeyDSIGN (SL.mkSeedFromBytes bytes)
-      verKey = SL.deriveVerKeyDSIGN signKey
-      keyHash = SL.hashKey (SL.VKey verKey)
-  pure (PerasVoterId keyHash)
+genPerasSeatIndex :: Gen PerasSeatIndex
+genPerasSeatIndex = PerasSeatIndex <$> choose (0, 99)
 
 genPerasVoteStake :: Gen PerasVoteStake
 genPerasVoteStake = do
@@ -82,13 +72,13 @@ genPerasVote :: Gen (PerasVote TestBlock)
 genPerasVote = do
   pvVoteRound <- PerasRoundNo <$> arbitrary
   pvVoteBlock <- genPointTestBlock
-  pvVoteVoterId <- genPerasVoterId
+  pvVoteVoterId <- genPerasSeatIndex
   pure $ PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId}
 
-instance WithId (PerasVote' blk) (PerasVoteId blk) where
+instance WithId (PerasVote' blk) PerasVoteId where
   getId = getPerasVoteId
 
-instance WithId (WithArrivalTime (ValidatedPerasVote blk)) (PerasVoteId blk) where
+instance WithId (WithArrivalTime (ValidatedPerasVote blk)) PerasVoteId where
   getId = getPerasVoteId . vpvVote . forgetArrivalTime
 
 genValidatedPerasVote :: Gen (ValidatedPerasVote TestBlock)
@@ -122,8 +112,8 @@ prop_smoke =
           mkPoolInterfaces ::
             IOLike m =>
             m
-              ( ObjectPoolReader (PerasVoteId TestBlock) (PerasVote TestBlock) PerasVoteTicketNo m
-              , ObjectPoolWriter (PerasVoteId TestBlock) (PerasVote TestBlock) m
+              ( ObjectPoolReader PerasVoteId (PerasVote TestBlock) PerasVoteTicketNo m
+              , ObjectPoolWriter PerasVoteId (PerasVote TestBlock) m
               , m [PerasVote TestBlock]
               )
           mkPoolInterfaces = do

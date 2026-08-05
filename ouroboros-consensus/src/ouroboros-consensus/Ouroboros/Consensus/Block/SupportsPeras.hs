@@ -67,7 +67,6 @@ module Ouroboros.Consensus.Block.SupportsPeras
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
-import qualified Cardano.Binary as KeyHash
 import Cardano.Ledger.Hashes (KeyHash, KeyRole (..))
 import Codec.Serialise (Serialise (..))
 import Codec.Serialise.Decoding (decodeListLenOf)
@@ -88,7 +87,7 @@ import Ouroboros.Consensus.Committee.Class
   , VotingCommittee
   )
 import Ouroboros.Consensus.Peras.Params
-import Ouroboros.Consensus.Peras.Types hiding (PerasVoteId (..))
+import Ouroboros.Consensus.Peras.Types
 import Ouroboros.Consensus.Peras.Void
 import Ouroboros.Consensus.Peras.Voting.Adapter (PerasConversionError)
 import Ouroboros.Consensus.Util
@@ -220,18 +219,10 @@ stakeAboveThreshold params voteStake =
       (perasQuorumWeightThresholdSafetyMargin params)
 
 newtype PerasVoteStakeDistr = PerasVoteStakeDistr
-  { unPerasVoteStakeDistr :: Map PerasVoterId PerasVoteStake
+  { unPerasVoteStakeDistr :: Map PerasSeatIndex PerasVoteStake
   }
   deriving newtype NoThunks
   deriving stock (Show, Eq, Generic)
-
--- NOTE: to be removed in favor of the one in 'Ouroboros.Consensus.Peras.Types'
-data PerasVoteId blk = PerasVoteId
-  { pviRoundNo :: !PerasRoundNo
-  , pviVoterId :: !PerasVoterId
-  }
-  deriving stock (Show, Eq, Ord, Generic)
-  deriving anyclass NoThunks
 
 -- | Lookup the stake of a vote cast by a member of a given stake distribution.
 lookupPerasVoteStake ::
@@ -462,7 +453,7 @@ data PerasVote' blk
   = PerasVote
   { pvVoteRound :: PerasRoundNo
   , pvVoteBlock :: Point blk
-  , pvVoteVoterId :: PerasVoterId
+  , pvVoteVoterId :: PerasSeatIndex
   }
   deriving stock (Generic, Eq, Ord, Show)
   deriving anyclass NoThunks
@@ -472,9 +463,6 @@ instance ShowProxy blk => ShowProxy (PerasCert' blk) where
 
 instance ShowProxy blk => ShowProxy (PerasVote' blk) where
   showProxy _ = "PerasVote " <> showProxy (Proxy @blk)
-
-instance ShowProxy blk => ShowProxy (PerasVoteId blk) where
-  showProxy _ = "PerasVoteId " <> showProxy (Proxy @blk)
 
 instance Serialise (HeaderHash blk) => Serialise (PerasCert' blk) where
   encode PerasCert{pcCertRound, pcCertBoostedBlock} =
@@ -492,24 +480,13 @@ instance Serialise (HeaderHash blk) => Serialise (PerasVote' blk) where
     encodeListLen 3
       <> encode pvVoteRound
       <> encode pvVoteBlock
-      <> KeyHash.toCBOR (unPerasVoterId pvVoteVoterId)
+      <> toCBOR pvVoteVoterId
   decode = do
     decodeListLenOf 3
     pvVoteRound <- decode
     pvVoteBlock <- decode
-    pvVoteVoterId <- PerasVoterId <$> KeyHash.fromCBOR
+    pvVoteVoterId <- fromCBOR
     pure $ PerasVote{pvVoteRound, pvVoteBlock, pvVoteVoterId}
-
-instance Serialise (PerasVoteId blk) where
-  encode PerasVoteId{pviRoundNo, pviVoterId} =
-    encodeListLen 2
-      <> encode pviRoundNo
-      <> KeyHash.toCBOR (unPerasVoterId pviVoterId)
-  decode = do
-    decodeListLenOf 2
-    pviRoundNo <- decode
-    pviVoterId <- PerasVoterId <$> KeyHash.fromCBOR
-    pure $ PerasVoteId{pviRoundNo, pviVoterId}
 
 -- | Extract the certificate round from a Peras certificate container
 class HasPerasCertRound cert where
@@ -590,7 +567,7 @@ instance
 
 -- | Extract the stake pool ID from a Peras vote container
 class HasPerasVoteVoterId vote where
-  getPerasVoteVoterId :: vote -> PerasVoterId
+  getPerasVoteVoterId :: vote -> PerasSeatIndex
 
 instance HasPerasVoteVoterId (PerasVote' blk) where
   getPerasVoteVoterId = pvVoteVoterId
@@ -639,13 +616,13 @@ instance
 
 -- | Extract the vote ID from a Peras vote container
 class HasPerasVoteId vote blk | vote -> blk where
-  getPerasVoteId :: vote -> PerasVoteId blk
+  getPerasVoteId :: vote -> PerasVoteId
 
 instance HasPerasVoteId (PerasVote' blk) blk where
   getPerasVoteId vote =
     PerasVoteId
       { pviRoundNo = pvVoteRound vote
-      , pviVoterId = pvVoteVoterId vote
+      , pviSeatIndex = pvVoteVoterId vote
       }
 
 instance HasPerasVoteId (ValidatedPerasVote blk) blk where

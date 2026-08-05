@@ -232,17 +232,17 @@ instance SerialiseNodeToNode blk PerasVoterId where
   encodeNodeToNode _ccfg _version = KeyHash.toCBOR . unPerasVoterId
   decodeNodeToNode _ccfg _version = PerasVoterId <$> KeyHash.fromCBOR
 
-instance SerialiseNodeToNode blk (PerasVoteId blk) where
+instance SerialiseNodeToNode blk PerasVoteId where
   -- Consistent with the 'Serialise' instance for 'PerasVoteId' defined in Ouroboros.Consensus.Block.SupportsPeras
   encodeNodeToNode ccfg version PerasVoteId{..} =
     encodeListLen 2
       <> encodeNodeToNode ccfg version pviRoundNo
-      <> encodeNodeToNode ccfg version pviVoterId
+      <> encodeNodeToNode ccfg version pviSeatIndex
   decodeNodeToNode ccfg version = do
     decodeListLenOf 2
     pviRoundNo <- decodeNodeToNode ccfg version
-    pviVoterId <- decodeNodeToNode ccfg version
-    pure $ PerasVoteId pviRoundNo pviVoterId
+    pviSeatIndex <- decodeNodeToNode ccfg version
+    pure $ PerasVoteId pviRoundNo pviSeatIndex
 
 deriving newtype instance
   SerialiseNodeToClient blk (GenTxId blk) =>

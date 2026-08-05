@@ -52,7 +52,7 @@ data PerasVoteDbEnv m blk = PerasVoteDbEnv
 
 -- INVARIANT: See 'invariantForPerasVoteDbState'.
 data PerasVoteDbState blk = PerasVoteDbState
-  { pvdsVoteIds :: !(Set (PerasVoteId blk))
+  { pvdsVoteIds :: !(Set PerasVoteId)
   , pvdsRoundVoteStates :: !(Map PerasRoundNo (PerasRoundVoteState blk))
   , pvdsVotesByTicket :: !(Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
   -- ^ The votes by 'PerasVoteTicketNo'.
@@ -110,7 +110,7 @@ invariantForPerasVoteDbState pvs = do
 
 data TraceEvent blk
   = AddVote
-      (PerasVoteId blk)
+      PerasVoteId
       (WithArrivalTime (ValidatedPerasVote blk))
       (AddPerasVoteResult blk)
   | GarbageCollected
@@ -248,7 +248,7 @@ implAddVote perasCfg PerasVoteDbEnv{pvdeTracer, pvdeState} vote = do
 implGetVoteIds ::
   IOLike m =>
   PerasVoteDbEnv m blk ->
-  STM m (Set (PerasVoteId blk))
+  STM m (Set PerasVoteId)
 implGetVoteIds PerasVoteDbEnv{pvdeState} = do
   PerasVoteDbState{pvdsVoteIds} <-
     forgetFingerprint <$> readTVar pvdeState

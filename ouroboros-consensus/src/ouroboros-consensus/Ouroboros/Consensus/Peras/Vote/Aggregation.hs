@@ -407,7 +407,7 @@ voteGeneratedCert = \case
 data PerasTargetVoteTally blk = PerasTargetVoteTally
   { ptvtTarget :: !(PerasVoteTarget blk)
   -- ^ What we are tallying votes for
-  , ptvtVotes :: !(Map (PerasVoteId blk) (WithArrivalTime (ValidatedPerasVote blk)))
+  , ptvtVotes :: !(Map PerasVoteId (WithArrivalTime (ValidatedPerasVote blk)))
   -- ^ Votes received for this target, indexed by vote ID
   , ptvtTotalStake :: !PerasVoteStake
   -- ^ Total stake of the votes received for this target
