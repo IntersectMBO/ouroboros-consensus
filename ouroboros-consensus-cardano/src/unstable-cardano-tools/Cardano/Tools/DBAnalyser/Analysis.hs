@@ -652,7 +652,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     IO ()
   process ledgerDB intLedgerDB outFileHandle outFormat _ (blk, sz) = do
     prevRtsStats <- GC.getRTSStats
-    (((prevLedgerState, tables), tTableReadMut),  tTableReadElapsed) <- clock $ LedgerDB.withTipForker ledgerDB $ \frk -> do
+    (((prevLedgerState, tables), tTableReadMut), tTableReadElapsed) <- clock $ LedgerDB.withTipForker ledgerDB $ \frk -> do
       st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
       tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
       pure (st, tbs)
