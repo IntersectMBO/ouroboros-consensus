@@ -38,6 +38,7 @@ import Control.Monad (join, unless, void, when)
 import Control.Monad.Except (runExcept)
 import Control.ResourceRegistry
 import Control.Tracer (Tracer, nullTracer, traceWith)
+import Data.Bifunctor (bimap)
 import Data.Int (Int64)
 import Data.List (intercalate)
 import qualified Data.Map.Strict as Map
@@ -650,21 +651,11 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     (blk, SizeInBytes) ->
     IO ()
   process ledgerDB intLedgerDB outFileHandle outFormat _ (blk, sz) = do
-    (prevLedgerState, tables) <- LedgerDB.withTipForker ledgerDB $ \frk -> do
+    prevRtsStats <- GC.getRTSStats
+    (((prevLedgerState, tables), tTableReadMut), tTableReadElapsed) <- clock $ LedgerDB.withTipForker ledgerDB $ \frk -> do
       st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
       tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
       pure (st, tbs)
-    prevRtsStats <- GC.getRTSStats
-    let
-      -- Compute how many nanoseconds the mutator used from the last
-      -- recorded 'elapsedTime' till the end of the execution of the given
-      -- action. This function forces the evaluation of its argument's
-      -- result.
-      time act = do
-        tPrev <- GC.mutator_elapsed_ns <$> GC.getRTSStats
-        !r <- act
-        tNow <- GC.mutator_elapsed_ns <$> GC.getRTSStats
-        pure (r, tNow - tPrev)
 
     let slot = blockSlot blk
     -- We do not use strictness annotation on the resulting tuples since
@@ -688,6 +679,8 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
           , DP.totalTime = currentMinusPrevious GC.elapsed_ns `div` 1000
           , DP.mut = currentMinusPrevious GC.mutator_elapsed_ns `div` 1000
           , DP.gc = currentMinusPrevious GC.gc_elapsed_ns `div` 1000
+          , DP.tableReadTime = tTableReadElapsed `div` 1000
+          , DP.mut_tableRead = tTableReadMut `div` 1000
           , DP.majGcCount = major_gcs
           , DP.minGcCount = currentMinusPrevious GC.gcs - major_gcs
           , DP.allocatedBytes = currentMinusPrevious GC.allocated_bytes
@@ -709,6 +702,19 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv{db, registry, startFrom, c
     LedgerDB.push intLedgerDB $ ExtLedgerState (prependDiffs tkLdgrSt newLedger) newHeader
    where
     rp = blockRealPoint blk
+
+    clock act = do
+      let dup x = (x, x)
+      (tMutPrev, tPrev) <- bimap GC.mutator_elapsed_ns GC.elapsed_ns . dup <$> GC.getRTSStats
+      !r <- act
+      (tMutNow, tNow) <- bimap GC.mutator_elapsed_ns GC.elapsed_ns . dup <$> GC.getRTSStats
+      pure ((r, tMutNow - tMutPrev), tNow - tPrev)
+
+    -- Compute how many nanoseconds the mutator used from the last
+    -- recorded 'elapsedTime' till the end of the execution of the given
+    -- action. This function forces the evaluation of its argument's
+    -- result.
+    time act = fst <$> clock act
 
     forecast ::
       SlotNo ->
