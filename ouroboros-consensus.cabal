@@ -113,9 +113,10 @@ library
     LeiosDemoOnlyTestNotify
     LeiosDemoTypes
     LeiosTxCache
-    LeiosTxCache.Mutable
-    LeiosTxCache.MutableHashTable
-    LeiosTxCacheIndex
+    LeiosTxCache.API
+    LeiosTxCache.Optimized
+    LeiosTxCache.Optimized.MutableHashTable
+    LeiosTxCache.Reference
     LeiosUtils.CallTrace
     LeiosVoteState
     LeiosVoting
@@ -733,9 +734,9 @@ test-suite consensus-test
     Test.LeiosDemoLogic
     Test.LeiosDemoLogic.Announcements
     Test.LeiosDemoTypes
-    Test.LeiosTxCache.Mutable
-    Test.LeiosTxCache.MutableHashTable
-    Test.LeiosTxCacheIndex
+    Test.LeiosTxCache.Optimized
+    Test.LeiosTxCache.Optimized.MutableHashTable
+    Test.LeiosTxCache.Reference
     Test.LeiosUtils.CallTrace
     Test.LeiosVoteState
 

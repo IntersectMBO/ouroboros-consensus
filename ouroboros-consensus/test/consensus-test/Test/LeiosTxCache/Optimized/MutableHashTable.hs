@@ -1,18 +1,18 @@
 {-# LANGUAGE BangPatterns #-}
 
--- | Model-based test for 'LeiosTxCache.MutableHashTable': a random sequence of
+-- | Model-based test for "LeiosTxCache.Optimized.MutableHashTable": a random sequence of
 -- insert\/delete\/lookup, run (purely, in 'ST') against the table and against a
 -- 'Data.Map.Strict' oracle, must agree on every lookup and on a final
 -- full-domain sweep. This exercises the probing and the backward-shift deletion
 -- under churn. The key domain is kept below the capacity so the table never
 -- fills.
-module Test.LeiosTxCache.MutableHashTable (tests) where
+module Test.LeiosTxCache.Optimized.MutableHashTable (tests) where
 
 import Control.Monad.ST (runST)
 import Data.Bits (shiftR, xor)
 import qualified Data.Map.Strict as Map
 import Data.Word (Word64)
-import qualified LeiosTxCache.MutableHashTable as HT
+import qualified LeiosTxCache.Optimized.MutableHashTable as HT
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.QuickCheck
   ( Arbitrary (..)
@@ -26,7 +26,7 @@ import Test.Tasty.QuickCheck
 tests :: TestTree
 tests =
   testGroup
-    "LeiosTxCache.MutableHashTable"
+    "LeiosTxCache.Optimized.MutableHashTable"
     [ testProperty "agrees with Data.Map under random churn" prop_matchesMap
     ]
 

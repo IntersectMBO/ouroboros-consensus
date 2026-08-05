@@ -7,7 +7,7 @@
 -- implementation will be tested for observational equivalence to it, not against
 -- these unit tests. These exercise observable behavior only (the exported ops
 -- and the internal state constructors), not any representation detail.
-module Test.LeiosTxCacheIndex (tests) where
+module Test.LeiosTxCache.Reference (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import qualified Data.ByteString as BS
@@ -18,7 +18,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Word (Word64, Word8)
 import LeiosDemoTypes (EbHash (..), RbHash (..), TxHash (..))
-import LeiosTxCacheIndex
+import LeiosTxCache.Reference
 import Test.Tasty (TestTree, adjustOption, testGroup)
 import Test.Tasty.HUnit (Assertion, testCase, (@?=))
 import Test.Tasty.QuickCheck
@@ -42,7 +42,7 @@ import Test.Tasty.QuickCheck
 tests :: TestTree
 tests =
   testGroup
-    "LeiosTxCacheIndex"
+    "LeiosTxCache.Reference"
     [ testGroup
         "announcements"
         [ testCase "one announcement -> BodyNotYetInserted rc=1" test_annOne

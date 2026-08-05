@@ -1,9 +1,11 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 
--- | A bounded, in-memory index over the recently-announced Leios EBs, their
--- bodies, and the txs those bodies reference, with reference-counted incremental
--- eviction.
+-- | The reference implementation of the LeiosTxCache: a bounded, in-memory index
+-- over the recently-announced Leios EBs, their bodies, and the txs those bodies
+-- reference, with reference-counted incremental eviction. Simple and obviously
+-- correct; "LeiosTxCache.Optimized" is validated for observational equivalence
+-- to it.
 --
 -- This is deliberately /independent/ of the on-disk LeiosDb: the two are
 -- separate caches with different eviction policies. This index retains only
@@ -30,14 +32,10 @@
 --     minimal @b@ of just the hashes suffices; storing more (e.g. the serialized
 --     body, which could ancillarily answer a MsgLeiosBodyRequest on a hit) is an
 --     implementation choice.
-module LeiosTxCacheIndex
+module LeiosTxCache.Reference
   ( -- * Index
     LeiosTxCacheIndex (..)
   , emptyLeiosTxCacheIndex
-  , maxAnnouncementCount
-
-    -- * Body payloads
-  , ReferencesTxsByHash (..)
 
     -- * Operations
   , insertAnnouncement
@@ -47,9 +45,13 @@ module LeiosTxCacheIndex
   , lookupTx
 
     -- * Internal state (exposed for testing)
-  , BodyState (..)
   , TxState (..)
+
+    -- * Shared types (re-exported from "LeiosTxCache.API")
+  , ReferencesTxsByHash (..)
   , RefCount (..)
+  , BodyState (..)
+  , maxAnnouncementCount
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
@@ -60,34 +62,15 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Word (Word8)
 import LeiosDemoTypes (EbHash, RbHash, TxHash)
+import LeiosTxCache.API
+  ( BodyState (..)
+  , RefCount (..)
+  , ReferencesTxsByHash (..)
+  , maxAnnouncementCount
+  )
 import qualified Lens.Micro as L
 import qualified Lens.Micro.Extras as L
-
--- | The maximum number of EB announcements retained. Inserting past it evicts
--- the oldest, cascading through the body and tx refcounts.
-maxAnnouncementCount :: Int
-maxAnnouncementCount = 128 -- TODO magic number
-
--- | A body @b@ from which the referenced txs can be enumerated by hash.
---
--- The fold must visit each referenced 'TxHash' at most once per body (a valid EB
--- body references a tx at most once), so that a body contributes exactly one to
--- each of its txs' refcounts.
-class ReferencesTxsByHash b where
-  foldTxReferences :: (r -> TxHash -> r) -> r -> b -> r
-
--- | A reference count.
---
--- INVARIANT: @> 0@ (an entry at zero is removed rather than stored).
-newtype RefCount = MkRefCount Word8
-  deriving (Eq, Show)
-
-data BodyState b
-  = -- | An announcement of this EB has been inserted, but not its body.
-    BodyNotYetInserted {-# UNPACK #-} !RefCount
-  | BodyAlreadyInserted {-# UNPACK #-} !RefCount !b
 
 data TxState a v
   = -- | An inserted body refers to this tx, but the tx itself is not inserted.

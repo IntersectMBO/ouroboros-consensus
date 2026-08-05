@@ -94,8 +94,7 @@ import LeiosDemoTypes
   , RbHash (..)
   )
 import qualified LeiosDemoTypes as Leios
-import LeiosTxCache (LeiosTxCache (..))
-import LeiosTxCacheIndex (ReferencesTxsByHash (..))
+import LeiosTxCache (LeiosTxCache (..), ReferencesTxsByHash (..))
 import Ouroboros.Consensus.Block
   ( BlockProtocol
   , ConvertRawHash

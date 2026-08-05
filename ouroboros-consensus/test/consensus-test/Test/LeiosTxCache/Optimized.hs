@@ -6,7 +6,7 @@
 -- return the same eviction sets from every announcement and agree on a final
 -- full-domain lookup sweep. Op ranges make the ~128-announcement eviction
 -- cascade fire in the longer sequences.
-module Test.LeiosTxCache.Mutable (tests) where
+module Test.LeiosTxCache.Optimized (tests) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
 import Control.Monad (foldM)
@@ -15,9 +15,8 @@ import qualified Data.List as List
 import Data.Set (Set)
 import Data.Word (Word64, Word8)
 import LeiosDemoTypes (EbHash (..), RbHash (..), TxHash (..))
-import LeiosTxCache (LeiosTxCache (..), newPureLeiosTxCache)
-import LeiosTxCache.Mutable (newHashTableLeiosTxCache)
-import LeiosTxCacheIndex (ReferencesTxsByHash (..))
+import LeiosTxCache (LeiosTxCache (..), ReferencesTxsByHash (..), newPureLeiosTxCache)
+import LeiosTxCache.Optimized (newHashTableLeiosTxCache)
 import Test.Tasty (TestTree, adjustOption, testGroup)
 import Test.Tasty.QuickCheck
   ( Gen
@@ -38,7 +37,7 @@ import Test.Tasty.QuickCheck
 tests :: TestTree
 tests =
   testGroup
-    "LeiosTxCache.Mutable"
+    "LeiosTxCache.Optimized"
     [ adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 10)) $
         testProperty "hash-table handle == pure handle" prop_equiv
     ]
