@@ -24,6 +24,7 @@ module LeiosTxCache.Optimized.MutableHashTable
   , size
   , capacity
   , siphash24
+  , checkInvariants
   ) where
 
 import Control.Monad.Primitive (PrimMonad, PrimState)
@@ -36,6 +37,7 @@ import Data.Primitive.ByteArray
   , writeByteArray
   )
 import Data.Primitive.MutVar (MutVar, modifyMutVar', newMutVar, readMutVar)
+import qualified Data.Set as Set
 import Data.Word (Word64)
 import Prelude hiding (lookup)
 
@@ -306,3 +308,53 @@ delete ht key = do
                 clearOccupied ht nxt
                 goShift (steps + 1) nxt ((nxt + 1) .&. mask)
               else goShift (steps + 1) cur ((nxt + 1) .&. mask)
+
+-- | Verify the table's representation invariants (for testing); returns a
+-- description of the first violation, or 'Nothing' when well-formed:
+--
+--   * the occupancy bitset's population equals the 'size' counter;
+--   * no key occupies two slots;
+--   * every occupied key lies on an unbroken probe run from its home slot — no
+--     empty slot between a key's home index and where it is stored, the invariant
+--     linear-probing 'lookup' and backward-shift 'delete' rely on.
+checkInvariants :: PrimMonad m => MutableHashTable (PrimState m) -> m (Maybe String)
+checkInvariants ht = do
+  sz <- size ht
+  flags <- mapM (isOccupied ht) [0 .. cap - 1]
+  let occupied = [i | (i, True) <- zip [0 .. cap - 1] flags]
+  keys <- mapM (readKey ht) occupied
+  gap <- firstGap (zip occupied keys)
+  pure $
+    if length occupied /= sz
+      then Just ("occupancy " ++ show (length occupied) ++ " /= size " ++ show sz)
+      else case firstDup Set.empty keys of
+        Just k -> Just ("key occupies two slots: " ++ show k)
+        Nothing -> gap
+ where
+  cap = mhtCap ht
+  mask = mhtMask ht
+
+  firstDup _ [] = Nothing
+  firstDup seen (k : ks)
+    | k `Set.member` seen = Just k
+    | otherwise = firstDup (Set.insert k seen) ks
+
+  firstGap [] = pure Nothing
+  firstGap ((i, k) : rest) = walk home
+   where
+    home = hashKey ht k
+    walk j
+      | j == i = firstGap rest
+      | otherwise = do
+          o <- isOccupied ht j
+          if o
+            then walk ((j + 1) .&. mask)
+            else
+              pure . Just $
+                "probe-chain gap: slot "
+                  ++ show i
+                  ++ " (home "
+                  ++ show home
+                  ++ ") has empty slot "
+                  ++ show j
+                  ++ " before it"
