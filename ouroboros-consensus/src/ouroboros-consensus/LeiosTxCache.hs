@@ -24,36 +24,25 @@
 -- allow improvements to the LeiosDb's other responsibilites, eg, its GC
 -- times). For considerations of how the LeiosTxCache should manage the tx bytes
 -- itself, see $backingStore.
+--
+-- This module is the umbrella: it re-exports the interface ("LeiosTxCache.API")
+-- and both handle factories ('newPureLeiosTxCache' from "LeiosTxCache.Reference"
+-- and 'newHashTableLeiosTxCache' from "LeiosTxCache.Optimized").
 module LeiosTxCache
-  ( LeiosTxCache (..)
+  ( module LeiosTxCache.API
   , newPureLeiosTxCache
+  , newHashTableLeiosTxCache
 
     -- $backingStore
   ) where
 
-import Cardano.Slotting.Slot (SlotNo)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
-import Data.Set (Set)
-import LeiosDemoTypes (EbHash, RbHash, TxHash)
-import LeiosTxCacheIndex (ReferencesTxsByHash)
-import qualified LeiosTxCacheIndex as Pure
+import LeiosTxCache.API
+import LeiosTxCache.Optimized (newHashTableLeiosTxCache)
+import qualified LeiosTxCache.Reference as Pure
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 
--- | A monadic tx-cache handle: the pure index operations, each performing its
--- state update in @m@.
-data LeiosTxCache m a v b = LeiosTxCache
-  { insertAnnouncement :: SlotNo -> RbHash -> EbHash -> m (Set EbHash, Set TxHash)
-  -- ^ Insert an announcement; returns the bodies and txs it evicted, if any.
-  , insertBody :: EbHash -> b -> m ()
-  , withLockedInsertUnappliedTx :: (forall w. w -> (w -> TxHash -> a -> m w) -> m w) -> m ()
-  -- ^ Has exclusive write-access
-  , withLockedInsertAppliedTx :: (forall w. w -> (w -> TxHash -> v -> m w) -> m w) -> m ()
-  -- ^ Has exclusive write-access
-  , withLookupTx :: forall r. ((TxHash -> m (Maybe (Either a v))) -> m r) -> m r
-  -- ^ Does not not hold the lock
-  }
-
--- | A handle backed by the pure index behind an MVar.
+-- | A handle backed by the pure reference index behind an MVar.
 newPureLeiosTxCache ::
   (IOLike m, ReferencesTxsByHash b) =>
   m (LeiosTxCache m a v b)
@@ -84,10 +73,11 @@ newPureLeiosTxCache = do
 --
 -- Note on scope: everything here concerns how a LeiosTxCache handle stores (or
 -- declines to store) the tx bytes, which is independent of how the index is
--- implemented — hence its home beside the handle type rather than beside the pure
--- index ("LeiosTxCacheIndex") or the mutable one ("LeiosTxCache.Mutable"). Some
--- details below are nonetheless phrased in terms of the hash-table implementation,
--- since that is the one intended for production use.
+-- implemented — hence it lives at the interface level (the handle type is in
+-- "LeiosTxCache.API") rather than beside either implementation
+-- ("LeiosTxCache.Reference" or "LeiosTxCache.Optimized"). Some details below are
+-- nonetheless phrased in terms of the hash-table implementation, since that is the
+-- one intended for production use.
 --
 -- == What we store today
 --
@@ -152,7 +142,7 @@ newPureLeiosTxCache = do
 -- bounded-work-per-EB easy to argue. This is a plain two-space (semi-space)
 -- copying collector.
 --
--- The LeiosTxCacheIndex must be in-memory, so LeiosFetch, LeiosVote, etc can
+-- The index must be in-memory, so LeiosFetch, LeiosVote, etc can
 -- make low-latency decisions. But the bytes of the cached txs can be slower to
 -- access on-disk---they'll still (generaly) be faster than network's fetching.
 --

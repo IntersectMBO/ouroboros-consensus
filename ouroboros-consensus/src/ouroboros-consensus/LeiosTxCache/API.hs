@@ -1,0 +1,60 @@
+{-# LANGUAGE Rank2Types #-}
+
+-- | The LeiosTxCache interface: the handle type and the small set of types
+-- shared by every implementation. See "LeiosTxCache" for the overview and the
+-- backing-store design note.
+module LeiosTxCache.API
+  ( -- * Handle
+    LeiosTxCache (..)
+
+    -- * Body payloads
+  , ReferencesTxsByHash (..)
+
+    -- * Shared refcount \/ body state
+  , RefCount (..)
+  , BodyState (..)
+  , maxAnnouncementCount
+  ) where
+
+import Cardano.Slotting.Slot (SlotNo)
+import Data.Set (Set)
+import Data.Word (Word8)
+import LeiosDemoTypes (EbHash, RbHash, TxHash)
+
+-- | A monadic tx-cache handle: the pure index operations, each performing its
+-- state update in @m@.
+data LeiosTxCache m a v b = LeiosTxCache
+  { insertAnnouncement :: SlotNo -> RbHash -> EbHash -> m (Set EbHash, Set TxHash)
+  -- ^ Insert an announcement; returns the bodies and txs it evicted, if any.
+  , insertBody :: EbHash -> b -> m ()
+  , withLockedInsertUnappliedTx :: (forall w. w -> (w -> TxHash -> a -> m w) -> m w) -> m ()
+  -- ^ Has exclusive write-access
+  , withLockedInsertAppliedTx :: (forall w. w -> (w -> TxHash -> v -> m w) -> m w) -> m ()
+  -- ^ Has exclusive write-access
+  , withLookupTx :: forall r. ((TxHash -> m (Maybe (Either a v))) -> m r) -> m r
+  -- ^ Does not not hold the lock
+  }
+
+-- | A body @b@ from which the referenced txs can be enumerated by hash.
+--
+-- The fold must visit each referenced 'TxHash' at most once per body (a valid EB
+-- body references a tx at most once), so that a body contributes exactly one to
+-- each of its txs' refcounts.
+class ReferencesTxsByHash b where
+  foldTxReferences :: (r -> TxHash -> r) -> r -> b -> r
+
+-- | The maximum number of EB announcements retained. Inserting past it evicts
+-- the oldest, cascading through the body and tx refcounts.
+maxAnnouncementCount :: Int
+maxAnnouncementCount = 128 -- TODO magic number
+
+-- | A reference count.
+--
+-- INVARIANT: @> 0@ (an entry at zero is removed rather than stored).
+newtype RefCount = MkRefCount Word8
+  deriving (Eq, Show)
+
+data BodyState b
+  = -- | An announcement of this EB has been inserted, but not its body.
+    BodyNotYetInserted {-# UNPACK #-} !RefCount
+  | BodyAlreadyInserted {-# UNPACK #-} !RefCount !b

@@ -8,12 +8,12 @@
 -- the 'Word64'); the small announcement and body state stays in 'Map's behind an
 -- 'MVar' that also serializes every hash-table access (the \"Locked\" ops hold it
 -- for writes; 'withLookupTx' holds it for the read batch). The refcount
--- maintenance and eviction cascade mirror 'LeiosTxCacheIndex' exactly — this is
--- the mutable re-implementation validated against the pure one.
+-- maintenance and eviction cascade mirror "LeiosTxCache.Reference" exactly — this
+-- is the mutable re-implementation validated against the pure one.
 --
 -- Only @a = v = ()@ is supported (the node's instantiation), since the value is
 -- a bare 'Word64'.
-module LeiosTxCache.Mutable
+module LeiosTxCache.Optimized
   ( newHashTableLeiosTxCache
   ) where
 
@@ -30,14 +30,14 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word (Word64)
 import LeiosDemoTypes (EbHash, RbHash, TxHash (..))
-import LeiosTxCache (LeiosTxCache (..))
-import qualified LeiosTxCache.MutableHashTable as HT
-import LeiosTxCacheIndex
+import LeiosTxCache.API
   ( BodyState (..)
+  , LeiosTxCache (..)
   , RefCount (..)
   , ReferencesTxsByHash (..)
   , maxAnnouncementCount
   )
+import qualified LeiosTxCache.Optimized.MutableHashTable as HT
 import Ouroboros.Consensus.Util.IOLike (IOLike)
 
 -- | The small, map-resident state (the tx map is the hash table, not here).
