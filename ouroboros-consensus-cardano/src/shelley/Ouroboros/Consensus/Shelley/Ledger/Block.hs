@@ -61,7 +61,12 @@ import Cardano.Ledger.Core as SL
   , eraProtVerLow
   , toEraCBOR
   )
-import qualified Cardano.Ledger.Core as SL (BlockBody, TranslationContext, hashBlockBody)
+import qualified Cardano.Ledger.Core as SL
+  ( BlockBody
+  , TranslationContext
+  , hashBlockBody
+  , txSeqBlockBodyL
+  )
 import Cardano.Ledger.Dijkstra.BlockBody (leiosCertBlockBodyL)
 import Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -232,6 +237,9 @@ instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
       -- a Leios certificate (i.e. it is a "CertRB"), binding the header-only
       -- CertRB signal to the actual body contents.
       && pHeaderLeiosContainsCert shelleyHdr == bodyHasLeiosCert
+      -- A CertRB carries a certificate XOR transactions: a body with both a
+      -- Leios certificate and transactions is structurally invalid.
+      && not (bodyHasLeiosCert && bodyHasTxs)
    where
     ShelleyHeader{shelleyHeaderRaw = shelleyHdr} = hdr
     ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} = blk
@@ -241,6 +249,10 @@ instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
     -- TODO: use blockLeiosCert from ResolveLeiosBlock type class?
     bodyHasLeiosCert = case eqT @era @DijkstraEra of
       Just Refl -> isSJust (blockBody ^. leiosCertBlockBodyL)
+      Nothing -> False
+
+    bodyHasTxs = case eqT @era @DijkstraEra of
+      Just Refl -> not (null (blockBody ^. SL.txSeqBlockBodyL))
       Nothing -> False
 
   headerIsEBB = const Nothing
