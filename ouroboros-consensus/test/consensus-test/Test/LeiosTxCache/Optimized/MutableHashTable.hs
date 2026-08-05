@@ -50,6 +50,7 @@ import Test.Tasty.QuickCheck
   , tabulate
   , testProperty
   , vectorOf
+  , (.&&.)
   , (===)
   )
 
@@ -141,12 +142,13 @@ keyOf n0 =
      in z2 `xor` (z2 `shiftR` 31)
 
 -- | Lookup results in op order, plus a final sweep over the whole domain.
-runMutable :: Config -> [Op] -> ([Maybe Word64], [Maybe Word64])
+runMutable :: Config -> [Op] -> (([Maybe Word64], [Maybe Word64]), Maybe String)
 runMutable cfg ops = runST $ do
   ht <- HT.new (cfgShift cfg) salt0 salt1
   looks <- go ht ops
   sweep <- mapM (HT.lookup ht . keyOf) [0 .. cfgDomain cfg - 1]
-  pure (looks, sweep)
+  inv <- HT.checkInvariants ht
+  pure ((looks, sweep), inv)
  where
   go _ [] = pure []
   go ht (op : rest) = case op of
@@ -192,7 +194,8 @@ prop_matchesMap =
   forAll (genConfig (6, 9)) $ \cfg ->
     forAllShrink (genOps cfg) (shrinkList (const [])) $ \ops ->
       tabulate "peak load" [show (peakLoadTwentieths cfg ops) ++ " twentieths"] $
-        runMutable cfg ops === runModel cfg ops
+        let (result, inv) = runMutable cfg ops
+         in inv === Nothing .&&. result === runModel cfg ops
 
 {-------------------------------------------------------------------------------
   SipHash-2-4 validation
