@@ -55,7 +55,7 @@ newPureLeiosTxCache = do
             let (idx', evEbs, evTxs) = Pure.insertAnnouncement slot rbh ebh idx
              in pure (idx', (evEbs, evTxs))
       , insertBody = \ebh b ->
-          MVar.modifyMVar_ var (pure . Pure.insertBody ebh b)
+          MVar.modifyMVar var $ \idx -> pure (Pure.insertBody ebh b idx)
       , withLockedInsertUnappliedTx = \k ->
           MVar.modifyMVar_ var $ \idx ->
             k idx (\idx' txh a -> pure $! Pure.insertUnappliedTx txh a idx')

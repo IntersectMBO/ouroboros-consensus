@@ -132,7 +132,7 @@ runBench name mkCache = do
     timedNs $
       forM_ ebData $ \(ebh, rbh, slot, txhs, bs) -> do
         _ <- insertAnnouncement cache slot rbh ebh
-        insertBody cache ebh (BenchBody bs)
+        _ <- insertBody cache ebh (BenchBody bs)
         withLockedInsertUnappliedTx cache $ \z step ->
           foldM (\ !acc txh -> step acc txh ()) z txhs
   allocAfter <- bytesAllocated
