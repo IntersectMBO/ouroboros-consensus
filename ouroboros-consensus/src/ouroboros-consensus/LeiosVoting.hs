@@ -56,6 +56,7 @@ import Ouroboros.Consensus.HeaderValidation
   , headerStateTip
   )
 import Ouroboros.Consensus.Ledger.Extended (headerState, ledgerState)
+import Ouroboros.Consensus.Node.GsmState (GsmState (..))
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
@@ -107,9 +108,15 @@ runLeiosVoting ::
   BlockchainTime m ->
   LeiosDbHandle m ->
   LeiosVoteState m ->
+  -- | Current GSM state, so voting can stay paused until the node has
+  -- caught up. Before Genesis sync completes, the node's selected chain
+  -- and ledger state are far behind the real network, so committees
+  -- resolved from its own ledger and EB/RB points announced by peers
+  -- don't correspond to the round the rest of the network is voting on.
+  STM m GsmState ->
   Maybe LeiosSigningKey ->
   m ()
-runLeiosVoting tracer chainDB btime leiosDB voteState = \case
+runLeiosVoting tracer chainDB btime leiosDB voteState readGsmState = \case
   Nothing ->
     traceWith tracer $
       MkTraceLeiosKernel
@@ -161,7 +168,8 @@ runLeiosVoting tracer chainDB btime leiosDB voteState = \case
     -- so we can't stall a due vote behind a chan drain.
     forever $ do
       mWork <-
-        atomically $
+        atomically $ do
+          waitUntilCaughtUp readGsmState
           (Just <$> takeReady) `orElse` (Nothing <$ takeAcquisition)
       case mWork of
         Nothing -> pure ()
@@ -190,6 +198,20 @@ runLeiosVoting tracer chainDB btime leiosDB voteState = \case
                     Nothing -> pure ()
                 err ->
                   error $ "runLeiosVoting: unexpected error on addVote: " <> show err
+
+-- | Block until the node has caught up ('GsmState' is 'CaughtUp').
+--
+-- Before that, our selection and ledger are stale relative to the round
+-- the rest of the network is voting on, so committees resolved from our
+-- own ledger, or certifications tallied from peers' votes, would be
+-- computed against the wrong point. Meant to be composed into a larger
+-- 'atomically' block and re-checked on every iteration of a loop (not
+-- just once at startup), since GSM can fall back out of 'CaughtUp'.
+waitUntilCaughtUp :: IOLike m => STM m GsmState -> STM m ()
+waitUntilCaughtUp readGsmState =
+  readGsmState >>= \case
+    CaughtUp -> pure ()
+    _ -> retry
 
 -- | Read the current wall-clock slot, retrying until it is known.
 knownSlot :: IOLike m => BlockchainTime m -> STM m SlotNo
