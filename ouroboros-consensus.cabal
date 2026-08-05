@@ -697,6 +697,34 @@ library unstable-tutorials
     ouroboros-network:api,
     serialise,
 
+-- A dedicated suite that recompiles the hash-table source (and its test) with
+-- GHC's array-primop bounds checking, so an out-of-bounds MutableByteArray access
+-- in the probing / backward-shift / bitset arithmetic fails loudly instead of
+-- silently corrupting memory. It deliberately does NOT depend on
+-- 'ouroboros-consensus': the module and its test are self-contained on
+-- base/containers/primitive/tasty, so recompiling them here (rather than linking
+-- the library's unchecked copy) both applies the flag and avoids a
+-- duplicate-module clash.
+test-suite leios-txcache-bounds-checked
+  import: common-test
+  type: exitcode-stdio-1.0
+  hs-source-dirs:
+    ouroboros-consensus/test/leios-txcache-bounds-checked
+    ouroboros-consensus/test/consensus-test
+    ouroboros-consensus/src/ouroboros-consensus
+  main-is: Main.hs
+  other-modules:
+    LeiosTxCache.Optimized.MutableHashTable
+    Test.LeiosTxCache.Optimized.MutableHashTable
+  ghc-options: -fcheck-prim-bounds
+  build-depends:
+    base,
+    containers,
+    primitive,
+    tasty,
+    tasty-hunit,
+    tasty-quickcheck,
+
 test-suite consensus-test
   import: common-test
   type: exitcode-stdio-1.0
