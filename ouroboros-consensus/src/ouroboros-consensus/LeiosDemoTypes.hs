@@ -894,6 +894,25 @@ messageLeiosFetchToObject = \case
   LeiosFetch.MsgDone ->
     "kind" .= Aeson.String "MsgDone"
 
+-- | Summary of an EB body inserted into the LeiosTxCache, for observability (see
+-- 'TraceLeiosTxCacheEbBody'). The counts nest:
+-- @ibsTxsInEb >= ibsTracked >= ibsAcquired >= ibsValidated@.
+data InsertBodySummary = InsertBodySummary
+  { ibsTxsInEb :: !Int
+  -- ^ txs the EB body references
+  , ibsTracked :: !Int
+  -- ^ of those, how many the cache already tracked
+  , ibsAcquired :: !Int
+  -- ^ of those tracked, how many were already acquired (inserted or validated)
+  , ibsValidated :: !Int
+  -- ^ of those acquired, how many were already validated
+  , ibsCacheTxCount :: !Int
+  -- ^ total txs the cache tracks after this insert
+  , ibsCacheLoad :: !Double
+  -- ^ 'ibsCacheTxCount' as a fraction of the worst-case cache capacity
+  }
+  deriving (Eq, Show)
+
 data TraceLeiosKernel
   = MkTraceLeiosKernel String
   | TraceLeiosBlockAcquired LeiosPoint
@@ -901,6 +920,8 @@ data TraceLeiosKernel
     -- unexpected as the point should have been inserted during announcement handling.
     TraceLeiosBlockPointMissing LeiosPoint
   | TraceLeiosBlockTxsAcquired LeiosPoint
+  | -- | An EB body was inserted into the LeiosTxCache; carries the insertion summary.
+    TraceLeiosTxCacheEbBody LeiosPoint InsertBodySummary
   | forall m. (Show m, TxMeasureMetrics m) => TraceLeiosBlockForged
       { slot :: SlotNo
       , eb :: LeiosEb
@@ -1005,6 +1026,18 @@ traceLeiosKernelToObject = \case
       [ "kind" .= Aeson.String "LeiosBlockTxsAcquired"
       , "ebHash" .= prettyEbHash ebHash
       , "ebSlot" .= ebSlot
+      ]
+  TraceLeiosTxCacheEbBody (MkLeiosPoint (SlotNo ebSlot) ebHash) ibs ->
+    mconcat
+      [ "kind" .= Aeson.String "LeiosTxCacheEbBody"
+      , "ebHash" .= prettyEbHash ebHash
+      , "ebSlot" .= ebSlot
+      , "txsInEb" .= ibsTxsInEb ibs
+      , "tracked" .= ibsTracked ibs
+      , "acquired" .= ibsAcquired ibs
+      , "validated" .= ibsValidated ibs
+      , "cacheTxCount" .= ibsCacheTxCount ibs
+      , "cacheLoad" .= ibsCacheLoad ibs
       ]
   TraceLeiosBlockForged{slot, eb, ebMeasure, mempoolRestMeasure} ->
     mconcat

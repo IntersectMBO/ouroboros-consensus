@@ -65,9 +65,11 @@ import qualified Data.Set as Set
 import LeiosDemoTypes (EbHash, RbHash, TxHash)
 import LeiosTxCache.API
   ( BodyState (..)
+  , InsertBodySummary
   , RefCount (..)
   , ReferencesTxsByHash (..)
   , maxAnnouncementCount
+  , mkInsertBodySummary
   )
 import qualified Lens.Micro as L
 import qualified Lens.Micro.Extras as L
@@ -276,23 +278,36 @@ insertBody ::
   EbHash ->
   b ->
   LeiosTxCacheIndex a v b ->
-  LeiosTxCacheIndex a v b
+  (LeiosTxCacheIndex a v b, Maybe InsertBodySummary)
 insertBody ebh body idx = case Map.lookup ebh (bodyState idx) of
-  Nothing -> idx
-  Just BodyAlreadyInserted{} -> idx
+  Nothing -> (idx, Nothing)
+  Just BodyAlreadyInserted{} -> (idx, Nothing)
   Just (BodyNotYetInserted rc) ->
-    MkLeiosTxCacheIndex
-      { announcementState = announcementState idx
-      , announcementCount = announcementCount idx
-      , bodyState = Map.insert ebh (BodyAlreadyInserted rc body) (bodyState idx)
-      , txState = foldTxReferences bumpTx (txState idx) body
-      }
+    let ((n, tracked, acquired, validated), txState') =
+          foldTxReferences bumpTx ((0, 0, 0, 0), txState idx) body
+        idx' =
+          MkLeiosTxCacheIndex
+            { announcementState = announcementState idx
+            , announcementCount = announcementCount idx
+            , bodyState = Map.insert ebh (BodyAlreadyInserted rc body) (bodyState idx)
+            , txState = txState'
+            }
+     in (idx', Just (mkInsertBodySummary n tracked acquired validated (Map.size txState')))
  where
-  bumpTx ts txh =
-    Map.alter
-      (Just . maybe (TxNotYetInserted (MkRefCount 1)) (L.over txRefCountL incRefCount))
-      txh
-      ts
+  -- Bump each tx's refcount and, in the same pass, classify its /prior/ state so
+  -- the summary needs no second traversal.
+  bumpTx ((!nn, !tt, !aa, !vv), ts) txh =
+    let (dt, da, dv) = case Map.lookup txh ts of
+          Nothing -> (0, 0, 0) -- new: not yet tracked
+          Just (TxNotYetInserted _) -> (1, 0, 0) -- tracked, not acquired
+          Just (TxAlreadyInserted _ _) -> (1, 1, 0) -- acquired, not validated
+          Just (TxAlreadyValidated _ _) -> (1, 1, 1) -- acquired and validated
+        ts' =
+          Map.alter
+            (Just . maybe (TxNotYetInserted (MkRefCount 1)) (L.over txRefCountL incRefCount))
+            txh
+            ts
+     in ((nn + 1, tt + dt, aa + da, vv + dv), ts')
 
 -- | Record the payload of a fetched-but-not-yet-applied tx, without changing its
 -- refcount. A no-op if no inserted body references this tx.

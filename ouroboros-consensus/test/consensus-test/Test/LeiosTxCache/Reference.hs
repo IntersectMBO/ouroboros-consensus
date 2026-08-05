@@ -103,7 +103,7 @@ ann :: Word64 -> Word8 -> Word8 -> Idx -> Idx
 ann s r e idx = let (idx', _, _) = insertAnnouncement (SlotNo s) (mkRbHash r) (mkEbHash e) idx in idx'
 
 body :: Word8 -> [Word8] -> Idx -> Idx
-body e ts = insertBody (mkEbHash e) (TestBody (map mkTxHash ts))
+body e ts idx = fst (insertBody (mkEbHash e) (TestBody (map mkTxHash ts)) idx)
 
 -- | Announce EBs 1..n, each at its own slot and with its own RB hash.
 annN :: Int -> Idx -> Idx
