@@ -29,11 +29,13 @@ module Test.LeiosTxCache.Optimized.MutableHashTable
   ) where
 
 import Control.Monad.ST (runST)
-import Data.Bits (shiftR, xor)
+import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.))
+import qualified Data.List as List
 import qualified Data.Map.Strict as Map
-import Data.Word (Word64)
+import Data.Word (Word64, Word8)
 import qualified LeiosTxCache.Optimized.MutableHashTable as HT
 import Test.Tasty (TestTree, adjustOption, testGroup)
+import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.QuickCheck
   ( Gen
   , Property
@@ -57,6 +59,14 @@ tests =
     "LeiosTxCache.Optimized.MutableHashTable"
     [ adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 10)) $
         testProperty "agrees with Data.Map across load factors" prop_matchesMap
+    , testGroup
+        "SipHash-2-4"
+        [ testCase "reference matches official vector (empty input)" $
+            refSipHash24 refK0 refK1 [] @?= 0x726fdb47dd0e0e31
+        , testCase "reference matches official vector (15 bytes)" $
+            refSipHash24 refK0 refK1 [0 .. 14] @?= 0xa129ca6149be45e5
+        , testProperty "ported core matches the reference" prop_siphashMatchesReference
+        ]
     ]
 
 -- | A table capacity (@2 ^ cfgShift@) paired with a key\/tx domain sized to a
@@ -183,3 +193,75 @@ prop_matchesMap =
     forAllShrink (genOps cfg) (shrinkList (const [])) $ \ops ->
       tabulate "peak load" [show (peakLoadTwentieths cfg ops) ++ " twentieths"] $
         runMutable cfg ops === runModel cfg ops
+
+{-------------------------------------------------------------------------------
+  SipHash-2-4 validation
+
+  'HT.siphash24' is the anti-flooding primitive, and a wrong-but-deterministic
+  hash would sail through the model test above while silently defeating the salt.
+  So we anchor a spec-following reference to the published test vectors, then check
+  the ported core against it over random inputs.
+-------------------------------------------------------------------------------}
+
+-- | The published SipHash test key: bytes @0x00 .. 0x0f@ as two little-endian
+-- words.
+refK0, refK1 :: Word64
+refK0 = 0x0706050403020100
+refK1 = 0x0f0e0d0c0b0a0908
+
+-- | The ported 4-word core agrees with the byte-oriented reference on any salt
+-- and any 32-byte key. (Both read the four words the same way: the reference's
+-- little-endian byte encoding round-trips through 'word64ToLE'.)
+prop_siphashMatchesReference ::
+  Word64 -> Word64 -> Word64 -> Word64 -> Word64 -> Word64 -> Property
+prop_siphashMatchesReference k0 k1 m0 m1 m2 m3 =
+  HT.siphash24 k0 k1 (HT.Key m0 m1 m2 m3)
+    === refSipHash24 k0 k1 (concatMap word64ToLE [m0, m1, m2, m3])
+ where
+  word64ToLE w = [fromIntegral (w `shiftR` (8 * i)) | i <- [0 .. 7]] :: [Word8]
+
+-- | A spec-following SipHash-2-4 over a byte string, used only to validate
+-- 'HT.siphash24'; anchored to the published vectors in 'tests'.
+refSipHash24 :: Word64 -> Word64 -> [Word8] -> Word64
+refSipHash24 k0 k1 msg = final (List.foldl' compress' initial (fullWords ++ [finalWord]))
+ where
+  initial =
+    ( k0 `xor` 0x736f6d6570736575
+    , k1 `xor` 0x646f72616e646f6d
+    , k0 `xor` 0x6c7967656e657261
+    , k1 `xor` 0x7465646279746573
+    )
+  n = length msg
+  nFull = n `div` 8
+  fullWords = [leWord (take 8 (drop (8 * i) msg)) | i <- [0 .. nFull - 1]]
+  leftover = drop (8 * nFull) msg
+  finalWord = leWord leftover .|. (fromIntegral (n .&. 0xff) `shiftL` 56)
+
+  leWord :: [Word8] -> Word64
+  leWord = foldr (\b acc -> (acc `shiftL` 8) .|. fromIntegral b) 0
+
+  -- c = 2 compression rounds per message word
+  compress' (v0, v1, v2, v3) m =
+    let (a0, a1, a2, a3) = sipround' (v0, v1, v2, v3 `xor` m)
+        (b0, b1, b2, b3) = sipround' (a0, a1, a2, a3)
+     in (b0 `xor` m, b1, b2, b3)
+
+  -- d = 4 finalization rounds after flipping v2
+  final (v0, v1, v2, v3) =
+    let (w0, w1, w2, w3) = iterate sipround' (v0, v1, v2 `xor` 0xff, v3) !! 4
+     in w0 `xor` w1 `xor` w2 `xor` w3
+
+  sipround' (v0, v1, v2, v3) =
+    let a = v0 + v1
+        b = rotl v1 13 `xor` a
+        a' = rotl a 32
+        c = v2 + v3
+        d = rotl v3 16 `xor` c
+        a'' = a' + d
+        d' = rotl d 21 `xor` a''
+        c' = c + b
+        b' = rotl b 17 `xor` c'
+        c'' = rotl c' 32
+     in (a'', b', c'', d')
+
+  rotl x r = (x `shiftL` r) .|. (x `shiftR` (64 - r))

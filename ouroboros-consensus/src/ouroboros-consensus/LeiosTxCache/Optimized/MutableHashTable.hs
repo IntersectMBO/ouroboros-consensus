@@ -23,6 +23,7 @@ module LeiosTxCache.Optimized.MutableHashTable
   , delete
   , size
   , capacity
+  , siphash24
   ) where
 
 import Control.Monad.Primitive (PrimMonad, PrimState)
@@ -185,12 +186,13 @@ compress m (SIP v0 v1 v2 v3) =
       !(SIP b0 b1 b2 b3) = sipround (SIP a0 a1 a2 a3)
    in SIP (b0 `xor` m) b1 b2 b3
 
-hashKey :: MutableHashTable s -> Key -> Int
-hashKey ht (Key m0 m1 m2 m3) =
-  fromIntegral (folded .&. fromIntegral (mhtMask ht))
+-- | Raw SipHash-2-4 of the four-word (32-byte) key under the 128-bit salt
+-- @(k0, k1)@. Exposed for validation against the published SipHash-2-4 test
+-- vectors; 'hashKey' just reduces this to a slot index.
+{-# INLINE siphash24 #-}
+siphash24 :: Word64 -> Word64 -> Key -> Word64
+siphash24 k0 k1 (Key m0 m1 m2 m3) = g0 `xor` g1 `xor` g2 `xor` g3
  where
-  k0 = mhtK0 ht
-  k1 = mhtK1 ht
   s0 =
     SIP
       (0x736f6d6570736575 `xor` k0)
@@ -202,7 +204,11 @@ hashKey ht (Key m0 m1 m2 m3) =
   -- finalization: v2 ^= 0xff; SIPROUND x4
   !(SIP g0 g1 g2 g3) =
     sipround (sipround (sipround (sipround (SIP p0 p1 (p2 `xor` 0xff) p3))))
-  h64 = g0 `xor` g1 `xor` g2 `xor` g3
+
+hashKey :: MutableHashTable s -> Key -> Int
+hashKey ht key = fromIntegral (folded .&. fromIntegral (mhtMask ht))
+ where
+  h64 = siphash24 (mhtK0 ht) (mhtK1 ht) key
   folded = h64 `xor` (h64 `unsafeShiftR` 32)
 
 {-------------------------------------------------------------------------------
