@@ -14,7 +14,7 @@
 --
 -- The key is four 'Word64's ('Key'), so there is no per-key heap object and both
 -- hashing and equality read the words directly.
-module LeiosTxCache.MutableHashTable
+module LeiosTxCache.Optimized.MutableHashTable
   ( MutableHashTable
   , Key (..)
   , new

@@ -35,8 +35,6 @@ import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Stats
 import LeiosDemoTypes (EbHash (..), RbHash (..), TxHash (..))
 import LeiosTxCache
-import LeiosTxCache.Mutable (newHashTableLeiosTxCache)
-import LeiosTxCacheIndex (ReferencesTxsByHash (..), maxAnnouncementCount)
 import Numeric (showFFloat)
 import System.Environment (getArgs)
 import System.IO (hFlush, stdout)
