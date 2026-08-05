@@ -23,6 +23,13 @@ import qualified TextBuilder as Builder
 --  3. Block tick.
 --  4. Block application.
 --
+-- Before those five operations run, the node reads the ledger tables
+-- that the block needs (e.g. the on-disk backend's UTxO-table, if the
+-- on-disk backend is used). This is the tables read. 'totalTime',
+-- 'mut', 'gc', 'majGcCount', 'minGcCount' and 'allocatedBytes' cover
+-- the tables read and the five operations together. 'tableReadTime'
+-- and 'mut_tableRead' report the costs of table read on its own.
+--
 -- It is up to the user of a slot data point to decide which units the data
 -- represent (eg milliseconds, nanoseconds, etc)
 data SlotDataPoint
@@ -32,30 +39,32 @@ data SlotDataPoint
   , slotGap :: !Word64
   -- ^ Gap to the previous slot.
   , totalTime :: !Int64
-  -- ^ Total time spent in the 5 ledger operations at 'slot'.
+  -- ^ Elapsed time spent on the tables read and the 5 ledger
+  -- operations at 'slot'. Taken from GC.elapsed_ns.
   , mut :: !Int64
-  -- ^ Time spent by the mutator while performing the 5 ledger operations
-  -- at 'slot'.
+  -- ^ Time the mutator ran during the tables read and the 5 ledger
+  -- operations at 'slot'. Taken from GC.mutator_elapsed_ns.
   , gc :: !Int64
-  -- ^ Time spent in garbage collection while performing the 5 ledger
-  -- operations at 'slot'.
+  -- ^ Time spent in garbage collection during the tables read and the
+  -- 5 ledger operations at 'slot'. Taken from GC.gc_elapsed_ns.
   , tableReadTime :: !Int64
-  -- ^ Elapsed time spent fetching this block's ledger tables (e.g. the
-  -- on-disk backend's UTxO-table reads) before any of the 5 ledger
-  -- operations below even start; not included in 'totalTime'/'mut'/'gc'.
+  -- ^ Elapsed time spent on the tables read. 'totalTime' already
+  -- counts this time. To get the time the 5 operations took on their
+  -- own, subtract this from 'totalTime'.
   , mut_tableRead :: !Int64
-  -- ^ Difference of the GC.mutator_elapsed_ns field while fetching this
-  -- block's ledger tables (see 'tableReadTime'); comparing the two
-  -- surfaces GC/blocking time not attributed to the mutator.
+  -- ^ Time the mutator ran during the tables read. Taken from
+  -- GC.mutator_elapsed_ns, which is elapsed time minus GC time.
+  -- 'tableReadTime' minus this value is the GC time inside the table
+  -- read.
   , majGcCount :: !Word32
-  -- ^ Total number of __major__ garbage collections that took place while
-  -- performing the 5 ledger operations at 'slot'.
+  -- ^ Total number of __major__ garbage collections that took place
+  -- during the tables read and the 5 ledger operations at 'slot'.
   , minGcCount :: !Word32
-  -- ^ Total number of __minor__ garbage collections that took place while
-  -- performing the 5 ledger operations at 'slot'.
+  -- ^ Total number of __minor__ garbage collections that took place
+  -- during the tables read and the 5 ledger operations at 'slot'.
   , allocatedBytes :: !Word64
-  -- ^ Allocated bytes while performing the 5 ledger operations
-  -- at 'slot'.
+  -- ^ Allocated bytes during the tables read and the 5 ledger
+  -- operations at 'slot'.
   , mut_forecast :: !Int64
   -- ^ Difference of the GC.mutator_elapsed_ns field when computing the
   -- forecast.
