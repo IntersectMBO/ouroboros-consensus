@@ -14,19 +14,24 @@ module LeiosTxCache.API
   , RefCount (..)
   , BodyState (..)
   , maxAnnouncementCount
+
+    -- * Insert-body observability summary
+  , InsertBodySummary (..)
+  , mkInsertBodySummary
+  , worstCaseCacheTxCount
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
 import Data.Set (Set)
 import Data.Word (Word8)
-import LeiosDemoTypes (EbHash, RbHash, TxHash)
+import LeiosDemoTypes (EbHash, InsertBodySummary (..), RbHash, TxHash, maxTxsPerEb)
 
 -- | A monadic tx-cache handle: the pure index operations, each performing its
 -- state update in @m@.
 data LeiosTxCache m a v b = LeiosTxCache
   { insertAnnouncement :: SlotNo -> RbHash -> EbHash -> m (Set EbHash, Set TxHash)
   -- ^ Insert an announcement; returns the bodies and txs it evicted, if any.
-  , insertBody :: EbHash -> b -> m ()
+  , insertBody :: EbHash -> b -> m (Maybe InsertBodySummary)
   , withLockedInsertUnappliedTx :: (forall w. w -> (w -> TxHash -> a -> m w) -> m w) -> m ()
   -- ^ Has exclusive write-access
   , withLockedInsertAppliedTx :: (forall w. w -> (w -> TxHash -> v -> m w) -> m w) -> m ()
@@ -58,3 +63,22 @@ data BodyState b
   = -- | An announcement of this EB has been inserted, but not its body.
     BodyNotYetInserted {-# UNPACK #-} !RefCount
   | BodyAlreadyInserted {-# UNPACK #-} !RefCount !b
+
+-- | The worst-case number of txs the cache can hold: a full 'maxAnnouncementCount'
+-- window of EBs, each referencing the maximum 'maxTxsPerEb' distinct txs. The fixed
+-- denominator for the cache's load factor.
+worstCaseCacheTxCount :: Int
+worstCaseCacheTxCount = maxAnnouncementCount * maxTxsPerEb
+
+-- | Build an 'InsertBodySummary' from the raw counts, computing the load factor
+-- ('ibsCacheLoad') against 'worstCaseCacheTxCount'.
+mkInsertBodySummary :: Int -> Int -> Int -> Int -> Int -> InsertBodySummary
+mkInsertBodySummary txsInEb tracked acquired validated cacheTxCount =
+  InsertBodySummary
+    { ibsTxsInEb = txsInEb
+    , ibsTracked = tracked
+    , ibsAcquired = acquired
+    , ibsValidated = validated
+    , ibsCacheTxCount = cacheTxCount
+    , ibsCacheLoad = fromIntegral cacheTxCount / fromIntegral worstCaseCacheTxCount
+    }

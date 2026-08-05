@@ -759,7 +759,8 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
         traceWith ktracer $ TraceLeiosBlockPointMissing point
         leiosDbInsertEbPoint db point ebBytesSize
         completedByBody <- leiosDbInsertEbBody db point eb
-        txCache.insertBody ebHash (serializeEbBody eb)
+        mSummary <- txCache.insertBody ebHash (serializeEbBody eb)
+        forM_ mSummary $ traceWith ktracer . TraceLeiosTxCacheEbBody point
         traceWith ktracer $ TraceLeiosBlockAcquired point
         forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired
     -- update NodeKernel state

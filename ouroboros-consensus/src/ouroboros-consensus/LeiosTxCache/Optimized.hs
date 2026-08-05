@@ -36,6 +36,7 @@ import LeiosTxCache.API
   , RefCount (..)
   , ReferencesTxsByHash (..)
   , maxAnnouncementCount
+  , mkInsertBodySummary
   )
 import qualified LeiosTxCache.Optimized.MutableHashTable as HT
 import Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -74,13 +75,24 @@ newHashTableLeiosTxCache nshift k0 k1 = do
               then pure (st, (Set.empty, Set.empty))
               else evictLoop ht (addAnnouncement slot rbh ebh st) Set.empty Set.empty
       , insertBody = \ebh b ->
-          MVar.modifyMVar_ stateVar $ \st ->
+          MVar.modifyMVar stateVar $ \st ->
             case Map.lookup ebh (hsBodies st) of
-              Nothing -> pure st
-              Just BodyAlreadyInserted{} -> pure st
+              Nothing -> pure (st, Nothing)
+              Just BodyAlreadyInserted{} -> pure (st, Nothing)
               Just (BodyNotYetInserted rc) -> do
-                foldTxReferences (\act txh -> act >> bumpTx ht txh) (pure ()) b
-                pure (st{hsBodies = Map.insert ebh (BodyAlreadyInserted rc b) (hsBodies st)})
+                -- bump each tx's refcount and classify its prior state in one pass
+                (n, tracked, acquired, validated) <-
+                  foldTxReferences
+                    ( \acc txh -> do
+                        (!nn, !tt, !aa, !vv) <- acc
+                        (dt, da, dv) <- priorClass <$> bumpTx ht txh
+                        pure (nn + 1, tt + dt, aa + da, vv + dv)
+                    )
+                    (pure (0, 0, 0, 0))
+                    b
+                cacheTxCount <- HT.size ht
+                let st' = st{hsBodies = Map.insert ebh (BodyAlreadyInserted rc b) (hsBodies st)}
+                pure (st', Just (mkInsertBodySummary n tracked acquired validated cacheTxCount))
       , withLockedInsertUnappliedTx = \k ->
           MVar.modifyMVar_ stateVar $ \st -> do
             _ <- k () (\_ txh _ -> setTag ht tagAlreadyInserted txh)
@@ -247,14 +259,26 @@ valTag :: Word64 -> Word64
 valTag w = w .&. 3
 
 -- | A body now refers to this tx: create at refcount 1 (NotYetInserted) or bump.
-bumpTx :: PrimMonad m => HT.MutableHashTable (PrimState m) -> TxHash -> m ()
-{-# SPECIALISE bumpTx :: HT.MutableHashTable (PrimState IO) -> TxHash -> IO () #-}
+-- Returns the tx's /prior/ packed value ('Nothing' if it was untracked), so the
+-- caller can classify it without a second lookup.
+bumpTx :: PrimMonad m => HT.MutableHashTable (PrimState m) -> TxHash -> m (Maybe Word64)
+{-# SPECIALISE bumpTx :: HT.MutableHashTable (PrimState IO) -> TxHash -> IO (Maybe Word64) #-}
 bumpTx ht txh = do
   let key = toKey txh
   mv <- HT.lookup ht key
   case mv of
     Nothing -> HT.insert ht key (mkVal 1 tagNotYetInserted)
     Just w -> HT.insert ht key (mkVal (valRefcount w + 1) (valTag w))
+  pure mv
+
+-- | Classify a tx's prior packed value into @(tracked, acquired, validated)@ count
+-- deltas for the insert-body summary.
+priorClass :: Maybe Word64 -> (Int, Int, Int)
+priorClass Nothing = (0, 0, 0)
+priorClass (Just w)
+  | valTag w == tagAlreadyValidated = (1, 1, 1)
+  | valTag w == tagAlreadyInserted = (1, 1, 0)
+  | otherwise = (1, 0, 0)
 
 -- | An evicted body no longer refers to this tx: decrement, deleting (and
 -- reporting) it at zero.
