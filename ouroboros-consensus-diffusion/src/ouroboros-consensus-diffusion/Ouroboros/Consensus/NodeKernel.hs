@@ -70,7 +70,7 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
-import LeiosTxCache (LeiosTxCache, newPureLeiosTxCache)
+import LeiosTxCache (LeiosTxCache, newHashTableLeiosTxCache)
 import LeiosUtils.CallTrace
   ( SomeJsonCallTrace (SomeJsonCallTrace)
   , callTraceSameThread
@@ -172,7 +172,7 @@ import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( TxSubmissionMempoolReader
   )
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
-import System.Random (StdGen)
+import System.Random (StdGen, splitGen, uniform)
 
 {-------------------------------------------------------------------------------
   Relay node
@@ -325,7 +325,12 @@ initNodeKernel
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
 
-    st <- initInternalState args
+    -- Split the per-node generator: 'txCacheSaltRng' (an independent child) seeds
+    -- the LeiosTxCache SipHash salt inside 'initInternalState'; 'peerSharingRng''
+    -- continues to peer-sharing below. They must not share a SplitMix stream, since
+    -- its state (hence the salt) is recoverable from observed outputs.
+    let (peerSharingRng', txCacheSaltRng) = splitGen peerSharingRng
+    st <- initInternalState txCacheSaltRng args
     let IS
           { blockFetchInterface
           , fetchClientRegistry
@@ -405,7 +410,7 @@ initNodeKernel
     peerSharingAPI <-
       newPeerSharingAPI
         publicPeerSelectionStateVar
-        peerSharingRng
+        peerSharingRng'
         ps_POLICY_PEER_SHARE_STICKY_TIME
         ps_POLICY_PEER_SHARE_MAX_PEERS
 
@@ -665,9 +670,12 @@ initInternalState ::
   , Typeable addrNTN
   , RunNode blk
   ) =>
+  -- | An independent generator for the LeiosTxCache SipHash salt.
+  StdGen ->
   NodeKernelArgs m addrNTN addrNTC blk ->
   m (InternalState m addrNTN addrNTC blk)
 initInternalState
+  txCacheSaltRng
   NodeKernelArgs
     { tracers
     , chainDB
@@ -708,7 +716,23 @@ initInternalState
     leiosOutstanding <- MVar.newMVar Leios.emptyLeiosOutstanding
     leiosReady <- MVar.newEmptyMVar
     leiosCentralState <- MVar.newMVar Announcements.emptyCentralState
-    leiosTxCache <- newPureLeiosTxCache
+    -- The Optimized (mutable hash-table) LeiosTxCache at production size: 2^22
+    -- slots (~4.19M) leaves ample headroom over the ~1.9M worst case, so the
+    -- table never fills. This preallocates a fixed ~168 MiB table regardless of
+    -- load (the bounded-footprint tradeoff vs the pure Map).
+    --
+    -- The SipHash salt is a per-node secret drawn from 'txCacheSaltRng' (an
+    -- independent split of the node's generator, passed in). tx hashes are adversarial
+    -- (grindable), so an unpredictable, never-exposed salt is what prevents
+    -- hash-flooding the table.
+    let (salt0, txCacheSaltRng') = uniform txCacheSaltRng
+        (salt1, _) = uniform txCacheSaltRng'
+        nshift = 22   -- 2^22 = ~4M entries in the hash table, which is ~2x the
+                      -- maximum number of txs that 128 EB could possibly
+                      -- references, which is enough EBs that a group of pools
+                      -- with 15% cumulative stake has a ~0.85^128 = ~1e-9
+                      -- chance of not being able to issue one of those 128
+    leiosTxCache <- newHashTableLeiosTxCache nshift salt0 salt1
 
     let readFetchMode =
           BlockFetchClientInterface.readFetchModeDefault
