@@ -51,7 +51,8 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   )
 import Ouroboros.Consensus.Protocol.Abstract (ValidationErr)
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
-  ( ResolveLeiosBlock
+  ( OCINStaleness (..)
+  , ResolveLeiosBlock
   , headerLeiosAnnouncement
   , validateAnnouncementChainDepState
   )
@@ -113,38 +114,82 @@ instance Show (AnnouncementInvalidity blk) where
 -- tip's ledger state (forecast to the header's slot). Envelope check skipped;
 -- see the module header.
 --
--- The operational certficiate (opcert) issue number (OCIN) is checked only as a
--- lower bound: any number at least the immutable tip's counter is accepted (the
--- over-increment upper bound, which the strict protocol check would enforce, is
--- skipped — see 'validateAnnouncementChainDepState' and
--- 'WhetherToUpperBoundOCERT'), and a lower one is rejected as a revoked key.
+-- The operational certificate (opcert) issue number (OCIN) governs only relay,
+-- not acceptance. We cannot soundly constrain it as strictly as genuine header
+-- validation does because we're using merely the immutable ledger state, which
+-- may be out of date. Only a non-OCIN failure — a bad election proof or
+-- signature, a slot before the immutable tip, an oversized header — rejects and
+-- disconnects. But even if an announcement is not considered invalid, it might
+-- otherwise be ignored. An announcement whose OCIN is at least our immutable
+-- tip's recorded counter is 'FreshOCIN': processed and relayed as usual. A
+-- lower one, or one from a key we have no recorded counter for, is 'StaleOCIN'
+-- (see 'validateAnnouncementChainDepState'): accepted from the peer — updating
+-- that peer's dedup state, never disconnecting — but not processed, published,
+-- or relayed.
 --
--- OCINs are otherwise ignored. In effect, this logic is assuming that all OCINs
--- are controlled by the pool owner. That's patentedly contrary the intended
--- purpose of OCINs, so it needs justification; hence this comment.
+-- Skipping OCIN validation effectively treats every one of a pool's OCINs as
+-- the pool owner's, which is contrary to the intended purpose of OCINs, so
+-- omitting the two checks that strict header validation would make needs
+-- justification.
 --
--- The crux is a Catch 22 if we consider different OCINs as different
--- identities. We must either treat all of those identities
--- _independently_ (ie as distinct elections) or _prioritize_ the
--- greater OCINs (which seems intuitive). The problem is that the
--- adversary can create arbitrarily many OCINs for its own pools. And
--- then it can abuse either choice we make: either it gets to multiply
--- the Leios load on the network per election, or it can cause
--- arbitrary "partitions" of the network, with one clique certifying a
--- lower OCIN's announcement but the other clique completely ignoring
--- that announcement.
+-- We do not enforce the counter's /upper/ bound: we accept that the true OCIN
+-- may have run ahead of our imm tip's view. In fact, this logic treats distinct
+-- OCINs as the same identity. The crux is a Catch 22 if we were to distinguish
+-- them: we would have to either treat those identities /independently/ (as
+-- distinct elections) or /prioritize/ the greater OCIN (which seems
+-- intuitive). But an adversary can mint arbitrarily many OCINs for its own
+-- pools and abuse either choice. The former lets them multiply the Leios load
+-- per election; the latter lets them "partition" the network, one clique
+-- certifying a lower OCIN's announcement while the other ignores it. So
+-- elections are keyed merely on @(slot, pool)@ alone (see
+-- 'LeiosDemoLogic.Announcements.ElBimap.ElId').
 --
--- The current behavior is to accept (and relay!) any OCIN at least as
--- great as the counter in our immutable tip's ledger state. The only
--- downside to this is that an increment OCIN doesn't revoke the old
--- opcert _for Leios_ until the increment is on the immutable tip
--- (Praos is still immediate). So a leaked hot key means the attacker
--- can equivocate all of the victim's announcements until the victim
--- notices, lands a new opcert on chain, and then waits for that
--- opcert to become immutable (~12 hr, <= ~36 hr). Not ideal, but
+-- We do not /promptly/ enforce the counter's /lower/ bound. An OCIN increment
+-- revokes the old opcert immediately for Praos (at header validation/chain
+-- adoption), but for Leios only once the increment reaches our immutable tip.
+-- Until then our recorded counter is still the old one, so an announcement
+-- bearing it (or greater) is 'FreshOCIN' and we process and relay it as
+-- usual. The downside of not being prompt is that a leaked hot key lets the
+-- attacker equivocate the victim's announcements until the victim notices,
+-- lands a new opcert, and waits for it to become immutable (~12 hr, <= ~36 hr)
+-- — and during that window announcements using the revoked OCIN are fresh, so
+-- they can even be voted for\/part of equivocation proofs\/etc. Not ideal, but
 -- tolerable.
 --
--- Returns the output of 'headerLeiosAnnouncement'.
+-- Once the increment /is/ immutable for us, an announcement bearing the old
+-- counter is 'StaleOCIN'. But even then we must not /reject/ it, only decline
+-- to process or relay it. Different honest nodes might have different immutable
+-- tips, so honest nodes can briefly disagree on whether the increment is yet
+-- immutable. An adversary who bumps a pool's OCIN and then sends a ~on-time
+-- announcement using the /revoked/ OCIN, timed to straddle that boundary, would
+-- otherwise make \"fast\" nodes (increment immutable, so 'StaleOCIN')
+-- disconnect the \"slow\" honest peers (increment not yet immutable, so still
+-- 'FreshOCIN') that legitimately relay it — an OCIN-timed partition.
+--
+-- That results in a diffusion asymmetry — the slow peers relay the old-counter
+-- announcement, the fast ones do not — but it is not the certify/ignore
+-- partition the upper-bound Catch 22 warned about, because once the increment
+-- is immutable even just /for/ /us/ the announcement can never be voted for,
+-- hence never certified:
+--
+--   * Once the increment is immutable for /any/ honest node then, by the Praos
+--     Common Prefix property, it is in every healthy honest node's selection now
+--     and forever, so every honest node's up-to-date view records the incremented
+--     counter.
+--
+--   * A vote follows selection, and selection is driven by ChainSync
+--     @MsgRollForward@ headers. Those are /not/ dangling: they extend the node's
+--     current chain and undergo full header validation with the exact
+--     chain-dependent OCIN bounds. Only announcements are dangling, which is
+--     precisely why only they fall back to the immutable-tip ledger view and this
+--     relaxed, report-don't-reject OCIN check.
+--
+-- So the old-counter RB fails @MsgRollForward@ validation on every healthy honest
+-- node — even the slow ones still relaying its announcement — never becomes a
+-- selected tip, and is never voted for; the asymmetry never yields a certified
+-- EB, so it is no Linear Leios availability violation.
+--
+-- Returns the OCIN staleness and the output of 'headerLeiosAnnouncement'.
 validateAnnouncementHeader ::
   forall blk.
   ( LedgerSupportsProtocol blk
@@ -153,7 +198,7 @@ validateAnnouncementHeader ::
   TopLevelConfig blk ->
   ExtLedgerState blk EmptyMK ->
   Header blk ->
-  Either (AnnouncementInvalidity blk) (LeiosPoint, BytesSize)
+  Either (AnnouncementInvalidity blk) (OCINStaleness, (LeiosPoint, BytesSize))
 validateAnnouncementHeader cfg extLedger hdr =
   runExcept $ do
     x <- case headerLeiosAnnouncement hdr of
@@ -184,12 +229,13 @@ validateAnnouncementHeader cfg extLedger hdr =
     -- rejection.
     let tickedHeaderState =
           tickHeaderState (configConsensus cfg) ledgerView slot (headerState extLedger)
-    withExcept HeaderInvalid $
-      validateAnnouncementChainDepState @blk
-        (configConsensus cfg)
-        (validateView (configBlock cfg) hdr)
-        slot
-        (tickedHeaderStateChainDep tickedHeaderState)
-    pure x
+    staleness <-
+      withExcept HeaderInvalid $
+        validateAnnouncementChainDepState @blk
+          (configConsensus cfg)
+          (validateView (configBlock cfg) hdr)
+          slot
+          (tickedHeaderStateChainDep tickedHeaderState)
+    pure (staleness, x)
  where
   slot = blockSlot hdr

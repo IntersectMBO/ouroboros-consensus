@@ -168,8 +168,15 @@ onAnnouncement ::
   -- restriction (its election's wall-clock age exceeds what a client
   -- tolerates); 'onAnnouncement' then raises 'ErrTooOld'. This callback owns
   -- that check because only it holds the wall clock. Return @Left (Just inv)@
-  -- for any other rejection (raised as 'ErrInvalid'), and @Right@ when valid.
-  (anc -> m (Either (Maybe invalidity) validated)) ->
+  -- for any other rejection (raised as 'ErrInvalid').
+  --
+  -- Return @Right (Just v)@ when the announcement is valid and should be
+  -- processed (via the next argument) and relayed. Return @Right Nothing@ when
+  -- it is valid but should be accepted from the peer /without/ processing or
+  -- relaying it — currently a stale-OCIN announcement (see
+  -- 'LeiosDemoLogic.Announcements.Validate.validateAnnouncementHeader'). Either
+  -- way the peer is not disconnected and its per-peer dedup state is updated.
+  (anc -> m (Either (Maybe invalidity) (Maybe validated))) ->
   -- | How this central logic should react to a new announcement from
   -- this peer
   --
@@ -189,7 +196,10 @@ onAnnouncement tracer getEl validate process st anc = do
   lift (validate anc) >>= \case
     Left Nothing -> throwError ErrTooOld
     Left (Just err) -> throwError $ ErrInvalid err
-    Right x -> do
+    -- Valid but not to be processed/relayed (e.g. a stale OCIN): the peer's
+    -- dedup state was already updated by 'extendLive' above, so just keep it.
+    Right Nothing -> pure st'
+    Right (Just x) -> do
       lift $ process anc x
       pure st'
 
