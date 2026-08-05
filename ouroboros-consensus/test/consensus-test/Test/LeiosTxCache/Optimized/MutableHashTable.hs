@@ -60,6 +60,10 @@ tests =
     "LeiosTxCache.Optimized.MutableHashTable"
     [ adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 10)) $
         testProperty "agrees with Data.Map across load factors" prop_matchesMap
+    , adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 10)) $
+        testProperty
+          "agrees with Data.Map on a long isolated chain (keys share a home slot)"
+          prop_adversarialCluster
     , testGroup
         "SipHash-2-4"
         [ testCase "reference matches official vector (empty input)" $
@@ -142,30 +146,30 @@ keyOf n0 =
      in z2 `xor` (z2 `shiftR` 31)
 
 -- | Lookup results in op order, plus a final sweep over the whole domain.
-runMutable :: Config -> [Op] -> (([Maybe Word64], [Maybe Word64]), Maybe String)
-runMutable cfg ops = runST $ do
+runMutable :: (Int -> HT.Key) -> Config -> [Op] -> (([Maybe Word64], [Maybe Word64]), Maybe String)
+runMutable key cfg ops = runST $ do
   ht <- HT.new (cfgShift cfg) salt0 salt1
   looks <- go ht ops
-  sweep <- mapM (HT.lookup ht . keyOf) [0 .. cfgDomain cfg - 1]
+  sweep <- mapM (HT.lookup ht . key) [0 .. cfgDomain cfg - 1]
   inv <- HT.checkInvariants ht
   pure ((looks, sweep), inv)
  where
   go _ [] = pure []
   go ht (op : rest) = case op of
-    Ins k v -> HT.insert ht (keyOf k) v >> go ht rest
-    Del k -> HT.delete ht (keyOf k) >> go ht rest
-    Look k -> (:) <$> HT.lookup ht (keyOf k) <*> go ht rest
+    Ins k v -> HT.insert ht (key k) v >> go ht rest
+    Del k -> HT.delete ht (key k) >> go ht rest
+    Look k -> (:) <$> HT.lookup ht (key k) <*> go ht rest
 
-runModel :: Config -> [Op] -> ([Maybe Word64], [Maybe Word64])
-runModel cfg ops = (looks, sweep)
+runModel :: (Int -> HT.Key) -> Config -> [Op] -> ([Maybe Word64], [Maybe Word64])
+runModel key cfg ops = (looks, sweep)
  where
   (looks, final) = go ops Map.empty
-  sweep = [Map.lookup (keyOf i) final | i <- [0 .. cfgDomain cfg - 1]]
+  sweep = [Map.lookup (key i) final | i <- [0 .. cfgDomain cfg - 1]]
   go [] m = ([], m)
   go (op : rest) m = case op of
-    Ins k v -> go rest (Map.insert (keyOf k) v m)
-    Del k -> go rest (Map.delete (keyOf k) m)
-    Look k -> let (rs, m') = go rest m in (Map.lookup (keyOf k) m : rs, m')
+    Ins k v -> go rest (Map.insert (key k) v m)
+    Del k -> go rest (Map.delete (key k) m)
+    Look k -> let (rs, m') = go rest m in (Map.lookup (key k) m : rs, m')
 
 -- | The peak occupancy the run reaches, in twentieths of capacity (one twentieth
 -- = 5%), rounded to the nearest twentieth — so a run that fills the table reads as
@@ -194,8 +198,56 @@ prop_matchesMap =
   forAll (genConfig (6, 9)) $ \cfg ->
     forAllShrink (genOps cfg) (shrinkList (const [])) $ \ops ->
       tabulate "peak load" [show (peakLoadTwentieths cfg ops) ++ " twentieths"] $
-        let (result, inv) = runMutable cfg ops
-         in inv === Nothing .&&. result === runModel cfg ops
+        let (result, inv) = runMutable keyOf cfg ops
+         in inv === Nothing .&&. result === runModel keyOf cfg ops
+
+{-------------------------------------------------------------------------------
+  Adversarial clustering
+
+  The load sweep already covers dense tables, and at near-full load even a good
+  hash yields ~cap/2-length chains — so a full table is not the distinctive case.
+  What a good hash /never/ produces is a long probe chain in a table that is
+  otherwise mostly empty. We force exactly that: a cluster of keys all sharing one
+  home slot, dropped into a much larger table (~25% load), so inserting them
+  builds one long chain surrounded by free slots. Run through the same oracle +
+  invariant machinery, it stresses long probes and the all-same-home
+  backward-shift at an occupancy the sweep only ever reaches with short chains.
+-------------------------------------------------------------------------------}
+
+advShift :: Int
+advShift = 8 -- capacity 256
+
+-- | The colliding-cluster length (~25% of capacity): long enough to be a genuine
+-- long chain, yet far from filling the table (the full case is the sweep's job).
+advClusterSize :: Int
+advClusterSize = 64
+
+-- | 'advClusterSize' keys that all hash to a single home slot for the test salt,
+-- found by grouping 'keyOf' images by 'HT.homeSlot' and taking the fullest slot.
+-- (The 20001 candidates over 256 slots put far more than 'advClusterSize' in the
+-- fullest slot, by pigeonhole.)
+colKeys :: [HT.Key]
+colKeys =
+  take advClusterSize
+    . List.maximumBy (\a b -> compare (length a) (length b))
+    . Map.elems
+    $ Map.fromListWith
+      (++)
+      [(HT.homeSlot (2 ^ advShift - 1) salt0 salt1 k, [k]) | i <- [0 .. 20000], let k = keyOf i]
+
+colKeyMap :: Map.Map Int HT.Key
+colKeyMap = Map.fromList (zip [0 ..] colKeys)
+
+colKeyOf :: Int -> HT.Key
+colKeyOf j = colKeyMap Map.! j
+
+prop_adversarialCluster :: Property
+prop_adversarialCluster =
+  forAllShrink (genOps cfg) (shrinkList (const [])) $ \ops ->
+    let (result, inv) = runMutable colKeyOf cfg ops
+     in inv === Nothing .&&. result === runModel colKeyOf cfg ops
+ where
+  cfg = Config advShift (length colKeys)
 
 {-------------------------------------------------------------------------------
   SipHash-2-4 validation

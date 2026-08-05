@@ -24,6 +24,7 @@ module LeiosTxCache.Optimized.MutableHashTable
   , size
   , capacity
   , siphash24
+  , homeSlot
   , checkInvariants
   ) where
 
@@ -207,11 +208,17 @@ siphash24 k0 k1 (Key m0 m1 m2 m3) = g0 `xor` g1 `xor` g2 `xor` g3
   !(SIP g0 g1 g2 g3) =
     sipround (sipround (sipround (sipround (SIP p0 p1 (p2 `xor` 0xff) p3))))
 
-hashKey :: MutableHashTable s -> Key -> Int
-hashKey ht key = fromIntegral (folded .&. fromIntegral (mhtMask ht))
+-- | The home slot a key hashes to in a table whose mask is @cap - 1@, under the
+-- 128-bit salt. Exposed so tests can construct colliding keys (a shared home).
+{-# INLINE homeSlot #-}
+homeSlot :: Int -> Word64 -> Word64 -> Key -> Int
+homeSlot mask k0 k1 key = fromIntegral (folded .&. fromIntegral mask)
  where
-  h64 = siphash24 (mhtK0 ht) (mhtK1 ht) key
+  h64 = siphash24 k0 k1 key
   folded = h64 `xor` (h64 `unsafeShiftR` 32)
+
+hashKey :: MutableHashTable s -> Key -> Int
+hashKey ht = homeSlot (mhtMask ht) (mhtK0 ht) (mhtK1 ht)
 
 {-------------------------------------------------------------------------------
   Operations
