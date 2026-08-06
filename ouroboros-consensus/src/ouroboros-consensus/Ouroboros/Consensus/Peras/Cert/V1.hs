@@ -32,9 +32,11 @@ import Cardano.Binary
   , ToCBOR (..)
   , decodeListLenOf
   , encodeListLen
+  , serialize
   )
 import Control.Monad (when)
 import Control.Monad.Error.Class (MonadError (..))
+import qualified Data.ByteString.Lazy as BL
 import Data.Coerce (coerce)
 import Data.Containers.NonEmpty (HasNonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -107,11 +109,13 @@ type instance BoostedBlock (PerasCert blk) = PerasBoostedBlock
 instance
   ( ConvertRawHash blk
   , HashSize blk ~ 32
+  , Typeable blk
   ) =>
   IsPerasCert (PerasCert blk) blk
   where
   getPerasCertRound = pcRoundNo
   getPerasCertBlock = pcBoostedBlock
+  getPerasCertSize = fromIntegral . BL.length . serialize
 
 instance
   Typeable blk =>

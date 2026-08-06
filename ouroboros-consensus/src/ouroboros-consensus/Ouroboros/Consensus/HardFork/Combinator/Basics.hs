@@ -793,6 +793,11 @@ instance
       . hcmap proxySingle (K . upcastToHardForkPoint . getPerasCertPoint . unwrapPerasCert)
       . getOneEraPerasCert
 
+  getPerasCertSize =
+    hcollapse
+      . hcmap proxySingle (K . getPerasCertSize . unwrapPerasCert)
+      . getOneEraPerasCert
+
 instance
   ( CanHardFork xs
   , All SingleEraBlock xs
@@ -807,6 +812,9 @@ instance
 
   -- NOTE: in practice this is never produced at the HFC level
   injectQuorumNotReachedError _ = HardForkPerasErrorQuorumNotReachedError
+
+  -- NOTE: in practice this is never produced at the HFC level
+  injectCertificateTooLargeError _ _ = HardForkPerasErrorCertificateTooLargeError
 
 -- ** 'BlockSupportsPeras' instance for 'HardForkBlock'
 

@@ -69,6 +69,7 @@ import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.Hashes (KeyHash (..))
 import Control.Exception (assert)
 import Control.Exception.Base (Exception)
+import Control.Monad (when)
 import Data.Bifunctor (bimap)
 import Data.Containers.NonEmpty (NE)
 import Data.Kind (Type)
@@ -77,6 +78,7 @@ import qualified Data.Map.NonEmpty as NEMap
 import Data.Map.Strict (Map)
 import Data.Traversable (for)
 import Data.Typeable (Typeable)
+import Data.Word (Word32)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract (Point, StandardHash)
@@ -365,6 +367,10 @@ class
     concreteCert <-
       bimap injectConversionError id $
         toPerasCert abstractCert
+    let maxSize = unPerasMaxBlockBodySize $ perasMaxBlockBodySize params
+        actualSize = getPerasCertSize concreteCert
+    when (actualSize > maxSize) $
+      Left $ injectCertificateTooLargeError actualSize maxSize
     pure $
       ValidatedPerasCert
         { vpcCert = concreteCert
@@ -511,6 +517,9 @@ instance
   where
   getPerasCertRound = getPerasCertRound . vpcCert
   getPerasCertBlock = getPerasCertBlock . vpcCert
+  -- We don't account for the size of the boost, because it is
+  -- never serialized.
+  getPerasCertSize = getPerasCertSize . vpcCert
 
 -- * Peras error types
 
@@ -519,6 +528,7 @@ class IsPerasError err blk | err -> blk where
   injectVotingCommitteeError :: PerasVotingCommitteeError blk -> err
   injectConversionError :: PerasConversionError -> err
   injectQuorumNotReachedError :: VoteWeight -> err
+  injectCertificateTooLargeError :: Word32 -> Word32 -> err
 
 instance IsPerasError (VoidPerasError blk) blk where
   injectVotingCommitteeError _ =
@@ -527,6 +537,8 @@ instance IsPerasError (VoidPerasError blk) blk where
     error "injectConversionError: VoidPerasError cannot be inhabited"
   injectQuorumNotReachedError _ =
     error "injectQuorumNotReachedError: VoidPerasError cannot be inhabited"
+  injectCertificateTooLargeError _ _ =
+    error "injectCertificateTooLargeError: VoidPerasError cannot be inhabited"
 
 -- * Types and functions related to Peras vote collection and quorum checking
 

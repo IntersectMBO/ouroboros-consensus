@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Peras.Error.V1
 
 import Control.Exception (Exception)
 import Data.Typeable (Typeable)
+import Data.Word (Word32)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.SupportsPeras
@@ -37,6 +38,8 @@ data PerasError blk
       VoteWeight
   | PerasTemporaryPublicKeyHackError
       String
+  | PerasCertificateTooLargeError
+      Word32 Word32
 
 deriving instance
   Show (PerasVotingCommitteeError blk) =>
@@ -59,3 +62,4 @@ instance IsPerasError (PerasError blk) blk where
   injectVotingCommitteeError = PerasVotingCommitteeError
   injectConversionError = PerasVotingConversionError
   injectQuorumNotReachedError = PerasQuorumNotReachedError
+  injectCertificateTooLargeError = PerasCertificateTooLargeError

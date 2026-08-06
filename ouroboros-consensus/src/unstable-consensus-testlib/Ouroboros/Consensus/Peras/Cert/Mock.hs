@@ -23,6 +23,7 @@ import Cardano.Binary
   , decodeListLenOf
   , encodeListLen
   )
+import Codec.Serialise ()
 import Control.DeepSeq (NFData)
 import Data.Containers.NonEmpty (NE)
 import Data.Data (Proxy (..))
@@ -70,6 +71,8 @@ type instance BoostedBlock (MockPerasCert blk) = Point blk
 instance IsPerasCert (MockPerasCert blk) blk where
   getPerasCertRound = mockCertRound
   getPerasCertBlock = mockCertBlock
+  -- We don't care about the size of mock certificates
+  getPerasCertSize = const 0
 
 instance ShowProxy blk => ShowProxy (MockPerasCert blk) where
   showProxy _ = "MockPerasCert(" <> showProxy (Proxy @blk) <> ")"

@@ -277,8 +277,10 @@ type instance BoostedBlock (TestCert) = Point TestBlock
 instance IsPerasCert TestCert TestBlock where
   getPerasCertRound = tcRoundNo
 
-  -- We don't really care about the block being boosted for the voting rules
+  -- We don't really care about the block being boosted for the voting rules,
+  -- nor the size of the certificate
   getPerasCertBlock = const GenesisPoint
+  getPerasCertSize = const 0
 
 -- | Generate a test certificate
 --
