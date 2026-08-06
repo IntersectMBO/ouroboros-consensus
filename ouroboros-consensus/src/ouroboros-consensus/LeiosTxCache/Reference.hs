@@ -39,6 +39,7 @@ module LeiosTxCache.Reference
 
     -- * Operations
   , insertAnnouncement
+  , evictOlderThan
   , insertBody
   , insertUnappliedTx
   , insertAppliedTx
@@ -198,21 +199,48 @@ insertAnnouncement slot rbh ebh idx
       , txState = txState idx
       }
 
+-- | Repeatedly 'evictOldest' while @shouldEvict@ holds of the index: the shared
+-- core of the two eviction entrypoints ('evictIfNeeded' and 'evictOlderThan').
+-- Strict accumulators avoid building up '<>' thunks.
+evictWhile ::
+  ReferencesTxsByHash b =>
+  (LeiosTxCacheIndex a v b -> Bool) ->
+  LeiosTxCacheIndex a v b ->
+  (LeiosTxCacheIndex a v b, Set EbHash, Set TxHash)
+evictWhile shouldEvict = go Set.empty Set.empty
+ where
+  go !evEbs !evTxs !idx
+    | shouldEvict idx =
+        let (idx', evEbs', evTxs') = evictOldest idx
+         in go (evEbs <> evEbs') (evTxs <> evTxs') idx'
+    | otherwise = (idx, evEbs, evTxs)
+
 -- | Evict oldest announcements until within 'maxAnnouncementCount'. In practice
--- a single 'insertAnnouncement' overshoots by at most one, but the loop is
--- robust regardless. Strict accumulators avoid building up '<>' thunks.
+-- a single 'insertAnnouncement' overshoots by at most one, but the loop is robust
+-- regardless.
 evictIfNeeded ::
   ReferencesTxsByHash b =>
   LeiosTxCacheIndex a v b ->
   (LeiosTxCacheIndex a v b, Set EbHash, Set TxHash)
-evictIfNeeded = go Set.empty Set.empty
+evictIfNeeded = evictWhile ((> maxAnnouncementCount) . announcementCount)
+
+-- | Evict every retained announcement whose slot is strictly older than the
+-- boundary, cascading through the bodies and txs like 'insertAnnouncement'.
+-- Returns the evicted bodies and txs.
+--
+-- This is the tip-driven eviction entrypoint (see "LeiosTxCache"): a Watcher
+-- feeds it the slot of the youngest @X@th RB on the current selection, so the
+-- cache retains no EB older than that regardless of the EB arrival rate.
+evictOlderThan ::
+  ReferencesTxsByHash b =>
+  SlotNo ->
+  LeiosTxCacheIndex a v b ->
+  (LeiosTxCacheIndex a v b, Set EbHash, Set TxHash)
+evictOlderThan boundary = evictWhile oldestIsStale
  where
-  go !evEbs !evTxs !idx
-    | announcementCount idx <= maxAnnouncementCount =
-        (idx, evEbs, evTxs)
-    | otherwise =
-        let (idx', evEbs', evTxs') = evictOldest idx
-         in go (evEbs <> evEbs') (evTxs <> evTxs') idx'
+  oldestIsStale idx = case Map.lookupMin (announcementState idx) of
+    Just (slotMin, _) -> slotMin < boundary
+    Nothing -> False
 
 evictOldest ::
   ReferencesTxsByHash b =>

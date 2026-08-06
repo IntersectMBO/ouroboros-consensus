@@ -36,6 +36,7 @@ import Test.Tasty.QuickCheck
   , ioProperty
   , listOf
   , shrinkList
+  , shuffle
   , testProperty
   , vectorOf
   , (.&&.)
@@ -48,6 +49,8 @@ tests =
     "LeiosTxCache.Optimized"
     [ adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 10)) $
         testProperty "hash-table handle == pure handle" prop_equiv
+    , adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 10)) $
+        testProperty "hash-table handle == pure handle, with evictOlderThan" prop_equivEvict
     ]
 
 type H = LeiosTxCache IO () () TestBody
@@ -73,13 +76,15 @@ data Op
   | OpBody !Word8 ![Word8]
   | OpUnapplied ![Word8]
   | OpApplied ![Word8]
+  | OpEvict !Word64
   deriving Show
 
--- | Apply an op, returning the announcement's eviction sets (the only
--- observable output of an op) when it is one.
+-- | Apply an op, returning the eviction sets (the only observable output of an
+-- op) when it is an announcement or an 'evictOlderThan'.
 applyOp :: H -> Op -> IO (Maybe (Set EbHash, Set TxHash))
 applyOp h op = case op of
   OpAnnounce s r e -> Just <$> insertAnnouncement h (SlotNo s) (rbhOf r) (ebhOf e)
+  OpEvict boundary -> Just <$> evictOlderThan h (SlotNo boundary)
   OpBody e ts -> insertBody h (ebhOf e) (TestBody (map txhOf ts)) >> pure Nothing
   OpUnapplied ts ->
     withLockedInsertUnappliedTx h (\z step -> foldM (\acc t -> step acc (txhOf t) ()) z ts)
@@ -121,3 +126,28 @@ prop_equiv =
       pure (resP === resM .&&. sweepP === sweepM)
  where
   allTxs txDomain = [0 .. fromIntegral (txDomain - 1)]
+
+-- | 'evictOlderThan' equivalence, kept out of 'prop_equiv': its draining of the
+-- cache would defeat that property's load-factor targeting, so this one runs at a
+-- fixed, generous table size where occupancy is not the point. Both handles must
+-- still agree on every op's eviction set and on the final lookup sweep.
+prop_equivEvict :: Property
+prop_equivEvict =
+  forAllShrink genEvictOps (shrinkList (const [])) $ \ops -> ioProperty $ do
+    hp <- newPureLeiosTxCache
+    hm <- newHashTableLeiosTxCache tableShift salt0 salt1
+    resP <- mapM (applyOp hp) ops
+    resM <- mapM (applyOp hm) ops
+    sweepP <- sweepLookup hp allTxs
+    sweepM <- sweepLookup hm allTxs
+    pure (resP === resM .&&. sweepP === sweepM)
+ where
+  tableShift = 8 :: Int -- 256 slots; load factor is deliberately not the point here
+  txDomain = 40 :: Int -- << 256, so the table never fills
+  allTxs = [0 .. fromIntegral (txDomain - 1)]
+  -- Reuse the ordinary op stream, then sprinkle in evictOlderThan boundaries over
+  -- the same slot range and shuffle, so evictions interleave with the rest.
+  genEvictOps = do
+    base <- genOps txDomain
+    evicts <- listOf (OpEvict . fromIntegral <$> chooseInt (1, 300))
+    shuffle (base ++ evicts)

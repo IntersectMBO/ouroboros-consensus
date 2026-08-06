@@ -73,7 +73,16 @@ newHashTableLeiosTxCache nshift k0 k1 = do
           MVar.modifyMVar stateVar $ \st ->
             if announcementPresent slot rbh st
               then pure (st, (Set.empty, Set.empty))
-              else evictLoop ht (addAnnouncement slot rbh ebh st) Set.empty Set.empty
+              else
+                evictWhile
+                  ht
+                  ((> maxAnnouncementCount) . hsCount)
+                  (addAnnouncement slot rbh ebh st)
+                  Set.empty
+                  Set.empty
+      , evictOlderThan = \boundary ->
+          MVar.modifyMVar stateVar $ \st ->
+            evictWhile ht (oldestIsStale boundary) st Set.empty Set.empty
       , insertBody = \ebh b ->
           MVar.modifyMVar stateVar $ \st ->
             case Map.lookup ebh (hsBodies st) of
@@ -129,27 +138,41 @@ addAnnouncement slot rbh ebh st =
           (hsBodies st)
     }
 
-evictLoop ::
+-- | Repeatedly 'evictOldest' while @shouldEvict@ holds of the state: the shared
+-- core of the two eviction entrypoints (count-driven from 'insertAnnouncement',
+-- slot-driven from 'evictOlderThan'). Mirrors 'LeiosTxCache.Reference.evictWhile'.
+evictWhile ::
   (PrimMonad m, ReferencesTxsByHash b) =>
   HT.MutableHashTable (PrimState m) ->
+  (HtState b -> Bool) ->
   HtState b ->
   Set EbHash ->
   Set TxHash ->
   m (HtState b, (Set EbHash, Set TxHash))
 {-# SPECIALISE
-  evictLoop ::
+  evictWhile ::
     ReferencesTxsByHash b =>
     HT.MutableHashTable (PrimState IO) ->
+    (HtState b -> Bool) ->
     HtState b ->
     Set EbHash ->
     Set TxHash ->
     IO (HtState b, (Set EbHash, Set TxHash))
   #-}
-evictLoop ht st !evEbs !evTxs
-  | hsCount st <= maxAnnouncementCount = pure (st, (evEbs, evTxs))
-  | otherwise = do
-      (st', ebs', txs') <- evictOldest ht st
-      evictLoop ht st' (evEbs <> ebs') (evTxs <> txs')
+evictWhile ht shouldEvict = go
+ where
+  go st !evEbs !evTxs
+    | shouldEvict st = do
+        (st', ebs', txs') <- evictOldest ht st
+        go st' (evEbs <> ebs') (evTxs <> txs')
+    | otherwise = pure (st, (evEbs, evTxs))
+
+-- | Whether the oldest retained announcement's slot is strictly older than the
+-- boundary. The slot-driven eviction predicate.
+oldestIsStale :: SlotNo -> HtState b -> Bool
+oldestIsStale boundary st = case Map.lookupMin (hsAnnouncements st) of
+  Just (slotMin, _) -> slotMin < boundary
+  Nothing -> False
 
 evictOldest ::
   (PrimMonad m, ReferencesTxsByHash b) =>

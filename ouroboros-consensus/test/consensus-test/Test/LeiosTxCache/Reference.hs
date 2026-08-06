@@ -67,6 +67,10 @@ tests =
         [ testCase "over-cap insert evicts the oldest body and its txs" test_evict
         , testCase "evicting a body-less EB evicts no txs" test_evictBodyless
         , testCase "a shared tx survives one referrer's eviction" test_evictShared
+        , testCase "evictOlderThan drops EBs below the boundary, cascading txs" test_evictOlderThan
+        , testCase "evictOlderThan keeps EBs at the boundary slot (exclusive)" test_evictOlderThanExclusive
+        , testCase "evictOlderThan below every slot evicts nothing" test_evictOlderThanNone
+        , testCase "evictOlderThan clears every EB in a stale slot" test_evictOlderThanWholeSlot
         ]
     , testProperty "announcementCount = sum of per-slot sizes" prop_countInvariant
     , adjustOption (\(QuickCheckTests n) -> QuickCheckTests (n * 100)) $
@@ -204,6 +208,49 @@ test_evictShared = do
         insertAnnouncement (SlotNo 129) (mkRbHash 129) (mkEbHash 129) base
   (evEbs, evTxs, txRC 200 idx')
     @?= (Set.singleton (mkEbHash 1), Set.empty, Just (MkRefCount 1))
+
+-- | EBs 1\/2\/3 at slots 1\/2\/3, each with a body; 'evictOlderThan' 3 drops the
+-- two below slot 3, cascading their txs, and keeps the one at slot 3.
+test_evictOlderThan :: Assertion
+test_evictOlderThan = do
+  let base = body 3 [30] (body 2 [20] (body 1 [10] (annN 3 empty)))
+      (idx', evEbs, evTxs) = evictOlderThan (SlotNo 3) base
+  ( evEbs
+    , evTxs
+    , bodyRC 1 idx'
+    , bodyRC 3 idx'
+    , txRC 10 idx'
+    , txRC 30 idx'
+    )
+    @?= ( Set.fromList [mkEbHash 1, mkEbHash 2]
+        , Set.fromList [mkTxHash 10, mkTxHash 20]
+        , Nothing
+        , Just (MkRefCount 1)
+        , Nothing
+        , Just (MkRefCount 1)
+        )
+
+-- | The boundary is exclusive: an EB /at/ the boundary slot survives.
+test_evictOlderThanExclusive :: Assertion
+test_evictOlderThanExclusive = do
+  let base = body 3 [30] (body 2 [20] (body 1 [10] (annN 3 empty)))
+      (_, evEbs, evTxs) = evictOlderThan (SlotNo 2) base
+  (evEbs, evTxs) @?= (Set.singleton (mkEbHash 1), Set.singleton (mkTxHash 10))
+
+-- | A boundary at or below the oldest slot evicts nothing.
+test_evictOlderThanNone :: Assertion
+test_evictOlderThanNone = do
+  let base = body 1 [10] (annN 3 empty)
+      (idx', evEbs, evTxs) = evictOlderThan (SlotNo 1) base
+  (evEbs, evTxs, announcementCount idx') @?= (Set.empty, Set.empty, 3)
+
+-- | Two EBs share the oldest slot; both are evicted together when that slot falls
+-- below the boundary (the loop chews through the whole slot).
+test_evictOlderThanWholeSlot :: Assertion
+test_evictOlderThanWholeSlot = do
+  let base = ann 2 3 3 (ann 1 2 2 (ann 1 1 1 empty))
+      (idx', evEbs, _) = evictOlderThan (SlotNo 2) base
+  (evEbs, bodyRC 3 idx') @?= (Set.fromList [mkEbHash 1, mkEbHash 2], Just (MkRefCount 1))
 
 {-------------------------------------------------------------------------------
   Invariant

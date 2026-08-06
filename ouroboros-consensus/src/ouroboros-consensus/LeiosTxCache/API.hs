@@ -44,6 +44,11 @@ import LeiosDemoTypes
 data LeiosTxCache m a v b = LeiosTxCache
   { insertAnnouncement :: SlotNo -> RbHash -> EbHash -> m (Set EbHash, Set TxHash)
   -- ^ Insert an announcement; returns the bodies and txs it evicted, if any.
+  , evictOlderThan :: SlotNo -> m (Set EbHash, Set TxHash)
+  -- ^ Evict every retained announcement whose slot is strictly older than the
+  -- given boundary; returns the bodies and txs it evicted, if any. The tip-driven
+  -- eviction entrypoint (see "LeiosTxCache"), complementing the count-driven
+  -- eviction that 'insertAnnouncement' performs.
   , insertBody :: EbHash -> b -> m (Maybe InsertBodySummary)
   , withLockedInsertUnappliedTx :: (forall w. w -> (w -> TxHash -> a -> m w) -> m w) -> m ()
   -- ^ Has exclusive write-access
