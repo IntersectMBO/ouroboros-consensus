@@ -720,7 +720,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     -- 'ChainDB.withReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
     -- is no longer on our chain. When that happens, we simply give up on the
     -- chance to produce a block.
-    (txs, txssz, proof, snapSize, tickedLedgerState, forgingOnTopOf) <-
+    (proof, unticked, forker) <-
       ChainDB.withReadOnlyForkerAtPoint chainDB (SpecificPoint bcPrevPoint) $ \case
         Left _ -> do
           trace blockForging $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -793,57 +793,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
           -- At this point we have established that we are indeed slot leader
           trace blockForging $ TraceNodeIsLeader currentSlot
 
-          -- Tick the ledger state for the 'SlotNo' we're producing a block for
-          let tickedLedgerState :: Ticked LedgerState blk DiffMK
-              tickedLedgerState =
-                applyChainTick
-                  OmitLedgerEvents
-                  (configLedger cfg)
-                  currentSlot
-                  (ledgerState unticked)
-
-          _ <- evaluate tickedLedgerState
-          trace blockForging $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
-
-          -- Get a snapshot of the mempool that is consistent with the ledger
-          --
-          -- NOTE: It is possible that due to adoption of new blocks the
-          -- /current/ ledger will have changed. This doesn't matter: we will
-          -- produce a block that fits onto the ledger we got above; if the
-          -- ledger in the meantime changes, the block we produce here may or
-          -- may not be adopted, but it won't be invalid.
-          (mempoolHash, mempoolSlotNo) <- lift $ atomically $ do
-            snap <- getSnapshot mempool -- only used for its tip-like information
-            pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
-
-          mempoolSnapshot <-
-            lift $
-              getSnapshotFor
-                mempool
-                currentSlot
-                tickedLedgerState
-                (roforkerReadTables forker)
-
-          let (txs, txssz) =
-                snapshotTake mempoolSnapshot $
-                  blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
-          -- NB respect the capacity of the ledger state we're extending,
-          -- which is /not/ 'snapshotLedgerState'
-
-          -- force the mempool's computation before the tracer event
-          _ <- evaluate (length txs)
-          _ <- evaluate mempoolHash
-
-          trace blockForging $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
-
-          pure
-            ( txs
-            , txssz
-            , proof
-            , snapshotMempoolSize mempoolSnapshot
-            , forgetLedgerTables tickedLedgerState
-            , ledgerTipPoint (ledgerState unticked)
-            )
+          pure (proof, unticked, forker)
 
     -- Decide if we need to include a Peras certificate in this block.
     mResult <- lift $ atomically $ do
@@ -899,6 +849,58 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                     currentRoundNo
                     opaquePerasCert
                 pure $ Just opaquePerasCert
+
+    (txs, txssz, snapSize, tickedLedgerState, forgingOnTopOf) <- do
+      -- Tick the ledger state for the 'SlotNo' we're producing a block for
+      let tickedLedgerState :: Ticked LedgerState blk DiffMK
+          tickedLedgerState =
+            applyChainTick
+              OmitLedgerEvents
+              (configLedger cfg)
+              currentSlot
+              (ledgerState unticked)
+
+      _ <- evaluate tickedLedgerState
+      trace blockForging $ TraceForgeTickedLedgerState currentSlot bcPrevPoint
+
+      -- Get a snapshot of the mempool that is consistent with the ledger
+      --
+      -- NOTE: It is possible that due to adoption of new blocks the
+      -- /current/ ledger will have changed. This doesn't matter: we will
+      -- produce a block that fits onto the ledger we got above; if the
+      -- ledger in the meantime changes, the block we produce here may or
+      -- may not be adopted, but it won't be invalid.
+      (mempoolHash, mempoolSlotNo) <- lift $ atomically $ do
+        snap <- getSnapshot mempool -- only used for its tip-like information
+        pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
+
+      mempoolSnapshot <-
+        lift $
+          getSnapshotFor
+            mempool
+            currentSlot
+            tickedLedgerState
+            (roforkerReadTables forker)
+
+      let (txs, txssz) =
+            snapshotTake mempoolSnapshot $
+              blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+      -- NB respect the capacity of the ledger state we're extending,
+      -- which is /not/ 'snapshotLedgerState'
+
+      -- force the mempool's computation before the tracer event
+      _ <- evaluate (length txs)
+      _ <- evaluate mempoolHash
+
+      trace blockForging $ TraceForgingMempoolSnapshot currentSlot bcPrevPoint mempoolHash mempoolSlotNo
+
+      pure
+        ( txs
+        , txssz
+        , snapshotMempoolSize mempoolSnapshot
+        , forgetLedgerTables tickedLedgerState
+        , ledgerTipPoint (ledgerState unticked)
+        )
 
     -- Actually produce the block
     newBlock <-
