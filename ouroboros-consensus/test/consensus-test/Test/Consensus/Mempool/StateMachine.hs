@@ -28,11 +28,13 @@ module Test.Consensus.Mempool.StateMachine (tests) where
 import Cardano.Slotting.Slot
 import Control.Arrow (second)
 import Control.Concurrent.Class.MonadSTM.Strict.TChan
+import Control.Monad (when)
 import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.Except (runExcept)
-import Control.Tracer (Tracer, mkTracer, traceWith)
+import Control.Tracer (Tracer, mkTracer, nullTracer, traceWith)
 import qualified Data.Foldable as Foldable
 import Data.Function (on)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import qualified Data.Measure as Measure
@@ -67,6 +69,7 @@ import Test.Cardano.Ledger.TreeDiff ()
 import Test.Consensus.Mempool.Util
   ( TestBlock
   , applyTxToLedger
+  , bumpTip
   , genTxs
   , genValidTxs
   , testInitLedger
@@ -80,6 +83,7 @@ import Test.StateMachine.Types (History (..), HistoryEvent (..))
 import qualified Test.StateMachine.Types as QC
 import qualified Test.StateMachine.Types.Rank2 as Rank2
 import Test.Tasty
+import Test.Tasty.HUnit (assertBool, testCase)
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.ToExpr ()
 import Test.Util.ToExpr ()
@@ -92,6 +96,11 @@ import Test.Util.ToExpr ()
 data Model blk r = Model
   { modelMempoolIntermediateState :: !(TickedLedgerState blk ValuesMK)
   -- ^ The current tip on the mempool
+  , modelMempoolBase :: !(LedgerState blk ValuesMK)
+  -- ^ The (unticked) ledger state the mempool is currently applied on top of,
+  -- i.e. the tip it last synced to. Needed to re-derive the mempool after a
+  -- 'RemoveTxs', which re-applies the kept txs on this same base rather than
+  -- syncing to a new one.
   , modelTxs :: ![(GenTx blk, TicketNo)]
   , modelAllValidTxs :: ![(GenTx blk, TicketNo)]
   -- ^ The current list of transactions
@@ -129,6 +138,8 @@ data Action blk r
     TryAddTxs ![GenTx blk]
   | -- | Unconditionally sync with the ledger db
     SyncLedger
+  | -- | Force-remove transactions (as the forge loop does on a rejected block).
+    RemoveTxs ![GenTxId blk]
   | -- | Ask for the current snapshot
     GetSnapshot
   -- TODO: maybe add 'GetSnapshotFor (Point blk)', but this requires to keep
@@ -196,6 +207,7 @@ generator ::
   , UnTick blk
   , StandardHash blk
   , GetTip (LedgerState blk)
+  , HasTxId (GenTx blk)
   ) =>
   MakeAtomic ->
   -- | Transaction generator based on an state
@@ -204,7 +216,7 @@ generator ::
   Maybe (Gen (Command blk Symbolic))
 generator ma gTxs model =
   Just $
-    frequency
+    frequency $
       [
         ( 100
         , Action . TryAddTxs <$> case ma of
@@ -239,11 +251,16 @@ generator ma gTxs model =
         )
       , (10, pure $ Action GetSnapshot)
       ]
+        -- Only remove when there is something to remove; races with SyncLedger.
+        ++ [ (10, Action . RemoveTxs <$> (sublistOf (map (txId . fst) modelTxs) `suchThat` (not . null)))
+           | not (null modelTxs)
+           ]
  where
   Model
     { modelMempoolIntermediateState
     , modelLedgerDBTip
     , modelLedgerDBOtherStates
+    , modelTxs
     } = model
 
 data Response blk r
@@ -271,6 +288,7 @@ initModel ::
 initModel cfg capacity initialState =
   Model
     { modelMempoolIntermediateState = ticked
+    , modelMempoolBase = initialState
     , modelLedgerDBOtherStates = Set.empty
     , modelLedgerDBTip = initialState
     , modelTxs = []
@@ -291,6 +309,7 @@ mock ::
 mock model = \case
   Action (TryAddTxs _) -> pure $ AddResult []
   Action SyncLedger -> pure $ Synced (genesisPoint, [])
+  Action (RemoveTxs _) -> pure Void
   Action GetSnapshot -> pure $ GotSnapshot $ modelTxs model
   Event (ChangeLedger _) -> pure Void
 
@@ -315,6 +334,7 @@ doSync model =
        in
         model
           { modelMempoolIntermediateState = st''
+          , modelMempoolBase = modelLedgerDBTip
           , modelTxs = validTxs
           , modelCurrentSize = newSize
           }
@@ -383,9 +403,41 @@ doTryAddTxs model txs =
     , modelCapacity
     } = model
 
+-- | Force-remove the given transactions, then re-derive the mempool by
+-- re-applying the /kept/ txs against the current base (mirrors
+-- 'removeTxsEvenIfValid'/'pureRemoveTxs': the base is unchanged, only the txs
+-- shrink).
+doRemoveTxs ::
+  ( LedgerSupportsMempool blk
+  , ValidateEnvelope blk
+  , HasTxId (GenTx blk)
+  ) =>
+  Model blk r ->
+  [GenTxId blk] ->
+  Model blk r
+doRemoveTxs model ids =
+  let toRemove = Set.fromList ids
+      kept = filter ((`Set.notMember` toRemove) . txId . fst) modelTxs
+      (validTxs, _tk, newSize, st'') =
+        foldTxs modelConfig zeroTicketNo modelCapacity Measure.zero (tick modelConfig modelMempoolBase) $
+          map (second Just) kept
+   in model
+        { modelMempoolIntermediateState = st''
+        , modelTxs = validTxs
+        , modelCurrentSize = newSize
+        }
+ where
+  Model
+    { modelMempoolBase
+    , modelTxs
+    , modelConfig
+    , modelCapacity
+    } = model
+
 transition ::
   ( Eq (TickedLedgerState blk ValuesMK)
   , LedgerSupportsMempool blk
+  , HasTxId (GenTx blk)
   , ToExpr (GenTx blk)
   , ValidateEnvelope blk
   , ToExpr (Command blk r)
@@ -399,6 +451,7 @@ transition model cmd resp = case (cmd, resp) of
   (Event (ChangeLedger l), Void) -> (doChangeLedger model l){modelIsSyncing = False}
   (Action GetSnapshot, GotSnapshot{}) -> model{modelIsSyncing = False}
   (Action SyncLedger, Synced{}) -> (doSync model){modelIsSyncing = True}
+  (Action (RemoveTxs ids), Void) -> (doRemoveTxs model ids){modelIsSyncing = False}
   _ ->
     error $
       "mismatched command "
@@ -597,6 +650,11 @@ semantics trcr cmd r = do
     Action SyncLedger -> do
       snap <- testSyncWithLedger m
       pure (Synced (snapshotPoint snap, [(txForgetValidated tt, tk) | (tt, tk, _) <- snapshotTxs snap]))
+    Action (RemoveTxs ids) -> do
+      case NE.nonEmpty ids of
+        Nothing -> pure ()
+        Just neids -> removeTxsEvenIfValid m neids
+      pure Void
     Action GetSnapshot -> do
       txs <- snapshotTxs <$> atomically (getSnapshot m)
       pure $ GotSnapshot [(txForgetValidated vtx, tk) | (vtx, tk, _) <- txs]
@@ -619,11 +677,13 @@ precondition :: Model blk Symbolic -> Command blk Symbolic -> Logic
 -- precondition cfg Model {modelCurrentSize} (Action (TryAddTxs txs)) =
 --   Boolean $ not (null txs) && modelCurrentSize > 0 && sum (map tSize rights $ init txs) < modelCurrentSize
 precondition m (Action SyncLedger) = Boolean $ not (modelIsSyncing m)
+precondition _ (Action (RemoveTxs ids)) = Boolean $ not (null ids)
 precondition _ _ = Top
 
 postcondition ::
   ( LedgerSupportsMempool blk
   , Eq (GenTx blk)
+  , HasTxId (GenTx blk)
   , --  , Show (TickedLedgerState blk ValuesMK)
     UnTick blk
   , ValidateEnvelope blk
@@ -668,6 +728,8 @@ shrinker ::
   [Command blk Symbolic]
 shrinker _ (Action (TryAddTxs txs)) =
   Action . TryAddTxs <$> shrinkList shrinkNothing txs
+shrinker _ (Action (RemoveTxs ids)) =
+  Action . RemoveTxs <$> filter (not . null) (shrinkList shrinkNothing ids)
 shrinker _ _ = []
 
 {-------------------------------------------------------------------------------
@@ -790,12 +852,127 @@ prop_mempoolParallel cfg capacity initialState ma gTxs = forAllParallelCommandsN
  where
   sm0 = smUnused cfg initialState capacity ma gTxs
 
+-- | A regression test for one specific interleaving that is hard to hit by
+-- random parallel testing, so we reproduce it deterministically.
+--
+-- Beware of this interleaving: the forge loop may 'removeTxsEvenIfValid' a
+-- transaction (to recover from forging a block that turns out to be invalid)
+-- while a mempool sync is in flight. A sync snapshots the mempool, does the
+-- expensive revalidation /off the lock/, and only then commits. If a removal
+-- lands in that window, a naive sync commits its now-stale snapshot and
+-- /resurrects/ the removed transaction.
+--
+-- Rather than race a second thread and hope to hit the window (which is exactly
+-- what the QSM parallel tests do — and miss), we interpose the removal at the
+-- one point that matters: from inside the sync's off-lock ledger read. That read
+-- happens after the snapshot and before the commit, so removing @x@ there
+-- reproduces the race with no threads and no blocking. The tip change to @base1@
+-- ('bumpTip') keeps @x@ valid, so the /only/ thing that can drop it is the
+-- removal.
+--
+-- The rest is an ordinary state-machine program run through 'semantics', with
+-- the 'Model' as the oracle:
+--
+-- > TryAddTxs [x]; ChangeLedger base1; SyncLedger; GetSnapshot
+--
+-- We advance the model as if the interposed removal happened just before the
+-- sync (the only sensible linearization), so the trailing 'GetSnapshot'
+-- 'postcondition' rejects a resurrected @x@.
+prop_removeDuringSyncSM :: IO ()
+prop_removeDuringSyncSM = do
+  let cfg = testLedgerConfigNoSizeLimits
+      capacity = txMaxBytes'
+      base0 = testInitLedger
+      base1 = bumpTip base0
+
+  (txs, _) <- generate $ genValidTxs 1 base0
+  assertBool "expected a valid tx" (not (null txs))
+  let x = head txs
+      xid = txId x
+
+  -- Reference to the mempool, filled once it exists so the ledger interface can
+  -- reach back into it to interpose the removal.
+  mempoolRef <- newEmptyMVar
+  removed <- newTVarIO False
+  ldb <- newTVarIO $ MockedLedgerDB base0 Set.empty
+  let interposeRemoval st =
+        -- Fire exactly once, and only in the sync's snapshot read: only the sync
+        -- serves 'base1' (setup reads serve 'base0', and the removal's own read
+        -- uses the stored 'base0' forker).
+        when (getTip st == getTip base1) $ do
+          firstTime <- atomically $ do
+            done <- readTVar removed
+            writeTVar removed True
+            pure (not done)
+          when firstTime $ do
+            mempool <- readMVar mempoolRef
+            removeTxsEvenIfValid mempool (NE.fromList [xid])
+      readTables st keys = do
+        interposeRemoval st
+        pure (projectLedgerTables st `restrictValues'` keys)
+      ledgerInterface =
+        LedgerInterface
+          { getCurrentLedgerState = do
+              st <- ldbTip <$> readTVar ldb
+              pure $
+                MempoolLedgerDBView
+                  (forgetLedgerTables st)
+                  ( pure $
+                      Right $
+                        ReadOnlyForker
+                          { roforkerClose = pure ()
+                          , roforkerReadStatistics = pure $ Statistics 0
+                          , roforkerReadTables = readTables st
+                          , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
+                          , roforkerGetLedgerState = pure $ forgetLedgerTables st
+                          }
+                  )
+          }
+  mempool <-
+    openMempoolWithoutSyncThread
+      ledgerInterface
+      cfg
+      (MempoolCapacityBytesOverride $ unIgnoringOverflow capacity)
+      (Nothing :: Maybe MempoolTimeoutConfig)
+      nullTracer
+  putMVar mempoolRef mempool
+  sutVar <- newTVarIO (SUT mempool ldb)
+
+  let model0 = initModel cfg capacity base0
+      -- Run one command through the state machine: execute it via 'semantics',
+      -- check its 'postcondition' against the model, and return the model
+      -- advanced by 'transition'.
+      step model cmd = do
+        resp <- semantics nullTracer cmd sutVar
+        assertBool ("postcondition violated by " <> show cmd) $
+          boolean (postcondition model cmd resp)
+        pure (transition model cmd resp)
+
+  -- Add x, then move the ledger tip so the sync does real work without
+  -- invalidating x ('ChangeLedger' goes through 'semantics', which writes the
+  -- same mocked ledger db the interface reads).
+  model1 <- step model0 (Action (TryAddTxs [x]))
+  model2 <- step model1 (Event (ChangeLedger base1))
+
+  -- The sync runs to completion; x is removed during its off-lock read.
+  syncResp <- semantics nullTracer (Action SyncLedger) sutVar
+
+  -- Advance the model as if the removal happened just before the sync.
+  let model3 = transition model2 (Action (RemoveTxs [xid])) Void
+      model4 = transition model3 (Action SyncLedger) syncResp
+
+  -- Observe: the snapshot must match the model, i.e. x is gone. Pre-fix the sync
+  -- resurrects x and this 'postcondition' fails.
+  _ <- step model4 (Action GetSnapshot)
+  pure ()
+
 -- | See 'MakeAtomic' on the reasoning behind having these tests.
 tests :: TestTree
 tests =
   testGroup
     "QSM"
-    [ testProperty "sequential" $
+    [ testCase "removal is not undone by a concurrent sync" prop_removeDuringSyncSM
+    , testProperty "sequential" $
         withMaxSuccess 1000 $
           prop_mempoolSequential testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger $
             \i -> fmap (fmap fst . fst) . genTxs i
@@ -898,6 +1075,8 @@ instance ToExpr (Action TestBlock r) where
       ]
   toExpr SyncLedger = App "SyncLedger" []
   toExpr GetSnapshot = App "GetSnapshot" []
+  toExpr (RemoveTxs ids) =
+    App "RemoveTxs" [App (take 8 (tail $ init $ show i)) [] | i <- ids]
 
 instance ToExpr (LedgerState blk ValuesMK) => ToExpr (Event blk r) where
   toExpr (ChangeLedger ls) =
