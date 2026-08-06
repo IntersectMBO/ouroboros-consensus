@@ -139,6 +139,7 @@ praosBlockForging cid initHotKey = do
       , forgeBlock = \ForgeBlockArgs{..} -> do
           hotKey <- readMVar varHotKey
           return $
+            flip (,) Nothing $
             forgeSimple
               (forgePraosExt hotKey)
               fbConfig

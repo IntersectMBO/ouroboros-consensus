@@ -30,6 +30,7 @@ import Data.SOP.OptNP (NonEmptyOptNP, OptNP, ViewOptNP (..))
 import qualified Data.SOP.OptNP as OptNP
 import Data.SOP.Strict
 import Data.Text (Text)
+import LeiosDemoTypes (ForgedLeiosEb)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -311,7 +312,7 @@ hardForkForgeBlock ::
   (CanHardFork xs, Monad m) =>
   OptNP empty (BlockForging m) xs ->
   ForgeBlockArgs m (HardForkBlock xs) ->
-  m (HardForkBlock xs)
+  m (HardForkBlock xs, Maybe ForgedLeiosEb)
 hardForkForgeBlock
   blockForging
   ForgeBlockArgs
@@ -323,13 +324,17 @@ hardForkForgeBlock
     , fbEbTxs
     , fbIsLeader
     , fbChainDepState
-    , fbLeiosDb
     , fbLeiosTracer
     , fbLeiosVoteState
     , fbMayLeiosCert
     } =
-    fmap (HardForkBlock . OneEraBlock)
-      $ hsequence
+    fmap
+      ( \ns ->
+          ( HardForkBlock $ OneEraBlock $ hmap (\(Pair blk _) -> blk) ns
+          , hcollapse $ hmap (\(Pair _ mEb) -> mEb) ns
+          )
+      )
+      $ hsequence'
       $ hizipWith3
         forgeBlockOne
         cfgs
@@ -413,7 +418,7 @@ hardForkForgeBlock
         )
         (Product ([] :.: WrapValidatedGenTx) ([] :.: WrapValidatedGenTx))
         blk ->
-      m blk
+      (m :.: Product I (K (Maybe ForgedLeiosEb))) blk
     forgeBlockOne
       index
       cfg'
@@ -425,22 +430,23 @@ hardForkForgeBlock
             )
           (Pair (Comp rbTxs') (Comp ebTxs'))
         ) =
-        forgeBlock
-          ( fromMaybe
-              (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
-              mBlockForging'
-          )
-          ForgeBlockArgs
-            { fbConfig = cfg'
-            , fbCurrentBlockNo
-            , fbCurrentSlotNo
-            , fbCurrentTickedLedgerState = ledgerState'
-            , fbRbTxs = map unwrapValidatedGenTx rbTxs'
-            , fbEbTxs = map unwrapValidatedGenTx ebTxs'
-            , fbIsLeader = isLeader'
-            , fbChainDepState = unwrapChainDepState <$> mChainDepState'
-            , fbLeiosDb
-            , fbLeiosTracer
-            , fbLeiosVoteState
-            , fbMayLeiosCert
-            }
+        Comp $
+          (\(blk, mEb) -> Pair (I blk) (K mEb))
+            <$> forgeBlock
+              ( fromMaybe
+                  (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
+                  mBlockForging'
+              )
+              ForgeBlockArgs
+                { fbConfig = cfg'
+                , fbCurrentBlockNo
+                , fbCurrentSlotNo
+                , fbCurrentTickedLedgerState = ledgerState'
+                , fbRbTxs = map unwrapValidatedGenTx rbTxs'
+                , fbEbTxs = map unwrapValidatedGenTx ebTxs'
+                , fbIsLeader = isLeader'
+                , fbChainDepState = unwrapChainDepState <$> mChainDepState'
+                , fbLeiosTracer
+                , fbLeiosVoteState
+                , fbMayLeiosCert
+                }

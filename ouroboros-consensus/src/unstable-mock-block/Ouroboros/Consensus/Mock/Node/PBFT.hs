@@ -112,6 +112,7 @@ pbftBlockForging canBeLeader =
             tickedPBftState
     , forgeBlock = \ForgeBlockArgs{..} ->
         return $
+          flip (,) Nothing $
           forgeSimple
             forgePBftExt
             fbConfig

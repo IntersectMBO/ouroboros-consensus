@@ -145,6 +145,7 @@ byronBlockForging creds =
           tickedPBftState
     , forgeBlock = \ForgeBlockArgs{..} ->
         return $
+          flip (,) Nothing $
           forgeByronBlock
             fbConfig
             fbCurrentBlockNo

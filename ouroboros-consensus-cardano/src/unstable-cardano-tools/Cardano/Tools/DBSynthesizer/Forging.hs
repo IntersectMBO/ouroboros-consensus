@@ -111,7 +111,7 @@ runForge ::
   GenTxs blk ->
   LeiosDbConnection IO ->
   IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
+runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs _leiosDb = do
   putStrLn $ "--> epoch size: " ++ show epochSize_
   putStrLn $ "--> will process until: " ++ show opts
   -- Synthetic forging doesn't gather votes; supply a vote state with
@@ -233,7 +233,9 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
             tickedLedgerState
 
     -- Actually produce the block
-    newBlock <-
+    --
+    -- TODO the block may be accompanied by an EB, which is entirely ignored
+    (newBlock, _mForgedEb) <-
       lift $
         Block.forgeBlock
           blockForging'
@@ -246,7 +248,6 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs leiosDb = do
             , fbEbTxs = []
             , fbIsLeader = proof
             , fbChainDepState = Nothing
-            , fbLeiosDb = leiosDb
             , fbLeiosTracer = Trace.nullTracer
             , fbLeiosVoteState = leiosVoteState
             , fbMayLeiosCert = Nothing

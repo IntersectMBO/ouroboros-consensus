@@ -22,9 +22,22 @@ module LeiosTxCache.API
   ) where
 
 import Cardano.Slotting.Slot (SlotNo)
+import Codec.CBOR.Read (deserialiseFromBytes)
+import qualified Data.ByteString.Lazy as LBS
+import Data.ByteString.Short (fromShort)
 import Data.Set (Set)
+import qualified Data.Vector.Strict as V
 import Data.Word (Word8)
-import LeiosDemoTypes (EbHash, InsertBodySummary (..), RbHash, TxHash, maxTxsPerEb)
+import LeiosDemoTypes
+  ( EbHash
+  , InsertBodySummary (..)
+  , RbHash
+  , SerializedEbBody (..)
+  , TxHash
+  , decodeLeiosEb
+  , leiosEbTxs
+  , maxTxsPerEb
+  )
 
 -- | A monadic tx-cache handle: the pure index operations, each performing its
 -- state update in @m@.
@@ -47,6 +60,17 @@ data LeiosTxCache m a v b = LeiosTxCache
 -- each of its txs' refcounts.
 class ReferencesTxsByHash b where
   foldTxReferences :: (r -> TxHash -> r) -> r -> b -> r
+
+-- | The production body type: 'SerializedEbBody' is decoded to enumerate its
+-- referenced txs. (The type lives in "LeiosDemoTypes"; the instance lives here,
+-- with the class, to keep it non-orphan.)
+instance ReferencesTxsByHash SerializedEbBody where
+  foldTxReferences f z (MkSerializedEbBody sbs) =
+    V.foldl' (\acc (txh, _sz) -> f acc txh) z (leiosEbTxs eb)
+   where
+    eb = case deserialiseFromBytes decodeLeiosEb (LBS.fromStrict (fromShort sbs)) of
+      Right (_leftover, decoded) -> decoded
+      Left err -> error $ "SerializedEbBody: undecodable: " <> show err
 
 -- | The maximum number of EB announcements retained. Inserting past it evicts
 -- the oldest, cascading through the body and tx refcounts.
