@@ -456,7 +456,7 @@ instance Functor m => Isomorphic (BlockForging m) where
               (inject' (Proxy @(WrapIsLeader blk)) isLeader)
               (inject' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
       , forgeBlock = \fbArgs ->
-          project' (Proxy @(I blk))
+          first (project' (Proxy @(I blk)))
             <$> forgeBlock
               ForgeBlockArgs
                 { fbConfig = inject (fbConfig fbArgs)
@@ -469,7 +469,6 @@ instance Functor m => Isomorphic (BlockForging m) where
                 , fbEbTxs = inject' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs fbArgs
                 , fbIsLeader = inject' (Proxy @(WrapIsLeader blk)) (fbIsLeader fbArgs)
                 , fbChainDepState = Nothing
-                , fbLeiosDb = fbLeiosDb fbArgs
                 , fbLeiosTracer = fbLeiosTracer fbArgs
                 , fbLeiosVoteState = fbLeiosVoteState fbArgs
                 , fbMayLeiosCert = fbMayLeiosCert fbArgs
@@ -512,7 +511,7 @@ instance Functor m => Isomorphic (BlockForging m) where
               (project' (Proxy @(WrapIsLeader blk)) isLeader)
               (project' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
       , forgeBlock = \fbArgs ->
-          inject' (Proxy @(I blk))
+          first (inject' (Proxy @(I blk)))
             <$> forgeBlock
               ForgeBlockArgs
                 { fbConfig = project (fbConfig fbArgs)
@@ -525,7 +524,6 @@ instance Functor m => Isomorphic (BlockForging m) where
                 , fbEbTxs = project' (Proxy @(WrapValidatedGenTx blk)) <$> fbEbTxs fbArgs
                 , fbIsLeader = project' (Proxy @(WrapIsLeader blk)) (fbIsLeader fbArgs)
                 , fbChainDepState = Nothing
-                , fbLeiosDb = fbLeiosDb fbArgs
                 , fbLeiosTracer = fbLeiosTracer fbArgs
                 , fbLeiosVoteState = fbLeiosVoteState fbArgs
                 , fbMayLeiosCert = fbMayLeiosCert fbArgs

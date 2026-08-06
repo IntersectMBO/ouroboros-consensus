@@ -32,11 +32,13 @@ module LeiosTxCache
   ( module LeiosTxCache.API
   , newPureLeiosTxCache
   , newHashTableLeiosTxCache
+  , nullLeiosTxCache
 
     -- $backingStore
   ) where
 
 import qualified Control.Concurrent.Class.MonadMVar as MVar
+import qualified Data.Set as Set
 import LeiosTxCache.API
 import LeiosTxCache.Optimized (newHashTableLeiosTxCache)
 import qualified LeiosTxCache.Reference as Pure
@@ -66,6 +68,20 @@ newPureLeiosTxCache = do
           idx <- MVar.readMVar var
           k $ \txh -> pure $! Pure.lookupTx txh idx
       }
+
+-- | A handle whose every operation is inert: announcements evict nothing, bodies
+-- are never summarised, tx insertions do nothing, and lookups always miss. For
+-- forge\/replay contexts that don't maintain the cache (e.g.
+-- "Cardano.Tools.DBSynthesizer").
+nullLeiosTxCache :: Applicative m => LeiosTxCache m a v b
+nullLeiosTxCache =
+  LeiosTxCache
+    { insertAnnouncement = \_slot _rbh _ebh -> pure (Set.empty, Set.empty)
+    , insertBody = \_ebh _b -> pure Nothing
+    , withLockedInsertUnappliedTx = \k -> k () (\w _txh _a -> pure w)
+    , withLockedInsertAppliedTx = \k -> k () (\w _txh _v -> pure w)
+    , withLookupTx = \k -> k (\_txh -> pure Nothing)
+    }
 
 -- $backingStore
 --
