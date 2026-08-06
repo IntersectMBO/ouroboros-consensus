@@ -3,36 +3,133 @@
 -- | The LeiosTxCache tracks txs that were acquired because a /recent/ EB
 -- referenced them.
 --
--- The LeiosTxCacheIndex records two facts about each tx the LeiosTxCache is
--- tracking: whether the tx is already acquired and whether it has already been
--- validated (either by the Mempool or by the LeiosVoting thread).
+-- The LeiosTxCacheIndex records two facts about each tracked tx: whether it is
+-- already acquired and whether it has already been validated (by the Mempool or
+-- by the LeiosVoting thread).
 --
--- The index is in-memory so that other components (LeiosFetch and LeiosVoting)
--- can query it with constantly low latency. The size of the LeiosTxCache is
--- bounded first and foremost by the requirement that its index fits comfortably
--- in-memory, even in a worst-case.
+-- The index is in-memory so that latency-critical consumers (LeiosFetch,
+-- LeiosVoting) can query it with constantly low latency; its eventual purpose is
+-- to /supplant/ the by-hash membership check that @filterMissingWork@ does
+-- against the LeiosDb. The size of the LeiosTxCache is bounded first and foremost
+-- by the requirement that its index fits comfortably in-memory, even in a worst
+-- case.
 --
--- Beyond its index, the LeiosTxCache also "contains" the bytes of the txs it
--- claims were already acquired. In the currently implementation these bytes are
--- sure to be present in the LeiosDb: they're written there before the
--- LeiosTxCacheIndex is updated, and the LeiosDb's eviction is certainly later,
--- since the LeiosTxCache holds at most much less than k blocks, and the LeiosDb
--- only evicts data that is unreachable from the immutable tip.
+-- This module is the umbrella: it re-exports the "LeiosTxCache.API" interface
+-- and both handle factories, 'newPureLeiosTxCache' from
+-- "LeiosTxCache.Reference" and 'newHashTableLeiosTxCache' from
+-- "LeiosTxCache.Optimized".
 --
--- In the future, we may prefer for the LeiosTxCache to also own the bytes of
--- the txs it contains, in order to decouple it from the LeiosDb (which might
--- allow improvements to the LeiosDb's other responsibilites, eg, its GC
--- times). For considerations of how the LeiosTxCache should manage the tx bytes
--- itself, see $backingStore.
+-- == INVARIANT: an AlreadyAcquired tx is in the LeiosDb and will be for hours
 --
--- This module is the umbrella: it re-exports the interface ("LeiosTxCache.API")
--- and both handle factories ('newPureLeiosTxCache' from "LeiosTxCache.Reference"
--- and 'newHashTableLeiosTxCache' from "LeiosTxCache.Optimized").
+-- Challenge: it's possible that LeiosFetch finds some of an EB's TxHashes in
+-- the LeiosTxCacheIndex but then is unable to read those txs from the LeiosDb.
+-- This happens when the LeiosTxCacheIndex contains an EB that has an age close
+-- enough to the immutable tip that it could be pruned from the LeiosDb after
+-- LeiosFetch sees the cache hit but before its subsequent reads finish. There
+-- are many potential solutions.
+--
+-- - Simply detect and recover. This is feasible, but undesirable. When
+--   processing an EB arrival, LeiosFetch divides it into a set of jobs, where
+--   each job is a set of txs the node needs to fetch. LeiosFetch is already
+--   very complicated, so I don't want to add the complexity of subsequently
+--   adding some jobs to compensate for some of the LeiosTxCacheIndex hits
+--   ending up stale due to a hit-prune race. And I also don't want to add
+--   latency by waiting for the hit-driven lookups to finish before finalizing
+--   the job set.
+--
+-- - Use MVCC. Our current LeiosDb implementations (in-memory and SQLite) both
+--   happen to provide persistence (eg open a read transaction before querying
+--   the LeiosTxCacheIndex). However, MVCC is a sophisticated feature which we'd
+--   rather not require of the LeiosDb. It's not clear to me that any other
+--   component already does, so I'd rather not have the LeiosTxCacheIndex impose
+--   that constraint on LeiosDb.
+--
+-- - Also keep the LeiosTxCache's backing store in RAM. Even if we had
+--   zero-overhead for GC, this would require up to 1.536 GB of RAM. That seems
+--   like too much, since the fundamental purpose of the LeiosTxCache is merely
+--   to prevent having to refetch the data /from peers/---some disk latency is
+--   completely fine.
+--
+-- - Have LeiosFetch pin the txs as side-effect of looking them up in the
+--   LeiosTxCacheIndex.
+--
+--     - While the LeiosTxCache is backed by the LeiosDb, this requires
+--       undesirable coupling between the LeiosDb's pruning logic and the
+--       LeiosTxCacheIndex.
+--
+--     - If the LeiosTxCache were instead backed by its own bespoke independent
+--       (on-disk) storage, then this would be more tenable. But that's still
+--       undesirable complexity to engineer if we don't actually have to.
+--
+-- - Rely on hours of slack between the LeiosTxCacheIndex hit and the tx being
+--   pruned from the LeiosTxCache's backing store. Until recently, we had
+--   assumed there was slack.
+--
+--     - Recall that Linear Leios must not prune an EB until all of its
+--       announcements are older than the immutable tip.
+--
+--     - The LeiosTxCacheIndex must have very low latency (because it's used in
+--       each LeiosFetch decision logic iteration), so it must be an in-memory
+--       hash table, so it can't be particularly large, so it can't contain too
+--       many txs (at least 32-bytes just for each TxHash, doubled for <50% load
+--       factor), and so it can't contain too many EBs (up to ~15000 TxHashes
+--       per EB).
+--
+--     - Specifically, 128 EBs seems sufficient to almost-always mitigate
+--       inter-continental Mempool fragmentation.
+--
+--     - And since 128 EBs should arise in approximately 45 minutes on average,
+--       any EB in the LeiosTxCacheIndex won't be pruned for /several/
+--       /hours/---surely the LeiosFetch logic will issue and finish its reads
+--       within that slack.
+--
+--         - The only reason LeiosFetch wouldn't is if the process were deprived
+--           of CPU (eg put to sleep) for several hours.
+--
+--         - But in that case, its TCP connections are almost certainly dead
+--           when it awakes, so the LeiosFetch reads will finish before enough
+--           blocks could be fetched and selected to prune the relevant EB from
+--           the backing store.
+--
+--         - Even if it weren't, any node that's being slept for hours is not a
+--           critical node for the network, so a very rare crash is tolerable.
+--
+--     - However, that argument is spoiled by the fact that there's no lower
+--       bound on the arrival rate of EBs. In the simplest case, there might
+--       merely be less load than Praos can handle, so no EBs are /needed/. As a
+--       result, the up-to-128 EBs in the LeiosTxCacheIndex might include some
+--       with ages near/greater than the immutable tip.
+--
+-- Solution: continue to rely on there being hours of slack, but moreover
+-- actively ensure that slack. In particular, evict EBs as they get "too old",
+-- regardless of whether new EBs have been arriving. For example, the
+-- LeiosTxCacheIndex should evict any EBs that are older than the youngest X RBs
+-- on the current selection, for X≥128.
+--
+-- TODO The current code assumes 128 ≪ k, but that's not true on testnets,
+-- etc. We should add a 'min' call somehwere.
+--
+-- == Coupling to the LeiosDb
+--
+-- Today the LeiosDb's txs table is keyed by tx hash, so the cache's free ride is
+-- effortless: a tracked tx is found by its hash. But that same de-duplication is
+-- what would make the LeiosDb's (not-yet-written) GC costly — pruning a tx shared
+-- by several EBs needs refcounts or scans. Were the LeiosDb to key txs by
+-- @(EbHash, offset)@ instead (no de-duplication; GC becomes "delete an EB's rows
+-- when the EB is deleted"), its GC would be trivial, at the cost of by-hash
+-- lookup — which is fine, since the cache is the only by-hash reader, so long as
+-- it carries each tracked tx's location itself. See $withoutDedup.
+--
+-- Owning the tx bytes outright — rather than reading them from the LeiosDb at all
+-- — is a further, narrower step, worthwhile only if the LeiosDb read path is ever
+-- measured too slow. See $backingStore.
 module LeiosTxCache
   ( module LeiosTxCache.API
   , newPureLeiosTxCache
   , newHashTableLeiosTxCache
   , nullLeiosTxCache
+
+    -- $withoutDedup
 
     -- $backingStore
   ) where
@@ -83,6 +180,63 @@ nullLeiosTxCache =
     , withLookupTx = \k -> k (\_txh -> pure Nothing)
     }
 
+-- $withoutDedup
+--
+-- = Supporting a LeiosDb that is not de-duplicated
+--
+-- If the LeiosDb stops de-duplicating txs — storing each EB's txs alongside the
+-- EB and keying them by @(EbHash, offset)@ rather than by tx hash — its GC
+-- collapses to "delete an EB's rows when the EB is deleted": no refcounts, no
+-- scans. The price is that the LeiosDb can no longer be queried by tx hash; since
+-- the LeiosTxCache is (or will be) the only by-hash reader, that is acceptable so
+-- long as the cache can name a live location for each tx it tracks. This variant
+-- does so.
+--
+-- == The location: a freelisted TxCacheEbId
+--
+-- Each tracked tx's value gains a location: which EB holds its bytes, plus the
+-- offset within that EB. Naming the EB by its 32-byte EbHash would add ~34 bytes
+-- to every hash-table slot (~140 MB over the 2^22 slots), so instead each EB in
+-- the cache is assigned a small stable id — a @TxCacheEbId@, ~2 bytes — from a
+-- freelist, and the value stores @(TxCacheEbId, offset)@. That packs into the
+-- existing Word64 alongside the 2-bit state tag, so the location costs no extra
+-- per-slot memory. Reading the bytes resolves the id to its EbHash and hits the
+-- LeiosDb by @(EbHash, offset)@.
+--
+-- Ids come from a freelist and are recycled on eviction. Recycling is always safe
+-- (see the eviction rule below): when an EB is evicted, no surviving tx still
+-- points at it, so its id has zero inbound references and is immediately reusable
+-- — even under the out-of-order arrival of announcements that would make a naive
+-- monotonic id unstable.
+--
+-- == The location /replaces/ the refcount
+--
+-- A tx's stored location is the /youngest/ EB (by slot) that references it,
+-- maintained exactly where the refcount is bumped today: in 'insertBody', while
+-- walking the new EB's txs, an already-acquired tx's location is overwritten iff
+-- the new EB is younger than its current one. No reverse index is needed — the
+-- update is local to the insert.
+--
+-- This youngest-EB location subsumes the refcount entirely. The refcount only
+-- ever answered "when does this tx die?", and "when its youngest referencing EB
+-- is evicted" answers that exactly: eviction is FIFO by slot, so the youngest
+-- referencer is the last to go. Hence the value holds a location + tag and /no/
+-- refcount, and eviction deletes a tx precisely when the EB its location names is
+-- evicted.
+--
+-- == Eviction becomes slot-granular
+--
+-- For "youngest EB" to be well-defined, eviction must remove EBs a whole slot at a
+-- time, never just one EB from within a slot. The module header's rule — evict any
+-- EB older than the youngest X RBs on the current selection — is already at slot
+-- granularity, since its threshold falls between two slots. The only wrinkle is the
+-- 128-EB cap: hitting the count exactly would otherwise split the oldest slot by
+-- the least RbHash, so that tiebreaker is dropped and the cap too evicts whole
+-- slots — possibly leaving fewer than 128 EBs, since 128 was always a cap, not a
+-- floor. With whole-slot eviction the youngest slot is unambiguous: when slot @s@
+-- is evicted, every EB at @s@ goes, so every tx whose youngest referencing slot is
+-- @s@ dies exactly then.
+
 -- $backingStore
 --
 -- = A dedicated backing store for the LeiosTxCache's tx bytes
@@ -93,7 +247,9 @@ nullLeiosTxCache =
 -- "LeiosTxCache.API") rather than beside either implementation
 -- ("LeiosTxCache.Reference" or "LeiosTxCache.Optimized"). Some details below are
 -- nonetheless phrased in terms of the hash-table implementation, since that is the
--- one intended for production use.
+-- one intended for production use. It is also orthogonal to $withoutDedup: the
+-- sketch below keeps today's per-tx refcount, which $withoutDedup would replace
+-- with a youngest-EB location, but either variant can be adopted without the other.
 --
 -- == What we store today
 --
@@ -106,14 +262,17 @@ nullLeiosTxCache =
 -- LeiosTxCache is tuned to be "big enough", paying the re-fetch/re-validation
 -- costs for such misses is acceptable.
 --
--- == Why a separate store later
+-- == When a separate store would help
 --
--- Eventually we may want the LeiosTxCache to own its tx bytes in a dedicated
--- backing store rather than piggy-backing on the LeiosDb, so the two are not
--- coupled: the LeiosDb keeps its own eviction policy, schema, and durability
--- guarantees without the cache imposing synchronization or extra constraints, and
--- the cache can be tuned purely as a bounded, lossy accelerator. The rest of this
--- note sketches such a store.
+-- $withoutDedup already decouples the cache from the LeiosDb's GC /without/ owning
+-- any bytes: it lets the LeiosDb be non-de-duplicated (trivial GC) while the cache
+-- supplies the location. So the remaining — and narrower — reason to own the bytes
+-- is /read latency/: if reading a tx out of the LeiosDb's on-disk
+-- @(EbHash, offset)@ storage is ever measured too slow for a latency-critical
+-- consumer, a dedicated in-process store avoids that hop. This is contingency
+-- planning for a bottleneck that has not been observed (and "No durability" below
+-- argues on-disk still beats a network re-fetch); the rest of this note sketches
+-- such a store should it ever be warranted.
 --
 -- == The bounds
 --
@@ -127,8 +286,8 @@ nullLeiosTxCache =
 --
 --   * An EB's cumulative referenced-tx bytes are separately capped at 12 MB.
 --
---   * At most 128 EBs are retained in the cache at once. (The derivation of 128
---     is out of scope here.)
+--   * At most 128 EBs are retained in the cache at once. (The module header's
+--     invariant covers the eviction rule and the choice of 128.)
 --
 -- Therefore the cache holds at most:
 --
@@ -160,7 +319,8 @@ nullLeiosTxCache =
 --
 -- The index must be in-memory, so LeiosFetch, LeiosVote, etc can
 -- make low-latency decisions. But the bytes of the cached txs can be slower to
--- access on-disk---they'll still (generaly) be faster than network's fetching.
+-- access on-disk---they'll still (generally) be faster than fetching over the
+-- network.
 --
 -- == No durability, and no VM buffering
 --
