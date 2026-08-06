@@ -70,7 +70,12 @@ import LeiosDemoTypes
   , TraceLeiosKernel (..)
   )
 import qualified LeiosDemoTypes as Leios
-import LeiosTxCache (LeiosTxCache, newHashTableLeiosTxCache)
+import LeiosTxCache
+  ( LeiosTxCache
+  , evictOlderThan
+  , maxAnnouncementCount
+  , newHashTableLeiosTxCache
+  )
 import LeiosUtils.CallTrace
   ( SomeJsonCallTrace (SomeJsonCallTrace)
   , callTraceSameThread
@@ -569,6 +574,27 @@ initNodeKernel
               NotOrigin immTipSlot ->
                 MVar.modifyMVar_ getLeiosCentralState $
                   pure . Announcements.pruneCentralState immTipSlot
+          }
+
+    -- Keep the LeiosTxCache within the youngest @1 + maxAnnouncementCount@ RBs of
+    -- the current selection, evicting older EBs regardless of the EB arrival rate,
+    -- so that every EB it retains is far younger than the immutable tip and hence
+    -- still in the LeiosDb (see the invariant in "LeiosTxCache"). Complements the
+    -- count-driven eviction that 'insertAnnouncement' performs. Dropping the
+    -- youngest 'maxAnnouncementCount' headers leaves the @1 + maxAnnouncementCount@th
+    -- youngest as the boundary; @dropNewest@ is @O(log n)@.
+    void $
+      forkLinkedWatcher registry "NodeKernel.leiosEvictStaleTxCacheEbs" $
+        Watcher
+          { wFingerprint = id
+          , wInitial = Nothing
+          , wReader =
+              AF.headSlot . AF.dropNewest maxAnnouncementCount
+                <$> ChainDB.getCurrentChain chainDB
+          , wNotify = \case
+              Origin -> pure ()
+              NotOrigin boundary ->
+                void $ evictOlderThan getLeiosTxCache boundary
           }
 
     return
