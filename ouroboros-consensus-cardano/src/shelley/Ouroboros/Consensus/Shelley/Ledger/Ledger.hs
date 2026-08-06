@@ -61,8 +61,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger
   , BigEndianTxIn (..)
   ) where
 
-import Cardano.Crypto.DSIGN (DSIGNAlgorithm (deriveVerKeyDSIGN), rawDeserialiseSignKeyDSIGN)
-import Cardano.Crypto.Hash.Class (hashToBytes)
+import Cardano.Crypto.Leios (mkLeiosCommittee)
 import Cardano.Ledger.BaseTypes (strictMaybeToMaybe)
 import qualified Cardano.Ledger.BaseTypes as SL (TxIx (..), epochInfoPure)
 import Cardano.Ledger.BaseTypes.NonZero (unNonZero)
@@ -86,7 +85,6 @@ import qualified Cardano.Ledger.Block as Core
 import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core
   ( Era
-  , KeyHash (..)
   , eraDecoder
   , ppMaxBHSizeL
   , ppMaxTxSizeL
@@ -95,7 +93,14 @@ import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import Cardano.Ledger.State (individualPoolStake, poolDistrDistrL)
+import Cardano.Ledger.State
+  ( LeiosKey (..)
+  , LeiosPossessionProof (..)
+  , LeiosPubKey (..)
+  , individualPoolStake
+  , individualPoolStakeBls
+  , poolDistrDistrL
+  )
 import qualified Cardano.Ledger.State as SL
 import Cardano.Slotting.EpochInfo
 import Codec.CBOR.Decoding (Decoder)
@@ -107,19 +112,17 @@ import Control.Arrow (left, second)
 import qualified Control.Exception as Exception
 import Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
-import qualified Data.ByteString as BS
 import Data.Coerce
 import Data.Foldable (toList)
 import Data.Functor.Identity
 import qualified Data.Map as Map
-import Data.Maybe (fromJust)
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import Data.MemPack
 import qualified Data.Text as T
 import qualified Data.Text as Text
+import qualified Data.Vector.Strict as V
 import Data.Word
 import GHC.Generics (Generic)
-import LeiosDemoTypes (mkCommitteeEveryoneVotes)
 import LeiosVoting (HasLeiosVoting (..))
 import Lens.Micro
 import Lens.Micro.Extras (view)
@@ -1004,23 +1007,33 @@ instance HasLeiosVoting (ShelleyBlock (Praos c) DijkstraEra) where
   getLeiosCommittee ls =
     Just everyoneVotes
    where
-    -- TODO: stake-based scheme and move to era boundary (to cache computation)
+    -- Every pool in the (snapshotted) stake distribution gets a committee seat
+    -- weighted by its stake fraction; a pool that has not registered a Leios key
+    -- gets a keyless seat (an invalid proof of possession is dropped to keyless
+    -- by 'mkLeiosCommittee'). Keeping every pool as a seat — rather than
+    -- filtering keyless ones out — is what makes voter indices stable as keys
+    -- come and go.
+    --
+    -- Weights are the raw stake fractions and are deliberately NOT normalised:
+    -- the committee is a stake-based selection (eventually with a cutoff, so a
+    -- strict subset of pools), so there is no meaningful total to divide by. The
+    -- certification threshold is therefore an absolute fraction of the total
+    -- active stake, and keyless / cut-off stake simply lowers the reachable
+    -- maximum.
+    --
+    -- TODO: apply the stake-based cutoff and move this to the era boundary (to
+    -- cache the computation).
     everyoneVotes =
-      mkCommitteeEveryoneVotes
-        [ (vk, stake)
-        | (poolId, ips) <- Map.toList stakeDistribution
-        , let vk = deriveVerKeyDSIGN $ unsafeDeriveSigningKey poolId
-              stake = individualPoolStake ips
-        ]
+      mkLeiosCommittee $
+        V.fromList
+          -- TODO: order by stake descending
+          [ (seatKey ips, ips.individualPoolStake)
+          | ips <- Map.elems stakeDistribution
+          ]
+
+    seatKey ips = case ips.individualPoolStakeBls of
+      SJust lk -> SJust (unLeiosPubKey lk.leiosPubKey, unLeiosPossessionProof lk.leiosPossessionProof)
+      SNothing -> SNothing
 
     stakeDistribution =
       ls.shelleyLedgerState.nesPd ^. poolDistrDistrL
-
-    -- FIXME: REMOVE THIS. Interprets cold key hashes as signing keys
-    unsafeDeriveSigningKey =
-      fromJust
-        . rawDeserialiseSignKeyDSIGN
-        -- Pad the 28 bytes of blake2b_224 to get 32 bytes for BLS
-        . (<> BS.pack (replicate 4 0))
-        . hashToBytes
-        . unKeyHash

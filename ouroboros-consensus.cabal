@@ -741,6 +741,7 @@ test-suite consensus-test
     bytestring,
     cardano-binary,
     cardano-crypto-class:{cardano-crypto-class, testlib},
+    cardano-crypto-leios:testlib,
     cardano-diffusion:api,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-slotting:{cardano-slotting, testlib},
@@ -1489,6 +1490,7 @@ library cardano
     text,
     these,
     validation ^>=1.2,
+    vector,
 
 library unstable-byronspec
   import: common-lib
