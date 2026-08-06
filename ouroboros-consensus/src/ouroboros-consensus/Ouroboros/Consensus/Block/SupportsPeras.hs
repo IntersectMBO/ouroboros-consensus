@@ -69,6 +69,7 @@ import qualified Cardano.Crypto.Hash as Hash
 import Cardano.Ledger.Hashes (KeyHash (..))
 import Control.Exception (assert)
 import Control.Exception.Base (Exception)
+import Control.Monad (when)
 import Data.Bifunctor (bimap)
 import Data.Containers.NonEmpty (NE)
 import Data.Kind (Type)
@@ -366,6 +367,10 @@ class
     concreteCert <-
       bimap injectConversionError id $
         toPerasCert abstractCert
+    let maxSize = unPerasMaxBlockBodySize $ perasMaxBlockBodySize params
+        actualSize = getPerasCertSize concreteCert
+    when (actualSize > maxSize) $
+      Left $ injectCertificateTooLargeError actualSize maxSize
     pure $
       ValidatedPerasCert
         { vpcCert = concreteCert
