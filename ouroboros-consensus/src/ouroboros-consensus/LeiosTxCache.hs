@@ -153,6 +153,10 @@ newPureLeiosTxCache = do
           MVar.modifyMVar var $ \idx ->
             let (idx', evEbs, evTxs) = Pure.insertAnnouncement slot rbh ebh idx
              in pure (idx', (evEbs, evTxs))
+      , evictOlderThan = \boundary ->
+          MVar.modifyMVar var $ \idx ->
+            let (idx', evEbs, evTxs) = Pure.evictOlderThan boundary idx
+             in pure (idx', (evEbs, evTxs))
       , insertBody = \ebh b ->
           MVar.modifyMVar var $ \idx -> pure (Pure.insertBody ebh b idx)
       , withLockedInsertUnappliedTx = \k ->
@@ -174,6 +178,7 @@ nullLeiosTxCache :: Applicative m => LeiosTxCache m a v b
 nullLeiosTxCache =
   LeiosTxCache
     { insertAnnouncement = \_slot _rbh _ebh -> pure (Set.empty, Set.empty)
+    , evictOlderThan = \_boundary -> pure (Set.empty, Set.empty)
     , insertBody = \_ebh _b -> pure Nothing
     , withLockedInsertUnappliedTx = \k -> k () (\w _txh _a -> pure w)
     , withLockedInsertAppliedTx = \k -> k () (\w _txh _v -> pure w)
