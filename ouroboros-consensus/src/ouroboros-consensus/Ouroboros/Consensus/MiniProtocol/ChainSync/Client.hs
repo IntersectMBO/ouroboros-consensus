@@ -782,17 +782,17 @@ data ConfigEnv m blk = ConfigEnv
   , chainDbView :: ChainDbView m blk
   , getDiffusionPipeliningSupport ::
       DiffusionPipeliningSupport
-  , leiosCertRbCallback ::
+  , leiosMsgRollForwardCallback ::
       Header blk ->
+      RelativeTime ->
       ChainDepState (BlockProtocol blk) ->
       m ()
-  -- ^ Invoked on each accepted 'MsgRollForward' with the just-arrived header
-  -- and the chain-dep state as of its predecessor. For Leios: when the new
-  -- header is a CertRB (its @headerContainsLeiosCert@ bit is set), the predecessor's
-  -- chain-dep state still records (in @chainDepStateLeiosAnnouncement@) the EB the
-  -- CertRB certifies — the CertRB's own transition would overwrite it — so this
-  -- lets the same peer's LeiosFetch state be updated as if its LeiosNotify
-  -- client had offered that EB. A no-op for non-Leios setups.
+  -- ^ Invoked on each accepted 'MsgRollForward' with the just-arrived header,
+  -- its slot's wall-clock onset, and the chain-dep state as of its predecessor.
+  -- For Leios the wiring uses this to both register any EB the header
+  -- /certifies/ as an offer from this peer, and feed any EB the header
+  -- /announces/ into the central announcement state — dating that announcement
+  -- from the slot onset. A no-op for non-Leios setups.
   }
 
 -- | Arguments determined dynamically
@@ -1531,8 +1531,9 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
             traceWith headerMetricsTracer (slotNo, arrivalTime)
 
           -- Pass the predecessor's chain-dep state (the pre-validation state,
-          -- whose history tip is still the predecessor); see 'leiosCertRbCallback'.
-          leiosCertRbCallback cfgEnv hdr $
+          -- whose history tip is still the predecessor); see
+          -- 'leiosMsgRollForwardCallback'.
+          leiosMsgRollForwardCallback cfgEnv hdr hdrSlotTime $
             headerStateChainDep $
               hswtHeaderState $
                 HeaderStateHistory.current (theirHeaderStateHistory kis')
