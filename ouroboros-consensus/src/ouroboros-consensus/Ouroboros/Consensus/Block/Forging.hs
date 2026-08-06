@@ -29,8 +29,7 @@ import Control.Tracer (Tracer, traceWith)
 import Data.Kind (Type)
 import Data.Text (Text)
 import GHC.Stack
-import LeiosDemoDb (LeiosDbConnection)
-import LeiosDemoTypes (LeiosCert, TraceLeiosKernel)
+import LeiosDemoTypes (ForgedLeiosEb, LeiosCert, TraceLeiosKernel)
 import LeiosVoteState (LeiosVoteState)
 import Ouroboros.Consensus.Block.Abstract
 import Ouroboros.Consensus.Config
@@ -125,8 +124,13 @@ data BlockForging m blk = BlockForging
   -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
   , forgeBlock ::
       ForgeBlockArgs m blk ->
-      m blk
+      m (blk, Maybe ForgedLeiosEb)
   -- ^ Forge a block
+  --
+  -- The 'Maybe' 'ForgedLeiosEb' is the Endorser Block this block announces, if
+  -- any (only Leios-enabled eras produce one, and only when there were EB txs).
+  -- The caller persists it and registers it in the cache /after/ relaying
+  -- the announcement, so the body offer never precedes the announcement.
   --
   -- The function is passed the prefix of the mempool that will fit within
   -- a valid block; this is a set of transactions that is guaranteed to be
@@ -266,7 +270,6 @@ data ForgeBlockArgs m blk = ForgeBlockArgs
   -- ^ The Leios certificate this block should embed, if it certifies a
   -- previously-announced EB. 'Nothing' for non-Leios eras and for
   -- blocks that don't certify anything.
-  , fbLeiosDb :: LeiosDbConnection m
   , fbLeiosTracer :: Tracer m TraceLeiosKernel
   , fbLeiosVoteState :: LeiosVoteState m
   }

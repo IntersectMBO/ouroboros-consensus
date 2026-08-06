@@ -14,8 +14,6 @@
 module LeiosDemoLogic (module LeiosDemoLogic) where
 
 import Cardano.Slotting.Slot (SlotNo (..))
-import Codec.CBOR.Read (deserialiseFromBytes)
-import Codec.CBOR.Write (toStrictByteString)
 import Control.Concurrent.Class.MonadMVar (MVar)
 import qualified Control.Concurrent.Class.MonadMVar as MVar
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
@@ -28,8 +26,6 @@ import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Tracer (Tracer, traceWith)
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as LBS
-import Data.ByteString.Short (ShortByteString, fromShort, toShort)
 import Data.DList (DList)
 import qualified Data.DList as DList
 import Data.Functor (void, (<&>))
@@ -81,6 +77,7 @@ import LeiosDemoTypes
   , LeiosPoint (..)
   , LeiosTx (..)
   , PeerId (..)
+  , SerializedEbBody
   , TraceLeiosKernel (..)
   , TraceLeiosPeer (..)
   , TxHash (..)
@@ -88,13 +85,11 @@ import LeiosDemoTypes
   , hashLeiosTx
   , leiosEbBytesSize
   , maxTxsPerEb
-  , decodeLeiosEb
-  , encodeLeiosEb
   , leiosEbTxs
   , RbHash (..)
   )
 import qualified LeiosDemoTypes as Leios
-import LeiosTxCache (LeiosTxCache (..), ReferencesTxsByHash (..))
+import LeiosTxCache (LeiosTxCache (..))
 import Ouroboros.Consensus.Block
   ( BlockProtocol
   , ConvertRawHash
@@ -135,24 +130,9 @@ traceException tracer toTrace action =
   per tx, and the serialized body is the @b@.
 -------------------------------------------------------------------------------}
 
--- | An EB body as its canonical CBOR bytes: the @b@ stored in the index. Its
--- 'ReferencesTxsByHash' instance decodes it to enumerate the referenced txs.
-newtype SerializedEbBody = MkSerializedEbBody ShortByteString
-
-serializeEbBody :: LeiosEb -> SerializedEbBody
-serializeEbBody = MkSerializedEbBody . toShort . toStrictByteString . encodeLeiosEb
-
-instance ReferencesTxsByHash SerializedEbBody where
-  foldTxReferences f z (MkSerializedEbBody sbs) =
-    V.foldl' (\acc (txh, _sz) -> f acc txh) z (leiosEbTxs eb)
-   where
-    eb = case deserialiseFromBytes decodeLeiosEb (LBS.fromStrict (fromShort sbs)) of
-      Right (_leftover, decoded) -> decoded
-      Left err -> error $ "SerializedEbBody: undecodable: " <> show err
-
--- | Insert an EB announcement into the shadow tx-cache index, keyed by the
--- announced slot, the announcing RB header's hash, and the announced EB hash.
--- Evicted bodies\/txs are discarded (the shadow has no consumer for them yet).
+-- | Insert an EB announcement into the tx-cache index, keyed by the announced
+-- slot, the announcing RB header's hash, and the announced EB hash. Evicted
+-- bodies\/txs are discarded; they can be useful for debugging/etc.
 recordAnnouncementInTxCache ::
   forall blk m.
   (ConvertRawHash blk, HasHeader (Header blk), IOLike m) =>
@@ -164,6 +144,29 @@ recordAnnouncementInTxCache txCache ancHdr point =
   void $ txCache.insertAnnouncement point.pointSlotNo rbh point.pointEbHash
  where
   rbh = MkRbHash (toRawHash (Proxy @blk) (headerHash (ancHeader ancHdr)))
+
+-- | Register a locally-forged EB in the tx-cache: its announcement, its
+-- body, and each of its txs as already-applied (the forger drew them from its
+-- validated mempool, so they are known-valid). This mirrors the receive side,
+-- which splits the same inserts between announcement handling
+-- ('recordAnnouncementInTxCache') and body acquisition. The applied-tagging must
+-- follow 'insertBody', which creates the per-tx entries that the tagging upgrades.
+recordForgedEbAndClosureInTxCache ::
+  Monad m =>
+  Tracer m TraceLeiosKernel ->
+  LeiosTxCache m () () SerializedEbBody ->
+  RbHash ->
+  Leios.ForgedLeiosEb ->
+  m ()
+recordForgedEbAndClosureInTxCache tracer txCache rbh forgedEb = do
+  _ <- txCache.insertAnnouncement point.pointSlotNo rbh point.pointEbHash
+  mSummary <- txCache.insertBody point.pointEbHash (Leios.serializeEbBody eb)
+  forM_ mSummary $ traceWith tracer . TraceLeiosTxCacheEbBody point
+  withLockedInsertAppliedTx txCache $ \w0 step ->
+    foldM (\w (txh, _sz) -> step w txh ()) w0 (leiosEbTxs eb)
+ where
+  point = forgedEb.point
+  eb = forgedEb.body
 
 -----
 
@@ -747,7 +750,7 @@ msgLeiosBlock ktracer tracer (outstandingVar, readyVar) txCache db peerId req eb
         traceWith ktracer $ TraceLeiosBlockPointMissing point
         leiosDbInsertEbPoint db point ebBytesSize
         completedByBody <- leiosDbInsertEbBody db point eb
-        mSummary <- txCache.insertBody ebHash (serializeEbBody eb)
+        mSummary <- txCache.insertBody ebHash (Leios.serializeEbBody eb)
         forM_ mSummary $ traceWith ktracer . TraceLeiosTxCacheEbBody point
         traceWith ktracer $ TraceLeiosBlockAcquired point
         forM_ completedByBody $ traceWith ktracer . TraceLeiosBlockTxsAcquired

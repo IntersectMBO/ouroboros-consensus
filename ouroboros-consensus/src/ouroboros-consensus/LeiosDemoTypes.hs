@@ -672,6 +672,15 @@ decodeLeiosEb = do
   fmap MkLeiosEb $ V.generateM n $ \_i -> do
     (,) <$> (fmap MkTxHash CBOR.decodeBytes) <*> CBOR.decodeWord32
 
+-- | An EB body as its canonical CBOR bytes: the @b@ stored in the
+-- 'LeiosTxCache' index. Its 'LeiosTxCache.API.ReferencesTxsByHash' instance
+-- (defined alongside the class in "LeiosTxCache.API") decodes it to enumerate the
+-- referenced txs.
+newtype SerializedEbBody = MkSerializedEbBody SBS.ShortByteString
+
+serializeEbBody :: LeiosEb -> SerializedEbBody
+serializeEbBody = MkSerializedEbBody . SBS.toShort . toStrictByteString . encodeLeiosEb
+
 -- * Voting
 
 -- | Select the voting committee from a stake (weight) distribution per CIP-164:

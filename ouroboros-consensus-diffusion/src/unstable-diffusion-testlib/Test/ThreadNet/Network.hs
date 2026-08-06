@@ -912,7 +912,7 @@ runThreadNetwork
       let customForgeBlock ::
             BlockForging m blk ->
             ForgeBlockArgs m blk ->
-            m blk
+            m (blk, Maybe LeiosDemoTypes.ForgedLeiosEb)
           customForgeBlock origBlockForging fbArgs = do
             let currentBno = fbCurrentBlockNo fbArgs
                 currentSlot = fbCurrentSlotNo fbArgs
