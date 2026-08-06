@@ -23,7 +23,7 @@ import Control.Monad (foldM, forM_, when)
 import Control.Monad.Class.MonadThrow (Exception, catch, throwIO)
 import Control.Monad.Except (runExcept)
 import Control.Monad.Primitive (PrimMonad, PrimState)
-import Control.Tracer (Tracer, traceWith)
+import Control.Tracer (Tracer, contramap, traceWith)
 import qualified Data.Bits as Bits
 import qualified Data.ByteString as BS
 import Data.DList (DList)
@@ -96,6 +96,7 @@ import Ouroboros.Consensus.Block
   , HasHeader
   , Header
   , WithOrigin (NotOrigin)
+  , blockSlot
   , headerHash
   , toRawHash
   )
@@ -992,7 +993,7 @@ msgLeiosBlockTxs ktracer tracer (outstandingVar, readyVar) txCache db peerId req
 -- peer as offering both the body and its txs, then wake the fetch logic. (The
 -- block-aware decision of /whether/ to call this — recognising the CertRB,
 -- extracting its announcement, and waiting for the peer's LeiosNotify vars to
--- register — stays in the ChainSync client's @leiosCertRbCallback@.)
+-- register — stays in 'checkMsgRollForwardForLeiosOffers'.)
 leiosCertRbOffer ::
   IOLike m =>
   ( MVar m (LeiosOutstanding pid)
@@ -1024,16 +1025,13 @@ leiosCertRbOffer (outstandingVar, readyVar) peerVars (point, ebBytesSize) = do
 
 -----
 
--- | When a CertRB header arrives via ChainSync, update this peer's LeiosFetch
--- state as if its LeiosNotify client had offered the EB that the CertRB
--- certifies. The block-aware entry point: recognise the CertRB
--- ('headerContainsLeiosCert') and read the EB it certifies — the announcement
--- still recorded in the predecessor's chain-dep state, which the CertRB's own
--- transition would overwrite ('chainDepStateLeiosAnnouncement'). A no-op when
--- the header is not a CertRB or no announcement is recorded; otherwise the
--- LeiosFetch-side effect is recorded via 'leiosCertRbOffer' against the peer's
--- (already-resolved) LeiosNotify vars.
-leiosCertRbCallback ::
+-- | The offer-side handling of a 'MsgRollForward': when the header is a CertRB
+-- ('headerContainsLeiosCert'), record this peer as offering the EB it certifies
+-- (via 'leiosCertRbOffer'), reading that EB from the predecessor's chain-dep
+-- state ('chainDepStateLeiosAnnouncement'), which the CertRB's own transition
+-- would overwrite. A no-op otherwise. The announcement-side handling of the same
+-- header is separate; see the ChainSync client's 'leiosMsgRollForwardCallback'.
+checkMsgRollForwardForLeiosOffers ::
   forall blk pid m.
   (IOLike m, ResolveLeiosBlock blk) =>
   ( MVar m (LeiosOutstanding pid)
@@ -1043,7 +1041,7 @@ leiosCertRbCallback ::
   Header blk ->
   ChainDepState (BlockProtocol blk) ->
   m ()
-leiosCertRbCallback kernelVars peerVars hdr cds =
+checkMsgRollForwardForLeiosOffers kernelVars peerVars hdr cds =
   when (headerContainsLeiosCert hdr) $
     forM_ (protocolStateLeiosAnnouncement @blk cds) $ \announcement ->
       leiosCertRbOffer kernelVars peerVars announcement
@@ -1081,6 +1079,54 @@ mkAnnouncingHeader h =
 -- | The election of an 'AnnouncingHeader'.
 ancElId :: AnnouncingHeader blk -> ElId
 ancElId = announcementElection . ancAnnouncementFields
+
+-- | The central-state handling shared by an incoming LeiosNotify
+-- 'MsgLeiosBlockAnnouncement' and a ChainSync 'MsgRollForward' that announces an
+-- EB: run 'Announcements.onAnnouncementCentral' (relay + dedup) and, for a
+-- genuinely new announcement, record the EB as awaited ('recordAnnouncedEb') and
+-- in the tx-cache ('recordAnnouncementInTxCache'). Central-only: no per-peer
+-- state is touched.
+processAnnouncementCentrally ::
+  forall blk peer pid m.
+  (IOLike m, ConvertRawHash blk, HasHeader (Header blk), Ord peer) =>
+  Tracer m TraceLeiosKernel ->
+  MVar m (Announcements.CentralState m peer (AnnouncingHeader blk)) ->
+  (MVar m (LeiosOutstanding pid), MVar m ()) ->
+  LeiosTxCache m () () SerializedEbBody ->
+  Maybe peer ->
+  AnnouncementSource ->
+  Announcements.ShouldRelay ->
+  Maybe NominalDiffTime ->
+  AnnouncingHeader blk ->
+  m ()
+processAnnouncementCentrally
+  kernelTracer
+  centralVar
+  kernelVars
+  txCache
+  source
+  provenance
+  shouldRelay
+  age
+  ancHdr =
+    MVar.modifyMVar_ centralVar $ \cst ->
+      Announcements.onAnnouncementCentral
+        (contramap (traceNewAnnouncement provenance) kernelTracer)
+        ancElId
+        ( \_elSt -> do
+            recordAnnouncedEb kernelVars (point, Leios.announcementEbBodySize fields)
+            recordAnnouncementInTxCache txCache ancHdr point
+        )
+        cst
+        source
+        shouldRelay
+        age
+        ancHdr
+ where
+  fields = ancAnnouncementFields ancHdr
+  -- The announced EB's slot is the announcing header's own slot (see
+  -- 'headerLeiosAnnouncement'); its ebHash is kept in 'ancAnnouncementFields'.
+  point = MkLeiosPoint (blockSlot (ancHeader ancHdr)) (announcementEbHash fields)
 
 -- | Thrown when a peer misbehaves on the announcement protocol; the ensuing
 -- thread death disconnects the peer. It carries the
@@ -1223,17 +1269,16 @@ tracePeerAnnouncement (Announcements.TracePeerAnnouncement elSt) =
    in TraceLeiosPeerAnnouncement equivocation fields
 
 -- | Render an 'Announcements' node-wide announcement event as a
--- 'TraceLeiosKernel'.
+-- 'TraceLeiosKernel'. The 'AnnouncementSource' is supplied by the caller (only
+-- it knows which path delivered the announcement); the event's own @mbPeer@
+-- cannot distinguish LeiosNotify from ChainSync, as both carry a peer.
 traceNewAnnouncement ::
+  AnnouncementSource ->
   Announcements.TraceLeiosNotifyEvent peer (AnnouncingHeader blk) ->
   TraceLeiosKernel
-traceNewAnnouncement (Announcements.TraceNewAnnouncement mbPeer _elId elSt age) =
+traceNewAnnouncement source (Announcements.TraceNewAnnouncement _mbPeer _elId elSt age) =
   let (equivocation, fields) = announcementTraceFields elSt
-   in TraceLeiosAnnouncementAccepted
-        (maybe ForgedLocally (const ReceivedFromPeer) mbPeer)
-        equivocation
-        fields
-        age
+   in TraceLeiosAnnouncementAccepted source equivocation fields age
 
 -- | Do not relay (to downstream peers) an announcement whose slot's wall-clock
 -- onset is older than this. See 'Announcements.ShouldRelay'.
