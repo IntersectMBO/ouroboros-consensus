@@ -66,7 +66,7 @@ genPerasCert = do
   pcCertBoostedBlock <- genPointTestBlock
   pure $ PerasCert{pcCertRound, pcCertBoostedBlock}
 
-instance WithId (PerasCert blk) PerasRoundNo where
+instance WithId (PerasCert' blk) PerasRoundNo where
   getId = pcCertRound
 
 instance WithId (WithArrivalTime (ValidatedPerasCert blk)) PerasRoundNo where

@@ -854,13 +854,13 @@ protocolInfoCardano (SomeHasFS hasFS) paramsCardano
     History.Shape $
       Exactly $
         K (Byron.byronEraParams genesisByron)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
-          :* K (Shelley.shelleyEraParams genesisShelley)
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @ShelleyEra))
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @AllegraEra))
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @MaryEra))
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @AlonzoEra))
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @BabbageEra))
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @ConwayEra))
+          :* K (Shelley.shelleyEraParams genesisShelley (Proxy @DijkstraEra))
           :* Nil
 
   cfg :: TopLevelConfig (CardanoBlock c)

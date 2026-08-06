@@ -231,28 +231,51 @@ instance Inject Examples where
 -------------------------------------------------------------------------------}
 
 byronEraParams :: History.EraParams
-byronEraParams = Byron.byronEraParams Byron.ledgerConfig
+byronEraParams =
+  Byron.byronEraParams
+    Byron.ledgerConfig
 
 shelleyEraParams :: History.EraParams
-shelleyEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+shelleyEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @ShelleyEra)
 
 allegraEraParams :: History.EraParams
-allegraEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+allegraEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @AllegraEra)
 
 maryEraParams :: History.EraParams
-maryEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+maryEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @MaryEra)
 
 alonzoEraParams :: History.EraParams
-alonzoEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+alonzoEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @AlonzoEra)
 
 babbageEraParams :: History.EraParams
-babbageEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+babbageEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @BabbageEra)
 
 conwayEraParams :: History.EraParams
-conwayEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+conwayEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @ConwayEra)
 
 dijkstraEraParams :: History.EraParams
-dijkstraEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
+dijkstraEraParams =
+  Shelley.shelleyEraParams
+    Shelley.testShelleyGenesis
+    (Proxy @DijkstraEra)
 
 -- | We use 10, 20, 30, 40, ... as the transition epochs
 shelleyTransitionEpoch :: EpochNo

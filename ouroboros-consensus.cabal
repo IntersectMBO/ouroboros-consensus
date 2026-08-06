@@ -238,10 +238,12 @@ library
     Ouroboros.Consensus.Peras.Cert.Class
     Ouroboros.Consensus.Peras.Cert.Inclusion
     Ouroboros.Consensus.Peras.Cert.V1
+    Ouroboros.Consensus.Peras.Context
     Ouroboros.Consensus.Peras.Crypto.BLS
     Ouroboros.Consensus.Peras.Params
     Ouroboros.Consensus.Peras.SelectView
     Ouroboros.Consensus.Peras.Types
+    Ouroboros.Consensus.Peras.Void
     Ouroboros.Consensus.Peras.Vote.Aggregation
     Ouroboros.Consensus.Peras.Vote.Class
     Ouroboros.Consensus.Peras.Vote.V1
@@ -466,6 +468,7 @@ library unstable-consensus-testlib
     Test.Util.ChainDB
     Test.Util.ChainUpdates
     Test.Util.ChunkInfo
+    Test.Util.Committee
     Test.Util.Corruption
     Test.Util.FileLock
     Test.Util.HardFork.Future
@@ -659,7 +662,6 @@ test-suite consensus-test
     Test.Consensus.Committee.EveryoneVotes
     Test.Consensus.Committee.EveryoneVotes.Tests
     Test.Consensus.Committee.TestCrypto
-    Test.Consensus.Committee.Utils
     Test.Consensus.Committee.WFALS
     Test.Consensus.Committee.WFALS.Conformance
     Test.Consensus.Committee.WFALS.Model

@@ -115,7 +115,7 @@ prop_simple_bft_convergence
                       numCoreNodes
                       nid
                       k
-                      (HardFork.defaultEraParams k slotLength)
+                      (HardFork.defaultEraParams k slotLength NoPerasEnabled)
                   )
                   (pure $ fmap (MkBlockForging . pure) $ blockForgingBft nid)
           , mkRekeyM = Nothing

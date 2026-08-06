@@ -202,7 +202,7 @@ instance SerialiseNodeToNode blk PerasSeatIndex where
   encodeNodeToNode _ccfg _version = toCBOR . unPerasSeatIndex
   decodeNodeToNode _ccfg _version = PerasSeatIndex <$> fromCBOR
 
-instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
+instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert' blk) where
   -- Consistent with the 'Serialise' instance for 'PerasCert' defined in Ouroboros.Consensus.Block.SupportsPeras
   encodeNodeToNode ccfg version PerasCert{..} =
     encodeListLen 2
@@ -214,7 +214,7 @@ instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasCert blk) where
     pcCertBoostedBlock <- decodeNodeToNode ccfg version
     pure $ PerasCert pcCertRound pcCertBoostedBlock
 
-instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasVote blk) where
+instance ConvertRawHash blk => SerialiseNodeToNode blk (PerasVote' blk) where
   -- Consistent with the 'Serialise' instance for 'PerasVote' defined in Ouroboros.Consensus.Block.SupportsPeras
   encodeNodeToNode ccfg version PerasVote{..} =
     encodeListLen 3
@@ -232,17 +232,17 @@ instance SerialiseNodeToNode blk PerasVoterId where
   encodeNodeToNode _ccfg _version = KeyHash.toCBOR . unPerasVoterId
   decodeNodeToNode _ccfg _version = PerasVoterId <$> KeyHash.fromCBOR
 
-instance SerialiseNodeToNode blk (PerasVoteId blk) where
+instance SerialiseNodeToNode blk PerasVoteId where
   -- Consistent with the 'Serialise' instance for 'PerasVoteId' defined in Ouroboros.Consensus.Block.SupportsPeras
   encodeNodeToNode ccfg version PerasVoteId{..} =
     encodeListLen 2
       <> encodeNodeToNode ccfg version pviRoundNo
-      <> encodeNodeToNode ccfg version pviVoterId
+      <> encodeNodeToNode ccfg version pviSeatIndex
   decodeNodeToNode ccfg version = do
     decodeListLenOf 2
     pviRoundNo <- decodeNodeToNode ccfg version
-    pviVoterId <- decodeNodeToNode ccfg version
-    pure $ PerasVoteId pviRoundNo pviVoterId
+    pviSeatIndex <- decodeNodeToNode ccfg version
+    pure $ PerasVoteId pviRoundNo pviSeatIndex
 
 deriving newtype instance
   SerialiseNodeToClient blk (GenTxId blk) =>

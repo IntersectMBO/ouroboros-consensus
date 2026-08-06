@@ -113,10 +113,10 @@ instance
   ) =>
   ImmutableEraParams (ShelleyBlock proto era)
   where
-  immutableEraParams =
+  immutableEraParams cfg =
     shelleyEraParamsNeverHardForks
-      . shelleyLedgerGenesis
-      . configLedger
+      (shelleyLedgerGenesis (configLedger cfg))
+      NoPerasEnabled
 
 instance
   ( ShelleyCompatible proto era

@@ -368,7 +368,7 @@ getPerasVotesAfter ::
 getPerasVotesAfter CDB{..} = PerasVoteDB.getVotesAfter cdbPerasVoteDB
 
 getPerasVoteIds ::
-  ChainDbEnv m blk -> STM m (Set (PerasVoteId blk))
+  ChainDbEnv m blk -> STM m (Set PerasVoteId)
 getPerasVoteIds CDB{..} = PerasVoteDB.getVoteIds cdbPerasVoteDB
 
 -- | Wait until the slot of the given point is smaller or equal than the immutable tip slot,

@@ -49,7 +49,7 @@ makePerasVotePoolReader ::
   ( PerasVoteTicketNo ->
     STM m (Map PerasVoteTicketNo (WithArrivalTime (ValidatedPerasVote blk)))
   ) ->
-  ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
+  ObjectPoolReader PerasVoteId (PerasVote blk) PerasVoteTicketNo m
 makePerasVotePoolReader getVotesAfterSTM =
   ObjectPoolReader
     { oprObjectId = getPerasVoteId
@@ -66,7 +66,7 @@ makePerasVotePoolReader getVotesAfterSTM =
 makePerasVotePoolReaderFromVoteDB ::
   IOLike m =>
   PerasVoteDB m blk ->
-  ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
+  ObjectPoolReader PerasVoteId (PerasVote blk) PerasVoteTicketNo m
 makePerasVotePoolReaderFromVoteDB perasVoteDB =
   makePerasVotePoolReader
     (PerasVoteDB.getVotesAfter perasVoteDB)
@@ -74,7 +74,7 @@ makePerasVotePoolReaderFromVoteDB perasVoteDB =
 makePerasVotePoolReaderFromChainDB ::
   IOLike m =>
   ChainDB m blk ->
-  ObjectPoolReader (PerasVoteId blk) (PerasVote blk) PerasVoteTicketNo m
+  ObjectPoolReader PerasVoteId (PerasVote blk) PerasVoteTicketNo m
 makePerasVotePoolReaderFromChainDB chainDB =
   makePerasVotePoolReader
     (ChainDB.getPerasVotesAfter chainDB)
@@ -97,7 +97,7 @@ makePerasVotePoolWriterFromVoteDB ::
   -- from the stake distr directly, but rather use the committee selection data)
   STM m PerasVoteStakeDistr ->
   PerasVoteDB m blk ->
-  ObjectPoolWriter (PerasVoteId blk) (PerasVote blk) m
+  ObjectPoolWriter PerasVoteId (PerasVote blk) m
 makePerasVotePoolWriterFromVoteDB systemTime getStakeDistrSTM perasVoteDB =
   ObjectPoolWriter
     { opwObjectId = getPerasVoteId
@@ -127,7 +127,7 @@ makePerasVotePoolWriterFromChainDB ::
   -- from the stake distr directly, but rather use the committee selection data)
   STM m PerasVoteStakeDistr ->
   ChainDB m blk ->
-  ObjectPoolWriter (PerasVoteId blk) (PerasVote blk) m
+  ObjectPoolWriter PerasVoteId (PerasVote blk) m
 makePerasVotePoolWriterFromChainDB systemTime getStakeDistrSTM chainDB =
   ObjectPoolWriter
     { opwObjectId = getPerasVoteId
@@ -170,7 +170,7 @@ instance Exception PerasVoteInboundException
 processVotes ::
   MonadSTM m =>
   SystemTime m ->
-  STM m (Set (PerasVoteId blk)) ->
+  STM m (Set PerasVoteId) ->
   (PerasVote blk -> STM m (Either (PerasValidationErr blk) (ValidatedPerasVote blk))) ->
   (WithArrivalTime (ValidatedPerasVote blk) -> m ()) ->
   [PerasVote blk] ->

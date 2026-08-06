@@ -26,14 +26,13 @@ import Ouroboros.Consensus.Block.Abstract (StandardHash)
 import Ouroboros.Consensus.Block.SupportsPeras
   ( HasPerasVoteBlock (..)
   , HasPerasVoteRound (..)
-  , PerasCert (..)
+  , PerasCert' (..)
   , PerasCfg
   , PerasParams (..)
   , PerasRoundNo
   , PerasVoteId (..)
   , PerasVoteStake (..)
   , PerasVoteTarget (..)
-  , PerasVoterId
   , ValidatedPerasCert (..)
   , ValidatedPerasVote
   , getPerasCertBoostedBlock
@@ -44,6 +43,7 @@ import Ouroboros.Consensus.Block.SupportsPeras
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( WithArrivalTime (..)
   )
+import Ouroboros.Consensus.Peras.Types (PerasSeatIndex)
 import Ouroboros.Consensus.Storage.PerasVoteDB.API
   ( AddPerasVoteResult (..)
   , PerasVoteTicketNo
@@ -53,7 +53,7 @@ import Ouroboros.Consensus.Storage.PerasVoteDB.API
 data VoteEntry blk = VoteEntry
   { veTicketNo :: PerasVoteTicketNo
   -- ^ The ticket number assigned to this vote
-  , veVoter :: PerasVoterId
+  , veVoter :: PerasSeatIndex
   -- ^ The voter ID
   , veVote :: WithArrivalTime (ValidatedPerasVote blk)
   -- ^ The vote itself
@@ -97,7 +97,7 @@ initModel cfg =
 -- collection to track this information efficienty, at the cost of added
 -- complexity.
 hasVote ::
-  PerasVoteId blk ->
+  PerasVoteId ->
   Model blk ->
   Bool
 hasVote voteId model =
@@ -109,7 +109,7 @@ hasVote voteId model =
           ( \ve ->
               PerasVoteId
                 { pviRoundNo = pvtRoundNo voteTarget
-                , pviVoterId = veVoter ve
+                , pviSeatIndex = veVoter ve
                 }
           )
           votesForTarget
@@ -208,7 +208,7 @@ addVote vote model
     succ (lastTicketNo model)
   -- Prepare various data structures needed to update the model
   voteId =
-    PerasVoteId{pviRoundNo = roundNo, pviVoterId = voter}
+    PerasVoteId{pviRoundNo = roundNo, pviSeatIndex = voter}
   voteTarget =
     PerasVoteTarget{pvtRoundNo = roundNo, pvtBlock = votedBlock}
   voteEntry =
@@ -261,14 +261,14 @@ addVote vote model
 
 getVoteIds ::
   Model blk ->
-  Set (PerasVoteId blk)
+  Set PerasVoteId
 getVoteIds model =
   Set.unions $
     [ Set.map
         ( \ve ->
             PerasVoteId
               { pviRoundNo = pvtRoundNo voteTarget
-              , pviVoterId = veVoter ve
+              , pviSeatIndex = veVoter ve
               }
         )
         votesForTarget
