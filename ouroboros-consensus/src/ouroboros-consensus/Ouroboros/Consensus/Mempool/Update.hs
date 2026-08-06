@@ -574,7 +574,9 @@ implSyncWithLedger projectResult mpEnv =
   -- identical to a single revalidation of all current txs ('extendReapply').
   go = do
     MempoolLedgerDBView ls0 meFrk0 <- atomically $ getCurrentLedgerState ldgrInterface
-    is0 <- atomically $ readTMVar istate
+    -- Capture the removal generation together with the snapshot, so a removal
+    -- that races this sync is detected at commit (see 'mpEnvRemovalGen').
+    (is0, gen0) <- atomically $ (,) <$> readTMVar istate <*> readTVar removalGen
     let (slot0, _ls0') = tickLedgerState cfg $ ForgeInUnknownSlot ls0
     if pointHash (isTip is0) == castHash (getTipHash ls0) && isSlotNo is0 == slot0
       then do
@@ -629,9 +631,13 @@ implSyncWithLedger projectResult mpEnv =
                             extendReapply capacityOverride cfg slot ls' cand deltaValues (isLastTicketNo isNow) deltaTickets
                       shrinkThenCommit cand' (removedAcc ++ removed') (iterN + 1)
                     else withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
-                      \isLocked (MempoolLedgerDBView ls _meFrk) ->
-                        if getTipHash ls /= getTipHash ls0
-                          then -- Tip moved while we worked; retry the whole sync.
+                      \isLocked (MempoolLedgerDBView ls _meFrk) -> do
+                        -- The lock is held, so a removal cannot bump the gen
+                        -- concurrently; this read is stable.
+                        genNow <- readTVarIO removalGen
+                        if getTipHash ls /= getTipHash ls0 || genNow /= gen0
+                          then -- Tip moved or a tx was removed while we worked;
+                          -- our candidate may be stale, so retry the whole sync.
                             pure (Nothing, isLocked)
                           else do
                             -- The lock is held, so no add can intervene: reapply
@@ -670,4 +676,5 @@ implSyncWithLedger projectResult mpEnv =
     , mpEnvTracer = trcr
     , mpEnvLedgerCfg = cfg
     , mpEnvCapacityOverride = capacityOverride
+    , mpEnvRemovalGen = removalGen
     } = mpEnv
