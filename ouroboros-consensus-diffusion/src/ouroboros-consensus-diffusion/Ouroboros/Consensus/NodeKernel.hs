@@ -824,7 +824,7 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
     whenJust (Leios.mkAnnouncingHeader forgedHeader) $ \anc ->
       MVar.modifyMVar_ leiosCentralState $ \cst ->
         Announcements.onAnnouncementCentral
-          (contramap Leios.traceNewAnnouncement (leiosKernelTracer tracers))
+          (contramap (Leios.traceNewAnnouncement Leios.ForgedLocally) (leiosKernelTracer tracers))
           Leios.ancElId
           (\_elSt -> pure ()) -- we forged the EB; nothing to fetch locally
           cst

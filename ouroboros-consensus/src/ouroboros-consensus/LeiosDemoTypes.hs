@@ -990,9 +990,14 @@ data AnnouncementEquivocation
   | Equivocation
   deriving (Eq, Show)
 
--- | Whether the node accepted an EB announcement it forged itself or one
--- relayed by an upstream peer.
-data AnnouncementSource = ForgedLocally | ReceivedFromPeer
+-- | How the node came to accept an EB announcement.
+data AnnouncementSource
+  = -- | The node forged the EB itself.
+    ForgedLocally
+  | -- | An upstream peer relayed it over the LeiosNotify mini-protocol.
+    ReceivedViaLeiosNotify
+  | -- | It rode in on a ChainSync 'MsgRollForward' header (the announcing RB).
+    ReceivedViaChainSync
   deriving (Eq, Show)
 
 -- | Reasons 'runLeiosVoting' may decline to cast a vote after acquiring an
@@ -1144,7 +1149,8 @@ announcementEquivocationToObject = \case
 announcementSourceText :: AnnouncementSource -> Aeson.Value
 announcementSourceText = \case
   ForgedLocally -> Aeson.String "forgedLocally"
-  ReceivedFromPeer -> Aeson.String "receivedFromPeer"
+  ReceivedViaLeiosNotify -> Aeson.String "receivedViaLeiosNotify"
+  ReceivedViaChainSync -> Aeson.String "receivedViaChainSync"
 
 notVotedReasonText :: LeiosNotVotedReason -> Aeson.Value
 notVotedReasonText = \case
