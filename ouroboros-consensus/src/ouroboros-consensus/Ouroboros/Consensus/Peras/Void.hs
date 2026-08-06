@@ -81,6 +81,7 @@ instance IsPerasVote (VoidPerasVote blk) blk where
 instance IsPerasCert (VoidPerasCert blk) blk where
   getPerasCertRound = absurd . unVoidPerasCert
   getPerasCertBlock = absurd . unVoidPerasCert
+  getPerasCertSize = absurd . unVoidPerasCert
 
 -- | Void Peras error for @blk@.
 --

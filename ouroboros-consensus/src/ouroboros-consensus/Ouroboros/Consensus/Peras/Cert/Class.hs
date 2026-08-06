@@ -9,6 +9,7 @@ module Ouroboros.Consensus.Peras.Cert.Class
   ( IsPerasCert (..)
   ) where
 
+import Data.Word (Word32)
 import Ouroboros.Consensus.Block.Abstract (Point)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types (WithArrivalTime (..))
 import Ouroboros.Consensus.Peras.Types
@@ -25,6 +26,7 @@ class
   where
   getPerasCertRound :: cert -> PerasRoundNo
   getPerasCertBlock :: cert -> BoostedBlock cert
+  getPerasCertSize :: cert -> Word32
 
   getPerasCertPoint :: cert -> Point blk
   getPerasCertPoint = boostedBlockToPoint . getPerasCertBlock
@@ -35,3 +37,4 @@ instance
   where
   getPerasCertRound = getPerasCertRound . forgetArrivalTime
   getPerasCertBlock = getPerasCertBlock . forgetArrivalTime
+  getPerasCertSize = getPerasCertSize . forgetArrivalTime

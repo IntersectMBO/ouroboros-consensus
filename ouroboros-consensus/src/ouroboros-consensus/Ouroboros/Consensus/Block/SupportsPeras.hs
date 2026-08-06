@@ -512,6 +512,9 @@ instance
   where
   getPerasCertRound = getPerasCertRound . vpcCert
   getPerasCertBlock = getPerasCertBlock . vpcCert
+  -- We don't account for the size of the boost, because it is
+  -- never serialized.
+  getPerasCertSize = getPerasCertSize . vpcCert
 
 -- * Peras error types
 

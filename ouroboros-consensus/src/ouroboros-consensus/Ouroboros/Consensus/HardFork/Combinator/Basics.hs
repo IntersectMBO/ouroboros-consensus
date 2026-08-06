@@ -793,6 +793,11 @@ instance
       . hcmap proxySingle (K . upcastToHardForkPoint . getPerasCertPoint . unwrapPerasCert)
       . getOneEraPerasCert
 
+  getPerasCertSize =
+    hcollapse
+      . hcmap proxySingle (K . getPerasCertSize . unwrapPerasCert)
+      . getOneEraPerasCert
+
 instance
   ( CanHardFork xs
   , All SingleEraBlock xs
