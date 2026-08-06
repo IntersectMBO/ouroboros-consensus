@@ -12,6 +12,7 @@ module Ouroboros.Consensus.Peras.Cert.Opaque
   , OpaquePerasCert (..)
   , toOpaquePerasCert
   , fromOpaquePerasCert
+  , opaquePerasCertSize
   ) where
 
 import Cardano.Binary (Decoder, FromCBOR (..))
@@ -30,6 +31,7 @@ import Data.MemPack.Buffer
   )
 import Data.Proxy (Proxy)
 import Data.Typeable (Proxy (..), Typeable, eqT, typeRep, (:~:) (..))
+import Data.Word (Word32)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.SupportsPeras (BlockSupportsPeras (..))
@@ -112,3 +114,10 @@ fromOpaquePerasCert (Proxy :: Proxy blk) (OpaquePerasCert byteArray)
         OpaquePerasCertError $
           "Failed to deserialize opaque Peras certificate from byte array: "
             <> show err
+
+opaquePerasCertSize :: OpaquePerasCert -> Word32
+opaquePerasCertSize =
+    fromIntegral
+  . ShortByteString.length
+  . byteArrayToShortByteString
+  . unOpaquePerasCert
