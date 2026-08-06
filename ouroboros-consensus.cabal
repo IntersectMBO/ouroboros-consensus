@@ -1755,8 +1755,6 @@ library unstable-cardano-tools
   visibility: public
   hs-source-dirs: ouroboros-consensus-cardano/src/unstable-cardano-tools
   exposed-modules:
-    Cardano.Api.Any
-    Cardano.Node.Types
     Cardano.Tools.DBAnalyser.Analysis
     Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting
     Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata
@@ -1770,7 +1768,6 @@ library unstable-cardano-tools
     Cardano.Tools.DBAnalyser.Types
     Cardano.Tools.DBImmutaliser.Run
     Cardano.Tools.DBSynthesizer.Forging
-    Cardano.Tools.DBSynthesizer.Orphans
     Cardano.Tools.DBSynthesizer.Run
     Cardano.Tools.DBSynthesizer.Types
     Cardano.Tools.DBTruncater.Run
@@ -1780,27 +1777,11 @@ library unstable-cardano-tools
     Cardano.Tools.ImmDBServer.Diffusion
     Cardano.Tools.ImmDBServer.MiniProtocols
 
-  other-modules:
-    Cardano.Api.Key
-    Cardano.Api.KeysByron
-    Cardano.Api.KeysPraos
-    Cardano.Api.KeysShelley
-    Cardano.Api.OperationalCertificate
-    Cardano.Api.SerialiseTextEnvelope
-    Cardano.Api.SerialiseUsing
-    Cardano.Node.Protocol.Alonzo
-    Cardano.Node.Protocol.Byron
-    Cardano.Node.Protocol.Cardano
-    Cardano.Node.Protocol.Conway
-    Cardano.Node.Protocol.Shelley
-
   build-depends:
     aeson,
     base,
-    base16-bytestring,
     bytestring,
-    cardano-binary,
-    cardano-crypto,
+    cardano-config ^>=1,
     cardano-crypto-class,
     cardano-crypto-wrapper,
     cardano-diffusion:cardano-diffusion,
@@ -1845,7 +1826,6 @@ library unstable-cardano-tools
     text,
     text-builder >=1,
     transformers,
-    transformers-except,
 
 executable db-analyser
   import: common-lib
@@ -1888,20 +1868,6 @@ executable db-immutaliser
     optparse-applicative,
     ouroboros-consensus:unstable-cardano-tools,
     with-utf8,
-
-executable db-synthesizer
-  import: common-exe
-  hs-source-dirs: ouroboros-consensus-cardano/app
-  main-is: db-synthesizer.hs
-  build-depends:
-    base,
-    cardano-crypto-class,
-    optparse-applicative,
-    ouroboros-consensus,
-    unstable-cardano-tools,
-    with-utf8,
-
-  other-modules: DBSynthesizer.Parsers
 
 executable db-truncater
   import: common-exe
@@ -1991,15 +1957,25 @@ test-suite tools-test
   build-depends:
     aeson,
     base,
-    ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-tools, unstable-consensus-testlib, unstable-protocol-testlib},
+    bytestring,
+    cardano-config ^>=1,
+    cardano-crypto-class,
+    cardano-ledger-core,
+    directory,
+    filepath,
+    ouroboros-consensus:{cardano, ouroboros-consensus, unstable-cardano-testlib, unstable-cardano-tools, unstable-consensus-testlib, unstable-protocol-testlib, unstable-shelley-testlib},
     QuickCheck,
+    sop-core,
+    strict-sop-core,
     tasty,
     tasty-hunit,
     tasty-quickcheck,
+    temporary,
     text,
     unstable-cardano-tools,
 
   other-modules:
+    Test.Cardano.Tools.DBAnalyser.NodeConfig
     Test.Cardano.Tools.Headers
 
 executable gen-header

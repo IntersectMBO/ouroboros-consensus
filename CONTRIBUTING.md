@@ -374,7 +374,7 @@ interactively:
 nix-repl> :lf .
 nix-repl> pkgs = legacyPackages.${__currentSystem}
 nix-repl> pkgs.hsPkgs.ouroboros-consensus.components.exes.db-
-pkgs.hsPkgs.ouroboros-consensus.components.exes.db-analyser     pkgs.hsPkgs.ouroboros-consensus.components.exes.db-synthesizer
+pkgs.hsPkgs.ouroboros-consensus.components.exes.db-analyser     pkgs.hsPkgs.ouroboros-consensus.components.exes.db-immutaliser  pkgs.hsPkgs.ouroboros-consensus.components.exes.db-truncater
 ```
 
 # Reporting a bug or requesting a feature
