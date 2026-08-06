@@ -8,47 +8,43 @@ The specification is both *formal* (meaning that is machine-checked and amenable
 
 The project is comprised by the following subdirectories:
 
-* `Axiom`: The Agda set theory library
+* `src`: Files comprising the formal specification
 
-* `Data`: Extensions to the Agda standard library
+  - `Foreign`: General utilities to automatically generate Haskell code from Agda code
 
-* `Foreign`: General utilities to automatically generate Haskell code from Agda code
+  - `Interface`: General-purpose type classes not included in the Agda standard library
 
-* `Interface`: General-purpose type classes not included in the Agda standard library
+  - `InterfaceLibrary`: Interfaces exposed by other Cardano components, currently only for the Ledger Layer
 
-* `InterfaceLibrary`: Interfaces exposed by other Cardano components, currently only for the Ledger Layer
+    - `Common`: Component-agnostic features (e.g. stake pool distributions)
 
-  - `Common`: Component-agnostic features (e.g. stake pool distributions)
+  - `Ledger`: Components borrowed from the Ledger specification, most of them actually not Ledger-specific (e.g. slots, epochs, cryptographic primitives)
 
-* `Ledger`: Components borrowed from the Ledger specification, most of them actually not Ledger-specific (e.g. slots, epochs, cryptographic primitives)
+  - `latex`: Auxiliary $$\LaTeX$$-related files required to generate the PDF version of the specification (e.g. fonts, references and static content)
 
-* `Reflection`: Extensions to the reflection support in the Agda standard library
+  - `Spec`: Root directory of the specification
 
-* `Tactic`: General-purpose tactics not included in the Agda standard library
+    - `<STS>.lagda` (e.g. `TickNonce.lagda` for TICKN): The definition of `<STS>` in a human-readable format
 
-* `latex`: Auxiliary $$\LaTeX$$-related files required to generate the PDF version of the specification (e.g. fonts, references and static content)
+    - `<STS>/Properties.agda` (e.g. `TickNonce/Properties.agda` for TICKN): Proofs of properties about `<STS>`. In particular, this file contains a proof that `<STS>` can be 'computed' by a given function. This means that we have an executable version of `<STS>` which is guaranteed to be correct
 
-* `Spec`: Root directory of the specification
+    - `PDF.lagda`: Source Agda file from which the corresponding PDF file is generated
 
-  - `<STS>.lagda` (e.g. `TickNonce.lagda` for TICKN): The definition of `<STS>` in a human-readable format
+    - `Foreign`: Machinery required for the automatic generation of an executable (Haskell) version of the Agda specification
 
-  - `<STS>/Properties.agda` (e.g. `TickNonce/Properties.agda` for TICKN): Proofs of properties about `<STS>`. In particular, this file contains a proof that `<STS>` can be 'computed' by a given function. This means that we have an executable version of `<STS>` which is guaranteed to be correct
+      - `HSConsensus/<STS>.agda` (e.g. `HSConsensus/TickNonce.agda` for TICKN): Contains the code to automatically generate the Haskell types used by `<STS>` and a \*`Step` Haskell function to execute `<STS>`
 
-  - `PDF.lagda`: Source Agda file from which the corresponding PDF file is generated
+      - `ExternalFunctions.agda`: Automatically generates a Haskell record of 'external functions'. An external function is a function used by the Agda specification whose Haskell version should be provided by the calling environment. Dummy external functions are also available
 
-  - `Foreign`: Machinery required for the automatic generation of an executable (Haskell) version of the Agda specification
+      - `HSTypes.agda`: Generates Haskell versions for common Agda types used in the specification, such as sets and maps
 
-    - `HSConsensus/<STS>.agda` (e.g. `HSConsensus/TickNonce.agda` for TICKN): Contains the code to automatically generate the Haskell types used by `<STS>` and a \*`Step` Haskell function to execute `<STS>`
+      - `HSConsensus.agda`: Top-level Agda module from which the executable specification is generated
 
-    - `ExternalFunctions.agda`: Automatically generates a Haskell record of 'external functions'. An external function is a function used by the Agda specification whose Haskell version should be provided by the calling environment. Dummy external functions are also available
+* `src-lib-exts`: Extensions to the Agda standard library (`stdlib`), the IOG prelude library (`iog-prelude`), etc
 
-    - `HSTypes.agda`: Generates Haskell versions for common Agda types used in the specification, such as sets and maps
+* `conformance-example`: A Haskell test suite for the executable specification
 
-    - `HSConsensus.agda`: Top-level Agda module from which the executable specification is generated
-
-  - `hs-src`: A Haskell test suite for the executable specification
-
-  	- `test/<STS>Spec.hs` (e.g. `test/TickNonceSpec.hs` for TICKN): A Haskell program that tests the executable version of `<STS>`
+  - `test/<STS>Spec.hs` (e.g. `test/TickNonceSpec.hs` for TICKN): A Haskell program that tests the executable version of `<STS>`
 
 ## Generating the PDF file
 
@@ -132,22 +128,26 @@ It is possible to perform the above-mentioned tasks without the use of Nix, usin
 
 - Install [latexmk](https://ctan.org/pkg/latexmk/) and [XeTeX](https://xetex.sourceforge.net/)
 
-- Install Agda version `2.7.0` (e.g. follow the instructions in <https://agda.readthedocs.io/en/v2.7.0/getting-started/installation.html#step-1-install-agda>
+- Install Agda version `2.8.0` (e.g. follow the instructions in <https://agda.readthedocs.io/en/v2.8.0/getting-started/installation.html#step-1-install-agda>
 )
 
 - In a folder `<LIB>`, clone the dependencies and checkout the respective commits/tags:
 
   | *Dependency*                                                       | *Tag/commit*                               |
   |--------------------------------------------------------------------|--------------------------------------------|
-  | [agda-stdlib](https://github.com/agda/agda-stdlib)                 | `v2.1.1`                                   |
-  | [agda-stdlib-classes](https://github.com/agda/agda-stdlib-classes) | `73f4da05aeea040fea4587629f9fd83a8f04e656` |
-  | [agda-stdlib-meta](https://github.com/agda/agda-stdlib-meta)       | `v2.1.1`                                   |
+  | [agda-stdlib](https://github.com/agda/agda-stdlib)                 | `v2.3`                                     |
+  | [agda-stdlib-classes](https://github.com/agda/agda-stdlib-classes) | `v2.3`                                     |
+  | [agda-stdlib-meta](https://github.com/agda/agda-stdlib-meta)       | `v2.3`                                     |
+  | [agda-sets](https://github.com/input-output-hk/agda-sets)          | `31512b000317a577230e9ba5081b693801104851` |
+  | [iog-prelude](https://github.com/input-output-hk/iog-agda-prelude) | `e25670dcea694f321cbcd7a0bb704b82d5d7b266` |
 
 - Create a file `<LIB>/libraries` with the following content:
 ```
 <LIB>/agda-stdlib/standard-library.agda-lib
 <LIB>/agda-stdlib-classes/agda-stdlib-classes.agda-lib
 <LIB>/agda-stdlib-meta/agda-stdlib-meta.agda-lib
+<LIB>/agda-sets/abstract-set-theory.agda-lib
+<LIB>/iog-prelude/iog-prelude.agda-lib
 ```
 
 - Instead of `agda` use `agda --library-file <LIB>/libraries`. For example, to typecheck `Everything.agda`:
