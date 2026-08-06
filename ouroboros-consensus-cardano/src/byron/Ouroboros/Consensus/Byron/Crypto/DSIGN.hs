@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Byron.Crypto.DSIGN
   , VerKeyDSIGN (..)
   ) where
 
+import Cardano.Binary.FixedSizeCodec (FixedSizeCodec (..))
 import qualified Cardano.Chain.Block as CC.Block
 import qualified Cardano.Chain.UTxO as CC.UTxO
 import Cardano.Crypto
@@ -64,9 +65,6 @@ data ByronDSIGN
 
 instance DSIGNAlgorithm ByronDSIGN where
   type SeedSizeDSIGN ByronDSIGN = 32
-  type VerKeySizeDSIGN ByronDSIGN = 64
-  type SignKeySizeDSIGN ByronDSIGN = 128
-  type SigSizeDSIGN ByronDSIGN = 64
 
   algorithmNameDSIGN _ = "ByronDSIGN"
 
@@ -114,19 +112,19 @@ instance FixedSizeCodec (VerKeyDSIGN ByronDSIGN) where
   type FixedSize (VerKeyDSIGN ByronDSIGN) = 64
   rawEncodeFixedSized (VerKeyByronDSIGN (VerificationKey vk)) = CC.unXPub vk
   rawDecodeFixedSized bs =
-    either fail (pure . VerKeyByronDSIGN . VerificationKey) (CC.xpub bs)
+    VerKeyByronDSIGN . VerificationKey <$> either fail pure (CC.xpub bs)
 
 instance FixedSizeCodec (SignKeyDSIGN ByronDSIGN) where
   type FixedSize (SignKeyDSIGN ByronDSIGN) = 128
   rawEncodeFixedSized (SignKeyByronDSIGN (SigningKey sk)) = CC.unXPrv sk
   rawDecodeFixedSized bs =
-    either fail (pure . SignKeyByronDSIGN . SigningKey) (CC.xprv bs)
+    SignKeyByronDSIGN . SigningKey <$> either fail pure (CC.xprv bs)
 
 instance FixedSizeCodec (SigDSIGN ByronDSIGN) where
   type FixedSize (SigDSIGN ByronDSIGN) = 64
   rawEncodeFixedSized (SigByronDSIGN (Signature sig)) = CC.unXSignature sig
   rawDecodeFixedSized bs =
-    either fail (pure . SigByronDSIGN . Signature) (CC.xsignature bs)
+    SigByronDSIGN . Signature <$> either fail pure (CC.xsignature bs)
 
 instance Condense (SigDSIGN ByronDSIGN) where
   condense (SigByronDSIGN s) = show s
