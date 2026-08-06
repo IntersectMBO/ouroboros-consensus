@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Peras.Params
   , PerasWeight (..)
   , PerasQuorumWeightThreshold (..)
   , PerasQuorumWeightThresholdSafetyMargin (..)
+  , PerasMaxBlockBodySize (..)
 
     -- * Protocol parameters bundle
   , PerasParams (..)
@@ -55,7 +56,7 @@ import Control.Monad.Trans.Class
 import Data.Coerce (coerce)
 import Data.Semigroup (Sum (..))
 import Data.Typeable (Typeable)
-import Data.Word (Word64)
+import Data.Word (Word32, Word64)
 import GHC.Generics (Generic)
 import qualified Ouroboros.Consensus.Committee.Types as Committee
 import Ouroboros.Consensus.Util.Condense (Condense (..))
@@ -138,6 +139,16 @@ newtype PerasQuorumWeightThresholdSafetyMargin
   deriving stock Generic
   deriving newtype (Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
 
+-- | Maximum size of a block body in bytes.
+--
+-- In the context of Peras, this is used as an upper bound for the size of
+-- certificates, which might get included in block bodies.
+newtype PerasMaxBlockBodySize
+  = PerasMaxBlockBodySize {unPerasMaxBlockBodySize :: Word32}
+  deriving Show via Quiet PerasMaxBlockBodySize
+  deriving stock Generic
+  deriving newtype (Eq, Ord, NoThunks, Condense, FromCBOR, ToCBOR)
+
 -- * Protocol parameters bundle
 
 -- | Peras protocol parameters.
@@ -156,14 +167,16 @@ data PerasParams blk = PerasParams
   , perasQuorumWeightThreshold :: !PerasQuorumWeightThreshold
   , perasQuorumWeightThresholdSafetyMargin :: !PerasQuorumWeightThresholdSafetyMargin
   , perasTargetCommitteeSize :: !Committee.TargetCommitteeSize
+  , perasMaxBlockBodySize :: !PerasMaxBlockBodySize
   }
   deriving (Show, Eq, Generic, NoThunks)
 
 instance Typeable blk => FromCBOR (PerasParams blk) where
   fromCBOR = do
-    decodeListLenOf 9
+    decodeListLenOf 10
     PerasParams
       <$> fromCBOR
+      <*> fromCBOR
       <*> fromCBOR
       <*> fromCBOR
       <*> fromCBOR
@@ -175,7 +188,7 @@ instance Typeable blk => FromCBOR (PerasParams blk) where
 
 instance Typeable blk => ToCBOR (PerasParams blk) where
   toCBOR params =
-    encodeListLen 9
+    encodeListLen 10
       <> toCBOR (perasIgnoranceRounds params)
       <> toCBOR (perasCooldownRounds params)
       <> toCBOR (perasBlockMinSlots params)
@@ -185,6 +198,7 @@ instance Typeable blk => ToCBOR (PerasParams blk) where
       <> toCBOR (perasQuorumWeightThreshold params)
       <> toCBOR (perasQuorumWeightThresholdSafetyMargin params)
       <> toCBOR (perasTargetCommitteeSize params)
+      <> toCBOR (perasMaxBlockBodySize params)
 
 -- | Retag a 'PerasParams' with a new phantom @blk@ type.
 castPerasParams :: forall blk' blk. PerasParams blk -> PerasParams blk'
@@ -233,6 +247,13 @@ defaultPerasParams =
         PerasQuorumWeightThresholdSafetyMargin (2 / 100)
     , perasTargetCommitteeSize =
         Committee.TargetCommitteeSize 800
+    , -- Mainnet value as of 2026-08-06
+      -- In the future, this should *not* be retrieved directly from
+      -- the ledger state, but rather from `TxLimits blk`, because it
+      -- has to account for various overheads, such as the block body
+      -- CBOR encoding, the HFC overhead, etc.
+      perasMaxBlockBodySize =
+        PerasMaxBlockBodySize 90112
     }
 
 -- * Era-dependent default values
