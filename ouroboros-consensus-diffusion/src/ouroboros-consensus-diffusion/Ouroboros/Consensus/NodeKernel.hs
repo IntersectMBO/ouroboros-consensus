@@ -101,7 +101,7 @@ import Ouroboros.Consensus.Peras.Cert.Inclusion
   ( PerasCertInclusionRulesDecision (..)
   , needCertWithHandle
   )
-import Ouroboros.Consensus.Peras.Cert.Opaque (toOpaquePerasCert)
+import Ouroboros.Consensus.Peras.Cert.Opaque (opaquePerasCertSize, toOpaquePerasCert)
 import Ouroboros.Consensus.Peras.Context
   ( forgePerasVoteIfEligibleWithHandle
   , runQueryWithContextHandle
@@ -849,6 +849,8 @@ forkBlockForging IS{..} (MkBlockForging blockForgingM) =
                     currentRoundNo
                     opaquePerasCert
                 pure $ Just opaquePerasCert
+
+    let overhead = maybe 0 opaquePerasCertSize mbPerasCert
 
     (txs, txssz, snapSize, tickedLedgerState, forgingOnTopOf) <- do
       -- Tick the ledger state for the 'SlotNo' we're producing a block for
