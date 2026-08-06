@@ -28,10 +28,9 @@ import Cardano.Binary
   , toStrictByteString
   )
 import qualified Cardano.Binary as CBOR
+import Cardano.Binary.FixedSizeCodec (decodeFixedSized, encodeFixedSized)
 import Cardano.Crypto.DSIGN
-  ( decodeSigDSIGN
-  , encodeSigDSIGN
-  , signDSIGN
+  ( signDSIGN
   , verifyDSIGN
   )
 import qualified Cardano.Crypto.Hash as Hash
@@ -40,20 +39,18 @@ import Cardano.Crypto.Leios
   , LeiosCert (..)
   , LeiosCommittee (..)
   , LeiosDSIGN
+  , LeiosSeat (..)
+  , LeiosSeatId (..)
   , LeiosSignature
   , LeiosSigningKey
   , LeiosVerificationKey
-  , LeiosVoter (..)
-  , LeiosVoterId (..)
   , VerificationError
   , Weight
   , aggregateLeiosCert
-  , decodeLeiosVoterId
-  , encodeLeiosVoterId
-  , getLeiosVoterId
+  , getLeiosSeatId
   , leiosCommitteeSize
   , leiosSignContext
-  , resolveLeiosVoter
+  , resolveLeiosSeat
   , verifyLeiosCert
   )
 import Cardano.Crypto.Util (SignableRepresentation (..))
@@ -81,6 +78,7 @@ import qualified Data.IntMap as IntMap
 import Data.List (nubBy, sortOn)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe.Strict (StrictMaybe (..))
 import Data.Ratio ((%))
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
@@ -681,11 +679,14 @@ decodeLeiosEb = do
 -- final 'Weight' in the committee is normalized by the total of the input map.
 -- TODO: The total can only be calculated here in "everyone votes" scheme.
 mkCommitteeEveryoneVotes :: Real w => [(LeiosVerificationKey, w)] -> LeiosCommittee
+-- NOTE: Bypasses 'mkLeiosCommittee' as the inputs carry no proofs of
+-- possession. Only used by tests; the ledger-driven path uses
+-- 'mkLeiosCommittee'.
 mkCommitteeEveryoneVotes inputs =
-  LeiosCommittee
+  UnsafeLeiosCommittee
     . V.fromList
-    . sortOn voterWeight
-    $ [ LeiosVoter{voterWeight = toRational weight / totalWeight, voterVKey = vk}
+    . sortOn seatWeight
+    $ [ LeiosSeat{seatWeight = toRational weight / totalWeight, seatVKey = SJust vk}
       | (vk, weight) <- nubBy ((==) `on` fst) inputs
       ]
  where
@@ -698,7 +699,7 @@ data LeiosVote = MkLeiosVote
   { announcingRbHash :: RbHash
   -- ^ The message that gets signed, the hash of the ranking block
   --   that announced an endorser block.
-  , voterId :: LeiosVoterId
+  , voterId :: LeiosSeatId
   -- ^ Identity within a 'LeiosCommittee' who signed this vote.
   , voteSignature :: LeiosSignature
   -- ^ The cryptographic signature of the vote.
@@ -718,16 +719,16 @@ encodeLeiosVote :: LeiosVote -> Encoding
 encodeLeiosVote MkLeiosVote{announcingRbHash, voterId, voteSignature} =
   CBOR.encodeListLen 3
     <> encodeRbHash announcingRbHash
-    <> encodeLeiosVoterId voterId
-    <> encodeSigDSIGN voteSignature
+    <> CBOR.encodeWord16 voterId.leiosSeatIndex
+    <> encodeFixedSized voteSignature
 
 -- | Dedoe a 'LeiosVote' from CBOR.
 decodeLeiosVote :: Decoder s LeiosVote
 decodeLeiosVote = do
   enforceSize (fromString "LeiosVote") 3
   pointRbHash <- decodeRbHash
-  voterId <- decodeLeiosVoterId
-  voteSignature <- decodeSigDSIGN
+  voterId <- LeiosSeatId <$> CBOR.decodeWord16
+  voteSignature <- decodeFixedSized
   pure
     MkLeiosVote
       { announcingRbHash = pointRbHash
@@ -739,11 +740,11 @@ voteToObject :: LeiosVote -> Aeson.Object
 voteToObject MkLeiosVote{announcingRbHash, voterId} =
   mconcat
     [ "rbHash" .= prettyRbHash announcingRbHash
-    , "voterId" .= voterId.leiosVoterIndex
+    , "voterId" .= voterId.leiosSeatIndex
     ]
 
 -- | Create a vote for given 'LeiosPoint' and signing key.
-signLeiosVote :: LeiosSigningKey -> LeiosVoterId -> RbHash -> LeiosVote
+signLeiosVote :: LeiosSigningKey -> LeiosSeatId -> RbHash -> LeiosVote
 signLeiosVote sk voterId announcingRbHash =
   MkLeiosVote
     { announcingRbHash
@@ -754,16 +755,20 @@ signLeiosVote sk voterId announcingRbHash =
 -- | Validate a 'LeiosVote' against a selected 'Commitee'.
 validateLeiosVote :: LeiosCommittee -> LeiosVote -> Either VoteInvalid Weight
 validateLeiosVote committee MkLeiosVote{announcingRbHash, voterId, voteSignature} =
-  case resolveLeiosVoter committee voterId of
+  case resolveLeiosSeat committee voterId of
     Nothing -> Left SignerNotInCommittee
-    Just voter ->
-      case verifyDSIGN leiosSignContext voter.voterVKey announcingRbHash voteSignature of
-        Left _ -> Left InvalidSignature
-        Right () -> Right voter.voterWeight
+    Just seat ->
+      case seat.seatVKey of
+        SNothing -> Left SignerHasNoKey
+        SJust vk ->
+          case verifyDSIGN leiosSignContext vk announcingRbHash voteSignature of
+            Left _ -> Left InvalidSignature
+            Right () -> Right seat.seatWeight
 
 data VoteInvalid
   = InvalidSignature
   | SignerNotInCommittee
+  | SignerHasNoKey
   deriving (Eq, Show)
 
 -- | Why a CertRB was rejected during ledger validation of its Leios
